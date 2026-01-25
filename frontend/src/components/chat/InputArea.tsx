@@ -13,6 +13,7 @@ import { uploadAudio } from '../../services/audio';
 import { useMessageHandlers } from '../../hooks/useMessageHandlers';
 import { useImageUpload } from '../../hooks/useImageUpload';
 import { useModelSelection } from '../../hooks/useModelSelection';
+import { useAudioRecording } from '../../hooks/useAudioRecording';
 import { getSavedSettings, saveSettings, resetSettings } from '../../utils/settingsStorage';
 import { type UnifiedModel, ALL_MODELS } from '../../constants/models';
 import ConflictAlert from './ConflictAlert';
@@ -79,6 +80,17 @@ export default function InputArea({
     handleRemoveAllImages,
     clearUploadError,
   } = useImageUpload();
+
+  // 音频录制 Hook
+  const {
+    recordingState,
+    audioBlob,
+    audioDuration,
+    startRecording,
+    stopRecording,
+    clearRecording,
+    error: audioRecordingError,
+  } = useAudioRecording();
 
   // 计算是否有图片（用于模型选择）
   const hasImage = hasImages;
@@ -190,6 +202,9 @@ export default function InputArea({
   if (imageUploadError && !uploadError) {
     setUploadError(imageUploadError);
   }
+  if (audioRecordingError && !uploadError) {
+    setUploadError(audioRecordingError);
+  }
 
   // 包装 handleRemoveImage 以清除错误
   const handleRemoveImage = (imageId: string) => {
@@ -260,6 +275,13 @@ export default function InputArea({
 
   // 发送消息
   const handleSubmit = async () => {
+    // 如果有音频，调用音频提交处理
+    if (audioBlob) {
+      await handleAudioSubmit(audioBlob);
+      clearRecording();
+      return;
+    }
+
     const sendButtonState = getSendButtonState(isSubmitting, isUploading, !!(prompt.trim() || hasImages));
     if (sendButtonState.disabled) return;
 
@@ -387,6 +409,12 @@ export default function InputArea({
           onImageSelect={handleImageSelect}
           onImageDrop={handleImageDrop}
           onImagePaste={handleImagePaste}
+          recordingState={recordingState}
+          audioBlob={audioBlob}
+          audioDuration={audioDuration}
+          onStartRecording={startRecording}
+          onStopRecording={stopRecording}
+          onClearRecording={clearRecording}
         />
       </div>
     </div>

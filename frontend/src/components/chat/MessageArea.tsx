@@ -320,45 +320,48 @@ export default function MessageArea({
   }
 
   return (
-    <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto bg-white">
-      <div key={conversationId || 'no-conversation'} className="max-w-3xl mx-auto py-6 px-4 animate-fadeIn">
-        {messages.map((message, index) => {
-          const isStreaming = message.id?.startsWith('streaming-') && isWaitingForAI;
-          const isRegenerating = message.id === regeneratingId;
+    <div className="flex-1 flex flex-col relative min-h-0 h-full">
+      {/* 可滚动的消息区域 */}
+      <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto bg-white">
+        <div key={conversationId || 'no-conversation'} className="max-w-3xl mx-auto py-6 px-4 animate-fadeIn">
+          {messages.map((message, index) => {
+            const isStreaming = message.id?.startsWith('streaming-') && isWaitingForAI;
+            const isRegenerating = message.id === regeneratingId;
 
-          return (
-            <MessageItem
-              key={message.id || `message-${index}`}
-              message={message}
-              isStreaming={isStreaming}
-              isRegenerating={isRegenerating}
-              onRegenerate={handleRegenerate}
-              onDelete={handleDelete}
-            />
-          );
-        })}
+            return (
+              <MessageItem
+                key={message.id || `message-${index}`}
+                message={message}
+                isStreaming={isStreaming}
+                isRegenerating={isRegenerating}
+                onRegenerate={handleRegenerate}
+                onDelete={handleDelete}
+              />
+            );
+          })}
 
-        {/* AI 思考中加载状态 */}
-        {(isWaitingForAI || isRegeneratingAI) &&
-         !streamingContent &&
-         regeneratingContentRef.current === '' && (
-          <div className="flex mb-4 justify-start">
-            <div className="max-w-[70%] rounded-2xl px-4 py-3 bg-white border border-gray-200">
-              <div className="flex items-center space-x-2 text-gray-500">
-                <div className="flex space-x-1">
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+          {/* AI 思考中加载状态 */}
+          {(isWaitingForAI || isRegeneratingAI) &&
+           !streamingContent &&
+           regeneratingContentRef.current === '' && (
+            <div className="flex mb-4 justify-start">
+              <div className="max-w-[70%] rounded-2xl px-4 py-3 bg-white border border-gray-200">
+                <div className="flex items-center space-x-2 text-gray-500">
+                  <div className="flex space-x-1">
+                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                  </div>
+                  <span className="text-sm">AI 正在思考...</span>
                 </div>
-                <span className="text-sm">AI 正在思考...</span>
               </div>
             </div>
-          </div>
-        )}
-        <div ref={messagesEndRef} />
+          )}
+          <div ref={messagesEndRef} />
+        </div>
       </div>
 
-      {/* 回到底部按钮 */}
+      {/* 回到底部按钮（相对于 MessageArea 底部定位） */}
       {showScrollButton && (
         <button
           onClick={() => {
@@ -366,12 +369,11 @@ export default function MessageArea({
             scrollToBottom();
             setHasNewMessages(false);
           }}
-          className={`fixed bottom-32 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-full shadow-lg flex items-center justify-center transition-colors z-10 ${
+          className={`absolute bottom-6 left-1/2 transform -translate-x-1/2 px-4 py-2 rounded-full shadow-lg flex items-center justify-center transition-colors z-20 ${
             hasNewMessages
               ? 'bg-blue-600 text-white hover:bg-blue-700'
-              : 'bg-white text-gray-600 hover:bg-gray-50'
+              : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
           }`}
-          style={{ marginLeft: '128px' }}
         >
           {hasNewMessages ? (
             <span className="text-sm font-medium">有新消息</span>

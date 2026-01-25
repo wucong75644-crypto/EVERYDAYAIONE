@@ -1,12 +1,14 @@
 # 数据库迁移指南
 
-## 迁移 003：修改 model_id 字段类型
+## 迁移 003：修改 model_id 字段类型 + 添加 last_message_preview 字段
 
 ### 问题
-`conversations` 表的 `model_id` 字段当前为 `UUID` 类型，但代码中使用字符串模型ID（如 `'gemini-3-pro'`），导致保存失败。
+1. `conversations` 表的 `model_id` 字段当前为 `UUID` 类型，但代码中使用字符串模型ID（如 `'gemini-3-pro'`），导致保存失败
+2. `conversations` 表缺少 `last_message_preview` 字段，导致获取对话列表时后端返回 **500错误**
 
 ### 解决方案
-将 `model_id` 字段从 `UUID` 改为 `VARCHAR(100)`。
+1. 将 `model_id` 字段从 `UUID` 改为 `VARCHAR(100)`
+2. 添加 `last_message_preview` 字段（TEXT类型）用于存储对话最后一条消息的预览
 
 ### 执行步骤
 
@@ -54,17 +56,19 @@ psql "your-connection-string" -f docs/database/migrations/003_change_model_id_to
 
 ### 验证
 
-执行完成后，可以运行以下SQL验证字段类型已更改：
+执行完成后，可以运行以下SQL验证字段已正确添加和修改：
 
 ```sql
 SELECT column_name, data_type, character_maximum_length
 FROM information_schema.columns
-WHERE table_name = 'conversations' AND column_name = 'model_id';
+WHERE table_name = 'conversations'
+  AND column_name IN ('model_id', 'last_message_preview')
+ORDER BY column_name;
 ```
 
-应该返回：
-- `data_type`: `character varying`
-- `character_maximum_length`: `100`
+应该返回两行：
+- `model_id`: `data_type` = `character varying`, `character_maximum_length` = `100`
+- `last_message_preview`: `data_type` = `text`, `character_maximum_length` = `null`（TEXT类型没有长度限制）
 
 ### 回滚（如需要）
 
@@ -81,6 +85,7 @@ FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE SET NULL;
 
 ## 迁移历史
 
-- `001_add_image_url_to_messages.sql` - 添加图片URL字段
-- `002_add_video_url_to_messages.sql` - 添加视频URL字段
-- `003_change_model_id_to_varchar.sql` - 修改model_id字段类型（本次迁移）
+- `001_add_image_url_to_messages.sql` - 添加图片URL字段到messages表
+- `002_add_video_url_to_messages.sql` - 添加视频URL字段到messages表
+- `003_change_model_id_to_varchar.sql` - 修改model_id字段类型 + 添加last_message_preview字段到conversations表
+- `004_add_is_error_to_messages.sql` - 添加is_error字段到messages表
