@@ -1,0 +1,35 @@
+# FastAPI 框架
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# Supabase 客户端
+supabase==2.11.0
+
+# 配置管理
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# JWT 认证
+python-jose[cryptography]==3.3.0
+bcrypt==4.2.1
+
+# 日志
+loguru==0.7.3
+
+# HTTP 客户端
+httpx[socks]==0.28.1
+socksio==1.0.0
+
+# 阿里云 SDK（短信、OSS）
+alibabacloud-dysmsapi20170525==3.0.0
+oss2==2.19.1
+
+# Redis 客户端
+redis==5.2.1
+
+# 重试机制
+tenacity==9.0.0
+
+# 测试
+pytest==8.3.4
+pytest-asyncio==0.25.2
