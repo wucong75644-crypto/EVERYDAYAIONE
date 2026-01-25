@@ -6,17 +6,18 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Settings, Upload, Brain } from 'lucide-react';
+import { Send, Settings, Upload, Brain, Paperclip } from 'lucide-react';
 import { type UnifiedModel } from '../../constants/models';
 import { type AspectRatio, type ImageResolution, type ImageOutputFormat } from '../../services/image';
 import { type VideoFrames, type VideoAspectRatio } from '../../services/video';
 import ImagePreview from './ImagePreview';
+import AudioPreview from './AudioPreview';
 import ModelSelector from './ModelSelector';
 import AdvancedSettingsMenu from './AdvancedSettingsMenu';
 import UploadMenu from './UploadMenu';
 import AudioRecorder from './AudioRecorder';
 import { type UploadedImage } from '../../hooks/useImageUpload';
-import { useAudioRecording } from '../../hooks/useAudioRecording';
+import { type RecordingState } from '../../hooks/useAudioRecording';
 import { useDragDropUpload } from '../../hooks/useDragDropUpload';
 
 interface InputControlsProps {
@@ -28,6 +29,13 @@ interface InputControlsProps {
   isSubmitting: boolean;
   sendButtonDisabled: boolean;
   sendButtonTooltip: string;
+  // 音频录制相关
+  recordingState: RecordingState;
+  audioBlob: Blob | null;
+  audioDuration: number;
+  onStartRecording: () => Promise<void>;
+  onStopRecording: () => void;
+  onClearRecording: () => void;
   selectedModel: UnifiedModel;
   availableModels: UnifiedModel[];
   modelSelectorLocked: boolean;
@@ -75,6 +83,7 @@ export default function InputControls(props: InputControlsProps) {
     deepThinkMode, onDeepThinkModeChange,
     onSaveSettings, onResetSettings,
     images, maxImages, maxFileSize, onRemoveImage, onImageSelect, onImageDrop, onImagePaste,
+    recordingState, audioBlob, audioDuration, onStartRecording, onStopRecording, onClearRecording,
   } = props;
 
   const [showUploadMenu, setShowUploadMenu] = useState(false);
@@ -86,7 +95,6 @@ export default function InputControls(props: InputControlsProps) {
   const advancedMenuRef = useRef<HTMLDivElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
 
-  const { recordingState, audioBlob, audioDuration, startRecording, stopRecording, clearRecording, error: recordingError } = useAudioRecording();
   const { isDragging } = useDragDropUpload({ dropZoneRef, textareaRef, onImageDrop, onImagePaste, maxImages, maxFileSize });
 
   // 自动调整文本框高度（最多5行，约120px）
@@ -122,6 +130,9 @@ export default function InputControls(props: InputControlsProps) {
     selectedModel.capabilities.vqa ||
     selectedModel.capabilities.videoQA;
 
+  // 判断是否有任何上传支持（图片或文档）
+  const hasAnyUploadSupport = hasImageUploadSupport || selectedModel.type === 'chat';
+
   const supportsDeepThinking = selectedModel.capabilities.thinkingEffort === true;
   const hasContent = prompt.trim().length > 0 || images.length > 0;
   const canSubmit = !sendButtonDisabled && (hasContent || audioBlob);
@@ -154,6 +165,15 @@ export default function InputControls(props: InputControlsProps) {
           <div className="mb-2 pb-2 border-b border-gray-100">
             <ImagePreview images={images} onRemove={onRemoveImage} />
           </div>
+        )}
+
+        {/* 音频预览区域 */}
+        {audioBlob && (
+          <AudioPreview
+            audioURL={URL.createObjectURL(audioBlob)}
+            recordingTime={audioDuration}
+            onClear={onClearRecording}
+          />
         )}
 
         {/* 输入区域 */}
@@ -237,30 +257,28 @@ export default function InputControls(props: InputControlsProps) {
             {/* 计费提示（无边框背景，颜色渐变动画） */}
             <span
               className={`text-xs transition-colors duration-1000 ease-out ${
-                creditsHighlight ? 'text-blue-600' : 'text-gray-400'
+                creditsHighlight ? 'text-orange-600' : 'text-gray-400'
               }`}
             >
               {estimatedCredits}
             </span>
 
-            {/* 上传按钮 */}
-            {hasImageUploadSupport && (
-              <div ref={uploadMenuRef} className="relative">
-                <button
-                  onClick={() => setShowUploadMenu(!showUploadMenu)}
-                  className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                  title="上传文件"
-                >
-                  <Upload className="w-4 h-4" />
-                </button>
-                <UploadMenu
-                  visible={showUploadMenu}
-                  selectedModel={selectedModel}
-                  onImageUpload={() => fileInputRef.current?.click()}
-                  onClose={() => setShowUploadMenu(false)}
-                />
-              </div>
-            )}
+            {/* 上传按钮（始终显示，UploadMenu 内部根据模型能力显示不同选项） */}
+            <div ref={uploadMenuRef} className="relative">
+              <button
+                onClick={() => setShowUploadMenu(!showUploadMenu)}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                title="上传文件"
+              >
+                <Paperclip className="w-4 h-4" />
+              </button>
+              <UploadMenu
+                visible={showUploadMenu}
+                selectedModel={selectedModel}
+                onImageUpload={() => fileInputRef.current?.click()}
+                onClose={() => setShowUploadMenu(false)}
+              />
+            </div>
 
             {/* 发送按钮（有内容时显示） */}
             {showSendButton && (
@@ -284,9 +302,9 @@ export default function InputControls(props: InputControlsProps) {
                 isRecording={recordingState === 'recording'}
                 recordingTime={audioDuration}
                 audioURL={audioBlob ? URL.createObjectURL(audioBlob) : null}
-                onStartRecording={startRecording}
-                onStopRecording={stopRecording}
-                onClearAudio={clearRecording}
+                onStartRecording={onStartRecording}
+                onStopRecording={onStopRecording}
+                onClearAudio={onClearRecording}
                 disabled={isSubmitting}
               />
             )}
@@ -303,13 +321,6 @@ export default function InputControls(props: InputControlsProps) {
             )}
           </div>
         </div>
-
-        {/* 录音错误提示 */}
-        {recordingError && (
-          <div className="mt-2 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">
-            {recordingError}
-          </div>
-        )}
       </div>
 
       {/* 隐藏的文件输入 */}

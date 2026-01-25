@@ -45,20 +45,6 @@ export default function AudioRecorder({
           {Math.floor(recordingTime / 60)}:{(recordingTime % 60).toString().padStart(2, '0')}
         </span>
       )}
-
-      {/* 音频预览 */}
-      {audioURL && !isRecording && (
-        <div className="flex items-center space-x-2 px-3 py-1 bg-blue-50 rounded-lg">
-          <audio src={audioURL} controls className="h-8" />
-          <button
-            onClick={onClearAudio}
-            className="text-red-500 hover:text-red-700 transition-colors"
-            title="删除录音"
-          >
-            ✕
-          </button>
-        </div>
-      )}
     </>
   );
 }
