@@ -394,13 +394,13 @@ export default memo(function MessageItem({ message, isStreaming = false, isRegen
               </>
             )}
 
-            {/* 重新生成按钮（所有AI消息显示）- 移到分享按钮之前 */}
+            {/* 重新生成/重试按钮（所有AI消息显示）- 移到分享按钮之前 */}
             {!isUser && onRegenerate && (
               <button
                 onClick={() => onRegenerate(message.id)}
                 disabled={isRegenerating}
                 className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                title={isRegenerating ? '正在重新生成...' : '重新生成'}
+                title={isRegenerating ? '处理中...' : isErrorMessage ? '重试' : '重新生成'}
               >
                 {isRegenerating ? (
                   <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
