@@ -125,8 +125,147 @@ export default function MessageArea({
     }
   }, [conversationId, messages, setMessages, getCachedMessages, updateCachedMessages, toStoreMessage, onDelete]);
 
-  // 处理重新生成
-  // 策略：失败消息原地重试，成功消息新增对话
+  // 重置重新生成状态的辅助函数
+  const resetRegeneratingState = useCallback(() => {
+    setRegeneratingId(null);
+    setIsRegeneratingAI(false);
+    regeneratingContentRef.current = '';
+  }, []);
+
+  // 策略 A：失败消息原地重新生成
+  const regenerateFailedMessage = useCallback(async (
+    messageId: string,
+    targetMessage: Message,
+    userMessage: Message
+  ) => {
+    if (!conversationId) return;
+
+    setRegeneratingId(messageId);
+    setIsRegeneratingAI(true);
+
+    const aiIndex = messages.findIndex((m) => m.id === messageId);
+    const tempMessage: Message = {
+      id: messageId,
+      conversation_id: conversationId,
+      role: 'assistant',
+      content: '',
+      image_url: null,
+      video_url: null,
+      credits_cost: 0,
+      created_at: new Date().toISOString(),
+    };
+
+    setMessages([...messages.slice(0, aiIndex), tempMessage, ...messages.slice(aiIndex + 1)]);
+
+    await sendMessageStream(
+      conversationId,
+      { content: userMessage.content, model_id: modelId || 'gemini-3-flash' },
+      {
+        onContent: (content: string) => {
+          regeneratingContentRef.current += content;
+          const updated = { ...tempMessage, content: regeneratingContentRef.current };
+          setMessages([...messages.slice(0, aiIndex), updated, ...messages.slice(aiIndex + 1)]);
+          if (!userScrolledAway) scrollToBottom();
+        },
+        onDone: (finalMessage: Message | null) => {
+          if (!finalMessage) return;
+          const finalMessages = messages.map((m) => (m.id === messageId ? finalMessage : m));
+          setMessages(finalMessages);
+
+          if (conversationId) {
+            const cached = getCachedMessages(conversationId);
+            if (cached) {
+              updateCachedMessages(conversationId, finalMessages.map(toStoreMessage), cached.hasMore);
+            }
+          }
+
+          resetRegeneratingState();
+          if (onMessageUpdate) onMessageUpdate(finalMessage.content);
+        },
+        onError: (error: string) => {
+          console.error('重试失败:', error);
+          setMessages(messages.map((m) => (m.id === messageId ? targetMessage : m)));
+          resetRegeneratingState();
+          toast.error(`重试失败: ${error}`);
+        },
+      }
+    );
+  }, [conversationId, messages, setMessages, modelId, userScrolledAway, scrollToBottom, getCachedMessages, updateCachedMessages, toStoreMessage, onMessageUpdate, resetRegeneratingState]);
+
+  // 策略 B：成功消息新增对话
+  const regenerateAsNewMessage = useCallback(async (userMessage: Message) => {
+    if (!conversationId) return;
+
+    const newStreamingId = `streaming-${Date.now()}`;
+    const tempUserId = `temp-user-${Date.now()}`;
+
+    setRegeneratingId(newStreamingId);
+    setIsRegeneratingAI(true);
+
+    const tempUserMessage: Message = {
+      id: tempUserId,
+      conversation_id: conversationId,
+      role: 'user',
+      content: userMessage.content,
+      image_url: userMessage.image_url,
+      video_url: null,
+      credits_cost: 0,
+      created_at: new Date().toISOString(),
+    };
+
+    const tempAiMessage: Message = {
+      id: newStreamingId,
+      conversation_id: conversationId,
+      role: 'assistant',
+      content: '',
+      image_url: null,
+      video_url: null,
+      credits_cost: 0,
+      created_at: new Date().toISOString(),
+    };
+
+    setMessages([...messages, tempUserMessage, tempAiMessage]);
+    scrollToBottom();
+
+    await sendMessageStream(
+      conversationId,
+      { content: userMessage.content, model_id: modelId || 'gemini-3-flash' },
+      {
+        onUserMessage: (realUserMessage: Message) => {
+          setMessages((prev) => prev.map((m) => (m.id === tempUserId ? realUserMessage : m)));
+        },
+        onContent: (content: string) => {
+          regeneratingContentRef.current += content;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === newStreamingId ? { ...m, content: regeneratingContentRef.current } : m))
+          );
+          if (!userScrolledAway) scrollToBottom();
+        },
+        onDone: (finalMessage: Message | null) => {
+          if (finalMessage) {
+            setMessages((prev) => {
+              const updated = prev.map((m) => (m.id === newStreamingId ? finalMessage : m));
+              if (conversationId) {
+                const cached = getCachedMessages(conversationId);
+                if (cached) updateCachedMessages(conversationId, updated.map(toStoreMessage), cached.hasMore);
+              }
+              return updated;
+            });
+            if (onMessageUpdate) onMessageUpdate(finalMessage.content);
+          }
+          resetRegeneratingState();
+        },
+        onError: (error: string) => {
+          console.error('重新生成失败:', error);
+          setMessages((prev) => prev.filter((m) => m.id !== tempUserId && m.id !== newStreamingId));
+          resetRegeneratingState();
+          toast.error(`重新生成失败: ${error}`);
+        },
+      }
+    );
+  }, [conversationId, messages, setMessages, modelId, userScrolledAway, scrollToBottom, getCachedMessages, updateCachedMessages, toStoreMessage, onMessageUpdate, resetRegeneratingState]);
+
+  // 处理重新生成（主入口）
   const handleRegenerate = useCallback(async (messageId: string) => {
     if (!conversationId || regeneratingId) return;
 
@@ -134,9 +273,9 @@ export default function MessageArea({
     if (!targetMessage || targetMessage.role !== 'assistant') return;
 
     // 查找对应的用户消息
-    const aiMessageIndex = messages.findIndex((m) => m.id === messageId);
+    const aiIndex = messages.findIndex((m) => m.id === messageId);
     let userMessage: Message | null = null;
-    for (let i = aiMessageIndex - 1; i >= 0; i--) {
+    for (let i = aiIndex - 1; i >= 0; i--) {
       if (messages[i].role === 'user') {
         userMessage = messages[i];
         break;
@@ -144,227 +283,27 @@ export default function MessageArea({
     }
 
     if (!userMessage) {
-      alert('未找到对应的用户消息');
+      toast.error('未找到对应的用户消息');
       return;
     }
 
-    // 判断是否为失败消息
-    const isFailedMessage = targetMessage.is_error === true;
+    regeneratingContentRef.current = '';
 
     try {
-      regeneratingContentRef.current = '';
-
-      if (isFailedMessage) {
-        // 策略 A：失败消息 - 原地重新生成
-        setRegeneratingId(messageId);
-        setIsRegeneratingAI(true);
-
-        const tempRegeneratingMessage: Message = {
-          id: messageId,
-          conversation_id: conversationId,
-          role: 'assistant',
-          content: '',
-          image_url: null,
-          video_url: null,
-          credits_cost: 0,
-          created_at: new Date().toISOString(),
-        };
-
-        const aiIndex = messages.findIndex((m) => m.id === messageId);
-        const newMessages = [
-          ...messages.slice(0, aiIndex),
-          tempRegeneratingMessage,
-          ...messages.slice(aiIndex + 1),
-        ];
-        setMessages(newMessages);
-
-        await sendMessageStream(
-          conversationId,
-          {
-            content: userMessage.content,
-            model_id: modelId || 'gemini-3-flash',
-          },
-          {
-            onContent: (content: string) => {
-              regeneratingContentRef.current += content;
-
-              const updatedMessage: Message = {
-                ...tempRegeneratingMessage,
-                content: regeneratingContentRef.current,
-              };
-
-              const updatedMessages = [
-                ...messages.slice(0, aiIndex),
-                updatedMessage,
-                ...messages.slice(aiIndex + 1),
-              ];
-              setMessages(updatedMessages);
-
-              if (!userScrolledAway) {
-                scrollToBottom();
-              }
-            },
-            onDone: (finalMessage: Message | null) => {
-              if (!finalMessage) return;
-              const finalMessages = messages.map((m) =>
-                m.id === messageId ? finalMessage : m
-              );
-              setMessages(finalMessages);
-
-              if (conversationId) {
-                const cached = getCachedMessages(conversationId);
-                if (cached) {
-                  updateCachedMessages(conversationId, finalMessages.map(toStoreMessage), cached.hasMore);
-                }
-              }
-
-              setRegeneratingId(null);
-              setIsRegeneratingAI(false);
-              regeneratingContentRef.current = '';
-
-              if (onMessageUpdate) {
-                onMessageUpdate(finalMessage.content);
-              }
-            },
-            onError: (error: string) => {
-              console.error('重试失败:', error);
-
-              const originalMessages = messages.map((m) =>
-                m.id === messageId ? targetMessage : m
-              );
-              setMessages(originalMessages);
-
-              setRegeneratingId(null);
-              setIsRegeneratingAI(false);
-              regeneratingContentRef.current = '';
-
-              toast.error(`重试失败: ${error}`);
-            },
-          }
-        );
+      if (targetMessage.is_error === true) {
+        await regenerateFailedMessage(messageId, targetMessage, userMessage);
       } else {
-        // 策略 B：成功消息 - 新增用户消息副本 + 新增 AI 占位消息
-        const newStreamingId = `streaming-${Date.now()}`;
-        setRegeneratingId(newStreamingId);
-        setIsRegeneratingAI(true);
-
-        // 创建用户消息副本（临时 ID，等待后端返回真实消息）
-        const tempUserMessage: Message = {
-          id: `temp-user-${Date.now()}`,
-          conversation_id: conversationId,
-          role: 'user',
-          content: userMessage.content,
-          image_url: userMessage.image_url,
-          video_url: null,
-          credits_cost: 0,
-          created_at: new Date().toISOString(),
-        };
-
-        // 创建 AI 占位消息
-        const tempAiMessage: Message = {
-          id: newStreamingId,
-          conversation_id: conversationId,
-          role: 'assistant',
-          content: '',
-          image_url: null,
-          video_url: null,
-          credits_cost: 0,
-          created_at: new Date().toISOString(),
-        };
-
-        // 追加到消息列表末尾
-        const newMessages = [...messages, tempUserMessage, tempAiMessage];
-        setMessages(newMessages);
-        scrollToBottom();
-
-        await sendMessageStream(
-          conversationId,
-          {
-            content: userMessage.content,
-            model_id: modelId || 'gemini-3-flash',
-          },
-          {
-            onUserMessage: (realUserMessage: Message) => {
-              // 替换临时用户消息为真实消息
-              setMessages((prev) =>
-                prev.map((m) => (m.id === tempUserMessage.id ? realUserMessage : m))
-              );
-            },
-            onContent: (content: string) => {
-              regeneratingContentRef.current += content;
-
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === newStreamingId
-                    ? { ...m, content: regeneratingContentRef.current }
-                    : m
-                )
-              );
-
-              if (!userScrolledAway) {
-                scrollToBottom();
-              }
-            },
-            onDone: (finalMessage: Message | null) => {
-              if (finalMessage) {
-                setMessages((prev) =>
-                  prev.map((m) => (m.id === newStreamingId ? finalMessage : m))
-                );
-
-                if (conversationId) {
-                  const cached = getCachedMessages(conversationId);
-                  if (cached) {
-                    // 获取最新的消息列表用于缓存更新
-                    setMessages((prev) => {
-                      const updated = prev.map((m) => (m.id === newStreamingId ? finalMessage : m));
-                      updateCachedMessages(conversationId, updated.map(toStoreMessage), cached.hasMore);
-                      return updated;
-                    });
-                  }
-                }
-
-                if (onMessageUpdate) {
-                  onMessageUpdate(finalMessage.content);
-                }
-              }
-
-              setRegeneratingId(null);
-              setIsRegeneratingAI(false);
-              regeneratingContentRef.current = '';
-            },
-            onError: (error: string) => {
-              console.error('重新生成失败:', error);
-
-              // 移除临时添加的消息
-              setMessages((prev) =>
-                prev.filter((m) => m.id !== tempUserMessage.id && m.id !== newStreamingId)
-              );
-
-              setRegeneratingId(null);
-              setIsRegeneratingAI(false);
-              regeneratingContentRef.current = '';
-
-              toast.error(`重新生成失败: ${error}`);
-            },
-          }
-        );
+        await regenerateAsNewMessage(userMessage);
       }
     } catch (error) {
       console.error('重新生成失败:', error);
-
-      if (isFailedMessage) {
-        const originalMessages = messages.map((m) =>
-          m.id === messageId ? targetMessage : m
-        );
-        setMessages(originalMessages);
+      if (targetMessage.is_error === true) {
+        setMessages(messages.map((m) => (m.id === messageId ? targetMessage : m)));
       }
-
-      setRegeneratingId(null);
-      setIsRegeneratingAI(false);
-      regeneratingContentRef.current = '';
+      resetRegeneratingState();
       toast.error('重新生成失败，请重试');
     }
-  }, [conversationId, messages, setMessages, regeneratingId, modelId, onMessageUpdate, userScrolledAway, scrollToBottom, getCachedMessages, updateCachedMessages, toStoreMessage]);
+  }, [conversationId, messages, setMessages, regeneratingId, regenerateFailedMessage, regenerateAsNewMessage, resetRegeneratingState]);
 
   // 新消息或流式内容变化时更新显示和滚动
   useEffect(() => {

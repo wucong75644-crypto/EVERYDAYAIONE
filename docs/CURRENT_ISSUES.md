@@ -1051,3 +1051,79 @@ useEffect(() => {
 - `backend/api/routes/message.py:27-36` - 依赖注入更新
 
 ---
+
+### 2026-01-25 handleRegenerate 函数重构（CLAUDE.md 合规性修复）
+
+**当前阶段**：代码质量优化 - handleRegenerate 函数重构完成
+
+**问题诊断**：
+- `MessageArea.tsx` 中的 `handleRegenerate` 函数 238 行，超过 120 行限制 98%
+- 文件总行数 503 行，略超 500 行限制
+
+**已完成任务**：
+
+1. ✅ **handleRegenerate 函数拆分**
+   - 重构前：238 行（超出 120 行限制 98%）
+   - 重构后：拆分为 4 个函数，每个均符合限制
+   - 拆分策略：按职责单一原则分离
+
+2. ✅ **新增函数**
+   | 函数名 | 行数 | 职责 |
+   |--------|------|------|
+   | `resetRegeneratingState` | 5 行 | 重置状态辅助函数 |
+   | `regenerateFailedMessage` | 58 行 | 策略A：失败消息原地重试 |
+   | `regenerateAsNewMessage` | 71 行 | 策略B：成功消息新增对话 |
+   | `handleRegenerate` | 38 行 | 主入口：判断策略并调用 |
+
+3. ✅ **附带修复的 linter 错误**
+   - `AudioRecorder.tsx:20,23` - 未使用变量 audioURL、onClearAudio
+   - `InputControls.tsx:134` - 未使用变量 hasAnyUploadSupport
+   - `UploadMenu.tsx:28` - 未使用变量 supportsDocumentUpload
+
+**重构收益**：
+| 指标 | 重构前 | 重构后 | 改进 |
+|------|--------|--------|------|
+| handleRegenerate 行数 | 238 行 | 38 行 | ↓ 84% |
+| 文件总行数 | 503 行 | 442 行 | ↓ 12% |
+| 最长函数 | 238 行 | 71 行 | ✅ <120行 |
+| 符合 500 行限制 | ❌ | ✅ | 已合规 |
+
+**测试状态**：
+- ✅ TypeScript 编译通过
+- ✅ 生产构建成功（dist/ 406.66 KB）
+- ✅ 无 linter 错误
+
+**修改文件**：
+- `frontend/src/components/chat/MessageArea.tsx` - 主要重构（503→442行）
+- `frontend/src/components/chat/AudioRecorder.tsx` - 修复未使用变量
+- `frontend/src/components/chat/InputControls.tsx` - 修复未使用变量
+- `frontend/src/components/chat/UploadMenu.tsx` - 修复未使用变量
+
+**相关文件**：
+- `frontend/src/components/chat/MessageArea.tsx:129-306` - 重构后的 4 个函数
+
+---
+
+### 2026-01-25 错误消息重新生成 Bug 修复
+
+**问题描述**：
+- 失败消息点击"重新生成"后，没有原地重新生成，而是新增了用户消息和 AI 占位消息
+- 走了错误的策略 B（新增对话），而不是策略 A（原地重试）
+
+**根本原因**：
+- `format_message` 函数返回消息时没有包含 `is_error` 字段
+- 前端获取消息后，`message.is_error` 是 `undefined`
+- `handleRegenerate` 判断 `targetMessage.is_error === true` 返回 `false`
+
+**修复内容**：
+- 修改 `backend/services/message_utils.py:format_message()` 函数
+- 添加 `"is_error": message.get("is_error", False)` 字段
+
+**测试状态**：
+- ✅ Python 语法验证通过
+- ⏳ 功能测试待执行
+
+**相关文件**：
+- `backend/services/message_utils.py:22-32` - format_message 函数
+
+---

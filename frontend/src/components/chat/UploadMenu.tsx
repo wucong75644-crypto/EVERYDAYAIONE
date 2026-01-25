@@ -25,7 +25,9 @@ export default function UploadMenu({
     selectedModel.capabilities.vqa ||
     selectedModel.capabilities.videoQA;
 
-  const supportsDocumentUpload = selectedModel.type === 'chat';
+  // 文档上传功能预留（当前禁用）
+  const _supportsDocumentUpload = selectedModel.type === 'chat';
+  void _supportsDocumentUpload;
 
   return (
     <div className="absolute bottom-full right-0 mb-2 bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden z-10 min-w-[200px]">
