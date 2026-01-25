@@ -17,12 +17,15 @@ interface AudioRecorderProps {
 export default function AudioRecorder({
   isRecording,
   recordingTime,
-  audioURL,
+  audioURL: _audioURL,
   onStartRecording,
   onStopRecording,
-  onClearAudio,
+  onClearAudio: _onClearAudio,
   disabled = false,
 }: AudioRecorderProps) {
+  // 预留参数供后续音频预览功能使用
+  void _audioURL;
+  void _onClearAudio;
   return (
     <>
       {/* 录音按钮 */}

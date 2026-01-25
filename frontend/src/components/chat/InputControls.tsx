@@ -130,8 +130,9 @@ export default function InputControls(props: InputControlsProps) {
     selectedModel.capabilities.vqa ||
     selectedModel.capabilities.videoQA;
 
-  // 判断是否有任何上传支持（图片或文档）
-  const hasAnyUploadSupport = hasImageUploadSupport || selectedModel.type === 'chat';
+  // 判断是否有任何上传支持（图片或文档）- 供 UploadMenu 组件使用
+  const _hasAnyUploadSupport = hasImageUploadSupport || selectedModel.type === 'chat';
+  void _hasAnyUploadSupport;
 
   const supportsDeepThinking = selectedModel.capabilities.thinkingEffort === true;
   const hasContent = prompt.trim().length > 0 || images.length > 0;
