@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pkill:*)",
+      "Bash([ -f /Users/wucong/EVERYDAYAIONE/requirements.txt ])",
+      "Bash([ -f /Users/wucong/EVERYDAYAIONE/backend/requirements.txt ])",
+      "Bash([ -f /Users/wucong/EVERYDAYAIONE/.env.example ])",
+      "Bash(while read file)",
+      "Bash(do wc -l \"$file\")",
+      "Bash(done)",
+      "Bash(python3:*)",
+      "Bash(npm run build:*)",
+      "Bash(wc:*)",
+      "Bash(source backend/venv/bin/activate)",
+      "Bash(curl:*)",
+      "Skill(everydayai-testing)",
+      "Skill(everydayai-testing:*)",
+      "Skill(everydayai-requirement)",
+      "Skill(everydayai-requirement:*)",
+      "Bash(npm install:*)",
+      "Skill(everydayai-ui-design)",
+      "Skill(everydayai-ui-design:*)",
+      "Bash(source venv/bin/activate)",
+      "Bash(lsof:*)",
+      "Bash(npm run dev:*)",
+      "Bash(test:*)",
+      "Bash(find:*)",
+      "Read(//Users/wucong/EVERYDAYAIONE/**)",
+      "Bash(do echo \"=== $file ===\" grep -n \":\\\\s*any\" \"$file\")",
+      "Bash(npx tsc:*)",
+      "Bash(if [ -f src/components/chat/InputControls.tsx.bak ])",
+      "Bash(then cp src/components/chat/InputControls.tsx.bak src/components/chat/InputControls.tsx)",
+      "Bash(else echo \"备份文件不存在\")",
+      "Bash(fi)",
+      "Bash(ls:*)",
+      "Bash(echo:*)",
+      "Bash(xargs -I {} sh -c 'echo \"\"=== {} ===\"\"; grep -n \"\"^def \\\\|^    def \"\" {} | head -3')",
+      "Bash(kill:*)"
+    ]
+  }
+}
