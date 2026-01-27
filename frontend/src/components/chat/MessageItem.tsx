@@ -11,7 +11,6 @@ import DeleteMessageModal from './DeleteMessageModal';
 import ImagePreviewModal from './ImagePreviewModal';
 import MessageMedia from './MessageMedia';
 import MessageActions from './MessageActions';
-import MediaPlaceholder from './MediaPlaceholder';
 
 interface MessageItemProps {
   message: Message;
@@ -162,12 +161,6 @@ export default memo(function MessageItem({
                 </div>
                 <span className="text-sm">正在重新生成...</span>
               </div>
-            ) : mediaPlaceholderInfo ? (
-              /* 媒体占位符（图片/视频生成中） */
-              <MediaPlaceholder
-                type={mediaPlaceholderInfo.type}
-                text={mediaPlaceholderInfo.text}
-              />
             ) : (
               <>
                 {message.content}
@@ -192,7 +185,7 @@ export default memo(function MessageItem({
             </div>
           )}
 
-          {/* 媒体内容（图片、视频） */}
+          {/* 媒体内容（含占位符） */}
           <MessageMedia
             imageUrl={message.image_url}
             videoUrl={message.video_url}
@@ -200,6 +193,8 @@ export default memo(function MessageItem({
             isUser={isUser}
             onImageClick={() => setShowImagePreview(true)}
             onMediaLoaded={onMediaLoaded}
+            isGenerating={!!mediaPlaceholderInfo}
+            generatingType={mediaPlaceholderInfo?.type}
           />
         </div>
 

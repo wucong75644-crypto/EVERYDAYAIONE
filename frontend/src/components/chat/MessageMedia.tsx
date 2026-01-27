@@ -3,11 +3,12 @@
  *
  * 负责渲染消息中的图片和视频内容
  * 支持懒加载、点击预览、下载功能
+ * 内置占位符，实现平滑淡入效果
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface MessageMediaProps {
@@ -23,6 +24,10 @@ interface MessageMediaProps {
   onImageClick: () => void;
   /** 媒体加载完成回调（用于滚动调整） */
   onMediaLoaded?: () => void;
+  /** 是否正在生成中（显示占位符） */
+  isGenerating?: boolean;
+  /** 生成类型（image/video） */
+  generatingType?: 'image' | 'video';
 }
 
 export default function MessageMedia({
@@ -32,9 +37,20 @@ export default function MessageMedia({
   isUser,
   onImageClick,
   onMediaLoaded,
+  isGenerating = false,
+  generatingType = 'image',
 }: MessageMediaProps) {
   // 图片下载状态
   const [isDownloading, setIsDownloading] = useState(false);
+  // 图片加载完成状态
+  const [imageLoaded, setImageLoaded] = useState(false);
+
+  // 当 imageUrl 变化时，重置加载状态
+  useEffect(() => {
+    if (imageUrl) {
+      setImageLoaded(false);
+    }
+  }, [imageUrl]);
 
   // 懒加载：监听元素是否进入可视区域
   const { ref: lazyRef, inView } = useInView({
@@ -88,24 +104,41 @@ export default function MessageMedia({
     }
   };
 
-  // 没有媒体内容时不渲染
-  if (!imageUrl && !videoUrl) return null;
+  // 是否显示占位符：正在生成 或 图片URL存在但未加载完成
+  const showPlaceholder = isGenerating || (imageUrl && !imageLoaded);
+  const PlaceholderIcon = generatingType === 'video' ? VideoIcon : ImageIcon;
+
+  // 没有媒体内容且不在生成中时不渲染
+  if (!imageUrl && !videoUrl && !isGenerating) return null;
 
   return (
     <>
-      {/* 图片渲染 */}
-      {imageUrl && (
-        <div className="mt-4" ref={lazyRef}>
-          {inView ? (
+      {/* 图片渲染（含占位符） */}
+      {(imageUrl || (isGenerating && generatingType === 'image')) && (
+        <div className="mt-4 relative w-[180px]" ref={lazyRef}>
+          {/* 占位符 - 生成中或图片加载中显示 */}
+          {showPlaceholder && (
+            <div className="rounded-xl w-[180px] h-[180px] bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm">
+              <PlaceholderIcon className="w-10 h-10 text-gray-300 dark:text-gray-500" />
+            </div>
+          )}
+
+          {/* 图片 - 加载完成后显示 */}
+          {imageUrl && inView && (
             <div
-              className="relative group w-fit cursor-pointer"
+              className={`group cursor-pointer transition-opacity duration-500 ease-out ${
+                imageLoaded ? 'opacity-100' : 'opacity-0 absolute inset-0'
+              }`}
               onClick={onImageClick}
             >
               <img
                 src={imageUrl}
                 alt={isUser ? '上传的图片' : '生成的图片'}
-                className="rounded-xl w-full max-w-[240px] shadow-sm"
-                onLoad={onMediaLoaded}
+                className="rounded-xl w-[180px] shadow-sm"
+                onLoad={() => {
+                  setImageLoaded(true);
+                  onMediaLoaded?.();
+                }}
                 loading="lazy"
               />
               {/* 底部下载按钮（hover 显示） */}
@@ -125,12 +158,6 @@ export default function MessageMedia({
                   <span>{isDownloading ? '下载中' : '下载'}</span>
                 </button>
               </div>
-            </div>
-          ) : (
-            <div className="rounded-xl w-full max-w-[240px] aspect-[4/3] bg-gray-100 flex items-center justify-center">
-              <svg className="w-8 h-8 text-gray-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
             </div>
           )}
         </div>

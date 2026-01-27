@@ -315,7 +315,7 @@ export function useRegenerateHandlers({
       if (!conversationId) return;
 
       const { tempUserMessage, tempAiMessage, tempUserId, newStreamingId } = createTempMessagePair(
-        conversationId, userMessage, '正在生成图片...'
+        conversationId, userMessage, '图片生成中...'
       );
 
       setRegeneratingId(newStreamingId);
@@ -374,7 +374,7 @@ export function useRegenerateHandlers({
       if (!conversationId) return;
 
       const { tempUserMessage, tempAiMessage, tempUserId, newStreamingId } = createTempMessagePair(
-        conversationId, userMessage, '正在生成视频...'
+        conversationId, userMessage, '视频生成中...'
       );
 
       setRegeneratingId(newStreamingId);
