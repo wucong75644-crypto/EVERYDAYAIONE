@@ -129,11 +129,17 @@ export default function MessageArea({
   const [isRegeneratingAI, setIsRegeneratingAI] = useState(false);
   const regeneratingContentRef = useRef<string>('');
 
+  // 滚动控制（防止重复滚动）
+  const hasScrolledForConversationRef = useRef(false);
+  const scrollToBottomRef = useRef(scrollToBottom);
+  scrollToBottomRef.current = scrollToBottom;
+
   // 对话切换时重置滚动状态（P0-1 修复）
   useEffect(() => {
     if (conversationId !== prevConversationIdRef.current) {
       // 重置滚动状态，确保新对话从干净状态开始
       resetScrollState();
+      hasScrolledForConversationRef.current = false; // 重置滚动标志
       prevConversationIdRef.current = conversationId;
     }
   }, [conversationId, resetScrollState]);
@@ -148,15 +154,17 @@ export default function MessageArea({
     };
   }, [loadMessages]);
 
-  // 消息加载完成后滚动到底部
+  // 消息加载完成后滚动到底部（仅对话切换后首次加载触发一次）
   useEffect(() => {
-    if (!loading && mergedMessages.length > 0) {
+    // 条件：未加载中 + 有消息 + 当前对话未滚动过
+    if (!loading && mergedMessages.length > 0 && !hasScrolledForConversationRef.current) {
+      hasScrolledForConversationRef.current = true;
       // 使用 requestAnimationFrame 确保 DOM 已更新
       requestAnimationFrame(() => {
-        scrollToBottom(false); // 使用 instant 滚动，避免加载时的动画
+        scrollToBottomRef.current(false); // 使用 instant 滚动，避免加载时的动画
       });
     }
-  }, [loading, conversationId, mergedMessages.length, scrollToBottom]); // 仅在加载状态变化或对话切换时触发
+  }, [loading, mergedMessages.length]); // 移除 scrollToBottom 依赖，避免重复触发
 
   // 处理删除消息
   const handleDelete = useCallback(async (messageId: string) => {

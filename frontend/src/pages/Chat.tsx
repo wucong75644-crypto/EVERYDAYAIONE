@@ -17,6 +17,7 @@ import Sidebar from '../components/chat/Sidebar';
 import MessageArea from '../components/chat/MessageArea';
 import InputArea from '../components/chat/InputArea';
 import { updateConversation, getConversation } from '../services/conversation';
+import { CONVERSATIONS_CACHE_KEY } from '../components/chat/conversationUtils';
 import type { Message } from '../services/message';
 import type { UnifiedModel } from '../constants/models';
 import toast from 'react-hot-toast';
@@ -113,9 +114,22 @@ export default function Chat() {
     if (urlConversationId) {
       // 立即设置对话 ID（无需等待 API，让 MessageArea 立即加载缓存）
       setCurrentConversationId(urlConversationId);
-      setConversationTitle('加载中...');
 
-      // 异步加载对话详情（只更新 title 和 modelId）
+      // 优先从 localStorage 缓存中获取标题（避免显示"加载中..."）
+      let cachedTitle: string | null = null;
+      try {
+        const cached = localStorage.getItem(CONVERSATIONS_CACHE_KEY);
+        if (cached) {
+          const conversations = JSON.parse(cached) as { id: string; title: string }[];
+          const found = conversations.find((c) => c.id === urlConversationId);
+          if (found) cachedTitle = found.title;
+        }
+      } catch {
+        // 解析失败，忽略
+      }
+      setConversationTitle(cachedTitle || '加载中...');
+
+      // 异步加载对话详情（更新 title 和 modelId，确保数据最新）
       getConversation(urlConversationId)
         .then((conversation) => {
           // 只有当前 URL 还是这个对话时才更新（避免快速切换导致的状态错乱）
