@@ -8,10 +8,13 @@ from typing import Annotated, Optional
 
 from fastapi import Depends, Header
 from supabase import Client
+from loguru import logger
 
 from core.database import get_db
 from core.exceptions import AuthenticationError, InvalidTokenError
 from core.security import decode_access_token
+from core.redis import RedisClient
+from services.task_limit_service import TaskLimitService
 
 
 async def get_current_user_id(
@@ -91,8 +94,23 @@ async def get_optional_user_id(
         return None
 
 
+async def get_task_limit_service() -> Optional[TaskLimitService]:
+    """
+    获取任务限制服务实例
+
+    如果 Redis 不可用，返回 None（降级处理）
+    """
+    try:
+        redis_client = await RedisClient.get_client()
+        return TaskLimitService(redis_client)
+    except Exception as e:
+        logger.warning(f"TaskLimitService 初始化失败，降级跳过限制 | error={e}")
+        return None
+
+
 # 类型别名，简化依赖注入的使用
 CurrentUserId = Annotated[str, Depends(get_current_user_id)]
 CurrentUser = Annotated[dict, Depends(get_current_user)]
 OptionalUserId = Annotated[Optional[str], Depends(get_optional_user_id)]
 Database = Annotated[Client, Depends(get_db)]
+TaskLimitSvc = Annotated[Optional[TaskLimitService], Depends(get_task_limit_service)]

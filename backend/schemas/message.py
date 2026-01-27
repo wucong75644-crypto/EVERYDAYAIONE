@@ -5,7 +5,7 @@
 from datetime import datetime
 from enum import Enum
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
 class MessageRole(str, Enum):
@@ -22,6 +22,8 @@ class MessageCreate(BaseModel):
     image_url: Optional[str] = None
     video_url: Optional[str] = None
     credits_cost: int = 0
+    is_error: bool = False  # 是否为错误消息
+    created_at: Optional[datetime] = None  # 可选时间戳（用于保持消息顺序）
 
 
 class MessageResponse(BaseModel):
@@ -55,6 +57,16 @@ class SendMessageRequest(BaseModel):
     # 高级设置
     image_size: Optional[str] = "1024x1024"
     image_count: Optional[int] = Field(default=1, ge=1, le=4)
+
+    @field_validator('image_url', 'video_url', mode='before')
+    @classmethod
+    def validate_url(cls, v: Optional[str]) -> Optional[str]:
+        """验证 URL 格式"""
+        if v is None or v == '':
+            return None
+        if not v.startswith(('http://', 'https://')):
+            raise ValueError('URL 必须以 http:// 或 https:// 开头')
+        return v
 
 
 class SendMessageResponse(BaseModel):

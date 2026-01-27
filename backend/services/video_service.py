@@ -9,28 +9,14 @@ from typing import Optional, List, Dict, Any
 from loguru import logger
 from supabase import Client
 
-from core.config import get_settings
-from core.exceptions import (
-    AppException,
-    InsufficientCreditsError,
-    NotFoundError,
-)
+from core.exceptions import AppException, InsufficientCreditsError
 from services.adapters.kie.client import KieClient, KieAPIError
 from services.adapters.kie.video_adapter import KieVideoAdapter
+from services.base_generation_service import BaseGenerationService
 
 
-class VideoService:
+class VideoService(BaseGenerationService):
     """视频生成服务"""
-
-    def __init__(self, db: Client):
-        """
-        初始化服务
-
-        Args:
-            db: Supabase 数据库客户端
-        """
-        self.db = db
-        self.settings = get_settings()
 
     async def generate_text_to_video(
         self,
@@ -61,60 +47,20 @@ class VideoService:
             InsufficientCreditsError: 积分不足
             AppException: 生成失败
         """
-        # 1. 获取用户并检查积分
-        user = await self._get_user(user_id)
-        duration = int(n_frames)
-        estimated_credits = self._estimate_credits(model, duration)
-
-        if user["credits"] < estimated_credits:
-            raise InsufficientCreditsError(
-                required=estimated_credits,
-                current=user["credits"],
-            )
-
-        logger.info(
-            f"Starting text-to-video generation: user_id={user_id}, model={model}, "
-            f"duration={duration}s, aspect_ratio={aspect_ratio}"
-        )
-
-        # 2. 立即扣除预估积分（异步模式下无法获取实际消耗）
-        await self._deduct_credits(
+        return await self._generate_with_credits(
             user_id=user_id,
-            credits=estimated_credits,
-            description=f"文生视频: {model}",
-            metadata={
-                "model": model,
-                "duration_seconds": duration,
+            model=model,
+            n_frames=n_frames,
+            description="文生视频",
+            error_message="视频生成失败",
+            generate_kwargs={
+                "prompt": prompt,
+                "n_frames": n_frames,
                 "aspect_ratio": aspect_ratio,
+                "remove_watermark": remove_watermark,
+                "wait_for_result": wait_for_result,
             },
         )
-
-        try:
-            # 3. 调用 KIE 生成视频
-            async with KieClient(self.settings.kie_api_key) as client:
-                adapter = KieVideoAdapter(client, model)
-                result = await adapter.generate(
-                    prompt=prompt,
-                    n_frames=n_frames,
-                    aspect_ratio=aspect_ratio,
-                    remove_watermark=remove_watermark,
-                    wait_for_result=wait_for_result,
-                )
-
-            logger.info(
-                f"Video generation started: user_id={user_id}, task_id={result.get('task_id')}, "
-                f"credits={estimated_credits}"
-            )
-
-            return result
-
-        except KieAPIError as e:
-            logger.error(f"KIE API error: user_id={user_id}, error={e}")
-            raise AppException(
-                code="VIDEO_GENERATION_FAILED",
-                message=f"视频生成失败: {str(e)}",
-                status_code=500,
-            )
 
     async def generate_image_to_video(
         self,
@@ -143,55 +89,21 @@ class VideoService:
         Returns:
             生成结果
         """
-        # 1. 获取用户并检查积分
-        user = await self._get_user(user_id)
-        duration = int(n_frames)
-        estimated_credits = self._estimate_credits(model, duration)
-
-        if user["credits"] < estimated_credits:
-            raise InsufficientCreditsError(
-                required=estimated_credits,
-                current=user["credits"],
-            )
-
-        logger.info(
-            f"Starting image-to-video generation: user_id={user_id}, model={model}, "
-            f"duration={duration}s"
-        )
-
-        # 2. 立即扣除预估积分
-        await self._deduct_credits(
+        return await self._generate_with_credits(
             user_id=user_id,
-            credits=estimated_credits,
-            description=f"图生视频: {model}",
-            metadata={
-                "model": model,
-                "duration_seconds": duration,
+            model=model,
+            n_frames=n_frames,
+            description="图生视频",
+            error_message="图生视频失败",
+            generate_kwargs={
+                "prompt": prompt,
+                "image_urls": [image_url],
+                "n_frames": n_frames,
                 "aspect_ratio": aspect_ratio,
+                "remove_watermark": remove_watermark,
+                "wait_for_result": wait_for_result,
             },
         )
-
-        try:
-            async with KieClient(self.settings.kie_api_key) as client:
-                adapter = KieVideoAdapter(client, model)
-                result = await adapter.generate(
-                    prompt=prompt,
-                    image_urls=[image_url],
-                    n_frames=n_frames,
-                    aspect_ratio=aspect_ratio,
-                    remove_watermark=remove_watermark,
-                    wait_for_result=wait_for_result,
-                )
-
-            return result
-
-        except KieAPIError as e:
-            logger.error(f"KIE API error: user_id={user_id}, error={e}")
-            raise AppException(
-                code="VIDEO_GENERATION_FAILED",
-                message=f"图生视频失败: {str(e)}",
-                status_code=500,
-            )
 
     async def generate_storyboard_video(
         self,
@@ -216,53 +128,19 @@ class VideoService:
         Returns:
             生成结果
         """
-        # 1. 获取用户并检查积分
-        user = await self._get_user(user_id)
-        duration = int(n_frames)
-        estimated_credits = self._estimate_credits(model, duration)
-
-        if user["credits"] < estimated_credits:
-            raise InsufficientCreditsError(
-                required=estimated_credits,
-                current=user["credits"],
-            )
-
-        logger.info(
-            f"Starting storyboard video generation: user_id={user_id}, model={model}, "
-            f"duration={duration}s"
-        )
-
-        # 2. 立即扣除预估积分
-        await self._deduct_credits(
+        return await self._generate_with_credits(
             user_id=user_id,
-            credits=estimated_credits,
-            description=f"故事板视频: {model}",
-            metadata={
-                "model": model,
-                "duration_seconds": duration,
+            model=model,
+            n_frames=n_frames,
+            description="故事板视频",
+            error_message="故事板视频生成失败",
+            generate_kwargs={
+                "image_urls": storyboard_images,
+                "n_frames": n_frames,
                 "aspect_ratio": aspect_ratio,
+                "wait_for_result": wait_for_result,
             },
         )
-
-        try:
-            async with KieClient(self.settings.kie_api_key) as client:
-                adapter = KieVideoAdapter(client, model)
-                result = await adapter.generate(
-                    image_urls=storyboard_images,
-                    n_frames=n_frames,
-                    aspect_ratio=aspect_ratio,
-                    wait_for_result=wait_for_result,
-                )
-
-            return result
-
-        except KieAPIError as e:
-            logger.error(f"KIE API error: user_id={user_id}, error={e}")
-            raise AppException(
-                code="VIDEO_GENERATION_FAILED",
-                message=f"故事板视频生成失败: {str(e)}",
-                status_code=500,
-            )
 
     async def query_task(self, task_id: str) -> Dict[str, Any]:
         """
@@ -312,20 +190,72 @@ class VideoService:
     # 私有方法
     # ============================================================
 
-    async def _get_user(self, user_id: str) -> Dict[str, Any]:
-        """获取用户信息"""
-        response = (
-            self.db.table("users")
-            .select("id, credits")
-            .eq("id", user_id)
-            .single()
-            .execute()
+    async def _generate_with_credits(
+        self,
+        user_id: str,
+        model: str,
+        n_frames: str,
+        description: str,
+        error_message: str,
+        generate_kwargs: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        通用视频生成流程（积分检查→扣除→生成）
+
+        Args:
+            user_id: 用户 ID
+            model: 模型名称
+            n_frames: 视频时长
+            description: 积分扣除描述
+            error_message: 错误提示前缀
+            generate_kwargs: 传递给 adapter.generate 的参数
+
+        Returns:
+            生成结果
+        """
+        # 1. 获取用户并检查积分
+        user = await self._get_user(user_id)
+        duration = int(n_frames)
+        estimated_credits = self._estimate_credits(model, duration)
+
+        if user["credits"] < estimated_credits:
+            raise InsufficientCreditsError(
+                required=estimated_credits,
+                current=user["credits"],
+            )
+
+        logger.info(
+            f"Starting {description}: user_id={user_id}, model={model}, duration={duration}s"
         )
 
-        if not response.data:
-            raise NotFoundError("用户")
+        # 2. 立即扣除预估积分
+        await self._deduct_credits(
+            user_id=user_id,
+            credits=estimated_credits,
+            description=f"{description}: {model}",
+            change_type="video_generation_cost",
+        )
 
-        return response.data
+        try:
+            # 3. 调用 KIE 生成视频
+            async with KieClient(self.settings.kie_api_key) as client:
+                adapter = KieVideoAdapter(client, model)
+                result = await adapter.generate(**generate_kwargs)
+
+            logger.info(
+                f"Video generation started: user_id={user_id}, task_id={result.get('task_id')}, "
+                f"credits={estimated_credits}"
+            )
+
+            return result
+
+        except KieAPIError as e:
+            logger.error(f"KIE API error: user_id={user_id}, error={e}")
+            raise AppException(
+                code="VIDEO_GENERATION_FAILED",
+                message=f"{error_message}: {str(e)}",
+                status_code=500,
+            )
 
     def _estimate_credits(
         self,
@@ -336,50 +266,3 @@ class VideoService:
         config = KieVideoAdapter.MODEL_CONFIGS.get(model, {})
         credits_per_second = config.get("credits_per_second", 0)
         return credits_per_second * duration_seconds
-
-    async def _deduct_credits(
-        self,
-        user_id: str,
-        credits: int,
-        description: str,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """
-        扣除用户积分
-
-        Args:
-            user_id: 用户 ID
-            credits: 扣除的积分数
-            description: 描述
-            metadata: 额外元数据
-        """
-        # 1. 获取当前积分
-        current_credits = (
-            self.db.table("users")
-            .select("credits")
-            .eq("id", user_id)
-            .single()
-            .execute()
-            .data["credits"]
-        )
-
-        new_balance = current_credits - credits
-
-        # 2. 更新用户积分
-        self.db.table("users").update({
-            "credits": new_balance
-        }).eq("id", user_id).execute()
-
-        # 3. 记录积分历史
-        self.db.table("credits_history").insert({
-            "user_id": user_id,
-            "change_amount": -credits,
-            "balance_after": new_balance,
-            "change_type": "video_generation_cost",
-            "description": description,
-        }).execute()
-
-        logger.info(
-            f"Credits deducted: user_id={user_id}, credits={credits}, "
-            f"balance_after={new_balance}, description={description}"
-        )

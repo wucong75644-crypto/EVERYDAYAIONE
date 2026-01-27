@@ -47,18 +47,27 @@ EVERYDAYAIONE/
 │   ├── PROJECT_OVERVIEW.md       # 项目概览（本文档）
 │   ├── FUNCTION_INDEX.md         # 函数索引
 │   ├── CURRENT_ISSUES.md         # 当前问题
+│   ├── API_REFERENCE.md          # API 接口文档
 │   ├── database/
 │   │   ├── DATABASE_GUIDE.md     # 数据库使用指南
+│   │   ├── MIGRATION_GUIDE.md    # 迁移指南
 │   │   ├── supabase_init.sql     # Supabase 建表脚本（PostgreSQL）
 │   │   └── migrations/           # 数据库迁移脚本
 │   │       ├── 001_add_image_url_to_messages.sql
 │   │       ├── 002_add_video_url_to_messages.sql
-│   │       ├── 003_add_credits_cost_to_messages.sql
-│   │       └── 004_add_is_error_to_messages.sql
+│   │       ├── 003_change_model_id_to_varchar.sql
+│   │       ├── 004_add_is_error_to_messages.sql
+│   │       ├── 005_add_video_cost_enum.sql
+│   │       ├── 006_add_tasks_table.sql
+│   │       └── 007_add_credit_transactions.sql
 │   └── document/
-│       ├── TECH_ARCHITECTURE.md  # 技术架构
-│       ├── PAGE_DESIGN.md        # 页面设计
-│       └── OSS_CDN_DESIGN.md     # OSS/CDN 设计
+│       ├── TECH_ARCHITECTURE.md      # 技术架构
+│       ├── PAGE_DESIGN.md            # 页面设计
+│       ├── OSS_CDN_DESIGN.md         # OSS/CDN 设计
+│       ├── KIE_INTEGRATION_DESIGN.md # KIE API 集成设计
+│       ├── SUPER_ADMIN_FEATURES.md   # 超级管理员功能
+│       ├── TECH_CHAT_PAGE_FIX.md     # 聊天页修复技术方案
+│       └── TEST_LAZY_LOADING.md      # 懒加载测试
 │
 ├── backend/                  # 后端代码（Python/FastAPI）
 │   ├── venv/                      # Python 虚拟环境（git 忽略）
@@ -70,7 +79,9 @@ EVERYDAYAIONE/
 │   │   ├── config.py                 # 配置管理（pydantic-settings）
 │   │   ├── database.py               # Supabase 客户端
 │   │   ├── security.py               # JWT/密码处理
-│   │   └── exceptions.py             # 自定义异常
+│   │   ├── exceptions.py             # 自定义异常
+│   │   ├── redis.py                  # Redis 客户端
+│   │   └── limiter.py                # 频率限制器
 │   ├── api/                      # API 层
 │   │   ├── deps.py                   # 依赖注入
 │   │   └── routes/                   # 路由模块
@@ -91,9 +102,16 @@ EVERYDAYAIONE/
 │   │   ├── conversation_service.py   # 对话服务
 │   │   ├── message_service.py        # 消息服务（CRUD）
 │   │   ├── message_stream_service.py # 流式消息服务
+│   │   ├── message_utils.py          # 消息工具函数
+│   │   ├── message_ai_helpers.py     # AI 调用辅助函数
 │   │   ├── image_service.py          # 图像生成服务
 │   │   ├── video_service.py          # 视频生成服务
+│   │   ├── audio_service.py          # 音频处理服务
 │   │   ├── storage_service.py        # 文件存储服务
+│   │   ├── sms_service.py            # 短信服务
+│   │   ├── credit_service.py         # 积分服务
+│   │   ├── task_limit_service.py     # 任务限制服务
+│   │   ├── base_generation_service.py # 生成服务基类
 │   │   └── adapters/                 # AI 模型适配器
 │   │       └── kie/                      # KIE API 适配器
 │   │           ├── client.py                 # HTTP 客户端
@@ -122,20 +140,32 @@ EVERYDAYAIONE/
         ├── components/               # 组件
         │   └── chat/                     # 聊天相关组件
         │       ├── Sidebar.tsx               # 左侧栏（对话列表、用户菜单）
-        │       ├── ConversationList.tsx      # 对话列表（按日期分组）
-        │       ├── MessageArea.tsx           # 消息区域（886行，待优化）
+        │       ├── ConversationList.tsx      # 对话列表（按日期分组，302行）
+        │       ├── ConversationItem.tsx      # 对话项组件
+        │       ├── ContextMenu.tsx           # 右键菜单组件
+        │       ├── DeleteConfirmModal.tsx    # 对话删除确认弹框
+        │       ├── conversationUtils.ts      # 对话列表工具函数
+        │       ├── MessageArea.tsx           # 消息区域
         │       ├── MessageItem.tsx           # 单条消息
+        │       ├── MessageToolbar.tsx        # 消息工具栏
         │       ├── InputArea.tsx             # 输入区域（组合 InputControls 和工具栏）
         │       ├── InputControls.tsx         # 输入控制（文本框、按钮、上传）
         │       ├── ModelSelector.tsx         # 模型选择器
-        │       ├── ImagePreview.tsx          # 图片预览
         │       ├── AdvancedSettingsMenu.tsx  # 高级设置菜单（图像/视频/推理参数）
+        │       ├── SettingsModal.tsx         # 个人设置弹框
+        │       ├── UploadMenu.tsx            # 上传菜单
+        │       ├── ImagePreview.tsx          # 图片预览
+        │       ├── AudioPreview.tsx          # 音频预览
+        │       ├── AudioRecorder.tsx         # 录音组件
+        │       ├── ConflictAlert.tsx         # 模型冲突提示
         │       ├── EmptyState.tsx            # 空状态提示
         │       ├── LoadingSkeleton.tsx       # 加载骨架屏
         │       └── DeleteMessageModal.tsx    # 删除消息确认弹框
         ├── stores/                   # 状态管理（Zustand）
         │   ├── useAuthStore.ts           # 认证状态
-        │   └── useChatStore.ts           # 聊天状态
+        │   ├── useChatStore.ts           # 聊天状态（消息缓存）
+        │   ├── useTaskStore.ts           # 任务状态（全局任务队列）
+        │   └── useConversationRuntimeStore.ts # 对话运行时状态
         ├── services/                 # API 调用
         │   ├── api.ts                    # Axios 配置
         │   ├── auth.ts                   # 认证 API
@@ -150,10 +180,17 @@ EVERYDAYAIONE/
         │   ├── useAudioRecording.ts      # 录音逻辑
         │   ├── useDragDropUpload.ts      # 拖拽上传逻辑
         │   ├── useMessageLoader.ts       # 消息加载逻辑（含缓存）
-        │   └── useScrollManager.ts       # 滚动管理逻辑
+        │   ├── useMessageHandlers.ts     # 消息发送处理逻辑
+        │   ├── useRegenerateHandlers.ts  # 消息重新生成逻辑
+        │   ├── useModelSelection.ts      # 模型选择逻辑
+        │   ├── useScrollManager.ts       # 滚动管理逻辑
+        │   └── useClickOutside.ts        # 点击外部关闭逻辑
         ├── constants/                # 常量配置
         │   └── models.ts                 # 模型配置（UnifiedModel）
-        └── utils/                    # 工具函数（待开发）
+        └── utils/                    # 工具函数
+            ├── settingsStorage.ts        # 用户设置存储
+            ├── modelConflict.ts          # 模型冲突检测
+            └── messageFactory.ts         # 消息工厂函数
 │
 └── tests/                    # 单元测试
     ├── __init__.py               # 测试模块标识

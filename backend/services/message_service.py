@@ -4,6 +4,7 @@
 处理消息的创建、查询等业务逻辑。
 """
 
+from datetime import datetime
 from typing import Optional, List, Dict, Any, AsyncIterator
 
 from loguru import logger
@@ -15,7 +16,6 @@ from services.conversation_service import ConversationService
 from services.adapters.kie.client import KieAPIError
 from services.message_utils import format_message, deduct_user_credits
 from services.message_ai_helpers import (
-    call_ai_chat,
     prepare_ai_stream_client,
     stream_ai_response,
 )
@@ -37,6 +37,8 @@ class MessageService:
         credits_cost: int = 0,
         image_url: Optional[str] = None,
         video_url: Optional[str] = None,
+        is_error: bool = False,
+        created_at: Optional[datetime] = None,
     ) -> dict:
         """
         创建消息
@@ -49,6 +51,7 @@ class MessageService:
             credits_cost: 消耗积分
             image_url: 图片 URL（可选）
             video_url: 视频 URL（可选）
+            is_error: 是否为错误消息
 
         Returns:
             消息信息
@@ -65,11 +68,14 @@ class MessageService:
             "role": role,
             "content": content,
             "credits_cost": credits_cost,
+            "is_error": is_error,
         }
         if image_url:
             message_data["image_url"] = image_url
         if video_url:
             message_data["video_url"] = video_url
+        if created_at:
+            message_data["created_at"] = created_at.isoformat()
 
         result = self.db.table("messages").insert(message_data).execute()
 
@@ -91,7 +97,8 @@ class MessageService:
 
         logger.info(
             f"Message created | message_id={message['id']} | "
-            f"conversation_id={conversation_id} | role={role}"
+            f"conversation_id={conversation_id} | role={role} | "
+            f"image_url={message.get('image_url')} | video_url={message.get('video_url')}"
         )
 
         return format_message(message)
@@ -326,105 +333,6 @@ class MessageService:
             "id": message["id"],
             "conversation_id": conversation_id,
         }
-
-    async def send_message(
-        self,
-        conversation_id: str,
-        user_id: str,
-        content: str,
-        model_id: Optional[str] = None,
-        image_url: Optional[str] = None,
-        video_url: Optional[str] = None,
-        thinking_effort: Optional[str] = None,
-        thinking_mode: Optional[str] = None,
-    ) -> dict:
-        """
-        发送消息并获取 AI 响应
-
-        Args:
-            conversation_id: 对话 ID
-            user_id: 用户 ID
-            content: 消息内容
-            model_id: 模型 ID（可选，默认 gemini-3-flash）
-            image_url: 图片 URL（可选，用于 VQA）
-            video_url: 视频 URL（可选，用于视频 QA）
-            thinking_effort: 推理强度（可选，Gemini 3 专用）
-            thinking_mode: 推理模式（可选，Gemini 3 Pro Deep Think）
-
-        Returns:
-            用户消息和 AI 响应
-        """
-        # 创建用户消息
-        user_message = await self.create_message(
-            conversation_id=conversation_id,
-            user_id=user_id,
-            content=content,
-            role="user",
-            image_url=image_url,
-            video_url=video_url,
-        )
-
-        # 更新对话标题（如果是第一条消息）
-        await self._update_conversation_title_if_first_message(
-            conversation_id, user_id, content
-        )
-
-        # 调用 AI 生成响应
-        assistant_message = None
-        credits_consumed = 0
-
-        try:
-            ai_response, credits = await call_ai_chat(
-                db=self.db,
-                get_conversation_history_func=self._get_conversation_history,
-                conversation_id=conversation_id,
-                user_id=user_id,
-                user_message=content,
-                model_id=model_id,
-                image_url=image_url,
-                video_url=video_url,
-                thinking_effort=thinking_effort,
-                thinking_mode=thinking_mode,
-            )
-
-            if ai_response:
-                # 创建 assistant 消息
-                assistant_message = await self.create_message(
-                    conversation_id=conversation_id,
-                    user_id=user_id,
-                    content=ai_response,
-                    role="assistant",
-                    credits_cost=credits,
-                )
-                # 扣除用户积分
-                await deduct_user_credits(
-                    db=self.db,
-                    user_id=user_id,
-                    credits=credits,
-                    description="AI 对话",
-                )
-                credits_consumed = credits
-        except KieAPIError as e:
-            logger.error(
-                f"AI call failed | conversation_id={conversation_id} | "
-                f"user_id={user_id} | error={e.message}"
-            )
-            # AI 调用失败时不保存错误消息到数据库，返回 None
-            assistant_message = None
-        except Exception as e:
-            logger.error(
-                f"Unexpected error in AI call | conversation_id={conversation_id} | "
-                f"user_id={user_id} | error={e}"
-            )
-            # 不保存错误消息到数据库，返回 None
-            assistant_message = None
-
-        return {
-            "user_message": user_message,
-            "assistant_message": assistant_message,
-            "credits_consumed": credits_consumed,
-        }
-
 
     async def _get_conversation_history(
         self,

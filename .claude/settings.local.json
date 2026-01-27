@@ -37,7 +37,9 @@
       "Bash(xargs -I {} sh -c 'echo \"\"=== {} ===\"\"; grep -n \"\"^def \\\\|^    def \"\" {} | head -3')",
       "Bash(kill:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git checkout:*)"
     ]
   }
 }

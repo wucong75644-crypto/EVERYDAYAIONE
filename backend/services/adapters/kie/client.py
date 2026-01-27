@@ -6,7 +6,7 @@ KIE API HTTP 客户端
 
 import asyncio
 import json
-from typing import Optional, AsyncIterator, Dict, Any
+from typing import Optional, AsyncIterator, Dict, Any, NoReturn
 from decimal import Decimal
 
 import httpx
@@ -127,19 +127,19 @@ class KieClient:
             )
         return self._client
 
-    async def close(self):
+    async def close(self) -> None:
         """关闭 HTTP 客户端"""
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> "KieClient":
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: object) -> None:
         await self.close()
 
-    def _handle_error_response(self, status_code: int, response_data: Dict[str, Any]):
+    def _handle_error_response(self, status_code: int, response_data: Dict[str, Any]) -> NoReturn:
         """处理错误响应"""
         msg = response_data.get("msg", "Unknown error")
         code = response_data.get("code")

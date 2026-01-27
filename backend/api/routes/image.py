@@ -4,9 +4,10 @@
 提供图像生成、编辑、任务查询接口。
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from api.deps import CurrentUser, Database
+from core.limiter import limiter, RATE_LIMITS
 from schemas.image import (
     GenerateImageRequest,
     GenerateImageResponse,
@@ -30,8 +31,10 @@ def get_image_service(db: Database) -> ImageService:
 
 
 @router.post("/generate", response_model=GenerateImageResponse, summary="生成图像")
+@limiter.limit(RATE_LIMITS["image_generate"])
 async def generate_image(
-    request: GenerateImageRequest,
+    request: Request,
+    body: GenerateImageRequest,
     current_user: CurrentUser,
     service: ImageService = Depends(get_image_service),
 ):
@@ -46,12 +49,12 @@ async def generate_image(
     """
     result = await service.generate_image(
         user_id=current_user["id"],
-        prompt=request.prompt,
-        model=request.model.value,
-        size=request.size.value,
-        output_format=request.output_format.value,
-        resolution=request.resolution.value if request.resolution else None,
-        wait_for_result=request.wait_for_result,
+        prompt=body.prompt,
+        model=body.model.value,
+        size=body.size.value,
+        output_format=body.output_format.value,
+        resolution=body.resolution.value if body.resolution else None,
+        wait_for_result=body.wait_for_result,
     )
 
     return GenerateImageResponse(

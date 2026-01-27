@@ -13,7 +13,7 @@ router = APIRouter(prefix="/health", tags=["健康检查"])
 
 
 @router.get("")
-async def health_check():
+async def health_check() -> dict[str, str]:
     """
     基础健康检查
 

@@ -30,6 +30,9 @@ redis==5.2.1
 # 重试机制
 tenacity==9.0.0
 
+# API 限流
+slowapi==0.1.9
+
 # 测试
 pytest==8.3.4
 pytest-asyncio==0.25.2

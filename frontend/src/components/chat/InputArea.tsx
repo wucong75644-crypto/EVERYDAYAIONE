@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import toast from 'react-hot-toast';
 import { createConversation, updateConversation } from '../../services/conversation';
 import { type Message } from '../../services/message';
 import { type AspectRatio, type ImageResolution, type ImageOutputFormat } from '../../services/image';
@@ -16,6 +17,8 @@ import { useModelSelection } from '../../hooks/useModelSelection';
 import { useAudioRecording } from '../../hooks/useAudioRecording';
 import { getSavedSettings, saveSettings, resetSettings } from '../../utils/settingsStorage';
 import { type UnifiedModel, ALL_MODELS } from '../../constants/models';
+import { useTaskStore } from '../../stores/useTaskStore';
+import { useChatStore } from '../../stores/useChatStore';
 import ConflictAlert from './ConflictAlert';
 import InputControls from './InputControls';
 
@@ -29,7 +32,11 @@ interface InputAreaProps {
   /** 消息发送完成时调用，传递 AI 回复 */
   onMessageSent: (aiMessage?: Message | null) => void;
   /** 流式内容更新时调用 */
-  onStreamContent?: (text: string) => void;
+  onStreamContent?: (text: string, conversationId: string) => void;
+  /** AI开始生成时调用（用于创建streaming消息） */
+  onStreamStart?: (conversationId: string, model: string) => void;
+  /** 模型变化时调用（同步给父组件，用于重新生成） */
+  onModelChange?: (model: UnifiedModel) => void;
 }
 
 export default function InputArea({
@@ -39,6 +46,8 @@ export default function InputArea({
   onMessagePending,
   onMessageSent,
   onStreamContent,
+  onStreamStart,
+  onModelChange,
 }: InputAreaProps) {
   // 基础状态
   const [prompt, setPrompt] = useState('');
@@ -111,6 +120,11 @@ export default function InputArea({
     getModelSelectorLockState,
   } = useModelSelection({ hasImage });
 
+  // 同步 selectedModel 给父组件（用于 MessageArea 重新生成）
+  useEffect(() => {
+    onModelChange?.(selectedModel);
+  }, [selectedModel, onModelChange]);
+
   // 保存上传前的模型（用于恢复）
   const modelBeforeUpload = useRef<UnifiedModel | null>(null);
 
@@ -121,15 +135,20 @@ export default function InputArea({
 
   // 恢复对话的模型选择
   useEffect(() => {
-    // 对话切换时重置状态，允许自动恢复模型
+    // 对话切换时重置状态
     if (conversationId !== prevConversationId.current) {
+      // 不取消正在进行的请求，支持并发生成（对话A生成中切换到对话B，对话A继续后台生成）
+      // conversationId 验证守卫（在 MessageArea.tsx 中）会防止状态污染
+
       prevConversationId.current = conversationId;
       prevConversationModelId.current = null; // 重置，以便新对话的 model_id 能被检测到变化
       setUserExplicitChoice(false);
+      setIsSubmitting(false); // 重置提交状态，允许新对话输入
+      // 注意：新对话（conversationId = null）或切换对话时，保持当前 selectedModel 不变
     }
 
-    // 只在 conversationModelId 变化时恢复模型
-    // 避免用户主动选择后被覆盖
+    // 只在有 conversationModelId 时恢复模型
+    // model_id 为 null 时保持当前选择不变（用户偏好连续性）
     if (
       conversationId &&
       conversationModelId &&
@@ -141,6 +160,10 @@ export default function InputArea({
       const savedModel = ALL_MODELS.find((m) => m.id === conversationModelId);
       if (savedModel) {
         switchModel(savedModel, false);
+      } else {
+        // 边界情况：模型已下架/不存在，降级到默认模型
+        switchModel(ALL_MODELS[0], false);
+        toast('该对话使用的模型已下架，已切换为默认模型', { icon: 'ℹ️' });
       }
     }
   }, [conversationId, conversationModelId, userExplicitChoice, switchModel, setUserExplicitChoice]);
@@ -182,6 +205,9 @@ export default function InputArea({
     }
   }, [hasImage, selectedModel, userExplicitChoice, switchModel]);
 
+  // 获取当前对话标题（用于任务追踪）
+  const currentConversationTitle = useChatStore((state) => state.currentConversationTitle);
+
   // 消息处理 Hook
   const { handleChatMessage, handleImageGeneration, handleVideoGeneration } = useMessageHandlers({
     selectedModel,
@@ -193,18 +219,25 @@ export default function InputArea({
     removeWatermark,
     thinkingEffort,
     deepThinkMode,
+    conversationTitle: currentConversationTitle,
     onMessagePending,
     onMessageSent,
     onStreamContent,
+    onStreamStart,
   });
 
-  // 同步上传错误
-  if (imageUploadError && !uploadError) {
-    setUploadError(imageUploadError);
-  }
-  if (audioRecordingError && !uploadError) {
-    setUploadError(audioRecordingError);
-  }
+  // 同步上传错误（移到 useEffect 避免渲染期间 setState）
+  useEffect(() => {
+    if (imageUploadError && !uploadError) {
+      setUploadError(imageUploadError);
+    }
+  }, [imageUploadError, uploadError]);
+
+  useEffect(() => {
+    if (audioRecordingError && !uploadError) {
+      setUploadError(audioRecordingError);
+    }
+  }, [audioRecordingError, uploadError]);
 
   // 包装 handleRemoveImage 以清除错误
   const handleRemoveImage = (imageId: string) => {
@@ -252,9 +285,12 @@ export default function InputArea({
     try {
       let currentConversationId = conversationId;
 
-      // 如果是新对话，先创建对话
+      // 如果是新对话，先创建对话（同时保存当前模型）
       if (!currentConversationId) {
-        const conversation = await createConversation({ title: '语音对话' });
+        const conversation = await createConversation({
+          title: '语音对话',
+          model_id: selectedModel.id,
+        });
         currentConversationId = conversation.id;
         onConversationCreated(currentConversationId, '语音对话');
       }
@@ -285,6 +321,13 @@ export default function InputArea({
     const sendButtonState = getSendButtonState(isSubmitting, isUploading, !!(prompt.trim() || hasImages));
     if (sendButtonState.disabled) return;
 
+    // 检查全局任务限制
+    const taskLimitCheck = useTaskStore.getState().canStartTask();
+    if (!taskLimitCheck.allowed) {
+      toast.error(taskLimitCheck.reason || '任务队列已满');
+      return;
+    }
+
     const messageContent = prompt.trim();
     const imageUrls = uploadedImageUrls;
     const firstImageUrl = imageUrls[0] || null; // 向后兼容，取第一张图片
@@ -295,10 +338,13 @@ export default function InputArea({
     try {
       let currentConversationId = conversationId;
 
-      // 如果是新对话，先创建对话
+      // 如果是新对话，先创建对话（同时保存当前模型）
       if (!currentConversationId) {
         const title = messageContent.slice(0, 20) || '新对话';
-        const conversation = await createConversation({ title });
+        const conversation = await createConversation({
+          title,
+          model_id: selectedModel.id,
+        });
         currentConversationId = conversation.id;
         onConversationCreated(currentConversationId, title);
       }

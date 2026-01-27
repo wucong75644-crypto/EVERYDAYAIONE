@@ -88,3 +88,7 @@ def get_settings() -> Settings:
     使用 lru_cache 确保配置只加载一次，提高性能。
     """
     return Settings()
+
+
+# 全局配置实例
+settings = get_settings()

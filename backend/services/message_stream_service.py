@@ -4,6 +4,7 @@
 处理消息的流式发送和重新生成等业务逻辑。
 """
 
+import json
 from typing import Optional, AsyncIterator, TYPE_CHECKING
 
 from loguru import logger
@@ -67,7 +68,6 @@ class MessageStreamService:
         Yields:
             SSE 格式的流式数据
         """
-        import json
         # 1. 创建用户消息并发送事件
         user_message = await self.message_service.create_message(
             conversation_id, user_id, content, "user", 0, image_url, video_url
@@ -163,7 +163,6 @@ class MessageStreamService:
         Yields:
             SSE 流式事件
         """
-        import json
         # 1. 权限校验
         validation_result = await self._validate_regenerate_permission(
             conversation_id, message_id, user_id
@@ -273,8 +272,6 @@ class MessageStreamService:
         Returns:
             dict: {"message": 消息数据或None, "error": 错误SSE事件或None}
         """
-        import json
-
         message_result = self.db.table("messages").select("*").eq("id", message_id).single().execute()
         if not message_result.data:
             error_event = f"data: {json.dumps({'type': 'error', 'data': {'message': '消息不存在'}})}\n\n"
@@ -309,8 +306,6 @@ class MessageStreamService:
         Returns:
             dict: {"content": 用户消息内容或None, "error": 错误SSE事件或None}
         """
-        import json
-
         history_result = self.db.table("messages") \
             .select("role,content") \
             .eq("conversation_id", conversation_id) \
@@ -348,8 +343,6 @@ class MessageStreamService:
         Yields:
             错误SSE事件
         """
-        import json
-
         error_message = await self.message_service.create_error_message(
             conversation_id=conversation_id,
             user_id=user_id,

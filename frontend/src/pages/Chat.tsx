@@ -7,14 +7,33 @@
  * - 管理对话（重命名、删除）
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
+import { useTaskStore } from '../stores/useTaskStore';
+import { useConversationRuntimeStore } from '../stores/useConversationRuntimeStore';
+import { useChatStore } from '../stores/useChatStore';
 import Sidebar from '../components/chat/Sidebar';
 import MessageArea from '../components/chat/MessageArea';
 import InputArea from '../components/chat/InputArea';
 import { updateConversation, getConversation } from '../services/conversation';
 import type { Message } from '../services/message';
+import type { UnifiedModel } from '../constants/models';
+import toast from 'react-hot-toast';
+
+/**
+ * 将 Message 添加到本地缓存（避免重复的类型转换代码）
+ */
+function addMessageToLocalCache(conversationId: string, message: Message): void {
+  useChatStore.getState().addMessageToCache(conversationId, {
+    id: message.id,
+    role: message.role as 'user' | 'assistant',
+    content: message.content,
+    imageUrl: message.image_url ?? undefined,
+    videoUrl: message.video_url ?? undefined,
+    createdAt: message.created_at,
+  });
+}
 
 export default function Chat() {
   const navigate = useNavigate();
@@ -24,17 +43,12 @@ export default function Chat() {
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [conversationTitle, setConversationTitle] = useState('新对话');
   const [conversationModelId, setConversationModelId] = useState<string | null>(null);
+  // 当前用户选择的模型（由 InputArea 同步，用于 MessageArea 重新生成）
+  const [currentSelectedModel, setCurrentSelectedModel] = useState<UnifiedModel | null>(null);
 
-  // 刷新触发器（用于触发子组件重新加载数据）
-  const [conversationRefreshTrigger] = useState(0);
-  const [messageRefreshTrigger] = useState(0);
-
-  // 乐观更新
-  const [newMessage, setNewMessage] = useState<Message | null>(null);
-  const [isWaitingForAI, setIsWaitingForAI] = useState(false);
-
-  // 流式内容状态
-  const [streamingContent, setStreamingContent] = useState('');
+  // 使用 ref 保存最新的 currentConversationId（避免 useCallback 闭包陷阱）
+  const currentConversationIdRef = useRef<string | null>(null);
+  currentConversationIdRef.current = currentConversationId;
 
   // 对话列表乐观更新（发送消息时立即将对话移到最前）
   const [conversationOptimisticUpdate, setConversationOptimisticUpdate] = useState<{
@@ -72,26 +86,29 @@ export default function Chat() {
     }
   }, [isAuthenticated, refreshUser]);
 
-  // 页面初始化时加载当前对话的模型ID（用于刷新页面后恢复模型选择）
-  useEffect(() => {
-    if (currentConversationId && conversationModelId === null) {
-      // 只在 conversationModelId 还未加载时执行
-      getConversation(currentConversationId)
-        .then((conversation) => {
-          setConversationModelId(conversation.model_id);
-        })
-        .catch((error) => {
-          console.error('初始化加载对话详情失败:', error);
-        });
-    }
-  }, [currentConversationId, conversationModelId]);
-
   // 监听 URL 参数变化，同步到状态
   useEffect(() => {
-    // 立即清除消息状态（在对话ID变化之前）
-    setNewMessage(null);
-    setStreamingContent('');
-    setIsWaitingForAI(false);
+    // LRU清理：保留当前对话 + 活跃任务对话 + 正在生成的对话
+    if (urlConversationId) {
+      const activeTaskIds = useTaskStore.getState().getActiveConversationIds();
+
+      // 查找所有正在生成（streaming）的对话，避免删除它们的状态
+      const activeStreamingIds: string[] = [];
+      runtimeStore.states.forEach((state, conversationId) => {
+        if (state.isGenerating || state.streamingMessageId) {
+          activeStreamingIds.push(conversationId);
+        }
+      });
+
+      // 合并所有需要保留的对话ID（去重后保留前10个）
+      const keepIds = Array.from(new Set([
+        urlConversationId,
+        ...activeTaskIds,
+        ...activeStreamingIds,
+      ])).slice(0, 10);
+
+      runtimeStore.cleanup(keepIds);
+    }
 
     if (urlConversationId) {
       // 立即设置对话 ID（无需等待 API，让 MessageArea 立即加载缓存）
@@ -140,40 +157,127 @@ export default function Chat() {
     setConversationOptimisticNew({ id, title });
   };
 
+  // 任务状态管理
+  const { startTask, updateTaskContent, completeTask, failTask, markNotificationRead, clearRecentlyCompleted } = useTaskStore();
+
+  // RuntimeStore（新架构）
+  const runtimeStore = useConversationRuntimeStore();
+
   // 消息开始发送（乐观更新）
   const handleMessagePending = useCallback((message: Message) => {
-    setNewMessage(message);
-    setIsWaitingForAI(true);
-    // 立即更新对话列表排序
-    if (currentConversationId) {
+    const messageConversationId = message.conversation_id;
+
+    // 启动任务追踪（所有对话都追踪，仅用户消息）
+    if (messageConversationId && message.role === 'user') {
+      startTask(messageConversationId, conversationTitle);
+    }
+
+    // 添加/替换RuntimeStore消息
+    if (messageConversationId) {
+      if (message.role === 'user') {
+        if (message.id.startsWith('temp-')) {
+          // 临时用户消息：添加到乐观更新
+          runtimeStore.addOptimisticUserMessage(messageConversationId, message);
+        } else {
+          // 真实用户消息（后端返回）：替换匹配的temp-消息
+          runtimeStore.replaceOptimisticMessage(messageConversationId, message);
+          // 同时添加到缓存，确保切换对话后消息仍然显示
+          addMessageToLocalCache(messageConversationId, message);
+        }
+      } else if (message.role === 'assistant' && message.id.startsWith('streaming-')) {
+        // 媒体任务占位符（图片/视频生成中）
+        runtimeStore.addMediaPlaceholder(messageConversationId, message);
+      }
+    }
+
+    // 侧边栏乐观更新（只有当前对话）
+    if (messageConversationId === currentConversationIdRef.current) {
       setConversationOptimisticUpdate({
-        conversationId: currentConversationId,
+        conversationId: currentConversationIdRef.current,
         lastMessage: message.content,
       });
     }
-  }, [currentConversationId]);
+  }, [conversationTitle, startTask, runtimeStore]);
 
   // 消息发送成功（接收 AI 回复）
   const handleMessageSent = useCallback((aiMessage?: Message | null) => {
-    // 停止 AI 等待状态
-    setIsWaitingForAI(false);
-    // 清空流式内容
-    setStreamingContent('');
-    // 如果有 AI 回复，追加到列表
-    if (aiMessage) {
-      setNewMessage(aiMessage);
-    } else {
-      setNewMessage(null);
+    const messageConversationId = aiMessage?.conversation_id;
+
+    // 完成任务追踪
+    if (messageConversationId) {
+      if (aiMessage?.is_error) {
+        failTask(messageConversationId);
+      } else {
+        completeTask(messageConversationId);
+      }
     }
-    // 刷新用户积分
+
+    // 完成流式生成
+    if (messageConversationId) {
+      // 如果是错误消息，先添加错误消息再完成streaming
+      if (aiMessage && aiMessage.is_error) {
+        runtimeStore.addErrorMessage(messageConversationId, aiMessage);
+      } else if (aiMessage && (aiMessage.image_url || aiMessage.video_url)) {
+        // 图片/视频生成完成：已在 handleMediaPolling.onSuccess 中通过
+        // replaceMediaPlaceholder + addMessageToCache 完成处理
+        // 这里不再重复操作，避免消息重复（duplicate key 错误）
+
+        // 更新侧边栏显示（如果是当前对话）
+        if (messageConversationId === currentConversationIdRef.current) {
+          setConversationOptimisticUpdate({
+            conversationId: messageConversationId,
+            lastMessage: aiMessage.content,
+          });
+        }
+      } else {
+        // 普通聊天流式生成完成
+        runtimeStore.completeStreaming(messageConversationId);
+      }
+
+      // 用户正在查看当前对话，清除闪烁状态
+      if (messageConversationId === currentConversationIdRef.current) {
+        clearRecentlyCompleted(messageConversationId);
+      }
+    }
+
+    // 如果是其他对话的消息完成，显示通知
+    if (messageConversationId && messageConversationId !== currentConversationIdRef.current && aiMessage && !aiMessage.is_error) {
+      toast.success(
+        (t) => (
+          <span
+            className="cursor-pointer"
+            onClick={() => {
+              toast.dismiss(t.id);
+              markNotificationRead(messageConversationId);
+              navigate(`/chat/${messageConversationId}`);
+            }}
+          >
+            对话任务已完成，点击查看
+          </span>
+        ),
+        { duration: 5000 }
+      );
+    }
+
     refreshUser();
-    // 已有 optimisticUpdate 机制会立即更新侧边栏，无需再调用 API
-  }, [refreshUser]);
+  }, [refreshUser, completeTask, failTask, markNotificationRead, clearRecentlyCompleted, navigate, runtimeStore]);
+
+  // AI开始生成（创建streaming消息）
+  const handleStreamStart = useCallback((conversationId: string, _model: string) => {
+    // 创建streaming消息
+    const now = Date.now();
+    const streamingId = now.toString();
+    runtimeStore.startStreaming(conversationId, streamingId, new Date(now).toISOString());
+  }, [runtimeStore]);
 
   // 流式内容更新
-  const handleStreamContent = useCallback((text: string) => {
-    setStreamingContent((prev) => prev + text);
-  }, []);
+  const handleStreamContent = useCallback((text: string, conversationId: string) => {
+    // 更新任务流式内容（所有对话都追踪）
+    updateTaskContent(conversationId, text);
+
+    // 追加流式内容到RuntimeStore（所有对话都追踪）
+    runtimeStore.appendStreamingContent(conversationId, text);
+  }, [updateTaskContent, runtimeStore]);
 
   // 切换侧边栏
   const toggleSidebar = () => {
@@ -257,7 +361,6 @@ export default function Chat() {
         onNewConversation={handleNewConversation}
         onSelectConversation={handleSelectConversation}
         userCredits={user?.credits ?? 0}
-        refreshTrigger={conversationRefreshTrigger}
         optimisticUpdate={conversationOptimisticUpdate}
         optimisticTitleUpdate={conversationOptimisticTitleUpdate}
         optimisticNewConversation={conversationOptimisticNew}
@@ -323,11 +426,8 @@ export default function Chat() {
         {/* 消息区域 */}
         <MessageArea
           conversationId={currentConversationId}
-          refreshTrigger={messageRefreshTrigger}
-          newMessage={newMessage}
-          isWaitingForAI={isWaitingForAI}
-          streamingContent={streamingContent}
           modelId={conversationModelId}
+          selectedModel={currentSelectedModel}
           onDelete={handleMessageDelete}
           onMessageUpdate={handleMessageUpdate}
         />
@@ -340,6 +440,8 @@ export default function Chat() {
           onMessagePending={handleMessagePending}
           onMessageSent={handleMessageSent}
           onStreamContent={handleStreamContent}
+          onStreamStart={handleStreamStart}
+          onModelChange={setCurrentSelectedModel}
         />
       </div>
     </div>

@@ -45,9 +45,6 @@ interface AdvancedSettingsMenuProps {
   onClose: () => void;
 }
 
-// 辅助函数：获取支持的视频时长选项
-const getSupportedDurations = () => VIDEO_DURATIONS;
-
 // 辅助函数：根据时长计算视频价格
 const getVideoPrice = (frames: VideoFrames): number => {
   const duration = VIDEO_DURATIONS.find((d) => d.value === frames);
@@ -161,7 +158,7 @@ export default function AdvancedSettingsMenu({
           <div className="mb-3">
             <label className="block text-xs font-medium text-gray-700 mb-2">视频时长</label>
             <div className="flex flex-wrap gap-2">
-              {getSupportedDurations().map((duration) => {
+              {VIDEO_DURATIONS.map((duration) => {
                 const price = getVideoPrice(duration.value);
                 return (
                   <button

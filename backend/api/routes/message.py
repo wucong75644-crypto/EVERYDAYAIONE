@@ -4,19 +4,21 @@
 提供消息的发送、查询接口。
 """
 
+from collections.abc import AsyncGenerator
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 
-from api.deps import CurrentUser, CurrentUserId, Database
+from api.deps import CurrentUser, CurrentUserId, Database, TaskLimitSvc
+from core.limiter import limiter, RATE_LIMITS
+from loguru import logger
 from schemas.message import (
     DeleteMessageResponse,
     MessageCreate,
     MessageListResult,
     MessageResponse,
     SendMessageRequest,
-    SendMessageResponse,
 )
 from services.message_service import MessageService
 from services.message_stream_service import MessageStreamService
@@ -51,7 +53,9 @@ async def create_message(
     - **content**: 消息内容
     - **role**: 消息角色（user/assistant）
     - **image_url**: 图片 URL（可选）
+    - **video_url**: 视频 URL（可选）
     - **credits_cost**: 消耗积分
+    - **is_error**: 是否为错误消息
     """
     result = await service.create_message(
         conversation_id=conversation_id,
@@ -59,37 +63,10 @@ async def create_message(
         content=request.content,
         role=request.role.value,
         image_url=request.image_url,
-        credits_cost=request.credits_cost,
-    )
-    return result
-
-
-@router.post("", response_model=SendMessageResponse, summary="发送消息")
-async def send_message(
-    conversation_id: str,
-    request: SendMessageRequest,
-    current_user: CurrentUser,
-    service: MessageService = Depends(get_message_service),
-):
-    """
-    发送消息到对话
-
-    - **content**: 消息内容
-    - **model_id**: 模型 ID（可选，用于指定 AI 响应模型）
-    - **image_url**: 图片 URL（可选，用于 VQA）
-    - **video_url**: 视频 URL（可选，用于视频 QA）
-    - **image_size**: 图片尺寸（可选，用于图片生成）
-    - **image_count**: 图片数量（可选，1-4张）
-    """
-    result = await service.send_message(
-        conversation_id=conversation_id,
-        user_id=current_user["id"],
-        content=request.content,
-        model_id=request.model_id,
-        image_url=request.image_url,
         video_url=request.video_url,
-        thinking_effort=request.thinking_effort,
-        thinking_mode=request.thinking_mode,
+        credits_cost=request.credits_cost,
+        is_error=request.is_error,
+        created_at=request.created_at,
     )
     return result
 
@@ -136,10 +113,13 @@ async def get_message(
 
 
 @router.post("/stream", summary="流式发送消息")
+@limiter.limit(RATE_LIMITS["message_stream"])
 async def send_message_stream(
+    request: Request,
     conversation_id: str,
-    request: SendMessageRequest,
+    body: SendMessageRequest,
     current_user: CurrentUser,
+    task_limit_service: TaskLimitSvc,
     service: MessageStreamService = Depends(get_message_stream_service),
 ):
     """
@@ -162,17 +142,30 @@ async def send_message_stream(
     data: [DONE]
     ```
     """
+    # 任务限制检查（降级处理：服务不可用时跳过）
+    if task_limit_service:
+        await task_limit_service.check_and_acquire(current_user["id"], conversation_id)
+
+    async def stream_with_cleanup() -> AsyncGenerator[str, None]:
+        """流式响应包装器，确保任务槽位释放"""
+        try:
+            async for chunk in service.send_message_stream(
+                conversation_id=conversation_id,
+                user_id=current_user["id"],
+                content=body.content,
+                model_id=body.model_id,
+                image_url=body.image_url,
+                video_url=body.video_url,
+                thinking_effort=body.thinking_effort,
+                thinking_mode=body.thinking_mode,
+            ):
+                yield chunk
+        finally:
+            if task_limit_service:
+                await task_limit_service.release(current_user["id"], conversation_id)
+
     return StreamingResponse(
-        service.send_message_stream(
-            conversation_id=conversation_id,
-            user_id=current_user["id"],
-            content=request.content,
-            model_id=request.model_id,
-            image_url=request.image_url,
-            video_url=request.video_url,
-            thinking_effort=request.thinking_effort,
-            thinking_mode=request.thinking_mode,
-        ),
+        stream_with_cleanup(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -183,7 +176,9 @@ async def send_message_stream(
 
 
 @router.post("/{message_id}/regenerate", summary="重新生成失败的消息")
+@limiter.limit(RATE_LIMITS["message_regenerate"])
 async def regenerate_message(
+    request: Request,
     conversation_id: str,
     message_id: str,
     current_user: CurrentUser,

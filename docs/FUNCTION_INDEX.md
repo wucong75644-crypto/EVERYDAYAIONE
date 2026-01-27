@@ -38,16 +38,43 @@
 | `getConversationTaskBadge` | `frontend/utils/taskUtils.ts` | 计算对话任务徽章数量 | conversationId | {processing: number, completed: number} |
 | `mergeTasks` | `frontend/stores/taskStore.ts` | 合并任务列表（断线重连用） | tasks | void |
 
+### Redis 基础设施模块 (Redis Infrastructure)
+
+#### 后端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `RedisClient.get_client` | `backend/core/redis.py` | 获取 Redis 客户端（单例模式） | - | Redis |
+| `RedisClient.close` | `backend/core/redis.py` | 关闭 Redis 连接 | - | None |
+| `RedisClient.health_check` | `backend/core/redis.py` | Redis 健康检查 | - | bool |
+| `RedisClient.acquire_lock` | `backend/core/redis.py` | 获取分布式锁 | key, timeout | Optional[str] |
+| `RedisClient.release_lock` | `backend/core/redis.py` | 释放分布式锁（Lua 原子操作） | key, token | bool |
+| `RedisClient.extend_lock` | `backend/core/redis.py` | 延长锁的过期时间 | key, token, timeout | bool |
+
+### 任务限制服务模块 (Task Limit Service)
+
+#### 后端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `check_and_acquire` | `backend/services/task_limit_service.py` | 检查限制并获取槽位 | user_id, conversation_id | bool |
+| `release` | `backend/services/task_limit_service.py` | 释放任务槽位 | user_id, conversation_id | None |
+| `get_active_count` | `backend/services/task_limit_service.py` | 获取活跃任务数量 | user_id, conversation_id? | dict |
+| `can_start_task` | `backend/services/task_limit_service.py` | 检查是否可以启动新任务 | user_id, conversation_id | bool |
+
 ### 积分管理模块 (Credits Management)
 
 #### 后端函数
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `lock_credits` | `backend/services/credit_service.py` | 锁定用户积分（任务提交时） | user_id, task_id, amount | bool |
-| `deduct_locked_credits` | `backend/services/credit_service.py` | 扣除已锁定积分（任务成功） | task_id | bool |
-| `refund_locked_credits` | `backend/services/credit_service.py` | 退回已锁定积分（任务失败） | task_id | bool |
-| `get_available_credits` | `backend/services/credit_service.py` | 获取用户可用积分 | user_id | int |
+| `get_balance` | `backend/services/credit_service.py` | 获取用户积分余额 | user_id | int |
+| `deduct_atomic` | `backend/services/credit_service.py` | 原子扣除积分（RPC 保证原子性） | user_id, amount, reason, change_type | int |
+| `lock_credits` | `backend/services/credit_service.py` | 预扣积分（锁定） | task_id, user_id, amount, reason | str |
+| `confirm_deduct` | `backend/services/credit_service.py` | 确认扣除（任务成功时调用） | transaction_id | None |
+| `refund_credits` | `backend/services/credit_service.py` | 退回积分（任务失败时调用） | transaction_id | None |
+| `credit_lock` | `backend/services/credit_service.py` | 积分锁定上下文管理器 | task_id, user_id, amount, reason | AsyncContextManager |
+| `get_credit_service` | `backend/services/credit_service.py` | 获取积分服务实例（依赖注入） | db, redis? | CreditService |
 
 ### 对话管理模块 (Conversation Management)
 
@@ -71,19 +98,16 @@
 | `syncTitleToNavbar` | `frontend/components/Navbar.tsx` | 同步标题到顶部导航栏 | conversationId, title | void |
 | `handleTitleEdit` | `frontend/components/Navbar.tsx` | 处理导航栏标题编辑 | - | void |
 
-### 聊天模块 (Chat Module)
+### 聊天模块 (Chat Module) - 简要列表
 
-#### 前端组件
+> 详细组件列表见下方"聊天组件模块 (Chat Components)"
 
 | 组件名 | 文件路径 | 功能描述 |
 |--------|----------|----------|
 | `Chat` | `frontend/src/pages/Chat.tsx` | 聊天主页面，管理侧边栏、消息区域、输入区域 |
 | `Sidebar` | `frontend/src/components/chat/Sidebar.tsx` | 左侧栏，包含新建对话、对话列表、用户菜单 |
-| `ConversationList` | `frontend/src/components/chat/ConversationList.tsx` | 对话列表，按日期分组显示，支持右键菜单 |
-| `MessageArea` | `frontend/src/components/chat/MessageArea.tsx` | 消息区域，显示对话消息，支持自动滚动、流式显示、删除消息 |
-| `MessageItem` | `frontend/src/components/chat/MessageItem.tsx` | 单条消息，支持用户/AI不同样式、图片展示、工具栏延迟显示 |
-| `MessageToolbar` | `frontend/src/components/chat/MessageToolbar.tsx` | 消息工具栏，包含朗读、点赞/点踩、复制、分享、删除按钮 |
-| `DeleteMessageModal` | `frontend/src/components/chat/DeleteMessageModal.tsx` | 删除消息确认弹框，支持ESC键关闭、点击外部关闭 |
+| `ConversationList` | `frontend/src/components/chat/ConversationList.tsx` | 对话列表主组件（302行，已拆分） |
+| `MessageArea` | `frontend/src/components/chat/MessageArea.tsx` | 消息区域，显示对话消息 |
 | `InputArea` | `frontend/src/components/chat/InputArea.tsx` | 输入区域，模型选择、图片上传、高级设置、流式发送 |
 
 ### 消息服务模块 (Message Service)
@@ -191,38 +215,138 @@
 | `deleteConversation` | `frontend/src/stores/useChatStore.ts` | 删除对话 | id | void |
 | `renameConversation` | `frontend/src/stores/useChatStore.ts` | 重命名对话 | id, title | void |
 | `createConversation` | `frontend/src/stores/useChatStore.ts` | 创建新对话 | title | string |
-| `formatDateGroup` | `frontend/src/components/chat/ConversationList.tsx` | 格式化日期分组（今天/昨天/具体日期） | dateStr | string |
-| `groupConversationsByDate` | `frontend/src/components/chat/ConversationList.tsx` | 按日期分组对话列表 | conversations | Record |
+| `formatDateGroup` | `frontend/src/components/chat/conversationUtils.ts` | 格式化日期分组（今天/昨天/具体日期） | dateStr | string |
+| `groupConversationsByDate` | `frontend/src/components/chat/conversationUtils.ts` | 按日期分组对话列表 | conversations | Record |
+
+### 任务状态管理模块 (Task Store)
+
+#### 前端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `useTaskStore` | `frontend/src/stores/useTaskStore.ts` | Zustand 任务状态管理 | - | TaskStore |
+| `startTask` | `frontend/src/stores/useTaskStore.ts` | 开始任务 | conversationId, type | void |
+| `updateTaskProgress` | `frontend/src/stores/useTaskStore.ts` | 更新任务进度 | conversationId, progress, content | void |
+| `completeTask` | `frontend/src/stores/useTaskStore.ts` | 完成任务 | conversationId, result | void |
+| `failTask` | `frontend/src/stores/useTaskStore.ts` | 任务失败 | conversationId, error | void |
+| `canStartTask` | `frontend/src/stores/useTaskStore.ts` | 检查是否可以开始新任务 | conversationId | { allowed, reason? } |
+| `getActiveTaskCount` | `frontend/src/stores/useTaskStore.ts` | 获取活跃任务数量 | - | number |
+
+### 对话运行时状态模块 (Conversation Runtime Store)
+
+#### 前端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `useConversationRuntimeStore` | `frontend/src/stores/useConversationRuntimeStore.ts` | 对话运行时状态管理 | - | RuntimeStore |
+
+### 自定义 Hooks 模块 (Custom Hooks)
+
+#### 前端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `useClickOutside` | `frontend/src/hooks/useClickOutside.ts` | 点击外部关闭逻辑 | ref, isVisible, onClose, skipCondition | void |
+| `useMessageLoader` | `frontend/src/hooks/useMessageLoader.ts` | 消息加载（含缓存） | options | { messages, loading, loadMessages, ... } |
+| `useMessageHandlers` | `frontend/src/hooks/useMessageHandlers.ts` | 消息发送处理 | options | { handleSendMessage, isProcessing, ... } |
+| `useRegenerateHandlers` | `frontend/src/hooks/useRegenerateHandlers.ts` | 消息重新生成处理 | options | { handleRegenerate, isRegenerating, ... } |
+| `useModelSelection` | `frontend/src/hooks/useModelSelection.ts` | 模型选择逻辑 | options | { selectedModel, setSelectedModel, ... } |
+| `useImageUpload` | `frontend/src/hooks/useImageUpload.ts` | 图片上传逻辑 | - | { uploadImage, uploading, ... } |
+| `useAudioRecording` | `frontend/src/hooks/useAudioRecording.ts` | 录音逻辑 | - | { startRecording, stopRecording, ... } |
+| `useDragDropUpload` | `frontend/src/hooks/useDragDropUpload.ts` | 拖拽上传逻辑 | - | { isDragging, handleDrop, ... } |
+| `useScrollManager` | `frontend/src/hooks/useScrollManager.ts` | 滚动管理逻辑 | - | { scrollToBottom, ... } |
+
+### 聊天组件模块 (Chat Components)
+
+#### 前端组件
+
+| 组件名 | 文件路径 | 功能描述 |
+|--------|----------|----------|
+| `Chat` | `frontend/src/pages/Chat.tsx` | 聊天主页面，管理侧边栏、消息区域、输入区域 |
+| `Sidebar` | `frontend/src/components/chat/Sidebar.tsx` | 左侧栏，包含新建对话、对话列表、用户菜单 |
+| `ConversationList` | `frontend/src/components/chat/ConversationList.tsx` | 对话列表主组件（302行） |
+| `ConversationItem` | `frontend/src/components/chat/ConversationItem.tsx` | 单个对话项组件 |
+| `ContextMenu` | `frontend/src/components/chat/ContextMenu.tsx` | 右键菜单组件 |
+| `DeleteConfirmModal` | `frontend/src/components/chat/DeleteConfirmModal.tsx` | 对话删除确认弹框 |
+| `MessageArea` | `frontend/src/components/chat/MessageArea.tsx` | 消息区域，显示对话消息 |
+| `MessageItem` | `frontend/src/components/chat/MessageItem.tsx` | 单条消息，支持用户/AI不同样式 |
+| `MessageToolbar` | `frontend/src/components/chat/MessageToolbar.tsx` | 消息工具栏 |
+| `DeleteMessageModal` | `frontend/src/components/chat/DeleteMessageModal.tsx` | 删除消息确认弹框 |
+| `InputArea` | `frontend/src/components/chat/InputArea.tsx` | 输入区域 |
+| `InputControls` | `frontend/src/components/chat/InputControls.tsx` | 输入控制（文本框、按钮、上传） |
+| `ModelSelector` | `frontend/src/components/chat/ModelSelector.tsx` | 模型选择器 |
+| `AdvancedSettingsMenu` | `frontend/src/components/chat/AdvancedSettingsMenu.tsx` | 高级设置菜单 |
+| `SettingsModal` | `frontend/src/components/chat/SettingsModal.tsx` | 个人设置弹框 |
+| `UploadMenu` | `frontend/src/components/chat/UploadMenu.tsx` | 上传菜单 |
+| `ImagePreview` | `frontend/src/components/chat/ImagePreview.tsx` | 图片预览 |
+| `AudioPreview` | `frontend/src/components/chat/AudioPreview.tsx` | 音频预览 |
+| `AudioRecorder` | `frontend/src/components/chat/AudioRecorder.tsx` | 录音组件 |
+| `ConflictAlert` | `frontend/src/components/chat/ConflictAlert.tsx` | 模型冲突提示 |
+| `EmptyState` | `frontend/src/components/chat/EmptyState.tsx` | 空状态提示 |
+| `LoadingSkeleton` | `frontend/src/components/chat/LoadingSkeleton.tsx` | 加载骨架屏 |
+
+### 工具函数模块 (Utility Functions)
+
+#### 前端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `getSavedSettings` | `frontend/src/utils/settingsStorage.ts` | 从 localStorage 加载设置 | - | UserAdvancedSettings |
+| `saveSettings` | `frontend/src/utils/settingsStorage.ts` | 保存设置到 localStorage | settings | void |
+| `resetSettings` | `frontend/src/utils/settingsStorage.ts` | 重置为默认设置 | - | UserAdvancedSettings |
+| `checkModelConflict` | `frontend/src/utils/modelConflict.ts` | 检查模型冲突 | model, hasImage, hasVideo | ConflictResult |
+| `createTempMessage` | `frontend/src/utils/messageFactory.ts` | 创建临时消息 | content, role | Message |
+| `createStreamingMessage` | `frontend/src/utils/messageFactory.ts` | 创建流式消息占位 | - | Message |
+
+### 后端服务辅助模块 (Backend Service Helpers)
+
+#### 后端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `format_message` | `backend/services/message_utils.py` | 格式化消息响应 | message_data | dict |
+| `deduct_user_credits` | `backend/services/message_utils.py` | 扣除用户积分 | db, user_id, credits, description | None |
+| `prepare_ai_stream_client` | `backend/services/message_ai_helpers.py` | 准备 AI 流式客户端 | model_id | tuple[model, client, adapter] |
+| `stream_ai_response` | `backend/services/message_ai_helpers.py` | 流式获取 AI 响应 | adapter, history_func, ... | AsyncIterator |
+| `_generate_with_credits` | `backend/services/video_service.py` | 通用视频生成流程 | user_id, model, ... | Dict[str, Any] |
+| `_get_user` | `backend/services/base_generation_service.py` | 获取用户信息 | user_id | dict |
+| `_check_credits` | `backend/services/base_generation_service.py` | 检查积分是否足够 | user, required_credits | None |
+| `_deduct_credits` | `backend/services/base_generation_service.py` | 扣除积分 | user_id, credits, description | int |
 
 ---
 
 ## 函数分类索引
 
 ### 按模块分类
+- **Redis 基础设施模块**：6个后端函数（✨新增）
+- **任务限制服务模块**：4个后端函数（✨新增）
 - **任务管理模块**：9个后端函数 + 8个前端函数
-- **积分管理模块**：4个后端函数
+- **积分管理模块**：7个后端函数（✨更新）
 - **对话管理模块**：5个后端函数 + 5个前端函数
 - **消息服务模块**：8个后端函数 + 5个前端函数
 - **图像生成模块**：3个后端函数 + 5个前端函数
 - **视频生成模块**：5个后端函数 + 6个前端函数
-- **用户设置模块**：3个前端函数（✨新增）
+- **用户设置模块**：3个前端函数
 - **KIE 适配器模块**：5个后端函数
-- **总计**：76个函数
+- **总计**：约 90 个函数
 
 ### 按功能分类
+- **Redis 操作**：`RedisClient.get_client`, `RedisClient.acquire_lock`, `RedisClient.release_lock`
+- **任务限制**：`check_and_acquire`, `release`, `get_active_count`, `can_start_task`
 - **任务创建与提交**：`create_task`, `submitTask`, `checkTaskLimits`
 - **任务状态管理**：`update_task_status`, `handle_task_completion`, `handle_task_failure`, `useTaskStore`, `mergeTasks`
 - **任务查询**：`get_active_tasks`, `count_active_tasks`, `count_conversation_active_tasks`, `getConversationTaskBadge`
 - **AI调用**：`call_ai_api`, `process_task_worker`
 - **实时通信**：`subscribeTaskUpdates`, `handleTaskProgress`, `handleTaskCompleted`
-- **积分操作**：`lock_credits`, `deduct_locked_credits`, `refund_locked_credits`, `get_available_credits`
+- **积分操作**：`lock_credits`, `confirm_deduct`, `refund_credits`, `credit_lock`, `deduct_atomic`, `get_balance`
 - **对话管理**：`create_conversation`, `update_conversation_title`, `get_conversation_list`, `delete_conversation`
 - **标题管理**：`generate_auto_title`, `generateAutoTitle`, `updateConversationTitle`, `syncTitleToNavbar`, `handleTitleEdit`
 
 ---
 
 ## 统计信息
-- **总函数数**：76（27 规划中 + 49 已实现）
-- **已实现组件**：6 个聊天组件
-- **已实现模块**：消息服务、图像生成、视频生成、用户设置、KIE 适配器、聊天模块
-- **最后更新**：2026-01-25（添加消息重新生成功能：4个函数）
+- **总函数数**：约 130 个（规划中 + 已实现）
+- **已实现组件**：22 个聊天组件
+- **已实现 Hooks**：9 个自定义 Hooks
+- **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息服务、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理
+- **最后更新**：2026-01-27（添加 Redis 基础设施模块、任务限制服务模块、更新积分管理模块）
