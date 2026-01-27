@@ -31,8 +31,18 @@ export default memo(function ImagePreviewModal({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isClosing, setIsClosing] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // 处理关闭动画
+  const handleClose = useCallback(() => {
+    setIsClosing(true);
+    setTimeout(() => {
+      setIsClosing(false);
+      onClose();
+    }, 150);
+  }, [onClose]);
 
   // 缩放限制
   const MIN_SCALE = 0.5;
@@ -132,13 +142,13 @@ export default memo(function ImagePreviewModal({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose();
+        handleClose();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [handleClose]);
 
   // 打开时禁止背景滚动
   useEffect(() => {
@@ -157,13 +167,63 @@ export default memo(function ImagePreviewModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
+      className="fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) handleClose();
+      }}
+      style={{
+        animation: isClosing
+          ? 'preview-backdrop-exit 150ms ease-out forwards'
+          : 'preview-backdrop 200ms ease-out forwards',
       }}
     >
+      <style>{`
+        @keyframes preview-backdrop {
+          from {
+            background-color: rgba(0, 0, 0, 0);
+          }
+          to {
+            background-color: rgba(0, 0, 0, 0.9);
+          }
+        }
+        @keyframes preview-backdrop-exit {
+          from {
+            background-color: rgba(0, 0, 0, 0.9);
+          }
+          to {
+            background-color: rgba(0, 0, 0, 0);
+          }
+        }
+        @keyframes preview-content {
+          from {
+            opacity: 0;
+            transform: scale(0.95);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1);
+          }
+        }
+        @keyframes preview-content-exit {
+          from {
+            opacity: 1;
+            transform: scale(1);
+          }
+          to {
+            opacity: 0;
+            transform: scale(0.95);
+          }
+        }
+      `}</style>
       {/* 顶部工具栏 */}
-      <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/50 to-transparent">
+      <div
+        className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/50 to-transparent"
+        style={{
+          animation: isClosing
+            ? 'preview-content-exit 150ms cubic-bezier(0.32, 0.72, 0, 1) forwards'
+            : 'preview-content 200ms cubic-bezier(0.32, 0.72, 0, 1) forwards',
+        }}
+      >
         <div className="flex items-center gap-2">
           {/* 缩放比例显示 */}
           <span className="text-white/80 text-sm tabular-nums">
@@ -220,7 +280,7 @@ export default memo(function ImagePreviewModal({
 
           {/* 关闭 */}
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition-colors"
             title="关闭 (ESC)"
           >
@@ -235,6 +295,11 @@ export default memo(function ImagePreviewModal({
         className={`w-full h-full flex items-center justify-center overflow-hidden ${
           isDragging ? 'cursor-grabbing' : scale > 1 ? 'cursor-grab' : 'cursor-zoom-in'
         }`}
+        style={{
+          animation: isClosing
+            ? 'preview-content-exit 150ms cubic-bezier(0.32, 0.72, 0, 1) forwards'
+            : 'preview-content 200ms cubic-bezier(0.32, 0.72, 0, 1) forwards',
+        }}
         onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
@@ -256,7 +321,14 @@ export default memo(function ImagePreviewModal({
       </div>
 
       {/* 底部提示 */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/60 text-xs">
+      <div
+        className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 text-white/60 text-xs"
+        style={{
+          animation: isClosing
+            ? 'preview-content-exit 150ms cubic-bezier(0.32, 0.72, 0, 1) forwards'
+            : 'preview-content 200ms cubic-bezier(0.32, 0.72, 0, 1) forwards',
+        }}
+      >
         滚轮缩放 · 双击重置 · ESC 关闭
       </div>
     </div>

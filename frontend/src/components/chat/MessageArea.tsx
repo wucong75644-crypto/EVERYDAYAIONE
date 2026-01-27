@@ -166,6 +166,23 @@ export default function MessageArea({
     }
   }, [loading, mergedMessages.length]); // 移除 scrollToBottom 依赖，避免重复触发
 
+  // 新消息添加后自动滚动（发送消息、生成完成等场景）
+  const prevMessageCountRef = useRef(0);
+  useEffect(() => {
+    const currentCount = mergedMessages.length;
+    const prevCount = prevMessageCountRef.current;
+
+    // 仅当消息数量增加时触发（避免删除消息时滚动）
+    if (currentCount > prevCount && prevCount > 0 && !userScrolledAway) {
+      // 使用 requestAnimationFrame 确保 DOM 已更新
+      requestAnimationFrame(() => {
+        scrollToBottomRef.current(true); // 平滑滚动
+      });
+    }
+
+    prevMessageCountRef.current = currentCount;
+  }, [mergedMessages.length, userScrolledAway]);
+
   // 处理删除消息
   const handleDelete = useCallback(async (messageId: string) => {
     try {

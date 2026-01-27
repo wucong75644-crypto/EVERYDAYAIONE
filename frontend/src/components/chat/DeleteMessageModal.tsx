@@ -48,14 +48,32 @@ export default function DeleteMessageModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-in fade-in duration-150"
       onClick={(e) => {
         if (e.target === e.currentTarget && !loading) {
           onClose();
         }
       }}
     >
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 relative animate-in fade-in zoom-in-95 duration-150">
+      {/* Modal 本体：参考 shadcn/ui 的动画 - scale 从 95% 到 100% + 淡入 */}
+      <div
+        className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 relative"
+        style={{
+          animation: 'modal-enter 200ms cubic-bezier(0.32, 0.72, 0, 1)',
+        }}
+      >
+        <style>{`
+          @keyframes modal-enter {
+            from {
+              opacity: 0;
+              transform: scale(0.96) translateY(8px);
+            }
+            to {
+              opacity: 1;
+              transform: scale(1) translateY(0);
+            }
+          }
+        `}</style>
         {/* 关闭按钮 */}
         <button
           onClick={onClose}

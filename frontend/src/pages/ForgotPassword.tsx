@@ -12,6 +12,7 @@ import { sendCode } from '../services/auth';
 import { request } from '../services/api';
 import type { ApiErrorResponse } from '../types/auth';
 import { AxiosError } from 'axios';
+import Footer from '../components/Footer';
 
 type Step = 'verify' | 'reset';
 
@@ -198,6 +199,9 @@ export default function ForgotPassword() {
             </Link>
           </div>
         </div>
+
+        {/* 备案信息 */}
+        <Footer className="mt-8" />
       </div>
     );
   }
@@ -407,6 +411,9 @@ export default function ForgotPassword() {
           </p>
         </div>
       </div>
+
+      {/* 备案信息 */}
+      <Footer className="mt-8" />
     </div>
   );
 }

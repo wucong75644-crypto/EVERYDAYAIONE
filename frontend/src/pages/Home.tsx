@@ -4,6 +4,7 @@
 
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
+import Footer from '../components/Footer';
 
 export default function Home() {
   const { user, isAuthenticated, clearAuth } = useAuthStore();
@@ -73,6 +74,9 @@ export default function Home() {
           )}
         </div>
       </main>
+
+      {/* 备案信息 */}
+      <Footer />
     </div>
   );
 }

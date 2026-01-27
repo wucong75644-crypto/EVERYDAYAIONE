@@ -6,9 +6,11 @@
 
 import { memo, useState, useRef, useEffect } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { Trash2 } from 'lucide-react';
+import { Trash2, Loader2 } from 'lucide-react';
+import toast from 'react-hot-toast';
 import type { Message } from '../../services/message';
 import DeleteMessageModal from './DeleteMessageModal';
+import ImagePreviewModal from './ImagePreviewModal';
 
 interface MessageItemProps {
   message: Message;
@@ -44,6 +46,12 @@ export default memo(function MessageItem({ message, isStreaming = false, isRegen
   // 删除确认弹框状态
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // 图片预览弹窗状态
+  const [showImagePreview, setShowImagePreview] = useState(false);
+
+  // 图片下载状态
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // 鼠标进入消息区域 - 显示工具栏并清除隐藏定时器
   const handleMouseEnter = () => {
@@ -231,49 +239,64 @@ export default memo(function MessageItem({ message, isStreaming = false, isRegen
           {message.image_url && (
             <div className="mt-4" ref={lazyRef}>
               {inView ? (
-                <img
-                  src={message.image_url}
-                  alt={isUser ? '上传的图片' : '生成的图片'}
-                  className="rounded-xl w-full max-w-[240px] cursor-pointer hover:opacity-95 transition-opacity shadow-sm"
-                  onClick={() => {
-                    window.open(message.image_url!, '_blank');
-                  }}
-                  onLoad={onMediaLoaded}
-                  loading="lazy"
-                />
-              ) : (
-                <div className="rounded-xl w-full max-w-[240px] h-[240px] bg-gray-100 flex items-center justify-center">
-                  <svg className="w-8 h-8 text-gray-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
+                <div
+                  className="relative group w-fit cursor-pointer"
+                  onClick={() => setShowImagePreview(true)}
+                >
+                  <img
+                    src={message.image_url}
+                    alt={isUser ? '上传的图片' : '生成的图片'}
+                    className="rounded-xl w-full max-w-[240px] shadow-sm"
+                    onLoad={onMediaLoaded}
+                    loading="lazy"
+                  />
+                  {/* 底部下载按钮（hover 显示） */}
+                  <div className="absolute bottom-0 left-0 right-0 flex justify-center py-2 bg-gradient-to-t from-black/50 to-transparent rounded-b-xl opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      className="flex items-center gap-1 px-3 py-1 text-xs text-white bg-black/40 hover:bg-black/60 rounded-full transition-colors disabled:opacity-60"
+                      disabled={isDownloading}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (isDownloading) return;
+                        setIsDownloading(true);
+                        try {
+                          const response = await fetch(message.image_url!, {
+                            mode: 'cors',
+                            credentials: 'omit',
+                          });
+                          if (!response.ok) throw new Error('下载失败');
+                          const blob = await response.blob();
+                          const blobUrl = URL.createObjectURL(blob);
+                          const link = document.createElement('a');
+                          link.href = blobUrl;
+                          link.download = `image-${message.id}.png`;
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                          URL.revokeObjectURL(blobUrl);
+                        } catch {
+                          toast.error('下载失败，请右键图片选择"另存为"');
+                        } finally {
+                          setIsDownloading(false);
+                        }
+                      }}
+                    >
+                      {isDownloading ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                      )}
+                      <span>{isDownloading ? '下载中' : '下载'}</span>
+                    </button>
+                  </div>
                 </div>
-              )}
-              {/* 图片操作按钮 */}
-              {!isUser && (
-                <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
-                  <button
-                    className="text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-50 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors"
-                    onClick={() => window.open(message.image_url!, '_blank')}
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
-                    </svg>
-                    <span>查看</span>
-                  </button>
-                  <button
-                    className="text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-50 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors"
-                    onClick={() => {
-                      const link = document.createElement('a');
-                      link.href = message.image_url!;
-                      link.download = `image-${message.id}.png`;
-                      link.click();
-                    }}
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                    <span>下载</span>
-                  </button>
+              ) : (
+                <div className="rounded-xl w-full max-w-[240px] aspect-[4/3] bg-gray-100 flex items-center justify-center">
+                  <svg className="w-8 h-8 text-gray-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
                 </div>
               )}
             </div>
@@ -283,7 +306,7 @@ export default memo(function MessageItem({ message, isStreaming = false, isRegen
           {message.video_url && (
             <div className="mt-4" ref={!message.image_url ? lazyRef : undefined}>
               {(!message.image_url && !inView) ? (
-                <div className="rounded-xl w-full max-w-[400px] h-[225px] bg-gray-100 flex items-center justify-center">
+                <div className="rounded-xl w-full max-w-[400px] aspect-video bg-gray-100 flex items-center justify-center">
                   <svg className="w-8 h-8 text-gray-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -448,14 +471,14 @@ export default memo(function MessageItem({ message, isStreaming = false, isRegen
 
               {/* 下拉菜单 */}
               {showMoreMenu && (
-                <div className="absolute bottom-full right-0 mb-1.5 bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[100px] z-10 animate-in fade-in zoom-in-95 duration-100">
+                <div className="absolute bottom-full right-0 mb-1.5 bg-white rounded-lg shadow-lg border border-gray-200 p-1 min-w-[100px] z-10 animate-in fade-in zoom-in-95 duration-100">
                   {onDelete && (
                     <button
                       onClick={() => {
                         setShowMoreMenu(false);
                         setShowDeleteModal(true);
                       }}
-                      className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 flex items-center gap-2 transition-colors"
+                      className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-gray-100 rounded-md flex items-center gap-2 transition-colors"
                     >
                       <Trash2 className="w-3.5 h-3.5 flex-shrink-0" />
                       <span>删除</span>
@@ -474,6 +497,15 @@ export default memo(function MessageItem({ message, isStreaming = false, isRegen
         onConfirm={handleDeleteConfirm}
         loading={isDeleting}
       />
+
+      {/* 图片预览弹窗 */}
+      {showImagePreview && message.image_url && (
+        <ImagePreviewModal
+          imageUrl={message.image_url}
+          onClose={() => setShowImagePreview(false)}
+          filename={`image-${message.id}`}
+        />
+      )}
     </div>
   );
 });

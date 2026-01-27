@@ -4,6 +4,7 @@
  * 显示用户信息和账户操作
  */
 
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
 
@@ -15,6 +16,23 @@ interface SettingsModalProps {
 export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const navigate = useNavigate();
   const { user, clearAuth, refreshUser } = useAuthStore();
+  const [isClosing, setIsClosing] = useState(false);
+
+  // 处理关闭动画
+  const handleClose = useCallback(() => {
+    setIsClosing(true);
+    setTimeout(() => {
+      setIsClosing(false);
+      onClose();
+    }, 150); // 动画时长
+  }, [onClose]);
+
+  // 重置关闭状态
+  useEffect(() => {
+    if (isOpen) {
+      setIsClosing(false);
+    }
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -51,16 +69,47 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   // 点击遮罩关闭
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
-      onClose();
+      handleClose();
     }
   };
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/50 transition-opacity duration-150 ${
+        isClosing ? 'opacity-0' : 'animate-in fade-in duration-150'
+      }`}
       onClick={handleBackdropClick}
     >
-      <div className="bg-white rounded-2xl w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto shadow-xl">
+      <div
+        className="bg-white rounded-2xl w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto shadow-xl"
+        style={{
+          animation: isClosing
+            ? 'modal-exit 150ms cubic-bezier(0.32, 0.72, 0, 1) forwards'
+            : 'modal-enter 200ms cubic-bezier(0.32, 0.72, 0, 1)',
+        }}
+      >
+        <style>{`
+          @keyframes modal-enter {
+            from {
+              opacity: 0;
+              transform: scale(0.96) translateY(8px);
+            }
+            to {
+              opacity: 1;
+              transform: scale(1) translateY(0);
+            }
+          }
+          @keyframes modal-exit {
+            from {
+              opacity: 1;
+              transform: scale(1) translateY(0);
+            }
+            to {
+              opacity: 0;
+              transform: scale(0.96) translateY(8px);
+            }
+          }
+        `}</style>
         {/* 顶部标题栏 */}
         <div className="flex items-center justify-between p-4 border-b border-gray-100">
           <h2 className="text-lg font-semibold">个人设置</h2>
@@ -75,7 +124,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               </svg>
             </button>
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
               title="关闭"
             >

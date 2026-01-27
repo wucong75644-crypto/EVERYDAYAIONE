@@ -12,6 +12,7 @@ import { useAuthStore } from '../stores/useAuthStore';
 import { sendCode, loginByPhone, loginByPassword } from '../services/auth';
 import type { ApiErrorResponse } from '../types/auth';
 import { AxiosError } from 'axios';
+import Footer from '../components/Footer';
 
 type LoginMode = 'password' | 'code';
 
@@ -356,6 +357,9 @@ export default function Login() {
           </p>
         </div>
       </div>
+
+      {/* 备案信息 */}
+      <Footer className="mt-8" />
     </div>
   );
 }
