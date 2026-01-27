@@ -97,21 +97,25 @@ export function useScrollManager({ containerRef, messagesEndRef }: UseScrollMana
 
   /**
    * 滚动到底部（兼容旧 API）
+   * - smooth=true: 平滑滚动（新消息、用户点击）
+   * - smooth=false: 瞬时定位（对话切换），直接设置 scrollTop 无任何动画
    */
   const scrollToBottom = useCallback((smooth = true) => {
     isProgrammaticScrollRef.current = true;
+    const container = containerRef.current;
 
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({
-        behavior: smooth ? 'smooth' : 'auto',
-        block: 'end',
-      });
+    if (smooth) {
+      // 平滑滚动：使用 scrollIntoView
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    } else if (container) {
+      // 瞬时定位：直接设置 scrollTop（无任何动画，参考 ChatGPT）
+      container.scrollTop = container.scrollHeight;
     }
 
     setTimeout(() => {
       isProgrammaticScrollRef.current = false;
-    }, 100);
-  }, [messagesEndRef]);
+    }, smooth ? 100 : 50);
+  }, [containerRef, messagesEndRef]);
 
   /**
    * 处理滚动事件
