@@ -9,10 +9,12 @@ from typing import Optional, List, Dict, Any
 from loguru import logger
 from supabase import Client
 
+from core.config import settings
 from core.exceptions import AppException, InsufficientCreditsError
 from services.adapters.kie.client import KieClient, KieAPIError
 from services.adapters.kie.image_adapter import KieImageAdapter
 from services.base_generation_service import BaseGenerationService
+from services.oss_service import get_oss_service
 
 
 class ImageService(BaseGenerationService):
@@ -87,6 +89,11 @@ class ImageService(BaseGenerationService):
                 f"credits={estimated_credits}"
             )
 
+            # 4. 如果生成完成，将图片上传到 OSS
+            # 注意：adapter 返回的状态是 "success"，不是 "finished"
+            if wait_for_result and result.get("status") == "success":
+                result = await self._upload_images_to_oss(result, user_id)
+
             return result
 
         except KieAPIError as e:
@@ -155,6 +162,10 @@ class ImageService(BaseGenerationService):
                     wait_for_result=wait_for_result,
                 )
 
+            # 如果生成完成，将图片上传到 OSS
+            if wait_for_result and result.get("status") == "success":
+                result = await self._upload_images_to_oss(result, user_id)
+
             return result
 
         except KieAPIError as e:
@@ -165,12 +176,17 @@ class ImageService(BaseGenerationService):
                 status_code=500,
             )
 
-    async def query_task(self, task_id: str) -> Dict[str, Any]:
+    async def query_task(
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         查询任务状态
 
         Args:
             task_id: 任务 ID
+            user_id: 用户 ID（可选，用于图片完成时上传到 OSS）
 
         Returns:
             任务状态
@@ -179,7 +195,14 @@ class ImageService(BaseGenerationService):
             async with KieClient(self.settings.kie_api_key) as client:
                 # 使用基础模型查询（任务查询不需要特定模型）
                 adapter = KieImageAdapter(client, "google/nano-banana")
-                return await adapter.query_task(task_id)
+                result = await adapter.query_task(task_id)
+
+            # 如果图片生成完成且提供了 user_id，上传到 OSS
+            # 注意：image adapter 返回的状态是 "success"，不是 "finished"
+            if result.get("status") == "success" and user_id:
+                result = await self._upload_images_to_oss(result, user_id)
+
+            return result
 
         except KieAPIError as e:
             logger.error(f"Query task failed: task_id={task_id}, error={e}")
@@ -226,3 +249,57 @@ class ImageService(BaseGenerationService):
             return credits_per_image.get(resolution or "1K", 25)
 
         return credits_per_image
+
+    async def _upload_images_to_oss(
+        self,
+        result: Dict[str, Any],
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """
+        将生成的图片上传到 OSS
+
+        Args:
+            result: KIE 返回的结果（包含 image_urls 字段）
+            user_id: 用户 ID
+
+        Returns:
+            替换 URL 后的结果
+        """
+        image_urls = result.get("image_urls", [])
+        if not image_urls:
+            return result
+
+        # 检查 OSS 是否配置
+        if not settings.oss_access_key_id:
+            logger.warning("OSS not configured, skipping upload")
+            return result
+
+        try:
+            oss_service = get_oss_service()
+        except ValueError as e:
+            logger.warning(f"OSS service init failed: {e}, skipping upload")
+            return result
+
+        oss_urls = []
+        for i, image_url in enumerate(image_urls):
+            try:
+                upload_result = await oss_service.upload_from_url(
+                    url=image_url,
+                    user_id=user_id,
+                    category="generated",
+                )
+                oss_urls.append(upload_result["url"])
+                logger.info(
+                    f"Image {i+1}/{len(image_urls)} uploaded to OSS: "
+                    f"object_key={upload_result['object_key']}"
+                )
+            except Exception as e:
+                logger.error(f"Failed to upload image to OSS: {e}")
+                # 上传失败时保留原 URL
+                oss_urls.append(image_url)
+
+        # 替换 URL
+        result["image_urls"] = oss_urls
+        result["oss_uploaded"] = True
+
+        return result

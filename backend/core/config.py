@@ -51,6 +51,7 @@ class Settings(BaseSettings):
     oss_bucket_name: Optional[str] = None
     oss_endpoint: Optional[str] = None
     oss_region: Optional[str] = None
+    oss_cdn_domain: Optional[str] = None  # CDN 加速域名，如 cdn.everydayai.com.cn
 
     # KIE API 配置
     kie_api_key: Optional[str] = None

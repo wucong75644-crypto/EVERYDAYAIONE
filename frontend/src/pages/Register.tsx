@@ -11,6 +11,7 @@ import { useAuthStore } from '../stores/useAuthStore';
 import { sendCode, register } from '../services/auth';
 import type { ApiErrorResponse } from '../types/auth';
 import { AxiosError } from 'axios';
+import Footer from '../components/Footer';
 
 type PasswordStrength = 'weak' | 'medium' | 'strong';
 
@@ -441,6 +442,9 @@ export default function Register() {
           </p>
         </div>
       </div>
+
+      {/* 备案信息 */}
+      <Footer className="mt-8" />
     </div>
   );
 }

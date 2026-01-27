@@ -9,10 +9,12 @@ from typing import Optional, List, Dict, Any
 from loguru import logger
 from supabase import Client
 
+from core.config import settings
 from core.exceptions import AppException, InsufficientCreditsError
 from services.adapters.kie.client import KieClient, KieAPIError
 from services.adapters.kie.video_adapter import KieVideoAdapter
 from services.base_generation_service import BaseGenerationService
+from services.oss_service import get_oss_service
 
 
 class VideoService(BaseGenerationService):
@@ -142,12 +144,17 @@ class VideoService(BaseGenerationService):
             },
         )
 
-    async def query_task(self, task_id: str) -> Dict[str, Any]:
+    async def query_task(
+        self,
+        task_id: str,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         查询任务状态
 
         Args:
             task_id: 任务 ID
+            user_id: 用户 ID（可选，用于视频完成时上传到 OSS）
 
         Returns:
             任务状态
@@ -156,7 +163,13 @@ class VideoService(BaseGenerationService):
             async with KieClient(self.settings.kie_api_key) as client:
                 # 使用基础模型查询（任务查询不需要特定模型）
                 adapter = KieVideoAdapter(client, "sora-2-text-to-video")
-                return await adapter.query_task(task_id)
+                result = await adapter.query_task(task_id)
+
+            # 如果视频生成完成且提供了 user_id，上传到 OSS
+            if result.get("status") == "finished" and user_id:
+                result = await self._upload_videos_to_oss(result, user_id)
+
+            return result
 
         except KieAPIError as e:
             logger.error(f"Query task failed: task_id={task_id}, error={e}")
@@ -247,6 +260,11 @@ class VideoService(BaseGenerationService):
                 f"credits={estimated_credits}"
             )
 
+            # 4. 如果生成完成，将视频上传到 OSS
+            wait_for_result = generate_kwargs.get("wait_for_result", False)
+            if wait_for_result and result.get("status") == "finished":
+                result = await self._upload_videos_to_oss(result, user_id)
+
             return result
 
         except KieAPIError as e:
@@ -266,3 +284,52 @@ class VideoService(BaseGenerationService):
         config = KieVideoAdapter.MODEL_CONFIGS.get(model, {})
         credits_per_second = config.get("credits_per_second", 0)
         return credits_per_second * duration_seconds
+
+    async def _upload_videos_to_oss(
+        self,
+        result: Dict[str, Any],
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """
+        将生成的视频上传到 OSS
+
+        Args:
+            result: KIE 返回的结果（包含 video_url 字段）
+            user_id: 用户 ID
+
+        Returns:
+            替换 URL 后的结果
+        """
+        video_url = result.get("video_url")
+        if not video_url:
+            return result
+
+        # 检查 OSS 是否配置
+        if not settings.oss_access_key_id:
+            logger.warning("OSS not configured, skipping video upload")
+            return result
+
+        try:
+            oss_service = get_oss_service()
+        except ValueError as e:
+            logger.warning(f"OSS service init failed: {e}, skipping video upload")
+            return result
+
+        try:
+            upload_result = await oss_service.upload_from_url(
+                url=video_url,
+                user_id=user_id,
+                category="generated",
+                media_type="video",
+            )
+            result["video_url"] = upload_result["url"]
+            result["oss_uploaded"] = True
+            logger.info(
+                f"Video uploaded to OSS: object_key={upload_result['object_key']}, "
+                f"size={upload_result['size']} bytes"
+            )
+        except Exception as e:
+            logger.error(f"Failed to upload video to OSS: {e}")
+            # 上传失败时保留原 URL
+
+        return result

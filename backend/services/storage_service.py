@@ -1,26 +1,21 @@
 """
 存储服务
 
-提供文件上传功能，使用 Supabase Storage。
+提供文件上传功能，使用阿里云 OSS + CDN 加速。
 """
 
 import base64
-import uuid
 from typing import Optional
 
 from loguru import logger
 from supabase import Client
 
-from core.config import get_settings
+from services.oss_service import get_oss_service
 
 
 class StorageService:
-    """Supabase Storage 服务"""
+    """存储服务（使用阿里云 OSS）"""
 
-    # 存储桶名称
-    BUCKET_NAME = "uploads"
-    # 图片存储路径前缀
-    IMAGE_PREFIX = "images"
     # 允许的图片类型
     ALLOWED_IMAGE_TYPES = {
         "image/jpeg": "jpg",
@@ -32,8 +27,13 @@ class StorageService:
     MAX_FILE_SIZE = 10 * 1024 * 1024
 
     def __init__(self, db: Client):
+        """
+        初始化存储服务
+
+        Args:
+            db: Supabase 客户端（保留参数以保持 API 兼容性）
+        """
         self.db = db
-        self.settings = get_settings()
 
     async def upload_image(
         self,
@@ -43,7 +43,7 @@ class StorageService:
         filename: Optional[str] = None,
     ) -> str:
         """
-        上传图片到 Supabase Storage
+        上传图片到 OSS
 
         Args:
             user_id: 用户 ID
@@ -52,7 +52,7 @@ class StorageService:
             filename: 原始文件名（可选）
 
         Returns:
-            图片的公开 URL
+            图片的 CDN URL
 
         Raises:
             ValueError: 文件类型或大小不符合要求
@@ -71,30 +71,26 @@ class StorageService:
                 f"{self.MAX_FILE_SIZE / 1024 / 1024}MB"
             )
 
-        # 生成唯一文件名
+        # 获取文件扩展名
         extension = self.ALLOWED_IMAGE_TYPES[content_type]
-        unique_filename = f"{uuid.uuid4().hex}.{extension}"
-        file_path = f"{self.IMAGE_PREFIX}/{user_id}/{unique_filename}"
 
         try:
-            # 上传到 Supabase Storage
-            result = self.db.storage.from_(self.BUCKET_NAME).upload(
-                path=file_path,
-                file=file_data,
-                file_options={"content-type": content_type},
+            # 上传到 OSS
+            oss_service = get_oss_service()
+            result = oss_service.upload_bytes(
+                content=file_data,
+                user_id=user_id,
+                ext=extension,
+                category="uploaded",
+                content_type=content_type,
             )
 
             logger.info(
-                f"Image uploaded: user_id={user_id}, "
-                f"path={file_path}, size={len(file_data)}"
+                f"Image uploaded to OSS: user_id={user_id}, "
+                f"object_key={result['object_key']}, size={len(file_data)}"
             )
 
-            # 获取公开 URL
-            public_url = self.db.storage.from_(self.BUCKET_NAME).get_public_url(
-                file_path
-            )
-
-            return public_url
+            return result["url"]
 
         except Exception as e:
             logger.error(f"Upload image failed: user_id={user_id}, error={e}")
@@ -113,7 +109,7 @@ class StorageService:
             base64_data: base64 数据（可包含 data URL 前缀）
 
         Returns:
-            图片的公开 URL
+            图片的 CDN URL
         """
         # 解析 data URL
         if base64_data.startswith("data:"):

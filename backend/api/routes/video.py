@@ -144,8 +144,12 @@ async def query_task(
     查询视频生成任务状态
 
     用于轮询异步任务的完成状态。
+    视频完成后会自动上传到 OSS，返回 CDN 加速的 URL。
     """
-    result = await service.query_task(task_id)
+    result = await service.query_task(
+        task_id=task_id,
+        user_id=current_user["id"],
+    )
 
     return TaskStatusResponse(
         task_id=result["task_id"],
