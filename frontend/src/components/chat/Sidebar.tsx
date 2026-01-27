@@ -7,10 +7,12 @@
  * - 用户头像和导航
  */
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { useClickOutside } from '../../hooks/useClickOutside';
 import ConversationList from './ConversationList';
+import SettingsModal from './SettingsModal';
 
 /** 乐观更新参数 */
 interface OptimisticUpdate {
@@ -37,7 +39,6 @@ interface SidebarProps {
   onNewConversation: () => void;
   onSelectConversation: (id: string, title: string, modelId?: string | null) => void;
   userCredits: number;
-  refreshTrigger?: number;
   /** 乐观更新：立即将指定对话移到最前并更新信息 */
   optimisticUpdate?: OptimisticUpdate | null;
   /** 标题乐观更新：立即更新指定对话的标题 */
@@ -56,7 +57,6 @@ export default function Sidebar({
   currentConversationId,
   onNewConversation,
   onSelectConversation,
-  refreshTrigger = 0,
   optimisticUpdate = null,
   optimisticTitleUpdate = null,
   optimisticNewConversation = null,
@@ -66,6 +66,7 @@ export default function Sidebar({
   const { user, clearAuth } = useAuthStore();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -76,32 +77,15 @@ export default function Sidebar({
   };
 
   // 点击外部关闭搜索框（仅在搜索框为空时）
-  useEffect(() => {
-    if (!showSearch || searchQuery) return; // 有搜索内容时不自动关闭
-
-    const handleClickOutside = (e: MouseEvent) => {
-      if (searchInputRef.current && !searchInputRef.current.contains(e.target as Node)) {
-        setShowSearch(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showSearch, searchQuery]);
+  useClickOutside(
+    searchInputRef,
+    showSearch,
+    () => setShowSearch(false),
+    !!searchQuery // 有搜索内容时跳过关闭
+  );
 
   // 点击外部关闭用户菜单
-  useEffect(() => {
-    if (!showUserMenu) return;
-
-    const handleClickOutside = (e: MouseEvent) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
-        setShowUserMenu(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showUserMenu]);
+  useClickOutside(userMenuRef, showUserMenu, () => setShowUserMenu(false));
 
   // 包装 onSelectConversation，选择对话时关闭搜索
   const handleSelectConversation = (id: string, title: string, modelId?: string | null) => {
@@ -190,7 +174,6 @@ export default function Sidebar({
         <ConversationList
           currentConversationId={currentConversationId}
           onSelectConversation={handleSelectConversation}
-          refreshTrigger={refreshTrigger}
           optimisticUpdate={optimisticUpdate}
           optimisticTitleUpdate={optimisticTitleUpdate}
           optimisticNewConversation={optimisticNewConversation}
@@ -218,7 +201,10 @@ export default function Sidebar({
             {showUserMenu && (
               <div className="absolute bottom-full left-0 mb-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 text-gray-700">
                 <button
-                  onClick={() => setShowUserMenu(false)}
+                  onClick={() => {
+                    setShowUserMenu(false);
+                    setShowSettingsModal(true);
+                  }}
                   className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 flex items-center space-x-2"
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -249,6 +235,12 @@ export default function Sidebar({
           </Link>
         </div>
       </div>
+
+      {/* 个人设置弹框 */}
+      <SettingsModal
+        isOpen={showSettingsModal}
+        onClose={() => setShowSettingsModal(false)}
+      />
     </aside>
   );
 }

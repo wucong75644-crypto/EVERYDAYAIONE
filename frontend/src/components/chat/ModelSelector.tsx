@@ -13,8 +13,8 @@ interface ModelSelectorProps {
   locked: boolean;
   lockTooltip: string;
   onSelectModel: (model: UnifiedModel) => void;
-  /** 紧凑模式（用于工具栏） */
-  compact?: boolean;
+  /** 模型加载中状态（切换对话时） */
+  loading?: boolean;
 }
 
 export default function ModelSelector({
@@ -23,7 +23,7 @@ export default function ModelSelector({
   locked,
   lockTooltip,
   onSelectModel,
-  compact: _compact,
+  loading = false,
 }: ModelSelectorProps) {
   const [showDropdown, setShowDropdown] = useState(false);
   const selectorRef = useRef<HTMLDivElement>(null);
@@ -83,18 +83,26 @@ export default function ModelSelector({
     <div className="relative" ref={selectorRef}>
       <button
         onClick={() => {
-          if (!locked) {
+          if (!locked && !loading) {
             setShowDropdown(!showDropdown);
           }
         }}
-        disabled={locked}
+        disabled={locked || loading}
         className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg transition-colors ${
-          locked ? 'opacity-60 cursor-not-allowed bg-gray-50' : 'hover:bg-gray-100'
+          locked || loading ? 'opacity-60 cursor-not-allowed bg-gray-50' : 'hover:bg-gray-100'
         }`}
-        title={lockTooltip}
+        title={loading ? '加载中...' : lockTooltip}
       >
-        {/* 锁定图标（锁定时显示） */}
-        {locked && (
+        {/* 加载指示器（加载中显示） */}
+        {loading && (
+          <svg className="w-4 h-4 text-gray-500 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+        )}
+
+        {/* 锁定图标（锁定且非加载时显示） */}
+        {locked && !loading && (
           <svg className="w-3 h-3 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
             <path
               fillRule="evenodd"
@@ -109,8 +117,8 @@ export default function ModelSelector({
 
         <span className="text-sm font-medium text-gray-700">{selectedModel.name}</span>
 
-        {/* 下拉箭头（非锁定时显示） */}
-        {!locked && (
+        {/* 下拉箭头（非锁定非加载时显示） */}
+        {!locked && !loading && (
           <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
           </svg>

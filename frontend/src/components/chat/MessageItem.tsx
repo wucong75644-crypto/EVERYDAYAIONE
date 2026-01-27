@@ -20,9 +20,11 @@ interface MessageItemProps {
   onRegenerate?: (messageId: string) => void;
   /** 删除回调 */
   onDelete?: (messageId: string) => void;
+  /** 媒体加载完成回调（用于滚动调整） */
+  onMediaLoaded?: () => void;
 }
 
-export default memo(function MessageItem({ message, isStreaming = false, isRegenerating = false, onRegenerate, onDelete }: MessageItemProps) {
+export default memo(function MessageItem({ message, isStreaming = false, isRegenerating = false, onRegenerate, onDelete, onMediaLoaded }: MessageItemProps) {
   const isUser = message.role === 'user';
 
   // 判断是否为失败消息：只检查 is_error 标志（避免误判正常消息）
@@ -236,6 +238,7 @@ export default memo(function MessageItem({ message, isStreaming = false, isRegen
                   onClick={() => {
                     window.open(message.image_url!, '_blank');
                   }}
+                  onLoad={onMediaLoaded}
                   loading="lazy"
                 />
               ) : (
@@ -292,6 +295,7 @@ export default memo(function MessageItem({ message, isStreaming = false, isRegen
                   controls
                   className="rounded-xl w-full max-w-[400px] shadow-sm"
                   preload="metadata"
+                  onLoadedMetadata={onMediaLoaded}
                 >
                   您的浏览器不支持视频播放
                 </video>

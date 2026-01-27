@@ -4,9 +4,10 @@
 提供视频生成、任务查询接口。
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from api.deps import CurrentUser, Database
+from core.limiter import limiter, RATE_LIMITS
 from schemas.video import (
     GenerateTextToVideoRequest,
     GenerateImageToVideoRequest,
@@ -28,8 +29,10 @@ def get_video_service(db: Database) -> VideoService:
 
 
 @router.post("/generate/text-to-video", response_model=GenerateVideoResponse, summary="文本生成视频")
+@limiter.limit(RATE_LIMITS["video_generate"])
 async def generate_text_to_video(
-    request: GenerateTextToVideoRequest,
+    request: Request,
+    body: GenerateTextToVideoRequest,
     current_user: CurrentUser,
     service: VideoService = Depends(get_video_service),
 ):
@@ -44,12 +47,12 @@ async def generate_text_to_video(
     """
     result = await service.generate_text_to_video(
         user_id=current_user["id"],
-        prompt=request.prompt,
-        model=request.model.value,
-        n_frames=request.n_frames.value,
-        aspect_ratio=request.aspect_ratio.value,
-        remove_watermark=request.remove_watermark,
-        wait_for_result=request.wait_for_result,
+        prompt=body.prompt,
+        model=body.model.value,
+        n_frames=body.n_frames.value,
+        aspect_ratio=body.aspect_ratio.value,
+        remove_watermark=body.remove_watermark,
+        wait_for_result=body.wait_for_result,
     )
 
     return GenerateVideoResponse(
@@ -64,8 +67,10 @@ async def generate_text_to_video(
 
 
 @router.post("/generate/image-to-video", response_model=GenerateVideoResponse, summary="图片生成视频")
+@limiter.limit(RATE_LIMITS["video_generate"])
 async def generate_image_to_video(
-    request: GenerateImageToVideoRequest,
+    request: Request,
+    body: GenerateImageToVideoRequest,
     current_user: CurrentUser,
     service: VideoService = Depends(get_video_service),
 ):
@@ -77,13 +82,13 @@ async def generate_image_to_video(
     """
     result = await service.generate_image_to_video(
         user_id=current_user["id"],
-        prompt=request.prompt,
-        image_url=request.image_url,
-        model=request.model.value,
-        n_frames=request.n_frames.value,
-        aspect_ratio=request.aspect_ratio.value,
-        remove_watermark=request.remove_watermark,
-        wait_for_result=request.wait_for_result,
+        prompt=body.prompt,
+        image_url=body.image_url,
+        model=body.model.value,
+        n_frames=body.n_frames.value,
+        aspect_ratio=body.aspect_ratio.value,
+        remove_watermark=body.remove_watermark,
+        wait_for_result=body.wait_for_result,
     )
 
     return GenerateVideoResponse(

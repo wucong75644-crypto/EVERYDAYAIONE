@@ -4,20 +4,25 @@ FastAPI 应用入口
 EVERYDAYAI - AI 图片/视频生成平台后端服务
 """
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from api.routes import audio, auth, conversation, health, image, message, video
 from core.config import get_settings
 from core.exceptions import AppException
+from core.limiter import limiter
+from core.redis import RedisClient
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     应用生命周期管理
 
@@ -26,8 +31,17 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     logger.info(f"Starting EVERYDAYAI API | env={settings.app_env}")
 
+    # 初始化 Redis 连接
+    try:
+        await RedisClient.get_client()
+        logger.info("Redis 连接初始化成功")
+    except Exception as e:
+        logger.warning(f"Redis 连接失败，限流功能降级 | error={e}")
+
     yield
 
+    # 关闭 Redis 连接
+    await RedisClient.close()
     logger.info("Shutting down EVERYDAYAI API")
 
 
@@ -58,6 +72,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # 限流配置
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
     # 注册异常处理器
     register_exception_handlers(app)
 
@@ -71,7 +89,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     """注册全局异常处理器"""
 
     @app.exception_handler(AppException)
-    async def app_exception_handler(request: Request, exc: AppException):
+    async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
         """处理应用自定义异常"""
         logger.warning(
             f"AppException | code={exc.code} | message={exc.message} | "
@@ -89,7 +107,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(Exception)
-    async def general_exception_handler(request: Request, exc: Exception):
+    async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         """处理未捕获的异常"""
         logger.exception(
             f"Unhandled exception | path={request.url.path} | error={str(exc)}"

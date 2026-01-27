@@ -125,15 +125,6 @@ export default function InputControls(props: InputControlsProps) {
   }, []);
 
   // 判断条件
-  const hasImageUploadSupport = selectedModel.capabilities.imageEditing ||
-    selectedModel.capabilities.imageToVideo ||
-    selectedModel.capabilities.vqa ||
-    selectedModel.capabilities.videoQA;
-
-  // 判断是否有任何上传支持（图片或文档）- 供 UploadMenu 组件使用
-  const _hasAnyUploadSupport = hasImageUploadSupport || selectedModel.type === 'chat';
-  void _hasAnyUploadSupport;
-
   const supportsDeepThinking = selectedModel.capabilities.thinkingEffort === true;
   const hasContent = prompt.trim().length > 0 || images.length > 0;
   const canSubmit = !sendButtonDisabled && (hasContent || audioBlob);
@@ -163,7 +154,7 @@ export default function InputControls(props: InputControlsProps) {
       <div className="p-3">
         {/* 图片预览区域（输入框顶部） */}
         {images.length > 0 && (
-          <div className="mb-2 pb-2 border-b border-gray-100">
+          <div className="mb-2">
             <ImagePreview images={images} onRemove={onRemoveImage} />
           </div>
         )}
@@ -183,14 +174,14 @@ export default function InputControls(props: InputControlsProps) {
           value={prompt}
           onChange={(e) => onPromptChange(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder='发消息或输入"/"选择技能'
+          placeholder='发送消息...'
           className="w-full resize-none border-none outline-none text-gray-900 placeholder-gray-400 text-base leading-6 min-h-[40px] max-h-[120px] overflow-y-auto"
           rows={1}
           disabled={isSubmitting}
         />
 
         {/* 底部工具栏 */}
-        <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
+        <div className="flex items-center justify-between mt-2">
           {/* 左侧：模型选择器、设置、深度思考 */}
           <div className="flex items-center space-x-1">
             {/* 模型选择器 */}
@@ -200,7 +191,6 @@ export default function InputControls(props: InputControlsProps) {
               onSelectModel={onSelectModel}
               locked={modelSelectorLocked}
               lockTooltip={modelSelectorLockTooltip}
-              compact
             />
 
             {/* 高级设置 */}

@@ -21,16 +21,36 @@ function toStoreMessage(msg: Message): CacheMessage {
   };
 }
 
+/** 将缓存消息转换为 API Message 格式（过滤临时消息） */
+function convertCacheToApiMessages(
+  messages: CacheMessage[],
+  conversationId: string
+): Message[] {
+  return messages
+    .filter((m) => !m.id.startsWith('temp-') && !m.id.startsWith('streaming-') && !m.id.startsWith('error-'))
+    .map((m) => ({
+      id: m.id,
+      conversation_id: conversationId,
+      role: m.role,
+      content: m.content,
+      image_url: m.imageUrl ?? null,
+      video_url: m.videoUrl ?? null,
+      credits_cost: 0,
+      created_at: m.createdAt,
+    }));
+}
+
 interface UseMessageLoaderOptions {
   conversationId: string | null;
   refreshTrigger?: number;
+  /** 后台刷新发现新消息时的回调 */
+  onNewMessages?: () => void;
 }
 
-export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMessageLoaderOptions) {
+export function useMessageLoader({ conversationId, refreshTrigger = 0, onNewMessages }: UseMessageLoaderOptions) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(false);
-  const [hasNewMessages, setHasNewMessages] = useState(false);
   const lastRefreshTriggerRef = useRef(refreshTrigger);
   const previousConversationIdRef = useRef<string | null>(conversationId);
 
@@ -39,6 +59,7 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
     setCachedMessages,
     updateCachedMessages,
     isCacheExpired,
+    touchCache,
   } = useChatStore();
 
   // 从后端加载消息
@@ -84,19 +105,10 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
       if (previousConversationIdRef.current !== conversationId) {
         const cachedData = getCachedMessages(conversationId);
         if (cachedData && cachedData.messages && cachedData.messages.length > 0) {
-          const storeMessages = cachedData.messages.filter(
-            (m) => !m.id.startsWith('temp-') && !m.id.startsWith('streaming-') && !m.id.startsWith('error-')
-          );
-          const cachedMessages = storeMessages.map((m) => ({
-            id: m.id,
-            conversation_id: conversationId,
-            role: m.role,
-            content: m.content,
-            image_url: m.imageUrl ?? null,
-            video_url: null,
-            credits_cost: 0,
-            created_at: m.createdAt,
-          }));
+          // 更新LRU访问顺序
+          touchCache(conversationId);
+
+          const cachedMessages = convertCacheToApiMessages(cachedData.messages, conversationId);
 
           requestAnimationFrame(() => {
             setMessages(cachedMessages);
@@ -107,7 +119,6 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
           setMessages([]);
           setLoading(true);
         }
-        setHasNewMessages(false);
         previousConversationIdRef.current = conversationId;
       }
 
@@ -119,21 +130,10 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
       const cacheExpired = isCacheExpired(conversationId);
 
       if (cached && cached.messages && !isRefreshTriggered) {
-        const storeMessages = cached.messages.filter(
-          (m) => !m.id.startsWith('temp-') && !m.id.startsWith('streaming-') && !m.id.startsWith('error-')
-        );
-        setMessages(
-          storeMessages.map((m) => ({
-            id: m.id,
-            conversation_id: conversationId,
-            role: m.role,
-            content: m.content,
-            image_url: m.imageUrl ?? null,
-            video_url: null,
-            credits_cost: 0,
-            created_at: m.createdAt,
-          }))
-        );
+        // 更新LRU访问顺序
+        touchCache(conversationId);
+
+        setMessages(convertCacheToApiMessages(cached.messages, conversationId));
         setHasMore(cached.hasMore);
         setLoading(false);
 
@@ -148,8 +148,9 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
             const newStoreMessages = freshMessages.map(toStoreMessage);
             updateCachedMessages(conversationId, newStoreMessages);
 
+            // 通知有新消息（由 useScrollManager 处理显示逻辑）
             if (cached.messages && freshMessages.length > cached.messages.length) {
-              setHasNewMessages(true);
+              onNewMessages?.();
             }
           }
         }
@@ -174,7 +175,7 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
         setLoading(false);
       }
     },
-    [conversationId, refreshTrigger, getCachedMessages, isCacheExpired, setCachedMessages, updateCachedMessages, fetchMessages]
+    [conversationId, refreshTrigger, getCachedMessages, touchCache, isCacheExpired, setCachedMessages, updateCachedMessages, fetchMessages, onNewMessages]
   );
 
   return {
@@ -182,8 +183,6 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
     setMessages,
     loading,
     hasMore,
-    hasNewMessages,
-    setHasNewMessages,
     loadMessages,
     toStoreMessage,
     getCachedMessages,

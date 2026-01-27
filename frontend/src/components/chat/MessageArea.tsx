@@ -9,67 +9,134 @@
  * - 消息缓存（切换秒显）
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { deleteMessage, sendMessageStream, type Message } from '../../services/message';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { deleteMessage, type Message } from '../../services/message';
 import MessageItem from './MessageItem';
 import EmptyState from './EmptyState';
 import LoadingSkeleton from './LoadingSkeleton';
 import toast from 'react-hot-toast';
 import { useMessageLoader } from '../../hooks/useMessageLoader';
 import { useScrollManager } from '../../hooks/useScrollManager';
+import { useRegenerateHandlers } from '../../hooks/useRegenerateHandlers';
+import { useConversationRuntimeStore } from '../../stores/useConversationRuntimeStore';
+import { useChatStore } from '../../stores/useChatStore';
+import type { UnifiedModel } from '../../constants/models';
 
 interface MessageAreaProps {
   conversationId: string | null;
-  refreshTrigger?: number;
-  isWaitingForAI?: boolean;
-  newMessage?: Message | null;
-  streamingContent?: string;
   onDelete?: (messageId: string, newLastMessage?: string) => void;
   onMessageUpdate?: (newLastMessage: string) => void;
   modelId?: string | null;
+  /** 当前用户选择的模型（用于重新生成） */
+  selectedModel?: UnifiedModel | null;
 }
 
 export default function MessageArea({
   conversationId,
-  refreshTrigger = 0,
-  isWaitingForAI = false,
-  newMessage = null,
-  streamingContent = '',
   onDelete,
   onMessageUpdate,
   modelId = null,
+  selectedModel = null,
 }: MessageAreaProps) {
-  // 使用消息加载 Hook
-  const {
-    messages,
-    setMessages,
-    loading,
-    hasMore,
-    hasNewMessages,
-    setHasNewMessages,
-    loadMessages,
-    toStoreMessage,
-    getCachedMessages,
-    updateCachedMessages,
-  } = useMessageLoader({ conversationId, refreshTrigger });
-
-  // 使用滚动管理 Hook
+  // 使用滚动管理 Hook（统一管理所有滚动状态）
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const {
     showScrollButton,
     userScrolledAway,
+    hasNewMessages,
     setUserScrolledAway,
+    setHasNewMessages,
     scrollToBottom,
     handleScroll,
+    markNewMessages,
+    resetScrollState,
   } = useScrollManager({ containerRef, messagesEndRef });
+
+  // 记录上一次的对话 ID（用于检测对话切换）
+  const prevConversationIdRef = useRef<string | null>(null);
+
+  // 使用消息加载 Hook（通过回调通知新消息）
+  const {
+    messages,
+    setMessages,
+    loading,
+    loadMessages,
+    toStoreMessage,
+    getCachedMessages,
+    updateCachedMessages,
+  } = useMessageLoader({ conversationId, onNewMessages: markNewMessages });
+
+  // 获取当前对话标题（用于任务追踪）
+  const currentConversationTitle = useChatStore((state) => state.currentConversationTitle);
+
+  // 获取运行时状态（乐观更新消息）
+  // 注意：直接从 states Map 获取，避免 getState() 返回新对象导致无限循环
+  const runtimeState = useConversationRuntimeStore(
+    (state) => conversationId ? state.states.get(conversationId) : undefined
+  );
+
+  // 合并持久化消息和乐观更新消息（去重）
+  const mergedMessages = useMemo(() => {
+    if (!runtimeState || runtimeState.optimisticMessages.length === 0) {
+      return messages;
+    }
+
+    // 创建持久化消息的ID集合
+    const persistedIds = new Set(messages.map(m => m.id));
+
+    // 创建持久化用户消息的内容集合（用于检测 temp- 消息是否已被替换）
+    const persistedUserContents = new Set(
+      messages.filter(m => m.role === 'user').map(m => m.content)
+    );
+
+    // 过滤出需要显示的乐观消息
+    const newOptimisticMessages = runtimeState.optimisticMessages.filter(m => {
+      // 已存在于持久化消息中（通过ID），跳过
+      if (persistedIds.has(m.id)) return false;
+
+      // temp- 用户消息：检查内容是否已有对应的持久化消息
+      if (m.id.startsWith('temp-') && m.role === 'user') {
+        // 如果持久化消息中已有相同内容的用户消息，说明已被替换
+        return !persistedUserContents.has(m.content);
+      }
+
+      // streaming- AI消息需要区分聊天流式和媒体任务
+      if (m.id.startsWith('streaming-')) {
+        // 检查是否是当前聊天流式消息
+        if (m.id === runtimeState.streamingMessageId) {
+          // 聊天流式消息：显示（正在生成中）
+          return true;
+        }
+        // 媒体任务占位符（streaming-${taskId}）：始终显示
+        // 它们会在轮询完成后被 replaceMediaPlaceholder 替换为真实消息
+        return true;
+      }
+
+      // 其他消息：显示
+      return true;
+    });
+
+    // 合并并按时间排序
+    const combined = [...messages, ...newOptimisticMessages];
+    combined.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+    return combined;
+  }, [messages, runtimeState]);
 
   // 重新生成相关状态
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [isRegeneratingAI, setIsRegeneratingAI] = useState(false);
   const regeneratingContentRef = useRef<string>('');
 
-  const prevStreamingContentRef = useRef('');
+  // 对话切换时重置滚动状态（P0-1 修复）
+  useEffect(() => {
+    if (conversationId !== prevConversationIdRef.current) {
+      // 重置滚动状态，确保新对话从干净状态开始
+      resetScrollState();
+      prevConversationIdRef.current = conversationId;
+    }
+  }, [conversationId, resetScrollState]);
 
   // 加载消息
   useEffect(() => {
@@ -78,19 +145,18 @@ export default function MessageArea({
 
     return () => {
       abortController.abort();
-      prevStreamingContentRef.current = '';
     };
   }, [loadMessages]);
 
   // 消息加载完成后滚动到底部
   useEffect(() => {
-    if (!loading && messages.length > 0) {
+    if (!loading && mergedMessages.length > 0) {
       // 使用 requestAnimationFrame 确保 DOM 已更新
       requestAnimationFrame(() => {
         scrollToBottom(false); // 使用 instant 滚动，避免加载时的动画
       });
     }
-  }, [loading, conversationId, messages.length, scrollToBottom]); // 仅在加载状态变化或对话切换时触发
+  }, [loading, conversationId, mergedMessages.length, scrollToBottom]); // 仅在加载状态变化或对话切换时触发
 
   // 处理删除消息
   const handleDelete = useCallback(async (messageId: string) => {
@@ -129,155 +195,61 @@ export default function MessageArea({
   const resetRegeneratingState = useCallback(() => {
     setRegeneratingId(null);
     setIsRegeneratingAI(false);
-    regeneratingContentRef.current = '';
   }, []);
 
-  // 策略 A：失败消息原地重新生成
-  const regenerateFailedMessage = useCallback(async (
-    messageId: string,
-    targetMessage: Message,
-    userMessage: Message
-  ) => {
-    if (!conversationId) return;
+  // 媒体加载完成回调（P0-2 修复：图片/视频加载后重新调整滚动位置）
+  const mediaLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleMediaLoaded = useCallback(() => {
+    // 如果用户已滚走或正在重新生成，不触发滚动
+    if (userScrolledAway || regeneratingId) return;
 
-    setRegeneratingId(messageId);
-    setIsRegeneratingAI(true);
+    // 防抖：50ms 内多次加载只触发一次滚动
+    if (mediaLoadTimerRef.current) {
+      clearTimeout(mediaLoadTimerRef.current);
+    }
+    mediaLoadTimerRef.current = setTimeout(() => {
+      scrollToBottom(true); // 平滑滚动
+    }, 50);
+  }, [userScrolledAway, regeneratingId, scrollToBottom]);
 
-    const aiIndex = messages.findIndex((m) => m.id === messageId);
-    const tempMessage: Message = {
-      id: messageId,
-      conversation_id: conversationId,
-      role: 'assistant',
-      content: '',
-      image_url: null,
-      video_url: null,
-      credits_cost: 0,
-      created_at: new Date().toISOString(),
-    };
-
-    setMessages([...messages.slice(0, aiIndex), tempMessage, ...messages.slice(aiIndex + 1)]);
-
-    await sendMessageStream(
-      conversationId,
-      { content: userMessage.content, model_id: modelId || 'gemini-3-flash' },
-      {
-        onContent: (content: string) => {
-          regeneratingContentRef.current += content;
-          const updated = { ...tempMessage, content: regeneratingContentRef.current };
-          setMessages([...messages.slice(0, aiIndex), updated, ...messages.slice(aiIndex + 1)]);
-          if (!userScrolledAway) scrollToBottom();
-        },
-        onDone: (finalMessage: Message | null) => {
-          if (!finalMessage) return;
-          const finalMessages = messages.map((m) => (m.id === messageId ? finalMessage : m));
-          setMessages(finalMessages);
-
-          if (conversationId) {
-            const cached = getCachedMessages(conversationId);
-            if (cached) {
-              updateCachedMessages(conversationId, finalMessages.map(toStoreMessage), cached.hasMore);
-            }
-          }
-
-          resetRegeneratingState();
-          if (onMessageUpdate) onMessageUpdate(finalMessage.content);
-        },
-        onError: (error: string) => {
-          console.error('重试失败:', error);
-          setMessages(messages.map((m) => (m.id === messageId ? targetMessage : m)));
-          resetRegeneratingState();
-          toast.error(`重试失败: ${error}`);
-        },
-      }
-    );
-  }, [conversationId, messages, setMessages, modelId, userScrolledAway, scrollToBottom, getCachedMessages, updateCachedMessages, toStoreMessage, onMessageUpdate, resetRegeneratingState]);
-
-  // 策略 B：成功消息新增对话
-  const regenerateAsNewMessage = useCallback(async (userMessage: Message) => {
-    if (!conversationId) return;
-
-    const newStreamingId = `streaming-${Date.now()}`;
-    const tempUserId = `temp-user-${Date.now()}`;
-
-    setRegeneratingId(newStreamingId);
-    setIsRegeneratingAI(true);
-
-    const tempUserMessage: Message = {
-      id: tempUserId,
-      conversation_id: conversationId,
-      role: 'user',
-      content: userMessage.content,
-      image_url: userMessage.image_url,
-      video_url: null,
-      credits_cost: 0,
-      created_at: new Date().toISOString(),
-    };
-
-    const tempAiMessage: Message = {
-      id: newStreamingId,
-      conversation_id: conversationId,
-      role: 'assistant',
-      content: '',
-      image_url: null,
-      video_url: null,
-      credits_cost: 0,
-      created_at: new Date().toISOString(),
-    };
-
-    setMessages([...messages, tempUserMessage, tempAiMessage]);
-    scrollToBottom();
-
-    await sendMessageStream(
-      conversationId,
-      { content: userMessage.content, model_id: modelId || 'gemini-3-flash' },
-      {
-        onUserMessage: (realUserMessage: Message) => {
-          setMessages((prev) => prev.map((m) => (m.id === tempUserId ? realUserMessage : m)));
-        },
-        onContent: (content: string) => {
-          regeneratingContentRef.current += content;
-          setMessages((prev) =>
-            prev.map((m) => (m.id === newStreamingId ? { ...m, content: regeneratingContentRef.current } : m))
-          );
-          if (!userScrolledAway) scrollToBottom();
-        },
-        onDone: (finalMessage: Message | null) => {
-          if (finalMessage) {
-            setMessages((prev) => {
-              const updated = prev.map((m) => (m.id === newStreamingId ? finalMessage : m));
-              if (conversationId) {
-                const cached = getCachedMessages(conversationId);
-                if (cached) updateCachedMessages(conversationId, updated.map(toStoreMessage), cached.hasMore);
-              }
-              return updated;
-            });
-            if (onMessageUpdate) onMessageUpdate(finalMessage.content);
-          }
-          resetRegeneratingState();
-        },
-        onError: (error: string) => {
-          console.error('重新生成失败:', error);
-          setMessages((prev) => prev.filter((m) => m.id !== tempUserId && m.id !== newStreamingId));
-          resetRegeneratingState();
-          toast.error(`重新生成失败: ${error}`);
-        },
-      }
-    );
-  }, [conversationId, messages, setMessages, modelId, userScrolledAway, scrollToBottom, getCachedMessages, updateCachedMessages, toStoreMessage, onMessageUpdate, resetRegeneratingState]);
+  // 使用重新生成处理器 hook
+  const {
+    regenerateFailedMessage,
+    regenerateAsNewMessage,
+    regenerateImageMessage,
+    regenerateVideoMessage,
+  } = useRegenerateHandlers({
+    conversationId,
+    conversationTitle: currentConversationTitle,
+    setMessages,
+    scrollToBottom,
+    onMessageUpdate,
+    resetRegeneratingState,
+    setRegeneratingId,
+    setIsRegeneratingAI,
+    modelId,
+    selectedModel,
+    userScrolledAway,
+    getCachedMessages,
+    updateCachedMessages,
+    toStoreMessage,
+  });
 
   // 处理重新生成（主入口）
+  // 注意：使用 mergedMessages 而不是 messages，因为新生成的消息可能在乐观更新中
   const handleRegenerate = useCallback(async (messageId: string) => {
     if (!conversationId || regeneratingId) return;
 
-    const targetMessage = messages.find((m) => m.id === messageId);
+    // 使用 mergedMessages 查找，因为新生成的消息可能在乐观更新中而不在持久化消息中
+    const targetMessage = mergedMessages.find((m) => m.id === messageId);
     if (!targetMessage || targetMessage.role !== 'assistant') return;
 
     // 查找对应的用户消息
-    const aiIndex = messages.findIndex((m) => m.id === messageId);
+    const aiIndex = mergedMessages.findIndex((m) => m.id === messageId);
     let userMessage: Message | null = null;
     for (let i = aiIndex - 1; i >= 0; i--) {
-      if (messages[i].role === 'user') {
-        userMessage = messages[i];
+      if (mergedMessages[i].role === 'user') {
+        userMessage = mergedMessages[i];
         break;
       }
     }
@@ -290,48 +262,42 @@ export default function MessageArea({
     regeneratingContentRef.current = '';
 
     try {
-      if (targetMessage.is_error === true) {
-        await regenerateFailedMessage(messageId, targetMessage, userMessage);
+      // 根据原始 AI 消息类型判断使用哪种重新生成策略
+      const isImageMessage = !!targetMessage.image_url;
+      const isVideoMessage = !!targetMessage.video_url;
+
+      if (isImageMessage) {
+        await regenerateImageMessage(userMessage);
+      } else if (isVideoMessage) {
+        await regenerateVideoMessage(userMessage);
+      } else if (targetMessage.is_error === true) {
+        await regenerateFailedMessage(messageId, targetMessage);
       } else {
         await regenerateAsNewMessage(userMessage);
       }
     } catch (error) {
-      console.error('重新生成失败:', error);
+      // 增强错误恢复：使用函数式 setState
       if (targetMessage.is_error === true) {
-        setMessages(messages.map((m) => (m.id === messageId ? targetMessage : m)));
+        setMessages((prev) =>
+          prev.map((m) => (m.id === messageId ? targetMessage : m))
+        );
       }
+
       resetRegeneratingState();
-      toast.error('重新生成失败，请重试');
+
+      const errorMsg = error instanceof Error ? error.message : '未知错误';
+      toast.error(`重新生成失败: ${errorMsg}`);
+
+      // 记录详细日志
+      console.error('重新生成失败详情:', {
+        messageId,
+        conversationId,
+        isError: targetMessage.is_error,
+        error
+      });
     }
-  }, [conversationId, messages, setMessages, regeneratingId, regenerateFailedMessage, regenerateAsNewMessage, resetRegeneratingState]);
+  }, [conversationId, mergedMessages, regeneratingId, regenerateFailedMessage, regenerateAsNewMessage, regenerateImageMessage, regenerateVideoMessage, resetRegeneratingState, setMessages]);
 
-  // 新消息或流式内容变化时更新显示和滚动
-  useEffect(() => {
-    if (newMessage && newMessage.id && messages.every((m) => m.id !== newMessage.id)) {
-      setMessages((prev) => [...prev, newMessage]);
-
-      if (conversationId) {
-        const storeMessage = toStoreMessage(newMessage);
-        const cached = getCachedMessages(conversationId);
-        if (cached) {
-          updateCachedMessages(conversationId, [...cached.messages, storeMessage], hasMore);
-        }
-      }
-
-      if (!userScrolledAway) {
-        setTimeout(() => scrollToBottom(), 100);
-      }
-    }
-  }, [newMessage, conversationId, messages, setMessages, userScrolledAway, scrollToBottom, hasMore, toStoreMessage, getCachedMessages, updateCachedMessages]);
-
-  useEffect(() => {
-    if (streamingContent && streamingContent !== prevStreamingContentRef.current) {
-      prevStreamingContentRef.current = streamingContent;
-      if (!userScrolledAway) {
-        scrollToBottom();
-      }
-    }
-  }, [streamingContent, userScrolledAway, scrollToBottom]);
 
   // 重新生成开始时自动滚动
   useEffect(() => {
@@ -348,17 +314,17 @@ export default function MessageArea({
   }, [isRegeneratingAI, regeneratingId, messages, scrollToBottom, userScrolledAway]);
 
   // 空状态
-  if (!conversationId && messages.length === 0) {
+  if (!conversationId && mergedMessages.length === 0) {
     return <EmptyState hasConversation={false} />;
   }
 
   // 加载中骨架屏
-  if (conversationId && messages.length === 0 && loading) {
+  if (conversationId && mergedMessages.length === 0 && loading) {
     return <LoadingSkeleton />;
   }
 
   // 对话已选择但无消息
-  if (conversationId && messages.length === 0 && !loading) {
+  if (conversationId && mergedMessages.length === 0 && !loading) {
     return (
       <div className="flex-1 flex items-center justify-center bg-white">
         <div className="text-center max-w-md px-4">
@@ -379,9 +345,9 @@ export default function MessageArea({
       {/* 可滚动的消息区域 */}
       <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto bg-white">
         <div key={conversationId || 'no-conversation'} className="max-w-3xl mx-auto py-6 px-4 animate-fadeIn">
-          {messages.map((message, index) => {
-            const isStreaming = message.id?.startsWith('streaming-') && isWaitingForAI;
+          {mergedMessages.map((message, index) => {
             const isRegenerating = message.id === regeneratingId;
+            const isStreaming = message.id.startsWith('streaming-');
 
             return (
               <MessageItem
@@ -391,25 +357,10 @@ export default function MessageArea({
                 isRegenerating={isRegenerating}
                 onRegenerate={handleRegenerate}
                 onDelete={handleDelete}
+                onMediaLoaded={handleMediaLoaded}
               />
             );
           })}
-
-          {/* AI 思考中加载状态（仅新消息等待时显示，重新生成时由 MessageItem 内部处理） */}
-          {isWaitingForAI && !isRegeneratingAI && !streamingContent && (
-            <div className="flex mb-4 justify-start">
-              <div className="max-w-[70%] rounded-2xl px-4 py-3 bg-white border border-gray-200">
-                <div className="flex items-center space-x-2 text-gray-500">
-                  <div className="flex space-x-1">
-                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                    <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
-                  </div>
-                  <span className="text-sm">AI 正在思考...</span>
-                </div>
-              </div>
-            </div>
-          )}
           <div ref={messagesEndRef} />
         </div>
       </div>

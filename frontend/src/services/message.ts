@@ -49,6 +49,9 @@ export interface CreateMessageRequest {
   image_url?: string | null;
   video_url?: string | null;
   credits_cost?: number;
+  is_error?: boolean;
+  /** 可选时间戳（ISO 8601 格式），用于保持消息顺序 */
+  created_at?: string;
 }
 
 /** 发送消息请求 */
