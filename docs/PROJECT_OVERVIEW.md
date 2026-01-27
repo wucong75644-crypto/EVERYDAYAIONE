@@ -146,15 +146,19 @@ EVERYDAYAIONE/
         │       ├── DeleteConfirmModal.tsx    # 对话删除确认弹框
         │       ├── conversationUtils.ts      # 对话列表工具函数
         │       ├── MessageArea.tsx           # 消息区域
-        │       ├── MessageItem.tsx           # 单条消息
-        │       ├── MessageToolbar.tsx        # 消息工具栏
+        │       ├── MessageItem.tsx           # 单条消息（组合子组件）
+        │       ├── MessageMedia.tsx          # 消息媒体渲染（图片、视频）
+        │       ├── MessageActions.tsx        # 消息操作工具栏
+        │       ├── MessageToolbar.tsx        # 消息工具栏（旧版，待删除）
         │       ├── InputArea.tsx             # 输入区域（组合 InputControls 和工具栏）
         │       ├── InputControls.tsx         # 输入控制（文本框、按钮、上传）
         │       ├── ModelSelector.tsx         # 模型选择器
         │       ├── AdvancedSettingsMenu.tsx  # 高级设置菜单（图像/视频/推理参数）
         │       ├── SettingsModal.tsx         # 个人设置弹框
         │       ├── UploadMenu.tsx            # 上传菜单
-        │       ├── ImagePreview.tsx          # 图片预览
+        │       ├── ImagePreview.tsx          # 图片预览（输入区小图）
+        │       ├── ImagePreviewModal.tsx     # 图片预览弹窗（全屏缩放下载）
+        │       ├── MediaPlaceholder.tsx      # 媒体占位符（加载中状态）
         │       ├── AudioPreview.tsx          # 音频预览
         │       ├── AudioRecorder.tsx         # 录音组件
         │       ├── ConflictAlert.tsx         # 模型冲突提示

@@ -129,3 +129,59 @@ export function createStreamingPlaceholder(
     created_at: createdAt || new Date().toISOString(),
   };
 }
+
+/**
+ * 媒体生成时间戳数据
+ */
+export interface MediaTimestamps {
+  /** 用户消息时间戳 */
+  userTimestamp: string;
+  /** 占位符时间戳（比用户消息晚1ms，确保排序） */
+  placeholderTimestamp: string;
+  /** 临时占位符ID */
+  tempPlaceholderId: string;
+}
+
+/**
+ * 创建媒体生成所需的时间戳和ID
+ *
+ * 用于图片/视频生成时保持消息顺序：
+ * - 用户消息在前
+ * - AI占位符在后（+1ms）
+ */
+export function createMediaTimestamps(): MediaTimestamps {
+  const userTimestamp = new Date().toISOString();
+  const placeholderTimestamp = new Date(
+    new Date(userTimestamp).getTime() + 1
+  ).toISOString();
+  const tempPlaceholderId = `streaming-temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+  return { userTimestamp, placeholderTimestamp, tempPlaceholderId };
+}
+
+/**
+ * 创建媒体生成的乐观消息对（用户消息 + AI占位符）
+ *
+ * @param conversationId 对话ID
+ * @param content 用户消息内容
+ * @param imageUrl 用户上传的图片URL（可选）
+ * @param loadingText 占位符显示文本
+ * @param timestamps 预生成的时间戳数据
+ */
+export function createMediaOptimisticPair(
+  conversationId: string,
+  content: string,
+  imageUrl: string | null,
+  loadingText: string,
+  timestamps: MediaTimestamps
+): { userMessage: Message; placeholder: Message } {
+  const userMessage = createOptimisticUserMessage(content, conversationId, imageUrl);
+  const placeholder = createStreamingPlaceholder(
+    conversationId,
+    timestamps.tempPlaceholderId,
+    loadingText,
+    timestamps.placeholderTimestamp
+  );
+
+  return { userMessage, placeholder };
+}

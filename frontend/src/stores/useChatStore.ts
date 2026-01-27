@@ -75,8 +75,8 @@ const customStorage = createJSONStorage<PersistedState>(() => ({
         delete data.state.messageCache;
       }
       localStorage.setItem(name, JSON.stringify(data));
-    } catch (error) {
-      console.warn('保存消息缓存失败:', error);
+    } catch {
+      // 缓存保存失败，不影响功能
     }
   },
   removeItem: (name) => {

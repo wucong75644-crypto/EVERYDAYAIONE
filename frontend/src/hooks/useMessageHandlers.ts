@@ -11,6 +11,8 @@ import {
   createErrorMessage,
   createOptimisticUserMessage,
   createStreamingPlaceholder,
+  createMediaTimestamps,
+  createMediaOptimisticPair,
 } from '../utils/messageFactory';
 import {
   generateImage,
@@ -276,11 +278,8 @@ export function useMessageHandlers({
     );
     onMessagePending(optimisticUserMessage);
 
-    // ✅ 优化：立即创建 AI 流式占位符（无需等待后端 start 事件）
-    // 这将延迟从 500-800ms 降低到 <50ms
-    if (onStreamStart) {
-      onStreamStart(currentConversationId, selectedModel.id);
-    }
+    // 立即创建流式占位符，减少感知延迟
+    if (onStreamStart) onStreamStart(currentConversationId, selectedModel.id);
 
     try {
       await sendMessageStream(
@@ -294,9 +293,7 @@ export function useMessageHandlers({
         },
         {
           onUserMessage: (userMessage: Message) => onMessagePending(userMessage),
-          onStart: () => {
-            // 占位符已预先创建，onStart 仅用于确认后端已开始处理
-          },
+          onStart: () => {},
           onContent: (text: string) => {
             if (onStreamContent) onStreamContent(text, currentConversationId);
           },
@@ -319,46 +316,30 @@ export function useMessageHandlers({
   ) => {
     const { replaceMediaPlaceholder } = useConversationRuntimeStore.getState();
 
-    // ✅ 优化：预先生成时间戳，用于保持消息顺序
-    const userMessageTimestamp = new Date().toISOString();
-    // 基于用户消息时间计算占位符时间戳（+1ms 确保排序）
-    const placeholderTimestamp = new Date(
-      new Date(userMessageTimestamp).getTime() + 1
-    ).toISOString();
-    // 生成唯一的临时占位符ID
-    const tempPlaceholderId = `streaming-temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    // 预生成时间戳和占位符ID
+    const timestamps = createMediaTimestamps();
+    const { tempPlaceholderId, userTimestamp: userMessageTimestamp, placeholderTimestamp } = timestamps;
 
-    // ✅ 优化：立即显示乐观用户消息（无需等待 API）
-    const optimisticUserMessage = createOptimisticUserMessage(
+    // 立即显示乐观消息对（用户消息 + 占位符）
+    const { userMessage, placeholder } = createMediaOptimisticPair(
+      currentConversationId,
       messageContent,
-      currentConversationId,
-      imageUrl
-    );
-    onMessagePending(optimisticUserMessage);
-
-    // ✅ 优化：立即显示占位符（不等待 API 返回）
-    const placeholder = createStreamingPlaceholder(
-      currentConversationId,
-      tempPlaceholderId,
+      imageUrl,
       '图片生成中...',
-      placeholderTimestamp
+      timestamps
     );
+    onMessagePending(userMessage);
     onMessagePending(placeholder);
 
     try {
-      // ✅ 优化：并行执行 createMessage 和 generateImage
+      // 并行：保存用户消息 + 请求图片生成
       const [, response] = await Promise.all([
-        // 后台保存用户消息（不阻塞 UI）
         createMessage(currentConversationId, {
           content: messageContent,
           role: 'user',
           image_url: imageUrl,
           created_at: userMessageTimestamp,
-        }).then((realUserMessage) => {
-          // 用真实消息替换乐观消息
-          onMessagePending(realUserMessage);
-        }),
-        // 同时请求图片生成
+        }).then((realUserMessage) => onMessagePending(realUserMessage)),
         imageUrl
           ? editImage({
               prompt: messageContent,
@@ -395,7 +376,6 @@ export function useMessageHandlers({
           extractMediaUrl: (r) => ({ image_url: extractImageUrl(r) }),
         });
       } else if (response.status === 'success' && response.image_urls?.length) {
-        // 同步完成：替换占位符为真实消息
         const savedAiMessage = await createMessage(currentConversationId, {
           content: successContent,
           role: 'assistant',
@@ -410,7 +390,6 @@ export function useMessageHandlers({
         throw new Error('图片处理失败');
       }
     } catch (error) {
-      // 错误处理：替换预创建的占位符为错误消息
       const errorMessage = await handleGenerationError(currentConversationId, '图片处理失败', error);
       replaceMediaPlaceholder(currentConversationId, tempPlaceholderId, errorMessage);
       onMessageSent(errorMessage);
@@ -427,46 +406,30 @@ export function useMessageHandlers({
     const { replaceMediaPlaceholder } = useConversationRuntimeStore.getState();
     const isImageToVideo = imageUrl && selectedModel.capabilities.imageToVideo;
 
-    // ✅ 优化：预先生成时间戳，用于保持消息顺序
-    const userMessageTimestamp = new Date().toISOString();
-    // 基于用户消息时间计算占位符时间戳（+1ms 确保排序）
-    const placeholderTimestamp = new Date(
-      new Date(userMessageTimestamp).getTime() + 1
-    ).toISOString();
-    // 生成唯一的临时占位符ID
-    const tempPlaceholderId = `streaming-temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    // 预生成时间戳和占位符ID
+    const timestamps = createMediaTimestamps();
+    const { tempPlaceholderId, userTimestamp: userMessageTimestamp, placeholderTimestamp } = timestamps;
 
-    // ✅ 优化：立即显示乐观用户消息（无需等待 API）
-    const optimisticUserMessage = createOptimisticUserMessage(
+    // 立即显示乐观消息对（用户消息 + 占位符）
+    const { userMessage, placeholder } = createMediaOptimisticPair(
+      currentConversationId,
       messageContent,
-      currentConversationId,
-      isImageToVideo ? imageUrl : null
-    );
-    onMessagePending(optimisticUserMessage);
-
-    // ✅ 优化：立即显示占位符（不等待 API 返回）
-    const placeholder = createStreamingPlaceholder(
-      currentConversationId,
-      tempPlaceholderId,
+      isImageToVideo ? imageUrl : null,
       '视频生成中...',
-      placeholderTimestamp
+      timestamps
     );
+    onMessagePending(userMessage);
     onMessagePending(placeholder);
 
     try {
-      // ✅ 优化：并行执行 createMessage 和 generateVideo
+      // 并行：保存用户消息 + 请求视频生成
       const [, response] = await Promise.all([
-        // 后台保存用户消息（不阻塞 UI）
         createMessage(currentConversationId, {
           content: messageContent,
           role: 'user',
           image_url: isImageToVideo ? imageUrl : null,
           created_at: userMessageTimestamp,
-        }).then((realUserMessage) => {
-          // 用真实消息替换乐观消息
-          onMessagePending(realUserMessage);
-        }),
-        // 同时请求视频生成
+        }).then((realUserMessage) => onMessagePending(realUserMessage)),
         isImageToVideo
           ? generateImageToVideo({
               prompt: messageContent,
@@ -505,7 +468,6 @@ export function useMessageHandlers({
           extractMediaUrl: (r) => ({ video_url: extractVideoUrl(r) }),
         });
       } else if (response.status === 'success' && response.video_url) {
-        // 同步完成：替换占位符为真实消息
         const savedAiMessage = await createMessage(currentConversationId, {
           content: successContent,
           role: 'assistant',
@@ -520,7 +482,6 @@ export function useMessageHandlers({
         throw new Error('视频生成失败');
       }
     } catch (error) {
-      // 错误处理：替换预创建的占位符为错误消息
       const errorMessage = await handleGenerationError(currentConversationId, '视频生成失败', error);
       replaceMediaPlaceholder(currentConversationId, tempPlaceholderId, errorMessage);
       onMessageSent(errorMessage);

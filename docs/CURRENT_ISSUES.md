@@ -16,11 +16,131 @@
 ---
 
 ## 技术债务
-- 无
+- 无（测试覆盖率已补充，迁移回滚脚本已添加）
 
 ---
 
 ## 会话交接记录
+
+### 2026-01-27 技术债务清理（完成）
+
+**完成内容**：
+
+1. ✅ **测试框架搭建**
+   - 创建 `backend/pytest.ini` - pytest 配置
+   - 创建 `backend/tests/conftest.py` - 公共 fixtures 和 mock 工具
+
+2. ✅ **核心服务测试**（5 个服务，共 ~600 行测试代码）
+   - `test_auth_service.py` - 认证服务测试（注册、登录、重置密码）
+   - `test_credit_service.py` - 积分服务测试（扣除、锁定、退回）
+   - `test_message_service.py` - 消息服务测试（创建、查询、删除）
+   - `test_image_service.py` - 图像生成测试（生成、编辑、积分检查）
+   - `test_video_service.py` - 视频生成测试（文生视频、图生视频）
+
+3. ✅ **迁移回滚脚本**（7 个迁移的回滚脚本）
+   - `rollback/001_rollback_add_image_url.sql`
+   - `rollback/002_rollback_add_video_url.sql`
+   - `rollback/003_rollback_model_id_varchar.sql`
+   - `rollback/004_rollback_is_error.sql`
+   - `rollback/005_rollback_video_cost_enum.sql`
+   - `rollback/006_rollback_tasks_table.sql`
+   - `rollback/007_rollback_credit_transactions.sql`
+
+**新增文件清单**：
+| 文件 | 说明 |
+|------|------|
+| `backend/pytest.ini` | pytest 配置文件 |
+| `backend/tests/__init__.py` | 测试模块 |
+| `backend/tests/conftest.py` | 公共 fixtures |
+| `backend/tests/test_auth_service.py` | 认证测试 |
+| `backend/tests/test_credit_service.py` | 积分测试 |
+| `backend/tests/test_message_service.py` | 消息测试 |
+| `backend/tests/test_image_service.py` | 图像测试 |
+| `backend/tests/test_video_service.py` | 视频测试 |
+| `docs/database/migrations/rollback/*.sql` | 7 个回滚脚本 |
+
+**运行测试**：
+```bash
+cd backend
+source venv/bin/activate
+pytest
+```
+
+---
+
+### 2026-01-27 代码质量修复（完成）
+
+**修复内容**：
+
+1. ✅ **删除 .backup 冗余文件**
+   - `backend/services/message_service.py.backup`
+   - `backend/services/adapters/kie/image_adapter.py.backup`
+   - `backend/services/adapters/kie/video_adapter.py.backup`
+
+2. ✅ **重构 useMessageHandlers.ts**（536行 → 497行）
+   - 提取 `createMediaTimestamps()` 到 messageFactory.ts（消除重复的时间戳生成逻辑）
+   - 提取 `createMediaOptimisticPair()` 到 messageFactory.ts（统一乐观消息创建）
+   - 清理冗余注释
+
+**修改文件清单**：
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `frontend/src/utils/messageFactory.ts` | 修改 | 新增 createMediaTimestamps、createMediaOptimisticPair |
+| `frontend/src/hooks/useMessageHandlers.ts` | 修改 | 使用新工厂函数，清理注释（536→497行） |
+| `docs/FUNCTION_INDEX.md` | 修改 | 添加新增函数文档 |
+
+---
+
+### 2026-01-27 UI 动画优化（完成）
+
+**当前阶段**：UI/UX 体验优化 - 弹窗和下拉菜单动画效果
+
+**已完成任务**：
+
+1. ✅ **删除按钮修复**
+   - 修复删除按钮悬停高亮显示不完整问题
+   - 悬停颜色改为浅灰色（`hover:bg-gray-100`）
+
+2. ✅ **弹窗打开动画**（参考 shadcn/ui、Radix UI）
+   - `DeleteMessageModal.tsx` - 删除确认弹窗动画
+   - `SettingsModal.tsx` - 个人设置弹窗动画
+   - `ImagePreviewModal.tsx` - 图片预览弹窗动画
+   - 动画效果：scale 0.96→1 + translateY 8px→0 + 淡入
+   - 使用 cubic-bezier(0.32, 0.72, 0, 1) 缓动函数
+
+3. ✅ **下拉菜单动画**
+   - `ModelSelector.tsx` - 模型选择器下拉动画
+   - `AdvancedSettingsMenu.tsx` - 高级设置菜单动画
+   - `UploadMenu.tsx` - 上传菜单动画
+   - 动画效果：scale 0.96→1 + translateY 4px→0 + 淡入（150ms）
+
+4. ✅ **弹窗关闭动画**
+   - `SettingsModal.tsx` - 添加 isClosing 状态和退出动画
+   - `ImagePreviewModal.tsx` - 添加 isClosing 状态和退出动画
+   - 退出动画：反向播放进入动画（150ms）
+
+5. ✅ **图片预览按钮修复**
+   - 修复图片预览模式下工具栏按钮无法点击问题
+   - 添加 `z-10` 到工具栏和底部提示
+
+**修改文件清单**：
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `MessageItem.tsx` | 修改 | 删除按钮样式修复 |
+| `DeleteMessageModal.tsx` | 修改 | 添加打开动画 |
+| `ModelSelector.tsx` | 修改 | 添加下拉动画 |
+| `AdvancedSettingsMenu.tsx` | 修改 | 添加下拉动画 |
+| `UploadMenu.tsx` | 修改 | 添加下拉动画 |
+| `SettingsModal.tsx` | 修改 | 添加打开/关闭动画 |
+| `ImagePreviewModal.tsx` | 修改 | 添加打开/关闭动画、修复按钮点击 |
+
+**代码质量检查**：
+- ✅ `MessageItem.tsx` 已拆分为 211 行（从 511 行优化）
+- ✅ 新增 `MessageMedia.tsx` 189 行（媒体渲染）
+- ✅ 新增 `MessageActions.tsx` 235 行（操作工具栏）
+- ✅ 所有文件均符合 500 行限制
+
+---
 
 ### 2026-01-23 图像生成功能实现（阶段 C 完成）
 
