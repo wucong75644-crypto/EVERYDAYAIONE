@@ -269,8 +269,10 @@
 | `ContextMenu` | `frontend/src/components/chat/ContextMenu.tsx` | 右键菜单组件 |
 | `DeleteConfirmModal` | `frontend/src/components/chat/DeleteConfirmModal.tsx` | 对话删除确认弹框 |
 | `MessageArea` | `frontend/src/components/chat/MessageArea.tsx` | 消息区域，显示对话消息 |
-| `MessageItem` | `frontend/src/components/chat/MessageItem.tsx` | 单条消息，支持用户/AI不同样式 |
-| `MessageToolbar` | `frontend/src/components/chat/MessageToolbar.tsx` | 消息工具栏 |
+| `MessageItem` | `frontend/src/components/chat/MessageItem.tsx` | 单条消息（组合 MessageMedia 和 MessageActions） |
+| `MessageMedia` | `frontend/src/components/chat/MessageMedia.tsx` | 消息媒体渲染（图片、视频、懒加载、下载） |
+| `MessageActions` | `frontend/src/components/chat/MessageActions.tsx` | 消息操作工具栏（复制、朗读、反馈、分享、删除） |
+| `MessageToolbar` | `frontend/src/components/chat/MessageToolbar.tsx` | 消息工具栏（旧版） |
 | `DeleteMessageModal` | `frontend/src/components/chat/DeleteMessageModal.tsx` | 删除消息确认弹框 |
 | `InputArea` | `frontend/src/components/chat/InputArea.tsx` | 输入区域 |
 | `InputControls` | `frontend/src/components/chat/InputControls.tsx` | 输入控制（文本框、按钮、上传） |
@@ -278,7 +280,9 @@
 | `AdvancedSettingsMenu` | `frontend/src/components/chat/AdvancedSettingsMenu.tsx` | 高级设置菜单 |
 | `SettingsModal` | `frontend/src/components/chat/SettingsModal.tsx` | 个人设置弹框 |
 | `UploadMenu` | `frontend/src/components/chat/UploadMenu.tsx` | 上传菜单 |
-| `ImagePreview` | `frontend/src/components/chat/ImagePreview.tsx` | 图片预览 |
+| `ImagePreview` | `frontend/src/components/chat/ImagePreview.tsx` | 图片预览（输入区小图预览） |
+| `ImagePreviewModal` | `frontend/src/components/chat/ImagePreviewModal.tsx` | 图片预览弹窗（全屏缩放下载） |
+| `MediaPlaceholder` | `frontend/src/components/chat/MediaPlaceholder.tsx` | 媒体占位符（加载中状态） |
 | `AudioPreview` | `frontend/src/components/chat/AudioPreview.tsx` | 音频预览 |
 | `AudioRecorder` | `frontend/src/components/chat/AudioRecorder.tsx` | 录音组件 |
 | `ConflictAlert` | `frontend/src/components/chat/ConflictAlert.tsx` | 模型冲突提示 |
@@ -297,6 +301,8 @@
 | `checkModelConflict` | `frontend/src/utils/modelConflict.ts` | 检查模型冲突 | model, hasImage, hasVideo | ConflictResult |
 | `createTempMessage` | `frontend/src/utils/messageFactory.ts` | 创建临时消息 | content, role | Message |
 | `createStreamingMessage` | `frontend/src/utils/messageFactory.ts` | 创建流式消息占位 | - | Message |
+| `createMediaTimestamps` | `frontend/src/utils/messageFactory.ts` | 生成媒体消息时间戳和占位符ID | - | MediaTimestamps |
+| `createMediaOptimisticPair` | `frontend/src/utils/messageFactory.ts` | 创建媒体生成乐观消息对 | conversationId, content, imageUrl, loadingText, timestamps | { userMessage, placeholder } |
 
 ### 后端服务辅助模块 (Backend Service Helpers)
 
@@ -346,7 +352,7 @@
 
 ## 统计信息
 - **总函数数**：约 130 个（规划中 + 已实现）
-- **已实现组件**：22 个聊天组件
+- **已实现组件**：26 个聊天组件
 - **已实现 Hooks**：9 个自定义 Hooks
 - **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息服务、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理
 - **最后更新**：2026-01-27（添加 Redis 基础设施模块、任务限制服务模块、更新积分管理模块）

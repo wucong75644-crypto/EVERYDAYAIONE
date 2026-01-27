@@ -67,7 +67,9 @@ async def get_current_user(
     Raises:
         AuthenticationError: 用户不存在
     """
-    response = db.table("users").select("*").eq("id", user_id).single().execute()
+    response = db.table("users").select(
+        "id, phone, nickname, avatar_url, role, credits, status, created_at"
+    ).eq("id", user_id).single().execute()
 
     if not response.data:
         raise AuthenticationError("用户不存在")

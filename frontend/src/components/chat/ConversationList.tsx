@@ -88,8 +88,8 @@ export default function ConversationList({
       setConversations(response.conversations);
       try {
         localStorage.setItem(CONVERSATIONS_CACHE_KEY, JSON.stringify(response.conversations));
-      } catch (error) {
-        console.warn('保存对话列表缓存失败:', error);
+      } catch {
+        // 缓存保存失败，不影响功能
       }
       if (isInitial && !hasAutoSelected.current && response.conversations.length > 0) {
         hasAutoSelected.current = true;
@@ -174,8 +174,8 @@ export default function ConversationList({
       setConversations(updatedConversations);
       try {
         localStorage.setItem(CONVERSATIONS_CACHE_KEY, JSON.stringify(updatedConversations));
-      } catch (error) {
-        console.warn('更新缓存失败:', error);
+      } catch {
+        // 缓存更新失败，不影响功能
       }
       onDelete?.(deleteConfirm.id);
     } catch (error) {
@@ -203,8 +203,8 @@ export default function ConversationList({
     setConversations(updatedConversations);
     try {
       localStorage.setItem(CONVERSATIONS_CACHE_KEY, JSON.stringify(updatedConversations));
-    } catch (error) {
-      console.warn('更新缓存失败:', error);
+    } catch {
+      // 缓存更新失败，不影响功能
     }
     onRename?.(oldId, newTitle);
     setRenameId(null);

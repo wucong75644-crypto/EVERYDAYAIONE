@@ -97,7 +97,8 @@ class CreditService:
         task_id: str,
         user_id: str,
         amount: int,
-        reason: str = ""
+        reason: str = "",
+        _retry_count: int = 0,
     ) -> str:
         """
         预扣积分（锁定）
@@ -107,13 +108,15 @@ class CreditService:
             user_id: 用户ID
             amount: 锁定数量
             reason: 锁定原因
+            _retry_count: 内部参数，重试计数（请勿外部传入）
 
         Returns:
             transaction_id
 
         Raises:
-            InsufficientCreditsError: 余额不足
+            InsufficientCreditsError: 余额不足或系统繁忙
         """
+        MAX_RETRIES = 3
         transaction_id = str(uuid4())
 
         # 1. 检查余额
@@ -137,9 +140,24 @@ class CreditService:
         }).eq("id", user_id).eq("credits", current_credits).execute()
 
         if not update_result.data:
-            # 乐观锁冲突，重试一次
-            logger.warning("积分锁定乐观锁冲突，重试", user_id=user_id)
-            return await self.lock_credits(task_id, user_id, amount, reason)
+            # 乐观锁冲突，有限重试
+            if _retry_count >= MAX_RETRIES:
+                logger.error(
+                    "积分锁定失败：乐观锁冲突超过最大重试次数",
+                    user_id=user_id,
+                    retry_count=_retry_count
+                )
+                raise InsufficientCreditsError("系统繁忙，请稍后重试")
+
+            logger.warning(
+                "积分锁定乐观锁冲突，重试",
+                user_id=user_id,
+                retry_count=_retry_count + 1
+            )
+            return await self.lock_credits(
+                task_id, user_id, amount, reason,
+                _retry_count=_retry_count + 1
+            )
 
         # 3. 记录事务
         await self.db.table("credit_transactions").insert({
