@@ -41,7 +41,9 @@ def get_message_stream_service(db: Database) -> MessageStreamService:
 
 
 @router.post("/create", response_model=MessageResponse, summary="创建消息")
+@limiter.limit("60/minute")
 async def create_message(
+    http_request: Request,
     conversation_id: str,
     request: MessageCreate,
     current_user: CurrentUser,

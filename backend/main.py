@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from loguru import logger
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -19,6 +20,47 @@ from core.config import get_settings
 from core.exceptions import AppException
 from core.limiter import limiter
 from core.redis import RedisClient
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """添加安全响应头中间件"""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+
+        # 防止点击劫持
+        response.headers["X-Frame-Options"] = "DENY"
+
+        # 防止 MIME 类型嗅探
+        response.headers["X-Content-Type-Options"] = "nosniff"
+
+        # XSS 保护
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+
+        # 强制 HTTPS（仅生产环境）
+        settings = get_settings()
+        if not settings.app_debug:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        # Content Security Policy
+        csp_policy = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: https:; "
+            "font-src 'self'; "
+            "connect-src 'self' https://qcaatwmlzqqnzfjdzlzm.supabase.co https://api.kie.ai; "
+            "frame-ancestors 'none';"
+        )
+        response.headers["Content-Security-Policy"] = csp_policy
+
+        # 推荐策略
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+        # 权限策略
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+
+        return response
 
 
 @asynccontextmanager
@@ -64,13 +106,25 @@ def create_app() -> FastAPI:
     )
 
     # CORS 配置
+    allowed_origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",  # Vite 默认端口
+    ] if settings.app_debug else [
+        "https://everydayai.com",
+        "https://www.everydayai.com",
+    ]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"] if settings.app_debug else ["https://everydayai.com"],
+        allow_origins=allowed_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
     )
+
+    # 安全响应头
+    app.add_middleware(SecurityHeadersMiddleware)
 
     # 限流配置
     app.state.limiter = limiter
