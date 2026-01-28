@@ -137,11 +137,11 @@ export default memo(function MessageItem({
   return (
     <div className={`flex mb-12 ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className="relative max-w-[80%]"
+        className={`relative max-w-[80%] flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
-        {/* 消息气泡 */}
+        {/* 消息气泡（仅文字内容） */}
         <div
           className={`rounded-2xl px-5 py-3 ${
             isUser
@@ -184,19 +184,19 @@ export default memo(function MessageItem({
               </button>
             </div>
           )}
-
-          {/* 媒体内容（含占位符） */}
-          <MessageMedia
-            imageUrl={message.image_url}
-            videoUrl={message.video_url}
-            messageId={message.id}
-            isUser={isUser}
-            onImageClick={() => setShowImagePreview(true)}
-            onMediaLoaded={onMediaLoaded}
-            isGenerating={!!mediaPlaceholderInfo}
-            generatingType={mediaPlaceholderInfo?.type}
-          />
         </div>
+
+        {/* 媒体内容（独立于气泡，固定尺寸不受文字影响） */}
+        <MessageMedia
+          imageUrl={message.image_url}
+          videoUrl={message.video_url}
+          messageId={message.id}
+          isUser={isUser}
+          onImageClick={() => setShowImagePreview(true)}
+          onMediaLoaded={onMediaLoaded}
+          isGenerating={!!mediaPlaceholderInfo}
+          generatingType={mediaPlaceholderInfo?.type}
+        />
 
         {/* 操作工具栏 */}
         <MessageActions
