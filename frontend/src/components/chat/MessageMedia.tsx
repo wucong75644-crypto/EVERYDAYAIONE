@@ -6,10 +6,13 @@
  * 内置占位符，实现平滑淡入效果
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { Loader2, Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { type AspectRatio } from '../../services/image';
+import { type VideoAspectRatio } from '../../services/video';
+import { getImagePlaceholderSize, getVideoPlaceholderSize } from '../../utils/settingsStorage';
 
 interface MessageMediaProps {
   /** 图片 URL */
@@ -28,6 +31,10 @@ interface MessageMediaProps {
   isGenerating?: boolean;
   /** 生成类型（image/video） */
   generatingType?: 'image' | 'video';
+  /** 图片宽高比（用于占位符动态尺寸） */
+  imageAspectRatio?: AspectRatio;
+  /** 视频宽高比（用于占位符动态尺寸） */
+  videoAspectRatio?: VideoAspectRatio;
 }
 
 export default function MessageMedia({
@@ -39,13 +46,23 @@ export default function MessageMedia({
   onMediaLoaded,
   isGenerating = false,
   generatingType = 'image',
+  imageAspectRatio = '1:1',
+  videoAspectRatio = 'landscape',
 }: MessageMediaProps) {
   // 图片下载状态
   const [isDownloading, setIsDownloading] = useState(false);
   // 图片加载完成状态
   const [imageLoaded, setImageLoaded] = useState(false);
-  // 视频加载完成状态
-  const [videoLoaded, setVideoLoaded] = useState(false);
+
+  // 根据高级设置计算占位符尺寸（仅用于生成中的占位符）
+  const imagePlaceholderSize = useMemo(
+    () => getImagePlaceholderSize(imageAspectRatio),
+    [imageAspectRatio]
+  );
+  const videoPlaceholderSize = useMemo(
+    () => getVideoPlaceholderSize(videoAspectRatio),
+    [videoAspectRatio]
+  );
 
   // 当 imageUrl 变化时，重置加载状态
   useEffect(() => {
@@ -53,13 +70,6 @@ export default function MessageMedia({
       setImageLoaded(false);
     }
   }, [imageUrl]);
-
-  // 当 videoUrl 变化时，重置加载状态
-  useEffect(() => {
-    if (videoUrl) {
-      setVideoLoaded(false);
-    }
-  }, [videoUrl]);
 
   // 懒加载：监听元素是否进入可视区域
   const { ref: lazyRef, inView } = useInView({
@@ -99,8 +109,6 @@ export default function MessageMedia({
 
   // 是否显示图片占位符：正在生成图片 或 图片URL存在但未加载完成
   const showImagePlaceholder = (isGenerating && generatingType === 'image') || (imageUrl && !imageLoaded);
-  // 是否显示视频占位符：正在生成视频 或 视频URL存在但未加载完成
-  const showVideoPlaceholder = (isGenerating && generatingType === 'video') || (videoUrl && !videoLoaded);
 
   // 没有媒体内容且不在生成中时不渲染
   if (!imageUrl && !videoUrl && !isGenerating) return null;
@@ -109,10 +117,20 @@ export default function MessageMedia({
     <>
       {/* 图片渲染（含占位符） */}
       {(imageUrl || (isGenerating && generatingType === 'image')) && (
-        <div className="mt-4 relative w-[180px]" ref={lazyRef}>
+        <div
+          className="mt-4 relative"
+          style={{ width: imagePlaceholderSize.width }}
+          ref={lazyRef}
+        >
           {/* 占位符 - 生成中或图片加载中显示 */}
           {showImagePlaceholder && (
-            <div className="rounded-xl w-[180px] h-[180px] bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm">
+            <div
+              className="rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm"
+              style={{
+                width: imagePlaceholderSize.width,
+                height: imagePlaceholderSize.height,
+              }}
+            >
               <ImageIcon className="w-10 h-10 text-gray-300 dark:text-gray-500" />
             </div>
           )}
@@ -128,7 +146,8 @@ export default function MessageMedia({
               <img
                 src={imageUrl}
                 alt={isUser ? '上传的图片' : '生成的图片'}
-                className="rounded-xl w-[180px] shadow-sm"
+                className="rounded-xl shadow-sm"
+                style={{ width: imagePlaceholderSize.width }}
                 onLoad={() => {
                   setImageLoaded(true);
                   onMediaLoaded?.();
@@ -159,34 +178,36 @@ export default function MessageMedia({
 
       {/* 视频渲染（含占位符） */}
       {(videoUrl || (isGenerating && generatingType === 'video')) && (
-        <div className="mt-4 relative w-[320px]" ref={!imageUrl ? lazyRef : undefined}>
-          {/* 视频占位符 - 生成中或视频加载中显示 */}
-          {showVideoPlaceholder && (
-            <div className="rounded-xl w-[320px] h-[180px] bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm">
+        <div
+          className="mt-4 relative"
+          style={{ width: videoPlaceholderSize.width }}
+          ref={!imageUrl ? lazyRef : undefined}
+        >
+          {/* 视频占位符 - 生成中显示（根据用户设置的比例） */}
+          {isGenerating && generatingType === 'video' && !videoUrl && (
+            <div
+              className="rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm"
+              style={{
+                width: videoPlaceholderSize.width,
+                height: videoPlaceholderSize.height,
+              }}
+            >
               <VideoIcon className="w-10 h-10 text-gray-300 dark:text-gray-500" />
             </div>
           )}
 
-          {/* 视频 - 加载完成后显示 */}
+          {/* 视频 - 固定宽度，与占位符一致 */}
           {videoUrl && inView && (
-            <div
-              className={`transition-opacity duration-500 ease-out ${
-                videoLoaded ? 'opacity-100' : 'opacity-0 absolute inset-0'
-              }`}
+            <video
+              src={videoUrl}
+              controls
+              className="rounded-xl shadow-sm"
+              style={{ width: videoPlaceholderSize.width }}
+              preload="metadata"
+              onLoadedMetadata={() => onMediaLoaded?.()}
             >
-              <video
-                src={videoUrl}
-                controls
-                className="rounded-xl w-[320px] shadow-sm"
-                preload="metadata"
-                onLoadedMetadata={() => {
-                  setVideoLoaded(true);
-                  onMediaLoaded?.();
-                }}
-              >
-                您的浏览器不支持视频播放
-              </video>
-            </div>
+              您的浏览器不支持视频播放
+            </video>
           )}
         </div>
       )}
