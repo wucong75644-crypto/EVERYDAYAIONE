@@ -159,6 +159,14 @@ class VideoService(BaseGenerationService):
         Returns:
             任务状态
         """
+        # 检查 KIE API Key 是否配置
+        if not self.settings.kie_api_key:
+            raise AppException(
+                code="SERVICE_NOT_CONFIGURED",
+                message="视频服务未配置，请联系管理员",
+                status_code=503,
+            )
+
         try:
             async with KieClient(self.settings.kie_api_key) as client:
                 # 使用基础模型查询（任务查询不需要特定模型）
@@ -226,6 +234,14 @@ class VideoService(BaseGenerationService):
         Returns:
             生成结果
         """
+        # 0. 检查 KIE API Key 是否配置
+        if not self.settings.kie_api_key:
+            raise AppException(
+                code="SERVICE_NOT_CONFIGURED",
+                message="视频生成服务未配置，请联系管理员",
+                status_code=503,
+            )
+
         # 1. 获取用户并检查积分
         user = await self._get_user(user_id)
         duration = int(n_frames)

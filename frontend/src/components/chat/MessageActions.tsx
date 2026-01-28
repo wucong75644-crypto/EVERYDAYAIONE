@@ -19,6 +19,8 @@ interface MessageActionsProps {
   isErrorMessage: boolean;
   /** 是否正在重新生成 */
   isRegenerating: boolean;
+  /** 是否正在生成中（图片/视频占位符状态） */
+  isGenerating?: boolean;
   /** 工具栏是否可见 */
   visible: boolean;
   /** 重新生成回调 */
@@ -37,6 +39,7 @@ export default function MessageActions({
   isUser,
   isErrorMessage,
   isRegenerating,
+  isGenerating = false,
   visible,
   onRegenerate,
   onDeleteClick,
@@ -164,13 +167,13 @@ export default function MessageActions({
         </>
       )}
 
-      {/* 重新生成/重试按钮（所有 AI 消息显示） */}
+      {/* 重新生成/重试按钮（所有 AI 消息显示，生成中禁用） */}
       {!isUser && onRegenerate && (
         <button
           onClick={() => onRegenerate(messageId)}
-          disabled={isRegenerating}
+          disabled={isRegenerating || isGenerating}
           className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          title={isRegenerating ? '处理中...' : isErrorMessage ? '重试' : '重新生成'}
+          title={isGenerating ? '生成中...' : isRegenerating ? '处理中...' : isErrorMessage ? '重试' : '重新生成'}
         >
           {isRegenerating ? (
             <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">

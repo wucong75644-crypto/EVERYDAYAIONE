@@ -49,6 +49,14 @@ class ImageService(BaseGenerationService):
             InsufficientCreditsError: 积分不足
             AppException: 生成失败
         """
+        # 0. 检查 KIE API Key 是否配置
+        if not self.settings.kie_api_key:
+            raise AppException(
+                code="SERVICE_NOT_CONFIGURED",
+                message="图像生成服务未配置，请联系管理员",
+                status_code=503,
+            )
+
         # 1. 获取用户并检查积分
         user = await self._get_user(user_id)
         estimated_credits = self._estimate_credits(model, resolution)
@@ -127,6 +135,14 @@ class ImageService(BaseGenerationService):
         Returns:
             编辑结果
         """
+        # 0. 检查 KIE API Key 是否配置
+        if not self.settings.kie_api_key:
+            raise AppException(
+                code="SERVICE_NOT_CONFIGURED",
+                message="图像编辑服务未配置，请联系管理员",
+                status_code=503,
+            )
+
         model = "google/nano-banana-edit"
 
         # 1. 获取用户并检查积分
@@ -191,6 +207,14 @@ class ImageService(BaseGenerationService):
         Returns:
             任务状态
         """
+        # 检查 KIE API Key 是否配置
+        if not self.settings.kie_api_key:
+            raise AppException(
+                code="SERVICE_NOT_CONFIGURED",
+                message="图像服务未配置，请联系管理员",
+                status_code=503,
+            )
+
         try:
             async with KieClient(self.settings.kie_api_key) as client:
                 # 使用基础模型查询（任务查询不需要特定模型）

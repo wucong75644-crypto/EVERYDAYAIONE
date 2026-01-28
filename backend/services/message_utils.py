@@ -29,6 +29,7 @@ def format_message(message: dict) -> dict:
         "video_url": message.get("video_url"),
         "credits_cost": message.get("credits_cost", 0),
         "is_error": message.get("is_error", False),
+        "generation_params": message.get("generation_params"),
     }
 
 

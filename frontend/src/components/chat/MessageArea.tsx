@@ -48,6 +48,8 @@ export default function MessageArea({
     setUserScrolledAway,
     setHasNewMessages,
     scrollToBottom,
+    scrollToBottomDebounced,
+    scrollToElement,
     handleScroll,
     markNewMessages,
     resetScrollState,
@@ -74,6 +76,10 @@ export default function MessageArea({
   const setScrollPosition = useChatStore((state) => state.setScrollPosition);
   const getScrollPosition = useChatStore((state) => state.getScrollPosition);
   const clearScrollPosition = useChatStore((state) => state.clearScrollPosition);
+
+  // 未读消息状态（用于切换对话时决定滚动行为）
+  const hasUnreadMessages = useChatStore((state) => state.hasUnreadMessages);
+  const clearConversationUnread = useChatStore((state) => state.clearConversationUnread);
 
   // 获取运行时状态（乐观更新消息）
   // 注意：直接从 states Map 获取，避免 getState() 返回新对象导致无限循环
@@ -106,16 +112,31 @@ export default function MessageArea({
         return !persistedUserContents.has(m.content);
       }
 
-      // streaming- AI消息需要区分聊天流式和媒体任务
+      // streaming- AI消息需要区分聊天流式和媒体任务占位符
       if (m.id.startsWith('streaming-')) {
-        // 检查是否是当前聊天流式消息
+        // 检查是否是当前正在进行的聊天流式消息
         if (m.id === runtimeState.streamingMessageId) {
           // 聊天流式消息：显示（正在生成中）
           return true;
         }
-        // 媒体任务占位符（streaming-${taskId}）：始终显示
-        // 它们会在轮询完成后被 replaceMediaPlaceholder 替换为真实消息
-        return true;
+
+        // 检查是否是媒体任务占位符（图片/视频生成中）
+        const isMediaPlaceholder = m.content.includes('图片生成中') ||
+          m.content.includes('视频生成中') ||
+          m.content.includes('正在生成图片') ||
+          m.content.includes('正在生成视频');
+
+        if (isMediaPlaceholder) {
+          // 媒体任务占位符：始终显示（会被 replaceMediaPlaceholder 替换为真实消息）
+          return true;
+        }
+
+        // 已完成的聊天流式消息：检查 messages 中是否已有相同内容的 AI 消息
+        // 如果有，说明真实消息已到达，过滤掉流式消息；否则继续显示
+        const hasMatchingPersistedMessage = messages.some(
+          pm => pm.role === 'assistant' && pm.content === m.content
+        );
+        return !hasMatchingPersistedMessage;
       }
 
       // 其他消息：显示
@@ -193,18 +214,28 @@ export default function MessageArea({
         const container = containerRef.current;
         if (!container) return;
 
-        const savedPosition = getScrollPosition(conversationId);
-        if (savedPosition !== null) {
-          // 恢复到之前的滚动位置（边界检查）
-          const maxScroll = container.scrollHeight - container.clientHeight;
-          container.scrollTop = Math.min(savedPosition, Math.max(0, maxScroll));
-        } else {
-          // 没有保存的位置，直接定位到底部（无动画）
+        // 检查是否有未读消息（任务完成、后台刷新等）
+        const hasUnread = hasUnreadMessages(conversationId);
+        if (hasUnread) {
+          // 有新消息：滚动到底部显示最新内容
           container.scrollTop = container.scrollHeight;
+          clearConversationUnread(conversationId);
+        } else {
+          // 无新消息：恢复之前的滚动位置或滚动到底部
+          const savedPosition = getScrollPosition(conversationId);
+          if (savedPosition !== null) {
+            const maxScroll = container.scrollHeight - container.clientHeight;
+            container.scrollTop = Math.min(savedPosition, Math.max(0, maxScroll));
+          } else {
+            container.scrollTop = container.scrollHeight;
+          }
         }
       });
     }
-  }, [loading, mergedMessages.length, conversationId, getScrollPosition]);
+  }, [loading, mergedMessages.length, conversationId, getScrollPosition, hasUnreadMessages, clearConversationUnread]);
+
+  // 长消息检测阈值（消息高度占可视区域比例）
+  const LONG_MESSAGE_RATIO = 0.8;
 
   // 新消息添加后自动滚动（发送消息、生成完成等场景）
   const prevMessageCountRef = useRef(0);
@@ -214,15 +245,49 @@ export default function MessageArea({
 
     // 仅当消息数量增加时触发（避免删除消息时滚动）
     // 添加 hasScrolledForConversationRef 检查，确保初始定位完成后才触发，避免覆盖恢复的滚动位置
-    if (currentCount > prevCount && prevCount > 0 && !userScrolledAway && hasScrolledForConversationRef.current) {
-      // 使用 requestAnimationFrame 确保 DOM 已更新
-      requestAnimationFrame(() => {
-        scrollToBottomRef.current(true); // 平滑滚动
-      });
+    if (currentCount > prevCount && prevCount > 0 && hasScrolledForConversationRef.current) {
+      // 检测是否是用户发送的消息（场景1：任意位置发送消息后自动滚动到底部）
+      const newMessages = mergedMessages.slice(prevCount);
+      const hasUserMessage = newMessages.some(
+        (m) => m.role === 'user' || m.id.startsWith('temp-')
+      );
+
+      // 用户发送消息时，强制重置滚动状态
+      if (hasUserMessage) {
+        setUserScrolledAway(false);
+      }
+
+      // 只有用户未滚走时才自动滚动
+      if (hasUserMessage || !userScrolledAway) {
+        // 使用 requestAnimationFrame 确保 DOM 已更新后检测消息高度
+        requestAnimationFrame(() => {
+          const container = containerRef.current;
+          if (!container) return;
+
+          // 场景3：检测最后一条消息是否为长消息
+          const messageElements = container.querySelectorAll('[data-message-id]');
+          const lastMessageElement = messageElements[messageElements.length - 1] as HTMLElement | undefined;
+
+          if (lastMessageElement) {
+            const messageHeight = lastMessageElement.offsetHeight;
+            const containerHeight = container.clientHeight;
+
+            // 长消息：高度超过可视区域的 80%，滚动到消息顶部
+            if (messageHeight > containerHeight * LONG_MESSAGE_RATIO) {
+              scrollToElement(lastMessageElement, 'top');
+              return;
+            }
+          }
+
+          // 场景2：连续发送使用防抖滚动，避免频繁跳动
+          // 普通消息或短消息：使用防抖滚动到底部
+          scrollToBottomDebounced(true);
+        });
+      }
     }
 
     prevMessageCountRef.current = currentCount;
-  }, [mergedMessages.length, userScrolledAway]);
+  }, [mergedMessages, userScrolledAway, setUserScrolledAway, scrollToBottomDebounced, scrollToElement]);
 
   // 流式内容更新时自动滚动（AI 输出时持续跟随）
   const prevStreamingContentLengthRef = useRef(0);
@@ -250,6 +315,43 @@ export default function MessageArea({
       prevStreamingContentLengthRef.current = 0;
     }
   }, [runtimeState?.streamingMessageId, runtimeState?.optimisticMessages, userScrolledAway]);
+
+  // 媒体内容替换时自动滚动（错误消息、视频生成完成等场景）
+  // 这些场景不会改变消息数量，而是替换占位符内容（ID 会从 streaming-xxx 变成真实 ID）
+  const prevLastMessageStateRef = useRef<{
+    hasMedia: boolean;
+    isError: boolean;
+    isPlaceholder: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (!hasScrolledForConversationRef.current || mergedMessages.length === 0) {
+      prevLastMessageStateRef.current = null;
+      return;
+    }
+
+    const lastMessage = mergedMessages[mergedMessages.length - 1];
+    const isPlaceholder = lastMessage.id.startsWith('streaming-') &&
+      (lastMessage.content.includes('生成中') || lastMessage.content.includes('正在'));
+    const currentState = {
+      hasMedia: !!(lastMessage.image_url || lastMessage.video_url),
+      isError: lastMessage.is_error === true,
+      isPlaceholder,
+    };
+
+    const prevState = prevLastMessageStateRef.current;
+
+    // 检测占位符被替换为真实内容的情况（ID 会变化，所以不检查 ID）
+    // 条件：上一状态是占位符，当前状态有媒体或错误
+    if (prevState && prevState.isPlaceholder && !currentState.isPlaceholder) {
+      if (currentState.hasMedia || currentState.isError) {
+        requestAnimationFrame(() => {
+          scrollToBottomRef.current(true); // 平滑滚动
+        });
+      }
+    }
+
+    prevLastMessageStateRef.current = currentState;
+  }, [mergedMessages]);
 
   // 处理删除消息
   const handleDelete = useCallback(async (messageId: string) => {
@@ -348,13 +450,19 @@ export default function MessageArea({
 
     try {
       // 根据原始 AI 消息类型判断使用哪种重新生成策略
-      const isImageMessage = !!targetMessage.image_url;
-      const isVideoMessage = !!targetMessage.video_url;
+      // 优先检查 generation_params（失败消息没有 url，但有 params）
+      const hasImageUrl = !!targetMessage.image_url;
+      const hasVideoUrl = !!targetMessage.video_url;
+      const hasImageParams = !!targetMessage.generation_params?.image;
+      const hasVideoParams = !!targetMessage.generation_params?.video;
+
+      const isImageMessage = hasImageUrl || hasImageParams;
+      const isVideoMessage = hasVideoUrl || hasVideoParams;
 
       if (isImageMessage) {
-        await regenerateImageMessage(userMessage);
+        await regenerateImageMessage(userMessage, targetMessage.generation_params);
       } else if (isVideoMessage) {
-        await regenerateVideoMessage(userMessage);
+        await regenerateVideoMessage(userMessage, targetMessage.generation_params);
       } else if (targetMessage.is_error === true) {
         await regenerateFailedMessage(messageId, targetMessage);
       } else {

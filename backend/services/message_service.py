@@ -39,6 +39,7 @@ class MessageService:
         video_url: Optional[str] = None,
         is_error: bool = False,
         created_at: Optional[datetime] = None,
+        generation_params: Optional[Dict[str, Any]] = None,
     ) -> dict:
         """
         创建消息
@@ -52,6 +53,7 @@ class MessageService:
             image_url: 图片 URL（可选）
             video_url: 视频 URL（可选）
             is_error: 是否为错误消息
+            generation_params: 生成参数（图片/视频生成时保存，用于重新生成）
 
         Returns:
             消息信息
@@ -76,6 +78,8 @@ class MessageService:
             message_data["video_url"] = video_url
         if created_at:
             message_data["created_at"] = created_at.isoformat()
+        if generation_params:
+            message_data["generation_params"] = generation_params
 
         result = self.db.table("messages").insert(message_data).execute()
 

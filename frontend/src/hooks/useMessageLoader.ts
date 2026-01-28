@@ -157,6 +157,8 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0, onNewMess
             // 通知有新消息（由 useScrollManager 处理显示逻辑）
             if (cached.messages && freshMessages.length > cached.messages.length) {
               onNewMessages?.();
+              // 标记对话有新消息（用于切换对话时决定滚动行为）
+              useChatStore.getState().markConversationUnread(conversationId);
             }
           }
         }

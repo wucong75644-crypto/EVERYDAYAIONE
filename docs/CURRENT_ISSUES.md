@@ -22,6 +22,51 @@
 
 ## 会话交接记录
 
+### 2026-01-28 重新生成参数继承功能（完成）
+
+**功能描述**：
+图片/视频重新生成时，使用原始任务的生成参数（模型、宽高比、分辨率等），而不是当前用户设置。
+
+**实现内容**：
+
+1. **数据库迁移**（[008_add_generation_params_to_messages.sql](database/migrations/008_add_generation_params_to_messages.sql)）
+   - 添加 `generation_params` JSONB 字段到 messages 表
+
+2. **后端修改**：
+   - `schemas/message.py`: MessageCreate 和 MessageResponse 添加 `generation_params` 字段
+   - `services/message_utils.py`: format_message 支持 generation_params
+   - `services/message_service.py`: create_message 方法支持保存 generation_params
+   - `api/routes/message.py`: 创建消息 API 支持 generation_params
+
+3. **前端修改**：
+   - `services/message.ts`: 添加 GenerationParams 类型定义，Message 和 CreateMessageRequest 添加字段
+   - `hooks/useMessageHandlers.ts`: 首次生成图片/视频时保存 generation_params
+   - `hooks/useRegenerateHandlers.ts`: 重新生成时优先读取原始 generation_params
+   - `components/chat/MessageArea.tsx`: 调用重新生成时传递 generation_params
+
+**参数结构**：
+```typescript
+interface GenerationParams {
+  image?: {
+    aspectRatio: AspectRatio;
+    resolution: ImageResolution;
+    outputFormat: ImageOutputFormat;
+    model: string;
+  };
+  video?: {
+    frames: VideoFrames;
+    aspectRatio: VideoAspectRatio;
+    removeWatermark: boolean;
+    model: string;
+  };
+}
+```
+
+**优先级逻辑**：
+重新生成时参数优先级：原始 generation_params > 当前选中模型 > localStorage 设置 > 默认值
+
+---
+
 ### 2026-01-28 聊天消息切换对话后丢失修复（完成）
 
 **问题描述**：
