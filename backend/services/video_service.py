@@ -166,7 +166,7 @@ class VideoService(BaseGenerationService):
                 result = await adapter.query_task(task_id)
 
             # 如果视频生成完成且提供了 user_id，上传到 OSS
-            if result.get("status") == "finished" and user_id:
+            if result.get("status") == "success" and user_id:
                 result = await self._upload_videos_to_oss(result, user_id)
 
             return result
@@ -262,7 +262,7 @@ class VideoService(BaseGenerationService):
 
             # 4. 如果生成完成，将视频上传到 OSS
             wait_for_result = generate_kwargs.get("wait_for_result", False)
-            if wait_for_result and result.get("status") == "finished":
+            if wait_for_result and result.get("status") == "success":
                 result = await self._upload_videos_to_oss(result, user_id)
 
             return result
