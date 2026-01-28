@@ -70,6 +70,11 @@ export default function MessageArea({
   // 获取当前对话标题（用于任务追踪）
   const currentConversationTitle = useChatStore((state) => state.currentConversationTitle);
 
+  // 滚动位置存储（用于对话切换时保存/恢复滚动位置）
+  const setScrollPosition = useChatStore((state) => state.setScrollPosition);
+  const getScrollPosition = useChatStore((state) => state.getScrollPosition);
+  const clearScrollPosition = useChatStore((state) => state.clearScrollPosition);
+
   // 获取运行时状态（乐观更新消息）
   // 注意：直接从 states Map 获取，避免 getState() 返回新对象导致无限循环
   const runtimeState = useConversationRuntimeStore(
@@ -133,16 +138,36 @@ export default function MessageArea({
   const hasScrolledForConversationRef = useRef(false);
   const scrollToBottomRef = useRef(scrollToBottom);
   scrollToBottomRef.current = scrollToBottom;
+  // 跟踪 loading 状态变化（确保滚动在 loading: true → false 时触发）
+  const prevLoadingRef = useRef(true);
+  // 消息引用（用于重新生成 effect，避免 messages 依赖导致频繁触发）
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
 
-  // 对话切换时重置滚动状态（P0-1 修复）
+  // 对话切换时保存旧对话滚动位置 + 重置状态
   useEffect(() => {
-    if (conversationId !== prevConversationIdRef.current) {
+    const prevId = prevConversationIdRef.current;
+    if (conversationId !== prevId) {
+      // 保存旧对话的滚动位置（仅当用户滚走时才保存）
+      if (prevId) {
+        const container = containerRef.current;
+        if (container && userScrolledAway) {
+          setScrollPosition(prevId, container.scrollTop);
+        } else if (prevId) {
+          // 用户在底部，清除保存的位置（下次直接显示底部）
+          clearScrollPosition(prevId);
+        }
+      }
+
       // 重置滚动状态，确保新对话从干净状态开始
       resetScrollState();
-      hasScrolledForConversationRef.current = false; // 重置滚动标志
+      hasScrolledForConversationRef.current = false;
+      // 注意：不要重置 prevLoadingRef.current，让滚动 useEffect 自然等待 loading 状态变化
+      // 否则会在对话切换时使用旧数据立即触发滚动
+      prevMessageCountRef.current = 0; // 重置消息计数器，避免误触发滚动
       prevConversationIdRef.current = conversationId;
     }
-  }, [conversationId, resetScrollState]);
+  }, [conversationId, resetScrollState, userScrolledAway, setScrollPosition, clearScrollPosition]);
 
   // 加载消息
   useEffect(() => {
@@ -154,17 +179,32 @@ export default function MessageArea({
     };
   }, [loadMessages]);
 
-  // 消息加载完成后滚动到底部（仅对话切换后首次加载触发一次）
+  // 消息加载完成后恢复滚动位置或定位到底部
   useEffect(() => {
-    // 条件：未加载中 + 有消息 + 当前对话未滚动过
-    if (!loading && mergedMessages.length > 0 && !hasScrolledForConversationRef.current) {
+    const wasLoading = prevLoadingRef.current;
+    prevLoadingRef.current = loading;
+
+    // 条件：loading 从 true 变为 false + 有消息 + 当前对话未定位过
+    // 这确保消息已经是当前对话的消息（而非旧对话的残留数据）
+    if (wasLoading && !loading && mergedMessages.length > 0 && !hasScrolledForConversationRef.current && conversationId) {
       hasScrolledForConversationRef.current = true;
       // 使用 requestAnimationFrame 确保 DOM 已更新
       requestAnimationFrame(() => {
-        scrollToBottomRef.current(false); // 使用 instant 滚动，避免加载时的动画
+        const container = containerRef.current;
+        if (!container) return;
+
+        const savedPosition = getScrollPosition(conversationId);
+        if (savedPosition !== null) {
+          // 恢复到之前的滚动位置（边界检查）
+          const maxScroll = container.scrollHeight - container.clientHeight;
+          container.scrollTop = Math.min(savedPosition, Math.max(0, maxScroll));
+        } else {
+          // 没有保存的位置，直接定位到底部（无动画）
+          container.scrollTop = container.scrollHeight;
+        }
       });
     }
-  }, [loading, mergedMessages.length]); // 移除 scrollToBottom 依赖，避免重复触发
+  }, [loading, mergedMessages.length, conversationId, getScrollPosition]);
 
   // 新消息添加后自动滚动（发送消息、生成完成等场景）
   const prevMessageCountRef = useRef(0);
@@ -173,7 +213,8 @@ export default function MessageArea({
     const prevCount = prevMessageCountRef.current;
 
     // 仅当消息数量增加时触发（避免删除消息时滚动）
-    if (currentCount > prevCount && prevCount > 0 && !userScrolledAway) {
+    // 添加 hasScrolledForConversationRef 检查，确保初始定位完成后才触发，避免覆盖恢复的滚动位置
+    if (currentCount > prevCount && prevCount > 0 && !userScrolledAway && hasScrolledForConversationRef.current) {
       // 使用 requestAnimationFrame 确保 DOM 已更新
       requestAnimationFrame(() => {
         scrollToBottomRef.current(true); // 平滑滚动
@@ -197,8 +238,10 @@ export default function MessageArea({
       const updatedMessages = messages.filter((msg) => msg.id !== messageId);
       setMessages(updatedMessages);
 
-      const newLastMessage = updatedMessages.length > 0
-        ? updatedMessages[updatedMessages.length - 1].content
+      // 使用 mergedMessages 过滤后获取最后一条消息（包含乐观更新消息）
+      const updatedMergedMessages = mergedMessages.filter((msg) => msg.id !== messageId);
+      const newLastMessage = updatedMergedMessages.length > 0
+        ? updatedMergedMessages[updatedMergedMessages.length - 1].content
         : undefined;
 
       if (conversationId) {
@@ -214,7 +257,7 @@ export default function MessageArea({
       console.error('删除消息失败:', error);
       toast.error('删除失败，请重试');
     }
-  }, [conversationId, messages, setMessages, getCachedMessages, updateCachedMessages, toStoreMessage, onDelete]);
+  }, [conversationId, messages, mergedMessages, setMessages, getCachedMessages, updateCachedMessages, toStoreMessage, onDelete]);
 
   // 重置重新生成状态的辅助函数
   const resetRegeneratingState = useCallback(() => {
@@ -222,20 +265,10 @@ export default function MessageArea({
     setIsRegeneratingAI(false);
   }, []);
 
-  // 媒体加载完成回调（P0-2 修复：图片/视频加载后重新调整滚动位置）
-  const mediaLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 媒体加载完成回调（占位符尺寸固定，无需滚动调整）
   const handleMediaLoaded = useCallback(() => {
-    // 如果用户已滚走或正在重新生成，不触发滚动
-    if (userScrolledAway || regeneratingId) return;
-
-    // 防抖：50ms 内多次加载只触发一次滚动
-    if (mediaLoadTimerRef.current) {
-      clearTimeout(mediaLoadTimerRef.current);
-    }
-    mediaLoadTimerRef.current = setTimeout(() => {
-      scrollToBottom(true); // 平滑滚动
-    }, 50);
-  }, [userScrolledAway, regeneratingId, scrollToBottom]);
+    // 占位符和媒体尺寸固定，加载完成不改变布局，无需滚动
+  }, []);
 
   // 使用重新生成处理器 hook
   const {
@@ -327,16 +360,18 @@ export default function MessageArea({
   // 重新生成开始时自动滚动
   useEffect(() => {
     if (isRegeneratingAI && regeneratingId) {
-      setTimeout(() => {
+      // 使用 requestAnimationFrame 确保 DOM 已更新
+      requestAnimationFrame(() => {
         if (!userScrolledAway) {
-          const isFailedMessageRegenerate = messages.some(
+          // 使用 messagesRef 避免 messages 依赖导致频繁触发
+          const isFailedMessageRegenerate = messagesRef.current.some(
             m => m.id === regeneratingId && m.content === ''
           );
           scrollToBottom(!isFailedMessageRegenerate);
         }
-      }, 150);
+      });
     }
-  }, [isRegeneratingAI, regeneratingId, messages, scrollToBottom, userScrolledAway]);
+  }, [isRegeneratingAI, regeneratingId, scrollToBottom, userScrolledAway]);
 
   // 空状态
   if (!conversationId && mergedMessages.length === 0) {

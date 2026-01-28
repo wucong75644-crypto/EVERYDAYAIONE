@@ -105,6 +105,9 @@ interface ChatState {
   // LRU 访问顺序记录
   cacheAccessOrder: string[];
 
+  // 滚动位置缓存 Map<conversationId, scrollTop>（仅当用户在历史记录时保存）
+  scrollPositions: Map<string, number>;
+
   // Actions
   setConversations: (conversations: Conversation[]) => void;
   setConversationsLoading: (loading: boolean) => void;
@@ -129,6 +132,11 @@ interface ChatState {
   deleteCachedMessages: (conversationId: string) => void;
   isCacheExpired: (conversationId: string) => boolean;
   clearAllCache: () => void;
+
+  // 滚动位置操作
+  setScrollPosition: (conversationId: string, position: number) => void;
+  getScrollPosition: (conversationId: string) => number | null;
+  clearScrollPosition: (conversationId: string) => void;
 }
 
 const initialState = {
@@ -141,6 +149,7 @@ const initialState = {
   isSending: false,
   messageCache: new Map<string, MessageCacheEntry>(),
   cacheAccessOrder: [] as string[],
+  scrollPositions: new Map<string, number>(),
 };
 
 export const useChatStore = create<ChatState>()(
@@ -375,6 +384,28 @@ export const useChatStore = create<ChatState>()(
   // 清空所有缓存
   clearAllCache: () => {
     set({ messageCache: new Map(), cacheAccessOrder: [] });
+  },
+
+  // 保存滚动位置（仅当用户在历史记录时调用）
+  setScrollPosition: (conversationId: string, position: number) => {
+    const state = get();
+    const newPositions = new Map(state.scrollPositions);
+    newPositions.set(conversationId, position);
+    set({ scrollPositions: newPositions });
+  },
+
+  // 获取保存的滚动位置
+  getScrollPosition: (conversationId: string) => {
+    const state = get();
+    return state.scrollPositions.get(conversationId) ?? null;
+  },
+
+  // 清除滚动位置（用户在底部时调用，下次直接显示底部）
+  clearScrollPosition: (conversationId: string) => {
+    const state = get();
+    const newPositions = new Map(state.scrollPositions);
+    newPositions.delete(conversationId);
+    set({ scrollPositions: newPositions });
   },
 }),
 {

@@ -49,10 +49,11 @@ interface UseMessageLoaderOptions {
 
 export function useMessageLoader({ conversationId, refreshTrigger = 0, onNewMessages }: UseMessageLoaderOptions) {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // 初始为 true，避免滚动逻辑提前触发
   const [hasMore, setHasMore] = useState(false);
   const lastRefreshTriggerRef = useRef(refreshTrigger);
-  const previousConversationIdRef = useRef<string | null>(conversationId);
+  // 初始值为 null，确保首次渲染也会走"对话切换"分支
+  const previousConversationIdRef = useRef<string | null>(null);
 
   const {
     getCachedMessages,
@@ -103,6 +104,11 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0, onNewMess
 
       // 检测对话切换
       if (previousConversationIdRef.current !== conversationId) {
+        // 同步清空旧消息并设置加载中，避免滚动逻辑使用旧数据计算位置
+        setMessages([]);
+        setLoading(true);
+        previousConversationIdRef.current = conversationId;
+
         const cachedData = getCachedMessages(conversationId);
         if (cachedData && cachedData.messages && cachedData.messages.length > 0) {
           // 更新LRU访问顺序
@@ -110,16 +116,16 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0, onNewMess
 
           const cachedMessages = convertCacheToApiMessages(cachedData.messages, conversationId);
 
+          // 下一帧设置消息，确保 DOM 已准备好
           requestAnimationFrame(() => {
             setMessages(cachedMessages);
             setLoading(false);
             setHasMore(cachedData.hasMore);
           });
-        } else {
-          setMessages([]);
-          setLoading(true);
+          // 有缓存时提前返回，避免下面的逻辑同步覆盖 loading 状态
+          return;
         }
-        previousConversationIdRef.current = conversationId;
+        // 无缓存时继续执行下面的从后端加载逻辑
       }
 
       const currentConversationId = conversationId;
