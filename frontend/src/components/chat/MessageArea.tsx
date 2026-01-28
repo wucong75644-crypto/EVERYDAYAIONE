@@ -224,6 +224,33 @@ export default function MessageArea({
     prevMessageCountRef.current = currentCount;
   }, [mergedMessages.length, userScrolledAway]);
 
+  // 流式内容更新时自动滚动（AI 输出时持续跟随）
+  const prevStreamingContentLengthRef = useRef(0);
+  useEffect(() => {
+    // 获取当前流式消息的内容长度
+    const streamingMessage = runtimeState?.streamingMessageId
+      ? runtimeState.optimisticMessages.find(m => m.id === runtimeState.streamingMessageId)
+      : null;
+    const currentLength = streamingMessage?.content.length ?? 0;
+    const prevLength = prevStreamingContentLengthRef.current;
+
+    // 流式内容增长时触发滚动（用户未滚走 + 初始定位完成）
+    if (currentLength > prevLength && prevLength > 0 && !userScrolledAway && hasScrolledForConversationRef.current) {
+      // 使用 requestAnimationFrame 确保 DOM 已更新
+      requestAnimationFrame(() => {
+        scrollToBottomRef.current(false); // 瞬时定位，避免平滑滚动跟不上输出速度
+      });
+    }
+
+    // 更新记录（无论是否滚动）
+    prevStreamingContentLengthRef.current = currentLength;
+
+    // 流式结束时重置
+    if (!runtimeState?.streamingMessageId) {
+      prevStreamingContentLengthRef.current = 0;
+    }
+  }, [runtimeState?.streamingMessageId, runtimeState?.optimisticMessages, userScrolledAway]);
+
   // 处理删除消息
   const handleDelete = useCallback(async (messageId: string) => {
     try {

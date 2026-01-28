@@ -151,15 +151,15 @@ export default memo(function MessageItem({
         >
           {/* 消息文本 */}
           <div className="text-[15px] leading-relaxed whitespace-pre-wrap">
-            {/* 重新生成加载状态 */}
-            {isRegenerating && !message.content ? (
+            {/* 加载状态：重新生成或流式输出开始但内容为空 */}
+            {((isRegenerating || isStreaming) && !message.content) ? (
               <div className="flex items-center space-x-2 text-gray-500">
                 <div className="flex space-x-1">
                   <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
                   <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
                   <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
                 </div>
-                <span className="text-sm">正在重新生成...</span>
+                <span className="text-sm">{isRegenerating ? '正在重新生成...' : 'AI 正在思考...'}</span>
               </div>
             ) : (
               <>

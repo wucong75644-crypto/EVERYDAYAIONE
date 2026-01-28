@@ -1,10 +1,14 @@
 /**
  * 图片预览组件
  *
- * 显示上传的多张图片缩略图，提供删除功能
+ * 显示上传的多张图片缩略图，支持：
+ * - 删除功能
+ * - 点击放大查看（集成 ImagePreviewModal）
  */
 
+import { useState } from 'react';
 import { type UploadedImage } from '../../hooks/useImageUpload';
+import ImagePreviewModal from './ImagePreviewModal';
 
 interface ImagePreviewProps {
   images: UploadedImage[];
@@ -12,21 +16,76 @@ interface ImagePreviewProps {
 }
 
 export default function ImagePreview({ images, onRemove }: ImagePreviewProps) {
+  // 当前放大预览的图片索引（-1 表示未预览）
+  const [previewIndex, setPreviewIndex] = useState<number>(-1);
+
   if (images.length === 0) return null;
 
+  // 获取可预览的图片列表（排除上传中和错误的）
+  const previewableImages = images.filter((img) => !img.isUploading && !img.error && img.preview);
+
+  // 当前预览的图片
+  const currentPreviewImage = previewIndex >= 0 ? previewableImages[previewIndex] : null;
+
+  // 点击缩略图放大
+  const handleImageClick = (image: UploadedImage) => {
+    // 上传中或有错误时不允许放大
+    if (image.isUploading || image.error || !image.preview) return;
+    const index = previewableImages.findIndex((img) => img.id === image.id);
+    if (index >= 0) {
+      setPreviewIndex(index);
+    }
+  };
+
+  // 切换到上一张
+  const handlePrev = () => {
+    if (previewIndex > 0) {
+      setPreviewIndex(previewIndex - 1);
+    }
+  };
+
+  // 切换到下一张
+  const handleNext = () => {
+    if (previewIndex < previewableImages.length - 1) {
+      setPreviewIndex(previewIndex + 1);
+    }
+  };
+
+  // 删除当前预览的图片
+  const handleDelete = () => {
+    if (!currentPreviewImage) return;
+    const imageId = currentPreviewImage.id;
+
+    // 删除后自动切换到下一张或上一张
+    if (previewableImages.length === 1) {
+      // 只有一张图片，关闭预览
+      setPreviewIndex(-1);
+    } else if (previewIndex >= previewableImages.length - 1) {
+      // 删除的是最后一张，切换到前一张
+      setPreviewIndex(previewIndex - 1);
+    }
+    // 其他情况保持当前索引，会自动显示下一张
+
+    onRemove(imageId);
+  };
+
   return (
-    <div className="mb-2 flex flex-wrap gap-2">
-      {images.map((image) => (
-        <div key={image.id} className="relative inline-block">
-          {image.preview ? (
-            <img
-              src={image.preview}
-              alt={`预览 ${image.file.name}`}
-              className={`h-14 w-14 rounded-lg object-cover ${
-                image.isUploading ? 'opacity-50' : ''
-              } ${image.error ? 'border-2 border-red-500' : ''}`}
-            />
-          ) : (
+    <>
+      <div className="mb-2 flex flex-wrap gap-2">
+        {images.map((image) => (
+          <div key={image.id} className="relative inline-block">
+            {image.preview ? (
+              <img
+                src={image.preview}
+                alt={`预览 ${image.file.name}`}
+                onClick={() => handleImageClick(image)}
+                className={`h-14 w-14 rounded-lg object-cover transition-transform ${
+                  image.isUploading ? 'opacity-50' : ''
+                } ${image.error ? 'border-2 border-red-500' : ''} ${
+                  !image.isUploading && !image.error ? 'cursor-pointer hover:scale-105 hover:shadow-md' : ''
+                }`}
+              />
+            ) : (
             <div className="h-14 w-14 rounded-lg bg-gray-200 flex items-center justify-center">
               <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
             </div>
@@ -71,5 +130,20 @@ export default function ImagePreview({ images, onRemove }: ImagePreviewProps) {
         </div>
       ))}
     </div>
+
+      {/* 图片放大预览弹窗 */}
+      {currentPreviewImage && (
+        <ImagePreviewModal
+          imageUrl={currentPreviewImage.preview}
+          onClose={() => setPreviewIndex(-1)}
+          filename={currentPreviewImage.file.name.replace(/\.[^.]+$/, '')}
+          onDelete={handleDelete}
+          onPrev={handlePrev}
+          onNext={handleNext}
+          hasPrev={previewIndex > 0}
+          hasNext={previewIndex < previewableImages.length - 1}
+        />
+      )}
+    </>
   );
 }

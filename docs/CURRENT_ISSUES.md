@@ -22,6 +22,131 @@
 
 ## 会话交接记录
 
+### 2026-01-28 聊天消息切换对话后丢失修复（完成）
+
+**问题描述**：
+文字聊天内容生成后，切换到其他对话再返回，新生成的 AI 回复消失了。
+
+**原因分析**：
+- 普通聊天流式生成完成时，只调用了 `runtimeStore.completeStreaming()`
+- **没有将 AI 消息添加到缓存**（useChatStore.addMessageToCache）
+- 而图片/视频任务在 `handleMediaPolling.onSuccess` 中有正确添加到缓存
+- 当用户切换对话时，`runtimeStore.cleanup()` 被调用，runtimeState 被清理
+- 返回对话时，MessageArea 从缓存加载消息，但 streaming 消息没有被保存，所以消失了
+
+**修复内容**：
+1. ✅ **添加缓存写入**（Chat.tsx:249-254）
+   - 普通聊天完成时，调用 `addMessageToLocalCache(messageConversationId, aiMessage)`
+   - 确保 AI 消息被持久化到缓存，切换对话后不丢失
+
+**修改文件**：
+- `frontend/src/pages/Chat.tsx:249-254`
+
+---
+
+### 2026-01-28 流式输出自动滚动修复（完成）
+
+**问题描述**：
+当 AI 流式输出较长内容时，消息区域没有自动向下滚动跟随新输出的内容，用户需要手动滚动才能看到最新内容。
+
+**原因分析**：
+- `MessageArea.tsx` 只在消息**数量**变化时（`mergedMessages.length`）触发自动滚动
+- 流式输出时消息数量不变，只是同一条消息的 `content` 在不断累积增长
+- 因此流式输出过程中不会触发自动滚动
+
+**修复内容**：
+1. ✅ **添加流式内容变化监听**（MessageArea.tsx:227-251）
+   - 新增 `useEffect` 监听 `runtimeState.streamingMessageId` 和 `runtimeState.optimisticMessages`
+   - 跟踪流式消息的 `content.length` 变化
+   - 当内容长度增加时触发自动滚动（瞬时定位，避免平滑滚动跟不上输出速度）
+   - 流式结束时重置计数器
+
+**修改文件**：
+- `frontend/src/components/chat/MessageArea.tsx:227-251`
+
+---
+
+### 2026-01-28 侧边栏任务完成状态更新修复（完成）
+
+**问题描述**：
+图片/视频生成任务完成后，侧边栏的信息内容没有及时从"图片生成中..."更新为"图片已生成完成"。
+
+**原因分析（第一阶段）**：
+- `handleMessagePending` 在**所有消息**到达时都会更新侧边栏
+- 当图片任务A完成后，`handleMessageSent` 更新侧边栏为"图片已生成完成"
+- 但此时如果有另一个请求B的用户消息从后端返回（或请求A自己的真实用户消息延迟返回）
+- `handleMessagePending` 会被调用，将侧边栏覆盖为用户消息内容
+- 导致"图片已生成完成"状态被覆盖
+
+**修复内容（第一阶段）**：
+1. ✅ **限制侧边栏更新触发条件**（Chat.tsx:207-217）
+   - 只在临时消息（`temp-` 开头）或占位符（`streaming-` 开头）时更新侧边栏
+   - 真实用户消息从后端确认时不更新，避免覆盖已完成任务的状态
+
+**原因分析（第二阶段 - 2026-01-28 补充修复）**：
+- `handleMessageSent` 中更新侧边栏时有条件检查 `messageConversationId === currentConversationIdRef.current`
+- 该条件在某些时序情况下可能不满足（如 ref 更新时机问题）
+- 导致图片任务完成后侧边栏仍显示"图片生成中..."
+
+**修复内容（第二阶段）**：
+1. ✅ **移除条件限制**（Chat.tsx:244-250）
+   - 图片/视频任务完成时无条件更新侧边栏的 `last_message`
+   - 确保媒体任务完成后侧边栏状态始终正确更新
+
+**修改文件**：
+- `frontend/src/pages/Chat.tsx:207-217, 244-250`
+
+---
+
+### 2026-01-28 图片/视频生成消息顺序修复（完成）
+
+**问题描述**：
+发送图片/视频生成请求时，消息显示顺序不正确。用户发送消息后，预期显示"用户消息 → AI占位符"，但实际只显示AI占位符，用户消息延迟一段时间后才出现。
+
+**原因分析**：
+- `MessageArea.tsx:127` 根据 `created_at` 时间戳对消息排序
+- `createMediaTimestamps()` 创建 `userTimestamp` (T1) 和 `placeholderTimestamp` (T1+1ms)
+- 但 `createOptimisticUserMessage()` 内部又创建了新的 `created_at` (T2)
+- 由于代码执行延迟，T2 可能 > T1+1ms，导致用户消息时间戳比占位符晚
+- 排序后占位符显示在前，用户消息在后
+
+**修复内容**：
+1. ✅ **扩展 createOptimisticUserMessage 参数**（messageFactory.ts:41-56）
+   - 新增可选参数 `createdAt?: string`
+   - 允许外部传入时间戳，保持消息顺序一致性
+
+2. ✅ **修改 createMediaOptimisticPair**（messageFactory.ts:171-189）
+   - 将 `timestamps.userTimestamp` 传递给 `createOptimisticUserMessage`
+   - 确保用户消息时间戳 < 占位符时间戳
+
+**修改文件**：
+- `frontend/src/utils/messageFactory.ts:41-56, 171-189`
+
+---
+
+### 2026-01-28 聊天消息流式占位符空白框修复（完成）
+
+**问题描述**：
+用户发送带图片的消息给聊天大模型时，AI 响应的流式占位符显示为一个空白小框，内部没有任何内容。
+
+**原因分析**：
+- `MessageItem.tsx` 在渲染流式消息（`isStreaming=true`）时，只处理了 `isRegenerating && !message.content` 的情况
+- 当 `isStreaming && !message.content` 时（流式开始但内容还未到达），直接渲染空内容，导致显示空白气泡
+
+**修复内容**：
+1. ✅ **更新加载状态判断**（MessageItem.tsx:154-155）
+   - 修改条件为 `(isRegenerating || isStreaming) && !message.content`
+   - 覆盖流式输出开始时内容为空的情况
+
+2. ✅ **动态显示加载文本**（MessageItem.tsx:162）
+   - 重新生成时显示："正在重新生成..."
+   - 新消息流式时显示："AI 正在思考..."
+
+**影响文件**：
+- `frontend/src/components/chat/MessageItem.tsx`
+
+---
+
 ### 2026-01-28 视频模型价格配置修复（完成）
 
 **问题描述**：

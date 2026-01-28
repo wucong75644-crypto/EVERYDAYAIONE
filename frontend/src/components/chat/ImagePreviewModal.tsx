@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, memo } from 'react';
-import { X, Download, ZoomIn, ZoomOut, RotateCcw, Loader2 } from 'lucide-react';
+import { X, Download, ZoomIn, ZoomOut, RotateCcw, Loader2, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface ImagePreviewModalProps {
   /** 图片 URL */
@@ -18,12 +18,27 @@ interface ImagePreviewModalProps {
   onClose: () => void;
   /** 文件名（用于下载） */
   filename?: string;
+  /** 删除回调（可选，用于输入框图片预览） */
+  onDelete?: () => void;
+  /** 上一张回调 */
+  onPrev?: () => void;
+  /** 下一张回调 */
+  onNext?: () => void;
+  /** 是否有上一张 */
+  hasPrev?: boolean;
+  /** 是否有下一张 */
+  hasNext?: boolean;
 }
 
 export default memo(function ImagePreviewModal({
   imageUrl,
   onClose,
   filename = 'image',
+  onDelete,
+  onPrev,
+  onNext,
+  hasPrev = false,
+  hasNext = false,
 }: ImagePreviewModalProps) {
   // 缩放状态
   const [scale, setScale] = useState(1);
@@ -138,17 +153,23 @@ export default memo(function ImagePreviewModal({
     }
   }, [imageUrl, filename, isDownloading]);
 
-  // ESC 关闭
+  // 键盘快捷键：ESC 关闭、左右箭头切换、Delete 删除
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         handleClose();
+      } else if (e.key === 'ArrowLeft' && hasPrev && onPrev) {
+        onPrev();
+      } else if (e.key === 'ArrowRight' && hasNext && onNext) {
+        onNext();
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && onDelete) {
+        onDelete();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleClose]);
+  }, [handleClose, hasPrev, hasNext, onPrev, onNext, onDelete]);
 
   // 打开时禁止背景滚动
   useEffect(() => {
@@ -278,6 +299,17 @@ export default memo(function ImagePreviewModal({
             )}
           </button>
 
+          {/* 删除按钮（仅当 onDelete 存在时显示） */}
+          {onDelete && (
+            <button
+              onClick={onDelete}
+              className="p-2 text-white/80 hover:text-red-400 hover:bg-white/10 rounded-lg transition-colors"
+              title="删除 (Delete)"
+            >
+              <Trash2 className="w-5 h-5" />
+            </button>
+          )}
+
           {/* 关闭 */}
           <button
             onClick={handleClose}
@@ -320,6 +352,38 @@ export default memo(function ImagePreviewModal({
         />
       </div>
 
+      {/* 左侧切换按钮 */}
+      {hasPrev && onPrev && (
+        <button
+          onClick={onPrev}
+          className="absolute left-4 top-1/2 -translate-y-1/2 z-10 p-3 bg-black/30 hover:bg-black/50 text-white/80 hover:text-white rounded-full transition-all"
+          style={{
+            animation: isClosing
+              ? 'preview-content-exit 150ms cubic-bezier(0.32, 0.72, 0, 1) forwards'
+              : 'preview-content 200ms cubic-bezier(0.32, 0.72, 0, 1) forwards',
+          }}
+          title="上一张 (←)"
+        >
+          <ChevronLeft className="w-6 h-6" />
+        </button>
+      )}
+
+      {/* 右侧切换按钮 */}
+      {hasNext && onNext && (
+        <button
+          onClick={onNext}
+          className="absolute right-4 top-1/2 -translate-y-1/2 z-10 p-3 bg-black/30 hover:bg-black/50 text-white/80 hover:text-white rounded-full transition-all"
+          style={{
+            animation: isClosing
+              ? 'preview-content-exit 150ms cubic-bezier(0.32, 0.72, 0, 1) forwards'
+              : 'preview-content 200ms cubic-bezier(0.32, 0.72, 0, 1) forwards',
+          }}
+          title="下一张 (→)"
+        >
+          <ChevronRight className="w-6 h-6" />
+        </button>
+      )}
+
       {/* 底部提示 */}
       <div
         className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 text-white/60 text-xs"
@@ -329,7 +393,7 @@ export default memo(function ImagePreviewModal({
             : 'preview-content 200ms cubic-bezier(0.32, 0.72, 0, 1) forwards',
         }}
       >
-        滚轮缩放 · 双击重置 · ESC 关闭
+        滚轮缩放 · 双击重置 · ESC 关闭{(hasPrev || hasNext) && ' · ←→ 切换'}{onDelete && ' · Delete 删除'}
       </div>
     </div>
   );

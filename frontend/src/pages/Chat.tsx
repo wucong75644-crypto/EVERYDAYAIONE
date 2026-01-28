@@ -205,7 +205,12 @@ export default function Chat() {
     }
 
     // 侧边栏乐观更新（只有当前对话）
-    if (messageConversationId === currentConversationIdRef.current) {
+    // 注意：只在临时消息（temp-）或占位符（streaming-）时更新
+    // 真实用户消息返回时不更新，避免覆盖已完成任务的"图片已生成完成"状态
+    const shouldUpdateSidebar =
+      message.id.startsWith('temp-') || message.id.startsWith('streaming-');
+
+    if (shouldUpdateSidebar && messageConversationId === currentConversationIdRef.current) {
       setConversationOptimisticUpdate({
         conversationId: currentConversationIdRef.current,
         lastMessage: message.content,
@@ -236,16 +241,16 @@ export default function Chat() {
         // replaceMediaPlaceholder + addMessageToCache 完成处理
         // 这里不再重复操作，避免消息重复（duplicate key 错误）
 
-        // 更新侧边栏显示（如果是当前对话）
-        if (messageConversationId === currentConversationIdRef.current) {
-          setConversationOptimisticUpdate({
-            conversationId: messageConversationId,
-            lastMessage: aiMessage.content,
-          });
-        }
-      } else {
+        // 更新侧边栏显示（无条件更新，确保媒体任务完成后侧边栏状态正确）
+        setConversationOptimisticUpdate({
+          conversationId: messageConversationId,
+          lastMessage: aiMessage.content,
+        });
+      } else if (aiMessage) {
         // 普通聊天流式生成完成
         runtimeStore.completeStreaming(messageConversationId);
+        // 将 AI 消息添加到缓存，确保切换对话后消息不丢失
+        addMessageToLocalCache(messageConversationId, aiMessage);
       }
 
       // 用户正在查看当前对话，清除闪烁状态
