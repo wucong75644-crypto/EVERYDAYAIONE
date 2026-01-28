@@ -4,8 +4,9 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Any
+from typing import Optional, Any, Literal
 from pydantic import BaseModel, Field, HttpUrl, field_validator
+import json
 
 
 class MessageRole(str, Enum):
@@ -13,6 +14,42 @@ class MessageRole(str, Enum):
     USER = "user"
     ASSISTANT = "assistant"
     SYSTEM = "system"
+
+
+# ============================================================
+# 生成参数验证模型
+# ============================================================
+
+
+class ImageGenerationParams(BaseModel):
+    """图片生成参数"""
+    aspectRatio: str = Field(..., description="宽高比")
+    resolution: Optional[str] = Field(None, description="分辨率")
+    outputFormat: str = Field(..., description="输出格式")
+    model: str = Field(..., max_length=100, description="模型ID")
+
+
+class VideoGenerationParams(BaseModel):
+    """视频生成参数"""
+    frames: str = Field(..., description="帧数/时长")
+    aspectRatio: str = Field(..., description="宽高比")
+    removeWatermark: bool = Field(..., description="是否去水印")
+    model: str = Field(..., max_length=100, description="模型ID")
+
+
+class GenerationParams(BaseModel):
+    """生成参数（用于重新生成时继承）"""
+    image: Optional[ImageGenerationParams] = None
+    video: Optional[VideoGenerationParams] = None
+
+    @field_validator('image', 'video', mode='after')
+    @classmethod
+    def validate_not_both(cls, v, info):
+        """验证不能同时有 image 和 video"""
+        values = info.data
+        if values.get('image') and values.get('video'):
+            raise ValueError('不能同时包含 image 和 video 参数')
+        return v
 
 
 class MessageCreate(BaseModel):
@@ -24,7 +61,17 @@ class MessageCreate(BaseModel):
     credits_cost: int = 0
     is_error: bool = False  # 是否为错误消息
     created_at: Optional[datetime] = None  # 可选时间戳（用于保持消息顺序）
-    generation_params: Optional[dict[str, Any]] = None  # 生成参数（图片/视频生成时保存）
+    generation_params: Optional[GenerationParams] = None  # 生成参数（图片/视频生成时保存）
+
+    @field_validator('generation_params')
+    @classmethod
+    def validate_params_size(cls, v: Optional[GenerationParams]) -> Optional[GenerationParams]:
+        """验证生成参数大小不超过 10KB"""
+        if v:
+            json_str = json.dumps(v.model_dump())
+            if len(json_str) > 10000:  # 10KB 限制
+                raise ValueError('generation_params 大小不能超过 10KB')
+        return v
 
 
 class MessageResponse(BaseModel):
@@ -37,7 +84,7 @@ class MessageResponse(BaseModel):
     video_url: Optional[str] = None
     credits_cost: int = 0
     is_error: bool = False
-    generation_params: Optional[dict[str, Any]] = None  # 生成参数（用于重新生成时继承）
+    generation_params: Optional[GenerationParams] = None  # 生成参数（用于重新生成时继承）
     created_at: datetime
 
 

@@ -13,6 +13,7 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
 RATE_LIMITS = {
     "message_stream": "30/minute",      # 消息发送
     "message_regenerate": "20/minute",  # 消息重新生成
+    "message_create": "60/minute",      # 消息创建
     "image_generate": "10/minute",      # 图像生成
     "video_generate": "5/minute",       # 视频生成
 }

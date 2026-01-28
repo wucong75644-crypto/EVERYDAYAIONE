@@ -42,3 +42,6 @@ yarn-error.log*
 
 # Debug files
 debug_*.txt
+
+# Claude Code local settings
+.claude/
