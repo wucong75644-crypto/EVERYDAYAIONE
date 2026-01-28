@@ -6,7 +6,7 @@
  */
 
 import { type UnifiedModel } from '../constants/models';
-import { sendMessageStream, createMessage, type Message } from '../services/message';
+import { sendMessageStream, createMessage, type Message, type GenerationParams } from '../services/message';
 import {
   createErrorMessage,
   createOptimisticUserMessage,
@@ -54,6 +54,8 @@ interface MediaGenConfig {
   preCreatedPlaceholderId?: string;
   /** 占位符的时间戳 */
   placeholderTimestamp: string;
+  /** 生成参数（用于重新生成时继承） */
+  generationParams?: GenerationParams;
   pollFn: (taskId: string) => Promise<{ status: string; fail_msg?: string | null; image_urls?: string[]; video_url?: string | null }>;
   extractMediaUrl: (result: unknown) => { image_url?: string; video_url?: string };
 }
@@ -144,7 +146,9 @@ export function useMessageHandlers({
   const handleGenerationError = async (
     conversationId: string,
     errorPrefix: string,
-    error: unknown
+    error: unknown,
+    createdAt?: string,
+    generationParams?: GenerationParams
   ): Promise<Message> => {
     const errorMsg = extractErrorMessage(error);
     try {
@@ -152,9 +156,11 @@ export function useMessageHandlers({
         content: `${errorPrefix}: ${errorMsg}`,
         role: 'assistant',
         is_error: true,
+        created_at: createdAt,
+        generation_params: generationParams,
       });
     } catch {
-      return createErrorMessage(conversationId, errorPrefix, error);
+      return createErrorMessage(conversationId, errorPrefix, error, createdAt);
     }
   };
 
@@ -218,6 +224,7 @@ export function useMessageHandlers({
               video_url: mediaUrl.video_url,
               credits_cost: config.creditsConsumed,
               created_at: placeholderTimestamp,
+              generation_params: config.generationParams,
             });
 
             // 替换 runtimeStore 中的占位符为真实消息
@@ -253,7 +260,9 @@ export function useMessageHandlers({
           const errorMessage = await handleGenerationError(
             config.conversationId,
             config.errorPrefix,
-            error
+            error,
+            placeholderTimestamp,
+            config.generationParams
           );
           // 替换 runtimeStore 中的占位符为错误消息
           replaceMediaPlaceholder(config.conversationId, placeholderId, errorMessage);
@@ -261,7 +270,11 @@ export function useMessageHandlers({
           onMessageSent(errorMessage);
         },
       },
-      config.pollInterval
+      {
+        interval: config.pollInterval,
+        // 图片最大轮询 10 分钟，视频最大轮询 30 分钟
+        maxDuration: config.type === 'image' ? 10 * 60 * 1000 : 30 * 60 * 1000,
+      }
     );
   };
 
@@ -331,6 +344,16 @@ export function useMessageHandlers({
     onMessagePending(userMessage);
     onMessagePending(placeholder);
 
+    // 构建图片生成参数（用于重新生成时继承，放在 try 外以便 catch 也能访问）
+    const imageGenerationParams: GenerationParams = {
+      image: {
+        aspectRatio,
+        resolution,
+        outputFormat,
+        model: selectedModel.id,
+      },
+    };
+
     try {
       // 并行：保存用户消息 + 请求图片生成
       const [, response] = await Promise.all([
@@ -372,6 +395,7 @@ export function useMessageHandlers({
           userMessageTimestamp,
           placeholderTimestamp,
           preCreatedPlaceholderId: tempPlaceholderId,
+          generationParams: imageGenerationParams,
           pollFn: getImageTaskStatus,
           extractMediaUrl: (r) => ({ image_url: extractImageUrl(r) }),
         });
@@ -382,6 +406,7 @@ export function useMessageHandlers({
           image_url: response.image_urls[0],
           credits_cost: response.credits_consumed,
           created_at: placeholderTimestamp,
+          generation_params: imageGenerationParams,
         });
         replaceMediaPlaceholder(currentConversationId, tempPlaceholderId, savedAiMessage);
         onMessageSent(savedAiMessage);
@@ -390,7 +415,13 @@ export function useMessageHandlers({
         throw new Error('图片处理失败');
       }
     } catch (error) {
-      const errorMessage = await handleGenerationError(currentConversationId, '图片处理失败', error);
+      const errorMessage = await handleGenerationError(
+        currentConversationId,
+        '图片处理失败',
+        error,
+        placeholderTimestamp,
+        imageGenerationParams
+      );
       replaceMediaPlaceholder(currentConversationId, tempPlaceholderId, errorMessage);
       onMessageSent(errorMessage);
       if (onMediaTaskSubmitted) onMediaTaskSubmitted();
@@ -420,6 +451,16 @@ export function useMessageHandlers({
     );
     onMessagePending(userMessage);
     onMessagePending(placeholder);
+
+    // 构建视频生成参数（用于重新生成时继承，放在 try 外以便 catch 也能访问）
+    const videoGenerationParams: GenerationParams = {
+      video: {
+        frames: videoFrames,
+        aspectRatio: videoAspectRatio,
+        removeWatermark,
+        model: selectedModel.id,
+      },
+    };
 
     try {
       // 并行：保存用户消息 + 请求视频生成
@@ -464,6 +505,7 @@ export function useMessageHandlers({
           userMessageTimestamp,
           placeholderTimestamp,
           preCreatedPlaceholderId: tempPlaceholderId,
+          generationParams: videoGenerationParams,
           pollFn: getVideoTaskStatus,
           extractMediaUrl: (r) => ({ video_url: extractVideoUrl(r) }),
         });
@@ -474,6 +516,7 @@ export function useMessageHandlers({
           video_url: response.video_url,
           credits_cost: response.credits_consumed,
           created_at: placeholderTimestamp,
+          generation_params: videoGenerationParams,
         });
         replaceMediaPlaceholder(currentConversationId, tempPlaceholderId, savedAiMessage);
         onMessageSent(savedAiMessage);
@@ -482,7 +525,13 @@ export function useMessageHandlers({
         throw new Error('视频生成失败');
       }
     } catch (error) {
-      const errorMessage = await handleGenerationError(currentConversationId, '视频生成失败', error);
+      const errorMessage = await handleGenerationError(
+        currentConversationId,
+        '视频生成失败',
+        error,
+        placeholderTimestamp,
+        videoGenerationParams
+      );
       replaceMediaPlaceholder(currentConversationId, tempPlaceholderId, errorMessage);
       onMessageSent(errorMessage);
       if (onMediaTaskSubmitted) onMediaTaskSubmitted();

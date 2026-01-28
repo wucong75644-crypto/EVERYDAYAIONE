@@ -4,6 +4,30 @@
 
 import { request } from './api';
 import type { DeleteMessageResponse } from '../types/message';
+import type { AspectRatio, ImageResolution, ImageOutputFormat } from './image';
+import type { VideoFrames, VideoAspectRatio } from './video';
+
+/** 图片生成参数 */
+export interface ImageGenerationParams {
+  aspectRatio: AspectRatio;
+  resolution?: ImageResolution;  // 可选：部分模型不支持 resolution
+  outputFormat: ImageOutputFormat;
+  model: string;
+}
+
+/** 视频生成参数 */
+export interface VideoGenerationParams {
+  frames: VideoFrames;
+  aspectRatio: VideoAspectRatio;
+  removeWatermark: boolean;
+  model: string;
+}
+
+/** 生成参数（用于重新生成时继承） */
+export interface GenerationParams {
+  image?: ImageGenerationParams;
+  video?: VideoGenerationParams;
+}
 
 /** 消息类型（API 响应格式） */
 export interface Message {
@@ -15,6 +39,7 @@ export interface Message {
   video_url?: string | null;
   is_error?: boolean;
   credits_cost?: number;
+  generation_params?: GenerationParams | null;
   created_at: string;
 }
 
@@ -52,6 +77,8 @@ export interface CreateMessageRequest {
   is_error?: boolean;
   /** 可选时间戳（ISO 8601 格式），用于保持消息顺序 */
   created_at?: string;
+  /** 生成参数（用于重新生成时继承） */
+  generation_params?: GenerationParams | null;
 }
 
 /** 发送消息请求 */

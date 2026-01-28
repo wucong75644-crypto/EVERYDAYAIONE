@@ -166,6 +166,11 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>((set
     set((state) => {
       const current = state.states.get(conversationId) ?? createDefaultState();
 
+      // 检查是否已存在相同 ID 的消息（防止重复添加，如媒体生成错误已通过 replaceMediaPlaceholder 添加）
+      if (current.optimisticMessages.some(m => m.id === errorMessage.id)) {
+        return state;
+      }
+
       // 移除空的streaming消息（如果存在）
       const filteredMessages = current.optimisticMessages.filter(
         m => !(m.id.startsWith('streaming-') && !m.content.trim())

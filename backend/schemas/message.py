@@ -4,7 +4,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Optional, Any
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
@@ -24,6 +24,7 @@ class MessageCreate(BaseModel):
     credits_cost: int = 0
     is_error: bool = False  # 是否为错误消息
     created_at: Optional[datetime] = None  # 可选时间戳（用于保持消息顺序）
+    generation_params: Optional[dict[str, Any]] = None  # 生成参数（图片/视频生成时保存）
 
 
 class MessageResponse(BaseModel):
@@ -36,6 +37,7 @@ class MessageResponse(BaseModel):
     video_url: Optional[str] = None
     credits_cost: int = 0
     is_error: bool = False
+    generation_params: Optional[dict[str, Any]] = None  # 生成参数（用于重新生成时继承）
     created_at: datetime
 
 

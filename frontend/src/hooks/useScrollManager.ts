@@ -26,6 +26,9 @@ const SCROLL_THRESHOLDS = {
   SHOW_BUTTON: 300,
 };
 
+/** 连续发送消息时的滚动防抖时间（ms）*/
+const SCROLL_DEBOUNCE_MS = 150;
+
 interface UseScrollManagerOptions {
   containerRef: RefObject<HTMLDivElement | null>;
   messagesEndRef: RefObject<HTMLDivElement | null>;
@@ -43,6 +46,8 @@ export function useScrollManager({ containerRef, messagesEndRef }: UseScrollMana
   const isProgrammaticScrollRef = useRef(false);
   // 上一次滚动位置（用于判断滚动方向）
   const lastScrollTopRef = useRef(0);
+  // 防抖定时器
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /**
    * 强制滚动到底部（用户主动操作或对话切换）
@@ -161,7 +166,56 @@ export function useScrollManager({ containerRef, messagesEndRef }: UseScrollMana
     setHasNewMessages(false);
     lastScrollTopRef.current = 0;
     isProgrammaticScrollRef.current = false;
+    // 清理防抖定时器
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
   }, []);
+
+  /**
+   * 防抖滚动到底部（连续发送消息时使用）
+   * - 在短时间内多次调用只执行最后一次
+   * - 避免连续发送消息时频繁跳动
+   */
+  const scrollToBottomDebounced = useCallback((smooth = true) => {
+    // 清除之前的定时器
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    // 设置新的定时器
+    debounceTimerRef.current = setTimeout(() => {
+      scrollToBottom(smooth);
+      debounceTimerRef.current = null;
+    }, SCROLL_DEBOUNCE_MS);
+  }, [scrollToBottom]);
+
+  /**
+   * 滚动到指定元素（用于长消息滚动到消息顶部）
+   * @param element 目标元素
+   * @param position 滚动位置：'top' 滚动到元素顶部，'bottom' 滚动到元素底部
+   */
+  const scrollToElement = useCallback((element: HTMLElement, position: 'top' | 'bottom' = 'top') => {
+    const container = containerRef.current;
+    if (!container || !element) return;
+
+    isProgrammaticScrollRef.current = true;
+
+    if (position === 'top') {
+      // 滚动到元素顶部（留出一些顶部空间）
+      const elementTop = element.offsetTop;
+      const padding = 20; // 顶部留白
+      container.scrollTop = Math.max(0, elementTop - padding);
+    } else {
+      // 滚动到元素底部
+      element.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+
+    setTimeout(() => {
+      isProgrammaticScrollRef.current = false;
+    }, 100);
+  }, [containerRef]);
 
   /**
    * 标记有新消息（外部调用，如后台刷新发现新消息）
@@ -189,6 +243,8 @@ export function useScrollManager({ containerRef, messagesEndRef }: UseScrollMana
     setHasNewMessages,
     // 滚动方法
     scrollToBottom,
+    scrollToBottomDebounced,
+    scrollToElement,
     forceScrollToBottom,
     autoScrollIfNeeded,
     // 事件处理

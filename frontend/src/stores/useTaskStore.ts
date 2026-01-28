@@ -10,6 +10,7 @@
  */
 
 import { create } from 'zustand';
+import { useChatStore } from './useChatStore';
 
 /** 任务限制常量 */
 const GLOBAL_TASK_LIMIT = 15;
@@ -103,7 +104,7 @@ interface TaskState {
     taskId: string,
     pollFn: () => Promise<{ done: boolean; result?: unknown; error?: Error }>,
     callbacks: PollingCallbacks,
-    interval?: number
+    options?: { interval?: number; maxDuration?: number }
   ) => void;
   stopPolling: (taskId: string) => void;
 
@@ -165,6 +166,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   // 完成聊天任务
   completeTask: (conversationId: string) => {
+    // 标记对话有新消息（如果用户不在该对话）
+    useChatStore.getState().markConversationUnread(conversationId);
+
     set((state) => {
       const task = state.chatTasks.get(conversationId);
       if (!task) return state;
@@ -258,6 +262,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     // 停止轮询
     get().stopPolling(taskId);
 
+    // 标记对话有新消息（如果用户不在该对话）
+    useChatStore.getState().markConversationUnread(task.conversationId);
+
     set((state) => {
       const newTasks = new Map(state.mediaTasks);
       newTasks.delete(taskId);
@@ -345,7 +352,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   // =============================================
 
   // 开始轮询
-  startPolling: (taskId, pollFn, callbacks, interval = 2000) => {
+  startPolling: (taskId, pollFn, callbacks, options = {}) => {
+    const { interval = 2000, maxDuration } = options;
+    const startTime = Date.now();
+    let consecutiveFailures = 0;
+
     // 更新状态为轮询中
     set((state) => {
       const task = state.mediaTasks.get(taskId);
@@ -359,19 +370,39 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     // 注意：立即执行 + 定时器可能导致多个 executePoll 并发
     // 使用 pollingConfigs.has() 作为原子锁：只有第一个完成的能触发回调
     const executePoll = async () => {
+      // 检查是否超过最大轮询时长
+      if (maxDuration) {
+        const elapsed = Date.now() - startTime;
+        if (elapsed > maxDuration) {
+          if (!get().pollingConfigs.has(taskId)) return;
+          get().stopPolling(taskId);
+          const minutes = Math.round(maxDuration / 60000);
+          callbacks.onError(new Error(`任务轮询超时，已等待 ${minutes} 分钟`));
+          return;
+        }
+      }
+
       try {
         const result = await pollFn();
+        // 请求成功，重置连续失败计数
+        consecutiveFailures = 0;
+
         if (result.done) {
           // 原子性检查：防止竞态时多个 executePoll 重复触发回调
           if (!get().pollingConfigs.has(taskId)) return;
           get().stopPolling(taskId);
           result.error ? callbacks.onError(result.error) : callbacks.onSuccess(result.result);
         }
+        // 任务未完成（pending/running）：等待下次轮询间隔
       } catch (error) {
-        // 原子性检查：防止竞态时重复触发 onError
-        if (!get().pollingConfigs.has(taskId)) return;
-        get().stopPolling(taskId);
-        callbacks.onError(error instanceof Error ? error : new Error(String(error)));
+        // 请求超时/网络错误 ≠ 任务失败
+        // 只有 KIE 返回明确的 failed 状态才是真正的失败（通过 result.error 处理）
+        consecutiveFailures++;
+        console.warn(
+          `轮询任务 ${taskId} 请求失败 (连续第 ${consecutiveFailures} 次)，将在下次间隔后重试:`,
+          error
+        );
+        // 继续等待下次轮询，不调用 onError
       }
     };
 

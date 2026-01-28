@@ -56,6 +56,7 @@ async def create_message(
     - **video_url**: 视频 URL（可选）
     - **credits_cost**: 消耗积分
     - **is_error**: 是否为错误消息
+    - **generation_params**: 生成参数（用于重新生成时继承）
     """
     result = await service.create_message(
         conversation_id=conversation_id,
@@ -67,6 +68,7 @@ async def create_message(
         credits_cost=request.credits_cost,
         is_error=request.is_error,
         created_at=request.created_at,
+        generation_params=request.generation_params,
     )
     return result
 

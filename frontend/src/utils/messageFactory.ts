@@ -12,11 +12,13 @@ import type { Message } from '../services/message';
  * @param conversationId 对话ID
  * @param errorText 错误前缀文本
  * @param error 错误对象
+ * @param createdAt 可选时间戳（用于保持消息顺序）
  */
 export function createErrorMessage(
   conversationId: string,
   errorText: string,
-  error: unknown
+  error: unknown,
+  createdAt?: string
 ): Message {
   return {
     id: `error-${Date.now()}`,
@@ -27,7 +29,7 @@ export function createErrorMessage(
     video_url: null,
     is_error: true,
     credits_cost: 0,
-    created_at: new Date().toISOString(),
+    created_at: createdAt || new Date().toISOString(),
   };
 }
 

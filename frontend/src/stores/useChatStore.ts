@@ -108,6 +108,9 @@ interface ChatState {
   // 滚动位置缓存 Map<conversationId, scrollTop>（仅当用户在历史记录时保存）
   scrollPositions: Map<string, number>;
 
+  // 有新消息的对话（用于切换对话时决定滚动行为）
+  unreadConversations: Set<string>;
+
   // Actions
   setConversations: (conversations: Conversation[]) => void;
   setConversationsLoading: (loading: boolean) => void;
@@ -137,6 +140,11 @@ interface ChatState {
   setScrollPosition: (conversationId: string, position: number) => void;
   getScrollPosition: (conversationId: string) => number | null;
   clearScrollPosition: (conversationId: string) => void;
+
+  // 未读消息操作
+  markConversationUnread: (conversationId: string) => void;
+  clearConversationUnread: (conversationId: string) => void;
+  hasUnreadMessages: (conversationId: string) => boolean;
 }
 
 const initialState = {
@@ -150,6 +158,7 @@ const initialState = {
   messageCache: new Map<string, MessageCacheEntry>(),
   cacheAccessOrder: [] as string[],
   scrollPositions: new Map<string, number>(),
+  unreadConversations: new Set<string>(),
 };
 
 export const useChatStore = create<ChatState>()(
@@ -406,6 +415,31 @@ export const useChatStore = create<ChatState>()(
     const newPositions = new Map(state.scrollPositions);
     newPositions.delete(conversationId);
     set({ scrollPositions: newPositions });
+  },
+
+  // 标记对话有新消息（任务完成时调用）
+  markConversationUnread: (conversationId: string) => {
+    const state = get();
+    // 如果用户当前就在这个对话，不标记为未读
+    if (state.currentConversationId === conversationId) return;
+    const newUnread = new Set(state.unreadConversations);
+    newUnread.add(conversationId);
+    set({ unreadConversations: newUnread });
+  },
+
+  // 清除对话未读状态（切换到该对话时调用）
+  clearConversationUnread: (conversationId: string) => {
+    const state = get();
+    if (!state.unreadConversations.has(conversationId)) return;
+    const newUnread = new Set(state.unreadConversations);
+    newUnread.delete(conversationId);
+    set({ unreadConversations: newUnread });
+  },
+
+  // 检查对话是否有未读消息
+  hasUnreadMessages: (conversationId: string) => {
+    const state = get();
+    return state.unreadConversations.has(conversationId);
   },
 }),
 {

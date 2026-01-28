@@ -57,11 +57,6 @@ export function ConversationItemContent({
           </div>
         )}
       </div>
-      {conv.last_message && (
-        <div className="text-xs text-gray-500 truncate mt-1">
-          {conv.last_message}
-        </div>
-      )}
     </>
   );
 }

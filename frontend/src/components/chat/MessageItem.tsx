@@ -11,6 +11,7 @@ import DeleteMessageModal from './DeleteMessageModal';
 import ImagePreviewModal from './ImagePreviewModal';
 import MessageMedia from './MessageMedia';
 import MessageActions from './MessageActions';
+import { getSavedSettings } from '../../utils/settingsStorage';
 
 interface MessageItemProps {
   message: Message;
@@ -38,6 +39,13 @@ export default memo(function MessageItem({
 
   // 判断是否为失败消息：只检查 is_error 标志
   const isErrorMessage = message.is_error === true;
+
+  // 获取当前高级设置（用于占位符动态尺寸）
+  const savedSettings = useMemo(() => getSavedSettings(), []);
+
+  // 计算实际使用的宽高比：已生成的媒体使用保存的参数，生成中使用当前设置
+  const actualImageAspectRatio = message.generation_params?.image?.aspectRatio ?? savedSettings.image.aspectRatio;
+  const actualVideoAspectRatio = message.generation_params?.video?.aspectRatio ?? savedSettings.video.aspectRatio;
 
   // 判断是否为媒体占位符消息（图片/视频生成中）
   const mediaPlaceholderInfo = useMemo(() => {
@@ -134,10 +142,13 @@ export default memo(function MessageItem({
     }
   };
 
+  // 判断是否有媒体内容（需要更宽的显示区域）
+  const hasMedia = !!(message.image_url || message.video_url || mediaPlaceholderInfo);
+
   return (
-    <div className={`flex mb-12 ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div data-message-id={message.id} className={`flex mb-12 ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`relative max-w-[80%] flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
+        className={`relative flex flex-col ${isUser ? 'items-end' : 'items-start'} ${hasMedia ? 'max-w-[90%]' : 'max-w-[80%]'}`}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
@@ -186,7 +197,7 @@ export default memo(function MessageItem({
           )}
         </div>
 
-        {/* 媒体内容（独立于气泡，固定尺寸不受文字影响） */}
+        {/* 媒体内容（独立于气泡，动态尺寸根据高级设置） */}
         <MessageMedia
           imageUrl={message.image_url}
           videoUrl={message.video_url}
@@ -196,6 +207,8 @@ export default memo(function MessageItem({
           onMediaLoaded={onMediaLoaded}
           isGenerating={!!mediaPlaceholderInfo}
           generatingType={mediaPlaceholderInfo?.type}
+          imageAspectRatio={actualImageAspectRatio}
+          videoAspectRatio={actualVideoAspectRatio}
         />
 
         {/* 操作工具栏 */}
@@ -205,6 +218,7 @@ export default memo(function MessageItem({
           isUser={isUser}
           isErrorMessage={isErrorMessage}
           isRegenerating={isRegenerating}
+          isGenerating={!!mediaPlaceholderInfo}
           visible={showToolbar}
           onRegenerate={onRegenerate}
           onDeleteClick={onDelete ? () => setShowDeleteModal(true) : undefined}
