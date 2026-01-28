@@ -280,8 +280,15 @@ class VideoService(BaseGenerationService):
         model: str,
         duration_seconds: int,
     ) -> int:
-        """估算积分消耗"""
+        """估算积分消耗（支持阶梯定价）"""
         config = KieVideoAdapter.MODEL_CONFIGS.get(model, {})
+
+        # 优先使用阶梯定价（如 sora-2-pro-storyboard）
+        credits_by_duration = config.get("credits_by_duration")
+        if credits_by_duration:
+            return credits_by_duration.get(str(duration_seconds), 0)
+
+        # 否则使用按秒计费
         credits_per_second = config.get("credits_per_second", 0)
         return credits_per_second * duration_seconds
 

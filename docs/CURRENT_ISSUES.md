@@ -22,6 +22,166 @@
 
 ## 会话交接记录
 
+### 2026-01-28 视频模型价格配置修复（完成）
+
+**问题描述**：
+后端视频模型的 `credits_per_second` 配置与前端显示价格不一致，导致实际扣费与用户预期不符。
+
+**价格对比**：
+| 模型 | 时长 | 前端显示 | 后端实际（修复前） | 修复后 |
+|------|------|---------|------------------|--------|
+| sora-2-text-to-video | 10s | 30 | 40 | 30 ✅ |
+| sora-2-text-to-video | 15s | 45 | 60 | 45 ✅ |
+| sora-2-image-to-video | 10s | 30 | 40 | 30 ✅ |
+| sora-2-image-to-video | 15s | 45 | 60 | 45 ✅ |
+| sora-2-pro-storyboard | 10s | 150 | 100 | 150 ✅ |
+| sora-2-pro-storyboard | 15s | 270 | 150 | 270 ✅ |
+| sora-2-pro-storyboard | 25s | 270 | 250 | 270 ✅ |
+
+**修复内容**：
+
+1. ✅ **修正 credits_per_second**（video_adapter.py:45-79）
+   - sora-2-text-to-video: 4 → 3 credits/秒
+   - sora-2-image-to-video: 4 → 3 credits/秒
+
+2. ✅ **添加阶梯定价支持**（video_adapter.py:69-78）
+   - sora-2-pro-storyboard 使用 `credits_by_duration` 字段
+   - 支持 10秒=150, 15秒=270, 25秒=270 的阶梯定价
+
+3. ✅ **修改 _estimate_credits 方法**（video_service.py:278-293）
+   - 优先使用 `credits_by_duration` 阶梯定价
+   - 否则使用 `credits_per_second` 按秒计费
+
+4. ✅ **修改 estimate_cost 方法**（video_adapter.py:334-364）
+   - 同步支持阶梯定价逻辑
+
+**修改文件**：
+- `backend/services/adapters/kie/video_adapter.py:45-79, 334-364`
+- `backend/services/video_service.py:278-293`
+
+---
+
+### 2026-01-28 Nano Banana Pro 模型冲突检测修复（完成）
+
+**问题描述**：
+nano-banana-pro 模型同时支持文生图和图生图，图片输入是可选的，但冲突检测逻辑在没有图片时错误报错"需要上传图片才能使用"。
+
+**根本原因**：
+[modelConflict.ts:47](frontend/src/utils/modelConflict.ts#L47) 的冲突检测条件不够精确：
+```typescript
+// ❌ 错误：只要有 imageEditing 能力就要求图片
+if (!hasImage && model.capabilities.imageEditing)
+```
+
+**修复内容**：
+添加 `!model.capabilities.textToImage` 条件，只有**纯编辑模型**才强制要求图片：
+```typescript
+// ✅ 正确：同时支持 textToImage 的模型图片可选
+if (!hasImage && model.capabilities.imageEditing && !model.capabilities.textToImage)
+```
+
+**修复后行为**：
+| 模型 | textToImage | imageEditing | 无图片时 |
+|------|------------|--------------|---------|
+| Nano Banana | ✅ | ❌ | ✅ 正常 |
+| Nano Banana Edit | ❌ | ✅ | ❌ 报错（需要图片） |
+| Nano Banana Pro | ✅ | ✅ | ✅ 正常（图片可选） |
+
+**修改文件**：
+- `frontend/src/utils/modelConflict.ts:46-54`
+
+---
+
+### 2026-01-28 消息滚动定位问题修复（完成）
+
+**问题描述**：
+从第二个对话开始，消息始终固定在最顶部而非底部，影响用户体验。
+
+**根本原因分析**：
+
+1. **useEffect 执行顺序问题**
+   - 对话切换时多个 useEffect 同时执行
+   - 滚动 useEffect 可能在消息加载前触发，使用旧数据计算位置
+   - `hasScrolledForConversationRef.current = true` 被错误设置，阻止后续滚动
+
+2. **状态追踪不完整**
+   - 缺少 `loading` 状态变化追踪（true → false）
+   - 无法准确判断消息加载完成时机
+
+3. **多个滚动逻辑协调问题**
+   - 新消息滚动 effect 可能覆盖恢复的滚动位置
+   - 重新生成 effect 中的 `messages` 依赖导致频繁触发
+
+**修复内容**：
+
+1. ✅ **添加 loading 状态追踪**（MessageArea.tsx）
+   - 新增 `prevLoadingRef` 追踪 loading 状态变化
+   - 滚动仅在 `loading: true → false` 时触发
+   - 避免使用旧数据触发滚动
+
+2. ✅ **移除错误的状态重置**（MessageArea.tsx:159-164）
+   - 删除对话切换时的 `prevLoadingRef.current = true` 重置
+   - 让滚动 useEffect 自然等待 loading 状态变化
+   - 避免在对话切换时使用旧数据立即触发滚动
+
+3. ✅ **第二个滚动 effect 添加条件检查**（MessageArea.tsx:213）
+   - 添加 `hasScrolledForConversationRef.current` 条件
+   - 确保初始定位完成后才响应新消息滚动
+   - 避免覆盖恢复的滚动位置
+
+4. ✅ **删除消息时使用正确的消息源**（MessageArea.tsx:236-240）
+   - `handleDelete` 使用 `mergedMessages` 而非 `messages`
+   - 确保包含乐观更新消息，准确获取 `newLastMessage`
+
+5. ✅ **重新生成 effect 优化**（MessageArea.tsx:353-367）
+   - 使用 `requestAnimationFrame` 替代 `setTimeout`
+   - 新增 `messagesRef` 避免 `messages` 依赖导致频繁触发
+   - 提升滚动时机准确性
+
+**修改文件清单**：
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `frontend/src/components/chat/MessageArea.tsx` | 修改 | 核心滚动逻辑修复 |
+| `frontend/src/hooks/useMessageLoader.ts` | 已修改 | loading 初始值改为 true |
+| `frontend/src/stores/useChatStore.ts` | 已修改 | 添加滚动位置管理函数 |
+
+**关键代码修改**：
+
+```typescript
+// 1. 添加 loading 状态追踪
+const prevLoadingRef = useRef(true);
+const messagesRef = useRef(messages);
+messagesRef.current = messages;
+
+// 2. 对话切换时不重置 prevLoadingRef（避免错误触发滚动）
+// 注意：不要重置 prevLoadingRef.current，让滚动 useEffect 自然等待
+
+// 3. 滚动 useEffect 条件修正
+useEffect(() => {
+  const wasLoading = prevLoadingRef.current;
+  prevLoadingRef.current = loading;
+
+  if (wasLoading && !loading && mergedMessages.length > 0 && !hasScrolledForConversationRef.current) {
+    hasScrolledForConversationRef.current = true;
+    // 执行滚动...
+  }
+}, [loading, mergedMessages.length, conversationId]);
+
+// 4. 新消息滚动添加条件
+if (currentCount > prevCount && prevCount > 0 && !userScrolledAway && hasScrolledForConversationRef.current) {
+  // 只有初始定位完成后才响应新消息滚动
+}
+```
+
+**测试验证**：
+- ✅ 首个对话正常显示在底部
+- ✅ 切换到其他对话正常显示在底部
+- ✅ 保存的滚动位置正确恢复
+- ✅ 新消息到达时正确滚动
+- ✅ 用户滚走后不打断阅读
+
+---
+
 ### 2026-01-27 技术债务清理（完成）
 
 **完成内容**：

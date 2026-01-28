@@ -43,8 +43,9 @@ export function detectConflict(model: UnifiedModel, hasImage: boolean): ModelCon
     };
   }
 
-  // 硬性冲突 2：图像编辑模型 + 无图片（模型需要图片）
-  if (!hasImage && model.type === 'image' && model.capabilities.imageEditing) {
+  // 硬性冲突 2：纯图像编辑模型 + 无图片（模型需要图片）
+  // 注意：同时支持 textToImage 和 imageEditing 的模型（如 nano-banana-pro）图片是可选的
+  if (!hasImage && model.type === 'image' && model.capabilities.imageEditing && !model.capabilities.textToImage) {
     return {
       severity: 'critical',
       type: 'requires_image',
