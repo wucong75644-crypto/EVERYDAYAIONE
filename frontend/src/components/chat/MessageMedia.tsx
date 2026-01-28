@@ -44,6 +44,8 @@ export default function MessageMedia({
   const [isDownloading, setIsDownloading] = useState(false);
   // 图片加载完成状态
   const [imageLoaded, setImageLoaded] = useState(false);
+  // 视频加载完成状态
+  const [videoLoaded, setVideoLoaded] = useState(false);
 
   // 当 imageUrl 变化时，重置加载状态
   useEffect(() => {
@@ -51,6 +53,13 @@ export default function MessageMedia({
       setImageLoaded(false);
     }
   }, [imageUrl]);
+
+  // 当 videoUrl 变化时，重置加载状态
+  useEffect(() => {
+    if (videoUrl) {
+      setVideoLoaded(false);
+    }
+  }, [videoUrl]);
 
   // 懒加载：监听元素是否进入可视区域
   const { ref: lazyRef, inView } = useInView({
@@ -104,9 +113,10 @@ export default function MessageMedia({
     }
   };
 
-  // 是否显示占位符：正在生成 或 图片URL存在但未加载完成
-  const showPlaceholder = isGenerating || (imageUrl && !imageLoaded);
-  const PlaceholderIcon = generatingType === 'video' ? VideoIcon : ImageIcon;
+  // 是否显示图片占位符：正在生成图片 或 图片URL存在但未加载完成
+  const showImagePlaceholder = (isGenerating && generatingType === 'image') || (imageUrl && !imageLoaded);
+  // 是否显示视频占位符：正在生成视频 或 视频URL存在但未加载完成
+  const showVideoPlaceholder = (isGenerating && generatingType === 'video') || (videoUrl && !videoLoaded);
 
   // 没有媒体内容且不在生成中时不渲染
   if (!imageUrl && !videoUrl && !isGenerating) return null;
@@ -117,9 +127,9 @@ export default function MessageMedia({
       {(imageUrl || (isGenerating && generatingType === 'image')) && (
         <div className="mt-4 relative w-[180px]" ref={lazyRef}>
           {/* 占位符 - 生成中或图片加载中显示 */}
-          {showPlaceholder && (
+          {showImagePlaceholder && (
             <div className="rounded-xl w-[180px] h-[180px] bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm">
-              <PlaceholderIcon className="w-10 h-10 text-gray-300 dark:text-gray-500" />
+              <ImageIcon className="w-10 h-10 text-gray-300 dark:text-gray-500" />
             </div>
           )}
 
@@ -163,33 +173,43 @@ export default function MessageMedia({
         </div>
       )}
 
-      {/* 视频渲染 */}
-      {videoUrl && (
-        <div className="mt-4" ref={!imageUrl ? lazyRef : undefined}>
-          {(!imageUrl && !inView) ? (
-            <div className="rounded-xl w-full max-w-[400px] aspect-video bg-gray-100 flex items-center justify-center">
-              <svg className="w-8 h-8 text-gray-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
+      {/* 视频渲染（含占位符） */}
+      {(videoUrl || (isGenerating && generatingType === 'video')) && (
+        <div className="mt-4 relative w-[320px]" ref={!imageUrl ? lazyRef : undefined}>
+          {/* 视频占位符 - 生成中或视频加载中显示 */}
+          {showVideoPlaceholder && (
+            <div className="rounded-xl w-[320px] h-[180px] bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm">
+              <VideoIcon className="w-10 h-10 text-gray-300 dark:text-gray-500" />
             </div>
-          ) : (
-            <video
-              src={videoUrl}
-              controls
-              className="rounded-xl w-full max-w-[400px] shadow-sm"
-              preload="metadata"
-              onLoadedMetadata={onMediaLoaded}
-            >
-              您的浏览器不支持视频播放
-            </video>
           )}
 
-          {/* 视频操作按钮（仅 AI 消息显示） */}
-          {!isUser && (
-            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
+          {/* 视频 - 加载完成后显示 */}
+          {videoUrl && inView && (
+            <div
+              className={`transition-opacity duration-500 ease-out ${
+                videoLoaded ? 'opacity-100' : 'opacity-0 absolute inset-0'
+              }`}
+            >
+              <video
+                src={videoUrl}
+                controls
+                className="rounded-xl w-[320px] shadow-sm"
+                preload="metadata"
+                onLoadedMetadata={() => {
+                  setVideoLoaded(true);
+                  onMediaLoaded?.();
+                }}
+              >
+                您的浏览器不支持视频播放
+              </video>
+            </div>
+          )}
+
+          {/* 视频操作按钮（仅 AI 消息且加载完成后显示） */}
+          {videoLoaded && !isUser && (
+            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100 dark:border-gray-600">
               <button
-                className="text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-50 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors"
+                className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors"
                 onClick={handleVideoPlay}
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -199,7 +219,7 @@ export default function MessageMedia({
                 <span>播放</span>
               </button>
               <button
-                className="text-xs text-gray-600 hover:text-gray-900 hover:bg-gray-50 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors"
+                className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors"
                 onClick={handleVideoDownload}
               >
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
