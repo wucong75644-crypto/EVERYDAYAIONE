@@ -37,11 +37,13 @@ export function createErrorMessage(
  * @param content 消息内容
  * @param conversationId 对话ID
  * @param imageUrl 图片URL（可选）
+ * @param createdAt 可选的时间戳（用于保持与占位符的顺序一致）
  */
 export function createOptimisticUserMessage(
   content: string,
   conversationId: string,
-  imageUrl: string | null = null
+  imageUrl: string | null = null,
+  createdAt?: string
 ): Message {
   return {
     id: `temp-${Date.now()}`,
@@ -51,7 +53,7 @@ export function createOptimisticUserMessage(
     image_url: imageUrl,
     video_url: null,
     credits_cost: 0,
-    created_at: new Date().toISOString(),
+    created_at: createdAt || new Date().toISOString(),
   };
 }
 
@@ -175,7 +177,13 @@ export function createMediaOptimisticPair(
   loadingText: string,
   timestamps: MediaTimestamps
 ): { userMessage: Message; placeholder: Message } {
-  const userMessage = createOptimisticUserMessage(content, conversationId, imageUrl);
+  // 使用预生成的时间戳，确保用户消息时间 < 占位符时间，排序后顺序正确
+  const userMessage = createOptimisticUserMessage(
+    content,
+    conversationId,
+    imageUrl,
+    timestamps.userTimestamp
+  );
   const placeholder = createStreamingPlaceholder(
     conversationId,
     timestamps.tempPlaceholderId,
