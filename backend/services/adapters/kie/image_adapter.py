@@ -315,12 +315,21 @@ class KieImageAdapter:
         result: QueryTaskResponse,
         resolution: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """格式化结果"""
+        """格式化结果（状态值已映射为前端格式）"""
         cost_estimate = self.estimate_cost(resolution=resolution)
+
+        # 状态映射：KIE → 前端格式
+        status_map = {
+            "success": "success",
+            "fail": "failed",
+            "waiting": "pending",
+        }
+        raw_status = result.state.value if result.state else "unknown"
+        status = status_map.get(raw_status, raw_status)
 
         return {
             "task_id": result.task_id,
-            "status": result.state.value if result.state else "unknown",
+            "status": status,
             "image_urls": result.result_urls,
             "cost_usd": float(cost_estimate.estimated_cost_usd),
             "credits_consumed": cost_estimate.estimated_credits,

@@ -285,15 +285,24 @@ class KieVideoAdapter:
         result: QueryTaskResponse,
         duration_seconds: int,
     ) -> Dict[str, Any]:
-        """格式化结果"""
+        """格式化结果（状态值已映射为前端格式）"""
         cost_estimate = self.estimate_cost(duration_seconds)
 
         # 获取视频 URL (通常只有一个)
         video_url = result.result_urls[0] if result.result_urls else None
 
+        # 状态映射：KIE → 前端格式
+        status_map = {
+            "success": "success",
+            "fail": "failed",
+            "waiting": "pending",
+        }
+        raw_status = result.state.value if result.state else "unknown"
+        status = status_map.get(raw_status, raw_status)
+
         return {
             "task_id": result.task_id,
-            "status": result.state.value if result.state else "unknown",
+            "status": status,
             "video_url": video_url,
             "duration_seconds": duration_seconds,
             "cost_usd": float(cost_estimate.estimated_cost_usd),
@@ -309,7 +318,7 @@ class KieVideoAdapter:
             task_id: 任务 ID
 
         Returns:
-            任务状态
+            任务状态（状态值已映射为前端格式：success/failed/pending）
         """
         try:
             result = await self.client.query_task(task_id)
@@ -318,9 +327,18 @@ class KieVideoAdapter:
             if result.state == TaskState.SUCCESS and result.result_urls:
                 video_url = result.result_urls[0]
 
+            # 状态映射：KIE → 前端格式
+            status_map = {
+                "success": "success",
+                "fail": "failed",  # KIE 返回 "fail"，前端期望 "failed"
+                "waiting": "pending",  # KIE 返回 "waiting"，前端期望 "pending"
+            }
+            raw_status = result.state.value if result.state else "unknown"
+            status = status_map.get(raw_status, raw_status)
+
             return {
                 "task_id": result.task_id,
-                "status": result.state.value if result.state else "unknown",
+                "status": status,
                 "video_url": video_url,
                 "fail_code": result.fail_code,
                 "fail_msg": result.fail_msg,
