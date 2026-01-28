@@ -41,7 +41,7 @@ class KieVideoAdapter:
     - 支持去水印
     """
 
-    # 模型配置
+    # 模型配置（价格与前端 models.ts 保持一致）
     MODEL_CONFIGS = {
         "sora-2-text-to-video": {
             "model_id": "sora-2-text-to-video",
@@ -52,7 +52,7 @@ class KieVideoAdapter:
             "supported_frames": ["10", "15"],
             "supports_watermark_removal": True,
             "cost_per_second": Decimal("0.015"),
-            "credits_per_second": 4,
+            "credits_per_second": 3,  # 30 credits/10秒
         },
         "sora-2-image-to-video": {
             "model_id": "sora-2-image-to-video",
@@ -64,7 +64,7 @@ class KieVideoAdapter:
             "supported_frames": ["10", "15"],
             "supports_watermark_removal": True,
             "cost_per_second": Decimal("0.015"),
-            "credits_per_second": 4,
+            "credits_per_second": 3,  # 30 credits/10秒
         },
         "sora-2-pro-storyboard": {
             "model_id": "sora-2-pro-storyboard",
@@ -73,8 +73,9 @@ class KieVideoAdapter:
             "requires_prompt": False,  # 无 prompt
             "supported_frames": ["10", "15", "25"],
             "supports_watermark_removal": False,
-            "cost_per_second": Decimal("0.045"),
-            "credits_per_second": 10,
+            "cost_per_second": Decimal("0.054"),
+            # 阶梯定价：10秒=150, 15秒=270, 25秒=270
+            "credits_by_duration": {"10": 150, "15": 270, "25": 270},
         },
     }
 
@@ -332,7 +333,7 @@ class KieVideoAdapter:
 
     def estimate_cost(self, duration_seconds: int) -> CostEstimate:
         """
-        估算成本
+        估算成本（支持阶梯定价）
 
         Args:
             duration_seconds: 视频时长 (秒)
@@ -341,10 +342,17 @@ class KieVideoAdapter:
             成本估算
         """
         cost_per_second = self.config["cost_per_second"]
-        credits_per_second = self.config["credits_per_second"]
 
-        total_cost = cost_per_second * duration_seconds
-        total_credits = credits_per_second * duration_seconds
+        # 优先使用阶梯定价（如 sora-2-pro-storyboard）
+        credits_by_duration = self.config.get("credits_by_duration")
+        if credits_by_duration:
+            total_credits = credits_by_duration.get(str(duration_seconds), 0)
+            # 根据积分反算美元成本（1 credit ≈ $0.005）
+            total_cost = Decimal(total_credits) * Decimal("0.005")
+        else:
+            credits_per_second = self.config.get("credits_per_second", 0)
+            total_cost = cost_per_second * duration_seconds
+            total_credits = credits_per_second * duration_seconds
 
         return CostEstimate(
             model=self.model,
@@ -353,7 +361,7 @@ class KieVideoAdapter:
             breakdown={
                 "duration_seconds": duration_seconds,
                 "cost_per_second": float(cost_per_second),
-                "credits_per_second": credits_per_second,
+                "total_credits": total_credits,
             },
         )
 
