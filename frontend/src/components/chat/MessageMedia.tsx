@@ -97,22 +97,6 @@ export default function MessageMedia({
     }
   };
 
-  // 处理视频下载
-  const handleVideoDownload = () => {
-    if (!videoUrl) return;
-    const link = document.createElement('a');
-    link.href = videoUrl;
-    link.download = `video-${messageId}.mp4`;
-    link.click();
-  };
-
-  // 处理视频播放（新窗口）
-  const handleVideoPlay = () => {
-    if (videoUrl) {
-      window.open(videoUrl, '_blank');
-    }
-  };
-
   // 是否显示图片占位符：正在生成图片 或 图片URL存在但未加载完成
   const showImagePlaceholder = (isGenerating && generatingType === 'image') || (imageUrl && !imageLoaded);
   // 是否显示视频占位符：正在生成视频 或 视频URL存在但未加载完成
@@ -202,31 +186,6 @@ export default function MessageMedia({
               >
                 您的浏览器不支持视频播放
               </video>
-            </div>
-          )}
-
-          {/* 视频操作按钮（仅 AI 消息且加载完成后显示） */}
-          {videoLoaded && !isUser && (
-            <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100 dark:border-gray-600">
-              <button
-                className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors"
-                onClick={handleVideoPlay}
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span>播放</span>
-              </button>
-              <button
-                className="text-xs text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 px-2 py-1 rounded-lg flex items-center gap-1 transition-colors"
-                onClick={handleVideoDownload}
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                <span>下载</span>
-              </button>
             </div>
           )}
         </div>
