@@ -118,9 +118,12 @@ class OSSService:
         prefix = self.VIDEO_PREFIX if media_type == "video" else self.IMAGE_PREFIX
         object_key = self._generate_object_key(user_id, category, ext, prefix)
 
-        # 4. 上传到 OSS
+        # 4. 上传到 OSS（使用线程池避免阻塞event loop）
         try:
-            result = self.bucket.put_object(
+            import asyncio
+            # 将同步OSS上传放到线程池执行，避免阻塞worker
+            result = await asyncio.to_thread(
+                self.bucket.put_object,
                 object_key,
                 content,
                 headers={"Content-Type": content_type or f"{media_type}/{ext}"},

@@ -79,7 +79,13 @@ class MessageService:
         if created_at:
             message_data["created_at"] = created_at.isoformat()
         if generation_params:
-            message_data["generation_params"] = generation_params
+            # 如果是 Pydantic 模型，转换为字典
+            if hasattr(generation_params, 'model_dump'):
+                message_data["generation_params"] = generation_params.model_dump()
+            elif hasattr(generation_params, 'dict'):
+                message_data["generation_params"] = generation_params.dict()
+            else:
+                message_data["generation_params"] = generation_params
 
         result = self.db.table("messages").insert(message_data).execute()
 

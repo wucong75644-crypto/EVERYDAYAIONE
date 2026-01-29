@@ -124,5 +124,6 @@ export const mockAsyncFn = <T,>(value: T, delayMs = 0) => {
 };
 
 // Re-export testing library utilities
+// eslint-disable-next-line react-refresh/only-export-components
 export * from '@testing-library/react';
 export { default as userEvent } from '@testing-library/user-event';

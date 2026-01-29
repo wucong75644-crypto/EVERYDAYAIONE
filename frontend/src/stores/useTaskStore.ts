@@ -306,7 +306,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         if (result.done) {
           if (!get().pollingConfigs.has(taskId)) return;
           get().stopPolling(taskId);
-          result.error ? callbacks.onError(result.error) : callbacks.onSuccess(result.result);
+          if (result.error) {
+            callbacks.onError(result.error);
+          } else {
+            callbacks.onSuccess(result.result);
+          }
         }
       } catch (error) {
         consecutiveFailures++;

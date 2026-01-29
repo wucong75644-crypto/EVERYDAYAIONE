@@ -3,7 +3,7 @@
  * 检测占位符被替换为真实内容并触发滚动
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { Message } from '../../services/message';
 
 interface UseMediaReplacementScrollOptions {
@@ -25,7 +25,11 @@ export function useMediaReplacementScroll({
 }: UseMediaReplacementScrollOptions) {
   const prevLastMessageStateRef = useRef<LastMessageState | null>(null);
   const scrollToBottomRef = useRef(scrollToBottom);
-  scrollToBottomRef.current = scrollToBottom;
+
+  // 使用 useLayoutEffect 同步更新 ref，避免在渲染期间访问
+  useLayoutEffect(() => {
+    scrollToBottomRef.current = scrollToBottom;
+  }, [scrollToBottom]);
 
   useEffect(() => {
     if (!hasScrolledForConversation || messages.length === 0) {

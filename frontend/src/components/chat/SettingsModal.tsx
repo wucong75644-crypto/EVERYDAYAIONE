@@ -4,7 +4,7 @@
  * 显示用户信息和账户操作
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
 
@@ -20,21 +20,22 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
   // 处理关闭动画
   const handleClose = useCallback(() => {
+    if (isClosing) return; // 防止重复触发
     setIsClosing(true);
     setTimeout(() => {
       setIsClosing(false);
       onClose();
     }, 150); // 动画时长
-  }, [onClose]);
+  }, [isClosing, onClose]);
 
-  // 重置关闭状态
-  useEffect(() => {
-    if (isOpen) {
-      setIsClosing(false);
+  // 不渲染已关闭的模态框，同时重置关闭状态
+  if (!isOpen) {
+    if (isClosing) {
+      // 安全地在下一帧重置状态（避免在渲染期间更新）
+      requestAnimationFrame(() => setIsClosing(false));
     }
-  }, [isOpen]);
-
-  if (!isOpen) return null;
+    return null;
+  }
 
   const handleLogout = () => {
     clearAuth();

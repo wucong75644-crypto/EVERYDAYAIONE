@@ -123,13 +123,14 @@ class PerformanceMonitor {
   /**
    * 发送到外部监控服务
    */
-  private sendToMonitoringService(_metric: PerformanceMetric): void {
+  private sendToMonitoringService(metric: PerformanceMetric): void {
+    void metric;
     // 这里可以集成 Sentry、DataDog 等监控服务
     // 示例：
     // if (window.Sentry) {
     //   window.Sentry.captureMessage('Performance Metric', {
     //     level: 'info',
-    //     extra: _metric,
+    //     extra: metric,
     //   });
     // }
   }

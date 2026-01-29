@@ -19,7 +19,7 @@ export default function ContextMenu({
 }: ContextMenuProps) {
   return (
     <div
-      className={`fixed bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 min-w-32 ${
+      className={`fixed bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50 min-w-32 ${
         closing ? 'animate-slideUp' : 'animate-slideDown'
       }`}
       style={{ left: x, top: y }}
@@ -27,13 +27,13 @@ export default function ContextMenu({
     >
       <button
         onClick={onRename}
-        className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+        className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
       >
         重命名
       </button>
       <button
         onClick={onDelete}
-        className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-gray-100"
+        className="w-full px-4 py-2 text-left text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700"
       >
         删除
       </button>
