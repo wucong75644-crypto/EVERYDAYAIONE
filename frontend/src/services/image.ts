@@ -120,7 +120,7 @@ export async function queryTaskStatus(taskId: string): Promise<TaskStatusRespons
   return request<TaskStatusResponse>({
     method: 'GET',
     url: `/images/tasks/${taskId}`,
-    timeout: 60000, // 60秒超时（首次查询可能需要上传到 OSS）
+    timeout: 120000, // 120秒超时（首次查询可能需要下载并上传到 OSS）
   });
 }
 

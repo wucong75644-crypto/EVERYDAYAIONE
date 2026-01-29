@@ -118,7 +118,7 @@ export async function queryVideoTaskStatus(taskId: string): Promise<TaskStatusRe
   return request<TaskStatusResponse>({
     method: 'GET',
     url: `/videos/tasks/${taskId}`,
-    timeout: 120000, // 120秒超时（首次查询可能需要上传大视频到 OSS）
+    timeout: 180000, // 180秒超时（首次查询可能需要下载并上传大视频到 OSS）
   });
 }
 
