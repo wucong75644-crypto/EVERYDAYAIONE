@@ -7,7 +7,7 @@
  * - 管理对话（重命名、删除）
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useTaskStore } from '../stores/useTaskStore';
@@ -49,7 +49,11 @@ export default function Chat() {
 
   // 使用 ref 保存最新的 currentConversationId（避免 useCallback 闭包陷阱）
   const currentConversationIdRef = useRef<string | null>(null);
-  currentConversationIdRef.current = currentConversationId;
+
+  // 使用 useLayoutEffect 同步更新 ref，避免在渲染期间访问
+  useLayoutEffect(() => {
+    currentConversationIdRef.current = currentConversationId;
+  }, [currentConversationId]);
 
   // 对话列表乐观更新（发送消息时立即将对话移到最前）
   const [conversationOptimisticUpdate, setConversationOptimisticUpdate] = useState<{
@@ -72,6 +76,12 @@ export default function Chat() {
   // 顶部标题编辑状态
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editingTitle, setEditingTitle] = useState('');
+
+  // RuntimeStore（新架构）- 需要在 useEffect 之前声明
+  const runtimeStore = useConversationRuntimeStore();
+
+  // 任务状态管理
+  const { startTask, updateTaskContent, completeTask, failTask, markNotificationRead, clearRecentlyCompleted } = useTaskStore();
 
   // 未登录用户重定向到登录页
   useEffect(() => {
@@ -113,6 +123,7 @@ export default function Chat() {
 
     if (urlConversationId) {
       // 立即设置对话 ID（无需等待 API，让 MessageArea 立即加载缓存）
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- URL 参数同步到状态是合理用例
       setCurrentConversationId(urlConversationId);
 
       // 优先从 localStorage 缓存中获取标题（避免显示"加载中..."）
@@ -149,7 +160,7 @@ export default function Chat() {
       setConversationTitle('新对话');
       setConversationModelId(null);
     }
-  }, [urlConversationId, navigate]);
+  }, [urlConversationId, navigate, runtimeStore]);
 
   // 创建新对话
   const handleNewConversation = () => {
@@ -158,7 +169,9 @@ export default function Chat() {
   };
 
   // 选择对话
-  const handleSelectConversation = (id: string, _title: string, _modelId?: string | null) => {
+  const handleSelectConversation = (id: string, title: string, modelId?: string | null) => {
+    void title;
+    void modelId;
     // 路由跳转到对话详情页（URL 变化会触发 useEffect 统一处理状态更新）
     navigate(`/chat/${id}`);
   };
@@ -169,13 +182,9 @@ export default function Chat() {
     setConversationTitle(title);
     // 乐观更新：直接添加新对话到列表顶部（不触发 API 调用）
     setConversationOptimisticNew({ id, title });
+    // 更新URL，确保刷新后能正确加载对话
+    navigate(`/chat/${id}`, { replace: true });
   };
-
-  // 任务状态管理
-  const { startTask, updateTaskContent, completeTask, failTask, markNotificationRead, clearRecentlyCompleted } = useTaskStore();
-
-  // RuntimeStore（新架构）
-  const runtimeStore = useConversationRuntimeStore();
 
   // 消息开始发送（乐观更新）
   const handleMessagePending = useCallback((message: Message) => {
@@ -282,7 +291,8 @@ export default function Chat() {
   }, [refreshUser, completeTask, failTask, markNotificationRead, clearRecentlyCompleted, navigate, runtimeStore]);
 
   // AI开始生成（创建streaming消息）
-  const handleStreamStart = useCallback((conversationId: string, _model: string) => {
+  const handleStreamStart = useCallback((conversationId: string, model: string) => {
+    void model;
     // 创建streaming消息
     const now = Date.now();
     const streamingId = now.toString();
@@ -424,6 +434,7 @@ export default function Chat() {
                   if (e.key === 'Escape') setIsEditingTitle(false);
                 }}
                 autoFocus
+                aria-label="编辑对话标题"
                 className="text-lg font-medium bg-gray-100 px-2 py-1 rounded outline-none focus:ring-2 focus:ring-blue-500"
               />
             ) : (
