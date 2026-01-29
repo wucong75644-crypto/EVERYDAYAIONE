@@ -175,7 +175,14 @@ class VideoService(BaseGenerationService):
 
             # 如果视频生成完成且提供了 user_id，上传到 OSS
             if result.get("status") == "success" and user_id:
-                result = await self._upload_videos_to_oss(result, user_id)
+                try:
+                    result = await self._upload_videos_to_oss(result, user_id)
+                except Exception as e:
+                    # OSS 上传失败不影响任务查询结果，只记录日志
+                    logger.warning(
+                        f"Failed to upload video to OSS during query: "
+                        f"task_id={task_id}, error={e}"
+                    )
 
             return result
 

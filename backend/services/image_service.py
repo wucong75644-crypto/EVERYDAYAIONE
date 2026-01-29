@@ -230,7 +230,14 @@ class ImageService(BaseGenerationService):
             # 如果图片生成完成且提供了 user_id，上传到 OSS
             # 注意：image adapter 返回的状态是 "success"，不是 "finished"
             if result.get("status") == "success" and user_id:
-                result = await self._upload_images_to_oss(result, user_id)
+                try:
+                    result = await self._upload_images_to_oss(result, user_id)
+                except Exception as e:
+                    # OSS 上传失败不影响任务查询结果，只记录日志
+                    logger.warning(
+                        f"Failed to upload images to OSS during query: "
+                        f"task_id={task_id}, error={e}"
+                    )
 
             return result
 
