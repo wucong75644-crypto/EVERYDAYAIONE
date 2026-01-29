@@ -273,6 +273,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   startPolling: (taskId, pollFn, callbacks, options = {}) => {
     const { interval = 2000, maxDuration } = options;
     const startTime = Date.now();
+    let consecutiveFailures = 0;
+    const MAX_CONSECUTIVE_FAILURES = 5; // 连续失败5次后停止轮询（考虑首次OSS上传可能超时）
 
     set((state) => {
       const task = state.mediaTasks.get(taskId);
@@ -300,13 +302,22 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
       try {
         const result = await pollFn();
+        consecutiveFailures = 0; // 重置失败计数
         if (result.done) {
           if (!get().pollingConfigs.has(taskId)) return;
           get().stopPolling(taskId);
           result.error ? callbacks.onError(result.error) : callbacks.onSuccess(result.result);
         }
       } catch (error) {
-        console.warn(`轮询任务 ${taskId} 请求失败，将在下次间隔后重试:`, error);
+        consecutiveFailures++;
+        console.warn(`轮询任务 ${taskId} 请求失败 (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES})，将在下次间隔后重试:`, error);
+
+        // 连续失败超过限制，停止轮询
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          if (!get().pollingConfigs.has(taskId)) return;
+          get().stopPolling(taskId);
+          callbacks.onError(new Error('任务查询连续失败，可能任务已过期'));
+        }
       }
     };
 

@@ -55,7 +55,7 @@ class KieImageAdapter:
             "supported_formats": ["png", "jpeg"],
             "supports_resolution": False,
             "cost_per_image": Decimal("0.02"),
-            "credits_per_image": 5,
+            "credits_per_image": 4,
         },
         "google/nano-banana-edit": {
             "model_id": "google/nano-banana-edit",
@@ -88,14 +88,14 @@ class KieImageAdapter:
             "supports_resolution": True,
             "supported_resolutions": ["1K", "2K", "4K"],
             "cost_per_image": {
-                "1K": Decimal("0.12"),
-                "2K": Decimal("0.18"),
-                "4K": Decimal("0.24"),
+                "1K": Decimal("0.09"),
+                "2K": Decimal("0.09"),
+                "4K": Decimal("0.12"),
             },
             "credits_per_image": {
-                "1K": 25,
-                "2K": 36,
-                "4K": 48,
+                "1K": 18,
+                "2K": 18,
+                "4K": 24,
             },
         },
     }
