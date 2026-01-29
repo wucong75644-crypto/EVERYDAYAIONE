@@ -7,6 +7,8 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Trash2 } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useModalAnimation } from '../../hooks/useModalAnimation';
 
 interface MessageActionsProps {
   /** 消息 ID */
@@ -47,18 +49,15 @@ export default function MessageActions({
   onMouseLeave,
 }: MessageActionsProps) {
   const [copied, setCopied] = useState(false);
-  const [showMoreMenu, setShowMoreMenu] = useState(false);
-  const [moreMenuClosing, setMoreMenuClosing] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
 
-  // 关闭更多菜单（带动画）
-  const closeMoreMenu = () => {
-    setMoreMenuClosing(true);
-    setTimeout(() => {
-      setShowMoreMenu(false);
-      setMoreMenuClosing(false);
-    }, 150); // 匹配动画时长
-  };
+  // 使用自定义 Hook 管理更多菜单动画
+  const {
+    isOpen: showMoreMenu,
+    isClosing: moreMenuClosing,
+    open: openMoreMenu,
+    close: closeMoreMenu,
+  } = useModalAnimation();
 
   // 复制功能
   const handleCopy = useCallback(async () => {
@@ -71,14 +70,17 @@ export default function MessageActions({
     }
   }, [content]);
 
-  // 朗读功能
+  // 朗读功能（待实现）
   const handleSpeak = useCallback(() => {
-    // 暂不支持
+    // TODO: 朗读功能待后续迭代实现
+    toast('朗读功能开发中，敬请期待', { icon: '🎧' });
   }, []);
 
-  // 点赞/点踩功能
-  const handleFeedback = useCallback((_type: 'like' | 'dislike') => {
-    // 暂不支持
+  // 点赞/点踩功能（待实现）
+  const handleFeedback = useCallback((type: 'like' | 'dislike') => {
+    // TODO: 反馈功能待后续迭代实现
+    const icon = type === 'like' ? '👍' : '👎';
+    toast('反馈功能开发中，敬请期待', { icon });
   }, []);
 
   // 分享功能
@@ -214,7 +216,7 @@ export default function MessageActions({
       {/* 更多按钮（包含下拉菜单） */}
       <div className="relative" ref={moreMenuRef}>
         <button
-          onClick={() => setShowMoreMenu(!showMoreMenu)}
+          onClick={() => showMoreMenu ? closeMoreMenu() : openMoreMenu()}
           className={`p-1.5 rounded-lg transition-all duration-150 ${
             showMoreMenu
               ? 'text-gray-900 bg-gray-200'

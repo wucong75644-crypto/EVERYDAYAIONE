@@ -239,7 +239,9 @@ export function getModelById(id: string): UnifiedModel | undefined {
 }
 
 // 根据图片状态筛选可用模型
-export function getAvailableModels(_hasImage: boolean): UnifiedModel[] {
+export function getAvailableModels(hasImage: boolean): UnifiedModel[] {
   // 显示所有模型，让冲突检测来处理不匹配的情况
+  // hasImage 参数保留供未来筛选逻辑使用
+  void hasImage;
   return ALL_MODELS;
 }

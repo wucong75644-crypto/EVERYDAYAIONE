@@ -23,6 +23,7 @@ import ConversationItem from './ConversationItem';
 import ContextMenu from './ContextMenu';
 import DropdownMenu from './DropdownMenu';
 import DeleteConfirmModal from './DeleteConfirmModal';
+import { MODAL_CLOSE_ANIMATION_DURATION } from '../../constants/animations';
 
 interface ConversationListProps {
   currentConversationId: string | null;
@@ -169,7 +170,7 @@ export default function ConversationList({
     setTimeout(() => {
       setContextMenu(null);
       setContextMenuClosing(false);
-    }, 150); // 匹配动画时长
+    }, MODAL_CLOSE_ANIMATION_DURATION);
   };
 
   const closeDropdownMenu = () => {
@@ -177,7 +178,7 @@ export default function ConversationList({
     setTimeout(() => {
       setDropdownMenu(null);
       setDropdownClosing(false);
-    }, 150); // 匹配动画时长
+    }, MODAL_CLOSE_ANIMATION_DURATION);
   };
 
   const closeDeleteConfirm = () => {
@@ -185,7 +186,7 @@ export default function ConversationList({
     setTimeout(() => {
       setDeleteConfirm(null);
       setDeleteConfirmClosing(false);
-    }, 150); // 匹配动画时长
+    }, MODAL_CLOSE_ANIMATION_DURATION);
   };
 
   const handleContextMenu = (e: React.MouseEvent, id: string, title: string) => {
@@ -278,32 +279,27 @@ export default function ConversationList({
   };
 
   // Placeholder handlers for new menu options
-  const handlePin = (id: string) => {
-    console.log('Pin conversation:', id);
+  const handlePin = (_id: string) => {
     closeDropdownMenu();
     // TODO: Implement pin functionality
   };
 
-  const handleShare = (id: string) => {
-    console.log('Share conversation:', id);
+  const handleShare = (_id: string) => {
     closeDropdownMenu();
     // TODO: Implement share functionality
   };
 
   const handleBatchManage = () => {
-    console.log('Batch manage');
     closeDropdownMenu();
     // TODO: Implement batch manage functionality
   };
 
-  const handleMoveToGroup = (id: string) => {
-    console.log('Move to group:', id);
+  const handleMoveToGroup = (_id: string) => {
     closeDropdownMenu();
     // TODO: Implement move to group functionality
   };
 
-  const handleExport = (id: string) => {
-    console.log('Export conversation:', id);
+  const handleExport = (_id: string) => {
     closeDropdownMenu();
     // TODO: Implement export functionality
   };

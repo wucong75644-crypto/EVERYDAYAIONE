@@ -12,6 +12,7 @@ import ImagePreviewModal from './ImagePreviewModal';
 import MessageMedia from './MessageMedia';
 import MessageActions from './MessageActions';
 import { getSavedSettings } from '../../utils/settingsStorage';
+import { useModalAnimation } from '../../hooks/useModalAnimation';
 
 interface MessageItemProps {
   message: Message;
@@ -25,6 +26,10 @@ interface MessageItemProps {
   onDelete?: (messageId: string) => void;
   /** 媒体加载完成回调（用于滚动调整） */
   onMediaLoaded?: () => void;
+  /** 所有图片 URL 列表（用于缩略图预览） */
+  allImageUrls?: string[];
+  /** 当前图片在列表中的索引（用于缩略图预览） */
+  currentImageIndex?: number;
 }
 
 export default memo(function MessageItem({
@@ -34,6 +39,8 @@ export default memo(function MessageItem({
   onRegenerate,
   onDelete,
   onMediaLoaded,
+  allImageUrls = [],
+  currentImageIndex = 0,
 }: MessageItemProps) {
   const isUser = message.role === 'user';
 
@@ -73,13 +80,18 @@ export default memo(function MessageItem({
   const hideTimeoutRef = useRef<number | null>(null);
   const isMouseOnToolbarRef = useRef(false);
 
-  // 删除确认弹框状态
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deleteModalClosing, setDeleteModalClosing] = useState(false);
+  // 使用自定义 Hook 管理删除弹框动画
+  const {
+    isOpen: showDeleteModal,
+    isClosing: deleteModalClosing,
+    open: openDeleteModal,
+    close: closeDeleteModal,
+  } = useModalAnimation();
   const [isDeleting, setIsDeleting] = useState(false);
 
   // 图片预览弹窗状态
   const [showImagePreview, setShowImagePreview] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState(currentImageIndex);
 
   // 鼠标进入消息区域 - 显示工具栏并清除隐藏定时器
   const handleMouseEnter = () => {
@@ -127,15 +139,6 @@ export default memo(function MessageItem({
       }
     };
   }, []);
-
-  // 关闭删除弹框（带动画）
-  const closeDeleteModal = () => {
-    setDeleteModalClosing(true);
-    setTimeout(() => {
-      setShowDeleteModal(false);
-      setDeleteModalClosing(false);
-    }, 150); // 匹配动画时长
-  };
 
   // 处理删除确认
   const handleDeleteConfirm = async () => {
@@ -213,7 +216,10 @@ export default memo(function MessageItem({
           videoUrl={message.video_url}
           messageId={message.id}
           isUser={isUser}
-          onImageClick={() => setShowImagePreview(true)}
+          onImageClick={() => {
+            setPreviewIndex(currentImageIndex);
+            setShowImagePreview(true);
+          }}
           onMediaLoaded={onMediaLoaded}
           isGenerating={!!mediaPlaceholderInfo}
           generatingType={mediaPlaceholderInfo?.type}
@@ -231,7 +237,7 @@ export default memo(function MessageItem({
           isGenerating={!!mediaPlaceholderInfo}
           visible={showToolbar}
           onRegenerate={onRegenerate}
-          onDeleteClick={onDelete ? () => setShowDeleteModal(true) : undefined}
+          onDeleteClick={onDelete ? openDeleteModal : undefined}
           onMouseEnter={handleToolbarMouseEnter}
           onMouseLeave={handleToolbarMouseLeave}
         />
@@ -247,11 +253,18 @@ export default memo(function MessageItem({
       />
 
       {/* 图片预览弹窗 */}
-      {showImagePreview && message.image_url && (
+      {showImagePreview && allImageUrls.length > 0 && (
         <ImagePreviewModal
-          imageUrl={message.image_url}
+          imageUrl={allImageUrls[previewIndex]}
           onClose={() => setShowImagePreview(false)}
-          filename={`image-${message.id}`}
+          filename={`image-${previewIndex + 1}`}
+          onPrev={() => setPreviewIndex(Math.max(0, previewIndex - 1))}
+          onNext={() => setPreviewIndex(Math.min(allImageUrls.length - 1, previewIndex + 1))}
+          hasPrev={previewIndex > 0}
+          hasNext={previewIndex < allImageUrls.length - 1}
+          allImages={allImageUrls}
+          currentIndex={previewIndex}
+          onSelectImage={setPreviewIndex}
         />
       )}
     </div>

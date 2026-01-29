@@ -6,6 +6,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { type UnifiedModel } from '../../constants/models';
+import { MODAL_CLOSE_ANIMATION_DURATION } from '../../constants/animations';
 
 interface ModelSelectorProps {
   selectedModel: UnifiedModel;
@@ -35,7 +36,7 @@ export default function ModelSelector({
     setTimeout(() => {
       setShowDropdown(false);
       setDropdownClosing(false);
-    }, 150); // 匹配动画时长
+    }, MODAL_CLOSE_ANIMATION_DURATION);
   };
 
   // 点击外部关闭下拉框

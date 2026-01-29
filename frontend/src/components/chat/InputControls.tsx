@@ -19,6 +19,7 @@ import AudioRecorder from './AudioRecorder';
 import { type UploadedImage } from '../../hooks/useImageUpload';
 import { type RecordingState } from '../../hooks/useAudioRecording';
 import { useDragDropUpload } from '../../hooks/useDragDropUpload';
+import { MODAL_CLOSE_ANIMATION_DURATION } from '../../constants/animations';
 
 interface InputControlsProps {
   prompt: string;
@@ -118,7 +119,7 @@ export default function InputControls(props: InputControlsProps) {
     setTimeout(() => {
       setShowUploadMenu(false);
       setUploadMenuClosing(false);
-    }, 150); // 匹配动画时长
+    }, MODAL_CLOSE_ANIMATION_DURATION);
   };
 
   // 关闭高级设置菜单（带动画）
@@ -127,7 +128,7 @@ export default function InputControls(props: InputControlsProps) {
     setTimeout(() => {
       setShowAdvancedDropdown(false);
       setAdvancedDropdownClosing(false);
-    }, 150); // 匹配动画时长
+    }, MODAL_CLOSE_ANIMATION_DURATION);
   };
 
   // 点击外部关闭菜单

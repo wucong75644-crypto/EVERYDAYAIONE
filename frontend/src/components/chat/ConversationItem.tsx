@@ -4,6 +4,7 @@
  * 包含对话内容显示、任务状态徽章、点击/双击/右键交互
  */
 
+import { memo } from 'react';
 import type { ConversationListItem } from '../../services/conversation';
 import { useTaskStore } from '../../stores/useTaskStore';
 import { MoreHorizontal } from 'lucide-react';
@@ -103,7 +104,7 @@ interface ConversationItemProps {
 /**
  * 完整的对话项组件（包含点击、双击、右键交互）
  */
-export default function ConversationItem({
+export default memo(function ConversationItem({
   conv,
   currentConversationId,
   isRenaming,
@@ -164,4 +165,4 @@ export default function ConversationItem({
       )}
     </div>
   );
-}
+});

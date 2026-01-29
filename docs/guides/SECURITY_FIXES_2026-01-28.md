@@ -119,8 +119,8 @@ Permissions-Policy: geolocation=(), microphone=(), camera=()
 ### 6. 文档完善
 
 **新增文档**:
-- ✅ `docs/SECURITY_CHECKLIST.md` - 安全检查清单
-- ✅ `docs/SECURITY_FIXES_2026-01-28.md` - 本文件
+- ✅ `docs/guides/SECURITY_CHECKLIST.md` - 安全检查清单
+- ✅ `docs/guides/SECURITY_FIXES_2026-01-28.md` - 本文件
 
 ---
 
@@ -244,7 +244,6 @@ curl -I http://localhost:8000/api/health
 ## 📚 相关文档
 
 - [安全检查清单](SECURITY_CHECKLIST.md)
-- [安全审查报告](security_audit_2026-01-28.md)
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/)
 
 ---

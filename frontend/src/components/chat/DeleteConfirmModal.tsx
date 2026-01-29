@@ -2,6 +2,8 @@
  * 删除确认弹框组件
  */
 
+import { useEffect } from 'react';
+
 interface DeleteConfirmModalProps {
   closing?: boolean;
   onConfirm: () => void;
@@ -13,16 +15,46 @@ export default function DeleteConfirmModal({
   onConfirm,
   onCancel,
 }: DeleteConfirmModalProps) {
+  // ESC键关闭弹框
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onCancel();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onCancel]);
+
+  // 禁止背景滚动
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, []);
+
   return (
     <div
       className={`fixed inset-0 bg-black/50 flex items-center justify-center z-50 ${
         closing ? 'animate-backdropExit' : 'animate-backdropEnter'
       }`}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onCancel();
+        }
+      }}
+      role="presentation"
     >
       <div
         className={`bg-white rounded-xl p-6 w-80 shadow-xl relative ${
           closing ? 'animate-modalExit' : 'animate-modalEnter'
         }`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-modal-title"
+        aria-describedby="delete-modal-description"
       >
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
@@ -31,7 +63,7 @@ export default function DeleteConfirmModal({
             </svg>
           </div>
           <div className="flex-1">
-            <h3 className="text-lg font-medium text-gray-900">确定删除对话？</h3>
+            <h3 id="delete-modal-title" className="text-lg font-medium text-gray-900">确定删除对话？</h3>
           </div>
           <button
             onClick={onCancel}
@@ -42,7 +74,7 @@ export default function DeleteConfirmModal({
             </svg>
           </button>
         </div>
-        <p className="mt-3 text-sm text-gray-500">删除后，聊天记录将不可恢复。</p>
+        <p id="delete-modal-description" className="mt-3 text-sm text-gray-500">删除后，聊天记录将不可恢复。</p>
         <div className="mt-6 flex gap-3 justify-end">
           <button
             onClick={onCancel}

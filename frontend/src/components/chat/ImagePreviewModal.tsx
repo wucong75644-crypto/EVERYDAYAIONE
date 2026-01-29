@@ -28,6 +28,12 @@ interface ImagePreviewModalProps {
   hasPrev?: boolean;
   /** 是否有下一张 */
   hasNext?: boolean;
+  /** 所有图片列表（用于底部缩略图预览） */
+  allImages?: string[];
+  /** 当前图片索引（用于底部缩略图预览） */
+  currentIndex?: number;
+  /** 选择图片回调（用于底部缩略图预览） */
+  onSelectImage?: (index: number) => void;
 }
 
 export default memo(function ImagePreviewModal({
@@ -39,6 +45,9 @@ export default memo(function ImagePreviewModal({
   onNext,
   hasPrev = false,
   hasNext = false,
+  allImages = [],
+  currentIndex = 0,
+  onSelectImage,
 }: ImagePreviewModalProps) {
   // 缩放状态
   const [scale, setScale] = useState(1);
@@ -324,13 +333,15 @@ export default memo(function ImagePreviewModal({
       {/* 图片容器 */}
       <div
         ref={containerRef}
-        className={`w-full h-full flex items-center justify-center overflow-hidden ${
-          isDragging ? 'cursor-grabbing' : scale > 1 ? 'cursor-grab' : 'cursor-zoom-in'
-        }`}
+        className="w-full h-full flex items-center justify-center overflow-hidden pt-20 pb-28 cursor-default"
         style={{
           animation: isClosing
             ? 'preview-content-exit 150ms cubic-bezier(0.32, 0.72, 0, 1) forwards'
             : 'preview-content 200ms cubic-bezier(0.32, 0.72, 0, 1) forwards',
+        }}
+        onClick={(e) => {
+          // 点击容器背景（非图片）时关闭
+          if (e.target === e.currentTarget) handleClose();
         }}
         onWheel={handleWheel}
         onMouseDown={handleMouseDown}
@@ -343,7 +354,9 @@ export default memo(function ImagePreviewModal({
           ref={imageRef}
           src={imageUrl}
           alt="预览图片"
-          className="max-w-[90vw] max-h-[90vh] object-contain select-none"
+          className={`max-w-[90vw] max-h-[calc(100vh-240px)] object-contain select-none ${
+            isDragging ? 'cursor-grabbing' : scale > 1 ? 'cursor-grab' : 'cursor-zoom-in'
+          }`}
           style={{
             transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
             transition: isDragging ? 'none' : 'transform 0.2s ease-out',
@@ -384,17 +397,37 @@ export default memo(function ImagePreviewModal({
         </button>
       )}
 
-      {/* 底部提示 */}
-      <div
-        className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 text-white/60 text-xs"
-        style={{
-          animation: isClosing
-            ? 'preview-content-exit 150ms cubic-bezier(0.32, 0.72, 0, 1) forwards'
-            : 'preview-content 200ms cubic-bezier(0.32, 0.72, 0, 1) forwards',
-        }}
-      >
-        滚轮缩放 · 双击重置 · ESC 关闭{(hasPrev || hasNext) && ' · ←→ 切换'}{onDelete && ' · Delete 删除'}
-      </div>
+      {/* 底部缩略图预览条 */}
+      {allImages.length > 0 && onSelectImage && (
+        <div
+          className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex gap-2 px-4 py-2 bg-black/50 rounded-lg backdrop-blur-sm max-w-[90vw] overflow-x-auto"
+          style={{
+            animation: isClosing
+              ? 'preview-content-exit 150ms cubic-bezier(0.32, 0.72, 0, 1) forwards'
+              : 'preview-content 200ms cubic-bezier(0.32, 0.72, 0, 1) forwards',
+          }}
+        >
+          {allImages.map((img, index) => (
+            <button
+              key={index}
+              type="button"
+              onClick={() => onSelectImage(index)}
+              className={`flex-shrink-0 h-16 w-16 rounded-lg overflow-hidden transition-all ${
+                index === currentIndex
+                  ? 'ring-2 ring-white scale-110 shadow-lg'
+                  : 'ring-1 ring-white/30 opacity-70 hover:opacity-100 hover:scale-105'
+              }`}
+              title={`切换到图片 ${index + 1}`}
+            >
+              <img
+                src={img}
+                alt={`缩略图 ${index + 1}`}
+                className="w-full h-full object-cover"
+              />
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 });
