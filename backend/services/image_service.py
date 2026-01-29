@@ -306,6 +306,17 @@ class ImageService(BaseGenerationService):
         if not image_urls:
             return result
 
+        # 检查是否已经是 OSS URL（避免重复上传）
+        cdn_domain = settings.oss_cdn_domain
+        oss_domain = f"{settings.oss_bucket_name}.{settings.oss_endpoint}"
+        first_url = image_urls[0].lower()
+        if cdn_domain and cdn_domain in first_url:
+            logger.debug("Images already uploaded to OSS (CDN URL detected)")
+            return result
+        if oss_domain and oss_domain in first_url:
+            logger.debug("Images already uploaded to OSS (OSS URL detected)")
+            return result
+
         # 检查 OSS 是否配置
         if not settings.oss_access_key_id:
             logger.warning("OSS not configured, skipping upload")
