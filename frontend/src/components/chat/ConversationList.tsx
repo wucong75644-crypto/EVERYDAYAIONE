@@ -279,12 +279,14 @@ export default function ConversationList({
   };
 
   // Placeholder handlers for new menu options
-  const handlePin = (_id: string) => {
+  const handlePin = (id: string) => {
+    void id;
     closeDropdownMenu();
     // TODO: Implement pin functionality
   };
 
-  const handleShare = (_id: string) => {
+  const handleShare = (id: string) => {
+    void id;
     closeDropdownMenu();
     // TODO: Implement share functionality
   };
@@ -294,12 +296,14 @@ export default function ConversationList({
     // TODO: Implement batch manage functionality
   };
 
-  const handleMoveToGroup = (_id: string) => {
+  const handleMoveToGroup = (id: string) => {
+    void id;
     closeDropdownMenu();
     // TODO: Implement move to group functionality
   };
 
-  const handleExport = (_id: string) => {
+  const handleExport = (id: string) => {
+    void id;
     closeDropdownMenu();
     // TODO: Implement export functionality
   };

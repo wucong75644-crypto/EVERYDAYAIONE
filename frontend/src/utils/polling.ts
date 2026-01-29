@@ -86,7 +86,11 @@ export class PollingManager {
           // 原子性检查：防止竞态时多个 executePoll 重复触发回调
           if (!this.configs.has(taskId)) return;
           this.stop(taskId);
-          result.error ? callbacks.onError(result.error) : callbacks.onSuccess(result.result);
+          if (result.error) {
+            callbacks.onError(result.error);
+          } else {
+            callbacks.onSuccess(result.result);
+          }
         }
         // 任务未完成（pending/running）：等待下次轮询间隔
       } catch (error) {

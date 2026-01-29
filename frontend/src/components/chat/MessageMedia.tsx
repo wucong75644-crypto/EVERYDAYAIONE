@@ -72,11 +72,15 @@ export default function MessageMedia({
   }, [imageUrl]);
 
   // 懒加载：监听元素是否进入可视区域
+  // 对于已生成的媒体（非生成中），立即加载；对于新生成的，使用懒加载
+  const shouldLazyLoad = isGenerating;
   const { ref: lazyRef, inView } = useInView({
     triggerOnce: true,
     threshold: 0.1,
     rootMargin: '100px',
   });
+  // 如果不需要懒加载（已生成的媒体），直接渲染；否则等待进入视口
+  const shouldRender = !shouldLazyLoad || inView;
 
   // 处理图片下载
   const handleImageDownload = async (e: React.MouseEvent) => {
@@ -136,7 +140,7 @@ export default function MessageMedia({
           )}
 
           {/* 图片 - 加载完成后显示 */}
-          {imageUrl && inView && (
+          {imageUrl && shouldRender && (
             <div
               className={`group cursor-pointer transition-opacity duration-500 ease-out ${
                 imageLoaded ? 'opacity-100' : 'opacity-0 absolute inset-0'
@@ -197,7 +201,7 @@ export default function MessageMedia({
           )}
 
           {/* 视频 - 固定宽度，与占位符一致 */}
-          {videoUrl && inView && (
+          {videoUrl && shouldRender && (
             <video
               src={videoUrl}
               controls

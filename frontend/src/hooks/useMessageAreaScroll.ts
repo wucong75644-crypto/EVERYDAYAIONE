@@ -4,7 +4,7 @@
  * 组合多个独立的滚动管理 Hook，提供统一的滚动行为接口
  */
 
-import { useRef, useCallback, type RefObject } from 'react';
+import { useRef, useCallback, useLayoutEffect, useState, type RefObject } from 'react';
 import type { Message } from '../services/message';
 import { useConversationSwitchScroll } from './scroll/useConversationSwitchScroll';
 import { useMessageLoadingScroll } from './scroll/useMessageLoadingScroll';
@@ -44,10 +44,14 @@ export function useMessageAreaScroll(options: UseMessageAreaScrollOptions) {
     runtimeState,
   } = options;
 
-  // 滚动状态跟踪
-  const hasScrolledForConversationRef = useRef(false);
+  // 滚动状态跟踪 - 使用 state 替代 ref 以符合 React 规范
+  const [hasScrolledForConversation, setHasScrolledForConversation] = useState(false);
   const scrollToBottomRef = useRef(scrollToBottom);
-  scrollToBottomRef.current = scrollToBottom;
+
+  // 使用 useLayoutEffect 同步更新 ref，避免在渲染期间访问
+  useLayoutEffect(() => {
+    scrollToBottomRef.current = scrollToBottom;
+  }, [scrollToBottom]);
 
   // 对话切换时的滚动管理
   useConversationSwitchScroll({
@@ -56,7 +60,7 @@ export function useMessageAreaScroll(options: UseMessageAreaScrollOptions) {
     userScrolledAway,
     resetScrollState,
     onConversationSwitch: () => {
-      hasScrolledForConversationRef.current = false;
+      setHasScrolledForConversation(false);
     },
   });
 
@@ -66,9 +70,9 @@ export function useMessageAreaScroll(options: UseMessageAreaScrollOptions) {
     messagesLength: messages.length,
     loading,
     containerRef,
-    hasScrolledForConversation: hasScrolledForConversationRef.current,
+    hasScrolledForConversation,
     onScrollComplete: () => {
-      hasScrolledForConversationRef.current = true;
+      setHasScrolledForConversation(true);
     },
   });
 
@@ -80,7 +84,7 @@ export function useMessageAreaScroll(options: UseMessageAreaScrollOptions) {
     setUserScrolledAway,
     scrollToBottomDebounced,
     scrollToElement,
-    hasScrolledForConversation: hasScrolledForConversationRef.current,
+    hasScrolledForConversation,
     onMessageCountChange: () => {
       // 消息数量变化时的额外处理（如果需要）
     },
@@ -91,14 +95,14 @@ export function useMessageAreaScroll(options: UseMessageAreaScrollOptions) {
     runtimeState,
     userScrolledAway,
     scrollToBottom,
-    hasScrolledForConversation: hasScrolledForConversationRef.current,
+    hasScrolledForConversation,
   });
 
   // 媒体内容替换时的自动滚动
   useMediaReplacementScroll({
     messages,
     scrollToBottom,
-    hasScrolledForConversation: hasScrolledForConversationRef.current,
+    hasScrolledForConversation,
   });
 
   // 重新生成开始时的滚动处理
@@ -116,7 +120,7 @@ export function useMessageAreaScroll(options: UseMessageAreaScrollOptions) {
   }, [userScrolledAway, messages]);
 
   return {
-    hasScrolledForConversation: hasScrolledForConversationRef.current,
+    hasScrolledForConversation,
     handleRegenerateScroll,
   };
 }

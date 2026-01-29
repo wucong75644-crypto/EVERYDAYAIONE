@@ -110,7 +110,6 @@ export default function InputArea({
     userExplicitChoice,
     setUserExplicitChoice,
     modelConflict,
-    setModelConflict,
     modelJustSwitched,
     availableModels,
     handleUserSelectModel,
@@ -409,7 +408,6 @@ export default function InputArea({
           conflict={modelConflict}
           onSwitchModel={handleModelSelect}
           onRemoveImage={handleRemoveAllImages}
-          onClose={() => setModelConflict(null)}
         />
 
         {/* 主输入控件（包含底部的模型选择器） */}

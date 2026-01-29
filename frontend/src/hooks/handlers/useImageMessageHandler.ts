@@ -97,6 +97,12 @@ export function useImageMessageHandler({
         onSuccess: async (result: unknown) => {
           const mediaUrl = config.extractMediaUrl(result);
           try {
+            // 立即预加载图片（后台下载，加速显示）
+            if (mediaUrl.image_url) {
+              const img = new Image();
+              img.src = mediaUrl.image_url;
+            }
+
             const savedAiMessage = await createMessage(config.conversationId, {
               content: config.successContent,
               role: 'assistant',

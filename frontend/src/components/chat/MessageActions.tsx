@@ -114,7 +114,7 @@ export default function MessageActions({
       document.addEventListener('mousedown', handleClickOutside);
       return () => document.removeEventListener('mousedown', handleClickOutside);
     }
-  }, [showMoreMenu]);
+  }, [showMoreMenu, closeMoreMenu]);
 
   return (
     <div

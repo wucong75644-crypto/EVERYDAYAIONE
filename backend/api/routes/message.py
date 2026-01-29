@@ -43,9 +43,9 @@ def get_message_stream_service(db: Database) -> MessageStreamService:
 @router.post("/create", response_model=MessageResponse, summary="创建消息")
 @limiter.limit("60/minute")
 async def create_message(
-    http_request: Request,
+    request: Request,
     conversation_id: str,
-    request: MessageCreate,
+    body: MessageCreate,
     current_user: CurrentUser,
     service: MessageService = Depends(get_message_service),
 ):
@@ -63,14 +63,14 @@ async def create_message(
     result = await service.create_message(
         conversation_id=conversation_id,
         user_id=current_user["id"],
-        content=request.content,
-        role=request.role.value,
-        image_url=request.image_url,
-        video_url=request.video_url,
-        credits_cost=request.credits_cost,
-        is_error=request.is_error,
-        created_at=request.created_at,
-        generation_params=request.generation_params,
+        content=body.content,
+        role=body.role.value,
+        image_url=body.image_url,
+        video_url=body.video_url,
+        credits_cost=body.credits_cost,
+        is_error=body.is_error,
+        created_at=body.created_at,
+        generation_params=body.generation_params,
     )
     return result
 

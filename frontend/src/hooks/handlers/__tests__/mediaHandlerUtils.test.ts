@@ -11,6 +11,7 @@ import {
   handleGenerationError,
 } from '../mediaHandlerUtils';
 import * as messageService from '../../../services/message';
+import { type Message } from '../../../services/message';
 import { AxiosError } from 'axios';
 
 // Mock message service
@@ -131,7 +132,7 @@ describe('mediaHandlerUtils', () => {
         is_error: true,
       };
 
-      vi.mocked(messageService.createMessage).mockResolvedValue(mockErrorMessage as any);
+      vi.mocked(messageService.createMessage).mockResolvedValue(mockErrorMessage as Message);
 
       const result = await handleGenerationError(
         'conv-1',
@@ -176,7 +177,7 @@ describe('mediaHandlerUtils', () => {
         },
       };
 
-      vi.mocked(messageService.createMessage).mockResolvedValue({} as any);
+      vi.mocked(messageService.createMessage).mockResolvedValue({} as Message);
 
       await handleGenerationError(
         'conv-1',

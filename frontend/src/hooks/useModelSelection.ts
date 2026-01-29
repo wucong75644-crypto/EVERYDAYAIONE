@@ -4,9 +4,9 @@
  * 管理模型选择、冲突检测和可用模型过滤
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { type UnifiedModel, ALL_MODELS, getAvailableModels } from '../constants/models';
-import { detectConflict, type ModelConflict } from '../utils/modelConflict';
+import { detectConflict } from '../utils/modelConflict';
 
 interface UseModelSelectionParams {
   hasImage: boolean;
@@ -15,14 +15,13 @@ interface UseModelSelectionParams {
 export function useModelSelection({ hasImage }: UseModelSelectionParams) {
   const [selectedModel, setSelectedModel] = useState<UnifiedModel>(ALL_MODELS[0]);
   const [userExplicitChoice, setUserExplicitChoice] = useState(false);
-  const [modelConflict, setModelConflict] = useState<ModelConflict | null>(null);
   const [modelJustSwitched, setModelJustSwitched] = useState(false);
 
-  // 统一冲突检测
-  useEffect(() => {
-    const conflict = detectConflict(selectedModel, hasImage);
-    setModelConflict(conflict);
-  }, [selectedModel, hasImage]);
+  // 统一冲突检测 - 使用 useMemo 派生状态，避免在 effect 中 setState
+  const modelConflict = useMemo(
+    () => detectConflict(selectedModel, hasImage),
+    [selectedModel, hasImage]
+  );
 
   /**
    * 切换模型（带高亮动画）
@@ -128,7 +127,6 @@ export function useModelSelection({ hasImage }: UseModelSelectionParams) {
     userExplicitChoice,
     setUserExplicitChoice,
     modelConflict,
-    setModelConflict,
     modelJustSwitched,
     availableModels,
     switchModel,
