@@ -379,3 +379,21 @@ build-error-resolver - 构建修复
 ---
 
 *更新日期：2026-01-28*
+
+
+你已经安装了 everything-claude-code 最新版本（2026-01-27）！
+
+组件	状态
+agents	✅ 已是最新
+rules	✅ 已是最新
+commands	✅ 已是最新 + 你的 5 个自定义 everydayai-* 命令
+skills	✅ 已是最新 + 你的 learned 目录
+无需重新安装。如果将来想更新，可以运行：
+
+
+cd /tmp && git clone --depth 1 https://github.com/affaan-m/everything-claude-code.git ecc-update
+cp -n ecc-update/agents/*.md ~/.claude/agents/
+cp -n ecc-update/commands/*.md ~/.claude/commands/
+cp -rn ecc-update/skills/* ~/.claude/skills/
+rm -rf ecc-update
+（-n 参数不会覆盖你的自定义文件）
