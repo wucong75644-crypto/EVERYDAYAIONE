@@ -281,6 +281,9 @@ class VideoService(BaseGenerationService):
             if wait_for_result and result.get("status") == "success":
                 result = await self._upload_videos_to_oss(result, user_id)
 
+            # 5. 确保返回实际扣除的积分数（异步模式下 adapter 返回 0）
+            result["credits_consumed"] = estimated_credits
+
             return result
 
         except KieAPIError as e:
