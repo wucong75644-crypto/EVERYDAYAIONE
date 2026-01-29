@@ -102,6 +102,9 @@ class ImageService(BaseGenerationService):
             if wait_for_result and result.get("status") == "success":
                 result = await self._upload_images_to_oss(result, user_id)
 
+            # 5. 确保返回实际扣除的积分数（异步模式下 adapter 返回 0）
+            result["credits_consumed"] = estimated_credits
+
             return result
 
         except KieAPIError as e:
@@ -181,6 +184,9 @@ class ImageService(BaseGenerationService):
             # 如果生成完成，将图片上传到 OSS
             if wait_for_result and result.get("status") == "success":
                 result = await self._upload_images_to_oss(result, user_id)
+
+            # 确保返回实际扣除的积分数
+            result["credits_consumed"] = estimated_credits
 
             return result
 
