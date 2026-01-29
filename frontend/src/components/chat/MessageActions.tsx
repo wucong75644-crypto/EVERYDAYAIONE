@@ -48,7 +48,17 @@ export default function MessageActions({
 }: MessageActionsProps) {
   const [copied, setCopied] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [moreMenuClosing, setMoreMenuClosing] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+
+  // 关闭更多菜单（带动画）
+  const closeMoreMenu = () => {
+    setMoreMenuClosing(true);
+    setTimeout(() => {
+      setShowMoreMenu(false);
+      setMoreMenuClosing(false);
+    }, 150); // 匹配动画时长
+  };
 
   // 复制功能
   const handleCopy = useCallback(async () => {
@@ -92,7 +102,9 @@ export default function MessageActions({
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
-        setShowMoreMenu(false);
+        if (showMoreMenu) {
+          closeMoreMenu();
+        }
       }
     };
 
@@ -217,11 +229,15 @@ export default function MessageActions({
 
         {/* 下拉菜单 */}
         {showMoreMenu && (
-          <div className="absolute bottom-full right-0 mb-1.5 bg-white rounded-lg shadow-lg border border-gray-200 p-1 min-w-[100px] z-10 animate-in fade-in zoom-in-95 duration-100">
+          <div
+            className={`absolute bottom-full right-0 mb-1.5 bg-white rounded-lg shadow-lg border border-gray-200 p-1 min-w-[100px] z-10 ${
+              moreMenuClosing ? 'animate-popupExit' : 'animate-popupEnter'
+            }`}
+          >
             {onDeleteClick && (
               <button
                 onClick={() => {
-                  setShowMoreMenu(false);
+                  closeMoreMenu();
                   onDeleteClick();
                 }}
                 className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-gray-100 rounded-md flex items-center gap-2 transition-colors"

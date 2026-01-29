@@ -75,6 +75,7 @@ export default memo(function MessageItem({
 
   // 删除确认弹框状态
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteModalClosing, setDeleteModalClosing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
   // 图片预览弹窗状态
@@ -127,6 +128,15 @@ export default memo(function MessageItem({
     };
   }, []);
 
+  // 关闭删除弹框（带动画）
+  const closeDeleteModal = () => {
+    setDeleteModalClosing(true);
+    setTimeout(() => {
+      setShowDeleteModal(false);
+      setDeleteModalClosing(false);
+    }, 150); // 匹配动画时长
+  };
+
   // 处理删除确认
   const handleDeleteConfirm = async () => {
     if (!onDelete) return;
@@ -134,7 +144,7 @@ export default memo(function MessageItem({
     try {
       setIsDeleting(true);
       await onDelete(message.id);
-      setShowDeleteModal(false);
+      closeDeleteModal();
     } catch (error) {
       console.error('删除消息失败:', error);
     } finally {
@@ -230,7 +240,8 @@ export default memo(function MessageItem({
       {/* 删除确认弹框 */}
       <DeleteMessageModal
         isOpen={showDeleteModal}
-        onClose={() => setShowDeleteModal(false)}
+        closing={deleteModalClosing}
+        onClose={closeDeleteModal}
         onConfirm={handleDeleteConfirm}
         loading={isDeleting}
       />

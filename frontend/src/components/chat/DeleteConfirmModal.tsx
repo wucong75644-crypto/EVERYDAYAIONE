@@ -3,17 +3,27 @@
  */
 
 interface DeleteConfirmModalProps {
+  closing?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
 export default function DeleteConfirmModal({
+  closing = false,
   onConfirm,
   onCancel,
 }: DeleteConfirmModalProps) {
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl p-6 w-80 shadow-xl relative">
+    <div
+      className={`fixed inset-0 bg-black/50 flex items-center justify-center z-50 ${
+        closing ? 'animate-backdropExit' : 'animate-backdropEnter'
+      }`}
+    >
+      <div
+        className={`bg-white rounded-xl p-6 w-80 shadow-xl relative ${
+          closing ? 'animate-modalExit' : 'animate-modalEnter'
+        }`}
+      >
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center flex-shrink-0">
             <svg className="w-5 h-5 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">

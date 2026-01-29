@@ -6,6 +6,7 @@ import { type UnifiedModel } from '../../constants/models';
 
 interface UploadMenuProps {
   visible: boolean;
+  closing?: boolean;
   selectedModel: UnifiedModel;
   onImageUpload: () => void;
   onClose: () => void;
@@ -13,6 +14,7 @@ interface UploadMenuProps {
 
 export default function UploadMenu({
   visible,
+  closing = false,
   selectedModel,
   onImageUpload,
   onClose,
@@ -31,23 +33,10 @@ export default function UploadMenu({
 
   return (
     <div
-      className="absolute bottom-full right-0 mb-2 bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden z-10 min-w-[200px]"
-      style={{
-        animation: 'dropdown-enter 150ms cubic-bezier(0.32, 0.72, 0, 1)',
-      }}
+      className={`absolute bottom-full right-0 mb-2 bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden z-10 min-w-[200px] ${
+        closing ? 'animate-popupExit' : 'animate-popupEnter'
+      }`}
     >
-      <style>{`
-        @keyframes dropdown-enter {
-          from {
-            opacity: 0;
-            transform: scale(0.96) translateY(4px);
-          }
-          to {
-            opacity: 1;
-            transform: scale(1) translateY(0);
-          }
-        }
-      `}</style>
       {/* 上传图片 */}
       <button
         onClick={() => {
