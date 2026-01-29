@@ -5,6 +5,7 @@
 interface ContextMenuProps {
   x: number;
   y: number;
+  closing?: boolean;
   onRename: () => void;
   onDelete: () => void;
 }
@@ -12,12 +13,15 @@ interface ContextMenuProps {
 export default function ContextMenu({
   x,
   y,
+  closing = false,
   onRename,
   onDelete,
 }: ContextMenuProps) {
   return (
     <div
-      className="fixed bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 min-w-32"
+      className={`fixed bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 min-w-32 ${
+        closing ? 'animate-slideUp' : 'animate-slideDown'
+      }`}
       style={{ left: x, top: y }}
       onClick={(e) => e.stopPropagation()}
     >

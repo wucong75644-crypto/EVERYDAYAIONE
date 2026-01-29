@@ -87,7 +87,9 @@ export default function InputControls(props: InputControlsProps) {
   } = props;
 
   const [showUploadMenu, setShowUploadMenu] = useState(false);
+  const [uploadMenuClosing, setUploadMenuClosing] = useState(false);
   const [showAdvancedDropdown, setShowAdvancedDropdown] = useState(false);
+  const [advancedDropdownClosing, setAdvancedDropdownClosing] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -110,19 +112,41 @@ export default function InputControls(props: InputControlsProps) {
     }
   }, [prompt]);
 
+  // 关闭上传菜单（带动画）
+  const closeUploadMenu = () => {
+    setUploadMenuClosing(true);
+    setTimeout(() => {
+      setShowUploadMenu(false);
+      setUploadMenuClosing(false);
+    }, 150); // 匹配动画时长
+  };
+
+  // 关闭高级设置菜单（带动画）
+  const closeAdvancedDropdown = () => {
+    setAdvancedDropdownClosing(true);
+    setTimeout(() => {
+      setShowAdvancedDropdown(false);
+      setAdvancedDropdownClosing(false);
+    }, 150); // 匹配动画时长
+  };
+
   // 点击外部关闭菜单
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (uploadMenuRef.current && !uploadMenuRef.current.contains(e.target as Node)) {
-        setShowUploadMenu(false);
+        if (showUploadMenu) {
+          closeUploadMenu();
+        }
       }
       if (advancedMenuRef.current && !advancedMenuRef.current.contains(e.target as Node)) {
-        setShowAdvancedDropdown(false);
+        if (showAdvancedDropdown) {
+          closeAdvancedDropdown();
+        }
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [showUploadMenu, showAdvancedDropdown]);
 
   // 判断条件
   const supportsDeepThinking = selectedModel.capabilities.thinkingEffort === true;
@@ -204,6 +228,7 @@ export default function InputControls(props: InputControlsProps) {
               </button>
               {showAdvancedDropdown && (
                 <AdvancedSettingsMenu
+                  closing={advancedDropdownClosing}
                   selectedModel={selectedModel}
                   aspectRatio={aspectRatio}
                   onAspectRatioChange={onAspectRatioChange}
@@ -221,7 +246,7 @@ export default function InputControls(props: InputControlsProps) {
                   onThinkingEffortChange={onThinkingEffortChange}
                   onSave={onSaveSettings}
                   onReset={onResetSettings}
-                  onClose={() => setShowAdvancedDropdown(false)}
+                  onClose={closeAdvancedDropdown}
                 />
               )}
             </div>
@@ -265,9 +290,10 @@ export default function InputControls(props: InputControlsProps) {
               </button>
               <UploadMenu
                 visible={showUploadMenu}
+                closing={uploadMenuClosing}
                 selectedModel={selectedModel}
                 onImageUpload={() => fileInputRef.current?.click()}
-                onClose={() => setShowUploadMenu(false)}
+                onClose={closeUploadMenu}
               />
             </div>
 

@@ -14,3 +14,127 @@ body {
 .animate-fadeIn {
   animation: fadeIn 0.15s ease-out;
 }
+
+/* 下拉菜单滑入动画 */
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-slideDown {
+  animation: slideDown 0.15s ease-out;
+}
+
+/* 下拉菜单滑出动画（向上收起） */
+@keyframes slideUp {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.95);
+  }
+}
+
+.animate-slideUp {
+  animation: slideUp 0.15s ease-in;
+}
+
+/* 底部弹出菜单动画（从下向上弹出） */
+@keyframes popupEnter {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-popupEnter {
+  animation: popupEnter 0.15s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* 底部弹出菜单退出动画 */
+@keyframes popupExit {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.96);
+  }
+}
+
+.animate-popupExit {
+  animation: popupExit 0.15s ease-in;
+}
+
+/* Modal弹框进入动画（缩放+淡入） */
+@keyframes modalEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.animate-modalEnter {
+  animation: modalEnter 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Modal弹框退出动画 */
+@keyframes modalExit {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+}
+
+.animate-modalExit {
+  animation: modalExit 0.15s ease-in;
+}
+
+/* 背景遮罩进入动画（淡入） */
+@keyframes backdropEnter {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-backdropEnter {
+  animation: backdropEnter 0.2s ease-out;
+}
+
+/* 背景遮罩退出动画（淡出） */
+@keyframes backdropExit {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.animate-backdropExit {
+  animation: backdropExit 0.15s ease-in;
+}

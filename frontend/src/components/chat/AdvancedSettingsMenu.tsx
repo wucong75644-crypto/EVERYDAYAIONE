@@ -21,6 +21,7 @@ import {
 } from '../../services/video';
 
 interface AdvancedSettingsMenuProps {
+  closing?: boolean;
   selectedModel: UnifiedModel;
   // 图像设置
   aspectRatio: AspectRatio;
@@ -52,6 +53,7 @@ const getVideoPrice = (frames: VideoFrames): number => {
 };
 
 export default function AdvancedSettingsMenu({
+  closing = false,
   selectedModel,
   aspectRatio,
   onAspectRatioChange,
@@ -73,23 +75,10 @@ export default function AdvancedSettingsMenu({
 }: AdvancedSettingsMenuProps) {
   return (
     <div
-      className="absolute bottom-full left-0 mb-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 p-3 z-10"
-      style={{
-        animation: 'dropdown-enter 150ms cubic-bezier(0.32, 0.72, 0, 1)',
-      }}
+      className={`absolute bottom-full left-0 mb-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 p-3 z-10 ${
+        closing ? 'animate-popupExit' : 'animate-popupEnter'
+      }`}
     >
-      <style>{`
-        @keyframes dropdown-enter {
-          from {
-            opacity: 0;
-            transform: scale(0.96) translateY(4px);
-          }
-          to {
-            opacity: 1;
-            transform: scale(1) translateY(0);
-          }
-        }
-      `}</style>
       {/* 图像模型设置 */}
       {selectedModel.type === 'image' && (
         <>

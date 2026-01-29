@@ -6,10 +6,14 @@
 
 import type { ConversationListItem } from '../../services/conversation';
 import { useTaskStore } from '../../stores/useTaskStore';
+import { MoreHorizontal } from 'lucide-react';
 
 interface ConversationItemContentProps {
   conv: ConversationListItem;
   currentConversationId: string | null;
+  isHovered: boolean;
+  isDropdownOpen: boolean;
+  onShowDropdown: (e: React.MouseEvent) => void;
 }
 
 /**
@@ -18,6 +22,9 @@ interface ConversationItemContentProps {
 export function ConversationItemContent({
   conv,
   currentConversationId,
+  isHovered,
+  isDropdownOpen,
+  onShowDropdown,
 }: ConversationItemContentProps) {
   const { hasActiveTask, getTask, isRecentlyCompleted } = useTaskStore();
   const isActive = hasActiveTask(conv.id);
@@ -26,12 +33,12 @@ export function ConversationItemContent({
 
   return (
     <>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 relative pr-8">
         <div
           className={`text-sm truncate flex-1 ${
             currentConversationId === conv.id
-              ? 'text-gray-900 font-semibold'
-              : 'text-gray-800 font-medium'
+              ? 'text-gray-900 font-normal'
+              : 'text-gray-800 font-normal'
           }`}
         >
           {conv.title}
@@ -56,6 +63,21 @@ export function ConversationItemContent({
             <div className="w-2 h-2 bg-green-500 rounded-full animate-ping"></div>
           </div>
         )}
+        {/* More button (绝对定位在右侧，hover或菜单打开时显示) */}
+        <button
+          type="button"
+          onClick={onShowDropdown}
+          className={`absolute right-0 top-1/2 -translate-y-1/2 p-1 rounded transition-all ${
+            isDropdownOpen
+              ? 'opacity-100 bg-gray-200'
+              : isHovered
+              ? 'opacity-100 hover:bg-gray-200'
+              : 'opacity-0 pointer-events-none'
+          }`}
+          title="更多选项"
+        >
+          <MoreHorizontal className="w-4 h-4 text-gray-600" />
+        </button>
       </div>
     </>
   );
@@ -64,15 +86,18 @@ export function ConversationItemContent({
 interface ConversationItemProps {
   conv: ConversationListItem;
   currentConversationId: string | null;
-  isClicked: boolean;
   isRenaming: boolean;
   renameTitle: string;
   onSelect: () => void;
   onStartRename: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
+  onShowDropdown: (e: React.MouseEvent) => void;
   onRenameChange: (value: string) => void;
   onRenameSubmit: () => void;
   onRenameCancel: () => void;
+  isHovered: boolean;
+  isDropdownOpen: boolean;
+  onHoverChange: (hovered: boolean) => void;
 }
 
 /**
@@ -81,15 +106,18 @@ interface ConversationItemProps {
 export default function ConversationItem({
   conv,
   currentConversationId,
-  isClicked,
   isRenaming,
   renameTitle,
   onSelect,
   onStartRename,
   onContextMenu,
+  onShowDropdown,
   onRenameChange,
   onRenameSubmit,
   onRenameCancel,
+  isHovered,
+  isDropdownOpen,
+  onHoverChange,
 }: ConversationItemProps) {
   return (
     <div
@@ -100,11 +128,11 @@ export default function ConversationItem({
       }}
       onDoubleClick={onStartRename}
       onContextMenu={onContextMenu}
-      className={`mx-2 mb-1 px-3 py-1.5 rounded-lg cursor-pointer transition-all duration-150 outline-none ${
+      onMouseEnter={() => onHoverChange(true)}
+      onMouseLeave={() => onHoverChange(false)}
+      className={`mx-2 mb-1 px-3 py-1.5 rounded-lg cursor-pointer transition-colors duration-150 outline-none ${
         currentConversationId === conv.id
           ? 'bg-blue-50'
-          : isClicked
-          ? 'bg-blue-50 scale-[0.98]'
           : 'hover:bg-gray-50'
       }`}
     >
@@ -126,7 +154,13 @@ export default function ConversationItem({
           onClick={(e) => e.stopPropagation()}
         />
       ) : (
-        <ConversationItemContent conv={conv} currentConversationId={currentConversationId} />
+        <ConversationItemContent
+          conv={conv}
+          currentConversationId={currentConversationId}
+          isHovered={isHovered}
+          isDropdownOpen={isDropdownOpen}
+          onShowDropdown={onShowDropdown}
+        />
       )}
     </div>
   );

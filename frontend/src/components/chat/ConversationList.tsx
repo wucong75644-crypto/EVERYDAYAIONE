@@ -21,6 +21,7 @@ import {
 } from './conversationUtils';
 import ConversationItem from './ConversationItem';
 import ContextMenu from './ContextMenu';
+import DropdownMenu from './DropdownMenu';
 import DeleteConfirmModal from './DeleteConfirmModal';
 
 interface ConversationListProps {
@@ -44,7 +45,6 @@ export default function ConversationList({
   onDelete,
   searchQuery = '',
 }: ConversationListProps) {
-  const [clickedId, setClickedId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationListItem[]>(() => {
     try {
       const cached = localStorage.getItem(CONVERSATIONS_CACHE_KEY);
@@ -67,12 +67,22 @@ export default function ConversationList({
     x: number;
     y: number;
   } | null>(null);
+  const [contextMenuClosing, setContextMenuClosing] = useState(false);
+  const [dropdownMenu, setDropdownMenu] = useState<{
+    id: string;
+    title: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [dropdownClosing, setDropdownClosing] = useState(false);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<{
     id: string;
     title: string;
   } | null>(null);
+  const [deleteConfirmClosing, setDeleteConfirmClosing] = useState(false);
 
   const hasAutoSelected = useRef(false);
   const onSelectConversationRef = useRef(onSelectConversation);
@@ -154,16 +164,92 @@ export default function ConversationList({
     });
   }, [optimisticNewConversation]);
 
-  const closeContextMenu = () => setContextMenu(null);
+  const closeContextMenu = () => {
+    setContextMenuClosing(true);
+    setTimeout(() => {
+      setContextMenu(null);
+      setContextMenuClosing(false);
+    }, 150); // 匹配动画时长
+  };
+
+  const closeDropdownMenu = () => {
+    setDropdownClosing(true);
+    setTimeout(() => {
+      setDropdownMenu(null);
+      setDropdownClosing(false);
+    }, 150); // 匹配动画时长
+  };
+
+  const closeDeleteConfirm = () => {
+    setDeleteConfirmClosing(true);
+    setTimeout(() => {
+      setDeleteConfirm(null);
+      setDeleteConfirmClosing(false);
+    }, 150); // 匹配动画时长
+  };
 
   const handleContextMenu = (e: React.MouseEvent, id: string, title: string) => {
     e.preventDefault();
     setContextMenu({ id, title, x: e.clientX, y: e.clientY });
   };
 
-  const handleDelete = (id: string) => {
-    setDeleteConfirm({ id, title: contextMenu?.title || '' });
+  const handleShowDropdown = (e: React.MouseEvent, id: string, title: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Toggle: 如果点击的是已打开的菜单，则关闭它
+    if (dropdownMenu?.id === id) {
+      closeDropdownMenu();
+      return;
+    }
+
+    // 获取按钮位置，用于定位菜单
+    const buttonRect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+
+    // 菜单高度精确计算（7个选项每项40px + 分隔线10px + padding 8px）
+    const menuHeight = 298;
+
+    // 水平位置：紧贴按钮右侧
+    const x = buttonRect.right + 5;
+
+    // 垂直位置逻辑：
+    // 1. 默认：菜单顶部对齐按钮顶部（向下展开）
+    // 2. 底部被遮挡：菜单底部对齐按钮底部（向上展开）
+    let y = buttonRect.top;
+
+    // 检测底部是否会被遮挡（保留20px安全边距）
+    const viewportHeight = window.innerHeight;
+    const spaceBelow = viewportHeight - buttonRect.bottom;
+    const spaceAbove = buttonRect.top;
+
+    if (spaceBelow < menuHeight && spaceAbove > spaceBelow) {
+      // 底部空间不足且上方空间更大，向上展开
+      y = buttonRect.bottom - menuHeight;
+      // 确保不超出顶部
+      if (y < 10) {
+        y = 10;
+      }
+    } else {
+      // 向下展开（默认）
+      y = buttonRect.top;
+      // 如果超出底部，调整到最大可显示位置
+      if (y + menuHeight > viewportHeight - 10) {
+        y = Math.max(10, viewportHeight - menuHeight - 10);
+      }
+    }
+
+    setDropdownMenu({
+      id,
+      title,
+      x,
+      y
+    });
+  };
+
+  const handleDelete = (id: string, title?: string) => {
+    setDeleteConfirm({ id, title: title || contextMenu?.title || dropdownMenu?.title || '' });
     closeContextMenu();
+    closeDropdownMenu();
   };
 
   const confirmDelete = async () => {
@@ -181,13 +267,45 @@ export default function ConversationList({
     } catch (error) {
       console.error('删除对话失败:', error);
     }
-    setDeleteConfirm(null);
+    closeDeleteConfirm();
   };
 
   const handleStartRename = (id: string, title: string) => {
     setRenameId(id);
     setRenameTitle(title);
     closeContextMenu();
+    closeDropdownMenu();
+  };
+
+  // Placeholder handlers for new menu options
+  const handlePin = (id: string) => {
+    console.log('Pin conversation:', id);
+    closeDropdownMenu();
+    // TODO: Implement pin functionality
+  };
+
+  const handleShare = (id: string) => {
+    console.log('Share conversation:', id);
+    closeDropdownMenu();
+    // TODO: Implement share functionality
+  };
+
+  const handleBatchManage = () => {
+    console.log('Batch manage');
+    closeDropdownMenu();
+    // TODO: Implement batch manage functionality
+  };
+
+  const handleMoveToGroup = (id: string) => {
+    console.log('Move to group:', id);
+    closeDropdownMenu();
+    // TODO: Implement move to group functionality
+  };
+
+  const handleExport = (id: string) => {
+    console.log('Export conversation:', id);
+    closeDropdownMenu();
+    // TODO: Implement export functionality
   };
 
   const handleSubmitRename = async () => {
@@ -216,7 +334,10 @@ export default function ConversationList({
   };
 
   useEffect(() => {
-    const handleClick = () => closeContextMenu();
+    const handleClick = () => {
+      closeContextMenu();
+      closeDropdownMenu();
+    };
     window.addEventListener('click', handleClick);
     return () => window.removeEventListener('click', handleClick);
   }, []);
@@ -262,17 +383,18 @@ export default function ConversationList({
               key={conv.id}
               conv={conv}
               currentConversationId={currentConversationId}
-              isClicked={clickedId === conv.id}
               isRenaming={renameId === conv.id}
               renameTitle={renameTitle}
+              isHovered={hoveredId === conv.id}
+              isDropdownOpen={dropdownMenu?.id === conv.id}
               onSelect={() => {
-                setClickedId(conv.id);
                 onSelectConversation(conv.id, conv.title, conv.model_id);
                 useTaskStore.getState().clearRecentlyCompleted(conv.id);
-                setTimeout(() => setClickedId(null), 300);
               }}
               onStartRename={() => handleStartRename(conv.id, conv.title)}
               onContextMenu={(e) => handleContextMenu(e, conv.id, conv.title)}
+              onShowDropdown={(e) => handleShowDropdown(e, conv.id, conv.title)}
+              onHoverChange={(hovered) => setHoveredId(hovered ? conv.id : null)}
               onRenameChange={setRenameTitle}
               onRenameSubmit={handleSubmitRename}
               onRenameCancel={() => setRenameId(null)}
@@ -285,15 +407,32 @@ export default function ConversationList({
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
+          closing={contextMenuClosing}
           onRename={() => handleStartRename(contextMenu.id, contextMenu.title)}
           onDelete={() => handleDelete(contextMenu.id)}
         />
       )}
 
+      {dropdownMenu && (
+        <DropdownMenu
+          x={dropdownMenu.x}
+          y={dropdownMenu.y}
+          closing={dropdownClosing}
+          onRename={() => handleStartRename(dropdownMenu.id, dropdownMenu.title)}
+          onPin={() => handlePin(dropdownMenu.id)}
+          onShare={() => handleShare(dropdownMenu.id)}
+          onBatchManage={handleBatchManage}
+          onMoveToGroup={() => handleMoveToGroup(dropdownMenu.id)}
+          onExport={() => handleExport(dropdownMenu.id)}
+          onDelete={() => handleDelete(dropdownMenu.id, dropdownMenu.title)}
+        />
+      )}
+
       {deleteConfirm && (
         <DeleteConfirmModal
+          closing={deleteConfirmClosing}
           onConfirm={confirmDelete}
-          onCancel={() => setDeleteConfirm(null)}
+          onCancel={closeDeleteConfirm}
         />
       )}
     </div>
