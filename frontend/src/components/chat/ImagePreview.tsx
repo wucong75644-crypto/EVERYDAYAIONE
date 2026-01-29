@@ -142,6 +142,9 @@ export default function ImagePreview({ images, onRemove }: ImagePreviewProps) {
           onNext={handleNext}
           hasPrev={previewIndex > 0}
           hasNext={previewIndex < previewableImages.length - 1}
+          allImages={previewableImages.map((img) => img.preview)}
+          currentIndex={previewIndex}
+          onSelectImage={setPreviewIndex}
         />
       )}
     </>

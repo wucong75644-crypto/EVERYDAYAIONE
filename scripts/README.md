@@ -138,8 +138,8 @@ chmod +x scripts/**/*.py
 
 ## 🔗 相关文档
 
-- [安全检查清单](../docs/SECURITY_CHECKLIST.md)
-- [安全修复报告](../docs/SECURITY_FIXES_2026-01-28.md)
+- [安全检查清单](../docs/guides/SECURITY_CHECKLIST.md)
+- [安全修复报告](../docs/guides/SECURITY_FIXES_2026-01-28.md)
 - [数据库迁移](../docs/database/migrations/)
 
 ---

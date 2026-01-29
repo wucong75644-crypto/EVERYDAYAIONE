@@ -1,6 +1,6 @@
 # 📚 项目文档中心
 
-> **最后更新**：2026-01-23
+> **最后更新**：2026-01-29
 
 ---
 
@@ -22,6 +22,15 @@
 | [FUNCTION_INDEX.md](./FUNCTION_INDEX.md) | 函数索引与代码结构 | ✅ 完成 |
 | [CURRENT_ISSUES.md](./CURRENT_ISSUES.md) | 当前问题追踪与待办事项 | 🔄 持续更新 |
 | [API_REFERENCE.md](./API_REFERENCE.md) | AI 模型 API 参考文档 | ✅ 完成 |
+
+### 操作指南（Guides）
+
+| 文档名称 | 描述 | 状态 |
+|---------|------|------|
+| [CONTRIB.md](./guides/CONTRIB.md) | 开发贡献指南（环境搭建、脚本、测试流程） | ✅ 完成 |
+| [RUNBOOK.md](./guides/RUNBOOK.md) | 运维操作手册（部署、监控、故障排查、回滚） | ✅ 完成 |
+| [SECURITY_CHECKLIST.md](./guides/SECURITY_CHECKLIST.md) | 安全检查清单（部署前必检） | ✅ 完成 |
+| [SECURITY_FIXES_2026-01-28.md](./guides/SECURITY_FIXES_2026-01-28.md) | 安全修复报告 | ✅ 完成 |
 
 ---
 
@@ -54,8 +63,14 @@ docs/
 ├── FUNCTION_INDEX.md         # 函数索引
 ├── CURRENT_ISSUES.md         # 问题追踪
 ├── API_REFERENCE.md          # AI 模型 API 参考
+├── guides/                   # 🆕 操作指南
+│   ├── CONTRIB.md            # 开发贡献指南
+│   ├── RUNBOOK.md            # 运维操作手册
+│   ├── SECURITY_CHECKLIST.md # 安全检查清单
+│   └── SECURITY_FIXES_2026-01-28.md # 安全修复报告
 ├── database/                 # 数据库相关
-│   └── DATABASE_GUIDE.md     # 数据库使用指南
+│   ├── DATABASE_GUIDE.md     # 数据库使用指南
+│   └── migrations/           # 数据库迁移脚本
 └── document/                 # 核心设计文档
     ├── TECH_ARCHITECTURE.md  # 技术架构
     ├── PAGE_DESIGN.md        # 页面设计
