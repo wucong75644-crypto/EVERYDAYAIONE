@@ -337,6 +337,17 @@ class VideoService(BaseGenerationService):
         if not video_url:
             return result
 
+        # 检查是否已经是 OSS URL（避免重复上传）
+        cdn_domain = settings.oss_cdn_domain
+        oss_domain = f"{settings.oss_bucket_name}.{settings.oss_endpoint}"
+        video_url_lower = video_url.lower()
+        if cdn_domain and cdn_domain in video_url_lower:
+            logger.debug("Video already uploaded to OSS (CDN URL detected)")
+            return result
+        if oss_domain and oss_domain in video_url_lower:
+            logger.debug("Video already uploaded to OSS (OSS URL detected)")
+            return result
+
         # 检查 OSS 是否配置
         if not settings.oss_access_key_id:
             logger.warning("OSS not configured, skipping video upload")
