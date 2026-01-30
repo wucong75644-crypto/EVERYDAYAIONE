@@ -5,7 +5,10 @@
 from enum import Enum
 from typing import Optional, List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from core.url_validation import validate_url, validate_urls
+from .common import TaskStatus
 
 
 class VideoModel(str, Enum):
@@ -28,15 +31,6 @@ class VideoAspectRatio(str, Enum):
     LANDSCAPE = "landscape"  # 横屏
 
 
-class TaskStatus(str, Enum):
-    """任务状态"""
-    PENDING = "pending"
-    PROCESSING = "processing"
-    SUCCESS = "success"
-    FAILED = "failed"
-    TIMEOUT = "timeout"
-
-
 # ============================================================
 # 请求模型
 # ============================================================
@@ -50,6 +44,7 @@ class GenerateTextToVideoRequest(BaseModel):
     aspect_ratio: VideoAspectRatio = Field(default=VideoAspectRatio.LANDSCAPE, description="宽高比")
     remove_watermark: bool = Field(default=True, description="是否去水印")
     wait_for_result: bool = Field(default=False, description="是否等待结果")
+    conversation_id: Optional[str] = Field(default=None, description="对话 ID（用于任务恢复）")
 
 
 class GenerateImageToVideoRequest(BaseModel):
@@ -61,6 +56,13 @@ class GenerateImageToVideoRequest(BaseModel):
     aspect_ratio: VideoAspectRatio = Field(default=VideoAspectRatio.LANDSCAPE, description="宽高比")
     remove_watermark: bool = Field(default=True, description="是否去水印")
     wait_for_result: bool = Field(default=False, description="是否等待结果")
+    conversation_id: Optional[str] = Field(default=None, description="对话 ID（用于任务恢复）")
+
+    @field_validator("image_url")
+    @classmethod
+    def validate_image_url(cls, v: str) -> str:
+        """验证图片 URL，防止 SSRF 攻击"""
+        return validate_url(v)
 
 
 class GenerateStoryboardVideoRequest(BaseModel):
@@ -69,6 +71,15 @@ class GenerateStoryboardVideoRequest(BaseModel):
     storyboard_images: Optional[List[str]] = Field(default=None, description="故事板图片列表")
     aspect_ratio: VideoAspectRatio = Field(default=VideoAspectRatio.LANDSCAPE, description="宽高比")
     wait_for_result: bool = Field(default=False, description="是否等待结果")
+    conversation_id: Optional[str] = Field(default=None, description="对话 ID（用于任务恢复）")
+
+    @field_validator("storyboard_images")
+    @classmethod
+    def validate_storyboard_images(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        """验证故事板图片 URL，防止 SSRF 攻击"""
+        if v is None:
+            return v
+        return validate_urls(v)
 
 
 # ============================================================

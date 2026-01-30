@@ -89,6 +89,13 @@ interface ConversationRuntimeStore {
 
   /** 清理旧对话状态，只保留指定的对话ID列表 */
   cleanup: (keepConversationIds: string[]) => void;
+
+  // ========================================
+  // 5. 对话迁移
+  // ========================================
+
+  /** 迁移对话：将临时对话ID的状态迁移到真实对话ID（用于新对话创建后的乐观更新） */
+  migrateConversation: (fromId: string, toId: string) => void;
 }
 
 /** 默认运行时状态工厂 */
@@ -140,16 +147,22 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>((set
       const hasReplaced = replaced.some(m => m.id === realMessage.id);
       let finalMessages = hasReplaced ? replaced : [...replaced, realMessage];
 
-      // ✅ 如果是用户消息，且存在streaming消息，调整streaming消息的时间戳确保在用户消息之后
+      // ✅ 如果是用户消息，且存在streaming消息，确保streaming消息在用户消息之后
+      // 只在streaming时间戳早于或等于用户消息时才调整，避免不必要的位置变化
       if (hasReplaced && realMessage.role === 'user' && current.streamingMessageId) {
         const userTimestamp = new Date(realMessage.created_at).getTime();
-        finalMessages = finalMessages.map(m => {
-          if (m.id === current.streamingMessageId) {
-            // 确保streaming消息时间戳晚于用户消息1ms
-            return { ...m, created_at: new Date(userTimestamp + 1).toISOString() };
-          }
-          return m;
-        });
+        const streamingMessage = finalMessages.find(m => m.id === current.streamingMessageId);
+        const streamingTimestamp = streamingMessage ? new Date(streamingMessage.created_at).getTime() : 0;
+
+        // 只有当 streaming 时间戳不正确时才调整
+        if (streamingMessage && streamingTimestamp <= userTimestamp) {
+          finalMessages = finalMessages.map(m => {
+            if (m.id === current.streamingMessageId) {
+              return { ...m, created_at: new Date(userTimestamp + 1).toISOString() };
+            }
+            return m;
+          });
+        }
       }
 
       const newStates = new Map(state.states);
@@ -386,6 +399,41 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>((set
           newStates.set(id, runtimeState);
         }
       }
+
+      return { states: newStates };
+    });
+  },
+
+  // ========================================
+  // 5. 对话迁移
+  // ========================================
+
+  migrateConversation: (fromId: string, toId: string) => {
+    set((state) => {
+      const fromState = state.states.get(fromId);
+      if (!fromState) return state;
+
+      const newStates = new Map(state.states);
+
+      // 更新所有消息的 conversation_id
+      const migratedMessages = fromState.optimisticMessages.map((m) => ({
+        ...m,
+        conversation_id: toId,
+      }));
+
+      // 获取目标对话的现有状态（如果有）
+      const toState = newStates.get(toId) ?? createDefaultState();
+
+      // 合并迁移的消息到目标对话
+      newStates.set(toId, {
+        ...toState,
+        optimisticMessages: [...toState.optimisticMessages, ...migratedMessages],
+        isGenerating: fromState.isGenerating || toState.isGenerating,
+        streamingMessageId: fromState.streamingMessageId || toState.streamingMessageId,
+      });
+
+      // 删除源对话状态
+      newStates.delete(fromId);
 
       return { states: newStates };
     });

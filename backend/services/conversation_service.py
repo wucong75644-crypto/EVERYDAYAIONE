@@ -73,6 +73,10 @@ class ConversationService:
             NotFoundError: 对话不存在
             PermissionError: 无权访问
         """
+        # 验证对话 ID 有效性（防止前端传递 "null"、"undefined" 等无效字符串）
+        if not conversation_id or conversation_id in ("null", "undefined", "None"):
+            raise NotFoundError("对话", conversation_id)
+
         result = (
             self.db.table("conversations")
             .select("*")

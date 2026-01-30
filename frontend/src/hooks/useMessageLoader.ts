@@ -104,9 +104,6 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0, onNewMess
 
       // 检测对话切换
       if (previousConversationIdRef.current !== conversationId) {
-        // 同步清空旧消息并设置加载中，避免滚动逻辑使用旧数据计算位置
-        setMessages([]);
-        setLoading(true);
         previousConversationIdRef.current = conversationId;
 
         const cachedData = getCachedMessages(conversationId);
@@ -116,16 +113,19 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0, onNewMess
 
           const cachedMessages = convertCacheToApiMessages(cachedData.messages, conversationId);
 
-          // 下一帧设置消息，确保 DOM 已准备好
-          requestAnimationFrame(() => {
-            setMessages(cachedMessages);
-            setLoading(false);
-            setHasMore(cachedData.hasMore);
-          });
-          // 有缓存时提前返回，避免下面的逻辑同步覆盖 loading 状态
+          // 同步设置消息，避免中间帧的空白闪烁
+          // React 18 自动批处理会合并这些更新到一次渲染
+          setMessages(cachedMessages);
+          setLoading(false);
+          setHasMore(cachedData.hasMore);
+          // 有缓存时提前返回，避免下面的逻辑覆盖
           return;
         }
-        // 无缓存时继续执行下面的从后端加载逻辑
+
+        // 无缓存时：先清空并显示加载中
+        setMessages([]);
+        setLoading(true);
+        // 继续执行下面的从后端加载逻辑
       }
 
       const currentConversationId = conversationId;

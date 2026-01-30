@@ -20,6 +20,7 @@ export interface PollingConfig {
   intervalId: ReturnType<typeof setInterval>;
   pollFn: () => Promise<{ done: boolean; result?: unknown; error?: Error }>;
   callbacks: PollingCallbacks;
+  lockRenewalId?: ReturnType<typeof setInterval>;
 }
 
 /** 轮询选项 */

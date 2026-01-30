@@ -10,7 +10,7 @@ import { uploadImage } from '../services/image';
 export interface UploadedImage {
   id: string; // 唯一标识
   file: File;
-  preview: string; // base64 预览
+  preview: string; // ObjectURL 预览（本地 blob:// URL，性能优于 base64）
   url: string | null; // 上传后的公网URL
   isUploading: boolean;
   error: string | null;
@@ -87,21 +87,24 @@ export function useImageUpload() {
     // 逐个处理图片（读取预览 + 上传）
     for (const newImage of newImages) {
       try {
-        // 读取文件为 base64
+        // 使用 ObjectURL（性能优于 base64，内存占用更小）
+        const preview = URL.createObjectURL(newImage.file);
+
+        // 更新预览（立即显示）
+        setImages((prev) =>
+          prev.map((img) => (img.id === newImage.id ? { ...img, preview } : img))
+        );
+
+        // 读取文件为 base64（仅用于上传）
         const reader = new FileReader();
-        const preview = await new Promise<string>((resolve, reject) => {
+        const base64 = await new Promise<string>((resolve, reject) => {
           reader.onload = () => resolve(reader.result as string);
           reader.onerror = () => reject(new Error('图片读取失败'));
           reader.readAsDataURL(newImage.file);
         });
 
-        // 更新预览
-        setImages((prev) =>
-          prev.map((img) => (img.id === newImage.id ? { ...img, preview } : img))
-        );
-
         // 上传到服务器
-        const uploadResult = await uploadImage(preview);
+        const uploadResult = await uploadImage(base64);
 
         // 更新URL和状态
         setImages((prev) =>
@@ -174,7 +177,14 @@ export function useImageUpload() {
    * 移除单张图片
    */
   const handleRemoveImage = (imageId: string) => {
-    setImages((prev) => prev.filter((img) => img.id !== imageId));
+    setImages((prev) => {
+      const imageToRemove = prev.find((img) => img.id === imageId);
+      // 清理 ObjectURL 防止内存泄漏
+      if (imageToRemove?.preview.startsWith('blob:')) {
+        URL.revokeObjectURL(imageToRemove.preview);
+      }
+      return prev.filter((img) => img.id !== imageId);
+    });
     setUploadError(null);
   };
 
@@ -182,8 +192,22 @@ export function useImageUpload() {
    * 移除所有图片
    */
   const handleRemoveAllImages = () => {
+    // 提取需要释放的 URL（在清空状态之前）
+    const urlsToRevoke = images.map((img) => img.preview).filter((url) => url.startsWith('blob:'));
+
+    // 清空状态，让 UI 立即响应（输入框变空）
     setImages([]);
     setUploadError(null);
+
+    // 延迟释放内存（30秒后），确保消息列表中的图片已经渲染完成
+    if (urlsToRevoke.length > 0) {
+      setTimeout(() => {
+        urlsToRevoke.forEach((url) => {
+          URL.revokeObjectURL(url);
+          console.log(`[Memory Cleanup] Revoked ObjectURL: ${url.slice(0, 50)}...`);
+        });
+      }, 30000); // 30秒延迟
+    }
   };
 
   /**
@@ -198,11 +222,13 @@ export function useImageUpload() {
   const uploadedImageUrls = images
     .filter((img) => img.url !== null)
     .map((img) => img.url as string);
+  const previewUrls = images.map((img) => img.preview);
   const hasImages = images.length > 0;
 
   return {
     images, // 所有图片记录
-    uploadedImageUrls, // 已上传的图片 URL 数组
+    uploadedImageUrls, // 已上传的图片 URL 数组（服务器 URL）
+    previewUrls, // 本地预览 URL 数组（ObjectURL，用于消息显示）
     isUploading, // 是否有图片正在上传
     uploadError, // 上传错误信息
     hasImages, // 是否有图片

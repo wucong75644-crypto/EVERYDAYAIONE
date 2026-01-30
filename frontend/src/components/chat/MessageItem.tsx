@@ -93,6 +93,15 @@ export default memo(function MessageItem({
   const [showImagePreview, setShowImagePreview] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(currentImageIndex);
 
+  // 解析当前消息的图片 URL 列表（支持逗号分隔的多图）
+  const messageImageUrls = useMemo(() => {
+    if (!message.image_url) return [];
+    return message.image_url.split(',').map(url => url.trim()).filter(Boolean);
+  }, [message.image_url]);
+
+  // 用于预览的图片列表：用户消息用自身图片，AI 消息用全局列表
+  const previewImageUrls = isUser ? messageImageUrls : allImageUrls;
+
   // 鼠标进入消息区域 - 显示工具栏并清除隐藏定时器
   const handleMouseEnter = () => {
     if (hideTimeoutRef.current) {
@@ -216,8 +225,10 @@ export default memo(function MessageItem({
           videoUrl={message.video_url}
           messageId={message.id}
           isUser={isUser}
-          onImageClick={() => {
-            setPreviewIndex(currentImageIndex);
+          onImageClick={(index) => {
+            // 用户消息：index 是当前消息内的图片索引
+            // AI 消息：使用全局的 currentImageIndex
+            setPreviewIndex(isUser ? (index ?? 0) : currentImageIndex);
             setShowImagePreview(true);
           }}
           onMediaLoaded={onMediaLoaded}
@@ -253,16 +264,16 @@ export default memo(function MessageItem({
       />
 
       {/* 图片预览弹窗 */}
-      {showImagePreview && allImageUrls.length > 0 && (
+      {showImagePreview && previewImageUrls.length > 0 && (
         <ImagePreviewModal
-          imageUrl={allImageUrls[previewIndex]}
+          imageUrl={previewImageUrls[previewIndex]}
           onClose={() => setShowImagePreview(false)}
           filename={`image-${previewIndex + 1}`}
           onPrev={() => setPreviewIndex(Math.max(0, previewIndex - 1))}
-          onNext={() => setPreviewIndex(Math.min(allImageUrls.length - 1, previewIndex + 1))}
+          onNext={() => setPreviewIndex(Math.min(previewImageUrls.length - 1, previewIndex + 1))}
           hasPrev={previewIndex > 0}
-          hasNext={previewIndex < allImageUrls.length - 1}
-          allImages={allImageUrls}
+          hasNext={previewIndex < previewImageUrls.length - 1}
+          allImages={previewImageUrls}
           currentIndex={previewIndex}
           onSelectImage={setPreviewIndex}
         />

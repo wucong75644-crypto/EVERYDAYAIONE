@@ -113,10 +113,13 @@ async def call_ai_chat(
         if image_url or video_url:
             messages = adapter.format_messages_from_history(history)
 
-            # 收集所有媒体URL
+            # 收集所有媒体URL（支持逗号分隔的多图）
             media_urls = []
             if image_url:
-                media_urls.append(image_url)
+                for url in image_url.split(','):
+                    url = url.strip()
+                    if url:
+                        media_urls.append(url)
             if video_url:
                 media_urls.append(video_url)
 
@@ -218,8 +221,12 @@ async def stream_ai_response(
     if image_url or video_url:
         messages = adapter.format_messages_from_history(history)
         media_urls = []
+        # 支持逗号分隔的多图 URL（前端多图发送格式）
         if image_url:
-            media_urls.append(image_url)
+            for url in image_url.split(','):
+                url = url.strip()
+                if url:
+                    media_urls.append(url)
         if video_url:
             media_urls.append(video_url)
 

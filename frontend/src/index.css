@@ -15,6 +15,11 @@ body {
   animation: fadeIn 0.15s ease-out;
 }
 
+/* 快速淡入动画（100ms，用于 AI 占位符） */
+.animate-fade-in {
+  animation: fadeIn 0.1s ease-out;
+}
+
 /* 下拉菜单滑入动画 */
 @keyframes slideDown {
   from {
@@ -137,5 +142,20 @@ body {
 
 .animate-backdropExit {
   animation: backdropExit 0.15s ease-in;
+}
+
+/* 上传按钮红色外发光动效 */
+@keyframes uploadGlow {
+  0%, 100% {
+    box-shadow: 0 0 4px 2px rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 12px 4px rgba(239, 68, 68, 0.6);
+  }
+}
+
+.animate-upload-glow {
+  animation: uploadGlow 1s ease-in-out infinite;
+  border-radius: 0.5rem;
 }
 

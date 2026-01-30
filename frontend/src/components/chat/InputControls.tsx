@@ -70,6 +70,8 @@ interface InputControlsProps {
   onImageSelect: (e: React.ChangeEvent<HTMLInputElement>, maxImages?: number, maxFileSize?: number) => void;
   onImageDrop: (files: FileList, maxImages?: number, maxFileSize?: number) => void;
   onImagePaste: (e: ClipboardEvent, maxImages?: number, maxFileSize?: number) => void;
+  /** 是否需要上传图片（用于显示引导提示） */
+  requiresImageUpload?: boolean;
 }
 
 export default function InputControls(props: InputControlsProps) {
@@ -85,12 +87,29 @@ export default function InputControls(props: InputControlsProps) {
     onSaveSettings, onResetSettings,
     images, maxImages, maxFileSize, onRemoveImage, onImageSelect, onImageDrop, onImagePaste,
     recordingState, audioBlob, audioDuration, onStartRecording, onStopRecording, onClearRecording,
+    requiresImageUpload = false,
   } = props;
 
   const [showUploadMenu, setShowUploadMenu] = useState(false);
   const [uploadMenuClosing, setUploadMenuClosing] = useState(false);
   const [showAdvancedDropdown, setShowAdvancedDropdown] = useState(false);
   const [advancedDropdownClosing, setAdvancedDropdownClosing] = useState(false);
+  // 上传按钮发光动效状态
+  const [uploadButtonGlowing, setUploadButtonGlowing] = useState(false);
+
+  // 当需要上传图片时，触发发光动效（持续2秒）
+  useEffect(() => {
+    if (requiresImageUpload) {
+      // 使用 queueMicrotask 延迟状态更新，避免同步 setState
+      queueMicrotask(() => setUploadButtonGlowing(true));
+      const timer = setTimeout(() => setUploadButtonGlowing(false), 2000);
+      return () => clearTimeout(timer);
+    }
+    // 当 requiresImageUpload 变为 false 时，在 cleanup 中重置状态
+    return () => {
+      setUploadButtonGlowing(false);
+    };
+  }, [requiresImageUpload]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -199,7 +218,7 @@ export default function InputControls(props: InputControlsProps) {
           value={prompt}
           onChange={(e) => onPromptChange(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder='发送消息...'
+          placeholder={requiresImageUpload ? '📌 该模型需要先上传图片才能生成哦～' : '发送消息...'}
           className="w-full resize-none border-none outline-none text-gray-900 placeholder-gray-400 text-base leading-6 min-h-[40px] max-h-[120px] overflow-y-auto"
           rows={1}
           disabled={isSubmitting}
@@ -284,8 +303,12 @@ export default function InputControls(props: InputControlsProps) {
             <div ref={uploadMenuRef} className="relative">
               <button
                 onClick={() => setShowUploadMenu(!showUploadMenu)}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                title="上传文件"
+                className={`p-2 rounded-lg transition-all ${
+                  uploadButtonGlowing
+                    ? 'text-red-500 animate-upload-glow'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                }`}
+                title={requiresImageUpload ? '点击上传图片' : '上传文件'}
               >
                 <Paperclip className="w-4 h-4" />
               </button>

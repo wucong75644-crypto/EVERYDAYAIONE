@@ -98,7 +98,8 @@ class OSSService:
                 response.raise_for_status()
             except httpx.HTTPError as e:
                 logger.error(f"Failed to download {media_type}: url={url}, error={e}")
-                raise ValueError(f"{media_type}下载失败: {str(e)}")
+                # 脱敏：不暴露原始URL和HTTP错误详情
+                raise ValueError(f"{media_type}下载失败，请检查URL是否有效")
 
         content = response.content
         content_type = response.headers.get("content-type", "")
@@ -134,7 +135,8 @@ class OSSService:
             )
         except oss2.exceptions.OssError as e:
             logger.error(f"OSS upload failed: object_key={object_key}, error={e}")
-            raise Exception(f"OSS 上传失败: {str(e)}")
+            # 脱敏：不暴露OSS内部错误详情
+            raise Exception("OSS 上传失败，请稍后重试")
 
         # 5. 生成访问 URL
         access_url = self.get_url(object_key)
@@ -185,7 +187,8 @@ class OSSService:
             )
         except oss2.exceptions.OssError as e:
             logger.error(f"OSS upload failed: object_key={object_key}, error={e}")
-            raise Exception(f"OSS 上传失败: {str(e)}")
+            # 脱敏：不暴露OSS内部错误详情
+            raise Exception("OSS 上传失败，请稍后重试")
 
         return {
             "object_key": object_key,

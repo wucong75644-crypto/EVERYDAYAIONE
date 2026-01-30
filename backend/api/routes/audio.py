@@ -5,6 +5,7 @@
 """
 
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Query
+from loguru import logger
 
 from api.deps import CurrentUser, Database
 from schemas.audio import (
@@ -57,9 +58,12 @@ async def upload_audio(
         )
 
     except ValueError as e:
+        # ValueError 通常是用户输入错误，可以返回具体信息
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"上传失败: {e}")
+        # 其他异常脱敏处理
+        logger.exception(f"Audio upload failed: {e}")
+        raise HTTPException(status_code=500, detail="上传失败，请稍后重试")
 
 
 @router.get("/info", response_model=AudioInfoResponse, summary="获取音频信息")
@@ -86,7 +90,8 @@ async def get_audio_info(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"获取信息失败: {e}")
+        logger.exception(f"Get audio info failed: {e}")
+        raise HTTPException(status_code=500, detail="获取信息失败，请稍后重试")
 
 
 @router.delete("/delete", summary="删除音频")
@@ -106,4 +111,5 @@ async def delete_audio(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"删除失败: {e}")
+        logger.exception(f"Delete audio failed: {e}")
+        raise HTTPException(status_code=500, detail="删除失败，请稍后重试")

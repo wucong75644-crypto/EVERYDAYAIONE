@@ -16,4 +16,5 @@ RATE_LIMITS = {
     "message_create": "60/minute",      # 消息创建
     "image_generate": "10/minute",      # 图像生成
     "video_generate": "5/minute",       # 视频生成
+    "task_query": "120/minute",         # 任务状态查询（考虑前端轮询频率）
 }

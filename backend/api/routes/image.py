@@ -55,6 +55,7 @@ async def generate_image(
         output_format=body.output_format.value,
         resolution=body.resolution.value if body.resolution else None,
         wait_for_result=body.wait_for_result,
+        conversation_id=body.conversation_id,
     )
 
     return GenerateImageResponse(
@@ -85,6 +86,7 @@ async def edit_image(
         size=request.size.value,
         output_format=request.output_format.value,
         wait_for_result=request.wait_for_result,
+        conversation_id=request.conversation_id,
     )
 
     return GenerateImageResponse(
@@ -98,7 +100,9 @@ async def edit_image(
 
 
 @router.get("/tasks/{task_id}", response_model=TaskStatusResponse, summary="查询任务状态")
+@limiter.limit(RATE_LIMITS["task_query"])
 async def query_task(
+    request: Request,
     task_id: str,
     current_user: CurrentUser,
     service: ImageService = Depends(get_image_service),
@@ -108,6 +112,8 @@ async def query_task(
 
     用于轮询异步任务的完成状态。
     图片完成后会自动上传到 OSS，返回 CDN 加速的 URL。
+
+    速率限制：每分钟最多 120 次请求（考虑到前端轮询频率）
     """
     result = await service.query_task(
         task_id=task_id,

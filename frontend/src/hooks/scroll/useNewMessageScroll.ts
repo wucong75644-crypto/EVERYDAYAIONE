@@ -46,24 +46,27 @@ export function useNewMessageScroll({
       }
 
       if (hasUserMessage || !userScrolledAway) {
+        // 使用双重 RAF 确保 DOM 完全更新
         requestAnimationFrame(() => {
-          const container = containerRef.current;
-          if (!container) return;
+          requestAnimationFrame(() => {
+            const container = containerRef.current;
+            if (!container) return;
 
-          const messageElements = container.querySelectorAll('[data-message-id]');
-          const lastMessageElement = messageElements[messageElements.length - 1] as HTMLElement | undefined;
+            const messageElements = container.querySelectorAll('[data-message-id]');
+            const lastMessageElement = messageElements[messageElements.length - 1] as HTMLElement | undefined;
 
-          if (lastMessageElement) {
-            const messageHeight = lastMessageElement.offsetHeight;
-            const containerHeight = container.clientHeight;
+            if (lastMessageElement) {
+              const messageHeight = lastMessageElement.offsetHeight;
+              const containerHeight = container.clientHeight;
 
-            if (messageHeight > containerHeight * LONG_MESSAGE_RATIO) {
-              scrollToElement(lastMessageElement, 'top');
-              return;
+              if (messageHeight > containerHeight * LONG_MESSAGE_RATIO) {
+                scrollToElement(lastMessageElement, 'top');
+                return;
+              }
             }
-          }
 
-          scrollToBottomDebounced(true);
+            scrollToBottomDebounced(true);
+          });
         });
       }
     }
