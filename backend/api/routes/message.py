@@ -71,6 +71,7 @@ async def create_message(
         is_error=body.is_error,
         created_at=body.created_at,
         generation_params=body.generation_params,
+        client_request_id=body.client_request_id,
     )
     return result
 
@@ -162,6 +163,7 @@ async def send_message_stream(
                 video_url=body.video_url,
                 thinking_effort=body.thinking_effort,
                 thinking_mode=body.thinking_mode,
+                client_request_id=body.client_request_id,
             ):
                 yield chunk
         finally:

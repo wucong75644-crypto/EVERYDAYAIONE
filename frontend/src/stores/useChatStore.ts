@@ -14,6 +14,8 @@ export interface Message {
   imageUrl?: string;
   videoUrl?: string;
   createdAt: string;
+  client_request_id?: string;  // 客户端请求ID（用于乐观更新）
+  status?: 'pending' | 'sent' | 'failed';  // 消息状态
 }
 
 export interface Conversation {
@@ -131,6 +133,7 @@ interface ChatState {
   updateCachedMessages: (conversationId: string, messages: Message[], hasMore?: boolean) => void;
   addMessageToCache: (conversationId: string, message: Message) => void;
   replaceMessageInCache: (conversationId: string, messageId: string, newMessage: Message) => void;
+  replaceOptimisticMessage: (conversationId: string, clientRequestId: string, realMessage: Message) => void;
   setCacheSendingState: (conversationId: string, isSending: boolean) => void;
   deleteCachedMessages: (conversationId: string) => void;
   isCacheExpired: (conversationId: string) => boolean;
@@ -342,6 +345,39 @@ export const useChatStore = create<ChatState>()(
 
       const newMessages = [...cached.messages];
       newMessages[messageIndex] = newMessage;
+
+      const newCache = new Map(state.messageCache);
+      newCache.set(conversationId, {
+        ...cached,
+        messages: newMessages,
+      });
+
+      // 如果是当前对话，同步更新 messages 状态
+      const updates: Partial<ChatState> = { messageCache: newCache };
+      if (state.currentConversationId === conversationId) {
+        updates.messages = newMessages;
+      }
+
+      return updates;
+    });
+  },
+
+  // 根据 client_request_id 替换临时消息为真实消息（用于乐观更新）
+  replaceOptimisticMessage: (conversationId: string, clientRequestId: string, realMessage: Message) => {
+    set((state) => {
+      const cached = state.messageCache.get(conversationId);
+      if (!cached) return state;
+
+      // 查找匹配 client_request_id 的临时消息
+      const messageIndex = cached.messages.findIndex((m) => m.client_request_id === clientRequestId);
+      if (messageIndex === -1) return state; // 未找到匹配的临时消息
+
+      const newMessages = [...cached.messages];
+      // 替换为真实消息，保留状态为 'sent'
+      newMessages[messageIndex] = {
+        ...realMessage,
+        status: 'sent',
+      };
 
       const newCache = new Map(state.messageCache);
       newCache.set(conversationId, {

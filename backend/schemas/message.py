@@ -62,6 +62,7 @@ class MessageCreate(BaseModel):
     is_error: bool = False  # 是否为错误消息
     created_at: Optional[datetime] = None  # 可选时间戳（用于保持消息顺序）
     generation_params: Optional[GenerationParams] = None  # 生成参数（图片/视频生成时保存）
+    client_request_id: Optional[str] = Field(None, max_length=100, description="客户端请求ID，用于乐观更新")
 
     @field_validator('generation_params')
     @classmethod
@@ -85,6 +86,7 @@ class MessageResponse(BaseModel):
     credits_cost: int = 0
     is_error: bool = False
     generation_params: Optional[GenerationParams] = None  # 生成参数（用于重新生成时继承）
+    client_request_id: Optional[str] = None  # 客户端请求ID（原样返回，用于前端替换临时消息）
     created_at: datetime
 
 
@@ -103,6 +105,7 @@ class SendMessageRequest(BaseModel):
     video_url: Optional[str] = None  # 视频 URL（用于视频 QA）
     thinking_effort: Optional[str] = None  # 推理强度（Gemini 3）: minimal/low/medium/high
     thinking_mode: Optional[str] = None  # 推理模式（Gemini 3 Pro）: default/deep_think
+    client_request_id: Optional[str] = Field(None, max_length=100, description="客户端请求ID")
     # 高级设置
     image_size: Optional[str] = "1024x1024"
     image_count: Optional[int] = Field(default=1, ge=1, le=4)

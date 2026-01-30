@@ -7,6 +7,29 @@
 import type { Message } from '../services/message';
 
 /**
+ * 唯一 ID 生成器
+ * 使用时间戳 + 自增计数器 + 随机后缀，确保在快速连续调用时也能生成唯一 ID
+ */
+let idCounter = 0;
+function generateUniqueId(prefix: string): string {
+  const timestamp = Date.now();
+  const counter = idCounter++;
+  const random = Math.random().toString(36).slice(2, 7);
+  return `${prefix}-${timestamp}-${counter}-${random}`;
+}
+
+/**
+ * 获取当前时间戳（确保连续调用也能获得递增的时间戳）
+ */
+let lastTimestamp = 0;
+function getIncrementalTimestamp(): number {
+  const now = Date.now();
+  // 确保时间戳严格递增
+  lastTimestamp = now > lastTimestamp ? now : lastTimestamp + 1;
+  return lastTimestamp;
+}
+
+/**
  * 创建错误消息
  *
  * @param conversationId 对话ID
@@ -21,7 +44,7 @@ export function createErrorMessage(
   createdAt?: string
 ): Message {
   return {
-    id: `error-${Date.now()}`,
+    id: generateUniqueId('error'),
     conversation_id: conversationId,
     role: 'assistant',
     content: `${errorText}: ${error instanceof Error ? error.message : '未知错误'}`,
@@ -40,15 +63,17 @@ export function createErrorMessage(
  * @param conversationId 对话ID
  * @param imageUrl 图片URL（可选）
  * @param createdAt 可选的时间戳（用于保持与占位符的顺序一致）
+ * @param clientRequestId 客户端请求ID（用于乐观更新）
  */
 export function createOptimisticUserMessage(
   content: string,
   conversationId: string,
   imageUrl: string | null = null,
-  createdAt?: string
+  createdAt?: string,
+  clientRequestId?: string
 ): Message {
   return {
-    id: `temp-${Date.now()}`,
+    id: generateUniqueId('temp'),
     conversation_id: conversationId,
     role: 'user',
     content,
@@ -56,6 +81,8 @@ export function createOptimisticUserMessage(
     video_url: null,
     credits_cost: 0,
     created_at: createdAt || new Date().toISOString(),
+    client_request_id: clientRequestId,  // 客户端请求ID（用于后端匹配）
+    status: 'pending',  // 初始状态为 pending
   };
 }
 
@@ -76,12 +103,15 @@ export function createTempMessagePair(
   tempUserId: string;
   newStreamingId: string;
 } {
-  const newStreamingId = `streaming-${Date.now()}`;
-  const tempUserId = `temp-user-${Date.now()}`;
+  const newStreamingId = generateUniqueId('streaming');
+  const tempUserId = generateUniqueId('temp-user');
 
-  // 时间戳：确保用户消息在 AI 消息之前（+1ms 确保排序稳定）
-  const userTimestamp = new Date().toISOString();
-  const aiTimestamp = new Date(Date.now() + 1).toISOString();
+  // 使用递增时间戳确保用户消息在 AI 消息之前
+  const userTs = getIncrementalTimestamp();
+  const aiTs = getIncrementalTimestamp();
+
+  const userTimestamp = new Date(userTs).toISOString();
+  const aiTimestamp = new Date(aiTs).toISOString();
 
   const tempUserMessage: Message = {
     id: tempUserId,
@@ -140,7 +170,7 @@ export function createStreamingPlaceholder(
 export interface MediaTimestamps {
   /** 用户消息时间戳 */
   userTimestamp: string;
-  /** 占位符时间戳（比用户消息晚1ms，确保排序） */
+  /** 占位符时间戳（比用户消息晚，确保排序） */
   placeholderTimestamp: string;
   /** 临时占位符ID */
   tempPlaceholderId: string;
@@ -151,14 +181,16 @@ export interface MediaTimestamps {
  *
  * 用于图片/视频生成时保持消息顺序：
  * - 用户消息在前
- * - AI占位符在后（+1ms）
+ * - AI占位符在后
  */
 export function createMediaTimestamps(): MediaTimestamps {
-  const userTimestamp = new Date().toISOString();
-  const placeholderTimestamp = new Date(
-    new Date(userTimestamp).getTime() + 1
-  ).toISOString();
-  const tempPlaceholderId = `streaming-temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  // 使用递增时间戳确保顺序正确
+  const userTs = getIncrementalTimestamp();
+  const placeholderTs = getIncrementalTimestamp();
+
+  const userTimestamp = new Date(userTs).toISOString();
+  const placeholderTimestamp = new Date(placeholderTs).toISOString();
+  const tempPlaceholderId = generateUniqueId('streaming-temp');
 
   return { userTimestamp, placeholderTimestamp, tempPlaceholderId };
 }

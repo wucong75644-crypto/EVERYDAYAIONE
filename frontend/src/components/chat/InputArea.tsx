@@ -4,23 +4,24 @@
  * 统一聊天和图像生成界面，根据选择的模型自动判断功能
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import { createConversation, updateConversation } from '../../services/conversation';
 import { type Message } from '../../services/message';
-import { type AspectRatio, type ImageResolution, type ImageOutputFormat } from '../../services/image';
-import { type VideoFrames, type VideoAspectRatio } from '../../services/video';
 import { uploadAudio } from '../../services/audio';
 import { useMessageHandlers } from '../../hooks/useMessageHandlers';
 import { useImageUpload } from '../../hooks/useImageUpload';
 import { useModelSelection } from '../../hooks/useModelSelection';
 import { useAudioRecording } from '../../hooks/useAudioRecording';
-import { getSavedSettings, saveSettings, resetSettings } from '../../utils/settingsStorage';
-import { type UnifiedModel, ALL_MODELS } from '../../constants/models';
+import { useSettingsManager } from '../../hooks/useSettingsManager';
+import { type UnifiedModel } from '../../constants/models';
 import { useTaskStore } from '../../stores/useTaskStore';
 import { useChatStore } from '../../stores/useChatStore';
+import { createOptimisticUserMessage } from '../../utils/messageFactory';
+import { generateClientRequestId } from '../../utils/messageIdMapping';
 import ConflictAlert from './ConflictAlert';
 import InputControls from './InputControls';
+import UploadErrorBar from './UploadErrorBar';
 
 interface InputAreaProps {
   conversationId: string | null;
@@ -52,33 +53,25 @@ export default function InputArea({
   // 基础状态
   const [prompt, setPrompt] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // 加载保存的设置
-  const savedSettings = getSavedSettings();
-
-  // 图像生成参数
-  const [aspectRatio, setAspectRatio] = useState<AspectRatio>(savedSettings.image.aspectRatio);
-  const [resolution, setResolution] = useState<ImageResolution>(savedSettings.image.resolution);
-  const [outputFormat, setOutputFormat] = useState<ImageOutputFormat>(savedSettings.image.outputFormat);
-
-  // 视频生成参数
-  const [videoFrames, setVideoFrames] = useState<VideoFrames>(savedSettings.video.frames);
-  const [videoAspectRatio, setVideoAspectRatio] = useState<VideoAspectRatio>(savedSettings.video.aspectRatio);
-  const [removeWatermark, setRemoveWatermark] = useState<boolean>(savedSettings.video.removeWatermark);
-
-  // 聊天模型参数
-  const [thinkingEffort, setThinkingEffort] = useState<'minimal' | 'low' | 'medium' | 'high'>(
-    savedSettings.chat?.thinkingEffort || 'low'
-  );
-  const [deepThinkMode, setDeepThinkMode] = useState<boolean>(false);
-
-  // UI 状态
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // 设置管理 Hook（图像/视频/聊天参数）
+  const {
+    imageSettings,
+    setImageSetting,
+    videoSettings,
+    setVideoSetting,
+    chatSettings,
+    setChatSetting,
+    saveSettings: handleSaveSettings,
+    resetSettings: handleResetSettings,
+  } = useSettingsManager();
 
   // 图片上传 Hook
   const {
     images,
     uploadedImageUrls,
+    previewUrls,
     isUploading,
     uploadError: imageUploadError,
     hasImages,
@@ -101,108 +94,41 @@ export default function InputArea({
     error: audioRecordingError,
   } = useAudioRecording();
 
-  // 计算是否有图片（用于模型选择）
-  const hasImage = hasImages;
+  // 自动保存模型到对话的回调
+  const handleAutoSaveModel = useCallback((modelId: string) => {
+    if (conversationId) {
+      updateConversation(conversationId, { model_id: modelId }).catch((error) => {
+        console.error('保存模型选择失败:', error);
+      });
+    }
+  }, [conversationId]);
 
-  // 模型选择 Hook（使用真实的图片状态）
+  // 模型选择 Hook（包含对话恢复和智能切换逻辑）
   const {
     selectedModel,
-    userExplicitChoice,
-    setUserExplicitChoice,
     modelConflict,
     modelJustSwitched,
     availableModels,
     handleUserSelectModel,
-    switchModel,
     getSendButtonState,
     getEstimatedCredits,
     getModelSelectorLockState,
-  } = useModelSelection({ hasImage });
+  } = useModelSelection({
+    hasImage: hasImages,
+    conversationId,
+    conversationModelId,
+    onAutoSaveModel: handleAutoSaveModel,
+  });
+
+  // 对话切换时重置提交状态
+  useEffect(() => {
+    setIsSubmitting(false);
+  }, [conversationId]);
 
   // 同步 selectedModel 给父组件（用于 MessageArea 重新生成）
   useEffect(() => {
     onModelChange?.(selectedModel);
   }, [selectedModel, onModelChange]);
-
-  // 保存上传前的模型（用于恢复）
-  const modelBeforeUpload = useRef<UnifiedModel | null>(null);
-
-  // 上一次的对话 ID（用于检测对话切换）
-  const prevConversationId = useRef<string | null>(null);
-  // 上一次的 conversationModelId（用于检测模型ID变化）
-  const prevConversationModelId = useRef<string | null>(null);
-
-  // 恢复对话的模型选择
-  useEffect(() => {
-    // 对话切换时重置状态
-    if (conversationId !== prevConversationId.current) {
-      // 不取消正在进行的请求，支持并发生成（对话A生成中切换到对话B，对话A继续后台生成）
-      // conversationId 验证守卫（在 MessageArea.tsx 中）会防止状态污染
-
-      prevConversationId.current = conversationId;
-      prevConversationModelId.current = null; // 重置，以便新对话的 model_id 能被检测到变化
-      setUserExplicitChoice(false);
-      setIsSubmitting(false); // 重置提交状态，允许新对话输入
-      // 注意：新对话（conversationId = null）或切换对话时，保持当前 selectedModel 不变
-    }
-
-    // 只在有 conversationModelId 时恢复模型
-    // model_id 为 null 时保持当前选择不变（用户偏好连续性）
-    if (
-      conversationId &&
-      conversationModelId &&
-      conversationModelId !== prevConversationModelId.current &&
-      !userExplicitChoice
-    ) {
-      prevConversationModelId.current = conversationModelId;
-
-      const savedModel = ALL_MODELS.find((m) => m.id === conversationModelId);
-      if (savedModel) {
-        switchModel(savedModel, false);
-      } else {
-        // 边界情况：模型已下架/不存在，降级到默认模型
-        switchModel(ALL_MODELS[0], false);
-        toast('该对话使用的模型已下架，已切换为默认模型', { icon: 'ℹ️' });
-      }
-    }
-  }, [conversationId, conversationModelId, userExplicitChoice, switchModel, setUserExplicitChoice]);
-
-  // 包装 handleUserSelectModel，添加自动保存逻辑
-  const handleModelSelect = useCallback((model: UnifiedModel) => {
-    // 调用原始的 handleUserSelectModel
-    handleUserSelectModel(model);
-
-    // 只在对话存在时保存
-    if (conversationId) {
-      updateConversation(conversationId, { model_id: model.id }).catch((error) => {
-        console.error('保存模型选择失败:', error);
-      });
-    }
-  }, [conversationId, handleUserSelectModel]);
-
-  // 智能模型切换：上传图片时自动切换到图像编辑模型
-  useEffect(() => {
-    // 如果用户主动选择过模型，不自动切换
-    if (userExplicitChoice) return;
-
-    // 有图片 + 当前是文生图模型 → 切换到编辑模型
-    if (hasImage && selectedModel.type === 'image' && !selectedModel.capabilities.imageEditing) {
-      // 保存当前模型
-      modelBeforeUpload.current = selectedModel;
-
-      // 切换到编辑模型
-      const editModel = ALL_MODELS.find((m) => m.id === 'google/nano-banana-edit');
-      if (editModel) {
-        switchModel(editModel, true);
-      }
-    }
-
-    // 无图片 + 之前保存过模型 → 恢复原模型
-    if (!hasImage && modelBeforeUpload.current) {
-      switchModel(modelBeforeUpload.current, true);
-      modelBeforeUpload.current = null;
-    }
-  }, [hasImage, selectedModel, userExplicitChoice, switchModel]);
 
   // 获取当前对话标题（用于任务追踪）
   const currentConversationTitle = useChatStore((state) => state.currentConversationTitle);
@@ -210,14 +136,14 @@ export default function InputArea({
   // 消息处理 Hook
   const { handleChatMessage, handleImageGeneration, handleVideoGeneration } = useMessageHandlers({
     selectedModel,
-    aspectRatio,
-    resolution,
-    outputFormat,
-    videoFrames,
-    videoAspectRatio,
-    removeWatermark,
-    thinkingEffort,
-    deepThinkMode,
+    aspectRatio: imageSettings.aspectRatio,
+    resolution: imageSettings.resolution,
+    outputFormat: imageSettings.outputFormat,
+    videoFrames: videoSettings.frames,
+    videoAspectRatio: videoSettings.aspectRatio,
+    removeWatermark: videoSettings.removeWatermark,
+    thinkingEffort: chatSettings.thinkingEffort,
+    deepThinkMode: chatSettings.deepThinkMode,
     conversationTitle: currentConversationTitle,
     onMessagePending,
     onMessageSent,
@@ -239,41 +165,10 @@ export default function InputArea({
   }, [audioRecordingError, uploadError]);
 
   // 包装 handleRemoveImage 以清除错误
-  const handleRemoveImage = (imageId: string) => {
+  const handleRemoveImage = useCallback((imageId: string) => {
     removeImageById(imageId);
     setUploadError(null);
-  };
-
-  // 保存当前设置为默认值
-  const handleSaveSettings = () => {
-    saveSettings({
-      image: {
-        aspectRatio,
-        resolution,
-        outputFormat,
-      },
-      video: {
-        frames: videoFrames,
-        aspectRatio: videoAspectRatio,
-        removeWatermark,
-      },
-      chat: {
-        thinkingEffort,
-      },
-    });
-  };
-
-  // 重置为默认设置
-  const handleResetSettings = () => {
-    const defaults = resetSettings();
-    setAspectRatio(defaults.image.aspectRatio);
-    setResolution(defaults.image.resolution);
-    setOutputFormat(defaults.image.outputFormat);
-    setVideoFrames(defaults.video.frames);
-    setVideoAspectRatio(defaults.video.aspectRatio);
-    setRemoveWatermark(defaults.video.removeWatermark);
-    setThinkingEffort(defaults.chat.thinkingEffort);
-  };
+  }, [removeImageById]);
 
   // 发送音频消息
   const handleAudioSubmit = async (audioBlob: Blob) => {
@@ -328,34 +223,103 @@ export default function InputArea({
     }
 
     const messageContent = prompt.trim();
-    const imageUrls = uploadedImageUrls;
-    const firstImageUrl = imageUrls[0] || null; // 向后兼容，取第一张图片
+    // 准备图片 URL：
+    // - previewUrls: 本地预览 URL（ObjectURL，用于用户消息立即显示）
+    // - uploadedImageUrls: 服务器 URL（用于保存到数据库和发送给 AI）
+    const combinedPreviewUrl = previewUrls.length > 0 ? previewUrls.join(',') : null;
+    const combinedImageUrl = uploadedImageUrls.length > 0 ? uploadedImageUrls.join(',') : null;
+
+    // 立即清空输入（提升响应速度）
     setPrompt('');
-    handleRemoveAllImages();
+    handleRemoveAllImages();  // 30秒后才会清理 ObjectURL
     setIsSubmitting(true);
 
     try {
-      let currentConversationId = conversationId;
+      const isNewConversation = !conversationId;
+      const title = messageContent.slice(0, 20) || '新对话';
 
-      // 如果是新对话，先创建对话（同时保存当前模型）
-      if (!currentConversationId) {
-        const title = messageContent.slice(0, 20) || '新对话';
-        const conversation = await createConversation({
+      // 🚀 双轨并行优化：
+      // 第一轨（UI层）：立即开始处理消息（不阻塞UI）
+      // 第二轨（数据层）：后台创建对话（如果是新对话）
+
+      // 使用临时对话 ID 或真实对话 ID
+      const currentConversationId = conversationId || `pending-${Date.now()}`;
+
+      // 立即开始处理消息（不等待 createConversation）
+      const messagePromise = (async () => {
+        if (selectedModel.type === 'chat') {
+          // 生成唯一的客户端请求 ID
+          const clientRequestId = generateClientRequestId();
+
+          // 聊天消息：如果有图片，使用本地预览 URL 立即显示用户消息
+          if (combinedPreviewUrl) {
+            // 立即创建用户消息（使用本地预览 URL，瞬间显示）
+            const optimisticMessage = createOptimisticUserMessage(
+              messageContent,
+              currentConversationId,
+              combinedPreviewUrl,  // 使用 blob:// URL 立即显示
+              undefined,           // createdAt 自动生成
+              clientRequestId      // 传递 client_request_id 用于后续替换
+            );
+
+            // 立即显示临时消息
+            onMessagePending(optimisticMessage);
+
+            // 转换为 Store 的 Message 类型并添加到缓存
+            const storeMessage = {
+              id: optimisticMessage.id,
+              role: optimisticMessage.role as 'user' | 'assistant',
+              content: optimisticMessage.content,
+              imageUrl: optimisticMessage.image_url || undefined,
+              videoUrl: optimisticMessage.video_url || undefined,
+              createdAt: optimisticMessage.created_at,
+              client_request_id: optimisticMessage.client_request_id,
+              status: optimisticMessage.status,
+            };
+            useChatStore.getState().addMessageToCache(currentConversationId, storeMessage);
+
+            // 发送到后端，使用服务器 URL，跳过内部的乐观更新（避免重复）
+            await handleChatMessage(
+              messageContent,
+              currentConversationId,
+              combinedImageUrl,     // 后端使用服务器 URL（AI 需要公网 URL）
+              clientRequestId,      // 传递 client_request_id 用于后端匹配
+              true                  // skipOptimisticUpdate=true，避免重复创建临时消息
+            );
+          } else {
+            // 没有图片时，正常流程（handleChatMessage 内部创建乐观消息）
+            await handleChatMessage(
+              messageContent,
+              currentConversationId,
+              combinedImageUrl,
+              clientRequestId,
+              false  // 允许 handleChatMessage 创建乐观消息
+            );
+          }
+        } else if (selectedModel.type === 'video') {
+          await handleVideoGeneration(messageContent, currentConversationId, combinedImageUrl);
+        } else {
+          await handleImageGeneration(messageContent, currentConversationId, combinedImageUrl);
+        }
+      })();
+
+      // 后台创建对话（如果是新对话）
+      if (isNewConversation) {
+        // 不阻塞消息处理，并行创建对话
+        createConversation({
           title,
           model_id: selectedModel.id,
+        }).then((conversation) => {
+          // 通知父组件对话已创建
+          onConversationCreated(conversation.id, title);
+        }).catch((error) => {
+          console.error('创建对话失败:', error);
+          // 创建对话失败不影响消息发送（后端会过滤临时 ID）
         });
-        currentConversationId = conversation.id;
-        onConversationCreated(currentConversationId, title);
       }
 
-      // 根据模型类型调用不同的处理函数
-      if (selectedModel.type === 'chat') {
-        await handleChatMessage(messageContent, currentConversationId, firstImageUrl);
-      } else if (selectedModel.type === 'video') {
-        await handleVideoGeneration(messageContent, currentConversationId, firstImageUrl);
-      } else {
-        await handleImageGeneration(messageContent, currentConversationId, firstImageUrl);
-      }
+      // 等待消息处理完成
+      await messagePromise;
     } catch (error) {
       console.error('发送消息失败:', error);
       setPrompt(messageContent);
@@ -379,34 +343,18 @@ export default function InputArea({
     <div className="bg-white">
       <div className="max-w-3xl mx-auto px-4 pb-4">
         {/* 上传错误提示条 */}
-        {uploadError && (
-          <div className="mb-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg flex items-start space-x-2 transition-all duration-300 ease-out overflow-hidden">
-            <svg className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-              <path
-                fillRule="evenodd"
-                d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <div className="flex-1 text-xs text-red-800">{uploadError}</div>
-            <button
-              onClick={() => {
-                setUploadError(null);
-                clearUploadError();
-              }}
-              className="flex-shrink-0 text-red-600 hover:text-red-800"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        )}
+        <UploadErrorBar
+          error={uploadError}
+          onDismiss={() => {
+            setUploadError(null);
+            clearUploadError();
+          }}
+        />
 
-        {/* 模型冲突警告条 */}
+        {/* 模型冲突警告条（不显示 requires_image 类型，改用输入框内引导） */}
         <ConflictAlert
-          conflict={modelConflict}
-          onSwitchModel={handleModelSelect}
+          conflict={modelConflict?.type === 'requires_image' ? null : modelConflict}
+          onSwitchModel={handleUserSelectModel}
           onRemoveImage={handleRemoveAllImages}
         />
 
@@ -424,25 +372,25 @@ export default function InputArea({
           availableModels={availableModels}
           modelSelectorLocked={getModelSelectorLockState(isUploading).locked}
           modelSelectorLockTooltip={getModelSelectorLockState(isUploading).tooltip}
-          onSelectModel={handleModelSelect}
-          estimatedCredits={getEstimatedCredits(resolution)}
+          onSelectModel={handleUserSelectModel}
+          estimatedCredits={getEstimatedCredits(imageSettings.resolution)}
           creditsHighlight={modelJustSwitched}
-          aspectRatio={aspectRatio}
-          onAspectRatioChange={setAspectRatio}
-          resolution={resolution}
-          onResolutionChange={setResolution}
-          outputFormat={outputFormat}
-          onOutputFormatChange={setOutputFormat}
-          videoFrames={videoFrames}
-          onVideoFramesChange={setVideoFrames}
-          videoAspectRatio={videoAspectRatio}
-          onVideoAspectRatioChange={setVideoAspectRatio}
-          removeWatermark={removeWatermark}
-          onRemoveWatermarkChange={setRemoveWatermark}
-          thinkingEffort={thinkingEffort}
-          onThinkingEffortChange={setThinkingEffort}
-          deepThinkMode={deepThinkMode}
-          onDeepThinkModeChange={setDeepThinkMode}
+          aspectRatio={imageSettings.aspectRatio}
+          onAspectRatioChange={(v) => setImageSetting('aspectRatio', v)}
+          resolution={imageSettings.resolution}
+          onResolutionChange={(v) => setImageSetting('resolution', v)}
+          outputFormat={imageSettings.outputFormat}
+          onOutputFormatChange={(v) => setImageSetting('outputFormat', v)}
+          videoFrames={videoSettings.frames}
+          onVideoFramesChange={(v) => setVideoSetting('frames', v)}
+          videoAspectRatio={videoSettings.aspectRatio}
+          onVideoAspectRatioChange={(v) => setVideoSetting('aspectRatio', v)}
+          removeWatermark={videoSettings.removeWatermark}
+          onRemoveWatermarkChange={(v) => setVideoSetting('removeWatermark', v)}
+          thinkingEffort={chatSettings.thinkingEffort}
+          onThinkingEffortChange={(v) => setChatSetting('thinkingEffort', v)}
+          deepThinkMode={chatSettings.deepThinkMode}
+          onDeepThinkModeChange={(v) => setChatSetting('deepThinkMode', v)}
           onSaveSettings={handleSaveSettings}
           onResetSettings={handleResetSettings}
           images={images}
@@ -459,6 +407,7 @@ export default function InputArea({
           onStartRecording={startRecording}
           onStopRecording={stopRecording}
           onClearRecording={clearRecording}
+          requiresImageUpload={modelConflict?.type === 'requires_image'}
         />
       </div>
     </div>
