@@ -29,6 +29,9 @@ export interface GenerationParams {
   video?: VideoGenerationParams;
 }
 
+/** 消息状态 */
+export type MessageStatus = 'pending' | 'sent' | 'failed';
+
 /** 消息类型（API 响应格式） */
 export interface Message {
   id: string;
@@ -40,6 +43,8 @@ export interface Message {
   is_error?: boolean;
   credits_cost?: number;
   generation_params?: GenerationParams | null;
+  client_request_id?: string;  // 客户端请求ID（用于乐观更新）
+  status?: MessageStatus;       // 消息状态（pending/sent/failed）
   created_at: string;
 }
 
@@ -79,6 +84,8 @@ export interface CreateMessageRequest {
   created_at?: string;
   /** 生成参数（用于重新生成时继承） */
   generation_params?: GenerationParams | null;
+  /** 客户端请求ID（用于乐观更新） */
+  client_request_id?: string;
 }
 
 /** 发送消息请求 */
@@ -89,6 +96,7 @@ export interface SendMessageStreamRequest {
   video_url?: string | null;
   thinking_effort?: 'minimal' | 'low' | 'medium' | 'high';
   thinking_mode?: 'default' | 'deep_think';
+  client_request_id?: string;  // 客户端请求ID（用于乐观更新）
 }
 
 /**

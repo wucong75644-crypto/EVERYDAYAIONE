@@ -30,6 +30,7 @@ def format_message(message: dict) -> dict:
         "credits_cost": message.get("credits_cost", 0),
         "is_error": message.get("is_error", False),
         "generation_params": message.get("generation_params"),
+        "client_request_id": message.get("client_request_id"),  # 客户端请求ID（用于乐观更新）
     }
 
 

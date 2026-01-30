@@ -40,6 +40,7 @@ class MessageService:
         is_error: bool = False,
         created_at: Optional[datetime] = None,
         generation_params: Optional[Dict[str, Any]] = None,
+        client_request_id: Optional[str] = None,
     ) -> dict:
         """
         创建消息
@@ -54,6 +55,7 @@ class MessageService:
             video_url: 视频 URL（可选）
             is_error: 是否为错误消息
             generation_params: 生成参数（图片/视频生成时保存，用于重新生成）
+            client_request_id: 客户端请求ID（用于乐观更新）
 
         Returns:
             消息信息
@@ -86,6 +88,8 @@ class MessageService:
                 message_data["generation_params"] = generation_params.dict()
             else:
                 message_data["generation_params"] = generation_params
+        if client_request_id:
+            message_data["client_request_id"] = client_request_id
 
         result = self.db.table("messages").insert(message_data).execute()
 
