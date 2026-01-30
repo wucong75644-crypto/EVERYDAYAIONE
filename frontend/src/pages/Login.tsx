@@ -7,7 +7,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
 import { sendCode, loginByPhone, loginByPassword } from '../services/auth';
 import type { ApiErrorResponse } from '../types/auth';
@@ -18,7 +18,11 @@ type LoginMode = 'password' | 'code';
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { setUser, setToken, isAuthenticated } = useAuthStore();
+
+  // 获取重定向目标路径（由 ProtectedRoute 传递）
+  const from = (location.state as { from?: string })?.from || '/chat';
 
   const [loginMode, setLoginMode] = useState<LoginMode>('password');
   const [phone, setPhone] = useState('');
@@ -53,12 +57,12 @@ export default function Login() {
     }
   };
 
-  // 已登录用户重定向到首页
+  // 已登录用户重定向到原页面或聊天页
   useEffect(() => {
     if (isAuthenticated) {
-      navigate('/chat');
+      navigate(from, { replace: true });
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, navigate, from]);
 
   // 自动填充上次登录的手机号
   useEffect(() => {
@@ -137,8 +141,8 @@ export default function Login() {
       // 记住手机号
       localStorage.setItem('last_login_phone', phone);
 
-      // 跳转到聊天页
-      navigate('/chat');
+      // 跳转到原页面或聊天页（replace: true 避免回退到登录页）
+      navigate(from, { replace: true });
     } catch (err) {
       const error = err as AxiosError<ApiErrorResponse>;
       setError(error.response?.data?.error?.message || '登录失败，请重试');
