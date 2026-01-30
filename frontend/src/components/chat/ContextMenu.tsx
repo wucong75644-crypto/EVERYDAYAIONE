@@ -22,7 +22,7 @@ export default function ContextMenu({
       className={`fixed bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50 min-w-32 ${
         closing ? 'animate-slideUp' : 'animate-slideDown'
       }`}
-      style={{ left: x, top: y }}
+      style={{ left: `${x}px`, top: `${y}px` }}
       onClick={(e) => e.stopPropagation()}
     >
       <button

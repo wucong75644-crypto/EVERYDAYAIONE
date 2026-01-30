@@ -2,11 +2,11 @@
  * 消息媒体组件
  *
  * 负责渲染消息中的图片和视频内容
- * 支持懒加载、点击预览、下载功能
- * 内置占位符，实现平滑淡入效果
+ * - 用户图片：直接显示，自适应尺寸，支持多图横排
+ * - AI 图片：占位符 + 淡入效果，固定尺寸
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { Loader2, Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -15,7 +15,7 @@ import { type VideoAspectRatio } from '../../services/video';
 import { getImagePlaceholderSize, getVideoPlaceholderSize } from '../../utils/settingsStorage';
 
 interface MessageMediaProps {
-  /** 图片 URL */
+  /** 图片 URL（单个或多个，逗号分隔） */
   imageUrl?: string | null;
   /** 视频 URL */
   videoUrl?: string | null;
@@ -24,75 +24,78 @@ interface MessageMediaProps {
   /** 是否为用户消息 */
   isUser: boolean;
   /** 图片点击回调（打开预览） */
-  onImageClick: () => void;
+  onImageClick: (index?: number) => void;
   /** 媒体加载完成回调（用于滚动调整） */
   onMediaLoaded?: () => void;
   /** 是否正在生成中（显示占位符） */
   isGenerating?: boolean;
   /** 生成类型（image/video） */
   generatingType?: 'image' | 'video';
-  /** 图片宽高比（用于占位符动态尺寸） */
+  /** 图片宽高比（用于 AI 生成图片的占位符尺寸） */
   imageAspectRatio?: AspectRatio;
   /** 视频宽高比（用于占位符动态尺寸） */
   videoAspectRatio?: VideoAspectRatio;
 }
 
-export default function MessageMedia({
+/** 单张图片组件（AI 生成，带占位符） */
+function AiGeneratedImage({
   imageUrl,
-  videoUrl,
   messageId,
-  isUser,
+  placeholderSize,
   onImageClick,
   onMediaLoaded,
-  isGenerating = false,
-  generatingType = 'image',
-  imageAspectRatio = '1:1',
-  videoAspectRatio = 'landscape',
-}: MessageMediaProps) {
-  // 图片下载状态
-  const [isDownloading, setIsDownloading] = useState(false);
-  // 图片加载完成状态
+  isGenerating,
+}: {
+  imageUrl: string | null;
+  messageId: string;
+  placeholderSize: { width: number; height: number };
+  onImageClick: () => void;
+  onMediaLoaded?: () => void;
+  isGenerating: boolean;
+}) {
   const [imageLoaded, setImageLoaded] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const placeholderNotified = useRef(false);
 
-  // 根据高级设置计算占位符尺寸（仅用于生成中的占位符）
-  const imagePlaceholderSize = useMemo(
-    () => getImagePlaceholderSize(imageAspectRatio),
-    [imageAspectRatio]
-  );
-  const videoPlaceholderSize = useMemo(
-    () => getVideoPlaceholderSize(videoAspectRatio),
-    [videoAspectRatio]
-  );
-
-  // 当 imageUrl 变化时，重置加载状态
-  useEffect(() => {
-    if (imageUrl) {
-      setImageLoaded(false);
-    }
-  }, [imageUrl]);
-
-  // 懒加载：监听元素是否进入可视区域
-  // 对于已生成的媒体（非生成中），立即加载；对于新生成的，使用懒加载
-  const shouldLazyLoad = isGenerating;
+  // 懒加载
   const { ref: lazyRef, inView } = useInView({
     triggerOnce: true,
     threshold: 0.1,
     rootMargin: '100px',
   });
-  // 如果不需要懒加载（已生成的媒体），直接渲染；否则等待进入视口
-  const shouldRender = !shouldLazyLoad || inView;
+  const shouldRender = !isGenerating || inView;
 
-  // 处理图片下载
-  const handleImageDownload = async (e: React.MouseEvent) => {
+  // 计算宽高比（用于图片加载前的占位）
+  const aspectRatio = placeholderSize.width / placeholderSize.height;
+
+  // imageUrl 变化时重置
+  useEffect(() => {
+    if (imageUrl) {
+      setImageLoaded(false);
+      placeholderNotified.current = false;
+    }
+  }, [imageUrl]);
+
+  // 占位符渲染时触发滚动回调（仅触发一次）
+  const showPlaceholder = isGenerating && !imageLoaded;
+  useEffect(() => {
+    if (showPlaceholder && !placeholderNotified.current) {
+      placeholderNotified.current = true;
+      // 使用 requestAnimationFrame 确保 DOM 渲染完成后再触发
+      requestAnimationFrame(() => {
+        onMediaLoaded?.();
+      });
+    }
+  }, [showPlaceholder, onMediaLoaded]);
+
+  // 下载图片
+  const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isDownloading || !imageUrl) return;
 
     setIsDownloading(true);
     try {
-      const response = await fetch(imageUrl, {
-        mode: 'cors',
-        credentials: 'omit',
-      });
+      const response = await fetch(imageUrl, { mode: 'cors', credentials: 'omit' });
       if (!response.ok) throw new Error('下载失败');
 
       const blob = await response.blob();
@@ -111,102 +114,250 @@ export default function MessageMedia({
     }
   };
 
-  // 是否显示图片占位符：正在生成图片 或 图片URL存在但未加载完成
-  const showImagePlaceholder = (isGenerating && generatingType === 'image') || (imageUrl && !imageLoaded);
+  // 键盘事件处理（支持回车和空格键）
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onImageClick();
+    }
+  };
+
+  return (
+    <div className="mt-4 mb-4" ref={lazyRef}>
+      {/* 占位符（仅生成中显示固定尺寸，带淡入动画） */}
+      {showPlaceholder && (
+        <div
+          className="rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm animate-fade-in"
+          style={{ width: placeholderSize.width, height: placeholderSize.height }}
+          role="status"
+          aria-label="正在生成图片"
+        >
+          <ImageIcon className="w-10 h-10 text-gray-300 dark:text-gray-500" aria-hidden="true" />
+        </div>
+      )}
+
+      {/* 图片（按占位符尺寸限制显示） */}
+      {imageUrl && shouldRender && (
+        <div
+          className="group cursor-pointer relative inline-block"
+          style={{ aspectRatio: imageLoaded ? undefined : aspectRatio, maxWidth: placeholderSize.width }}
+          role="button"
+          tabIndex={0}
+          onClick={onImageClick}
+          onKeyDown={handleKeyDown}
+          aria-label="查看大图"
+        >
+          <img
+            src={imageUrl}
+            alt="生成的图片"
+            className="rounded-xl shadow-sm w-full h-auto block"
+            onLoad={() => {
+              setImageLoaded(true);
+              onMediaLoaded?.();
+            }}
+          />
+          {/* 下载按钮 */}
+          <div className="absolute bottom-0 left-0 right-0 flex justify-center py-2 bg-gradient-to-t from-black/50 to-transparent rounded-b-xl opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              type="button"
+              className="flex items-center gap-1 px-3 py-1 text-xs text-white bg-black/40 hover:bg-black/60 rounded-full transition-colors disabled:opacity-60"
+              disabled={isDownloading}
+              onClick={handleDownload}
+              aria-label={isDownloading ? '正在下载图片' : '下载图片'}
+            >
+              {isDownloading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+              )}
+              <span>{isDownloading ? '下载中' : '下载'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 单张用户图片组件（无占位符，自适应尺寸） */
+function UserImage({
+  imageUrl,
+  index,
+  maxWidth,
+  onImageClick,
+  onMediaLoaded,
+}: {
+  imageUrl: string;
+  index: number;
+  maxWidth: number;
+  onImageClick: (index: number) => void;
+  onMediaLoaded?: () => void;
+}) {
+  const handleClick = useCallback(() => {
+    onImageClick(index);
+  }, [index, onImageClick]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onImageClick(index);
+    }
+  }, [index, onImageClick]);
+
+  return (
+    <div
+      className="group cursor-pointer relative inline-block"
+      role="button"
+      tabIndex={0}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+      aria-label={`查看图片 ${index + 1}`}
+      style={{ maxWidth }}
+    >
+      <img
+        src={imageUrl}
+        alt={`上传的图片 ${index + 1}`}
+        className="rounded-xl shadow-sm w-full h-auto block"
+        onLoad={onMediaLoaded}
+      />
+    </div>
+  );
+}
+
+/** 用户图片容器（支持多图横排） */
+function UserImageGallery({
+  imageUrls,
+  maxWidth,
+  onImageClick,
+  onMediaLoaded,
+}: {
+  imageUrls: string[];
+  maxWidth: number;
+  onImageClick: (index: number) => void;
+  onMediaLoaded?: () => void;
+}) {
+  if (imageUrls.length === 0) return null;
+
+  return (
+    <div className="mt-4 flex flex-wrap gap-2">
+      {imageUrls.map((url, index) => (
+        <UserImage
+          key={`${url}-${index}`}
+          imageUrl={url}
+          index={index}
+          maxWidth={maxWidth}
+          onImageClick={onImageClick}
+          onMediaLoaded={index === 0 ? onMediaLoaded : undefined}
+        />
+      ))}
+    </div>
+  );
+}
+
+export default function MessageMedia({
+  imageUrl,
+  videoUrl,
+  messageId,
+  isUser,
+  onImageClick,
+  onMediaLoaded,
+  isGenerating = false,
+  generatingType = 'image',
+  imageAspectRatio = '1:1',
+  videoAspectRatio = 'landscape',
+}: MessageMediaProps) {
+  // 解析图片 URL（支持逗号分隔的多图）
+  const imageUrls = useMemo(() => {
+    if (!imageUrl) return [];
+    return imageUrl.split(',').map(url => url.trim()).filter(Boolean);
+  }, [imageUrl]);
+
+  // AI 生成图片的占位符尺寸
+  const imagePlaceholderSize = useMemo(
+    () => getImagePlaceholderSize(imageAspectRatio),
+    [imageAspectRatio]
+  );
+  const videoPlaceholderSize = useMemo(
+    () => getVideoPlaceholderSize(videoAspectRatio),
+    [videoAspectRatio]
+  );
+
+  // 懒加载（用于视频）
+  const { ref: videoLazyRef, inView: videoInView } = useInView({
+    triggerOnce: true,
+    threshold: 0.1,
+    rootMargin: '100px',
+  });
+
+  // 视频占位符渲染时触发滚动回调
+  const videoPlaceholderNotified = useRef(false);
+  const showVideoPlaceholder = isGenerating && generatingType === 'video' && !videoUrl;
+  useEffect(() => {
+    if (showVideoPlaceholder && !videoPlaceholderNotified.current) {
+      videoPlaceholderNotified.current = true;
+      requestAnimationFrame(() => {
+        onMediaLoaded?.();
+      });
+    }
+  }, [showVideoPlaceholder, onMediaLoaded]);
 
   // 没有媒体内容且不在生成中时不渲染
-  if (!imageUrl && !videoUrl && !isGenerating) return null;
+  if (imageUrls.length === 0 && !videoUrl && !isGenerating) return null;
+
+  // 处理图片点击（兼容旧接口）
+  const handleImageClick = (index?: number) => {
+    onImageClick(index ?? 0);
+  };
 
   return (
     <>
-      {/* 图片渲染（含占位符） */}
-      {(imageUrl || (isGenerating && generatingType === 'image')) && (
-        <div
-          className="mt-4 relative"
-          style={{ width: imagePlaceholderSize.width }}
-          ref={lazyRef}
-        >
-          {/* 占位符 - 生成中或图片加载中显示 */}
-          {showImagePlaceholder && (
-            <div
-              className="rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm"
-              style={{
-                width: imagePlaceholderSize.width,
-                height: imagePlaceholderSize.height,
-              }}
-            >
-              <ImageIcon className="w-10 h-10 text-gray-300 dark:text-gray-500" />
-            </div>
-          )}
-
-          {/* 图片 - 加载完成后显示 */}
-          {imageUrl && shouldRender && (
-            <div
-              className={`group cursor-pointer transition-opacity duration-500 ease-out ${
-                imageLoaded ? 'opacity-100' : 'opacity-0 absolute inset-0'
-              }`}
-              onClick={onImageClick}
-            >
-              <img
-                src={imageUrl}
-                alt={isUser ? '上传的图片' : '生成的图片'}
-                className="rounded-xl shadow-sm"
-                style={{ width: imagePlaceholderSize.width }}
-                onLoad={() => {
-                  setImageLoaded(true);
-                  onMediaLoaded?.();
-                }}
-                loading="lazy"
-              />
-              {/* 底部下载按钮（hover 显示） */}
-              <div className="absolute bottom-0 left-0 right-0 flex justify-center py-2 bg-gradient-to-t from-black/50 to-transparent rounded-b-xl opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  className="flex items-center gap-1 px-3 py-1 text-xs text-white bg-black/40 hover:bg-black/60 rounded-full transition-colors disabled:opacity-60"
-                  disabled={isDownloading}
-                  onClick={handleImageDownload}
-                >
-                  {isDownloading ? (
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  ) : (
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                  )}
-                  <span>{isDownloading ? '下载中' : '下载'}</span>
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+      {/* 图片渲染 */}
+      {(imageUrls.length > 0 || (isGenerating && generatingType === 'image')) && (
+        isUser ? (
+          // 用户图片：直接显示，无占位符，支持多图横排
+          <UserImageGallery
+            imageUrls={imageUrls}
+            maxWidth={imagePlaceholderSize.width}
+            onImageClick={handleImageClick}
+            onMediaLoaded={onMediaLoaded}
+          />
+        ) : (
+          // AI 生成图片：占位符 + 淡入效果
+          <AiGeneratedImage
+            imageUrl={imageUrls[0] || null}
+            messageId={messageId}
+            placeholderSize={imagePlaceholderSize}
+            onImageClick={() => handleImageClick(0)}
+            onMediaLoaded={onMediaLoaded}
+            isGenerating={isGenerating && generatingType === 'image'}
+          />
+        )
       )}
 
       {/* 视频渲染（含占位符） */}
       {(videoUrl || (isGenerating && generatingType === 'video')) && (
-        <div
-          className="mt-4 relative"
-          style={{ width: videoPlaceholderSize.width }}
-          ref={!imageUrl ? lazyRef : undefined}
-        >
-          {/* 视频占位符 - 生成中显示（根据用户设置的比例） */}
+        <div className="mt-4 mb-4" ref={videoLazyRef}>
+          {/* 视频占位符（带淡入动画） */}
           {isGenerating && generatingType === 'video' && !videoUrl && (
             <div
-              className="rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm"
-              style={{
-                width: videoPlaceholderSize.width,
-                height: videoPlaceholderSize.height,
-              }}
+              className="rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm animate-fade-in"
+              style={{ width: videoPlaceholderSize.width, height: videoPlaceholderSize.height }}
+              role="status"
+              aria-label="正在生成视频"
             >
-              <VideoIcon className="w-10 h-10 text-gray-300 dark:text-gray-500" />
+              <VideoIcon className="w-10 h-10 text-gray-300 dark:text-gray-500" aria-hidden="true" />
             </div>
           )}
 
-          {/* 视频 - 固定宽度，与占位符一致 */}
-          {videoUrl && shouldRender && (
+          {/* 视频（按占位符尺寸限制显示） */}
+          {videoUrl && (!isGenerating || videoInView) && (
             <video
               src={videoUrl}
               controls
-              className="rounded-xl shadow-sm"
-              style={{ width: videoPlaceholderSize.width }}
+              className="rounded-xl shadow-sm w-full h-auto block"
+              style={{ maxWidth: videoPlaceholderSize.width }}
               preload="metadata"
               onLoadedMetadata={() => onMediaLoaded?.()}
             >

@@ -1,6 +1,9 @@
 /**
- * 媒体内容替换时的自动滚动
- * 检测占位符被替换为真实内容并触发滚动
+ * 媒体占位符出现时的自动滚动
+ *
+ * 滚动策略：
+ * 1. 占位符（如"图片生成中..."）出现时 → 滚动让其完全显示
+ * 2. 占位符被替换为真实图片/视频时 → 不滚动，保持位置不变
  */
 
 import { useEffect, useLayoutEffect, useRef } from 'react';
@@ -10,20 +13,16 @@ interface UseMediaReplacementScrollOptions {
   messages: Message[];
   scrollToBottom: (smooth?: boolean) => void;
   hasScrolledForConversation: boolean;
-}
-
-interface LastMessageState {
-  hasMedia: boolean;
-  isError: boolean;
-  isPlaceholder: boolean;
+  userScrolledAway: boolean;
 }
 
 export function useMediaReplacementScroll({
   messages,
   scrollToBottom,
   hasScrolledForConversation,
+  userScrolledAway,
 }: UseMediaReplacementScrollOptions) {
-  const prevLastMessageStateRef = useRef<LastMessageState | null>(null);
+  const prevIsPlaceholderRef = useRef(false);
   const scrollToBottomRef = useRef(scrollToBottom);
 
   // 使用 useLayoutEffect 同步更新 ref，避免在渲染期间访问
@@ -33,29 +32,28 @@ export function useMediaReplacementScroll({
 
   useEffect(() => {
     if (!hasScrolledForConversation || messages.length === 0) {
-      prevLastMessageStateRef.current = null;
+      prevIsPlaceholderRef.current = false;
       return;
     }
 
     const lastMessage = messages[messages.length - 1];
     const isPlaceholder = lastMessage.id.startsWith('streaming-') &&
       (lastMessage.content.includes('生成中') || lastMessage.content.includes('正在'));
-    const currentState: LastMessageState = {
-      hasMedia: !!(lastMessage.image_url || lastMessage.video_url),
-      isError: lastMessage.is_error === true,
-      isPlaceholder,
-    };
 
-    const prevState = prevLastMessageStateRef.current;
+    const wasPlaceholder = prevIsPlaceholderRef.current;
+    prevIsPlaceholderRef.current = isPlaceholder;
 
-    if (prevState && prevState.isPlaceholder && !currentState.isPlaceholder) {
-      if (currentState.hasMedia || currentState.isError) {
+    // 占位符刚出现时滚动（从非占位符变为占位符）
+    if (!wasPlaceholder && isPlaceholder && !userScrolledAway) {
+      // 使用双重 RAF 确保占位符 DOM 完全渲染
+      requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           scrollToBottomRef.current(true);
         });
-      }
+      });
     }
 
-    prevLastMessageStateRef.current = currentState;
-  }, [messages, hasScrolledForConversation]);
+    // 占位符被替换为真实内容时（从占位符变为非占位符）
+    // 不做任何滚动，保持当前位置
+  }, [messages, hasScrolledForConversation, userScrolledAway]);
 }

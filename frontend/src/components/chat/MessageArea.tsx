@@ -176,10 +176,12 @@ export default function MessageArea({
     setIsRegeneratingAI(false);
   }, []);
 
-  // 媒体加载完成回调（占位符尺寸固定，无需滚动调整）
+  // 媒体加载完成回调（占位符渲染后触发滚动）
   const handleMediaLoaded = useCallback(() => {
-    // 占位符和媒体尺寸固定，加载完成不改变布局，无需滚动
-  }, []);
+    if (!userScrolledAway) {
+      scrollToBottom(true);
+    }
+  }, [userScrolledAway, scrollToBottom]);
 
   // 使用重新生成处理器 hook
   const {

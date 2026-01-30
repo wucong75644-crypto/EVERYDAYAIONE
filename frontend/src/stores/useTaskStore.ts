@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import { useChatStore } from './useChatStore';
 import type { PollingCallbacks, PollingConfig } from '../utils/polling';
+import { taskCoordinator } from '../utils/taskCoordinator';
 
 const GLOBAL_TASK_LIMIT = 15;
 const MAX_NOTIFICATIONS = 50;
@@ -271,10 +272,20 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
   // 轮询操作
   startPolling: (taskId, pollFn, callbacks, options = {}) => {
+    // 检查是否可以开始轮询（防止多标签页重复轮询）
+    if (!taskCoordinator.canStartPolling(taskId)) {
+      return;
+    }
+
     const { interval = 2000, maxDuration } = options;
     const startTime = Date.now();
     let consecutiveFailures = 0;
     const MAX_CONSECUTIVE_FAILURES = 5; // 连续失败5次后停止轮询（考虑首次OSS上传可能超时）
+
+    // 每15秒更新锁
+    const lockRenewalId = setInterval(() => {
+      taskCoordinator.renewLock(taskId);
+    }, 15000);
 
     set((state) => {
       const task = state.mediaTasks.get(taskId);
@@ -329,7 +340,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
     set((state) => {
       const newConfigs = new Map(state.pollingConfigs);
-      newConfigs.set(taskId, { intervalId, pollFn, callbacks });
+      newConfigs.set(taskId, { intervalId, pollFn, callbacks, lockRenewalId });
       return { pollingConfigs: newConfigs };
     });
 
@@ -341,6 +352,10 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     const config = state.pollingConfigs.get(taskId);
     if (config) {
       clearInterval(config.intervalId);
+      if (config.lockRenewalId) {
+        clearInterval(config.lockRenewalId);
+      }
+      taskCoordinator.releasePolling(taskId);
       set((state) => {
         const newConfigs = new Map(state.pollingConfigs);
         newConfigs.delete(taskId);

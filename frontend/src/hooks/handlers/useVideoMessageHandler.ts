@@ -6,7 +6,6 @@
 import { type UnifiedModel } from '../../constants/models';
 import { createMessage, type Message, type GenerationParams } from '../../services/message';
 import {
-  createStreamingPlaceholder,
   createMediaTimestamps,
   createMediaOptimisticPair,
 } from '../../utils/messageFactory';
@@ -18,16 +17,15 @@ import {
   type VideoFrames,
   type VideoAspectRatio,
 } from '../../services/video';
-import { useTaskStore } from '../../stores/useTaskStore';
-import { useChatStore } from '../../stores/useChatStore';
 import { useConversationRuntimeStore } from '../../stores/useConversationRuntimeStore';
-import { useAuthStore } from '../../stores/useAuthStore';
 import {
   extractVideoUrl,
   handleGenerationError,
+  createMediaPollingHandler,
   type MediaResponse,
   type MediaGenConfig,
 } from './mediaHandlerUtils';
+import { VIDEO_TASK_TIMEOUT, VIDEO_POLL_INTERVAL } from '../../config/task';
 
 interface UseVideoMessageHandlerParams {
   selectedModel: UnifiedModel;
@@ -52,102 +50,11 @@ export function useVideoMessageHandler({
 }: UseVideoMessageHandlerParams) {
   /** 通用媒体生成轮询处理 */
   const handleMediaPolling = (response: MediaResponse, config: MediaGenConfig) => {
-    const { startMediaTask, startPolling, completeMediaTask, failMediaTask } =
-      useTaskStore.getState();
-    const { replaceMediaPlaceholder } = useConversationRuntimeStore.getState();
-    const { addMessageToCache } = useChatStore.getState();
-    const { refreshUser } = useAuthStore.getState();
-
-    const taskId = response.task_id;
-    const placeholderId = config.preCreatedPlaceholderId || `streaming-${taskId}`;
-    const placeholderTimestamp = config.placeholderTimestamp;
-
-    if (!config.preCreatedPlaceholderId) {
-      const placeholderMessage = createStreamingPlaceholder(
-        config.conversationId,
-        placeholderId,
-        config.placeholderText || '视频生成中...',
-        placeholderTimestamp
-      );
-      onMessagePending(placeholderMessage);
-    }
-
-    startMediaTask({
-      taskId,
-      conversationId: config.conversationId,
-      conversationTitle: config.conversationTitle,
-      type: config.type,
-      placeholderId,
+    createMediaPollingHandler(response, config, {
+      onMessagePending,
+      onMessageSent,
+      onMediaTaskSubmitted,
     });
-
-    if (onMediaTaskSubmitted) onMediaTaskSubmitted();
-
-    startPolling(
-      taskId,
-      async () => {
-        const result = await config.pollFn(taskId);
-        if (result.status === 'success') return { done: true, result };
-        if (result.status === 'failed') {
-          return { done: true, error: new Error(result.fail_msg || '视频生成失败') };
-        }
-        return { done: false };
-      },
-      {
-        onSuccess: async (result: unknown) => {
-          const mediaUrl = config.extractMediaUrl(result);
-          try {
-            const savedAiMessage = await createMessage(config.conversationId, {
-              content: config.successContent,
-              role: 'assistant',
-              image_url: mediaUrl.image_url,
-              video_url: mediaUrl.video_url,
-              credits_cost: config.creditsConsumed,
-              created_at: placeholderTimestamp,
-              generation_params: config.generationParams,
-            });
-
-            const messageWithCorrectTime: Message = {
-              ...savedAiMessage,
-              created_at: placeholderTimestamp,
-            };
-            replaceMediaPlaceholder(config.conversationId, placeholderId, messageWithCorrectTime);
-
-            addMessageToCache(config.conversationId, {
-              id: savedAiMessage.id,
-              role: savedAiMessage.role as 'user' | 'assistant',
-              content: savedAiMessage.content,
-              imageUrl: savedAiMessage.image_url ?? undefined,
-              videoUrl: savedAiMessage.video_url ?? undefined,
-              createdAt: placeholderTimestamp,
-            });
-
-            completeMediaTask(taskId);
-            refreshUser();
-            onMessageSent(savedAiMessage);
-          } catch (err) {
-            console.error('保存视频消息失败:', err);
-            failMediaTask(taskId);
-          }
-        },
-        onError: async (error: Error) => {
-          console.error('视频生成失败:', error);
-          const errorMessage = await handleGenerationError(
-            config.conversationId,
-            config.errorPrefix,
-            error,
-            placeholderTimestamp,
-            config.generationParams
-          );
-          replaceMediaPlaceholder(config.conversationId, placeholderId, errorMessage);
-          failMediaTask(taskId);
-          onMessageSent(errorMessage);
-        },
-      },
-      {
-        interval: config.pollInterval,
-        maxDuration: 30 * 60 * 1000,
-      }
-    );
   };
 
   const handleVideoGeneration = async (
@@ -201,6 +108,7 @@ export function useVideoMessageHandler({
               aspect_ratio: videoAspectRatio,
               remove_watermark: removeWatermark,
               wait_for_result: false,
+              conversation_id: currentConversationId,
             })
           : generateTextToVideo({
               prompt: messageContent,
@@ -209,6 +117,7 @@ export function useVideoMessageHandler({
               aspect_ratio: videoAspectRatio,
               remove_watermark: removeWatermark,
               wait_for_result: false,
+              conversation_id: currentConversationId,
             }),
       ]);
 
@@ -221,7 +130,8 @@ export function useVideoMessageHandler({
           conversationTitle,
           successContent,
           errorPrefix: '视频生成失败',
-          pollInterval: 5000,
+          pollInterval: VIDEO_POLL_INTERVAL,
+          maxDuration: VIDEO_TASK_TIMEOUT,
           creditsConsumed: response.credits_consumed,
           userMessageTimestamp,
           placeholderTimestamp,
@@ -229,6 +139,7 @@ export function useVideoMessageHandler({
           generationParams: videoGenerationParams,
           pollFn: getVideoTaskStatus,
           extractMediaUrl: (r) => ({ video_url: extractVideoUrl(r) }),
+          shouldPreloadImage: false,
         });
       } else if (response.status === 'success' && response.video_url) {
         const savedAiMessage = await createMessage(currentConversationId, {

@@ -29,6 +29,7 @@ class VideoService(BaseGenerationService):
         aspect_ratio: str = "landscape",
         remove_watermark: bool = True,
         wait_for_result: bool = False,
+        conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         文本生成视频
@@ -55,6 +56,7 @@ class VideoService(BaseGenerationService):
             n_frames=n_frames,
             description="文生视频",
             error_message="视频生成失败",
+            conversation_id=conversation_id,
             generate_kwargs={
                 "prompt": prompt,
                 "n_frames": n_frames,
@@ -74,6 +76,7 @@ class VideoService(BaseGenerationService):
         aspect_ratio: str = "landscape",
         remove_watermark: bool = True,
         wait_for_result: bool = False,
+        conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         图片生成视频
@@ -97,6 +100,7 @@ class VideoService(BaseGenerationService):
             n_frames=n_frames,
             description="图生视频",
             error_message="图生视频失败",
+            conversation_id=conversation_id,
             generate_kwargs={
                 "prompt": prompt,
                 "image_urls": [image_url],
@@ -115,6 +119,7 @@ class VideoService(BaseGenerationService):
         storyboard_images: Optional[List[str]] = None,
         aspect_ratio: str = "landscape",
         wait_for_result: bool = False,
+        conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         故事板视频生成
@@ -136,6 +141,7 @@ class VideoService(BaseGenerationService):
             n_frames=n_frames,
             description="故事板视频",
             error_message="故事板视频生成失败",
+            conversation_id=conversation_id,
             generate_kwargs={
                 "image_urls": storyboard_images,
                 "n_frames": n_frames,
@@ -154,10 +160,14 @@ class VideoService(BaseGenerationService):
 
         Args:
             task_id: 任务 ID
-            user_id: 用户 ID（可选，用于视频完成时上传到 OSS）
+            user_id: 用户 ID（必需，用于权限验证和视频上传到 OSS）
 
         Returns:
             任务状态
+
+        Raises:
+            NotFoundError: 任务不存在
+            PermissionError: 用户无权访问该任务
         """
         # 检查 KIE API Key 是否配置
         if not self.settings.kie_api_key:
@@ -167,13 +177,50 @@ class VideoService(BaseGenerationService):
                 status_code=503,
             )
 
+        # 验证任务所有权（防止未授权访问）
+        if not user_id:
+            raise AppException(
+                code="MISSING_USER_ID",
+                message="缺少用户ID",
+                status_code=400,
+            )
+
+        task_info = await self._verify_task_ownership(
+            external_task_id=task_id,
+            user_id=user_id,
+        )
+
+        # 如果任务已完成，直接返回数据库中的缓存结果（避免调用已过期的 KIE API）
+        if task_info.get("status") == "completed" and task_info.get("result"):
+            cached_result = task_info["result"]
+            logger.debug(
+                f"Returning cached result for completed task: task_id={task_id}"
+            )
+            return {
+                "task_id": task_id,
+                "status": "success",
+                "video_url": cached_result.get("video_url"),
+            }
+
+        # 如果任务已失败，直接返回失败信息
+        if task_info.get("status") == "failed":
+            logger.debug(
+                f"Returning cached failure for task: task_id={task_id}"
+            )
+            return {
+                "task_id": task_id,
+                "status": "failed",
+                "fail_code": task_info.get("fail_code"),
+                "fail_msg": task_info.get("error_message"),
+            }
+
         try:
             async with KieClient(self.settings.kie_api_key) as client:
                 # 使用基础模型查询（任务查询不需要特定模型）
                 adapter = KieVideoAdapter(client, "sora-2-text-to-video")
                 result = await adapter.query_task(task_id)
 
-            # 如果视频生成完成且提供了 user_id，上传到 OSS
+            # 如果视频生成完成且提供了 user_id，先上传到 OSS 再更新状态
             if result.get("status") == "success" and user_id:
                 try:
                     result = await self._upload_videos_to_oss(result, user_id)
@@ -183,6 +230,15 @@ class VideoService(BaseGenerationService):
                         f"Failed to upload video to OSS during query: "
                         f"task_id={task_id}, error={e}"
                     )
+
+            # 统一更新数据库任务状态（如果成功上传OSS，result已包含OSS URL）
+            await self._update_task_status(
+                task_id=task_id,
+                status=result.get("status"),
+                result=result if result.get("status") == "success" else None,
+                fail_code=result.get("fail_code"),
+                fail_msg=result.get("fail_msg"),
+            )
 
             return result
 
@@ -218,30 +274,29 @@ class VideoService(BaseGenerationService):
     # 私有方法
     # ============================================================
 
-    async def _generate_with_credits(
+    async def _validate_and_deduct_credits(
         self,
         user_id: str,
         model: str,
         n_frames: str,
         description: str,
-        error_message: str,
-        generate_kwargs: Dict[str, Any],
-    ) -> Dict[str, Any]:
+    ) -> int:
         """
-        通用视频生成流程（积分检查→扣除→生成）
+        验证用户并扣除积分
 
         Args:
             user_id: 用户 ID
             model: 模型名称
             n_frames: 视频时长
             description: 积分扣除描述
-            error_message: 错误提示前缀
-            generate_kwargs: 传递给 adapter.generate 的参数
 
         Returns:
-            生成结果
+            预估积分数
+
+        Raises:
+            AppException: 服务未配置
+            InsufficientCreditsError: 积分不足
         """
-        # 0. 检查 KIE API Key 是否配置
         if not self.settings.kie_api_key:
             raise AppException(
                 code="SERVICE_NOT_CONFIGURED",
@@ -249,7 +304,6 @@ class VideoService(BaseGenerationService):
                 status_code=503,
             )
 
-        # 1. 获取用户并检查积分
         user = await self._get_user(user_id)
         duration = int(n_frames)
         estimated_credits = self._estimate_credits(model, duration)
@@ -261,10 +315,10 @@ class VideoService(BaseGenerationService):
             )
 
         logger.info(
-            f"Starting {description}: user_id={user_id}, model={model}, duration={duration}s"
+            f"Starting {description}: user_id={user_id}, model={model}, "
+            f"duration={duration}s"
         )
 
-        # 2. 立即扣除预估积分
         await self._deduct_credits(
             user_id=user_id,
             credits=estimated_credits,
@@ -272,23 +326,140 @@ class VideoService(BaseGenerationService):
             change_type="video_generation_cost",
         )
 
-        try:
-            # 3. 调用 KIE 生成视频
-            async with KieClient(self.settings.kie_api_key) as client:
-                adapter = KieVideoAdapter(client, model)
-                result = await adapter.generate(**generate_kwargs)
+        return estimated_credits
 
-            logger.info(
-                f"Video generation started: user_id={user_id}, task_id={result.get('task_id')}, "
-                f"credits={estimated_credits}"
+    async def _call_kie_api(
+        self,
+        model: str,
+        generate_kwargs: Dict[str, Any],
+        user_id: str,
+        conversation_id: Optional[str],
+        n_frames: str,
+        estimated_credits: int,
+    ) -> tuple[Dict[str, Any], Optional[str]]:
+        """
+        调用 KIE API 生成视频
+
+        Args:
+            model: 模型名称
+            generate_kwargs: 传递给 adapter.generate 的参数
+            user_id: 用户 ID
+            conversation_id: 会话 ID
+            n_frames: 视频时长
+            estimated_credits: 预估积分
+
+        Returns:
+            (result, task_id) 元组
+        """
+        async with KieClient(self.settings.kie_api_key) as client:
+            adapter = KieVideoAdapter(client, model)
+            result = await adapter.generate(**generate_kwargs)
+
+        task_id = result.get("task_id")
+
+        logger.info(
+            f"Video generation started: user_id={user_id}, task_id={task_id}, "
+            f"credits={estimated_credits}"
+        )
+
+        if task_id and conversation_id:
+            await self._save_task_to_db(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                task_id=task_id,
+                task_type="video",
+                request_params={
+                    "model": model,
+                    "n_frames": n_frames,
+                    **generate_kwargs,
+                },
+                credits_locked=estimated_credits,
             )
 
-            # 4. 如果生成完成，将视频上传到 OSS
+        return result, task_id
+
+    async def _handle_sync_completion(
+        self,
+        result: Dict[str, Any],
+        task_id: Optional[str],
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """
+        同步模式完成处理（OSS 上传 + 状态更新）
+
+        Args:
+            result: KIE 返回的结果
+            task_id: 任务 ID
+            user_id: 用户 ID
+
+        Returns:
+            更新后的 result
+        """
+        result = await self._upload_videos_to_oss(result, user_id)
+
+        if task_id:
+            await self._update_task_status(
+                task_id=task_id,
+                status="success",
+                result=result,
+            )
+
+        return result
+
+    async def _generate_with_credits(
+        self,
+        user_id: str,
+        model: str,
+        n_frames: str,
+        description: str,
+        error_message: str,
+        conversation_id: Optional[str],
+        generate_kwargs: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        通用视频生成流程（积分检查→扣除→生成）
+
+        Args:
+            user_id: 用户 ID
+            model: 模型名称
+            n_frames: 视频时长
+            description: 积分扣除描述
+            error_message: 错误提示前缀
+            conversation_id: 会话 ID
+            generate_kwargs: 传递给 adapter.generate 的参数
+
+        Returns:
+            生成结果
+        """
+        # 1. 验证并扣除积分
+        estimated_credits = await self._validate_and_deduct_credits(
+            user_id=user_id,
+            model=model,
+            n_frames=n_frames,
+            description=description,
+        )
+
+        try:
+            # 2. 调用 KIE API
+            result, task_id = await self._call_kie_api(
+                model=model,
+                generate_kwargs=generate_kwargs,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                n_frames=n_frames,
+                estimated_credits=estimated_credits,
+            )
+
+            # 3. 同步模式完成处理
             wait_for_result = generate_kwargs.get("wait_for_result", False)
             if wait_for_result and result.get("status") == "success":
-                result = await self._upload_videos_to_oss(result, user_id)
+                result = await self._handle_sync_completion(
+                    result=result,
+                    task_id=task_id,
+                    user_id=user_id,
+                )
 
-            # 5. 确保返回实际扣除的积分数（异步模式下 adapter 返回 0）
+            # 4. 添加 credits_consumed 字段
             result["credits_consumed"] = estimated_credits
 
             return result

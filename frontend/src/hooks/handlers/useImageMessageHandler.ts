@@ -6,7 +6,6 @@
 import { type UnifiedModel } from '../../constants/models';
 import { createMessage, type Message, type GenerationParams } from '../../services/message';
 import {
-  createStreamingPlaceholder,
   createMediaTimestamps,
   createMediaOptimisticPair,
 } from '../../utils/messageFactory';
@@ -19,16 +18,15 @@ import {
   type ImageResolution,
   type ImageOutputFormat,
 } from '../../services/image';
-import { useTaskStore } from '../../stores/useTaskStore';
-import { useChatStore } from '../../stores/useChatStore';
 import { useConversationRuntimeStore } from '../../stores/useConversationRuntimeStore';
-import { useAuthStore } from '../../stores/useAuthStore';
 import {
   extractImageUrl,
   handleGenerationError,
+  createMediaPollingHandler,
   type MediaResponse,
   type MediaGenConfig,
 } from './mediaHandlerUtils';
+import { IMAGE_TASK_TIMEOUT, IMAGE_POLL_INTERVAL } from '../../config/task';
 
 interface UseImageMessageHandlerParams {
   selectedModel: UnifiedModel;
@@ -53,108 +51,11 @@ export function useImageMessageHandler({
 }: UseImageMessageHandlerParams) {
   /** 通用媒体生成轮询处理 */
   const handleMediaPolling = (response: MediaResponse, config: MediaGenConfig) => {
-    const { startMediaTask, startPolling, completeMediaTask, failMediaTask } =
-      useTaskStore.getState();
-    const { replaceMediaPlaceholder } = useConversationRuntimeStore.getState();
-    const { addMessageToCache } = useChatStore.getState();
-    const { refreshUser } = useAuthStore.getState();
-
-    const taskId = response.task_id;
-    const placeholderId = config.preCreatedPlaceholderId || `streaming-${taskId}`;
-    const placeholderTimestamp = config.placeholderTimestamp;
-
-    if (!config.preCreatedPlaceholderId) {
-      const placeholderMessage = createStreamingPlaceholder(
-        config.conversationId,
-        placeholderId,
-        config.placeholderText || '图片生成中...',
-        placeholderTimestamp
-      );
-      onMessagePending(placeholderMessage);
-    }
-
-    startMediaTask({
-      taskId,
-      conversationId: config.conversationId,
-      conversationTitle: config.conversationTitle,
-      type: config.type,
-      placeholderId,
+    createMediaPollingHandler(response, config, {
+      onMessagePending,
+      onMessageSent,
+      onMediaTaskSubmitted,
     });
-
-    if (onMediaTaskSubmitted) onMediaTaskSubmitted();
-
-    startPolling(
-      taskId,
-      async () => {
-        const result = await config.pollFn(taskId);
-        if (result.status === 'success') return { done: true, result };
-        if (result.status === 'failed') {
-          return { done: true, error: new Error(result.fail_msg || '图片生成失败') };
-        }
-        return { done: false };
-      },
-      {
-        onSuccess: async (result: unknown) => {
-          const mediaUrl = config.extractMediaUrl(result);
-          try {
-            // 立即预加载图片（后台下载，加速显示）
-            if (mediaUrl.image_url) {
-              const img = new Image();
-              img.src = mediaUrl.image_url;
-            }
-
-            const savedAiMessage = await createMessage(config.conversationId, {
-              content: config.successContent,
-              role: 'assistant',
-              image_url: mediaUrl.image_url,
-              video_url: mediaUrl.video_url,
-              credits_cost: config.creditsConsumed,
-              created_at: placeholderTimestamp,
-              generation_params: config.generationParams,
-            });
-
-            const messageWithCorrectTime: Message = {
-              ...savedAiMessage,
-              created_at: placeholderTimestamp,
-            };
-            replaceMediaPlaceholder(config.conversationId, placeholderId, messageWithCorrectTime);
-
-            addMessageToCache(config.conversationId, {
-              id: savedAiMessage.id,
-              role: savedAiMessage.role as 'user' | 'assistant',
-              content: savedAiMessage.content,
-              imageUrl: savedAiMessage.image_url ?? undefined,
-              videoUrl: savedAiMessage.video_url ?? undefined,
-              createdAt: placeholderTimestamp,
-            });
-
-            completeMediaTask(taskId);
-            refreshUser();
-            onMessageSent(savedAiMessage);
-          } catch (err) {
-            console.error('保存图片消息失败:', err);
-            failMediaTask(taskId);
-          }
-        },
-        onError: async (error: Error) => {
-          console.error('图片生成失败:', error);
-          const errorMessage = await handleGenerationError(
-            config.conversationId,
-            config.errorPrefix,
-            error,
-            placeholderTimestamp,
-            config.generationParams
-          );
-          replaceMediaPlaceholder(config.conversationId, placeholderId, errorMessage);
-          failMediaTask(taskId);
-          onMessageSent(errorMessage);
-        },
-      },
-      {
-        interval: config.pollInterval,
-        maxDuration: 10 * 60 * 1000,
-      }
-    );
   };
 
   const handleImageGeneration = async (
@@ -201,10 +102,12 @@ export function useImageMessageHandler({
         imageUrl
           ? editImage({
               prompt: messageContent,
-              image_urls: [imageUrl],
+              // 解析逗号分隔的多图 URL 为数组
+              image_urls: imageUrl.split(',').map(url => url.trim()).filter(Boolean),
               size: aspectRatio,
               output_format: outputFormat,
               wait_for_result: false,
+              conversation_id: currentConversationId,
             })
           : generateImage({
               prompt: messageContent,
@@ -213,6 +116,7 @@ export function useImageMessageHandler({
               output_format: outputFormat,
               resolution: selectedModel.supportsResolution ? resolution : undefined,
               wait_for_result: false,
+              conversation_id: currentConversationId,
             }),
       ]);
 
@@ -225,7 +129,8 @@ export function useImageMessageHandler({
           conversationTitle,
           successContent,
           errorPrefix: '图片处理失败',
-          pollInterval: 2000,
+          pollInterval: IMAGE_POLL_INTERVAL,
+          maxDuration: IMAGE_TASK_TIMEOUT,
           creditsConsumed: response.credits_consumed,
           userMessageTimestamp,
           placeholderTimestamp,
@@ -233,6 +138,7 @@ export function useImageMessageHandler({
           generationParams: imageGenerationParams,
           pollFn: getImageTaskStatus,
           extractMediaUrl: (r) => ({ image_url: extractImageUrl(r) }),
+          shouldPreloadImage: true,
         });
       } else if (response.status === 'success' && response.image_urls?.length) {
         const savedAiMessage = await createMessage(currentConversationId, {

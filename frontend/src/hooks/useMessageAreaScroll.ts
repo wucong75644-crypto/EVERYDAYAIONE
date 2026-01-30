@@ -103,6 +103,7 @@ export function useMessageAreaScroll(options: UseMessageAreaScrollOptions) {
     messages,
     scrollToBottom,
     hasScrolledForConversation,
+    userScrolledAway,
   });
 
   // 重新生成开始时的滚动处理

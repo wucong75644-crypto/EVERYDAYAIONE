@@ -4,7 +4,7 @@
  * 替代 window.open 的应用内图片预览，支持：
  * - 全屏预览
  * - 缩放操作（滚轮/双击）
- * - 下载功能（fetch + blob 解决跨域问题）
+ * - 下载功能（fetch + blob）
  * - 键盘交互（ESC 关闭）
  */
 
@@ -127,7 +127,7 @@ export default memo(function ImagePreviewModal({
     setIsDragging(false);
   }, []);
 
-  // 下载图片（使用 fetch + blob 解决跨域问题）
+  // 下载图片（使用 fetch + blob）
   const handleDownload = useCallback(async () => {
     if (!imageUrl || isDownloading) return;
 
@@ -153,9 +153,8 @@ export default memo(function ImagePreviewModal({
 
       // 释放 blob URL
       URL.revokeObjectURL(blobUrl);
-    } catch (error) {
-      console.error('下载图片失败:', error);
-      // 降级：尝试直接打开链接
+    } catch {
+      // 下载失败时降级：直接打开链接让用户手动下载
       window.open(imageUrl, '_blank');
     } finally {
       setIsDownloading(false);

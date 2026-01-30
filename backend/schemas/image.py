@@ -2,11 +2,13 @@
 图像生成相关的请求/响应模型
 """
 
-from datetime import datetime
 from enum import Enum
 from typing import Optional, List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from core.url_validation import validate_urls
+from .common import TaskStatus
 
 
 class ImageModel(str, Enum):
@@ -45,15 +47,6 @@ class ImageOutputFormat(str, Enum):
     JPG = "jpg"
 
 
-class TaskStatus(str, Enum):
-    """任务状态"""
-    PENDING = "pending"
-    PROCESSING = "processing"
-    SUCCESS = "success"
-    FAILED = "failed"
-    TIMEOUT = "timeout"
-
-
 # ============================================================
 # 请求模型
 # ============================================================
@@ -70,6 +63,7 @@ class GenerateImageRequest(BaseModel):
         description="分辨率（仅 nano-banana-pro 支持）"
     )
     wait_for_result: bool = Field(default=True, description="是否等待结果")
+    conversation_id: Optional[str] = Field(default=None, description="对话 ID（用于任务恢复）")
 
 
 class EditImageRequest(BaseModel):
@@ -79,6 +73,13 @@ class EditImageRequest(BaseModel):
     size: AspectRatio = Field(default=AspectRatio.SQUARE, description="输出宽高比")
     output_format: ImageOutputFormat = Field(default=ImageOutputFormat.PNG, description="输出格式")
     wait_for_result: bool = Field(default=True, description="是否等待结果")
+    conversation_id: Optional[str] = Field(default=None, description="对话 ID（用于任务恢复）")
+
+    @field_validator("image_urls")
+    @classmethod
+    def validate_image_urls(cls, v: List[str]) -> List[str]:
+        """验证图片 URL，防止 SSRF 攻击"""
+        return validate_urls(v)
 
 
 # ============================================================

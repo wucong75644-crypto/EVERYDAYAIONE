@@ -3,6 +3,7 @@
  */
 
 import { request } from './api';
+import type { TaskStatus } from '../types/task';
 
 // ============================================================
 // 类型定义
@@ -16,7 +17,7 @@ export type ImageResolution = '1K' | '2K' | '4K';
 
 export type ImageOutputFormat = 'png' | 'jpeg' | 'jpg';
 
-export type TaskStatus = 'pending' | 'processing' | 'success' | 'failed' | 'timeout';
+export type { TaskStatus };
 
 export interface GenerateImageRequest {
   prompt: string;
@@ -25,6 +26,7 @@ export interface GenerateImageRequest {
   output_format?: ImageOutputFormat;
   resolution?: ImageResolution;
   wait_for_result?: boolean;
+  conversation_id?: string;
 }
 
 export interface EditImageRequest {
@@ -33,6 +35,7 @@ export interface EditImageRequest {
   size?: AspectRatio;
   output_format?: ImageOutputFormat;
   wait_for_result?: boolean;
+  conversation_id?: string;
 }
 
 export interface UploadImageRequest {

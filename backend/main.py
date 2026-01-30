@@ -15,11 +15,12 @@ from loguru import logger
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from api.routes import audio, auth, conversation, health, image, message, video
+from api.routes import audio, auth, conversation, health, image, message, task, video
 from core.config import get_settings
 from core.exceptions import AppException
 from core.limiter import limiter
 from core.redis import RedisClient
+from services.background_task_worker import BackgroundTaskWorker
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -43,15 +44,39 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
         # Content Security Policy
-        csp_policy = (
-            "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-            "style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data: https:; "
-            "font-src 'self'; "
-            "connect-src 'self' https://qcaatwmlzqqnzfjdzlzm.supabase.co https://api.kie.ai; "
-            "frame-ancestors 'none';"
-        )
+        # 开发环境：保留 unsafe-inline 以支持 Vite HMR（热模块替换）
+        # 生产环境：移除 unsafe-eval 和 unsafe-inline，使用严格策略
+        # 未来优化：实现 nonce 或 hash 机制进一步提升安全性（见 docs/TECH_DEBT.md）
+        if settings.app_debug:
+            # 开发环境 CSP：允许内联脚本和样式（Vite 需要）
+            csp_policy = (
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "  # Vite HMR 需要
+                "style-src 'self' 'unsafe-inline'; "  # Vite 样式注入需要
+                "img-src 'self' data: https://*.aliyuncs.com https://qcaatwmlzqqnzfjdzlzm.supabase.co; "
+                "font-src 'self' data:; "
+                "connect-src 'self' https://qcaatwmlzqqnzfjdzlzm.supabase.co https://api.kie.ai ws://localhost:*; "  # 添加 WebSocket 支持
+                "object-src 'none'; "
+                "base-uri 'self'; "
+                "form-action 'self'; "
+                "frame-ancestors 'none'; "
+                "upgrade-insecure-requests;"
+            )
+        else:
+            # 生产环境 CSP：严格策略，禁止 unsafe-eval 和 unsafe-inline
+            csp_policy = (
+                "default-src 'self'; "
+                "script-src 'self'; "  # 移除 unsafe-inline 和 unsafe-eval
+                "style-src 'self'; "  # 移除 unsafe-inline
+                "img-src 'self' data: https://*.aliyuncs.com https://qcaatwmlzqqnzfjdzlzm.supabase.co; "
+                "font-src 'self' data:; "
+                "connect-src 'self' https://qcaatwmlzqqnzfjdzlzm.supabase.co https://api.kie.ai; "
+                "object-src 'none'; "
+                "base-uri 'self'; "
+                "form-action 'self'; "
+                "frame-ancestors 'none'; "
+                "upgrade-insecure-requests;"
+            )
         response.headers["Content-Security-Policy"] = csp_policy
 
         # 推荐策略
@@ -80,7 +105,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning(f"Redis 连接失败，限流功能降级 | error={e}")
 
+    # 启动后台任务工作器
+    from core.database import get_supabase_client
+    import asyncio
+
+    db = get_supabase_client()
+    worker = BackgroundTaskWorker(db)
+    worker_task = asyncio.create_task(worker.start())
+    logger.info("BackgroundTaskWorker started")
+
     yield
+
+    # 停止后台工作器
+    await worker.stop()
+    worker_task.cancel()
+    try:
+        await worker_task
+    except asyncio.CancelledError:
+        pass
 
     # 关闭 Redis 连接
     await RedisClient.close()
@@ -203,6 +245,9 @@ def register_routers(app: FastAPI) -> None:
     # 音频上传
     app.include_router(audio.router, prefix="/api")
 
+    # 任务管理
+    app.include_router(task.router, prefix="/api")
+
 
 # 创建应用实例
 app = create_app()
@@ -213,7 +258,7 @@ if __name__ == "__main__":
 
     settings = get_settings()
     uvicorn.run(
-        "backend.main:app",
+        "main:app",
         host=settings.app_host,
         port=settings.app_port,
         reload=settings.app_debug,

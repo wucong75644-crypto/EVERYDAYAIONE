@@ -228,8 +228,8 @@ export async function executeImageRegeneration({
     await saveUserMessage(conversationId, userMessage, tempUserId, setMessages, userTimestamp);
 
     const response = userMessage.image_url
-      ? await editImage({ prompt: userMessage.content, image_urls: [userMessage.image_url], size: aspectRatio, output_format: outputFormat, wait_for_result: false })
-      : await generateImage({ prompt: userMessage.content, model: imageModelId as ImageModel, size: aspectRatio, output_format: outputFormat, resolution: finalResolution, wait_for_result: false });
+      ? await editImage({ prompt: userMessage.content, image_urls: [userMessage.image_url], size: aspectRatio, output_format: outputFormat, wait_for_result: false, conversation_id: conversationId })
+      : await generateImage({ prompt: userMessage.content, model: imageModelId as ImageModel, size: aspectRatio, output_format: outputFormat, resolution: finalResolution, wait_for_result: false, conversation_id: conversationId });
 
     const successContent = userMessage.image_url ? '图片编辑完成' : '图片已生成完成';
 
@@ -334,8 +334,8 @@ export async function executeVideoRegeneration({
     await saveUserMessage(conversationId, userMessage, tempUserId, setMessages, userTimestamp);
 
     const response = userMessage.image_url
-      ? await generateImageToVideo({ prompt: userMessage.content, image_url: userMessage.image_url, model: i2vModelId as VideoModel, n_frames: finalFrames, aspect_ratio: videoAspectRatio, remove_watermark: removeWatermark, wait_for_result: false })
-      : await generateTextToVideo({ prompt: userMessage.content, model: videoModelId as VideoModel, n_frames: finalFrames, aspect_ratio: videoAspectRatio, remove_watermark: removeWatermark, wait_for_result: false });
+      ? await generateImageToVideo({ prompt: userMessage.content, image_url: userMessage.image_url, model: i2vModelId as VideoModel, n_frames: finalFrames, aspect_ratio: videoAspectRatio, remove_watermark: removeWatermark, wait_for_result: false, conversation_id: conversationId })
+      : await generateTextToVideo({ prompt: userMessage.content, model: videoModelId as VideoModel, n_frames: finalFrames, aspect_ratio: videoAspectRatio, remove_watermark: removeWatermark, wait_for_result: false, conversation_id: conversationId });
 
     const successContent = userMessage.image_url ? '视频生成完成（图生视频）' : '视频生成完成';
 

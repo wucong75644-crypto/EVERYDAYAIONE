@@ -3,6 +3,7 @@
  */
 
 import { request } from './api';
+import type { TaskStatus } from '../types/task';
 
 // ============================================================
 // 类型定义
@@ -14,7 +15,7 @@ export type VideoFrames = '10' | '15' | '25';
 
 export type VideoAspectRatio = 'portrait' | 'landscape';
 
-export type TaskStatus = 'pending' | 'processing' | 'success' | 'failed' | 'timeout';
+export type { TaskStatus };
 
 export interface GenerateTextToVideoRequest {
   prompt: string;
@@ -23,6 +24,7 @@ export interface GenerateTextToVideoRequest {
   aspect_ratio?: VideoAspectRatio;
   remove_watermark?: boolean;
   wait_for_result?: boolean;
+  conversation_id?: string;
 }
 
 export interface GenerateImageToVideoRequest {
@@ -33,6 +35,7 @@ export interface GenerateImageToVideoRequest {
   aspect_ratio?: VideoAspectRatio;
   remove_watermark?: boolean;
   wait_for_result?: boolean;
+  conversation_id?: string;
 }
 
 export interface GenerateStoryboardVideoRequest {
@@ -40,6 +43,7 @@ export interface GenerateStoryboardVideoRequest {
   storyboard_images?: string[];
   aspect_ratio?: VideoAspectRatio;
   wait_for_result?: boolean;
+  conversation_id?: string;
 }
 
 export interface GenerateVideoResponse {
