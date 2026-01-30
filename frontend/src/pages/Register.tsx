@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
 import { sendCode, register } from '../services/auth';
 import type { ApiErrorResponse } from '../types/auth';
@@ -17,7 +17,11 @@ type PasswordStrength = 'weak' | 'medium' | 'strong';
 
 export default function Register() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { setUser, setToken, isAuthenticated } = useAuthStore();
+
+  // 获取重定向目标路径（由 ProtectedRoute 传递）
+  const from = (location.state as { from?: string })?.from || '/chat';
 
   const [nickname, setNickname] = useState('');
   const [phone, setPhone] = useState('');
@@ -52,12 +56,12 @@ export default function Register() {
     }
   };
 
-  // 已登录用户重定向到首页
+  // 已登录用户重定向到原页面或聊天页
   useEffect(() => {
     if (isAuthenticated) {
-      navigate('/chat');
+      navigate(from, { replace: true });
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, navigate, from]);
 
   const validatePhone = (phone: string): boolean => {
     return /^1[3-9]\d{9}$/.test(phone);
@@ -164,8 +168,8 @@ export default function Register() {
       setToken(response.token.access_token);
       setUser(response.user);
 
-      // 跳转到聊天页
-      navigate('/chat');
+      // 跳转到原页面或聊天页（replace: true 避免回退到注册页）
+      navigate(from, { replace: true });
     } catch (err) {
       const error = err as AxiosError<ApiErrorResponse>;
       setError(error.response?.data?.error?.message || '注册失败，请重试');

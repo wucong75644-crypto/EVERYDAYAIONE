@@ -26,7 +26,7 @@ import type { UnifiedModel } from '../constants/models';
 export default function Chat() {
   const navigate = useNavigate();
   const { id: urlConversationId } = useParams<{ id?: string }>();
-  const { isAuthenticated, user, refreshUser } = useAuthStore();
+  const { user, refreshUser } = useAuthStore();
 
   // 基础状态
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -70,19 +70,11 @@ export default function Chat() {
     setConversationTitle,
   });
 
-  // 未登录用户重定向到登录页
-  useEffect(() => {
-    if (!isAuthenticated) {
-      navigate('/login');
-    }
-  }, [isAuthenticated, navigate]);
-
   // 页面加载时刷新用户信息（包括积分）
+  // 由于页面已被 ProtectedRoute 保护，此处无需检查登录状态
   useEffect(() => {
-    if (isAuthenticated) {
-      refreshUser();
-    }
-  }, [isAuthenticated, refreshUser]);
+    refreshUser();
+  }, [refreshUser]);
 
   // 恢复进行中的任务（页面刷新/登录后）
   useEffect(() => {
@@ -189,10 +181,6 @@ export default function Chat() {
     },
     [currentConversationId, setConversationOptimisticUpdate]
   );
-
-  if (!isAuthenticated) {
-    return null;
-  }
 
   return (
     <div className="h-screen flex bg-gray-50">
