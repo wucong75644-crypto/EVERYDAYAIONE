@@ -7,6 +7,7 @@ import { type UnifiedModel } from '../../constants/models';
 import { sendMessageStream, type Message } from '../../services/message';
 import { createOptimisticUserMessage, createErrorMessage } from '../../utils/messageFactory';
 import { useChatStore } from '../../stores/useChatStore';
+import { useConversationRuntimeStore } from '../../stores/useConversationRuntimeStore';
 
 interface UseTextMessageHandlerParams {
   selectedModel: UnifiedModel;
@@ -74,10 +75,18 @@ export function useTextMessageHandler({
                 client_request_id: userMessage.client_request_id,
                 status: userMessage.status,
               };
+
+              // 更新 ChatStore 缓存（持久化消息）
               useChatStore.getState().replaceOptimisticMessage(
                 currentConversationId,
                 userMessage.client_request_id,
                 storeMessage
+              );
+
+              // ✅ 同时更新 RuntimeStore（移除临时消息，替换为真实消息）
+              useConversationRuntimeStore.getState().replaceOptimisticMessage(
+                currentConversationId,
+                userMessage
               );
             } else {
               // 兼容旧逻辑（没有 client_request_id 时，直接添加）
