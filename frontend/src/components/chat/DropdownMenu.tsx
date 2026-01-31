@@ -36,6 +36,7 @@ export default function DropdownMenu({
       className={`${styles['dropdown-menu']} bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 w-44 origin-top-right ${
         closing ? 'animate-slideUp' : 'animate-slideDown'
       }`}
+      // 动态定位需要 CSS 变量，忽略内联样式警告
       style={
         {
           '--menu-x': `${x}px`,

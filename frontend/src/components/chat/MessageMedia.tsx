@@ -129,6 +129,7 @@ function AiGeneratedImage({
       {showPlaceholder && (
         <div
           className={`${styles['dynamic-size']} rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm animate-fade-in`}
+          // 动态尺寸需要 CSS 变量
           style={
             {
               '--width': `${placeholderSize.width}px`,
@@ -146,6 +147,7 @@ function AiGeneratedImage({
       {imageUrl && shouldRender && (
         <div
           className={`group cursor-pointer relative inline-block ${styles['dynamic-aspect-ratio']}`}
+          // 动态宽高比需要 CSS 变量
           style={
             {
               '--aspect-ratio': imageLoaded ? 'auto' : aspectRatio,
@@ -225,6 +227,7 @@ function UserImage({
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       aria-label={`查看图片 ${index + 1}`}
+      // 动态最大宽度需要 CSS 变量
       style={
         {
           '--max-width': `${maxWidth}px`,
@@ -358,6 +361,7 @@ export default function MessageMedia({
           {isGenerating && generatingType === 'video' && !videoUrl && (
             <div
               className={`${styles['dynamic-size']} rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm animate-fade-in`}
+              // 动态尺寸需要 CSS 变量
               style={
                 {
                   '--width': `${videoPlaceholderSize.width}px`,
@@ -377,6 +381,7 @@ export default function MessageMedia({
               src={videoUrl}
               controls
               className={`${styles['dynamic-max-width']} rounded-xl shadow-sm w-full h-auto block`}
+              // 动态最大宽度需要 CSS 变量
               style={
                 {
                   '--max-width': `${videoPlaceholderSize.width}px`,
