@@ -5,7 +5,7 @@
  * 组合 MessageMedia 和 MessageActions 子组件
  */
 
-import { memo, useState, useRef, useEffect, useMemo } from 'react';
+import { memo, useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import type { Message } from '../../services/message';
 import DeleteMessageModal from './DeleteMessageModal';
 import ImagePreviewModal from './ImagePreviewModal';
@@ -100,8 +100,18 @@ export default memo(function MessageItem({
     return message.image_url.split(',').map(url => url.trim()).filter(Boolean);
   }, [message.image_url]);
 
-  // 用于预览的图片列表：用户消息用自身图片，AI 消息用全局列表
-  const previewImageUrls = isUser ? messageImageUrls : allImageUrls;
+  // 用于预览的图片列表：所有消息都使用全局列表（支持查看对话中所有图片）
+  const previewImageUrls = allImageUrls;
+
+  // 将消息内图片索引转换为全局索引
+  const getGlobalImageIndex = useCallback((localIndex: number): number => {
+    if (messageImageUrls.length === 0 || localIndex >= messageImageUrls.length) {
+      return currentImageIndex;
+    }
+    const targetUrl = messageImageUrls[localIndex];
+    const globalIndex = allImageUrls.indexOf(targetUrl);
+    return globalIndex >= 0 ? globalIndex : currentImageIndex;
+  }, [messageImageUrls, allImageUrls, currentImageIndex]);
 
   // 鼠标进入消息区域 - 显示工具栏并清除隐藏定时器
   const handleMouseEnter = () => {
@@ -175,6 +185,28 @@ export default memo(function MessageItem({
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
+        {/* 用户消息：图片在上，文字在下（因为上传时已获取 CDN URL，图片先准备好） */}
+        {isUser && (message.image_url || message.video_url) && (
+          <div className="mb-3">
+            <MessageMedia
+              imageUrl={message.image_url}
+              videoUrl={message.video_url}
+              messageId={message.id}
+              isUser={isUser}
+              onImageClick={(index) => {
+                const globalIndex = index !== undefined ? getGlobalImageIndex(index) : currentImageIndex;
+                setPreviewIndex(globalIndex);
+                setShowImagePreview(true);
+              }}
+              onMediaLoaded={onMediaLoaded}
+              isGenerating={!!mediaPlaceholderInfo}
+              generatingType={mediaPlaceholderInfo?.type}
+              imageAspectRatio={actualImageAspectRatio}
+              videoAspectRatio={actualVideoAspectRatio}
+            />
+          </div>
+        )}
+
         {/* 消息气泡（仅文字内容） */}
         <div
           className={`rounded-2xl px-5 py-3 ${
@@ -188,12 +220,12 @@ export default memo(function MessageItem({
             {/* 加载状态：重新生成或流式输出开始但内容为空 */}
             {((isRegenerating || isStreaming) && !message.content) ? (
               <div className="flex items-center space-x-2 text-gray-500">
+                <span className="text-sm">{isRegenerating ? '正在重新生成' : 'AI 正在思考'}</span>
                 <div className="flex space-x-1">
                   <span className={`w-2 h-2 bg-gray-400 rounded-full animate-bounce ${styles['bounce-dot-1']}`}></span>
                   <span className={`w-2 h-2 bg-gray-400 rounded-full animate-bounce ${styles['bounce-dot-2']}`}></span>
                   <span className={`w-2 h-2 bg-gray-400 rounded-full animate-bounce ${styles['bounce-dot-3']}`}></span>
                 </div>
-                <span className="text-sm">{isRegenerating ? '正在重新生成...' : 'AI 正在思考...'}</span>
               </div>
             ) : (
               <>
@@ -220,24 +252,25 @@ export default memo(function MessageItem({
           )}
         </div>
 
-        {/* 媒体内容（独立于气泡，动态尺寸根据高级设置） */}
-        <MessageMedia
-          imageUrl={message.image_url}
-          videoUrl={message.video_url}
-          messageId={message.id}
-          isUser={isUser}
-          onImageClick={(index) => {
-            // 用户消息：index 是当前消息内的图片索引
-            // AI 消息：使用全局的 currentImageIndex
-            setPreviewIndex(isUser ? (index ?? 0) : currentImageIndex);
-            setShowImagePreview(true);
-          }}
-          onMediaLoaded={onMediaLoaded}
-          isGenerating={!!mediaPlaceholderInfo}
-          generatingType={mediaPlaceholderInfo?.type}
-          imageAspectRatio={actualImageAspectRatio}
-          videoAspectRatio={actualVideoAspectRatio}
-        />
+        {/* AI 消息：文字在上，图片在下 */}
+        {!isUser && (
+          <MessageMedia
+            imageUrl={message.image_url}
+            videoUrl={message.video_url}
+            messageId={message.id}
+            isUser={isUser}
+            onImageClick={(index) => {
+              const globalIndex = index !== undefined ? getGlobalImageIndex(index) : currentImageIndex;
+              setPreviewIndex(globalIndex);
+              setShowImagePreview(true);
+            }}
+            onMediaLoaded={onMediaLoaded}
+            isGenerating={!!mediaPlaceholderInfo}
+            generatingType={mediaPlaceholderInfo?.type}
+            imageAspectRatio={actualImageAspectRatio}
+            videoAspectRatio={actualVideoAspectRatio}
+          />
+        )}
 
         {/* 操作工具栏 */}
         <MessageActions
