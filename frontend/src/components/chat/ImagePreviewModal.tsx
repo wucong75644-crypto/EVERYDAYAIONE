@@ -58,6 +58,8 @@ export default memo(function ImagePreviewModal({
   const [isClosing, setIsClosing] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const thumbnailContainerRef = useRef<HTMLDivElement>(null);
+  const activeThumbnailRef = useRef<HTMLButtonElement>(null);
 
   // 处理关闭动画
   const handleClose = useCallback(() => {
@@ -88,11 +90,23 @@ export default memo(function ImagePreviewModal({
     setScale((s) => Math.max(s - SCALE_STEP, MIN_SCALE));
   }, []);
 
-  // 滚轮缩放
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? -SCALE_STEP : SCALE_STEP;
-    setScale((s) => Math.min(Math.max(s + delta, MIN_SCALE), MAX_SCALE));
+  // 滚轮缩放（使用原生事件监听器以支持 preventDefault）
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -SCALE_STEP : SCALE_STEP;
+      setScale((s) => Math.min(Math.max(s + delta, MIN_SCALE), MAX_SCALE));
+    };
+
+    // 添加原生事件监听器，设置 passive: false 以允许 preventDefault
+    container.addEventListener('wheel', handleWheel, { passive: false });
+
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+    };
   }, []);
 
   // 双击缩放
@@ -192,6 +206,35 @@ export default memo(function ImagePreviewModal({
     resetView();
   }, [imageUrl, resetView]);
 
+  // 自动滚动缩略图到当前选中项
+  useEffect(() => {
+    if (activeThumbnailRef.current && thumbnailContainerRef.current) {
+      const thumbnail = activeThumbnailRef.current;
+      const container = thumbnailContainerRef.current;
+
+      // 计算缩略图相对于容器的位置
+      const thumbnailLeft = thumbnail.offsetLeft;
+      const thumbnailWidth = thumbnail.offsetWidth;
+      const containerScrollLeft = container.scrollLeft;
+      const containerWidth = container.offsetWidth;
+
+      // 如果缩略图在可视区域左侧外
+      if (thumbnailLeft < containerScrollLeft) {
+        container.scrollTo({
+          left: thumbnailLeft - 8, // 留 8px 边距
+          behavior: 'smooth',
+        });
+      }
+      // 如果缩略图在可视区域右侧外
+      else if (thumbnailLeft + thumbnailWidth > containerScrollLeft + containerWidth) {
+        container.scrollTo({
+          left: thumbnailLeft + thumbnailWidth - containerWidth + 8, // 留 8px 边距
+          behavior: 'smooth',
+        });
+      }
+    }
+  }, [currentIndex]);
+
   if (!imageUrl) return null;
 
   return (
@@ -242,6 +285,14 @@ export default memo(function ImagePreviewModal({
             opacity: 0;
             transform: scale(0.95);
           }
+        }
+        /* 隐藏缩略图滚动条 */
+        .thumbnail-container::-webkit-scrollbar {
+          display: none;
+        }
+        .thumbnail-container {
+          -ms-overflow-style: none;
+          scrollbar-width: none;
         }
       `}</style>
       {/* 顶部工具栏 */}
@@ -342,7 +393,6 @@ export default memo(function ImagePreviewModal({
           // 点击容器背景（非图片）时关闭
           if (e.target === e.currentTarget) handleClose();
         }}
-        onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
@@ -399,7 +449,8 @@ export default memo(function ImagePreviewModal({
       {/* 底部缩略图预览条 */}
       {allImages.length > 0 && onSelectImage && (
         <div
-          className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex gap-2 px-4 py-2 bg-black/50 rounded-lg backdrop-blur-sm max-w-[90vw] overflow-x-auto"
+          ref={thumbnailContainerRef}
+          className="thumbnail-container absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex gap-2 px-4 py-2 bg-black/50 rounded-lg backdrop-blur-sm max-w-[90vw] overflow-x-auto"
           style={{
             animation: isClosing
               ? 'preview-content-exit 150ms cubic-bezier(0.32, 0.72, 0, 1) forwards'
@@ -409,6 +460,7 @@ export default memo(function ImagePreviewModal({
           {allImages.map((img, index) => (
             <button
               key={index}
+              ref={index === currentIndex ? activeThumbnailRef : null}
               type="button"
               onClick={() => onSelectImage(index)}
               className={`flex-shrink-0 h-16 w-16 rounded-lg overflow-hidden transition-all ${
