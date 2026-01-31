@@ -19,5 +19,10 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // 允许使用 style 属性传递 CSS 变量（用于动态值是最佳实践）
+      'react/forbid-dom-props': ['off'],
+      'react/forbid-component-props': ['off'],
+    },
   },
 ])

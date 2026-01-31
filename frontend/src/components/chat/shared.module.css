@@ -1,0 +1,38 @@
+/**
+ * Chat 组件共享样式
+ */
+
+/* 动画延迟 - 三个跳动的点（用于加载/流式状态） */
+.bounce-dot-1 {
+  animation-delay: 0ms;
+}
+
+.bounce-dot-2 {
+  animation-delay: 150ms;
+}
+
+.bounce-dot-3 {
+  animation-delay: 300ms;
+}
+
+/* 动态定位 - 使用 CSS 变量 */
+.dropdown-menu {
+  position: fixed;
+  left: var(--menu-x);
+  top: var(--menu-y);
+}
+
+/* 动态尺寸 - 使用 CSS 变量 */
+.dynamic-size {
+  width: var(--width);
+  height: var(--height);
+}
+
+.dynamic-max-width {
+  max-width: var(--max-width);
+}
+
+.dynamic-aspect-ratio {
+  aspect-ratio: var(--aspect-ratio);
+  max-width: var(--max-width);
+}

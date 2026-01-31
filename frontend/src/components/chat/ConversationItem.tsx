@@ -8,6 +8,7 @@ import { memo } from 'react';
 import type { ConversationListItem } from '../../services/conversation';
 import { useTaskStore } from '../../stores/useTaskStore';
 import { MoreHorizontal } from 'lucide-react';
+import styles from './shared.module.css';
 
 interface ConversationItemContentProps {
   conv: ConversationListItem;
@@ -49,9 +50,9 @@ export function ConversationItemContent({
           <div className="flex-shrink-0" title={task?.status === 'streaming' ? '正在生成...' : '等待中...'}>
             {task?.status === 'streaming' ? (
               <div className="flex space-x-0.5">
-                <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                <span className={`w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce ${styles['bounce-dot-1']}`}></span>
+                <span className={`w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce ${styles['bounce-dot-2']}`}></span>
+                <span className={`w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce ${styles['bounce-dot-3']}`}></span>
               </div>
             ) : (
               <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
@@ -153,6 +154,8 @@ export default memo(function ConversationItem({
           autoFocus
           className="w-full bg-white text-gray-900 text-sm px-2 py-1 rounded outline-none border border-blue-500 focus:ring-2 focus:ring-blue-300"
           onClick={(e) => e.stopPropagation()}
+          aria-label="重命名对话标题"
+          placeholder="输入新的对话标题"
         />
       ) : (
         <ConversationItemContent

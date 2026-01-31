@@ -13,6 +13,7 @@ import MessageMedia from './MessageMedia';
 import MessageActions from './MessageActions';
 import { getSavedSettings } from '../../utils/settingsStorage';
 import { useModalAnimation } from '../../hooks/useModalAnimation';
+import styles from './shared.module.css';
 
 interface MessageItemProps {
   message: Message;
@@ -188,9 +189,9 @@ export default memo(function MessageItem({
             {((isRegenerating || isStreaming) && !message.content) ? (
               <div className="flex items-center space-x-2 text-gray-500">
                 <div className="flex space-x-1">
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                  <span className={`w-2 h-2 bg-gray-400 rounded-full animate-bounce ${styles['bounce-dot-1']}`}></span>
+                  <span className={`w-2 h-2 bg-gray-400 rounded-full animate-bounce ${styles['bounce-dot-2']}`}></span>
+                  <span className={`w-2 h-2 bg-gray-400 rounded-full animate-bounce ${styles['bounce-dot-3']}`}></span>
                 </div>
                 <span className="text-sm">{isRegenerating ? '正在重新生成...' : 'AI 正在思考...'}</span>
               </div>

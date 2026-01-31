@@ -120,7 +120,7 @@ export default function MessageActions({
     <div
       className={`absolute bottom-0 ${
         isUser ? 'right-0' : 'left-0'
-      } transform translate-y-full pt-1 flex items-center gap-1 transition-opacity duration-300 ${
+      } transform translate-y-full flex items-center gap-1 transition-opacity duration-300 ${
         visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
       }`}
       onMouseEnter={onMouseEnter}

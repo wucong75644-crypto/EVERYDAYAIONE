@@ -4,6 +4,7 @@
  */
 
 import { Edit2, Pin, Share2, List, FolderInput, Download, Trash2, ChevronRight } from 'lucide-react';
+import styles from './shared.module.css';
 
 interface DropdownMenuProps {
   x: number;
@@ -32,10 +33,15 @@ export default function DropdownMenu({
 }: DropdownMenuProps) {
   return (
     <div
-      className={`fixed bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 w-44 origin-top-right ${
+      className={`${styles['dropdown-menu']} bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50 w-44 origin-top-right ${
         closing ? 'animate-slideUp' : 'animate-slideDown'
       }`}
-      style={{ left: x, top: y }}
+      style={
+        {
+          '--menu-x': `${x}px`,
+          '--menu-y': `${y}px`,
+        } as React.CSSProperties
+      }
       onClick={(e) => e.stopPropagation()}
     >
       {/* 重命名 */}
