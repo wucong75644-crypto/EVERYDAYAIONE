@@ -144,18 +144,19 @@ body {
   animation: backdropExit 0.15s ease-in;
 }
 
-/* 上传按钮红色外发光动效 */
+/* 上传按钮呼吸动效（无外发光） */
 @keyframes uploadGlow {
   0%, 100% {
-    box-shadow: 0 0 4px 2px rgba(239, 68, 68, 0.4);
+    opacity: 1;
+    transform: scale(1);
   }
   50% {
-    box-shadow: 0 0 12px 4px rgba(239, 68, 68, 0.6);
+    opacity: 0.7;
+    transform: scale(1.05);
   }
 }
 
 .animate-upload-glow {
   animation: uploadGlow 1s ease-in-out infinite;
-  border-radius: 0.5rem;
 }
 

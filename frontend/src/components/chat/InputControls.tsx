@@ -218,7 +218,7 @@ export default function InputControls(props: InputControlsProps) {
           value={prompt}
           onChange={(e) => onPromptChange(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={requiresImageUpload ? '📌 该模型需要先上传图片才能生成哦～' : '发送消息...'}
+          placeholder={requiresImageUpload ? '该模型需要先上传图片才能生成哦～' : '发送消息...'}
           className="w-full resize-none border-none outline-none text-gray-900 placeholder-gray-400 text-base leading-6 min-h-[40px] max-h-[120px] overflow-y-auto"
           rows={1}
           disabled={isSubmitting}
@@ -353,9 +353,10 @@ export default function InputControls(props: InputControlsProps) {
             {/* 如果两个都不显示，显示一个占位的发送按钮 */}
             {!showSendButton && !showVoiceButton && (
               <button
-                onClick={onSubmit}
+                type="button"
                 disabled={true}
                 className="p-2.5 rounded-full bg-gray-200 text-gray-400 cursor-not-allowed"
+                aria-label="发送消息（需要输入内容）"
               >
                 <Send className="w-4 h-4" />
               </button>
@@ -372,6 +373,8 @@ export default function InputControls(props: InputControlsProps) {
         multiple
         onChange={(e) => onImageSelect(e, maxImages, maxFileSize)}
         className="hidden"
+        aria-label="选择图片文件"
+        title="选择图片文件"
       />
     </div>
   );

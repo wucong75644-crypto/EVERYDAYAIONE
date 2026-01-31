@@ -13,6 +13,7 @@ import toast from 'react-hot-toast';
 import { type AspectRatio } from '../../services/image';
 import { type VideoAspectRatio } from '../../services/video';
 import { getImagePlaceholderSize, getVideoPlaceholderSize } from '../../utils/settingsStorage';
+import styles from './shared.module.css';
 
 interface MessageMediaProps {
   /** 图片 URL（单个或多个，逗号分隔） */
@@ -123,12 +124,17 @@ function AiGeneratedImage({
   };
 
   return (
-    <div className="mt-4 mb-4" ref={lazyRef}>
+    <div className="mt-4" ref={lazyRef}>
       {/* 占位符（仅生成中显示固定尺寸，带淡入动画） */}
       {showPlaceholder && (
         <div
-          className="rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm animate-fade-in"
-          style={{ width: placeholderSize.width, height: placeholderSize.height }}
+          className={`${styles['dynamic-size']} rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm animate-fade-in`}
+          style={
+            {
+              '--width': `${placeholderSize.width}px`,
+              '--height': `${placeholderSize.height}px`,
+            } as React.CSSProperties
+          }
           role="status"
           aria-label="正在生成图片"
         >
@@ -139,8 +145,13 @@ function AiGeneratedImage({
       {/* 图片（按占位符尺寸限制显示） */}
       {imageUrl && shouldRender && (
         <div
-          className="group cursor-pointer relative inline-block"
-          style={{ aspectRatio: imageLoaded ? undefined : aspectRatio, maxWidth: placeholderSize.width }}
+          className={`group cursor-pointer relative inline-block ${styles['dynamic-aspect-ratio']}`}
+          style={
+            {
+              '--aspect-ratio': imageLoaded ? 'auto' : aspectRatio,
+              '--max-width': `${placeholderSize.width}px`,
+            } as React.CSSProperties
+          }
           role="button"
           tabIndex={0}
           onClick={onImageClick}
@@ -208,13 +219,17 @@ function UserImage({
 
   return (
     <div
-      className="group cursor-pointer relative inline-block"
+      className={`group cursor-pointer relative inline-block ${styles['dynamic-max-width']}`}
       role="button"
       tabIndex={0}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       aria-label={`查看图片 ${index + 1}`}
-      style={{ maxWidth }}
+      style={
+        {
+          '--max-width': `${maxWidth}px`,
+        } as React.CSSProperties
+      }
     >
       <img
         src={imageUrl}
@@ -338,12 +353,17 @@ export default function MessageMedia({
 
       {/* 视频渲染（含占位符） */}
       {(videoUrl || (isGenerating && generatingType === 'video')) && (
-        <div className="mt-4 mb-4" ref={videoLazyRef}>
+        <div className="mt-4" ref={videoLazyRef}>
           {/* 视频占位符（带淡入动画） */}
           {isGenerating && generatingType === 'video' && !videoUrl && (
             <div
-              className="rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm animate-fade-in"
-              style={{ width: videoPlaceholderSize.width, height: videoPlaceholderSize.height }}
+              className={`${styles['dynamic-size']} rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm animate-fade-in`}
+              style={
+                {
+                  '--width': `${videoPlaceholderSize.width}px`,
+                  '--height': `${videoPlaceholderSize.height}px`,
+                } as React.CSSProperties
+              }
               role="status"
               aria-label="正在生成视频"
             >
@@ -356,8 +376,12 @@ export default function MessageMedia({
             <video
               src={videoUrl}
               controls
-              className="rounded-xl shadow-sm w-full h-auto block"
-              style={{ maxWidth: videoPlaceholderSize.width }}
+              className={`${styles['dynamic-max-width']} rounded-xl shadow-sm w-full h-auto block`}
+              style={
+                {
+                  '--max-width': `${videoPlaceholderSize.width}px`,
+                } as React.CSSProperties
+              }
               preload="metadata"
               onLoadedMetadata={() => onMediaLoaded?.()}
             >
