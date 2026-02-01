@@ -2,10 +2,9 @@ import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './stores/useAuthStore';
 import ProtectedRoute from './components/auth/ProtectedRoute';
+import AuthModal from './components/auth/AuthModal';
 import LoadingScreen from './components/common/LoadingScreen';
 import Home from './pages/Home';
-import Login from './pages/Login';
-import Register from './pages/Register';
 import ForgotPassword from './pages/ForgotPassword';
 import Chat from './pages/Chat';
 
@@ -23,10 +22,11 @@ function App() {
 
   return (
     <BrowserRouter>
+      {/* 全局认证弹窗 */}
+      <AuthModal />
+
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         {/* 受保护的路由：需要登录才能访问 */}
         <Route

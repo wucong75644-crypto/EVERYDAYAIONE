@@ -8,11 +8,13 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { Loader2, Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { type AspectRatio } from '../../services/image';
 import { type VideoAspectRatio } from '../../services/video';
 import { getImagePlaceholderSize, getVideoPlaceholderSize } from '../../utils/settingsStorage';
+import { parseImageUrls } from '../../utils/imageUtils';
+import MediaPlaceholder from './MediaPlaceholder';
 import styles from './shared.module.css';
 
 interface MessageMediaProps {
@@ -124,23 +126,14 @@ function AiGeneratedImage({
   };
 
   return (
-    <div className="mt-4" ref={lazyRef}>
+    <div className="mt-3" ref={lazyRef}>
       {/* 占位符（仅生成中显示固定尺寸，带淡入动画） */}
       {showPlaceholder && (
-        <div
-          className={`${styles['dynamic-size']} rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm animate-fade-in`}
-          // 动态尺寸需要 CSS 变量
-          style={
-            {
-              '--width': `${placeholderSize.width}px`,
-              '--height': `${placeholderSize.height}px`,
-            } as React.CSSProperties
-          }
-          role="status"
-          aria-label="正在生成图片"
-        >
-          <ImageIcon className="w-10 h-10 text-gray-300 dark:text-gray-500" aria-hidden="true" />
-        </div>
+        <MediaPlaceholder
+          type="image"
+          width={placeholderSize.width}
+          height={placeholderSize.height}
+        />
       )}
 
       {/* 图片（按占位符尺寸限制显示） */}
@@ -287,10 +280,7 @@ export default function MessageMedia({
   videoAspectRatio = 'landscape',
 }: MessageMediaProps) {
   // 解析图片 URL（支持逗号分隔的多图）
-  const imageUrls = useMemo(() => {
-    if (!imageUrl) return [];
-    return imageUrl.split(',').map(url => url.trim()).filter(Boolean);
-  }, [imageUrl]);
+  const imageUrls = useMemo(() => parseImageUrls(imageUrl), [imageUrl]);
 
   // AI 生成图片的占位符尺寸
   const imagePlaceholderSize = useMemo(
@@ -356,23 +346,14 @@ export default function MessageMedia({
 
       {/* 视频渲染（含占位符） */}
       {(videoUrl || (isGenerating && generatingType === 'video')) && (
-        <div className="mt-4" ref={videoLazyRef}>
+        <div className="mt-3" ref={videoLazyRef}>
           {/* 视频占位符（带淡入动画） */}
           {isGenerating && generatingType === 'video' && !videoUrl && (
-            <div
-              className={`${styles['dynamic-size']} rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center shadow-sm animate-fade-in`}
-              // 动态尺寸需要 CSS 变量
-              style={
-                {
-                  '--width': `${videoPlaceholderSize.width}px`,
-                  '--height': `${videoPlaceholderSize.height}px`,
-                } as React.CSSProperties
-              }
-              role="status"
-              aria-label="正在生成视频"
-            >
-              <VideoIcon className="w-10 h-10 text-gray-300 dark:text-gray-500" aria-hidden="true" />
-            </div>
+            <MediaPlaceholder
+              type="video"
+              width={videoPlaceholderSize.width}
+              height={videoPlaceholderSize.height}
+            />
           )}
 
           {/* 视频（按占位符尺寸限制显示） */}

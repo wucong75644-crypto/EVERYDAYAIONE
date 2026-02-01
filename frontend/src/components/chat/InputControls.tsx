@@ -72,6 +72,8 @@ interface InputControlsProps {
   onImagePaste: (e: ClipboardEvent, maxImages?: number, maxFileSize?: number) => void;
   /** 是否需要上传图片（用于显示引导提示） */
   requiresImageUpload?: boolean;
+  /** 发送错误信息（用于显示错误状态） */
+  sendError?: string | null;
 }
 
 export default function InputControls(props: InputControlsProps) {
@@ -87,7 +89,7 @@ export default function InputControls(props: InputControlsProps) {
     onSaveSettings, onResetSettings,
     images, maxImages, maxFileSize, onRemoveImage, onImageSelect, onImageDrop, onImagePaste,
     recordingState, audioBlob, audioDuration, onStartRecording, onStopRecording, onClearRecording,
-    requiresImageUpload = false,
+    requiresImageUpload = false, sendError,
   } = props;
 
   const [showUploadMenu, setShowUploadMenu] = useState(false);
@@ -181,7 +183,11 @@ export default function InputControls(props: InputControlsProps) {
     <div
       ref={dropZoneRef}
       className={`relative border rounded-2xl bg-white shadow-sm transition-all ${
-        isDragging ? 'border-blue-500 border-2 bg-blue-50 shadow-lg' : 'border-gray-200 hover:shadow-md'
+        sendError
+          ? 'border-red-500 border-2 shadow-md'
+          : isDragging
+            ? 'border-blue-500 border-2 bg-blue-50 shadow-lg'
+            : 'border-gray-200 hover:shadow-md'
       }`}
     >
       {/* 拖拽提示 */}
@@ -326,11 +332,13 @@ export default function InputControls(props: InputControlsProps) {
               <button
                 onClick={onSubmit}
                 disabled={!canSubmit || isSubmitting}
-                title={sendButtonTooltip}
+                title={sendError || sendButtonTooltip}
                 className={`p-2.5 rounded-full transition-all ${
-                  canSubmit && !isSubmitting
-                    ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-md hover:shadow-lg'
-                    : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                  sendError
+                    ? 'bg-red-500 text-white hover:bg-red-600 shadow-md hover:shadow-lg'
+                    : canSubmit && !isSubmitting
+                      ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-md hover:shadow-lg'
+                      : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                 }`}
               >
                 <Send className="w-4 h-4" />

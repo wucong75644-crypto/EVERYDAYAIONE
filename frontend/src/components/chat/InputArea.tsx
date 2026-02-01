@@ -17,7 +17,6 @@ import { useSettingsManager } from '../../hooks/useSettingsManager';
 import { type UnifiedModel } from '../../constants/models';
 import { useTaskStore } from '../../stores/useTaskStore';
 import { useChatStore } from '../../stores/useChatStore';
-import { createOptimisticUserMessage } from '../../utils/messageFactory';
 import { generateClientRequestId } from '../../utils/messageIdMapping';
 import ConflictAlert from './ConflictAlert';
 import InputControls from './InputControls';
@@ -54,6 +53,7 @@ export default function InputArea({
   const [prompt, setPrompt] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   // 设置管理 Hook（图像/视频/聊天参数）
   const {
@@ -71,7 +71,6 @@ export default function InputArea({
   const {
     images,
     uploadedImageUrls,
-    previewUrls,
     isUploading,
     uploadError: imageUploadError,
     hasImages,
@@ -223,10 +222,7 @@ export default function InputArea({
     }
 
     const messageContent = prompt.trim();
-    // 准备图片 URL：
-    // - previewUrls: 本地预览 URL（ObjectURL，用于用户消息立即显示）
-    // - uploadedImageUrls: 服务器 URL（用于保存到数据库和发送给 AI）
-    const combinedPreviewUrl = previewUrls.length > 0 ? previewUrls.join(',') : null;
+    // 准备图片 URL：使用服务器 URL（确保图片已上传完成）
     const combinedImageUrl = uploadedImageUrls.length > 0 ? uploadedImageUrls.join(',') : null;
 
     // 立即清空输入（提升响应速度）
@@ -238,91 +234,42 @@ export default function InputArea({
       const isNewConversation = !conversationId;
       const title = messageContent.slice(0, 20) || '新对话';
 
-      // 🚀 双轨并行优化：
-      // 第一轨（UI层）：立即开始处理消息（不阻塞UI）
-      // 第二轨（数据层）：后台创建对话（如果是新对话）
+      // 获取真实的对话 ID（新对话需先创建）
+      let currentConversationId = conversationId;
 
-      // 使用临时对话 ID 或真实对话 ID
-      const currentConversationId = conversationId || `pending-${Date.now()}`;
-
-      // 立即开始处理消息（不等待 createConversation）
-      const messagePromise = (async () => {
-        if (selectedModel.type === 'chat') {
-          // 生成唯一的客户端请求 ID
-          const clientRequestId = generateClientRequestId();
-
-          // 聊天消息：如果有图片，使用本地预览 URL 立即显示用户消息
-          if (combinedPreviewUrl) {
-            // 立即创建用户消息（使用本地预览 URL，瞬间显示）
-            const optimisticMessage = createOptimisticUserMessage(
-              messageContent,
-              currentConversationId,
-              combinedPreviewUrl,  // 使用 blob:// URL 立即显示
-              undefined,           // createdAt 自动生成
-              clientRequestId      // 传递 client_request_id 用于后续替换
-            );
-
-            // 立即显示临时消息
-            onMessagePending(optimisticMessage);
-
-            // 转换为 Store 的 Message 类型并添加到缓存
-            const storeMessage = {
-              id: optimisticMessage.id,
-              role: optimisticMessage.role as 'user' | 'assistant',
-              content: optimisticMessage.content,
-              imageUrl: optimisticMessage.image_url || undefined,
-              videoUrl: optimisticMessage.video_url || undefined,
-              createdAt: optimisticMessage.created_at,
-              client_request_id: optimisticMessage.client_request_id,
-              status: optimisticMessage.status,
-            };
-            useChatStore.getState().addMessageToCache(currentConversationId, storeMessage);
-
-            // 发送到后端，使用服务器 URL，跳过内部的乐观更新（避免重复）
-            await handleChatMessage(
-              messageContent,
-              currentConversationId,
-              combinedImageUrl,     // 后端使用服务器 URL（AI 需要公网 URL）
-              clientRequestId,      // 传递 client_request_id 用于后端匹配
-              true                  // skipOptimisticUpdate=true，避免重复创建临时消息
-            );
-          } else {
-            // 没有图片时，正常流程（handleChatMessage 内部创建乐观消息）
-            await handleChatMessage(
-              messageContent,
-              currentConversationId,
-              combinedImageUrl,
-              clientRequestId,
-              false  // 允许 handleChatMessage 创建乐观消息
-            );
-          }
-        } else if (selectedModel.type === 'video') {
-          await handleVideoGeneration(messageContent, currentConversationId, combinedImageUrl);
-        } else {
-          await handleImageGeneration(messageContent, currentConversationId, combinedImageUrl);
-        }
-      })();
-
-      // 后台创建对话（如果是新对话）
       if (isNewConversation) {
-        // 不阻塞消息处理，并行创建对话
-        createConversation({
+        // 新对话：必须先创建对话，获取真实 ID
+        const conversation = await createConversation({
           title,
           model_id: selectedModel.id,
-        }).then((conversation) => {
-          // 通知父组件对话已创建
-          onConversationCreated(conversation.id, title);
-        }).catch((error) => {
-          console.error('创建对话失败:', error);
-          // 创建对话失败不影响消息发送（后端会过滤临时 ID）
         });
+        currentConversationId = conversation.id;
+        // 通知父组件对话已创建
+        onConversationCreated(conversation.id, title);
       }
 
-      // 等待消息处理完成
-      await messagePromise;
+      // 发送消息（使用真实对话 ID）
+      if (selectedModel.type === 'chat') {
+        // 生成唯一的客户端请求 ID
+        const clientRequestId = generateClientRequestId();
+
+        // 聊天消息：统一使用服务器 URL（确保刷新后图片仍然可见）
+        await handleChatMessage(
+          messageContent,
+          currentConversationId!,
+          combinedImageUrl,     // 使用服务器 URL（已上传完成）
+          clientRequestId,
+          false  // 允许 handleChatMessage 创建乐观消息
+        );
+      } else if (selectedModel.type === 'video') {
+        await handleVideoGeneration(messageContent, currentConversationId!, combinedImageUrl);
+      } else {
+        await handleImageGeneration(messageContent, currentConversationId!, combinedImageUrl);
+      }
     } catch (error) {
       console.error('发送消息失败:', error);
       setPrompt(messageContent);
+      setSendError(error instanceof Error ? error.message : '发送失败，请重试');
       onMessageSent(null);
     } finally {
       setIsSubmitting(false);
@@ -338,6 +285,12 @@ export default function InputArea({
   };
 
   const sendButtonState = getSendButtonState(isSubmitting, isUploading, !!(prompt.trim() || hasImages));
+
+  // 输入变化时清除发送错误状态
+  const handlePromptChange = useCallback((value: string) => {
+    setPrompt(value);
+    if (sendError) setSendError(null);
+  }, [sendError]);
 
   return (
     <div className="bg-white">
@@ -361,8 +314,9 @@ export default function InputArea({
         {/* 主输入控件（包含底部的模型选择器） */}
         <InputControls
           prompt={prompt}
-          onPromptChange={setPrompt}
+          onPromptChange={handlePromptChange}
           onSubmit={handleSubmit}
+          sendError={sendError}
           onAudioSubmit={handleAudioSubmit}
           onKeyDown={handleKeyDown}
           isSubmitting={isSubmitting}
