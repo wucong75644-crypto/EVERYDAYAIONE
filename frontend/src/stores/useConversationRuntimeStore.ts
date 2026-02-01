@@ -39,8 +39,8 @@ interface ConversationRuntimeStore {
   /** 添加乐观用户消息（用户发送消息时调用） */
   addOptimisticUserMessage: (conversationId: string, message: Message) => void;
 
-  /** 替换临时消息为真实消息（后端返回真实消息时调用） */
-  replaceOptimisticMessage: (conversationId: string, realMessage: Message) => void;
+  /** 只更新消息 ID 和状态（精简版乐观更新，避免替换整个消息对象） */
+  updateMessageId: (conversationId: string, clientRequestId: string, newId: string) => void;
 
   /** 添加错误消息（用于显示错误） */
   addErrorMessage: (conversationId: string, errorMessage: Message) => void;
@@ -128,47 +128,21 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>((set
     });
   },
 
-  replaceOptimisticMessage: (conversationId: string, realMessage: Message) => {
+  updateMessageId: (conversationId: string, clientRequestId: string, newId: string) => {
     set((state) => {
       const current = state.states.get(conversationId);
       if (!current) return state;
 
-      // 查找并替换同样内容的temp-消息（匹配content和role）
-      const replaced = current.optimisticMessages.map(m => {
-        if (m.id.startsWith('temp-') &&
-            m.role === realMessage.role &&
-            m.content === realMessage.content) {
-          return realMessage; // 使用后端的真实消息（包含真实时间戳）
-        }
-        return m;
-      });
-
-      // 如果没有找到匹配的temp-消息，直接添加（防御性编程）
-      const hasReplaced = replaced.some(m => m.id === realMessage.id);
-      let finalMessages = hasReplaced ? replaced : [...replaced, realMessage];
-
-      // ✅ 如果是用户消息，且存在streaming消息，确保streaming消息在用户消息之后
-      // 只在streaming时间戳早于或等于用户消息时才调整，避免不必要的位置变化
-      if (hasReplaced && realMessage.role === 'user' && current.streamingMessageId) {
-        const userTimestamp = new Date(realMessage.created_at).getTime();
-        const streamingMessage = finalMessages.find(m => m.id === current.streamingMessageId);
-        const streamingTimestamp = streamingMessage ? new Date(streamingMessage.created_at).getTime() : 0;
-
-        // 只有当 streaming 时间戳不正确时才调整
-        if (streamingMessage && streamingTimestamp <= userTimestamp) {
-          finalMessages = finalMessages.map(m => {
-            if (m.id === current.streamingMessageId) {
-              return { ...m, created_at: new Date(userTimestamp + 1).toISOString() };
-            }
-            return m;
-          });
-        }
-      }
+      const updatedMessages = current.optimisticMessages.map((msg) =>
+        msg.client_request_id === clientRequestId
+          ? { ...msg, id: newId, status: 'sent' as const }
+          : msg
+      );
 
       const newStates = new Map(state.states);
       newStates.set(conversationId, {
         ...current,
-        optimisticMessages: finalMessages,
+        optimisticMessages: updatedMessages,
       });
 
       return { states: newStates };

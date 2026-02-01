@@ -2,43 +2,17 @@
  * 消息加载自定义Hook
  *
  * 封装消息加载逻辑，包括缓存、竞态处理、后台刷新等
+ *
+ * 重构说明（方案B）：
+ * - 删除了 toStoreMessage 和 convertCacheToApiMessages 格式转换函数
+ * - 缓存直接存储 API Message 格式，无需转换
+ * - 使用统一方法 setMessagesForConversation 写入缓存
  */
 
 import { useState, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { getMessages, type Message } from '../services/message';
-import { useChatStore, type Message as CacheMessage } from '../stores/useChatStore';
-
-/** 将 API Message 转换为缓存 Message 格式 */
-function toStoreMessage(msg: Message): CacheMessage {
-  return {
-    id: msg.id,
-    role: msg.role === 'system' ? 'assistant' : msg.role,
-    content: msg.content,
-    imageUrl: msg.image_url ?? undefined,
-    videoUrl: msg.video_url ?? undefined,
-    createdAt: msg.created_at,
-  };
-}
-
-/** 将缓存消息转换为 API Message 格式（过滤临时消息） */
-function convertCacheToApiMessages(
-  messages: CacheMessage[],
-  conversationId: string
-): Message[] {
-  return messages
-    .filter((m) => !m.id.startsWith('temp-') && !m.id.startsWith('streaming-') && !m.id.startsWith('error-'))
-    .map((m) => ({
-      id: m.id,
-      conversation_id: conversationId,
-      role: m.role,
-      content: m.content,
-      image_url: m.imageUrl ?? null,
-      video_url: m.videoUrl ?? null,
-      credits_cost: 0,
-      created_at: m.createdAt,
-    }));
-}
+import { useChatStore } from '../stores/useChatStore';
 
 interface UseMessageLoaderOptions {
   conversationId: string | null;
@@ -48,7 +22,6 @@ interface UseMessageLoaderOptions {
 }
 
 export function useMessageLoader({ conversationId, refreshTrigger = 0, onNewMessages }: UseMessageLoaderOptions) {
-  const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true); // 初始为 true，避免滚动逻辑提前触发
   const [hasMore, setHasMore] = useState(false);
   const lastRefreshTriggerRef = useRef(refreshTrigger);
@@ -57,8 +30,7 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0, onNewMess
 
   const {
     getCachedMessages,
-    setCachedMessages,
-    updateCachedMessages,
+    setMessagesForConversation,
     isCacheExpired,
     touchCache,
   } = useChatStore();
@@ -97,7 +69,6 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0, onNewMess
   const loadMessages = useCallback(
     async (signal?: AbortSignal) => {
       if (!conversationId) {
-        setMessages([]);
         previousConversationIdRef.current = null;
         return;
       }
@@ -111,19 +82,14 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0, onNewMess
           // 更新LRU访问顺序
           touchCache(conversationId);
 
-          const cachedMessages = convertCacheToApiMessages(cachedData.messages, conversationId);
-
-          // 同步设置消息，避免中间帧的空白闪烁
-          // React 18 自动批处理会合并这些更新到一次渲染
-          setMessages(cachedMessages);
+          // 缓存已是 Message 格式，无需转换
           setLoading(false);
           setHasMore(cachedData.hasMore);
           // 有缓存时提前返回，避免下面的逻辑覆盖
           return;
         }
 
-        // 无缓存时：先清空并显示加载中
-        setMessages([]);
+        // 无缓存时：显示加载中
         setLoading(true);
         // 继续执行下面的从后端加载逻辑
       }
@@ -139,7 +105,6 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0, onNewMess
         // 更新LRU访问顺序
         touchCache(conversationId);
 
-        setMessages(convertCacheToApiMessages(cached.messages, conversationId));
         setHasMore(cached.hasMore);
         setLoading(false);
 
@@ -151,8 +116,8 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0, onNewMess
           }
 
           if (freshMessages && freshMessages.length > 0) {
-            const newStoreMessages = freshMessages.map(toStoreMessage);
-            updateCachedMessages(conversationId, newStoreMessages);
+            // 直接存储 API 返回的 Message 格式，无需转换
+            setMessagesForConversation(conversationId, freshMessages, freshMessages.length >= 1000);
 
             // 通知有新消息（由 useScrollManager 处理显示逻辑）
             if (cached.messages && freshMessages.length > cached.messages.length) {
@@ -172,28 +137,19 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0, onNewMess
         }
 
         if (freshMessages) {
-          setMessages(freshMessages);
           setHasMore(freshMessages.length >= 1000);
-          const storeMessages = freshMessages.map(toStoreMessage);
-          setCachedMessages(conversationId, {
-            messages: storeMessages,
-            hasMore: freshMessages.length >= 1000,
-          });
+          // 直接存储 API 返回的 Message 格式，无需转换
+          setMessagesForConversation(conversationId, freshMessages, freshMessages.length >= 1000);
         }
         setLoading(false);
       }
     },
-    [conversationId, refreshTrigger, getCachedMessages, touchCache, isCacheExpired, setCachedMessages, updateCachedMessages, fetchMessages, onNewMessages]
+    [conversationId, refreshTrigger, getCachedMessages, touchCache, isCacheExpired, setMessagesForConversation, fetchMessages, onNewMessages]
   );
 
   return {
-    messages,
-    setMessages,
     loading,
     hasMore,
     loadMessages,
-    toStoreMessage,
-    getCachedMessages,
-    updateCachedMessages,
   };
 }

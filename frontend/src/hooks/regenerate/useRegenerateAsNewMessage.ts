@@ -1,14 +1,14 @@
 /**
- * 成功消息新增对话
- * 策略 B：在消息列表末尾添加新的用户消息+AI回复
+ * 聊天成功消息新增对话
+ * 在消息列表末尾添加新的用户消息+AI回复（流式）
  */
 
 import { useCallback, useRef } from 'react';
-import { sendMessageStream, type Message } from '../../services/message';
+import { type Message } from '../../services/message';
 import toast from 'react-hot-toast';
-import type { Message as CacheMessage, MessageCacheEntry } from '../../stores/useChatStore';
 import { createTempMessagePair } from '../../utils/messageFactory';
 import type { UnifiedModel } from '../../constants/models';
+import { sendChatMessage } from '../../services/messageSender';
 
 interface UseRegenerateAsNewMessageOptions {
   conversationId: string | null;
@@ -19,9 +19,6 @@ interface UseRegenerateAsNewMessageOptions {
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
   setRegeneratingId: (id: string | null) => void;
   setIsRegeneratingAI: (value: boolean) => void;
-  getCachedMessages: (conversationId: string) => MessageCacheEntry | null;
-  updateCachedMessages: (conversationId: string, messages: CacheMessage[], hasMore?: boolean) => void;
-  toStoreMessage: (msg: Message) => CacheMessage;
   onMessageUpdate?: (newLastMessage: string) => void;
   resetRegeneratingState: () => void;
 }
@@ -35,9 +32,6 @@ export function useRegenerateAsNewMessage({
   setMessages,
   setRegeneratingId,
   setIsRegeneratingAI,
-  getCachedMessages,
-  updateCachedMessages,
-  toStoreMessage,
   onMessageUpdate,
   resetRegeneratingState,
 }: UseRegenerateAsNewMessageOptions) {
@@ -59,42 +53,39 @@ export function useRegenerateAsNewMessage({
 
       const chatModelId = modelId || selectedModel?.id || 'gemini-3-flash';
 
-      await sendMessageStream(
+      await sendChatMessage({
+        type: 'chat',
         conversationId,
-        { content: userMessage.content, model_id: chatModelId },
-        {
-          onUserMessage: (realUser: Message) => {
-            setMessages((prev) => prev.map((m) => (m.id === tempUserId ? realUser : m)));
+        content: userMessage.content,
+        modelId: chatModelId,
+        skipOptimisticUpdate: true,
+        callbacks: {
+          onMessagePending: (msg) => {
+            // 用户消息确认时，替换临时用户消息
+            setMessages((prev) => prev.map((m) => (m.id === tempUserId ? msg : m)));
           },
-          onContent: (content: string) => {
-            regeneratingContentRef.current += content;
+          onMessageSent: (aiMessage) => {
+            if (aiMessage?.is_error) {
+              // 错误消息，删除临时消息并显示 toast
+              setMessages((prev) => prev.filter((m) => m.id !== tempUserId && m.id !== newStreamingId));
+              toast.error(`重新生成失败: ${aiMessage.content}`);
+            } else if (aiMessage) {
+              // 成功消息，替换临时 AI 消息
+              setMessages((prev) => prev.map((m) => (m.id === newStreamingId ? aiMessage : m)));
+              if (onMessageUpdate) onMessageUpdate(aiMessage.content);
+            }
+            resetRegeneratingState();
+          },
+          onStreamContent: (text) => {
+            regeneratingContentRef.current += text;
             setMessages((prev) =>
               prev.map((m) => (m.id === newStreamingId ? { ...m, content: regeneratingContentRef.current } : m))
             );
             if (!userScrolledAway) scrollToBottom();
           },
-          onDone: (finalMessage: Message | null) => {
-            if (finalMessage) {
-              setMessages((prev) => {
-                const updated = prev.map((m) => (m.id === newStreamingId ? finalMessage : m));
-                queueMicrotask(() => {
-                  const cached = getCachedMessages(conversationId!);
-                  if (cached) updateCachedMessages(conversationId!, updated.map(toStoreMessage), cached.hasMore);
-                });
-                return updated;
-              });
-              if (onMessageUpdate) onMessageUpdate(finalMessage.content);
-            }
-            resetRegeneratingState();
-          },
-          onError: (error: string) => {
-            setMessages((prev) => prev.filter((m) => m.id !== tempUserId && m.id !== newStreamingId));
-            resetRegeneratingState();
-            toast.error(`重新生成失败: ${error}`);
-          },
-        }
-      );
+        },
+      });
     },
-    [conversationId, modelId, selectedModel, userScrolledAway, scrollToBottom, getCachedMessages, updateCachedMessages, toStoreMessage, onMessageUpdate, resetRegeneratingState, setMessages, setRegeneratingId, setIsRegeneratingAI]
+    [conversationId, modelId, selectedModel, userScrolledAway, scrollToBottom, onMessageUpdate, resetRegeneratingState, setMessages, setRegeneratingId, setIsRegeneratingAI]
   );
 }

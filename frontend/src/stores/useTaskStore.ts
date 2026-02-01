@@ -3,20 +3,23 @@
  */
 
 import { create } from 'zustand';
-import { useChatStore } from './useChatStore';
 import type { PollingCallbacks, PollingConfig } from '../utils/polling';
 import { taskCoordinator } from '../utils/taskCoordinator';
+import { notifyTaskComplete } from '../utils/taskNotification';
+import { useChatStore } from './useChatStore';
+import type { StoreTaskStatus, StoreTaskType, CompletedNotification } from '../types/task';
 
 const GLOBAL_TASK_LIMIT = 15;
-const MAX_NOTIFICATIONS = 50;
 
-export type TaskStatus = 'pending' | 'streaming' | 'polling' | 'completed' | 'error';
-export type TaskType = 'chat' | 'image' | 'video';
+// 重新导出类型供外部使用（保持向后兼容）
+export type TaskStatus = StoreTaskStatus;
+export type TaskType = StoreTaskType;
+export type { CompletedNotification };
 
 export interface ChatTask {
   conversationId: string;
   conversationTitle: string;
-  status: TaskStatus;
+  status: StoreTaskStatus;
   startTime: number;
   content?: string;
 }
@@ -26,18 +29,9 @@ export interface MediaTask {
   conversationId: string;
   conversationTitle: string;
   type: 'image' | 'video';
-  status: TaskStatus;
+  status: StoreTaskStatus;
   startTime: number;
   placeholderId: string;
-}
-
-export interface CompletedNotification {
-  id: string;
-  conversationId: string;
-  conversationTitle: string;
-  type: TaskType;
-  completedAt: number;
-  isRead: boolean;
 }
 
 export type { PollingCallbacks };
@@ -120,6 +114,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   },
 
   completeTask: (conversationId: string) => {
+    // 在 set 之前调用副作用（与原实现一致）
     useChatStore.getState().markConversationUnread(conversationId);
 
     set((state) => {
@@ -129,29 +124,21 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       const newTasks = new Map(state.chatTasks);
       newTasks.delete(conversationId);
 
-      let newNotifications = [
-        ...state.pendingNotifications,
+      const { pendingNotifications, recentlyCompleted } = notifyTaskComplete(
         {
           id: conversationId,
           conversationId,
           conversationTitle: task.conversationTitle,
-          type: 'chat' as TaskType,
-          completedAt: Date.now(),
-          isRead: false,
+          type: 'chat',
         },
-      ];
-
-      if (newNotifications.length > MAX_NOTIFICATIONS) {
-        newNotifications = newNotifications.slice(-MAX_NOTIFICATIONS);
-      }
-
-      const newRecentlyCompleted = new Set(state.recentlyCompleted);
-      newRecentlyCompleted.add(conversationId);
+        state.pendingNotifications,
+        state.recentlyCompleted
+      );
 
       return {
         chatTasks: newTasks,
-        pendingNotifications: newNotifications,
-        recentlyCompleted: newRecentlyCompleted,
+        pendingNotifications,
+        recentlyCompleted,
       };
     });
   },
@@ -199,35 +186,28 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     if (!task) return;
 
     get().stopPolling(taskId);
+    // 在 set 之前调用副作用（与原实现一致）
     useChatStore.getState().markConversationUnread(task.conversationId);
 
     set((state) => {
       const newTasks = new Map(state.mediaTasks);
       newTasks.delete(taskId);
 
-      let newNotifications = [
-        ...state.pendingNotifications,
+      const { pendingNotifications, recentlyCompleted } = notifyTaskComplete(
         {
           id: taskId,
           conversationId: task.conversationId,
           conversationTitle: task.conversationTitle,
           type: task.type,
-          completedAt: Date.now(),
-          isRead: false,
         },
-      ];
-
-      if (newNotifications.length > MAX_NOTIFICATIONS) {
-        newNotifications = newNotifications.slice(-MAX_NOTIFICATIONS);
-      }
-
-      const newRecentlyCompleted = new Set(state.recentlyCompleted);
-      newRecentlyCompleted.add(task.conversationId);
+        state.pendingNotifications,
+        state.recentlyCompleted
+      );
 
       return {
         mediaTasks: newTasks,
-        pendingNotifications: newNotifications,
-        recentlyCompleted: newRecentlyCompleted,
+        pendingNotifications,
+        recentlyCompleted,
       };
     });
   },

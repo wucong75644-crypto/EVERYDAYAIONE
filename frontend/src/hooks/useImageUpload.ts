@@ -5,7 +5,7 @@
  */
 
 import { useState } from 'react';
-import { uploadImage } from '../services/image';
+import { uploadImageFile } from '../services/image';
 
 export interface UploadedImage {
   id: string; // 唯一标识
@@ -95,16 +95,11 @@ export function useImageUpload() {
           prev.map((img) => (img.id === newImage.id ? { ...img, preview } : img))
         );
 
-        // 读取文件为 base64（仅用于上传）
-        const reader = new FileReader();
-        const base64 = await new Promise<string>((resolve, reject) => {
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = () => reject(new Error('图片读取失败'));
-          reader.readAsDataURL(newImage.file);
-        });
+        // 使用 FormData 上传到服务器（避免 base64 编码 33% 体积膨胀）
+        const uploadResult = await uploadImageFile(newImage.file);
 
-        // 上传到服务器
-        const uploadResult = await uploadImage(base64);
+        // 预加载 CDN 图片，确保发送消息时图片已在浏览器缓存中
+        new Image().src = uploadResult.url;
 
         // 更新URL和状态
         setImages((prev) =>

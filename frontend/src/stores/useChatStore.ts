@@ -2,21 +2,19 @@
  * 聊天状态管理
  *
  * 管理对话列表、消息、发送状态、消息缓存等
+ *
+ * 重构说明（方案B）：
+ * - 删除了旧的 CacheMessage 类型（驼峰命名），统一使用 API 的 Message 格式（下划线命名）
+ * - messageCache 直接存储 Message 格式，无需格式转换
+ * - 新增统一操作方法：appendMessage, replaceMessage, removeMessage, setMessagesForConversation
  */
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { type Message } from '../services/message';
 
-export interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  imageUrl?: string;
-  videoUrl?: string;
-  createdAt: string;
-  client_request_id?: string;  // 客户端请求ID（用于乐观更新）
-  status?: 'pending' | 'sent' | 'failed';  // 消息状态
-}
+// 重新导出 Message 类型，保持向后兼容
+export type { Message } from '../services/message';
 
 export interface Conversation {
   id: string;
@@ -126,14 +124,27 @@ interface ChatState {
   createConversation: (title: string) => string;
   reset: () => void;
 
+  // ========================================
+  // 统一操作入口（方案B 新增）
+  // ========================================
+
+  /** 追加消息到缓存末尾 */
+  appendMessage: (conversationId: string, message: Message) => void;
+  /** 替换缓存中的消息（通过 messageId 查找） */
+  replaceMessage: (conversationId: string, messageId: string, newMessage: Message) => void;
+  /** 删除缓存中的消息 */
+  removeMessage: (conversationId: string, messageId: string) => void;
+  /** 批量设置对话的所有消息（从后端加载时使用） */
+  setMessagesForConversation: (conversationId: string, messages: Message[], hasMore?: boolean) => void;
+  /** 清空指定对话的缓存 */
+  clearConversationCache: (conversationId: string) => void;
+
+  // ========================================
   // 缓存操作
+  // ========================================
   getCachedMessages: (conversationId: string) => MessageCacheEntry | null;
   touchCache: (conversationId: string) => void;
-  setCachedMessages: (conversationId: string, entry: Omit<MessageCacheEntry, 'lastFetchedAt'>) => void;
-  updateCachedMessages: (conversationId: string, messages: Message[], hasMore?: boolean) => void;
-  addMessageToCache: (conversationId: string, message: Message) => void;
-  replaceMessageInCache: (conversationId: string, messageId: string, newMessage: Message) => void;
-  replaceOptimisticMessage: (conversationId: string, clientRequestId: string, realMessage: Message) => void;
+  updateMessageId: (conversationId: string, clientRequestId: string, newId: string) => void;
   setCacheSendingState: (conversationId: string, isSending: boolean) => void;
   deleteCachedMessages: (conversationId: string) => void;
   isCacheExpired: (conversationId: string) => boolean;
@@ -250,6 +261,138 @@ export const useChatStore = create<ChatState>()(
     cacheAccessOrder: [],
   }),
 
+  // ========================================
+  // 统一操作入口（方案B 新增）
+  // ========================================
+
+  // 追加消息到缓存末尾（统一入口）
+  appendMessage: (conversationId: string, message: Message) => {
+    set((state) => {
+      const cached = state.messageCache.get(conversationId);
+
+      // 如果缓存不存在，创建新缓存
+      if (!cached) {
+        const newCache = new Map(state.messageCache);
+        let newOrder = [...state.cacheAccessOrder];
+
+        // LRU 淘汰
+        while (newOrder.length >= CACHE_CONFIG.MAX_CACHED_CONVERSATIONS) {
+          const oldestId = newOrder.shift();
+          if (oldestId) newCache.delete(oldestId);
+        }
+
+        newCache.set(conversationId, {
+          messages: [message],
+          hasMore: false,
+          lastFetchedAt: Date.now(),
+        });
+        newOrder.push(conversationId);
+
+        return { messageCache: newCache, cacheAccessOrder: newOrder };
+      }
+
+      // 缓存存在，检查消息是否已存在（去重）
+      if (cached.messages.some((m) => m.id === message.id)) {
+        return state; // 消息已存在，不重复追加
+      }
+
+      const newCache = new Map(state.messageCache);
+      newCache.set(conversationId, {
+        ...cached,
+        messages: [...cached.messages, message],
+      });
+
+      return { messageCache: newCache };
+    });
+  },
+
+  // 替换缓存中的消息（统一入口）
+  replaceMessage: (conversationId: string, messageId: string, newMessage: Message) => {
+    set((state) => {
+      const cached = state.messageCache.get(conversationId);
+      if (!cached) return state;
+
+      const messageIndex = cached.messages.findIndex((m) => m.id === messageId);
+      if (messageIndex === -1) {
+        // 消息不存在，追加到末尾
+        const newCache = new Map(state.messageCache);
+        newCache.set(conversationId, {
+          ...cached,
+          messages: [...cached.messages, newMessage],
+        });
+        return { messageCache: newCache };
+      }
+
+      // 替换消息
+      const newMessages = [...cached.messages];
+      newMessages[messageIndex] = newMessage;
+
+      const newCache = new Map(state.messageCache);
+      newCache.set(conversationId, {
+        ...cached,
+        messages: newMessages,
+      });
+
+      return { messageCache: newCache };
+    });
+  },
+
+  // 删除缓存中的消息（统一入口）
+  removeMessage: (conversationId: string, messageId: string) => {
+    set((state) => {
+      const cached = state.messageCache.get(conversationId);
+      if (!cached) return state;
+
+      const newMessages = cached.messages.filter((m) => m.id !== messageId);
+
+      const newCache = new Map(state.messageCache);
+      newCache.set(conversationId, {
+        ...cached,
+        messages: newMessages,
+      });
+
+      return { messageCache: newCache };
+    });
+  },
+
+  // 批量设置对话的所有消息（统一入口，从后端加载时使用）
+  setMessagesForConversation: (conversationId: string, messages: Message[], hasMore = false) => {
+    const state = get();
+    const newCache = new Map(state.messageCache);
+    let newOrder = [...state.cacheAccessOrder];
+
+    // 移除旧的顺序记录
+    newOrder = newOrder.filter((id) => id !== conversationId);
+
+    // LRU 淘汰
+    while (newOrder.length >= CACHE_CONFIG.MAX_CACHED_CONVERSATIONS) {
+      const oldestId = newOrder.shift();
+      if (oldestId) newCache.delete(oldestId);
+    }
+
+    newCache.set(conversationId, {
+      messages,
+      hasMore,
+      lastFetchedAt: Date.now(),
+    });
+    newOrder.push(conversationId);
+
+    set({ messageCache: newCache, cacheAccessOrder: newOrder });
+  },
+
+  // 清空指定对话的缓存（统一入口）
+  clearConversationCache: (conversationId: string) => {
+    const state = get();
+    const newCache = new Map(state.messageCache);
+    newCache.delete(conversationId);
+    const newOrder = state.cacheAccessOrder.filter((id) => id !== conversationId);
+    set({ messageCache: newCache, cacheAccessOrder: newOrder });
+  },
+
+  // ========================================
+  // 缓存操作（旧方法，过渡期保留）
+  // ========================================
+
   // 获取缓存的消息（只读，不更新LRU顺序）
   getCachedMessages: (conversationId: string) => {
     const state = get();
@@ -268,127 +411,25 @@ export const useChatStore = create<ChatState>()(
     set({ cacheAccessOrder: newOrder });
   },
 
-  // 设置缓存的消息（带 LRU 淘汰）
-  setCachedMessages: (conversationId: string, entry: Omit<MessageCacheEntry, 'lastFetchedAt'>) => {
-    const state = get();
-    const newCache = new Map(state.messageCache);
-    let newOrder = [...state.cacheAccessOrder];
-
-    // 如果已存在，先移除旧的顺序记录
-    newOrder = newOrder.filter((id) => id !== conversationId);
-
-    // LRU 淘汰：超出上限时移除最久未访问的
-    while (newOrder.length >= CACHE_CONFIG.MAX_CACHED_CONVERSATIONS) {
-      const oldestId = newOrder.shift();
-      if (oldestId) {
-        newCache.delete(oldestId);
-      }
-    }
-
-    // 添加新缓存
-    newCache.set(conversationId, {
-      ...entry,
-      lastFetchedAt: Date.now(),
-    });
-    newOrder.push(conversationId);
-
-    set({ messageCache: newCache, cacheAccessOrder: newOrder });
-  },
-
-  // 更新已缓存的消息（静默刷新后调用）- 使用函数式 set 避免并发覆盖
-  updateCachedMessages: (conversationId: string, messages: Message[], hasMore?: boolean) => {
+  // 根据 client_request_id 只更新消息 ID 和状态（精简版乐观更新）
+  updateMessageId: (conversationId: string, clientRequestId: string, newId: string) => {
     set((state) => {
       const cached = state.messageCache.get(conversationId);
       if (!cached) return state;
 
+      const updatedMessages = cached.messages.map((msg) =>
+        msg.client_request_id === clientRequestId
+          ? { ...msg, id: newId, status: 'sent' as const }
+          : msg
+      );
+
       const newCache = new Map(state.messageCache);
-      newCache.set(conversationId, {
-        ...cached,
-        messages,
-        hasMore: hasMore ?? cached.hasMore,
-        lastFetchedAt: Date.now(),
-      });
+      newCache.set(conversationId, { ...cached, messages: updatedMessages });
 
       // 如果是当前对话，同步更新 messages 状态
       const updates: Partial<ChatState> = { messageCache: newCache };
       if (state.currentConversationId === conversationId) {
-        updates.messages = messages;
-      }
-
-      return updates;
-    });
-  },
-
-  // 追加消息到缓存（发送消息后调用）- 使用函数式 set 避免并发覆盖
-  addMessageToCache: (conversationId: string, message: Message) => {
-    set((state) => {
-      const cached = state.messageCache.get(conversationId);
-      if (!cached) return state;
-
-      const newCache = new Map(state.messageCache);
-      newCache.set(conversationId, {
-        ...cached,
-        messages: [...cached.messages, message],
-      });
-      return { messageCache: newCache };
-    });
-  },
-
-  // 原子替换缓存中的单条消息（通过 messageId 查找并替换）
-  replaceMessageInCache: (conversationId: string, messageId: string, newMessage: Message) => {
-    set((state) => {
-      const cached = state.messageCache.get(conversationId);
-      if (!cached) return state;
-
-      const messageIndex = cached.messages.findIndex((m) => m.id === messageId);
-      if (messageIndex === -1) return state;
-
-      const newMessages = [...cached.messages];
-      newMessages[messageIndex] = newMessage;
-
-      const newCache = new Map(state.messageCache);
-      newCache.set(conversationId, {
-        ...cached,
-        messages: newMessages,
-      });
-
-      // 如果是当前对话，同步更新 messages 状态
-      const updates: Partial<ChatState> = { messageCache: newCache };
-      if (state.currentConversationId === conversationId) {
-        updates.messages = newMessages;
-      }
-
-      return updates;
-    });
-  },
-
-  // 根据 client_request_id 替换临时消息为真实消息（用于乐观更新）
-  replaceOptimisticMessage: (conversationId: string, clientRequestId: string, realMessage: Message) => {
-    set((state) => {
-      const cached = state.messageCache.get(conversationId);
-      if (!cached) return state;
-
-      // 查找匹配 client_request_id 的临时消息
-      const messageIndex = cached.messages.findIndex((m) => m.client_request_id === clientRequestId);
-      if (messageIndex === -1) return state; // 未找到匹配的临时消息
-
-      const newMessages = [...cached.messages];
-      // 替换为真实消息，保留状态为 'sent'
-      newMessages[messageIndex] = {
-        ...realMessage,
-        status: 'sent',
-      };
-
-      const newCache = new Map(state.messageCache);
-      newCache.set(conversationId, {
-        ...cached,
-        messages: newMessages,
-      });
-
-      // 如果是当前对话，同步更新 messages 状态
-      const updates: Partial<ChatState> = { messageCache: newCache };
-      if (state.currentConversationId === conversationId) {
-        updates.messages = newMessages;
+        updates.messages = updatedMessages;
       }
 
       return updates;

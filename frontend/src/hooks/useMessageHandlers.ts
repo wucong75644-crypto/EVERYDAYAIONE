@@ -2,7 +2,7 @@
  * 消息处理 Hook（组合器）
  *
  * 组合聊天、图像生成、视频生成的处理逻辑
- * 各策略逻辑已提取到独立 Handler 文件
+ * 使用统一的 useMediaMessageHandler 处理图片/视频
  */
 
 import { type UnifiedModel } from '../constants/models';
@@ -17,8 +17,7 @@ import {
   type VideoAspectRatio,
 } from '../services/video';
 import { useTextMessageHandler } from './handlers/useTextMessageHandler';
-import { useImageMessageHandler } from './handlers/useImageMessageHandler';
-import { useVideoMessageHandler } from './handlers/useVideoMessageHandler';
+import { useMediaMessageHandler } from './handlers/useMediaMessageHandler';
 
 interface UseMessageHandlersParams {
   selectedModel: UnifiedModel;
@@ -68,8 +67,9 @@ export function useMessageHandlers(params: UseMessageHandlersParams) {
     onStreamStart,
   });
 
-  // 图片消息处理
-  const { handleImageGeneration } = useImageMessageHandler({
+  // 图片消息处理（使用统一媒体处理器）
+  const { handleMediaGeneration: handleImageGeneration } = useMediaMessageHandler({
+    type: 'image',
     selectedModel,
     aspectRatio,
     resolution,
@@ -80,8 +80,9 @@ export function useMessageHandlers(params: UseMessageHandlersParams) {
     onMediaTaskSubmitted,
   });
 
-  // 视频消息处理
-  const { handleVideoGeneration } = useVideoMessageHandler({
+  // 视频消息处理（使用统一媒体处理器）
+  const { handleMediaGeneration: handleVideoGeneration } = useMediaMessageHandler({
+    type: 'video',
     selectedModel,
     videoFrames,
     videoAspectRatio,

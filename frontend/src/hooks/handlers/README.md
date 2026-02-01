@@ -211,56 +211,16 @@ function VideoGenerationComponent() {
 
 ### mediaHandlerUtils.ts
 
-提供共享的工具函数和类型定义。
+提供错误提取工具函数。
 
 ```typescript
-import {
-  extractErrorMessage,
-  extractImageUrl,
-  extractVideoUrl,
-  handleGenerationError,
-} from './handlers/mediaHandlerUtils';
+import { extractErrorMessage } from './handlers/mediaHandlerUtils';
 
 // 从错误对象提取友好消息
 const errorMsg = extractErrorMessage(error);
-
-// 从 API 响应提取 URL
-const imageUrl = extractImageUrl(response);
-const videoUrl = extractVideoUrl(response);
-
-// 处理生成错误
-const errorMessage = await handleGenerationError(
-  conversationId,
-  '图片生成失败',
-  error,
-  timestamp,
-  generationParams
-);
 ```
 
-**主要类型：**
-
-```typescript
-// 媒体生成配置
-interface MediaGenConfig {
-  type: 'image' | 'video';
-  conversationId: string;
-  successContent: string;
-  errorPrefix: string;
-  pollInterval: number;
-  creditsConsumed: number;
-  // ...更多配置
-}
-
-// 媒体生成响应
-interface MediaResponse {
-  status: string;
-  task_id: string;
-  credits_consumed: number;
-  image_urls?: string[];
-  video_url?: string | null;
-}
-```
+> 注意：URL 提取和错误消息创建逻辑已移至 `services/messageSender/mediaGenerationCore.ts`
 
 ---
 
