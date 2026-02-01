@@ -104,10 +104,11 @@
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `useMessageHandlers` | `frontend/src/hooks/useMessageHandlers.ts` | 消息处理器组合 Hook | UseMessageHandlersParams | {handleChatMessage, handleImageGeneration, handleVideoGeneration} |
+| `useMessageHandlers` | `frontend/src/hooks/useMessageHandlers.ts` | 消息处理器组合 Hook（使用统一 useMediaMessageHandler） | UseMessageHandlersParams | {handleChatMessage, handleImageGeneration, handleVideoGeneration} |
 | `useTextMessageHandler` | `frontend/src/hooks/handlers/useTextMessageHandler.ts` | 文本消息处理 Hook | UseTextMessageHandlerParams | {handleChatMessage} |
-| `useImageMessageHandler` | `frontend/src/hooks/handlers/useImageMessageHandler.ts` | 图片消息处理 Hook | UseImageMessageHandlerParams | {handleImageGeneration} |
-| `useVideoMessageHandler` | `frontend/src/hooks/handlers/useVideoMessageHandler.ts` | 视频消息处理 Hook | UseVideoMessageHandlerParams | {handleVideoGeneration} |
+| `useMediaMessageHandler` | `frontend/src/hooks/handlers/useMediaMessageHandler.ts` | 统一媒体消息处理 Hook（合并图片/视频） | UseMediaMessageHandlerParams | {handleMediaGeneration} |
+| `useImageMessageHandler` | `frontend/src/hooks/handlers/useImageMessageHandler.ts` | 图片消息处理 Hook（@deprecated，使用 useMediaMessageHandler） | UseImageMessageHandlerParams | {handleImageGeneration} |
+| `useVideoMessageHandler` | `frontend/src/hooks/handlers/useVideoMessageHandler.ts` | 视频消息处理 Hook（@deprecated，使用 useMediaMessageHandler） | UseVideoMessageHandlerParams | {handleVideoGeneration} |
 | `extractErrorMessage` | `frontend/src/hooks/handlers/mediaHandlerUtils.ts` | 从错误对象提取友好消息 | error: unknown | string |
 | `extractImageUrl` | `frontend/src/hooks/handlers/mediaHandlerUtils.ts` | 从 API 响应提取图片 URL | result: unknown | string \| undefined |
 | `extractVideoUrl` | `frontend/src/hooks/handlers/mediaHandlerUtils.ts` | 从 API 响应提取视频 URL | result: unknown | string \| undefined |
@@ -138,16 +139,28 @@
 
 ### 轮询管理模块 (Polling)
 
+> **重构说明**：轮询逻辑已迁移到 `useTaskStore`，`polling.ts` 仅保留类型定义。实际轮询在 `useTaskStore.startPolling/stopPolling` 中实现，支持连续失败计数、锁续约、taskCoordinator 多标签页协调。
+
+#### 前端类型定义
+
+| 类型名 | 文件路径 | 功能描述 |
+|--------|----------|----------|
+| `PollingCallbacks` | `frontend/src/utils/polling.ts` | 轮询回调接口（onSuccess、onError、onProgress?） |
+| `PollingConfig` | `frontend/src/utils/polling.ts` | 轮询配置接口（intervalId、pollFn、callbacks、lockRenewalId?） |
+
+### 统一消息发送模块 (Message Sender)
+
 #### 前端函数
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `PollingManager` | `frontend/src/utils/polling.ts` | 轮询管理器类 | - | PollingManager |
-| `PollingManager.start` | `frontend/src/utils/polling.ts` | 开始轮询任务 | taskId, pollFn, callbacks, options? | () => void (cleanup) |
-| `PollingManager.stop` | `frontend/src/utils/polling.ts` | 停止轮询任务 | taskId | void |
-| `PollingManager.stopAll` | `frontend/src/utils/polling.ts` | 停止所有轮询任务 | - | void |
-| `PollingManager.has` | `frontend/src/utils/polling.ts` | 检查任务是否正在轮询 | taskId | boolean |
-| `PollingManager.size` | `frontend/src/utils/polling.ts` | 获取当前轮询任务数量 | - | number |
+| `sendMessage` | `frontend/src/services/messageSender/index.ts` | 统一发送消息入口（自动分发到对应 sender） | ChatSenderParams \| ImageSenderParams \| VideoSenderParams | Promise<void> |
+| `sendChatMessage` | `frontend/src/services/messageSender/chatSender.ts` | 发送聊天消息（流式 SSE） | ChatSenderParams | Promise<void> |
+| `sendMediaMessage` | `frontend/src/services/messageSender/mediaSender.ts` | 统一媒体发送器（合并图片/视频） | ImageSenderParams \| VideoSenderParams | Promise<void> |
+| `sendImageMessage` | `frontend/src/services/messageSender/imageSender.ts` | 发送图片消息（@deprecated，使用 sendMediaMessage） | ImageSenderParams | Promise<void> |
+| `sendVideoMessage` | `frontend/src/services/messageSender/videoSender.ts` | 发送视频消息（@deprecated，使用 sendMediaMessage） | VideoSenderParams | Promise<void> |
+| `executeImageGenerationCore` | `frontend/src/services/messageSender/mediaGenerationCore.ts` | 图片生成核心逻辑（API调用+轮询） | ImageGenerationCoreParams | Promise<void> |
+| `executeVideoGenerationCore` | `frontend/src/services/messageSender/mediaGenerationCore.ts` | 视频生成核心逻辑（API调用+轮询） | VideoGenerationCoreParams | Promise<void> |
 
 ### 媒体重新生成模块 (Media Regeneration)
 
@@ -155,10 +168,11 @@
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `executeImageRegeneration` | `frontend/src/utils/mediaRegeneration.ts` | 执行图片重新生成流程 | ImageRegenParams | Promise<void> |
-| `executeVideoRegeneration` | `frontend/src/utils/mediaRegeneration.ts` | 执行视频重新生成流程 | VideoRegenParams | Promise<void> |
-| `handleMediaPolling` | `frontend/src/utils/mediaRegeneration.ts` | 处理媒体生成后台轮询 | taskId, placeholderId, creditsConsumed, config, ... | void |
-| `saveUserMessage` | `frontend/src/utils/mediaRegeneration.ts` | 保存用户消息到数据库 | conversationId, userMessage, tempUserId, setMessages, createdAt | Promise<Message> |
+| `executeImageRegeneration` | `frontend/src/utils/mediaRegeneration.ts` | 执行图片重新生成（复用 sendImageMessage） | MediaRegenParams | Promise<void> |
+| `executeVideoRegeneration` | `frontend/src/utils/mediaRegeneration.ts` | 执行视频重新生成（复用 sendVideoMessage） | MediaRegenParams | Promise<void> |
+| `computeImageGenerationParams` | `frontend/src/utils/mediaRegeneration.ts` | 计算图片生成参数（优先级：原始>保存>默认） | originalParams?, modelId?, selectedModel? | ImageSenderParams['generationParams'] |
+| `computeVideoGenerationParams` | `frontend/src/utils/mediaRegeneration.ts` | 计算视频生成参数（优先级：原始>保存>默认） | originalParams?, modelId?, selectedModel?, hasImage? | { generationParams, finalModelId } |
+| `createMediaRegenCallbacks` | `frontend/src/utils/mediaRegeneration.ts` | 创建媒体重新生成回调工厂函数（通过 setMessages 兼容层写入缓存） | setMessages, resetRegeneratingState, onMessageUpdate?, onMediaTaskSubmitted? | SendMessageCallbacks |
 | `getModelTypeById` | `frontend/src/utils/mediaRegeneration.ts` | 根据模型 ID 获取类型 | modelId: string | 'chat' \| 'image' \| 'video' \| null |
 
 ### 性能监控模块 (Performance Monitoring)
@@ -374,6 +388,34 @@
 | `useDragDropUpload` | `frontend/src/hooks/useDragDropUpload.ts` | 拖拽上传逻辑 | - | { isDragging, handleDrop, ... } |
 | `useScrollManager` | `frontend/src/hooks/useScrollManager.ts` | 滚动管理逻辑 | - | { scrollToBottom, ... } |
 
+### 通用组件模块 (Common Components)
+
+#### 前端组件
+
+| 组件名 | 文件路径 | 功能描述 |
+|--------|----------|----------|
+| `Modal` | `frontend/src/components/common/Modal.tsx` | 通用弹窗组件（动画、ESC关闭、遮罩层点击关闭、防止背景滚动） |
+
+### 认证弹窗模块 (Auth Modal)
+
+#### 前端组件
+
+| 组件名 | 文件路径 | 功能描述 |
+|--------|----------|----------|
+| `AuthModal` | `frontend/src/components/auth/AuthModal.tsx` | 认证弹窗容器，整合登录/注册表单，根据 mode 切换显示 |
+| `LoginForm` | `frontend/src/components/auth/LoginForm.tsx` | 登录表单组件，支持密码登录和验证码登录双模式 |
+| `RegisterForm` | `frontend/src/components/auth/RegisterForm.tsx` | 注册表单组件，手机号+验证码注册 |
+| `ProtectedRoute` | `frontend/src/components/auth/ProtectedRoute.tsx` | 路由守卫组件，未登录时弹出认证弹窗 |
+
+#### 前端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `useAuthModalStore` | `frontend/src/stores/useAuthModalStore.ts` | Zustand 认证弹窗状态管理 | - | AuthModalStore |
+| `open` | `frontend/src/stores/useAuthModalStore.ts` | 打开认证弹窗 | mode: 'login' \| 'register' | void |
+| `close` | `frontend/src/stores/useAuthModalStore.ts` | 关闭认证弹窗 | - | void |
+| `switchMode` | `frontend/src/stores/useAuthModalStore.ts` | 切换登录/注册模式 | - | void |
+
 ### 聊天组件模块 (Chat Components)
 
 #### 前端组件
@@ -400,7 +442,8 @@
 | `UploadMenu` | `frontend/src/components/chat/UploadMenu.tsx` | 上传菜单 |
 | `ImagePreview` | `frontend/src/components/chat/ImagePreview.tsx` | 图片预览（输入区小图预览） |
 | `ImagePreviewModal` | `frontend/src/components/chat/ImagePreviewModal.tsx` | 图片预览弹窗（全屏缩放下载） |
-| `MediaPlaceholder` | `frontend/src/components/chat/MediaPlaceholder.tsx` | 媒体占位符（加载中状态） |
+| `LoadingPlaceholder` | `frontend/src/components/chat/LoadingPlaceholder.tsx` | 统一加载占位符（文字 + 跳动小圆点） |
+| `MediaPlaceholder` | `frontend/src/components/chat/MediaPlaceholder.tsx` | 统一媒体占位符（灰色框 + 图标，支持图片/视频/音频等） |
 | `AudioPreview` | `frontend/src/components/chat/AudioPreview.tsx` | 音频预览 |
 | `AudioRecorder` | `frontend/src/components/chat/AudioRecorder.tsx` | 录音组件 |
 | `ConflictAlert` | `frontend/src/components/chat/ConflictAlert.tsx` | 模型冲突提示 |
@@ -421,6 +464,92 @@
 | `createStreamingMessage` | `frontend/src/utils/messageFactory.ts` | 创建流式消息占位 | - | Message |
 | `createMediaTimestamps` | `frontend/src/utils/messageFactory.ts` | 生成媒体消息时间戳和占位符ID | - | MediaTimestamps |
 | `createMediaOptimisticPair` | `frontend/src/utils/messageFactory.ts` | 创建媒体生成乐观消息对 | conversationId, content, imageUrl, loadingText, timestamps | { userMessage, placeholder } |
+| `getPlaceholderText` | `frontend/src/constants/placeholder.ts` | 获取占位符文字（聊天/媒体通用） | type | string |
+| `getPlaceholderInfo` | `frontend/src/constants/placeholder.ts` | 判断是否为占位符消息 | message | PlaceholderInfo |
+| `isMediaPlaceholder` | `frontend/src/constants/placeholder.ts` | 判断是否为媒体占位符 | message | boolean |
+| `getMediaPlaceholderLabel` | `frontend/src/components/chat/MediaPlaceholder.tsx` | 获取媒体占位符标签文字 | type | string |
+| `regenerateMessage` | `frontend/src/utils/regenerate/index.ts` | 统一重新生成入口（自动判断失败/成功） | options | Promise<void> |
+| `regenerateInPlace` | `frontend/src/utils/regenerate/regenerateInPlace.ts` | 失败消息原地重新生成 | options | Promise<void> |
+| `regenerateChatInPlace` | `frontend/src/utils/regenerate/strategies/chatStrategy.ts` | 聊天消息原地重新生成策略 | options | Promise<void> |
+| `regenerateImageInPlace` | `frontend/src/utils/regenerate/strategies/imageStrategy.ts` | 图片消息原地重新生成策略（复用 executeImageGenerationCore） | RegenerateImageInPlaceOptions | Promise<void> |
+| `regenerateVideoInPlace` | `frontend/src/utils/regenerate/strategies/videoStrategy.ts` | 视频消息原地重新生成策略（复用 executeVideoGenerationCore） | RegenerateVideoInPlaceOptions | Promise<void> |
+
+### 任务通知模块 (Task Notification)
+
+> **新增于阶段4重构**：提取任务完成通知逻辑为纯函数，消除 useTaskStore 中的重复代码。
+
+#### 前端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `notifyTaskComplete` | `frontend/src/utils/taskNotification.ts` | 处理任务完成通知（纯函数，仅计算新状态） | NotifyTaskCompleteParams, currentNotifications, currentRecentlyCompleted | NotifyTaskCompleteResult |
+
+#### 共享类型定义
+
+| 类型名 | 文件路径 | 功能描述 |
+|--------|----------|----------|
+| `StoreTaskStatus` | `frontend/src/types/task.ts` | Store 任务状态（pending、streaming、polling、completed、error） |
+| `StoreTaskType` | `frontend/src/types/task.ts` | Store 任务类型（chat、image、video） |
+| `CompletedNotification` | `frontend/src/types/task.ts` | 完成通知接口（id、conversationId、type、completedAt、isRead） |
+| `NotifyTaskCompleteParams` | `frontend/src/utils/taskNotification.ts` | 通知参数接口 |
+| `NotifyTaskCompleteResult` | `frontend/src/utils/taskNotification.ts` | 通知结果接口（pendingNotifications、recentlyCompleted） |
+
+---
+
+### 图片URL工具模块 (Image Utils)
+
+> **新增于阶段0重构**：提取图片URL解析逻辑为共享函数，支持逗号分隔的多图格式。
+
+#### 前端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `parseImageUrls` | `frontend/src/utils/imageUtils.ts` | 解析图片URL字符串为数组（支持逗号分隔） | imageUrl: string \| null \| undefined | string[] |
+| `getFirstImageUrl` | `frontend/src/utils/imageUtils.ts` | 获取第一张图片URL | imageUrl: string \| null \| undefined | string \| null |
+
+---
+
+### 统一日志工具模块 (Logger)
+
+> **新增于阶段0重构**：提供格式化的日志输出，支持业务上下文。
+
+#### 前端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `logger.error` | `frontend/src/utils/logger.ts` | 错误日志（带业务上下文） | scope, message, error?, context? | void |
+| `logger.warn` | `frontend/src/utils/logger.ts` | 警告日志 | scope, message, context? | void |
+| `logger.debug` | `frontend/src/utils/logger.ts` | 调试日志（仅开发环境） | scope, message, data? | void |
+| `logger.info` | `frontend/src/utils/logger.ts` | 信息日志 | scope, message, context? | void |
+
+---
+
+### 任务协调器模块 (Task Coordinator)
+
+> **用于多标签页任务轮询协调**：通过 BroadcastChannel 和 localStorage 锁机制防止重复轮询。
+
+#### 前端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `taskCoordinator.canStartPolling` | `frontend/src/utils/taskCoordinator.ts` | 检查是否可以开始轮询（获取锁） | taskId: string | boolean |
+| `taskCoordinator.releasePolling` | `frontend/src/utils/taskCoordinator.ts` | 释放轮询锁 | taskId: string | void |
+| `taskCoordinator.renewLock` | `frontend/src/utils/taskCoordinator.ts` | 续约锁（每15秒调用） | taskId: string | void |
+| `taskCoordinator.cleanup` | `frontend/src/utils/taskCoordinator.ts` | 清理所有锁（页面卸载时） | - | void |
+
+---
+
+### 消息合并工具模块 (Merge Optimistic Messages)
+
+> **用于合并持久化消息和乐观更新消息**：处理去重、temp-消息替换、streaming-消息替换等场景。
+
+#### 前端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `mergeOptimisticMessages` | `frontend/src/utils/mergeOptimisticMessages.ts` | 合并持久化消息和乐观更新消息 | persistedMessages, runtimeState | Message[] |
+
+---
 
 ### 后端服务辅助模块 (Backend Service Helpers)
 
@@ -442,25 +571,31 @@
 ## 函数分类索引
 
 ### 按模块分类
-- **Redis 基础设施模块**：6个后端函数（✨新增）
-- **任务限制服务模块**：4个后端函数（✨新增）
+- **Redis 基础设施模块**：6个后端函数
+- **任务限制服务模块**：4个后端函数
 - **任务管理模块**：9个后端函数 + 8个前端函数
-- **积分管理模块**：7个后端函数（✨更新）
+- **积分管理模块**：7个后端函数
 - **对话管理模块**：5个后端函数 + 5个前端函数
-- **消息处理模块**：8个前端函数（✨新增）
-- **滚动管理模块**：6个前端函数（✨新增）
-- **重新生成模块**：3个前端函数（✨新增）
-- **轮询管理模块**：6个前端函数（✨新增）
-- **媒体重新生成模块**：5个前端函数（✨新增）
-- **性能监控模块**：9个前端函数（✨新增）
-- **测试工具模块**：4个前端函数（✨新增）
+- **消息处理模块**：9个前端函数（含统一 useMediaMessageHandler）
+- **滚动管理模块**：6个前端函数
+- **重新生成模块**：3个前端函数
+- **轮询管理模块**：2个类型定义（实现在 useTaskStore）
+- **统一消息发送模块**：7个前端函数（含统一 sendMediaMessage）
+- **媒体重新生成模块**：6个前端函数
+- **任务通知模块**：1个前端函数 + 5个类型定义（✨阶段4新增）
+- **图片URL工具模块**：2个前端函数（✨阶段0新增）
+- **统一日志工具模块**：4个前端函数（✨阶段0新增）
+- **任务协调器模块**：4个前端函数
+- **消息合并工具模块**：1个前端函数
+- **性能监控模块**：9个前端函数
+- **测试工具模块**：4个前端函数
 - **消息服务模块**：8个后端函数 + 5个前端函数
 - **图像生成模块**：3个后端函数 + 5个前端函数
 - **视频生成模块**：5个后端函数 + 6个前端函数
 - **用户设置模块**：3个前端函数
 - **KIE 适配器模块**：5个后端函数
-- **预定义常量**：13个性能标记常量 + 3个媒体默认值常量（✨新增）
-- **总计**：约 180+ 个函数
+- **预定义常量**：13个性能标记常量 + 3个媒体默认值常量
+- **总计**：约 210+ 个函数/类型
 
 ### 按功能分类
 - **Redis 操作**：`RedisClient.get_client`, `RedisClient.acquire_lock`, `RedisClient.release_lock`
@@ -477,13 +612,13 @@
 ---
 
 ## 统计信息
-- **总函数数**：约 180+ 个（规划中 + 已实现）
-- **已实现组件**：26 个聊天组件
+- **总函数数**：约 210+ 个（规划中 + 已实现）
+- **已实现组件**：32 个（27 聊天组件 + 4 认证组件 + 1 通用组件）
 - **已实现 Hooks**：50+ 个自定义 Hooks（含消息处理、滚动管理、重新生成等）
-- **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息处理、消息服务、滚动管理、重新生成、轮询管理、媒体重新生成、性能监控、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理、测试工具
+- **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息处理、消息服务、滚动管理、重新生成、轮询管理、**统一消息发送**（含 mediaSender）、媒体重新生成、**任务通知**、**图片URL工具**、**统一日志**、**任务协调器**、**消息合并**、性能监控、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理、测试工具、认证弹窗模块、通用组件模块、占位符管理模块
 - **测试覆盖率目标**：80%+（Vitest + Testing Library）
 - **性能监控**：13个预定义性能标记，支持关键路径监控
-- **最后更新**：2026-01-28（添加消息处理模块、滚动管理模块、重新生成模块、轮询管理模块、媒体重新生成模块、性能监控模块、测试工具模块）
+- **最后更新**：2026-02-01（聊天系统综合重构阶段0-4完成，60%进度）
 
 ---
 
