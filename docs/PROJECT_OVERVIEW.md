@@ -132,12 +132,17 @@ EVERYDAYAIONE/
         ├── App.tsx                   # 根组件（路由配置）
         ├── index.css                 # 全局样式（TailwindCSS）
         ├── pages/                    # 页面组件
-        │   ├── Home.tsx                  # 首页
-        │   ├── Login.tsx                 # 登录页
-        │   ├── Register.tsx              # 注册页
+        │   ├── Home.tsx                  # 首页（含认证弹窗入口）
         │   ├── ForgotPassword.tsx        # 忘记密码页
         │   └── Chat.tsx                  # 聊天页（主功能页）
         ├── components/               # 组件
+        │   ├── common/                   # 通用组件
+        │   │   └── Modal.tsx                 # 通用弹窗组件（动画、ESC关闭、遮罩层）
+        │   ├── auth/                     # 认证相关组件
+        │   │   ├── AuthModal.tsx             # 认证弹窗容器（登录/注册切换）
+        │   │   ├── LoginForm.tsx             # 登录表单（密码/验证码双模式）
+        │   │   ├── RegisterForm.tsx          # 注册表单（手机号+验证码）
+        │   │   └── ProtectedRoute.tsx        # 路由守卫组件
         │   └── chat/                     # 聊天相关组件
         │       ├── Sidebar.tsx               # 左侧栏（对话列表、用户菜单）
         │       ├── ConversationList.tsx      # 对话列表（按日期分组，302行）
@@ -158,7 +163,8 @@ EVERYDAYAIONE/
         │       ├── UploadMenu.tsx            # 上传菜单
         │       ├── ImagePreview.tsx          # 图片预览（输入区小图）
         │       ├── ImagePreviewModal.tsx     # 图片预览弹窗（全屏缩放下载）
-        │       ├── MediaPlaceholder.tsx      # 媒体占位符（加载中状态）
+        │       ├── LoadingPlaceholder.tsx    # 统一加载占位符（文字 + 跳动圆点）
+        │       ├── MediaPlaceholder.tsx      # 统一媒体占位符（灰色框 + 图标）
         │       ├── AudioPreview.tsx          # 音频预览
         │       ├── AudioRecorder.tsx         # 录音组件
         │       ├── ConflictAlert.tsx         # 模型冲突提示
@@ -166,7 +172,8 @@ EVERYDAYAIONE/
         │       ├── LoadingSkeleton.tsx       # 加载骨架屏
         │       └── DeleteMessageModal.tsx    # 删除消息确认弹框
         ├── stores/                   # 状态管理（Zustand）
-        │   ├── useAuthStore.ts           # 认证状态
+        │   ├── useAuthStore.ts           # 认证状态（用户信息、Token）
+        │   ├── useAuthModalStore.ts      # 认证弹窗状态（开关、模式切换）
         │   ├── useChatStore.ts           # 聊天状态（消息缓存）
         │   ├── useTaskStore.ts           # 任务状态（全局任务队列）
         │   └── useConversationRuntimeStore.ts # 对话运行时状态
@@ -176,25 +183,55 @@ EVERYDAYAIONE/
         │   ├── conversation.ts           # 对话 API
         │   ├── message.ts                # 消息 API
         │   ├── image.ts                  # 图像生成 API
-        │   └── video.ts                  # 视频生成 API
+        │   ├── video.ts                  # 视频生成 API
+        │   └── messageSender/            # 统一消息发送模块
+        │       ├── index.ts                  # 统一入口（sendMessage）
+        │       ├── types.ts                  # 类型定义
+        │       ├── chatSender.ts             # 聊天消息发送器
+        │       ├── mediaSender.ts            # 统一媒体消息发送器（合并图片/视频）
+        │       ├── imageSender.ts            # 图片消息发送器（@deprecated）
+        │       ├── videoSender.ts            # 视频消息发送器（@deprecated）
+        │       └── mediaGenerationCore.ts    # 媒体生成核心逻辑（API+轮询）
         ├── types/                    # TypeScript 类型
-        │   └── auth.ts                   # 认证相关类型
+        │   ├── auth.ts                   # 认证相关类型
+        │   ├── message.ts                # 消息相关类型
+        │   └── task.ts                   # 任务相关类型（共享类型：StoreTaskStatus、StoreTaskType、CompletedNotification）
         ├── hooks/                    # 自定义 Hooks
         │   ├── useImageUpload.ts         # 图片上传逻辑
         │   ├── useAudioRecording.ts      # 录音逻辑
         │   ├── useDragDropUpload.ts      # 拖拽上传逻辑
         │   ├── useMessageLoader.ts       # 消息加载逻辑（含缓存）
-        │   ├── useMessageHandlers.ts     # 消息发送处理逻辑
+        │   ├── useMessageHandlers.ts     # 消息发送处理逻辑（组合器）
         │   ├── useRegenerateHandlers.ts  # 消息重新生成逻辑
-        │   ├── useModelSelection.ts      # 模型选择逻辑
+        │   ├── useModelSelection.ts      # 模型选择逻辑（含用户选择保护）
         │   ├── useScrollManager.ts       # 滚动管理逻辑
-        │   └── useClickOutside.ts        # 点击外部关闭逻辑
+        │   ├── useClickOutside.ts        # 点击外部关闭逻辑
+        │   └── handlers/                 # 消息处理器子模块
+        │       ├── useTextMessageHandler.ts   # 文本消息处理
+        │       ├── useMediaMessageHandler.ts  # 统一媒体消息处理（图片/视频）
+        │       └── mediaHandlerUtils.ts       # 媒体处理工具函数
         ├── constants/                # 常量配置
-        │   └── models.ts                 # 模型配置（UnifiedModel）
+        │   ├── models.ts                 # 模型配置（UnifiedModel）
+        │   └── placeholder.ts            # 占位符常量（PLACEHOLDER_TEXT）
         └── utils/                    # 工具函数
             ├── settingsStorage.ts        # 用户设置存储
             ├── modelConflict.ts          # 模型冲突检测
-            └── messageFactory.ts         # 消息工厂函数
+            ├── messageFactory.ts         # 消息工厂函数
+            ├── mergeOptimisticMessages.ts # 合并乐观更新消息（去重逻辑）
+            ├── imageUtils.ts             # 图片URL工具（parseImageUrls、getFirstImageUrl）
+            ├── logger.ts                 # 统一日志工具（error、warn、debug、info）
+            ├── taskNotification.ts       # 任务通知工具（notifyTaskComplete纯函数）
+            ├── taskCoordinator.ts        # 任务协调器（防多标签页重复轮询）
+            ├── polling.ts                # 轮询类型定义（仅类型，实现在useTaskStore）
+            ├── mediaRegeneration.ts      # 媒体重新生成工具函数
+            └── regenerate/               # 重新生成逻辑
+                ├── index.ts              # 统一入口（regenerateMessage）
+                ├── regenerateInPlace.ts  # 失败消息原地重新生成
+                ├── regenerateAsNew.ts    # 成功消息新增对话
+                └── strategies/           # 类型策略
+                    ├── chatStrategy.ts   # 聊天重新生成策略
+                    ├── imageStrategy.ts  # 图片重新生成策略
+                    └── videoStrategy.ts  # 视频重新生成策略
 │
 └── tests/                    # 单元测试
     ├── __init__.py               # 测试模块标识
@@ -440,6 +477,72 @@ cache = client.caches.create(
 ---
 
 ## 更新记录
+- **2026-02-01**：完成聊天系统综合重构（阶段0-4，21/35任务，60%进度）
+  - **阶段0 短期修复**（9个任务）：
+    - 优化 MessageArea 兼容层（Map替代index）
+    - 修复聊天流式缓存写入路径
+    - 优化消息去重逻辑（mergeOptimisticMessages.ts 优先使用 client_request_id）
+    - 修复侧边栏缓存同步竞态
+    - 修复模型切换与用户选择冲突（useModelSelection.ts 使用 userExplicitChoice）
+    - 修复消息列表key策略（移除index fallback）
+    - 提取图片URL工具函数（imageUtils.ts：parseImageUrls、getFirstImageUrl）
+    - 增加LRU清理容量（10→15）
+    - 统一错误日志（logger.ts：error、warn、debug、info 方法）
+  - **阶段1 统一缓存写入**（3个任务）：
+    - 重新生成改用 RuntimeStore
+    - 首次发送改用兼容层
+    - 删除旧缓存写入方法（4个deprecated方法）
+  - **阶段2 合并发送器处理器**（5/6任务）：
+    - 新建 mediaSender.ts 统一媒体发送器（合并图片/视频）
+    - 新建 useMediaMessageHandler.ts 统一媒体处理器
+    - 标记旧发送器/处理器为 @deprecated
+    - 更新调用方（index.ts、useMessageHandlers.ts、mediaRegeneration.ts）
+  - **阶段3 统一轮询管理器**（2个任务）：
+    - 精简 polling.ts（147→22行，仅保留类型定义）
+    - 验证 useTaskStore 轮询正常工作
+  - **阶段4 提取任务通知逻辑**（2个任务）：
+    - 新建 taskNotification.ts（notifyTaskComplete纯函数）
+    - 新建 types/task.ts（共享类型：StoreTaskStatus、StoreTaskType、CompletedNotification）
+    - 解决循环依赖（useTaskStore↔taskNotification）
+- **2026-02-01**：完成"缓存即状态"统一重构
+  - 重构：统一缓存写入逻辑到 setMessages 兼容层（MessageArea.tsx）
+  - 重构：mediaRegeneration.ts 移除直接 useChatStore 依赖
+  - 优化：createMediaRegenCallbacks 通过 setMessages 写入缓存，无需 conversationId 参数
+  - 架构：所有重新生成场景统一通过 setMessages → 兼容层 → replaceMessage/appendMessage 流程
+  - 优势：新模型（音频、3D、代码等）只需实现标准回调，缓存写入自动处理
+- **2026-02-01**：完成统一消息发送架构重构
+  - 新增：services/messageSender/ 统一消息发送模块
+  - 新增：sendMessage 统一入口（自动分发到 chat/image/video）
+  - 新增：mediaGenerationCore.ts 媒体生成核心逻辑（API调用+轮询，被 sender 和 strategy 共同复用）
+  - 重构：imageSender.ts 从 137→75 行（复用 core）
+  - 重构：videoSender.ts 从 143→81 行（复用 core）
+  - 重构：imageStrategy.ts 从 168→62 行（复用 core + computeImageGenerationParams）
+  - 重构：videoStrategy.ts 从 172→67 行（复用 core + computeVideoGenerationParams）
+  - 重构：mediaHandlerUtils.ts 从 232→68 行（移除不再使用的 createMediaPollingHandler）
+  - 新增：computeImageGenerationParams / computeVideoGenerationParams 参数计算工具函数
+  - 新增：createMediaRegenCallbacks 回调工厂函数
+  - 架构：首次发送和成功消息重新生成共用 sender，失败消息重新生成复用 core
+- **2026-02-01**：完成占位符统一重构
+  - 新增：LoadingPlaceholder 统一加载占位符组件（文字 + 三个跳动小圆点）
+  - 新增：MediaPlaceholder 统一媒体占位符组件（灰色框 + 图标，支持图片/视频/音频等）
+  - 新增：constants/placeholder.ts 占位符常量（PLACEHOLDER_TEXT，统一管理所有占位符文字）
+  - 新增：utils/regenerate/ 重新生成逻辑目录（统一入口 + 策略模式）
+  - 新增：regenerateInPlace 失败消息原地重新生成
+  - 新增：chatStrategy、imageStrategy、videoStrategy 三种重新生成策略
+  - 修改：MessageItem.tsx 使用 LoadingPlaceholder 替代硬编码占位符
+  - 修改：MessageMedia.tsx 使用 MediaPlaceholder 替代重复的占位符代码
+  - 修改：mediaRegeneration.ts 使用 PLACEHOLDER_TEXT 常量替代硬编码文字
+  - 优化：所有占位符显示统一样式（文字 + 三个跳动小圆点）
+  - 优化：首次生成和重新生成使用相同的占位符文字
+  - 文档：更新 FUNCTION_INDEX.md 和 PROJECT_OVERVIEW.md
+- **2026-01-31**：完成登录/注册弹窗化重构
+  - 新增：通用 Modal 组件（动画、ESC关闭、遮罩层点击关闭）
+  - 新增：AuthModal 认证弹窗容器（登录/注册模式切换）
+  - 新增：LoginForm 登录表单（密码登录 + 验证码登录双模式）
+  - 新增：RegisterForm 注册表单（手机号 + 验证码注册）
+  - 新增：useAuthModalStore 弹窗状态管理
+  - 删除：Login.tsx、Register.tsx 独立页面（改为弹窗模式）
+  - 优化：Home.tsx 集成认证弹窗入口
 - **2026-01-24**：完成视频生成功能集成
   - 后端：添加 `video_service.py`、`video.py` (routes)、`video.py` (schemas)
   - 前端：添加 `video.ts` (API服务)、扩展 `InputArea.tsx` 和 `MessageItem.tsx`
