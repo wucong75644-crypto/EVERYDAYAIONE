@@ -17,24 +17,12 @@ import { useAuthStore } from '../stores/useAuthStore';
 import type { Message } from '../services/message';
 import toast from 'react-hot-toast';
 
-/** 将 Message 添加到本地缓存（避免重复的类型转换代码） */
-function addMessageToLocalCache(conversationId: string, message: Message): void {
-  useChatStore.getState().addMessageToCache(conversationId, {
-    id: message.id,
-    role: message.role as 'user' | 'assistant',
-    content: message.content,
-    imageUrl: message.image_url ?? undefined,
-    videoUrl: message.video_url ?? undefined,
-    createdAt: message.created_at,
-    client_request_id: message.client_request_id,  // 添加 client_request_id
-    status: message.status,  // 添加 status
-  });
-}
-
 /** Hook 参数接口 */
 export interface UseMessageCallbacksParams {
   conversationTitle: string;
   currentConversationId: string | null;
+  /** MessageArea 的 setMessages 兼容层（用于统一缓存写入） */
+  setMessages?: (updater: Message[] | ((prev: Message[]) => Message[])) => void;
 }
 
 /** 侧边栏乐观更新状态 */
@@ -71,6 +59,7 @@ export interface UseMessageCallbacksReturn {
 export function useMessageCallbacks({
   conversationTitle,
   currentConversationId,
+  setMessages,
 }: UseMessageCallbacksParams): UseMessageCallbacksReturn {
   const navigate = useNavigate();
   const { refreshUser } = useAuthStore();
@@ -90,7 +79,6 @@ export function useMessageCallbacks({
   // RuntimeStore actions
   const {
     addOptimisticUserMessage,
-    replaceOptimisticMessage,
     addMediaPlaceholder,
     addErrorMessage,
     startStreaming,
@@ -118,18 +106,11 @@ export function useMessageCallbacks({
         startTask(messageConversationId, conversationTitle);
       }
 
-      // 添加/替换 RuntimeStore 消息
+      // 添加 RuntimeStore 消息（只处理临时消息，真实消息通过 updateMessageId 更新）
       if (messageConversationId) {
-        if (message.role === 'user') {
-          if (message.id.startsWith('temp-')) {
-            // 临时用户消息：添加到乐观更新
-            addOptimisticUserMessage(messageConversationId, message);
-          } else {
-            // 真实用户消息（后端返回）：替换匹配的 temp- 消息
-            replaceOptimisticMessage(messageConversationId, message);
-            // 同时添加到缓存，确保切换对话后消息仍然显示
-            addMessageToLocalCache(messageConversationId, message);
-          }
+        if (message.role === 'user' && message.id.startsWith('temp-')) {
+          // 临时用户消息：添加到乐观更新
+          addOptimisticUserMessage(messageConversationId, message);
         } else if (message.role === 'assistant' && message.id.startsWith('streaming-')) {
           // 媒体任务占位符（图片/视频生成中）
           addMediaPlaceholder(messageConversationId, message);
@@ -153,7 +134,6 @@ export function useMessageCallbacks({
       conversationTitle,
       startTask,
       addOptimisticUserMessage,
-      replaceOptimisticMessage,
       addMediaPlaceholder,
     ]
   );
@@ -178,11 +158,15 @@ export function useMessageCallbacks({
         if (aiMessage && aiMessage.is_error) {
           addErrorMessage(messageConversationId, aiMessage);
         } else if (aiMessage && (aiMessage.image_url || aiMessage.video_url)) {
-          // 图片/视频生成完成：已在 handleMediaPolling.onSuccess 中通过
-          // replaceMediaPlaceholder + addMessageToCache 完成处理
-          // 这里不再重复操作，避免消息重复（duplicate key 错误）
+          // 媒体消息完成：通过 setMessages 兼容层写入缓存（确保切换对话后秒显）
+          if (setMessages) {
+            setMessages((prev) => [...prev, aiMessage]);
+          } else {
+            // Fallback: 如果 setMessages 未传入，直接写入缓存
+            useChatStore.getState().appendMessage(messageConversationId, aiMessage);
+          }
 
-          // 更新侧边栏显示（无条件更新，确保媒体任务完成后侧边栏状态正确）
+          // 更新侧边栏显示
           setConversationOptimisticUpdate({
             conversationId: messageConversationId,
             lastMessage: aiMessage.content,
@@ -190,8 +174,13 @@ export function useMessageCallbacks({
         } else if (aiMessage) {
           // 普通聊天流式生成完成
           completeStreaming(messageConversationId);
-          // 将 AI 消息添加到缓存，确保切换对话后消息不丢失
-          addMessageToLocalCache(messageConversationId, aiMessage);
+          // 通过 setMessages 兼容层写入缓存（确保切换对话后秒显）
+          if (setMessages) {
+            setMessages((prev) => [...prev, aiMessage]);
+          } else {
+            // Fallback: 如果 setMessages 未传入，直接写入缓存
+            useChatStore.getState().appendMessage(messageConversationId, aiMessage);
+          }
         }
 
         // 用户正在查看当前对话，清除闪烁状态
@@ -235,6 +224,7 @@ export function useMessageCallbacks({
       navigate,
       addErrorMessage,
       completeStreaming,
+      setMessages,
     ]
   );
 

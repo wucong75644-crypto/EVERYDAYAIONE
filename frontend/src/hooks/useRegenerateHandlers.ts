@@ -1,17 +1,14 @@
 /**
- * 重新生成处理器 Hook（组合器）
+ * 重新生成处理器 Hook
  *
- * 封装所有消息重新生成逻辑（聊天、图片、视频），避免 MessageArea 代码膨胀
- * 各策略逻辑已提取到独立 Hook 文件
+ * 提供统一的消息重新生成入口，自动判断消息类型和失败/成功策略
  */
 
 import { useCallback } from 'react';
-import type { Message, GenerationParams } from '../services/message';
-import type { Message as CacheMessage, MessageCacheEntry } from '../stores/useChatStore';
+import type { Message } from '../services/message';
 import type { UnifiedModel } from '../constants/models';
-import { useRegenerateFailedMessage } from './regenerate/useRegenerateFailedMessage';
 import { useRegenerateAsNewMessage } from './regenerate/useRegenerateAsNewMessage';
-import { executeImageRegeneration, executeVideoRegeneration } from '../utils/mediaRegeneration';
+import { regenerateMessage } from '../utils/regenerate';
 
 interface RegenerateHandlersOptions {
   conversationId: string | null;
@@ -25,9 +22,6 @@ interface RegenerateHandlersOptions {
   modelId?: string | null;
   selectedModel?: UnifiedModel | null;
   userScrolledAway: boolean;
-  getCachedMessages: (conversationId: string) => MessageCacheEntry | null;
-  updateCachedMessages: (conversationId: string, messages: CacheMessage[], hasMore?: boolean) => void;
-  toStoreMessage: (msg: Message) => CacheMessage;
   onMediaTaskSubmitted?: () => void;
 }
 
@@ -44,29 +38,11 @@ export function useRegenerateHandlers(options: RegenerateHandlersOptions) {
     modelId,
     selectedModel,
     userScrolledAway,
-    getCachedMessages,
-    updateCachedMessages,
-    toStoreMessage,
     onMediaTaskSubmitted,
   } = options;
 
-  // 策略 A：失败消息原地重新生成
-  const regenerateFailedMessage = useRegenerateFailedMessage({
-    conversationId,
-    userScrolledAway,
-    scrollToBottom,
-    setMessages,
-    setRegeneratingId,
-    setIsRegeneratingAI,
-    getCachedMessages,
-    updateCachedMessages,
-    toStoreMessage,
-    onMessageUpdate,
-    resetRegeneratingState,
-  });
-
-  // 策略 B：成功消息新增对话
-  const regenerateAsNewMessage = useRegenerateAsNewMessage({
+  // 聊天成功重新生成处理器（涉及流式处理）
+  const handleChatAsNew = useRegenerateAsNewMessage({
     conversationId,
     modelId,
     selectedModel,
@@ -75,65 +51,52 @@ export function useRegenerateHandlers(options: RegenerateHandlersOptions) {
     setMessages,
     setRegeneratingId,
     setIsRegeneratingAI,
-    getCachedMessages,
-    updateCachedMessages,
-    toStoreMessage,
     onMessageUpdate,
     resetRegeneratingState,
   });
 
-  // 策略 C：图片消息重新生成
-  const regenerateImageMessage = useCallback(
-    async (userMessage: Message, originalGenerationParams?: GenerationParams | null) => {
+  // 统一重新生成入口
+  const handleRegenerate = useCallback(
+    async (targetMessage: Message, userMessage: Message) => {
       if (!conversationId) return;
 
-      await executeImageRegeneration({
+      await regenerateMessage({
+        messageId: targetMessage.id,
         conversationId,
+        targetMessage,
         userMessage,
-        originalGenerationParams,
-        modelId,
-        selectedModel,
+        generationParams: targetMessage.generation_params || undefined,
+        conversationTitle,
         setMessages,
-        scrollToBottom,
         setRegeneratingId,
         setIsRegeneratingAI,
-        conversationTitle,
-        onMessageUpdate,
+        scrollToBottom,
+        userScrolledAway,
         resetRegeneratingState,
-        onMediaTaskSubmitted,
-      });
-    },
-    [conversationId, modelId, selectedModel, setMessages, scrollToBottom, conversationTitle, onMessageUpdate, resetRegeneratingState, setRegeneratingId, setIsRegeneratingAI, onMediaTaskSubmitted]
-  );
-
-  // 策略 D：视频消息重新生成
-  const regenerateVideoMessage = useCallback(
-    async (userMessage: Message, originalGenerationParams?: GenerationParams | null) => {
-      if (!conversationId) return;
-
-      await executeVideoRegeneration({
-        conversationId,
-        userMessage,
-        originalGenerationParams,
         modelId,
         selectedModel,
-        setMessages,
-        scrollToBottom,
-        setRegeneratingId,
-        setIsRegeneratingAI,
-        conversationTitle,
+        onSuccess: (msg) => onMessageUpdate?.(msg.content),
         onMessageUpdate,
-        resetRegeneratingState,
         onMediaTaskSubmitted,
+        handleChatAsNew,
       });
     },
-    [conversationId, modelId, selectedModel, setMessages, scrollToBottom, conversationTitle, onMessageUpdate, resetRegeneratingState, setRegeneratingId, setIsRegeneratingAI, onMediaTaskSubmitted]
+    [
+      conversationId,
+      conversationTitle,
+      setMessages,
+      setRegeneratingId,
+      setIsRegeneratingAI,
+      scrollToBottom,
+      userScrolledAway,
+      resetRegeneratingState,
+      modelId,
+      selectedModel,
+      onMessageUpdate,
+      onMediaTaskSubmitted,
+      handleChatAsNew,
+    ]
   );
 
-  return {
-    regenerateFailedMessage,
-    regenerateAsNewMessage,
-    regenerateImageMessage,
-    regenerateVideoMessage,
-  };
+  return { handleRegenerate };
 }
