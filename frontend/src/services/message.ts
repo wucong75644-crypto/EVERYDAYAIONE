@@ -6,6 +6,7 @@ import { request } from './api';
 import type { DeleteMessageResponse } from '../types/message';
 import type { AspectRatio, ImageResolution, ImageOutputFormat } from './image';
 import type { VideoFrames, VideoAspectRatio } from './video';
+import { logger } from '../utils/logger';
 
 /** 图片生成参数 */
 export interface ImageGenerationParams {
@@ -97,6 +98,7 @@ export interface SendMessageStreamRequest {
   thinking_effort?: 'minimal' | 'low' | 'medium' | 'high';
   thinking_mode?: 'default' | 'deep_think';
   client_request_id?: string;  // 客户端请求ID（用于乐观更新）
+  created_at?: string;  // 前端生成的时间戳（ISO 8601），确保消息排序正确
 }
 
 /**
@@ -216,7 +218,7 @@ export async function sendMessageStream(
               break;
           }
         } catch (e) {
-          console.error('解析 SSE 事件失败:', e);
+          logger.error('sse:parse', '解析 SSE 事件失败', e, { conversationId });
         }
       }
     }
@@ -309,7 +311,7 @@ export async function regenerateMessageStream(
               break;
           }
         } catch (e) {
-          console.error('解析 SSE 事件失败:', e);
+          logger.error('sse:parse', '解析 SSE 事件失败', e, { conversationId, messageId });
         }
       }
     }

@@ -3,15 +3,21 @@
  *
  * 处理以下场景：
  * 1. 去重：已持久化的消息不重复显示
- * 2. temp- 用户消息：检查是否已被真实消息替换（内容+时间匹配）
- * 3. streaming- 消息：区分聊天流式、媒体任务占位符、已完成流式
+ * 2. temp- 用户消息：优先 client_request_id 精确匹配，Fallback 到内容+时间匹配
+ * 3. streaming- 消息：区分聊天流式、媒体任务占位符、已完成流式（精确内容匹配）
  * 4. 按时间排序
+ *
+ * 任务0.2修复（2026-02-01）：
+ * - 增强 temp- 消息去重：优先使用 client_request_id 避免误判
+ * - 修复 streaming- 消息去重：移除时间阈值，使用精确内容匹配
+ * - 解决"AI回复 → 用户消息 → AI回复"重复显示问题
  */
 
 import type { Message } from '../services/message';
+import { isMediaPlaceholder } from '../constants/placeholder';
 
 /** 判断 temp 消息是否已被替换的时间阈值（ms）*/
-const TEMP_MESSAGE_MATCH_THRESHOLD_MS = 10000; // 10秒
+const TEMP_MESSAGE_MATCH_THRESHOLD_MS = 30000; // 30秒（兼容弱网环境）
 
 export interface RuntimeState {
   streamingMessageId: string | null;
@@ -20,14 +26,22 @@ export interface RuntimeState {
 
 /**
  * 检查 temp 消息是否已被持久化消息替换
- * 匹配条件：内容相同 + 时间差在阈值内
+ * 优先使用 client_request_id 精确匹配，Fallback 到内容+时间匹配
  */
 function isTempMessageReplaced(
   tempMessage: Message,
   persistedMessages: Message[]
 ): boolean {
-  const tempTime = new Date(tempMessage.created_at).getTime();
+  // ✅ 任务0.2：优先使用 client_request_id 精确匹配（避免内容+时间误判）
+  if (tempMessage.client_request_id) {
+    const matchByClientId = persistedMessages.some(
+      (pm) => pm.client_request_id === tempMessage.client_request_id
+    );
+    if (matchByClientId) return true;
+  }
 
+  // Fallback：内容+时间匹配（兼容旧消息或无 client_request_id 的场景）
+  const tempTime = new Date(tempMessage.created_at).getTime();
   return persistedMessages.some((pm) => {
     if (pm.role !== 'user' || pm.content !== tempMessage.content) {
       return false;
@@ -40,21 +54,17 @@ function isTempMessageReplaced(
 
 /**
  * 检查 streaming 消息是否已被持久化消息替换
- * 匹配条件：角色为 assistant + 内容相同 + 时间差在阈值内
+ * 匹配条件：角色为 assistant + 内容完全相同（流式完成后内容应完全一致）
+ *
+ * 注：时间戳排序问题已通过前端传递 created_at 给后端解决，无需时间阈值检查
  */
 function isStreamingMessageReplaced(
   streamingMessage: Message,
   persistedMessages: Message[]
 ): boolean {
-  const streamingTime = new Date(streamingMessage.created_at).getTime();
-
+  // ✅ 精确内容匹配，无时间阈值（流式完成后内容应完全相同）
   return persistedMessages.some((pm) => {
-    if (pm.role !== 'assistant' || pm.content !== streamingMessage.content) {
-      return false;
-    }
-    const persistedTime = new Date(pm.created_at).getTime();
-    const timeDiff = Math.abs(persistedTime - streamingTime);
-    return timeDiff < TEMP_MESSAGE_MATCH_THRESHOLD_MS;
+    return pm.role === 'assistant' && pm.content === streamingMessage.content;
   });
 }
 
@@ -95,14 +105,8 @@ export function mergeOptimisticMessages(
         return true;
       }
 
-      // 检查是否是媒体任务占位符（图片/视频生成中）
-      const isMediaPlaceholder =
-        m.content.includes('图片生成中') ||
-        m.content.includes('视频生成中') ||
-        m.content.includes('正在生成图片') ||
-        m.content.includes('正在生成视频');
-
-      if (isMediaPlaceholder) {
+      // 检查是否是媒体任务占位符（使用统一常量判断）
+      if (isMediaPlaceholder(m)) {
         // 媒体任务占位符：始终显示（会被 replaceMediaPlaceholder 替换为真实消息）
         return true;
       }
