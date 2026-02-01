@@ -86,25 +86,49 @@ export default function ConversationList({
   const [deleteConfirmClosing, setDeleteConfirmClosing] = useState(false);
 
   const hasAutoSelected = useRef(false);
+  const hasInitialLoaded = useRef(false);  // 防止重复初始加载
   const onSelectConversationRef = useRef(onSelectConversation);
   onSelectConversationRef.current = onSelectConversation;
 
-  // 加载对话列表
+  // 本地修改追踪（用于乐观合并，防止 API 响应覆盖本地修改）
+  const localModificationsRef = useRef<{
+    deleted: Set<string>;      // 已删除的对话 ID
+    renamed: Map<string, string>;  // ID → 新标题
+  }>({ deleted: new Set(), renamed: new Map() });
+
+  // 加载对话列表（乐观合并策略：保留本地修改）
   const loadConversations = useCallback(async (isInitial = false) => {
+    // 防止重复初始加载
+    if (isInitial && hasInitialLoaded.current) return;
+    if (isInitial) hasInitialLoaded.current = true;
+
     try {
-      if (isInitial && conversations.length === 0) {
-        setLoading(true);
+      if (isInitial) {
+        // 仅当没有缓存时才显示 loading
+        const cached = localStorage.getItem(CONVERSATIONS_CACHE_KEY);
+        if (!cached) setLoading(true);
       }
       const response = await getConversationList();
-      setConversations(response.conversations);
+
+      // 乐观合并：过滤已删除的对话，应用已重命名的标题
+      const { deleted, renamed } = localModificationsRef.current;
+      const mergedConversations = response.conversations
+        .filter((c) => !deleted.has(c.id))  // 过滤已删除
+        .map((c) => renamed.has(c.id) ? { ...c, title: renamed.get(c.id)! } : c);  // 应用重命名
+
+      setConversations(mergedConversations);
       try {
-        localStorage.setItem(CONVERSATIONS_CACHE_KEY, JSON.stringify(response.conversations));
+        localStorage.setItem(CONVERSATIONS_CACHE_KEY, JSON.stringify(mergedConversations));
       } catch {
         // 缓存保存失败，不影响功能
       }
-      if (isInitial && !hasAutoSelected.current && response.conversations.length > 0) {
+
+      // 清理已同步的本地修改（下次加载不再需要）
+      localModificationsRef.current = { deleted: new Set(), renamed: new Map() };
+
+      if (isInitial && !hasAutoSelected.current && mergedConversations.length > 0) {
         hasAutoSelected.current = true;
-        const mostRecent = response.conversations[0];
+        const mostRecent = mergedConversations[0];
         onSelectConversationRef.current(mostRecent.id, mostRecent.title, mostRecent.model_id);
       }
     } catch (error) {
@@ -114,7 +138,7 @@ export default function ConversationList({
         setLoading(false);
       }
     }
-  }, [conversations.length]);
+  }, []);  // 移除 conversations.length 依赖，避免重复创建
 
   useEffect(() => {
     loadConversations(true);
@@ -255,20 +279,30 @@ export default function ConversationList({
 
   const confirmDelete = async () => {
     if (!deleteConfirm) return;
+    const deleteId = deleteConfirm.id;
+
+    // 记录本地修改（防止 API 响应覆盖）
+    localModificationsRef.current.deleted.add(deleteId);
+
+    // 乐观更新 UI
+    const updatedConversations = conversations.filter((c) => c.id !== deleteId);
+    setConversations(updatedConversations);
     try {
-      await deleteConversation(deleteConfirm.id);
-      const updatedConversations = conversations.filter((c) => c.id !== deleteConfirm.id);
-      setConversations(updatedConversations);
-      try {
-        localStorage.setItem(CONVERSATIONS_CACHE_KEY, JSON.stringify(updatedConversations));
-      } catch {
-        // 缓存更新失败，不影响功能
-      }
-      onDelete?.(deleteConfirm.id);
+      localStorage.setItem(CONVERSATIONS_CACHE_KEY, JSON.stringify(updatedConversations));
+    } catch {
+      // 缓存更新失败，不影响功能
+    }
+    onDelete?.(deleteId);
+    closeDeleteConfirm();
+
+    // 异步调用后端（失败时本地修改会在下次加载时被恢复）
+    try {
+      await deleteConversation(deleteId);
     } catch (error) {
       console.error('删除对话失败:', error);
+      // 删除失败，清除本地修改记录，下次加载会恢复
+      localModificationsRef.current.deleted.delete(deleteId);
     }
-    closeDeleteConfirm();
   };
 
   const handleStartRename = (id: string, title: string) => {
@@ -315,6 +349,11 @@ export default function ConversationList({
     }
     const newTitle = renameTitle.trim();
     const oldId = renameId;
+
+    // 记录本地修改（防止 API 响应覆盖）
+    localModificationsRef.current.renamed.set(oldId, newTitle);
+
+    // 乐观更新 UI
     const updatedConversations = conversations.map((c) =>
       c.id === oldId ? { ...c, title: newTitle } : c
     );
@@ -326,10 +365,14 @@ export default function ConversationList({
     }
     onRename?.(oldId, newTitle);
     setRenameId(null);
+
+    // 异步调用后端（失败时本地修改会在下次加载时被恢复）
     try {
       await updateConversation(oldId, { title: newTitle });
     } catch (error) {
       console.error('重命名失败:', error);
+      // 重命名失败，清除本地修改记录，下次加载会恢复原标题
+      localModificationsRef.current.renamed.delete(oldId);
     }
   };
 

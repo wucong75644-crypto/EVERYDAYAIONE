@@ -7,7 +7,7 @@
  * - 管理对话（重命名、删除）
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useTaskStore } from '../stores/useTaskStore';
@@ -22,6 +22,9 @@ import { useMessageCallbacks } from '../hooks/useMessageCallbacks';
 import { useConversationNavigation } from '../hooks/useConversationNavigation';
 import { restoreAllPendingTasks } from '../utils/taskRestoration';
 import type { UnifiedModel } from '../constants/models';
+import { useUnifiedMessages } from '../hooks/useUnifiedMessages';
+import { useChatStore } from '../stores/useChatStore';
+import type { Message } from '../services/message';
 
 export default function Chat() {
   const navigate = useNavigate();
@@ -35,6 +38,60 @@ export default function Chat() {
   const [conversationModelId, setConversationModelId] = useState<string | null>(null);
   const [currentSelectedModel, setCurrentSelectedModel] = useState<UnifiedModel | null>(null);
 
+  // 请求序号（用于防止快速切换对话时的竞态）
+  const conversationRequestSeqRef = useRef(0);
+
+  // 获取统一消息列表（用于 setMessages 兼容层）
+  const mergedMessages = useUnifiedMessages(currentConversationId);
+  const { replaceMessage, appendMessage } = useChatStore();
+
+  // 创建 setMessages 兼容层（用于统一缓存写入）
+  const setMessages = useCallback(
+    (updater: Message[] | ((prev: Message[]) => Message[])) => {
+      if (typeof updater === 'function') {
+        const newMessages = updater(mergedMessages);
+
+        // 使用Map提升性能，O(1)查找，避免index错位
+        const oldMessagesMap = new Map(mergedMessages.map(m => [m.id, m]));
+
+        // ✅ 方案A：按对话ID分组消息，避免跨对话写入
+        const messagesByConversation = new Map<string, { toReplace: Array<{ oldId: string; newMsg: Message }>; toAppend: Message[] }>();
+
+        newMessages.forEach((newMsg) => {
+          const conversationId = newMsg.conversation_id;
+          if (!conversationId) return; // 忽略无效消息
+
+          // 初始化对话分组
+          if (!messagesByConversation.has(conversationId)) {
+            messagesByConversation.set(conversationId, { toReplace: [], toAppend: [] });
+          }
+
+          const group = messagesByConversation.get(conversationId)!;
+          const oldMsg = oldMessagesMap.get(newMsg.id);
+
+          if (oldMsg && oldMsg !== newMsg) {
+            // 消息被修改 → 记录待替换
+            group.toReplace.push({ oldId: oldMsg.id, newMsg });
+          } else if (!oldMsg && newMsg && !newMsg.id.startsWith('temp-') && !newMsg.id.startsWith('streaming-')) {
+            // 新增持久化消息 → 记录待追加
+            group.toAppend.push(newMsg);
+          }
+        });
+
+        // 遍历每个对话，写入对应的缓存
+        messagesByConversation.forEach((group, conversationId) => {
+          group.toReplace.forEach(({ oldId, newMsg }) => {
+            replaceMessage(conversationId, oldId, newMsg);
+          });
+          group.toAppend.forEach((msg) => {
+            appendMessage(conversationId, msg);
+          });
+        });
+      }
+    },
+    [mergedMessages, replaceMessage, appendMessage]
+  );
+
   // 使用消息回调 Hook
   const {
     handleMessagePending,
@@ -46,6 +103,7 @@ export default function Chat() {
   } = useMessageCallbacks({
     conversationTitle,
     currentConversationId,
+    setMessages,
   });
 
   // 使用对话导航 Hook
@@ -102,15 +160,19 @@ export default function Chat() {
         }
       });
 
-      // 合并所有需要保留的对话 ID（去重后保留前 10 个）
+      // 合并所有需要保留的对话 ID（去重后保留前 15 个）
       const keepIds = Array.from(
         new Set([urlConversationId, ...activeTaskIds, ...activeStreamingIds])
-      ).slice(0, 10);
+      ).slice(0, 15);
 
       runtimeState.cleanup(keepIds);
     }
 
     if (urlConversationId) {
+      // 递增请求序号（用于检测过期响应）
+      conversationRequestSeqRef.current += 1;
+      const currentSeq = conversationRequestSeqRef.current;
+
       // 立即设置对话 ID（无需等待 API，让 MessageArea 立即加载缓存）
       // eslint-disable-next-line react-hooks/set-state-in-effect -- URL 参数同步到状态是合理用例
       setCurrentConversationId(urlConversationId);
@@ -132,6 +194,10 @@ export default function Chat() {
       // 异步加载对话详情（更新 title 和 modelId，确保数据最新）
       getConversation(urlConversationId)
         .then((conversation) => {
+          // 检测过期响应：如果请求序号已变化，说明用户已切换到其他对话，丢弃响应
+          if (currentSeq !== conversationRequestSeqRef.current) {
+            return;  // 丢弃过期响应
+          }
           // 只有当前 URL 还是这个对话时才更新（避免快速切换导致的状态错乱）
           if (urlConversationId === conversation.id) {
             setConversationTitle(conversation.title);
@@ -139,6 +205,10 @@ export default function Chat() {
           }
         })
         .catch((error) => {
+          // 检测过期响应
+          if (currentSeq !== conversationRequestSeqRef.current) {
+            return;  // 丢弃过期错误
+          }
           console.error('加载 URL 对话失败:', error);
           // 对话不存在或加载失败，跳转回主聊天页
           navigate('/chat');

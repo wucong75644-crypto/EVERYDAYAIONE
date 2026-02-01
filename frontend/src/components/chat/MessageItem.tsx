@@ -12,8 +12,10 @@ import ImagePreviewModal from './ImagePreviewModal';
 import MessageMedia from './MessageMedia';
 import MessageActions from './MessageActions';
 import { getSavedSettings } from '../../utils/settingsStorage';
+import { parseImageUrls } from '../../utils/imageUtils';
 import { useModalAnimation } from '../../hooks/useModalAnimation';
-import styles from './shared.module.css';
+import LoadingPlaceholder from './LoadingPlaceholder';
+import { PLACEHOLDER_TEXT } from '../../constants/placeholder';
 
 interface MessageItemProps {
   message: Message;
@@ -67,11 +69,11 @@ export default memo(function MessageItem({
       return null;
     }
 
-    if (message.content.includes('图片生成中')) {
-      return { type: 'image' as const, text: message.content };
+    if (message.content.includes(PLACEHOLDER_TEXT.IMAGE_GENERATING)) {
+      return { type: 'image' as const, text: PLACEHOLDER_TEXT.IMAGE_GENERATING };
     }
-    if (message.content.includes('视频生成中')) {
-      return { type: 'video' as const, text: message.content };
+    if (message.content.includes(PLACEHOLDER_TEXT.VIDEO_GENERATING)) {
+      return { type: 'video' as const, text: PLACEHOLDER_TEXT.VIDEO_GENERATING };
     }
     return null;
   }, [message.id, message.role, message.content, message.image_url, message.video_url]);
@@ -95,10 +97,7 @@ export default memo(function MessageItem({
   const [previewIndex, setPreviewIndex] = useState(currentImageIndex);
 
   // 解析当前消息的图片 URL 列表（支持逗号分隔的多图）
-  const messageImageUrls = useMemo(() => {
-    if (!message.image_url) return [];
-    return message.image_url.split(',').map(url => url.trim()).filter(Boolean);
-  }, [message.image_url]);
+  const messageImageUrls = useMemo(() => parseImageUrls(message.image_url), [message.image_url]);
 
   // 用于预览的图片列表：所有消息都使用全局列表（支持查看对话中所有图片）
   const previewImageUrls = allImageUrls;
@@ -219,14 +218,10 @@ export default memo(function MessageItem({
           <div className="text-[15px] leading-relaxed whitespace-pre-wrap">
             {/* 加载状态：重新生成或流式输出开始但内容为空 */}
             {((isRegenerating || isStreaming) && !message.content) ? (
-              <div className="flex items-center space-x-2 text-gray-500">
-                <span className="text-sm">{isRegenerating ? '正在重新生成' : 'AI 正在思考'}</span>
-                <div className="flex space-x-1">
-                  <span className={`w-2 h-2 bg-gray-400 rounded-full animate-bounce ${styles['bounce-dot-1']}`}></span>
-                  <span className={`w-2 h-2 bg-gray-400 rounded-full animate-bounce ${styles['bounce-dot-2']}`}></span>
-                  <span className={`w-2 h-2 bg-gray-400 rounded-full animate-bounce ${styles['bounce-dot-3']}`}></span>
-                </div>
-              </div>
+              <LoadingPlaceholder text={PLACEHOLDER_TEXT.CHAT_THINKING} />
+            ) : mediaPlaceholderInfo ? (
+              /* 媒体占位符：图片/视频生成中 */
+              <LoadingPlaceholder text={mediaPlaceholderInfo.text} />
             ) : (
               <>
                 {message.content}

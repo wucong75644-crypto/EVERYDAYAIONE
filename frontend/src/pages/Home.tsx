@@ -4,10 +4,12 @@
 
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
+import { useAuthModalStore } from '../stores/useAuthModalStore';
 import Footer from '../components/Footer';
 
 export default function Home() {
   const { user, isAuthenticated, clearAuth } = useAuthStore();
+  const { openLogin } = useAuthModalStore();
 
   const handleLogout = () => {
     clearAuth();
@@ -36,12 +38,12 @@ export default function Home() {
                   </button>
                 </>
               ) : (
-                <Link
-                  to="/login"
-                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+                <button
+                  onClick={openLogin}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
                 >
                   登录
-                </Link>
+                </button>
               )}
             </div>
           </div>
@@ -60,17 +62,17 @@ export default function Home() {
           {isAuthenticated ? (
             <Link
               to="/chat"
-              className="inline-block bg-blue-600 text-white px-8 py-3 rounded-lg text-lg font-medium hover:bg-blue-700"
+              className="inline-block bg-blue-600 text-white px-8 py-3 rounded-lg text-lg font-medium hover:bg-blue-700 transition-colors"
             >
               开始创作
             </Link>
           ) : (
-            <Link
-              to="/login"
-              className="inline-block bg-blue-600 text-white px-8 py-3 rounded-lg text-lg font-medium hover:bg-blue-700"
+            <button
+              onClick={openLogin}
+              className="inline-block bg-blue-600 text-white px-8 py-3 rounded-lg text-lg font-medium hover:bg-blue-700 transition-colors"
             >
               立即体验
-            </Link>
+            </button>
           )}
         </div>
       </main>

@@ -19,10 +19,11 @@ import { useMessageLoader } from '../../hooks/useMessageLoader';
 import { useScrollManager } from '../../hooks/useScrollManager';
 import { useMessageAreaScroll } from '../../hooks/useMessageAreaScroll';
 import { useRegenerateHandlers } from '../../hooks/useRegenerateHandlers';
+import { useUnifiedMessages } from '../../hooks/useUnifiedMessages';
 import { useConversationRuntimeStore } from '../../stores/useConversationRuntimeStore';
 import { useChatStore } from '../../stores/useChatStore';
+import { parseImageUrls, getFirstImageUrl } from '../../utils/imageUtils';
 import type { UnifiedModel } from '../../constants/models';
-import { mergeOptimisticMessages } from '../../utils/mergeOptimisticMessages';
 
 interface MessageAreaProps {
   conversationId: string | null;
@@ -57,36 +58,60 @@ export default function MessageArea({
     resetScrollState,
   } = useScrollManager({ containerRef, messagesEndRef });
 
-  // 使用消息加载 Hook（通过回调通知新消息）
-  const {
-    messages,
-    setMessages,
-    loading,
-    loadMessages,
-    toStoreMessage,
-    getCachedMessages,
-    updateCachedMessages,
-  } = useMessageLoader({ conversationId, onNewMessages: markNewMessages });
+  // 使用消息加载 Hook（负责从后端加载并写入缓存）
+  const { loading, loadMessages } = useMessageLoader({
+    conversationId,
+    onNewMessages: markNewMessages,
+  });
+
+  // 使用统一消息读取 Hook（自动合并持久化消息和临时消息）
+  const mergedMessages = useUnifiedMessages(conversationId);
 
   // 获取当前对话标题（用于任务追踪）
   const currentConversationTitle = useChatStore((state) => state.currentConversationTitle);
 
-  // 获取运行时状态（乐观更新消息）
-  // 注意：直接从 states Map 获取，避免 getState() 返回新对象导致无限循环
+  // 获取统一操作方法
+  const { removeMessage, replaceMessage, appendMessage } = useChatStore();
+
+  // 兼容层：为重新生成策略提供 setMessages 接口
+  // 实际上调用 replaceMessage/appendMessage 更新缓存，UI 通过 useUnifiedMessages 自动响应
+  const setMessages = useCallback(
+    (updater: Message[] | ((prev: Message[]) => Message[])) => {
+      if (!conversationId) return;
+
+      // 如果是函数形式，计算新消息列表并找出变化
+      if (typeof updater === 'function') {
+        const newMessages = updater(mergedMessages);
+
+        // ✅ 使用Map提升性能，O(1)查找，避免index错位
+        const oldMessagesMap = new Map(mergedMessages.map(m => [m.id, m]));
+
+        newMessages.forEach((newMsg) => {
+          const oldMsg = oldMessagesMap.get(newMsg.id);  // ✅ ID匹配替代index匹配
+
+          if (oldMsg && oldMsg !== newMsg) {
+            // 消息被修改 → 替换缓存
+            replaceMessage(conversationId, oldMsg.id, newMsg);
+          } else if (!oldMsg && newMsg && !newMsg.id.startsWith('temp-') && !newMsg.id.startsWith('streaming-')) {
+            // 新增持久化消息 → 追加缓存
+            appendMessage(conversationId, newMsg);
+          }
+        });
+      }
+    },
+    [conversationId, mergedMessages, replaceMessage, appendMessage]
+  );
+
+  // 获取运行时状态（仅用于滚动逻辑，不用于消息合并）
   const runtimeState = useConversationRuntimeStore(
     (state) => conversationId ? state.states.get(conversationId) : undefined
   );
 
-  // 合并持久化消息和乐观更新消息（使用工具函数）
-  const mergedMessages = useMemo(() => {
-    return mergeOptimisticMessages(messages, runtimeState);
-  }, [messages, runtimeState]);
-
-  // 提取所有图片 URL（用于缩略图预览）
+  // 提取所有图片 URL（用于缩略图预览，支持逗号分隔的多图）
   const allImageUrls = useMemo(() => {
     return mergedMessages
       .filter(m => m.image_url)
-      .map(m => m.image_url as string);
+      .flatMap(m => parseImageUrls(m.image_url));
   }, [mergedMessages]);
 
   // 创建图片 URL 索引 Map（O(1) 查找优化）
@@ -96,16 +121,16 @@ export default function MessageArea({
     return map;
   }, [allImageUrls]);
 
-  // 计算每条消息的图片索引（用于缩略图预览）
+  // 计算每条消息的第一张图片索引（用于缩略图预览）
   const getImageIndex = useCallback((message: Message): number => {
-    if (!message.image_url) return -1;
-    return imageUrlIndexMap.get(message.image_url) ?? -1;
+    const firstUrl = getFirstImageUrl(message.image_url);
+    if (!firstUrl) return -1;
+    return imageUrlIndexMap.get(firstUrl) ?? -1;
   }, [imageUrlIndexMap]);
 
   // 重新生成相关状态
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [isRegeneratingAI, setIsRegeneratingAI] = useState(false);
-  const regeneratingContentRef = useRef<string>('');
 
   // 使用滚动行为管理 Hook（处理对话切换、消息加载、新消息等滚动逻辑）
   const { handleRegenerateScroll } = useMessageAreaScroll({
@@ -142,25 +167,23 @@ export default function MessageArea({
                                  messageId.startsWith('error-') ||
                                  messageId.startsWith('streaming-');
 
+      // 非临时消息需要调用后端 API 删除
       if (!isTemporaryMessage) {
         await deleteMessage(messageId);
       }
 
-      const updatedMessages = messages.filter((msg) => msg.id !== messageId);
-      setMessages(updatedMessages);
+      // 使用统一方法删除缓存中的消息
+      if (conversationId) {
+        removeMessage(conversationId, messageId);
+        // 同时清理 RuntimeStore 中的临时消息
+        useConversationRuntimeStore.getState().removeOptimisticMessage(conversationId, messageId);
+      }
 
-      // 使用 mergedMessages 过滤后获取最后一条消息（包含乐观更新消息）
+      // 计算新的最后一条消息（用于更新对话列表）
       const updatedMergedMessages = mergedMessages.filter((msg) => msg.id !== messageId);
       const newLastMessage = updatedMergedMessages.length > 0
         ? updatedMergedMessages[updatedMergedMessages.length - 1].content
         : undefined;
-
-      if (conversationId) {
-        const cached = getCachedMessages(conversationId);
-        if (cached) {
-          updateCachedMessages(conversationId, updatedMessages.map(toStoreMessage), cached.hasMore);
-        }
-      }
 
       onDelete?.(messageId, newLastMessage);
       toast.success('消息已删除');
@@ -168,7 +191,7 @@ export default function MessageArea({
       console.error('删除消息失败:', error);
       toast.error('删除失败，请重试');
     }
-  }, [conversationId, messages, mergedMessages, setMessages, getCachedMessages, updateCachedMessages, toStoreMessage, onDelete]);
+  }, [conversationId, mergedMessages, removeMessage, onDelete]);
 
   // 重置重新生成状态的辅助函数
   const resetRegeneratingState = useCallback(() => {
@@ -183,13 +206,8 @@ export default function MessageArea({
     }
   }, [userScrolledAway, scrollToBottom]);
 
-  // 使用重新生成处理器 hook
-  const {
-    regenerateFailedMessage,
-    regenerateAsNewMessage,
-    regenerateImageMessage,
-    regenerateVideoMessage,
-  } = useRegenerateHandlers({
+  // 使用重新生成处理器 hook（统一入口）
+  const { handleRegenerate: doRegenerate } = useRegenerateHandlers({
     conversationId,
     conversationTitle: currentConversationTitle,
     setMessages,
@@ -201,17 +219,13 @@ export default function MessageArea({
     modelId,
     selectedModel,
     userScrolledAway,
-    getCachedMessages,
-    updateCachedMessages,
-    toStoreMessage,
   });
 
-  // 处理重新生成（主入口）
-  // 注意：使用 mergedMessages 而不是 messages，因为新生成的消息可能在乐观更新中
+  // 处理重新生成（查找消息对，调用统一入口）
   const handleRegenerate = useCallback(async (messageId: string) => {
     if (!conversationId || regeneratingId) return;
 
-    // 使用 mergedMessages 查找，因为新生成的消息可能在乐观更新中而不在持久化消息中
+    // 使用 mergedMessages 查找，因为新生成的消息可能在乐观更新中
     const targetMessage = mergedMessages.find((m) => m.id === messageId);
     if (!targetMessage || targetMessage.role !== 'assistant') return;
 
@@ -230,50 +244,9 @@ export default function MessageArea({
       return;
     }
 
-    regeneratingContentRef.current = '';
-
-    try {
-      // 根据原始 AI 消息类型判断使用哪种重新生成策略
-      // 优先检查 generation_params（失败消息没有 url，但有 params）
-      const hasImageUrl = !!targetMessage.image_url;
-      const hasVideoUrl = !!targetMessage.video_url;
-      const hasImageParams = !!targetMessage.generation_params?.image;
-      const hasVideoParams = !!targetMessage.generation_params?.video;
-
-      const isImageMessage = hasImageUrl || hasImageParams;
-      const isVideoMessage = hasVideoUrl || hasVideoParams;
-
-      if (isImageMessage) {
-        await regenerateImageMessage(userMessage, targetMessage.generation_params);
-      } else if (isVideoMessage) {
-        await regenerateVideoMessage(userMessage, targetMessage.generation_params);
-      } else if (targetMessage.is_error === true) {
-        await regenerateFailedMessage(messageId, targetMessage);
-      } else {
-        await regenerateAsNewMessage(userMessage);
-      }
-    } catch (error) {
-      // 增强错误恢复：使用函数式 setState
-      if (targetMessage.is_error === true) {
-        setMessages((prev) =>
-          prev.map((m) => (m.id === messageId ? targetMessage : m))
-        );
-      }
-
-      resetRegeneratingState();
-
-      const errorMsg = error instanceof Error ? error.message : '未知错误';
-      toast.error(`重新生成失败: ${errorMsg}`);
-
-      // 记录详细日志
-      console.error('重新生成失败详情:', {
-        messageId,
-        conversationId,
-        isError: targetMessage.is_error,
-        error
-      });
-    }
-  }, [conversationId, mergedMessages, regeneratingId, regenerateFailedMessage, regenerateAsNewMessage, regenerateImageMessage, regenerateVideoMessage, resetRegeneratingState, setMessages]);
+    // 调用统一入口，自动判断类型和策略
+    await doRegenerate(targetMessage, userMessage);
+  }, [conversationId, mergedMessages, regeneratingId, doRegenerate]);
 
 
   // 重新生成开始时自动滚动
@@ -313,14 +286,14 @@ export default function MessageArea({
       {/* 可滚动的消息区域 */}
       <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto bg-white">
         <div key={conversationId || 'no-conversation'} className="max-w-3xl mx-auto py-6 px-4 animate-fadeIn">
-          {mergedMessages.map((message, index) => {
+          {mergedMessages.map((message) => {
             const isRegenerating = message.id === regeneratingId;
             const isStreaming = message.id.startsWith('streaming-');
             const imageIndex = getImageIndex(message);
 
             return (
               <MessageItem
-                key={message.id || `message-${index}`}
+                key={message.id}
                 message={message}
                 isStreaming={isStreaming}
                 isRegenerating={isRegenerating}
