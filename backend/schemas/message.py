@@ -106,6 +106,7 @@ class SendMessageRequest(BaseModel):
     thinking_effort: Optional[str] = None  # 推理强度（Gemini 3）: minimal/low/medium/high
     thinking_mode: Optional[str] = None  # 推理模式（Gemini 3 Pro）: default/deep_think
     client_request_id: Optional[str] = Field(None, max_length=100, description="客户端请求ID")
+    created_at: Optional[datetime] = Field(None, description="前端生成的时间戳，用于保持消息排序")
     # 高级设置
     image_size: Optional[str] = "1024x1024"
     image_count: Optional[int] = Field(default=1, ge=1, le=4)

@@ -26,6 +26,7 @@ oss2==2.19.1
 
 # Redis 客户端
 redis==5.2.1
+certifi==2026.1.4
 
 # 重试机制
 tenacity==9.0.0

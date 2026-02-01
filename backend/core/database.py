@@ -4,9 +4,11 @@
 提供 Supabase 和 Redis 客户端的初始化和获取方法。
 """
 
+import ssl
 from functools import lru_cache
 from typing import Optional
 
+import certifi
 import redis
 from loguru import logger
 from supabase import Client, create_client
@@ -27,11 +29,25 @@ def get_redis_client() -> redis.Redis:
     global _redis_client
     if _redis_client is None:
         settings = get_settings()
+
+        # 构建连接参数
+        connection_kwargs = {
+            "decode_responses": True,
+        }
+
+        # 如果启用 SSL，使用 certifi 提供的 CA 证书包
+        if settings.redis_ssl:
+            connection_kwargs["ssl_cert_reqs"] = ssl.CERT_REQUIRED
+            connection_kwargs["ssl_ca_certs"] = certifi.where()
+
         _redis_client = redis.from_url(
             settings.redis_url,
-            decode_responses=True,
+            **connection_kwargs,
         )
-        logger.info(f"Redis client initialized | host={settings.redis_host}")
+        logger.info(
+            f"Redis client initialized | host={settings.redis_host} | "
+            f"ssl={settings.redis_ssl}"
+        )
     return _redis_client
 
 

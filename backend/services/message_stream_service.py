@@ -16,6 +16,7 @@ from services.message_utils import format_message, deduct_user_credits
 from services.message_ai_helpers import prepare_ai_stream_client, stream_ai_response
 
 if TYPE_CHECKING:
+    from datetime import datetime
     from services.message_service import MessageService
     from services.conversation_service import ConversationService
 
@@ -52,6 +53,7 @@ class MessageStreamService:
         thinking_effort: Optional[str] = None,
         thinking_mode: Optional[str] = None,
         client_request_id: Optional[str] = None,
+        created_at: Optional["datetime"] = None,
     ) -> AsyncIterator[str]:
         """
         流式发送消息并获取 AI 响应
@@ -66,6 +68,7 @@ class MessageStreamService:
             thinking_effort: 推理强度（可选，Gemini 3 专用）
             thinking_mode: 推理模式（可选，Gemini 3 Pro Deep Think）
             client_request_id: 客户端请求ID（可选，用于乐观更新）
+            created_at: 前端生成的时间戳（可选，用于保持消息排序）
 
         Yields:
             SSE 格式的流式数据
@@ -73,7 +76,8 @@ class MessageStreamService:
         # 1. 创建用户消息并发送事件
         user_message = await self.message_service.create_message(
             conversation_id, user_id, content, "user", 0, image_url, video_url,
-            client_request_id=client_request_id
+            client_request_id=client_request_id,
+            created_at=created_at,
         )
         yield f"data: {json.dumps({'type': 'user_message', 'data': {'user_message': user_message}})}\n\n"
         # 2. 更新对话标题（如果需要）

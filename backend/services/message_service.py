@@ -210,7 +210,16 @@ class MessageService:
             if before_msg.data:
                 query = query.lt("created_at", before_msg.data["created_at"])
 
-        if limit:
+        # ✅ 修复：limit=0 时应返回空列表，而不是查询所有消息
+        if limit == 0:
+            return {
+                "messages": [],
+                "total": 0,
+                "limit": limit,
+                "offset": offset,
+            }
+
+        if limit > 0:
             query = query.limit(limit)
         if offset:
             query = query.offset(offset)
@@ -352,15 +361,21 @@ class MessageService:
         self,
         conversation_id: str,
         user_id: str,
-        limit: int = 10,
+        limit: int = 0,  # ✅ 修改：10 → 0，完全移除上下文记忆（避免污染）
     ) -> List[Dict[str, Any]]:
         """
         获取对话历史（用于 AI 上下文）
 
+        ⚠️ 任务0.2扩展修复（2026-02-01）：
+        - 默认 limit=0，完全移除上下文记忆
+        - 原因：避免历史对话污染新话题（如税收政策被回答为产品设计）
+        - 副作用：失去连续对话能力，用户无法引用之前内容
+        - 如需恢复：将 limit 改为 3-5（保留最近几条消息）
+
         Args:
             conversation_id: 对话 ID
             user_id: 用户 ID
-            limit: 历史消息数量限制
+            limit: 历史消息数量限制（默认0=无上下文）
 
         Returns:
             格式化的历史消息列表
