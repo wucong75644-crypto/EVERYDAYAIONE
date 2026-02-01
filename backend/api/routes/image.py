@@ -4,7 +4,8 @@
 提供图像生成、编辑、任务查询接口。
 """
 
-from fastapi import APIRouter, Depends, Request
+from typing import Optional
+from fastapi import APIRouter, Depends, Request, UploadFile, File, HTTPException, Form
 
 from api.deps import CurrentUser, Database
 from core.limiter import limiter, RATE_LIMITS
@@ -146,19 +147,38 @@ async def get_models(
 
 @router.post("/upload", response_model=UploadImageResponse, summary="上传图片")
 async def upload_image(
-    request: UploadImageRequest,
     current_user: CurrentUser,
     db: Database,
+    file: Optional[UploadFile] = File(None),
+    image_data: Optional[str] = Form(None),
 ):
     """
     上传图片到存储服务
 
+    支持两种上传方式：
+    - FormData 上传文件（推荐，体积更小）
+    - base64 编码上传（兼容旧版）
+
     用于图像编辑功能，先上传本地图片获取 URL。
     """
     storage = StorageService(db)
-    url = await storage.upload_base64_image(
-        user_id=current_user["id"],
-        base64_data=request.image_data,
-    )
+
+    if file:
+        # FormData 方式：直接上传文件
+        content = await file.read()
+        url = await storage.upload_image(
+            user_id=current_user["id"],
+            file_data=content,
+            content_type=file.content_type or "image/jpeg",
+            filename=file.filename,
+        )
+    elif image_data:
+        # base64 方式：兼容旧版
+        url = await storage.upload_base64_image(
+            user_id=current_user["id"],
+            base64_data=image_data,
+        )
+    else:
+        raise HTTPException(status_code=400, detail="请提供图片文件或 base64 数据")
 
     return UploadImageResponse(url=url)

@@ -164,6 +164,7 @@ async def send_message_stream(
                 thinking_effort=body.thinking_effort,
                 thinking_mode=body.thinking_mode,
                 client_request_id=body.client_request_id,
+                created_at=body.created_at,
             ):
                 yield chunk
         finally:
