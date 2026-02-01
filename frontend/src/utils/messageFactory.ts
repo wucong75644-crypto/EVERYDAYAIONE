@@ -19,14 +19,23 @@ function generateUniqueId(prefix: string): string {
 }
 
 /**
- * 获取当前时间戳（确保连续调用也能获得递增的时间戳）
+ * 获取递增时间戳（确保连续调用也能获得严格递增的时间戳）
+ * 用于保证消息排序正确：用户消息 < AI占位符
  */
 let lastTimestamp = 0;
-function getIncrementalTimestamp(): number {
+export function getIncrementalTimestamp(): number {
   const now = Date.now();
   // 确保时间戳严格递增
   lastTimestamp = now > lastTimestamp ? now : lastTimestamp + 1;
   return lastTimestamp;
+}
+
+/**
+ * 获取递增时间戳的 ISO 字符串格式
+ * 用于传递给后端 API
+ */
+export function getIncrementalTimestampISO(): string {
+  return new Date(getIncrementalTimestamp()).toISOString();
 }
 
 /**

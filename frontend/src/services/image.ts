@@ -104,15 +104,32 @@ export async function editImage(data: EditImageRequest): Promise<GenerateImageRe
 }
 
 /**
- * 上传图片
+ * 上传图片（base64）
  *
  * 将 base64 图片数据上传到存储服务，返回公开 URL。
+ * @deprecated 请使用 uploadImageFile 代替，FormData 上传体积更小
  */
 export async function uploadImage(imageData: string): Promise<UploadImageResponse> {
   return request<UploadImageResponse>({
     method: 'POST',
     url: '/images/upload',
     data: { image_data: imageData },
+  });
+}
+
+/**
+ * 上传图片（FormData）
+ *
+ * 使用 FormData 直接上传文件，避免 base64 编码带来的 33% 体积膨胀。
+ */
+export async function uploadImageFile(file: File): Promise<UploadImageResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return request<UploadImageResponse>({
+    method: 'POST',
+    url: '/images/upload',
+    data: formData,
+    headers: { 'Content-Type': 'multipart/form-data' },
   });
 }
 

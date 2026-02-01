@@ -11,6 +11,7 @@ import { createMessage, getMessages } from '../services/message';
 import { createStreamingPlaceholder } from './messageFactory';
 import api from '../services/api';
 import toast from 'react-hot-toast';
+import { logger } from './logger';
 import {
   IMAGE_TASK_TIMEOUT,
   VIDEO_TASK_TIMEOUT,
@@ -50,7 +51,7 @@ export async function fetchPendingTasks(): Promise<PendingTask[]> {
     const response = await api.get<{ tasks: PendingTask[]; count: number }>('/tasks/pending');
     return response.data.tasks || [];
   } catch (error) {
-    console.error('获取进行中任务失败:', error);
+    logger.error('task:fetch', '获取进行中任务失败', error);
     return [];
   }
 }
@@ -59,20 +60,20 @@ export function restoreTaskPolling(task: PendingTask, conversationTitle: string)
   const { startMediaTask, startPolling, completeMediaTask, failMediaTask } =
     useTaskStore.getState();
   const { replaceMediaPlaceholder, addMediaPlaceholder } = useConversationRuntimeStore.getState();
-  const { addMessageToCache } = useChatStore.getState();
+  const { appendMessage } = useChatStore.getState();
 
   const maxDuration = task.type === 'image' ? IMAGE_TASK_TIMEOUT : VIDEO_TASK_TIMEOUT;
   const elapsed = Date.now() - new Date(task.started_at).getTime();
 
   if (elapsed > maxDuration) {
-    console.warn(`任务 ${task.external_task_id} 已超时,跳过恢复`);
+    logger.warn('task:restore', '任务已超时,跳过恢复', { taskId: task.external_task_id });
     markTaskAsFailed(task.external_task_id, '任务超时');
     return;
   }
 
   // 验证对话 ID 有效性（任务可能是在临时对话中创建的，此时 conversation_id 为 null）
   if (!task.conversation_id) {
-    console.warn(`任务 ${task.external_task_id} 没有关联对话,跳过恢复`);
+    logger.warn('task:restore', '任务没有关联对话,跳过恢复', { taskId: task.external_task_id });
     markTaskAsFailed(task.external_task_id, '任务未关联对话');
     return;
   }
@@ -133,7 +134,7 @@ export function restoreTaskPolling(task: PendingTask, conversationTitle: string)
             });
 
             if (isDuplicate) {
-              console.info(`任务 ${task.external_task_id} 的消息已存在，跳过创建`);
+              logger.info('task:restore', '任务的消息已存在，跳过创建', { taskId: task.external_task_id });
               // 移除占位符，使用已存在的消息
               const existingMessage = existingMessages.messages.find((msg) =>
                 task.type === 'image' ? msg.image_url === mediaUrl : msg.video_url === mediaUrl
@@ -146,7 +147,7 @@ export function restoreTaskPolling(task: PendingTask, conversationTitle: string)
             }
           } catch (checkError) {
             // 查询失败不阻塞，继续创建消息（可能会重复，但不会丢失）
-            console.warn('检查消息是否存在失败:', checkError);
+            logger.warn('task:restore', '检查消息是否存在失败', { taskId: task.external_task_id });
           }
 
           const savedMessage = await createMessage(task.conversation_id, {
@@ -159,24 +160,18 @@ export function restoreTaskPolling(task: PendingTask, conversationTitle: string)
           });
 
           replaceMediaPlaceholder(task.conversation_id, placeholderId, savedMessage);
-          addMessageToCache(task.conversation_id, {
-            id: savedMessage.id,
-            role: 'assistant',
-            content: savedMessage.content,
-            imageUrl: savedMessage.image_url || undefined,
-            videoUrl: savedMessage.video_url || undefined,
-            createdAt: savedMessage.created_at,
-          });
+          // 使用统一方法添加到缓存（直接存储 API Message 格式，无需转换）
+          appendMessage(task.conversation_id, savedMessage);
 
           completeMediaTask(task.external_task_id);
           toast.success(`${task.type === 'image' ? '图片' : '视频'}生成完成`);
         } catch (error) {
-          console.error('保存任务结果失败:', error);
+          logger.error('task:save', '保存任务结果失败', error, { taskId: task.external_task_id });
           failMediaTask(task.external_task_id);
         }
       },
       onError: async (error: Error) => {
-        console.error('任务恢复失败:', error);
+        logger.error('task:restore', '任务恢复失败', error, { taskId: task.external_task_id });
         failMediaTask(task.external_task_id);
         await markTaskAsFailed(task.external_task_id, error.message);
       },
@@ -189,7 +184,7 @@ async function markTaskAsFailed(externalTaskId: string, reason: string) {
   try {
     await api.post(`/tasks/${externalTaskId}/fail`, { reason });
   } catch (error) {
-    console.error('标记任务失败:', error);
+    logger.error('task:fail', '标记任务失败', error, { taskId: externalTaskId, reason });
   }
 }
 

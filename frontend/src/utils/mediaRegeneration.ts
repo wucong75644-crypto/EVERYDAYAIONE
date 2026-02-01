@@ -1,19 +1,15 @@
 /**
  * 媒体重新生成工具
  *
- * 包含图片/视频重新生成的通用逻辑和工具函数
+ * 包含图片/视频重新生成的参数计算逻辑
+ * 核心发送逻辑复用 messageSender
  */
 
-import { createMessage, type Message, type GenerationParams } from '../services/message';
-import { generateImage, editImage, queryTaskStatus as getImageTaskStatus, type ImageModel } from '../services/image';
-import { generateTextToVideo, generateImageToVideo, queryVideoTaskStatus as getVideoTaskStatus, type VideoModel } from '../services/video';
-import { useTaskStore } from '../stores/useTaskStore';
-import { useAuthStore } from '../stores/useAuthStore';
-import toast from 'react-hot-toast';
-import { createTempMessagePair } from './messageFactory';
+import { type Message, type GenerationParams } from '../services/message';
 import { type UnifiedModel, ALL_MODELS } from '../constants/models';
 import { getSavedSettings } from './settingsStorage';
-import { extractErrorMessage } from '../hooks/handlers/mediaHandlerUtils';
+import { sendMediaMessage, type ImageSenderParams, type VideoSenderParams } from '../services/messageSender';
+import { useConversationRuntimeStore } from '../stores/useConversationRuntimeStore';
 
 /** 默认参数 */
 export const MEDIA_DEFAULTS = {
@@ -27,186 +23,18 @@ export function getModelTypeById(modelId: string): 'chat' | 'image' | 'video' | 
   return ALL_MODELS.find((m) => m.id === modelId)?.type ?? null;
 }
 
-/** 媒体重新生成配置 */
-export interface MediaRegenConfig {
-  type: 'image' | 'video';
-  placeholderText: string;
-  successContent: string;
-  pollInterval: number;
-  userMessageTimestamp: string;
-  generationParams?: GenerationParams;
-  pollFn: (taskId: string) => Promise<{ status: string; fail_msg?: string | null }>;
-  extractUrl: (result: unknown) => { image_url?: string; video_url?: string };
-}
-
-/** 保存用户消息到数据库 */
-export async function saveUserMessage(
-  conversationId: string,
-  userMessage: Message,
-  tempUserId: string,
-  setMessages: React.Dispatch<React.SetStateAction<Message[]>>,
-  createdAt: string
-): Promise<Message> {
-  const realUserMessage = await createMessage(conversationId, {
-    content: userMessage.content,
-    role: 'user',
-    image_url: userMessage.image_url,
-    created_at: createdAt,
-  });
-  setMessages((prev) =>
-    prev.map((m) => (m.id === tempUserId ? { ...realUserMessage, created_at: m.created_at } : m))
-  );
-  return realUserMessage;
-}
-
-/** 处理重新生成错误 */
-export async function handleRegenError(
-  error: unknown,
-  conversationId: string,
-  placeholderId: string,
-  mediaType: 'image' | 'video',
-  setMessages: React.Dispatch<React.SetStateAction<Message[]>>,
-  createdAt: string,
-  generationParams?: GenerationParams
-): Promise<void> {
-  const errorText = mediaType === 'image' ? '图片生成失败' : '视频生成失败';
-  const errorMsg = `${errorText}: ${extractErrorMessage(error)}`;
-
-  try {
-    const savedError = await createMessage(conversationId, {
-      content: errorMsg,
-      role: 'assistant',
-      is_error: true,
-      created_at: createdAt,
-      generation_params: generationParams,
-    });
-    setMessages((prev) => prev.map((m) => (m.id === placeholderId ? savedError : m)));
-  } catch {
-    setMessages((prev) =>
-      prev.map((m) => (m.id === placeholderId ? { ...m, content: errorMsg, is_error: true } : m))
-    );
-  }
-  toast.error(errorMsg);
-}
-
-/** 通用媒体轮询处理 */
-export function handleMediaPolling(
-  taskId: string,
-  placeholderId: string,
-  creditsConsumed: number,
-  config: MediaRegenConfig,
-  conversationId: string,
-  conversationTitle: string,
-  setMessages: React.Dispatch<React.SetStateAction<Message[]>>,
-  onMessageUpdate?: (newLastMessage: string) => void,
-  resetRegeneratingState?: () => void,
-  onMediaTaskSubmitted?: () => void
-): void {
-  const { startMediaTask, startPolling, completeMediaTask, failMediaTask } = useTaskStore.getState();
-  const { refreshUser } = useAuthStore.getState();
-
-  startMediaTask({
-    taskId,
-    conversationId,
-    conversationTitle,
-    type: config.type,
-    placeholderId,
-  });
-
-  resetRegeneratingState?.();
-  onMediaTaskSubmitted?.();
-
-  startPolling(
-    taskId,
-    async () => {
-      const result = await config.pollFn(taskId);
-      if (result.status === 'success') return { done: true, result };
-      if (result.status === 'failed') {
-        return { done: true, error: new Error(result.fail_msg || `${config.type}生成失败`) };
-      }
-      return { done: false };
-    },
-    {
-      onSuccess: async (result: unknown) => {
-        const mediaUrl = config.extractUrl(result);
-        const aiCreatedAt = new Date(new Date(config.userMessageTimestamp).getTime() + 1).toISOString();
-        try {
-          const savedMsg = await createMessage(conversationId, {
-            content: config.successContent,
-            role: 'assistant',
-            image_url: mediaUrl.image_url,
-            video_url: mediaUrl.video_url,
-            credits_cost: creditsConsumed,
-            created_at: aiCreatedAt,
-            generation_params: config.generationParams,
-          });
-          setMessages((prev) => prev.map((m) => (m.id === placeholderId ? savedMsg : m)));
-          completeMediaTask(taskId);
-          refreshUser();
-          if (onMessageUpdate) onMessageUpdate(savedMsg.content);
-        } catch (err) {
-          console.error(`保存${config.type}消息失败:`, err);
-          failMediaTask(taskId);
-        }
-      },
-      onError: async (error: Error) => {
-        const errorCreatedAt = new Date(new Date(config.userMessageTimestamp).getTime() + 1).toISOString();
-        await handleRegenError(error, conversationId, placeholderId, config.type, setMessages, errorCreatedAt, config.generationParams);
-        failMediaTask(taskId);
-      },
-    },
-    {
-      interval: config.pollInterval,
-      maxDuration: config.type === 'image' ? 10 * 60 * 1000 : 30 * 60 * 1000,
-    }
-  );
-}
-
-/** 图片重新生成参数 */
-interface ImageRegenParams {
-  conversationId: string;
-  userMessage: Message;
-  originalGenerationParams?: GenerationParams | null;
-  modelId?: string | null;
-  selectedModel?: UnifiedModel | null;
-  setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
-  scrollToBottom: (smooth?: boolean) => void;
-  setRegeneratingId: (id: string | null) => void;
-  setIsRegeneratingAI: (value: boolean) => void;
-  conversationTitle: string;
-  onMessageUpdate?: (newLastMessage: string) => void;
-  resetRegeneratingState: () => void;
-  onMediaTaskSubmitted?: () => void;
-}
-
-/** 执行图片重新生成 */
-export async function executeImageRegeneration({
-  conversationId,
-  userMessage,
-  originalGenerationParams,
-  modelId,
-  selectedModel,
-  setMessages,
-  scrollToBottom,
-  setRegeneratingId,
-  setIsRegeneratingAI,
-  conversationTitle,
-  onMessageUpdate,
-  resetRegeneratingState,
-  onMediaTaskSubmitted,
-}: ImageRegenParams): Promise<void> {
-  const { tempUserMessage, tempAiMessage, tempUserId, newStreamingId } = createTempMessagePair(
-    conversationId, userMessage, '图片生成中...'
-  );
-
-  setRegeneratingId(newStreamingId);
-  setIsRegeneratingAI(true);
-  setMessages((prev) => [...prev, tempUserMessage, tempAiMessage]);
-  scrollToBottom();
-
-  const userTimestamp = tempUserMessage.created_at;
-  const originalImageParams = originalGenerationParams?.image;
+/**
+ * 计算图片生成参数
+ * 优先级：原始参数 > 保存的设置 > 默认值
+ */
+export function computeImageGenerationParams(
+  originalParams?: GenerationParams | null,
+  modelId?: string | null,
+  selectedModel?: UnifiedModel | null
+): ImageSenderParams['generationParams'] {
+  const originalImageParams = originalParams?.image;
   const savedSettings = getSavedSettings();
+
   const aspectRatio = originalImageParams?.aspectRatio ?? savedSettings.image.aspectRatio;
   const outputFormat = originalImageParams?.outputFormat ?? savedSettings.image.outputFormat;
   const resolution = originalImageParams?.resolution ?? savedSettings.image.resolution;
@@ -216,54 +44,118 @@ export async function executeImageRegeneration({
   const currentImageModel = selectedModel?.type === 'image' ? selectedModel.id : null;
   const imageModelId = originalModel || savedImageModel || currentImageModel || MEDIA_DEFAULTS.IMAGE_MODEL;
 
-  const modelConfig = ALL_MODELS.find((m) => m.id === imageModelId);
-  const supportsResolution = modelConfig?.supportsResolution ?? false;
-  const finalResolution = supportsResolution ? resolution : undefined;
-
-  const imageGenerationParams: GenerationParams = {
-    image: { aspectRatio, resolution: finalResolution, outputFormat, model: imageModelId },
+  return {
+    image: {
+      aspectRatio,
+      resolution,
+      outputFormat,
+      model: imageModelId,
+    },
   };
-
-  try {
-    await saveUserMessage(conversationId, userMessage, tempUserId, setMessages, userTimestamp);
-
-    const response = userMessage.image_url
-      ? await editImage({ prompt: userMessage.content, image_urls: [userMessage.image_url], size: aspectRatio, output_format: outputFormat, wait_for_result: false, conversation_id: conversationId })
-      : await generateImage({ prompt: userMessage.content, model: imageModelId as ImageModel, size: aspectRatio, output_format: outputFormat, resolution: finalResolution, wait_for_result: false, conversation_id: conversationId });
-
-    const successContent = userMessage.image_url ? '图片编辑完成' : '图片已生成完成';
-
-    if (response.status === 'pending' || response.status === 'processing') {
-      handleMediaPolling(response.task_id, newStreamingId, response.credits_consumed, {
-        type: 'image',
-        placeholderText: '正在生成图片...',
-        successContent,
-        pollInterval: 2000,
-        userMessageTimestamp: userTimestamp,
-        generationParams: imageGenerationParams,
-        pollFn: getImageTaskStatus,
-        extractUrl: (r) => ({ image_url: (r as { image_urls: string[] }).image_urls[0] }),
-      }, conversationId, conversationTitle, setMessages, onMessageUpdate, resetRegeneratingState, onMediaTaskSubmitted);
-    } else if (response.status === 'success' && response.image_urls.length > 0) {
-      const aiCreatedAt = new Date(new Date(userTimestamp).getTime() + 1).toISOString();
-      const savedMsg = await createMessage(conversationId, { content: successContent, role: 'assistant', image_url: response.image_urls[0], credits_cost: response.credits_consumed, created_at: aiCreatedAt, generation_params: imageGenerationParams });
-      setMessages((prev) => prev.map((m) => (m.id === newStreamingId ? savedMsg : m)));
-      resetRegeneratingState();
-      onMediaTaskSubmitted?.();
-      if (onMessageUpdate) onMessageUpdate(savedMsg.content);
-    } else {
-      throw new Error('图片生成失败');
-    }
-  } catch (error) {
-    const errorCreatedAt = new Date(new Date(tempUserMessage.created_at).getTime() + 1).toISOString();
-    await handleRegenError(error, conversationId, newStreamingId, 'image', setMessages, errorCreatedAt, imageGenerationParams);
-    resetRegeneratingState();
-    onMediaTaskSubmitted?.();
-  }
 }
 
-/** 视频重新生成参数 */
-interface VideoRegenParams {
+/**
+ * 计算视频生成参数
+ * 优先级：原始参数 > 保存的设置 > 默认值
+ */
+export function computeVideoGenerationParams(
+  originalParams?: GenerationParams | null,
+  modelId?: string | null,
+  selectedModel?: UnifiedModel | null,
+  hasImage?: boolean
+): { generationParams: VideoSenderParams['generationParams']; finalModelId: string } {
+  const originalVideoParams = originalParams?.video;
+  const savedSettings = getSavedSettings();
+
+  const videoFrames = originalVideoParams?.frames ?? savedSettings.video.frames;
+  const videoAspectRatio = originalVideoParams?.aspectRatio ?? savedSettings.video.aspectRatio;
+  const removeWatermark = originalVideoParams?.removeWatermark ?? savedSettings.video.removeWatermark;
+
+  const originalModel = originalVideoParams?.model;
+  const savedVideoModel = modelId && getModelTypeById(modelId) === 'video' ? modelId : null;
+  const currentVideoModel = selectedModel?.type === 'video' ? selectedModel.id : null;
+  const videoModelId = originalModel || savedVideoModel || currentVideoModel || MEDIA_DEFAULTS.VIDEO_MODEL;
+
+  // 图生视频模型选择
+  const savedModel = savedVideoModel ? ALL_MODELS.find((m) => m.id === savedVideoModel) : null;
+  const savedSupportsI2V = savedModel?.type === 'video' && savedModel.capabilities.imageToVideo;
+  const currentSupportsI2V = selectedModel?.type === 'video' && selectedModel.capabilities.imageToVideo;
+  const i2vModelId = originalModel || (savedSupportsI2V ? savedVideoModel : null) || (currentSupportsI2V ? selectedModel!.id : null) || MEDIA_DEFAULTS.I2V_MODEL;
+
+  const finalModelId = hasImage ? i2vModelId : videoModelId;
+
+  // 帧数兼容性检查
+  const videoModelConfig = ALL_MODELS.find((m) => m.id === finalModelId);
+  const supportedFrames = videoModelConfig?.videoPricing ? Object.keys(videoModelConfig.videoPricing) : ['10', '15'];
+  const finalFrames = supportedFrames.includes(videoFrames) ? videoFrames : (supportedFrames[supportedFrames.length - 1] as typeof videoFrames);
+
+  return {
+    generationParams: {
+      video: {
+        frames: finalFrames,
+        aspectRatio: videoAspectRatio,
+        removeWatermark,
+        model: finalModelId,
+      },
+    },
+    finalModelId,
+  };
+}
+
+/**
+ * 创建媒体重新生成回调（复用模式）
+ * 用于成功消息重新生成场景
+ *
+ * 缓存写入路径：
+ * - 临时消息（temp-xxx、streaming-xxx）→ RuntimeStore（占位符管理）
+ * - 持久化消息 → setMessages 兼容层 → ChatStore
+ */
+export function createMediaRegenCallbacks(
+  setMessages: React.Dispatch<React.SetStateAction<Message[]>>,
+  resetRegeneratingState: () => void,
+  onMessageUpdate?: (newLastMessage: string) => void,
+  onMediaTaskSubmitted?: () => void,
+  // RuntimeStore 操作方法（统一占位符管理）
+  addOptimisticUserMessage?: (conversationId: string, message: Message) => void,
+  addMediaPlaceholder?: (conversationId: string, placeholder: Message) => void
+) {
+  return {
+    onMessagePending: (msg: Message) => {
+      // 临时消息写入 RuntimeStore（保持占位符管理一致性）
+      if (msg.id.startsWith('temp-') && addOptimisticUserMessage && msg.conversation_id) {
+        addOptimisticUserMessage(msg.conversation_id, msg);
+      } else if (msg.id.startsWith('streaming-') && addMediaPlaceholder && msg.conversation_id) {
+        addMediaPlaceholder(msg.conversation_id, msg);
+      } else {
+        // 持久化消息通过 setMessages 兼容层
+        setMessages((prev) => {
+          const existing = prev.findIndex((m) => m.id === msg.id);
+          if (existing >= 0) {
+            return prev.map((m, i) => (i === existing ? msg : m));
+          }
+          return [...prev, msg];
+        });
+      }
+    },
+    onMessageSent: (aiMessage?: Message | null) => {
+      resetRegeneratingState();
+      // 持久化消息统一走 setMessages 兼容层
+      if (aiMessage) {
+        setMessages((prev) => [...prev, aiMessage]);
+      }
+      if (aiMessage && !aiMessage.is_error && onMessageUpdate) {
+        onMessageUpdate(aiMessage.content);
+      }
+    },
+    onMediaTaskSubmitted: () => {
+      resetRegeneratingState();
+      onMediaTaskSubmitted?.();
+    },
+  };
+}
+
+/** 媒体重新生成公共参数 */
+interface MediaRegenParams {
   conversationId: string;
   userMessage: Message;
   originalGenerationParams?: GenerationParams | null;
@@ -279,7 +171,49 @@ interface VideoRegenParams {
   onMediaTaskSubmitted?: () => void;
 }
 
-/** 执行视频重新生成 */
+/** 执行图片重新生成 - 复用 sendMediaMessage */
+export async function executeImageRegeneration({
+  conversationId,
+  userMessage,
+  originalGenerationParams,
+  modelId,
+  selectedModel,
+  setMessages,
+  scrollToBottom,
+  setIsRegeneratingAI,
+  conversationTitle,
+  onMessageUpdate,
+  resetRegeneratingState,
+  onMediaTaskSubmitted,
+}: MediaRegenParams): Promise<void> {
+  setIsRegeneratingAI(true);
+  scrollToBottom();
+
+  const generationParams = computeImageGenerationParams(originalGenerationParams, modelId, selectedModel);
+
+  // 获取 RuntimeStore 方法（统一占位符管理）
+  const { addOptimisticUserMessage, addMediaPlaceholder } = useConversationRuntimeStore.getState();
+
+  await sendMediaMessage({
+    type: 'image',
+    conversationId,
+    content: userMessage.content,
+    imageUrl: userMessage.image_url,
+    modelId: generationParams.image.model,
+    generationParams,
+    conversationTitle,
+    callbacks: createMediaRegenCallbacks(
+      setMessages,
+      resetRegeneratingState,
+      onMessageUpdate,
+      onMediaTaskSubmitted,
+      addOptimisticUserMessage,
+      addMediaPlaceholder
+    ),
+  });
+}
+
+/** 执行视频重新生成 - 复用 sendMediaMessage */
 export async function executeVideoRegeneration({
   conversationId,
   userMessage,
@@ -288,82 +222,40 @@ export async function executeVideoRegeneration({
   selectedModel,
   setMessages,
   scrollToBottom,
-  setRegeneratingId,
   setIsRegeneratingAI,
   conversationTitle,
   onMessageUpdate,
   resetRegeneratingState,
   onMediaTaskSubmitted,
-}: VideoRegenParams): Promise<void> {
-  const { tempUserMessage, tempAiMessage, tempUserId, newStreamingId } = createTempMessagePair(
-    conversationId, userMessage, '视频生成中...'
-  );
-
-  setRegeneratingId(newStreamingId);
+}: MediaRegenParams): Promise<void> {
   setIsRegeneratingAI(true);
-  setMessages((prev) => [...prev, tempUserMessage, tempAiMessage]);
   scrollToBottom();
 
-  const userTimestamp = tempUserMessage.created_at;
-  const originalVideoParams = originalGenerationParams?.video;
-  const savedSettings = getSavedSettings();
-  const videoFrames = originalVideoParams?.frames ?? savedSettings.video.frames;
-  const videoAspectRatio = originalVideoParams?.aspectRatio ?? savedSettings.video.aspectRatio;
-  const removeWatermark = originalVideoParams?.removeWatermark ?? savedSettings.video.removeWatermark;
+  const { generationParams, finalModelId } = computeVideoGenerationParams(
+    originalGenerationParams,
+    modelId,
+    selectedModel,
+    !!userMessage.image_url
+  );
 
-  const originalModel = originalVideoParams?.model;
-  const savedVideoModel = modelId && getModelTypeById(modelId) === 'video' ? modelId : null;
-  const currentVideoModel = selectedModel?.type === 'video' ? selectedModel.id : null;
-  const videoModelId = originalModel || savedVideoModel || currentVideoModel || MEDIA_DEFAULTS.VIDEO_MODEL;
+  // 获取 RuntimeStore 方法（统一占位符管理）
+  const { addOptimisticUserMessage, addMediaPlaceholder } = useConversationRuntimeStore.getState();
 
-  const savedModel = savedVideoModel ? ALL_MODELS.find((m) => m.id === savedVideoModel) : null;
-  const savedSupportsI2V = savedModel?.type === 'video' && savedModel.capabilities.imageToVideo;
-  const currentSupportsI2V = selectedModel?.type === 'video' && selectedModel.capabilities.imageToVideo;
-  const i2vModelId = originalModel || (savedSupportsI2V ? savedVideoModel : null) || (currentSupportsI2V ? selectedModel!.id : null) || MEDIA_DEFAULTS.I2V_MODEL;
-
-  const finalModelId = userMessage.image_url ? i2vModelId : videoModelId;
-  const videoModelConfig = ALL_MODELS.find((m) => m.id === finalModelId);
-  const supportedFrames = videoModelConfig?.videoPricing ? Object.keys(videoModelConfig.videoPricing) : ['10', '15'];
-  const finalFrames = supportedFrames.includes(videoFrames) ? videoFrames : (supportedFrames[supportedFrames.length - 1] as typeof videoFrames);
-
-  const videoGenerationParams: GenerationParams = {
-    video: { frames: finalFrames, aspectRatio: videoAspectRatio, removeWatermark, model: finalModelId },
-  };
-
-  try {
-    await saveUserMessage(conversationId, userMessage, tempUserId, setMessages, userTimestamp);
-
-    const response = userMessage.image_url
-      ? await generateImageToVideo({ prompt: userMessage.content, image_url: userMessage.image_url, model: i2vModelId as VideoModel, n_frames: finalFrames, aspect_ratio: videoAspectRatio, remove_watermark: removeWatermark, wait_for_result: false, conversation_id: conversationId })
-      : await generateTextToVideo({ prompt: userMessage.content, model: videoModelId as VideoModel, n_frames: finalFrames, aspect_ratio: videoAspectRatio, remove_watermark: removeWatermark, wait_for_result: false, conversation_id: conversationId });
-
-    const successContent = userMessage.image_url ? '视频生成完成（图生视频）' : '视频生成完成';
-
-    if (response.status === 'pending' || response.status === 'processing') {
-      handleMediaPolling(response.task_id, newStreamingId, response.credits_consumed, {
-        type: 'video',
-        placeholderText: '正在生成视频...',
-        successContent,
-        pollInterval: 5000,
-        userMessageTimestamp: userTimestamp,
-        generationParams: videoGenerationParams,
-        pollFn: getVideoTaskStatus,
-        extractUrl: (r) => ({ video_url: (r as { video_url: string }).video_url }),
-      }, conversationId, conversationTitle, setMessages, onMessageUpdate, resetRegeneratingState, onMediaTaskSubmitted);
-    } else if (response.status === 'success' && response.video_url) {
-      const aiCreatedAt = new Date(new Date(userTimestamp).getTime() + 1).toISOString();
-      const savedMsg = await createMessage(conversationId, { content: successContent, role: 'assistant', video_url: response.video_url, credits_cost: response.credits_consumed, created_at: aiCreatedAt, generation_params: videoGenerationParams });
-      setMessages((prev) => prev.map((m) => (m.id === newStreamingId ? savedMsg : m)));
-      resetRegeneratingState();
-      onMediaTaskSubmitted?.();
-      if (onMessageUpdate) onMessageUpdate(savedMsg.content);
-    } else {
-      throw new Error('视频生成失败');
-    }
-  } catch (error) {
-    const errorCreatedAt = new Date(new Date(tempUserMessage.created_at).getTime() + 1).toISOString();
-    await handleRegenError(error, conversationId, newStreamingId, 'video', setMessages, errorCreatedAt, videoGenerationParams);
-    resetRegeneratingState();
-    onMediaTaskSubmitted?.();
-  }
+  await sendMediaMessage({
+    type: 'video',
+    conversationId,
+    content: userMessage.content,
+    imageUrl: userMessage.image_url,
+    modelId: finalModelId,
+    generationParams,
+    conversationTitle,
+    callbacks: createMediaRegenCallbacks(
+      setMessages,
+      resetRegeneratingState,
+      onMessageUpdate,
+      onMediaTaskSubmitted,
+      addOptimisticUserMessage,
+      addMediaPlaceholder
+    ),
+  });
 }
