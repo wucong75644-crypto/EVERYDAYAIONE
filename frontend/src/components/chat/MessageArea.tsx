@@ -1,23 +1,28 @@
 /**
- * 消息区域组件（重构版）
+ * 消息区域组件（虚拟滚动版）
  *
  * 显示对话消息列表，支持：
  * - 空状态显示
- * - 消息列表
+ * - 消息列表（虚拟滚动优化）
  * - 自动滚动
  * - 加载更多历史消息
  * - 消息缓存（切换秒显）
+ *
+ * 重构记录（2026-02-02）：
+ * - 使用 useVirtuosoScroll 统一入口管理滚动
+ * - 删除冗余的滚动 hooks（useScrollManager、useMessageAreaScroll）
+ * - 以 Virtuoso 为核心，简化滚动逻辑
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Virtuoso } from 'react-virtuoso';
 import { deleteMessage, type Message } from '../../services/message';
 import MessageItem from './MessageItem';
 import EmptyState from './EmptyState';
 import LoadingSkeleton from './LoadingSkeleton';
 import toast from 'react-hot-toast';
 import { useMessageLoader } from '../../hooks/useMessageLoader';
-import { useScrollManager } from '../../hooks/useScrollManager';
-import { useMessageAreaScroll } from '../../hooks/useMessageAreaScroll';
+import { useVirtuosoScroll } from '../../hooks/useVirtuosoScroll';
 import { useRegenerateHandlers } from '../../hooks/useRegenerateHandlers';
 import { useUnifiedMessages } from '../../hooks/useUnifiedMessages';
 import { useConversationRuntimeStore } from '../../stores/useConversationRuntimeStore';
@@ -41,31 +46,43 @@ export default function MessageArea({
   modelId = null,
   selectedModel = null,
 }: MessageAreaProps) {
-  // 使用滚动管理 Hook（统一管理所有滚动状态）
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const {
-    showScrollButton,
-    userScrolledAway,
-    hasNewMessages,
-    setUserScrolledAway,
-    setHasNewMessages,
-    scrollToBottom,
-    scrollToBottomDebounced,
-    scrollToElement,
-    handleScroll,
-    markNewMessages,
-    resetScrollState,
-  } = useScrollManager({ containerRef, messagesEndRef });
-
   // 使用消息加载 Hook（负责从后端加载并写入缓存）
-  const { loading, loadMessages } = useMessageLoader({
-    conversationId,
-    onNewMessages: markNewMessages,
-  });
+  // 不传 onNewMessages，新消息标记由 store.markConversationUnread 和 useVirtuosoScroll 处理
+  const { loading, loadMessages } = useMessageLoader({ conversationId });
 
   // 使用统一消息读取 Hook（自动合并持久化消息和临时消息）
   const mergedMessages = useUnifiedMessages(conversationId);
+
+  // 使用 ref 存储 mergedMessages，避免 setMessages 依赖导致频繁重建
+  const mergedMessagesRef = useRef(mergedMessages);
+  mergedMessagesRef.current = mergedMessages;
+
+  // 获取运行时状态（用于判断是否正在流式生成）
+  const runtimeState = useConversationRuntimeStore(
+    (state) => conversationId ? state.states.get(conversationId) : undefined
+  );
+
+  // 判断是否正在流式生成
+  const isStreaming = !!runtimeState?.streamingMessageId;
+
+  // ✅ 使用统一的 Virtuoso 滚动管理 Hook
+  const {
+    virtuosoRef,
+    userScrolledAway,
+    hasNewMessages,
+    showScrollButton,
+    followOutput,
+    atBottomStateChange,
+    scrollerRef,
+    scrollToBottom,
+    setUserScrolledAway,
+    setHasNewMessages,
+  } = useVirtuosoScroll({
+    conversationId,
+    messages: mergedMessages,
+    loading,
+    isStreaming,
+  });
 
   // 获取当前对话标题（用于任务追踪）
   const currentConversationTitle = useChatStore((state) => state.currentConversationTitle);
@@ -74,40 +91,31 @@ export default function MessageArea({
   const { removeMessage, replaceMessage, appendMessage } = useChatStore();
 
   // 兼容层：为重新生成策略提供 setMessages 接口
-  // 实际上调用 replaceMessage/appendMessage 更新缓存，UI 通过 useUnifiedMessages 自动响应
+  // 使用 ref 读取 mergedMessages，避免依赖变化导致函数重建
   const setMessages = useCallback(
     (updater: Message[] | ((prev: Message[]) => Message[])) => {
       if (!conversationId) return;
 
-      // 如果是函数形式，计算新消息列表并找出变化
       if (typeof updater === 'function') {
-        const newMessages = updater(mergedMessages);
-
-        // ✅ 使用Map提升性能，O(1)查找，避免index错位
-        const oldMessagesMap = new Map(mergedMessages.map(m => [m.id, m]));
+        const currentMessages = mergedMessagesRef.current;
+        const newMessages = updater(currentMessages);
+        const oldMessagesMap = new Map(currentMessages.map(m => [m.id, m]));
 
         newMessages.forEach((newMsg) => {
-          const oldMsg = oldMessagesMap.get(newMsg.id);  // ✅ ID匹配替代index匹配
+          const oldMsg = oldMessagesMap.get(newMsg.id);
 
           if (oldMsg && oldMsg !== newMsg) {
-            // 消息被修改 → 替换缓存
             replaceMessage(conversationId, oldMsg.id, newMsg);
           } else if (!oldMsg && newMsg && !newMsg.id.startsWith('temp-') && !newMsg.id.startsWith('streaming-')) {
-            // 新增持久化消息 → 追加缓存
             appendMessage(conversationId, newMsg);
           }
         });
       }
     },
-    [conversationId, mergedMessages, replaceMessage, appendMessage]
+    [conversationId, replaceMessage, appendMessage]
   );
 
-  // 获取运行时状态（仅用于滚动逻辑，不用于消息合并）
-  const runtimeState = useConversationRuntimeStore(
-    (state) => conversationId ? state.states.get(conversationId) : undefined
-  );
-
-  // 提取所有图片 URL（用于缩略图预览，支持逗号分隔的多图）
+  // 提取所有图片 URL（用于缩略图预览）
   const allImageUrls = useMemo(() => {
     return mergedMessages
       .filter(m => m.image_url)
@@ -121,7 +129,7 @@ export default function MessageArea({
     return map;
   }, [allImageUrls]);
 
-  // 计算每条消息的第一张图片索引（用于缩略图预览）
+  // 计算每条消息的第一张图片索引
   const getImageIndex = useCallback((message: Message): number => {
     const firstUrl = getFirstImageUrl(message.image_url);
     if (!firstUrl) return -1;
@@ -131,24 +139,6 @@ export default function MessageArea({
   // 重新生成相关状态
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [isRegeneratingAI, setIsRegeneratingAI] = useState(false);
-
-  // 使用滚动行为管理 Hook（处理对话切换、消息加载、新消息等滚动逻辑）
-  const { handleRegenerateScroll } = useMessageAreaScroll({
-    conversationId,
-    messages: mergedMessages,
-    loading,
-    containerRef,
-    userScrolledAway,
-    setUserScrolledAway,
-    scrollToBottom,
-    scrollToBottomDebounced,
-    scrollToElement,
-    resetScrollState,
-    runtimeState: runtimeState ? {
-      streamingMessageId: runtimeState.streamingMessageId,
-      optimisticMessages: runtimeState.optimisticMessages,
-    } : undefined,
-  });
 
   // 加载消息
   useEffect(() => {
@@ -167,19 +157,15 @@ export default function MessageArea({
                                  messageId.startsWith('error-') ||
                                  messageId.startsWith('streaming-');
 
-      // 非临时消息需要调用后端 API 删除
       if (!isTemporaryMessage) {
         await deleteMessage(messageId);
       }
 
-      // 使用统一方法删除缓存中的消息
       if (conversationId) {
         removeMessage(conversationId, messageId);
-        // 同时清理 RuntimeStore 中的临时消息
         useConversationRuntimeStore.getState().removeOptimisticMessage(conversationId, messageId);
       }
 
-      // 计算新的最后一条消息（用于更新对话列表）
       const updatedMergedMessages = mergedMessages.filter((msg) => msg.id !== messageId);
       const newLastMessage = updatedMergedMessages.length > 0
         ? updatedMergedMessages[updatedMergedMessages.length - 1].content
@@ -193,20 +179,20 @@ export default function MessageArea({
     }
   }, [conversationId, mergedMessages, removeMessage, onDelete]);
 
-  // 重置重新生成状态的辅助函数
+  // 重置重新生成状态
   const resetRegeneratingState = useCallback(() => {
     setRegeneratingId(null);
     setIsRegeneratingAI(false);
   }, []);
 
-  // 媒体加载完成回调（占位符渲染后触发滚动）
+  // 媒体加载完成回调
   const handleMediaLoaded = useCallback(() => {
     if (!userScrolledAway) {
       scrollToBottom(true);
     }
   }, [userScrolledAway, scrollToBottom]);
 
-  // 使用重新生成处理器 hook（统一入口）
+  // 使用重新生成处理器 hook
   const { handleRegenerate: doRegenerate } = useRegenerateHandlers({
     conversationId,
     conversationTitle: currentConversationTitle,
@@ -221,15 +207,13 @@ export default function MessageArea({
     userScrolledAway,
   });
 
-  // 处理重新生成（查找消息对，调用统一入口）
+  // 处理重新生成
   const handleRegenerate = useCallback(async (messageId: string) => {
     if (!conversationId || regeneratingId) return;
 
-    // 使用 mergedMessages 查找，因为新生成的消息可能在乐观更新中
     const targetMessage = mergedMessages.find((m) => m.id === messageId);
     if (!targetMessage || targetMessage.role !== 'assistant') return;
 
-    // 查找对应的用户消息
     const aiIndex = mergedMessages.findIndex((m) => m.id === messageId);
     let userMessage: Message | null = null;
     for (let i = aiIndex - 1; i >= 0; i--) {
@@ -244,15 +228,39 @@ export default function MessageArea({
       return;
     }
 
-    // 调用统一入口，自动判断类型和策略
     await doRegenerate(targetMessage, userMessage);
   }, [conversationId, mergedMessages, regeneratingId, doRegenerate]);
 
-
   // 重新生成开始时自动滚动
   useEffect(() => {
-    handleRegenerateScroll(regeneratingId, isRegeneratingAI);
-  }, [isRegeneratingAI, regeneratingId, handleRegenerateScroll]);
+    if (isRegeneratingAI && regeneratingId && !userScrolledAway) {
+      const isFailedMessageRegenerate = mergedMessages.some(
+        m => m.id === regeneratingId && m.content === ''
+      );
+      scrollToBottom(!isFailedMessageRegenerate);
+    }
+  }, [isRegeneratingAI, regeneratingId, userScrolledAway, mergedMessages, scrollToBottom]);
+
+  // 渲染单条消息
+  const itemContent = useCallback((_index: number, message: Message) => {
+    const isRegenerating = message.id === regeneratingId;
+    const isMessageStreaming = message.id.startsWith('streaming-');
+    const imageIndex = getImageIndex(message);
+
+    return (
+      <MessageItem
+        key={message.id}
+        message={message}
+        isStreaming={isMessageStreaming}
+        isRegenerating={isRegenerating}
+        onRegenerate={handleRegenerate}
+        onDelete={handleDelete}
+        onMediaLoaded={handleMediaLoaded}
+        allImageUrls={allImageUrls}
+        currentImageIndex={imageIndex >= 0 ? imageIndex : 0}
+      />
+    );
+  }, [regeneratingId, getImageIndex, handleRegenerate, handleDelete, handleMediaLoaded, allImageUrls]);
 
   // 空状态
   if (!conversationId && mergedMessages.length === 0) {
@@ -283,33 +291,33 @@ export default function MessageArea({
 
   return (
     <div className="flex-1 flex flex-col relative min-h-0 h-full">
-      {/* 可滚动的消息区域 */}
-      <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto bg-white">
-        <div key={conversationId || 'no-conversation'} className="max-w-3xl mx-auto py-6 px-4 animate-fadeIn">
-          {mergedMessages.map((message) => {
-            const isRegenerating = message.id === regeneratingId;
-            const isStreaming = message.id.startsWith('streaming-');
-            const imageIndex = getImageIndex(message);
+      {/* Virtuoso 虚拟滚动 */}
+      <Virtuoso
+        ref={virtuosoRef}
+        key={conversationId || 'no-conversation'}
+        data={mergedMessages}
+        itemContent={itemContent}
+        followOutput={followOutput}
+        atBottomStateChange={atBottomStateChange}
+        atBottomThreshold={100}
+        overscan={200}
+        scrollerRef={scrollerRef}
+        className="flex-1 bg-white"
+        style={{ height: '100%' }}
+        components={{
+          List: ({ style, children, ...props }) => (
+            <div
+              {...props}
+              style={style}
+              className="max-w-3xl mx-auto py-6 px-4"
+            >
+              {children}
+            </div>
+          ),
+        }}
+      />
 
-            return (
-              <MessageItem
-                key={message.id}
-                message={message}
-                isStreaming={isStreaming}
-                isRegenerating={isRegenerating}
-                onRegenerate={handleRegenerate}
-                onDelete={handleDelete}
-                onMediaLoaded={handleMediaLoaded}
-                allImageUrls={allImageUrls}
-                currentImageIndex={imageIndex >= 0 ? imageIndex : 0}
-              />
-            );
-          })}
-          <div ref={messagesEndRef} />
-        </div>
-      </div>
-
-      {/* 回到底部按钮（相对于 MessageArea 底部定位） */}
+      {/* 回到底部按钮 */}
       {showScrollButton && (
         <button
           onClick={() => {

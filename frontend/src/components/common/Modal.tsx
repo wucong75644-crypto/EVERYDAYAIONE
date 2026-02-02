@@ -29,8 +29,10 @@ export default function Modal({
   const [shouldRender, setShouldRender] = useState(isOpen);
 
   // 控制渲染和动画
+  // 注意：同步 setState 是动画时序必需的（先渲染 DOM，再触发 CSS 动画）
   useEffect(() => {
     if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setShouldRender(true);
       // 等待 DOM 渲染后触发进入动画
       const timer = setTimeout(() => {

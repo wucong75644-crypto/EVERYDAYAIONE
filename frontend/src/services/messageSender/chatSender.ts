@@ -9,8 +9,7 @@ import {
   createErrorMessage,
   getIncrementalTimestampISO,
 } from '../../utils/messageFactory';
-import { useChatStore } from '../../stores/useChatStore';
-import { useConversationRuntimeStore } from '../../stores/useConversationRuntimeStore';
+import { messageCoordinator } from '../../utils/messageCoordinator';
 import type { ChatSenderParams } from './types';
 
 export async function sendChatMessage(params: ChatSenderParams): Promise<void> {
@@ -61,26 +60,13 @@ export async function sendChatMessage(params: ChatSenderParams): Promise<void> {
       {
         onUserMessage: (userMessage) => {
           if (userMessage.client_request_id) {
-            // ✅ 修复测试3：先尝试更新ID，如果失败则直接写入缓存
-            const chatStore = useChatStore.getState();
-            chatStore.updateMessageId(
+            // ✅ 使用协调层统一处理 updateMessageId（解决重复调用问题）
+            messageCoordinator.confirmUserMessage({
               conversationId,
-              userMessage.client_request_id,
-              userMessage.id
-            );
-
-            // ✅ 确保用户消息写入缓存（如果updateMessageId失败，直接追加）
-            const cached = chatStore.messageCache.get(conversationId);
-            const messageExists = cached?.messages.some(m => m.id === userMessage.id);
-            if (!messageExists) {
-              chatStore.appendMessage(conversationId, userMessage);
-            }
-
-            useConversationRuntimeStore.getState().updateMessageId(
-              conversationId,
-              userMessage.client_request_id,
-              userMessage.id
-            );
+              clientRequestId: userMessage.client_request_id,
+              newId: userMessage.id,
+              message: userMessage,
+            });
           } else {
             onMessagePending(userMessage);
           }

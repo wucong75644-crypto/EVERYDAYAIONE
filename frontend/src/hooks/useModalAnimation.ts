@@ -15,7 +15,7 @@
  * ```
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { MODAL_CLOSE_ANIMATION_DURATION } from '../constants/animations';
 
 interface UseModalAnimationOptions {
@@ -42,6 +42,10 @@ export function useModalAnimation(options: UseModalAnimationOptions = {}): UseMo
   const [isOpen, setIsOpen] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
 
+  // 使用 ref 存储 onClosed 回调，避免调用方未 memoize 时导致 close 函数频繁重建
+  const onClosedRef = useRef(onClosed);
+  onClosedRef.current = onClosed;
+
   const open = useCallback(() => {
     setIsOpen(true);
     setIsClosing(false);
@@ -52,9 +56,9 @@ export function useModalAnimation(options: UseModalAnimationOptions = {}): UseMo
     setTimeout(() => {
       setIsOpen(false);
       setIsClosing(false);
-      onClosed?.();
+      onClosedRef.current?.();
     }, duration);
-  }, [duration, onClosed]);
+  }, [duration]);
 
   return {
     isOpen,

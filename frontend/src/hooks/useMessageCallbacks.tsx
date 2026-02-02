@@ -14,6 +14,7 @@ import { useConversationRuntimeStore } from '../stores/useConversationRuntimeSto
 import { useTaskStore } from '../stores/useTaskStore';
 import { useChatStore } from '../stores/useChatStore';
 import { useAuthStore } from '../stores/useAuthStore';
+import { messageCoordinator } from '../utils/messageCoordinator';
 import type { Message } from '../services/message';
 import toast from 'react-hot-toast';
 
@@ -148,6 +149,8 @@ export function useMessageCallbacks({
         if (aiMessage?.is_error) {
           failTask(messageConversationId);
         } else {
+          // 先标记未读，再完成任务（保持与原实现一致的顺序）
+          messageCoordinator.markConversationUnread(messageConversationId);
           completeTask(messageConversationId);
         }
       }

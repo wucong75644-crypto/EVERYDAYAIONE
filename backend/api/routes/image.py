@@ -57,6 +57,8 @@ async def generate_image(
         resolution=body.resolution.value if body.resolution else None,
         wait_for_result=body.wait_for_result,
         conversation_id=body.conversation_id,
+        placeholder_message_id=body.placeholder_message_id,
+        placeholder_created_at=body.placeholder_created_at,
     )
 
     return GenerateImageResponse(
@@ -88,6 +90,8 @@ async def edit_image(
         output_format=request.output_format.value,
         wait_for_result=request.wait_for_result,
         conversation_id=request.conversation_id,
+        placeholder_message_id=request.placeholder_message_id,
+        placeholder_created_at=request.placeholder_created_at,
     )
 
     return GenerateImageResponse(

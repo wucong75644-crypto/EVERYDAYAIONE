@@ -54,6 +54,8 @@ async def generate_text_to_video(
         remove_watermark=body.remove_watermark,
         wait_for_result=body.wait_for_result,
         conversation_id=body.conversation_id,
+        placeholder_message_id=body.placeholder_message_id,
+        placeholder_created_at=body.placeholder_created_at,
     )
 
     return GenerateVideoResponse(
@@ -91,6 +93,8 @@ async def generate_image_to_video(
         remove_watermark=body.remove_watermark,
         wait_for_result=body.wait_for_result,
         conversation_id=body.conversation_id,
+        placeholder_message_id=body.placeholder_message_id,
+        placeholder_created_at=body.placeholder_created_at,
     )
 
     return GenerateVideoResponse(
@@ -124,6 +128,8 @@ async def generate_storyboard_video(
         aspect_ratio=request.aspect_ratio.value,
         wait_for_result=request.wait_for_result,
         conversation_id=request.conversation_id,
+        placeholder_message_id=request.placeholder_message_id,
+        placeholder_created_at=request.placeholder_created_at,
     )
 
     return GenerateVideoResponse(

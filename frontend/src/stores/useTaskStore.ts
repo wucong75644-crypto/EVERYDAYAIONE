@@ -6,7 +6,6 @@ import { create } from 'zustand';
 import type { PollingCallbacks, PollingConfig } from '../utils/polling';
 import { taskCoordinator } from '../utils/taskCoordinator';
 import { notifyTaskComplete } from '../utils/taskNotification';
-import { useChatStore } from './useChatStore';
 import type { StoreTaskStatus, StoreTaskType, CompletedNotification } from '../types/task';
 
 const GLOBAL_TASK_LIMIT = 15;
@@ -114,8 +113,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   },
 
   completeTask: (conversationId: string) => {
-    // 在 set 之前调用副作用（与原实现一致）
-    useChatStore.getState().markConversationUnread(conversationId);
+    // 注意：markConversationUnread 已移至调用方（useMessageCallbacks.tsx）
+    // 解耦 TaskStore 对 ChatStore 的依赖
 
     set((state) => {
       const task = state.chatTasks.get(conversationId);
@@ -186,8 +185,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     if (!task) return;
 
     get().stopPolling(taskId);
-    // 在 set 之前调用副作用（与原实现一致）
-    useChatStore.getState().markConversationUnread(task.conversationId);
+    // 注意：markConversationUnread 已移至调用方（mediaGenerationCore.ts、taskRestoration.ts）
+    // 解耦 TaskStore 对 ChatStore 的依赖
 
     set((state) => {
       const newTasks = new Map(state.mediaTasks);

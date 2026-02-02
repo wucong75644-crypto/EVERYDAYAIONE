@@ -17,6 +17,12 @@ import { parseImageUrls } from '../../utils/imageUtils';
 import MediaPlaceholder from './MediaPlaceholder';
 import styles from './shared.module.css';
 
+/** 图片加载重试配置 */
+const IMAGE_RETRY_CONFIG = {
+  maxRetries: 3,
+  baseDelay: 1000, // 基础延迟 1s，指数退避
+};
+
 interface MessageMediaProps {
   /** 图片 URL（单个或多个，逗号分隔） */
   imageUrl?: string | null;
@@ -40,7 +46,7 @@ interface MessageMediaProps {
   videoAspectRatio?: VideoAspectRatio;
 }
 
-/** 单张图片组件（AI 生成，带占位符） */
+/** 单张图片组件（AI 生成，带占位符和失败重试） */
 function AiGeneratedImage({
   imageUrl,
   messageId,
@@ -58,7 +64,10 @@ function AiGeneratedImage({
 }) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const [loadError, setLoadError] = useState(false);
   const placeholderNotified = useRef(false);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 懒加载
   const { ref: lazyRef, inView } = useInView({
@@ -71,13 +80,50 @@ function AiGeneratedImage({
   // 计算宽高比（用于图片加载前的占位）
   const aspectRatio = placeholderSize.width / placeholderSize.height;
 
-  // imageUrl 变化时重置
+  // 生成带重试参数的图片 URL（绕过缓存）
+  const imageUrlWithRetry = useMemo(() => {
+    if (!imageUrl) return null;
+    if (retryCount === 0) return imageUrl;
+    const separator = imageUrl.includes('?') ? '&' : '?';
+    return `${imageUrl}${separator}_retry=${retryCount}`;
+  }, [imageUrl, retryCount]);
+
+  // imageUrl 变化时重置所有状态
   useEffect(() => {
     if (imageUrl) {
       setImageLoaded(false);
+      setRetryCount(0);
+      setLoadError(false);
       placeholderNotified.current = false;
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
     }
   }, [imageUrl]);
+
+  // 组件卸载时清理定时器
+  useEffect(() => {
+    return () => {
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+      }
+    };
+  }, []);
+
+  // 处理图片加载失败
+  const handleImageError = useCallback(() => {
+    if (retryCount < IMAGE_RETRY_CONFIG.maxRetries) {
+      // 指数退避延迟重试
+      const delay = IMAGE_RETRY_CONFIG.baseDelay * Math.pow(2, retryCount);
+      retryTimerRef.current = setTimeout(() => {
+        setRetryCount((prev) => prev + 1);
+      }, delay);
+    } else {
+      // 重试次数用尽，标记加载失败
+      setLoadError(true);
+    }
+  }, [retryCount]);
 
   // 占位符渲染时触发滚动回调（仅触发一次）
   const showPlaceholder = isGenerating && !imageLoaded;
@@ -137,10 +183,9 @@ function AiGeneratedImage({
       )}
 
       {/* 图片（按占位符尺寸限制显示） */}
-      {imageUrl && shouldRender && (
+      {imageUrl && shouldRender && !loadError && (
         <div
           className={`group cursor-pointer relative inline-block ${styles['dynamic-aspect-ratio']}`}
-          // 动态宽高比需要 CSS 变量
           style={
             {
               '--aspect-ratio': imageLoaded ? 'auto' : aspectRatio,
@@ -154,13 +199,14 @@ function AiGeneratedImage({
           aria-label="查看大图"
         >
           <img
-            src={imageUrl}
+            src={imageUrlWithRetry || imageUrl}
             alt="生成的图片"
             className="rounded-xl shadow-sm w-full h-auto block"
             onLoad={() => {
               setImageLoaded(true);
               onMediaLoaded?.();
             }}
+            onError={handleImageError}
           />
           {/* 下载按钮 */}
           <div className="absolute bottom-0 left-0 right-0 flex justify-center py-2 bg-gradient-to-t from-black/50 to-transparent rounded-b-xl opacity-0 group-hover:opacity-100 transition-opacity">
@@ -181,6 +227,29 @@ function AiGeneratedImage({
               <span>{isDownloading ? '下载中' : '下载'}</span>
             </button>
           </div>
+        </div>
+      )}
+
+      {/* 加载失败提示 */}
+      {loadError && imageUrl && (
+        <div
+          className="flex flex-col items-center justify-center rounded-xl bg-gray-100 text-gray-500"
+          style={{ width: placeholderSize.width, height: placeholderSize.height }}
+        >
+          <svg className="w-8 h-8 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span className="text-sm">图片加载失败</span>
+          <button
+            type="button"
+            className="mt-2 px-3 py-1 text-xs text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-full transition-colors"
+            onClick={() => {
+              setLoadError(false);
+              setRetryCount(0);
+            }}
+          >
+            点击重试
+          </button>
         </div>
       )}
     </div>
