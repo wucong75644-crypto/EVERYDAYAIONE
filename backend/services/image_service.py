@@ -30,6 +30,8 @@ class ImageService(BaseGenerationService):
         resolution: Optional[str] = None,
         wait_for_result: bool = True,
         conversation_id: Optional[str] = None,
+        placeholder_message_id: Optional[str] = None,
+        placeholder_created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         生成图像
@@ -43,6 +45,8 @@ class ImageService(BaseGenerationService):
             resolution: 分辨率（仅 nano-banana-pro）
             wait_for_result: 是否等待结果
             conversation_id: 对话 ID（用于任务恢复）
+            placeholder_message_id: 前端占位符消息 ID
+            placeholder_created_at: 占位符创建时间（ISO 8601）
 
         Returns:
             生成结果
@@ -59,6 +63,8 @@ class ImageService(BaseGenerationService):
             error_message="图像生成失败",
             conversation_id=conversation_id,
             resolution=resolution,
+            placeholder_message_id=placeholder_message_id,
+            placeholder_created_at=placeholder_created_at,
             generate_kwargs={
                 "prompt": prompt,
                 "size": size,
@@ -77,6 +83,8 @@ class ImageService(BaseGenerationService):
         output_format: str = "png",
         wait_for_result: bool = True,
         conversation_id: Optional[str] = None,
+        placeholder_message_id: Optional[str] = None,
+        placeholder_created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         编辑图像
@@ -89,6 +97,8 @@ class ImageService(BaseGenerationService):
             output_format: 输出格式
             wait_for_result: 是否等待结果
             conversation_id: 对话 ID（用于任务恢复）
+            placeholder_message_id: 前端占位符消息 ID
+            placeholder_created_at: 占位符创建时间（ISO 8601）
 
         Returns:
             编辑结果
@@ -105,6 +115,8 @@ class ImageService(BaseGenerationService):
             error_message="图像编辑失败",
             conversation_id=conversation_id,
             resolution=None,
+            placeholder_message_id=placeholder_message_id,
+            placeholder_created_at=placeholder_created_at,
             generate_kwargs={
                 "prompt": prompt,
                 "image_urls": image_urls,
@@ -249,6 +261,8 @@ class ImageService(BaseGenerationService):
         conversation_id: Optional[str],
         resolution: Optional[str],
         generate_kwargs: Dict[str, Any],
+        placeholder_message_id: Optional[str] = None,
+        placeholder_created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         通用图像生成流程（积分检查 -> 扣除 -> 生成）
@@ -262,6 +276,8 @@ class ImageService(BaseGenerationService):
             conversation_id: 对话 ID
             resolution: 分辨率（用于积分计算）
             generate_kwargs: 传递给 adapter.generate 的参数
+            placeholder_message_id: 前端占位符消息 ID
+            placeholder_created_at: 占位符创建时间（ISO 8601）
 
         Returns:
             生成结果
@@ -286,6 +302,8 @@ class ImageService(BaseGenerationService):
                 user_id=user_id,
                 conversation_id=conversation_id,
                 estimated_credits=estimated_credits,
+                placeholder_message_id=placeholder_message_id,
+                placeholder_created_at=placeholder_created_at,
             )
 
             # 3. 同步模式完成处理
@@ -370,6 +388,8 @@ class ImageService(BaseGenerationService):
         user_id: str,
         conversation_id: Optional[str],
         estimated_credits: int,
+        placeholder_message_id: Optional[str] = None,
+        placeholder_created_at: Optional[str] = None,
     ) -> tuple[Dict[str, Any], Optional[str]]:
         """
         调用 KIE API 生成图像
@@ -380,6 +400,8 @@ class ImageService(BaseGenerationService):
             user_id: 用户 ID
             conversation_id: 会话 ID
             estimated_credits: 预估积分
+            placeholder_message_id: 前端占位符消息 ID
+            placeholder_created_at: 占位符创建时间（ISO 8601）
 
         Returns:
             (result, task_id) 元组
@@ -406,6 +428,8 @@ class ImageService(BaseGenerationService):
                     **generate_kwargs,
                 },
                 credits_locked=estimated_credits,
+                placeholder_message_id=placeholder_message_id,
+                placeholder_created_at=placeholder_created_at,
             )
 
         return result, task_id

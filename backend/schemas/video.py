@@ -45,6 +45,8 @@ class GenerateTextToVideoRequest(BaseModel):
     remove_watermark: bool = Field(default=True, description="是否去水印")
     wait_for_result: bool = Field(default=False, description="是否等待结果")
     conversation_id: Optional[str] = Field(default=None, description="对话 ID（用于任务恢复）")
+    placeholder_message_id: Optional[str] = Field(default=None, description="前端占位符消息 ID")
+    placeholder_created_at: Optional[str] = Field(default=None, description="占位符创建时间（ISO 8601），用于任务恢复时保持消息排序")
 
 
 class GenerateImageToVideoRequest(BaseModel):
@@ -57,6 +59,8 @@ class GenerateImageToVideoRequest(BaseModel):
     remove_watermark: bool = Field(default=True, description="是否去水印")
     wait_for_result: bool = Field(default=False, description="是否等待结果")
     conversation_id: Optional[str] = Field(default=None, description="对话 ID（用于任务恢复）")
+    placeholder_message_id: Optional[str] = Field(default=None, description="前端占位符消息 ID")
+    placeholder_created_at: Optional[str] = Field(default=None, description="占位符创建时间（ISO 8601），用于任务恢复时保持消息排序")
 
     @field_validator("image_url")
     @classmethod
@@ -72,6 +76,8 @@ class GenerateStoryboardVideoRequest(BaseModel):
     aspect_ratio: VideoAspectRatio = Field(default=VideoAspectRatio.LANDSCAPE, description="宽高比")
     wait_for_result: bool = Field(default=False, description="是否等待结果")
     conversation_id: Optional[str] = Field(default=None, description="对话 ID（用于任务恢复）")
+    placeholder_message_id: Optional[str] = Field(default=None, description="前端占位符消息 ID")
+    placeholder_created_at: Optional[str] = Field(default=None, description="占位符创建时间（ISO 8601），用于任务恢复时保持消息排序")
 
     @field_validator("storyboard_images")
     @classmethod

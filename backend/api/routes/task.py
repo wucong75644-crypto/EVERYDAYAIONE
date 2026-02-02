@@ -41,7 +41,7 @@ async def get_pending_tasks(
     response = db.table("tasks").select(
         "id, external_task_id, conversation_id, type, status, "
         "request_params, credits_locked, placeholder_message_id, "
-        "started_at, last_polled_at"
+        "placeholder_created_at, started_at, last_polled_at"
     ).eq("user_id", current_user["id"]).in_(
         "status", ["pending", "running"]
     ).order("started_at", desc=False).execute()

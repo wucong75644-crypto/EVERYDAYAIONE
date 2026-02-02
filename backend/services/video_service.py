@@ -30,6 +30,8 @@ class VideoService(BaseGenerationService):
         remove_watermark: bool = True,
         wait_for_result: bool = False,
         conversation_id: Optional[str] = None,
+        placeholder_message_id: Optional[str] = None,
+        placeholder_created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         文本生成视频
@@ -42,6 +44,8 @@ class VideoService(BaseGenerationService):
             aspect_ratio: 宽高比 ("portrait"/"landscape")
             remove_watermark: 是否去水印
             wait_for_result: 是否等待结果
+            placeholder_message_id: 前端占位符消息 ID
+            placeholder_created_at: 占位符创建时间（ISO 8601）
 
         Returns:
             生成结果
@@ -57,6 +61,8 @@ class VideoService(BaseGenerationService):
             description="文生视频",
             error_message="视频生成失败",
             conversation_id=conversation_id,
+            placeholder_message_id=placeholder_message_id,
+            placeholder_created_at=placeholder_created_at,
             generate_kwargs={
                 "prompt": prompt,
                 "n_frames": n_frames,
@@ -77,6 +83,8 @@ class VideoService(BaseGenerationService):
         remove_watermark: bool = True,
         wait_for_result: bool = False,
         conversation_id: Optional[str] = None,
+        placeholder_message_id: Optional[str] = None,
+        placeholder_created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         图片生成视频
@@ -90,6 +98,8 @@ class VideoService(BaseGenerationService):
             aspect_ratio: 宽高比
             remove_watermark: 是否去水印
             wait_for_result: 是否等待结果
+            placeholder_message_id: 前端占位符消息 ID
+            placeholder_created_at: 占位符创建时间（ISO 8601）
 
         Returns:
             生成结果
@@ -101,6 +111,8 @@ class VideoService(BaseGenerationService):
             description="图生视频",
             error_message="图生视频失败",
             conversation_id=conversation_id,
+            placeholder_message_id=placeholder_message_id,
+            placeholder_created_at=placeholder_created_at,
             generate_kwargs={
                 "prompt": prompt,
                 "image_urls": [image_url],
@@ -120,6 +132,8 @@ class VideoService(BaseGenerationService):
         aspect_ratio: str = "landscape",
         wait_for_result: bool = False,
         conversation_id: Optional[str] = None,
+        placeholder_message_id: Optional[str] = None,
+        placeholder_created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         故事板视频生成
@@ -131,6 +145,8 @@ class VideoService(BaseGenerationService):
             storyboard_images: 故事板图片列表
             aspect_ratio: 宽高比
             wait_for_result: 是否等待结果
+            placeholder_message_id: 前端占位符消息 ID
+            placeholder_created_at: 占位符创建时间（ISO 8601）
 
         Returns:
             生成结果
@@ -142,6 +158,8 @@ class VideoService(BaseGenerationService):
             description="故事板视频",
             error_message="故事板视频生成失败",
             conversation_id=conversation_id,
+            placeholder_message_id=placeholder_message_id,
+            placeholder_created_at=placeholder_created_at,
             generate_kwargs={
                 "image_urls": storyboard_images,
                 "n_frames": n_frames,
@@ -336,6 +354,8 @@ class VideoService(BaseGenerationService):
         conversation_id: Optional[str],
         n_frames: str,
         estimated_credits: int,
+        placeholder_message_id: Optional[str] = None,
+        placeholder_created_at: Optional[str] = None,
     ) -> tuple[Dict[str, Any], Optional[str]]:
         """
         调用 KIE API 生成视频
@@ -347,6 +367,8 @@ class VideoService(BaseGenerationService):
             conversation_id: 会话 ID
             n_frames: 视频时长
             estimated_credits: 预估积分
+            placeholder_message_id: 前端占位符消息 ID
+            placeholder_created_at: 占位符创建时间（ISO 8601）
 
         Returns:
             (result, task_id) 元组
@@ -374,6 +396,8 @@ class VideoService(BaseGenerationService):
                     **generate_kwargs,
                 },
                 credits_locked=estimated_credits,
+                placeholder_message_id=placeholder_message_id,
+                placeholder_created_at=placeholder_created_at,
             )
 
         return result, task_id
@@ -415,6 +439,8 @@ class VideoService(BaseGenerationService):
         error_message: str,
         conversation_id: Optional[str],
         generate_kwargs: Dict[str, Any],
+        placeholder_message_id: Optional[str] = None,
+        placeholder_created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         通用视频生成流程（积分检查→扣除→生成）
@@ -427,6 +453,8 @@ class VideoService(BaseGenerationService):
             error_message: 错误提示前缀
             conversation_id: 会话 ID
             generate_kwargs: 传递给 adapter.generate 的参数
+            placeholder_message_id: 前端占位符消息 ID
+            placeholder_created_at: 占位符创建时间（ISO 8601）
 
         Returns:
             生成结果
@@ -448,6 +476,8 @@ class VideoService(BaseGenerationService):
                 conversation_id=conversation_id,
                 n_frames=n_frames,
                 estimated_credits=estimated_credits,
+                placeholder_message_id=placeholder_message_id,
+                placeholder_created_at=placeholder_created_at,
             )
 
             # 3. 同步模式完成处理

@@ -27,6 +27,8 @@ export interface GenerateImageRequest {
   resolution?: ImageResolution;
   wait_for_result?: boolean;
   conversation_id?: string;
+  placeholder_message_id?: string;
+  placeholder_created_at?: string;
 }
 
 export interface EditImageRequest {
@@ -36,6 +38,8 @@ export interface EditImageRequest {
   output_format?: ImageOutputFormat;
   wait_for_result?: boolean;
   conversation_id?: string;
+  placeholder_message_id?: string;
+  placeholder_created_at?: string;
 }
 
 export interface UploadImageRequest {
@@ -100,20 +104,6 @@ export async function editImage(data: EditImageRequest): Promise<GenerateImageRe
     method: 'POST',
     url: '/images/edit',
     data,
-  });
-}
-
-/**
- * 上传图片（base64）
- *
- * 将 base64 图片数据上传到存储服务，返回公开 URL。
- * @deprecated 请使用 uploadImageFile 代替，FormData 上传体积更小
- */
-export async function uploadImage(imageData: string): Promise<UploadImageResponse> {
-  return request<UploadImageResponse>({
-    method: 'POST',
-    url: '/images/upload',
-    data: { image_data: imageData },
   });
 }
 

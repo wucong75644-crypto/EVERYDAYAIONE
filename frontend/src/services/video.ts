@@ -25,6 +25,8 @@ export interface GenerateTextToVideoRequest {
   remove_watermark?: boolean;
   wait_for_result?: boolean;
   conversation_id?: string;
+  placeholder_message_id?: string;
+  placeholder_created_at?: string;
 }
 
 export interface GenerateImageToVideoRequest {
@@ -36,6 +38,8 @@ export interface GenerateImageToVideoRequest {
   remove_watermark?: boolean;
   wait_for_result?: boolean;
   conversation_id?: string;
+  placeholder_message_id?: string;
+  placeholder_created_at?: string;
 }
 
 export interface GenerateStoryboardVideoRequest {
@@ -44,6 +48,8 @@ export interface GenerateStoryboardVideoRequest {
   aspect_ratio?: VideoAspectRatio;
   wait_for_result?: boolean;
   conversation_id?: string;
+  placeholder_message_id?: string;
+  placeholder_created_at?: string;
 }
 
 export interface GenerateVideoResponse {

@@ -107,8 +107,6 @@
 | `useMessageHandlers` | `frontend/src/hooks/useMessageHandlers.ts` | 消息处理器组合 Hook（使用统一 useMediaMessageHandler） | UseMessageHandlersParams | {handleChatMessage, handleImageGeneration, handleVideoGeneration} |
 | `useTextMessageHandler` | `frontend/src/hooks/handlers/useTextMessageHandler.ts` | 文本消息处理 Hook | UseTextMessageHandlerParams | {handleChatMessage} |
 | `useMediaMessageHandler` | `frontend/src/hooks/handlers/useMediaMessageHandler.ts` | 统一媒体消息处理 Hook（合并图片/视频） | UseMediaMessageHandlerParams | {handleMediaGeneration} |
-| `useImageMessageHandler` | `frontend/src/hooks/handlers/useImageMessageHandler.ts` | 图片消息处理 Hook（@deprecated，使用 useMediaMessageHandler） | UseImageMessageHandlerParams | {handleImageGeneration} |
-| `useVideoMessageHandler` | `frontend/src/hooks/handlers/useVideoMessageHandler.ts` | 视频消息处理 Hook（@deprecated，使用 useMediaMessageHandler） | UseVideoMessageHandlerParams | {handleVideoGeneration} |
 | `extractErrorMessage` | `frontend/src/hooks/handlers/mediaHandlerUtils.ts` | 从错误对象提取友好消息 | error: unknown | string |
 | `extractImageUrl` | `frontend/src/hooks/handlers/mediaHandlerUtils.ts` | 从 API 响应提取图片 URL | result: unknown | string \| undefined |
 | `extractVideoUrl` | `frontend/src/hooks/handlers/mediaHandlerUtils.ts` | 从 API 响应提取视频 URL | result: unknown | string \| undefined |
@@ -116,16 +114,34 @@
 
 ### 滚动管理模块 (Scroll Management)
 
+> **重构记录（2026-02-02）**：以 Virtuoso 为核心重构滚动系统，删除 6+ 个分散的滚动 hooks，统一为 `useVirtuosoScroll` 单一入口。
+
 #### 前端函数
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `useMessageAreaScroll` | `frontend/src/hooks/useMessageAreaScroll.ts` | 消息区域滚动管理组合 Hook | UseMessageAreaScrollOptions | {hasScrolledForConversation, handleRegenerateScroll} |
-| `useConversationSwitchScroll` | `frontend/src/hooks/scroll/useConversationSwitchScroll.ts` | 对话切换滚动管理 | UseConversationSwitchScrollOptions | void |
-| `useMessageLoadingScroll` | `frontend/src/hooks/scroll/useMessageLoadingScroll.ts` | 消息加载完成滚动定位 | UseMessageLoadingScrollOptions | void |
-| `useNewMessageScroll` | `frontend/src/hooks/scroll/useNewMessageScroll.ts` | 新消息添加自动滚动 | UseNewMessageScrollOptions | void |
-| `useStreamingScroll` | `frontend/src/hooks/scroll/useStreamingScroll.ts` | 流式内容更新滚动跟随 | UseStreamingScrollOptions | void |
-| `useMediaReplacementScroll` | `frontend/src/hooks/scroll/useMediaReplacementScroll.ts` | 媒体内容替换滚动 | UseMediaReplacementScrollOptions | void |
+| `useVirtuosoScroll` | `frontend/src/hooks/useVirtuosoScroll.ts` | Virtuoso 滚动管理统一入口（智能自动滚动、用户状态检测、跨对话位置记忆） | UseVirtuosoScrollOptions | UseVirtuosoScrollReturn |
+
+**UseVirtuosoScrollOptions**：
+- `conversationId`: 当前对话 ID
+- `messages`: 消息列表
+- `loading`: 是否正在加载
+- `isStreaming`: 是否正在流式生成
+
+**UseVirtuosoScrollReturn**：
+- `virtuosoRef`: Virtuoso 实例引用
+- `userScrolledAway`: 用户是否主动滚走
+- `hasNewMessages`: 是否有新消息
+- `showScrollButton`: 是否显示滚动按钮
+- `followOutput`: 自动滚动决策回调（传给 Virtuoso）
+- `atBottomStateChange`: 底部状态变化回调（传给 Virtuoso）
+- `scrollerRef`: 滚动容器引用回调（传给 Virtuoso）
+- `scrollToBottom`: 滚动到底部方法
+- `resetScrollState`: 重置滚动状态方法
+- `markNewMessage`: 标记新消息方法
+- `setUserScrolledAway`: 设置用户滚走状态
+- `setHasNewMessages`: 设置新消息状态
+
 
 ### 重新生成模块 (Regenerate)
 
@@ -157,8 +173,6 @@
 | `sendMessage` | `frontend/src/services/messageSender/index.ts` | 统一发送消息入口（自动分发到对应 sender） | ChatSenderParams \| ImageSenderParams \| VideoSenderParams | Promise<void> |
 | `sendChatMessage` | `frontend/src/services/messageSender/chatSender.ts` | 发送聊天消息（流式 SSE） | ChatSenderParams | Promise<void> |
 | `sendMediaMessage` | `frontend/src/services/messageSender/mediaSender.ts` | 统一媒体发送器（合并图片/视频） | ImageSenderParams \| VideoSenderParams | Promise<void> |
-| `sendImageMessage` | `frontend/src/services/messageSender/imageSender.ts` | 发送图片消息（@deprecated，使用 sendMediaMessage） | ImageSenderParams | Promise<void> |
-| `sendVideoMessage` | `frontend/src/services/messageSender/videoSender.ts` | 发送视频消息（@deprecated，使用 sendMediaMessage） | VideoSenderParams | Promise<void> |
 | `executeImageGenerationCore` | `frontend/src/services/messageSender/mediaGenerationCore.ts` | 图片生成核心逻辑（API调用+轮询） | ImageGenerationCoreParams | Promise<void> |
 | `executeVideoGenerationCore` | `frontend/src/services/messageSender/mediaGenerationCore.ts` | 视频生成核心逻辑（API调用+轮询） | VideoGenerationCoreParams | Promise<void> |
 
@@ -386,7 +400,7 @@
 | `useImageUpload` | `frontend/src/hooks/useImageUpload.ts` | 图片上传逻辑 | - | { uploadImage, uploading, ... } |
 | `useAudioRecording` | `frontend/src/hooks/useAudioRecording.ts` | 录音逻辑 | - | { startRecording, stopRecording, ... } |
 | `useDragDropUpload` | `frontend/src/hooks/useDragDropUpload.ts` | 拖拽上传逻辑 | - | { isDragging, handleDrop, ... } |
-| `useScrollManager` | `frontend/src/hooks/useScrollManager.ts` | 滚动管理逻辑 | - | { scrollToBottom, ... } |
+| `useVirtuosoScroll` | `frontend/src/hooks/useVirtuosoScroll.ts` | Virtuoso 滚动管理（统一入口） | options | { virtuosoRef, scrollToBottom, ... } |
 
 ### 通用组件模块 (Common Components)
 
@@ -576,11 +590,11 @@
 - **任务管理模块**：9个后端函数 + 8个前端函数
 - **积分管理模块**：7个后端函数
 - **对话管理模块**：5个后端函数 + 5个前端函数
-- **消息处理模块**：9个前端函数（含统一 useMediaMessageHandler）
-- **滚动管理模块**：6个前端函数
+- **消息处理模块**：7个前端函数（统一 useMediaMessageHandler）
+- **滚动管理模块**：1个前端函数（useVirtuosoScroll 统一入口，替换原 6+ 个分散 hooks）
 - **重新生成模块**：3个前端函数
 - **轮询管理模块**：2个类型定义（实现在 useTaskStore）
-- **统一消息发送模块**：7个前端函数（含统一 sendMediaMessage）
+- **统一消息发送模块**：5个前端函数（统一 sendMediaMessage）
 - **媒体重新生成模块**：6个前端函数
 - **任务通知模块**：1个前端函数 + 5个类型定义（✨阶段4新增）
 - **图片URL工具模块**：2个前端函数（✨阶段0新增）
@@ -618,7 +632,7 @@
 - **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息处理、消息服务、滚动管理、重新生成、轮询管理、**统一消息发送**（含 mediaSender）、媒体重新生成、**任务通知**、**图片URL工具**、**统一日志**、**任务协调器**、**消息合并**、性能监控、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理、测试工具、认证弹窗模块、通用组件模块、占位符管理模块
 - **测试覆盖率目标**：80%+（Vitest + Testing Library）
 - **性能监控**：13个预定义性能标记，支持关键路径监控
-- **最后更新**：2026-02-01（聊天系统综合重构阶段0-4完成，60%进度）
+- **最后更新**：2026-02-02（滚动系统以 Virtuoso 为核心重构，删除 6+ 冗余 hooks）
 
 ---
 

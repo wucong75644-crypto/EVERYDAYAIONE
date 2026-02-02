@@ -20,6 +20,7 @@ import { useAuthStore } from '../../stores/useAuthStore';
 import { extractErrorMessage } from '../../hooks/handlers/mediaHandlerUtils';
 import { ALL_MODELS } from '../../constants/models';
 import { parseImageUrls } from '../../utils/imageUtils';
+import { messageCoordinator } from '../../utils/messageCoordinator';
 import toast from 'react-hot-toast';
 
 /** 媒体生成结果回调 */
@@ -97,6 +98,8 @@ export async function executeImageGenerationCore(params: ImageGenerationCorePara
           output_format: outputFormat,
           wait_for_result: false,
           conversation_id: conversationId,
+          placeholder_message_id: placeholderId,
+          placeholder_created_at: messageTimestamp,
         })
       : await generateImage({
           prompt,
@@ -106,6 +109,8 @@ export async function executeImageGenerationCore(params: ImageGenerationCorePara
           resolution: finalResolution,
           wait_for_result: false,
           conversation_id: conversationId,
+          placeholder_message_id: placeholderId,
+          placeholder_created_at: messageTimestamp,
         });
 
     if (response.status === 'pending' || response.status === 'processing') {
@@ -192,6 +197,8 @@ export async function executeVideoGenerationCore(params: VideoGenerationCorePara
           remove_watermark: removeWatermark,
           wait_for_result: false,
           conversation_id: conversationId,
+          placeholder_message_id: placeholderId,
+          placeholder_created_at: messageTimestamp,
         })
       : await generateTextToVideo({
           prompt,
@@ -201,6 +208,8 @@ export async function executeVideoGenerationCore(params: VideoGenerationCorePara
           remove_watermark: removeWatermark,
           wait_for_result: false,
           conversation_id: conversationId,
+          placeholder_message_id: placeholderId,
+          placeholder_created_at: messageTimestamp,
         });
 
     if (response.status === 'pending' || response.status === 'processing') {
@@ -334,6 +343,8 @@ function startMediaPolling(config: MediaPollingConfig): void {
             created_at: messageTimestamp,
             generation_params: generationParams,
           });
+          // 先标记未读，再完成任务（从 TaskStore 移至此处，解耦依赖）
+          messageCoordinator.markConversationUnread(conversationId);
           completeMediaTask(taskId);
           refreshUser();
           onSuccess(savedMessage);

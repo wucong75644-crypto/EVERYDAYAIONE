@@ -188,9 +188,7 @@ EVERYDAYAIONE/
         │       ├── index.ts                  # 统一入口（sendMessage）
         │       ├── types.ts                  # 类型定义
         │       ├── chatSender.ts             # 聊天消息发送器
-        │       ├── mediaSender.ts            # 统一媒体消息发送器（合并图片/视频）
-        │       ├── imageSender.ts            # 图片消息发送器（@deprecated）
-        │       ├── videoSender.ts            # 视频消息发送器（@deprecated）
+        │       ├── mediaSender.ts            # 统一媒体消息发送器（图片/视频合并）
         │       └── mediaGenerationCore.ts    # 媒体生成核心逻辑（API+轮询）
         ├── types/                    # TypeScript 类型
         │   ├── auth.ts                   # 认证相关类型
@@ -204,7 +202,8 @@ EVERYDAYAIONE/
         │   ├── useMessageHandlers.ts     # 消息发送处理逻辑（组合器）
         │   ├── useRegenerateHandlers.ts  # 消息重新生成逻辑
         │   ├── useModelSelection.ts      # 模型选择逻辑（含用户选择保护）
-        │   ├── useScrollManager.ts       # 滚动管理逻辑
+        │   ├── useVirtuosoScroll.ts      # Virtuoso 滚动管理（统一入口）
+        │   ├── useUnifiedMessages.ts     # 统一消息读取（合并持久化+临时消息）
         │   ├── useClickOutside.ts        # 点击外部关闭逻辑
         │   └── handlers/                 # 消息处理器子模块
         │       ├── useTextMessageHandler.ts   # 文本消息处理
@@ -477,85 +476,14 @@ cache = client.caches.create(
 ---
 
 ## 更新记录
-- **2026-02-01**：完成聊天系统综合重构（阶段0-4，21/35任务，60%进度）
-  - **阶段0 短期修复**（9个任务）：
-    - 优化 MessageArea 兼容层（Map替代index）
-    - 修复聊天流式缓存写入路径
-    - 优化消息去重逻辑（mergeOptimisticMessages.ts 优先使用 client_request_id）
-    - 修复侧边栏缓存同步竞态
-    - 修复模型切换与用户选择冲突（useModelSelection.ts 使用 userExplicitChoice）
-    - 修复消息列表key策略（移除index fallback）
-    - 提取图片URL工具函数（imageUtils.ts：parseImageUrls、getFirstImageUrl）
-    - 增加LRU清理容量（10→15）
-    - 统一错误日志（logger.ts：error、warn、debug、info 方法）
-  - **阶段1 统一缓存写入**（3个任务）：
-    - 重新生成改用 RuntimeStore
-    - 首次发送改用兼容层
-    - 删除旧缓存写入方法（4个deprecated方法）
-  - **阶段2 合并发送器处理器**（5/6任务）：
-    - 新建 mediaSender.ts 统一媒体发送器（合并图片/视频）
-    - 新建 useMediaMessageHandler.ts 统一媒体处理器
-    - 标记旧发送器/处理器为 @deprecated
-    - 更新调用方（index.ts、useMessageHandlers.ts、mediaRegeneration.ts）
-  - **阶段3 统一轮询管理器**（2个任务）：
-    - 精简 polling.ts（147→22行，仅保留类型定义）
-    - 验证 useTaskStore 轮询正常工作
-  - **阶段4 提取任务通知逻辑**（2个任务）：
-    - 新建 taskNotification.ts（notifyTaskComplete纯函数）
-    - 新建 types/task.ts（共享类型：StoreTaskStatus、StoreTaskType、CompletedNotification）
-    - 解决循环依赖（useTaskStore↔taskNotification）
-- **2026-02-01**：完成"缓存即状态"统一重构
-  - 重构：统一缓存写入逻辑到 setMessages 兼容层（MessageArea.tsx）
-  - 重构：mediaRegeneration.ts 移除直接 useChatStore 依赖
-  - 优化：createMediaRegenCallbacks 通过 setMessages 写入缓存，无需 conversationId 参数
-  - 架构：所有重新生成场景统一通过 setMessages → 兼容层 → replaceMessage/appendMessage 流程
-  - 优势：新模型（音频、3D、代码等）只需实现标准回调，缓存写入自动处理
-- **2026-02-01**：完成统一消息发送架构重构
-  - 新增：services/messageSender/ 统一消息发送模块
-  - 新增：sendMessage 统一入口（自动分发到 chat/image/video）
-  - 新增：mediaGenerationCore.ts 媒体生成核心逻辑（API调用+轮询，被 sender 和 strategy 共同复用）
-  - 重构：imageSender.ts 从 137→75 行（复用 core）
-  - 重构：videoSender.ts 从 143→81 行（复用 core）
-  - 重构：imageStrategy.ts 从 168→62 行（复用 core + computeImageGenerationParams）
-  - 重构：videoStrategy.ts 从 172→67 行（复用 core + computeVideoGenerationParams）
-  - 重构：mediaHandlerUtils.ts 从 232→68 行（移除不再使用的 createMediaPollingHandler）
-  - 新增：computeImageGenerationParams / computeVideoGenerationParams 参数计算工具函数
-  - 新增：createMediaRegenCallbacks 回调工厂函数
-  - 架构：首次发送和成功消息重新生成共用 sender，失败消息重新生成复用 core
-- **2026-02-01**：完成占位符统一重构
-  - 新增：LoadingPlaceholder 统一加载占位符组件（文字 + 三个跳动小圆点）
-  - 新增：MediaPlaceholder 统一媒体占位符组件（灰色框 + 图标，支持图片/视频/音频等）
-  - 新增：constants/placeholder.ts 占位符常量（PLACEHOLDER_TEXT，统一管理所有占位符文字）
-  - 新增：utils/regenerate/ 重新生成逻辑目录（统一入口 + 策略模式）
-  - 新增：regenerateInPlace 失败消息原地重新生成
-  - 新增：chatStrategy、imageStrategy、videoStrategy 三种重新生成策略
-  - 修改：MessageItem.tsx 使用 LoadingPlaceholder 替代硬编码占位符
-  - 修改：MessageMedia.tsx 使用 MediaPlaceholder 替代重复的占位符代码
-  - 修改：mediaRegeneration.ts 使用 PLACEHOLDER_TEXT 常量替代硬编码文字
-  - 优化：所有占位符显示统一样式（文字 + 三个跳动小圆点）
-  - 优化：首次生成和重新生成使用相同的占位符文字
-  - 文档：更新 FUNCTION_INDEX.md 和 PROJECT_OVERVIEW.md
-- **2026-01-31**：完成登录/注册弹窗化重构
-  - 新增：通用 Modal 组件（动画、ESC关闭、遮罩层点击关闭）
-  - 新增：AuthModal 认证弹窗容器（登录/注册模式切换）
-  - 新增：LoginForm 登录表单（密码登录 + 验证码登录双模式）
-  - 新增：RegisterForm 注册表单（手机号 + 验证码注册）
-  - 新增：useAuthModalStore 弹窗状态管理
-  - 删除：Login.tsx、Register.tsx 独立页面（改为弹窗模式）
-  - 优化：Home.tsx 集成认证弹窗入口
-- **2026-01-24**：完成视频生成功能集成
-  - 后端：添加 `video_service.py`、`video.py` (routes)、`video.py` (schemas)
-  - 前端：添加 `video.ts` (API服务)、扩展 `InputArea.tsx` 和 `MessageItem.tsx`
-  - 数据库：添加迁移脚本 `002_add_video_url_to_messages.sql`
-  - 功能：支持 Sora 2 文生视频、图生视频、专业故事板（3个模型）
-  - 架构：智能模型选择、冲突检测、异步任务轮询、视频播放器
-- **2026-01-23**：完成聊天页面开发（Chat.tsx + 5 个子组件 + useChatStore）
-- **2026-01-23**：添加 venv/ 虚拟环境目录，完成环境配置（Python 3.12、Redis、Supabase）
-- **2026-01-23**：修复 7 个文件的 15 处错误导入路径（backend.xxx → xxx）
-- **2026-01-23**：更新 CLAUDE.md 到 V1.5，补充虚拟环境、Git忽略、类型安全等边界规则
-- **2026-01-21**：更新目录结构为实际项目结构，删除旧的 MySQL 脚本和根目录 requirements.txt
-- **2026-01-21**：完成基础架构搭建（后端 FastAPI + 前端 React + 数据库 Supabase）
-- **2026-01-21**：新增待开发功能规划（Google API 适配器、Gemini 3 优化、成本优化）
-- **2026-01-21**：新增 AI 模型接入架构说明，迁移文档结构
-- **2026-01-20**：更新文档结构，统一模型命名
-- **2026-01-19**：创建项目文档，完成多任务并发架构设计，确定部署方案（Supabase + OSS）
+
+- **2026-02-02**：完成聊天系统综合重构阶段5-7（状态管理重设计、占位符持久化、性能优化）
+  - 滚动系统以 Virtuoso 为核心重构，新增 `useVirtuosoScroll.ts` 统一入口
+  - 消息合并算法优化 O(n²) → O(n)，图片加载失败重试机制
+- **2026-02-01**：完成聊天系统综合重构阶段0-4（34/35任务，97%进度）
+  - 统一消息发送架构（mediaSender、mediaGenerationCore）
+  - 统一缓存写入（setMessages 兼容层）
+  - 统一占位符组件（LoadingPlaceholder、MediaPlaceholder）
+- **2026-01-31**：完成登录/注册弹窗化重构（Modal、AuthModal、LoginForm、RegisterForm）
+- **2026-01-24**：完成视频生成功能集成（Sora 2 系列 3 个模型）
+- **2026-01-21**：完成基础架构搭建（FastAPI + React + Supabase）

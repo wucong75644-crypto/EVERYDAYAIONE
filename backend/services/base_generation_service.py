@@ -184,6 +184,7 @@ class BaseGenerationService:
         request_params: Dict[str, Any],
         credits_locked: int,
         placeholder_message_id: Optional[str] = None,
+        placeholder_created_at: Optional[str] = None,
     ) -> Optional[str]:
         """
         保存任务到数据库
@@ -196,6 +197,7 @@ class BaseGenerationService:
             request_params: 生成请求参数
             credits_locked: 预扣积分
             placeholder_message_id: 前端占位符消息ID
+            placeholder_created_at: 占位符原始创建时间 (ISO 8601)，用于任务恢复时保持消息排序
 
         Returns:
             数据库任务ID (UUID)
@@ -222,6 +224,7 @@ class BaseGenerationService:
                 "request_params": request_params,
                 "credits_locked": credits_locked,
                 "placeholder_message_id": placeholder_message_id,
+                "placeholder_created_at": placeholder_created_at,
                 "started_at": datetime.utcnow().isoformat(),
             }).execute()
 

@@ -93,10 +93,3 @@ export default function MediaPlaceholder({
     </div>
   );
 }
-
-/**
- * 获取媒体占位符标签文字
- */
-export function getMediaPlaceholderLabel(type: MediaType): string {
-  return MEDIA_CONFIG[type]?.label || '正在生成';
-}

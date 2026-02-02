@@ -273,7 +273,7 @@ export const useChatStore = create<ChatState>()(
       // 如果缓存不存在，创建新缓存
       if (!cached) {
         const newCache = new Map(state.messageCache);
-        let newOrder = [...state.cacheAccessOrder];
+        const newOrder = [...state.cacheAccessOrder];
 
         // LRU 淘汰
         while (newOrder.length >= CACHE_CONFIG.MAX_CACHED_CONVERSATIONS) {

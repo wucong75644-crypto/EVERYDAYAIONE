@@ -5,6 +5,7 @@
 import { useTaskStore } from '../stores/useTaskStore';
 import { useChatStore } from '../stores/useChatStore';
 import { useConversationRuntimeStore } from '../stores/useConversationRuntimeStore';
+import { messageCoordinator } from './messageCoordinator';
 import { queryTaskStatus as getImageTaskStatus, type TaskStatusResponse as ImageTaskStatusResponse } from '../services/image';
 import { queryVideoTaskStatus as getVideoTaskStatus, type TaskStatusResponse as VideoTaskStatusResponse } from '../services/video';
 import { createMessage, getMessages } from '../services/message';
@@ -40,6 +41,7 @@ interface PendingTask {
   request_params: TaskRequestParams;
   credits_locked: number;
   placeholder_message_id: string | null;
+  placeholder_created_at: string | null;
   started_at: string;
   last_polled_at: string | null;
 }
@@ -90,14 +92,15 @@ export function restoreTaskPolling(task: PendingTask, conversationTitle: string)
   });
 
   // 创建占位符消息并添加到 RuntimeStore，确保刷新后 UI 能显示"生成中"状态
-  // 使用当前时间戳而非任务开始时间，确保占位符显示在消息列表末尾
-  // 避免插入到历史消息中间导致列表跳动
+  // 使用原始占位符时间戳（如果存在），确保消息排序正确
+  // 如果没有原始时间戳（旧任务），则使用当前时间戳
   const loadingText = task.type === 'image' ? '图片生成中...' : '视频生成中...';
+  const placeholderTimestamp = task.placeholder_created_at || new Date().toISOString();
   const placeholder = createStreamingPlaceholder(
     task.conversation_id,
     placeholderId,
     loadingText,
-    new Date().toISOString()
+    placeholderTimestamp
   );
   addMediaPlaceholder(task.conversation_id, placeholder);
 
@@ -142,10 +145,12 @@ export function restoreTaskPolling(task: PendingTask, conversationTitle: string)
               if (existingMessage) {
                 replaceMediaPlaceholder(task.conversation_id, placeholderId, existingMessage);
               }
+              // 先标记未读，再完成任务（从 TaskStore 移至此处，解耦依赖）
+              messageCoordinator.markConversationUnread(task.conversation_id);
               completeMediaTask(task.external_task_id);
               return;
             }
-          } catch (checkError) {
+          } catch {
             // 查询失败不阻塞，继续创建消息（可能会重复，但不会丢失）
             logger.warn('task:restore', '检查消息是否存在失败', { taskId: task.external_task_id });
           }
@@ -156,6 +161,7 @@ export function restoreTaskPolling(task: PendingTask, conversationTitle: string)
             image_url: task.type === 'image' ? mediaUrl : undefined,
             video_url: task.type === 'video' ? mediaUrl : undefined,
             credits_cost: task.credits_locked,
+            created_at: placeholderTimestamp, // 使用原始占位符时间戳，确保消息排序正确
             generation_params: undefined, // 任务恢复时不需要存储生成参数
           });
 
@@ -163,6 +169,8 @@ export function restoreTaskPolling(task: PendingTask, conversationTitle: string)
           // 使用统一方法添加到缓存（直接存储 API Message 格式，无需转换）
           appendMessage(task.conversation_id, savedMessage);
 
+          // 先标记未读，再完成任务（从 TaskStore 移至此处，解耦依赖）
+          messageCoordinator.markConversationUnread(task.conversation_id);
           completeMediaTask(task.external_task_id);
           toast.success(`${task.type === 'image' ? '图片' : '视频'}生成完成`);
         } catch (error) {
