@@ -79,7 +79,7 @@ export function useRegenerateAsNewMessage({
             setMessages((prev) =>
               prev.map((m) => (m.id === newStreamingId ? { ...m, content: regeneratingContentRef.current } : m))
             );
-            // 流式中不调用 scrollToBottom，由 Virtuoso followOutput 统一控制
+            // 流式中不调用 scrollToBottom，由 Virtua shift 模式自动维护底部位置
           },
         },
       });

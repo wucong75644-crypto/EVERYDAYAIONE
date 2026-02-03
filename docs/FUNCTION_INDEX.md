@@ -114,31 +114,27 @@
 
 ### 滚动管理模块 (Scroll Management)
 
-> **重构记录（2026-02-02）**：以 Virtuoso 为核心重构滚动系统，删除 6+ 个分散的滚动 hooks，统一为 `useVirtuosoScroll` 单一入口。
+> **重构记录（2026-02-03）**：从 Virtuoso 迁移到 Virtua，统一为 `useVirtuaScroll` 单一入口。Virtua 更轻量（~3KB）且更好支持动态高度。
 
 #### 前端函数
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `useVirtuosoScroll` | `frontend/src/hooks/useVirtuosoScroll.ts` | Virtuoso 滚动管理统一入口（智能自动滚动、用户状态检测、跨对话位置记忆） | UseVirtuosoScrollOptions | UseVirtuosoScrollReturn |
+| `useVirtuaScroll` | `frontend/src/hooks/useVirtuaScroll.ts` | Virtua 滚动管理统一入口（智能自动滚动、用户状态检测） | UseVirtuaScrollOptions | UseVirtuaScrollReturn |
 
-**UseVirtuosoScrollOptions**：
+**UseVirtuaScrollOptions**：
 - `conversationId`: 当前对话 ID
 - `messages`: 消息列表
 - `loading`: 是否正在加载
 - `isStreaming`: 是否正在流式生成
 
-**UseVirtuosoScrollReturn**：
-- `virtuosoRef`: Virtuoso 实例引用
+**UseVirtuaScrollReturn**：
+- `vlistRef`: VList 实例引用
 - `userScrolledAway`: 用户是否主动滚走
 - `hasNewMessages`: 是否有新消息
 - `showScrollButton`: 是否显示滚动按钮
-- `followOutput`: 自动滚动决策回调（传给 Virtuoso）
-- `atBottomStateChange`: 底部状态变化回调（传给 Virtuoso）
-- `scrollerRef`: 滚动容器引用回调（传给 Virtuoso）
+- `handleScroll`: 滚动事件回调（传给 VList onScroll）
 - `scrollToBottom`: 滚动到底部方法
-- `resetScrollState`: 重置滚动状态方法
-- `markNewMessage`: 标记新消息方法
 - `setUserScrolledAway`: 设置用户滚走状态
 - `setHasNewMessages`: 设置新消息状态
 
@@ -400,7 +396,7 @@
 | `useImageUpload` | `frontend/src/hooks/useImageUpload.ts` | 图片上传逻辑 | - | { uploadImage, uploading, ... } |
 | `useAudioRecording` | `frontend/src/hooks/useAudioRecording.ts` | 录音逻辑 | - | { startRecording, stopRecording, ... } |
 | `useDragDropUpload` | `frontend/src/hooks/useDragDropUpload.ts` | 拖拽上传逻辑 | - | { isDragging, handleDrop, ... } |
-| `useVirtuosoScroll` | `frontend/src/hooks/useVirtuosoScroll.ts` | Virtuoso 滚动管理（统一入口） | options | { virtuosoRef, scrollToBottom, ... } |
+| `useVirtuaScroll` | `frontend/src/hooks/useVirtuaScroll.ts` | Virtua 滚动管理（统一入口） | options | { vlistRef, scrollToBottom, ... } |
 
 ### 通用组件模块 (Common Components)
 
@@ -591,7 +587,7 @@
 - **积分管理模块**：7个后端函数
 - **对话管理模块**：5个后端函数 + 5个前端函数
 - **消息处理模块**：7个前端函数（统一 useMediaMessageHandler）
-- **滚动管理模块**：1个前端函数（useVirtuosoScroll 统一入口，替换原 6+ 个分散 hooks）
+- **滚动管理模块**：1个前端函数（useVirtuaScroll 统一入口，使用 Virtua 替代 Virtuoso）
 - **重新生成模块**：3个前端函数
 - **轮询管理模块**：2个类型定义（实现在 useTaskStore）
 - **统一消息发送模块**：5个前端函数（统一 sendMediaMessage）
@@ -632,7 +628,7 @@
 - **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息处理、消息服务、滚动管理、重新生成、轮询管理、**统一消息发送**（含 mediaSender）、媒体重新生成、**任务通知**、**图片URL工具**、**统一日志**、**任务协调器**、**消息合并**、性能监控、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理、测试工具、认证弹窗模块、通用组件模块、占位符管理模块
 - **测试覆盖率目标**：80%+（Vitest + Testing Library）
 - **性能监控**：13个预定义性能标记，支持关键路径监控
-- **最后更新**：2026-02-02（滚动系统以 Virtuoso 为核心重构，删除 6+ 冗余 hooks）
+- **最后更新**：2026-02-03（滚动系统从 Virtuoso 迁移到 Virtua，更轻量且更好支持动态高度）
 
 ---
 
