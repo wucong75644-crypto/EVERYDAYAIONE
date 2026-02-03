@@ -28,6 +28,7 @@
   height: var(--height);
 }
 
+/* 用户图片 - 自适应宽度，限制最大宽度 */
 .dynamic-max-width {
   max-width: var(--max-width);
 }

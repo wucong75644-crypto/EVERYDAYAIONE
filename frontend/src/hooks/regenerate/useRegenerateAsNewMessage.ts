@@ -14,7 +14,6 @@ interface UseRegenerateAsNewMessageOptions {
   conversationId: string | null;
   modelId?: string | null;
   selectedModel?: UnifiedModel | null;
-  userScrolledAway: boolean;
   scrollToBottom: (smooth?: boolean) => void;
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
   setRegeneratingId: (id: string | null) => void;
@@ -27,7 +26,6 @@ export function useRegenerateAsNewMessage({
   conversationId,
   modelId,
   selectedModel,
-  userScrolledAway,
   scrollToBottom,
   setMessages,
   setRegeneratingId,
@@ -81,11 +79,11 @@ export function useRegenerateAsNewMessage({
             setMessages((prev) =>
               prev.map((m) => (m.id === newStreamingId ? { ...m, content: regeneratingContentRef.current } : m))
             );
-            if (!userScrolledAway) scrollToBottom();
+            // 流式中不调用 scrollToBottom，由 Virtuoso followOutput 统一控制
           },
         },
       });
     },
-    [conversationId, modelId, selectedModel, userScrolledAway, scrollToBottom, onMessageUpdate, resetRegeneratingState, setMessages, setRegeneratingId, setIsRegeneratingAI]
+    [conversationId, modelId, selectedModel, scrollToBottom, onMessageUpdate, resetRegeneratingState, setMessages, setRegeneratingId, setIsRegeneratingAI]
   );
 }

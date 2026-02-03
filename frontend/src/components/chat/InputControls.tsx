@@ -221,6 +221,7 @@ export default function InputControls(props: InputControlsProps) {
         {/* 输入区域 */}
         <textarea
           ref={textareaRef}
+          name="chat-input"
           value={prompt}
           onChange={(e) => onPromptChange(e.target.value)}
           onKeyDown={onKeyDown}

@@ -14,6 +14,10 @@ import axios from 'axios';
 import { getMessages, type Message } from '../services/message';
 import { useChatStore } from '../stores/useChatStore';
 
+// ========== 配置常量 ==========
+/** 首屏加载消息数量 */
+const INITIAL_LOAD_LIMIT = 100;
+
 interface UseMessageLoaderOptions {
   conversationId: string | null;
   refreshTrigger?: number;
@@ -36,7 +40,7 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
 
       try {
         if (!silent) setLoading(true);
-        const response = await getMessages(conversationId, 100, 0, undefined, signal);
+        const response = await getMessages(conversationId, INITIAL_LOAD_LIMIT, 0, undefined, signal);
 
         if (signal?.aborted) {
           return null;
@@ -115,7 +119,7 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
 
           if (freshMessages && freshMessages.length > 0) {
             // 直接存储 API 返回的 Message 格式，无需转换
-            store.setMessagesForConversation(conversationId, freshMessages, freshMessages.length >= 1000);
+            store.setMessagesForConversation(conversationId, freshMessages, freshMessages.length >= INITIAL_LOAD_LIMIT);
 
             // 标记对话有新消息（用于切换对话时决定滚动行为，由 useVirtuosoScroll 处理滚动逻辑）
             if (cached.messages && freshMessages.length > cached.messages.length) {
@@ -133,9 +137,9 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
         }
 
         if (freshMessages) {
-          setHasMore(freshMessages.length >= 1000);
+          setHasMore(freshMessages.length >= INITIAL_LOAD_LIMIT);
           // 直接存储 API 返回的 Message 格式，无需转换
-          store.setMessagesForConversation(conversationId, freshMessages, freshMessages.length >= 1000);
+          store.setMessagesForConversation(conversationId, freshMessages, freshMessages.length >= INITIAL_LOAD_LIMIT);
         }
         setLoading(false);
       }

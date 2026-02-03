@@ -9,8 +9,6 @@ interface RegenerateChatInPlaceOptions {
   messageId: string;
   conversationId: string;
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
-  scrollToBottom: (smooth?: boolean) => void;
-  userScrolledAway: boolean;
   resetRegeneratingState: () => void;
   onSuccess?: (finalMessage: Message) => void;
 }
@@ -19,8 +17,6 @@ export async function regenerateChatInPlace({
   messageId,
   conversationId,
   setMessages,
-  scrollToBottom,
-  userScrolledAway,
   resetRegeneratingState,
   onSuccess,
 }: RegenerateChatInPlaceOptions): Promise<void> {
@@ -36,7 +32,7 @@ export async function regenerateChatInPlace({
           m.id === messageId ? { ...m, content: contentRef.current, is_error: false } : m
         );
       });
-      if (!userScrolledAway) scrollToBottom();
+      // 流式中不调用 scrollToBottom，由 Virtuoso followOutput 统一控制
     },
     onDone: (finalMessage: Message | null) => {
       if (!finalMessage) return;

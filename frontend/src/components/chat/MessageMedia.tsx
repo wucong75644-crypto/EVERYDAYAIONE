@@ -172,7 +172,7 @@ function AiGeneratedImage({
   };
 
   return (
-    <div className="mt-3" ref={lazyRef}>
+    <div className="mt-3 leading-none" ref={lazyRef}>
       {/* 占位符（仅生成中显示固定尺寸，带淡入动画） */}
       {showPlaceholder && (
         <MediaPlaceholder

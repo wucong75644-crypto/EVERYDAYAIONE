@@ -22,8 +22,6 @@ export async function regenerateInPlace({
   setMessages,
   setRegeneratingId,
   setIsRegeneratingAI,
-  scrollToBottom,
-  userScrolledAway,
   onSuccess,
   onError,
   resetRegeneratingState,
@@ -52,8 +50,6 @@ export async function regenerateInPlace({
           messageId,
           conversationId,
           setMessages,
-          scrollToBottom,
-          userScrolledAway,
           resetRegeneratingState,
           onSuccess,
         });
