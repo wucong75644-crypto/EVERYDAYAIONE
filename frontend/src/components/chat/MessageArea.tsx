@@ -296,6 +296,7 @@ export default function MessageArea({
           key={conversationId || 'no-conversation'}
           data={mergedMessages}
           shift={true}
+          bufferSize={8}
           onScroll={handleScroll}
           className="h-full"
           style={{ height: '100%', paddingTop: 24, paddingBottom: 8 }}
