@@ -301,7 +301,7 @@ export default function MessageArea({
           style={{ height: '100%', paddingTop: 24, paddingBottom: 8 }}
         >
           {(message) => (
-            <div className="max-w-3xl mx-auto px-4">
+            <div className="max-w-4xl mx-auto px-4">
               {renderMessage(message)}
             </div>
           )}

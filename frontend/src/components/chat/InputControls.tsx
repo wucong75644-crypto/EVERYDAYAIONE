@@ -201,7 +201,7 @@ export default function InputControls(props: InputControlsProps) {
         </div>
       )}
 
-      <div className="p-3">
+      <div className="px-3 pt-2 pb-2">
         {/* 图片预览区域（输入框顶部） */}
         {images.length > 0 && (
           <div className="mb-2">
@@ -226,13 +226,13 @@ export default function InputControls(props: InputControlsProps) {
           onChange={(e) => onPromptChange(e.target.value)}
           onKeyDown={onKeyDown}
           placeholder={requiresImageUpload ? '该模型需要先上传图片才能生成哦～' : '发送消息...'}
-          className="w-full resize-none border-none outline-none text-gray-900 placeholder-gray-400 text-base leading-6 min-h-[40px] max-h-[120px] overflow-y-auto"
+          className="w-full resize-none border-none outline-none text-gray-900 placeholder-gray-400 text-base leading-6 pt-2 pb-1 min-h-[44px] max-h-[120px] overflow-y-auto"
           rows={1}
           disabled={isSubmitting}
         />
 
         {/* 底部工具栏 */}
-        <div className="flex items-center justify-between mt-2">
+        <div className="flex items-center justify-between mt-1">
           {/* 左侧：模型选择器、设置、深度思考 */}
           <div className="flex items-center space-x-1">
             {/* 模型选择器 */}
