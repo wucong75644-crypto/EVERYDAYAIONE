@@ -8,21 +8,20 @@
  * - 加载更多历史消息
  * - 消息缓存（切换秒显）
  *
- * 重构记录（2026-02-02）：
- * - 使用 useVirtuosoScroll 统一入口管理滚动
- * - 删除冗余的滚动 hooks（useScrollManager、useMessageAreaScroll）
- * - 以 Virtuoso 为核心，简化滚动逻辑
+ * 重构记录：
+ * - 2026-02-02：使用 useVirtuosoScroll 统一入口管理滚动
+ * - 2026-02-03：从 Virtuoso 迁移到 Virtua，解决动态高度闪烁问题
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Virtuoso } from 'react-virtuoso';
+import { VList } from 'virtua';
 import { deleteMessage, type Message } from '../../services/message';
 import MessageItem from './MessageItem';
 import EmptyState from './EmptyState';
 import LoadingSkeleton from './LoadingSkeleton';
 import toast from 'react-hot-toast';
 import { useMessageLoader } from '../../hooks/useMessageLoader';
-import { useVirtuosoScroll } from '../../hooks/useVirtuosoScroll';
+import { useVirtuaScroll } from '../../hooks/useVirtuaScroll';
 import { useRegenerateHandlers } from '../../hooks/useRegenerateHandlers';
 import { useUnifiedMessages } from '../../hooks/useUnifiedMessages';
 import { useConversationRuntimeStore } from '../../stores/useConversationRuntimeStore';
@@ -65,19 +64,17 @@ export default function MessageArea({
   // 判断是否正在流式生成
   const isStreaming = !!runtimeState?.streamingMessageId;
 
-  // ✅ 使用统一的 Virtuoso 滚动管理 Hook
+  // ✅ 使用统一的 Virtua 滚动管理 Hook
   const {
-    virtuosoRef,
+    vlistRef,
     userScrolledAway,
     hasNewMessages,
     showScrollButton,
-    followOutput,
-    atBottomStateChange,
-    scrollerRef,
+    handleScroll,
     scrollToBottom,
     setUserScrolledAway,
     setHasNewMessages,
-  } = useVirtuosoScroll({
+  } = useVirtuaScroll({
     conversationId,
     messages: mergedMessages,
     loading,
@@ -241,26 +238,6 @@ export default function MessageArea({
     }
   }, [isRegeneratingAI, regeneratingId, userScrolledAway, mergedMessages, scrollToBottom]);
 
-  // 渲染单条消息
-  const itemContent = useCallback((_index: number, message: Message) => {
-    const isRegenerating = message.id === regeneratingId;
-    const isMessageStreaming = message.id.startsWith('streaming-');
-    const imageIndex = getImageIndex(message);
-
-    return (
-      <MessageItem
-        key={message.id}
-        message={message}
-        isStreaming={isMessageStreaming}
-        isRegenerating={isRegenerating}
-        onRegenerate={handleRegenerate}
-        onDelete={handleDelete}
-        onMediaLoaded={handleMediaLoaded}
-        allImageUrls={allImageUrls}
-        currentImageIndex={imageIndex >= 0 ? imageIndex : 0}
-      />
-    );
-  }, [regeneratingId, getImageIndex, handleRegenerate, handleDelete, handleMediaLoaded, allImageUrls]);
 
   // 空状态
   if (!conversationId && mergedMessages.length === 0) {
@@ -289,33 +266,47 @@ export default function MessageArea({
     );
   }
 
+  // 渲染单条消息的函数（用于 VList）
+  const renderMessage = useCallback((message: Message) => {
+    const isRegenerating = message.id === regeneratingId;
+    const isMessageStreaming = message.id.startsWith('streaming-');
+    const imageIndex = getImageIndex(message);
+
+    return (
+      <MessageItem
+        key={message.id}
+        message={message}
+        isStreaming={isMessageStreaming}
+        isRegenerating={isRegenerating}
+        onRegenerate={handleRegenerate}
+        onDelete={handleDelete}
+        onMediaLoaded={handleMediaLoaded}
+        allImageUrls={allImageUrls}
+        currentImageIndex={imageIndex >= 0 ? imageIndex : 0}
+      />
+    );
+  }, [regeneratingId, getImageIndex, handleRegenerate, handleDelete, handleMediaLoaded, allImageUrls]);
+
   return (
     <div className="flex-1 flex flex-col relative min-h-0 h-full">
-      {/* Virtuoso 虚拟滚动 */}
-      <Virtuoso
-        ref={virtuosoRef}
-        key={conversationId || 'no-conversation'}
-        data={mergedMessages}
-        itemContent={itemContent}
-        followOutput={followOutput}
-        atBottomStateChange={atBottomStateChange}
-        atBottomThreshold={100}
-        overscan={200}
-        scrollerRef={scrollerRef}
-        className="flex-1 bg-white"
-        style={{ height: '100%' }}
-        components={{
-          List: ({ style, children, ...props }) => (
-            <div
-              {...props}
-              style={style}
-              className="max-w-3xl mx-auto py-6 px-4"
-            >
-              {children}
+      {/* Virtua VList 虚拟滚动 */}
+      <div className="flex-1 bg-white overflow-hidden" style={{ height: '100%' }}>
+        <VList
+          ref={vlistRef}
+          key={conversationId || 'no-conversation'}
+          data={mergedMessages}
+          shift={true}
+          onScroll={handleScroll}
+          className="h-full"
+          style={{ height: '100%' }}
+        >
+          {(message) => (
+            <div className="max-w-3xl mx-auto px-4 first:pt-6 last:pb-6">
+              {renderMessage(message)}
             </div>
-          ),
-        }}
-      />
+          )}
+        </VList>
+      </div>
 
       {/* 回到底部按钮 */}
       {showScrollButton && (
