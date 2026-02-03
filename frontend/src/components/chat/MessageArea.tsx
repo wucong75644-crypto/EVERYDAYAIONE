@@ -238,6 +238,27 @@ export default function MessageArea({
     }
   }, [isRegeneratingAI, regeneratingId, userScrolledAway, mergedMessages, scrollToBottom]);
 
+  // 渲染单条消息的函数（用于 VList）
+  // 注意：必须在所有 early return 之前定义，遵守 Hooks 规则
+  const renderMessage = useCallback((message: Message) => {
+    const isRegenerating = message.id === regeneratingId;
+    const isMessageStreaming = message.id.startsWith('streaming-');
+    const imageIndex = getImageIndex(message);
+
+    return (
+      <MessageItem
+        key={message.id}
+        message={message}
+        isStreaming={isMessageStreaming}
+        isRegenerating={isRegenerating}
+        onRegenerate={handleRegenerate}
+        onDelete={handleDelete}
+        onMediaLoaded={handleMediaLoaded}
+        allImageUrls={allImageUrls}
+        currentImageIndex={imageIndex >= 0 ? imageIndex : 0}
+      />
+    );
+  }, [regeneratingId, getImageIndex, handleRegenerate, handleDelete, handleMediaLoaded, allImageUrls]);
 
   // 空状态
   if (!conversationId && mergedMessages.length === 0) {
@@ -265,27 +286,6 @@ export default function MessageArea({
       </div>
     );
   }
-
-  // 渲染单条消息的函数（用于 VList）
-  const renderMessage = useCallback((message: Message) => {
-    const isRegenerating = message.id === regeneratingId;
-    const isMessageStreaming = message.id.startsWith('streaming-');
-    const imageIndex = getImageIndex(message);
-
-    return (
-      <MessageItem
-        key={message.id}
-        message={message}
-        isStreaming={isMessageStreaming}
-        isRegenerating={isRegenerating}
-        onRegenerate={handleRegenerate}
-        onDelete={handleDelete}
-        onMediaLoaded={handleMediaLoaded}
-        allImageUrls={allImageUrls}
-        currentImageIndex={imageIndex >= 0 ? imageIndex : 0}
-      />
-    );
-  }, [regeneratingId, getImageIndex, handleRegenerate, handleDelete, handleMediaLoaded, allImageUrls]);
 
   return (
     <div className="flex-1 flex flex-col relative min-h-0 h-full">
