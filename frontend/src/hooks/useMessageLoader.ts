@@ -7,6 +7,10 @@
  * - 删除了 toStoreMessage 和 convertCacheToApiMessages 格式转换函数
  * - 缓存直接存储 API Message 格式，无需转换
  * - 使用统一方法 setMessagesForConversation 写入缓存
+ *
+ * 懒加载支持：
+ * - 首屏加载 30 条消息
+ * - 支持向上滚动加载更多历史消息
  */
 
 import { useState, useCallback, useRef } from 'react';
@@ -16,7 +20,9 @@ import { useChatStore } from '../stores/useChatStore';
 
 // ========== 配置常量 ==========
 /** 首屏加载消息数量 */
-const INITIAL_LOAD_LIMIT = 100;
+const INITIAL_LOAD_LIMIT = 30;
+/** 加载更多时每次加载的数量 */
+const LOAD_MORE_LIMIT = 30;
 
 interface UseMessageLoaderOptions {
   conversationId: string | null;
@@ -26,6 +32,7 @@ interface UseMessageLoaderOptions {
 export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMessageLoaderOptions) {
   const [loading, setLoading] = useState(true); // 初始为 true，避免滚动逻辑提前触发
   const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const lastRefreshTriggerRef = useRef(refreshTrigger);
   // 初始值为 null，确保首次渲染也会走"对话切换"分支
   const previousConversationIdRef = useRef<string | null>(null);
@@ -147,9 +154,41 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
     [conversationId, refreshTrigger, fetchMessages]
   );
 
+  // 加载更多历史消息（向上滚动时触发）
+  const loadMore = useCallback(async () => {
+    if (!conversationId || loadingMore) return;
+
+    const store = useChatStore.getState();
+    const cached = store.getCachedMessages(conversationId);
+
+    // 没有缓存或没有更多消息时不加载
+    if (!cached || !cached.hasMore) return;
+
+    setLoadingMore(true);
+
+    try {
+      // 使用 offset 分页，从当前消息数量位置开始加载
+      const offset = cached.messages.length;
+      const response = await getMessages(conversationId, LOAD_MORE_LIMIT, offset);
+
+      // 检查是否还有更多
+      const newHasMore = response.messages.length >= LOAD_MORE_LIMIT;
+
+      // 向缓存顶部追加消息
+      store.prependMessages(conversationId, response.messages, newHasMore);
+      setHasMore(newHasMore);
+    } catch (error) {
+      console.error('加载更多消息失败:', error);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [conversationId, loadingMore]);
+
   return {
     loading,
     hasMore,
     loadMessages,
+    loadMore,
+    loadingMore,
   };
 }

@@ -46,8 +46,8 @@ export default function MessageArea({
   selectedModel = null,
 }: MessageAreaProps) {
   // 使用消息加载 Hook（负责从后端加载并写入缓存）
-  // 不传 onNewMessages，新消息标记由 store.markConversationUnread 和 useVirtuaScroll 处理
-  const { loading, loadMessages } = useMessageLoader({ conversationId });
+  // 支持懒加载：首屏 30 条，向上滚动加载更多
+  const { loading, hasMore, loadMessages, loadMore, loadingMore } = useMessageLoader({ conversationId });
 
   // 使用统一消息读取 Hook（自动合并持久化消息和临时消息）
   const mergedMessages = useUnifiedMessages(conversationId);
@@ -64,7 +64,7 @@ export default function MessageArea({
   // 判断是否正在流式生成
   const isStreaming = !!runtimeState?.streamingMessageId;
 
-  // ✅ 使用统一的 Virtua 滚动管理 Hook
+  // ✅ 使用统一的 Virtua 滚动管理 Hook（支持懒加载）
   const {
     vlistRef,
     userScrolledAway,
@@ -79,6 +79,9 @@ export default function MessageArea({
     messages: mergedMessages,
     loading,
     isStreaming,
+    hasMore,
+    loadingMore,
+    onLoadMore: loadMore,
   });
 
   // 获取当前对话标题（用于任务追踪）
