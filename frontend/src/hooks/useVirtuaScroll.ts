@@ -5,6 +5,7 @@
  * - 智能自动滚动（新消息、流式内容）
  * - 用户滚动状态检测
  * - 滚动按钮显示控制
+ * - 向上滚动加载更多历史消息
  *
  * 相比 Virtuoso 的改进：
  * - 使用 shift={true} 自动维护底部滚动位置
@@ -13,6 +14,7 @@
  *
  * 重构记录：
  * - 2026-02-03：从 Virtuoso 迁移到 Virtua
+ * - 2026-02-03：新增懒加载支持（向上滚动加载历史消息）
  */
 
 import { useState, useCallback, useRef, useLayoutEffect, useEffect } from 'react';
@@ -29,6 +31,12 @@ interface UseVirtuaScrollOptions {
   loading: boolean;
   /** 是否正在流式生成（外部传入） */
   isStreaming?: boolean;
+  /** 是否还有更多历史消息 */
+  hasMore?: boolean;
+  /** 是否正在加载更多 */
+  loadingMore?: boolean;
+  /** 加载更多回调 */
+  onLoadMore?: () => void;
 }
 
 interface UseVirtuaScrollReturn {
@@ -59,12 +67,17 @@ interface UseVirtuaScrollReturn {
 
 /** 判断是否在底部的阈值（像素） */
 const AT_BOTTOM_THRESHOLD = 100;
+/** 触发加载更多的顶部阈值（像素） */
+const LOAD_MORE_THRESHOLD = 200;
 
 export function useVirtuaScroll({
   conversationId,
   messages,
   loading,
   isStreaming = false,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
 }: UseVirtuaScrollOptions): UseVirtuaScrollReturn {
   // ========== VList Ref ==========
   const vlistRef = useRef<VListHandle | null>(null);
@@ -99,6 +112,15 @@ export function useVirtuaScroll({
     // viewportSize 是可视区域高度
     // 当 scrollOffset + viewportSize >= scrollSize - threshold 时，认为在底部
     return scrollOffset + viewportSize >= scrollSize - AT_BOTTOM_THRESHOLD;
+  }, []);
+
+  // ========== 判断是否在顶部（用于触发加载更多） ==========
+  const isAtTop = useCallback((): boolean => {
+    const handle = vlistRef.current;
+    if (!handle) return false;
+
+    const { scrollOffset } = handle;
+    return scrollOffset < LOAD_MORE_THRESHOLD;
   }, []);
 
   // ========== 滚动到底部 ==========
@@ -216,13 +238,19 @@ export function useVirtuaScroll({
 
   // ========== VList onScroll 回调 ==========
   const handleScroll = useCallback((_offset: number) => {
+    // 底部检测
     const atBottom = isAtBottom();
     setUserScrolledAway(!atBottom);
     if (atBottom) {
       setHasNewMessages(false);
     }
     setShowScrollButton(!atBottom);
-  }, [isAtBottom]);
+
+    // 顶部检测：触发加载更多
+    if (isAtTop() && hasMore && !loadingMore && onLoadMore) {
+      onLoadMore();
+    }
+  }, [isAtBottom, isAtTop, hasMore, loadingMore, onLoadMore]);
 
   return {
     // VList Ref

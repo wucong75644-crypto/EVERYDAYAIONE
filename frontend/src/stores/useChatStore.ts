@@ -126,6 +126,8 @@ interface ChatState {
   removeMessage: (conversationId: string, messageId: string) => void;
   /** 批量设置对话的所有消息（从后端加载时使用） */
   setMessagesForConversation: (conversationId: string, messages: Message[], hasMore?: boolean) => void;
+  /** 向缓存顶部追加消息（加载历史消息时使用） */
+  prependMessages: (conversationId: string, messages: Message[], hasMore: boolean) => void;
   /** 清空指定对话的缓存 */
   clearConversationCache: (conversationId: string) => void;
 
@@ -348,6 +350,34 @@ export const useChatStore = create<ChatState>()(
     newOrder.push(conversationId);
 
     set({ messageCache: newCache, cacheAccessOrder: newOrder });
+  },
+
+  // 向缓存顶部追加消息（加载历史消息时使用）
+  prependMessages: (conversationId: string, messages: Message[], hasMore: boolean) => {
+    set((state) => {
+      const cached = state.messageCache.get(conversationId);
+      if (!cached) return state;
+
+      // 去重：过滤掉已存在的消息
+      const existingIds = new Set(cached.messages.map(m => m.id));
+      const newMessages = messages.filter(m => !existingIds.has(m.id));
+
+      if (newMessages.length === 0) {
+        // 没有新消息，只更新 hasMore 状态
+        const newCache = new Map(state.messageCache);
+        newCache.set(conversationId, { ...cached, hasMore });
+        return { messageCache: newCache };
+      }
+
+      const newCache = new Map(state.messageCache);
+      newCache.set(conversationId, {
+        ...cached,
+        messages: [...newMessages, ...cached.messages], // 追加到顶部
+        hasMore,
+      });
+
+      return { messageCache: newCache };
+    });
   },
 
   // 清空指定对话的缓存（统一入口）
