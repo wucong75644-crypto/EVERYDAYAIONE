@@ -294,7 +294,7 @@ export default function InputArea({
 
   return (
     <div className="bg-white">
-      <div className="max-w-3xl mx-auto px-4 pb-4">
+      <div className="max-w-4xl mx-auto px-4 pb-4">
         {/* 上传错误提示条 */}
         <UploadErrorBar
           error={uploadError}
