@@ -227,7 +227,8 @@ export async function restoreAllPendingTasks() {
 
   for (const [index, task] of tasks.entries()) {
     const timeoutId = setTimeout(() => {
-      const title = conversationTitles.get(task.conversation_id) || '未知对话';
+      // 兜底标题：对话列表未加载完时使用通用文案
+      const title = conversationTitles.get(task.conversation_id) || '进行中的任务';
       restoreTaskPolling(task, title);
     }, index * TASK_RESTORE_STAGGER_DELAY);
     pendingRestoreTimeouts.push(timeoutId);
