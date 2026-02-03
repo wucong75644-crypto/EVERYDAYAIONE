@@ -202,7 +202,7 @@ EVERYDAYAIONE/
         │   ├── useMessageHandlers.ts     # 消息发送处理逻辑（组合器）
         │   ├── useRegenerateHandlers.ts  # 消息重新生成逻辑
         │   ├── useModelSelection.ts      # 模型选择逻辑（含用户选择保护）
-        │   ├── useVirtuosoScroll.ts      # Virtuoso 滚动管理（统一入口）
+        │   ├── useVirtuaScroll.ts        # Virtua 滚动管理（统一入口）
         │   ├── useUnifiedMessages.ts     # 统一消息读取（合并持久化+临时消息）
         │   ├── useClickOutside.ts        # 点击外部关闭逻辑
         │   └── handlers/                 # 消息处理器子模块
@@ -477,8 +477,11 @@ cache = client.caches.create(
 
 ## 更新记录
 
+- **2026-02-03**：滚动系统从 Virtuoso 迁移到 Virtua
+  - 使用 `useVirtuaScroll.ts` 统一入口，删除旧的 `useVirtuosoScroll.ts`
+  - 移除 `react-virtuoso` 依赖，改用更轻量的 `virtua`（~3KB）
+  - 更好的动态高度支持，解决消息闪烁问题
 - **2026-02-02**：完成聊天系统综合重构阶段5-7（状态管理重设计、占位符持久化、性能优化）
-  - 滚动系统以 Virtuoso 为核心重构，新增 `useVirtuosoScroll.ts` 统一入口
   - 消息合并算法优化 O(n²) → O(n)，图片加载失败重试机制
 - **2026-02-01**：完成聊天系统综合重构阶段0-4（34/35任务，97%进度）
   - 统一消息发送架构（mediaSender、mediaGenerationCore）

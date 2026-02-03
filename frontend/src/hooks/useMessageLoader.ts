@@ -121,7 +121,7 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
             // 直接存储 API 返回的 Message 格式，无需转换
             store.setMessagesForConversation(conversationId, freshMessages, freshMessages.length >= INITIAL_LOAD_LIMIT);
 
-            // 标记对话有新消息（用于切换对话时决定滚动行为，由 useVirtuosoScroll 处理滚动逻辑）
+            // 标记对话有新消息（用于切换对话时决定滚动行为，由 useVirtuaScroll 处理滚动逻辑）
             if (cached.messages && freshMessages.length > cached.messages.length) {
               store.markConversationUnread(conversationId);
             }

@@ -9,7 +9,7 @@
  * - 消息缓存（切换秒显）
  *
  * 重构记录：
- * - 2026-02-02：使用 useVirtuosoScroll 统一入口管理滚动
+ * - 2026-02-02：使用 useVirtuaScroll 统一入口管理滚动
  * - 2026-02-03：从 Virtuoso 迁移到 Virtua，解决动态高度闪烁问题
  */
 
@@ -46,7 +46,7 @@ export default function MessageArea({
   selectedModel = null,
 }: MessageAreaProps) {
   // 使用消息加载 Hook（负责从后端加载并写入缓存）
-  // 不传 onNewMessages，新消息标记由 store.markConversationUnread 和 useVirtuosoScroll 处理
+  // 不传 onNewMessages，新消息标记由 store.markConversationUnread 和 useVirtuaScroll 处理
   const { loading, loadMessages } = useMessageLoader({ conversationId });
 
   // 使用统一消息读取 Hook（自动合并持久化消息和临时消息）
