@@ -396,13 +396,7 @@ export const useChatStore = create<ChatState>()(
       const newCache = new Map(state.messageCache);
       newCache.set(conversationId, { ...cached, messages: updatedMessages });
 
-      // 如果是当前对话，同步更新 messages 状态
-      const updates: Partial<ChatState> = { messageCache: newCache };
-      if (state.currentConversationId === conversationId) {
-        updates.messages = updatedMessages;
-      }
-
-      return updates;
+      return { messageCache: newCache };
     });
   },
 

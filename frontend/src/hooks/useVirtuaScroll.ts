@@ -177,14 +177,15 @@ export function useVirtuaScroll({
       return;
     }
 
-    // 用户发送消息时（新增 user/temp- 消息），重置滚走状态并滚动
+    // 用户发送消息时（新增 user/temp- 消息），只重置滚走状态
+    // 注意：不手动滚动，让 Virtua shift 模式自动维护底部位置，避免闪动
     const newMessages = messages.slice(prevCount);
     const hasUserMessage = newMessages.some(
       (m) => m.role === 'user' || m.id.startsWith('temp-')
     );
     if (hasUserMessage) {
       setUserScrolledAway(false);
-      scrollToBottom(true);
+      // shift 模式会自动维护底部位置，无需手动滚动
       return;
     }
 
@@ -194,10 +195,11 @@ export function useVirtuaScroll({
       return;
     }
 
-    // 用户在底部且有新消息 → 平滑滚动
-    if (isAtBottom()) {
-      scrollToBottom(true);
-    }
+    // 用户在底部且有新消息 → shift 模式会自动维护，无需手动滚动
+    // 注释掉避免与 shift 模式冲突导致闪动
+    // if (isAtBottom()) {
+    //   scrollToBottom(true);
+    // }
   }, [messages, userScrolledAway, isStreaming, scrollToBottom, isAtBottom]);
 
   // ========== 流式结束时自动滚动到底部 ==========
