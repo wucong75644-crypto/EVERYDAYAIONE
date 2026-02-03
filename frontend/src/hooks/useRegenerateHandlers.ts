@@ -46,7 +46,6 @@ export function useRegenerateHandlers(options: RegenerateHandlersOptions) {
     conversationId,
     modelId,
     selectedModel,
-    userScrolledAway,
     scrollToBottom,
     setMessages,
     setRegeneratingId,

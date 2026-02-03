@@ -9,8 +9,7 @@ handlers/
 ├── README.md                      # 本文档
 ├── mediaHandlerUtils.ts          # 共享工具函数
 ├── useTextMessageHandler.ts      # 文本消息处理
-├── useImageMessageHandler.ts     # 图片消息处理
-├── useVideoMessageHandler.ts     # 视频消息处理
+├── useMediaMessageHandler.ts     # 图片/视频统一处理（通过 type 参数区分）
 └── __tests__/                    # 单元测试
 ```
 
@@ -71,13 +70,14 @@ function ChatComponent() {
 
 ### 2. 图片消息处理
 
-处理图片生成和图片编辑。
+处理图片生成和图片编辑。使用统一的 `useMediaMessageHandler`，通过 `type: 'image'` 参数区分。
 
 ```typescript
-import { useImageMessageHandler } from './handlers/useImageMessageHandler';
+import { useMediaMessageHandler } from './handlers/useMediaMessageHandler';
 
 function ImageGenerationComponent() {
-  const { handleImageGeneration } = useImageMessageHandler({
+  const { handleMediaGeneration } = useMediaMessageHandler({
+    type: 'image',
     selectedModel: currentImageModel,
     aspectRatio: '16:9',
     resolution: '1024x1024',
@@ -140,13 +140,14 @@ function ImageGenerationComponent() {
 
 ### 3. 视频消息处理
 
-处理文本生视频和图片生视频。
+处理文本生视频和图片生视频。使用统一的 `useMediaMessageHandler`，通过 `type: 'video'` 参数区分。
 
 ```typescript
-import { useVideoMessageHandler } from './handlers/useVideoMessageHandler';
+import { useMediaMessageHandler } from './handlers/useMediaMessageHandler';
 
 function VideoGenerationComponent() {
-  const { handleVideoGeneration } = useVideoMessageHandler({
+  const { handleMediaGeneration } = useMediaMessageHandler({
+    type: 'video',
     selectedModel: currentVideoModel,
     videoFrames: '10',
     videoAspectRatio: 'landscape',
@@ -368,8 +369,7 @@ npm run test:coverage
 
 测试文件位置：
 - `__tests__/useTextMessageHandler.test.ts`
-- `__tests__/useImageMessageHandler.test.ts`
-- `__tests__/useVideoMessageHandler.test.ts`
+- `__tests__/useMediaMessageHandler.test.ts`
 - `__tests__/mediaHandlerUtils.test.ts`
 
 ---

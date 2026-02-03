@@ -89,6 +89,8 @@ export default function ConversationList({
   const hasInitialLoaded = useRef(false);  // 防止重复初始加载
   const onSelectConversationRef = useRef(onSelectConversation);
   onSelectConversationRef.current = onSelectConversation;
+  const currentConversationIdRef = useRef(currentConversationId);
+  currentConversationIdRef.current = currentConversationId;
 
   // 本地修改追踪（用于乐观合并，防止 API 响应覆盖本地修改）
   const localModificationsRef = useRef<{
@@ -126,7 +128,9 @@ export default function ConversationList({
       // 清理已同步的本地修改（下次加载不再需要）
       localModificationsRef.current = { deleted: new Set(), renamed: new Map() };
 
-      if (isInitial && !hasAutoSelected.current && mergedConversations.length > 0) {
+      // 只有当 URL 没有指定对话时，才自动选择第一个对话
+      // 避免 URL 已有对话 ID 时重复触发 navigate，导致请求被 cancel
+      if (isInitial && !hasAutoSelected.current && !currentConversationIdRef.current && mergedConversations.length > 0) {
         hasAutoSelected.current = true;
         const mostRecent = mergedConversations[0];
         onSelectConversationRef.current(mostRecent.id, mostRecent.title, mostRecent.model_id);
