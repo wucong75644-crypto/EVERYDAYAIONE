@@ -163,6 +163,7 @@ export function useVirtuosoScroll({
   }, [isStreaming, userScrolledAway, scrollToBottom]);
 
   // ========== Virtuoso followOutput 回调 ==========
+  // 只在明确需要时才返回滚动指令，避免误触发导致闪烁
   const followOutput = useCallback((isAtBottom: boolean): 'smooth' | 'auto' | false => {
     const currentCount = messages.length;
     const prevCount = prevMessageCountRef.current;
@@ -181,31 +182,29 @@ export function useVirtuosoScroll({
       return false;
     }
 
-    // 用户发送消息时（新增 user/temp- 消息），重置滚走状态
-    if (isNewMessage) {
-      const newMessages = messages.slice(prevCount);
-      const hasUserMessage = newMessages.some(
-        (m) => m.role === 'user' || m.id.startsWith('temp-')
-      );
-      if (hasUserMessage) {
-        setUserScrolledAway(false);
-        return 'smooth';
-      }
+    // 没有新消息时不滚动（避免图片加载等高度变化触发滚动）
+    if (!isNewMessage) {
+      return false;
     }
 
-    // 用户已滚走且有新消息 → 不滚动，标记新消息
-    if (userScrolledAway && isNewMessage) {
+    // 用户发送消息时（新增 user/temp- 消息），重置滚走状态并滚动
+    const newMessages = messages.slice(prevCount);
+    const hasUserMessage = newMessages.some(
+      (m) => m.role === 'user' || m.id.startsWith('temp-')
+    );
+    if (hasUserMessage) {
+      setUserScrolledAway(false);
+      return 'smooth';
+    }
+
+    // 用户已滚走 → 不滚动，标记新消息
+    if (userScrolledAway) {
       setHasNewMessages(true);
       return false;
     }
 
-    // 在底部 → 平滑滚动
+    // 用户在底部且有新消息 → 平滑滚动
     if (isAtBottom) {
-      return 'smooth';
-    }
-
-    // 用户未滚走 → 平滑滚动
-    if (!userScrolledAway) {
       return 'smooth';
     }
 
