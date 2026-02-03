@@ -178,7 +178,7 @@ export default memo(function MessageItem({
   const hasMedia = !!(message.image_url || message.video_url || mediaPlaceholderInfo);
 
   return (
-    <div data-message-id={message.id} className={`flex mb-12 ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div data-message-id={message.id} className={`flex mb-4 ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
         className={`relative flex flex-col ${isUser ? 'items-end' : 'items-start'} ${hasMedia ? 'max-w-[90%]' : 'max-w-[80%]'}`}
         onMouseEnter={handleMouseEnter}

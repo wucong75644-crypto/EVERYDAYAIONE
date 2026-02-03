@@ -298,10 +298,10 @@ export default function MessageArea({
           shift={true}
           onScroll={handleScroll}
           className="h-full"
-          style={{ height: '100%' }}
+          style={{ height: '100%', paddingTop: 24, paddingBottom: 8 }}
         >
           {(message) => (
-            <div className="max-w-3xl mx-auto px-4 first:pt-6 last:pb-6">
+            <div className="max-w-3xl mx-auto px-4">
               {renderMessage(message)}
             </div>
           )}
