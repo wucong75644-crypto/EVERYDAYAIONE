@@ -25,15 +25,54 @@ import type { UnifiedModel } from '../constants/models';
 import { useUnifiedMessages } from '../hooks/useUnifiedMessages';
 import { useChatStore } from '../stores/useChatStore';
 import type { Message } from '../services/message';
+import { performanceMonitor } from '../utils/performanceMonitor';
+
+// 用户信息刷新间隔（5 分钟）
+const USER_REFRESH_INTERVAL = 5 * 60 * 1000;
+const USER_REFRESH_KEY = 'everydayai_user_refresh_time';
+
+/**
+ * 从缓存预读初始对话 ID
+ * 优先从 URL 读取，否则从 localStorage 缓存读取第一个对话
+ * 实现消息加载并行化，避免等待对话列表返回
+ */
+function getInitialConversationId(): string | null {
+  // 优先从 URL 读取
+  const match = window.location.pathname.match(/\/chat\/([^/]+)/);
+  if (match) return match[1];
+
+  // 从缓存预读第一个对话
+  try {
+    const cached = localStorage.getItem(CONVERSATIONS_CACHE_KEY);
+    if (cached) {
+      const list = JSON.parse(cached);
+      return list[0]?.id || null;
+    }
+  } catch {
+    // 解析失败，忽略
+  }
+  return null;
+}
 
 export default function Chat() {
   const navigate = useNavigate();
   const { id: urlConversationId } = useParams<{ id?: string }>();
   const { user, refreshUser } = useAuthStore();
 
+  // 性能监控：标记组件挂载时间
+  const ttiMeasured = useRef(false);
+  useEffect(() => {
+    performanceMonitor.mark('chat_mount');
+    return () => {
+      // 组件卸载时输出性能报告
+      performanceMonitor.report();
+    };
+  }, []);
+
   // 基础状态
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  // 从缓存预读初始对话 ID，实现消息并行加载
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(getInitialConversationId);
   const [conversationTitle, setConversationTitle] = useState('新对话');
   const [conversationModelId, setConversationModelId] = useState<string | null>(null);
   const [currentSelectedModel, setCurrentSelectedModel] = useState<UnifiedModel | null>(null);
@@ -44,6 +83,15 @@ export default function Chat() {
   // 获取统一消息列表（用于 setMessages 兼容层）
   const mergedMessages = useUnifiedMessages(currentConversationId);
   const { replaceMessage, appendMessage } = useChatStore();
+
+  // 性能监控：测量 TTI（首次消息加载完成时）
+  useEffect(() => {
+    if (ttiMeasured.current) return;
+    if (mergedMessages.length > 0 || !currentConversationId) {
+      ttiMeasured.current = true;
+      performanceMonitor.measure('TTI', 'chat_mount');
+    }
+  }, [mergedMessages.length, currentConversationId]);
 
   // 创建 setMessages 兼容层（用于统一缓存写入）
   const setMessages = useCallback(
@@ -129,21 +177,46 @@ export default function Chat() {
   });
 
   // 页面加载时刷新用户信息（包括积分）
-  // 由于页面已被 ProtectedRoute 保护，此处无需检查登录状态
+  // 条件调用：5 分钟内刷新过则跳过，避免重复请求
   useEffect(() => {
-    refreshUser();
+    const lastRefresh = localStorage.getItem(USER_REFRESH_KEY);
+    const now = Date.now();
+
+    // 5 分钟内刷新过，跳过
+    if (lastRefresh && now - parseInt(lastRefresh) < USER_REFRESH_INTERVAL) {
+      return;
+    }
+
+    refreshUser().then(() => {
+      localStorage.setItem(USER_REFRESH_KEY, String(Date.now()));
+    });
   }, [refreshUser]);
 
   // 恢复进行中的任务（页面刷新/登录后）
+  // 条件触发：等待对话列表加载完成后执行，避免固定 1000ms 延迟
+  const conversations = useChatStore((state) => state.conversations);
+  const taskRestoreTriggered = useRef(false);
+
   useEffect(() => {
     if (!user) return;
+    if (taskRestoreTriggered.current) return;
 
-    const timer = setTimeout(() => {
+    // 检查是否有缓存的对话列表
+    const hasCachedConversations = (() => {
+      try {
+        const cached = localStorage.getItem(CONVERSATIONS_CACHE_KEY);
+        return cached ? JSON.parse(cached).length > 0 : false;
+      } catch {
+        return false;
+      }
+    })();
+
+    // 触发条件：store 有数据，或缓存为空（新用户）
+    if (conversations.length > 0 || !hasCachedConversations) {
+      taskRestoreTriggered.current = true;
       restoreAllPendingTasks();
-    }, 1000);
-
-    return () => clearTimeout(timer);
-  }, [user]);
+    }
+  }, [user, conversations.length]);
 
   // 监听 URL 参数变化，同步到状态
   useEffect(() => {
