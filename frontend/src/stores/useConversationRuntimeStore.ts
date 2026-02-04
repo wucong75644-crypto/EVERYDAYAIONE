@@ -6,14 +6,107 @@
  * - 流式生成的AI消息（streaming-xxx）
  * - 生成状态管理
  * - LRU自动清理
+ * - 持久化到 localStorage（刷新后可恢复）
  *
  * 职责边界：
- * - 本Store：只管理临时、未持久化的状态
+ * - 本Store：管理临时状态，持久化到 localStorage
  * - useChatStore：管理已持久化到数据库的消息
  */
 
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import { type Message } from '../services/message';
+
+/** 序列化后的状态结构（Map 转换为普通对象） */
+interface SerializedState {
+  statesObj: Record<string, ConversationRuntimeState>;
+}
+
+/** 节流写入配置 */
+const THROTTLE_MS = 500; // 500ms 节流，避免流式内容频繁写入
+let throttleTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingValue: string | null = null;
+let pendingName: string | null = null;
+
+/** 强制写入待处理的数据（页面卸载前调用） */
+function flushPendingWrite() {
+  if (pendingValue && pendingName) {
+    try {
+      localStorage.setItem(pendingName, pendingValue);
+    } catch {
+      // 忽略错误
+    }
+    pendingValue = null;
+    pendingName = null;
+  }
+}
+
+// 页面卸载前强制写入，确保最后的状态不丢失
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', flushPendingWrite);
+}
+
+/** 带节流的 localStorage 存储（使用字符串接口） */
+const throttledStorage = {
+  getItem: (name: string): string | null => {
+    return localStorage.getItem(name);
+  },
+  setItem: (name: string, value: string): void => {
+    // 节流写入：避免流式内容频繁写入 localStorage
+    pendingValue = value;
+    pendingName = name;
+
+    if (throttleTimer) {
+      return; // 已有定时器在等待，跳过本次写入
+    }
+
+    throttleTimer = setTimeout(() => {
+      throttleTimer = null;
+      if (pendingValue && pendingName) {
+        try {
+          localStorage.setItem(pendingName, pendingValue);
+        } catch {
+          // 缓存保存失败，不影响功能
+        }
+        pendingValue = null;
+        pendingName = null;
+      }
+    }, THROTTLE_MS);
+  },
+  removeItem: (name: string): void => {
+    localStorage.removeItem(name);
+  },
+};
+
+/** 自定义序列化 - 将 Map 转换为普通对象 */
+type StorageValue = { state: { states: Map<string, ConversationRuntimeState> }; version?: number };
+function serializeState(storageValue: StorageValue): string {
+  const statesObj: Record<string, ConversationRuntimeState> = {};
+  if (storageValue.state?.states instanceof Map) {
+    storageValue.state.states.forEach((value, key) => {
+      statesObj[key] = value;
+    });
+  }
+  return JSON.stringify({
+    state: { statesObj },
+    version: storageValue.version,
+  });
+}
+
+/** 自定义反序列化 - 将普通对象转换回 Map */
+function deserializeState(str: string): StorageValue {
+  const data = JSON.parse(str) as { state: SerializedState; version?: number };
+  const states = new Map<string, ConversationRuntimeState>();
+  if (data.state?.statesObj) {
+    Object.entries(data.state.statesObj).forEach(([key, value]) => {
+      states.set(key, value);
+    });
+  }
+  return {
+    state: { states },
+    version: data.version,
+  };
+}
 
 /** 单个对话的运行时状态 */
 export interface ConversationRuntimeState {
@@ -105,9 +198,11 @@ const createDefaultState = (): ConversationRuntimeState => ({
   streamingMessageId: null,
 });
 
-/** 创建Store */
-export const useConversationRuntimeStore = create<ConversationRuntimeStore>((set, get) => ({
-  states: new Map(),
+/** 创建Store（带持久化） */
+export const useConversationRuntimeStore = create<ConversationRuntimeStore>()(
+  persist(
+    (set, get) => ({
+      states: new Map(),
 
   // ========================================
   // 1. 乐观消息管理
@@ -158,9 +253,9 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>((set
         return state;
       }
 
-      // 移除空的streaming消息（如果存在）
+      // 移除所有 streaming 消息（不管有没有内容，错误消息会替代它们）
       const filteredMessages = current.optimisticMessages.filter(
-        m => !(m.id.startsWith('streaming-') && !m.content.trim())
+        m => !m.id.startsWith('streaming-')
       );
 
       const newStates = new Map(state.states);
@@ -238,10 +333,25 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>((set
   startStreaming: (conversationId: string, streamingId: string, createdAt?: string) => {
     set((state) => {
       const current = state.states.get(conversationId) ?? createDefaultState();
+      const targetId = `streaming-${streamingId}`;
 
-      // 创建streaming-AI消息
+      // 【幂等性】检查是否已存在相同 ID 的 streaming 消息
+      const existingIndex = current.optimisticMessages.findIndex(m => m.id === targetId);
+
+      if (existingIndex >= 0) {
+        // 已存在：只更新 streamingMessageId，不重复创建消息
+        const newStates = new Map(state.states);
+        newStates.set(conversationId, {
+          ...current,
+          streamingMessageId: targetId,
+          isGenerating: true,
+        });
+        return { states: newStates };
+      }
+
+      // 不存在：创建新的 streaming-AI 消息
       const streamingMessage: Message = {
-        id: `streaming-${streamingId}`,
+        id: targetId,
         conversation_id: conversationId,
         role: 'assistant',
         content: '',  // 初始为空，后续通过appendStreamingContent累积
@@ -412,4 +522,88 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>((set
       return { states: newStates };
     });
   },
-}));
+    }),
+    {
+      name: 'everydayai_runtime_state',
+      storage: {
+        getItem: (name) => {
+          const str = throttledStorage.getItem(name);
+          if (!str) return null;
+          try {
+            return deserializeState(str);
+          } catch {
+            return null;
+          }
+        },
+        setItem: (name, value) => {
+          const serialized = serializeState(value);
+          throttledStorage.setItem(name, serialized);
+        },
+        removeItem: (name) => {
+          throttledStorage.removeItem(name);
+        },
+      },
+      // 只持久化 states
+      partialize: (state) => ({
+        states: state.states,
+      }),
+      // 恢复状态后：
+      // 1. 清理所有 streaming 消息（避免 ID 不一致导致重复占位符）
+      // 2. 调用 restoreAllPendingTasks 恢复任务（会重新创建 streaming 消息）
+      onRehydrateStorage: () => (state) => {
+        if (!state) return;
+
+        // 使用 setTimeout 确保 store 已经初始化完成
+        setTimeout(async () => {
+          // 1. 先清理所有 streaming 消息
+          // 原因：发送时使用 timestamp 作为 ID，恢复时使用 assistantMessageId
+          // 两者不同会导致幂等性检查失败，创建重复占位符
+          const currentState = useConversationRuntimeStore.getState();
+          const newStates = new Map<string, ConversationRuntimeState>();
+          let hasChanges = false;
+
+          currentState.states.forEach((runtimeState, conversationId) => {
+            const hasStreamingMessages = runtimeState.optimisticMessages.some(
+              m => m.id.startsWith('streaming-')
+            );
+
+            if (hasStreamingMessages || runtimeState.streamingMessageId) {
+              hasChanges = true;
+              const cleanedMessages = runtimeState.optimisticMessages.filter(
+                m => !m.id.startsWith('streaming-')
+              );
+              newStates.set(conversationId, {
+                ...runtimeState,
+                optimisticMessages: cleanedMessages,
+                streamingMessageId: null,
+                isGenerating: false,
+              });
+            } else {
+              newStates.set(conversationId, runtimeState);
+            }
+          });
+
+          if (hasChanges) {
+            useConversationRuntimeStore.setState({ states: newStates });
+          }
+
+          // 2. 恢复 pending 任务（会重新创建 streaming 消息）
+          try {
+            const { fetchPendingTasks, restoreAllPendingTasks } = await import('../utils/taskRestoration');
+            const pendingTasks = await fetchPendingTasks();
+
+            if (pendingTasks.length > 0) {
+              console.log('[RuntimeStore] onRehydrateStorage: calling restoreAllPendingTasks');
+              // 延迟执行，确保状态更新完成
+              setTimeout(() => {
+                restoreAllPendingTasks();
+              }, 50);
+            }
+          } catch (e) {
+            console.error('[RuntimeStore] onRehydrateStorage: restoreAllPendingTasks failed', e);
+          }
+        }, 100);
+      },
+    }
+  )
+);

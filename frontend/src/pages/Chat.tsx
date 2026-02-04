@@ -20,12 +20,12 @@ import { getConversation } from '../services/conversation';
 import { CONVERSATIONS_CACHE_KEY } from '../components/chat/conversationUtils';
 import { useMessageCallbacks } from '../hooks/useMessageCallbacks';
 import { useConversationNavigation } from '../hooks/useConversationNavigation';
-import { restoreAllPendingTasks } from '../utils/taskRestoration';
 import type { UnifiedModel } from '../constants/models';
 import { useUnifiedMessages } from '../hooks/useUnifiedMessages';
 import { useChatStore } from '../stores/useChatStore';
 import type { Message } from '../services/message';
 import { performanceMonitor } from '../utils/performanceMonitor';
+import { tabSync } from '../utils/tabSync';
 
 // 用户信息刷新间隔（5 分钟）
 const USER_REFRESH_INTERVAL = 5 * 60 * 1000;
@@ -192,31 +192,42 @@ export default function Chat() {
     });
   }, [refreshUser]);
 
-  // 恢复进行中的任务（页面刷新/登录后）
-  // 条件触发：等待对话列表加载完成后执行，避免固定 1000ms 延迟
-  const conversations = useChatStore((state) => state.conversations);
-  const taskRestoreTriggered = useRef(false);
-
+  // 监听跨标签页同步事件
   useEffect(() => {
-    if (!user) return;
-    if (taskRestoreTriggered.current) return;
-
-    // 检查是否有缓存的对话列表
-    const hasCachedConversations = (() => {
-      try {
-        const cached = localStorage.getItem(CONVERSATIONS_CACHE_KEY);
-        return cached ? JSON.parse(cached).length > 0 : false;
-      } catch {
-        return false;
+    // 其他标签页完成聊天任务：刷新当前对话的消息列表
+    const unsubscribeCompleted = tabSync.on('chat_completed', (data) => {
+      if (data.conversationId === currentConversationId) {
+        // 清除缓存，触发 MessageArea 重新加载
+        useChatStore.getState().clearConversationCache(data.conversationId);
       }
-    })();
+    });
 
-    // 触发条件：store 有数据，或缓存为空（新用户）
-    if (conversations.length > 0 || !hasCachedConversations) {
-      taskRestoreTriggered.current = true;
-      restoreAllPendingTasks();
-    }
-  }, [user, conversations.length]);
+    // 其他标签页聊天失败：同上
+    const unsubscribeFailed = tabSync.on('chat_failed', (data) => {
+      if (data.conversationId === currentConversationId) {
+        useChatStore.getState().clearConversationCache(data.conversationId);
+      }
+    });
+
+    // 其他标签页积分变动：刷新用户信息
+    const unsubscribeCredits = tabSync.on('credits_changed', () => {
+      refreshUser();
+    });
+
+    // 其他标签页删除对话：如果是当前对话，跳转回主页
+    const unsubscribeDeleted = tabSync.on('conversation_deleted', (data) => {
+      if (data.conversationId === currentConversationId) {
+        navigate('/chat');
+      }
+    });
+
+    return () => {
+      unsubscribeCompleted();
+      unsubscribeFailed();
+      unsubscribeCredits();
+      unsubscribeDeleted();
+    };
+  }, [currentConversationId, refreshUser, navigate]);
 
   // 监听 URL 参数变化，同步到状态
   useEffect(() => {
