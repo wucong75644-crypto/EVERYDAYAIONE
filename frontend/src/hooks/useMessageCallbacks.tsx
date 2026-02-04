@@ -16,6 +16,7 @@ import { useChatStore } from '../stores/useChatStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { messageCoordinator } from '../utils/messageCoordinator';
 import { getIncrementalTimestamp } from '../utils/messageFactory';
+import { tabSync } from '../utils/tabSync';
 import type { Message } from '../services/message';
 import toast from 'react-hot-toast';
 
@@ -161,6 +162,11 @@ export function useMessageCallbacks({
         // 如果是错误消息，先添加错误消息再完成 streaming
         if (aiMessage && aiMessage.is_error) {
           addErrorMessage(messageConversationId, aiMessage);
+          // 广播聊天失败事件给其他标签页
+          tabSync.broadcast('chat_failed', {
+            conversationId: messageConversationId,
+            messageId: aiMessage.id,
+          });
         } else if (aiMessage && (aiMessage.image_url || aiMessage.video_url)) {
           // 媒体消息完成：通过 setMessages 兼容层写入缓存（确保切换对话后秒显）
           if (setMessages) {
@@ -185,6 +191,11 @@ export function useMessageCallbacks({
             // Fallback: 如果 setMessages 未传入，直接写入缓存
             useChatStore.getState().appendMessage(messageConversationId, aiMessage);
           }
+          // 广播聊天完成事件给其他标签页
+          tabSync.broadcast('chat_completed', {
+            conversationId: messageConversationId,
+            messageId: aiMessage.id,
+          });
         }
 
         // 用户正在查看当前对话，清除闪烁状态
@@ -240,6 +251,10 @@ export function useMessageCallbacks({
       const now = getIncrementalTimestamp();
       const streamingId = now.toString();
       startStreaming(conversationId, streamingId, new Date(now).toISOString());
+      // 广播聊天开始事件给其他标签页
+      tabSync.broadcast('chat_started', {
+        conversationId,
+      });
     },
     [startStreaming]
   );

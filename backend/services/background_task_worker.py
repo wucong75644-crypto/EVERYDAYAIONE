@@ -233,7 +233,7 @@ class BackgroundTaskWorker:
             )
 
     async def cleanup_stale_tasks(self):
-        """清理超时任务"""
+        """清理超时任务（包括 chat 类型）"""
         now = datetime.now(timezone.utc)
 
         # 查询所有pending/running任务
@@ -247,10 +247,15 @@ class BackgroundTaskWorker:
             started_at = datetime.fromisoformat(
                 task["started_at"].replace("Z", "+00:00")
             )
-            max_duration_minutes = (
-                IMAGE_TASK_TIMEOUT_MINUTES if task["type"] == "image"
-                else VIDEO_TASK_TIMEOUT_MINUTES
-            )
+
+            # 根据任务类型确定超时时间
+            task_type = task["type"]
+            if task_type == "chat":
+                max_duration_minutes = 10  # chat 任务超时时间：10 分钟
+            elif task_type == "image":
+                max_duration_minutes = IMAGE_TASK_TIMEOUT_MINUTES
+            else:
+                max_duration_minutes = VIDEO_TASK_TIMEOUT_MINUTES
 
             # 检查是否超时
             if (now - started_at).total_seconds() > max_duration_minutes * 60:
@@ -265,7 +270,7 @@ class BackgroundTaskWorker:
                 logger.warning(
                     f"Task timeout: id={task['id']}, "
                     f"external_id={task.get('external_task_id')}, "
-                    f"type={task['type']}"
+                    f"type={task_type}"
                 )
 
         if cleaned_count > 0:
