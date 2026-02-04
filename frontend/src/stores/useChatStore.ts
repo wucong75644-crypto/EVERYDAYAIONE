@@ -369,10 +369,12 @@ export const useChatStore = create<ChatState>()(
         return { messageCache: newCache };
       }
 
+      const mergedMessages = [...newMessages, ...cached.messages];
+
       const newCache = new Map(state.messageCache);
       newCache.set(conversationId, {
         ...cached,
-        messages: [...newMessages, ...cached.messages], // 追加到顶部
+        messages: mergedMessages, // 追加到顶部
         hasMore,
       });
 

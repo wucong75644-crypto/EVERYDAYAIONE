@@ -20,7 +20,7 @@
     "react-hot-toast": "^2.6.0",
     "react-intersection-observer": "^10.0.2",
     "react-router-dom": "^7.6.2",
-    "virtua": "^0.48.5",
+    "use-stick-to-bottom": "^1.1.2",
     "zustand": "^5.0.5"
   },
   "devDependencies": {

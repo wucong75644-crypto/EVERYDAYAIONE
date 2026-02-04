@@ -125,11 +125,12 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
           }
 
           if (freshMessages && freshMessages.length > 0) {
-            // 直接存储 API 返回的 Message 格式，无需转换
-            store.setMessagesForConversation(conversationId, freshMessages, freshMessages.length >= INITIAL_LOAD_LIMIT);
+            // ✅ 后端返回降序（从新到旧），前端反转为升序（从旧到新）
+            const messagesAsc = [...freshMessages].reverse();
+            store.setMessagesForConversation(conversationId, messagesAsc, freshMessages.length >= INITIAL_LOAD_LIMIT);
 
-            // 标记对话有新消息（用于切换对话时决定滚动行为，由 useVirtuaScroll 处理滚动逻辑）
-            if (cached.messages && freshMessages.length > cached.messages.length) {
+            // 标记对话有新消息（用于切换对话时决定滚动行为）
+            if (cached.messages && messagesAsc.length > cached.messages.length) {
               store.markConversationUnread(conversationId);
             }
           }
@@ -145,8 +146,9 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
 
         if (freshMessages) {
           setHasMore(freshMessages.length >= INITIAL_LOAD_LIMIT);
-          // 直接存储 API 返回的 Message 格式，无需转换
-          store.setMessagesForConversation(conversationId, freshMessages, freshMessages.length >= INITIAL_LOAD_LIMIT);
+          // ✅ 后端返回降序（从新到旧），前端反转为升序（从旧到新）
+          const messagesAsc = [...freshMessages].reverse();
+          store.setMessagesForConversation(conversationId, messagesAsc, freshMessages.length >= INITIAL_LOAD_LIMIT);
         }
         setLoading(false);
       }
@@ -174,8 +176,11 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
       // 检查是否还有更多
       const newHasMore = response.messages.length >= LOAD_MORE_LIMIT;
 
+      // ✅ 后端返回降序（从新到旧），前端反转为升序（从旧到新）
+      const messagesAsc = [...response.messages].reverse();
+
       // 向缓存顶部追加消息
-      store.prependMessages(conversationId, response.messages, newHasMore);
+      store.prependMessages(conversationId, messagesAsc, newHasMore);
       setHasMore(newHasMore);
     } catch (error) {
       console.error('加载更多消息失败:', error);
