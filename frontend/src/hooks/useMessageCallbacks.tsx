@@ -15,6 +15,7 @@ import { useTaskStore } from '../stores/useTaskStore';
 import { useChatStore } from '../stores/useChatStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { messageCoordinator } from '../utils/messageCoordinator';
+import { getIncrementalTimestamp } from '../utils/messageFactory';
 import type { Message } from '../services/message';
 import toast from 'react-hot-toast';
 
@@ -235,8 +236,8 @@ export function useMessageCallbacks({
   const handleStreamStart = useCallback(
     (conversationId: string, model: string) => {
       void model;
-      // 创建 streaming 消息
-      const now = Date.now();
+      // 创建 streaming 消息（使用递增时间戳，确保 AI 消息时间戳 > 用户消息时间戳）
+      const now = getIncrementalTimestamp();
       const streamingId = now.toString();
       startStreaming(conversationId, streamingId, new Date(now).toISOString());
     },
