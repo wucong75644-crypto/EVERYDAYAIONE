@@ -262,9 +262,9 @@ export default function InputArea({
           false  // 允许 handleChatMessage 创建乐观消息
         );
       } else if (selectedModel.type === 'video') {
-        await handleVideoGeneration(messageContent, currentConversationId!, combinedImageUrl);
+        await handleVideoGeneration(currentConversationId!, messageContent, combinedImageUrl);
       } else {
-        await handleImageGeneration(messageContent, currentConversationId!, combinedImageUrl);
+        await handleImageGeneration(currentConversationId!, messageContent, combinedImageUrl);
       }
     } catch (error) {
       console.error('发送消息失败:', error);

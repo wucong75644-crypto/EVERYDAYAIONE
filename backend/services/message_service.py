@@ -195,12 +195,12 @@ class MessageService:
         # 验证对话权限
         await self.conversation_service.get_conversation(conversation_id, user_id)
 
-        # 查询消息（按创建时间正序）
+        # 查询消息（按创建时间降序：从新到旧，确保首次加载显示最新消息）
         query = (
             self.db.table("messages")
             .select("*")
             .eq("conversation_id", conversation_id)
-            .order("created_at", desc=False)
+            .order("created_at", desc=True)
         )
 
         # 如果指定了 before_id，获取该消息之前的消息

@@ -135,7 +135,9 @@ export function mergeOptimisticMessages(
   // 过滤出需要显示的乐观消息，每次查找 O(1)
   const newOptimisticMessages = runtimeState.optimisticMessages.filter((m) => {
     // 已存在于持久化消息中（通过ID），跳过 O(1)
-    if (index.idSet.has(m.id)) return false;
+    if (index.idSet.has(m.id)) {
+      return false;
+    }
 
     // temp- 用户消息：检查是否已有对应的持久化消息
     if (m.id.startsWith('temp-') && m.role === 'user') {

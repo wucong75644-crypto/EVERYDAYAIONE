@@ -88,7 +88,8 @@ async def get_messages(
     """
     获取对话的消息列表
 
-    按创建时间正序返回，支持分页加载历史消息。
+    按创建时间降序返回（从新到旧），支持分页加载历史消息。
+    offset=0 返回最新的消息，增加 offset 加载更早的消息。
     """
     result = await service.get_messages(
         conversation_id=conversation_id,

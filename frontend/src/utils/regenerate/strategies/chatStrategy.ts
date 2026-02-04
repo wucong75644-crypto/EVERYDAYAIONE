@@ -32,7 +32,7 @@ export async function regenerateChatInPlace({
           m.id === messageId ? { ...m, content: contentRef.current, is_error: false } : m
         );
       });
-      // 流式中不调用 scrollToBottom，由 Virtua shift 模式自动维护底部位置
+      // 流式中不调用 scrollToBottom，由 use-stick-to-bottom 自动维护底部位置
     },
     onDone: (finalMessage: Message | null) => {
       if (!finalMessage) return;
