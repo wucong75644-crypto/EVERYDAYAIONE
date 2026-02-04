@@ -59,15 +59,15 @@ EVERYDAYAIONE/
 │   │       ├── 004_add_is_error_to_messages.sql
 │   │       ├── 005_add_video_cost_enum.sql
 │   │       ├── 006_add_tasks_table.sql
-│   │       └── 007_add_credit_transactions.sql
+│   │       ├── 007_add_credit_transactions.sql
+│   │       └── 015_add_chat_task_fields.sql  # chat 任务字段
 │   └── document/
 │       ├── TECH_ARCHITECTURE.md      # 技术架构
 │       ├── PAGE_DESIGN.md            # 页面设计
 │       ├── OSS_CDN_DESIGN.md         # OSS/CDN 设计
 │       ├── KIE_INTEGRATION_DESIGN.md # KIE API 集成设计
 │       ├── SUPER_ADMIN_FEATURES.md   # 超级管理员功能
-│       ├── TECH_CHAT_PAGE_FIX.md     # 聊天页修复技术方案
-│       └── TEST_LAZY_LOADING.md      # 懒加载测试
+│       └── 聊天任务恢复方案.md       # 聊天任务刷新恢复方案
 │
 ├── backend/                  # 后端代码（Python/FastAPI）
 │   ├── venv/                      # Python 虚拟环境（git 忽略）
@@ -90,7 +90,8 @@ EVERYDAYAIONE/
 │   │       ├── conversation.py           # 对话路由
 │   │       ├── message.py                # 消息路由
 │   │       ├── image.py                  # 图像生成路由
-│   │       └── video.py                  # 视频生成路由
+│   │       ├── video.py                  # 视频生成路由
+│   │       └── task.py                   # 任务管理路由（SSE恢复）
 │   ├── schemas/                  # 请求/响应模型
 │   │   ├── auth.py                   # 认证相关 Schema
 │   │   ├── conversation.py           # 对话相关 Schema
@@ -112,6 +113,8 @@ EVERYDAYAIONE/
 │   │   ├── credit_service.py         # 积分服务
 │   │   ├── task_limit_service.py     # 任务限制服务
 │   │   ├── base_generation_service.py # 生成服务基类
+│   │   ├── chat_stream_manager.py    # 聊天流管理器（后台协程）
+│   │   ├── background_task_worker.py # 后台任务轮询器
 │   │   └── adapters/                 # AI 模型适配器
 │   │       └── kie/                      # KIE API 适配器
 │   │           ├── client.py                 # HTTP 客户端
@@ -221,6 +224,8 @@ EVERYDAYAIONE/
             ├── logger.ts                 # 统一日志工具（error、warn、debug、info）
             ├── taskNotification.ts       # 任务通知工具（notifyTaskComplete纯函数）
             ├── taskCoordinator.ts        # 任务协调器（防多标签页重复轮询）
+            ├── taskRestoration.ts        # 任务恢复工具（SSE/轮询恢复）
+            ├── tabSync.ts                # 跨标签页同步（BroadcastChannel）
             ├── polling.ts                # 轮询类型定义（仅类型，实现在useTaskStore）
             ├── mediaRegeneration.ts      # 媒体重新生成工具函数
             └── regenerate/               # 重新生成逻辑
@@ -477,6 +482,12 @@ cache = client.caches.create(
 
 ## 更新记录
 
+- **2026-02-04**：完成聊天任务刷新恢复功能
+  - 新增 `ChatStreamManager` 后台协程管理器，支持 SSE 断开后继续处理
+  - 新增 `/tasks/{task_id}/stream` SSE 恢复端点，支持断点续传
+  - 新增 `tabSync.ts` 跨标签页广播同步
+  - 完善 `taskRestoration.ts` 任务恢复逻辑（chat/image/video）
+  - 统一任务恢复入口：`onRehydrateStorage` → `restoreAllPendingTasks`
 - **2026-02-03**：滚动系统从 Virtuoso 迁移到 Virtua
   - 使用 `useVirtuaScroll.ts` 统一入口，删除旧的 `useVirtuosoScroll.ts`
   - 移除 `react-virtuoso` 依赖，改用更轻量的 `virtua`（~3KB）
