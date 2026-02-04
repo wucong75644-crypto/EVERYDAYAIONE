@@ -1,10 +1,17 @@
 """
-流式消息服务
+流式消息服务（改造版）
 
-处理消息的流式发送和重新生成等业务逻辑。
+使用 ChatStreamManager 实现后台协程处理：
+- 支持预分配消息 ID（避免 UI 闪烁）
+- 30s 心跳（避免网关超时）
+- SSE 断开后后台协程继续处理
+- 刷新后可恢复流式连接
 """
 
+import asyncio
 import json
+import uuid
+from datetime import datetime, timezone
 from typing import Optional, AsyncIterator, TYPE_CHECKING
 
 from loguru import logger
@@ -14,6 +21,7 @@ from core.config import get_settings
 from services.adapters.kie.client import KieAPIError
 from services.message_utils import format_message, deduct_user_credits
 from services.message_ai_helpers import prepare_ai_stream_client, stream_ai_response
+from services.chat_stream_manager import chat_stream_manager, HEARTBEAT_INTERVAL
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -56,7 +64,7 @@ class MessageStreamService:
         created_at: Optional["datetime"] = None,
     ) -> AsyncIterator[str]:
         """
-        流式发送消息并获取 AI 响应
+        流式发送消息并获取 AI 响应（后台协程模式）
 
         Args:
             conversation_id: 对话 ID
@@ -80,23 +88,53 @@ class MessageStreamService:
             created_at=created_at,
         )
         yield f"data: {json.dumps({'type': 'user_message', 'data': {'user_message': user_message}})}\n\n"
+
         # 2. 更新对话标题（如果需要）
         await self.message_service._update_conversation_title_if_first_message(
             conversation_id, user_id, content
         )
-        # 3. 检查AI服务配置
+
+        # 3. 检查 AI 服务配置
         settings = get_settings()
         if not settings.kie_api_key:
             yield f"data: {json.dumps({'type': 'error', 'data': {'message': 'AI 服务未配置'}})}\n\n"
             yield "data: [DONE]\n\n"
             return
-        # 4. 准备AI客户端
+
+        # 4. 预分配 ID（解决 UI 闪烁问题）
+        task_id = str(uuid.uuid4())
+        assistant_message_id = str(uuid.uuid4())
+
+        # 5. 创建 chat 任务记录
+        self.db.table("tasks").insert({
+            "id": task_id,
+            "external_task_id": task_id,
+            "user_id": user_id,
+            "conversation_id": conversation_id,
+            "type": "chat",
+            "status": "pending",
+            "request_params": {
+                "content": content,
+                "image_url": image_url,
+                "video_url": video_url,
+                "thinking_effort": thinking_effort,
+                "thinking_mode": thinking_mode,
+            },
+            "model_id": model_id,
+            "assistant_message_id": assistant_message_id,
+            "credits_locked": 0,  # chat 不预扣积分
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }).execute()
+
+        # 6. 返回 task_id 和预分配的消息 ID 给前端
+        yield f"data: {json.dumps({'type': 'task_created', 'data': {'task_id': task_id, 'assistant_message_id': assistant_message_id}})}\n\n"
+
+        # 7. 准备 AI 客户端
         model, client, adapter = prepare_ai_stream_client(model_id)
-        full_content = ""
-        total_credits = 0
+        connection_id = None
+
         try:
-            yield f"data: {json.dumps({'type': 'start', 'data': {'model': model}})}\n\n"
-            # 5. 流式获取AI响应
+            # 8. 获取流式响应
             stream = await stream_ai_response(
                 adapter=adapter,
                 get_conversation_history_func=self.message_service._get_conversation_history,
@@ -108,48 +146,64 @@ class MessageStreamService:
                 thinking_effort=thinking_effort,
                 thinking_mode=thinking_mode,
             )
-            async for chunk in stream:
-                if chunk.choices:
-                    delta = chunk.choices[0].delta
-                    if delta.content:
-                        full_content += delta.content
-                        yield f"data: {json.dumps({'type': 'content', 'data': {'text': delta.content}})}\n\n"
-                if chunk.usage:
-                    cost = adapter.estimate_cost(
-                        chunk.usage.prompt_tokens,
-                        chunk.usage.completion_tokens,
-                    )
-                    total_credits = cost.estimated_credits
-            # 6. 保存消息并扣除积分
-            if full_content:
-                assistant_message = await self.message_service.create_message(
-                    conversation_id, user_id, full_content, "assistant", total_credits
-                )
-                await deduct_user_credits(
-                    self.db, user_id, total_credits, f"AI 对话 ({model})"
-                )
-                yield f"data: {json.dumps({'type': 'done', 'data': {'assistant_message': assistant_message, 'credits_consumed': total_credits}})}\n\n"
-            else:
-                yield f"data: {json.dumps({'type': 'done', 'data': {'assistant_message': None, 'credits_consumed': 0}})}\n\n"
+
+            # 9. 启动后台协程处理流
+            queue, connection_id = await chat_stream_manager.start_stream_processing(
+                db=self.db,
+                message_service=self.message_service,
+                task_id=task_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                assistant_message_id=assistant_message_id,
+                stream=stream,
+                model=model,
+                adapter=adapter,
+            )
+
+            # 10. SSE 转发：从队列读取并发送给前端
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_INTERVAL)
+                    if item is None:  # 结束信号
+                        break
+                    yield item
+                except asyncio.TimeoutError:
+                    # 发送心跳保持连接（30s，避免网关超时）
+                    yield ": heartbeat\n\n"
+
         except KieAPIError as e:
-            logger.error(
-                f"AI stream failed | conversation_id={conversation_id} | "
-                f"user_id={user_id} | error={e.message}"
-            )
+            logger.error(f"AI stream init failed: task_id={task_id}, error={e.message}")
+            # 更新任务状态
+            self.db.table("tasks").update({
+                "status": "failed",
+                "error_message": e.message,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", task_id).execute()
+
             async for event in self._handle_stream_error(
-                conversation_id, user_id, "抱歉，AI 服务暂时不可用，请稍后重试。"
+                conversation_id, user_id, "抱歉，AI 服务暂时不可用，请稍后重试。",
+                message_id=assistant_message_id,
             ):
                 yield event
+
         except Exception as e:
-            logger.error(
-                f"Unexpected error in AI stream | conversation_id={conversation_id} | "
-                f"user_id={user_id} | error={e}"
-            )
+            logger.error(f"Unexpected error: task_id={task_id}, error={e}")
+            self.db.table("tasks").update({
+                "status": "failed",
+                "error_message": str(e),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", task_id).execute()
+
             async for event in self._handle_stream_error(
-                conversation_id, user_id, "发生了意外错误，请稍后重试。"
+                conversation_id, user_id, "发生了意外错误，请稍后重试。",
+                message_id=assistant_message_id,
             ):
                 yield event
+
         finally:
+            # 取消订阅
+            if connection_id:
+                await chat_stream_manager.unsubscribe(task_id, connection_id)
             await client.close()
             yield "data: [DONE]\n\n"
 
@@ -338,6 +392,7 @@ class MessageStreamService:
         conversation_id: str,
         user_id: str,
         error_content: str,
+        message_id: Optional[str] = None,
     ) -> AsyncIterator[str]:
         """
         处理流式响应错误
@@ -346,6 +401,7 @@ class MessageStreamService:
             conversation_id: 对话 ID
             user_id: 用户 ID
             error_content: 错误消息内容
+            message_id: 预分配的消息 ID（可选）
 
         Yields:
             错误SSE事件
@@ -354,5 +410,6 @@ class MessageStreamService:
             conversation_id=conversation_id,
             user_id=user_id,
             content=error_content,
+            message_id=message_id,
         )
         yield f"data: {json.dumps({'type': 'error', 'data': {'message': error_content, 'error_message': error_message}})}\n\n"

@@ -41,6 +41,7 @@ class MessageService:
         created_at: Optional[datetime] = None,
         generation_params: Optional[Dict[str, Any]] = None,
         client_request_id: Optional[str] = None,
+        message_id: Optional[str] = None,
     ) -> dict:
         """
         创建消息
@@ -56,6 +57,7 @@ class MessageService:
             is_error: 是否为错误消息
             generation_params: 生成参数（图片/视频生成时保存，用于重新生成）
             client_request_id: 客户端请求ID（用于乐观更新）
+            message_id: 预分配的消息ID（可选，用于聊天任务恢复避免ID闪烁）
 
         Returns:
             消息信息
@@ -74,6 +76,9 @@ class MessageService:
             "credits_cost": credits_cost,
             "is_error": is_error,
         }
+        # 使用预分配的消息ID（聊天任务恢复场景）
+        if message_id:
+            message_data["id"] = message_id
         if image_url:
             message_data["image_url"] = image_url
         if video_url:
@@ -122,6 +127,7 @@ class MessageService:
         conversation_id: str,
         user_id: str,
         content: str,
+        message_id: Optional[str] = None,
     ) -> dict:
         """
         创建错误消息（AI 调用失败时）
@@ -130,6 +136,7 @@ class MessageService:
             conversation_id: 对话 ID
             user_id: 用户 ID
             content: 错误消息内容
+            message_id: 预分配的消息ID（可选，用于聊天任务恢复避免ID闪烁）
 
         Returns:
             错误消息信息
@@ -144,6 +151,9 @@ class MessageService:
             "credits_cost": 0,
             "is_error": True,  # 标记为错误消息
         }
+        # 使用预分配的消息ID
+        if message_id:
+            message_data["id"] = message_id
 
         result = self.db.table("messages").insert(message_data).execute()
 

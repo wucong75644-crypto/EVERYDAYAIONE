@@ -24,6 +24,7 @@ import ContextMenu from './ContextMenu';
 import DropdownMenu from './DropdownMenu';
 import DeleteConfirmModal from './DeleteConfirmModal';
 import { MODAL_CLOSE_ANIMATION_DURATION } from '../../constants/animations';
+import { tabSync } from '../../utils/tabSync';
 
 interface ConversationListProps {
   currentConversationId: string | null;
@@ -302,6 +303,8 @@ export default function ConversationList({
     // 异步调用后端（失败时本地修改会在下次加载时被恢复）
     try {
       await deleteConversation(deleteId);
+      // 广播删除事件给其他标签页
+      tabSync.broadcast('conversation_deleted', { conversationId: deleteId });
     } catch (error) {
       console.error('删除对话失败:', error);
       // 删除失败，清除本地修改记录，下次加载会恢复
