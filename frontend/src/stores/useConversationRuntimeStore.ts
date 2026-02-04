@@ -555,26 +555,18 @@ export const useConversationRuntimeStore = create<ConversationRuntimeStore>()(
 
         // 使用 setTimeout 确保 store 已经初始化完成
         setTimeout(async () => {
-          // 1. 先清理所有 streaming 消息
-          // 原因：发送时使用 timestamp 作为 ID，恢复时使用 assistantMessageId
-          // 两者不同会导致幂等性检查失败，创建重复占位符
+          // 1. 清理所有乐观消息（包括用户消息和 streaming 消息）
+          // 原因：乐观消息是临时状态，刷新后应从后端重新加载真实数据
           const currentState = useConversationRuntimeStore.getState();
           const newStates = new Map<string, ConversationRuntimeState>();
           let hasChanges = false;
 
           currentState.states.forEach((runtimeState, conversationId) => {
-            const hasStreamingMessages = runtimeState.optimisticMessages.some(
-              m => m.id.startsWith('streaming-')
-            );
-
-            if (hasStreamingMessages || runtimeState.streamingMessageId) {
+            if (runtimeState.optimisticMessages.length > 0 || runtimeState.streamingMessageId) {
               hasChanges = true;
-              const cleanedMessages = runtimeState.optimisticMessages.filter(
-                m => !m.id.startsWith('streaming-')
-              );
               newStates.set(conversationId, {
                 ...runtimeState,
-                optimisticMessages: cleanedMessages,
+                optimisticMessages: [],  // 清空所有乐观消息
                 streamingMessageId: null,
                 isGenerating: false,
               });
