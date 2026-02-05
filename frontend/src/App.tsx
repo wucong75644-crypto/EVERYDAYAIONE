@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './stores/useAuthStore';
+import { WebSocketProvider } from './contexts/WebSocketContext';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import AuthModal from './components/auth/AuthModal';
 import LoadingScreen from './components/common/LoadingScreen';
@@ -22,32 +23,34 @@ function App() {
 
   return (
     <BrowserRouter>
-      {/* 全局认证弹窗 */}
-      <AuthModal />
+      <WebSocketProvider>
+        {/* 全局认证弹窗 */}
+        <AuthModal />
 
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/forgot-password" element={<ForgotPassword />} />
-        {/* 受保护的路由：需要登录才能访问 */}
-        <Route
-          path="/chat"
-          element={
-            <ProtectedRoute>
-              <Chat />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/chat/:id"
-          element={
-            <ProtectedRoute>
-              <Chat />
-            </ProtectedRoute>
-          }
-        />
-        {/* 未匹配路由重定向到首页 */}
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          {/* 受保护的路由：需要登录才能访问 */}
+          <Route
+            path="/chat"
+            element={
+              <ProtectedRoute>
+                <Chat />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/chat/:id"
+            element={
+              <ProtectedRoute>
+                <Chat />
+              </ProtectedRoute>
+            }
+          />
+          {/* 未匹配路由重定向到首页 */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </WebSocketProvider>
     </BrowserRouter>
   );
 }
