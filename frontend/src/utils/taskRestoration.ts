@@ -3,7 +3,7 @@
  *
  * 支持：
  * - 图片/视频任务恢复（轮询模式）
- * - 聊天任务恢复（SSE 流式连接恢复）
+ * - 聊天任务恢复（WebSocket 订阅模式，由 WebSocketContext 处理）
  * - 多标签页防重复恢复
  * - 幂等性保护
  */
@@ -16,11 +16,9 @@ import { queryTaskStatus as getImageTaskStatus, type TaskStatusResponse as Image
 import { queryVideoTaskStatus as getVideoTaskStatus, type TaskStatusResponse as VideoTaskStatusResponse } from '../services/video';
 import { createMessage, getMessages } from '../services/message';
 import { createStreamingPlaceholder } from './messageFactory';
-import { tabSync } from './tabSync';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 import { logger } from './logger';
-import { fetchEventSource } from '@microsoft/fetch-event-source';
 import {
   IMAGE_TASK_TIMEOUT,
   VIDEO_TASK_TIMEOUT,
@@ -66,32 +64,6 @@ interface PendingTask {
 
 type TaskResult = ImageTaskStatusResponse | VideoTaskStatusResponse;
 
-// 【幂等性保护】活动恢复追踪
-const activeRecoveries = new Map<string, AbortController>();
-
-// 【多标签页防重复】被其他标签页恢复的任务 ID 集合
-const restoredByOtherTabs = new Set<string>();
-
-// 监听其他标签页的恢复通知
-tabSync.on('task_restored', (payload) => {
-  if (payload.taskId) {
-    restoredByOtherTabs.add(payload.taskId as string);
-  }
-});
-
-/**
- * 取消所有恢复（页面卸载前调用）
- */
-export function cancelAllRecoveries() {
-  activeRecoveries.forEach((controller) => controller.abort());
-  activeRecoveries.clear();
-}
-
-// 页面卸载前取消所有恢复
-if (typeof window !== 'undefined') {
-  window.addEventListener('beforeunload', cancelAllRecoveries);
-}
-
 export async function fetchPendingTasks(): Promise<PendingTask[]> {
   console.log('[TaskRestore] fetchPendingTasks START (v2)');
   try {
@@ -109,6 +81,9 @@ export async function fetchPendingTasks(): Promise<PendingTask[]> {
 
 /**
  * 恢复聊天任务
+ *
+ * v1.2: 聊天任务恢复由 WebSocketContext 统一处理
+ * 此函数只处理已完成/失败状态，进行中的任务由 WS 订阅
  */
 async function restoreChatTask(task: PendingTask) {
   const {
@@ -119,32 +94,15 @@ async function restoreChatTask(task: PendingTask) {
     error_message: errorMessage,
   } = task;
 
-  console.log('[TaskRestore] restoreChatTask called:', { taskId, conversationId, status, assistantMessageId });
+  console.log('[TaskRestore] restoreChatTask:', { taskId, status });
 
   const runtimeStore = useConversationRuntimeStore.getState();
 
-  // 1. 如果任务进行中，创建 streaming 消息占位
-  // 【关键】使用预分配的 assistant_message_id，避免 UI 闪烁
-  // 【注意】不在这里调用 appendStreamingContent，由 SSE handler 统一负责内容更新，避免内容重复
-  if (status === 'running' || status === 'pending') {
-    // 【重要】startStreaming 内部会自动添加 streaming- 前缀
-    // 所以这里传入原始 ID，不带前缀
-    const streamingId = assistantMessageId || taskId;
-    console.log('[TaskRestore] calling startStreaming:', { conversationId, streamingId });
-    runtimeStore.startStreaming(conversationId, streamingId);
-  }
-
-  // 2. 根据状态处理
-  if (status === 'running' || status === 'pending') {
-    // 恢复 SSE 连接，继续接收流式内容
-    console.log('[TaskRestore] calling resumeChatStream');
-    await resumeChatStream(taskId, conversationId, assistantMessageId || undefined);
-  } else if (status === 'completed') {
-    // 已完成，重新加载消息列表
+  // 进行中的任务由 WebSocketContext 订阅处理，这里只处理终态
+  if (status === 'completed') {
     console.log('[TaskRestore] task completed, reloading messages');
     await reloadConversationMessages(conversationId);
   } else if (status === 'failed') {
-    // 失败，显示错误
     const errorMsg = {
       id: assistantMessageId || `error-${taskId}`,
       conversation_id: conversationId,
@@ -156,208 +114,7 @@ async function restoreChatTask(task: PendingTask) {
     };
     runtimeStore.addErrorMessage(conversationId, errorMsg);
   }
-}
-
-/**
- * 恢复聊天流式连接
- *
- * 使用 @microsoft/fetch-event-source 替代原生 EventSource
- * 原因：EventSource 不支持自定义 headers，无法携带认证 token
- */
-async function resumeChatStream(
-  taskId: string,
-  conversationId: string,
-  assistantMessageId?: string,
-) {
-  // 【多标签页防重复】检查是否已被其他标签页恢复
-  if (restoredByOtherTabs.has(taskId)) {
-    logger.info('task:restore', `Task ${taskId} already restored by another tab`);
-    return;
-  }
-
-  // 【幂等性检查】防止重复恢复
-  if (activeRecoveries.has(taskId)) {
-    logger.info('task:restore', `Recovery already in progress: ${taskId}`);
-    return;
-  }
-
-  const controller = new AbortController();
-  activeRecoveries.set(taskId, controller);
-
-  // 【广播】告诉其他标签页这个任务已被恢复
-  tabSync.broadcast('task_restored', {
-    taskId,
-    conversationId,
-  });
-
-  const runtimeStore = useConversationRuntimeStore.getState();
-  const chatStore = useChatStore.getState();
-  const token = localStorage.getItem('access_token');
-
-  try {
-    console.log('[TaskRestore] SSE connecting to:', `/api/tasks/${taskId}/stream`);
-    await fetchEventSource(`/api/tasks/${taskId}/stream`, {
-      method: 'GET',
-      headers: {
-        'Authorization': token ? `Bearer ${token}` : '',
-        'Accept': 'text/event-stream',
-      },
-      signal: controller.signal,
-
-      onopen: async (response) => {
-        console.log('[TaskRestore] SSE onopen:', response.status, response.ok);
-        if (!response.ok) {
-          throw new Error(`SSE connection failed: ${response.status}`);
-        }
-      },
-
-      onmessage: (event) => {
-        console.log('[TaskRestore] SSE onmessage:', event.data.substring(0, 100));
-        if (event.data === '[DONE]') {
-          console.log('[TaskRestore] SSE [DONE] received');
-          activeRecoveries.delete(taskId);
-          runtimeStore.completeStreaming(conversationId);
-          controller.abort(); // 关闭连接
-          return;
-        }
-
-        try {
-          const data = JSON.parse(event.data);
-          console.log('[TaskRestore] SSE event type:', data.type);
-
-          if (data.type === 'accumulated') {
-            // 累积内容（首次恢复时发送的完整已有内容）
-            const streamingId = assistantMessageId || taskId;
-            console.log('[TaskRestore] accumulated content length:', data.data.text?.length);
-            runtimeStore.startStreaming(conversationId, streamingId);
-            runtimeStore.appendStreamingContent(conversationId, data.data.text);
-          } else if (data.type === 'content') {
-            // 增量内容
-            runtimeStore.appendStreamingContent(conversationId, data.data.text);
-          } else if (data.type === 'done') {
-            // 完成
-            runtimeStore.completeStreaming(conversationId);
-            if (data.data.assistant_message) {
-              chatStore.appendMessage(conversationId, data.data.assistant_message);
-              tabSync.broadcast('chat_completed', {
-                conversationId,
-                messageId: data.data.assistant_message.id,
-              });
-            }
-            activeRecoveries.delete(taskId);
-            controller.abort();
-          } else if (data.type === 'error') {
-            runtimeStore.completeStreaming(conversationId);
-            const errorMsg = {
-              id: assistantMessageId || `error-${taskId}`,
-              conversation_id: conversationId,
-              role: 'assistant' as const,
-              content: data.data.message,
-              created_at: new Date().toISOString(),
-              credits_cost: 0,
-              is_error: true,
-            };
-            runtimeStore.addErrorMessage(conversationId, errorMsg);
-            activeRecoveries.delete(taskId);
-            tabSync.broadcast('chat_failed', { conversationId, taskId });
-            controller.abort();
-          }
-        } catch (parseError) {
-          logger.error('task:restore', 'Failed to parse SSE data', { error: String(parseError) });
-        }
-      },
-
-      onerror: (error) => {
-        activeRecoveries.delete(taskId);
-        // SSE 失败，降级到轮询模式
-        logger.warn('task:restore', 'SSE failed, falling back to polling', { error: String(error) });
-        pollTaskStatus(taskId, conversationId, assistantMessageId);
-        // 抛出错误阻止自动重连
-        throw error;
-      },
-
-      onclose: () => {
-        activeRecoveries.delete(taskId);
-      },
-    });
-  } catch (error) {
-    activeRecoveries.delete(taskId);
-    // 如果不是主动中止，则降级到轮询
-    if (error instanceof Error && error.name !== 'AbortError') {
-      logger.warn('task:restore', 'SSE connection error, falling back to polling', { error: String(error) });
-      pollTaskStatus(taskId, conversationId, assistantMessageId);
-    }
-  }
-}
-
-/**
- * 轮询任务状态（SSE 连接失败时的兜底）
- *
- * @param lastContentLength 上次轮询时的内容长度，用于计算增量内容
- */
-async function pollTaskStatus(
-  taskId: string,
-  conversationId: string,
-  assistantMessageId?: string,
-  lastContentLength: number = 0,
-) {
-  console.log('[TaskRestore] pollTaskStatus called:', { taskId, conversationId, lastContentLength });
-  const runtimeStore = useConversationRuntimeStore.getState();
-
-  // 确保 streaming 消息已创建（幂等操作）
-  const streamingId = assistantMessageId || taskId;
-  runtimeStore.startStreaming(conversationId, streamingId);
-
-  try {
-    const response = await api.get<{
-      task_id: string;
-      status: string;
-      accumulated_content?: string;
-      error_message?: string;
-      assistant_message_id?: string;
-    }>(`/tasks/${taskId}/content`);
-
-    const { status, accumulated_content, error_message } = response.data;
-    console.log('[TaskRestore] poll response:', { status, contentLength: accumulated_content?.length });
-
-    if (status === 'completed') {
-      console.log('[TaskRestore] task completed via polling');
-      runtimeStore.completeStreaming(conversationId);
-      // 重新加载消息
-      await reloadConversationMessages(conversationId);
-    } else if (status === 'failed') {
-      runtimeStore.completeStreaming(conversationId);
-      const errorMsg = {
-        id: assistantMessageId || `error-${taskId}`,
-        conversation_id: conversationId,
-        role: 'assistant' as const,
-        content: error_message || '生成失败，请重试',
-        created_at: new Date().toISOString(),
-        credits_cost: 0,
-        is_error: true,
-      };
-      runtimeStore.addErrorMessage(conversationId, errorMsg);
-    } else if (status === 'running' || status === 'pending') {
-      // 任务进行中
-      const currentContent = accumulated_content || '';
-      const currentLength = currentContent.length;
-
-      // 只追加新增的内容（避免重复）
-      if (currentLength > lastContentLength) {
-        const newContent = currentContent.slice(lastContentLength);
-        runtimeStore.appendStreamingContent(conversationId, newContent);
-      }
-
-      // 继续轮询（传入当前内容长度）
-      setTimeout(
-        () => pollTaskStatus(taskId, conversationId, assistantMessageId, currentLength),
-        1000
-      );
-    }
-  } catch (error) {
-    logger.error('task:restore', 'Failed to poll task status', error);
-    runtimeStore.completeStreaming(conversationId);
-  }
+  // pending/running 状态由 WebSocketContext 处理
 }
 
 /**
