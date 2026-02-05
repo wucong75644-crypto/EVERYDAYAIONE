@@ -2,6 +2,7 @@
 后台任务轮询服务
 
 即使用户离线也继续轮询KIE，任务完成后自动保存结果
+- 支持 WebSocket 实时推送任务状态（v1.2）
 """
 
 import asyncio
@@ -17,6 +18,8 @@ from core.task_config import IMAGE_TASK_TIMEOUT_MINUTES, VIDEO_TASK_TIMEOUT_MINU
 from services.adapters.kie.client import KieClient
 from services.adapters.kie.image_adapter import KieImageAdapter
 from services.adapters.kie.video_adapter import KieVideoAdapter
+from services.websocket_manager import ws_manager
+from schemas.websocket import build_task_status_message
 
 
 class BackgroundTaskWorker:
@@ -162,6 +165,71 @@ class BackgroundTaskWorker:
             f"type={task_type}"
         )
 
+        # WebSocket 推送任务状态（完成或失败时）
+        if db_status in ("completed", "failed"):
+            await self._notify_task_status(task, result, db_status)
+
+    async def _notify_task_status(
+        self,
+        task: dict,
+        result: dict,
+        status: str,
+    ):
+        """
+        通过 WebSocket 推送任务状态
+
+        Args:
+            task: 任务信息（包含 user_id, external_task_id 等）
+            result: KIE 返回的结果
+            status: 数据库状态（completed/failed）
+        """
+        try:
+            user_id = task["user_id"]
+            external_task_id = task["external_task_id"]
+            task_type = task["type"]
+            conversation_id = task.get("conversation_id")
+
+            # 构建推送消息
+            if status == "completed":
+                urls = None
+                if task_type == "image":
+                    urls = result.get("image_urls", [])
+                elif task_type == "video":
+                    video_url = result.get("video_url")
+                    urls = [video_url] if video_url else []
+
+                message = build_task_status_message(
+                    task_id=external_task_id,
+                    conversation_id=conversation_id or "",
+                    status="completed",
+                    media_type=task_type,
+                    urls=urls,
+                    credits_consumed=task.get("credits_locked", 0),
+                )
+            else:
+                # failed
+                message = build_task_status_message(
+                    task_id=external_task_id,
+                    conversation_id=conversation_id or "",
+                    status="failed",
+                    media_type=task_type,
+                    error_message=result.get("fail_msg", "任务失败"),
+                )
+
+            # 推送给用户
+            await ws_manager.send_to_user(user_id, message)
+
+            logger.info(
+                f"WebSocket notification sent | user={user_id} | "
+                f"task={external_task_id} | status={status}"
+            )
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to send WebSocket notification | "
+                f"task={task.get('external_task_id')} | error={e}"
+            )
+
     async def save_completed_message(self, task: dict, result: dict):
         """任务完成后自动创建消息（带权限验证）"""
         try:
@@ -265,6 +333,13 @@ class BackgroundTaskWorker:
                     "error_message": f"任务超时 (超过{max_duration_minutes}分钟)",
                     "completed_at": now.isoformat(),
                 }).eq("id", task["id"]).execute()
+
+                # WebSocket 推送超时通知
+                await self._notify_task_status(
+                    task,
+                    {"fail_msg": f"任务超时 (超过{max_duration_minutes}分钟)"},
+                    "failed",
+                )
 
                 cleaned_count += 1
                 logger.warning(

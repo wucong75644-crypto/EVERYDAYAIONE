@@ -8,6 +8,7 @@
 - 心跳超时优化
 - 断点续传
 - 保底计费
+- WebSocket 广播（v1.2）
 """
 
 import asyncio
@@ -23,6 +24,13 @@ from loguru import logger
 from supabase import Client
 
 from services.message_utils import deduct_user_credits
+from services.websocket_manager import ws_manager
+from schemas.websocket import (
+    build_chat_start_message,
+    build_chat_chunk_message,
+    build_chat_done_message,
+    build_chat_error_message,
+)
 
 if TYPE_CHECKING:
     from services.message_service import MessageService
@@ -174,22 +182,41 @@ class ChatStreamManager:
                 "status": "running",
             }).eq("id", task_id).execute()
 
-            # 广播 start 事件
+            # 广播 start 事件（SSE + WebSocket）
             self._broadcast(task_id, state, {
                 "type": "start",
                 "data": {"model": model}
             })
+            # WebSocket 广播
+            await ws_manager.send_to_task_subscribers(
+                task_id,
+                build_chat_start_message(
+                    task_id=task_id,
+                    conversation_id=conversation_id,
+                    model=model,
+                    assistant_message_id=assistant_message_id,
+                )
+            )
 
             async for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
                     delta_content = chunk.choices[0].delta.content
                     state.full_content += delta_content
 
-                    # 广播 content 事件
+                    # 广播 content 事件（SSE + WebSocket）
                     self._broadcast(task_id, state, {
                         "type": "content",
                         "data": {"text": delta_content}
                     })
+                    # WebSocket 广播
+                    await ws_manager.send_to_task_subscribers(
+                        task_id,
+                        build_chat_chunk_message(
+                            task_id=task_id,
+                            text=delta_content,
+                            accumulated=state.full_content,
+                        )
+                    )
 
                     # 节流更新数据库
                     if time.time() - last_update_time > DB_UPDATE_INTERVAL:
@@ -240,7 +267,7 @@ class ChatStreamManager:
                     "completed_at": datetime.now(timezone.utc).isoformat(),
                 }).eq("id", task_id).execute()
 
-                # 广播 done 事件
+                # 广播 done 事件（SSE + WebSocket）
                 self._broadcast(task_id, state, {
                     "type": "done",
                     "data": {
@@ -248,6 +275,21 @@ class ChatStreamManager:
                         "credits_consumed": total_credits
                     }
                 })
+                # WebSocket 广播（不缓存 done 消息）
+                await ws_manager.send_to_task_subscribers(
+                    task_id,
+                    build_chat_done_message(
+                        task_id=task_id,
+                        conversation_id=conversation_id,
+                        message_id=assistant_message_id,
+                        content=state.full_content,
+                        credits_consumed=total_credits,
+                        model=model,
+                    ),
+                    buffer=False,
+                )
+                # 标记任务完成，延迟清理缓冲区
+                await ws_manager.mark_task_completed(task_id)
             else:
                 # 无内容也标记完成
                 db.table("tasks").update({
@@ -259,6 +301,20 @@ class ChatStreamManager:
                     "type": "done",
                     "data": {"assistant_message": None, "credits_consumed": 0}
                 })
+                # WebSocket 广播
+                await ws_manager.send_to_task_subscribers(
+                    task_id,
+                    build_chat_done_message(
+                        task_id=task_id,
+                        conversation_id=conversation_id,
+                        message_id=assistant_message_id,
+                        content="",
+                        credits_consumed=0,
+                        model=model,
+                    ),
+                    buffer=False,
+                )
+                await ws_manager.mark_task_completed(task_id)
 
             completed_normally = True
             logger.info(f"Chat stream completed: task_id={task_id}")
@@ -281,7 +337,7 @@ class ChatStreamManager:
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             }).eq("id", task_id).execute()
 
-            # 广播 error 事件
+            # 广播 error 事件（SSE + WebSocket）
             self._broadcast(task_id, state, {
                 "type": "error",
                 "data": {
@@ -289,6 +345,16 @@ class ChatStreamManager:
                     "error_message": error_message
                 }
             })
+            # WebSocket 广播（不缓存 error 消息）
+            await ws_manager.send_to_task_subscribers(
+                task_id,
+                build_chat_error_message(
+                    task_id=task_id,
+                    error="抱歉，AI 服务暂时不可用，请稍后重试。",
+                ),
+                buffer=False,
+            )
+            await ws_manager.mark_task_completed(task_id)
 
         finally:
             # 【关键】最终一致性保障
