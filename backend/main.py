@@ -15,12 +15,13 @@ from loguru import logger
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from api.routes import audio, auth, conversation, health, image, message, task, video
+from api.routes import audio, auth, conversation, health, image, message, task, video, ws
 from core.config import get_settings
 from core.exceptions import AppException
 from core.limiter import limiter
 from core.redis import RedisClient
 from services.background_task_worker import BackgroundTaskWorker
+from services.websocket_manager import ws_manager
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -114,7 +115,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     worker_task = asyncio.create_task(worker.start())
     logger.info("BackgroundTaskWorker started")
 
+    # 启动 WebSocket 清理任务
+    await ws_manager.start_cleanup_task()
+    logger.info("WebSocket cleanup task started")
+
     yield
+
+    # 优雅关闭：通知所有 WebSocket 客户端服务即将重启
+    from schemas.websocket import build_server_restarting_message
+    await ws_manager.broadcast_all(build_server_restarting_message())
+    await asyncio.sleep(1)  # 给客户端一点时间接收消息
+
+    # 停止 WebSocket 清理任务
+    await ws_manager.stop_cleanup_task()
+    logger.info("WebSocket cleanup task stopped")
 
     # 停止后台工作器
     await worker.stop()
@@ -247,6 +261,9 @@ def register_routers(app: FastAPI) -> None:
 
     # 任务管理
     app.include_router(task.router, prefix="/api")
+
+    # WebSocket
+    app.include_router(ws.router, prefix="/api")
 
 
 # 创建应用实例
