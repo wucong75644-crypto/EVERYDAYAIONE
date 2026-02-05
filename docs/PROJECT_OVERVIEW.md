@@ -45,6 +45,7 @@ EVERYDAYAIONE/
 ├── .env                      # 环境变量（本地）
 ├── docs/                     # 项目文档
 │   ├── PROJECT_OVERVIEW.md       # 项目概览（本文档）
+│   ├── FLOW_DIAGRAMS.md          # 程序流转图（架构/组件/流程）
 │   ├── FUNCTION_INDEX.md         # 函数索引
 │   ├── CURRENT_ISSUES.md         # 当前问题
 │   ├── API_REFERENCE.md          # API 接口文档
