@@ -196,13 +196,14 @@ EVERYDAYAIONE/
         │   ├── auth.ts                   # 认证 API
         │   ├── conversation.ts           # 对话 API
         │   ├── message.ts                # 消息 API
-        │   ├── image.ts                  # 图像生成 API
-        │   ├── video.ts                  # 视频生成 API
-        │   └── messageSender.ts          # 统一消息发送器
+        │   ├── messageSender.ts          # 统一消息发送器（chat/image/video）
+        │   ├── upload.ts                 # 文件上传服务
+        │   └── audio.ts                  # 音频服务
         ├── types/                    # TypeScript 类型
         │   ├── auth.ts                   # 认证相关类型
-        │   ├── message.ts                # 消息相关类型
-        │   └── task.ts                   # 任务相关类型（共享类型：StoreTaskStatus、StoreTaskType、CompletedNotification）
+        │   ├── message.ts                # 消息相关类型（ContentPart、Message、Task 等）
+        │   ├── task.ts                   # 任务相关类型（兼容旧格式）
+        │   └── websocket.ts              # WebSocket 消息类型
         ├── hooks/                    # 自定义 Hooks
         │   ├── useImageUpload.ts         # 图片上传逻辑
         │   ├── useAudioRecording.ts      # 录音逻辑
@@ -223,12 +224,12 @@ EVERYDAYAIONE/
         └── utils/                    # 工具函数
             ├── settingsStorage.ts        # 用户设置存储
             ├── modelConflict.ts          # 模型冲突检测
-            ├── messageFactory.ts         # 消息工厂函数
+            ├── messageUtils.ts           # 消息工具函数（getTextContent、normalizeMessage）
+            ├── messageCoordinator.ts     # 消息协调器
             ├── mergeOptimisticMessages.ts # 合并乐观更新消息（去重逻辑）
-            ├── imageUtils.ts             # 图片URL工具（parseImageUrls、getFirstImageUrl）
-            ├── logger.ts                 # 统一日志工具（error、warn、debug、info）
-            ├── taskNotification.ts       # 任务通知工具（notifyTaskComplete纯函数）
-            ├── taskCoordinator.ts        # 任务协调器（防多标签页重复轮询）
+            ├── imageUtils.ts             # 图片URL工具
+            ├── logger.ts                 # 统一日志工具
+            ├── taskNotification.ts       # 任务通知工具
             ├── taskRestoration.ts        # 任务恢复工具（WebSocket 恢复）
             └── tabSync.ts                # 跨标签页同步（BroadcastChannel）
 │
