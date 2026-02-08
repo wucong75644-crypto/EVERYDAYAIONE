@@ -1,152 +1,18 @@
 """
-图像生成路由
+图像上传路由
 
-提供图像生成、编辑、任务查询接口。
+提供图片上传接口。
+注：图像生成功能已迁移到统一消息 API (/messages/generate)
 """
 
 from typing import Optional
-from fastapi import APIRouter, Depends, Request, UploadFile, File, HTTPException, Form
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Form
 
 from api.deps import CurrentUser, Database
-from core.limiter import limiter, RATE_LIMITS
-from schemas.image import (
-    GenerateImageRequest,
-    GenerateImageResponse,
-    EditImageRequest,
-    TaskStatusResponse,
-    ImageModelsResponse,
-    ImageModelInfo,
-    TaskStatus,
-    UploadImageRequest,
-    UploadImageResponse,
-)
-from services.image_service import ImageService
+from schemas.image import UploadImageResponse
 from services.storage_service import StorageService
 
-router = APIRouter(prefix="/images", tags=["图像生成"])
-
-
-def get_image_service(db: Database) -> ImageService:
-    """获取图像服务实例"""
-    return ImageService(db)
-
-
-@router.post("/generate", response_model=GenerateImageResponse, summary="生成图像")
-@limiter.limit(RATE_LIMITS["image_generate"])
-async def generate_image(
-    request: Request,
-    body: GenerateImageRequest,
-    current_user: CurrentUser,
-    service: ImageService = Depends(get_image_service),
-):
-    """
-    文生图接口
-
-    支持模型：
-    - google/nano-banana: 基础文生图（5积分/张）
-    - nano-banana-pro: 高级文生图，支持1K/2K/4K（25-48积分/张）
-
-    如果 wait_for_result=False，将立即返回 task_id，需要轮询 /tasks/{id} 获取结果。
-    """
-    result = await service.generate_image(
-        user_id=current_user["id"],
-        prompt=body.prompt,
-        model=body.model.value,
-        size=body.size.value,
-        output_format=body.output_format.value,
-        resolution=body.resolution.value if body.resolution else None,
-        wait_for_result=body.wait_for_result,
-        conversation_id=body.conversation_id,
-        placeholder_message_id=body.placeholder_message_id,
-        placeholder_created_at=body.placeholder_created_at,
-    )
-
-    return GenerateImageResponse(
-        task_id=result["task_id"],
-        status=TaskStatus(result["status"]),
-        image_urls=result.get("image_urls", []),
-        credits_consumed=result.get("credits_consumed", 0),
-        cost_usd=result.get("cost_usd", 0.0),
-        cost_time_ms=result.get("cost_time_ms"),
-    )
-
-
-@router.post("/edit", response_model=GenerateImageResponse, summary="编辑图像")
-async def edit_image(
-    request: EditImageRequest,
-    current_user: CurrentUser,
-    service: ImageService = Depends(get_image_service),
-):
-    """
-    图像编辑接口
-
-    使用 google/nano-banana-edit 模型，需要提供输入图片。
-    """
-    result = await service.edit_image(
-        user_id=current_user["id"],
-        prompt=request.prompt,
-        image_urls=request.image_urls,
-        size=request.size.value,
-        output_format=request.output_format.value,
-        wait_for_result=request.wait_for_result,
-        conversation_id=request.conversation_id,
-        placeholder_message_id=request.placeholder_message_id,
-        placeholder_created_at=request.placeholder_created_at,
-    )
-
-    return GenerateImageResponse(
-        task_id=result["task_id"],
-        status=TaskStatus(result["status"]),
-        image_urls=result.get("image_urls", []),
-        credits_consumed=result.get("credits_consumed", 0),
-        cost_usd=result.get("cost_usd", 0.0),
-        cost_time_ms=result.get("cost_time_ms"),
-    )
-
-
-@router.get("/tasks/{task_id}", response_model=TaskStatusResponse, summary="查询任务状态")
-@limiter.limit(RATE_LIMITS["task_query"])
-async def query_task(
-    request: Request,
-    task_id: str,
-    current_user: CurrentUser,
-    service: ImageService = Depends(get_image_service),
-):
-    """
-    查询图像生成任务状态
-
-    用于轮询异步任务的完成状态。
-    图片完成后会自动上传到 OSS，返回 CDN 加速的 URL。
-
-    速率限制：每分钟最多 120 次请求（考虑到前端轮询频率）
-    """
-    result = await service.query_task(
-        task_id=task_id,
-        user_id=current_user["id"],
-    )
-
-    return TaskStatusResponse(
-        task_id=result["task_id"],
-        status=TaskStatus(result["status"]),
-        image_urls=result.get("image_urls", []),
-        fail_code=result.get("fail_code"),
-        fail_msg=result.get("fail_msg"),
-    )
-
-
-@router.get("/models", response_model=ImageModelsResponse, summary="获取可用模型")
-async def get_models(
-    current_user: CurrentUser,
-    service: ImageService = Depends(get_image_service),
-):
-    """
-    获取可用的图像生成模型列表
-    """
-    models = service.get_available_models()
-
-    return ImageModelsResponse(
-        models=[ImageModelInfo(**m) for m in models]
-    )
+router = APIRouter(prefix="/images", tags=["图像"])
 
 
 @router.post("/upload", response_model=UploadImageResponse, summary="上传图片")

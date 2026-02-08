@@ -1,12 +1,23 @@
 /**
  * 消息相关 API 服务
+ *
+ * 注意：消息发送请使用 messageSender.ts 中的 sendMessage()
+ * 本文件仅保留消息查询和删除 API
  */
 
 import { request } from './api';
 import type { DeleteMessageResponse } from '../types/message';
-import type { AspectRatio, ImageResolution, ImageOutputFormat } from './image';
-import type { VideoFrames, VideoAspectRatio } from './video';
-import { logger } from '../utils/logger';
+import type {
+  AspectRatio,
+  ImageResolution,
+  ImageOutputFormat,
+  VideoFrames,
+  VideoAspectRatio,
+} from '../constants/models';
+
+// ============================================================
+// 类型定义
+// ============================================================
 
 /** 图片生成参数 */
 export interface ImageGenerationParams {
@@ -24,19 +35,27 @@ export interface VideoGenerationParams {
   model: string;
 }
 
+/** 聊天生成参数 */
+export interface ChatGenerationParams {
+  model: string;
+  thinkingEffort?: string;
+  thinkingMode?: 'default' | 'deep_think';
+}
+
 /** 生成参数（用于重新生成时继承） */
 export interface GenerationParams {
   image?: ImageGenerationParams;
   video?: VideoGenerationParams;
+  chat?: ChatGenerationParams;
 }
 
-/** 消息状态 */
-export type MessageStatus = 'pending' | 'sent' | 'failed';
+/** 消息状态（与后端保持一致） */
+export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'failed';
 
-/** 消息类型（API 响应格式） */
+/** 消息类型（API 响应格式 - 旧版兼容） */
 export interface Message {
   id: string;
-  conversation_id?: string;
+  conversation_id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
   image_url?: string | null;
@@ -44,8 +63,8 @@ export interface Message {
   is_error?: boolean;
   credits_cost?: number;
   generation_params?: GenerationParams | null;
-  client_request_id?: string;  // 客户端请求ID（用于乐观更新）
-  status?: MessageStatus;       // 消息状态（pending/sent/failed）
+  client_request_id?: string;
+  status?: MessageStatus;
   created_at: string;
 }
 
@@ -56,66 +75,9 @@ export interface MessageListResponse {
   has_more: boolean;
 }
 
-/** 流式回调接口（用于 regenerate） */
-export interface StreamCallbacks {
-  onStart?: () => void;
-  onContent?: (text: string) => void;
-  onDone?: (message: Message) => void;
-  onError?: (error: string) => void;
-}
-
-/** 发送消息流式回调接口 */
-export interface SendMessageStreamCallbacks {
-  onUserMessage?: (message: Message) => void;
-  onStart?: (model: string) => void;
-  onContent?: (text: string) => void;
-  onDone?: (assistantMessage: Message | null, creditsConsumed: number) => void;
-  onError?: (error: string) => void;
-}
-
-/** 创建消息请求 */
-export interface CreateMessageRequest {
-  content: string;
-  role: 'user' | 'assistant';
-  image_url?: string | null;
-  video_url?: string | null;
-  credits_cost?: number;
-  is_error?: boolean;
-  /** 可选时间戳（ISO 8601 格式），用于保持消息顺序 */
-  created_at?: string;
-  /** 生成参数（用于重新生成时继承） */
-  generation_params?: GenerationParams | null;
-  /** 客户端请求ID（用于乐观更新） */
-  client_request_id?: string;
-}
-
-/** 发送消息请求 */
-export interface SendMessageStreamRequest {
-  content: string;
-  model_id?: string;
-  image_url?: string | null;
-  video_url?: string | null;
-  thinking_effort?: 'minimal' | 'low' | 'medium' | 'high';
-  thinking_mode?: 'default' | 'deep_think';
-  client_request_id?: string;  // 客户端请求ID（用于乐观更新）
-  created_at?: string;  // 前端生成的时间戳（ISO 8601），确保消息排序正确
-}
-
-/**
- * 创建消息
- * @param conversationId 对话ID
- * @param data 消息数据
- */
-export async function createMessage(
-  conversationId: string,
-  data: CreateMessageRequest
-): Promise<Message> {
-  return request<Message>({
-    url: `/conversations/${conversationId}/messages/create`,
-    method: 'POST',
-    data,
-  });
-}
+// ============================================================
+// API 函数
+// ============================================================
 
 /**
  * 获取消息列表
@@ -138,195 +100,6 @@ export async function getMessages(
     params: { limit, offset, before_id: beforeId },
     signal,
   });
-}
-
-/**
- * 流式发送消息
- * @param conversationId 对话ID
- * @param data 消息数据
- * @param callbacks 流式回调
- */
-export async function sendMessageStream(
-  conversationId: string,
-  data: SendMessageStreamRequest,
-  callbacks: SendMessageStreamCallbacks
-): Promise<void> {
-  const token = localStorage.getItem('access_token');
-  const url = `/api/conversations/${conversationId}/messages/stream`;
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(data),
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || '发送消息失败');
-    }
-
-    if (!response.body) {
-      throw new Error('响应体为空');
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.trim() || !line.startsWith('data: ')) continue;
-
-        const data = line.slice(6); // 移除 "data: "
-        if (data === '[DONE]') {
-          break;
-        }
-
-        try {
-          const event = JSON.parse(data);
-
-          switch (event.type) {
-            case 'user_message':
-              callbacks.onUserMessage?.(event.data.user_message);
-              break;
-            case 'start':
-              callbacks.onStart?.(event.data.model);
-              break;
-            case 'content':
-              callbacks.onContent?.(event.data.text);
-              break;
-            case 'done':
-              callbacks.onDone?.(
-                event.data.assistant_message,
-                event.data.credits_consumed
-              );
-              break;
-            case 'error':
-              callbacks.onError?.(event.data.message);
-              break;
-          }
-        } catch (e) {
-          logger.error('sse:parse', '解析 SSE 事件失败', e, { conversationId });
-        }
-      }
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '未知错误';
-    callbacks.onError?.(message);
-    throw error;
-  }
-}
-
-/**
- * 重新生成失败的消息（流式）
- * @param conversationId 对话ID
- * @param messageId 消息ID
- * @param callbacks 流式回调
- */
-export async function regenerateMessageStream(
-  conversationId: string,
-  messageId: string,
-  callbacks: StreamCallbacks
-): Promise<void> {
-  const token = localStorage.getItem('access_token');
-  const url = `/api/conversations/${conversationId}/messages/${messageId}/regenerate`;
-
-  try {
-    // 添加超时控制
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => {
-      controller.abort();
-    }, 10000); // 10秒超时
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.message || '重新生成失败');
-    }
-
-    if (!response.body) {
-      throw new Error('响应体为空');
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-
-      if (done) {
-        break;
-      }
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (!line.trim() || !line.startsWith('data: ')) continue;
-
-        const data = line.slice(6); // 移除 "data: "
-        if (data === '[DONE]') {
-          break;
-        }
-
-        try {
-          const event = JSON.parse(data);
-
-          switch (event.type) {
-            case 'start':
-              callbacks.onStart?.();
-              break;
-            case 'content':
-              callbacks.onContent?.(event.data.text);
-              break;
-            case 'done':
-              callbacks.onDone?.(event.data.assistant_message);
-              break;
-            case 'error':
-              callbacks.onError?.(event.data.message);
-              break;
-          }
-        } catch (e) {
-          logger.error('sse:parse', '解析 SSE 事件失败', e, { conversationId, messageId });
-        }
-      }
-    }
-  } catch (error) {
-    // 特殊处理超时错误
-    if (error instanceof Error && error.name === 'AbortError') {
-      const message = '请求超时,后端服务可能未响应';
-      callbacks.onError?.(message);
-      throw new Error(message);
-    }
-
-    const message = error instanceof Error ? error.message : '未知错误';
-    callbacks.onError?.(message);
-    throw error;
-  }
 }
 
 /**

@@ -23,8 +23,11 @@ from schemas.websocket import (
     build_ping_message,
     build_pong_message,
     build_subscribed_message,
+    build_chat_done_message,
+    build_chat_error_message,
 )
 from services.websocket_manager import HEARTBEAT_INTERVAL, ws_manager
+from core.database import get_supabase_client
 
 router = APIRouter(tags=["WebSocket"])
 
@@ -144,26 +147,41 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
             result = await ws_manager.subscribe_task(conn_id, task_id, last_index)
 
             # 发送订阅确认
+            # 关键逻辑：
+            # - last_index < 0（首次订阅）：发送 accumulated，不补发 missed_messages
+            # - last_index >= 0（断点续传）：不发送 accumulated，只补发 missed_messages
+            # 这样避免内容重复
+            send_accumulated = ""
+            if last_index < 0 and result:
+                send_accumulated = result.get("accumulated", "")
+
             await ws_manager.send_to_connection(conn_id, build_subscribed_message(
                 task_id=task_id,
-                accumulated=result.get("accumulated", "") if result else "",
+                accumulated=send_accumulated,
                 current_index=result.get("current_index", -1) if result else -1
             ))
 
-            # 补发错过的消息
-            if result and result.get("missed_messages"):
+            # 补发错过的消息（只在断点续传时，即 last_index >= 0）
+            missed_count = 0
+            if result and result.get("missed_messages") and last_index >= 0:
                 for idx, msg_json in result["missed_messages"]:
                     try:
                         msg = json.loads(msg_json)
                         await ws_manager.send_to_connection(conn_id, msg)
+                        missed_count += 1
                     except json.JSONDecodeError:
                         logger.warning(f"Failed to parse missed message | index={idx}")
 
             logger.info(
                 f"Task subscribed | conn={conn_id} | task={task_id} | "
                 f"last_index={last_index} | "
-                f"missed={len(result.get('missed_messages', [])) if result else 0}"
+                f"missed_sent={missed_count} | "
+                f"accumulated_len={len(result.get('accumulated', '')) if result else 0}"
             )
+
+            # 【关键】检查任务是否已完成
+            # 如果任务已完成但缓冲区为空，需要从数据库获取完整消息并推送
+            await _check_and_send_completed_task(conn_id, task_id, user_id)
         else:
             await ws_manager.send_to_connection(conn_id, build_error_message(
                 "task_id is required",
@@ -179,6 +197,153 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
 
     else:
         logger.warning(f"Unknown message type | conn={conn_id} | type={msg_type}")
+
+
+async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: str):
+    """
+    检查任务是否已完成，如果已完成则推送完成消息
+
+    解决问题：前端订阅时任务可能已完成，但缓冲区为空，导致收不到完成消息
+    支持 chat、image、video 三种任务类型
+    """
+    try:
+        db = get_supabase_client()
+
+        # 查询任务状态
+        # 注意：chat 任务使用 id 字段，image/video 任务使用 external_task_id 字段
+        # 先尝试用 id 查询（chat 任务）
+        task_response = db.table("tasks").select(
+            "id, external_task_id, status, conversation_id, accumulated_content, error_message, "
+            "assistant_message_id, type, result, credits_locked"
+        ).eq("id", task_id).eq("user_id", user_id).maybe_single().execute()
+
+        # 如果没找到，尝试用 external_task_id 查询（image/video 任务）
+        if not task_response.data:
+            task_response = db.table("tasks").select(
+                "id, external_task_id, status, conversation_id, accumulated_content, error_message, "
+                "assistant_message_id, type, result, credits_locked"
+            ).eq("external_task_id", task_id).eq("user_id", user_id).maybe_single().execute()
+
+        if not task_response.data:
+            logger.debug(f"Task not found for subscription check | task_id={task_id}")
+            return
+
+        task = task_response.data
+        task_type = task.get("type")
+        status = task.get("status")
+        conversation_id = task.get("conversation_id")
+
+        logger.debug(
+            f"Checking completed task | task_id={task_id} | type={task_type} | "
+            f"status={status} | conversation_id={conversation_id}"
+        )
+
+        if task_type == "chat":
+            # Chat 任务处理逻辑
+            if status == "completed":
+                message_id = task.get("assistant_message_id")
+                content = task.get("accumulated_content", "")
+
+                if message_id and conversation_id:
+                    msg_response = db.table("messages").select(
+                        "content, credits_cost, model"
+                    ).eq("id", message_id).single().execute()
+
+                    if msg_response.data:
+                        content = msg_response.data.get("content", content)
+                        credits = msg_response.data.get("credits_cost", 0)
+                        model = msg_response.data.get("model", "unknown")
+                    else:
+                        credits = 0
+                        model = "unknown"
+
+                    await ws_manager.send_to_connection(conn_id, build_chat_done_message(
+                        task_id=task_id,
+                        conversation_id=conversation_id,
+                        message_id=message_id,
+                        content=content,
+                        credits_consumed=credits,
+                        model=model,
+                    ))
+
+                    logger.info(
+                        f"Sent completed chat task | conn={conn_id} | task={task_id} | "
+                        f"message_id={message_id}"
+                    )
+
+            elif status == "failed":
+                error_message = task.get("error_message", "生成失败，请重试")
+                await ws_manager.send_to_connection(conn_id, build_chat_error_message(
+                    task_id=task_id,
+                    error=error_message,
+                    conversation_id=conversation_id,
+                ))
+                logger.info(f"Sent failed chat task | conn={conn_id} | task={task_id}")
+
+        elif task_type in ("image", "video"):
+            # Image/Video 任务处理逻辑
+            external_task_id = task.get("external_task_id")
+
+            if status == "completed":
+                result = task.get("result") or {}
+
+                # 获取媒体 URL
+                urls = None
+                if task_type == "image":
+                    urls = result.get("image_urls", [])
+                elif task_type == "video":
+                    video_url = result.get("video_url")
+                    urls = [video_url] if video_url else []
+
+                # 查询消息（与 chat 任务统一，使用 assistant_message_id）
+                created_message = None
+                message_id = task.get("assistant_message_id")
+
+                if message_id:
+                    # 优先使用 assistant_message_id 精确查询
+                    msg_response = db.table("messages").select("*").eq(
+                        "id", message_id
+                    ).maybe_single().execute()
+
+                    if msg_response.data:
+                        created_message = msg_response.data
+                        logger.debug(
+                            f"Found message by assistant_message_id | message_id={message_id}"
+                        )
+
+                # 构建并发送 task_status 消息
+                from schemas.websocket import build_task_status_message
+                message = build_task_status_message(
+                    task_id=external_task_id or task_id,
+                    conversation_id=conversation_id or "",
+                    status="completed",
+                    media_type=task_type,
+                    urls=urls,
+                    credits_consumed=task.get("credits_locked", 0),
+                    created_message=created_message,
+                )
+                await ws_manager.send_to_connection(conn_id, message)
+
+                logger.info(
+                    f"Sent completed {task_type} task | conn={conn_id} | "
+                    f"task={external_task_id or task_id} | has_message={created_message is not None}"
+                )
+
+            elif status == "failed":
+                error_message = task.get("error_message", "生成失败，请重试")
+                from schemas.websocket import build_task_status_message
+                message = build_task_status_message(
+                    task_id=external_task_id or task_id,
+                    conversation_id=conversation_id or "",
+                    status="failed",
+                    media_type=task_type,
+                    error_message=error_message,
+                )
+                await ws_manager.send_to_connection(conn_id, message)
+                logger.info(f"Sent failed {task_type} task | conn={conn_id} | task={task_id}")
+
+    except Exception as e:
+        logger.warning(f"Failed to check completed task | task={task_id} | error={e}")
 
 
 # === 健康检查端点（用于负载均衡器检测 WebSocket 可用性）===

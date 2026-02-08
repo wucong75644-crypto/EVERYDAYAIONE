@@ -11,9 +11,10 @@
  * - 2026-02-04：从 Virtua 迁移到 use-stick-to-bottom，彻底解决滚动问题
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import { StickToBottom, useStickToBottomContext } from 'use-stick-to-bottom';
-import { deleteMessage, type Message } from '../../services/message';
+import { deleteMessage } from '../../services/message';
+import { useMessageStore, type Message, getTextContent } from '../../stores/useMessageStore';
 import MessageItem from './MessageItem';
 import EmptyState from './EmptyState';
 import LoadingSkeleton from './LoadingSkeleton';
@@ -21,18 +22,11 @@ import toast from 'react-hot-toast';
 import { useMessageLoader } from '../../hooks/useMessageLoader';
 import { useRegenerateHandlers } from '../../hooks/useRegenerateHandlers';
 import { useUnifiedMessages } from '../../hooks/useUnifiedMessages';
-import { useConversationRuntimeStore } from '../../stores/useConversationRuntimeStore';
-import { useChatStore } from '../../stores/useChatStore';
 import { parseImageUrls, getFirstImageUrl } from '../../utils/imageUtils';
-import type { UnifiedModel } from '../../constants/models';
 
 interface MessageAreaProps {
   conversationId: string | null;
   onDelete?: (messageId: string, newLastMessage?: string) => void;
-  onMessageUpdate?: (newLastMessage: string) => void;
-  modelId?: string | null;
-  /** 当前用户选择的模型（用于重新生成） */
-  selectedModel?: UnifiedModel | null;
 }
 
 /**
@@ -94,8 +88,9 @@ function ScrollToBottomButton() {
   const [hasNewMessages, setHasNewMessages] = useState(false);
 
   // 监听 isAtBottom 变化，管理新消息提示
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isAtBottom) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setHasNewMessages(false);
     }
   }, [isAtBottom]);
@@ -131,9 +126,6 @@ function ScrollToBottomButton() {
 export default function MessageArea({
   conversationId,
   onDelete,
-  onMessageUpdate,
-  modelId = null,
-  selectedModel = null,
 }: MessageAreaProps) {
   // 使用消息加载 Hook（负责从后端加载并写入缓存）
   const { loading, hasMore, loadMessages, loadMore, loadingMore } = useMessageLoader({ conversationId });
@@ -143,15 +135,14 @@ export default function MessageArea({
 
   // 使用 ref 存储 mergedMessages，避免 setMessages 依赖导致频繁重建
   const mergedMessagesRef = useRef(mergedMessages);
-  mergedMessagesRef.current = mergedMessages;
+  useLayoutEffect(() => {
+    mergedMessagesRef.current = mergedMessages;
+  });
 
   // 注意：use-stick-to-bottom 会自动处理滚动，无需手动判断流式状态
 
-  // 获取当前对话标题（用于任务追踪）
-  const currentConversationTitle = useChatStore((state) => state.currentConversationTitle);
-
   // 获取统一操作方法
-  const { removeMessage, replaceMessage, appendMessage } = useChatStore();
+  const { removeMessage, replaceMessage, appendMessage, removeOptimisticMessage } = useMessageStore();
 
   // 兼容层：为重新生成策略提供 setMessages 接口
   const setMessages = useCallback(
@@ -199,7 +190,7 @@ export default function MessageArea({
   }, [imageUrlIndexMap]);
 
   // 重新生成相关状态
-  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
+  // 注意：重新生成状态现在由 streaming- 前缀管理，不再需要单独状态
 
   // 加载消息
   useEffect(() => {
@@ -223,13 +214,13 @@ export default function MessageArea({
       }
 
       if (conversationId) {
-        removeMessage(conversationId, messageId);
-        useConversationRuntimeStore.getState().removeOptimisticMessage(conversationId, messageId);
+        removeMessage(messageId);
+        removeOptimisticMessage(conversationId, messageId);
       }
 
       const updatedMergedMessages = mergedMessages.filter((msg) => msg.id !== messageId);
       const newLastMessage = updatedMergedMessages.length > 0
-        ? updatedMergedMessages[updatedMergedMessages.length - 1].content
+        ? getTextContent(updatedMergedMessages[updatedMergedMessages.length - 1])
         : undefined;
 
       onDelete?.(messageId, newLastMessage);
@@ -238,40 +229,21 @@ export default function MessageArea({
       console.error('删除消息失败:', error);
       toast.error('删除失败，请重试');
     }
-  }, [conversationId, mergedMessages, removeMessage, onDelete]);
-
-  // 重置重新生成状态
-  const resetRegeneratingState = useCallback(() => {
-    setRegeneratingId(null);
-  }, []);
+  }, [conversationId, mergedMessages, removeMessage, removeOptimisticMessage, onDelete]);
 
   // 媒体加载完成回调（use-stick-to-bottom 会自动处理，这里保留接口兼容性）
   const handleMediaLoaded = useCallback(() => {
     // use-stick-to-bottom 的 resize="smooth" 会自动处理高度变化
   }, []);
 
-  // 使用重新生成处理器 hook（添加临时状态管理）
-  const setIsRegeneratingAI = useCallback(() => {
-    // use-stick-to-bottom 自动管理滚动，无需手动状态
-  }, []);
-
   const { handleRegenerate: doRegenerate } = useRegenerateHandlers({
     conversationId,
-    conversationTitle: currentConversationTitle,
     setMessages,
-    scrollToBottom: () => {}, // use-stick-to-bottom 会自动滚动
-    onMessageUpdate,
-    resetRegeneratingState,
-    setRegeneratingId,
-    setIsRegeneratingAI,
-    modelId,
-    selectedModel,
-    userScrolledAway: false, // use-stick-to-bottom 自动管理
   });
 
   // 处理重新生成
   const handleRegenerate = useCallback(async (messageId: string) => {
-    if (!conversationId || regeneratingId) return;
+    if (!conversationId) return;
 
     const targetMessage = mergedMessages.find((m) => m.id === messageId);
     if (!targetMessage || targetMessage.role !== 'assistant') return;
@@ -290,8 +262,16 @@ export default function MessageArea({
       return;
     }
 
-    await doRegenerate(targetMessage, userMessage);
-  }, [conversationId, mergedMessages, regeneratingId, doRegenerate]);
+    // 处理 streaming- 前缀的占位符消息
+    // streaming-xxx 中的 xxx 是真实的 assistant_message_id
+    let finalTargetMessage = targetMessage;
+    if (targetMessage.id.startsWith('streaming-')) {
+      const realId = targetMessage.id.replace(/^streaming-/, '');
+      finalTargetMessage = { ...targetMessage, id: realId };
+    }
+
+    await doRegenerate(finalTargetMessage, userMessage);
+  }, [conversationId, mergedMessages, doRegenerate]);
 
   // 空状态
   if (!conversationId && mergedMessages.length === 0) {
@@ -340,7 +320,6 @@ export default function MessageArea({
           {/* 消息列表 */}
           <div className="max-w-4xl mx-auto px-4 space-y-4">
             {mergedMessages.map((message) => {
-              const isRegenerating = message.id === regeneratingId;
               const isMessageStreaming = message.id.startsWith('streaming-');
               const imageIndex = getImageIndex(message);
 
@@ -349,7 +328,6 @@ export default function MessageArea({
                   key={message.id}
                   message={message}
                   isStreaming={isMessageStreaming}
-                  isRegenerating={isRegenerating}
                   onRegenerate={handleRegenerate}
                   onDelete={handleDelete}
                   onMediaLoaded={handleMediaLoaded}

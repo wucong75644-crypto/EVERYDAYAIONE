@@ -5,8 +5,13 @@
  */
 
 import { useState, useCallback } from 'react';
-import { type AspectRatio, type ImageResolution, type ImageOutputFormat } from '../services/image';
-import { type VideoFrames, type VideoAspectRatio } from '../services/video';
+import {
+  type AspectRatio,
+  type ImageResolution,
+  type ImageOutputFormat,
+  type VideoFrames,
+  type VideoAspectRatio,
+} from '../constants/models';
 import {
   getSavedSettings,
   saveSettings as persistSettings,

@@ -4,18 +4,25 @@
 
 import { describe, it, expect } from 'vitest';
 import { mergeOptimisticMessages } from '../mergeOptimisticMessages';
-import type { Message } from '../../services/message';
+import type { Message, ContentPart } from '../../stores/useMessageStore';
 import type { RuntimeState } from '../mergeOptimisticMessages';
 
+// 辅助函数：将字符串转换为 ContentPart[]
+function toContent(text: string): ContentPart[] {
+  return [{ type: 'text', text }];
+}
+
 // 辅助函数：创建测试消息
-function createMessage(overrides: Partial<Message> = {}): Message {
+function createMessage(overrides: Partial<Omit<Message, 'content'>> & { content?: string } = {}): Message {
+  const { content, ...rest } = overrides;
   return {
     id: 'msg-1',
     conversation_id: 'conv-1',
     role: 'user',
-    content: 'test message',
+    content: toContent(content || 'test message'),
+    status: 'completed',
     created_at: new Date().toISOString(),
-    ...overrides,
+    ...rest,
   };
 }
 

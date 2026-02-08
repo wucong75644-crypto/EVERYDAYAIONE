@@ -7,9 +7,14 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Send, Settings, Upload, Brain, Paperclip } from 'lucide-react';
-import { type UnifiedModel } from '../../constants/models';
-import { type AspectRatio, type ImageResolution, type ImageOutputFormat } from '../../services/image';
-import { type VideoFrames, type VideoAspectRatio } from '../../services/video';
+import {
+  type UnifiedModel,
+  type AspectRatio,
+  type ImageResolution,
+  type ImageOutputFormat,
+  type VideoFrames,
+  type VideoAspectRatio,
+} from '../../constants/models';
 import ImagePreview from './ImagePreview';
 import AudioPreview from './AudioPreview';
 import ModelSelector from './ModelSelector';

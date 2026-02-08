@@ -6,7 +6,7 @@
 
 import { memo } from 'react';
 import type { ConversationListItem } from '../../services/conversation';
-import { useTaskStore } from '../../stores/useTaskStore';
+import { useMessageStore } from '../../stores/useMessageStore';
 import { MoreHorizontal } from 'lucide-react';
 import styles from './shared.module.css';
 
@@ -28,9 +28,9 @@ export function ConversationItemContent({
   isDropdownOpen,
   onShowDropdown,
 }: ConversationItemContentProps) {
-  const { hasActiveTask, getTask, isRecentlyCompleted } = useTaskStore();
+  const { hasActiveTask, getChatTask, isRecentlyCompleted } = useMessageStore();
   const isActive = hasActiveTask(conv.id);
-  const task = getTask(conv.id);
+  const task = getChatTask(conv.id);
   const justCompleted = isRecentlyCompleted(conv.id);
 
   return (

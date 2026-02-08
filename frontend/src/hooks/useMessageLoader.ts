@@ -15,8 +15,8 @@
 
 import { useState, useCallback, useRef } from 'react';
 import axios from 'axios';
-import { getMessages, type Message } from '../services/message';
-import { useChatStore } from '../stores/useChatStore';
+import { getMessages } from '../services/message';
+import { useMessageStore, type Message, normalizeMessage } from '../stores/useMessageStore';
 
 // ========== 配置常量 ==========
 /** 首屏加载消息数量 */
@@ -53,7 +53,8 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
           return null;
         }
 
-        return response.messages;
+        // 使用 normalizeMessage 转换 API 格式为 Store 格式
+        return response.messages.map(normalizeMessage);
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') {
           return null;
@@ -80,25 +81,35 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
       }
 
       // 在回调内部获取 store 方法（稳定，不会导致依赖变化）
-      const store = useChatStore.getState();
+      const store = useMessageStore.getState();
+
+      // 检查是否需要强制刷新（任务恢复场景）
+      const forceRefresh = store.needsForceRefresh(conversationId);
+      if (forceRefresh) {
+        // 消费强制刷新标记，避免重复触发
+        store.clearForceRefresh(conversationId);
+      }
 
       // 检测对话切换
       if (previousConversationIdRef.current !== conversationId) {
         previousConversationIdRef.current = conversationId;
 
-        const cachedData = store.getCachedMessages(conversationId);
-        if (cachedData && cachedData.messages && cachedData.messages.length > 0) {
-          // 更新LRU访问顺序
-          store.touchCache(conversationId);
+        // 强制刷新时跳过缓存
+        if (!forceRefresh) {
+          const cachedData = store.getCachedMessages(conversationId);
+          if (cachedData && cachedData.messages && cachedData.messages.length > 0) {
+            // 更新LRU访问顺序
+            store.touchCache(conversationId);
 
-          // 缓存已是 Message 格式，无需转换
-          setLoading(false);
-          setHasMore(cachedData.hasMore);
-          // 有缓存时提前返回，避免下面的逻辑覆盖
-          return;
+            // 缓存已是 Message 格式，无需转换
+            setLoading(false);
+            setHasMore(cachedData.hasMore);
+            // 有缓存时提前返回，避免下面的逻辑覆盖
+            return;
+          }
         }
 
-        // 无缓存时：显示加载中
+        // 无缓存或强制刷新时：显示加载中
         setLoading(true);
         // 继续执行下面的从后端加载逻辑
       }
@@ -110,7 +121,8 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
       const cached = store.getCachedMessages(conversationId);
       const cacheExpired = store.isCacheExpired(conversationId);
 
-      if (cached && cached.messages && !isRefreshTriggered) {
+      // 强制刷新时跳过缓存逻辑，直接从后端加载
+      if (cached && cached.messages && !isRefreshTriggered && !forceRefresh) {
         // 更新LRU访问顺序
         store.touchCache(conversationId);
 
@@ -160,7 +172,7 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
   const loadMore = useCallback(async () => {
     if (!conversationId || loadingMore) return;
 
-    const store = useChatStore.getState();
+    const store = useMessageStore.getState();
     const cached = store.getCachedMessages(conversationId);
 
     // 没有缓存或没有更多消息时不加载
@@ -177,7 +189,8 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
       const newHasMore = response.messages.length >= LOAD_MORE_LIMIT;
 
       // ✅ 后端返回降序（从新到旧），前端反转为升序（从旧到新）
-      const messagesAsc = [...response.messages].reverse();
+      // 使用 normalizeMessage 转换旧格式消息为新格式
+      const messagesAsc = [...response.messages].reverse().map(normalizeMessage);
 
       // 向缓存顶部追加消息
       store.prependMessages(conversationId, messagesAsc, newHasMore);

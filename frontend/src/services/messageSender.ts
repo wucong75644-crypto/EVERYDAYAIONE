@@ -1,0 +1,435 @@
+/**
+ * 统一消息发送器
+ *
+ * 简化设计：
+ * 1. 单一入口：所有消息类型（chat/image/video）通过 sendMessage()
+ * 2. 乐观更新：添加占位消息，后端确认后替换 ID
+ * 3. WebSocket：完成通知由 WebSocketContext 处理
+ *
+ * 状态流转：
+ * OPTIMISTIC (乐观更新) → PENDING (后端确认) → STREAMING/PROCESSING → COMPLETED
+ */
+
+import { request } from './api';
+import { useMessageStore, type ContentPart, type Message } from '../stores/useMessageStore';
+import { logger } from '../utils/logger';
+
+// ============================================================
+// 类型定义
+// ============================================================
+
+/** 生成类型 */
+export type GenerationType = 'chat' | 'image' | 'video' | 'audio';
+
+/** 操作类型 */
+export type MessageOperation = 'send' | 'regenerate' | 'retry';
+
+/** 发送选项 */
+export interface SendOptions {
+  /** 对话 ID */
+  conversationId: string;
+  /** 消息内容（统一 ContentPart[] 格式） */
+  content: ContentPart[];
+  /** 生成类型（自动推断或显式指定） */
+  generationType?: GenerationType;
+  /** 模型 ID */
+  model?: string;
+  /** 类型特定参数 */
+  params?: Record<string, unknown>;
+  /** 操作类型 */
+  operation?: MessageOperation;
+  /** 原消息 ID（regenerate/retry 时传入） */
+  originalMessageId?: string;
+  /** WebSocket 订阅函数（可选，由调用者注入） */
+  subscribeTask?: (taskId: string, conversationId: string) => void;
+}
+
+/** API 请求格式 */
+interface GenerateRequest {
+  operation: MessageOperation;
+  content: ContentPart[];
+  generation_type?: GenerationType;
+  model?: string;
+  params?: Record<string, unknown>;
+  original_message_id?: string;
+  client_request_id: string;
+  created_at?: string;
+  assistant_message_id?: string;
+}
+
+/** API 响应格式 */
+interface GenerateResponse {
+  task_id: string;
+  user_message: Message | null;
+  assistant_message: Message;
+  operation: MessageOperation;
+}
+
+// ============================================================
+// 主函数
+// ============================================================
+
+/**
+ * 统一消息发送
+ *
+ * 使用方式：
+ * ```ts
+ * await sendMessage({
+ *   conversationId: 'xxx',
+ *   content: [{ type: 'text', text: 'Hello' }],
+ *   generationType: 'chat',
+ *   subscribeTask: (taskId) => ws.subscribe(taskId),
+ * });
+ * ```
+ */
+export async function sendMessage(options: SendOptions): Promise<string> {
+  const {
+    conversationId,
+    content,
+    generationType,
+    model,
+    params,
+    operation = 'send',
+    originalMessageId,
+    subscribeTask,
+  } = options;
+
+  const messageStore = useMessageStore.getState();
+  const clientRequestId = crypto.randomUUID();
+  const userMessageId = crypto.randomUUID();      // 用户消息真实 UUID
+  // retry 时复用原消息 ID，其他操作生成新 UUID
+  const assistantMessageId = operation === 'retry' && originalMessageId
+    ? originalMessageId
+    : crypto.randomUUID();
+  const now = new Date();
+
+  logger.info('messageSender', 'sending message', {
+    conversationId,
+    operation,
+    generationType,
+    clientRequestId,
+  });
+
+  // ========================================
+  // Phase 1: 乐观更新（使用真实 UUID）
+  // ========================================
+
+  // 1.1 创建乐观用户消息（send/regenerate）
+  if (operation !== 'retry') {
+    const userMessage: Message = {
+      id: userMessageId,
+      conversation_id: conversationId,
+      role: 'user',
+      content,
+      status: 'completed',
+      created_at: now.toISOString(),
+      client_request_id: clientRequestId,
+    };
+
+    messageStore.addMessage(conversationId, userMessage);
+  }
+
+  // 1.2 处理助手消息（retry 更新原消息，其他创建新占位符）
+  const placeholderCreatedAt = new Date(now.getTime() + 1).toISOString();
+
+  if (operation === 'retry') {
+    // retry: 原地更新消息状态（保持消息在列表中的位置）
+    messageStore.updateMessage(assistantMessageId, {
+      status: 'pending',
+      content: [],
+      is_error: false,
+      error: undefined,
+    });
+
+    if (generationType === 'chat' || !generationType) {
+      // Chat 类型：只注册 streamingId，不创建新消息
+      // 这样 chat_chunk 能路由到正确的消息，且不会创建重复消息
+      messageStore.registerStreamingId(conversationId, assistantMessageId);
+    } else {
+      // Media 类型：只设置发送状态
+      messageStore.setIsSending(true);
+    }
+  } else if (generationType === 'chat' || !generationType) {
+    // Chat 类型：使用 startStreaming 创建占位符
+    // 这样 streamingMessages Map 会正确设置，chat_chunk 能路由到正确的消息
+    messageStore.startStreaming(conversationId, assistantMessageId, {
+      initialContent: '',
+      createdAt: placeholderCreatedAt,
+      generationParams: { type: generationType, model },
+    });
+  } else {
+    // Media 类型：添加到 optimisticMessages（与 replaceMediaPlaceholder 查找位置一致）
+    const placeholderMessage: Message = {
+      id: assistantMessageId,
+      conversation_id: conversationId,
+      role: 'assistant',
+      content: [],
+      status: 'pending',
+      created_at: placeholderCreatedAt,
+      generation_params: {
+        type: generationType,
+        model,
+      },
+    };
+    messageStore.addOptimisticMessage(conversationId, placeholderMessage);
+    messageStore.setIsSending(true);
+  }
+
+  try {
+    // ========================================
+    // Phase 2: 调用后端 API
+    // ========================================
+
+    const response = await request<GenerateResponse>({
+      url: `/conversations/${conversationId}/messages/generate`,
+      method: 'POST',
+      data: {
+        operation,
+        content,
+        generation_type: generationType,
+        model,
+        params,
+        original_message_id: originalMessageId,
+        client_request_id: clientRequestId,
+        created_at: now.toISOString(),
+        assistant_message_id: assistantMessageId, // 前端生成的真实 UUID
+      } as GenerateRequest,
+    });
+
+    logger.info('messageSender', 'API response received', {
+      taskId: response.task_id,
+      userMessageId: response.user_message?.id,
+      assistantMessageId: response.assistant_message.id,
+    });
+
+    // ========================================
+    // Phase 3: 更新消息状态（ID已一致，无需替换）
+    // ========================================
+
+    // 3.1 更新助手消息的 task_id
+    messageStore.updateMessage(assistantMessageId, {
+      task_id: response.task_id,
+    });
+
+    // ========================================
+    // Phase 4: 创建任务追踪
+    // ========================================
+
+    messageStore.createTask({
+      taskId: response.task_id,
+      messageId: response.assistant_message.id,
+      conversationId,
+      type: generationType || 'chat',
+      status: 'pending',
+      progress: 0,
+      createdAt: Date.now(),
+    });
+
+    // 4.1 媒体类型：注册到 mediaTasks（Chat 类型已在 Phase 1.2 处理）
+    if (generationType && generationType !== 'chat') {
+      messageStore.startMediaTask({
+        taskId: response.task_id,
+        conversationId,
+        conversationTitle: '',
+        type: generationType as 'image' | 'video',
+        placeholderId: assistantMessageId,
+      });
+    }
+
+    // ========================================
+    // Phase 5: 订阅 WebSocket
+    // ========================================
+
+    if (subscribeTask) {
+      subscribeTask(response.task_id, conversationId);
+    }
+
+    logger.info('messageSender', 'message sent successfully', {
+      taskId: response.task_id,
+    });
+
+    return response.task_id;
+
+  } catch (error) {
+    // ========================================
+    // 错误处理：回滚乐观更新
+    // ========================================
+
+    logger.error('messageSender', 'send failed', error);
+
+    // 清理 streamingMessages（Chat 类型会设置）
+    messageStore.completeStreaming(conversationId);
+
+    // 移除占位符（同时检查 messages 和 optimisticMessages）
+    messageStore.removeMessage(assistantMessageId);
+    // 同时移除可能的 streaming-xxx 消息
+    messageStore.removeMessage(`streaming-${assistantMessageId}`);
+
+    // 添加错误消息
+    const errorMessage: Message = {
+      id: assistantMessageId,
+      conversation_id: conversationId,
+      role: 'assistant',
+      content: [{ type: 'text', text: '' }],
+      status: 'failed',
+      is_error: true,
+      error: {
+        code: 'SEND_FAILED',
+        message: error instanceof Error ? error.message : '发送失败',
+      },
+      created_at: new Date().toISOString(),
+    };
+
+    messageStore.addMessage(conversationId, errorMessage);
+
+    throw error;
+  }
+}
+
+// ============================================================
+// 辅助函数
+// ============================================================
+
+/**
+ * 创建错误消息（供 handler 使用）
+ */
+export function createErrorMessage(
+  conversationId: string,
+  error: unknown,
+  defaultText = '发送失败'
+): Message {
+  return {
+    id: crypto.randomUUID(),
+    conversation_id: conversationId,
+    role: 'assistant',
+    content: [{ type: 'text', text: error instanceof Error ? error.message : defaultText }],
+    status: 'failed',
+    is_error: true,
+    created_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * 创建文本消息内容
+ */
+export function createTextContent(text: string): ContentPart[] {
+  return [{ type: 'text', text }];
+}
+
+/**
+ * 创建图文混合内容
+ */
+export function createTextWithImage(text: string, imageUrl: string): ContentPart[] {
+  return [
+    { type: 'text', text },
+    { type: 'image', url: imageUrl },
+  ];
+}
+
+/**
+ * 从旧格式消息提取 ContentPart[]
+ */
+export function extractContent(message: {
+  content?: string;
+  image_url?: string | null;
+  video_url?: string | null;
+}): ContentPart[] {
+  const parts: ContentPart[] = [];
+
+  if (message.content) {
+    parts.push({ type: 'text', text: message.content });
+  }
+
+  if (message.image_url) {
+    parts.push({ type: 'image', url: message.image_url });
+  }
+
+  if (message.video_url) {
+    parts.push({ type: 'video', url: message.video_url });
+  }
+
+  return parts;
+}
+
+/**
+ * 从 ContentPart[] 提取文本
+ */
+export function getTextFromContent(content: ContentPart[]): string {
+  for (const part of content) {
+    if (part.type === 'text') {
+      return part.text;
+    }
+  }
+  return '';
+}
+
+/**
+ * 推断生成类型
+ */
+export function inferGenerationType(content: ContentPart[]): GenerationType {
+  const text = getTextFromContent(content).toLowerCase();
+
+  // 图片生成关键词
+  if (/生成图片|画一|generate image|\/image/i.test(text)) {
+    return 'image';
+  }
+
+  // 视频生成关键词
+  if (/生成视频|做个视频|generate video|\/video/i.test(text)) {
+    return 'video';
+  }
+
+  // 默认聊天
+  return 'chat';
+}
+
+/**
+ * 判断消息类型（用于重新生成）
+ */
+export function determineMessageType(message: Message): GenerationType {
+  // 优先从 generation_params 判断
+  if (message.generation_params?.type) {
+    return message.generation_params.type as GenerationType;
+  }
+
+  // 从内容判断
+  for (const part of message.content) {
+    if (part.type === 'video') return 'video';
+    if (part.type === 'image') return 'image';
+  }
+
+  return 'chat';
+}
+
+/**
+ * 提取模型 ID（用于重新生成）
+ */
+export function extractModelId(message: Message): string | undefined {
+  return message.generation_params?.model as string | undefined;
+}
+
+/**
+ * 提取生成参数（用于重新生成，保持原参数）
+ * 返回的参数已转换为后端期望的下划线格式
+ */
+export function extractGenerationParams(message: Message): Record<string, unknown> {
+  const params: Record<string, unknown> = {};
+  const gp = message.generation_params;
+
+  if (!gp) return params;
+
+  // 聊天参数
+  if (gp.thinking_effort) params.thinking_effort = gp.thinking_effort;
+  if (gp.thinking_mode) params.thinking_mode = gp.thinking_mode;
+
+  // 图片参数
+  if (gp.aspect_ratio) params.aspect_ratio = gp.aspect_ratio;
+  if (gp.resolution) params.resolution = gp.resolution;
+  if (gp.output_format) params.output_format = gp.output_format;
+
+  // 视频参数
+  if (gp.n_frames) params.n_frames = gp.n_frames;
+  if (gp.remove_watermark !== undefined) params.remove_watermark = gp.remove_watermark;
+
+  return params;
+}

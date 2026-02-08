@@ -4,21 +4,19 @@
  * 为图像、视频和聊天模型提供高级参数配置
  */
 
-import { type UnifiedModel } from '../../constants/models';
 import {
+  type UnifiedModel,
   ASPECT_RATIOS,
   RESOLUTIONS,
   OUTPUT_FORMATS,
+  VIDEO_DURATIONS,
+  VIDEO_ASPECT_RATIOS,
   type AspectRatio,
   type ImageResolution,
   type ImageOutputFormat,
-} from '../../services/image';
-import {
-  VIDEO_DURATIONS,
-  VIDEO_ASPECT_RATIOS,
   type VideoFrames,
   type VideoAspectRatio,
-} from '../../services/video';
+} from '../../constants/models';
 
 interface AdvancedSettingsMenuProps {
   closing?: boolean;

@@ -18,12 +18,13 @@
 const CHANNEL_NAME = 'everydayai-sync';
 
 export type TabSyncEventType =
-  | 'chat_started'      // 聊天开始（用于显示"正在输入"）
-  | 'chat_completed'    // 聊天完成（刷新消息列表）
-  | 'chat_failed'       // 聊天失败
-  | 'task_restored'     // 任务已被恢复（防止重复恢复）
-  | 'message_updated'   // 消息更新（重新生成等）
-  | 'credits_changed'   // 积分变化
+  | 'chat_started'         // 聊天开始（用于显示"正在输入"）
+  | 'chat_completed'       // 聊天完成（刷新消息列表）
+  | 'chat_failed'          // 聊天失败
+  | 'task_restored'        // 任务已被恢复（防止重复恢复）
+  | 'message_updated'      // 消息更新（重新生成等）
+  | 'message_completed'    // 消息生成完成（统一事件）
+  | 'credits_changed'      // 积分变化
   | 'conversation_deleted'; // 对话删除
 
 interface TabSyncPayload {
@@ -100,8 +101,11 @@ class TabSyncManager {
 
   /**
    * 广播事件给其他标签页
+   *
+   * 注意：此方法不会抛出错误，确保不影响外层业务逻辑
    */
   broadcast(type: TabSyncEventType, payload: TabSyncPayload = {}) {
+    // 如果已销毁或未初始化，静默返回
     if (!this.isInitialized) return;
 
     const event: TabSyncEvent = {
@@ -119,10 +123,12 @@ class TabSyncManager {
         localStorage.removeItem(this.STORAGE_KEY);
       } else if (this.channel) {
         // 【正常模式】通过 BroadcastChannel 广播
+        // 检查 channel 是否仍然可用（可能在 beforeunload 时被关闭）
         this.channel.postMessage(event);
       }
-    } catch (error) {
-      console.error('[TabSync] Failed to broadcast:', error);
+    } catch {
+      // 静默处理错误，不影响外层业务逻辑
+      // 常见错误：Channel is closed（页面刷新时）
     }
   }
 

@@ -3,7 +3,7 @@
  * 统一管理所有占位符相关的文字和逻辑
  */
 
-import type { Message } from '../services/message';
+import { type Message, getTextContent } from '../stores/useMessageStore';
 
 /** 消息类型 */
 export type MessageType = 'chat' | 'image' | 'video' | 'audio' | '3d' | 'code';
@@ -52,25 +52,26 @@ export interface PlaceholderInfo {
  * 判断是否为占位符消息
  */
 export function getPlaceholderInfo(message: Message): PlaceholderInfo {
-  const content = message.content;
+  // 从 ContentPart[] 提取文本内容
+  const textContent = getTextContent(message);
 
   // 检查图片占位符
-  if (content.includes(PLACEHOLDER_TEXT.IMAGE_GENERATING)) {
-    return { isPlaceholder: true, type: 'image', text: content };
+  if (textContent.includes(PLACEHOLDER_TEXT.IMAGE_GENERATING)) {
+    return { isPlaceholder: true, type: 'image', text: textContent };
   }
 
   // 检查视频占位符
-  if (content.includes(PLACEHOLDER_TEXT.VIDEO_GENERATING)) {
-    return { isPlaceholder: true, type: 'video', text: content };
+  if (textContent.includes(PLACEHOLDER_TEXT.VIDEO_GENERATING)) {
+    return { isPlaceholder: true, type: 'video', text: textContent };
   }
 
   // 检查音频占位符
-  if (content.includes(PLACEHOLDER_TEXT.AUDIO_GENERATING)) {
-    return { isPlaceholder: true, type: 'audio', text: content };
+  if (textContent.includes(PLACEHOLDER_TEXT.AUDIO_GENERATING)) {
+    return { isPlaceholder: true, type: 'audio', text: textContent };
   }
 
-  // 检查聊天占位符（空内容 + streaming ID）
-  if (!content && message.id.startsWith('streaming-')) {
+  // 检查聊天占位符（空内容 + streaming 状态）
+  if (!textContent && message.status === 'streaming') {
     return { isPlaceholder: true, type: 'chat', text: PLACEHOLDER_TEXT.CHAT_THINKING };
   }
 

@@ -24,12 +24,15 @@
 | `handle_task_failure` | `backend/services/task_service.py` | 处理任务失败（退回积分、通知前端） | task_id, error | bool |
 | `call_ai_api` | `backend/services/ai_service.py` | 调用AI API生成内容（含重试） | prompt, model, timeout | Dict |
 | `process_task_worker` | `backend/workers/task_worker.py` | 任务队列Worker处理函数 | task_id | None |
+| `BackgroundTaskWorker.poll_pending_tasks` | `backend/services/background_task_worker.py` | 轮询 pending/running 的 image/video 任务（兜底模式，120s 间隔） | - | None |
+| `BackgroundTaskWorker.query_and_process` | `backend/services/background_task_worker.py` | 查询 Provider 任务状态，完成/失败交给 TaskCompletionService | task: dict | None |
+| `BackgroundTaskWorker.cleanup_stale_tasks` | `backend/services/background_task_worker.py` | 清理超时任务（image/video 走 TaskCompletionService，chat 直接更新） | - | None |
 
 #### 前端函数
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `useTaskStore` | `frontend/stores/taskStore.ts` | Zustand全局任务状态管理 | - | TaskStore |
+| `useMessageStore` | `frontend/src/stores/useMessageStore.ts` | Zustand 统一消息状态管理 | - | MessageStore |
 | `submitTask` | `frontend/services/taskService.ts` | 提交新任务到后端 | conversationId, prompt, modelConfig | Promise<Task> |
 | `checkTaskLimits` | `frontend/services/taskService.ts` | 检查任务数量限制 | conversationId | boolean |
 | `subscribeTaskUpdates` | `frontend/services/websocket.ts` | 订阅任务实时更新 | taskIds | void |
@@ -149,16 +152,15 @@
 | `useRegenerateFailedMessage` | `frontend/src/hooks/regenerate/useRegenerateFailedMessage.ts` | 失败消息原地重新生成 | UseRegenerateFailedMessageOptions | (messageId, targetMessage) => Promise<void> |
 | `useRegenerateAsNewMessage` | `frontend/src/hooks/regenerate/useRegenerateAsNewMessage.ts` | 成功消息新增对话重新生成 | UseRegenerateAsNewMessageOptions | (userMessage) => Promise<void> |
 
-### 轮询管理模块 (Polling)
+### 任务恢复模块 (Task Restoration)
 
-> **重构说明**：轮询逻辑已迁移到 `useTaskStore`，`polling.ts` 仅保留类型定义。实际轮询在 `useTaskStore.startPolling/stopPolling` 中实现，支持连续失败计数、锁续约、taskCoordinator 多标签页协调。
+> **重构说明**：轮询逻辑已被 WebSocket 实时推送替代。任务恢复通过 `taskRestoration.ts` 重新订阅未完成任务。
 
-#### 前端类型定义
+#### 前端函数
 
-| 类型名 | 文件路径 | 功能描述 |
-|--------|----------|----------|
-| `PollingCallbacks` | `frontend/src/utils/polling.ts` | 轮询回调接口（onSuccess、onError、onProgress?） |
-| `PollingConfig` | `frontend/src/utils/polling.ts` | 轮询配置接口（intervalId、pollFn、callbacks、lockRenewalId?） |
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `restorePendingTasks` | `frontend/src/utils/taskRestoration.ts` | 恢复未完成任务 | subscribeTask | Promise<void> |
 
 ### 统一消息发送模块 (Message Sender)
 
@@ -166,24 +168,18 @@
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `sendMessage` | `frontend/src/services/messageSender/index.ts` | 统一发送消息入口（自动分发到对应 sender） | ChatSenderParams \| ImageSenderParams \| VideoSenderParams | Promise<void> |
-| `sendChatMessage` | `frontend/src/services/messageSender/chatSender.ts` | 发送聊天消息（流式 SSE） | ChatSenderParams | Promise<void> |
-| `sendMediaMessage` | `frontend/src/services/messageSender/mediaSender.ts` | 统一媒体发送器（合并图片/视频） | ImageSenderParams \| VideoSenderParams | Promise<void> |
-| `executeImageGenerationCore` | `frontend/src/services/messageSender/mediaGenerationCore.ts` | 图片生成核心逻辑（API调用+轮询） | ImageGenerationCoreParams | Promise<void> |
-| `executeVideoGenerationCore` | `frontend/src/services/messageSender/mediaGenerationCore.ts` | 视频生成核心逻辑（API调用+轮询） | VideoGenerationCoreParams | Promise<void> |
+| `sendUnifiedMessage` | `frontend/src/services/messageSender/unifiedSender.ts` | 统一消息发送入口（chat/image/video） | UnifiedMessageParams | Promise<void> |
+| `createMessageLifecycle` | `frontend/src/services/messageSender/lifecycle.ts` | 创建消息生命周期标识 | - | MessageLifecycle |
+| `callBackendAPI` | `frontend/src/services/messageSender/backendAPI.ts` | 后端 API 调用（路由到 chat/image/video API） | UnifiedMessageParams, MessageLifecycle | Promise<UnifiedAPIResponse> |
+| `determineMessageType` | `frontend/src/services/messageSender/unifiedSender.ts` | 判断消息类型 | Message | MessageType |
 
-### 媒体重新生成模块 (Media Regeneration)
+### 重新生成模块 (Regeneration)
 
 #### 前端函数
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `executeImageRegeneration` | `frontend/src/utils/mediaRegeneration.ts` | 执行图片重新生成（复用 sendImageMessage） | MediaRegenParams | Promise<void> |
-| `executeVideoRegeneration` | `frontend/src/utils/mediaRegeneration.ts` | 执行视频重新生成（复用 sendVideoMessage） | MediaRegenParams | Promise<void> |
-| `computeImageGenerationParams` | `frontend/src/utils/mediaRegeneration.ts` | 计算图片生成参数（优先级：原始>保存>默认） | originalParams?, modelId?, selectedModel? | ImageSenderParams['generationParams'] |
-| `computeVideoGenerationParams` | `frontend/src/utils/mediaRegeneration.ts` | 计算视频生成参数（优先级：原始>保存>默认） | originalParams?, modelId?, selectedModel?, hasImage? | { generationParams, finalModelId } |
-| `createMediaRegenCallbacks` | `frontend/src/utils/mediaRegeneration.ts` | 创建媒体重新生成回调工厂函数（通过 setMessages 兼容层写入缓存） | setMessages, resetRegeneratingState, onMessageUpdate?, onMediaTaskSubmitted? | SendMessageCallbacks |
-| `getModelTypeById` | `frontend/src/utils/mediaRegeneration.ts` | 根据模型 ID 获取类型 | modelId: string | 'chat' \| 'image' \| 'video' \| null |
+| `regenerateMessage` | `frontend/src/utils/regenerate/index.ts` | 统一重新生成入口（使用 sendUnifiedMessage） | targetMessage, userMessage, RegenerateContext | Promise<void> |
 
 ### 性能监控模块 (Performance Monitoring)
 
@@ -258,27 +254,26 @@
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `send_message` | `backend/services/message_service.py` | 发送消息并获取 AI 响应（非流式） | conversation_id, user_id, content, model_id | dict |
-| `send_message_stream` | `backend/services/message_stream_service.py` | 流式发送消息并获取 AI 响应（SSE） | conversation_id, user_id, content, model_id | AsyncIterator[str] |
-| `regenerate_message_stream` | `backend/services/message_stream_service.py` | 重新生成失败的消息（流式） | conversation_id, message_id, user_id | AsyncIterator[str] |
-| `_call_ai_chat` | `backend/services/message_service.py` | 调用 AI Chat 模型（非流式） | conversation_id, user_id, user_message, model_id | tuple[str, int] |
-| `_get_conversation_history` | `backend/services/message_service.py` | 获取对话历史用于 AI 上下文 | conversation_id, user_id, limit | List[Dict] |
-| `create_message` | `backend/services/message_service.py` | 创建消息记录 | conversation_id, user_id, content, role, credits_cost | dict |
+| `generate_message` | `backend/api/routes/message.py` | 统一消息生成入口（send/retry/regenerate） | body: GenerateRequest | GenerateResponse |
 | `get_messages` | `backend/services/message_service.py` | 获取对话消息列表 | conversation_id, user_id, limit, offset, before_id | dict |
 | `delete_message` | `backend/services/message_service.py` | 删除单条消息（权限验证后物理删除） | message_id, user_id | dict |
-| `create_error_message` | `backend/services/message_service.py` | 创建错误消息记录（AI 调用失败时） | conversation_id, user_id, content | dict |
-| `regenerate_message_stream` | `backend/services/message_service.py` | 重新生成失败消息（流式 SSE） | conversation_id, message_id, user_id | AsyncIterator[str] |
+| `create_message` | `backend/services/message_service.py` | 创建消息记录 | conversation_id, user_id, content, role, credits_cost | dict |
+| `ChatHandler.start` | `backend/services/handlers/chat_handler.py` | 启动聊天任务（流式 WebSocket） | message_id, conversation_id, user_id, content, params | task_id |
+| `ImageHandler.start` | `backend/services/handlers/image_handler.py` | 启动图片生成任务（异步） | message_id, conversation_id, user_id, content, params | task_id |
+| `VideoHandler.start` | `backend/services/handlers/video_handler.py` | 启动视频生成任务（异步） | message_id, conversation_id, user_id, content, params | task_id |
+| `_reset_message_for_retry` | `backend/api/routes/message.py` | 重置失败消息用于重试 | db, message_id, gen_type, model, params | Message |
+| `_create_assistant_placeholder` | `backend/api/routes/message.py` | 创建助手消息占位符 | db, conversation_id, message_id, gen_type, model, params | Message |
 
 #### 前端函数
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `sendMessage` | `frontend/src/services/message.ts` | 发送消息（非流式） | conversationId, data | Promise<SendMessageResponse> |
-| `sendMessageStream` | `frontend/src/services/message.ts` | 流式发送消息（SSE） | conversationId, data, callbacks | Promise<void> |
+| `sendMessage` | `frontend/src/services/messageSender.ts` | 统一消息发送（send/retry/regenerate） | options: SendOptions | Promise<string> |
 | `getMessages` | `frontend/src/services/message.ts` | 获取消息列表 | conversationId, limit, offset, beforeId | Promise<MessageListResponse> |
 | `deleteMessage` | `frontend/src/services/message.ts` | 删除单条消息 | messageId | Promise<DeleteMessageResponse> |
-| `regenerateMessageStream` | `frontend/src/services/message.ts` | 重新生成失败消息（流式 SSE） | conversationId, messageId, callbacks | Promise<void> |
-| `handleRegenerate` | `frontend/src/components/chat/MessageArea.tsx` | 处理消息重新生成请求 | messageId | Promise<void> |
+| `handleRegenerate` | `frontend/src/hooks/useRegenerateHandlers.ts` | 处理消息重新生成/重试请求 | targetMessage, userMessage | Promise<void> |
+| `handleChatMessage` | `frontend/src/hooks/handlers/useTextMessageHandler.ts` | 处理聊天消息发送 | messageContent, conversationId, imageUrl | Promise<void> |
+| `handleMediaGeneration` | `frontend/src/hooks/handlers/useMediaMessageHandler.ts` | 处理媒体生成请求 | conversationId, prompt, imageUrl | Promise<void> |
 
 ### 图像生成模块 (Image Generation)
 
@@ -333,6 +328,34 @@
 | `pollVideoTaskUntilDone` | `frontend/src/services/video.ts` | 轮询视频任务直到完成 | taskId, options | Promise<TaskStatusResponse> |
 | `handleVideoGeneration` | `frontend/src/components/chat/InputArea.tsx` | 处理视频生成请求 | messageContent, currentConversationId, imageUrl | Promise<void> |
 
+### Webhook 回调与任务完成服务模块 (Webhook & Task Completion)
+
+> **新增于 Webhook 回调改造**：将图片/视频任务从纯轮询改为「回调为主 + 轮询兜底」，统一完成处理入口。
+
+#### 后端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `handle_webhook` | `backend/api/routes/webhook.py` | 统一 Webhook 入口（按 provider 分发） | provider: str, request, db | JSONResponse |
+| `TaskCompletionService.__init__` | `backend/services/task_completion_service.py` | 初始化统一任务完成服务 | db: Client | - |
+| `TaskCompletionService.get_task` | `backend/services/task_completion_service.py` | 根据 external_task_id 查询任务 | external_task_id: str | Optional[Dict] |
+| `TaskCompletionService.process_result` | `backend/services/task_completion_service.py` | 统一处理入口（幂等，分发成功/失败） | external_task_id, result: TaskResult | bool |
+| `TaskCompletionService._handle_success` | `backend/services/task_completion_service.py` | 处理成功结果（OSS 上传 → handler.on_complete） | task, result | bool |
+| `TaskCompletionService._handle_failure` | `backend/services/task_completion_service.py` | 处理失败结果（handler.on_error） | task, result | bool |
+| `TaskCompletionService._upload_urls_to_oss` | `backend/services/task_completion_service.py` | 批量上传媒体到 OSS（降级返回原 URL） | urls, user_id, task_type | List[str] |
+| `TaskCompletionService._build_content_parts` | `backend/services/task_completion_service.py` | 构建 ContentPart 字典列表 | urls, task_type | list |
+| `TaskCompletionService._create_handler` | `backend/services/task_completion_service.py` | 根据任务类型创建 Handler | task_type: str | BaseHandler |
+| `_empty_result` | `backend/services/task_completion_service.py` | 将成功结果转为失败结果（空结果场景） | original, fail_code, fail_msg | TaskResult |
+| `BaseImageAdapter.extract_task_id` | `backend/services/adapters/base.py` | 从回调 payload 提取任务 ID（抽象方法） | payload: Dict | str |
+| `BaseImageAdapter.parse_callback` | `backend/services/adapters/base.py` | 解析回调 payload 为 ImageGenerateResult（抽象方法） | payload: Dict | ImageGenerateResult |
+| `BaseVideoAdapter.extract_task_id` | `backend/services/adapters/base.py` | 从回调 payload 提取任务 ID（抽象方法） | payload: Dict | str |
+| `BaseVideoAdapter.parse_callback` | `backend/services/adapters/base.py` | 解析回调 payload 为 VideoGenerateResult（抽象方法） | payload: Dict | VideoGenerateResult |
+| `KieImageAdapter.extract_task_id` | `backend/services/adapters/kie/image_adapter.py` | KIE 图片回调提取 taskId | payload: Dict | str |
+| `KieImageAdapter.parse_callback` | `backend/services/adapters/kie/image_adapter.py` | 解析 KIE 图片回调（taskId+state+resultJson） | payload: Dict | ImageGenerateResult |
+| `KieVideoAdapter.extract_task_id` | `backend/services/adapters/kie/video_adapter.py` | KIE 视频回调提取 taskId | payload: Dict | str |
+| `KieVideoAdapter.parse_callback` | `backend/services/adapters/kie/video_adapter.py` | 解析 KIE 视频回调（taskId+state+resultJson） | payload: Dict | VideoGenerateResult |
+| `BaseHandler._build_callback_url` | `backend/services/handlers/base.py` | 构建 Webhook 回调 URL（未配置则返回 None） | provider_value: str | Optional[str] |
+
 ### KIE 适配器模块 (KIE Adapter)
 
 #### 后端函数
@@ -347,40 +370,25 @@
 
 #### 前端函数
 
+> **重构说明**：原 `useChatStore`、`useTaskStore`、`useConversationRuntimeStore` 已合并为统一的 `useMessageStore`。
+
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `useChatStore` | `frontend/src/stores/useChatStore.ts` | Zustand 聊天状态管理 | - | ChatState |
-| `setConversations` | `frontend/src/stores/useChatStore.ts` | 设置对话列表 | conversations | void |
-| `setCurrentConversation` | `frontend/src/stores/useChatStore.ts` | 设置当前对话 | id, title | void |
-| `setMessages` | `frontend/src/stores/useChatStore.ts` | 设置消息列表 | messages | void |
-| `addMessage` | `frontend/src/stores/useChatStore.ts` | 添加单条消息 | message | void |
-| `deleteConversation` | `frontend/src/stores/useChatStore.ts` | 删除对话 | id | void |
-| `renameConversation` | `frontend/src/stores/useChatStore.ts` | 重命名对话 | id, title | void |
-| `createConversation` | `frontend/src/stores/useChatStore.ts` | 创建新对话 | title | string |
+| `useMessageStore` | `frontend/src/stores/useMessageStore.ts` | 统一消息状态管理（消息、任务、缓存） | - | MessageStore |
+| `addMessage` | `frontend/src/stores/useMessageStore.ts` | 添加消息 | conversationId, message | void |
+| `updateMessage` | `frontend/src/stores/useMessageStore.ts` | 更新消息 | messageId, updates | void |
+| `removeMessage` | `frontend/src/stores/useMessageStore.ts` | 删除消息 | messageId | void |
+| `setMessagesForConversation` | `frontend/src/stores/useMessageStore.ts` | 设置对话消息 | conversationId, messages, hasMore | void |
+| `startChatTask` | `frontend/src/stores/useMessageStore.ts` | 开始聊天任务 | conversationId, title | void |
+| `completeChatTask` | `frontend/src/stores/useMessageStore.ts` | 完成聊天任务 | conversationId | void |
+| `startMediaTask` | `frontend/src/stores/useMessageStore.ts` | 开始媒体任务 | options | void |
+| `completeMediaTask` | `frontend/src/stores/useMessageStore.ts` | 完成媒体任务 | taskId, result | void |
+| `canStartTask` | `frontend/src/stores/useMessageStore.ts` | 检查是否可以开始新任务 | conversationId | { allowed, reason? } |
+| `hasActiveTask` | `frontend/src/stores/useMessageStore.ts` | 检查对话是否有活跃任务 | conversationId | boolean |
+| `getTextContent` | `frontend/src/stores/useMessageStore.ts` | 从 Message 提取文本内容 | message | string |
+| `normalizeMessage` | `frontend/src/stores/useMessageStore.ts` | 标准化消息格式（兼容旧格式） | message | Message |
 | `formatDateGroup` | `frontend/src/components/chat/conversationUtils.ts` | 格式化日期分组（今天/昨天/具体日期） | dateStr | string |
 | `groupConversationsByDate` | `frontend/src/components/chat/conversationUtils.ts` | 按日期分组对话列表 | conversations | Record |
-
-### 任务状态管理模块 (Task Store)
-
-#### 前端函数
-
-| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
-|--------|----------|----------|------|--------|
-| `useTaskStore` | `frontend/src/stores/useTaskStore.ts` | Zustand 任务状态管理 | - | TaskStore |
-| `startTask` | `frontend/src/stores/useTaskStore.ts` | 开始任务 | conversationId, type | void |
-| `updateTaskProgress` | `frontend/src/stores/useTaskStore.ts` | 更新任务进度 | conversationId, progress, content | void |
-| `completeTask` | `frontend/src/stores/useTaskStore.ts` | 完成任务 | conversationId, result | void |
-| `failTask` | `frontend/src/stores/useTaskStore.ts` | 任务失败 | conversationId, error | void |
-| `canStartTask` | `frontend/src/stores/useTaskStore.ts` | 检查是否可以开始新任务 | conversationId | { allowed, reason? } |
-| `getActiveTaskCount` | `frontend/src/stores/useTaskStore.ts` | 获取活跃任务数量 | - | number |
-
-### 对话运行时状态模块 (Conversation Runtime Store)
-
-#### 前端函数
-
-| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
-|--------|----------|----------|------|--------|
-| `useConversationRuntimeStore` | `frontend/src/stores/useConversationRuntimeStore.ts` | 对话运行时状态管理 | - | RuntimeStore |
 
 ### 自定义 Hooks 模块 (Custom Hooks)
 
@@ -486,7 +494,7 @@
 
 ### 任务通知模块 (Task Notification)
 
-> **新增于阶段4重构**：提取任务完成通知逻辑为纯函数，消除 useTaskStore 中的重复代码。
+> **新增于阶段4重构**：提取任务完成通知逻辑为纯函数，消除 useMessageStore 中的重复代码。
 
 #### 前端函数
 
@@ -583,15 +591,16 @@
 ### 按模块分类
 - **Redis 基础设施模块**：6个后端函数
 - **任务限制服务模块**：4个后端函数
-- **任务管理模块**：9个后端函数 + 8个前端函数
+- **任务管理模块**：12个后端函数 + 8个前端函数（含 BackgroundTaskWorker 轮询兜底）
 - **积分管理模块**：7个后端函数
 - **对话管理模块**：5个后端函数 + 5个前端函数
 - **消息处理模块**：7个前端函数（统一 useMediaMessageHandler）
 - **滚动管理模块**：1个前端函数（useVirtuaScroll 统一入口，使用 Virtua 替代 Virtuoso）
 - **重新生成模块**：3个前端函数
-- **轮询管理模块**：2个类型定义（实现在 useTaskStore）
-- **统一消息发送模块**：5个前端函数（统一 sendMediaMessage）
+- **任务恢复模块**：1个前端函数（WebSocket 实时推送替代轮询）
+- **统一消息发送模块**：5个前端函数（统一 sendMessage）
 - **媒体重新生成模块**：6个前端函数
+- **Webhook 回调与任务完成服务模块**：19个后端函数（✨Webhook 改造新增）
 - **任务通知模块**：1个前端函数 + 5个类型定义（✨阶段4新增）
 - **图片URL工具模块**：2个前端函数（✨阶段0新增）
 - **统一日志工具模块**：4个前端函数（✨阶段0新增）
@@ -605,14 +614,16 @@
 - **用户设置模块**：3个前端函数
 - **KIE 适配器模块**：5个后端函数
 - **预定义常量**：13个性能标记常量 + 3个媒体默认值常量
-- **总计**：约 210+ 个函数/类型
+- **总计**：约 230+ 个函数/类型
 
 ### 按功能分类
 - **Redis 操作**：`RedisClient.get_client`, `RedisClient.acquire_lock`, `RedisClient.release_lock`
 - **任务限制**：`check_and_acquire`, `release`, `get_active_count`, `can_start_task`
 - **任务创建与提交**：`create_task`, `submitTask`, `checkTaskLimits`
-- **任务状态管理**：`update_task_status`, `handle_task_completion`, `handle_task_failure`, `useTaskStore`, `mergeTasks`
+- **任务状态管理**：`update_task_status`, `handle_task_completion`, `handle_task_failure`, `useMessageStore`, `mergeTasks`
+- **任务完成处理（Webhook/轮询）**：`handle_webhook`, `TaskCompletionService.process_result`, `parse_callback`, `extract_task_id`
 - **任务查询**：`get_active_tasks`, `count_active_tasks`, `count_conversation_active_tasks`, `getConversationTaskBadge`
+- **轮询兜底**：`BackgroundTaskWorker.poll_pending_tasks`, `query_and_process`, `cleanup_stale_tasks`
 - **AI调用**：`call_ai_api`, `process_task_worker`
 - **实时通信**：`subscribeTaskUpdates`, `handleTaskProgress`, `handleTaskCompleted`
 - **积分操作**：`lock_credits`, `confirm_deduct`, `refund_credits`, `credit_lock`, `deduct_atomic`, `get_balance`
@@ -622,13 +633,13 @@
 ---
 
 ## 统计信息
-- **总函数数**：约 210+ 个（规划中 + 已实现）
+- **总函数数**：约 230+ 个（规划中 + 已实现）
 - **已实现组件**：32 个（27 聊天组件 + 4 认证组件 + 1 通用组件）
 - **已实现 Hooks**：50+ 个自定义 Hooks（含消息处理、滚动管理、重新生成等）
-- **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息处理、消息服务、滚动管理、重新生成、轮询管理、**统一消息发送**（含 mediaSender）、媒体重新生成、**任务通知**、**图片URL工具**、**统一日志**、**任务协调器**、**消息合并**、性能监控、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理、测试工具、认证弹窗模块、通用组件模块、占位符管理模块
+- **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息处理、消息服务、滚动管理、重新生成、轮询管理、**统一消息发送**（含 mediaSender）、媒体重新生成、**任务通知**、**图片URL工具**、**统一日志**、**任务协调器**、**消息合并**、性能监控、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理、测试工具、认证弹窗模块、通用组件模块、占位符管理模块、**Webhook 回调与任务完成服务**
 - **测试覆盖率目标**：80%+（Vitest + Testing Library）
 - **性能监控**：13个预定义性能标记，支持关键路径监控
-- **最后更新**：2026-02-03（滚动系统从 Virtuoso 迁移到 Virtua，更轻量且更好支持动态高度）
+- **最后更新**：2026-02-08（Webhook 回调改造：回调为主 + 轮询兜底 + 多 Provider 兼容）
 
 ---
 

@@ -2,26 +2,21 @@
  * 消息协调层 - 统一管理跨 Store 操作
  *
  * 解决问题：
- * 1. updateMessageId 重复调用（ChatStore + RuntimeStore）
- * 2. TaskStore 直接依赖 ChatStore（markConversationUnread）
+ * 1. updateMessageId 重复调用
+ * 2. 解耦不同模块对 Store 的直接依赖
  *
  * 设计原则：
- * - 每个 Store 只管理自己的数据
- * - 跨 Store 操作通过协调层统一处理
- * - 相关操作要么都成功要么都失败
+ * - 使用统一的 useMessageStore 管理所有状态
+ * - 跨模块操作通过协调层统一处理
  */
 
-import { useChatStore } from '../stores/useChatStore';
-import { useConversationRuntimeStore } from '../stores/useConversationRuntimeStore';
-import type { Message } from '../services/message';
+import { useMessageStore, type Message } from '../stores/useMessageStore';
 
 export const messageCoordinator = {
   /**
    * 确认用户消息（统一 updateMessageId）
    *
-   * 替代：chatSender.ts 中的两次 updateMessageId 调用
-   * - ChatStore.updateMessageId()
-   * - RuntimeStore.updateMessageId()
+   * 由 sendMessage 调用，统一更新消息 ID
    *
    * @param params.conversationId - 对话 ID
    * @param params.clientRequestId - 客户端请求 ID（temp-xxx）
@@ -36,34 +31,30 @@ export const messageCoordinator = {
   }): void {
     const { conversationId, clientRequestId, newId, message } = params;
 
-    // 1. 更新 ChatStore 中的消息 ID
-    const chatStore = useChatStore.getState();
-    chatStore.updateMessageId(conversationId, clientRequestId, newId);
+    const store = useMessageStore.getState();
 
-    // 2. 确保消息在缓存中（如果 updateMessageId 失败，直接追加）
-    const cached = chatStore.messageCache.get(conversationId);
+    // 1. 更新消息 ID（从 temp-xxx 到真实 ID）
+    store.updateMessage(`temp-${clientRequestId}`, { id: newId });
+
+    // 2. 更新乐观消息 ID
+    store.updateOptimisticMessageId(conversationId, clientRequestId, newId);
+
+    // 3. 确保消息在缓存中（如果更新失败，直接追加）
+    const cached = store.getCachedMessages(conversationId);
     const messageExists = cached?.messages.some((m) => m.id === newId);
     if (!messageExists) {
-      chatStore.appendMessage(conversationId, message);
+      store.appendMessage(conversationId, message);
     }
-
-    // 3. 更新 RuntimeStore 中的消息 ID
-    useConversationRuntimeStore.getState().updateMessageId(
-      conversationId,
-      clientRequestId,
-      newId
-    );
   },
 
   /**
    * 标记对话未读
    *
-   * 从 TaskStore 提取，解耦 TaskStore 对 ChatStore 的依赖
-   * 调用方：useMessageCallbacks、mediaGenerationCore、taskRestoration
+   * 调用方：useMessageCallbacks、taskRestoration
    *
    * @param conversationId - 对话 ID
    */
   markConversationUnread(conversationId: string): void {
-    useChatStore.getState().markConversationUnread(conversationId);
+    useMessageStore.getState().markConversationUnread(conversationId);
   },
 };

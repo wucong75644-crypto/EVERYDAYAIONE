@@ -57,7 +57,7 @@ from .client import (
 
 from .chat_adapter import (
     KieChatAdapter,
-    create_chat_adapter,
+    create_kie_chat_adapter,
 )
 
 from .image_adapter import (
@@ -114,7 +114,7 @@ __all__ = [
     "KieImageAdapter",
     "KieVideoAdapter",
     # 便捷函数
-    "create_chat_adapter",
+    "create_kie_chat_adapter",
     "generate_image",
     "edit_image",
     "generate_image_pro",

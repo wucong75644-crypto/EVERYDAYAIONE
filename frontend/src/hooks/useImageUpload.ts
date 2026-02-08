@@ -5,7 +5,7 @@
  */
 
 import { useState } from 'react';
-import { uploadImageFile } from '../services/image';
+import { uploadImageFile } from '../services/upload';
 
 export interface UploadedImage {
   id: string; // 唯一标识
