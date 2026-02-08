@@ -1,14 +1,13 @@
 /**
  * 统一媒体消息处理 Hook
  *
- * 合并图片/视频处理器，消除重复代码
- * 根据 type 参数区分图片和视频生成
+ * 合并图片/视频处理器，使用统一的 sendMessage API
  */
 
 import { type UnifiedModel } from '../../constants/models';
-import { type Message } from '../../services/message';
-import { sendMediaMessage } from '../../services/messageSender';
-import { computeImageGenerationParams, computeVideoGenerationParams } from '../../utils/mediaRegeneration';
+import { useMessageStore, type Message } from '../../stores/useMessageStore';
+import { sendMessage, createTextContent, createTextWithImage, createErrorMessage, type GenerationType } from '../../services/messageSender';
+import { useWebSocketContext } from '../../contexts/WebSocketContext';
 
 export type MediaType = 'image' | 'video';
 
@@ -26,9 +25,6 @@ interface UseMediaMessageHandlerParams {
   videoAspectRatio?: string;
   removeWatermark?: boolean;
 
-  // 对话标题（媒体任务需要）
-  conversationTitle?: string;
-
   // 回调
   onMessagePending: (message: Message) => void;
   onMessageSent: (aiMessage?: Message | null) => void;
@@ -36,53 +32,68 @@ interface UseMediaMessageHandlerParams {
 }
 
 export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
-  const { type, selectedModel, conversationTitle: defaultTitle, onMessagePending, onMessageSent, onMediaTaskSubmitted } = params;
+  const {
+    type,
+    selectedModel,
+    aspectRatio,
+    resolution,
+    outputFormat,
+    videoFrames,
+    videoAspectRatio,
+    removeWatermark,
+    onMessagePending,
+    onMessageSent,
+  } = params;
+
+  // 获取 WebSocket 订阅函数
+  const { subscribeTaskWithMapping } = useWebSocketContext();
 
   const handleMediaGeneration = async (
     conversationId: string,
     prompt: string,
-    imageUrl: string | null = null,
-    conversationTitle: string = defaultTitle ?? ''
+    imageUrl: string | null = null
   ) => {
-    if (type === 'image') {
-      // 图片生成
-      const generationParams = computeImageGenerationParams(null, selectedModel.id, selectedModel);
-      await sendMediaMessage({
-        type: 'image',
+    try {
+      // 构建 content
+      const content = imageUrl
+        ? createTextWithImage(prompt, imageUrl)
+        : createTextContent(prompt);
+
+      // 构建类型特定参数（使用下划线命名匹配后端）
+      const mediaParams: Record<string, unknown> = {};
+
+      if (type === 'image') {
+        mediaParams.aspect_ratio = aspectRatio ?? '1:1';
+        mediaParams.resolution = resolution;
+        mediaParams.output_format = outputFormat;
+      } else if (type === 'video') {
+        mediaParams.n_frames = videoFrames;
+        mediaParams.aspect_ratio = videoAspectRatio;
+        mediaParams.remove_watermark = removeWatermark;
+      }
+
+      // 调用统一发送器
+      await sendMessage({
         conversationId,
-        content: prompt,
-        imageUrl,
-        modelId: selectedModel.id,
-        generationParams,
-        conversationTitle,
-        callbacks: {
-          onMessagePending,
-          onMessageSent,
-          onMediaTaskSubmitted,
-        },
+        content,
+        generationType: type as GenerationType,
+        model: selectedModel.id,
+        params: mediaParams,
+        subscribeTask: subscribeTaskWithMapping,
       });
-    } else {
-      // 视频生成
-      const { generationParams, finalModelId } = computeVideoGenerationParams(
-        null,
-        selectedModel.id,
-        selectedModel,
-        !!imageUrl
-      );
-      await sendMediaMessage({
-        type: 'video',
-        conversationId,
-        content: prompt,
-        imageUrl,
-        modelId: finalModelId,
-        generationParams,
-        conversationTitle,
-        callbacks: {
-          onMessagePending,
-          onMessageSent,
-          onMediaTaskSubmitted,
-        },
-      });
+
+      // 通知消息已开始发送
+      const userMessage = useMessageStore.getState().optimisticMessages.get(conversationId)?.[0];
+      if (userMessage) {
+        onMessagePending(userMessage);
+      }
+
+      // 注意：onMessageSent 现在由 WebSocketContext 处理
+      // WebSocket 推送会触发相应的状态更新
+
+    } catch (error) {
+      console.error('Media generation failed:', error);
+      onMessageSent(createErrorMessage(conversationId, error, '生成失败'));
     }
   };
 

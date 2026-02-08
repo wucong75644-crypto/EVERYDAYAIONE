@@ -167,9 +167,9 @@ export default function ForgotPassword() {
       });
 
       setSuccess(true);
-      // 3秒后跳转到登录页
+      // 3秒后跳转到首页（项目使用弹窗登录，无 /login 页面）
       setTimeout(() => {
-        navigate('/login');
+        navigate('/');
       }, 3000);
     } catch (err) {
       const error = err as AxiosError<ApiErrorResponse>;
@@ -190,12 +190,12 @@ export default function ForgotPassword() {
               </svg>
             </div>
             <h3 className="text-lg font-medium text-gray-900 mb-2">密码重置成功</h3>
-            <p className="text-sm text-gray-500 mb-4">即将跳转到登录页面...</p>
+            <p className="text-sm text-gray-500 mb-4">即将跳转到首页...</p>
             <Link
-              to="/login"
+              to="/"
               className="text-blue-600 hover:text-blue-500 font-medium"
             >
-              立即登录
+              返回首页
             </Link>
           </div>
         </div>
@@ -399,14 +399,14 @@ export default function ForgotPassword() {
             </form>
           )}
 
-          {/* 返回登录 */}
+          {/* 返回首页 */}
           <p className="mt-6 text-center text-sm text-gray-600">
             <Link
-              to="/login"
+              to="/"
               tabIndex={-1}
               className="font-medium text-blue-600 hover:text-blue-500"
             >
-              ← 返回登录
+              ← 返回首页
             </Link>
           </p>
         </div>

@@ -11,7 +11,7 @@ import {
   updateConversation,
   type ConversationListItem,
 } from '../../services/conversation';
-import { useTaskStore } from '../../stores/useTaskStore';
+import { useMessageStore } from '../../stores/useMessageStore';
 import {
   type OptimisticUpdate,
   type OptimisticTitleUpdate,
@@ -319,34 +319,29 @@ export default function ConversationList({
     closeDropdownMenu();
   };
 
-  // Placeholder handlers for new menu options
+  // 菜单功能占位（后续迭代实现）
   const handlePin = (id: string) => {
     void id;
     closeDropdownMenu();
-    // TODO: Implement pin functionality
   };
 
   const handleShare = (id: string) => {
     void id;
     closeDropdownMenu();
-    // TODO: Implement share functionality
   };
 
   const handleBatchManage = () => {
     closeDropdownMenu();
-    // TODO: Implement batch manage functionality
   };
 
   const handleMoveToGroup = (id: string) => {
     void id;
     closeDropdownMenu();
-    // TODO: Implement move to group functionality
   };
 
   const handleExport = (id: string) => {
     void id;
     closeDropdownMenu();
-    // TODO: Implement export functionality
   };
 
   const handleSubmitRename = async () => {
@@ -439,7 +434,7 @@ export default function ConversationList({
               isDropdownOpen={dropdownMenu?.id === conv.id}
               onSelect={() => {
                 onSelectConversation(conv.id, conv.title, conv.model_id);
-                useTaskStore.getState().clearRecentlyCompleted(conv.id);
+                useMessageStore.getState().clearRecentlyCompleted(conv.id);
               }}
               onStartRename={() => handleStartRename(conv.id, conv.title)}
               onContextMenu={(e) => handleContextMenu(e, conv.id, conv.title)}

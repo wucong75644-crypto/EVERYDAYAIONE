@@ -20,7 +20,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const handleLogout = () => {
     clearAuth();
     onClose();
-    navigate('/login');
+    navigate('/');
   };
 
   const handleRefresh = async () => {

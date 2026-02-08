@@ -1,62 +1,90 @@
 /**
  * 统一消息读取 Hook
  *
- * 封装消息合并逻辑，组件无需关心数据来源：
- * - 持久化消息来自 useChatStore.messageCache
- * - 临时消息来自 useConversationRuntimeStore.states
- *
- * 内部使用 mergeOptimisticMessages 进行合并和去重
+ * 合并 messages 和 optimisticMessages，实时显示流式消息和乐观更新
  */
 
 import { useMemo } from 'react';
-import { useChatStore } from '../stores/useChatStore';
-import { useConversationRuntimeStore } from '../stores/useConversationRuntimeStore';
-import { mergeOptimisticMessages } from '../utils/mergeOptimisticMessages';
-import type { Message } from '../services/message';
+import { useMessageStore, type Message } from '../stores/useMessageStore';
+
+/** 空数组常量，避免每次返回新引用 */
+const EMPTY_MESSAGES: Message[] = [];
 
 /**
- * 获取指定对话的统一消息列表
+ * 合并消息列表和乐观消息
  *
- * @param conversationId - 对话 ID，null 时返回空数组
- * @returns 合并后的消息列表（持久化消息 + 临时消息，已去重和排序）
- *
- * @example
- * ```tsx
- * const messages = useUnifiedMessages(conversationId);
- * return messages.map(msg => <MessageItem key={msg.id} message={msg} />);
- * ```
+ * 规则：
+ * 1. 先取 messages（已持久化）
+ * 2. 再追加 optimisticMessages 中不重复的（streaming/pending）
+ * 3. 按 created_at 排序
  */
-export function useUnifiedMessages(conversationId: string | null): Message[] {
-  // 订阅持久化消息（来自 useChatStore）
-  const cachedEntry = useChatStore((state) =>
-    conversationId ? state.messageCache.get(conversationId) : undefined
-  );
+function mergeMessages(
+  messages: Message[] | undefined,
+  optimisticMessages: Message[] | undefined
+): Message[] {
+  const persisted = messages || [];
+  const optimistic = optimisticMessages || [];
 
-  // 订阅运行时状态（来自 useConversationRuntimeStore）
-  const runtimeState = useConversationRuntimeStore((state) =>
-    conversationId ? state.states.get(conversationId) : undefined
-  );
+  if (optimistic.length === 0) {
+    return persisted;
+  }
 
-  // 合并消息（内部使用 mergeOptimisticMessages）
-  const messages = useMemo(() => {
-    if (!conversationId) return [];
+  // 收集已持久化消息的 ID
+  const persistedIds = new Set(persisted.map((m) => m.id));
 
-    // 从缓存获取持久化消息（已统一为 API Message 格式）
-    const persistedMessages: Message[] = cachedEntry?.messages ?? [];
+  // 过滤出不重复的乐观消息
+  // 注意：streaming-{id} 格式的消息需要特殊处理
+  const newOptimistic = optimistic.filter((m) => {
+    // 如果 ID 已存在于持久化消息中，跳过
+    if (persistedIds.has(m.id)) return false;
 
-    // 调用 mergeOptimisticMessages 进行合并
-    return mergeOptimisticMessages(persistedMessages, runtimeState);
-  }, [conversationId, cachedEntry, runtimeState]);
+    // 如果是 streaming- 前缀，检查对应的真实 ID 是否已存在
+    if (m.id.startsWith('streaming-')) {
+      const realId = m.id.replace('streaming-', '');
+      if (persistedIds.has(realId)) return false;
+    }
 
-  return messages;
+    return true;
+  });
+
+  if (newOptimistic.length === 0) {
+    return persisted;
+  }
+
+  // 合并并按时间排序
+  const merged = [...persisted, ...newOptimistic];
+  merged.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  return merged;
 }
 
 /**
- * 获取当前对话的统一消息列表（便捷方法）
+ * 获取指定对话的消息列表
  *
- * 自动从 useChatStore 获取 currentConversationId
+ * @param conversationId - 对话 ID，null 时返回空数组
+ * @returns 消息列表（包含乐观消息和流式消息）
+ */
+export function useUnifiedMessages(conversationId: string | null): Message[] {
+  // 选择 messages 和 optimisticMessages
+  const messages = useMessageStore((state) =>
+    conversationId ? state.messages.get(conversationId) : undefined
+  );
+
+  const optimisticMessages = useMessageStore((state) =>
+    conversationId ? state.optimisticMessages.get(conversationId) : undefined
+  );
+
+  // 使用 useMemo 缓存合并结果
+  return useMemo(() => {
+    if (!conversationId) return EMPTY_MESSAGES;
+    return mergeMessages(messages, optimisticMessages);
+  }, [conversationId, messages, optimisticMessages]);
+}
+
+/**
+ * 获取当前对话的消息列表
  */
 export function useCurrentMessages(): Message[] {
-  const currentConversationId = useChatStore((state) => state.currentConversationId);
+  const currentConversationId = useMessageStore((state) => state.currentConversationId);
   return useUnifiedMessages(currentConversationId);
 }

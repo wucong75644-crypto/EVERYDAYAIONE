@@ -10,10 +10,8 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { type AspectRatio } from '../../services/image';
-import { type VideoAspectRatio } from '../../services/video';
+import { type AspectRatio, type VideoAspectRatio } from '../../constants/models';
 import { getImagePlaceholderSize, getVideoPlaceholderSize } from '../../utils/settingsStorage';
-import { parseImageUrls } from '../../utils/imageUtils';
 import MediaPlaceholder from './MediaPlaceholder';
 import styles from './shared.module.css';
 
@@ -24,10 +22,10 @@ const IMAGE_RETRY_CONFIG = {
 };
 
 interface MessageMediaProps {
-  /** 图片 URL（单个或多个，逗号分隔） */
-  imageUrl?: string | null;
-  /** 视频 URL */
-  videoUrl?: string | null;
+  /** 图片 URL 列表 */
+  imageUrls?: string[];
+  /** 视频 URL 列表 */
+  videoUrls?: string[];
   /** 消息 ID（用于下载文件命名） */
   messageId: string;
   /** 是否为用户消息 */
@@ -337,8 +335,8 @@ function UserImageGallery({
 }
 
 export default function MessageMedia({
-  imageUrl,
-  videoUrl,
+  imageUrls = [],
+  videoUrls = [],
   messageId,
   isUser,
   onImageClick,
@@ -348,8 +346,8 @@ export default function MessageMedia({
   imageAspectRatio = '1:1',
   videoAspectRatio = 'landscape',
 }: MessageMediaProps) {
-  // 解析图片 URL（支持逗号分隔的多图）
-  const imageUrls = useMemo(() => parseImageUrls(imageUrl), [imageUrl]);
+  // 获取第一个视频 URL（目前只支持单视频）
+  const videoUrl = videoUrls[0] || null;
 
   // AI 生成图片的占位符尺寸
   const imagePlaceholderSize = useMemo(
@@ -383,7 +381,7 @@ export default function MessageMedia({
   // 没有媒体内容且不在生成中时不渲染
   if (imageUrls.length === 0 && !videoUrl && !isGenerating) return null;
 
-  // 处理图片点击（兼容旧接口）
+  // 处理图片点击
   const handleImageClick = (index?: number) => {
     onImageClick(index ?? 0);
   };
@@ -431,7 +429,6 @@ export default function MessageMedia({
               src={videoUrl}
               controls
               className={`${styles['dynamic-max-width']} rounded-xl shadow-sm w-full h-auto block`}
-              // 动态最大宽度需要 CSS 变量
               style={
                 {
                   '--max-width': `${videoPlaceholderSize.width}px`,

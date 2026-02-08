@@ -9,6 +9,13 @@ from decimal import Decimal
 
 from loguru import logger
 
+from ..base import (
+    BaseImageAdapter,
+    ModelProvider,
+    TaskStatus,
+    ImageGenerateResult,
+    CostEstimate,
+)
 from .client import KieClient, KieAPIError, KieTaskFailedError, KieTaskTimeoutError
 from .models import (
     CreateTaskRequest,
@@ -19,13 +26,12 @@ from .models import (
     AspectRatio,
     ImageResolution,
     ImageOutputFormat,
-    CostEstimate,
     UsageRecord,
     KieModelType,
     TaskState,
 )
 
-class KieImageAdapter:
+class KieImageAdapter(BaseImageAdapter):
     """
     KIE 图像生成适配器
 
@@ -114,17 +120,18 @@ class KieImageAdapter:
                 f"Supported: {list(self.MODEL_CONFIGS.keys())}"
             )
 
+        super().__init__(model)
         self.client = client
         self.model = model
         self.config = self.MODEL_CONFIGS[model]
 
     @property
-    def model_type(self) -> KieModelType:
-        return KieModelType.IMAGE
+    def provider(self) -> ModelProvider:
+        return ModelProvider.KIE
 
     @property
-    def model_id(self) -> str:
-        return self.config["model_id"]
+    def model_type(self) -> KieModelType:
+        return KieModelType.IMAGE
 
     @property
     def requires_image_input(self) -> bool:
@@ -191,7 +198,8 @@ class KieImageAdapter:
         wait_for_result: bool = True,
         poll_interval: float = 2.0,
         max_wait_time: float = 300.0,
-    ) -> Dict[str, Any]:
+        **kwargs,
+    ) -> ImageGenerateResult:
         """
         生成图像
 
@@ -253,13 +261,13 @@ class KieImageAdapter:
             else:
                 # 仅创建任务
                 create_response = await self.client.create_task(request)
-                return {
-                    "task_id": create_response.task_id,
-                    "status": "pending",
-                    "image_urls": [],
-                    "cost_usd": 0,
-                    "credits_consumed": 0,
-                }
+                return ImageGenerateResult(
+                    task_id=create_response.task_id,
+                    status=TaskStatus.PENDING,
+                    image_urls=[],
+                    cost_usd=0,
+                    credits_consumed=0,
+                )
         except (KieAPIError, KieTaskFailedError, KieTaskTimeoutError, ValueError):
             raise
         except Exception as e:
@@ -314,29 +322,29 @@ class KieImageAdapter:
         self,
         result: QueryTaskResponse,
         resolution: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> ImageGenerateResult:
         """格式化结果（状态值已映射为前端格式）"""
         cost_estimate = self.estimate_cost(resolution=resolution)
 
-        # 状态映射：KIE → 前端格式
+        # 状态映射：KIE → TaskStatus
         status_map = {
-            "success": "success",
-            "fail": "failed",
-            "waiting": "pending",
+            "success": TaskStatus.SUCCESS,
+            "fail": TaskStatus.FAILED,
+            "waiting": TaskStatus.PENDING,
         }
         raw_status = result.state.value if result.state else "unknown"
-        status = status_map.get(raw_status, raw_status)
+        status = status_map.get(raw_status, TaskStatus.PROCESSING)
 
-        return {
-            "task_id": result.task_id,
-            "status": status,
-            "image_urls": result.result_urls,
-            "cost_usd": float(cost_estimate.estimated_cost_usd),
-            "credits_consumed": cost_estimate.estimated_credits,
-            "cost_time_ms": result.cost_time,
-        }
+        return ImageGenerateResult(
+            task_id=result.task_id,
+            status=status,
+            image_urls=result.result_urls,
+            cost_usd=float(cost_estimate.estimated_cost_usd),
+            credits_consumed=cost_estimate.estimated_credits,
+            cost_time_ms=result.cost_time,
+        )
 
-    async def query_task(self, task_id: str) -> Dict[str, Any]:
+    async def query_task(self, task_id: str) -> ImageGenerateResult:
         """
         查询任务状态
 
@@ -344,29 +352,29 @@ class KieImageAdapter:
             task_id: 任务 ID
 
         Returns:
-            任务状态
+            ImageGenerateResult: 当前状态
         """
         try:
             result = await self.client.query_task(task_id)
 
-            # 映射 KIE 状态到 API 状态
+            # 映射 KIE 状态到 TaskStatus
             status_map = {
-                "waiting": "pending",
-                "success": "success",
-                "fail": "failed",
+                "waiting": TaskStatus.PENDING,
+                "success": TaskStatus.SUCCESS,
+                "fail": TaskStatus.FAILED,
             }
             status = status_map.get(
                 result.state.value if result.state else "unknown",
-                "processing"
+                TaskStatus.PROCESSING
             )
 
-            return {
-                "task_id": result.task_id,
-                "status": status,
-                "image_urls": result.result_urls if result.state == TaskState.SUCCESS else [],
-                "fail_code": result.fail_code,
-                "fail_msg": result.fail_msg,
-            }
+            return ImageGenerateResult(
+                task_id=result.task_id,
+                status=status,
+                image_urls=result.result_urls if result.state == TaskState.SUCCESS else [],
+                fail_code=result.fail_code,
+                fail_msg=result.fail_msg,
+            )
         except KieAPIError:
             raise
         except Exception as e:
@@ -426,6 +434,88 @@ class KieImageAdapter:
             cost_usd=estimate.estimated_cost_usd,
             credits_consumed=estimate.estimated_credits,
         )
+
+    async def close(self) -> None:
+        """关闭连接（KieClient 由调用方管理）"""
+        pass
+
+    # ==================== 回调解析 ====================
+
+    @classmethod
+    def extract_task_id(cls, payload: Dict[str, Any]) -> str:
+        """从 KIE 回调 payload 提取任务 ID"""
+        task_id = payload.get("taskId")
+        if not task_id:
+            raise ValueError("Missing taskId in KIE callback payload")
+        return task_id
+
+    @classmethod
+    def parse_callback(cls, payload: Dict[str, Any]) -> ImageGenerateResult:
+        """
+        解析 KIE 图片回调 payload
+
+        KIE 回调格式：
+        {
+            "taskId": "xxx",
+            "state": "success" | "fail",
+            "resultJson": "{\"resultUrls\": [\"https://...\"]}",
+            "failCode": "...",
+            "failMsg": "...",
+            "costTime": 12345
+        }
+        """
+        import json
+
+        task_id = cls.extract_task_id(payload)
+        state = payload.get("state")
+        cost_time = payload.get("costTime")
+
+        if state == "success":
+            # 解析 resultJson
+            result_json_raw = payload.get("resultJson", "{}")
+            if isinstance(result_json_raw, str):
+                try:
+                    result_data = json.loads(result_json_raw)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Invalid resultJson | task_id={task_id} | error={e}")
+                    return ImageGenerateResult(
+                        task_id=task_id,
+                        status=TaskStatus.FAILED,
+                        fail_code="INVALID_RESULT_JSON",
+                        fail_msg="回调数据解析失败",
+                        cost_time_ms=cost_time,
+                    )
+            else:
+                result_data = result_json_raw or {}
+
+            image_urls = result_data.get("resultUrls", [])
+
+            # 空结果视为失败
+            if not image_urls:
+                logger.warning(f"Empty resultUrls in success callback | task_id={task_id}")
+                return ImageGenerateResult(
+                    task_id=task_id,
+                    status=TaskStatus.FAILED,
+                    fail_code="EMPTY_RESULT",
+                    fail_msg="生成结果为空",
+                    cost_time_ms=cost_time,
+                )
+
+            return ImageGenerateResult(
+                task_id=task_id,
+                status=TaskStatus.SUCCESS,
+                image_urls=image_urls,
+                cost_time_ms=cost_time,
+            )
+        else:
+            return ImageGenerateResult(
+                task_id=task_id,
+                status=TaskStatus.FAILED,
+                fail_code=payload.get("failCode", "UNKNOWN"),
+                fail_msg=payload.get("failMsg", "任务失败"),
+                cost_time_ms=cost_time,
+            )
+
 
 async def generate_image(
     api_key: str,

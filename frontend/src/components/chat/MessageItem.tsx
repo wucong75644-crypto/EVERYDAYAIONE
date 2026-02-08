@@ -6,16 +6,17 @@
  */
 
 import { memo, useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import type { Message } from '../../services/message';
+import type { Message } from '../../stores/useMessageStore';
+import { getTextContent, getImageUrls, getVideoUrls } from '../../stores/useMessageStore';
 import DeleteMessageModal from './DeleteMessageModal';
 import ImagePreviewModal from './ImagePreviewModal';
 import MessageMedia from './MessageMedia';
 import MessageActions from './MessageActions';
 import { getSavedSettings } from '../../utils/settingsStorage';
-import { parseImageUrls } from '../../utils/imageUtils';
 import { useModalAnimation } from '../../hooks/useModalAnimation';
 import LoadingPlaceholder from './LoadingPlaceholder';
 import { PLACEHOLDER_TEXT } from '../../constants/placeholder';
+import type { AspectRatio, VideoAspectRatio } from '../../constants/models';
 
 interface MessageItemProps {
   message: Message;
@@ -47,36 +48,55 @@ export default memo(function MessageItem({
 }: MessageItemProps) {
   const isUser = message.role === 'user';
 
-  // 判断是否为失败消息：只检查 is_error 标志
-  const isErrorMessage = message.is_error === true;
+  // 提取内容（兼容新旧格式）
+  const textContent = getTextContent(message);
+  const imageUrls = getImageUrls(message);
+  const videoUrls = getVideoUrls(message);
+  const hasImage = imageUrls.length > 0;
+  const hasVideo = videoUrls.length > 0;
+
+  // 判断是否为失败消息
+  const isErrorMessage = message.status === 'failed' || message.is_error === true;
 
   // 获取当前高级设置（用于占位符动态尺寸）
   const savedSettings = useMemo(() => getSavedSettings(), []);
 
   // 计算实际使用的宽高比：已生成的媒体使用保存的参数，生成中使用当前设置
-  const actualImageAspectRatio = message.generation_params?.image?.aspectRatio ?? savedSettings.image.aspectRatio;
-  const actualVideoAspectRatio = message.generation_params?.video?.aspectRatio ?? savedSettings.video.aspectRatio;
+  const genParams = message.generation_params || {};
+  const actualImageAspectRatio = (genParams.aspect_ratio ?? genParams.aspectRatio ?? savedSettings.image.aspectRatio) as AspectRatio;
+  const actualVideoAspectRatio = (genParams.aspect_ratio ?? genParams.aspectRatio ?? savedSettings.video.aspectRatio) as VideoAspectRatio;
 
   // 判断是否为媒体占位符消息（图片/视频生成中）
   const mediaPlaceholderInfo = useMemo(() => {
-    // 条件：streaming- 开头 + AI消息 + 特定文本 + 无媒体
+    // 条件：pending 状态 + AI消息 + 无媒体
     if (
-      !message.id.startsWith('streaming-') ||
       message.role !== 'assistant' ||
-      message.image_url ||
-      message.video_url
+      hasImage ||
+      hasVideo
     ) {
       return null;
     }
 
-    if (message.content.includes(PLACEHOLDER_TEXT.IMAGE_GENERATING)) {
+    // 检查是否为 pending 状态的媒体生成
+    if (message.status === 'pending') {
+      const genType = message.generation_params?.type;
+      if (genType === 'image') {
+        return { type: 'image' as const, text: PLACEHOLDER_TEXT.IMAGE_GENERATING };
+      }
+      if (genType === 'video') {
+        return { type: 'video' as const, text: PLACEHOLDER_TEXT.VIDEO_GENERATING };
+      }
+    }
+
+    // 兼容旧格式：检查文本内容
+    if (textContent.includes(PLACEHOLDER_TEXT.IMAGE_GENERATING)) {
       return { type: 'image' as const, text: PLACEHOLDER_TEXT.IMAGE_GENERATING };
     }
-    if (message.content.includes(PLACEHOLDER_TEXT.VIDEO_GENERATING)) {
+    if (textContent.includes(PLACEHOLDER_TEXT.VIDEO_GENERATING)) {
       return { type: 'video' as const, text: PLACEHOLDER_TEXT.VIDEO_GENERATING };
     }
     return null;
-  }, [message.id, message.role, message.content, message.image_url, message.video_url]);
+  }, [message.role, message.status, message.generation_params, hasImage, hasVideo, textContent]);
 
   // 工具栏显示/隐藏状态
   const [showToolbar, setShowToolbar] = useState(false);
@@ -96,21 +116,18 @@ export default memo(function MessageItem({
   const [showImagePreview, setShowImagePreview] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(currentImageIndex);
 
-  // 解析当前消息的图片 URL 列表（支持逗号分隔的多图）
-  const messageImageUrls = useMemo(() => parseImageUrls(message.image_url), [message.image_url]);
-
   // 用于预览的图片列表：所有消息都使用全局列表（支持查看对话中所有图片）
   const previewImageUrls = allImageUrls;
 
   // 将消息内图片索引转换为全局索引
   const getGlobalImageIndex = useCallback((localIndex: number): number => {
-    if (messageImageUrls.length === 0 || localIndex >= messageImageUrls.length) {
+    if (imageUrls.length === 0 || localIndex >= imageUrls.length) {
       return currentImageIndex;
     }
-    const targetUrl = messageImageUrls[localIndex];
+    const targetUrl = imageUrls[localIndex];
     const globalIndex = allImageUrls.indexOf(targetUrl);
     return globalIndex >= 0 ? globalIndex : currentImageIndex;
-  }, [messageImageUrls, allImageUrls, currentImageIndex]);
+  }, [imageUrls, allImageUrls, currentImageIndex]);
 
   // 鼠标进入消息区域 - 显示工具栏并清除隐藏定时器
   const handleMouseEnter = () => {
@@ -175,7 +192,7 @@ export default memo(function MessageItem({
   };
 
   // 判断是否有媒体内容（需要更宽的显示区域）
-  const hasMedia = !!(message.image_url || message.video_url || mediaPlaceholderInfo);
+  const hasMedia = hasImage || hasVideo || !!mediaPlaceholderInfo;
 
   return (
     <div
@@ -188,11 +205,11 @@ export default memo(function MessageItem({
         onMouseLeave={handleMouseLeave}
       >
         {/* 用户消息：图片在上，文字在下（因为上传时已获取 CDN URL，图片先准备好） */}
-        {isUser && (message.image_url || message.video_url) && (
+        {isUser && (hasImage || hasVideo) && (
           <div className="mb-3">
             <MessageMedia
-              imageUrl={message.image_url}
-              videoUrl={message.video_url}
+              imageUrls={imageUrls}
+              videoUrls={videoUrls}
               messageId={message.id}
               isUser={isUser}
               onImageClick={(index) => {
@@ -220,16 +237,16 @@ export default memo(function MessageItem({
           {/* 消息文本 */}
           <div className="text-[15px] leading-relaxed whitespace-pre-wrap">
             {/* 加载状态：重新生成或流式输出开始但内容为空 */}
-            {((isRegenerating || isStreaming) && !message.content) ? (
+            {((isRegenerating || isStreaming) && !textContent) ? (
               <LoadingPlaceholder text={PLACEHOLDER_TEXT.CHAT_THINKING} />
             ) : mediaPlaceholderInfo ? (
               /* 媒体占位符：图片/视频生成中 */
               <LoadingPlaceholder text={mediaPlaceholderInfo.text} />
             ) : (
               <>
-                {message.content}
+                {textContent}
                 {/* 流式输出光标 */}
-                {(isStreaming || isRegenerating) && message.content && (
+                {(isStreaming || isRegenerating) && textContent && (
                   <span className="inline-block w-2 h-4 bg-blue-500 ml-0.5 animate-pulse" />
                 )}
               </>
@@ -253,8 +270,8 @@ export default memo(function MessageItem({
         {/* AI 消息：文字在上，图片在下 */}
         {!isUser && (
           <MessageMedia
-            imageUrl={message.image_url}
-            videoUrl={message.video_url}
+            imageUrls={imageUrls}
+            videoUrls={videoUrls}
             messageId={message.id}
             isUser={isUser}
             onImageClick={(index) => {
@@ -273,7 +290,7 @@ export default memo(function MessageItem({
         {/* 操作工具栏 */}
         <MessageActions
           messageId={message.id}
-          content={message.content}
+          content={textContent}
           isUser={isUser}
           isErrorMessage={isErrorMessage}
           isRegenerating={isRegenerating}

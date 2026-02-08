@@ -15,7 +15,7 @@ from loguru import logger
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from api.routes import audio, auth, conversation, health, image, message, task, video, ws
+from api.routes import audio, auth, conversation, health, image, message, task, webhook, ws
 from core.config import get_settings
 from core.exceptions import AppException
 from core.limiter import limiter
@@ -250,17 +250,17 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(message.router, prefix="/api")
     app.include_router(message.message_router, prefix="/api")  # 独立消息操作
 
-    # 图像生成
+    # 图像上传（生成功能已迁移到 /messages/generate）
     app.include_router(image.router, prefix="/api")
-
-    # 视频生成
-    app.include_router(video.router, prefix="/api")
 
     # 音频上传
     app.include_router(audio.router, prefix="/api")
 
     # 任务管理
     app.include_router(task.router, prefix="/api")
+
+    # Webhook 回调（无需用户鉴权，Provider 直接调用）
+    app.include_router(webhook.router, prefix="/api")
 
     # WebSocket
     app.include_router(ws.router, prefix="/api")

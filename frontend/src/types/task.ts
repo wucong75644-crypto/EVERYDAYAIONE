@@ -16,8 +16,8 @@ export type TaskType = 'image' | 'video';
 // Store 任务状态（前端状态管理）
 // ============================================================
 
-/** Store 任务状态 */
-export type StoreTaskStatus = 'pending' | 'streaming' | 'polling' | 'completed' | 'error';
+/** Store 任务状态（v2.0: polling 已移除，改用 WebSocket 推送） */
+export type StoreTaskStatus = 'pending' | 'streaming' | 'completed' | 'error';
 
 /** Store 任务类型（包含聊天） */
 export type StoreTaskType = 'chat' | 'image' | 'video';

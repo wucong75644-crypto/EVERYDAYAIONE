@@ -2,6 +2,8 @@
 KIE Chat 模型适配器
 
 适配 Gemini 3 Pro / Gemini 3 Flash (OpenAI 兼容格式)
+
+继承统一基类 BaseChatAdapter，保持现有接口不变。
 """
 
 from typing import List, Optional, Dict, Any, AsyncIterator, Union
@@ -27,9 +29,16 @@ from .models import (
     UsageRecord,
     KieModelType,
 )
+from ..base import (
+    BaseChatAdapter,
+    ModelProvider,
+    StreamChunk,
+    ChatResponse,
+    CostEstimate as BaseCostEstimate,
+)
 
 
-class KieChatAdapter:
+class KieChatAdapter(BaseChatAdapter):
     """
     KIE Chat 模型适配器
 
@@ -80,6 +89,8 @@ class KieChatAdapter:
             client: KIE HTTP 客户端
             model: 模型名称
         """
+        super().__init__(model)  # 调用基类初始化
+
         if model not in self.MODEL_CONFIGS:
             raise ValueError(f"Unsupported model: {model}")
 
@@ -434,28 +445,128 @@ class KieChatAdapter:
             credits_consumed=estimate.estimated_credits,
         )
 
+    # ============================================================
+    # 基类抽象方法实现（统一接口）
+    # ============================================================
+
+    @property
+    def provider(self) -> ModelProvider:
+        """返回提供商标识"""
+        return ModelProvider.KIE
+
+    @property
+    def supports_streaming(self) -> bool:
+        """是否支持流式输出"""
+        return True
+
+    async def stream_chat(
+        self,
+        messages: List[Dict[str, Any]],
+        reasoning_effort: Optional[str] = None,
+        thinking_mode: Optional[str] = None,
+        **kwargs,
+    ) -> AsyncIterator[StreamChunk]:
+        """
+        统一格式的流式聊天
+
+        将现有 chat() 方法的输出转换为统一的 StreamChunk 格式
+        """
+        # 转换消息格式
+        formatted_messages = self.format_messages_from_history(messages)
+
+        # 解析参数
+        effort = ReasoningEffort(reasoning_effort) if reasoning_effort else ReasoningEffort.HIGH
+        mode = ThinkingMode(thinking_mode) if thinking_mode else None
+
+        # 调用现有方法
+        stream = await self.chat(
+            messages=formatted_messages,
+            stream=True,
+            include_thoughts=False,
+            reasoning_effort=effort,
+            thinking_mode=mode,
+            **kwargs,
+        )
+
+        # 转换输出格式
+        async for chunk in stream:
+            yield StreamChunk(
+                content=chunk.choices[0].delta.content if chunk.choices else None,
+                finish_reason=chunk.choices[0].finish_reason if chunk.choices else None,
+                prompt_tokens=chunk.usage.prompt_tokens if chunk.usage else 0,
+                completion_tokens=chunk.usage.completion_tokens if chunk.usage else 0,
+            )
+
+    async def chat_sync(
+        self,
+        messages: List[Dict[str, Any]],
+        reasoning_effort: Optional[str] = None,
+        thinking_mode: Optional[str] = None,
+        **kwargs,
+    ) -> ChatResponse:
+        """非流式聊天（统一接口，避免与现有 chat 方法冲突）"""
+        formatted_messages = self.format_messages_from_history(messages)
+        effort = ReasoningEffort(reasoning_effort) if reasoning_effort else ReasoningEffort.HIGH
+        mode = ThinkingMode(thinking_mode) if thinking_mode else None
+
+        response = await self.chat(
+            messages=formatted_messages,
+            stream=False,
+            include_thoughts=False,
+            reasoning_effort=effort,
+            thinking_mode=mode,
+            **kwargs,
+        )
+
+        content = ""
+        if response.choices:
+            content = response.choices[0].delta.content or ""
+
+        return ChatResponse(
+            content=content,
+            finish_reason=response.choices[0].finish_reason if response.choices else None,
+            prompt_tokens=response.usage.prompt_tokens if response.usage else 0,
+            completion_tokens=response.usage.completion_tokens if response.usage else 0,
+        )
+
+    def estimate_cost_unified(self, input_tokens: int, output_tokens: int) -> BaseCostEstimate:
+        """转换现有 estimate_cost 的输出为统一格式"""
+        result = self.estimate_cost(input_tokens, output_tokens)
+        return BaseCostEstimate(
+            model=result.model,
+            estimated_cost_usd=result.estimated_cost_usd,
+            estimated_credits=result.estimated_credits,
+            breakdown=result.breakdown,
+        )
+
+    async def close(self) -> None:
+        """关闭客户端连接"""
+        await self.client.close()
+
 
 # ============================================================
-# 便捷函数
+# 便捷函数（KIE 专用，推荐使用统一工厂 adapters.create_chat_adapter）
 # ============================================================
 
-async def create_chat_adapter(
+async def create_kie_chat_adapter(
     api_key: str,
     model: str = "gemini-3-flash",
 ) -> KieChatAdapter:
     """
-    创建 Chat 适配器
+    创建 KIE Chat 适配器（KIE 专用便捷函数）
+
+    推荐使用统一工厂: from services.adapters import create_chat_adapter
 
     Args:
         api_key: KIE API 密钥
         model: 模型名称
 
     Returns:
-        Chat 适配器实例
+        KIE Chat 适配器实例
     """
     try:
         client = KieClient(api_key)
         return KieChatAdapter(client, model)
     except Exception as e:
-        logger.error(f"Create chat adapter failed: model={model}, error={e}")
+        logger.error(f"Create KIE chat adapter failed: model={model}, error={e}")
         raise

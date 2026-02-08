@@ -9,6 +9,13 @@ from decimal import Decimal
 
 from loguru import logger
 
+from ..base import (
+    BaseVideoAdapter,
+    ModelProvider,
+    TaskStatus,
+    VideoGenerateResult,
+    CostEstimate,
+)
 from .client import KieClient, KieAPIError, KieTaskFailedError, KieTaskTimeoutError
 from .models import (
     CreateTaskRequest,
@@ -18,14 +25,13 @@ from .models import (
     Sora2ProStoryboardInput,
     AspectRatio,
     VideoFrames,
-    CostEstimate,
     UsageRecord,
     KieModelType,
     TaskState,
 )
 
 
-class KieVideoAdapter:
+class KieVideoAdapter(BaseVideoAdapter):
     """
     KIE 视频生成适配器
 
@@ -93,17 +99,18 @@ class KieVideoAdapter:
                 f"Supported: {list(self.MODEL_CONFIGS.keys())}"
             )
 
+        super().__init__(model)
         self.client = client
         self.model = model
         self.config = self.MODEL_CONFIGS[model]
 
     @property
-    def model_type(self) -> KieModelType:
-        return KieModelType.VIDEO
+    def provider(self) -> ModelProvider:
+        return ModelProvider.KIE
 
     @property
-    def model_id(self) -> str:
-        return self.config["model_id"]
+    def model_type(self) -> KieModelType:
+        return KieModelType.VIDEO
 
     @property
     def requires_image_input(self) -> bool:
@@ -151,21 +158,22 @@ class KieVideoAdapter:
         self,
         prompt: Optional[str] = None,
         image_urls: Optional[List[str]] = None,
-        n_frames: str = "10",
+        duration_seconds: int = 10,
         aspect_ratio: str = "landscape",
         remove_watermark: bool = True,
         callback_url: Optional[str] = None,
         wait_for_result: bool = True,
         poll_interval: float = 5.0,  # 视频生成较慢，间隔长一些
         max_wait_time: float = 600.0,  # 最多等待10分钟
-    ) -> Dict[str, Any]:
+        **kwargs,
+    ) -> VideoGenerateResult:
         """
         生成视频
 
         Args:
             prompt: 视频描述 (sora-2-pro-storyboard 不需要)
             image_urls: 输入图片 URL (sora-2-image-to-video 必填)
-            n_frames: 视频时长 ("10"/"15"/"25")
+            duration_seconds: 视频时长 (10/15/25 秒)
             aspect_ratio: 宽高比 ("portrait"/"landscape")
             remove_watermark: 是否去水印
             callback_url: 回调 URL
@@ -174,22 +182,17 @@ class KieVideoAdapter:
             max_wait_time: 最大等待时间
 
         Returns:
-            {
-                "task_id": "xxx",
-                "status": "success",
-                "video_url": "https://...",
-                "duration_seconds": 10,
-                "cost_usd": 0.15,
-                "credits_consumed": 40,
-            }
+            VideoGenerateResult: 统一结果格式
         """
+        n_frames = str(duration_seconds)
+
         # 参数验证
         self.validate_prompt(prompt)
         self.validate_image_urls(image_urls)
         self.validate_frames(n_frames)
         self.validate_aspect_ratio(aspect_ratio)
 
-        duration = int(n_frames)
+        duration = duration_seconds
 
         try:
             # 构建输入参数
@@ -222,14 +225,14 @@ class KieVideoAdapter:
                 return self._format_result(result, duration)
             else:
                 create_response = await self.client.create_task(request)
-                return {
-                    "task_id": create_response.task_id,
-                    "status": "pending",
-                    "video_url": None,
-                    "duration_seconds": duration,
-                    "cost_usd": 0,
-                    "credits_consumed": 0,
-                }
+                return VideoGenerateResult(
+                    task_id=create_response.task_id,
+                    status=TaskStatus.PENDING,
+                    video_url=None,
+                    duration_seconds=duration,
+                    cost_usd=0,
+                    credits_consumed=0,
+                )
         except (KieAPIError, KieTaskFailedError, KieTaskTimeoutError, ValueError):
             raise
         except Exception as e:
@@ -284,33 +287,33 @@ class KieVideoAdapter:
         self,
         result: QueryTaskResponse,
         duration_seconds: int,
-    ) -> Dict[str, Any]:
+    ) -> VideoGenerateResult:
         """格式化结果（状态值已映射为前端格式）"""
         cost_estimate = self.estimate_cost(duration_seconds)
 
         # 获取视频 URL (通常只有一个)
         video_url = result.result_urls[0] if result.result_urls else None
 
-        # 状态映射：KIE → 前端格式
+        # 状态映射：KIE → TaskStatus
         status_map = {
-            "success": "success",
-            "fail": "failed",
-            "waiting": "pending",
+            "success": TaskStatus.SUCCESS,
+            "fail": TaskStatus.FAILED,
+            "waiting": TaskStatus.PENDING,
         }
         raw_status = result.state.value if result.state else "unknown"
-        status = status_map.get(raw_status, raw_status)
+        status = status_map.get(raw_status, TaskStatus.PROCESSING)
 
-        return {
-            "task_id": result.task_id,
-            "status": status,
-            "video_url": video_url,
-            "duration_seconds": duration_seconds,
-            "cost_usd": float(cost_estimate.estimated_cost_usd),
-            "credits_consumed": cost_estimate.estimated_credits,
-            "cost_time_ms": result.cost_time,
-        }
+        return VideoGenerateResult(
+            task_id=result.task_id,
+            status=status,
+            video_url=video_url,
+            duration_seconds=duration_seconds,
+            cost_usd=float(cost_estimate.estimated_cost_usd),
+            credits_consumed=cost_estimate.estimated_credits,
+            cost_time_ms=result.cost_time,
+        )
 
-    async def query_task(self, task_id: str) -> Dict[str, Any]:
+    async def query_task(self, task_id: str) -> VideoGenerateResult:
         """
         查询任务状态
 
@@ -318,7 +321,7 @@ class KieVideoAdapter:
             task_id: 任务 ID
 
         Returns:
-            任务状态（状态值已映射为前端格式：success/failed/pending）
+            VideoGenerateResult: 当前状态
         """
         try:
             result = await self.client.query_task(task_id)
@@ -327,22 +330,22 @@ class KieVideoAdapter:
             if result.state == TaskState.SUCCESS and result.result_urls:
                 video_url = result.result_urls[0]
 
-            # 状态映射：KIE → 前端格式
+            # 状态映射：KIE → TaskStatus
             status_map = {
-                "success": "success",
-                "fail": "failed",  # KIE 返回 "fail"，前端期望 "failed"
-                "waiting": "pending",  # KIE 返回 "waiting"，前端期望 "pending"
+                "success": TaskStatus.SUCCESS,
+                "fail": TaskStatus.FAILED,
+                "waiting": TaskStatus.PENDING,
             }
             raw_status = result.state.value if result.state else "unknown"
-            status = status_map.get(raw_status, raw_status)
+            status = status_map.get(raw_status, TaskStatus.PROCESSING)
 
-            return {
-                "task_id": result.task_id,
-                "status": status,
-                "video_url": video_url,
-                "fail_code": result.fail_code,
-                "fail_msg": result.fail_msg,
-            }
+            return VideoGenerateResult(
+                task_id=result.task_id,
+                status=status,
+                video_url=video_url,
+                fail_code=result.fail_code,
+                fail_msg=result.fail_msg,
+            )
         except KieAPIError:
             raise
         except Exception as e:
@@ -394,6 +397,79 @@ class KieVideoAdapter:
             cost_usd=estimate.estimated_cost_usd,
             credits_consumed=estimate.estimated_credits,
         )
+
+    async def close(self) -> None:
+        """关闭连接（KieClient 由调用方管理）"""
+        pass
+
+    # ==================== 回调解析 ====================
+
+    @classmethod
+    def extract_task_id(cls, payload: Dict[str, Any]) -> str:
+        """从 KIE 回调 payload 提取任务 ID"""
+        task_id = payload.get("taskId")
+        if not task_id:
+            raise ValueError("Missing taskId in KIE callback payload")
+        return task_id
+
+    @classmethod
+    def parse_callback(cls, payload: Dict[str, Any]) -> VideoGenerateResult:
+        """
+        解析 KIE 视频回调 payload
+
+        KIE 回调格式同图片，resultUrls 包含视频 URL（通常只有一个）
+        """
+        import json
+
+        task_id = cls.extract_task_id(payload)
+        state = payload.get("state")
+        cost_time = payload.get("costTime")
+
+        if state == "success":
+            result_json_raw = payload.get("resultJson", "{}")
+            if isinstance(result_json_raw, str):
+                try:
+                    result_data = json.loads(result_json_raw)
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Invalid resultJson | task_id={task_id} | error={e}")
+                    return VideoGenerateResult(
+                        task_id=task_id,
+                        status=TaskStatus.FAILED,
+                        fail_code="INVALID_RESULT_JSON",
+                        fail_msg="回调数据解析失败",
+                        cost_time_ms=cost_time,
+                    )
+            else:
+                result_data = result_json_raw or {}
+
+            result_urls = result_data.get("resultUrls", [])
+            video_url = result_urls[0] if result_urls else None
+
+            # 空结果视为失败
+            if not video_url:
+                logger.warning(f"Empty resultUrls in success callback | task_id={task_id}")
+                return VideoGenerateResult(
+                    task_id=task_id,
+                    status=TaskStatus.FAILED,
+                    fail_code="EMPTY_RESULT",
+                    fail_msg="生成结果为空",
+                    cost_time_ms=cost_time,
+                )
+
+            return VideoGenerateResult(
+                task_id=task_id,
+                status=TaskStatus.SUCCESS,
+                video_url=video_url,
+                cost_time_ms=cost_time,
+            )
+        else:
+            return VideoGenerateResult(
+                task_id=task_id,
+                status=TaskStatus.FAILED,
+                fail_code=payload.get("failCode", "UNKNOWN"),
+                fail_msg=payload.get("failMsg", "任务失败"),
+                cost_time_ms=cost_time,
+            )
 
 
 async def text_to_video(

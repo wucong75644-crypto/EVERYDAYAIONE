@@ -356,18 +356,22 @@ class WebSocketManager:
 
                 task_buffer = self._task_buffers[task_id]
 
-                # 序列化消息
+                # 先获取并设置消息索引（确保缓存的消息也包含 index）
+                message_index = task_buffer.next_index
+                message["message_index"] = message_index
+
+                # 序列化消息（此时已包含 message_index）
                 import json
                 msg_json = json.dumps(message, ensure_ascii=False)
-                message_index = task_buffer.add_message(msg_json)
+                task_buffer.add_message(msg_json)
 
                 # 更新累积内容
                 if message.get("type") == "chat_chunk":
                     text = message.get("payload", {}).get("text", "")
                     task_buffer.accumulated_content += text
-
-        # 添加消息索引到消息中
-        message["message_index"] = message_index
+        else:
+            # 不缓存时也添加索引（虽然是 -1）
+            message["message_index"] = message_index
 
         # 发送给所有订阅者
         subscribers = self._task_subscribers.get(task_id, set())

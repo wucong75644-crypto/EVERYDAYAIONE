@@ -7,10 +7,8 @@
 ```
 handlers/
 ├── README.md                      # 本文档
-├── mediaHandlerUtils.ts          # 共享工具函数
 ├── useTextMessageHandler.ts      # 文本消息处理
-├── useMediaMessageHandler.ts     # 图片/视频统一处理（通过 type 参数区分）
-└── __tests__/                    # 单元测试
+└── useMediaMessageHandler.ts     # 图片/视频统一处理（通过 type 参数区分）
 ```
 
 ## 快速开始
@@ -36,9 +34,7 @@ function ChatComponent() {
     onStreamContent: (text, conversationId) => {
       console.log('流式内容:', text);
     },
-    onStreamStart: (conversationId, model) => {
-      console.log('开始生成');
-    },
+    // 注意：onStreamStart 已废弃，广播由内部 tabSync 处理
   });
 
   // 发送文本消息
@@ -123,17 +119,17 @@ function ImageGenerationComponent() {
 **支持的功能：**
 - ✅ 文本生图片
 - ✅ 图片编辑
-- ✅ 后台轮询（异步处理）
+- ✅ WebSocket 实时推送（异步处理）
 - ✅ 自定义宽高比
 - ✅ 分辨率控制
 - ✅ 输出格式选择（png/jpg/webp）
 - ✅ 积分消耗跟踪
 
-**后台任务流程：**
-1. 用户消息立即显示
+**后台任务流程（POST + WebSocket 模式）：**
+1. 用户消息立即显示（乐观更新）
 2. 占位符消息显示"生成中..."
-3. API 请求提交，获取 task_id
-4. 后台轮询任务状态（每 2 秒）
+3. POST API 请求提交，立即返回 task_id
+4. WebSocket 订阅任务状态，接收实时推送
 5. 任务完成后替换占位符为真实图片
 
 ---
@@ -193,35 +189,24 @@ function VideoGenerationComponent() {
 **支持的功能：**
 - ✅ 文本生视频
 - ✅ 图片生视频
-- ✅ 后台轮询（异步处理，最长 30 分钟）
+- ✅ WebSocket 实时推送（异步处理）
 - ✅ 帧数控制（5/10/15 帧）
 - ✅ 宽高比选择（landscape/portrait/square）
 - ✅ 水印去除选项
 - ✅ 积分消耗跟踪
 
-**后台任务流程：**
-1. 用户消息立即显示
+**后台任务流程（POST + WebSocket 模式）：**
+1. 用户消息立即显示（乐观更新）
 2. 占位符消息显示"生成中..."
-3. API 请求提交，获取 task_id
-4. 后台轮询任务状态（每 5 秒）
+3. POST API 请求提交，立即返回 task_id
+4. WebSocket 订阅任务状态，接收实时推送
 5. 任务完成后替换占位符为真实视频
 
 ---
 
 ## 工具函数
 
-### mediaHandlerUtils.ts
-
-提供错误提取工具函数。
-
-```typescript
-import { extractErrorMessage } from './handlers/mediaHandlerUtils';
-
-// 从错误对象提取友好消息
-const errorMsg = extractErrorMessage(error);
-```
-
-> 注意：URL 提取和错误消息创建逻辑已移至 `services/messageSender/mediaGenerationCore.ts`
+错误提取和消息创建逻辑已统一移至 `services/messageSender.ts`。
 
 ---
 
@@ -256,11 +241,11 @@ try {
 
 ### 3. 超时错误
 
-媒体生成任务会自动超时保护：
-- 图片：最长轮询 10 分钟
-- 视频：最长轮询 30 分钟
+媒体生成任务由后端统一管理超时：
+- 图片：最长 10 分钟
+- 视频：最长 30 分钟
 
-超时后会调用 `onError` 回调并显示错误消息。
+超时后后端通过 WebSocket 推送失败状态，前端显示错误消息。
 
 ---
 
@@ -277,15 +262,19 @@ const [, response] = await Promise.all([
 ]);
 ```
 
-### 2. 后台轮询
+### 2. WebSocket 实时推送
 
-媒体生成使用后台轮询，不阻塞 UI：
+媒体生成使用 WebSocket 订阅，实时接收任务状态：
 
 ```typescript
-handleMediaPolling(response, {
+// 通过 sendUnifiedMessage 自动处理 WebSocket 订阅
+await sendUnifiedMessage({
   type: 'image',
-  pollInterval: 2000,  // 每 2 秒轮询一次
-  maxDuration: 600000, // 最长 10 分钟
+  subscribeTask: subscribeTaskWithMapping,
+  callbacks: {
+    onComplete: (finalMessage) => { /* 处理完成 */ },
+    onError: (error) => { /* 处理错误 */ },
+  },
 });
 ```
 
@@ -328,7 +317,6 @@ function MessageComposer() {
     onMessagePending,
     onMessageSent,
     onStreamContent,
-    onStreamStart,
     onMediaTaskSubmitted,
   });
 
@@ -354,23 +342,7 @@ function MessageComposer() {
 
 ## 测试
 
-每个 Handler 都有对应的单元测试：
-
-```bash
-# 运行所有测试
-npm test
-
-# 运行特定测试
-npm test useTextMessageHandler
-
-# 查看覆盖率
-npm run test:coverage
-```
-
-测试文件位置：
-- `__tests__/useTextMessageHandler.test.ts`
-- `__tests__/useMediaMessageHandler.test.ts`
-- `__tests__/mediaHandlerUtils.test.ts`
+> **待完善**：测试用例待补充。
 
 ---
 
@@ -378,35 +350,34 @@ npm run test:coverage
 
 ### Q: 如何取消正在进行的媒体生成任务？
 
-A: 使用 `useTaskStore` 的 `stopPolling` 方法：
+A: 使用 WebSocket 上下文的取消订阅方法：
 
 ```typescript
-import { useTaskStore } from '../stores/useTaskStore';
+import { useWebSocketContext } from '../../contexts/WebSocketContext';
 
-const { stopPolling } = useTaskStore();
-stopPolling(taskId);
+const { unsubscribeTask } = useWebSocketContext();
+unsubscribeTask(taskId);
 ```
 
 ### Q: 如何监控任务进度？
 
-A: 通过 `useTaskStore` 获取任务状态：
+A: 通过 `useMessageStore` 获取任务状态：
 
 ```typescript
-const tasks = useTaskStore((state) => state.mediaTasks);
-const task = tasks.get(taskId);
+import { useMessageStore } from '../../stores/useMessageStore';
 
-console.log(task?.status); // 'pending' | 'polling' | 'completed' | 'error'
+const task = useMessageStore.getState().getTask(taskId);
+
+console.log(task?.status); // 'pending' | 'processing' | 'completed' | 'failed'
 ```
 
-### Q: 如何自定义轮询间隔？
+### Q: WebSocket 连接断开怎么办？
 
-A: 修改 `pollInterval` 配置：
+A: WebSocket 上下文会自动重连，任务订阅会在重连后自动恢复：
 
 ```typescript
-handleMediaPolling(response, {
-  pollInterval: 5000, // 5 秒轮询一次
-  // ...
-});
+// WebSocketContext 内部处理重连逻辑
+// 用户无需手动干预
 ```
 
 ### Q: 如何获取生成消耗的积分？
@@ -443,14 +414,15 @@ onMessageSent: (aiMessage) => {
    ```typescript
    useEffect(() => {
      return () => {
-       stopPolling(taskId);
+       // WebSocket 订阅会在组件卸载时自动清理
+       unsubscribeTask(taskId);
      };
    }, [taskId]);
    ```
 
-4. **合理设置超时时间**
-   - 图片：10 分钟（大多数在 10-30 秒内完成）
-   - 视频：30 分钟（视频生成较慢）
+4. **WebSocket 订阅自动管理**
+   - 使用 `sendUnifiedMessage` 自动处理订阅/取消订阅
+   - 页面刷新后通过 `taskRestoration` 恢复未完成任务
 
 ---
 

@@ -7,7 +7,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import { createConversation, updateConversation } from '../../services/conversation';
-import { type Message } from '../../services/message';
 import { uploadAudio } from '../../services/audio';
 import { useMessageHandlers } from '../../hooks/useMessageHandlers';
 import { useImageUpload } from '../../hooks/useImageUpload';
@@ -15,9 +14,7 @@ import { useModelSelection } from '../../hooks/useModelSelection';
 import { useAudioRecording } from '../../hooks/useAudioRecording';
 import { useSettingsManager } from '../../hooks/useSettingsManager';
 import { type UnifiedModel } from '../../constants/models';
-import { useTaskStore } from '../../stores/useTaskStore';
-import { useChatStore } from '../../stores/useChatStore';
-import { generateClientRequestId } from '../../utils/messageIdMapping';
+import { useMessageStore, type Message } from '../../stores/useMessageStore';
 import ConflictAlert from './ConflictAlert';
 import InputControls from './InputControls';
 import UploadErrorBar from './UploadErrorBar';
@@ -31,10 +28,6 @@ interface InputAreaProps {
   onMessagePending: (message: Message) => void;
   /** 消息发送完成时调用，传递 AI 回复 */
   onMessageSent: (aiMessage?: Message | null) => void;
-  /** 流式内容更新时调用 */
-  onStreamContent?: (text: string, conversationId: string) => void;
-  /** AI开始生成时调用（用于创建streaming消息） */
-  onStreamStart?: (conversationId: string, model: string) => void;
   /** 模型变化时调用（同步给父组件，用于重新生成） */
   onModelChange?: (model: UnifiedModel) => void;
 }
@@ -45,8 +38,6 @@ export default function InputArea({
   onConversationCreated,
   onMessagePending,
   onMessageSent,
-  onStreamContent,
-  onStreamStart,
   onModelChange,
 }: InputAreaProps) {
   // 基础状态
@@ -129,9 +120,6 @@ export default function InputArea({
     onModelChange?.(selectedModel);
   }, [selectedModel, onModelChange]);
 
-  // 获取当前对话标题（用于任务追踪）
-  const currentConversationTitle = useChatStore((state) => state.currentConversationTitle);
-
   // 消息处理 Hook
   const { handleChatMessage, handleImageGeneration, handleVideoGeneration } = useMessageHandlers({
     selectedModel,
@@ -143,11 +131,8 @@ export default function InputArea({
     removeWatermark: videoSettings.removeWatermark,
     thinkingEffort: chatSettings.thinkingEffort,
     deepThinkMode: chatSettings.deepThinkMode,
-    conversationTitle: currentConversationTitle,
     onMessagePending,
     onMessageSent,
-    onStreamContent,
-    onStreamStart,
   });
 
   // 同步上传错误（移到 useEffect 避免渲染期间 setState）
@@ -215,7 +200,7 @@ export default function InputArea({
     if (sendButtonState.disabled) return;
 
     // 检查全局任务限制
-    const taskLimitCheck = useTaskStore.getState().canStartTask();
+    const taskLimitCheck = useMessageStore.getState().canStartTask();
     if (!taskLimitCheck.allowed) {
       toast.error(taskLimitCheck.reason || '任务队列已满');
       return;
@@ -250,16 +235,12 @@ export default function InputArea({
 
       // 发送消息（使用真实对话 ID）
       if (selectedModel.type === 'chat') {
-        // 生成唯一的客户端请求 ID
-        const clientRequestId = generateClientRequestId();
-
         // 聊天消息：统一使用服务器 URL（确保刷新后图片仍然可见）
+        // 注：clientRequestId 由 sendMessage 内部生成，无需传入
         await handleChatMessage(
           messageContent,
           currentConversationId!,
-          combinedImageUrl,     // 使用服务器 URL（已上传完成）
-          clientRequestId,
-          false  // 允许 handleChatMessage 创建乐观消息
+          combinedImageUrl     // 使用服务器 URL（已上传完成）
         );
       } else if (selectedModel.type === 'video') {
         await handleVideoGeneration(currentConversationId!, messageContent, combinedImageUrl);

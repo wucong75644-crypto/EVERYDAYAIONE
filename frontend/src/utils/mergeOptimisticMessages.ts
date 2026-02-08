@@ -17,7 +17,7 @@
  * - 预处理持久化消息为 Map/Set 结构，查找复杂度 O(1)
  */
 
-import type { Message } from '../services/message';
+import { type Message, getTextContent } from '../stores/useMessageStore';
 import { isMediaPlaceholder } from '../constants/placeholder';
 
 /** 判断 temp 消息是否已被替换的时间阈值（ms）*/
@@ -57,12 +57,15 @@ function buildPersistedMessagesIndex(persistedMessages: Message[]): PersistedMes
       clientRequestIdMap.set(pm.client_request_id, pm);
     }
 
+    // 提取文本内容用于匹配
+    const textContent = getTextContent(pm);
+
     if (pm.role === 'user') {
-      const existing = userContentMap.get(pm.content) || [];
+      const existing = userContentMap.get(textContent) || [];
       existing.push(pm);
-      userContentMap.set(pm.content, existing);
+      userContentMap.set(textContent, existing);
     } else if (pm.role === 'assistant') {
-      assistantContentSet.add(pm.content);
+      assistantContentSet.add(textContent);
     }
   }
 
@@ -86,7 +89,8 @@ function isTempMessageReplaced(
   }
 
   // Fallback：内容+时间匹配
-  const sameContentMessages = index.userContentMap.get(tempMessage.content);
+  const tempContent = getTextContent(tempMessage);
+  const sameContentMessages = index.userContentMap.get(tempContent);
   if (!sameContentMessages || sameContentMessages.length === 0) {
     return false;
   }
@@ -108,7 +112,8 @@ function isStreamingMessageReplaced(
   streamingMessage: Message,
   index: PersistedMessagesIndex
 ): boolean {
-  return index.assistantContentSet.has(streamingMessage.content);
+  const textContent = getTextContent(streamingMessage);
+  return index.assistantContentSet.has(textContent);
 }
 
 /**
@@ -166,7 +171,14 @@ export function mergeOptimisticMessages(
 
   // 合并并按时间排序
   const combined = [...persistedMessages, ...newOptimisticMessages];
-  combined.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+  combined.sort((a, b) => {
+    const timeDiff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    if (timeDiff !== 0) return timeDiff;
+    // 时间戳相同时，用户消息排在 AI 消息之前（确保正确的对话顺序）
+    if (a.role === 'user' && b.role === 'assistant') return -1;
+    if (a.role === 'assistant' && b.role === 'user') return 1;
+    return 0;
+  });
 
   return combined;
 }

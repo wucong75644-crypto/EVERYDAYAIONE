@@ -4,20 +4,17 @@
  * 职责：
  * - handleMessagePending：乐观更新用户消息
  * - handleMessageSent：处理 AI 回复完成
- * - handleStreamStart / handleStreamContent：流式内容处理
  * - 管理 conversationOptimisticUpdate 状态
+ *
+ * 注意：流式内容处理已迁移到 WebSocketContext（chat_chunk 消息）
  */
 
 import { useState, useCallback, useRef, useLayoutEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useConversationRuntimeStore } from '../stores/useConversationRuntimeStore';
-import { useTaskStore } from '../stores/useTaskStore';
-import { useChatStore } from '../stores/useChatStore';
+import { useMessageStore, type Message, getTextContent } from '../stores/useMessageStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { messageCoordinator } from '../utils/messageCoordinator';
-import { getIncrementalTimestamp } from '../utils/messageFactory';
 import { tabSync } from '../utils/tabSync';
-import type { Message } from '../services/message';
 import toast from 'react-hot-toast';
 
 /** Hook 参数接口 */
@@ -40,10 +37,6 @@ export interface UseMessageCallbacksReturn {
   handleMessagePending: (message: Message) => void;
   /** 消息发送成功（接收 AI 回复） */
   handleMessageSent: (aiMessage?: Message | null) => void;
-  /** AI 开始生成（创建 streaming 消息） */
-  handleStreamStart: (conversationId: string, model: string) => void;
-  /** 流式内容更新 */
-  handleStreamContent: (text: string, conversationId: string) => void;
   /** 侧边栏乐观更新状态 */
   conversationOptimisticUpdate: ConversationOptimisticUpdate | null;
   /** 设置侧边栏乐观更新（供外部使用，如删除消息） */
@@ -79,25 +72,17 @@ export function useMessageCallbacks({
     currentConversationIdRef.current = currentConversationId;
   }, [currentConversationId]);
 
-  // RuntimeStore actions
+  // MessageStore actions
   const {
-    addOptimisticUserMessage,
-    addMediaPlaceholder,
-    addErrorMessage,
-    startStreaming,
-    appendStreamingContent,
-    completeStreaming,
-  } = useConversationRuntimeStore();
-
-  // TaskStore actions
-  const {
-    startTask,
-    updateTaskContent,
-    completeTask,
-    failTask,
+    startChatTask,
+    completeChatTask,
+    failChatTask,
     markNotificationRead,
     clearRecentlyCompleted,
-  } = useTaskStore();
+    addErrorMessage,
+    completeStreaming,
+    appendMessage,
+  } = useMessageStore();
 
   // 消息开始发送（乐观更新）
   const handleMessagePending = useCallback(
@@ -106,19 +91,11 @@ export function useMessageCallbacks({
 
       // 启动任务追踪（所有对话都追踪，仅用户消息）
       if (messageConversationId && message.role === 'user') {
-        startTask(messageConversationId, conversationTitle);
+        startChatTask(messageConversationId, conversationTitle);
       }
 
-      // 添加 RuntimeStore 消息（只处理临时消息，真实消息通过 updateMessageId 更新）
-      if (messageConversationId) {
-        if (message.role === 'user' && message.id.startsWith('temp-')) {
-          // 临时用户消息：添加到乐观更新
-          addOptimisticUserMessage(messageConversationId, message);
-        } else if (message.role === 'assistant' && message.id.startsWith('streaming-')) {
-          // 媒体任务占位符（图片/视频生成中）
-          addMediaPlaceholder(messageConversationId, message);
-        }
-      }
+      // 注意：RuntimeStore 消息添加已由 sendUnifiedMessage 处理，这里不再重复添加
+      // sendUnifiedMessage 中调用了 runtimeStore.addOptimisticUserMessage()
 
       // 侧边栏乐观更新（只有当前对话）
       // 注意：只在临时消息（temp-）或占位符（streaming-）时更新
@@ -129,15 +106,13 @@ export function useMessageCallbacks({
       if (shouldUpdateSidebar && messageConversationId === currentConversationIdRef.current) {
         setConversationOptimisticUpdate({
           conversationId: currentConversationIdRef.current,
-          lastMessage: message.content,
+          lastMessage: getTextContent(message),
         });
       }
     },
     [
       conversationTitle,
-      startTask,
-      addOptimisticUserMessage,
-      addMediaPlaceholder,
+      startChatTask,
     ]
   );
 
@@ -149,11 +124,11 @@ export function useMessageCallbacks({
       // 完成任务追踪
       if (messageConversationId) {
         if (aiMessage?.is_error) {
-          failTask(messageConversationId);
+          failChatTask(messageConversationId);
         } else {
           // 先标记未读，再完成任务（保持与原实现一致的顺序）
           messageCoordinator.markConversationUnread(messageConversationId);
-          completeTask(messageConversationId);
+          completeChatTask(messageConversationId);
         }
       }
 
@@ -173,13 +148,13 @@ export function useMessageCallbacks({
             setMessages((prev) => [...prev, aiMessage]);
           } else {
             // Fallback: 如果 setMessages 未传入，直接写入缓存
-            useChatStore.getState().appendMessage(messageConversationId, aiMessage);
+            appendMessage(messageConversationId, aiMessage);
           }
 
           // 更新侧边栏显示
           setConversationOptimisticUpdate({
             conversationId: messageConversationId,
-            lastMessage: aiMessage.content,
+            lastMessage: getTextContent(aiMessage),
           });
         } else if (aiMessage) {
           // 普通聊天流式生成完成
@@ -189,7 +164,7 @@ export function useMessageCallbacks({
             setMessages((prev) => [...prev, aiMessage]);
           } else {
             // Fallback: 如果 setMessages 未传入，直接写入缓存
-            useChatStore.getState().appendMessage(messageConversationId, aiMessage);
+            appendMessage(messageConversationId, aiMessage);
           }
           // 广播聊天完成事件给其他标签页
           tabSync.broadcast('chat_completed', {
@@ -232,50 +207,21 @@ export function useMessageCallbacks({
     },
     [
       refreshUser,
-      completeTask,
-      failTask,
+      completeChatTask,
+      failChatTask,
       markNotificationRead,
       clearRecentlyCompleted,
       navigate,
       addErrorMessage,
       completeStreaming,
+      appendMessage,
       setMessages,
     ]
-  );
-
-  // AI 开始生成（创建 streaming 消息）
-  const handleStreamStart = useCallback(
-    (conversationId: string, model: string) => {
-      void model;
-      // 创建 streaming 消息（使用递增时间戳，确保 AI 消息时间戳 > 用户消息时间戳）
-      const now = getIncrementalTimestamp();
-      const streamingId = now.toString();
-      startStreaming(conversationId, streamingId, new Date(now).toISOString());
-      // 广播聊天开始事件给其他标签页
-      tabSync.broadcast('chat_started', {
-        conversationId,
-      });
-    },
-    [startStreaming]
-  );
-
-  // 流式内容更新
-  const handleStreamContent = useCallback(
-    (text: string, conversationId: string) => {
-      // 更新任务流式内容（所有对话都追踪）
-      updateTaskContent(conversationId, text);
-
-      // 追加流式内容到 RuntimeStore（所有对话都追踪）
-      appendStreamingContent(conversationId, text);
-    },
-    [updateTaskContent, appendStreamingContent]
   );
 
   return {
     handleMessagePending,
     handleMessageSent,
-    handleStreamStart,
-    handleStreamContent,
     conversationOptimisticUpdate,
     setConversationOptimisticUpdate,
   };

@@ -1,61 +1,84 @@
 """
 后台任务轮询服务
 
-即使用户离线也继续轮询KIE，任务完成后自动保存结果
-- 支持 WebSocket 实时推送任务状态（v1.2）
+运行模式由环境变量自动决定：
+- 有 CALLBACK_BASE_URL → 兜底模式（默认 120s）
+- 无 CALLBACK_BASE_URL → 主轮询模式（默认 15s）
+- 可通过 POLL_INTERVAL_SECONDS 手动覆盖
+
+统一调用 TaskCompletionService 处理完成/失败。
+超时清理走 handler.on_error()，确保积分退回 + WebSocket 推送。
 """
 
 import asyncio
 import random
-from datetime import datetime, timedelta, timezone
-from typing import Dict, Any, Optional
+from datetime import datetime, timezone
 
 from loguru import logger
 from supabase import Client
 
 from core.config import Settings, get_settings
 from core.task_config import IMAGE_TASK_TIMEOUT_MINUTES, VIDEO_TASK_TIMEOUT_MINUTES
-from services.adapters.kie.client import KieClient
-from services.adapters.kie.image_adapter import KieImageAdapter
-from services.adapters.kie.video_adapter import KieVideoAdapter
-from services.websocket_manager import ws_manager
-from schemas.websocket import build_task_status_message
+from services.adapters import (
+    create_image_adapter,
+    create_video_adapter,
+)
+from services.adapters.base import (
+    ImageGenerateResult,
+    VideoGenerateResult,
+    TaskStatus,
+)
+from services.task_completion_service import TaskCompletionService
+
+# 默认轮询间隔（秒）
+_DEFAULT_POLL_INTERVAL_WITH_WEBHOOK = 120  # 有回调时：兜底模式
+_DEFAULT_POLL_INTERVAL_NO_WEBHOOK = 15     # 无回调时：主轮询模式
+
+
+def _resolve_poll_interval(settings: Settings) -> int:
+    """根据配置自动选择轮询间隔"""
+    if settings.poll_interval_seconds > 0:
+        return settings.poll_interval_seconds
+    if settings.callback_base_url:
+        return _DEFAULT_POLL_INTERVAL_WITH_WEBHOOK
+    return _DEFAULT_POLL_INTERVAL_NO_WEBHOOK
 
 
 class BackgroundTaskWorker:
-    """后台任务轮询器（带执行锁防止重叠）"""
+    """后台任务轮询器（自适应模式，带执行锁防止重叠）"""
 
     def __init__(self, db: Client):
         self.db = db
         self.settings: Settings = get_settings()
+        self.poll_interval = _resolve_poll_interval(self.settings)
         self.is_running = False
-        self._poll_lock = asyncio.Lock()  # 轮询锁（单进程）
+        self._poll_lock = asyncio.Lock()
 
     async def start(self):
         """启动后台工作器"""
         self.is_running = True
-        logger.info("BackgroundTaskWorker started")
+        mode = "fallback" if self.settings.callback_base_url else "primary"
+        logger.info(
+            f"BackgroundTaskWorker started | mode={mode} | "
+            f"interval={self.poll_interval}s | "
+            f"callback={'configured' if self.settings.callback_base_url else 'none'}"
+        )
 
         while self.is_running:
             try:
-                # 检查锁，防止轮询重叠
                 if self._poll_lock.locked():
                     logger.warning("Previous polling not finished, skipping this round")
-                    await asyncio.sleep(30)
+                    await asyncio.sleep(self.poll_interval)
                     continue
 
                 async with self._poll_lock:
-                    # 1. 轮询进行中的任务
                     await self.poll_pending_tasks()
-
-                    # 2. 清理超时任务
                     await self.cleanup_stale_tasks()
 
             except Exception as e:
                 logger.error(f"BackgroundTaskWorker error: {e}")
 
-            # 等待30秒后继续
-            await asyncio.sleep(30)
+            await asyncio.sleep(self.poll_interval)
 
     async def stop(self):
         """停止后台工作器"""
@@ -63,36 +86,39 @@ class BackgroundTaskWorker:
         logger.info("BackgroundTaskWorker stopped")
 
     async def poll_pending_tasks(self):
-        """轮询所有pending/running任务（带随机抖动）"""
-        # 查询所有进行中的任务
+        """
+        轮询所有 pending/running 的 image/video 任务
+
+        Chat 任务由流式处理管理，不参与轮询。
+        使用随机抖动避免惊群效应。
+        """
         response = self.db.table("tasks").select("*").in_(
             "status", ["pending", "running"]
+        ).in_(
+            "type", ["image", "video"]
         ).execute()
 
         if not response.data:
             return
 
-        logger.debug(f"Polling {len(response.data)} tasks")
+        logger.debug(f"Polling {len(response.data)} tasks (fallback)")
 
-        # 随机打散任务（防止惊群效应）
         tasks_shuffled = random.sample(response.data, len(response.data))
-
-        # 动态调整并发数（根据KIE QPS限制）
         kie_qps_limit = getattr(self.settings, 'kie_qps_limit', 50)
         semaphore = asyncio.Semaphore(kie_qps_limit)
 
         async def process_task_with_jitter(task: dict, index: int):
-            # 在30秒窗口内均匀分布（随机抖动）
-            jitter_delay = (index / len(tasks_shuffled)) * 30.0
+            # 在 60 秒窗口内均匀分布
+            jitter_delay = (index / len(tasks_shuffled)) * 60.0
             await asyncio.sleep(jitter_delay)
 
             async with semaphore:
                 try:
-                    await self.query_kie_and_update(task)
+                    await self.query_and_process(task)
                 except Exception as e:
                     logger.error(
-                        f"Failed to process task: {task.get('external_task_id')}, "
-                        f"error={e}"
+                        f"Failed to process task | "
+                        f"task_id={task.get('external_task_id')} | error={e}"
                     )
 
         await asyncio.gather(*[
@@ -100,211 +126,58 @@ class BackgroundTaskWorker:
             for i, task in enumerate(tasks_shuffled)
         ])
 
-        logger.info(f"Polled {len(response.data)} tasks in 30s window")
+        logger.info(f"Polled {len(response.data)} tasks (fallback)")
 
-    async def query_kie_and_update(self, task: dict):
-        """查询KIE并更新任务状态"""
+    async def query_and_process(self, task: dict):
+        """
+        查询 Provider 任务状态，完成/失败时交给统一处理服务
+
+        使用任务记录中的 model_id 创建适配器（而非硬编码）。
+        """
         external_task_id = task["external_task_id"]
         task_type = task["type"]
+        model_id = task.get("model_id")
 
         try:
-            async with KieClient(self.settings.kie_api_key) as client:
-                if task_type == "image":
-                    adapter = KieImageAdapter(client, "google/nano-banana")
-                else:
-                    adapter = KieVideoAdapter(client, "sora-2-text-to-video")
+            if task_type == "image":
+                adapter = create_image_adapter(model_id)
+            else:
+                adapter = create_video_adapter(model_id)
 
-                result = await adapter.query_task(external_task_id)
+            try:
+                query_result = await adapter.query_task(external_task_id)
+            finally:
+                await adapter.close()
 
         except Exception as e:
-            logger.error(f"KIE query failed: {external_task_id}, error={e}")
-            # 更新 last_polled_at，但不标记为失败（等待下次重试）
+            logger.error(
+                f"Provider query failed | task_id={external_task_id} | "
+                f"model={model_id} | error={e}"
+            )
             self.db.table("tasks").update({
                 "last_polled_at": datetime.now(timezone.utc).isoformat(),
             }).eq("external_task_id", external_task_id).execute()
             return
 
-        # 映射KIE状态
-        kie_status = result.get("status")
-        status_mapping = {
-            "pending": "pending",
-            "processing": "running",
-            "success": "completed",
-            "failed": "failed",
-        }
-        db_status = status_mapping.get(kie_status, "pending")
-
-        update_data = {
-            "status": db_status,
+        # 更新 last_polled_at 用于监控
+        self.db.table("tasks").update({
             "last_polled_at": datetime.now(timezone.utc).isoformat(),
-        }
+        }).eq("external_task_id", external_task_id).execute()
 
-        # 任务完成
-        if db_status == "completed":
-            update_data["result"] = result
-            update_data["completed_at"] = datetime.now(timezone.utc).isoformat()
-            update_data["credits_used"] = result.get("credits_consumed", 0)
-
-            # 自动创建消息
-            if task.get("conversation_id"):
-                await self.save_completed_message(task, result)
-
-        # 任务失败
-        elif db_status == "failed":
-            update_data["fail_code"] = result.get("fail_code")
-            update_data["error_message"] = result.get("fail_msg", "任务失败")
-            update_data["completed_at"] = datetime.now(timezone.utc).isoformat()
-
-        # 更新数据库
-        self.db.table("tasks").update(update_data).eq(
-            "external_task_id", external_task_id
-        ).execute()
-
-        logger.info(
-            f"Task updated: {external_task_id}, status={db_status}, "
-            f"type={task_type}"
-        )
-
-        # WebSocket 推送任务状态（完成或失败时）
-        if db_status in ("completed", "failed"):
-            await self._notify_task_status(task, result, db_status)
-
-    async def _notify_task_status(
-        self,
-        task: dict,
-        result: dict,
-        status: str,
-    ):
-        """
-        通过 WebSocket 推送任务状态
-
-        Args:
-            task: 任务信息（包含 user_id, external_task_id 等）
-            result: KIE 返回的结果
-            status: 数据库状态（completed/failed）
-        """
-        try:
-            user_id = task["user_id"]
-            external_task_id = task["external_task_id"]
-            task_type = task["type"]
-            conversation_id = task.get("conversation_id")
-
-            # 构建推送消息
-            if status == "completed":
-                urls = None
-                if task_type == "image":
-                    urls = result.get("image_urls", [])
-                elif task_type == "video":
-                    video_url = result.get("video_url")
-                    urls = [video_url] if video_url else []
-
-                message = build_task_status_message(
-                    task_id=external_task_id,
-                    conversation_id=conversation_id or "",
-                    status="completed",
-                    media_type=task_type,
-                    urls=urls,
-                    credits_consumed=task.get("credits_locked", 0),
-                )
-            else:
-                # failed
-                message = build_task_status_message(
-                    task_id=external_task_id,
-                    conversation_id=conversation_id or "",
-                    status="failed",
-                    media_type=task_type,
-                    error_message=result.get("fail_msg", "任务失败"),
-                )
-
-            # 推送给用户
-            await ws_manager.send_to_user(user_id, message)
+        # 完成/失败 → 交给统一处理服务（包含幂等检查）
+        if query_result.status in (TaskStatus.SUCCESS, TaskStatus.FAILED):
+            service = TaskCompletionService(self.db)
+            await service.process_result(external_task_id, query_result)
 
             logger.info(
-                f"WebSocket notification sent | user={user_id} | "
-                f"task={external_task_id} | status={status}"
-            )
-
-        except Exception as e:
-            logger.warning(
-                f"Failed to send WebSocket notification | "
-                f"task={task.get('external_task_id')} | error={e}"
-            )
-
-    async def save_completed_message(self, task: dict, result: dict):
-        """任务完成后自动创建消息（带权限验证）"""
-        try:
-            task_type = task["type"]
-            conversation_id = task["conversation_id"]
-            task_user_id = task["user_id"]
-
-            # 防御性检查：验证对话所有权（防止恶意用户伪造conversation_id）
-            conversation_response = (
-                self.db.table("conversations")
-                .select("user_id")
-                .eq("id", conversation_id)
-                .single()
-                .execute()
-            )
-
-            if not conversation_response.data:
-                logger.warning(
-                    f"Conversation not found when saving message: "
-                    f"conversation_id={conversation_id}, "
-                    f"task={task['external_task_id']}"
-                )
-                return
-
-            conversation_user_id = conversation_response.data["user_id"]
-
-            # 验证任务所有者与对话所有者是否匹配
-            if task_user_id != conversation_user_id:
-                logger.error(
-                    f"Security violation: Task user does not match conversation owner! "
-                    f"task={task['external_task_id']}, task_user={task_user_id}, "
-                    f"conversation_user={conversation_user_id}, "
-                    f"conversation_id={conversation_id}"
-                )
-                return
-
-            message_data = {
-                "conversation_id": conversation_id,
-                "content": "生成完成",
-                "role": "assistant",
-                "credits_cost": task["credits_locked"],
-                "generation_params": task["request_params"],
-            }
-
-            if task_type == "image":
-                image_urls = result.get("image_urls", [])
-                if image_urls:
-                    message_data["image_url"] = image_urls[0]
-            else:
-                message_data["video_url"] = result.get("video_url")
-
-            # 创建消息
-            self.db.table("messages").insert(message_data).execute()
-
-            # 标记conversation为未读
-            self.db.table("conversations").update({
-                "unread": True,
-            }).eq("id", conversation_id).execute()
-
-            logger.info(
-                f"Message created for task: {task['external_task_id']}, "
-                f"conversation={conversation_id}"
-            )
-
-        except Exception as e:
-            logger.error(
-                f"Failed to save completed message: {task['external_task_id']}, "
-                f"error={e}"
+                f"Task processed via fallback | task_id={external_task_id} | "
+                f"status={query_result.status.value}"
             )
 
     async def cleanup_stale_tasks(self):
         """清理超时任务（包括 chat 类型）"""
         now = datetime.now(timezone.utc)
 
-        # 查询所有pending/running任务
         response = self.db.table("tasks").select("*").in_(
             "status", ["pending", "running"]
         ).execute()
@@ -316,37 +189,133 @@ class BackgroundTaskWorker:
                 task["started_at"].replace("Z", "+00:00")
             )
 
-            # 根据任务类型确定超时时间
             task_type = task["type"]
             if task_type == "chat":
-                max_duration_minutes = 10  # chat 任务超时时间：10 分钟
+                max_duration_minutes = 10
             elif task_type == "image":
                 max_duration_minutes = IMAGE_TASK_TIMEOUT_MINUTES
             else:
                 max_duration_minutes = VIDEO_TASK_TIMEOUT_MINUTES
 
-            # 检查是否超时
             if (now - started_at).total_seconds() > max_duration_minutes * 60:
-                # 标记为失败
-                self.db.table("tasks").update({
-                    "status": "failed",
-                    "error_message": f"任务超时 (超过{max_duration_minutes}分钟)",
-                    "completed_at": now.isoformat(),
-                }).eq("id", task["id"]).execute()
-
-                # WebSocket 推送超时通知
-                await self._notify_task_status(
-                    task,
-                    {"fail_msg": f"任务超时 (超过{max_duration_minutes}分钟)"},
-                    "failed",
-                )
-
+                await self._handle_timeout(task, max_duration_minutes)
                 cleaned_count += 1
-                logger.warning(
-                    f"Task timeout: id={task['id']}, "
-                    f"external_id={task.get('external_task_id')}, "
-                    f"type={task_type}"
-                )
 
         if cleaned_count > 0:
             logger.info(f"Cleaned {cleaned_count} stale tasks")
+
+    async def _handle_timeout(self, task: dict, max_duration_minutes: int):
+        """
+        处理超时任务
+
+        image/video：通过 TaskCompletionService 统一处理（退回积分+更新消息+WebSocket 推送）
+        chat：直接标记失败 + 退回积分（chat 有自己的流式错误处理机制）
+        """
+        external_task_id = task.get("external_task_id", "unknown")
+        task_type = task["type"]
+        error_msg = f"任务超时 (超过{max_duration_minutes}分钟)"
+
+        # image/video 通过统一处理服务
+        if task_type in ("image", "video") and external_task_id != "unknown":
+            try:
+                if task_type == "image":
+                    timeout_result = ImageGenerateResult(
+                        task_id=external_task_id,
+                        status=TaskStatus.FAILED,
+                        fail_code="TIMEOUT",
+                        fail_msg=error_msg,
+                    )
+                else:
+                    timeout_result = VideoGenerateResult(
+                        task_id=external_task_id,
+                        status=TaskStatus.FAILED,
+                        fail_code="TIMEOUT",
+                        fail_msg=error_msg,
+                    )
+
+                service = TaskCompletionService(self.db)
+                success = await service.process_result(external_task_id, timeout_result)
+
+                if success:
+                    logger.warning(
+                        f"Task timeout | task_id={external_task_id} | "
+                        f"type={task_type} | limit={max_duration_minutes}min"
+                    )
+                    return
+
+                logger.warning(
+                    f"Timeout via service returned False, falling back | "
+                    f"task_id={external_task_id}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"Timeout via service failed, falling back | "
+                    f"task_id={external_task_id} | error={e}"
+                )
+
+        # Chat 任务或 fallback：直接更新数据库 + 退回积分
+        # 注：_refund_credits 检查 status="pending"，不会重复退回
+        try:
+            transaction_id = task.get("credit_transaction_id")
+            if transaction_id:
+                await self._refund_credits(transaction_id)
+
+            self.db.table("tasks").update({
+                "status": "failed",
+                "error_message": error_msg,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", task["id"]).execute()
+
+            logger.warning(
+                f"Task timeout (direct) | id={task['id']} | "
+                f"external_id={external_task_id} | "
+                f"type={task_type} | refunded={bool(transaction_id)}"
+            )
+        except Exception as e:
+            logger.error(
+                f"Timeout direct fallback failed | id={task['id']} | "
+                f"task_id={external_task_id} | error={e}"
+            )
+
+    async def _refund_credits(self, transaction_id: str) -> None:
+        """
+        退回积分（chat 任务超时时调用）
+
+        image/video 超时走 TaskCompletionService → handler.on_error() 自动退回
+        """
+        try:
+            tx_result = self.db.table("credit_transactions").select("*").eq(
+                "id", transaction_id
+            ).maybe_single().execute()
+
+            if not tx_result.data:
+                logger.warning(f"Refund failed: transaction not found | id={transaction_id}")
+                return
+
+            tx = tx_result.data
+            if tx["status"] != "pending":
+                logger.warning(
+                    f"Refund skipped: status={tx['status']} | id={transaction_id}"
+                )
+                return
+
+            self.db.rpc(
+                'refund_credits',
+                {
+                    'p_user_id': tx["user_id"],
+                    'p_amount': tx["amount"]
+                }
+            ).execute()
+
+            self.db.table("credit_transactions").update({
+                "status": "refunded",
+                "confirmed_at": datetime.now(timezone.utc).isoformat()
+            }).eq("id", transaction_id).execute()
+
+            logger.info(
+                f"Credits refunded | transaction_id={transaction_id} | "
+                f"user_id={tx['user_id']} | amount={tx['amount']}"
+            )
+
+        except Exception as e:
+            logger.error(f"Refund failed | transaction_id={transaction_id} | error={e}")

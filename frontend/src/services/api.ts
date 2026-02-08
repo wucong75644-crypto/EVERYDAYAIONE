@@ -34,10 +34,15 @@ api.interceptors.response.use(
   (response) => response,
   (error: AxiosError<ApiErrorResponse>) => {
     if (error.response?.status === 401) {
-      // Token 过期或无效，清除本地存储并跳转登录
+      // Token 过期或无效，清除本地存储
+      // 注意：项目使用 AuthModal 弹窗登录，没有 /login 页面
+      // 只有在受保护页面（/chat）才需要跳转，首页无需跳转
       localStorage.removeItem('access_token');
       localStorage.removeItem('user');
-      window.location.href = '/login';
+      // 只在非首页时跳转，避免首页循环重定向
+      if (window.location.pathname !== '/') {
+        window.location.href = '/';
+      }
     }
     return Promise.reject(error);
   }

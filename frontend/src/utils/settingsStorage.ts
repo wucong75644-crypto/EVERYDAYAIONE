@@ -4,8 +4,13 @@
  * 保存和读取用户的默认参数设置
  */
 
-import { type AspectRatio, type ImageResolution, type ImageOutputFormat } from '../services/image';
-import { type VideoFrames, type VideoAspectRatio } from '../services/video';
+import {
+  type AspectRatio,
+  type ImageResolution,
+  type ImageOutputFormat,
+  type VideoFrames,
+  type VideoAspectRatio,
+} from '../constants/models';
 
 // 存储键名
 const SETTINGS_KEY = 'user_advanced_settings';

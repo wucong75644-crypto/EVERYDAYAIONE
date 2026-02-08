@@ -30,7 +30,7 @@ flowchart TB
         Components[Components<br/>Sidebar/MessageArea/InputArea]
         Stores[Zustand Stores<br/>Auth/Chat/Task]
         Services[API Services<br/>auth/message/image/video]
-        Hooks[Custom Hooks<br/>useMessageHandlers/useTaskStore]
+        Hooks[Custom Hooks<br/>useMessageHandlers/useMessageLoader]
     end
 
     subgraph 后端["后端 (Python + FastAPI)"]
@@ -138,9 +138,7 @@ flowchart LR
     subgraph Stores["Zustand Stores"]
         AuthStore[useAuthStore<br/>用户信息/Token/登录状态]
         AuthModalStore[useAuthModalStore<br/>弹窗开关/登录注册模式]
-        ChatStore[useChatStore<br/>消息缓存/对话列表]
-        TaskStore[useTaskStore<br/>任务队列/轮询配置/通知]
-        RuntimeStore[useConversationRuntimeStore<br/>streaming消息/乐观更新]
+        MessageStore[useMessageStore<br/>消息缓存/任务状态/streaming]
     end
 
     subgraph Components[组件层]
@@ -159,28 +157,23 @@ flowchart LR
     AuthStore -->|isAuthenticated| Chat
     AuthModalStore <-->|弹窗控制| AuthModal
 
-    ChatStore <-->|消息缓存| MessageArea
-    ChatStore <-->|对话列表| Sidebar
-    ChatStore -->|persist| LocalStorage
+    MessageStore <-->|消息缓存| MessageArea
+    MessageStore <-->|任务状态| InputArea
+    MessageStore <-->|任务通知| Sidebar
+    MessageStore -->|persist| LocalStorage
 
-    TaskStore <-->|任务状态| InputArea
-    TaskStore <-->|任务通知| Sidebar
-
-    RuntimeStore <-->|streaming| MessageArea
-    RuntimeStore <-->|乐观消息| InputArea
-
-    AuthStore -.->|clearAuth| ChatStore
+    AuthStore -.->|clearAuth| MessageStore
 ```
 
 ### Store 职责说明
+
+> **重构说明**：原 `useChatStore`、`useTaskStore`、`useConversationRuntimeStore` 已合并为统一的 `useMessageStore`。
 
 | Store | 职责 | 持久化 |
 |-------|------|--------|
 | `useAuthStore` | 用户信息、Token、登录状态 | ✅ localStorage |
 | `useAuthModalStore` | 认证弹窗开关、登录/注册模式切换 | ❌ |
-| `useChatStore` | 消息缓存（LRU）、对话列表 | ✅ localStorage |
-| `useTaskStore` | 聊天任务、媒体任务、轮询配置、通知队列 | ❌ |
-| `useConversationRuntimeStore` | streaming 消息、乐观更新、媒体占位符 | ❌ |
+| `useMessageStore` | 消息缓存（LRU）、任务队列、streaming 消息、乐观更新 | ✅ localStorage |
 
 ---
 
@@ -193,8 +186,10 @@ sequenceDiagram
     participant User as 用户
     participant InputArea as InputArea
     participant Handler as useTextMessageHandler
-    participant Runtime as RuntimeStore
-    participant API as /messages/stream
+    participant Sender as sendMessage
+    participant Store as MessageStore
+    participant WS as WebSocket
+    participant API as /messages/send
     participant Service as MessageStreamService
     participant KIE as KIE API
     participant DB as Supabase
@@ -202,30 +197,36 @@ sequenceDiagram
     User->>InputArea: 输入消息 + 点击发送
     InputArea->>Handler: handleChatMessage()
 
-    Note over Handler: 1. 创建乐观用户消息
-    Handler->>Runtime: addOptimisticMessage(userMsg)
-    Handler->>Runtime: startStreaming(conversationId)
+    Note over Handler: 1. 调用统一发送器
+    Handler->>Sender: sendUnifiedMessage({ type: 'chat' })
+    Sender->>Sender: createMessageLifecycle()
+    Sender->>Runtime: addOptimisticUserMessage()
+    Sender->>Runtime: startStreaming(conversationId)
+    Sender-->>Handler: onOptimisticUpdate(userMsg, placeholder)
 
-    Note over Handler: 2. 发起 SSE 请求
-    Handler->>API: POST /messages/stream (SSE)
-
-    API->>Service: send_message_stream()
+    Note over Sender: 2. 发起 POST 请求
+    Sender->>API: POST /messages/send
+    API->>Service: send_message()
     Service->>DB: 保存用户消息
-    Service-->>API: event: user_message
-    API-->>Handler: 用户消息已创建
+    Service-->>API: { task_id, user_message }
+    API-->>Sender: 任务已创建
+
+    Note over Sender: 3. 注册操作上下文 + 订阅 WebSocket
+    Sender->>WS: registerOperation(taskId, context)
+    Sender->>WS: subscribeTask(taskId, conversationId)
 
     Service->>KIE: 调用 AI 模型 (streaming)
 
-    loop 流式响应
+    loop WebSocket 流式推送
         KIE-->>Service: content chunk
-        Service-->>API: event: content
-        API-->>Handler: 内容片段
+        Service-->>WS: chat_chunk 事件
+        WS-->>Handler: onStreamChunk(chunk, accumulated)
         Handler->>Runtime: appendStreamingContent()
     end
 
     Service->>DB: 保存 AI 消息
-    Service-->>API: event: done + assistant_message
-    API-->>Handler: 生成完成
+    Service-->>WS: chat_done 事件
+    WS-->>Handler: onComplete(finalMessage)
 
     Handler->>Runtime: completeStreaming()
     Handler->>Runtime: 替换乐观消息为真实消息
@@ -234,9 +235,9 @@ sequenceDiagram
 **关键文件**：
 - 入口：[InputArea.tsx](frontend/src/components/chat/InputArea.tsx)
 - 处理器：[useTextMessageHandler.ts](frontend/src/hooks/handlers/useTextMessageHandler.ts)
-- 发送器：[chatSender.ts](frontend/src/services/messageSender/chatSender.ts)
-- 后端路由：[message.py:121](backend/api/routes/message.py#L121)
-- 后端服务：[message_stream_service.py](backend/services/message_stream_service.py)
+- 统一发送器：[messageSender.ts](frontend/src/services/messageSender.ts)
+- 后端路由：[message.py](backend/api/routes/message.py) - `/messages/generate`
+- 后端处理器：[chat_handler.py](backend/services/handlers/chat_handler.py)
 
 ---
 
@@ -247,9 +248,9 @@ sequenceDiagram
     participant User as 用户
     participant InputArea as InputArea
     participant Handler as useMediaMessageHandler
-    participant Sender as mediaSender
-    participant Core as mediaGenerationCore
-    participant TaskStore as useTaskStore
+    participant Sender as sendUnifiedMessage
+    participant BackendAPI as backendAPI
+    participant WS as WebSocket
     participant API as /image/generate 或 /video/generate
     participant Service as ImageService/VideoService
     participant KIE as KIE API
@@ -258,48 +259,42 @@ sequenceDiagram
     User->>InputArea: 选择图片/视频模型 + 输入 prompt
     InputArea->>Handler: handleMediaGeneration()
 
-    Note over Handler: 1. 创建乐观消息对
-    Handler->>Sender: sendMediaMessage()
-    Sender->>Sender: createMediaOptimisticPair()
-    Sender-->>InputArea: onMessagePending(userMsg + placeholder)
+    Note over Handler: 1. 创建乐观消息
+    Handler->>Sender: sendUnifiedMessage({ type: 'image'/'video' })
+    Sender->>Sender: createMessageLifecycle()
+    Sender-->>InputArea: onOptimisticUpdate(userMsg, placeholder)
 
-    Note over Sender: 2. 保存用户消息
-    Sender->>API: POST /messages/create
+    Note over Sender: 2. 调用后端 API
+    Sender->>BackendAPI: callBackendAPI()
+    BackendAPI->>API: POST /image/generate 或 /video/generate
     API->>DB: 保存用户消息
-
-    Note over Sender: 3. 提交生成任务
-    Sender->>Core: executeImageGenerationCore() / executeVideoGenerationCore()
-    Core->>API: POST /image/generate 或 /video/generate
     API->>Service: 创建任务记录
     Service->>DB: INSERT tasks (status=pending)
     Service->>KIE: 提交生成任务
     KIE-->>Service: task_id
     Service-->>API: { task_id, credits_locked }
-    API-->>Core: 任务已提交
+    API-->>BackendAPI: 任务已提交
+    BackendAPI-->>Sender: { taskId, userMessage }
 
-    Note over Core: 4. 注册任务 + 启动轮询
-    Core->>TaskStore: startMediaTask()
-    Core->>TaskStore: startPolling()
+    Note over Sender: 3. 注册操作上下文 + 订阅 WebSocket
+    Sender->>WS: registerOperation(taskId, context)
+    Sender->>WS: subscribeTask(taskId, conversationId)
 
-    loop 轮询任务状态
-        TaskStore->>API: GET /image/status/{task_id}
-        API->>KIE: 查询任务状态
-        KIE-->>API: { status, image_urls/video_url }
-        API-->>TaskStore: 任务状态
+    Note over WS: 4. 后端推送任务状态
+    loop WebSocket 推送
+        KIE-->>Service: 任务状态更新
+        Service-->>WS: task_status 事件
+        WS-->>Handler: onComplete(finalMessage)
     end
 
-    Note over TaskStore: 5. 任务完成
-    TaskStore->>Core: onSuccess(result)
-    Core->>API: POST /messages/create (AI消息)
-    API->>DB: 保存 AI 消息
-    Core->>TaskStore: completeMediaTask()
-    Core-->>InputArea: onMessageSent(savedMessage)
+    Note over Handler: 5. 任务完成
+    Handler-->>InputArea: onMessageSent(savedMessage)
 ```
 
 **关键文件**：
 - 处理器：[useMediaMessageHandler.ts](frontend/src/hooks/handlers/useMediaMessageHandler.ts)
-- 发送器：[mediaSender.ts](frontend/src/services/messageSender/mediaSender.ts)
-- 核心逻辑：[mediaGenerationCore.ts](frontend/src/services/messageSender/mediaGenerationCore.ts)
+- 统一发送器：[unifiedSender.ts](frontend/src/services/messageSender/unifiedSender.ts)
+- 后端 API 层：[backendAPI.ts](frontend/src/services/messageSender/backendAPI.ts)
 - 后端图片路由：[image.py](backend/api/routes/image.py)
 - 后端视频路由：[video.py](backend/api/routes/video.py)
 
@@ -348,7 +343,7 @@ stateDiagram-v2
 ```
 
 **任务状态存储**：
-- 前端：`useTaskStore` (chatTasks + mediaTasks)
+- 前端：`useMessageStore` (chatTasks + mediaTasks)
 - 后端：`tasks` 表 (status: pending/running/completed/failed)
 
 ---
@@ -364,7 +359,7 @@ flowchart TB
     end
 
     subgraph 恢复入口["恢复入口 (onRehydrateStorage)"]
-        Rehydrate[useChatStore rehydrate]
+        Rehydrate[useMessageStore rehydrate]
     end
 
     subgraph 恢复流程
@@ -490,9 +485,9 @@ flowchart TB
     end
 
     subgraph 前端处理
-        Optimistic[乐观更新<br/>RuntimeStore]
-        Cache[消息缓存<br/>ChatStore]
-        Task[任务追踪<br/>TaskStore]
+        Optimistic[乐观更新<br/>MessageStore]
+        Cache[消息缓存<br/>MessageStore]
+        Task[任务追踪<br/>MessageStore]
     end
 
     subgraph API层
@@ -563,4 +558,5 @@ flowchart TB
 
 ## 更新记录
 
+- **2026-02-07**：更新消息流程图，反映统一消息系统重构（sendUnifiedMessage + WebSocket 模式）
 - **2026-02-04**：创建流转图文档，包含整体架构、组件层级、状态管理、业务流程、通信方式等

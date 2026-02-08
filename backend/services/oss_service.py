@@ -35,7 +35,13 @@ class OSSService:
     VIDEO_PREFIX = "videos"
 
     def __init__(self):
-        """初始化 OSS 客户端"""
+        """
+        初始化 OSS 客户端
+
+        支持双端点配置：
+        - 内网端点（oss_internal_endpoint）：用于上传，免流量费
+        - 外网端点（oss_endpoint）：用于生成 CDN URL
+        """
         if not all([
             settings.oss_access_key_id,
             settings.oss_access_key_secret,
@@ -48,15 +54,22 @@ class OSSService:
             settings.oss_access_key_id,
             settings.oss_access_key_secret,
         )
+
+        # 优先使用内网端点（免流量费），否则使用外网端点
+        upload_endpoint = settings.oss_internal_endpoint or settings.oss_endpoint
         self.bucket = oss2.Bucket(
             auth,
-            settings.oss_endpoint,
+            upload_endpoint,
             settings.oss_bucket_name,
         )
         self.cdn_domain = settings.oss_cdn_domain
+        self.external_endpoint = settings.oss_endpoint  # 用于生成外部访问 URL
 
+        # 日志：区分内外网
+        endpoint_type = "internal" if settings.oss_internal_endpoint else "external"
         logger.info(
             f"OSS service initialized: bucket={settings.oss_bucket_name}, "
+            f"endpoint={upload_endpoint} ({endpoint_type}), "
             f"cdn={self.cdn_domain or 'not configured'}"
         )
 
@@ -235,7 +248,7 @@ class OSSService:
         """
         获取对象的访问 URL
 
-        优先使用 CDN 域名，否则使用 OSS 直链。
+        优先使用 CDN 域名，否则使用 OSS 外网直链。
 
         Args:
             object_key: 对象键
@@ -247,8 +260,29 @@ class OSSService:
             # 使用 CDN 加速域名
             return f"https://{self.cdn_domain}/{object_key}"
         else:
-            # 使用 OSS 直链
-            return f"https://{settings.oss_bucket_name}.{settings.oss_endpoint}/{object_key}"
+            # 使用 OSS 外网直链（使用 external_endpoint）
+            return f"https://{settings.oss_bucket_name}.{self.external_endpoint}/{object_key}"
+
+    def is_oss_url(self, url: str) -> bool:
+        """
+        检查 URL 是否已经是 OSS/CDN URL
+
+        用于避免重复上传。
+        """
+        if not url:
+            return False
+        url_lower = url.lower()
+
+        # 检查 CDN 域名
+        if self.cdn_domain and self.cdn_domain in url_lower:
+            return True
+
+        # 检查 OSS 域名
+        oss_domain = f"{settings.oss_bucket_name}.{self.external_endpoint}"
+        if oss_domain in url_lower:
+            return True
+
+        return False
 
     def exists(self, object_key: str) -> bool:
         """检查对象是否存在"""

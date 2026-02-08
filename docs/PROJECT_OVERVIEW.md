@@ -89,40 +89,51 @@ EVERYDAYAIONE/
 │   │       ├── auth.py                   # 认证路由
 │   │       ├── health.py                 # 健康检查
 │   │       ├── conversation.py           # 对话路由
-│   │       ├── message.py                # 消息路由
-│   │       ├── image.py                  # 图像生成路由
-│   │       ├── video.py                  # 视频生成路由
-│   │       └── task.py                   # 任务管理路由（SSE恢复）
+│   │       ├── message.py                # 统一消息路由（/generate）
+│   │       ├── image.py                  # 图像上传路由
+│   │       ├── audio.py                  # 音频上传路由
+│   │       ├── task.py                   # 任务管理路由
+│   │       ├── webhook.py                # Webhook 回调路由（多 Provider 分发）
+│   │       └── ws.py                     # WebSocket 路由
 │   ├── schemas/                  # 请求/响应模型
 │   │   ├── auth.py                   # 认证相关 Schema
 │   │   ├── conversation.py           # 对话相关 Schema
 │   │   ├── message.py                # 消息相关 Schema
-│   │   ├── image.py                  # 图像生成 Schema
-│   │   └── video.py                  # 视频生成 Schema
+│   │   ├── image.py                  # 图像上传 Schema
+│   │   └── websocket.py              # WebSocket 消息 Schema
 │   ├── services/                 # 业务逻辑层
 │   │   ├── auth_service.py           # 认证服务
 │   │   ├── conversation_service.py   # 对话服务
 │   │   ├── message_service.py        # 消息服务（CRUD）
-│   │   ├── message_stream_service.py # 流式消息服务
 │   │   ├── message_utils.py          # 消息工具函数
 │   │   ├── message_ai_helpers.py     # AI 调用辅助函数
-│   │   ├── image_service.py          # 图像生成服务
-│   │   ├── video_service.py          # 视频生成服务
 │   │   ├── audio_service.py          # 音频处理服务
 │   │   ├── storage_service.py        # 文件存储服务
+│   │   ├── oss_service.py            # OSS 存储服务
 │   │   ├── sms_service.py            # 短信服务
 │   │   ├── credit_service.py         # 积分服务
 │   │   ├── task_limit_service.py     # 任务限制服务
-│   │   ├── base_generation_service.py # 生成服务基类
-│   │   ├── chat_stream_manager.py    # 聊天流管理器（后台协程）
-│   │   ├── background_task_worker.py # 后台任务轮询器
+│   │   ├── background_task_worker.py # 后台任务轮询器（兜底模式，120s 间隔）
+│   │   ├── task_completion_service.py # 统一任务完成处理服务（Webhook/轮询共用）
+│   │   ├── websocket_manager.py      # WebSocket 连接管理
+│   │   ├── handlers/                 # 统一消息处理器
+│   │   │   ├── __init__.py               # Handler 工厂
+│   │   │   ├── base.py                   # Handler 基类
+│   │   │   ├── chat_handler.py           # 聊天处理器（流式）
+│   │   │   ├── image_handler.py          # 图片生成处理器
+│   │   │   └── video_handler.py          # 视频生成处理器
 │   │   └── adapters/                 # AI 模型适配器
-│   │       └── kie/                      # KIE API 适配器
-│   │           ├── client.py                 # HTTP 客户端
-│   │           ├── models.py                 # 数据模型
-│   │           ├── chat_adapter.py           # 聊天适配器
-│   │           ├── image_adapter.py          # 图片生成适配器
-│   │           └── video_adapter.py          # 视频生成适配器
+│   │       ├── __init__.py               # 适配器导出
+│   │       ├── base.py                   # 适配器基类
+│   │       ├── factory.py                # 适配器工厂
+│   │       ├── kie/                      # KIE API 适配器
+│   │       │   ├── client.py                 # HTTP 客户端
+│   │       │   ├── models.py                 # 数据模型
+│   │       │   ├── chat_adapter.py           # 聊天适配器
+│   │       │   ├── image_adapter.py          # 图片生成适配器
+│   │       │   └── video_adapter.py          # 视频生成适配器
+│   │       └── google/                   # Google API 适配器
+│   │           └── image_adapter.py          # Imagen 图片适配器
 │   └── config/                   # 配置文件
 │       └── kie_models.py             # KIE 模型配置
 │
@@ -178,9 +189,8 @@ EVERYDAYAIONE/
         ├── stores/                   # 状态管理（Zustand）
         │   ├── useAuthStore.ts           # 认证状态（用户信息、Token）
         │   ├── useAuthModalStore.ts      # 认证弹窗状态（开关、模式切换）
-        │   ├── useChatStore.ts           # 聊天状态（消息缓存）
-        │   ├── useTaskStore.ts           # 任务状态（全局任务队列）
-        │   └── useConversationRuntimeStore.ts # 对话运行时状态
+        │   ├── useMessageStore.ts        # 统一消息 Store（消息、任务、缓存）
+        │   └── useTaskRestorationStore.ts # 任务恢复状态
         ├── services/                 # API 调用
         │   ├── api.ts                    # Axios 配置
         │   ├── auth.ts                   # 认证 API
@@ -188,12 +198,7 @@ EVERYDAYAIONE/
         │   ├── message.ts                # 消息 API
         │   ├── image.ts                  # 图像生成 API
         │   ├── video.ts                  # 视频生成 API
-        │   └── messageSender/            # 统一消息发送模块
-        │       ├── index.ts                  # 统一入口（sendMessage）
-        │       ├── types.ts                  # 类型定义
-        │       ├── chatSender.ts             # 聊天消息发送器
-        │       ├── mediaSender.ts            # 统一媒体消息发送器（图片/视频合并）
-        │       └── mediaGenerationCore.ts    # 媒体生成核心逻辑（API+轮询）
+        │   └── messageSender.ts          # 统一消息发送器
         ├── types/                    # TypeScript 类型
         │   ├── auth.ts                   # 认证相关类型
         │   ├── message.ts                # 消息相关类型
@@ -211,8 +216,7 @@ EVERYDAYAIONE/
         │   ├── useClickOutside.ts        # 点击外部关闭逻辑
         │   └── handlers/                 # 消息处理器子模块
         │       ├── useTextMessageHandler.ts   # 文本消息处理
-        │       ├── useMediaMessageHandler.ts  # 统一媒体消息处理（图片/视频）
-        │       └── mediaHandlerUtils.ts       # 媒体处理工具函数
+        │       └── useMediaMessageHandler.ts  # 统一媒体消息处理（图片/视频）
         ├── constants/                # 常量配置
         │   ├── models.ts                 # 模型配置（UnifiedModel）
         │   └── placeholder.ts            # 占位符常量（PLACEHOLDER_TEXT）
@@ -225,18 +229,8 @@ EVERYDAYAIONE/
             ├── logger.ts                 # 统一日志工具（error、warn、debug、info）
             ├── taskNotification.ts       # 任务通知工具（notifyTaskComplete纯函数）
             ├── taskCoordinator.ts        # 任务协调器（防多标签页重复轮询）
-            ├── taskRestoration.ts        # 任务恢复工具（SSE/轮询恢复）
-            ├── tabSync.ts                # 跨标签页同步（BroadcastChannel）
-            ├── polling.ts                # 轮询类型定义（仅类型，实现在useTaskStore）
-            ├── mediaRegeneration.ts      # 媒体重新生成工具函数
-            └── regenerate/               # 重新生成逻辑
-                ├── index.ts              # 统一入口（regenerateMessage）
-                ├── regenerateInPlace.ts  # 失败消息原地重新生成
-                ├── regenerateAsNew.ts    # 成功消息新增对话
-                └── strategies/           # 类型策略
-                    ├── chatStrategy.ts   # 聊天重新生成策略
-                    ├── imageStrategy.ts  # 图片重新生成策略
-                    └── videoStrategy.ts  # 视频重新生成策略
+            ├── taskRestoration.ts        # 任务恢复工具（WebSocket 恢复）
+            └── tabSync.ts                # 跨标签页同步（BroadcastChannel）
 │
 └── tests/                    # 单元测试
     ├── __init__.py               # 测试模块标识
@@ -281,8 +275,8 @@ EVERYDAYAIONE/
   - Image：Nano Banana 系列（KIE）
   - Video：Sora 2 系列（KIE）
 - **调用模式**：
-  - Chat：同步流式（SSE）
-  - Image/Video：异步任务（创建任务 → 轮询状态）
+  - Chat：同步流式（SSE → WebSocket 推送）
+  - Image/Video：异步任务（Webhook 回调为主 + 轮询兜底 120s）
 - **成本控制**：预扣费机制（Lock → Execute → Settle）
 - **详细 API 文档**：见 `API_REFERENCE.md`
 
@@ -483,6 +477,14 @@ cache = client.caches.create(
 
 ## 更新记录
 
+- **2026-02-08**：Webhook 回调改造（回调为主 + 轮询兜底 + 多 Provider 兼容）
+  - 新增 `task_completion_service.py` 统一任务完成处理（幂等、OSS 上传、handler 分发）
+  - 新增 `webhook.py` 多 Provider Webhook 路由（`/api/webhook/{provider}`）
+  - 适配器基类新增 `parse_callback()` / `extract_task_id()` 抽象方法
+  - KIE 图片/视频适配器实现回调解析
+  - Handler 基类新增 `_build_callback_url()` 回调地址构建
+  - `BackgroundTaskWorker` 轮询间隔从 30s 降级到 120s，仅作兜底
+  - 消除双路径格式不一致问题（polling/handler 统一走 TaskCompletionService）
 - **2026-02-04**：完成聊天任务刷新恢复功能
   - 新增 `ChatStreamManager` 后台协程管理器，支持 SSE 断开后继续处理
   - 新增 `/tasks/{task_id}/stream` SSE 恢复端点，支持断点续传

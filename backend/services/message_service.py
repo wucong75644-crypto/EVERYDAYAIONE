@@ -5,20 +5,14 @@
 """
 
 from datetime import datetime
-from typing import Optional, List, Dict, Any, AsyncIterator
+from typing import Optional, List, Dict, Any
 
 from loguru import logger
 from supabase import Client
 
-from core.config import get_settings
 from core.exceptions import NotFoundError, PermissionDeniedError
 from services.conversation_service import ConversationService
-from services.adapters.kie.client import KieAPIError
-from services.message_utils import format_message, deduct_user_credits
-from services.message_ai_helpers import (
-    prepare_ai_stream_client,
-    stream_ai_response,
-)
+from services.message_utils import format_message
 
 
 class MessageService:

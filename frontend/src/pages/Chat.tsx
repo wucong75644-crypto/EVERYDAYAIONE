@@ -10,8 +10,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
-import { useTaskStore } from '../stores/useTaskStore';
-import { useConversationRuntimeStore } from '../stores/useConversationRuntimeStore';
+import { useMessageStore, type Message } from '../stores/useMessageStore';
 import Sidebar from '../components/chat/Sidebar';
 import MessageArea from '../components/chat/MessageArea';
 import InputArea from '../components/chat/InputArea';
@@ -22,8 +21,6 @@ import { useMessageCallbacks } from '../hooks/useMessageCallbacks';
 import { useConversationNavigation } from '../hooks/useConversationNavigation';
 import type { UnifiedModel } from '../constants/models';
 import { useUnifiedMessages } from '../hooks/useUnifiedMessages';
-import { useChatStore } from '../stores/useChatStore';
-import type { Message } from '../services/message';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { tabSync } from '../utils/tabSync';
 
@@ -75,14 +72,15 @@ export default function Chat() {
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(getInitialConversationId);
   const [conversationTitle, setConversationTitle] = useState('新对话');
   const [conversationModelId, setConversationModelId] = useState<string | null>(null);
-  const [currentSelectedModel, setCurrentSelectedModel] = useState<UnifiedModel | null>(null);
+  // 当前选择的模型（由 InputArea 设置，用于将来扩展）
+  const [, setCurrentSelectedModel] = useState<UnifiedModel | null>(null);
 
   // 请求序号（用于防止快速切换对话时的竞态）
   const conversationRequestSeqRef = useRef(0);
 
   // 获取统一消息列表（用于 setMessages 兼容层）
   const mergedMessages = useUnifiedMessages(currentConversationId);
-  const { replaceMessage, appendMessage } = useChatStore();
+  const { replaceMessage, appendMessage } = useMessageStore();
 
   // 性能监控：测量 TTI（首次消息加载完成时）
   useEffect(() => {
@@ -144,8 +142,6 @@ export default function Chat() {
   const {
     handleMessagePending,
     handleMessageSent,
-    handleStreamStart,
-    handleStreamContent,
     conversationOptimisticUpdate,
     setConversationOptimisticUpdate,
   } = useMessageCallbacks({
@@ -198,14 +194,14 @@ export default function Chat() {
     const unsubscribeCompleted = tabSync.on('chat_completed', (data) => {
       if (data.conversationId === currentConversationId) {
         // 清除缓存，触发 MessageArea 重新加载
-        useChatStore.getState().clearConversationCache(data.conversationId);
+        useMessageStore.getState().clearConversationCache(data.conversationId);
       }
     });
 
     // 其他标签页聊天失败：同上
     const unsubscribeFailed = tabSync.on('chat_failed', (data) => {
       if (data.conversationId === currentConversationId) {
-        useChatStore.getState().clearConversationCache(data.conversationId);
+        useMessageStore.getState().clearConversationCache(data.conversationId);
       }
     });
 
@@ -233,15 +229,13 @@ export default function Chat() {
   useEffect(() => {
     // LRU 清理：保留当前对话 + 活跃任务对话 + 正在生成的对话
     if (urlConversationId) {
-      const runtimeState = useConversationRuntimeStore.getState();
-      const activeTaskIds = useTaskStore.getState().getActiveConversationIds();
+      const store = useMessageStore.getState();
+      const activeTaskIds = store.getActiveConversationIds();
 
       // 查找所有正在生成（streaming）的对话，避免删除它们的状态
       const activeStreamingIds: string[] = [];
-      runtimeState.states.forEach((state, conversationId) => {
-        if (state.isGenerating || state.streamingMessageId) {
-          activeStreamingIds.push(conversationId);
-        }
+      store.streamingMessages.forEach((_, conversationId) => {
+        activeStreamingIds.push(conversationId);
       });
 
       // 合并所有需要保留的对话 ID（去重后保留前 15 个）
@@ -249,7 +243,7 @@ export default function Chat() {
         new Set([urlConversationId, ...activeTaskIds, ...activeStreamingIds])
       ).slice(0, 15);
 
-      runtimeState.cleanup(keepIds);
+      store.cleanup(keepIds);
     }
 
     if (urlConversationId) {
@@ -323,19 +317,6 @@ export default function Chat() {
     [currentConversationId, setConversationOptimisticUpdate]
   );
 
-  // 消息更新回调：更新侧边栏对话预览（用于重新生成等场景）
-  const handleMessageUpdate = useCallback(
-    (newLastMessage: string) => {
-      if (currentConversationId) {
-        setConversationOptimisticUpdate({
-          conversationId: currentConversationId,
-          lastMessage: newLastMessage,
-        });
-      }
-    },
-    [currentConversationId, setConversationOptimisticUpdate]
-  );
-
   return (
     <div className="h-screen flex bg-gray-50">
       {/* 左侧栏 */}
@@ -372,10 +353,7 @@ export default function Chat() {
         {/* 消息区域 */}
         <MessageArea
           conversationId={currentConversationId}
-          modelId={conversationModelId}
-          selectedModel={currentSelectedModel}
           onDelete={handleMessageDelete}
-          onMessageUpdate={handleMessageUpdate}
         />
 
         {/* 输入框区域 */}
@@ -385,8 +363,6 @@ export default function Chat() {
           onConversationCreated={handleConversationCreated}
           onMessagePending={handleMessagePending}
           onMessageSent={handleMessageSent}
-          onStreamContent={handleStreamContent}
-          onStreamStart={handleStreamStart}
           onModelChange={setCurrentSelectedModel}
         />
       </div>

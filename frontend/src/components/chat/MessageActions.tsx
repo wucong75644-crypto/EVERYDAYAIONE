@@ -70,15 +70,13 @@ export default function MessageActions({
     }
   }, [content]);
 
-  // 朗读功能（待实现）
+  // 朗读功能（后续迭代实现）
   const handleSpeak = useCallback(() => {
-    // TODO: 朗读功能待后续迭代实现
     toast('朗读功能开发中，敬请期待', { icon: '🎧' });
   }, []);
 
-  // 点赞/点踩功能（待实现）
+  // 点赞/点踩功能（后续迭代实现）
   const handleFeedback = useCallback((type: 'like' | 'dislike') => {
-    // TODO: 反馈功能待后续迭代实现
     const icon = type === 'like' ? '👍' : '👎';
     toast('反馈功能开发中，敬请期待', { icon });
   }, []);

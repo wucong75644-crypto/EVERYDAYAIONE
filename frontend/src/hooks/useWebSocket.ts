@@ -11,7 +11,7 @@
  * - 断点续传支持
  */
 
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react';
 import { logger } from '../utils/logger';
 
 // === 配置常量 ===
@@ -47,12 +47,21 @@ const MAX_RECONNECT_ATTEMPTS = 20;
 // === 消息类型 ===
 
 export type WSMessageType =
+  // 新统一消息类型
+  | 'message_pending'
+  | 'message_start'
+  | 'message_chunk'
+  | 'message_progress'
+  | 'message_done'
+  | 'message_error'
+  // 兼容旧类型（过渡期）
   | 'chat_start'
   | 'chat_chunk'
   | 'chat_done'
   | 'chat_error'
   | 'task_status'
   | 'task_progress'
+  // 系统消息
   | 'credits_changed'
   | 'notification'
   | 'ping'
@@ -85,6 +94,7 @@ type MessageHandler = (message: WSMessage) => void;
 export interface UseWebSocketReturn {
   connectionState: ConnectionState;
   isConnected: boolean;
+  isConnecting: boolean;
   subscribe: (type: WSMessageType, handler: MessageHandler) => () => void;
   subscribeTask: (taskId: string, lastIndex?: number) => void;
   unsubscribeTask: (taskId: string) => void;
@@ -110,6 +120,8 @@ export function useWebSocket(): UseWebSocketReturn {
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isCleaningUpRef = useRef(false);
+  // 用于打破 handleServerRestart <-> connect 循环依赖
+  const connectRef = useRef<(() => void) | null>(null);
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
 
@@ -141,7 +153,7 @@ export function useWebSocket(): UseWebSocketReturn {
         try {
           handler(message);
         } catch (error) {
-          logger.error('[WebSocket] Handler error:', error);
+          logger.error('ws:dispatch', 'Handler error', error);
         }
       });
     }
@@ -177,7 +189,7 @@ export function useWebSocket(): UseWebSocketReturn {
 
   // 处理服务器重启消息
   const handleServerRestart = useCallback(() => {
-    logger.info('[WebSocket] Server restarting, will reconnect with jitter');
+    logger.info('ws:connection', 'Server restarting, will reconnect with jitter');
     cleanup();
 
     // 增加随机抖动（0-5秒），错开重连峰值
@@ -185,7 +197,8 @@ export function useWebSocket(): UseWebSocketReturn {
     reconnectAttemptsRef.current = 0; // 重置重连计数
 
     reconnectTimeoutRef.current = setTimeout(() => {
-      connect();
+      // 使用 ref 调用 connect，打破循环依赖
+      connectRef.current?.();
     }, jitter);
   }, [cleanup]);
 
@@ -193,7 +206,7 @@ export function useWebSocket(): UseWebSocketReturn {
   const connect = useCallback(() => {
     const token = getToken();
     if (!token || !isAuthenticated()) {
-      logger.info('[WebSocket] Not authenticated, skip connection');
+      logger.info('ws:connection', 'Not authenticated, skip connection');
       return;
     }
 
@@ -209,20 +222,20 @@ export function useWebSocket(): UseWebSocketReturn {
     setConnectionState('connecting');
 
     const wsUrl = `${getWebSocketUrl()}?token=${encodeURIComponent(token)}`;
-    logger.info('[WebSocket] Connecting to', wsUrl.replace(/token=.*/, 'token=***'));
+    logger.info('ws:connection', 'Connecting', { url: wsUrl.replace(/token=.*/, 'token=***') });
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      logger.info('[WebSocket] Connected');
+      logger.info('ws:connection', 'Connected');
       setConnectionState('connected');
       reconnectAttemptsRef.current = 0;
       startHeartbeat();
     };
 
     ws.onclose = (event) => {
-      logger.info(`[WebSocket] Closed: ${event.code} ${event.reason}`);
+      logger.info('ws:connection', 'Closed', { code: event.code, reason: event.reason });
       setConnectionState('disconnected');
 
       if (heartbeatIntervalRef.current) {
@@ -240,16 +253,17 @@ export function useWebSocket(): UseWebSocketReturn {
         setConnectionState('reconnecting');
         const delay = getReconnectDelay();
         reconnectAttemptsRef.current++;
-        logger.info(`[WebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
+        logger.info('ws:connection', 'Reconnecting', { delay, attempt: reconnectAttemptsRef.current });
 
         reconnectTimeoutRef.current = setTimeout(() => {
-          connect();
+          // 使用 ref 调用 connect，避免声明顺序问题
+          connectRef.current?.();
         }, delay);
       }
     };
 
-    ws.onerror = (error) => {
-      logger.error('[WebSocket] Error:', error);
+    ws.onerror = () => {
+      logger.error('ws:connection', 'WebSocket error');
     };
 
     ws.onmessage = (event) => {
@@ -277,10 +291,15 @@ export function useWebSocket(): UseWebSocketReturn {
         // 分发消息
         dispatchMessage(message);
       } catch (error) {
-        logger.error('[WebSocket] Message parse error:', error);
+        logger.error('ws:message', 'Message parse error', error);
       }
     };
   }, [cleanup, startHeartbeat, getReconnectDelay, dispatchMessage, handleServerRestart]);
+
+  // 更新 connectRef，供 handleServerRestart 使用（避免渲染期间修改 ref）
+  useLayoutEffect(() => {
+    connectRef.current = connect;
+  });
 
   // 订阅消息类型
   const subscribe = useCallback((type: WSMessageType, handler: MessageHandler) => {
@@ -305,7 +324,7 @@ export function useWebSocket(): UseWebSocketReturn {
           timestamp: Date.now(),
         })
       );
-      logger.info(`[WebSocket] Subscribed to task: ${taskId}`);
+      logger.info('ws:subscribe', 'Subscribed to task', { taskId });
     }
   }, []);
 
@@ -319,7 +338,7 @@ export function useWebSocket(): UseWebSocketReturn {
           timestamp: Date.now(),
         })
       );
-      logger.info(`[WebSocket] Unsubscribed from task: ${taskId}`);
+      logger.info('ws:subscribe', 'Unsubscribed from task', { taskId });
     }
   }, []);
 
@@ -357,6 +376,7 @@ export function useWebSocket(): UseWebSocketReturn {
   // 自动连接
   useEffect(() => {
     if (isAuthenticated()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       connect();
     }
     return cleanup;
@@ -365,6 +385,7 @@ export function useWebSocket(): UseWebSocketReturn {
   return {
     connectionState,
     isConnected: connectionState === 'connected',
+    isConnecting: connectionState === 'connecting' || connectionState === 'reconnecting',
     subscribe,
     subscribeTask,
     unsubscribeTask,

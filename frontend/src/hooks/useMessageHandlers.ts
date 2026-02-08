@@ -6,16 +6,14 @@
  */
 
 import { type UnifiedModel } from '../constants/models';
-import { type Message } from '../services/message';
+import { type Message } from '../stores/useMessageStore';
 import {
   type AspectRatio,
   type ImageResolution,
   type ImageOutputFormat,
-} from '../services/image';
-import {
   type VideoFrames,
   type VideoAspectRatio,
-} from '../services/video';
+} from '../constants/models';
 import { useTextMessageHandler } from './handlers/useTextMessageHandler';
 import { useMediaMessageHandler } from './handlers/useMediaMessageHandler';
 
@@ -29,11 +27,8 @@ interface UseMessageHandlersParams {
   removeWatermark: boolean;
   thinkingEffort?: 'minimal' | 'low' | 'medium' | 'high';
   deepThinkMode?: boolean;
-  conversationTitle: string;
   onMessagePending: (message: Message) => void;
   onMessageSent: (aiMessage?: Message | null) => void;
-  onStreamContent?: (text: string, conversationId: string) => void;
-  onStreamStart?: (conversationId: string, model: string) => void;
   onMediaTaskSubmitted?: () => void;
 }
 
@@ -48,11 +43,8 @@ export function useMessageHandlers(params: UseMessageHandlersParams) {
     removeWatermark,
     thinkingEffort,
     deepThinkMode,
-    conversationTitle,
     onMessagePending,
     onMessageSent,
-    onStreamContent,
-    onStreamStart,
     onMediaTaskSubmitted,
   } = params;
 
@@ -63,8 +55,6 @@ export function useMessageHandlers(params: UseMessageHandlersParams) {
     deepThinkMode,
     onMessagePending,
     onMessageSent,
-    onStreamContent,
-    onStreamStart,
   });
 
   // 图片消息处理（使用统一媒体处理器）
@@ -74,7 +64,6 @@ export function useMessageHandlers(params: UseMessageHandlersParams) {
     aspectRatio,
     resolution,
     outputFormat,
-    conversationTitle,
     onMessagePending,
     onMessageSent,
     onMediaTaskSubmitted,
@@ -87,7 +76,6 @@ export function useMessageHandlers(params: UseMessageHandlersParams) {
     videoFrames,
     videoAspectRatio,
     removeWatermark,
-    conversationTitle,
     onMessagePending,
     onMessageSent,
     onMediaTaskSubmitted,

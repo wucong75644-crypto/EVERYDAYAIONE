@@ -1,28 +1,38 @@
 """
-消息路由
+统一消息路由
 
-提供消息的发送、查询接口。
+提供统一的消息生成入口 /messages/generate。
+支持聊天、图片、视频等多种生成类型。
 """
 
-from collections.abc import AsyncGenerator
-from typing import Optional
+import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from api.deps import CurrentUser, CurrentUserId, Database, TaskLimitSvc
 from core.limiter import limiter, RATE_LIMITS
-from loguru import logger
 from schemas.message import (
+    ContentPart,
     DeleteMessageResponse,
+    GenerateRequest,
+    GenerateResponse,
+    GenerationType,
+    Message,
     MessageCreate,
     MessageListResult,
+    MessageOperation,
     MessageResponse,
-    SendMessageRequest,
+    MessageRole,
+    MessageStatus,
+    TextPart,
+    content_parts_from_legacy,
+    infer_generation_type,
 )
 from services.message_service import MessageService
-from services.message_stream_service import MessageStreamService
 from services.conversation_service import ConversationService
+from services.handlers import get_handler
 
 router = APIRouter(prefix="/conversations/{conversation_id}/messages", tags=["消息"])
 message_router = APIRouter(prefix="/messages", tags=["消息"])
@@ -33,11 +43,301 @@ def get_message_service(db: Database) -> MessageService:
     return MessageService(db)
 
 
-def get_message_stream_service(db: Database) -> MessageStreamService:
-    """获取流式消息服务实例"""
-    message_service = MessageService(db)
-    conversation_service = ConversationService(db)
-    return MessageStreamService(db, message_service, conversation_service)
+def get_conversation_service(db: Database) -> ConversationService:
+    """获取对话服务实例"""
+    return ConversationService(db)
+
+
+# ============================================================
+# 统一消息生成 API
+# ============================================================
+
+
+@router.post("/generate", response_model=GenerateResponse, summary="统一消息生成")
+@limiter.limit(RATE_LIMITS["message_stream"])
+async def generate_message(
+    request: Request,
+    conversation_id: str,
+    body: GenerateRequest,
+    current_user: CurrentUser,
+    db: Database,
+    task_limit_service: TaskLimitSvc,
+):
+    """
+    统一消息生成入口
+
+    根据 generation_type 或 content 自动路由到对应 Handler：
+    - chat: 流式聊天（WebSocket 推送）
+    - image: 图片生成（异步任务）
+    - video: 视频生成（异步任务）
+
+    支持三种操作：
+    - send: 发送新消息（创建用户消息 + 创建 AI 消息）
+    - retry: 重试失败的 AI 消息（不创建用户消息 + 原地更新）
+    - regenerate: 重新生成成功的 AI 消息（创建用户消息 + 创建 AI 消息）
+    """
+    user_id = current_user["id"]
+
+    # 1. 检查任务限制
+    if task_limit_service:
+        await task_limit_service.check_and_acquire(user_id, conversation_id)
+
+    # 2. 推断生成类型
+    gen_type = body.generation_type or infer_generation_type(body.content)
+
+    # 3. 验证对话权限
+    conversation_service = get_conversation_service(db)
+    await conversation_service.get_conversation(conversation_id, user_id)
+
+    # 4. 创建用户消息（send/regenerate）
+    user_message: Optional[Message] = None
+    if body.operation != MessageOperation.RETRY:
+        user_message = await _create_user_message(
+            db=db,
+            conversation_id=conversation_id,
+            content=body.content,
+            created_at=body.created_at,
+            client_request_id=body.client_request_id,
+        )
+
+    # 5. 处理助手消息
+    if body.operation == MessageOperation.RETRY:
+        # retry: 更新原失败消息状态
+
+        if not body.original_message_id:
+            raise HTTPException(status_code=400, detail="retry 操作必须提供 original_message_id")
+
+        # 校验原消息状态
+        original_msg = db.table("messages").select("id, status, conversation_id").eq(
+            "id", body.original_message_id
+        ).single().execute()
+
+        if not original_msg.data:
+            raise HTTPException(status_code=404, detail="原消息不存在")
+
+        if original_msg.data["conversation_id"] != conversation_id:
+            raise HTTPException(status_code=403, detail="消息不属于该对话")
+
+        if original_msg.data["status"] != MessageStatus.FAILED.value:
+            raise HTTPException(status_code=400, detail="retry 只能用于失败消息")
+
+        # 检查是否有进行中的任务
+        existing_task = db.table("tasks").select("id").eq(
+            "placeholder_message_id", body.original_message_id
+        ).in_("status", ["pending", "running"]).execute()
+
+        if existing_task.data:
+            raise HTTPException(status_code=409, detail="该消息正在处理中，请稍候")
+
+        assistant_message_id = body.original_message_id
+        assistant_message = await _reset_message_for_retry(
+            db=db,
+            message_id=assistant_message_id,
+            gen_type=gen_type,
+            model=body.model,
+            params=body.params,
+        )
+    elif body.operation == MessageOperation.REGENERATE:
+        # regenerate: 校验原消息并创建新消息
+
+        if body.original_message_id:
+            # 校验原消息状态（必须是成功消息）
+            original_msg = db.table("messages").select("id, status, conversation_id").eq(
+                "id", body.original_message_id
+            ).single().execute()
+
+            if original_msg.data and original_msg.data["status"] == MessageStatus.FAILED.value:
+                raise HTTPException(status_code=400, detail="regenerate 只能用于成功消息，失败消息请用 retry")
+
+        assistant_message_id = body.assistant_message_id or str(uuid.uuid4())
+        assistant_message = await _create_assistant_placeholder(
+            db=db,
+            conversation_id=conversation_id,
+            message_id=assistant_message_id,
+            gen_type=gen_type,
+            model=body.model,
+            params=body.params,
+        )
+    else:
+        # send: 创建新消息
+        assistant_message_id = body.assistant_message_id or str(uuid.uuid4())
+        assistant_message = await _create_assistant_placeholder(
+            db=db,
+            conversation_id=conversation_id,
+            message_id=assistant_message_id,
+            gen_type=gen_type,
+            model=body.model,
+            params=body.params,
+        )
+
+    # 6. 获取 Handler 并启动任务
+    handler = get_handler(gen_type, db)
+    # 合并 model 到 params 中，确保 handler 能获取到用户选择的模型
+    handler_params = {**(body.params or {}), "model": body.model} if body.model else (body.params or {})
+    task_id = await handler.start(
+        message_id=assistant_message_id,
+        conversation_id=conversation_id,
+        user_id=user_id,
+        content=body.content,
+        params=handler_params,
+    )
+
+    # 7. 更新消息的 task_id
+    db.table("messages").update({
+        "task_id": task_id,
+    }).eq("id", assistant_message_id).execute()
+
+    return GenerateResponse(
+        task_id=task_id,
+        user_message=user_message,
+        assistant_message=assistant_message,
+        operation=body.operation,
+    )
+
+
+async def _create_user_message(
+    db: Database,
+    conversation_id: str,
+    content: List[ContentPart],
+    created_at: Optional[datetime] = None,
+    client_request_id: Optional[str] = None,
+) -> Message:
+    """创建用户消息"""
+    message_id = str(uuid.uuid4())
+
+    # 转换 ContentPart 为字典
+    content_dicts = []
+    for part in content:
+        if isinstance(part, TextPart):
+            content_dicts.append({"type": "text", "text": part.text})
+        elif hasattr(part, "model_dump"):
+            content_dicts.append(part.model_dump())
+        elif isinstance(part, dict):
+            content_dicts.append(part)
+
+    message_data = {
+        "id": message_id,
+        "conversation_id": conversation_id,
+        "role": MessageRole.USER.value,
+        "content": content_dicts,
+        "status": MessageStatus.COMPLETED.value,
+        "credits_cost": 0,
+    }
+
+    if created_at:
+        message_data["created_at"] = created_at.isoformat()
+    if client_request_id:
+        message_data["client_request_id"] = client_request_id
+
+    result = db.table("messages").insert(message_data).execute()
+
+    if not result.data:
+        raise Exception("创建用户消息失败")
+
+    msg_data = result.data[0]
+
+    return Message(
+        id=msg_data["id"],
+        conversation_id=msg_data["conversation_id"],
+        role=MessageRole(msg_data["role"]),
+        content=content,
+        status=MessageStatus(msg_data["status"]),
+        created_at=datetime.fromisoformat(msg_data["created_at"].replace("Z", "+00:00")),
+        client_request_id=msg_data.get("client_request_id"),
+    )
+
+
+async def _reset_message_for_retry(
+    db: Database,
+    message_id: str,
+    gen_type: GenerationType,
+    model: Optional[str] = None,
+    params: Optional[Dict[str, Any]] = None,
+) -> Message:
+    """
+    重置失败消息用于重试
+
+    将原失败消息的状态重置为 pending，清空内容和错误信息
+    """
+    # 构建新的 generation_params
+    generation_params = {"type": gen_type.value}
+    if model:
+        generation_params["model"] = model
+    if params:
+        generation_params.update(params)
+
+    # 更新消息：重置状态、清空内容和错误
+    update_data = {
+        "status": MessageStatus.PENDING.value,
+        "content": [],
+        "error": None,
+        "generation_params": generation_params,
+        "task_id": None,  # 清空旧的 task_id
+    }
+
+    result = db.table("messages").update(update_data).eq("id", message_id).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="原消息不存在")
+
+    msg_data = result.data[0]
+
+    return Message(
+        id=msg_data["id"],
+        conversation_id=msg_data["conversation_id"],
+        role=MessageRole(msg_data["role"]),
+        content=[],
+        status=MessageStatus(msg_data["status"]),
+        created_at=datetime.fromisoformat(msg_data["created_at"].replace("Z", "+00:00")),
+    )
+
+
+async def _create_assistant_placeholder(
+    db: Database,
+    conversation_id: str,
+    message_id: str,
+    gen_type: GenerationType,
+    model: Optional[str] = None,
+    params: Optional[Dict[str, Any]] = None,
+) -> Message:
+    """创建助手消息占位符"""
+    # 构建 generation_params
+    generation_params = {"type": gen_type.value}
+    if model:
+        generation_params["model"] = model
+    if params:
+        generation_params.update(params)
+
+    message_data = {
+        "id": message_id,
+        "conversation_id": conversation_id,
+        "role": MessageRole.ASSISTANT.value,
+        "content": [],  # 空内容
+        "status": MessageStatus.PENDING.value,
+        "generation_params": generation_params,
+        "credits_cost": 0,
+    }
+
+    result = db.table("messages").insert(message_data).execute()
+
+    if not result.data:
+        raise Exception("创建助手消息失败")
+
+    msg_data = result.data[0]
+
+    return Message(
+        id=msg_data["id"],
+        conversation_id=msg_data["conversation_id"],
+        role=MessageRole(msg_data["role"]),
+        content=[],
+        status=MessageStatus(msg_data["status"]),
+        created_at=datetime.fromisoformat(msg_data["created_at"].replace("Z", "+00:00")),
+    )
+
+
+# ============================================================
+# 兼容旧 API（过渡期保留）
+# ============================================================
 
 
 @router.post("/create", response_model=MessageResponse, summary="创建消息")
@@ -52,23 +352,32 @@ async def create_message(
     """
     直接创建消息（用于图像生成等场景）
 
-    - **content**: 消息内容
-    - **role**: 消息角色（user/assistant）
-    - **image_url**: 图片 URL（可选）
-    - **video_url**: 视频 URL（可选）
-    - **credits_cost**: 消耗积分
-    - **is_error**: 是否为错误消息
-    - **generation_params**: 生成参数（用于重新生成时继承）
+    注意：此 API 已过时，请使用 /generate 端点。
     """
+    # 转换新格式的 content 为旧格式
+    text_content = ""
+    image_url = None
+    video_url = None
+
+    for part in body.content:
+        if isinstance(part, TextPart):
+            text_content = part.text
+        elif isinstance(part, dict):
+            if part.get("type") == "text":
+                text_content = part.get("text", "")
+            elif part.get("type") == "image":
+                image_url = part.get("url")
+            elif part.get("type") == "video":
+                video_url = part.get("url")
+
     result = await service.create_message(
         conversation_id=conversation_id,
         user_id=current_user["id"],
-        content=body.content,
+        content=text_content,
         role=body.role.value,
-        image_url=body.image_url,
-        video_url=body.video_url,
+        image_url=image_url,
+        video_url=video_url,
         credits_cost=body.credits_cost,
-        is_error=body.is_error,
         created_at=body.created_at,
         generation_params=body.generation_params,
         client_request_id=body.client_request_id,
@@ -89,7 +398,6 @@ async def get_messages(
     获取对话的消息列表
 
     按创建时间降序返回（从新到旧），支持分页加载历史消息。
-    offset=0 返回最新的消息，增加 offset 加载更早的消息。
     """
     result = await service.get_messages(
         conversation_id=conversation_id,
@@ -108,122 +416,13 @@ async def get_message(
     current_user: CurrentUser,
     service: MessageService = Depends(get_message_service),
 ):
-    """
-    获取单条消息的详细信息
-    """
+    """获取单条消息的详细信息"""
     result = await service.get_message(
+        conversation_id=conversation_id,
         message_id=message_id,
         user_id=current_user["id"],
     )
     return result
-
-
-@router.post("/stream", summary="流式发送消息")
-@limiter.limit(RATE_LIMITS["message_stream"])
-async def send_message_stream(
-    request: Request,
-    conversation_id: str,
-    body: SendMessageRequest,
-    current_user: CurrentUser,
-    task_limit_service: TaskLimitSvc,
-    service: MessageStreamService = Depends(get_message_stream_service),
-):
-    """
-    流式发送消息到对话（SSE）
-
-    返回 Server-Sent Events 流，包含以下事件类型：
-    - user_message: 用户消息已创建
-    - start: AI 开始生成
-    - content: AI 响应内容块（逐字返回）
-    - done: 生成完成，包含完整的 assistant_message
-    - error: 发生错误
-
-    示例响应流：
-    ```
-    data: {"type": "user_message", "data": {...}}
-    data: {"type": "start", "data": {"model": "gemini-3-flash"}}
-    data: {"type": "content", "data": {"text": "你好"}}
-    data: {"type": "content", "data": {"text": "！"}}
-    data: {"type": "done", "data": {"assistant_message": {...}, "credits_consumed": 5}}
-    data: [DONE]
-    ```
-    """
-    # 任务限制检查（降级处理：服务不可用时跳过）
-    if task_limit_service:
-        await task_limit_service.check_and_acquire(current_user["id"], conversation_id)
-
-    async def stream_with_cleanup() -> AsyncGenerator[str, None]:
-        """流式响应包装器，确保任务槽位释放"""
-        try:
-            async for chunk in service.send_message_stream(
-                conversation_id=conversation_id,
-                user_id=current_user["id"],
-                content=body.content,
-                model_id=body.model_id,
-                image_url=body.image_url,
-                video_url=body.video_url,
-                thinking_effort=body.thinking_effort,
-                thinking_mode=body.thinking_mode,
-                client_request_id=body.client_request_id,
-                created_at=body.created_at,
-            ):
-                yield chunk
-        finally:
-            if task_limit_service:
-                await task_limit_service.release(current_user["id"], conversation_id)
-
-    return StreamingResponse(
-        stream_with_cleanup(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-@router.post("/{message_id}/regenerate", summary="重新生成失败的消息")
-@limiter.limit(RATE_LIMITS["message_regenerate"])
-async def regenerate_message(
-    request: Request,
-    conversation_id: str,
-    message_id: str,
-    current_user: CurrentUser,
-    service: MessageStreamService = Depends(get_message_stream_service),
-):
-    """
-    重新生成失败的消息（流式）
-
-    用于重新尝试生成之前失败的 AI 回复。返回 SSE 流式事件。
-
-    事件类型：
-    - start: AI 开始生成
-    - content: AI 响应内容块（逐字返回）
-    - done: 生成完成，包含更新后的消息
-    - error: 再次失败
-
-    示例响应流：
-    ```
-    data: {"type": "start", "data": {"model": "gemini-3-flash"}}
-    data: {"type": "content", "data": {"text": "你好"}}
-    data: {"type": "done", "data": {"assistant_message": {...}, "credits_consumed": 5}}
-    data: [DONE]
-    ```
-    """
-    return StreamingResponse(
-        service.regenerate_message_stream(
-            conversation_id=conversation_id,
-            message_id=message_id,
-            user_id=current_user["id"],
-        ),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
 
 
 # ==================== 独立消息路由 ====================
@@ -237,8 +436,6 @@ async def delete_message(
 ):
     """
     删除单条消息
-
-    - **message_id**: 消息 ID
 
     权限验证：只能删除自己对话中的消息
     """

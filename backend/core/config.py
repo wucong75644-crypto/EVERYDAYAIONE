@@ -49,13 +49,21 @@ class Settings(BaseSettings):
     oss_access_key_id: Optional[str] = None
     oss_access_key_secret: Optional[str] = None
     oss_bucket_name: Optional[str] = None
-    oss_endpoint: Optional[str] = None
+    oss_endpoint: Optional[str] = None  # 外网端点（用于生成 CDN URL）
+    oss_internal_endpoint: Optional[str] = None  # 内网端点（用于上传，免流量费）
     oss_region: Optional[str] = None
     oss_cdn_domain: Optional[str] = None  # CDN 加速域名，如 cdn.everydayai.com.cn
 
     # KIE API 配置
     kie_api_key: Optional[str] = None
     kie_base_url: str = "https://api.kie.ai/v1"
+
+    # Google API 配置（统一适配器 Phase 6 使用）
+    google_api_key: Optional[str] = None
+
+    # Webhook 回调配置
+    callback_base_url: Optional[str] = None  # 公网可访问的回调地址，未配置则纯轮询模式
+    poll_interval_seconds: int = 0  # 轮询间隔秒数（0=自动：有回调120s，无回调15s）
 
     # 应用配置
     app_env: str = "development"
