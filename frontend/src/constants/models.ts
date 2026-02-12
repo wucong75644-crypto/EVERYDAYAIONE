@@ -114,6 +114,68 @@ export const ALL_MODELS: UnifiedModel[] = [
     credits: 0,
   },
 
+  // Google 官方模型（免费层）
+  {
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash ⚡️',
+    type: 'chat',
+    description: 'Google 官方 | 免费 | 快速响应',
+    capabilities: {
+      // 生成能力
+      textToImage: false,
+      imageEditing: false,
+      imageToVideo: false,
+      textToVideo: false,
+      // 理解能力
+      vqa: true, // 图片理解
+      videoQA: true, // 视频理解
+      audioInput: true, // 音频输入
+      pdfInput: false, // 暂不支持 PDF
+      // 高级功能
+      functionCalling: true, // 工具调用
+      structuredOutput: true, // 结构化输出
+      thinkingEffort: false, // Google 官方 API 暂不支持
+      streamingResponse: true, // 流式响应
+      // 容量限制
+      maxImages: 10,
+      maxFileSize: 20,
+      maxAudioSize: 25,
+      maxVideoSize: 100,
+      maxContextTokens: 1000000, // 1M tokens
+    },
+    credits: 0, // 免费层，无需积分
+  },
+  {
+    id: 'gemini-2.5-pro',
+    name: 'Gemini 2.5 Pro 🚀',
+    type: 'chat',
+    description: 'Google 官方 | 免费 | 高级推理',
+    capabilities: {
+      // 生成能力
+      textToImage: false,
+      imageEditing: false,
+      imageToVideo: false,
+      textToVideo: false,
+      // 理解能力
+      vqa: true, // 图片理解
+      videoQA: true, // 视频理解
+      audioInput: true, // 音频输入
+      pdfInput: false, // 暂不支持 PDF
+      // 高级功能
+      functionCalling: true, // 工具调用
+      structuredOutput: true, // 结构化输出
+      thinkingEffort: false, // Google 官方 API 暂不支持
+      streamingResponse: true, // 流式响应
+      // 容量限制
+      maxImages: 10,
+      maxFileSize: 20,
+      maxAudioSize: 25,
+      maxVideoSize: 100,
+      maxContextTokens: 1000000, // 1M tokens
+    },
+    credits: 0, // 免费层，无需积分
+  },
+
   // 图像模型
   {
     id: 'google/nano-banana',

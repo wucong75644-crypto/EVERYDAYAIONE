@@ -29,6 +29,7 @@ from .models import (
     KieModelType,
     TaskState,
 )
+from .configs import VIDEO_MODEL_CONFIGS
 
 
 class KieVideoAdapter(BaseVideoAdapter):
@@ -47,43 +48,8 @@ class KieVideoAdapter(BaseVideoAdapter):
     - 支持去水印
     """
 
-    # 模型配置（价格与前端 models.ts 保持一致）
-    MODEL_CONFIGS = {
-        "sora-2-text-to-video": {
-            "model_id": "sora-2-text-to-video",
-            "description": "文本生成视频",
-            "requires_image_input": False,
-            "requires_prompt": True,
-            "max_prompt_length": 10000,
-            "supported_frames": ["10", "15"],
-            "supports_watermark_removal": True,
-            "cost_per_second": Decimal("0.015"),
-            "credits_per_second": 3,  # 30 credits/10秒
-        },
-        "sora-2-image-to-video": {
-            "model_id": "sora-2-image-to-video",
-            "description": "图片生成视频",
-            "requires_image_input": True,
-            "requires_prompt": True,
-            "max_prompt_length": 10000,
-            "max_image_size_mb": 10,
-            "supported_frames": ["10", "15"],
-            "supports_watermark_removal": True,
-            "cost_per_second": Decimal("0.015"),
-            "credits_per_second": 3,  # 30 credits/10秒
-        },
-        "sora-2-pro-storyboard": {
-            "model_id": "sora-2-pro-storyboard",
-            "description": "故事板视频生成 (专业版)",
-            "requires_image_input": False,  # 可选
-            "requires_prompt": False,  # 无 prompt
-            "supported_frames": ["10", "15", "25"],
-            "supports_watermark_removal": False,
-            "cost_per_second": Decimal("0.054"),
-            # 阶梯定价：10秒=150, 15秒=270, 25秒=270
-            "credits_by_duration": {"10": 150, "15": 270, "25": 270},
-        },
-    }
+    # 模型配置（从 configs.py 导入）
+    MODEL_CONFIGS = VIDEO_MODEL_CONFIGS
 
     def __init__(self, client: KieClient, model: str):
         """
@@ -472,118 +438,6 @@ class KieVideoAdapter(BaseVideoAdapter):
             )
 
 
-async def text_to_video(
-    api_key: str,
-    prompt: str,
-    duration: int = 10,
-    aspect_ratio: str = "landscape",
-    remove_watermark: bool = True,
-    **kwargs,
-) -> Dict[str, Any]:
-    """
-    文本生成视频
 
-    Args:
-        api_key: KIE API 密钥
-        prompt: 视频描述
-        duration: 时长 (10/15 秒)
-        aspect_ratio: 宽高比
-        remove_watermark: 是否去水印
-        **kwargs: 其他参数
-
-    Returns:
-        生成结果
-    """
-    try:
-        async with KieClient(api_key) as client:
-            adapter = KieVideoAdapter(client, "sora-2-text-to-video")
-            return await adapter.generate(
-                prompt=prompt,
-                n_frames=str(duration),
-                aspect_ratio=aspect_ratio,
-                remove_watermark=remove_watermark,
-                **kwargs,
-            )
-    except (KieAPIError, KieTaskFailedError, KieTaskTimeoutError, ValueError):
-        raise
-    except Exception as e:
-        logger.error(f"text_to_video failed: duration={duration}s, error={e}")
-        raise KieAPIError(f"text_to_video failed: {e}") from e
-
-
-async def image_to_video(
-    api_key: str,
-    prompt: str,
-    image_url: str,
-    duration: int = 10,
-    aspect_ratio: str = "landscape",
-    remove_watermark: bool = True,
-    **kwargs,
-) -> Dict[str, Any]:
-    """
-    图片生成视频
-
-    Args:
-        api_key: KIE API 密钥
-        prompt: 视频描述
-        image_url: 首帧图片 URL
-        duration: 时长
-        aspect_ratio: 宽高比
-        remove_watermark: 是否去水印
-        **kwargs: 其他参数
-
-    Returns:
-        生成结果
-    """
-    try:
-        async with KieClient(api_key) as client:
-            adapter = KieVideoAdapter(client, "sora-2-image-to-video")
-            return await adapter.generate(
-                prompt=prompt,
-                image_urls=[image_url],
-                n_frames=str(duration),
-                aspect_ratio=aspect_ratio,
-                remove_watermark=remove_watermark,
-                **kwargs,
-            )
-    except (KieAPIError, KieTaskFailedError, KieTaskTimeoutError, ValueError):
-        raise
-    except Exception as e:
-        logger.error(f"image_to_video failed: duration={duration}s, error={e}")
-        raise KieAPIError(f"image_to_video failed: {e}") from e
-
-
-async def storyboard_video(
-    api_key: str,
-    duration: int = 15,
-    storyboard_images: Optional[List[str]] = None,
-    aspect_ratio: str = "landscape",
-    **kwargs,
-) -> Dict[str, Any]:
-    """
-    故事板视频生成
-
-    Args:
-        api_key: KIE API 密钥
-        duration: 时长 (10/15/25 秒)
-        storyboard_images: 故事板图片列表
-        aspect_ratio: 宽高比
-        **kwargs: 其他参数
-
-    Returns:
-        生成结果
-    """
-    try:
-        async with KieClient(api_key) as client:
-            adapter = KieVideoAdapter(client, "sora-2-pro-storyboard")
-            return await adapter.generate(
-                image_urls=storyboard_images,
-                n_frames=str(duration),
-                aspect_ratio=aspect_ratio,
-                **kwargs,
-            )
-    except (KieAPIError, KieTaskFailedError, KieTaskTimeoutError, ValueError):
-        raise
-    except Exception as e:
-        logger.error(f"storyboard_video failed: duration={duration}s, error={e}")
-        raise KieAPIError(f"storyboard_video failed: {e}") from e
+# 便捷函数已移至 helpers.py
+# from .helpers import text_to_video, image_to_video, storyboard_video

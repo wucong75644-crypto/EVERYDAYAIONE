@@ -35,12 +35,13 @@ const checkRuntimeState = () => {
   });
 };
 
-// 检查 TaskStore 状态
-const checkTaskStore = () => {
-  const store = window.__zustand?.['task-store'];
+// 检查任务状态（统一使用 useMessageStore）
+const checkTaskState = () => {
+  const store = window.__zustand?.['message-store'];
   if (!store) return console.log('Store 不可用');
 
   console.log('媒体任务:', store.getState().mediaTasks);
+  console.log('统一任务:', store.getState().tasks);
 };
 ```
 
@@ -91,11 +92,11 @@ checkRuntimeState();
 **控制台验证**:
 ```javascript
 // 发送后立即执行
-checkTaskStore();
+checkTaskState();
 // 应该看到有一个 image 类型的任务
 
 // 完成后执行
-checkTaskStore();
+checkTaskState();
 // 任务应该已清除
 ```
 
@@ -149,7 +150,7 @@ console.log('恢复状态:', restorationStore?.getState());
 **验证点**:
 - [ ] 占位符恢复显示"图片生成中..."
 - [ ] 生成完成后正常显示图片
-- [ ] TaskStore 任务正确恢复
+- [ ] useMessageStore 任务正确恢复
 
 ---
 

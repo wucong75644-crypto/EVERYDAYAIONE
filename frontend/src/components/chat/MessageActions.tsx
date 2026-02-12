@@ -51,6 +51,18 @@ export default function MessageActions({
   const [copied, setCopied] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
 
+  // 复制状态重置定时器 ref（用于组件卸载时清理）
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 组件卸载时清理定时器
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) {
+        clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, []);
+
   // 使用自定义 Hook 管理更多菜单动画
   const {
     isOpen: showMoreMenu,
@@ -64,7 +76,11 @@ export default function MessageActions({
     try {
       await navigator.clipboard.writeText(content);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => {
+        setCopied(false);
+        copyTimerRef.current = null;
+      }, 2000);
     } catch (error) {
       console.error('复制失败:', error);
     }

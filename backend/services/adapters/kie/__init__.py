@@ -55,20 +55,16 @@ from .client import (
     KieTaskTimeoutError,
 )
 
-from .chat_adapter import (
-    KieChatAdapter,
-    create_kie_chat_adapter,
-)
+from .chat_adapter import KieChatAdapter
+from .image_adapter import KieImageAdapter
+from .video_adapter import KieVideoAdapter
 
-from .image_adapter import (
-    KieImageAdapter,
+# 便捷函数从 helpers.py 导入
+from .helpers import (
+    create_kie_chat_adapter,
     generate_image,
     edit_image,
     generate_image_pro,
-)
-
-from .video_adapter import (
-    KieVideoAdapter,
     text_to_video,
     image_to_video,
     storyboard_video,

@@ -7,7 +7,7 @@
 
 import hashlib
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -33,6 +33,10 @@ class OSSService:
     # 存储路径前缀
     IMAGE_PREFIX = "images"
     VIDEO_PREFIX = "videos"
+
+    # 文件大小限制（字节）
+    MAX_IMAGE_SIZE = 50 * 1024 * 1024  # 50MB
+    MAX_VIDEO_SIZE = 500 * 1024 * 1024  # 500MB
 
     def __init__(self):
         """
@@ -98,24 +102,75 @@ class OSSService:
             }
 
         Raises:
-            ValueError: URL 无效或格式不支持
+            ValueError: URL 无效、格式不支持或文件过大
             Exception: 下载或上传失败
         """
         logger.info(f"Uploading {media_type} from URL: user_id={user_id}, url={url[:100]}...")
 
-        # 1. 下载文件（视频超时时间更长）
+        # 确定大小限制
+        max_size = self.MAX_VIDEO_SIZE if media_type == "video" else self.MAX_IMAGE_SIZE
+        max_size_mb = max_size / 1024 / 1024
+
+        # 1. 预检查文件大小（HEAD 请求）
         timeout = 120.0 if media_type == "video" else 30.0
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             try:
-                response = await client.get(url)
-                response.raise_for_status()
+                # 尝试 HEAD 请求获取 Content-Length
+                try:
+                    head_response = await client.head(url, timeout=10.0)
+                    content_length = head_response.headers.get("content-length")
+                    if content_length:
+                        size = int(content_length)
+                        if size > max_size:
+                            logger.warning(
+                                f"{media_type.capitalize()} too large | "
+                                f"size={size/1024/1024:.1f}MB | max={max_size_mb}MB"
+                            )
+                            raise ValueError(
+                                f"{media_type}文件过大: "
+                                f"{size/1024/1024:.1f}MB > {max_size_mb}MB"
+                            )
+                        logger.info(
+                            f"Pre-check passed | size={size/1024/1024:.1f}MB | "
+                            f"max={max_size_mb}MB"
+                        )
+                except (httpx.HTTPError, ValueError) as e:
+                    # HEAD 请求失败或不支持，继续尝试 GET（流式下载时检查）
+                    logger.debug(f"HEAD request failed, will check size during download: {e}")
+
+                # 2. 流式下载并检查累计大小
+                content_chunks = []
+                total_size = 0
+
+                async with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    content_type = response.headers.get("content-type", "")
+
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        content_chunks.append(chunk)
+                        total_size += len(chunk)
+
+                        # 实时检查是否超限
+                        if total_size > max_size:
+                            logger.warning(
+                                f"{media_type.capitalize()} download aborted | "
+                                f"size={total_size/1024/1024:.1f}MB > {max_size_mb}MB"
+                            )
+                            raise ValueError(
+                                f"{media_type}下载超限: >{max_size_mb}MB"
+                            )
+
+                # 合并所有块
+                content = b"".join(content_chunks)
+                logger.info(
+                    f"{media_type.capitalize()} downloaded | "
+                    f"size={len(content)/1024/1024:.1f}MB"
+                )
+
             except httpx.HTTPError as e:
                 logger.error(f"Failed to download {media_type}: url={url}, error={e}")
                 # 脱敏：不暴露原始URL和HTTP错误详情
                 raise ValueError(f"{media_type}下载失败，请检查URL是否有效")
-
-        content = response.content
-        content_type = response.headers.get("content-type", "")
 
         # 2. 确定文件扩展名
         ext = self._get_extension(url, content_type, media_type)
@@ -267,22 +322,32 @@ class OSSService:
         """
         检查 URL 是否已经是 OSS/CDN URL
 
-        用于避免重复上传。
+        用于避免重复上传。使用精确的域名匹配防止误判。
         """
-        if not url:
+        if not url or not url.strip():
             return False
-        url_lower = url.lower()
 
-        # 检查 CDN 域名
-        if self.cdn_domain and self.cdn_domain in url_lower:
-            return True
+        try:
+            parsed = urlparse(url)
+            hostname = parsed.hostname
 
-        # 检查 OSS 域名
-        oss_domain = f"{settings.oss_bucket_name}.{self.external_endpoint}"
-        if oss_domain in url_lower:
-            return True
+            if not hostname:
+                return False
 
-        return False
+            # 精确匹配 CDN 域名
+            if self.cdn_domain and hostname.lower() == self.cdn_domain.lower():
+                return True
+
+            # 精确匹配 OSS 域名
+            oss_domain = f"{settings.oss_bucket_name}.{self.external_endpoint}"
+            if hostname.lower() == oss_domain.lower():
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.warning(f"Failed to parse URL: {url[:50]}... | error={e}")
+            return False
 
     def exists(self, object_key: str) -> bool:
         """检查对象是否存在"""
@@ -304,7 +369,7 @@ class OSSService:
 
         格式：{prefix}/{category}/{yyyy}/{mm}/{dd}/{user_hash}_{uuid}.{ext}
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         date_path = now.strftime("%Y/%m/%d")
 
         # 用户 ID 哈希（保护隐私）
@@ -372,13 +437,29 @@ class OSSService:
         return None
 
 
-# 全局单例
+# 全局单例（线程安全）
+import threading
+
 _oss_service: Optional[OSSService] = None
+_oss_lock = threading.Lock()
 
 
 def get_oss_service() -> OSSService:
-    """获取 OSS 服务单例"""
+    """
+    获取 OSS 服务单例（线程安全）
+
+    使用双重检查锁定模式确保多线程环境下只创建一个实例。
+    """
     global _oss_service
-    if _oss_service is None:
-        _oss_service = OSSService()
+
+    # 第一次检查（无锁，快速路径）
+    if _oss_service is not None:
+        return _oss_service
+
+    # 获取锁
+    with _oss_lock:
+        # 第二次检查（有锁，防止多个线程同时初始化）
+        if _oss_service is None:
+            _oss_service = OSSService()
+
     return _oss_service

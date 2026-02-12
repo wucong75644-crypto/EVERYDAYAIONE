@@ -13,6 +13,7 @@
 import { request } from './api';
 import { useMessageStore, type ContentPart, type Message } from '../stores/useMessageStore';
 import { logger } from '../utils/logger';
+import { getPlaceholderText } from '../constants/placeholder';
 
 // ============================================================
 // 类型定义
@@ -42,6 +43,8 @@ export interface SendOptions {
   originalMessageId?: string;
   /** WebSocket 订阅函数（可选，由调用者注入） */
   subscribeTask?: (taskId: string, conversationId: string) => void;
+  /** WebSocket 取消订阅函数（可选，用于错误回滚） */
+  unsubscribeTask?: (taskId: string) => void;
 }
 
 /** API 请求格式 */
@@ -92,6 +95,7 @@ export async function sendMessage(options: SendOptions): Promise<string> {
     operation = 'send',
     originalMessageId,
     subscribeTask,
+    unsubscribeTask,
   } = options;
 
   const messageStore = useMessageStore.getState();
@@ -103,11 +107,15 @@ export async function sendMessage(options: SendOptions): Promise<string> {
     : crypto.randomUUID();
   const now = new Date();
 
+  // 🔥 关键改动：生成 client_task_id（用于提前订阅）
+  const clientTaskId = crypto.randomUUID();
+
   logger.info('messageSender', 'sending message', {
     conversationId,
     operation,
     generationType,
     clientRequestId,
+    clientTaskId,  // 🔥 新增日志
   });
 
   // ========================================
@@ -143,7 +151,7 @@ export async function sendMessage(options: SendOptions): Promise<string> {
 
     if (generationType === 'chat' || !generationType) {
       // Chat 类型：只注册 streamingId，不创建新消息
-      // 这样 chat_chunk 能路由到正确的消息，且不会创建重复消息
+      // 这样 message_chunk 能路由到正确的消息，且不会创建重复消息
       messageStore.registerStreamingId(conversationId, assistantMessageId);
     } else {
       // Media 类型：只设置发送状态
@@ -151,19 +159,22 @@ export async function sendMessage(options: SendOptions): Promise<string> {
     }
   } else if (generationType === 'chat' || !generationType) {
     // Chat 类型：使用 startStreaming 创建占位符
-    // 这样 streamingMessages Map 会正确设置，chat_chunk 能路由到正确的消息
+    // 这样 streamingMessages Map 会正确设置，message_chunk 能路由到正确的消息
     messageStore.startStreaming(conversationId, assistantMessageId, {
       initialContent: '',
       createdAt: placeholderCreatedAt,
       generationParams: { type: generationType, model },
     });
   } else {
-    // Media 类型：添加到 optimisticMessages（与 replaceMediaPlaceholder 查找位置一致）
+    // Media 类型：直接添加到 messages（不再使用 optimistic，避免状态分散）
+    // 占位符将在原地被替换，不会触发滚动
+    const loadingText = getPlaceholderText(generationType as 'image' | 'video');
+
     const placeholderMessage: Message = {
       id: assistantMessageId,
       conversation_id: conversationId,
       role: 'assistant',
-      content: [],
+      content: [{ type: 'text', text: loadingText }],
       status: 'pending',
       created_at: placeholderCreatedAt,
       generation_params: {
@@ -171,8 +182,17 @@ export async function sendMessage(options: SendOptions): Promise<string> {
         model,
       },
     };
-    messageStore.addOptimisticMessage(conversationId, placeholderMessage);
+    messageStore.addMessage(conversationId, placeholderMessage); // 直接添加到 messages
     messageStore.setIsSending(true);
+  }
+
+  // ========================================
+  // 🔥 Phase 1.5: 提前订阅（在发送请求前）
+  // ========================================
+
+  if (subscribeTask) {
+    subscribeTask(clientTaskId, conversationId);
+    logger.info('messageSender', 'pre-subscribed to task', { clientTaskId });
   }
 
   try {
@@ -191,8 +211,10 @@ export async function sendMessage(options: SendOptions): Promise<string> {
         params,
         original_message_id: originalMessageId,
         client_request_id: clientRequestId,
+        client_task_id: clientTaskId, // 🔥 前端生成的 task_id（用于订阅）
         created_at: now.toISOString(),
         assistant_message_id: assistantMessageId, // 前端生成的真实 UUID
+        placeholder_created_at: placeholderCreatedAt, // 占位符的创建时间（确保前后端一致）
       } as GenerateRequest,
     });
 
@@ -216,7 +238,7 @@ export async function sendMessage(options: SendOptions): Promise<string> {
     // ========================================
 
     messageStore.createTask({
-      taskId: response.task_id,
+      taskId: clientTaskId, // 🔥 使用 clientTaskId（已订阅）
       messageId: response.assistant_message.id,
       conversationId,
       type: generationType || 'chat',
@@ -225,30 +247,27 @@ export async function sendMessage(options: SendOptions): Promise<string> {
       createdAt: Date.now(),
     });
 
-    // 4.1 媒体类型：注册到 mediaTasks（Chat 类型已在 Phase 1.2 处理）
-    if (generationType && generationType !== 'chat') {
-      messageStore.startMediaTask({
-        taskId: response.task_id,
-        conversationId,
-        conversationTitle: '',
-        type: generationType as 'image' | 'video',
-        placeholderId: assistantMessageId,
+    // ========================================
+    // Phase 5: 验证后端返回的 task_id（应该与 clientTaskId 一致）
+    // ========================================
+
+    if (response.task_id !== clientTaskId) {
+      logger.warn('messageSender', 'task_id mismatch', {
+        expected: clientTaskId,
+        received: response.task_id,
       });
-    }
-
-    // ========================================
-    // Phase 5: 订阅 WebSocket
-    // ========================================
-
-    if (subscribeTask) {
-      subscribeTask(response.task_id, conversationId);
+      // 如果不一致，说明后端不支持 client_task_id，需要补订阅
+      if (subscribeTask) {
+        subscribeTask(response.task_id, conversationId);
+      }
     }
 
     logger.info('messageSender', 'message sent successfully', {
-      taskId: response.task_id,
+      taskId: clientTaskId,
+      backendTaskId: response.task_id,
     });
 
-    return response.task_id;
+    return clientTaskId; // 🔥 返回 clientTaskId（前端已订阅）
 
   } catch (error) {
     // ========================================
@@ -257,13 +276,17 @@ export async function sendMessage(options: SendOptions): Promise<string> {
 
     logger.error('messageSender', 'send failed', error);
 
+    // 🔥 取消订阅（防止内存泄漏）
+    if (unsubscribeTask) {
+      unsubscribeTask(clientTaskId);
+      logger.info('messageSender', 'unsubscribed from task', { clientTaskId });
+    }
+
     // 清理 streamingMessages（Chat 类型会设置）
     messageStore.completeStreaming(conversationId);
 
     // 移除占位符（同时检查 messages 和 optimisticMessages）
     messageStore.removeMessage(assistantMessageId);
-    // 同时移除可能的 streaming-xxx 消息
-    messageStore.removeMessage(`streaming-${assistantMessageId}`);
 
     // 添加错误消息
     const errorMessage: Message = {
@@ -324,31 +347,6 @@ export function createTextWithImage(text: string, imageUrl: string): ContentPart
     { type: 'text', text },
     { type: 'image', url: imageUrl },
   ];
-}
-
-/**
- * 从旧格式消息提取 ContentPart[]
- */
-export function extractContent(message: {
-  content?: string;
-  image_url?: string | null;
-  video_url?: string | null;
-}): ContentPart[] {
-  const parts: ContentPart[] = [];
-
-  if (message.content) {
-    parts.push({ type: 'text', text: message.content });
-  }
-
-  if (message.image_url) {
-    parts.push({ type: 'image', url: message.image_url });
-  }
-
-  if (message.video_url) {
-    parts.push({ type: 'video', url: message.video_url });
-  }
-
-  return parts;
 }
 
 /**

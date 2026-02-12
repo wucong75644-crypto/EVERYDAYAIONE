@@ -197,25 +197,7 @@ class Message(BaseModel):
 # ============================================================
 
 
-class MessageCreate(BaseModel):
-    """创建消息请求（直接创建，不触发生成）"""
-    role: MessageRole = MessageRole.USER
-    content: List[ContentPart] = Field(default_factory=list)
-    status: MessageStatus = MessageStatus.COMPLETED
-    credits_cost: int = 0
-    created_at: Optional[datetime] = None
-    client_request_id: Optional[str] = Field(None, max_length=100)
-    generation_params: Optional[GenerationParams] = None
-
-    @field_validator('content')
-    @classmethod
-    def validate_content_size(cls, v: List[ContentPart]) -> List[ContentPart]:
-        """验证内容大小不超过 100KB"""
-        json_str = json.dumps([p.model_dump() for p in v])
-        if len(json_str) > 100000:
-            raise ValueError('content 大小不能超过 100KB')
-        return v
-
+# ❌ MessageCreate 已删除 - 请使用 GenerateRequest
 
 class GenerateRequest(BaseModel):
     """
@@ -246,8 +228,10 @@ class GenerateRequest(BaseModel):
 
     # 前端预分配 ID（用于乐观更新）
     client_request_id: Optional[str] = Field(None, max_length=100)
+    client_task_id: Optional[str] = Field(None, max_length=100)  # 🔥 前端生成的 task_id（用于提前订阅）
     created_at: Optional[datetime] = None
     assistant_message_id: Optional[str] = Field(None, max_length=100)
+    placeholder_created_at: Optional[datetime] = None  # 占位符创建时间（确保前后端时间戳一致）
 
     def model_post_init(self, __context) -> None:
         """验证操作参数完整性"""
@@ -284,18 +268,14 @@ class MessageResponse(BaseModel):
     """
     消息响应（对外 API）
 
-    同时支持新格式（content 数组）和旧格式（content 字符串 + image_url/video_url）
+    使用统一的新格式：content 数组
     """
     id: str
     conversation_id: str
     role: MessageRole
 
-    # 新格式：统一内容数组
+    # 统一内容数组（新格式）
     content: Union[str, List[Dict[str, Any]]]
-
-    # 旧格式兼容（从 content 数组提取）
-    image_url: Optional[str] = None
-    video_url: Optional[str] = None
 
     # 状态
     status: MessageStatus = MessageStatus.COMPLETED
@@ -320,11 +300,7 @@ class MessageResponse(BaseModel):
         # 提取文本内容
         text_content = msg.get_text_content()
 
-        # 提取 URL（兼容旧格式）
-        image_urls = msg.get_image_urls()
-        video_urls = msg.get_video_urls()
-
-        # 构建 content（支持两种格式）
+        # 构建 content
         # 如果只有文本，返回字符串；否则返回数组
         if len(msg.content) == 1 and isinstance(msg.content[0], TextPart):
             content_value: Union[str, List[Dict[str, Any]]] = text_content
@@ -336,8 +312,6 @@ class MessageResponse(BaseModel):
             conversation_id=msg.conversation_id,
             role=msg.role,
             content=content_value,
-            image_url=image_urls[0] if image_urls else None,
-            video_url=video_urls[0] if video_urls else None,
             status=msg.status,
             is_error=msg.error is not None,
             task_id=msg.task_id,
@@ -366,29 +340,7 @@ class DeleteMessageResponse(BaseModel):
 # ============================================================
 
 
-def content_parts_from_legacy(
-    text: Optional[str],
-    image_url: Optional[str] = None,
-    video_url: Optional[str] = None,
-) -> List[ContentPart]:
-    """
-    从旧格式转换为 ContentPart 数组
-
-    用于兼容旧 API 调用。
-    """
-    parts: List[ContentPart] = []
-
-    if text:
-        parts.append(TextPart(text=text))
-
-    if image_url:
-        parts.append(ImagePart(url=image_url))
-
-    if video_url:
-        parts.append(VideoPart(url=video_url))
-
-    return parts
-
+# ❌ content_parts_from_legacy 已删除 - 请直接使用新格式 ContentPart 数组
 
 def infer_generation_type(content: List[ContentPart]) -> GenerationType:
     """

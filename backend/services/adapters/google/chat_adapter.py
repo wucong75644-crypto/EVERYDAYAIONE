@@ -1,16 +1,20 @@
 """
-Google 官方 Gemini API 聊天适配器
+Google Gemini 聊天适配器
 
-使用 google-generativeai SDK 实现与 Google 官方 API 的对接。
+使用新的 google-genai SDK（GA 状态）实现与 Google 官方 API 的对接。
 
 支持模型:
 - gemini-2.5-flash-preview-05-20
 - gemini-2.5-pro-preview-05-06
+
+版本: 2.0（使用 google-genai SDK）
 """
 
+import base64
 from typing import List, Optional, Dict, Any, AsyncIterator
 from decimal import Decimal
 
+import httpx
 from loguru import logger
 
 from ..base import (
@@ -20,41 +24,25 @@ from ..base import (
     ChatResponse,
     CostEstimate,
 )
-
-# 模型配置
-MODEL_CONFIGS = {
-    "gemini-2.5-flash-preview-05-20": {
-        "display_name": "Gemini 2.5 Flash",
-        "cost_per_1k_input": Decimal("0.00015"),   # $0.15 / 1M
-        "cost_per_1k_output": Decimal("0.0006"),   # $0.60 / 1M
-        "credits_per_1k_input": Decimal("0.3"),
-        "credits_per_1k_output": Decimal("1.2"),
-        "max_tokens": 65536,
-        "context_window": 1_000_000,
-    },
-    "gemini-2.5-pro-preview-05-06": {
-        "display_name": "Gemini 2.5 Pro",
-        "cost_per_1k_input": Decimal("0.00125"),   # $1.25 / 1M
-        "cost_per_1k_output": Decimal("0.01"),     # $10.0 / 1M
-        "credits_per_1k_input": Decimal("2.5"),
-        "credits_per_1k_output": Decimal("20"),
-        "max_tokens": 65536,
-        "context_window": 1_000_000,
-    },
-}
+from .client import GoogleClient
+from .configs import get_model_config
+from .models import GoogleAPIError, GoogleContentFilterError
 
 
 class GoogleChatAdapter(BaseChatAdapter):
     """
-    Google 官方 Gemini API 聊天适配器
+    Google Gemini 聊天适配器
+
+    使用新的 google-genai SDK（GA 状态）。
 
     特性:
     - 支持流式/非流式输出
-    - 支持多模态输入 (文本、图像、视频)
-    - 支持函数调用
+    - 支持多模态输入 (文本、图像)
+    - 免费层（无需积分）
+    - 自动图片下载和 base64 编码
 
     注意:
-    - 需要安装 google-generativeai: pip install google-generativeai
+    - 需要安装 google-genai: pip install google-genai
     - 需要设置 GOOGLE_API_KEY 环境变量
     """
 
@@ -67,100 +55,168 @@ class GoogleChatAdapter(BaseChatAdapter):
             api_key: Google API 密钥
         """
         super().__init__(model_id)
-
-        if model_id not in MODEL_CONFIGS:
-            logger.warning(f"Unknown model: {model_id}, using default config")
-            self.config = MODEL_CONFIGS.get(
-                "gemini-2.5-flash-preview-05-20",
-                list(MODEL_CONFIGS.values())[0]
-            )
-        else:
-            self.config = MODEL_CONFIGS[model_id]
-
         self.api_key = api_key
-        self._client = None
-        self._model = None
+        self.client = GoogleClient(api_key)
+        self.config = get_model_config(model_id)
 
-    def _ensure_client(self):
-        """确保客户端已初始化（延迟加载）"""
-        if self._client is None:
-            try:
-                import google.generativeai as genai
-                genai.configure(api_key=self.api_key)
-                self._client = genai
-                self._model = genai.GenerativeModel(self._model_id)
-            except ImportError:
-                raise ImportError(
-                    "google-generativeai is required for Google adapter. "
-                    "Install with: pip install google-generativeai"
-                )
+        logger.info(
+            f"GoogleChatAdapter initialized | "
+            f"model={model_id} | "
+            f"display_name={self.config['display_name']}"
+        )
 
     @property
     def provider(self) -> ModelProvider:
+        """返回提供商标识"""
         return ModelProvider.GOOGLE
 
     @property
     def supports_streaming(self) -> bool:
+        """是否支持流式输出"""
         return True
 
-    def _convert_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    async def _download_image(self, url: str, max_size_mb: int = 20) -> Optional[str]:
         """
-        将统一消息格式转换为 Google API 格式
+        下载图片并转换为 base64
 
-        统一格式: [{"role": "user", "content": "..."}]
-        Google 格式: [{"role": "user", "parts": [{"text": "..."}]}]
+        Args:
+            url: 图片 URL
+            max_size_mb: 最大图片大小（MB）
+
+        Returns:
+            base64 编码的图片数据，失败返回 None
+        """
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as http_client:
+                response = await http_client.get(url)
+                response.raise_for_status()
+
+                # 检查大小
+                content_length = len(response.content)
+                max_bytes = max_size_mb * 1024 * 1024
+                if content_length > max_bytes:
+                    logger.warning(
+                        f"Image too large, skipping | "
+                        f"url={url} | size={content_length / 1024 / 1024:.2f}MB"
+                    )
+                    return None
+
+                # 转换为 base64
+                image_data = base64.b64encode(response.content).decode('utf-8')
+                logger.debug(f"Image downloaded | url={url} | size={content_length / 1024:.2f}KB")
+                return image_data
+
+        except Exception as e:
+            logger.warning(f"Failed to download image | url={url} | error={str(e)}")
+            return None
+
+    def _detect_mime_type(self, url: str, default: str = "image/png") -> str:
+        """
+        根据 URL 检测 MIME 类型
+
+        Args:
+            url: 图片 URL
+            default: 默认类型
+
+        Returns:
+            MIME 类型字符串
+        """
+        url_lower = url.lower()
+        if url_lower.endswith('.jpg') or url_lower.endswith('.jpeg'):
+            return "image/jpeg"
+        elif url_lower.endswith('.png'):
+            return "image/png"
+        elif url_lower.endswith('.webp'):
+            return "image/webp"
+        elif url_lower.endswith('.gif'):
+            return "image/gif"
+        return default
+
+    async def _convert_to_google_format(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        转换消息格式：OpenAI/KIE 格式 → Google 格式
+
+        输入（OpenAI 格式）:
+        {
+            "role": "user" | "assistant" | "system",
+            "content": "text" | [
+                {"type": "text", "text": "..."},
+                {"type": "image_url", "image_url": {"url": "..."}}
+            ]
+        }
+
+        输出（Google 格式）:
+        {
+            "role": "user" | "model",
+            "parts": [
+                {"text": "..."},
+                {"inline_data": {"mime_type": "image/png", "data": "base64..."}}
+            ]
+        }
+
+        Args:
+            messages: OpenAI 格式的消息列表
+
+        Returns:
+            Google 格式的消息列表
         """
         google_messages = []
 
         for msg in messages:
+            # 转换角色：assistant → model
             role = msg.get("role", "user")
+            google_role = "model" if role == "assistant" else "user"
+
+            # 处理系统消息：合并到第一条用户消息
+            if role == "system":
+                # Google API 不支持 system 角色，将其转为 user 消息
+                google_role = "user"
+
+            parts = []
             content = msg.get("content", "")
 
-            # Google API 使用 "model" 而不是 "assistant"
-            if role == "assistant":
-                role = "model"
-            elif role == "system":
-                # Google API 将 system prompt 作为第一条 user 消息
-                role = "user"
-
-            # 处理内容
+            # 处理纯文本内容
             if isinstance(content, str):
-                parts = [{"text": content}]
+                if content.strip():  # 忽略空内容
+                    parts.append({"text": content})
+
+            # 处理多模态内容
             elif isinstance(content, list):
-                # 多模态内容
-                parts = []
                 for item in content:
-                    if item.get("type") == "text":
-                        parts.append({"text": item.get("text", "")})
-                    elif item.get("type") == "image_url":
-                        # 需要转换图片 URL 为 inline_data
+                    item_type = item.get("type", "text")
+
+                    if item_type == "text":
+                        text = item.get("text", "")
+                        if text.strip():
+                            parts.append({"text": text})
+
+                    elif item_type == "image_url":
                         image_url = item.get("image_url", {}).get("url", "")
-                        if image_url.startswith("data:"):
-                            # data:image/png;base64,xxx
-                            header, data = image_url.split(",", 1)
-                            mime_type = header.split(":")[1].split(";")[0]
-                            parts.append({
-                                "inline_data": {
-                                    "mime_type": mime_type,
-                                    "data": data
-                                }
-                            })
-                        else:
-                            # HTTP URL - 需要下载或使用 file_data
-                            parts.append({
-                                "file_data": {
-                                    "file_uri": image_url,
-                                    "mime_type": "image/jpeg"  # 默认
-                                }
-                            })
-            else:
-                parts = [{"text": str(content)}]
+                        if image_url:
+                            # 下载图片并转换为 base64
+                            image_data = await self._download_image(image_url)
+                            if image_data:
+                                mime_type = self._detect_mime_type(image_url)
+                                parts.append({
+                                    "inline_data": {
+                                        "mime_type": mime_type,
+                                        "data": image_data
+                                    }
+                                })
+                            else:
+                                logger.warning(f"Skipped image (download failed) | url={image_url}")
 
-            google_messages.append({
-                "role": role,
-                "parts": parts
-            })
+            # 只添加非空消息
+            if parts:
+                google_messages.append({
+                    "role": google_role,
+                    "parts": parts
+                })
 
+        logger.debug(
+            f"Message format converted | "
+            f"input={len(messages)} | output={len(google_messages)}"
+        )
         return google_messages
 
     async def stream_chat(
@@ -174,75 +230,88 @@ class GoogleChatAdapter(BaseChatAdapter):
         流式聊天
 
         Args:
-            messages: 消息列表
-            reasoning_effort: 推理强度 (Google API 暂不支持)
-            thinking_mode: 思考模式 (Google API 暂不支持)
+            messages: 消息列表（OpenAI 格式）
+            reasoning_effort: 推理力度（Google 暂不支持，忽略）
+            thinking_mode: 思考模式（Google 暂不支持，忽略）
+            **kwargs: 其他参数（temperature, max_output_tokens 等）
 
         Yields:
-            StreamChunk: 统一格式的流式响应块
+            StreamChunk: 响应块
+
+        Raises:
+            GoogleAPIError: API 调用失败
         """
-        self._ensure_client()
-
         # 转换消息格式
-        google_messages = self._convert_messages(messages)
+        google_messages = await self._convert_to_google_format(messages)
 
-        # 配置生成参数
-        generation_config = {
-            "max_output_tokens": self.config.get("max_tokens", 8192),
+        if not google_messages:
+            logger.warning("No valid messages to send")
+            return
+
+        # 构建配置
+        config = {
             "temperature": kwargs.get("temperature", 1.0),
+            "top_p": kwargs.get("top_p", 0.95),
+            "top_k": kwargs.get("top_k", 40),
+            "max_output_tokens": kwargs.get("max_output_tokens", 8192),
         }
 
+        logger.info(
+            f"Stream chat started | "
+            f"model={self._model_id} | "
+            f"messages={len(google_messages)} | "
+            f"config={config}"
+        )
+
         try:
-            # 使用 chat 模式
-            chat = self._model.start_chat(history=google_messages[:-1] if len(google_messages) > 1 else [])
-
-            # 获取最后一条用户消息
-            last_message = google_messages[-1] if google_messages else {"parts": [{"text": ""}]}
-            last_content = last_message.get("parts", [{"text": ""}])
-
-            # 发送消息并获取流式响应
-            response = await chat.send_message_async(
-                last_content,
-                generation_config=generation_config,
-                stream=True
+            # 调用流式 API
+            response_stream = self.client.generate_content_stream(
+                model=self._model_id,
+                contents=google_messages,
+                config=config,
             )
 
-            prompt_tokens = 0
-            completion_tokens = 0
+            # 逐块处理并返回
+            chunk_count = 0
+            async for chunk in response_stream:
+                chunk_count += 1
 
-            async for chunk in response:
                 # 提取文本内容
-                text = ""
-                if hasattr(chunk, "text"):
+                text = None
+                if hasattr(chunk, 'text') and chunk.text:
                     text = chunk.text
-                elif hasattr(chunk, "parts"):
-                    for part in chunk.parts:
-                        if hasattr(part, "text"):
-                            text += part.text
 
-                # 获取 usage（如果有）
-                if hasattr(chunk, "usage_metadata"):
-                    usage = chunk.usage_metadata
-                    prompt_tokens = getattr(usage, "prompt_token_count", 0)
-                    completion_tokens = getattr(usage, "candidates_token_count", 0)
+                # 提取 token 使用量（通常在最后一个 chunk）
+                prompt_tokens = 0
+                completion_tokens = 0
+                if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
+                    prompt_tokens = getattr(chunk.usage_metadata, 'prompt_token_count', 0)
+                    completion_tokens = getattr(chunk.usage_metadata, 'candidates_token_count', 0)
 
-                # 获取 finish_reason
-                finish_reason = None
-                if hasattr(chunk, "candidates") and chunk.candidates:
-                    candidate = chunk.candidates[0]
-                    if hasattr(candidate, "finish_reason"):
-                        finish_reason = str(candidate.finish_reason)
+                # 检查是否被内容过滤
+                if hasattr(chunk, 'candidates') and chunk.candidates:
+                    for candidate in chunk.candidates:
+                        if hasattr(candidate, 'finish_reason'):
+                            finish_reason = str(candidate.finish_reason)
+                            if 'SAFETY' in finish_reason or 'BLOCK' in finish_reason:
+                                logger.warning(f"Content filtered | reason={finish_reason}")
+                                raise GoogleContentFilterError()
 
                 yield StreamChunk(
-                    content=text if text else None,
-                    finish_reason=finish_reason,
+                    content=text,
+                    finish_reason=None,  # Google 在最后一个 chunk 返回
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 )
 
-        except Exception as e:
-            logger.error(f"Google API stream_chat error: {e}")
+            logger.info(f"Stream chat completed | chunks={chunk_count}")
+
+        except GoogleAPIError:
+            # 直接抛出自定义异常
             raise
+        except Exception as e:
+            logger.error(f"Stream chat failed | error={str(e)}", exc_info=True)
+            raise GoogleAPIError(f"流式聊天失败: {str(e)}") from e
 
     async def chat_sync(
         self,
@@ -251,89 +320,71 @@ class GoogleChatAdapter(BaseChatAdapter):
         thinking_mode: Optional[str] = None,
         **kwargs,
     ) -> ChatResponse:
-        """非流式聊天"""
-        self._ensure_client()
+        """
+        非流式聊天
 
-        # 转换消息格式
-        google_messages = self._convert_messages(messages)
+        Args:
+            messages: 消息列表（OpenAI 格式）
+            reasoning_effort: 推理力度
+            thinking_mode: 思考模式
+            **kwargs: 其他参数
 
-        # 配置生成参数
-        generation_config = {
-            "max_output_tokens": self.config.get("max_tokens", 8192),
-            "temperature": kwargs.get("temperature", 1.0),
-        }
+        Returns:
+            ChatResponse: 完整响应
 
-        try:
-            chat = self._model.start_chat(history=google_messages[:-1] if len(google_messages) > 1 else [])
-            last_message = google_messages[-1] if google_messages else {"parts": [{"text": ""}]}
-            last_content = last_message.get("parts", [{"text": ""}])
+        Raises:
+            GoogleAPIError: API 调用失败
+        """
+        # 复用 stream_chat 逻辑，累积所有 chunk
+        accumulated_text = ""
+        final_usage = {"prompt_tokens": 0, "completion_tokens": 0}
 
-            response = await chat.send_message_async(
-                last_content,
-                generation_config=generation_config,
-                stream=False
-            )
+        async for chunk in self.stream_chat(messages, reasoning_effort, thinking_mode, **kwargs):
+            if chunk.content:
+                accumulated_text += chunk.content
 
-            # 提取内容
-            content = ""
-            if hasattr(response, "text"):
-                content = response.text
-            elif hasattr(response, "parts"):
-                for part in response.parts:
-                    if hasattr(part, "text"):
-                        content += part.text
+            # 捕获最终的 token 使用量
+            if chunk.prompt_tokens or chunk.completion_tokens:
+                final_usage["prompt_tokens"] = chunk.prompt_tokens
+                final_usage["completion_tokens"] = chunk.completion_tokens
 
-            # 提取 usage
-            prompt_tokens = 0
-            completion_tokens = 0
-            if hasattr(response, "usage_metadata"):
-                usage = response.usage_metadata
-                prompt_tokens = getattr(usage, "prompt_token_count", 0)
-                completion_tokens = getattr(usage, "candidates_token_count", 0)
+        return ChatResponse(
+            content=accumulated_text,
+            finish_reason="stop",
+            prompt_tokens=final_usage["prompt_tokens"],
+            completion_tokens=final_usage["completion_tokens"],
+        )
 
-            # 提取 finish_reason
-            finish_reason = None
-            if hasattr(response, "candidates") and response.candidates:
-                candidate = response.candidates[0]
-                if hasattr(candidate, "finish_reason"):
-                    finish_reason = str(candidate.finish_reason)
+    def estimate_cost_unified(
+        self,
+        input_tokens: int,
+        output_tokens: int
+    ) -> CostEstimate:
+        """
+        估算成本（Google 免费层成本为 0）
 
-            return ChatResponse(
-                content=content,
-                finish_reason=finish_reason,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-            )
+        Args:
+            input_tokens: 输入 token 数
+            output_tokens: 输出 token 数
 
-        except Exception as e:
-            logger.error(f"Google API chat_sync error: {e}")
-            raise
-
-    def estimate_cost_unified(self, input_tokens: int, output_tokens: int) -> CostEstimate:
-        """估算成本"""
-        input_cost = Decimal(input_tokens) / 1000 * self.config["cost_per_1k_input"]
-        output_cost = Decimal(output_tokens) / 1000 * self.config["cost_per_1k_output"]
-        total_cost = input_cost + output_cost
-
-        input_credits = Decimal(input_tokens) / 1000 * self.config["credits_per_1k_input"]
-        output_credits = Decimal(output_tokens) / 1000 * self.config["credits_per_1k_output"]
-        total_credits = int((input_credits + output_credits).to_integral_value())
-
+        Returns:
+            CostEstimate: 成本估算结果
+        """
+        # Google 免费层无需付费，但追踪 token 使用
         return CostEstimate(
             model=self._model_id,
-            estimated_cost_usd=total_cost,
-            estimated_credits=total_credits,
+            estimated_cost_usd=Decimal("0"),  # 免费
+            estimated_credits=0,  # 不消耗积分
             breakdown={
+                "provider": "Google (免费层)",
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
-                "input_cost_usd": float(input_cost),
-                "output_cost_usd": float(output_cost),
-                "input_credits": float(input_credits),
-                "output_credits": float(output_credits),
-            },
+                "total_tokens": input_tokens + output_tokens,
+                "note": "Google 免费层，无费用",
+            }
         )
 
     async def close(self) -> None:
-        """关闭连接（Google SDK 无需显式关闭）"""
-        self._client = None
-        self._model = None
+        """关闭连接，释放资源"""
+        await self.client.aclose()
+        logger.debug(f"GoogleChatAdapter closed | model={self._model_id}")

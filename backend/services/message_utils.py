@@ -25,8 +25,6 @@ def format_message(message: dict) -> dict:
         "content": message["content"],
         "role": message["role"],
         "created_at": message["created_at"],
-        "image_url": message.get("image_url"),
-        "video_url": message.get("video_url"),
         "credits_cost": message.get("credits_cost", 0),
         "is_error": message.get("is_error", False),
         "generation_params": message.get("generation_params"),

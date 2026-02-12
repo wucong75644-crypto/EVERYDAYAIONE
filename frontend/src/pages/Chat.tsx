@@ -10,7 +10,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
-import { useMessageStore, type Message } from '../stores/useMessageStore';
+import { useMessageStore } from '../stores/useMessageStore';
 import Sidebar from '../components/chat/Sidebar';
 import MessageArea from '../components/chat/MessageArea';
 import InputArea from '../components/chat/InputArea';
@@ -78,9 +78,8 @@ export default function Chat() {
   // 请求序号（用于防止快速切换对话时的竞态）
   const conversationRequestSeqRef = useRef(0);
 
-  // 获取统一消息列表（用于 setMessages 兼容层）
+  // 获取统一消息列表
   const mergedMessages = useUnifiedMessages(currentConversationId);
-  const { replaceMessage, appendMessage } = useMessageStore();
 
   // 性能监控：测量 TTI（首次消息加载完成时）
   useEffect(() => {
@@ -91,53 +90,6 @@ export default function Chat() {
     }
   }, [mergedMessages.length, currentConversationId]);
 
-  // 创建 setMessages 兼容层（用于统一缓存写入）
-  const setMessages = useCallback(
-    (updater: Message[] | ((prev: Message[]) => Message[])) => {
-      if (typeof updater === 'function') {
-        const newMessages = updater(mergedMessages);
-
-        // 使用Map提升性能，O(1)查找，避免index错位
-        const oldMessagesMap = new Map(mergedMessages.map(m => [m.id, m]));
-
-        // ✅ 方案A：按对话ID分组消息，避免跨对话写入
-        const messagesByConversation = new Map<string, { toReplace: Array<{ oldId: string; newMsg: Message }>; toAppend: Message[] }>();
-
-        newMessages.forEach((newMsg) => {
-          const conversationId = newMsg.conversation_id;
-          if (!conversationId) return; // 忽略无效消息
-
-          // 初始化对话分组
-          if (!messagesByConversation.has(conversationId)) {
-            messagesByConversation.set(conversationId, { toReplace: [], toAppend: [] });
-          }
-
-          const group = messagesByConversation.get(conversationId)!;
-          const oldMsg = oldMessagesMap.get(newMsg.id);
-
-          if (oldMsg && oldMsg !== newMsg) {
-            // 消息被修改 → 记录待替换
-            group.toReplace.push({ oldId: oldMsg.id, newMsg });
-          } else if (!oldMsg && newMsg && !newMsg.id.startsWith('temp-') && !newMsg.id.startsWith('streaming-')) {
-            // 新增持久化消息 → 记录待追加
-            group.toAppend.push(newMsg);
-          }
-        });
-
-        // 遍历每个对话，写入对应的缓存
-        messagesByConversation.forEach((group, conversationId) => {
-          group.toReplace.forEach(({ oldId, newMsg }) => {
-            replaceMessage(conversationId, oldId, newMsg);
-          });
-          group.toAppend.forEach((msg) => {
-            appendMessage(conversationId, msg);
-          });
-        });
-      }
-    },
-    [mergedMessages, replaceMessage, appendMessage]
-  );
-
   // 使用消息回调 Hook
   const {
     handleMessagePending,
@@ -147,7 +99,6 @@ export default function Chat() {
   } = useMessageCallbacks({
     conversationTitle,
     currentConversationId,
-    setMessages,
   });
 
   // 使用对话导航 Hook

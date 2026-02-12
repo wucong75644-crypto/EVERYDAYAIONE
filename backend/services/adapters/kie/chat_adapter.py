@@ -36,6 +36,7 @@ from ..base import (
     ChatResponse,
     CostEstimate as BaseCostEstimate,
 )
+from .configs import CHAT_MODEL_CONFIGS
 
 
 class KieChatAdapter(BaseChatAdapter):
@@ -53,33 +54,8 @@ class KieChatAdapter(BaseChatAdapter):
     - 支持推理力度控制 (reasoning_effort)
     """
 
-    # 模型配置
-    MODEL_CONFIGS = {
-        "gemini-3-pro": {
-            "context_window": 1_000_000,
-            "max_output_tokens": 65536,
-            "supports_vision": True,
-            "supports_google_search": True,
-            "supports_function_calling": True,
-            "supports_response_format": True,
-            "cost_per_1k_input": Decimal("0.0005"),   # $0.50 / 1M
-            "cost_per_1k_output": Decimal("0.0035"),  # $3.50 / 1M
-            "credits_per_1k_input": 1,   # 1 积分 / 1K input
-            "credits_per_1k_output": 7,  # 7 积分 / 1K output
-        },
-        "gemini-3-flash": {
-            "context_window": 1_000_000,
-            "max_output_tokens": 65536,
-            "supports_vision": True,
-            "supports_google_search": False,
-            "supports_function_calling": True,
-            "supports_response_format": False,
-            "cost_per_1k_input": Decimal("0.00015"),   # $0.15 / 1M
-            "cost_per_1k_output": Decimal("0.0009"),   # $0.90 / 1M
-            "credits_per_1k_input": Decimal("0.3"),    # 0.3 积分 / 1K input
-            "credits_per_1k_output": Decimal("1.8"),   # 1.8 积分 / 1K output
-        },
-    }
+    # 模型配置（从 configs.py 导入）
+    MODEL_CONFIGS = CHAT_MODEL_CONFIGS
 
     def __init__(self, client: KieClient, model: str):
         """
@@ -544,29 +520,6 @@ class KieChatAdapter(BaseChatAdapter):
         await self.client.close()
 
 
-# ============================================================
-# 便捷函数（KIE 专用，推荐使用统一工厂 adapters.create_chat_adapter）
-# ============================================================
 
-async def create_kie_chat_adapter(
-    api_key: str,
-    model: str = "gemini-3-flash",
-) -> KieChatAdapter:
-    """
-    创建 KIE Chat 适配器（KIE 专用便捷函数）
-
-    推荐使用统一工厂: from services.adapters import create_chat_adapter
-
-    Args:
-        api_key: KIE API 密钥
-        model: 模型名称
-
-    Returns:
-        KIE Chat 适配器实例
-    """
-    try:
-        client = KieClient(api_key)
-        return KieChatAdapter(client, model)
-    except Exception as e:
-        logger.error(f"Create KIE chat adapter failed: model={model}, error={e}")
-        raise
+# 便捷函数已移至 helpers.py
+# from .helpers import create_kie_chat_adapter

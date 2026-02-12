@@ -93,6 +93,20 @@ export default function ConversationList({
   const currentConversationIdRef = useRef(currentConversationId);
   currentConversationIdRef.current = currentConversationId;
 
+  // 菜单关闭动画定时器 ref（用于组件卸载时清理）
+  const contextMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dropdownMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deleteConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 组件卸载时清理定时器
+  useEffect(() => {
+    return () => {
+      if (contextMenuTimerRef.current) clearTimeout(contextMenuTimerRef.current);
+      if (dropdownMenuTimerRef.current) clearTimeout(dropdownMenuTimerRef.current);
+      if (deleteConfirmTimerRef.current) clearTimeout(deleteConfirmTimerRef.current);
+    };
+  }, []);
+
   // 本地修改追踪（用于乐观合并，防止 API 响应覆盖本地修改）
   const localModificationsRef = useRef<{
     deleted: Set<string>;      // 已删除的对话 ID
@@ -196,25 +210,31 @@ export default function ConversationList({
 
   const closeContextMenu = () => {
     setContextMenuClosing(true);
-    setTimeout(() => {
+    if (contextMenuTimerRef.current) clearTimeout(contextMenuTimerRef.current);
+    contextMenuTimerRef.current = setTimeout(() => {
       setContextMenu(null);
       setContextMenuClosing(false);
+      contextMenuTimerRef.current = null;
     }, MODAL_CLOSE_ANIMATION_DURATION);
   };
 
   const closeDropdownMenu = () => {
     setDropdownClosing(true);
-    setTimeout(() => {
+    if (dropdownMenuTimerRef.current) clearTimeout(dropdownMenuTimerRef.current);
+    dropdownMenuTimerRef.current = setTimeout(() => {
       setDropdownMenu(null);
       setDropdownClosing(false);
+      dropdownMenuTimerRef.current = null;
     }, MODAL_CLOSE_ANIMATION_DURATION);
   };
 
   const closeDeleteConfirm = () => {
     setDeleteConfirmClosing(true);
-    setTimeout(() => {
+    if (deleteConfirmTimerRef.current) clearTimeout(deleteConfirmTimerRef.current);
+    deleteConfirmTimerRef.current = setTimeout(() => {
       setDeleteConfirm(null);
       setDeleteConfirmClosing(false);
+      deleteConfirmTimerRef.current = null;
     }, MODAL_CLOSE_ANIMATION_DURATION);
   };
 
@@ -319,30 +339,8 @@ export default function ConversationList({
     closeDropdownMenu();
   };
 
-  // 菜单功能占位（后续迭代实现）
-  const handlePin = (id: string) => {
-    void id;
-    closeDropdownMenu();
-  };
-
-  const handleShare = (id: string) => {
-    void id;
-    closeDropdownMenu();
-  };
-
-  const handleBatchManage = () => {
-    closeDropdownMenu();
-  };
-
-  const handleMoveToGroup = (id: string) => {
-    void id;
-    closeDropdownMenu();
-  };
-
-  const handleExport = (id: string) => {
-    void id;
-    closeDropdownMenu();
-  };
+  // 菜单功能占位（后续迭代实现，统一关闭菜单）
+  const handleMenuPlaceholder = () => closeDropdownMenu();
 
   const handleSubmitRename = async () => {
     if (!renameId || !renameTitle.trim()) {
@@ -464,11 +462,11 @@ export default function ConversationList({
           y={dropdownMenu.y}
           closing={dropdownClosing}
           onRename={() => handleStartRename(dropdownMenu.id, dropdownMenu.title)}
-          onPin={() => handlePin(dropdownMenu.id)}
-          onShare={() => handleShare(dropdownMenu.id)}
-          onBatchManage={handleBatchManage}
-          onMoveToGroup={() => handleMoveToGroup(dropdownMenu.id)}
-          onExport={() => handleExport(dropdownMenu.id)}
+          onPin={handleMenuPlaceholder}
+          onShare={handleMenuPlaceholder}
+          onBatchManage={handleMenuPlaceholder}
+          onMoveToGroup={handleMenuPlaceholder}
+          onExport={handleMenuPlaceholder}
           onDelete={() => handleDelete(dropdownMenu.id, dropdownMenu.title)}
         />
       )}

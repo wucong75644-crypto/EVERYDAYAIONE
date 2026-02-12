@@ -1,0 +1,279 @@
+/**
+ * 流式消息 Slice
+ *
+ * 管理流式消息状态和乐观更新
+ */
+
+import type { StateCreator } from 'zustand';
+import type { Message, GenerationParams } from '../../types/message';
+import { getTextContent, normalizeMessage } from '../../utils/messageUtils';
+
+// ============================================================
+// 类型定义
+// ============================================================
+
+export interface StreamingSlice {
+  /** 发送状态 */
+  isSending: boolean;
+
+  /** 流式消息状态: conversationId -> messageId */
+  streamingMessages: Map<string, string>;
+
+  /** 乐观消息: conversationId -> messages */
+  optimisticMessages: Map<string, Message[]>;
+
+  // 流式消息操作
+  startStreaming: (conversationId: string, messageId: string, options?: {
+    initialContent?: string;
+    createdAt?: string;
+    generationParams?: GenerationParams;
+  }) => void;
+  registerStreamingId: (conversationId: string, messageId: string) => void;
+  appendStreamingContent: (conversationId: string, chunk: string) => void;
+  setStreamingContent: (conversationId: string, content: string) => void;
+  completeStreaming: (conversationId: string) => void;
+  completeStreamingWithMessage: (conversationId: string, message: Message) => void;
+  getStreamingMessageId: (conversationId: string) => string | null;
+
+  // 乐观消息操作
+  addOptimisticMessage: (conversationId: string, message: Message) => void;
+  addOptimisticUserMessage: (conversationId: string, message: Message) => void;
+  updateOptimisticMessageId: (conversationId: string, clientRequestId: string, newId: string) => void;
+  addErrorMessage: (conversationId: string, errorMessage: Message) => void;
+  removeOptimisticMessage: (conversationId: string, messageId: string) => void;
+  getOptimisticMessages: (conversationId: string) => Message[];
+
+  // 发送状态
+  setIsSending: (sending: boolean) => void;
+}
+
+// Store 依赖类型（用于跨 slice 访问）
+export interface StreamingSliceDeps {
+  messages: Map<string, Message[]>;
+}
+
+// ============================================================
+// Slice 创建器
+// ============================================================
+
+export const createStreamingSlice: StateCreator<
+  StreamingSlice & StreamingSliceDeps,
+  [],
+  [],
+  StreamingSlice
+> = (set, get) => ({
+  // 初始状态
+  isSending: false,
+  streamingMessages: new Map<string, string>(),
+  optimisticMessages: new Map<string, Message[]>(),
+
+  // ========================================
+  // 流式消息操作
+  // ========================================
+
+  startStreaming: (conversationId, messageId, options) => {
+    set((state) => {
+      const streamingMessages = new Map(state.streamingMessages);
+      const targetId = messageId;
+      streamingMessages.set(conversationId, targetId);
+
+      const optimisticMessages = new Map(state.optimisticMessages);
+      const list = optimisticMessages.get(conversationId) || [];
+
+      // 幂等性检查
+      if (!list.some((m) => m.id === targetId)) {
+        const streamingMessage: Message = {
+          id: targetId,
+          conversation_id: conversationId,
+          role: 'assistant',
+          content: [{ type: 'text', text: options?.initialContent ?? '' }],
+          status: 'streaming',
+          created_at: options?.createdAt || new Date().toISOString(),
+          generation_params: options?.generationParams,
+        };
+        optimisticMessages.set(conversationId, [...list, streamingMessage]);
+      }
+
+      return { streamingMessages, optimisticMessages, isSending: true };
+    });
+  },
+
+  registerStreamingId: (conversationId, messageId) => {
+    set((state) => {
+      const streamingMessages = new Map(state.streamingMessages);
+      streamingMessages.set(conversationId, messageId);
+      return { streamingMessages, isSending: true };
+    });
+  },
+
+  appendStreamingContent: (conversationId, chunk) => {
+    set((state) => {
+      const streamingId = state.streamingMessages.get(conversationId);
+      if (!streamingId) return state;
+
+      const list = state.optimisticMessages.get(conversationId);
+      if (!list) return state;
+
+      // 直接定位目标消息（避免 .map() 遍历全数组）
+      const targetIndex = list.findIndex((m) => m.id === streamingId);
+      if (targetIndex === -1) return state;
+
+      const target = list[targetIndex];
+      const updatedMessage = {
+        ...target,
+        content: [{ type: 'text' as const, text: getTextContent(target) + chunk }],
+      };
+
+      // 只克隆目标对话的数组
+      const updatedList = [...list];
+      updatedList[targetIndex] = updatedMessage;
+
+      // 浅克隆 Map，只更新一个条目
+      const optimisticMessages = new Map(state.optimisticMessages);
+      optimisticMessages.set(conversationId, updatedList);
+      return { optimisticMessages };
+    });
+  },
+
+  setStreamingContent: (conversationId, content) => {
+    set((state) => {
+      const streamingId = state.streamingMessages.get(conversationId);
+      if (!streamingId) return state;
+
+      const optimisticMessages = new Map(state.optimisticMessages);
+      const list = optimisticMessages.get(conversationId);
+      if (!list) return state;
+
+      const updatedList = list.map((m) =>
+        m.id === streamingId
+          ? { ...m, content: [{ type: 'text' as const, text: content }] }
+          : m
+      );
+
+      optimisticMessages.set(conversationId, updatedList);
+      return { optimisticMessages };
+    });
+  },
+
+  completeStreaming: (conversationId) => {
+    set((state) => {
+      const streamingMessages = new Map(state.streamingMessages);
+      streamingMessages.delete(conversationId);
+      return { streamingMessages, isSending: false };
+    });
+  },
+
+  completeStreamingWithMessage: (conversationId, message) => {
+    set((state) => {
+      const streamingMessages = new Map(state.streamingMessages);
+      const streamingId = streamingMessages.get(conversationId);
+      streamingMessages.delete(conversationId);
+
+      const optimisticMessages = new Map(state.optimisticMessages);
+      const list = optimisticMessages.get(conversationId) || [];
+      const filteredList = list.filter((m) => m.id !== streamingId);
+      optimisticMessages.set(conversationId, [...filteredList, normalizeMessage(message)]);
+
+      return { streamingMessages, optimisticMessages, isSending: false };
+    });
+  },
+
+  getStreamingMessageId: (conversationId) => {
+    return get().streamingMessages.get(conversationId) || null;
+  },
+
+  // ========================================
+  // 乐观消息操作
+  // ========================================
+
+  addOptimisticMessage: (conversationId, message) => {
+    set((state) => {
+      const optimisticMessages = new Map(state.optimisticMessages);
+      const list = optimisticMessages.get(conversationId) || [];
+
+      // 幂等性检查：已存在则不重复添加
+      if (list.some((m) => m.id === message.id)) {
+        return state;
+      }
+
+      optimisticMessages.set(conversationId, [...list, normalizeMessage(message)]);
+      return { optimisticMessages };
+    });
+  },
+
+  addOptimisticUserMessage: (conversationId, message) => {
+    set((state) => {
+      const optimisticMessages = new Map(state.optimisticMessages);
+      const list = optimisticMessages.get(conversationId) || [];
+
+      // 幂等性检查：已存在则不重复添加
+      if (list.some((m) => m.id === message.id)) {
+        return state;
+      }
+
+      optimisticMessages.set(conversationId, [...list, normalizeMessage(message)]);
+      return { optimisticMessages, isSending: true };
+    });
+  },
+
+  updateOptimisticMessageId: (conversationId, clientRequestId, newId) => {
+    set((state) => {
+      const optimisticMessages = new Map(state.optimisticMessages);
+      const list = optimisticMessages.get(conversationId);
+      if (!list) return state;
+
+      const updatedList = list.map((msg) =>
+        msg.client_request_id === clientRequestId
+          ? { ...msg, id: newId, status: 'completed' as const }
+          : msg
+      );
+
+      optimisticMessages.set(conversationId, updatedList);
+      return { optimisticMessages };
+    });
+  },
+
+  addErrorMessage: (conversationId, errorMessage) => {
+    set((state) => {
+      const optimisticMessages = new Map(state.optimisticMessages);
+      const list = optimisticMessages.get(conversationId) || [];
+
+      if (list.some((m) => m.id === errorMessage.id)) {
+        return state;
+      }
+
+      const streamingMessages = new Map(state.streamingMessages);
+      const streamingId = streamingMessages.get(conversationId);
+      const filteredList = list.filter((m) => m.id !== streamingId);
+      optimisticMessages.set(conversationId, [...filteredList, normalizeMessage(errorMessage)]);
+
+      streamingMessages.delete(conversationId);
+
+      return { optimisticMessages, streamingMessages, isSending: false };
+    });
+  },
+
+  removeOptimisticMessage: (conversationId, messageId) => {
+    set((state) => {
+      const optimisticMessages = new Map(state.optimisticMessages);
+      const list = optimisticMessages.get(conversationId);
+      if (!list) return state;
+
+      optimisticMessages.set(
+        conversationId,
+        list.filter((m) => m.id !== messageId)
+      );
+      return { optimisticMessages };
+    });
+  },
+
+  getOptimisticMessages: (conversationId) => {
+    return get().optimisticMessages.get(conversationId) || [];
+  },
+
+  // ========================================
+  // 发送状态
+  // ========================================
+
+  setIsSending: (sending) => set({ isSending: sending }),
+});

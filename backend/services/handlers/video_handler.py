@@ -5,6 +5,7 @@
 """
 
 import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -14,12 +15,11 @@ from schemas.message import (
     ContentPart,
     GenerationType,
     Message,
+    MessageRole,
     MessageStatus,
     VideoPart,
 )
-from schemas.websocket import build_task_status_message
-from services.handlers.base import BaseHandler
-from services.websocket_manager import ws_manager
+from services.handlers.base import BaseHandler, TaskMetadata
 
 
 class VideoHandler(BaseHandler):
@@ -46,6 +46,7 @@ class VideoHandler(BaseHandler):
         user_id: str,
         content: List[ContentPart],
         params: Dict[str, Any],
+        metadata: TaskMetadata,
     ) -> str:
         """
         启动视频生成任务
@@ -106,7 +107,7 @@ class VideoHandler(BaseHandler):
                 callback_url=self._build_callback_url(adapter.provider.value),
                 wait_for_result=False,  # 异步模式
             )
-            task_id = result.task_id
+            external_task_id = result.task_id  # KIE 返回的外部任务 ID
         except Exception as e:
             # API 调用失败，退回积分
             await self._refund_credits(transaction_id)
@@ -114,56 +115,36 @@ class VideoHandler(BaseHandler):
         finally:
             await adapter.close()
 
-        # 6. 保存任务到数据库（含 transaction_id）
+        # 6. 保存任务到数据库（使用 external_task_id 作为主 ID）
         await self._save_task(
-            task_id=task_id,
+            task_id=external_task_id,
             message_id=message_id,
             conversation_id=conversation_id,
             user_id=user_id,
             model_id=model_id,
             prompt=prompt,
             params=params,
+            metadata=metadata,
             credits_locked=credits_to_lock,
             transaction_id=transaction_id,
         )
 
-        # 7. 更新消息状态
-        await self._update_message(message_id, status=MessageStatus.PENDING)
-
         logger.info(
-            f"Video task started | task_id={task_id} | "
-            f"message_id={message_id} | model={model_id} | credits_locked={credits_to_lock}"
+            f"Video task started | external_task_id={external_task_id} | "
+            f"client_task_id={metadata.client_task_id} | message_id={message_id} | "
+            f"model={model_id} | credits_locked={credits_to_lock}"
         )
 
-        return task_id
+        # 返回 client_task_id（与前端订阅匹配）
+        return metadata.client_task_id or external_task_id
 
-    async def on_complete(
-        self,
-        task_id: str,
-        result: List[ContentPart],
-        credits_consumed: int = 0,
-    ) -> Message:
-        """完成回调"""
-        task = await self._get_task(task_id)
-        if not task:
-            logger.error(f"Task not found | task_id={task_id}")
-            raise Exception("任务不存在")
+    # ========================================
+    # 基类抽象方法实现
+    # ========================================
 
-        message_id = task["placeholder_message_id"]
-        conversation_id = task["conversation_id"]
-        user_id = task["user_id"]
-        transaction_id = task.get("credit_transaction_id")
-
-        # 1. 确认积分扣除
-        if transaction_id:
-            await self._confirm_deduct(transaction_id)
-
-        # 使用预扣的积分作为实际消耗
-        actual_credits = task.get("credits_locked", credits_consumed)
-
-        # 2. 转换 ContentPart 为字典
+    def _convert_content_parts_to_dicts(self, result: List[ContentPart]) -> List[Dict[str, Any]]:
+        """转换 VideoPart 为字典"""
         content_dicts = []
-        video_urls = []
         for part in result:
             if isinstance(part, VideoPart):
                 content_dicts.append({
@@ -172,41 +153,43 @@ class VideoHandler(BaseHandler):
                     "duration": part.duration,
                     "thumbnail": part.thumbnail,
                 })
-                video_urls.append(part.url)
             elif isinstance(part, dict):
                 content_dicts.append(part)
-                if part.get("type") == "video":
-                    video_urls.append(part.get("url"))
+        return content_dicts
 
-        # 3. 更新消息
-        message = await self._update_message(
-            message_id=message_id,
-            content=content_dicts,
-            status=MessageStatus.COMPLETED,
-            credits_cost=actual_credits,
-        )
+    async def _handle_credits_on_complete(
+        self,
+        task: Dict[str, Any],
+        credits_consumed: int,
+    ) -> int:
+        """Video 完成时确认积分扣除"""
+        transaction_id = task.get("credit_transaction_id")
+        if transaction_id:
+            await self._confirm_deduct(transaction_id)
+        # 使用预扣的积分作为实际消耗
+        return task.get("credits_locked", credits_consumed)
 
-        # 4. 推送完成消息
-        status_msg = build_task_status_message(
-            task_id=task_id,
-            conversation_id=conversation_id,
-            status="completed",
-            media_type="video",
-            urls=video_urls,
-            credits_consumed=actual_credits,
-            created_message=message,
-        )
-        await ws_manager.send_to_user(user_id, status_msg)
+    async def _handle_credits_on_error(self, task: Dict[str, Any]) -> None:
+        """Video 错误时退回积分"""
+        transaction_id = task.get("credit_transaction_id")
+        if transaction_id:
+            await self._refund_credits(transaction_id)
 
-        # 5. 更新任务状态
-        await self._complete_task(task_id)
+    # ========================================
+    # 回调方法（调用基类通用流程）
+    # ========================================
 
-        logger.info(
-            f"Video completed | task_id={task_id} | "
-            f"message_id={message_id} | videos={len(video_urls)} | credits={actual_credits}"
-        )
+    async def on_complete(
+        self,
+        task_id: str,
+        result: List[ContentPart],
+        credits_consumed: int = 0,
+    ) -> Message:
+        """完成回调（调用基类通用流程）
 
-        return message
+        注意：task_id 是 external_task_id（KIE 返回的），需要查询 client_task_id 用于 WebSocket 推送
+        """
+        return await self._handle_complete_common(task_id, result, credits_consumed)
 
     async def on_error(
         self,
@@ -214,48 +197,11 @@ class VideoHandler(BaseHandler):
         error_code: str,
         error_message: str,
     ) -> Message:
-        """错误回调"""
-        task = await self._get_task(task_id)
-        if not task:
-            logger.error(f"Task not found | task_id={task_id}")
-            raise Exception("任务不存在")
+        """错误回调（调用基类通用流程）
 
-        message_id = task["placeholder_message_id"]
-        conversation_id = task["conversation_id"]
-        user_id = task["user_id"]
-        transaction_id = task.get("credit_transaction_id")
-
-        # 1. 退回积分
-        if transaction_id:
-            await self._refund_credits(transaction_id)
-
-        # 2. 更新消息为失败状态
-        message = await self._update_message(
-            message_id=message_id,
-            content=[{"type": "text", "text": error_message}],
-            status=MessageStatus.FAILED,
-            error={"code": error_code, "message": error_message},
-        )
-
-        # 3. 推送失败消息
-        status_msg = build_task_status_message(
-            task_id=task_id,
-            conversation_id=conversation_id,
-            status="failed",
-            media_type="video",
-            error_message=error_message,
-        )
-        await ws_manager.send_to_user(user_id, status_msg)
-
-        # 4. 更新任务状态
-        await self._fail_task(task_id, error_message)
-
-        logger.error(
-            f"Video failed | task_id={task_id} | "
-            f"error_code={error_code} | error={error_message}"
-        )
-
-        return message
+        注意：task_id 是 external_task_id（KIE 返回的），需要查询 client_task_id 用于 WebSocket 推送
+        """
+        return await self._handle_error_common(task_id, error_code, error_message)
 
     async def _save_task(
         self,
@@ -266,26 +212,32 @@ class VideoHandler(BaseHandler):
         model_id: str,
         prompt: str,
         params: Dict[str, Any],
+        metadata: TaskMetadata,
         credits_locked: int = 0,
         transaction_id: Optional[str] = None,
     ) -> None:
         """保存任务到数据库"""
-        # 构建请求参数
+        # 1. 序列化业务参数
         request_params = {
             "prompt": prompt,
             "model": model_id,
-            **{k: v for k, v in params.items() if v is not None},
+            **self._serialize_params(params),
         }
 
-        self.db.table("tasks").insert({
-            "external_task_id": task_id,
-            "conversation_id": conversation_id,
-            "user_id": user_id,
-            "type": "video",
-            "status": "pending",
-            "model_id": model_id,
-            "placeholder_message_id": message_id,
-            "request_params": request_params,
-            "credits_locked": credits_locked,
-            "credit_transaction_id": transaction_id,
-        }).execute()
+        # 2. 构建标准 task_data（使用基类方法）
+        task_data = self._build_task_data(
+            task_id=task_id,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            task_type="video",
+            status="pending",
+            model_id=model_id,
+            request_params=request_params,
+            metadata=metadata,
+            credits_locked=credits_locked,
+            transaction_id=transaction_id,
+        )
+
+        # 3. 保存到数据库
+        self.db.table("tasks").insert(task_data).execute()

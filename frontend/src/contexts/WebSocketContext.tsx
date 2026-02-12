@@ -10,7 +10,7 @@
 
 import { createContext, useContext, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { useWebSocket, type WSMessageType } from '../hooks/useWebSocket';
-import { useMessageStore, normalizeMessage, type Message, type ContentPart } from '../stores/useMessageStore';
+import { useMessageStore, normalizeMessage, type Message } from '../stores/useMessageStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useTaskRestorationStore } from '../stores/useTaskRestorationStore';
 import { initializeTaskRestoration } from '../utils/taskRestoration';
@@ -55,7 +55,8 @@ interface WebSocketProviderProps {
 
 export function WebSocketProvider({ children }: WebSocketProviderProps) {
   const ws = useWebSocket();
-  const messageStore = useMessageStore();
+  // 注意：不订阅整个 store（会导致每次 state 变化重建 handler）
+  // handler 内部通过 useMessageStore.getState() 获取最新状态和方法
 
   // 已订阅任务（防止重复）
   const subscribedTasksRef = useRef<Set<string>>(new Set());
@@ -66,6 +67,11 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // 操作上下文映射
   const operationContextRef = useRef<Map<string, OperationContext>>(new Map());
 
+  // L1: chunk 缓冲（50ms 批量刷新，避免每个 token 都触发渲染）
+  // 改进：同时存储 conversationId，避免额外映射维护
+  const chunkBufferRef = useRef<Map<string, { chunk: string; conversationId: string }>>(new Map());
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // ws ref（避免回调重建）
   const wsRef = useRef(ws);
   wsRef.current = ws;
@@ -74,6 +80,116 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // 统一消息处理
   // ========================================
   useEffect(() => {
+    // handler 内部通过 getState() 获取最新 store，避免闭包捕获导致频繁重建
+    const getStore = () => useMessageStore.getState();
+
+    // --- 辅助函数（减少嵌套） ---
+
+    /** 清理任务订阅 */
+    const cleanupTaskSubscription = (taskId: string) => {
+      subscribedTasksRef.current.delete(taskId);
+      taskConversationMapRef.current.delete(taskId);
+      ws.unsubscribeTask(taskId);
+    };
+
+    /** 处理任务完成（有 messageData） */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handleTaskDoneWithMessage = (taskId: string, messageData: any, conversationId: string) => {
+      const store = getStore();
+
+      // 🔥 DEBUG: 显示原始 messageData
+      console.log('🔥 [DEBUG] handleTaskDoneWithMessage - messageData:', messageData);
+
+      const normalized = normalizeMessage(messageData);
+
+      // 🔥 DEBUG: 显示规范化后的消息
+      console.log('🔥 [DEBUG] handleTaskDoneWithMessage - normalized:', normalized);
+
+      // 幂等性检查：使用 Store 作为唯一真相来源
+      // 检查消息是否已存在且状态为 completed
+      const existingMessage = store.getMessage(normalized.id);
+
+      // 🔥 DEBUG: 显示现有消息状态
+      console.log('🔥 [DEBUG] handleTaskDoneWithMessage - existingMessage:', existingMessage);
+
+      if (existingMessage?.status === 'completed') {
+        logger.warn('ws:done', 'message already completed in store', {
+          taskId,
+          messageId: normalized.id,
+          existingStatus: existingMessage.status
+        });
+        return;
+      }
+
+      logger.info('ws:done', 'processing message', {
+        taskId,
+        conversationId,
+        messageId: normalized.id,
+      });
+
+      // 🔥 DEBUG: 准备更新的数据
+      const updateData = {
+        ...normalized,
+        status: 'completed' as const,
+      };
+      console.log('🔥 [DEBUG] handleTaskDoneWithMessage - updateData:', updateData);
+
+      // 统一更新逻辑：updateMessage 自动处理 messages 和 optimisticMessages
+      // 无需区分 chat/media 类型，避免逻辑分支
+      store.updateMessage(normalized.id, updateData);
+
+      // 🔥 DEBUG: 更新后检查 store 状态
+      const updatedMessage = store.getMessage(normalized.id);
+      console.log('🔥 [DEBUG] handleTaskDoneWithMessage - updatedMessage:', updatedMessage);
+
+      // 清理任务状态
+      store.completeTask(taskId);
+
+      // 触发操作上下文回调
+      const context = operationContextRef.current.get(taskId);
+      context?.onComplete?.(normalized);
+      operationContextRef.current.delete(taskId);
+    };
+
+    /** 处理任务失败 */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handleTaskFailure = (taskId: string, error: any) => {
+      const store = getStore();
+      const errorMessage = error?.message || '生成失败';
+      store.failTask(taskId, errorMessage);
+
+      // 触发操作上下文回调
+      const context = operationContextRef.current.get(taskId);
+      context?.onError?.(new Error(errorMessage));
+      operationContextRef.current.delete(taskId);
+
+      cleanupTaskSubscription(taskId);
+    };
+
+    // --- L1: chunk 缓冲 flush ---
+
+    /** 将缓冲的 chunk 批量刷新到 store */
+    const flushChunkBuffer = () => {
+      const buffer = chunkBufferRef.current;
+      if (buffer.size === 0) return;
+
+      const store = getStore();
+      buffer.forEach((bufferData, messageId) => {
+        const { conversationId } = bufferData;
+        if (conversationId) {
+          // 定向更新（跳过 getMessage 全局查找）
+          store.appendStreamingContent(conversationId, bufferData.chunk);
+        } else {
+          // fallback: 旧路径（理论上不应该走到这里）
+          store.appendContent(messageId, bufferData.chunk);
+        }
+      });
+      buffer.clear();
+      flushTimerRef.current = null;
+    };
+
+    // --- 消息处理器 ---
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handlers: Record<string, (msg: any) => void> = {
 
@@ -83,78 +199,109 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
         if (!message_id) return;
 
         logger.info('ws:message', 'start received', { messageId: message_id });
-        messageStore.setStatus(message_id, 'streaming');
+        getStore().setStatus(message_id, 'streaming');
       },
 
       // 流式内容块
       message_chunk: (msg) => {
-        const { message_id, chunk } = msg;
-        if (!message_id || !chunk) return;
+        const { message_id, task_id, conversation_id } = msg;
+        const chunk = msg.chunk || msg.payload?.chunk;
+        if (!message_id || !chunk || !conversation_id) return;
 
-        messageStore.appendContent(message_id, chunk);
+        // L1: 累积到 buffer（不触发渲染）
+        const bufferData = chunkBufferRef.current.get(message_id);
+        const prevChunk = bufferData?.chunk || '';
+        const accumulated = prevChunk + chunk;
 
-        // 触发流式回调
-        const taskId = msg.task_id;
-        if (taskId) {
-          const context = operationContextRef.current.get(taskId);
+        chunkBufferRef.current.set(message_id, {
+          chunk: accumulated,
+          conversationId: conversation_id,
+        });
+
+        // 流式回调仍然立即触发（用于外部消费者）
+        if (task_id) {
+          const context = operationContextRef.current.get(task_id);
           if (context?.onStreamChunk) {
-            const message = messageStore.getMessage(message_id);
-            const accumulated = message?.content?.find(p => p.type === 'text')?.text || '';
-            context.onStreamChunk(chunk, accumulated as string);
+            context.onStreamChunk(chunk, accumulated);
           }
+        }
+
+        // L1: 50ms 防抖 flush
+        if (!flushTimerRef.current) {
+          flushTimerRef.current = setTimeout(flushChunkBuffer, 50);
         }
       },
 
       // 进度更新
       message_progress: (msg) => {
-        const { task_id, progress } = msg;
+        const { task_id } = msg;
+        const progress = msg.progress ?? msg.payload?.progress;
         if (!task_id || progress === undefined) return;
 
         logger.debug('ws:message', 'progress update', { taskId: task_id, progress });
-        messageStore.updateTaskProgress(task_id, progress);
+        getStore().updateTaskProgress(task_id, progress);
       },
 
       // 生成完成
       message_done: (msg) => {
-        const { task_id, message, message_id, conversation_id } = msg;
+        const { task_id, message_id, conversation_id } = msg;
+        const messageData = msg.message || msg.payload?.message;
+
+        // L1: 完成前立即 flush 缓冲的 chunk
+        if (chunkBufferRef.current.size > 0) {
+          if (flushTimerRef.current) {
+            clearTimeout(flushTimerRef.current);
+            flushTimerRef.current = null;
+          }
+          flushChunkBuffer();
+        }
+
+        // 🔥 DEBUG: 记录完整的 WebSocket 消息
+        console.log('🔥 [DEBUG] message_done received:', {
+          task_id,
+          message_id,
+          conversation_id,
+          messageData,
+          fullMsg: msg,
+        });
 
         logger.info('ws:message', 'done received', {
           taskId: task_id,
-          messageId: message_id || message?.id,
+          messageId: message_id || messageData?.id,
           conversationId: conversation_id,
         });
 
-        // 用后端返回的完整消息更新
-        if (message) {
-          const normalized = normalizeMessage(message);
-          messageStore.updateMessage(message_id || message.id, {
-            ...normalized,
-            status: 'completed',
-          });
-        } else if (message_id) {
-          messageStore.setStatus(message_id, 'completed');
-        }
+        const store = getStore();
 
-        // 完成任务
+        // 1. 有 task_id：处理任务完成
         if (task_id) {
-          messageStore.completeTask(task_id);
-
-          // 触发操作上下文回调
-          const context = operationContextRef.current.get(task_id);
-          if (context?.onComplete && message) {
-            context.onComplete(normalizeMessage(message));
+          if (messageData && conversation_id) {
+            console.log('🔥 [DEBUG] Calling handleTaskDoneWithMessage with:', {
+              task_id,
+              messageData,
+              conversation_id,
+            });
+            handleTaskDoneWithMessage(task_id, messageData, conversation_id);
+          } else if (message_id) {
+            store.setStatus(message_id, 'completed');
+            store.completeTask(task_id);
           }
-          operationContextRef.current.delete(task_id);
-
-          // 清理订阅
-          subscribedTasksRef.current.delete(task_id);
-          taskConversationMapRef.current.delete(task_id);
-          ws.unsubscribeTask(task_id);
+          cleanupTaskSubscription(task_id);
+        }
+        // 2. 无 task_id 但有 messageData
+        else if (messageData) {
+          const normalized = normalizeMessage(messageData);
+          store.updateMessage(message_id || messageData.id, { ...normalized, status: 'completed' });
+        }
+        // 3. 只有 message_id
+        else if (message_id) {
+          store.setStatus(message_id, 'completed');
         }
 
         // 完成流式状态
         if (conversation_id) {
-          messageStore.completeStreaming(conversation_id);
+          store.completeStreaming(conversation_id);
+          store.setIsSending(false);
           tabSync.broadcast('message_completed', { conversationId: conversation_id, messageId: message_id });
         }
 
@@ -166,7 +313,17 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
       // 生成失败
       message_error: (msg) => {
-        const { task_id, message_id, error, conversation_id } = msg;
+        const { task_id, message_id, conversation_id } = msg;
+        const error = msg.error || msg.payload?.error;
+
+        // L1: 错误时丢弃缓冲（避免 flush 到已失败的消息）
+        if (message_id) {
+          chunkBufferRef.current.delete(message_id);
+        }
+        if (flushTimerRef.current && chunkBufferRef.current.size === 0) {
+          clearTimeout(flushTimerRef.current);
+          flushTimerRef.current = null;
+        }
 
         logger.error('ws:message', 'error received', undefined, {
           taskId: task_id,
@@ -174,255 +331,36 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
           error,
         });
 
-        // 更新消息状态
+        const store = getStore();
+
+        // 更新消息状态（同步 content，与后端 on_error 保存的一致）
         if (message_id) {
-          messageStore.updateMessage(message_id, {
+          const errorText = error?.message || '生成失败';
+          store.updateMessage(message_id, {
             status: 'failed',
-            error: error || { code: 'UNKNOWN', message: '生成失败' },
+            is_error: true,
+            error: error || { code: 'UNKNOWN', message: errorText },
+            content: [{ type: 'text', text: errorText }],
           });
         }
 
-        // 失败任务
+        // 处理任务失败
         if (task_id) {
-          messageStore.failTask(task_id, error?.message || '生成失败');
-
-          // 触发操作上下文回调
-          const context = operationContextRef.current.get(task_id);
-          if (context?.onError) {
-            context.onError(new Error(error?.message || '生成失败'));
-          }
-          operationContextRef.current.delete(task_id);
-
-          // 清理订阅
-          subscribedTasksRef.current.delete(task_id);
-          taskConversationMapRef.current.delete(task_id);
-          ws.unsubscribeTask(task_id);
+          handleTaskFailure(task_id, error);
         }
 
         // 完成流式状态
         if (conversation_id) {
-          messageStore.completeStreaming(conversation_id);
+          store.completeStreaming(conversation_id);
         }
+
+        // 设置发送状态
+        store.setIsSending(false);
 
         // Toast 提示
         import('react-hot-toast').then(({ default: toast }) => {
           toast.error(error?.message || '生成失败');
         });
-      },
-
-      // ========================================
-      // 兼容旧消息类型（过渡期）
-      // ========================================
-
-      chat_start: (msg) => {
-        const { assistant_message_id } = msg.payload || {};
-        const conversation_id = msg.conversation_id;
-        if (!assistant_message_id || !conversation_id) return;
-
-        logger.info('ws:chat', 'start received (legacy)', { assistantMessageId: assistant_message_id });
-
-        // 开始流式
-        messageStore.startStreaming(conversation_id, assistant_message_id);
-      },
-
-      chat_chunk: (msg) => {
-        const { text } = msg.payload || {};
-        const messageId = messageStore.getStreamingMessageId(msg.conversation_id);
-
-        if (!messageId || !text) return;
-
-        messageStore.appendContent(messageId, text);
-      },
-
-      chat_done: (msg) => {
-        const { message_id, content, credits_consumed, model } = msg.payload || {};
-        const conversationId = msg.conversation_id;
-
-        if (!conversationId || !message_id) return;
-
-        logger.info('ws:chat', 'done received (legacy)', { messageId: message_id, credits: credits_consumed });
-
-        // 构建完整消息
-        const finalMessage: Message = {
-          id: message_id,
-          conversation_id: conversationId,
-          role: 'assistant',
-          content: [{ type: 'text', text: content || '' }],
-          status: 'completed',
-          credits_cost: credits_consumed,
-          created_at: new Date().toISOString(),
-          generation_params: model ? { model } : undefined,
-        };
-
-        // 更新消息
-        const streamingId = messageStore.getStreamingMessageId(conversationId);
-        if (streamingId) {
-          messageStore.updateMessage(streamingId, finalMessage);
-        } else {
-          messageStore.addMessage(conversationId, finalMessage);
-        }
-
-        messageStore.completeStreaming(conversationId);
-
-        // 触发回调
-        const taskId = msg.task_id;
-        if (taskId) {
-          const context = operationContextRef.current.get(taskId);
-          if (context?.onComplete) {
-            context.onComplete(finalMessage);
-          }
-          operationContextRef.current.delete(taskId);
-          subscribedTasksRef.current.delete(taskId);
-          taskConversationMapRef.current.delete(taskId);
-          ws.unsubscribeTask(taskId);
-        }
-
-        tabSync.broadcast('chat_completed', { conversationId, messageId: message_id });
-      },
-
-      chat_error: (msg) => {
-        const { error } = msg.payload || {};
-        const conversationId = msg.conversation_id;
-        const taskId = msg.task_id;
-
-        if (!conversationId) return;
-
-        logger.error('ws:chat', 'error received (legacy)', undefined, { error });
-
-        // 添加错误消息
-        const streamingId = messageStore.getStreamingMessageId(conversationId);
-        if (streamingId) {
-          messageStore.updateMessage(streamingId, {
-            status: 'failed',
-            error: { code: 'CHAT_ERROR', message: error || '生成失败' },
-          });
-        }
-
-        messageStore.completeStreaming(conversationId);
-
-        if (taskId) {
-          const context = operationContextRef.current.get(taskId);
-          if (context?.onError) {
-            context.onError(new Error(error || '生成失败'));
-          }
-          operationContextRef.current.delete(taskId);
-          subscribedTasksRef.current.delete(taskId);
-          ws.unsubscribeTask(taskId);
-        }
-      },
-
-      task_status: async (msg) => {
-        const { status, media_type, error_message, message: createdMessage } = msg.payload || {};
-        const taskId = msg.task_id;
-        const conversationId = msg.conversation_id;
-
-        if (!taskId) return;
-
-        logger.info('ws:task', 'status received (legacy)', {
-          taskId,
-          status,
-          mediaType: media_type,
-        });
-
-        if (status === 'completed' && createdMessage && conversationId) {
-          // 处理消息内容（支持新格式数组和旧格式单独字段）
-          let content: ContentPart[];
-          if (Array.isArray(createdMessage.content)) {
-            // 新格式：content 已经是数组
-            content = createdMessage.content;
-          } else {
-            // 旧格式：从单独字段转换
-            content = [];
-            if (typeof createdMessage.content === 'string' && createdMessage.content) {
-              content.push({ type: 'text', text: createdMessage.content });
-            }
-            if (createdMessage.image_url) {
-              content.push({ type: 'image', url: createdMessage.image_url });
-            }
-            if (createdMessage.video_url) {
-              content.push({ type: 'video', url: createdMessage.video_url });
-            }
-          }
-
-          const normalizedMessage: Message = {
-            id: createdMessage.id,
-            conversation_id: conversationId,
-            role: 'assistant',
-            content,
-            status: 'completed',
-            credits_cost: createdMessage.credits_cost,
-            created_at: createdMessage.created_at,
-          };
-
-          // 查找并替换占位符
-          // 优先查找 mediaTasks（图片/视频任务），fallback 到 tasks（统一任务）
-          const mediaTask = messageStore.getMediaTask(taskId);
-          const unifiedTask = messageStore.getTask(taskId);
-
-          if (mediaTask?.placeholderId) {
-            // 媒体任务：替换占位符
-            messageStore.replaceMediaPlaceholder(conversationId, mediaTask.placeholderId, normalizedMessage);
-            messageStore.completeMediaTask(taskId);
-          } else if (unifiedTask?.messageId) {
-            // 统一任务：更新消息
-            messageStore.updateMessage(unifiedTask.messageId, normalizedMessage);
-            messageStore.completeTask(taskId);
-          } else {
-            // 兜底：直接添加消息
-            messageStore.addMessage(conversationId, normalizedMessage);
-          }
-
-          // 回调
-          const context = operationContextRef.current.get(taskId);
-          if (context?.onComplete) {
-            context.onComplete(normalizedMessage);
-          }
-          operationContextRef.current.delete(taskId);
-
-          const { default: toast } = await import('react-hot-toast');
-          toast.success(`${media_type === 'image' ? '图片' : '视频'}生成完成`);
-
-          tabSync.broadcast('message_updated', { conversationId, taskId });
-
-        } else if (status === 'failed') {
-          // 更新任务状态
-          messageStore.failTask(taskId, error_message || '生成失败');
-
-          // 更新消息状态为失败
-          const mediaTask = messageStore.getMediaTask(taskId);
-          const unifiedTask = messageStore.getTask(taskId);
-          const messageId = mediaTask?.placeholderId || unifiedTask?.messageId;
-
-          if (messageId && conversationId) {
-            messageStore.updateMessage(messageId, {
-              status: 'failed',
-              is_error: true,
-              error: { code: 'GENERATION_FAILED', message: error_message || '生成失败' },
-            });
-          }
-
-          // 清理媒体任务
-          if (mediaTask) {
-            messageStore.failMediaTask(taskId);
-          }
-
-          // 设置发送状态
-          messageStore.setIsSending(false);
-
-          const context = operationContextRef.current.get(taskId);
-          if (context?.onError) {
-            context.onError(new Error(error_message || '生成失败'));
-          }
-          operationContextRef.current.delete(taskId);
-
-          // Toast 提示
-          import('react-hot-toast').then(({ default: toast }) => {
-            toast.error(error_message || '生成失败');
-          });
-        }
-
-        subscribedTasksRef.current.delete(taskId);
-        taskConversationMapRef.current.delete(taskId);
       },
 
       // ========================================
@@ -451,9 +389,10 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
         // 恢复累积内容
         if (accumulated && accumulated.length > 0) {
-          const task = messageStore.getTask(task_id);
+          const store = getStore();
+          const task = store.getTask(task_id);
           if (task?.messageId) {
-            messageStore.appendContent(task.messageId, accumulated);
+            store.appendContent(task.messageId, accumulated);
           }
         }
       },
@@ -469,8 +408,16 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       ws.subscribe(type as WSMessageType, handler)
     );
 
-    return () => unsubscribes.forEach((unsub) => unsub());
-  }, [ws, messageStore]);
+    return () => {
+      unsubscribes.forEach((unsub) => unsub());
+      // L1: 清理定时器
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- handler 通过 getState() 获取最新 store，无需依赖 messageStore
+  }, [ws]);
 
   // ========================================
   // 订阅任务（带映射）

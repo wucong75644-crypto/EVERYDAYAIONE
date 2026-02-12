@@ -31,6 +31,9 @@ certifi==2026.1.4
 # 重试机制
 tenacity==9.0.0
 
+# Google Gemini API
+google-genai==1.0.0
+
 # API 限流
 slowapi==0.1.9
 

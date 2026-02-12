@@ -219,13 +219,13 @@ sequenceDiagram
 
     loop WebSocket 流式推送
         KIE-->>Service: content chunk
-        Service-->>WS: chat_chunk 事件
+        Service-->>WS: message_chunk 事件
         WS-->>Handler: onStreamChunk(chunk, accumulated)
-        Handler->>Runtime: appendStreamingContent()
+        Handler->>Store: setStreamingContent()
     end
 
     Service->>DB: 保存 AI 消息
-    Service-->>WS: chat_done 事件
+    Service-->>WS: message_done 事件
     WS-->>Handler: onComplete(finalMessage)
 
     Handler->>Runtime: completeStreaming()
@@ -248,11 +248,10 @@ sequenceDiagram
     participant User as 用户
     participant InputArea as InputArea
     participant Handler as useMediaMessageHandler
-    participant Sender as sendUnifiedMessage
-    participant BackendAPI as backendAPI
+    participant Sender as sendMessage
     participant WS as WebSocket
-    participant API as /image/generate 或 /video/generate
-    participant Service as ImageService/VideoService
+    participant API as /messages/generate
+    participant Service as Handler (Image/Video)
     participant KIE as KIE API
     participant DB as Supabase
 
@@ -260,43 +259,39 @@ sequenceDiagram
     InputArea->>Handler: handleMediaGeneration()
 
     Note over Handler: 1. 创建乐观消息
-    Handler->>Sender: sendUnifiedMessage({ type: 'image'/'video' })
-    Sender->>Sender: createMessageLifecycle()
-    Sender-->>InputArea: onOptimisticUpdate(userMsg, placeholder)
+    Handler->>Sender: sendMessage({ generationType: 'image'/'video' })
+    Sender->>Sender: 添加占位消息到 Store
+    Sender-->>InputArea: 乐观更新显示
 
     Note over Sender: 2. 调用后端 API
-    Sender->>BackendAPI: callBackendAPI()
-    BackendAPI->>API: POST /image/generate 或 /video/generate
+    Sender->>API: POST /conversations/{id}/messages/generate
     API->>DB: 保存用户消息
     API->>Service: 创建任务记录
     Service->>DB: INSERT tasks (status=pending)
     Service->>KIE: 提交生成任务
     KIE-->>Service: task_id
     Service-->>API: { task_id, credits_locked }
-    API-->>BackendAPI: 任务已提交
-    BackendAPI-->>Sender: { taskId, userMessage }
+    API-->>Sender: { taskId, userMessage, assistantMessage }
 
-    Note over Sender: 3. 注册操作上下文 + 订阅 WebSocket
-    Sender->>WS: registerOperation(taskId, context)
+    Note over Sender: 3. 订阅 WebSocket
     Sender->>WS: subscribeTask(taskId, conversationId)
 
-    Note over WS: 4. 后端推送任务状态
+    Note over WS: 4. 后端推送任务完成
     loop WebSocket 推送
-        KIE-->>Service: 任务状态更新
-        Service-->>WS: task_status 事件
-        WS-->>Handler: onComplete(finalMessage)
+        KIE-->>Service: 任务完成
+        Service-->>WS: message_done 事件
+        WS-->>Handler: 替换占位符为真实消息
     end
 
     Note over Handler: 5. 任务完成
-    Handler-->>InputArea: onMessageSent(savedMessage)
+    Handler-->>InputArea: 更新 UI
 ```
 
 **关键文件**：
 - 处理器：[useMediaMessageHandler.ts](frontend/src/hooks/handlers/useMediaMessageHandler.ts)
-- 统一发送器：[unifiedSender.ts](frontend/src/services/messageSender/unifiedSender.ts)
-- 后端 API 层：[backendAPI.ts](frontend/src/services/messageSender/backendAPI.ts)
-- 后端图片路由：[image.py](backend/api/routes/image.py)
-- 后端视频路由：[video.py](backend/api/routes/video.py)
+- 统一发送器：[messageSender.ts](frontend/src/services/messageSender.ts)
+- 后端路由：[message.py](backend/api/routes/message.py)
+- 后端处理器：[image_handler.py](backend/services/handlers/image_handler.py)、[video_handler.py](backend/services/handlers/video_handler.py)
 
 ---
 

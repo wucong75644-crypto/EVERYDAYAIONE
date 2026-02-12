@@ -88,9 +88,6 @@ export interface Message {
   created_at: string;
   updated_at?: string;
   client_request_id?: string;
-  // 兼容旧格式
-  image_url?: string | null;
-  video_url?: string | null;
   is_error?: boolean;
 }
 

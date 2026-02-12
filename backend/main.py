@@ -115,20 +115,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     worker_task = asyncio.create_task(worker.start())
     logger.info("BackgroundTaskWorker started")
 
-    # 启动 WebSocket 清理任务
-    await ws_manager.start_cleanup_task()
-    logger.info("WebSocket cleanup task started")
-
     yield
 
     # 优雅关闭：通知所有 WebSocket 客户端服务即将重启
-    from schemas.websocket import build_server_restarting_message
-    await ws_manager.broadcast_all(build_server_restarting_message())
+    from schemas.websocket import build_server_restarting
+    await ws_manager.broadcast_all(build_server_restarting())
     await asyncio.sleep(1)  # 给客户端一点时间接收消息
-
-    # 停止 WebSocket 清理任务
-    await ws_manager.stop_cleanup_task()
-    logger.info("WebSocket cleanup task stopped")
 
     # 停止后台工作器
     await worker.stop()

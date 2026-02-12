@@ -2,10 +2,10 @@
 message_service 单元测试
 
 测试消息服务的核心功能：
-- 创建消息
 - 获取消息列表
 - 获取单条消息
 - 删除消息
+- 获取对话历史
 """
 
 import pytest
@@ -15,135 +15,6 @@ from uuid import uuid4
 from services.message_service import MessageService
 from core.exceptions import NotFoundError, PermissionDeniedError
 from tests.conftest import create_test_user, create_test_message, create_test_conversation
-
-
-class TestMessageServiceCreate:
-    """消息创建测试"""
-
-    @pytest.fixture
-    def message_service(self, mock_db):
-        return MessageService(mock_db)
-
-    @pytest.mark.asyncio
-    async def test_create_message_success(self, message_service, mock_db):
-        """测试：创建消息成功"""
-        # Arrange
-        user = create_test_user()
-        conversation = create_test_conversation(user_id=user["id"])
-        mock_db.set_table_data("conversations", [conversation])
-
-        new_message = create_test_message(
-            conversation_id=conversation["id"],
-            content="测试消息"
-        )
-        mock_db.table("messages").execute = MagicMock(
-            return_value=MagicMock(data=[new_message])
-        )
-
-        # Mock conversation_service 方法
-        with patch.object(
-            message_service.conversation_service,
-            "get_conversation",
-            return_value=conversation
-        ):
-            with patch.object(
-                message_service.conversation_service,
-                "increment_message_count",
-                return_value=None
-            ):
-                with patch.object(
-                    message_service.conversation_service,
-                    "update_last_message_preview",
-                    return_value=None
-                ):
-                    # Act
-                    result = await message_service.create_message(
-                        conversation_id=conversation["id"],
-                        user_id=user["id"],
-                        content="测试消息",
-                        role="user"
-                    )
-
-        # Assert
-        assert result["content"] == "测试消息"
-        assert result["role"] == "user"
-
-    @pytest.mark.asyncio
-    async def test_create_message_with_image(self, message_service, mock_db):
-        """测试：创建带图片的消息"""
-        # Arrange
-        user = create_test_user()
-        conversation = create_test_conversation(user_id=user["id"])
-
-        new_message = create_test_message(conversation_id=conversation["id"])
-        new_message["image_url"] = "https://example.com/image.jpg"
-        mock_db.table("messages").execute = MagicMock(
-            return_value=MagicMock(data=[new_message])
-        )
-
-        with patch.object(
-            message_service.conversation_service,
-            "get_conversation",
-            return_value=conversation
-        ):
-            with patch.object(
-                message_service.conversation_service,
-                "increment_message_count",
-                return_value=None
-            ):
-                with patch.object(
-                    message_service.conversation_service,
-                    "update_last_message_preview",
-                    return_value=None
-                ):
-                    # Act
-                    result = await message_service.create_message(
-                        conversation_id=conversation["id"],
-                        user_id=user["id"],
-                        content="图片消息",
-                        image_url="https://example.com/image.jpg"
-                    )
-
-        # Assert
-        assert result["image_url"] == "https://example.com/image.jpg"
-
-    @pytest.mark.asyncio
-    async def test_create_error_message(self, message_service, mock_db):
-        """测试：创建错误消息"""
-        # Arrange
-        user = create_test_user()
-        conversation = create_test_conversation(user_id=user["id"])
-
-        error_message = create_test_message(
-            conversation_id=conversation["id"],
-            role="assistant",
-            content="AI 调用失败"
-        )
-        error_message["is_error"] = True
-        mock_db.table("messages").execute = MagicMock(
-            return_value=MagicMock(data=[error_message])
-        )
-
-        with patch.object(
-            message_service.conversation_service,
-            "get_conversation",
-            return_value=conversation
-        ):
-            with patch.object(
-                message_service.conversation_service,
-                "update_last_message_preview",
-                return_value=None
-            ):
-                # Act
-                result = await message_service.create_error_message(
-                    conversation_id=conversation["id"],
-                    user_id=user["id"],
-                    content="AI 调用失败"
-                )
-
-        # Assert
-        assert result["role"] == "assistant"
-        assert result["is_error"] is True
 
 
 class TestMessageServiceGet:
@@ -375,37 +246,3 @@ class TestMessageServiceHistory:
         assert len(history) == 2
         assert history[0]["role"] == "user"
         assert history[1]["role"] == "assistant"
-
-    @pytest.mark.asyncio
-    async def test_get_conversation_history_with_attachments(self, message_service, mock_db):
-        """测试：获取带附件的对话历史"""
-        # Arrange
-        user = create_test_user()
-        conversation = create_test_conversation(user_id=user["id"])
-        messages = [
-            {
-                "id": str(uuid4()),
-                "conversation_id": conversation["id"],
-                "role": "user",
-                "content": "这是一张图片",
-                "image_url": "https://example.com/image.jpg",
-                "video_url": None,
-            },
-        ]
-
-        with patch.object(
-            message_service,
-            "get_messages",
-            return_value={"messages": messages, "total": 1}
-        ):
-            # Act
-            history = await message_service._get_conversation_history(
-                conversation_id=conversation["id"],
-                user_id=user["id"],
-                limit=10
-            )
-
-        # Assert
-        assert len(history) == 1
-        assert "attachments" in history[0]
-        assert history[0]["attachments"][0]["type"] == "image"
