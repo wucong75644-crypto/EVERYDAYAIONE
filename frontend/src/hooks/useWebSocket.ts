@@ -47,20 +47,13 @@ const MAX_RECONNECT_ATTEMPTS = 20;
 // === 消息类型 ===
 
 export type WSMessageType =
-  // 新统一消息类型
+  // 统一消息类型
   | 'message_pending'
   | 'message_start'
   | 'message_chunk'
   | 'message_progress'
   | 'message_done'
   | 'message_error'
-  // 兼容旧类型（过渡期）
-  | 'chat_start'
-  | 'chat_chunk'
-  | 'chat_done'
-  | 'chat_error'
-  | 'task_status'
-  | 'task_progress'
   // 系统消息
   | 'credits_changed'
   | 'notification'

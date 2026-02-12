@@ -52,25 +52,9 @@ export interface GenerationParams {
 /** 消息状态（与后端保持一致） */
 export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'failed';
 
-/** 消息类型（API 响应格式 - 旧版兼容） */
-export interface Message {
-  id: string;
-  conversation_id: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  image_url?: string | null;
-  video_url?: string | null;
-  is_error?: boolean;
-  credits_cost?: number;
-  generation_params?: GenerationParams | null;
-  client_request_id?: string;
-  status?: MessageStatus;
-  created_at: string;
-}
-
-/** 消息列表响应 */
+/** 消息列表响应（原始 API 格式，需要通过 normalizeMessage 转换） */
 export interface MessageListResponse {
-  messages: Message[];
+  messages: any[];  // 使用 any，由 normalizeMessage 转换为标准 Message 格式
   total: number;
   has_more: boolean;
 }

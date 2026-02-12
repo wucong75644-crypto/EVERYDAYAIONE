@@ -8,7 +8,6 @@ import { describe, it, expect } from 'vitest';
 import {
   createTextContent,
   createTextWithImage,
-  extractContent,
   getTextFromContent,
   inferGenerationType,
   determineMessageType,
@@ -62,59 +61,6 @@ describe('createTextWithImage', () => {
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({ type: 'text', text: '描述图片' });
     expect(result[1]).toEqual({ type: 'image', url: 'https://example.com/image.jpg' });
-  });
-});
-
-// ============================================================
-// extractContent 测试
-// ============================================================
-
-describe('extractContent', () => {
-  it('should extract text content', () => {
-    const result = extractContent({ content: 'Hello' });
-
-    expect(result).toEqual([{ type: 'text', text: 'Hello' }]);
-  });
-
-  it('should extract image url', () => {
-    const result = extractContent({ image_url: 'https://example.com/image.jpg' });
-
-    expect(result).toEqual([{ type: 'image', url: 'https://example.com/image.jpg' }]);
-  });
-
-  it('should extract video url', () => {
-    const result = extractContent({ video_url: 'https://example.com/video.mp4' });
-
-    expect(result).toEqual([{ type: 'video', url: 'https://example.com/video.mp4' }]);
-  });
-
-  it('should extract all content types', () => {
-    const result = extractContent({
-      content: 'Hello',
-      image_url: 'https://example.com/image.jpg',
-      video_url: 'https://example.com/video.mp4',
-    });
-
-    expect(result).toHaveLength(3);
-    expect(result[0]).toEqual({ type: 'text', text: 'Hello' });
-    expect(result[1]).toEqual({ type: 'image', url: 'https://example.com/image.jpg' });
-    expect(result[2]).toEqual({ type: 'video', url: 'https://example.com/video.mp4' });
-  });
-
-  it('should handle null values', () => {
-    const result = extractContent({
-      content: 'Hello',
-      image_url: null,
-      video_url: null,
-    });
-
-    expect(result).toEqual([{ type: 'text', text: 'Hello' }]);
-  });
-
-  it('should return empty array for empty object', () => {
-    const result = extractContent({});
-
-    expect(result).toEqual([]);
   });
 });
 

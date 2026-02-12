@@ -346,6 +346,18 @@ export default function MessageMedia({
   imageAspectRatio = '1:1',
   videoAspectRatio = 'landscape',
 }: MessageMediaProps) {
+  // 🔥 DEBUG: 记录 MessageMedia 接收到的 props
+  console.log('🔥 [DEBUG] MessageMedia render:', {
+    messageId,
+    isUser,
+    isGenerating,
+    generatingType,
+    imageUrls,
+    videoUrls,
+    imageUrlsLength: imageUrls.length,
+    videoUrlsLength: videoUrls.length,
+  });
+
   // 获取第一个视频 URL（目前只支持单视频）
   const videoUrl = videoUrls[0] || null;
 

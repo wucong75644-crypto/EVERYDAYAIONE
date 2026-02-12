@@ -15,7 +15,7 @@
  * ```
  */
 
-import { useState, useCallback, useRef, useLayoutEffect } from 'react';
+import { useState, useCallback, useRef, useLayoutEffect, useEffect } from 'react';
 import { MODAL_CLOSE_ANIMATION_DURATION } from '../constants/animations';
 
 interface UseModalAnimationOptions {
@@ -48,6 +48,18 @@ export function useModalAnimation(options: UseModalAnimationOptions = {}): UseMo
     onClosedRef.current = onClosed;
   });
 
+  // 关闭动画定时器 ref（用于组件卸载时清理）
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 组件卸载时清理定时器
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) {
+        clearTimeout(closeTimerRef.current);
+      }
+    };
+  }, []);
+
   const open = useCallback(() => {
     setIsOpen(true);
     setIsClosing(false);
@@ -55,10 +67,12 @@ export function useModalAnimation(options: UseModalAnimationOptions = {}): UseMo
 
   const close = useCallback(() => {
     setIsClosing(true);
-    setTimeout(() => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = setTimeout(() => {
       setIsOpen(false);
       setIsClosing(false);
       onClosedRef.current?.();
+      closeTimerRef.current = null;
     }, duration);
   }, [duration]);
 

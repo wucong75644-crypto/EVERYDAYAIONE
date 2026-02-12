@@ -14,7 +14,7 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import { StickToBottom, useStickToBottomContext } from 'use-stick-to-bottom';
 import { deleteMessage } from '../../services/message';
-import { useMessageStore, type Message, getTextContent } from '../../stores/useMessageStore';
+import { useMessageStore, type Message, getTextContent, getImageUrls } from '../../stores/useMessageStore';
 import MessageItem from './MessageItem';
 import EmptyState from './EmptyState';
 import LoadingSkeleton from './LoadingSkeleton';
@@ -22,7 +22,6 @@ import toast from 'react-hot-toast';
 import { useMessageLoader } from '../../hooks/useMessageLoader';
 import { useRegenerateHandlers } from '../../hooks/useRegenerateHandlers';
 import { useUnifiedMessages } from '../../hooks/useUnifiedMessages';
-import { parseImageUrls, getFirstImageUrl } from '../../utils/imageUtils';
 
 interface MessageAreaProps {
   conversationId: string | null;
@@ -159,7 +158,7 @@ export default function MessageArea({
 
           if (oldMsg && oldMsg !== newMsg) {
             replaceMessage(conversationId, oldMsg.id, newMsg);
-          } else if (!oldMsg && newMsg && !newMsg.id.startsWith('temp-') && !newMsg.id.startsWith('streaming-')) {
+          } else if (!oldMsg && newMsg && !newMsg.id.startsWith('temp-') && newMsg.status !== 'streaming') {
             appendMessage(conversationId, newMsg);
           }
         });
@@ -170,9 +169,7 @@ export default function MessageArea({
 
   // 提取所有图片 URL（用于缩略图预览）
   const allImageUrls = useMemo(() => {
-    return mergedMessages
-      .filter(m => m.image_url)
-      .flatMap(m => parseImageUrls(m.image_url));
+    return mergedMessages.flatMap(m => getImageUrls(m));
   }, [mergedMessages]);
 
   // 创建图片 URL 索引 Map（O(1) 查找优化）
@@ -184,13 +181,12 @@ export default function MessageArea({
 
   // 计算每条消息的第一张图片索引
   const getImageIndex = useCallback((message: Message): number => {
-    const firstUrl = getFirstImageUrl(message.image_url);
-    if (!firstUrl) return -1;
-    return imageUrlIndexMap.get(firstUrl) ?? -1;
+    const urls = getImageUrls(message);
+    if (urls.length === 0) return -1;
+    return imageUrlIndexMap.get(urls[0]) ?? -1;
   }, [imageUrlIndexMap]);
 
-  // 重新生成相关状态
-  // 注意：重新生成状态现在由 streaming- 前缀管理，不再需要单独状态
+  // 重新生成相关状态（由 message.status 管理）
 
   // 加载消息
   useEffect(() => {
@@ -205,9 +201,10 @@ export default function MessageArea({
   // 处理删除消息
   const handleDelete = useCallback(async (messageId: string) => {
     try {
+      const targetMsg = mergedMessages.find(m => m.id === messageId);
       const isTemporaryMessage = messageId.startsWith('temp-') ||
                                  messageId.startsWith('error-') ||
-                                 messageId.startsWith('streaming-');
+                                 targetMsg?.status === 'streaming';
 
       if (!isTemporaryMessage) {
         await deleteMessage(messageId);
@@ -262,15 +259,7 @@ export default function MessageArea({
       return;
     }
 
-    // 处理 streaming- 前缀的占位符消息
-    // streaming-xxx 中的 xxx 是真实的 assistant_message_id
-    let finalTargetMessage = targetMessage;
-    if (targetMessage.id.startsWith('streaming-')) {
-      const realId = targetMessage.id.replace(/^streaming-/, '');
-      finalTargetMessage = { ...targetMessage, id: realId };
-    }
-
-    await doRegenerate(finalTargetMessage, userMessage);
+    await doRegenerate(targetMessage, userMessage);
   }, [conversationId, mergedMessages, doRegenerate]);
 
   // 空状态
@@ -320,7 +309,7 @@ export default function MessageArea({
           {/* 消息列表 */}
           <div className="max-w-4xl mx-auto px-4 space-y-4">
             {mergedMessages.map((message) => {
-              const isMessageStreaming = message.id.startsWith('streaming-');
+              const isMessageStreaming = message.status === 'streaming';
               const imageIndex = getImageIndex(message);
 
               return (
@@ -333,6 +322,7 @@ export default function MessageArea({
                   onMediaLoaded={handleMediaLoaded}
                   allImageUrls={allImageUrls}
                   currentImageIndex={imageIndex >= 0 ? imageIndex : 0}
+                  skipEntryAnimation={loading || loadingMore}
                 />
               );
             })}

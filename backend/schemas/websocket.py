@@ -7,7 +7,7 @@
 
 import time
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -55,14 +55,6 @@ class WSMessageType(str, Enum):
     PING = "ping"
     PONG = "pong"
     ERROR = "error"
-
-    # === 兼容旧消息类型（过渡期保留） ===
-    CHAT_START = "chat_start"
-    CHAT_CHUNK = "chat_chunk"
-    CHAT_DONE = "chat_done"
-    CHAT_ERROR = "chat_error"
-    TASK_STATUS = "task_status"
-    TASK_PROGRESS = "task_progress"
 
     # === 系统相关 ===
     SERVER_RESTARTING = "server_restarting"
@@ -168,55 +160,6 @@ class ErrorPayload(BaseModel):
 
 
 # ============================================================
-# 兼容旧格式的 Payload 模型（过渡期保留）
-# ============================================================
-
-
-class ChatStartPayload(BaseModel):
-    """聊天开始消息的 payload（兼容旧格式）"""
-    model: str
-    assistant_message_id: str
-
-
-class ChatChunkPayload(BaseModel):
-    """聊天流式内容块的 payload（兼容旧格式）"""
-    text: str
-    accumulated: Optional[str] = None
-
-
-class ChatDonePayload(BaseModel):
-    """聊天完成消息的 payload（兼容旧格式）"""
-    message_id: str
-    content: str
-    credits_consumed: int
-    model: str
-    usage: Optional[Dict[str, int]] = None
-
-
-class ChatErrorPayload(BaseModel):
-    """聊天错误消息的 payload（兼容旧格式）"""
-    error: str
-    error_code: Optional[str] = None
-
-
-class TaskStatusPayload(BaseModel):
-    """任务状态更新的 payload（兼容旧格式）"""
-    status: str
-    media_type: Optional[str] = None
-    urls: Optional[List[str]] = None
-    credits_consumed: Optional[int] = None
-    error_message: Optional[str] = None
-    message: Optional[Dict[str, Any]] = None
-
-
-class TaskProgressPayload(BaseModel):
-    """任务进度的 payload（兼容旧格式）"""
-    status: str
-    progress: int
-    message: Optional[str] = None
-
-
-# ============================================================
 # 消息构建辅助函数
 # ============================================================
 
@@ -244,7 +187,7 @@ def _build_ws_message(
 
 
 # ============================================================
-# 统一消息构建函数（新协议）
+# 统一消息构建函数
 # ============================================================
 
 
@@ -423,167 +366,3 @@ def build_server_restarting() -> Dict[str, Any]:
         WSMessageType.SERVER_RESTARTING,
         {"message": "Server is restarting, please reconnect"},
     )
-
-
-# ============================================================
-# 兼容旧消息构建函数（过渡期保留）
-# ============================================================
-
-
-def build_ws_message(
-    msg_type: WSMessageType,
-    payload: Dict[str, Any],
-    task_id: Optional[str] = None,
-    conversation_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """构建 WebSocket 消息（兼容旧接口）"""
-    return _build_ws_message(msg_type, payload, task_id, conversation_id)
-
-
-def build_chat_start_message(
-    task_id: str,
-    conversation_id: str,
-    model: str,
-    assistant_message_id: str,
-) -> Dict[str, Any]:
-    """构建聊天开始消息（兼容旧格式）"""
-    return _build_ws_message(
-        WSMessageType.CHAT_START,
-        {"model": model, "assistant_message_id": assistant_message_id},
-        task_id=task_id,
-        conversation_id=conversation_id,
-    )
-
-
-def build_chat_chunk_message(
-    task_id: str,
-    text: str,
-    conversation_id: str,
-    accumulated: Optional[str] = None,
-) -> Dict[str, Any]:
-    """构建聊天流式内容块消息（兼容旧格式）"""
-    payload = {"text": text}
-    if accumulated is not None:
-        payload["accumulated"] = accumulated
-    return _build_ws_message(
-        WSMessageType.CHAT_CHUNK,
-        payload,
-        task_id=task_id,
-        conversation_id=conversation_id,
-    )
-
-
-def build_chat_done_message(
-    task_id: str,
-    conversation_id: str,
-    message_id: str,
-    content: str,
-    credits_consumed: int,
-    model: str,
-    usage: Optional[Dict[str, int]] = None,
-) -> Dict[str, Any]:
-    """构建聊天完成消息（兼容旧格式）"""
-    payload: Dict[str, Any] = {
-        "message_id": message_id,
-        "content": content,
-        "credits_consumed": credits_consumed,
-        "model": model,
-    }
-    if usage:
-        payload["usage"] = usage
-    return _build_ws_message(
-        WSMessageType.CHAT_DONE,
-        payload,
-        task_id=task_id,
-        conversation_id=conversation_id,
-    )
-
-
-def build_chat_error_message(
-    task_id: str,
-    error: str,
-    conversation_id: Optional[str] = None,
-    error_code: Optional[str] = None,
-) -> Dict[str, Any]:
-    """构建聊天错误消息（兼容旧格式）"""
-    payload: Dict[str, Any] = {"error": error}
-    if error_code:
-        payload["error_code"] = error_code
-    return _build_ws_message(
-        WSMessageType.CHAT_ERROR,
-        payload,
-        task_id=task_id,
-        conversation_id=conversation_id,
-    )
-
-
-def build_task_status_message(
-    task_id: str,
-    conversation_id: str,
-    status: str,
-    media_type: Optional[str] = None,
-    urls: Optional[List[str]] = None,
-    credits_consumed: Optional[int] = None,
-    error_message: Optional[str] = None,
-    created_message: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """构建任务状态更新消息（兼容旧格式）"""
-    payload: Dict[str, Any] = {"status": status}
-    if media_type:
-        payload["media_type"] = media_type
-    if urls:
-        payload["urls"] = urls
-    if credits_consumed is not None:
-        payload["credits_consumed"] = credits_consumed
-    if error_message:
-        payload["error_message"] = error_message
-    if created_message:
-        payload["message"] = created_message
-    return _build_ws_message(
-        WSMessageType.TASK_STATUS,
-        payload,
-        task_id=task_id,
-        conversation_id=conversation_id,
-    )
-
-
-def build_credits_changed_message(
-    credits: int,
-    delta: int,
-    reason: str,
-    task_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """构建积分变化消息（兼容旧接口）"""
-    return build_credits_changed(credits, delta, reason, task_id)
-
-
-def build_subscribed_message(
-    task_id: str,
-    accumulated: str = "",
-    current_index: int = -1,
-) -> Dict[str, Any]:
-    """构建订阅确认消息（兼容旧接口）"""
-    return build_subscribed(task_id, accumulated, current_index)
-
-
-def build_error_message(
-    message: str,
-    code: Optional[str] = None,
-) -> Dict[str, Any]:
-    """构建错误消息（兼容旧接口）"""
-    return build_error(message, code)
-
-
-def build_ping_message() -> Dict[str, Any]:
-    """构建心跳请求消息（兼容旧接口）"""
-    return build_ping()
-
-
-def build_pong_message() -> Dict[str, Any]:
-    """构建心跳响应消息（兼容旧接口）"""
-    return build_pong()
-
-
-def build_server_restarting_message() -> Dict[str, Any]:
-    """构建服务重启通知消息（兼容旧接口）"""
-    return build_server_restarting()

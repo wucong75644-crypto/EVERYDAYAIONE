@@ -43,6 +43,18 @@ export default function LoginForm({
   const codeRef = useRef<HTMLInputElement>(null);
   const submitRef = useRef<HTMLButtonElement>(null);
 
+  // 倒计时定时器 ref（用于组件卸载时清理）
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // 组件卸载时清理定时器
+  useEffect(() => {
+    return () => {
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current);
+      }
+    };
+  }, []);
+
   // Tab 键焦点循环处理
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key !== 'Tab') return;
@@ -84,12 +96,18 @@ export default function LoginForm({
     try {
       await sendCode({ phone, purpose: 'login' });
 
-      // 开始倒计时
+      // 开始倒计时（先清理可能存在的旧定时器）
+      if (countdownTimerRef.current) {
+        clearInterval(countdownTimerRef.current);
+      }
       setCountdown(60);
-      const timer = setInterval(() => {
+      countdownTimerRef.current = setInterval(() => {
         setCountdown((prev) => {
           if (prev <= 1) {
-            clearInterval(timer);
+            if (countdownTimerRef.current) {
+              clearInterval(countdownTimerRef.current);
+              countdownTimerRef.current = null;
+            }
             return 0;
           }
           return prev - 1;

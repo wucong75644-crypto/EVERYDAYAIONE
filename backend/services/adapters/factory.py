@@ -61,32 +61,32 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
     "gemini-2.5-flash": ModelConfig(
         model_id="gemini-2.5-flash",
         provider=ModelProvider.GOOGLE,
-        provider_model="gemini-2.5-flash-preview-05-20",
+        provider_model="gemini-2.5-flash",  # Google API 实际模型名称
         display_name="Gemini 2.5 Flash",
-        input_price=0.15,
-        output_price=0.60,
-        credits_per_1k_input=0.3,
-        credits_per_1k_output=1.2,
+        input_price=0,  # 免费层
+        output_price=0,
+        credits_per_1k_input=0,
+        credits_per_1k_output=0,
         supports_vision=True,
         supports_video=True,
         supports_tools=True,
-        max_tokens=65536,
+        max_tokens=8192,
         context_window=1_000_000,
     ),
     "gemini-2.5-pro": ModelConfig(
         model_id="gemini-2.5-pro",
         provider=ModelProvider.GOOGLE,
-        provider_model="gemini-2.5-pro-preview-05-06",
+        provider_model="gemini-2.5-pro",  # Google API 实际模型名称
         display_name="Gemini 2.5 Pro",
-        input_price=1.25,
-        output_price=10.0,
-        credits_per_1k_input=2.5,
-        credits_per_1k_output=20,
+        input_price=0,  # 免费层
+        output_price=0,
+        credits_per_1k_input=0,
+        credits_per_1k_output=0,
         supports_vision=True,
         supports_video=True,
         supports_tools=True,
-        max_tokens=65536,
-        context_window=1_000_000,
+        max_tokens=8192,
+        context_window=2_000_000,
     ),
 }
 

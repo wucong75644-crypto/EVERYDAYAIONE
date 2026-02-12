@@ -64,14 +64,14 @@
 **验证点**:
 - [ ] 用户消息立即显示
 - [ ] 占位符显示"图片生成中..."
-- [ ] TaskStore 注册了任务
+- [ ] useMessageStore 注册了任务
 - [ ] 生成完成后显示图片
 - [ ] 占位符被替换为图片消息
 - [ ] Toast 提示"图片生成完成"
 
 **技术检查**:
-- [ ] TaskStore.mediaTasks 正确添加/移除
-- [ ] WebSocket task_status 事件正确处理
+- [ ] useMessageStore.mediaTasks 正确添加/移除
+- [ ] WebSocket message_done 事件正确处理
 
 ---
 
@@ -90,7 +90,7 @@
 **验证点**:
 - [ ] 用户消息立即显示
 - [ ] 占位符显示"视频生成中..."
-- [ ] TaskStore 注册了任务
+- [ ] useMessageStore 注册了任务
 - [ ] 生成完成后显示视频
 - [ ] 占位符被替换为视频消息
 - [ ] Toast 提示"视频生成完成"
@@ -131,7 +131,7 @@
 
 **验证点**:
 - [ ] 占位符自动恢复（显示"图片生成中..."）
-- [ ] TaskStore 任务重新注册
+- [ ] useMessageStore 任务重新注册
 - [ ] 生成完成后正常显示图片
 - [ ] 占位符被正确替换
 
@@ -148,7 +148,7 @@
 
 **验证点**:
 - [ ] 占位符自动恢复（显示"视频生成中..."）
-- [ ] TaskStore 任务重新注册
+- [ ] useMessageStore 任务重新注册
 - [ ] 生成完成后正常显示视频
 - [ ] 占位符被正确替换
 
@@ -234,10 +234,10 @@ console.log('流式消息ID:', convState.streamingMessageId);
 console.log('流式内容:', convState.streamingContent);
 ```
 
-### TaskStore 状态检查
+### useMessageStore 状态检查
 
 ```typescript
-const taskState = useTaskStore.getState();
+const taskState = useuseMessageStore.getState();
 console.log('媒体任务:', taskState.mediaTasks);
 ```
 

@@ -15,8 +15,8 @@ const EMPTY_MESSAGES: Message[] = [];
  *
  * 规则：
  * 1. 先取 messages（已持久化）
- * 2. 再追加 optimisticMessages 中不重复的（streaming/pending）
- * 3. 按 created_at 排序
+ * 2. 再追加 optimisticMessages 中不重复的
+ * 3. 按 created_at 排序（修复重新生成时的顺序问题）
  */
 function mergeMessages(
   messages: Message[] | undefined,
@@ -33,28 +33,22 @@ function mergeMessages(
   const persistedIds = new Set(persisted.map((m) => m.id));
 
   // 过滤出不重复的乐观消息
-  // 注意：streaming-{id} 格式的消息需要特殊处理
-  const newOptimistic = optimistic.filter((m) => {
-    // 如果 ID 已存在于持久化消息中，跳过
-    if (persistedIds.has(m.id)) return false;
-
-    // 如果是 streaming- 前缀，检查对应的真实 ID 是否已存在
-    if (m.id.startsWith('streaming-')) {
-      const realId = m.id.replace('streaming-', '');
-      if (persistedIds.has(realId)) return false;
-    }
-
-    return true;
-  });
+  const newOptimistic = optimistic.filter((m) => !persistedIds.has(m.id));
 
   if (newOptimistic.length === 0) {
     return persisted;
   }
 
-  // 合并并按时间排序
+  // 合并后按 created_at 排序（修复重新生成时的顺序问题）
   const merged = [...persisted, ...newOptimistic];
-  merged.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
+  merged.sort((a, b) => {
+    const timeDiff = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    if (timeDiff !== 0) return timeDiff;
+    // 时间戳相同时，用户消息排在 AI 消息之前（确保正确的对话顺序）
+    if (a.role === 'user' && b.role === 'assistant') return -1;
+    if (a.role === 'assistant' && b.role === 'user') return 1;
+    return 0;
+  });
   return merged;
 }
 
@@ -77,7 +71,18 @@ export function useUnifiedMessages(conversationId: string | null): Message[] {
   // 使用 useMemo 缓存合并结果
   return useMemo(() => {
     if (!conversationId) return EMPTY_MESSAGES;
-    return mergeMessages(messages, optimisticMessages);
+
+    // 🔥 DEBUG: 记录合并前的状态
+    console.log('🔥 [DEBUG] useUnifiedMessages - conversationId:', conversationId);
+    console.log('🔥 [DEBUG] useUnifiedMessages - messages:', messages);
+    console.log('🔥 [DEBUG] useUnifiedMessages - optimisticMessages:', optimisticMessages);
+
+    const merged = mergeMessages(messages, optimisticMessages);
+
+    // 🔥 DEBUG: 记录合并结果
+    console.log('🔥 [DEBUG] useUnifiedMessages - merged:', merged);
+
+    return merged;
   }, [conversationId, messages, optimisticMessages]);
 }
 

@@ -7,7 +7,6 @@
 import type {
   Message,
   ContentPart,
-  TextPart,
   ImagePart,
   VideoPart,
 } from '../types/message';
@@ -37,11 +36,6 @@ export function getTextContent(message: Message): string {
 
 /** 从 Message 提取图片 URL */
 export function getImageUrls(message: Message): string[] {
-  // 兼容旧格式
-  if (message.image_url) {
-    return [message.image_url];
-  }
-
   if (!Array.isArray(message.content)) return [];
 
   return message.content
@@ -51,11 +45,6 @@ export function getImageUrls(message: Message): string[] {
 
 /** 从 Message 提取视频 URL */
 export function getVideoUrls(message: Message): string[] {
-  // 兼容旧格式
-  if (message.video_url) {
-    return [message.video_url];
-  }
-
   if (!Array.isArray(message.content)) return [];
 
   return message.content
@@ -99,14 +88,6 @@ export function normalizeMessage(msg: any): Message {
 
   if (typeof msg.content === 'string' && msg.content) {
     content.push({ type: 'text', text: msg.content });
-  }
-
-  if (msg.image_url) {
-    content.push({ type: 'image', url: msg.image_url });
-  }
-
-  if (msg.video_url) {
-    content.push({ type: 'video', url: msg.video_url });
   }
 
   return {

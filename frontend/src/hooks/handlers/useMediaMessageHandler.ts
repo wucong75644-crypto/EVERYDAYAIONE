@@ -45,8 +45,8 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
     onMessageSent,
   } = params;
 
-  // 获取 WebSocket 订阅函数
-  const { subscribeTaskWithMapping } = useWebSocketContext();
+  // 获取 WebSocket 订阅/取消订阅函数
+  const { subscribeTaskWithMapping, unsubscribeTask } = useWebSocketContext();
 
   const handleMediaGeneration = async (
     conversationId: string,
@@ -80,10 +80,15 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
         model: selectedModel.id,
         params: mediaParams,
         subscribeTask: subscribeTaskWithMapping,
+        unsubscribeTask, // 🔥 传入取消订阅函数
       });
 
-      // 通知消息已开始发送
-      const userMessage = useMessageStore.getState().optimisticMessages.get(conversationId)?.[0];
+      // 通知消息已开始发送（查找最新的 user 消息）
+      const optimisticList = useMessageStore.getState().optimisticMessages.get(conversationId);
+      const userMessage = optimisticList
+        ?.filter(m => m.role === 'user')
+        ?.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+
       if (userMessage) {
         onMessagePending(userMessage);
       }

@@ -14,6 +14,7 @@ import MessageMedia from './MessageMedia';
 import MessageActions from './MessageActions';
 import { getSavedSettings } from '../../utils/settingsStorage';
 import { useModalAnimation } from '../../hooks/useModalAnimation';
+import { useMessageAnimation } from '../../hooks/useMessageAnimation';
 import LoadingPlaceholder from './LoadingPlaceholder';
 import { PLACEHOLDER_TEXT } from '../../constants/placeholder';
 import type { AspectRatio, VideoAspectRatio } from '../../constants/models';
@@ -34,6 +35,8 @@ interface MessageItemProps {
   allImageUrls?: string[];
   /** 当前图片在列表中的索引（用于缩略图预览） */
   currentImageIndex?: number;
+  /** 是否跳过进入动画（批量加载历史消息时） */
+  skipEntryAnimation?: boolean;
 }
 
 export default memo(function MessageItem({
@@ -45,8 +48,17 @@ export default memo(function MessageItem({
   onMediaLoaded,
   allImageUrls = [],
   currentImageIndex = 0,
+  skipEntryAnimation = false,
 }: MessageItemProps) {
   const isUser = message.role === 'user';
+
+  // 消息动画管理
+  const {
+    entryAnimationClass,
+    deleteAnimationClass,
+    isDeleting,
+    // triggerDeleteAnimation - 未使用，保留 hook 返回以备将来使用
+  } = useMessageAnimation({ message, skipEntryAnimation });
 
   // 提取内容（兼容新旧格式）
   const textContent = getTextContent(message);
@@ -110,7 +122,6 @@ export default memo(function MessageItem({
     open: openDeleteModal,
     close: closeDeleteModal,
   } = useModalAnimation();
-  const [isDeleting, setIsDeleting] = useState(false);
 
   // 图片预览弹窗状态
   const [showImagePreview, setShowImagePreview] = useState(false);
@@ -181,13 +192,10 @@ export default memo(function MessageItem({
     if (!onDelete) return;
 
     try {
-      setIsDeleting(true);
       await onDelete(message.id);
       closeDeleteModal();
     } catch (error) {
       console.error('删除消息失败:', error);
-    } finally {
-      setIsDeleting(false);
     }
   };
 
@@ -197,7 +205,7 @@ export default memo(function MessageItem({
   return (
     <div
       data-message-id={message.id}
-      className={`flex mb-4 ${isUser ? 'justify-end' : 'justify-start'}`}
+      className={`flex mb-4 ${isUser ? 'justify-end' : 'justify-start'} ${entryAnimationClass} ${deleteAnimationClass}`}
     >
       <div
         className={`relative flex flex-col ${isUser ? 'items-end' : 'items-start'} ${hasMedia ? 'max-w-[90%]' : 'max-w-[80%]'}`}
@@ -242,29 +250,19 @@ export default memo(function MessageItem({
             ) : mediaPlaceholderInfo ? (
               /* 媒体占位符：图片/视频生成中 */
               <LoadingPlaceholder text={mediaPlaceholderInfo.text} />
+            ) : isErrorMessage ? (
+              /* 错误状态：显示实际错误信息 */
+              <span>{textContent || 'Error occurred'}</span>
             ) : (
               <>
                 {textContent}
                 {/* 流式输出光标 */}
                 {(isStreaming || isRegenerating) && textContent && (
-                  <span className="inline-block w-2 h-4 bg-blue-500 ml-0.5 animate-pulse" />
+                  <span className="inline-block w-2 h-4 bg-blue-500 ml-0.5 animate-typing-cursor" />
                 )}
               </>
             )}
           </div>
-
-          {/* 移动端重试链接（仅错误消息显示） */}
-          {!isUser && isErrorMessage && (
-            <div className="mt-2 sm:hidden">
-              <button
-                onClick={() => onRegenerate?.(message.id)}
-                disabled={isRegenerating}
-                className="text-sm text-blue-600 hover:text-blue-700 disabled:text-gray-400 disabled:cursor-not-allowed"
-              >
-                服务不可用。<span className="underline">[重试]</span>
-              </button>
-            </div>
-          )}
         </div>
 
         {/* AI 消息：文字在上，图片在下 */}

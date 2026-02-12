@@ -30,6 +30,8 @@ from .models import (
     KieModelType,
     TaskState,
 )
+from .configs import IMAGE_MODEL_CONFIGS
+
 
 class KieImageAdapter(BaseImageAdapter):
     """
@@ -47,64 +49,8 @@ class KieImageAdapter(BaseImageAdapter):
     - nano-banana-pro 支持 1K/2K/4K 分辨率
     """
 
-    # 模型配置
-    MODEL_CONFIGS = {
-        "google/nano-banana": {
-            "model_id": "google/nano-banana",
-            "description": "基础文生图",
-            "requires_image_input": False,
-            "max_prompt_length": 20000,
-            "supported_sizes": [
-                "1:1", "9:16", "16:9", "3:4", "4:3",
-                "3:2", "2:3", "5:4", "4:5", "21:9", "auto"
-            ],
-            "supported_formats": ["png", "jpeg"],
-            "supports_resolution": False,
-            "cost_per_image": Decimal("0.02"),
-            "credits_per_image": 4,
-        },
-        "google/nano-banana-edit": {
-            "model_id": "google/nano-banana-edit",
-            "description": "图像编辑",
-            "requires_image_input": True,
-            "max_images": 10,
-            "max_image_size_mb": 10,
-            "max_prompt_length": 20000,
-            "supported_sizes": [
-                "1:1", "9:16", "16:9", "3:4", "4:3",
-                "3:2", "2:3", "5:4", "4:5", "21:9", "auto"
-            ],
-            "supported_formats": ["png", "jpeg"],
-            "supports_resolution": False,
-            "cost_per_image": Decimal("0.02"),
-            "credits_per_image": 6,
-        },
-        "nano-banana-pro": {
-            "model_id": "nano-banana-pro",
-            "description": "高级文生图 (支持4K)",
-            "requires_image_input": False,
-            "max_images": 8,  # 参考图片
-            "max_image_size_mb": 30,
-            "max_prompt_length": 20000,
-            "supported_sizes": [
-                "1:1", "2:3", "3:2", "3:4", "4:3",
-                "4:5", "5:4", "9:16", "16:9", "21:9", "auto"
-            ],
-            "supported_formats": ["png", "jpg"],
-            "supports_resolution": True,
-            "supported_resolutions": ["1K", "2K", "4K"],
-            "cost_per_image": {
-                "1K": Decimal("0.09"),
-                "2K": Decimal("0.09"),
-                "4K": Decimal("0.12"),
-            },
-            "credits_per_image": {
-                "1K": 18,
-                "2K": 18,
-                "4K": 24,
-            },
-        },
-    }
+    # 模型配置（从 configs.py 导入）
+    MODEL_CONFIGS = IMAGE_MODEL_CONFIGS
 
     def __init__(self, client: KieClient, model: str):
         """
@@ -517,59 +463,6 @@ class KieImageAdapter(BaseImageAdapter):
             )
 
 
-async def generate_image(
-    api_key: str,
-    prompt: str,
-    model: str = "google/nano-banana",
-    **kwargs,
-) -> Dict[str, Any]:
-    """快速生成图像 (默认使用 google/nano-banana)"""
-    try:
-        async with KieClient(api_key) as client:
-            adapter = KieImageAdapter(client, model)
-            return await adapter.generate(prompt, **kwargs)
-    except (KieAPIError, KieTaskFailedError, KieTaskTimeoutError, ValueError):
-        raise
-    except Exception as e:
-        logger.error(f"generate_image failed: model={model}, error={e}")
-        raise KieAPIError(f"generate_image failed: {e}") from e
 
-async def edit_image(
-    api_key: str,
-    prompt: str,
-    image_urls: List[str],
-    **kwargs,
-) -> Dict[str, Any]:
-    """快速编辑图像 (使用 google/nano-banana-edit)"""
-    try:
-        async with KieClient(api_key) as client:
-            adapter = KieImageAdapter(client, "google/nano-banana-edit")
-            return await adapter.generate(prompt, image_urls=image_urls, **kwargs)
-    except (KieAPIError, KieTaskFailedError, KieTaskTimeoutError, ValueError):
-        raise
-    except Exception as e:
-        logger.error(f"edit_image failed: image_count={len(image_urls)}, error={e}")
-        raise KieAPIError(f"edit_image failed: {e}") from e
-
-async def generate_image_pro(
-    api_key: str,
-    prompt: str,
-    resolution: str = "2K",
-    reference_images: Optional[List[str]] = None,
-    **kwargs,
-) -> Dict[str, Any]:
-    """高级图像生成 (使用 nano-banana-pro, 支持 1K/2K/4K 分辨率)"""
-    try:
-        async with KieClient(api_key) as client:
-            adapter = KieImageAdapter(client, "nano-banana-pro")
-            return await adapter.generate(
-                prompt,
-                image_urls=reference_images,
-                resolution=resolution,
-                **kwargs,
-            )
-    except (KieAPIError, KieTaskFailedError, KieTaskTimeoutError, ValueError):
-        raise
-    except Exception as e:
-        logger.error(f"generate_image_pro failed: resolution={resolution}, error={e}")
-        raise KieAPIError(f"generate_image_pro failed: {e}") from e
+# 便捷函数已移至 helpers.py
+# from .helpers import generate_image, edit_image, generate_image_pro

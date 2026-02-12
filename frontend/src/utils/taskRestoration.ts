@@ -12,7 +12,7 @@
  *
  * 任务类型处理：
  * - 聊天任务：创建占位符 + WebSocket 订阅
- * - 图片/视频：创建占位符，等待 WebSocket task_status 推送
+ * - 图片/视频：创建占位符，等待 WebSocket message_done/error 推送
  */
 
 import { useMessageStore } from '../stores/useMessageStore';
@@ -36,8 +36,6 @@ interface TaskRequestParams {
   aspect_ratio?: string;
   n_frames?: string;
   content?: string;
-  image_url?: string;
-  video_url?: string;
   thinking_effort?: string;
   thinking_mode?: string;
   [key: string]: string | undefined;
@@ -112,10 +110,10 @@ export async function fetchPendingTasks(): Promise<PendingTask[] | null> {
  *
  * v2.0: WebSocket 推送模式
  * - 只创建占位符和注册任务到 Store
- * - 不启动轮询，等待 WebSocket task_status 事件处理完成
- * - 后端完成后通过 WebSocket 推送 task_status 事件
+ * - 不启动轮询，等待 WebSocket message_done/error 事件处理完成
+ * - 后端完成后通过 WebSocket 推送 message_done/error 事件
  */
-export function restoreMediaTask(task: PendingTask, conversationTitle: string) {
+export function restoreMediaTask(task: PendingTask, _conversationTitle: string) {
   const store = useMessageStore.getState();
 
   const maxDuration = task.type === 'image' ? IMAGE_TASK_TIMEOUT : VIDEO_TASK_TIMEOUT;
@@ -133,33 +131,42 @@ export function restoreMediaTask(task: PendingTask, conversationTitle: string) {
     return;
   }
 
-  // 确保占位符 ID 有 streaming- 前缀，与正常创建流程一致
-  // 注意：startStreaming 会自动添加 streaming- 前缀，所以这里提取基础 ID
-  const rawPlaceholderId = task.placeholder_message_id || `restored-${task.external_task_id}`;
-  const streamingIdBase = rawPlaceholderId.replace(/^streaming-/, '');
-  const placeholderId = `streaming-${streamingIdBase}`;
+  // 使用数据库中保存的原始占位符 ID（与前端生成的 UUID 一致）
+  const placeholderId = task.placeholder_message_id || `restored-${task.external_task_id}`;
 
-  // 1. 注册任务到 Store（用于 UI 显示状态）
-  store.startMediaTask({
-    taskId: task.external_task_id,
-    conversationId: task.conversation_id,
-    conversationTitle,
-    type: task.type as 'image' | 'video',
-    placeholderId,
-  });
-
-  // 2. 统一使用 startStreaming 创建占位符（与正常发送流程一致）
+  // 1. 创建占位符消息（直接添加到 messages，不再使用 streaming/optimistic）
   const loadingText = task.type === 'image'
     ? PLACEHOLDER_TEXT.IMAGE_GENERATING
     : PLACEHOLDER_TEXT.VIDEO_GENERATING;
-  const placeholderTimestamp = task.placeholder_created_at || new Date().toISOString();
-  store.startStreaming(task.conversation_id, streamingIdBase, {
-    initialContent: loadingText,
-    createdAt: placeholderTimestamp,
-  });
 
-  // 3. 不启动轮询！等待 WebSocket task_status 事件
-  // 后端完成后会推送 task_status 事件，由 WebSocketContext 处理
+  // 使用数据库保存的占位符时间戳（确保与原始占位符时间一致）
+  const placeholderTimestamp = task.placeholder_created_at || new Date().toISOString();
+
+  // 警告：如果没有 placeholder_created_at（旧数据），时间戳可能不准确
+  if (!task.placeholder_created_at) {
+    logger.warn('task:restore', '任务缺少 placeholder_created_at，使用当前时间', {
+      taskId: task.external_task_id,
+      fallbackTime: placeholderTimestamp,
+    });
+  }
+
+  const placeholderMessage = {
+    id: placeholderId,
+    conversation_id: task.conversation_id,
+    role: 'assistant' as const,
+    content: [{ type: 'text' as const, text: loadingText }],
+    status: 'pending' as const,
+    created_at: placeholderTimestamp,
+    generation_params: {
+      type: task.type,
+      model: task.request_params?.model,
+    },
+  };
+
+  store.addMessage(task.conversation_id, placeholderMessage);
+
+  // 3. 不启动轮询！等待 WebSocket message_done/error 事件
+  // 后端完成后会推送 message_done/error 事件，由 WebSocketContext 处理
   logger.info('task:restore', '媒体任务已恢复，等待 WebSocket 推送', {
     taskId: task.external_task_id,
     type: task.type,
@@ -347,7 +354,7 @@ function restoreChatTask(
     });
   }
 
-  // 订阅 WebSocket 任务通道（后续增量内容通过 chat_chunk 推送）
+  // 订阅 WebSocket 任务通道（后续增量内容通过 message_chunk 推送）
   // 注意：必须使用 external_task_id，因为后端 WebSocket 推送使用的是这个 ID
   subscribeToTask(task.external_task_id, task.conversation_id);
 

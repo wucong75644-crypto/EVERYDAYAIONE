@@ -6,6 +6,7 @@
 
 import asyncio
 import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -15,16 +16,15 @@ from schemas.message import (
     ContentPart,
     GenerationType,
     Message,
+    MessageRole,
     MessageStatus,
     TextPart,
 )
 from schemas.websocket import (
-    build_chat_start_message,
-    build_chat_chunk_message,
-    build_chat_done_message,
-    build_chat_error_message,
+    build_message_start,
+    build_message_chunk,
 )
-from services.handlers.base import BaseHandler
+from services.handlers.base import BaseHandler, TaskMetadata
 from services.websocket_manager import ws_manager
 
 
@@ -53,17 +53,17 @@ class ChatHandler(BaseHandler):
         user_id: str,
         content: List[ContentPart],
         params: Dict[str, Any],
+        metadata: TaskMetadata,
     ) -> str:
         """
         启动聊天任务
 
         1. 生成 task_id
         2. 保存任务到数据库
-        3. 更新消息状态为 streaming
-        4. 启动异步流式生成
+        3. 启动异步流式生成
         """
-        # 1. 生成 task_id
-        task_id = str(uuid.uuid4())
+        # 1. 获取或生成 task_id（优先使用前端提供的 client_task_id）
+        task_id = metadata.client_task_id or str(uuid.uuid4())
 
         # 2. 获取模型配置
         model_id = params.get("model") or "gemini-3-flash"
@@ -79,12 +79,10 @@ class ChatHandler(BaseHandler):
             model_id=model_id,
             content=content,
             params=params,
+            metadata=metadata,
         )
 
-        # 4. 更新消息状态为 streaming
-        await self._update_message(message_id, status=MessageStatus.STREAMING)
-
-        # 5. 启动异步流式生成
+        # 4. 启动异步流式生成
         asyncio.create_task(
             self._stream_generate(
                 task_id=task_id,
@@ -122,11 +120,11 @@ class ChatHandler(BaseHandler):
 
         try:
             # 1. 推送开始消息
-            start_msg = build_chat_start_message(
+            start_msg = build_message_start(
                 task_id=task_id,
                 conversation_id=conversation_id,
+                message_id=message_id,
                 model=model_id,
-                assistant_message_id=message_id,
             )
             await ws_manager.send_to_task_subscribers(task_id, start_msg)
 
@@ -157,10 +155,11 @@ class ChatHandler(BaseHandler):
                     accumulated_text += chunk.content
 
                     # 推送增量内容
-                    chunk_msg = build_chat_chunk_message(
+                    chunk_msg = build_message_chunk(
                         task_id=task_id,
-                        text=chunk.content,
                         conversation_id=conversation_id,
+                        message_id=message_id,
+                        chunk=chunk.content,
                         accumulated=accumulated_text,
                     )
                     await ws_manager.send_to_task_subscribers(task_id, chunk_msg)
@@ -170,15 +169,16 @@ class ChatHandler(BaseHandler):
                     final_usage["prompt_tokens"] = chunk.prompt_tokens or 0
                     final_usage["completion_tokens"] = chunk.completion_tokens or 0
 
-            # 5. 计算积分消耗（使用统一入口）
-            from config.kie_models import calculate_chat_cost
-
-            cost_result = calculate_chat_cost(
-                model_name=model_id,
+            # 5. 计算积分消耗（使用 adapter 的统一方法）
+            cost_estimate = self._adapter.estimate_cost_unified(
                 input_tokens=final_usage["prompt_tokens"],
                 output_tokens=final_usage["completion_tokens"],
             )
-            credits_consumed = max(1, cost_result["user_credits"])  # 最少 1 积分
+            credits_consumed = cost_estimate.estimated_credits
+
+            # 对于 KIE 模型，最少 1 积分；对于免费模型（如 Google），为 0
+            if credits_consumed > 0:
+                credits_consumed = max(1, credits_consumed)
 
             # 6. 完成回调
             await self.on_complete(
@@ -199,69 +199,53 @@ class ChatHandler(BaseHandler):
             if self._adapter:
                 await self._adapter.close()
 
-    async def on_complete(
-        self,
-        task_id: str,
-        result: List[ContentPart],
-        credits_consumed: int = 0,
-    ) -> Message:
-        """完成回调"""
-        task = await self._get_task(task_id)
-        if not task:
-            logger.error(f"Task not found | task_id={task_id}")
-            raise Exception("任务不存在")
+    # ========================================
+    # 基类抽象方法实现
+    # ========================================
 
-        message_id = task["placeholder_message_id"]
-        conversation_id = task["conversation_id"]
-        user_id = task["user_id"]
-        model_id = task.get("model_id", "gemini-3-flash")
-
-        # 1. 扣除积分（Chat 完成后直接扣除）
-        if credits_consumed > 0:
-            await self._deduct_directly(
-                user_id=user_id,
-                amount=credits_consumed,
-                reason=f"Chat: {model_id}",
-                change_type="chat_generation",
-            )
-
-        # 2. 转换 ContentPart 为字典
+    def _convert_content_parts_to_dicts(self, result: List[ContentPart]) -> List[Dict[str, Any]]:
+        """转换 TextPart 为字典"""
         content_dicts = []
         for part in result:
             if isinstance(part, TextPart):
                 content_dicts.append({"type": "text", "text": part.text})
             elif isinstance(part, dict):
                 content_dicts.append(part)
+        return content_dicts
 
-        # 3. 更新消息
-        message = await self._update_message(
-            message_id=message_id,
-            content=content_dicts,
-            status=MessageStatus.COMPLETED,
-            credits_cost=credits_consumed,
-        )
+    async def _handle_credits_on_complete(
+        self,
+        task: Dict[str, Any],
+        credits_consumed: int,
+    ) -> int:
+        """Chat 完成时直接扣除积分"""
+        if credits_consumed > 0:
+            user_id = task["user_id"]
+            model_id = task.get("model_id", "gemini-3-flash")
+            await self._deduct_directly(
+                user_id=user_id,
+                amount=credits_consumed,
+                reason=f"Chat: {model_id}",
+                change_type="chat_generation",
+            )
+        return credits_consumed
 
-        # 4. 推送完成消息（使用旧格式保持兼容）
-        text_content = self._extract_text_content(result)
-        done_msg = build_chat_done_message(
-            task_id=task_id,
-            conversation_id=conversation_id,
-            message_id=message_id,
-            content=text_content,
-            credits_consumed=credits_consumed,
-            model=model_id,
-        )
-        await ws_manager.send_to_task_subscribers(task_id, done_msg, buffer=False)
+    async def _handle_credits_on_error(self, task: Dict[str, Any]) -> None:
+        """Chat 错误时不需要退回积分（没有预扣）"""
+        pass
 
-        # 5. 更新任务状态
-        await self._complete_task(task_id)
+    # ========================================
+    # 回调方法（调用基类通用流程）
+    # ========================================
 
-        logger.info(
-            f"Chat completed | task_id={task_id} | "
-            f"message_id={message_id} | credits={credits_consumed}"
-        )
-
-        return message
+    async def on_complete(
+        self,
+        task_id: str,
+        result: List[ContentPart],
+        credits_consumed: int = 0,
+    ) -> Message:
+        """完成回调（调用基类通用流程）"""
+        return await self._handle_complete_common(task_id, result, credits_consumed)
 
     async def on_error(
         self,
@@ -269,41 +253,8 @@ class ChatHandler(BaseHandler):
         error_code: str,
         error_message: str,
     ) -> Message:
-        """错误回调"""
-        task = await self._get_task(task_id)
-        if not task:
-            logger.error(f"Task not found | task_id={task_id}")
-            raise Exception("任务不存在")
-
-        message_id = task["placeholder_message_id"]
-        conversation_id = task["conversation_id"]
-
-        # 1. 更新消息为失败状态
-        message = await self._update_message(
-            message_id=message_id,
-            content=[{"type": "text", "text": error_message}],
-            status=MessageStatus.FAILED,
-            error={"code": error_code, "message": error_message},
-        )
-
-        # 2. 推送错误消息
-        error_msg = build_chat_error_message(
-            task_id=task_id,
-            error=error_message,
-            conversation_id=conversation_id,
-            error_code=error_code,
-        )
-        await ws_manager.send_to_task_subscribers(task_id, error_msg, buffer=False)
-
-        # 3. 更新任务状态
-        await self._fail_task(task_id, error_message)
-
-        logger.error(
-            f"Chat failed | task_id={task_id} | "
-            f"error_code={error_code} | error={error_message}"
-        )
-
-        return message
+        """错误回调（调用基类通用流程）"""
+        return await self._handle_error_common(task_id, error_code, error_message)
 
     async def _save_task(
         self,
@@ -314,23 +265,29 @@ class ChatHandler(BaseHandler):
         model_id: str,
         content: List[ContentPart],
         params: Dict[str, Any],
+        metadata: TaskMetadata,
     ) -> None:
         """保存任务到数据库"""
-        # 构建请求参数
+        # 1. 序列化业务参数
         request_params = {
             "content": self._extract_text_content(content),
             "model_id": model_id,
-            **{k: v for k, v in params.items() if v is not None},
+            **self._serialize_params(params),
         }
 
-        self.db.table("tasks").insert({
-            "external_task_id": task_id,
-            "conversation_id": conversation_id,
-            "user_id": user_id,
-            "type": "chat",
-            "status": "running",
-            "model_id": model_id,
-            "placeholder_message_id": message_id,
-            "request_params": request_params,
-        }).execute()
+        # 2. 构建标准 task_data（使用基类方法）
+        task_data = self._build_task_data(
+            task_id=task_id,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            task_type="chat",
+            status="running",
+            model_id=model_id,
+            request_params=request_params,
+            metadata=metadata,
+        )
+
+        # 3. 保存到数据库
+        self.db.table("tasks").insert(task_data).execute()
 

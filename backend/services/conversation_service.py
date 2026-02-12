@@ -208,7 +208,7 @@ class ConversationService:
         # 先验证权限
         await self.get_conversation(conversation_id, user_id)
 
-        # 删除对话（消息会通过外键级联删除）
+        # 删除对话（任务和消息会通过外键 CASCADE 级联删除）
         self.db.table("conversations").delete().eq("id", conversation_id).execute()
 
         logger.info(

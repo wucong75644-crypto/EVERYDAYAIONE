@@ -30,14 +30,10 @@ from loguru import logger
 HEARTBEAT_INTERVAL = 30
 # 心跳超时（秒）
 HEARTBEAT_TIMEOUT = 60
-# 缓冲区最大字节数（1MB）
-MAX_BUFFER_SIZE_BYTES = 1 * 1024 * 1024
-# 缓冲区消息最大存活时间（秒）
-BUFFER_MAX_AGE_SECONDS = 300  # 5 分钟
 # 单用户最大连接数
 MAX_CONNECTIONS_PER_USER = 5
-# 缓冲区清理间隔（秒）
-BUFFER_CLEANUP_INTERVAL = 600  # 10 分钟
+# 连接清理间隔（秒）
+CONNECTION_CLEANUP_INTERVAL = 300  # 5 分钟
 
 
 @dataclass
@@ -51,77 +47,10 @@ class Connection:
     subscribed_tasks: Set[str] = field(default_factory=set)
 
 
-@dataclass
-class TaskBuffer:
-    """
-    任务消息缓冲区（字节 + 时间双维度）
-
-    用于断点续传，当客户端重新连接时可以补发错过的消息。
-    """
-    # (timestamp, index, message_json)
-    messages: List[Tuple[float, int, str]] = field(default_factory=list)
-    accumulated_content: str = ""
-    total_bytes: int = 0
-    created_at: float = field(default_factory=time.time)
-    last_update: float = field(default_factory=time.time)
-    expire_at: Optional[float] = None  # 任务完成后设置过期时间
-    next_index: int = 0  # 下一个消息的索引
-
-    def add_message(self, msg: str) -> int:
-        """
-        添加消息，自动清理超限内容
-
-        Args:
-            msg: JSON 格式的消息字符串
-
-        Returns:
-            消息的索引
-        """
-        now = time.time()
-        msg_bytes = len(msg.encode('utf-8'))
-        current_index = self.next_index
-
-        self.messages.append((now, current_index, msg))
-        self.total_bytes += msg_bytes
-        self.last_update = now
-        self.next_index += 1
-
-        # 清理超过 5 分钟的旧消息
-        cutoff_time = now - BUFFER_MAX_AGE_SECONDS
-        while self.messages and self.messages[0][0] < cutoff_time:
-            _, _, old_msg = self.messages.pop(0)
-            self.total_bytes -= len(old_msg.encode('utf-8'))
-
-        # 清理超过 1MB 的旧消息
-        while self.total_bytes > MAX_BUFFER_SIZE_BYTES and self.messages:
-            _, _, old_msg = self.messages.pop(0)
-            self.total_bytes -= len(old_msg.encode('utf-8'))
-
-        return current_index
-
-    def get_messages_after(self, last_index: int) -> List[Tuple[int, str]]:
-        """
-        获取指定索引之后的消息（用于断点续传）
-
-        Args:
-            last_index: 客户端收到的最后一条消息的索引
-
-        Returns:
-            [(index, message_json), ...]
-        """
-        result = []
-        for _, idx, msg in self.messages:
-            if idx > last_index:
-                result.append((idx, msg))
-        return result
-
-    def get_current_index(self) -> int:
-        """获取当前最新消息的索引"""
-        return self.next_index - 1 if self.next_index > 0 else -1
 
 
 class WebSocketManager:
-    """WebSocket 连接管理器"""
+    """WebSocket 连接管理器（简化版）"""
 
     def __init__(self):
         # user_id -> {conn_id -> Connection}
@@ -130,28 +59,8 @@ class WebSocketManager:
         self._task_subscribers: Dict[str, Set[str]] = {}
         # conn_id -> Connection (快速查找)
         self._conn_index: Dict[str, Connection] = {}
-        # task_id -> TaskBuffer (消息缓冲)
-        self._task_buffers: Dict[str, TaskBuffer] = {}
         # 锁
         self._lock = asyncio.Lock()
-        # 清理任务
-        self._cleanup_task: Optional[asyncio.Task] = None
-
-    async def start_cleanup_task(self):
-        """启动定期清理任务"""
-        if self._cleanup_task is None:
-            self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
-            logger.info("WebSocket buffer cleanup task started")
-
-    async def stop_cleanup_task(self):
-        """停止清理任务"""
-        if self._cleanup_task:
-            self._cleanup_task.cancel()
-            try:
-                await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
-            self._cleanup_task = None
 
     async def connect(
         self,
@@ -258,27 +167,21 @@ class WebSocketManager:
 
         logger.info(f"WebSocket disconnected | user={connection.user_id} | conn={conn_id}")
 
-    async def subscribe_task(
-        self,
-        conn_id: str,
-        task_id: str,
-        last_index: int = -1
-    ) -> Optional[Dict[str, Any]]:
+    async def subscribe_task(self, conn_id: str, task_id: str) -> bool:
         """
-        订阅任务
+        订阅任务（简化版）
 
         Args:
             conn_id: 连接 ID
             task_id: 任务 ID
-            last_index: 上次收到的消息索引（用于断点续传）
 
         Returns:
-            订阅结果，包含累积内容和需要补发的消息
+            是否订阅成功
         """
         async with self._lock:
             connection = self._conn_index.get(conn_id)
             if not connection:
-                return None
+                return False
 
             # 添加订阅关系
             if task_id not in self._task_subscribers:
@@ -286,17 +189,7 @@ class WebSocketManager:
             self._task_subscribers[task_id].add(conn_id)
             connection.subscribed_tasks.add(task_id)
 
-            # 获取需要补发的消息（断点续传）
-            buffer = self._task_buffers.get(task_id)
-            if buffer:
-                missed_messages = buffer.get_messages_after(last_index)
-                return {
-                    "accumulated": buffer.accumulated_content,
-                    "missed_messages": missed_messages,
-                    "current_index": buffer.get_current_index()
-                }
-
-            return {"accumulated": "", "missed_messages": [], "current_index": -1}
+            return True
 
     async def unsubscribe_task(self, conn_id: str, task_id: str):
         """取消订阅任务"""
@@ -326,6 +219,12 @@ class WebSocketManager:
         """发送消息到用户的所有连接"""
         connections = self._connections.get(user_id, {})
 
+        logger.debug(
+            f"send_to_user | user={user_id} | "
+            f"msg_type={message.get('type')} | "
+            f"connections={len(connections)}"
+        )
+
         for conn_id in list(connections.keys()):
             await self.send_to_connection(conn_id, message)
 
@@ -333,77 +232,61 @@ class WebSocketManager:
         self,
         task_id: str,
         message: Dict[str, Any],
-        buffer: bool = True
-    ) -> int:
+    ) -> None:
         """
-        发送消息到任务的所有订阅者
+        发送消息到任务的所有订阅者（简化版）
 
         Args:
             task_id: 任务 ID
             message: 消息内容
-            buffer: 是否缓存消息（用于断点续传）
-
-        Returns:
-            消息索引
         """
-        message_index = -1
-
-        # 缓存消息
-        if buffer:
-            async with self._lock:
-                if task_id not in self._task_buffers:
-                    self._task_buffers[task_id] = TaskBuffer()
-
-                task_buffer = self._task_buffers[task_id]
-
-                # 先获取并设置消息索引（确保缓存的消息也包含 index）
-                message_index = task_buffer.next_index
-                message["message_index"] = message_index
-
-                # 序列化消息（此时已包含 message_index）
-                import json
-                msg_json = json.dumps(message, ensure_ascii=False)
-                task_buffer.add_message(msg_json)
-
-                # 更新累积内容
-                if message.get("type") == "chat_chunk":
-                    text = message.get("payload", {}).get("text", "")
-                    task_buffer.accumulated_content += text
-        else:
-            # 不缓存时也添加索引（虽然是 -1）
-            message["message_index"] = message_index
-
-        # 发送给所有订阅者
         subscribers = self._task_subscribers.get(task_id, set())
+
+        logger.debug(
+            f"send_to_task_subscribers | task={task_id} | "
+            f"msg_type={message.get('type')} | "
+            f"subscribers={len(subscribers)}"
+        )
+
         for conn_id in list(subscribers):
             await self.send_to_connection(conn_id, message)
 
-        return message_index
+    async def send_to_task_or_user(
+        self,
+        task_id: str,
+        user_id: str,
+        message: Dict[str, Any],
+    ) -> None:
+        """
+        发送消息：优先走任务订阅，无订阅者时降级到用户广播
+
+        用于 image/video 任务完成推送，确保消息送达。
+
+        Args:
+            task_id: 任务 ID
+            user_id: 用户 ID（降级备用）
+            message: 消息内容
+        """
+        subscribers = self._task_subscribers.get(task_id, set())
+
+        if subscribers:
+            logger.info(
+                f"send_to_task_or_user | task={task_id} | "
+                f"path=task_subscribers | count={len(subscribers)}"
+            )
+            await self.send_to_task_subscribers(task_id, message)
+        else:
+            logger.warning(
+                f"send_to_task_or_user | task={task_id} | "
+                f"path=user_fallback | user={user_id} | "
+                f"reason=no_task_subscribers"
+            )
+            await self.send_to_user(user_id, message)
 
     async def broadcast_all(self, message: Dict[str, Any]):
         """广播消息到所有连接"""
         for conn_id in list(self._conn_index.keys()):
             await self.send_to_connection(conn_id, message)
-
-    async def mark_task_completed(self, task_id: str, delay_seconds: int = 300):
-        """
-        标记任务缓冲区为过期（延迟删除）
-
-        任务完成后不立即删除缓冲区，给客户端一定时间来恢复连接。
-
-        Args:
-            task_id: 任务 ID
-            delay_seconds: 延迟删除时间（默认 5 分钟）
-        """
-        async with self._lock:
-            if task_id in self._task_buffers:
-                self._task_buffers[task_id].expire_at = time.time() + delay_seconds
-
-    async def clear_task_buffer(self, task_id: str):
-        """立即清理任务缓冲区"""
-        async with self._lock:
-            self._task_buffers.pop(task_id, None)
-            self._task_subscribers.pop(task_id, None)
 
     async def update_heartbeat(self, conn_id: str):
         """更新心跳时间"""
@@ -424,42 +307,6 @@ class WebSocketManager:
             logger.warning(f"Cleaning stale connection | conn={conn_id}")
             await self.disconnect(conn_id)
 
-    async def _periodic_cleanup(self):
-        """定期清理过期的任务缓冲区和超时连接"""
-        while True:
-            try:
-                await asyncio.sleep(BUFFER_CLEANUP_INTERVAL)
-
-                # 清理超时连接
-                await self.cleanup_stale_connections()
-
-                # 清理过期缓冲区
-                async with self._lock:
-                    now = time.time()
-                    expired_tasks = []
-
-                    for task_id, buffer in self._task_buffers.items():
-                        # 清理已设置过期时间且已过期的
-                        if buffer.expire_at and now > buffer.expire_at:
-                            expired_tasks.append(task_id)
-                        # 清理超过 30 分钟无更新的（兜底）
-                        elif now - buffer.last_update > 1800:
-                            expired_tasks.append(task_id)
-
-                    for task_id in expired_tasks:
-                        del self._task_buffers[task_id]
-                        self._task_subscribers.pop(task_id, None)
-                        logger.info(f"Cleaned up buffer | task={task_id}")
-
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Periodic cleanup error: {e}")
-
-    def get_task_buffer(self, task_id: str) -> Optional[TaskBuffer]:
-        """获取任务缓冲区（用于 API 返回 last_index）"""
-        return self._task_buffers.get(task_id)
-
     def get_connection_count(self) -> int:
         """获取当前连接数"""
         return len(self._conn_index)
@@ -473,7 +320,6 @@ class WebSocketManager:
         return {
             "total_connections": len(self._conn_index),
             "total_users": len(self._connections),
-            "total_tasks": len(self._task_buffers),
             "total_subscriptions": sum(len(s) for s in self._task_subscribers.values()),
         }
 

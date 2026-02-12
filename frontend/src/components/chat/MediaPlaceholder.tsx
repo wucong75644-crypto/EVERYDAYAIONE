@@ -77,6 +77,7 @@ export default function MediaPlaceholder({
         flex items-center justify-center
         shadow-sm
         animate-fade-in
+        animate-media-pulse
         ${className}
       `}
       style={{

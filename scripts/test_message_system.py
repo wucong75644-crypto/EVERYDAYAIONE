@@ -116,7 +116,7 @@ async def test_chat_message_flow(client: httpx.AsyncClient, token: str, conversa
     验证点：
     - API 调用成功返回 task_id
     - WebSocket 接收流式内容
-    - 最终收到 chat_done 事件
+    - 最终收到 message_done 事件
     """
     test_name = "T01: 聊天消息正常发送"
     headers = {"Authorization": f"Bearer {token}"}
@@ -150,7 +150,7 @@ async def test_chat_message_flow(client: httpx.AsyncClient, token: str, conversa
 
         # 2. 连接 WebSocket 接收响应
         received_chunks = []
-        chat_done = False
+        message_done = False
 
         async with websockets.connect(
             f"{WS_URL}?token={token}",
@@ -165,21 +165,21 @@ async def test_chat_message_flow(client: httpx.AsyncClient, token: str, conversa
             # 等待响应（最多30秒）
             try:
                 async with asyncio.timeout(30):
-                    while not chat_done:
+                    while not message_done:
                         msg = await ws.recv()
                         data = json.loads(msg)
                         msg_type = data.get("type")
 
-                        if msg_type == "chat_chunk":
-                            text = data.get("payload", {}).get("text", "")
-                            received_chunks.append(text)
-                            log(f"收到 chunk: {len(text)} 字符")
+                        if msg_type == "message_chunk":
+                            chunk = data.get("chunk", "")
+                            received_chunks.append(chunk)
+                            log(f"收到 chunk: {len(chunk)} 字符")
 
-                        elif msg_type == "chat_done":
-                            chat_done = True
-                            log("收到 chat_done")
+                        elif msg_type == "message_done":
+                            message_done = True
+                            log("收到 message_done")
 
-                        elif msg_type == "chat_error":
+                        elif msg_type == "message_error":
                             error = data.get("payload", {}).get("error")
                             record_result(test_name, False, f"收到错误: {error}", data)
                             return
@@ -191,7 +191,7 @@ async def test_chat_message_flow(client: httpx.AsyncClient, token: str, conversa
                 return
 
         # 3. 验证结果
-        if chat_done and len(received_chunks) > 0:
+        if message_done and len(received_chunks) > 0:
             total_content = "".join(received_chunks)
             record_result(test_name, True, f"成功接收 {len(received_chunks)} 个 chunks", {
                 "task_id": task_id,
@@ -201,7 +201,7 @@ async def test_chat_message_flow(client: httpx.AsyncClient, token: str, conversa
             })
         else:
             record_result(test_name, False, "未收到完整响应", {
-                "chat_done": chat_done,
+                "message_done": message_done,
                 "chunks_count": len(received_chunks),
             })
 
@@ -215,7 +215,7 @@ async def test_image_generation_flow(client: httpx.AsyncClient, token: str, conv
 
     验证点：
     - API 调用成功返回 task_id
-    - WebSocket 接收 task_status 事件
+    - WebSocket 接收 message_done/error 事件
     - 最终状态为 completed，包含图片 URL
     """
     test_name = "T02: 图片生成正常发送"
@@ -280,14 +280,14 @@ async def test_image_generation_flow(client: httpx.AsyncClient, token: str, conv
                         # 打印所有收到的消息类型
                         log(f"收到 WebSocket 消息: type={msg_type}")
 
-                        if msg_type == "task_status":
-                            payload = data.get("payload", {})
-                            status = payload.get("status")
-                            log(f"收到 task_status: {status}, task_id={data.get('task_id')}")
-
-                            if status in ("completed", "failed"):
-                                task_completed = True
-                                final_status = payload
+                        if msg_type == "message_done":
+                            task_completed = True
+                            final_status = {"status": "completed", "message": data.get("payload", {}).get("message")}
+                            log(f"收到 message_done: task_id={data.get('task_id')}")
+                        elif msg_type == "message_error":
+                            task_completed = True
+                            final_status = {"status": "failed", "error": data.get("payload", {}).get("error")}
+                            log(f"收到 message_error: task_id={data.get('task_id')}")
                         elif msg_type == "subscribed":
                             log(f"订阅确认: task_id={data.get('payload', {}).get('task_id')}")
                         elif msg_type == "ping":
@@ -301,7 +301,15 @@ async def test_image_generation_flow(client: httpx.AsyncClient, token: str, conv
         # 3. 验证结果
         if final_status and final_status.get("status") == "completed":
             message = final_status.get("message", {})
-            image_url = message.get("image_url")
+
+            # 从新格式 content 数组中提取图片 URL
+            image_url = None
+            content = message.get("content", [])
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "image":
+                        image_url = part.get("url")
+                        break
 
             if image_url:
                 record_result(test_name, True, "图片生成成功", {

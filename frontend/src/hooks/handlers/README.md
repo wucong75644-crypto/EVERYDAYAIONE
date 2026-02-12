@@ -267,14 +267,12 @@ const [, response] = await Promise.all([
 媒体生成使用 WebSocket 订阅，实时接收任务状态：
 
 ```typescript
-// 通过 sendUnifiedMessage 自动处理 WebSocket 订阅
-await sendUnifiedMessage({
-  type: 'image',
-  subscribeTask: subscribeTaskWithMapping,
-  callbacks: {
-    onComplete: (finalMessage) => { /* 处理完成 */ },
-    onError: (error) => { /* 处理错误 */ },
-  },
+// 通过 sendMessage 自动处理 WebSocket 订阅
+await sendMessage({
+  conversationId: 'xxx',
+  content: [{ type: 'text', text: prompt }],
+  generationType: 'image',
+  subscribeTask: (taskId, conversationId) => ws.subscribe(taskId),
 });
 ```
 
@@ -421,7 +419,7 @@ onMessageSent: (aiMessage) => {
    ```
 
 4. **WebSocket 订阅自动管理**
-   - 使用 `sendUnifiedMessage` 自动处理订阅/取消订阅
+   - 使用 `sendMessage` 自动处理订阅/取消订阅
    - 页面刷新后通过 `taskRestoration` 恢复未完成任务
 
 ---

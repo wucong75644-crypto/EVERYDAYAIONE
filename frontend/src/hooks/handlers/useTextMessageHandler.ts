@@ -62,7 +62,7 @@ export function useTextMessageHandler({
         onMessagePending(userMessage);
       }
 
-      // 注意：流式内容由 WebSocketContext 处理（chat_chunk 消息）
+      // 注意：流式内容由 WebSocketContext 处理（message_chunk 消息）
       // 消息完成也由 WebSocket 推送触发状态更新
 
     } catch (error) {

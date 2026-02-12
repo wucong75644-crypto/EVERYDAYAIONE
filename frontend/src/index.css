@@ -176,4 +176,82 @@ body {
   animation: slideUpModal 0.25s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
+/* ==================== 消息动画 ==================== */
+
+/* 用户消息滑入（从输入框向上） */
+@keyframes messageSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-message-slide-in {
+  animation: messageSlideIn 0.25s cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: transform, opacity;
+}
+
+/* AI 消息淡入缩放 */
+@keyframes aiMessageFadeScale {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-ai-message-fade-scale {
+  animation: aiMessageFadeScale 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+  will-change: transform, opacity;
+}
+
+/* 打字光标闪烁（优化版，比 animate-pulse 慢） */
+@keyframes typingCursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.animate-typing-cursor {
+  animation: typingCursor 0.5s ease-in-out infinite;
+}
+
+/* 媒体生成进度脉冲 */
+@keyframes mediaPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.animate-media-pulse {
+  animation: mediaPulse 1.5s ease-in-out infinite;
+}
+
+/* 消息滑出（删除时） */
+@keyframes messageSlideOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+    max-height: 500px;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(12px);
+    max-height: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}
+
+.animate-message-slide-out {
+  animation: messageSlideOut 0.15s ease-in forwards;
+  overflow: hidden;
+}
+
 

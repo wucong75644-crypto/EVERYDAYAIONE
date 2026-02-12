@@ -76,7 +76,7 @@ class BackgroundTaskWorker:
                     await self.cleanup_stale_tasks()
 
             except Exception as e:
-                logger.error(f"BackgroundTaskWorker error: {e}")
+                logger.error(f"BackgroundTaskWorker error: {e}", exc_info=True)
 
             await asyncio.sleep(self.poll_interval)
 
@@ -138,6 +138,12 @@ class BackgroundTaskWorker:
         task_type = task["type"]
         model_id = task.get("model_id")
 
+        # 🔥 DEBUG: 记录开始查询
+        logger.info(
+            f"[POLL] Querying task | task_id={external_task_id} | "
+            f"type={task_type} | model={model_id}"
+        )
+
         try:
             if task_type == "image":
                 adapter = create_image_adapter(model_id)
@@ -146,13 +152,21 @@ class BackgroundTaskWorker:
 
             try:
                 query_result = await adapter.query_task(external_task_id)
+
+                # 🔥 DEBUG: 记录查询结果
+                logger.info(
+                    f"[POLL] Query result | task_id={external_task_id} | "
+                    f"status={query_result.status.value} | "
+                    f"has_urls={'Yes' if (hasattr(query_result, 'image_urls') and query_result.image_urls) or (hasattr(query_result, 'video_url') and query_result.video_url) else 'No'}"
+                )
             finally:
                 await adapter.close()
 
         except Exception as e:
             logger.error(
-                f"Provider query failed | task_id={external_task_id} | "
-                f"model={model_id} | error={e}"
+                f"[POLL] Provider query failed | task_id={external_task_id} | "
+                f"model={model_id} | error={e}",
+                exc_info=True
             )
             self.db.table("tasks").update({
                 "last_polled_at": datetime.now(timezone.utc).isoformat(),
@@ -166,12 +180,26 @@ class BackgroundTaskWorker:
 
         # 完成/失败 → 交给统一处理服务（包含幂等检查）
         if query_result.status in (TaskStatus.SUCCESS, TaskStatus.FAILED):
+            print(f"🔥🔥🔥 POLL: Task ready | {external_task_id} | {query_result.status.value}", flush=True)
+            logger.info(
+                f"[POLL] Task ready for processing | task_id={external_task_id} | "
+                f"status={query_result.status.value}"
+            )
+
             service = TaskCompletionService(self.db)
+            print(f"🔥🔥🔥 POLL: Calling process_result | {external_task_id}", flush=True)
             await service.process_result(external_task_id, query_result)
+            print(f"🔥🔥🔥 POLL: process_result done | {external_task_id}", flush=True)
 
             logger.info(
                 f"Task processed via fallback | task_id={external_task_id} | "
                 f"status={query_result.status.value}"
+            )
+        else:
+            # 🔥 DEBUG: 记录非终态任务
+            logger.info(
+                f"[POLL] Task not ready | task_id={external_task_id} | "
+                f"status={query_result.status.value} | skipping"
             )
 
     async def cleanup_stale_tasks(self):
@@ -185,6 +213,10 @@ class BackgroundTaskWorker:
         cleaned_count = 0
 
         for task in response.data:
+            # 跳过没有 started_at 的任务（可能是旧数据或创建时未设置）
+            if not task.get("started_at"):
+                continue
+
             started_at = datetime.fromisoformat(
                 task["started_at"].replace("Z", "+00:00")
             )

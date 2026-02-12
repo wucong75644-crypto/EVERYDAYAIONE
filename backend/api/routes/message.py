@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from loguru import logger
 
 from api.deps import CurrentUser, CurrentUserId, Database, TaskLimitSvc
 from core.limiter import limiter, RATE_LIMITS
@@ -19,15 +20,14 @@ from schemas.message import (
     GenerateRequest,
     GenerateResponse,
     GenerationType,
+    GenerationParams,
     Message,
-    MessageCreate,
     MessageListResult,
     MessageOperation,
     MessageResponse,
     MessageRole,
     MessageStatus,
     TextPart,
-    content_parts_from_legacy,
     infer_generation_type,
 )
 from services.message_service import MessageService
@@ -138,7 +138,7 @@ async def generate_message(
             params=body.params,
         )
     elif body.operation == MessageOperation.REGENERATE:
-        # regenerate: 校验原消息并创建新消息
+        # regenerate: 校验原消息并生成新 ID（不创建占位符）
 
         if body.original_message_id:
             # 校验原消息状态（必须是成功消息）
@@ -149,50 +149,130 @@ async def generate_message(
             if original_msg.data and original_msg.data["status"] == MessageStatus.FAILED.value:
                 raise HTTPException(status_code=400, detail="regenerate 只能用于成功消息，失败消息请用 retry")
 
+        # 只生成 ID，不创建占位符消息（前端负责创建占位符）
         assistant_message_id = body.assistant_message_id or str(uuid.uuid4())
-        assistant_message = await _create_assistant_placeholder(
-            db=db,
+
+        # 构建 generation_params（只设置 type，前端用来判断占位符类型）
+        generation_params_obj = GenerationParams(type=gen_type)
+
+        # 构造返回用的虚拟 Message（不存储到数据库）
+        assistant_message = Message(
+            id=assistant_message_id,
             conversation_id=conversation_id,
-            message_id=assistant_message_id,
-            gen_type=gen_type,
-            model=body.model,
-            params=body.params,
+            role=MessageRole.ASSISTANT,
+            content=[],
+            status=MessageStatus.PENDING,
+            created_at=body.placeholder_created_at or datetime.utcnow(),
+            generation_params=generation_params_obj,
         )
     else:
-        # send: 创建新消息
+        # send: 只生成 ID，不创建占位符消息（前端负责创建占位符）
         assistant_message_id = body.assistant_message_id or str(uuid.uuid4())
-        assistant_message = await _create_assistant_placeholder(
-            db=db,
+
+        # 构建 generation_params（只设置 type，前端用来判断占位符类型）
+        generation_params_obj = GenerationParams(type=gen_type)
+
+        # 构造返回用的虚拟 Message（不存储到数据库）
+        assistant_message = Message(
+            id=assistant_message_id,
             conversation_id=conversation_id,
-            message_id=assistant_message_id,
-            gen_type=gen_type,
-            model=body.model,
-            params=body.params,
+            role=MessageRole.ASSISTANT,
+            content=[],
+            status=MessageStatus.PENDING,
+            created_at=body.placeholder_created_at or datetime.utcnow(),
+            generation_params=generation_params_obj,
         )
 
     # 6. 获取 Handler 并启动任务
     handler = get_handler(gen_type, db)
-    # 合并 model 到 params 中，确保 handler 能获取到用户选择的模型
-    handler_params = {**(body.params or {}), "model": body.model} if body.model else (body.params or {})
-    task_id = await handler.start(
+
+    # 🔥 分离元数据和业务参数
+    from services.handlers.base import TaskMetadata
+
+    # 🔍 日志：接收到的 client_task_id
+    logger.info(
+        f"[message.py] Received request | "
+        f"operation={body.operation} | gen_type={gen_type} | "
+        f"client_task_id={body.client_task_id} | "
+        f"assistant_message_id={assistant_message_id}"
+    )
+
+    # 构建元数据
+    metadata = TaskMetadata(
+        client_task_id=body.client_task_id,
+        placeholder_created_at=body.placeholder_created_at,
+    )
+
+    # 构建纯业务参数（排除元数据字段）
+    business_params = {}
+    if body.params:
+        for k, v in body.params.items():
+            if k not in {"client_task_id", "placeholder_created_at"}:
+                business_params[k] = v
+
+    # 添加 model（如果有）
+    if body.model:
+        business_params["model"] = body.model
+
+    external_task_id = await handler.start(
         message_id=assistant_message_id,
         conversation_id=conversation_id,
         user_id=user_id,
         content=body.content,
-        params=handler_params,
+        params=business_params,
+        metadata=metadata,
     )
 
-    # 7. 更新消息的 task_id
-    db.table("messages").update({
-        "task_id": task_id,
-    }).eq("id", assistant_message_id).execute()
+    # 7. 确定返回的 client_task_id（Handler 已保存到数据库）
+    client_task_id = body.client_task_id or external_task_id
 
+    # 🔍 日志：返回给前端的 task_id
+    logger.info(
+        f"[message.py] Returning to frontend | "
+        f"client_task_id={client_task_id} | "
+        f"external_task_id={external_task_id} | "
+        f"assistant_message_id={assistant_message_id}"
+    )
+
+    # 8. 更新消息的 task_id（仅 retry 操作，因为消息已存在）
+    if body.operation == MessageOperation.RETRY:
+        db.table("messages").update({
+            "task_id": client_task_id,
+        }).eq("id", assistant_message_id).execute()
+
+    # 🔥 返回 client_task_id（前端已订阅）
     return GenerateResponse(
-        task_id=task_id,
+        task_id=client_task_id,
         user_message=user_message,
         assistant_message=assistant_message,
         operation=body.operation,
     )
+
+
+def _build_generation_params(
+    gen_type: GenerationType,
+    model: Optional[str] = None,
+    params: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    构建生成参数（公共函数）
+
+    用于 retry、regenerate、send 操作复用，减少重复代码。
+
+    Args:
+        gen_type: 生成类型（chat/image/video）
+        model: 模型 ID
+        params: 其他参数
+
+    Returns:
+        generation_params 字典
+    """
+    generation_params = {"type": gen_type.value}
+    if model:
+        generation_params["model"] = model
+    if params:
+        generation_params.update(params)
+    return generation_params
 
 
 async def _create_user_message(
@@ -259,12 +339,8 @@ async def _reset_message_for_retry(
 
     将原失败消息的状态重置为 pending，清空内容和错误信息
     """
-    # 构建新的 generation_params
-    generation_params = {"type": gen_type.value}
-    if model:
-        generation_params["model"] = model
-    if params:
-        generation_params.update(params)
+    # 使用公共函数构建 generation_params
+    generation_params = _build_generation_params(gen_type, model, params)
 
     # 更新消息：重置状态、清空内容和错误
     update_data = {
@@ -282,48 +358,12 @@ async def _reset_message_for_retry(
 
     msg_data = result.data[0]
 
-    return Message(
-        id=msg_data["id"],
-        conversation_id=msg_data["conversation_id"],
-        role=MessageRole(msg_data["role"]),
-        content=[],
-        status=MessageStatus(msg_data["status"]),
-        created_at=datetime.fromisoformat(msg_data["created_at"].replace("Z", "+00:00")),
-    )
-
-
-async def _create_assistant_placeholder(
-    db: Database,
-    conversation_id: str,
-    message_id: str,
-    gen_type: GenerationType,
-    model: Optional[str] = None,
-    params: Optional[Dict[str, Any]] = None,
-) -> Message:
-    """创建助手消息占位符"""
-    # 构建 generation_params
-    generation_params = {"type": gen_type.value}
-    if model:
-        generation_params["model"] = model
-    if params:
-        generation_params.update(params)
-
-    message_data = {
-        "id": message_id,
-        "conversation_id": conversation_id,
-        "role": MessageRole.ASSISTANT.value,
-        "content": [],  # 空内容
-        "status": MessageStatus.PENDING.value,
-        "generation_params": generation_params,
-        "credits_cost": 0,
-    }
-
-    result = db.table("messages").insert(message_data).execute()
-
-    if not result.data:
-        raise Exception("创建助手消息失败")
-
-    msg_data = result.data[0]
+    # 转换 generation_params 为 Pydantic 模型（只提取 type）
+    generation_params_obj = None
+    if msg_data.get("generation_params"):
+        gen_type_str = msg_data["generation_params"].get("type")
+        if gen_type_str:
+            generation_params_obj = GenerationParams(type=GenerationType(gen_type_str))
 
     return Message(
         id=msg_data["id"],
@@ -332,57 +372,14 @@ async def _create_assistant_placeholder(
         content=[],
         status=MessageStatus(msg_data["status"]),
         created_at=datetime.fromisoformat(msg_data["created_at"].replace("Z", "+00:00")),
+        generation_params=generation_params_obj,
     )
 
 
 # ============================================================
-# 兼容旧 API（过渡期保留）
+# ❌ 旧 API 已删除
 # ============================================================
-
-
-@router.post("/create", response_model=MessageResponse, summary="创建消息")
-@limiter.limit("60/minute")
-async def create_message(
-    request: Request,
-    conversation_id: str,
-    body: MessageCreate,
-    current_user: CurrentUser,
-    service: MessageService = Depends(get_message_service),
-):
-    """
-    直接创建消息（用于图像生成等场景）
-
-    注意：此 API 已过时，请使用 /generate 端点。
-    """
-    # 转换新格式的 content 为旧格式
-    text_content = ""
-    image_url = None
-    video_url = None
-
-    for part in body.content:
-        if isinstance(part, TextPart):
-            text_content = part.text
-        elif isinstance(part, dict):
-            if part.get("type") == "text":
-                text_content = part.get("text", "")
-            elif part.get("type") == "image":
-                image_url = part.get("url")
-            elif part.get("type") == "video":
-                video_url = part.get("url")
-
-    result = await service.create_message(
-        conversation_id=conversation_id,
-        user_id=current_user["id"],
-        content=text_content,
-        role=body.role.value,
-        image_url=image_url,
-        video_url=video_url,
-        credits_cost=body.credits_cost,
-        created_at=body.created_at,
-        generation_params=body.generation_params,
-        client_request_id=body.client_request_id,
-    )
-    return result
+# 旧的 /create API 已删除，请使用 /generate 端点
 
 
 @router.get("", response_model=MessageListResult, summary="获取消息列表")
