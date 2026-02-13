@@ -50,53 +50,68 @@ class MessageService:
             NotFoundError: 对话不存在
             PermissionDeniedError: 无权访问
         """
-        # 验证对话权限
-        await self.conversation_service.get_conversation(conversation_id, user_id)
+        try:
+            # 验证对话权限
+            await self.conversation_service.get_conversation(conversation_id, user_id)
 
-        # 查询消息（按创建时间降序：从新到旧，确保首次加载显示最新消息）
-        query = (
-            self.db.table("messages")
-            .select("*")
-            .eq("conversation_id", conversation_id)
-            .order("created_at", desc=True)
-        )
+            # 查询消息（按创建时间降序：从新到旧，确保首次加载显示最新消息）
+            query = (
+                self.db.table("messages")
+                .select("*")
+                .eq("conversation_id", conversation_id)
+                .order("created_at", desc=True)
+            )
 
-        # 如果指定了 before_id，获取该消息之前的消息
-        if before_id:
-            # 先获取 before_id 消息的创建时间
-            before_msg = self.db.table("messages").select("created_at").eq("id", before_id).single().execute()
-            if before_msg.data:
-                query = query.lt("created_at", before_msg.data["created_at"])
+            # 如果指定了 before_id，获取该消息之前的消息
+            if before_id:
+                # 先获取 before_id 消息的创建时间
+                before_msg = self.db.table("messages").select("created_at").eq("id", before_id).single().execute()
+                if before_msg.data:
+                    query = query.lt("created_at", before_msg.data["created_at"])
 
-        # ✅ 修复：limit=0 时应返回空列表，而不是查询所有消息
-        if limit == 0:
+            # ✅ 修复：limit=0 时应返回空列表，而不是查询所有消息
+            if limit == 0:
+                return {
+                    "messages": [],
+                    "total": 0,
+                    "limit": limit,
+                    "offset": offset,
+                }
+
+            if limit > 0:
+                query = query.limit(limit)
+            if offset:
+                query = query.offset(offset)
+
+            result = query.execute()
+
+            messages = [format_message(msg) for msg in result.data]
+
+            logger.info(
+                f"Messages retrieved | conversation_id={conversation_id} | "
+                f"count={len(messages)}"
+            )
+
             return {
-                "messages": [],
-                "total": 0,
+                "messages": messages,
+                "total": len(messages),
                 "limit": limit,
                 "offset": offset,
             }
-
-        if limit > 0:
-            query = query.limit(limit)
-        if offset:
-            query = query.offset(offset)
-
-        result = query.execute()
-
-        messages = [format_message(msg) for msg in result.data]
-
-        logger.info(
-            f"Messages retrieved | conversation_id={conversation_id} | "
-            f"count={len(messages)}"
-        )
-
-        return {
-            "messages": messages,
-            "total": len(messages),
-            "limit": limit,
-            "offset": offset,
-        }
+        except (NotFoundError, PermissionDeniedError):
+            raise
+        except Exception as e:
+            logger.error(
+                f"Error getting messages | conversation_id={conversation_id} | "
+                f"user_id={user_id} | limit={limit} | offset={offset} | "
+                f"before_id={before_id} | error={str(e)}"
+            )
+            from core.exceptions import AppException
+            raise AppException(
+                code="MESSAGE_GET_ERROR",
+                message="获取消息列表失败",
+                status_code=500,
+            )
 
     async def get_message(
         self,
@@ -119,35 +134,49 @@ class MessageService:
             NotFoundError: 消息不存在
             PermissionDeniedError: 无权访问
         """
-        # 验证对话权限
-        await self.conversation_service.get_conversation(conversation_id, user_id)
+        try:
+            # 验证对话权限
+            await self.conversation_service.get_conversation(conversation_id, user_id)
 
-        result = (
-            self.db.table("messages")
-            .select("*")
-            .eq("id", message_id)
-            .eq("conversation_id", conversation_id)
-            .single()
-            .execute()
-        )
-
-        if not result.data:
-            logger.warning(
-                f"Message not found | message_id={message_id} | "
-                f"conversation_id={conversation_id}"
+            result = (
+                self.db.table("messages")
+                .select("*")
+                .eq("id", message_id)
+                .eq("conversation_id", conversation_id)
+                .single()
+                .execute()
             )
-            raise NotFoundError("消息不存在")
 
-        message = result.data
+            if not result.data:
+                logger.warning(
+                    f"Message not found | message_id={message_id} | "
+                    f"conversation_id={conversation_id}"
+                )
+                raise NotFoundError("消息不存在")
 
-        # 再次验证权限
-        conversation = await self.conversation_service.get_conversation(
-            conversation_id, user_id
-        )
-        if conversation["user_id"] != user_id:
-            raise PermissionDeniedError("无权访问此消息")
+            message = result.data
 
-        return format_message(message)
+            # 再次验证权限
+            conversation = await self.conversation_service.get_conversation(
+                conversation_id, user_id
+            )
+            if conversation["user_id"] != user_id:
+                raise PermissionDeniedError("无权访问此消息")
+
+            return format_message(message)
+        except (NotFoundError, PermissionDeniedError):
+            raise
+        except Exception as e:
+            logger.error(
+                f"Error getting message | conversation_id={conversation_id} | "
+                f"message_id={message_id} | user_id={user_id} | error={str(e)}"
+            )
+            from core.exceptions import AppException
+            raise AppException(
+                code="MESSAGE_GET_SINGLE_ERROR",
+                message="获取消息失败",
+                status_code=500,
+            )
 
     async def delete_message(
         self,
@@ -168,52 +197,66 @@ class MessageService:
             NotFoundError: 消息不存在
             PermissionDeniedError: 无权删除此消息
         """
-        # 查询消息，获取 conversation_id
         try:
-            result = (
-                self.db.table("messages")
-                .select("id, conversation_id")
-                .eq("id", message_id)
-                .execute()
+            # 查询消息，获取 conversation_id
+            try:
+                result = (
+                    self.db.table("messages")
+                    .select("id, conversation_id")
+                    .eq("id", message_id)
+                    .execute()
+                )
+
+                if not result.data or len(result.data) == 0:
+                    logger.warning(f"Message not found | message_id={message_id}")
+                    raise NotFoundError("消息", message_id)
+
+                message = result.data[0]
+                conversation_id = message["conversation_id"]
+            except NotFoundError:
+                raise
+            except Exception as e:
+                logger.error(
+                    f"Error querying message | message_id={message_id} | error={str(e)}"
+                )
+                raise
+
+            # 验证对话权限（确保用户拥有该对话）
+            conversation = await self.conversation_service.get_conversation(
+                conversation_id, user_id
+            )
+            if conversation["user_id"] != user_id:
+                logger.warning(
+                    f"Permission denied for delete | message_id={message_id} | "
+                    f"user_id={user_id} | owner_id={conversation['user_id']}"
+                )
+                raise PermissionDeniedError("无权删除此消息")
+
+            # 执行删除
+            self.db.table("messages").delete().eq("id", message_id).execute()
+
+            logger.info(
+                f"Message deleted | message_id={message_id} | "
+                f"conversation_id={conversation_id} | user_id={user_id}"
             )
 
-            if not result.data or len(result.data) == 0:
-                logger.warning(f"Message not found | message_id={message_id}")
-                raise NotFoundError("消息", message_id)
-
-            message = result.data[0]
-            conversation_id = message["conversation_id"]
-        except NotFoundError:
+            return {
+                "id": message["id"],
+                "conversation_id": conversation_id,
+            }
+        except (NotFoundError, PermissionDeniedError):
             raise
         except Exception as e:
             logger.error(
-                f"Error querying message | message_id={message_id} | error={str(e)}"
+                f"Error deleting message | message_id={message_id} | "
+                f"user_id={user_id} | error={str(e)}"
             )
-            raise
-
-        # 验证对话权限（确保用户拥有该对话）
-        conversation = await self.conversation_service.get_conversation(
-            conversation_id, user_id
-        )
-        if conversation["user_id"] != user_id:
-            logger.warning(
-                f"Permission denied for delete | message_id={message_id} | "
-                f"user_id={user_id} | owner_id={conversation['user_id']}"
+            from core.exceptions import AppException
+            raise AppException(
+                code="MESSAGE_DELETE_ERROR",
+                message="删除消息失败",
+                status_code=500,
             )
-            raise PermissionDeniedError("无权删除此消息")
-
-        # 执行删除
-        self.db.table("messages").delete().eq("id", message_id).execute()
-
-        logger.info(
-            f"Message deleted | message_id={message_id} | "
-            f"conversation_id={conversation_id} | user_id={user_id}"
-        )
-
-        return {
-            "id": message["id"],
-            "conversation_id": conversation_id,
-        }
 
     async def _get_conversation_history(
         self,

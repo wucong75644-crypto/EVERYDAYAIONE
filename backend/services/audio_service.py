@@ -11,6 +11,7 @@ from loguru import logger
 from supabase import Client
 
 from core.config import get_settings
+from core.exceptions import AppException, ValidationError
 
 
 class AudioService:
@@ -56,6 +57,7 @@ class AudioService:
 
         Raises:
             ValueError: 文件类型或大小不符合要求
+            AppException: 上传失败
         """
         # 验证文件类型
         if content_type not in self.ALLOWED_AUDIO_TYPES:
@@ -104,9 +106,18 @@ class AudioService:
                 "size": len(file_data),
             }
 
+        except (ValueError, ValidationError, AppException):
+            raise
         except Exception as e:
-            logger.error(f"Upload audio failed: user_id={user_id}, error={e}")
-            raise ValueError(f"上传失败: {e}") from e
+            logger.error(
+                f"Upload audio failed | user_id={user_id} | "
+                f"content_type={content_type} | size={len(file_data)} | error={str(e)}"
+            )
+            raise AppException(
+                code="AUDIO_UPLOAD_ERROR",
+                message="音频上传失败",
+                status_code=500,
+            )
 
     async def delete_audio(self, file_url: str) -> None:
         """
@@ -116,7 +127,8 @@ class AudioService:
             file_url: 文件的公开 URL
 
         Raises:
-            ValueError: 删除失败
+            ValueError: URL 无效
+            AppException: 删除失败
         """
         try:
             # 从 URL 中提取文件路径
@@ -131,9 +143,17 @@ class AudioService:
 
             logger.info(f"Audio deleted: path={file_path}")
 
+        except (ValueError, ValidationError, AppException):
+            raise
         except Exception as e:
-            logger.error(f"Delete audio failed: url={file_url}, error={e}")
-            raise ValueError(f"删除失败: {e}") from e
+            logger.error(
+                f"Delete audio failed | file_url={file_url} | error={str(e)}"
+            )
+            raise AppException(
+                code="AUDIO_DELETE_ERROR",
+                message="音频删除失败",
+                status_code=500,
+            )
 
     async def get_audio_info(self, file_url: str) -> dict:
         """
@@ -146,7 +166,8 @@ class AudioService:
             包含 duration 和 size 的字典
 
         Raises:
-            ValueError: 获取失败
+            ValueError: URL 无效
+            AppException: 获取失败
         """
         # 简化实现：从存储中获取文件元数据
         # 实际项目中可能需要存储到数据库或使用 ffmpeg 解析
@@ -164,6 +185,14 @@ class AudioService:
                 "size": 0,
             }
 
+        except (ValueError, ValidationError, AppException):
+            raise
         except Exception as e:
-            logger.error(f"Get audio info failed: url={file_url}, error={e}")
-            raise ValueError(f"获取信息失败: {e}") from e
+            logger.error(
+                f"Get audio info failed | file_url={file_url} | error={str(e)}"
+            )
+            raise AppException(
+                code="AUDIO_INFO_ERROR",
+                message="获取音频信息失败",
+                status_code=500,
+            )

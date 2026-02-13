@@ -134,55 +134,63 @@ class SmsService:
         Returns:
             是否发送成功
         """
-        # 开发环境：模拟发送成功
-        if self.settings.app_debug:
-            code = "123456"
+        try:
+            # 开发环境：模拟发送成功
+            if self.settings.app_debug:
+                code = "123456"
+                redis_client = get_redis_client()
+                redis_key = self._get_redis_key(phone, purpose)
+                redis_client.setex(redis_key, self.CODE_EXPIRE_SECONDS, code)
+                logger.info(
+                    f"[DEV] Verification code sent | phone={phone} | "
+                    f"purpose={purpose} | code={code}"
+                )
+                return True
+
+            # 检查配置
+            if not self._is_configured():
+                logger.warning(
+                    f"SMS not configured, falling back to dev mode | phone={phone}"
+                )
+                code = "123456"
+                redis_client = get_redis_client()
+                redis_key = self._get_redis_key(phone, purpose)
+                redis_client.setex(redis_key, self.CODE_EXPIRE_SECONDS, code)
+                return True
+
+            # 获取模板代码
+            template_code = self._get_template_code(purpose)
+            if not template_code:
+                logger.error(f"Template not found for purpose | purpose={purpose}")
+                return False
+
+            # 生成验证码
+            code = generate_verification_code()
+
+            # 存储到 Redis
             redis_client = get_redis_client()
             redis_key = self._get_redis_key(phone, purpose)
             redis_client.setex(redis_key, self.CODE_EXPIRE_SECONDS, code)
-            logger.info(
-                f"[DEV] Verification code sent | phone={phone} | "
-                f"purpose={purpose} | code={code}"
+
+            # 发送短信
+            success = self._send_sms_request(
+                phone=phone,
+                template_code=template_code,
+                template_param={"code": code},
             )
-            return True
 
-        # 检查配置
-        if not self._is_configured():
-            logger.warning(
-                f"SMS not configured, falling back to dev mode | phone={phone}"
+            if not success:
+                # 发送失败，删除 Redis 中的验证码
+                redis_client.delete(redis_key)
+
+            return success
+        except Exception as e:
+            logger.error(f"Failed to send verification code | phone={phone} | purpose={purpose} | error={e}")
+            from core.exceptions import SMSServiceError
+            raise SMSServiceError(
+                message="发送验证码失败，请稍后重试",
+                original_error=str(e)
             )
-            code = "123456"
-            redis_client = get_redis_client()
-            redis_key = self._get_redis_key(phone, purpose)
-            redis_client.setex(redis_key, self.CODE_EXPIRE_SECONDS, code)
-            return True
-
-        # 获取模板代码
-        template_code = self._get_template_code(purpose)
-        if not template_code:
-            logger.error(f"Template not found for purpose | purpose={purpose}")
-            return False
-
-        # 生成验证码
-        code = generate_verification_code()
-
-        # 存储到 Redis
-        redis_client = get_redis_client()
-        redis_key = self._get_redis_key(phone, purpose)
-        redis_client.setex(redis_key, self.CODE_EXPIRE_SECONDS, code)
-
-        # 发送短信
-        success = self._send_sms_request(
-            phone=phone,
-            template_code=template_code,
-            template_param={"code": code},
-        )
-
-        if not success:
-            # 发送失败，删除 Redis 中的验证码
-            redis_client.delete(redis_key)
-
-        return success
 
     async def verify_code(self, phone: str, code: str, purpose: str) -> bool:
         """
@@ -196,21 +204,30 @@ class SmsService:
         Returns:
             验证码是否正确
         """
-        redis_client = get_redis_client()
-        redis_key = self._get_redis_key(phone, purpose)
+        try:
+            redis_client = get_redis_client()
+            redis_key = self._get_redis_key(phone, purpose)
 
-        stored_code = redis_client.get(redis_key)
-        if stored_code and stored_code == code:
-            # 验证成功，删除验证码（一次性使用）
-            redis_client.delete(redis_key)
-            logger.info(f"Verification code verified | phone={phone} | purpose={purpose}")
-            return True
+            stored_code = redis_client.get(redis_key)
+            if stored_code and stored_code == code:
+                # 验证成功，删除验证码（一次性使用）
+                redis_client.delete(redis_key)
+                logger.info(f"Verification code verified | phone={phone} | purpose={purpose}")
+                return True
 
-        logger.warning(
-            f"Verification code mismatch | phone={phone} | "
-            f"purpose={purpose} | provided={code}"
-        )
-        return False
+            logger.warning(
+                f"Verification code mismatch | phone={phone} | "
+                f"purpose={purpose} | provided={code}"
+            )
+            return False
+        except Exception as e:
+            logger.error(f"Failed to verify code | phone={phone} | purpose={purpose} | error={e}")
+            from core.exceptions import AppException
+            raise AppException(
+                code="VERIFY_CODE_ERROR",
+                message="验证码验证失败，请稍后重试",
+                status_code=500
+            )
 
 
 # 单例实例

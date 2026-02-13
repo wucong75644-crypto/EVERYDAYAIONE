@@ -7,8 +7,14 @@
 
 from typing import Optional
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Form
+from loguru import logger
 
 from api.deps import CurrentUser, Database
+from core.exceptions import (
+    AppException,
+    ValidationError,
+    PermissionDeniedError,
+)
 from schemas.image import UploadImageResponse
 from services.storage_service import StorageService
 
@@ -31,24 +37,41 @@ async def upload_image(
 
     用于图像编辑功能，先上传本地图片获取 URL。
     """
-    storage = StorageService(db)
+    try:
+        storage = StorageService(db)
 
-    if file:
-        # FormData 方式：直接上传文件
-        content = await file.read()
-        url = await storage.upload_image(
-            user_id=current_user["id"],
-            file_data=content,
-            content_type=file.content_type or "image/jpeg",
-            filename=file.filename,
-        )
-    elif image_data:
-        # base64 方式：兼容旧版
-        url = await storage.upload_base64_image(
-            user_id=current_user["id"],
-            base64_data=image_data,
-        )
-    else:
-        raise HTTPException(status_code=400, detail="请提供图片文件或 base64 数据")
+        if file:
+            # FormData 方式：直接上传文件
+            content = await file.read()
+            url = await storage.upload_image(
+                user_id=current_user["id"],
+                file_data=content,
+                content_type=file.content_type or "image/jpeg",
+                filename=file.filename,
+            )
+        elif image_data:
+            # base64 方式：兼容旧版
+            url = await storage.upload_base64_image(
+                user_id=current_user["id"],
+                base64_data=image_data,
+            )
+        else:
+            raise ValidationError(message="请提供图片文件或 base64 数据")
 
-    return UploadImageResponse(url=url)
+        return UploadImageResponse(url=url)
+    except (
+        ValidationError,
+        PermissionDeniedError,
+        AppException,
+    ):
+        raise
+    except Exception as e:
+        logger.error(
+            f"Upload image failed | user_id={current_user['id']} | "
+            f"file={file.filename if file else 'base64'} | error={str(e)}"
+        )
+        raise AppException(
+            code="UPLOAD_IMAGE_ERROR",
+            message="图片上传失败",
+            status_code=500,
+        )

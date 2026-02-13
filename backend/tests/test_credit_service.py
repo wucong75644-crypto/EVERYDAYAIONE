@@ -8,13 +8,48 @@ credit_service 单元测试
 - 上下文管理器
 """
 
+import sys
+from pathlib import Path
+
+# Python path fix: 避免与根目录的 tests/ 冲突
+backend_dir = Path(__file__).parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from services.credit_service import CreditService
 from core.exceptions import InsufficientCreditsError
-from tests.conftest import create_test_user
+
+# 测试辅助函数（避免导入冲突）
+def create_test_user(
+    user_id: str = None,
+    phone: str = "13800138000",
+    nickname: str = "测试用户",
+    credits: int = 100,
+    status: str = "active",
+    role: str = "user",
+    password_hash: str = None,
+) -> dict:
+    """创建测试用户数据"""
+    from datetime import datetime, timezone
+    return {
+        "id": user_id or str(uuid4()),
+        "phone": phone,
+        "nickname": nickname,
+        "credits": credits,
+        "status": status,
+        "role": role,
+        "password_hash": password_hash,
+        "avatar_url": None,
+        "login_methods": ["phone"],
+        "created_by": "phone",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    }
 
 
 class TestCreditServiceBalance:
@@ -108,14 +143,7 @@ class TestCreditServiceLock:
         # Arrange
         user = create_test_user(credits=100)
         mock_async_db.set_table_data("users", [user])
-
-        # Mock update 成功
-        mock_async_db.table("users").execute = AsyncMock(
-            return_value=MagicMock(data=[{"credits": 90}])
-        )
-        mock_async_db.table("credit_transactions").execute = AsyncMock(
-            return_value=MagicMock(data=[{}])
-        )
+        mock_async_db.set_table_data("credit_transactions", [])
 
         # Act
         tx_id = await credit_service.lock_credits(
@@ -224,13 +252,7 @@ class TestCreditServiceContextManager:
         # Arrange
         user = create_test_user(credits=100)
         mock_async_db.set_table_data("users", [user])
-
-        mock_async_db.table("users").execute = AsyncMock(
-            return_value=MagicMock(data=[{"credits": 90}])
-        )
-        mock_async_db.table("credit_transactions").execute = AsyncMock(
-            return_value=MagicMock(data=[{}])
-        )
+        mock_async_db.set_table_data("credit_transactions", [])
 
         confirmed = False
 
@@ -253,13 +275,7 @@ class TestCreditServiceContextManager:
         # Arrange
         user = create_test_user(credits=100)
         mock_async_db.set_table_data("users", [user])
-
-        mock_async_db.table("users").execute = AsyncMock(
-            return_value=MagicMock(data=[{"credits": 90}])
-        )
-        mock_async_db.table("credit_transactions").execute = AsyncMock(
-            return_value=MagicMock(data=[{}])
-        )
+        mock_async_db.set_table_data("credit_transactions", [])
 
         refunded = False
 
@@ -310,13 +326,7 @@ class TestCreditServiceEdgeCases:
         # Arrange
         user = create_test_user(credits=50)
         mock_async_db.set_table_data("users", [user])
-
-        mock_async_db.table("users").execute = AsyncMock(
-            return_value=MagicMock(data=[{"credits": 0}])
-        )
-        mock_async_db.table("credit_transactions").execute = AsyncMock(
-            return_value=MagicMock(data=[{}])
-        )
+        mock_async_db.set_table_data("credit_transactions", [])
 
         # Act
         tx_id = await credit_service.lock_credits(

@@ -39,8 +39,12 @@ async def send_verification_code(
     - **phone**: 手机号
     - **purpose**: 验证码用途 (register/login/reset_password/bind_phone)
     """
-    await auth_service.send_verification_code(request.phone, request.purpose)
-    return {"message": "验证码已发送"}
+    try:
+        await auth_service.send_verification_code(request.phone, request.purpose)
+        return {"message": "验证码已发送"}
+    except Exception as e:
+        # 业务异常会被全局异常处理器捕获
+        raise
 
 
 @router.post("/verify-code", summary="验证验证码")
@@ -55,8 +59,12 @@ async def verify_code(
     - **code**: 验证码
     - **purpose**: 验证码用途
     """
-    await auth_service.verify_code_only(request.phone, request.code, request.purpose)
-    return {"message": "验证成功"}
+    try:
+        await auth_service.verify_code_only(request.phone, request.code, request.purpose)
+        return {"message": "验证成功"}
+    except Exception as e:
+        # 业务异常会被全局异常处理器捕获
+        raise
 
 
 @router.post("/reset-password", summary="重置密码")
@@ -71,12 +79,16 @@ async def reset_password(
     - **code**: 验证码
     - **new_password**: 新密码（至少8位，包含字母和数字）
     """
-    result = await auth_service.reset_password(
-        phone=request.phone,
-        code=request.code,
-        new_password=request.new_password,
-    )
-    return result
+    try:
+        result = await auth_service.reset_password(
+            phone=request.phone,
+            code=request.code,
+            new_password=request.new_password,
+        )
+        return result
+    except Exception as e:
+        # 业务异常会被全局异常处理器捕获
+        raise
 
 
 @router.post("/register", response_model=LoginResponse, summary="手机号注册")
@@ -92,13 +104,17 @@ async def register_by_phone(
     - **nickname**: 昵称（可选）
     - **password**: 密码（可选，设置后可使用密码登录）
     """
-    result = await auth_service.register_by_phone(
-        phone=request.phone,
-        code=request.code,
-        nickname=request.nickname,
-        password=request.password,
-    )
-    return result
+    try:
+        result = await auth_service.register_by_phone(
+            phone=request.phone,
+            code=request.code,
+            nickname=request.nickname,
+            password=request.password,
+        )
+        return result
+    except Exception as e:
+        # 业务异常会被全局异常处理器捕获
+        raise
 
 
 @router.post("/login/phone", response_model=LoginResponse, summary="验证码登录")
@@ -112,11 +128,15 @@ async def login_by_phone(
     - **phone**: 手机号
     - **code**: 验证码
     """
-    result = await auth_service.login_by_phone(
-        phone=request.phone,
-        code=request.code,
-    )
-    return result
+    try:
+        result = await auth_service.login_by_phone(
+            phone=request.phone,
+            code=request.code,
+        )
+        return result
+    except Exception as e:
+        # 业务异常会被全局异常处理器捕获
+        raise
 
 
 @router.post("/login/password", response_model=LoginResponse, summary="密码登录")
@@ -130,11 +150,15 @@ async def login_by_password(
     - **phone**: 手机号
     - **password**: 密码
     """
-    result = await auth_service.login_by_password(
-        phone=request.phone,
-        password=request.password,
-    )
-    return result
+    try:
+        result = await auth_service.login_by_password(
+            phone=request.phone,
+            password=request.password,
+        )
+        return result
+    except Exception as e:
+        # 业务异常会被全局异常处理器捕获
+        raise
 
 
 @router.get("/me", response_model=UserResponse, summary="获取当前用户信息")

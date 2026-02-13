@@ -8,13 +8,87 @@ message_service 单元测试
 - 获取对话历史
 """
 
+import sys
+from pathlib import Path
+
+# Python path fix: 避免与根目录的 tests/ 冲突
+backend_dir = Path(__file__).parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from services.message_service import MessageService
 from core.exceptions import NotFoundError, PermissionDeniedError
-from tests.conftest import create_test_user, create_test_message, create_test_conversation
+
+# 测试辅助函数（避免导入冲突）
+def create_test_user(
+    user_id: str = None,
+    phone: str = "13800138000",
+    nickname: str = "测试用户",
+    credits: int = 100,
+    status: str = "active",
+    role: str = "user",
+    password_hash: str = None,
+) -> dict:
+    """创建测试用户数据"""
+    from datetime import datetime, timezone
+    return {
+        "id": user_id or str(uuid4()),
+        "phone": phone,
+        "nickname": nickname,
+        "credits": credits,
+        "status": status,
+        "role": role,
+        "password_hash": password_hash,
+        "avatar_url": None,
+        "login_methods": ["phone"],
+        "created_by": "phone",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    }
+
+
+def create_test_message(
+    message_id: str = None,
+    conversation_id: str = None,
+    role: str = "user",
+    content: str = "测试消息",
+    credits_cost: int = 0,
+) -> dict:
+    """创建测试消息数据"""
+    from datetime import datetime, timezone
+    return {
+        "id": message_id or str(uuid4()),
+        "conversation_id": conversation_id or str(uuid4()),
+        "role": role,
+        "content": content,
+        "image_url": None,
+        "video_url": None,
+        "credits_cost": credits_cost,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def create_test_conversation(
+    conversation_id: str = None,
+    user_id: str = None,
+    title: str = "测试对话",
+) -> dict:
+    """创建测试对话数据"""
+    from datetime import datetime, timezone
+    return {
+        "id": conversation_id or str(uuid4()),
+        "user_id": user_id or str(uuid4()),
+        "title": title,
+        "model_id": "gpt-4",
+        "last_message": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 class TestMessageServiceGet:
