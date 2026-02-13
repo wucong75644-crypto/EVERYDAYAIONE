@@ -78,37 +78,99 @@ export default memo(function MessageItem({
   const actualImageAspectRatio = (genParams.aspect_ratio ?? genParams.aspectRatio ?? savedSettings.image.aspectRatio) as AspectRatio;
   const actualVideoAspectRatio = (genParams.aspect_ratio ?? genParams.aspectRatio ?? savedSettings.video.aspectRatio) as VideoAspectRatio;
 
-  // 判断是否为媒体占位符消息（图片/视频生成中）
-  const mediaPlaceholderInfo = useMemo(() => {
-    // 条件：pending 状态 + AI消息 + 无媒体
-    if (
-      message.role !== 'assistant' ||
-      hasImage ||
-      hasVideo
-    ) {
+  // 气泡文字信息
+  const bubbleTextInfo = useMemo(() => {
+    // 必须是 AI 消息
+    if (message.role !== 'assistant') {
       return null;
     }
 
-    // 检查是否为 pending 状态的媒体生成
-    if (message.status === 'pending') {
-      const genType = message.generation_params?.type;
-      if (genType === 'image') {
-        return { type: 'image' as const, text: PLACEHOLDER_TEXT.IMAGE_GENERATING };
+    const genType = message.generation_params?.type;
+
+    // 图片任务
+    if (genType === 'image') {
+      // 有图片URL：显示"生成完成"（无论 pending 还是 completed）
+      if (hasImage) {
+        return { text: '生成完成', hasAnimation: false };
       }
-      if (genType === 'video') {
-        return { type: 'video' as const, text: PLACEHOLDER_TEXT.VIDEO_GENERATING };
+      // pending 状态但无URL：显示"正在生成图片"
+      if (message.status === 'pending') {
+        return { text: PLACEHOLDER_TEXT.IMAGE_GENERATING, hasAnimation: true };
       }
     }
 
-    // 兼容旧格式：检查文本内容
-    if (textContent.includes(PLACEHOLDER_TEXT.IMAGE_GENERATING)) {
-      return { type: 'image' as const, text: PLACEHOLDER_TEXT.IMAGE_GENERATING };
+    // 视频任务
+    if (genType === 'video') {
+      // 有视频URL：显示"生成完成"（无论 pending 还是 completed）
+      if (hasVideo) {
+        return { text: '生成完成', hasAnimation: false };
+      }
+      // pending 状态但无URL：显示"正在生成视频"
+      if (message.status === 'pending') {
+        return { text: PLACEHOLDER_TEXT.VIDEO_GENERATING, hasAnimation: true };
+      }
     }
-    if (textContent.includes(PLACEHOLDER_TEXT.VIDEO_GENERATING)) {
-      return { type: 'video' as const, text: PLACEHOLDER_TEXT.VIDEO_GENERATING };
-    }
+
     return null;
-  }, [message.role, message.status, message.generation_params, hasImage, hasVideo, textContent]);
+  }, [message.role, message.status, message.generation_params, hasImage, hasVideo]);
+
+  // 占位符信息（传给 MessageMedia，用于控制灰色占位符显示）
+  const mediaPlaceholderInfo = useMemo(() => {
+    // 必须是 AI 消息
+    if (message.role !== 'assistant') {
+      return null;
+    }
+
+    const genType = message.generation_params?.type;
+
+    // 图片任务：只有非历史消息才显示占位符
+    if (genType === 'image') {
+      // skipEntryAnimation=true 表示批量加载的历史消息，不显示占位符
+      if (!skipEntryAnimation) {
+        return {
+          type: 'image' as const,
+          text: hasImage ? '生成完成' : PLACEHOLDER_TEXT.IMAGE_GENERATING,
+        };
+      }
+      return null;
+    }
+
+    // 视频任务：只有非历史消息才显示占位符
+    if (genType === 'video') {
+      if (!skipEntryAnimation) {
+        return {
+          type: 'video' as const,
+          text: hasVideo ? '生成完成' : PLACEHOLDER_TEXT.VIDEO_GENERATING,
+        };
+      }
+      return null;
+    }
+
+    return null;
+  }, [message.role, message.generation_params, hasImage, hasVideo, skipEntryAnimation]);
+
+  // 是否真正在生成中（用于控制重新生成按钮，区别于占位符显示）
+  const isActuallyGenerating = useMemo(() => {
+    if (message.role !== 'assistant') return false;
+
+    // 1. 如果正在流式输出，算作生成中（聊天消息）
+    if (isStreaming) return true;
+
+    // 2. 如果不是 pending 状态，不算生成中
+    if (message.status !== 'pending') return false;
+
+    // 3. 对于媒体生成任务，pending 状态且无 URL 时才算生成中
+    const genType = message.generation_params?.type;
+    if (genType === 'image') {
+      return !hasImage;
+    }
+    if (genType === 'video') {
+      return !hasVideo;
+    }
+
+    // 4. 其他情况（包括聊天任务），pending 状态算生成中
+    return true;
+  }, [message.role, message.status, message.generation_params, hasImage, hasVideo, isStreaming]);
 
   // 工具栏显示/隐藏状态
   const [showToolbar, setShowToolbar] = useState(false);
@@ -247,9 +309,15 @@ export default memo(function MessageItem({
             {/* 加载状态：重新生成或流式输出开始但内容为空 */}
             {((isRegenerating || isStreaming) && !textContent) ? (
               <LoadingPlaceholder text={PLACEHOLDER_TEXT.CHAT_THINKING} />
-            ) : mediaPlaceholderInfo ? (
-              /* 媒体占位符：图片/视频生成中 */
-              <LoadingPlaceholder text={mediaPlaceholderInfo.text} />
+            ) : bubbleTextInfo ? (
+              /* 媒体任务气泡文字：图片/视频生成中或生成完成（仅 pending 状态） */
+              bubbleTextInfo.hasAnimation ? (
+                /* 生成中：显示文字 + 跳动的点 */
+                <LoadingPlaceholder text={bubbleTextInfo.text} />
+              ) : (
+                /* 生成完成：只显示文字，不显示跳动的点 */
+                <span>{bubbleTextInfo.text}</span>
+              )
             ) : isErrorMessage ? (
               /* 错误状态：显示实际错误信息 */
               <span>{textContent || 'Error occurred'}</span>
@@ -282,6 +350,7 @@ export default memo(function MessageItem({
             generatingType={mediaPlaceholderInfo?.type}
             imageAspectRatio={actualImageAspectRatio}
             videoAspectRatio={actualVideoAspectRatio}
+            placeholderText={mediaPlaceholderInfo?.text}
           />
         )}
 
@@ -292,7 +361,7 @@ export default memo(function MessageItem({
           isUser={isUser}
           isErrorMessage={isErrorMessage}
           isRegenerating={isRegenerating}
-          isGenerating={!!mediaPlaceholderInfo}
+          isGenerating={isActuallyGenerating}
           visible={showToolbar}
           onRegenerate={onRegenerate}
           onDeleteClick={onDelete ? openDeleteModal : undefined}

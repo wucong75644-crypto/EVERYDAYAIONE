@@ -56,6 +56,8 @@ interface MediaPlaceholderProps {
   height: number;
   /** 自定义样式类名 */
   className?: string;
+  /** 占位符文字（如"生成完成"） */
+  text?: string;
 }
 
 export default function MediaPlaceholder({
@@ -63,6 +65,7 @@ export default function MediaPlaceholder({
   width,
   height,
   className = '',
+  text,
 }: MediaPlaceholderProps) {
   const config = MEDIA_CONFIG[type];
   const Icon = config.icon;
@@ -87,10 +90,24 @@ export default function MediaPlaceholder({
       role="status"
       aria-label={config.label}
     >
-      <Icon
-        className={`${iconSize} text-gray-300 dark:text-gray-500`}
-        aria-hidden={true}
-      />
+      {text ? (
+        // 有文字时：垂直布局显示图标和文字
+        <div className="flex flex-col items-center justify-center gap-2">
+          <Icon
+            className={`${iconSize} text-gray-300 dark:text-gray-500`}
+            aria-hidden={true}
+          />
+          <span className="text-sm text-gray-600 dark:text-gray-400 font-medium">
+            {text}
+          </span>
+        </div>
+      ) : (
+        // 无文字时：只显示图标
+        <Icon
+          className={`${iconSize} text-gray-300 dark:text-gray-500`}
+          aria-hidden={true}
+        />
+      )}
     </div>
   );
 }
