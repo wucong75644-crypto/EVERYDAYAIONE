@@ -8,6 +8,14 @@ auth_service 单元测试
 - 重置密码
 """
 
+import sys
+from pathlib import Path
+
+# Python path fix: 避免与根目录的 tests/ 冲突
+backend_dir = Path(__file__).parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -19,7 +27,34 @@ from core.exceptions import (
     NotFoundError,
     ValidationError,
 )
-from tests.conftest import create_test_user
+
+# 测试辅助函数（避免导入冲突）
+def create_test_user(
+    user_id: str = None,
+    phone: str = "13800138000",
+    nickname: str = "测试用户",
+    credits: int = 100,
+    status: str = "active",
+    role: str = "user",
+    password_hash: str = None,
+) -> dict:
+    """创建测试用户数据"""
+    from datetime import datetime, timezone
+    return {
+        "id": user_id or str(uuid4()),
+        "phone": phone,
+        "nickname": nickname,
+        "credits": credits,
+        "status": status,
+        "role": role,
+        "password_hash": password_hash,
+        "avatar_url": None,
+        "login_methods": ["phone"],
+        "created_by": "phone",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "last_login_at": None,
+    }
 
 
 class TestAuthServiceRegister:
@@ -42,16 +77,24 @@ class TestAuthServiceRegister:
         # 设置空的用户表（手机号未注册）
         mock_db.set_table_data("users", [])
 
+        # Mock _verify_code 和 _subscribe_default_models
+        async def mock_verify_code(*args, **kwargs):
+            return True
+
+        async def mock_subscribe(*args, **kwargs):
+            return None
+
         # Mock insert 返回新用户
         new_user = create_test_user(phone=phone, nickname=nickname)
-        mock_db.table("users").execute = MagicMock(
-            return_value=MagicMock(data=[new_user])
-        )
 
-        # Act
-        with patch.object(auth_service, "_verify_code", return_value=True):
-            with patch.object(auth_service, "_subscribe_default_models", return_value=None):
-                result = await auth_service.register_by_phone(phone, code, nickname)
+        with patch.object(auth_service, "_verify_code", side_effect=mock_verify_code):
+            with patch.object(auth_service, "_subscribe_default_models", side_effect=mock_subscribe):
+                # Mock insert 的返回值
+                mock_insert_result = MagicMock()
+                mock_insert_result.execute.return_value = MagicMock(data=[new_user])
+                with patch.object(mock_db.table("users"), "insert", return_value=mock_insert_result):
+                    # Act
+                    result = await auth_service.register_by_phone(phone, code, nickname)
 
         # Assert
         assert "token" in result
@@ -164,8 +207,11 @@ class TestAuthServiceLoginByPassword:
         phone = "13800138000"
         password = "password123"
 
-        # 创建带密码的用户
-        user = create_test_user(phone=phone)
+        # 创建带密码的用户（设置 password_hash）
+        user = create_test_user(
+            phone=phone,
+            password_hash="$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.G9HwI0Pv0K2L4K"  # bcrypt hash
+        )
         mock_db.set_table_data("users", [user])
 
         # Act

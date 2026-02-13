@@ -16,6 +16,7 @@ import oss2
 from loguru import logger
 
 from core.config import settings
+from core.exceptions import AppException, ValidationError
 
 
 class OSSService:
@@ -167,8 +168,13 @@ class OSSService:
                     f"size={len(content)/1024/1024:.1f}MB"
                 )
 
+            except (ValueError, ValidationError, AppException):
+                raise
             except httpx.HTTPError as e:
-                logger.error(f"Failed to download {media_type}: url={url}, error={e}")
+                logger.error(
+                    f"Failed to download {media_type} | user_id={user_id} | "
+                    f"url={url[:100]} | error={str(e)}"
+                )
                 # 脱敏：不暴露原始URL和HTTP错误详情
                 raise ValueError(f"{media_type}下载失败，请检查URL是否有效")
 
@@ -201,10 +207,19 @@ class OSSService:
                 f"{media_type.capitalize()} uploaded: object_key={object_key}, "
                 f"size={len(content)}, etag={result.etag}"
             )
+        except (ValueError, ValidationError, AppException):
+            raise
         except oss2.exceptions.OssError as e:
-            logger.error(f"OSS upload failed: object_key={object_key}, error={e}")
+            logger.error(
+                f"OSS upload failed | user_id={user_id} | object_key={object_key} | "
+                f"media_type={media_type} | error={str(e)}"
+            )
             # 脱敏：不暴露OSS内部错误详情
-            raise Exception("OSS 上传失败，请稍后重试")
+            raise AppException(
+                code="OSS_UPLOAD_ERROR",
+                message="OSS 上传失败，请稍后重试",
+                status_code=500,
+            )
 
         # 5. 生成访问 URL
         access_url = self.get_url(object_key)

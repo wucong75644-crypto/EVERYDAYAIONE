@@ -213,8 +213,20 @@ class AuthService:
         Returns:
             是否发送成功
         """
-        sms_service = get_sms_service()
-        return await sms_service.send_verification_code(phone, purpose)
+        try:
+            sms_service = get_sms_service()
+            return await sms_service.send_verification_code(phone, purpose)
+        except (ValidationError, AuthenticationError, ConflictError, NotFoundError) as e:
+            # 业务异常直接抛出
+            raise
+        except Exception as e:
+            logger.error(f"Failed to send verification code | phone={phone} | purpose={purpose} | error={e}")
+            from core.exceptions import AppException
+            raise AppException(
+                code="SMS_SEND_ERROR",
+                message="发送验证码失败，请稍后重试",
+                status_code=500
+            )
 
     async def verify_code_only(self, phone: str, code: str, purpose: str) -> bool:
         """
@@ -231,9 +243,21 @@ class AuthService:
         Raises:
             ValidationError: 验证码错误
         """
-        if not await self._verify_code(phone, code, purpose):
-            raise ValidationError("验证码错误或已过期")
-        return True
+        try:
+            if not await self._verify_code(phone, code, purpose):
+                raise ValidationError("验证码错误或已过期")
+            return True
+        except (ValidationError, AuthenticationError, ConflictError, NotFoundError) as e:
+            # 业务异常直接抛出
+            raise
+        except Exception as e:
+            logger.error(f"Failed to verify code | phone={phone} | purpose={purpose} | error={e}")
+            from core.exceptions import AppException
+            raise AppException(
+                code="VERIFY_CODE_ERROR",
+                message="验证码验证失败，请稍后重试",
+                status_code=500
+            )
 
     async def reset_password(
         self, phone: str, code: str, new_password: str
@@ -253,27 +277,39 @@ class AuthService:
             NotFoundError: 用户不存在
             ValidationError: 验证码错误
         """
-        # 1. 先检查用户是否存在
-        result = self.db.table("users").select("id").eq("phone", phone).execute()
+        try:
+            # 1. 先检查用户是否存在
+            result = self.db.table("users").select("id").eq("phone", phone).execute()
 
-        if not result.data:
-            raise NotFoundError("用户", phone)
+            if not result.data:
+                raise NotFoundError("用户", phone)
 
-        user_id = result.data[0]["id"]
+            user_id = result.data[0]["id"]
 
-        # 2. 验证验证码
-        if not await self._verify_code(phone, code, "reset_password"):
-            raise ValidationError("验证码错误或已过期")
+            # 2. 验证验证码
+            if not await self._verify_code(phone, code, "reset_password"):
+                raise ValidationError("验证码错误或已过期")
 
-        # 3. 更新密码
-        password_hash = hash_password(new_password)
-        self.db.table("users").update({
-            "password_hash": password_hash
-        }).eq("id", user_id).execute()
+            # 3. 更新密码
+            password_hash = hash_password(new_password)
+            self.db.table("users").update({
+                "password_hash": password_hash
+            }).eq("id", user_id).execute()
 
-        logger.info(f"User password reset | user_id={user_id} | phone={phone}")
+            logger.info(f"User password reset | user_id={user_id} | phone={phone}")
 
-        return {"message": "密码重置成功"}
+            return {"message": "密码重置成功"}
+        except (ValidationError, AuthenticationError, ConflictError, NotFoundError) as e:
+            # 业务异常直接抛出
+            raise
+        except Exception as e:
+            logger.error(f"Failed to reset password | phone={phone} | error={e}")
+            from core.exceptions import AppException
+            raise AppException(
+                code="RESET_PASSWORD_ERROR",
+                message="密码重置失败，请稍后重试",
+                status_code=500
+            )
 
     async def _verify_code(self, phone: str, code: str, purpose: str) -> bool:
         """
@@ -287,20 +323,44 @@ class AuthService:
         Returns:
             验证码是否正确
         """
-        sms_service = get_sms_service()
-        return await sms_service.verify_code(phone, code, purpose)
+        try:
+            sms_service = get_sms_service()
+            return await sms_service.verify_code(phone, code, purpose)
+        except (ValidationError, AuthenticationError, ConflictError, NotFoundError) as e:
+            # 业务异常直接抛出
+            raise
+        except Exception as e:
+            logger.error(f"Failed to verify code internally | phone={phone} | purpose={purpose} | error={e}")
+            from core.exceptions import AppException
+            raise AppException(
+                code="VERIFY_CODE_ERROR",
+                message="验证码验证失败，请稍后重试",
+                status_code=500
+            )
 
     async def _subscribe_default_models(self, user_id: str) -> None:
         """为新用户订阅默认模型"""
-        # 获取所有默认模型
-        models = self.db.table("models").select("id").eq("is_default", True).execute()
+        try:
+            # 获取所有默认模型
+            models = self.db.table("models").select("id").eq("is_default", True).execute()
 
-        if models.data:
-            subscriptions = [
-                {"user_id": user_id, "model_id": model["id"]}
-                for model in models.data
-            ]
-            self.db.table("user_subscriptions").insert(subscriptions).execute()
+            if models.data:
+                subscriptions = [
+                    {"user_id": user_id, "model_id": model["id"]}
+                    for model in models.data
+                ]
+                self.db.table("user_subscriptions").insert(subscriptions).execute()
+        except (ValidationError, AuthenticationError, ConflictError, NotFoundError) as e:
+            # 业务异常直接抛出
+            raise
+        except Exception as e:
+            logger.error(f"Failed to subscribe default models | user_id={user_id} | error={e}")
+            from core.exceptions import AppException
+            raise AppException(
+                code="SUBSCRIBE_DEFAULT_MODELS_ERROR",
+                message="订阅默认模型失败",
+                status_code=500
+            )
 
     def _create_token_response(self, user_id: str) -> dict:
         """创建 token 响应"""

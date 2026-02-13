@@ -14,7 +14,7 @@ from supabase import AsyncClient as SupabaseClient
 from redis.asyncio import Redis
 from loguru import logger
 
-from core.exceptions import InsufficientCreditsError
+from core.exceptions import InsufficientCreditsError, AppException
 
 
 class CreditService:
@@ -32,10 +32,18 @@ class CreditService:
 
     async def get_balance(self, user_id: str) -> int:
         """获取用户积分余额"""
-        result = await self.db.table("users").select("credits").eq("id", user_id).single().execute()
-        if not result.data:
-            return 0
-        return result.data.get("credits", 0)
+        try:
+            result = await self.db.table("users").select("credits").eq("id", user_id).single().execute()
+            if not result.data:
+                return 0
+            return result.data.get("credits", 0)
+        except Exception as e:
+            logger.error("获取积分余额失败", user_id=user_id, error=str(e))
+            raise AppException(
+                code="DATABASE_ERROR",
+                message="获取积分余额失败",
+                status_code=500
+            )
 
     async def deduct_atomic(
         self,
@@ -63,34 +71,48 @@ class CreditService:
         Raises:
             InsufficientCreditsError: 余额不足
         """
-        result = await self.db.rpc(
-            'deduct_credits_atomic',
-            {
-                'p_user_id': user_id,
-                'p_amount': amount,
-                'p_reason': reason,
-                'p_change_type': change_type
-            }
-        ).execute()
+        try:
+            result = await self.db.rpc(
+                'deduct_credits_atomic',
+                {
+                    'p_user_id': user_id,
+                    'p_amount': amount,
+                    'p_reason': reason,
+                    'p_change_type': change_type
+                }
+            ).execute()
 
-        if not result.data or result.data.get('success') is False:
-            logger.warning(
-                "积分扣除失败：余额不足",
+            if not result.data or result.data.get('success') is False:
+                # 获取当前余额用于错误提示
+                current_balance = await self.get_balance(user_id)
+                logger.warning(
+                    "积分扣除失败：余额不足",
+                    user_id=user_id,
+                    amount=amount,
+                    current=current_balance,
+                    reason=reason
+                )
+                raise InsufficientCreditsError(required=amount, current=current_balance)
+
+            new_balance = result.data.get('new_balance', 0)
+            logger.info(
+                "积分扣除成功",
                 user_id=user_id,
                 amount=amount,
+                new_balance=new_balance,
                 reason=reason
             )
-            raise InsufficientCreditsError("积分不足")
-
-        new_balance = result.data.get('new_balance', 0)
-        logger.info(
-            "积分扣除成功",
-            user_id=user_id,
-            amount=amount,
-            new_balance=new_balance,
-            reason=reason
-        )
-        return new_balance
+            return new_balance
+        except InsufficientCreditsError:
+            # 业务异常直接抛出
+            raise
+        except Exception as e:
+            logger.error("积分原子扣除失败", user_id=user_id, amount=amount, error=str(e))
+            raise AppException(
+                code="CREDIT_DEDUCT_FAILED",
+                message="积分扣除失败",
+                status_code=500
+            )
 
     async def lock_credits(
         self,
@@ -116,69 +138,82 @@ class CreditService:
         Raises:
             InsufficientCreditsError: 余额不足或系统繁忙
         """
-        MAX_RETRIES = 3
-        transaction_id = str(uuid4())
+        try:
+            MAX_RETRIES = 3
+            transaction_id = str(uuid4())
 
-        # 1. 检查余额
-        current_credits = await self.get_balance(user_id)
-        if current_credits < amount:
-            logger.warning(
-                "积分锁定失败：余额不足",
-                user_id=user_id,
-                amount=amount,
-                current=current_credits
-            )
-            raise InsufficientCreditsError(
-                f"积分不足，当前余额 {current_credits}，需要 {amount}"
-            )
-
-        # 2. 原子扣除（使用乐观锁）
-        new_balance = current_credits - amount
-        update_result = await self.db.table("users").update({
-            "credits": new_balance,
-            "updated_at": datetime.now(timezone.utc).isoformat()
-        }).eq("id", user_id).eq("credits", current_credits).execute()
-
-        if not update_result.data:
-            # 乐观锁冲突，有限重试
-            if _retry_count >= MAX_RETRIES:
-                logger.error(
-                    "积分锁定失败：乐观锁冲突超过最大重试次数",
+            # 1. 检查余额
+            current_credits = await self.get_balance(user_id)
+            if current_credits < amount:
+                logger.warning(
+                    "积分锁定失败：余额不足",
                     user_id=user_id,
-                    retry_count=_retry_count
+                    amount=amount,
+                    current=current_credits
                 )
-                raise InsufficientCreditsError("系统繁忙，请稍后重试")
+                raise InsufficientCreditsError(required=amount, current=current_credits)
 
-            logger.warning(
-                "积分锁定乐观锁冲突，重试",
+            # 2. 原子扣除（使用乐观锁）
+            new_balance = current_credits - amount
+            update_result = await self.db.table("users").update({
+                "credits": new_balance,
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }).eq("id", user_id).eq("credits", current_credits).execute()
+
+            if not update_result.data:
+                # 乐观锁冲突，有限重试
+                if _retry_count >= MAX_RETRIES:
+                    logger.error(
+                        "积分锁定失败：乐观锁冲突超过最大重试次数",
+                        user_id=user_id,
+                        retry_count=_retry_count
+                    )
+                    raise AppException(
+                        code="SYSTEM_BUSY",
+                        message="系统繁忙，请稍后重试",
+                        status_code=503
+                    )
+
+                logger.warning(
+                    "积分锁定乐观锁冲突，重试",
+                    user_id=user_id,
+                    retry_count=_retry_count + 1
+                )
+                return await self.lock_credits(
+                    task_id, user_id, amount, reason,
+                    _retry_count=_retry_count + 1
+                )
+
+            # 3. 记录事务
+            await self.db.table("credit_transactions").insert({
+                "id": transaction_id,
+                "task_id": task_id,
+                "user_id": user_id,
+                "amount": amount,
+                "type": "lock",
+                "status": "pending",
+                "reason": reason
+            }).execute()
+
+            logger.info(
+                "积分锁定成功",
+                transaction_id=transaction_id,
+                task_id=task_id,
                 user_id=user_id,
-                retry_count=_retry_count + 1
-            )
-            return await self.lock_credits(
-                task_id, user_id, amount, reason,
-                _retry_count=_retry_count + 1
+                amount=amount
             )
 
-        # 3. 记录事务
-        await self.db.table("credit_transactions").insert({
-            "id": transaction_id,
-            "task_id": task_id,
-            "user_id": user_id,
-            "amount": amount,
-            "type": "lock",
-            "status": "pending",
-            "reason": reason
-        }).execute()
-
-        logger.info(
-            "积分锁定成功",
-            transaction_id=transaction_id,
-            task_id=task_id,
-            user_id=user_id,
-            amount=amount
-        )
-
-        return transaction_id
+            return transaction_id
+        except (InsufficientCreditsError, AppException):
+            # 业务异常直接抛出
+            raise
+        except Exception as e:
+            logger.error("积分锁定异常", task_id=task_id, user_id=user_id, amount=amount, error=str(e))
+            raise AppException(
+                code="CREDIT_LOCK_FAILED",
+                message="积分锁定失败",
+                status_code=500
+            )
 
     async def confirm_deduct(self, transaction_id: str) -> None:
         """
@@ -187,12 +222,20 @@ class CreditService:
         Args:
             transaction_id: 事务ID
         """
-        await self.db.table("credit_transactions").update({
-            "status": "confirmed",
-            "confirmed_at": datetime.now(timezone.utc).isoformat()
-        }).eq("id", transaction_id).execute()
+        try:
+            await self.db.table("credit_transactions").update({
+                "status": "confirmed",
+                "confirmed_at": datetime.now(timezone.utc).isoformat()
+            }).eq("id", transaction_id).execute()
 
-        logger.info("积分扣除确认", transaction_id=transaction_id)
+            logger.info("积分扣除确认", transaction_id=transaction_id)
+        except Exception as e:
+            logger.error("确认积分扣除失败", transaction_id=transaction_id, error=str(e))
+            raise AppException(
+                code="CREDIT_CONFIRM_FAILED",
+                message="确认积分扣除失败",
+                status_code=500
+            )
 
     async def refund_credits(self, transaction_id: str) -> None:
         """
@@ -201,42 +244,50 @@ class CreditService:
         Args:
             transaction_id: 事务ID
         """
-        # 1. 获取事务信息
-        tx_result = await self.db.table("credit_transactions").select("*").eq("id", transaction_id).single().execute()
-        if not tx_result.data:
-            logger.warning("退回失败：事务不存在", transaction_id=transaction_id)
-            return
+        try:
+            # 1. 获取事务信息
+            tx_result = await self.db.table("credit_transactions").select("*").eq("id", transaction_id).single().execute()
+            if not tx_result.data:
+                logger.warning("退回失败：事务不存在", transaction_id=transaction_id)
+                return
 
-        tx = tx_result.data
-        if tx["status"] != "pending":
-            logger.warning(
-                "退回失败：事务状态不是 pending",
+            tx = tx_result.data
+            if tx["status"] != "pending":
+                logger.warning(
+                    "退回失败：事务状态不是 pending",
+                    transaction_id=transaction_id,
+                    status=tx["status"]
+                )
+                return
+
+            # 2. 退回积分
+            await self.db.rpc(
+                'refund_credits',
+                {
+                    'p_user_id': tx["user_id"],
+                    'p_amount': tx["amount"]
+                }
+            ).execute()
+
+            # 3. 更新事务状态
+            await self.db.table("credit_transactions").update({
+                "status": "refunded",
+                "confirmed_at": datetime.now(timezone.utc).isoformat()
+            }).eq("id", transaction_id).execute()
+
+            logger.info(
+                "积分退回成功",
                 transaction_id=transaction_id,
-                status=tx["status"]
+                user_id=tx["user_id"],
+                amount=tx["amount"]
             )
-            return
-
-        # 2. 退回积分
-        await self.db.rpc(
-            'refund_credits',
-            {
-                'p_user_id': tx["user_id"],
-                'p_amount': tx["amount"]
-            }
-        ).execute()
-
-        # 3. 更新事务状态
-        await self.db.table("credit_transactions").update({
-            "status": "refunded",
-            "confirmed_at": datetime.now(timezone.utc).isoformat()
-        }).eq("id", transaction_id).execute()
-
-        logger.info(
-            "积分退回成功",
-            transaction_id=transaction_id,
-            user_id=tx["user_id"],
-            amount=tx["amount"]
-        )
+        except Exception as e:
+            logger.error("退回积分失败", transaction_id=transaction_id, error=str(e))
+            raise AppException(
+                code="CREDIT_REFUND_FAILED",
+                message="退回积分失败",
+                status_code=500
+            )
 
     @asynccontextmanager
     async def credit_lock(
