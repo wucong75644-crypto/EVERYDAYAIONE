@@ -267,8 +267,8 @@ class BaseHandler(ABC):
 
     async def _get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         """获取任务信息"""
-        result = (
-            self.db.table("tasks")
+        result = await (
+            await self.db.table("tasks")
             .select("*")
             .eq("external_task_id", task_id)
             .maybe_single()
@@ -289,7 +289,7 @@ class BaseHandler(ABC):
         - 未设置 → Chat 直接路径 → 更新 version + started_at + status
         """
         # 先获取当前任务
-        task_result = self.db.table("tasks").select("version, started_at, status").eq("external_task_id", task_id).execute()
+        task_result = await self.db.table("tasks").select("version, started_at, status").eq("external_task_id", task_id).execute()
         if not task_result.data:
             logger.error(f"Task not found for completion | task_id={task_id}")
             return
@@ -306,7 +306,7 @@ class BaseHandler(ABC):
         # 路径1：started_at 已设置 → Image/Video 通过 process_result 调用
         # process_result 已经更新了 version，这里只更新 status 和 completed_at
         if task.get("started_at"):
-            self.db.table("tasks").update({
+            await self.db.table("tasks").update({
                 "status": "completed",
                 "completed_at": datetime.utcnow().isoformat(),
             }).eq("external_task_id", task_id).execute()
@@ -327,7 +327,7 @@ class BaseHandler(ABC):
             }
 
             # 执行更新（带乐观锁检查）
-            result = self.db.table("tasks").update(update_data).eq("external_task_id", task_id).eq("version", current_version).execute()
+            result = await self.db.table("tasks").update(update_data).eq("external_task_id", task_id).eq("version", current_version).execute()
 
             if not result.data:
                 logger.warning(
@@ -347,7 +347,7 @@ class BaseHandler(ABC):
         同 _complete_task 逻辑：根据 started_at 判断调用路径
         """
         # 先获取当前任务
-        task_result = self.db.table("tasks").select("version, started_at, status").eq("external_task_id", task_id).execute()
+        task_result = await self.db.table("tasks").select("version, started_at, status").eq("external_task_id", task_id).execute()
         if not task_result.data:
             logger.error(f"Task not found for failure | task_id={task_id}")
             return
@@ -363,7 +363,7 @@ class BaseHandler(ABC):
 
         # 路径1：started_at 已设置 → process_result 路径
         if task.get("started_at"):
-            self.db.table("tasks").update({
+            await self.db.table("tasks").update({
                 "status": "failed",
                 "error_message": error_message,
                 "completed_at": datetime.utcnow().isoformat(),
@@ -384,7 +384,7 @@ class BaseHandler(ABC):
                 "started_at": datetime.utcnow().isoformat(),
             }
 
-            result = self.db.table("tasks").update(update_data).eq("external_task_id", task_id).eq("version", current_version).execute()
+            result = await self.db.table("tasks").update(update_data).eq("external_task_id", task_id).eq("version", current_version).execute()
 
             if not result.data:
                 logger.warning(
@@ -403,7 +403,7 @@ class BaseHandler(ABC):
 
     async def _get_user_balance(self, user_id: str) -> int:
         """获取用户积分余额"""
-        result = self.db.table("users").select("credits").eq("id", user_id).single().execute()
+        result = await self.db.table("users").select("credits").eq("id", user_id).single().execute()
         if not result.data:
             return 0
         return result.data.get("credits", 0)
@@ -462,7 +462,7 @@ class BaseHandler(ABC):
 
         # 2. 原子扣除（使用乐观锁）
         new_balance = current_credits - amount
-        update_result = self.db.table("users").update({
+        update_result = await self.db.table("users").update({
             "credits": new_balance,
             "updated_at": datetime.now(timezone.utc).isoformat()
         }).eq("id", user_id).eq("credits", current_credits).execute()
@@ -475,7 +475,7 @@ class BaseHandler(ABC):
                 raise InsufficientCreditsError(required=amount, current=current_credits)
 
             new_balance = current_credits - amount
-            update_result = self.db.table("users").update({
+            update_result = await self.db.table("users").update({
                 "credits": new_balance,
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }).eq("id", user_id).eq("credits", current_credits).execute()
@@ -484,7 +484,7 @@ class BaseHandler(ABC):
                 raise InsufficientCreditsError(required=amount, current=current_credits)
 
         # 3. 记录事务
-        self.db.table("credit_transactions").insert({
+        await self.db.table("credit_transactions").insert({
             "id": transaction_id,
             "task_id": task_id,
             "user_id": user_id,
@@ -508,7 +508,7 @@ class BaseHandler(ABC):
         Args:
             transaction_id: 事务 ID
         """
-        self.db.table("credit_transactions").update({
+        await self.db.table("credit_transactions").update({
             "status": "confirmed",
             "confirmed_at": datetime.now(timezone.utc).isoformat()
         }).eq("id", transaction_id).execute()
@@ -523,7 +523,7 @@ class BaseHandler(ABC):
             transaction_id: 事务 ID
         """
         # 1. 获取事务信息
-        tx_result = self.db.table("credit_transactions").select("*").eq(
+        tx_result = await self.db.table("credit_transactions").select("*").eq(
             "id", transaction_id
         ).maybe_single().execute()
 
@@ -531,7 +531,7 @@ class BaseHandler(ABC):
             logger.warning(f"Refund failed: transaction not found | id={transaction_id}")
             return
 
-        tx = tx_result.data
+        tx = await tx_result.data
         if tx["status"] != "pending":
             logger.warning(
                 f"Refund failed: status not pending | "
@@ -549,7 +549,7 @@ class BaseHandler(ABC):
         ).execute()
 
         # 3. 更新事务状态
-        self.db.table("credit_transactions").update({
+        await self.db.table("credit_transactions").update({
             "status": "refunded",
             "confirmed_at": datetime.now(timezone.utc).isoformat()
         }).eq("id", transaction_id).execute()
@@ -582,7 +582,7 @@ class BaseHandler(ABC):
             InsufficientCreditsError: 余额不足
         """
         try:
-            result = self.db.rpc(
+            result = await self.db.rpc(
                 'deduct_credits_atomic',
                 {
                     'p_user_id': user_id,
@@ -703,7 +703,7 @@ class BaseHandler(ABC):
             message_data["error"] = error_dict
 
         # 2. Upsert 到数据库
-        upsert_result = self.db.table("messages").upsert(
+        upsert_result = await self.db.table("messages").upsert(
             message_data, on_conflict="id"
         ).execute()
 

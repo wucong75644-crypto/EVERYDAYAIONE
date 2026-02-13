@@ -222,6 +222,25 @@ class MockAsyncSupabaseTable:
         self._single = True
         return self
 
+    def maybe_single(self):
+        """返回单个结果或 None（类似 single 但不抛异常）"""
+        self._single = True
+        return self
+
+    def order(self, column: str, **kwargs):
+        """排序（mock 实现）"""
+        return self
+
+    def limit(self, count: int):
+        """限制结果数量"""
+        self._limit = count
+        return self
+
+    def offset(self, count: int):
+        """偏移量"""
+        self._offset = count
+        return self
+
     async def execute(self):
         """异步执行查询"""
         result = MagicMock()
@@ -229,6 +248,12 @@ class MockAsyncSupabaseTable:
         filtered = self._data
         for field, value in self._filters.items():
             filtered = [d for d in filtered if d.get(field) == value]
+
+        # 应用 offset 和 limit
+        if hasattr(self, '_offset'):
+            filtered = filtered[self._offset:]
+        if hasattr(self, '_limit'):
+            filtered = filtered[:self._limit]
 
         if self._single:
             result.data = filtered[0] if filtered else None
