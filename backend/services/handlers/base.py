@@ -260,7 +260,10 @@ class BaseHandler(ABC):
 
     def _extract_image_url(self, content: List[ContentPart]) -> Optional[str]:
         """从 ContentPart 数组提取图片 URL"""
+        from schemas.message import ImagePart
         for part in content:
+            if isinstance(part, ImagePart):
+                return part.url
             if isinstance(part, dict) and part.get("type") == "image":
                 return part.get("url")
         return None
@@ -268,7 +271,7 @@ class BaseHandler(ABC):
     async def _get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         """获取任务信息"""
         result = await (
-            await self.db.table("tasks")
+            self.db.table("tasks")  # 移除错误的 await
             .select("*")
             .eq("external_task_id", task_id)
             .maybe_single()
@@ -531,7 +534,7 @@ class BaseHandler(ABC):
             logger.warning(f"Refund failed: transaction not found | id={transaction_id}")
             return
 
-        tx = await tx_result.data
+        tx = tx_result.data  # 移除错误的 await
         if tx["status"] != "pending":
             logger.warning(
                 f"Refund failed: status not pending | "
@@ -540,7 +543,7 @@ class BaseHandler(ABC):
             return
 
         # 2. 退回积分（原子增加）
-        self.db.rpc(
+        await self.db.rpc(
             'refund_credits',
             {
                 'p_user_id': tx["user_id"],
