@@ -330,15 +330,12 @@ class TestBaseHandlerCredits:
     async def test_lock_credits_success(self, handler, mock_async_db):
         """测试：锁定积分成功"""
         user = create_test_user(credits=100)
+
+        # 设置用户数据（用于 _get_user_balance 查询）
         mock_async_db.set_table_data("users", [user])
 
-        # Mock 数据库操作
-        mock_async_db.table("users").execute = AsyncMock(
-            return_value=MagicMock(data=[{"credits": 90}])
-        )
-        mock_async_db.table("credit_transactions").execute = AsyncMock(
-            return_value=MagicMock(data=[{"id": "tx_123"}])
-        )
+        # 设置空的 credit_transactions 表（用于 insert）
+        mock_async_db.set_table_data("credit_transactions", [])
 
         tx_id = await handler._lock_credits(
             task_id="task_123",
@@ -449,6 +446,8 @@ class TestBaseHandlerTaskManagement:
             "user_id": "user_123",
             "status": "running",
         }
+
+        # 直接设置表数据，MockAsyncSupabaseTable 会自动处理
         mock_async_db.set_table_data("tasks", [task_data])
 
         task = await handler._get_task("task_123")
@@ -459,6 +458,7 @@ class TestBaseHandlerTaskManagement:
     @pytest.mark.asyncio
     async def test_get_task_not_found(self, handler, mock_async_db):
         """测试：任务不存在"""
+        # 设置空数据
         mock_async_db.set_table_data("tasks", [])
 
         task = await handler._get_task("nonexistent")
@@ -575,13 +575,7 @@ class TestBaseHandlerEdgeCases:
         """测试：锁定 0 积分"""
         user = create_test_user(credits=100)
         mock_async_db.set_table_data("users", [user])
-
-        mock_async_db.table("users").execute = AsyncMock(
-            return_value=MagicMock(data=[{"credits": 100}])
-        )
-        mock_async_db.table("credit_transactions").execute = AsyncMock(
-            return_value=MagicMock(data=[{"id": "tx_123"}])
-        )
+        mock_async_db.set_table_data("credit_transactions", [])
 
         tx_id = await handler._lock_credits(
             task_id="task_123",
@@ -597,13 +591,7 @@ class TestBaseHandlerEdgeCases:
         """测试：锁定恰好等于余额的积分"""
         user = create_test_user(credits=50)
         mock_async_db.set_table_data("users", [user])
-
-        mock_async_db.table("users").execute = AsyncMock(
-            return_value=MagicMock(data=[{"credits": 0}])
-        )
-        mock_async_db.table("credit_transactions").execute = AsyncMock(
-            return_value=MagicMock(data=[{"id": "tx_123"}])
-        )
+        mock_async_db.set_table_data("credit_transactions", [])
 
         tx_id = await handler._lock_credits(
             task_id="task_123",
