@@ -78,6 +78,171 @@ class OSSService:
             f"cdn={self.cdn_domain or 'not configured'}"
         )
 
+    async def _download_from_url(
+        self,
+        url: str,
+        user_id: str,
+        media_type: str,
+    ) -> tuple[bytes, str]:
+        """
+        从远程 URL 下载文件
+
+        Args:
+            url: 远程文件 URL
+            user_id: 用户 ID
+            media_type: 媒体类型（image/video）
+
+        Returns:
+            (content, content_type): 文件内容和 Content-Type
+
+        Raises:
+            ValueError: URL 无效或文件过大
+        """
+        # 确定大小限制
+        max_size = self.MAX_VIDEO_SIZE if media_type == "video" else self.MAX_IMAGE_SIZE
+        max_size_mb = max_size / 1024 / 1024
+
+        # 预检查文件大小（HEAD 请求）
+        timeout = 120.0 if media_type == "video" else 30.0
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            try:
+                # 尝试 HEAD 请求获取 Content-Length
+                try:
+                    head_response = await client.head(url, timeout=10.0)
+                    content_length = head_response.headers.get("content-length")
+                    if content_length:
+                        size = int(content_length)
+                        if size > max_size:
+                            logger.warning(
+                                f"{media_type.capitalize()} too large | "
+                                f"size={size/1024/1024:.1f}MB | max={max_size_mb}MB"
+                            )
+                            raise ValueError(
+                                f"{media_type}文件过大: "
+                                f"{size/1024/1024:.1f}MB > {max_size_mb}MB"
+                            )
+                        logger.info(
+                            f"Pre-check passed | size={size/1024/1024:.1f}MB | "
+                            f"max={max_size_mb}MB"
+                        )
+                except (httpx.HTTPError, ValueError) as e:
+                    # HEAD 请求失败或不支持，继续尝试 GET（流式下载时检查）
+                    logger.debug(f"HEAD request failed, will check size during download: {e}")
+
+                # 流式下载并检查累计大小
+                content_chunks = []
+                total_size = 0
+
+                async with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    content_type = response.headers.get("content-type", "")
+
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        content_chunks.append(chunk)
+                        total_size += len(chunk)
+
+                        # 实时检查是否超限
+                        if total_size > max_size:
+                            logger.warning(
+                                f"{media_type.capitalize()} download aborted | "
+                                f"size={total_size/1024/1024:.1f}MB > {max_size_mb}MB"
+                            )
+                            raise ValueError(
+                                f"{media_type}下载超限: >{max_size_mb}MB"
+                            )
+
+                # 合并所有块
+                content = b"".join(content_chunks)
+                logger.info(
+                    f"{media_type.capitalize()} downloaded | "
+                    f"size={len(content)/1024/1024:.1f}MB"
+                )
+                return content, content_type
+
+            except (ValueError, ValidationError, AppException):
+                raise
+            except httpx.HTTPError as e:
+                logger.error(
+                    f"Failed to download {media_type} | user_id={user_id} | "
+                    f"url={url[:100]} | error={str(e)}"
+                )
+                # 脱敏：不暴露原始URL和HTTP错误详情
+                raise ValueError(f"{media_type}下载失败，请检查URL是否有效")
+
+    async def _validate_and_upload(
+        self,
+        content: bytes,
+        content_type: str,
+        url: str,
+        user_id: str,
+        category: str,
+        media_type: str,
+    ) -> tuple[str, str]:
+        """
+        验证格式并上传到 OSS
+
+        Args:
+            content: 文件内容
+            content_type: Content-Type
+            url: 原始 URL（用于提取扩展名）
+            user_id: 用户 ID
+            category: 分类
+            media_type: 媒体类型
+
+        Returns:
+            (object_key, access_url): 对象键和访问 URL
+
+        Raises:
+            ValueError: 格式不支持
+            AppException: OSS 上传失败
+        """
+        # 确定文件扩展名
+        ext = self._get_extension(url, content_type, media_type)
+
+        # 验证格式
+        if media_type == "video":
+            if ext not in self.SUPPORTED_VIDEO_FORMATS:
+                raise ValueError(f"不支持的视频格式: {ext}")
+        else:
+            if ext not in self.SUPPORTED_IMAGE_FORMATS:
+                raise ValueError(f"不支持的图片格式: {ext}")
+
+        # 生成对象键（按日期分目录）
+        prefix = self.VIDEO_PREFIX if media_type == "video" else self.IMAGE_PREFIX
+        object_key = self._generate_object_key(user_id, category, ext, prefix)
+
+        # 上传到 OSS（使用线程池避免阻塞event loop）
+        try:
+            import asyncio
+            # 将同步OSS上传放到线程池执行，避免阻塞worker
+            result = await asyncio.to_thread(
+                self.bucket.put_object,
+                object_key,
+                content,
+                headers={"Content-Type": content_type or f"{media_type}/{ext}"},
+            )
+            logger.info(
+                f"{media_type.capitalize()} uploaded: object_key={object_key}, "
+                f"size={len(content)}, etag={result.etag}"
+            )
+        except (ValueError, ValidationError, AppException):
+            raise
+        except oss2.exceptions.OssError as e:
+            logger.error(
+                f"OSS upload failed | user_id={user_id} | object_key={object_key} | "
+                f"media_type={media_type} | error={str(e)}"
+            )
+            # 脱敏：不暴露OSS内部错误详情
+            raise AppException(
+                code="OSS_UPLOAD_ERROR",
+                message="OSS 上传失败，请稍后重试",
+                status_code=500,
+            )
+
+        # 生成访问 URL
+        access_url = self.get_url(object_key)
+        return object_key, access_url
+
     async def upload_from_url(
         self,
         url: str,
@@ -108,127 +273,20 @@ class OSSService:
         """
         logger.info(f"Uploading {media_type} from URL: user_id={user_id}, url={url[:100]}...")
 
-        # 确定大小限制
-        max_size = self.MAX_VIDEO_SIZE if media_type == "video" else self.MAX_IMAGE_SIZE
-        max_size_mb = max_size / 1024 / 1024
+        # 1. 下载文件
+        content, content_type = await self._download_from_url(url, user_id, media_type)
 
-        # 1. 预检查文件大小（HEAD 请求）
-        timeout = 120.0 if media_type == "video" else 30.0
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            try:
-                # 尝试 HEAD 请求获取 Content-Length
-                try:
-                    head_response = await client.head(url, timeout=10.0)
-                    content_length = head_response.headers.get("content-length")
-                    if content_length:
-                        size = int(content_length)
-                        if size > max_size:
-                            logger.warning(
-                                f"{media_type.capitalize()} too large | "
-                                f"size={size/1024/1024:.1f}MB | max={max_size_mb}MB"
-                            )
-                            raise ValueError(
-                                f"{media_type}文件过大: "
-                                f"{size/1024/1024:.1f}MB > {max_size_mb}MB"
-                            )
-                        logger.info(
-                            f"Pre-check passed | size={size/1024/1024:.1f}MB | "
-                            f"max={max_size_mb}MB"
-                        )
-                except (httpx.HTTPError, ValueError) as e:
-                    # HEAD 请求失败或不支持，继续尝试 GET（流式下载时检查）
-                    logger.debug(f"HEAD request failed, will check size during download: {e}")
+        # 2. 验证并上传
+        object_key, access_url = await self._validate_and_upload(
+            content, content_type, url, user_id, category, media_type
+        )
 
-                # 2. 流式下载并检查累计大小
-                content_chunks = []
-                total_size = 0
-
-                async with client.stream("GET", url) as response:
-                    response.raise_for_status()
-                    content_type = response.headers.get("content-type", "")
-
-                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                        content_chunks.append(chunk)
-                        total_size += len(chunk)
-
-                        # 实时检查是否超限
-                        if total_size > max_size:
-                            logger.warning(
-                                f"{media_type.capitalize()} download aborted | "
-                                f"size={total_size/1024/1024:.1f}MB > {max_size_mb}MB"
-                            )
-                            raise ValueError(
-                                f"{media_type}下载超限: >{max_size_mb}MB"
-                            )
-
-                # 合并所有块
-                content = b"".join(content_chunks)
-                logger.info(
-                    f"{media_type.capitalize()} downloaded | "
-                    f"size={len(content)/1024/1024:.1f}MB"
-                )
-
-            except (ValueError, ValidationError, AppException):
-                raise
-            except httpx.HTTPError as e:
-                logger.error(
-                    f"Failed to download {media_type} | user_id={user_id} | "
-                    f"url={url[:100]} | error={str(e)}"
-                )
-                # 脱敏：不暴露原始URL和HTTP错误详情
-                raise ValueError(f"{media_type}下载失败，请检查URL是否有效")
-
-        # 2. 确定文件扩展名
-        ext = self._get_extension(url, content_type, media_type)
-
-        # 验证格式
-        if media_type == "video":
-            if ext not in self.SUPPORTED_VIDEO_FORMATS:
-                raise ValueError(f"不支持的视频格式: {ext}")
-        else:
-            if ext not in self.SUPPORTED_IMAGE_FORMATS:
-                raise ValueError(f"不支持的图片格式: {ext}")
-
-        # 3. 生成对象键（按日期分目录）
-        prefix = self.VIDEO_PREFIX if media_type == "video" else self.IMAGE_PREFIX
-        object_key = self._generate_object_key(user_id, category, ext, prefix)
-
-        # 4. 上传到 OSS（使用线程池避免阻塞event loop）
-        try:
-            import asyncio
-            # 将同步OSS上传放到线程池执行，避免阻塞worker
-            result = await asyncio.to_thread(
-                self.bucket.put_object,
-                object_key,
-                content,
-                headers={"Content-Type": content_type or f"{media_type}/{ext}"},
-            )
-            logger.info(
-                f"{media_type.capitalize()} uploaded: object_key={object_key}, "
-                f"size={len(content)}, etag={result.etag}"
-            )
-        except (ValueError, ValidationError, AppException):
-            raise
-        except oss2.exceptions.OssError as e:
-            logger.error(
-                f"OSS upload failed | user_id={user_id} | object_key={object_key} | "
-                f"media_type={media_type} | error={str(e)}"
-            )
-            # 脱敏：不暴露OSS内部错误详情
-            raise AppException(
-                code="OSS_UPLOAD_ERROR",
-                message="OSS 上传失败，请稍后重试",
-                status_code=500,
-            )
-
-        # 5. 生成访问 URL
-        access_url = self.get_url(object_key)
-
+        # 3. 返回结果
         return {
             "object_key": object_key,
             "url": access_url,
             "size": len(content),
-            "content_type": content_type or f"{media_type}/{ext}",
+            "content_type": content_type or f"{media_type}/{self._get_extension(url, content_type, media_type)}",
         }
 
     def upload_bytes(
