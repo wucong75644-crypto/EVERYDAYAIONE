@@ -72,15 +72,7 @@ export function useUnifiedMessages(conversationId: string | null): Message[] {
   return useMemo(() => {
     if (!conversationId) return EMPTY_MESSAGES;
 
-    // 🔥 DEBUG: 记录合并前的状态
-    console.log('🔥 [DEBUG] useUnifiedMessages - conversationId:', conversationId);
-    console.log('🔥 [DEBUG] useUnifiedMessages - messages:', messages);
-    console.log('🔥 [DEBUG] useUnifiedMessages - optimisticMessages:', optimisticMessages);
-
     const merged = mergeMessages(messages, optimisticMessages);
-
-    // 🔥 DEBUG: 记录合并结果
-    console.log('🔥 [DEBUG] useUnifiedMessages - merged:', merged);
 
     return merged;
   }, [conversationId, messages, optimisticMessages]);
