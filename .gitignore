@@ -18,6 +18,9 @@ ENV/
 # Environment variables
 .env
 .env.local
+.env.production
+deploy/.env*
+deploy/config.env
 
 # Node modules
 node_modules/
@@ -48,4 +51,9 @@ build/
 
 # Migrations (keep tracked)
 !backend/migrations/
+
+# Backup files
+*.bak
+*.backup
+*.tmp
 
