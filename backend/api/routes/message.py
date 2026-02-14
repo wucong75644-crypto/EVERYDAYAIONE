@@ -100,153 +100,265 @@ async def generate_message(
             client_request_id=body.client_request_id,
         )
 
-    # 5. 处理助手消息
+    # 5. 处理助手消息（根据操作类型）
     if body.operation == MessageOperation.RETRY:
-        # retry: 更新原失败消息状态
-
-        if not body.original_message_id:
-            raise HTTPException(status_code=400, detail="retry 操作必须提供 original_message_id")
-
-        # 校验原消息状态
-        original_msg = db.table("messages").select("id, status, conversation_id").eq(
-            "id", body.original_message_id
-        ).single().execute()
-
-        if not original_msg.data:
-            raise HTTPException(status_code=404, detail="原消息不存在")
-
-        if original_msg.data["conversation_id"] != conversation_id:
-            raise HTTPException(status_code=403, detail="消息不属于该对话")
-
-        if original_msg.data["status"] != MessageStatus.FAILED.value:
-            raise HTTPException(status_code=400, detail="retry 只能用于失败消息")
-
-        # 检查是否有进行中的任务
-        existing_task = db.table("tasks").select("id").eq(
-            "placeholder_message_id", body.original_message_id
-        ).in_("status", ["pending", "running"]).execute()
-
-        if existing_task.data:
-            raise HTTPException(status_code=409, detail="该消息正在处理中，请稍候")
-
-        assistant_message_id = body.original_message_id
-        assistant_message = await _reset_message_for_retry(
+        assistant_message_id, assistant_message = await _handle_retry_operation(
             db=db,
-            message_id=assistant_message_id,
+            conversation_id=conversation_id,
+            original_message_id=body.original_message_id,
             gen_type=gen_type,
             model=body.model,
             params=body.params,
         )
-    elif body.operation == MessageOperation.REGENERATE:
-        # regenerate: 校验原消息并生成新 ID（不创建占位符）
-
-        if body.original_message_id:
-            # 校验原消息状态（必须是成功消息）
-            original_msg = db.table("messages").select("id, status, conversation_id").eq(
-                "id", body.original_message_id
-            ).single().execute()
-
-            if original_msg.data and original_msg.data["status"] == MessageStatus.FAILED.value:
-                raise HTTPException(status_code=400, detail="regenerate 只能用于成功消息，失败消息请用 retry")
-
-        # 只生成 ID，不创建占位符消息（前端负责创建占位符）
-        assistant_message_id = body.assistant_message_id or str(uuid.uuid4())
-
-        # 构建 generation_params（只设置 type，前端用来判断占位符类型）
-        generation_params_obj = GenerationParams(type=gen_type)
-
-        # 构造返回用的虚拟 Message（不存储到数据库）
-        assistant_message = Message(
-            id=assistant_message_id,
-            conversation_id=conversation_id,
-            role=MessageRole.ASSISTANT,
-            content=[],
-            status=MessageStatus.PENDING,
-            created_at=body.placeholder_created_at or datetime.utcnow(),
-            generation_params=generation_params_obj,
-        )
     else:
-        # send: 只生成 ID，不创建占位符消息（前端负责创建占位符）
-        assistant_message_id = body.assistant_message_id or str(uuid.uuid4())
-
-        # 构建 generation_params（只设置 type，前端用来判断占位符类型）
-        generation_params_obj = GenerationParams(type=gen_type)
-
-        # 构造返回用的虚拟 Message（不存储到数据库）
-        assistant_message = Message(
-            id=assistant_message_id,
+        assistant_message_id, assistant_message = await _handle_regenerate_or_send_operation(
+            db=db,
             conversation_id=conversation_id,
-            role=MessageRole.ASSISTANT,
-            content=[],
-            status=MessageStatus.PENDING,
-            created_at=body.placeholder_created_at or datetime.utcnow(),
-            generation_params=generation_params_obj,
+            operation=body.operation,
+            original_message_id=body.original_message_id,
+            assistant_message_id=body.assistant_message_id,
+            placeholder_created_at=body.placeholder_created_at,
+            gen_type=gen_type,
         )
 
     # 6. 获取 Handler 并启动任务
     handler = get_handler(gen_type, db)
 
-    # 🔥 分离元数据和业务参数
-    from services.handlers.base import TaskMetadata
-
-    # 🔍 日志：接收到的 client_task_id
-    logger.info(
-        f"[message.py] Received request | "
-        f"operation={body.operation} | gen_type={gen_type} | "
-        f"client_task_id={body.client_task_id} | "
-        f"assistant_message_id={assistant_message_id}"
-    )
-
-    # 构建元数据
-    metadata = TaskMetadata(
-        client_task_id=body.client_task_id,
-        placeholder_created_at=body.placeholder_created_at,
-    )
-
-    # 构建纯业务参数（排除元数据字段）
-    business_params = {}
-    if body.params:
-        for k, v in body.params.items():
-            if k not in {"client_task_id", "placeholder_created_at"}:
-                business_params[k] = v
-
-    # 添加 model（如果有）
-    if body.model:
-        business_params["model"] = body.model
-
-    external_task_id = await handler.start(
-        message_id=assistant_message_id,
+    external_task_id = await _start_generation_task(
+        db=db,
+        handler=handler,
+        assistant_message_id=assistant_message_id,
         conversation_id=conversation_id,
         user_id=user_id,
         content=body.content,
-        params=business_params,
-        metadata=metadata,
+        model=body.model,
+        params=body.params,
+        client_task_id=body.client_task_id,
+        placeholder_created_at=body.placeholder_created_at,
+        operation=body.operation,
     )
 
     # 7. 确定返回的 client_task_id（Handler 已保存到数据库）
     client_task_id = body.client_task_id or external_task_id
 
-    # 🔍 日志：返回给前端的 task_id
-    logger.info(
-        f"[message.py] Returning to frontend | "
-        f"client_task_id={client_task_id} | "
-        f"external_task_id={external_task_id} | "
-        f"assistant_message_id={assistant_message_id}"
-    )
-
-    # 8. 更新消息的 task_id（仅 retry 操作，因为消息已存在）
-    if body.operation == MessageOperation.RETRY:
-        db.table("messages").update({
-            "task_id": client_task_id,
-        }).eq("id", assistant_message_id).execute()
-
-    # 🔥 返回 client_task_id（前端已订阅）
+    # 8. 返回结果
     return GenerateResponse(
         task_id=client_task_id,
         user_message=user_message,
         assistant_message=assistant_message,
         operation=body.operation,
     )
+
+
+async def _handle_retry_operation(
+    db: Database,
+    conversation_id: str,
+    original_message_id: Optional[str],
+    gen_type: GenerationType,
+    model: Optional[str],
+    params: Optional[Dict[str, Any]],
+) -> tuple[str, Message]:
+    """
+    处理 retry 操作
+
+    Args:
+        db: 数据库连接
+        conversation_id: 对话 ID
+        original_message_id: 原消息 ID
+        gen_type: 生成类型
+        model: 模型 ID
+        params: 参数
+
+    Returns:
+        (assistant_message_id, assistant_message)
+
+    Raises:
+        HTTPException: 验证失败或消息状态不正确
+    """
+    if not original_message_id:
+        raise HTTPException(status_code=400, detail="retry 操作必须提供 original_message_id")
+
+    # 校验原消息状态
+    original_msg = db.table("messages").select("id, status, conversation_id").eq(
+        "id", original_message_id
+    ).single().execute()
+
+    if not original_msg.data:
+        raise HTTPException(status_code=404, detail="原消息不存在")
+
+    if original_msg.data["conversation_id"] != conversation_id:
+        raise HTTPException(status_code=403, detail="消息不属于该对话")
+
+    if original_msg.data["status"] != MessageStatus.FAILED.value:
+        raise HTTPException(status_code=400, detail="retry 只能用于失败消息")
+
+    # 检查是否有进行中的任务
+    existing_task = db.table("tasks").select("id").eq(
+        "placeholder_message_id", original_message_id
+    ).in_("status", ["pending", "running"]).execute()
+
+    if existing_task.data:
+        raise HTTPException(status_code=409, detail="该消息正在处理中，请稍候")
+
+    # 重置消息状态
+    assistant_message_id = original_message_id
+    assistant_message = await _reset_message_for_retry(
+        db=db,
+        message_id=assistant_message_id,
+        gen_type=gen_type,
+        model=model,
+        params=params,
+    )
+
+    return assistant_message_id, assistant_message
+
+
+async def _handle_regenerate_or_send_operation(
+    db: Database,
+    conversation_id: str,
+    operation: MessageOperation,
+    original_message_id: Optional[str],
+    assistant_message_id: Optional[str],
+    placeholder_created_at: Optional[datetime],
+    gen_type: GenerationType,
+) -> tuple[str, Message]:
+    """
+    处理 regenerate 或 send 操作
+
+    Args:
+        db: 数据库连接
+        conversation_id: 对话 ID
+        operation: 操作类型
+        original_message_id: 原消息 ID
+        assistant_message_id: 助手消息 ID
+        placeholder_created_at: 占位符创建时间
+        gen_type: 生成类型
+
+    Returns:
+        (assistant_message_id, assistant_message)
+
+    Raises:
+        HTTPException: regenerate 验证失败
+    """
+    if operation == MessageOperation.REGENERATE and original_message_id:
+        # 校验原消息状态（必须是成功消息）
+        original_msg = db.table("messages").select("id, status, conversation_id").eq(
+            "id", original_message_id
+        ).single().execute()
+
+        if original_msg.data and original_msg.data["status"] == MessageStatus.FAILED.value:
+            raise HTTPException(
+                status_code=400,
+                detail="regenerate 只能用于成功消息，失败消息请用 retry"
+            )
+
+    # 只生成 ID，不创建占位符消息（前端负责创建占位符）
+    assistant_message_id = assistant_message_id or str(uuid.uuid4())
+
+    # 构建 generation_params（只设置 type，前端用来判断占位符类型）
+    generation_params_obj = GenerationParams(type=gen_type)
+
+    # 构造返回用的虚拟 Message（不存储到数据库）
+    assistant_message = Message(
+        id=assistant_message_id,
+        conversation_id=conversation_id,
+        role=MessageRole.ASSISTANT,
+        content=[],
+        status=MessageStatus.PENDING,
+        created_at=placeholder_created_at or datetime.utcnow(),
+        generation_params=generation_params_obj,
+    )
+
+    return assistant_message_id, assistant_message
+
+
+async def _start_generation_task(
+    db: Database,
+    handler,
+    assistant_message_id: str,
+    conversation_id: str,
+    user_id: str,
+    content: List[ContentPart],
+    model: Optional[str],
+    params: Optional[Dict[str, Any]],
+    client_task_id: Optional[str],
+    placeholder_created_at: Optional[datetime],
+    operation: MessageOperation,
+) -> str:
+    """
+    启动生成任务
+
+    Args:
+        db: 数据库连接
+        handler: Handler 实例
+        assistant_message_id: 助手消息 ID
+        conversation_id: 对话 ID
+        user_id: 用户 ID
+        content: 内容
+        model: 模型 ID
+        params: 参数
+        client_task_id: 客户端任务 ID
+        placeholder_created_at: 占位符创建时间
+        operation: 操作类型
+
+    Returns:
+        external_task_id: 外部任务 ID
+    """
+    from services.handlers.base import TaskMetadata
+
+    # 日志：接收到的 client_task_id
+    logger.info(
+        f"[message.py] Starting task | "
+        f"operation={operation} | "
+        f"client_task_id={client_task_id} | "
+        f"assistant_message_id={assistant_message_id}"
+    )
+
+    # 构建元数据
+    metadata = TaskMetadata(
+        client_task_id=client_task_id,
+        placeholder_created_at=placeholder_created_at,
+    )
+
+    # 构建纯业务参数（排除元数据字段）
+    business_params = {}
+    if params:
+        for k, v in params.items():
+            if k not in {"client_task_id", "placeholder_created_at"}:
+                business_params[k] = v
+
+    # 添加 model（如果有）
+    if model:
+        business_params["model"] = model
+
+    # 启动任务
+    external_task_id = await handler.start(
+        message_id=assistant_message_id,
+        conversation_id=conversation_id,
+        user_id=user_id,
+        content=content,
+        params=business_params,
+        metadata=metadata,
+    )
+
+    # 确定返回的 client_task_id
+    final_client_task_id = client_task_id or external_task_id
+
+    # 日志：返回给前端的 task_id
+    logger.info(
+        f"[message.py] Task started | "
+        f"client_task_id={final_client_task_id} | "
+        f"external_task_id={external_task_id} | "
+        f"assistant_message_id={assistant_message_id}"
+    )
+
+    # 更新消息的 task_id（仅 retry 操作，因为消息已存在）
+    if operation == MessageOperation.RETRY:
+        db.table("messages").update({
+            "task_id": final_client_task_id,
+        }).eq("id", assistant_message_id).execute()
+
+    return external_task_id
 
 
 def _build_generation_params(
