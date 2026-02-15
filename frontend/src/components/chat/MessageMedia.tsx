@@ -42,8 +42,6 @@ interface MessageMediaProps {
   imageAspectRatio?: AspectRatio;
   /** 视频宽高比（用于占位符动态尺寸） */
   videoAspectRatio?: VideoAspectRatio;
-  /** 占位符文字（如"生成完成"） */
-  placeholderText?: string;
 }
 
 /** 单张图片组件（AI 生成，带占位符和失败重试） */
@@ -54,7 +52,6 @@ function AiGeneratedImage({
   onImageClick,
   onMediaLoaded,
   isGenerating,
-  placeholderText,
 }: {
   imageUrl: string | null;
   messageId: string;
@@ -62,7 +59,6 @@ function AiGeneratedImage({
   onImageClick: () => void;
   onMediaLoaded?: () => void;
   isGenerating: boolean;
-  placeholderText?: string;
 }) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -181,7 +177,6 @@ function AiGeneratedImage({
           type="image"
           width={placeholderSize.width}
           height={placeholderSize.height}
-          text={placeholderText}
         />
       )}
 
@@ -350,7 +345,6 @@ export default function MessageMedia({
   generatingType = 'image',
   imageAspectRatio = '1:1',
   videoAspectRatio = 'landscape',
-  placeholderText,
 }: MessageMediaProps) {
   // 获取第一个视频 URL（目前只支持单视频）
   const videoUrl = videoUrls[0] || null;
@@ -413,7 +407,6 @@ export default function MessageMedia({
             onImageClick={() => handleImageClick(0)}
             onMediaLoaded={onMediaLoaded}
             isGenerating={isGenerating && generatingType === 'image'}
-            placeholderText={placeholderText}
           />
         )
       )}
@@ -427,7 +420,6 @@ export default function MessageMedia({
               type="video"
               width={videoPlaceholderSize.width}
               height={videoPlaceholderSize.height}
-              text={placeholderText}
             />
           )}
 
