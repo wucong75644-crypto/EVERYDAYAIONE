@@ -31,7 +31,7 @@ class MessageMixin:
     - 错误处理（退回积分 + 错误消息 + WebSocket + 任务状态）
     """
 
-    async def _upsert_assistant_message(
+    def _upsert_assistant_message(
         self,
         message_id: str,
         conversation_id: str,
@@ -79,7 +79,7 @@ class MessageMixin:
             message_data["error"] = error_dict
 
         # 2. Upsert 到数据库
-        upsert_result = await self.db.table("messages").upsert(
+        upsert_result = self.db.table("messages").upsert(
             message_data, on_conflict="id"
         ).execute()
 
@@ -123,7 +123,7 @@ class MessageMixin:
             完成后的消息
         """
         # 1. 获取任务信息
-        task = await self._get_task(task_id)
+        task = self._get_task(task_id)
         if not task:
             logger.error(f"Task not found | task_id={task_id}")
             raise Exception("任务不存在")
@@ -140,7 +140,7 @@ class MessageMixin:
         content_dicts = self._convert_content_parts_to_dicts(result)
 
         # 4. Upsert 消息到数据库
-        message, msg_data = await self._upsert_assistant_message(
+        message, msg_data = self._upsert_assistant_message(
             message_id=message_id,
             conversation_id=conversation_id,
             content_dicts=content_dicts,
@@ -170,7 +170,7 @@ class MessageMixin:
             await ws_manager.send_to_task_or_user(client_task_id, user_id, done_msg)
 
         # 6. 更新任务状态
-        await self._complete_task(task_id)
+        self._complete_task(task_id)
 
         # 7. 记录日志
         logger.info(
@@ -198,7 +198,7 @@ class MessageMixin:
             错误消息
         """
         # 1. 获取任务信息
-        task = await self._get_task(task_id)
+        task = self._get_task(task_id)
         if not task:
             logger.error(f"Task not found | task_id={task_id}")
             raise Exception("任务不存在")
@@ -212,7 +212,7 @@ class MessageMixin:
         await self._handle_credits_on_error(task)
 
         # 3. Upsert 错误消息到数据库
-        message, msg_data = await self._upsert_assistant_message(
+        message, msg_data = self._upsert_assistant_message(
             message_id=message_id,
             conversation_id=conversation_id,
             content_dicts=[{"type": "text", "text": error_message}],
@@ -245,7 +245,7 @@ class MessageMixin:
             await ws_manager.send_to_task_or_user(client_task_id, user_id, error_msg)
 
         # 5. 更新任务状态
-        await self._fail_task(task_id, error_message)
+        self._fail_task(task_id, error_message)
 
         # 6. 记录日志
         logger.error(

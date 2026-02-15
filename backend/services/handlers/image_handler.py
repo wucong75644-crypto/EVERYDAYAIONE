@@ -75,11 +75,11 @@ class ImageHandler(BaseHandler):
         credits_to_lock = cost_result["user_credits"]
 
         # 3. 检查并预扣积分
-        await self._check_balance(user_id, credits_to_lock)
+        self._check_balance(user_id, credits_to_lock)
 
         # 生成临时 task_id 用于积分锁定
         temp_task_id = str(uuid.uuid4())
-        transaction_id = await self._lock_credits(
+        transaction_id = self._lock_credits(
             task_id=temp_task_id,
             user_id=user_id,
             amount=credits_to_lock,
@@ -115,13 +115,13 @@ class ImageHandler(BaseHandler):
             external_task_id = result.task_id  # KIE 返回的外部任务 ID
         except Exception as e:
             # API 调用失败，退回积分
-            await self._refund_credits(transaction_id)
+            self._refund_credits(transaction_id)
             raise e
         finally:
             await adapter.close()
 
         # 5. 保存任务到数据库（使用 external_task_id 作为主 ID）
-        await self._save_task(
+        self._save_task(
             task_id=external_task_id,
             message_id=message_id,
             conversation_id=conversation_id,
@@ -170,7 +170,7 @@ class ImageHandler(BaseHandler):
         """Image 完成时确认积分扣除"""
         transaction_id = task.get("credit_transaction_id")
         if transaction_id:
-            await self._confirm_deduct(transaction_id)
+            self._confirm_deduct(transaction_id)
         # 使用预扣的积分作为实际消耗
         return task.get("credits_locked", credits_consumed)
 
@@ -178,7 +178,7 @@ class ImageHandler(BaseHandler):
         """Image 错误时退回积分"""
         transaction_id = task.get("credit_transaction_id")
         if transaction_id:
-            await self._refund_credits(transaction_id)
+            self._refund_credits(transaction_id)
 
     # ========================================
     # 回调方法（调用基类通用流程）
@@ -208,7 +208,7 @@ class ImageHandler(BaseHandler):
         """
         return await self._handle_error_common(task_id, error_code, error_message)
 
-    async def _save_task(
+    def _save_task(
         self,
         task_id: str,
         message_id: str,

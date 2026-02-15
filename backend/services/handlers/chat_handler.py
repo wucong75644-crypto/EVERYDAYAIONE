@@ -71,7 +71,7 @@ class ChatHandler(BaseHandler):
         thinking_mode = params.get("thinking_mode")
 
         # 3. 保存任务到数据库
-        await self._save_task(
+        self._save_task(
             task_id=task_id,
             message_id=message_id,
             conversation_id=conversation_id,
@@ -256,7 +256,7 @@ class ChatHandler(BaseHandler):
         """错误回调（调用基类通用流程）"""
         return await self._handle_error_common(task_id, error_code, error_message)
 
-    async def _save_task(
+    def _save_task(
         self,
         task_id: str,
         message_id: str,
