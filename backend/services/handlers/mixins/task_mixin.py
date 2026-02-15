@@ -23,9 +23,9 @@ class TaskMixin:
     - 任务失败（带幂等性检查和乐观锁）
     """
 
-    async def _get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+    def _get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         """获取任务信息"""
-        result = await (
+        result = (
             self.db.table("tasks")
             .select("*")
             .eq("external_task_id", task_id)
@@ -34,7 +34,7 @@ class TaskMixin:
         )
         return result.data if result.data else None
 
-    async def _complete_task(self, task_id: str) -> None:
+    def _complete_task(self, task_id: str) -> None:
         """
         标记任务完成
 
@@ -47,7 +47,7 @@ class TaskMixin:
         - 未设置 → Chat 直接路径 → 更新 version + started_at + status
         """
         # 先获取当前任务
-        task_result = await self.db.table("tasks").select("version, started_at, status").eq("external_task_id", task_id).execute()
+        task_result = self.db.table("tasks").select("version, started_at, status").eq("external_task_id", task_id).execute()
         if not task_result.data:
             logger.error(f"Task not found for completion | task_id={task_id}")
             return
@@ -64,7 +64,7 @@ class TaskMixin:
         # 路径1：started_at 已设置 → Image/Video 通过 process_result 调用
         # process_result 已经更新了 version，这里只更新 status 和 completed_at
         if task.get("started_at"):
-            await self.db.table("tasks").update({
+            self.db.table("tasks").update({
                 "status": "completed",
                 "completed_at": datetime.utcnow().isoformat(),
             }).eq("external_task_id", task_id).execute()
@@ -85,7 +85,7 @@ class TaskMixin:
             }
 
             # 执行更新（带乐观锁检查）
-            result = await self.db.table("tasks").update(update_data).eq("external_task_id", task_id).eq("version", current_version).execute()
+            result = self.db.table("tasks").update(update_data).eq("external_task_id", task_id).eq("version", current_version).execute()
 
             if not result.data:
                 logger.warning(
@@ -98,14 +98,14 @@ class TaskMixin:
                     f"task_id={task_id} | version={current_version}→{current_version + 1}"
                 )
 
-    async def _fail_task(self, task_id: str, error_message: str) -> None:
+    def _fail_task(self, task_id: str, error_message: str) -> None:
         """
         标记任务失败
 
         同 _complete_task 逻辑：根据 started_at 判断调用路径
         """
         # 先获取当前任务
-        task_result = await self.db.table("tasks").select("version, started_at, status").eq("external_task_id", task_id).execute()
+        task_result = self.db.table("tasks").select("version, started_at, status").eq("external_task_id", task_id).execute()
         if not task_result.data:
             logger.error(f"Task not found for failure | task_id={task_id}")
             return
@@ -121,7 +121,7 @@ class TaskMixin:
 
         # 路径1：started_at 已设置 → process_result 路径
         if task.get("started_at"):
-            await self.db.table("tasks").update({
+            self.db.table("tasks").update({
                 "status": "failed",
                 "error_message": error_message,
                 "completed_at": datetime.utcnow().isoformat(),
@@ -142,7 +142,7 @@ class TaskMixin:
                 "started_at": datetime.utcnow().isoformat(),
             }
 
-            result = await self.db.table("tasks").update(update_data).eq("external_task_id", task_id).eq("version", current_version).execute()
+            result = self.db.table("tasks").update(update_data).eq("external_task_id", task_id).eq("version", current_version).execute()
 
             if not result.data:
                 logger.warning(

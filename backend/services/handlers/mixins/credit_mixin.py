@@ -29,14 +29,14 @@ class CreditMixin:
     - 直接扣除（Chat 完成后使用）
     """
 
-    async def _get_user_balance(self, user_id: str) -> int:
+    def _get_user_balance(self, user_id: str) -> int:
         """获取用户积分余额"""
-        result = await self.db.table("users").select("credits").eq("id", user_id).single().execute()
+        result = self.db.table("users").select("credits").eq("id", user_id).single().execute()
         if not result.data:
             return 0
         return result.data.get("credits", 0)
 
-    async def _check_balance(self, user_id: str, required: int) -> int:
+    def _check_balance(self, user_id: str, required: int) -> int:
         """
         检查余额是否足够
 
@@ -50,7 +50,7 @@ class CreditMixin:
         Raises:
             InsufficientCreditsError: 余额不足
         """
-        balance = await self._get_user_balance(user_id)
+        balance = self._get_user_balance(user_id)
         if balance < required:
             logger.warning(
                 f"Insufficient credits | user_id={user_id} | "
@@ -59,7 +59,7 @@ class CreditMixin:
             raise InsufficientCreditsError(required=required, current=balance)
         return balance
 
-    async def _lock_credits(
+    def _lock_credits(
         self,
         task_id: str,
         user_id: str,
@@ -84,13 +84,13 @@ class CreditMixin:
         transaction_id = str(uuid4())
 
         # 1. 检查余额
-        current_credits = await self._get_user_balance(user_id)
+        current_credits = self._get_user_balance(user_id)
         if current_credits < amount:
             raise InsufficientCreditsError(required=amount, current=current_credits)
 
         # 2. 原子扣除（使用乐观锁）
         new_balance = current_credits - amount
-        update_result = await self.db.table("users").update({
+        update_result = self.db.table("users").update({
             "credits": new_balance,
             "updated_at": datetime.now(timezone.utc).isoformat()
         }).eq("id", user_id).eq("credits", current_credits).execute()
@@ -98,12 +98,12 @@ class CreditMixin:
         if not update_result.data:
             # 乐观锁冲突，重试一次
             logger.warning(f"Credit lock optimistic lock conflict | user_id={user_id}")
-            current_credits = await self._get_user_balance(user_id)
+            current_credits = self._get_user_balance(user_id)
             if current_credits < amount:
                 raise InsufficientCreditsError(required=amount, current=current_credits)
 
             new_balance = current_credits - amount
-            update_result = await self.db.table("users").update({
+            update_result = self.db.table("users").update({
                 "credits": new_balance,
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }).eq("id", user_id).eq("credits", current_credits).execute()
@@ -112,7 +112,7 @@ class CreditMixin:
                 raise InsufficientCreditsError(required=amount, current=current_credits)
 
         # 3. 记录事务
-        await self.db.table("credit_transactions").insert({
+        self.db.table("credit_transactions").insert({
             "id": transaction_id,
             "task_id": task_id,
             "user_id": user_id,
@@ -129,21 +129,21 @@ class CreditMixin:
 
         return transaction_id
 
-    async def _confirm_deduct(self, transaction_id: str) -> None:
+    def _confirm_deduct(self, transaction_id: str) -> None:
         """
         确认扣除（任务成功时调用）
 
         Args:
             transaction_id: 事务 ID
         """
-        await self.db.table("credit_transactions").update({
+        self.db.table("credit_transactions").update({
             "status": "confirmed",
             "confirmed_at": datetime.now(timezone.utc).isoformat()
         }).eq("id", transaction_id).execute()
 
         logger.info(f"Credits confirmed | transaction_id={transaction_id}")
 
-    async def _refund_credits(self, transaction_id: str) -> None:
+    def _refund_credits(self, transaction_id: str) -> None:
         """
         退回积分（任务失败时调用）
 
@@ -151,7 +151,7 @@ class CreditMixin:
             transaction_id: 事务 ID
         """
         # 1. 获取事务信息
-        tx_result = await self.db.table("credit_transactions").select("*").eq(
+        tx_result = self.db.table("credit_transactions").select("*").eq(
             "id", transaction_id
         ).maybe_single().execute()
 
@@ -168,7 +168,7 @@ class CreditMixin:
             return
 
         # 2. 退回积分（原子增加）
-        await self.db.rpc(
+        self.db.rpc(
             'refund_credits',
             {
                 'p_user_id': tx["user_id"],
@@ -177,7 +177,7 @@ class CreditMixin:
         ).execute()
 
         # 3. 更新事务状态
-        await self.db.table("credit_transactions").update({
+        self.db.table("credit_transactions").update({
             "status": "refunded",
             "confirmed_at": datetime.now(timezone.utc).isoformat()
         }).eq("id", transaction_id).execute()
@@ -187,7 +187,7 @@ class CreditMixin:
             f"user_id={tx['user_id']} | amount={tx['amount']}"
         )
 
-    async def _deduct_directly(
+    def _deduct_directly(
         self,
         user_id: str,
         amount: int,
@@ -210,7 +210,7 @@ class CreditMixin:
             InsufficientCreditsError: 余额不足
         """
         try:
-            result = await self.db.rpc(
+            result = self.db.rpc(
                 'deduct_credits_atomic',
                 {
                     'p_user_id': user_id,
@@ -221,7 +221,7 @@ class CreditMixin:
             ).execute()
 
             if not result.data or result.data.get('success') is False:
-                current = await self._get_user_balance(user_id)
+                current = self._get_user_balance(user_id)
                 raise InsufficientCreditsError(required=amount, current=current)
 
             new_balance = result.data.get('new_balance', 0)

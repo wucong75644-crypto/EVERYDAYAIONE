@@ -285,6 +285,9 @@ export async function sendMessage(options: SendOptions): Promise<string> {
     // 清理 streamingMessages（Chat 类型会设置）
     messageStore.completeStreaming(conversationId);
 
+    // 🔥 清理发送状态（修复光标持续闪动问题）
+    messageStore.setIsSending(false);
+
     // 移除占位符（同时检查 messages 和 optimisticMessages）
     messageStore.removeMessage(assistantMessageId);
 
