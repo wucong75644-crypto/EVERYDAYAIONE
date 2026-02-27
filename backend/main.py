@@ -4,6 +4,7 @@ FastAPI 应用入口
 EVERYDAYAI - AI 图片/视频生成平台后端服务
 """
 
+import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -20,8 +21,31 @@ from core.config import get_settings
 from core.exceptions import AppException
 from core.limiter import limiter
 from core.redis import RedisClient
+from core.logging_config import setup_logging
 from services.background_task_worker import BackgroundTaskWorker
 from services.websocket_manager import ws_manager
+
+# ============================================================
+# 应用初始化：日志和错误监控
+# ============================================================
+
+# 1. 配置日志（文件 + 控制台）
+setup_logging()
+
+# 2. 配置 Sentry 错误监控（可选）
+settings = get_settings()
+if settings.sentry_dsn:
+    import sentry_sdk
+
+    sentry_sdk.init(
+        dsn=settings.sentry_dsn,
+        environment=settings.environment,
+        traces_sample_rate=0.1,  # 性能监控采样率（10%）
+        profiles_sample_rate=0.1,  # 性能分析采样率（10%）
+    )
+    logger.info(f"Sentry initialized | environment={settings.environment}")
+else:
+    logger.info("Sentry not configured | using log files only")
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -54,7 +78,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "default-src 'self'; "
                 "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "  # Vite HMR 需要
                 "style-src 'self' 'unsafe-inline'; "  # Vite 样式注入需要
-                "img-src 'self' data: https://*.aliyuncs.com https://qcaatwmlzqqnzfjdzlzm.supabase.co; "
+                "img-src 'self' data: https://*.aliyuncs.com https://cdn.everydayai.com.cn https://qcaatwmlzqqnzfjdzlzm.supabase.co; "
+                "media-src 'self' https://*.aliyuncs.com https://cdn.everydayai.com.cn; "
                 "font-src 'self' data:; "
                 "connect-src 'self' https://qcaatwmlzqqnzfjdzlzm.supabase.co https://api.kie.ai ws://localhost:*; "  # 添加 WebSocket 支持
                 "object-src 'none'; "
@@ -69,7 +94,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "default-src 'self'; "
                 "script-src 'self'; "  # 移除 unsafe-inline 和 unsafe-eval
                 "style-src 'self'; "  # 移除 unsafe-inline
-                "img-src 'self' data: https://*.aliyuncs.com https://qcaatwmlzqqnzfjdzlzm.supabase.co; "
+                "img-src 'self' data: https://*.aliyuncs.com https://cdn.everydayai.com.cn https://qcaatwmlzqqnzfjdzlzm.supabase.co; "
+                "media-src 'self' https://*.aliyuncs.com https://cdn.everydayai.com.cn; "
                 "font-src 'self' data:; "
                 "connect-src 'self' https://qcaatwmlzqqnzfjdzlzm.supabase.co https://api.kie.ai; "
                 "object-src 'none'; "

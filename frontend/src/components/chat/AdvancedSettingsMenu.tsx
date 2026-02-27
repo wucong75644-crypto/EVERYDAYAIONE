@@ -38,6 +38,14 @@ interface AdvancedSettingsMenuProps {
   // 聊天模型设置
   thinkingEffort?: 'minimal' | 'low' | 'medium' | 'high';
   onThinkingEffortChange?: (effort: 'minimal' | 'low' | 'medium' | 'high') => void;
+  temperature?: number;
+  onTemperatureChange?: (value: number) => void;
+  topP?: number;
+  onTopPChange?: (value: number) => void;
+  topK?: number;
+  onTopKChange?: (value: number) => void;
+  maxOutputTokens?: number;
+  onMaxOutputTokensChange?: (value: number) => void;
   // 操作
   onSave: () => void;
   onReset: () => void;
@@ -67,6 +75,14 @@ export default function AdvancedSettingsMenu({
   onRemoveWatermarkChange,
   thinkingEffort,
   onThinkingEffortChange,
+  temperature,
+  onTemperatureChange,
+  topP,
+  onTopPChange,
+  topK,
+  onTopKChange,
+  maxOutputTokens,
+  onMaxOutputTokensChange,
   onSave,
   onReset,
   onClose,
@@ -223,62 +239,151 @@ export default function AdvancedSettingsMenu({
       )}
 
       {/* 聊天模型设置 */}
-      {selectedModel.type === 'chat' && selectedModel.capabilities.thinkingEffort && (
+      {selectedModel.type === 'chat' && (
         <>
-          <div className="mb-3">
-            <label className="block text-xs font-medium text-gray-700 mb-2">
-              推理强度 (Thinking Effort)
-            </label>
-            <div className="space-y-2">
-              {[
-                { value: 'minimal' as const, label: '极快响应', desc: '最快速度，适合简单问答' },
-                { value: 'low' as const, label: '标准速度', desc: '默认选项，平衡速度与质量' },
-                { value: 'medium' as const, label: '深度思考', desc: '适合多步推理任务' },
-                { value: 'high' as const, label: '最强推理', desc: '接近 Pro 级表现，耗时更长' },
-              ].map((effort) => (
-                <button
-                  key={effort.value}
-                  onClick={() => onThinkingEffortChange?.(effort.value)}
-                  className={`w-full px-3 py-2 text-left rounded-md transition-colors ${
-                    thinkingEffort === effort.value
-                      ? 'bg-blue-100 border border-blue-400'
-                      : 'bg-gray-50 border border-gray-200 hover:bg-gray-100'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <div className="text-xs font-medium text-gray-900">{effort.label}</div>
-                      <div className="text-[10px] text-gray-600 mt-0.5">{effort.desc}</div>
+          {/* 推理强度（仅支持的模型显示） */}
+          {selectedModel.capabilities.thinkingEffort && (
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-gray-700 mb-2">
+                推理强度 (Thinking Effort)
+              </label>
+              <div className="space-y-2">
+                {[
+                  { value: 'minimal' as const, label: '极快响应', desc: '最快速度，适合简单问答' },
+                  { value: 'low' as const, label: '标准速度', desc: '默认选项，平衡速度与质量' },
+                  { value: 'medium' as const, label: '深度思考', desc: '适合多步推理任务' },
+                  { value: 'high' as const, label: '最强推理', desc: '接近 Pro 级表现，耗时更长' },
+                ].map((effort) => (
+                  <button
+                    key={effort.value}
+                    onClick={() => onThinkingEffortChange?.(effort.value)}
+                    className={`w-full px-3 py-2 text-left rounded-md transition-colors ${
+                      thinkingEffort === effort.value
+                        ? 'bg-blue-100 border border-blue-400'
+                        : 'bg-gray-50 border border-gray-200 hover:bg-gray-100'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="text-xs font-medium text-gray-900">{effort.label}</div>
+                        <div className="text-[10px] text-gray-600 mt-0.5">{effort.desc}</div>
+                      </div>
+                      {thinkingEffort === effort.value && (
+                        <svg className="w-4 h-4 text-blue-600 flex-shrink-0 ml-2" fill="currentColor" viewBox="0 0 20 20">
+                          <path
+                            fillRule="evenodd"
+                            d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                            clipRule="evenodd"
+                          />
+                        </svg>
+                      )}
                     </div>
-                    {thinkingEffort === effort.value && (
-                      <svg className="w-4 h-4 text-blue-600 flex-shrink-0 ml-2" fill="currentColor" viewBox="0 0 20 20">
-                        <path
-                          fillRule="evenodd"
-                          d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                    )}
-                  </div>
-                </button>
-              ))}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Temperature 滑块 */}
+          <div className="mb-3">
+            <label className="block text-xs font-medium text-gray-700 mb-1.5">
+              Temperature（创造性）: {temperature?.toFixed(2)}
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="2"
+              step="0.1"
+              value={temperature ?? 1.0}
+              onChange={(e) => onTemperatureChange?.(parseFloat(e.target.value))}
+              className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+            />
+            <div className="flex justify-between text-[9px] text-gray-500 mt-0.5">
+              <span>精确 (0.0)</span>
+              <span>平衡 (1.0)</span>
+              <span>创造 (2.0)</span>
             </div>
           </div>
-          <div className="bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+
+          {/* Top P 滑块 */}
+          <div className="mb-3">
+            <label className="block text-xs font-medium text-gray-700 mb-1.5">
+              Top P（多样性）: {topP?.toFixed(2)}
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={topP ?? 0.95}
+              onChange={(e) => onTopPChange?.(parseFloat(e.target.value))}
+              className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+            />
+            <div className="flex justify-between text-[9px] text-gray-500 mt-0.5">
+              <span>保守 (0.0)</span>
+              <span>推荐 (0.95)</span>
+              <span>多样 (1.0)</span>
+            </div>
+          </div>
+
+          {/* Top K 滑块 */}
+          <div className="mb-3">
+            <label className="block text-xs font-medium text-gray-700 mb-1.5">
+              Top K（候选数）: {topK}
+            </label>
+            <input
+              type="range"
+              min="1"
+              max="64"
+              step="1"
+              value={topK ?? 40}
+              onChange={(e) => onTopKChange?.(parseInt(e.target.value))}
+              className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+            />
+            <div className="flex justify-between text-[9px] text-gray-500 mt-0.5">
+              <span>1</span>
+              <span>40 (推荐)</span>
+              <span>64</span>
+            </div>
+          </div>
+
+          {/* Max Output Tokens 滑块 */}
+          <div className="mb-3">
+            <label className="block text-xs font-medium text-gray-700 mb-1.5">
+              最大输出长度: {maxOutputTokens} tokens
+            </label>
+            <input
+              type="range"
+              min="1024"
+              max="65536"
+              step="1024"
+              value={maxOutputTokens ?? 8192}
+              onChange={(e) => onMaxOutputTokensChange?.(parseInt(e.target.value))}
+              className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+            />
+            <div className="flex justify-between text-[9px] text-gray-500 mt-0.5">
+              <span>1K</span>
+              <span>8K (默认)</span>
+              <span>65K</span>
+            </div>
+          </div>
+
+          {/* 说明信息 */}
+          <div className="bg-blue-50 border border-blue-200 rounded-md px-3 py-2">
             <div className="flex items-start space-x-2">
-              <svg className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+              <svg className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
                 <path
                   fillRule="evenodd"
                   d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
                   clipRule="evenodd"
                 />
               </svg>
-              <div className="flex-1 text-[10px] text-amber-800">
-                <div className="font-medium mb-1">推理强度越高：</div>
+              <div className="flex-1 text-[10px] text-blue-800">
+                <div className="font-medium mb-1">参数说明：</div>
                 <ul className="list-disc list-inside space-y-0.5 text-[9px]">
-                  <li>推理深度更强，适合复杂任务</li>
-                  <li>响应时间更长</li>
-                  <li>更接近 Gemini 3 Pro 的表现</li>
+                  <li>Temperature 越高，回答越有创造性</li>
+                  <li>Top P/K 控制候选词的范围</li>
+                  <li>输出长度影响回答的详细程度</li>
                 </ul>
               </div>
             </div>

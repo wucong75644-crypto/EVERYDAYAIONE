@@ -38,6 +38,10 @@ export interface VideoSettings {
 export interface ChatSettings {
   thinkingEffort: 'minimal' | 'low' | 'medium' | 'high';
   deepThinkMode: boolean;
+  temperature: number;      // 0.0 - 2.0
+  topP: number;            // 0.0 - 1.0
+  topK: number;            // 1 - 64
+  maxOutputTokens: number; // 1 - 65536
 }
 
 export interface UseSettingsManagerReturn {
@@ -84,6 +88,10 @@ export function useSettingsManager(): UseSettingsManagerReturn {
   const [chatSettings, setChatSettings] = useState<ChatSettings>({
     thinkingEffort: savedSettings.chat?.thinkingEffort || 'low',
     deepThinkMode: false, // 非持久化字段，每次会话重置
+    temperature: savedSettings.chat?.temperature ?? 1.0,
+    topP: savedSettings.chat?.topP ?? 0.95,
+    topK: savedSettings.chat?.topK ?? 40,
+    maxOutputTokens: savedSettings.chat?.maxOutputTokens ?? 8192,
   });
 
   // 设置单个图像参数
@@ -125,6 +133,10 @@ export function useSettingsManager(): UseSettingsManagerReturn {
       },
       chat: {
         thinkingEffort: chatSettings.thinkingEffort,
+        temperature: chatSettings.temperature,
+        topP: chatSettings.topP,
+        topK: chatSettings.topK,
+        maxOutputTokens: chatSettings.maxOutputTokens,
       },
     };
     persistSettings(settings);
@@ -146,6 +158,10 @@ export function useSettingsManager(): UseSettingsManagerReturn {
     setChatSettings({
       thinkingEffort: defaults.chat.thinkingEffort,
       deepThinkMode: false,
+      temperature: defaults.chat.temperature,
+      topP: defaults.chat.topP,
+      topK: defaults.chat.topK,
+      maxOutputTokens: defaults.chat.maxOutputTokens,
     });
   }, []);
 

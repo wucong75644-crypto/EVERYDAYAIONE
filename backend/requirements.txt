@@ -15,6 +15,7 @@ bcrypt==4.2.1
 
 # 日志
 loguru==0.7.3
+sentry-sdk==2.52.0
 
 # HTTP 客户端
 httpx[socks]==0.28.1

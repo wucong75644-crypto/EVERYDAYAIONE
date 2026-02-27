@@ -138,11 +138,15 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       // 无需区分 chat/media 类型，避免逻辑分支
       store.updateMessage(normalized.id, updateData);
 
+      // 将完成的消息持久化到 messages（addMessage 内置幂等检查，不会重复添加）
+      // 确保切换对话再切回来时消息不丢失（optimisticMessages 不参与持久化）
+      store.addMessage(conversationId, updateData);
+
       // 🔥 DEBUG: 更新后检查 store 状态
       const updatedMessage = store.getMessage(normalized.id);
       console.log('🔥 [DEBUG] handleTaskDoneWithMessage - updatedMessage:', updatedMessage);
 
-      // 清理任务状态
+      // 清理任务状态（统一使用 taskId）
       store.completeTask(taskId);
 
       // 触发操作上下文回调
@@ -284,6 +288,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
             handleTaskDoneWithMessage(task_id, messageData, conversation_id);
           } else if (message_id) {
             store.setStatus(message_id, 'completed');
+            // 尝试获取 conversationId 和任务类型
             store.completeTask(task_id);
           }
           cleanupTaskSubscription(task_id);

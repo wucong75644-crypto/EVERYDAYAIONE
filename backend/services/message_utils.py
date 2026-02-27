@@ -25,9 +25,11 @@ def format_message(message: dict) -> dict:
         "content": message["content"],
         "role": message["role"],
         "created_at": message["created_at"],
+        "status": message.get("status", "completed"),
         "credits_cost": message.get("credits_cost", 0),
         "is_error": message.get("is_error", False),
         "generation_params": message.get("generation_params"),
+        "task_id": message.get("task_id"),
         "client_request_id": message.get("client_request_id"),  # 客户端请求ID（用于乐观更新）
     }
 

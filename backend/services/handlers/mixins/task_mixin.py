@@ -32,7 +32,7 @@ class TaskMixin:
             .maybe_single()
             .execute()
         )
-        return result.data if result.data else None
+        return result.data if (result and result.data) else None
 
     def _complete_task(self, task_id: str) -> None:
         """

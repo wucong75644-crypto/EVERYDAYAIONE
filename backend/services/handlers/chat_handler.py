@@ -222,7 +222,7 @@ class ChatHandler(BaseHandler):
         if credits_consumed > 0:
             user_id = task["user_id"]
             model_id = task.get("model_id", "gemini-3-flash")
-            await self._deduct_directly(
+            self._deduct_directly(
                 user_id=user_id,
                 amount=credits_consumed,
                 reason=f"Chat: {model_id}",
