@@ -203,17 +203,19 @@ class WebSocketManager:
                 if not self._task_subscribers[task_id]:
                     del self._task_subscribers[task_id]
 
-    async def send_to_connection(self, conn_id: str, message: Dict[str, Any]):
-        """发送消息到指定连接"""
+    async def send_to_connection(self, conn_id: str, message: Dict[str, Any]) -> bool:
+        """发送消息到指定连接，返回是否成功"""
         connection = self._conn_index.get(conn_id)
         if not connection:
-            return
+            return False
 
         try:
             await connection.websocket.send_json(message)
+            return True
         except Exception as e:
             logger.warning(f"Send failed | conn={conn_id} | error={e}")
             await self.disconnect(conn_id)
+            return False
 
     async def send_to_user(self, user_id: str, message: Dict[str, Any]):
         """发送消息到用户的所有连接"""
@@ -232,13 +234,16 @@ class WebSocketManager:
         self,
         task_id: str,
         message: Dict[str, Any],
-    ) -> None:
+    ) -> int:
         """
         发送消息到任务的所有订阅者（简化版）
 
         Args:
             task_id: 任务 ID
             message: 消息内容
+
+        Returns:
+            成功投递的连接数
         """
         subscribers = self._task_subscribers.get(task_id, set())
 
@@ -248,8 +253,11 @@ class WebSocketManager:
             f"subscribers={len(subscribers)}"
         )
 
+        delivered = 0
         for conn_id in list(subscribers):
-            await self.send_to_connection(conn_id, message)
+            if await self.send_to_connection(conn_id, message):
+                delivered += 1
+        return delivered
 
     async def send_to_task_or_user(
         self,
@@ -274,7 +282,15 @@ class WebSocketManager:
                 f"send_to_task_or_user | task={task_id} | "
                 f"path=task_subscribers | count={len(subscribers)}"
             )
-            await self.send_to_task_subscribers(task_id, message)
+            delivered = await self.send_to_task_subscribers(task_id, message)
+            if delivered == 0:
+                # 所有订阅者连接均已断开（僵尸连接），降级到用户广播
+                logger.warning(
+                    f"send_to_task_or_user | task={task_id} | "
+                    f"path=user_fallback | user={user_id} | "
+                    f"reason=all_subscriber_connections_dead"
+                )
+                await self.send_to_user(user_id, message)
         else:
             logger.warning(
                 f"send_to_task_or_user | task={task_id} | "

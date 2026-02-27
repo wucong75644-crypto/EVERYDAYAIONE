@@ -53,6 +53,7 @@ class BackgroundTaskWorker:
         self.poll_interval = _resolve_poll_interval(self.settings)
         self.is_running = False
         self._poll_lock = asyncio.Lock()
+        self._last_consistency_check = None  # 上次数据一致性检查时间
 
     async def start(self):
         """启动后台工作器"""
@@ -74,6 +75,7 @@ class BackgroundTaskWorker:
                 async with self._poll_lock:
                     await self.poll_pending_tasks()
                     await self.cleanup_stale_tasks()
+                    await self.check_data_consistency()
 
             except Exception as e:
                 logger.error(f"BackgroundTaskWorker error: {e}", exc_info=True)
@@ -92,13 +94,17 @@ class BackgroundTaskWorker:
         Chat 任务由流式处理管理，不参与轮询。
         使用随机抖动避免惊群效应。
         """
-        response = self.db.table("tasks").select("*").in_(
-            "status", ["pending", "running"]
-        ).in_(
-            "type", ["image", "video"]
-        ).execute()
+        try:
+            response = self.db.table("tasks").select("*").in_(
+                "status", ["pending", "running"]
+            ).in_(
+                "type", ["image", "video"]
+            ).execute()
+        except Exception as e:
+            logger.warning(f"Failed to query pending tasks (DB connection error) | error={e}")
+            return
 
-        if not response.data:
+        if not response or not response.data:
             return
 
         logger.debug(f"Polling {len(response.data)} tasks (fallback)")
@@ -206,9 +212,16 @@ class BackgroundTaskWorker:
         """清理超时任务（包括 chat 类型）"""
         now = datetime.now(timezone.utc)
 
-        response = self.db.table("tasks").select("*").in_(
-            "status", ["pending", "running"]
-        ).execute()
+        try:
+            response = self.db.table("tasks").select("*").in_(
+                "status", ["pending", "running"]
+            ).execute()
+        except Exception as e:
+            logger.warning(f"Failed to query stale tasks (DB connection error) | error={e}")
+            return
+
+        if not response or not response.data:
+            return
 
         cleaned_count = 0
 
@@ -351,3 +364,38 @@ class BackgroundTaskWorker:
 
         except Exception as e:
             logger.error(f"Refund failed | transaction_id={transaction_id} | error={e}")
+
+    async def check_data_consistency(self):
+        """
+        定期检查数据一致性（每小时运行一次）
+
+        检查以下异常并发送告警（不自动修复）：
+        - completed 消息但没有 URL
+        - pending 消息但有 URL
+        - 超过24小时的 pending 消息
+        """
+        from datetime import datetime, timezone
+        from services.data_consistency_checker import DataConsistencyChecker
+
+        now = datetime.now(timezone.utc)
+
+        # 检查是否需要运行（每小时一次）
+        if self._last_consistency_check is not None:
+            elapsed = (now - self._last_consistency_check).total_seconds()
+            if elapsed < 3600:  # 1小时 = 3600秒
+                return
+
+        try:
+            checker = DataConsistencyChecker(self.db)
+            results = await checker.check_and_alert()  # 🔥 改为只告警
+
+            self._last_consistency_check = now
+
+            # 记录检查结果
+            # 详细日志已在 checker._send_alert() 中记录
+            # 这里只记录简要信息
+            if results["total_issues"] == 0:
+                logger.debug("Data consistency check completed | no issues found")
+
+        except Exception as e:
+            logger.error(f"Data consistency check failed | error={e}", exc_info=True)

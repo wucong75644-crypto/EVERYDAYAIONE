@@ -1,0 +1,54 @@
+[Unit]
+Description=EVERYDAYAIONE Backend API Service
+Documentation=https://github.com/your-org/everydayai
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/var/www/everydayai/backend
+
+# 环境变量
+Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/var/www/everydayai/backend/.env
+
+# 启动命令（生产环境使用uvicorn）
+ExecStart=/var/www/everydayai/backend/venv/bin/uvicorn main:app \
+    --host 0.0.0.0 \
+    --port 8000 \
+    --workers 4 \
+    --log-level info \
+    --access-log \
+    --no-use-colors
+
+# 优雅重启
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# 自动重启配置
+Restart=always
+RestartSec=10
+StartLimitInterval=600
+StartLimitBurst=5
+
+# 资源限制
+LimitNOFILE=65535
+LimitNPROC=4096
+
+# 安全加固（可选，根据需要调整）
+# NoNewPrivileges=true
+# PrivateTmp=true
+# ProtectSystem=strict
+# ProtectHome=true
+# ReadWritePaths=/var/www/everydayai/backend /var/log/everydayai
+
+# 日志配置
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=everydayai-backend
+
+[Install]
+WantedBy=multi-user.target

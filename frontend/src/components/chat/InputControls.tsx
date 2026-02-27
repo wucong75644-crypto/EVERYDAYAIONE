@@ -65,6 +65,14 @@ interface InputControlsProps {
   onThinkingEffortChange?: (effort: 'minimal' | 'low' | 'medium' | 'high') => void;
   deepThinkMode?: boolean;
   onDeepThinkModeChange?: (enabled: boolean) => void;
+  temperature?: number;
+  onTemperatureChange?: (value: number) => void;
+  topP?: number;
+  onTopPChange?: (value: number) => void;
+  topK?: number;
+  onTopKChange?: (value: number) => void;
+  maxOutputTokens?: number;
+  onMaxOutputTokensChange?: (value: number) => void;
   onSaveSettings: () => void;
   onResetSettings: () => void;
   images: UploadedImage[];
@@ -91,6 +99,8 @@ export default function InputControls(props: InputControlsProps) {
     videoFrames, onVideoFramesChange, videoAspectRatio, onVideoAspectRatioChange,
     removeWatermark, onRemoveWatermarkChange, thinkingEffort, onThinkingEffortChange,
     deepThinkMode, onDeepThinkModeChange,
+    temperature, onTemperatureChange, topP, onTopPChange, topK, onTopKChange,
+    maxOutputTokens, onMaxOutputTokensChange,
     onSaveSettings, onResetSettings,
     images, maxImages, maxFileSize, onRemoveImage, onImageSelect, onImageDrop, onImagePaste,
     recordingState, audioBlob, audioDuration, onStartRecording, onStopRecording, onClearRecording,
@@ -276,6 +286,14 @@ export default function InputControls(props: InputControlsProps) {
                   onRemoveWatermarkChange={onRemoveWatermarkChange}
                   thinkingEffort={thinkingEffort}
                   onThinkingEffortChange={onThinkingEffortChange}
+                  temperature={temperature}
+                  onTemperatureChange={onTemperatureChange}
+                  topP={topP}
+                  onTopPChange={onTopPChange}
+                  topK={topK}
+                  onTopKChange={onTopKChange}
+                  maxOutputTokens={maxOutputTokens}
+                  onMaxOutputTokensChange={onMaxOutputTokensChange}
                   onSave={onSaveSettings}
                   onReset={onResetSettings}
                   onClose={closeAdvancedDropdown}

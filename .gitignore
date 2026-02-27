@@ -2,6 +2,7 @@
 # Runtime logs
 nohup.out
 *.log
+backend/logs/
 
 # Python cache
 __pycache__/

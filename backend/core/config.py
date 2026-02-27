@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     rate_limit_global_tasks: int = 15
     rate_limit_conversation_tasks: int = 5
 
+    # Sentry 错误监控配置
+    sentry_dsn: Optional[str] = None
+    environment: str = "development"
+
     @property
     def is_production(self) -> bool:
         """是否为生产环境"""

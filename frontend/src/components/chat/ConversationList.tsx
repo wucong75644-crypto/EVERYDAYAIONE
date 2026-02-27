@@ -11,7 +11,6 @@ import {
   updateConversation,
   type ConversationListItem,
 } from '../../services/conversation';
-import { useMessageStore } from '../../stores/useMessageStore';
 import {
   type OptimisticUpdate,
   type OptimisticTitleUpdate,
@@ -430,10 +429,7 @@ export default function ConversationList({
               renameTitle={renameTitle}
               isHovered={hoveredId === conv.id}
               isDropdownOpen={dropdownMenu?.id === conv.id}
-              onSelect={() => {
-                onSelectConversation(conv.id, conv.title, conv.model_id);
-                useMessageStore.getState().clearRecentlyCompleted(conv.id);
-              }}
+              onSelect={() => onSelectConversation(conv.id, conv.title, conv.model_id)}
               onStartRename={() => handleStartRename(conv.id, conv.title)}
               onContextMenu={(e) => handleContextMenu(e, conv.id, conv.title)}
               onShowDropdown={(e) => handleShowDropdown(e, conv.id, conv.title)}

@@ -10,6 +10,7 @@
 import { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { useMessageStore } from '../../stores/useMessageStore';
 import { useClickOutside } from '../../hooks/useClickOutside';
 import ConversationList from './ConversationList';
 import SettingsModal from './SettingsModal';
@@ -87,10 +88,11 @@ export default function Sidebar({
   // 点击外部关闭用户菜单
   useClickOutside(userMenuRef, showUserMenu, () => setShowUserMenu(false));
 
-  // 包装 onSelectConversation，选择对话时关闭搜索
+  // 包装 onSelectConversation，选择对话时关闭搜索并清除完成提醒
   const handleSelectConversation = (id: string, title: string, modelId?: string | null) => {
     setShowSearch(false);
     setSearchQuery('');
+    useMessageStore.getState().clearRecentlyCompleted(id);
     onSelectConversation(id, title, modelId);
   };
 

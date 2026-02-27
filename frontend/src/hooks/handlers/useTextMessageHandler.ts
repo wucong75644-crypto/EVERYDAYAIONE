@@ -15,6 +15,10 @@ interface UseTextMessageHandlerParams {
   selectedModel: UnifiedModel;
   thinkingEffort?: 'minimal' | 'low' | 'medium' | 'high';
   deepThinkMode?: boolean;
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  maxOutputTokens?: number;
   onMessagePending: (message: Message) => void;
   onMessageSent: (aiMessage?: Message | null) => void;
 }
@@ -23,6 +27,10 @@ export function useTextMessageHandler({
   selectedModel,
   thinkingEffort,
   deepThinkMode,
+  temperature,
+  topP,
+  topK,
+  maxOutputTokens,
   onMessagePending,
   onMessageSent,
 }: UseTextMessageHandlerParams) {
@@ -52,6 +60,10 @@ export function useTextMessageHandler({
         params: {
           thinking_effort: thinkingEffort,
           thinking_mode: deepThinkMode ? 'deep_think' : undefined,
+          temperature,
+          top_p: topP,
+          top_k: topK,
+          max_output_tokens: maxOutputTokens,
         },
         subscribeTask: subscribeTaskWithMapping,
       });

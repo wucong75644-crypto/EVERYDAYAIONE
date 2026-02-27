@@ -29,6 +29,10 @@ export interface UserAdvancedSettings {
   };
   chat: {
     thinkingEffort: 'minimal' | 'low' | 'medium' | 'high';
+    temperature: number;      // 0.0 - 2.0, 默认 1.0
+    topP: number;            // 0.0 - 1.0, 默认 0.95
+    topK: number;            // 1 - 64, 默认 40
+    maxOutputTokens: number; // 1 - 65536, 默认 8192
   };
 }
 
@@ -46,6 +50,10 @@ const DEFAULT_SETTINGS: UserAdvancedSettings = {
   },
   chat: {
     thinkingEffort: 'low', // 标准速度（默认）
+    temperature: 1.0,      // 默认创造性
+    topP: 0.95,            // 默认多样性
+    topK: 40,              // 默认候选数
+    maxOutputTokens: 8192, // 默认输出长度
   },
 };
 

@@ -27,6 +27,10 @@ interface UseMessageHandlersParams {
   removeWatermark: boolean;
   thinkingEffort?: 'minimal' | 'low' | 'medium' | 'high';
   deepThinkMode?: boolean;
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  maxOutputTokens?: number;
   onMessagePending: (message: Message) => void;
   onMessageSent: (aiMessage?: Message | null) => void;
   onMediaTaskSubmitted?: () => void;
@@ -43,6 +47,10 @@ export function useMessageHandlers(params: UseMessageHandlersParams) {
     removeWatermark,
     thinkingEffort,
     deepThinkMode,
+    temperature,
+    topP,
+    topK,
+    maxOutputTokens,
     onMessagePending,
     onMessageSent,
     onMediaTaskSubmitted,
@@ -53,6 +61,10 @@ export function useMessageHandlers(params: UseMessageHandlersParams) {
     selectedModel,
     thinkingEffort,
     deepThinkMode,
+    temperature,
+    topP,
+    topK,
+    maxOutputTokens,
     onMessagePending,
     onMessageSent,
   });

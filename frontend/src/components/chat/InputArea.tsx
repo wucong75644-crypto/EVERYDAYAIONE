@@ -131,6 +131,10 @@ export default function InputArea({
     removeWatermark: videoSettings.removeWatermark,
     thinkingEffort: chatSettings.thinkingEffort,
     deepThinkMode: chatSettings.deepThinkMode,
+    temperature: chatSettings.temperature,
+    topP: chatSettings.topP,
+    topK: chatSettings.topK,
+    maxOutputTokens: chatSettings.maxOutputTokens,
     onMessagePending,
     onMessageSent,
   });
@@ -326,6 +330,14 @@ export default function InputArea({
           onThinkingEffortChange={(v) => setChatSetting('thinkingEffort', v)}
           deepThinkMode={chatSettings.deepThinkMode}
           onDeepThinkModeChange={(v) => setChatSetting('deepThinkMode', v)}
+          temperature={chatSettings.temperature}
+          onTemperatureChange={(v) => setChatSetting('temperature', v)}
+          topP={chatSettings.topP}
+          onTopPChange={(v) => setChatSetting('topP', v)}
+          topK={chatSettings.topK}
+          onTopKChange={(v) => setChatSetting('topK', v)}
+          maxOutputTokens={chatSettings.maxOutputTokens}
+          onMaxOutputTokensChange={(v) => setChatSetting('maxOutputTokens', v)}
           onSaveSettings={handleSaveSettings}
           onResetSettings={handleResetSettings}
           images={images}

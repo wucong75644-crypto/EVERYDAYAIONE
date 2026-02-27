@@ -123,24 +123,23 @@ export default memo(function MessageItem({
 
     const genType = message.generation_params?.type;
 
-    // 图片任务：只有非历史消息才显示占位符
+    // 图片任务：仅在生成中（无图片且非历史消息）显示占位符
     if (genType === 'image') {
-      // skipEntryAnimation=true 表示批量加载的历史消息，不显示占位符
-      if (!skipEntryAnimation) {
+      if (!skipEntryAnimation && !hasImage) {
         return {
           type: 'image' as const,
-          text: hasImage ? '生成完成' : PLACEHOLDER_TEXT.IMAGE_GENERATING,
+          text: PLACEHOLDER_TEXT.IMAGE_GENERATING,
         };
       }
       return null;
     }
 
-    // 视频任务：只有非历史消息才显示占位符
+    // 视频任务：仅在生成中（无视频且非历史消息）显示占位符
     if (genType === 'video') {
-      if (!skipEntryAnimation) {
+      if (!skipEntryAnimation && !hasVideo) {
         return {
           type: 'video' as const,
-          text: hasVideo ? '生成完成' : PLACEHOLDER_TEXT.VIDEO_GENERATING,
+          text: PLACEHOLDER_TEXT.VIDEO_GENERATING,
         };
       }
       return null;
@@ -350,7 +349,6 @@ export default memo(function MessageItem({
             generatingType={mediaPlaceholderInfo?.type}
             imageAspectRatio={actualImageAspectRatio}
             videoAspectRatio={actualVideoAspectRatio}
-            placeholderText={mediaPlaceholderInfo?.text}
           />
         )}
 

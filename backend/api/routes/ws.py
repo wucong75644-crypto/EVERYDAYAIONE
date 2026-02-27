@@ -260,7 +260,7 @@ async def _find_task_by_any_id(db, task_id: str, user_id: str) -> Optional[Dict[
         "client_task_id", task_id
     ).eq("user_id", user_id).maybe_single().execute()
 
-    if result.data:
+    if result and result.data:
         return result.data
 
     # 2. 再尝试用 external_task_id 查询（image/video 任务）
@@ -268,7 +268,7 @@ async def _find_task_by_any_id(db, task_id: str, user_id: str) -> Optional[Dict[
         "external_task_id", task_id
     ).eq("user_id", user_id).maybe_single().execute()
 
-    if result.data:
+    if result and result.data:
         return result.data
 
     # 3. 最后尝试用 id 查询（chat 任务）
@@ -276,7 +276,7 @@ async def _find_task_by_any_id(db, task_id: str, user_id: str) -> Optional[Dict[
         "id", task_id
     ).eq("user_id", user_id).maybe_single().execute()
 
-    return result.data if result.data else None
+    return result.data if (result and result.data) else None
 
 
 async def _find_message_by_id(db, message_id: str) -> Optional[Dict[str, Any]]:
@@ -288,7 +288,7 @@ async def _find_message_by_id(db, message_id: str) -> Optional[Dict[str, Any]]:
         "id", message_id
     ).maybe_single().execute()
 
-    return result.data if result.data else None
+    return result.data if (result and result.data) else None
 
 
 def _build_fallback_message(task: Dict[str, Any], message_id: str, conversation_id: str) -> Dict[str, Any]:
