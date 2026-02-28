@@ -6,7 +6,7 @@
  */
 
 import { type UnifiedModel } from '../../constants/models';
-import { useMessageStore, type Message } from '../../stores/useMessageStore';
+import { type Message } from '../../stores/useMessageStore';
 import { sendMessage, createTextContent, createTextWithImage, createErrorMessage } from '../../services/messageSender';
 import { useWebSocketContext } from '../../contexts/WebSocketContext';
 import { tabSync } from '../../utils/tabSync';
@@ -48,6 +48,16 @@ export function useTextMessageHandler({
         ? createTextWithImage(messageContent, imageUrl)
         : createTextContent(messageContent);
 
+      // 立即触发侧边栏乐观更新（不等待 API 返回）
+      onMessagePending({
+        id: 'temp-' + Date.now(),
+        conversation_id: currentConversationId,
+        role: 'user',
+        content,
+        status: 'completed',
+        created_at: new Date().toISOString(),
+      } as Message);
+
       // 广播聊天开始事件给其他标签页
       tabSync.broadcast('chat_started', { conversationId: currentConversationId });
 
@@ -67,12 +77,6 @@ export function useTextMessageHandler({
         },
         subscribeTask: subscribeTaskWithMapping,
       });
-
-      // 通知消息已开始发送
-      const userMessage = useMessageStore.getState().optimisticMessages.get(currentConversationId)?.[0];
-      if (userMessage) {
-        onMessagePending(userMessage);
-      }
 
       // 注意：流式内容由 WebSocketContext 处理（message_chunk 消息）
       // 消息完成也由 WebSocket 推送触发状态更新

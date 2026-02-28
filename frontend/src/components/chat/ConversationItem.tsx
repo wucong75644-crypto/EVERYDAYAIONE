@@ -8,7 +8,6 @@ import { memo } from 'react';
 import type { ConversationListItem } from '../../services/conversation';
 import { useMessageStore } from '../../stores/useMessageStore';
 import { MoreHorizontal } from 'lucide-react';
-import styles from './shared.module.css';
 
 interface ConversationItemContentProps {
   conv: ConversationListItem;
@@ -28,10 +27,7 @@ export function ConversationItemContent({
   isDropdownOpen,
   onShowDropdown,
 }: ConversationItemContentProps) {
-  const { hasActiveTask, getChatTask, isRecentlyCompleted } = useMessageStore();
-  const isActive = hasActiveTask(conv.id);
-  const task = getChatTask(conv.id);
-  const justCompleted = isRecentlyCompleted(conv.id);
+  const hasUnread = useMessageStore((state) => state.recentlyCompleted.has(conv.id));
 
   return (
     <>
@@ -45,24 +41,10 @@ export function ConversationItemContent({
         >
           {conv.title}
         </div>
-        {/* 任务状态徽章 */}
-        {isActive && (
-          <div className="flex-shrink-0" title={task?.status === 'streaming' ? '正在生成...' : '等待中...'}>
-            {task?.status === 'streaming' ? (
-              <div className="flex space-x-0.5">
-                <span className={`w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce ${styles['bounce-dot-1']}`}></span>
-                <span className={`w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce ${styles['bounce-dot-2']}`}></span>
-                <span className={`w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce ${styles['bounce-dot-3']}`}></span>
-              </div>
-            ) : (
-              <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
-            )}
-          </div>
-        )}
-        {/* 完成闪烁徽章（绿色闪烁2秒） */}
-        {justCompleted && !isActive && (
-          <div className="flex-shrink-0" title="生成完成">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-ping"></div>
+        {/* 完成通知（仅非当前对话，持续闪烁直到用户点击查看） */}
+        {hasUnread && conv.id !== currentConversationId && (
+          <div className="flex-shrink-0" title="生成完成，点击查看">
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-dot-breathe"></div>
           </div>
         )}
         {/* More button (绝对定位在右侧，hover或菜单打开时显示) */}

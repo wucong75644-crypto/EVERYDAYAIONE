@@ -49,6 +49,8 @@ export interface TaskSlice {
 
   // 通知操作
   markNotificationRead: (id: string) => void;
+  /** 直接标记对话已完成（无依赖，供 WebSocket 调用） */
+  markConversationCompleted: (conversationId: string) => void;
   clearRecentlyCompleted: (conversationId: string) => void;
   isRecentlyCompleted: (conversationId: string) => boolean;
 }
@@ -290,6 +292,14 @@ export const createTaskSlice: StateCreator<TaskSlice & TaskSliceDeps, [], [], Ta
         n.id === id ? { ...n, isRead: true } : n
       ),
     }));
+  },
+
+  markConversationCompleted: (conversationId) => {
+    set((state) => {
+      const recentlyCompleted = new Set(state.recentlyCompleted);
+      recentlyCompleted.add(conversationId);
+      return { recentlyCompleted };
+    });
   },
 
   clearRecentlyCompleted: (conversationId) => {
