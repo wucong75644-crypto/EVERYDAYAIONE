@@ -5,7 +5,7 @@
  */
 
 import { type UnifiedModel } from '../../constants/models';
-import { useMessageStore, type Message } from '../../stores/useMessageStore';
+import { type Message } from '../../stores/useMessageStore';
 import { sendMessage, createTextContent, createTextWithImage, createErrorMessage, type GenerationType } from '../../services/messageSender';
 import { useWebSocketContext } from '../../contexts/WebSocketContext';
 
@@ -59,6 +59,16 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
         ? createTextWithImage(prompt, imageUrl)
         : createTextContent(prompt);
 
+      // 立即触发侧边栏乐观更新（不等待 API 返回）
+      onMessagePending({
+        id: 'temp-' + Date.now(),
+        conversation_id: conversationId,
+        role: 'user',
+        content,
+        status: 'completed',
+        created_at: new Date().toISOString(),
+      } as Message);
+
       // 构建类型特定参数（使用下划线命名匹配后端）
       const mediaParams: Record<string, unknown> = {};
 
@@ -82,16 +92,6 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
         subscribeTask: subscribeTaskWithMapping,
         unsubscribeTask, // 🔥 传入取消订阅函数
       });
-
-      // 通知消息已开始发送（查找最新的 user 消息）
-      const optimisticList = useMessageStore.getState().optimisticMessages.get(conversationId);
-      const userMessage = optimisticList
-        ?.filter(m => m.role === 'user')
-        ?.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
-
-      if (userMessage) {
-        onMessagePending(userMessage);
-      }
 
       // 注意：onMessageSent 现在由 WebSocketContext 处理
       // WebSocket 推送会触发相应的状态更新

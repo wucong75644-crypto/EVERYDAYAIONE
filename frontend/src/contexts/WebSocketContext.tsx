@@ -277,15 +277,19 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
         const store = getStore();
 
+        // conversation_id 兜底：从 taskConversationMap 查找（后端可能不发送该字段）
+        const effectiveConversationId = conversation_id
+          || (task_id ? taskConversationMapRef.current.get(task_id) : undefined);
+
         // 1. 有 task_id：处理任务完成
         if (task_id) {
-          if (messageData && conversation_id) {
+          if (messageData && effectiveConversationId) {
             console.log('🔥 [DEBUG] Calling handleTaskDoneWithMessage with:', {
               task_id,
               messageData,
-              conversation_id,
+              conversation_id: effectiveConversationId,
             });
-            handleTaskDoneWithMessage(task_id, messageData, conversation_id);
+            handleTaskDoneWithMessage(task_id, messageData, effectiveConversationId);
           } else if (message_id) {
             store.setStatus(message_id, 'completed');
             // 尝试获取 conversationId 和任务类型
@@ -304,10 +308,11 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
         }
 
         // 完成流式状态
-        if (conversation_id) {
-          store.completeStreaming(conversation_id);
+        if (effectiveConversationId) {
+          store.completeStreaming(effectiveConversationId);
+          store.markConversationCompleted(effectiveConversationId);
           store.setIsSending(false);
-          tabSync.broadcast('message_completed', { conversationId: conversation_id, messageId: message_id });
+          tabSync.broadcast('message_completed', { conversationId: effectiveConversationId, messageId: message_id });
         }
 
         // Toast 提示
