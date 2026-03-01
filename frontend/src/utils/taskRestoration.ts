@@ -131,10 +131,28 @@ export function restoreMediaTask(task: PendingTask) {
     return;
   }
 
-  // 占位符已在 DB 中，标记强制刷新让 loadMessages 跳过缓存拿到最新消息
+  // 1. 标记强制刷新，让 loadMessages 跳过缓存从 API 加载（含 DB 中的占位符）
   store.markForceRefresh(task.conversation_id);
 
-  logger.info('task:restore', '媒体任务已标记强制刷新，等待 WebSocket 推送', {
+  // 2. 同时添加占位符到 Store（防止 loadMessages 先执行时用了旧缓存）
+  //    addMessage 有 ID 去重，loadMessages 从 API 加载后不会重复
+  const placeholderId = task.placeholder_message_id || `restored-${task.external_task_id}`;
+  const loadingText = task.type === 'image' ? '图片生成中' : '视频生成中';
+
+  store.addMessage(task.conversation_id, {
+    id: placeholderId,
+    conversation_id: task.conversation_id,
+    role: 'assistant' as const,
+    content: [{ type: 'text' as const, text: loadingText }],
+    status: 'pending' as const,
+    created_at: task.placeholder_created_at || new Date().toISOString(),
+    generation_params: {
+      type: task.type,
+      model: task.request_params?.model,
+    },
+  });
+
+  logger.info('task:restore', '媒体任务已恢复，等待 WebSocket 推送', {
     taskId: task.external_task_id,
     type: task.type,
     conversationId: task.conversation_id,
