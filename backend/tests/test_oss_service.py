@@ -99,30 +99,10 @@ class TestOSSServiceUploadFromURL:
         user_id = str(uuid4())
         image_content = b"fake_image_content"
 
-        # Mock HEAD 响应
-        mock_head_response = Mock()
-        mock_head_response.headers = {"content-length": "100", "content-type": "image/png"}
-
-        # Mock 流式 GET 响应
-        mock_stream_response = AsyncMock()
-        mock_stream_response.headers = {"content-type": "image/png"}
-        mock_stream_response.raise_for_status = Mock()
-
-        async def mock_aiter_bytes(chunk_size):
-            yield image_content
-
-        mock_stream_response.aiter_bytes = mock_aiter_bytes
-
-        mock_stream_context = AsyncMock()
-        mock_stream_context.__aenter__.return_value = mock_stream_response
-        mock_stream_context.__aexit__.return_value = None
-
-        # 直接注入 _http_client（连接池模式）
-        mock_client = AsyncMock()
-        mock_client.is_closed = False
-        mock_client.head = AsyncMock(return_value=mock_head_response)
-        mock_client.stream = Mock(return_value=mock_stream_context)
-        oss_service._http_client = mock_client
+        # Mock downloader.download 返回内容
+        mock_downloader = AsyncMock()
+        mock_downloader.download = AsyncMock(return_value=(image_content, "image/png"))
+        oss_service._downloader = mock_downloader
 
         # Mock OSS upload
         mock_upload_result = Mock()
@@ -156,40 +136,14 @@ class TestOSSServiceUploadFromURL:
         test_url = "https://example.com/large_image.png"
         user_id = str(uuid4())
 
-        # 创建一个超大的文件内容
-        large_content = b"x" * (60 * 1024 * 1024)  # 60MB
+        # Mock downloader.download 抛出文件过大异常
+        mock_downloader = AsyncMock()
+        mock_downloader.download = AsyncMock(
+            side_effect=ValueError("image下载超限: >50.0MB")
+        )
+        oss_service._downloader = mock_downloader
 
-        # Mock HEAD 请求失败（某些服务器不支持HEAD）
-        mock_head_response = Mock()
-        mock_head_response.headers = {}
-
-        # Mock 流式GET响应
-        mock_stream_response = AsyncMock()
-        mock_stream_response.headers = {"content-type": "image/png"}
-        mock_stream_response.raise_for_status = Mock()
-
-        # 模拟大文件下载
-        async def mock_aiter_bytes(chunk_size):
-            chunk_count = len(large_content) // chunk_size + 1
-            for i in range(chunk_count):
-                start = i * chunk_size
-                end = min(start + chunk_size, len(large_content))
-                yield large_content[start:end]
-
-        mock_stream_response.aiter_bytes = mock_aiter_bytes
-
-        mock_stream_context = AsyncMock()
-        mock_stream_context.__aenter__.return_value = mock_stream_response
-        mock_stream_context.__aexit__.return_value = None
-
-        # 直接注入 _http_client（连接池模式）
-        mock_client = AsyncMock()
-        mock_client.is_closed = False
-        mock_client.head = AsyncMock(return_value=mock_head_response)
-        mock_client.stream = Mock(return_value=mock_stream_context)
-        oss_service._http_client = mock_client
-
-        # Act & Assert - 应该在下载过程中检测到文件过大
+        # Act & Assert
         with pytest.raises(ValueError, match="下载超限"):
             await oss_service.upload_from_url(
                 url=test_url,
@@ -205,30 +159,10 @@ class TestOSSServiceUploadFromURL:
         user_id = str(uuid4())
         content = b"fake_content"
 
-        # Mock HEAD 响应
-        mock_head_response = Mock()
-        mock_head_response.headers = {"content-length": "100", "content-type": "image/bmp"}
-
-        # Mock 流式 GET 响应
-        mock_stream_response = AsyncMock()
-        mock_stream_response.headers = {"content-type": "image/bmp"}
-        mock_stream_response.raise_for_status = Mock()
-
-        async def mock_aiter_bytes(chunk_size):
-            yield content
-
-        mock_stream_response.aiter_bytes = mock_aiter_bytes
-
-        mock_stream_context = AsyncMock()
-        mock_stream_context.__aenter__.return_value = mock_stream_response
-        mock_stream_context.__aexit__.return_value = None
-
-        # 直接注入 _http_client（连接池模式）
-        mock_client = AsyncMock()
-        mock_client.is_closed = False
-        mock_client.head = AsyncMock(return_value=mock_head_response)
-        mock_client.stream = Mock(return_value=mock_stream_context)
-        oss_service._http_client = mock_client
+        # Mock downloader.download 返回 bmp content-type
+        mock_downloader = AsyncMock()
+        mock_downloader.download = AsyncMock(return_value=(content, "image/bmp"))
+        oss_service._downloader = mock_downloader
 
         mock_upload_result = Mock()
         mock_upload_result.etag = "test_etag"
