@@ -105,14 +105,10 @@ class TaskCompletionService:
         Returns:
             True = 已处理（含幂等跳过），False = 处理失败
         """
-        print(f"🔥🔥🔥 process_result START | task_id={external_task_id} | status={result.status.value}", flush=True)
-
         # pending/processing 状态忽略（轮询场景，任务仍在进行中）
         if result.status not in (TaskStatus.SUCCESS, TaskStatus.FAILED):
-            print(f"🔥🔥🔥 process_result: not final status, returning | {result.status.value}", flush=True)
             return True
 
-        print(f"🔥🔥🔥 process_result: getting task from DB | {external_task_id}", flush=True)
         # 1. 查询当前任务状态（获取version用于乐观锁）
         task = self.get_task(external_task_id)
         if not task:

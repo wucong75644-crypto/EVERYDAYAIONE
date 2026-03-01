@@ -154,13 +154,17 @@
 
 ### 任务恢复模块 (Task Restoration)
 
-> **重构说明**：轮询逻辑已被 WebSocket 实时推送替代。任务恢复通过 `taskRestoration.ts` 重新订阅未完成任务。
+> **重构说明**：轮询逻辑已被 WebSocket 实时推送替代。任务恢复通过 `taskRestoration.ts` 两阶段架构恢复。
+> **2026-03-01 修复**：WS 订阅从 `external_task_id` 改为优先使用 `client_task_id`，与后端推送 ID 一致。
 
 #### 前端函数
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `restorePendingTasks` | `frontend/src/utils/taskRestoration.ts` | 恢复未完成任务 | subscribeTask | Promise<void> |
+| `fetchPendingTasks` | `frontend/src/utils/taskRestoration.ts` | 获取进行中的任务（含 client_task_id） | - | Promise<PendingTask[] \| null> |
+| `restoreTaskPlaceholders` | `frontend/src/utils/taskRestoration.ts` | Phase 1: 获取 pending 任务并创建占位符（纯 HTTP） | - | Promise<RestorationResult \| null> |
+| `subscribeRestoredTasks` | `frontend/src/utils/taskRestoration.ts` | Phase 2: 为恢复的任务订阅 WS（优先 client_task_id） | result, subscribeToTask | void |
+| `restoreMediaTask` | `frontend/src/utils/taskRestoration.ts` | 恢复媒体任务占位符 | task: PendingTask | void |
 
 ### 统一消息发送模块 (Message Sender)
 
@@ -255,6 +259,7 @@
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
 | `generate_message` | `backend/api/routes/message.py` | 统一消息生成入口（send/retry/regenerate） | body: GenerateRequest | GenerateResponse |
+| `MessageResponse.parse_generation_params` | `backend/schemas/message.py` | Supabase JSONB 字符串自动转 dict（field_validator） | v: Any | Any |
 | `get_messages` | `backend/services/message_service.py` | 获取对话消息列表 | conversation_id, user_id, limit, offset, before_id | dict |
 | `delete_message` | `backend/services/message_service.py` | 删除单条消息（权限验证后物理删除） | message_id, user_id | dict |
 | `create_message` | `backend/services/message_service.py` | 创建消息记录 | conversation_id, user_id, content, role, credits_cost | dict |
@@ -639,7 +644,7 @@
 - **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息处理、消息服务、滚动管理、重新生成、轮询管理、**统一消息发送**（含 mediaSender）、媒体重新生成、**任务通知**、**图片URL工具**、**统一日志**、**任务协调器**、**消息合并**、性能监控、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理、测试工具、认证弹窗模块、通用组件模块、占位符管理模块、**Webhook 回调与任务完成服务**
 - **测试覆盖率目标**：80%+（Vitest + Testing Library）
 - **性能监控**：13个预定义性能标记，支持关键路径监控
-- **最后更新**：2026-02-08（Webhook 回调改造：回调为主 + 轮询兜底 + 多 Provider 兼容）
+- **最后更新**：2026-03-01（修复刷新恢复僵尸消息：generation_params validator + WS 订阅 ID 修正）
 
 ---
 
