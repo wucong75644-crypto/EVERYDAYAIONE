@@ -69,6 +69,7 @@ class OSSService:
         )
         self.cdn_domain = settings.oss_cdn_domain
         self.external_endpoint = settings.oss_endpoint  # 用于生成外部访问 URL
+        self._http_client: Optional[httpx.AsyncClient] = None
 
         # 日志：区分内外网
         endpoint_type = "internal" if settings.oss_internal_endpoint else "external"
@@ -77,6 +78,36 @@ class OSSService:
             f"endpoint={upload_endpoint} ({endpoint_type}), "
             f"cdn={self.cdn_domain or 'not configured'}"
         )
+
+    async def _get_http_client(self) -> httpx.AsyncClient:
+        """
+        获取或创建 HTTP 客户端（复用连接池）
+
+        httpx 官方推荐复用 Client 实例以获得连接池，
+        避免每次请求都建立新的 TCP 连接和 TLS 握手。
+        参考：https://www.python-httpx.org/advanced/clients/
+        """
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    connect=10.0,   # 连接超时 10s
+                    read=60.0,      # 读超时 60s（per-chunk，适合大文件流式下载）
+                    write=10.0,     # 写超时 10s
+                    pool=10.0,      # 连接池等待 10s
+                ),
+                follow_redirects=True,
+                limits=httpx.Limits(
+                    max_connections=10,
+                    max_keepalive_connections=5,
+                ),
+            )
+        return self._http_client
+
+    async def close(self) -> None:
+        """关闭 HTTP 客户端连接池"""
+        if self._http_client and not self._http_client.is_closed:
+            await self._http_client.aclose()
+            self._http_client = None
 
     async def _download_from_url(
         self,
@@ -102,72 +133,101 @@ class OSSService:
         max_size = self.MAX_VIDEO_SIZE if media_type == "video" else self.MAX_IMAGE_SIZE
         max_size_mb = max_size / 1024 / 1024
 
-        # 预检查文件大小（HEAD 请求）
-        timeout = 120.0 if media_type == "video" else 30.0
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        # 获取复用的 HTTP 客户端（连接池）
+        client = await self._get_http_client()
+
+        # 视频使用更长的 read timeout（per-request 覆盖默认值）
+        request_timeout = httpx.Timeout(
+            connect=10.0,
+            read=120.0 if media_type == "video" else 60.0,
+            write=10.0,
+            pool=10.0,
+        )
+
+        try:
+            # 尝试 HEAD 请求获取 Content-Length
             try:
-                # 尝试 HEAD 请求获取 Content-Length
-                try:
-                    head_response = await client.head(url, timeout=10.0)
-                    content_length = head_response.headers.get("content-length")
-                    if content_length:
-                        size = int(content_length)
-                        if size > max_size:
-                            logger.warning(
-                                f"{media_type.capitalize()} too large | "
-                                f"size={size/1024/1024:.1f}MB | max={max_size_mb}MB"
-                            )
-                            raise ValueError(
-                                f"{media_type}文件过大: "
-                                f"{size/1024/1024:.1f}MB > {max_size_mb}MB"
-                            )
-                        logger.info(
-                            f"Pre-check passed | size={size/1024/1024:.1f}MB | "
-                            f"max={max_size_mb}MB"
+                head_response = await client.head(url, timeout=10.0)
+                content_length = head_response.headers.get("content-length")
+                if content_length:
+                    size = int(content_length)
+                    if size > max_size:
+                        logger.warning(
+                            f"{media_type.capitalize()} too large | "
+                            f"size={size/1024/1024:.1f}MB | max={max_size_mb}MB"
                         )
-                except (httpx.HTTPError, ValueError) as e:
-                    # HEAD 请求失败或不支持，继续尝试 GET（流式下载时检查）
-                    logger.debug(f"HEAD request failed, will check size during download: {e}")
+                        raise ValueError(
+                            f"{media_type}文件过大: "
+                            f"{size/1024/1024:.1f}MB > {max_size_mb}MB"
+                        )
+                    logger.info(
+                        f"Pre-check passed | size={size/1024/1024:.1f}MB | "
+                        f"max={max_size_mb}MB"
+                    )
+            except (httpx.HTTPError, ValueError) as e:
+                # HEAD 请求失败或不支持，继续尝试 GET（流式下载时检查）
+                if isinstance(e, ValueError) and "文件过大" in str(e):
+                    raise  # 文件过大的 ValueError 直接抛出
+                logger.debug(f"HEAD request failed, will check size during download: {e}")
 
-                # 流式下载并检查累计大小
-                content_chunks = []
-                total_size = 0
+            # 流式下载并检查累计大小
+            content_chunks = []
+            total_size = 0
 
-                async with client.stream("GET", url) as response:
-                    response.raise_for_status()
-                    content_type = response.headers.get("content-type", "")
+            async with client.stream("GET", url, timeout=request_timeout) as response:
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "")
 
-                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                        content_chunks.append(chunk)
-                        total_size += len(chunk)
+                async for chunk in response.aiter_bytes(chunk_size=8192):
+                    content_chunks.append(chunk)
+                    total_size += len(chunk)
 
-                        # 实时检查是否超限
-                        if total_size > max_size:
-                            logger.warning(
-                                f"{media_type.capitalize()} download aborted | "
-                                f"size={total_size/1024/1024:.1f}MB > {max_size_mb}MB"
-                            )
-                            raise ValueError(
-                                f"{media_type}下载超限: >{max_size_mb}MB"
-                            )
+                    # 实时检查是否超限
+                    if total_size > max_size:
+                        logger.warning(
+                            f"{media_type.capitalize()} download aborted | "
+                            f"size={total_size/1024/1024:.1f}MB > {max_size_mb}MB"
+                        )
+                        raise ValueError(
+                            f"{media_type}下载超限: >{max_size_mb}MB"
+                        )
 
-                # 合并所有块
-                content = b"".join(content_chunks)
-                logger.info(
-                    f"{media_type.capitalize()} downloaded | "
-                    f"size={len(content)/1024/1024:.1f}MB"
+            # 合并所有块
+            content = b"".join(content_chunks)
+            logger.info(
+                f"{media_type.capitalize()} downloaded | "
+                f"size={len(content)/1024/1024:.1f}MB"
+            )
+            return content, content_type
+
+        except (ValueError, ValidationError, AppException):
+            raise
+        except httpx.TimeoutException as e:
+            # 超时错误：保留原始类型，上层可据此重试
+            logger.error(
+                f"Download timeout | type={media_type} | user_id={user_id} | "
+                f"url={url[:100]} | error={e}"
+            )
+            raise
+        except httpx.HTTPStatusError as e:
+            # HTTP 状态码错误：区分可重试/不可重试
+            logger.error(
+                f"HTTP error | status={e.response.status_code} | "
+                f"user_id={user_id} | url={url[:100]}"
+            )
+            if e.response.status_code in (403, 404, 410):
+                # URL 已失效，不可重试
+                raise ValueError(
+                    f"{media_type} URL 已失效(HTTP {e.response.status_code})"
                 )
-                return content, content_type
-
-            except (ValueError, ValidationError, AppException):
-                raise
-            except httpx.HTTPError as e:
-                logger.error(
-                    f"Failed to download {media_type} | user_id={user_id} | "
-                    f"url={url[:100]} | error={str(e)}"
-                )
-                # 脱敏：不暴露原始URL和HTTP错误详情
-                raise ValueError(f"{media_type}下载失败，请检查URL是否有效")
+            raise  # 其他 HTTP 错误保留原始类型
+        except httpx.HTTPError as e:
+            # 其他网络错误：保留原始类型，上层可据此重试
+            logger.error(
+                f"Download failed | type={media_type} | user_id={user_id} | "
+                f"url={url[:100]} | error={e}"
+            )
+            raise
 
     async def _validate_and_upload(
         self,

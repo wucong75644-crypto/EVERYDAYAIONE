@@ -99,47 +99,47 @@ class TestOSSServiceUploadFromURL:
         user_id = str(uuid4())
         image_content = b"fake_image_content"
 
-        # Mock HTTP 客户端
-        mock_response = AsyncMock()
-        mock_response.headers = {"content-length": "100", "content-type": "image/png"}
-        mock_response.raise_for_status = Mock()
+        # Mock HEAD 响应
+        mock_head_response = Mock()
+        mock_head_response.headers = {"content-length": "100", "content-type": "image/png"}
 
-        # Mock 流式响应
+        # Mock 流式 GET 响应
+        mock_stream_response = AsyncMock()
+        mock_stream_response.headers = {"content-type": "image/png"}
+        mock_stream_response.raise_for_status = Mock()
+
         async def mock_aiter_bytes(chunk_size):
             yield image_content
 
-        mock_response.aiter_bytes = mock_aiter_bytes
+        mock_stream_response.aiter_bytes = mock_aiter_bytes
 
         mock_stream_context = AsyncMock()
-        mock_stream_context.__aenter__.return_value = mock_response
+        mock_stream_context.__aenter__.return_value = mock_stream_response
         mock_stream_context.__aexit__.return_value = None
 
+        # 直接注入 _http_client（连接池模式）
         mock_client = AsyncMock()
-        mock_client.head = AsyncMock(return_value=mock_response)
+        mock_client.is_closed = False
+        mock_client.head = AsyncMock(return_value=mock_head_response)
         mock_client.stream = Mock(return_value=mock_stream_context)
-
-        mock_client_context = AsyncMock()
-        mock_client_context.__aenter__.return_value = mock_client
-        mock_client_context.__aexit__.return_value = None
+        oss_service._http_client = mock_client
 
         # Mock OSS upload
         mock_upload_result = Mock()
         mock_upload_result.etag = "test_etag"
 
-        # Mock asyncio.to_thread 使用 AsyncMock
         async def mock_to_thread(func, *args, **kwargs):
             return mock_upload_result
 
-        with patch('services.oss_service.httpx.AsyncClient', return_value=mock_client_context):
-            with patch.object(oss_service, 'bucket') as mock_bucket:
-                with patch('asyncio.to_thread', side_effect=mock_to_thread):
-                    # Act
-                    result = await oss_service.upload_from_url(
-                        url=test_url,
-                        user_id=user_id,
-                        category="generated",
-                        media_type="image"
-                    )
+        with patch.object(oss_service, 'bucket') as mock_bucket:
+            with patch('asyncio.to_thread', side_effect=mock_to_thread):
+                # Act
+                result = await oss_service.upload_from_url(
+                    url=test_url,
+                    user_id=user_id,
+                    category="generated",
+                    media_type="image"
+                )
 
         # Assert
         assert "object_key" in result
@@ -170,7 +170,6 @@ class TestOSSServiceUploadFromURL:
 
         # 模拟大文件下载
         async def mock_aiter_bytes(chunk_size):
-            # 分块yield，模拟流式下载
             chunk_count = len(large_content) // chunk_size + 1
             for i in range(chunk_count):
                 start = i * chunk_size
@@ -183,22 +182,20 @@ class TestOSSServiceUploadFromURL:
         mock_stream_context.__aenter__.return_value = mock_stream_response
         mock_stream_context.__aexit__.return_value = None
 
+        # 直接注入 _http_client（连接池模式）
         mock_client = AsyncMock()
+        mock_client.is_closed = False
         mock_client.head = AsyncMock(return_value=mock_head_response)
         mock_client.stream = Mock(return_value=mock_stream_context)
+        oss_service._http_client = mock_client
 
-        mock_client_context = AsyncMock()
-        mock_client_context.__aenter__.return_value = mock_client
-        mock_client_context.__aexit__.return_value = None
-
-        with patch('services.oss_service.httpx.AsyncClient', return_value=mock_client_context):
-            # Act & Assert - 应该在下载过程中检测到文件过大
-            with pytest.raises(ValueError, match="下载超限"):
-                await oss_service.upload_from_url(
-                    url=test_url,
-                    user_id=user_id,
-                    media_type="image"
-                )
+        # Act & Assert - 应该在下载过程中检测到文件过大
+        with pytest.raises(ValueError, match="下载超限"):
+            await oss_service.upload_from_url(
+                url=test_url,
+                user_id=user_id,
+                media_type="image"
+            )
 
     @pytest.mark.asyncio
     async def test_upload_from_url_with_fallback_extension(self, oss_service):
@@ -208,10 +205,11 @@ class TestOSSServiceUploadFromURL:
         user_id = str(uuid4())
         content = b"fake_content"
 
-        # Mock HTTP 响应
+        # Mock HEAD 响应
         mock_head_response = Mock()
         mock_head_response.headers = {"content-length": "100", "content-type": "image/bmp"}
 
+        # Mock 流式 GET 响应
         mock_stream_response = AsyncMock()
         mock_stream_response.headers = {"content-type": "image/bmp"}
         mock_stream_response.raise_for_status = Mock()
@@ -225,13 +223,12 @@ class TestOSSServiceUploadFromURL:
         mock_stream_context.__aenter__.return_value = mock_stream_response
         mock_stream_context.__aexit__.return_value = None
 
+        # 直接注入 _http_client（连接池模式）
         mock_client = AsyncMock()
+        mock_client.is_closed = False
         mock_client.head = AsyncMock(return_value=mock_head_response)
         mock_client.stream = Mock(return_value=mock_stream_context)
-
-        mock_client_context = AsyncMock()
-        mock_client_context.__aenter__.return_value = mock_client
-        mock_client_context.__aexit__.return_value = None
+        oss_service._http_client = mock_client
 
         mock_upload_result = Mock()
         mock_upload_result.etag = "test_etag"
@@ -239,14 +236,13 @@ class TestOSSServiceUploadFromURL:
         async def mock_to_thread(func, *args, **kwargs):
             return mock_upload_result
 
-        with patch('services.oss_service.httpx.AsyncClient', return_value=mock_client_context):
-            with patch('asyncio.to_thread', side_effect=mock_to_thread):
-                # Act - OSS 服务有 fallback 逻辑，会使用默认的 png
-                result = await oss_service.upload_from_url(
-                    url=test_url,
-                    user_id=user_id,
-                    media_type="image"
-                )
+        with patch('asyncio.to_thread', side_effect=mock_to_thread):
+            # Act - OSS 服务有 fallback 逻辑，会使用默认的 png
+            result = await oss_service.upload_from_url(
+                url=test_url,
+                user_id=user_id,
+                media_type="image"
+            )
 
         # Assert - 验证使用了 fallback 扩展名 (png)
         assert result["object_key"].endswith(".png")
