@@ -203,6 +203,7 @@ export async function sendMessage(options: SendOptions): Promise<string> {
     const response = await request<GenerateResponse>({
       url: `/conversations/${conversationId}/messages/generate`,
       method: 'POST',
+      timeout: 60000, // 生成请求需要更长超时（KIE 等 Provider 响应慢）
       data: {
         operation,
         content,

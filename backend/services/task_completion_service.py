@@ -8,6 +8,7 @@ Webhook 和轮询兜底的统一入口，保证：
 """
 
 from typing import Dict, Any, List, Optional, Tuple, Union
+from datetime import datetime, timezone
 
 from loguru import logger
 from supabase import Client
@@ -141,7 +142,7 @@ class TaskCompletionService:
             self.db.table("tasks")
             .update({
                 "version": current_version + 1,
-                "started_at": "NOW()" if not task.get("started_at") else task.get("started_at")
+                "started_at": task.get("started_at") or datetime.now(timezone.utc).isoformat()
             })
             .eq("external_task_id", external_task_id)
             .eq("version", current_version)  # 乐观锁条件
