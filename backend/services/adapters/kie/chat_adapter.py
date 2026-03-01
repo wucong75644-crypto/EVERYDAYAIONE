@@ -261,21 +261,7 @@ class KieChatAdapter(BaseChatAdapter):
         tools: Optional[List[ToolDefinition]] = None,
         response_format: Optional[ResponseFormat] = None,
     ) -> Union[ChatCompletionChunk, AsyncIterator[ChatCompletionChunk]]:
-        """
-        发送聊天请求
-
-        Args:
-            messages: 消息列表
-            stream: 是否流式输出
-            include_thoughts: 是否包含思考过程
-            reasoning_effort: 推理力度
-            thinking_mode: 推理模式（Deep Think 等）
-            tools: 工具列表
-            response_format: 响应格式 (与 tools 互斥)
-
-        Returns:
-            流式响应迭代器 或 完整响应
-        """
+        """发送聊天请求（tools 和 response_format 互斥）"""
         # 验证互斥参数
         if tools and response_format:
             raise ValueError("tools and response_format are mutually exclusive")
@@ -311,21 +297,7 @@ class KieChatAdapter(BaseChatAdapter):
         reasoning_effort: ReasoningEffort = ReasoningEffort.HIGH,
         thinking_mode: Optional[ThinkingMode] = None,
     ) -> Union[ChatCompletionChunk, AsyncIterator[ChatCompletionChunk]]:
-        """
-        简化的聊天接口
-
-        Args:
-            user_message: 用户消息
-            system_prompt: 系统提示
-            history: 对话历史
-            stream: 是否流式
-            include_thoughts: 是否包含思考过程
-            reasoning_effort: 推理力度
-            thinking_mode: 推理模式（Deep Think 等）
-
-        Returns:
-            响应
-        """
+        """简化的聊天接口：自动格式化历史消息并发送"""
         try:
             messages = self.format_messages_from_history(
                 history or [],
@@ -430,11 +402,6 @@ class KieChatAdapter(BaseChatAdapter):
         """返回提供商标识"""
         return ModelProvider.KIE
 
-    @property
-    def supports_streaming(self) -> bool:
-        """是否支持流式输出"""
-        return True
-
     async def stream_chat(
         self,
         messages: List[Dict[str, Any]],
@@ -518,8 +485,3 @@ class KieChatAdapter(BaseChatAdapter):
     async def close(self) -> None:
         """关闭客户端连接"""
         await self.client.close()
-
-
-
-# 便捷函数已移至 helpers.py
-# from .helpers import create_kie_chat_adapter

@@ -2,7 +2,7 @@
 OSS 上传高失败率修复 - 单元测试
 
 覆盖以下修复点：
-1. 连接池复用（_get_http_client）
+1. 连接池复用（HttpDownloader.get_client）
 2. 细粒度超时配置（connect=10, read=60/120）
 3. 错误类型保留（TimeoutException / HTTPStatusError 不被包装为 ValueError）
 4. HTTP 403/404/410 → ValueError（不可重试）
@@ -25,65 +25,57 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import httpx
 
+from services.http_downloader import HttpDownloader
+
 
 # ============================================================
-# OSSService 连接池测试
+# HttpDownloader 连接池测试
 # ============================================================
 
 class TestHTTPClientPool:
     """测试 HTTP 客户端连接池"""
 
     @pytest.fixture
-    def oss_service(self):
-        with patch('services.oss_service.settings') as mock_settings:
-            mock_settings.oss_access_key_id = "test_key"
-            mock_settings.oss_access_key_secret = "test_secret"
-            mock_settings.oss_endpoint = "oss-cn-hangzhou.aliyuncs.com"
-            mock_settings.oss_bucket_name = "test-bucket"
-            mock_settings.oss_internal_endpoint = None
-            mock_settings.oss_cdn_domain = "cdn.example.com"
-
-            with patch('services.oss_service.oss2.Bucket'):
-                from services.oss_service import OSSService
-                return OSSService()
+    def downloader(self):
+        return HttpDownloader()
 
     @pytest.mark.asyncio
-    async def test_client_reuse(self, oss_service):
-        """多次调用 _get_http_client() 返回同一实例"""
-        client1 = await oss_service._get_http_client()
-        client2 = await oss_service._get_http_client()
+    async def test_client_reuse(self, downloader):
+        """多次调用 get_client() 返回同一实例"""
+        client1 = await downloader.get_client()
+        client2 = await downloader.get_client()
         assert client1 is client2
-        await oss_service.close()
+        await downloader.close()
 
     @pytest.mark.asyncio
-    async def test_client_recreate_after_close(self, oss_service):
+    async def test_client_recreate_after_close(self, downloader):
         """客户端关闭后重新创建"""
-        client1 = await oss_service._get_http_client()
-        await oss_service.close()
-        assert oss_service._http_client is None
+        client1 = await downloader.get_client()
+        await downloader.close()
+        assert downloader._client is None
 
-        client2 = await oss_service._get_http_client()
+        client2 = await downloader.get_client()
         assert client2 is not client1
-        await oss_service.close()
+        await downloader.close()
 
     @pytest.mark.asyncio
-    async def test_client_timeout_config(self, oss_service):
+    async def test_client_timeout_config(self, downloader):
         """默认超时配置：connect=10, read=60, write=10, pool=10"""
-        client = await oss_service._get_http_client()
+        client = await downloader.get_client()
         timeout = client.timeout
         assert timeout.connect == 10.0
         assert timeout.read == 60.0
         assert timeout.write == 10.0
         assert timeout.pool == 10.0
-        await oss_service.close()
+        await downloader.close()
 
     @pytest.mark.asyncio
-    async def test_close_idempotent(self, oss_service):
+    async def test_close_idempotent(self, downloader):
         """close 可多次调用不报错"""
-        await oss_service._get_http_client()
-        await oss_service.close()
-        await oss_service.close()  # 第二次不应报错
-        assert oss_service._http_client is None
+        await downloader.get_client()
+        await downloader.close()
+        await downloader.close()  # 第二次不应报错
+        assert downloader._client is None
 
 
 # ============================================================
@@ -94,38 +86,29 @@ class TestErrorPreservation:
     """测试下载错误不被包装为通用 ValueError"""
 
     @pytest.fixture
-    def oss_service(self):
-        with patch('services.oss_service.settings') as mock_settings:
-            mock_settings.oss_access_key_id = "test_key"
-            mock_settings.oss_access_key_secret = "test_secret"
-            mock_settings.oss_endpoint = "oss-cn-hangzhou.aliyuncs.com"
-            mock_settings.oss_bucket_name = "test-bucket"
-            mock_settings.oss_internal_endpoint = None
-            mock_settings.oss_cdn_domain = "cdn.example.com"
-
-            with patch('services.oss_service.oss2.Bucket'):
-                from services.oss_service import OSSService
-                return OSSService()
+    def downloader(self):
+        return HttpDownloader()
 
     @pytest.mark.asyncio
-    async def test_timeout_preserves_type(self, oss_service):
+    async def test_timeout_preserves_type(self, downloader):
         """超时错误保留 TimeoutException 类型（不被包装为 ValueError）"""
         mock_client = AsyncMock()
         mock_client.is_closed = False
         mock_client.head = AsyncMock(return_value=Mock(headers={}))
         mock_client.stream = Mock(side_effect=httpx.ReadTimeout("read timeout"))
 
-        oss_service._http_client = mock_client
+        downloader._client = mock_client
 
         with pytest.raises(httpx.TimeoutException):
-            await oss_service._download_from_url(
+            await downloader.download(
                 url="https://example.com/image.png",
                 user_id="user_123",
                 media_type="image",
+                max_size=50 * 1024 * 1024,
             )
 
     @pytest.mark.asyncio
-    async def test_http_403_raises_valueerror(self, oss_service):
+    async def test_http_403_raises_valueerror(self, downloader):
         """HTTP 403 → ValueError（不可重试）"""
         mock_client = AsyncMock()
         mock_client.is_closed = False
@@ -143,17 +126,18 @@ class TestErrorPreservation:
         mock_stream_ctx.__aexit__.return_value = None
         mock_client.stream = Mock(return_value=mock_stream_ctx)
 
-        oss_service._http_client = mock_client
+        downloader._client = mock_client
 
         with pytest.raises(ValueError, match="URL 已失效.*403"):
-            await oss_service._download_from_url(
+            await downloader.download(
                 url="https://example.com/expired.png",
                 user_id="user_123",
                 media_type="image",
+                max_size=50 * 1024 * 1024,
             )
 
     @pytest.mark.asyncio
-    async def test_http_404_raises_valueerror(self, oss_service):
+    async def test_http_404_raises_valueerror(self, downloader):
         """HTTP 404 → ValueError（不可重试）"""
         mock_client = AsyncMock()
         mock_client.is_closed = False
@@ -171,17 +155,18 @@ class TestErrorPreservation:
         mock_stream_ctx.__aexit__.return_value = None
         mock_client.stream = Mock(return_value=mock_stream_ctx)
 
-        oss_service._http_client = mock_client
+        downloader._client = mock_client
 
         with pytest.raises(ValueError, match="URL 已失效.*404"):
-            await oss_service._download_from_url(
+            await downloader.download(
                 url="https://example.com/gone.png",
                 user_id="user_123",
                 media_type="image",
+                max_size=50 * 1024 * 1024,
             )
 
     @pytest.mark.asyncio
-    async def test_http_500_preserves_type(self, oss_service):
+    async def test_http_500_preserves_type(self, downloader):
         """HTTP 500 → 保留 HTTPStatusError（可重试）"""
         mock_client = AsyncMock()
         mock_client.is_closed = False
@@ -199,13 +184,14 @@ class TestErrorPreservation:
         mock_stream_ctx.__aexit__.return_value = None
         mock_client.stream = Mock(return_value=mock_stream_ctx)
 
-        oss_service._http_client = mock_client
+        downloader._client = mock_client
 
         with pytest.raises(httpx.HTTPStatusError):
-            await oss_service._download_from_url(
+            await downloader.download(
                 url="https://example.com/server-error.png",
                 user_id="user_123",
                 media_type="image",
+                max_size=50 * 1024 * 1024,
             )
 
 
@@ -381,21 +367,11 @@ class TestVideoTimeout:
     """测试视频使用更长的 read timeout"""
 
     @pytest.fixture
-    def oss_service(self):
-        with patch('services.oss_service.settings') as mock_settings:
-            mock_settings.oss_access_key_id = "test_key"
-            mock_settings.oss_access_key_secret = "test_secret"
-            mock_settings.oss_endpoint = "oss-cn-hangzhou.aliyuncs.com"
-            mock_settings.oss_bucket_name = "test-bucket"
-            mock_settings.oss_internal_endpoint = None
-            mock_settings.oss_cdn_domain = "cdn.example.com"
-
-            with patch('services.oss_service.oss2.Bucket'):
-                from services.oss_service import OSSService
-                return OSSService()
+    def downloader(self):
+        return HttpDownloader()
 
     @pytest.mark.asyncio
-    async def test_video_read_timeout_120s(self, oss_service):
+    async def test_video_read_timeout_120s(self, downloader):
         """视频下载使用 read=120s 的超时"""
         mock_client = AsyncMock()
         mock_client.is_closed = False
@@ -421,19 +397,20 @@ class TestVideoTimeout:
             return mock_stream_ctx
 
         mock_client.stream = capture_stream
-        oss_service._http_client = mock_client
+        downloader._client = mock_client
 
-        await oss_service._download_from_url(
+        await downloader.download(
             url="https://example.com/video.mp4",
             user_id="user_123",
             media_type="video",
+            max_size=500 * 1024 * 1024,
         )
 
         assert captured_timeout is not None
         assert captured_timeout.read == 120.0
 
     @pytest.mark.asyncio
-    async def test_image_read_timeout_60s(self, oss_service):
+    async def test_image_read_timeout_60s(self, downloader):
         """图片下载使用 read=60s 的超时"""
         mock_client = AsyncMock()
         mock_client.is_closed = False
@@ -459,12 +436,13 @@ class TestVideoTimeout:
             return mock_stream_ctx
 
         mock_client.stream = capture_stream
-        oss_service._http_client = mock_client
+        downloader._client = mock_client
 
-        await oss_service._download_from_url(
+        await downloader.download(
             url="https://example.com/image.png",
             user_id="user_123",
             media_type="image",
+            max_size=50 * 1024 * 1024,
         )
 
         assert captured_timeout is not None

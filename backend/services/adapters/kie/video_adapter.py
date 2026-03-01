@@ -4,6 +4,7 @@ KIE 视频模型适配器
 适配 Sora 2 系列视频生成模型
 """
 
+import json
 from typing import List, Optional, Dict, Any
 from decimal import Decimal
 
@@ -385,8 +386,6 @@ class KieVideoAdapter(BaseVideoAdapter):
 
         KIE 回调格式同图片，resultUrls 包含视频 URL（通常只有一个）
         """
-        import json
-
         task_id = cls.extract_task_id(payload)
         state = payload.get("state")
         cost_time = payload.get("costTime")
@@ -436,8 +435,3 @@ class KieVideoAdapter(BaseVideoAdapter):
                 fail_msg=payload.get("failMsg", "任务失败"),
                 cost_time_ms=cost_time,
             )
-
-
-
-# 便捷函数已移至 helpers.py
-# from .helpers import text_to_video, image_to_video, storyboard_video

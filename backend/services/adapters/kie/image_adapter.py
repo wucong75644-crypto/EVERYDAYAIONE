@@ -4,8 +4,8 @@ KIE 图像模型适配器
 适配 Nano Banana 系列图像生成模型
 """
 
+import json
 from typing import List, Optional, Dict, Any
-from decimal import Decimal
 
 from loguru import logger
 
@@ -410,8 +410,6 @@ class KieImageAdapter(BaseImageAdapter):
             "costTime": 12345
         }
         """
-        import json
-
         task_id = cls.extract_task_id(payload)
         state = payload.get("state")
         cost_time = payload.get("costTime")
@@ -461,8 +459,3 @@ class KieImageAdapter(BaseImageAdapter):
                 fail_msg=payload.get("failMsg", "任务失败"),
                 cost_time_ms=cost_time,
             )
-
-
-
-# 便捷函数已移至 helpers.py
-# from .helpers import generate_image, edit_image, generate_image_pro
