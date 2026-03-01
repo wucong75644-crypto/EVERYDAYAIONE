@@ -111,6 +111,11 @@ class MockSupabaseTable:
         self._single = True
         return self
 
+    def maybe_single(self):
+        """返回单个结果或 None（类似 single 但不抛异常）"""
+        self._single = True
+        return self
+
     def execute(self):
         """执行查询并返回结果"""
         result = MagicMock()

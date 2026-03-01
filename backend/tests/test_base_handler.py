@@ -280,64 +280,59 @@ class TestBaseHandlerHelperMethods:
 # ============ 积分相关测试 ============
 
 class TestBaseHandlerCredits:
-    """测试 BaseHandler 的积分处理逻辑"""
+    """测试 BaseHandler 的积分处理逻辑（同步 DB 调用）"""
 
     @pytest.fixture
-    def handler(self, mock_async_db):
-        return TestHandler(mock_async_db)
+    def handler(self, mock_db):
+        return TestHandler(mock_db)
 
-    @pytest.mark.asyncio
-    async def test_get_user_balance_success(self, handler, mock_async_db):
+    def test_get_user_balance_success(self, handler, mock_db):
         """测试：获取用户余额成功"""
         user = create_test_user(credits=500)
-        mock_async_db.set_table_data("users", [user])
+        mock_db.set_table_data("users", [user])
 
-        balance = await handler._get_user_balance(user["id"])
+        balance = handler._get_user_balance(user["id"])
 
         assert balance == 500
 
-    @pytest.mark.asyncio
-    async def test_get_user_balance_user_not_found(self, handler, mock_async_db):
+    def test_get_user_balance_user_not_found(self, handler, mock_db):
         """测试：用户不存在返回 0"""
-        mock_async_db.set_table_data("users", [])
+        mock_db.set_table_data("users", [])
 
-        balance = await handler._get_user_balance("nonexistent")
+        balance = handler._get_user_balance("nonexistent")
 
         assert balance == 0
 
-    @pytest.mark.asyncio
-    async def test_check_balance_sufficient(self, handler, mock_async_db):
+    def test_check_balance_sufficient(self, handler, mock_db):
         """测试：余额充足"""
         user = create_test_user(credits=100)
-        mock_async_db.set_table_data("users", [user])
+        mock_db.set_table_data("users", [user])
 
-        balance = await handler._check_balance(user["id"], required=50)
+        balance = handler._check_balance(user["id"], required=50)
 
         assert balance == 100
 
-    @pytest.mark.asyncio
-    async def test_check_balance_insufficient(self, handler, mock_async_db):
+    def test_check_balance_insufficient(self, handler, mock_db):
         """测试：余额不足抛出异常"""
         user = create_test_user(credits=10)
-        mock_async_db.set_table_data("users", [user])
+        mock_db.set_table_data("users", [user])
 
         with pytest.raises(InsufficientCreditsError) as exc_info:
-            await handler._check_balance(user["id"], required=100)
+            handler._check_balance(user["id"], required=100)
 
         assert "积分不足" in str(exc_info.value)
 
-    @pytest.mark.asyncio
-    async def test_lock_credits_success(self, handler, mock_async_db):
+    def test_lock_credits_success(self, handler, mock_db):
         """测试：锁定积分成功"""
         user = create_test_user(credits=100)
 
         # 设置用户数据（用于 _get_user_balance 查询）
-        mock_async_db.set_table_data("users", [user])
+        mock_db.set_table_data("users", [user])
 
         # 设置空的 credit_transactions 表（用于 insert）
-        mock_async_db.set_table_data("credit_transactions", [])
+        mock_db.set_table_data("credit_transactions", [])
 
-        tx_id = await handler._lock_credits(
+        tx_id = handler._lock_credits(
             task_id="task_123",
             user_id=user["id"],
             amount=10,
@@ -347,32 +342,28 @@ class TestBaseHandlerCredits:
         assert tx_id is not None
         assert len(tx_id) == 36  # UUID 格式
 
-    @pytest.mark.asyncio
-    async def test_lock_credits_insufficient(self, handler, mock_async_db):
+    def test_lock_credits_insufficient(self, handler, mock_db):
         """测试：余额不足无法锁定"""
         user = create_test_user(credits=5)
-        mock_async_db.set_table_data("users", [user])
+        mock_db.set_table_data("users", [user])
 
         with pytest.raises(InsufficientCreditsError):
-            await handler._lock_credits(
+            handler._lock_credits(
                 task_id="task_123",
                 user_id=user["id"],
                 amount=100,
                 reason="测试锁定",
             )
 
-    @pytest.mark.asyncio
-    async def test_confirm_deduct(self, handler, mock_async_db):
+    def test_confirm_deduct(self, handler, mock_db):
         """测试：确认扣除"""
-        mock_async_db.table("credit_transactions").execute = AsyncMock(
-            return_value=MagicMock(data=[{}])
-        )
+        # _confirm_deduct 使用同步 DB 调用
+        mock_db.set_table_data("credit_transactions", [{}])
 
         # 应该不抛异常
-        await handler._confirm_deduct("tx_123")
+        handler._confirm_deduct("tx_123")
 
-    @pytest.mark.asyncio
-    async def test_refund_credits_success(self, handler, mock_async_db):
+    def test_refund_credits_success(self, handler, mock_db):
         """测试：退回积分成功"""
         tx_data = {
             "id": "tx_123",
@@ -380,66 +371,52 @@ class TestBaseHandlerCredits:
             "amount": 10,
             "status": "pending",
         }
-        mock_async_db.set_table_data("credit_transactions", [tx_data])
-
-        # Mock 链式调用
-        mock_table = mock_async_db.table("credit_transactions")
-        mock_table.select = MagicMock(return_value=mock_table)
-        mock_table.eq = MagicMock(return_value=mock_table)
-        mock_table.single = MagicMock(return_value=mock_table)
-        mock_table.execute = AsyncMock(return_value=MagicMock(data=tx_data))
-
-        mock_async_db.rpc("refund_credits", {}).execute = AsyncMock(
-            return_value=MagicMock(data={})
-        )
+        mock_db.set_table_data("credit_transactions", [tx_data])
 
         # 应该不抛异常
-        await handler._refund_credits("tx_123")
+        handler._refund_credits("tx_123")
 
-    @pytest.mark.asyncio
-    async def test_deduct_directly_success(self, handler, mock_async_db):
+    def test_deduct_directly_success(self, handler, mock_db):
         """测试：直接扣除积分成功"""
-        mock_async_db.set_rpc_result("deduct_credits_atomic", {
+        mock_db.set_rpc_result("deduct_credits_atomic", {
             "success": True,
             "new_balance": 90
         })
 
-        new_balance = await handler._deduct_directly(
+        new_balance = handler._deduct_directly(
             user_id="user_123",
             amount=10,
             reason="测试扣除",
-            change_type="usage",  # 添加缺失的参数
+            change_type="usage",
         )
 
         assert new_balance == 90
 
-    @pytest.mark.asyncio
-    async def test_deduct_directly_insufficient(self, handler, mock_async_db):
+    def test_deduct_directly_insufficient(self, handler, mock_db):
         """测试：直接扣除余额不足"""
-        mock_async_db.set_rpc_result("deduct_credits_atomic", {
+        mock_db.set_rpc_result("deduct_credits_atomic", {
             "success": False
         })
 
         with pytest.raises(InsufficientCreditsError):
-            await handler._deduct_directly(
+            handler._deduct_directly(
                 user_id="user_123",
                 amount=1000,
                 reason="测试扣除",
-                change_type="usage",  # 添加缺失的参数
+                change_type="usage",
             )
 
 
 # ============ 任务管理测试 ============
 
 class TestBaseHandlerTaskManagement:
-    """测试 BaseHandler 的任务管理功能"""
+    """测试 BaseHandler 的任务管理功能（同步 DB 调用）"""
 
     @pytest.fixture
-    def handler(self, mock_async_db):
-        return TestHandler(mock_async_db)
+    def handler(self, mock_db):
+        return TestHandler(mock_db)
 
-    @pytest.mark.asyncio
-    async def test_get_task_success(self, handler, mock_async_db):
+    def test_get_task_success(self, handler, mock_db):
         """测试：获取任务成功"""
         task_data = {
             "external_task_id": "task_123",
@@ -447,43 +424,44 @@ class TestBaseHandlerTaskManagement:
             "status": "running",
         }
 
-        # 直接设置表数据，MockAsyncSupabaseTable 会自动处理
-        mock_async_db.set_table_data("tasks", [task_data])
+        mock_db.set_table_data("tasks", [task_data])
 
-        task = await handler._get_task("task_123")
+        task = handler._get_task("task_123")
 
         assert task is not None
         assert task["external_task_id"] == "task_123"
 
-    @pytest.mark.asyncio
-    async def test_get_task_not_found(self, handler, mock_async_db):
+    def test_get_task_not_found(self, handler, mock_db):
         """测试：任务不存在"""
-        # 设置空数据
-        mock_async_db.set_table_data("tasks", [])
+        mock_db.set_table_data("tasks", [])
 
-        task = await handler._get_task("nonexistent")
+        task = handler._get_task("nonexistent")
 
         assert task is None
 
-    @pytest.mark.asyncio
-    async def test_complete_task(self, handler, mock_async_db):
+    def test_complete_task(self, handler, mock_db):
         """测试：完成任务"""
-        mock_async_db.table("tasks").execute = AsyncMock(
-            return_value=MagicMock(data=[{}])
-        )
+        task_data = {
+            "external_task_id": "task_123",
+            "status": "running",
+            "version": 1,
+        }
+        mock_db.set_table_data("tasks", [task_data])
 
         # 应该不抛异常
-        await handler._complete_task("task_123")
+        handler._complete_task("task_123")
 
-    @pytest.mark.asyncio
-    async def test_fail_task(self, handler, mock_async_db):
+    def test_fail_task(self, handler, mock_db):
         """测试：失败任务"""
-        mock_async_db.table("tasks").execute = AsyncMock(
-            return_value=MagicMock(data=[{}])
-        )
+        task_data = {
+            "external_task_id": "task_123",
+            "status": "running",
+            "version": 1,
+        }
+        mock_db.set_table_data("tasks", [task_data])
 
         # 应该不抛异常
-        await handler._fail_task("task_123", "测试错误")
+        handler._fail_task("task_123", "测试错误")
 
 
 # ============ 积分处理集成测试 ============
@@ -492,11 +470,11 @@ class TestBaseHandlerCreditsIntegration:
     """测试 BaseHandler 的积分处理完整流程"""
 
     @pytest.fixture
-    def handler(self, mock_async_db):
-        return TestHandler(mock_async_db)
+    def handler(self, mock_db):
+        return TestHandler(mock_db)
 
     @pytest.mark.asyncio
-    async def test_handle_credits_on_complete_image_task(self, handler, mock_async_db):
+    async def test_handle_credits_on_complete_image_task(self, handler, mock_db):
         """测试：图片任务完成时确认扣除"""
         task_data = {
             "external_task_id": "task_123",
@@ -505,15 +483,13 @@ class TestBaseHandlerCreditsIntegration:
             "credit_transaction_id": "tx_123",
         }
 
-        mock_async_db.table("credit_transactions").execute = AsyncMock(
-            return_value=MagicMock(data=[{}])
-        )
+        mock_db.set_table_data("credit_transactions", [{}])
 
         # 应该不抛异常
         await handler._handle_credits_on_complete(task_data, credits_consumed=0)
 
     @pytest.mark.asyncio
-    async def test_handle_credits_on_complete_chat_task(self, handler, mock_async_db):
+    async def test_handle_credits_on_complete_chat_task(self, handler, mock_db):
         """测试：聊天任务完成时直接扣除"""
         task_data = {
             "external_task_id": "task_123",
@@ -521,7 +497,7 @@ class TestBaseHandlerCreditsIntegration:
             "user_id": "user_123",
         }
 
-        mock_async_db.set_rpc_result("deduct_credits_atomic", {
+        mock_db.set_rpc_result("deduct_credits_atomic", {
             "success": True,
             "new_balance": 90
         })
@@ -530,7 +506,7 @@ class TestBaseHandlerCreditsIntegration:
         await handler._handle_credits_on_complete(task_data, credits_consumed=10)
 
     @pytest.mark.asyncio
-    async def test_handle_credits_on_error_with_transaction(self, handler, mock_async_db):
+    async def test_handle_credits_on_error_with_transaction(self, handler, mock_db):
         """测试：任务失败时退回积分"""
         task_data = {
             "external_task_id": "task_123",
@@ -544,18 +520,7 @@ class TestBaseHandlerCreditsIntegration:
             "amount": 50,
             "status": "pending",
         }
-        mock_async_db.set_table_data("credit_transactions", [tx_data])
-
-        # Mock 链式调用
-        mock_table = mock_async_db.table("credit_transactions")
-        mock_table.select = MagicMock(return_value=mock_table)
-        mock_table.eq = MagicMock(return_value=mock_table)
-        mock_table.single = MagicMock(return_value=mock_table)
-        mock_table.execute = AsyncMock(return_value=MagicMock(data=tx_data))
-
-        mock_async_db.rpc("refund_credits", {}).execute = AsyncMock(
-            return_value=MagicMock(data={})
-        )
+        mock_db.set_table_data("credit_transactions", [tx_data])
 
         # 应该不抛异常
         await handler._handle_credits_on_error(task_data)
@@ -567,17 +532,16 @@ class TestBaseHandlerEdgeCases:
     """测试 BaseHandler 的边界情况"""
 
     @pytest.fixture
-    def handler(self, mock_async_db):
-        return TestHandler(mock_async_db)
+    def handler(self, mock_db):
+        return TestHandler(mock_db)
 
-    @pytest.mark.asyncio
-    async def test_lock_zero_credits(self, handler, mock_async_db):
+    def test_lock_zero_credits(self, handler, mock_db):
         """测试：锁定 0 积分"""
         user = create_test_user(credits=100)
-        mock_async_db.set_table_data("users", [user])
-        mock_async_db.set_table_data("credit_transactions", [])
+        mock_db.set_table_data("users", [user])
+        mock_db.set_table_data("credit_transactions", [])
 
-        tx_id = await handler._lock_credits(
+        tx_id = handler._lock_credits(
             task_id="task_123",
             user_id=user["id"],
             amount=0,
@@ -586,14 +550,13 @@ class TestBaseHandlerEdgeCases:
 
         assert tx_id is not None
 
-    @pytest.mark.asyncio
-    async def test_lock_exact_balance(self, handler, mock_async_db):
+    def test_lock_exact_balance(self, handler, mock_db):
         """测试：锁定恰好等于余额的积分"""
         user = create_test_user(credits=50)
-        mock_async_db.set_table_data("users", [user])
-        mock_async_db.set_table_data("credit_transactions", [])
+        mock_db.set_table_data("users", [user])
+        mock_db.set_table_data("credit_transactions", [])
 
-        tx_id = await handler._lock_credits(
+        tx_id = handler._lock_credits(
             task_id="task_123",
             user_id=user["id"],
             amount=50,
