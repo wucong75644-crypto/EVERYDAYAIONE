@@ -111,9 +111,11 @@ function createMockMessageStore() {
     completeTask: vi.fn(),
     failTask: vi.fn(),
     completeStreaming: vi.fn(),
+    markConversationCompleted: vi.fn(),
     setIsSending: vi.fn(),
     getMessage: vi.fn(),
     setStreamingContent: vi.fn(),
+    addMessage: vi.fn(),
   };
 }
 
