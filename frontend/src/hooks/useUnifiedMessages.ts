@@ -61,7 +61,7 @@ function mergeMessages(
 export function useUnifiedMessages(conversationId: string | null): Message[] {
   // 选择 messages 和 optimisticMessages
   const messages = useMessageStore((state) =>
-    conversationId ? state.messages.get(conversationId) : undefined
+    conversationId ? state.messages[conversationId] : undefined
   );
 
   const optimisticMessages = useMessageStore((state) =>

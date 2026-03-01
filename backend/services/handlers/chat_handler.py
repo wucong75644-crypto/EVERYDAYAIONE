@@ -103,6 +103,16 @@ class ChatHandler(BaseHandler):
 
         return task_id
 
+    async def _save_accumulated_content(self, task_id: str, content: str) -> None:
+        """将累积内容写入数据库（供刷新恢复使用）"""
+        try:
+            self.db.table("tasks").update({
+                "accumulated_content": content,
+            }).eq("external_task_id", task_id).execute()
+        except Exception as e:
+            # 写入失败不影响流式生成主流程
+            logger.warning(f"Failed to save accumulated_content | task_id={task_id} | error={e}")
+
     async def _stream_generate(
         self,
         task_id: str,
@@ -117,6 +127,7 @@ class ChatHandler(BaseHandler):
         """流式生成主逻辑"""
         accumulated_text = ""
         final_usage = {"prompt_tokens": 0, "completion_tokens": 0}
+        chunk_count = 0
 
         try:
             # 1. 推送开始消息
@@ -153,6 +164,7 @@ class ChatHandler(BaseHandler):
             ):
                 if chunk.content:
                     accumulated_text += chunk.content
+                    chunk_count += 1
 
                     # 推送增量内容
                     chunk_msg = build_message_chunk(
@@ -163,6 +175,10 @@ class ChatHandler(BaseHandler):
                         accumulated=accumulated_text,
                     )
                     await ws_manager.send_to_task_subscribers(task_id, chunk_msg)
+
+                    # 每 20 个 chunk 持久化一次累积内容（供刷新恢复）
+                    if chunk_count % 20 == 0:
+                        await self._save_accumulated_content(task_id, accumulated_text)
 
                 # 捕获 usage
                 if chunk.prompt_tokens or chunk.completion_tokens:

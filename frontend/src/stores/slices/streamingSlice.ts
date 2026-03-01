@@ -49,7 +49,7 @@ export interface StreamingSlice {
 
 // Store 依赖类型（用于跨 slice 访问）
 export interface StreamingSliceDeps {
-  messages: Map<string, Message[]>;
+  messages: Record<string, Message[]>;
 }
 
 // ============================================================

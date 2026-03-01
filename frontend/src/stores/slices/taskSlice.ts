@@ -13,7 +13,7 @@ import type { Message, TaskState, ChatTask, CompletedNotification } from '../../
 
 // Store 依赖类型（用于跨 slice 访问）
 export interface TaskSliceDeps {
-  messages: Map<string, Message[]>;
+  messages: Record<string, Message[]>;
 }
 
 export interface TaskSlice {
@@ -128,7 +128,7 @@ export const createTaskSlice: StateCreator<TaskSlice & TaskSliceDeps, [], [], Ta
     if (state.chatTasks.has(conversationId)) return true;
 
     // 检查媒体任务：从 messages 中查找 pending 状态的媒体消息
-    const messages = state.messages.get(conversationId);
+    const messages = state.messages[conversationId];
     if (messages) {
       const hasPendingMedia = messages.some(
         (m: Message) => m.role === 'assistant' &&
@@ -147,7 +147,7 @@ export const createTaskSlice: StateCreator<TaskSlice & TaskSliceDeps, [], [], Ta
 
     // 计算进行中的媒体任务数（从所有 messages 中统计）
     let mediaTaskCount = 0;
-    for (const messages of state.messages.values()) {
+    for (const messages of Object.values(state.messages)) {
       mediaTaskCount += messages.filter(
         (m: Message) => m.role === 'assistant' &&
              m.status === 'pending' &&
@@ -262,7 +262,7 @@ export const createTaskSlice: StateCreator<TaskSlice & TaskSliceDeps, [], [], Ta
     }
 
     // 媒体任务：从 messages 中查找 pending 状态的媒体消息
-    for (const [conversationId, messages] of state.messages.entries()) {
+    for (const [conversationId, messages] of Object.entries(state.messages)) {
       const hasPendingMedia = messages.some(
         (m: Message) => m.role === 'assistant' &&
              m.status === 'pending' &&

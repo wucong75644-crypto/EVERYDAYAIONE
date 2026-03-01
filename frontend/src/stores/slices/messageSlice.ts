@@ -14,10 +14,10 @@ import { normalizeMessage } from '../../utils/messageUtils';
 
 export interface MessageSlice {
   /** 消息缓存: conversationId -> messages */
-  messages: Map<string, Message[]>;
+  messages: Record<string, Message[]>;
 
   /** 缓存元数据: conversationId -> { hasMore, lastFetchedAt } */
-  cacheMetadata: Map<string, { hasMore: boolean; lastFetchedAt: number }>;
+  cacheMetadata: Record<string, { hasMore: boolean; lastFetchedAt: number }>;
 
   /** LRU 访问顺序 */
   cacheAccessOrder: string[];
@@ -65,8 +65,8 @@ export const createMessageSlice: StateCreator<
   MessageSlice
 > = (set, get) => ({
   // 初始状态
-  messages: new Map<string, Message[]>(),
-  cacheMetadata: new Map<string, { hasMore: boolean; lastFetchedAt: number }>(),
+  messages: {} as Record<string, Message[]>,
+  cacheMetadata: {} as Record<string, { hasMore: boolean; lastFetchedAt: number }>,
   cacheAccessOrder: [] as string[],
 
   // ========================================
@@ -75,37 +75,26 @@ export const createMessageSlice: StateCreator<
 
   addMessage: (conversationId, message) => {
     set((state) => {
-      const messages = new Map(state.messages);
-      const list = messages.get(conversationId) || [];
+      const messages = { ...state.messages };
+      const list = messages[conversationId] || [];
 
       if (list.some((m) => m.id === message.id)) {
         return state;
       }
 
       const normalizedMsg = normalizeMessage(message);
-      messages.set(conversationId, [...list, normalizedMsg]);
+      messages[conversationId] = [...list, normalizedMsg];
       return { messages };
     });
   },
 
   updateMessage: (messageId, updates) => {
-    // 🔥 DEBUG: 记录 updateMessage 调用
-    console.log('🔥 [DEBUG] updateMessage called:', { messageId, updates });
-
     set((state) => {
-      const messages = new Map(state.messages);
+      const messages = { ...state.messages };
 
-      // 🔥 DEBUG: 显示当前 messages Map 状态
-      console.log('🔥 [DEBUG] updateMessage - current messages Map size:', messages.size);
-      for (const [convId, list] of messages) {
-        console.log(`🔥 [DEBUG] updateMessage - convId: ${convId}, messages:`, list.map(m => ({ id: m.id, status: m.status, content: m.content })));
-      }
-
-      for (const [convId, list] of messages) {
+      for (const [convId, list] of Object.entries(messages)) {
         const index = list.findIndex((m) => m.id === messageId);
         if (index !== -1) {
-          console.log('🔥 [DEBUG] updateMessage - FOUND in messages:', { convId, index, oldMessage: list[index] });
-
           const updated = {
             ...list[index],
             ...updates,
@@ -113,26 +102,18 @@ export const createMessageSlice: StateCreator<
           };
           const newList = [...list];
           newList[index] = updated;
-          messages.set(convId, newList);
-
-          console.log('🔥 [DEBUG] updateMessage - UPDATED message:', updated);
-          console.log('🔥 [DEBUG] updateMessage - new messages Map:', messages.get(convId));
+          messages[convId] = newList;
 
           return { messages };
         }
       }
 
-      console.log('🔥 [DEBUG] updateMessage - NOT FOUND in messages, checking optimisticMessages');
-
       // 也检查乐观消息
       const optimisticMessages = new Map(state.optimisticMessages);
-      console.log('🔥 [DEBUG] updateMessage - optimisticMessages Map size:', optimisticMessages.size);
 
       for (const [convId, list] of optimisticMessages) {
         const index = list.findIndex((m) => m.id === messageId);
         if (index !== -1) {
-          console.log('🔥 [DEBUG] updateMessage - FOUND in optimisticMessages:', { convId, index, oldMessage: list[index] });
-
           const updated = {
             ...list[index],
             ...updates,
@@ -142,13 +123,9 @@ export const createMessageSlice: StateCreator<
           newList[index] = updated;
           optimisticMessages.set(convId, newList);
 
-          console.log('🔥 [DEBUG] updateMessage - UPDATED optimistic message:', updated);
-
           return { optimisticMessages };
         }
       }
-
-      console.warn('🔥 [DEBUG] updateMessage - MESSAGE NOT FOUND in either map!', { messageId });
 
       return state;
     });
@@ -184,11 +161,11 @@ export const createMessageSlice: StateCreator<
   removeMessage: (messageId) => {
     set((state) => {
       // 先检查 messages
-      const messages = new Map(state.messages);
-      for (const [convId, list] of messages) {
+      const messages = { ...state.messages };
+      for (const [convId, list] of Object.entries(messages)) {
         const filtered = list.filter((m) => m.id !== messageId);
         if (filtered.length !== list.length) {
-          messages.set(convId, filtered);
+          messages[convId] = filtered;
           return { messages };
         }
       }
@@ -209,15 +186,15 @@ export const createMessageSlice: StateCreator<
 
   setMessages: (conversationId, msgs, hasMore = false) => {
     set((state) => {
-      const messages = new Map(state.messages);
-      const cacheMetadata = new Map(state.cacheMetadata);
+      const messages = { ...state.messages };
+      const cacheMetadata = { ...state.cacheMetadata };
 
       const normalizedMsgs = msgs.map(normalizeMessage);
-      messages.set(conversationId, normalizedMsgs);
-      cacheMetadata.set(conversationId, {
+      messages[conversationId] = normalizedMsgs;
+      cacheMetadata[conversationId] = {
         hasMore,
         lastFetchedAt: Date.now(),
-      });
+      };
 
       return { messages, cacheMetadata };
     });
@@ -225,20 +202,20 @@ export const createMessageSlice: StateCreator<
 
   prependMessages: (conversationId, msgs, hasMore) => {
     set((state) => {
-      const messages = new Map(state.messages);
-      const cacheMetadata = new Map(state.cacheMetadata);
+      const messages = { ...state.messages };
+      const cacheMetadata = { ...state.cacheMetadata };
 
-      const existing = messages.get(conversationId) || [];
+      const existing = messages[conversationId] || [];
       const existingIds = new Set(existing.map((m) => m.id));
 
       const newMsgs = msgs
         .map(normalizeMessage)
         .filter((m) => !existingIds.has(m.id));
 
-      messages.set(conversationId, [...newMsgs, ...existing]);
+      messages[conversationId] = [...newMsgs, ...existing];
 
-      const meta = cacheMetadata.get(conversationId) || { hasMore: false, lastFetchedAt: Date.now() };
-      cacheMetadata.set(conversationId, { ...meta, hasMore });
+      const meta = cacheMetadata[conversationId] || { hasMore: false, lastFetchedAt: Date.now() };
+      cacheMetadata[conversationId] = { ...meta, hasMore };
 
       return { messages, cacheMetadata };
     });
@@ -250,17 +227,17 @@ export const createMessageSlice: StateCreator<
 
   replaceMessage: (conversationId, messageId, newMessage) => {
     set((state) => {
-      const messages = new Map(state.messages);
-      const list = messages.get(conversationId);
+      const messages = { ...state.messages };
+      const list = messages[conversationId];
       if (!list) return state;
 
       const index = list.findIndex((m) => m.id === messageId);
       if (index === -1) {
-        messages.set(conversationId, [...list, normalizeMessage(newMessage)]);
+        messages[conversationId] = [...list, normalizeMessage(newMessage)];
       } else {
         const newList = [...list];
         newList[index] = normalizeMessage(newMessage);
-        messages.set(conversationId, newList);
+        messages[conversationId] = newList;
       }
 
       return { messages };
@@ -271,13 +248,13 @@ export const createMessageSlice: StateCreator<
   // 辅助方法
   // ========================================
 
-  getMessages: (conversationId) => get().messages.get(conversationId) || [],
+  getMessages: (conversationId) => get().messages[conversationId] || [],
 
   getMessage: (messageId) => {
     const state = get();
 
     // 检查持久化消息
-    for (const list of state.messages.values()) {
+    for (const list of Object.values(state.messages)) {
       const found = list.find((m) => m.id === messageId);
       if (found) return found;
     }
@@ -293,10 +270,10 @@ export const createMessageSlice: StateCreator<
 
   clearConversation: (conversationId) => {
     set((state) => {
-      const messages = new Map(state.messages);
+      const messages = { ...state.messages };
       const optimisticMessages = new Map(state.optimisticMessages);
 
-      messages.delete(conversationId);
+      delete messages[conversationId];
       optimisticMessages.delete(conversationId);
 
       return { messages, optimisticMessages };

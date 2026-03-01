@@ -139,21 +139,23 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
         await ws_manager.update_heartbeat(conn_id)
 
     elif msg_type == WSMessageType.SUBSCRIBE.value:
-        # 订阅任务（简化版）
+        # 订阅任务
         task_id = payload.get("task_id")
 
         if task_id:
             success = await ws_manager.subscribe_task(conn_id, task_id)
 
             if success:
-                # 发送订阅确认（简化版，不携带累积内容）
+                # 查询最新累积内容（补全 Phase 1 到 Phase 2 之间的差异）
+                accumulated = await _get_task_accumulated_content(task_id, user_id)
+
                 await ws_manager.send_to_connection(conn_id, build_subscribed(
                     task_id=task_id,
-                    accumulated="",  # 累积内容由 /tasks/pending API 提供
+                    accumulated=accumulated or "",
                     current_index=-1  # 不再使用索引
                 ))
 
-                logger.info(f"Task subscribed | conn={conn_id} | task={task_id}")
+                logger.info(f"Task subscribed | conn={conn_id} | task={task_id} | accumulated_len={len(accumulated or '')}")
 
                 # 检查任务是否已完成（解决订阅晚于任务完成的问题）
                 await _check_and_send_completed_task(conn_id, task_id, user_id)
@@ -177,6 +179,32 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
 
     else:
         logger.warning(f"Unknown message type | conn={conn_id} | type={msg_type}")
+
+
+async def _get_task_accumulated_content(task_id: str, user_id: str) -> Optional[str]:
+    """
+    查询任务的累积内容（用于 subscribe 时返回最新内容）
+
+    仅查询 running 状态的 chat 任务，已完成的由 _check_and_send_completed_task 处理
+    """
+    try:
+        db = get_supabase_client()
+        # 尝试 external_task_id 和 client_task_id 两种方式查询
+        for field in ["external_task_id", "client_task_id"]:
+            result = db.table("tasks").select(
+                "accumulated_content"
+            ).eq(field, task_id).eq(
+                "user_id", user_id
+            ).eq("type", "chat").eq(
+                "status", "running"
+            ).maybe_single().execute()
+
+            if result and result.data and result.data.get("accumulated_content"):
+                return result.data["accumulated_content"]
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to get accumulated_content | task_id={task_id} | error={e}")
+        return None
 
 
 async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: str):
