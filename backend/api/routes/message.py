@@ -252,13 +252,48 @@ async def _handle_regenerate_or_send_operation(
                 detail="regenerate 只能用于成功消息，失败消息请用 retry"
             )
 
-    # 只生成 ID，不创建占位符消息（前端负责创建占位符）
+    # 生成助手消息 ID
     assistant_message_id = assistant_message_id or str(uuid.uuid4())
 
     # 构建 generation_params（只设置 type，前端用来判断占位符类型）
     generation_params_obj = GenerationParams(type=gen_type)
 
-    # 构造返回用的虚拟 Message（不存储到数据库）
+    # Media 类型（image/video）：将占位符 insert 到 messages 表
+    # 这样刷新页面后占位符能通过 GET /messages 自然加载，无需 taskRestoration 手动重建
+    # Chat 类型保持虚拟（不入库），因为 Chat 的流式 chunk 依赖 optimisticMessages
+    if gen_type in (GenerationType.IMAGE, GenerationType.VIDEO):
+        _PLACEHOLDER_TEXT = {
+            GenerationType.IMAGE: "图片生成中",
+            GenerationType.VIDEO: "视频生成中",
+        }
+        placeholder_text = _PLACEHOLDER_TEXT[gen_type]
+
+        placeholder_data = {
+            "id": assistant_message_id,
+            "conversation_id": conversation_id,
+            "role": MessageRole.ASSISTANT.value,
+            "content": [{"type": "text", "text": placeholder_text}],
+            "status": MessageStatus.PENDING.value,
+            "generation_params": {"type": gen_type.value},
+            "credits_cost": 0,
+        }
+        if placeholder_created_at:
+            placeholder_data["created_at"] = placeholder_created_at.isoformat()
+
+        try:
+            db.table("messages").insert(placeholder_data).execute()
+            logger.info(
+                f"Media placeholder saved to DB | "
+                f"message_id={assistant_message_id} | type={gen_type.value}"
+            )
+        except Exception as e:
+            # 占位符入库失败不应阻断任务，降级为虚拟占位符（与 Chat 行为一致）
+            logger.warning(
+                f"Failed to save media placeholder to DB, continuing | "
+                f"message_id={assistant_message_id} | error={e}"
+            )
+
+    # 构造返回用的 Message 对象
     assistant_message = Message(
         id=assistant_message_id,
         conversation_id=conversation_id,
