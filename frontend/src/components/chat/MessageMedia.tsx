@@ -123,8 +123,9 @@ function AiGeneratedImage({
     }
   }, [retryCount]);
 
-  // 占位符渲染时触发滚动回调（仅触发一次）
-  const showPlaceholder = isGenerating && !imageLoaded;
+  // 占位符可见：图片未加载完成且无加载错误时，生成中或有URL正在加载都显示
+  // 修复：任务完成（isGenerating=false）后图片还没 onLoad 时的空白间隙
+  const showPlaceholder = !imageLoaded && !loadError && (isGenerating || !!imageUrl);
   useEffect(() => {
     if (showPlaceholder && !placeholderNotified.current) {
       placeholderNotified.current = true;
@@ -171,8 +172,8 @@ function AiGeneratedImage({
 
   return (
     <div className="mt-3 leading-none" ref={lazyRef}>
-      {/* 占位符（仅生成中显示固定尺寸，带淡入动画） */}
-      {showPlaceholder && (
+      {/* 纯占位符：生成中且还没有 imageUrl */}
+      {isGenerating && !imageUrl && (
         <MediaPlaceholder
           type="image"
           width={placeholderSize.width}
@@ -180,7 +181,7 @@ function AiGeneratedImage({
         />
       )}
 
-      {/* 图片（按占位符尺寸限制显示） */}
+      {/* 图片容器：有 imageUrl 后渲染，占位符叠加在图片上方实现平滑过渡 */}
       {imageUrl && shouldRender && !loadError && (
         <div
           className={`group cursor-pointer relative inline-block ${styles['dynamic-aspect-ratio']}`}
@@ -188,6 +189,8 @@ function AiGeneratedImage({
             {
               '--aspect-ratio': imageLoaded ? 'auto' : aspectRatio,
               '--max-width': `${placeholderSize.width}px`,
+              // 图片加载前用显式宽度撑开容器，否则 inline-block 会塌缩为 0
+              ...(imageLoaded ? {} : { width: `${placeholderSize.width}px` }),
             } as React.CSSProperties
           }
           role="button"
@@ -196,18 +199,29 @@ function AiGeneratedImage({
           onKeyDown={handleKeyDown}
           aria-label="查看大图"
         >
+          {/* 图片：加载中 opacity-0，加载完成淡入 */}
           <img
             src={imageUrlWithRetry || imageUrl}
             alt="生成的图片"
-            className="rounded-xl shadow-sm w-full h-auto block"
+            className={`rounded-xl shadow-sm w-full h-auto block transition-opacity duration-500 ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
             onLoad={() => {
               setImageLoaded(true);
               onMediaLoaded?.();
             }}
             onError={handleImageError}
           />
-          {/* 下载按钮 */}
-          <div className="absolute bottom-0 left-0 right-0 flex justify-center py-2 bg-gradient-to-t from-black/50 to-transparent rounded-b-xl opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* 占位符叠层：图片加载期间覆盖在上方，加载完成后移除 */}
+          {!imageLoaded && (
+            <div className="absolute inset-0 rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center animate-media-pulse">
+              <svg className="w-10 h-10 text-gray-300 dark:text-gray-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+                <circle cx="9" cy="9" r="2" />
+                <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+              </svg>
+            </div>
+          )}
+          {/* 下载按钮（图片加载后才可交互） */}
+          <div className={`absolute bottom-0 left-0 right-0 flex justify-center py-2 bg-gradient-to-t from-black/50 to-transparent rounded-b-xl transition-opacity ${imageLoaded ? 'opacity-0 group-hover:opacity-100' : 'opacity-0 pointer-events-none'}`}>
             <button
               type="button"
               className="flex items-center gap-1 px-3 py-1 text-xs text-white bg-black/40 hover:bg-black/60 rounded-full transition-colors disabled:opacity-60"
