@@ -286,19 +286,33 @@ class TaskCompletionService:
             async with semaphore:
                 return await self._upload_single_to_oss(url, user_id, task_type)
 
-        # 并发上传所有 URL
-        try:
-            oss_urls = await asyncio.gather(
-                *[upload_with_limit(url) for url in urls],
-                return_exceptions=False  # 任意失败立即抛异常
+        # 并发上传所有 URL（部分成功模式）
+        results = await asyncio.gather(
+            *[upload_with_limit(url) for url in urls],
+            return_exceptions=True  # 收集所有结果，不因单个失败丢弃全部
+        )
+
+        # 成功的用 OSS URL，失败的降级用原始临时 URL
+        oss_urls = []
+        fail_count = 0
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                fail_count += 1
+                logger.warning(
+                    f"OSS upload failed for url[{i}], using temporary URL | "
+                    f"type={task_type} | error={result}"
+                )
+                oss_urls.append(urls[i])  # 降级使用原始临时 URL
+            else:
+                oss_urls.append(result)
+
+        if fail_count > 0:
+            logger.warning(
+                f"Batch OSS upload partial failure | type={task_type} | "
+                f"total={len(urls)} | failed={fail_count} | success={len(urls) - fail_count}"
             )
-            return oss_urls
-        except Exception as e:
-            logger.error(
-                f"Batch OSS upload failed | type={task_type} | "
-                f"total={len(urls)} | error={e}"
-            )
-            raise
+
+        return oss_urls
 
     async def _upload_single_to_oss(
         self,
@@ -340,7 +354,11 @@ class TaskCompletionService:
         if oss_service.is_oss_url(url):
             return url
 
-        # 重试上传
+        # 重试上传（带 Full Jitter 退避）
+        # 参考：https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+        import asyncio
+        import random
+
         last_error = None
         for attempt in range(max_retries):
             try:
@@ -358,7 +376,16 @@ class TaskCompletionService:
                 )
                 return result["url"]
 
+            except ValueError as e:
+                # ValueError = URL 已失效（403/404/410）或文件过大 → 不可重试
+                logger.warning(
+                    f"Non-retryable error | type={media_type} | "
+                    f"attempt={attempt + 1}/{max_retries} | error={e}"
+                )
+                raise
+
             except Exception as e:
+                # 其他错误（超时、网络）→ 可重试
                 last_error = e
                 logger.warning(
                     f"OSS upload attempt {attempt + 1}/{max_retries} failed | "
@@ -371,14 +398,18 @@ class TaskCompletionService:
                         f"OSS upload failed after {max_retries} attempts | "
                         f"type={media_type} | user_id={user_id} | error={e}"
                     )
-                    raise Exception(f"图片持久化失败（已重试{max_retries}次）: {e}") from last_error
+                    raise Exception(
+                        f"媒体持久化失败（已重试{max_retries}次）: {e}"
+                    ) from last_error
 
-                # 指数退避
-                import asyncio
-                await asyncio.sleep(2 ** attempt)
+                # Full Jitter 退避：random_between(0, min(cap, base * 2^attempt))
+                cap = 16.0
+                delay = min(cap, 2.0 ** attempt)
+                jitter = random.uniform(0, delay)
+                await asyncio.sleep(jitter)
 
         # 理论上不会到这里（最后一次循环会抛异常）
-        raise Exception(f"图片持久化失败: {last_error}")
+        raise Exception(f"媒体持久化失败: {last_error}")
 
     def _build_content_parts(
         self,
