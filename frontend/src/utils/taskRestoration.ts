@@ -296,6 +296,9 @@ function createChatPlaceholder(task: PendingTask) {
     ? { model: task.model_id }
     : undefined;
 
+  // 标记强制刷新，让 loadMessages 跳过旧缓存拉取最新数据
+  store.markForceRefresh(task.conversation_id);
+
   // 创建 streaming 占位符（幂等）
   store.startStreaming(task.conversation_id, streamingId, { generationParams });
 
