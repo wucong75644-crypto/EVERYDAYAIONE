@@ -113,7 +113,7 @@ function createMockMessageStore() {
     completeStreaming: vi.fn(),
     setIsSending: vi.fn(),
     getMessage: vi.fn(),
-    getTask: vi.fn(),
+    setStreamingContent: vi.fn(),
   };
 }
 
@@ -480,10 +480,11 @@ describe('WebSocketContext - Provider & Hook', () => {
 
     it('should handle subscribed event with accumulated content', async () => {
       const wrapper = createWrapper(mockWs, mockMessageStore);
-      renderHook(() => useWebSocketContext(), { wrapper });
+      const { result } = renderHook(() => useWebSocketContext(), { wrapper });
 
-      mockMessageStore.getTask.mockReturnValue({
-        messageId: 'msg_123',
+      // 先通过 subscribeTaskWithMapping 建立映射
+      act(() => {
+        result.current.subscribeTaskWithMapping('task_123', 'conv_abc');
       });
 
       await act(async () => {
@@ -496,7 +497,7 @@ describe('WebSocketContext - Provider & Hook', () => {
       });
 
       await waitFor(() => {
-        expect(mockMessageStore.appendContent).toHaveBeenCalledWith('msg_123', 'Accumulated content');
+        expect(mockMessageStore.setStreamingContent).toHaveBeenCalledWith('conv_abc', 'Accumulated content');
       });
     });
 
@@ -733,23 +734,22 @@ describe('WebSocketContext - Provider & Hook', () => {
       expect(mockAuthStore.setUser).not.toHaveBeenCalled();
     });
 
-    it('should handle subscribed without task in store', async () => {
+    it('should handle subscribed without task mapping', async () => {
       const wrapper = createWrapper(mockWs, mockMessageStore);
       renderHook(() => useWebSocketContext(), { wrapper });
 
-      mockMessageStore.getTask.mockReturnValue(null); // 任务不存在
-
+      // 不建立映射，直接触发 subscribed
       await act(async () => {
         mockWs.emit('subscribed', {
           payload: {
-            task_id: 'task_123',
+            task_id: 'unknown_task',
             accumulated: 'Content',
           },
         });
       });
 
-      // 不应该抛异常
-      expect(mockMessageStore.appendContent).not.toHaveBeenCalled();
+      // 没有映射，不应调用 setStreamingContent
+      expect(mockMessageStore.setStreamingContent).not.toHaveBeenCalled();
     });
   });
 });
