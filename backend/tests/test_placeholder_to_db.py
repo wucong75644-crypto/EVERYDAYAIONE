@@ -217,7 +217,7 @@ class TestPlaceholderInsertFailure:
         insert_chain.execute.side_effect = Exception("timeout")
         table_mock.insert.return_value = insert_chain
 
-        with patch("api.routes.message.logger") as mock_logger:
+        with patch("api.routes.message_generation_helpers.logger") as mock_logger:
             await _handle_regenerate_or_send_operation(
                 db=db,
                 conversation_id=str(uuid4()),
