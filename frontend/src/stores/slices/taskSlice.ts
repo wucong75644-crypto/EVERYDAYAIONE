@@ -34,7 +34,6 @@ export interface TaskSlice {
   updateTaskProgress: (taskId: string, progress: number) => void;
   completeTask: (taskId: string) => void;
   failTask: (taskId: string, error: string) => void;
-  getTask: (taskId: string) => TaskState | undefined;
   hasActiveTask: (conversationId: string) => boolean;
   canStartTask: () => { allowed: boolean; reason?: string };
 
@@ -113,8 +112,6 @@ export const createTaskSlice: StateCreator<TaskSlice & TaskSliceDeps, [], [], Ta
       return { tasks };
     });
   },
-
-  getTask: (taskId) => get().tasks.get(taskId),
 
   hasActiveTask: (conversationId) => {
     const state = get();

@@ -366,12 +366,11 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
           accumulatedLen: accumulated?.length ?? 0,
         });
 
-        // 恢复累积内容
-        if (accumulated && accumulated.length > 0) {
-          const store = getStore();
-          const task = store.getTask(task_id);
-          if (task?.messageId) {
-            store.appendContent(task.messageId, accumulated);
+        // 用最新 accumulated 替换占位符内容（补全 Phase 1→2 间的差异）
+        if (accumulated && accumulated.length > 0 && task_id) {
+          const conversationId = taskConversationMapRef.current.get(task_id);
+          if (conversationId) {
+            getStore().setStreamingContent(conversationId, accumulated);
           }
         }
       },
