@@ -13,7 +13,11 @@ import { useWebSocket, type WSMessageType } from '../hooks/useWebSocket';
 import { useMessageStore, normalizeMessage, type Message } from '../stores/useMessageStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useTaskRestorationStore } from '../stores/useTaskRestorationStore';
-import { initializeTaskRestoration } from '../utils/taskRestoration';
+import {
+  restoreTaskPlaceholders,
+  subscribeRestoredTasks,
+  type RestorationResult,
+} from '../utils/taskRestoration';
 import { logger } from '../utils/logger';
 import { tabSync } from '../utils/tabSync';
 
@@ -96,27 +100,14 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handleTaskDoneWithMessage = (taskId: string, messageData: any, conversationId: string) => {
       const store = getStore();
-
-      // 🔥 DEBUG: 显示原始 messageData
-      console.log('🔥 [DEBUG] handleTaskDoneWithMessage - messageData:', messageData);
-
       const normalized = normalizeMessage(messageData);
 
-      // 🔥 DEBUG: 显示规范化后的消息
-      console.log('🔥 [DEBUG] handleTaskDoneWithMessage - normalized:', normalized);
-
       // 幂等性检查：使用 Store 作为唯一真相来源
-      // 检查消息是否已存在且状态为 completed
       const existingMessage = store.getMessage(normalized.id);
-
-      // 🔥 DEBUG: 显示现有消息状态
-      console.log('🔥 [DEBUG] handleTaskDoneWithMessage - existingMessage:', existingMessage);
-
       if (existingMessage?.status === 'completed') {
         logger.warn('ws:done', 'message already completed in store', {
           taskId,
           messageId: normalized.id,
-          existingStatus: existingMessage.status
         });
         return;
       }
@@ -127,26 +118,18 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
         messageId: normalized.id,
       });
 
-      // 🔥 DEBUG: 准备更新的数据
       const updateData = {
         ...normalized,
         status: 'completed' as const,
       };
-      console.log('🔥 [DEBUG] handleTaskDoneWithMessage - updateData:', updateData);
 
       // 统一更新逻辑：updateMessage 自动处理 messages 和 optimisticMessages
-      // 无需区分 chat/media 类型，避免逻辑分支
       store.updateMessage(normalized.id, updateData);
 
-      // 将完成的消息持久化到 messages（addMessage 内置幂等检查，不会重复添加）
-      // 确保切换对话再切回来时消息不丢失（optimisticMessages 不参与持久化）
+      // 持久化到 messages（确保切换对话再切回来时不丢失）
       store.addMessage(conversationId, updateData);
 
-      // 🔥 DEBUG: 更新后检查 store 状态
-      const updatedMessage = store.getMessage(normalized.id);
-      console.log('🔥 [DEBUG] handleTaskDoneWithMessage - updatedMessage:', updatedMessage);
-
-      // 清理任务状态（统一使用 taskId）
+      // 清理任务状态
       store.completeTask(taskId);
 
       // 触发操作上下文回调
@@ -260,15 +243,6 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
           flushChunkBuffer();
         }
 
-        // 🔥 DEBUG: 记录完整的 WebSocket 消息
-        console.log('🔥 [DEBUG] message_done received:', {
-          task_id,
-          message_id,
-          conversation_id,
-          messageData,
-          fullMsg: msg,
-        });
-
         logger.info('ws:message', 'done received', {
           taskId: task_id,
           messageId: message_id || messageData?.id,
@@ -284,11 +258,6 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
         // 1. 有 task_id：处理任务完成
         if (task_id) {
           if (messageData && effectiveConversationId) {
-            console.log('🔥 [DEBUG] Calling handleTaskDoneWithMessage with:', {
-              task_id,
-              messageData,
-              conversation_id: effectiveConversationId,
-            });
             handleTaskDoneWithMessage(task_id, messageData, effectiveConversationId);
           } else if (message_id) {
             store.setStatus(message_id, 'completed');
@@ -450,24 +419,61 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   subscribeTaskWithMappingRef.current = subscribeTaskWithMapping;
 
   // ========================================
-  // 任务恢复逻辑
+  // 任务恢复逻辑（两阶段）
   // ========================================
 
-  // 同步 WebSocket 连接状态到 TaskRestorationStore
-  useEffect(() => {
-    const { setWsConnected } = useTaskRestorationStore.getState();
-    setWsConnected(ws.isConnected);
-  }, [ws.isConnected]);
+  // Phase 1 结果缓存（供 Phase 2 使用）
+  const restorationResultRef = useRef<RestorationResult | null>(null);
 
-  // 当条件满足时触发任务恢复
+  // Phase 1：hydrate 完成后立即执行（不等 WS）
+  // 使用 zustand subscribe 监听 hydrateComplete，避免空依赖 useEffect 的竞态
   useEffect(() => {
-    const state = useTaskRestorationStore.getState();
+    const runPhase1 = () => {
+      if (!useTaskRestorationStore.getState().hydrateComplete) return;
+      // 防重复：restorationResultRef 从 null → 非 null 表示已启动
+      if (restorationResultRef.current !== null) return;
+      restorationResultRef.current = { chatTasks: [], mediaTasks: [] };
 
-    // 检查是否可以开始恢复
-    if (state.hydrateComplete && ws.isConnected && !state.restorationComplete && !state.restorationInProgress) {
-      logger.info('ws:restore', 'Conditions met, starting task restoration');
-      initializeTaskRestoration(subscribeTaskWithMappingRef.current);
-    }
+      logger.info('ws:restore', 'Phase 1: Starting placeholder restoration (HTTP only)');
+      restoreTaskPlaceholders().then((result) => {
+        if (result) {
+          restorationResultRef.current = result;
+          logger.info('ws:restore', 'Phase 1 complete', {
+            chat: result.chatTasks.length,
+            media: result.mediaTasks.length,
+          });
+        }
+        // 无论成功失败都标记就绪（不阻塞骨架屏）
+        useTaskRestorationStore.getState().setPlaceholdersReady();
+
+        // 如果 WS 已连接，立即执行 Phase 2
+        if (result && wsRef.current.isConnected) {
+          logger.info('ws:restore', 'Phase 2: WS already connected, subscribing immediately');
+          subscribeRestoredTasks(result, subscribeTaskWithMappingRef.current);
+        }
+      });
+    };
+
+    // 立即检查（hydrate 可能已完成）
+    runPhase1();
+
+    // 订阅变化（hydrate 可能在挂载后异步完成）
+    const unsub = useTaskRestorationStore.subscribe((state) => {
+      if (state.hydrateComplete) runPhase1();
+    });
+    return unsub;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Phase 2：WS 就绪后，对 Phase 1 的任务执行 subscribe
+  // 幂等：subscribedTasksRef 防止重复订阅
+  useEffect(() => {
+    if (!ws.isConnected) return;
+    const result = restorationResultRef.current;
+    if (!result || (result.chatTasks.length === 0 && result.mediaTasks.length === 0)) return;
+
+    logger.info('ws:restore', 'Phase 2: WS connected, subscribing restored tasks');
+    subscribeRestoredTasks(result, subscribeTaskWithMappingRef.current);
   }, [ws.isConnected]);
 
   // ========================================

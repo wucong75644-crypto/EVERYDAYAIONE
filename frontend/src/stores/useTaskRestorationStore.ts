@@ -2,138 +2,49 @@
  * 任务恢复状态协调器
  *
  * 职责：
- * 1. 跟踪 hydrate 和 WebSocket 连接状态
- * 2. 在两者都就绪后触发统一恢复流程
- * 3. 防止重复恢复（strict mode / 多标签页）
+ * 1. 跟踪 hydrate 完成状态
+ * 2. 标记 Phase 1（占位符创建）完成，供 MessageArea 协调骨架屏
  *
- * 设计说明：
- * - 解决 hydrate 与 WebSocket 的竞态条件
- * - 确保恢复时机正确：等待两个条件都满足
- * - 支持重连后重新恢复
+ * 设计说明（v5.0 精简版）：
+ * - hydrateComplete：zustand persist 恢复完成标记，Phase 1 的前置条件
+ * - placeholdersReady：Phase 1 完成标记，MessageArea 骨架屏依赖
+ * - 防重复：由 WebSocketContext 中的 restorationResultRef 负责
+ * - WS 状态：直接使用 ws.isConnected，不再同步到此 Store
  */
 
 import { create } from 'zustand';
 import { logger } from '../utils/logger';
 
 interface TaskRestorationState {
-  // 状态标记
+  /** zustand persist hydrate 完成标记 */
   hydrateComplete: boolean;
-  wsConnected: boolean;
-  restorationComplete: boolean;
-  restorationInProgress: boolean;
+  /** Phase 1 完成标记：占位符已创建，MessageArea 可以渲染 */
+  placeholdersReady: boolean;
 
-  // 操作
   setHydrateComplete: () => void;
-  setWsConnected: (connected: boolean) => void;
-  startRestoration: () => boolean; // 返回是否可以开始
-  completeRestoration: () => void;
+  setPlaceholdersReady: () => void;
   reset: () => void;
-
-  // 内部：检查是否就绪
-  isReady: () => boolean;
 }
 
-export const useTaskRestorationStore = create<TaskRestorationState>((set, get) => ({
+export const useTaskRestorationStore = create<TaskRestorationState>((set) => ({
   hydrateComplete: false,
-  wsConnected: false,
-  restorationComplete: false,
-  restorationInProgress: false,
+  placeholdersReady: false,
 
   setHydrateComplete: () => {
     set({ hydrateComplete: true });
-    logger.debug('task:restore', 'Hydrate complete, checking restoration readiness');
+    logger.debug('task:restore', 'Hydrate complete');
   },
 
-  setWsConnected: (connected: boolean) => {
-    const prev = get().wsConnected;
-    set({ wsConnected: connected });
-
-    if (connected && !prev) {
-      logger.debug('task:restore', 'WebSocket connected, checking restoration readiness');
-    } else if (!connected && prev) {
-      // 断开连接时，重置恢复状态以便重连后能重新恢复
-      logger.debug('task:restore', 'WebSocket disconnected, resetting restoration state');
-      set({
-        restorationComplete: false,
-        restorationInProgress: false,
-      });
-    }
-  },
-
-  startRestoration: () => {
-    const state = get();
-
-    // 防止重复恢复
-    if (state.restorationComplete || state.restorationInProgress) {
-      logger.debug('task:restore', 'Restoration already done or in progress, skipping', {
-        complete: state.restorationComplete,
-        inProgress: state.restorationInProgress,
-      });
-      return false;
-    }
-
-    // 检查前置条件
-    if (!state.hydrateComplete || !state.wsConnected) {
-      logger.debug('task:restore', 'Not ready for restoration', {
-        hydrateComplete: state.hydrateComplete,
-        wsConnected: state.wsConnected,
-      });
-      return false;
-    }
-
-    set({ restorationInProgress: true });
-    logger.info('task:restore', 'Starting task restoration');
-    return true;
-  },
-
-  completeRestoration: () => {
-    set({
-      restorationComplete: true,
-      restorationInProgress: false,
-    });
-    logger.info('task:restore', 'Task restoration completed');
+  setPlaceholdersReady: () => {
+    set({ placeholdersReady: true });
+    logger.debug('task:restore', 'Phase 1 complete: placeholders ready');
   },
 
   reset: () => {
     set({
       hydrateComplete: false,
-      wsConnected: false,
-      restorationComplete: false,
-      restorationInProgress: false,
+      placeholdersReady: false,
     });
     logger.debug('task:restore', 'Restoration state reset');
   },
-
-  isReady: () => {
-    const state = get();
-    return (
-      state.hydrateComplete &&
-      state.wsConnected &&
-      !state.restorationComplete &&
-      !state.restorationInProgress
-    );
-  },
 }));
-
-/**
- * 辅助 hook：检查是否可以开始恢复
- */
-export function useIsRestorationReady() {
-  return useTaskRestorationStore((state) =>
-    state.hydrateComplete &&
-    state.wsConnected &&
-    !state.restorationComplete &&
-    !state.restorationInProgress
-  );
-}
-
-/**
- * 辅助函数：用于重连后重置恢复状态
- * 由于 hydrate 只执行一次，重连时需要手动标记 hydrate 完成
- */
-export function resetForReconnect() {
-  const store = useTaskRestorationStore.getState();
-  store.reset();
-  // hydrate 已完成（不会重新执行），直接标记
-  store.setHydrateComplete();
-}

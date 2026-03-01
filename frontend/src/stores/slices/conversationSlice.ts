@@ -60,8 +60,8 @@ export interface ConversationSlice {
 
 // Store 依赖类型
 export interface ConversationSliceDeps {
-  messages: Map<string, Message[]>;
-  cacheMetadata: Map<string, { hasMore: boolean; lastFetchedAt: number }>;
+  messages: Record<string, Message[]>;
+  cacheMetadata: Record<string, { hasMore: boolean; lastFetchedAt: number }>;
   cacheAccessOrder: string[];
   optimisticMessages: Map<string, Message[]>;
   streamingMessages: Map<string, string>;
@@ -108,12 +108,12 @@ export const createConversationSlice: StateCreator<
 
   deleteConversation: (id) => {
     set((state) => {
-      const messages = new Map(state.messages);
-      const cacheMetadata = new Map(state.cacheMetadata);
+      const messages = { ...state.messages };
+      const cacheMetadata = { ...state.cacheMetadata };
       const optimisticMessages = new Map(state.optimisticMessages);
 
-      messages.delete(id);
-      cacheMetadata.delete(id);
+      delete messages[id];
+      delete cacheMetadata[id];
       optimisticMessages.delete(id);
 
       const conversations = state.conversations.filter((c) => c.id !== id);
@@ -171,8 +171,8 @@ export const createConversationSlice: StateCreator<
 
   getCachedMessages: (conversationId) => {
     const state = get();
-    const messages = state.messages.get(conversationId);
-    const meta = state.cacheMetadata.get(conversationId);
+    const messages = state.messages[conversationId];
+    const meta = state.cacheMetadata[conversationId];
 
     if (!messages) return null;
 
@@ -192,18 +192,18 @@ export const createConversationSlice: StateCreator<
   },
 
   isCacheExpired: (conversationId) => {
-    const meta = get().cacheMetadata.get(conversationId);
+    const meta = get().cacheMetadata[conversationId];
     if (!meta) return true;
     return Date.now() - meta.lastFetchedAt > CACHE_CONFIG.CACHE_EXPIRY_MS;
   },
 
   clearConversationCache: (conversationId) => {
     set((state) => {
-      const messages = new Map(state.messages);
-      const cacheMetadata = new Map(state.cacheMetadata);
+      const messages = { ...state.messages };
+      const cacheMetadata = { ...state.cacheMetadata };
 
-      messages.delete(conversationId);
-      cacheMetadata.delete(conversationId);
+      delete messages[conversationId];
+      delete cacheMetadata[conversationId];
 
       const cacheAccessOrder = state.cacheAccessOrder.filter((id) => id !== conversationId);
       return { messages, cacheMetadata, cacheAccessOrder };
@@ -212,8 +212,8 @@ export const createConversationSlice: StateCreator<
 
   setMessagesForConversation: (conversationId, msgs, hasMore = false) => {
     set((state) => {
-      const messages = new Map(state.messages);
-      const cacheMetadata = new Map(state.cacheMetadata);
+      const messages = { ...state.messages };
+      const cacheMetadata = { ...state.cacheMetadata };
       let cacheAccessOrder = [...state.cacheAccessOrder];
 
       // LRU 淘汰
@@ -221,14 +221,14 @@ export const createConversationSlice: StateCreator<
       while (cacheAccessOrder.length >= CACHE_CONFIG.MAX_CACHED_CONVERSATIONS) {
         const oldestId = cacheAccessOrder.shift();
         if (oldestId) {
-          messages.delete(oldestId);
-          cacheMetadata.delete(oldestId);
+          delete messages[oldestId];
+          delete cacheMetadata[oldestId];
         }
       }
 
       const normalizedMsgs = msgs.map(normalizeMessage);
-      messages.set(conversationId, normalizedMsgs);
-      cacheMetadata.set(conversationId, { hasMore, lastFetchedAt: Date.now() });
+      messages[conversationId] = normalizedMsgs;
+      cacheMetadata[conversationId] = { hasMore, lastFetchedAt: Date.now() };
 
       cacheAccessOrder.push(conversationId);
       return { messages, cacheMetadata, cacheAccessOrder };
@@ -307,8 +307,8 @@ export const createConversationSlice: StateCreator<
 
   reset: () =>
     set({
-      messages: new Map(),
-      cacheMetadata: new Map(),
+      messages: {},
+      cacheMetadata: {},
       cacheAccessOrder: [],
       tasks: new Map(),
       chatTasks: new Map(),

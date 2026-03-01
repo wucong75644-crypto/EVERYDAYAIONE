@@ -23,7 +23,6 @@ import { useWebSocket } from '../hooks/useWebSocket';
 import { useMessageStore } from '../stores/useMessageStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useTaskRestorationStore } from '../stores/useTaskRestorationStore';
-import { initializeTaskRestoration } from '../utils/taskRestoration';
 
 // ============================================================
 // Mock 配置
@@ -147,9 +146,11 @@ describe('WebSocketContext - Provider & Hook', () => {
     };
     mockTaskRestorationStore = {
       hydrateComplete: false,
-      restorationComplete: false,
-      restorationInProgress: false,
-      setWsConnected: vi.fn(),
+      placeholdersReady: false,
+      setHydrateComplete: vi.fn(),
+      setPlaceholdersReady: vi.fn(),
+      reset: vi.fn(),
+      subscribe: vi.fn(() => vi.fn()),
     };
 
     (useWebSocket as Mock).mockReturnValue(mockWs);
@@ -584,57 +585,7 @@ describe('WebSocketContext - Provider & Hook', () => {
   });
 
   // ========================================
-  // 5. 任务恢复逻辑测试
-  // ========================================
-
-  describe('Task Restoration', () => {
-    it('should sync WebSocket connection state to TaskRestorationStore', () => {
-      const wrapper = createWrapper(mockWs, mockMessageStore);
-      renderHook(() => useWebSocketContext(), { wrapper });
-
-      expect(mockTaskRestorationStore.setWsConnected).toHaveBeenCalledWith(true);
-    });
-
-    it('should trigger task restoration when conditions met', async () => {
-      mockTaskRestorationStore.hydrateComplete = true;
-      mockWs.isConnected = true;
-      mockTaskRestorationStore.restorationComplete = false;
-      mockTaskRestorationStore.restorationInProgress = false;
-
-      const wrapper = createWrapper(mockWs, mockMessageStore);
-      renderHook(() => useWebSocketContext(), { wrapper });
-
-      await waitFor(() => {
-        expect(initializeTaskRestoration).toHaveBeenCalledWith(expect.any(Function));
-      });
-    });
-
-    it('should not trigger restoration if already complete', () => {
-      mockTaskRestorationStore.hydrateComplete = true;
-      mockWs.isConnected = true;
-      mockTaskRestorationStore.restorationComplete = true; // 已完成
-
-      const wrapper = createWrapper(mockWs, mockMessageStore);
-      renderHook(() => useWebSocketContext(), { wrapper });
-
-      expect(initializeTaskRestoration).not.toHaveBeenCalled();
-    });
-
-    it('should not trigger restoration if in progress', () => {
-      mockTaskRestorationStore.hydrateComplete = true;
-      mockWs.isConnected = true;
-      mockTaskRestorationStore.restorationComplete = false;
-      mockTaskRestorationStore.restorationInProgress = true; // 进行中
-
-      const wrapper = createWrapper(mockWs, mockMessageStore);
-      renderHook(() => useWebSocketContext(), { wrapper });
-
-      expect(initializeTaskRestoration).not.toHaveBeenCalled();
-    });
-  });
-
-  // ========================================
-  // 6. 资源清理测试
+  // 5. 资源清理测试
   // ========================================
 
   describe('Cleanup', () => {

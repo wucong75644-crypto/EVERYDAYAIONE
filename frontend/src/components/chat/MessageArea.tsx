@@ -22,6 +22,7 @@ import toast from 'react-hot-toast';
 import { useMessageLoader } from '../../hooks/useMessageLoader';
 import { useRegenerateHandlers } from '../../hooks/useRegenerateHandlers';
 import { useUnifiedMessages } from '../../hooks/useUnifiedMessages';
+import { useTaskRestorationStore } from '../../stores/useTaskRestorationStore';
 
 interface MessageAreaProps {
   conversationId: string | null;
@@ -128,6 +129,9 @@ export default function MessageArea({
 }: MessageAreaProps) {
   // 使用消息加载 Hook（负责从后端加载并写入缓存）
   const { loading, hasMore, loadMessages, loadMore, loadingMore } = useMessageLoader({ conversationId });
+
+  // Phase 1 占位符是否就绪（刷新后需要等 pending tasks API 返回才能渲染）
+  const placeholdersReady = useTaskRestorationStore((s) => s.placeholdersReady);
 
   // 使用统一消息读取 Hook（自动合并持久化消息和临时消息）
   const mergedMessages = useUnifiedMessages(conversationId);
@@ -267,13 +271,16 @@ export default function MessageArea({
     return <EmptyState hasConversation={false} />;
   }
 
-  // 加载中骨架屏
-  if (conversationId && mergedMessages.length === 0 && loading) {
+  // 综合加载状态：消息加载中 OR 占位符未就绪
+  const isLoading = loading || !placeholdersReady;
+
+  // 加载中骨架屏（等消息加载 + 任务恢复都完成才消失）
+  if (conversationId && mergedMessages.length === 0 && isLoading) {
     return <LoadingSkeleton />;
   }
 
   // 对话已选择但无消息
-  if (conversationId && mergedMessages.length === 0 && !loading) {
+  if (conversationId && mergedMessages.length === 0 && !isLoading) {
     return (
       <div className="flex-1 flex items-center justify-center bg-white">
         <div className="text-center max-w-md px-4">

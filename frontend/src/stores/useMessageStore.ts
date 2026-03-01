@@ -13,6 +13,7 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { useTaskRestorationStore } from './useTaskRestorationStore';
 
 // Slice 导入
 import {
@@ -56,53 +57,11 @@ export { getTextContent, getImageUrls, getVideoUrls, normalizeMessage } from '..
 export type MessageStore = MessageSlice & TaskSlice & StreamingSlice & ConversationSlice;
 
 // ============================================================
-// 自定义序列化
-// ============================================================
-
-const customStorage = createJSONStorage<Partial<MessageStore>>(() => ({
-  getItem: (name) => {
-    const str = localStorage.getItem(name);
-    if (!str) return null;
-
-    try {
-      const data = JSON.parse(str);
-      // 恢复 Map 类型
-      if (data.state?.messagesObj) {
-        data.state.messages = new Map(Object.entries(data.state.messagesObj));
-        delete data.state.messagesObj;
-      }
-      if (data.state?.cacheMetadataObj) {
-        data.state.cacheMetadata = new Map(Object.entries(data.state.cacheMetadataObj));
-        delete data.state.cacheMetadataObj;
-      }
-      return data;
-    } catch {
-      return null;
-    }
-  },
-  setItem: (name, value) => {
-    try {
-      const data = JSON.parse(value);
-      // 转换 Map 为 Object
-      if (data.state?.messages instanceof Map) {
-        data.state.messagesObj = Object.fromEntries(data.state.messages);
-        delete data.state.messages;
-      }
-      if (data.state?.cacheMetadata instanceof Map) {
-        data.state.cacheMetadataObj = Object.fromEntries(data.state.cacheMetadata);
-        delete data.state.cacheMetadata;
-      }
-      localStorage.setItem(name, JSON.stringify(data));
-    } catch {
-      // 忽略序列化错误
-    }
-  },
-  removeItem: (name) => localStorage.removeItem(name),
-}));
-
-// ============================================================
 // Store 创建
 // ============================================================
+
+// 持久化策略：只持久化 conversations（会话列表）
+// messages 不持久化：切换对话从内存读取（秒显），刷新从 API 加载（骨架屏）
 
 export const useMessageStore = create<MessageStore>()(
   persist(
@@ -115,19 +74,15 @@ export const useMessageStore = create<MessageStore>()(
     }),
     {
       name: 'everydayai_message_store',
-      storage: customStorage,
+      storage: createJSONStorage(() => localStorage),
+      // 只持久化会话列表，messages 由 API 加载（刷新）或内存缓存（切换）
       partialize: (state) => ({
-        messages: state.messages,
-        cacheMetadata: state.cacheMetadata,
-        cacheAccessOrder: state.cacheAccessOrder,
         conversations: state.conversations,
       }),
       onRehydrateStorage: () => {
         return () => {
           // hydrate 完成后通知 TaskRestorationStore
-          import('./useTaskRestorationStore').then(({ useTaskRestorationStore }) => {
-            useTaskRestorationStore.getState().setHydrateComplete();
-          });
+          useTaskRestorationStore.getState().setHydrateComplete();
         };
       },
     }

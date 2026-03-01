@@ -1,22 +1,24 @@
 /**
- * 任务恢复工具 v3.0 - 统一入口架构
+ * 任务恢复工具 v4.0 - 两阶段架构
  *
- * 核心改进：
- * - 统一恢复入口 `initializeTaskRestoration`
- * - 解决 hydrate 与 WebSocket 的竞态条件
- * - 按任务状态条件清理乐观消息
+ * 设计原则：切换对话（内存秒显） vs 刷新页面（API 加载）分离
  *
- * 调用时机：
- * - Zustand hydrate 完成 AND WebSocket 连接就绪
- * - 由 TaskRestorationStore 协调触发
+ * Phase 1（纯 HTTP，不等 WS）：
+ * - hydrate 完成后立即执行
+ * - fetch /tasks/pending → 创建占位符/恢复内容
+ * - 与消息加载协调：骨架屏等两者都完成才消失
+ *
+ * Phase 2（WS 就绪后）：
+ * - WS 连接成功后执行
+ * - 对 Phase 1 中的 running 任务，subscribe 到 WS task channel
+ * - 开始接收后续 chunk
  *
  * 任务类型处理：
- * - 聊天任务：创建占位符 + WebSocket 订阅
- * - 图片/视频：创建占位符，等待 WebSocket message_done/error 推送
+ * - 聊天任务：Phase 1 创建占位符/恢复内容，Phase 2 订阅 WS
+ * - 图片/视频：Phase 1 创建占位符，Phase 2 订阅 WS
  */
 
 import { useMessageStore } from '../stores/useMessageStore';
-import { useTaskRestorationStore } from '../stores/useTaskRestorationStore';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 import { logger } from './logger';
@@ -24,7 +26,6 @@ import { PLACEHOLDER_TEXT } from '../constants/placeholder';
 import {
   IMAGE_TASK_TIMEOUT,
   VIDEO_TASK_TIMEOUT,
-  TASK_RESTORE_STAGGER_DELAY,
 } from '../config/task';
 
 interface TaskRequestParams {
@@ -189,42 +190,39 @@ export function cancelPendingRestorations() {
 
 
 // ============================================================
-// 统一任务恢复入口（v3.0）
+// Phase 1：纯 HTTP 恢复（不等 WS）
 // ============================================================
 
+/** Phase 1 恢复结果，传递给 Phase 2 使用 */
+export interface RestorationResult {
+  /** 需要 WS 订阅的 chat 任务 */
+  chatTasks: PendingTask[];
+  /** 需要 WS 订阅的 media 任务 */
+  mediaTasks: PendingTask[];
+}
+
 /**
- * 统一任务恢复入口
+ * Phase 1：获取 pending 任务并创建占位符（纯 HTTP，不等 WS）
  *
- * 调用时机：hydrate 完成 AND WebSocket 连接就绪
- * 由 TaskRestorationStore 协调触发
+ * 调用时机：hydrate 完成后立即执行
+ * 与消息加载并行，骨架屏等两者都完成才消失
  *
  * 职责：
  * 1. 获取所有进行中的任务
- * 2. 按任务状态条件清理乐观消息
- * 3. 恢复聊天任务（创建占位符 + WebSocket 订阅）
- * 4. 恢复媒体任务（创建占位符）
+ * 2. 创建占位符 / 恢复部分内容
+ * 3. 返回需要 WS 订阅的任务列表（交给 Phase 2）
  */
-export async function initializeTaskRestoration(
-  subscribeToTask: (taskId: string, conversationId: string) => void
-): Promise<void> {
-  const { startRestoration, completeRestoration } = useTaskRestorationStore.getState();
-
-  // 检查是否可以开始恢复
-  if (!startRestoration()) {
-    return;
-  }
-
+export async function restoreTaskPlaceholders(): Promise<RestorationResult | null> {
   try {
     // 1. 获取所有进行中的任务
     const tasks = await fetchPendingTasks();
 
-    // 2. 处理 API 请求失败的情况
     if (tasks === null) {
-      logger.warn('task:restore', 'API 请求失败，跳过恢复');
-      return;
+      logger.warn('task:restore:p1', 'API 请求失败，跳过恢复');
+      return null;
     }
 
-    // 3. 分类任务（只处理进行中的任务）
+    // 2. 分类任务
     const chatTasks = tasks.filter(
       t => t.type === 'chat' && (t.status === 'pending' || t.status === 'running')
     );
@@ -232,13 +230,13 @@ export async function initializeTaskRestoration(
       t => (t.type === 'image' || t.type === 'video') && (t.status === 'pending' || t.status === 'running')
     );
 
-    logger.info('task:restore', '获取进行中任务', {
+    logger.info('task:restore:p1', '获取进行中任务', {
       total: tasks.length,
       chat: chatTasks.length,
       media: mediaTasks.length,
     });
 
-    // 4. 处理已终结的任务（刷新期间完成/失败的，只标记不加载）
+    // 3. 处理已终结的任务（标记强制刷新）
     const terminatedTasks = tasks.filter(
       t => t.status === 'completed' || t.status === 'failed'
     );
@@ -246,126 +244,111 @@ export async function initializeTaskRestoration(
       handleTerminatedTasks(terminatedTasks);
     }
 
-    // 5. 获取对话标题映射（用于媒体任务）
+    // 4. 创建聊天任务占位符（不订阅 WS）
+    for (const task of chatTasks) {
+      createChatPlaceholder(task);
+    }
+
+    // 5. 创建媒体任务占位符
     const store = useMessageStore.getState();
     const conversationTitles = new Map<string, string>();
     for (const conv of store.conversations) {
       conversationTitles.set(conv.id, conv.title);
     }
 
-    // 6. 恢复聊天任务
-    for (const task of chatTasks) {
-      restoreChatTask(task, subscribeToTask);
+    cancelPendingRestorations();
+    for (const task of mediaTasks) {
+      const title = conversationTitles.get(task.conversation_id) || '进行中的任务';
+      try {
+        restoreMediaTask(task, title);
+      } catch (error) {
+        logger.error('task:restore:p1', '恢复媒体任务失败', error, { taskId: task.id });
+      }
     }
 
-    // 7. 恢复媒体任务（带错开延迟）
-    cancelPendingRestorations();
-
-    const restorePromises = mediaTasks.map((task, index) => {
-      const delay = index * TASK_RESTORE_STAGGER_DELAY;
-      return new Promise<void>((resolve) => {
-        const timeoutId = setTimeout(() => {
-          try {
-            const title = conversationTitles.get(task.conversation_id) || '进行中的任务';
-            restoreMediaTask(task, title);
-          } catch (error) {
-            logger.error('task:restore', '恢复媒体任务失败', error, { taskId: task.id });
-          }
-          resolve();
-        }, delay);
-        pendingRestoreTimeouts.push(timeoutId);
-      });
-    });
-
-    await Promise.all(restorePromises);
-
-    // 8. 显示恢复提示
+    // 6. 显示恢复提示
     const totalRestored = chatTasks.length + mediaTasks.length;
     if (totalRestored > 0) {
       toast.success(`正在恢复 ${totalRestored} 个任务`);
     }
+
+    return { chatTasks, mediaTasks };
   } catch (error) {
-    logger.error('task:restore', '任务恢复异常', error);
-  } finally {
-    completeRestoration();
+    logger.error('task:restore:p1', '任务恢复异常', error);
+    return null;
   }
 }
 
 /**
- * 恢复单个聊天任务
- *
- * 1. 检查缓存中是否已有对应的 AI 消息（防御已完成任务）
- * 2. 创建 streaming 占位符
- * 3. 订阅 WebSocket 任务通道
+ * 创建聊天任务占位符（Phase 1 使用，不订阅 WS）
  */
-function restoreChatTask(
-  task: PendingTask,
-  subscribeToTask: (taskId: string, conversationId: string) => void
-) {
+function createChatPlaceholder(task: PendingTask) {
   if (!task.conversation_id) {
-    logger.warn('task:restore', '聊天任务没有关联对话', { taskId: task.external_task_id });
+    logger.warn('task:restore:p1', '聊天任务没有关联对话', { taskId: task.external_task_id });
     return;
   }
 
   const store = useMessageStore.getState();
-
-  // 获取消息 ID（优先使用 placeholder_message_id，chat handler 保存的是这个字段）
-  // assistant_message_id 是后加的字段，可能为 null
   const messageId = task.placeholder_message_id || task.assistant_message_id;
-
-  // 防御检查：如果缓存中已有对应的 AI 消息，说明任务已完成，跳过恢复
-  // 这处理后端返回的任务状态不准确（应该是 completed 但返回了 pending/running）的情况
-  const cachedData = store.getCachedMessages(task.conversation_id);
-  if (cachedData?.messages && messageId) {
-    const existingMessage = cachedData.messages.find(
-      m => m.id === messageId && m.role === 'assistant'
-    );
-    if (existingMessage) {
-      logger.info('task:restore', '缓存中已有对应 AI 消息，跳过恢复', {
-        taskId: task.id,
-        messageId,
-        conversationId: task.conversation_id,
-      });
-      return;
-    }
-  }
-
-  // 创建 streaming 占位符
-  // 使用消息 ID 作为 streamingId，确保与发送时创建的占位符 ID 一致
   const streamingId = messageId || task.id;
 
-  // 构建 generationParams（用于重新生成时复用模型）
   const generationParams = task.model_id
     ? { model: task.model_id }
     : undefined;
 
-  // 使用 startStreaming 创建占位符（幂等，已存在则不重复创建）
-  store.startStreaming(task.conversation_id, streamingId, {
-    generationParams,
-  });
+  // 创建 streaming 占位符（幂等）
+  store.startStreaming(task.conversation_id, streamingId, { generationParams });
 
-  // 如果 API 返回了累积内容，立即设置到占位符
-  // 这确保刷新后能立即看到已生成的内容，不依赖 WebSocket subscribed 消息
+  // 如果有累积内容，立即显示
   if (task.accumulated_content) {
     store.setStreamingContent(task.conversation_id, task.accumulated_content);
-    logger.debug('task:restore', '设置累积内容', {
+    logger.debug('task:restore:p1', '设置累积内容', {
       taskId: task.id,
       contentLen: task.accumulated_content.length,
     });
   }
 
-  // 订阅 WebSocket 任务通道（后续增量内容通过 message_chunk 推送）
-  // 注意：必须使用 external_task_id，因为后端 WebSocket 推送使用的是这个 ID
-  subscribeToTask(task.external_task_id, task.conversation_id);
-
-  logger.info('task:restore', '聊天任务已恢复', {
+  logger.info('task:restore:p1', '聊天占位符已创建', {
     taskId: task.id,
-    externalTaskId: task.external_task_id,
-    conversationId: task.conversation_id,
     streamingId,
-    messageId,
-    hasAccumulatedContent: !!task.accumulated_content,
+    hasContent: !!task.accumulated_content,
   });
+}
+
+// ============================================================
+// Phase 2：WS 订阅（WS 就绪后执行）
+// ============================================================
+
+/**
+ * Phase 2：为 Phase 1 中的任务订阅 WS
+ *
+ * 调用时机：WS 连接成功后
+ */
+export function subscribeRestoredTasks(
+  result: RestorationResult,
+  subscribeToTask: (taskId: string, conversationId: string) => void
+) {
+  // 订阅 chat 任务
+  for (const task of result.chatTasks) {
+    if (task.conversation_id) {
+      subscribeToTask(task.external_task_id, task.conversation_id);
+      logger.info('task:restore:p2', 'Chat 任务已订阅 WS', {
+        taskId: task.external_task_id,
+        conversationId: task.conversation_id,
+      });
+    }
+  }
+
+  // 订阅 media 任务（它们也需要 WS 推送 message_done）
+  for (const task of result.mediaTasks) {
+    if (task.conversation_id) {
+      subscribeToTask(task.external_task_id, task.conversation_id);
+      logger.info('task:restore:p2', 'Media 任务已订阅 WS', {
+        taskId: task.external_task_id,
+        conversationId: task.conversation_id,
+      });
+    }
+  }
 }
 
 /**
