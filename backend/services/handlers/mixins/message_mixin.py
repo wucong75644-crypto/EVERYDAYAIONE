@@ -83,7 +83,7 @@ class MessageMixin:
             message_data, on_conflict="id"
         ).execute()
 
-        if not upsert_result.data:
+        if not upsert_result or not upsert_result.data:
             logger.error(f"Failed to upsert message | message_id={message_id}")
             raise Exception("创建/更新消息失败")
 
@@ -147,7 +147,7 @@ class MessageMixin:
                 logger.error(f"Failed to fetch existing message | task_id={task_id} | error={e}")
                 raise Exception(f"无法读取已完成的消息: {e}")
 
-            if existing_msg.data:
+            if existing_msg and existing_msg.data:
                 return Message(
                     id=existing_msg.data["id"],
                     conversation_id=existing_msg.data["conversation_id"],
@@ -265,7 +265,7 @@ class MessageMixin:
                 logger.error(f"Failed to fetch existing message | task_id={task_id} | error={e}")
                 raise Exception(f"无法读取已失败的消息: {e}")
 
-            if existing_msg.data:
+            if existing_msg and existing_msg.data:
                 from schemas.message import MessageError
 
                 # 根据 is_error 标志构造 error 对象（因为数据库不存储详情）
