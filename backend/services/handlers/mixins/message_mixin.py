@@ -207,7 +207,16 @@ class MessageMixin:
         # 7. 更新任务状态
         self._complete_task(task_id)
 
-        # 8. 记录日志
+        # 8. 更新对话预览（触发器自动更新 updated_at，保证排序正确）
+        preview_text = content_dicts[0].get("text", "")[:50] if content_dicts else ""
+        try:
+            self.db.table("conversations").update({
+                "last_message_preview": preview_text,
+            }).eq("id", conversation_id).execute()
+        except Exception as e:
+            logger.warning(f"Failed to update conversation preview | conversation_id={conversation_id} | error={e}")
+
+        # 9. 记录日志
         logger.info(
             f"{self.handler_type.value.capitalize()} completed | "
             f"task_id={task_id} | message_id={message_id} | credits={actual_credits}"
