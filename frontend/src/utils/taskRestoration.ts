@@ -114,7 +114,7 @@ export async function fetchPendingTasks(): Promise<PendingTask[] | null> {
  * - 不启动轮询，等待 WebSocket message_done/error 事件处理完成
  * - 后端完成后通过 WebSocket 推送 message_done/error 事件
  */
-export function restoreMediaTask(task: PendingTask, _conversationTitle: string) {
+export function restoreMediaTask(task: PendingTask) {
   const store = useMessageStore.getState();
 
   const maxDuration = task.type === 'image' ? IMAGE_TASK_TIMEOUT : VIDEO_TASK_TIMEOUT;
@@ -173,19 +173,6 @@ export function restoreMediaTask(task: PendingTask, _conversationTitle: string) 
     type: task.type,
     conversationId: task.conversation_id,
   });
-}
-
-
-// 跟踪待处理的恢复任务超时
-let pendingRestoreTimeouts: ReturnType<typeof setTimeout>[] = [];
-
-/**
- * 取消所有待处理的任务恢复
- * 用于防止重复恢复（如 React strict mode）
- */
-export function cancelPendingRestorations() {
-  pendingRestoreTimeouts.forEach(clearTimeout);
-  pendingRestoreTimeouts = [];
 }
 
 
@@ -249,18 +236,10 @@ export async function restoreTaskPlaceholders(): Promise<RestorationResult | nul
       createChatPlaceholder(task);
     }
 
-    // 5. 创建媒体任务占位符
-    const store = useMessageStore.getState();
-    const conversationTitles = new Map<string, string>();
-    for (const conv of store.conversations) {
-      conversationTitles.set(conv.id, conv.title);
-    }
-
-    cancelPendingRestorations();
+    // 5. 恢复媒体任务
     for (const task of mediaTasks) {
-      const title = conversationTitles.get(task.conversation_id) || '进行中的任务';
       try {
-        restoreMediaTask(task, title);
+        restoreMediaTask(task);
       } catch (error) {
         logger.error('task:restore:p1', '恢复媒体任务失败', error, { taskId: task.id });
       }
