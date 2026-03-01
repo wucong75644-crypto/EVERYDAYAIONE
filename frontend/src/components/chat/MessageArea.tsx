@@ -133,6 +133,11 @@ export default function MessageArea({
   // Phase 1 占位符是否就绪（刷新后需要等 pending tasks API 返回才能渲染）
   const placeholdersReady = useTaskRestorationStore((s) => s.placeholdersReady);
 
+  // 持久化消息是否已加载（骨架屏判断用，不含乐观消息/占位符）
+  const hasLoadedMessages = useMessageStore((state) =>
+    conversationId ? (state.messages[conversationId]?.length ?? 0) > 0 : false
+  );
+
   // 使用统一消息读取 Hook（自动合并持久化消息和临时消息）
   const mergedMessages = useUnifiedMessages(conversationId);
 
@@ -192,15 +197,17 @@ export default function MessageArea({
 
   // 重新生成相关状态（由 message.status 管理）
 
-  // 加载消息
+  // 加载消息（等 Phase 1 完成后再执行，避免与占位符创建竞态）
   useEffect(() => {
+    if (!placeholdersReady) return;
+
     const abortController = new AbortController();
     loadMessages(abortController.signal);
 
     return () => {
       abortController.abort();
     };
-  }, [loadMessages]);
+  }, [loadMessages, placeholdersReady]);
 
   // 处理删除消息
   const handleDelete = useCallback(async (messageId: string) => {
@@ -274,8 +281,8 @@ export default function MessageArea({
   // 综合加载状态：消息加载中 OR 占位符未就绪
   const isLoading = loading || !placeholdersReady;
 
-  // 加载中骨架屏（等消息加载 + 任务恢复都完成才消失）
-  if (conversationId && mergedMessages.length === 0 && isLoading) {
+  // 加载中骨架屏（基于持久化消息判断，不受占位符影响）
+  if (conversationId && !hasLoadedMessages && isLoading) {
     return <LoadingSkeleton />;
   }
 
