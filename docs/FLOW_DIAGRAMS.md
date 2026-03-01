@@ -343,7 +343,7 @@ stateDiagram-v2
 
 ---
 
-### 4.4 任务恢复流程
+### 4.4 任务恢复流程（两阶段架构 v4.0）
 
 ```mermaid
 flowchart TB
@@ -353,62 +353,67 @@ flowchart TB
         Reconnect[网络重连]
     end
 
-    subgraph 恢复入口["恢复入口 (onRehydrateStorage)"]
-        Rehydrate[useMessageStore rehydrate]
-    end
-
-    subgraph 恢复流程
+    subgraph Phase1["Phase 1：纯 HTTP（hydrate 后立即执行）"]
         FetchPending[fetchPendingTasks<br/>GET /tasks/pending]
-        CheckType{任务类型?}
+        Classify{任务分类}
 
-        subgraph ChatRestore[Chat 任务恢复]
-            CreateStreaming[创建 streaming 占位符]
-            ResumeSSE[恢复 SSE 连接<br/>GET /tasks/{id}/stream]
-            SSESuccess{SSE 成功?}
-            FallbackPoll[降级轮询<br/>GET /tasks/{id}/content]
+        subgraph ChatP1[Chat 任务]
+            CreateStreaming[startStreaming 创建占位符]
+            RestoreContent[恢复 accumulated_content]
         end
 
-        subgraph MediaRestore[媒体任务恢复]
-            CreatePlaceholder[创建媒体占位符]
-            StartPolling[启动轮询<br/>GET /image/status/{id}]
+        subgraph MediaP1[媒体任务]
+            ForceRefresh[markForceRefresh 标记]
+            CreatePlaceholder[addMessage 创建占位符]
+        end
+
+        subgraph TerminatedP1[已终结任务]
+            MarkRefresh[markForceRefresh<br/>等 loadMessages 重新加载]
         end
     end
 
-    subgraph 防重复机制
-        TabSync[tabSync 跨标签页广播]
-        Coordinator[taskCoordinator 分布式锁]
-        IdempotentCheck[activeRecoveries 幂等检查]
+    subgraph Phase2["Phase 2：WS 订阅（WS 连接成功后执行）"]
+        SubscribeChat[订阅 Chat 任务<br/>subscribeToTask]
+        SubscribeMedia[订阅 Media 任务<br/>subscribeToTask]
+        IDPriority["ID 优先级：<br/>client_task_id > external_task_id"]
     end
 
-    Refresh --> Rehydrate
-    TabSwitch --> Rehydrate
-    Reconnect --> Rehydrate
+    subgraph WS推送["后端 WS 推送"]
+        TaskChannel["task:{client_task_id} 频道"]
+        CheckCompleted["_check_and_send_completed_task<br/>（订阅时检查是否已完成）"]
+    end
 
-    Rehydrate --> FetchPending
-    FetchPending --> CheckType
+    Refresh --> FetchPending
+    TabSwitch --> FetchPending
+    Reconnect --> FetchPending
 
-    CheckType -->|chat| ChatRestore
-    CheckType -->|image/video| MediaRestore
+    FetchPending --> Classify
+    Classify -->|"chat (pending/running)"| ChatP1
+    Classify -->|"image/video (pending/running)"| MediaP1
+    Classify -->|"completed/failed (近5分钟)"| TerminatedP1
 
-    CreateStreaming --> ResumeSSE
-    ResumeSSE --> SSESuccess
-    SSESuccess -->|是| ChatRestore
-    SSESuccess -->|否| FallbackPoll
+    CreateStreaming --> RestoreContent
 
-    CreatePlaceholder --> StartPolling
+    ForceRefresh --> CreatePlaceholder
 
-    ChatRestore --> TabSync
-    MediaRestore --> TabSync
-    TabSync --> Coordinator
-    Coordinator --> IdempotentCheck
+    ChatP1 --> SubscribeChat
+    MediaP1 --> SubscribeMedia
+    SubscribeChat --> IDPriority
+    SubscribeMedia --> IDPriority
+    IDPriority --> TaskChannel
+    TaskChannel --> CheckCompleted
 ```
 
 **关键文件**：
 - 恢复工具：[taskRestoration.ts](frontend/src/utils/taskRestoration.ts)
-- 跨标签页同步：[tabSync.ts](frontend/src/utils/tabSync.ts)
-- 任务协调器：[taskCoordinator.ts](frontend/src/utils/taskCoordinator.ts)
-- 后端 SSE 恢复：[task.py](backend/api/routes/task.py)
-- 后端流管理器：[chat_stream_manager.py](backend/services/chat_stream_manager.py)
+- WebSocket 连接：[useWebSocket.ts](frontend/src/hooks/useWebSocket.ts)
+- 后端任务 API：[task.py](backend/api/routes/task.py)
+- 后端 WS 任务混入：[task_mixin.py](backend/services/ws/mixins/task_mixin.py)
+
+**ID 链说明**：
+- `client_task_id`：前端生成的 UUID，后端 WS 用此 ID 推送到 `task:{client_task_id}` 频道
+- `external_task_id`：KIE 返回的任务 ID，仅用于后端轮询 KIE 状态
+- 恢复订阅时优先用 `client_task_id`，确保与后端推送频道一致
 
 ---
 
