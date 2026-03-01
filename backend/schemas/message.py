@@ -285,6 +285,17 @@ class MessageResponse(BaseModel):
     task_id: Optional[str] = None
     generation_params: Optional[Dict[str, Any]] = None
 
+    @field_validator('generation_params', mode='before')
+    @classmethod
+    def parse_generation_params(cls, v: Any) -> Any:
+        """Supabase JSONB 可能返回字符串，自动转 dict"""
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                return None
+        return v
+
     # 计费
     credits_cost: int = 0
 

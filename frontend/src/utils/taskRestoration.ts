@@ -53,6 +53,8 @@ export interface PendingTask {
   placeholder_created_at: string | null;
   started_at: string;
   last_polled_at: string | null;
+  // WS 订阅用的客户端任务 ID
+  client_task_id?: string | null;
   // chat 任务特有字段
   accumulated_content?: string | null;
   model_id?: string | null;
@@ -294,23 +296,25 @@ export function subscribeRestoredTasks(
   result: RestorationResult,
   subscribeToTask: (taskId: string, conversationId: string) => void
 ) {
-  // 订阅 chat 任务
+  // 订阅 chat 任务（优先用 client_task_id，与后端推送 ID 一致）
   for (const task of result.chatTasks) {
     if (task.conversation_id) {
-      subscribeToTask(task.external_task_id, task.conversation_id);
+      const subscribeId = task.client_task_id || task.external_task_id;
+      subscribeToTask(subscribeId, task.conversation_id);
       logger.info('task:restore:p2', 'Chat 任务已订阅 WS', {
-        taskId: task.external_task_id,
+        taskId: subscribeId,
         conversationId: task.conversation_id,
       });
     }
   }
 
-  // 订阅 media 任务（它们也需要 WS 推送 message_done）
+  // 订阅 media 任务（优先用 client_task_id，与后端推送 ID 一致）
   for (const task of result.mediaTasks) {
     if (task.conversation_id) {
-      subscribeToTask(task.external_task_id, task.conversation_id);
+      const subscribeId = task.client_task_id || task.external_task_id;
+      subscribeToTask(subscribeId, task.conversation_id);
       logger.info('task:restore:p2', 'Media 任务已订阅 WS', {
-        taskId: task.external_task_id,
+        taskId: subscribeId,
         conversationId: task.conversation_id,
       });
     }

@@ -478,6 +478,11 @@ cache = client.caches.create(
 
 ## 更新记录
 
+- **2026-03-01**：修复刷新恢复场景僵尸消息
+  - `MessageResponse` 添加 `field_validator` 处理 Supabase JSONB 字符串 → dict 转换
+  - `/tasks/pending` API 增加 `client_task_id` 返回字段
+  - `taskRestoration.ts` WS 订阅优先使用 `client_task_id`（与后端推送 ID 一致）
+  - 清理 `task_completion_service.py` 中遗留的 debug print
 - **2026-02-08**：Webhook 回调改造（回调为主 + 轮询兜底 + 多 Provider 兼容）
   - 新增 `task_completion_service.py` 统一任务完成处理（幂等、OSS 上传、handler 分发）
   - 新增 `webhook.py` 多 Provider Webhook 路由（`/api/webhook/{provider}`）

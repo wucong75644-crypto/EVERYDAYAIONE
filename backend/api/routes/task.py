@@ -61,7 +61,7 @@ async def get_pending_tasks(
 
         # 查询进行中的任务
         pending_response = db.table("tasks").select(
-            "id, external_task_id, conversation_id, type, status, "
+            "id, external_task_id, client_task_id, conversation_id, type, status, "
             "request_params, credits_locked, placeholder_message_id, "
             "placeholder_created_at, started_at, last_polled_at, "
             "accumulated_content, model_id, error_message, assistant_message_id"
@@ -72,7 +72,7 @@ async def get_pending_tasks(
         # 查询最近 5 分钟内终结的任务（包括所有类型）
         # 前端需要知道刷新期间完成的任务，以便清理缓存触发重新加载
         recent_completed_response = db.table("tasks").select(
-            "id, external_task_id, conversation_id, type, status, "
+            "id, external_task_id, client_task_id, conversation_id, type, status, "
             "request_params, credits_locked, placeholder_message_id, "
             "placeholder_created_at, started_at, last_polled_at, "
             "accumulated_content, model_id, error_message, assistant_message_id"
