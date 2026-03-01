@@ -22,7 +22,6 @@ import { useMessageStore } from '../stores/useMessageStore';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 import { logger } from './logger';
-import { PLACEHOLDER_TEXT } from '../constants/placeholder';
 import {
   IMAGE_TASK_TIMEOUT,
   VIDEO_TASK_TIMEOUT,
@@ -109,10 +108,10 @@ export async function fetchPendingTasks(): Promise<PendingTask[] | null> {
 /**
  * 恢复媒体任务（图片/视频）
  *
- * v2.0: WebSocket 推送模式
- * - 只创建占位符和注册任务到 Store
- * - 不启动轮询，等待 WebSocket message_done/error 事件处理完成
- * - 后端完成后通过 WebSocket 推送 message_done/error 事件
+ * v3.0: 占位符已入库模式
+ * - 占位符消息已在 generate 时 insert 到 messages 表
+ * - 刷新后通过 loadMessages() 自然加载出 pending 状态的占位符
+ * - 此函数只需标记强制刷新 + 等待 WS 推送，不再手动构造占位符
  */
 export function restoreMediaTask(task: PendingTask) {
   const store = useMessageStore.getState();
@@ -132,43 +131,10 @@ export function restoreMediaTask(task: PendingTask) {
     return;
   }
 
-  // 使用数据库中保存的原始占位符 ID（与前端生成的 UUID 一致）
-  const placeholderId = task.placeholder_message_id || `restored-${task.external_task_id}`;
+  // 占位符已在 DB 中，标记强制刷新让 loadMessages 跳过缓存拿到最新消息
+  store.markForceRefresh(task.conversation_id);
 
-  // 1. 创建占位符消息（直接添加到 messages，不再使用 streaming/optimistic）
-  const loadingText = task.type === 'image'
-    ? PLACEHOLDER_TEXT.IMAGE_GENERATING
-    : PLACEHOLDER_TEXT.VIDEO_GENERATING;
-
-  // 使用数据库保存的占位符时间戳（确保与原始占位符时间一致）
-  const placeholderTimestamp = task.placeholder_created_at || new Date().toISOString();
-
-  // 警告：如果没有 placeholder_created_at（旧数据），时间戳可能不准确
-  if (!task.placeholder_created_at) {
-    logger.warn('task:restore', '任务缺少 placeholder_created_at，使用当前时间', {
-      taskId: task.external_task_id,
-      fallbackTime: placeholderTimestamp,
-    });
-  }
-
-  const placeholderMessage = {
-    id: placeholderId,
-    conversation_id: task.conversation_id,
-    role: 'assistant' as const,
-    content: [{ type: 'text' as const, text: loadingText }],
-    status: 'pending' as const,
-    created_at: placeholderTimestamp,
-    generation_params: {
-      type: task.type,
-      model: task.request_params?.model,
-    },
-  };
-
-  store.addMessage(task.conversation_id, placeholderMessage);
-
-  // 3. 不启动轮询！等待 WebSocket message_done/error 事件
-  // 后端完成后会推送 message_done/error 事件，由 WebSocketContext 处理
-  logger.info('task:restore', '媒体任务已恢复，等待 WebSocket 推送', {
+  logger.info('task:restore', '媒体任务已标记强制刷新，等待 WebSocket 推送', {
     taskId: task.external_task_id,
     type: task.type,
     conversationId: task.conversation_id,
