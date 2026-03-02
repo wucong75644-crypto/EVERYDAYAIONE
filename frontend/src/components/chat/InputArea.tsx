@@ -219,6 +219,9 @@ export default function InputArea({
     handleRemoveAllImages();  // 30秒后才会清理 ObjectURL
     setIsSubmitting(true);
 
+    // 发送消息时滚动到底部（用户可能在上方浏览历史）
+    window.dispatchEvent(new Event('chat:scroll-to-bottom'));
+
     try {
       const isNewConversation = !conversationId;
       const title = messageContent.slice(0, 20) || '新对话';
