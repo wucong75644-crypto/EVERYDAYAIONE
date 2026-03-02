@@ -153,8 +153,8 @@ class TaskCompletionService:
             )
             return True  # 其他进程已处理，幂等返回成功
 
-        # 6. 成功抢到锁，更新task为最新数据
-        task = lock_update.data[0]
+        # 6. 成功抢到锁，保留原始 task（get_task 返回完整行）
+        #    lock_update.data[0] 可能仅包含更新字段，缺少 type 等列
 
         # 7. 根据结果状态分发处理
         try:

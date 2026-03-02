@@ -124,7 +124,8 @@ class BackgroundTaskWorker:
                 except Exception as e:
                     logger.error(
                         f"Failed to process task | "
-                        f"task_id={task.get('external_task_id')} | error={e}"
+                        f"task_id={task.get('external_task_id')} | error={e}",
+                        exc_info=True
                     )
 
         await asyncio.gather(*[
