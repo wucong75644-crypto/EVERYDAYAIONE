@@ -58,7 +58,7 @@ class ImageHandler(BaseHandler):
         """
         # 1. 提取参数
         prompt = self._extract_text_content(content)
-        image_url = self._extract_image_url(content)
+        image_urls = self._extract_image_urls(content)
         model_id = params.get("model") or "google/nano-banana"
         aspect_ratio = params.get("aspect_ratio") or "1:1"
         output_format = params.get("output_format") or "png"
@@ -101,7 +101,7 @@ class ImageHandler(BaseHandler):
         # 只有支持 resolution 的模型才传递该参数
         generate_kwargs = {
             "prompt": prompt,
-            "image_urls": [image_url] if image_url else None,
+            "image_urls": image_urls if image_urls else None,
             "size": aspect_ratio,
             "output_format": output_format,
             "callback_url": self._build_callback_url(adapter.provider.value),

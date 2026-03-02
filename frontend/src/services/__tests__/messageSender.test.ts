@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   createTextContent,
-  createTextWithImage,
+  createTextWithImages,
   getTextFromContent,
   inferGenerationType,
   determineMessageType,
@@ -51,16 +51,45 @@ describe('createTextContent', () => {
 });
 
 // ============================================================
-// createTextWithImage 测试
+// createTextWithImages 测试
 // ============================================================
 
-describe('createTextWithImage', () => {
-  it('should create text and image content array', () => {
-    const result = createTextWithImage('描述图片', 'https://example.com/image.jpg');
+describe('createTextWithImages', () => {
+  it('should create text and single image content array', () => {
+    const result = createTextWithImages('描述图片', ['https://example.com/image.jpg']);
 
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({ type: 'text', text: '描述图片' });
     expect(result[1]).toEqual({ type: 'image', url: 'https://example.com/image.jpg' });
+  });
+
+  it('should create text and multiple images content array', () => {
+    const result = createTextWithImages('编辑这些图片', [
+      'https://example.com/a.jpg',
+      'https://example.com/b.png',
+      'https://example.com/c.webp',
+    ]);
+
+    expect(result).toHaveLength(4);
+    expect(result[0]).toEqual({ type: 'text', text: '编辑这些图片' });
+    expect(result[1]).toEqual({ type: 'image', url: 'https://example.com/a.jpg' });
+    expect(result[2]).toEqual({ type: 'image', url: 'https://example.com/b.png' });
+    expect(result[3]).toEqual({ type: 'image', url: 'https://example.com/c.webp' });
+  });
+
+  it('should preserve image order', () => {
+    const urls = ['https://example.com/1.jpg', 'https://example.com/2.jpg'];
+    const result = createTextWithImages('test', urls);
+
+    expect(result[1]).toEqual({ type: 'image', url: 'https://example.com/1.jpg' });
+    expect(result[2]).toEqual({ type: 'image', url: 'https://example.com/2.jpg' });
+  });
+
+  it('should handle empty image array', () => {
+    const result = createTextWithImages('纯文本', []);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ type: 'text', text: '纯文本' });
   });
 });
 

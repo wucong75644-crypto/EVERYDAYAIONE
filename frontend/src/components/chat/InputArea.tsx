@@ -181,7 +181,7 @@ export default function InputArea({
       const uploadResult = await uploadAudio(audioBlob);
 
       // 发送消息（将音频 URL 作为附件）
-      await handleChatMessage(`[语音消息]`, currentConversationId, uploadResult.audio_url);
+      await handleChatMessage(`[语音消息]`, currentConversationId, [uploadResult.audio_url]);
     } catch (error) {
       console.error('发送语音消息失败:', error);
       setUploadError(error instanceof Error ? error.message : '语音上传失败');
@@ -211,8 +211,8 @@ export default function InputArea({
     }
 
     const messageContent = prompt.trim();
-    // 准备图片 URL：使用服务器 URL（确保图片已上传完成）
-    const combinedImageUrl = uploadedImageUrls.length > 0 ? uploadedImageUrls.join(',') : null;
+    // 准备图片 URL 数组：使用服务器 URL（确保图片已上传完成）
+    const imageUrls = uploadedImageUrls.length > 0 ? [...uploadedImageUrls] : null;
 
     // 立即清空输入（提升响应速度）
     setPrompt('');
@@ -244,12 +244,12 @@ export default function InputArea({
         await handleChatMessage(
           messageContent,
           currentConversationId!,
-          combinedImageUrl     // 使用服务器 URL（已上传完成）
+          imageUrls     // 使用服务器 URL（已上传完成）
         );
       } else if (selectedModel.type === 'video') {
-        await handleVideoGeneration(currentConversationId!, messageContent, combinedImageUrl);
+        await handleVideoGeneration(currentConversationId!, messageContent, imageUrls);
       } else {
-        await handleImageGeneration(currentConversationId!, messageContent, combinedImageUrl);
+        await handleImageGeneration(currentConversationId!, messageContent, imageUrls);
       }
     } catch (error) {
       console.error('发送消息失败:', error);
