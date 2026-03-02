@@ -58,20 +58,20 @@ function cleanupTaskSubscription(deps: HandlerDeps, taskId: string): void {
   deps.unsubscribeTask(taskId);
 }
 
-/** 处理任务完成（有 messageData） */
+/** 处理任务完成（有 messageData），返回是否为新处理的消息 */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function handleTaskDoneWithMessage(deps: HandlerDeps, taskId: string, messageData: any, conversationId: string): void {
+function handleTaskDoneWithMessage(deps: HandlerDeps, taskId: string, messageData: any, conversationId: string): boolean {
   const store = deps.getStore();
   const normalized = normalizeMessage(messageData);
 
   // 幂等性检查：使用 Store 作为唯一真相来源
   const existingMessage = store.getMessage(normalized.id);
   if (existingMessage?.status === 'completed') {
-    logger.warn('ws:done', 'message already completed in store', {
+    logger.warn('ws:done', 'message already completed in store, skipping', {
       taskId,
       messageId: normalized.id,
     });
-    return;
+    return false;
   }
 
   logger.info('ws:done', 'processing message', {
@@ -98,6 +98,8 @@ function handleTaskDoneWithMessage(deps: HandlerDeps, taskId: string, messageDat
   const context = deps.operationContextRef.current.get(taskId);
   context?.onComplete?.(normalized);
   deps.operationContextRef.current.delete(taskId);
+
+  return true;
 }
 
 /** 处理任务失败 */
@@ -217,13 +219,15 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       const effectiveConversationId = conversation_id
         || (task_id ? deps.taskConversationMapRef.current.get(task_id) : undefined);
 
+      // 跟踪是否为新处理的消息（控制 toast 显示）
+      let isNewlyCompleted = true;
+
       // 1. 有 task_id：处理任务完成
       if (task_id) {
         if (messageData && effectiveConversationId) {
-          handleTaskDoneWithMessage(deps, task_id, messageData, effectiveConversationId);
+          isNewlyCompleted = handleTaskDoneWithMessage(deps, task_id, messageData, effectiveConversationId);
         } else if (message_id) {
           store.setStatus(message_id, 'completed');
-          // 尝试获取 conversationId 和任务类型
           store.completeTask(task_id);
         }
         cleanupTaskSubscription(deps, task_id);
@@ -238,18 +242,20 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
         store.setStatus(message_id, 'completed');
       }
 
-      // 完成流式状态
-      if (effectiveConversationId) {
+      // 完成流式状态（仅在新完成时更新，避免重复触发）
+      if (effectiveConversationId && isNewlyCompleted) {
         store.completeStreaming(effectiveConversationId);
         store.markConversationCompleted(effectiveConversationId);
         store.setIsSending(false);
         tabSync.broadcast('message_completed', { conversationId: effectiveConversationId, messageId: message_id });
       }
 
-      // Toast 提示
-      import('react-hot-toast').then(({ default: toast }) => {
-        toast.success('生成完成');
-      });
+      // Toast 提示（仅在消息确实是新完成时才显示）
+      if (isNewlyCompleted) {
+        import('react-hot-toast').then(({ default: toast }) => {
+          toast.success('生成完成');
+        });
+      }
     },
 
     // 生成失败
