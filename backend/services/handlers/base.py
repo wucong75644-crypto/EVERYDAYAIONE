@@ -262,7 +262,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
         return ""
 
     def _extract_image_url(self, content: List[ContentPart]) -> Optional[str]:
-        """从 ContentPart 数组提取图片 URL"""
+        """从 ContentPart 数组提取第一张图片 URL（单图场景：chat/video）"""
         from schemas.message import ImagePart
         for part in content:
             if isinstance(part, ImagePart):
@@ -270,6 +270,19 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
             if isinstance(part, dict) and part.get("type") == "image":
                 return part.get("url")
         return None
+
+    def _extract_image_urls(self, content: List[ContentPart]) -> List[str]:
+        """从 ContentPart 数组提取所有图片 URL（多图场景：image editing）"""
+        from schemas.message import ImagePart
+        urls: List[str] = []
+        for part in content:
+            if isinstance(part, ImagePart) and part.url:
+                urls.append(part.url)
+            elif isinstance(part, dict) and part.get("type") == "image":
+                url = part.get("url")
+                if url:
+                    urls.append(url)
+        return urls
 
     # ========================================
     # 任务管理方法 → TaskMixin

@@ -344,12 +344,12 @@ export function createTextContent(text: string): ContentPart[] {
 }
 
 /**
- * 创建图文混合内容
+ * 创建图文混合内容（多图）
  */
-export function createTextWithImage(text: string, imageUrl: string): ContentPart[] {
+export function createTextWithImages(text: string, imageUrls: string[]): ContentPart[] {
   return [
     { type: 'text', text },
-    { type: 'image', url: imageUrl },
+    ...imageUrls.map(url => ({ type: 'image' as const, url })),
   ];
 }
 

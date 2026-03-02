@@ -59,6 +59,7 @@ class ImageOutputFormat(str, Enum):
     PNG = "png"
     JPEG = "jpeg"
     JPG = "jpg"
+    WEBP = "webp"
 
 
 class VideoFrames(str, Enum):
@@ -279,7 +280,7 @@ class NanoBananaInput(BaseModel):
 
 class NanoBananaEditInput(BaseModel):
     """nano-banana-edit (图像编辑) 输入参数"""
-    prompt: str = Field(..., max_length=20000)
+    prompt: str = Field(..., max_length=5000)
     image_urls: List[str] = Field(..., max_length=10)  # 必填，最多10张
     output_format: ImageOutputFormat = ImageOutputFormat.PNG
     image_size: AspectRatio = AspectRatio.RATIO_1_1
@@ -287,7 +288,7 @@ class NanoBananaEditInput(BaseModel):
 
 class NanoBananaProInput(BaseModel):
     """nano-banana-pro (高级文生图) 输入参数"""
-    prompt: str = Field(..., max_length=20000)
+    prompt: str = Field(..., max_length=10000)
     image_input: List[str] = Field(default_factory=list, max_length=8)  # 可选，最多8张
     aspect_ratio: AspectRatio = AspectRatio.RATIO_1_1
     resolution: ImageResolution = ImageResolution.RES_1K

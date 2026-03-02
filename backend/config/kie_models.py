@@ -138,12 +138,12 @@ KIE_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "api_endpoint": "https://api.kie.ai/api/v1/jobs/createTask",
 
         # 能力配置
-        "max_prompt_length": 20000,
+        "max_prompt_length": 5000,
         "requires_image_input": True,
         "max_images": 10,
         "max_image_size_mb": 10,
         "supported_sizes": ["1:1", "9:16", "16:9", "3:4", "4:3", "3:2", "2:3", "5:4", "4:5", "21:9", "auto"],
-        "supported_formats": ["png", "jpeg"],
+        "supported_formats": ["png", "jpeg", "webp"],
         "supports_resolution": False,
 
         # KIE 成本 (积分)
@@ -167,7 +167,7 @@ KIE_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "api_endpoint": "https://api.kie.ai/api/v1/jobs/createTask",
 
         # 能力配置
-        "max_prompt_length": 20000,
+        "max_prompt_length": 10000,
         "requires_image_input": False,
         "max_images": 8,  # 参考图片
         "max_image_size_mb": 30,

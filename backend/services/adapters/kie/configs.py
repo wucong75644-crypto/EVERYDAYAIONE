@@ -64,12 +64,12 @@ IMAGE_MODEL_CONFIGS = {
         "requires_image_input": True,
         "max_images": 10,
         "max_image_size_mb": 10,
-        "max_prompt_length": 20000,
+        "max_prompt_length": 5000,
         "supported_sizes": [
             "1:1", "9:16", "16:9", "3:4", "4:3",
             "3:2", "2:3", "5:4", "4:5", "21:9", "auto"
         ],
-        "supported_formats": ["png", "jpeg"],
+        "supported_formats": ["png", "jpeg", "webp"],
         "supports_resolution": False,
         "cost_per_image": Decimal("0.02"),
         "credits_per_image": 6,
@@ -80,7 +80,7 @@ IMAGE_MODEL_CONFIGS = {
         "requires_image_input": False,
         "max_images": 8,  # 参考图片
         "max_image_size_mb": 30,
-        "max_prompt_length": 20000,
+        "max_prompt_length": 10000,
         "supported_sizes": [
             "1:1", "2:3", "3:2", "3:4", "4:3",
             "4:5", "5:4", "9:16", "16:9", "21:9", "auto"

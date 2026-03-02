@@ -115,9 +115,11 @@ class KieImageAdapter(BaseImageAdapter):
             )
 
     def validate_format(self, fmt: str) -> None:
-        """验证输出格式"""
+        """验证输出格式（jpeg/jpg 视为等价）"""
         supported = self.config["supported_formats"]
-        if fmt not in supported:
+        # jpeg 与 jpg 是同一格式的两种写法，归一化后再校验
+        aliases = {"jpeg": "jpg", "jpg": "jpeg"}
+        if fmt not in supported and aliases.get(fmt) not in supported:
             raise ValueError(
                 f"Unsupported format: {fmt}. Supported: {supported}"
             )

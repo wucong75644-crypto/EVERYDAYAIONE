@@ -6,7 +6,7 @@
 
 import { type UnifiedModel } from '../../constants/models';
 import { type Message } from '../../stores/useMessageStore';
-import { sendMessage, createTextContent, createTextWithImage, createErrorMessage, type GenerationType } from '../../services/messageSender';
+import { sendMessage, createTextContent, createTextWithImages, createErrorMessage, type GenerationType } from '../../services/messageSender';
 import { useWebSocketContext } from '../../contexts/WebSocketContext';
 
 export type MediaType = 'image' | 'video';
@@ -51,12 +51,12 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
   const handleMediaGeneration = async (
     conversationId: string,
     prompt: string,
-    imageUrl: string | null = null
+    imageUrls: string[] | null = null
   ) => {
     try {
       // 构建 content
-      const content = imageUrl
-        ? createTextWithImage(prompt, imageUrl)
+      const content = imageUrls?.length
+        ? createTextWithImages(prompt, imageUrls)
         : createTextContent(prompt);
 
       // 立即触发侧边栏乐观更新（不等待 API 返回）
