@@ -123,6 +123,22 @@ function ScrollToBottomButton() {
   );
 }
 
+/**
+ * 监听 chat:scroll-to-bottom 事件，触发滚动到底部
+ * 用于发送消息时自动滚动（用户可能在上方浏览历史）
+ */
+function ScrollOnSend() {
+  const { scrollToBottom } = useStickToBottomContext();
+
+  useEffect(() => {
+    const handler = () => scrollToBottom();
+    window.addEventListener('chat:scroll-to-bottom', handler);
+    return () => window.removeEventListener('chat:scroll-to-bottom', handler);
+  }, [scrollToBottom]);
+
+  return null;
+}
+
 export default function MessageArea({
   conversationId,
   onDelete,
@@ -345,6 +361,9 @@ export default function MessageArea({
 
         {/* 滚动到底部按钮（使用 Context） */}
         <ScrollToBottomButton />
+
+        {/* 监听发送事件，自动滚动到底部 */}
+        <ScrollOnSend />
       </StickToBottom>
     </div>
   );
