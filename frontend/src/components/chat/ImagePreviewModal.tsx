@@ -235,6 +235,8 @@ export default memo(function ImagePreviewModal({
     }
   }, [currentIndex]);
 
+  const hasThumbnails = allImages.length > 0 && !!onSelectImage;
+
   if (!imageUrl) return null;
 
   return (
@@ -383,7 +385,7 @@ export default memo(function ImagePreviewModal({
       {/* 图片容器 */}
       <div
         ref={containerRef}
-        className="w-full h-full flex items-center justify-center overflow-hidden pt-20 pb-28 cursor-default"
+        className={`w-full h-full flex items-center justify-center overflow-hidden pt-14 ${hasThumbnails ? 'pb-24' : 'pb-6'} cursor-default`}
         style={{
           animation: isClosing
             ? 'preview-content-exit 150ms cubic-bezier(0.32, 0.72, 0, 1) forwards'
@@ -403,7 +405,7 @@ export default memo(function ImagePreviewModal({
           ref={imageRef}
           src={imageUrl}
           alt="预览图片"
-          className={`max-w-[90vw] max-h-[calc(100vh-240px)] object-contain select-none ${
+          className={`max-w-[90vw] ${hasThumbnails ? 'max-h-[calc(100vh-160px)]' : 'max-h-[calc(100vh-80px)]'} object-contain select-none ${
             isDragging ? 'cursor-grabbing' : scale > 1 ? 'cursor-grab' : 'cursor-zoom-in'
           }`}
           style={{
