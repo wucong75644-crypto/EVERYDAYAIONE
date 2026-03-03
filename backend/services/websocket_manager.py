@@ -140,7 +140,9 @@ class WebSocketManager:
 
         while True:
             try:
+                got_message = False
                 async for raw_msg in self._pubsub.listen():
+                    got_message = True
                     consecutive_failures = 0  # 成功接收消息，重置计数
                     if raw_msg["type"] != "message":
                         continue
@@ -157,6 +159,10 @@ class WebSocketManager:
                         logger.warning("Redis Pub/Sub received invalid JSON")
                     except Exception as e:
                         logger.warning(f"Redis message handling error | error={e}")
+
+                # listen() 正常结束但没产出任何消息 → PubSub 状态异常（未订阅）
+                if not got_message:
+                    raise ConnectionError("PubSub listen() returned empty, likely not subscribed")
 
             except asyncio.CancelledError:
                 return  # 正常退出
