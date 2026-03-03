@@ -238,9 +238,14 @@ export default function Chat() {
           if (currentSeq !== conversationRequestSeqRef.current) {
             return;  // 丢弃过期错误
           }
-          console.error('加载 URL 对话失败:', error);
-          // 对话不存在或加载失败，跳转回主聊天页
-          navigate('/chat');
+          // 只有对话确实不存在（404）才跳转，其他错误（网络抖动、超时等）不跳走
+          const status = error?.response?.status;
+          if (status === 404) {
+            console.error('对话不存在:', urlConversationId);
+            navigate('/chat');
+          } else {
+            console.error('加载对话失败（非 404，不跳转）:', status, error);
+          }
         });
     } else {
       // URL 中没有对话 ID，清除状态（回到主页）
