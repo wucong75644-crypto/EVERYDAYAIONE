@@ -151,6 +151,7 @@ export function restoreMediaTask(task: PendingTask) {
     generation_params: {
       type: task.type,
       model: task.request_params?.model,
+      ...(task.request_params?.num_images ? { num_images: task.request_params.num_images } : {}),
     },
   });
 

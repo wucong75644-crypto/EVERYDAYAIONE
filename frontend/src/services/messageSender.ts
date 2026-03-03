@@ -180,6 +180,7 @@ export async function sendMessage(options: SendOptions): Promise<string> {
       generation_params: {
         type: generationType,
         model,
+        ...(generationType === 'image' && params?.num_images ? { num_images: params.num_images } : {}),
       },
     };
     messageStore.addMessage(conversationId, placeholderMessage); // 直接添加到 messages
@@ -428,6 +429,7 @@ export function extractGenerationParams(message: Message): Record<string, unknow
   if (gp.aspect_ratio) params.aspect_ratio = gp.aspect_ratio;
   if (gp.resolution) params.resolution = gp.resolution;
   if (gp.output_format) params.output_format = gp.output_format;
+  if (gp.num_images) params.num_images = gp.num_images;
 
   // 视频参数
   if (gp.n_frames) params.n_frames = gp.n_frames;

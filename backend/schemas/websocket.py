@@ -43,6 +43,7 @@ class WSMessageType(str, Enum):
     MESSAGE_PROGRESS = "message_progress"
     MESSAGE_DONE = "message_done"
     MESSAGE_ERROR = "message_error"
+    IMAGE_PARTIAL_UPDATE = "image_partial_update"
 
     # === 系统消息 ===
     CREDITS_CHANGED = "credits_changed"
@@ -299,6 +300,34 @@ def build_message_error(
     return _build_ws_message(
         WSMessageType.MESSAGE_ERROR,
         {"error": {"code": error_code, "message": error_message}},
+        task_id=task_id,
+        conversation_id=conversation_id,
+        message_id=message_id,
+    )
+
+
+def build_image_partial_update(
+    task_id: str,
+    conversation_id: str,
+    message_id: str,
+    image_index: int,
+    completed_count: int,
+    total_count: int,
+    content_part: Optional[Dict[str, Any]] = None,
+    error: Optional[str] = None,
+) -> Dict[str, Any]:
+    """构建多图批次中单张图片完成/失败的通知"""
+    payload: Dict[str, Any] = {
+        "image_index": image_index,
+        "content_part": content_part,
+        "completed_count": completed_count,
+        "total_count": total_count,
+    }
+    if error:
+        payload["error"] = error
+    return _build_ws_message(
+        WSMessageType.IMAGE_PARTIAL_UPDATE,
+        payload,
         task_id=task_id,
         conversation_id=conversation_id,
         message_id=message_id,

@@ -350,4 +350,54 @@ describe('extractGenerationParams', () => {
     });
     expect(result).not.toHaveProperty('thinking_mode');
   });
+
+  it('should extract num_images for multi-image regeneration', () => {
+    const message = createTestMessage({
+      generation_params: {
+        type: 'image',
+        model: 'nano-banana',
+        aspect_ratio: '1:1',
+        num_images: 4,
+      },
+    });
+
+    const result = extractGenerationParams(message);
+
+    expect(result).toEqual({
+      aspect_ratio: '1:1',
+      num_images: 4,
+    });
+  });
+
+  it('should not include num_images when it is 0 or falsy', () => {
+    const message = createTestMessage({
+      generation_params: {
+        type: 'image',
+        aspect_ratio: '16:9',
+        num_images: 0,
+      },
+    });
+
+    const result = extractGenerationParams(message);
+
+    expect(result).toEqual({
+      aspect_ratio: '16:9',
+    });
+    expect(result).not.toHaveProperty('num_images');
+  });
+
+  it('should preserve num_images=1 (truthy)', () => {
+    const message = createTestMessage({
+      generation_params: {
+        type: 'image',
+        num_images: 1,
+      },
+    });
+
+    const result = extractGenerationParams(message);
+
+    expect(result).toEqual({
+      num_images: 1,
+    });
+  });
 });

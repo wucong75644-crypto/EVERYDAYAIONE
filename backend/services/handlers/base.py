@@ -185,6 +185,8 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
         metadata: TaskMetadata,
         credits_locked: int = 0,
         transaction_id: Optional[str] = None,
+        image_index: Optional[int] = None,
+        batch_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         构建标准 task_data 结构（所有 Handler 共用）
@@ -201,6 +203,8 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
             metadata: 任务元数据
             credits_locked: 锁定积分（仅 image/video）
             transaction_id: 积分事务 ID（仅 image/video）
+            image_index: 图片在批次中的位置（0~3），仅图片任务
+            batch_id: 批次 ID（同批次 task 共享），仅图片任务
 
         Returns:
             标准 task_data 字典
@@ -228,6 +232,12 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
             task_data["credits_locked"] = credits_locked
         if transaction_id:
             task_data["credit_transaction_id"] = transaction_id
+
+        # 多图批次字段（仅图片任务）
+        if image_index is not None:
+            task_data["image_index"] = image_index
+        if batch_id:
+            task_data["batch_id"] = batch_id
 
         return task_data
 

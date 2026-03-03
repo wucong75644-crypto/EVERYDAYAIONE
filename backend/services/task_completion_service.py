@@ -197,7 +197,13 @@ class TaskCompletionService:
                 result, "NO_RESULT", "生成结果为空",
             ))
 
-        # 5. 调用 Handler.on_complete
+        # 5. 图片任务统一走批次处理（含 num_images=1）
+        if task_type == "image" and task.get("batch_id"):
+            from services.batch_completion_service import BatchCompletionService
+            batch_svc = BatchCompletionService(self.db)
+            return await batch_svc.handle_image_complete(task, content_parts)
+
+        # 6. 其他任务（video）走原有 Handler 路径
         handler = self._create_handler(task_type)
         await handler.on_complete(
             task_id=external_task_id,
@@ -215,6 +221,17 @@ class TaskCompletionService:
         external_task_id = task["external_task_id"]
         task_type = task["type"]
 
+        # 图片任务统一走批次处理
+        if task_type == "image" and task.get("batch_id"):
+            from services.batch_completion_service import BatchCompletionService
+            batch_svc = BatchCompletionService(self.db)
+            return await batch_svc.handle_image_failure(
+                task,
+                error_code=result.fail_code or "UNKNOWN",
+                error_message=result.fail_msg or "任务失败",
+            )
+
+        # 其他任务走原有 Handler 路径
         handler = self._create_handler(task_type)
         await handler.on_error(
             task_id=external_task_id,

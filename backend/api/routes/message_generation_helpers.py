@@ -98,6 +98,7 @@ async def handle_regenerate_or_send_operation(
     assistant_message_id: Optional[str],
     placeholder_created_at: Optional[datetime],
     gen_type: GenerationType,
+    params: Optional[Dict[str, Any]] = None,
 ) -> tuple[str, Message]:
     """
     处理 regenerate 或 send 操作
@@ -145,13 +146,20 @@ async def handle_regenerate_or_send_operation(
         }
         placeholder_text = _PLACEHOLDER_TEXT[gen_type]
 
+        # 构建 generation_params（包含前端渲染占位符所需的参数）
+        gen_params: Dict[str, Any] = {"type": gen_type.value}
+        if gen_type == GenerationType.IMAGE and params:
+            for key in ("num_images", "aspect_ratio", "resolution", "output_format"):
+                if key in params:
+                    gen_params[key] = params[key]
+
         placeholder_data = {
             "id": assistant_message_id,
             "conversation_id": conversation_id,
             "role": MessageRole.ASSISTANT.value,
             "content": [{"type": "text", "text": placeholder_text}],
             "status": MessageStatus.PENDING.value,
-            "generation_params": {"type": gen_type.value},
+            "generation_params": gen_params,
             "credits_cost": 0,
         }
         if placeholder_created_at:

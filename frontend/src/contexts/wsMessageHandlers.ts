@@ -310,6 +310,42 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       });
     },
 
+    // 多图批次：单张图片完成/失败通知
+    image_partial_update: (msg) => {
+      const { message_id } = msg;
+      const payload = msg.payload || {};
+      const { image_index, content_part, completed_count, total_count, error } = payload;
+
+      if (!message_id || image_index === undefined) return;
+
+      logger.info('ws:image', 'partial update', {
+        messageId: message_id,
+        imageIndex: image_index,
+        progress: `${completed_count}/${total_count}`,
+        hasError: !!error,
+      });
+
+      const store = deps.getStore();
+      const existing = store.getMessage(message_id);
+      if (!existing) return;
+
+      // 克隆 content 数组，在对应 index 插入/替换
+      const content = [...(existing.content || [])];
+
+      // 确保数组长度足够
+      while (content.length <= image_index) {
+        content.push({ type: 'image', url: null } as unknown as Message['content'][number]);
+      }
+
+      if (error) {
+        content[image_index] = { type: 'image', url: null, failed: true, error } as unknown as Message['content'][number];
+      } else if (content_part) {
+        content[image_index] = content_part;
+      }
+
+      store.updateMessage(message_id, { content });
+    },
+
     // 积分变更
     credits_changed: (msg) => {
       const credits = msg.credits ?? msg.payload?.credits;

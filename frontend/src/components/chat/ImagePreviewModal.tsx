@@ -9,6 +9,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, memo } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Download, ZoomIn, ZoomOut, RotateCcw, Loader2, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface ImagePreviewModalProps {
@@ -239,7 +240,7 @@ export default memo(function ImagePreviewModal({
 
   if (!imageUrl) return null;
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => {
@@ -481,7 +482,8 @@ export default memo(function ImagePreviewModal({
           ))}
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   );
 });
 

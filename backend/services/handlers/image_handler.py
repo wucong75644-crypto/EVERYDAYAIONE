@@ -2,10 +2,11 @@
 图片生成处理器
 
 处理图片生成任务（异步模式）。
+统一路径：单图（num_images=1）当作 batch_size=1 的批次处理。
 """
 
+import asyncio
 import uuid
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -16,8 +17,6 @@ from schemas.message import (
     GenerationType,
     ImagePart,
     Message,
-    MessageRole,
-    MessageStatus,
 )
 from services.handlers.base import BaseHandler, TaskMetadata
 
@@ -27,7 +26,7 @@ class ImageHandler(BaseHandler):
     图片生成处理器
 
     特点：
-    - 异步任务模式
+    - 异步任务模式，统一批次路径（1~4 张）
     - 支持文生图和图生图
     - 通过 WebSocket 推送完成状态
     """
@@ -49,12 +48,15 @@ class ImageHandler(BaseHandler):
         metadata: TaskMetadata,
     ) -> str:
         """
-        启动图片生成任务
+        启动图片生成任务（统一批次路径）
 
+        num_images=1 也走批次逻辑（batch_size=1），不做 if/else 分流。
+
+        流程：
         1. 提取 prompt 和参考图
-        2. 计算并预扣积分
-        3. 调用图片生成 API
-        4. 保存任务到数据库（含 transaction_id）
+        2. 计算总积分并校验余额
+        3. 循环创建 N 个任务（锁积分 → API 调用 → 保存 task）
+        4. 返回 client_task_id
         """
         # 1. 提取参数
         prompt = self._extract_text_content(content)
@@ -62,65 +64,123 @@ class ImageHandler(BaseHandler):
         model_id = params.get("model") or "google/nano-banana"
         aspect_ratio = params.get("aspect_ratio") or "1:1"
         output_format = params.get("output_format") or "png"
-        resolution = params.get("resolution") or None  # 确保空字符串也转为 None
+        resolution = params.get("resolution") or None
+        num_images = max(1, min(4, int(params.get("num_images", 1))))
 
-        # 2. 计算积分（使用统一入口）
+        # 2. 计算总积分并校验余额
         from config.kie_models import calculate_image_cost
 
         cost_result = calculate_image_cost(
             model_name=model_id,
-            image_count=1,
+            image_count=num_images,
             resolution=resolution,
         )
-        credits_to_lock = cost_result["user_credits"]
+        total_credits = cost_result["user_credits"]
+        per_image_credits = total_credits // num_images
 
-        # 3. 检查并预扣积分
-        self._check_balance(user_id, credits_to_lock)
+        self._check_balance(user_id, total_credits)
 
-        # 生成临时 task_id 用于积分锁定
-        temp_task_id = str(uuid.uuid4())
-        transaction_id = self._lock_credits(
-            task_id=temp_task_id,
-            user_id=user_id,
-            amount=credits_to_lock,
-            reason=f"Image: {model_id}",
-        )
-
-        # 🔍 日志：追踪 client_task_id
         logger.info(
-            f"[image_handler.start] Before API call | "
-            f"client_task_id={metadata.client_task_id} | "
-            f"message_id={message_id} | model={model_id}"
+            f"Image batch start | client_task_id={metadata.client_task_id} | "
+            f"message_id={message_id} | model={model_id} | "
+            f"num_images={num_images} | total_credits={total_credits}"
         )
 
-        # 4. 调用图片生成 API
+        # 3. 统一批次逻辑
+        batch_id = str(uuid.uuid4())
+        tasks_created: List[str] = []
+
         from services.adapters.factory import create_image_adapter
 
         adapter = create_image_adapter(model_id)
 
-        # 只有支持 resolution 的模型才传递该参数
+        # 构建生成参数（所有图片共用）
         generate_kwargs = {
             "prompt": prompt,
             "image_urls": image_urls if image_urls else None,
             "size": aspect_ratio,
             "output_format": output_format,
             "callback_url": self._build_callback_url(adapter.provider.value),
-            "wait_for_result": False,  # 异步模式
+            "wait_for_result": False,
         }
         if resolution and adapter.supports_resolution:
             generate_kwargs["resolution"] = resolution
 
         try:
-            result = await adapter.generate(**generate_kwargs)
-            external_task_id = result.task_id  # KIE 返回的外部任务 ID
-        except Exception as e:
-            # API 调用失败，退回积分
-            self._refund_credits(transaction_id)
-            raise e
+            for i in range(num_images):
+                if i > 0:
+                    await asyncio.sleep(0.3)  # 300ms 间隔，尊重 KIE 频率限制
+
+                ext_task_id = await self._create_single_task(
+                    adapter=adapter,
+                    index=i,
+                    batch_id=batch_id,
+                    generate_kwargs=generate_kwargs,
+                    message_id=message_id,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    model_id=model_id,
+                    per_image_credits=per_image_credits,
+                    params=params,
+                    prompt=prompt,
+                    metadata=metadata,
+                )
+                if ext_task_id:
+                    tasks_created.append(ext_task_id)
         finally:
             await adapter.close()
 
-        # 5. 保存任务到数据库（使用 external_task_id 作为主 ID）
+        if not tasks_created:
+            raise Exception("所有图片生成请求均失败")
+
+        logger.info(
+            f"Image batch created | batch_id={batch_id} | "
+            f"created={len(tasks_created)}/{num_images} | "
+            f"client_task_id={metadata.client_task_id}"
+        )
+
+        return metadata.client_task_id or tasks_created[0]
+
+    async def _create_single_task(
+        self,
+        adapter: Any,
+        index: int,
+        batch_id: str,
+        generate_kwargs: Dict[str, Any],
+        message_id: str,
+        conversation_id: str,
+        user_id: str,
+        model_id: str,
+        per_image_credits: int,
+        params: Dict[str, Any],
+        prompt: str,
+        metadata: TaskMetadata,
+    ) -> Optional[str]:
+        """
+        创建单个图片生成任务（锁积分 → API → 保存 task）
+
+        Returns:
+            external_task_id 或 None（失败时）
+        """
+        temp_task_id = str(uuid.uuid4())
+        transaction_id = self._lock_credits(
+            task_id=temp_task_id,
+            user_id=user_id,
+            amount=per_image_credits,
+            reason=f"Image[{index}]: {model_id}",
+        )
+
+        try:
+            result = await adapter.generate(**generate_kwargs)
+            external_task_id = result.task_id
+        except Exception as e:
+            self._refund_credits(transaction_id)
+            logger.warning(
+                f"Image task[{index}] API failed, skipping | "
+                f"batch_id={batch_id} | error={e}"
+            )
+            return None
+
         self._save_task(
             task_id=external_task_id,
             message_id=message_id,
@@ -130,18 +190,13 @@ class ImageHandler(BaseHandler):
             prompt=prompt,
             params=params,
             metadata=metadata,
-            credits_locked=credits_to_lock,
+            credits_locked=per_image_credits,
             transaction_id=transaction_id,
+            image_index=index,
+            batch_id=batch_id,
         )
 
-        logger.info(
-            f"Image task started | external_task_id={external_task_id} | "
-            f"client_task_id={metadata.client_task_id} | message_id={message_id} | "
-            f"model={model_id} | credits_locked={credits_to_lock}"
-        )
-
-        # 返回 client_task_id（与前端订阅匹配）
-        return metadata.client_task_id or external_task_id
+        return external_task_id
 
     # ========================================
     # 基类抽象方法实现
@@ -171,7 +226,6 @@ class ImageHandler(BaseHandler):
         transaction_id = task.get("credit_transaction_id")
         if transaction_id:
             self._confirm_deduct(transaction_id)
-        # 使用预扣的积分作为实际消耗
         return task.get("credits_locked", credits_consumed)
 
     async def _handle_credits_on_error(self, task: Dict[str, Any]) -> None:
@@ -190,10 +244,7 @@ class ImageHandler(BaseHandler):
         result: List[ContentPart],
         credits_consumed: int = 0,
     ) -> Message:
-        """完成回调（调用基类通用流程）
-
-        注意：task_id 是 external_task_id（KIE 返回的），需要查询 client_task_id 用于 WebSocket 推送
-        """
+        """完成回调（调用基类通用流程）"""
         return await self._handle_complete_common(task_id, result, credits_consumed)
 
     async def on_error(
@@ -202,10 +253,7 @@ class ImageHandler(BaseHandler):
         error_code: str,
         error_message: str,
     ) -> Message:
-        """错误回调（调用基类通用流程）
-
-        注意：task_id 是 external_task_id（KIE 返回的），需要查询 client_task_id 用于 WebSocket 推送
-        """
+        """错误回调（调用基类通用流程）"""
         return await self._handle_error_common(task_id, error_code, error_message)
 
     def _save_task(
@@ -220,16 +268,16 @@ class ImageHandler(BaseHandler):
         metadata: TaskMetadata,
         credits_locked: int = 0,
         transaction_id: Optional[str] = None,
+        image_index: Optional[int] = None,
+        batch_id: Optional[str] = None,
     ) -> None:
         """保存任务到数据库"""
-        # 1. 序列化业务参数
         request_params = {
             "prompt": prompt,
             "model": model_id,
             **self._serialize_params(params),
         }
 
-        # 2. 构建标准 task_data（使用基类方法）
         task_data = self._build_task_data(
             task_id=task_id,
             message_id=message_id,
@@ -242,27 +290,14 @@ class ImageHandler(BaseHandler):
             metadata=metadata,
             credits_locked=credits_locked,
             transaction_id=transaction_id,
+            image_index=image_index,
+            batch_id=batch_id,
         )
 
-        # 🔍 日志：保存任务前
-        logger.info(
-            f"[image_handler._save_task] Saving task | "
-            f"external_task_id={task_id} | "
-            f"client_task_id={metadata.client_task_id} | "
-            f"message_id={message_id}"
-        )
-
-        # 3. 保存到数据库
         self.db.table("tasks").insert(task_data).execute()
 
-        # 🔍 日志：保存任务后（验证）
-        verify_task = self.db.table("tasks").select("external_task_id, client_task_id").eq("external_task_id", task_id).execute()
-        if verify_task.data:
-            saved_data = verify_task.data[0]
-            logger.info(
-                f"[image_handler._save_task] Task saved verified | "
-                f"external_task_id={saved_data.get('external_task_id')} | "
-                f"client_task_id={saved_data.get('client_task_id')}"
-            )
-        else:
-            logger.error(f"[image_handler._save_task] Failed to verify saved task | task_id={task_id}")
+        logger.info(
+            f"Task saved | external_task_id={task_id} | "
+            f"client_task_id={metadata.client_task_id} | "
+            f"image_index={image_index} | batch_id={batch_id}"
+        )

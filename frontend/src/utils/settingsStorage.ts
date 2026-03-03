@@ -8,6 +8,7 @@ import {
   type AspectRatio,
   type ImageResolution,
   type ImageOutputFormat,
+  type ImageCount,
   type VideoFrames,
   type VideoAspectRatio,
 } from '../constants/models';
@@ -21,6 +22,7 @@ export interface UserAdvancedSettings {
     aspectRatio: AspectRatio;
     resolution: ImageResolution;
     outputFormat: ImageOutputFormat;
+    numImages: ImageCount;
   };
   video: {
     frames: VideoFrames;
@@ -42,6 +44,7 @@ const DEFAULT_SETTINGS: UserAdvancedSettings = {
     aspectRatio: '1:1',
     resolution: '1K',
     outputFormat: 'png',
+    numImages: 1,
   },
   video: {
     frames: '10',
