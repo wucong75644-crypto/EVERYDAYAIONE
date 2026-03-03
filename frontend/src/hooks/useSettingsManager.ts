@@ -9,6 +9,7 @@ import {
   type AspectRatio,
   type ImageResolution,
   type ImageOutputFormat,
+  type ImageCount,
   type VideoFrames,
   type VideoAspectRatio,
 } from '../constants/models';
@@ -27,6 +28,7 @@ export interface ImageSettings {
   aspectRatio: AspectRatio;
   resolution: ImageResolution;
   outputFormat: ImageOutputFormat;
+  numImages: ImageCount;
 }
 
 export interface VideoSettings {
@@ -75,6 +77,7 @@ export function useSettingsManager(): UseSettingsManagerReturn {
     aspectRatio: savedSettings.image.aspectRatio,
     resolution: savedSettings.image.resolution,
     outputFormat: savedSettings.image.outputFormat,
+    numImages: savedSettings.image.numImages,
   });
 
   // 视频生成参数
@@ -125,6 +128,7 @@ export function useSettingsManager(): UseSettingsManagerReturn {
         aspectRatio: imageSettings.aspectRatio,
         resolution: imageSettings.resolution,
         outputFormat: imageSettings.outputFormat,
+        numImages: imageSettings.numImages,
       },
       video: {
         frames: videoSettings.frames,
@@ -149,6 +153,7 @@ export function useSettingsManager(): UseSettingsManagerReturn {
       aspectRatio: defaults.image.aspectRatio,
       resolution: defaults.image.resolution,
       outputFormat: defaults.image.outputFormat,
+      numImages: defaults.image.numImages,
     });
     setVideoSettings({
       frames: defaults.video.frames,

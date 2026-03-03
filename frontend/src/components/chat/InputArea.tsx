@@ -15,6 +15,7 @@ import { useAudioRecording } from '../../hooks/useAudioRecording';
 import { useSettingsManager } from '../../hooks/useSettingsManager';
 import { type UnifiedModel } from '../../constants/models';
 import { useMessageStore, type Message } from '../../stores/useMessageStore';
+import { useAuthStore } from '../../stores/useAuthStore';
 import ConflictAlert from './ConflictAlert';
 import InputControls from './InputControls';
 import UploadErrorBar from './UploadErrorBar';
@@ -45,6 +46,9 @@ export default function InputArea({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+
+  // 用户积分（用于禁用积分不足的数量选项）
+  const userCredits = useAuthStore((s) => s.user?.credits);
 
   // 设置管理 Hook（图像/视频/聊天参数）
   const {
@@ -126,6 +130,7 @@ export default function InputArea({
     aspectRatio: imageSettings.aspectRatio,
     resolution: imageSettings.resolution,
     outputFormat: imageSettings.outputFormat,
+    numImages: imageSettings.numImages,
     videoFrames: videoSettings.frames,
     videoAspectRatio: videoSettings.aspectRatio,
     removeWatermark: videoSettings.removeWatermark,
@@ -323,6 +328,9 @@ export default function InputArea({
           onResolutionChange={(v) => setImageSetting('resolution', v)}
           outputFormat={imageSettings.outputFormat}
           onOutputFormatChange={(v) => setImageSetting('outputFormat', v)}
+          numImages={imageSettings.numImages}
+          onNumImagesChange={(v) => setImageSetting('numImages', v)}
+          userCredits={userCredits}
           videoFrames={videoSettings.frames}
           onVideoFramesChange={(v) => setVideoSetting('frames', v)}
           videoAspectRatio={videoSettings.aspectRatio}

@@ -324,6 +324,9 @@ export type ImageOutputFormat = 'png' | 'jpeg' | 'jpg';
 /** 视频时长 */
 export type VideoFrames = '10' | '15' | '25';
 
+/** 生成数量（图片） */
+export type ImageCount = 1 | 2 | 3 | 4;
+
 /** 视频宽高比 */
 export type VideoAspectRatio = 'portrait' | 'landscape';
 
@@ -357,6 +360,14 @@ export const RESOLUTIONS: { value: ImageResolution; label: string; credits: numb
 export const OUTPUT_FORMATS: { value: ImageOutputFormat; label: string }[] = [
   { value: 'png', label: 'PNG' },
   { value: 'jpeg', label: 'JPEG' },
+];
+
+/** 生成数量选项 */
+export const IMAGE_COUNTS: { value: ImageCount; label: string }[] = [
+  { value: 1, label: '1张' },
+  { value: 2, label: '2张' },
+  { value: 3, label: '3张' },
+  { value: 4, label: '4张' },
 ];
 
 /** 视频时长选项 */

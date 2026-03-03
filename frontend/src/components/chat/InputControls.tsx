@@ -12,6 +12,7 @@ import {
   type AspectRatio,
   type ImageResolution,
   type ImageOutputFormat,
+  type ImageCount,
   type VideoFrames,
   type VideoAspectRatio,
 } from '../../constants/models';
@@ -55,6 +56,9 @@ interface InputControlsProps {
   onResolutionChange: (res: ImageResolution) => void;
   outputFormat: ImageOutputFormat;
   onOutputFormatChange: (format: ImageOutputFormat) => void;
+  numImages: ImageCount;
+  onNumImagesChange: (count: ImageCount) => void;
+  userCredits?: number;
   videoFrames: VideoFrames;
   onVideoFramesChange: (frames: VideoFrames) => void;
   videoAspectRatio: VideoAspectRatio;
@@ -96,6 +100,7 @@ export default function InputControls(props: InputControlsProps) {
     selectedModel, availableModels, modelSelectorLocked, modelSelectorLockTooltip, onSelectModel,
     estimatedCredits, creditsHighlight,
     aspectRatio, onAspectRatioChange, resolution, onResolutionChange, outputFormat, onOutputFormatChange,
+    numImages, onNumImagesChange, userCredits,
     videoFrames, onVideoFramesChange, videoAspectRatio, onVideoAspectRatioChange,
     removeWatermark, onRemoveWatermarkChange, thinkingEffort, onThinkingEffortChange,
     deepThinkMode, onDeepThinkModeChange,
@@ -278,6 +283,9 @@ export default function InputControls(props: InputControlsProps) {
                   onResolutionChange={onResolutionChange}
                   outputFormat={outputFormat}
                   onOutputFormatChange={onOutputFormatChange}
+                  numImages={numImages}
+                  onNumImagesChange={onNumImagesChange}
+                  userCredits={userCredits}
                   videoFrames={videoFrames}
                   onVideoFramesChange={onVideoFramesChange}
                   videoAspectRatio={videoAspectRatio}

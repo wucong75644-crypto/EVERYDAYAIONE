@@ -273,13 +273,13 @@ export default memo(function MessageItem({
       className={`flex mb-4 ${isUser ? 'justify-end' : 'justify-start'} ${entryAnimationClass} ${deleteAnimationClass}`}
     >
       <div
-        className={`relative flex flex-col ${isUser ? 'items-end' : 'items-start'} ${hasMedia ? 'max-w-[90%]' : 'max-w-[80%]'}`}
+        className={`relative flex flex-col ${isUser ? 'items-end' : 'items-start'} ${hasMedia ? 'w-full max-w-[90%]' : 'max-w-[80%]'}`}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
         {/* 用户消息：图片在上，文字在下（因为上传时已获取 CDN URL，图片先准备好） */}
         {isUser && (hasImage || hasVideo) && (
-          <div className="mb-3">
+          <div className="mb-3 w-full">
             <MessageMedia
               imageUrls={imageUrls}
               videoUrls={videoUrls}
@@ -353,6 +353,8 @@ export default memo(function MessageItem({
             generatingType={mediaPlaceholderInfo?.type}
             imageAspectRatio={actualImageAspectRatio}
             videoAspectRatio={actualVideoAspectRatio}
+            numImages={Number(genParams.num_images) || 1}
+            content={message.content}
           />
         )}
 

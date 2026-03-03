@@ -13,7 +13,9 @@ import toast from 'react-hot-toast';
 import { type AspectRatio, type VideoAspectRatio } from '../../constants/models';
 import { getImagePlaceholderSize, getVideoPlaceholderSize } from '../../utils/settingsStorage';
 import MediaPlaceholder from './MediaPlaceholder';
+import AiImageGrid from './AiImageGrid';
 import styles from './shared.module.css';
+import type { ContentPart } from '../../stores/useMessageStore';
 
 /** 图片加载重试配置 */
 const IMAGE_RETRY_CONFIG = {
@@ -42,6 +44,10 @@ interface MessageMediaProps {
   imageAspectRatio?: AspectRatio;
   /** 视频宽高比（用于占位符动态尺寸） */
   videoAspectRatio?: VideoAspectRatio;
+  /** 预期图片数量（多图模式） */
+  numImages?: number;
+  /** 消息的完整 content 数组（多图模式需要） */
+  content?: ContentPart[];
 }
 
 /** 单张图片组件（AI 生成，带占位符和失败重试） */
@@ -272,13 +278,11 @@ function AiGeneratedImage({
 function UserImage({
   imageUrl,
   index,
-  maxWidth,
   onImageClick,
   onMediaLoaded,
 }: {
   imageUrl: string;
   index: number;
-  maxWidth: number;
   onImageClick: (index: number) => void;
   onMediaLoaded?: () => void;
 }) {
@@ -295,18 +299,12 @@ function UserImage({
 
   return (
     <div
-      className={`group cursor-pointer relative inline-block ${styles['dynamic-max-width']}`}
+      className="group cursor-pointer relative"
       role="button"
       tabIndex={0}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       aria-label={`查看图片 ${index + 1}`}
-      // 动态最大宽度需要 CSS 变量
-      style={
-        {
-          '--max-width': `${maxWidth}px`,
-        } as React.CSSProperties
-      }
     >
       <img
         src={imageUrl}
@@ -318,7 +316,7 @@ function UserImage({
   );
 }
 
-/** 用户图片容器（支持多图横排） */
+/** 用户图片容器（auto-fill 网格，与 AI 图片统一布局逻辑） */
 function UserImageGallery({
   imageUrls,
   maxWidth,
@@ -333,13 +331,15 @@ function UserImageGallery({
   if (imageUrls.length === 0) return null;
 
   return (
-    <div className="mt-4 flex flex-wrap gap-2">
+    <div
+      className="mt-4 grid gap-2 w-full justify-end"
+      style={{ gridTemplateColumns: `repeat(auto-fit, ${maxWidth}px)` }}
+    >
       {imageUrls.map((url, index) => (
         <UserImage
           key={`${url}-${index}`}
           imageUrl={url}
           index={index}
-          maxWidth={maxWidth}
           onImageClick={onImageClick}
           onMediaLoaded={index === 0 ? onMediaLoaded : undefined}
         />
@@ -359,6 +359,8 @@ export default function MessageMedia({
   generatingType = 'image',
   imageAspectRatio = '1:1',
   videoAspectRatio = 'landscape',
+  numImages = 1,
+  content = [],
 }: MessageMediaProps) {
   // 获取第一个视频 URL（目前只支持单视频）
   const videoUrl = videoUrls[0] || null;
@@ -412,8 +414,19 @@ export default function MessageMedia({
             onImageClick={handleImageClick}
             onMediaLoaded={onMediaLoaded}
           />
+        ) : numImages > 1 ? (
+          // AI 多图：网格布局
+          <AiImageGrid
+            content={content}
+            numImages={numImages}
+            messageId={messageId}
+            placeholderSize={imagePlaceholderSize}
+            onImageClick={(idx) => handleImageClick(idx)}
+            onMediaLoaded={onMediaLoaded}
+            isGenerating={isGenerating && generatingType === 'image'}
+          />
         ) : (
-          // AI 生成图片：占位符 + 淡入效果
+          // AI 单图：占位符 + 淡入效果
           <AiGeneratedImage
             imageUrl={imageUrls[0] || null}
             messageId={messageId}

@@ -39,7 +39,7 @@ export function getImageUrls(message: Message): string[] {
   if (!Array.isArray(message.content)) return [];
 
   return message.content
-    .filter((p): p is ImagePart => p.type === 'image')
+    .filter((p): p is ImagePart => p.type === 'image' && !!p.url)
     .map((p) => p.url);
 }
 

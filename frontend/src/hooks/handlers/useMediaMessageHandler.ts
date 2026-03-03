@@ -19,6 +19,7 @@ interface UseMediaMessageHandlerParams {
   aspectRatio?: string;
   outputFormat?: string;
   resolution?: string;
+  numImages?: number;
 
   // 视频参数
   videoFrames?: string;
@@ -38,6 +39,7 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
     aspectRatio,
     resolution,
     outputFormat,
+    numImages,
     videoFrames,
     videoAspectRatio,
     removeWatermark,
@@ -76,6 +78,7 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
         mediaParams.aspect_ratio = aspectRatio ?? '1:1';
         mediaParams.resolution = resolution;
         mediaParams.output_format = outputFormat;
+        mediaParams.num_images = numImages ?? 1;
       } else if (type === 'video') {
         mediaParams.n_frames = videoFrames;
         mediaParams.aspect_ratio = videoAspectRatio;

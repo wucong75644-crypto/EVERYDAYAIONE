@@ -9,11 +9,13 @@ import {
   ASPECT_RATIOS,
   RESOLUTIONS,
   OUTPUT_FORMATS,
+  IMAGE_COUNTS,
   VIDEO_DURATIONS,
   VIDEO_ASPECT_RATIOS,
   type AspectRatio,
   type ImageResolution,
   type ImageOutputFormat,
+  type ImageCount,
   type VideoFrames,
   type VideoAspectRatio,
 } from '../../constants/models';
@@ -28,6 +30,9 @@ interface AdvancedSettingsMenuProps {
   onResolutionChange: (res: ImageResolution) => void;
   outputFormat: ImageOutputFormat;
   onOutputFormatChange: (format: ImageOutputFormat) => void;
+  numImages: ImageCount;
+  onNumImagesChange: (count: ImageCount) => void;
+  userCredits?: number;
   // 视频设置
   videoFrames: VideoFrames;
   onVideoFramesChange: (frames: VideoFrames) => void;
@@ -52,6 +57,14 @@ interface AdvancedSettingsMenuProps {
   onClose: () => void;
 }
 
+// 辅助函数：获取单张图片积分
+const getPerImageCredits = (model: UnifiedModel, resolution: ImageResolution): number => {
+  if (model.supportsResolution && typeof model.credits === 'object') {
+    return model.credits[resolution] || 18;
+  }
+  return typeof model.credits === 'number' ? model.credits : 18;
+};
+
 // 辅助函数：根据时长计算视频价格
 const getVideoPrice = (frames: VideoFrames): number => {
   const duration = VIDEO_DURATIONS.find((d) => d.value === frames);
@@ -67,6 +80,9 @@ export default function AdvancedSettingsMenu({
   onResolutionChange,
   outputFormat,
   onOutputFormatChange,
+  numImages,
+  onNumImagesChange,
+  userCredits,
   videoFrames,
   onVideoFramesChange,
   videoAspectRatio,
@@ -153,20 +169,47 @@ export default function AdvancedSettingsMenu({
               ))}
             </div>
           </div>
+          <div className="mb-3">
+            <label className="block text-xs font-medium text-gray-700 mb-2">生成数量</label>
+            <div className="flex gap-2">
+              {IMAGE_COUNTS.map((item) => {
+                const perImage = getPerImageCredits(selectedModel, resolution);
+                const totalCredits = perImage * item.value;
+                const disabled = userCredits !== undefined && userCredits < totalCredits;
+                return (
+                  <button
+                    key={item.value}
+                    onClick={() => !disabled && onNumImagesChange(item.value)}
+                    disabled={disabled}
+                    className={`flex flex-col items-center px-3 py-1.5 text-xs rounded-md transition-colors ${
+                      disabled
+                        ? 'bg-gray-50 text-gray-400 cursor-not-allowed'
+                        : numImages === item.value
+                          ? 'bg-purple-600 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                    }`}
+                  >
+                    <span className="font-medium">{item.label}</span>
+                    <span className="text-[10px] opacity-75">{totalCredits}积分</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           <div className="bg-blue-50 border border-blue-200 rounded-md px-3 py-2">
             <div className="flex items-center justify-between text-xs">
               <span className="text-blue-700 font-medium">预计消耗:</span>
               <span className="text-blue-900 font-semibold">
-                {selectedModel.supportsResolution
-                  ? `${RESOLUTIONS.find((r) => r.value === resolution)?.credits || 18} 积分`
-                  : `${selectedModel.credits} 积分`}
+                {getPerImageCredits(selectedModel, resolution) * numImages} 积分
+                {numImages > 1 && (
+                  <span className="font-normal text-blue-600 ml-1">
+                    ({getPerImageCredits(selectedModel, resolution)} x {numImages})
+                  </span>
+                )}
               </span>
             </div>
             <div className="text-[10px] text-blue-600 mt-1">
-              ≈ ¥
-              {selectedModel.supportsResolution
-                ? ((RESOLUTIONS.find((r) => r.value === resolution)?.credits || 18) * 0.036).toFixed(3)
-                : (Number(selectedModel.credits) * 0.036).toFixed(3)}
+              ≈ ¥{(getPerImageCredits(selectedModel, resolution) * numImages * 0.036).toFixed(3)}
             </div>
           </div>
         </>

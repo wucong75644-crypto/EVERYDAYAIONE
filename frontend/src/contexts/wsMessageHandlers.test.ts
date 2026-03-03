@@ -119,10 +119,10 @@ describe('wsMessageHandlers', () => {
   // ========================================
 
   describe('createWSMessageHandlers', () => {
-    it('should return all 8 handlers', () => {
+    it('should return all 9 handlers', () => {
       const expectedTypes = [
         'message_start', 'message_chunk', 'message_progress',
-        'message_done', 'message_error',
+        'message_done', 'message_error', 'image_partial_update',
         'credits_changed', 'subscribed', 'error',
       ];
 
@@ -547,7 +547,130 @@ describe('wsMessageHandlers', () => {
   });
 
   // ========================================
-  // 10. error handler
+  // 10. image_partial_update
+  // ========================================
+
+  describe('image_partial_update', () => {
+    it('should update message content at specified image_index', () => {
+      const existingMessage = {
+        id: 'msg_1',
+        content: [
+          { type: 'image', url: null },
+          { type: 'image', url: null },
+        ],
+      };
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue(existingMessage);
+
+      const contentPart = { type: 'image', url: 'https://oss/img0.png', width: 1024, height: 1024 };
+
+      handlers.image_partial_update({
+        message_id: 'msg_1',
+        payload: {
+          image_index: 0,
+          content_part: contentPart,
+          completed_count: 1,
+          total_count: 2,
+        },
+      });
+
+      expect(store.updateMessage).toHaveBeenCalledWith('msg_1', {
+        content: expect.arrayContaining([contentPart]),
+      });
+      // 第二个 slot 仍为原始值
+      const updateCall = (store.updateMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(updateCall[1].content[1]).toEqual({ type: 'image', url: null });
+    });
+
+    it('should handle error in partial update (failed image)', () => {
+      const existingMessage = {
+        id: 'msg_1',
+        content: [
+          { type: 'image', url: 'https://oss/img0.png' },
+          { type: 'image', url: null },
+        ],
+      };
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue(existingMessage);
+
+      handlers.image_partial_update({
+        message_id: 'msg_1',
+        payload: {
+          image_index: 1,
+          content_part: null,
+          completed_count: 2,
+          total_count: 2,
+          error: '模型超时',
+        },
+      });
+
+      const updateCall = (store.updateMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+      const content = updateCall[1].content;
+      expect(content[0].url).toBe('https://oss/img0.png');
+      expect(content[1].failed).toBe(true);
+      expect(content[1].error).toBe('模型超时');
+    });
+
+    it('should expand content array if image_index exceeds length', () => {
+      const existingMessage = {
+        id: 'msg_1',
+        content: [],
+      };
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue(existingMessage);
+
+      const contentPart = { type: 'image', url: 'https://oss/img2.png' };
+
+      handlers.image_partial_update({
+        message_id: 'msg_1',
+        payload: {
+          image_index: 2,
+          content_part: contentPart,
+          completed_count: 1,
+          total_count: 4,
+        },
+      });
+
+      const updateCall = (store.updateMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+      const content = updateCall[1].content;
+      expect(content.length).toBeGreaterThanOrEqual(3);
+      expect(content[2]).toEqual(contentPart);
+    });
+
+    it('should ignore if message not found', () => {
+      (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue(null);
+
+      handlers.image_partial_update({
+        message_id: 'nonexistent',
+        payload: {
+          image_index: 0,
+          content_part: { type: 'image', url: 'https://oss/img.png' },
+          completed_count: 1,
+          total_count: 1,
+        },
+      });
+
+      expect(store.updateMessage).not.toHaveBeenCalled();
+    });
+
+    it('should ignore if message_id is missing', () => {
+      handlers.image_partial_update({
+        payload: { image_index: 0 },
+      });
+
+      expect(store.getMessage).not.toHaveBeenCalled();
+      expect(store.updateMessage).not.toHaveBeenCalled();
+    });
+
+    it('should ignore if image_index is undefined', () => {
+      handlers.image_partial_update({
+        message_id: 'msg_1',
+        payload: {},
+      });
+
+      expect(store.getMessage).not.toHaveBeenCalled();
+    });
+  });
+
+  // ========================================
+  // 11. error handler
   // ========================================
 
   describe('error', () => {

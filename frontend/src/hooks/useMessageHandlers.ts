@@ -11,6 +11,7 @@ import {
   type AspectRatio,
   type ImageResolution,
   type ImageOutputFormat,
+  type ImageCount,
   type VideoFrames,
   type VideoAspectRatio,
 } from '../constants/models';
@@ -22,6 +23,7 @@ interface UseMessageHandlersParams {
   aspectRatio: AspectRatio;
   resolution: ImageResolution;
   outputFormat: ImageOutputFormat;
+  numImages: ImageCount;
   videoFrames: VideoFrames;
   videoAspectRatio: VideoAspectRatio;
   removeWatermark: boolean;
@@ -42,6 +44,7 @@ export function useMessageHandlers(params: UseMessageHandlersParams) {
     aspectRatio,
     resolution,
     outputFormat,
+    numImages,
     videoFrames,
     videoAspectRatio,
     removeWatermark,
@@ -76,6 +79,7 @@ export function useMessageHandlers(params: UseMessageHandlersParams) {
     aspectRatio,
     resolution,
     outputFormat,
+    numImages,
     onMessagePending,
     onMessageSent,
     onMediaTaskSubmitted,
