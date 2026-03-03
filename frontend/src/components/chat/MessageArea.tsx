@@ -229,9 +229,11 @@ export default function MessageArea({
   const handleDelete = useCallback(async (messageId: string) => {
     try {
       const targetMsg = mergedMessages.find(m => m.id === messageId);
+      const textContent = targetMsg ? getTextContent(targetMsg) : '';
       const isTemporaryMessage = messageId.startsWith('temp-') ||
                                  messageId.startsWith('error-') ||
-                                 targetMsg?.status === 'streaming';
+                                 targetMsg?.status === 'streaming' ||
+                                 (targetMsg?.status === 'pending' && !textContent);
 
       if (!isTemporaryMessage) {
         await deleteMessage(messageId);
