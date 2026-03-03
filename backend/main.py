@@ -132,6 +132,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning(f"Redis 连接失败，限流功能降级 | error={e}")
 
+    # 启动 WebSocket Redis Pub/Sub 监听（跨 Worker 消息投递）
+    await ws_manager.start_redis_listener()
+
     # 启动后台任务工作器
     from core.database import get_supabase_client
     import asyncio
@@ -147,6 +150,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from schemas.websocket import build_server_restarting
     await ws_manager.broadcast_all(build_server_restarting())
     await asyncio.sleep(1)  # 给客户端一点时间接收消息
+
+    # 停止 WebSocket Redis Pub/Sub 监听
+    await ws_manager.stop_redis_listener()
 
     # 停止后台工作器
     await worker.stop()
@@ -179,15 +185,8 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS 配置
-    allowed_origins = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:5173",  # Vite 默认端口
-    ] if settings.app_debug else [
-        "https://everydayai.com",
-        "https://www.everydayai.com",
-    ]
+    # CORS 配置（从环境变量读取）
+    allowed_origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
 
     app.add_middleware(
         CORSMiddleware,

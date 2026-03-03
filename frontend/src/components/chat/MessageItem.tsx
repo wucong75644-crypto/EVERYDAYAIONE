@@ -56,8 +56,6 @@ export default memo(function MessageItem({
   const {
     entryAnimationClass,
     deleteAnimationClass,
-    isDeleting,
-    // triggerDeleteAnimation - 未使用，保留 hook 返回以备将来使用
   } = useMessageAnimation({ message, skipEntryAnimation });
 
   // 提取内容（兼容新旧格式）
@@ -248,15 +246,21 @@ export default memo(function MessageItem({
     };
   }, []);
 
+  // 删除操作 loading 状态
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
   // 处理删除确认
   const handleDeleteConfirm = async () => {
     if (!onDelete) return;
 
+    setDeleteLoading(true);
     try {
       await onDelete(message.id);
-      closeDeleteModal();
     } catch (error) {
       console.error('删除消息失败:', error);
+    } finally {
+      setDeleteLoading(false);
+      closeDeleteModal();
     }
   };
 
@@ -374,7 +378,7 @@ export default memo(function MessageItem({
         closing={deleteModalClosing}
         onClose={closeDeleteModal}
         onConfirm={handleDeleteConfirm}
-        loading={isDeleting}
+        loading={deleteLoading}
       />
 
       {/* 图片预览弹窗 */}

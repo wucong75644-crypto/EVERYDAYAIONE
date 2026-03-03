@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
 
+    # CORS 允许的域名（逗号分隔，生产环境必须配置）
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173"
+
     # 限流配置
     rate_limit_global_tasks: int = 15
     rate_limit_conversation_tasks: int = 5
