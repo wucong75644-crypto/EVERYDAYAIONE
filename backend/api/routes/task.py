@@ -153,6 +153,72 @@ async def get_chat_task_content(
         )
 
 
+@router.post("/cancel-by-message/{message_id}", summary="通过消息ID取消关联任务")
+@limiter.limit("60/minute")
+async def cancel_task_by_message_id(
+    request: Request,
+    current_user: CurrentUser,
+    db: Database,
+    message_id: str = Path(
+        ...,
+        regex=r"^[a-zA-Z0-9_-]{1,100}$",
+        description="消息ID（占位符消息或助手消息）"
+    ),
+) -> Dict[str, Any]:
+    """
+    通过消息 ID 取消关联的后台任务
+
+    用于用户删除 streaming/pending 占位符消息时，清理 tasks 表中的关联记录，
+    防止刷新页面后占位符重新出现。
+
+    匹配规则：查找 placeholder_message_id 或 assistant_message_id 等于 message_id
+    且状态为 pending/running 的任务，将其标记为 failed。
+    """
+    try:
+        # 查找关联任务（通过 placeholder_message_id 或 assistant_message_id）
+        # 只取消属于当前用户且仍在进行中的任务
+        for field in ("placeholder_message_id", "assistant_message_id"):
+            result = db.table("tasks").select("id, external_task_id").eq(
+                field, message_id
+            ).eq("user_id", current_user["id"]).in_(
+                "status", ["pending", "running"]
+            ).execute()
+
+            if result.data:
+                for task in result.data:
+                    db.table("tasks").update({
+                        "status": "failed",
+                        "error_message": "用户删除了占位符消息",
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                    }).eq("id", task["id"]).execute()
+
+                    logger.info(
+                        f"Task cancelled by message deletion | task_id={task['id']} | "
+                        f"message_id={message_id} | user_id={current_user['id']}"
+                    )
+
+                return {"success": True, "cancelled_count": len(result.data)}
+
+        return {"success": True, "cancelled_count": 0}
+    except (
+        ValidationError,
+        NotFoundError,
+        PermissionDeniedError,
+        AppException,
+    ):
+        raise
+    except Exception as e:
+        logger.error(
+            f"Cancel task by message_id failed | message_id={message_id} | "
+            f"user_id={current_user['id']} | error={str(e)}"
+        )
+        raise AppException(
+            code="CANCEL_TASK_BY_MESSAGE_ERROR",
+            message="取消任务失败",
+            status_code=500,
+        )
+
+
 @router.post("/{external_task_id}/fail", summary="手动标记任务失败")
 @limiter.limit("60/minute")
 async def mark_task_failed(
