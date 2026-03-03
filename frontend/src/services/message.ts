@@ -97,3 +97,15 @@ export async function deleteMessage(messageId: string): Promise<DeleteMessageRes
     method: 'DELETE',
   });
 }
+
+/**
+ * 通过消息 ID 取消关联的后台任务
+ * 用于删除 streaming/pending 占位符时清理后端 tasks 表中的记录
+ * @param messageId 占位符消息 ID（对应 tasks 表的 placeholder_message_id 或 assistant_message_id）
+ */
+export async function cancelTaskByMessageId(messageId: string): Promise<void> {
+  await request({
+    url: `/tasks/cancel-by-message/${messageId}`,
+    method: 'POST',
+  });
+}

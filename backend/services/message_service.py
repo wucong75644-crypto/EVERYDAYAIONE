@@ -4,7 +4,7 @@
 处理消息的创建、查询等业务逻辑。
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 from loguru import logger
@@ -234,6 +234,22 @@ class MessageService:
 
             # 执行删除
             self.db.table("messages").delete().eq("id", message_id).execute()
+
+            # 兜底：清理 tasks 表中关联的进行中任务（防止刷新后占位符重现）
+            try:
+                for field in ("placeholder_message_id", "assistant_message_id"):
+                    self.db.table("tasks").update({
+                        "status": "failed",
+                        "error_message": "关联消息已被删除",
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                    }).eq(field, message_id).in_(
+                        "status", ["pending", "running"]
+                    ).execute()
+            except Exception as task_err:
+                logger.warning(
+                    f"Failed to clean up tasks for deleted message | "
+                    f"message_id={message_id} | error={str(task_err)}"
+                )
 
             logger.info(
                 f"Message deleted | message_id={message_id} | "

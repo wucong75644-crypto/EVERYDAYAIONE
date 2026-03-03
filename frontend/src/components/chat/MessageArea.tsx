@@ -13,7 +13,7 @@
 
 import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import { StickToBottom, useStickToBottomContext } from 'use-stick-to-bottom';
-import { deleteMessage } from '../../services/message';
+import { deleteMessage, cancelTaskByMessageId } from '../../services/message';
 import { useMessageStore, type Message, getTextContent, getImageUrls } from '../../stores/useMessageStore';
 import MessageItem from './MessageItem';
 import EmptyState from './EmptyState';
@@ -237,6 +237,13 @@ export default function MessageArea({
 
       if (!isTemporaryMessage) {
         await deleteMessage(messageId);
+      }
+
+      // 如果是 streaming/pending 占位符，取消后端关联的任务（防止刷新后重新出现）
+      if (targetMsg?.status === 'streaming' || (targetMsg?.status === 'pending' && !textContent)) {
+        cancelTaskByMessageId(messageId).catch(() => {
+          // 静默失败：任务可能已完成或不存在，不影响删除操作
+        });
       }
 
       if (conversationId) {
