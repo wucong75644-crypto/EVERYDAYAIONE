@@ -77,11 +77,13 @@ export default function ImagePreview({ images, onRemove }: ImagePreviewProps) {
             {image.preview ? (
               <img
                 src={image.preview}
-                alt={`预览 ${image.file.name}`}
+                alt={image.isQuoted ? '引用图片' : `预览 ${image.file.name}`}
                 onClick={() => handleImageClick(image)}
                 className={`h-14 w-14 rounded-lg object-cover transition-transform ${
                   image.isUploading ? 'opacity-50' : ''
                 } ${image.error ? 'border-2 border-red-500' : ''} ${
+                  image.isQuoted ? 'ring-2 ring-blue-400' : ''
+                } ${
                   !image.isUploading && !image.error ? 'cursor-pointer hover:scale-105 hover:shadow-md' : ''
                 }`}
               />
@@ -123,9 +125,20 @@ export default function ImagePreview({ images, onRemove }: ImagePreviewProps) {
             </svg>
           </button>
 
-          {/* 图片序号 */}
-          <div className="absolute bottom-0 left-0 bg-gray-800 bg-opacity-75 text-white text-[10px] px-1 rounded-br-lg rounded-tl">
-            {images.indexOf(image) + 1}
+          {/* 引用图：左上角引号图标 */}
+          {image.isQuoted && (
+            <div className="absolute top-0.5 left-0.5 text-blue-400 drop-shadow">
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                <path d="M4.583 17.321C3.553 16.227 3 15 3 13.011c0-3.5 2.457-6.637 6.03-8.188l.893 1.378c-3.335 1.804-3.987 4.145-4.247 5.621.537-.278 1.24-.375 1.929-.311C9.591 11.69 11 13.168 11 15c0 1.933-1.567 3.5-3.5 3.5-1.172 0-2.204-.544-2.917-1.179zm10 0C13.553 16.227 13 15 13 13.011c0-3.5 2.457-6.637 6.03-8.188l.893 1.378c-3.335 1.804-3.987 4.145-4.247 5.621.537-.278 1.24-.375 1.929-.311C19.591 11.69 21 13.168 21 15c0 1.933-1.567 3.5-3.5 3.5-1.172 0-2.204-.544-2.917-1.179z" />
+              </svg>
+            </div>
+          )}
+
+          {/* 角标：引用图显示蓝色"引用"，上传图显示数字序号 */}
+          <div className={`absolute bottom-0 left-0 text-white text-[10px] px-1 rounded-br-lg rounded-tl ${
+            image.isQuoted ? 'bg-blue-500 bg-opacity-85' : 'bg-gray-800 bg-opacity-75'
+          }`}>
+            {image.isQuoted ? '引用' : images.filter((img) => !img.isQuoted).indexOf(image) + 1}
           </div>
         </div>
       ))}

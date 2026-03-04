@@ -1,10 +1,4 @@
-/**
- * 消息媒体组件
- *
- * 负责渲染消息中的图片和视频内容
- * - 用户图片：直接显示，自适应尺寸，支持多图横排
- * - AI 图片：占位符 + 淡入效果，固定尺寸
- */
+/** 消息媒体组件 - 渲染消息中的图片和视频内容 */
 
 import { memo, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useInView } from 'react-intersection-observer';
@@ -14,10 +8,10 @@ import { type AspectRatio, type VideoAspectRatio } from '../../constants/models'
 import { getImagePlaceholderSize, getVideoPlaceholderSize } from '../../utils/settingsStorage';
 import MediaPlaceholder, { FailedMediaPlaceholder } from './MediaPlaceholder';
 import AiImageGrid from './AiImageGrid';
+import ImageContextMenu from './ImageContextMenu';
 import styles from './shared.module.css';
 import type { ContentPart } from '../../stores/useMessageStore';
 
-/** 图片加载重试配置 */
 const IMAGE_RETRY_CONFIG = {
   maxRetries: 3,
   baseDelay: 1000, // 基础延迟 1s，指数退避
@@ -76,10 +70,10 @@ function AiGeneratedImage({
   const [isDownloading, setIsDownloading] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const [loadError, setLoadError] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const placeholderNotified = useRef(false);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // 懒加载
   const { ref: lazyRef, inView } = useInView({
     triggerOnce: true,
     threshold: 0.1,
@@ -87,10 +81,8 @@ function AiGeneratedImage({
   });
   const shouldRender = !isGenerating || inView;
 
-  // 计算宽高比（用于图片加载前的占位）
   const aspectRatio = placeholderSize.width / placeholderSize.height;
 
-  // 生成带重试参数的图片 URL（绕过缓存）
   const imageUrlWithRetry = useMemo(() => {
     if (!imageUrl) return null;
     if (retryCount === 0) return imageUrl;
@@ -98,7 +90,6 @@ function AiGeneratedImage({
     return `${imageUrl}${separator}_retry=${retryCount}`;
   }, [imageUrl, retryCount]);
 
-  // imageUrl 变化时重置所有状态
   useEffect(() => {
     if (imageUrl) {
       setImageLoaded(false);
@@ -112,7 +103,6 @@ function AiGeneratedImage({
     }
   }, [imageUrl]);
 
-  // 组件卸载时清理定时器
   useEffect(() => {
     return () => {
       if (retryTimerRef.current) {
@@ -121,7 +111,6 @@ function AiGeneratedImage({
     };
   }, []);
 
-  // 处理图片加载失败
   const handleImageError = useCallback(() => {
     if (retryCount < IMAGE_RETRY_CONFIG.maxRetries) {
       // 指数退避延迟重试
@@ -148,7 +137,6 @@ function AiGeneratedImage({
     }
   }, [showPlaceholder, onMediaLoaded]);
 
-  // 下载图片
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isDownloading || !imageUrl) return;
@@ -174,7 +162,6 @@ function AiGeneratedImage({
     }
   };
 
-  // 键盘事件处理（支持回车和空格键）
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
@@ -209,9 +196,9 @@ function AiGeneratedImage({
           tabIndex={0}
           onClick={onImageClick}
           onKeyDown={handleKeyDown}
+          onContextMenu={(e) => { if (imageLoaded && imageUrl) { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY }); } }}
           aria-label="查看大图"
         >
-          {/* 图片：加载中 opacity-0，加载完成淡入 */}
           <img
             src={imageUrlWithRetry || imageUrl}
             alt="生成的图片"
@@ -232,7 +219,6 @@ function AiGeneratedImage({
               </svg>
             </div>
           )}
-          {/* 下载按钮（图片加载后才可交互） */}
           <div className={`absolute bottom-0 left-0 right-0 flex justify-center py-2 bg-gradient-to-t from-black/50 to-transparent rounded-b-xl transition-opacity ${imageLoaded ? 'opacity-0 group-hover:opacity-100' : 'opacity-0 pointer-events-none'}`}>
             <button
               type="button"
@@ -251,6 +237,16 @@ function AiGeneratedImage({
               <span>{isDownloading ? '下载中' : '下载'}</span>
             </button>
           </div>
+
+          {contextMenu && imageUrl && (
+            <ImageContextMenu
+              x={contextMenu.x}
+              y={contextMenu.y}
+              imageUrl={imageUrl}
+              messageId={messageId}
+              onClose={() => setContextMenu(null)}
+            />
+          )}
         </div>
       )}
 
@@ -371,10 +367,8 @@ export default memo(function MessageMedia({
   failedMediaType,
   onRegenerate,
 }: MessageMediaProps) {
-  // 获取第一个视频 URL（目前只支持单视频）
   const videoUrl = videoUrls[0] || null;
 
-  // AI 生成图片的占位符尺寸
   const imagePlaceholderSize = useMemo(
     () => getImagePlaceholderSize(imageAspectRatio),
     [imageAspectRatio]
@@ -384,14 +378,12 @@ export default memo(function MessageMedia({
     [videoAspectRatio]
   );
 
-  // 懒加载（用于视频）
   const { ref: videoLazyRef, inView: videoInView } = useInView({
     triggerOnce: true,
     threshold: 0.1,
     rootMargin: '100px',
   });
 
-  // 视频占位符渲染时触发滚动回调
   const videoPlaceholderNotified = useRef(false);
   const showVideoPlaceholder = isGenerating && generatingType === 'video' && !videoUrl;
   useEffect(() => {
@@ -403,10 +395,8 @@ export default memo(function MessageMedia({
     }
   }, [showVideoPlaceholder, onMediaLoaded]);
 
-  // 没有媒体内容且不在生成中且没有失败占位符时不渲染
   if (imageUrls.length === 0 && !videoUrl && !isGenerating && !failedMediaType) return null;
 
-  // 处理图片点击（useCallback 稳定引用，避免子组件不必要重渲染）
   const handleImageClick = useCallback((index?: number) => {
     onImageClick(index ?? 0);
   }, [onImageClick]);

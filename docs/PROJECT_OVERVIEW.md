@@ -176,7 +176,8 @@ EVERYDAYAIONE/
         │       ├── AdvancedSettingsMenu.tsx  # 高级设置菜单（图像/视频/推理参数）
         │       ├── SettingsModal.tsx         # 个人设置弹框
         │       ├── UploadMenu.tsx            # 上传菜单
-        │       ├── ImagePreview.tsx          # 图片预览（输入区小图）
+        │       ├── ImageContextMenu.tsx       # 图片右键上下文菜单（引用/复制/下载）
+        │       ├── ImagePreview.tsx          # 图片预览（输入区小图，含引用图片标识）
         │       ├── ImagePreviewModal.tsx     # 图片预览弹窗（全屏缩放下载）
         │       ├── LoadingPlaceholder.tsx    # 统一加载占位符（文字 + 跳动圆点）
         │       ├── MediaPlaceholder.tsx      # 统一媒体占位符（灰色框 + 图标）

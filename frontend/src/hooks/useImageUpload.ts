@@ -10,10 +10,11 @@ import { uploadImageFile } from '../services/upload';
 export interface UploadedImage {
   id: string; // 唯一标识
   file: File;
-  preview: string; // ObjectURL 预览（本地 blob:// URL，性能优于 base64）
+  preview: string; // ObjectURL 预览（本地 blob:// URL，性能优于 base64）；引用图直接用 CDN URL
   url: string | null; // 上传后的公网URL
   isUploading: boolean;
   error: string | null;
+  isQuoted?: boolean; // 是否为引用图片（来自 AI 生成图片的引用，无需上传）
 }
 
 export function useImageUpload() {
@@ -206,6 +207,30 @@ export function useImageUpload() {
   };
 
   /**
+   * 添加引用图片（已有 CDN URL，无需上传）
+   * - 如果已有引用图，替换（每次只能引用一张）
+   * - 引用图的 preview 和 url 均使用 CDN URL
+   */
+  const addQuotedImage = (cdnUrl: string) => {
+    setImages((prev) => {
+      // 移除已有的引用图（保证只有一张引用图）
+      const withoutQuoted = prev.filter((img) => !img.isQuoted);
+      const quotedImage: UploadedImage = {
+        id: `quoted-${Date.now()}`,
+        file: new File([], 'quoted-image'),
+        preview: cdnUrl,
+        url: cdnUrl,
+        isUploading: false,
+        error: null,
+        isQuoted: true,
+      };
+      // 引用图放在最前面
+      return [quotedImage, ...withoutQuoted];
+    });
+    setUploadError(null);
+  };
+
+  /**
    * 清除上传错误
    */
   const clearUploadError = () => {
@@ -219,6 +244,7 @@ export function useImageUpload() {
     .map((img) => img.url as string);
   const previewUrls = images.map((img) => img.preview);
   const hasImages = images.length > 0;
+  const hasQuotedImage = images.some((img) => img.isQuoted);
 
   return {
     images, // 所有图片记录
@@ -227,11 +253,13 @@ export function useImageUpload() {
     isUploading, // 是否有图片正在上传
     uploadError, // 上传错误信息
     hasImages, // 是否有图片
+    hasQuotedImage, // 是否有引用图片
     handleImageSelect, // 文件选择处理
     handleImageDrop, // 拖拽上传处理
     handleImagePaste, // 粘贴上传处理
     handleRemoveImage, // 移除单张图片
     handleRemoveAllImages, // 移除所有图片
+    addQuotedImage, // 添加引用图片
     clearUploadError, // 清除错误
   };
 }

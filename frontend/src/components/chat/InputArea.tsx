@@ -69,11 +69,13 @@ export default function InputArea({
     isUploading,
     uploadError: imageUploadError,
     hasImages,
+    hasQuotedImage,
     handleImageSelect,
     handleImageDrop,
     handleImagePaste,
     handleRemoveImage: removeImageById,
     handleRemoveAllImages,
+    addQuotedImage,
     clearUploadError,
   } = useImageUpload();
 
@@ -109,10 +111,21 @@ export default function InputArea({
     getModelSelectorLockState,
   } = useModelSelection({
     hasImage: hasImages,
+    hasQuotedImage,
     conversationId,
     conversationModelId,
     onAutoSaveModel: handleAutoSaveModel,
   });
+
+  // 监听图片引用事件（从 AI 生成图片右键菜单触发）
+  useEffect(() => {
+    const handleQuoteImage = (e: Event) => {
+      const { url } = (e as CustomEvent<{ url: string; messageId: string }>).detail;
+      addQuotedImage(url);
+    };
+    window.addEventListener('chat:quote-image', handleQuoteImage);
+    return () => window.removeEventListener('chat:quote-image', handleQuoteImage);
+  }, [addQuotedImage]);
 
   // 对话切换时重置提交状态
   useEffect(() => {
@@ -366,6 +379,7 @@ export default function InputArea({
           onStopRecording={stopRecording}
           onClearRecording={clearRecording}
           requiresImageUpload={modelConflict?.type === 'requires_image'}
+          hasQuotedImage={hasQuotedImage}
         />
       </div>
     </div>

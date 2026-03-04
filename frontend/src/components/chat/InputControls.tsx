@@ -91,6 +91,8 @@ interface InputControlsProps {
   requiresImageUpload?: boolean;
   /** 发送错误信息（用于显示错误状态） */
   sendError?: string | null;
+  /** 是否有引用图片（用于切换 placeholder） */
+  hasQuotedImage?: boolean;
 }
 
 export default function InputControls(props: InputControlsProps) {
@@ -109,7 +111,7 @@ export default function InputControls(props: InputControlsProps) {
     onSaveSettings, onResetSettings,
     images, maxImages, maxFileSize, onRemoveImage, onImageSelect, onImageDrop, onImagePaste,
     recordingState, audioBlob, audioDuration, onStartRecording, onStopRecording, onClearRecording,
-    requiresImageUpload = false, sendError,
+    requiresImageUpload = false, sendError, hasQuotedImage = false,
   } = props;
 
   const [showUploadMenu, setShowUploadMenu] = useState(false);
@@ -245,7 +247,7 @@ export default function InputControls(props: InputControlsProps) {
           value={prompt}
           onChange={(e) => onPromptChange(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={requiresImageUpload ? '该模型需要先上传图片才能生成哦～' : '发送消息...'}
+          placeholder={hasQuotedImage ? '描述你想要的修改...' : requiresImageUpload ? '该模型需要先上传图片才能生成哦～' : '发送消息...'}
           className="w-full resize-none border-none outline-none text-gray-900 placeholder-gray-400 text-base leading-6 pt-2 pb-1 min-h-[44px] max-h-[120px] overflow-y-auto"
           rows={1}
           disabled={isSubmitting}
