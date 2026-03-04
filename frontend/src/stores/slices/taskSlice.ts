@@ -14,6 +14,7 @@ import type { Message, TaskState, ChatTask, CompletedNotification } from '../../
 // Store 依赖类型（用于跨 slice 访问）
 export interface TaskSliceDeps {
   messages: Record<string, Message[]>;
+  currentConversationId: string | null;
 }
 
 export interface TaskSlice {
@@ -292,6 +293,9 @@ export const createTaskSlice: StateCreator<TaskSlice & TaskSliceDeps, [], [], Ta
   },
 
   markConversationCompleted: (conversationId) => {
+    // 用户正在查看该对话时无需提醒，跳过
+    if (get().currentConversationId === conversationId) return;
+
     set((state) => {
       const recentlyCompleted = new Set(state.recentlyCompleted);
       recentlyCompleted.add(conversationId);
