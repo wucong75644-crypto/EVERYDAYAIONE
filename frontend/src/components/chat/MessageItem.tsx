@@ -220,6 +220,23 @@ export default memo(function MessageItem({
     return globalIndex >= 0 ? globalIndex : currentImageIndex;
   }, [imageUrls, allImageUrls, currentImageIndex]);
 
+  // 图片点击回调（合并用户/AI 两处相同逻辑，稳定引用）
+  const handleImageClick = useCallback((index?: number) => {
+    const globalIndex = index !== undefined ? getGlobalImageIndex(index) : currentImageIndex;
+    setPreviewIndex(globalIndex);
+    setShowImagePreview(true);
+  }, [getGlobalImageIndex, currentImageIndex]);
+
+  // 单图重新生成回调（绑定 message.id，稳定引用）
+  const handleRegenerateSingle = useCallback((idx: number) => {
+    onRegenerateSingle?.(message.id, idx);
+  }, [onRegenerateSingle, message.id]);
+
+  // 整体重新生成回调（绑定 message.id，稳定引用）
+  const handleRegenerate = useCallback(() => {
+    onRegenerate?.(message.id);
+  }, [onRegenerate, message.id]);
+
   // 鼠标进入消息区域 - 显示工具栏并清除隐藏定时器
   const handleMouseEnter = () => {
     if (hideTimeoutRef.current) {
@@ -306,11 +323,7 @@ export default memo(function MessageItem({
               videoUrls={videoUrls}
               messageId={message.id}
               isUser={isUser}
-              onImageClick={(index) => {
-                const globalIndex = index !== undefined ? getGlobalImageIndex(index) : currentImageIndex;
-                setPreviewIndex(globalIndex);
-                setShowImagePreview(true);
-              }}
+              onImageClick={handleImageClick}
               onMediaLoaded={onMediaLoaded}
               isGenerating={!!mediaPlaceholderInfo}
               generatingType={mediaPlaceholderInfo?.type}
@@ -364,11 +377,7 @@ export default memo(function MessageItem({
             videoUrls={videoUrls}
             messageId={message.id}
             isUser={isUser}
-            onImageClick={(index) => {
-              const globalIndex = index !== undefined ? getGlobalImageIndex(index) : currentImageIndex;
-              setPreviewIndex(globalIndex);
-              setShowImagePreview(true);
-            }}
+            onImageClick={handleImageClick}
             onMediaLoaded={onMediaLoaded}
             isGenerating={!!mediaPlaceholderInfo}
             generatingType={mediaPlaceholderInfo?.type}
@@ -376,9 +385,9 @@ export default memo(function MessageItem({
             videoAspectRatio={actualVideoAspectRatio}
             numImages={Number(genParams.num_images) || 1}
             content={message.content}
-            onRegenerateSingle={onRegenerateSingle ? (idx) => onRegenerateSingle(message.id, idx) : undefined}
+            onRegenerateSingle={onRegenerateSingle ? handleRegenerateSingle : undefined}
             failedMediaType={failedMediaType}
-            onRegenerate={onRegenerate ? () => onRegenerate(message.id) : undefined}
+            onRegenerate={onRegenerate ? handleRegenerate : undefined}
           />
         )}
 

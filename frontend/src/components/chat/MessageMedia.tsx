@@ -6,7 +6,7 @@
  * - AI 图片：占位符 + 淡入效果，固定尺寸
  */
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { memo, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -354,7 +354,7 @@ function UserImageGallery({
   );
 }
 
-export default function MessageMedia({
+export default memo(function MessageMedia({
   imageUrls = [],
   videoUrls = [],
   messageId,
@@ -406,10 +406,10 @@ export default function MessageMedia({
   // 没有媒体内容且不在生成中且没有失败占位符时不渲染
   if (imageUrls.length === 0 && !videoUrl && !isGenerating && !failedMediaType) return null;
 
-  // 处理图片点击
-  const handleImageClick = (index?: number) => {
+  // 处理图片点击（useCallback 稳定引用，避免子组件不必要重渲染）
+  const handleImageClick = useCallback((index?: number) => {
     onImageClick(index ?? 0);
-  };
+  }, [onImageClick]);
 
   return (
     <>
@@ -430,7 +430,7 @@ export default function MessageMedia({
             numImages={numImages}
             messageId={messageId}
             placeholderSize={imagePlaceholderSize}
-            onImageClick={(idx) => handleImageClick(idx)}
+            onImageClick={handleImageClick}
             onMediaLoaded={onMediaLoaded}
             isGenerating={isGenerating && generatingType === 'image'}
             onRegenerateSingle={onRegenerateSingle}
@@ -505,4 +505,4 @@ export default function MessageMedia({
       )}
     </>
   );
-}
+});
