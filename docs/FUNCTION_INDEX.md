@@ -459,8 +459,8 @@
 | `ContextMenu` | `frontend/src/components/chat/ContextMenu.tsx` | 右键菜单组件 |
 | `DeleteConfirmModal` | `frontend/src/components/chat/DeleteConfirmModal.tsx` | 对话删除确认弹框 |
 | `MessageArea` | `frontend/src/components/chat/MessageArea.tsx` | 消息区域，显示对话消息 |
-| `MessageItem` | `frontend/src/components/chat/MessageItem.tsx` | 单条消息（组合 MessageMedia 和 MessageActions） |
-| `MessageMedia` | `frontend/src/components/chat/MessageMedia.tsx` | 消息媒体渲染（图片、视频、懒加载、下载） |
+| `MessageItem` | `frontend/src/components/chat/MessageItem.tsx` | 单条消息（memo 包裹，useCallback 稳定回调：handleImageClick/handleRegenerateSingle/handleRegenerate） |
+| `MessageMedia` | `frontend/src/components/chat/MessageMedia.tsx` | 消息媒体渲染（memo 包裹，图片、视频、懒加载、下载） |
 | `MessageActions` | `frontend/src/components/chat/MessageActions.tsx` | 消息操作工具栏（复制、朗读、反馈、分享、删除） |
 | `MessageToolbar` | `frontend/src/components/chat/MessageToolbar.tsx` | 消息工具栏（旧版） |
 | `DeleteMessageModal` | `frontend/src/components/chat/DeleteMessageModal.tsx` | 删除消息确认弹框 |
@@ -475,7 +475,8 @@
 | `LoadingPlaceholder` | `frontend/src/components/chat/LoadingPlaceholder.tsx` | 统一加载占位符（文字 + 跳动小圆点） |
 | `MediaPlaceholder` | `frontend/src/components/chat/MediaPlaceholder.tsx` | 统一媒体占位符（灰色框 + 图标，支持图片/视频/音频等） |
 | `AiImageGrid` | `frontend/src/components/chat/AiImageGrid.tsx` | AI 多图网格组件（2/3/4 张自适应布局，含失败占位符和单图重新生成） |
-| `FailedPlaceholder` | `frontend/src/components/chat/AiImageGrid.tsx` | 失败/加载失败占位符子组件（灰色背景 + ImageOff 图标 + hover 重试按钮） |
+| `GridCell` | `frontend/src/components/chat/AiImageGrid.tsx` | 单个网格单元（memo + gridCellAreEqual 自定义比较，仅数据 props 变化时重渲染） |
+| `gridCellAreEqual` | `frontend/src/components/chat/AiImageGrid.tsx` | GridCell 自定义 memo 比较函数（比较 imageUrl/failed/index/messageId/isGenerating，忽略函数引用） |
 | `AudioPreview` | `frontend/src/components/chat/AudioPreview.tsx` | 音频预览 |
 | `AudioRecorder` | `frontend/src/components/chat/AudioRecorder.tsx` | 录音组件 |
 | `ConflictAlert` | `frontend/src/components/chat/ConflictAlert.tsx` | 模型冲突提示 |
@@ -654,7 +655,7 @@
 - **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息处理、消息服务、滚动管理、重新生成、轮询管理、**统一消息发送**（含 mediaSender）、媒体重新生成、**任务通知**、**图片URL工具**、**统一日志**、**任务协调器**、**消息合并**、性能监控、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理、测试工具、认证弹窗模块、通用组件模块、占位符管理模块、**Webhook 回调与任务完成服务**、**批次完成处理服务**
 - **测试覆盖率目标**：80%+（Vitest + Testing Library）
 - **性能监控**：13个预定义性能标记，支持关键路径监控
-- **最后更新**：2026-03-04（单图重新生成 regenerate_single：BatchCompletionService、AiImageGrid、handleRegenerateSingle）
+- **最后更新**：2026-03-04（多图渲染性能优化：GridCell memo + gridCellAreEqual、MessageMedia memo + useCallback、MessageItem useCallback 回调稳定化）
 
 ---
 

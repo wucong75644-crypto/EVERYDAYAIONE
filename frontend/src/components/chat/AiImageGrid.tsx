@@ -9,7 +9,7 @@
  * 每个 cell 独立渲染：成功图片 / 加载中占位符 / 失败占位符
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { memo, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { Image as ImageIcon, Loader2, RefreshCw } from 'lucide-react';
 import { FailedMediaPlaceholder } from './MediaPlaceholder';
@@ -45,8 +45,32 @@ interface AiImageGridProps {
 
 /** 网格布局：auto-fill 根据单图宽度自动计算每行列数，放不下自动换行 */
 
-/** 单个网格单元 */
-function GridCell({
+/** GridCell props */
+interface GridCellProps {
+  imageUrl: string | null;
+  failed?: boolean;
+  index: number;
+  messageId: string;
+  placeholderSize: { width: number; height: number };
+  onImageClick: (index: number) => void;
+  onMediaLoaded?: () => void;
+  isGenerating: boolean;
+  onRegenerateSingle?: (imageIndex: number) => void;
+}
+
+/** 自定义比较：仅比较数据 props，忽略函数 props（函数行为不变，仅引用变化） */
+function gridCellAreEqual(prev: GridCellProps, next: GridCellProps): boolean {
+  return (
+    prev.imageUrl === next.imageUrl &&
+    prev.failed === next.failed &&
+    prev.index === next.index &&
+    prev.messageId === next.messageId &&
+    prev.isGenerating === next.isGenerating
+  );
+}
+
+/** 单个网格单元（memo 包裹，仅数据变化时重渲染） */
+const GridCell = memo(function GridCell({
   imageUrl,
   failed,
   index,
@@ -56,17 +80,7 @@ function GridCell({
   onMediaLoaded,
   isGenerating,
   onRegenerateSingle,
-}: {
-  imageUrl: string | null;
-  failed?: boolean;
-  index: number;
-  messageId: string;
-  placeholderSize: { width: number; height: number };
-  onImageClick: (index: number) => void;
-  onMediaLoaded?: () => void;
-  isGenerating: boolean;
-  onRegenerateSingle?: () => void;
-}) {
+}: GridCellProps) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
@@ -147,7 +161,7 @@ function GridCell({
       <FailedMediaPlaceholder
         type="image"
         aspectRatio={aspectRatio}
-        onRetry={onRegenerateSingle}
+        onRetry={onRegenerateSingle ? () => onRegenerateSingle(index) : undefined}
         retryLabel="重新生成"
       />
     );
@@ -218,7 +232,7 @@ function GridCell({
           <button
             type="button"
             className="flex items-center px-2 py-0.5 text-white bg-black/40 hover:bg-black/60 rounded-full transition-colors"
-            onClick={(e) => { e.stopPropagation(); onRegenerateSingle(); }}
+            onClick={(e) => { e.stopPropagation(); onRegenerateSingle?.(index); }}
             aria-label="重新生成"
           >
             <RefreshCw className="w-3 h-3" />
@@ -242,7 +256,7 @@ function GridCell({
       </div>
     </div>
   );
-}
+}, gridCellAreEqual);
 
 export default function AiImageGrid({
   content,
@@ -289,7 +303,7 @@ export default function AiImageGrid({
             onImageClick={onImageClick}
             onMediaLoaded={index === 0 ? onMediaLoaded : undefined}
             isGenerating={isGenerating}
-            onRegenerateSingle={onRegenerateSingle ? () => onRegenerateSingle(index) : undefined}
+            onRegenerateSingle={onRegenerateSingle}
           />
         ))}
       </div>
