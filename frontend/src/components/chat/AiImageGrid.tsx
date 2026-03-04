@@ -13,6 +13,7 @@ import { memo, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { Image as ImageIcon, Loader2, RefreshCw } from 'lucide-react';
 import { FailedMediaPlaceholder } from './MediaPlaceholder';
+import ImageContextMenu from './ImageContextMenu';
 import toast from 'react-hot-toast';
 import styles from './shared.module.css';
 import type { ContentPart } from '../../stores/useMessageStore';
@@ -85,6 +86,7 @@ const GridCell = memo(function GridCell({
   const [isDownloading, setIsDownloading] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const [loadError, setLoadError] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { ref: lazyRef, inView } = useInView({
@@ -203,6 +205,7 @@ const GridCell = memo(function GridCell({
       tabIndex={0}
       onClick={() => onImageClick(index)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onImageClick(index); } }}
+      onContextMenu={(e) => { if (imageLoaded && imageUrl) { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY }); } }}
       aria-label={`查看图片 ${index + 1}`}
     >
       {shouldRender && (
@@ -254,6 +257,17 @@ const GridCell = memo(function GridCell({
           )}
         </button>
       </div>
+
+      {/* 右键上下文菜单 */}
+      {contextMenu && imageUrl && (
+        <ImageContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          imageUrl={imageUrl}
+          messageId={messageId}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   );
 }, gridCellAreEqual);

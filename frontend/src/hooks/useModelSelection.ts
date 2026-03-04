@@ -16,6 +16,8 @@ import { detectConflict } from '../utils/modelConflict';
 interface UseModelSelectionParams {
   /** 是否有上传图片 */
   hasImage: boolean;
+  /** 是否有引用图片（触发跨模型类型的自动切换） */
+  hasQuotedImage?: boolean;
   /** 当前对话ID（用于检测对话切换） */
   conversationId?: string | null;
   /** 对话保存的模型ID（用于恢复模型选择） */
@@ -30,6 +32,7 @@ interface UseModelSelectionParams {
 
 export function useModelSelection({
   hasImage,
+  hasQuotedImage = false,
   conversationId,
   conversationModelId,
   onAutoSaveModel,
@@ -134,13 +137,24 @@ export function useModelSelection({
       }
     }
 
+    // 有引用图 + 当前模型不支持图片编辑 → 切换到编辑模型（无论当前模型类型）
+    if (hasQuotedImage && !selectedModel.capabilities.imageEditing) {
+      if (!modelBeforeUpload.current) {
+        modelBeforeUpload.current = selectedModel;
+      }
+      const editModel = ALL_MODELS.find((m) => m.id === 'google/nano-banana-edit');
+      if (editModel) {
+        queueMicrotask(() => switchModel(editModel, true));
+      }
+    }
+
     // 无图片 + 之前保存过模型 → 恢复原模型
     if (!hasImage && modelBeforeUpload.current) {
       const modelToRestore = modelBeforeUpload.current;
       modelBeforeUpload.current = null;
       queueMicrotask(() => switchModel(modelToRestore, true));
     }
-  }, [hasImage, selectedModel, userExplicitChoice, switchModel]);
+  }, [hasImage, hasQuotedImage, selectedModel, userExplicitChoice, switchModel]);
 
   /**
    * 获取可用模型列表

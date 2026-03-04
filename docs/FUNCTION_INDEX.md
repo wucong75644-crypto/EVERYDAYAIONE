@@ -412,8 +412,8 @@
 | `useMessageLoader` | `frontend/src/hooks/useMessageLoader.ts` | 消息加载（含缓存） | options | { messages, loading, loadMessages, ... } |
 | `useMessageHandlers` | `frontend/src/hooks/useMessageHandlers.ts` | 消息发送处理 | options | { handleSendMessage, isProcessing, ... } |
 | `useRegenerateHandlers` | `frontend/src/hooks/useRegenerateHandlers.ts` | 消息重新生成处理 | options | { handleRegenerate, isRegenerating, ... } |
-| `useModelSelection` | `frontend/src/hooks/useModelSelection.ts` | 模型选择逻辑 | options | { selectedModel, setSelectedModel, ... } |
-| `useImageUpload` | `frontend/src/hooks/useImageUpload.ts` | 图片上传逻辑 | - | { uploadImage, uploading, ... } |
+| `useModelSelection` | `frontend/src/hooks/useModelSelection.ts` | 模型选择逻辑（含 hasQuotedImage 自动切换编辑模型） | options | { selectedModel, setSelectedModel, ... } |
+| `useImageUpload` | `frontend/src/hooks/useImageUpload.ts` | 图片上传逻辑（含引用图片 addQuotedImage/hasQuotedImage） | - | { uploadImage, uploading, addQuotedImage, hasQuotedImage, ... } |
 | `useAudioRecording` | `frontend/src/hooks/useAudioRecording.ts` | 录音逻辑 | - | { startRecording, stopRecording, ... } |
 | `useDragDropUpload` | `frontend/src/hooks/useDragDropUpload.ts` | 拖拽上传逻辑 | - | { isDragging, handleDrop, ... } |
 | `useVirtuaScroll` | `frontend/src/hooks/useVirtuaScroll.ts` | Virtua 滚动管理（统一入口） | options | { vlistRef, scrollToBottom, ... } |
@@ -460,7 +460,7 @@
 | `DeleteConfirmModal` | `frontend/src/components/chat/DeleteConfirmModal.tsx` | 对话删除确认弹框 |
 | `MessageArea` | `frontend/src/components/chat/MessageArea.tsx` | 消息区域，显示对话消息 |
 | `MessageItem` | `frontend/src/components/chat/MessageItem.tsx` | 单条消息（memo 包裹，useCallback 稳定回调：handleImageClick/handleRegenerateSingle/handleRegenerate） |
-| `MessageMedia` | `frontend/src/components/chat/MessageMedia.tsx` | 消息媒体渲染（memo 包裹，图片、视频、懒加载、下载） |
+| `MessageMedia` | `frontend/src/components/chat/MessageMedia.tsx` | 消息媒体渲染（memo 包裹，图片、视频、懒加载、下载、右键菜单） |
 | `MessageActions` | `frontend/src/components/chat/MessageActions.tsx` | 消息操作工具栏（复制、朗读、反馈、分享、删除） |
 | `MessageToolbar` | `frontend/src/components/chat/MessageToolbar.tsx` | 消息工具栏（旧版） |
 | `DeleteMessageModal` | `frontend/src/components/chat/DeleteMessageModal.tsx` | 删除消息确认弹框 |
@@ -470,11 +470,12 @@
 | `AdvancedSettingsMenu` | `frontend/src/components/chat/AdvancedSettingsMenu.tsx` | 高级设置菜单 |
 | `SettingsModal` | `frontend/src/components/chat/SettingsModal.tsx` | 个人设置弹框 |
 | `UploadMenu` | `frontend/src/components/chat/UploadMenu.tsx` | 上传菜单 |
-| `ImagePreview` | `frontend/src/components/chat/ImagePreview.tsx` | 图片预览（输入区小图预览） |
+| `ImagePreview` | `frontend/src/components/chat/ImagePreview.tsx` | 图片预览（输入区小图预览，引用图片蓝色边框+引号图标+引用角标） |
 | `ImagePreviewModal` | `frontend/src/components/chat/ImagePreviewModal.tsx` | 图片预览弹窗（全屏缩放下载） |
 | `LoadingPlaceholder` | `frontend/src/components/chat/LoadingPlaceholder.tsx` | 统一加载占位符（文字 + 跳动小圆点） |
 | `MediaPlaceholder` | `frontend/src/components/chat/MediaPlaceholder.tsx` | 统一媒体占位符（灰色框 + 图标，支持图片/视频/音频等） |
-| `AiImageGrid` | `frontend/src/components/chat/AiImageGrid.tsx` | AI 多图网格组件（2/3/4 张自适应布局，含失败占位符和单图重新生成） |
+| `ImageContextMenu` | `frontend/src/components/chat/ImageContextMenu.tsx` | 图片右键上下文菜单（引用/复制/下载，dispatch chat:quote-image 事件） |
+| `AiImageGrid` | `frontend/src/components/chat/AiImageGrid.tsx` | AI 多图网格组件（2/3/4 张自适应布局，含失败占位符、单图重新生成、右键菜单） |
 | `GridCell` | `frontend/src/components/chat/AiImageGrid.tsx` | 单个网格单元（memo + gridCellAreEqual 自定义比较，仅数据 props 变化时重渲染） |
 | `gridCellAreEqual` | `frontend/src/components/chat/AiImageGrid.tsx` | GridCell 自定义 memo 比较函数（比较 imageUrl/failed/index/messageId/isGenerating，忽略函数引用） |
 | `AudioPreview` | `frontend/src/components/chat/AudioPreview.tsx` | 音频预览 |
@@ -650,12 +651,12 @@
 
 ## 统计信息
 - **总函数数**：约 240+ 个（规划中 + 已实现）
-- **已实现组件**：34 个（29 聊天组件 + 4 认证组件 + 1 通用组件）
+- **已实现组件**：35 个（30 聊天组件 + 4 认证组件 + 1 通用组件）
 - **已实现 Hooks**：50+ 个自定义 Hooks（含消息处理、滚动管理、重新生成等）
 - **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息处理、消息服务、滚动管理、重新生成、轮询管理、**统一消息发送**（含 mediaSender）、媒体重新生成、**任务通知**、**图片URL工具**、**统一日志**、**任务协调器**、**消息合并**、性能监控、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理、测试工具、认证弹窗模块、通用组件模块、占位符管理模块、**Webhook 回调与任务完成服务**、**批次完成处理服务**
 - **测试覆盖率目标**：80%+（Vitest + Testing Library）
 - **性能监控**：13个预定义性能标记，支持关键路径监控
-- **最后更新**：2026-03-04（多图渲染性能优化：GridCell memo + gridCellAreEqual、MessageMedia memo + useCallback、MessageItem useCallback 回调稳定化）
+- **最后更新**：2026-03-05（图片引用编辑功能：ImageContextMenu 右键菜单、引用图片视觉标识、自动切换编辑模型）
 
 ---
 
