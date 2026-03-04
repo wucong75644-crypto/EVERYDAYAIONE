@@ -11,10 +11,11 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { Image as ImageIcon, Loader2, AlertTriangle } from 'lucide-react';
+import { Image as ImageIcon, ImageOff, Loader2, RefreshCw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import styles from './shared.module.css';
 import type { ContentPart } from '../../stores/useMessageStore';
+import type { ImagePart } from '../../types/message';
 
 /** 图片加载重试配置 */
 const IMAGE_RETRY_CONFIG = {
@@ -37,31 +38,65 @@ interface AiImageGridProps {
   onMediaLoaded?: () => void;
   /** 是否正在生成中 */
   isGenerating: boolean;
+  /** 单图重新生成回调 */
+  onRegenerateSingle?: (imageIndex: number) => void;
 }
 
 /** 网格布局：auto-fill 根据单图宽度自动计算每行列数，放不下自动换行 */
+
+/** 失败/加载失败占位符（统一样式） */
+function FailedPlaceholder({
+  aspectRatio,
+  onRetry,
+  retryLabel,
+}: {
+  aspectRatio: number;
+  onRetry?: () => void;
+  retryLabel: string;
+}) {
+  return (
+    <div
+      className="group rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-gray-300 dark:text-gray-500 relative"
+      style={{ aspectRatio }}
+    >
+      <ImageOff className="w-8 h-8" />
+      {onRetry && (
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            type="button"
+            className="p-2 bg-black/40 hover:bg-black/60 rounded-full text-white transition-colors"
+            onClick={onRetry}
+            aria-label={retryLabel}
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** 单个网格单元 */
 function GridCell({
   imageUrl,
   failed,
-  error,
   index,
   messageId,
   placeholderSize,
   onImageClick,
   onMediaLoaded,
   isGenerating,
+  onRegenerateSingle,
 }: {
   imageUrl: string | null;
   failed?: boolean;
-  error?: string;
   index: number;
   messageId: string;
   placeholderSize: { width: number; height: number };
   onImageClick: (index: number) => void;
   onMediaLoaded?: () => void;
   isGenerating: boolean;
+  onRegenerateSingle?: () => void;
 }) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -140,13 +175,11 @@ function GridCell({
   // 失败的图片
   if (failed) {
     return (
-      <div
-        className="rounded-xl bg-gray-100 dark:bg-gray-700 flex flex-col items-center justify-center text-gray-400"
-        style={{ aspectRatio }}
-      >
-        <AlertTriangle className="w-6 h-6 mb-1" />
-        <span className="text-xs">{error || '生成失败'}</span>
-      </div>
+      <FailedPlaceholder
+        aspectRatio={aspectRatio}
+        onRetry={onRegenerateSingle}
+        retryLabel="重新生成"
+      />
     );
   }
 
@@ -165,20 +198,11 @@ function GridCell({
   // 加载失败
   if (loadError) {
     return (
-      <div
-        className="rounded-xl bg-gray-100 flex flex-col items-center justify-center text-gray-500"
-        style={{ aspectRatio }}
-      >
-        <AlertTriangle className="w-6 h-6 mb-1" />
-        <span className="text-xs">加载失败</span>
-        <button
-          type="button"
-          className="mt-1 px-2 py-0.5 text-[10px] text-blue-600 hover:bg-blue-50 rounded-full"
-          onClick={() => { setLoadError(false); setRetryCount(0); }}
-        >
-          重试
-        </button>
-      </div>
+      <FailedPlaceholder
+        aspectRatio={aspectRatio}
+        onRetry={() => { setLoadError(false); setRetryCount(0); }}
+        retryLabel="重试加载"
+      />
     );
   }
 
@@ -217,11 +241,21 @@ function GridCell({
         </div>
       )}
 
-      {/* 下载按钮 */}
-      <div className={`absolute bottom-0 left-0 right-0 flex justify-center py-1.5 bg-gradient-to-t from-black/50 to-transparent transition-opacity ${imageLoaded ? 'opacity-0 group-hover:opacity-100' : 'opacity-0 pointer-events-none'}`}>
+      {/* 悬浮操作按钮 */}
+      <div className={`absolute bottom-0 left-0 right-0 flex justify-center gap-1.5 py-1.5 bg-gradient-to-t from-black/50 to-transparent transition-opacity ${imageLoaded ? 'opacity-0 group-hover:opacity-100' : 'opacity-0 pointer-events-none'}`}>
+        {onRegenerateSingle && (
+          <button
+            type="button"
+            className="flex items-center px-2 py-0.5 text-white bg-black/40 hover:bg-black/60 rounded-full transition-colors"
+            onClick={(e) => { e.stopPropagation(); onRegenerateSingle(); }}
+            aria-label="重新生成"
+          >
+            <RefreshCw className="w-3 h-3" />
+          </button>
+        )}
         <button
           type="button"
-          className="flex items-center gap-1 px-2 py-0.5 text-[10px] text-white bg-black/40 hover:bg-black/60 rounded-full transition-colors disabled:opacity-60"
+          className="flex items-center px-2 py-0.5 text-white bg-black/40 hover:bg-black/60 rounded-full transition-colors disabled:opacity-60"
           disabled={isDownloading}
           onClick={handleDownload}
           aria-label={isDownloading ? '正在下载' : '下载'}
@@ -247,20 +281,19 @@ export default function AiImageGrid({
   onImageClick,
   onMediaLoaded,
   isGenerating,
+  onRegenerateSingle,
 }: AiImageGridProps) {
   // 构建 cells 数组：确保有 numImages 个 cell
   const cells = useMemo(() => {
-    const result: Array<{ url: string | null; failed?: boolean; error?: string }> = [];
+    const result: Array<{ url: string | null; failed?: boolean }> = [];
 
     for (let i = 0; i < numImages; i++) {
       const part = content[i];
       if (part && part.type === 'image') {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const imgPart = part as any;
+        const imgPart = part as ImagePart;
         result.push({
           url: imgPart.url || null,
           failed: imgPart.failed || false,
-          error: imgPart.error,
         });
       } else {
         // 未到达的 slot
@@ -279,13 +312,13 @@ export default function AiImageGrid({
             key={`${messageId}-cell-${index}`}
             imageUrl={cell.url}
             failed={cell.failed}
-            error={cell.error}
             index={index}
             messageId={messageId}
             placeholderSize={placeholderSize}
             onImageClick={onImageClick}
             onMediaLoaded={index === 0 ? onMediaLoaded : undefined}
             isGenerating={isGenerating}
+            onRegenerateSingle={onRegenerateSingle ? () => onRegenerateSingle(index) : undefined}
           />
         ))}
       </div>

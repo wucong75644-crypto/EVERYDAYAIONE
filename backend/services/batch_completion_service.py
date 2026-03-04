@@ -11,6 +11,7 @@
 - 所有图片任务（含 num_images=1）统一走此路径
 """
 
+import json
 from typing import Any, Dict, List
 
 from loguru import logger
@@ -73,9 +74,9 @@ class BatchCompletionService:
             total_count=total_count,
         )
 
-        # 5. 全部终态 → finalize
+        # 5. 全部终态 → finalize（区分 regenerate_single 和批次生成）
         if completed_count >= total_count:
-            await self._finalize_batch(batch_id, batch_tasks)
+            await self._dispatch_finalize(batch_id, batch_tasks)
 
         logger.info(
             f"Batch task completed | task_id={ext_task_id} | "
@@ -129,9 +130,9 @@ class BatchCompletionService:
             error=error_message,
         )
 
-        # 5. 全部终态 → finalize
+        # 5. 全部终态 → finalize（区分 regenerate_single 和批次生成）
         if completed_count >= total_count:
-            await self._finalize_batch(batch_id, batch_tasks)
+            await self._dispatch_finalize(batch_id, batch_tasks)
 
         logger.info(
             f"Batch task failed | task_id={ext_task_id} | "
@@ -196,6 +197,135 @@ class BatchCompletionService:
             user_id=user_id,
             message=msg,
         )
+
+    async def _dispatch_finalize(
+        self,
+        batch_id: str,
+        batch_tasks: List[Dict[str, Any]],
+    ) -> None:
+        """根据操作类型分发到对应的 finalize 方法"""
+        first_task = batch_tasks[0]
+        request_params = first_task.get("request_params") or {}
+        if isinstance(request_params, str):
+            request_params = json.loads(request_params)
+        operation = request_params.get("operation")
+
+        if operation == "regenerate_single":
+            await self._finalize_single_image(batch_id, batch_tasks)
+        else:
+            await self._finalize_batch(batch_id, batch_tasks)
+
+    async def _finalize_single_image(
+        self,
+        batch_id: str,
+        batch_tasks: List[Dict[str, Any]],
+    ) -> None:
+        """
+        单图重新生成的最终处理（merge-update）
+
+        与 _finalize_batch（全量替换）不同，此方法：
+        1. 读取现有消息的 content 数组
+        2. 仅更新 content[image_index] 位置
+        3. 保持其他图片不变
+        """
+        if not batch_tasks:
+            return
+
+        the_task = batch_tasks[0]
+        message_id = the_task["placeholder_message_id"]
+        image_index = the_task.get("image_index", 0)
+        client_task_id = the_task.get("client_task_id")
+        user_id = the_task["user_id"]
+        conversation_id = the_task["conversation_id"]
+
+        try:
+            # 1. 读取现有消息
+            msg_result = (
+                self.db.table("messages")
+                .select("content, credits_cost, generation_params, created_at")
+                .eq("id", message_id)
+                .single()
+                .execute()
+            )
+            if not msg_result.data:
+                logger.error(
+                    f"Message not found for single image finalize | "
+                    f"message_id={message_id} | user_id={user_id} | "
+                    f"conversation_id={conversation_id}"
+                )
+                return
+
+            content = msg_result.data.get("content", [])
+            if isinstance(content, str):
+                content = json.loads(content)
+            current_credits = msg_result.data.get("credits_cost", 0)
+
+            # 2. 更新 content[image_index]
+            # 确保 content 数组长度足够
+            while len(content) <= image_index:
+                content.append({"type": "image", "url": None})
+
+            if the_task["status"] == "completed" and the_task.get("result_data"):
+                content[image_index] = the_task["result_data"]
+                current_credits += the_task.get("credits_locked", 0)
+            else:
+                content[image_index] = {
+                    "type": "image",
+                    "url": None,
+                    "failed": True,
+                    "error": the_task.get("error_message", "生成失败"),
+                }
+
+            # 3. 确定消息状态（至少 1 张有效图片 → completed，全部无效 → failed）
+            has_valid = any(
+                isinstance(c, dict) and c.get("url") and not c.get("failed")
+                for c in content
+            )
+            msg_status = "completed" if has_valid else "failed"
+
+            # 4. 更新消息（merge-update，不替换整条记录）
+            self.db.table("messages").update({
+                "content": content,
+                "status": msg_status,
+                "credits_cost": current_credits,
+            }).eq("id", message_id).execute()
+
+            # 5. 推送 message_done
+            msg_data = {
+                "id": message_id,
+                "conversation_id": conversation_id,
+                "role": "assistant",
+                "content": content,
+                "status": msg_status,
+                "credits_cost": current_credits,
+                "generation_params": msg_result.data.get("generation_params"),
+                "created_at": msg_result.data.get("created_at"),
+            }
+
+            done_msg = build_message_done(
+                task_id=client_task_id or the_task["external_task_id"],
+                conversation_id=conversation_id,
+                message=msg_data,
+                credits_consumed=the_task.get("credits_locked", 0),
+            )
+
+            await ws_manager.send_to_task_or_user(
+                task_id=client_task_id or the_task["external_task_id"],
+                user_id=user_id,
+                message=done_msg,
+            )
+
+            logger.info(
+                f"Single image finalized | batch_id={batch_id} | "
+                f"message_id={message_id} | image_index={image_index} | "
+                f"status={msg_status}"
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to finalize single image | batch_id={batch_id} | "
+                f"message_id={message_id} | user_id={user_id} | "
+                f"image_index={image_index} | error={e}"
+            )
 
     async def _finalize_batch(
         self,

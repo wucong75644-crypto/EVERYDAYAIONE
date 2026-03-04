@@ -116,6 +116,10 @@ class MockTableChain:
         self._filters[field] = value
         return self
 
+    def single(self):
+        self._single = True
+        return self
+
     def order(self, column: str, **kwargs):
         return self
 
@@ -126,7 +130,11 @@ class MockTableChain:
         filtered = self._data
         for field, value in self._filters.items():
             filtered = [d for d in filtered if d.get(field) == value]
-        result.data = filtered
+        # single() 模式返回第一条数据（模拟 Supabase .single()）
+        if getattr(self, '_single', False) and filtered:
+            result.data = filtered[0]
+        else:
+            result.data = filtered
         return result
 
 
@@ -479,6 +487,233 @@ class TestBatchCompletionServiceHelpers:
         terminal, total = service._count_terminal(tasks)
         assert terminal == 0
         assert total == 2
+
+
+class TestDispatchFinalize:
+    """测试 _dispatch_finalize 分发逻辑"""
+
+    @pytest.fixture
+    def db(self):
+        return MockBatchDB()
+
+    @pytest.fixture
+    def service(self, db):
+        return BatchCompletionService(db)
+
+    @pytest.mark.asyncio
+    @patch("services.batch_completion_service.ws_manager")
+    async def test_dispatch_to_finalize_batch_for_send(self, mock_ws, service, db):
+        """测试：send 操作分发到 _finalize_batch"""
+        batch_id = str(uuid4())
+        batch_tasks = [
+            {**create_batch_task(0, batch_id, status="completed",
+                                 result_data=create_content_part()),
+             "request_params": {"operation": "send"}},
+        ]
+        db.set_table_data("tasks", batch_tasks)
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await service._dispatch_finalize(batch_id, batch_tasks)
+
+        # _finalize_batch 使用 upsert，会推送 message_done
+        ws_msg = (
+            mock_ws.send_to_task_or_user.call_args.kwargs.get("message")
+            or mock_ws.send_to_task_or_user.call_args[1].get("message")
+        )
+        assert ws_msg["type"] == "message_done"
+
+    @pytest.mark.asyncio
+    @patch("services.batch_completion_service.ws_manager")
+    async def test_dispatch_to_finalize_single_for_regenerate_single(
+        self, mock_ws, service, db
+    ):
+        """测试：regenerate_single 操作分发到 _finalize_single_image"""
+        batch_id = str(uuid4())
+        batch_tasks = [
+            {**create_batch_task(0, batch_id, status="completed",
+                                 result_data=create_content_part("https://oss/new.png")),
+             "request_params": {"operation": "regenerate_single"},
+             "image_index": 1},
+        ]
+
+        # 需要 messages 表支持 single() 查询（id 必须匹配 placeholder_message_id）
+        db.set_table_data("messages", [{
+            "id": "msg_1",
+            "content": [
+                {"type": "image", "url": "https://oss/0.png"},
+                {"type": "image", "url": None},  # 占位符
+            ],
+            "credits_cost": 5,
+            "generation_params": {"type": "image", "num_images": 2},
+        }])
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await service._dispatch_finalize(batch_id, batch_tasks)
+
+        # _finalize_single_image 使用 update，推送 message_done
+        ws_msg = (
+            mock_ws.send_to_task_or_user.call_args.kwargs.get("message")
+            or mock_ws.send_to_task_or_user.call_args[1].get("message")
+        )
+        assert ws_msg["type"] == "message_done"
+
+    @pytest.mark.asyncio
+    @patch("services.batch_completion_service.ws_manager")
+    async def test_dispatch_defaults_to_batch(self, mock_ws, service, db):
+        """测试：无 operation 字段时默认走 _finalize_batch"""
+        batch_id = str(uuid4())
+        batch_tasks = [
+            {**create_batch_task(0, batch_id, status="completed",
+                                 result_data=create_content_part()),
+             "request_params": {}},
+        ]
+        db.set_table_data("tasks", batch_tasks)
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await service._dispatch_finalize(batch_id, batch_tasks)
+
+        ws_msg = (
+            mock_ws.send_to_task_or_user.call_args.kwargs.get("message")
+            or mock_ws.send_to_task_or_user.call_args[1].get("message")
+        )
+        assert ws_msg["type"] == "message_done"
+
+
+class TestFinalizeSingleImage:
+    """测试 _finalize_single_image 单图重新生成"""
+
+    @pytest.fixture
+    def db(self):
+        return MockBatchDB()
+
+    @pytest.fixture
+    def service(self, db):
+        return BatchCompletionService(db)
+
+    @pytest.mark.asyncio
+    @patch("services.batch_completion_service.ws_manager")
+    async def test_success_merges_content(self, mock_ws, service, db):
+        """测试：成功时仅更新 content[image_index]，保留其他图片"""
+        batch_id = str(uuid4())
+        new_img = create_content_part("https://oss/new_1.png")
+        batch_tasks = [
+            {**create_batch_task(0, batch_id, status="completed",
+                                 result_data=new_img, credits_locked=5),
+             "request_params": {"operation": "regenerate_single"},
+             "image_index": 1},
+        ]
+
+        # 现有消息有 3 张图片（id 必须匹配 placeholder_message_id）
+        db.set_table_data("messages", [{
+            "id": "msg_1",
+            "content": [
+                {"type": "image", "url": "https://oss/0.png"},
+                {"type": "image", "url": "https://oss/old_1.png"},  # 被替换
+                {"type": "image", "url": "https://oss/2.png"},
+            ],
+            "credits_cost": 10,
+            "generation_params": {"type": "image", "num_images": 3},
+        }])
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await service._finalize_single_image(batch_id, batch_tasks)
+
+        # 验证 message_done 推送
+        ws_msg = (
+            mock_ws.send_to_task_or_user.call_args.kwargs.get("message")
+            or mock_ws.send_to_task_or_user.call_args[1].get("message")
+        )
+        assert ws_msg["type"] == "message_done"
+
+        msg_data = ws_msg.get("payload", {}).get("message", {})
+        content = msg_data["content"]
+        # 图片 0 和 2 保持不变
+        assert content[0]["url"] == "https://oss/0.png"
+        assert content[2]["url"] == "https://oss/2.png"
+        # 图片 1 被更新
+        assert content[1]["url"] == "https://oss/new_1.png"
+        # 状态 completed
+        assert msg_data["status"] == "completed"
+        # 积分累加
+        assert msg_data["credits_cost"] == 15  # 原 10 + 新 5
+
+    @pytest.mark.asyncio
+    @patch("services.batch_completion_service.ws_manager")
+    async def test_failure_marks_content_failed(self, mock_ws, service, db):
+        """测试：失败时 content[image_index] 标记 failed"""
+        batch_id = str(uuid4())
+        batch_tasks = [
+            {**create_batch_task(0, batch_id, status="failed",
+                                 error_message="API 超时", credits_locked=5),
+             "request_params": {"operation": "regenerate_single"},
+             "image_index": 0},
+        ]
+
+        db.set_table_data("messages", [{
+            "id": "msg_1",
+            "content": [
+                {"type": "image", "url": "https://oss/old_0.png"},
+                {"type": "image", "url": "https://oss/1.png"},
+            ],
+            "credits_cost": 10,
+            "generation_params": {"type": "image", "num_images": 2},
+        }])
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await service._finalize_single_image(batch_id, batch_tasks)
+
+        ws_msg = (
+            mock_ws.send_to_task_or_user.call_args.kwargs.get("message")
+            or mock_ws.send_to_task_or_user.call_args[1].get("message")
+        )
+        msg_data = ws_msg.get("payload", {}).get("message", {})
+        content = msg_data["content"]
+        # 图片 0 失败
+        assert content[0]["url"] is None
+        assert content[0]["failed"] is True
+        assert content[0]["error"] == "API 超时"
+        # 图片 1 不变
+        assert content[1]["url"] == "https://oss/1.png"
+        # 至少 1 张有效 → completed
+        assert msg_data["status"] == "completed"
+
+    @pytest.mark.asyncio
+    @patch("services.batch_completion_service.ws_manager")
+    async def test_all_failed_status(self, mock_ws, service, db):
+        """测试：所有图片都失败时 status=failed"""
+        batch_id = str(uuid4())
+        batch_tasks = [
+            {**create_batch_task(0, batch_id, status="failed",
+                                 error_message="超时"),
+             "request_params": {"operation": "regenerate_single"},
+             "image_index": 0},
+        ]
+
+        db.set_table_data("messages", [{
+            "id": "msg_1",
+            "content": [
+                {"type": "image", "url": None, "failed": True, "error": "旧错误"},
+            ],
+            "credits_cost": 0,
+            "generation_params": {"type": "image", "num_images": 1},
+        }])
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await service._finalize_single_image(batch_id, batch_tasks)
+
+        ws_msg = (
+            mock_ws.send_to_task_or_user.call_args.kwargs.get("message")
+            or mock_ws.send_to_task_or_user.call_args[1].get("message")
+        )
+        msg_data = ws_msg.get("payload", {}).get("message", {})
+        assert msg_data["status"] == "failed"
+
+    @pytest.mark.asyncio
+    @patch("services.batch_completion_service.ws_manager")
+    async def test_empty_batch_noop(self, mock_ws, service, db):
+        """测试：空批次不做操作"""
+        await service._finalize_single_image("batch_empty", [])
+        mock_ws.send_to_task_or_user.assert_not_called()
 
 
 class TestBatchCompletionServiceCredits:

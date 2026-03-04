@@ -48,6 +48,8 @@ interface MessageMediaProps {
   numImages?: number;
   /** 消息的完整 content 数组（多图模式需要） */
   content?: ContentPart[];
+  /** 单图重新生成回调（多图模式） */
+  onRegenerateSingle?: (imageIndex: number) => void;
 }
 
 /** 单张图片组件（AI 生成，带占位符和失败重试） */
@@ -361,6 +363,7 @@ export default function MessageMedia({
   videoAspectRatio = 'landscape',
   numImages = 1,
   content = [],
+  onRegenerateSingle,
 }: MessageMediaProps) {
   // 获取第一个视频 URL（目前只支持单视频）
   const videoUrl = videoUrls[0] || null;
@@ -424,6 +427,7 @@ export default function MessageMedia({
             onImageClick={(idx) => handleImageClick(idx)}
             onMediaLoaded={onMediaLoaded}
             isGenerating={isGenerating && generatingType === 'image'}
+            onRegenerateSingle={onRegenerateSingle}
           />
         ) : (
           // AI 单图：占位符 + 淡入效果

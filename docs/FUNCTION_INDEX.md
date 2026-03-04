@@ -148,7 +148,8 @@
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `useRegenerateHandlers` | `frontend/src/hooks/useRegenerateHandlers.ts` | 重新生成处理器组合 Hook | RegenerateHandlersOptions | {regenerateFailedMessage, regenerateAsNewMessage, regenerateImageMessage, regenerateVideoMessage} |
+| `useRegenerateHandlers` | `frontend/src/hooks/useRegenerateHandlers.ts` | 重新生成处理器组合 Hook | RegenerateHandlersOptions | {handleRegenerate, handleRegenerateSingle} |
+| `handleRegenerateSingle` | `frontend/src/hooks/useRegenerateHandlers.ts` | 单图重新生成（多图模式下重新生成指定 index 的图片） | targetMessage, imageIndex, userMessage | Promise<void> |
 | `useRegenerateFailedMessage` | `frontend/src/hooks/regenerate/useRegenerateFailedMessage.ts` | 失败消息原地重新生成 | UseRegenerateFailedMessageOptions | (messageId, targetMessage) => Promise<void> |
 | `useRegenerateAsNewMessage` | `frontend/src/hooks/regenerate/useRegenerateAsNewMessage.ts` | 成功消息新增对话重新生成 | UseRegenerateAsNewMessageOptions | (userMessage) => Promise<void> |
 
@@ -268,6 +269,7 @@
 | `VideoHandler.start` | `backend/services/handlers/video_handler.py` | 启动视频生成任务（异步） | message_id, conversation_id, user_id, content, params | task_id |
 | `_reset_message_for_retry` | `backend/api/routes/message.py` | 重置失败消息用于重试 | db, message_id, gen_type, model, params | Message |
 | `_create_assistant_placeholder` | `backend/api/routes/message.py` | 创建助手消息占位符 | db, conversation_id, message_id, gen_type, model, params | Message |
+| `handle_regenerate_single_operation` | `backend/api/routes/message_generation_helpers.py` | 单图重新生成操作（复用现有消息，仅更新指定 image_index） | db, body, user_id | dict |
 
 #### 前端函数
 
@@ -360,6 +362,11 @@
 | `KieVideoAdapter.extract_task_id` | `backend/services/adapters/kie/video_adapter.py` | KIE 视频回调提取 taskId | payload: Dict | str |
 | `KieVideoAdapter.parse_callback` | `backend/services/adapters/kie/video_adapter.py` | 解析 KIE 视频回调（taskId+state+resultJson） | payload: Dict | VideoGenerateResult |
 | `BaseHandler._build_callback_url` | `backend/services/handlers/base.py` | 构建 Webhook 回调 URL（未配置则返回 None） | provider_value: str | Optional[str] |
+| `BatchCompletionService.handle_image_complete` | `backend/services/batch_completion_service.py` | 处理单个图片 task 成功（确认积分、推送 partial update、finalize） | task, content_parts | bool |
+| `BatchCompletionService.handle_image_failure` | `backend/services/batch_completion_service.py` | 处理单个图片 task 失败（退回积分、推送 partial update、finalize） | task, error_code, error_message | bool |
+| `BatchCompletionService._dispatch_finalize` | `backend/services/batch_completion_service.py` | 根据操作类型分发到 _finalize_batch 或 _finalize_single_image | batch_id, batch_tasks | None |
+| `BatchCompletionService._finalize_single_image` | `backend/services/batch_completion_service.py` | 单图重新生成最终处理（merge-update 现有消息的 content[image_index]） | batch_id, batch_tasks | None |
+| `BatchCompletionService._finalize_batch` | `backend/services/batch_completion_service.py` | 批次全部终态后最终处理（upsert 消息、推送 message_done） | batch_id, batch_tasks | None |
 
 ### KIE 适配器模块 (KIE Adapter)
 
@@ -467,6 +474,8 @@
 | `ImagePreviewModal` | `frontend/src/components/chat/ImagePreviewModal.tsx` | 图片预览弹窗（全屏缩放下载） |
 | `LoadingPlaceholder` | `frontend/src/components/chat/LoadingPlaceholder.tsx` | 统一加载占位符（文字 + 跳动小圆点） |
 | `MediaPlaceholder` | `frontend/src/components/chat/MediaPlaceholder.tsx` | 统一媒体占位符（灰色框 + 图标，支持图片/视频/音频等） |
+| `AiImageGrid` | `frontend/src/components/chat/AiImageGrid.tsx` | AI 多图网格组件（2/3/4 张自适应布局，含失败占位符和单图重新生成） |
+| `FailedPlaceholder` | `frontend/src/components/chat/AiImageGrid.tsx` | 失败/加载失败占位符子组件（灰色背景 + ImageOff 图标 + hover 重试按钮） |
 | `AudioPreview` | `frontend/src/components/chat/AudioPreview.tsx` | 音频预览 |
 | `AudioRecorder` | `frontend/src/components/chat/AudioRecorder.tsx` | 录音组件 |
 | `ConflictAlert` | `frontend/src/components/chat/ConflictAlert.tsx` | 模型冲突提示 |
@@ -496,6 +505,7 @@
 | `regenerateChatInPlace` | `frontend/src/utils/regenerate/strategies/chatStrategy.ts` | 聊天消息原地重新生成策略 | options | Promise<void> |
 | `regenerateImageInPlace` | `frontend/src/utils/regenerate/strategies/imageStrategy.ts` | 图片消息原地重新生成策略（复用 executeImageGenerationCore） | RegenerateImageInPlaceOptions | Promise<void> |
 | `regenerateVideoInPlace` | `frontend/src/utils/regenerate/strategies/videoStrategy.ts` | 视频消息原地重新生成策略（复用 executeVideoGenerationCore） | RegenerateVideoInPlaceOptions | Promise<void> |
+| `findMessagePair` | `frontend/src/components/chat/MessageArea.tsx` | 查找 AI 消息及其对应的用户消息（重新生成用） | messageId | { target, user } \| null |
 
 ### 任务通知模块 (Task Notification)
 
@@ -638,13 +648,13 @@
 ---
 
 ## 统计信息
-- **总函数数**：约 230+ 个（规划中 + 已实现）
-- **已实现组件**：32 个（27 聊天组件 + 4 认证组件 + 1 通用组件）
+- **总函数数**：约 240+ 个（规划中 + 已实现）
+- **已实现组件**：34 个（29 聊天组件 + 4 认证组件 + 1 通用组件）
 - **已实现 Hooks**：50+ 个自定义 Hooks（含消息处理、滚动管理、重新生成等）
-- **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息处理、消息服务、滚动管理、重新生成、轮询管理、**统一消息发送**（含 mediaSender）、媒体重新生成、**任务通知**、**图片URL工具**、**统一日志**、**任务协调器**、**消息合并**、性能监控、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理、测试工具、认证弹窗模块、通用组件模块、占位符管理模块、**Webhook 回调与任务完成服务**
+- **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息处理、消息服务、滚动管理、重新生成、轮询管理、**统一消息发送**（含 mediaSender）、媒体重新生成、**任务通知**、**图片URL工具**、**统一日志**、**任务协调器**、**消息合并**、性能监控、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理、测试工具、认证弹窗模块、通用组件模块、占位符管理模块、**Webhook 回调与任务完成服务**、**批次完成处理服务**
 - **测试覆盖率目标**：80%+（Vitest + Testing Library）
 - **性能监控**：13个预定义性能标记，支持关键路径监控
-- **最后更新**：2026-03-01（修复刷新恢复僵尸消息：generation_params validator + WS 订阅 ID 修正）
+- **最后更新**：2026-03-04（单图重新生成 regenerate_single：BatchCompletionService、AiImageGrid、handleRegenerateSingle）
 
 ---
 
