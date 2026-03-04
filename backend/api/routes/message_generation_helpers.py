@@ -231,8 +231,13 @@ async def handle_regenerate_or_send_operation(
 
         # 构建 generation_params（包含前端渲染占位符所需的参数）
         gen_params: Dict[str, Any] = {"type": gen_type.value}
-        if gen_type == GenerationType.IMAGE and params:
-            for key in ("num_images", "aspect_ratio", "resolution", "output_format"):
+        if params:
+            # 按类型提取前端渲染所需的参数
+            _PARAM_KEYS = {
+                GenerationType.IMAGE: ("num_images", "aspect_ratio", "resolution", "output_format"),
+                GenerationType.VIDEO: ("aspect_ratio", "n_frames", "remove_watermark"),
+            }
+            for key in _PARAM_KEYS.get(gen_type, ()):
                 if key in params:
                     gen_params[key] = params[key]
 
