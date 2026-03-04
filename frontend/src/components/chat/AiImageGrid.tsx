@@ -11,7 +11,8 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useInView } from 'react-intersection-observer';
-import { Image as ImageIcon, ImageOff, Loader2, RefreshCw } from 'lucide-react';
+import { Image as ImageIcon, Loader2, RefreshCw } from 'lucide-react';
+import { FailedMediaPlaceholder } from './MediaPlaceholder';
 import toast from 'react-hot-toast';
 import styles from './shared.module.css';
 import type { ContentPart } from '../../stores/useMessageStore';
@@ -43,38 +44,6 @@ interface AiImageGridProps {
 }
 
 /** 网格布局：auto-fill 根据单图宽度自动计算每行列数，放不下自动换行 */
-
-/** 失败/加载失败占位符（统一样式） */
-function FailedPlaceholder({
-  aspectRatio,
-  onRetry,
-  retryLabel,
-}: {
-  aspectRatio: number;
-  onRetry?: () => void;
-  retryLabel: string;
-}) {
-  return (
-    <div
-      className="group rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-gray-300 dark:text-gray-500 relative"
-      style={{ aspectRatio }}
-    >
-      <ImageOff className="w-8 h-8" />
-      {onRetry && (
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            type="button"
-            className="p-2 bg-black/40 hover:bg-black/60 rounded-full text-white transition-colors"
-            onClick={onRetry}
-            aria-label={retryLabel}
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
 
 /** 单个网格单元 */
 function GridCell({
@@ -175,7 +144,8 @@ function GridCell({
   // 失败的图片
   if (failed) {
     return (
-      <FailedPlaceholder
+      <FailedMediaPlaceholder
+        type="image"
         aspectRatio={aspectRatio}
         onRetry={onRegenerateSingle}
         retryLabel="重新生成"
@@ -198,7 +168,8 @@ function GridCell({
   // 加载失败
   if (loadError) {
     return (
-      <FailedPlaceholder
+      <FailedMediaPlaceholder
+        type="image"
         aspectRatio={aspectRatio}
         onRetry={() => { setLoadError(false); setRetryCount(0); }}
         retryLabel="重试加载"

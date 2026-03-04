@@ -12,7 +12,7 @@ import { Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { type AspectRatio, type VideoAspectRatio } from '../../constants/models';
 import { getImagePlaceholderSize, getVideoPlaceholderSize } from '../../utils/settingsStorage';
-import MediaPlaceholder from './MediaPlaceholder';
+import MediaPlaceholder, { FailedMediaPlaceholder } from './MediaPlaceholder';
 import AiImageGrid from './AiImageGrid';
 import styles from './shared.module.css';
 import type { ContentPart } from '../../stores/useMessageStore';
@@ -50,6 +50,10 @@ interface MessageMediaProps {
   content?: ContentPart[];
   /** 单图重新生成回调（多图模式） */
   onRegenerateSingle?: (imageIndex: number) => void;
+  /** 失败的媒体类型（显示裂开占位符） */
+  failedMediaType?: 'image' | 'video' | null;
+  /** 重新生成回调（失败时 retry） */
+  onRegenerate?: () => void;
 }
 
 /** 单张图片组件（AI 生成，带占位符和失败重试） */
@@ -364,6 +368,8 @@ export default function MessageMedia({
   numImages = 1,
   content = [],
   onRegenerateSingle,
+  failedMediaType,
+  onRegenerate,
 }: MessageMediaProps) {
   // 获取第一个视频 URL（目前只支持单视频）
   const videoUrl = videoUrls[0] || null;
@@ -397,8 +403,8 @@ export default function MessageMedia({
     }
   }, [showVideoPlaceholder, onMediaLoaded]);
 
-  // 没有媒体内容且不在生成中时不渲染
-  if (imageUrls.length === 0 && !videoUrl && !isGenerating) return null;
+  // 没有媒体内容且不在生成中且没有失败占位符时不渲染
+  if (imageUrls.length === 0 && !videoUrl && !isGenerating && !failedMediaType) return null;
 
   // 处理图片点击
   const handleImageClick = (index?: number) => {
@@ -442,6 +448,18 @@ export default function MessageMedia({
         )
       )}
 
+      {/* 失败的图片占位符（裂开状态 + hover 重新生成） */}
+      {failedMediaType === 'image' && imageUrls.length === 0 && !isGenerating && (
+        <div className="mt-3">
+          <FailedMediaPlaceholder
+            type="image"
+            width={imagePlaceholderSize.width}
+            height={imagePlaceholderSize.height}
+            onRetry={onRegenerate}
+          />
+        </div>
+      )}
+
       {/* 视频渲染（含占位符） */}
       {(videoUrl || (isGenerating && generatingType === 'video')) && (
         <div className="mt-3" ref={videoLazyRef}>
@@ -471,6 +489,18 @@ export default function MessageMedia({
               您的浏览器不支持视频播放
             </video>
           )}
+        </div>
+      )}
+
+      {/* 失败的视频占位符（裂开状态 + hover 重新生成） */}
+      {failedMediaType === 'video' && !videoUrl && !isGenerating && (
+        <div className="mt-3">
+          <FailedMediaPlaceholder
+            type="video"
+            width={videoPlaceholderSize.width}
+            height={videoPlaceholderSize.height}
+            onRetry={onRegenerate}
+          />
         </div>
       )}
     </>

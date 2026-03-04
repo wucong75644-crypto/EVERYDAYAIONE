@@ -5,7 +5,7 @@
  * 支持动态尺寸、淡入动画、深色模式
  */
 
-import { Image as ImageIcon, Video as VideoIcon, Music as MusicIcon, Box as BoxIcon } from 'lucide-react';
+import { Image as ImageIcon, Video as VideoIcon, Music as MusicIcon, Box as BoxIcon, ImageOff, VideoOff, RefreshCw } from 'lucide-react';
 import styles from './shared.module.css';
 
 /** 媒体类型（可扩展） */
@@ -56,6 +56,66 @@ interface MediaPlaceholderProps {
   height: number;
   /** 自定义样式类名 */
   className?: string;
+}
+
+/** 失败图标映射 */
+const FAILED_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
+  image: ImageOff,
+  video: VideoOff,
+};
+
+interface FailedMediaPlaceholderProps {
+  /** 媒体类型 */
+  type: 'image' | 'video';
+  /** 占位符宽高比（用于 grid cell 自适应） */
+  aspectRatio?: number;
+  /** 占位符固定宽度（px，与 aspectRatio 二选一） */
+  width?: number;
+  /** 占位符固定高度（px，与 aspectRatio 二选一） */
+  height?: number;
+  /** 重试/重新生成回调 */
+  onRetry?: () => void;
+  /** 重试按钮文案 */
+  retryLabel?: string;
+}
+
+/** 失败的媒体占位符（裂开图标 + hover 重试按钮） */
+export function FailedMediaPlaceholder({
+  type,
+  aspectRatio,
+  width,
+  height,
+  onRetry,
+  retryLabel = '重新生成',
+}: FailedMediaPlaceholderProps) {
+  const Icon = FAILED_ICON_MAP[type] || ImageOff;
+
+  // 尺寸：优先用 aspectRatio（grid cell 场景），否则用固定宽高
+  const sizeStyle: React.CSSProperties = aspectRatio
+    ? { aspectRatio }
+    : { width, height };
+
+  return (
+    <div
+      className="group rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-gray-400 dark:text-gray-500 relative"
+      style={sizeStyle}
+    >
+      <Icon className="w-10 h-10" />
+      {onRetry && (
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            type="button"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-black/40 hover:bg-black/60 rounded-full text-white text-xs transition-colors"
+            onClick={onRetry}
+            aria-label={retryLabel}
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>{retryLabel}</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function MediaPlaceholder({

@@ -126,6 +126,9 @@ export default memo(function MessageItem({
       return null;
     }
 
+    // 仅 pending 状态才显示"生成中"占位符（failed/completed 不显示）
+    if (message.status !== 'pending') return null;
+
     const genType = message.generation_params?.type;
 
     // 图片任务：仅在生成中（无图片且非历史消息）显示占位符
@@ -151,7 +154,18 @@ export default memo(function MessageItem({
     }
 
     return null;
-  }, [message.role, message.generation_params, hasImage, hasVideo, skipEntryAnimation]);
+  }, [message.role, message.status, message.generation_params, hasImage, hasVideo, skipEntryAnimation]);
+
+  // 失败的媒体任务信息（用于渲染"裂开"占位符）
+  const failedMediaType = useMemo(() => {
+    if (message.role !== 'assistant') return null;
+    if (message.status !== 'failed') return null;
+
+    const genType = message.generation_params?.type;
+    if (genType === 'image' && !hasImage) return 'image' as const;
+    if (genType === 'video' && !hasVideo) return 'video' as const;
+    return null;
+  }, [message.role, message.status, message.generation_params, hasImage, hasVideo]);
 
   // 是否真正在生成中（用于控制重新生成按钮，区别于占位符显示）
   const isActuallyGenerating = useMemo(() => {
@@ -363,6 +377,8 @@ export default memo(function MessageItem({
             numImages={Number(genParams.num_images) || 1}
             content={message.content}
             onRegenerateSingle={onRegenerateSingle ? (idx) => onRegenerateSingle(message.id, idx) : undefined}
+            failedMediaType={failedMediaType}
+            onRegenerate={onRegenerate ? () => onRegenerate(message.id) : undefined}
           />
         )}
 
