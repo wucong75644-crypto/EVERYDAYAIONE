@@ -43,6 +43,7 @@ class MessageMixin:
         model_id: str,
         is_error: bool = False,
         error_dict: Optional[Dict[str, str]] = None,
+        extra_generation_params: Optional[Dict[str, Any]] = None,
     ) -> tuple[Message, Dict[str, Any]]:
         """
         通用的助手消息 upsert 方法
@@ -58,11 +59,16 @@ class MessageMixin:
             model_id: 模型 ID
             is_error: 是否为错误消息
             error_dict: 错误详情（is_error=True 时提供）
+            extra_generation_params: 额外的生成参数（如 aspect_ratio），合并到 generation_params
 
         Returns:
             (Message 对象, 原始字典数据)
         """
         # 1. 构建消息数据
+        gen_params: Dict[str, Any] = {"type": generation_type, "model": model_id}
+        if extra_generation_params:
+            gen_params.update(extra_generation_params)
+
         message_data = {
             "id": message_id,
             "conversation_id": conversation_id,
@@ -71,7 +77,7 @@ class MessageMixin:
             "status": status.value,
             "credits_cost": credits_cost,
             "task_id": client_task_id,
-            "generation_params": {"type": generation_type, "model": model_id},
+            "generation_params": gen_params,
         }
 
         if is_error:
@@ -174,7 +180,16 @@ class MessageMixin:
         # 4. 转换 ContentPart 为字典（子类实现）
         content_dicts = self._convert_content_parts_to_dicts(result)
 
-        # 5. Upsert 消息到数据库
+        # 5. 从 request_params 提取前端渲染所需参数（避免 upsert 覆盖占位符阶段存的值）
+        request_params = task.get("request_params") or {}
+        if isinstance(request_params, str):
+            import json
+            request_params = json.loads(request_params)
+        extra_gen_params = {}
+        if request_params.get("aspect_ratio"):
+            extra_gen_params["aspect_ratio"] = request_params["aspect_ratio"]
+
+        # 6. Upsert 消息到数据库
         message, msg_data = self._upsert_assistant_message(
             message_id=message_id,
             conversation_id=conversation_id,
@@ -184,6 +199,7 @@ class MessageMixin:
             client_task_id=client_task_id,
             generation_type=self.handler_type.value,
             model_id=model_id,
+            extra_generation_params=extra_gen_params,
         )
 
         # 6. 推送 WebSocket 完成消息
@@ -296,7 +312,16 @@ class MessageMixin:
         # 3. 处理积分退回（子类实现）
         await self._handle_credits_on_error(task)
 
-        # 4. Upsert 错误消息到数据库
+        # 4. 从 request_params 提取前端渲染所需参数
+        request_params = task.get("request_params") or {}
+        if isinstance(request_params, str):
+            import json
+            request_params = json.loads(request_params)
+        extra_gen_params = {}
+        if request_params.get("aspect_ratio"):
+            extra_gen_params["aspect_ratio"] = request_params["aspect_ratio"]
+
+        # 5. Upsert 错误消息到数据库
         message, msg_data = self._upsert_assistant_message(
             message_id=message_id,
             conversation_id=conversation_id,
@@ -308,6 +333,7 @@ class MessageMixin:
             model_id=model_id,
             is_error=True,
             error_dict={"code": error_code, "message": error_message},
+            extra_generation_params=extra_gen_params,
         )
 
         # 5. 推送 WebSocket 错误消息

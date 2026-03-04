@@ -371,6 +371,18 @@ class BatchCompletionService:
 
         # 3. Upsert message（幂等：ON CONFLICT id）
         generation_type = first_task.get("type", "image")
+        # 从 request_params 提取前端渲染所需参数（避免 upsert 覆盖占位符阶段存的值）
+        request_params = first_task.get("request_params") or {}
+        if isinstance(request_params, str):
+            request_params = json.loads(request_params)
+        gen_params = {
+            "type": generation_type,
+            "model": model_id,
+            "num_images": len(batch_tasks),
+        }
+        if request_params.get("aspect_ratio"):
+            gen_params["aspect_ratio"] = request_params["aspect_ratio"]
+
         message_data = {
             "id": message_id,
             "conversation_id": conversation_id,
@@ -379,11 +391,7 @@ class BatchCompletionService:
             "status": msg_status,
             "credits_cost": total_credits,
             "task_id": client_task_id or first_task["external_task_id"],
-            "generation_params": {
-                "type": generation_type,
-                "model": model_id,
-                "num_images": len(batch_tasks),
-            },
+            "generation_params": gen_params,
         }
 
         upsert_result = (
