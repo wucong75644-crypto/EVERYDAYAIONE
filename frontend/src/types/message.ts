@@ -23,10 +23,12 @@ export interface TextPart {
 
 export interface ImagePart {
   type: 'image';
-  url: string;
+  url: string | null;
   width?: number;
   height?: number;
   alt?: string;
+  failed?: boolean;
+  error?: string;
 }
 
 export interface VideoPart {

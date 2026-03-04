@@ -63,5 +63,35 @@ export function useRegenerateHandlers(options: RegenerateHandlersOptions) {
     [conversationId, subscribeTaskWithMapping]
   );
 
-  return { handleRegenerate };
+  // 单图重新生成
+  const handleRegenerateSingle = useCallback(
+    async (targetMessage: Message, imageIndex: number, userMessage: Message) => {
+      if (!conversationId) return;
+
+      try {
+        const modelId = extractModelId(targetMessage);
+        const originalParams = extractGenerationParams(targetMessage);
+
+        await sendMessage({
+          conversationId,
+          content: userMessage.content,
+          generationType: 'image',
+          model: modelId,
+          operation: 'regenerate_single',
+          originalMessageId: targetMessage.id,
+          subscribeTask: subscribeTaskWithMapping,
+          params: {
+            ...originalParams,
+            image_index: imageIndex,
+          },
+        });
+      } catch (error) {
+        console.error('Regenerate single failed:', error);
+        toast.error(error instanceof Error ? error.message : '重新生成失败');
+      }
+    },
+    [conversationId, subscribeTaskWithMapping]
+  );
+
+  return { handleRegenerate, handleRegenerateSingle };
 }

@@ -37,6 +37,8 @@ interface MessageItemProps {
   currentImageIndex?: number;
   /** 是否跳过进入动画（批量加载历史消息时） */
   skipEntryAnimation?: boolean;
+  /** 单图重新生成回调（多图模式） */
+  onRegenerateSingle?: (messageId: string, imageIndex: number) => void;
 }
 
 export default memo(function MessageItem({
@@ -49,6 +51,7 @@ export default memo(function MessageItem({
   allImageUrls = [],
   currentImageIndex = 0,
   skipEntryAnimation = false,
+  onRegenerateSingle,
 }: MessageItemProps) {
   const isUser = message.role === 'user';
 
@@ -87,9 +90,13 @@ export default memo(function MessageItem({
 
     // 图片任务
     if (genType === 'image') {
-      // 有图片URL：显示"生成完成"（无论 pending 还是 completed）
+      // 有图片URL：显示引导文字
       if (hasImage) {
-        return { text: '生成完成', hasAnimation: false };
+        const numImgs = Number(genParams.num_images) || 1;
+        const text = numImgs > 1
+          ? `好的，来看看生成的 ${numImgs} 张图片`
+          : '好的，来看看生成的图片';
+        return { text, hasAnimation: false };
       }
       // pending 状态但无URL：显示"正在生成图片"
       if (message.status === 'pending') {
@@ -355,6 +362,7 @@ export default memo(function MessageItem({
             videoAspectRatio={actualVideoAspectRatio}
             numImages={Number(genParams.num_images) || 1}
             content={message.content}
+            onRegenerateSingle={onRegenerateSingle ? (idx) => onRegenerateSingle(message.id, idx) : undefined}
           />
         )}
 

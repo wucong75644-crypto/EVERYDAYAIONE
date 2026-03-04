@@ -29,6 +29,7 @@ from services.handlers import get_handler
 from api.routes.message_generation_helpers import (
     handle_retry_operation,
     handle_regenerate_or_send_operation,
+    handle_regenerate_single_operation,
     start_generation_task,
     create_user_message,
 )
@@ -94,9 +95,9 @@ async def generate_message(
     conversation_service = get_conversation_service(db)
     await conversation_service.get_conversation(conversation_id, user_id)
 
-    # 4. 创建用户消息（send/regenerate）
+    # 4. 创建用户消息（send/regenerate，单图重新生成不创建）
     user_message: Optional[Message] = None
-    if body.operation != MessageOperation.RETRY:
+    if body.operation not in (MessageOperation.RETRY, MessageOperation.REGENERATE_SINGLE):
         user_message = await create_user_message(
             db=db,
             conversation_id=conversation_id,
@@ -113,6 +114,13 @@ async def generate_message(
             original_message_id=body.original_message_id,
             gen_type=gen_type,
             model=body.model,
+            params=body.params,
+        )
+    elif body.operation == MessageOperation.REGENERATE_SINGLE:
+        assistant_message_id, assistant_message = await handle_regenerate_single_operation(
+            db=db,
+            conversation_id=conversation_id,
+            original_message_id=body.original_message_id,
             params=body.params,
         )
     else:

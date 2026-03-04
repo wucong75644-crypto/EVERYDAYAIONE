@@ -65,7 +65,14 @@ class ImageHandler(BaseHandler):
         aspect_ratio = params.get("aspect_ratio") or "1:1"
         output_format = params.get("output_format") or "png"
         resolution = params.get("resolution") or None
-        num_images = max(1, min(4, int(params.get("num_images", 1))))
+
+        # regenerate_single：仅生成 1 张，使用指定 image_index
+        is_regenerate_single = params.get("operation") == "regenerate_single"
+        if is_regenerate_single:
+            num_images = 1
+            single_image_index = int(params.get("image_index", 0))
+        else:
+            num_images = max(1, min(4, int(params.get("num_images", 1))))
 
         # 2. 计算总积分并校验余额
         from config.kie_models import calculate_image_cost
@@ -111,9 +118,12 @@ class ImageHandler(BaseHandler):
                 if i > 0:
                     await asyncio.sleep(0.3)  # 300ms 间隔，尊重 KIE 频率限制
 
+                # regenerate_single 使用指定的 image_index，否则使用循环 index
+                actual_index = single_image_index if is_regenerate_single else i
+
                 ext_task_id = await self._create_single_task(
                     adapter=adapter,
-                    index=i,
+                    index=actual_index,
                     batch_id=batch_id,
                     generate_kwargs=generate_kwargs,
                     message_id=message_id,

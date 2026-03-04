@@ -8,6 +8,7 @@
 - 消息重置
 """
 
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -88,6 +89,88 @@ async def handle_retry_operation(
     )
 
     return assistant_message_id, assistant_message
+
+
+async def handle_regenerate_single_operation(
+    db,
+    conversation_id: str,
+    original_message_id: Optional[str],
+    params: Optional[Dict[str, Any]],
+) -> tuple[str, Message]:
+    """
+    处理 regenerate_single 操作（单图重新生成）
+
+    复用原消息 ID，仅将 content[image_index] 置为 null 占位。
+    不创建用户消息，不创建新 AI 消息。
+
+    Returns:
+        (assistant_message_id, assistant_message)
+
+    Raises:
+        HTTPException: 验证失败
+    """
+    if not original_message_id:
+        raise HTTPException(status_code=400, detail="regenerate_single 必须提供 original_message_id")
+
+    image_index = params.get("image_index") if params else None
+    if image_index is None:
+        raise HTTPException(status_code=400, detail="regenerate_single 必须提供 image_index")
+
+    # 校验原消息
+    original_msg = db.table("messages").select(
+        "id, status, conversation_id, content, generation_params"
+    ).eq("id", original_message_id).single().execute()
+
+    if not original_msg.data:
+        raise HTTPException(status_code=404, detail="原消息不存在")
+
+    if original_msg.data["conversation_id"] != conversation_id:
+        raise HTTPException(status_code=403, detail="消息不属于该对话")
+
+    msg_status = original_msg.data["status"]
+    if msg_status not in (MessageStatus.COMPLETED.value, MessageStatus.FAILED.value):
+        raise HTTPException(status_code=400, detail="只能对已完成或已失败的消息重新生成单图")
+
+    # 校验 image_index 合法性
+    content = original_msg.data.get("content", [])
+    if isinstance(content, str):
+        content = json.loads(content)
+    gen_params = original_msg.data.get("generation_params", {})
+    if isinstance(gen_params, str):
+        gen_params = json.loads(gen_params)
+    num_images = gen_params.get("num_images", len(content))
+    if image_index < 0 or image_index >= num_images:
+        raise HTTPException(status_code=400, detail=f"image_index 超出范围 [0, {num_images})")
+
+    # 检查是否有进行中的任务（针对同一张图）
+    existing_task = db.table("tasks").select("id").eq(
+        "placeholder_message_id", original_message_id
+    ).eq("image_index", image_index).in_(
+        "status", ["pending", "running"]
+    ).execute()
+    if existing_task.data:
+        raise HTTPException(status_code=409, detail="该图片正在重新生成中，请稍候")
+
+    # 更新 content[image_index] 为进行中占位
+    if isinstance(content, list) and image_index < len(content):
+        content[image_index] = {"type": "image", "url": None}
+        db.table("messages").update({"content": content}).eq("id", original_message_id).execute()
+
+    # 构造返回对象（只提取 type 字段，gen_params 可能含 num_images 等额外字段）
+    gen_type_str = gen_params.get("type") if gen_params else None
+    generation_params_obj = GenerationParams(type=GenerationType(gen_type_str)) if gen_type_str else None
+
+    assistant_message = Message(
+        id=original_message_id,
+        conversation_id=conversation_id,
+        role=MessageRole.ASSISTANT,
+        content=content,
+        status=MessageStatus(msg_status),
+        created_at=datetime.now(timezone.utc),
+        generation_params=generation_params_obj,
+    )
+
+    return original_message_id, assistant_message
 
 
 async def handle_regenerate_or_send_operation(
@@ -251,6 +334,9 @@ async def start_generation_task(
     if model:
         business_params["model"] = model
 
+    # 添加 operation（handler 用于区分 regenerate_single 等操作）
+    business_params["operation"] = operation.value
+
     # 启动任务
     external_task_id = await handler.start(
         message_id=assistant_message_id,
@@ -272,8 +358,8 @@ async def start_generation_task(
         f"assistant_message_id={assistant_message_id}"
     )
 
-    # 更新消息的 task_id（仅 retry 操作，因为消息已存在）
-    if operation == MessageOperation.RETRY:
+    # 更新消息的 task_id（retry 和 regenerate_single 操作，因为消息已存在）
+    if operation in (MessageOperation.RETRY, MessageOperation.REGENERATE_SINGLE):
         db.table("messages").update({
             "task_id": final_client_task_id,
         }).eq("id", assistant_message_id).execute()

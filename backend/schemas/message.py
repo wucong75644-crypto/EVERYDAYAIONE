@@ -37,6 +37,7 @@ class MessageOperation(str, Enum):
     SEND = "send"
     RETRY = "retry"
     REGENERATE = "regenerate"
+    REGENERATE_SINGLE = "regenerate_single"
 
 
 class GenerationType(str, Enum):
@@ -59,9 +60,9 @@ class TextPart(BaseModel):
 
 
 class ImagePart(BaseModel):
-    """图片内容"""
+    """图片内容（url 可为 None 表示占位符/生成中）"""
     type: Literal["image"] = "image"
-    url: str
+    url: Optional[str] = None
     width: Optional[int] = None
     height: Optional[int] = None
     alt: Optional[str] = None
@@ -176,6 +177,28 @@ class Message(BaseModel):
     # 客户端请求 ID（用于乐观更新）
     client_request_id: Optional[str] = None
 
+    @field_validator('content', mode='before')
+    @classmethod
+    def parse_content(cls, v: Any) -> Any:
+        """Supabase JSONB 可能返回字符串，自动转 list"""
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                return []
+        return v
+
+    @field_validator('generation_params', mode='before')
+    @classmethod
+    def parse_generation_params(cls, v: Any) -> Any:
+        """Supabase JSONB 可能返回字符串，自动转 dict"""
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                return None
+        return v
+
     def get_text_content(self) -> str:
         """获取文本内容（便捷方法）"""
         for part in self.content:
@@ -184,8 +207,8 @@ class Message(BaseModel):
         return ""
 
     def get_image_urls(self) -> List[str]:
-        """获取所有图片 URL"""
-        return [p.url for p in self.content if isinstance(p, ImagePart)]
+        """获取所有图片 URL（排除占位符）"""
+        return [p.url for p in self.content if isinstance(p, ImagePart) and p.url]
 
     def get_video_urls(self) -> List[str]:
         """获取所有视频 URL"""

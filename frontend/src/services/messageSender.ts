@@ -23,7 +23,7 @@ import { getPlaceholderText } from '../constants/placeholder';
 export type GenerationType = 'chat' | 'image' | 'video' | 'audio';
 
 /** 操作类型 */
-export type MessageOperation = 'send' | 'regenerate' | 'retry';
+export type MessageOperation = 'send' | 'regenerate' | 'retry' | 'regenerate_single';
 
 /** 发送选项 */
 export interface SendOptions {
@@ -101,8 +101,8 @@ export async function sendMessage(options: SendOptions): Promise<string> {
   const messageStore = useMessageStore.getState();
   const clientRequestId = crypto.randomUUID();
   const userMessageId = crypto.randomUUID();      // 用户消息真实 UUID
-  // retry 时复用原消息 ID，其他操作生成新 UUID
-  const assistantMessageId = operation === 'retry' && originalMessageId
+  // retry/regenerate_single 时复用原消息 ID，其他操作生成新 UUID
+  const assistantMessageId = (operation === 'retry' || operation === 'regenerate_single') && originalMessageId
     ? originalMessageId
     : crypto.randomUUID();
   const now = new Date();
@@ -122,8 +122,8 @@ export async function sendMessage(options: SendOptions): Promise<string> {
   // Phase 1: 乐观更新（使用真实 UUID）
   // ========================================
 
-  // 1.1 创建乐观用户消息（send/regenerate）
-  if (operation !== 'retry') {
+  // 1.1 创建乐观用户消息（send/regenerate，retry/regenerate_single 不创建）
+  if (operation !== 'retry' && operation !== 'regenerate_single') {
     const userMessage: Message = {
       id: userMessageId,
       conversation_id: conversationId,
@@ -157,6 +157,18 @@ export async function sendMessage(options: SendOptions): Promise<string> {
       // Media 类型：只设置发送状态
       messageStore.setIsSending(true);
     }
+  } else if (operation === 'regenerate_single') {
+    // regenerate_single: 仅将 content[image_index] 设为 null 占位符
+    const imageIndex = (params?.image_index as number) ?? 0;
+    const existing = messageStore.getMessage(assistantMessageId);
+    if (existing) {
+      const newContent = [...existing.content];
+      if (imageIndex < newContent.length) {
+        newContent[imageIndex] = { type: 'image', url: null } as ContentPart;
+      }
+      messageStore.updateMessage(assistantMessageId, { content: newContent, status: 'pending' });
+    }
+    messageStore.setIsSending(true);
   } else if (generationType === 'chat' || !generationType) {
     // Chat 类型：使用 startStreaming 创建占位符
     // 这样 streamingMessages Map 会正确设置，message_chunk 能路由到正确的消息

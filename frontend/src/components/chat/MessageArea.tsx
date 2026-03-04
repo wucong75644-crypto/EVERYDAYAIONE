@@ -269,34 +269,42 @@ export default function MessageArea({
     // use-stick-to-bottom 的 resize="smooth" 会自动处理高度变化
   }, []);
 
-  const { handleRegenerate: doRegenerate } = useRegenerateHandlers({
+  const { handleRegenerate: doRegenerate, handleRegenerateSingle: doRegenerateSingle } = useRegenerateHandlers({
     conversationId,
     setMessages,
   });
 
-  // 处理重新生成
-  const handleRegenerate = useCallback(async (messageId: string) => {
-    if (!conversationId) return;
-
-    const targetMessage = mergedMessages.find((m) => m.id === messageId);
-    if (!targetMessage || targetMessage.role !== 'assistant') return;
+  // 查找 AI 消息及其对应的用户消息
+  const findMessagePair = useCallback((messageId: string): { target: Message; user: Message } | null => {
+    const target = mergedMessages.find((m) => m.id === messageId);
+    if (!target || target.role !== 'assistant') return null;
 
     const aiIndex = mergedMessages.findIndex((m) => m.id === messageId);
-    let userMessage: Message | null = null;
     for (let i = aiIndex - 1; i >= 0; i--) {
       if (mergedMessages[i].role === 'user') {
-        userMessage = mergedMessages[i];
-        break;
+        return { target, user: mergedMessages[i] };
       }
     }
 
-    if (!userMessage) {
-      toast.error('未找到对应的用户消息');
-      return;
-    }
+    toast.error('未找到对应的用户消息');
+    return null;
+  }, [mergedMessages]);
 
-    await doRegenerate(targetMessage, userMessage);
-  }, [conversationId, mergedMessages, doRegenerate]);
+  // 处理重新生成
+  const handleRegenerate = useCallback(async (messageId: string) => {
+    if (!conversationId) return;
+    const pair = findMessagePair(messageId);
+    if (!pair) return;
+    await doRegenerate(pair.target, pair.user);
+  }, [conversationId, findMessagePair, doRegenerate]);
+
+  // 处理单图重新生成
+  const handleRegenerateSingle = useCallback(async (messageId: string, imageIndex: number) => {
+    if (!conversationId) return;
+    const pair = findMessagePair(messageId);
+    if (!pair) return;
+    await doRegenerateSingle(pair.target, imageIndex, pair.user);
+  }, [conversationId, findMessagePair, doRegenerateSingle]);
 
   // 空状态
   if (!conversationId && mergedMessages.length === 0) {
@@ -362,6 +370,7 @@ export default function MessageArea({
                   allImageUrls={allImageUrls}
                   currentImageIndex={imageIndex >= 0 ? imageIndex : 0}
                   skipEntryAnimation={loading || loadingMore}
+                  onRegenerateSingle={handleRegenerateSingle}
                 />
               );
             })}
