@@ -12,16 +12,17 @@
 
 import { createContext, useContext, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { useWebSocket, type WSMessageType } from '../hooks/useWebSocket';
-import { useMessageStore } from '../stores/useMessageStore';
+import { useMessageStore, normalizeMessage, type Message } from '../stores/useMessageStore';
 import { useTaskRestorationStore } from '../stores/useTaskRestorationStore';
 import {
   restoreTaskPlaceholders,
   subscribeRestoredTasks,
+  fetchPendingTasks,
   type RestorationResult,
 } from '../utils/taskRestoration';
+import { getMessages } from '../services/message';
 import { logger } from '../utils/logger';
 import { createWSMessageHandlers } from './wsMessageHandlers';
-import type { Message } from '../stores/useMessageStore';
 
 /** 操作上下文（供完成回调使用） */
 export interface OperationContext {
@@ -175,6 +176,87 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
     logger.info('ws:restore', 'Phase 2: WS connected, subscribing restored tasks');
     subscribeRestoredTasks(result, subscribeTaskWithMappingRef.current);
+  }, [ws.isConnected]);
+
+  // WS 重连恢复：从 API 刷新断连期间已完成的媒体消息
+  async function recoverMissedMediaCompletions() {
+    const store = useMessageStore.getState();
+
+    // 1. 从 store 中找出有 pending 媒体消息的对话
+    const pendingMediaConversations: string[] = [];
+    for (const [conversationId, messages] of Object.entries(store.messages)) {
+      const hasPendingMedia = messages.some(
+        (m: Message) =>
+          m.role === 'assistant' &&
+          m.status === 'pending' &&
+          m.generation_params?.type &&
+          ['image', 'video'].includes(m.generation_params.type)
+      );
+      if (hasPendingMedia) {
+        pendingMediaConversations.push(conversationId);
+      }
+    }
+
+    if (pendingMediaConversations.length === 0) return;
+
+    logger.info('ws:reconnect', 'Checking for missed media completions', {
+      conversations: pendingMediaConversations.length,
+    });
+
+    // 2. 调用 /tasks/pending 获取后端最新任务状态
+    const tasks = await fetchPendingTasks();
+    if (!tasks) return;
+
+    // 3. 仍在运行的任务对应的对话
+    const stillRunningConversations = new Set(
+      tasks
+        .filter((t) => t.status === 'pending' || t.status === 'running')
+        .map((t) => t.conversation_id)
+    );
+
+    // 4. 前端认为 pending，但后端已完成 → 断连期间完成的任务
+    const completedConversations = pendingMediaConversations.filter(
+      (cid) => !stillRunningConversations.has(cid)
+    );
+
+    if (completedConversations.length === 0) return;
+
+    logger.info('ws:reconnect', 'Recovering missed media completions', {
+      conversations: completedConversations,
+    });
+
+    // 5. 重新从 API 加载这些对话的消息，替换 store 中的旧数据
+    for (const cid of completedConversations) {
+      try {
+        const response = await getMessages(cid, 30, 0);
+        if (response?.messages) {
+          const messagesAsc = [...response.messages].map(normalizeMessage).reverse();
+          store.setMessagesForConversation(cid, messagesAsc, response.messages.length >= 30);
+        }
+      } catch (error) {
+        logger.error('ws:reconnect', 'Failed to refresh messages', error, {
+          conversationId: cid,
+        });
+      }
+    }
+  }
+
+  // Phase 3：WS 重连后，检查断连期间是否有媒体任务已完成
+  // 区分首次连接 vs 重连：首次由 Phase 1/2 处理，重连才走此逻辑
+  const wasEverConnectedRef = useRef(false);
+
+  useEffect(() => {
+    if (!ws.isConnected) return;
+
+    // 首次连接由 Phase 1/2 处理，跳过
+    if (!wasEverConnectedRef.current) {
+      wasEverConnectedRef.current = true;
+      return;
+    }
+
+    // 重连：检查是否有遗漏的媒体完成事件
+    recoverMissedMediaCompletions();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ws.isConnected]);
 
   // 注册操作上下文
