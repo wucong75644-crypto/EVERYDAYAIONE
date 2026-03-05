@@ -132,6 +132,7 @@ async def generate_message(
             assistant_message_id=body.assistant_message_id,
             placeholder_created_at=body.placeholder_created_at,
             gen_type=gen_type,
+            model=body.model,
             params=body.params,
         )
 
