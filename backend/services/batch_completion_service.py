@@ -380,8 +380,10 @@ class BatchCompletionService:
             "model": model_id,
             "num_images": len(batch_tasks),
         }
-        if request_params.get("aspect_ratio"):
-            gen_params["aspect_ratio"] = request_params["aspect_ratio"]
+        # 保留占位符阶段写入的渲染参数（避免 upsert 覆盖后丢失）
+        for key in ("aspect_ratio", "resolution", "output_format"):
+            if request_params.get(key):
+                gen_params[key] = request_params[key]
 
         message_data = {
             "id": message_id,

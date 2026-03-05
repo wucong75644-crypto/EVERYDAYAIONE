@@ -181,6 +181,7 @@ async def handle_regenerate_or_send_operation(
     assistant_message_id: Optional[str],
     placeholder_created_at: Optional[datetime],
     gen_type: GenerationType,
+    model: Optional[str] = None,
     params: Optional[Dict[str, Any]] = None,
 ) -> tuple[str, Message]:
     """
@@ -231,6 +232,9 @@ async def handle_regenerate_or_send_operation(
 
         # 构建 generation_params（包含前端渲染占位符所需的参数）
         gen_params: Dict[str, Any] = {"type": gen_type.value}
+        # 🔥 关键：model 必须写入占位符，否则 message_done 丢失时前端无法获取正确模型
+        if model:
+            gen_params["model"] = model
         if params:
             # 按类型提取前端渲染所需的参数
             _PARAM_KEYS = {
