@@ -39,13 +39,13 @@ def chat_handler(mock_db):
 @pytest.fixture(autouse=True)
 def reset_mem0_globals():
     """每个测试前重置 Mem0 全局状态"""
-    import services.memory_service as mod
+    import services.memory_config as cfg
 
-    mod._mem0_instance = None
-    mod._mem0_available = None
+    cfg._mem0_instance = None
+    cfg._mem0_available = None
     yield
-    mod._mem0_instance = None
-    mod._mem0_available = None
+    cfg._mem0_instance = None
+    cfg._mem0_available = None
 
 
 # ============ 记忆注入测试 ============
@@ -65,9 +65,9 @@ class TestBuildMemoryPrompt:
             {"id": "2", "memory": "用户在杭州", "metadata": {}},
         ])
 
-        import services.memory_service as mod
-        mod._mem0_instance = mock_mem0
-        mod._mem0_available = True
+        import services.memory_config as cfg
+        cfg._mem0_instance = mock_mem0
+        cfg._mem0_available = True
 
         mock_db.set_table_data("user_memory_settings", [
             {"user_id": user_id, "memory_enabled": True, "retention_days": 7}
@@ -86,9 +86,9 @@ class TestBuildMemoryPrompt:
     ):
         """用户关闭记忆时返回 None"""
         mock_mem0 = AsyncMock()
-        import services.memory_service as mod
-        mod._mem0_instance = mock_mem0
-        mod._mem0_available = True
+        import services.memory_config as cfg
+        cfg._mem0_instance = mock_mem0
+        cfg._mem0_available = True
 
         mock_db.set_table_data("user_memory_settings", [
             {"user_id": user_id, "memory_enabled": False, "retention_days": 7}
@@ -103,8 +103,8 @@ class TestBuildMemoryPrompt:
         self, chat_handler, user_id
     ):
         """Mem0 不可用时返回 None"""
-        import services.memory_service as mod
-        mod._mem0_available = False
+        import services.memory_config as cfg
+        cfg._mem0_available = False
 
         result = await chat_handler._build_memory_prompt(user_id, "你好")
 
@@ -118,9 +118,9 @@ class TestBuildMemoryPrompt:
         mock_mem0 = AsyncMock()
         mock_mem0.search = AsyncMock(return_value=[])
 
-        import services.memory_service as mod
-        mod._mem0_instance = mock_mem0
-        mod._mem0_available = True
+        import services.memory_config as cfg
+        cfg._mem0_instance = mock_mem0
+        cfg._mem0_available = True
 
         mock_db.set_table_data("user_memory_settings", [
             {"user_id": user_id, "memory_enabled": True, "retention_days": 7}
@@ -138,9 +138,9 @@ class TestBuildMemoryPrompt:
         mock_mem0 = AsyncMock()
         mock_mem0.search = AsyncMock(side_effect=Exception("search error"))
 
-        import services.memory_service as mod
-        mod._mem0_instance = mock_mem0
-        mod._mem0_available = True
+        import services.memory_config as cfg
+        cfg._mem0_instance = mock_mem0
+        cfg._mem0_available = True
 
         # 模拟 is_memory_enabled 成功但 search 失败
         with patch(
@@ -222,9 +222,9 @@ class TestExtractMemoriesAsync:
     ):
         """用户关闭记忆时跳过提取"""
         mock_mem0 = AsyncMock()
-        import services.memory_service as mod
-        mod._mem0_instance = mock_mem0
-        mod._mem0_available = True
+        import services.memory_config as cfg
+        cfg._mem0_instance = mock_mem0
+        cfg._mem0_available = True
 
         mock_db.set_table_data("user_memory_settings", [
             {"user_id": user_id, "memory_enabled": False, "retention_days": 7}
@@ -253,9 +253,9 @@ class TestExtractMemoriesAsync:
         mock_mem0 = AsyncMock()
         mock_mem0.add = AsyncMock(return_value=None)
 
-        import services.memory_service as mod
-        mod._mem0_instance = mock_mem0
-        mod._mem0_available = True
+        import services.memory_config as cfg
+        cfg._mem0_instance = mock_mem0
+        cfg._mem0_available = True
 
         mock_db.set_table_data("user_memory_settings", [
             {"user_id": user_id, "memory_enabled": True, "retention_days": 7}

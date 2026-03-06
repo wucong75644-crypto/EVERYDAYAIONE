@@ -46,7 +46,7 @@ class TestMem0E2E:
     @pytest.mark.asyncio
     async def test_01_mem0_initialization(self):
         """测试 Mem0 配置构建"""
-        from services.memory_service import _build_mem0_config
+        from services.memory_config import _build_mem0_config
 
         config = _build_mem0_config()
         assert config is not None, "配置构建失败，检查 SUPABASE_DB_URL 和 DASHSCOPE_API_KEY"
@@ -59,7 +59,7 @@ class TestMem0E2E:
     async def test_02_mem0_async_memory_create(self):
         """测试 AsyncMemory 实例创建（验证 DB 连接）"""
         from mem0 import AsyncMemory
-        from services.memory_service import _build_mem0_config
+        from services.memory_config import _build_mem0_config
 
         config = _build_mem0_config()
         mem0 = await AsyncMemory.from_config(config)
@@ -70,7 +70,7 @@ class TestMem0E2E:
     async def test_03_add_memory(self, test_user_id):
         """测试添加记忆"""
         from mem0 import AsyncMemory
-        from services.memory_service import _build_mem0_config
+        from services.memory_config import _build_mem0_config
 
         config = _build_mem0_config()
         mem0 = await AsyncMemory.from_config(config)
@@ -87,7 +87,7 @@ class TestMem0E2E:
     async def test_04_get_all_memories(self, test_user_id):
         """测试获取所有记忆"""
         from mem0 import AsyncMemory
-        from services.memory_service import _build_mem0_config
+        from services.memory_config import _build_mem0_config
 
         config = _build_mem0_config()
         mem0 = await AsyncMemory.from_config(config)
@@ -108,7 +108,7 @@ class TestMem0E2E:
     async def test_05_search_memory(self, test_user_id):
         """测试搜索相关记忆"""
         from mem0 import AsyncMemory
-        from services.memory_service import _build_mem0_config
+        from services.memory_config import _build_mem0_config
 
         config = _build_mem0_config()
         mem0 = await AsyncMemory.from_config(config)
@@ -129,7 +129,7 @@ class TestMem0E2E:
     async def test_06_cleanup(self, test_user_id):
         """清理测试数据"""
         from mem0 import AsyncMemory
-        from services.memory_service import _build_mem0_config
+        from services.memory_config import _build_mem0_config
 
         config = _build_mem0_config()
         mem0 = await AsyncMemory.from_config(config)

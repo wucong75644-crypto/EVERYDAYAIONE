@@ -137,7 +137,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 预热 Mem0 记忆服务连接（避免首次请求慢）
     try:
-        from services.memory_service import _get_mem0
+        from services.memory_config import _get_mem0
         mem0 = await _get_mem0()
         if mem0:
             logger.info("Mem0 connection pre-warmed successfully")
