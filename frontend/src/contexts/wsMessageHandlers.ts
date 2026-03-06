@@ -2,7 +2,7 @@
  * WebSocket 消息处理器工厂
  *
  * 从 WebSocketContext.tsx 提取的纯函数逻辑，包括：
- * - 8 种 WS 消息类型的处理器
+ * - 10 种 WS 消息类型的处理器
  * - chunk 缓冲 flush 机制
  * - 任务完成/失败辅助函数
  */
@@ -138,13 +138,172 @@ export function flushChunkBuffer(deps: HandlerDeps): void {
 }
 
 // ============================================================
+// 独立 handler 函数（从工厂提取，降低单函数复杂度）
+// ============================================================
+
+/** 处理生成完成消息 */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function handleMessageDone(deps: HandlerDeps, msg: any): void {
+  const { task_id, message_id, conversation_id } = msg;
+  const messageData = msg.message || msg.payload?.message;
+
+  // L1: 完成前立即 flush 缓冲的 chunk
+  if (deps.chunkBufferRef.current.size > 0) {
+    if (deps.flushTimerRef.current) {
+      clearTimeout(deps.flushTimerRef.current);
+      deps.flushTimerRef.current = null;
+    }
+    flushChunkBuffer(deps);
+  }
+
+  logger.info('ws:message', 'done received', {
+    taskId: task_id,
+    messageId: message_id || messageData?.id,
+    conversationId: conversation_id,
+  });
+
+  const store = deps.getStore();
+
+  // conversation_id 兜底：从 taskConversationMap 查找（后端可能不发送该字段）
+  const effectiveConversationId = conversation_id
+    || (task_id ? deps.taskConversationMapRef.current.get(task_id) : undefined);
+
+  // 跟踪是否为新处理的消息（控制 toast 显示）
+  let isNewlyCompleted = true;
+
+  // 1. 有 task_id：处理任务完成
+  if (task_id) {
+    if (messageData && effectiveConversationId) {
+      isNewlyCompleted = handleTaskDoneWithMessage(deps, task_id, messageData, effectiveConversationId);
+    } else if (message_id) {
+      store.setStatus(message_id, 'completed');
+      store.completeTask(task_id);
+    }
+    cleanupTaskSubscription(deps, task_id);
+  }
+  // 2. 无 task_id 但有 messageData
+  else if (messageData) {
+    const normalized = normalizeMessage(messageData);
+    store.updateMessage(message_id || messageData.id, { ...normalized, status: 'completed' });
+  }
+  // 3. 只有 message_id
+  else if (message_id) {
+    store.setStatus(message_id, 'completed');
+  }
+
+  // 完成流式状态（仅在新完成时更新，避免重复触发）
+  if (effectiveConversationId && isNewlyCompleted) {
+    store.completeStreaming(effectiveConversationId);
+    store.markConversationCompleted(effectiveConversationId);
+    store.setIsSending(false);
+    tabSync.broadcast('message_completed', { conversationId: effectiveConversationId, messageId: message_id });
+  }
+
+  // Toast 提示（仅在消息确实是新完成时才显示）
+  if (isNewlyCompleted) {
+    import('react-hot-toast').then(({ default: toast }) => {
+      toast.success('生成完成');
+    });
+  }
+}
+
+/** 处理生成失败消息 */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function handleMessageError(deps: HandlerDeps, msg: any): void {
+  const { task_id, message_id, conversation_id } = msg;
+  const error = msg.error || msg.payload?.error;
+
+  // L1: 错误时丢弃缓冲（避免 flush 到已失败的消息）
+  if (message_id) {
+    deps.chunkBufferRef.current.delete(message_id);
+  }
+  if (deps.flushTimerRef.current && deps.chunkBufferRef.current.size === 0) {
+    clearTimeout(deps.flushTimerRef.current);
+    deps.flushTimerRef.current = null;
+  }
+
+  logger.error('ws:message', 'error received', undefined, {
+    taskId: task_id,
+    messageId: message_id,
+    error,
+  });
+
+  const store = deps.getStore();
+
+  // 更新消息状态（同步 content，与后端 on_error 保存的一致）
+  if (message_id) {
+    const errorText = error?.message || '生成失败';
+    store.updateMessage(message_id, {
+      status: 'failed',
+      is_error: true,
+      error: error || { code: 'UNKNOWN', message: errorText },
+      content: [{ type: 'text', text: errorText }],
+    });
+  }
+
+  // 处理任务失败
+  if (task_id) {
+    handleTaskFailure(deps, task_id, error);
+  }
+
+  // 完成流式状态
+  if (conversation_id) {
+    store.completeStreaming(conversation_id);
+  }
+
+  // 设置发送状态
+  store.setIsSending(false);
+
+  // Toast 提示
+  import('react-hot-toast').then(({ default: toast }) => {
+    toast.error(error?.message || '生成失败');
+  });
+}
+
+/** 处理多图批次单张图片完成/失败通知 */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function handleImagePartialUpdate(deps: HandlerDeps, msg: any): void {
+  const { message_id } = msg;
+  const payload = msg.payload || {};
+  const { image_index, content_part, completed_count, total_count, error } = payload;
+
+  if (!message_id || image_index === undefined) return;
+
+  logger.info('ws:image', 'partial update', {
+    messageId: message_id,
+    imageIndex: image_index,
+    progress: `${completed_count}/${total_count}`,
+    hasError: !!error,
+  });
+
+  const store = deps.getStore();
+  const existing = store.getMessage(message_id);
+  if (!existing) return;
+
+  // 克隆 content 数组，在对应 index 插入/替换
+  const content = [...(existing.content || [])];
+
+  // 确保数组长度足够
+  while (content.length <= image_index) {
+    content.push({ type: 'image', url: null } as unknown as Message['content'][number]);
+  }
+
+  if (error) {
+    content[image_index] = { type: 'image', url: null, failed: true, error } as unknown as Message['content'][number];
+  } else if (content_part) {
+    content[image_index] = content_part;
+  }
+
+  store.updateMessage(message_id, { content });
+}
+
+// ============================================================
 // Handler 工厂
 // ============================================================
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg: any) => void> {
   return {
-    // 消息开始（流式）
     message_start: (msg) => {
       const { message_id } = msg;
       if (!message_id) return;
@@ -153,13 +312,11 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       deps.getStore().setStatus(message_id, 'streaming');
     },
 
-    // 流式内容块
     message_chunk: (msg) => {
       const { message_id, task_id, conversation_id } = msg;
       const chunk = msg.chunk || msg.payload?.chunk;
       if (!message_id || !chunk || !conversation_id) return;
 
-      // L1: 累积到 buffer（不触发渲染）
       const bufferData = deps.chunkBufferRef.current.get(message_id);
       const prevChunk = bufferData?.chunk || '';
       const accumulated = prevChunk + chunk;
@@ -169,7 +326,6 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
         conversationId: conversation_id,
       });
 
-      // 流式回调仍然立即触发（用于外部消费者）
       if (task_id) {
         const context = deps.operationContextRef.current.get(task_id);
         if (context?.onStreamChunk) {
@@ -177,13 +333,11 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
         }
       }
 
-      // L1: 50ms 防抖 flush
       if (!deps.flushTimerRef.current) {
         deps.flushTimerRef.current = setTimeout(() => flushChunkBuffer(deps), 50);
       }
     },
 
-    // 进度更新
     message_progress: (msg) => {
       const { task_id } = msg;
       const progress = msg.progress ?? msg.payload?.progress;
@@ -193,160 +347,12 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       deps.getStore().updateTaskProgress(task_id, progress);
     },
 
-    // 生成完成
-    message_done: (msg) => {
-      const { task_id, message_id, conversation_id } = msg;
-      const messageData = msg.message || msg.payload?.message;
+    message_done: (msg) => handleMessageDone(deps, msg),
 
-      // L1: 完成前立即 flush 缓冲的 chunk
-      if (deps.chunkBufferRef.current.size > 0) {
-        if (deps.flushTimerRef.current) {
-          clearTimeout(deps.flushTimerRef.current);
-          deps.flushTimerRef.current = null;
-        }
-        flushChunkBuffer(deps);
-      }
+    message_error: (msg) => handleMessageError(deps, msg),
 
-      logger.info('ws:message', 'done received', {
-        taskId: task_id,
-        messageId: message_id || messageData?.id,
-        conversationId: conversation_id,
-      });
+    image_partial_update: (msg) => handleImagePartialUpdate(deps, msg),
 
-      const store = deps.getStore();
-
-      // conversation_id 兜底：从 taskConversationMap 查找（后端可能不发送该字段）
-      const effectiveConversationId = conversation_id
-        || (task_id ? deps.taskConversationMapRef.current.get(task_id) : undefined);
-
-      // 跟踪是否为新处理的消息（控制 toast 显示）
-      let isNewlyCompleted = true;
-
-      // 1. 有 task_id：处理任务完成
-      if (task_id) {
-        if (messageData && effectiveConversationId) {
-          isNewlyCompleted = handleTaskDoneWithMessage(deps, task_id, messageData, effectiveConversationId);
-        } else if (message_id) {
-          store.setStatus(message_id, 'completed');
-          store.completeTask(task_id);
-        }
-        cleanupTaskSubscription(deps, task_id);
-      }
-      // 2. 无 task_id 但有 messageData
-      else if (messageData) {
-        const normalized = normalizeMessage(messageData);
-        store.updateMessage(message_id || messageData.id, { ...normalized, status: 'completed' });
-      }
-      // 3. 只有 message_id
-      else if (message_id) {
-        store.setStatus(message_id, 'completed');
-      }
-
-      // 完成流式状态（仅在新完成时更新，避免重复触发）
-      if (effectiveConversationId && isNewlyCompleted) {
-        store.completeStreaming(effectiveConversationId);
-        store.markConversationCompleted(effectiveConversationId);
-        store.setIsSending(false);
-        tabSync.broadcast('message_completed', { conversationId: effectiveConversationId, messageId: message_id });
-      }
-
-      // Toast 提示（仅在消息确实是新完成时才显示）
-      if (isNewlyCompleted) {
-        import('react-hot-toast').then(({ default: toast }) => {
-          toast.success('生成完成');
-        });
-      }
-    },
-
-    // 生成失败
-    message_error: (msg) => {
-      const { task_id, message_id, conversation_id } = msg;
-      const error = msg.error || msg.payload?.error;
-
-      // L1: 错误时丢弃缓冲（避免 flush 到已失败的消息）
-      if (message_id) {
-        deps.chunkBufferRef.current.delete(message_id);
-      }
-      if (deps.flushTimerRef.current && deps.chunkBufferRef.current.size === 0) {
-        clearTimeout(deps.flushTimerRef.current);
-        deps.flushTimerRef.current = null;
-      }
-
-      logger.error('ws:message', 'error received', undefined, {
-        taskId: task_id,
-        messageId: message_id,
-        error,
-      });
-
-      const store = deps.getStore();
-
-      // 更新消息状态（同步 content，与后端 on_error 保存的一致）
-      if (message_id) {
-        const errorText = error?.message || '生成失败';
-        store.updateMessage(message_id, {
-          status: 'failed',
-          is_error: true,
-          error: error || { code: 'UNKNOWN', message: errorText },
-          content: [{ type: 'text', text: errorText }],
-        });
-      }
-
-      // 处理任务失败
-      if (task_id) {
-        handleTaskFailure(deps, task_id, error);
-      }
-
-      // 完成流式状态
-      if (conversation_id) {
-        store.completeStreaming(conversation_id);
-      }
-
-      // 设置发送状态
-      store.setIsSending(false);
-
-      // Toast 提示
-      import('react-hot-toast').then(({ default: toast }) => {
-        toast.error(error?.message || '生成失败');
-      });
-    },
-
-    // 多图批次：单张图片完成/失败通知
-    image_partial_update: (msg) => {
-      const { message_id } = msg;
-      const payload = msg.payload || {};
-      const { image_index, content_part, completed_count, total_count, error } = payload;
-
-      if (!message_id || image_index === undefined) return;
-
-      logger.info('ws:image', 'partial update', {
-        messageId: message_id,
-        imageIndex: image_index,
-        progress: `${completed_count}/${total_count}`,
-        hasError: !!error,
-      });
-
-      const store = deps.getStore();
-      const existing = store.getMessage(message_id);
-      if (!existing) return;
-
-      // 克隆 content 数组，在对应 index 插入/替换
-      const content = [...(existing.content || [])];
-
-      // 确保数组长度足够
-      while (content.length <= image_index) {
-        content.push({ type: 'image', url: null } as unknown as Message['content'][number]);
-      }
-
-      if (error) {
-        content[image_index] = { type: 'image', url: null, failed: true, error } as unknown as Message['content'][number];
-      } else if (content_part) {
-        content[image_index] = content_part;
-      }
-
-      store.updateMessage(message_id, { content });
-    },
-
-    // 积分变更
     credits_changed: (msg) => {
       const credits = msg.credits ?? msg.payload?.credits;
       if (credits === undefined) return;
@@ -359,7 +365,6 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       }
     },
 
-    // 订阅确认
     subscribed: (msg) => {
       const { task_id, accumulated } = msg.payload || {};
 
@@ -368,7 +373,6 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
         accumulatedLen: accumulated?.length ?? 0,
       });
 
-      // 用最新 accumulated 替换占位符内容（补全 Phase 1→2 间的差异）
       if (accumulated && accumulated.length > 0 && task_id) {
         const conversationId = deps.taskConversationMapRef.current.get(task_id);
         if (conversationId) {
@@ -377,20 +381,17 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       }
     },
 
-    // 记忆提取通知
     memory_extracted: (msg) => {
       const data = msg.data ?? msg.payload;
       if (!data?.memories) return;
 
       logger.info('ws:memory', 'memories extracted', { count: data.count });
 
-      // 动态导入避免循环依赖
       import('../stores/useMemoryStore').then(({ useMemoryStore }) => {
         useMemoryStore.getState().onMemoryExtracted(data.memories);
       });
     },
 
-    // 通用错误
     error: (msg) => {
       const message = msg.message ?? msg.payload?.message;
       logger.error('ws:error', 'error received', undefined, { error: message });

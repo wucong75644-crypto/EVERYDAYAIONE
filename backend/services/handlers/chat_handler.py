@@ -245,6 +245,7 @@ class ChatHandler(BaseHandler):
         """
         try:
             from services.memory_service import MemoryService
+            from services.memory_config import build_memory_system_prompt
 
             memory_service = MemoryService(self.db)
 
@@ -257,7 +258,7 @@ class ChatHandler(BaseHandler):
             if not memories:
                 return None
 
-            prompt = memory_service.build_system_prompt_with_memories(memories)
+            prompt = build_memory_system_prompt(memories)
             if prompt:
                 logger.debug(
                     f"Memory injected | user_id={user_id} | "
