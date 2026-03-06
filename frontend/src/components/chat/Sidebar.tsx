@@ -12,8 +12,11 @@ import { Link } from 'react-router-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { useMessageStore } from '../../stores/useMessageStore';
 import { useClickOutside } from '../../hooks/useClickOutside';
+import { Brain } from 'lucide-react';
 import ConversationList from './ConversationList';
 import SettingsModal from './SettingsModal';
+import MemoryModal from './MemoryModal';
+import { useMemoryStore } from '../../stores/useMemoryStore';
 
 /** 乐观更新参数 */
 interface OptimisticUpdate {
@@ -185,6 +188,17 @@ export default function Sidebar({
         />
       </div>
 
+      {/* 记忆入口 */}
+      <div className="px-3 pb-1">
+        <button
+          onClick={useMemoryStore.getState().openModal}
+          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+        >
+          <Brain className="w-4 h-4" />
+          <span>AI 记忆</span>
+        </button>
+      </div>
+
       {/* 底部用户区域 */}
       <div className="p-3">
         <div className="flex items-center justify-between">
@@ -243,6 +257,9 @@ export default function Sidebar({
         isOpen={showSettingsModal}
         onClose={() => setShowSettingsModal(false)}
       />
+
+      {/* 记忆管理弹框 */}
+      <MemoryModal />
     </aside>
   );
 }

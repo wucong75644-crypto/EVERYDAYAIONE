@@ -56,6 +56,7 @@ export type WSMessageType =
   | 'message_error'
   // 系统消息
   | 'credits_changed'
+  | 'memory_extracted'
   | 'notification'
   | 'ping'
   | 'pong'

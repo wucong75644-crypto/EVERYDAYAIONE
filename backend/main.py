@@ -16,7 +16,7 @@ from loguru import logger
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from api.routes import audio, auth, conversation, health, image, message, task, webhook, ws
+from api.routes import audio, auth, conversation, health, image, memory, message, task, webhook, ws
 from core.config import get_settings
 from core.exceptions import AppException
 from core.limiter import limiter
@@ -134,6 +134,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 启动 WebSocket Redis Pub/Sub 监听（跨 Worker 消息投递）
     await ws_manager.start_redis_listener()
+
+    # 预热 Mem0 记忆服务连接（避免首次请求慢）
+    try:
+        from services.memory_service import _get_mem0
+        mem0 = await _get_mem0()
+        if mem0:
+            logger.info("Mem0 connection pre-warmed successfully")
+        else:
+            logger.info("Mem0 not configured, memory feature disabled")
+    except Exception as e:
+        logger.warning(f"Mem0 pre-warm failed (non-critical) | error={e}")
 
     # 启动后台任务工作器
     from core.database import get_supabase_client
@@ -272,6 +283,9 @@ def register_routers(app: FastAPI) -> None:
 
     # 音频上传
     app.include_router(audio.router, prefix="/api")
+
+    # 记忆
+    app.include_router(memory.router, prefix="/api")
 
     # 任务管理
     app.include_router(task.router, prefix="/api")

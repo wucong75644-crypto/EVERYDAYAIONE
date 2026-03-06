@@ -377,6 +377,19 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       }
     },
 
+    // 记忆提取通知
+    memory_extracted: (msg) => {
+      const data = msg.data ?? msg.payload;
+      if (!data?.memories) return;
+
+      logger.info('ws:memory', 'memories extracted', { count: data.count });
+
+      // 动态导入避免循环依赖
+      import('../stores/useMemoryStore').then(({ useMemoryStore }) => {
+        useMemoryStore.getState().onMemoryExtracted(data.memories);
+      });
+    },
+
     // 通用错误
     error: (msg) => {
       const message = msg.message ?? msg.payload?.message;

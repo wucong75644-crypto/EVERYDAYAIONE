@@ -151,6 +151,11 @@ class ChatHandler(BaseHandler):
                     {"type": "image_url", "image_url": {"url": image_url}},
                 ]
 
+            # 2.5 记忆注入（失败不影响主流程）
+            memory_prompt = await self._build_memory_prompt(user_id, text_content)
+            if memory_prompt:
+                messages.insert(0, {"role": "system", "content": memory_prompt})
+
             # 3. 创建适配器
             from services.adapters.factory import create_chat_adapter
 
@@ -203,6 +208,16 @@ class ChatHandler(BaseHandler):
                 credits_consumed=credits_consumed,
             )
 
+            # 7. 异步提取记忆（fire-and-forget，失败不影响主流程）
+            asyncio.create_task(
+                self._extract_memories_async(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    user_text=text_content,
+                    assistant_text=accumulated_text,
+                )
+            )
+
         except Exception as e:
             logger.error(f"Chat stream error | task_id={task_id} | error={str(e)}")
             await self.on_error(
@@ -214,6 +229,95 @@ class ChatHandler(BaseHandler):
         finally:
             if self._adapter:
                 await self._adapter.close()
+
+    # ========================================
+    # 记忆功能
+    # ========================================
+
+    async def _build_memory_prompt(
+        self, user_id: str, query: str
+    ) -> Optional[str]:
+        """
+        构建记忆 system prompt
+
+        检索用户相关记忆并构建注入文本。
+        失败时返回 None，不影响主流程。
+        """
+        try:
+            from services.memory_service import MemoryService
+
+            memory_service = MemoryService(self.db)
+
+            if not await memory_service.is_memory_enabled(user_id):
+                return None
+
+            memories = await memory_service.get_relevant_memories(
+                user_id, query
+            )
+            if not memories:
+                return None
+
+            prompt = memory_service.build_system_prompt_with_memories(memories)
+            if prompt:
+                logger.debug(
+                    f"Memory injected | user_id={user_id} | "
+                    f"memory_count={len(memories)}"
+                )
+            return prompt
+        except Exception as e:
+            logger.warning(
+                f"Memory injection failed, skipping | "
+                f"user_id={user_id} | error={e}"
+            )
+            return None
+
+    async def _extract_memories_async(
+        self,
+        user_id: str,
+        conversation_id: str,
+        user_text: str,
+        assistant_text: str,
+    ) -> None:
+        """
+        异步从对话中提取记忆（fire-and-forget）
+
+        短消息（<50字符）跳过提取。
+        提取成功后通过 WebSocket 通知用户。
+        """
+        try:
+            # 短消息无信息量，跳过提取（中文信息密度高，阈值设低）
+            if len(user_text) < 10:
+                return
+
+            from services.memory_service import MemoryService
+
+            memory_service = MemoryService(self.db)
+
+            if not await memory_service.is_memory_enabled(user_id):
+                return
+
+            messages = [
+                {"role": "user", "content": user_text},
+                {"role": "assistant", "content": assistant_text},
+            ]
+
+            extracted = await memory_service.extract_memories_from_conversation(
+                user_id, messages, conversation_id
+            )
+
+            if extracted:
+                await ws_manager.send_to_user(user_id, {
+                    "type": "memory_extracted",
+                    "data": {
+                        "memories": extracted,
+                        "count": len(extracted),
+                    },
+                })
+        except Exception as e:
+            logger.warning(
+                f"Memory extraction failed | user_id={user_id} | "
+                f"conversation_id={conversation_id} | error={e}"
+            )
 
     # ========================================
     # 基类抽象方法实现
