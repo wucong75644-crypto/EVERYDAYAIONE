@@ -38,6 +38,10 @@ google-genai==1.0.0
 # API 限流
 slowapi==0.1.9
 
+# AI 记忆层（开源自部署，数据存自有 PostgreSQL + pgvector）
+mem0ai==1.0.4
+psycopg[pool]==3.3.3
+
 # 测试
 pytest==8.3.4
 pytest-asyncio==0.25.2

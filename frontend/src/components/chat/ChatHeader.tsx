@@ -9,6 +9,8 @@
  */
 
 import { memo } from 'react';
+import { Brain } from 'lucide-react';
+import { useMemoryStore } from '../../stores/useMemoryStore';
 
 /** 组件属性接口 */
 export interface ChatHeaderProps {
@@ -99,9 +101,19 @@ export const ChatHeader = memo(function ChatHeader({
           </h1>
         )}
       </div>
-      <div className="flex items-center space-x-2 text-sm text-gray-600">
-        <span>剩余积分:</span>
-        <span className="font-medium text-blue-600">{userCredits}</span>
+      <div className="flex items-center space-x-3 text-sm text-gray-600">
+        <button
+          onClick={useMemoryStore.getState().openModal}
+          className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
+          title="AI 记忆"
+          aria-label="打开记忆管理"
+        >
+          <Brain className="w-5 h-5 text-gray-500" />
+        </button>
+        <div className="flex items-center space-x-2">
+          <span>剩余积分:</span>
+          <span className="font-medium text-blue-600">{userCredits}</span>
+        </div>
       </div>
     </header>
   );

@@ -78,6 +78,15 @@ class Settings(BaseSettings):
     rate_limit_global_tasks: int = 15
     rate_limit_conversation_tasks: int = 5
 
+    # DashScope（阿里云灵积）配置
+    dashscope_api_key: Optional[str] = None
+
+    # 记忆功能配置（Mem0）
+    supabase_db_url: Optional[str] = None  # PostgreSQL 直连串（Mem0 pgvector 使用）
+    memory_extraction_model: str = "qwen-plus"  # 记忆提取用 LLM（DashScope）
+    memory_embedding_model: str = "text-embedding-v3"  # 嵌入模型（1024维，DashScope）
+    memory_enabled_default: bool = True  # 新用户默认开启记忆
+
     # Sentry 错误监控配置
     sentry_dsn: Optional[str] = None
     environment: str = "development"
