@@ -6,6 +6,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { type UnifiedModel } from '../../constants/models';
+import { isSmartModel } from '../../constants/smartModel';
 import { MODAL_CLOSE_ANIMATION_DURATION } from '../../constants/animations';
 
 interface ModelSelectorProps {
@@ -56,7 +57,18 @@ export default function ModelSelector({
    * 渲染模型图标
    */
   const renderModelIcon = (model: UnifiedModel, className: string = 'w-4 h-4 text-gray-700') => {
-    if (model.type === 'chat') {
+    if (isSmartModel(model.id)) {
+      return (
+        <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"
+          />
+        </svg>
+      );
+    } else if (model.type === 'chat') {
       return (
         <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path

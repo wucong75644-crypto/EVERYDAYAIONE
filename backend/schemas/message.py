@@ -125,7 +125,13 @@ class VideoParams(BaseModel):
 
 
 class GenerationParams(BaseModel):
-    """统一生成参数（用于存储和重新生成）"""
+    """统一生成参数（用于存储和重新生成）
+
+    DB 中以扁平 JSON 存储（如 {"type":"image", "model":"...", "aspect_ratio":"16:9"}），
+    允许额外字段透传给前端用于占位符渲染。
+    """
+    model_config = {"extra": "allow"}
+
     type: Optional[GenerationType] = None
     chat: Optional[ChatParams] = None
     image: Optional[ImageParams] = None
@@ -280,6 +286,9 @@ class GenerateResponse(BaseModel):
 
     # 操作类型（回显）
     operation: MessageOperation
+
+    # 后端路由确认的真实生成类型
+    generation_type: str = "chat"
 
 
 # ============================================================

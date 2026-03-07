@@ -395,11 +395,11 @@ export default memo(function MessageMedia({
     }
   }, [showVideoPlaceholder, onMediaLoaded]);
 
-  if (imageUrls.length === 0 && !videoUrl && !isGenerating && !failedMediaType) return null;
-
   const handleImageClick = useCallback((index?: number) => {
     onImageClick(index ?? 0);
   }, [onImageClick]);
+
+  if (imageUrls.length === 0 && !videoUrl && !isGenerating && !failedMediaType) return null;
 
   return (
     <>

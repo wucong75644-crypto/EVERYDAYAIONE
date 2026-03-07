@@ -1,15 +1,14 @@
 /**
  * 统一的加载占位符组件
  *
- * 显示文字 + 三个跳动的小圆点
- * 适用于：聊天、图片、视频等所有类型的生成中状态
+ * 显示文字 + 三个跳动圆点（如"AI 正在思考"）
  */
 
 import styles from './shared.module.css';
 
 interface LoadingPlaceholderProps {
-  /** 占位符文字（如："AI 正在思考"、"图片生成中"、"视频生成中"） */
-  text: string;
+  /** 占位符文字 */
+  text?: string;
   /** 自定义样式类名 */
   className?: string;
 }

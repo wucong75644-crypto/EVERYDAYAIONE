@@ -65,6 +65,11 @@ class ImageHandler(BaseHandler):
         aspect_ratio = params.get("aspect_ratio") or "1:1"
         output_format = params.get("output_format") or "png"
         resolution = params.get("resolution") or None
+        # 支持分辨率的模型（如 nano-banana-pro）未指定时默认 1K
+        from config.kie_models import get_model_config
+        model_config = get_model_config(model_id)
+        if model_config and model_config.get("supports_resolution") and not resolution:
+            resolution = "1K"
 
         # regenerate_single：仅生成 1 张，使用指定 image_index
         is_regenerate_single = params.get("operation") == "regenerate_single"
@@ -186,10 +191,19 @@ class ImageHandler(BaseHandler):
         except Exception as e:
             self._refund_credits(transaction_id)
             logger.warning(
-                f"Image task[{index}] API failed, skipping | "
+                f"Image task[{index}] API failed | "
                 f"batch_id={batch_id} | error={e}"
             )
-            return None
+
+            # Smart mode: 尝试用替代模型重试
+            retry_result = await self._attempt_image_sync_retry(
+                prompt=prompt, model_id=model_id, error=str(e),
+                params=params, generate_kwargs=generate_kwargs,
+                user_id=user_id, per_image_credits=per_image_credits,
+                index=index, batch_id=batch_id, message_id=message_id,
+                conversation_id=conversation_id, metadata=metadata,
+            )
+            return retry_result  # None if retry also failed
 
         self._save_task(
             task_id=external_task_id,
@@ -207,6 +221,90 @@ class ImageHandler(BaseHandler):
         )
 
         return external_task_id
+
+    async def _attempt_image_sync_retry(
+        self,
+        prompt: str,
+        model_id: str,
+        error: str,
+        params: Dict[str, Any],
+        generate_kwargs: Dict[str, Any],
+        user_id: str,
+        per_image_credits: int,
+        index: int,
+        batch_id: str,
+        message_id: str,
+        conversation_id: str,
+        metadata: TaskMetadata,
+    ) -> Optional[str]:
+        """Smart mode 同步重试：API 调用失败时尝试替代模型"""
+        if not params.get("_is_smart_mode"):
+            return None
+
+        from services.intent_router import RetryContext
+
+        ctx = RetryContext(
+            is_smart_mode=True,
+            original_content=prompt,
+            generation_type=GenerationType.IMAGE,
+        )
+        ctx.add_failure(model_id, error)
+
+        while ctx.can_retry:
+            decision = await self._route_retry(ctx)
+            if not decision or not decision.recommended_model:
+                break
+
+            new_model = decision.recommended_model
+            attempt = len(ctx.failed_attempts)
+            logger.info(
+                f"Image sync retry | index={index} | attempt={attempt} | "
+                f"{model_id} → {new_model}"
+            )
+
+            from services.adapters.factory import create_image_adapter
+
+            new_adapter = create_image_adapter(new_model)
+            new_tx = self._lock_credits(
+                task_id=str(uuid.uuid4()),
+                user_id=user_id,
+                amount=per_image_credits,
+                reason=f"Image[{index}] retry: {new_model}",
+            )
+
+            try:
+                new_kwargs = {**generate_kwargs}
+                new_kwargs["callback_url"] = self._build_callback_url(
+                    new_adapter.provider.value
+                )
+                result = await new_adapter.generate(**new_kwargs)
+
+                self._save_task(
+                    task_id=result.task_id,
+                    message_id=message_id,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    model_id=new_model,
+                    prompt=prompt,
+                    params=params,
+                    metadata=metadata,
+                    credits_locked=per_image_credits,
+                    transaction_id=new_tx,
+                    image_index=index,
+                    batch_id=batch_id,
+                )
+                return result.task_id
+            except Exception as retry_err:
+                self._refund_credits(new_tx)
+                ctx.add_failure(new_model, str(retry_err))
+                logger.warning(
+                    f"Image sync retry failed | index={index} | "
+                    f"model={new_model} | error={retry_err}"
+                )
+            finally:
+                await new_adapter.close()
+
+        return None
 
     # ========================================
     # 基类抽象方法实现

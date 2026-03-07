@@ -1,0 +1,74 @@
+{
+  "chat": {
+    "models": [
+      {
+        "id": "gemini-3-pro",
+        "description": "高级推理，复杂分析/代码/深度思考",
+        "priority": 1
+      },
+      {
+        "id": "gemini-3-flash",
+        "description": "快速响应，日常对话/简单问答/翻译",
+        "priority": 2
+      }
+    ],
+    "default": "gemini-3-pro"
+  },
+  "image": {
+    "models": [
+      {
+        "id": "google/nano-banana",
+        "description": "默认文生图模型，速度快费用低(5积分)。用户没有特殊要求时优先选择此模型",
+        "priority": 1
+      },
+      {
+        "id": "nano-banana-pro",
+        "description": "高品质文生图，支持2K/4K高分辨率(25-49积分)。仅当用户明确要求高清、高品质、精细、大图、4K时选择",
+        "priority": 2
+      },
+      {
+        "id": "google/nano-banana-edit",
+        "description": "纯图像编辑，仅当用户上传了图片并要求修改时选择(5积分)",
+        "priority": 3,
+        "requires_image": true
+      }
+    ],
+    "default": "google/nano-banana"
+  },
+  "video": {
+    "models": [
+      {
+        "id": "sora-2-text-to-video",
+        "description": "文生视频(30积分/10秒)",
+        "priority": 1
+      },
+      {
+        "id": "sora-2-image-to-video",
+        "description": "图生视频，仅当用户上传了图片时选择(30积分/10秒)",
+        "priority": 2,
+        "requires_image": true
+      },
+      {
+        "id": "sora-2-pro-storyboard",
+        "description": "专业故事板，用户要求电影级/专业级质量时选择(150积分/10秒)",
+        "priority": 3
+      }
+    ],
+    "default": "sora-2-text-to-video"
+  },
+  "web_search": {
+    "models": [
+      {
+        "id": "gemini-3-pro",
+        "description": "高级推理，适合深度分析",
+        "priority": 1
+      },
+      {
+        "id": "gemini-3-flash",
+        "description": "快速响应，适合简单搜索",
+        "priority": 2
+      }
+    ],
+    "default": "gemini-3-flash"
+  }
+}

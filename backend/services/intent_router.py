@@ -1,0 +1,443 @@
+"""
+智能意图路由器
+
+通过千问 Function Calling 分析用户消息，决定：
+1. 生成类型（CHAT / IMAGE / VIDEO）
+2. 自动推断人设（system_prompt）
+3. 搜索需求（web_search）
+4. 动态模型选择 + 失败重试路由
+
+降级链：qwen-plus → qwen-turbo → 关键词兜底
+重试降级链：千问主模型 → 千问备用 → 确定性兜底 → 放弃
+"""
+
+import json
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+import httpx
+from loguru import logger
+
+from schemas.message import ContentPart, GenerationType, TextPart, ImagePart
+from config.smart_model_config import (
+    TOOL_TO_TYPE,
+    MODEL_TO_GEN_TYPE,
+    AUTO_MODEL_DEFAULTS,
+    ROUTER_TOOLS,
+    build_retry_tools,
+    get_remaining_models,
+)
+
+
+# ============================================================
+# 数据结构
+# ============================================================
+
+
+@dataclass
+class RoutingDecision:
+    """路由决策结果"""
+
+    generation_type: GenerationType
+    system_prompt: Optional[str] = None
+    tool_params: Dict[str, Any] = field(default_factory=dict)
+    search_query: Optional[str] = None
+    recommended_model: Optional[str] = None
+    raw_tool_name: str = "text_chat"
+    routed_by: str = "keyword"
+
+
+@dataclass
+class RetryContext:
+    """重试上下文（跨重试传递）"""
+
+    is_smart_mode: bool
+    original_content: str
+    generation_type: GenerationType
+    failed_attempts: List[Dict[str, str]] = field(default_factory=list)
+    max_retries: int = 2
+
+    @property
+    def can_retry(self) -> bool:
+        return self.is_smart_mode and len(self.failed_attempts) < self.max_retries
+
+    @property
+    def failed_models(self) -> List[str]:
+        return [a["model"] for a in self.failed_attempts]
+
+    def add_failure(self, model: str, error: str) -> None:
+        self.failed_attempts.append({"model": model, "error": error})
+
+
+# ============================================================
+# 提示词 & 常量
+# ============================================================
+
+ROUTER_SYSTEM_PROMPT = (
+    "你是智能意图路由器。分析用户消息，必须调用一个工具，"
+    "并为该工具选择最合适的 model。\n\n"
+    "意图判断：\n"
+    "- generate_image: 用户明确要求生成/画/绘制/修改图片\n"
+    "- generate_video: 用户明确要求生成/制作视频\n"
+    "- web_search: 需要搜索互联网最新信息才能回答\n"
+    "- text_chat: 其他所有对话（包括讨论图片风格、分析设计等）\n\n"
+    "模型选择要点：\n"
+    "- 根据 model 参数的 description 选择最匹配的模型\n"
+    "- 用户有图片且要编辑 → google/nano-banana-edit 或 nano-banana-pro\n"
+    "- 用户有图片且要做视频 → sora-2-image-to-video\n"
+    "- 用户要求高质量/专业级 → 选更高级的模型\n"
+    "- 日常简单对话 → gemini-3-flash；复杂推理/代码 → gemini-3-pro\n\n"
+    "重要：仅当用户明确要求「生成/画/制作」时才调用生成工具。"
+    "讨论、分析、解释等一律用 text_chat。"
+)
+
+RETRY_ROUTER_SYSTEM_PROMPT = (
+    "你是智能重试路由器。之前选择的模型执行失败了，"
+    "你需要从剩余可用模型中选择一个替代模型重试。\n\n"
+    "分析失败原因，选择最合适的替代模型。"
+    "如果没有合适的替代模型可选，调用 give_up 工具放弃重试。"
+)
+
+DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+# 智能模型 ID（前端 smartModel.ts 对应）
+SMART_MODEL_ID = "auto"
+
+# 向后兼容别名（旧代码可能直接引用这些名称）
+_MODEL_TO_GEN_TYPE = MODEL_TO_GEN_TYPE
+_AUTO_MODEL_DEFAULTS = AUTO_MODEL_DEFAULTS
+
+
+def resolve_auto_model(
+    gen_type: GenerationType,
+    content: List[ContentPart],
+    recommended_model: Optional[str] = None,
+) -> str:
+    """根据千问推荐 + 路由意图解析智能模型到实际工作模型"""
+    if recommended_model and recommended_model in MODEL_TO_GEN_TYPE:
+        if MODEL_TO_GEN_TYPE[recommended_model] == gen_type:
+            return recommended_model
+        logger.warning(
+            f"Model type mismatch | recommended={recommended_model} | "
+            f"gen_type={gen_type.value} | falling back to default"
+        )
+
+    if gen_type == GenerationType.VIDEO:
+        has_images = any(isinstance(p, ImagePart) for p in content)
+        if has_images:
+            return "sora-2-image-to-video"
+    return AUTO_MODEL_DEFAULTS.get(gen_type, "gemini-3-pro")
+
+
+# ============================================================
+# 路由器实现
+# ============================================================
+
+
+class IntentRouter:
+    """智能意图路由器（DashScope Function Calling）"""
+
+    def __init__(self) -> None:
+        self._client: Optional[httpx.AsyncClient] = None
+
+    # ------ 首次路由 ------
+
+    async def route(
+        self,
+        content: List[ContentPart],
+        user_id: str,
+        conversation_id: str,
+    ) -> RoutingDecision:
+        """分析用户消息，返回路由决策"""
+        from core.config import get_settings
+
+        settings = get_settings()
+
+        if not settings.intent_router_enabled:
+            return self._keyword_fallback(content)
+
+        if not settings.dashscope_api_key:
+            logger.warning("Intent router skipped: DASHSCOPE_API_KEY not configured")
+            return self._keyword_fallback(content)
+
+        text = self._extract_text(content)
+        if not text or len(text.strip()) < 2:
+            return RoutingDecision(
+                generation_type=GenerationType.CHAT,
+                routed_by="skip_empty",
+            )
+
+        # 上下文前缀（让千问知道用户是否附带了图片）
+        image_count = sum(1 for p in content if isinstance(p, ImagePart))
+        context_prefix = ""
+        if image_count > 0:
+            context_prefix = f"[上下文：用户附带了{image_count}张图片]\n"
+
+        # 降级链：主模型 → 备用模型 → 关键词
+        models = [
+            settings.intent_router_model,
+            settings.intent_router_fallback_model,
+        ]
+
+        for model in models:
+            try:
+                decision = await self._call_model(
+                    api_key=settings.dashscope_api_key,
+                    model=model,
+                    system_prompt=ROUTER_SYSTEM_PROMPT,
+                    text=context_prefix + text,
+                    tools=ROUTER_TOOLS,
+                    timeout=settings.intent_router_timeout,
+                )
+                if decision:
+                    logger.info(
+                        f"Intent routed | tool={decision.raw_tool_name} | "
+                        f"type={decision.generation_type.value} | "
+                        f"recommended={decision.recommended_model} | "
+                        f"router_model={model} | user_id={user_id}"
+                    )
+                    return decision
+            except Exception as e:
+                logger.warning(
+                    f"Router model failed, trying next | "
+                    f"model={model} | error={e}"
+                )
+
+        logger.warning("All router models failed, using keyword fallback")
+        return self._keyword_fallback(content)
+
+    # ------ 重试路由 ------
+
+    async def route_retry(
+        self,
+        original_content: str,
+        generation_type: GenerationType,
+        failed_models: List[str],
+        error_message: str,
+    ) -> Optional[RoutingDecision]:
+        """重试路由：将失败信息发给千问，让它选择替代模型
+
+        降级链：千问主模型 → 千问备用 → 确定性兜底 → None
+        """
+        from core.config import get_settings
+
+        settings = get_settings()
+        if not settings.dashscope_api_key:
+            return self._deterministic_fallback(generation_type, failed_models)
+
+        retry_message = (
+            f"原始请求：{original_content}\n"
+            f"已失败的模型：{', '.join(failed_models)}\n"
+            f"最近错误：{error_message}\n"
+            f"请从剩余可用模型中选择一个替代模型重试。"
+        )
+
+        retry_tools = build_retry_tools(generation_type, failed_models)
+        real_tools = [t for t in retry_tools if t["function"]["name"] != "give_up"]
+        if not real_tools:
+            logger.info(f"No remaining models for retry | type={generation_type.value}")
+            return None
+
+        router_models = [
+            settings.intent_router_model,
+            settings.intent_router_fallback_model,
+        ]
+
+        for router_model in router_models:
+            try:
+                decision = await self._call_model(
+                    api_key=settings.dashscope_api_key,
+                    model=router_model,
+                    system_prompt=RETRY_ROUTER_SYSTEM_PROMPT,
+                    text=retry_message,
+                    tools=retry_tools,
+                    timeout=settings.intent_router_timeout,
+                )
+                if decision and decision.raw_tool_name == "give_up":
+                    logger.info(f"Router chose to give_up | model={router_model}")
+                    return self._deterministic_fallback(generation_type, failed_models)
+                if decision:
+                    logger.info(
+                        f"Retry routed | recommended={decision.recommended_model} | "
+                        f"router_model={router_model} | failed={failed_models}"
+                    )
+                    return decision
+            except Exception as e:
+                logger.warning(f"Retry router failed | model={router_model} | error={e}")
+
+        return self._deterministic_fallback(generation_type, failed_models)
+
+    def _deterministic_fallback(
+        self,
+        generation_type: GenerationType,
+        failed_models: List[str],
+    ) -> Optional[RoutingDecision]:
+        """确定性兜底：按优先级取同类型下一个未试模型"""
+        remaining = get_remaining_models(generation_type, failed_models)
+        if remaining:
+            logger.info(
+                f"Deterministic fallback | model={remaining[0]} | "
+                f"type={generation_type.value}"
+            )
+            return RoutingDecision(
+                generation_type=generation_type,
+                recommended_model=remaining[0],
+                routed_by="deterministic_fallback",
+            )
+        logger.warning(
+            f"All models exhausted | type={generation_type.value} | "
+            f"failed={failed_models}"
+        )
+        return None
+
+    # ------ 搜索 ------
+
+    async def execute_search(
+        self,
+        query: str,
+        user_text: str,
+        system_prompt: Optional[str] = None,
+    ) -> Optional[str]:
+        """调用千问搜索能力，返回搜索增强的回答摘要"""
+        from core.config import get_settings
+
+        settings = get_settings()
+        if not settings.dashscope_api_key:
+            return None
+
+        try:
+            client = await self._get_client(
+                settings.dashscope_api_key, timeout=10.0,
+            )
+
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": user_text})
+
+            response = await client.post("/chat/completions", json={
+                "model": settings.intent_router_model,
+                "messages": messages,
+                "enable_search": True,
+                "temperature": 0.3,
+                "max_tokens": 2000,
+            })
+            response.raise_for_status()
+            data = response.json()
+
+            choices = data.get("choices", [])
+            if choices:
+                content = choices[0].get("message", {}).get("content", "")
+                if content:
+                    logger.info(f"Web search completed | query={query} | len={len(content)}")
+                    return content
+
+        except Exception as e:
+            logger.warning(f"Web search failed | query={query} | error={e}")
+
+        return None
+
+    # ------ 内部方法 ------
+
+    async def _call_model(
+        self,
+        api_key: str,
+        model: str,
+        system_prompt: str,
+        text: str,
+        tools: List[Dict[str, Any]],
+        timeout: float,
+    ) -> Optional[RoutingDecision]:
+        """统一的千问调用方法（首次路由和重试路由共用）"""
+        client = await self._get_client(api_key, timeout)
+        response = await client.post(
+            "/chat/completions",
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": text},
+                ],
+                "tools": tools,
+                "tool_choice": "auto",
+                "temperature": 0.1,
+                "max_tokens": 200,
+            },
+        )
+        response.raise_for_status()
+        return self._parse_response(response.json())
+
+    def _parse_response(self, data: Dict[str, Any]) -> Optional[RoutingDecision]:
+        """解析模型响应中的 tool_calls"""
+        choices = data.get("choices", [])
+        if not choices:
+            return None
+
+        message = choices[0].get("message", {})
+        tool_calls = message.get("tool_calls")
+
+        if not tool_calls:
+            return RoutingDecision(
+                generation_type=GenerationType.CHAT,
+                raw_tool_name="text_chat",
+                routed_by="model_no_tool",
+            )
+
+        tool_call = tool_calls[0]
+        func = tool_call.get("function", {})
+        tool_name = func.get("name", "text_chat")
+
+        try:
+            arguments = json.loads(func.get("arguments", "{}"))
+        except (json.JSONDecodeError, TypeError):
+            arguments = {}
+
+        gen_type = TOOL_TO_TYPE.get(tool_name, GenerationType.CHAT)
+
+        return RoutingDecision(
+            generation_type=gen_type,
+            system_prompt=arguments.get("system_prompt"),
+            tool_params=arguments,
+            search_query=arguments.get("search_query"),
+            recommended_model=arguments.get("model"),
+            raw_tool_name=tool_name,
+            routed_by="model",
+        )
+
+    def _keyword_fallback(self, content: List[ContentPart]) -> RoutingDecision:
+        """关键词兜底"""
+        from schemas.message import infer_generation_type
+
+        gen_type = infer_generation_type(content)
+        return RoutingDecision(
+            generation_type=gen_type,
+            raw_tool_name=f"keyword_{gen_type.value}",
+            routed_by="keyword",
+        )
+
+    def _extract_text(self, content: List[ContentPart]) -> str:
+        """从 ContentPart 列表提取文本"""
+        return " ".join(
+            part.text for part in content if isinstance(part, TextPart)
+        ).strip()
+
+    async def _get_client(
+        self, api_key: str, timeout: float
+    ) -> httpx.AsyncClient:
+        """获取或创建 HTTP 客户端"""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                base_url=DASHSCOPE_BASE_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=httpx.Timeout(timeout),
+            )
+        return self._client
+
+    async def close(self) -> None:
+        """关闭 HTTP 客户端"""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None

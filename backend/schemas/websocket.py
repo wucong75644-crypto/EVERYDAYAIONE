@@ -43,6 +43,7 @@ class WSMessageType(str, Enum):
     MESSAGE_PROGRESS = "message_progress"
     MESSAGE_DONE = "message_done"
     MESSAGE_ERROR = "message_error"
+    MESSAGE_RETRY = "message_retry"
     IMAGE_PARTIAL_UPDATE = "image_partial_update"
 
     # === 系统消息 ===
@@ -303,6 +304,21 @@ def build_message_error(
         task_id=task_id,
         conversation_id=conversation_id,
         message_id=message_id,
+    )
+
+
+def build_message_retry(
+    task_id: str,
+    conversation_id: str,
+    new_model: str,
+    attempt: int,
+) -> Dict[str, Any]:
+    """构建模型重试通知"""
+    return _build_ws_message(
+        WSMessageType.MESSAGE_RETRY,
+        {"new_model": new_model, "attempt": attempt},
+        task_id=task_id,
+        conversation_id=conversation_id,
     )
 
 

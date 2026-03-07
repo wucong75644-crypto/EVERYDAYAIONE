@@ -7,6 +7,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import toast from 'react-hot-toast';
 import { type UnifiedModel, ALL_MODELS, getAvailableModels } from '../constants/models';
+import { isSmartModel } from '../constants/smartModel';
 import { detectConflict } from '../utils/modelConflict';
 
 // ============================================================
@@ -124,6 +125,9 @@ export function useModelSelection({
   useEffect(() => {
     // 如果用户主动选择过模型，不自动切换
     if (userExplicitChoice) return;
+
+    // 智能模型不自动切换（由后端路由决定）
+    if (isSmartModel(selectedModel.id)) return;
 
     // 有图片 + 当前是文生图模型 → 切换到编辑模型
     if (hasImage && selectedModel.type === 'image' && !selectedModel.capabilities.imageEditing) {

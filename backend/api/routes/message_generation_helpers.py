@@ -219,6 +219,8 @@ async def handle_regenerate_or_send_operation(
 
     # 构建 generation_params（只设置 type，前端用来判断占位符类型）
     generation_params_obj = GenerationParams(type=gen_type)
+    # 扁平化 generation_params（用于返回给前端，包含 aspect_ratio 等渲染参数）
+    gen_params_flat: Optional[Dict[str, Any]] = None
 
     # Media 类型（image/video）：将占位符 insert 到 messages 表
     # 这样刷新页面后占位符能通过 GET /messages 自然加载，无需 taskRestoration 手动重建
@@ -244,6 +246,8 @@ async def handle_regenerate_or_send_operation(
             for key in _PARAM_KEYS.get(gen_type, ()):
                 if key in params:
                     gen_params[key] = params[key]
+
+        gen_params_flat = gen_params  # 保存完整扁平参数，用于返回给前端
 
         placeholder_data = {
             "id": assistant_message_id,
@@ -271,6 +275,8 @@ async def handle_regenerate_or_send_operation(
             )
 
     # 构造返回用的 Message 对象
+    # media 类型使用扁平 gen_params（包含 aspect_ratio 等前端占位符渲染参数）
+    final_gen_params = GenerationParams(**gen_params_flat) if gen_params_flat else generation_params_obj
     assistant_message = Message(
         id=assistant_message_id,
         conversation_id=conversation_id,
@@ -278,7 +284,7 @@ async def handle_regenerate_or_send_operation(
         content=[],
         status=MessageStatus.PENDING,
         created_at=placeholder_created_at or datetime.now(timezone.utc),
-        generation_params=generation_params_obj,
+        generation_params=final_gen_params,
     )
 
     return assistant_message_id, assistant_message

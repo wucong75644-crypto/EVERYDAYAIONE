@@ -6,7 +6,6 @@
 
 import asyncio
 import uuid
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -16,8 +15,6 @@ from schemas.message import (
     ContentPart,
     GenerationType,
     Message,
-    MessageRole,
-    MessageStatus,
     TextPart,
 )
 from schemas.websocket import (
@@ -25,22 +22,16 @@ from schemas.websocket import (
     build_message_chunk,
 )
 from services.handlers.base import BaseHandler, TaskMetadata
+from services.handlers.chat_context_mixin import ChatContextMixin
 from services.websocket_manager import ws_manager
 
 
-class ChatHandler(BaseHandler):
-    """
-    聊天消息处理器
-
-    特点：
-    - 流式生成
-    - 实时推送 WebSocket
-    - 支持多模态输入（VQA）
-    """
+class ChatHandler(ChatContextMixin, BaseHandler):
+    """聊天消息处理器：流式生成 + WebSocket 推送 + 多模态输入"""
 
     def __init__(self, db: Client):
         super().__init__(db)
-        self._adapter = None  # 当前使用的适配器
+        self._adapter = None
 
     @property
     def handler_type(self) -> GenerationType:
@@ -55,13 +46,7 @@ class ChatHandler(BaseHandler):
         params: Dict[str, Any],
         metadata: TaskMetadata,
     ) -> str:
-        """
-        启动聊天任务
-
-        1. 生成 task_id
-        2. 保存任务到数据库
-        3. 启动异步流式生成
-        """
+        """启动聊天任务：生成 task_id → 保存到 DB → 启动异步流式生成"""
         # 1. 获取或生成 task_id（优先使用前端提供的 client_task_id）
         task_id = metadata.client_task_id or str(uuid.uuid4())
 
@@ -82,7 +67,11 @@ class ChatHandler(BaseHandler):
             metadata=metadata,
         )
 
-        # 4. 启动异步流式生成
+        # 4. 提取路由信息
+        router_system_prompt = params.get("_router_system_prompt")
+        router_search_context = params.get("_router_search_context")
+
+        # 5. 启动异步流式生成
         asyncio.create_task(
             self._stream_generate(
                 task_id=task_id,
@@ -93,6 +82,9 @@ class ChatHandler(BaseHandler):
                 model_id=model_id,
                 thinking_effort=thinking_effort,
                 thinking_mode=thinking_mode,
+                router_system_prompt=router_system_prompt,
+                router_search_context=router_search_context,
+                _params=params,
             )
         )
 
@@ -106,11 +98,10 @@ class ChatHandler(BaseHandler):
     async def _save_accumulated_content(self, task_id: str, content: str) -> None:
         """将累积内容写入数据库（供刷新恢复使用）"""
         try:
-            self.db.table("tasks").update({
-                "accumulated_content": content,
-            }).eq("external_task_id", task_id).execute()
+            self.db.table("tasks").update(
+                {"accumulated_content": content}
+            ).eq("external_task_id", task_id).execute()
         except Exception as e:
-            # 写入失败不影响流式生成主流程
             logger.warning(f"Failed to save accumulated_content | task_id={task_id} | error={e}")
 
     async def _stream_generate(
@@ -123,8 +114,12 @@ class ChatHandler(BaseHandler):
         model_id: str,
         thinking_effort: Optional[str] = None,
         thinking_mode: Optional[str] = None,
+        router_system_prompt: Optional[str] = None,
+        router_search_context: Optional[str] = None,
+        _params: Optional[Dict[str, Any]] = None,
+        _retry_context: Optional[Any] = None,
     ) -> None:
-        """流式生成主逻辑"""
+        """流式生成主逻辑（支持 smart_mode 自动重试）"""
         accumulated_text = ""
         final_usage = {"prompt_tokens": 0, "completion_tokens": 0}
         chunk_count = 0
@@ -139,22 +134,13 @@ class ChatHandler(BaseHandler):
             )
             await ws_manager.send_to_task_subscribers(task_id, start_msg)
 
-            # 2. 准备消息列表（转换为 LLM 格式）
+            # 2. 组装消息列表（路由人设 + 搜索上下文 + 记忆 + 历史 + 当前消息）
             text_content = self._extract_text_content(content)
-            image_url = self._extract_image_url(content)
-
-            messages = [{"role": "user", "content": text_content}]
-            if image_url:
-                # 添加图片到消息（VQA 模式）
-                messages[0]["content"] = [
-                    {"type": "text", "text": text_content},
-                    {"type": "image_url", "image_url": {"url": image_url}},
-                ]
-
-            # 2.5 记忆注入（失败不影响主流程）
-            memory_prompt = await self._build_memory_prompt(user_id, text_content)
-            if memory_prompt:
-                messages.insert(0, {"role": "system", "content": memory_prompt})
+            messages = await self._build_llm_messages(
+                content, user_id, conversation_id, text_content,
+                router_system_prompt=router_system_prompt,
+                router_search_context=router_search_context,
+            )
 
             # 3. 创建适配器
             from services.adapters.factory import create_chat_adapter
@@ -165,7 +151,7 @@ class ChatHandler(BaseHandler):
             async for chunk in self._adapter.stream_chat(
                 messages=messages,
                 reasoning_effort=thinking_effort,
-                thinking_mode=thinking_mode,  # 直接传递 'deep_think' 或 None
+                thinking_mode=thinking_mode,
             ):
                 if chunk.content:
                     accumulated_text += chunk.content
@@ -219,110 +205,94 @@ class ChatHandler(BaseHandler):
             )
 
         except Exception as e:
-            logger.error(f"Chat stream error | task_id={task_id} | error={str(e)}")
-            await self.on_error(
-                task_id=task_id,
-                error_code="GENERATION_FAILED",
-                error_message=str(e),
+            logger.error(f"Chat stream error | task_id={task_id} | model={model_id} | error={str(e)}")
+
+            # 智能重试
+            retried = await self._attempt_chat_retry(
+                error=e, task_id=task_id, message_id=message_id,
+                conversation_id=conversation_id, user_id=user_id,
+                content=content, model_id=model_id,
+                thinking_effort=thinking_effort, thinking_mode=thinking_mode,
+                router_system_prompt=router_system_prompt,
+                router_search_context=router_search_context,
+                _params=_params, _retry_context=_retry_context,
             )
+            if not retried:
+                await self.on_error(
+                    task_id=task_id,
+                    error_code="GENERATION_FAILED",
+                    error_message=str(e),
+                )
 
         finally:
             if self._adapter:
                 await self._adapter.close()
 
-    # ========================================
-    # 记忆功能
-    # ========================================
-
-    async def _build_memory_prompt(
-        self, user_id: str, query: str
-    ) -> Optional[str]:
-        """
-        构建记忆 system prompt
-
-        检索用户相关记忆并构建注入文本。
-        失败时返回 None，不影响主流程。
-        """
-        try:
-            from services.memory_service import MemoryService
-            from services.memory_config import build_memory_system_prompt
-
-            memory_service = MemoryService(self.db)
-
-            if not await memory_service.is_memory_enabled(user_id):
-                return None
-
-            memories = await memory_service.get_relevant_memories(
-                user_id, query
-            )
-            if not memories:
-                return None
-
-            prompt = build_memory_system_prompt(memories)
-            if prompt:
-                logger.debug(
-                    f"Memory injected | user_id={user_id} | "
-                    f"memory_count={len(memories)}"
-                )
-            return prompt
-        except Exception as e:
-            logger.warning(
-                f"Memory injection failed, skipping | "
-                f"user_id={user_id} | error={e}"
-            )
-            return None
-
-    async def _extract_memories_async(
+    async def _attempt_chat_retry(
         self,
-        user_id: str,
+        error: Exception,
+        task_id: str,
+        message_id: str,
         conversation_id: str,
-        user_text: str,
-        assistant_text: str,
-    ) -> None:
-        """
-        异步从对话中提取记忆（fire-and-forget）
+        user_id: str,
+        content: List[ContentPart],
+        model_id: str,
+        thinking_effort: Optional[str],
+        thinking_mode: Optional[str],
+        router_system_prompt: Optional[str],
+        router_search_context: Optional[str],
+        _params: Optional[Dict[str, Any]],
+        _retry_context: Optional[Any],
+    ) -> bool:
+        """Smart mode 重试：调用千问大脑重新选择模型，成功则递归重试"""
+        retry_ctx = self._build_retry_context(
+            params=_params or {}, content=content,
+            model_id=model_id, error=str(error),
+            existing_ctx=_retry_context,
+        )
+        if not retry_ctx or not retry_ctx.can_retry:
+            return False
 
-        短消息（<50字符）跳过提取。
-        提取成功后通过 WebSocket 通知用户。
-        """
+        new_decision = await self._route_retry(retry_ctx)
+        if not new_decision or not new_decision.recommended_model:
+            return False
+
+        new_model = new_decision.recommended_model
+        attempt = len(retry_ctx.failed_attempts)
+        logger.info(
+            f"Chat retry | task_id={task_id} | "
+            f"failed={model_id} → new={new_model} | attempt={attempt}"
+        )
+
+        # WS 通知前端正在重试
+        await self._send_retry_notification(
+            task_id, conversation_id, new_model, attempt,
+        )
+
+        # 关闭旧 adapter
+        if self._adapter:
+            await self._adapter.close()
+            self._adapter = None
+
+        # 更新 DB 中的 model_id
         try:
-            # 短消息无信息量，跳过提取（中文信息密度高，阈值设低）
-            if len(user_text) < 10:
-                return
-
-            from services.memory_service import MemoryService
-
-            memory_service = MemoryService(self.db)
-
-            if not await memory_service.is_memory_enabled(user_id):
-                return
-
-            messages = [
-                {"role": "user", "content": user_text},
-                {"role": "assistant", "content": assistant_text},
-            ]
-
-            extracted = await memory_service.extract_memories_from_conversation(
-                user_id, messages, conversation_id
-            )
-
-            if extracted:
-                await ws_manager.send_to_user(user_id, {
-                    "type": "memory_extracted",
-                    "data": {
-                        "memories": extracted,
-                        "count": len(extracted),
-                    },
-                })
+            self.db.table("tasks").update(
+                {"model_id": new_model}
+            ).eq("external_task_id", task_id).execute()
         except Exception as e:
-            logger.warning(
-                f"Memory extraction failed | user_id={user_id} | "
-                f"conversation_id={conversation_id} | error={e}"
-            )
+            logger.warning(f"Failed to update task model | task_id={task_id} | error={e}")
 
-    # ========================================
-    # 基类抽象方法实现
-    # ========================================
+        # 递归重试（用新模型）
+        await self._stream_generate(
+            task_id=task_id, message_id=message_id,
+            conversation_id=conversation_id, user_id=user_id,
+            content=content, model_id=new_model,
+            thinking_effort=thinking_effort, thinking_mode=thinking_mode,
+            router_system_prompt=router_system_prompt,
+            router_search_context=router_search_context,
+            _params=_params, _retry_context=retry_ctx,
+        )
+        return True
 
     def _convert_content_parts_to_dicts(self, result: List[ContentPart]) -> List[Dict[str, Any]]:
         """转换 TextPart 为字典"""
@@ -347,17 +317,12 @@ class ChatHandler(BaseHandler):
                 user_id=user_id,
                 amount=credits_consumed,
                 reason=f"Chat: {model_id}",
-                change_type="chat_generation",
+                change_type="conversation_cost",
             )
         return credits_consumed
 
     async def _handle_credits_on_error(self, task: Dict[str, Any]) -> None:
-        """Chat 错误时不需要退回积分（没有预扣）"""
-        pass
-
-    # ========================================
-    # 回调方法（调用基类通用流程）
-    # ========================================
+        pass  # Chat 无预扣，无需退回
 
     async def on_complete(
         self,

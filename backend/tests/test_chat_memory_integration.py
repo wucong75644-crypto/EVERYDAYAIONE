@@ -177,7 +177,7 @@ class TestExtractMemoriesAsync:
             new_callable=AsyncMock,
             return_value=extracted_memories,
         ), patch(
-            "services.handlers.chat_handler.ws_manager",
+            "services.handlers.chat_context_mixin.ws_manager",
         ) as mock_ws:
             mock_ws.send_to_user = AsyncMock()
 
@@ -203,7 +203,7 @@ class TestExtractMemoriesAsync:
     ):
         """短消息（<50字符）跳过提取"""
         with patch(
-            "services.handlers.chat_handler.ws_manager"
+            "services.handlers.chat_context_mixin.ws_manager"
         ) as mock_ws:
             mock_ws.send_to_user = AsyncMock()
 
@@ -231,7 +231,7 @@ class TestExtractMemoriesAsync:
         ])
 
         with patch(
-            "services.handlers.chat_handler.ws_manager"
+            "services.handlers.chat_context_mixin.ws_manager"
         ) as mock_ws:
             mock_ws.send_to_user = AsyncMock()
 
@@ -262,7 +262,7 @@ class TestExtractMemoriesAsync:
         ])
 
         with patch(
-            "services.handlers.chat_handler.ws_manager"
+            "services.handlers.chat_context_mixin.ws_manager"
         ) as mock_ws:
             mock_ws.send_to_user = AsyncMock()
 

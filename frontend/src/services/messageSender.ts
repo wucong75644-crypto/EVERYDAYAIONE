@@ -66,6 +66,7 @@ interface GenerateResponse {
   user_message: Message | null;
   assistant_message: Message;
   operation: MessageOperation;
+  generation_type?: GenerationType;
 }
 
 // ============================================================
@@ -169,34 +170,15 @@ export async function sendMessage(options: SendOptions): Promise<string> {
       messageStore.updateMessage(assistantMessageId, { content: newContent, status: 'pending' });
     }
     messageStore.setIsSending(true);
-  } else if (generationType === 'chat' || !generationType) {
-    // Chat 类型：使用 startStreaming 创建占位符
-    // 这样 streamingMessages Map 会正确设置，message_chunk 能路由到正确的消息
+  } else {
+    // 统一占位符：所有新消息先显示旋转圆点（思考阶段）
+    // 不设 type → UI 判断为 analyzing 模式（旋转圆点）
+    // HTTP 响应后根据 generation_type 变形为类型专属占位符
     messageStore.startStreaming(conversationId, assistantMessageId, {
       initialContent: '',
       createdAt: placeholderCreatedAt,
-      generationParams: { type: generationType, model },
+      generationParams: { model },
     });
-  } else {
-    // Media 类型：直接添加到 messages（不再使用 optimistic，避免状态分散）
-    // 占位符将在原地被替换，不会触发滚动
-    const loadingText = getPlaceholderText(generationType as 'image' | 'video');
-
-    const placeholderMessage: Message = {
-      id: assistantMessageId,
-      conversation_id: conversationId,
-      role: 'assistant',
-      content: [{ type: 'text', text: loadingText }],
-      status: 'pending',
-      created_at: placeholderCreatedAt,
-      generation_params: {
-        type: generationType,
-        model,
-        ...(generationType === 'image' && params?.num_images ? { num_images: params.num_images } : {}),
-      },
-    };
-    messageStore.addMessage(conversationId, placeholderMessage); // 直接添加到 messages
-    messageStore.setIsSending(true);
   }
 
   // ========================================
@@ -247,6 +229,32 @@ export async function sendMessage(options: SendOptions): Promise<string> {
       task_id: response.task_id,
     });
 
+    // 3.2 占位符变形：旋转圆点 → 类型专属占位符
+    // 仅对统一占位符（send/regenerate 非 retry/regenerate_single）执行
+    const actualType = response.generation_type;
+    if (actualType && operation !== 'retry' && operation !== 'regenerate_single') {
+      if (actualType === 'chat') {
+        // Chat：设置 type → UI 从旋转圆点变为"AI 正在思考" ●●●
+        messageStore.updateMessage(assistantMessageId, {
+          generation_params: response.assistant_message.generation_params,
+        });
+      } else if (actualType === 'image' || actualType === 'video' || actualType === 'audio') {
+        // Media：原子替换 streaming → media 占位符（避免中间状态导致白屏）
+        const loadingText = getPlaceholderText(actualType as 'image' | 'video' | 'audio');
+        messageStore.completeStreamingWithMessage(conversationId, {
+          id: assistantMessageId,
+          conversation_id: conversationId,
+          role: 'assistant',
+          content: [{ type: 'text', text: loadingText }],
+          status: 'pending',
+          created_at: placeholderCreatedAt,
+          generation_params: response.assistant_message.generation_params,
+          task_id: response.task_id,
+        });
+        messageStore.setIsSending(true);
+      }
+    }
+
     // ========================================
     // Phase 4: 创建任务追踪
     // ========================================
@@ -255,7 +263,7 @@ export async function sendMessage(options: SendOptions): Promise<string> {
       taskId: clientTaskId, // 🔥 使用 clientTaskId（已订阅）
       messageId: response.assistant_message.id,
       conversationId,
-      type: generationType || 'chat',
+      type: actualType || generationType || 'chat',
       status: 'pending',
       progress: 0,
       createdAt: Date.now(),
