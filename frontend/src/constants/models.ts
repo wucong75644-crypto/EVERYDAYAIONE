@@ -4,6 +4,8 @@
  * 包含所有AI模型的配置和能力定义
  */
 
+import { SMART_MODEL } from './smartModel';
+
 // 统一模型类型
 export type ModelType = 'chat' | 'image' | 'video';
 
@@ -50,6 +52,9 @@ export interface UnifiedModel {
 
 // 合并所有模型
 export const ALL_MODELS: UnifiedModel[] = [
+  // 智能模型（配置见 smartModel.ts）
+  SMART_MODEL,
+
   // 聊天模型
   {
     id: 'gemini-3-flash',

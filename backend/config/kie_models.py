@@ -432,12 +432,14 @@ def calculate_image_cost(
     if not config or config["category"] != KieModelCategory.IMAGE:
         raise ValueError(f"Invalid image model: {model_name}")
 
-    if config.get("supports_resolution") and resolution:
+    if config.get("supports_resolution"):
+        # 未指定分辨率时默认 1K
+        res = resolution or "1K"
         kie_per_image = config["kie_cost_per_image_by_resolution"].get(
-            resolution, config["kie_cost_per_image_by_resolution"]["1K"]
+            res, config["kie_cost_per_image_by_resolution"]["1K"]
         )
         user_per_image = config["user_credits_per_image_by_resolution"].get(
-            resolution, config["user_credits_per_image_by_resolution"]["1K"]
+            res, config["user_credits_per_image_by_resolution"]["1K"]
         )
     else:
         kie_per_image = config["kie_cost_per_image"]

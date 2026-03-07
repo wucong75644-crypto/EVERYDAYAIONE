@@ -217,9 +217,15 @@ class TaskCompletionService:
         return True
 
     async def _handle_failure(self, task: Dict[str, Any], result: TaskResult) -> bool:
-        """处理失败结果"""
+        """处理失败结果（含 smart_mode 异步重试）"""
         external_task_id = task["external_task_id"]
         task_type = task["type"]
+
+        # Smart mode 异步重试：尝试用替代模型重新提交
+        from services.async_retry_service import AsyncRetryService
+        retry_svc = AsyncRetryService(self.db)
+        if await retry_svc.attempt_retry(task, result):
+            return True
 
         # 图片任务统一走批次处理
         if task_type == "image" and task.get("batch_id"):

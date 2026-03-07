@@ -5,6 +5,7 @@
  */
 
 import { type UnifiedModel, ALL_MODELS } from '../constants/models';
+import { isSmartModel } from '../constants/smartModel';
 
 // 冲突严重程度
 export type ConflictSeverity = 'critical' | 'warning' | 'info';
@@ -29,6 +30,9 @@ export interface ModelConflict {
  * @returns 冲突信息，如果没有冲突返回 null
  */
 export function detectConflict(model: UnifiedModel, hasImage: boolean): ModelConflict | null {
+  // 智能模型不触发冲突（系统自动适配）
+  if (isSmartModel(model.id)) return null;
+
   // 硬性冲突 1：文生图模型 + 有图片（模型不支持图片输入）
   if (hasImage && model.type === 'image' && !model.capabilities.imageEditing) {
     return {

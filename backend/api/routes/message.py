@@ -16,6 +16,7 @@ from schemas.message import (
     DeleteMessageResponse,
     GenerateRequest,
     GenerateResponse,
+    GenerationType,
     Message,
     MessageListResult,
     MessageOperation,
@@ -55,6 +56,45 @@ def get_conversation_service(db: Database) -> ConversationService:
 
 
 # ============================================================
+# 智能路由
+# ============================================================
+
+
+async def _resolve_generation_type(body, user_id: str, conversation_id: str):
+    """推断生成类型：智能路由 → 关键词兜底。返回 (gen_type, routing_decision)"""
+    from services.intent_router import IntentRouter, SMART_MODEL_ID
+
+    # auto 模型：始终走路由（忽略前端传入的 generation_type）
+    if body.model != SMART_MODEL_ID and body.generation_type:
+        return body.generation_type, None
+    if body.operation in (MessageOperation.RETRY, MessageOperation.REGENERATE_SINGLE):
+        return infer_generation_type(body.content), None
+
+    router = IntentRouter()
+    try:
+        decision = await router.route(
+            content=body.content, user_id=user_id, conversation_id=conversation_id,
+        )
+
+        # web_search：执行搜索，将结果作为上下文注入
+        if decision.raw_tool_name == "web_search" and decision.search_query:
+            user_text = " ".join(p.text for p in body.content if hasattr(p, "text"))
+            search_result = await router.execute_search(
+                query=decision.search_query,
+                user_text=user_text,
+                system_prompt=decision.system_prompt,
+            )
+            if search_result:
+                decision.tool_params["_search_context"] = search_result
+
+        return decision.generation_type, decision
+    except Exception:
+        return infer_generation_type(body.content), None
+    finally:
+        await router.close()
+
+
+# ============================================================
 # 统一消息生成 API
 # ============================================================
 
@@ -88,8 +128,36 @@ async def generate_message(
     if task_limit_service:
         await task_limit_service.check_and_acquire(user_id, conversation_id)
 
-    # 2. 推断生成类型
-    gen_type = body.generation_type or infer_generation_type(body.content)
+    # 2. 推断生成类型（智能路由 / 关键词兜底）
+    gen_type, routing_decision = await _resolve_generation_type(body, user_id, conversation_id)
+
+    # 智能模型：标记 smart_mode + 解析实际工作模型
+    from services.intent_router import SMART_MODEL_ID, resolve_auto_model
+    if body.model == SMART_MODEL_ID:
+        if body.params is None:
+            body.params = {}
+        body.params["_is_smart_mode"] = True
+        recommended = routing_decision.recommended_model if routing_decision else None
+        body.model = resolve_auto_model(gen_type, body.content, recommended)
+
+    # 将路由结果注入 params（供 handler 使用）
+    if routing_decision:
+        if body.params is None:
+            body.params = {}
+        if routing_decision.system_prompt:
+            body.params["_router_system_prompt"] = routing_decision.system_prompt
+        if routing_decision.tool_params.get("_search_context"):
+            body.params["_router_search_context"] = routing_decision.tool_params["_search_context"]
+        # 注入大脑选择的媒体生成参数（resolution/aspect_ratio/output_format）
+        for key in ("resolution", "aspect_ratio", "output_format"):
+            val = routing_decision.tool_params.get(key)
+            if val is not None:
+                body.params[key] = val
+
+    # 智能模式下图片参数兜底：确保占位符和 handler 使用一致的默认值
+    if gen_type == GenerationType.IMAGE and body.params:
+        if body.params.get("_is_smart_mode") and "aspect_ratio" not in body.params:
+            body.params["aspect_ratio"] = "1:1"
 
     # 3. 验证对话权限
     conversation_service = get_conversation_service(db)
@@ -162,6 +230,7 @@ async def generate_message(
         user_message=user_message,
         assistant_message=assistant_message,
         operation=body.operation,
+        generation_type=gen_type.value,
     )
 
 

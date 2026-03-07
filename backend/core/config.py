@@ -87,6 +87,15 @@ class Settings(BaseSettings):
     memory_embedding_model: str = "text-embedding-v3"  # 嵌入模型（1024维，DashScope）
     memory_enabled_default: bool = True  # 新用户默认开启记忆
 
+    # 对话上下文配置
+    chat_context_limit: int = 20  # 注入历史消息的最大条数
+
+    # 智能路由配置
+    intent_router_model: str = "qwen-plus"  # 主路由模型（DashScope）
+    intent_router_fallback_model: str = "qwen-turbo"  # 降级路由模型
+    intent_router_enabled: bool = True  # 是否启用智能路由
+    intent_router_timeout: float = 5.0  # 单次调用超时（秒）
+
     # Sentry 错误监控配置
     sentry_dsn: Optional[str] = None
     environment: str = "development"

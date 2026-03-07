@@ -5,6 +5,7 @@ import { WebSocketProvider } from './contexts/WebSocketContext';
 import ProtectedRoute from './components/auth/ProtectedRoute';
 import AuthModal from './components/auth/AuthModal';
 import LoadingScreen from './components/common/LoadingScreen';
+import ErrorBoundary from './components/common/ErrorBoundary';
 import Home from './pages/Home';
 import ForgotPassword from './pages/ForgotPassword';
 import Chat from './pages/Chat';
@@ -22,6 +23,7 @@ function App() {
   }
 
   return (
+    <ErrorBoundary>
     <BrowserRouter>
       <WebSocketProvider>
         {/* 全局认证弹窗 */}
@@ -52,6 +54,7 @@ function App() {
         </Routes>
       </WebSocketProvider>
     </BrowserRouter>
+    </ErrorBoundary>
   );
 }
 

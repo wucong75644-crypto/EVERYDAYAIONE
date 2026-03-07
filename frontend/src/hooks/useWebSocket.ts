@@ -41,8 +41,7 @@ function getWebSocketUrl(): string {
 
 const HEARTBEAT_INTERVAL = 30000; // 30秒
 const RECONNECT_INTERVAL_BASE = 1000; // 基础重连间隔
-const RECONNECT_INTERVAL_MAX = 30000; // 最大重连间隔
-const MAX_RECONNECT_ATTEMPTS = 20;
+const RECONNECT_INTERVAL_MAX = 30000; // 最大重连间隔（之后每30s重试，无上限）
 
 // === 消息类型 ===
 
@@ -237,11 +236,10 @@ export function useWebSocket(): UseWebSocketReturn {
         heartbeatIntervalRef.current = null;
       }
 
-      // 非正常关闭且不是主动清理，尝试重连
+      // 非正常关闭且不是主动清理，无限重连（指数退避，上限30s）
       if (
         event.code !== 1000 &&
         !isCleaningUpRef.current &&
-        reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS &&
         isAuthenticated()
       ) {
         setConnectionState('reconnecting');
@@ -346,6 +344,41 @@ export function useWebSocket(): UseWebSocketReturn {
         })
       );
     }
+  }, []);
+
+  // 页面可见性变化：切回前台时检查并重连
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (
+        document.visibilityState === 'visible' &&
+        wsRef.current?.readyState !== WebSocket.OPEN &&
+        isAuthenticated()
+      ) {
+        logger.info('ws:connection', 'Tab visible, reconnecting');
+        reconnectAttemptsRef.current = 0;
+        connectRef.current?.();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  // 网络恢复：offline → online 时重连
+  useEffect(() => {
+    const handleOnline = () => {
+      if (
+        wsRef.current?.readyState !== WebSocket.OPEN &&
+        isAuthenticated()
+      ) {
+        logger.info('ws:connection', 'Network online, reconnecting');
+        reconnectAttemptsRef.current = 0;
+        connectRef.current?.();
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
   }, []);
 
   // 监听认证状态变化

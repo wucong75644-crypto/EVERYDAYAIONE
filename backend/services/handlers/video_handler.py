@@ -98,19 +98,32 @@ class VideoHandler(BaseHandler):
 
         adapter = create_video_adapter(model_id)
 
+        generate_kwargs = {
+            "prompt": prompt,
+            "image_urls": [image_url] if image_url else None,
+            "aspect_ratio": aspect_ratio,
+            "remove_watermark": remove_watermark,
+            "callback_url": self._build_callback_url(adapter.provider.value),
+            "wait_for_result": False,
+        }
+
         try:
-            result = await adapter.generate(
-                prompt=prompt,
-                image_urls=[image_url] if image_url else None,
-                aspect_ratio=aspect_ratio,
-                remove_watermark=remove_watermark,
-                callback_url=self._build_callback_url(adapter.provider.value),
-                wait_for_result=False,  # 异步模式
-            )
-            external_task_id = result.task_id  # KIE 返回的外部任务 ID
+            result = await adapter.generate(**generate_kwargs)
+            external_task_id = result.task_id
         except Exception as e:
             # API 调用失败，退回积分
             self._refund_credits(transaction_id)
+
+            # Smart mode 重试
+            retry_result = await self._attempt_video_sync_retry(
+                prompt=prompt, model_id=model_id, error=str(e),
+                params=params, generate_kwargs=generate_kwargs,
+                user_id=user_id, credits_to_lock=credits_to_lock,
+                message_id=message_id, conversation_id=conversation_id,
+                metadata=metadata,
+            )
+            if retry_result:
+                return retry_result
             raise e
         finally:
             await adapter.close()
@@ -137,6 +150,92 @@ class VideoHandler(BaseHandler):
 
         # 返回 client_task_id（与前端订阅匹配）
         return metadata.client_task_id or external_task_id
+
+    async def _attempt_video_sync_retry(
+        self,
+        prompt: str,
+        model_id: str,
+        error: str,
+        params: Dict[str, Any],
+        generate_kwargs: Dict[str, Any],
+        user_id: str,
+        credits_to_lock: int,
+        message_id: str,
+        conversation_id: str,
+        metadata: TaskMetadata,
+    ) -> Optional[str]:
+        """Smart mode 同步重试：API 调用失败时尝试替代模型"""
+        if not params.get("_is_smart_mode"):
+            return None
+
+        from services.intent_router import RetryContext
+
+        ctx = RetryContext(
+            is_smart_mode=True,
+            original_content=prompt,
+            generation_type=GenerationType.VIDEO,
+        )
+        ctx.add_failure(model_id, error)
+
+        while ctx.can_retry:
+            decision = await self._route_retry(ctx)
+            if not decision or not decision.recommended_model:
+                break
+
+            new_model = decision.recommended_model
+            attempt = len(ctx.failed_attempts)
+            logger.info(
+                f"Video sync retry | attempt={attempt} | "
+                f"{model_id} → {new_model}"
+            )
+
+            from services.adapters.factory import create_video_adapter
+
+            new_adapter = create_video_adapter(new_model)
+            new_tx = self._lock_credits(
+                task_id=str(uuid.uuid4()),
+                user_id=user_id,
+                amount=credits_to_lock,
+                reason=f"Video retry: {new_model}",
+            )
+
+            try:
+                new_kwargs = {**generate_kwargs}
+                new_kwargs["callback_url"] = self._build_callback_url(
+                    new_adapter.provider.value
+                )
+                result = await new_adapter.generate(**new_kwargs)
+
+                self._save_task(
+                    task_id=result.task_id,
+                    message_id=message_id,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    model_id=new_model,
+                    prompt=prompt,
+                    params=params,
+                    metadata=metadata,
+                    credits_locked=credits_to_lock,
+                    transaction_id=new_tx,
+                )
+
+                logger.info(
+                    f"Video retry succeeded | task_id={result.task_id} | "
+                    f"model={new_model}"
+                )
+                return metadata.client_task_id or result.task_id
+
+            except Exception as retry_err:
+                self._refund_credits(new_tx)
+                ctx.add_failure(new_model, str(retry_err))
+                logger.warning(
+                    f"Video sync retry failed | model={new_model} | "
+                    f"error={retry_err}"
+                )
+            finally:
+                await new_adapter.close()
+
+        return None
 
     # ========================================
     # 基类抽象方法实现

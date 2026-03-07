@@ -258,9 +258,11 @@ function createChatPlaceholder(task: PendingTask) {
   const messageId = task.placeholder_message_id || task.assistant_message_id;
   const streamingId = messageId || task.id;
 
-  const generationParams = task.model_id
-    ? { model: task.model_id }
-    : undefined;
+  // 任务已入库 = 已路由完成，必须设置 type 以跳过旋转圆点（Phase 1）
+  const generationParams = {
+    type: 'chat' as const,
+    ...(task.model_id ? { model: task.model_id } : {}),
+  };
 
   // 标记强制刷新，让 loadMessages 跳过旧缓存拉取最新数据
   store.markForceRefresh(task.conversation_id);

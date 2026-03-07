@@ -107,6 +107,15 @@ class MockSupabaseTable:
         self._filters[field] = value
         return self
 
+    def order(self, column: str, **kwargs):
+        """排序（mock 实现，不实际排序，依赖测试数据顺序）"""
+        return self
+
+    def limit(self, count: int):
+        """限制结果数量"""
+        self._limit = count
+        return self
+
     def single(self):
         self._single = True
         return self
@@ -124,6 +133,10 @@ class MockSupabaseTable:
         filtered = self._data
         for field, value in self._filters.items():
             filtered = [d for d in filtered if d.get(field) == value]
+
+        # 应用 limit
+        if hasattr(self, '_limit'):
+            filtered = filtered[:self._limit]
 
         if hasattr(self, '_single') and self._single:
             result.data = filtered[0] if filtered else None
