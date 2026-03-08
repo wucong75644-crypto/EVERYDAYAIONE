@@ -323,12 +323,3 @@ class CreditService:
             )
             await self.refund_credits(transaction_id)
             raise
-
-
-# 依赖注入工厂函数
-async def get_credit_service(
-    db: SupabaseClient,
-    redis: Optional[Redis] = None
-) -> CreditService:
-    """获取积分服务实例"""
-    return CreditService(db, redis)

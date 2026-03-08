@@ -99,7 +99,7 @@ class TestSummarizeMessages:
         mock_client.post.return_value = mock_response
         mock_client.is_closed = False
 
-        with patch("services.context_summarizer._get_client", return_value=mock_client), \
+        with patch("services.context_summarizer._ds_client.get", return_value=mock_client), \
              patch("services.context_summarizer.settings") as mock_settings:
             mock_settings.dashscope_api_key = "test-key"
             mock_settings.context_summary_model = "qwen-turbo"
@@ -133,7 +133,7 @@ class TestSummarizeMessages:
             mock_response,
         ]
 
-        with patch("services.context_summarizer._get_client", return_value=mock_client), \
+        with patch("services.context_summarizer._ds_client.get", return_value=mock_client), \
              patch("services.context_summarizer.settings") as mock_settings:
             mock_settings.dashscope_api_key = "test-key"
             mock_settings.context_summary_model = "qwen-turbo"
@@ -156,7 +156,7 @@ class TestSummarizeMessages:
         mock_client.is_closed = False
         mock_client.post.side_effect = httpx.TimeoutException("timeout")
 
-        with patch("services.context_summarizer._get_client", return_value=mock_client), \
+        with patch("services.context_summarizer._ds_client.get", return_value=mock_client), \
              patch("services.context_summarizer.settings") as mock_settings:
             mock_settings.dashscope_api_key = "test-key"
             mock_settings.context_summary_model = "qwen-turbo"
@@ -185,7 +185,7 @@ class TestSummarizeMessages:
         mock_client.is_closed = False
         mock_client.post.return_value = mock_response
 
-        with patch("services.context_summarizer._get_client", return_value=mock_client), \
+        with patch("services.context_summarizer._ds_client.get", return_value=mock_client), \
              patch("services.context_summarizer.settings") as mock_settings:
             mock_settings.dashscope_api_key = "test-key"
             mock_settings.context_summary_model = "qwen-turbo"

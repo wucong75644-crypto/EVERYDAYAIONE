@@ -13,6 +13,7 @@ import ImagePreviewModal from './ImagePreviewModal';
 import MessageMedia from './MessageMedia';
 import MessageActions from './MessageActions';
 import { getSavedSettings } from '../../utils/settingsStorage';
+import { logger } from '../../utils/logger';
 import { useModalAnimation } from '../../hooks/useModalAnimation';
 import { useMessageAnimation } from '../../hooks/useMessageAnimation';
 import LoadingPlaceholder from './LoadingPlaceholder';
@@ -295,7 +296,7 @@ export default memo(function MessageItem({
     try {
       await onDelete(message.id);
     } catch (error) {
-      console.error('删除消息失败:', error);
+      logger.error('messageItem', '删除消息失败', error);
     } finally {
       setDeleteLoading(false);
       closeDeleteModal();

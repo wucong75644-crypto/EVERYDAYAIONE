@@ -17,6 +17,7 @@ import { useState, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { getMessages } from '../services/message';
 import { useMessageStore, type Message, normalizeMessage } from '../stores/useMessageStore';
+import { logger } from '../utils/logger';
 
 // ========== 配置常量 ==========
 /** 首屏加载消息数量 */
@@ -62,7 +63,7 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
         if (axios.isCancel(error)) {
           return null;
         }
-        console.error('加载消息失败:', error);
+        logger.error('messageLoader', '加载消息失败', error);
         return null;
       } finally {
         if (!silent) setLoading(false);
@@ -196,7 +197,7 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
       store.prependMessages(conversationId, messagesAsc, newHasMore);
       setHasMore(newHasMore);
     } catch (error) {
-      console.error('加载更多消息失败:', error);
+      logger.error('messageLoader', '加载更多消息失败', error);
     } finally {
       setLoadingMore(false);
     }

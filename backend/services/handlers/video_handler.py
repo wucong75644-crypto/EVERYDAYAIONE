@@ -5,7 +5,6 @@
 """
 
 import uuid
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -15,10 +14,10 @@ from schemas.message import (
     ContentPart,
     GenerationType,
     Message,
-    MessageRole,
-    MessageStatus,
     VideoPart,
 )
+from config.smart_model_config import get_image_to_video_model
+from services.adapters.factory import DEFAULT_VIDEO_MODEL_ID
 from services.handlers.base import BaseHandler, TaskMetadata
 
 
@@ -59,14 +58,14 @@ class VideoHandler(BaseHandler):
         # 1. 提取参数
         prompt = self._extract_text_content(content)
         image_url = self._extract_image_url(content)
-        model_id = params.get("model") or "sora-2-text-to-video"
+        model_id = params.get("model") or DEFAULT_VIDEO_MODEL_ID
         aspect_ratio = params.get("aspect_ratio") or "landscape"
         n_frames = params.get("n_frames") or "25"
         remove_watermark = params.get("remove_watermark", True)
 
         # 2. 根据是否有图片选择模型
         if image_url and "image-to-video" not in model_id:
-            model_id = "sora-2-image-to-video"
+            model_id = get_image_to_video_model()
 
         # 3. 计算积分（使用统一入口）
         from config.kie_models import calculate_video_cost

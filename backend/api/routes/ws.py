@@ -10,7 +10,6 @@ WebSocket 端点
 
 import asyncio
 import json
-import time
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -21,7 +20,6 @@ from schemas.websocket import (
     WSMessageType,
     build_error,
     build_ping,
-    build_pong,
     build_subscribed,
     build_message_done,
     build_message_error,

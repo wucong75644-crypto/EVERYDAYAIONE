@@ -10,6 +10,7 @@ import { type Message } from '../../stores/useMessageStore';
 import { sendMessage, createTextContent, createTextWithImages, createErrorMessage } from '../../services/messageSender';
 import { useWebSocketContext } from '../../contexts/WebSocketContext';
 import { tabSync } from '../../utils/tabSync';
+import { logger } from '../../utils/logger';
 
 interface UseTextMessageHandlerParams {
   selectedModel: UnifiedModel;
@@ -82,7 +83,7 @@ export function useTextMessageHandler({
       // 消息完成也由 WebSocket 推送触发状态更新
 
     } catch (error) {
-      console.error('Chat message failed:', error);
+      logger.error('chatHandler', 'Chat message failed', error);
       onMessageSent(createErrorMessage(currentConversationId, error, '发送失败'));
     }
   };

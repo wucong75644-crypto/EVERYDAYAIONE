@@ -21,7 +21,6 @@ from schemas.message import (
     ContentPart,
     GenerationType,
     Message,
-    MessageStatus,
     TextPart,
 )
 from .mixins import TaskMixin, CreditMixin, MessageMixin
@@ -365,6 +364,44 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
             attempt=attempt,
         )
         await ws_manager.send_to_task_subscribers(task_id, retry_msg)
+
+    # ========================================
+    # 知识库钩子（fire-and-forget）
+    # ========================================
+
+    async def _record_knowledge_metric(self, **kwargs) -> None:
+        """记录任务指标到知识库（fire-and-forget）"""
+        try:
+            from services.knowledge_service import record_metric
+            await record_metric(**kwargs)
+        except Exception as e:
+            logger.debug(f"Knowledge metric record skipped | error={e}")
+
+    async def _extract_retry_knowledge(
+        self, *, task_type: str, model_id: str, retry_from_model: str,
+    ) -> None:
+        """重试成功时提取知识（模型对比经验）"""
+        try:
+            from services.knowledge_extractor import extract_and_save
+            await extract_and_save(
+                task_type=task_type, model_id=model_id, status="retry_success",
+                retry_from_model=retry_from_model,
+            )
+        except Exception as e:
+            logger.debug(f"Knowledge retry extraction skipped | error={e}")
+
+    async def _extract_failure_knowledge(
+        self, *, task_type: str, model_id: str, error_message: str,
+    ) -> None:
+        """任务失败时提取知识（失败模式）"""
+        try:
+            from services.knowledge_extractor import extract_and_save
+            await extract_and_save(
+                task_type=task_type, model_id=model_id, status="failed",
+                error_message=error_message,
+            )
+        except Exception as e:
+            logger.debug(f"Knowledge failure extraction skipped | error={e}")
 
     # ========================================
     # 任务管理方法 → TaskMixin

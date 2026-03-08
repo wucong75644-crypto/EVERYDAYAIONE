@@ -18,6 +18,7 @@ from schemas.message import (
     ImagePart,
     Message,
 )
+from services.adapters.factory import DEFAULT_IMAGE_MODEL_ID
 from services.handlers.base import BaseHandler, TaskMetadata
 
 
@@ -61,7 +62,7 @@ class ImageHandler(BaseHandler):
         # 1. 提取参数
         prompt = self._extract_text_content(content)
         image_urls = self._extract_image_urls(content)
-        model_id = params.get("model") or "google/nano-banana"
+        model_id = params.get("model") or DEFAULT_IMAGE_MODEL_ID
         aspect_ratio = params.get("aspect_ratio") or "1:1"
         output_format = params.get("output_format") or "png"
         resolution = params.get("resolution") or None

@@ -12,6 +12,7 @@
 import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { updateConversation } from '../services/conversation';
+import { logger } from '../utils/logger';
 
 /** 标题乐观更新状态 */
 export interface ConversationOptimisticTitleUpdate {
@@ -163,7 +164,7 @@ export function useConversationNavigation({
     try {
       await updateConversation(currentConversationId, { title: newTitle });
     } catch (error) {
-      console.error('重命名失败:', error);
+      logger.error('conversation', '重命名失败', error);
     }
   }, [editingTitle, conversationTitle, currentConversationId, setConversationTitle]);
 

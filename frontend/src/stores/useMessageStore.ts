@@ -89,17 +89,3 @@ export const useMessageStore = create<MessageStore>()(
   )
 );
 
-// ============================================================
-// 便捷 Hooks
-// ============================================================
-
-export const useMessages = (conversationId: string) =>
-  useMessageStore((state) => state.getMessages(conversationId));
-
-export const useCurrentConversation = () =>
-  useMessageStore((state) => ({
-    id: state.currentConversationId,
-    title: state.currentConversationTitle,
-  }));
-
-export const useIsSending = () => useMessageStore((state) => state.isSending);

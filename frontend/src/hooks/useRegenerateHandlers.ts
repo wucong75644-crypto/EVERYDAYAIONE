@@ -9,6 +9,7 @@ import { type Message } from '../stores/useMessageStore';
 import { sendMessage, determineMessageType, extractModelId, extractGenerationParams } from '../services/messageSender';
 import { useWebSocketContext } from '../contexts/WebSocketContext';
 import toast from 'react-hot-toast';
+import { logger } from '../utils/logger';
 
 interface RegenerateHandlersOptions {
   conversationId: string | null;
@@ -56,7 +57,7 @@ export function useRegenerateHandlers(options: RegenerateHandlersOptions) {
 
         // 注：retry 的本地状态更新已在 sendMessage 内部处理
       } catch (error) {
-        console.error('Regenerate failed:', error);
+        logger.error('regenerate', 'Regenerate failed', error);
         toast.error(error instanceof Error ? error.message : '重新生成失败');
       }
     },
@@ -86,7 +87,7 @@ export function useRegenerateHandlers(options: RegenerateHandlersOptions) {
           },
         });
       } catch (error) {
-        console.error('Regenerate single failed:', error);
+        logger.error('regenerate', 'Regenerate single failed', error);
         toast.error(error instanceof Error ? error.message : '重新生成失败');
       }
     },

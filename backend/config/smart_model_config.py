@@ -10,7 +10,7 @@
 import copy
 import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from loguru import logger
 
@@ -70,6 +70,19 @@ def _build_mappings(config: Dict[str, Any]) -> tuple:
 # 模块级变量（启动时初始化）
 SMART_CONFIG = _load_config()
 MODEL_TO_GEN_TYPE, AUTO_MODEL_DEFAULTS = _build_mappings(SMART_CONFIG)
+
+# 具名默认模型常量（供外部引用，数据源 = smart_models.json.default）
+DEFAULT_CHAT_MODEL = AUTO_MODEL_DEFAULTS.get(GenerationType.CHAT, "gemini-3-pro")
+DEFAULT_IMAGE_MODEL = AUTO_MODEL_DEFAULTS.get(GenerationType.IMAGE, "google/nano-banana")
+DEFAULT_VIDEO_MODEL = AUTO_MODEL_DEFAULTS.get(GenerationType.VIDEO, "sora-2-text-to-video")
+
+
+def get_image_to_video_model() -> str:
+    """获取图生视频模型（requires_image=true 的视频模型）"""
+    for m in SMART_CONFIG.get("video", {}).get("models", []):
+        if m.get("requires_image"):
+            return m["id"]
+    return "sora-2-image-to-video"
 
 
 # ============================================================

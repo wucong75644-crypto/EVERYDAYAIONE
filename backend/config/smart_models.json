@@ -3,13 +3,38 @@
     "models": [
       {
         "id": "gemini-3-pro",
-        "description": "高级推理，复杂分析/代码/深度思考",
+        "description": "Google高级推理，复杂分析/深度思考/联网搜索。海外模型，延迟较高",
         "priority": 1
       },
       {
         "id": "gemini-3-flash",
-        "description": "快速响应，日常对话/简单问答/翻译",
+        "description": "Google快速响应，日常对话/简单问答/翻译。海外模型，延迟较高",
         "priority": 2
+      },
+      {
+        "id": "deepseek-v3.2",
+        "description": "DeepSeek最新旗舰，代码/数学极强，速度快费用低。国内模型，响应快。用户要求快速回复或代码能力时优先",
+        "priority": 3
+      },
+      {
+        "id": "deepseek-r1",
+        "description": "DeepSeek深度推理模型，数学/逻辑/复杂推理极强，媲美o1。用户要求深度思考、解题、数学证明时选择",
+        "priority": 4
+      },
+      {
+        "id": "qwen3.5-plus",
+        "description": "阿里千问3.5，百万上下文，费用极低。适合长文分析、通用对话、写作。用户无特殊要求且追求性价比时选择",
+        "priority": 5
+      },
+      {
+        "id": "kimi-k2.5",
+        "description": "月之暗面Kimi最强模型，26万上下文，支持图片理解。适合长文档分析、多模态对话",
+        "priority": 6
+      },
+      {
+        "id": "glm-5",
+        "description": "智谱GLM最新模型，20万上下文，中文理解能力强。适合中文创作、对话、分析",
+        "priority": 7
       }
     ],
     "default": "gemini-3-pro"
@@ -39,18 +64,18 @@
     "models": [
       {
         "id": "sora-2-text-to-video",
-        "description": "文生视频(30积分/10秒)",
+        "description": "文生视频(31积分/10秒)",
         "priority": 1
       },
       {
         "id": "sora-2-image-to-video",
-        "description": "图生视频，仅当用户上传了图片时选择(30积分/10秒)",
+        "description": "图生视频，仅当用户上传了图片时选择(31积分/10秒)",
         "priority": 2,
         "requires_image": true
       },
       {
         "id": "sora-2-pro-storyboard",
-        "description": "专业故事板，用户要求电影级/专业级质量时选择(150积分/10秒)",
+        "description": "专业故事板，用户要求电影级/专业级质量时选择(91积分/10秒)",
         "priority": 3
       }
     ],
@@ -60,7 +85,7 @@
     "models": [
       {
         "id": "gemini-3-pro",
-        "description": "高级推理，适合深度分析",
+        "description": "高级推理，适合深度分析（支持Google Search）",
         "priority": 1
       },
       {

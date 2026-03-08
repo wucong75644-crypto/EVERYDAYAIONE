@@ -1,0 +1,183 @@
+[
+  {
+    "category": "model",
+    "subcategory": "chat",
+    "node_type": "model",
+    "title": "gemini-3-pro 模型特点",
+    "content": "Google 最强推理模型（默认聊天模型）。能力：100万上下文窗口，最大输出65536 tokens，支持图片理解（Vision）、Google Search 实时搜索、函数调用、结构化输出（response_format）、推理深度调节（reasoning_effort）。适合：复杂分析、代码生成、深度思考、多步推理、长文写作、技术问题、需要联网搜索的场景。费用：按 token 计费，约 101/701 积分每百万输入/输出 token。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"model_id": "gemini-3-pro", "provider": "kie"}
+  },
+  {
+    "category": "model",
+    "subcategory": "chat",
+    "node_type": "model",
+    "title": "gemini-3-flash 模型特点",
+    "content": "Google 快速响应模型，低延迟高吞吐。能力：100万上下文窗口，最大输出65536 tokens，支持图片理解（Vision）、函数调用、推理深度调节。不支持 Google Search 实时搜索、不支持结构化输出。适合：日常对话、简单问答、翻译等不需要深度推理和联网搜索的场景。费用低于 pro（约 31/181 积分每百万输入/输出 token），速度更快但推理能力弱。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"model_id": "gemini-3-flash", "provider": "kie"}
+  },
+  {
+    "category": "model",
+    "subcategory": "image_generation",
+    "node_type": "model",
+    "title": "google/nano-banana 基础文生图",
+    "content": "默认文生图模型，速度快费用低（5积分/张）。不支持分辨率选择。支持比例：1:1、9:16、16:9、3:4、4:3、3:2、2:3、5:4、4:5、21:9、auto。输出格式：PNG/JPEG。最大提示词20000字符。不需要输入图片。适合：快速出图、概念验证、社交媒体用图。用户没有特殊要求时优先选择此模型。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"model_id": "google/nano-banana", "provider": "kie"}
+  },
+  {
+    "category": "model",
+    "subcategory": "image_generation",
+    "node_type": "model",
+    "title": "nano-banana-pro 高级文生图",
+    "content": "高品质文生图模型，支持高分辨率和参考图片。分辨率及费用：1K=25积分、2K=37积分、4K=49积分。支持参考图片（最多8张，每张最大30MB）。支持比例：1:1、2:3、3:2、3:4、4:3、4:5、5:4、9:16、16:9、21:9、auto。输出格式：PNG/JPG。最大提示词10000字符。4K 耗时约为 1K 的 3 倍。适合：商品主图、海报设计、印刷品。仅当用户明确要求高清、高品质、精细、大图、4K 或需要参考图时选择。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"model_id": "nano-banana-pro", "provider": "kie"}
+  },
+  {
+    "category": "model",
+    "subcategory": "image_generation",
+    "node_type": "model",
+    "title": "google/nano-banana-edit 图片编辑",
+    "content": "纯图像编辑模型（5积分/张），必须上传图片才能使用。支持最多10张输入图片，每张最大10MB。支持格式：PNG/JPEG/WebP。不支持分辨率选择。支持比例：1:1、9:16、16:9、3:4、4:3、3:2、2:3、5:4、4:5、21:9、auto。最大提示词5000字符。适合：修改图片内容、风格转换、局部编辑、图片增强。不能从零生成图片，仅当用户上传了图片并要求修改时选择。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"model_id": "google/nano-banana-edit", "provider": "kie"}
+  },
+  {
+    "category": "model",
+    "subcategory": "video_generation",
+    "node_type": "model",
+    "title": "sora-2-text-to-video 文生视频",
+    "content": "文生视频模型，纯文字描述生成视频。支持时长：10秒（31积分）、15秒（46积分）。画面方向：portrait（竖屏）、landscape（横屏）。支持去水印。不需要输入图片。最大提示词10000字符。适合：创意视频、产品演示、社交媒体短片。生成时间较长。默认视频生成模型。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"model_id": "sora-2-text-to-video", "provider": "kie"}
+  },
+  {
+    "category": "model",
+    "subcategory": "video_generation",
+    "node_type": "model",
+    "title": "sora-2-image-to-video 图生视频",
+    "content": "图生视频模型，以用户上传的图片作为第一帧生成视频。必须上传图片（最大10MB）。支持时长：10秒（31积分）、15秒（46积分）。画面方向：portrait（竖屏）、landscape（横屏）。支持去水印。最大提示词10000字符。效果比纯文字更可控。仅当用户上传了图片且要求生成视频时选择。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"model_id": "sora-2-image-to-video", "provider": "kie"}
+  },
+  {
+    "category": "model",
+    "subcategory": "video_generation",
+    "node_type": "model",
+    "title": "sora-2-pro-storyboard 专业故事板",
+    "content": "专业级视频生成模型，支持最长25秒。费用：10秒=91积分、15秒=136积分、25秒=226积分。画面方向：portrait（竖屏）、landscape（横屏）。不支持去水印。不要求必须输入图片和提示词。适合电影级、专业级质量需求。费用远高于普通视频，仅当用户明确要求最高品质或需要25秒长视频时选择。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"model_id": "sora-2-pro-storyboard", "provider": "kie"}
+  },
+  {
+    "category": "tool",
+    "subcategory": "image_generation",
+    "node_type": "parameter",
+    "title": "图片分辨率选择建议",
+    "content": "仅 nano-banana-pro 支持分辨率选择。1K（25积分）适合快速预览和社交媒体；2K（37积分）适合网页展示和电商详情页；4K（49积分）适合印刷品和大尺寸海报。google/nano-banana 和 google/nano-banana-edit 不支持分辨率选择，固定5积分/张。分辨率越高，生成耗时和积分消耗越高。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"related_models": ["nano-banana-pro", "google/nano-banana", "google/nano-banana-edit"]}
+  },
+  {
+    "category": "tool",
+    "subcategory": "video_generation",
+    "node_type": "parameter",
+    "title": "视频时长选择建议",
+    "content": "普通视频（sora-2-text-to-video/image-to-video）支持10秒（31积分）和15秒（46积分）。专业故事板（sora-2-pro-storyboard）额外支持25秒（226积分）。时长越长积分消耗越高。图生视频以第一帧为起点，效果更可控。10秒适合短片和社交媒体；15秒适合产品展示和广告；25秒仅专业故事板支持，适合完整叙事。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"related_models": ["sora-2-text-to-video", "sora-2-image-to-video", "sora-2-pro-storyboard"]}
+  },
+  {
+    "category": "experience",
+    "subcategory": "chat",
+    "node_type": "pattern",
+    "title": "聊天与生图意图区分",
+    "content": "用户讨论图片风格、分析设计、询问技巧时应使用聊天模型而非生图模型。只有用户明确说'生成''画''制作'图片时才调用生图工具。模糊表达如'帮我看看这张图'应走聊天（用 gemini-3-pro 的 Vision 能力看图）。需要联网搜索最新信息时必须用 gemini-3-pro（flash 不支持 Google Search）。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {}
+  },
+  {
+    "category": "experience",
+    "subcategory": "chat",
+    "node_type": "pattern",
+    "title": "gemini-3-pro 与 flash 选择策略",
+    "content": "选 pro 的场景：复杂推理、代码生成、需要联网搜索、需要结构化输出、深度分析、长文写作。选 flash 的场景：简单问答、日常闲聊、翻译、摘要、不需要深度思考的快速响应。两者都支持 Vision（看图能力）和函数调用，但 flash 不支持 Google Search 和 response_format。费用 flash 约为 pro 的 1/4。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"related_models": ["gemini-3-pro", "gemini-3-flash"]}
+  },
+
+  {
+    "category": "model",
+    "subcategory": "chat",
+    "node_type": "model",
+    "title": "deepseek-v3.2 模型特点",
+    "content": "DeepSeek 最新旗舰模型，国内模型响应快。能力：131K 上下文窗口，最大输出 65536 tokens，支持函数调用（Function Calling）、流式响应、混合思考模式（enable_thinking）。不支持图片理解。适合：代码生成、数学计算、逻辑推理、技术问题、需要快速响应的场景。费用极低（约 29/113 积分每百万输入/输出 token），是 gemini-3-pro 的 1/6。用户要求快速回复、写代码、做数学题时优先选择。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"model_id": "deepseek-v3.2", "provider": "dashscope"}
+  },
+  {
+    "category": "model",
+    "subcategory": "chat",
+    "node_type": "model",
+    "title": "deepseek-r1 模型特点",
+    "content": "DeepSeek 深度推理模型，专注复杂推理，国内模型响应快。能力：131K 上下文窗口，最大输出 16384 tokens，支持函数调用、流式响应、思考模式。不支持图片理解。推理能力媲美 OpenAI o1，擅长数学证明、逻辑推理、复杂分析。费用（约 57/225 积分每百万输入/输出 token）。适合：数学证明、逻辑推理题、复杂分析、需要深度思考的场景。用户要求深度思考、解题、数学证明时选择。输出长度限制较短（16K），不适合长文写作。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"model_id": "deepseek-r1", "provider": "dashscope"}
+  },
+  {
+    "category": "model",
+    "subcategory": "chat",
+    "node_type": "model",
+    "title": "qwen3.5-plus 模型特点",
+    "content": "阿里通义千问 3.5 Plus，国内模型响应快。能力：100万（1M）上下文窗口，最大输出 65536 tokens，支持图片理解（Vision）、函数调用、流式响应、思考模式。适合：长文档分析、通用对话、中文写作、翻译、摘要。费用极低（约 12/68 积分每百万输入/输出 token），是所有模型中最便宜的，约 gemini-3-pro 的 1/10。百万级上下文适合处理超长文本。用户没有特殊要求且追求性价比时选择。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"model_id": "qwen3.5-plus", "provider": "dashscope"}
+  },
+  {
+    "category": "model",
+    "subcategory": "chat",
+    "node_type": "model",
+    "title": "kimi-k2.5 模型特点",
+    "content": "月之暗面 Kimi K2.5，国内模型响应快。能力：262K（26万）上下文窗口，最大输出 32768 tokens，支持图片理解（Vision）、函数调用、流式响应、思考模式。全能型模型，代码、推理、创作均衡。费用（约 57/295 积分每百万输入/输出 token）。适合：长文档分析、多模态对话（文字+图片）、代码生成、创意写作。26万上下文处于中高水平，适合分析较长文档。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"model_id": "kimi-k2.5", "provider": "dashscope"}
+  },
+  {
+    "category": "model",
+    "subcategory": "chat",
+    "node_type": "model",
+    "title": "glm-5 模型特点",
+    "content": "智谱 GLM-5，国内模型响应快。能力：202K（20万）上下文窗口，最大输出 16384 tokens，支持函数调用、流式响应、思考模式。不支持图片理解。中文理解和生成能力强，国产老牌 AI 厂商。费用（约 57/253 积分每百万输入/输出 token）。适合：中文创作、中文对话、文本分析、知识问答。输出长度限制较短（16K），不适合超长文写作。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"model_id": "glm-5", "provider": "dashscope"}
+  },
+  {
+    "category": "experience",
+    "subcategory": "chat",
+    "node_type": "pattern",
+    "title": "国内模型与海外模型选择策略",
+    "content": "国内模型（deepseek-v3.2、deepseek-r1、qwen3.5-plus、kimi-k2.5、glm-5）通过阿里云百炼 DashScope 调用，延迟低、响应快、费用低。海外模型（gemini-3-pro、gemini-3-flash）通过 KIE 平台调用，延迟较高但能力强（支持 Google Search、结构化输出）。用户追求速度时选国内模型；需要联网搜索时必须用 gemini-3-pro；代码/数学选 deepseek-v3.2；深度推理选 deepseek-r1；性价比/长文选 qwen3.5-plus；多模态+长文选 kimi-k2.5。",
+    "source": "seed",
+    "confidence": 1.0,
+    "metadata": {"related_models": ["deepseek-v3.2", "deepseek-r1", "qwen3.5-plus", "kimi-k2.5", "glm-5", "gemini-3-pro", "gemini-3-flash"]}
+  }
+]

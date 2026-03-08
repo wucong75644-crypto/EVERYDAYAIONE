@@ -130,7 +130,7 @@ class TestFilterMemories:
         }
 
         with patch(
-            "services.memory_filter._get_client",
+            "services.memory_filter._ds_client.get",
             return_value=AsyncMock(post=AsyncMock(return_value=mock_response)),
         ):
             result = await filter_memories("查询", memories)
@@ -165,7 +165,7 @@ class TestFilterMemories:
 
         mock_client = AsyncMock(post=mock_post)
         with patch(
-            "services.memory_filter._get_client",
+            "services.memory_filter._ds_client.get",
             return_value=mock_client,
         ):
             result = await filter_memories("查询", memories)
@@ -183,7 +183,7 @@ class TestFilterMemories:
 
         mock_client = AsyncMock(post=mock_post)
         with patch(
-            "services.memory_filter._get_client",
+            "services.memory_filter._ds_client.get",
             return_value=mock_client,
         ):
             result = await filter_memories("查询", memories)
@@ -207,7 +207,7 @@ class TestFilterMemories:
         }
 
         with patch(
-            "services.memory_filter._get_client",
+            "services.memory_filter._ds_client.get",
             return_value=AsyncMock(post=AsyncMock(return_value=mock_response)),
         ):
             result = await filter_memories("查询", memories)
@@ -240,7 +240,7 @@ class TestFilterMemories:
         }
 
         with patch(
-            "services.memory_filter._get_client",
+            "services.memory_filter._ds_client.get",
             return_value=AsyncMock(post=AsyncMock(return_value=mock_response)),
         ):
             result = await filter_memories("查询", memories)

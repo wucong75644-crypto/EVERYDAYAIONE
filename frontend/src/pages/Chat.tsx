@@ -23,6 +23,7 @@ import type { UnifiedModel } from '../constants/models';
 import { useUnifiedMessages } from '../hooks/useUnifiedMessages';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { tabSync } from '../utils/tabSync';
+import { logger } from '../utils/logger';
 
 // 用户信息刷新间隔（5 分钟）
 const USER_REFRESH_INTERVAL = 5 * 60 * 1000;
@@ -241,10 +242,10 @@ export default function Chat() {
           // 只有对话确实不存在（404）才跳转，其他错误（网络抖动、超时等）不跳走
           const status = error?.response?.status;
           if (status === 404) {
-            console.error('对话不存在:', urlConversationId);
+            logger.error('chat', '对话不存在', undefined, { conversationId: urlConversationId });
             navigate('/chat');
           } else {
-            console.error('加载对话失败（非 404，不跳转）:', status, error);
+            logger.error('chat', '加载对话失败（非 404，不跳转）', error, { status });
           }
         });
     } else {

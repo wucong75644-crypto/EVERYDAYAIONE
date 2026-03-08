@@ -15,6 +15,7 @@ import { Image as ImageIcon, Loader2, RefreshCw } from 'lucide-react';
 import { FailedMediaPlaceholder } from './MediaPlaceholder';
 import ImageContextMenu from './ImageContextMenu';
 import toast from 'react-hot-toast';
+import { downloadImage } from '../../utils/downloadImage';
 import styles from './shared.module.css';
 import type { ContentPart } from '../../stores/useMessageStore';
 import type { ImagePart } from '../../types/message';
@@ -137,17 +138,7 @@ const GridCell = memo(function GridCell({
 
     setIsDownloading(true);
     try {
-      const response = await fetch(imageUrl, { mode: 'cors', credentials: 'omit' });
-      if (!response.ok) throw new Error('download failed');
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = `image-${messageId}-${index}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(blobUrl);
+      await downloadImage(imageUrl, `image-${messageId}-${index}`);
     } catch {
       toast.error('download failed');
     } finally {

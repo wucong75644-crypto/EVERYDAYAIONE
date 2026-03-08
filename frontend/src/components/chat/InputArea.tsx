@@ -16,6 +16,7 @@ import { useSettingsManager } from '../../hooks/useSettingsManager';
 import { type UnifiedModel } from '../../constants/models';
 import { useMessageStore, type Message } from '../../stores/useMessageStore';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { logger } from '../../utils/logger';
 import ConflictAlert from './ConflictAlert';
 import InputControls from './InputControls';
 import UploadErrorBar from './UploadErrorBar';
@@ -94,7 +95,7 @@ export default function InputArea({
   const handleAutoSaveModel = useCallback((modelId: string) => {
     if (conversationId) {
       updateConversation(conversationId, { model_id: modelId }).catch((error) => {
-        console.error('保存模型选择失败:', error);
+        logger.error('inputArea', '保存模型选择失败', error);
       });
     }
   }, [conversationId]);
@@ -201,7 +202,7 @@ export default function InputArea({
       // 发送消息（将音频 URL 作为附件）
       await handleChatMessage(`[语音消息]`, currentConversationId, [uploadResult.audio_url]);
     } catch (error) {
-      console.error('发送语音消息失败:', error);
+      logger.error('inputArea', '发送语音消息失败', error);
       setUploadError(error instanceof Error ? error.message : '语音上传失败');
       onMessageSent(null);
     } finally {
@@ -273,7 +274,7 @@ export default function InputArea({
         await handleImageGeneration(currentConversationId!, messageContent, imageUrls);
       }
     } catch (error) {
-      console.error('发送消息失败:', error);
+      logger.error('inputArea', '发送消息失败', error);
       setPrompt(messageContent);
       setSendError(error instanceof Error ? error.message : '发送失败，请重试');
       onMessageSent(null);

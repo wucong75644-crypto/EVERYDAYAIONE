@@ -4,6 +4,7 @@ import { memo, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { downloadImage } from '../../utils/downloadImage';
 import { type AspectRatio, type VideoAspectRatio } from '../../constants/models';
 import { getImagePlaceholderSize, getVideoPlaceholderSize } from '../../utils/settingsStorage';
 import MediaPlaceholder, { FailedMediaPlaceholder } from './MediaPlaceholder';
@@ -143,18 +144,7 @@ function AiGeneratedImage({
 
     setIsDownloading(true);
     try {
-      const response = await fetch(imageUrl, { mode: 'cors', credentials: 'omit' });
-      if (!response.ok) throw new Error('下载失败');
-
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = `image-${messageId}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(blobUrl);
+      await downloadImage(imageUrl, `image-${messageId}`);
     } catch {
       toast.error('下载失败，请右键图片选择"另存为"');
     } finally {

@@ -146,6 +146,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning(f"Mem0 pre-warm failed (non-critical) | error={e}")
 
+    # 预热知识库连接 + 导入种子知识
+    try:
+        from services.knowledge_config import _get_pg_pool, is_kb_available
+        pool = await _get_pg_pool()
+        if pool and is_kb_available():
+            from services.knowledge_service import load_seed_knowledge
+            imported = await load_seed_knowledge()
+            logger.info(f"Knowledge base ready | seed_imported={imported}")
+        else:
+            logger.info("Knowledge base not configured or disabled")
+    except Exception as e:
+        logger.warning(f"Knowledge base init failed (non-critical) | error={e}")
+
     # 启动后台任务工作器
     from core.database import get_supabase_client
     import asyncio

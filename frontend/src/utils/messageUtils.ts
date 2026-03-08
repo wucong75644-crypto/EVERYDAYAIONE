@@ -18,10 +18,9 @@ import type {
 /** 从 Message 提取文本内容 */
 export function getTextContent(message: Message): string {
   // 兼容旧格式（content 可能是字符串而非 ContentPart[]）
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if (typeof (message as any).content === 'string') {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (message as any).content;
+  const rawContent = (message as unknown as { content: unknown }).content;
+  if (typeof rawContent === 'string') {
+    return rawContent;
   }
 
   if (!Array.isArray(message.content)) return '';
@@ -56,9 +55,19 @@ export function getVideoUrls(message: Message): string[] {
 // 消息转换函数
 // ============================================================
 
+/** API 返回的原始消息（content 可能是字符串或数组） */
+interface RawApiMessage {
+  id: string;
+  conversation_id: string;
+  role: string;
+  content: string | ContentPart[];
+  status?: string;
+  is_error?: boolean;
+  [key: string]: unknown;
+}
+
 /** 转换旧格式消息为新格式 */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function normalizeMessage(msg: any): Message {
+export function normalizeMessage(msg: RawApiMessage): Message {
   // 如果 content 已经是数组，直接返回
   if (Array.isArray(msg.content)) {
     return {

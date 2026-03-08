@@ -9,6 +9,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useModalAnimation } from '../../hooks/useModalAnimation';
+import { logger } from '../../utils/logger';
 
 interface MessageActionsProps {
   /** 消息 ID */
@@ -82,7 +83,7 @@ export default function MessageActions({
         copyTimerRef.current = null;
       }, 2000);
     } catch (error) {
-      console.error('复制失败:', error);
+      logger.error('messageActions', '复制失败', error);
     }
   }, [content]);
 

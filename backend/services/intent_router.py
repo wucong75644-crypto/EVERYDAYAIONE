@@ -7,7 +7,7 @@
 3. 搜索需求（web_search）
 4. 动态模型选择 + 失败重试路由
 
-降级链：qwen-plus → qwen-turbo → 关键词兜底
+降级链：qwen3.5-plus → qwen3.5-flash → 关键词兜底
 重试降级链：千问主模型 → 千问备用 → 确定性兜底 → 放弃
 """
 
@@ -25,8 +25,12 @@ from config.smart_model_config import (
     MODEL_TO_GEN_TYPE,
     AUTO_MODEL_DEFAULTS,
     ROUTER_TOOLS,
+    SMART_CONFIG,
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_IMAGE_MODEL,
     build_retry_tools,
     get_remaining_models,
+    get_image_to_video_model,
 )
 
 
@@ -74,23 +78,39 @@ class RetryContext:
 # 提示词 & 常量
 # ============================================================
 
-ROUTER_SYSTEM_PROMPT = (
-    "你是智能意图路由器。分析用户消息，必须调用一个工具，"
-    "并为该工具选择最合适的 model。\n\n"
-    "意图判断：\n"
-    "- generate_image: 用户明确要求生成/画/绘制/修改图片\n"
-    "- generate_video: 用户明确要求生成/制作视频\n"
-    "- web_search: 需要搜索互联网最新信息才能回答\n"
-    "- text_chat: 其他所有对话（包括讨论图片风格、分析设计等）\n\n"
-    "模型选择要点：\n"
-    "- 根据 model 参数的 description 选择最匹配的模型\n"
-    "- 用户有图片且要编辑 → google/nano-banana-edit 或 nano-banana-pro\n"
-    "- 用户有图片且要做视频 → sora-2-image-to-video\n"
-    "- 用户要求高质量/专业级 → 选更高级的模型\n"
-    "- 日常简单对话 → gemini-3-flash；复杂推理/代码 → gemini-3-pro\n\n"
-    "重要：仅当用户明确要求「生成/画/制作」时才调用生成工具。"
-    "讨论、分析、解释等一律用 text_chat。"
-)
+def _build_router_prompt() -> str:
+    """从 smart_models.json 动态生成路由提示词（消除硬编码模型名）"""
+    image_edit_models = [
+        m["id"] for m in SMART_CONFIG.get("image", {}).get("models", [])
+        if m.get("requires_image")
+    ]
+    image_pro_models = [
+        m["id"] for m in SMART_CONFIG.get("image", {}).get("models", [])
+        if not m.get("requires_image") and m["id"] != DEFAULT_IMAGE_MODEL
+    ]
+    edit_hint = " 或 ".join(image_edit_models + image_pro_models) or "图片编辑模型"
+    i2v_model = get_image_to_video_model()
+
+    return (
+        "你是智能意图路由器。分析用户消息，必须调用一个工具，"
+        "并为该工具选择最合适的 model。\n\n"
+        "意图判断：\n"
+        "- generate_image: 用户明确要求生成/画/绘制/修改图片\n"
+        "- generate_video: 用户明确要求生成/制作视频\n"
+        "- web_search: 需要搜索互联网最新信息才能回答\n"
+        "- text_chat: 其他所有对话（包括讨论图片风格、分析设计等）\n\n"
+        "模型选择要点：\n"
+        "- 根据 model 参数的 description 选择最匹配的模型\n"
+        f"- 用户有图片且要编辑 → {edit_hint}\n"
+        f"- 用户有图片且要做视频 → {i2v_model}\n"
+        "- 用户要求高质量/专业级 → 选更高级的模型\n"
+        "- 根据各模型的 description 自动匹配最合适的聊天模型\n\n"
+        "重要：仅当用户明确要求「生成/画/制作」时才调用生成工具。"
+        "讨论、分析、解释等一律用 text_chat。"
+    )
+
+
+ROUTER_SYSTEM_PROMPT = _build_router_prompt()
 
 RETRY_ROUTER_SYSTEM_PROMPT = (
     "你是智能重试路由器。之前选择的模型执行失败了，"
@@ -126,8 +146,8 @@ def resolve_auto_model(
     if gen_type == GenerationType.VIDEO:
         has_images = any(isinstance(p, ImagePart) for p in content)
         if has_images:
-            return "sora-2-image-to-video"
-    return AUTO_MODEL_DEFAULTS.get(gen_type, "gemini-3-pro")
+            return get_image_to_video_model()
+    return AUTO_MODEL_DEFAULTS.get(gen_type, DEFAULT_CHAT_MODEL)
 
 
 # ============================================================
@@ -174,6 +194,9 @@ class IntentRouter:
         if image_count > 0:
             context_prefix = f"[上下文：用户附带了{image_count}张图片]\n"
 
+        # 查询知识库，增强路由 system prompt
+        enhanced_prompt = await self._enhance_with_knowledge(text)
+
         # 降级链：主模型 → 备用模型 → 关键词
         models = [
             settings.intent_router_model,
@@ -185,7 +208,7 @@ class IntentRouter:
                 decision = await self._call_model(
                     api_key=settings.dashscope_api_key,
                     model=model,
-                    system_prompt=ROUTER_SYSTEM_PROMPT,
+                    system_prompt=enhanced_prompt,
                     text=context_prefix + text,
                     tools=ROUTER_TOOLS,
                     timeout=settings.intent_router_timeout,
@@ -415,6 +438,25 @@ class IntentRouter:
             raw_tool_name=f"keyword_{gen_type.value}",
             routed_by="keyword",
         )
+
+    async def _enhance_with_knowledge(self, text: str) -> str:
+        """查询知识库，将相关知识注入路由 system prompt"""
+        try:
+            from services.knowledge_service import search_relevant
+
+            knowledge_items = await search_relevant(query=text, limit=5)
+            if knowledge_items:
+                knowledge_text = "\n".join(
+                    f"- {k['title']}: {k['content']}" for k in knowledge_items
+                )
+                return (
+                    ROUTER_SYSTEM_PROMPT
+                    + f"\n\n你已掌握的经验知识：\n{knowledge_text}"
+                )
+        except Exception as e:
+            logger.debug(f"Knowledge injection skipped | error={e}")
+
+        return ROUTER_SYSTEM_PROMPT
 
     def _extract_text(self, content: List[ContentPart]) -> str:
         """从 ContentPart 列表提取文本"""

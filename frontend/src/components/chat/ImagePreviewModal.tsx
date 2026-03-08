@@ -11,6 +11,7 @@
 import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Download, ZoomIn, ZoomOut, RotateCcw, Loader2, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { downloadImage } from '../../utils/downloadImage';
 
 interface ImagePreviewModalProps {
   /** 图片 URL */
@@ -148,26 +149,7 @@ export default memo(function ImagePreviewModal({
 
     try {
       setIsDownloading(true);
-
-      // 使用 fetch 获取图片数据
-      const response = await fetch(imageUrl);
-      if (!response.ok) {
-        throw new Error('下载失败');
-      }
-
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-
-      // 创建下载链接
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = `${filename}.${getExtensionFromBlob(blob)}`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      // 释放 blob URL
-      URL.revokeObjectURL(blobUrl);
+      await downloadImage(imageUrl, filename, { cors: false });
     } catch {
       // 下载失败时降级：直接打开链接让用户手动下载
       window.open(imageUrl, '_blank');
@@ -487,17 +469,3 @@ export default memo(function ImagePreviewModal({
   );
 });
 
-/**
- * 从 Blob MIME 类型获取文件扩展名
- */
-function getExtensionFromBlob(blob: Blob): string {
-  const mimeType = blob.type;
-  const mimeMap: Record<string, string> = {
-    'image/png': 'png',
-    'image/jpeg': 'jpg',
-    'image/gif': 'gif',
-    'image/webp': 'webp',
-    'image/svg+xml': 'svg',
-  };
-  return mimeMap[mimeType] || 'png';
-}

@@ -11,7 +11,7 @@
  */
 
 import { createContext, useContext, useEffect, useRef, useCallback, type ReactNode } from 'react';
-import { useWebSocket, type WSMessageType } from '../hooks/useWebSocket';
+import { useWebSocket, type WSMessageType, type WSMessage } from '../hooks/useWebSocket';
 import { useMessageStore, normalizeMessage, type Message } from '../stores/useMessageStore';
 import { useTaskRestorationStore } from '../stores/useTaskRestorationStore';
 import {
@@ -38,8 +38,7 @@ export interface OperationContext {
 export interface WebSocketContextValue {
   isConnected: boolean;
   isConnecting: boolean;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  subscribe: (type: WSMessageType, handler: (msg: any) => void) => () => void;
+  subscribe: (type: WSMessageType, handler: (msg: WSMessage) => void) => () => void;
   subscribeTask: (taskId: string) => void;
   unsubscribeTask: (taskId: string) => void;
   subscribeTaskWithMapping: (taskId: string, conversationId: string) => void;

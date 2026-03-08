@@ -57,6 +57,78 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         context_window=1_000_000,
     ),
 
+    # ==================== DashScope 百炼模型 ====================
+    "deepseek-v3.2": ModelConfig(
+        model_id="deepseek-v3.2",
+        provider=ModelProvider.DASHSCOPE,
+        provider_model="deepseek-v3.2",
+        display_name="DeepSeek V3.2",
+        input_price=0.28,       # ~2元/1M ≈ $0.28
+        output_price=1.11,      # ~8元/1M ≈ $1.11
+        credits_per_1k_input=0.029,
+        credits_per_1k_output=0.113,
+        supports_vision=False,
+        supports_tools=True,
+        max_tokens=65536,
+        context_window=131_072,
+    ),
+    "deepseek-r1": ModelConfig(
+        model_id="deepseek-r1",
+        provider=ModelProvider.DASHSCOPE,
+        provider_model="deepseek-r1",
+        display_name="DeepSeek R1",
+        input_price=0.56,       # ~4元/1M ≈ $0.56
+        output_price=2.22,      # ~16元/1M ≈ $2.22
+        credits_per_1k_input=0.057,
+        credits_per_1k_output=0.225,
+        supports_vision=False,
+        supports_tools=True,
+        max_tokens=16384,
+        context_window=131_072,
+    ),
+    "qwen3.5-plus": ModelConfig(
+        model_id="qwen3.5-plus",
+        provider=ModelProvider.DASHSCOPE,
+        provider_model="qwen3.5-plus",
+        display_name="Qwen 3.5 Plus",
+        input_price=0.11,       # 0.8元/1M ≈ $0.11
+        output_price=0.67,      # 4.8元/1M ≈ $0.67
+        credits_per_1k_input=0.012,
+        credits_per_1k_output=0.068,
+        supports_vision=True,
+        supports_tools=True,
+        max_tokens=65536,
+        context_window=1_000_000,
+    ),
+    "kimi-k2.5": ModelConfig(
+        model_id="kimi-k2.5",
+        provider=ModelProvider.DASHSCOPE,
+        provider_model="kimi-k2.5",
+        display_name="Kimi K2.5",
+        input_price=0.56,       # 4元/1M ≈ $0.56
+        output_price=2.92,      # 21元/1M ≈ $2.92
+        credits_per_1k_input=0.057,
+        credits_per_1k_output=0.295,
+        supports_vision=True,
+        supports_tools=True,
+        max_tokens=32768,
+        context_window=262_144,
+    ),
+    "glm-5": ModelConfig(
+        model_id="glm-5",
+        provider=ModelProvider.DASHSCOPE,
+        provider_model="glm-5",
+        display_name="GLM 5",
+        input_price=0.56,       # ~4元/1M ≈ $0.56
+        output_price=2.50,      # ~18元/1M ≈ $2.50
+        credits_per_1k_input=0.057,
+        credits_per_1k_output=0.253,
+        supports_vision=False,
+        supports_tools=True,
+        max_tokens=16384,
+        context_window=202_752,
+    ),
+
     # ==================== Google 官方模型（Phase 6）====================
     "gemini-2.5-flash": ModelConfig(
         model_id="gemini-2.5-flash",
@@ -90,8 +162,14 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
     ),
 }
 
-# 默认模型
-DEFAULT_MODEL_ID = "gemini-3-flash"
+# 默认模型（数据源：smart_models.json → smart_model_config.py）
+from config.smart_model_config import (
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_IMAGE_MODEL,
+    DEFAULT_VIDEO_MODEL,
+)
+
+DEFAULT_MODEL_ID = DEFAULT_CHAT_MODEL
 
 
 # ============================================================
@@ -120,7 +198,7 @@ IMAGE_MODEL_REGISTRY: Dict[str, Dict] = {
     },
 }
 
-DEFAULT_IMAGE_MODEL_ID = "google/nano-banana"
+DEFAULT_IMAGE_MODEL_ID = DEFAULT_IMAGE_MODEL
 
 
 # ============================================================
@@ -149,7 +227,7 @@ VIDEO_MODEL_REGISTRY: Dict[str, Dict] = {
     },
 }
 
-DEFAULT_VIDEO_MODEL_ID = "sora-2-text-to-video"
+DEFAULT_VIDEO_MODEL_ID = DEFAULT_VIDEO_MODEL
 
 
 # ============================================================
@@ -197,6 +275,18 @@ def create_chat_adapter(model_id: Optional[str] = None) -> BaseChatAdapter:
 
         client = KieClient(settings.kie_api_key)
         return KieChatAdapter(client, config.provider_model)
+
+    elif config.provider == ModelProvider.DASHSCOPE:
+        from .dashscope import DashScopeChatAdapter
+
+        if not settings.dashscope_api_key:
+            raise ValueError("DashScope API Key 未配置")
+
+        return DashScopeChatAdapter(
+            api_key=settings.dashscope_api_key,
+            model=config.provider_model,
+            base_url=settings.dashscope_base_url,
+        )
 
     elif config.provider == ModelProvider.GOOGLE:
         # Phase 6 实现

@@ -69,6 +69,161 @@ interface GenerateResponse {
   generation_type?: GenerationType;
 }
 
+/** 发送上下文（sendMessage 内部生成的 ID 和时间戳） */
+interface SendContext {
+  clientRequestId: string;
+  userMessageId: string;
+  assistantMessageId: string;
+  clientTaskId: string;
+  now: Date;
+  placeholderCreatedAt: string;
+}
+
+// ============================================================
+// Phase 提取函数
+// ============================================================
+
+/** Phase 1: 乐观更新 — 创建用户消息 + 助手占位符 */
+function applyOptimisticUpdate(options: SendOptions, ctx: SendContext): void {
+  const { conversationId, content, generationType, model, params, operation = 'send' } = options;
+  const messageStore = useMessageStore.getState();
+
+  // 1.1 创建乐观用户消息（send/regenerate，retry/regenerate_single 不创建）
+  if (operation !== 'retry' && operation !== 'regenerate_single') {
+    messageStore.addMessage(conversationId, {
+      id: ctx.userMessageId,
+      conversation_id: conversationId,
+      role: 'user',
+      content,
+      status: 'completed',
+      created_at: ctx.now.toISOString(),
+      client_request_id: ctx.clientRequestId,
+    });
+  }
+
+  // 1.2 处理助手消息（retry 更新原消息，其他创建新占位符）
+  if (operation === 'retry') {
+    messageStore.updateMessage(ctx.assistantMessageId, {
+      status: 'pending',
+      content: [],
+      is_error: false,
+      error: undefined,
+    });
+    if (generationType === 'chat' || !generationType) {
+      messageStore.registerStreamingId(conversationId, ctx.assistantMessageId);
+    } else {
+      messageStore.setIsSending(true);
+    }
+  } else if (operation === 'regenerate_single') {
+    const imageIndex = (params?.image_index as number) ?? 0;
+    const existing = messageStore.getMessage(ctx.assistantMessageId);
+    if (existing) {
+      const newContent = [...existing.content];
+      if (imageIndex < newContent.length) {
+        newContent[imageIndex] = { type: 'image', url: null } as ContentPart;
+      }
+      messageStore.updateMessage(ctx.assistantMessageId, { content: newContent, status: 'pending' });
+    }
+    messageStore.setIsSending(true);
+  } else {
+    // 统一占位符：旋转圆点（思考阶段），HTTP 响应后变形为类型专属占位符
+    messageStore.startStreaming(conversationId, ctx.assistantMessageId, {
+      initialContent: '',
+      createdAt: ctx.placeholderCreatedAt,
+      generationParams: { model },
+    });
+  }
+}
+
+/** Phase 3-5: API 响应处理 — 状态更新 + 任务创建 + task_id 验证 */
+function processApiResponse(
+  response: GenerateResponse,
+  options: SendOptions,
+  ctx: SendContext,
+): void {
+  const { conversationId, generationType, operation = 'send', subscribeTask } = options;
+  const messageStore = useMessageStore.getState();
+
+  // 3.1 更新助手消息的 task_id
+  messageStore.updateMessage(ctx.assistantMessageId, { task_id: response.task_id });
+
+  // 3.2 占位符变形：旋转圆点 → 类型专属占位符
+  const actualType = response.generation_type;
+  if (actualType && operation !== 'retry' && operation !== 'regenerate_single') {
+    if (actualType === 'chat') {
+      messageStore.updateMessage(ctx.assistantMessageId, {
+        generation_params: response.assistant_message.generation_params,
+      });
+    } else if (actualType === 'image' || actualType === 'video' || actualType === 'audio') {
+      const loadingText = getPlaceholderText(actualType as 'image' | 'video' | 'audio');
+      messageStore.completeStreamingWithMessage(conversationId, {
+        id: ctx.assistantMessageId,
+        conversation_id: conversationId,
+        role: 'assistant',
+        content: [{ type: 'text', text: loadingText }],
+        status: 'pending',
+        created_at: ctx.placeholderCreatedAt,
+        generation_params: response.assistant_message.generation_params,
+        task_id: response.task_id,
+      });
+      messageStore.setIsSending(true);
+    }
+  }
+
+  // Phase 4: 创建任务追踪
+  messageStore.createTask({
+    taskId: ctx.clientTaskId,
+    messageId: response.assistant_message.id,
+    conversationId,
+    type: actualType || generationType || 'chat',
+    status: 'pending',
+    progress: 0,
+    createdAt: Date.now(),
+  });
+
+  // Phase 5: 验证 task_id 一致性
+  if (response.task_id !== ctx.clientTaskId) {
+    logger.warn('messageSender', 'task_id mismatch', {
+      expected: ctx.clientTaskId,
+      received: response.task_id,
+    });
+    if (subscribeTask) {
+      subscribeTask(response.task_id, conversationId);
+    }
+  }
+}
+
+/** 错误回滚 — 取消订阅 + 清理状态 + 添加错误消息 */
+function rollbackOnError(error: unknown, options: SendOptions, ctx: SendContext): void {
+  const { conversationId, unsubscribeTask } = options;
+  const messageStore = useMessageStore.getState();
+
+  logger.error('messageSender', 'send failed', error);
+
+  if (unsubscribeTask) {
+    unsubscribeTask(ctx.clientTaskId);
+    logger.info('messageSender', 'unsubscribed from task', { clientTaskId: ctx.clientTaskId });
+  }
+
+  messageStore.completeStreaming(conversationId);
+  messageStore.setIsSending(false);
+  messageStore.removeMessage(ctx.assistantMessageId);
+
+  messageStore.addMessage(conversationId, {
+    id: ctx.assistantMessageId,
+    conversation_id: conversationId,
+    role: 'assistant',
+    content: [{ type: 'text', text: '' }],
+    status: 'failed',
+    is_error: true,
+    error: {
+      code: 'SEND_FAILED',
+      message: error instanceof Error ? error.message : '发送失败',
+    },
+    created_at: new Date().toISOString(),
+  });
+}
+
 // ============================================================
 // 主函数
 // ============================================================
@@ -87,130 +242,50 @@ interface GenerateResponse {
  * ```
  */
 export async function sendMessage(options: SendOptions): Promise<string> {
-  const {
-    conversationId,
-    content,
-    generationType,
-    model,
-    params,
-    operation = 'send',
-    originalMessageId,
-    subscribeTask,
-    unsubscribeTask,
-  } = options;
+  const { conversationId, content, generationType, model, params,
+    operation = 'send', originalMessageId, subscribeTask } = options;
 
-  const messageStore = useMessageStore.getState();
-  const clientRequestId = crypto.randomUUID();
-  const userMessageId = crypto.randomUUID();      // 用户消息真实 UUID
-  // retry/regenerate_single 时复用原消息 ID，其他操作生成新 UUID
-  const assistantMessageId = (operation === 'retry' || operation === 'regenerate_single') && originalMessageId
-    ? originalMessageId
-    : crypto.randomUUID();
+  // 生成上下文 ID 和时间戳
   const now = new Date();
-
-  // 🔥 关键改动：生成 client_task_id（用于提前订阅）
-  const clientTaskId = crypto.randomUUID();
+  const ctx: SendContext = {
+    clientRequestId: crypto.randomUUID(),
+    userMessageId: crypto.randomUUID(),
+    assistantMessageId: (operation === 'retry' || operation === 'regenerate_single') && originalMessageId
+      ? originalMessageId
+      : crypto.randomUUID(),
+    clientTaskId: crypto.randomUUID(),
+    now,
+    placeholderCreatedAt: new Date(now.getTime() + 1).toISOString(),
+  };
 
   logger.info('messageSender', 'sending message', {
-    conversationId,
-    operation,
-    generationType,
-    clientRequestId,
-    clientTaskId,  // 🔥 新增日志
+    conversationId, operation, generationType,
+    clientRequestId: ctx.clientRequestId, clientTaskId: ctx.clientTaskId,
   });
 
-  // ========================================
-  // Phase 1: 乐观更新（使用真实 UUID）
-  // ========================================
+  // Phase 1: 乐观更新
+  applyOptimisticUpdate(options, ctx);
 
-  // 1.1 创建乐观用户消息（send/regenerate，retry/regenerate_single 不创建）
-  if (operation !== 'retry' && operation !== 'regenerate_single') {
-    const userMessage: Message = {
-      id: userMessageId,
-      conversation_id: conversationId,
-      role: 'user',
-      content,
-      status: 'completed',
-      created_at: now.toISOString(),
-      client_request_id: clientRequestId,
-    };
-
-    messageStore.addMessage(conversationId, userMessage);
-  }
-
-  // 1.2 处理助手消息（retry 更新原消息，其他创建新占位符）
-  const placeholderCreatedAt = new Date(now.getTime() + 1).toISOString();
-
-  if (operation === 'retry') {
-    // retry: 原地更新消息状态（保持消息在列表中的位置）
-    messageStore.updateMessage(assistantMessageId, {
-      status: 'pending',
-      content: [],
-      is_error: false,
-      error: undefined,
-    });
-
-    if (generationType === 'chat' || !generationType) {
-      // Chat 类型：只注册 streamingId，不创建新消息
-      // 这样 message_chunk 能路由到正确的消息，且不会创建重复消息
-      messageStore.registerStreamingId(conversationId, assistantMessageId);
-    } else {
-      // Media 类型：只设置发送状态
-      messageStore.setIsSending(true);
-    }
-  } else if (operation === 'regenerate_single') {
-    // regenerate_single: 仅将 content[image_index] 设为 null 占位符
-    const imageIndex = (params?.image_index as number) ?? 0;
-    const existing = messageStore.getMessage(assistantMessageId);
-    if (existing) {
-      const newContent = [...existing.content];
-      if (imageIndex < newContent.length) {
-        newContent[imageIndex] = { type: 'image', url: null } as ContentPart;
-      }
-      messageStore.updateMessage(assistantMessageId, { content: newContent, status: 'pending' });
-    }
-    messageStore.setIsSending(true);
-  } else {
-    // 统一占位符：所有新消息先显示旋转圆点（思考阶段）
-    // 不设 type → UI 判断为 analyzing 模式（旋转圆点）
-    // HTTP 响应后根据 generation_type 变形为类型专属占位符
-    messageStore.startStreaming(conversationId, assistantMessageId, {
-      initialContent: '',
-      createdAt: placeholderCreatedAt,
-      generationParams: { model },
-    });
-  }
-
-  // ========================================
-  // 🔥 Phase 1.5: 提前订阅（在发送请求前）
-  // ========================================
-
+  // Phase 1.5: 提前订阅（在发送请求前）
   if (subscribeTask) {
-    subscribeTask(clientTaskId, conversationId);
-    logger.info('messageSender', 'pre-subscribed to task', { clientTaskId });
+    subscribeTask(ctx.clientTaskId, conversationId);
+    logger.info('messageSender', 'pre-subscribed to task', { clientTaskId: ctx.clientTaskId });
   }
 
   try {
-    // ========================================
     // Phase 2: 调用后端 API
-    // ========================================
-
     const response = await request<GenerateResponse>({
       url: `/conversations/${conversationId}/messages/generate`,
       method: 'POST',
-      timeout: 60000, // 生成请求需要更长超时（KIE 等 Provider 响应慢）
+      timeout: 60000,
       data: {
-        operation,
-        content,
-        generation_type: generationType,
-        model,
-        params,
-        original_message_id: originalMessageId,
-        client_request_id: clientRequestId,
-        client_task_id: clientTaskId, // 🔥 前端生成的 task_id（用于订阅）
-        created_at: now.toISOString(),
-        assistant_message_id: assistantMessageId, // 前端生成的真实 UUID
-        placeholder_created_at: placeholderCreatedAt, // 占位符的创建时间（确保前后端一致）
+        operation, content, generation_type: generationType,
+        model, params, original_message_id: originalMessageId,
+        client_request_id: ctx.clientRequestId,
+        client_task_id: ctx.clientTaskId,
+        created_at: ctx.now.toISOString(),
+        assistant_message_id: ctx.assistantMessageId,
+        placeholder_created_at: ctx.placeholderCreatedAt,
       } as GenerateRequest,
     });
 
@@ -220,116 +295,17 @@ export async function sendMessage(options: SendOptions): Promise<string> {
       assistantMessageId: response.assistant_message.id,
     });
 
-    // ========================================
-    // Phase 3: 更新消息状态（ID已一致，无需替换）
-    // ========================================
-
-    // 3.1 更新助手消息的 task_id
-    messageStore.updateMessage(assistantMessageId, {
-      task_id: response.task_id,
-    });
-
-    // 3.2 占位符变形：旋转圆点 → 类型专属占位符
-    // 仅对统一占位符（send/regenerate 非 retry/regenerate_single）执行
-    const actualType = response.generation_type;
-    if (actualType && operation !== 'retry' && operation !== 'regenerate_single') {
-      if (actualType === 'chat') {
-        // Chat：设置 type → UI 从旋转圆点变为"AI 正在思考" ●●●
-        messageStore.updateMessage(assistantMessageId, {
-          generation_params: response.assistant_message.generation_params,
-        });
-      } else if (actualType === 'image' || actualType === 'video' || actualType === 'audio') {
-        // Media：原子替换 streaming → media 占位符（避免中间状态导致白屏）
-        const loadingText = getPlaceholderText(actualType as 'image' | 'video' | 'audio');
-        messageStore.completeStreamingWithMessage(conversationId, {
-          id: assistantMessageId,
-          conversation_id: conversationId,
-          role: 'assistant',
-          content: [{ type: 'text', text: loadingText }],
-          status: 'pending',
-          created_at: placeholderCreatedAt,
-          generation_params: response.assistant_message.generation_params,
-          task_id: response.task_id,
-        });
-        messageStore.setIsSending(true);
-      }
-    }
-
-    // ========================================
-    // Phase 4: 创建任务追踪
-    // ========================================
-
-    messageStore.createTask({
-      taskId: clientTaskId, // 🔥 使用 clientTaskId（已订阅）
-      messageId: response.assistant_message.id,
-      conversationId,
-      type: actualType || generationType || 'chat',
-      status: 'pending',
-      progress: 0,
-      createdAt: Date.now(),
-    });
-
-    // ========================================
-    // Phase 5: 验证后端返回的 task_id（应该与 clientTaskId 一致）
-    // ========================================
-
-    if (response.task_id !== clientTaskId) {
-      logger.warn('messageSender', 'task_id mismatch', {
-        expected: clientTaskId,
-        received: response.task_id,
-      });
-      // 如果不一致，说明后端不支持 client_task_id，需要补订阅
-      if (subscribeTask) {
-        subscribeTask(response.task_id, conversationId);
-      }
-    }
+    // Phase 3-5: 状态更新 + 任务创建 + task_id 验证
+    processApiResponse(response, options, ctx);
 
     logger.info('messageSender', 'message sent successfully', {
-      taskId: clientTaskId,
-      backendTaskId: response.task_id,
+      taskId: ctx.clientTaskId, backendTaskId: response.task_id,
     });
 
-    return clientTaskId; // 🔥 返回 clientTaskId（前端已订阅）
+    return ctx.clientTaskId;
 
   } catch (error) {
-    // ========================================
-    // 错误处理：回滚乐观更新
-    // ========================================
-
-    logger.error('messageSender', 'send failed', error);
-
-    // 🔥 取消订阅（防止内存泄漏）
-    if (unsubscribeTask) {
-      unsubscribeTask(clientTaskId);
-      logger.info('messageSender', 'unsubscribed from task', { clientTaskId });
-    }
-
-    // 清理 streamingMessages（Chat 类型会设置）
-    messageStore.completeStreaming(conversationId);
-
-    // 🔥 清理发送状态（修复光标持续闪动问题）
-    messageStore.setIsSending(false);
-
-    // 移除占位符（同时检查 messages 和 optimisticMessages）
-    messageStore.removeMessage(assistantMessageId);
-
-    // 添加错误消息
-    const errorMessage: Message = {
-      id: assistantMessageId,
-      conversation_id: conversationId,
-      role: 'assistant',
-      content: [{ type: 'text', text: '' }],
-      status: 'failed',
-      is_error: true,
-      error: {
-        code: 'SEND_FAILED',
-        message: error instanceof Error ? error.message : '发送失败',
-      },
-      created_at: new Date().toISOString(),
-    };
-
-    messageStore.addMessage(conversationId, errorMessage);
-
+    rollbackOnError(error, options, ctx);
     throw error;
   }
 }

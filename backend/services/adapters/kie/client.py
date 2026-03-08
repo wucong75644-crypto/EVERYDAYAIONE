@@ -7,7 +7,6 @@ KIE API HTTP 客户端
 import asyncio
 import json
 from typing import Optional, AsyncIterator, Dict, Any, NoReturn
-from decimal import Decimal
 
 import httpx
 from loguru import logger

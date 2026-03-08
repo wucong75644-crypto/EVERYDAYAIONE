@@ -12,6 +12,7 @@ import {
   type VideoFrames,
   type VideoAspectRatio,
 } from '../constants/models';
+import { logger } from './logger';
 
 // 存储键名
 const SETTINGS_KEY = 'user_advanced_settings';
@@ -76,7 +77,7 @@ export function getSavedSettings(): UserAdvancedSettings {
       };
     }
   } catch (error) {
-    console.error('读取设置失败:', error);
+    logger.error('settings', '读取设置失败', error);
   }
   return DEFAULT_SETTINGS;
 }
@@ -88,7 +89,7 @@ export function saveSettings(settings: UserAdvancedSettings): void {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   } catch (error) {
-    console.error('保存设置失败:', error);
+    logger.error('settings', '保存设置失败', error);
   }
 }
 
@@ -99,7 +100,7 @@ export function resetSettings(): UserAdvancedSettings {
   try {
     localStorage.removeItem(SETTINGS_KEY);
   } catch (error) {
-    console.error('重置设置失败:', error);
+    logger.error('settings', '重置设置失败', error);
   }
   return DEFAULT_SETTINGS;
 }

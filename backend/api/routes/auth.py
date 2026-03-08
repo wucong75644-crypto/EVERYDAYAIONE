@@ -5,7 +5,6 @@
 """
 
 from fastapi import APIRouter, Depends
-from supabase import Client
 
 from api.deps import CurrentUser, Database
 from schemas.auth import (

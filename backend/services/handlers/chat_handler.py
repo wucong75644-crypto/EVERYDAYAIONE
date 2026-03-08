@@ -21,6 +21,7 @@ from schemas.websocket import (
     build_message_start,
     build_message_chunk,
 )
+from services.adapters.factory import DEFAULT_MODEL_ID
 from services.handlers.base import BaseHandler, TaskMetadata
 from services.handlers.chat_context_mixin import ChatContextMixin
 from services.websocket_manager import ws_manager
@@ -51,7 +52,7 @@ class ChatHandler(ChatContextMixin, BaseHandler):
         task_id = metadata.client_task_id or str(uuid.uuid4())
 
         # 2. 获取模型配置
-        model_id = params.get("model") or "gemini-3-flash"
+        model_id = params.get("model") or DEFAULT_MODEL_ID
         thinking_effort = params.get("thinking_effort")
         thinking_mode = params.get("thinking_mode")
 
@@ -120,8 +121,10 @@ class ChatHandler(ChatContextMixin, BaseHandler):
         _retry_context: Optional[Any] = None,
     ) -> None:
         """流式生成主逻辑（支持 smart_mode 自动重试）"""
+        import time as _time
+        _start_time = _time.monotonic()
         accumulated_text = ""
-        final_usage = {"prompt_tokens": 0, "completion_tokens": 0}
+        final_usage: Dict[str, Any] = {"prompt_tokens": 0, "completion_tokens": 0}
         chunk_count = 0
 
         try:
@@ -134,7 +137,7 @@ class ChatHandler(ChatContextMixin, BaseHandler):
             )
             await ws_manager.send_to_task_subscribers(task_id, start_msg)
 
-            # 2. 组装消息列表（路由人设 + 搜索上下文 + 记忆 + 历史 + 当前消息）
+            # 2. 组装消息列表
             text_content = self._extract_text_content(content)
             messages = await self._build_llm_messages(
                 content, user_id, conversation_id, text_content,
@@ -142,12 +145,11 @@ class ChatHandler(ChatContextMixin, BaseHandler):
                 router_search_context=router_search_context,
             )
 
-            # 3. 创建适配器
+            # 3. 创建适配器并流式生成
             from services.adapters.factory import create_chat_adapter
 
             self._adapter = create_chat_adapter(model_id)
 
-            # 4. 流式生成（直接使用适配器）
             async for chunk in self._adapter.stream_chat(
                 messages=messages,
                 reasoning_effort=thinking_effort,
@@ -157,7 +159,6 @@ class ChatHandler(ChatContextMixin, BaseHandler):
                     accumulated_text += chunk.content
                     chunk_count += 1
 
-                    # 推送增量内容
                     chunk_msg = build_message_chunk(
                         task_id=task_id,
                         conversation_id=conversation_id,
@@ -167,66 +168,39 @@ class ChatHandler(ChatContextMixin, BaseHandler):
                     )
                     await ws_manager.send_to_task_subscribers(task_id, chunk_msg)
 
-                    # 每 20 个 chunk 持久化一次累积内容（供刷新恢复）
                     if chunk_count % 20 == 0:
                         await self._save_accumulated_content(task_id, accumulated_text)
 
-                # 捕获 usage 和 API 报告的积分
                 if chunk.prompt_tokens or chunk.completion_tokens:
                     final_usage["prompt_tokens"] = chunk.prompt_tokens or 0
                     final_usage["completion_tokens"] = chunk.completion_tokens or 0
                 if chunk.credits_consumed is not None:
                     final_usage["api_credits"] = chunk.credits_consumed
 
-            # 5. 计算积分消耗
-            import math
-            api_credits = final_usage.get("api_credits")
-            if api_credits is not None:
-                # 优先使用 API 报告的实际积分 + 1（平台利润）
-                credits_consumed = math.ceil(api_credits) + 1
-                logger.info(
-                    f"Credits from API | api={api_credits} | "
-                    f"charged={credits_consumed} (ceil+1)"
-                )
-            else:
-                # 降级：本地估算（Google 免费模型等）
-                cost_estimate = self._adapter.estimate_cost_unified(
-                    input_tokens=final_usage["prompt_tokens"],
-                    output_tokens=final_usage["completion_tokens"],
-                )
-                credits_consumed = cost_estimate.estimated_credits
-
-            # 最少 1 积分（KIE 模型）；免费模型为 0
-            if credits_consumed > 0:
-                credits_consumed = max(1, credits_consumed)
-
-            # 6. 完成回调
+            # 4. 计算积分 → 完成回调
+            credits_consumed = self._calculate_credits(final_usage)
             await self.on_complete(
                 task_id=task_id,
                 result=[TextPart(text=accumulated_text)],
                 credits_consumed=credits_consumed,
             )
 
-            # 7. 异步提取记忆（fire-and-forget，失败不影响主流程）
-            asyncio.create_task(
-                self._extract_memories_async(
-                    user_id=user_id,
-                    conversation_id=conversation_id,
-                    user_text=text_content,
-                    assistant_text=accumulated_text,
-                )
-            )
-
-            # 8. 异步更新对话摘要（fire-and-forget，失败不影响主流程）
-            asyncio.create_task(
-                self._update_summary_if_needed(conversation_id)
+            # 5. Fire-and-forget 后置任务
+            elapsed_ms = int((_time.monotonic() - _start_time) * 1000)
+            self._dispatch_post_tasks(
+                user_id=user_id, conversation_id=conversation_id,
+                text_content=text_content, accumulated_text=accumulated_text,
+                model_id=model_id, final_usage=final_usage,
+                elapsed_ms=elapsed_ms, retry_context=_retry_context,
             )
 
         except Exception as e:
-            logger.error(f"Chat stream error | task_id={task_id} | model={model_id} | error={str(e)}")
-
-            # 智能重试
-            retried = await self._attempt_chat_retry(
+            logger.error(
+                f"Chat stream error | task_id={task_id} | "
+                f"model={model_id} | error={str(e)}"
+            )
+            elapsed_ms = int((_time.monotonic() - _start_time) * 1000)
+            await self._handle_stream_failure(
                 error=e, task_id=task_id, message_id=message_id,
                 conversation_id=conversation_id, user_id=user_id,
                 content=content, model_id=model_id,
@@ -234,17 +208,126 @@ class ChatHandler(ChatContextMixin, BaseHandler):
                 router_system_prompt=router_system_prompt,
                 router_search_context=router_search_context,
                 _params=_params, _retry_context=_retry_context,
+                elapsed_ms=elapsed_ms,
             )
-            if not retried:
-                await self.on_error(
-                    task_id=task_id,
-                    error_code="GENERATION_FAILED",
-                    error_message=str(e),
-                )
 
         finally:
             if self._adapter:
                 await self._adapter.close()
+
+    def _calculate_credits(self, final_usage: Dict[str, Any]) -> int:
+        """根据 API 报告或本地估算计算积分消耗"""
+        import math
+        api_credits = final_usage.get("api_credits")
+        if api_credits is not None:
+            credits_consumed = math.ceil(api_credits) + 1
+            logger.info(
+                f"Credits from API | api={api_credits} | "
+                f"charged={credits_consumed} (ceil+1)"
+            )
+        else:
+            cost_estimate = self._adapter.estimate_cost_unified(
+                input_tokens=final_usage["prompt_tokens"],
+                output_tokens=final_usage["completion_tokens"],
+            )
+            credits_consumed = cost_estimate.estimated_credits
+
+        if credits_consumed > 0:
+            credits_consumed = max(1, credits_consumed)
+        return credits_consumed
+
+    def _dispatch_post_tasks(
+        self,
+        user_id: str,
+        conversation_id: str,
+        text_content: str,
+        accumulated_text: str,
+        model_id: str,
+        final_usage: Dict[str, Any],
+        elapsed_ms: int,
+        retry_context: Optional[Any],
+    ) -> None:
+        """分发 fire-and-forget 后置任务（记忆提取、摘要更新、指标记录）"""
+        asyncio.create_task(
+            self._extract_memories_async(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                user_text=text_content,
+                assistant_text=accumulated_text,
+            )
+        )
+        asyncio.create_task(
+            self._update_summary_if_needed(conversation_id)
+        )
+        asyncio.create_task(
+            self._record_knowledge_metric(
+                task_type="chat", model_id=model_id, status="success",
+                cost_time_ms=elapsed_ms,
+                prompt_tokens=final_usage["prompt_tokens"],
+                completion_tokens=final_usage["completion_tokens"],
+                retried=bool(retry_context),
+                retry_from_model=(
+                    retry_context.failed_attempts[-1]["model"]
+                    if retry_context and retry_context.failed_attempts
+                    else None
+                ),
+                user_id=user_id,
+            )
+        )
+        if retry_context and retry_context.failed_attempts:
+            asyncio.create_task(
+                self._extract_retry_knowledge(
+                    task_type="chat", model_id=model_id,
+                    retry_from_model=retry_context.failed_attempts[-1]["model"],
+                )
+            )
+
+    async def _handle_stream_failure(
+        self,
+        error: Exception,
+        task_id: str,
+        message_id: str,
+        conversation_id: str,
+        user_id: str,
+        content: List[ContentPart],
+        model_id: str,
+        thinking_effort: Optional[str],
+        thinking_mode: Optional[str],
+        router_system_prompt: Optional[str],
+        router_search_context: Optional[str],
+        _params: Optional[Dict[str, Any]],
+        _retry_context: Optional[Any],
+        elapsed_ms: int,
+    ) -> None:
+        """处理流式生成失败：尝试重试，否则报错 + 记录指标"""
+        retried = await self._attempt_chat_retry(
+            error=error, task_id=task_id, message_id=message_id,
+            conversation_id=conversation_id, user_id=user_id,
+            content=content, model_id=model_id,
+            thinking_effort=thinking_effort, thinking_mode=thinking_mode,
+            router_system_prompt=router_system_prompt,
+            router_search_context=router_search_context,
+            _params=_params, _retry_context=_retry_context,
+        )
+        if not retried:
+            await self.on_error(
+                task_id=task_id,
+                error_code="GENERATION_FAILED",
+                error_message=str(error),
+            )
+            asyncio.create_task(
+                self._record_knowledge_metric(
+                    task_type="chat", model_id=model_id, status="failed",
+                    error_code="GENERATION_FAILED", cost_time_ms=elapsed_ms,
+                    user_id=user_id,
+                )
+            )
+            asyncio.create_task(
+                self._extract_failure_knowledge(
+                    task_type="chat", model_id=model_id,
+                    error_message=str(error),
+                )
+            )
 
     async def _attempt_chat_retry(
         self,
@@ -330,7 +413,7 @@ class ChatHandler(ChatContextMixin, BaseHandler):
         """Chat 完成时直接扣除积分"""
         if credits_consumed > 0:
             user_id = task["user_id"]
-            model_id = task.get("model_id", "gemini-3-flash")
+            model_id = task.get("model_id", DEFAULT_MODEL_ID)
             self._deduct_directly(
                 user_id=user_id,
                 amount=credits_consumed,

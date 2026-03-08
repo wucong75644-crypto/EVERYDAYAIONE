@@ -7,15 +7,11 @@ Webhook 回调路由
 
 from typing import Dict, Any, Type
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
-from supabase import Client
-
 from api.deps import Database
 from services.adapters.base import (
-    BaseImageAdapter,
-    BaseVideoAdapter,
     ModelProvider,
 )
 from services.adapters.kie.image_adapter import KieImageAdapter
