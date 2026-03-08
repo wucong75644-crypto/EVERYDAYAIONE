@@ -4,6 +4,11 @@ Google Gemini Adapter 测试脚本
 快速验证 Google adapter 的基本功能。
 """
 
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import asyncio
 import os
 from services.adapters.google import GoogleChatAdapter

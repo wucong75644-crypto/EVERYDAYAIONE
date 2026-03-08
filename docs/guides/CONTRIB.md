@@ -138,17 +138,17 @@ npm run test:coverage
 cd backend
 source venv/bin/activate
 
-# Run all tests
-pytest
+# Run all tests (from backend/ directory)
+python -m pytest tests/ -q --tb=short
 
 # Run with verbose output
-pytest -v
+python -m pytest tests/ -v
 
 # Run specific test file
-pytest tests/test_auth.py
+python -m pytest tests/test_auth_service.py
 
 # Run with coverage
-pytest --cov=. --cov-report=html
+python -m pytest tests/ --cov=. --cov-report=html
 # Coverage report: backend/htmlcov/index.html
 ```
 

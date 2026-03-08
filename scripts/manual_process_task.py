@@ -6,12 +6,19 @@
 
 import asyncio
 import os
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).parent.parent
+BACKEND_DIR = PROJECT_ROOT / "backend"
+sys.path.insert(0, str(BACKEND_DIR))
+
 from dotenv import load_dotenv
 from supabase import create_client
 from services.task_completion_service import TaskCompletionService
 from services.adapters.base import ImageGenerateResult, TaskStatus
 
-load_dotenv('.env')
+load_dotenv(BACKEND_DIR / '.env')
 
 async def main():
     # 初始化数据库

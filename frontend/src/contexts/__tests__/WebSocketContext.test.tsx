@@ -18,21 +18,21 @@ import {
   WebSocketProvider,
   useWebSocketContext,
   type OperationContext,
-} from './WebSocketContext';
-import { useWebSocket } from '../hooks/useWebSocket';
-import { useMessageStore } from '../stores/useMessageStore';
-import { useAuthStore } from '../stores/useAuthStore';
-import { useTaskRestorationStore } from '../stores/useTaskRestorationStore';
+} from '../WebSocketContext';
+import { useWebSocket } from '../../hooks/useWebSocket';
+import { useMessageStore } from '../../stores/useMessageStore';
+import { useAuthStore } from '../../stores/useAuthStore';
+import { useTaskRestorationStore } from '../../stores/useTaskRestorationStore';
 
 // ============================================================
 // Mock 配置
 // ============================================================
 
-vi.mock('../hooks/useWebSocket');
-vi.mock('../stores/useAuthStore');
-vi.mock('../stores/useTaskRestorationStore');
-vi.mock('../utils/taskRestoration');
-vi.mock('../stores/useMessageStore', () => ({
+vi.mock('../../hooks/useWebSocket');
+vi.mock('../../stores/useAuthStore');
+vi.mock('../../stores/useTaskRestorationStore');
+vi.mock('../../utils/taskRestoration');
+vi.mock('../../stores/useMessageStore', () => ({
   useMessageStore: vi.fn(),
   normalizeMessage: (msg: any) => {
     if (!msg) return undefined;
@@ -46,7 +46,7 @@ vi.mock('../stores/useMessageStore', () => ({
   getImageUrls: vi.fn(),
   getVideoUrls: vi.fn(),
 }));
-vi.mock('../utils/logger', () => ({
+vi.mock('../../utils/logger', () => ({
   logger: {
     info: vi.fn(),
     debug: vi.fn(),
@@ -54,7 +54,7 @@ vi.mock('../utils/logger', () => ({
     error: vi.fn(),
   },
 }));
-vi.mock('../utils/tabSync', () => ({
+vi.mock('../../utils/tabSync', () => ({
   tabSync: {
     broadcast: vi.fn(),
   },
