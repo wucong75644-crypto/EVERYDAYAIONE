@@ -84,6 +84,7 @@ class MockSupabaseTable:
     def __init__(self, data: list = None):
         self._data = data or []
         self._filters = {}
+        self._in_filters = {}
         self._select_fields = "*"
 
     def select(self, fields: str = "*"):
@@ -105,6 +106,10 @@ class MockSupabaseTable:
 
     def eq(self, field: str, value):
         self._filters[field] = value
+        return self
+
+    def in_(self, field: str, values: list):
+        self._in_filters[field] = values
         return self
 
     def order(self, column: str, **kwargs):
@@ -133,6 +138,10 @@ class MockSupabaseTable:
         filtered = self._data
         for field, value in self._filters.items():
             filtered = [d for d in filtered if d.get(field) == value]
+
+        # 应用 in_ 过滤
+        for field, values in self._in_filters.items():
+            filtered = [d for d in filtered if d.get(field) in values]
 
         # 应用 limit
         if hasattr(self, '_limit'):

@@ -204,6 +204,11 @@ class ChatHandler(ChatContextMixin, BaseHandler):
                 )
             )
 
+            # 8. 异步更新对话摘要（fire-and-forget，失败不影响主流程）
+            asyncio.create_task(
+                self._update_summary_if_needed(conversation_id)
+            )
+
         except Exception as e:
             logger.error(f"Chat stream error | task_id={task_id} | model={model_id} | error={str(e)}")
 

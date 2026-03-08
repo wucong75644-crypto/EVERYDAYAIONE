@@ -41,6 +41,9 @@ class MockQueryBuilder:
     def eq(self, column: str, value: Any) -> "MockQueryBuilder":
         return self
 
+    def in_(self, column: str, values: list) -> "MockQueryBuilder":
+        return self
+
     def lt(self, column: str, value: Any) -> "MockQueryBuilder":
         return self
 

@@ -53,14 +53,29 @@ class ChatContextMixin:
             messages.insert(0, {"role": "system", "content": router_system_prompt})
             logger.debug(f"Router system_prompt injected | len={len(router_system_prompt)}")
 
+        # 对话历史摘要注入（覆盖 20 条之前的消息，失败不影响主流程）
+        summary_prompt = await self._get_context_summary(conversation_id)
+        if summary_prompt:
+            messages.insert(0, {"role": "system", "content": summary_prompt})
+
         # 对话上下文注入（失败不影响主流程）
-        context_messages = self._build_context_messages(
+        context_messages = await self._build_context_messages(
             conversation_id, text_content
         )
         if context_messages:
             pos = len(messages) - 1
             for i, ctx_msg in enumerate(context_messages):
                 messages.insert(pos + i, ctx_msg)
+
+            # 话题聚焦指令（紧贴用户消息前，防止旧话题污染新问题）
+            focus_prompt = (
+                "回答时只关注用户的最新问题。"
+                "如果对话中途切换了话题，以最新话题为准，不要受之前话题的影响。"
+            )
+            messages.insert(
+                len(messages) - 1,
+                {"role": "system", "content": focus_prompt},
+            )
 
         return messages
 
@@ -140,7 +155,7 @@ class ChatContextMixin:
                 f"conversation_id={conversation_id} | error={e}"
             )
 
-    def _build_context_messages(
+    async def _build_context_messages(
         self, conversation_id: str, current_text: str
     ) -> List[Dict[str, Any]]:
         """获取对话历史并构建纯文本上下文（失败时降级为空）"""
@@ -156,6 +171,7 @@ class ChatContextMixin:
                 .select("role, content, status, created_at")
                 .eq("conversation_id", conversation_id)
                 .eq("status", "completed")
+                .in_("role", ["user", "assistant"])
                 .order("created_at", desc=True)
                 .limit(limit)
                 .execute()
@@ -164,30 +180,34 @@ class ChatContextMixin:
             if not result.data:
                 return []
 
-            # 反转为正序（旧→新），过滤 role
-            rows = [
-                r for r in reversed(result.data)
-                if r.get("role") in ("user", "assistant")
-            ]
-
+            # 从新→旧遍历，优先保留最近消息（防止旧长回复吃光字符预算）
             context = []
-            for row in rows:
+            total_chars = 0
+            max_chars = settings.chat_context_max_chars
+            for row in result.data:  # 已按 created_at DESC 排序
                 text = self._extract_text_from_content(row.get("content"))
-                if text:
-                    context.append({"role": row["role"], "content": text})
+                if not text:
+                    continue
+                total_chars += len(text)
+                if total_chars > max_chars:
+                    break
+                context.append({"role": row["role"], "content": text})
+
+            # 反转为正序（旧→新），LLM 需要按时间顺序读取
+            context.reverse()
 
             # 去除末尾与当前消息重复的 user 消息
-            if (
-                context
-                and context[-1]["role"] == "user"
-                and context[-1]["content"].strip() == current_text.strip()
-            ):
-                context.pop()
+            if context and context[-1]["role"] == "user":
+                tail = self._extract_text_from_content(
+                    context[-1]["content"]
+                )
+                if tail.strip() == current_text.strip():
+                    context.pop()
 
             if context:
                 logger.debug(
-                    f"Context injected | conversation_id={conversation_id} | "
-                    f"count={len(context)}"
+                    f"Context injected | conversation_id={conversation_id} "
+                    f"| count={len(context)} | chars={total_chars}"
                 )
 
             return context
@@ -198,6 +218,137 @@ class ChatContextMixin:
                 f"conversation_id={conversation_id} | error={e}"
             )
             return []
+
+    async def _get_context_summary(
+        self, conversation_id: str
+    ) -> Optional[str]:
+        """获取已缓存的对话摘要（失败返回 None）"""
+        try:
+            from core.config import settings
+
+            if not settings.context_summary_enabled:
+                return None
+
+            result = (
+                self.db.table("conversations")
+                .select("context_summary")
+                .eq("id", conversation_id)
+                .single()
+                .execute()
+            )
+
+            if not result.data:
+                return None
+
+            summary = result.data.get("context_summary")
+            if not summary:
+                return None
+
+            logger.debug(
+                f"Context summary injected | "
+                f"conversation_id={conversation_id} | len={len(summary)}"
+            )
+            return f"以下是之前对话的摘要（供参考）：\n{summary}"
+
+        except Exception as e:
+            logger.warning(
+                f"Context summary fetch failed, skipping | "
+                f"conversation_id={conversation_id} | error={e}"
+            )
+            return None
+
+    async def _update_summary_if_needed(
+        self, conversation_id: str
+    ) -> None:
+        """检查并更新对话摘要（fire-and-forget，失败不影响主流程）"""
+        try:
+            from core.config import settings
+
+            if not settings.context_summary_enabled:
+                return
+
+            # 查询对话信息
+            conv_result = (
+                self.db.table("conversations")
+                .select("message_count, summary_message_count")
+                .eq("id", conversation_id)
+                .single()
+                .execute()
+            )
+
+            if not conv_result.data:
+                return
+
+            message_count = conv_result.data.get("message_count", 0)
+            summary_count = conv_result.data.get("summary_message_count", 0)
+            context_limit = settings.chat_context_limit
+
+            # 不需要摘要（≤20 条消息）
+            if message_count <= context_limit:
+                return
+
+            # 已有摘要且不需要更新（新增消息 < update_interval）
+            if summary_count > 0 and (message_count - summary_count) < settings.context_summary_update_interval:
+                return
+
+            # 获取所有已完成的 user/assistant 消息（按时间正序）
+            all_result = (
+                self.db.table("messages")
+                .select("role, content")
+                .eq("conversation_id", conversation_id)
+                .eq("status", "completed")
+                .in_("role", ["user", "assistant"])
+                .order("created_at", desc=False)
+                .execute()
+            )
+
+            if not all_result.data:
+                return
+
+            all_msgs = all_result.data
+
+            # 取除最近 N 条之外的消息进行压缩
+            if len(all_msgs) <= context_limit:
+                return
+
+            msgs_to_summarize = all_msgs[:-context_limit]
+
+            # 提取纯文本
+            text_messages = []
+            for msg in msgs_to_summarize:
+                text = self._extract_text_from_content(msg.get("content"))
+                if text:
+                    text_messages.append(
+                        {"role": msg["role"], "content": text}
+                    )
+
+            if not text_messages:
+                return
+
+            # 调用压缩服务
+            from services.context_summarizer import summarize_messages
+
+            summary = await summarize_messages(text_messages)
+
+            if summary:
+                self.db.table("conversations").update({
+                    "context_summary": summary,
+                    "summary_message_count": message_count,
+                }).eq("id", conversation_id).execute()
+
+                logger.info(
+                    f"Context summary updated | "
+                    f"conversation_id={conversation_id} | "
+                    f"message_count={message_count} | "
+                    f"compressed={len(msgs_to_summarize)} msgs | "
+                    f"summary_len={len(summary)}"
+                )
+
+        except Exception as e:
+            logger.warning(
+                f"Context summary update failed | "
+                f"conversation_id={conversation_id} | error={e}"
+            )
 
     def _extract_text_from_content(self, content: Any) -> str:
         """从 DB content 字段提取纯文本，跳过图片/视频 URL"""
