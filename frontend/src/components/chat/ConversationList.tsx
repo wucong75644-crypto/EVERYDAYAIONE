@@ -24,6 +24,7 @@ import DropdownMenu from './DropdownMenu';
 import DeleteConfirmModal from './DeleteConfirmModal';
 import { MODAL_CLOSE_ANIMATION_DURATION } from '../../constants/animations';
 import { tabSync } from '../../utils/tabSync';
+import { logger } from '../../utils/logger';
 
 interface ConversationListProps {
   currentConversationId: string | null;
@@ -150,7 +151,7 @@ export default function ConversationList({
         onSelectConversationRef.current(mostRecent.id, mostRecent.title, mostRecent.model_id);
       }
     } catch (error) {
-      console.error('加载对话列表失败:', error);
+      logger.error('conversationList', '加载对话列表失败', error);
     } finally {
       if (isInitial) {
         setLoading(false);
@@ -325,7 +326,7 @@ export default function ConversationList({
       // 广播删除事件给其他标签页
       tabSync.broadcast('conversation_deleted', { conversationId: deleteId });
     } catch (error) {
-      console.error('删除对话失败:', error);
+      logger.error('conversationList', '删除对话失败', error);
       // 删除失败，清除本地修改记录，下次加载会恢复
       localModificationsRef.current.deleted.delete(deleteId);
     }
@@ -369,7 +370,7 @@ export default function ConversationList({
     try {
       await updateConversation(oldId, { title: newTitle });
     } catch (error) {
-      console.error('重命名失败:', error);
+      logger.error('conversationList', '重命名失败', error);
       // 重命名失败，清除本地修改记录，下次加载会恢复原标题
       localModificationsRef.current.renamed.delete(oldId);
     }

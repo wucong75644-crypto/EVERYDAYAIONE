@@ -19,6 +19,7 @@ import MessageItem from './MessageItem';
 import EmptyState from './EmptyState';
 import LoadingSkeleton from './LoadingSkeleton';
 import toast from 'react-hot-toast';
+import { logger } from '../../utils/logger';
 import { useMessageLoader } from '../../hooks/useMessageLoader';
 import { useRegenerateHandlers } from '../../hooks/useRegenerateHandlers';
 import { useUnifiedMessages } from '../../hooks/useUnifiedMessages';
@@ -259,7 +260,7 @@ export default function MessageArea({
       onDelete?.(messageId, newLastMessage);
       toast.success('消息已删除');
     } catch (error) {
-      console.error('删除消息失败:', error);
+      logger.error('messageArea', '删除消息失败', error);
       toast.error('删除失败，请重试');
     }
   }, [conversationId, mergedMessages, removeMessage, removeOptimisticMessage, onDelete]);

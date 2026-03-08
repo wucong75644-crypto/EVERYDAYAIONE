@@ -5,6 +5,7 @@
  */
 
 import { Component, type ReactNode, type ErrorInfo } from 'react';
+import { logger } from '../../utils/logger';
 
 interface Props {
   children: ReactNode;
@@ -29,8 +30,7 @@ export default class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     this.setState({ errorInfo });
-    console.error('[ErrorBoundary] React rendering crash:', error);
-    console.error('[ErrorBoundary] Component stack:', errorInfo.componentStack);
+    logger.error('errorBoundary', 'React rendering crash', error, { componentStack: errorInfo.componentStack });
   }
 
   handleReload = (): void => {

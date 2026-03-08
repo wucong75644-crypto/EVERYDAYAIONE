@@ -6,7 +6,7 @@
 """
 
 from typing import Optional
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Form
+from fastapi import APIRouter, UploadFile, File, Form
 from loguru import logger
 
 from api.deps import CurrentUser, Database

@@ -5,6 +5,7 @@
  */
 
 import { useState, useRef, useCallback } from 'react';
+import { logger } from '../utils/logger';
 
 export type RecordingState = 'idle' | 'recording' | 'paused' | 'stopped';
 
@@ -93,7 +94,7 @@ export function useAudioRecording(): UseAudioRecordingReturn {
         setAudioDuration(elapsed);
       }, 100);
     } catch (err) {
-      console.error('录音失败:', err);
+      logger.error('audioRecording', '录音失败', err);
       setError(
         err instanceof Error
           ? err.message

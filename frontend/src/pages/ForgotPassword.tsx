@@ -6,12 +6,13 @@
  * 2. 验证成功后设置新密码
  */
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { sendCode } from '../services/auth';
 import { request } from '../services/api';
 import type { ApiErrorResponse } from '../types/auth';
 import { AxiosError } from 'axios';
+import { useCountdown } from '../hooks/useCountdown';
 import Footer from '../components/Footer';
 
 type Step = 'verify' | 'reset';
@@ -27,9 +28,9 @@ export default function ForgotPassword() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
-  const [countdown, setCountdown] = useState(0);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const { countdown, startCountdown } = useCountdown(60);
 
   // 步骤1 焦点循环 refs
   const phoneRef = useRef<HTMLInputElement>(null);
@@ -40,18 +41,6 @@ export default function ForgotPassword() {
   const passwordRef = useRef<HTMLInputElement>(null);
   const confirmPasswordRef = useRef<HTMLInputElement>(null);
   const resetSubmitRef = useRef<HTMLButtonElement>(null);
-
-  // 倒计时定时器 ref（用于组件卸载时清理）
-  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  // 组件卸载时清理定时器
-  useEffect(() => {
-    return () => {
-      if (countdownTimerRef.current) {
-        clearInterval(countdownTimerRef.current);
-      }
-    };
-  }, []);
 
   // 步骤1 Tab 键焦点循环处理
   const handleVerifyKeyDown = (e: React.KeyboardEvent) => {
@@ -102,24 +91,7 @@ export default function ForgotPassword() {
 
     try {
       await sendCode({ phone, purpose: 'reset_password' });
-
-      // 开始倒计时（先清理可能存在的旧定时器）
-      if (countdownTimerRef.current) {
-        clearInterval(countdownTimerRef.current);
-      }
-      setCountdown(60);
-      countdownTimerRef.current = setInterval(() => {
-        setCountdown((prev) => {
-          if (prev <= 1) {
-            if (countdownTimerRef.current) {
-              clearInterval(countdownTimerRef.current);
-              countdownTimerRef.current = null;
-            }
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+      startCountdown();
     } catch (err) {
       const error = err as AxiosError<ApiErrorResponse>;
       setError(error.response?.data?.error?.message || '发送验证码失败');

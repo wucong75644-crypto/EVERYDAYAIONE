@@ -41,27 +41,3 @@ export async function uploadAudio(audioBlob: Blob): Promise<AudioUploadResponse>
   return response.json();
 }
 
-/**
- * 获取音频文件信息
- */
-export async function getAudioInfo(audioUrl: string): Promise<{
-  duration: number;
-  size: number;
-}> {
-  return request<{ duration: number; size: number }>({
-    method: 'GET',
-    url: '/audio/info',
-    params: { url: audioUrl },
-  });
-}
-
-/**
- * 删除音频文件
- */
-export async function deleteAudio(audioUrl: string): Promise<void> {
-  return request<void>({
-    method: 'DELETE',
-    url: '/audio/delete',
-    data: { audio_url: audioUrl },
-  });
-}

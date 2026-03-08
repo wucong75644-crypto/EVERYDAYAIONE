@@ -8,7 +8,6 @@ KIE 模型配置
 - 使用限制
 """
 
-from decimal import Decimal
 from typing import Dict, Any, List, Optional
 from enum import Enum
 
@@ -321,95 +320,6 @@ def get_models_by_category(category: KieModelCategory) -> List[Dict[str, Any]]:
         for name, config in KIE_MODEL_CONFIGS.items()
         if config["category"] == category
     ]
-
-
-def get_chat_models() -> List[Dict[str, Any]]:
-    """获取所有 Chat 模型"""
-    return get_models_by_category(KieModelCategory.CHAT)
-
-
-def get_image_models() -> List[Dict[str, Any]]:
-    """获取所有图像模型"""
-    return get_models_by_category(KieModelCategory.IMAGE)
-
-
-def get_video_models() -> List[Dict[str, Any]]:
-    """获取所有视频模型"""
-    return get_models_by_category(KieModelCategory.VIDEO)
-
-
-def get_active_models() -> List[Dict[str, Any]]:
-    """获取所有激活的模型"""
-    return [
-        {"name": name, **config}
-        for name, config in KIE_MODEL_CONFIGS.items()
-        if config.get("is_active", False)
-    ]
-
-
-def is_async_task_model(model_name: str) -> bool:
-    """判断是否为异步任务模型"""
-    config = get_model_config(model_name)
-    if not config:
-        return False
-    return config.get("api_pattern") == KieAPIPattern.ASYNC_TASK
-
-
-def is_chat_model(model_name: str) -> bool:
-    """判断是否为 Chat 模型"""
-    config = get_model_config(model_name)
-    if not config:
-        return False
-    return config.get("category") == KieModelCategory.CHAT
-
-
-# ============================================================
-# 价格计算（用户定价 = KIE 成本 + 1 积分利润）
-# ============================================================
-
-def calculate_chat_cost(
-    model_name: str,
-    input_tokens: int,
-    output_tokens: int,
-) -> Dict[str, Any]:
-    """
-    计算 Chat 模型用户积分消耗
-
-    Returns:
-        {
-            "kie_cost": int,        # KIE 成本（积分）
-            "user_credits": int,    # 用户支付（积分）
-            "profit": int,          # 利润（积分）
-            "breakdown": {...}
-        }
-    """
-    config = get_model_config(model_name)
-    if not config or config["category"] != KieModelCategory.CHAT:
-        raise ValueError(f"Invalid chat model: {model_name}")
-
-    # KIE 成本
-    kie_input = int(input_tokens * config["kie_cost_per_1m_input_tokens"] / 1_000_000)
-    kie_output = int(output_tokens * config["kie_cost_per_1m_output_tokens"] / 1_000_000)
-    kie_total = kie_input + kie_output
-
-    # 用户定价
-    user_input = int(input_tokens * config["user_credits_per_1m_input_tokens"] / 1_000_000)
-    user_output = int(output_tokens * config["user_credits_per_1m_output_tokens"] / 1_000_000)
-    user_total = user_input + user_output
-
-    return {
-        "kie_cost": kie_total,
-        "user_credits": user_total,
-        "profit": user_total - kie_total,
-        "breakdown": {
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "kie_input_cost": kie_input,
-            "kie_output_cost": kie_output,
-            "user_input_credits": user_input,
-            "user_output_credits": user_output,
-        }
-    }
 
 
 def calculate_image_cost(

@@ -4,8 +4,7 @@ Google Gemini API 客户端封装
 封装 google-genai SDK，提供统一的 API 调用接口。
 """
 
-import asyncio
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List
 
 from loguru import logger
 from tenacity import (
@@ -23,7 +22,6 @@ from .models import (
     GoogleServiceError,
     GoogleContentFilterError,
 )
-from .configs import get_model_config
 
 
 class GoogleClient:

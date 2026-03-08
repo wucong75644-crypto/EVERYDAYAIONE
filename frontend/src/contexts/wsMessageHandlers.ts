@@ -18,6 +18,25 @@ import type { OperationContext } from './WebSocketContext';
 // ============================================================
 
 import type { MessageStatus } from '../types/message';
+import type { WSMessage } from '../hooks/useWebSocket';
+
+/**
+ * WS 消息扩展类型 — 后端各消息类型可能携带的额外字段
+ * 仅处理器内部使用，外部统一使用 WSMessage
+ */
+interface WSIncomingMessage extends WSMessage {
+  message_id?: string;
+  message?: unknown;
+  chunk?: string;
+  accumulated?: string;
+  error?: { code?: string; message?: string };
+  credits?: number;
+  progress?: number;
+  data?: Record<string, unknown>;
+}
+
+/** normalizeMessage 参数类型（避免导出内部 RawApiMessage） */
+type NormalizeInput = Parameters<typeof normalizeMessage>[0];
 
 /** MessageStore 需要的方法子集（避免导入完整 Store 类型） */
 export interface MessageStoreActions {
@@ -59,10 +78,9 @@ function cleanupTaskSubscription(deps: HandlerDeps, taskId: string): void {
 }
 
 /** 处理任务完成（有 messageData），返回是否为新处理的消息 */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function handleTaskDoneWithMessage(deps: HandlerDeps, taskId: string, messageData: any, conversationId: string): boolean {
+function handleTaskDoneWithMessage(deps: HandlerDeps, taskId: string, messageData: Record<string, unknown>, conversationId: string): boolean {
   const store = deps.getStore();
-  const normalized = normalizeMessage(messageData);
+  const normalized = normalizeMessage(messageData as NormalizeInput);
 
   // 幂等性检查：使用 Store 作为唯一真相来源
   const existingMessage = store.getMessage(normalized.id);
@@ -103,8 +121,7 @@ function handleTaskDoneWithMessage(deps: HandlerDeps, taskId: string, messageDat
 }
 
 /** 处理任务失败 */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function handleTaskFailure(deps: HandlerDeps, taskId: string, error: any): void {
+function handleTaskFailure(deps: HandlerDeps, taskId: string, error: { message?: string } | undefined): void {
   const store = deps.getStore();
   const errorMessage = error?.message || '生成失败';
   store.failTask(taskId, errorMessage);
@@ -142,10 +159,9 @@ export function flushChunkBuffer(deps: HandlerDeps): void {
 // ============================================================
 
 /** 处理生成完成消息 */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function handleMessageDone(deps: HandlerDeps, msg: any): void {
+function handleMessageDone(deps: HandlerDeps, msg: WSIncomingMessage): void {
   const { task_id, message_id, conversation_id } = msg;
-  const messageData = msg.message || msg.payload?.message;
+  const messageData = (msg.message ?? msg.payload?.message) as Record<string, unknown> | undefined;
 
   // L1: 完成前立即 flush 缓冲的 chunk
   if (deps.chunkBufferRef.current.size > 0) {
@@ -183,8 +199,8 @@ function handleMessageDone(deps: HandlerDeps, msg: any): void {
   }
   // 2. 无 task_id 但有 messageData
   else if (messageData) {
-    const normalized = normalizeMessage(messageData);
-    store.updateMessage(message_id || messageData.id, { ...normalized, status: 'completed' });
+    const normalized = normalizeMessage(messageData as NormalizeInput);
+    store.updateMessage(message_id || (messageData.id as string), { ...normalized, status: 'completed' });
   }
   // 3. 只有 message_id
   else if (message_id) {
@@ -208,10 +224,9 @@ function handleMessageDone(deps: HandlerDeps, msg: any): void {
 }
 
 /** 处理生成失败消息 */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function handleMessageError(deps: HandlerDeps, msg: any): void {
+function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): void {
   const { task_id, message_id, conversation_id } = msg;
-  const error = msg.error || msg.payload?.error;
+  const error = (msg.error ?? msg.payload?.error) as { code?: string; message?: string } | undefined;
 
   // L1: 错误时丢弃缓冲（避免 flush 到已失败的消息）
   if (message_id) {
@@ -261,10 +276,15 @@ function handleMessageError(deps: HandlerDeps, msg: any): void {
 }
 
 /** 处理多图批次单张图片完成/失败通知 */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function handleImagePartialUpdate(deps: HandlerDeps, msg: any): void {
+function handleImagePartialUpdate(deps: HandlerDeps, msg: WSIncomingMessage): void {
   const { message_id } = msg;
-  const payload = msg.payload || {};
+  const payload = (msg.payload || {}) as {
+    image_index?: number;
+    content_part?: Message['content'][number];
+    completed_count?: number;
+    total_count?: number;
+    error?: string;
+  };
   const { image_index, content_part, completed_count, total_count, error } = payload;
 
   if (!message_id || image_index === undefined) return;
@@ -301,9 +321,9 @@ function handleImagePartialUpdate(deps: HandlerDeps, msg: any): void {
 // Handler 工厂
 // ============================================================
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg: any) => void> {
-  return {
+export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg: WSMessage) => void> {
+  // 内部使用 WSIncomingMessage 访问后端可能发送的额外字段
+  const handlers: Record<string, (msg: WSIncomingMessage) => void> = {
     message_start: (msg) => {
       const { message_id } = msg;
       if (!message_id) return;
@@ -314,7 +334,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
 
     message_chunk: (msg) => {
       const { message_id, task_id, conversation_id } = msg;
-      const chunk = msg.chunk || msg.payload?.chunk;
+      const chunk = msg.chunk || (msg.payload?.chunk as string | undefined);
       if (!message_id || !chunk || !conversation_id) return;
 
       const bufferData = deps.chunkBufferRef.current.get(message_id);
@@ -340,7 +360,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
 
     message_progress: (msg) => {
       const { task_id } = msg;
-      const progress = msg.progress ?? msg.payload?.progress;
+      const progress = msg.progress ?? (msg.payload?.progress as number | undefined);
       if (!task_id || progress === undefined) return;
 
       logger.debug('ws:message', 'progress update', { taskId: task_id, progress });
@@ -354,7 +374,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
     image_partial_update: (msg) => handleImagePartialUpdate(deps, msg),
 
     credits_changed: (msg) => {
-      const credits = msg.credits ?? msg.payload?.credits;
+      const credits = msg.credits ?? (msg.payload?.credits as number | undefined);
       if (credits === undefined) return;
 
       logger.info('ws:credits', 'credits changed', { credits });
@@ -366,7 +386,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
     },
 
     subscribed: (msg) => {
-      const { task_id, accumulated } = msg.payload || {};
+      const { task_id, accumulated } = (msg.payload || {}) as { task_id?: string; accumulated?: string };
 
       logger.info('ws:subscribe', 'confirmed', {
         taskId: task_id,
@@ -382,7 +402,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
     },
 
     memory_extracted: (msg) => {
-      const data = msg.data ?? msg.payload;
+      const data = (msg.data ?? msg.payload) as { memories?: unknown[]; count?: number };
       if (!data?.memories) return;
 
       logger.info('ws:memory', 'memories extracted', { count: data.count });
@@ -397,4 +417,6 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       logger.error('ws:error', 'error received', undefined, { error: message });
     },
   };
+  // WSIncomingMessage extends WSMessage — 运行时对象包含所有字段，类型断言安全
+  return handlers as Record<string, (msg: WSMessage) => void>;
 }

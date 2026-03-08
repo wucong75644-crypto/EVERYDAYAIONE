@@ -13,6 +13,7 @@ import httpx
 from loguru import logger
 
 from core.config import settings
+from services.dashscope_client import DashScopeClient
 
 # 相关性评分阈值：≥ 此分数的记忆才注入（1-10 分制）
 RELEVANCE_THRESHOLD = 7
@@ -48,22 +49,7 @@ Doc: 2, Relevance: 3
 只输出评分，不要解释。"""
 
 # 模块级 HTTP 客户端（延迟初始化）
-_client: Optional[httpx.AsyncClient] = None
-
-
-async def _get_client() -> httpx.AsyncClient:
-    """获取或创建 HTTP 客户端"""
-    global _client
-    if _client is None or _client.is_closed:
-        _client = httpx.AsyncClient(
-            base_url=settings.dashscope_base_url,
-            headers={
-                "Authorization": f"Bearer {settings.dashscope_api_key}",
-                "Content-Type": "application/json",
-            },
-            timeout=httpx.Timeout(settings.memory_filter_timeout),
-        )
-    return _client
+_ds_client = DashScopeClient("memory_filter_timeout")
 
 
 def _build_filter_prompt(
@@ -112,7 +98,7 @@ async def _call_filter_model(
     model: str, query: str, memories: List[Dict[str, Any]]
 ) -> Optional[List[Tuple[int, int]]]:
     """调用单个模型做评分，返回 [(0-based index, score), ...]，失败返回 None"""
-    client = await _get_client()
+    client = await _ds_client.get()
     user_prompt = _build_filter_prompt(query, memories)
 
     try:
@@ -211,7 +197,4 @@ async def filter_memories(
 
 async def close() -> None:
     """关闭 HTTP 客户端"""
-    global _client
-    if _client and not _client.is_closed:
-        await _client.aclose()
-        _client = None
+    await _ds_client.close()

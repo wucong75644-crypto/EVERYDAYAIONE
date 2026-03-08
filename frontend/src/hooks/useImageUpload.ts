@@ -6,6 +6,7 @@
 
 import { useState } from 'react';
 import { uploadImageFile } from '../services/upload';
+import { logger } from '../utils/logger';
 
 export interface UploadedImage {
   id: string; // 唯一标识
@@ -111,7 +112,7 @@ export function useImageUpload() {
           )
         );
       } catch (error) {
-        console.error('图片上传失败:', error);
+        logger.error('imageUpload', '图片上传失败', error);
         setImages((prev) =>
           prev.map((img) =>
             img.id === newImage.id
@@ -200,7 +201,7 @@ export function useImageUpload() {
       setTimeout(() => {
         urlsToRevoke.forEach((url) => {
           URL.revokeObjectURL(url);
-          console.log(`[Memory Cleanup] Revoked ObjectURL: ${url.slice(0, 50)}...`);
+          logger.debug('imageUpload', 'Revoked ObjectURL', url.slice(0, 50));
         });
       }, 30000); // 30秒延迟
     }

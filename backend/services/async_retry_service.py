@@ -16,7 +16,6 @@ from schemas.message import GenerationType
 from services.adapters.base import (
     ImageGenerateResult,
     VideoGenerateResult,
-    TaskStatus,
 )
 
 TaskResult = Union[ImageGenerateResult, VideoGenerateResult]

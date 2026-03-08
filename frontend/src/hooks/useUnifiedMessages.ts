@@ -78,10 +78,3 @@ export function useUnifiedMessages(conversationId: string | null): Message[] {
   }, [conversationId, messages, optimisticMessages]);
 }
 
-/**
- * 获取当前对话的消息列表
- */
-export function useCurrentMessages(): Message[] {
-  const currentConversationId = useMessageStore((state) => state.currentConversationId);
-  return useUnifiedMessages(currentConversationId);
-}

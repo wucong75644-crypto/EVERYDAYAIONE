@@ -13,7 +13,6 @@ from datetime import datetime, timezone
 from loguru import logger
 from supabase import Client
 
-from schemas.message import ImagePart, VideoPart
 from services.adapters.base import (
     ImageGenerateResult,
     VideoGenerateResult,

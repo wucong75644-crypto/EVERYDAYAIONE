@@ -181,6 +181,98 @@ export const ALL_MODELS: UnifiedModel[] = [
     credits: 0, // 免费层，无需积分
   },
 
+  // 国内模型（DashScope 百炼）
+  {
+    id: 'deepseek-v3.2',
+    name: 'DeepSeek V3.2',
+    type: 'chat',
+    description: '代码/数学极强 | 速度快费用低',
+    capabilities: {
+      textToImage: false,
+      imageEditing: false,
+      imageToVideo: false,
+      textToVideo: false,
+      vqa: false,
+      videoQA: false,
+      functionCalling: true,
+      streamingResponse: true,
+      maxContextTokens: 131072,
+    },
+    credits: 0,
+  },
+  {
+    id: 'deepseek-r1',
+    name: 'DeepSeek R1',
+    type: 'chat',
+    description: '深度推理 | 数学/逻辑极强',
+    capabilities: {
+      textToImage: false,
+      imageEditing: false,
+      imageToVideo: false,
+      textToVideo: false,
+      vqa: false,
+      videoQA: false,
+      functionCalling: true,
+      streamingResponse: true,
+      maxContextTokens: 131072,
+    },
+    credits: 0,
+  },
+  {
+    id: 'qwen3.5-plus',
+    name: 'Qwen 3.5 Plus',
+    type: 'chat',
+    description: '百万上下文 | 性价比之王',
+    capabilities: {
+      textToImage: false,
+      imageEditing: false,
+      imageToVideo: false,
+      textToVideo: false,
+      vqa: true,
+      videoQA: false,
+      functionCalling: true,
+      streamingResponse: true,
+      maxContextTokens: 1000000,
+    },
+    credits: 0,
+  },
+  {
+    id: 'kimi-k2.5',
+    name: 'Kimi K2.5',
+    type: 'chat',
+    description: '全能模型 | 图片理解 | 26万上下文',
+    capabilities: {
+      textToImage: false,
+      imageEditing: false,
+      imageToVideo: false,
+      textToVideo: false,
+      vqa: true,
+      videoQA: false,
+      functionCalling: true,
+      streamingResponse: true,
+      maxContextTokens: 262144,
+    },
+    credits: 0,
+  },
+  {
+    id: 'glm-5',
+    name: 'GLM 5',
+    type: 'chat',
+    description: '中文能力强 | 20万上下文',
+    capabilities: {
+      textToImage: false,
+      imageEditing: false,
+      imageToVideo: false,
+      textToVideo: false,
+      vqa: false,
+      videoQA: false,
+      functionCalling: true,
+      streamingResponse: true,
+      maxContextTokens: 202752,
+    },
+    credits: 0,
+  },
+
   // 图像模型
   {
     id: 'google/nano-banana',
@@ -294,16 +386,6 @@ export const ALL_MODELS: UnifiedModel[] = [
     },
   },
 ];
-
-// 根据类型获取模型列表
-export function getModelsByType(type: ModelType): UnifiedModel[] {
-  return ALL_MODELS.filter((m) => m.type === type);
-}
-
-// 根据ID获取模型
-export function getModelById(id: string): UnifiedModel | undefined {
-  return ALL_MODELS.find((m) => m.id === id);
-}
 
 // 根据图片状态筛选可用模型
 export function getAvailableModels(hasImage: boolean): UnifiedModel[] {

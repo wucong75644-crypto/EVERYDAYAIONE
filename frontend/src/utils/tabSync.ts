@@ -15,6 +15,8 @@
  * - 当前实现已包含 localStorage fallback，覆盖绝大多数场景
  */
 
+import { logger } from './logger';
+
 const CHANNEL_NAME = 'everydayai-sync';
 
 export type TabSyncEventType =
@@ -69,7 +71,7 @@ class TabSyncManager {
         this.isInitialized = true;
         return;
       } catch (error) {
-        console.warn('[TabSync] BroadcastChannel failed, falling back to localStorage:', error);
+        logger.warn('tabSync', 'BroadcastChannel failed, falling back to localStorage');
       }
     }
 
@@ -78,9 +80,8 @@ class TabSyncManager {
       this.useFallback = true;
       window.addEventListener('storage', this.handleStorageEvent.bind(this));
       this.isInitialized = true;
-      console.info('[TabSync] Using localStorage fallback');
     } catch (error) {
-      console.error('[TabSync] Failed to initialize fallback:', error);
+      logger.error('tabSync', 'Failed to initialize fallback', error);
     }
   }
 
@@ -95,7 +96,7 @@ class TabSyncManager {
       // StorageEvent 只会在其他标签页触发，所以不需要检查 tabId
       this.dispatchToListeners(data.type, data.payload);
     } catch (error) {
-      console.error('[TabSync] Failed to parse storage event:', error);
+      logger.error('tabSync', 'Failed to parse storage event', error);
     }
   }
 
@@ -182,7 +183,7 @@ class TabSyncManager {
         try {
           callback(payload);
         } catch (error) {
-          console.error(`[TabSync] Listener error for ${type}:`, error);
+          logger.error('tabSync', `Listener error for ${type}`, error);
         }
       });
     }

@@ -54,7 +54,7 @@ export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'failed';
 
 /** 消息列表响应（原始 API 格式，需要通过 normalizeMessage 转换） */
 export interface MessageListResponse {
-  messages: any[];  // 使用 any，由 normalizeMessage 转换为标准 Message 格式
+  messages: Record<string, unknown>[];  // 原始 API 数据，由 normalizeMessage 转换为 Message
   total: number;
   has_more: boolean;
 }

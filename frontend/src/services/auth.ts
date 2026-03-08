@@ -66,12 +66,3 @@ export async function getCurrentUser(): Promise<User> {
   });
 }
 
-/**
- * 退出登录
- */
-export async function logout(): Promise<{ message: string }> {
-  return request({
-    method: 'POST',
-    url: '/auth/logout',
-  });
-}

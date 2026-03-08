@@ -193,25 +193,6 @@ def _build_ws_message(
 # ============================================================
 
 
-def build_message_pending(
-    task_id: str,
-    conversation_id: str,
-    message_id: str,
-    estimated_time_ms: Optional[int] = None,
-) -> Dict[str, Any]:
-    """构建任务已提交消息"""
-    payload = {"message_id": message_id}
-    if estimated_time_ms:
-        payload["estimated_time_ms"] = estimated_time_ms
-    return _build_ws_message(
-        WSMessageType.MESSAGE_PENDING,
-        payload,
-        task_id=task_id,
-        conversation_id=conversation_id,
-        message_id=message_id,
-    )
-
-
 def build_message_start(
     task_id: str,
     conversation_id: str,
@@ -244,26 +225,6 @@ def build_message_chunk(
         payload["accumulated"] = accumulated
     return _build_ws_message(
         WSMessageType.MESSAGE_CHUNK,
-        payload,
-        task_id=task_id,
-        conversation_id=conversation_id,
-        message_id=message_id,
-    )
-
-
-def build_message_progress(
-    task_id: str,
-    conversation_id: str,
-    message_id: str,
-    progress: int,
-    message: Optional[str] = None,
-) -> Dict[str, Any]:
-    """构建进度更新消息"""
-    payload: Dict[str, Any] = {"progress": progress}
-    if message:
-        payload["message"] = message
-    return _build_ws_message(
-        WSMessageType.MESSAGE_PROGRESS,
         payload,
         task_id=task_id,
         conversation_id=conversation_id,
@@ -347,24 +308,6 @@ def build_image_partial_update(
         task_id=task_id,
         conversation_id=conversation_id,
         message_id=message_id,
-    )
-
-
-def build_credits_changed(
-    credits: int,
-    delta: int,
-    reason: str,
-    task_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """构建积分变化消息"""
-    return _build_ws_message(
-        WSMessageType.CREDITS_CHANGED,
-        {
-            "credits": credits,
-            "delta": delta,
-            "reason": reason,
-            "task_id": task_id,
-        },
     )
 
 

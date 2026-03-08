@@ -84,11 +84,11 @@ class Settings(BaseSettings):
 
     # 记忆功能配置（Mem0）
     supabase_db_url: Optional[str] = None  # PostgreSQL 直连串（Mem0 pgvector 使用）
-    memory_extraction_model: str = "qwen-plus"  # 记忆提取用 LLM（DashScope）
+    memory_extraction_model: str = "qwen3.5-plus"  # 记忆提取用 LLM（DashScope）
     memory_embedding_model: str = "text-embedding-v3"  # 嵌入模型（1024维，DashScope）
     memory_enabled_default: bool = True  # 新用户默认开启记忆
-    memory_filter_model: str = "qwen-turbo"  # 记忆精排主模型
-    memory_filter_fallback_model: str = "qwen-plus"  # 记忆精排备用模型
+    memory_filter_model: str = "qwen3.5-flash"  # 记忆精排主模型
+    memory_filter_fallback_model: str = "qwen3.5-plus"  # 记忆精排备用模型
     memory_filter_timeout: float = 5.0  # 记忆精排单次超时（秒）
 
     # 对话上下文配置
@@ -97,17 +97,29 @@ class Settings(BaseSettings):
 
     # 对话历史摘要压缩配置
     context_summary_enabled: bool = True  # 是否启用摘要压缩
-    context_summary_model: str = "qwen-turbo"  # 摘要主模型
-    context_summary_fallback_model: str = "qwen-plus"  # 摘要备用模型
+    context_summary_model: str = "qwen3.5-flash"  # 摘要主模型
+    context_summary_fallback_model: str = "qwen3.5-plus"  # 摘要备用模型
     context_summary_timeout: float = 5.0  # 单次调用超时（秒）
     context_summary_max_chars: int = 500  # 摘要最大字符数
     context_summary_update_interval: int = 10  # 每N条新消息更新摘要
 
     # 智能路由配置
-    intent_router_model: str = "qwen-plus"  # 主路由模型（DashScope）
-    intent_router_fallback_model: str = "qwen-turbo"  # 降级路由模型
+    intent_router_model: str = "qwen3.5-plus"  # 主路由模型（DashScope）
+    intent_router_fallback_model: str = "qwen3.5-flash"  # 降级路由模型
     intent_router_enabled: bool = True  # 是否启用智能路由
     intent_router_timeout: float = 5.0  # 单次调用超时（秒）
+
+    # Agent 知识库配置
+    kb_enabled: bool = True                              # 知识库总开关
+    kb_extraction_model: str = "qwen3.5-flash"           # 知识提取模型
+    kb_extraction_fallback_model: str = "qwen3.5-plus"   # 降级模型
+    kb_extraction_timeout: float = 3.0               # 提取超时（秒）
+    kb_search_limit: int = 5                         # 路由检索最大条数
+    kb_search_threshold: float = 0.5                 # 向量相似度阈值
+    kb_max_nodes: int = 5000                         # 知识节点上限
+    kb_cache_ttl: int = 600                          # 检索缓存 TTL（秒）
+    kb_confidence_boost: float = 0.1                 # 命中时置信度增量
+    kb_confidence_decay_days: int = 30               # 未命中衰减周期（天）
 
     # Sentry 错误监控配置
     sentry_dsn: Optional[str] = None

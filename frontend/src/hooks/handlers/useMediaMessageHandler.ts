@@ -8,6 +8,7 @@ import { type UnifiedModel } from '../../constants/models';
 import { type Message } from '../../stores/useMessageStore';
 import { sendMessage, createTextContent, createTextWithImages, createErrorMessage, type GenerationType } from '../../services/messageSender';
 import { useWebSocketContext } from '../../contexts/WebSocketContext';
+import { logger } from '../../utils/logger';
 
 export type MediaType = 'image' | 'video';
 
@@ -100,7 +101,7 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
       // WebSocket 推送会触发相应的状态更新
 
     } catch (error) {
-      console.error('Media generation failed:', error);
+      logger.error('mediaHandler', 'Media generation failed', error);
       onMessageSent(createErrorMessage(conversationId, error, '生成失败'));
     }
   };

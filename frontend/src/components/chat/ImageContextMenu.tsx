@@ -10,6 +10,7 @@
 import { useEffect, useRef } from 'react';
 import { Quote, Copy, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { downloadImage } from '../../utils/downloadImage';
 
 interface ImageContextMenuProps {
   x: number;
@@ -99,17 +100,7 @@ export default function ImageContextMenu({
 
   const handleDownload = async () => {
     try {
-      const response = await fetch(imageUrl, { mode: 'cors', credentials: 'omit' });
-      if (!response.ok) throw new Error('download failed');
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = `image-${messageId}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(blobUrl);
+      await downloadImage(imageUrl, `image-${messageId}`);
     } catch {
       toast.error('下载失败');
     }

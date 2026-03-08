@@ -137,7 +137,7 @@ class TestBuildRetryTools:
 
     def test_all_models_failed_only_give_up(self):
         """所有模型都失败时，只有 give_up 工具（同类型工具被过滤）"""
-        all_chat_models = ["gemini-3-pro", "gemini-3-flash"]
+        all_chat_models = get_remaining_models(GenerationType.CHAT, [])
         tools = build_retry_tools(GenerationType.CHAT, all_chat_models)
         tool_names = [t["function"]["name"] for t in tools]
         assert "text_chat" not in tool_names
@@ -165,7 +165,7 @@ class TestGetRemainingModels:
         assert "gemini-3-flash" in remaining
 
     def test_all_failed_returns_empty(self):
-        all_chat = ["gemini-3-pro", "gemini-3-flash"]
+        all_chat = get_remaining_models(GenerationType.CHAT, [])
         remaining = get_remaining_models(GenerationType.CHAT, all_chat)
         assert remaining == []
 
@@ -294,7 +294,7 @@ class TestRouteRetry:
     @pytest.mark.asyncio
     async def test_all_models_exhausted_returns_none(self, router):
         """所有同类型模型都已失败 → 返回 None"""
-        all_chat_models = ["gemini-3-pro", "gemini-3-flash"]
+        all_chat_models = get_remaining_models(GenerationType.CHAT, [])
         mock_client = AsyncMock()
         mock_client.is_closed = False
         mock_client.post = AsyncMock(side_effect=Exception("error"))

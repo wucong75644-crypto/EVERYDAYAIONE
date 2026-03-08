@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>清理缓存 - EverydayAI</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 600px;
+      margin: 100px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #333;
+      margin-bottom: 20px;
+    }
+    button {
+      background: #3b82f6;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      margin-right: 10px;
+    }
+    button:hover {
+      background: #2563eb;
+    }
+    .success {
+      color: #10b981;
+      font-weight: 500;
+      margin-top: 20px;
+      display: none;
+    }
+    .info {
+      background: #eff6ff;
+      padding: 15px;
+      border-radius: 8px;
+      margin-top: 20px;
+      color: #1e40af;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>清理缓存</h1>
+    <p>点击下方按钮清理旧的缓存状态，修复黄色提醒点问题。</p>
+
+    <button onclick="clearCache()">清理缓存</button>
+    <button onclick="goToApp()">返回应用</button>
+
+    <div id="success" class="success">
+      ✅ 缓存已清除！<br>
+      正在跳转回应用...
+    </div>
+
+    <div class="info">
+      <strong>清理内容：</strong><br>
+      • 消息存储（包含任务状态）<br>
+      • 对话列表缓存<br>
+      • 任务恢复状态
+    </div>
+  </div>
+
+  <script>
+    function clearCache() {
+      // 清除所有相关缓存
+      localStorage.removeItem('everydayai_message_store');
+      localStorage.removeItem('conversations_cache');
+      localStorage.removeItem('task_restoration_store');
+
+      // 显示成功消息
+      document.getElementById('success').style.display = 'block';
+
+      // 2秒后跳转回应用
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 2000);
+    }
+
+    function goToApp() {
+      window.location.href = '/';
+    }
+  </script>
+</body>
+</html>

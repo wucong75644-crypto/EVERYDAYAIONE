@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import type { User } from '../types/auth';
 import { getCurrentUser } from '../services/auth';
+import { logger } from '../utils/logger';
 
 interface AuthState {
   user: User | null;
@@ -69,7 +70,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       localStorage.setItem('user', JSON.stringify(user));
       set({ user, isAuthenticated: true });
     } catch (error) {
-      console.error('刷新用户信息失败:', error);
+      logger.error('auth', '刷新用户信息失败', error);
     }
   },
 }));
