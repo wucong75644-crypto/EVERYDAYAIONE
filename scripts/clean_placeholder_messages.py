@@ -5,12 +5,19 @@
 这些是前端的占位符遗留，没有实际内容
 """
 
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).parent.parent
+BACKEND_DIR = PROJECT_ROOT / "backend"
+sys.path.insert(0, str(BACKEND_DIR))
+
 import os
 import json
 from dotenv import load_dotenv
 from supabase import create_client
 
-load_dotenv('.env')
+load_dotenv(BACKEND_DIR / '.env')
 
 def main():
     url = os.getenv('SUPABASE_URL')

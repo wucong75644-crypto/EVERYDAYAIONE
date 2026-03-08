@@ -181,9 +181,9 @@ class TestRecordMetric:
     @pytest.mark.asyncio
     async def test_record_metric_success(self, mock_pg_connection, mock_conn, mock_cursor):
         """成功记录指标"""
-        with patch("services.knowledge_service.is_kb_available", return_value=True), \
-             patch("services.knowledge_service.get_pg_connection", return_value=mock_pg_connection):
-            from services.knowledge_service import record_metric
+        with patch("services.knowledge_metrics.is_kb_available", return_value=True), \
+             patch("services.knowledge_metrics.get_pg_connection", return_value=mock_pg_connection):
+            from services.knowledge_metrics import record_metric
 
             await record_metric(
                 task_type="chat",

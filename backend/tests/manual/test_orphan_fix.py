@@ -7,11 +7,16 @@
 3. 查看最新任务的 version 和 started_at 是否正确
 """
 
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import os
 from dotenv import load_dotenv
 from supabase import create_client
 
-load_dotenv('.env')
+load_dotenv(Path(__file__).parent.parent / '.env')
 db = create_client(os.getenv('SUPABASE_URL'), os.getenv('SUPABASE_SERVICE_ROLE_KEY'))
 
 print("=" * 70)

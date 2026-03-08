@@ -83,7 +83,7 @@ JSONB 字段，新增 `num_images` 键：
 {"type": "image", "model": "nano-banana-pro", "num_images": 4, "aspect_ratio": "1:1"}
 ```
 
-**文件**: 新建 `backend/migrations/add_multi_image_support.sql`
+**文件**: 新建 `backend/migrations/020_add_multi_image_support.sql`
 
 ---
 
@@ -436,7 +436,7 @@ image_partial_update: (msg) => {
 
 | 文件 | 类型 | 改动 |
 |------|------|------|
-| `backend/migrations/add_multi_image_support.sql` | 新建 | tasks 表新增 3 列 + 索引 |
+| `backend/migrations/020_add_multi_image_support.sql` | 新建 | tasks 表新增 3 列 + 索引 |
 | `backend/services/handlers/image_handler.py` | 修改 | start() 支持 N 张并行生成 |
 | `backend/services/handlers/base.py` | 修改 | _build_task_data() 新增参数 |
 | `backend/services/task_completion_service.py` | 修改 | 批次完成逻辑 + _finalize_batch |

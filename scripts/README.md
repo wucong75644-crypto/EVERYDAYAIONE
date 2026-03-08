@@ -6,12 +6,22 @@
 
 ```
 scripts/
-├── security/          # 安全相关脚本
-│   ├── update_env.sh          # 更新环境变量密钥
-│   └── verify_supabase.py     # 验证 Supabase 连接
-├── database/          # 数据库相关脚本
-│   └── apply_migration.sh     # 应用数据库迁移
-└── README.md          # 本文件
+├── security/                          # 安全相关脚本
+│   ├── update_env.sh                  # 更新环境变量密钥
+│   └── verify_supabase.py             # 验证 Supabase 连接
+├── database/                          # 数据库相关脚本
+│   ├── apply_migration.sh             # 应用数据库迁移
+│   ├── run_migration.py               # 执行迁移脚本
+│   └── check_fk_constraints.sql       # 检查外键约束
+├── clean_placeholder_messages.py      # 清理占位符消息
+├── fix_orphan_tasks.py                # 修复孤儿任务
+├── manual_process_task.py             # 手动处理任务
+├── check_conversation_messages.py     # 检查对话消息
+├── clean_invalid_completion_messages.py # 清理无效完成消息
+├── clean_media_messages.py            # 清理媒体消息
+├── diagnose_media_messages.py         # 诊断媒体消息
+├── test_message_system.py             # E2E 消息系统测试
+└── README.md                          # 本文件
 ```
 
 ---
@@ -86,6 +96,35 @@ bash scripts/database/apply_migration.sh
 - 显示需要在 Supabase Dashboard 执行的 SQL
 - 提供 Dashboard 链接
 
+### run_migration.py
+
+**用途**：通过 Supabase RPC 执行数据库迁移 SQL
+
+**用法**：
+```bash
+cd backend && source venv/bin/activate
+python3 ../scripts/database/run_migration.py
+```
+
+---
+
+## 🔧 维护脚本
+
+### clean_placeholder_messages.py
+清理前端占位符遗留的"生成完成"消息。
+
+### fix_orphan_tasks.py
+修复已完成但消息未创建的孤儿任务。
+
+### manual_process_task.py
+手动处理指定的已完成任务（用于修复消息未创建的情况）。
+
+**维护脚本用法**：
+```bash
+cd backend && source venv/bin/activate
+python3 ../scripts/fix_orphan_tasks.py
+```
+
 ---
 
 ## ⚠️ 使用注意事项
@@ -144,4 +183,4 @@ chmod +x scripts/**/*.py
 
 ---
 
-**最后更新**: 2026-01-28
+**最后更新**: 2026-03-08

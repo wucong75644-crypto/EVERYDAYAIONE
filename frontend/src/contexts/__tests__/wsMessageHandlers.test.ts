@@ -17,10 +17,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createWSMessageHandlers, flushChunkBuffer, type HandlerDeps, type MessageStoreActions } from './wsMessageHandlers';
+import { createWSMessageHandlers, flushChunkBuffer, type HandlerDeps, type MessageStoreActions } from '../wsMessageHandlers';
 
 // Mock 外部依赖
-vi.mock('../stores/useMessageStore', () => ({
+vi.mock('../../stores/useMessageStore', () => ({
   useMessageStore: vi.fn(),
   normalizeMessage: (msg: any) => ({
     ...msg,
@@ -35,13 +35,13 @@ const mockAuthStore = {
   setUser: mockSetUser,
 };
 
-vi.mock('../stores/useAuthStore', () => ({
+vi.mock('../../stores/useAuthStore', () => ({
   useAuthStore: {
     getState: () => mockAuthStore,
   },
 }));
 
-vi.mock('../utils/logger', () => ({
+vi.mock('../../utils/logger', () => ({
   logger: {
     info: vi.fn(),
     debug: vi.fn(),
@@ -50,7 +50,7 @@ vi.mock('../utils/logger', () => ({
   },
 }));
 
-vi.mock('../utils/tabSync', () => ({
+vi.mock('../../utils/tabSync', () => ({
   tabSync: { broadcast: vi.fn() },
 }));
 

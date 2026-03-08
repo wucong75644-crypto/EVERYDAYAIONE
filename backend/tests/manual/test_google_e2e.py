@@ -4,6 +4,11 @@ Google Gemini API 端到端测试
 实际调用 Google API，验证完整流程。
 """
 
+
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import asyncio
 import os
 from dotenv import load_dotenv

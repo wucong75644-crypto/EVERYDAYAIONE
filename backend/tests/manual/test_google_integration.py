@@ -14,12 +14,13 @@ import json
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 
 import httpx
 import websockets
 
 # 添加项目路径
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # 测试配置
 BASE_URL = "http://localhost:8000/api"

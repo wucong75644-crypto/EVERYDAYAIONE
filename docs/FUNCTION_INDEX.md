@@ -517,8 +517,6 @@
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `notifyTaskComplete` | `frontend/src/utils/taskNotification.ts` | 处理任务完成通知（纯函数，仅计算新状态） | NotifyTaskCompleteParams, currentNotifications, currentRecentlyCompleted | NotifyTaskCompleteResult |
-
 #### 共享类型定义
 
 | 类型名 | 文件路径 | 功能描述 |
@@ -526,21 +524,6 @@
 | `StoreTaskStatus` | `frontend/src/types/task.ts` | Store 任务状态（pending、streaming、polling、completed、error） |
 | `StoreTaskType` | `frontend/src/types/task.ts` | Store 任务类型（chat、image、video） |
 | `CompletedNotification` | `frontend/src/types/task.ts` | 完成通知接口（id、conversationId、type、completedAt、isRead） |
-| `NotifyTaskCompleteParams` | `frontend/src/utils/taskNotification.ts` | 通知参数接口 |
-| `NotifyTaskCompleteResult` | `frontend/src/utils/taskNotification.ts` | 通知结果接口（pendingNotifications、recentlyCompleted） |
-
----
-
-### 图片URL工具模块 (Image Utils)
-
-> **新增于阶段0重构**：提取图片URL解析逻辑为共享函数，支持逗号分隔的多图格式。
-
-#### 前端函数
-
-| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
-|--------|----------|----------|------|--------|
-| `parseImageUrls` | `frontend/src/utils/imageUtils.ts` | 解析图片URL字符串为数组（支持逗号分隔） | imageUrl: string \| null \| undefined | string[] |
-| `getFirstImageUrl` | `frontend/src/utils/imageUtils.ts` | 获取第一张图片URL | imageUrl: string \| null \| undefined | string \| null |
 
 ---
 
@@ -633,8 +616,6 @@
 |--------|----------|----------|------|--------|
 | `format_message` | `backend/services/message_utils.py` | 格式化消息响应 | message_data | dict |
 | `deduct_user_credits` | `backend/services/message_utils.py` | 扣除用户积分 | db, user_id, credits, description | None |
-| `prepare_ai_stream_client` | `backend/services/message_ai_helpers.py` | 准备 AI 流式客户端 | model_id | tuple[model, client, adapter] |
-| `stream_ai_response` | `backend/services/message_ai_helpers.py` | 流式获取 AI 响应 | adapter, history_func, ... | AsyncIterator |
 | `_generate_with_credits` | `backend/services/video_service.py` | 通用视频生成流程 | user_id, model, ... | Dict[str, Any] |
 | `_get_user` | `backend/services/base_generation_service.py` | 获取用户信息 | user_id | dict |
 | `_check_credits` | `backend/services/base_generation_service.py` | 检查积分是否足够 | user, required_credits | None |

@@ -3,10 +3,17 @@
 执行数据库迁移脚本
 """
 import os
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+BACKEND_DIR = PROJECT_ROOT / "backend"
+sys.path.insert(0, str(BACKEND_DIR))
+
 from supabase import create_client
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(BACKEND_DIR / '.env')
 
 def run_migration():
     """执行 add_client_task_id.sql 迁移"""
@@ -25,7 +32,7 @@ def run_migration():
     supabase = create_client(supabase_url, supabase_key)
 
     # 读取迁移 SQL
-    migration_file = "migrations/add_client_task_id.sql"
+    migration_file = str(BACKEND_DIR / "migrations" / "017_add_client_task_id.sql")
 
     print(f"📄 读取迁移文件: {migration_file}")
 
