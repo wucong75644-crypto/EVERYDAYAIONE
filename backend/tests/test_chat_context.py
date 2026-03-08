@@ -358,6 +358,7 @@ def _make_mock_chunk(content="hi", prompt_tokens=0, completion_tokens=0):
     chunk.content = content
     chunk.prompt_tokens = prompt_tokens
     chunk.completion_tokens = completion_tokens
+    chunk.credits_consumed = None
     return chunk
 
 

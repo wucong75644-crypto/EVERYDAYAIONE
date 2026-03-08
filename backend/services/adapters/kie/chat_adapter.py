@@ -438,6 +438,7 @@ class KieChatAdapter(BaseChatAdapter):
                 finish_reason=chunk.choices[0].finish_reason if chunk.choices else None,
                 prompt_tokens=chunk.usage.prompt_tokens if chunk.usage else 0,
                 completion_tokens=chunk.usage.completion_tokens if chunk.usage else 0,
+                credits_consumed=chunk.credits_consumed,
             )
 
     async def chat_sync(
