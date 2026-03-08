@@ -116,6 +116,10 @@ EVERYDAYAIONE/
 │   │   ├── background_task_worker.py # 后台任务轮询器（兜底模式，120s 间隔）
 │   │   ├── task_completion_service.py # 统一任务完成处理服务（Webhook/轮询共用）
 │   │   ├── websocket_manager.py      # WebSocket 连接管理
+│   │   ├── intent_router.py         # 智能意图路由器（千问 Function Calling）
+│   │   ├── memory_config.py         # 记忆基础设施（Mem0 配置/单例/缓存/格式化）
+│   │   ├── memory_service.py        # 记忆服务（CRUD、对话提取、智能检索）
+│   │   ├── memory_filter.py         # 记忆智能过滤器（千问精排，降级链）
 │   │   ├── handlers/                 # 统一消息处理器
 │   │   │   ├── __init__.py               # Handler 工厂
 │   │   │   ├── base.py                   # Handler 基类
@@ -479,6 +483,11 @@ cache = client.caches.create(
 
 ## 更新记录
 
+- **2026-03-07**：记忆智能过滤功能
+  - 新增 `memory_filter.py` 千问精排过滤器（降级链：turbo → plus → 跳过）
+  - Mem0 search 加 `threshold=0.5` 相似度阈值初筛
+  - `format_memory()` 保留 score 字段
+  - `DASHSCOPE_BASE_URL` 统一提取到 `config.py`，消除跨文件重复
 - **2026-03-01**：修复刷新恢复场景僵尸消息
   - `MessageResponse` 添加 `field_validator` 处理 Supabase JSONB 字符串 → dict 转换
   - `/tasks/pending` API 增加 `client_task_id` 返回字段

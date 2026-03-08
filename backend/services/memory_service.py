@@ -12,6 +12,7 @@ from core.exceptions import AppException, NotFoundError, PermissionDeniedError
 from services.memory_config import (
     MAX_MEMORIES_PER_USER,
     MAX_INJECTION_COUNT,
+    MEMORY_SEARCH_THRESHOLD,
     MEM0_TIMEOUT,
     _get_mem0,
     _get_cached_memories,
@@ -21,6 +22,7 @@ from services.memory_config import (
     format_memory_list,
     verify_memory_ownership,
 )
+from services.memory_filter import filter_memories
 
 
 class MemoryService:
@@ -350,7 +352,11 @@ class MemoryService:
         """清空用户所有记忆"""
         mem0 = await _get_mem0()
         if mem0 is None:
-            return
+            raise AppException(
+                code="MEMORY_UNAVAILABLE",
+                message="记忆功能暂不可用，无法清空",
+                status_code=503,
+            )
 
         try:
             await asyncio.wait_for(
@@ -382,7 +388,6 @@ class MemoryService:
         cached = _get_cached_memories(user_id)
         if cached is not None:
             return len(cached)
-
         mem0 = await _get_mem0()
         if mem0 is None:
             return 0
@@ -409,7 +414,7 @@ class MemoryService:
         query: str,
         limit: int = MAX_INJECTION_COUNT,
     ) -> List[Dict[str, Any]]:
-        """检索与当前对话相关的记忆"""
+        """检索与当前对话相关的记忆（两级过滤：Mem0 阈值初筛 → 千问精排）"""
         mem0 = await _get_mem0()
         if mem0 is None:
             return []
@@ -422,11 +427,36 @@ class MemoryService:
                 memories = format_memory_list(result)
                 return memories[:limit]
 
+            # 第一级：Mem0 向量搜索 + 相似度阈值初筛
+            # 多搜一些候选（3x），让精排有足够样本筛选
+            search_limit = limit * 3
             result = await asyncio.wait_for(
-                mem0.search(query=query, user_id=user_id, limit=limit),
+                mem0.search(
+                    query=query, user_id=user_id,
+                    limit=search_limit, threshold=MEMORY_SEARCH_THRESHOLD,
+                ),
                 timeout=MEM0_TIMEOUT,
             )
-            return format_memory_list(result)
+            memories = format_memory_list(result)
+            if not memories:
+                return []
+
+            logger.info(
+                f"Memory search | user_id={user_id} | "
+                f"query={query[:50]} | mem0_returned={len(memories)}"
+            )
+
+            # 第二级：千问精排（降级链：turbo → plus → 跳过）
+            filtered = await filter_memories(query, memories)
+
+            # 硬性上限：无论精排结果如何，最多注入 limit 条
+            filtered = filtered[:limit]
+
+            logger.info(
+                f"Memory pipeline done | user_id={user_id} | "
+                f"searched={len(memories)} → filtered={len(filtered)}"
+            )
+            return filtered
         except Exception as e:
             logger.warning(
                 f"Memory search failed, skipping | user_id={user_id} | error={e}"
@@ -483,4 +513,3 @@ class MemoryService:
                 f"conversation_id={conversation_id} | error={e}"
             )
             return []
-

@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from loguru import logger
 
+from core.config import settings
 from schemas.message import ContentPart, GenerationType, TextPart, ImagePart
 from config.smart_model_config import (
     TOOL_TO_TYPE,
@@ -98,7 +99,7 @@ RETRY_ROUTER_SYSTEM_PROMPT = (
     "如果没有合适的替代模型可选，调用 give_up 工具放弃重试。"
 )
 
-DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+DASHSCOPE_BASE_URL = settings.dashscope_base_url
 
 # 智能模型 ID（前端 smartModel.ts 对应）
 SMART_MODEL_ID = "auto"

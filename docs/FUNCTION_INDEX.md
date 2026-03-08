@@ -586,6 +586,45 @@
 
 ---
 
+### 记忆模块 (Memory Module)
+
+> **新增于记忆智能过滤**：Mem0 向量检索 + 千问二次精排，两级过滤确保注入上下文的记忆高度相关。
+
+#### 后端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `MemoryService.get_relevant_memories` | `backend/services/memory_service.py` | 检索相关记忆（两级过滤：Mem0 阈值初筛 → 千问精排） | user_id, query, limit | List[Dict] |
+| `MemoryService.extract_memories_from_conversation` | `backend/services/memory_service.py` | 从对话中自动提取记忆（Mem0 LLM） | user_id, messages, conversation_id | List[Dict] |
+| `MemoryService.get_all_memories` | `backend/services/memory_service.py` | 获取用户所有记忆（带内存缓存） | user_id | List[Dict] |
+| `MemoryService.add_memory` | `backend/services/memory_service.py` | 添加记忆 | user_id, content, source | List[Dict] |
+| `MemoryService.is_memory_enabled` | `backend/services/memory_service.py` | 检查用户是否开启记忆 | user_id | bool |
+| `filter_memories` | `backend/services/memory_filter.py` | 千问精排过滤（降级链：turbo → plus → 跳过） | query, memories | List[Dict] |
+| `format_memory` | `backend/services/memory_config.py` | 格式化单条 Mem0 记忆（含 score） | raw | Dict |
+| `build_memory_system_prompt` | `backend/services/memory_config.py` | 将记忆列表构建为 system prompt | memories | str |
+| `ChatContextMixin._build_memory_prompt` | `backend/services/handlers/chat_context_mixin.py` | 构建记忆 system prompt（对话注入入口） | user_id, query | Optional[str] |
+| `ChatContextMixin._extract_memories_async` | `backend/services/handlers/chat_context_mixin.py` | 异步提取记忆（fire-and-forget） | user_id, conversation_id, user_text, assistant_text | None |
+
+#### 前端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `useMemoryStore` | `frontend/src/stores/useMemoryStore.ts` | Zustand 记忆状态管理（CRUD + 设置） | - | MemoryStore |
+| `getMemories` | `frontend/src/services/memory.ts` | 获取记忆列表 | - | Promise |
+| `addMemory` | `frontend/src/services/memory.ts` | 添加记忆 | content | Promise |
+
+#### 配置常量
+
+| 常量名 | 值 | 文件路径 | 说明 |
+|--------|-----|----------|------|
+| `MEMORY_SEARCH_THRESHOLD` | 0.5 | `backend/services/memory_config.py` | Mem0 向量搜索相似度阈值 |
+| `MAX_INJECTION_COUNT` | 20 | `backend/services/memory_config.py` | 单次对话注入最大记忆数 |
+| `MAX_MEMORIES_PER_USER` | 100 | `backend/services/memory_config.py` | 每用户记忆上限 |
+| `MEM0_TIMEOUT` | 45s | `backend/services/memory_config.py` | Mem0 操作超时 |
+| `memory_filter_model` | qwen-turbo | `backend/core/config.py` | 记忆精排主模型 |
+| `memory_filter_fallback_model` | qwen-plus | `backend/core/config.py` | 记忆精排备用模型 |
+| `memory_filter_timeout` | 3.0s | `backend/core/config.py` | 精排单次超时 |
+
 ### 后端服务辅助模块 (Backend Service Helpers)
 
 #### 后端函数
@@ -623,6 +662,7 @@
 - **统一日志工具模块**：4个前端函数（✨阶段0新增）
 - **任务协调器模块**：4个前端函数
 - **消息合并工具模块**：1个前端函数
+- **记忆模块**：10个后端函数 + 3个前端函数 + 7个配置常量（✨记忆智能过滤）
 - **性能监控模块**：9个前端函数
 - **测试工具模块**：4个前端函数
 - **消息服务模块**：8个后端函数 + 5个前端函数
