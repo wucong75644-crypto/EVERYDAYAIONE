@@ -171,19 +171,32 @@ class ChatHandler(ChatContextMixin, BaseHandler):
                     if chunk_count % 20 == 0:
                         await self._save_accumulated_content(task_id, accumulated_text)
 
-                # 捕获 usage
+                # 捕获 usage 和 API 报告的积分
                 if chunk.prompt_tokens or chunk.completion_tokens:
                     final_usage["prompt_tokens"] = chunk.prompt_tokens or 0
                     final_usage["completion_tokens"] = chunk.completion_tokens or 0
+                if chunk.credits_consumed is not None:
+                    final_usage["api_credits"] = chunk.credits_consumed
 
-            # 5. 计算积分消耗（使用 adapter 的统一方法）
-            cost_estimate = self._adapter.estimate_cost_unified(
-                input_tokens=final_usage["prompt_tokens"],
-                output_tokens=final_usage["completion_tokens"],
-            )
-            credits_consumed = cost_estimate.estimated_credits
+            # 5. 计算积分消耗
+            import math
+            api_credits = final_usage.get("api_credits")
+            if api_credits is not None:
+                # 优先使用 API 报告的实际积分 + 1（平台利润）
+                credits_consumed = math.ceil(api_credits) + 1
+                logger.info(
+                    f"Credits from API | api={api_credits} | "
+                    f"charged={credits_consumed} (ceil+1)"
+                )
+            else:
+                # 降级：本地估算（Google 免费模型等）
+                cost_estimate = self._adapter.estimate_cost_unified(
+                    input_tokens=final_usage["prompt_tokens"],
+                    output_tokens=final_usage["completion_tokens"],
+                )
+                credits_consumed = cost_estimate.estimated_credits
 
-            # 对于 KIE 模型，最少 1 积分；对于免费模型（如 Google），为 0
+            # 最少 1 积分（KIE 模型）；免费模型为 0
             if credits_consumed > 0:
                 credits_consumed = max(1, credits_consumed)
 

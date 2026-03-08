@@ -56,6 +56,8 @@ class StreamChunk:
     # Token 使用量（通常在最后一帧返回）
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    # API 报告的实际积分消耗（优先使用，无则走本地估算）
+    credits_consumed: Optional[float] = None
 
     @property
     def has_content(self) -> bool:
