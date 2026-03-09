@@ -155,7 +155,8 @@ function processApiResponse(
         generation_params: response.assistant_message.generation_params,
       });
     } else if (actualType === 'image' || actualType === 'video' || actualType === 'audio') {
-      const loadingText = getPlaceholderText(actualType as 'image' | 'video' | 'audio');
+      const render = response.assistant_message?.generation_params?._render as Record<string, string> | undefined;
+      const loadingText = render?.placeholder_text || getPlaceholderText(actualType as 'image' | 'video' | 'audio');
       messageStore.completeStreamingWithMessage(conversationId, {
         id: ctx.assistantMessageId,
         conversation_id: conversationId,

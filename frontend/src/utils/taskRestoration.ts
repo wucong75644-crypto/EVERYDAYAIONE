@@ -26,6 +26,7 @@ import {
   IMAGE_TASK_TIMEOUT,
   VIDEO_TASK_TIMEOUT,
 } from '../config/task';
+import { getPlaceholderText, type MessageType } from '../constants/placeholder';
 
 interface TaskRequestParams {
   prompt?: string;
@@ -139,7 +140,8 @@ export function restoreMediaTask(task: PendingTask) {
   // 2. 同时添加占位符到 Store（防止 loadMessages 先执行时用了旧缓存）
   //    addMessage 有 ID 去重，loadMessages 从 API 加载后不会重复
   const placeholderId = task.placeholder_message_id || `restored-${task.external_task_id}`;
-  const loadingText = task.type === 'image' ? '图片生成中' : '视频生成中';
+  const renderHints = task.request_params?._render as Record<string, string> | undefined;
+  const loadingText = renderHints?.placeholder_text || getPlaceholderText(task.type as MessageType);
 
   store.addMessage(task.conversation_id, {
     id: placeholderId,
@@ -152,6 +154,7 @@ export function restoreMediaTask(task: PendingTask) {
       type: task.type,
       model: task.request_params?.model,
       ...(task.request_params?.num_images ? { num_images: task.request_params.num_images } : {}),
+      ...(renderHints ? { _render: renderHints } : {}),
     },
   });
 

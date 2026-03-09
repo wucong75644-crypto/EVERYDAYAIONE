@@ -17,7 +17,8 @@ import { logger } from '../../utils/logger';
 import { useModalAnimation } from '../../hooks/useModalAnimation';
 import { useMessageAnimation } from '../../hooks/useMessageAnimation';
 import LoadingPlaceholder from './LoadingPlaceholder';
-import { PLACEHOLDER_TEXT } from '../../constants/placeholder';
+import { PLACEHOLDER_TEXT, RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../constants/placeholder';
+import type { RenderInstruction } from '../../types/render';
 import type { AspectRatio, VideoAspectRatio } from '../../constants/models';
 
 interface MessageItemProps {
@@ -83,92 +84,60 @@ export default memo(function MessageItem({
   const actualImageAspectRatio = (genParams.aspect_ratio ?? genParams.aspectRatio ?? savedSettings.image.aspectRatio) as AspectRatio;
   const actualVideoAspectRatio = (genParams.aspect_ratio ?? genParams.aspectRatio ?? savedSettings.video.aspectRatio) as VideoAspectRatio;
 
-  // 气泡文字信息
+  // 气泡文字信息（优先级：_render > RENDER_CONFIG > 兜底）
   const bubbleTextInfo = useMemo(() => {
-    // 必须是 AI 消息
-    if (message.role !== 'assistant') {
-      return null;
-    }
+    if (message.role !== 'assistant') return null;
 
     const genType = message.generation_params?.type;
+    if (!genType || genType === 'chat') return null;
 
-    // 图片任务
-    if (genType === 'image') {
-      // 有图片URL：显示引导文字
-      if (hasImage) {
-        const numImgs = Number(genParams.num_images) || 1;
-        const text = numImgs > 1
-          ? `好的，来看看生成的 ${numImgs} 张图片`
-          : '好的，来看看生成的图片';
-        return { text, hasAnimation: false };
-      }
-      // pending 状态但无URL：显示"正在生成图片"
-      if (message.status === 'pending') {
-        return { text: PLACEHOLDER_TEXT.IMAGE_GENERATING, hasAnimation: true };
-      }
+    const config = RENDER_CONFIG[genType as Exclude<MessageType, 'chat'>];
+    if (!config) return null;
+
+    const render = message.generation_params?._render as RenderInstruction | undefined;
+
+    // 有媒体内容：显示完成文字
+    const hasMediaContent = (genType === 'image' && hasImage) || (genType === 'video' && hasVideo);
+    if (hasMediaContent) {
+      const count = genType === 'image' ? (Number(genParams.num_images) || 1) : undefined;
+      const text = render?.bubble_text || getCompletedBubbleText(genType as MessageType, count);
+      return { text, hasAnimation: false };
     }
 
-    // 视频任务
-    if (genType === 'video') {
-      // 有视频URL：显示"生成完成"（无论 pending 还是 completed）
-      if (hasVideo) {
-        return { text: '生成完成', hasAnimation: false };
-      }
-      // pending 状态但无URL：显示"正在生成视频"
-      if (message.status === 'pending') {
-        return { text: PLACEHOLDER_TEXT.VIDEO_GENERATING, hasAnimation: true };
-      }
+    // pending 无内容：显示生成中文字
+    if (message.status === 'pending') {
+      const text = render?.placeholder_text || config.loadingText;
+      return { text, hasAnimation: true };
     }
 
     return null;
-  }, [message.role, message.status, message.generation_params, hasImage, hasVideo]);
+  }, [message.role, message.status, message.generation_params, hasImage, hasVideo, genParams]);
 
   // 占位符信息（传给 MessageMedia，用于控制灰色占位符显示）
   const mediaPlaceholderInfo = useMemo(() => {
-    // 必须是 AI 消息
-    if (message.role !== 'assistant') {
-      return null;
-    }
-
-    // 仅 pending 状态才显示"生成中"占位符（failed/completed 不显示）
-    if (message.status !== 'pending') return null;
+    if (message.role !== 'assistant' || message.status !== 'pending') return null;
 
     const genType = message.generation_params?.type;
+    if (!genType || genType === 'chat') return null;
 
-    // 图片任务：仅在生成中（无图片且非历史消息）显示占位符
-    if (genType === 'image') {
-      if (!skipEntryAnimation && !hasImage) {
-        return {
-          type: 'image' as const,
-          text: PLACEHOLDER_TEXT.IMAGE_GENERATING,
-        };
-      }
-      return null;
-    }
+    const config = RENDER_CONFIG[genType as Exclude<MessageType, 'chat'>];
+    if (!config) return null;
 
-    // 视频任务：仅在生成中（无视频且非历史消息）显示占位符
-    if (genType === 'video') {
-      if (!skipEntryAnimation && !hasVideo) {
-        return {
-          type: 'video' as const,
-          text: PLACEHOLDER_TEXT.VIDEO_GENERATING,
-        };
-      }
-      return null;
-    }
+    const hasContent = (genType === 'image' && hasImage) || (genType === 'video' && hasVideo);
+    if (skipEntryAnimation || hasContent) return null;
 
-    return null;
+    return { type: genType as 'image' | 'video', text: config.loadingText };
   }, [message.role, message.status, message.generation_params, hasImage, hasVideo, skipEntryAnimation]);
 
   // 失败的媒体任务信息（用于渲染"裂开"占位符）
   const failedMediaType = useMemo(() => {
-    if (message.role !== 'assistant') return null;
-    if (message.status !== 'failed') return null;
+    if (message.role !== 'assistant' || message.status !== 'failed') return null;
 
     const genType = message.generation_params?.type;
-    if (genType === 'image' && !hasImage) return 'image' as const;
-    if (genType === 'video' && !hasVideo) return 'video' as const;
-    return null;
+    if (!genType || genType === 'chat') return null;
+
+    const hasContent = (genType === 'image' && hasImage) || (genType === 'video' && hasVideo);
+    return hasContent ? null : (genType as 'image' | 'video');
   }, [message.role, message.status, message.generation_params, hasImage, hasVideo]);
 
   // 是否真正在生成中（用于控制重新生成按钮，区别于占位符显示）

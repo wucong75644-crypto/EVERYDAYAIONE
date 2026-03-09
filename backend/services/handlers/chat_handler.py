@@ -71,6 +71,7 @@ class ChatHandler(ChatContextMixin, BaseHandler):
         # 4. 提取路由信息
         router_system_prompt = params.get("_router_system_prompt")
         router_search_context = params.get("_router_search_context")
+        needs_google_search = params.get("_needs_google_search", False)
 
         # 5. 启动异步流式生成
         asyncio.create_task(
@@ -85,6 +86,7 @@ class ChatHandler(ChatContextMixin, BaseHandler):
                 thinking_mode=thinking_mode,
                 router_system_prompt=router_system_prompt,
                 router_search_context=router_search_context,
+                needs_google_search=needs_google_search,
                 _params=params,
             )
         )
@@ -163,6 +165,7 @@ class ChatHandler(ChatContextMixin, BaseHandler):
         thinking_mode: Optional[str] = None,
         router_system_prompt: Optional[str] = None,
         router_search_context: Optional[str] = None,
+        needs_google_search: bool = False,
         _params: Optional[Dict[str, Any]] = None,
         _retry_context: Optional[Any] = None,
     ) -> None:
@@ -208,10 +211,18 @@ class ChatHandler(ChatContextMixin, BaseHandler):
 
             self._adapter = create_chat_adapter(model_id)
 
+            # 按需启用 Google Search Grounding（能力匹配）
+            stream_kwargs: Dict[str, Any] = {}
+            if needs_google_search and hasattr(self._adapter, 'supports_google_search') and self._adapter.supports_google_search:
+                google_tool = self._adapter.create_google_search_tool()
+                stream_kwargs["tools"] = [google_tool]
+                logger.info(f"Google Search Grounding enabled | model={model_id} | task={task_id}")
+
             async for chunk in self._adapter.stream_chat(
                 messages=messages,
                 reasoning_effort=thinking_effort,
                 thinking_mode=thinking_mode,
+                **stream_kwargs,
             ):
                 if chunk.content:
                     accumulated_text += chunk.content

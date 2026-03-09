@@ -83,7 +83,13 @@
       "Bash(python -m pytest backend/tests/test_context_summarizer.py backend/tests/test_chat_context.py -q --tb=short)",
       "Bash(python -m pytest tests/test_memory_filter.py -q --tb=short)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(xargs -0 python3 /tmp/find_long_funcs.py)"
+      "Bash(xargs -0 python3 /tmp/find_long_funcs.py)",
+      "Bash(xargs -I {} basename {})",
+      "Bash(grep -l \"AiImageGrid\\\\|ImageContextMenu\\\\|ImagePreview\\\\|MessageItem\\\\|MessageMedia\" frontend/src/components/chat/__tests__/*.tsx)",
+      "Bash(comm -23 /tmp/all.txt /tmp/tested.txt)",
+      "Bash(grep -r \"def test_\" /Users/wucong/EVERYDAYAIONE/backend/tests/*.py)",
+      "Bash(python -m pytest tests/test_smart_model_config.py tests/test_adapter_factory.py tests/test_openrouter_chat_adapter.py -q --tb=short)",
+      "Bash(npx vitest run src/constants/__tests__/models.test.ts src/constants/__tests__/smartModel.test.ts)"
     ]
   }
 }

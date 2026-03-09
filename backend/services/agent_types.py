@@ -26,6 +26,7 @@ class AgentResult:
     tool_params: Dict[str, Any] = field(default_factory=dict)
     batch_prompts: Optional[List[Dict[str, Any]]] = None
     direct_reply: Optional[str] = None
+    render_hints: Optional[Dict[str, Any]] = None
     turns_used: int = 1
     total_tokens: int = 0
     routed_by: str = "agent_loop"

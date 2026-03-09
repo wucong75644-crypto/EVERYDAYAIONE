@@ -4,6 +4,7 @@ AI 模型适配器包
 提供统一的模型访问接口，支持多 Provider：
 - KIE AI 平台（Gemini 3 Pro/Flash）
 - Google 官方 Gemini（Phase 6）
+- OpenRouter（GPT-4.1、Claude Sonnet 4、Grok 等多家模型）
 - OpenAI（预留）
 - Anthropic（预留）
 
@@ -78,6 +79,9 @@ from .kie import (
     KieAPIError,
 )
 
+# OpenRouter 适配器
+from .openrouter import OpenRouterChatAdapter, OpenRouterAPIError
+
 
 __all__ = [
     # 基类
@@ -122,6 +126,9 @@ __all__ = [
     "KieImageAdapter",
     "KieVideoAdapter",
     "KieAPIError",
+    # OpenRouter 适配器
+    "OpenRouterChatAdapter",
+    "OpenRouterAPIError",
 ]
 
 __version__ = "2.0.0"  # 统一适配器版本
