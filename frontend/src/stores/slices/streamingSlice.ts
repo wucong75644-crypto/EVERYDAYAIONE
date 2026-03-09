@@ -43,6 +43,12 @@ export interface StreamingSlice {
   removeOptimisticMessage: (conversationId: string, messageId: string) => void;
   getOptimisticMessages: (conversationId: string) => Message[];
 
+  // Agent Loop 步骤提示
+  /** Agent Loop 步骤提示: conversationId -> "正在搜索..." */
+  agentStepHint: Map<string, string>;
+  setAgentStepHint: (conversationId: string, hint: string) => void;
+  clearAgentStepHint: (conversationId: string) => void;
+
   // 发送状态
   setIsSending: (sending: boolean) => void;
 }
@@ -66,6 +72,7 @@ export const createStreamingSlice: StateCreator<
   isSending: false,
   streamingMessages: new Map<string, string>(),
   optimisticMessages: new Map<string, Message[]>(),
+  agentStepHint: new Map<string, string>(),
 
   // ========================================
   // 流式消息操作
@@ -159,7 +166,9 @@ export const createStreamingSlice: StateCreator<
     set((state) => {
       const streamingMessages = new Map(state.streamingMessages);
       streamingMessages.delete(conversationId);
-      return { streamingMessages, isSending: false };
+      const agentStepHint = new Map(state.agentStepHint);
+      agentStepHint.delete(conversationId);
+      return { streamingMessages, agentStepHint, isSending: false };
     });
   },
 
@@ -174,7 +183,10 @@ export const createStreamingSlice: StateCreator<
       const filteredList = list.filter((m) => m.id !== streamingId);
       optimisticMessages.set(conversationId, [...filteredList, normalizeMessage(message)]);
 
-      return { streamingMessages, optimisticMessages, isSending: false };
+      const agentStepHint = new Map(state.agentStepHint);
+      agentStepHint.delete(conversationId);
+
+      return { streamingMessages, optimisticMessages, agentStepHint, isSending: false };
     });
   },
 
@@ -274,6 +286,26 @@ export const createStreamingSlice: StateCreator<
   // ========================================
   // 发送状态
   // ========================================
+
+  // ========================================
+  // Agent Loop 步骤提示
+  // ========================================
+
+  setAgentStepHint: (conversationId, hint) => {
+    set((state) => {
+      const agentStepHint = new Map(state.agentStepHint);
+      agentStepHint.set(conversationId, hint);
+      return { agentStepHint };
+    });
+  },
+
+  clearAgentStepHint: (conversationId) => {
+    set((state) => {
+      const agentStepHint = new Map(state.agentStepHint);
+      agentStepHint.delete(conversationId);
+      return { agentStepHint };
+    });
+  },
 
   setIsSending: (sending) => set({ isSending: sending }),
 });

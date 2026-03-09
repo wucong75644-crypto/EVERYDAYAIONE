@@ -40,6 +40,8 @@ interface MessageItemProps {
   skipEntryAnimation?: boolean;
   /** 单图重新生成回调（多图模式） */
   onRegenerateSingle?: (messageId: string, imageIndex: number) => void;
+  /** Agent Loop 步骤提示（"正在搜索..." 等） */
+  agentStepHint?: string;
 }
 
 export default memo(function MessageItem({
@@ -53,6 +55,7 @@ export default memo(function MessageItem({
   currentImageIndex = 0,
   skipEntryAnimation = false,
   onRegenerateSingle,
+  agentStepHint,
 }: MessageItemProps) {
   const isUser = message.role === 'user';
 
@@ -346,7 +349,7 @@ export default memo(function MessageItem({
           <div className="text-[15px] leading-relaxed whitespace-pre-wrap">
             {/* 加载状态：重新生成或流式输出开始但内容为空 */}
             {((isRegenerating || isStreaming) && !textContent) ? (
-              <LoadingPlaceholder text={PLACEHOLDER_TEXT.CHAT_THINKING} />
+              <LoadingPlaceholder text={agentStepHint || PLACEHOLDER_TEXT.CHAT_THINKING} />
             ) : bubbleTextInfo ? (
               /* 媒体任务气泡文字：图片/视频生成中或生成完成（仅 pending 状态） */
               bubbleTextInfo.hasAnimation ? (

@@ -2,42 +2,42 @@
   "chat": {
     "models": [
       {
-        "id": "gemini-3-pro",
-        "description": "Google高级推理，复杂分析/深度思考/联网搜索。海外模型，延迟较高",
+        "id": "qwen3.5-plus",
+        "description": "阿里千问3.5，百万上下文，费用极低，响应快。默认首选，适合通用对话、长文分析、写作、翻译。用户无特殊要求时优先选择此模型",
         "priority": 1
       },
       {
-        "id": "gemini-3-flash",
-        "description": "Google快速响应，日常对话/简单问答/翻译。海外模型，延迟较高",
-        "priority": 2
-      },
-      {
         "id": "deepseek-v3.2",
-        "description": "DeepSeek最新旗舰，代码/数学极强，速度快费用低。国内模型，响应快。用户要求快速回复或代码能力时优先",
-        "priority": 3
+        "description": "DeepSeek最新旗舰，代码/数学极强，速度快费用低。用户要求代码能力、快速回复时优先",
+        "priority": 2
       },
       {
         "id": "deepseek-r1",
         "description": "DeepSeek深度推理模型，数学/逻辑/复杂推理极强，媲美o1。用户要求深度思考、解题、数学证明时选择",
-        "priority": 4
-      },
-      {
-        "id": "qwen3.5-plus",
-        "description": "阿里千问3.5，百万上下文，费用极低。适合长文分析、通用对话、写作。用户无特殊要求且追求性价比时选择",
-        "priority": 5
+        "priority": 3
       },
       {
         "id": "kimi-k2.5",
         "description": "月之暗面Kimi最强模型，26万上下文，支持图片理解。适合长文档分析、多模态对话",
-        "priority": 6
+        "priority": 4
       },
       {
         "id": "glm-5",
         "description": "智谱GLM最新模型，20万上下文，中文理解能力强。适合中文创作、对话、分析",
+        "priority": 5
+      },
+      {
+        "id": "gemini-3-pro",
+        "description": "Google高级推理，复杂分析/深度思考/联网搜索。海外模型，延迟较高。仅当用户明确要求Google或海外模型时选择",
+        "priority": 6
+      },
+      {
+        "id": "gemini-3-flash",
+        "description": "Google快速响应，日常对话/简单问答。海外模型，延迟较高。仅当用户明确要求Google或海外模型时选择",
         "priority": 7
       }
     ],
-    "default": "gemini-3-pro"
+    "default": "qwen3.5-plus"
   },
   "image": {
     "models": [

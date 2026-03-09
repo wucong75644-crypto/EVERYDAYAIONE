@@ -109,6 +109,14 @@ class Settings(BaseSettings):
     intent_router_enabled: bool = True  # 是否启用智能路由
     intent_router_timeout: float = 5.0  # 单次调用超时（秒）
 
+    # Agent Loop 配置（多步工具编排）
+    agent_loop_enabled: bool = True  # Agent Loop 总开关（False 退回 IntentRouter）
+    agent_loop_max_turns: int = 3  # 最大循环轮数
+    agent_loop_max_tokens: int = 3000  # 每次运行的总 token 预算
+    agent_loop_model: str = "qwen3.5-plus"  # Agent 大脑模型
+    agent_loop_fallback_model: str = "qwen3.5-flash"  # 降级模型
+    agent_loop_timeout: float = 5.0  # 单次 FC 调用超时（秒）
+
     # Agent 知识库配置
     kb_enabled: bool = True                              # 知识库总开关
     kb_extraction_model: str = "qwen3.5-flash"           # 知识提取模型
