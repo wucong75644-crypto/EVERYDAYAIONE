@@ -232,11 +232,13 @@ async def handle_regenerate_or_send_operation(
     # 这样刷新页面后占位符能通过 GET /messages 自然加载，无需 taskRestoration 手动重建
     # Chat 类型保持虚拟（不入库），因为 Chat 的流式 chunk 依赖 optimisticMessages
     if gen_type in (GenerationType.IMAGE, GenerationType.VIDEO):
-        _PLACEHOLDER_TEXT = {
+        _PLACEHOLDER_TEXT_FALLBACK = {
             GenerationType.IMAGE: "图片生成中",
             GenerationType.VIDEO: "视频生成中",
         }
-        placeholder_text = _PLACEHOLDER_TEXT[gen_type]
+        # 优先使用大脑提供的渲染提示，兜底硬编码
+        render = (params or {}).get("_render", {})
+        placeholder_text = render.get("placeholder_text") or _PLACEHOLDER_TEXT_FALLBACK[gen_type]
 
         # 构建 generation_params（包含前端渲染占位符所需的参数）
         gen_params: Dict[str, Any] = {"type": gen_type.value}
@@ -252,6 +254,9 @@ async def handle_regenerate_or_send_operation(
             for key in _PARAM_KEYS.get(gen_type, ()):
                 if key in params:
                     gen_params[key] = params[key]
+            # 写入大脑渲染提示（前端即时读取）
+            if "_render" in params:
+                gen_params["_render"] = params["_render"]
 
         gen_params_flat = gen_params  # 保存完整扁平参数，用于返回给前端
 

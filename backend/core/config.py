@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     dashscope_api_key: Optional[str] = None
     dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
+    # OpenRouter 配置（多模型统一网关）
+    openrouter_api_key: Optional[str] = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_app_title: str = "EverydayAI"
+
     # 记忆功能配置（Mem0）
     supabase_db_url: Optional[str] = None  # PostgreSQL 直连串（Mem0 pgvector 使用）
     memory_extraction_model: str = "qwen3.5-plus"  # 记忆提取用 LLM（DashScope）

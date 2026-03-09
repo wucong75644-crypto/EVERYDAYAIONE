@@ -79,13 +79,17 @@ vi.mock('../../../stores/useMessageStore', () => ({
   getVideoUrls: () => [],
 }));
 
-vi.mock('../../../constants/placeholder', () => ({
-  PLACEHOLDER_TEXT: {
-    CHAT_THINKING: '思考中',
-    IMAGE_GENERATING: '正在生成图片',
-    VIDEO_GENERATING: '正在生成视频',
-  },
-}));
+vi.mock('../../../constants/placeholder', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../constants/placeholder')>();
+  return {
+    ...actual,
+    PLACEHOLDER_TEXT: {
+      CHAT_THINKING: '思考中',
+      IMAGE_GENERATING: '正在生成图片',
+      VIDEO_GENERATING: '正在生成视频',
+    },
+  };
+});
 
 // ============================================================
 // 测试

@@ -129,6 +129,163 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         context_window=202_752,
     ),
 
+    # ==================== OpenRouter 模型（多家统一网关）====================
+    "openai/gpt-4.1": ModelConfig(
+        model_id="openai/gpt-4.1",
+        provider=ModelProvider.OPENROUTER,
+        provider_model="openai/gpt-4.1",
+        display_name="GPT-4.1",
+        input_price=2.00,       # $2.00 / 1M
+        output_price=8.00,      # $8.00 / 1M
+        credits_per_1k_input=0.4,
+        credits_per_1k_output=1.6,
+        supports_vision=True,
+        supports_tools=True,
+        max_tokens=32768,
+        context_window=1_047_576,
+    ),
+    "openai/gpt-4.1-mini": ModelConfig(
+        model_id="openai/gpt-4.1-mini",
+        provider=ModelProvider.OPENROUTER,
+        provider_model="openai/gpt-4.1-mini",
+        display_name="GPT-4.1 Mini",
+        input_price=0.40,       # $0.40 / 1M
+        output_price=1.60,      # $1.60 / 1M
+        credits_per_1k_input=0.08,
+        credits_per_1k_output=0.32,
+        supports_vision=True,
+        supports_tools=True,
+        max_tokens=32768,
+        context_window=1_047_576,
+    ),
+    "openai/o4-mini": ModelConfig(
+        model_id="openai/o4-mini",
+        provider=ModelProvider.OPENROUTER,
+        provider_model="openai/o4-mini",
+        display_name="o4-mini",
+        input_price=1.10,       # $1.10 / 1M
+        output_price=4.40,      # $4.40 / 1M
+        credits_per_1k_input=0.22,
+        credits_per_1k_output=0.88,
+        supports_vision=True,
+        supports_tools=True,
+        max_tokens=100000,
+        context_window=200_000,
+    ),
+    "anthropic/claude-sonnet-4": ModelConfig(
+        model_id="anthropic/claude-sonnet-4",
+        provider=ModelProvider.OPENROUTER,
+        provider_model="anthropic/claude-sonnet-4",
+        display_name="Claude Sonnet 4",
+        input_price=3.00,       # $3.00 / 1M
+        output_price=15.00,     # $15.00 / 1M
+        credits_per_1k_input=0.6,
+        credits_per_1k_output=3.0,
+        supports_vision=True,
+        supports_tools=True,
+        max_tokens=16384,
+        context_window=200_000,
+    ),
+    "x-ai/grok-4.1-fast": ModelConfig(
+        model_id="x-ai/grok-4.1-fast",
+        provider=ModelProvider.OPENROUTER,
+        provider_model="x-ai/grok-4.1-fast",
+        display_name="Grok 4.1 Fast",
+        input_price=0.20,       # $0.20 / 1M
+        output_price=0.50,      # $0.50 / 1M
+        credits_per_1k_input=0.04,
+        credits_per_1k_output=0.1,
+        supports_vision=False,
+        supports_tools=True,
+        max_tokens=32768,
+        context_window=2_000_000,
+    ),
+    "openai/gpt-5.4": ModelConfig(
+        model_id="openai/gpt-5.4",
+        provider=ModelProvider.OPENROUTER,
+        provider_model="openai/gpt-5.4",
+        display_name="GPT-5.4",
+        input_price=2.50,       # $2.50 / 1M
+        output_price=15.00,     # $15.00 / 1M
+        credits_per_1k_input=0.5,
+        credits_per_1k_output=3.0,
+        supports_vision=True,
+        supports_tools=True,
+        max_tokens=128000,
+        context_window=1_050_000,
+    ),
+    "openai/gpt-5.4-pro": ModelConfig(
+        model_id="openai/gpt-5.4-pro",
+        provider=ModelProvider.OPENROUTER,
+        provider_model="openai/gpt-5.4-pro",
+        display_name="GPT-5.4 Pro",
+        input_price=30.00,      # $30.00 / 1M
+        output_price=180.00,    # $180.00 / 1M
+        credits_per_1k_input=6.0,
+        credits_per_1k_output=36.0,
+        supports_vision=True,
+        supports_tools=True,
+        max_tokens=128000,
+        context_window=1_050_000,
+    ),
+    "openai/gpt-5.3-codex": ModelConfig(
+        model_id="openai/gpt-5.3-codex",
+        provider=ModelProvider.OPENROUTER,
+        provider_model="openai/gpt-5.3-codex",
+        display_name="GPT-5.3 Codex",
+        input_price=1.75,       # $1.75 / 1M
+        output_price=14.00,     # $14.00 / 1M
+        credits_per_1k_input=0.35,
+        credits_per_1k_output=2.8,
+        supports_vision=True,
+        supports_tools=True,
+        max_tokens=65536,
+        context_window=400_000,
+    ),
+    "google/gemini-3.1-pro-preview": ModelConfig(
+        model_id="google/gemini-3.1-pro-preview",
+        provider=ModelProvider.OPENROUTER,
+        provider_model="google/gemini-3.1-pro-preview",
+        display_name="Gemini 3.1 Pro",
+        input_price=2.00,       # $2.00 / 1M
+        output_price=12.00,     # $12.00 / 1M
+        credits_per_1k_input=0.4,
+        credits_per_1k_output=2.4,
+        supports_vision=True,
+        supports_video=True,
+        supports_tools=True,
+        max_tokens=65536,
+        context_window=1_048_576,
+    ),
+    "anthropic/claude-sonnet-4.6": ModelConfig(
+        model_id="anthropic/claude-sonnet-4.6",
+        provider=ModelProvider.OPENROUTER,
+        provider_model="anthropic/claude-sonnet-4.6",
+        display_name="Claude Sonnet 4.6",
+        input_price=3.00,       # $3.00 / 1M
+        output_price=15.00,     # $15.00 / 1M
+        credits_per_1k_input=0.6,
+        credits_per_1k_output=3.0,
+        supports_vision=True,
+        supports_tools=True,
+        max_tokens=16384,
+        context_window=1_000_000,
+    ),
+    "anthropic/claude-opus-4.6": ModelConfig(
+        model_id="anthropic/claude-opus-4.6",
+        provider=ModelProvider.OPENROUTER,
+        provider_model="anthropic/claude-opus-4.6",
+        display_name="Claude Opus 4.6",
+        input_price=5.00,       # $5.00 / 1M
+        output_price=25.00,     # $25.00 / 1M
+        credits_per_1k_input=1.0,
+        credits_per_1k_output=5.0,
+        supports_vision=True,
+        supports_tools=True,
+        max_tokens=32768,
+        context_window=1_000_000,
+    ),
+
     # ==================== Google 官方模型（Phase 6）====================
     "gemini-2.5-flash": ModelConfig(
         model_id="gemini-2.5-flash",
@@ -286,6 +443,19 @@ def create_chat_adapter(model_id: Optional[str] = None) -> BaseChatAdapter:
             api_key=settings.dashscope_api_key,
             model=config.provider_model,
             base_url=settings.dashscope_base_url,
+        )
+
+    elif config.provider == ModelProvider.OPENROUTER:
+        from .openrouter import OpenRouterChatAdapter
+
+        if not settings.openrouter_api_key:
+            raise ValueError("OpenRouter API Key 未配置")
+
+        return OpenRouterChatAdapter(
+            api_key=settings.openrouter_api_key,
+            model=config.provider_model,
+            base_url=settings.openrouter_base_url,
+            app_title=settings.openrouter_app_title,
         )
 
     elif config.provider == ModelProvider.GOOGLE:

@@ -20,6 +20,7 @@ class ModelProvider(str, Enum):
     KIE = "kie"              # KIE AI 平台
     GOOGLE = "google"        # Google 官方 Gemini
     DASHSCOPE = "dashscope"  # 阿里云百炼（DashScope）
+    OPENROUTER = "openrouter"  # OpenRouter（多模型统一网关）
     OPENAI = "openai"        # OpenAI（预留）
     ANTHROPIC = "anthropic"  # Claude（预留）
 

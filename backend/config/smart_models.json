@@ -35,6 +35,61 @@
         "id": "gemini-3-flash",
         "description": "Google快速响应，日常对话/简单问答。海外模型，延迟较高。仅当用户明确要求Google或海外模型时选择",
         "priority": 7
+      },
+      {
+        "id": "openai/gpt-4.1",
+        "description": "OpenAI最新旗舰GPT-4.1，百万上下文，代码/推理极强，支持图片理解。用户要求OpenAI或GPT时优先选择",
+        "priority": 8
+      },
+      {
+        "id": "openai/gpt-4.1-mini",
+        "description": "GPT-4.1轻量版，百万上下文，速度快费用低。用户要求GPT但不需要最强能力时选择",
+        "priority": 9
+      },
+      {
+        "id": "openai/o4-mini",
+        "description": "OpenAI推理模型o4-mini，深度思考能力强，适合数学/逻辑/复杂推理。用户要求OpenAI推理或o4时选择",
+        "priority": 10
+      },
+      {
+        "id": "anthropic/claude-sonnet-4",
+        "description": "Anthropic Claude Sonnet 4，代码/分析/创作能力强，安全性高。用户要求Claude时选择",
+        "priority": 11
+      },
+      {
+        "id": "x-ai/grok-4.1-fast",
+        "description": "xAI Grok 4.1 Fast，200万超长上下文，速度极快费用极低。用户要求Grok或要求最便宜的海外模型时选择",
+        "priority": 12
+      },
+      {
+        "id": "openai/gpt-5.4",
+        "description": "OpenAI最新旗舰GPT-5.4，百万上下文，统一Codex与GPT架构，全能力最强。用户要求最强GPT时选择",
+        "priority": 13
+      },
+      {
+        "id": "openai/gpt-5.4-pro",
+        "description": "GPT-5.4 Pro，OpenAI最强推理模型，费用极高($30/$180)。仅当用户明确要求最强模型且不计费用时选择",
+        "priority": 14
+      },
+      {
+        "id": "openai/gpt-5.3-codex",
+        "description": "GPT-5.3 Codex，OpenAI最强代码模型，40万上下文，编程排名第一。用户要求写代码且指定OpenAI时选择",
+        "priority": 15
+      },
+      {
+        "id": "google/gemini-3.1-pro-preview",
+        "description": "Google Gemini 3.1 Pro，最新旗舰推理模型，支持音频/视频/图片全模态。用户要求最新Google模型时选择",
+        "priority": 16
+      },
+      {
+        "id": "anthropic/claude-sonnet-4.6",
+        "description": "Claude Sonnet 4.6，Anthropic最新Sonnet，百万上下文，代码/Agent能力极强。用户要求最新Claude时选择",
+        "priority": 17
+      },
+      {
+        "id": "anthropic/claude-opus-4.6",
+        "description": "Claude Opus 4.6，Anthropic最强模型，百万上下文，复杂推理/长任务极强，费用较高。用户要求最强Claude时选择",
+        "priority": 18
       }
     ],
     "default": "qwen3.5-plus"

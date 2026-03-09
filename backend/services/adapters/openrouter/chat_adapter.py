@@ -1,12 +1,14 @@
 """
-DashScope Chat 适配器
+OpenRouter Chat 适配器
 
-通过阿里云百炼 OpenAI 兼容接口调用第三方模型。
-支持：DeepSeek V3.2/R1、Qwen3.5-Plus、Kimi-K2.5、GLM-5。
+通过 OpenRouter 统一网关调用多家 AI 模型。
+API 与 OpenAI 完全兼容，额外返回 usage.cost（USD）用于精确计费。
+
+积分公式：ceil(cost_usd × 200) + 1
 """
 
 import json
-from dataclasses import dataclass
+import math
 from decimal import Decimal
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -21,48 +23,34 @@ from ..base import (
     StreamChunk,
 )
 
-
-# ============================================================
-# 模型定价配置（积分/百万 token）
-# ============================================================
-
-@dataclass
-class DashScopeModelPricing:
-    """单个模型的积分定价"""
-    credits_per_1m_input: int
-    credits_per_1m_output: int
-
-
-DASHSCOPE_PRICING: Dict[str, DashScopeModelPricing] = {
-    "deepseek-v3.2": DashScopeModelPricing(credits_per_1m_input=29, credits_per_1m_output=113),
-    "deepseek-r1": DashScopeModelPricing(credits_per_1m_input=57, credits_per_1m_output=225),
-    "qwen3.5-plus": DashScopeModelPricing(credits_per_1m_input=12, credits_per_1m_output=68),
-    "kimi-k2.5": DashScopeModelPricing(credits_per_1m_input=57, credits_per_1m_output=295),
-    "glm-5": DashScopeModelPricing(credits_per_1m_input=57, credits_per_1m_output=253),
-}
-
-# 流式超时（秒）
+# 超时配置（秒）
 STREAM_TIMEOUT = 120.0
 CONNECT_TIMEOUT = 15.0
 
+# 积分换算：$50 = 10000 积分 → 1 USD = 200 积分
+CREDITS_PER_USD = 200
+CREDITS_MARKUP = 1  # 每次调用额外加 1 积分
 
-class DashScopeChatAdapter(BaseChatAdapter):
+
+class OpenRouterChatAdapter(BaseChatAdapter):
     """
-    DashScope Chat 适配器
+    OpenRouter Chat 适配器
 
-    通过 OpenAI 兼容 API 调用百炼平台上的模型。
-    API 格式与 OpenAI 完全一致，仅 base_url 和 api_key 不同。
+    通过 OpenAI 兼容 API 调用 OpenRouter 网关。
+    支持 GPT、Claude、Gemini、Grok 等多家模型。
     """
 
     def __init__(
         self,
         api_key: str,
         model: str,
-        base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        base_url: str = "https://openrouter.ai/api/v1",
+        app_title: str = "EverydayAI",
     ):
         super().__init__(model)
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
+        self._app_title = app_title
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -73,6 +61,7 @@ class DashScopeChatAdapter(BaseChatAdapter):
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": "application/json",
+                    "X-Title": self._app_title,
                 },
                 timeout=httpx.Timeout(
                     connect=CONNECT_TIMEOUT,
@@ -85,7 +74,7 @@ class DashScopeChatAdapter(BaseChatAdapter):
 
     @property
     def provider(self) -> ModelProvider:
-        return ModelProvider.DASHSCOPE
+        return ModelProvider.OPENROUTER
 
     @property
     def supports_streaming(self) -> bool:
@@ -104,19 +93,12 @@ class DashScopeChatAdapter(BaseChatAdapter):
     ) -> AsyncIterator[StreamChunk]:
         """流式聊天（统一接口）"""
 
-        # 构建请求体（OpenAI 兼容格式）
         request_body: Dict[str, Any] = {
             "model": self._model_id,
             "messages": messages,
             "stream": True,
             "stream_options": {"include_usage": True},
         }
-
-        # 思考模式支持（DeepSeek/Qwen/GLM 通用参数）
-        if thinking_mode == "enabled":
-            request_body["enable_thinking"] = True
-        elif thinking_mode == "disabled":
-            request_body["enable_thinking"] = False
 
         client = await self._get_client()
 
@@ -129,8 +111,8 @@ class DashScopeChatAdapter(BaseChatAdapter):
                 if response.status_code != 200:
                     error_body = await response.aread()
                     error_msg = self._parse_error(error_body)
-                    raise DashScopeAPIError(
-                        f"DashScope API error: {error_msg}",
+                    raise OpenRouterAPIError(
+                        f"OpenRouter API error: {error_msg}",
                         status_code=response.status_code,
                     )
 
@@ -149,7 +131,7 @@ class DashScopeChatAdapter(BaseChatAdapter):
 
                     # 检查错误
                     if chunk.get("error"):
-                        raise DashScopeAPIError(
+                        raise OpenRouterAPIError(
                             f"Stream error: {chunk['error'].get('message', str(chunk['error']))}",
                             status_code=chunk["error"].get("code", 500),
                         )
@@ -163,25 +145,32 @@ class DashScopeChatAdapter(BaseChatAdapter):
                         content = delta.get("content")
                         finish_reason = choices[0].get("finish_reason")
 
-                    # 提取 usage（通常在最后一个 chunk，中间 chunk 为 null）
+                    # 提取 usage（通常在最后一个 chunk）
                     usage = chunk.get("usage") or {}
                     prompt_tokens = usage.get("prompt_tokens", 0)
                     completion_tokens = usage.get("completion_tokens", 0)
+
+                    # OpenRouter 独有：直接返回 USD 成本
+                    cost_usd = usage.get("cost")
+                    credits_consumed = None
+                    if cost_usd is not None:
+                        credits_consumed = math.ceil(float(cost_usd) * CREDITS_PER_USD) + CREDITS_MARKUP
 
                     yield StreamChunk(
                         content=content,
                         finish_reason=finish_reason,
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
+                        credits_consumed=credits_consumed,
                     )
 
-        except DashScopeAPIError:
+        except OpenRouterAPIError:
             raise
         except httpx.TimeoutException as e:
-            raise DashScopeAPIError(f"Request timeout: {e}") from e
+            raise OpenRouterAPIError(f"Request timeout: {e}") from e
         except Exception as e:
-            logger.error(f"DashScope stream error | model={self._model_id} | error={e}")
-            raise DashScopeAPIError(f"Stream failed: {e}") from e
+            logger.error(f"OpenRouter stream error | model={self._model_id} | error={e}")
+            raise OpenRouterAPIError(f"Stream failed: {e}") from e
 
     async def chat_sync(
         self,
@@ -197,9 +186,6 @@ class DashScopeChatAdapter(BaseChatAdapter):
             "stream": False,
         }
 
-        if thinking_mode == "enabled":
-            request_body["enable_thinking"] = True
-
         client = await self._get_client()
 
         try:
@@ -207,8 +193,8 @@ class DashScopeChatAdapter(BaseChatAdapter):
 
             if response.status_code != 200:
                 error_msg = self._parse_error(response.content)
-                raise DashScopeAPIError(
-                    f"DashScope API error: {error_msg}",
+                raise OpenRouterAPIError(
+                    f"OpenRouter API error: {error_msg}",
                     status_code=response.status_code,
                 )
 
@@ -229,41 +215,47 @@ class DashScopeChatAdapter(BaseChatAdapter):
                 completion_tokens=usage.get("completion_tokens", 0),
             )
 
-        except DashScopeAPIError:
+        except OpenRouterAPIError:
             raise
         except Exception as e:
-            logger.error(f"DashScope sync error | model={self._model_id} | error={e}")
-            raise DashScopeAPIError(f"Sync chat failed: {e}") from e
+            logger.error(f"OpenRouter sync error | model={self._model_id} | error={e}")
+            raise OpenRouterAPIError(f"Sync chat failed: {e}") from e
 
     def estimate_cost_unified(
         self, input_tokens: int, output_tokens: int,
     ) -> BaseCostEstimate:
-        """积分消耗估算"""
-        pricing = DASHSCOPE_PRICING.get(self._model_id)
-        if not pricing:
+        """
+        积分消耗估算（兜底方案）
+
+        优先使用 stream_chat 返回的 credits_consumed（来自 usage.cost）。
+        此方法仅在 usage.cost 缺失时作为兜底。
+        """
+        from ..factory import get_model_config
+
+        config = get_model_config(self._model_id)
+        if not config:
             return BaseCostEstimate(
                 model=self._model_id,
                 estimated_cost_usd=Decimal("0"),
-                estimated_credits=1,
+                estimated_credits=CREDITS_MARKUP,
             )
 
-        input_credits = int(
-            Decimal(input_tokens) * pricing.credits_per_1m_input / 1_000_000
-        )
-        output_credits = int(
-            Decimal(output_tokens) * pricing.credits_per_1m_output / 1_000_000
-        )
-        total = input_credits + output_credits
+        # 用 ModelConfig 的价格估算
+        input_cost = Decimal(str(input_tokens)) * Decimal(str(config.input_price)) / 1_000_000
+        output_cost = Decimal(str(output_tokens)) * Decimal(str(config.output_price)) / 1_000_000
+        total_usd = input_cost + output_cost
+        total_credits = math.ceil(float(total_usd) * CREDITS_PER_USD) + CREDITS_MARKUP
 
         return BaseCostEstimate(
             model=self._model_id,
-            estimated_cost_usd=Decimal(str(total)) / 100,
-            estimated_credits=max(1, total) if total > 0 else 0,
+            estimated_cost_usd=total_usd,
+            estimated_credits=max(CREDITS_MARKUP + 1, total_credits),
             breakdown={
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
-                "input_credits": input_credits,
-                "output_credits": output_credits,
+                "input_cost_usd": float(input_cost),
+                "output_cost_usd": float(output_cost),
+                "rate": f"1 USD = {CREDITS_PER_USD} credits + {CREDITS_MARKUP} markup",
             },
         )
 
@@ -289,8 +281,8 @@ class DashScopeChatAdapter(BaseChatAdapter):
             return body.decode("utf-8", errors="replace")[:500]
 
 
-class DashScopeAPIError(Exception):
-    """DashScope API 错误"""
+class OpenRouterAPIError(Exception):
+    """OpenRouter API 错误"""
 
     def __init__(self, message: str, status_code: int = 0):
         super().__init__(message)

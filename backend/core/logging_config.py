@@ -3,7 +3,7 @@
 
 配置 loguru 日志输出：
 - 控制台输出（所有级别）
-- 应用日志文件（WARNING 及以上）
+- 应用日志文件（INFO 及以上）
 - 数据一致性专用日志文件
 """
 
@@ -18,12 +18,12 @@ def setup_logging():
     log_dir = Path(__file__).parent.parent / "logs"
     log_dir.mkdir(exist_ok=True)
 
-    # 1. 应用日志（WARNING 及以上级别）
+    # 1. 应用日志（INFO 及以上级别）
     logger.add(
         log_dir / "app_{time:YYYY-MM-DD}.log",
         rotation="00:00",  # 每天午夜滚动
         retention="30 days",  # 保留30天
-        level="WARNING",
+        level="INFO",
         format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} | {message}",
         encoding="utf-8",
     )

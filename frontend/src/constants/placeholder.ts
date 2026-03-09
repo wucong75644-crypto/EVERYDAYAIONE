@@ -1,9 +1,13 @@
 /**
  * 占位符常量和工具函数
  * 统一管理所有占位符相关的文字和逻辑
+ *
+ * 渲染决策优先级：
+ *   大脑 _render.xxx > RENDER_CONFIG[type] > 硬编码兜底
  */
 
 import { type Message, getTextContent } from '../stores/useMessageStore';
+import type { RenderInstruction } from '../types/render';
 
 /** 消息类型 */
 export type MessageType = 'chat' | 'image' | 'video' | 'audio' | '3d' | 'code';
@@ -41,6 +45,60 @@ export function getPlaceholderText(type: MessageType): string {
   return MEDIA_PLACEHOLDER_MAP[type];
 }
 
+// ============================================================
+// 渲染配置表（Phase 1: 配置化，替代散落各处的硬编码）
+// ============================================================
+
+/** 单类型渲染配置 */
+export interface RenderConfig {
+  /** 生成中占位符文字 */
+  loadingText: string;
+  /** 完成后气泡文字（单个） */
+  completedText: string;
+  /** 完成后气泡文字（多个，{count} 为数量占位） */
+  completedTextPlural?: string;
+}
+
+/** 各媒体类型的渲染配置 */
+export const RENDER_CONFIG: Record<Exclude<MessageType, 'chat'>, RenderConfig> = {
+  image: {
+    loadingText: PLACEHOLDER_TEXT.IMAGE_GENERATING,
+    completedText: '好的，来看看生成的图片',
+    completedTextPlural: '好的，来看看生成的 {count} 张图片',
+  },
+  video: {
+    loadingText: PLACEHOLDER_TEXT.VIDEO_GENERATING,
+    completedText: '生成完成',
+  },
+  audio: {
+    loadingText: PLACEHOLDER_TEXT.AUDIO_GENERATING,
+    completedText: '生成完成',
+  },
+  '3d': {
+    loadingText: PLACEHOLDER_TEXT.MODEL_3D_GENERATING,
+    completedText: '生成完成',
+  },
+  code: {
+    loadingText: PLACEHOLDER_TEXT.CODE_GENERATING,
+    completedText: '生成完成',
+  },
+};
+
+/** 获取完成后的气泡文字 */
+export function getCompletedBubbleText(type: MessageType, count?: number): string {
+  if (type === 'chat') return '';
+  const config = RENDER_CONFIG[type];
+  if (!config) return '';
+  if (count && count > 1 && config.completedTextPlural) {
+    return config.completedTextPlural.replace('{count}', String(count));
+  }
+  return config.completedText;
+}
+
+// ============================================================
+// 占位符检测
+// ============================================================
+
 /** 占位符判断结果 */
 export interface PlaceholderInfo {
   isPlaceholder: boolean;
@@ -50,29 +108,39 @@ export interface PlaceholderInfo {
 
 /**
  * 判断是否为占位符消息
+ *
+ * 优先使用 generation_params.type（大脑渲染指令），
+ * 文字匹配作为旧消息的兼容兜底。
  */
 export function getPlaceholderInfo(message: Message): PlaceholderInfo {
-  // 从 ContentPart[] 提取文本内容
   const textContent = getTextContent(message);
 
-  // 检查图片占位符
+  // Priority 1: generation_params.type（大脑的渲染指令）
+  const genType = message.generation_params?.type;
+  if (genType && genType !== 'chat' && message.status === 'pending') {
+    const mediaType = genType as Exclude<MessageType, 'chat'>;
+    const render = message.generation_params?._render as RenderInstruction | undefined;
+    return {
+      isPlaceholder: true,
+      type: mediaType,
+      text: render?.placeholder_text || textContent || MEDIA_PLACEHOLDER_MAP[mediaType] || '',
+    };
+  }
+
+  // Priority 2: Chat streaming（空内容 + streaming 状态）
+  if (!textContent && message.status === 'streaming') {
+    return { isPlaceholder: true, type: 'chat', text: PLACEHOLDER_TEXT.CHAT_THINKING };
+  }
+
+  // Legacy fallback: 文字匹配（兼容旧消息，无 generation_params）
   if (textContent.includes(PLACEHOLDER_TEXT.IMAGE_GENERATING)) {
     return { isPlaceholder: true, type: 'image', text: textContent };
   }
-
-  // 检查视频占位符
   if (textContent.includes(PLACEHOLDER_TEXT.VIDEO_GENERATING)) {
     return { isPlaceholder: true, type: 'video', text: textContent };
   }
-
-  // 检查音频占位符
   if (textContent.includes(PLACEHOLDER_TEXT.AUDIO_GENERATING)) {
     return { isPlaceholder: true, type: 'audio', text: textContent };
-  }
-
-  // 检查聊天占位符（空内容 + streaming 状态）
-  if (!textContent && message.status === 'streaming') {
-    return { isPlaceholder: true, type: 'chat', text: PLACEHOLDER_TEXT.CHAT_THINKING };
   }
 
   return { isPlaceholder: false };

@@ -212,6 +212,13 @@ class AgentLoop:
                 pending_async, turn + 1, guardrails.tokens_used,
             )
 
+        # web_search → 终端工具：大脑只判断意图，搜索由能力匹配的模型执行
+        if tool_name == "web_search":
+            return self._build_search_result(
+                arguments, accumulated_context,
+                turn + 1, guardrails.tokens_used,
+            )
+
         # 分发：同步工具
         if tool_name in SYNC_TOOLS:
             await self._notify_progress(turn, tool_name, "executing")
@@ -342,6 +349,50 @@ class AgentLoop:
             total_tokens=tokens,
         )
 
+    def _build_search_result(
+        self,
+        arguments: Dict[str, Any],
+        context: List[str],
+        turns: int,
+        tokens: int,
+    ) -> AgentResult:
+        """web_search → 按能力匹配搜索模型（从模型库按优先级取）
+
+        大脑只负责判断"需要搜索"，实际搜索由模型库中有搜索能力的模型执行。
+        模型选择：smart_models.json → web_search.models（按 priority 排序）→ 取第一个。
+        """
+        from config.smart_model_config import SMART_CONFIG, DEFAULT_CHAT_MODEL
+
+        ws_models = SMART_CONFIG.get("web_search", {}).get("models", [])
+        model = ws_models[0]["id"] if ws_models else DEFAULT_CHAT_MODEL
+
+        search_ctx = "\n".join(context) if context else None
+
+        logger.info(
+            f"Agent web_search → routed to search model | model={model} | "
+            f"query={arguments.get('search_query', '')} | conv={self.conversation_id}"
+        )
+
+        return AgentResult(
+            generation_type=GenerationType.CHAT,
+            model=model,
+            system_prompt=arguments.get("system_prompt"),
+            search_context=search_ctx,
+            tool_params={
+                "_needs_google_search": True,
+                "_search_query": arguments.get("search_query", ""),
+            },
+            turns_used=turns,
+            total_tokens=tokens,
+        )
+
+    # 工具名 → 前端渲染提示（大脑控制前端显示）
+    _TOOL_RENDER_HINTS: Dict[str, Dict[str, str]] = {
+        "generate_image": {"placeholder_text": "图片生成中", "component": "image_grid"},
+        "generate_video": {"placeholder_text": "视频生成中", "component": "video_player"},
+        "batch_generate_image": {"placeholder_text": "图片生成中", "component": "image_grid"},
+    }
+
     def _build_async_result(
         self,
         pending_async: List[PendingAsyncTool],
@@ -357,6 +408,7 @@ class AgentLoop:
         gen_type = TOOL_TO_TYPE.get(first.tool_name, GenerationType.CHAT)
         model = first.arguments.get("model", "")
         search_ctx = "\n".join(context) if context else None
+        render_hints = self._TOOL_RENDER_HINTS.get(first.tool_name)
 
         if first.tool_name == "batch_generate_image":
             prompts = first.arguments.get("prompts", [])
@@ -366,6 +418,7 @@ class AgentLoop:
                 search_context=search_ctx,
                 batch_prompts=prompts,
                 tool_params=first.arguments,
+                render_hints=render_hints,
                 turns_used=turns,
                 total_tokens=tokens,
             )
@@ -375,6 +428,7 @@ class AgentLoop:
             model=model,
             search_context=search_ctx,
             tool_params=first.arguments,
+            render_hints=render_hints,
             turns_used=turns,
             total_tokens=tokens,
         )

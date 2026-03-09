@@ -195,6 +195,11 @@ async def generate_message(
                 body.params["_direct_reply"] = routing_decision.direct_reply
             if routing_decision.batch_prompts:
                 body.params["_batch_prompts"] = routing_decision.batch_prompts
+            if routing_decision.render_hints:
+                body.params["_render"] = routing_decision.render_hints
+            # 注入搜索标志（让 ChatHandler 启用 Google Search Grounding）
+            if routing_decision.tool_params.get("_needs_google_search"):
+                body.params["_needs_google_search"] = True
             # 注入工具参数（prompt/aspect_ratio 等）
             for key in ("prompt", "resolution", "aspect_ratio", "output_format"):
                 val = routing_decision.tool_params.get(key)
