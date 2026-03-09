@@ -78,6 +78,22 @@ export function getPlaceholderInfo(message: Message): PlaceholderInfo {
   return { isPlaceholder: false };
 }
 
+// ============================================================
+// Agent Loop 步骤文字映射
+// ============================================================
+
+/** Agent Loop 工具名 → 前端展示文字 */
+const AGENT_STEP_MAP: Record<string, string> = {
+  web_search: '正在搜索',
+  get_conversation_context: '正在查看对话',
+  search_knowledge: '正在查阅知识库',
+};
+
+/** 根据工具名获取 Agent Loop 步骤展示文字 */
+export function getAgentStepText(toolName: string): string {
+  return AGENT_STEP_MAP[toolName] || 'AI 正在分析';
+}
+
 /**
  * 判断是否为媒体占位符（图片/视频/音频）
  */

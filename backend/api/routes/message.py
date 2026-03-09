@@ -59,15 +59,43 @@ def get_conversation_service(db: Database) -> ConversationService:
 # ============================================================
 
 
-async def _resolve_generation_type(body, user_id: str, conversation_id: str):
-    """推断生成类型：智能路由 → 关键词兜底。返回 (gen_type, routing_decision)"""
-    from services.intent_router import IntentRouter, SMART_MODEL_ID
+async def _resolve_generation_type(body, user_id: str, conversation_id: str, db=None):
+    """推断生成类型：Agent Loop → IntentRouter 降级 → 关键词兜底"""
+    from loguru import logger
+    from services.intent_router import SMART_MODEL_ID
 
-    # auto 模型：始终走路由（忽略前端传入的 generation_type）
+    # 非智能模式 / retry / regenerate_single → 不走 Agent Loop
     if body.model != SMART_MODEL_ID and body.generation_type:
         return body.generation_type, None
     if body.operation in (MessageOperation.RETRY, MessageOperation.REGENERATE_SINGLE):
         return infer_generation_type(body.content), None
+
+    # Agent Loop（开关控制，可回退到 IntentRouter）
+    from core.config import get_settings
+    if get_settings().agent_loop_enabled and db is not None:
+        from services.agent_loop import AgentLoop
+
+        agent = AgentLoop(db, user_id, conversation_id)
+        try:
+            result = await agent.run(body.content)
+            logger.info(
+                f"Agent loop completed | type={result.generation_type.value} | "
+                f"turns={result.turns_used} | tokens={result.total_tokens} | "
+                f"user_id={user_id}"
+            )
+            return result.generation_type, result
+        except Exception as e:
+            logger.warning(f"Agent loop failed, legacy fallback | error={e}")
+        finally:
+            await agent.close()
+
+    # 降级到旧路由（IntentRouter 单步路由）
+    return await _legacy_resolve(body, user_id, conversation_id)
+
+
+async def _legacy_resolve(body, user_id: str, conversation_id: str):
+    """旧路由降级路径（IntentRouter 单步路由）"""
+    from services.intent_router import IntentRouter
 
     router = IntentRouter()
     try:
@@ -128,7 +156,9 @@ async def generate_message(
         await task_limit_service.check_and_acquire(user_id, conversation_id)
 
     # 2. 推断生成类型（智能路由 / 关键词兜底）
-    gen_type, routing_decision = await _resolve_generation_type(body, user_id, conversation_id)
+    gen_type, routing_decision = await _resolve_generation_type(
+        body, user_id, conversation_id, db=db,
+    )
 
     # 智能模型：标记 smart_mode + 解析实际工作模型
     from services.intent_router import SMART_MODEL_ID, resolve_auto_model
@@ -136,22 +166,50 @@ async def generate_message(
         if body.params is None:
             body.params = {}
         body.params["_is_smart_mode"] = True
-        recommended = routing_decision.recommended_model if routing_decision else None
-        body.model = resolve_auto_model(gen_type, body.content, recommended)
+
+        # AgentResult vs RoutingDecision 兼容处理
+        from services.agent_loop import AgentResult
+        if isinstance(routing_decision, AgentResult):
+            # Agent Loop 返回 AgentResult
+            recommended = routing_decision.model or None
+            if recommended:
+                body.model = recommended
+            else:
+                body.model = resolve_auto_model(gen_type, body.content, None)
+        else:
+            recommended = routing_decision.recommended_model if routing_decision else None
+            body.model = resolve_auto_model(gen_type, body.content, recommended)
 
     # 将路由结果注入 params（供 handler 使用）
     if routing_decision:
         if body.params is None:
             body.params = {}
-        if routing_decision.system_prompt:
-            body.params["_router_system_prompt"] = routing_decision.system_prompt
-        if routing_decision.tool_params.get("_search_context"):
-            body.params["_router_search_context"] = routing_decision.tool_params["_search_context"]
-        # 注入大脑选择的媒体生成参数（resolution/aspect_ratio/output_format）
-        for key in ("resolution", "aspect_ratio", "output_format"):
-            val = routing_decision.tool_params.get(key)
-            if val is not None:
-                body.params[key] = val
+
+        if isinstance(routing_decision, AgentResult):
+            # Agent Loop 结果注入
+            if routing_decision.system_prompt:
+                body.params["_router_system_prompt"] = routing_decision.system_prompt
+            if routing_decision.search_context:
+                body.params["_router_search_context"] = routing_decision.search_context
+            if routing_decision.direct_reply:
+                body.params["_direct_reply"] = routing_decision.direct_reply
+            if routing_decision.batch_prompts:
+                body.params["_batch_prompts"] = routing_decision.batch_prompts
+            # 注入工具参数（prompt/aspect_ratio 等）
+            for key in ("prompt", "resolution", "aspect_ratio", "output_format"):
+                val = routing_decision.tool_params.get(key)
+                if val is not None:
+                    body.params[key] = val
+        else:
+            # 旧路由 RoutingDecision 结果注入
+            if routing_decision.system_prompt:
+                body.params["_router_system_prompt"] = routing_decision.system_prompt
+            if routing_decision.tool_params.get("_search_context"):
+                body.params["_router_search_context"] = routing_decision.tool_params["_search_context"]
+            for key in ("resolution", "aspect_ratio", "output_format"):
+                val = routing_decision.tool_params.get(key)
+                if val is not None:
+                    body.params[key] = val
 
     # 智能模式下图片参数兜底：确保占位符和 handler 使用一致的默认值
     if gen_type == GenerationType.IMAGE and body.params:

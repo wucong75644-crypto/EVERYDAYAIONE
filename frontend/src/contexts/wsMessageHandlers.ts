@@ -19,6 +19,7 @@ import type { OperationContext } from './WebSocketContext';
 
 import type { MessageStatus } from '../types/message';
 import type { WSMessage } from '../hooks/useWebSocket';
+import { getAgentStepText } from '../constants/placeholder';
 
 /**
  * WS 消息扩展类型 — 后端各消息类型可能携带的额外字段
@@ -53,6 +54,8 @@ export interface MessageStoreActions {
   setIsSending: (isSending: boolean) => void;
   getMessage: (messageId: string) => Message | undefined;
   setStreamingContent: (conversationId: string, content: string) => void;
+  setAgentStepHint: (conversationId: string, hint: string) => void;
+  clearAgentStepHint: (conversationId: string) => void;
 }
 
 /** handler 工厂的依赖 */
@@ -410,6 +413,15 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       import('../stores/useMemoryStore').then(({ useMemoryStore }) => {
         useMemoryStore.getState().onMemoryExtracted(data.memories);
       });
+    },
+
+    agent_step: (msg) => {
+      const { conversation_id } = msg;
+      const toolName = msg.payload?.tool_name as string | undefined;
+      if (!conversation_id || !toolName) return;
+
+      const hint = getAgentStepText(toolName);
+      deps.getStore().setAgentStepHint(conversation_id, hint);
     },
 
     error: (msg) => {

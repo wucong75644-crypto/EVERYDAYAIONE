@@ -45,6 +45,7 @@ class WSMessageType(str, Enum):
     MESSAGE_ERROR = "message_error"
     MESSAGE_RETRY = "message_retry"
     IMAGE_PARTIAL_UPDATE = "image_partial_update"
+    AGENT_STEP = "agent_step"
 
     # === 系统消息 ===
     CREDITS_CHANGED = "credits_changed"
@@ -353,4 +354,22 @@ def build_server_restarting() -> Dict[str, Any]:
     return _build_ws_message(
         WSMessageType.SERVER_RESTARTING,
         {"message": "Server is restarting, please reconnect"},
+    )
+
+
+def build_agent_step(
+    conversation_id: str,
+    tool_name: str,
+    status: str,
+    turn: int,
+) -> Dict[str, Any]:
+    """构建 Agent Loop 步骤通知（前端显示「搜索中...」等临时状态）"""
+    return _build_ws_message(
+        WSMessageType.AGENT_STEP,
+        {
+            "tool_name": tool_name,
+            "status": status,
+            "turn": turn,
+        },
+        conversation_id=conversation_id,
     )

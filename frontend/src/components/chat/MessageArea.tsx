@@ -155,6 +155,11 @@ export default function MessageArea({
     conversationId ? (state.messages[conversationId]?.length ?? 0) > 0 : false
   );
 
+  // Agent Loop 步骤提示（"正在搜索..." 等动态文字）
+  const agentStepHint = useMessageStore((state) =>
+    conversationId ? state.agentStepHint.get(conversationId) : undefined
+  );
+
   // 使用统一消息读取 Hook（自动合并持久化消息和临时消息）
   const mergedMessages = useUnifiedMessages(conversationId);
 
@@ -365,6 +370,7 @@ export default function MessageArea({
                   key={message.id}
                   message={message}
                   isStreaming={isMessageStreaming}
+                  agentStepHint={isMessageStreaming ? agentStepHint : undefined}
                   onRegenerate={handleRegenerate}
                   onDelete={handleDelete}
                   onMediaLoaded={handleMediaLoaded}

@@ -96,6 +96,52 @@ class ChatHandler(ChatContextMixin, BaseHandler):
 
         return task_id
 
+    async def _stream_direct_reply(
+        self,
+        task_id: str,
+        message_id: str,
+        conversation_id: str,
+        text: str,
+    ) -> None:
+        """Agent Loop ask_user：大脑直接回复，跳过 LLM 调用"""
+        try:
+            # 推送 start
+            start_msg = build_message_start(
+                task_id=task_id,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                model="agent",
+            )
+            await ws_manager.send_to_task_subscribers(task_id, start_msg)
+
+            # 推送完整文字作为一个 chunk
+            chunk_msg = build_message_chunk(
+                task_id=task_id,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                chunk=text,
+                accumulated=text,
+            )
+            await ws_manager.send_to_task_subscribers(task_id, chunk_msg)
+
+            # 完成回调（0 积分）
+            await self.on_complete(
+                task_id=task_id,
+                result=[TextPart(text=text)],
+                credits_consumed=0,
+            )
+
+            logger.info(
+                f"Direct reply sent | task_id={task_id} | len={len(text)}"
+            )
+        except Exception as e:
+            logger.error(f"Direct reply error | task_id={task_id} | error={e}")
+            await self.on_error(
+                task_id=task_id,
+                error_code="DIRECT_REPLY_FAILED",
+                error_message=str(e),
+            )
+
     async def _save_accumulated_content(self, task_id: str, content: str) -> None:
         """将累积内容写入数据库（供刷新恢复使用）"""
         try:
@@ -122,6 +168,18 @@ class ChatHandler(ChatContextMixin, BaseHandler):
     ) -> None:
         """流式生成主逻辑（支持 smart_mode 自动重试）"""
         import time as _time
+
+        # Agent Loop ask_user：大脑主动回复，跳过 LLM 调用
+        direct_reply = (_params or {}).get("_direct_reply")
+        if direct_reply:
+            await self._stream_direct_reply(
+                task_id=task_id,
+                message_id=message_id,
+                conversation_id=conversation_id,
+                text=direct_reply,
+            )
+            return
+
         _start_time = _time.monotonic()
         accumulated_text = ""
         final_usage: Dict[str, Any] = {"prompt_tokens": 0, "completion_tokens": 0}
