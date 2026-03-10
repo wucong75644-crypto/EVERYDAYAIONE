@@ -293,6 +293,19 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
                     urls.append(url)
         return urls
 
+    def _extract_file_urls(self, content: List[ContentPart]) -> List[str]:
+        """从 ContentPart 数组提取所有文件 URL（PDF 等文档）"""
+        from schemas.message import FilePart
+        urls: List[str] = []
+        for part in content:
+            if isinstance(part, FilePart) and part.url:
+                urls.append(part.url)
+            elif isinstance(part, dict) and part.get("type") == "file":
+                url = part.get("url")
+                if url:
+                    urls.append(url)
+        return urls
+
     # ========================================
     # 智能重试方法
     # ========================================

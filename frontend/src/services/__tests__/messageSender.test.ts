@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import {
   createTextContent,
   createTextWithImages,
+  createTextWithFiles,
   getTextFromContent,
   inferGenerationType,
   determineMessageType,
@@ -90,6 +91,55 @@ describe('createTextWithImages', () => {
 
     expect(result).toHaveLength(1);
     expect(result[0]).toEqual({ type: 'text', text: '纯文本' });
+  });
+});
+
+// ============================================================
+// createTextWithFiles 测试
+// ============================================================
+
+describe('createTextWithFiles', () => {
+  const testFile = { url: 'https://cdn.example.com/report.pdf', name: 'report.pdf', mime_type: 'application/pdf', size: 2400000 };
+
+  it('should create text and file content array', () => {
+    const result = createTextWithFiles('分析这份PDF', null, [testFile]);
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ type: 'text', text: '分析这份PDF' });
+    expect(result[1]).toEqual({ type: 'file', url: testFile.url, name: testFile.name, mime_type: testFile.mime_type, size: testFile.size });
+  });
+
+  it('should include images and files together', () => {
+    const result = createTextWithFiles('对比', ['https://cdn.example.com/img.png'], [testFile]);
+
+    expect(result).toHaveLength(3);
+    expect(result[0]).toEqual({ type: 'text', text: '对比' });
+    expect(result[1]).toEqual({ type: 'image', url: 'https://cdn.example.com/img.png' });
+    expect(result[2]).toEqual({ type: 'file', url: testFile.url, name: testFile.name, mime_type: testFile.mime_type, size: testFile.size });
+  });
+
+  it('should handle null imageUrls', () => {
+    const result = createTextWithFiles('分析', null, [testFile]);
+
+    expect(result).toHaveLength(2);
+    expect(result[0].type).toBe('text');
+    expect(result[1].type).toBe('file');
+  });
+
+  it('should handle multiple files', () => {
+    const file2 = { url: 'https://cdn.example.com/doc2.pdf', name: 'doc2.pdf', mime_type: 'application/pdf', size: 500000 };
+    const result = createTextWithFiles('对比', null, [testFile, file2]);
+
+    expect(result).toHaveLength(3);
+    expect(result[1].type).toBe('file');
+    expect(result[2].type).toBe('file');
+  });
+
+  it('should handle empty files array', () => {
+    const result = createTextWithFiles('无文件', null, []);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toEqual({ type: 'text', text: '无文件' });
   });
 });
 

@@ -23,8 +23,15 @@ class StorageService:
         "image/gif": "gif",
         "image/webp": "webp",
     }
-    # 最大文件大小 (10MB)
+    # 最大图片大小 (10MB)
     MAX_FILE_SIZE = 10 * 1024 * 1024
+
+    # 允许的文档类型
+    ALLOWED_FILE_TYPES = {
+        "application/pdf": "pdf",
+    }
+    # 最大文档大小 (50MB)
+    MAX_DOCUMENT_SIZE = 50 * 1024 * 1024
 
     def __init__(self, db: Client):
         """
@@ -94,6 +101,70 @@ class StorageService:
 
         except Exception as e:
             logger.error(f"Upload image failed: user_id={user_id}, error={e}")
+            raise ValueError(f"上传失败: {e}") from e
+
+    async def upload_file(
+        self,
+        user_id: str,
+        file_data: bytes,
+        content_type: str,
+        filename: Optional[str] = None,
+    ) -> dict:
+        """
+        上传文档文件到 OSS（当前仅支持 PDF）
+
+        Args:
+            user_id: 用户 ID
+            file_data: 文件二进制数据
+            content_type: MIME 类型
+            filename: 原始文件名（可选）
+
+        Returns:
+            包含 url, name, mime_type, size 的字典
+
+        Raises:
+            ValueError: 文件类型或大小不符合要求
+        """
+        # 验证文件类型
+        if content_type not in self.ALLOWED_FILE_TYPES:
+            raise ValueError(
+                f"不支持的文件类型: {content_type}。"
+                f"支持: {list(self.ALLOWED_FILE_TYPES.keys())}"
+            )
+
+        # 验证文件大小
+        if len(file_data) > self.MAX_DOCUMENT_SIZE:
+            raise ValueError(
+                f"文件过大: {len(file_data) / 1024 / 1024:.1f}MB > "
+                f"{self.MAX_DOCUMENT_SIZE / 1024 / 1024:.0f}MB"
+            )
+
+        extension = self.ALLOWED_FILE_TYPES[content_type]
+
+        try:
+            oss_service = get_oss_service()
+            result = oss_service.upload_bytes(
+                content=file_data,
+                user_id=user_id,
+                ext=extension,
+                category="documents",
+                content_type=content_type,
+            )
+
+            logger.info(
+                f"File uploaded to OSS: user_id={user_id}, "
+                f"object_key={result['object_key']}, size={len(file_data)}"
+            )
+
+            return {
+                "url": result["url"],
+                "name": filename or f"document.{extension}",
+                "mime_type": content_type,
+                "size": len(file_data),
+            }
+
+        except Exception as e:
+            logger.error(f"Upload file failed: user_id={user_id}, error={e}")
             raise ValueError(f"上传失败: {e}") from e
 
     async def upload_base64_image(

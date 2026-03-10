@@ -17,7 +17,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from api.routes import (
-    audio, auth, conversation, health, image, memory, message,
+    audio, auth, conversation, file, health, image, memory, message,
     models, subscription, task, webhook, ws,
 )
 from core.config import get_settings
@@ -296,6 +296,9 @@ def register_routers(app: FastAPI) -> None:
 
     # 图像上传（生成功能已迁移到 /messages/generate）
     app.include_router(image.router, prefix="/api")
+
+    # 文件上传（PDF 等文档）
+    app.include_router(file.router, prefix="/api")
 
     # 音频上传
     app.include_router(audio.router, prefix="/api")

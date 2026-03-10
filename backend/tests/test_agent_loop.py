@@ -19,6 +19,14 @@ import pytest
 from schemas.message import GenerationType, TextPart, ImagePart
 from services.agent_types import AgentResult, AgentGuardrails, PendingAsyncTool
 from services.agent_loop import AgentLoop
+from services.agent_result_builder import (
+    build_chat_result,
+    build_terminal_result,
+    build_ask_user_result,
+    build_search_result,
+    build_async_result,
+    build_graceful_timeout,
+)
 
 
 # ============================================================
@@ -494,10 +502,10 @@ class TestAgentLoopRun:
 
 
 class TestBuildResults:
+    """测试提取到 agent_result_builder 的构建函数"""
 
     def test_chat_result_with_context(self):
-        loop = _make_loop()
-        result = loop._build_chat_result(
+        result = build_chat_result(
             "回复", ["ctx1", "ctx2"], turns=2, tokens=500,
         )
         assert result.generation_type == GenerationType.CHAT
@@ -505,20 +513,18 @@ class TestBuildResults:
         assert result.direct_reply == "回复"
 
     def test_chat_result_no_context(self):
-        loop = _make_loop()
-        result = loop._build_chat_result(
+        result = build_chat_result(
             "", [], turns=1, tokens=100,
         )
         assert result.search_context is None
         assert result.direct_reply is None  # empty string → None
 
     def test_async_result_image(self):
-        loop = _make_loop()
         pending = [PendingAsyncTool(
             tool_name="generate_image",
             arguments={"prompt": "cat", "model": "flux"},
         )]
-        result = loop._build_async_result(pending, [], turns=1, tokens=100)
+        result = build_async_result(pending, [], turns=1, tokens=100)
         assert result.generation_type == GenerationType.IMAGE
         assert result.render_hints == {
             "placeholder_text": "图片生成中",
@@ -526,59 +532,52 @@ class TestBuildResults:
         }
 
     def test_async_result_video(self):
-        loop = _make_loop()
         pending = [PendingAsyncTool(
             tool_name="generate_video",
             arguments={"prompt": "waves", "model": "vidu"},
         )]
-        result = loop._build_async_result(pending, [], turns=1, tokens=100)
+        result = build_async_result(pending, [], turns=1, tokens=100)
         assert result.generation_type == GenerationType.VIDEO
         assert result.render_hints["placeholder_text"] == "视频生成中"
 
     def test_async_result_batch_image(self):
-        loop = _make_loop()
         prompts = [{"prompt": "a"}, {"prompt": "b"}]
         pending = [PendingAsyncTool(
             tool_name="batch_generate_image",
             arguments={"prompts": prompts, "model": "flux"},
         )]
-        result = loop._build_async_result(pending, [], turns=1, tokens=100)
+        result = build_async_result(pending, [], turns=1, tokens=100)
         assert result.generation_type == GenerationType.IMAGE
         assert result.batch_prompts == prompts
 
     def test_async_result_empty_pending(self):
         """空 pending→fallback 到 chat"""
-        loop = _make_loop()
-        result = loop._build_async_result([], ["ctx"], turns=1, tokens=100)
+        result = build_async_result([], ["ctx"], turns=1, tokens=100)
         assert result.generation_type == GenerationType.CHAT
 
     def test_graceful_timeout_with_pending(self):
         """graceful timeout + pending async→异步结果"""
-        loop = _make_loop()
         pending = [PendingAsyncTool(
             tool_name="generate_image",
             arguments={"prompt": "cat", "model": "flux"},
         )]
-        result = loop._build_graceful_timeout(pending, [], turns=3, tokens=3000)
+        result = build_graceful_timeout(pending, [], turns=3, tokens=3000)
         assert result.generation_type == GenerationType.IMAGE
 
     def test_graceful_timeout_with_context(self):
         """graceful timeout + context→chat with context"""
-        loop = _make_loop()
-        result = loop._build_graceful_timeout([], ["搜索结果"], turns=3, tokens=3000)
+        result = build_graceful_timeout([], ["搜索结果"], turns=3, tokens=3000)
         assert result.generation_type == GenerationType.CHAT
         assert result.search_context == "搜索结果"
 
     def test_graceful_timeout_empty(self):
         """graceful timeout + 全空→DEFAULT_CHAT_MODEL"""
-        loop = _make_loop()
-        result = loop._build_graceful_timeout([], [], turns=3, tokens=3000)
+        result = build_graceful_timeout([], [], turns=3, tokens=3000)
         assert result.generation_type == GenerationType.CHAT
         assert result.model != ""  # 应该有默认模型
 
     def test_terminal_text_chat(self):
-        loop = _make_loop()
-        result = loop._build_terminal_result(
+        result = build_terminal_result(
             "text_chat",
             {"system_prompt": "翻译", "model": "gpt-4"},
             ["ctx"],
@@ -592,25 +591,73 @@ class TestBuildResults:
 
     def test_terminal_finish_with_pending(self):
         """finish + pending→异步结果"""
-        loop = _make_loop()
         pending = [PendingAsyncTool(
             tool_name="generate_video",
             arguments={"prompt": "waves", "model": "vidu"},
         )]
-        result = loop._build_terminal_result(
+        result = build_terminal_result(
             "finish", {}, [], pending, turns=2, tokens=200,
         )
         assert result.generation_type == GenerationType.VIDEO
 
     def test_ask_user_result(self):
-        loop = _make_loop()
-        result = loop._build_ask_user_result(
+        result = build_ask_user_result(
             {"message": "需要更多信息", "reason": "need_info"},
             ["ctx"], [], turns=1, tokens=100,
+            conversation_id="c1",
         )
         assert result.direct_reply == "需要更多信息"
         assert result.tool_params["_ask_reason"] == "need_info"
         assert result.search_context == "ctx"
+
+    @patch("config.smart_model_config.SMART_CONFIG", {
+        "web_search": {"models": [{"id": "gemini-3-pro", "priority": 1}]},
+    })
+    def test_search_result_with_config(self):
+        """build_search_result：从 SMART_CONFIG 取搜索模型"""
+        result = build_search_result(
+            {"search_query": "iPhone 价格", "system_prompt": "数码助手"},
+            ["前置上下文"], turns=2, tokens=300,
+            conversation_id="c1",
+        )
+        assert result.generation_type == GenerationType.CHAT
+        assert result.model == "gemini-3-pro"
+        assert result.system_prompt == "数码助手"
+        assert result.tool_params["_needs_google_search"] is True
+        assert result.tool_params["_search_query"] == "iPhone 价格"
+        assert result.search_context == "前置上下文"
+        assert result.turns_used == 2
+        assert result.total_tokens == 300
+
+    @patch("config.smart_model_config.SMART_CONFIG", {})
+    def test_search_result_fallback_default_model(self):
+        """build_search_result：无搜索模型配置时使用默认模型"""
+        result = build_search_result(
+            {"search_query": "天气"}, [], turns=1, tokens=100,
+        )
+        assert result.generation_type == GenerationType.CHAT
+        assert result.model != ""  # 应该回退到 DEFAULT_CHAT_MODEL
+        assert result.tool_params["_needs_google_search"] is True
+
+    @patch("config.smart_model_config.SMART_CONFIG", {
+        "web_search": {"models": [{"id": "search-model", "priority": 1}]},
+    })
+    def test_search_result_no_context(self):
+        """build_search_result：无上下文时 search_context 为 None"""
+        result = build_search_result(
+            {"search_query": "test"}, [], turns=1, tokens=100,
+        )
+        assert result.search_context is None
+
+    @patch("config.smart_model_config.SMART_CONFIG", {
+        "web_search": {"models": [{"id": "search-model", "priority": 1}]},
+    })
+    def test_search_result_empty_query(self):
+        """build_search_result：无 search_query 参数时默认空字符串"""
+        result = build_search_result(
+            {}, [], turns=1, tokens=100,
+        )
+        assert result.tool_params["_search_query"] == ""
 
 
 # ============================================================

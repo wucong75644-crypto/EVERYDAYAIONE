@@ -8,6 +8,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { ALL_MODELS, getAvailableModels, type UnifiedModel } from '../models';
+import { CHAT_MODELS } from '../chatModels';
+import { IMAGE_MODELS, VIDEO_MODELS } from '../mediaModels';
+import { ASPECT_RATIOS, RESOLUTIONS, OUTPUT_FORMATS, IMAGE_COUNTS, VIDEO_DURATIONS, VIDEO_ASPECT_RATIOS } from '../mediaOptions';
 
 // ============================================================
 // 辅助函数
@@ -182,5 +185,90 @@ describe('getAvailableModels', () => {
   it('undefined subscribedModelIds 等同于无过滤', () => {
     const models = getAvailableModels(false, undefined);
     expect(models.length).toBe(ALL_MODELS.length);
+  });
+});
+
+// ============================================================
+// TestModelSplit — 拆分后子模块验证
+// ============================================================
+
+describe('模型拆分子模块', () => {
+  it('CHAT_MODELS 包含所有聊天模型', () => {
+    const chatFromAll = ALL_MODELS.filter((m) => m.type === 'chat');
+    expect(CHAT_MODELS.length).toBe(chatFromAll.length);
+  });
+
+  it('IMAGE_MODELS 包含所有图像模型', () => {
+    const imageFromAll = ALL_MODELS.filter((m) => m.type === 'image');
+    expect(IMAGE_MODELS.length).toBe(imageFromAll.length);
+  });
+
+  it('VIDEO_MODELS 包含所有视频模型', () => {
+    const videoFromAll = ALL_MODELS.filter((m) => m.type === 'video');
+    expect(VIDEO_MODELS.length).toBe(videoFromAll.length);
+  });
+
+  it('ALL_MODELS = CHAT + IMAGE + VIDEO', () => {
+    expect(ALL_MODELS.length).toBe(
+      CHAT_MODELS.length + IMAGE_MODELS.length + VIDEO_MODELS.length,
+    );
+  });
+
+  it('IMAGE_MODELS 均支持图片生成', () => {
+    for (const m of IMAGE_MODELS) {
+      expect(m.capabilities.textToImage || m.capabilities.imageEditing).toBe(true);
+    }
+  });
+
+  it('VIDEO_MODELS 均支持视频生成', () => {
+    for (const m of VIDEO_MODELS) {
+      expect(m.capabilities.textToVideo || m.capabilities.imageToVideo).toBe(true);
+    }
+  });
+
+  it('VIDEO_MODELS 均有 videoPricing', () => {
+    for (const m of VIDEO_MODELS) {
+      expect(m.videoPricing).toBeDefined();
+    }
+  });
+});
+
+// ============================================================
+// TestMediaOptions — 媒体选项常量验证
+// ============================================================
+
+describe('媒体选项常量', () => {
+  it('ASPECT_RATIOS 非空且包含 1:1', () => {
+    expect(ASPECT_RATIOS.length).toBeGreaterThan(0);
+    expect(ASPECT_RATIOS.some((r) => r.value === '1:1')).toBe(true);
+  });
+
+  it('RESOLUTIONS 包含 1K/2K/4K', () => {
+    const values = RESOLUTIONS.map((r) => r.value);
+    expect(values).toContain('1K');
+    expect(values).toContain('2K');
+    expect(values).toContain('4K');
+  });
+
+  it('OUTPUT_FORMATS 包含 png 和 jpeg', () => {
+    const values = OUTPUT_FORMATS.map((f) => f.value);
+    expect(values).toContain('png');
+    expect(values).toContain('jpeg');
+  });
+
+  it('IMAGE_COUNTS 包含 1-4', () => {
+    const values = IMAGE_COUNTS.map((c) => c.value);
+    expect(values).toEqual([1, 2, 3, 4]);
+  });
+
+  it('VIDEO_DURATIONS 非空', () => {
+    expect(VIDEO_DURATIONS.length).toBeGreaterThan(0);
+    expect(VIDEO_DURATIONS.every((d) => d.credits > 0)).toBe(true);
+  });
+
+  it('VIDEO_ASPECT_RATIOS 包含横竖屏', () => {
+    const values = VIDEO_ASPECT_RATIOS.map((r) => r.value);
+    expect(values).toContain('landscape');
+    expect(values).toContain('portrait');
   });
 });

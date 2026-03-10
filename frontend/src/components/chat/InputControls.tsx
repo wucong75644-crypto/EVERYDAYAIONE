@@ -17,12 +17,14 @@ import {
   type VideoAspectRatio,
 } from '../../constants/models';
 import ImagePreview from './ImagePreview';
+import FilePreview from './FilePreview';
 import AudioPreview from './AudioPreview';
 import ModelSelector from './ModelSelector';
 import AdvancedSettingsMenu from './AdvancedSettingsMenu';
 import UploadMenu from './UploadMenu';
 import AudioRecorder from './AudioRecorder';
 import { type UploadedImage } from '../../hooks/useImageUpload';
+import { type UploadedFile } from '../../hooks/useFileUpload';
 import { type RecordingState } from '../../hooks/useAudioRecording';
 import { useDragDropUpload } from '../../hooks/useDragDropUpload';
 import { MODAL_CLOSE_ANIMATION_DURATION } from '../../constants/animations';
@@ -87,6 +89,14 @@ interface InputControlsProps {
   onImageSelect: (e: React.ChangeEvent<HTMLInputElement>, maxImages?: number, maxFileSize?: number) => void;
   onImageDrop: (files: FileList, maxImages?: number, maxFileSize?: number) => void;
   onImagePaste: (e: ClipboardEvent, maxImages?: number, maxFileSize?: number) => void;
+  /** PDF 文件列表 */
+  files: UploadedFile[];
+  /** PDF 最大大小（MB） */
+  maxPDFSize?: number;
+  /** 删除 PDF 文件 */
+  onRemoveFile: (fileId: string) => void;
+  /** 选择 PDF 文件 */
+  onFileSelect: (e: React.ChangeEvent<HTMLInputElement>, maxSizeMB?: number) => void;
   /** 是否需要上传图片（用于显示引导提示） */
   requiresImageUpload?: boolean;
   /** 发送错误信息（用于显示错误状态） */
@@ -110,6 +120,7 @@ export default function InputControls(props: InputControlsProps) {
     maxOutputTokens, onMaxOutputTokensChange,
     onSaveSettings, onResetSettings,
     images, maxImages, maxFileSize, onRemoveImage, onImageSelect, onImageDrop, onImagePaste,
+    files, maxPDFSize, onRemoveFile, onFileSelect,
     recordingState, audioBlob, audioDuration, onStartRecording, onStopRecording, onClearRecording,
     requiresImageUpload = false, sendError, hasQuotedImage = false,
   } = props;
@@ -137,6 +148,7 @@ export default function InputControls(props: InputControlsProps) {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfFileInputRef = useRef<HTMLInputElement>(null);
   const uploadMenuRef = useRef<HTMLDivElement>(null);
   const advancedMenuRef = useRef<HTMLDivElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
@@ -194,7 +206,7 @@ export default function InputControls(props: InputControlsProps) {
 
   // 判断条件
   const supportsDeepThinking = selectedModel.capabilities.thinkingEffort === true;
-  const hasContent = prompt.trim().length > 0 || images.length > 0;
+  const hasContent = prompt.trim().length > 0 || images.length > 0 || files.length > 0;
   const canSubmit = !sendButtonDisabled && (hasContent || audioBlob);
 
   // 发送/语音按钮互斥显示
@@ -218,7 +230,7 @@ export default function InputControls(props: InputControlsProps) {
           <div className="text-center">
             <Upload className="w-12 h-12 text-blue-600 mx-auto mb-2" />
             <p className="text-lg font-medium text-blue-900">拖放图片到这里</p>
-            <p className="text-sm text-blue-600">支持 PNG, JPG, GIF</p>
+            <p className="text-sm text-blue-600">支持 PNG, JPG, GIF, PDF</p>
           </div>
         </div>
       )}
@@ -229,6 +241,11 @@ export default function InputControls(props: InputControlsProps) {
           <div className="mb-2">
             <ImagePreview images={images} onRemove={onRemoveImage} />
           </div>
+        )}
+
+        {/* PDF 文件预览区域 */}
+        {files.length > 0 && (
+          <FilePreview files={files} onRemove={onRemoveFile} />
         )}
 
         {/* 音频预览区域 */}
@@ -357,6 +374,7 @@ export default function InputControls(props: InputControlsProps) {
                 closing={uploadMenuClosing}
                 selectedModel={selectedModel}
                 onImageUpload={() => fileInputRef.current?.click()}
+                onFileUpload={() => pdfFileInputRef.current?.click()}
                 onClose={closeUploadMenu}
               />
             </div>
@@ -407,7 +425,7 @@ export default function InputControls(props: InputControlsProps) {
         </div>
       </div>
 
-      {/* 隐藏的文件输入 */}
+      {/* 隐藏的图片文件输入 */}
       <input
         ref={fileInputRef}
         type="file"
@@ -417,6 +435,17 @@ export default function InputControls(props: InputControlsProps) {
         className="hidden"
         aria-label="选择图片文件"
         title="选择图片文件"
+      />
+
+      {/* 隐藏的 PDF 文件输入 */}
+      <input
+        ref={pdfFileInputRef}
+        type="file"
+        accept=".pdf,application/pdf"
+        onChange={(e) => onFileSelect(e, maxPDFSize)}
+        className="hidden"
+        aria-label="选择 PDF 文件"
+        title="选择 PDF 文件"
       />
     </div>
   );
