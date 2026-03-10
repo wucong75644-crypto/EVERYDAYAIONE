@@ -168,6 +168,24 @@ class MessageMixin:
         )
         return None
 
+    @staticmethod
+    def _calc_task_elapsed_ms(task: Dict[str, Any]) -> Optional[int]:
+        """从 task.created_at 计算任务耗时（毫秒），失败返回 None"""
+        task_created = task.get("created_at")
+        if not task_created:
+            return None
+        try:
+            if isinstance(task_created, str):
+                created_dt = datetime.fromisoformat(
+                    task_created.replace("Z", "+00:00")
+                )
+            else:
+                created_dt = task_created
+            elapsed = datetime.now(created_dt.tzinfo) - created_dt
+            return int(elapsed.total_seconds() * 1000)
+        except Exception:
+            return None
+
     def _extract_extra_gen_params(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """从 request_params 提取前端渲染所需参数"""
         request_params = task.get("request_params") or {}
@@ -263,11 +281,13 @@ class MessageMixin:
             if isinstance(request_params, str):
                 import json
                 request_params = json.loads(request_params)
+
             asyncio.create_task(
                 self._record_knowledge_metric(
                     task_type=handler_type, model_id=model_id,
                     status="success", user_id=task.get("user_id"),
                     params=request_params,
+                    cost_time_ms=self._calc_task_elapsed_ms(task),
                 )
             )
 
@@ -334,11 +354,18 @@ class MessageMixin:
         # 知识库指标（Image/Video）
         handler_type = self.handler_type.value
         if handler_type in ("image", "video"):
+            request_params = task.get("request_params") or {}
+            if isinstance(request_params, str):
+                import json
+                request_params = json.loads(request_params)
+
             asyncio.create_task(
                 self._record_knowledge_metric(
                     task_type=handler_type, model_id=model_id,
                     status="failed", error_code=error_code,
                     user_id=task.get("user_id"),
+                    cost_time_ms=self._calc_task_elapsed_ms(task),
+                    params=request_params,
                 )
             )
             asyncio.create_task(

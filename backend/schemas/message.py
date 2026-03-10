@@ -414,7 +414,7 @@ def infer_generation_type(content: List[ContentPart]) -> GenerationType:
     if image_parts:
         if any(kw in text for kw in ['变成视频', 'to video', '做成视频']):
             return GenerationType.VIDEO
-        if any(kw in text for kw in ['修改', '编辑', 'edit', '重绘']):
+        if any(kw in text for kw in ['修改', '修正', '编辑', '裁剪', '调整', '改大小', '改尺寸', 'edit', '重绘']):
             return GenerationType.IMAGE
 
     return GenerationType.CHAT

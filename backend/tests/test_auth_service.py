@@ -297,6 +297,99 @@ class TestAuthServiceResetPassword:
             await auth_service.reset_password("13800138000", "123456", "newpwd")
 
 
+class TestAuthServiceSendVerificationCode:
+    """发送验证码测试"""
+
+    @pytest.fixture
+    def auth_service(self, mock_db, mock_settings):
+        with patch("services.auth_service.get_settings", return_value=mock_settings):
+            return AuthService(mock_db)
+
+    @pytest.mark.asyncio
+    async def test_send_code_success(self, auth_service, mock_sms_service):
+        """测试：发送验证码成功"""
+        result = await auth_service.send_verification_code("13800138000", "login")
+
+        assert result is True
+        mock_sms_service.send_verification_code.assert_awaited_once_with(
+            "13800138000", "login"
+        )
+
+    @pytest.mark.asyncio
+    async def test_send_code_sms_failure(self, auth_service, mock_sms_service):
+        """测试：短信服务异常时抛出 AppException"""
+        from core.exceptions import AppException
+
+        mock_sms_service.send_verification_code.side_effect = Exception("SMS provider down")
+
+        with pytest.raises(AppException) as exc_info:
+            await auth_service.send_verification_code("13800138000", "register")
+
+        assert exc_info.value.code == "SMS_SEND_ERROR"
+
+    @pytest.mark.asyncio
+    async def test_send_code_validation_error_passthrough(self, auth_service, mock_sms_service):
+        """测试：业务异常直接传递"""
+        mock_sms_service.send_verification_code.side_effect = ValidationError("频率过高")
+
+        with pytest.raises(ValidationError, match="频率过高"):
+            await auth_service.send_verification_code("13800138000", "login")
+
+
+class TestAuthServiceVerifyCodeOnly:
+    """仅验证验证码测试"""
+
+    @pytest.fixture
+    def auth_service(self, mock_db, mock_settings):
+        with patch("services.auth_service.get_settings", return_value=mock_settings):
+            return AuthService(mock_db)
+
+    @pytest.mark.asyncio
+    async def test_verify_code_only_success(self, auth_service):
+        """测试：验证码正确返回 True"""
+        with patch.object(auth_service, "_verify_code", return_value=True):
+            result = await auth_service.verify_code_only("13800138000", "123456", "reset_password")
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_verify_code_only_invalid(self, auth_service):
+        """测试：验证码错误抛出 ValidationError"""
+        with patch.object(auth_service, "_verify_code", return_value=False):
+            with pytest.raises(ValidationError, match="验证码"):
+                await auth_service.verify_code_only("13800138000", "wrong", "reset_password")
+
+    @pytest.mark.asyncio
+    async def test_verify_code_only_exception(self, auth_service):
+        """测试：内部异常时抛出 AppException"""
+        from core.exceptions import AppException
+
+        with patch.object(auth_service, "_verify_code", side_effect=Exception("timeout")):
+            with pytest.raises(AppException) as exc_info:
+                await auth_service.verify_code_only("13800138000", "123456", "reset_password")
+
+        assert exc_info.value.code == "VERIFY_CODE_ERROR"
+
+
+class TestAuthServiceResetPasswordInvalidCode:
+    """重置密码 - 验证码错误分支"""
+
+    @pytest.fixture
+    def auth_service(self, mock_db, mock_settings):
+        with patch("services.auth_service.get_settings", return_value=mock_settings):
+            return AuthService(mock_db)
+
+    @pytest.mark.asyncio
+    async def test_reset_password_invalid_code(self, auth_service, mock_db):
+        """测试：验证码错误时抛出 ValidationError"""
+        user = create_test_user()
+        mock_db.set_table_data("users", [user])
+
+        with patch.object(auth_service, "_verify_code", return_value=False):
+            with pytest.raises(ValidationError, match="验证码"):
+                await auth_service.reset_password(user["phone"], "wrong", "newpwd")
+
+
 class TestAuthServiceHelpers:
     """辅助方法测试"""
 
