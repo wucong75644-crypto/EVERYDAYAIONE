@@ -75,39 +75,37 @@ class GoogleChatAdapter(BaseChatAdapter):
         """是否支持流式输出"""
         return True
 
-    async def _download_image(self, url: str, max_size_mb: int = 20) -> Optional[str]:
+    async def _download_media(self, url: str, max_size_mb: int = 20) -> Optional[str]:
         """
-        下载图片并转换为 base64
+        下载媒体文件并转换为 base64
 
         Args:
-            url: 图片 URL
-            max_size_mb: 最大图片大小（MB）
+            url: 媒体文件 URL（图片或 PDF）
+            max_size_mb: 最大文件大小（MB）
 
         Returns:
-            base64 编码的图片数据，失败返回 None
+            base64 编码的数据，失败返回 None
         """
         try:
-            async with httpx.AsyncClient(timeout=10.0) as http_client:
+            async with httpx.AsyncClient(timeout=30.0) as http_client:
                 response = await http_client.get(url)
                 response.raise_for_status()
 
-                # 检查大小
                 content_length = len(response.content)
                 max_bytes = max_size_mb * 1024 * 1024
                 if content_length > max_bytes:
                     logger.warning(
-                        f"Image too large, skipping | "
+                        f"Media too large, skipping | "
                         f"url={url} | size={content_length / 1024 / 1024:.2f}MB"
                     )
                     return None
 
-                # 转换为 base64
-                image_data = base64.b64encode(response.content).decode('utf-8')
-                logger.debug(f"Image downloaded | url={url} | size={content_length / 1024:.2f}KB")
-                return image_data
+                data = base64.b64encode(response.content).decode('utf-8')
+                logger.debug(f"Media downloaded | url={url} | size={content_length / 1024:.2f}KB")
+                return data
 
         except Exception as e:
-            logger.warning(f"Failed to download image | url={url} | error={str(e)}")
+            logger.warning(f"Failed to download media | url={url} | error={str(e)}")
             return None
 
     def _detect_mime_type(self, url: str, default: str = "image/png") -> str:
@@ -121,7 +119,7 @@ class GoogleChatAdapter(BaseChatAdapter):
         Returns:
             MIME 类型字符串
         """
-        url_lower = url.lower()
+        url_lower = url.lower().split('?')[0]  # 去掉查询参数
         if url_lower.endswith('.jpg') or url_lower.endswith('.jpeg'):
             return "image/jpeg"
         elif url_lower.endswith('.png'):
@@ -130,6 +128,8 @@ class GoogleChatAdapter(BaseChatAdapter):
             return "image/webp"
         elif url_lower.endswith('.gif'):
             return "image/gif"
+        elif url_lower.endswith('.pdf'):
+            return "application/pdf"
         return default
 
     async def _convert_to_google_format(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -191,20 +191,21 @@ class GoogleChatAdapter(BaseChatAdapter):
                             parts.append({"text": text})
 
                     elif item_type == "image_url":
-                        image_url = item.get("image_url", {}).get("url", "")
-                        if image_url:
-                            # 下载图片并转换为 base64
-                            image_data = await self._download_image(image_url)
-                            if image_data:
-                                mime_type = self._detect_mime_type(image_url)
+                        media_url = item.get("image_url", {}).get("url", "")
+                        if media_url:
+                            mime_type = self._detect_mime_type(media_url)
+                            # PDF 允许 50MB，图片允许 20MB
+                            max_mb = 50 if mime_type == "application/pdf" else 20
+                            media_data = await self._download_media(media_url, max_size_mb=max_mb)
+                            if media_data:
                                 parts.append({
                                     "inline_data": {
                                         "mime_type": mime_type,
-                                        "data": image_data
+                                        "data": media_data
                                     }
                                 })
                             else:
-                                logger.warning(f"Skipped image (download failed) | url={image_url}")
+                                logger.warning(f"Skipped media (download failed) | url={media_url}")
 
             # 只添加非空消息
             if parts:

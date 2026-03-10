@@ -10,6 +10,7 @@ import { createConversation, updateConversation } from '../../services/conversat
 import { uploadAudio } from '../../services/audio';
 import { useMessageHandlers } from '../../hooks/useMessageHandlers';
 import { useImageUpload } from '../../hooks/useImageUpload';
+import { useFileUpload } from '../../hooks/useFileUpload';
 import { useModelSelection } from '../../hooks/useModelSelection';
 import { useAudioRecording } from '../../hooks/useAudioRecording';
 import { useSettingsManager } from '../../hooks/useSettingsManager';
@@ -79,6 +80,19 @@ export default function InputArea({
     addQuotedImage,
     clearUploadError,
   } = useImageUpload();
+
+  // PDF 文件上传 Hook
+  const {
+    files,
+    uploadedFileUrls,
+    isUploading: isFileUploading,
+    uploadError: fileUploadError,
+    hasFiles,
+    handleFileSelect,
+    handleRemoveFile,
+    handleRemoveAllFiles,
+    clearUploadError: clearFileUploadError,
+  } = useFileUpload();
 
   // 音频录制 Hook
   const {
@@ -171,6 +185,12 @@ export default function InputArea({
     }
   }, [audioRecordingError, uploadError]);
 
+  useEffect(() => {
+    if (fileUploadError && !uploadError) {
+      setUploadError(fileUploadError);
+    }
+  }, [fileUploadError, uploadError]);
+
   // 包装 handleRemoveImage 以清除错误
   const handleRemoveImage = useCallback((imageId: string) => {
     removeImageById(imageId);
@@ -219,7 +239,8 @@ export default function InputArea({
       return;
     }
 
-    const sendButtonState = getSendButtonState(isSubmitting, isUploading, !!(prompt.trim() || hasImages));
+    const anyUploading = isUploading || isFileUploading;
+    const sendButtonState = getSendButtonState(isSubmitting, anyUploading, !!(prompt.trim() || hasImages || hasFiles));
     if (sendButtonState.disabled) return;
 
     // 检查全局任务限制
@@ -232,10 +253,13 @@ export default function InputArea({
     const messageContent = prompt.trim();
     // 准备图片 URL 数组：使用服务器 URL（确保图片已上传完成）
     const imageUrls = uploadedImageUrls.length > 0 ? [...uploadedImageUrls] : null;
+    // 准备 PDF 文件数组
+    const fileData = uploadedFileUrls.length > 0 ? [...uploadedFileUrls] : null;
 
     // 立即清空输入（提升响应速度）
     setPrompt('');
     handleRemoveAllImages();  // 30秒后才会清理 ObjectURL
+    handleRemoveAllFiles();
     setIsSubmitting(true);
 
     // 发送消息时滚动到底部（用户可能在上方浏览历史）
@@ -266,7 +290,8 @@ export default function InputArea({
         await handleChatMessage(
           messageContent,
           currentConversationId!,
-          imageUrls     // 使用服务器 URL（已上传完成）
+          imageUrls,    // 使用服务器 URL（已上传完成）
+          fileData,     // PDF 文件信息
         );
       } else if (selectedModel.type === 'video') {
         await handleVideoGeneration(currentConversationId!, messageContent, imageUrls);
@@ -291,7 +316,8 @@ export default function InputArea({
     }
   };
 
-  const sendButtonState = getSendButtonState(isSubmitting, isUploading, !!(prompt.trim() || hasImages));
+  const anyUploadingState = isUploading || isFileUploading;
+  const sendButtonState = getSendButtonState(isSubmitting, anyUploadingState, !!(prompt.trim() || hasImages || hasFiles));
 
   // 输入变化时清除发送错误状态
   const handlePromptChange = useCallback((value: string) => {
@@ -308,6 +334,7 @@ export default function InputArea({
           onDismiss={() => {
             setUploadError(null);
             clearUploadError();
+            clearFileUploadError();
           }}
         />
 
@@ -373,6 +400,10 @@ export default function InputArea({
           onImageSelect={handleImageSelect}
           onImageDrop={handleImageDrop}
           onImagePaste={handleImagePaste}
+          files={files}
+          maxPDFSize={selectedModel.capabilities.maxPDFSize}
+          onRemoveFile={handleRemoveFile}
+          onFileSelect={handleFileSelect}
           recordingState={recordingState}
           audioBlob={audioBlob}
           audioDuration={audioDuration}

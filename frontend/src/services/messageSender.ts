@@ -352,6 +352,27 @@ export function createTextWithImages(text: string, imageUrls: string[]): Content
 }
 
 /**
+ * 创建带文件（PDF）的混合内容
+ */
+export function createTextWithFiles(
+  text: string,
+  imageUrls: string[] | null,
+  files: { url: string; name: string; mime_type: string; size: number }[],
+): ContentPart[] {
+  return [
+    { type: 'text', text },
+    ...(imageUrls || []).map(url => ({ type: 'image' as const, url })),
+    ...files.map(f => ({
+      type: 'file' as const,
+      url: f.url,
+      name: f.name,
+      mime_type: f.mime_type,
+      size: f.size,
+    })),
+  ];
+}
+
+/**
  * 从 ContentPart[] 提取文本
  */
 export function getTextFromContent(content: ContentPart[]): string {

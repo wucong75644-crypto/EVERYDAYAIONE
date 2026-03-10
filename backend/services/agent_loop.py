@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from loguru import logger
 
-from schemas.message import ContentPart, GenerationType, TextPart, ImagePart
+from schemas.message import ContentPart, FilePart, GenerationType, TextPart, ImagePart
 from config.agent_tools import (
     AGENT_TOOLS,
     AGENT_SYSTEM_PROMPT,
@@ -28,8 +28,15 @@ from config.agent_tools import (
     TERMINAL_TOOLS,
     validate_tool_call,
 )
-from config.smart_model_config import TOOL_TO_TYPE
 from services.agent_types import AgentResult, PendingAsyncTool, AgentGuardrails
+from services.agent_result_builder import (
+    build_chat_result,
+    build_terminal_result,
+    build_ask_user_result,
+    build_search_result,
+    build_async_result,
+    build_graceful_timeout,
+)
 from services.tool_executor import ToolExecutor
 
 # 向后兼容：外部通过 from services.agent_loop import AgentResult 导入
@@ -60,11 +67,12 @@ class AgentLoop:
         """执行 Agent Loop，返回路由结果"""
         text = self._extract_text(content)
         has_image = any(isinstance(p, ImagePart) for p in content)
+        has_file = any(isinstance(p, FilePart) for p in content)
 
         result = await self._execute_loop(content)
 
         # 记录 Agent Loop 路由信号
-        self._record_loop_signal(result, len(text), has_image)
+        self._record_loop_signal(result, len(text), has_image, has_file)
 
         return result
 
@@ -85,6 +93,10 @@ class AgentLoop:
         if image_count > 0:
             user_text = f"[上下文：用户附带了{image_count}张图片]\n{user_text}"
 
+        file_count = sum(1 for p in content if isinstance(p, FilePart))
+        if file_count > 0:
+            user_text = f"[上下文：用户附带了{file_count}份PDF文档，请选择支持PDF的模型]\n{user_text}"
+
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_text},
@@ -100,7 +112,7 @@ class AgentLoop:
                     f"Agent loop token budget exceeded | "
                     f"tokens={guardrails.tokens_used} | turn={turn}"
                 )
-                return self._build_graceful_timeout(
+                return build_graceful_timeout(
                     pending_async, accumulated_context, turn, guardrails.tokens_used,
                 )
 
@@ -116,7 +128,7 @@ class AgentLoop:
             # 3. 解析 tool_calls
             choices = response.get("choices", [])
             if not choices:
-                return self._build_chat_result(
+                return build_chat_result(
                     "", accumulated_context, turn + 1, guardrails.tokens_used,
                 )
 
@@ -126,7 +138,7 @@ class AgentLoop:
             # 无 tool_calls → 大脑直接文字回复
             if not tool_calls:
                 text_content = message.get("content", "")
-                return self._build_chat_result(
+                return build_chat_result(
                     text_content, accumulated_context, turn + 1, guardrails.tokens_used,
                 )
 
@@ -142,14 +154,14 @@ class AgentLoop:
 
             # 5. 纯异步（无同步结果需要回传）→ 结束
             if not tool_results and pending_async:
-                return self._build_async_result(
+                return build_async_result(
                     pending_async, accumulated_context,
                     turn + 1, guardrails.tokens_used,
                 )
 
             # 没有任何结果也没有异步 → 退出
             if not tool_results and not pending_async:
-                return self._build_chat_result(
+                return build_chat_result(
                     "", accumulated_context, turn + 1, guardrails.tokens_used,
                 )
 
@@ -163,7 +175,7 @@ class AgentLoop:
                 })
 
         # 超出轮次 → 优雅终止
-        return self._build_graceful_timeout(
+        return build_graceful_timeout(
             pending_async, accumulated_context,
             guardrails.max_turns, guardrails.tokens_used,
         )
@@ -204,7 +216,7 @@ class AgentLoop:
         # 循环检测
         if tool_name in SYNC_TOOLS and guardrails.detect_loop(tool_name, arguments):
             logger.warning(f"Loop detected | tool={tool_name}")
-            return self._build_graceful_timeout(
+            return build_graceful_timeout(
                 pending_async, accumulated_context, turn + 1, guardrails.tokens_used,
             )
 
@@ -215,21 +227,23 @@ class AgentLoop:
 
         # 分发：终端工具
         if tool_name == "ask_user":
-            return self._build_ask_user_result(
+            return build_ask_user_result(
                 arguments, accumulated_context, pending_async,
                 turn + 1, guardrails.tokens_used,
+                conversation_id=self.conversation_id,
             )
         if tool_name in TERMINAL_TOOLS:
-            return self._build_terminal_result(
+            return build_terminal_result(
                 tool_name, arguments, accumulated_context,
                 pending_async, turn + 1, guardrails.tokens_used,
             )
 
         # web_search → 终端工具：大脑只判断意图，搜索由能力匹配的模型执行
         if tool_name == "web_search":
-            return self._build_search_result(
+            return build_search_result(
                 arguments, accumulated_context,
                 turn + 1, guardrails.tokens_used,
+                conversation_id=self.conversation_id,
             )
 
         # 分发：同步工具
@@ -278,199 +292,6 @@ class AgentLoop:
         )
         response.raise_for_status()
         return response.json()
-
-    # ========================================
-    # 结果构建
-    # ========================================
-
-    def _build_chat_result(
-        self, text: str, context: List[str], turns: int, tokens: int,
-    ) -> AgentResult:
-        """大脑直接文字回复 → 走 ChatHandler"""
-        from config.smart_model_config import DEFAULT_CHAT_MODEL
-
-        search_ctx = "\n".join(context) if context else None
-        return AgentResult(
-            generation_type=GenerationType.CHAT,
-            model=DEFAULT_CHAT_MODEL,
-            search_context=search_ctx,
-            direct_reply=text if text else None,
-            turns_used=turns,
-            total_tokens=tokens,
-        )
-
-    def _build_terminal_result(
-        self,
-        tool_name: str,
-        arguments: Dict[str, Any],
-        context: List[str],
-        pending_async: List[PendingAsyncTool],
-        turns: int,
-        tokens: int,
-    ) -> AgentResult:
-        """终端工具 → 构建最终结果"""
-        model = arguments.get("model", "")
-        search_ctx = "\n".join(context) if context else None
-
-        if tool_name == "text_chat":
-            return AgentResult(
-                generation_type=GenerationType.CHAT,
-                model=model,
-                system_prompt=arguments.get("system_prompt"),
-                search_context=search_ctx,
-                tool_params=arguments,
-                turns_used=turns,
-                total_tokens=tokens,
-            )
-
-        if tool_name == "finish" and pending_async:
-            return self._build_async_result(pending_async, context, turns, tokens)
-
-        return AgentResult(
-            generation_type=GenerationType.CHAT,
-            model="",
-            search_context=search_ctx,
-            turns_used=turns,
-            total_tokens=tokens,
-        )
-
-    def _build_ask_user_result(
-        self,
-        arguments: Dict[str, Any],
-        context: List[str],
-        pending_async: List[PendingAsyncTool],
-        turns: int,
-        tokens: int,
-    ) -> AgentResult:
-        """ask_user → 大脑主动回复用户（追问/说明）"""
-        message = arguments.get("message", "")
-        reason = arguments.get("reason", "need_info")
-        search_ctx = "\n".join(context) if context else None
-
-        logger.info(
-            f"Agent ask_user | reason={reason} | "
-            f"conv={self.conversation_id} | turns={turns}"
-        )
-
-        return AgentResult(
-            generation_type=GenerationType.CHAT,
-            model="",
-            search_context=search_ctx,
-            direct_reply=message,
-            tool_params={"_ask_reason": reason},
-            turns_used=turns,
-            total_tokens=tokens,
-        )
-
-    def _build_search_result(
-        self,
-        arguments: Dict[str, Any],
-        context: List[str],
-        turns: int,
-        tokens: int,
-    ) -> AgentResult:
-        """web_search → 按能力匹配搜索模型（从模型库按优先级取）
-
-        大脑只负责判断"需要搜索"，实际搜索由模型库中有搜索能力的模型执行。
-        模型选择：smart_models.json → web_search.models（按 priority 排序）→ 取第一个。
-        """
-        from config.smart_model_config import SMART_CONFIG, DEFAULT_CHAT_MODEL
-
-        ws_models = SMART_CONFIG.get("web_search", {}).get("models", [])
-        model = ws_models[0]["id"] if ws_models else DEFAULT_CHAT_MODEL
-
-        search_ctx = "\n".join(context) if context else None
-
-        logger.info(
-            f"Agent web_search → routed to search model | model={model} | "
-            f"query={arguments.get('search_query', '')} | conv={self.conversation_id}"
-        )
-
-        return AgentResult(
-            generation_type=GenerationType.CHAT,
-            model=model,
-            system_prompt=arguments.get("system_prompt"),
-            search_context=search_ctx,
-            tool_params={
-                "_needs_google_search": True,
-                "_search_query": arguments.get("search_query", ""),
-            },
-            turns_used=turns,
-            total_tokens=tokens,
-        )
-
-    # 工具名 → 前端渲染提示（大脑控制前端显示）
-    _TOOL_RENDER_HINTS: Dict[str, Dict[str, str]] = {
-        "generate_image": {"placeholder_text": "图片生成中", "component": "image_grid"},
-        "generate_video": {"placeholder_text": "视频生成中", "component": "video_player"},
-        "batch_generate_image": {"placeholder_text": "图片生成中", "component": "image_grid"},
-    }
-
-    def _build_async_result(
-        self,
-        pending_async: List[PendingAsyncTool],
-        context: List[str],
-        turns: int,
-        tokens: int,
-    ) -> AgentResult:
-        """纯异步工具 → 从第一个异步工具推断 generation_type"""
-        if not pending_async:
-            return self._build_chat_result("", context, turns, tokens)
-
-        first = pending_async[0]
-        gen_type = TOOL_TO_TYPE.get(first.tool_name, GenerationType.CHAT)
-        model = first.arguments.get("model", "")
-        search_ctx = "\n".join(context) if context else None
-        render_hints = self._TOOL_RENDER_HINTS.get(first.tool_name)
-
-        if first.tool_name == "batch_generate_image":
-            prompts = first.arguments.get("prompts", [])
-            return AgentResult(
-                generation_type=GenerationType.IMAGE,
-                model=model,
-                search_context=search_ctx,
-                batch_prompts=prompts,
-                tool_params=first.arguments,
-                render_hints=render_hints,
-                turns_used=turns,
-                total_tokens=tokens,
-            )
-
-        return AgentResult(
-            generation_type=gen_type,
-            model=model,
-            search_context=search_ctx,
-            tool_params=first.arguments,
-            render_hints=render_hints,
-            turns_used=turns,
-            total_tokens=tokens,
-        )
-
-    def _build_graceful_timeout(
-        self,
-        pending_async: List[PendingAsyncTool],
-        context: List[str],
-        turns: int,
-        tokens: int,
-    ) -> AgentResult:
-        """超出轮次/token → 优雅终止（保存已有进度）"""
-        logger.warning(
-            f"Agent loop graceful timeout | turns={turns} | "
-            f"tokens={tokens} | pending_async={len(pending_async)}"
-        )
-
-        if pending_async:
-            return self._build_async_result(pending_async, context, turns, tokens)
-        if context:
-            return self._build_chat_result("", context, turns, tokens)
-
-        from config.smart_model_config import DEFAULT_CHAT_MODEL
-        return AgentResult(
-            generation_type=GenerationType.CHAT,
-            model=DEFAULT_CHAT_MODEL,
-            turns_used=turns,
-            total_tokens=tokens,
-        )
 
     # ========================================
     # 系统提示词
@@ -545,7 +366,8 @@ class AgentLoop:
         return self._client
 
     def _record_loop_signal(
-        self, result: AgentResult, input_length: int, has_image: bool,
+        self, result: AgentResult, input_length: int,
+        has_image: bool, has_file: bool = False,
     ) -> None:
         """记录 Agent Loop 路由信号到 knowledge_metrics"""
         async def _do_record() -> None:
@@ -562,6 +384,7 @@ class AgentLoop:
                         "recommended_model": result.model,
                         "input_length": input_length,
                         "has_image": has_image,
+                        "has_file": has_file,
                         "loop_turns": result.turns_used,
                         "loop_tokens": result.total_tokens,
                     },

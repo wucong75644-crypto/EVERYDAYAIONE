@@ -16,6 +16,7 @@ GOOGLE_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "supports_vision": True,
         "supports_video": True,
         "supports_audio": True,
+        "supports_pdf": True,
         "supports_tools": True,
         # 成本（免费层）
         "cost_per_1k_input": Decimal("0"),
@@ -32,6 +33,7 @@ GOOGLE_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "supports_vision": True,
         "supports_video": True,
         "supports_audio": True,
+        "supports_pdf": True,
         "supports_tools": True,
         # 成本（免费层）
         "cost_per_1k_input": Decimal("0"),

@@ -28,13 +28,19 @@ class ChatContextMixin:
     ) -> List[Dict[str, Any]]:
         """组装发送给 LLM 的完整消息列表"""
         image_urls = self._extract_image_urls(content)
+        file_urls = self._extract_file_urls(content)
 
         # 当前用户消息
         messages = [{"role": "user", "content": text_content}]
-        if image_urls:
+        if image_urls or file_urls:
+            # 图片和文件统一用 image_url 格式（Gemini 通过 MIME 自动识别 PDF）
+            media_parts = [
+                *[{"type": "image_url", "image_url": {"url": url}} for url in image_urls],
+                *[{"type": "image_url", "image_url": {"url": url}} for url in file_urls],
+            ]
             messages[0]["content"] = [
                 {"type": "text", "text": text_content},
-                *[{"type": "image_url", "image_url": {"url": url}} for url in image_urls],
+                *media_parts,
             ]
 
         # 搜索上下文注入（作为 system prompt，让工作模型基于搜索结果回答）
