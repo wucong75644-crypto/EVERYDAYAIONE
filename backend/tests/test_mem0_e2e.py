@@ -9,7 +9,7 @@ Mem0 端到端集成测试
 5. 删除记忆
 
 运行方式（需要 .env 中配置 SUPABASE_DB_URL 和 DASHSCOPE_API_KEY）：
-  python -m pytest backend/tests/test_mem0_e2e.py -v -s
+  RUN_E2E=1 python -m pytest backend/tests/test_mem0_e2e.py -v -s
 """
 
 import asyncio
@@ -25,6 +25,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # 加载 .env
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+
+# E2E 测试需要真实 API，仅在显式指定 RUN_E2E=1 时运行
+pytestmark = pytest.mark.skipif(
+    not os.getenv("RUN_E2E"),
+    reason="E2E test requires RUN_E2E=1 (real DashScope API + Supabase DB)",
+)
 
 
 @pytest.fixture(scope="module")

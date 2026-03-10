@@ -609,12 +609,16 @@ export const ALL_MODELS: UnifiedModel[] = [
   },
 ];
 
-// 根据图片状态筛选可用模型
-export function getAvailableModels(hasImage: boolean): UnifiedModel[] {
-  // 显示所有模型，让冲突检测来处理不匹配的情况
-  // hasImage 参数保留供未来筛选逻辑使用
+// 根据订阅状态筛选可用模型（auto 智能模式始终可用）
+export function getAvailableModels(
+  hasImage: boolean,
+  subscribedModelIds?: string[],
+): UnifiedModel[] {
   void hasImage;
-  return ALL_MODELS;
+  if (!subscribedModelIds) return ALL_MODELS;
+  return ALL_MODELS.filter(
+    (m) => m.id === 'auto' || subscribedModelIds.includes(m.id),
+  );
 }
 
 // ============================================================

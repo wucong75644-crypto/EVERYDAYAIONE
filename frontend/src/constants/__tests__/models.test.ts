@@ -148,13 +148,39 @@ describe('聊天模型完整性', () => {
 // ============================================================
 
 describe('getAvailableModels', () => {
-  it('返回所有模型', () => {
+  it('无 subscribedModelIds 参数时返回所有模型', () => {
     const models = getAvailableModels(false);
     expect(models.length).toBe(ALL_MODELS.length);
   });
 
-  it('有图片时也返回所有模型', () => {
+  it('有图片时也返回所有模型（无订阅过滤）', () => {
     const models = getAvailableModels(true);
+    expect(models.length).toBe(ALL_MODELS.length);
+  });
+
+  it('传入 subscribedModelIds 只返回已订阅模型 + auto', () => {
+    const models = getAvailableModels(false, ['gemini-3-flash', 'deepseek-v3.2']);
+    const ids = models.map((m) => m.id);
+    expect(ids).toContain('auto');
+    expect(ids).toContain('gemini-3-flash');
+    expect(ids).toContain('deepseek-v3.2');
+    expect(ids).not.toContain('gemini-3-pro');
+  });
+
+  it('auto 智能模式始终可用，即使不在订阅列表', () => {
+    const models = getAvailableModels(false, ['gemini-3-flash']);
+    const ids = models.map((m) => m.id);
+    expect(ids).toContain('auto');
+  });
+
+  it('空订阅列表只返回 auto', () => {
+    const models = getAvailableModels(false, []);
+    expect(models.length).toBe(1);
+    expect(models[0].id).toBe('auto');
+  });
+
+  it('undefined subscribedModelIds 等同于无过滤', () => {
+    const models = getAvailableModels(false, undefined);
     expect(models.length).toBe(ALL_MODELS.length);
   });
 });

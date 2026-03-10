@@ -32,26 +32,47 @@
 - 实现文件：`context_summarizer.py`、`chat_context_mixin.py`
 - DB 迁移：`migrations/add_context_summary.sql`
 
+### ✅ 智能模式 — 千问路由 + Agentic Retry（2026-03-09）
+- 大脑（千问）通过 Function Calling 判断意图 + 选择工作模型 + 生成人设
+- Agentic Retry Loop：工作模型失败 → 回传大脑重新判断 → 选新模型重试
+- 动态模型选择：千问通过 ROUTER_TOOLS 的 model enum 自选工作模型
+- 实现文件：`agent_loop.py`、`intent_router.py`、`smart_model_config.py`
+
+### ✅ Agent 自主知识库 — 基础设施（2026-03-09）
+- 知识库 DB 表：`knowledge_nodes`（向量检索）+ `knowledge_edges`（关系图）+ `knowledge_metrics`（指标记录）
+- 种子知识：24 个模型知识 + 3 个工具参数 + 2 个经验模式，启动时自动加载
+- 路由知识注入：`_enhance_with_knowledge()` 查询 top-5 相关知识注入大脑 system prompt
+- 指标记录：Chat/Image/Video 任务完成后 fire-and-forget 记录到 `knowledge_metrics`
+- 实现文件：`knowledge_service.py`、`knowledge_config.py`、`knowledge_metrics.py`、`seed_knowledge.json`
+- DB 迁移：`migrations/023_add_knowledge_base.sql`
+
+### ✅ 搜索架构重构（2026-03-10）
+- web_search 从同步工具改为终端工具：大脑判断"需要搜索" → 立即退出 → 系统路由到搜索模型
+- 按能力匹配搜索模型：从 `smart_models.json` 的 `web_search` 分类按优先级取，零硬编码
+- Google Search Grounding：ChatHandler 按需注入 Google Search tool
+- 搜索响应从 ~25 秒降到 ~5 秒
+- 实现文件：`agent_loop.py`（`_build_search_result`）、`message.py`（透传标志）、`chat_handler.py`（注入搜索工具）
+
+### ✅ 模型能力注册（2026-03-10）
+- ModelConfig 新增 4 个能力字段：`supports_search`、`supports_thinking`、`supports_structured_output`、`supports_audio`
+- 19 个模型全部标注正确能力（跨 KIE/DashScope/OpenRouter/Google 四个 provider）
+- 修复 gemini-3-flash 搜索能力标记（False → True）
+- 为未来按能力匹配模型提供数据基础
+- 实现文件：`types.py`、`factory.py`、`kie/configs.py`、`kie_models.py`
+
 ---
 
 ## 开发计划（按顺序执行）
 
-### 第一步：Agent 自主知识库 ← 当前
-
-> 让 Agent 每次执行任务后自动积累经验，后续决策时检索知识，越用越聪明。
-> 与用户记忆互补——记忆是"了解用户"，知识库是"了解自己的能力"。
-
-**核心功能**：
-1. 分类存储：知识按类型分区（模型知识、工具知识、执行经验），支持向量检索
-2. 自动提取：Chat/Image/Video 任务完成后，自动提取知识（成功经验、失败教训、模型表现）
-3. 按需检索：路由决策前查询知识库，辅助选择更合适的模型/参数
-4. 自动更新：新知识与旧知识冲突时更新而非堆叠，保持知识库干净
-
-**边界约束**：
-- 不包含 ERP 对接、企业微信对接（第三步做）
-- 不包含工具编排能力（第二步做）
-- 复用现有 DashScope + PostgreSQL 基础设施
-- 知识提取 fire-and-forget，不阻塞主流程
+### ✅ Agent 自主知识库 — 动态评分（2026-03-10）
+- 每小时从 `knowledge_metrics` 聚合模型表现（成功率、P75 延迟、重试率）
+- EMA 平滑（α=0.2）+ 7 天滑动窗口，自然衰减旧数据，抗网络抖动
+- 评分作为 `source="aggregated"` 知识节点写入，路由时自动注入大脑参考
+- 异常保护：最小样本量门槛、P75 抗抖动、错误码分类、冷启动 confidence 分级（<10→0.3, <50→0.7, ≥50→0.9）
+- 审核日志：`scoring_audit_log` 表记录每次评分变化，Δ≥0.1 标记 `pending_review` 暂不生效
+- 审核页面属于超级管理员功能，待管理后台设计后实现（见第五步），暂用 SQL 直接操作
+- 实现文件：`model_scorer.py`、`background_task_worker.py`（`_run_model_scoring`）
+- DB 迁移：`migrations/025_add_scoring_audit_log.sql`
 
 ---
 
@@ -69,9 +90,10 @@
 - "搜索最新新闻并总结" → AI 调搜索工具 → 拿到结果 → 调 LLM 总结
 
 **前置依赖**：
-- ✅ 智能路由（已有，识别意图）
-- ✅ 上下文记忆（已有，AI 知道之前聊了什么）
-- ✅ Agent 自主知识库（第一步完成后）
+- ✅ 智能路由（已完成，千问 Function Calling + Agentic Retry）
+- ✅ 上下文记忆（已完成，Mem0 + 摘要压缩）
+- ✅ Agent 自主知识库（基础设施 + 动态评分已完成）
+- ✅ 搜索能力（已完成，web_search 终端工具 + Google Search Grounding）
 - 需要：定义工具注册表（tool registry）、工具执行引擎、结果回传机制
 
 ---
@@ -118,3 +140,20 @@
 - 第二步工具编排（Agent 先会用工具，才能造工具）
 - 第三步 ERP 数据接入（有真实业务数据驱动）
 - 沙箱执行环境（安全运行 Agent 生成的代码）
+
+---
+
+### 第五步：超级管理员后台
+
+> 平台运营管理界面，集中管控模型、用户、审核等系统级功能。
+
+**核心功能**：
+- 模型评分审核：查看自动聚合的评分变化，一键批准/撤回（对接 `scoring_audit_log`）
+- 模型管理：查看/编辑模型配置、能力标记、优先级
+- 用户管理：用户列表、积分管理、权限分配
+- 系统监控：API 调用量、模型成功率、延迟趋势图
+- 知识库管理：查看/编辑/删除知识节点，手动添加经验
+
+**前置依赖**：
+- ✅ 模型评分聚合（第一步完成后，审核数据已有）
+- 需要：管理后台 UI 设计、权限体系（超级管理员角色）

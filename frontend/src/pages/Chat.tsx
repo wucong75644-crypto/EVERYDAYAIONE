@@ -8,7 +8,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useMessageStore } from '../stores/useMessageStore';
 import Sidebar from '../components/chat/Sidebar';
@@ -55,6 +55,7 @@ function getInitialConversationId(): string | null {
 export default function Chat() {
   const navigate = useNavigate();
   const { id: urlConversationId } = useParams<{ id?: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, refreshUser } = useAuthStore();
 
   // 性能监控：标记组件挂载时间
@@ -139,6 +140,18 @@ export default function Chat() {
       localStorage.setItem(USER_REFRESH_KEY, String(Date.now()));
     });
   }, [refreshUser]);
+
+  // 从 URL query 读取 model 参数（从模型广场跳转过来）
+  useEffect(() => {
+    const modelParam = searchParams.get('model');
+    if (modelParam) {
+      // 设置为对话模型，让 InputArea 的 useModelSelection 自动选中
+      setConversationModelId(modelParam);
+      // 清除 query 参数，避免刷新重复触发
+      searchParams.delete('model');
+      setSearchParams(searchParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   // 监听跨标签页同步事件
   useEffect(() => {

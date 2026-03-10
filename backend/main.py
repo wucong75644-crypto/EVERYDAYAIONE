@@ -16,7 +16,10 @@ from loguru import logger
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from api.routes import audio, auth, conversation, health, image, memory, message, task, webhook, ws
+from api.routes import (
+    audio, auth, conversation, health, image, memory, message,
+    models, subscription, task, webhook, ws,
+)
 from core.config import get_settings
 from core.exceptions import AppException
 from core.limiter import limiter
@@ -305,6 +308,10 @@ def register_routers(app: FastAPI) -> None:
 
     # Webhook 回调（无需用户鉴权，Provider 直接调用）
     app.include_router(webhook.router, prefix="/api")
+
+    # 模型 + 订阅
+    app.include_router(models.router, prefix="/api")
+    app.include_router(subscription.router, prefix="/api")
 
     # WebSocket
     app.include_router(ws.router, prefix="/api")

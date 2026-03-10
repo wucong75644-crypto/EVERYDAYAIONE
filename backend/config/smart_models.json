@@ -145,7 +145,7 @@
       },
       {
         "id": "gemini-3-flash",
-        "description": "快速响应，适合简单搜索",
+        "description": "快速响应，适合简单搜索（支持Google Search）",
         "priority": 2
       }
     ],

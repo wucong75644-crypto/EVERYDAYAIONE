@@ -5,6 +5,7 @@
 import { create } from 'zustand';
 import type { User } from '../types/auth';
 import { getCurrentUser } from '../services/auth';
+import { useSubscriptionStore } from './useSubscriptionStore';
 import { logger } from '../utils/logger';
 
 interface AuthState {
@@ -42,6 +43,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     localStorage.removeItem('user');
     localStorage.removeItem('everydayai_conversations_cache'); // 清除对话列表缓存
     localStorage.removeItem('everydayai_message_cache'); // 清除消息缓存
+    useSubscriptionStore.getState().clearSubscriptions();
     set({ user: null, isAuthenticated: false });
   },
 
