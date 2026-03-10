@@ -327,19 +327,63 @@ class MemoryService(MemorySettingsService):
             )
 
             # 第二级：千问精排
+            t0_filter = time.monotonic()
             filtered = await filter_memories(query, memories)
+            filter_latency_ms = int((time.monotonic() - t0_filter) * 1000)
             filtered = filtered[:limit]
 
             logger.info(
                 f"Memory pipeline done | user_id={user_id} | "
                 f"searched={len(memories)} -> filtered={len(filtered)}"
             )
+
+            # 记录记忆检索效果信号
+            self._record_memory_search_signal(
+                user_id=user_id,
+                mem0_returned=len(memories),
+                filtered_count=len(filtered),
+                filter_latency_ms=filter_latency_ms,
+                query_length=len(query),
+            )
+
             return filtered
         except Exception as e:
             logger.warning(
                 f"Memory search failed, skipping | user_id={user_id} | error={e}"
             )
             return []
+
+    @staticmethod
+    def _record_memory_search_signal(
+        user_id: str,
+        mem0_returned: int,
+        filtered_count: int,
+        filter_latency_ms: int,
+        query_length: int,
+    ) -> None:
+        """记录记忆检索效果信号到 knowledge_metrics（fire-and-forget）"""
+
+        async def _do_record() -> None:
+            try:
+                from services.knowledge_service import record_metric
+                await record_metric(
+                    task_type="memory_search",
+                    model_id="mem0",
+                    status="success",
+                    user_id=user_id,
+                    params={
+                        "mem0_returned": mem0_returned,
+                        "filtered_count": filtered_count,
+                        "filter_latency_ms": filter_latency_ms,
+                        "query_length": query_length,
+                    },
+                )
+            except Exception as e:
+                logger.debug(
+                    f"Memory search signal record skipped | error={e}"
+                )
+
+        asyncio.create_task(_do_record())
 
     async def extract_memories_from_conversation(
         self,

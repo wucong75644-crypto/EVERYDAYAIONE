@@ -5,9 +5,11 @@
 支持聊天、图片、视频等多种生成类型。
 """
 
+import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
+from loguru import logger
 
 from api.deps import CurrentUser, CurrentUserId, Database, TaskLimitSvc
 from core.limiter import limiter, RATE_LIMITS
@@ -119,6 +121,61 @@ async def _legacy_resolve(body, user_id: str, conversation_id: str):
         return infer_generation_type(body.content), None
     finally:
         await router.close()
+
+
+# ============================================================
+# 用户反馈信号
+# ============================================================
+
+
+def _record_user_feedback_signal(
+    db,
+    user_id: str,
+    operation: str,
+    model: str | None,
+    gen_type: str,
+    original_message_id: str | None,
+    conversation_id: str,
+) -> None:
+    """记录用户反馈信号到 knowledge_metrics（fire-and-forget）"""
+
+    async def _do_record() -> None:
+        try:
+            # 从原消息提取原始模型
+            original_model = None
+            if original_message_id:
+                try:
+                    orig = db.table("messages").select(
+                        "generation_params"
+                    ).eq("id", original_message_id).maybe_single().execute()
+                    if orig and orig.data:
+                        import json as _json
+                        gp = orig.data.get("generation_params") or {}
+                        if isinstance(gp, str):
+                            gp = _json.loads(gp)
+                        original_model = gp.get("model")
+                except Exception:
+                    pass
+
+            from services.knowledge_service import record_metric
+            await record_metric(
+                task_type="user_feedback",
+                model_id=model or "unknown",
+                status="success",
+                user_id=user_id,
+                params={
+                    "feedback_type": operation,
+                    "original_model": original_model,
+                    "new_model": model,
+                    "original_task_type": gen_type,
+                    "original_message_id": original_message_id,
+                    "conversation_id": conversation_id,
+                },
+            )
+        except Exception as e:
+            logger.debug(f"User feedback signal record skipped | error={e}")
+
+    asyncio.create_task(_do_record())
 
 
 # ============================================================
@@ -264,6 +321,22 @@ async def generate_message(
             gen_type=gen_type,
             model=body.model,
             params=body.params,
+        )
+
+    # 5.1 记录用户反馈信号（retry/regenerate = 用户对生成结果的隐式反馈）
+    if body.operation in (
+        MessageOperation.RETRY,
+        MessageOperation.REGENERATE,
+        MessageOperation.REGENERATE_SINGLE,
+    ):
+        _record_user_feedback_signal(
+            db=db,
+            user_id=user_id,
+            operation=body.operation.value,
+            model=body.model,
+            gen_type=gen_type.value,
+            original_message_id=body.original_message_id,
+            conversation_id=conversation_id,
         )
 
     # 6. 获取 Handler 并启动任务

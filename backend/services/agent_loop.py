@@ -11,6 +11,7 @@ Agent Loop — 多步工具编排引擎 (ReAct 模式)
 - Schema 验证（拒绝幻觉工具调用）
 """
 
+import asyncio
 import json
 import time as _time
 from typing import Any, Dict, List, Optional
@@ -57,6 +58,18 @@ class AgentLoop:
 
     async def run(self, content: List[ContentPart]) -> AgentResult:
         """执行 Agent Loop，返回路由结果"""
+        text = self._extract_text(content)
+        has_image = any(isinstance(p, ImagePart) for p in content)
+
+        result = await self._execute_loop(content)
+
+        # 记录 Agent Loop 路由信号
+        self._record_loop_signal(result, len(text), has_image)
+
+        return result
+
+    async def _execute_loop(self, content: List[ContentPart]) -> AgentResult:
+        """Agent Loop 核心循环"""
         from core.config import get_settings
 
         self._settings = get_settings()
@@ -530,6 +543,33 @@ class AgentLoop:
                 timeout=httpx.Timeout(self._settings.agent_loop_timeout),
             )
         return self._client
+
+    def _record_loop_signal(
+        self, result: AgentResult, input_length: int, has_image: bool,
+    ) -> None:
+        """记录 Agent Loop 路由信号到 knowledge_metrics"""
+        async def _do_record() -> None:
+            try:
+                from services.knowledge_service import record_metric
+                await record_metric(
+                    task_type="routing",
+                    model_id="agent_loop",
+                    status="success",
+                    user_id=self.user_id,
+                    params={
+                        "routing_tool": result.generation_type.value,
+                        "routed_by": "agent_loop",
+                        "recommended_model": result.model,
+                        "input_length": input_length,
+                        "has_image": has_image,
+                        "loop_turns": result.turns_used,
+                        "loop_tokens": result.total_tokens,
+                    },
+                )
+            except Exception as e:
+                logger.debug(f"Agent loop signal record skipped | error={e}")
+
+        asyncio.create_task(_do_record())
 
     async def close(self) -> None:
         """关闭 HTTP 客户端"""

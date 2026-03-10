@@ -11,6 +11,7 @@
 重试降级链：千问主模型 → 千问备用 → 确定性兜底 → 放弃
 """
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -173,20 +174,34 @@ class IntentRouter:
         from core.config import get_settings
 
         settings = get_settings()
+        text = self._extract_text(content)
+        input_length = len(text) if text else 0
+        has_image = any(isinstance(p, ImagePart) for p in content)
 
         if not settings.intent_router_enabled:
-            return self._keyword_fallback(content)
+            decision = self._keyword_fallback(content)
+            self._record_routing_signal(
+                decision, user_id, input_length, has_image, "disabled",
+            )
+            return decision
 
         if not settings.dashscope_api_key:
             logger.warning("Intent router skipped: DASHSCOPE_API_KEY not configured")
-            return self._keyword_fallback(content)
+            decision = self._keyword_fallback(content)
+            self._record_routing_signal(
+                decision, user_id, input_length, has_image, "no_api_key",
+            )
+            return decision
 
-        text = self._extract_text(content)
         if not text or len(text.strip()) < 2:
-            return RoutingDecision(
+            decision = RoutingDecision(
                 generation_type=GenerationType.CHAT,
                 routed_by="skip_empty",
             )
+            self._record_routing_signal(
+                decision, user_id, input_length, has_image, "skip_empty",
+            )
+            return decision
 
         # 上下文前缀（让千问知道用户是否附带了图片）
         image_count = sum(1 for p in content if isinstance(p, ImagePart))
@@ -220,6 +235,9 @@ class IntentRouter:
                         f"recommended={decision.recommended_model} | "
                         f"router_model={model} | user_id={user_id}"
                     )
+                    self._record_routing_signal(
+                        decision, user_id, input_length, has_image, model,
+                    )
                     return decision
             except Exception as e:
                 logger.warning(
@@ -228,7 +246,11 @@ class IntentRouter:
                 )
 
         logger.warning("All router models failed, using keyword fallback")
-        return self._keyword_fallback(content)
+        decision = self._keyword_fallback(content)
+        self._record_routing_signal(
+            decision, user_id, input_length, has_image, "all_failed",
+        )
+        return decision
 
     # ------ 重试路由 ------
 
@@ -478,6 +500,36 @@ class IntentRouter:
                 timeout=httpx.Timeout(timeout),
             )
         return self._client
+
+    @staticmethod
+    def _record_routing_signal(
+        decision: RoutingDecision,
+        user_id: str,
+        input_length: int,
+        has_image: bool,
+        router_model: str = "keyword",
+    ) -> None:
+        """记录路由决策信号到 knowledge_metrics（fire-and-forget）"""
+        async def _do_record() -> None:
+            try:
+                from services.knowledge_service import record_metric
+                await record_metric(
+                    task_type="routing",
+                    model_id=router_model,
+                    status="success",
+                    user_id=user_id,
+                    params={
+                        "routing_tool": decision.raw_tool_name,
+                        "routed_by": decision.routed_by,
+                        "recommended_model": decision.recommended_model,
+                        "input_length": input_length,
+                        "has_image": has_image,
+                    },
+                )
+            except Exception as e:
+                logger.debug(f"Routing signal record skipped | error={e}")
+
+        asyncio.create_task(_do_record())
 
     async def close(self) -> None:
         """关闭 HTTP 客户端"""

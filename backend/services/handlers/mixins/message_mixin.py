@@ -288,6 +288,8 @@ class MessageMixin:
                     status="success", user_id=task.get("user_id"),
                     params=request_params,
                     cost_time_ms=self._calc_task_elapsed_ms(task),
+                    retried=bool(request_params.get("_retried")),
+                    retry_from_model=request_params.get("_retry_from_model"),
                 )
             )
 
@@ -366,6 +368,8 @@ class MessageMixin:
                     user_id=task.get("user_id"),
                     cost_time_ms=self._calc_task_elapsed_ms(task),
                     params=request_params,
+                    retried=bool(request_params.get("_retried")),
+                    retry_from_model=request_params.get("_retry_from_model"),
                 )
             )
             asyncio.create_task(

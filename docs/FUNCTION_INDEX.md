@@ -637,6 +637,29 @@
 | `REVIEW_SCORE_CHANGE_THRESHOLD` | 0.1 | `backend/services/model_scorer.py` | 触发人工审核的分数变化阈值 |
 | `REVIEW_MIN_SAMPLE_COUNT` | 20 | `backend/services/model_scorer.py` | 触发人工审核的最小样本量 |
 
+### 知识系统信号接入模块 (Knowledge Signal Pipeline)
+
+> **新增于信号接入增强**：将路由决策、用户反馈、记忆检索、生成耗时等数据信号全链路接入 knowledge_metrics，供 EMA 评分聚合使用。
+
+#### 后端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `MessageMixin._calc_task_elapsed_ms` | `backend/services/handlers/mixins/message_mixin.py` | 从 task.created_at 计算任务耗时（毫秒） | task | Optional[int] |
+| `IntentRouter._record_routing_signal` | `backend/services/intent_router.py` | 记录意图路由决策信号（fire-and-forget） | decision, user_id, input_length, has_image, router_model | None |
+| `AgentLoop._record_loop_signal` | `backend/services/agent_loop.py` | 记录 Agent Loop 路由信号（含 loop_turns/tokens） | result, input_length, has_image | None |
+| `_record_user_feedback_signal` | `backend/api/routes/message.py` | 记录用户反馈信号（retry/regenerate/regenerate_single） | db, user_id, operation, model, gen_type, original_message_id, conversation_id | None |
+| `MemoryService._record_memory_search_signal` | `backend/services/memory_service.py` | 记录记忆检索效果信号（mem0_returned/filtered_count/latency） | user_id, mem0_returned, filtered_count, filter_latency_ms, query_length | None |
+
+#### 信号类型（task_type 值）
+
+| task_type | 来源 | 关键 params 字段 |
+|-----------|------|-----------------|
+| `image` / `video` | 成功/失败回调 | cost_time_ms, retried, retry_from_model |
+| `routing` | IntentRouter / AgentLoop | routing_tool, routed_by, recommended_model, input_length, has_image |
+| `user_feedback` | message.py 操作分发 | feedback_type, original_model, new_model, original_task_type |
+| `memory_search` | MemoryService | mem0_returned, filtered_count, filter_latency_ms, query_length |
+
 ### 后端服务辅助模块 (Backend Service Helpers)
 
 #### 后端函数
