@@ -54,6 +54,7 @@ class BackgroundTaskWorker:
         self.is_running = False
         self._poll_lock = asyncio.Lock()
         self._last_consistency_check = None  # 上次数据一致性检查时间
+        self._last_scoring_aggregation = None  # 上次模型评分聚合时间
 
     async def start(self):
         """启动后台工作器"""
@@ -76,6 +77,7 @@ class BackgroundTaskWorker:
                     await self.poll_pending_tasks()
                     await self.cleanup_stale_tasks()
                     await self.check_data_consistency()
+                    await self._run_model_scoring()
 
             except Exception as e:
                 logger.error(f"BackgroundTaskWorker error: {e}", exc_info=True)
@@ -400,3 +402,20 @@ class BackgroundTaskWorker:
 
         except Exception as e:
             logger.error(f"Data consistency check failed | error={e}", exc_info=True)
+
+    async def _run_model_scoring(self):
+        """每小时执行模型评分聚合"""
+        now = datetime.now(timezone.utc)
+        if self._last_scoring_aggregation is not None:
+            elapsed = (now - self._last_scoring_aggregation).total_seconds()
+            if elapsed < 3600:
+                return
+
+        try:
+            from services.model_scorer import aggregate_model_scores
+
+            await aggregate_model_scores()
+        except Exception as e:
+            logger.error(f"Model scoring aggregation failed | error={e}")
+        finally:
+            self._last_scoring_aggregation = now

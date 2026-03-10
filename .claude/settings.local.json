@@ -30,6 +30,8 @@
       "Skill(everydayai-git-push:*)",
       "Skill(everydayai-deploy)",
       "Skill(everydayai-deploy:*)",
+      "Skill(everydayai-test-coverage)",
+      "Skill(everydayai-test-coverage:*)",
       "Bash(source venv/bin/activate)",
       "Bash(lsof:*)",
       "Bash(npm run dev:*)",
@@ -89,7 +91,12 @@
       "Bash(comm -23 /tmp/all.txt /tmp/tested.txt)",
       "Bash(grep -r \"def test_\" /Users/wucong/EVERYDAYAIONE/backend/tests/*.py)",
       "Bash(python -m pytest tests/test_smart_model_config.py tests/test_adapter_factory.py tests/test_openrouter_chat_adapter.py -q --tb=short)",
-      "Bash(npx vitest run src/constants/__tests__/models.test.ts src/constants/__tests__/smartModel.test.ts)"
+      "Bash(npx vitest run src/constants/__tests__/models.test.ts src/constants/__tests__/smartModel.test.ts)",
+      "Bash(python -m pytest backend/tests/test_adapter_factory.py -q --tb=short)",
+      "Bash(PYTHONPATH=. python -m pytest tests/ -q --tb=short --ignore=tests/manual)",
+      "Bash(PYTHONPATH=. python -c \"from api.routes import models, subscription; print\\(''import OK''\\)\")",
+      "Bash(python -m pytest tests/test_model_scorer.py -v --tb=short)",
+      "Bash(npx vitest run src/stores/__tests__/useSubscriptionStore.test.ts src/constants/__tests__/models.test.ts)"
     ]
   }
 }

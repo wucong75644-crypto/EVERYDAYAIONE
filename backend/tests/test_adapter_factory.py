@@ -5,6 +5,13 @@
       图片/视频工厂、默认模型 fallback
 """
 
+import sys
+from pathlib import Path
+
+backend_dir = Path(__file__).parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -245,6 +252,93 @@ class TestModelRegistry:
 
         # Grok 不支持 vision
         assert or_models["x-ai/grok-4.1-fast"].supports_vision is False
+
+    def test_supports_search(self):
+        """验证 supports_search 标记（跨 provider）"""
+        search_models = {
+            # KIE
+            "gemini-3-pro", "gemini-3-flash",
+            # OpenRouter
+            "openai/gpt-4.1", "openai/gpt-4.1-mini", "openai/o4-mini",
+            "x-ai/grok-4.1-fast", "openai/gpt-5.4", "openai/gpt-5.4-pro",
+            "openai/gpt-5.3-codex", "google/gemini-3.1-pro-preview",
+        }
+        no_search = {
+            "deepseek-v3.2", "deepseek-r1", "qwen3.5-plus",
+            "kimi-k2.5", "glm-5",
+            "anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4.6",
+            "anthropic/claude-opus-4.6",
+        }
+        for mid in search_models:
+            cfg = get_model_config(mid)
+            assert cfg is not None, f"模型未注册: {mid}"
+            assert cfg.supports_search is True, f"{mid} should support search"
+        for mid in no_search:
+            cfg = get_model_config(mid)
+            assert cfg is not None, f"模型未注册: {mid}"
+            assert cfg.supports_search is False, f"{mid} should NOT support search"
+
+    def test_supports_thinking(self):
+        """验证 supports_thinking 标记（跨 provider）"""
+        thinking_models = {
+            # KIE
+            "gemini-3-pro", "gemini-3-flash",
+            # DashScope (全部)
+            "deepseek-v3.2", "deepseek-r1", "qwen3.5-plus",
+            "kimi-k2.5", "glm-5",
+            # OpenRouter
+            "openai/o4-mini", "openai/gpt-5.4-pro",
+            "anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4.6",
+            "anthropic/claude-opus-4.6", "google/gemini-3.1-pro-preview",
+        }
+        no_thinking = {
+            "openai/gpt-4.1", "openai/gpt-4.1-mini",
+            "x-ai/grok-4.1-fast", "openai/gpt-5.4",
+            "openai/gpt-5.3-codex",
+        }
+        for mid in thinking_models:
+            cfg = get_model_config(mid)
+            assert cfg is not None, f"模型未注册: {mid}"
+            assert cfg.supports_thinking is True, f"{mid} should support thinking"
+        for mid in no_thinking:
+            cfg = get_model_config(mid)
+            assert cfg is not None, f"模型未注册: {mid}"
+            assert cfg.supports_thinking is False, f"{mid} should NOT support thinking"
+
+    def test_supports_structured_output(self):
+        """验证 supports_structured_output 标记"""
+        structured_models = {
+            "gemini-3-pro",
+            "openai/gpt-4.1", "openai/gpt-4.1-mini", "openai/o4-mini",
+            "openai/gpt-5.4", "openai/gpt-5.4-pro",
+            "openai/gpt-5.3-codex", "google/gemini-3.1-pro-preview",
+        }
+        for mid in structured_models:
+            cfg = get_model_config(mid)
+            assert cfg is not None, f"模型未注册: {mid}"
+            assert cfg.supports_structured_output is True, \
+                f"{mid} should support structured_output"
+
+    def test_supports_audio(self):
+        """验证 supports_audio 标记"""
+        audio_models = {
+            "gemini-2.5-flash", "gemini-2.5-pro",
+            "openai/gpt-5.4", "openai/gpt-5.4-pro",
+            "google/gemini-3.1-pro-preview",
+        }
+        no_audio = {
+            "gemini-3-pro", "gemini-3-flash",
+            "deepseek-v3.2", "qwen3.5-plus",
+            "openai/gpt-4.1", "anthropic/claude-sonnet-4",
+        }
+        for mid in audio_models:
+            cfg = get_model_config(mid)
+            assert cfg is not None, f"模型未注册: {mid}"
+            assert cfg.supports_audio is True, f"{mid} should support audio"
+        for mid in no_audio:
+            cfg = get_model_config(mid)
+            assert cfg is not None, f"模型未注册: {mid}"
+            assert cfg.supports_audio is False, f"{mid} should NOT support audio"
 
     def test_openrouter_context_windows(self):
         """验证 OpenRouter 模型上下文窗口"""

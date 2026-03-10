@@ -4,6 +4,13 @@ Agent Loop + AgentGuardrails 单元测试
 覆盖：护栏（循环检测/token预算）、工具分发、结果构建、多轮循环
 """
 
+import sys
+from pathlib import Path
+
+backend_dir = Path(__file__).parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 

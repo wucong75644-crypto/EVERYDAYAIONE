@@ -80,7 +80,7 @@ KIE_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "supports_vision": True,
         "supports_streaming": True,
         "supports_function_calling": True,
-        "supports_google_search": False,
+        "supports_google_search": True,
         "supports_response_format": False,
         "supports_reasoning_effort": True,
 

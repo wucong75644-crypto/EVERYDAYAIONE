@@ -108,7 +108,11 @@ class ModelConfig:
     # 能力标记
     supports_vision: bool = False
     supports_video: bool = False
+    supports_audio: bool = False
     supports_tools: bool = False
+    supports_search: bool = False
+    supports_thinking: bool = False
+    supports_structured_output: bool = False
     max_tokens: int = 8192
     context_window: int = 128000
 

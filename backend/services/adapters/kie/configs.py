@@ -28,7 +28,7 @@ CHAT_MODEL_CONFIGS = {
         "context_window": 1_000_000,
         "max_output_tokens": 65536,
         "supports_vision": True,
-        "supports_google_search": False,
+        "supports_google_search": True,
         "supports_function_calling": True,
         "supports_response_format": False,
         "cost_per_1k_input": Decimal("0.00015"),   # $0.15 / 1M

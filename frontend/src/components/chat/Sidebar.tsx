@@ -244,7 +244,7 @@ export default function Sidebar({
 
           {/* 模型广场按钮 */}
           <Link
-            to="/models"
+            to="/"
             className="px-3 py-1.5 text-sm text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
           >
             模型广场

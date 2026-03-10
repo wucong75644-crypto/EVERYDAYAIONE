@@ -96,10 +96,7 @@ class AuthService:
             "description": "新用户注册赠送积分",
         }).execute()
 
-        # 5. 自动订阅默认模型
-        await self._subscribe_default_models(user["id"])
-
-        # 6. 生成 token
+        # 5. 生成 token
         token = self._create_token_response(user["id"])
 
         return {
@@ -335,30 +332,6 @@ class AuthService:
             raise AppException(
                 code="VERIFY_CODE_ERROR",
                 message="验证码验证失败，请稍后重试",
-                status_code=500
-            )
-
-    async def _subscribe_default_models(self, user_id: str) -> None:
-        """为新用户订阅默认模型"""
-        try:
-            # 获取所有默认模型
-            models = self.db.table("models").select("id").eq("is_default", True).execute()
-
-            if models.data:
-                subscriptions = [
-                    {"user_id": user_id, "model_id": model["id"]}
-                    for model in models.data
-                ]
-                self.db.table("user_subscriptions").insert(subscriptions).execute()
-        except (ValidationError, AuthenticationError, ConflictError, NotFoundError) as e:
-            # 业务异常直接抛出
-            raise
-        except Exception as e:
-            logger.error(f"Failed to subscribe default models | user_id={user_id} | error={e}")
-            from core.exceptions import AppException
-            raise AppException(
-                code="SUBSCRIBE_DEFAULT_MODELS_ERROR",
-                message="订阅默认模型失败",
                 status_code=500
             )
 

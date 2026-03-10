@@ -77,24 +77,20 @@ class TestAuthServiceRegister:
         # 设置空的用户表（手机号未注册）
         mock_db.set_table_data("users", [])
 
-        # Mock _verify_code 和 _subscribe_default_models
+        # Mock _verify_code
         async def mock_verify_code(*args, **kwargs):
             return True
-
-        async def mock_subscribe(*args, **kwargs):
-            return None
 
         # Mock insert 返回新用户
         new_user = create_test_user(phone=phone, nickname=nickname)
 
         with patch.object(auth_service, "_verify_code", side_effect=mock_verify_code):
-            with patch.object(auth_service, "_subscribe_default_models", side_effect=mock_subscribe):
-                # Mock insert 的返回值
-                mock_insert_result = MagicMock()
-                mock_insert_result.execute.return_value = MagicMock(data=[new_user])
-                with patch.object(mock_db.table("users"), "insert", return_value=mock_insert_result):
-                    # Act
-                    result = await auth_service.register_by_phone(phone, code, nickname)
+            # Mock insert 的返回值
+            mock_insert_result = MagicMock()
+            mock_insert_result.execute.return_value = MagicMock(data=[new_user])
+            with patch.object(mock_db.table("users"), "insert", return_value=mock_insert_result):
+                # Act
+                result = await auth_service.register_by_phone(phone, code, nickname)
 
         # Assert
         assert "token" in result

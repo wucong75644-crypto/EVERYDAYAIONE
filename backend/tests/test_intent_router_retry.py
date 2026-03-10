@@ -288,7 +288,7 @@ class TestRouteRetry:
             )
 
         assert result is not None
-        assert result.recommended_model == "gemini-3-flash"
+        assert result.recommended_model == "qwen3.5-plus"
         assert result.routed_by == "deterministic_fallback"
 
     @pytest.mark.asyncio

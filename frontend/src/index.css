@@ -144,6 +144,33 @@ body {
   animation: backdropExit 0.15s ease-in;
 }
 
+/* Drawer 滑入/滑出动画 */
+@keyframes drawerSlideIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes drawerSlideOut {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.animate-drawerSlideIn {
+  animation: drawerSlideIn 0.2s ease-out;
+}
+
+.animate-drawerSlideOut {
+  animation: drawerSlideOut 0.15s ease-in forwards;
+}
+
 /* 上传按钮呼吸动效（无外发光） */
 @keyframes uploadGlow {
   0%, 100% {

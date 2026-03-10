@@ -9,6 +9,8 @@ import toast from 'react-hot-toast';
 import { type UnifiedModel, ALL_MODELS, getAvailableModels } from '../constants/models';
 import { isSmartModel } from '../constants/smartModel';
 import { detectConflict } from '../utils/modelConflict';
+import { useAuthStore } from '../stores/useAuthStore';
+import { useSubscriptionStore } from '../stores/useSubscriptionStore';
 
 // ============================================================
 // 类型定义
@@ -41,6 +43,14 @@ export function useModelSelection({
   const [selectedModel, setSelectedModel] = useState<UnifiedModel>(ALL_MODELS[0]);
   const [userExplicitChoice, setUserExplicitChoice] = useState(false);
   const [modelJustSwitched, setModelJustSwitched] = useState(false);
+
+  // 确保模型信息和订阅数据已加载（从聊天页直接进入时）
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const { fetchModels, fetchSubscriptions } = useSubscriptionStore();
+  useEffect(() => {
+    fetchModels();
+    if (isAuthenticated) fetchSubscriptions();
+  }, [isAuthenticated, fetchModels, fetchSubscriptions]);
 
   // 保存上传前的模型（用于恢复）
   const modelBeforeUpload = useRef<UnifiedModel | null>(null);
@@ -161,9 +171,10 @@ export function useModelSelection({
   }, [hasImage, hasQuotedImage, selectedModel, userExplicitChoice, switchModel]);
 
   /**
-   * 获取可用模型列表
+   * 获取可用模型列表（已订阅 + auto）
    */
-  const availableModels = getAvailableModels(hasImage);
+  const subscribedModelIds = useSubscriptionStore((s) => s.subscribedModelIds);
+  const availableModels = getAvailableModels(hasImage, subscribedModelIds);
 
   /**
    * 获取模型选择器锁定状态
