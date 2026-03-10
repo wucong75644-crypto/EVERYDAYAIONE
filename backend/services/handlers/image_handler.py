@@ -296,6 +296,12 @@ class ImageHandler(BaseHandler):
                 )
                 result = await new_adapter.generate(**new_kwargs)
 
+                # 注入重试元数据（完成时记录到 knowledge_metrics）
+                retry_params = {
+                    **params,
+                    "_retried": True,
+                    "_retry_from_model": model_id,
+                }
                 self._save_task(
                     task_id=result.task_id,
                     message_id=message_id,
@@ -303,7 +309,7 @@ class ImageHandler(BaseHandler):
                     user_id=user_id,
                     model_id=new_model,
                     prompt=prompt,
-                    params=params,
+                    params=retry_params,
                     metadata=metadata,
                     credits_locked=per_image_credits,
                     transaction_id=new_tx,
