@@ -92,7 +92,7 @@ async def get_or_create_conversation(client: httpx.AsyncClient, token: str) -> s
         return None
 
 
-async def test_google_chat(client: httpx.AsyncClient, token: str, conversation_id: str):
+async def run_google_chat(client: httpx.AsyncClient, token: str, conversation_id: str):
     """测试 Google Gemini 聊天"""
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -231,7 +231,7 @@ async def main():
             return False
 
         # 3. 发送聊天消息
-        success, result = await test_google_chat(client, token, conversation_id)
+        success, result = await run_google_chat(client, token, conversation_id)
         if not success:
             log("❌ 发送消息失败，测试终止", "ERROR")
             return False

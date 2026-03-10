@@ -27,7 +27,7 @@ async def get_models(
     service: SubscriptionService = Depends(get_subscription_service),
 ) -> dict:
     """
-    获取所有模型的基础信息（is_default、status）
+    获取所有模型的基础信息（id、status）
 
     公开接口，无需登录。
     """
