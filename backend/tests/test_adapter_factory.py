@@ -419,7 +419,7 @@ class TestImageVideoFactory:
 class TestCircuitBreakerIntegration:
 
     @patch("services.adapters.factory.get_settings")
-    @patch("services.adapters.factory.is_provider_available", return_value=False)
+    @patch("services.circuit_breaker.is_provider_available", return_value=False)
     def test_chat_adapter_raises_when_provider_broken(self, mock_avail, mock_settings):
         """Provider 熔断时 create_chat_adapter 抛 ProviderUnavailableError"""
         from services.adapters.types import ProviderUnavailableError
@@ -429,7 +429,7 @@ class TestCircuitBreakerIntegration:
             create_chat_adapter("gemini-3-pro")
 
     @patch("services.adapters.factory.get_settings")
-    @patch("services.adapters.factory.is_provider_available", return_value=False)
+    @patch("services.circuit_breaker.is_provider_available", return_value=False)
     def test_image_adapter_raises_when_provider_broken(self, mock_avail, mock_settings):
         """Provider 熔断时 create_image_adapter 抛 ProviderUnavailableError"""
         from services.adapters.types import ProviderUnavailableError
@@ -439,7 +439,7 @@ class TestCircuitBreakerIntegration:
             create_image_adapter("google/nano-banana")
 
     @patch("services.adapters.factory.get_settings")
-    @patch("services.adapters.factory.is_provider_available", return_value=True)
+    @patch("services.circuit_breaker.is_provider_available", return_value=True)
     def test_chat_adapter_passes_when_provider_available(self, mock_avail, mock_settings):
         """Provider 正常时正常创建 adapter"""
         mock_settings.return_value = _mock_settings()
@@ -455,7 +455,7 @@ class TestCircuitBreakerIntegration:
 class TestStreamTimeoutIntegration:
 
     @patch("services.adapters.factory.get_settings")
-    @patch("services.adapters.factory.is_provider_available", return_value=True)
+    @patch("services.circuit_breaker.is_provider_available", return_value=True)
     def test_explicit_timeout_passed_through(self, mock_avail, mock_settings):
         """显式传入 stream_timeout 不走自动解析"""
         mock_settings.return_value = _mock_settings()
@@ -464,7 +464,7 @@ class TestStreamTimeoutIntegration:
         assert adapter is not None
 
     @patch("services.adapters.factory.get_settings")
-    @patch("services.adapters.factory.is_provider_available", return_value=True)
+    @patch("services.circuit_breaker.is_provider_available", return_value=True)
     @patch("services.timeout_resolver.resolve_stream_timeout", return_value=120.0)
     def test_none_timeout_triggers_auto_resolve(self, mock_resolve, mock_avail, mock_settings):
         """stream_timeout=None 时自动调用 resolve_stream_timeout"""
