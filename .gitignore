@@ -55,6 +55,9 @@ build/
 # Migrations (keep tracked)
 !backend/migrations/
 
+# External tools (MediaCrawler etc.)
+backend/external/
+
 # Backup files
 *.bak
 *.backup

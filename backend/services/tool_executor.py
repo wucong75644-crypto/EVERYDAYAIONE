@@ -8,12 +8,17 @@
 - web_search: 搜索互联网（复用 IntentRouter.execute_search）
 - get_conversation_context: 获取近期对话（复用 MessageService）
 - search_knowledge: 查询知识库（复用 knowledge_service）
+- erp_*_query: ERP查询工具（6个，委托 ErpDispatcher）
+- erp_execute: ERP写操作（委托 ErpDispatcher）
+- social_crawler: 社交媒体爬虫
 """
 
 from typing import Any, Callable, Coroutine, Dict
 
 from loguru import logger
 from supabase import Client
+
+from config.erp_tools import ERP_SYNC_TOOLS
 
 
 class ToolExecutor:
@@ -27,7 +32,19 @@ class ToolExecutor:
             "web_search": self._web_search,
             "get_conversation_context": self._get_conversation_context,
             "search_knowledge": self._search_knowledge,
+            "social_crawler": self._social_crawler,
         }
+        # 注册7个ERP工具，统一委托给 _erp_dispatch
+        for tool_name in ERP_SYNC_TOOLS:
+            self._handlers[tool_name] = self._make_erp_handler(tool_name)
+
+    def _make_erp_handler(
+        self, tool_name: str
+    ) -> Callable[..., Coroutine[Any, Any, str]]:
+        """为指定ERP工具创建handler"""
+        async def handler(args: Dict[str, Any]) -> str:
+            return await self._erp_dispatch(tool_name, args)
+        return handler
 
     async def execute(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """执行同步工具，返回结果文本
@@ -84,7 +101,6 @@ class ToolExecutor:
         if not messages:
             return "当前对话暂无历史消息"
 
-        # 格式化为大脑可读的文本
         lines = []
         for msg in reversed(messages):  # 从旧到新
             role = msg.get("role", "unknown")
@@ -106,7 +122,13 @@ class ToolExecutor:
                 line += f" [图片: {', '.join(image_urls)}]"
             lines.append(line)
 
-        return "\n".join(lines)
+        context_text = "\n".join(lines)
+        logger.debug(
+            f"get_conversation_context result | conv={self.conversation_id} "
+            f"| msg_count={len(messages)} | len={len(context_text)} "
+            f"| preview={context_text[:500]}"
+        )
+        return context_text
 
     async def _search_knowledge(self, args: Dict[str, Any]) -> str:
         """查询 AI 知识库"""
@@ -127,3 +149,107 @@ class ToolExecutor:
             lines.append(f"- {title}: {content}")
 
         return "\n".join(lines)
+
+    # ========================================
+    # ERP 统一调度
+    # ========================================
+
+    async def _erp_dispatch(
+        self, tool_name: str, args: Dict[str, Any]
+    ) -> str:
+        """ERP工具统一调度：查注册表 → 映射参数 → 调API → 格式化"""
+        dispatcher = await self._get_erp_dispatcher()
+        if isinstance(dispatcher, str):
+            return dispatcher
+
+        try:
+            # erp_execute 用 category 查找注册表
+            if tool_name == "erp_execute":
+                category = args.get("category", "")
+                action = args.get("action", "")
+                params = args.get("params") or {}
+                # 映射 category → 对应的查询工具名
+                cat_tool_map = {
+                    "basic": "erp_info_query",
+                    "product": "erp_product_query",
+                    "trade": "erp_trade_query",
+                    "aftersales": "erp_aftersales_query",
+                    "warehouse": "erp_warehouse_query",
+                    "purchase": "erp_purchase_query",
+                    "distribution": "erp_execute",
+                }
+                actual_tool = cat_tool_map.get(category, "erp_execute")
+                return await dispatcher.execute(actual_tool, action, params)
+
+            # 查询工具：action + 其余参数
+            action = args.pop("action", "")
+            if not action:
+                return "缺少 action 参数"
+            return await dispatcher.execute(tool_name, action, args)
+        except Exception as e:
+            logger.error(
+                f"ToolExecutor erp_dispatch | tool={tool_name} | error={e}"
+            )
+            return f"ERP操作失败：{e}"
+        finally:
+            await dispatcher.close()
+
+    async def _get_erp_dispatcher(self):
+        """获取ERP调度器实例，未配置时返回友好提示"""
+        from services.kuaimai.client import KuaiMaiClient
+        from services.kuaimai.dispatcher import ErpDispatcher
+
+        client = KuaiMaiClient()
+        if not client.is_configured:
+            await client.close()
+            return "ERP系统未配置，请联系管理员设置快麦ERP的AppKey和AccessToken"
+        await client.load_cached_token()
+        return ErpDispatcher(client)
+
+    # ========================================
+    # 社交媒体爬虫工具
+    # ========================================
+
+    async def _social_crawler(self, args: Dict[str, Any]) -> str:
+        """爬取社交媒体平台搜索结果"""
+        from core.config import get_settings
+        from services.crawler.service import CrawlerService
+
+        settings = get_settings()
+        if not settings.crawler_enabled:
+            return "社交媒体爬虫功能未启用，请在 .env 中设置 CRAWLER_ENABLED=true"
+
+        service = CrawlerService()
+        if not service.is_available():
+            return (
+                "社交媒体爬虫未安装，请运行以下命令安装：\n"
+                "cd backend/external && git clone https://github.com/NanmiCoder/MediaCrawler.git mediacrawler\n"
+                "cd mediacrawler && python3 -m venv venv && source venv/bin/activate\n"
+                "pip install -r requirements.txt && playwright install chromium"
+            )
+
+        platform = args.get("platform", "xhs")
+        keywords_str = args.get("keywords", "")
+        keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
+        if not keywords:
+            return "搜索关键词不能为空"
+
+        max_results = min(args.get("max_results", 10), 30)
+        crawl_type = args.get("crawl_type", "search")
+
+        logger.info(
+            f"ToolExecutor social_crawler | platform={platform} "
+            f"| keywords={keywords_str} | max={max_results}"
+        )
+
+        result = await service.execute(
+            platform=platform,
+            keywords=keywords,
+            max_notes=max_results,
+            crawl_type=crawl_type,
+        )
+
+        if result.error:
+            return f"爬取失败：{result.error}"
+
+        return service.format_for_brain(result.items)

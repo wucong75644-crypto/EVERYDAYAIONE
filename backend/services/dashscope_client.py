@@ -36,7 +36,12 @@ class DashScopeClient:
                     "Authorization": f"Bearer {settings.dashscope_api_key}",
                     "Content-Type": "application/json",
                 },
-                timeout=httpx.Timeout(timeout),
+                timeout=httpx.Timeout(
+                    connect=5.0,
+                    read=timeout,
+                    write=10.0,
+                    pool=5.0,
+                ),
             )
         return self._client
 

@@ -94,7 +94,9 @@ async def compute_embedding(text: str) -> Optional[List[float]]:
         return None
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=600.0, write=10.0, pool=5.0),
+        ) as client:
             resp = await client.post(
                 f"{settings.dashscope_base_url}/embeddings",
                 headers={

@@ -87,7 +87,9 @@ class GoogleChatAdapter(BaseChatAdapter):
             base64 编码的数据，失败返回 None
         """
         try:
-            async with httpx.AsyncClient(timeout=30.0) as http_client:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=5.0, read=600.0, write=10.0, pool=5.0),
+            ) as http_client:
                 response = await http_client.get(url)
                 response.raise_for_status()
 

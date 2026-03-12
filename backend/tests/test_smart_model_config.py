@@ -15,9 +15,13 @@ from config.smart_model_config import (
     DEFAULT_IMAGE_MODEL,
     DEFAULT_VIDEO_MODEL,
     ROUTER_TOOLS,
+    TOOL_TO_TYPE,
     build_router_tools,
     build_retry_tools,
     get_remaining_models,
+    get_image_to_video_model,
+    _get_model_enum,
+    _get_model_desc,
 )
 from schemas.message import GenerationType
 
@@ -190,3 +194,69 @@ class TestRetryTools:
         assert len(remaining) > 0
         # 第一个应该是 priority=1 的模型（qwen3.5-plus）
         assert remaining[0] == "qwen3.5-plus"
+
+
+# ============================================================
+# TestHelperFunctions
+# ============================================================
+
+
+class TestHelperFunctions:
+
+    def test_get_image_to_video_model_returns_string(self):
+        """get_image_to_video_model 返回有效模型 ID"""
+        model = get_image_to_video_model()
+        assert isinstance(model, str)
+        assert len(model) > 0
+
+    def test_get_image_to_video_model_in_video_models(self):
+        """返回的模型在 video 分类中"""
+        model = get_image_to_video_model()
+        video_ids = [m["id"] for m in SMART_CONFIG["video"]["models"]]
+        assert model in video_ids
+
+    def test_get_model_enum_chat(self):
+        """_get_model_enum('chat') 返回 chat 模型列表"""
+        enums = _get_model_enum("chat")
+        assert isinstance(enums, list)
+        assert len(enums) > 0
+        assert "qwen3.5-plus" in enums
+
+    def test_get_model_enum_nonexistent(self):
+        """_get_model_enum 不存在的分类→空列表"""
+        enums = _get_model_enum("nonexistent")
+        assert enums == []
+
+    def test_get_model_desc_chat(self):
+        """_get_model_desc('chat') 返回描述文本"""
+        desc = _get_model_desc("chat")
+        assert isinstance(desc, str)
+        assert len(desc) > 0
+        # 应包含模型 ID 和描述
+        assert "qwen3.5-plus" in desc
+
+    def test_get_model_desc_nonexistent(self):
+        """_get_model_desc 不存在的分类→空字符串"""
+        desc = _get_model_desc("nonexistent")
+        assert desc == ""
+
+
+# ============================================================
+# TestToolToType
+# ============================================================
+
+
+class TestToolToType:
+
+    def test_new_routing_tools_mapped(self):
+        """Agent Loop 新路由工具在映射中"""
+        assert TOOL_TO_TYPE["route_to_image"] == GenerationType.IMAGE
+        assert TOOL_TO_TYPE["route_to_video"] == GenerationType.VIDEO
+        assert TOOL_TO_TYPE["route_to_chat"] == GenerationType.CHAT
+
+    def test_legacy_tools_still_mapped(self):
+        """IntentRouter 旧工具名仍在映射中（向后兼容）"""
+        assert TOOL_TO_TYPE["generate_image"] == GenerationType.IMAGE
+        assert TOOL_TO_TYPE["generate_video"] == GenerationType.VIDEO
+        assert TOOL_TO_TYPE["text_chat"] == GenerationType.CHAT
+        assert TOOL_TO_TYPE["web_search"] == GenerationType.CHAT

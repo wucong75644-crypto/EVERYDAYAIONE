@@ -122,7 +122,12 @@ class KieClient:
             self._client = httpx.AsyncClient(
                 base_url=self.BASE_URL,
                 headers=self.headers,
-                timeout=httpx.Timeout(self.timeout),
+                timeout=httpx.Timeout(
+                    connect=5.0,
+                    read=self.timeout,
+                    write=10.0,
+                    pool=5.0,
+                ),
             )
         return self._client
 
@@ -245,7 +250,12 @@ class KieClient:
                 "POST",
                 endpoint,
                 json=request_data,
-                timeout=httpx.Timeout(self.STREAM_TIMEOUT),
+                timeout=httpx.Timeout(
+                    connect=5.0,
+                    read=self.STREAM_TIMEOUT,
+                    write=10.0,
+                    pool=5.0,
+                ),
             ) as response:
                 if response.status_code != 200:
                     error_content = await response.aread()

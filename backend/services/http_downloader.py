@@ -93,7 +93,10 @@ class HttpDownloader:
         try:
             # 尝试 HEAD 请求获取 Content-Length
             try:
-                head_response = await client.head(url, timeout=10.0)
+                head_response = await client.head(
+                    url,
+                    timeout=httpx.Timeout(connect=5.0, read=10.0, write=5.0, pool=5.0),
+                )
                 content_length = head_response.headers.get("content-length")
                 if content_length:
                     size = int(content_length)

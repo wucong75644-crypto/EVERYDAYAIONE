@@ -55,6 +55,7 @@ class BackgroundTaskWorker:
         self._poll_lock = asyncio.Lock()
         self._last_consistency_check = None  # 上次数据一致性检查时间
         self._last_scoring_aggregation = None  # 上次模型评分聚合时间
+        self._last_intent_distillation = None  # 上次意图提炼时间
 
     async def start(self):
         """启动后台工作器"""
@@ -78,6 +79,7 @@ class BackgroundTaskWorker:
                     await self.cleanup_stale_tasks()
                     await self.check_data_consistency()
                     await self._run_model_scoring()
+                    await self._run_intent_distillation()
 
             except Exception as e:
                 logger.error(f"BackgroundTaskWorker error: {e}", exc_info=True)
@@ -419,3 +421,20 @@ class BackgroundTaskWorker:
             logger.error(f"Model scoring aggregation failed | error={e}")
         finally:
             self._last_scoring_aggregation = now
+
+    async def _run_intent_distillation(self):
+        """每日执行意图模式提炼"""
+        now = datetime.now(timezone.utc)
+        if self._last_intent_distillation is not None:
+            elapsed = (now - self._last_intent_distillation).total_seconds()
+            if elapsed < 86400:  # 24 小时
+                return
+
+        try:
+            from services.intent_distiller import distill_intent_patterns
+
+            await distill_intent_patterns()
+        except Exception as e:
+            logger.error(f"Intent distillation failed | error={e}")
+        finally:
+            self._last_intent_distillation = now

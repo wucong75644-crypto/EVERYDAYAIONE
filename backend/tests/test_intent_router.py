@@ -479,6 +479,11 @@ class TestToolDefinitions:
         assert "text_chat" in names
 
     def test_tool_to_type_mapping(self):
+        # Agent Loop 新路由工具
+        assert _TOOL_TO_TYPE["route_to_image"] == GenerationType.IMAGE
+        assert _TOOL_TO_TYPE["route_to_video"] == GenerationType.VIDEO
+        assert _TOOL_TO_TYPE["route_to_chat"] == GenerationType.CHAT
+        # IntentRouter 旧工具名（向后兼容）
         assert _TOOL_TO_TYPE["generate_image"] == GenerationType.IMAGE
         assert _TOOL_TO_TYPE["generate_video"] == GenerationType.VIDEO
         assert _TOOL_TO_TYPE["web_search"] == GenerationType.CHAT
