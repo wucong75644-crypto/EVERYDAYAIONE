@@ -18,6 +18,7 @@ from .base import (
     ModelProvider,
     ModelConfig,
 )
+from .types import ProviderUnavailableError
 
 
 # ============================================================
@@ -428,28 +429,22 @@ DEFAULT_VIDEO_MODEL_ID = DEFAULT_VIDEO_MODEL
 # ============================================================
 
 
-def create_chat_adapter(model_id: Optional[str] = None) -> BaseChatAdapter:
+def create_chat_adapter(
+    model_id: Optional[str] = None,
+    stream_timeout: Optional[float] = None,
+) -> BaseChatAdapter:
     """
     根据模型 ID 创建对应的聊天适配器
 
     Args:
         model_id: 模型 ID，为空则使用默认模型
+        stream_timeout: 流式超时（秒），为空则根据模型类型自动解析
 
     Returns:
         对应 Provider 的聊天适配器实例
 
     Raises:
         ValueError: 模型不存在或 Provider 未实现
-
-    示例:
-        # 使用 KIE 平台
-        adapter = create_chat_adapter("gemini-3-flash")
-
-        # 使用 Google 官方（Phase 6）
-        adapter = create_chat_adapter("gemini-2.5-flash")
-
-        # 使用默认模型
-        adapter = create_chat_adapter()
     """
     settings = get_settings()
 
@@ -457,7 +452,23 @@ def create_chat_adapter(model_id: Optional[str] = None) -> BaseChatAdapter:
     actual_model_id = model_id if model_id in MODEL_REGISTRY else DEFAULT_MODEL_ID
     config = MODEL_REGISTRY[actual_model_id]
 
-    logger.debug(f"Creating adapter: model_id={actual_model_id}, provider={config.provider}")
+    # 熔断器检查
+    from services.circuit_breaker import is_provider_available
+    if not is_provider_available(config.provider):
+        raise ProviderUnavailableError(
+            f"Provider {config.provider.value} 熔断中，模型 {actual_model_id} 暂不可用",
+            provider=config.provider,
+        )
+
+    # 自动解析超时
+    if stream_timeout is None:
+        from services.timeout_resolver import resolve_stream_timeout
+        stream_timeout = resolve_stream_timeout(actual_model_id)
+
+    logger.debug(
+        f"Creating adapter: model_id={actual_model_id}, "
+        f"provider={config.provider}, timeout={stream_timeout}s"
+    )
 
     # 根据 Provider 创建适配器
     if config.provider == ModelProvider.KIE:
@@ -466,7 +477,7 @@ def create_chat_adapter(model_id: Optional[str] = None) -> BaseChatAdapter:
         if not settings.kie_api_key:
             raise ValueError("KIE API Key 未配置")
 
-        client = KieClient(settings.kie_api_key)
+        client = KieClient(settings.kie_api_key, stream_timeout=stream_timeout)
         return KieChatAdapter(client, config.provider_model)
 
     elif config.provider == ModelProvider.DASHSCOPE:
@@ -479,6 +490,7 @@ def create_chat_adapter(model_id: Optional[str] = None) -> BaseChatAdapter:
             api_key=settings.dashscope_api_key,
             model=config.provider_model,
             base_url=settings.dashscope_base_url,
+            stream_timeout=stream_timeout,
         )
 
     elif config.provider == ModelProvider.OPENROUTER:
@@ -492,10 +504,11 @@ def create_chat_adapter(model_id: Optional[str] = None) -> BaseChatAdapter:
             model=config.provider_model,
             base_url=settings.openrouter_base_url,
             app_title=settings.openrouter_app_title,
+            stream_timeout=stream_timeout,
         )
 
     elif config.provider == ModelProvider.GOOGLE:
-        # Phase 6 实现
+        # Phase 6：Google SDK 管理自己的超时
         from .google import GoogleChatAdapter
 
         google_api_key = getattr(settings, 'google_api_key', None)
@@ -563,6 +576,14 @@ def create_image_adapter(model_id: Optional[str] = None) -> BaseImageAdapter:
     actual_model_id = model_id if model_id in IMAGE_MODEL_REGISTRY else DEFAULT_IMAGE_MODEL_ID
     config = IMAGE_MODEL_REGISTRY[actual_model_id]
 
+    # 熔断器检查
+    from services.circuit_breaker import is_provider_available
+    if not is_provider_available(config["provider"]):
+        raise ProviderUnavailableError(
+            f"Provider {config['provider'].value} 熔断中，模型 {actual_model_id} 暂不可用",
+            provider=config["provider"],
+        )
+
     logger.debug(f"Creating image adapter: model_id={actual_model_id}, provider={config['provider']}")
 
     # 根据 Provider 创建适配器
@@ -622,6 +643,14 @@ def create_video_adapter(model_id: Optional[str] = None) -> BaseVideoAdapter:
     # 获取模型配置
     actual_model_id = model_id if model_id in VIDEO_MODEL_REGISTRY else DEFAULT_VIDEO_MODEL_ID
     config = VIDEO_MODEL_REGISTRY[actual_model_id]
+
+    # 熔断器检查
+    from services.circuit_breaker import is_provider_available
+    if not is_provider_available(config["provider"]):
+        raise ProviderUnavailableError(
+            f"Provider {config['provider'].value} 熔断中，模型 {actual_model_id} 暂不可用",
+            provider=config["provider"],
+        )
 
     logger.debug(f"Creating video adapter: model_id={actual_model_id}, provider={config['provider']}")
 
