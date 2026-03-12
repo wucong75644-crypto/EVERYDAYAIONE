@@ -12,6 +12,15 @@ from loguru import logger
 from core.config import settings
 
 
+async def get_redis() -> Optional[Redis]:
+    """获取 Redis 客户端的便捷函数"""
+    try:
+        return await RedisClient.get_client()
+    except Exception as e:
+        logger.debug(f"Redis 连接获取失败 | error={e}")
+        return None
+
+
 class RedisClient:
     """Redis 连接管理（单例模式）"""
 

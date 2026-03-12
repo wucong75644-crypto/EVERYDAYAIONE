@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     memory_enabled_default: bool = True  # 新用户默认开启记忆
     memory_filter_model: str = "qwen3.5-flash"  # 记忆精排主模型
     memory_filter_fallback_model: str = "qwen3.5-plus"  # 记忆精排备用模型
-    memory_filter_timeout: float = 5.0  # 记忆精排单次超时（秒）
+    memory_filter_timeout: float = 600.0  # 记忆精排读取超时（秒），connect=5s
 
     # 对话上下文配置
     chat_context_limit: int = 20  # 注入历史消息的最大条数
@@ -104,7 +104,7 @@ class Settings(BaseSettings):
     context_summary_enabled: bool = True  # 是否启用摘要压缩
     context_summary_model: str = "qwen3.5-flash"  # 摘要主模型
     context_summary_fallback_model: str = "qwen3.5-plus"  # 摘要备用模型
-    context_summary_timeout: float = 5.0  # 单次调用超时（秒）
+    context_summary_timeout: float = 600.0  # 摘要读取超时（秒），connect=5s
     context_summary_max_chars: int = 500  # 摘要最大字符数
     context_summary_update_interval: int = 10  # 每N条新消息更新摘要
 
@@ -112,27 +112,63 @@ class Settings(BaseSettings):
     intent_router_model: str = "qwen3.5-plus"  # 主路由模型（DashScope）
     intent_router_fallback_model: str = "qwen3.5-flash"  # 降级路由模型
     intent_router_enabled: bool = True  # 是否启用智能路由
-    intent_router_timeout: float = 5.0  # 单次调用超时（秒）
+    intent_router_timeout: float = 600.0  # 路由读取超时（秒），connect=5s
 
     # Agent Loop 配置（多步工具编排）
     agent_loop_enabled: bool = True  # Agent Loop 总开关（False 退回 IntentRouter）
-    agent_loop_max_turns: int = 3  # 最大循环轮数
-    agent_loop_max_tokens: int = 3000  # 每次运行的总 token 预算
-    agent_loop_model: str = "qwen3.5-plus"  # Agent 大脑模型
+    agent_loop_provider: str = "dashscope"  # 大脑提供商："dashscope" | "openrouter"
+    agent_loop_max_turns: int = 8  # 最大循环轮数（支持多步查询+汇总）
+    agent_loop_max_tokens: int = 100000  # 每次运行的总 token 预算（工具定义大，每轮约10K）
+    agent_loop_model: str = "qwen3.5-plus"  # Agent 大脑模型（dashscope）
+    agent_loop_openrouter_model: str = "anthropic/claude-sonnet-4.6"  # Agent 大脑模型（openrouter）
     agent_loop_fallback_model: str = "qwen3.5-flash"  # 降级模型
-    agent_loop_timeout: float = 5.0  # 单次 FC 调用超时（秒）
+    agent_loop_timeout: float = 600.0  # FC 调用读取超时（秒），connect=5s
+    agent_loop_brain_context_limit: int = 10  # 注入对话历史条数
+    agent_loop_brain_context_max_chars: int = 3000  # 历史文本最大字符数
+    agent_loop_brain_max_images: int = 8  # 历史注入最大图片数（控制 token 消耗）
 
     # Agent 知识库配置
     kb_enabled: bool = True                              # 知识库总开关
     kb_extraction_model: str = "qwen3.5-flash"           # 知识提取模型
     kb_extraction_fallback_model: str = "qwen3.5-plus"   # 降级模型
-    kb_extraction_timeout: float = 3.0               # 提取超时（秒）
+    kb_extraction_timeout: float = 600.0               # 知识提取读取超时（秒），connect=5s
     kb_search_limit: int = 5                         # 路由检索最大条数
     kb_search_threshold: float = 0.5                 # 向量相似度阈值
     kb_max_nodes: int = 5000                         # 知识节点上限
     kb_cache_ttl: int = 600                          # 检索缓存 TTL（秒）
     kb_confidence_boost: float = 0.1                 # 命中时置信度增量
     kb_confidence_decay_days: int = 30               # 未命中衰减周期（天）
+
+    # 快麦ERP 配置
+    kuaimai_app_key: Optional[str] = None
+    kuaimai_app_secret: Optional[str] = None
+    kuaimai_access_token: Optional[str] = None
+    kuaimai_refresh_token: Optional[str] = None
+    kuaimai_base_url: str = "https://gw.superboss.cc/router"
+    kuaimai_timeout: float = 10.0  # 请求超时（秒）
+
+    # 快麦奇门自定义接口配置（淘宝网关，需单独申请凭证）
+    qimen_app_key: Optional[str] = None  # 淘宝平台 appKey（非ERP的appKey）
+    qimen_app_secret: Optional[str] = None  # 淘宝平台 appSecret（签名用）
+    qimen_customer_id: Optional[str] = None  # 商家路由ID（授权时从快麦获取）
+    qimen_order_url: str = "http://33c367ryyg.api.taobao.com/router/qm"
+    qimen_refund_url: str = "http://z29932hpkn.api.taobao.com/router/qm"
+    qimen_target_app_key: str = "23204092"
+
+    # MediaCrawler 社交媒体爬虫配置
+    crawler_enabled: bool = False
+    crawler_dir: str = "backend/external/mediacrawler"
+    crawler_timeout: int = 120  # 单次爬取超时（秒）
+    crawler_max_notes: int = 30  # 最大抓取条数上限
+    crawler_headless: bool = True  # 无头浏览器模式
+    crawler_login_type: str = "cookie"  # 登录方式：cookie / qrcode
+    crawler_cookies_xhs: Optional[str] = None
+    crawler_cookies_dy: Optional[str] = None
+    crawler_cookies_ks: Optional[str] = None
+    crawler_cookies_bili: Optional[str] = None
+    crawler_cookies_wb: Optional[str] = None
+    crawler_cookies_tieba: Optional[str] = None
+    crawler_cookies_zhihu: Optional[str] = None
 
     # Sentry 错误监控配置
     sentry_dsn: Optional[str] = None

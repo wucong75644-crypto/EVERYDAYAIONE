@@ -2,15 +2,26 @@
 Agent 工具定义
 
 为 Agent Loop 提供千问 Function Calling 工具定义：
-- 同步工具（结果回传大脑迭代）
-- 异步工具（fire-and-forget 任务）
-- 终端工具（结束循环）
+- 信息工具（INFO）：结果回传大脑迭代
+- 路由工具（ROUTING）：大脑做出路由决策
 
 工具注册表设计：新增能力 = 注册新工具，引擎无需改动。
 """
 
 from typing import Any, Dict, List, Set
 
+from config.crawler_tools import (
+    CRAWLER_INFO_TOOLS,
+    CRAWLER_ROUTING_PROMPT,
+    CRAWLER_TOOL_SCHEMAS,
+    build_crawler_tools,
+)
+from config.erp_tools import (
+    ERP_ROUTING_PROMPT,
+    ERP_SYNC_TOOLS,
+    ERP_TOOL_SCHEMAS,
+    build_erp_tools,
+)
 from config.smart_model_config import (
     SMART_CONFIG,
     _get_model_enum,
@@ -19,13 +30,21 @@ from config.smart_model_config import (
 
 
 # ============================================================
-# 工具分类
+# 工具分类（2 类：信息采集 + 路由决策）
 # ============================================================
 
-SYNC_TOOLS: Set[str] = {"web_search", "get_conversation_context", "search_knowledge"}
-ASYNC_TOOLS: Set[str] = {"generate_image", "generate_video", "batch_generate_image"}
-TERMINAL_TOOLS: Set[str] = {"text_chat", "ask_user", "finish"}
-ALL_TOOLS: Set[str] = SYNC_TOOLS | ASYNC_TOOLS | TERMINAL_TOOLS
+INFO_TOOLS: Set[str] = {
+    "web_search", "get_conversation_context", "search_knowledge",
+} | ERP_SYNC_TOOLS | CRAWLER_INFO_TOOLS
+
+ROUTING_TOOLS: Set[str] = {
+    "route_to_chat", "route_to_image", "route_to_video", "ask_user",
+}
+
+ALL_TOOLS: Set[str] = INFO_TOOLS | ROUTING_TOOLS
+
+# 向后兼容别名（test_kuaimai.py 使用 SYNC_TOOLS）
+SYNC_TOOLS = INFO_TOOLS
 
 
 # ============================================================
@@ -33,6 +52,7 @@ ALL_TOOLS: Set[str] = SYNC_TOOLS | ASYNC_TOOLS | TERMINAL_TOOLS
 # ============================================================
 
 TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
+    # === 信息工具 ===
     "web_search": {
         "required": ["search_query"],
         "properties": {"search_query": {"type": "string"}},
@@ -45,32 +65,26 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "required": ["query"],
         "properties": {"query": {"type": "string"}},
     },
-    "generate_image": {
-        "required": ["prompt", "model"],
+    # === 路由工具 ===
+    "route_to_chat": {
+        "required": ["system_prompt", "model"],
         "properties": {
-            "prompt": {"type": "string"},
+            "system_prompt": {"type": "string"},
             "model": {"type": "string"},
-            "aspect_ratio": {"type": "string"},
+            "needs_google_search": {"type": "boolean"},
         },
     },
-    "generate_video": {
-        "required": ["prompt", "model"],
-        "properties": {
-            "prompt": {"type": "string"},
-            "model": {"type": "string"},
-        },
-    },
-    "batch_generate_image": {
+    "route_to_image": {
         "required": ["prompts", "model"],
         "properties": {
             "prompts": {"type": "array"},
             "model": {"type": "string"},
         },
     },
-    "text_chat": {
-        "required": ["system_prompt", "model"],
+    "route_to_video": {
+        "required": ["prompt", "model"],
         "properties": {
-            "system_prompt": {"type": "string"},
+            "prompt": {"type": "string"},
             "model": {"type": "string"},
         },
     },
@@ -81,10 +95,10 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "reason": {"type": "string"},
         },
     },
-    "finish": {
-        "required": [],
-        "properties": {"summary": {"type": "string"}},
-    },
+    # === ERP 工具 ===
+    **ERP_TOOL_SCHEMAS,
+    # === 爬虫工具 ===
+    **CRAWLER_TOOL_SCHEMAS,
 }
 
 
@@ -107,9 +121,9 @@ def validate_tool_call(tool_name: str, arguments: Dict[str, Any]) -> bool:
 
 
 def build_agent_tools() -> List[Dict[str, Any]]:
-    """从 smart_models.json 动态构建 Agent 工具定义（9个工具）"""
+    """动态构建 Agent 工具定义（12个工具：8 INFO + 4 ROUTING）"""
     return [
-        # === 同步工具 ===
+        # === 信息工具（结果回传大脑） ===
         {
             "type": "function",
             "function": {
@@ -117,7 +131,7 @@ def build_agent_tools() -> List[Dict[str, Any]]:
                 "description": (
                     "搜索互联网获取最新信息。适用于：实时新闻、价格行情、"
                     "最新资讯、事实查证等需要联网才能回答的问题。"
-                    "结果会返回给你，你可以用搜索结果继续思考或作为生成图片/视频的参考。"
+                    "结果会返回给你，你可以用搜索结果继续思考或作为路由决策的参考。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -171,46 +185,100 @@ def build_agent_tools() -> List[Dict[str, Any]]:
                 },
             },
         },
-        # === 异步工具 ===
+        # === ERP 数据查询工具（从 erp_tools.py 导入） ===
+        *build_erp_tools(),
+        # === 社交媒体爬虫工具（从 crawler_tools.py 导入） ===
+        *build_crawler_tools(),
+        # === 路由工具（大脑做出路由决策） ===
         {
             "type": "function",
             "function": {
-                "name": "generate_image",
+                "name": "route_to_chat",
                 "description": (
-                    "处理所有图片相关的操作请求：创建新图片、编辑已有图片、"
-                    "调整尺寸比例、风格转换等。只要用户的目标是得到一张图片，就用此工具。"
-                    "不适用：纯文字讨论图片话题（如分析风格、评价构图）。"
+                    "普通对话、问答、分析、翻译、写作、代码等文本交互。"
+                    "选择回复模型和角色设定。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "prompt": {
+                        "system_prompt": {
                             "type": "string",
-                            "description": "优化后的图片生成英文提示词",
+                            "description": "适合当前对话的角色设定（一句话）",
                         },
                         "model": {
                             "type": "string",
-                            "enum": _get_model_enum("image"),
-                            "description": _get_model_desc("image"),
+                            "enum": _get_model_enum("chat"),
+                            "description": _get_model_desc("chat"),
                         },
-                        "aspect_ratio": {
-                            "type": "string",
-                            "enum": ["1:1", "9:16", "16:9", "3:4", "4:3"],
+                        "needs_google_search": {
+                            "type": "boolean",
                             "description": (
-                                "图片宽高比。竖版/海报=9:16，横版/风景=16:9，方形=1:1。"
-                                "未明确要求时默认1:1"
+                                "是否需要模型使用联网搜索能力回答"
+                                "（仅在用户问题需要实时信息时设为 true）"
                             ),
                         },
                     },
-                    "required": ["prompt", "model"],
+                    "required": ["system_prompt", "model"],
                 },
             },
         },
         {
             "type": "function",
             "function": {
-                "name": "generate_video",
-                "description": "生成视频。用户明确要求生成/制作/创作视频时调用。",
+                "name": "route_to_image",
+                "description": (
+                    "用户明确要求生成/画/绘制/修改图片时调用。"
+                    "在 prompts 中直接写好英文提示词。1 张=单图，2-8 张=批量。"
+                    "不适用：纯文字讨论图片话题（如分析风格、评价构图）。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "prompts": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "prompt": {
+                                        "type": "string",
+                                        "description": "优化后的英文图片提示词",
+                                    },
+                                    "aspect_ratio": {
+                                        "type": "string",
+                                        "enum": [
+                                            "1:1", "9:16", "16:9", "3:4", "4:3",
+                                        ],
+                                        "description": (
+                                            "宽高比。竖版=9:16，横版=16:9，"
+                                            "方形=1:1。默认1:1"
+                                        ),
+                                    },
+                                },
+                                "required": ["prompt"],
+                            },
+                            "description": (
+                                "图片提示词列表（1张=单图，2-8张=批量）"
+                            ),
+                            "minItems": 1,
+                            "maxItems": 8,
+                        },
+                        "model": {
+                            "type": "string",
+                            "enum": _get_model_enum("image"),
+                            "description": _get_model_desc("image"),
+                        },
+                    },
+                    "required": ["prompts", "model"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "route_to_video",
+                "description": (
+                    "用户明确要求生成/制作/创作视频时调用。"
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -231,68 +299,6 @@ def build_agent_tools() -> List[Dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "batch_generate_image",
-                "description": (
-                    "批量生成多张不同的图片（2-8张）。"
-                    "适用于：用户要求「画5张不同的」「多个角度」「一组系列图」等场景。"
-                    "每张图使用不同的提示词，实现多样化输出。"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "prompts": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "prompt": {"type": "string"},
-                                    "aspect_ratio": {"type": "string"},
-                                },
-                                "required": ["prompt"],
-                            },
-                            "description": "每张图片的提示词和可选比例（2-8个）",
-                            "minItems": 2,
-                            "maxItems": 8,
-                        },
-                        "model": {
-                            "type": "string",
-                            "enum": _get_model_enum("image"),
-                            "description": _get_model_desc("image"),
-                        },
-                    },
-                    "required": ["prompts", "model"],
-                },
-            },
-        },
-        # === 终端工具 ===
-        {
-            "type": "function",
-            "function": {
-                "name": "text_chat",
-                "description": (
-                    "普通对话、问答、分析、翻译、写作、代码等文本交互时调用。"
-                    "这是最终输出工具，调用后将直接回复用户。"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "system_prompt": {
-                            "type": "string",
-                            "description": "适合当前对话的角色设定（一句话）",
-                        },
-                        "model": {
-                            "type": "string",
-                            "enum": _get_model_enum("chat"),
-                            "description": _get_model_desc("chat"),
-                        },
-                    },
-                    "required": ["system_prompt", "model"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
                 "name": "ask_user",
                 "description": (
                     "当你无法确定用户意图或信息不足时使用此工具。三种场景：\n"
@@ -307,7 +313,7 @@ def build_agent_tools() -> List[Dict[str, Any]]:
                     "    2. 用这张图片生成视频\n"
                     "    3. 基于这张图片生成新图片\n"
                     "    4. 只是想聊聊这张图片的内容」\n"
-                    "使用此工具后会直接回复用户，不再继续执行其他工具。"
+                    "使用此工具后循环自动结束。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -319,29 +325,13 @@ def build_agent_tools() -> List[Dict[str, Any]]:
                         "reason": {
                             "type": "string",
                             "enum": ["need_info", "out_of_scope"],
-                            "description": "need_info=信息不足需追问, out_of_scope=超出当前能力",
+                            "description": (
+                                "need_info=信息不足需追问, "
+                                "out_of_scope=超出当前能力"
+                            ),
                         },
                     },
                     "required": ["message", "reason"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "finish",
-                "description": (
-                    "当你已经安排了异步任务（生图/生视频），且不需要额外文字回复时调用。"
-                    "例如：用户说「画一只猫」→ 你已调用 generate_image → 调用 finish 结束。"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "summary": {
-                            "type": "string",
-                            "description": "可选的简短说明（不会展示给用户）",
-                        },
-                    },
                 },
             },
         },
@@ -354,9 +344,8 @@ def build_agent_tools() -> List[Dict[str, Any]]:
 
 
 def build_agent_system_prompt() -> str:
-    """构建 Agent 系统提示词（指导多步思考和工具使用）"""
+    """构建 Agent 系统提示词（纯路由器：分析 → 决策）"""
     from config.smart_model_config import (
-        DEFAULT_IMAGE_MODEL,
         get_image_to_video_model,
     )
 
@@ -368,34 +357,30 @@ def build_agent_system_prompt() -> str:
     edit_hint = " 或 ".join(image_edit_models) or "图片编辑模型"
 
     return (
-        "你是意图路由器。你的唯一职责是判断用户目标，调用对应工具。禁止直接回复用户。\n\n"
-        "## 核心决策逻辑\n"
-        "1. 判断用户的目标是什么（不是用户用了什么词）\n"
-        "2. 目标明确且信息充足 → 直接调用对应工具\n"
-        "3. 目标明确但缺非核心细节（如图片尺寸）→ 用合理默认值，直接调用\n"
-        "4. 目标不明确 → ask_user 带选项确认\n\n"
-        "## 路由规则\n"
-        "- 目标是得到图片（无论新建/修改/调整）→ generate_image\n"
-        "- 目标是得到视频 → generate_video\n"
-        "- 目标是获取实时信息 → web_search\n"
-        "- 目标是文字交流（包括讨论图片话题）→ text_chat\n"
-        "- 目标不确定 → ask_user 确认，不要猜\n\n"
-        "## 模型选择\n"
-        "- 根据 model 参数的 description 选择最匹配的模型\n"
+        "你是意图路由器。分析用户消息，调用一个路由工具，"
+        "并为该工具选择最合适的 model。\n\n"
+        "你不直接回答用户问题，不生成最终内容。"
+        "你的职责是分析意图、填好工具参数、做出路由决策。"
+        "对话记录中的信息可以直接用于填充工具参数。\n\n"
+        "路由规则：\n"
+        "- route_to_image：用户明确要求生成/画/绘制/修改图片\n"
+        "- route_to_video：用户明确要求生成/制作视频\n"
+        "- route_to_chat：其他所有对话（包括需要联网搜索的问题）\n"
+        "- ask_user：无法判断用户意图时，带选项询问\n\n"
+        "route_to_chat 要点：\n"
+        "- 用户问题需要实时信息（天气/新闻/股价等）"
+        " → needs_google_search=true，并选支持联网搜索的模型\n"
+        "- 其他对话 → needs_google_search 不传或 false\n\n"
+        "模型选择：\n"
+        "- 根据各 model 参数的 description 选择最匹配的模型\n"
         f"- 用户有图片且要编辑 → {edit_hint}\n"
         f"- 用户有图片且要做视频 → {i2v_model}\n"
-        "- 日常生成图片 → 默认模型即可\n\n"
-        "## 工具类型\n"
-        "- 同步工具（web_search/get_conversation_context/search_knowledge）："
-        "结果返回给你，可继续思考\n"
-        "- 异步工具（generate_image/generate_video/batch_generate_image）："
-        "后台任务，调用后用 finish 结束\n"
-        "- 终端工具（text_chat/ask_user/finish）：调用后循环结束\n\n"
-        "## ask_user 规则\n"
-        "- 用户请求模糊（如「帮我做个海报」但没说产品/尺寸/风格）→ ask_user\n"
-        "- 用户请求超出当前工具能力（如查库存、发邮件）→ ask_user\n"
-        "- 信息充足时直接调用工具，不要多问\n"
-        "- 批量生图时每张图写不同的提示词，实现多样化\n"
+        "- 用户无特殊要求 → 优先选 priority 最高的模型\n\n"
+        + ERP_ROUTING_PROMPT
+        + CRAWLER_ROUTING_PROMPT
+        + "重要：仅当用户明确要求「生成/画/制作」时才调用生成工具。"
+        "讨论、分析、解释等一律用 route_to_chat。\n"
+        "禁止直接回复用户，禁止调用不存在的工具。\n"
     )
 
 

@@ -27,6 +27,11 @@ _CONFIG_PATH = os.path.join(
 
 # 工具名 → GenerationType 映射
 TOOL_TO_TYPE: Dict[str, GenerationType] = {
+    # Agent Loop 新路由工具
+    "route_to_image": GenerationType.IMAGE,
+    "route_to_video": GenerationType.VIDEO,
+    "route_to_chat": GenerationType.CHAT,
+    # IntentRouter 旧工具名（向后兼容）
     "generate_image": GenerationType.IMAGE,
     "generate_video": GenerationType.VIDEO,
     "web_search": GenerationType.CHAT,

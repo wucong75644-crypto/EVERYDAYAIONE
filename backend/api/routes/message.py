@@ -87,7 +87,10 @@ async def _resolve_generation_type(body, user_id: str, conversation_id: str, db=
             )
             return result.generation_type, result
         except Exception as e:
-            logger.warning(f"Agent loop failed, legacy fallback | error={e}")
+            logger.warning(
+                f"Agent loop failed, legacy fallback | "
+                f"type={type(e).__name__} | error={e!r}"
+            )
         finally:
             await agent.close()
 
@@ -252,6 +255,11 @@ async def generate_message(
                 body.params["_direct_reply"] = routing_decision.direct_reply
             if routing_decision.batch_prompts:
                 body.params["_batch_prompts"] = routing_decision.batch_prompts
+                body.params["num_images"] = len(routing_decision.batch_prompts)
+                # 用第一张图的 aspect_ratio 作为占位符比例（未指定时默认 1:1）
+                first_ratio = routing_decision.batch_prompts[0].get("aspect_ratio", "1:1")
+                if "aspect_ratio" not in body.params:
+                    body.params["aspect_ratio"] = first_ratio
             if routing_decision.render_hints:
                 body.params["_render"] = routing_decision.render_hints
             # 注入搜索标志（让 ChatHandler 启用 Google Search Grounding）
