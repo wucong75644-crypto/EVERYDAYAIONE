@@ -221,6 +221,44 @@ def build_router_tools() -> List[Dict[str, Any]]:
 ROUTER_TOOLS = build_router_tools()
 
 
+def _get_available_model_set(failed_models: List[str]) -> set:
+    """获取可用模型 ID 集合（排除失败模型 + 熔断 Provider 的模型）
+
+    对于不在任何 Registry 中的模型 ID（如 smart_models.json 有但 Registry 没注册的），
+    默认视为可用（不做熔断过滤），仅排除 failed_models。
+    """
+    # 先收集 smart_models.json 中所有模型 ID
+    all_model_ids = {
+        m["id"]
+        for cat in SMART_CONFIG.values()
+        for m in (cat.get("models", []) if isinstance(cat, dict) else [])
+        if m["id"] not in failed_models
+    }
+
+    try:
+        from services.circuit_breaker import is_provider_available
+        from services.adapters.factory import (
+            MODEL_REGISTRY, IMAGE_MODEL_REGISTRY, VIDEO_MODEL_REGISTRY,
+        )
+
+        # 合并所有 Registry 中有 provider 信息的模型
+        provider_map = {}
+        for mid, cfg in MODEL_REGISTRY.items():
+            provider_map[mid] = cfg.provider
+        for mid, cfg in IMAGE_MODEL_REGISTRY.items():
+            provider_map[mid] = cfg["provider"]
+        for mid, cfg in VIDEO_MODEL_REGISTRY.items():
+            provider_map[mid] = cfg["provider"]
+
+        # 过滤：Registry 中能查到 provider 的走熔断检查，查不到的直接放行
+        return {
+            mid for mid in all_model_ids
+            if mid not in provider_map or is_provider_available(provider_map[mid])
+        }
+    except Exception:
+        return all_model_ids
+
+
 def build_retry_tools(
     gen_type: GenerationType,
     failed_models: List[str],
@@ -233,6 +271,9 @@ def build_retry_tools(
     }
     target_tool_name = type_to_tool.get(gen_type, "text_chat")
 
+    # 获取可用模型集合（排除失败模型 + 熔断 Provider）
+    available_models = _get_available_model_set(failed_models)
+
     retry_tools = []
     for tool in ROUTER_TOOLS:
         if tool["function"]["name"] != target_tool_name:
@@ -241,7 +282,7 @@ def build_retry_tools(
         props = tool_copy["function"]["parameters"]["properties"]
         if "model" in props and "enum" in props["model"]:
             props["model"]["enum"] = [
-                m for m in props["model"]["enum"] if m not in failed_models
+                m for m in props["model"]["enum"] if m in available_models
             ]
             if not props["model"]["enum"]:
                 continue
@@ -277,12 +318,15 @@ def get_remaining_models(
     }
     categories = gen_type_to_categories.get(gen_type, [])
 
+    # 获取可用模型集合（排除失败模型 + 熔断 Provider）
+    available_models = _get_available_model_set(failed_models)
+
     seen: set = set()
     remaining: List[str] = []
     for cat in categories:
         for m in SMART_CONFIG.get(cat, {}).get("models", []):
             mid = m["id"]
-            if mid not in failed_models and mid not in seen:
+            if mid in available_models and mid not in seen:
                 seen.add(mid)
                 remaining.append(mid)
     return remaining

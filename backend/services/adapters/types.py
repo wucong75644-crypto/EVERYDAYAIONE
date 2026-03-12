@@ -25,6 +25,14 @@ class ModelProvider(str, Enum):
     ANTHROPIC = "anthropic"  # Claude（预留）
 
 
+class ProviderUnavailableError(Exception):
+    """Provider 熔断中，暂时不可用"""
+
+    def __init__(self, message: str, provider: "ModelProvider"):
+        super().__init__(message)
+        self.provider = provider
+
+
 class MediaType(str, Enum):
     """媒体类型枚举"""
     IMAGE = "image"

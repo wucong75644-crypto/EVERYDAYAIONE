@@ -327,3 +327,65 @@ class TestHandleChatCreditsOnComplete:
         await handler._handle_credits_on_complete(task, credits_consumed=0)
 
         handler._deduct_directly.assert_not_called()
+
+
+# ============================================================
+# TestRecordBreakerResult — 熔断器记录
+# ============================================================
+
+
+class TestRecordBreakerResult:
+
+    @patch("services.handlers.chat_handler.ChatHandler._record_breaker_result.__wrapped__", create=True)
+    def _call(self, model_id, success, error=None):
+        """直接调用静态方法"""
+        ChatHandler._record_breaker_result(model_id, success=success, error=error)
+
+    @patch("services.circuit_breaker.get_breaker")
+    @patch("services.adapters.factory.MODEL_REGISTRY", {
+        "gemini-3-pro": MagicMock(provider="kie"),
+    })
+    def test_success_records_to_breaker(self, mock_get_breaker):
+        """成功时调用 breaker.record_success()"""
+        mock_breaker = MagicMock()
+        mock_get_breaker.return_value = mock_breaker
+
+        ChatHandler._record_breaker_result("gemini-3-pro", success=True)
+
+        mock_get_breaker.assert_called_once_with("kie")
+        mock_breaker.record_success.assert_called_once()
+
+    @patch("services.circuit_breaker.get_breaker")
+    @patch("services.adapters.factory.MODEL_REGISTRY", {
+        "gemini-3-pro": MagicMock(provider="kie"),
+    })
+    def test_failure_records_to_breaker(self, mock_get_breaker):
+        """失败时调用 breaker.record_failure()"""
+        mock_breaker = MagicMock()
+        mock_get_breaker.return_value = mock_breaker
+
+        ChatHandler._record_breaker_result(
+            "gemini-3-pro", success=False, error=RuntimeError("timeout"),
+        )
+
+        mock_breaker.record_failure.assert_called_once()
+
+    @patch("services.circuit_breaker.get_breaker")
+    @patch("services.adapters.factory.MODEL_REGISTRY", {
+        "gemini-3-pro": MagicMock(provider="kie"),
+    })
+    def test_provider_unavailable_error_skipped(self, mock_get_breaker):
+        """ProviderUnavailableError 不记录失败（避免重复计入）"""
+        from services.adapters.types import ProviderUnavailableError, ModelProvider
+
+        error = ProviderUnavailableError("熔断中", provider=ModelProvider.KIE)
+        ChatHandler._record_breaker_result("gemini-3-pro", success=False, error=error)
+
+        mock_get_breaker.assert_not_called()
+
+    @patch("services.circuit_breaker.get_breaker")
+    def test_unknown_model_skipped(self, mock_get_breaker):
+        """未注册模型不记录"""
+        ChatHandler._record_breaker_result("nonexistent-model", success=True)
+
+        mock_get_breaker.assert_not_called()

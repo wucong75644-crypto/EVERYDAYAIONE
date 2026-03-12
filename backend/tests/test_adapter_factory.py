@@ -409,3 +409,65 @@ class TestImageVideoFactory:
         mock_settings.return_value = _mock_settings(kie_api_key=None)
         with pytest.raises(ValueError, match="KIE API Key"):
             create_video_adapter("sora-2-text-to-video")
+
+
+# ============================================================
+# TestCircuitBreakerIntegration — 熔断器集成
+# ============================================================
+
+
+class TestCircuitBreakerIntegration:
+
+    @patch("services.adapters.factory.get_settings")
+    @patch("services.adapters.factory.is_provider_available", return_value=False)
+    def test_chat_adapter_raises_when_provider_broken(self, mock_avail, mock_settings):
+        """Provider 熔断时 create_chat_adapter 抛 ProviderUnavailableError"""
+        from services.adapters.types import ProviderUnavailableError
+
+        mock_settings.return_value = _mock_settings()
+        with pytest.raises(ProviderUnavailableError):
+            create_chat_adapter("gemini-3-pro")
+
+    @patch("services.adapters.factory.get_settings")
+    @patch("services.adapters.factory.is_provider_available", return_value=False)
+    def test_image_adapter_raises_when_provider_broken(self, mock_avail, mock_settings):
+        """Provider 熔断时 create_image_adapter 抛 ProviderUnavailableError"""
+        from services.adapters.types import ProviderUnavailableError
+
+        mock_settings.return_value = _mock_settings()
+        with pytest.raises(ProviderUnavailableError):
+            create_image_adapter("google/nano-banana")
+
+    @patch("services.adapters.factory.get_settings")
+    @patch("services.adapters.factory.is_provider_available", return_value=True)
+    def test_chat_adapter_passes_when_provider_available(self, mock_avail, mock_settings):
+        """Provider 正常时正常创建 adapter"""
+        mock_settings.return_value = _mock_settings()
+        adapter = create_chat_adapter("gemini-3-pro")
+        assert adapter is not None
+
+
+# ============================================================
+# TestStreamTimeoutIntegration — 超时参数传递
+# ============================================================
+
+
+class TestStreamTimeoutIntegration:
+
+    @patch("services.adapters.factory.get_settings")
+    @patch("services.adapters.factory.is_provider_available", return_value=True)
+    def test_explicit_timeout_passed_through(self, mock_avail, mock_settings):
+        """显式传入 stream_timeout 不走自动解析"""
+        mock_settings.return_value = _mock_settings()
+        # 传入自定义超时，不应触发 resolve_stream_timeout
+        adapter = create_chat_adapter("gemini-3-pro", stream_timeout=999.0)
+        assert adapter is not None
+
+    @patch("services.adapters.factory.get_settings")
+    @patch("services.adapters.factory.is_provider_available", return_value=True)
+    @patch("services.timeout_resolver.resolve_stream_timeout", return_value=120.0)
+    def test_none_timeout_triggers_auto_resolve(self, mock_resolve, mock_avail, mock_settings):
+        """stream_timeout=None 时自动调用 resolve_stream_timeout"""
+        mock_settings.return_value = _mock_settings()
+        create_chat_adapter("gemini-3-pro", stream_timeout=None)
+        mock_resolve.assert_called_once_with("gemini-3-pro")

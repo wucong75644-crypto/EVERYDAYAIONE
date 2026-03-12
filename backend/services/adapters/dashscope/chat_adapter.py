@@ -41,8 +41,8 @@ DASHSCOPE_PRICING: Dict[str, DashScopeModelPricing] = {
     "glm-5": DashScopeModelPricing(credits_per_1m_input=57, credits_per_1m_output=253),
 }
 
-# 流式超时（秒）
-STREAM_TIMEOUT = 120.0
+# 默认超时（秒）— 当工厂未传入 stream_timeout 时的兜底值
+_DEFAULT_STREAM_TIMEOUT = 120.0
 CONNECT_TIMEOUT = 15.0
 
 
@@ -59,10 +59,12 @@ class DashScopeChatAdapter(BaseChatAdapter):
         api_key: str,
         model: str,
         base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        stream_timeout: Optional[float] = None,
     ):
         super().__init__(model)
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
+        self._stream_timeout = stream_timeout or _DEFAULT_STREAM_TIMEOUT
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -76,7 +78,7 @@ class DashScopeChatAdapter(BaseChatAdapter):
                 },
                 timeout=httpx.Timeout(
                     connect=CONNECT_TIMEOUT,
-                    read=STREAM_TIMEOUT,
+                    read=self._stream_timeout,
                     write=30.0,
                     pool=30.0,
                 ),

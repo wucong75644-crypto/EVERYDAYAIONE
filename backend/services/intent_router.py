@@ -212,6 +212,9 @@ class IntentRouter:
         # 查询知识库，增强路由 system prompt
         enhanced_prompt = await self._enhance_with_knowledge(text)
 
+        # 过滤熔断 Provider 的模型
+        active_tools = self._filter_tools_by_breaker(ROUTER_TOOLS)
+
         # 降级链：主模型 → 备用模型 → 关键词
         models = [
             settings.intent_router_model,
@@ -225,7 +228,7 @@ class IntentRouter:
                     model=model,
                     system_prompt=enhanced_prompt,
                     text=context_prefix + text,
-                    tools=ROUTER_TOOLS,
+                    tools=active_tools,
                     timeout=settings.intent_router_timeout,
                 )
                 if decision:
@@ -449,6 +452,37 @@ class IntentRouter:
             raw_tool_name=tool_name,
             routed_by="model",
         )
+
+    @staticmethod
+    def _filter_tools_by_breaker(
+        tools: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """移除熔断 Provider 模型的工具 enum 选项"""
+        import copy as _copy
+
+        try:
+            from services.circuit_breaker import is_provider_available
+            from services.adapters.factory import MODEL_REGISTRY
+        except Exception:
+            return tools
+
+        available_models = {
+            mid for mid, cfg in MODEL_REGISTRY.items()
+            if is_provider_available(cfg.provider)
+        }
+
+        filtered = []
+        for tool in tools:
+            tool_copy = _copy.deepcopy(tool)
+            props = tool_copy["function"]["parameters"]["properties"]
+            if "model" in props and "enum" in props["model"]:
+                props["model"]["enum"] = [
+                    m for m in props["model"]["enum"] if m in available_models
+                ]
+                if not props["model"]["enum"]:
+                    continue
+            filtered.append(tool_copy)
+        return filtered
 
     def _keyword_fallback(self, content: List[ContentPart]) -> RoutingDecision:
         """关键词兜底"""

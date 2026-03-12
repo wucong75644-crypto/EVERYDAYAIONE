@@ -96,16 +96,23 @@ class KieClient:
     TASK_POLL_INTERVAL = 2.0  # 任务轮询间隔
     TASK_MAX_WAIT_TIME = 600.0  # 任务最大等待时间 (10分钟)
 
-    def __init__(self, api_key: str, timeout: float = DEFAULT_TIMEOUT):
+    def __init__(
+        self,
+        api_key: str,
+        timeout: float = DEFAULT_TIMEOUT,
+        stream_timeout: Optional[float] = None,
+    ):
         """
         初始化 KIE 客户端
 
         Args:
             api_key: KIE API 密钥
             timeout: 默认请求超时时间
+            stream_timeout: 流式响应超时（秒），为空则使用 STREAM_TIMEOUT
         """
         self.api_key = api_key
         self.timeout = timeout
+        self._stream_timeout = stream_timeout or self.STREAM_TIMEOUT
         self._client: Optional[httpx.AsyncClient] = None
 
     @property
@@ -252,7 +259,7 @@ class KieClient:
                 json=request_data,
                 timeout=httpx.Timeout(
                     connect=5.0,
-                    read=self.STREAM_TIMEOUT,
+                    read=self._stream_timeout,
                     write=10.0,
                     pool=5.0,
                 ),

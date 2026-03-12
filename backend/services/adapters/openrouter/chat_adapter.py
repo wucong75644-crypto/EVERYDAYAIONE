@@ -23,8 +23,8 @@ from ..base import (
     StreamChunk,
 )
 
-# 超时配置（秒）
-STREAM_TIMEOUT = 120.0
+# 默认超时（秒）— 当工厂未传入 stream_timeout 时的兜底值
+_DEFAULT_STREAM_TIMEOUT = 120.0
 CONNECT_TIMEOUT = 15.0
 
 # 积分换算：$50 = 10000 积分 → 1 USD = 200 积分
@@ -46,11 +46,13 @@ class OpenRouterChatAdapter(BaseChatAdapter):
         model: str,
         base_url: str = "https://openrouter.ai/api/v1",
         app_title: str = "EverydayAI",
+        stream_timeout: Optional[float] = None,
     ):
         super().__init__(model)
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._app_title = app_title
+        self._stream_timeout = stream_timeout or _DEFAULT_STREAM_TIMEOUT
         self._client: Optional[httpx.AsyncClient] = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -65,7 +67,7 @@ class OpenRouterChatAdapter(BaseChatAdapter):
                 },
                 timeout=httpx.Timeout(
                     connect=CONNECT_TIMEOUT,
-                    read=STREAM_TIMEOUT,
+                    read=self._stream_timeout,
                     write=30.0,
                     pool=30.0,
                 ),

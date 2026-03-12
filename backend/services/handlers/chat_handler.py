@@ -254,7 +254,10 @@ class ChatHandler(ChatContextMixin, BaseHandler):
                 credits_consumed=credits_consumed,
             )
 
-            # 5. Fire-and-forget 后置任务
+            # 5. 熔断器：记录成功
+            self._record_breaker_result(model_id, success=True)
+
+            # 6. Fire-and-forget 后置任务
             elapsed_ms = int((_time.monotonic() - _start_time) * 1000)
             self._dispatch_post_tasks(
                 user_id=user_id, conversation_id=conversation_id,
@@ -268,6 +271,8 @@ class ChatHandler(ChatContextMixin, BaseHandler):
                 f"Chat stream error | task_id={task_id} | "
                 f"model={model_id} | error={str(e)}"
             )
+            # 熔断器：仅在真实 API 失败时记录（ProviderUnavailableError 不算）
+            self._record_breaker_result(model_id, success=False, error=e)
             elapsed_ms = int((_time.monotonic() - _start_time) * 1000)
             await self._handle_stream_failure(
                 error=e, task_id=task_id, message_id=message_id,
@@ -304,6 +309,31 @@ class ChatHandler(ChatContextMixin, BaseHandler):
         if credits_consumed > 0:
             credits_consumed = max(1, credits_consumed)
         return credits_consumed
+
+    @staticmethod
+    def _record_breaker_result(
+        model_id: str,
+        success: bool,
+        error: Optional[Exception] = None,
+    ) -> None:
+        """向熔断器记录成功/失败"""
+        from services.adapters.factory import MODEL_REGISTRY
+        from services.adapters.types import ProviderUnavailableError
+        from services.circuit_breaker import get_breaker
+
+        # ProviderUnavailableError 说明熔断器已经 OPEN，不重复记录
+        if not success and isinstance(error, ProviderUnavailableError):
+            return
+
+        config = MODEL_REGISTRY.get(model_id)
+        if not config:
+            return
+
+        breaker = get_breaker(config.provider)
+        if success:
+            breaker.record_success()
+        else:
+            breaker.record_failure()
 
     def _dispatch_post_tasks(
         self,

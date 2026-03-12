@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     memory_enabled_default: bool = True  # 新用户默认开启记忆
     memory_filter_model: str = "qwen3.5-flash"  # 记忆精排主模型
     memory_filter_fallback_model: str = "qwen3.5-plus"  # 记忆精排备用模型
-    memory_filter_timeout: float = 600.0  # 记忆精排读取超时（秒），connect=5s
+    memory_filter_timeout: float = 10.0  # 记忆精排读取超时（秒），connect=5s
 
     # 对话上下文配置
     chat_context_limit: int = 20  # 注入历史消息的最大条数
@@ -104,7 +104,7 @@ class Settings(BaseSettings):
     context_summary_enabled: bool = True  # 是否启用摘要压缩
     context_summary_model: str = "qwen3.5-flash"  # 摘要主模型
     context_summary_fallback_model: str = "qwen3.5-plus"  # 摘要备用模型
-    context_summary_timeout: float = 600.0  # 摘要读取超时（秒），connect=5s
+    context_summary_timeout: float = 30.0  # 摘要读取超时（秒），connect=5s
     context_summary_max_chars: int = 500  # 摘要最大字符数
     context_summary_update_interval: int = 10  # 每N条新消息更新摘要
 
@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     intent_router_model: str = "qwen3.5-plus"  # 主路由模型（DashScope）
     intent_router_fallback_model: str = "qwen3.5-flash"  # 降级路由模型
     intent_router_enabled: bool = True  # 是否启用智能路由
-    intent_router_timeout: float = 600.0  # 路由读取超时（秒），connect=5s
+    intent_router_timeout: float = 15.0  # 路由读取超时（秒），connect=5s
 
     # Agent Loop 配置（多步工具编排）
     agent_loop_enabled: bool = True  # Agent Loop 总开关（False 退回 IntentRouter）
@@ -122,7 +122,7 @@ class Settings(BaseSettings):
     agent_loop_model: str = "qwen3.5-plus"  # Agent 大脑模型（dashscope）
     agent_loop_openrouter_model: str = "anthropic/claude-sonnet-4.6"  # Agent 大脑模型（openrouter）
     agent_loop_fallback_model: str = "qwen3.5-flash"  # 降级模型
-    agent_loop_timeout: float = 600.0  # FC 调用读取超时（秒），connect=5s
+    agent_loop_timeout: float = 120.0  # FC 调用读取超时（秒），connect=5s
     agent_loop_brain_context_limit: int = 10  # 注入对话历史条数
     agent_loop_brain_context_max_chars: int = 3000  # 历史文本最大字符数
     agent_loop_brain_max_images: int = 8  # 历史注入最大图片数（控制 token 消耗）
@@ -131,7 +131,7 @@ class Settings(BaseSettings):
     kb_enabled: bool = True                              # 知识库总开关
     kb_extraction_model: str = "qwen3.5-flash"           # 知识提取模型
     kb_extraction_fallback_model: str = "qwen3.5-plus"   # 降级模型
-    kb_extraction_timeout: float = 600.0               # 知识提取读取超时（秒），connect=5s
+    kb_extraction_timeout: float = 30.0                # 知识提取读取超时（秒），connect=5s
     kb_search_limit: int = 5                         # 路由检索最大条数
     kb_search_threshold: float = 0.5                 # 向量相似度阈值
     kb_max_nodes: int = 5000                         # 知识节点上限
@@ -169,6 +169,17 @@ class Settings(BaseSettings):
     crawler_cookies_wb: Optional[str] = None
     crawler_cookies_tieba: Optional[str] = None
     crawler_cookies_zhihu: Optional[str] = None
+
+    # 超时分级配置（按任务类型差异化超时）
+    chat_stream_timeout: float = 60.0         # 聊天流式超时（普通模型）
+    chat_thinking_timeout: float = 120.0      # 聊天流式超时（推理模型，如 deepseek-r1, o4-mini）
+    image_generation_timeout: float = 180.0   # 图片生成轮询超时
+    video_generation_timeout: float = 600.0   # 视频生成轮询超时（Sora 等，合理长时间）
+
+    # 熔断器配置（Provider 级别）
+    circuit_breaker_failure_threshold: int = 3      # 连续失败次数阈值 → 触发 OPEN
+    circuit_breaker_failure_window: float = 60.0    # 失败计数滑动窗口（秒）
+    circuit_breaker_open_duration: float = 30.0     # OPEN 状态持续时间（秒）
 
     # Sentry 错误监控配置
     sentry_dsn: Optional[str] = None
