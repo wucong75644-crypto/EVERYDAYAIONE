@@ -488,3 +488,110 @@ class TestToolDefinitions:
         assert _TOOL_TO_TYPE["generate_video"] == GenerationType.VIDEO
         assert _TOOL_TO_TYPE["web_search"] == GenerationType.CHAT
         assert _TOOL_TO_TYPE["text_chat"] == GenerationType.CHAT
+
+
+# ============================================================
+# _filter_tools_by_breaker 测试
+# ============================================================
+
+
+class TestFilterToolsByBreaker:
+
+    def test_removes_broken_provider_models(self, router):
+        """熔断 Provider 的模型从 enum 中移除"""
+        from services.adapters.base import ModelProvider
+
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "text_chat",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "model": {
+                            "type": "string",
+                            "enum": ["model-a", "model-b", "model-c"],
+                        },
+                    },
+                },
+            },
+        }]
+
+        mock_registry = {
+            "model-a": MagicMock(provider=ModelProvider.KIE),
+            "model-b": MagicMock(provider=ModelProvider.OPENROUTER),
+            "model-c": MagicMock(provider=ModelProvider.KIE),
+        }
+
+        def mock_available(provider):
+            return provider != ModelProvider.KIE
+
+        with patch("services.circuit_breaker.is_provider_available", mock_available), \
+             patch("services.adapters.factory.MODEL_REGISTRY", mock_registry):
+            filtered = router._filter_tools_by_breaker(tools)
+
+        enum_values = filtered[0]["function"]["parameters"]["properties"]["model"]["enum"]
+        assert enum_values == ["model-b"]
+
+    def test_all_models_broken_removes_tool(self, router):
+        """所有模型都被熔断时整个工具被移除"""
+        from services.adapters.base import ModelProvider
+
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "text_chat",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "model": {
+                            "type": "string",
+                            "enum": ["model-a"],
+                        },
+                    },
+                },
+            },
+        }]
+
+        mock_registry = {
+            "model-a": MagicMock(provider=ModelProvider.KIE),
+        }
+
+        with patch("services.circuit_breaker.is_provider_available", return_value=False), \
+             patch("services.adapters.factory.MODEL_REGISTRY", mock_registry):
+            filtered = router._filter_tools_by_breaker(tools)
+
+        assert len(filtered) == 0
+
+    def test_does_not_mutate_original_tools(self, router):
+        """过滤不修改原始工具列表"""
+        from services.adapters.base import ModelProvider
+
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "text_chat",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "model": {
+                            "type": "string",
+                            "enum": ["model-a", "model-b"],
+                        },
+                    },
+                },
+            },
+        }]
+
+        mock_registry = {
+            "model-a": MagicMock(provider=ModelProvider.KIE),
+            "model-b": MagicMock(provider=ModelProvider.OPENROUTER),
+        }
+
+        with patch("services.circuit_breaker.is_provider_available", return_value=False), \
+             patch("services.adapters.factory.MODEL_REGISTRY", mock_registry):
+            router._filter_tools_by_breaker(tools)
+
+        # 原始 tools 未被修改
+        original_enum = tools[0]["function"]["parameters"]["properties"]["model"]["enum"]
+        assert original_enum == ["model-a", "model-b"]

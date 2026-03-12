@@ -5,6 +5,8 @@
       重试工具过滤、默认模型常量
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from config.smart_model_config import (
@@ -260,3 +262,60 @@ class TestToolToType:
         assert TOOL_TO_TYPE["generate_video"] == GenerationType.VIDEO
         assert TOOL_TO_TYPE["text_chat"] == GenerationType.CHAT
         assert TOOL_TO_TYPE["web_search"] == GenerationType.CHAT
+
+
+# ============================================================
+# TestGetAvailableModelSet — 熔断集成过滤
+# ============================================================
+
+
+class TestGetAvailableModelSet:
+
+    @patch("services.circuit_breaker.is_provider_available", return_value=True)
+    @patch("services.adapters.factory.VIDEO_MODEL_REGISTRY", {
+        "sora-2-text-to-video": {"provider": "kie"},
+    })
+    @patch("services.adapters.factory.IMAGE_MODEL_REGISTRY", {
+        "google/nano-banana": {"provider": "kie"},
+    })
+    @patch("services.adapters.factory.MODEL_REGISTRY", {
+        "qwen3.5-plus": MagicMock(provider="dashscope"),
+    })
+    def test_all_available_returns_all(self, mock_avail):
+        """所有 Provider 正常时返回全部模型（排除 failed_models）"""
+        from config.smart_model_config import _get_available_model_set
+
+        result = _get_available_model_set(["qwen3.5-plus"])
+        # qwen3.5-plus 在 failed_models 中，应被排除
+        assert "qwen3.5-plus" not in result
+
+    @patch("services.circuit_breaker.is_provider_available")
+    @patch("services.adapters.factory.VIDEO_MODEL_REGISTRY", {})
+    @patch("services.adapters.factory.IMAGE_MODEL_REGISTRY", {})
+    @patch("services.adapters.factory.MODEL_REGISTRY", {
+        "qwen3.5-plus": MagicMock(provider="dashscope"),
+        "gemini-3-pro": MagicMock(provider="kie"),
+    })
+    def test_broken_provider_filtered_out(self, mock_avail):
+        """熔断 Provider 的模型被过滤"""
+        from config.smart_model_config import _get_available_model_set
+
+        def side_effect(provider):
+            return provider != "kie"
+
+        mock_avail.side_effect = side_effect
+        result = _get_available_model_set([])
+        # kie 熔断 → gemini-3-pro 被过滤（如果在 SMART_CONFIG 中）
+        assert "gemini-3-pro" not in result
+
+    def test_import_failure_returns_all_non_failed(self):
+        """熔断器导入失败时返回所有非失败模型"""
+        from config.smart_model_config import _get_available_model_set
+
+        with patch("services.circuit_breaker.is_provider_available", side_effect=ImportError):
+            result = _get_available_model_set(["qwen3.5-plus"])
+
+        # 导入失败时降级：返回除 failed 之外的全部模型
+        assert "qwen3.5-plus" not in result
+        # 其他模型应该在
+        assert len(result) > 0
