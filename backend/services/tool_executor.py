@@ -33,6 +33,8 @@ class ToolExecutor:
             "get_conversation_context": self._get_conversation_context,
             "search_knowledge": self._search_knowledge,
             "social_crawler": self._social_crawler,
+            "erp_api_search": self._erp_api_search,
+            "model_search": self._model_search,
         }
         # 注册7个ERP工具，统一委托给 _erp_dispatch
         for tool_name in ERP_SYNC_TOOLS:
@@ -149,6 +151,26 @@ class ToolExecutor:
             lines.append(f"- {title}: {content}")
 
         return "\n".join(lines)
+
+    # ========================================
+    # 搜索工具（按需发现 API/模型文档）
+    # ========================================
+
+    async def _erp_api_search(self, args: Dict[str, Any]) -> str:
+        """搜索 ERP API 操作和参数文档"""
+        from services.kuaimai.api_search import search_erp_api
+        query = args.get("query", "").strip()
+        if not query:
+            return "请输入搜索关键词"
+        return search_erp_api(query)
+
+    async def _model_search(self, args: Dict[str, Any]) -> str:
+        """搜索可用 AI 模型及其能力"""
+        from services.model_search import search_models
+        query = args.get("query", "").strip()
+        if not query:
+            return "请输入搜索关键词"
+        return search_models(query)
 
     # ========================================
     # ERP 统一调度

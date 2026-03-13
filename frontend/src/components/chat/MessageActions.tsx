@@ -6,10 +6,12 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Trash2, FileSpreadsheet } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useModalAnimation } from '../../hooks/useModalAnimation';
 import { logger } from '../../utils/logger';
+import { hasMarkdownTable } from '../../utils/tableExport';
+import TableExportModal from './TableExportModal';
 
 interface MessageActionsProps {
   /** 消息 ID */
@@ -28,6 +30,8 @@ interface MessageActionsProps {
   visible: boolean;
   /** 重新生成回调 */
   onRegenerate?: (messageId: string) => void;
+  /** 原始 Markdown 内容（用于表格导出检测） */
+  markdownContent?: string;
   /** 删除回调（打开确认弹框） */
   onDeleteClick?: () => void;
   /** 鼠标进入工具栏 */
@@ -44,13 +48,18 @@ export default function MessageActions({
   isRegenerating,
   isGenerating = false,
   visible,
+  markdownContent,
   onRegenerate,
   onDeleteClick,
   onMouseEnter,
   onMouseLeave,
 }: MessageActionsProps) {
   const [copied, setCopied] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+
+  // 检测是否包含可导出的表格
+  const canExportTable = !isUser && !!markdownContent && hasMarkdownTable(markdownContent);
 
   // 复制状态重置定时器 ref（用于组件卸载时清理）
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -245,26 +254,47 @@ export default function MessageActions({
           </svg>
         </button>
 
-        {/* 下拉菜单 */}
+        {/* 下拉菜单（向上展开，避免被底部遮挡） */}
         {showMoreMenu && (
           <div
-            className={`absolute bottom-full right-0 mb-1.5 bg-white rounded-lg shadow-lg border border-gray-200 p-1 min-w-[100px] z-10 ${
+            className={`absolute top-full left-0 mt-1.5 bg-white rounded-xl shadow-lg border border-gray-200 p-1 z-10 ${
               moreMenuClosing ? 'animate-popupExit' : 'animate-popupEnter'
             }`}
           >
+            {/* 导出表格（仅 AI 消息且包含表格时显示） */}
+            {canExportTable && (
+              <button
+                onClick={() => {
+                  closeMoreMenu();
+                  setShowExportModal(true);
+                }}
+                className="flex items-center gap-1.5 whitespace-nowrap px-2.5 py-1.5 text-xs text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 flex-shrink-0" />
+                <span>导出表格</span>
+              </button>
+            )}
             {onDeleteClick && (
               <button
                 onClick={() => {
                   closeMoreMenu();
                   onDeleteClick();
                 }}
-                className="w-full px-3 py-1.5 text-left text-xs text-red-600 hover:bg-gray-100 rounded-md flex items-center gap-2 transition-colors"
+                className="flex items-center gap-1.5 whitespace-nowrap px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-lg transition-colors"
               >
                 <Trash2 className="w-3.5 h-3.5 flex-shrink-0" />
                 <span>删除</span>
               </button>
             )}
           </div>
+        )}
+
+        {/* 表格导出弹窗 */}
+        {showExportModal && markdownContent && (
+          <TableExportModal
+            markdownContent={markdownContent}
+            onClose={() => setShowExportModal(false)}
+          />
         )}
       </div>
     </div>

@@ -79,7 +79,8 @@ async def _resolve_generation_type(body, user_id: str, conversation_id: str, db=
 
         agent = AgentLoop(db, user_id, conversation_id)
         try:
-            result = await agent.run(body.content)
+            thinking_mode = (body.params or {}).get("thinking_mode")
+            result = await agent.run(body.content, thinking_mode=thinking_mode)
             logger.info(
                 f"Agent loop completed | type={result.generation_type.value} | "
                 f"turns={result.turns_used} | tokens={result.total_tokens} | "

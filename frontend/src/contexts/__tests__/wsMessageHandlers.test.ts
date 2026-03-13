@@ -670,7 +670,61 @@ describe('wsMessageHandlers', () => {
   });
 
   // ========================================
-  // 11. error handler
+  // 11. thinking_chunk handler
+  // ========================================
+
+  describe('thinking_chunk', () => {
+    it('should call appendStreamingThinking with conversation_id and chunk', () => {
+      (store as any).appendStreamingThinking = vi.fn();
+
+      handlers.thinking_chunk({
+        conversation_id: 'conv_1',
+        chunk: '让我思考一下',
+      });
+
+      expect((store as any).appendStreamingThinking).toHaveBeenCalledWith(
+        'conv_1',
+        '让我思考一下',
+      );
+    });
+
+    it('should handle chunk from payload.chunk fallback', () => {
+      (store as any).appendStreamingThinking = vi.fn();
+
+      handlers.thinking_chunk({
+        conversation_id: 'conv_1',
+        payload: { chunk: '思考内容' },
+      });
+
+      expect((store as any).appendStreamingThinking).toHaveBeenCalledWith(
+        'conv_1',
+        '思考内容',
+      );
+    });
+
+    it('should ignore when conversation_id is missing', () => {
+      (store as any).appendStreamingThinking = vi.fn();
+
+      handlers.thinking_chunk({
+        chunk: '无效',
+      });
+
+      expect((store as any).appendStreamingThinking).not.toHaveBeenCalled();
+    });
+
+    it('should ignore when chunk is empty', () => {
+      (store as any).appendStreamingThinking = vi.fn();
+
+      handlers.thinking_chunk({
+        conversation_id: 'conv_1',
+      });
+
+      expect((store as any).appendStreamingThinking).not.toHaveBeenCalled();
+    });
+  });
+
+  // ========================================
+  // 12. error handler
   // ========================================
 
   describe('error', () => {

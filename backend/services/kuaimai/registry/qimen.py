@@ -20,9 +20,12 @@ QIMEN_REGISTRY = {
         response_key="trades",
         param_map={
             "tid": "tid",
+            "order_id": "tid",  # 兼容 TRADE 风格参数名
             "sid": "sid",
+            "system_id": "sid",  # 兼容 TRADE 风格参数名
             "status": "status",
             "date_type": "dateType",
+            "time_type": "dateType",  # 兼容 TRADE 风格参数名
             "shop_id": "userId",
             "warehouse_id": "warehouseId",
             "start_date": "startTime",

@@ -73,6 +73,8 @@ export interface MessageError {
 export interface GenerationParams {
   type?: 'chat' | 'image' | 'video' | 'audio';
   model?: string;
+  /** 思考过程内容（持久化在 generation_params 中） */
+  thinking_content?: string;
   [key: string]: unknown;
 }
 

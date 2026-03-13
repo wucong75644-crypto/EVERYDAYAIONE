@@ -114,10 +114,10 @@ class DashScopeChatAdapter(BaseChatAdapter):
             "stream_options": {"include_usage": True},
         }
 
-        # 思考模式支持（DeepSeek/Qwen/GLM 通用参数）
-        if thinking_mode == "enabled":
+        # 思考模式：用户开了深度思考才启用，否则显式关闭（qwen3.5 默认开，必须显式关）
+        if thinking_mode in ("enabled", "deep_think"):
             request_body["enable_thinking"] = True
-        elif thinking_mode == "disabled":
+        else:
             request_body["enable_thinking"] = False
 
         client = await self._get_client()
@@ -158,11 +158,13 @@ class DashScopeChatAdapter(BaseChatAdapter):
 
                     # 提取内容
                     content = None
+                    thinking_content = None
                     finish_reason = None
                     choices = chunk.get("choices", [])
                     if choices:
                         delta = choices[0].get("delta", {})
                         content = delta.get("content")
+                        thinking_content = delta.get("reasoning_content")
                         finish_reason = choices[0].get("finish_reason")
 
                     # 提取 usage（通常在最后一个 chunk，中间 chunk 为 null）
@@ -172,6 +174,7 @@ class DashScopeChatAdapter(BaseChatAdapter):
 
                     yield StreamChunk(
                         content=content,
+                        thinking_content=thinking_content,
                         finish_reason=finish_reason,
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
@@ -199,8 +202,10 @@ class DashScopeChatAdapter(BaseChatAdapter):
             "stream": False,
         }
 
-        if thinking_mode == "enabled":
+        if thinking_mode in ("enabled", "deep_think"):
             request_body["enable_thinking"] = True
+        else:
+            request_body["enable_thinking"] = False
 
         client = await self._get_client()
 

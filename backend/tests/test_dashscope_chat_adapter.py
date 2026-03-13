@@ -409,7 +409,7 @@ class TestStreamChat:
         ):
             pass
 
-        assert "enable_thinking" not in captured_body
+        assert captured_body.get("enable_thinking") is False
 
     @pytest.mark.asyncio
     async def test_finish_reason_propagated(self):

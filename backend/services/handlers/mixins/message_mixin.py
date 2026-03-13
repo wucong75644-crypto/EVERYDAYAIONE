@@ -213,6 +213,7 @@ class MessageMixin:
         task_id: str,
         result: List[ContentPart],
         credits_consumed: int,
+        thinking_content: Optional[str] = None,
     ) -> Message:
         """通用完成处理：积分扣除 + 消息 upsert + WS 推送 + 任务状态更新"""
         task = self._get_task_context(task_id)
@@ -232,6 +233,10 @@ class MessageMixin:
         # Upsert 消息
         content_dicts = self._convert_content_parts_to_dicts(result)
         extra_gen_params = self._extract_extra_gen_params(task)
+        # 将思考内容存入 generation_params（持久化）
+        if thinking_content:
+            extra_gen_params = extra_gen_params or {}
+            extra_gen_params["thinking_content"] = thinking_content
 
         message, msg_data = self._upsert_assistant_message(
             message_id=message_id,

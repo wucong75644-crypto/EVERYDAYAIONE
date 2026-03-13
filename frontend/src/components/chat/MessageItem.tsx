@@ -17,6 +17,8 @@ import { logger } from '../../utils/logger';
 import { useModalAnimation } from '../../hooks/useModalAnimation';
 import { useMessageAnimation } from '../../hooks/useMessageAnimation';
 import LoadingPlaceholder from './LoadingPlaceholder';
+import MarkdownRenderer from './MarkdownRenderer';
+import ThinkingBlock from './ThinkingBlock';
 import { PLACEHOLDER_TEXT, RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../constants/placeholder';
 import type { RenderInstruction } from '../../types/render';
 import type { AspectRatio, VideoAspectRatio } from '../../constants/models';
@@ -43,6 +45,10 @@ interface MessageItemProps {
   onRegenerateSingle?: (messageId: string, imageIndex: number) => void;
   /** Agent Loop 步骤提示（"正在搜索..." 等） */
   agentStepHint?: string;
+  /** 流式思考内容 */
+  streamingThinking?: string;
+  /** 思考开始时间戳 */
+  thinkingStartTime?: number;
 }
 
 export default memo(function MessageItem({
@@ -57,6 +63,8 @@ export default memo(function MessageItem({
   skipEntryAnimation = false,
   onRegenerateSingle,
   agentStepHint,
+  streamingThinking,
+  thinkingStartTime,
 }: MessageItemProps) {
   const isUser = message.role === 'user';
 
@@ -314,31 +322,43 @@ export default memo(function MessageItem({
               : 'bg-white border border-gray-200 text-gray-900'
           }`}
         >
+          {/* 思考过程折叠块（仅 AI 消息） */}
+          {!isUser && (() => {
+            const thinkingText = streamingThinking || genParams.thinking_content as string || '';
+            const isThinkingNow = !!(isStreaming && streamingThinking && !textContent);
+            if (!thinkingText && !isThinkingNow) return null;
+            return (
+              <ThinkingBlock
+                content={thinkingText}
+                isThinking={isThinkingNow}
+                thinkingStartTime={thinkingStartTime}
+              />
+            );
+          })()}
+
           {/* 消息文本 */}
-          <div className="text-[15px] leading-relaxed whitespace-pre-wrap">
+          <div className={isUser ? 'text-[15px] leading-relaxed whitespace-pre-wrap' : ''}>
             {/* 加载状态：重新生成或流式输出开始但内容为空 */}
             {((isRegenerating || isStreaming) && !textContent) ? (
               <LoadingPlaceholder text={agentStepHint || PLACEHOLDER_TEXT.CHAT_THINKING} />
             ) : bubbleTextInfo ? (
               /* 媒体任务气泡文字：图片/视频生成中或生成完成（仅 pending 状态） */
               bubbleTextInfo.hasAnimation ? (
-                /* 生成中：显示文字 + 跳动的点 */
                 <LoadingPlaceholder text={bubbleTextInfo.text} />
               ) : (
-                /* 生成完成：只显示文字，不显示跳动的点 */
                 <span>{bubbleTextInfo.text}</span>
               )
             ) : isErrorMessage ? (
-              /* 错误状态：显示实际错误信息 */
-              <span>{textContent || 'Error occurred'}</span>
+              <span className="text-[15px]">{textContent || 'Error occurred'}</span>
+            ) : isUser ? (
+              /* 用户消息：保持纯文本 */
+              <>{textContent}</>
             ) : (
-              <>
-                {textContent}
-                {/* 流式输出光标 */}
-                {(isStreaming || isRegenerating) && textContent && (
-                  <span className="inline-block w-2 h-4 bg-blue-500 ml-0.5 animate-typing-cursor" />
-                )}
-              </>
+              /* AI 消息：Markdown 渲染 */
+              <MarkdownRenderer
+                content={textContent}
+                isStreaming={isStreaming || isRegenerating}
+              />
             )}
           </div>
         </div>
@@ -373,6 +393,7 @@ export default memo(function MessageItem({
           isRegenerating={isRegenerating}
           isGenerating={isActuallyGenerating}
           visible={showToolbar}
+          markdownContent={!isUser ? textContent : undefined}
           onRegenerate={onRegenerate}
           onDeleteClick={onDelete ? openDeleteModal : undefined}
           onMouseEnter={handleToolbarMouseEnter}

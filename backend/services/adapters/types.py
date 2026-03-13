@@ -62,6 +62,7 @@ class StreamChunk:
     用于标准化不同 AI 提供商的流式响应格式。
     """
     content: Optional[str] = None           # 增量文本内容
+    thinking_content: Optional[str] = None  # 增量思考内容（reasoning_content）
     finish_reason: Optional[str] = None     # 结束原因
     # Token 使用量（通常在最后一帧返回）
     prompt_tokens: int = 0
@@ -72,6 +73,10 @@ class StreamChunk:
     @property
     def has_content(self) -> bool:
         return bool(self.content)
+
+    @property
+    def has_thinking_content(self) -> bool:
+        return bool(self.thinking_content)
 
     @property
     def has_usage(self) -> bool:

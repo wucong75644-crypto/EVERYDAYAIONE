@@ -96,7 +96,12 @@
       "Bash(PYTHONPATH=. python -m pytest tests/ -q --tb=short --ignore=tests/manual)",
       "Bash(PYTHONPATH=. python -c \"from api.routes import models, subscription; print\\(''import OK''\\)\")",
       "Bash(python -m pytest tests/test_model_scorer.py -v --tb=short)",
-      "Bash(npx vitest run src/stores/__tests__/useSubscriptionStore.test.ts src/constants/__tests__/models.test.ts)"
+      "Bash(npx vitest run src/stores/__tests__/useSubscriptionStore.test.ts src/constants/__tests__/models.test.ts)",
+      "Bash(npx vitest run src/stores/__tests__/useSubscriptionStore.test.ts -v)",
+      "Bash(python -m pytest backend/tests/test_agent_loop.py -q --tb=short)",
+      "Bash(python -m pytest backend/tests/test_kuaimai.py -q --tb=short)",
+      "Bash(python -m pytest backend/tests/test_kuaimai.py backend/tests/test_tool_executor.py backend/tests/test_smart_model_config.py -q --tb=short)",
+      "Bash(python -m pytest backend/tests/test_smart_model_config.py -q --tb=short)"
     ]
   }
 }

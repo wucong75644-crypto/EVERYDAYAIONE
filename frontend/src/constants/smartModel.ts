@@ -34,7 +34,7 @@ export const SMART_MODEL: UnifiedModel = {
     // 高级功能
     functionCalling: true,
     structuredOutput: true,
-    thinkingEffort: false,
+    thinkingEffort: true,
     streamingResponse: true,
     // 容量限制（取各模型最大值）
     maxImages: 10,

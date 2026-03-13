@@ -465,9 +465,10 @@ def create_chat_adapter(
         from services.timeout_resolver import resolve_stream_timeout
         stream_timeout = resolve_stream_timeout(actual_model_id)
 
-    logger.debug(
-        f"Creating adapter: model_id={actual_model_id}, "
-        f"provider={config.provider}, timeout={stream_timeout}s"
+    logger.info(
+        f"Chat adapter created | model={actual_model_id} | "
+        f"provider={config.provider.value} | "
+        f"provider_model={config.provider_model} | timeout={stream_timeout}s"
     )
 
     # 根据 Provider 创建适配器

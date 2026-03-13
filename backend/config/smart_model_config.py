@@ -10,7 +10,7 @@
 import copy
 import json
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
@@ -90,6 +90,61 @@ def get_image_to_video_model() -> str:
     return "sora-2-image-to-video"
 
 
+def _find_model_config(model_id: str) -> Optional[Dict[str, Any]]:
+    """在 chat 模型列表中查找指定模型配置"""
+    for m in SMART_CONFIG.get("chat", {}).get("models", []):
+        if m["id"] == model_id:
+            return m
+    return None
+
+
+def _get_models_with_capability(
+    capability: str, value: bool = True,
+) -> List[str]:
+    """获取具有指定能力的 chat 模型列表（按 priority 排序）"""
+    return [
+        m["id"]
+        for m in SMART_CONFIG.get("chat", {}).get("models", [])
+        if m.get(capability, not value) == value
+    ]
+
+
+def validate_model_choice(
+    model_id: str,
+    has_image: bool = False,
+    needs_search: bool = False,
+) -> Optional[str]:
+    """校验模型选择是否匹配需求，不匹配时返回警告文本
+
+    Args:
+        model_id: 选择的模型 ID
+        has_image: 用户是否发送了图片
+        needs_search: 是否需要联网搜索
+
+    Returns:
+        None=校验通过，str=警告文本（包含建议模型列表）
+    """
+    config = _find_model_config(model_id)
+    if not config:
+        return None  # 不在 chat 列表中的模型不做校验
+
+    if has_image and not config.get("supports_image", True):
+        alternatives = _get_models_with_capability("supports_image")[:5]
+        return (
+            f"模型 {model_id} 不支持图片理解，但用户发送了图片。"
+            f"建议改用: {', '.join(alternatives)}"
+        )
+
+    if needs_search and not config.get("supports_search", False):
+        alternatives = _get_models_with_capability("supports_search")[:5]
+        return (
+            f"模型 {model_id} 不支持联网搜索，但需要实时信息。"
+            f"建议改用: {', '.join(alternatives)}"
+        )
+
+    return None
+
+
 # ============================================================
 # 工具构建
 # ============================================================
@@ -101,9 +156,42 @@ def _get_model_enum(category: str) -> List[str]:
 
 
 def _get_model_desc(category: str) -> str:
-    """获取指定类别的模型描述文本（供千问阅读）"""
+    """获取指定类别的模型描述文本（供千问阅读）
+
+    chat 类型模型会自动附加能力标签（从 capabilities/supports_image/supports_search 生成），
+    其他类型（image/video/web_search）沿用纯描述。
+    """
     models = SMART_CONFIG.get(category, {}).get("models", [])
-    return "\n".join(f'{m["id"]} — {m["description"]}' for m in models)
+    lines: List[str] = []
+    for m in models:
+        base = f'{m["id"]} — {m["description"]}'
+        if category == "chat":
+            tags = _build_capability_tags(m)
+            if tags:
+                base += f" [{tags}]"
+        lines.append(base)
+    return "\n".join(lines)
+
+
+def _build_capability_tags(model: Dict[str, Any]) -> str:
+    """从模型配置生成能力标签字符串
+
+    示例输出：'code,math,reasoning | 图片:✓ | 搜索:✗ | 深度思考:✓'
+    缺失字段时使用默认值（supports_image=True, supports_search=False,
+    supports_thinking=False）。
+    """
+    caps = model.get("capabilities", [])
+    img = model.get("supports_image", True)
+    search = model.get("supports_search", False)
+    thinking = model.get("supports_thinking", False)
+
+    parts: List[str] = []
+    if caps:
+        parts.append(",".join(caps))
+    parts.append(f"图片:{'✓' if img else '✗'}")
+    parts.append(f"搜索:{'✓' if search else '✗'}")
+    parts.append(f"深度思考:{'✓' if thinking else '✗'}")
+    return " | ".join(parts)
 
 
 def build_router_tools() -> List[Dict[str, Any]]:

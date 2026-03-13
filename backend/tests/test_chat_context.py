@@ -411,15 +411,18 @@ class TestStreamGenerateContextInjection:
                 model_id="gemini-3-flash",
             )
 
-        assert len(captured) == 5
-        assert captured[0] == {"role": "system", "content": "你是AI助手"}
-        assert captured[1] == {"role": "user", "content": "你好"}
-        assert captured[2] == {"role": "assistant", "content": "你好！有什么可以帮你的？"}
+        # 前 2 条是思考语言指令 + 当前时间注入
+        assert captured[0] == {"role": "system", "content": "请使用中文进行思考和推理。"}
+        assert captured[1]["role"] == "system"
+        assert "当前时间" in captured[1]["content"]
+        assert captured[2] == {"role": "system", "content": "你是AI助手"}
+        assert captured[3] == {"role": "user", "content": "你好"}
+        assert captured[4] == {"role": "assistant", "content": "你好！有什么可以帮你的？"}
         # 话题聚焦指令（紧贴用户消息前）
-        assert captured[3]["role"] == "system"
-        assert "最新问题" in captured[3]["content"]
-        assert captured[4]["role"] == "user"
-        assert captured[4]["content"] == "今天天气怎么样"
+        assert captured[5]["role"] == "system"
+        assert "最新问题" in captured[5]["content"]
+        assert captured[6]["role"] == "user"
+        assert captured[6]["content"] == "今天天气怎么样"
 
     @pytest.mark.asyncio
     async def test_context_without_memory(self, chat_handler, mock_db, mock_adapter):
@@ -448,14 +451,17 @@ class TestStreamGenerateContextInjection:
                 model_id="gemini-3-flash",
             )
 
-        assert len(captured) == 4
-        assert captured[0] == {"role": "user", "content": "之前的问题"}
-        assert captured[1] == {"role": "assistant", "content": "之前的回答"}
+        # 前 2 条是思考语言指令 + 当前时间注入
+        assert captured[0] == {"role": "system", "content": "请使用中文进行思考和推理。"}
+        assert captured[1]["role"] == "system"
+        assert "当前时间" in captured[1]["content"]
+        assert captured[2] == {"role": "user", "content": "之前的问题"}
+        assert captured[3] == {"role": "assistant", "content": "之前的回答"}
         # 话题聚焦指令
-        assert captured[2]["role"] == "system"
-        assert "最新问题" in captured[2]["content"]
-        assert captured[3]["role"] == "user"
-        assert captured[3]["content"] == "新问题"
+        assert captured[4]["role"] == "system"
+        assert "最新问题" in captured[4]["content"]
+        assert captured[5]["role"] == "user"
+        assert captured[5]["content"] == "新问题"
 
     @pytest.mark.asyncio
     async def test_no_context_new_conversation(
@@ -483,9 +489,12 @@ class TestStreamGenerateContextInjection:
                 model_id="gemini-3-flash",
             )
 
-        assert len(captured) == 1
-        assert captured[0]["role"] == "user"
-        assert captured[0]["content"] == "第一条消息"
+        # 前 2 条是思考语言指令 + 当前时间注入
+        assert captured[0] == {"role": "system", "content": "请使用中文进行思考和推理。"}
+        assert captured[1]["role"] == "system"
+        assert "当前时间" in captured[1]["content"]
+        assert captured[2]["role"] == "user"
+        assert captured[2]["content"] == "第一条消息"
 
     @pytest.mark.asyncio
     async def test_context_with_vqa_image(self, chat_handler, mock_db, mock_adapter):
@@ -517,11 +526,14 @@ class TestStreamGenerateContextInjection:
                 model_id="gemini-3-flash",
             )
 
-        assert len(captured) == 4
-        assert captured[0] == {"role": "user", "content": "之前的对话"}
-        assert captured[1] == {"role": "assistant", "content": "之前的回复"}
+        # 前 2 条是思考语言指令 + 当前时间注入
+        assert captured[0] == {"role": "system", "content": "请使用中文进行思考和推理。"}
+        assert captured[1]["role"] == "system"
+        assert "当前时间" in captured[1]["content"]
+        assert captured[2] == {"role": "user", "content": "之前的对话"}
+        assert captured[3] == {"role": "assistant", "content": "之前的回复"}
         # 话题聚焦指令
-        assert captured[2]["role"] == "system"
-        assert "最新问题" in captured[2]["content"]
-        assert captured[3]["role"] == "user"
-        assert isinstance(captured[3]["content"], list)
+        assert captured[4]["role"] == "system"
+        assert "最新问题" in captured[4]["content"]
+        assert captured[5]["role"] == "user"
+        assert isinstance(captured[5]["content"], list)

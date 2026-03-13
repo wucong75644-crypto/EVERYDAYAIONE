@@ -21,6 +21,7 @@ from config.erp_tools import (
     ERP_SYNC_TOOLS,
     ERP_TOOL_SCHEMAS,
     build_erp_tools,
+    build_erp_search_tool,
 )
 from config.smart_model_config import (
     SMART_CONFIG,
@@ -35,6 +36,7 @@ from config.smart_model_config import (
 
 INFO_TOOLS: Set[str] = {
     "web_search", "get_conversation_context", "search_knowledge",
+    "erp_api_search", "model_search",
 } | ERP_SYNC_TOOLS | CRAWLER_INFO_TOOLS
 
 ROUTING_TOOLS: Set[str] = {
@@ -62,6 +64,15 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "properties": {"limit": {"type": "integer"}},
     },
     "search_knowledge": {
+        "required": ["query"],
+        "properties": {"query": {"type": "string"}},
+    },
+    # === 搜索工具 ===
+    "erp_api_search": {
+        "required": ["query"],
+        "properties": {"query": {"type": "string"}},
+    },
+    "model_search": {
         "required": ["query"],
         "properties": {"query": {"type": "string"}},
     },
@@ -189,6 +200,32 @@ def build_agent_tools() -> List[Dict[str, Any]]:
         *build_erp_tools(),
         # === 社交媒体爬虫工具（从 crawler_tools.py 导入） ===
         *build_crawler_tools(),
+        # === 搜索工具（按需发现 API/模型文档） ===
+        build_erp_search_tool(),
+        {
+            "type": "function",
+            "function": {
+                "name": "model_search",
+                "description": (
+                    "搜索可用的 AI 模型及其能力。"
+                    "当你不确定该选哪个模型时调用此工具。"
+                    "支持模型名搜索（如「deepseek」）、"
+                    "能力搜索（如「code」「reasoning」）、"
+                    "场景搜索（如「写代码」「数学题」「看图」）。"
+                    "结果会返回给你，帮你选择最合适的模型。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "模型名、能力标签或场景描述",
+                        },
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
         # === 路由工具（大脑做出路由决策） ===
         {
             "type": "function",
@@ -372,10 +409,22 @@ def build_agent_system_prompt() -> str:
         " → needs_google_search=true，并选支持联网搜索的模型\n"
         "- 其他对话 → needs_google_search 不传或 false\n\n"
         "模型选择：\n"
-        "- 根据各 model 参数的 description 选择最匹配的模型\n"
+        "- 根据各 model 参数的 description 和能力标签选择最匹配的模型\n"
+        "- 能力标签格式：[capabilities | 图片:✓/✗ | 搜索:✓/✗ | 深度思考:✓/✗]\n"
         f"- 用户有图片且要编辑 → {edit_hint}\n"
         f"- 用户有图片且要做视频 → {i2v_model}\n"
+        "- 用户发了图片（非编辑/视频） → 必须选 图片:✓ 的模型\n"
+        "- 用户需要实时信息 → 优先选 搜索:✓ 的模型\n"
+        "- 用户开启了深度思考模式 → 必须选 深度思考:✓ 的模型\n"
         "- 用户无特殊要求 → 优先选 priority 最高的模型\n\n"
+        "模型选择示例：\n"
+        "- 用户：「帮我写个Python爬虫」→ model=deepseek-v3.2（code能力强）\n"
+        "- 用户：「这道数学题怎么解」→ model=deepseek-r1（reasoning/math）\n"
+        "- 用户：[图片]+「这张图片里是什么」→ model=qwen3.5-plus（图片:✓）\n"
+        "- 用户：「今天黄金价格多少」→ model=gemini-3-flash + needs_google_search=true（搜索:✓）\n"
+        "- 用户：「帮我用Claude分析一下」→ model=anthropic/claude-sonnet-4（用户指定Claude）\n"
+        "- 用户开启深度思考 → model=deepseek-r1 或 gemini-3-pro（深度思考:✓）\n"
+        "- 不确定选哪个模型时 → 先调 model_search 搜索合适的模型\n\n"
         + ERP_ROUTING_PROMPT
         + CRAWLER_ROUTING_PROMPT
         + "重要：仅当用户明确要求「生成/画/制作」时才调用生成工具。"

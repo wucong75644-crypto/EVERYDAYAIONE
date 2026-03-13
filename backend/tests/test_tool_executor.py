@@ -609,3 +609,69 @@ class TestSocialCrawler:
         })
         call_kwargs = mock_svc.execute.call_args.kwargs
         assert call_kwargs["max_notes"] == 30
+
+
+# ============================================================
+# TestSearchHandlers — 搜索工具 handler
+# ============================================================
+
+
+class TestSearchHandlers:
+
+    @pytest.mark.asyncio
+    async def test_erp_api_search_calls_search(self):
+        """_erp_api_search 调用 search_erp_api 并返回结果"""
+        exe = _make_executor()
+        with patch(
+            "services.kuaimai.api_search.search_erp_api",
+            return_value="找到 3 个匹配",
+        ):
+            result = await exe._erp_api_search({"query": "订单"})
+        assert "匹配" in result
+
+    @pytest.mark.asyncio
+    async def test_erp_api_search_empty_query(self):
+        """_erp_api_search 空查询→提示输入"""
+        exe = _make_executor()
+        result = await exe._erp_api_search({"query": ""})
+        assert "请输入" in result
+
+    @pytest.mark.asyncio
+    async def test_model_search_calls_search(self):
+        """_model_search 调用 search_models 并返回结果"""
+        exe = _make_executor()
+        with patch(
+            "services.model_search.search_models",
+            return_value="找到 2 个匹配",
+        ):
+            result = await exe._model_search({"query": "code"})
+        assert "匹配" in result
+
+    @pytest.mark.asyncio
+    async def test_model_search_empty_query(self):
+        """_model_search 空查询→提示输入"""
+        exe = _make_executor()
+        result = await exe._model_search({"query": ""})
+        assert "请输入" in result
+
+    @pytest.mark.asyncio
+    async def test_execute_routes_to_erp_api_search(self):
+        """execute 分发 erp_api_search 到正确 handler"""
+        exe = _make_executor()
+        with patch(
+            "services.kuaimai.api_search.search_erp_api",
+            return_value="结果",
+        ):
+            result = await exe.execute("erp_api_search", {"query": "库存"})
+        assert result == "结果"
+
+    @pytest.mark.asyncio
+    async def test_execute_routes_to_model_search(self):
+        """execute 分发 model_search 到正确 handler"""
+        exe = _make_executor()
+        with patch(
+            "services.model_search.search_models",
+            return_value="模型列表",
+        ):
+            result = await exe.execute("model_search", {"query": "推理"})
+        assert result == "模型列表"

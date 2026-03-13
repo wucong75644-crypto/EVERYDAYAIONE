@@ -56,6 +56,7 @@ export interface MessageStoreActions {
   setStreamingContent: (conversationId: string, content: string) => void;
   setAgentStepHint: (conversationId: string, hint: string) => void;
   clearAgentStepHint: (conversationId: string) => void;
+  appendStreamingThinking: (conversationId: string, chunk: string) => void;
 }
 
 /** handler 工厂的依赖 */
@@ -413,6 +414,14 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       import('../stores/useMemoryStore').then(({ useMemoryStore }) => {
         useMemoryStore.getState().onMemoryExtracted(data.memories);
       });
+    },
+
+    thinking_chunk: (msg) => {
+      const { conversation_id } = msg;
+      const chunk = msg.chunk || (msg.payload?.chunk as string | undefined);
+      if (!conversation_id || !chunk) return;
+
+      deps.getStore().appendStreamingThinking(conversation_id, chunk);
     },
 
     agent_step: (msg) => {

@@ -69,12 +69,18 @@ class AgentLoop(AgentContextMixin):
         self._client: Optional[httpx.AsyncClient] = None
         self._settings: Optional[Any] = None
 
-    async def run(self, content: List[ContentPart]) -> AgentResult:
+    async def run(
+        self,
+        content: List[ContentPart],
+        thinking_mode: Optional[str] = None,
+    ) -> AgentResult:
         """执行 Agent Loop，返回路由结果"""
         text = self._extract_text(content)
         has_image = any(isinstance(p, ImagePart) for p in content)
         has_file = any(isinstance(p, FilePart) for p in content)
         self._user_text = text  # 意图学习需要原始文本
+        self._has_image = has_image  # 模型校验需要
+        self._thinking_mode = thinking_mode  # 深度思考开关状态
 
         result = await self._execute_loop(content)
 
@@ -100,6 +106,14 @@ class AgentLoop(AgentContextMixin):
         system_prompt = await self._build_system_prompt(content)
         now = _time.strftime("%Y-%m-%d %H:%M", _time.localtime())
         system_prompt += f"\n\n当前时间：{now}"
+
+        # 深度思考模式提示（用户开启时，优先选支持深度思考的模型）
+        thinking_mode = getattr(self, "_thinking_mode", None)
+        if thinking_mode == "deep_think":
+            system_prompt += (
+                "\n\n用户已开启深度思考模式，"
+                "请优先选择 深度思考:✓ 的模型。"
+            )
 
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -232,6 +246,11 @@ class AgentLoop(AgentContextMixin):
             logger.warning(
                 f"Invalid tool call | tool={tool_name} | args={arguments}"
             )
+            self._fire_and_forget_knowledge(
+                task_type="tool_validation", model_id=tool_name,
+                status="failed",
+                error_message=f"幻觉工具调用: {tool_name}, 参数: {arguments}",
+            )
             tool_results.append({
                 "tool_call_id": tc_id,
                 "content": f"无效的工具调用：{tool_name}",
@@ -244,6 +263,11 @@ class AgentLoop(AgentContextMixin):
             tool_name, arguments,
         ):
             logger.warning(f"Loop detected | tool={tool_name}")
+            self._fire_and_forget_knowledge(
+                task_type="loop_detection", model_id=tool_name,
+                status="failed",
+                error_message=f"连续3次相同调用被中止: {tool_name}({arguments})",
+            )
             routing_holder["_loop_abort"] = True
             return
 
@@ -280,6 +304,11 @@ class AgentLoop(AgentContextMixin):
                 logger.warning(
                     f"Sync tool error | tool={tool_name} | error={e}"
                 )
+                self._fire_and_forget_knowledge(
+                    task_type="tool_execution", model_id=tool_name,
+                    status="failed",
+                    error_message=f"工具 {tool_name} 执行异常: {e}",
+                )
                 tool_results.append({
                     "tool_call_id": tc_id,
                     "content": f"工具执行失败: {str(e)}",
@@ -287,8 +316,18 @@ class AgentLoop(AgentContextMixin):
                 })
             return
 
-        # 路由工具：记录决策 + 返回确认文本
+        # 路由工具：模型校验 + 记录决策 + 返回确认文本
         if tool_name in ROUTING_TOOLS:
+            # route_to_chat 模型校验（图片/搜索能力匹配）
+            model_warning = self._validate_routing_model(
+                tool_name, arguments,
+            )
+            if model_warning:
+                tool_results.append({
+                    "tool_call_id": tc_id, "content": model_warning,
+                })
+                return
+
             routing_holder["decision"] = {
                 "tool_name": tool_name,
                 "arguments": arguments,
@@ -322,6 +361,56 @@ class AgentLoop(AgentContextMixin):
             return "将向用户发送询问"
         return "已确认"
 
+    def _validate_routing_model(
+        self, tool_name: str, arguments: Dict[str, Any],
+    ) -> Optional[str]:
+        """校验路由决策的模型选择，不匹配返回警告文本（大脑可重选）"""
+        if tool_name != "route_to_chat":
+            return None
+
+        model_id = arguments.get("model", "")
+        has_image = getattr(self, "_has_image", False)
+        needs_search = arguments.get("needs_google_search", False)
+
+        try:
+            from config.smart_model_config import validate_model_choice
+            warning = validate_model_choice(
+                model_id, has_image=has_image, needs_search=needs_search,
+            )
+            if warning:
+                logger.warning(
+                    f"AgentLoop model mismatch | model={model_id} "
+                    f"has_image={has_image} needs_search={needs_search}"
+                )
+                self._fire_and_forget_knowledge(
+                    task_type="model_selection", model_id=model_id,
+                    status="failed", error_message=warning,
+                )
+            return warning
+        except Exception as e:
+            logger.error(f"AgentLoop model validation error: {e}")
+            return None
+
+    # ========================================
+    # 知识记录
+    # ========================================
+
+    def _fire_and_forget_knowledge(
+        self, *, task_type: str, model_id: str,
+        status: str, error_message: Optional[str] = None,
+    ) -> None:
+        """Fire-and-forget 知识记录（不阻塞主循环）"""
+        try:
+            from services.knowledge_extractor import extract_and_save
+            asyncio.create_task(
+                extract_and_save(
+                    task_type=task_type, model_id=model_id,
+                    status=status, error_message=error_message,
+                )
+            )
+        except Exception as e:
+            logger.debug(f"Knowledge recording skipped | error={e}")
+
     # ========================================
     # 大脑调用
     # ========================================
@@ -340,6 +429,10 @@ class AgentLoop(AgentContextMixin):
             else self._settings.agent_loop_model
         )
 
+        logger.info(
+            f"Brain calling | provider={provider} | model={model}"
+        )
+
         response = await client.post(
             "/chat/completions",
             json={
@@ -349,10 +442,17 @@ class AgentLoop(AgentContextMixin):
                 "tool_choice": "auto",
                 "temperature": 0.1,
                 "max_tokens": 4096,
+                "enable_thinking": False,
             },
         )
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+
+        usage = data.get("usage", {})
+        logger.info(
+            f"Brain responded | tokens={usage.get('total_tokens', '?')}"
+        )
+        return data
 
     # ========================================
     # WebSocket 通知
