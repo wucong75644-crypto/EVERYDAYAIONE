@@ -73,6 +73,7 @@ class AgentLoop(AgentContextMixin):
         self,
         content: List[ContentPart],
         thinking_mode: Optional[str] = None,
+        task_id: Optional[str] = None,
     ) -> AgentResult:
         """执行 Agent Loop，返回路由结果"""
         text = self._extract_text(content)
@@ -81,6 +82,7 @@ class AgentLoop(AgentContextMixin):
         self._user_text = text  # 意图学习需要原始文本
         self._has_image = has_image  # 模型校验需要
         self._thinking_mode = thinking_mode  # 深度思考开关状态
+        self._task_id = task_id  # WS 进度通知用
 
         result = await self._execute_loop(content)
 
@@ -102,8 +104,29 @@ class AgentLoop(AgentContextMixin):
             max_total_tokens=self._settings.agent_loop_max_tokens,
         )
 
-        # 构建初始消息（注入当前日期，让大脑知道"今天"是哪天）
-        system_prompt = await self._build_system_prompt(content)
+        # 构建初始消息：系统提示词 + 对话历史（并行获取，无交叉依赖）
+        prompt_result, history_result = await asyncio.gather(
+            self._build_system_prompt(content),
+            self._get_recent_history(),
+            return_exceptions=True,
+        )
+
+        # 安全解包：异常降级（两个函数内部已有 try/except，这里兜底防御）
+        if isinstance(prompt_result, BaseException):
+            logger.warning(f"Agent system prompt failed | error={prompt_result}")
+            from config.agent_tools import AGENT_SYSTEM_PROMPT
+            system_prompt = AGENT_SYSTEM_PROMPT
+        else:
+            system_prompt = prompt_result
+
+        history_msgs = (
+            history_result
+            if not isinstance(history_result, BaseException)
+            else None
+        )
+        if isinstance(history_result, BaseException):
+            logger.warning(f"Agent history failed | error={history_result}")
+
         now = _time.strftime("%Y-%m-%d %H:%M", _time.localtime())
         system_prompt += f"\n\n当前时间：{now}"
 
@@ -118,9 +141,6 @@ class AgentLoop(AgentContextMixin):
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
         ]
-
-        # 注入最近对话历史（多模态结构化格式）
-        history_msgs = await self._get_recent_history()
         if history_msgs:
             messages.append({
                 "role": "system",
@@ -461,7 +481,7 @@ class AgentLoop(AgentContextMixin):
     async def _notify_progress(
         self, turn: int, tool_name: str, status: str,
     ) -> None:
-        """推送 agent_step 事件给前端"""
+        """推送 agent_step 事件给前端（优先通过 task_id 精准推送）"""
         try:
             from schemas.websocket import build_agent_step
             from services.websocket_manager import ws_manager
@@ -471,8 +491,13 @@ class AgentLoop(AgentContextMixin):
                 tool_name=tool_name,
                 status=status,
                 turn=turn,
+                task_id=getattr(self, "_task_id", None),
             )
-            await ws_manager.send_to_user(self.user_id, msg)
+            task_id = getattr(self, "_task_id", None)
+            if task_id:
+                await ws_manager.send_to_task_subscribers(task_id, msg)
+            else:
+                await ws_manager.send_to_user(self.user_id, msg)
         except Exception as e:
             logger.debug(f"Agent step notification failed | error={e}")
 

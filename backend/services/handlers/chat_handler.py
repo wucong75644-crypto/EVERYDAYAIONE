@@ -25,11 +25,12 @@ from schemas.websocket import (
 from services.adapters.factory import DEFAULT_MODEL_ID
 from services.handlers.base import BaseHandler, TaskMetadata
 from services.handlers.chat_context_mixin import ChatContextMixin
+from services.handlers.chat_routing_mixin import ChatRoutingMixin
 from services.handlers.chat_stream_support_mixin import ChatStreamSupportMixin
 from services.websocket_manager import ws_manager
 
 
-class ChatHandler(ChatStreamSupportMixin, ChatContextMixin, BaseHandler):
+class ChatHandler(ChatRoutingMixin, ChatStreamSupportMixin, ChatContextMixin, BaseHandler):
     """聊天消息处理器：流式生成 + WebSocket 推送 + 多模态输入"""
 
     def __init__(self, db: Client):
@@ -55,8 +56,6 @@ class ChatHandler(ChatStreamSupportMixin, ChatContextMixin, BaseHandler):
 
         # 2. 获取模型配置
         model_id = params.get("model") or DEFAULT_MODEL_ID
-        thinking_effort = params.get("thinking_effort")
-        thinking_mode = params.get("thinking_mode")
 
         # 3. 保存任务到数据库
         self._save_task(
@@ -70,32 +69,45 @@ class ChatHandler(ChatStreamSupportMixin, ChatContextMixin, BaseHandler):
             metadata=metadata,
         )
 
-        # 4. 提取路由信息
-        router_system_prompt = params.get("_router_system_prompt")
-        router_search_context = params.get("_router_search_context")
-        needs_google_search = params.get("_needs_google_search", False)
+        # 4. Smart mode 异步路由 vs 常规流式生成
+        needs_routing = params.get("_needs_routing", False)
 
-        # 5. 启动异步流式生成
-        asyncio.create_task(
-            self._stream_generate(
-                task_id=task_id,
-                message_id=message_id,
-                conversation_id=conversation_id,
-                user_id=user_id,
-                content=content,
-                model_id=model_id,
-                thinking_effort=thinking_effort,
-                thinking_mode=thinking_mode,
-                router_system_prompt=router_system_prompt,
-                router_search_context=router_search_context,
-                needs_google_search=needs_google_search,
-                _params=params,
+        if needs_routing:
+            # Smart mode: 路由在异步阶段执行（不阻塞 HTTP 响应）
+            asyncio.create_task(
+                self._route_and_stream(
+                    task_id=task_id,
+                    message_id=message_id,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    content=content,
+                    _params=params,
+                    metadata=metadata,
+                )
             )
-        )
+        else:
+            # 常规路由：路由已在 HTTP 阶段完成
+            asyncio.create_task(
+                self._stream_generate(
+                    task_id=task_id,
+                    message_id=message_id,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    content=content,
+                    model_id=model_id,
+                    thinking_effort=params.get("thinking_effort"),
+                    thinking_mode=params.get("thinking_mode"),
+                    router_system_prompt=params.get("_router_system_prompt"),
+                    router_search_context=params.get("_router_search_context"),
+                    needs_google_search=params.get("_needs_google_search", False),
+                    _params=params,
+                )
+            )
 
         logger.info(
             f"Chat task started | task_id={task_id} | "
-            f"message_id={message_id} | model={model_id}"
+            f"message_id={message_id} | model={model_id} | "
+            f"routing={'deferred' if needs_routing else 'resolved'}"
         )
 
         return task_id
@@ -204,11 +216,13 @@ class ChatHandler(ChatStreamSupportMixin, ChatContextMixin, BaseHandler):
             # 2. 组装消息列表
             text_content = self._extract_text_content(content)
             prefetched_summary = (_params or {}).get("_prefetched_summary")
+            prefetched_memory = (_params or {}).get("_prefetched_memory")
             messages = await self._build_llm_messages(
                 content, user_id, conversation_id, text_content,
                 router_system_prompt=router_system_prompt,
                 router_search_context=router_search_context,
                 prefetched_summary=prefetched_summary,
+                prefetched_memory=prefetched_memory,
             )
 
             # 3. 创建适配器并流式生成

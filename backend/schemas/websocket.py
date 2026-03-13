@@ -47,6 +47,7 @@ class WSMessageType(str, Enum):
     MESSAGE_RETRY = "message_retry"
     IMAGE_PARTIAL_UPDATE = "image_partial_update"
     AGENT_STEP = "agent_step"
+    ROUTING_COMPLETE = "routing_complete"
 
     # === 系统消息 ===
     CREDITS_CHANGED = "credits_changed"
@@ -378,11 +379,36 @@ def build_server_restarting() -> Dict[str, Any]:
     )
 
 
+def build_routing_complete(
+    task_id: str,
+    conversation_id: str,
+    generation_type: str,
+    model: str,
+    message_id: Optional[str] = None,
+    generation_params: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """构建路由完成通知（smart mode 异步路由结果为 image/video 时通知前端变形占位符）"""
+    payload: Dict[str, Any] = {
+        "generation_type": generation_type,
+        "model": model,
+    }
+    if generation_params:
+        payload["generation_params"] = generation_params
+    return _build_ws_message(
+        WSMessageType.ROUTING_COMPLETE,
+        payload,
+        task_id=task_id,
+        conversation_id=conversation_id,
+        message_id=message_id,
+    )
+
+
 def build_agent_step(
     conversation_id: str,
     tool_name: str,
     status: str,
     turn: int,
+    task_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """构建 Agent Loop 步骤通知（前端显示「搜索中...」等临时状态）"""
     return _build_ws_message(
@@ -393,4 +419,5 @@ def build_agent_step(
             "turn": turn,
         },
         conversation_id=conversation_id,
+        task_id=task_id,
     )

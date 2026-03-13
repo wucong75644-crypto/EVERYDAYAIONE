@@ -224,6 +224,93 @@ class TestBuildMessageDoneThinkingContent:
         assert gen_params["thinking_content"] == "推理过程"
 
 
+class TestBuildRoutingComplete:
+    """测试 build_routing_complete 消息构建"""
+
+    def test_basic_structure(self):
+        from schemas.websocket import build_routing_complete
+
+        msg = build_routing_complete(
+            task_id="t1",
+            conversation_id="c1",
+            generation_type="image",
+            model="flux-1",
+        )
+        assert msg["type"] == "routing_complete"
+        assert msg["task_id"] == "t1"
+        assert msg["conversation_id"] == "c1"
+        assert msg["payload"]["generation_type"] == "image"
+        assert msg["payload"]["model"] == "flux-1"
+        assert "timestamp" in msg
+
+    def test_with_message_id(self):
+        from schemas.websocket import build_routing_complete
+
+        msg = build_routing_complete(
+            task_id="t1",
+            conversation_id="c1",
+            generation_type="chat",
+            model="gemini-3-pro",
+            message_id="msg-123",
+        )
+        assert msg["message_id"] == "msg-123"
+
+    def test_with_generation_params(self):
+        from schemas.websocket import build_routing_complete
+
+        gen_params = {"type": "image", "model": "flux-1", "aspect_ratio": "16:9"}
+        msg = build_routing_complete(
+            task_id="t1",
+            conversation_id="c1",
+            generation_type="image",
+            model="flux-1",
+            generation_params=gen_params,
+        )
+        assert msg["payload"]["generation_params"] == gen_params
+
+    def test_without_optional_fields(self):
+        from schemas.websocket import build_routing_complete
+
+        msg = build_routing_complete(
+            task_id="t1",
+            conversation_id="c1",
+            generation_type="chat",
+            model="gemini-3-pro",
+        )
+        assert "message_id" not in msg
+        assert "generation_params" not in msg["payload"]
+
+
+class TestBuildAgentStepWithTaskId:
+    """测试 build_agent_step 的 task_id 参数"""
+
+    def test_without_task_id(self):
+        from schemas.websocket import build_agent_step
+
+        msg = build_agent_step(
+            conversation_id="c1",
+            tool_name="kuaimai_search",
+            status="executing",
+            turn=1,
+        )
+        assert msg["type"] == "agent_step"
+        assert msg["conversation_id"] == "c1"
+        assert "task_id" not in msg
+
+    def test_with_task_id(self):
+        from schemas.websocket import build_agent_step
+
+        msg = build_agent_step(
+            conversation_id="c1",
+            tool_name="kuaimai_search",
+            status="executing",
+            turn=1,
+            task_id="task-abc",
+        )
+        assert msg["task_id"] == "task-abc"
+        assert msg["payload"]["tool_name"] == "kuaimai_search"
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])
