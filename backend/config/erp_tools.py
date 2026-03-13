@@ -466,6 +466,12 @@ ERP_ROUTING_PROMPT = (
     "- 查询订单时注意选择正确的 time_type/date_type\n"
     "- 所有必要数据收集完毕后，再用 route_to_chat 汇总回复用户\n"
     "- 不确定用哪个action或参数时 → 先调 erp_api_search 查询API文档\n\n"
+    "## 名称纠错与验证\n"
+    "- 用户输入的名称（店铺/买家/商品/供应商等）可能有错别字或谐音字\n"
+    "- 按名称查询无结果时，禁止直接返回「未找到」，必须用 ask_user 反问用户：\n"
+    '  「没有找到名为"XXX"的店铺/买家/商品，请确认名称是否正确」\n'
+    "- 如果用户的名称看起来像错别字（生僻组合、不像正常名称），"
+    "查询前就应先确认，避免浪费无效查询\n\n"
     "## ERP调用示例\n"
     "用户：「今天多少订单」\n"
     "→ erp_trade_query(action=\"order_list\", time_type=\"created\", "
