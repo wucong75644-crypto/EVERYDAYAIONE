@@ -140,11 +140,13 @@ class OpenRouterChatAdapter(BaseChatAdapter):
 
                     # 提取内容
                     content = None
+                    thinking_content = None
                     finish_reason = None
                     choices = chunk.get("choices", [])
                     if choices:
                         delta = choices[0].get("delta", {})
                         content = delta.get("content")
+                        thinking_content = delta.get("reasoning_content")
                         finish_reason = choices[0].get("finish_reason")
 
                     # 提取 usage（通常在最后一个 chunk）
@@ -160,6 +162,7 @@ class OpenRouterChatAdapter(BaseChatAdapter):
 
                     yield StreamChunk(
                         content=content,
+                        thinking_content=thinking_content,
                         finish_reason=finish_reason,
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,

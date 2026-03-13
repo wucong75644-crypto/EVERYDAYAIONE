@@ -909,9 +909,9 @@ class TestToolRegistration:
         assert validate_tool_call("unknown_erp_tool", {}) is False
 
     def test_agent_tools_count(self):
-        """工具总数验证（4 路由 + 3 信息 + 8 ERP + 1 爬虫 = 16）"""
+        """工具总数验证（4 路由 + 3 信息 + 2 搜索 + 8 ERP + 1 爬虫 = 18）"""
         from config.agent_tools import AGENT_TOOLS
-        assert len(AGENT_TOOLS) == 16
+        assert len(AGENT_TOOLS) == 18
 
     def test_agent_tools_names(self):
         """所有ERP工具名在定义中"""
@@ -1283,28 +1283,30 @@ class TestParamMapper:
         """默认值被应用"""
         from services.kuaimai.param_mapper import map_params
         entry = self._make_entry()
-        result = map_params(entry, {})
+        result, warnings = map_params(entry, {})
         assert result["status"] == "TRADE_FINISHED"
+        assert warnings == []
 
     def test_maps_user_params(self):
         """用户参数通过 param_map 映射"""
         from services.kuaimai.param_mapper import map_params
         entry = self._make_entry()
-        result = map_params(entry, {"order_id": "12345"})
+        result, warnings = map_params(entry, {"order_id": "12345"})
         assert result["tid"] == "12345"
+        assert warnings == []
 
     def test_skips_none_values(self):
         """None 值被跳过"""
         from services.kuaimai.param_mapper import map_params
         entry = self._make_entry()
-        result = map_params(entry, {"order_id": None})
+        result, warnings = map_params(entry, {"order_id": None})
         assert "tid" not in result
 
     def test_default_pagination(self):
         """未指定分页→默认 pageNo=1"""
         from services.kuaimai.param_mapper import map_params
         entry = self._make_entry()
-        result = map_params(entry, {})
+        result, warnings = map_params(entry, {})
         assert result["pageNo"] == 1
         assert result["pageSize"] == 20
 
@@ -1312,8 +1314,27 @@ class TestParamMapper:
         """用户指定 page→映射到 pageNo"""
         from services.kuaimai.param_mapper import map_params
         entry = self._make_entry()
-        result = map_params(entry, {"page": 3})
+        result, warnings = map_params(entry, {"page": 3})
         assert result["pageNo"] == 3
+        assert warnings == []
+
+    def test_invalid_params_return_warnings(self):
+        """无效参数不传入 API，返回警告列表"""
+        from services.kuaimai.param_mapper import map_params
+        entry = self._make_entry()
+        result, warnings = map_params(entry, {"fake_param": "test"})
+        assert "fake_param" not in result
+        assert "fake_param" in warnings
+
+    def test_mixed_valid_invalid_params(self):
+        """有效和无效参数混合：有效映射，无效返回警告"""
+        from services.kuaimai.param_mapper import map_params
+        entry = self._make_entry()
+        result, warnings = map_params(
+            entry, {"order_id": "123", "unknown_field": "x"}
+        )
+        assert result["tid"] == "123"
+        assert "unknown_field" in warnings
 
     def test_normalize_dates_start(self):
         """日期参数补全：start 补 00:00:00"""
@@ -1373,9 +1394,10 @@ class TestTradeRegistryParamMap:
         from services.kuaimai.param_mapper import map_params
         from services.kuaimai.registry import TRADE_REGISTRY
         entry = TRADE_REGISTRY["order_list"]
-        result = map_params(entry, {"time_type": "created"})
+        result, warnings = map_params(entry, {"time_type": "created"})
         assert result["timeType"] == "created"
         assert "time_type" not in result
+        assert warnings == []
 
 
 # ============================================================
@@ -1635,3 +1657,110 @@ class TestBuildGatewayParams:
             call_kwargs = mock_client.request_with_retry.call_args
             assert call_kwargs.kwargs["base_url"] == "http://test.taobao.com/router/qm"
             assert call_kwargs.kwargs["extra_system_params"]["customerId"] == "65109"
+
+
+# ============================================================
+# TestFormatActionDesc — 丰富 action 描述
+# ============================================================
+
+
+class TestFormatActionDesc:
+
+    def test_with_params(self):
+        """有参数时生成 name=描述(参数列表)"""
+        from config.erp_tools import _format_action_desc
+        from services.kuaimai.registry.base import ApiEntry
+        entry = ApiEntry(
+            method="test.method",
+            description="测试操作",
+            param_map={"order_id": "tid", "status": "status"},
+            required_params=["order_id"],
+        )
+        result = _format_action_desc("test_action", entry)
+        assert "test_action=" in result
+        assert "测试操作" in result
+        assert "*order_id" in result  # 必填标记
+        assert "status" in result
+        assert "*status" not in result  # 非必填无标记
+
+    def test_without_params(self):
+        """无参数时不加括号"""
+        from config.erp_tools import _format_action_desc
+        from services.kuaimai.registry.base import ApiEntry
+        entry = ApiEntry(
+            method="test.method",
+            description="无参操作",
+            param_map={},
+        )
+        result = _format_action_desc("simple", entry)
+        assert result == "simple=无参操作"
+        assert "(" not in result
+
+    def test_all_required(self):
+        """全部必填参数都有 * 前缀"""
+        from config.erp_tools import _format_action_desc
+        from services.kuaimai.registry.base import ApiEntry
+        entry = ApiEntry(
+            method="test.method",
+            description="必填测试",
+            param_map={"a": "A", "b": "B"},
+            required_params=["a", "b"],
+        )
+        result = _format_action_desc("req", entry)
+        assert "*a" in result
+        assert "*b" in result
+
+
+class TestRecordParamKnowledge:
+
+    def test_missing_params_triggers_knowledge(self):
+        """缺少必填参数→触发知识记录"""
+        from services.kuaimai.dispatcher import ErpDispatcher
+        mock_task = MagicMock()
+        with patch("services.kuaimai.dispatcher.asyncio.create_task", mock_task), \
+             patch(
+                 "services.knowledge_extractor.extract_and_save",
+                 new_callable=AsyncMock,
+             ):
+            ErpDispatcher._record_param_knowledge(
+                "erp_trade_query", "order_list",
+                "缺少必填参数: 订单号",
+            )
+            mock_task.assert_called_once()
+
+    def test_invalid_params_triggers_knowledge(self):
+        """无效参数→触发知识记录"""
+        from services.kuaimai.dispatcher import ErpDispatcher
+        mock_task = MagicMock()
+        with patch("services.kuaimai.dispatcher.asyncio.create_task", mock_task), \
+             patch(
+                 "services.knowledge_extractor.extract_and_save",
+                 new_callable=AsyncMock,
+             ):
+            ErpDispatcher._record_param_knowledge(
+                "erp_trade_query", "order_list",
+                "无效参数: fake_param",
+            )
+            mock_task.assert_called_once()
+
+    def test_import_error_silenced(self):
+        """import 失败→静默跳过"""
+        from services.kuaimai.dispatcher import ErpDispatcher
+        with patch.dict("sys.modules", {"services.knowledge_extractor": None}):
+            # 不应抛异常
+            ErpDispatcher._record_param_knowledge(
+                "tool", "action", "error",
+            )
+
+
+class TestBuildErpSearchTool:
+
+    def test_tool_structure(self):
+        """build_erp_search_tool 返回合法的工具定义"""
+        from config.erp_tools import build_erp_search_tool
+        tool = build_erp_search_tool()
+        assert tool["type"] == "function"
+        assert tool["function"]["name"] == "erp_api_search"
+        params = tool["function"]["parameters"]
+        assert "query" in params["properties"]
+        assert "query" in params["required"]

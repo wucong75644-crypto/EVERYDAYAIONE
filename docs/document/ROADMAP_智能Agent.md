@@ -60,6 +60,17 @@
 - 为未来按能力匹配模型提供数据基础
 - 实现文件：`types.py`、`factory.py`、`kie/configs.py`、`kie_models.py`
 
+### ✅ 可靠性三件套（2026-03-13）
+- **Provider 熔断器**：连续失败 3 次（60s 窗口）→ 自动熔断 30s → 半开探测恢复
+  - 集成到 factory/handler/router/retry_tools 四层，ProviderUnavailableError 快速失败
+  - 实现文件：`circuit_breaker.py`、`factory.py`、`chat_handler.py`、`intent_router.py`、`smart_model_config.py`
+- **超时分级**：普通聊天 60s / 推理模型 120s / 图片生成 180s / 视频生成 600s
+  - 修正 5 个模块默认超时：记忆精排 10s、摘要 30s、路由 15s、Agent Loop 120s、知识提取 30s
+  - 实现文件：`timeout_resolver.py`、`config.py`、各 chat_adapter
+- **路由评测框架**：105 条测试用例 + EvalRunner + 混淆矩阵报告
+  - Mock 模式（CI 快速验证）+ Real API 模式（`ROUTING_EVAL_REAL=1`）
+  - 实现文件：`test_routing_eval.py`、`fixtures/routing_eval_cases.json`
+
 ---
 
 ## 开发计划（按顺序执行）
@@ -90,6 +101,32 @@
 - **阶段 C — 定期提炼**：定时任务用大模型从意图模式中归纳通用规则，全用户共享
 - 前置依赖：✅ 知识库基础设施 + ✅ 动态评分 + 路由提示词修复
 - 详细方案：`docs/document/TECH_路由提示词修复+自主进化闭环.md`
+
+---
+
+### 待定：可靠性增强（按需排期）
+
+> 可靠性三件套完成后识别的剩余风险项，优先级中低，按需安排。
+
+**1. 路由器冗余 — 消除千问单点依赖**（优先级：中）
+- 现状：Intent Router 唯一依赖千问 DashScope，千问挂了 → 关键词匹配（质量差距大）
+- 方案：备用路由 Provider（如 OpenRouter 轻量模型做 fallback 路由），或本地轻量分类器
+- 改动范围：`intent_router.py`（新增 fallback provider 路径）
+
+**2. 模型能力分级路由**（优先级：中，性价比高）
+- 现状：免费 flash 和付费 pro 混在同一个路由池，千问可能把深度推理任务路由到 flash
+- 方案：在路由 prompt 中加入「任务复杂度 → 模型档次」约束规则
+- 改动范围：`intent_router.py`（`_build_router_prompt` 提示词优化），零代码量
+
+**3. 记忆召回质量评测**（优先级：低）
+- 现状：Mem0 embedding (text-embedding-v3) + threshold=0.5 + 千问精排，效果靠直觉调参
+- 方案：收集记忆召回 case 建评测集（类似路由评测），量化召回准确率和精排效果
+- 前置依赖：需要积累足够多的真实记忆数据
+
+**4. 主动健康检查**（优先级：低）
+- 现状：熔断器是被动的（失败后才触发），没有主动探测 Provider 可用性
+- 方案：后台定时 ping 各 Provider 的 health endpoint
+- 评估：当前规模下熔断器 HALF_OPEN 探测已够用，主动探活可能过度设计
 
 ---
 

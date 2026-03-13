@@ -40,6 +40,7 @@ class WSMessageType(str, Enum):
     MESSAGE_PENDING = "message_pending"
     MESSAGE_START = "message_start"
     MESSAGE_CHUNK = "message_chunk"
+    THINKING_CHUNK = "thinking_chunk"
     MESSAGE_PROGRESS = "message_progress"
     MESSAGE_DONE = "message_done"
     MESSAGE_ERROR = "message_error"
@@ -226,6 +227,26 @@ def build_message_chunk(
         payload["accumulated"] = accumulated
     return _build_ws_message(
         WSMessageType.MESSAGE_CHUNK,
+        payload,
+        task_id=task_id,
+        conversation_id=conversation_id,
+        message_id=message_id,
+    )
+
+
+def build_thinking_chunk(
+    task_id: str,
+    conversation_id: str,
+    message_id: str,
+    chunk: str,
+    accumulated: Optional[str] = None,
+) -> Dict[str, Any]:
+    """构建思考内容流式块消息"""
+    payload = {"chunk": chunk}
+    if accumulated is not None:
+        payload["accumulated"] = accumulated
+    return _build_ws_message(
+        WSMessageType.THINKING_CHUNK,
         payload,
         task_id=task_id,
         conversation_id=conversation_id,

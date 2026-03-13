@@ -22,8 +22,12 @@ from config.smart_model_config import (
     build_retry_tools,
     get_remaining_models,
     get_image_to_video_model,
+    validate_model_choice,
     _get_model_enum,
     _get_model_desc,
+    _build_capability_tags,
+    _find_model_config,
+    _get_models_with_capability,
 )
 from schemas.message import GenerationType
 
@@ -319,3 +323,106 @@ class TestGetAvailableModelSet:
         assert "qwen3.5-plus" not in result
         # 其他模型应该在
         assert len(result) > 0
+
+
+# ============================================================
+# TestCapabilityTags — 能力标签生成
+# ============================================================
+
+
+class TestCapabilityTags:
+
+    def test_build_tags_with_all_fields(self):
+        """完整字段生成标签"""
+        model = {
+            "capabilities": ["code", "math"],
+            "supports_image": True,
+            "supports_search": False,
+        }
+        tags = _build_capability_tags(model)
+        assert "code,math" in tags
+        assert "图片:✓" in tags
+        assert "搜索:✗" in tags
+
+    def test_build_tags_empty_capabilities(self):
+        """无能力标签时只有图片/搜索"""
+        model = {"capabilities": [], "supports_image": False}
+        tags = _build_capability_tags(model)
+        assert "图片:✗" in tags
+
+    def test_build_tags_missing_fields_defaults(self):
+        """缺失字段使用默认值"""
+        tags = _build_capability_tags({})
+        assert "图片:✓" in tags  # 默认 True
+        assert "搜索:✗" in tags  # 默认 False
+
+    def test_model_desc_chat_has_tags(self):
+        """chat 类型模型描述包含能力标签"""
+        desc = _get_model_desc("chat")
+        assert "[" in desc  # 至少有一个标签括号
+
+    def test_model_desc_image_no_tags(self):
+        """image 类型模型描述不包含能力标签"""
+        desc = _get_model_desc("image")
+        assert "[" not in desc
+
+
+# ============================================================
+# TestModelValidation — 模型校验
+# ============================================================
+
+
+class TestModelValidation:
+
+    def test_find_model_config_exists(self):
+        """查找存在的模型"""
+        config = _find_model_config("qwen3.5-plus")
+        assert config is not None
+        assert config["id"] == "qwen3.5-plus"
+
+    def test_find_model_config_not_exists(self):
+        """查找不存在的模型→None"""
+        assert _find_model_config("nonexistent-model") is None
+
+    def test_get_models_with_image_support(self):
+        """获取支持图片的模型"""
+        models = _get_models_with_capability("supports_image")
+        assert len(models) > 0
+        assert "qwen3.5-plus" in models
+
+    def test_get_models_with_search_support(self):
+        """获取支持搜索的模型"""
+        models = _get_models_with_capability("supports_search")
+        assert len(models) > 0
+        assert "gemini-3-pro" in models
+
+    def test_validate_model_image_mismatch(self):
+        """不支持图片的模型 + 用户发了图片 → 返回警告"""
+        warning = validate_model_choice(
+            "deepseek-v3.2", has_image=True,
+        )
+        assert warning is not None
+        assert "不支持图片" in warning
+        assert "建议改用" in warning
+
+    def test_validate_model_search_mismatch(self):
+        """不支持搜索的模型 + 需要搜索 → 返回警告"""
+        warning = validate_model_choice(
+            "qwen3.5-plus", needs_search=True,
+        )
+        assert warning is not None
+        assert "不支持联网搜索" in warning
+
+    def test_validate_model_passes(self):
+        """能力匹配 → 返回 None"""
+        assert validate_model_choice("qwen3.5-plus") is None
+        assert validate_model_choice(
+            "gemini-3-pro", needs_search=True,
+        ) is None
+        assert validate_model_choice(
+            "qwen3.5-plus", has_image=True,
+        ) is None
+
+    def test_validate_model_unknown(self):
+        """不在 chat 列表中的模型 → 不做校验"""
+        assert validate_model_choice("unknown-model") is None

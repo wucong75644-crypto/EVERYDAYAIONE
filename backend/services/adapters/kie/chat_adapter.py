@@ -433,8 +433,10 @@ class KieChatAdapter(BaseChatAdapter):
 
         # 转换输出格式
         async for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
             yield StreamChunk(
-                content=chunk.choices[0].delta.content if chunk.choices else None,
+                content=delta.content if delta else None,
+                thinking_content=delta.reasoning_content if delta else None,
                 finish_reason=chunk.choices[0].finish_reason if chunk.choices else None,
                 prompt_tokens=chunk.usage.prompt_tokens if chunk.usage else 0,
                 completion_tokens=chunk.usage.completion_tokens if chunk.usage else 0,

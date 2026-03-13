@@ -5,6 +5,7 @@ ERP统一调度引擎
 替代原有service.py中的独立query方法。
 """
 
+import asyncio
 import json
 from typing import Any, Dict, Optional
 
@@ -49,13 +50,31 @@ class ErpDispatcher:
             available = ", ".join(sorted(registry.keys()))
             return f"未知的操作「{action}」，可选: {available}"
 
-        # 2. 校验必填参数
+        # 2. 校验必填参数（增强错误信息：列出支持的参数）
         missing = [p for p in entry.required_params if not params.get(p)]
         if missing:
-            return f"缺少必填参数: {', '.join(missing)}"
+            valid = sorted(entry.param_map.keys())
+            self._record_param_knowledge(
+                tool_name, action,
+                f"缺少必填参数: {', '.join(missing)}，支持: {', '.join(valid)}",
+            )
+            return (
+                f"缺少必填参数: {', '.join(missing)}。"
+                f"该操作支持的参数: {', '.join(valid)}"
+            )
 
-        # 3. 映射参数
-        api_params = map_params(entry, params)
+        # 3. 映射参数（白名单校验）
+        api_params, param_warnings = map_params(entry, params)
+        if param_warnings:
+            logger.warning(
+                f"ErpDispatcher invalid params | tool={tool_name} "
+                f"action={action} invalid={param_warnings}"
+            )
+            self._record_param_knowledge(
+                tool_name, action,
+                f"无效参数: {', '.join(param_warnings)}，"
+                f"支持: {', '.join(sorted(entry.param_map.keys()))}",
+            )
         logger.info(
             f"ErpDispatcher | tool={tool_name} action={action} "
             f"method={entry.method} params={api_params}"
@@ -77,8 +96,33 @@ class ErpDispatcher:
             )
             return f"ERP接口调用失败: {e}"
 
-        # 5. 格式化返回
-        return self._format_response(data, entry, action)
+        # 5. 格式化返回（附带无效参数警告）
+        result = self._format_response(data, entry, action)
+        if param_warnings:
+            valid = sorted(entry.param_map.keys())
+            result += (
+                f"\n\n⚠ 忽略了无效参数: {', '.join(param_warnings)}。"
+                f"该操作支持的参数: {', '.join(valid)}"
+            )
+        return result
+
+    @staticmethod
+    def _record_param_knowledge(
+        tool_name: str, action: str, error_message: str,
+    ) -> None:
+        """Fire-and-forget 记录参数错误知识"""
+        try:
+            from services.knowledge_extractor import extract_and_save
+            asyncio.create_task(
+                extract_and_save(
+                    task_type="param_validation",
+                    model_id=f"{tool_name}:{action}",
+                    status="failed",
+                    error_message=error_message,
+                )
+            )
+        except Exception as e:
+            logger.debug(f"Param knowledge recording skipped | error={e}")
 
     @staticmethod
     def _build_gateway_params(

@@ -43,6 +43,12 @@ export interface StreamingSlice {
   removeOptimisticMessage: (conversationId: string, messageId: string) => void;
   getOptimisticMessages: (conversationId: string) => Message[];
 
+  // 思考内容流式状态
+  /** 流式思考内容: conversationId -> accumulated thinking text */
+  streamingThinking: Map<string, string>;
+  appendStreamingThinking: (conversationId: string, chunk: string) => void;
+  getStreamingThinking: (conversationId: string) => string;
+
   // Agent Loop 步骤提示
   /** Agent Loop 步骤提示: conversationId -> "正在搜索..." */
   agentStepHint: Map<string, string>;
@@ -72,6 +78,7 @@ export const createStreamingSlice: StateCreator<
   isSending: false,
   streamingMessages: new Map<string, string>(),
   optimisticMessages: new Map<string, Message[]>(),
+  streamingThinking: new Map<string, string>(),
   agentStepHint: new Map<string, string>(),
 
   // ========================================
@@ -166,9 +173,11 @@ export const createStreamingSlice: StateCreator<
     set((state) => {
       const streamingMessages = new Map(state.streamingMessages);
       streamingMessages.delete(conversationId);
+      const streamingThinking = new Map(state.streamingThinking);
+      streamingThinking.delete(conversationId);
       const agentStepHint = new Map(state.agentStepHint);
       agentStepHint.delete(conversationId);
-      return { streamingMessages, agentStepHint, isSending: false };
+      return { streamingMessages, streamingThinking, agentStepHint, isSending: false };
     });
   },
 
@@ -183,10 +192,12 @@ export const createStreamingSlice: StateCreator<
       const filteredList = list.filter((m) => m.id !== streamingId);
       optimisticMessages.set(conversationId, [...filteredList, normalizeMessage(message)]);
 
+      const streamingThinking = new Map(state.streamingThinking);
+      streamingThinking.delete(conversationId);
       const agentStepHint = new Map(state.agentStepHint);
       agentStepHint.delete(conversationId);
 
-      return { streamingMessages, optimisticMessages, agentStepHint, isSending: false };
+      return { streamingMessages, optimisticMessages, streamingThinking, agentStepHint, isSending: false };
     });
   },
 
@@ -281,6 +292,23 @@ export const createStreamingSlice: StateCreator<
 
   getOptimisticMessages: (conversationId) => {
     return get().optimisticMessages.get(conversationId) || [];
+  },
+
+  // ========================================
+  // 思考内容流式状态
+  // ========================================
+
+  appendStreamingThinking: (conversationId, chunk) => {
+    set((state) => {
+      const streamingThinking = new Map(state.streamingThinking);
+      const prev = streamingThinking.get(conversationId) || '';
+      streamingThinking.set(conversationId, prev + chunk);
+      return { streamingThinking };
+    });
+  },
+
+  getStreamingThinking: (conversationId) => {
+    return get().streamingThinking.get(conversationId) || '';
   },
 
   // ========================================

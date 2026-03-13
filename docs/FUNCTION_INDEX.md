@@ -660,6 +660,82 @@
 | `user_feedback` | message.py 操作分发 | feedback_type, original_model, new_model, original_task_type |
 | `memory_search` | MemoryService | mem0_returned, filtered_count, filter_latency_ms, query_length |
 
+---
+
+### ERP API 搜索模块 (ERP API Search)
+
+> **新增于快麦 ERP + 淘宝奇门接入**：提供两种查询模式（精确/关键词），支持按需发现 API 操作和参数文档。
+
+#### 后端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `search_erp_api` | `backend/services/kuaimai/api_search.py` | 搜索 ERP 可用的 API 操作和参数文档 | query: str | str |
+| `_exact_search` | `backend/services/kuaimai/api_search.py` | 精确查询：tool:action 格式 | query: str | str |
+| `_keyword_search` | `backend/services/kuaimai/api_search.py` | 关键词搜索：在 action 名称和描述中模糊匹配 | query: str | str |
+| `_calc_match_score` | `backend/services/kuaimai/api_search.py` | 计算关键词匹配分数（action+3, description+2, params+1） | keywords, tool_name, action_name, entry | int |
+| `_format_entry_detail` | `backend/services/kuaimai/api_search.py` | 格式化单个 API 操作的完整文档（含参数、默认值、是否写操作） | tool_name, action_name, entry | str |
+| `_format_entry_brief` | `backend/services/kuaimai/api_search.py` | 格式化 API 操作的简要信息摘要 | tool_name, action_name, entry | str |
+| `_format_tool_actions` | `backend/services/kuaimai/api_search.py` | 列出工具的所有操作（摘要格式） | tool_name, registry | str |
+
+---
+
+### AI 模型搜索模块 (Model Search)
+
+> **新增于智能模型配置增强**：支持模型精确查询、能力搜索、中文场景搜索。
+
+#### 后端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `search_models` | `backend/services/model_search.py` | 搜索可用 AI 模型及其能力 | query: str | str |
+| `_exact_search` | `backend/services/model_search.py` | 精确查询：按模型 ID 匹配（不分区分大小写） | query: str | str \| None |
+| `_capability_search` | `backend/services/model_search.py` | 能力/场景搜索，计分排序，返回 top 5 | query: str | str |
+| `_calc_score` | `backend/services/model_search.py` | 计算模型匹配分数（场景/能力+3, ID+2, 描述+1） | keywords, model, category | int |
+| `_format_model_detail` | `backend/services/model_search.py` | 格式化单个模型的完整信息（能力/图片理解/搜索支持） | model, category | str |
+| `_format_model_brief` | `backend/services/model_search.py` | 格式化模型简要摘要（含能力标签） | model, category | str |
+
+---
+
+### 智能模型配置模块 (Smart Model Config)
+
+> **增强部分**：新增模型能力标签生成、模型选择校验、对话配置查询等函数。
+
+#### 后端函数（新增/修改）
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `_build_capability_tags` | `backend/config/smart_model_config.py` | 从模型配置生成能力标签字符串 | model | str |
+| `_find_model_config` | `backend/config/smart_model_config.py` | 在 chat 模型列表中查找指定模型配置 | model_id: str | Optional[Dict[str, Any]] |
+| `_get_models_with_capability` | `backend/config/smart_model_config.py` | 获取具有指定能力的 chat 模型列表（按 priority 排序） | capability: str, value: bool | List[str] |
+| `validate_model_choice` | `backend/config/smart_model_config.py` | 校验模型选择是否匹配需求，不匹配时返回警告文本 | model_id, has_image, needs_search | Optional[str] |
+| `_get_model_desc` | `backend/config/smart_model_config.py` | **修改**：获取指定类别的模型描述文本，chat 类型自动附加能力标签 | category: str | str |
+
+---
+
+### ERP 工具定义模块 (ERP Tools)
+
+> **增强部分**：新增 action 描述生成函数，支持丰富的参数文档。
+
+#### 后端函数（新增）
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `_format_action_desc` | `backend/config/erp_tools.py` | 生成单个 action 的丰富描述（name=描述(参数列表)） | name: str, entry | str |
+| `build_erp_search_tool` | `backend/config/erp_tools.py` | 构建 ERP API 搜索工具定义（供千问 Function Calling 使用） | - | Dict[str, Any] |
+
+---
+
+### 快麦参数映射模块 (Kuaimai Param Mapper)
+
+> **修改部分**：map_params 返回类型变更。
+
+#### 后端函数（修改）
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `map_params` | `backend/services/kuaimai/param_mapper.py` | **修改**：将用户参数映射为 API 参数（带白名单校验） | entry, user_params | Tuple[Dict[str, Any], List[str]] |
+
 ### 后端服务辅助模块 (Backend Service Helpers)
 
 #### 后端函数
@@ -697,6 +773,11 @@
 - **消息合并工具模块**：1个前端函数
 - **记忆模块**：10个后端函数 + 3个前端函数 + 7个配置常量（✨记忆智能过滤）
 - **模型动态评分模块**：10个后端函数 + 5个配置常量（✨Agent 知识库动态评分）
+- **ERP API 搜索模块**：7个后端函数（✨快麦ERP接入）
+- **AI 模型搜索模块**：6个后端函数（✨智能模型配置增强）
+- **智能模型配置模块**：5个后端函数（✨模型能力标签和校验）
+- **ERP 工具定义模块**：2个后端函数（✨ERP工具增强）
+- **快麦参数映射模块**：1个后端函数修改（✨参数映射增强）
 - **性能监控模块**：9个前端函数
 - **测试工具模块**：4个前端函数
 - **消息服务模块**：8个后端函数 + 5个前端函数
@@ -705,7 +786,7 @@
 - **用户设置模块**：3个前端函数
 - **KIE 适配器模块**：5个后端函数
 - **预定义常量**：13个性能标记常量 + 3个媒体默认值常量
-- **总计**：约 240+ 个函数/类型
+- **总计**：约 270+ 个函数/类型
 
 ### 按功能分类
 - **Redis 操作**：`RedisClient.get_client`, `RedisClient.acquire_lock`, `RedisClient.release_lock`
@@ -724,13 +805,13 @@
 ---
 
 ## 统计信息
-- **总函数数**：约 240+ 个（规划中 + 已实现）
+- **总函数数**：约 270+ 个（规划中 + 已实现）
 - **已实现组件**：35 个（30 聊天组件 + 4 认证组件 + 1 通用组件）
 - **已实现 Hooks**：50+ 个自定义 Hooks（含消息处理、滚动管理、重新生成等）
-- **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息处理、消息服务、滚动管理、重新生成、轮询管理、**统一消息发送**（含 mediaSender）、媒体重新生成、**任务通知**、**图片URL工具**、**统一日志**、**任务协调器**、**消息合并**、性能监控、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理、测试工具、认证弹窗模块、通用组件模块、占位符管理模块、**Webhook 回调与任务完成服务**、**批次完成处理服务**
+- **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息处理、消息服务、滚动管理、重新生成、轮询管理、**统一消息发送**（含 mediaSender）、媒体重新生成、**任务通知**、**图片URL工具**、**统一日志**、**任务协调器**、**消息合并**、性能监控、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理、测试工具、认证弹窗模块、通用组件模块、占位符管理模块、**Webhook 回调与任务完成服务**、**批次完成处理服务**、**ERP API 搜索**、**AI 模型搜索**、**智能模型配置**、**ERP 工具定义**
 - **测试覆盖率目标**：80%+（Vitest + Testing Library）
 - **性能监控**：13个预定义性能标记，支持关键路径监控
-- **最后更新**：2026-03-10（模型动态评分：EMA 聚合 + 审核日志 + 知识库写入）
+- **最后更新**：2026-03-12（快麦 ERP + 淘宝奇门接入 + Agent 多 provider 支持 + 爬虫框架）
 
 ---
 

@@ -14,7 +14,7 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from schemas.websocket import build_image_partial_update, build_message_done
+from schemas.websocket import build_image_partial_update, build_message_done, build_thinking_chunk
 
 
 class TestBuildImagePartialUpdate:
@@ -158,6 +158,70 @@ class TestBuildMessageDone:
         assert msg["payload"]["message"]["content"][2]["failed"] is True
         assert msg["payload"]["credits_consumed"] == 15
         assert msg["message_id"] == "msg_1"
+
+
+class TestBuildThinkingChunk:
+    """测试 build_thinking_chunk 消息构建"""
+
+    def test_payload_with_chunk_and_accumulated(self):
+        """测试：chunk + accumulated 均存在"""
+        msg = build_thinking_chunk(
+            task_id="task_1",
+            conversation_id="conv_1",
+            message_id="msg_1",
+            chunk="让我思考",
+            accumulated="让我思考",
+        )
+
+        assert msg["type"] == "thinking_chunk"
+        assert msg["payload"]["chunk"] == "让我思考"
+        assert msg["payload"]["accumulated"] == "让我思考"
+        assert msg["task_id"] == "task_1"
+        assert msg["conversation_id"] == "conv_1"
+        assert msg["message_id"] == "msg_1"
+
+    def test_payload_without_accumulated(self):
+        """测试：不传 accumulated 时 payload 无该字段"""
+        msg = build_thinking_chunk(
+            task_id="task_1",
+            conversation_id="conv_1",
+            message_id="msg_1",
+            chunk="一下",
+        )
+
+        assert msg["payload"]["chunk"] == "一下"
+        assert "accumulated" not in msg["payload"]
+
+    def test_timestamp_is_valid(self):
+        """测试：timestamp 为正整数"""
+        msg = build_thinking_chunk(
+            task_id="t", conversation_id="c",
+            message_id="m", chunk="x",
+        )
+        assert isinstance(msg["timestamp"], int)
+        assert msg["timestamp"] > 0
+
+
+class TestBuildMessageDoneThinkingContent:
+    """测试 build_message_done 对 thinking_content 的传递"""
+
+    def test_message_done_preserves_thinking_content_in_gen_params(self):
+        """测试：message 中 generation_params.thinking_content 被保留"""
+        message_data = {
+            "id": "msg_t1",
+            "content": [{"type": "text", "text": "回答"}],
+            "generation_params": {"thinking_content": "推理过程"},
+            "status": "completed",
+        }
+
+        msg = build_message_done(
+            task_id="task_1",
+            conversation_id="conv_1",
+            message=message_data,
+        )
+
+        gen_params = msg["payload"]["message"]["generation_params"]
+        assert gen_params["thinking_content"] == "推理过程"
 
 
 if __name__ == "__main__":

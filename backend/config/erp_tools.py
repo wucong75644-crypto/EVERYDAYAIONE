@@ -35,14 +35,30 @@ ERP_SYNC_TOOLS: Set[str] = {
 }
 
 
+def _format_action_desc(name: str, entry: "ApiEntry") -> str:
+    """生成单个 action 的丰富描述：name=描述(参数列表)
+
+    必填参数标记 * 前缀，无参数的 action 不加括号。
+    示例：order_list=订单查询(order_id/buyer/status/*platform_ids)
+    """
+    params = list(entry.param_map.keys())
+    if not params:
+        return f"{name}={entry.description}"
+    param_parts = [
+        f"*{p}" if p in entry.required_params else p
+        for p in params
+    ]
+    return f"{name}={entry.description}({'/'.join(param_parts)})"
+
+
 def _read_actions(registry: dict) -> tuple:
-    """从注册表提取读操作的 enum 列表和描述"""
+    """从注册表提取读操作的 enum 列表和丰富描述（含参数名）"""
     actions = []
     descs = []
     for name, entry in registry.items():
         if not entry.is_write:
             actions.append(name)
-            descs.append(f"{name}={entry.description}")
+            descs.append(_format_action_desc(name, entry))
     return actions, ", ".join(descs)
 
 
@@ -60,7 +76,7 @@ def _write_actions_by_category() -> str:
     parts = []
     for cat_key, (cat_name, registry) in cats.items():
         writes = [
-            f"{n}={e.description}"
+            _format_action_desc(n, e)
             for n, e in registry.items() if e.is_write
         ]
         if writes:
@@ -449,4 +465,52 @@ ERP_ROUTING_PROMPT = (
     "- 复杂问题可跨类别多次查询（如先查订单再查库存再查供应商）\n"
     "- 查询订单时注意选择正确的 time_type/date_type\n"
     "- 所有必要数据收集完毕后，再用 route_to_chat 汇总回复用户\n"
+    "- 不确定用哪个action或参数时 → 先调 erp_api_search 查询API文档\n\n"
+    "## ERP调用示例\n"
+    "用户：「今天多少订单」\n"
+    "→ erp_trade_query(action=\"order_list\", time_type=\"created\", "
+    "start_date=\"{today}\", end_date=\"{today}\", page_size=1)\n"
+    "→ 只看 total 字段，不需要翻页\n\n"
+    "用户：「查订单 123456789」\n"
+    "→ erp_trade_query(action=\"order_list\", order_id=\"123456789\")\n\n"
+    "用户：「每个店铺今天发了多少单」\n"
+    "→ 第1步: erp_info_query(action=\"shop_list\") 获取所有店铺\n"
+    "→ 第2步: 对每个店铺 erp_trade_query(action=\"order_list\", "
+    "shop_name=\"店铺名\", time_type=\"consign_time\", "
+    "start_date=\"{today}\", end_date=\"{today}\", page_size=1)\n"
+    "→ 汇总各店铺 total\n\n"
+    "用户：「商品ABC123的库存」\n"
+    "→ erp_product_query(action=\"stock_status\", outer_id=\"ABC123\")\n\n"
+    "用户：「最近7天的退货单」\n"
+    "→ erp_aftersales_query(action=\"aftersale_list\", "
+    "start_date=\"{7天前}\", end_date=\"{today}\")\n"
 )
+
+
+def build_erp_search_tool() -> Dict[str, Any]:
+    """构建 erp_api_search 工具定义"""
+    return {
+        "type": "function",
+        "function": {
+            "name": "erp_api_search",
+            "description": (
+                "搜索 ERP 可用的 API 操作和参数文档。"
+                "当你不确定该用哪个 action 或哪些参数时调用此工具。"
+                "支持关键词搜索（如「退款」「库存」）"
+                "和精确查询（如「erp_trade_query:order_list」）。"
+                "结果会返回给你，你可以参考后再决定调用哪个 ERP 工具。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "搜索关键词或 tool:action 精确查询"
+                        ),
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    }

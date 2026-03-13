@@ -727,6 +727,143 @@ class TestBuildRoutingConfirmation:
 
 
 # ============================================================
+# TestValidateRoutingModel — 路由决策模型校验
+# ============================================================
+
+
+class TestValidateRoutingModel:
+
+    def test_non_chat_route_passes(self):
+        """非 route_to_chat 工具→不校验"""
+        loop = _make_loop()
+        assert loop._validate_routing_model(
+            "route_to_image", {"model": "google/nano-banana"},
+        ) is None
+
+    def test_image_mismatch_returns_warning(self):
+        """用户有图片但模型不支持→返回警告"""
+        loop = _make_loop()
+        loop._has_image = True
+        result = loop._validate_routing_model(
+            "route_to_chat",
+            {"model": "deepseek-v3.2"},
+        )
+        assert result is not None
+        assert "不支持图片" in result
+
+    def test_search_mismatch_returns_warning(self):
+        """需要搜索但模型不支持→返回警告"""
+        loop = _make_loop()
+        loop._has_image = False
+        result = loop._validate_routing_model(
+            "route_to_chat",
+            {"model": "qwen3.5-plus", "needs_google_search": True},
+        )
+        assert result is not None
+        assert "不支持联网搜索" in result
+
+    def test_valid_choice_passes(self):
+        """能力匹配→返回 None"""
+        loop = _make_loop()
+        loop._has_image = False
+        assert loop._validate_routing_model(
+            "route_to_chat",
+            {"model": "qwen3.5-plus"},
+        ) is None
+
+    def test_unknown_model_passes(self):
+        """不在 chat 列表中的模型→不做校验"""
+        loop = _make_loop()
+        loop._has_image = True
+        assert loop._validate_routing_model(
+            "route_to_chat",
+            {"model": "unknown-model-xyz"},
+        ) is None
+
+    def test_no_has_image_attr_defaults_false(self):
+        """_has_image 未设置→默认 False"""
+        loop = _make_loop()
+        # 不设置 _has_image
+        assert loop._validate_routing_model(
+            "route_to_chat",
+            {"model": "deepseek-v3.2"},
+        ) is None
+
+
+# ============================================================
+# TestFireAndForgetKnowledge — 知识记录
+# ============================================================
+
+
+class TestFireAndForgetKnowledge:
+
+    def test_calls_extract_and_save(self):
+        """正常调用→create_task 被执行"""
+        loop = _make_loop()
+        mock_task = MagicMock()
+        with patch("services.agent_loop.asyncio.create_task", mock_task), \
+             patch(
+                 "services.knowledge_extractor.extract_and_save",
+                 new_callable=AsyncMock,
+             ) as mock_extract:
+            loop._fire_and_forget_knowledge(
+                task_type="tool_validation", model_id="fake_tool",
+                status="failed", error_message="test error",
+            )
+            mock_task.assert_called_once()
+
+    def test_import_error_silenced(self):
+        """import 失败→静默跳过"""
+        loop = _make_loop()
+        with patch.dict("sys.modules", {"services.knowledge_extractor": None}):
+            # 不应抛异常
+            loop._fire_and_forget_knowledge(
+                task_type="test", model_id="x",
+                status="failed", error_message="err",
+            )
+
+    def test_model_mismatch_triggers_knowledge(self):
+        """模型不匹配→触发知识记录"""
+        loop = _make_loop()
+        loop._has_image = True
+        mock_task = MagicMock()
+        with patch("services.agent_loop.asyncio.create_task", mock_task), \
+             patch(
+                 "services.knowledge_extractor.extract_and_save",
+                 new_callable=AsyncMock,
+             ), \
+             patch(
+                 "config.smart_model_config.validate_model_choice",
+                 return_value="模型不支持图片",
+             ):
+            warning = loop._validate_routing_model(
+                "route_to_chat", {"model": "test-model"},
+            )
+            assert warning == "模型不支持图片"
+            mock_task.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_invalid_tool_triggers_knowledge(self):
+        """无效工具调用→触发知识记录"""
+        loop = _make_loop()
+        loop._settings = MagicMock()
+        tc = _make_tool_call("hallucinated_tool", {"x": 1})
+        tool_results = []
+        routing = {}
+        guardrails = AgentGuardrails()
+        context = []
+
+        mock_task = MagicMock()
+        with patch("services.agent_loop.asyncio.create_task", mock_task):
+            await loop._process_tool_call(
+                tc, 1, guardrails, tool_results, context, routing,
+            )
+        # schema 验证失败 → 结果包含错误
+        assert any(r.get("is_error") for r in tool_results)
+        mock_task.assert_called_once()
+
+
+# ============================================================
 # TestGetRecentHistory — 对话历史注入
 # ============================================================
 

@@ -6,6 +6,7 @@ Chat 上下文构建 Mixin
 """
 
 import json
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -58,6 +59,16 @@ class ChatContextMixin:
         if router_system_prompt:
             messages.insert(0, {"role": "system", "content": router_system_prompt})
             logger.debug(f"Router system_prompt injected | len={len(router_system_prompt)}")
+
+        # 当前日期时间注入（让模型知道"今天"是哪天）
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
+        messages.insert(0, {"role": "system", "content": f"当前时间：{now_str}"})
+
+        # 思考语言指令（让推理模型的 thinking 过程使用中文）
+        messages.insert(
+            0,
+            {"role": "system", "content": "请使用中文进行思考和推理。"},
+        )
 
         # 对话历史摘要注入（覆盖 20 条之前的消息，失败不影响主流程）
         summary_prompt = await self._get_context_summary(conversation_id)
