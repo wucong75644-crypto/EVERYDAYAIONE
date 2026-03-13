@@ -7,6 +7,7 @@
 
 import { request } from './api';
 import type { DeleteMessageResponse } from '../types/message';
+import type { RawApiMessage } from '../utils/messageUtils';
 import type {
   AspectRatio,
   ImageResolution,
@@ -54,7 +55,7 @@ export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'failed';
 
 /** 消息列表响应（原始 API 格式，需要通过 normalizeMessage 转换） */
 export interface MessageListResponse {
-  messages: Record<string, unknown>[];  // 原始 API 数据，由 normalizeMessage 转换为 Message
+  messages: RawApiMessage[];  // 原始 API 数据，由 normalizeMessage 转换为 Message
   total: number;
   has_more: boolean;
 }
