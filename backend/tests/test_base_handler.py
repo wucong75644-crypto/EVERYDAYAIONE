@@ -637,5 +637,52 @@ class TestBaseHandlerEdgeCases:
         assert result[0]["text"] == "Hello"
 
 
+# ============ _handle_complete_common 集成测试 ============
+
+class TestHandleCompleteCommonTaskReuse:
+    """_handle_complete_common 复用已查询的 task 传给 _complete_task"""
+
+    @pytest.fixture
+    def handler(self, mock_db):
+        return TestHandler(mock_db)
+
+    @pytest.mark.asyncio
+    async def test_passes_task_to_complete_task(self, handler):
+        """_handle_complete_common 将 _get_task_context 结果传给 _complete_task(task=task)"""
+        task_data = {
+            "external_task_id": "task_123",
+            "placeholder_message_id": "msg_123",
+            "conversation_id": "conv_123",
+            "user_id": "user_123",
+            "model_id": "test-model",
+            "client_task_id": "client_t1",
+            "status": "running",
+            "version": 1,
+            "started_at": None,
+        }
+
+        # Mock 依赖链
+        handler._get_task_context = MagicMock(return_value=task_data)
+        handler._check_idempotency = MagicMock(return_value=None)
+        handler._upsert_assistant_message = MagicMock(return_value=(
+            create_test_message(message_id="msg_123"),
+            {"id": "msg_123", "content": [{"type": "text", "text": "hi"}], "created_at": "2026-03-13T00:00:00+00:00"},
+        ))
+        handler._extract_extra_gen_params = MagicMock(return_value=None)
+        handler._complete_task = MagicMock()
+
+        with patch("services.websocket_manager.ws_manager") as mock_ws:
+            mock_ws.send_to_task_subscribers = AsyncMock()
+
+            await handler._handle_complete_common(
+                task_id="task_123",
+                result=[TextPart(text="hi")],
+                credits_consumed=0,
+            )
+
+        # 核心断言：_complete_task 收到 task=task_data
+        handler._complete_task.assert_called_once_with("task_123", task=task_data)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
