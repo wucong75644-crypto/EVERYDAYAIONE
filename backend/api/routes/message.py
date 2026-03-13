@@ -217,93 +217,116 @@ async def generate_message(
         await task_limit_service.check_and_acquire(user_id, conversation_id)
 
     # 2. 推断生成类型（智能路由 / 关键词兜底）
-    gen_type, routing_decision = await _resolve_generation_type(
-        body, user_id, conversation_id, db=db,
+    from services.intent_router import SMART_MODEL_ID, resolve_auto_model
+
+    # Smart mode + send → 异步路由：跳过 Agent Loop，ChatHandler 中异步执行
+    _is_smart_deferred = (
+        body.model == SMART_MODEL_ID
+        and body.operation == MessageOperation.SEND
     )
 
-    # 智能模型：标记 smart_mode + 解析实际工作模型
-    from services.intent_router import SMART_MODEL_ID, resolve_auto_model
-    if body.model == SMART_MODEL_ID:
+    if _is_smart_deferred:
+        # 使用 provisional chat 类型，路由在 ChatHandler 异步阶段完成
+        gen_type = GenerationType.CHAT
+        routing_decision = None
         if body.params is None:
             body.params = {}
         body.params["_is_smart_mode"] = True
+        body.params["_needs_routing"] = True
+        # provisional 模型（ChatHandler 路由完成后替换为实际模型）
+        body.model = resolve_auto_model(gen_type, body.content, None)
+    else:
+        # 非智能模式 / retry / regenerate → 同步路由（原有逻辑）
+        gen_type, routing_decision = await _resolve_generation_type(
+            body, user_id, conversation_id, db=db,
+        )
 
-        # AgentResult vs RoutingDecision 兼容处理
-        from services.agent_loop import AgentResult
-        if isinstance(routing_decision, AgentResult):
-            # Agent Loop 返回 AgentResult
-            recommended = routing_decision.model or None
-            if recommended:
-                body.model = recommended
+        # 智能模型：标记 smart_mode + 解析实际工作模型
+        if body.model == SMART_MODEL_ID:
+            if body.params is None:
+                body.params = {}
+            body.params["_is_smart_mode"] = True
+
+            from services.agent_loop import AgentResult
+            if isinstance(routing_decision, AgentResult):
+                recommended = routing_decision.model or None
+                if recommended:
+                    body.model = recommended
+                else:
+                    body.model = resolve_auto_model(gen_type, body.content, None)
             else:
-                body.model = resolve_auto_model(gen_type, body.content, None)
-        else:
-            recommended = routing_decision.recommended_model if routing_decision else None
-            body.model = resolve_auto_model(gen_type, body.content, recommended)
+                recommended = routing_decision.recommended_model if routing_decision else None
+                body.model = resolve_auto_model(gen_type, body.content, recommended)
 
-    # 将路由结果注入 params（供 handler 使用）
-    if routing_decision:
-        if body.params is None:
-            body.params = {}
+        # 将路由结果注入 params（供 handler 使用）
+        if routing_decision:
+            if body.params is None:
+                body.params = {}
 
-        if isinstance(routing_decision, AgentResult):
-            # Agent Loop 结果注入
-            if routing_decision.system_prompt:
-                body.params["_router_system_prompt"] = routing_decision.system_prompt
-            if routing_decision.search_context:
-                body.params["_router_search_context"] = routing_decision.search_context
-            if routing_decision.direct_reply:
-                body.params["_direct_reply"] = routing_decision.direct_reply
-            if routing_decision.batch_prompts:
-                body.params["_batch_prompts"] = routing_decision.batch_prompts
-                body.params["num_images"] = len(routing_decision.batch_prompts)
-                # 用第一张图的 aspect_ratio 作为占位符比例（未指定时默认 1:1）
-                first_ratio = routing_decision.batch_prompts[0].get("aspect_ratio", "1:1")
-                if "aspect_ratio" not in body.params:
-                    body.params["aspect_ratio"] = first_ratio
-            if routing_decision.render_hints:
-                body.params["_render"] = routing_decision.render_hints
-            # 注入搜索标志（让 ChatHandler 启用 Google Search Grounding）
-            if routing_decision.tool_params.get("_needs_google_search"):
-                body.params["_needs_google_search"] = True
-            # 注入工具参数（prompt/aspect_ratio 等）
-            for key in ("prompt", "resolution", "aspect_ratio", "output_format"):
-                val = routing_decision.tool_params.get(key)
-                if val is not None:
-                    body.params[key] = val
-        else:
-            # 旧路由 RoutingDecision 结果注入
-            if routing_decision.system_prompt:
-                body.params["_router_system_prompt"] = routing_decision.system_prompt
-            if routing_decision.tool_params.get("_search_context"):
-                body.params["_router_search_context"] = routing_decision.tool_params["_search_context"]
-            for key in ("resolution", "aspect_ratio", "output_format"):
-                val = routing_decision.tool_params.get(key)
-                if val is not None:
-                    body.params[key] = val
+            if isinstance(routing_decision, AgentResult):
+                if routing_decision.system_prompt:
+                    body.params["_router_system_prompt"] = routing_decision.system_prompt
+                if routing_decision.search_context:
+                    body.params["_router_search_context"] = routing_decision.search_context
+                if routing_decision.direct_reply:
+                    body.params["_direct_reply"] = routing_decision.direct_reply
+                if routing_decision.batch_prompts:
+                    body.params["_batch_prompts"] = routing_decision.batch_prompts
+                    body.params["num_images"] = len(routing_decision.batch_prompts)
+                    first_ratio = routing_decision.batch_prompts[0].get("aspect_ratio", "1:1")
+                    if "aspect_ratio" not in body.params:
+                        body.params["aspect_ratio"] = first_ratio
+                if routing_decision.render_hints:
+                    body.params["_render"] = routing_decision.render_hints
+                if routing_decision.tool_params.get("_needs_google_search"):
+                    body.params["_needs_google_search"] = True
+                for key in ("prompt", "resolution", "aspect_ratio", "output_format"):
+                    val = routing_decision.tool_params.get(key)
+                    if val is not None:
+                        body.params[key] = val
+            else:
+                if routing_decision.system_prompt:
+                    body.params["_router_system_prompt"] = routing_decision.system_prompt
+                if routing_decision.tool_params.get("_search_context"):
+                    body.params["_router_search_context"] = routing_decision.tool_params["_search_context"]
+                for key in ("resolution", "aspect_ratio", "output_format"):
+                    val = routing_decision.tool_params.get(key)
+                    if val is not None:
+                        body.params[key] = val
 
-    # 智能模式下图片参数兜底：确保占位符和 handler 使用一致的默认值
-    if gen_type == GenerationType.IMAGE and body.params:
-        if body.params.get("_is_smart_mode") and "aspect_ratio" not in body.params:
-            body.params["aspect_ratio"] = "1:1"
+        # 智能模式下图片参数兜底
+        if gen_type == GenerationType.IMAGE and body.params:
+            if body.params.get("_is_smart_mode") and "aspect_ratio" not in body.params:
+                body.params["aspect_ratio"] = "1:1"
 
-    # 3. 验证对话权限（同时预取 context_summary，省去 Phase 2 重复查询）
+    # 3+4. 验证对话权限 + 创建用户消息（并行执行，两者独立无数据依赖）
     conversation_service = get_conversation_service(db)
-    conversation = await conversation_service.get_conversation(conversation_id, user_id)
+    user_message: Optional[Message] = None
+    needs_user_message = body.operation not in (
+        MessageOperation.RETRY, MessageOperation.REGENERATE_SINGLE,
+    )
+
+    if needs_user_message:
+        conv_result, msg_result = await asyncio.gather(
+            conversation_service.get_conversation(conversation_id, user_id),
+            create_user_message(
+                db=db,
+                conversation_id=conversation_id,
+                content=body.content,
+                created_at=body.created_at,
+                client_request_id=body.client_request_id,
+            ),
+        )
+        conversation = conv_result
+        user_message = msg_result
+    else:
+        conversation = await conversation_service.get_conversation(
+            conversation_id, user_id,
+        )
+
     if body.params is None:
         body.params = {}
     body.params["_prefetched_summary"] = conversation.get("context_summary")
-
-    # 4. 创建用户消息（send/regenerate，单图重新生成不创建）
-    user_message: Optional[Message] = None
-    if body.operation not in (MessageOperation.RETRY, MessageOperation.REGENERATE_SINGLE):
-        user_message = await create_user_message(
-            db=db,
-            conversation_id=conversation_id,
-            content=body.content,
-            created_at=body.created_at,
-            client_request_id=body.client_request_id,
-        )
 
     # 5. 处理助手消息（根据操作类型）
     if body.operation == MessageOperation.RETRY:

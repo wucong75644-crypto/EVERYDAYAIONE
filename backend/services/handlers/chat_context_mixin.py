@@ -28,6 +28,7 @@ class ChatContextMixin:
         router_system_prompt: Optional[str] = None,
         router_search_context: Optional[str] = None,
         prefetched_summary: Optional[str] = None,
+        prefetched_memory: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """组装发送给 LLM 的完整消息列表"""
         image_urls = self._extract_image_urls(content)
@@ -53,25 +54,34 @@ class ChatContextMixin:
             logger.debug(f"Search context injected | len={len(router_search_context)}")
 
         # 并行获取：记忆 / 摘要 / 历史（三者完全独立，无交叉数据依赖）
-        memory_result, summary_result, context_result = await asyncio.gather(
-            self._build_memory_prompt(user_id, text_content),
-            self._get_context_summary(conversation_id, prefetched=prefetched_summary),
-            self._build_context_messages(conversation_id, text_content),
-            return_exceptions=True,
-        )
+        # 有预取记忆时跳过 _build_memory_prompt（已在 _route_and_stream 中并行获取）
+        if prefetched_memory is not None:
+            summary_result, context_result = await asyncio.gather(
+                self._get_context_summary(conversation_id, prefetched=prefetched_summary),
+                self._build_context_messages(conversation_id, text_content),
+                return_exceptions=True,
+            )
+            memory_prompt = prefetched_memory
+        else:
+            memory_result, summary_result, context_result = await asyncio.gather(
+                self._build_memory_prompt(user_id, text_content),
+                self._get_context_summary(conversation_id, prefetched=prefetched_summary),
+                self._build_context_messages(conversation_id, text_content),
+                return_exceptions=True,
+            )
+            memory_prompt = (
+                memory_result if not isinstance(memory_result, BaseException) else None
+            )
+            if isinstance(memory_result, BaseException):
+                logger.warning(f"Memory gather failed | error={memory_result}")
 
-        # 安全解包（异常降级，三个函数内部已有 try/except，这里兜底防御）
-        memory_prompt = (
-            memory_result if not isinstance(memory_result, BaseException) else None
-        )
+        # 安全解包（异常降级）
         summary_prompt = (
             summary_result if not isinstance(summary_result, BaseException) else None
         )
         context_messages = (
             context_result if not isinstance(context_result, BaseException) else []
         )
-        if isinstance(memory_result, BaseException):
-            logger.warning(f"Memory gather failed | error={memory_result}")
         if isinstance(summary_result, BaseException):
             logger.warning(f"Summary gather failed | error={summary_result}")
         if isinstance(context_result, BaseException):

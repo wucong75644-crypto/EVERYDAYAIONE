@@ -1,8 +1,4 @@
-"""
-ChatHandler 流式生成 + 积分计算测试
-
-覆盖：积分计算逻辑、流式生成主路径、direct_reply 路径、积分扣除
-"""
+"""ChatHandler 流式生成 + 积分计算测试"""
 
 import math
 from decimal import Decimal
@@ -15,9 +11,7 @@ from services.adapters.base import CostEstimate, StreamChunk
 from services.handlers.chat_handler import ChatHandler
 
 
-# ============================================================
-# Helpers
-# ============================================================
+# -- Helpers --
 
 
 def _make_handler() -> ChatHandler:
@@ -25,9 +19,7 @@ def _make_handler() -> ChatHandler:
     return ChatHandler(db=MagicMock())
 
 
-# ============================================================
-# TestCalculateCredits
-# ============================================================
+# -- TestCalculateCredits --
 
 
 class TestCalculateCredits:
@@ -101,9 +93,7 @@ class TestCalculateCredits:
         assert result == 0
 
 
-# ============================================================
-# TestStreamGenerate — 流式主路径
-# ============================================================
+# -- TestStreamGenerate --
 
 
 class TestStreamGenerate:
@@ -246,9 +236,7 @@ class TestStreamGenerate:
         mock_adapter.close.assert_awaited_once()
 
 
-# ============================================================
-# TestStreamDirectReply
-# ============================================================
+# -- TestStreamDirectReply --
 
 
 class TestStreamDirectReply:
@@ -297,9 +285,7 @@ class TestStreamDirectReply:
         assert call_args.kwargs["error_code"] == "DIRECT_REPLY_FAILED"
 
 
-# ============================================================
-# TestHandleChatCreditsOnComplete
-# ============================================================
+# -- TestHandleChatCreditsOnComplete --
 
 
 class TestHandleChatCreditsOnComplete:
@@ -329,9 +315,7 @@ class TestHandleChatCreditsOnComplete:
         handler._deduct_directly.assert_not_called()
 
 
-# ============================================================
-# TestRecordBreakerResult — 熔断器记录
-# ============================================================
+# -- TestRecordBreakerResult --
 
 
 class TestRecordBreakerResult:
@@ -391,9 +375,7 @@ class TestRecordBreakerResult:
         mock_get_breaker.assert_not_called()
 
 
-# ============================================================
-# 性能优化相关测试
-# ============================================================
+# -- TestStreamOptimizations --
 
 
 class TestStreamOptimizations:
@@ -473,3 +455,41 @@ class TestStreamOptimizations:
         )
 
         assert captured_kwargs.get("prefetched_summary") == "之前讨论了Python"
+
+    @pytest.mark.asyncio
+    @patch("services.adapters.factory.create_chat_adapter")
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_prefetched_memory_passed_to_build_llm_messages(self, mock_ws, mock_factory):
+        """_prefetched_memory 从 _params 传递到 _build_llm_messages"""
+        handler = _make_handler()
+
+        captured_kwargs = {}
+        original_build = AsyncMock(return_value=[{"role": "user", "content": "hi"}])
+
+        async def capture_build(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return await original_build(*args, **kwargs)
+
+        handler._build_llm_messages = capture_build
+        handler.on_complete = AsyncMock()
+        handler._dispatch_post_tasks = MagicMock()
+
+        async def mock_stream_chat(**kwargs):
+            yield StreamChunk(content="ok", prompt_tokens=5, completion_tokens=1)
+
+        mock_adapter = MagicMock()
+        mock_adapter.stream_chat = mock_stream_chat
+        mock_adapter.close = AsyncMock()
+        mock_adapter.estimate_cost_unified.return_value = CostEstimate(
+            model="test", estimated_cost_usd=Decimal("0"), estimated_credits=0,
+        )
+        mock_factory.return_value = mock_adapter
+        mock_ws.send_to_task_subscribers = AsyncMock()
+
+        await handler._stream_generate(
+            task_id="t1", message_id="m1", conversation_id="c1",
+            user_id="u1", content=[TextPart(text="hi")], model_id="test",
+            _params={"_prefetched_memory": "用户喜欢Python"},
+        )
+
+        assert captured_kwargs.get("prefetched_memory") == "用户喜欢Python"

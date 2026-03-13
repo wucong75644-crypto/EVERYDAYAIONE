@@ -182,6 +182,21 @@ class Settings(BaseSettings):
     circuit_breaker_failure_window: float = 60.0    # 失败计数滑动窗口（秒）
     circuit_breaker_open_duration: float = 30.0     # OPEN 状态持续时间（秒）
 
+    # 企业微信智能机器人配置（长连接模式 — 群聊）
+    wecom_bot_id: Optional[str] = None       # 智能机器人 Bot ID
+    wecom_bot_secret: Optional[str] = None   # 智能机器人 Secret
+    wecom_bot_enabled: bool = True           # 长连接总开关（有 bot_id+secret 时自动启用）
+
+    # 企业微信自建应用配置（URL 回调模式 — 私聊）
+    wecom_corp_id: Optional[str] = None              # 企业 ID
+    wecom_agent_id: Optional[int] = None             # 自建应用 AgentID
+    wecom_agent_secret: Optional[str] = None         # 自建应用 Secret
+    wecom_token: Optional[str] = None                # 回调验证 Token
+    wecom_encoding_aes_key: Optional[str] = None     # 回调消息加密密钥（43 位）
+
+    # 企微通用配置
+    wecom_stream_timeout: float = 300.0  # 企微流式回复超时（秒），企微上限 6 分钟
+
     # Sentry 错误监控配置
     sentry_dsn: Optional[str] = None
     environment: str = "development"

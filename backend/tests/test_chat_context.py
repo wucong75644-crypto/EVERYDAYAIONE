@@ -767,3 +767,59 @@ class TestBuildLlmMessagesGatherDegradation:
         # 无话题聚焦（因为无历史上下文）
         focus_msgs = [m for m in messages if "最新问题" in m.get("content", "")]
         assert len(focus_msgs) == 0
+
+
+# ============ Test prefetched_memory parameter ============
+
+
+class TestBuildLlmMessagesPrefetchedMemory:
+    """prefetched_memory 参数：有值时跳过 _build_memory_prompt"""
+
+    @pytest.mark.asyncio
+    async def test_prefetched_memory_skips_build(self, chat_handler, mock_db):
+        """传入 prefetched_memory 时，不调用 _build_memory_prompt"""
+        mock_db.set_table_data("messages", [])
+
+        with patch.object(
+            chat_handler, "_build_memory_prompt",
+            new_callable=AsyncMock, return_value="不应被调用",
+        ) as mock_build, patch.object(
+            chat_handler, "_get_context_summary",
+            new_callable=AsyncMock, return_value=None,
+        ):
+            messages = await chat_handler._build_llm_messages(
+                content=[{"type": "text", "text": "你好"}],
+                user_id="u1",
+                conversation_id="conv1",
+                text_content="你好",
+                prefetched_memory="你喜欢Python编程",
+            )
+
+        # _build_memory_prompt 不应被调用
+        mock_build.assert_not_called()
+        # 预取的记忆应被注入
+        memory_msgs = [m for m in messages if m.get("content") == "你喜欢Python编程"]
+        assert len(memory_msgs) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_prefetched_memory_calls_build(self, chat_handler, mock_db):
+        """不传 prefetched_memory 时，正常调用 _build_memory_prompt"""
+        mock_db.set_table_data("messages", [])
+
+        with patch.object(
+            chat_handler, "_build_memory_prompt",
+            new_callable=AsyncMock, return_value="记忆内容",
+        ) as mock_build, patch.object(
+            chat_handler, "_get_context_summary",
+            new_callable=AsyncMock, return_value=None,
+        ):
+            messages = await chat_handler._build_llm_messages(
+                content=[{"type": "text", "text": "你好"}],
+                user_id="u1",
+                conversation_id="conv1",
+                text_content="你好",
+            )
+
+        mock_build.assert_called_once()
+        memory_msgs = [m for m in messages if m.get("content") == "记忆内容"]
+        assert len(memory_msgs) == 1
