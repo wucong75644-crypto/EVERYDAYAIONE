@@ -195,7 +195,11 @@ class ChatContextMixin:
     async def _build_context_messages(
         self, conversation_id: str, current_text: str
     ) -> List[Dict[str, Any]]:
-        """获取对话历史并构建纯文本上下文（失败时降级为空）"""
+        """获取对话历史并构建多模态上下文（含图片，失败时降级为空）
+
+        历史消息中的图片会以 image_url 格式传给工作模型（Gemini/GPT），
+        使其能"看到"之前的图片，支持用户说"修改上一张图"等场景。
+        """
         try:
             from core.config import settings
 
@@ -220,23 +224,59 @@ class ChatContextMixin:
             # 从新→旧遍历，优先保留最近消息（防止旧长回复吃光字符预算）
             context = []
             total_chars = 0
+            total_images = 0
             max_chars = settings.chat_context_max_chars
+            max_images = settings.chat_context_max_images
             for row in result.data:  # 已按 created_at DESC 排序
-                text = self._extract_text_from_content(row.get("content"))
-                if not text:
+                raw_content = row.get("content")
+                text = self._extract_text_from_content(raw_content)
+                # 图片配额未满时提取图片 URL
+                images = (
+                    self._extract_image_urls_from_content(raw_content)
+                    if total_images < max_images
+                    else []
+                )
+
+                if not text and not images:
                     continue
-                total_chars += len(text)
-                if total_chars > max_chars:
-                    break
-                context.append({"role": row["role"], "content": text})
+
+                if text:
+                    total_chars += len(text)
+                    if total_chars > max_chars:
+                        break
+
+                # 限制图片数量不超过配额
+                remaining = max_images - total_images
+                if images and remaining > 0:
+                    images = images[:remaining]
+                    total_images += len(images)
+                else:
+                    images = []
+
+                # 有图片时用多模态格式，无图片时保持纯文本（节省 token）
+                if images:
+                    parts: List[Dict[str, Any]] = []
+                    if text:
+                        parts.append({"type": "text", "text": text})
+                    for url in images:
+                        parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": url},
+                        })
+                    context.append({"role": row["role"], "content": parts})
+                else:
+                    context.append({"role": row["role"], "content": text})
 
             # 反转为正序（旧→新），LLM 需要按时间顺序读取
             context.reverse()
 
             # 去除末尾与当前消息重复的 user 消息
             if context and context[-1]["role"] == "user":
-                tail = self._extract_text_from_content(
-                    context[-1]["content"]
+                tail_content = context[-1]["content"]
+                tail = (
+                    self._extract_text_from_content(tail_content)
+                    if isinstance(tail_content, list)
+                    else tail_content
                 )
                 if tail.strip() == current_text.strip():
                     context.pop()
@@ -244,7 +284,8 @@ class ChatContextMixin:
             if context:
                 logger.debug(
                     f"Context injected | conversation_id={conversation_id} "
-                    f"| count={len(context)} | chars={total_chars}"
+                    f"| count={len(context)} | chars={total_chars} "
+                    f"| images={total_images}"
                 )
 
             return context
@@ -395,6 +436,26 @@ class ChatContextMixin:
                 f"Context summary update failed | "
                 f"conversation_id={conversation_id} | error={e}"
             )
+
+    def _extract_image_urls_from_content(self, content: Any) -> List[str]:
+        """从 DB content 字段提取图片 URL 列表"""
+        if isinstance(content, str):
+            try:
+                parsed = json.loads(content)
+                if isinstance(parsed, list):
+                    return self._extract_image_urls_from_content(parsed)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            return []
+        if isinstance(content, list):
+            return [
+                part["url"]
+                for part in content
+                if isinstance(part, dict)
+                and part.get("type") == "image"
+                and part.get("url")
+            ]
+        return []
 
     def _extract_text_from_content(self, content: Any) -> str:
         """从 DB content 字段提取纯文本，跳过图片/视频 URL"""

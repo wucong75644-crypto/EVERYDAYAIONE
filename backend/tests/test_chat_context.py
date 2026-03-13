@@ -155,8 +155,8 @@ class TestBuildContextMessages:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_skips_image_only_messages(self, chat_handler, mock_db):
-        """跳过只有图片没有文本的消息"""
+    async def test_includes_image_only_messages(self, chat_handler, mock_db):
+        """图片消息（无文本）也被包含，以多模态格式传递"""
         mock_db.set_table_data("messages", [
             _make_msg("user", "看看这张图"),
             _make_msg("assistant", [{"type": "image", "url": "https://img.png"}]),
@@ -165,12 +165,16 @@ class TestBuildContextMessages:
 
         result = await chat_handler._build_context_messages("conv1", "看看这张图")
 
-        assert len(result) == 1
+        assert len(result) == 2
         assert result[0] == {"role": "user", "content": "第一条消息"}
+        assert result[1]["role"] == "assistant"
+        assert result[1]["content"] == [
+            {"type": "image_url", "image_url": {"url": "https://img.png"}},
+        ]
 
     @pytest.mark.asyncio
-    async def test_extracts_text_from_mixed_content(self, chat_handler, mock_db):
-        """混合内容只提取文本部分"""
+    async def test_mixed_content_includes_text_and_image(self, chat_handler, mock_db):
+        """混合内容同时包含文本和图片（多模态格式）"""
         mock_db.set_table_data("messages", [
             _make_msg("user", "当前"),
             _make_msg("user", [
@@ -182,7 +186,11 @@ class TestBuildContextMessages:
         result = await chat_handler._build_context_messages("conv1", "当前")
 
         assert len(result) == 1
-        assert result[0] == {"role": "user", "content": "画一只猫"}
+        assert result[0]["role"] == "user"
+        assert result[0]["content"] == [
+            {"type": "text", "text": "画一只猫"},
+            {"type": "image_url", "image_url": {"url": "https://cat.png"}},
+        ]
 
     @pytest.mark.asyncio
     async def test_dedup_removes_trailing_current_message(self, chat_handler, mock_db):
@@ -347,6 +355,138 @@ class TestBuildContextMessages:
         assert len(result) == 2
         assert result[0] == {"role": "user", "content": "短问题"}
         assert result[1] == {"role": "assistant", "content": "短回复"}
+
+    @pytest.mark.asyncio
+    async def test_image_limit_caps_total_images(self, chat_handler, mock_db):
+        """图片数量超过 chat_context_max_images 时截断"""
+        mock_db.set_table_data("messages", [
+            _make_msg("user", "当前"),
+            # 最新消息：3 张图（DESC 第一条）
+            _make_msg("user", [
+                {"type": "text", "text": "三张图"},
+                {"type": "image", "url": "https://img1.png"},
+                {"type": "image", "url": "https://img2.png"},
+                {"type": "image", "url": "https://img3.png"},
+            ]),
+            # 较旧消息：2 张图（DESC 第二条）
+            _make_msg("assistant", [
+                {"type": "text", "text": "生成了两张"},
+                {"type": "image", "url": "https://img4.png"},
+                {"type": "image", "url": "https://img5.png"},
+            ]),
+        ])
+
+        with patch("core.config.settings") as mock_settings:
+            mock_settings.chat_context_limit = 20
+            mock_settings.chat_context_max_chars = 8000
+            mock_settings.chat_context_max_images = 4  # 只允许 4 张
+
+            result = await chat_handler._build_context_messages("conv1", "当前")
+
+        # 最新消息 3 张全部保留，较旧消息只保留 1 张（4-3=1）
+        assert len(result) == 2
+        # 旧消息（正序第一条）：只有 1 张图片
+        older = result[0]
+        assert older["role"] == "assistant"
+        image_parts = [p for p in older["content"] if p.get("type") == "image_url"]
+        assert len(image_parts) == 1
+        # 新消息（正序第二条）：3 张图片
+        newer = result[1]
+        assert newer["role"] == "user"
+        image_parts = [p for p in newer["content"] if p.get("type") == "image_url"]
+        assert len(image_parts) == 3
+
+    @pytest.mark.asyncio
+    async def test_no_image_messages_stay_text_format(self, chat_handler, mock_db):
+        """纯文本消息保持字符串格式（不变为多模态列表）"""
+        mock_db.set_table_data("messages", [
+            _make_msg("user", "当前"),
+            _make_msg("assistant", "纯文本回复"),
+            _make_msg("user", "纯文本问题"),
+        ])
+
+        result = await chat_handler._build_context_messages("conv1", "当前")
+
+        assert len(result) == 2
+        # 纯文本消息 content 是字符串，不是列表
+        assert isinstance(result[0]["content"], str)
+        assert isinstance(result[1]["content"], str)
+
+    @pytest.mark.asyncio
+    async def test_dedup_works_with_multimodal_content(self, chat_handler, mock_db):
+        """去重逻辑对多模态格式（含图片）的消息也生效"""
+        mock_db.set_table_data("messages", [
+            _make_msg("user", [
+                {"type": "text", "text": "当前消息"},
+                {"type": "image", "url": "https://img.png"},
+            ]),
+            _make_msg("assistant", "回复"),
+        ])
+
+        result = await chat_handler._build_context_messages("conv1", "当前消息")
+
+        # 末尾 user 消息文本与 current_text 相同，应被去重
+        assert len(result) == 1
+        assert result[0] == {"role": "assistant", "content": "回复"}
+
+    @pytest.mark.asyncio
+    async def test_image_null_url_skipped(self, chat_handler, mock_db):
+        """图片 URL 为 null 时跳过（生成中的占位图片）"""
+        mock_db.set_table_data("messages", [
+            _make_msg("user", "当前"),
+            _make_msg("assistant", [
+                {"type": "text", "text": "正在生成"},
+                {"type": "image", "url": None},
+            ]),
+        ])
+
+        result = await chat_handler._build_context_messages("conv1", "当前")
+
+        assert len(result) == 1
+        # url=None 的图片被跳过，只剩文本 → 纯文本格式
+        assert result[0] == {"role": "assistant", "content": "正在生成"}
+
+
+# ============ Test _extract_image_urls_from_content ============
+
+
+class TestExtractImageUrlsFromContent:
+    """从 DB content 字段提取图片 URL"""
+
+    def test_list_with_images(self, chat_handler):
+        content = [
+            {"type": "text", "text": "hello"},
+            {"type": "image", "url": "https://img1.png"},
+            {"type": "image", "url": "https://img2.png"},
+        ]
+        assert chat_handler._extract_image_urls_from_content(content) == [
+            "https://img1.png", "https://img2.png",
+        ]
+
+    def test_no_images(self, chat_handler):
+        content = [{"type": "text", "text": "hello"}]
+        assert chat_handler._extract_image_urls_from_content(content) == []
+
+    def test_json_string(self, chat_handler):
+        content = json.dumps([
+            {"type": "image", "url": "https://img.png"},
+        ])
+        assert chat_handler._extract_image_urls_from_content(content) == [
+            "https://img.png",
+        ]
+
+    def test_plain_string(self, chat_handler):
+        assert chat_handler._extract_image_urls_from_content("hello") == []
+
+    def test_null_url_skipped(self, chat_handler):
+        content = [{"type": "image", "url": None}]
+        assert chat_handler._extract_image_urls_from_content(content) == []
+
+    def test_empty_list(self, chat_handler):
+        assert chat_handler._extract_image_urls_from_content([]) == []
+
+    def test_none_input(self, chat_handler):
+        assert chat_handler._extract_image_urls_from_content(None) == []
 
 
 # ============ Test _stream_generate context injection ============
