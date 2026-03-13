@@ -2,7 +2,7 @@
  * 音频上传服务
  */
 
-import { request, API_BASE_URL } from './api';
+import { API_BASE_URL } from './api';
 
 export interface AudioUploadResponse {
   audio_url: string;

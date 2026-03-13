@@ -6,6 +6,7 @@
 
 import type {
   Message,
+  MessageStatus,
   ContentPart,
   ImagePart,
   VideoPart,
@@ -56,7 +57,7 @@ export function getVideoUrls(message: Message): string[] {
 // ============================================================
 
 /** API 返回的原始消息（content 可能是字符串或数组） */
-interface RawApiMessage {
+export interface RawApiMessage {
   id: string;
   conversation_id: string;
   role: string;
@@ -66,14 +67,21 @@ interface RawApiMessage {
   [key: string]: unknown;
 }
 
-/** 转换旧格式消息为新格式 */
-export function normalizeMessage(msg: RawApiMessage): Message {
+/** 推断 MessageStatus：优先使用已有值，否则根据 is_error 推断 */
+function resolveStatus(status?: string, isError?: boolean): MessageStatus {
+  if (status === 'pending' || status === 'streaming' || status === 'completed' || status === 'failed') {
+    return status;
+  }
+  return isError ? 'failed' : 'completed';
+}
+
+/** 转换旧格式消息为新格式（兼容 Message 和 API 原始数据） */
+export function normalizeMessage(msg: RawApiMessage | Message): Message {
+  const status = resolveStatus(msg.status as string | undefined, msg.is_error);
+
   // 如果 content 已经是数组，直接返回
   if (Array.isArray(msg.content)) {
-    return {
-      ...msg,
-      status: msg.status || (msg.is_error ? 'failed' : 'completed'),
-    };
+    return { ...msg, status } as Message;
   }
 
   // 检查是否为 JSON 字符串数组（后端保存为 JSONB 但返回为字符串的情况）
@@ -81,11 +89,7 @@ export function normalizeMessage(msg: RawApiMessage): Message {
     try {
       const parsed = JSON.parse(msg.content);
       if (Array.isArray(parsed)) {
-        return {
-          ...msg,
-          content: parsed,
-          status: msg.status || (msg.is_error ? 'failed' : 'completed'),
-        };
+        return { ...msg, content: parsed, status } as Message;
       }
     } catch {
       // 不是有效 JSON，继续正常处理
@@ -99,9 +103,5 @@ export function normalizeMessage(msg: RawApiMessage): Message {
     content.push({ type: 'text', text: msg.content });
   }
 
-  return {
-    ...msg,
-    content,
-    status: msg.status || (msg.is_error ? 'failed' : 'completed'),
-  };
+  return { ...msg, content, status } as Message;
 }

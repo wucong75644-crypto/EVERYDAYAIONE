@@ -256,7 +256,7 @@ function handleMessageError(deps: HandlerDeps, msg: WSIncomingMessage): void {
     store.updateMessage(message_id, {
       status: 'failed',
       is_error: true,
-      error: error || { code: 'UNKNOWN', message: errorText },
+      error: { code: error?.code ?? 'UNKNOWN', message: error?.message ?? errorText },
       content: [{ type: 'text', text: errorText }],
     });
   }
@@ -423,7 +423,7 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       logger.info('ws:memory', 'memories extracted', { count: data.count });
 
       import('../stores/useMemoryStore').then(({ useMemoryStore }) => {
-        useMemoryStore.getState().onMemoryExtracted(data.memories);
+        useMemoryStore.getState().onMemoryExtracted(data.memories! as Array<{ id: string; memory: string }>);
       });
     },
 
