@@ -99,6 +99,7 @@ class Settings(BaseSettings):
     # 对话上下文配置
     chat_context_limit: int = 20  # 注入历史消息的最大条数
     chat_context_max_chars: int = 8000  # 上下文最大字符数（≈12K token）
+    chat_context_max_images: int = 5  # 上下文历史图片最大数量（防止 token 爆炸）
 
     # 对话历史摘要压缩配置
     context_summary_enabled: bool = True  # 是否启用摘要压缩
