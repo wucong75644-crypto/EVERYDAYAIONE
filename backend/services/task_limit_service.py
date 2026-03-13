@@ -52,8 +52,13 @@ class TaskLimitService:
             global_key = self._global_key(user_id)
             conv_key = self._conversation_key(user_id, conversation_id)
 
+            # 批量读取两个计数（1次往返替代2次）
+            async with self.redis.pipeline(transaction=False) as pipe:
+                await pipe.get(global_key)
+                await pipe.get(conv_key)
+                global_count, conv_count = await pipe.execute()
+
             # 检查全局限制
-            global_count = await self.redis.get(global_key)
             if global_count and int(global_count) >= self.global_limit:
                 logger.warning(
                     "任务队列已满（全局）",
@@ -62,11 +67,12 @@ class TaskLimitService:
                     limit=self.global_limit
                 )
                 raise TaskQueueFullError(
-                    f"任务队列已满，最多同时执行 {self.global_limit} 个任务"
+                    current_count=int(global_count),
+                    max_count=self.global_limit,
+                    scope="global",
                 )
 
             # 检查单对话限制
-            conv_count = await self.redis.get(conv_key)
             if conv_count and int(conv_count) >= self.conversation_limit:
                 logger.warning(
                     "任务队列已满（单对话）",
@@ -76,7 +82,9 @@ class TaskLimitService:
                     limit=self.conversation_limit
                 )
                 raise TaskQueueFullError(
-                    f"当前对话任务队列已满，最多同时执行 {self.conversation_limit} 个任务"
+                    current_count=int(conv_count),
+                    max_count=self.conversation_limit,
+                    scope="conversation",
                 )
 
             # 原子递增（使用 pipeline 保证原子性）

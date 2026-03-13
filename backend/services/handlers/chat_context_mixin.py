@@ -5,6 +5,7 @@ Chat 上下文构建 Mixin
 供 ChatHandler 混入使用。
 """
 
+import asyncio
 import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -26,6 +27,7 @@ class ChatContextMixin:
         text_content: str,
         router_system_prompt: Optional[str] = None,
         router_search_context: Optional[str] = None,
+        prefetched_summary: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """组装发送给 LLM 的完整消息列表"""
         image_urls = self._extract_image_urls(content)
@@ -50,8 +52,32 @@ class ChatContextMixin:
             messages.insert(0, {"role": "system", "content": search_prompt})
             logger.debug(f"Search context injected | len={len(router_search_context)}")
 
+        # 并行获取：记忆 / 摘要 / 历史（三者完全独立，无交叉数据依赖）
+        memory_result, summary_result, context_result = await asyncio.gather(
+            self._build_memory_prompt(user_id, text_content),
+            self._get_context_summary(conversation_id, prefetched=prefetched_summary),
+            self._build_context_messages(conversation_id, text_content),
+            return_exceptions=True,
+        )
+
+        # 安全解包（异常降级，三个函数内部已有 try/except，这里兜底防御）
+        memory_prompt = (
+            memory_result if not isinstance(memory_result, BaseException) else None
+        )
+        summary_prompt = (
+            summary_result if not isinstance(summary_result, BaseException) else None
+        )
+        context_messages = (
+            context_result if not isinstance(context_result, BaseException) else []
+        )
+        if isinstance(memory_result, BaseException):
+            logger.warning(f"Memory gather failed | error={memory_result}")
+        if isinstance(summary_result, BaseException):
+            logger.warning(f"Summary gather failed | error={summary_result}")
+        if isinstance(context_result, BaseException):
+            logger.warning(f"Context gather failed | error={context_result}")
+
         # 记忆注入（失败不影响主流程）
-        memory_prompt = await self._build_memory_prompt(user_id, text_content)
         if memory_prompt:
             messages.insert(0, {"role": "system", "content": memory_prompt})
 
@@ -71,14 +97,8 @@ class ChatContextMixin:
         )
 
         # 对话历史摘要注入（覆盖 20 条之前的消息，失败不影响主流程）
-        summary_prompt = await self._get_context_summary(conversation_id)
         if summary_prompt:
             messages.insert(0, {"role": "system", "content": summary_prompt})
-
-        # 对话上下文注入（失败不影响主流程）
-        context_messages = await self._build_context_messages(
-            conversation_id, text_content
-        )
         if context_messages:
             pos = len(messages) - 1
             for i, ctx_msg in enumerate(context_messages):
@@ -237,27 +257,36 @@ class ChatContextMixin:
             return []
 
     async def _get_context_summary(
-        self, conversation_id: str
+        self, conversation_id: str, prefetched: Optional[str] = None
     ) -> Optional[str]:
-        """获取已缓存的对话摘要（失败返回 None）"""
+        """获取已缓存的对话摘要（失败返回 None）
+
+        Args:
+            conversation_id: 对话 ID
+            prefetched: HTTP 阶段预取的 context_summary（有值时跳过 DB 查询）
+        """
         try:
             from core.config import settings
 
             if not settings.context_summary_enabled:
                 return None
 
-            result = (
-                self.db.table("conversations")
-                .select("context_summary")
-                .eq("id", conversation_id)
-                .single()
-                .execute()
-            )
+            # 优先使用预取值（HTTP 阶段 get_conversation 已查过同一行）
+            if prefetched is not None:
+                summary = prefetched
+            else:
+                result = (
+                    self.db.table("conversations")
+                    .select("context_summary")
+                    .eq("id", conversation_id)
+                    .single()
+                    .execute()
+                )
 
-            if not result.data:
-                return None
+                if not result.data:
+                    return None
 
-            summary = result.data.get("context_summary")
+                summary = result.data.get("context_summary")
             if not summary:
                 return None
 

@@ -34,7 +34,7 @@ class TaskMixin:
         )
         return result.data if (result and result.data) else None
 
-    def _complete_task(self, task_id: str) -> None:
+    def _complete_task(self, task_id: str, task: Optional[Dict[str, Any]] = None) -> None:
         """
         标记任务完成
 
@@ -45,14 +45,17 @@ class TaskMixin:
         判断依据：started_at 是否已设置
         - 已设置 → process_result 路径 → 只更新 status
         - 未设置 → Chat 直接路径 → 更新 version + started_at + status
-        """
-        # 先获取当前任务
-        task_result = self.db.table("tasks").select("version, started_at, status").eq("external_task_id", task_id).execute()
-        if not task_result.data:
-            logger.error(f"Task not found for completion | task_id={task_id}")
-            return
 
-        task = task_result.data[0]
+        Args:
+            task_id: 外部任务 ID
+            task: 已查询的任务数据（可选，传入时跳过 DB 查询）
+        """
+        if task is None:
+            task_result = self.db.table("tasks").select("version, started_at, status").eq("external_task_id", task_id).execute()
+            if not task_result.data:
+                logger.error(f"Task not found for completion | task_id={task_id}")
+                return
+            task = task_result.data[0]
 
         # 幂等性检查：如果已经是终态，跳过
         if task.get('status') in ['completed', 'failed', 'cancelled']:
@@ -98,19 +101,23 @@ class TaskMixin:
                     f"task_id={task_id} | version={current_version}→{current_version + 1}"
                 )
 
-    def _fail_task(self, task_id: str, error_message: str) -> None:
+    def _fail_task(self, task_id: str, error_message: str, task: Optional[Dict[str, Any]] = None) -> None:
         """
         标记任务失败
 
         同 _complete_task 逻辑：根据 started_at 判断调用路径
-        """
-        # 先获取当前任务
-        task_result = self.db.table("tasks").select("version, started_at, status").eq("external_task_id", task_id).execute()
-        if not task_result.data:
-            logger.error(f"Task not found for failure | task_id={task_id}")
-            return
 
-        task = task_result.data[0]
+        Args:
+            task_id: 外部任务 ID
+            error_message: 错误信息
+            task: 已查询的任务数据（可选，传入时跳过 DB 查询）
+        """
+        if task is None:
+            task_result = self.db.table("tasks").select("version, started_at, status").eq("external_task_id", task_id).execute()
+            if not task_result.data:
+                logger.error(f"Task not found for failure | task_id={task_id}")
+                return
+            task = task_result.data[0]
 
         # 幂等性检查
         if task.get('status') in ['completed', 'failed', 'cancelled']:

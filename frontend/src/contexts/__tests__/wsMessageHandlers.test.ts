@@ -154,34 +154,44 @@ describe('wsMessageHandlers', () => {
   // ========================================
 
   describe('message_chunk', () => {
-    it('should buffer chunks and schedule flush', () => {
+    it('should immediately flush first chunk and buffer subsequent ones', () => {
       handlers.message_chunk({
         message_id: 'msg_1',
         conversation_id: 'conv_1',
         chunk: 'Hello ',
       });
 
-      // 应该被缓冲，不立即调用 store
-      expect(store.appendStreamingContent).not.toHaveBeenCalled();
+      // 首字节立即 flush（不再缓冲）
+      expect(store.appendStreamingContent).toHaveBeenCalledWith('conv_1', 'Hello ');
 
-      // buffer 里有数据
+      // flush 后 buffer 保留空标记（防止后续 chunk 被当首字节）
       expect(deps.chunkBufferRef.current.size).toBe(1);
-      expect(deps.chunkBufferRef.current.get('msg_1')?.chunk).toBe('Hello ');
+      expect(deps.chunkBufferRef.current.get('msg_1')?.chunk).toBe('');
     });
 
-    it('should accumulate multiple chunks', () => {
+    it('should accumulate subsequent chunks in buffer', () => {
       handlers.message_chunk({
         message_id: 'msg_1',
         conversation_id: 'conv_1',
         chunk: 'Hello ',
       });
+
+      // 首字节立即 flush
+      expect(store.appendStreamingContent).toHaveBeenCalledTimes(1);
+      store.appendStreamingContent.mockClear();
+
+      // flush 后 buffer 中留有空标记（防止后续 chunk 被当首字节）
+      expect(deps.chunkBufferRef.current.get('msg_1')?.chunk).toBe('');
+
       handlers.message_chunk({
         message_id: 'msg_1',
         conversation_id: 'conv_1',
         chunk: 'World',
       });
 
-      expect(deps.chunkBufferRef.current.get('msg_1')?.chunk).toBe('Hello World');
+      // 第二个 chunk 被缓冲（不立即 flush）
+      expect(store.appendStreamingContent).not.toHaveBeenCalled();
+      expect(deps.chunkBufferRef.current.get('msg_1')?.chunk).toBe('World');
     });
 
     it('should trigger onStreamChunk callback immediately', () => {
@@ -203,16 +213,27 @@ describe('wsMessageHandlers', () => {
       expect(onStreamChunk).toHaveBeenCalledWith('Test', 'Test');
     });
 
-    it('should flush buffer after 50ms', () => {
+    it('should flush subsequent chunks after 16ms', () => {
+      // 首字节立即 flush
       handlers.message_chunk({
         message_id: 'msg_1',
         conversation_id: 'conv_1',
         chunk: 'Hello',
       });
-
-      vi.advanceTimersByTime(50);
-
       expect(store.appendStreamingContent).toHaveBeenCalledWith('conv_1', 'Hello');
+      store.appendStreamingContent.mockClear();
+
+      // 后续 chunk 被缓冲
+      handlers.message_chunk({
+        message_id: 'msg_1',
+        conversation_id: 'conv_1',
+        chunk: ' World',
+      });
+
+      // 16ms 后 flush
+      vi.advanceTimersByTime(16);
+
+      expect(store.appendStreamingContent).toHaveBeenCalledWith('conv_1', ' World');
       expect(deps.chunkBufferRef.current.size).toBe(0);
     });
 

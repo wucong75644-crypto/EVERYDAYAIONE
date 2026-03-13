@@ -366,3 +366,32 @@ class TestErpRoutingPrompt:
         """ERP_ROUTING_PROMPT 提到 time_type 用法"""
         from config.erp_tools import ERP_ROUTING_PROMPT
         assert "time_type" in ERP_ROUTING_PROMPT
+
+
+# ============================================================
+# TestAgentSystemPromptRegenRules — 重新生成引导规则
+# ============================================================
+
+
+class TestAgentSystemPromptRegenRules:
+
+    def test_regen_rules_present(self):
+        """系统提示词包含重新生成/修改规则"""
+        from config.agent_tools import AGENT_SYSTEM_PROMPT
+        assert "重新生成/修改规则" in AGENT_SYSTEM_PROMPT
+
+    def test_regen_references_history_prompt(self):
+        """规则要求从历史提示词标注中获取上次 prompt"""
+        from config.agent_tools import AGENT_SYSTEM_PROMPT
+        assert "[图片已生成，使用的提示词:" in AGENT_SYSTEM_PROMPT
+
+    def test_regen_preserves_original(self):
+        """规则要求保留原始提示词核心描述"""
+        from config.agent_tools import AGENT_SYSTEM_PROMPT
+        assert "保留原始提示词的核心描述" in AGENT_SYSTEM_PROMPT
+
+    def test_regen_keywords_covered(self):
+        """规则覆盖多种重新生成关键词"""
+        from config.agent_tools import AGENT_SYSTEM_PROMPT
+        for keyword in ["重新生成", "再来一张", "换一个", "改一下"]:
+            assert keyword in AGENT_SYSTEM_PROMPT, f"Missing keyword: {keyword}"

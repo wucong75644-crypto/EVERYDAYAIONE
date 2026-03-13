@@ -463,6 +463,56 @@ class TestBaseHandlerTaskManagement:
         # 应该不抛异常
         handler._fail_task("task_123", "测试错误")
 
+    def test_complete_task_with_preloaded_task(self, handler):
+        """传入已查询的 task 数据，跳过 DB SELECT"""
+        mock_db = MagicMock()
+        mock_table = MagicMock()
+        mock_table.update.return_value = mock_table
+        mock_table.eq.return_value = mock_table
+        mock_table.execute.return_value = MagicMock(data=[{}])
+        mock_db.table.return_value = mock_table
+        handler.db = mock_db
+
+        task = {"version": 2, "started_at": "2026-03-13T00:00:00", "status": "running"}
+        handler._complete_task("task_123", task=task)
+
+        # started_at 已设置 → process_result 路径，只 update status
+        mock_table.update.assert_called_once()
+        update_args = mock_table.update.call_args.args[0]
+        assert update_args["status"] == "completed"
+        # 不应包含 version 更新（process_result 路径）
+        assert "version" not in update_args
+
+    def test_fail_task_with_preloaded_task(self, handler):
+        """传入已查询的 task 数据进行失败标记"""
+        mock_db = MagicMock()
+        mock_table = MagicMock()
+        mock_table.update.return_value = mock_table
+        mock_table.eq.return_value = mock_table
+        mock_table.execute.return_value = MagicMock(data=[{}])
+        mock_db.table.return_value = mock_table
+        handler.db = mock_db
+
+        task = {"version": 3, "started_at": "2026-03-13T00:00:00", "status": "running"}
+        handler._fail_task("task_123", "测试错误", task=task)
+
+        # started_at 已设置 → process_result 路径
+        mock_table.update.assert_called_once()
+        update_args = mock_table.update.call_args.args[0]
+        assert update_args["status"] == "failed"
+        assert update_args["error_message"] == "测试错误"
+
+    def test_complete_task_with_preloaded_terminal_state(self, handler):
+        """传入终态 task，幂等性检查直接跳过"""
+        mock_db = MagicMock()
+        handler.db = mock_db
+
+        task = {"version": 2, "started_at": "2026-03-13T00:00:00", "status": "completed"}
+        handler._complete_task("task_123", task=task)
+
+        # 终态应跳过，不应有任何 DB 操作
+        mock_db.table.assert_not_called()
+
 
 # ============ 积分处理集成测试 ============
 

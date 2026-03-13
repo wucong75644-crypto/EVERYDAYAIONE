@@ -17,6 +17,7 @@ import { useSettingsManager } from '../../hooks/useSettingsManager';
 import { type UnifiedModel } from '../../constants/models';
 import { useMessageStore, type Message } from '../../stores/useMessageStore';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { cancelTaskByMessageId } from '../../services/message';
 import { logger } from '../../utils/logger';
 import ConflictAlert from './ConflictAlert';
 import InputControls from './InputControls';
@@ -141,6 +142,28 @@ export default function InputArea({
     window.addEventListener('chat:quote-image', handleQuoteImage);
     return () => window.removeEventListener('chat:quote-image', handleQuoteImage);
   }, [addQuotedImage]);
+
+  // 流式状态检测
+  const isStreaming = useMessageStore((s) =>
+    conversationId ? s.streamingMessages.has(conversationId) : false
+  );
+  const streamingMessageId = useMessageStore((s) =>
+    conversationId ? s.streamingMessages.get(conversationId) ?? null : null
+  );
+
+  // 停止生成
+  const handleStop = useCallback(() => {
+    if (!streamingMessageId || !conversationId) return;
+
+    // 1. 标记消息完成（防止后续 WS 事件重复处理）
+    useMessageStore.getState().updateMessage(streamingMessageId, { status: 'completed' });
+    // 2. 清理流式状态
+    useMessageStore.getState().completeStreaming(conversationId);
+    // 3. 后端取消任务（fire-and-forget）
+    cancelTaskByMessageId(streamingMessageId).catch((err) => {
+      logger.error('inputArea', '取消任务失败', err);
+    });
+  }, [streamingMessageId, conversationId]);
 
   // 对话切换时重置提交状态
   useEffect(() => {
@@ -412,6 +435,8 @@ export default function InputArea({
           onClearRecording={clearRecording}
           requiresImageUpload={modelConflict?.type === 'requires_image'}
           hasQuotedImage={hasQuotedImage}
+          isStreaming={isStreaming}
+          onStop={handleStop}
         />
       </div>
     </div>

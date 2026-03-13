@@ -126,9 +126,21 @@ class AgentContextMixin:
                 msg_role = "user" if role == "user" else "assistant"
                 # assistant 角色不支持 image_url blocks
                 if msg_role == "assistant":
+                    has_image_blocks = any(
+                        b.get("type") == "image_url" for b in blocks
+                    )
                     blocks = [
                         b for b in blocks if b.get("type") == "text"
                     ]
+                    # 图片消息：注入原始生成提示词，让大脑知道之前生成了什么
+                    if has_image_blocks:
+                        gen_prompt = self._extract_generation_prompt(msg)
+                        if gen_prompt:
+                            blocks.append({
+                                "type": "text",
+                                "text": f"[图片已生成，使用的提示词: {gen_prompt}]",
+                            })
+                            total_chars += len(gen_prompt) + 20
                 if blocks:
                     history_msgs.append({
                         "role": msg_role, "content": blocks,
@@ -146,6 +158,26 @@ class AgentContextMixin:
                 f"Agent history injection skipped | error={e}"
             )
             return None
+
+    # ========================================
+    # 辅助方法
+    # ========================================
+
+    @staticmethod
+    def _extract_generation_prompt(msg: Dict[str, Any]) -> Optional[str]:
+        """从消息的 generation_params 中提取原始图片生成提示词"""
+        gen_params = msg.get("generation_params")
+        if not gen_params:
+            return None
+        if isinstance(gen_params, str):
+            import json
+            try:
+                gen_params = json.loads(gen_params)
+            except (json.JSONDecodeError, TypeError):
+                return None
+        prompt = gen_params.get("prompt", "")
+        stripped = prompt.strip() if prompt else ""
+        return stripped or None
 
     # ========================================
     # 系统提示词

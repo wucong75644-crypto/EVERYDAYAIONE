@@ -1043,6 +1043,168 @@ class TestGetRecentHistory:
 
 
 # ============================================================
+# TestExtractGenerationPrompt — 原始生成提示词提取
+# ============================================================
+
+
+class TestExtractGenerationPrompt:
+
+    def test_dict_with_prompt(self):
+        """generation_params 是 dict 且包含 prompt→正常提取"""
+        msg = {"generation_params": {"prompt": "AI robot avatar", "model": "flux"}}
+        result = AgentLoop._extract_generation_prompt(msg)
+        assert result == "AI robot avatar"
+
+    def test_json_string_with_prompt(self):
+        """generation_params 是 JSON 字符串→解析后提取"""
+        msg = {"generation_params": json.dumps({"prompt": "cute cat", "model": "flux"})}
+        result = AgentLoop._extract_generation_prompt(msg)
+        assert result == "cute cat"
+
+    def test_no_generation_params(self):
+        """无 generation_params→None"""
+        assert AgentLoop._extract_generation_prompt({}) is None
+
+    def test_none_generation_params(self):
+        """generation_params=None→None"""
+        assert AgentLoop._extract_generation_prompt({"generation_params": None}) is None
+
+    def test_empty_prompt(self):
+        """prompt 为空字符串→None"""
+        msg = {"generation_params": {"prompt": "", "model": "flux"}}
+        assert AgentLoop._extract_generation_prompt(msg) is None
+
+    def test_whitespace_prompt(self):
+        """prompt 为纯空白→None"""
+        msg = {"generation_params": {"prompt": "   ", "model": "flux"}}
+        assert AgentLoop._extract_generation_prompt(msg) is None
+
+    def test_no_prompt_key(self):
+        """generation_params 无 prompt 字段→None"""
+        msg = {"generation_params": {"model": "flux"}}
+        assert AgentLoop._extract_generation_prompt(msg) is None
+
+    def test_invalid_json_string(self):
+        """generation_params 是非法 JSON 字符串→None"""
+        msg = {"generation_params": "not-json"}
+        assert AgentLoop._extract_generation_prompt(msg) is None
+
+    def test_strips_whitespace(self):
+        """prompt 前后空白被去除"""
+        msg = {"generation_params": {"prompt": "  hello world  "}}
+        assert AgentLoop._extract_generation_prompt(msg) == "hello world"
+
+
+# ============================================================
+# TestGetRecentHistory — assistant 图片消息 prompt 注入
+# ============================================================
+
+
+class TestHistoryImagePromptInjection:
+
+    def _make_settings(self):
+        s = MagicMock()
+        s.agent_loop_brain_context_limit = 10
+        s.agent_loop_brain_context_max_chars = 8000
+        s.agent_loop_brain_max_images = 8
+        return s
+
+    @pytest.mark.asyncio
+    async def test_assistant_image_injects_prompt(self):
+        """assistant 图片消息→注入原始生成提示词文本"""
+        loop = _make_loop()
+        loop._settings = self._make_settings()
+
+        mock_service = AsyncMock()
+        mock_service.get_messages.return_value = {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "好的，来看看生成的图片"},
+                        {"type": "image", "url": "https://img.com/robot.jpg"},
+                    ],
+                    "generation_params": {"prompt": "AI robot avatar, metallic"},
+                },
+            ],
+        }
+
+        with patch(
+            "services.message_service.MessageService", return_value=mock_service,
+        ):
+            result = await loop._get_recent_history()
+
+        assert result is not None
+        blocks = result[0]["content"]
+        # 应该有 2 个文本 block：原始文本 + 注入的提示词
+        assert len(blocks) == 2
+        prompt_block = blocks[1]
+        assert "[图片已生成，使用的提示词: AI robot avatar, metallic]" in prompt_block["text"]
+        # 不应有 image_url block（assistant 不支持）
+        img_blocks = [b for b in blocks if b.get("type") == "image_url"]
+        assert len(img_blocks) == 0
+
+    @pytest.mark.asyncio
+    async def test_assistant_image_no_generation_params(self):
+        """assistant 图片消息无 generation_params→不注入，只保留原始文本"""
+        loop = _make_loop()
+        loop._settings = self._make_settings()
+
+        mock_service = AsyncMock()
+        mock_service.get_messages.return_value = {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "图片来了"},
+                        {"type": "image", "url": "https://img.com/a.jpg"},
+                    ],
+                },
+            ],
+        }
+
+        with patch(
+            "services.message_service.MessageService", return_value=mock_service,
+        ):
+            result = await loop._get_recent_history()
+
+        assert result is not None
+        blocks = result[0]["content"]
+        # 只有 1 个文本 block（原始文本），没有 prompt 注入
+        assert len(blocks) == 1
+        assert "图片来了" in blocks[0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_assistant_text_only_no_injection(self):
+        """assistant 纯文本消息→不注入任何额外内容"""
+        loop = _make_loop()
+        loop._settings = self._make_settings()
+
+        mock_service = AsyncMock()
+        mock_service.get_messages.return_value = {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "你好！"}],
+                    "generation_params": {"model": "gemini-3-pro"},
+                },
+            ],
+        }
+
+        with patch(
+            "services.message_service.MessageService", return_value=mock_service,
+        ):
+            result = await loop._get_recent_history()
+
+        assert result is not None
+        blocks = result[0]["content"]
+        assert len(blocks) == 1
+        assert "你好！" in blocks[0]["text"]
+        # 无图片→不会注入 prompt
+        assert not any("图片已生成" in b.get("text", "") for b in blocks)
+
+
+# ============================================================
 # TestGetClient — HTTP 客户端管理
 # ============================================================
 

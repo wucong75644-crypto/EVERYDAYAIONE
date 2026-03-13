@@ -281,6 +281,33 @@ class TestGetContextSummary:
         result = await chat_handler._get_context_summary("conv1")
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_returns_summary_from_prefetched(self, chat_handler):
+        """prefetched 有值时直接使用，跳过 DB 查询"""
+        chat_handler.db = MagicMock()
+
+        result = await chat_handler._get_context_summary(
+            "conv1", prefetched="用户讨论了机器学习"
+        )
+
+        assert result is not None
+        assert "用户讨论了机器学习" in result
+        assert "以下是之前对话的摘要" in result
+        # 不应查询 DB
+        chat_handler.db.table.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_prefetched_empty_string(self, chat_handler):
+        """prefetched 为空字符串时返回 None（跳过 DB）"""
+        chat_handler.db = MagicMock()
+
+        result = await chat_handler._get_context_summary(
+            "conv1", prefetched=""
+        )
+
+        assert result is None
+        chat_handler.db.table.assert_not_called()
+
 
 # ============ Test _update_summary_if_needed (mixin) ============
 

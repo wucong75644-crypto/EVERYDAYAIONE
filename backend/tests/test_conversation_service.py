@@ -198,6 +198,31 @@ class TestConversationServiceGet:
         assert exc_info.value.code == "CONVERSATION_GET_ERROR"
 
 
+class TestFormatConversation:
+    """_format_conversation 格式化测试"""
+
+    @pytest.fixture
+    def conversation_service(self, mock_db):
+        return ConversationService(mock_db)
+
+    def test_includes_context_summary(self, conversation_service):
+        """context_summary 字段正确传递"""
+        conversation = create_test_conversation()
+        conversation["context_summary"] = "用户讨论了Python编程"
+
+        result = conversation_service._format_conversation(conversation)
+
+        assert result["context_summary"] == "用户讨论了Python编程"
+
+    def test_context_summary_defaults_to_none(self, conversation_service):
+        """无 context_summary 字段时默认 None"""
+        conversation = create_test_conversation()
+
+        result = conversation_service._format_conversation(conversation)
+
+        assert result["context_summary"] is None
+
+
 class TestConversationServiceUpdate:
     """对话更新测试"""
 

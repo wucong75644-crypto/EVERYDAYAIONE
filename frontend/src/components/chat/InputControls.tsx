@@ -6,7 +6,7 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
-import { Send, Settings, Upload, Brain, Paperclip } from 'lucide-react';
+import { Send, Square, Settings, Upload, Brain, Paperclip } from 'lucide-react';
 import {
   type UnifiedModel,
   type AspectRatio,
@@ -103,6 +103,10 @@ interface InputControlsProps {
   sendError?: string | null;
   /** 是否有引用图片（用于切换 placeholder） */
   hasQuotedImage?: boolean;
+  /** 是否正在流式生成 */
+  isStreaming?: boolean;
+  /** 停止生成回调 */
+  onStop?: () => void;
 }
 
 export default function InputControls(props: InputControlsProps) {
@@ -123,6 +127,7 @@ export default function InputControls(props: InputControlsProps) {
     files, maxPDFSize, onRemoveFile, onFileSelect,
     recordingState, audioBlob, audioDuration, onStartRecording, onStopRecording, onClearRecording,
     requiresImageUpload = false, sendError, hasQuotedImage = false,
+    isStreaming = false, onStop,
   } = props;
 
   const [showUploadMenu, setShowUploadMenu] = useState(false);
@@ -379,8 +384,16 @@ export default function InputControls(props: InputControlsProps) {
               />
             </div>
 
-            {/* 发送按钮（有内容时显示） */}
-            {showSendButton && (
+            {/* 停止按钮（生成中显示，替换所有其他按钮） */}
+            {isStreaming && onStop ? (
+              <button
+                onClick={onStop}
+                className="p-2.5 rounded-full bg-red-500 text-white hover:bg-red-600 shadow-md hover:shadow-lg transition-all"
+                title="停止生成"
+              >
+                <Square className="w-4 h-4 fill-current" />
+              </button>
+            ) : showSendButton ? (
               <button
                 onClick={onSubmit}
                 disabled={!canSubmit || isSubmitting}
@@ -395,10 +408,7 @@ export default function InputControls(props: InputControlsProps) {
               >
                 <Send className="w-4 h-4" />
               </button>
-            )}
-
-            {/* 语音按钮（无内容时显示） */}
-            {showVoiceButton && (
+            ) : showVoiceButton ? (
               <AudioRecorder
                 isRecording={recordingState === 'recording'}
                 recordingTime={audioDuration}
@@ -408,10 +418,7 @@ export default function InputControls(props: InputControlsProps) {
                 onClearAudio={onClearRecording}
                 disabled={isSubmitting}
               />
-            )}
-
-            {/* 如果两个都不显示，显示一个占位的发送按钮 */}
-            {!showSendButton && !showVoiceButton && (
+            ) : (
               <button
                 type="button"
                 disabled={true}

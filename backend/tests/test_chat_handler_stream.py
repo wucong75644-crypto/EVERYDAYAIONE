@@ -389,3 +389,87 @@ class TestRecordBreakerResult:
         ChatHandler._record_breaker_result("nonexistent-model", success=True)
 
         mock_get_breaker.assert_not_called()
+
+
+# ============================================================
+# 性能优化相关测试
+# ============================================================
+
+
+class TestStreamOptimizations:
+
+    @pytest.mark.asyncio
+    @patch("services.adapters.factory.create_chat_adapter")
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_chunk_msg_no_accumulated_field(self, mock_ws, mock_factory):
+        """build_message_chunk 不再传 accumulated（O(n²)流量优化）"""
+        handler = _make_handler()
+        handler._build_llm_messages = AsyncMock(return_value=[
+            {"role": "user", "content": "hi"},
+        ])
+        handler.on_complete = AsyncMock()
+        handler._dispatch_post_tasks = MagicMock()
+
+        async def mock_stream_chat(**kwargs):
+            yield StreamChunk(content="你", prompt_tokens=0, completion_tokens=0)
+            yield StreamChunk(content="好", prompt_tokens=10, completion_tokens=2)
+
+        mock_adapter = MagicMock()
+        mock_adapter.stream_chat = mock_stream_chat
+        mock_adapter.close = AsyncMock()
+        mock_adapter.estimate_cost_unified.return_value = CostEstimate(
+            model="test", estimated_cost_usd=Decimal("0"), estimated_credits=1,
+        )
+        mock_factory.return_value = mock_adapter
+        mock_ws.send_to_task_subscribers = AsyncMock()
+
+        await handler._stream_generate(
+            task_id="t1", message_id="m1", conversation_id="c1",
+            user_id="u1", content=[TextPart(text="hi")], model_id="test",
+        )
+
+        # 检查所有 WS 推送的 chunk 消息不含 accumulated
+        from schemas.websocket import WSMessageType
+        for call in mock_ws.send_to_task_subscribers.call_args_list:
+            msg = call.args[1]
+            if msg.get("type") == WSMessageType.MESSAGE_CHUNK.value:
+                assert "accumulated" not in msg.get("data", {}), \
+                    "chunk 消息不应包含 accumulated 字段"
+
+    @pytest.mark.asyncio
+    @patch("services.adapters.factory.create_chat_adapter")
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_prefetched_summary_passed_to_build_llm_messages(self, mock_ws, mock_factory):
+        """_prefetched_summary 从 _params 传递到 _build_llm_messages"""
+        handler = _make_handler()
+
+        captured_kwargs = {}
+        original_build = AsyncMock(return_value=[{"role": "user", "content": "hi"}])
+
+        async def capture_build(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return await original_build(*args, **kwargs)
+
+        handler._build_llm_messages = capture_build
+        handler.on_complete = AsyncMock()
+        handler._dispatch_post_tasks = MagicMock()
+
+        async def mock_stream_chat(**kwargs):
+            yield StreamChunk(content="ok", prompt_tokens=5, completion_tokens=1)
+
+        mock_adapter = MagicMock()
+        mock_adapter.stream_chat = mock_stream_chat
+        mock_adapter.close = AsyncMock()
+        mock_adapter.estimate_cost_unified.return_value = CostEstimate(
+            model="test", estimated_cost_usd=Decimal("0"), estimated_credits=0,
+        )
+        mock_factory.return_value = mock_adapter
+        mock_ws.send_to_task_subscribers = AsyncMock()
+
+        await handler._stream_generate(
+            task_id="t1", message_id="m1", conversation_id="c1",
+            user_id="u1", content=[TextPart(text="hi")], model_id="test",
+            _params={"_prefetched_summary": "之前讨论了Python"},
+        )
+
+        assert captured_kwargs.get("prefetched_summary") == "之前讨论了Python"

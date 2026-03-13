@@ -357,8 +357,18 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
         }
       }
 
-      if (!deps.flushTimerRef.current) {
-        deps.flushTimerRef.current = setTimeout(() => flushChunkBuffer(deps), 50);
+      // 首字节立即渲染，后续 chunk 用 16ms（约1帧）批量窗口
+      const isFirstChunk = !bufferData;
+      if (isFirstChunk) {
+        if (deps.flushTimerRef.current) {
+          clearTimeout(deps.flushTimerRef.current);
+          deps.flushTimerRef.current = null;
+        }
+        flushChunkBuffer(deps);
+        // flush 后 buffer 已清空，重新标记该消息（防止后续 chunk 被当成首字节）
+        deps.chunkBufferRef.current.set(message_id, { chunk: '', conversationId: conversation_id });
+      } else if (!deps.flushTimerRef.current) {
+        deps.flushTimerRef.current = setTimeout(() => flushChunkBuffer(deps), 16);
       }
     },
 
