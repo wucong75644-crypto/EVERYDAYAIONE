@@ -113,7 +113,8 @@
       "Bash(timeout 15 python -c \":*)",
       "Bash(python -m pytest backend/tests/test_chat_routing_mixin.py -q --tb=short)",
       "Bash(git status -u)",
-      "Bash(./git-push.sh \"fix: 修复前端 TypeScript 编译错误（类型兼容性+未使用导入）\")"
+      "Bash(./git-push.sh \"fix: 修复前端 TypeScript 编译错误（类型兼容性+未使用导入）\")",
+      "Bash(./deploy/deploy.sh)"
     ]
   }
 }

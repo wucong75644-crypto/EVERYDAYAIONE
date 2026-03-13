@@ -43,7 +43,7 @@ mem0ai==1.0.4
 psycopg[pool]==3.3.3
 
 # 企业微信
-websockets==15.0
+websockets==14.2
 pycryptodome==3.21.0
 
 # 测试
