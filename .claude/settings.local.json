@@ -101,7 +101,18 @@
       "Bash(python -m pytest backend/tests/test_agent_loop.py -q --tb=short)",
       "Bash(python -m pytest backend/tests/test_kuaimai.py -q --tb=short)",
       "Bash(python -m pytest backend/tests/test_kuaimai.py backend/tests/test_tool_executor.py backend/tests/test_smart_model_config.py -q --tb=short)",
-      "Bash(python -m pytest backend/tests/test_smart_model_config.py -q --tb=short)"
+      "Bash(python -m pytest backend/tests/test_smart_model_config.py -q --tb=short)",
+      "WebFetch(domain:developers.openai.com)",
+      "WebFetch(domain:ai.google.dev)",
+      "Bash(python -m pytest backend/tests/test_chat_handler_stream.py backend/tests/test_chat_retry.py -q --tb=short)",
+      "Bash(python -c \"from core.config import settings; print\\(''bot_id:'', settings.wecom_bot_id\\); print\\(''corp_id:'', settings.wecom_corp_id\\); print\\(''agent_id:'', settings.wecom_agent_id\\); print\\(''stream_timeout:'', settings.wecom_stream_timeout\\)\")",
+      "Bash(python -c \"from schemas.wecom import WecomIncomingMessage, WecomReplyContext, WecomCommand, WecomMsgType, WecomChatType; print\\(''All imports OK''\\)\")",
+      "Bash(python -c \"from services.wecom.user_mapping_service import WecomUserMappingService; print\\(''Import OK''\\)\")",
+      "Bash(python -m pytest tests/test_chat_routing_mixin.py -v --tb=short)",
+      "Bash(python -m pytest backend/tests/test_chat_routing_mixin.py -q --tb=line)",
+      "Bash(timeout 15 python -c \":*)",
+      "Bash(python -m pytest backend/tests/test_chat_routing_mixin.py -q --tb=short)",
+      "Bash(git status -u)"
     ]
   }
 }
