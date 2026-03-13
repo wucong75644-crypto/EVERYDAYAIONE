@@ -261,8 +261,8 @@ class MessageMixin:
         )
         await self._push_ws_message(client_task_id, task["user_id"], done_msg)
 
-        # 更新任务状态 + 对话预览
-        self._complete_task(task_id)
+        # 更新任务状态 + 对话预览（复用已查询的 task 数据，省去重复 SELECT）
+        self._complete_task(task_id, task=task)
         preview_text = content_dicts[0].get("text", "")[:50] if content_dicts else ""
         try:
             self.db.table("conversations").update({
@@ -350,8 +350,8 @@ class MessageMixin:
         )
         await self._push_ws_message(client_task_id, task["user_id"], error_msg)
 
-        # 更新任务状态
-        self._fail_task(task_id, error_message)
+        # 更新任务状态（复用已查询的 task 数据，省去重复 SELECT）
+        self._fail_task(task_id, error_message, task=task)
 
         logger.error(
             f"{self.handler_type.value.capitalize()} failed | "

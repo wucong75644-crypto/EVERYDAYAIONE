@@ -287,9 +287,12 @@ async def generate_message(
         if body.params.get("_is_smart_mode") and "aspect_ratio" not in body.params:
             body.params["aspect_ratio"] = "1:1"
 
-    # 3. 验证对话权限
+    # 3. 验证对话权限（同时预取 context_summary，省去 Phase 2 重复查询）
     conversation_service = get_conversation_service(db)
-    await conversation_service.get_conversation(conversation_id, user_id)
+    conversation = await conversation_service.get_conversation(conversation_id, user_id)
+    if body.params is None:
+        body.params = {}
+    body.params["_prefetched_summary"] = conversation.get("context_summary")
 
     # 4. 创建用户消息（send/regenerate，单图重新生成不创建）
     user_message: Optional[Message] = None

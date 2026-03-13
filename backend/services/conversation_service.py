@@ -316,4 +316,5 @@ class ConversationService:
             "credits_consumed": conversation.get("credits_consumed", 0),
             "created_at": conversation["created_at"],
             "updated_at": conversation["updated_at"],
+            "context_summary": conversation.get("context_summary"),
         }

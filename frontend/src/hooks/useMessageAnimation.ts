@@ -62,13 +62,13 @@ export function useMessageAnimation(options: UseMessageAnimationOptions): UseMes
 
   /**
    * 根据消息角色返回对应的进入动画 class
-   * - 用户消息：从下方滑入
+   * - 用户消息：无动画（即时显示，避免延迟感）
    * - AI 消息：淡入 + 缩放
    */
   const entryAnimationClass = useMemo(() => {
     if (!isNewMessage) return '';
     return message.role === 'user'
-      ? 'animate-message-slide-in'
+      ? ''
       : 'animate-ai-message-fade-scale';
   }, [isNewMessage, message.role]);
 

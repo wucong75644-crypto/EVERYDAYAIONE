@@ -224,7 +224,7 @@ describe('WebSocketContext - Provider & Hook', () => {
       });
     });
 
-    it('should handle message_chunk and buffer it', async () => {
+    it('should immediately flush first chunk and buffer subsequent ones', async () => {
       const wrapper = createWrapper(mockWs, mockMessageStore);
       renderHook(() => useWebSocketContext(), { wrapper });
 
@@ -242,17 +242,17 @@ describe('WebSocketContext - Provider & Hook', () => {
         });
       });
 
-      // 立即检查，应该还没有调用（被缓冲）
-      expect(mockMessageStore.appendStreamingContent).not.toHaveBeenCalled();
+      // 首字节立即 flush
+      expect(mockMessageStore.appendStreamingContent).toHaveBeenCalledWith('conv_123', 'Hello ');
 
-      // 等待 50ms flush
+      // 等待 16ms flush 窗口（后续 chunk）
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 60));
+        await new Promise((resolve) => setTimeout(resolve, 30));
       });
 
-      // 应该批量刷新
+      // 第二个 chunk 也应该被 flush
       await waitFor(() => {
-        expect(mockMessageStore.appendStreamingContent).toHaveBeenCalledWith('conv_123', 'Hello World');
+        expect(mockMessageStore.appendStreamingContent).toHaveBeenCalledWith('conv_123', 'World');
       });
     });
 
@@ -606,59 +606,95 @@ describe('WebSocketContext - Provider & Hook', () => {
     });
 
     it('should clear flush timer on unmount', async () => {
-      const wrapper = createWrapper(mockWs, mockMessageStore);
-      const { unmount } = renderHook(() => useWebSocketContext(), { wrapper });
+      vi.useFakeTimers();
+      try {
+        const wrapper = createWrapper(mockWs, mockMessageStore);
+        const { unmount } = renderHook(() => useWebSocketContext(), { wrapper });
 
-      // 触发 chunk（启动定时器）
-      await act(async () => {
-        mockWs.emit('message_chunk', {
-          message_id: 'msg_123',
-          conversation_id: 'conv_123',
-          chunk: 'Test',
+        // 触发首字节 chunk（立即 flush）
+        act(() => {
+          mockWs.emit('message_chunk', {
+            message_id: 'msg_123',
+            conversation_id: 'conv_123',
+            chunk: 'Test',
+          });
         });
-      });
 
-      // 立即卸载（定时器应该被清理）
-      unmount();
+        // 首字节立即 flush
+        expect(mockMessageStore.appendStreamingContent).toHaveBeenCalledTimes(1);
+        mockMessageStore.appendStreamingContent.mockClear();
 
-      // 等待超过 50ms
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 60));
-      });
+        // 发送第二个 chunk（被缓冲，启动 16ms 定时器）
+        act(() => {
+          mockWs.emit('message_chunk', {
+            message_id: 'msg_123',
+            conversation_id: 'conv_123',
+            chunk: 'More',
+          });
+        });
 
-      // 不应该触发 flush（因为已清理）
-      expect(mockMessageStore.appendStreamingContent).not.toHaveBeenCalled();
+        // 立即卸载（定时器应该被清理）
+        unmount();
+
+        // 推进时间超过 16ms（fake timer 精确控制）
+        act(() => {
+          vi.advanceTimersByTime(30);
+        });
+
+        // 缓冲的第二个 chunk 不应该触发 flush（因为已清理）
+        expect(mockMessageStore.appendStreamingContent).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
-    it('should clear chunk buffer on message_error', async () => {
-      const wrapper = createWrapper(mockWs, mockMessageStore);
-      renderHook(() => useWebSocketContext(), { wrapper });
+    it('should clear chunk buffer on message_error for subsequent chunks', async () => {
+      vi.useFakeTimers();
+      try {
+        const wrapper = createWrapper(mockWs, mockMessageStore);
+        renderHook(() => useWebSocketContext(), { wrapper });
 
-      // 发送 chunk
-      await act(async () => {
-        mockWs.emit('message_chunk', {
-          message_id: 'msg_123',
-          conversation_id: 'conv_123',
-          chunk: 'Test',
+        // 发送首字节 chunk（立即 flush）
+        act(() => {
+          mockWs.emit('message_chunk', {
+            message_id: 'msg_123',
+            conversation_id: 'conv_123',
+            chunk: 'Test',
+          });
         });
-      });
 
-      // 立即发送错误
-      await act(async () => {
-        mockWs.emit('message_error', {
-          message_id: 'msg_123',
-          task_id: 'task_123',
-          error: { message: 'Error' },
+        // 首字节已 flush
+        expect(mockMessageStore.appendStreamingContent).toHaveBeenCalledTimes(1);
+        mockMessageStore.appendStreamingContent.mockClear();
+
+        // 发送后续 chunk（被缓冲）
+        act(() => {
+          mockWs.emit('message_chunk', {
+            message_id: 'msg_123',
+            conversation_id: 'conv_123',
+            chunk: 'More',
+          });
         });
-      });
 
-      // 等待超过 50ms
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 60));
-      });
+        // 立即发送错误（应清除缓冲）
+        act(() => {
+          mockWs.emit('message_error', {
+            message_id: 'msg_123',
+            task_id: 'task_123',
+            error: { message: 'Error' },
+          });
+        });
 
-      // chunk 应该被丢弃，不触发 flush
-      expect(mockMessageStore.appendStreamingContent).not.toHaveBeenCalled();
+        // 推进时间超过 16ms（fake timer 精确控制）
+        act(() => {
+          vi.advanceTimersByTime(30);
+        });
+
+        // 缓冲的后续 chunk 应该被丢弃，不触发 flush
+        expect(mockMessageStore.appendStreamingContent).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

@@ -203,10 +203,12 @@ class ChatHandler(ChatStreamSupportMixin, ChatContextMixin, BaseHandler):
 
             # 2. 组装消息列表
             text_content = self._extract_text_content(content)
+            prefetched_summary = (_params or {}).get("_prefetched_summary")
             messages = await self._build_llm_messages(
                 content, user_id, conversation_id, text_content,
                 router_system_prompt=router_system_prompt,
                 router_search_context=router_search_context,
+                prefetched_summary=prefetched_summary,
             )
 
             # 3. 创建适配器并流式生成
@@ -253,12 +255,11 @@ class ChatHandler(ChatStreamSupportMixin, ChatContextMixin, BaseHandler):
                         conversation_id=conversation_id,
                         message_id=message_id,
                         chunk=chunk.content,
-                        accumulated=accumulated_text,
                     )
                     await ws_manager.send_to_task_subscribers(task_id, chunk_msg)
 
                     if chunk_count % 20 == 0:
-                        await self._save_accumulated_content(task_id, accumulated_text)
+                        asyncio.create_task(self._save_accumulated_content(task_id, accumulated_text))
 
                 if chunk.prompt_tokens or chunk.completion_tokens:
                     final_usage["prompt_tokens"] = chunk.prompt_tokens or 0

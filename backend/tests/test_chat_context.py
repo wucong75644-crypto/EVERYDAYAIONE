@@ -537,3 +537,93 @@ class TestStreamGenerateContextInjection:
         assert "最新问题" in captured[4]["content"]
         assert captured[5]["role"] == "user"
         assert isinstance(captured[5]["content"], list)
+
+
+# ============ Test _build_llm_messages gather exception degradation ============
+
+
+class TestBuildLlmMessagesGatherDegradation:
+    """asyncio.gather 中单个任务异常时降级（不影响其他结果）"""
+
+    @pytest.mark.asyncio
+    async def test_memory_exception_degrades_to_none(self, chat_handler, mock_db):
+        """记忆检索异常 → 降级为 None，摘要和历史正常注入"""
+        mock_db.set_table_data("messages", [
+            _make_msg("assistant", "之前的回复"),
+            _make_msg("user", "之前的问题"),
+        ])
+
+        with patch.object(
+            chat_handler, "_build_memory_prompt",
+            side_effect=RuntimeError("Mem0 timeout"),
+        ), patch.object(
+            chat_handler, "_get_context_summary",
+            new_callable=AsyncMock, return_value="摘要内容",
+        ):
+            messages = await chat_handler._build_llm_messages(
+                content=[{"type": "text", "text": "你好"}],
+                user_id="u1",
+                conversation_id="conv1",
+                text_content="你好",
+            )
+
+        # 摘要应被注入
+        summaries = [m for m in messages if m["role"] == "system" and "摘要" in m.get("content", "")]
+        assert len(summaries) == 1
+        # 记忆不应被注入（无 memory 关键词的 system prompt）
+        # 最后一条是用户消息
+        assert messages[-1] == {"role": "user", "content": "你好"}
+
+    @pytest.mark.asyncio
+    async def test_summary_exception_degrades_to_none(self, chat_handler, mock_db):
+        """摘要获取异常 → 降级为 None，记忆和历史正常"""
+        mock_db.set_table_data("messages", [])
+
+        with patch.object(
+            chat_handler, "_build_memory_prompt",
+            new_callable=AsyncMock, return_value="你喜欢Python",
+        ), patch.object(
+            chat_handler, "_get_context_summary",
+            side_effect=RuntimeError("DB down"),
+        ):
+            messages = await chat_handler._build_llm_messages(
+                content=[{"type": "text", "text": "你好"}],
+                user_id="u1",
+                conversation_id="conv1",
+                text_content="你好",
+            )
+
+        # 记忆应被注入
+        memory_msgs = [m for m in messages if m.get("content") == "你喜欢Python"]
+        assert len(memory_msgs) == 1
+        # 无摘要
+        summary_msgs = [m for m in messages if "摘要" in m.get("content", "")]
+        assert len(summary_msgs) == 0
+
+    @pytest.mark.asyncio
+    async def test_context_exception_degrades_to_empty(self, chat_handler, mock_db):
+        """历史上下文异常 → 降级为空列表，记忆和摘要正常"""
+        with patch.object(
+            chat_handler, "_build_memory_prompt",
+            new_callable=AsyncMock, return_value=None,
+        ), patch.object(
+            chat_handler, "_get_context_summary",
+            new_callable=AsyncMock, return_value=None,
+        ), patch.object(
+            chat_handler, "_build_context_messages",
+            side_effect=RuntimeError("DB timeout"),
+        ):
+            messages = await chat_handler._build_llm_messages(
+                content=[{"type": "text", "text": "你好"}],
+                user_id="u1",
+                conversation_id="conv1",
+                text_content="你好",
+            )
+
+        # 应只有基础 system prompts + 用户消息（无历史上下文、无话题聚焦指令）
+        user_msgs = [m for m in messages if m["role"] == "user"]
+        assert len(user_msgs) == 1
+        assert user_msgs[0]["content"] == "你好"
+        # 无话题聚焦（因为无历史上下文）
+        focus_msgs = [m for m in messages if "最新问题" in m.get("content", "")]
+        assert len(focus_msgs) == 0
