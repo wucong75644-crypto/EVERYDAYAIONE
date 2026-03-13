@@ -61,16 +61,19 @@ export function useMessageAnimation(options: UseMessageAnimationOptions): UseMes
   }, [message.created_at, skipEntryAnimation, newMessageWindow]);
 
   /**
-   * 根据消息角色返回对应的进入动画 class
+   * 根据消息角色和类型返回对应的进入动画 class
    * - 用户消息：无动画（即时显示，避免延迟感）
-   * - AI 消息：淡入 + 缩放
+   * - AI 聊天消息（流式）：无动画（流式打字本身就是动画）
+   * - AI 图片/视频消息（非流式）：淡入 + 缩放（整个出现需要过渡）
    */
   const entryAnimationClass = useMemo(() => {
     if (!isNewMessage) return '';
-    return message.role === 'user'
-      ? ''
-      : 'animate-ai-message-fade-scale';
-  }, [isNewMessage, message.role]);
+    if (message.role === 'user') return '';
+
+    const genType = message.generation_params?.type;
+    const isMediaMessage = genType === 'image' || genType === 'video';
+    return isMediaMessage ? 'animate-ai-message-fade-scale' : '';
+  }, [isNewMessage, message.role, message.generation_params?.type]);
 
   // ==================== 删除动画管理 ====================
 
