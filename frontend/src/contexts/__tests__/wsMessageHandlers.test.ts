@@ -73,10 +73,14 @@ function createMockStore(): MessageStoreActions {
     completeTask: vi.fn(),
     failTask: vi.fn(),
     completeStreaming: vi.fn(),
+    completeStreamingWithMessage: vi.fn(),
     markConversationCompleted: vi.fn(),
     setIsSending: vi.fn(),
     getMessage: vi.fn(),
     setStreamingContent: vi.fn(),
+    setAgentStepHint: vi.fn(),
+    clearAgentStepHint: vi.fn(),
+    appendStreamingThinking: vi.fn(),
   };
 }
 

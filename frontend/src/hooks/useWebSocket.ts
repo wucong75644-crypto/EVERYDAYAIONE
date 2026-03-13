@@ -54,6 +54,7 @@ export type WSMessageType =
   | 'message_done'
   | 'message_error'
   | 'agent_step'
+  | 'routing_complete'
   // 系统消息
   | 'credits_changed'
   | 'memory_extracted'

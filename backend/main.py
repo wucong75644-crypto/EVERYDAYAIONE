@@ -18,7 +18,7 @@ from slowapi.errors import RateLimitExceeded
 
 from api.routes import (
     audio, auth, conversation, file, health, image, memory, message,
-    models, subscription, task, webhook, ws,
+    models, subscription, task, webhook, wecom, ws,
 )
 from core.config import get_settings
 from core.exceptions import AppException
@@ -171,12 +171,75 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     worker_task = asyncio.create_task(worker.start())
     logger.info("BackgroundTaskWorker started")
 
+    # 启动企微智能机器人长连接（如已配置）
+    wecom_ws_client = None
+    if settings.wecom_bot_id and settings.wecom_bot_secret and settings.wecom_bot_enabled:
+        try:
+            from services.wecom.ws_client import WecomWSClient
+            from services.wecom.wecom_message_service import WecomMessageService
+            from schemas.wecom import (
+                WecomIncomingMessage,
+                WecomMsgType,
+                WecomReplyContext,
+            )
+
+            wecom_msg_svc = WecomMessageService(db)
+
+            async def _on_wecom_message(data: dict) -> None:
+                """企微长连接消息回调 → 统一消息处理"""
+                body = data.get("body", {})
+                req_id = data.get("headers", {}).get("req_id", "")
+                msgtype = body.get("msgtype", "")
+
+                # 解析文本内容
+                text_content = None
+                if msgtype == WecomMsgType.TEXT:
+                    text_content = body.get("text", {}).get("content", "")
+                elif msgtype == WecomMsgType.VOICE:
+                    text_content = body.get("voice", {}).get("content", "")
+
+                msg = WecomIncomingMessage(
+                    msgid=body.get("msgid", ""),
+                    wecom_userid=body.get("from", {}).get("userid", ""),
+                    corp_id=settings.wecom_corp_id or "",
+                    chatid=body.get("chatid", ""),
+                    chattype=body.get("chattype", "single"),
+                    msgtype=msgtype,
+                    channel="smart_robot",
+                    text_content=text_content,
+                    raw_data=body,
+                )
+
+                reply_ctx = WecomReplyContext(
+                    channel="smart_robot",
+                    ws_client=wecom_ws_client,
+                    req_id=req_id,
+                )
+
+                await wecom_msg_svc.handle_message(msg, reply_ctx)
+
+            wecom_ws_client = WecomWSClient(
+                bot_id=settings.wecom_bot_id,
+                secret=settings.wecom_bot_secret,
+                on_message=_on_wecom_message,
+            )
+            await wecom_ws_client.start()
+            logger.info("Wecom smart robot WS client started")
+        except Exception as e:
+            logger.warning(f"Wecom WS client start failed (non-critical) | error={e}")
+            wecom_ws_client = None
+
     yield
 
     # 优雅关闭：通知所有 WebSocket 客户端服务即将重启
     from schemas.websocket import build_server_restarting
     await ws_manager.broadcast_all(build_server_restarting())
     await asyncio.sleep(1)  # 给客户端一点时间接收消息
+
+    # 停止企微长连接
+    if wecom_ws_client:
+        await wecom_ws_client.stop()
+        logger.info("Wecom WS client stopped")
 
     # 停止 WebSocket Redis Pub/Sub 监听
     await ws_manager.stop_redis_listener()
@@ -311,6 +374,9 @@ def register_routers(app: FastAPI) -> None:
 
     # Webhook 回调（无需用户鉴权，Provider 直接调用）
     app.include_router(webhook.router, prefix="/api")
+
+    # 企业微信回调（无需用户鉴权）
+    app.include_router(wecom.router, prefix="/api")
 
     # 模型 + 订阅
     app.include_router(models.router, prefix="/api")

@@ -19,7 +19,7 @@ import type { OperationContext } from './WebSocketContext';
 
 import type { MessageStatus } from '../types/message';
 import type { WSMessage } from '../hooks/useWebSocket';
-import { getAgentStepText } from '../constants/placeholder';
+import { getAgentStepText, getPlaceholderText } from '../constants/placeholder';
 
 /**
  * WS 消息扩展类型 — 后端各消息类型可能携带的额外字段
@@ -50,6 +50,7 @@ export interface MessageStoreActions {
   completeTask: (taskId: string) => void;
   failTask: (taskId: string, error: string) => void;
   completeStreaming: (conversationId: string) => void;
+  completeStreamingWithMessage: (conversationId: string, message: Message) => void;
   markConversationCompleted: (conversationId: string) => void;
   setIsSending: (isSending: boolean) => void;
   getMessage: (messageId: string) => Message | undefined;
@@ -441,6 +442,40 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
 
       const hint = getAgentStepText(toolName);
       deps.getStore().setAgentStepHint(conversation_id, hint);
+    },
+
+    routing_complete: (msg) => {
+      const { conversation_id, message_id } = msg;
+      const genType = msg.payload?.generation_type as string | undefined;
+      const model = msg.payload?.model as string | undefined;
+      const genParams = msg.payload?.generation_params as Record<string, unknown> | undefined;
+      if (!conversation_id || !genType || !message_id) return;
+
+      const store = deps.getStore();
+
+      if (genType === 'image' || genType === 'video' || genType === 'audio') {
+        // 占位符变形：旋转圆点 → 媒体生成占位符
+        const render = genParams?._render as Record<string, string> | undefined;
+        const loadingText = render?.placeholder_text
+          || getPlaceholderText(genType as 'image' | 'video' | 'audio');
+
+        store.completeStreamingWithMessage(conversation_id, {
+          id: message_id,
+          conversation_id,
+          role: 'assistant',
+          content: [{ type: 'text', text: loadingText }],
+          status: 'pending',
+          created_at: new Date().toISOString(),
+          generation_params: genParams ?? { model },
+          task_id: msg.task_id,
+        });
+        store.setIsSending(true);
+      } else {
+        // chat 类型：更新 generation_params（路由确定的模型信息）
+        store.updateMessage(message_id, {
+          generation_params: genParams ?? { model },
+        });
+      }
     },
 
     error: (msg) => {
