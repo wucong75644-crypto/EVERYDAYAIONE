@@ -148,7 +148,6 @@ class WecomWSClient:
                     close_timeout=10,
                 ) as ws:
                     self._ws = ws
-                    self._enable_tcp_keepalive(ws)
                     await self._subscribe()
                     self._is_connected = True
                     self._last_recv_time = asyncio.get_event_loop().time()
