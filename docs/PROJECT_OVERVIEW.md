@@ -126,6 +126,13 @@ EVERYDAYAIONE/
 │   │   │   ├── chat_handler.py           # 聊天处理器（流式）
 │   │   │   ├── image_handler.py          # 图片生成处理器
 │   │   │   └── video_handler.py          # 视频生成处理器
+│   │   ├── wecom/                   # 企业微信服务
+│   │   │   ├── wecom_message_service.py # 企微消息处理核心（继承 WecomAIMixin）
+│   │   │   ├── wecom_ai_mixin.py        # AI 路由 + 生成能力 Mixin
+│   │   │   ├── app_message_sender.py    # 自建应用消息发送（文本/图片/视频）
+│   │   │   ├── ws_client.py             # 智能机器人 WebSocket 客户端
+│   │   │   ├── access_token_manager.py  # access_token 管理
+│   │   │   └── user_mapping_service.py  # 企微用户 → 系统用户映射
 │   │   └── adapters/                 # AI 模型适配器
 │   │       ├── __init__.py               # 适配器导出
 │   │       ├── base.py                   # 适配器基类

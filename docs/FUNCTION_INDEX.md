@@ -752,6 +752,32 @@
 | `_check_credits` | `backend/services/base_generation_service.py` | 检查积分是否足够 | user, required_credits | None |
 | `_deduct_credits` | `backend/services/base_generation_service.py` | 扣除积分 | user_id, credits, description | int |
 
+### 企业微信 AI 路由模块 (WeChat Work AI Routing)
+
+#### 后端函数 — WecomAIMixin (`backend/services/wecom/wecom_ai_mixin.py`)
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `_run_agent_loop` | `backend/services/wecom/wecom_ai_mixin.py` | Agent Loop 路由（失败降级 IntentRouter → 兜底 CHAT） | user_id, conversation_id, content | AgentResult |
+| `_build_memory_prompt` | `backend/services/wecom/wecom_ai_mixin.py` | 构建记忆 system prompt | user_id, query | Optional[str] |
+| `_handle_chat_response` | `backend/services/wecom/wecom_ai_mixin.py` | 处理 CHAT 类型（direct_reply 或流式生成） | user_id, conversation_id, message_id, text_content, reply_ctx, agent_result, memory_prompt | None |
+| `_handle_image_response` | `backend/services/wecom/wecom_ai_mixin.py` | 处理 IMAGE 类型（积分检查 → 生成 → 发送） | user_id, conversation_id, message_id, text_content, reply_ctx, agent_result | None |
+| `_handle_video_response` | `backend/services/wecom/wecom_ai_mixin.py` | 处理 VIDEO 类型（积分检查 → 生成 → 发送） | user_id, conversation_id, message_id, text_content, reply_ctx, agent_result | None |
+| `_send_media_to_wecom` | `backend/services/wecom/wecom_ai_mixin.py` | 统一媒体发送（两渠道差异封装）+ 更新 DB | reply_ctx, urls, media_type, message_id | None |
+| `_handle_chat_fallback` | `backend/services/wecom/wecom_ai_mixin.py` | 兜底：默认模型直接聊天 | user_id, conversation_id, message_id, text_content, reply_ctx | None |
+| `_stream_and_reply` | `backend/services/wecom/wecom_ai_mixin.py` | 流式生成 + 推送到企微 + 更新 DB | adapter, messages, reply_ctx, message_id | None |
+| `_build_chat_messages` | `backend/services/wecom/wecom_ai_mixin.py` | 构建 LLM 消息列表（记忆/人设/搜索上下文） | user_id, conversation_id, text_content, system_prompt, memory_prompt, search_context | List[Dict] |
+| `_get_user_balance` | `backend/services/wecom/wecom_ai_mixin.py` | 获取用户积分余额 | user_id | int |
+| `_deduct_credits` | `backend/services/wecom/wecom_ai_mixin.py` | 直接扣除积分 | user_id, amount, reason | None |
+
+#### 后端函数 — 企微消息发送 (`backend/services/wecom/app_message_sender.py`)
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `send_image` | `backend/services/wecom/app_message_sender.py` | 发送图片消息给企微用户 | wecom_userid, media_id, agent_id | bool |
+| `send_video` | `backend/services/wecom/app_message_sender.py` | 发送视频消息给企微用户 | wecom_userid, media_id, title, description, agent_id | bool |
+| `upload_temp_media` | `backend/services/wecom/app_message_sender.py` | 下载文件并上传到企微临时素材库 | file_url, media_type | Optional[str] |
+
 ---
 
 ## 函数分类索引
@@ -782,6 +808,7 @@
 - **ERP 工具定义模块**：2个后端函数（✨ERP工具增强）
 - **快麦参数映射模块**：1个后端函数修改（✨参数映射增强）
 - **性能监控模块**：9个前端函数
+- **企业微信 AI 路由模块**：11个后端函数（WecomAIMixin）+ 3个后端函数（app_message_sender）（✨企微Agent Loop对接）
 - **测试工具模块**：4个前端函数
 - **消息服务模块**：8个后端函数 + 5个前端函数
 - **图像生成模块**：3个后端函数 + 5个前端函数
