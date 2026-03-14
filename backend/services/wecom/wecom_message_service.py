@@ -300,7 +300,7 @@ class WecomMessageService(WecomAIMixin):
     async def _reply_text(
         self, reply_ctx: WecomReplyContext, text: str
     ) -> None:
-        """发送文本回复（app 通道自动适配 markdown_v2）"""
+        """发送文本回复（app 通道自动适配 markdown）"""
         if reply_ctx.channel == "smart_robot" and reply_ctx.ws_client:
             await reply_ctx.ws_client.send_reply(
                 req_id=reply_ctx.req_id,
@@ -315,19 +315,28 @@ class WecomMessageService(WecomAIMixin):
     ) -> None:
         """自建应用消息发送：格式适配 + 长消息分割"""
         import asyncio
-        from services.wecom.app_message_sender import send_text, send_markdown_v2
+        from services.wecom.app_message_sender import (
+            send_text, send_markdown,
+        )
         from services.wecom.markdown_adapter import adapt_for_app, split_long_message
 
         adapted, msgtype = adapt_for_app(text)
         chunks = split_long_message(adapted, max_bytes=2000)
 
         for i, chunk in enumerate(chunks):
-            if msgtype == "markdown_v2":
-                await send_markdown_v2(
+            if msgtype == "markdown":
+                ok = await send_markdown(
                     wecom_userid=reply_ctx.wecom_userid,
                     content=chunk,
                     agent_id=reply_ctx.agent_id,
                 )
+                # markdown 发送失败，降级为纯文本
+                if not ok:
+                    await send_text(
+                        wecom_userid=reply_ctx.wecom_userid,
+                        content=chunk,
+                        agent_id=reply_ctx.agent_id,
+                    )
             else:
                 await send_text(
                     wecom_userid=reply_ctx.wecom_userid,

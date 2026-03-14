@@ -143,7 +143,7 @@ class TestReplyText:
             "services.wecom.app_message_sender.send_text",
             new=AsyncMock(),
         ) as mock_send, patch(
-            "services.wecom.app_message_sender.send_markdown_v2",
+            "services.wecom.app_message_sender.send_markdown",
             new=AsyncMock(),
         ):
             await svc._reply_text(ctx, "hi from app")
@@ -155,8 +155,8 @@ class TestReplyText:
         )
 
     @pytest.mark.asyncio
-    async def test_app_channel_markdown_v2(self):
-        """app 通道含 Markdown → 调用 send_markdown_v2"""
+    async def test_app_channel_markdown(self):
+        """app 通道含 Markdown → 调用 send_markdown"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
         ctx = _make_reply_ctx("app")
@@ -165,7 +165,7 @@ class TestReplyText:
             "services.wecom.app_message_sender.send_text",
             new=AsyncMock(),
         ), patch(
-            "services.wecom.app_message_sender.send_markdown_v2",
+            "services.wecom.app_message_sender.send_markdown",
             new=AsyncMock(),
         ) as mock_md:
             await svc._reply_text(ctx, "# 标题\n\n**加粗**内容")
@@ -214,7 +214,7 @@ class TestPushStreamChunk:
             "services.wecom.app_message_sender.send_text",
             new=AsyncMock(),
         ) as mock_send, patch(
-            "services.wecom.app_message_sender.send_markdown_v2",
+            "services.wecom.app_message_sender.send_markdown",
             new=AsyncMock(),
         ):
             # finish=False → 不发送
@@ -230,8 +230,8 @@ class TestPushStreamChunk:
             )
 
     @pytest.mark.asyncio
-    async def test_app_finish_with_markdown_sends_v2(self):
-        """app 通道 finish=True 含 Markdown → send_markdown_v2"""
+    async def test_app_finish_with_markdown_sends_markdown(self):
+        """app 通道 finish=True 含 Markdown → send_markdown"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
         ctx = _make_reply_ctx("app")
@@ -240,7 +240,7 @@ class TestPushStreamChunk:
             "services.wecom.app_message_sender.send_text",
             new=AsyncMock(),
         ), patch(
-            "services.wecom.app_message_sender.send_markdown_v2",
+            "services.wecom.app_message_sender.send_markdown",
             new=AsyncMock(),
         ) as mock_md:
             await svc._push_stream_chunk(
@@ -369,7 +369,7 @@ class TestSendAppMessage:
             "services.wecom.app_message_sender.send_text",
             new=AsyncMock(),
         ) as mock_send, patch(
-            "services.wecom.app_message_sender.send_markdown_v2",
+            "services.wecom.app_message_sender.send_markdown",
             new=AsyncMock(),
         ):
             await svc._send_app_message(ctx, "普通文本消息")
@@ -381,8 +381,8 @@ class TestSendAppMessage:
         )
 
     @pytest.mark.asyncio
-    async def test_markdown_sends_v2(self):
-        """含 Markdown → send_markdown_v2"""
+    async def test_markdown_sends_markdown(self):
+        """含 Markdown → send_markdown"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
         ctx = _make_reply_ctx("app")
@@ -391,7 +391,7 @@ class TestSendAppMessage:
             "services.wecom.app_message_sender.send_text",
             new=AsyncMock(),
         ), patch(
-            "services.wecom.app_message_sender.send_markdown_v2",
+            "services.wecom.app_message_sender.send_markdown",
             new=AsyncMock(),
         ) as mock_md:
             await svc._send_app_message(ctx, "# 标题\n\n**内容**")
@@ -399,6 +399,25 @@ class TestSendAppMessage:
         mock_md.assert_called_once()
         call_kwargs = mock_md.call_args.kwargs
         assert call_kwargs["wecom_userid"] == "user_abc"
+
+    @pytest.mark.asyncio
+    async def test_markdown_fallback_to_text(self):
+        """send_markdown 失败 → 降级 send_text"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        ctx = _make_reply_ctx("app")
+
+        with patch(
+            "services.wecom.app_message_sender.send_text",
+            new=AsyncMock(),
+        ) as mock_text, patch(
+            "services.wecom.app_message_sender.send_markdown",
+            new=AsyncMock(return_value=False),
+        ) as mock_md:
+            await svc._send_app_message(ctx, "# 标题\n\n**内容**")
+
+        mock_md.assert_called_once()
+        mock_text.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_long_message_splits(self):
@@ -414,7 +433,7 @@ class TestSendAppMessage:
             "services.wecom.app_message_sender.send_text",
             new=AsyncMock(),
         ) as mock_send, patch(
-            "services.wecom.app_message_sender.send_markdown_v2",
+            "services.wecom.app_message_sender.send_markdown",
             new=AsyncMock(),
         ):
             await svc._send_app_message(ctx, long_text)
