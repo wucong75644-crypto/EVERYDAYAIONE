@@ -114,7 +114,10 @@
       "Bash(python -m pytest backend/tests/test_chat_routing_mixin.py -q --tb=short)",
       "Bash(git status -u)",
       "Bash(./git-push.sh \"fix: 修复前端 TypeScript 编译错误（类型兼容性+未使用导入）\")",
-      "Bash(./deploy/deploy.sh)"
+      "Bash(./deploy/deploy.sh)",
+      "Bash(python -m pytest tests/test_ip_location_service.py -v --tb=short)",
+      "Bash(python -m pytest backend/tests/test_wecom_message_service.py -q --tb=short)",
+      "Bash(python -m pytest backend/tests/test_app_message_sender.py -v --tb=short)"
     ]
   }
 }
