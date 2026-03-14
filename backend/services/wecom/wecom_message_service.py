@@ -110,6 +110,15 @@ class WecomMessageService(WecomAIMixin):
     ) -> None:
         """文本消息处理：Agent Loop 路由 → 按类型分发"""
         try:
+            # 立即发送"正在思考..."占位（保持 req_id 活跃，防止企微超时丢弃回复）
+            if reply_ctx.channel == "smart_robot" and reply_ctx.ws_client:
+                import uuid
+                stream_id = str(uuid.uuid4())
+                reply_ctx.active_stream_id = stream_id
+                await self._push_stream_chunk(
+                    reply_ctx, stream_id, "正在思考...", finish=False,
+                )
+
             content_parts: List[ContentPart] = [TextPart(text=text_content)]
 
             # 并行：Agent Loop + 记忆预取
@@ -300,13 +309,23 @@ class WecomMessageService(WecomAIMixin):
     async def _reply_text(
         self, reply_ctx: WecomReplyContext, text: str
     ) -> None:
-        """发送文本回复（app 通道自动适配 markdown）"""
+        """发送文本回复（有活跃 stream 时用 stream finish 替换占位内容）"""
         if reply_ctx.channel == "smart_robot" and reply_ctx.ws_client:
-            await reply_ctx.ws_client.send_reply(
-                req_id=reply_ctx.req_id,
-                msgtype="text",
-                content={"content": text},
-            )
+            if reply_ctx.active_stream_id:
+                # 用 stream finish 替换"正在思考..."占位
+                await reply_ctx.ws_client.send_stream_chunk(
+                    req_id=reply_ctx.req_id,
+                    stream_id=reply_ctx.active_stream_id,
+                    content=text,
+                    finish=True,
+                )
+                reply_ctx.active_stream_id = None
+            else:
+                await reply_ctx.ws_client.send_reply(
+                    req_id=reply_ctx.req_id,
+                    msgtype="text",
+                    content={"content": text},
+                )
         elif reply_ctx.channel == "app":
             await self._send_app_message(reply_ctx, text)
 
