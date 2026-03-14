@@ -324,13 +324,16 @@ class WecomAIMixin:
         from services.wecom.markdown_adapter import clean_for_stream
 
         accumulated_text = ""
-        stream_id = str(uuid.uuid4())
         chunk_count = 0
 
-        # 立即发送"正在思考..."占位，后续 stream chunk 会自动替换
-        await self._push_stream_chunk(
-            reply_ctx, stream_id, "正在思考...", finish=False,
-        )
+        # 复用已有 stream（_handle_text 已发送"正在思考..."），否则新建
+        if reply_ctx.active_stream_id:
+            stream_id = reply_ctx.active_stream_id
+        else:
+            stream_id = str(uuid.uuid4())
+            await self._push_stream_chunk(
+                reply_ctx, stream_id, "正在思考...", finish=False,
+            )
 
         async for chunk in adapter.stream_chat(messages=messages):
             if chunk.content:
@@ -347,6 +350,7 @@ class WecomAIMixin:
             await self._push_stream_chunk(
                 reply_ctx, stream_id, display, finish=True,
             )
+            reply_ctx.active_stream_id = None
             # DB 存原始内容（不清理），Web 前端自行渲染
             await self._update_assistant_message(message_id, accumulated_text)
         else:
