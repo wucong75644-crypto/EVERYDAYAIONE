@@ -215,7 +215,7 @@ class WecomWSClient:
             if self._ws and self._is_connected:
                 ping = {
                     "cmd": WecomCommand.PING,
-                    "headers": {"req_id": str(uuid.uuid4())},
+                    "headers": {"req_id": f"ping_{uuid.uuid4().hex[:8]}"},
                 }
                 try:
                     await asyncio.wait_for(
