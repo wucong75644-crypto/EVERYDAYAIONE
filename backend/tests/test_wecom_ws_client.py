@@ -13,6 +13,7 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -206,6 +207,26 @@ class TestSafeSend:
 
         assert connected_client._is_connected is False
 
+    @pytest.mark.asyncio
+    async def test_send_error_closes_ws(self, connected_client):
+        """发送失败 → 主动关闭WS触发重连"""
+        connected_client._ws.send.side_effect = RuntimeError("send failed")
+        connected_client._ws.close = AsyncMock()
+
+        await connected_client._safe_send({"cmd": "test"})
+
+        connected_client._ws.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_error_close_also_fails(self, connected_client):
+        """发送失败 + close也失败 → 不抛出"""
+        connected_client._ws.send.side_effect = RuntimeError("send failed")
+        connected_client._ws.close = AsyncMock(side_effect=RuntimeError("close failed"))
+
+        await connected_client._safe_send({"cmd": "test"})
+
+        assert connected_client._is_connected is False
+
 
 # ============================================================
 # TestHandleMsgCallback — 消息回调
@@ -310,3 +331,151 @@ class TestHandleEventCallback:
             await connected_client._handle_event_callback(data)
 
         connected_client._ws.send.assert_not_called()
+
+
+# ============================================================
+# TestHeartbeatLoop — 心跳连续失败检测
+# ============================================================
+
+
+class TestHeartbeatLoop:
+    """_heartbeat_loop 连续失败检测"""
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_resets_on_success(self, connected_client):
+        """心跳成功 → 计数器归零，循环继续"""
+        call_count = 0
+
+        async def _mock_send(data):
+            nonlocal call_count
+            call_count += 1
+            # 第2次心跳后断开循环
+            if call_count >= 2:
+                connected_client._is_connected = False
+
+        connected_client._ws.send = _mock_send
+
+        with patch("services.wecom.ws_client.HEARTBEAT_INTERVAL", 0.01):
+            await connected_client._heartbeat_loop()
+
+        assert call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_2_failures_closes_ws(self, connected_client):
+        """连续2次心跳失败 → 主动关闭WS"""
+        connected_client._ws.send = AsyncMock(
+            side_effect=RuntimeError("timeout")
+        )
+        connected_client._ws.close = AsyncMock()
+
+        with patch("services.wecom.ws_client.HEARTBEAT_INTERVAL", 0.01):
+            await connected_client._heartbeat_loop()
+
+        assert connected_client._is_connected is False
+        connected_client._ws.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_single_failure_continues(self, connected_client):
+        """单次心跳失败 → 继续尝试"""
+        call_count = 0
+
+        async def _flaky_send(data):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("transient error")
+            # 第二次成功后停止
+            if call_count >= 3:
+                connected_client._is_connected = False
+
+        connected_client._ws.send = _flaky_send
+
+        with patch("services.wecom.ws_client.HEARTBEAT_INTERVAL", 0.01):
+            await connected_client._heartbeat_loop()
+
+        # 至少发送了3次（1次失败 + 后续成功）
+        assert call_count >= 3
+
+
+# ============================================================
+# TestReceiveLoopNonBlocking — 接收循环非阻塞
+# ============================================================
+
+
+class TestReceiveLoopNonBlocking:
+    """_receive_loop 使用 create_task 不阻塞"""
+
+    @pytest.mark.asyncio
+    async def test_msg_callback_uses_create_task(self, client):
+        """消息回调通过 create_task 分发，不阻塞接收循环"""
+        msg_data = json.dumps({
+            "cmd": WecomCommand.MSG_CALLBACK,
+            "body": {"msgid": "m_task_001", "content": "hi"},
+        })
+
+        # 模拟 WS 只产出一条消息后结束
+        client._ws = AsyncMock()
+        client._ws.__aiter__ = lambda self: self
+        messages = [msg_data]
+
+        async def _anext(self):
+            if messages:
+                return messages.pop(0)
+            raise StopAsyncIteration
+
+        client._ws.__anext__ = _anext
+        client._is_connected = True
+
+        # 用真实 create_task 包装，避免协程未消费警告
+        tasks_created = []
+        original_create_task = asyncio.create_task
+
+        def _tracking_create_task(coro):
+            task = original_create_task(coro)
+            tasks_created.append(task)
+            return task
+
+        with patch("asyncio.create_task", side_effect=_tracking_create_task):
+            await client._receive_loop()
+            # 等待所有创建的任务完成
+            for t in tasks_created:
+                await t
+
+        assert len(tasks_created) == 1
+
+    @pytest.mark.asyncio
+    async def test_event_callback_uses_create_task(self, connected_client):
+        """事件回调通过 create_task 分发"""
+        event_data = json.dumps({
+            "cmd": WecomCommand.EVENT_CALLBACK,
+            "body": {"event": {"eventtype": "enter_chat"}},
+        })
+
+        connected_client._ws.__aiter__ = lambda self: self
+        messages = [event_data]
+
+        async def _anext(self):
+            if messages:
+                return messages.pop(0)
+            raise StopAsyncIteration
+
+        connected_client._ws.__anext__ = _anext
+
+        tasks_created = []
+        original_create_task = asyncio.create_task
+
+        def _tracking_create_task(coro):
+            task = original_create_task(coro)
+            tasks_created.append(task)
+            return task
+
+        with patch("asyncio.create_task", side_effect=_tracking_create_task):
+            with patch(
+                "services.wecom.ws_client.get_settings",
+                return_value=MagicMock(),
+            ):
+                await connected_client._receive_loop()
+                for t in tasks_created:
+                    await t
+
+        assert len(tasks_created) == 1
