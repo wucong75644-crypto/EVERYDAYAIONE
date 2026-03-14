@@ -493,3 +493,96 @@ class TestAgentLoopRun:
             result = await loop.run(_text_content("hi"))
 
         assert result.generation_type == GenerationType.CHAT
+
+
+# -- TestUserLocationInjection --
+
+
+class TestUserLocationInjection:
+    """Agent Loop run() user_location 参数存储 + 系统提示词注入"""
+
+    @pytest.mark.asyncio
+    async def test_user_location_stored_on_run(self):
+        """run(user_location='浙江省金华市') → self._user_location 被存储"""
+        loop = _make_loop()
+
+        mock_result = AgentResult(
+            generation_type=GenerationType.CHAT,
+            turns_used=0, total_tokens=0,
+        )
+        loop._execute_loop = AsyncMock(return_value=mock_result)
+
+        with patch("core.config.get_settings") as mock_settings:
+            mock_settings.return_value = MagicMock(
+                agent_loop_max_turns=3,
+                agent_loop_max_tokens=3000,
+            )
+            await loop.run(
+                _text_content("天气怎么样"),
+                user_location="浙江省金华市",
+            )
+
+        assert loop._user_location == "浙江省金华市"
+
+    @pytest.mark.asyncio
+    async def test_user_location_none_by_default(self):
+        """run() 不传 user_location → self._user_location = None"""
+        loop = _make_loop()
+
+        mock_result = AgentResult(
+            generation_type=GenerationType.CHAT,
+            turns_used=0, total_tokens=0,
+        )
+        loop._execute_loop = AsyncMock(return_value=mock_result)
+
+        with patch("core.config.get_settings") as mock_settings:
+            mock_settings.return_value = MagicMock(
+                agent_loop_max_turns=3,
+                agent_loop_max_tokens=3000,
+            )
+            await loop.run(_text_content("你好"))
+
+        assert loop._user_location is None
+
+    @pytest.mark.asyncio
+    async def test_location_injected_into_system_prompt(self):
+        """user_location 被注入到 _execute_loop 的系统提示词"""
+        loop = _make_loop()
+        loop._user_location = "广东省深圳市"
+        loop._has_image = False
+        loop._thinking_mode = None
+        loop._settings = MagicMock(
+            agent_loop_brain_context_limit=5,
+            agent_loop_brain_context_max_chars=2000,
+            agent_loop_brain_max_images=3,
+            agent_loop_max_turns=3,
+            agent_loop_max_tokens=3000,
+        )
+
+        captured_messages = {}
+
+        async def mock_call_brain(messages):
+            captured_messages["msgs"] = messages
+            return _make_brain_response(
+                tool_calls=[_make_tool_call("route_to_chat", {
+                    "system_prompt": "test",
+                    "model": "auto",
+                })],
+                usage={"total_tokens": 50},
+            )
+
+        loop._call_brain = mock_call_brain
+        loop._build_system_prompt = AsyncMock(return_value="base system prompt")
+        loop._build_user_content = MagicMock(
+            return_value=[{"type": "text", "text": "天气"}],
+        )
+        loop._get_recent_history = AsyncMock(return_value=None)
+
+        with patch("core.config.get_settings") as mock_settings:
+            mock_settings.return_value = loop._settings
+            await loop._execute_loop(_text_content("天气怎么样"))
+
+        # system prompt 是 messages 列表的第一个 system 消息
+        system_msg = captured_messages["msgs"][0]
+        assert system_msg["role"] == "system"
+        assert "用户所在位置：广东省深圳市" in system_msg["content"]

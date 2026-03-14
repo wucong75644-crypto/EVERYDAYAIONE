@@ -197,6 +197,11 @@ class Settings(BaseSettings):
     # 企微通用配置
     wecom_stream_timeout: float = 300.0  # 企微流式回复超时（秒），企微上限 6 分钟
 
+    # IP 地理位置（高德 API）
+    amap_api_key: Optional[str] = None           # 高德 Web 服务 API Key（未配置则禁用 IP 定位）
+    ip_location_timeout: float = 3.0             # 高德 API 请求超时（秒）
+    ip_location_cache_ttl: int = 86400           # IP→城市 Redis 缓存 TTL（秒，默认 24h）
+
     # Sentry 错误监控配置
     sentry_dsn: Optional[str] = None
     environment: str = "development"

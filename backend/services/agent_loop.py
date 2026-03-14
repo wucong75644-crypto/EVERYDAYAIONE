@@ -74,6 +74,7 @@ class AgentLoop(AgentContextMixin):
         content: List[ContentPart],
         thinking_mode: Optional[str] = None,
         task_id: Optional[str] = None,
+        user_location: Optional[str] = None,
     ) -> AgentResult:
         """执行 Agent Loop，返回路由结果"""
         text = self._extract_text(content)
@@ -83,6 +84,7 @@ class AgentLoop(AgentContextMixin):
         self._has_image = has_image  # 模型校验需要
         self._thinking_mode = thinking_mode  # 深度思考开关状态
         self._task_id = task_id  # WS 进度通知用
+        self._user_location = user_location  # IP 定位城市
 
         result = await self._execute_loop(content)
 
@@ -129,6 +131,11 @@ class AgentLoop(AgentContextMixin):
 
         now = _time.strftime("%Y-%m-%d %H:%M", _time.localtime())
         system_prompt += f"\n\n当前时间：{now}"
+
+        # 用户位置注入（IP 定位，辅助天气/本地搜索查询）
+        user_location = getattr(self, "_user_location", None)
+        if user_location:
+            system_prompt += f"\n用户所在位置：{user_location}"
 
         # 深度思考模式提示（用户开启时，优先选支持深度思考的模型）
         thinking_mode = getattr(self, "_thinking_mode", None)

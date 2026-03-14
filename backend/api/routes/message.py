@@ -216,6 +216,12 @@ async def generate_message(
     if task_limit_service:
         await task_limit_service.check_and_acquire(user_id, conversation_id)
 
+    # 1.5 异步获取用户 IP 位置（与路由并行，不阻塞主流程）
+    from services.ip_location_service import extract_client_ip, get_location_by_ip
+
+    client_ip = extract_client_ip(request)
+    location_task = asyncio.create_task(get_location_by_ip(client_ip))
+
     # 2. 推断生成类型（智能路由 / 关键词兜底）
     from services.intent_router import SMART_MODEL_ID, resolve_auto_model
 
@@ -298,6 +304,16 @@ async def generate_message(
         if gen_type == GenerationType.IMAGE and body.params:
             if body.params.get("_is_smart_mode") and "aspect_ratio" not in body.params:
                 body.params["aspect_ratio"] = "1:1"
+
+    # 2.5 等待 IP 位置结果并注入 params（与路由并行完成，此处仅 await 结果）
+    try:
+        user_location = await location_task
+    except Exception:
+        user_location = None
+    if user_location:
+        if body.params is None:
+            body.params = {}
+        body.params["_user_location"] = user_location
 
     # 3+4. 验证对话权限 + 创建用户消息（并行执行，两者独立无数据依赖）
     conversation_service = get_conversation_service(db)
