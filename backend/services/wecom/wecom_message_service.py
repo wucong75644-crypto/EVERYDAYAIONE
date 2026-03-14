@@ -2,34 +2,33 @@
 企业微信统一消息处理服务
 
 接收企微消息（来自长连接或回调）→ 映射用户 → 管理对话 →
-调用 AI 生成 → 流式回复到企微。
+Agent Loop 路由 → AI 生成 → 流式回复到企微。
 
 两个渠道共用此服务，仅回复方式不同。
 """
 
 import asyncio
 import time
-import uuid
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
 from supabase import Client
 
 from core.config import get_settings
-from schemas.message import ContentPart, TextPart
+from schemas.message import ContentPart, GenerationType, TextPart
 from schemas.wecom import (
     WecomChatType,
     WecomIncomingMessage,
     WecomMsgType,
     WecomReplyContext,
 )
-from services.adapters.factory import create_chat_adapter, DEFAULT_MODEL_ID
 from services.conversation_service import ConversationService
 from services.wecom.user_mapping_service import WecomUserMappingService
+from services.wecom.wecom_ai_mixin import WecomAIMixin
 
 
-class WecomMessageService:
-    """企微消息处理核心：用户映射 → 对话管理 → AI 生成 → 回复"""
+class WecomMessageService(WecomAIMixin):
+    """企微消息处理核心：用户映射 → 对话管理 → Agent Loop 路由 → AI 生成 → 回复"""
 
     def __init__(self, db: Client):
         self.db = db
@@ -42,13 +41,7 @@ class WecomMessageService:
         msg: WecomIncomingMessage,
         reply_ctx: WecomReplyContext,
     ) -> None:
-        """
-        处理企微消息的完整流程。
-
-        Args:
-            msg: 企微收到的消息（统一格式）
-            reply_ctx: 回复上下文（封装渠道差异）
-        """
+        """处理企微消息的完整流程。"""
         start_time = time.monotonic()
 
         try:
@@ -67,7 +60,7 @@ class WecomMessageService:
             )
 
             # 3. 保存用户消息到 DB
-            user_message_id = await self._save_user_message(
+            await self._save_user_message(
                 conversation_id=conversation_id,
                 user_id=user_id,
                 text_content=msg.text_content or "",
@@ -88,7 +81,6 @@ class WecomMessageService:
                     reply_ctx=reply_ctx,
                 )
             else:
-                # 不支持的消息类型，回复提示
                 await self._reply_text(
                     reply_ctx, "暂时只支持文本消息哦，发文字给我试试~"
                 )
@@ -106,7 +98,7 @@ class WecomMessageService:
             )
             await self._reply_text(reply_ctx, "抱歉，处理消息时出了点问题，请稍后再试。")
 
-    # ── AI 生成 + 流式回复 ────────────────────────────────
+    # ── AI 路由 + 分发 ──────────────────────────────────
 
     async def _handle_text(
         self,
@@ -116,85 +108,56 @@ class WecomMessageService:
         text_content: str,
         reply_ctx: WecomReplyContext,
     ) -> None:
-        """文本消息处理：构建上下文 → LLM 流式生成 → 推送到企微"""
-        model_id = "auto"  # 智能模式
-
+        """文本消息处理：Agent Loop 路由 → 按类型分发"""
         try:
-            # 构建 LLM 上下文
             content_parts: List[ContentPart] = [TextPart(text=text_content)]
-            messages = await self._build_chat_messages(
-                user_id=user_id,
-                conversation_id=conversation_id,
-                text_content=text_content,
+
+            # 并行：Agent Loop + 记忆预取
+            agent_raw, memory_raw = await asyncio.gather(
+                self._run_agent_loop(user_id, conversation_id, content_parts),
+                self._build_memory_prompt(user_id, text_content),
+                return_exceptions=True,
             )
 
-            # 使用默认模型（智能模式的 resolve 后续对接 Agent Loop）
-            actual_model = DEFAULT_MODEL_ID
-            adapter = create_chat_adapter(actual_model)
-
-            logger.info(
-                f"Wecom stream start | model={actual_model} | "
-                f"user={user_id} | conv={conversation_id}"
-            )
-
-            # 流式生成 + 推送
-            accumulated_text = ""
-            stream_id = str(uuid.uuid4())
-            chunk_count = 0
-
-            async for chunk in adapter.stream_chat(messages=messages):
-                if chunk.content:
-                    accumulated_text += chunk.content
-                    chunk_count += 1
-
-                    # 每 5 个 chunk 推送一次到企微（避免过于频繁）
-                    if chunk_count % 5 == 0:
-                        await self._push_stream_chunk(
-                            reply_ctx, stream_id, accumulated_text, finish=False
-                        )
-
-            # 发送最终结果
-            if accumulated_text:
-                await self._push_stream_chunk(
-                    reply_ctx, stream_id, accumulated_text, finish=True
+            # Agent Loop 失败 → 兜底纯文本聊天
+            if isinstance(agent_raw, BaseException):
+                logger.warning(f"Wecom routing failed | error={agent_raw}")
+                await self._handle_chat_fallback(
+                    user_id, conversation_id, message_id,
+                    text_content, reply_ctx,
                 )
+                return
 
-                # 更新 DB 中的 assistant 消息
-                await self._update_assistant_message(
-                    message_id=message_id,
-                    text=accumulated_text,
+            agent_result = agent_raw
+            memory_prompt = (
+                memory_raw if not isinstance(memory_raw, BaseException) else None
+            )
+            gen_type = agent_result.generation_type
+
+            if gen_type == GenerationType.CHAT:
+                await self._handle_chat_response(
+                    user_id, conversation_id, message_id,
+                    text_content, reply_ctx, agent_result, memory_prompt,
+                )
+            elif gen_type == GenerationType.IMAGE:
+                await self._handle_image_response(
+                    user_id, conversation_id, message_id,
+                    text_content, reply_ctx, agent_result,
+                )
+            elif gen_type == GenerationType.VIDEO:
+                await self._handle_video_response(
+                    user_id, conversation_id, message_id,
+                    text_content, reply_ctx, agent_result,
                 )
             else:
-                await self._reply_text(reply_ctx, "抱歉，AI 没有生成回复内容。")
-
-            await adapter.close()
+                await self._handle_chat_fallback(
+                    user_id, conversation_id, message_id,
+                    text_content, reply_ctx,
+                )
 
         except Exception as e:
-            logger.error(
-                f"Wecom text generation failed | user_id={user_id} | "
-                f"error={e}"
-            )
+            logger.error(f"Wecom _handle_text failed | user_id={user_id} | error={e}")
             await self._reply_text(reply_ctx, "生成回复时遇到了问题，请稍后再试。")
-
-    async def _build_chat_messages(
-        self,
-        user_id: str,
-        conversation_id: str,
-        text_content: str,
-    ) -> List[Dict[str, Any]]:
-        """构建 LLM 消息列表（简化版，复用对话历史）"""
-        messages: List[Dict[str, Any]] = []
-
-        # 注入对话历史
-        history = await self._get_conversation_history(
-            conversation_id, limit=self.settings.chat_context_limit
-        )
-        messages.extend(history)
-
-        # 当前用户消息
-        messages.append({"role": "user", "content": text_content})
-
-        return messages
 
     # ── 对话管理 ──────────────────────────────────────────
 
@@ -206,7 +169,6 @@ class WecomMessageService:
     ) -> str:
         """获取或创建企微对话。按 user_id 查找最近的企微对话。"""
         try:
-            # 查找用户最近的对话（title 以 "企微" 开头的）
             result = (
                 self.db.table("conversations")
                 .select("id")
@@ -220,7 +182,6 @@ class WecomMessageService:
             if result.data:
                 return result.data[0]["id"]
 
-            # 创建新对话
             title = "企微群聊" if chattype == WecomChatType.GROUP else "企微对话"
             conv = await self._conv_svc.create_conversation(
                 user_id=user_id,
@@ -285,7 +246,6 @@ class WecomMessageService:
         result = self.db.table("messages").insert(msg_data).execute()
         msg_id = result.data[0]["id"]
 
-        # 更新对话计数
         self.db.rpc("increment_message_count", {
             "conv_id": conversation_id,
         }).execute()
@@ -335,18 +295,12 @@ class WecomMessageService:
                 finish=finish,
             )
         elif reply_ctx.channel == "app" and finish:
-            # 自建应用不支持流式，仅在 finish=True 时发送完整内容
-            from services.wecom.app_message_sender import send_text
-            await send_text(
-                wecom_userid=reply_ctx.wecom_userid,
-                content=content,
-                agent_id=reply_ctx.agent_id,
-            )
+            await self._send_app_message(reply_ctx, content)
 
     async def _reply_text(
         self, reply_ctx: WecomReplyContext, text: str
     ) -> None:
-        """发送纯文本回复"""
+        """发送文本回复（app 通道自动适配 markdown_v2）"""
         if reply_ctx.channel == "smart_robot" and reply_ctx.ws_client:
             await reply_ctx.ws_client.send_reply(
                 req_id=reply_ctx.req_id,
@@ -354,12 +308,35 @@ class WecomMessageService:
                 content={"content": text},
             )
         elif reply_ctx.channel == "app":
-            from services.wecom.app_message_sender import send_text
-            await send_text(
-                wecom_userid=reply_ctx.wecom_userid,
-                content=text,
-                agent_id=reply_ctx.agent_id,
-            )
+            await self._send_app_message(reply_ctx, text)
+
+    async def _send_app_message(
+        self, reply_ctx: WecomReplyContext, text: str
+    ) -> None:
+        """自建应用消息发送：格式适配 + 长消息分割"""
+        import asyncio
+        from services.wecom.app_message_sender import send_text, send_markdown_v2
+        from services.wecom.markdown_adapter import adapt_for_app, split_long_message
+
+        adapted, msgtype = adapt_for_app(text)
+        chunks = split_long_message(adapted, max_bytes=2000)
+
+        for i, chunk in enumerate(chunks):
+            if msgtype == "markdown_v2":
+                await send_markdown_v2(
+                    wecom_userid=reply_ctx.wecom_userid,
+                    content=chunk,
+                    agent_id=reply_ctx.agent_id,
+                )
+            else:
+                await send_text(
+                    wecom_userid=reply_ctx.wecom_userid,
+                    content=chunk,
+                    agent_id=reply_ctx.agent_id,
+                )
+            # 多条消息间延迟，避免乱序
+            if i < len(chunks) - 1:
+                await asyncio.sleep(0.3)
 
     # ── 工具方法 ──────────────────────────────────────────
 
