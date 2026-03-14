@@ -3,8 +3,8 @@
 
 将 LLM 输出的标准 Markdown 适配为企微各通道兼容格式：
 - stream 通道（长连接）：清理 Mermaid 等不支持语法，其余自动渲染
-- app 通道（自建应用）：优先 markdown_v2（语法最全），降级 text
-- 长消息自动分割（markdown_v2 限 2048 UTF-8 字节）
+- app 通道（自建应用）：优先 markdown，降级 text
+- 长消息自动分割（markdown 限 2048 UTF-8 字节）
 """
 
 import re
@@ -85,10 +85,10 @@ def adapt_for_app(text: str) -> Tuple[str, str]:
     """
     将 LLM 输出适配为企微自建应用消息格式。
 
-    策略：含 Markdown 语法 → markdown_v2，纯文本 → text
+    策略：含 Markdown 语法 → markdown，纯文本 → text
 
     Returns:
-        (adapted_text, msgtype) — msgtype 为 "markdown_v2" 或 "text"
+        (adapted_text, msgtype) — msgtype 为 "markdown" 或 "text"
     """
     if not text:
         return (text, "text")
@@ -99,7 +99,7 @@ def adapt_for_app(text: str) -> Tuple[str, str]:
     cleaned = _remove_strikethrough(cleaned)
 
     if _has_markdown(cleaned):
-        return (cleaned, "markdown_v2")
+        return (cleaned, "markdown")
 
     return (cleaned, "text")
 

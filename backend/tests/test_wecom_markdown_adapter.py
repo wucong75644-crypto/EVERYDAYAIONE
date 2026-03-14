@@ -73,27 +73,27 @@ class TestAdaptForApp:
 
     def test_markdown_heading_detected(self):
         text, msgtype = adapt_for_app("# 标题\n\n正文内容")
-        assert msgtype == "markdown_v2"
+        assert msgtype == "markdown"
 
     def test_markdown_bold_detected(self):
         text, msgtype = adapt_for_app("这是 **加粗** 内容")
-        assert msgtype == "markdown_v2"
+        assert msgtype == "markdown"
 
     def test_code_block_detected(self):
         text, msgtype = adapt_for_app("示例：\n```python\nprint('hi')\n```")
-        assert msgtype == "markdown_v2"
+        assert msgtype == "markdown"
 
     def test_table_detected(self):
         text, msgtype = adapt_for_app("| A | B |\n|---|---|\n| 1 | 2 |")
-        assert msgtype == "markdown_v2"
+        assert msgtype == "markdown"
 
     def test_list_detected(self):
         text, msgtype = adapt_for_app("要点：\n- 第一\n- 第二")
-        assert msgtype == "markdown_v2"
+        assert msgtype == "markdown"
 
     def test_link_detected(self):
         text, msgtype = adapt_for_app("参考 [文档](https://example.com)")
-        assert msgtype == "markdown_v2"
+        assert msgtype == "markdown"
 
     def test_mermaid_removed(self):
         text, msgtype = adapt_for_app("# 标题\n\n```mermaid\ngraph TD\nA-->B\n```")
