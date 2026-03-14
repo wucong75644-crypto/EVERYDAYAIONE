@@ -4,11 +4,12 @@
 企微长连接协议要求在处理期间定期发送 stream 更新以保持 req_id 活跃。
 不发送保活会导致 req_id 失效，后续回复被静默丢弃。
 
-保活间隔 2 秒，与真实处理阶段大致匹配：
-  0s  正在理解你的问题...   ← 初始占位（_handle_text 直接发送）
-  2s  正在回忆相关记忆...   ← Mem0 初始化中
-  4s  正在思考回复...       ← Brain 调用中
-  6s+ 正在生成回复...       ← 生成阶段
+保活间隔 2 秒，循环播放思考动画：
+  0s  🤔 思考中      ← 初始占位
+  2s  🤔 思考中 .    ← 保活 #1
+  4s  🤔 思考中 ..   ← 保活 #2
+  6s  🤔 思考中 ...  ← 保活 #3
+  8s  🤔 思考中 .    ← 循环
 """
 
 import asyncio
@@ -19,11 +20,11 @@ from loguru import logger
 KEEPALIVE_INTERVAL = 2    # 保活间隔（秒），留余量防止事件循环延迟
 KEEPALIVE_TIMEOUT = 120   # 安全超时上限（秒）
 
-# 处理阶段进度文案（每次保活自动推进到下一阶段）
+# 思考动画帧（循环播放）
 PROGRESS_STAGES = [
-    "正在回忆相关记忆...",   # 2s  — Mem0 初始化
-    "正在思考回复...",       # 4s  — Brain 调用
-    "正在生成回复...",       # 6s+ — 生成阶段（循环使用）
+    "🤔 思考中 .",
+    "🤔 思考中 ..",
+    "🤔 思考中 ...",
 ]
 
 
@@ -54,11 +55,9 @@ class StreamKeepAlive:
                 pass
 
     def _next_status(self) -> str:
-        if self._stage_index < len(PROGRESS_STAGES):
-            text = PROGRESS_STAGES[self._stage_index]
-            self._stage_index += 1
-            return text
-        return PROGRESS_STAGES[-1]
+        text = PROGRESS_STAGES[self._stage_index % len(PROGRESS_STAGES)]
+        self._stage_index += 1
+        return text
 
     async def _loop(self) -> None:
         elapsed = 0

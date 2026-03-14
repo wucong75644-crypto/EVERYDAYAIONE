@@ -119,7 +119,7 @@ class WecomMessageService(WecomAIMixin):
                 stream_id = str(uuid.uuid4())
                 reply_ctx.active_stream_id = stream_id
                 await self._push_stream_chunk(
-                    reply_ctx, stream_id, "正在理解你的问题...", finish=False,
+                    reply_ctx, stream_id, "🤔 思考中", finish=False,
                 )
                 keepalive = StreamKeepAlive(reply_ctx, self._push_stream_chunk)
                 await keepalive.start()
