@@ -143,8 +143,7 @@ class WecomWSClient:
             try:
                 async with websockets.connect(
                     WSS_URL,
-                    ping_interval=20,    # 发送WS Ping帧保持连接活性
-                    ping_timeout=None,   # 企微服务器不回Pong，禁用超时检测
+                    ping_interval=None,  # 企微服务器不支持WS Ping/Pong帧（返回protocol error）
                     compression=None,    # 企微服务器不支持permessage-deflate，必须禁用
                     close_timeout=10,
                 ) as ws:
