@@ -261,6 +261,8 @@ class WecomWSClient:
                 asyncio.create_task(self._handle_event_callback(data))
             elif cmd == WecomCommand.PING:
                 logger.debug(f"Wecom heartbeat ACK received | req_id={data.get('headers', {}).get('req_id', '?')[:20]}")
+            else:
+                logger.debug(f"Wecom WS unknown frame | raw={str(raw)[:300]}")
 
     # ── 消息处理 ──────────────────────────────────────────
 
