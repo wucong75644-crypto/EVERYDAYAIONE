@@ -1,0 +1,38 @@
+[Unit]
+Description=EVERYDAYAI WeChat Work Smart Robot WebSocket Service
+After=network.target everydayai-backend.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/var/www/everydayai/backend
+
+# 环境变量
+Environment="PATH=/var/www/everydayai/backend/venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/var/www/everydayai/backend/.env
+
+# 启动命令（单进程，避免多连接竞争）
+ExecStart=/var/www/everydayai/backend/venv/bin/python wecom_ws_runner.py
+
+# 优雅关闭
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# 自动重启配置
+Restart=always
+RestartSec=5
+StartLimitInterval=600
+StartLimitBurst=10
+
+# 资源限制
+LimitNOFILE=65535
+
+# 日志配置
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=everydayai-wecom
+
+[Install]
+WantedBy=multi-user.target

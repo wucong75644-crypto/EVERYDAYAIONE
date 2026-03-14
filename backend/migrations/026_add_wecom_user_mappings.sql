@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS wecom_user_mappings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     wecom_userid VARCHAR(64) NOT NULL,
     corp_id VARCHAR(64) NOT NULL,
-    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     channel VARCHAR(20) NOT NULL DEFAULT 'smart_robot',
     wecom_nickname VARCHAR(128),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
