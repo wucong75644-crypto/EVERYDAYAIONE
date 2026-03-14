@@ -23,6 +23,7 @@ from schemas.wecom import WecomCommand
 
 WSS_URL = "wss://openws.work.weixin.qq.com"
 HEARTBEAT_INTERVAL = 30          # 心跳间隔（秒）
+RECV_TIMEOUT = 90                # 接收超时（秒）：超过此时间无数据则判定连接已死
 RECONNECT_DELAY_INIT = 5         # 初始重连延迟（秒）
 RECONNECT_DELAY_MAX = 60         # 最大重连延迟（秒）
 MSG_DEDUP_CAPACITY = 10000       # 消息去重缓存上限
@@ -49,6 +50,7 @@ class WecomWSClient:
         self._should_run = True
         self._processed_msgs: OrderedDict[str, None] = OrderedDict()
         self._connect_task: Optional[asyncio.Task] = None
+        self._last_recv_time: float = 0  # 最后收到数据的时间戳
 
     # ── 公开接口 ──────────────────────────────────────────
 
@@ -147,6 +149,7 @@ class WecomWSClient:
                     self._ws = ws
                     await self._subscribe()
                     self._is_connected = True
+                    self._last_recv_time = asyncio.get_event_loop().time()
                     delay = RECONNECT_DELAY_INIT  # 连接成功，重置延迟
 
                     logger.info("Wecom WS connected and subscribed")
@@ -192,9 +195,23 @@ class WecomWSClient:
             )
 
     async def _heartbeat_loop(self) -> None:
-        """定时发送心跳（先发后sleep + 连续失败检测）"""
+        """定时发送心跳 + 接收超时检测（替代WS Ping/Pong）"""
         consecutive_failures = 0
         while self._is_connected and self._should_run:
+            # 死连接检测：send可能成功（TCP半开），但如果长时间没收到数据则连接已死
+            now = asyncio.get_event_loop().time()
+            if self._last_recv_time and (now - self._last_recv_time) > RECV_TIMEOUT:
+                logger.error(
+                    f"Wecom WS: no data received for {int(now - self._last_recv_time)}s, "
+                    "force closing to trigger reconnect"
+                )
+                self._is_connected = False
+                try:
+                    await self._ws.close()
+                except Exception:
+                    pass
+                break
+
             if self._ws and self._is_connected:
                 ping = {
                     "cmd": WecomCommand.PING,
@@ -226,6 +243,7 @@ class WecomWSClient:
     async def _receive_loop(self) -> None:
         """接收并分发消息（不阻塞，消息处理在独立 task 中执行）"""
         async for raw in self._ws:
+            self._last_recv_time = asyncio.get_event_loop().time()
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError:
