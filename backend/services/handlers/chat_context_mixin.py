@@ -29,6 +29,7 @@ class ChatContextMixin:
         router_search_context: Optional[str] = None,
         prefetched_summary: Optional[str] = None,
         prefetched_memory: Optional[str] = None,
+        user_location: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """组装发送给 LLM 的完整消息列表"""
         image_urls = self._extract_image_urls(content)
@@ -99,6 +100,10 @@ class ChatContextMixin:
         # 当前日期时间注入（让模型知道"今天"是哪天）
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
         messages.insert(0, {"role": "system", "content": f"当前时间：{now_str}"})
+
+        # 用户位置注入（IP 定位，辅助天气/本地查询）
+        if user_location:
+            messages.insert(0, {"role": "system", "content": f"用户所在位置：{user_location}"})
 
         # 思考语言指令（让推理模型的 thinking 过程使用中文）
         messages.insert(

@@ -493,3 +493,94 @@ class TestStreamOptimizations:
         )
 
         assert captured_kwargs.get("prefetched_memory") == "用户喜欢Python"
+
+
+# -- TestUserLocationPassthrough --
+
+
+class TestUserLocationPassthrough:
+    """_stream_generate 中 _user_location 从 _params 透传到 _build_llm_messages"""
+
+    @pytest.mark.asyncio
+    @patch("services.adapters.factory.create_chat_adapter")
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_user_location_passed_to_build_llm(self, mock_ws, mock_factory):
+        """_params['_user_location'] → _build_llm_messages(user_location=...)"""
+        handler = _make_handler()
+        captured_kwargs = {}
+        original_build = AsyncMock(return_value=[
+            {"role": "user", "content": "天气"},
+        ])
+
+        async def capture_build(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return await original_build(*args, **kwargs)
+
+        handler._build_llm_messages = capture_build
+        handler.on_complete = AsyncMock()
+        handler._dispatch_post_tasks = MagicMock()
+
+        async def mock_stream(**kwargs):
+            yield StreamChunk(
+                content="晴天", finish_reason="stop",
+                prompt_tokens=10, completion_tokens=2,
+            )
+
+        mock_adapter = MagicMock()
+        mock_adapter.stream_chat = mock_stream
+        mock_adapter.close = AsyncMock()
+        mock_adapter.estimate_cost_unified.return_value = CostEstimate(
+            model="test", estimated_cost_usd=Decimal("0"), estimated_credits=1,
+        )
+        mock_factory.return_value = mock_adapter
+        mock_ws.send_to_task_subscribers = AsyncMock()
+
+        await handler._stream_generate(
+            task_id="t1", message_id="m1", conversation_id="c1",
+            user_id="u1", content=[TextPart(text="天气")], model_id="test",
+            _params={"_user_location": "浙江省金华市"},
+        )
+
+        assert captured_kwargs.get("user_location") == "浙江省金华市"
+
+    @pytest.mark.asyncio
+    @patch("services.adapters.factory.create_chat_adapter")
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_no_user_location_passes_none(self, mock_ws, mock_factory):
+        """_params 无 _user_location → user_location=None"""
+        handler = _make_handler()
+        captured_kwargs = {}
+        original_build = AsyncMock(return_value=[
+            {"role": "user", "content": "hi"},
+        ])
+
+        async def capture_build(*args, **kwargs):
+            captured_kwargs.update(kwargs)
+            return await original_build(*args, **kwargs)
+
+        handler._build_llm_messages = capture_build
+        handler.on_complete = AsyncMock()
+        handler._dispatch_post_tasks = MagicMock()
+
+        async def mock_stream(**kwargs):
+            yield StreamChunk(
+                content="ok", finish_reason="stop",
+                prompt_tokens=5, completion_tokens=1,
+            )
+
+        mock_adapter = MagicMock()
+        mock_adapter.stream_chat = mock_stream
+        mock_adapter.close = AsyncMock()
+        mock_adapter.estimate_cost_unified.return_value = CostEstimate(
+            model="test", estimated_cost_usd=Decimal("0"), estimated_credits=1,
+        )
+        mock_factory.return_value = mock_adapter
+        mock_ws.send_to_task_subscribers = AsyncMock()
+
+        await handler._stream_generate(
+            task_id="t1", message_id="m1", conversation_id="c1",
+            user_id="u1", content=[TextPart(text="hi")], model_id="test",
+            _params={},
+        )
+
+        assert captured_kwargs.get("user_location") is None

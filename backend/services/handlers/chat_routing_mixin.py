@@ -153,6 +153,7 @@ class ChatRoutingMixin:
             try:
                 result = await agent.run(
                     content, thinking_mode=thinking_mode, task_id=task_id,
+                    user_location=params.get("_user_location"),
                 )
                 logger.info(
                     f"Agent loop completed | type={result.generation_type.value} | "

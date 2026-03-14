@@ -823,3 +823,92 @@ class TestBuildLlmMessagesPrefetchedMemory:
         mock_build.assert_called_once()
         memory_msgs = [m for m in messages if m.get("content") == "记忆内容"]
         assert len(memory_msgs) == 1
+
+
+# ============ user_location 注入测试 ============
+
+
+class TestBuildLlmMessagesUserLocation:
+    """user_location 参数注入系统提示词测试"""
+
+    @pytest.mark.asyncio
+    async def test_location_injected_when_provided(self, chat_handler, mock_db):
+        """传入 user_location 时，注入位置系统消息"""
+        mock_db.set_table_data("messages", [])
+
+        with patch.object(
+            chat_handler, "_build_memory_prompt",
+            new_callable=AsyncMock, return_value=None,
+        ), patch.object(
+            chat_handler, "_get_context_summary",
+            new_callable=AsyncMock, return_value=None,
+        ):
+            messages = await chat_handler._build_llm_messages(
+                content=[{"type": "text", "text": "今天天气怎么样"}],
+                user_id="u1",
+                conversation_id="conv1",
+                text_content="今天天气怎么样",
+                user_location="浙江省金华市",
+            )
+
+        location_msgs = [
+            m for m in messages
+            if isinstance(m.get("content"), str)
+            and "用户所在位置：浙江省金华市" in m["content"]
+        ]
+        assert len(location_msgs) == 1
+        assert location_msgs[0]["role"] == "system"
+
+    @pytest.mark.asyncio
+    async def test_no_location_when_none(self, chat_handler, mock_db):
+        """user_location 为 None 时，不注入位置消息"""
+        mock_db.set_table_data("messages", [])
+
+        with patch.object(
+            chat_handler, "_build_memory_prompt",
+            new_callable=AsyncMock, return_value=None,
+        ), patch.object(
+            chat_handler, "_get_context_summary",
+            new_callable=AsyncMock, return_value=None,
+        ):
+            messages = await chat_handler._build_llm_messages(
+                content=[{"type": "text", "text": "你好"}],
+                user_id="u1",
+                conversation_id="conv1",
+                text_content="你好",
+                user_location=None,
+            )
+
+        location_msgs = [
+            m for m in messages
+            if isinstance(m.get("content"), str)
+            and "用户所在位置" in m["content"]
+        ]
+        assert len(location_msgs) == 0
+
+    @pytest.mark.asyncio
+    async def test_location_not_injected_when_empty(self, chat_handler, mock_db):
+        """user_location 为空字符串时，不注入位置消息"""
+        mock_db.set_table_data("messages", [])
+
+        with patch.object(
+            chat_handler, "_build_memory_prompt",
+            new_callable=AsyncMock, return_value=None,
+        ), patch.object(
+            chat_handler, "_get_context_summary",
+            new_callable=AsyncMock, return_value=None,
+        ):
+            messages = await chat_handler._build_llm_messages(
+                content=[{"type": "text", "text": "你好"}],
+                user_id="u1",
+                conversation_id="conv1",
+                text_content="你好",
+                user_location="",
+            )
+
+        location_msgs = [
+            m for m in messages
+            if isinstance(m.get("content"), str)
+            and "用户所在位置" in m["content"]
+        ]
+        assert len(location_msgs) == 0

@@ -217,12 +217,14 @@ class ChatHandler(ChatRoutingMixin, ChatStreamSupportMixin, ChatContextMixin, Ba
             text_content = self._extract_text_content(content)
             prefetched_summary = (_params or {}).get("_prefetched_summary")
             prefetched_memory = (_params or {}).get("_prefetched_memory")
+            user_location = (_params or {}).get("_user_location")
             messages = await self._build_llm_messages(
                 content, user_id, conversation_id, text_content,
                 router_system_prompt=router_system_prompt,
                 router_search_context=router_search_context,
                 prefetched_summary=prefetched_summary,
                 prefetched_memory=prefetched_memory,
+                user_location=user_location,
             )
 
             # 3. 创建适配器并流式生成
