@@ -222,6 +222,8 @@ class WecomWSClient:
                         self._ws.send(json.dumps(ping)), timeout=5,
                     )
                     consecutive_failures = 0
+                    since_recv = int(now - self._last_recv_time) if self._last_recv_time else -1
+                    logger.debug(f"Wecom heartbeat sent | since_last_recv={since_recv}s")
                 except Exception as e:
                     consecutive_failures += 1
                     logger.warning(
@@ -251,12 +253,14 @@ class WecomWSClient:
                 continue
 
             cmd = data.get("cmd")
+            if cmd and cmd != WecomCommand.PING:
+                logger.debug(f"Wecom WS frame | cmd={cmd}")
             if cmd == WecomCommand.MSG_CALLBACK:
                 asyncio.create_task(self._handle_msg_callback(data))
             elif cmd == WecomCommand.EVENT_CALLBACK:
                 asyncio.create_task(self._handle_event_callback(data))
             elif cmd == WecomCommand.PING:
-                pass  # 心跳响应，忽略
+                logger.debug(f"Wecom heartbeat ACK received | req_id={data.get('headers', {}).get('req_id', '?')[:20]}")
 
     # ── 消息处理 ──────────────────────────────────────────
 
