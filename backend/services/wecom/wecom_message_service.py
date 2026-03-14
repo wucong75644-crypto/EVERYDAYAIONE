@@ -109,24 +109,34 @@ class WecomMessageService(WecomAIMixin):
         reply_ctx: WecomReplyContext,
     ) -> None:
         """文本消息处理：Agent Loop 路由 → 按类型分发"""
+        from services.wecom.stream_keepalive import StreamKeepAlive
+
+        keepalive: StreamKeepAlive | None = None
         try:
-            # 立即发送"正在思考..."占位（保持 req_id 活跃，防止企微超时丢弃回复）
+            # 立即发送占位 + 启动保活（每 3 秒更新进度，防止 req_id 失效）
             if reply_ctx.channel == "smart_robot" and reply_ctx.ws_client:
                 import uuid
                 stream_id = str(uuid.uuid4())
                 reply_ctx.active_stream_id = stream_id
                 await self._push_stream_chunk(
-                    reply_ctx, stream_id, "正在思考...", finish=False,
+                    reply_ctx, stream_id, "正在理解你的问题...", finish=False,
                 )
+                keepalive = StreamKeepAlive(reply_ctx, self._push_stream_chunk)
+                await keepalive.start()
 
             content_parts: List[ContentPart] = [TextPart(text=text_content)]
 
-            # 并行：Agent Loop + 记忆预取
+            # 并行：Agent Loop + 记忆预取（保活在后台持续运行）
             agent_raw, memory_raw = await asyncio.gather(
                 self._run_agent_loop(user_id, conversation_id, content_parts),
                 self._build_memory_prompt(user_id, text_content),
                 return_exceptions=True,
             )
+
+            # 停止保活（即将发送真实内容）
+            if keepalive:
+                await keepalive.stop()
+                keepalive = None
 
             # Agent Loop 失败 → 兜底纯文本聊天
             if isinstance(agent_raw, BaseException):
@@ -167,6 +177,9 @@ class WecomMessageService(WecomAIMixin):
         except Exception as e:
             logger.error(f"Wecom _handle_text failed | user_id={user_id} | error={e}")
             await self._reply_text(reply_ctx, "生成回复时遇到了问题，请稍后再试。")
+        finally:
+            if keepalive:
+                await keepalive.stop()
 
     # ── 对话管理 ──────────────────────────────────────────
 
