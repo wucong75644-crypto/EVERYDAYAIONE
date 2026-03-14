@@ -4,12 +4,12 @@
 企微长连接协议要求在处理期间定期发送 stream 更新以保持 req_id 活跃。
 不发送保活会导致 req_id 失效，后续回复被静默丢弃。
 
-保活间隔 2 秒，循环播放思考动画：
+保活间隔 1 秒，循环播放思考动画：
   0s  🤔 思考中      ← 初始占位
-  2s  🤔 思考中 .    ← 保活 #1
-  4s  🤔 思考中 ..   ← 保活 #2
-  6s  🤔 思考中 ...  ← 保活 #3
-  8s  🤔 思考中 .    ← 循环
+  1s  🤔 思考中 .    ← 保活 #1
+  2s  🤔 思考中 ..   ← 保活 #2
+  3s  🤔 思考中 ...  ← 保活 #3
+  4s  🤔 思考中 .    ← 循环
 """
 
 import asyncio
@@ -17,7 +17,7 @@ from typing import Any, Callable, Coroutine
 
 from loguru import logger
 
-KEEPALIVE_INTERVAL = 2    # 保活间隔（秒），留余量防止事件循环延迟
+KEEPALIVE_INTERVAL = 1    # 保活间隔（秒），1秒动画更流畅
 KEEPALIVE_TIMEOUT = 120   # 安全超时上限（秒）
 
 # 思考动画帧（循环播放）
@@ -29,7 +29,7 @@ PROGRESS_STAGES = [
 
 
 class StreamKeepAlive:
-    """Stream 保活：每 3 秒发送进度更新，防止企微 req_id 失效"""
+    """Stream 保活：每 1 秒发送进度更新，防止企微 req_id 失效"""
 
     def __init__(
         self,

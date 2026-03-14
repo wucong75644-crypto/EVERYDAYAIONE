@@ -141,7 +141,8 @@ class WecomWSClient:
             try:
                 async with websockets.connect(
                     WSS_URL,
-                    ping_interval=None,  # 我们自己管心跳
+                    ping_interval=20,   # WS协议级ping：保持NAT/代理会话+检测死连接
+                    ping_timeout=20,    # Pong超时：20秒无响应判定连接已死
                     close_timeout=10,
                 ) as ws:
                     self._ws = ws
@@ -192,18 +193,39 @@ class WecomWSClient:
             )
 
     async def _heartbeat_loop(self) -> None:
-        """定时发送心跳"""
+        """定时发送心跳（先发后sleep + 连续失败检测）"""
+        consecutive_failures = 0
         while self._is_connected and self._should_run:
-            await asyncio.sleep(HEARTBEAT_INTERVAL)
             if self._ws and self._is_connected:
                 ping = {
                     "cmd": WecomCommand.PING,
                     "headers": {"req_id": str(uuid.uuid4())},
                 }
-                await self._safe_send(ping)
+                try:
+                    await asyncio.wait_for(
+                        self._ws.send(json.dumps(ping)), timeout=5,
+                    )
+                    consecutive_failures = 0
+                except Exception as e:
+                    consecutive_failures += 1
+                    logger.warning(
+                        f"Wecom heartbeat failed ({consecutive_failures}): {e}"
+                    )
+                    if consecutive_failures >= 2:
+                        logger.error(
+                            "Wecom heartbeat: 2 consecutive failures, "
+                            "force closing to trigger reconnect"
+                        )
+                        self._is_connected = False
+                        try:
+                            await self._ws.close()
+                        except Exception:
+                            pass
+                        break
+            await asyncio.sleep(HEARTBEAT_INTERVAL)
 
     async def _receive_loop(self) -> None:
-        """接收并分发消息"""
+        """接收并分发消息（不阻塞，消息处理在独立 task 中执行）"""
         async for raw in self._ws:
             try:
                 data = json.loads(raw)
@@ -213,9 +235,9 @@ class WecomWSClient:
 
             cmd = data.get("cmd")
             if cmd == WecomCommand.MSG_CALLBACK:
-                await self._handle_msg_callback(data)
+                asyncio.create_task(self._handle_msg_callback(data))
             elif cmd == WecomCommand.EVENT_CALLBACK:
-                await self._handle_event_callback(data)
+                asyncio.create_task(self._handle_event_callback(data))
             elif cmd == WecomCommand.PING:
                 pass  # 心跳响应，忽略
 
@@ -265,13 +287,19 @@ class WecomWSClient:
     # ── 工具方法 ──────────────────────────────────────────
 
     async def _safe_send(self, msg: dict) -> None:
-        """安全发送 JSON 消息（捕获异常）"""
+        """安全发送 JSON 消息（失败时标记断连，触发重连）"""
         try:
             if self._ws and self._is_connected:
                 await self._ws.send(json.dumps(msg))
         except Exception as e:
             logger.warning(f"Wecom WS send failed: {e}")
             self._is_connected = False
+            # 主动关闭WS，确保 _receive_loop 退出 → 触发重连
+            if self._ws:
+                try:
+                    await self._ws.close()
+                except Exception:
+                    pass
 
     def _add_to_dedup(self, msgid: str) -> None:
         """添加 msgid 到去重缓存（LRU 淘汰）"""
