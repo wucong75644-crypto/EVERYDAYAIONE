@@ -78,6 +78,24 @@ def _normalize_dates(params: Dict[str, Any]) -> None:
         "startFinished", "endFinished",
         "timeBegin", "timeEnd",
         "startCreated", "endCreated",
+        # 波次拣货时间
+        "pickStartTime", "pickEndTime",
+        # 售后维修单
+        "timeStart", "timeEnd",
+        # 加工单
+        "modifiedStart", "modifiedEnd",
+        "productTimeStart", "productTimeEnd",
+        "finishedTimeStart", "finishedTimeEnd",
+        "createdStart", "createdEnd",
+        # 货位进出记录
+        "operateStartTime", "operateEndTime",
+        # 分销
+        "modifiedTimeStart", "modifiedTimeEnd",
+        "updateTimeBegin", "updateTimeEnd",
+        # 出入库记录
+        "operateTimeBegin", "operateTimeEnd",
+        # 库存修改时间
+        "startStockModified", "endStockModified",
     ]
     for key in date_keys:
         val = params.get(key)
