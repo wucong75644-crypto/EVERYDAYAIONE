@@ -253,16 +253,17 @@ class WecomWSClient:
                 continue
 
             cmd = data.get("cmd")
-            if cmd and cmd != WecomCommand.PING:
-                logger.debug(f"Wecom WS frame | cmd={cmd}")
+            req_id = data.get("headers", {}).get("req_id", "")
+
             if cmd == WecomCommand.MSG_CALLBACK:
                 asyncio.create_task(self._handle_msg_callback(data))
             elif cmd == WecomCommand.EVENT_CALLBACK:
                 asyncio.create_task(self._handle_event_callback(data))
-            elif cmd == WecomCommand.PING:
-                logger.debug(f"Wecom heartbeat ACK received | req_id={data.get('headers', {}).get('req_id', '?')[:20]}")
-            else:
-                logger.debug(f"Wecom WS unknown frame | raw={str(raw)[:300]}")
+            elif not cmd and req_id.startswith("ping_"):
+                # 心跳ACK：服务器回复格式为 {"headers":{"req_id":"ping_xxx"},"errcode":0,"errmsg":"ok"}
+                pass
+            elif cmd:
+                logger.debug(f"Wecom WS frame | cmd={cmd}")
 
     # ── 消息处理 ──────────────────────────────────────────
 
