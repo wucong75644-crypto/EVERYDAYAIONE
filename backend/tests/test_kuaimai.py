@@ -1764,3 +1764,551 @@ class TestBuildErpSearchTool:
         params = tool["function"]["parameters"]
         assert "query" in params["properties"]
         assert "query" in params["required"]
+
+
+# ============================================================
+# TestAllRegistryStructure — 全注册表结构验证
+# ============================================================
+
+
+class TestAllRegistryStructure:
+    """验证所有 registry 文件的 ApiEntry 结构正确性"""
+
+    @staticmethod
+    def _all_registries():
+        from services.kuaimai.registry import (
+            BASIC_REGISTRY, PRODUCT_REGISTRY, TRADE_REGISTRY,
+            AFTERSALES_REGISTRY, WAREHOUSE_REGISTRY,
+            PURCHASE_REGISTRY, DISTRIBUTION_REGISTRY, QIMEN_REGISTRY,
+        )
+        return {
+            "basic": BASIC_REGISTRY,
+            "product": PRODUCT_REGISTRY,
+            "trade": TRADE_REGISTRY,
+            "aftersales": AFTERSALES_REGISTRY,
+            "warehouse": WAREHOUSE_REGISTRY,
+            "purchase": PURCHASE_REGISTRY,
+            "distribution": DISTRIBUTION_REGISTRY,
+            "qimen": QIMEN_REGISTRY,
+        }
+
+    def test_all_entries_have_method(self):
+        """每个 ApiEntry 都有 method 字段"""
+        for cat, reg in self._all_registries().items():
+            for name, entry in reg.items():
+                assert entry.method, f"{cat}.{name} 缺少 method"
+
+    def test_all_entries_have_description(self):
+        """每个 ApiEntry 都有 description"""
+        for cat, reg in self._all_registries().items():
+            for name, entry in reg.items():
+                assert entry.description, f"{cat}.{name} 缺少 description"
+
+    def test_required_params_subset_of_param_map(self):
+        """required_params 中的 key 必须在 param_map 中存在"""
+        for cat, reg in self._all_registries().items():
+            for name, entry in reg.items():
+                pm_keys = set(entry.param_map.keys())
+                for rp in entry.required_params:
+                    assert rp in pm_keys, (
+                        f"{cat}.{name}: required_param '{rp}' "
+                        f"不在 param_map {pm_keys} 中"
+                    )
+
+    def test_formatters_exist(self):
+        """每个 entry 的 formatter 在 _FORMATTER_REGISTRY 中能找到"""
+        from services.kuaimai.formatters import _FORMATTER_REGISTRY
+        for cat, reg in self._all_registries().items():
+            for name, entry in reg.items():
+                assert entry.formatter in _FORMATTER_REGISTRY, (
+                    f"{cat}.{name}: formatter '{entry.formatter}' "
+                    f"不在 _FORMATTER_REGISTRY 中"
+                )
+
+    def test_write_entries_have_is_write_true(self):
+        """写操作 entry 的 is_write 必须为 True"""
+        write_keywords = ["create", "add", "update", "save", "cancel",
+                          "delete", "revert", "out", "receive", "halt",
+                          "unhalt", "intercept", "consign", "pack",
+                          "seed", "generate", "validate", "change",
+                          "import", "resolve", "process", "pay",
+                          "un_audit", "anti_audit", "submit"]
+        for cat, reg in self._all_registries().items():
+            for name, entry in reg.items():
+                if entry.is_write:
+                    # 写操作的 response_key 应为 None
+                    assert entry.response_key is None, (
+                        f"{cat}.{name}: 写操作 response_key 应为 None"
+                    )
+
+    def test_date_params_in_normalize_keys(self):
+        """param_map 中映射到的日期参数必须被 _normalize_dates 覆盖"""
+        from services.kuaimai.param_mapper import _normalize_dates
+        # 收集所有 _normalize_dates 支持的 key
+        test_params = {}
+        # 通过一个足够大的字典来探测支持的 key
+        candidate_keys = [
+            "startTime", "endTime",
+            "startModified", "endModified",
+            "startApplyTime", "endApplyTime",
+            "startFinished", "endFinished",
+            "timeBegin", "timeEnd",
+            "startCreated", "endCreated",
+            "pickStartTime", "pickEndTime",
+            "timeStart",
+            "modifiedStart", "modifiedEnd",
+            "productTimeStart", "productTimeEnd",
+            "finishedTimeStart", "finishedTimeEnd",
+            "createdStart", "createdEnd",
+            "operateStartTime", "operateEndTime",
+            "modifiedTimeStart", "modifiedTimeEnd",
+            "updateTimeBegin", "updateTimeEnd",
+            "operateTimeBegin", "operateTimeEnd",
+            "startStockModified", "endStockModified",
+        ]
+        for k in candidate_keys:
+            test_params[k] = "2026-01-01"
+        _normalize_dates(test_params)
+        supported_keys = {
+            k for k, v in test_params.items()
+            if v != "2026-01-01"  # 被修改 = 被支持
+        }
+
+        # 检查每个 registry 中映射到日期相关的 API 参数
+        date_indicators = ["start", "end", "time", "modified", "begin",
+                           "created", "finished", "operate", "update"]
+        for cat, reg in self._all_registries().items():
+            for name, entry in reg.items():
+                for user_key, api_key in entry.param_map.items():
+                    # 判断是否像日期参数
+                    lower = api_key.lower()
+                    is_date_like = any(d in lower for d in date_indicators)
+                    # 排除不是日期的参数（如 timeType, activeStatus 等）
+                    exclude = ["type", "status", "begin", "number",
+                               "start", "end"]
+                    if api_key in ("timeType", "activeStatus", "customType",
+                                   "operateType", "updateStart", "updateEnd",
+                                   "consignStart", "consignEnd",
+                                   # order_log 的时间是 Unix 时间戳(long)
+                                   "operateTimeStart", "operateTimeEnd"):
+                        continue
+                    if is_date_like and len(api_key) > 6:
+                        # 只检查看起来明确是日期时间的 key
+                        if api_key.endswith(("Time", "Modified",
+                                             "Start", "End",
+                                             "Begin")):
+                            assert api_key in supported_keys, (
+                                f"{cat}.{name}: 日期参数 '{api_key}' "
+                                f"(来自 {user_key}) 不在 _normalize_dates "
+                                f"支持列表中"
+                            )
+
+    def test_no_duplicate_methods_in_same_registry(self):
+        """同一 registry 中不应有重复 method"""
+        for cat, reg in self._all_registries().items():
+            methods = [e.method for e in reg.values()]
+            dups = [m for m in methods if methods.count(m) > 1]
+            assert not dups, f"{cat}: 重复 method {set(dups)}"
+
+
+# ============================================================
+# TestRegistrySpecificEntries — 关键 entry 参数验证
+# ============================================================
+
+
+class TestRegistrySpecificEntries:
+    """验证本次修改的关键 entry 参数映射"""
+
+    # ── trade.py ──────────────────────────────────────────
+
+    def test_upload_memo_flag_has_memo_and_flag(self):
+        """upload_memo_flag 必须有 memo/flag/userId 参数"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        entry = TRADE_REGISTRY["upload_memo_flag"]
+        assert entry.param_map["memo"] == "memo"
+        assert entry.param_map["flag"] == "flag"
+        assert entry.param_map["shop_id"] == "userId"
+        assert "order_id" in entry.required_params
+
+    def test_wave_sorting_query_requires_wave_id(self):
+        """wave_sorting_query 的 waveId 是必填"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        entry = TRADE_REGISTRY["wave_sorting_query"]
+        assert entry.param_map["wave_id"] == "waveId"
+        assert "wave_id" in entry.required_params
+
+    def test_order_list_has_shop_ids(self):
+        """order_list 支持 shop_ids → userIds"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        entry = TRADE_REGISTRY["order_list"]
+        assert entry.param_map["shop_ids"] == "userIds"
+
+    def test_order_list_has_order_types(self):
+        """order_list 支持 order_types → types"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        entry = TRADE_REGISTRY["order_list"]
+        assert entry.param_map["order_types"] == "types"
+
+    def test_order_list_has_query_type(self):
+        """order_list 支持 query_type → queryType"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        entry = TRADE_REGISTRY["order_list"]
+        assert entry.param_map["query_type"] == "queryType"
+
+    def test_order_log_uses_sids(self):
+        """order_log 使用 sids（复数）"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        entry = TRADE_REGISTRY["order_log"]
+        assert entry.param_map["system_ids"] == "sids"
+
+    # ── aftersales.py ─────────────────────────────────────
+
+    def test_aftersale_list_defaults_asversion_2(self):
+        """aftersale_list 默认 asVersion=2"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        entry = AFTERSALES_REGISTRY["aftersale_list"]
+        assert entry.defaults.get("asVersion") == 2
+
+    def test_aftersale_list_has_user_ids(self):
+        """aftersale_list 支持 shop_ids → userIds"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        entry = AFTERSALES_REGISTRY["aftersale_list"]
+        assert entry.param_map["shop_ids"] == "userIds"
+
+    def test_workorder_cancel_uses_workOrderIds(self):
+        """workorder_cancel 使用 workOrderIds（非 workOrderNo）"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        entry = AFTERSALES_REGISTRY["workorder_cancel"]
+        assert entry.param_map["work_order_ids"] == "workOrderIds"
+        assert "work_order_ids" in entry.required_params
+
+    def test_workorder_resolve_uses_workOrderIds(self):
+        """workorder_resolve 使用 workOrderIds"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        entry = AFTERSALES_REGISTRY["workorder_resolve"]
+        assert entry.param_map["work_order_ids"] == "workOrderIds"
+
+    def test_workorder_tag_update_has_params(self):
+        """workorder_tag_update 有 type/workOrderId/tagNames 参数"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        entry = AFTERSALES_REGISTRY["workorder_tag_update"]
+        assert entry.param_map["type"] == "type"
+        assert entry.param_map["work_order_id"] == "workOrderId"
+        assert "type" in entry.required_params
+        assert "work_order_id" in entry.required_params
+
+    def test_refund_warehouse_has_wangwang(self):
+        """refund_warehouse 支持 wangwang → wangwangNum"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        entry = AFTERSALES_REGISTRY["refund_warehouse"]
+        assert entry.param_map["wangwang"] == "wangwangNum"
+
+    # ── purchase.py ───────────────────────────────────────
+
+    def test_purchase_order_history_requires_dates(self):
+        """purchase_order_history 的 start_date/end_date 是必填"""
+        from services.kuaimai.registry import PURCHASE_REGISTRY
+        entry = PURCHASE_REGISTRY["purchase_order_history"]
+        assert "start_date" in entry.required_params
+        assert "end_date" in entry.required_params
+
+    def test_purchase_order_list_uses_code(self):
+        """purchase_order_list 使用 code（非 purchaseNo）"""
+        from services.kuaimai.registry import PURCHASE_REGISTRY
+        entry = PURCHASE_REGISTRY["purchase_order_list"]
+        assert entry.param_map["code"] == "code"
+
+    def test_purchase_order_detail_uses_id(self):
+        """purchase_order_detail 使用 id（非 purchaseId）"""
+        from services.kuaimai.registry import PURCHASE_REGISTRY
+        entry = PURCHASE_REGISTRY["purchase_order_detail"]
+        assert entry.param_map["purchase_id"] == "id"
+
+    # ── product.py ────────────────────────────────────────
+
+    def test_stock_in_out_no_biz_type(self):
+        """stock_in_out 不应有 biz_type（已移除）"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["stock_in_out"]
+        assert "biz_type" not in entry.param_map
+
+    def test_stock_in_out_has_order_type(self):
+        """stock_in_out 使用 order_type → orderType"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["stock_in_out"]
+        assert entry.param_map["order_type"] == "orderType"
+
+    def test_stock_in_out_time_params(self):
+        """stock_in_out 时间参数使用 operateTimeBegin/End"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["stock_in_out"]
+        assert entry.param_map["start_date"] == "operateTimeBegin"
+        assert entry.param_map["end_date"] == "operateTimeEnd"
+
+    def test_history_cost_price_requires_ids(self):
+        """history_cost_price 的 item_id 和 sku_id 是必填"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["history_cost_price"]
+        assert "item_id" in entry.required_params
+        assert "sku_id" in entry.required_params
+
+    # ── distribution.py ───────────────────────────────────
+
+    def test_distribution_entries_have_param_maps(self):
+        """distribution 所有查询 entry 都有 param_map"""
+        from services.kuaimai.registry import DISTRIBUTION_REGISTRY
+        query_entries = [
+            "distributor_item_list", "distributor_item_detail",
+            "supplier_view_item_list", "supplier_view_item_detail",
+            "distributor_list",
+        ]
+        for name in query_entries:
+            entry = DISTRIBUTION_REGISTRY[name]
+            assert entry.param_map, (
+                f"distribution.{name} param_map 不应为空"
+            )
+
+    def test_distributor_item_list_requires_ids(self):
+        """distributor_item_list 必填 distributor/supplier company ID"""
+        from services.kuaimai.registry import DISTRIBUTION_REGISTRY
+        entry = DISTRIBUTION_REGISTRY["distributor_item_list"]
+        assert "distributor_company_id" in entry.required_params
+        assert "supplier_company_id" in entry.required_params
+
+    # ── warehouse.py ──────────────────────────────────────
+
+    def test_allocate_list_uses_code(self):
+        """allocate_list 使用 code（非 allocateNo）"""
+        from services.kuaimai.registry import WAREHOUSE_REGISTRY
+        entry = WAREHOUSE_REGISTRY["allocate_list"]
+        assert entry.param_map["code"] == "code"
+
+    def test_allocate_list_time_params(self):
+        """allocate_list 使用 startModified/endModified"""
+        from services.kuaimai.registry import WAREHOUSE_REGISTRY
+        entry = WAREHOUSE_REGISTRY["allocate_list"]
+        assert entry.param_map["start_date"] == "startModified"
+        assert entry.param_map["end_date"] == "endModified"
+
+
+# ============================================================
+# TestNewDateKeys — 新增日期 key 归一化
+# ============================================================
+
+
+class TestNewDateKeys:
+    """验证新增的 16 个日期 key 能被 _normalize_dates 正确处理"""
+
+    def _check_start(self, key):
+        from services.kuaimai.param_mapper import _normalize_dates
+        params = {key: "2026-03-14"}
+        _normalize_dates(params)
+        assert params[key] == "2026-03-14 00:00:00", (
+            f"{key} 应补全为 00:00:00"
+        )
+
+    def _check_end(self, key):
+        from services.kuaimai.param_mapper import _normalize_dates
+        params = {key: "2026-03-14"}
+        _normalize_dates(params)
+        assert params[key] == "2026-03-14 23:59:59", (
+            f"{key} 应补全为 23:59:59"
+        )
+
+    def test_timeStart(self):
+        self._check_start("timeStart")
+
+    def test_timeEnd(self):
+        self._check_end("timeEnd")
+
+    def test_modifiedStart(self):
+        self._check_start("modifiedStart")
+
+    def test_modifiedEnd(self):
+        self._check_end("modifiedEnd")
+
+    def test_productTimeStart(self):
+        self._check_start("productTimeStart")
+
+    def test_productTimeEnd(self):
+        self._check_end("productTimeEnd")
+
+    def test_finishedTimeStart(self):
+        self._check_start("finishedTimeStart")
+
+    def test_finishedTimeEnd(self):
+        self._check_end("finishedTimeEnd")
+
+    def test_createdStart(self):
+        self._check_start("createdStart")
+
+    def test_createdEnd(self):
+        self._check_end("createdEnd")
+
+    def test_operateStartTime(self):
+        self._check_start("operateStartTime")
+
+    def test_operateEndTime(self):
+        self._check_end("operateEndTime")
+
+    def test_modifiedTimeStart(self):
+        self._check_start("modifiedTimeStart")
+
+    def test_modifiedTimeEnd(self):
+        self._check_end("modifiedTimeEnd")
+
+    def test_updateTimeBegin(self):
+        self._check_start("updateTimeBegin")
+
+    def test_updateTimeEnd(self):
+        self._check_end("updateTimeEnd")
+
+    def test_operateTimeBegin(self):
+        self._check_start("operateTimeBegin")
+
+    def test_operateTimeEnd(self):
+        self._check_end("operateTimeEnd")
+
+    def test_startStockModified(self):
+        self._check_start("startStockModified")
+
+    def test_endStockModified(self):
+        self._check_end("endStockModified")
+
+
+# ============================================================
+# TestBuildErpTools — 工具定义完整性
+# ============================================================
+
+
+class TestBuildErpTools:
+    """验证 build_erp_tools 生成的工具定义结构"""
+
+    def test_returns_8_tools(self):
+        """build_erp_tools 返回 8 个工具"""
+        from config.erp_tools import build_erp_tools
+        tools = build_erp_tools()
+        assert len(tools) == 8
+
+    def test_all_query_tools_have_page_size(self):
+        """所有查询工具都有 page_size 参数"""
+        from config.erp_tools import build_erp_tools
+        tools = build_erp_tools()
+        for tool in tools[:7]:  # 前 7 个是查询工具
+            props = tool["function"]["parameters"]["properties"]
+            assert "page_size" in props, (
+                f"{tool['function']['name']} 缺少 page_size"
+            )
+
+    def test_all_query_tools_have_page(self):
+        """所有查询工具都有 page 参数"""
+        from config.erp_tools import build_erp_tools
+        tools = build_erp_tools()
+        for tool in tools[:7]:
+            props = tool["function"]["parameters"]["properties"]
+            assert "page" in props, (
+                f"{tool['function']['name']} 缺少 page"
+            )
+
+    def test_trade_query_has_shop_ids(self):
+        """erp_trade_query 有 shop_ids 参数"""
+        from config.erp_tools import build_erp_tools
+        tools = build_erp_tools()
+        trade_tool = [t for t in tools
+                      if t["function"]["name"] == "erp_trade_query"][0]
+        props = trade_tool["function"]["parameters"]["properties"]
+        assert "shop_ids" in props
+
+    def test_trade_query_has_order_types(self):
+        """erp_trade_query 有 order_types 参数"""
+        from config.erp_tools import build_erp_tools
+        tools = build_erp_tools()
+        trade_tool = [t for t in tools
+                      if t["function"]["name"] == "erp_trade_query"][0]
+        props = trade_tool["function"]["parameters"]["properties"]
+        assert "order_types" in props
+
+    def test_product_query_has_sku_outer_id(self):
+        """erp_product_query 有 sku_outer_id 参数"""
+        from config.erp_tools import build_erp_tools
+        tools = build_erp_tools()
+        prod_tool = [t for t in tools
+                     if t["function"]["name"] == "erp_product_query"][0]
+        props = prod_tool["function"]["parameters"]["properties"]
+        assert "sku_outer_id" in props
+
+    def test_execute_tool_has_category_enum(self):
+        """erp_execute 有 category enum"""
+        from config.erp_tools import build_erp_tools
+        tools = build_erp_tools()
+        exec_tool = [t for t in tools
+                     if t["function"]["name"] == "erp_execute"][0]
+        props = exec_tool["function"]["parameters"]["properties"]
+        assert "category" in props
+        assert "enum" in props["category"]
+
+    def test_action_desc_includes_required_markers(self):
+        """action 描述中包含 * 标记必填参数"""
+        from config.erp_tools import build_erp_tools
+        tools = build_erp_tools()
+        trade_tool = [t for t in tools
+                      if t["function"]["name"] == "erp_trade_query"][0]
+        action_desc = trade_tool["function"]["parameters"][
+            "properties"]["action"]["description"]
+        # wave_sorting_query 有 required wave_id
+        assert "*wave_id" in action_desc
+
+
+# ============================================================
+# TestFormatShopList — 店铺列表格式化
+# ============================================================
+
+
+class TestFormatShopList:
+    """验证 format_shop_list 输出包含 ID"""
+
+    def test_empty_list(self):
+        """空列表→提示无数据"""
+        from services.kuaimai.formatters.basic import format_shop_list
+        result = format_shop_list({"list": []}, None)
+        assert "暂无" in result
+
+    def test_includes_shop_id(self):
+        """输出包含店铺 ID"""
+        from services.kuaimai.formatters.basic import format_shop_list
+        data = {
+            "list": [
+                {"name": "京东旗舰店", "id": 12345,
+                 "source": "jd", "active": 1},
+            ]
+        }
+        result = format_shop_list(data, None)
+        assert "ID: 12345" in result
+        assert "京东旗舰店" in result
+
+    def test_includes_platform(self):
+        """输出包含平台信息"""
+        from services.kuaimai.formatters.basic import format_shop_list
+        data = {
+            "list": [
+                {"name": "天猫店", "id": 100, "source": "tmall",
+                 "active": 1},
+            ]
+        }
+        result = format_shop_list(data, None)
+        assert "平台: tmall" in result
+
+    def test_multiple_shops(self):
+        """多个店铺全部输出"""
+        from services.kuaimai.formatters.basic import format_shop_list
+        data = {
+            "list": [
+                {"name": "店铺A", "id": 1, "active": 1},
+                {"name": "店铺B", "id": 2, "active": 0},
+            ]
+        }
+        result = format_shop_list(data, None)
+        assert "共 2 个店铺" in result
+        assert "店铺A" in result
+        assert "店铺B" in result
+        assert "停用" in result

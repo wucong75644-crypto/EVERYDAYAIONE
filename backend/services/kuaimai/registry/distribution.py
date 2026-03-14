@@ -11,39 +11,90 @@ DISTRIBUTION_REGISTRY = {
     "distributor_item_list": ApiEntry(
         method="kmt.api.dms.query.page.distributor.item",
         description="分页查询供销小店商品",
+        param_map={
+            "distributor_company_id": "distributorCompanyId",
+            "supplier_company_id": "supplierCompanyId",
+            "outer_ids": "outerIds",
+            "sku_outer_ids": "skuOuterIds",
+            "title": "title",
+            "request_source": "requestSource",
+        },
+        required_params=["distributor_company_id", "supplier_company_id"],
         formatter="format_generic_list",
     ),
     "distributor_item_detail": ApiEntry(
         method="kmt.api.dms.query.detail.distributor.item",
         description="查询供销小店商品详情",
+        param_map={
+            "distributor_company_id": "distributorCompanyId",
+            "supplier_company_id": "supplierCompanyId",
+            "base_item_id": "baseItemId",
+        },
+        required_params=[
+            "distributor_company_id", "supplier_company_id", "base_item_id",
+        ],
         formatter="format_generic_detail",
         response_key=None,
     ),
     "supplier_view_item_list": ApiEntry(
         method="kmt.api.dms.query.page.distributor.item.supplier.view",
         description="供销商视角分页供销小店商品",
+        param_map={
+            "supplier_company_id": "supplierCompanyId",
+            "shop_id": "shopId",
+            "outer_ids": "outerIds",
+            "sku_outer_ids": "skuOuterIds",
+            "title": "title",
+            "start_date": "updateTimeBegin",
+            "end_date": "updateTimeEnd",
+            "request_source": "requestSource",
+        },
+        required_params=["supplier_company_id", "shop_id"],
         formatter="format_generic_list",
     ),
     "supplier_view_item_detail": ApiEntry(
         method="kmt.api.dms.query.detail.distributor.item.supplier.view",
         description="供销商视角查询供销小店商品详情",
+        param_map={
+            "supplier_company_id": "supplierCompanyId",
+            "base_item_id": "baseItemId",
+        },
+        required_params=["supplier_company_id", "base_item_id"],
         formatter="format_generic_detail",
         response_key=None,
     ),
     "distributor_list": ApiEntry(
         method="kmt.api.dms.query.distributor.list",
         description="分销商信息查询",
+        param_map={
+            "supplier_company_id": "supplierCompanyId",
+            "request_state": "requestState",
+            "start_date": "modifiedTimeStart",
+            "end_date": "modifiedTimeEnd",
+        },
+        required_params=["supplier_company_id"],
         formatter="format_generic_list",
     ),
     "pay_prompt": ApiEntry(
         method="kmt.api.dms.pay.prompt",
         description="查询在线支付方式提示文案",
+        param_map={
+            "pay_type": "payType",
+        },
         formatter="format_generic_detail",
         response_key=None,
     ),
     "item_video_info": ApiEntry(
         method="kmt.api.dms.query.item.video.info",
         description="获取最新的视频链接信息",
+        param_map={
+            "supplier_company_id": "supplierCompanyId",
+            "base_item_id": "baseItemId",
+            "video_id": "videoId",
+        },
+        required_params=[
+            "supplier_company_id", "base_item_id", "video_id",
+        ],
         formatter="format_generic_detail",
         response_key=None,
     ),
@@ -51,6 +102,16 @@ DISTRIBUTION_REGISTRY = {
     "add_distributor_money": ApiEntry(
         method="kmt.api.dms.add.distributor.money",
         description="增加分销余额",
+        param_map={
+            "supplier_company_id": "supplierCompanyId",
+            "distributor_company_id": "distributorCompanyId",
+            "payment_type": "paymentType",
+            "amount": "amount",
+        },
+        required_params=[
+            "supplier_company_id", "distributor_company_id",
+            "payment_type", "amount",
+        ],
         is_write=True,
         response_key=None,
         formatter="format_generic_detail",
@@ -59,6 +120,15 @@ DISTRIBUTION_REGISTRY = {
     "add_distribution_item": ApiEntry(
         method="kmt.api.dms.add.distribution.item.fromsupplier",
         description="添加分销商品",
+        param_map={
+            "supplier_company_id": "supplierCompanyId",
+            "distributor_company_id": "distributorCompanyId",
+            "item_outer_id": "itemOuterId",
+            "item_sku_outer_id_list": "itemSkuOuterIdList",
+        },
+        required_params=[
+            "supplier_company_id", "distributor_company_id", "item_outer_id",
+        ],
         is_write=True,
         response_key=None,
         formatter="format_generic_detail",
@@ -66,6 +136,18 @@ DISTRIBUTION_REGISTRY = {
     "add_distributor": ApiEntry(
         method="kmt.api.dms.add.distributor",
         description="注册分销商",
+        param_map={
+            "supplier_company_id": "supplierCompanyId",
+            "distributor_company_name": "distributorCompanyName",
+            "source": "source",
+            "main_phone": "mainPhone",
+            "default_user_name": "defaultUserName",
+            "default_password": "defaultPassword",
+        },
+        required_params=[
+            "supplier_company_id", "distributor_company_name",
+            "main_phone", "default_user_name", "default_password",
+        ],
         is_write=True,
         response_key=None,
         formatter="format_generic_detail",
@@ -74,6 +156,12 @@ DISTRIBUTION_REGISTRY = {
     "submit_sync_item": ApiEntry(
         method="kmt.api.dms.submit.sync.item",
         description="提交分销小店商品的同步",
+        param_map={
+            "supplier_company_id": "supplierCompanyId",
+            "shop_id": "shopId",
+            "item_type": "itemType",
+        },
+        required_params=["supplier_company_id", "shop_id"],
         is_write=True,
         response_key=None,
         formatter="format_generic_detail",
@@ -81,6 +169,11 @@ DISTRIBUTION_REGISTRY = {
     "sync_status_item": ApiEntry(
         method="kmt.api.dms.sync.status.item",
         description="获取小店商品的同步状态",
+        param_map={
+            "supplier_company_id": "supplierCompanyId",
+            "shop_id": "shopId",
+        },
+        required_params=["supplier_company_id", "shop_id"],
         formatter="format_generic_detail",
         response_key=None,
     ),

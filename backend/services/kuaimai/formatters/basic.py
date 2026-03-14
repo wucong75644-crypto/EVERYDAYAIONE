@@ -45,11 +45,14 @@ def format_shop_list(data: Any, entry: ApiEntry) -> str:
     lines = [f"共 {len(items)} 个店铺：\n"]
     for s in items:
         name = s.get("name") or ""
+        shop_id = s.get("id") or ""
         short = s.get("shortTitle") or ""
         source = s.get("source") or ""
         active = "启用" if s.get("active") == 1 else "停用"
         nick = s.get("nick") or ""
         parts = [f"- {name}"]
+        if shop_id:
+            parts.append(f"ID: {shop_id}")
         if short:
             parts.append(f"简称: {short}")
         if source:

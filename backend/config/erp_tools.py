@@ -103,6 +103,10 @@ def _build_query_tool(
             "type": "integer",
             "description": "页码（默认1）",
         },
+        "page_size": {
+            "type": "integer",
+            "description": "每页条数（默认20，仅取计数可设1，查全量可设100-200）",
+        },
     }
     return {
         "type": "function",
@@ -178,6 +182,17 @@ def build_erp_tools() -> List[Dict[str, Any]]:
                     "type": "string",
                     "description": "仓库ID",
                 },
+                "sku_outer_id": {
+                    "type": "string",
+                    "description": (
+                        "SKU商家编码（与主编码二选一，"
+                        "多个逗号隔开）"
+                    ),
+                },
+                "brand": {
+                    "type": "string",
+                    "description": "品牌名称（多个逗号隔开）",
+                },
                 "start_date": {
                     "type": "string",
                     "description": "起始日期 yyyy-MM-dd",
@@ -209,9 +224,13 @@ def build_erp_tools() -> List[Dict[str, Any]]:
                 "status": {
                     "type": "string",
                     "description": (
-                        "系统状态: WAIT_AUDIT(待审核), "
+                        "系统状态(多个逗号隔开): "
+                        "WAIT_BUYER_PAY(待付款), WAIT_AUDIT(待审核), "
+                        "WAIT_FINANCE_AUDIT(待财审), FINISHED_AUDIT(审核完成), "
+                        "WAIT_EXPRESS_PRINT(待打印快递单), WAIT_PACKAGE(待打包), "
+                        "WAIT_WEIGHT(待称重), WAIT_SEND_GOODS(待发货), "
                         "SELLER_SEND_GOODS(已发货), "
-                        "CLOSED(已关闭), FINISHED(已完成)"
+                        "FINISHED(交易完成), CLOSED(交易关闭)"
                     ),
                 },
                 "time_type": {
@@ -236,9 +255,37 @@ def build_erp_tools() -> List[Dict[str, Any]]:
                     "type": "string",
                     "description": "店铺名称筛选",
                 },
+                "shop_ids": {
+                    "type": "string",
+                    "description": (
+                        "店铺ID（多个逗号隔开，最多10组，"
+                        "通过 shop_list 查询获取）"
+                    ),
+                },
+                "order_types": {
+                    "type": "string",
+                    "description": (
+                        "订单类型（逗号分隔: 0=普通,7=合并,"
+                        "8=拆分,24=京东直发,33=分销,99=出库单）"
+                    ),
+                },
+                "tag_ids": {
+                    "type": "string",
+                    "description": (
+                        "标签ID（多个逗号隔开，最多10组，"
+                        "通过 tag_list 查询获取）"
+                    ),
+                },
                 "express_no": {
                     "type": "string",
-                    "description": "快递单号",
+                    "description": "快递单号（多个逗号隔开）",
+                },
+                "query_type": {
+                    "type": "integer",
+                    "description": (
+                        "查询范围: 0=三个月内订单(默认), "
+                        "1=归档订单(三个月前)"
+                    ),
                 },
             },
         ),
@@ -252,13 +299,32 @@ def build_erp_tools() -> List[Dict[str, Any]]:
                     "type": "string",
                     "description": "平台订单号",
                 },
-                "work_order_no": {
+                "work_order_id": {
                     "type": "string",
-                    "description": "售后工单号",
+                    "description": "售后工单号/ID",
+                },
+                "type": {
+                    "type": "string",
+                    "description": (
+                        "售后类型(仅aftersale_list): "
+                        "0=其他,1=已发货仅退款,2=退货,3=补发,"
+                        "4=换货,5=未发货仅退款,7=拒收退货,9=维修"
+                    ),
+                },
+                "shop_ids": {
+                    "type": "string",
+                    "description": (
+                        "店铺ID（多个逗号隔开，"
+                        "通过 shop_list 查询获取）"
+                    ),
                 },
                 "status": {
                     "type": "string",
-                    "description": "状态筛选",
+                    "description": (
+                        "状态筛选（不同action值不同，"
+                        "维修单用repairStatus: 0=待审核,1=待收货,"
+                        "2=待维修,3=待寄出,4=已完成,-1=已作废）"
+                    ),
                 },
                 "start_date": {
                     "type": "string",
@@ -276,21 +342,13 @@ def build_erp_tools() -> List[Dict[str, Any]]:
             "查询ERP调拨/入出库/盘点/下架/货位/加工单信息。",
             WAREHOUSE_REGISTRY,
             {
-                "order_no": {
+                "code": {
                     "type": "string",
-                    "description": "单号",
+                    "description": "单据号/业务单据号",
                 },
                 "status": {
                     "type": "string",
-                    "description": "状态筛选",
-                },
-                "outer_id": {
-                    "type": "string",
-                    "description": "商家编码",
-                },
-                "warehouse_id": {
-                    "type": "string",
-                    "description": "仓库ID",
+                    "description": "状态筛选（不同action值不同）",
                 },
                 "start_date": {
                     "type": "string",
@@ -308,17 +366,21 @@ def build_erp_tools() -> List[Dict[str, Any]]:
             "查询ERP供应商/采购单/收货单/采退单/上架单/采购建议。",
             PURCHASE_REGISTRY,
             {
-                "purchase_no": {
+                "code": {
                     "type": "string",
-                    "description": "采购单号",
+                    "description": "单据号/采购单号",
                 },
-                "supplier_name": {
+                "outer_code": {
                     "type": "string",
-                    "description": "供应商名称",
+                    "description": "外部采购订单号",
                 },
                 "status": {
                     "type": "string",
-                    "description": "状态筛选",
+                    "description": (
+                        "状态筛选（不同action值不同，"
+                        "采购单: WAIT_VERIFY=草稿,VERIFYING=待审核,"
+                        "GOODS_NOT_ARRIVED=未到货,FINISHED=已完成）"
+                    ),
                 },
                 "start_date": {
                     "type": "string",
@@ -399,9 +461,12 @@ def build_erp_tools() -> List[Dict[str, Any]]:
                     "type": "integer",
                     "description": "售后工单号(仅refund_list)",
                 },
-                "page_size": {
-                    "type": "integer",
-                    "description": "每页条数(默认20, 最小1)",
+                "tag_ids": {
+                    "type": "string",
+                    "description": (
+                        "标签ID（多个逗号隔开，"
+                        "仅order_list，通过 tag_list 查询获取）"
+                    ),
                 },
             },
         ),
