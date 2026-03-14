@@ -181,6 +181,7 @@ class WecomWSClient:
         # 等待订阅响应（errcode 可能在顶层或 body 内）
         raw = await asyncio.wait_for(self._ws.recv(), timeout=10)
         resp = json.loads(raw)
+        logger.debug(f"Wecom subscribe response: {raw[:500]}")
         errcode = resp.get("errcode")
         if errcode is None:
             errcode = resp.get("body", {}).get("errcode", -1)

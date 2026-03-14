@@ -319,7 +319,7 @@ export default memo(function MessageItem({
           className={`rounded-2xl px-5 py-3 ${
             isUser
               ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white'
-              : 'bg-white text-gray-900'
+              : 'bg-white border border-gray-200 text-gray-900'
           }`}
         >
           {/* 思考过程折叠块（仅 AI 消息） */}

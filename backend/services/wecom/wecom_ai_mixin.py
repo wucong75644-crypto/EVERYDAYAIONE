@@ -327,6 +327,11 @@ class WecomAIMixin:
         stream_id = str(uuid.uuid4())
         chunk_count = 0
 
+        # 立即发送"正在思考..."占位，后续 stream chunk 会自动替换
+        await self._push_stream_chunk(
+            reply_ctx, stream_id, "正在思考...", finish=False,
+        )
+
         async for chunk in adapter.stream_chat(messages=messages):
             if chunk.content:
                 accumulated_text += chunk.content
