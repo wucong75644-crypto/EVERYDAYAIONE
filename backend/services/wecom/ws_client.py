@@ -264,6 +264,9 @@ class WecomWSClient:
                 pass
             elif cmd:
                 logger.debug(f"Wecom WS frame | cmd={cmd}")
+            else:
+                # 捕获所有未匹配的帧，诊断5分钟断线
+                logger.info(f"Wecom WS unmatched frame | raw={str(raw)[:500]}")
 
     # ── 消息处理 ──────────────────────────────────────────
 
