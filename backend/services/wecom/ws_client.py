@@ -141,8 +141,7 @@ class WecomWSClient:
             try:
                 async with websockets.connect(
                     WSS_URL,
-                    ping_interval=20,   # WS协议级ping：保持NAT/代理会话+检测死连接
-                    ping_timeout=20,    # Pong超时：20秒无响应判定连接已死
+                    ping_interval=None,  # 企微服务器不支持WS Ping/Pong帧，用应用层心跳替代
                     close_timeout=10,
                 ) as ws:
                     self._ws = ws
