@@ -144,6 +144,7 @@ class WecomWSClient:
                 async with websockets.connect(
                     WSS_URL,
                     ping_interval=None,  # 企微服务器不支持WS Ping/Pong帧，用应用层心跳替代
+                    compression=None,    # 企微服务器不支持permessage-deflate，必须禁用
                     close_timeout=10,
                 ) as ws:
                     self._ws = ws
@@ -222,8 +223,6 @@ class WecomWSClient:
                         self._ws.send(json.dumps(ping)), timeout=5,
                     )
                     consecutive_failures = 0
-                    since_recv = int(now - self._last_recv_time) if self._last_recv_time else -1
-                    logger.debug(f"Wecom heartbeat sent | since_last_recv={since_recv}s")
                 except Exception as e:
                     consecutive_failures += 1
                     logger.warning(
@@ -264,9 +263,6 @@ class WecomWSClient:
                 pass
             elif cmd:
                 logger.debug(f"Wecom WS frame | cmd={cmd}")
-            else:
-                # 捕获所有未匹配的帧，诊断5分钟断线
-                logger.info(f"Wecom WS unmatched frame | raw={str(raw)[:500]}")
 
     # ── 消息处理 ──────────────────────────────────────────
 
