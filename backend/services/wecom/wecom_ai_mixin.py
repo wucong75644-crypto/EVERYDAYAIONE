@@ -101,6 +101,7 @@ class WecomAIMixin:
         reply_ctx: WecomReplyContext,
         agent_result: "AgentResult",
         memory_prompt: Optional[str],
+        image_urls: Optional[List[str]] = None,
     ) -> None:
         """处理 CHAT 类型：direct_reply 直接回复 / 否则流式生成"""
         if agent_result.direct_reply:
@@ -108,9 +109,12 @@ class WecomAIMixin:
             await self._update_assistant_message(message_id, agent_result.direct_reply)
             return
 
+        from schemas.message import ImagePart
         from services.intent_router import resolve_auto_model
 
-        content_parts = [TextPart(text=text_content)]
+        content_parts: List[ContentPart] = [TextPart(text=text_content)]
+        for url in (image_urls or []):
+            content_parts.append(ImagePart(url=url))
         model_id = resolve_auto_model(
             agent_result.generation_type, content_parts, agent_result.model,
         )
@@ -122,6 +126,7 @@ class WecomAIMixin:
             system_prompt=agent_result.system_prompt,
             memory_prompt=memory_prompt,
             search_context=agent_result.search_context,
+            image_urls=image_urls,
         )
 
         adapter = create_chat_adapter(model_id)
@@ -157,9 +162,8 @@ class WecomAIMixin:
         credits_needed = cost["user_credits"]
         balance = self._get_user_balance(user_id)
         if balance < credits_needed:
-            await self._reply_text(
-                reply_ctx,
-                f"积分不足，生成图片需要 {credits_needed} 积分，当前余额 {balance}。",
+            await self._reply_credits_insufficient(
+                reply_ctx, credits_needed, balance, "图片"
             )
             return
 
@@ -213,9 +217,8 @@ class WecomAIMixin:
         credits_needed = cost["user_credits"]
         balance = self._get_user_balance(user_id)
         if balance < credits_needed:
-            await self._reply_text(
-                reply_ctx,
-                f"积分不足，生成视频需要 {credits_needed} 积分，当前余额 {balance}。",
+            await self._reply_credits_insufficient(
+                reply_ctx, credits_needed, balance, "视频"
             )
             return
 
@@ -364,8 +367,9 @@ class WecomAIMixin:
         system_prompt: Optional[str] = None,
         memory_prompt: Optional[str] = None,
         search_context: Optional[str] = None,
+        image_urls: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """构建 LLM 消息列表（含路由注入的人设/记忆/搜索上下文）"""
+        """构建 LLM 消息列表（含路由注入的人设/记忆/搜索上下文 + 多模态）"""
         messages: List[Dict[str, Any]] = []
 
         if memory_prompt:
@@ -387,7 +391,20 @@ class WecomAIMixin:
             conversation_id, limit=self.settings.chat_context_limit,
         )
         messages.extend(history)
-        messages.append({"role": "user", "content": text_content})
+
+        # 构建用户消息：有图片时用多模态格式
+        if image_urls:
+            user_content: list = []
+            if text_content:
+                user_content.append({"type": "text", "text": text_content})
+            for url in image_urls:
+                user_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": url},
+                })
+            messages.append({"role": "user", "content": user_content})
+        else:
+            messages.append({"role": "user", "content": text_content})
 
         return messages
 

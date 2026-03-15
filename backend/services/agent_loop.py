@@ -300,6 +300,7 @@ class AgentLoop(AgentContextMixin):
 
         logger.info(
             f"agent_step | turn={turn} | tool={tool_name} | "
+            f"args={arguments} | "
             f"conv={self.conversation_id} | "
             f"tokens_cum={guardrails.tokens_used}"
         )

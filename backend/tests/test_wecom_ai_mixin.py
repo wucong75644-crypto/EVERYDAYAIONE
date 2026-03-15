@@ -230,6 +230,64 @@ class TestBuildChatMessages:
         search_msgs = [m for m in messages if "搜索到的相关信息" in m["content"]]
         assert len(search_msgs) == 1
 
+    @pytest.mark.asyncio
+    async def test_with_image_urls(self):
+        """有图片 → 用户消息使用多模态格式"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._get_conversation_history = AsyncMock(return_value=[])
+
+        messages = await svc._build_chat_messages(
+            user_id="u1",
+            conversation_id="c1",
+            text_content="看这张图",
+            image_urls=["https://oss.example.com/img.jpg"],
+        )
+
+        user_msg = messages[-1]
+        assert user_msg["role"] == "user"
+        # content 应是多模态列表
+        assert isinstance(user_msg["content"], list)
+        assert user_msg["content"][0] == {"type": "text", "text": "看这张图"}
+        assert user_msg["content"][1]["type"] == "image_url"
+        assert user_msg["content"][1]["image_url"]["url"] == "https://oss.example.com/img.jpg"
+
+    @pytest.mark.asyncio
+    async def test_without_image_urls_plain_text(self):
+        """无图片 → 用户消息是普通字符串"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._get_conversation_history = AsyncMock(return_value=[])
+
+        messages = await svc._build_chat_messages(
+            user_id="u1",
+            conversation_id="c1",
+            text_content="纯文本",
+        )
+
+        user_msg = messages[-1]
+        assert user_msg["role"] == "user"
+        assert user_msg["content"] == "纯文本"
+
+    @pytest.mark.asyncio
+    async def test_multiple_images(self):
+        """多张图片 → 多个 image_url 块"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._get_conversation_history = AsyncMock(return_value=[])
+
+        messages = await svc._build_chat_messages(
+            user_id="u1",
+            conversation_id="c1",
+            text_content="两张图",
+            image_urls=["https://oss.example.com/a.jpg", "https://oss.example.com/b.jpg"],
+        )
+
+        user_msg = messages[-1]
+        assert len(user_msg["content"]) == 3  # 1 text + 2 images
+        image_parts = [p for p in user_msg["content"] if p["type"] == "image_url"]
+        assert len(image_parts) == 2
+
 
 # ============================================================
 # TestHandleChatResponse
@@ -621,10 +679,10 @@ class TestHandleImageResponse:
 
     @pytest.mark.asyncio
     async def test_insufficient_credits(self):
-        """积分不足 → 回复提示，不生成"""
+        """积分不足 → 回复积分不足卡片"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
-        svc._reply_text = AsyncMock()
+        svc._reply_credits_insufficient = AsyncMock()
         svc._get_user_balance = MagicMock(return_value=0)
 
         agent_result = MagicMock()
@@ -644,9 +702,12 @@ class TestHandleImageResponse:
                 "u1", "c1", "m1", "画猫", ctx, agent_result,
             )
 
-        # 应回复积分不足
-        reply_text = svc._reply_text.call_args_list[0][0][1]
-        assert "积分不足" in reply_text
+        # 应调用积分不足卡片
+        svc._reply_credits_insufficient.assert_called_once()
+        call_args = svc._reply_credits_insufficient.call_args
+        assert call_args[0][1] == 100  # needed
+        assert call_args[0][2] == 0    # balance
+        assert call_args[0][3] == "图片"  # action
 
     @pytest.mark.asyncio
     async def test_generation_success(self):
@@ -737,10 +798,10 @@ class TestHandleVideoResponse:
 
     @pytest.mark.asyncio
     async def test_insufficient_credits(self):
-        """积分不足 → 回复提示"""
+        """积分不足 → 回复积分不足卡片"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
-        svc._reply_text = AsyncMock()
+        svc._reply_credits_insufficient = AsyncMock()
         svc._get_user_balance = MagicMock(return_value=0)
 
         agent_result = MagicMock()
@@ -760,8 +821,11 @@ class TestHandleVideoResponse:
                 "u1", "c1", "m1", "日出视频", ctx, agent_result,
             )
 
-        reply_text = svc._reply_text.call_args_list[0][0][1]
-        assert "积分不足" in reply_text
+        svc._reply_credits_insufficient.assert_called_once()
+        call_args = svc._reply_credits_insufficient.call_args
+        assert call_args[0][1] == 200  # needed
+        assert call_args[0][2] == 0    # balance
+        assert call_args[0][3] == "视频"  # action
 
     @pytest.mark.asyncio
     async def test_generation_success(self):

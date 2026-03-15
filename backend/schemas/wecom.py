@@ -5,7 +5,7 @@
 """
 
 from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -21,6 +21,9 @@ class WecomIncomingMessage:
     channel: str                            # "smart_robot" | "app"
     text_content: Optional[str] = None      # 文本内容
     image_urls: List[str] = field(default_factory=list)  # 图片 URL 列表
+    file_url: Optional[str] = None          # 文件下载 URL
+    file_name: Optional[str] = None         # 文件名
+    aeskeys: Dict[str, str] = field(default_factory=dict)  # URL→aeskey 映射（长连接模式解密用）
     raw_data: Optional[dict] = None         # 原始消息数据（调试用）
 
 
@@ -51,6 +54,7 @@ class WecomCommand:
     MSG_CALLBACK = "aibot_msg_callback"
     EVENT_CALLBACK = "aibot_event_callback"
     RESPOND_MSG = "aibot_respond_msg"
+    RESPOND_UPDATE = "aibot_respond_update_msg"
     RESPOND_WELCOME = "aibot_respond_welcome_msg"
     SEND_MSG = "aibot_send_msg"
 
@@ -62,6 +66,7 @@ class WecomMsgType:
     TEXT = "text"
     IMAGE = "image"
     VOICE = "voice"
+    VIDEO = "video"
     FILE = "file"
     MIXED = "mixed"
     MARKDOWN = "markdown"
