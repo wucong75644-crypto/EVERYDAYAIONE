@@ -5,7 +5,7 @@
 - 连接地址：wss://openws.work.weixin.qq.com
 - 认证方式：aibot_subscribe（Bot ID + Secret）
 - 心跳间隔：30 秒（ping 命令）
-- 重连策略：指数退避（5s → 10s → 20s → 60s max）
+- 重连策略：指数退避（1s → 2s → 4s → 30s max）
 - 去重机制：LRU 缓存已处理 msgid
 """
 
@@ -19,14 +19,13 @@ from typing import Any, Callable, Coroutine, Dict, Optional
 import websockets
 from loguru import logger
 
-from core.config import get_settings
 from schemas.wecom import WecomCommand
 
 WSS_URL = "wss://openws.work.weixin.qq.com"
 HEARTBEAT_INTERVAL = 30          # 心跳间隔（秒）
 RECV_TIMEOUT = 90                # 接收超时（秒）：超过此时间无数据则判定连接已死
-RECONNECT_DELAY_INIT = 5         # 初始重连延迟（秒）
-RECONNECT_DELAY_MAX = 60         # 最大重连延迟（秒）
+RECONNECT_DELAY_INIT = 1         # 初始重连延迟（秒）— 对齐官方 SDK
+RECONNECT_DELAY_MAX = 30         # 最大重连延迟（秒）— 对齐官方 SDK
 MSG_DEDUP_CAPACITY = 10000       # 消息去重缓存上限
 
 # 消息回调类型：async def handler(data: dict) -> None
@@ -163,11 +162,23 @@ class WecomWSClient:
 
                     logger.info("Wecom WS connected and subscribed")
 
-                    # 并发运行心跳和消息接收
-                    await asyncio.gather(
-                        self._heartbeat_loop(),
-                        self._receive_loop(),
+                    # 并发运行心跳和消息接收，任一退出则取消另一个
+                    hb_task = asyncio.create_task(self._heartbeat_loop())
+                    recv_task = asyncio.create_task(self._receive_loop())
+                    done, pending = await asyncio.wait(
+                        [hb_task, recv_task],
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
+                    for task in pending:
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+                    # 将已完成任务的异常抛出（触发重连逻辑）
+                    for task in done:
+                        if task.exception():
+                            raise task.exception()
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -296,14 +307,20 @@ class WecomWSClient:
                 )
 
     async def _handle_event_callback(self, data: dict) -> None:
-        """处理事件回调（如 enter_chat）"""
+        """处理事件回调（如 enter_chat、disconnected_event）"""
         body = data.get("body", {})
         event = body.get("event", {})
         event_type = event.get("eventtype", "")
 
+        if event_type == "disconnected_event":
+            logger.warning(
+                f"Wecom WS: disconnected_event received — "
+                f"另一个连接将本连接顶掉 | body={json.dumps(body, ensure_ascii=False)}"
+            )
+            return
+
         if event_type == "enter_chat":
             req_id = data.get("headers", {}).get("req_id", "")
-            settings = get_settings()
             welcome = {
                 "cmd": WecomCommand.RESPOND_WELCOME,
                 "headers": {"req_id": req_id},
