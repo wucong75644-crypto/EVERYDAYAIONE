@@ -47,6 +47,7 @@ WAREHOUSE_REGISTRY = {
     "allocate_in_detail": ApiEntry(
         method="allocate.in.task.get",
         description="查询调拨入库单明细",
+        param_map={"allocate_id": "id"},
         formatter="format_generic_detail",
         response_key=None,
     ),
@@ -65,6 +66,7 @@ WAREHOUSE_REGISTRY = {
     "allocate_out_detail": ApiEntry(
         method="allocate.out.task.get",
         description="查询调拨出库单明细",
+        param_map={"allocate_id": "id"},
         formatter="format_generic_detail",
         response_key=None,
     ),
@@ -85,6 +87,7 @@ WAREHOUSE_REGISTRY = {
     "other_in_detail": ApiEntry(
         method="other.in.order.get",
         description="查询其他入库单明细",
+        param_map={"order_id": "id"},
         formatter="format_generic_detail",
         response_key=None,
     ),
@@ -104,6 +107,7 @@ WAREHOUSE_REGISTRY = {
     "other_out_detail": ApiEntry(
         method="other.out.order.get",
         description="查询其他出库单明细",
+        param_map={"order_id": "id"},
         formatter="format_generic_detail",
         response_key=None,
     ),
@@ -122,6 +126,12 @@ WAREHOUSE_REGISTRY = {
     "inventory_sheet_detail": ApiEntry(
         method="inventory.sheet.get",
         description="查询盘点单明细",
+        param_map={
+            "code": "code",
+            "start_date": "startModified",
+            "end_date": "endModified",
+        },
+        required_params=["code"],
         formatter="format_inventory_sheet_detail",
         response_key=None,
     ),
@@ -139,6 +149,7 @@ WAREHOUSE_REGISTRY = {
     "unshelve_detail": ApiEntry(
         method="erp.wms.unshelve.order.get",
         description="查询下架单明细",
+        param_map={"unshelve_id": "id"},
         formatter="format_generic_detail",
         response_key=None,
     ),
@@ -186,6 +197,7 @@ WAREHOUSE_REGISTRY = {
     "process_order_detail": ApiEntry(
         method="erp.stock.product.order.get",
         description="查询加工单明细",
+        param_map={"product_order_id": "productOrderId"},
         formatter="format_generic_detail",
         response_key=None,
     ),
@@ -220,6 +232,12 @@ WAREHOUSE_REGISTRY = {
     "allocate_in_receive": ApiEntry(
         method="allocate.in.task.receive",
         description="调拨入库单收货",
+        param_map={
+            "allocate_id": "id",
+            "receive_details": "receiveDetails",
+            "outer_code": "weSourceId",
+        },
+        required_params=["allocate_id", "receive_details"],
         is_write=True,
         response_key=None,
         formatter="format_generic_detail",
@@ -234,6 +252,17 @@ WAREHOUSE_REGISTRY = {
     "other_in_add": ApiEntry(
         method="other.in.order.add",
         description="新增其他入库单",
+        param_map={
+            "items": "items",
+            "warehouse_code": "warehouseCode",
+            "outer_code": "weSourceId",
+            "custom_type": "customType",
+            "remark": "remark",
+            "status": "status",
+            "code": "code",
+            "in_location": "inLocation",
+        },
+        required_params=["items", "warehouse_code"],
         is_write=True,
         response_key=None,
         formatter="format_generic_detail",
@@ -242,6 +271,8 @@ WAREHOUSE_REGISTRY = {
     "other_in_cancel": ApiEntry(
         method="erp.other.in.order.cancel",
         description="作废其他入库单",
+        param_map={"ids": "ids"},
+        required_params=["ids"],
         is_write=True,
         response_key=None,
         formatter="format_generic_detail",
@@ -250,6 +281,16 @@ WAREHOUSE_REGISTRY = {
     "other_out_add": ApiEntry(
         method="other.out.order.add",
         description="新增其他出库单",
+        param_map={
+            "items": "items",
+            "warehouse_code": "warehouseCode",
+            "custom_type": "customType",
+            "outer_code": "prSourceId",
+            "remark": "remark",
+            "status": "status",
+            "out_location": "outLocation",
+        },
+        required_params=["items", "warehouse_code"],
         is_write=True,
         response_key=None,
         formatter="format_generic_detail",
@@ -258,6 +299,8 @@ WAREHOUSE_REGISTRY = {
     "other_out_cancel": ApiEntry(
         method="erp.other.out.order.cancel",
         description="作废其他出库单",
+        param_map={"ids": "ids"},
+        required_params=["ids"],
         is_write=True,
         response_key=None,
         formatter="format_generic_detail",
@@ -280,6 +323,8 @@ WAREHOUSE_REGISTRY = {
     "unshelve_execute": ApiEntry(
         method="erp.wms.unshelve.order.unshelve",
         description="下架单下架",
+        param_map={"unshelve_id": "id"},
+        required_params=["unshelve_id"],
         is_write=True,
         response_key=None,
         formatter="format_generic_detail",

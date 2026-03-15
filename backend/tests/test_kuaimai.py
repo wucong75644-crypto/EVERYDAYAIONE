@@ -1864,6 +1864,9 @@ class TestAllRegistryStructure:
             "modifiedTimeStart", "modifiedTimeEnd",
             "updateTimeBegin", "updateTimeEnd",
             "operateTimeBegin", "operateTimeEnd",
+            "receiveTimeStart", "receiveTimeEnd",
+            "createStart", "createEnd",
+            "receivedTime", "operatorTime",
             "startStockModified", "endStockModified",
         ]
         for k in candidate_keys:
@@ -1909,6 +1912,89 @@ class TestAllRegistryStructure:
             methods = [e.method for e in reg.values()]
             dups = [m for m in methods if methods.count(m) > 1]
             assert not dups, f"{cat}: 重复 method {set(dups)}"
+
+
+# ============================================================
+# TestRegistryParamCompleteness — 参数完整性校验
+# ============================================================
+
+
+class TestRegistryParamCompleteness:
+    """注册表参数完整性校验（官方文档对齐后新增）"""
+
+    @staticmethod
+    def _all_registries():
+        from services.kuaimai.registry import (
+            BASIC_REGISTRY, PRODUCT_REGISTRY, TRADE_REGISTRY,
+            AFTERSALES_REGISTRY, WAREHOUSE_REGISTRY,
+            PURCHASE_REGISTRY, DISTRIBUTION_REGISTRY, QIMEN_REGISTRY,
+        )
+        return {
+            "basic": BASIC_REGISTRY,
+            "product": PRODUCT_REGISTRY,
+            "trade": TRADE_REGISTRY,
+            "aftersales": AFTERSALES_REGISTRY,
+            "warehouse": WAREHOUSE_REGISTRY,
+            "purchase": PURCHASE_REGISTRY,
+            "distribution": DISTRIBUTION_REGISTRY,
+            "qimen": QIMEN_REGISTRY,
+        }
+
+    def test_detail_actions_have_id_param(self):
+        """所有 detail/get 操作必须有 ID 类参数"""
+        # 排除已知无需ID的查询（如 classify_list、cat_list 等无参数查询）
+        skip = {
+            "product.cat_list", "product.classify_list", "product.brand_list",
+        }
+        for cat, reg in self._all_registries().items():
+            for name, entry in reg.items():
+                key = f"{cat}.{name}"
+                if key in skip:
+                    continue
+                # 只检查名字含 detail 或 method 含 .get 的
+                is_detail = "detail" in name or (
+                    entry.method.endswith(".get")
+                    and not entry.method.endswith("list.get")
+                )
+                if not is_detail:
+                    continue
+                assert entry.param_map, (
+                    f"{key}: detail/get 操作必须有 param_map 来传递 ID"
+                )
+
+    def test_write_actions_have_param_map(self):
+        """所有写操作必须有非空 param_map（排除已知复杂JSON的）"""
+        # 这些API参数结构复杂（嵌套JSON），通过raw JSON传参
+        skip = {
+            "trade.wave_pick_hand", "trade.wave_seed",
+            "trade.order_create_new",
+            "purchase.purchase_add", "purchase.purchase_status_update",
+            "purchase.purchase_un_audit", "purchase.purchase_return_out",
+            "purchase.warehouse_entry_receive",
+            "purchase.warehouse_entry_fast_receive",
+            "purchase.warehouse_entry_add_update",
+            "purchase.shelf_save",
+            "purchase.pre_in_order_add", "purchase.pre_in_order_update",
+            "purchase.pre_in_order_anti_audit",
+            "warehouse.allocate_add", "warehouse.allocate_create",
+            "warehouse.allocate_out_direct",
+            "warehouse.inventory_batch_update",
+            "warehouse.unshelve_save", "warehouse.goods_section_delete",
+            "warehouse.upshelf_batch",
+            "product.product_add_update", "product.import_platform_item",
+            "product.supplier_update", "product.supplier_modify",
+            "product.cat_add", "product.classify_add",
+            "product.virtual_stock_batch_update", "product.item_type_change",
+        }
+        for cat, reg in self._all_registries().items():
+            for name, entry in reg.items():
+                key = f"{cat}.{name}"
+                if key in skip:
+                    continue
+                if entry.is_write:
+                    assert entry.param_map, (
+                        f"{key}: 写操作必须有 param_map"
+                    )
 
 
 # ============================================================
@@ -2312,3 +2398,512 @@ class TestFormatShopList:
         assert "店铺A" in result
         assert "店铺B" in result
         assert "停用" in result
+
+
+# ============================================================
+# 本次 param_map 全量对齐 — 补充覆盖测试
+# ============================================================
+
+
+class TestTradeFieldNameFixes:
+    """trade.py: 8个API关键字段名修正验证"""
+
+    def _reg(self):
+        from services.kuaimai.registry import TRADE_REGISTRY
+        return TRADE_REGISTRY
+
+    def test_express_query_no_tid(self):
+        """express_query 不应有 tid（官方只有 sid/outSid）"""
+        entry = self._reg()["express_query"]
+        api_values = set(entry.param_map.values())
+        assert "tid" not in api_values
+        assert entry.param_map["system_id"] == "sid"
+        assert entry.param_map["express_no"] == "outSid"
+
+    def test_order_cancel_uses_plural(self):
+        """order_cancel 使用复数 tids/sids"""
+        entry = self._reg()["order_cancel"]
+        assert entry.param_map["order_ids"] == "tids"
+        assert entry.param_map["system_ids"] == "sids"
+
+    def test_order_intercept_uses_sids(self):
+        """order_intercept 只有 sids（无 tid）"""
+        entry = self._reg()["order_intercept"]
+        assert entry.param_map["system_ids"] == "sids"
+        api_values = set(entry.param_map.values())
+        assert "tid" not in api_values
+
+    def test_trade_consign_uses_sids_and_new_params(self):
+        """trade_consign 使用 sids + consignType/expressCode/outSid/operateType"""
+        entry = self._reg()["trade_consign"]
+        assert entry.param_map["system_ids"] == "sids"
+        assert entry.param_map["consign_type"] == "consignType"
+        assert entry.param_map["express_code"] == "expressCode"
+        assert entry.param_map["express_no"] == "outSid"
+        assert entry.param_map["operate_type"] == "operateType"
+
+    def test_change_warehouse_has_required_params(self):
+        """change_warehouse: sids/warehouseId 必填 + force 可选"""
+        entry = self._reg()["change_warehouse"]
+        assert entry.param_map["system_ids"] == "sids"
+        assert entry.param_map["warehouse_id"] == "warehouseId"
+        assert entry.param_map["force"] == "force"
+        assert "system_ids" in entry.required_params
+        assert "warehouse_id" in entry.required_params
+
+    def test_order_remark_update_uses_orderId(self):
+        """order_remark_update 使用 orderId（非 tid）"""
+        entry = self._reg()["order_remark_update"]
+        assert entry.param_map["order_id"] == "orderId"
+        assert "order_id" in entry.required_params
+        assert "remark" in entry.required_params
+
+    def test_trade_halt_uses_plural_and_required(self):
+        """trade_halt: tids/sids(复数) + autoUnHalt(必填)"""
+        entry = self._reg()["trade_halt"]
+        assert entry.param_map["order_ids"] == "tids"
+        assert entry.param_map["system_ids"] == "sids"
+        assert entry.param_map["auto_unhalt"] == "autoUnHalt"
+        assert "auto_unhalt" in entry.required_params
+        # 可选参数
+        assert entry.param_map["unhalt_type"] == "unHaltType"
+        assert entry.param_map["halt_time_unit"] == "haltTimeUnit"
+        assert entry.param_map["is_urgent"] == "isUrgent"
+
+    def test_trade_unhalt_uses_plural(self):
+        """trade_unhalt 使用复数 tids/sids"""
+        entry = self._reg()["trade_unhalt"]
+        assert entry.param_map["order_ids"] == "tids"
+        assert entry.param_map["system_ids"] == "sids"
+
+    def test_receiver_update_has_5_required(self):
+        """receiver_update: 5个收货信息必填"""
+        entry = self._reg()["receiver_update"]
+        required = set(entry.required_params)
+        assert {"receiver_name", "receiver_state", "receiver_city",
+                "receiver_district", "receiver_address"}.issubset(required)
+        assert entry.param_map["receiver_mobile"] == "receiverMobile"
+
+    def test_order_create_has_10_required(self):
+        """order_create: 10个必填参数"""
+        entry = self._reg()["order_create"]
+        assert len(entry.required_params) >= 10
+        assert "shop_id" in entry.required_params
+        assert "warehouse_id" in entry.required_params
+        assert "orders" in entry.required_params
+        assert "payment" in entry.required_params
+        assert entry.param_map["buyer"] == "buyerNick"
+        assert entry.param_map["post_fee"] == "postFee"
+
+    def test_seller_memo_update_has_data_fields(self):
+        """seller_memo_update 有 sellerMemo/flag 参数"""
+        entry = self._reg()["seller_memo_update"]
+        assert entry.param_map["seller_memo"] == "sellerMemo"
+        assert entry.param_map["flag"] == "flag"
+        assert entry.param_map["order_id"] == "tid"
+
+    def test_tag_batch_update_has_required(self):
+        """tag_batch_update: tagIds/type 必填"""
+        entry = self._reg()["tag_batch_update"]
+        assert entry.param_map["tag_ids"] == "tagIds"
+        assert entry.param_map["type"] == "type"
+        assert "tag_ids" in entry.required_params
+        assert "type" in entry.required_params
+
+    def test_unique_code_query_has_new_params(self):
+        """unique_code_query 补全的8个新参数"""
+        entry = self._reg()["unique_code_query"]
+        assert entry.param_map["short_ids"] == "shortIds"
+        assert entry.param_map["after_sale_codes"] == "afterSaleOrderCodes"
+        assert entry.param_map["wave_id"] == "waveId"
+        assert entry.param_map["receive_start"] == "receiveTimeStart"
+        assert entry.param_map["receive_end"] == "receiveTimeEnd"
+        assert entry.param_map["create_start"] == "createStart"
+        assert entry.param_map["create_end"] == "createEnd"
+        assert entry.param_map["no_need_total"] == "noNeedTotal"
+
+    def test_order_list_has_cursor_params(self):
+        """order_list 补全的光标/仓库参数"""
+        entry = self._reg()["order_list"]
+        assert entry.param_map["use_has_next"] == "useHasNext"
+        assert entry.param_map["use_cursor"] == "useCursor"
+        assert entry.param_map["cursor"] == "cursor"
+        assert entry.param_map["warehouse_name"] == "warehouseName"
+
+
+class TestProductFieldNameFixes:
+    """product.py: 参数名修正 + 补全验证"""
+
+    def _reg(self):
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        return PRODUCT_REGISTRY
+
+    def test_stock_status_warehouseId_lowercase_h(self):
+        """stock_status: warehouseId 小写h（非 wareHouseId）"""
+        entry = self._reg()["stock_status"]
+        assert entry.param_map["warehouse_id"] == "warehouseId"
+
+    def test_stock_status_uses_stockStatuses_plural(self):
+        """stock_status: stockStatuses 复数"""
+        entry = self._reg()["stock_status"]
+        assert entry.param_map["stock_statuses"] == "stockStatuses"
+
+    def test_stock_status_no_startModified_endModified(self):
+        """stock_status: 不应有 startModified/endModified（官方无此字段）"""
+        entry = self._reg()["stock_status"]
+        api_values = set(entry.param_map.values())
+        assert "startModified" not in api_values
+        assert "endModified" not in api_values
+
+    def test_stock_status_has_stock_time_params(self):
+        """stock_status: 使用 startStockModified/endStockModified"""
+        entry = self._reg()["stock_status"]
+        assert entry.param_map["stock_start"] == "startStockModified"
+        assert entry.param_map["stock_end"] == "endStockModified"
+
+    def test_stock_update_uses_plural_outerIds(self):
+        """stock_update: outerIds/skuOuterIds（复数）+ stockNum"""
+        entry = self._reg()["stock_update"]
+        assert entry.param_map["outer_ids"] == "outerIds"
+        assert entry.param_map["sku_outer_ids"] == "skuOuterIds"
+        assert entry.param_map["stock_num"] == "stockNum"
+        assert "warehouse_id" in entry.required_params
+        assert "stock_num" in entry.required_params
+
+    def test_virtual_stock_update_has_full_params(self):
+        """virtual_stock_update: 完整 param_map"""
+        entry = self._reg()["virtual_stock_update"]
+        assert entry.param_map["item_ids"] == "itemIds"
+        assert entry.param_map["warehouse_id"] == "warehouseId"
+        assert entry.param_map["stock_num"] == "stockNum"
+        assert entry.param_map["sku_outer_ids"] == "skuOuterIds"
+        assert entry.param_map["outer_ids"] == "outerIds"
+        assert "warehouse_id" in entry.required_params
+
+    def test_product_list_has_return_purchase(self):
+        """product_list: 有 whetherReturnPurchase"""
+        entry = self._reg()["product_list"]
+        assert entry.param_map["return_purchase"] == "whetherReturnPurchase"
+
+    def test_product_detail_has_return_purchase(self):
+        """product_detail: 有 whetherReturnPurchase"""
+        entry = self._reg()["product_detail"]
+        assert entry.param_map["return_purchase"] == "whetherReturnPurchase"
+
+    def test_history_cost_price_has_warehouse_ids(self):
+        """history_cost_price: 有 warehouseIdList"""
+        entry = self._reg()["history_cost_price"]
+        assert entry.param_map["warehouse_ids"] == "warehouseIdList"
+
+    def test_product_add_update_simple_has_full_params(self):
+        """product_add_update_simple: 完整 param_map + 2个必填"""
+        entry = self._reg()["product_add_update_simple"]
+        assert entry.param_map["outer_id"] == "outerId"
+        assert entry.param_map["title"] == "title"
+        assert entry.param_map["purchase_price"] == "purchasePrice"
+        assert entry.param_map["weight"] == "weight"
+        assert "outer_id" in entry.required_params
+        assert "title" in entry.required_params
+
+    def test_supplier_add_has_params(self):
+        """supplier_add: 有 itemId/outerId/suppliers 等"""
+        entry = self._reg()["supplier_add"]
+        assert entry.param_map["item_id"] == "itemId"
+        assert entry.param_map["suppliers"] == "suppliers"
+
+    def test_supplier_delete_has_params(self):
+        """supplier_delete: 有 supplierIds/supplierCodes"""
+        entry = self._reg()["supplier_delete"]
+        assert entry.param_map["supplier_ids"] == "supplierIds"
+        assert entry.param_map["supplier_codes"] == "supplierCodes"
+
+    def test_phantom_params_marked(self):
+        """phantom 参数应存在于 param_map（保留待验证）"""
+        # warehouse_stock 的 sysItemId/warehouseId 是 phantom
+        entry = self._reg()["warehouse_stock"]
+        assert "item_id" in entry.param_map
+        assert "warehouse_id" in entry.param_map
+
+
+class TestPurchaseNewParamMaps:
+    """purchase.py: 新增 param_map 验证"""
+
+    def _reg(self):
+        from services.kuaimai.registry import PURCHASE_REGISTRY
+        return PURCHASE_REGISTRY
+
+    def test_purchase_strategy_calculate_has_warehouse_code(self):
+        """purchase_strategy_calculate: warehouseCode 必填"""
+        entry = self._reg()["purchase_strategy_calculate"]
+        assert entry.param_map["warehouse_code"] == "warehouseCode"
+        assert "warehouse_code" in entry.required_params
+
+    def test_purchase_progress_has_progress_type(self):
+        """purchase_progress: progressType 有默认值 4"""
+        entry = self._reg()["purchase_progress"]
+        assert entry.param_map["progress_type"] == "progressType"
+        assert entry.defaults.get("progressType") == 4
+
+    def test_warehouse_entry_history_requires_dates(self):
+        """warehouse_entry_history: start_date/end_date 必填"""
+        entry = self._reg()["warehouse_entry_history"]
+        assert entry.param_map["start_date"] == "startModified"
+        assert entry.param_map["end_date"] == "endModified"
+        assert "start_date" in entry.required_params
+        assert "end_date" in entry.required_params
+
+    def test_purchase_return_history_requires_dates(self):
+        """purchase_return_history: start_date/end_date 必填"""
+        entry = self._reg()["purchase_return_history"]
+        assert "start_date" in entry.required_params
+        assert "end_date" in entry.required_params
+
+    def test_shelf_history_requires_dates(self):
+        """shelf_history: start_date/end_date 必填"""
+        entry = self._reg()["shelf_history"]
+        assert "start_date" in entry.required_params
+        assert "end_date" in entry.required_params
+
+    def test_detail_queries_have_id(self):
+        """7个详情查询都有 ID 参数"""
+        reg = self._reg()
+        details = {
+            "purchase_return_detail": "id",
+            "warehouse_entry_detail": "id",
+            "shelf_detail": "id",
+            "purchase_order_history_detail": "id",
+            "warehouse_entry_history_detail": "id",
+            "purchase_return_history_detail": "id",
+            "shelf_history_detail": "id",
+        }
+        for name, expected_api_val in details.items():
+            entry = reg[name]
+            assert entry.param_map, f"purchase.{name} 应有 param_map"
+            assert expected_api_val in entry.param_map.values(), (
+                f"purchase.{name} 应映射到 {expected_api_val}"
+            )
+
+    def test_warehouse_entry_list_has_prein_order_id(self):
+        """warehouse_entry_list: 有 preinOrderId"""
+        entry = self._reg()["warehouse_entry_list"]
+        assert entry.param_map["prein_order_id"] == "preinOrderId"
+
+    def test_supplier_add_update_has_required(self):
+        """supplier_add_update: code/name 必填"""
+        entry = self._reg()["supplier_add_update"]
+        assert entry.param_map["code"] == "code"
+        assert entry.param_map["name"] == "name"
+        assert "code" in entry.required_params
+        assert "name" in entry.required_params
+
+    def test_purchase_add_update_has_required(self):
+        """purchase_add_update: supplierCode/items/warehouseCode 必填"""
+        entry = self._reg()["purchase_add_update"]
+        assert "supplier_code" in entry.required_params
+        assert "items" in entry.required_params
+        assert "warehouse_code" in entry.required_params
+
+    def test_purchase_return_save_has_required(self):
+        """purchase_return_save: supplierCode/items/warehouseCode 必填"""
+        entry = self._reg()["purchase_return_save"]
+        assert "supplier_code" in entry.required_params
+        assert "items" in entry.required_params
+        assert "warehouse_code" in entry.required_params
+
+    def test_purchase_return_cancel_has_id(self):
+        """purchase_return_cancel: return_id 必填"""
+        entry = self._reg()["purchase_return_cancel"]
+        assert entry.param_map["return_id"] == "id"
+        assert "return_id" in entry.required_params
+
+    def test_warehouse_entry_cancel_has_ids(self):
+        """warehouse_entry_cancel: entry_ids 必填"""
+        entry = self._reg()["warehouse_entry_cancel"]
+        assert entry.param_map["entry_ids"] == "ids"
+        assert "entry_ids" in entry.required_params
+
+
+class TestWarehouseDetailAndWrite:
+    """warehouse.py: 详情ID + 写操作验证"""
+
+    def _reg(self):
+        from services.kuaimai.registry import WAREHOUSE_REGISTRY
+        return WAREHOUSE_REGISTRY
+
+    def test_detail_queries_have_id_param(self):
+        """7个详情查询都有 ID 参数"""
+        reg = self._reg()
+        details = [
+            "allocate_in_detail", "allocate_out_detail",
+            "other_in_detail", "other_out_detail",
+            "unshelve_detail", "process_order_detail",
+        ]
+        for name in details:
+            entry = reg[name]
+            assert entry.param_map, f"warehouse.{name} 应有 param_map"
+
+    def test_inventory_sheet_detail_requires_code(self):
+        """inventory_sheet_detail: code 必填"""
+        entry = self._reg()["inventory_sheet_detail"]
+        assert entry.param_map["code"] == "code"
+        assert "code" in entry.required_params
+
+    def test_allocate_in_receive_has_required(self):
+        """allocate_in_receive: allocate_id + receive_details 必填"""
+        entry = self._reg()["allocate_in_receive"]
+        assert entry.param_map["allocate_id"] == "id"
+        assert entry.param_map["receive_details"] == "receiveDetails"
+        assert "allocate_id" in entry.required_params
+        assert "receive_details" in entry.required_params
+
+    def test_other_in_add_has_required(self):
+        """other_in_add: items/warehouseCode 必填"""
+        entry = self._reg()["other_in_add"]
+        assert entry.param_map["items"] == "items"
+        assert entry.param_map["warehouse_code"] == "warehouseCode"
+        assert "items" in entry.required_params
+
+    def test_other_in_cancel_has_ids(self):
+        """other_in_cancel: ids 必填"""
+        entry = self._reg()["other_in_cancel"]
+        assert entry.param_map["ids"] == "ids"
+        assert "ids" in entry.required_params
+
+    def test_other_out_add_has_required(self):
+        """other_out_add: items/warehouseCode 必填"""
+        entry = self._reg()["other_out_add"]
+        assert entry.param_map["items"] == "items"
+        assert entry.param_map["warehouse_code"] == "warehouseCode"
+        assert "items" in entry.required_params
+
+    def test_other_out_cancel_has_ids(self):
+        """other_out_cancel: ids 必填"""
+        entry = self._reg()["other_out_cancel"]
+        assert entry.param_map["ids"] == "ids"
+        assert "ids" in entry.required_params
+
+    def test_unshelve_execute_has_id(self):
+        """unshelve_execute: unshelve_id 必填"""
+        entry = self._reg()["unshelve_execute"]
+        assert entry.param_map["unshelve_id"] == "id"
+        assert "unshelve_id" in entry.required_params
+
+
+class TestAftersalesParamFixes:
+    """aftersales.py: workorder_create 补全 + 写操作验证"""
+
+    def _reg(self):
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        return AFTERSALES_REGISTRY
+
+    def test_workorder_create_has_14_params(self):
+        """workorder_create: 至少14个参数"""
+        entry = self._reg()["workorder_create"]
+        assert len(entry.param_map) >= 13
+        assert entry.param_map["warehouse_id"] == "refundWarehouseId"
+        assert entry.param_map["reason"] == "reason"
+        assert entry.param_map["after_sale_type"] == "afterSaleType"
+        assert entry.param_map["reissue_list"] == "reissueOrRefundList"
+
+    def test_workorder_create_has_4_required(self):
+        """workorder_create: 4个必填"""
+        entry = self._reg()["workorder_create"]
+        required = set(entry.required_params)
+        assert {"warehouse_id", "reason", "after_sale_type", "reissue_list"}.issubset(required)
+
+    def test_workorder_remark_update_has_required(self):
+        """workorder_remark_update: work_order_id + remark 必填"""
+        entry = self._reg()["workorder_remark_update"]
+        assert entry.param_map["work_order_id"] == "workOrderId"
+        assert entry.param_map["remark"] == "remark"
+        assert "work_order_id" in entry.required_params
+        assert "remark" in entry.required_params
+
+    def test_workorder_explains_update_has_required(self):
+        """workorder_explains_update: work_order_id + explains 必填"""
+        entry = self._reg()["workorder_explains_update"]
+        assert entry.param_map["work_order_id"] == "workOrderId"
+        assert entry.param_map["explains"] == "explains"
+        assert "work_order_id" in entry.required_params
+        assert "explains" in entry.required_params
+
+    def test_repair_process_has_params(self):
+        """repair_process: repair_no 必填"""
+        entry = self._reg()["repair_process"]
+        assert entry.param_map["repair_no"] == "repairOrderNum"
+        assert "repair_no" in entry.required_params
+        assert entry.param_map["has_fee"] == "hasFee"
+
+    def test_repair_edit_money_has_required(self):
+        """repair_edit_money: repair_no + repair_money 必填"""
+        entry = self._reg()["repair_edit_money"]
+        assert entry.param_map["repair_no"] == "repairOrderNum"
+        assert entry.param_map["repair_money"] == "repairMoney"
+        assert "repair_no" in entry.required_params
+        assert "repair_money" in entry.required_params
+
+    def test_repair_pay_has_params(self):
+        """repair_pay: repair_no 必填 + 付款参数"""
+        entry = self._reg()["repair_pay"]
+        assert entry.param_map["repair_no"] == "repairOrderNum"
+        assert "repair_no" in entry.required_params
+        assert entry.param_map["received_time"] == "receivedTime"
+        assert entry.param_map["current_price"] == "currentPrice"
+
+    def test_update_platform_refund_money_has_required(self):
+        """update_platform_refund_money: work_order_id 必填"""
+        entry = self._reg()["update_platform_refund_money"]
+        assert entry.param_map["work_order_id"] == "id"
+        assert "work_order_id" in entry.required_params
+
+    def test_update_express_has_required(self):
+        """update_express: work_order_id 必填"""
+        entry = self._reg()["update_express"]
+        assert entry.param_map["work_order_id"] == "id"
+        assert entry.param_map["express_name"] == "expressName"
+        assert "work_order_id" in entry.required_params
+
+    def test_aftersale_list_has_suite_single(self):
+        """aftersale_list: 有 suiteSingle 参数"""
+        entry = self._reg()["aftersale_list"]
+        assert entry.param_map["suite_single"] == "suiteSingle"
+
+    def test_workorder_goods_received_has_params(self):
+        """workorder_goods_received: received_orders 必填"""
+        entry = self._reg()["workorder_goods_received"]
+        assert entry.param_map["received_orders"] == "receivedAsOrders"
+        assert "received_orders" in entry.required_params
+
+    def test_workorder_batch_change_type_has_required(self):
+        """workorder_batch_change_type: work_order_ids + change_type 必填"""
+        entry = self._reg()["workorder_batch_change_type"]
+        assert "work_order_ids" in entry.required_params
+        assert "change_type" in entry.required_params
+
+
+class TestBasicAndDistributionFixes:
+    """basic.py + distribution.py: 新增参数验证"""
+
+    def test_customer_create_has_new_params(self):
+        """customer_create: 包含 typeCode/qqNumber/fax/url/zipCode"""
+        from services.kuaimai.registry import BASIC_REGISTRY
+        entry = BASIC_REGISTRY["customer_create"]
+        assert entry.param_map["type_code"] == "typeCode"
+        assert entry.param_map["qq"] == "qqNumber"
+        assert entry.param_map["fax"] == "fax"
+        assert entry.param_map["url"] == "url"
+        assert entry.param_map["zip_code"] == "zipCode"
+
+    def test_add_distributor_has_version_number(self):
+        """add_distributor: 有 versionNumber"""
+        from services.kuaimai.registry import DISTRIBUTION_REGISTRY
+        entry = DISTRIBUTION_REGISTRY["add_distributor"]
+        assert entry.param_map["version_number"] == "versionNumber"
+
+    def test_tag_batch_update_product_has_item_info_list(self):
+        """product tag_batch_update: itemInfoList 参数"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["tag_batch_update"]
+        assert entry.param_map["item_info_list"] == "itemInfoList"
+        assert "type" in entry.required_params
+        assert "item_info_list" in entry.required_params
