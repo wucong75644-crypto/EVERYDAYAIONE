@@ -151,3 +151,47 @@ class WecomUserMappingService:
                 f"Wecom nickname update failed | wecom_userid={wecom_userid} | "
                 f"error={e}"
             )
+
+    async def update_last_chatid(
+        self, wecom_userid: str, corp_id: str,
+        chatid: str, chattype: str,
+    ) -> None:
+        """更新用户最近一次活跃的 chatid（主动推送时用于寻址）"""
+        try:
+            self.db.table("wecom_user_mappings").update({
+                "last_chatid": chatid,
+                "last_chat_type": chattype,
+            }).eq("wecom_userid", wecom_userid).eq("corp_id", corp_id).execute()
+        except Exception as e:
+            logger.warning(
+                f"Wecom chatid update failed | wecom_userid={wecom_userid} | "
+                f"error={e}"
+            )
+
+    async def get_chatid_by_user_id(self, user_id: str) -> Optional[dict]:
+        """通过系统 user_id 查找最近活跃的 chatid
+
+        Returns:
+            {"chatid": "...", "chattype": "...", "wecom_userid": "..."} 或 None
+        """
+        try:
+            result = (
+                self.db.table("wecom_user_mappings")
+                .select("wecom_userid, last_chatid, last_chat_type")
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+            )
+            if not result.data:
+                return None
+            row = result.data[0]
+            if not row.get("last_chatid"):
+                return None
+            return {
+                "chatid": row["last_chatid"],
+                "chattype": row.get("last_chat_type", "single"),
+                "wecom_userid": row["wecom_userid"],
+            }
+        except Exception as e:
+            logger.warning(f"Wecom chatid lookup failed | user_id={user_id} | error={e}")
+            return None

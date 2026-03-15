@@ -266,6 +266,7 @@ class TestHandleMessage:
 
         svc._user_svc = MagicMock()
         svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.update_last_chatid = AsyncMock()
 
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
         svc._save_user_message = AsyncMock(return_value="umsg1")
@@ -292,6 +293,7 @@ class TestHandleMessage:
 
         svc._user_svc = MagicMock()
         svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.update_last_chatid = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
         svc._save_user_message = AsyncMock(return_value="umsg1")
         svc._create_assistant_placeholder = AsyncMock(return_value="amsg1")
@@ -315,6 +317,7 @@ class TestHandleMessage:
 
         svc._user_svc = MagicMock()
         svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.update_last_chatid = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
         svc._save_user_message = AsyncMock(return_value="umsg1")
         svc._create_assistant_placeholder = AsyncMock(return_value="amsg1")
@@ -360,6 +363,7 @@ class TestHandleMessage:
 
         svc._user_svc = MagicMock()
         svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.update_last_chatid = AsyncMock()
         svc._get_or_create_conversation = AsyncMock(return_value="conv1")
         svc._save_user_message = AsyncMock(return_value="umsg1")
         svc._create_assistant_placeholder = AsyncMock(return_value="amsg1")
@@ -974,3 +978,173 @@ class TestSessionSettings:
         WecomMessageService.set_session_setting("c2", "model", "gpt-4")
         WecomMessageService.set_session_setting("c2", "model", "deepseek-r1")
         assert WecomMessageService.get_session_setting("c2", "model") == "deepseek-r1"
+
+
+# ============================================================
+# TestReplyTextWithStream — 有活跃 stream 时用 stream finish 替换
+# ============================================================
+
+
+class TestReplyTextWithStream:
+    """_reply_text 在 active_stream_id 存在时走 stream finish 路径"""
+
+    @pytest.mark.asyncio
+    async def test_reply_text_uses_stream_finish(self):
+        """有 active_stream_id → 用 send_stream_chunk finish 替换占位"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+
+        ctx = _make_reply_ctx("smart_robot")
+        ctx.active_stream_id = "stream_existing_123"
+
+        await svc._reply_text(ctx, "AI 的回复内容")
+
+        ctx.ws_client.send_stream_chunk.assert_called_once_with(
+            req_id="req001",
+            stream_id="stream_existing_123",
+            content="AI 的回复内容",
+            finish=True,
+        )
+        # stream 用完后应清空
+        assert ctx.active_stream_id is None
+
+    @pytest.mark.asyncio
+    async def test_reply_text_no_stream_uses_send_reply(self):
+        """无 active_stream_id → 用 send_reply 发送"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+
+        ctx = _make_reply_ctx("smart_robot")
+        assert ctx.active_stream_id is None
+
+        await svc._reply_text(ctx, "直接回复")
+
+        ctx.ws_client.send_reply.assert_called_once_with(
+            req_id="req001",
+            msgtype="text",
+            content={"content": "直接回复"},
+        )
+
+
+# ============================================================
+# TestReplyCreditsInsufficient — 积分不足回复
+# ============================================================
+
+
+class TestReplyCreditsInsufficient:
+    """_reply_credits_insufficient 双通道回复"""
+
+    @pytest.mark.asyncio
+    async def test_smart_robot_sends_card(self):
+        """智能机器人通道 → 发送积分不足卡片"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+
+        ctx = _make_reply_ctx("smart_robot")
+
+        await svc._reply_credits_insufficient(ctx, 100, 20, "图片")
+
+        ctx.ws_client.send_template_card.assert_called_once()
+        card = ctx.ws_client.send_template_card.call_args[0][1]
+        assert "card_type" in card
+
+    @pytest.mark.asyncio
+    async def test_app_sends_text(self):
+        """自建应用通道 → 发送文本"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+
+        ctx = _make_reply_ctx("app")
+
+        with patch.object(svc, "_send_app_message", new=AsyncMock()) as mock_send:
+            await svc._reply_credits_insufficient(ctx, 100, 20, "图片")
+
+            mock_send.assert_called_once()
+            text_arg = mock_send.call_args[0][1]
+            assert "100" in text_arg
+            assert "20" in text_arg
+
+
+# ============================================================
+# TestCommandInterception — 指令拦截早期返回
+# ============================================================
+
+
+class TestCommandInterception:
+    """handle_message 中指令匹配成功 → 不进入 AI 路由"""
+
+    @pytest.mark.asyncio
+    async def test_command_match_skips_ai(self):
+        """文本"帮助"匹配指令 → try_handle=True → 不调用 _handle_text"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.update_last_chatid = AsyncMock()
+
+        # mock _get_or_create_conversation
+        svc._get_or_create_conversation = AsyncMock(return_value="conv1")
+
+        msg = _make_msg(text="帮助")
+        ctx = _make_reply_ctx()
+
+        with patch(
+            "services.wecom.command_handler.CommandHandler.try_handle",
+            new=AsyncMock(return_value=True),
+        ) as mock_try:
+            with patch.object(svc, "_handle_text", new=AsyncMock()) as mock_handle:
+                await svc.handle_message(msg, ctx)
+
+                mock_try.assert_called_once()
+                mock_handle.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_command_continues_to_ai(self):
+        """普通文本 → try_handle=False → 正常路由到 AI"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.update_last_chatid = AsyncMock()
+        svc._get_or_create_conversation = AsyncMock(return_value="conv1")
+        svc._download_media = AsyncMock(return_value=[])
+        svc._save_user_message = AsyncMock(return_value="m1")
+        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
+
+        msg = _make_msg(text="今天天气怎么样")
+        ctx = _make_reply_ctx()
+
+        with patch(
+            "services.wecom.command_handler.CommandHandler.try_handle",
+            new=AsyncMock(return_value=False),
+        ):
+            with patch.object(svc, "_handle_text", new=AsyncMock()) as mock_handle:
+                await svc.handle_message(msg, ctx)
+                mock_handle.assert_called_once()
+
+
+# ============================================================
+# TestFileVideoHint — FILE/VIDEO 不支持提示
+# ============================================================
+
+
+class TestFileVideoHint:
+    """FILE/VIDEO msgtype → 提示不支持"""
+
+    @pytest.mark.asyncio
+    async def test_file_replies_hint(self):
+        """FILE 消息 → 提示暂不支持"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.update_last_chatid = AsyncMock()
+        svc._get_or_create_conversation = AsyncMock(return_value="conv1")
+        svc._download_media = AsyncMock(return_value=[])
+        svc._save_user_message = AsyncMock(return_value="m1")
+        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
+
+        msg = _make_msg(msgtype=WecomMsgType.FILE, text="")
+        ctx = _make_reply_ctx()
+
+        with patch.object(svc, "_reply_text", new=AsyncMock()) as mock_reply:
+            await svc.handle_message(msg, ctx)
+            mock_reply.assert_called_once()
+            assert "暂不支持" in mock_reply.call_args[0][1]

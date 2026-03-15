@@ -352,6 +352,7 @@ class WecomAIMixin:
             display = clean_for_stream(accumulated_text)
             await self._push_stream_chunk(
                 reply_ctx, stream_id, display, finish=True,
+                feedback_id=message_id,
             )
             reply_ctx.active_stream_id = None
             # DB 存原始内容（不清理），Web 前端自行渲染

@@ -114,6 +114,7 @@ class WecomWSClient:
         stream_id: str,
         content: str,
         finish: bool = False,
+        feedback_id: Optional[str] = None,
     ) -> None:
         """
         发送流式回复的一个 chunk。
@@ -123,21 +124,23 @@ class WecomWSClient:
             stream_id: 流 ID（同一次流式回复共用）
             content: 累积全文（企微协议要求全量替换，非增量）
             finish: 是否结束流
+            feedback_id: 反馈标识（设置后企微会显示赞/踩按钮）
         """
         if not self._ws or not self._is_connected:
             return
 
+        stream_body: Dict[str, Any] = {
+            "id": stream_id,
+            "finish": finish,
+            "content": content,
+        }
+        if feedback_id:
+            stream_body["feedback"] = {"id": feedback_id}
+
         msg = {
             "cmd": WecomCommand.RESPOND_MSG,
             "headers": {"req_id": req_id},
-            "body": {
-                "msgtype": "stream",
-                "stream": {
-                    "id": stream_id,
-                    "finish": finish,
-                    "content": content,
-                },
-            },
+            "body": {"msgtype": "stream", "stream": stream_body},
         }
         await self._safe_send(msg)
 
@@ -183,6 +186,36 @@ class WecomWSClient:
             },
         }
         await self._safe_send(msg)
+
+    async def send_msg(
+        self,
+        chatid: str,
+        msgtype: str,
+        content: dict,
+        chattype: str = "single",
+    ) -> bool:
+        """主动发送消息（用 chatid 寻址，无需 req_id）"""
+        if not self._ws or not self._is_connected:
+            logger.warning("Wecom WS: cannot send_msg, not connected")
+            return False
+
+        req_id = _gen_req_id("send_msg")
+        msg = {
+            "cmd": WecomCommand.SEND_MSG,
+            "headers": {"req_id": req_id},
+            "body": {
+                "chatid": chatid,
+                "chattype": chattype,
+                "msgtype": msgtype,
+                msgtype: content,
+            },
+        }
+        await self._safe_send(msg)
+        logger.info(
+            f"Wecom send_msg | chatid={chatid} | msgtype={msgtype} | "
+            f"req_id={req_id}"
+        )
+        return True
 
     @property
     def is_connected(self) -> bool:
@@ -288,11 +321,7 @@ class WecomWSClient:
                     f"Wecom WS: no data received for {int(now - self._last_recv_time)}s, "
                     "force closing to trigger reconnect"
                 )
-                self._is_connected = False
-                try:
-                    await self._ws.close()
-                except Exception:
-                    pass
+                await self._force_close()
                 break
 
             if self._ws and self._is_connected:
@@ -317,15 +346,8 @@ class WecomWSClient:
                         f"Wecom heartbeat failed ({consecutive_failures}): {e}"
                     )
                     if consecutive_failures >= 2:
-                        logger.error(
-                            "Wecom heartbeat: 2 consecutive failures, "
-                            "force closing to trigger reconnect"
-                        )
-                        self._is_connected = False
-                        try:
-                            await self._ws.close()
-                        except Exception:
-                            pass
+                        logger.error("Wecom heartbeat: 2 consecutive failures, force close")
+                        await self._force_close()
                         break
             await asyncio.sleep(HEARTBEAT_INTERVAL)
 
@@ -397,16 +419,10 @@ class WecomWSClient:
 
         if event_type == "disconnected_event":
             logger.warning(
-                f"Wecom WS: disconnected_event received — "
-                f"另一个连接将本连接顶掉，主动关闭触发重连 | "
+                f"Wecom WS: disconnected_event — 主动关闭触发重连 | "
                 f"body={json.dumps(body, ensure_ascii=False)}"
             )
-            self._is_connected = False
-            if self._ws:
-                try:
-                    await self._ws.close()
-                except Exception:
-                    pass
+            await self._force_close()
             return
 
         if event_type == "enter_chat":
@@ -434,6 +450,20 @@ class WecomWSClient:
                 logger.debug("Wecom WS: template_card_event received but no handler")
             return
 
+        if event_type == "feedback_event":
+            feedback = event.get("feedback", {})
+            fb_type = feedback.get("type", 0)  # 1=赞, 2=踩
+            fb_id = feedback.get("id", "")
+            fb_content = feedback.get("content", "")
+            reasons = feedback.get("inaccurate_reason_list", [])
+            userid = body.get("from", {}).get("userid", "")
+            label = "like" if fb_type == 1 else "dislike"
+            logger.info(
+                f"Wecom feedback | {label} | feedback_id={fb_id} | "
+                f"userid={userid} | content={fb_content} | reasons={reasons}"
+            )
+            return
+
         logger.debug(f"Wecom WS: unhandled event | eventtype={event_type}")
 
     # ── 工具方法 ──────────────────────────────────────────
@@ -445,13 +475,16 @@ class WecomWSClient:
                 await self._ws.send(json.dumps(msg))
         except Exception as e:
             logger.warning(f"Wecom WS send failed: {e}")
-            self._is_connected = False
-            # 主动关闭WS，确保 _receive_loop 退出 → 触发重连
-            if self._ws:
-                try:
-                    await self._ws.close()
-                except Exception:
-                    pass
+            await self._force_close()
+
+    async def _force_close(self) -> None:
+        """强制关闭连接，触发重连"""
+        self._is_connected = False
+        if self._ws:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
 
     def _add_to_dedup(self, msgid: str) -> None:
         """添加 msgid 到去重缓存（LRU 淘汰）"""

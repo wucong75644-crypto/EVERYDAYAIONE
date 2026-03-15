@@ -167,3 +167,40 @@ class TestFuzzyModelMatch:
     def test_chinese_name_match(self):
         result = CommandHandler._fuzzy_match_model("千问")
         assert result == "qwen3.5-plus"
+
+
+# ============================================================
+# TestDispatchNoWsClient — ws_client 为 None 早期返回
+# ============================================================
+
+
+class TestDispatchNoWsClient:
+    """_dispatch 在 ws_client=None 或 req_id=None 时提前返回"""
+
+    @pytest.mark.asyncio
+    async def test_no_ws_client_returns_silently(self):
+        """ws_client=None → 静默返回不发送"""
+        handler = CommandHandler(_make_db())
+        ctx = MagicMock()
+        ctx.channel = "smart_robot"
+        ctx.ws_client = None
+        ctx.req_id = "req001"
+
+        # 匹配"帮助" → try_handle 返回 True
+        result = await handler.try_handle("帮助", "u1", "c1", ctx)
+
+        assert result is True
+        # 但无实际发送（无 ws_client）
+
+    @pytest.mark.asyncio
+    async def test_no_req_id_returns_silently(self):
+        """req_id=None → 静默返回不发送"""
+        handler = CommandHandler(_make_db())
+        ctx = MagicMock()
+        ctx.channel = "smart_robot"
+        ctx.ws_client = MagicMock()
+        ctx.req_id = None
+
+        result = await handler.try_handle("帮助", "u1", "c1", ctx)
+
+        assert result is True

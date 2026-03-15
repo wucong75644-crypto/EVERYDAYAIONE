@@ -26,6 +26,14 @@ from schemas.wecom import (
 from services.wecom.wecom_message_service import WecomMessageService
 from services.wecom.ws_client import WecomWSClient
 
+# 模块级 ws_client 引用（主动推送 API 读取）
+_ws_client: WecomWSClient | None = None
+
+
+def get_ws_client() -> WecomWSClient | None:
+    """获取 WS 客户端实例（仅在 ws_runner 进程内可用）"""
+    return _ws_client
+
 
 async def main() -> None:
     setup_logging()
@@ -170,12 +178,14 @@ async def main() -> None:
             reply_ctx=reply_ctx,
         )
 
+    global _ws_client
     ws_client = WecomWSClient(
         bot_id=settings.wecom_bot_id,
         secret=settings.wecom_bot_secret,
         on_message=_on_message,
         on_card_event=_on_card_event,
     )
+    _ws_client = ws_client
 
     # 优雅关闭
     stop_event = asyncio.Event()

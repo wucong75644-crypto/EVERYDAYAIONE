@@ -36,6 +36,44 @@ def _make_settings(**overrides):
     return MagicMock(**defaults)
 
 
+async def _capture_callbacks():
+    """启动 main() 并捕获 on_message / on_card_event 回调"""
+    mock_settings = _make_settings()
+    mock_msg_svc = MagicMock()
+    mock_msg_svc.handle_message = AsyncMock()
+
+    mock_ws_instance = MagicMock()
+    mock_ws_instance.start = AsyncMock()
+    mock_ws_instance.stop = AsyncMock()
+
+    callbacks = {}
+
+    def capture_ws_client(**kwargs):
+        callbacks["on_message"] = kwargs.get("on_message")
+        callbacks["on_card_event"] = kwargs.get("on_card_event")
+        return mock_ws_instance
+
+    with (
+        patch("wecom_ws_runner.setup_logging"),
+        patch("wecom_ws_runner.get_settings", return_value=mock_settings),
+        patch("wecom_ws_runner.get_supabase_client", return_value=MagicMock()),
+        patch("wecom_ws_runner.WecomMessageService", return_value=mock_msg_svc),
+        patch("wecom_ws_runner.WecomWSClient", side_effect=capture_ws_client),
+        patch("asyncio.Event") as mock_event_cls,
+    ):
+        mock_event = MagicMock()
+        mock_event.wait = AsyncMock()
+        mock_event_cls.return_value = mock_event
+
+        with patch.object(
+            asyncio.get_event_loop(), "add_signal_handler", create=True,
+        ):
+            from wecom_ws_runner import main
+            await main()
+
+    return callbacks, mock_msg_svc
+
+
 # ============================================================
 # TestMainExitEarly — 配置缺失提前退出
 # ============================================================
@@ -371,3 +409,257 @@ class TestSignalHandling:
 
         mock_ws_instance.start.assert_called_once()
         mock_ws_instance.stop.assert_called_once()
+
+
+# ============================================================
+# TestOnMessageImage — IMAGE 消息解析
+# ============================================================
+
+
+class TestOnMessageImage:
+    """_on_message: image 消息 → image_urls + aeskeys 正确提取"""
+
+    @pytest.mark.asyncio
+    async def test_image_with_aeskey(self):
+        """image 消息 → image_urls / aeskeys 正确"""
+        callbacks, mock_svc = await _capture_callbacks()
+
+        data = {
+            "headers": {"req_id": "req_img"},
+            "body": {
+                "msgid": "msg_img",
+                "from": {"userid": "u1"},
+                "chatid": "c1",
+                "chattype": "single",
+                "msgtype": "image",
+                "image": {
+                    "url": "https://img.example.com/pic.jpg",
+                    "aeskey": "abc123key",
+                },
+            },
+        }
+
+        await callbacks["on_message"](data)
+
+        msg = mock_svc.handle_message.call_args[0][0]
+        assert msg.msgtype == "image"
+        assert msg.image_urls == ["https://img.example.com/pic.jpg"]
+        assert msg.aeskeys == {"https://img.example.com/pic.jpg": "abc123key"}
+
+    @pytest.mark.asyncio
+    async def test_image_without_aeskey(self):
+        """image 消息无 aeskey → aeskeys 为空"""
+        callbacks, mock_svc = await _capture_callbacks()
+
+        data = {
+            "headers": {"req_id": "req_img2"},
+            "body": {
+                "msgid": "msg_img2",
+                "from": {"userid": "u1"},
+                "chatid": "c1",
+                "chattype": "single",
+                "msgtype": "image",
+                "image": {"url": "https://img.example.com/pic2.jpg"},
+            },
+        }
+
+        await callbacks["on_message"](data)
+
+        msg = mock_svc.handle_message.call_args[0][0]
+        assert msg.image_urls == ["https://img.example.com/pic2.jpg"]
+        assert msg.aeskeys == {}
+
+
+# ============================================================
+# TestOnMessageFile — FILE 消息解析
+# ============================================================
+
+
+class TestOnMessageFile:
+    """_on_message: file 消息 → file_url / file_name / aeskeys"""
+
+    @pytest.mark.asyncio
+    async def test_file_message(self):
+        """file 消息 → file_url / file_name 正确"""
+        callbacks, mock_svc = await _capture_callbacks()
+
+        data = {
+            "headers": {"req_id": "req_file"},
+            "body": {
+                "msgid": "msg_file",
+                "from": {"userid": "u1"},
+                "chatid": "c1",
+                "chattype": "single",
+                "msgtype": "file",
+                "file": {
+                    "url": "https://file.example.com/doc.pdf",
+                    "name": "report.pdf",
+                    "aeskey": "filekey",
+                },
+            },
+        }
+
+        await callbacks["on_message"](data)
+
+        msg = mock_svc.handle_message.call_args[0][0]
+        assert msg.msgtype == "file"
+        assert msg.file_url == "https://file.example.com/doc.pdf"
+        assert msg.file_name == "report.pdf"
+        assert msg.aeskeys == {"https://file.example.com/doc.pdf": "filekey"}
+
+
+# ============================================================
+# TestOnMessageVideo — VIDEO 消息解析
+# ============================================================
+
+
+class TestOnMessageVideo:
+    """_on_message: video 消息 → file_url / file_name / aeskeys"""
+
+    @pytest.mark.asyncio
+    async def test_video_message(self):
+        """video 消息 → file_url / file_name 正确"""
+        callbacks, mock_svc = await _capture_callbacks()
+
+        data = {
+            "headers": {"req_id": "req_vid"},
+            "body": {
+                "msgid": "msg_vid",
+                "from": {"userid": "u1"},
+                "chatid": "c1",
+                "chattype": "single",
+                "msgtype": "video",
+                "video": {
+                    "url": "https://vid.example.com/clip.mp4",
+                    "name": "clip.mp4",
+                    "aeskey": "vidkey",
+                },
+            },
+        }
+
+        await callbacks["on_message"](data)
+
+        msg = mock_svc.handle_message.call_args[0][0]
+        assert msg.msgtype == "video"
+        assert msg.file_url == "https://vid.example.com/clip.mp4"
+        assert msg.file_name == "clip.mp4"
+        assert msg.aeskeys == {"https://vid.example.com/clip.mp4": "vidkey"}
+
+
+# ============================================================
+# TestOnMessageMixed — MIXED 消息解析
+# ============================================================
+
+
+class TestOnMessageMixed:
+    """_on_message: mixed 消息 → text + images 正确提取"""
+
+    @pytest.mark.asyncio
+    async def test_mixed_text_and_images(self):
+        """mixed 消息 → text_content + image_urls 合并"""
+        callbacks, mock_svc = await _capture_callbacks()
+
+        data = {
+            "headers": {"req_id": "req_mix"},
+            "body": {
+                "msgid": "msg_mix",
+                "from": {"userid": "u1"},
+                "chatid": "c1",
+                "chattype": "single",
+                "msgtype": "mixed",
+                "mixed": {
+                    "msg_item": [
+                        {"type": "text", "text": {"content": "看这个图"}},
+                        {
+                            "type": "image",
+                            "image": {
+                                "url": "https://img1.example.com/a.jpg",
+                                "aeskey": "key1",
+                            },
+                        },
+                        {
+                            "type": "image",
+                            "image": {
+                                "url": "https://img2.example.com/b.jpg",
+                            },
+                        },
+                    ],
+                },
+            },
+        }
+
+        await callbacks["on_message"](data)
+
+        msg = mock_svc.handle_message.call_args[0][0]
+        assert msg.msgtype == "mixed"
+        assert msg.text_content == "看这个图"
+        assert len(msg.image_urls) == 2
+        assert "https://img1.example.com/a.jpg" in msg.image_urls
+        assert "https://img2.example.com/b.jpg" in msg.image_urls
+        assert msg.aeskeys.get("https://img1.example.com/a.jpg") == "key1"
+        assert "https://img2.example.com/b.jpg" not in msg.aeskeys
+
+
+# ============================================================
+# TestOnCardEvent — 卡片事件回调
+# ============================================================
+
+
+class TestOnCardEvent:
+    """_on_card_event 回调：解析卡片事件并分发到 handler"""
+
+    @pytest.mark.asyncio
+    async def test_card_event_callback_captured(self):
+        """main() 启动时 on_card_event 被注册"""
+        callbacks, _ = await _capture_callbacks()
+        assert callbacks["on_card_event"] is not None
+
+    @pytest.mark.asyncio
+    async def test_card_event_calls_handler(self):
+        """卡片事件 → 调用 CardEventHandler.handle"""
+        callbacks, mock_msg_svc = await _capture_callbacks()
+
+        mock_handler_instance = MagicMock()
+        mock_handler_instance.handle = AsyncMock()
+
+        mock_user_svc = MagicMock()
+        mock_user_svc.get_or_create_user = AsyncMock(return_value="user_123")
+
+        # mock msg_svc 的 _get_or_create_conversation
+        mock_msg_svc._get_or_create_conversation = AsyncMock(
+            return_value="conv_123"
+        )
+
+        data = {
+            "headers": {"req_id": "req_card"},
+            "body": {
+                "from": {"userid": "wx_user"},
+                "chatid": "chat_card",
+                "chattype": "single",
+                "event": {
+                    "template_card_event": {
+                        "event_key": "start_chat",
+                        "task_id": "task_001",
+                        "card_type": "button_interaction",
+                    },
+                },
+            },
+        }
+
+        # _on_card_event 内部用 from ... import 导入，patch 源模块
+        with (
+            patch(
+                "services.wecom.user_mapping_service.WecomUserMappingService",
+                return_value=mock_user_svc,
+            ),
+            patch(
+                "services.wecom.card_event_handler.WecomCardEventHandler",
+                return_value=mock_handler_instance,
+            ),
+        ):
+            await callbacks["on_card_event"](data)
+
+        mock_handler_instance.handle.assert_called_once()
+        call_kwargs = mock_handler_instance.handle.call_args[1]
+        assert call_kwargs["event_key"] == "start_chat"
+        assert call_kwargs["task_id"] == "task_001"

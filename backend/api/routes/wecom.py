@@ -142,3 +142,52 @@ def _xml_text(root: ET.Element, tag: str) -> str | None:
     """安全提取 XML 子节点文本"""
     node = root.find(tag)
     return node.text if node is not None else None
+
+
+# ── 主动推送 API ──────────────────────────────────────────
+
+from pydantic import BaseModel, Field
+
+
+class WecomPushRequest(BaseModel):
+    """主动推送消息请求体"""
+    user_id: str = Field(description="系统用户 ID")
+    message: str = Field(description="消息内容（Markdown 格式）")
+    chatid: str | None = Field(default=None, description="指定 chatid（不填则自动查找）")
+    msgtype: str = Field(default="markdown", description="消息类型")
+
+
+@router.post("/push", summary="主动推送消息")
+async def push_message(req: WecomPushRequest, db: Database) -> dict:
+    """主动推送消息到企微用户（内部调用）
+
+    通过 WS 长连接的 aibot_send_msg 向指定用户发送消息。
+    """
+    from services.wecom.user_mapping_service import WecomUserMappingService
+
+    # 1. 获取 ws_client 实例
+    from wecom_ws_runner import get_ws_client
+    ws_client = get_ws_client()
+    if not ws_client or not ws_client.is_connected:
+        return {"success": False, "error": "WS 长连接未就绪"}
+
+    # 2. 确定 chatid
+    chatid = req.chatid
+    chattype = "single"
+    if not chatid:
+        user_svc = WecomUserMappingService(db)
+        info = await user_svc.get_chatid_by_user_id(req.user_id)
+        if not info:
+            return {"success": False, "error": "未找到该用户的 chatid，请先让用户发送消息"}
+        chatid = info["chatid"]
+        chattype = info["chattype"]
+
+    # 3. 发送
+    ok = await ws_client.send_msg(
+        chatid=chatid,
+        msgtype=req.msgtype,
+        content={"content": req.message},
+        chattype=chattype,
+    )
+
+    return {"success": ok}

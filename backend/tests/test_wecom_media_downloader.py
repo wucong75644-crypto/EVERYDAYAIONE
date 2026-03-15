@@ -140,3 +140,88 @@ class TestDownloadAndStore:
             )
 
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_aeskey_success_uploads_to_oss(self):
+        """有 aeskey + 解密成功 → 上传到 OSS"""
+        downloader = WecomMediaDownloader()
+
+        decrypted = b"valid_image_data"
+
+        with (
+            patch.object(
+                downloader, "_download", new=AsyncMock(return_value=b"encrypted"),
+            ),
+            patch.object(downloader, "_aes_decrypt", return_value=decrypted),
+            patch(
+                "services.wecom.media_downloader.get_oss_service",
+                return_value=MagicMock(),
+            ),
+            patch("asyncio.to_thread", new=AsyncMock(
+                return_value={"url": "https://oss.example.com/img.jpg"},
+            )),
+        ):
+            result = await downloader.download_and_store(
+                url="https://wecom.example.com/img.jpg",
+                user_id="u1",
+                aeskey="valid_aes_key_base64",
+            )
+
+        assert result == "https://oss.example.com/img.jpg"
+
+
+# ============================================================
+# TestDownloadDirect — _download HTTP 流式下载
+# ============================================================
+
+
+class TestDownloadDirect:
+    """_download HTTP 流式下载"""
+
+    @pytest.mark.asyncio
+    async def test_download_http_error(self):
+        """HTTP 非200 → 返回 None"""
+        downloader = WecomMediaDownloader()
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def mock_stream(method, url):
+            yield mock_resp
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock()
+        mock_client.stream = mock_stream
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await downloader._download("https://example.com/img.jpg")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_download_timeout(self):
+        """超时 → 返回 None"""
+        import httpx
+        downloader = WecomMediaDownloader()
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock()
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def mock_stream(method, url):
+            raise httpx.TimeoutException("timeout")
+            yield  # noqa: unreachable
+
+        mock_client.stream = mock_stream
+
+        with patch("httpx.AsyncClient", return_value=mock_client):
+            result = await downloader._download("https://example.com/img.jpg")
+
+        assert result is None

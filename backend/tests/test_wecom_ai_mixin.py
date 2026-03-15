@@ -1061,3 +1061,254 @@ async def _async_iter(items):
     """将列表转为 async iterator"""
     for item in items:
         yield item
+
+
+# ============================================================
+# TestStreamAndReplyReuseStream — 复用已有 stream
+# ============================================================
+
+
+class TestStreamAndReplyReuseStream:
+    """_stream_and_reply 复用已有 active_stream_id"""
+
+    @pytest.mark.asyncio
+    async def test_reuses_existing_stream_id(self):
+        """有 active_stream_id → 不新建 stream，不发"正在思考..." """
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._push_stream_chunk = AsyncMock()
+        svc._update_assistant_message = AsyncMock()
+
+        chunks = [MagicMock(content="hello")]
+        adapter = MagicMock()
+        adapter.stream_chat = MagicMock(return_value=_async_iter(chunks))
+
+        ctx = _make_reply_ctx("smart_robot")
+        ctx.active_stream_id = "existing_stream_999"
+
+        await svc._stream_and_reply(adapter, [], ctx, "msg1")
+
+        # 只有 finish push，无 "正在思考..." 初始 push
+        calls = svc._push_stream_chunk.call_args_list
+        assert len(calls) == 1
+        assert calls[0].kwargs.get("finish") is True
+        # 使用已有 stream_id
+        assert calls[0].args[1] == "existing_stream_999"
+
+    @pytest.mark.asyncio
+    async def test_creates_new_stream_when_none(self):
+        """无 active_stream_id → 创建新 stream + 发"正在思考..." """
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._push_stream_chunk = AsyncMock()
+        svc._update_assistant_message = AsyncMock()
+
+        chunks = [MagicMock(content="world")]
+        adapter = MagicMock()
+        adapter.stream_chat = MagicMock(return_value=_async_iter(chunks))
+
+        ctx = _make_reply_ctx("smart_robot")
+        assert ctx.active_stream_id is None
+
+        await svc._stream_and_reply(adapter, [], ctx, "msg2")
+
+        # 初始 "正在思考..." + finish = 2 次
+        calls = svc._push_stream_chunk.call_args_list
+        assert len(calls) == 2
+        assert calls[0].kwargs.get("finish") is False
+        assert calls[-1].kwargs.get("finish") is True
+
+
+# ============================================================
+# TestHandleChatResponseWithImages — 多模态聊天路径
+# ============================================================
+
+
+class TestHandleChatResponseWithImages:
+    """_handle_chat_response 传入 image_urls → 多模态处理"""
+
+    @pytest.mark.asyncio
+    async def test_image_urls_passed_to_build(self):
+        """image_urls 传递到 _build_chat_messages"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+
+        mock_agent = MagicMock()
+        mock_agent.direct_reply = None
+        mock_agent.model = "auto"
+        mock_agent.system_prompt = None
+        mock_agent.search_context = None
+        from schemas.message import GenerationType
+        mock_agent.generation_type = GenerationType.CHAT
+
+        ctx = _make_reply_ctx("smart_robot")
+        ctx.active_stream_id = "s1"
+
+        with (
+            patch.object(svc, "_build_chat_messages", new=AsyncMock(return_value=[])) as mock_build,
+            patch.object(svc, "_stream_and_reply", new=AsyncMock()) as mock_stream,
+            patch(
+                "services.wecom.wecom_ai_mixin.create_chat_adapter",
+                return_value=MagicMock(close=AsyncMock()),
+            ),
+            patch(
+                "services.intent_router.resolve_auto_model",
+                return_value="test-model",
+            ),
+        ):
+            await svc._handle_chat_response(
+                "u1", "c1", "m1", "看这张图",
+                ctx, mock_agent, None,
+                image_urls=["https://oss.example.com/img.jpg"],
+            )
+
+            mock_build.assert_called_once()
+            build_kwargs = mock_build.call_args[1]
+            assert build_kwargs["image_urls"] == ["https://oss.example.com/img.jpg"]
+
+
+# ============================================================
+# TestHandleImageResponseEmpty — 图片生成无结果
+# ============================================================
+
+
+class TestHandleImageResponseEmpty:
+    """_handle_image_response 生成结果无 URL"""
+
+    @pytest.mark.asyncio
+    async def test_empty_urls_replies_failure(self):
+        """generate 返回空 image_urls → 提示失败"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._reply_text = AsyncMock()
+        svc._reply_credits_insufficient = AsyncMock()
+
+        mock_agent = MagicMock()
+        mock_agent.model = "auto"
+        mock_agent.tool_params = {"prompt": "a cat"}
+
+        ctx = _make_reply_ctx("smart_robot")
+
+        mock_result = MagicMock()
+        mock_result.image_urls = []  # 空列表
+
+        mock_adapter = MagicMock()
+        mock_adapter.generate = AsyncMock(return_value=mock_result)
+        mock_adapter.close = AsyncMock()
+
+        with (
+            patch(
+                "services.wecom.wecom_ai_mixin.create_chat_adapter",
+            ),
+            patch(
+                "config.kie_models.calculate_image_cost",
+                return_value={"user_credits": 10},
+            ),
+            patch.object(svc, "_get_user_balance", return_value=100),
+            patch(
+                "services.intent_router.resolve_auto_model",
+                return_value="test-img-model",
+            ),
+            patch(
+                "services.adapters.factory.create_image_adapter",
+                return_value=mock_adapter,
+            ),
+        ):
+            await svc._handle_image_response(
+                "u1", "c1", "m1", "画只猫", ctx, mock_agent,
+            )
+
+        # 应有"失败"提示
+        reply_calls = svc._reply_text.call_args_list
+        assert any("失败" in str(c) for c in reply_calls)
+
+
+# ============================================================
+# TestHandleVideoResponseException — 视频生成异常
+# ============================================================
+
+
+class TestHandleVideoResponseException:
+    """_handle_video_response 生成异常 → 错误提示"""
+
+    @pytest.mark.asyncio
+    async def test_gen_exception_replies_error(self):
+        """adapter.generate 异常 → 提示失败"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._reply_text = AsyncMock()
+        svc._reply_credits_insufficient = AsyncMock()
+
+        mock_agent = MagicMock()
+        mock_agent.model = "auto"
+        mock_agent.tool_params = {"prompt": "a sunset"}
+
+        ctx = _make_reply_ctx("smart_robot")
+
+        mock_adapter = MagicMock()
+        mock_adapter.generate = AsyncMock(side_effect=RuntimeError("GPU OOM"))
+        mock_adapter.close = AsyncMock()
+
+        with (
+            patch(
+                "config.kie_models.calculate_video_cost",
+                return_value={"user_credits": 50},
+            ),
+            patch.object(svc, "_get_user_balance", return_value=200),
+            patch(
+                "services.intent_router.resolve_auto_model",
+                return_value="test-vid-model",
+            ),
+            patch(
+                "services.adapters.factory.create_video_adapter",
+                return_value=mock_adapter,
+            ),
+        ):
+            await svc._handle_video_response(
+                "u1", "c1", "m1", "拍日落", ctx, mock_agent,
+            )
+
+        # 应有"失败"提示
+        reply_calls = svc._reply_text.call_args_list
+        assert any("失败" in str(c) for c in reply_calls)
+
+
+# ============================================================
+# TestRunAgentLoopDisabled — agent_loop 禁用走 IntentRouter
+# ============================================================
+
+
+class TestRunAgentLoopDisabled:
+    """_run_agent_loop 在 agent_loop_enabled=False 时直接走 IntentRouter"""
+
+    @pytest.mark.asyncio
+    async def test_disabled_uses_intent_router(self):
+        """agent_loop_enabled=False → IntentRouter 路由"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc.settings = MagicMock()
+        svc.settings.agent_loop_enabled = False
+
+        from schemas.message import GenerationType, TextPart
+
+        mock_decision = MagicMock()
+        mock_decision.generation_type = GenerationType.CHAT
+        mock_decision.recommended_model = "test-model"
+        mock_decision.system_prompt = "你是助手"
+        mock_decision.tool_params = {}
+
+        mock_router = MagicMock()
+        mock_router.route = AsyncMock(return_value=mock_decision)
+        mock_router.close = AsyncMock()
+
+        with patch(
+            "services.intent_router.IntentRouter",
+            return_value=mock_router,
+        ):
+            result = await svc._run_agent_loop(
+                "u1", "c1", [TextPart(text="hi")],
+            )
+
+        assert result.generation_type == GenerationType.CHAT
+        assert result.model == "test-model"
+        mock_router.route.assert_called_once()

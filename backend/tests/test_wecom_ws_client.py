@@ -160,6 +160,34 @@ class TestSendStreamChunk:
         assert sent["body"]["stream"]["finish"] is True
 
     @pytest.mark.asyncio
+    async def test_stream_with_feedback_id(self, connected_client):
+        """流式带 feedback_id → 包含 feedback.id 字段"""
+        await connected_client.send_stream_chunk(
+            req_id="req_005",
+            stream_id="stream_003",
+            content="回复内容",
+            finish=True,
+            feedback_id="msg_abc123",
+        )
+
+        sent = json.loads(connected_client._ws.send.call_args[0][0])
+        stream = sent["body"]["stream"]
+        assert stream["feedback"] == {"id": "msg_abc123"}
+
+    @pytest.mark.asyncio
+    async def test_stream_without_feedback_id(self, connected_client):
+        """流式无 feedback_id → 不含 feedback 字段"""
+        await connected_client.send_stream_chunk(
+            req_id="req_006",
+            stream_id="stream_004",
+            content="内容",
+            finish=False,
+        )
+
+        sent = json.loads(connected_client._ws.send.call_args[0][0])
+        assert "feedback" not in sent["body"]["stream"]
+
+    @pytest.mark.asyncio
     async def test_no_send_when_disconnected(self, client):
         """未连接时静默跳过"""
         await client.send_stream_chunk("req", "s1", "text")
@@ -294,7 +322,7 @@ class TestHandleEventCallback:
 
     @pytest.mark.asyncio
     async def test_enter_chat_sends_welcome(self, connected_client):
-        """enter_chat 事件 → 发送欢迎消息"""
+        """enter_chat 事件 → 发送欢迎卡片"""
         data = {
             "headers": {"req_id": "req_evt_001"},
             "body": {
@@ -302,17 +330,14 @@ class TestHandleEventCallback:
             },
         }
 
-        with patch(
-            "services.wecom.ws_client.get_settings",
-            return_value=MagicMock(),
-        ):
-            await connected_client._handle_event_callback(data)
+        await connected_client._handle_event_callback(data)
 
         connected_client._ws.send.assert_called_once()
         sent = json.loads(connected_client._ws.send.call_args[0][0])
         assert sent["cmd"] == WecomCommand.RESPOND_WELCOME
         assert sent["headers"]["req_id"] == "req_evt_001"
-        assert "你好" in sent["body"]["text"]["content"]
+        assert sent["body"]["msgtype"] == "template_card"
+        assert "template_card" in sent["body"]
 
     @pytest.mark.asyncio
     async def test_unknown_event_no_op(self, connected_client):
@@ -324,12 +349,52 @@ class TestHandleEventCallback:
             },
         }
 
-        with patch(
-            "services.wecom.ws_client.get_settings",
-            return_value=MagicMock(),
-        ):
-            await connected_client._handle_event_callback(data)
+        await connected_client._handle_event_callback(data)
 
+        connected_client._ws.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_feedback_event_like(self, connected_client):
+        """feedback_event 赞 → 记录日志，不发送消息"""
+        data = {
+            "headers": {"req_id": "req_fb_001"},
+            "body": {
+                "from": {"userid": "test_user"},
+                "event": {
+                    "eventtype": "feedback_event",
+                    "feedback": {
+                        "type": 1,
+                        "id": "fb_msg_001",
+                        "content": "",
+                    },
+                },
+            },
+        }
+
+        await connected_client._handle_event_callback(data)
+        # feedback_event 只记日志，不发送消息
+        connected_client._ws.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_feedback_event_dislike(self, connected_client):
+        """feedback_event 踩 → 记录日志（含 reasons）"""
+        data = {
+            "headers": {"req_id": "req_fb_002"},
+            "body": {
+                "from": {"userid": "test_user"},
+                "event": {
+                    "eventtype": "feedback_event",
+                    "feedback": {
+                        "type": 2,
+                        "id": "fb_msg_002",
+                        "content": "回答不准确",
+                        "inaccurate_reason_list": ["事实错误", "过时信息"],
+                    },
+                },
+            },
+        }
+
+        await connected_client._handle_event_callback(data)
         connected_client._ws.send.assert_not_called()
 
 
@@ -470,12 +535,216 @@ class TestReceiveLoopNonBlocking:
             return task
 
         with patch("asyncio.create_task", side_effect=_tracking_create_task):
-            with patch(
-                "services.wecom.ws_client.get_settings",
-                return_value=MagicMock(),
-            ):
-                await connected_client._receive_loop()
-                for t in tasks_created:
-                    await t
+            await connected_client._receive_loop()
+            for t in tasks_created:
+                await t
 
         assert len(tasks_created) == 1
+
+
+# ============================================================
+# TestSendTemplateCard — 模板卡片发送
+# ============================================================
+
+
+class TestSendTemplateCard:
+    """send_template_card 协议构建"""
+
+    @pytest.mark.asyncio
+    async def test_template_card_protocol(self, connected_client):
+        """模板卡片 → 正确协议格式"""
+        card = {"card_type": "text_notice", "main_title": {"title": "Hello"}}
+        await connected_client.send_template_card("req_tc_001", card)
+
+        sent = json.loads(connected_client._ws.send.call_args[0][0])
+        assert sent["cmd"] == WecomCommand.RESPOND_MSG
+        assert sent["headers"]["req_id"] == "req_tc_001"
+        assert sent["body"]["msgtype"] == "template_card"
+        assert sent["body"]["template_card"] == card
+
+    @pytest.mark.asyncio
+    async def test_template_card_disconnected(self, client):
+        """未连接 → 不发送"""
+        await client.send_template_card("req", {"card": "data"})
+        # 无 _ws，不抛出
+
+
+# ============================================================
+# TestSendUpdateCard — 更新卡片
+# ============================================================
+
+
+class TestSendUpdateCard:
+    """send_update_card 协议构建"""
+
+    @pytest.mark.asyncio
+    async def test_update_card_protocol(self, connected_client):
+        """更新卡片 → 正确协议格式"""
+        card = {"card_type": "text_notice", "main_title": {"title": "Updated"}}
+        await connected_client.send_update_card("req_uc_001", card)
+
+        sent = json.loads(connected_client._ws.send.call_args[0][0])
+        assert sent["cmd"] == WecomCommand.RESPOND_UPDATE
+        assert sent["headers"]["req_id"] == "req_uc_001"
+        assert sent["body"]["response_type"] == "update_template_card"
+        assert sent["body"]["template_card"] == card
+
+    @pytest.mark.asyncio
+    async def test_update_card_disconnected(self, client):
+        """未连接 → 不发送"""
+        await client.send_update_card("req", {"card": "data"})
+
+
+# ============================================================
+# TestDisconnectedEvent — disconnected_event 强制关闭重连
+# ============================================================
+
+
+class TestDisconnectedEvent:
+    """_handle_event_callback disconnected_event"""
+
+    @pytest.mark.asyncio
+    async def test_disconnected_event_force_closes(self, connected_client):
+        """disconnected_event → 主动关闭连接"""
+        connected_client._ws.close = AsyncMock()
+        data = {
+            "headers": {"req_id": "req_dc_001"},
+            "body": {
+                "event": {"eventtype": "disconnected_event"},
+            },
+        }
+
+        await connected_client._handle_event_callback(data)
+
+        assert connected_client._is_connected is False
+        connected_client._ws.close.assert_called_once()
+        # 不发送任何消息
+        connected_client._ws.send.assert_not_called()
+
+
+# ============================================================
+# TestTemplateCardEvent — template_card_event 分发
+# ============================================================
+
+
+class TestTemplateCardEvent:
+    """_handle_event_callback template_card_event"""
+
+    @pytest.mark.asyncio
+    async def test_card_event_dispatches_to_handler(self):
+        """template_card_event → 调用 on_card_event"""
+        on_card = AsyncMock()
+        client = WecomWSClient("bot", "secret", on_card_event=on_card)
+
+        data = {
+            "headers": {"req_id": "req_ce_001"},
+            "body": {
+                "event": {
+                    "eventtype": "template_card_event",
+                    "template_card_event": {"event_key": "start_chat"},
+                },
+            },
+        }
+
+        await client._handle_event_callback(data)
+        on_card.assert_called_once_with(data)
+
+    @pytest.mark.asyncio
+    async def test_card_event_handler_error_no_raise(self):
+        """on_card_event 异常 → 不抛出"""
+        on_card = AsyncMock(side_effect=RuntimeError("handler crash"))
+        client = WecomWSClient("bot", "secret", on_card_event=on_card)
+
+        data = {
+            "headers": {"req_id": "req_ce_002"},
+            "body": {
+                "event": {"eventtype": "template_card_event"},
+            },
+        }
+
+        # 不应抛出
+        await client._handle_event_callback(data)
+
+    @pytest.mark.asyncio
+    async def test_card_event_no_handler(self):
+        """无 on_card_event 处理器 → 静默跳过"""
+        client = WecomWSClient("bot", "secret", on_card_event=None)
+
+        data = {
+            "headers": {"req_id": "req_ce_003"},
+            "body": {
+                "event": {"eventtype": "template_card_event"},
+            },
+        }
+
+        await client._handle_event_callback(data)
+
+
+# ============================================================
+# TestSubscribe — 订阅协议
+# ============================================================
+
+
+class TestSubscribe:
+    """_subscribe 认证协议"""
+
+    @pytest.mark.asyncio
+    async def test_subscribe_success(self, connected_client):
+        """订阅成功 → 正常返回"""
+        connected_client._ws.recv = AsyncMock(
+            return_value=json.dumps({"errcode": 0, "errmsg": "ok"})
+        )
+
+        await connected_client._subscribe()
+
+        sent = json.loads(connected_client._ws.send.call_args[0][0])
+        assert sent["cmd"] == WecomCommand.SUBSCRIBE
+        assert sent["body"]["bot_id"] == "bot_test"
+        assert sent["body"]["secret"] == "secret_test"
+
+    @pytest.mark.asyncio
+    async def test_subscribe_error_raises(self, connected_client):
+        """订阅失败 → 抛出 ConnectionError"""
+        connected_client._ws.recv = AsyncMock(
+            return_value=json.dumps({"errcode": 40001, "errmsg": "invalid secret"})
+        )
+
+        with pytest.raises(ConnectionError, match="errcode=40001"):
+            await connected_client._subscribe()
+
+    @pytest.mark.asyncio
+    async def test_subscribe_body_errcode(self, connected_client):
+        """errcode 在 body 内 → 也能正确解析"""
+        connected_client._ws.recv = AsyncMock(
+            return_value=json.dumps({
+                "body": {"errcode": 40002, "errmsg": "bad bot_id"},
+            })
+        )
+
+        with pytest.raises(ConnectionError, match="errcode=40002"):
+            await connected_client._subscribe()
+
+
+# ============================================================
+# TestRecvTimeout — 心跳接收超时检测
+# ============================================================
+
+
+class TestRecvTimeout:
+    """_heartbeat_loop 接收超时检测"""
+
+    @pytest.mark.asyncio
+    async def test_recv_timeout_force_closes(self, connected_client):
+        """超过 RECV_TIMEOUT 未收到数据 → 强制关闭"""
+        connected_client._ws.close = AsyncMock()
+        # 设置 last_recv_time 为很久以前
+        connected_client._last_recv_time = (
+            asyncio.get_event_loop().time() - 100
+        )
+
+        with patch("services.wecom.ws_client.HEARTBEAT_INTERVAL", 0.01):
+            with patch("services.wecom.ws_client.RECV_TIMEOUT", 1):
+                await connected_client._heartbeat_loop()
+
+        assert connected_client._is_connected is False
+        connected_client._ws.close.assert_called_once()

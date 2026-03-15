@@ -245,3 +245,36 @@ class TestExtractSelectedId:
         }
         result = WecomCardEventHandler._extract_selected_id(selected, "model_select")
         assert result is None
+
+
+# ============================================================
+# TestHandleError — handler 异常 → 回复错误文本
+# ============================================================
+
+
+class TestHandleError:
+    """handle() 中 handler 抛异常 → 回复"操作失败" """
+
+    @pytest.mark.asyncio
+    async def test_handler_exception_replies_error(self):
+        """handler 抛异常 → 回复错误文本"""
+        handler = WecomCardEventHandler(_make_db())
+        ctx = _make_reply_ctx()
+
+        # 让 _handle_check_credits 内部抛异常
+        with patch.object(
+            handler, "_handle_check_credits",
+            new=AsyncMock(side_effect=RuntimeError("DB crash")),
+        ):
+            # 不应抛出
+            await handler.handle(
+                "check_credits", "t1", "button_interaction", None,
+                "u1", "c1", ctx,
+            )
+
+        # 应回复"操作失败"（send_reply 使用位置参数）
+        ctx.ws_client.send_reply.assert_called_once()
+        call_args = ctx.ws_client.send_reply.call_args[0]
+        # send_reply(req_id, "text", {"content": "操作失败..."})
+        assert call_args[1] == "text"
+        assert "操作失败" in call_args[2]["content"]
