@@ -58,6 +58,9 @@ class WecomWSClient:
         self._processed_msgs: OrderedDict[str, None] = OrderedDict()
         self._connect_task: Optional[asyncio.Task] = None
         self._last_recv_time: float = 0  # 最后收到数据的时间戳
+        self._connect_start_time: float = 0  # 连接建立时间（诊断用）
+        self._hb_sent: int = 0  # 心跳发送计数（诊断用）
+        self._hb_acked: int = 0  # 心跳 ACK 计数（诊断用）
 
     # ── 公开接口 ──────────────────────────────────────────
 
@@ -157,7 +160,11 @@ class WecomWSClient:
                     self._ws = ws
                     await self._subscribe()
                     self._is_connected = True
-                    self._last_recv_time = asyncio.get_event_loop().time()
+                    now = asyncio.get_event_loop().time()
+                    self._last_recv_time = now
+                    self._connect_start_time = now
+                    self._hb_sent = 0
+                    self._hb_acked = 0
                     delay = RECONNECT_DELAY_INIT  # 连接成功，重置延迟
 
                     logger.info("Wecom WS connected and subscribed")
@@ -184,6 +191,17 @@ class WecomWSClient:
             except Exception as e:
                 logger.warning(f"Wecom WS connection error: {e}")
             finally:
+                # 诊断：记录断连时的关键信息
+                uptime = 0
+                if self._connect_start_time:
+                    uptime = int(asyncio.get_event_loop().time() - self._connect_start_time)
+                close_code = getattr(self._ws, "close_code", None) if self._ws else None
+                close_reason = getattr(self._ws, "close_reason", None) if self._ws else None
+                logger.warning(
+                    f"Wecom WS disconnected | uptime={uptime}s | "
+                    f"hb_sent={self._hb_sent} hb_acked={self._hb_acked} | "
+                    f"close_code={close_code} close_reason={close_reason}"
+                )
                 self._is_connected = False
                 self._ws = None
 
@@ -233,15 +251,21 @@ class WecomWSClient:
                 break
 
             if self._ws and self._is_connected:
+                ping_req_id = _gen_req_id("ping")
                 ping = {
                     "cmd": WecomCommand.PING,
-                    "headers": {"req_id": _gen_req_id("ping")},
+                    "headers": {"req_id": ping_req_id},
                 }
                 try:
                     await asyncio.wait_for(
                         self._ws.send(json.dumps(ping)), timeout=5,
                     )
+                    self._hb_sent += 1
                     consecutive_failures = 0
+                    logger.debug(
+                        f"Wecom heartbeat sent #{self._hb_sent} | "
+                        f"req_id={ping_req_id}"
+                    )
                 except Exception as e:
                     consecutive_failures += 1
                     logger.warning(
@@ -278,10 +302,24 @@ class WecomWSClient:
             elif cmd == WecomCommand.EVENT_CALLBACK:
                 asyncio.create_task(self._handle_event_callback(data))
             elif not cmd and req_id.startswith("ping_"):
-                # 心跳ACK：服务器回复格式为 {"headers":{"req_id":"ping_xxx"},"errcode":0,"errmsg":"ok"}
-                pass
+                # 心跳ACK：{"headers":{"req_id":"ping_xxx"},"errcode":0,"errmsg":"ok"}
+                self._hb_acked += 1
+                errcode = data.get("errcode")
+                if errcode != 0:
+                    logger.warning(
+                        f"Wecom heartbeat ACK error | errcode={errcode} "
+                        f"errmsg={data.get('errmsg')} | req_id={req_id}"
+                    )
+                else:
+                    logger.debug(
+                        f"Wecom heartbeat ACK #{self._hb_acked} | "
+                        f"req_id={req_id}"
+                    )
             elif cmd:
                 logger.debug(f"Wecom WS frame | cmd={cmd}")
+            else:
+                # 未知响应格式 — 记录便于排查
+                logger.debug(f"Wecom WS unknown frame | data={str(raw)[:300]}")
 
     # ── 消息处理 ──────────────────────────────────────────
 
