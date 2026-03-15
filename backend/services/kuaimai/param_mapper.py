@@ -94,6 +94,11 @@ def _normalize_dates(params: Dict[str, Any]) -> None:
         "updateTimeBegin", "updateTimeEnd",
         # 出入库记录
         "operateTimeBegin", "operateTimeEnd",
+        # 唯一码
+        "receiveTimeStart", "receiveTimeEnd",
+        "createStart", "createEnd",
+        # 维修单付款
+        "receivedTime", "operatorTime",
         # 库存修改时间
         "startStockModified", "endStockModified",
     ]

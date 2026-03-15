@@ -143,6 +143,7 @@ DISTRIBUTION_REGISTRY = {
             "main_phone": "mainPhone",
             "default_user_name": "defaultUserName",
             "default_password": "defaultPassword",
+            "version_number": "versionNumber",
         },
         required_params=[
             "supplier_company_id", "distributor_company_name",
