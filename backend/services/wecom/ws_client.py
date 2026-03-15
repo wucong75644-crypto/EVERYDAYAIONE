@@ -11,7 +11,6 @@
 
 import asyncio
 import json
-import logging
 import time
 import uuid
 from collections import OrderedDict
@@ -19,10 +18,6 @@ from typing import Any, Callable, Coroutine, Dict, Optional
 
 import websockets
 from loguru import logger
-
-# 临时：启用 websockets 库内部日志，排查5分钟断线
-logging.basicConfig(level=logging.DEBUG)
-logging.getLogger("websockets").setLevel(logging.DEBUG)
 
 from core.config import get_settings
 from schemas.wecom import WecomCommand
