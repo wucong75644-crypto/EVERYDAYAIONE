@@ -68,6 +68,11 @@ class WecomMessageService(WecomAIMixin):
                 channel=msg.channel,
             )
 
+            # 1.5 更新 chatid（主动推送用）
+            await self._user_svc.update_last_chatid(
+                msg.wecom_userid, msg.corp_id, msg.chatid, msg.chattype,
+            )
+
             # 2. 获取或创建对话
             conversation_id = await self._get_or_create_conversation(
                 user_id=user_id,
@@ -403,6 +408,7 @@ class WecomMessageService(WecomAIMixin):
         stream_id: str,
         content: str,
         finish: bool,
+        feedback_id: Optional[str] = None,
     ) -> None:
         """推送流式 chunk 到企微"""
         if reply_ctx.channel == "smart_robot" and reply_ctx.ws_client:
@@ -411,6 +417,7 @@ class WecomMessageService(WecomAIMixin):
                 stream_id=stream_id,
                 content=content,
                 finish=finish,
+                feedback_id=feedback_id,
             )
         elif reply_ctx.channel == "app" and finish:
             await self._send_app_message(reply_ctx, content)
