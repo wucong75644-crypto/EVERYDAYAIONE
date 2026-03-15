@@ -353,8 +353,16 @@ class WecomWSClient:
         if event_type == "disconnected_event":
             logger.warning(
                 f"Wecom WS: disconnected_event received — "
-                f"另一个连接将本连接顶掉 | body={json.dumps(body, ensure_ascii=False)}"
+                f"另一个连接将本连接顶掉，主动关闭触发重连 | "
+                f"body={json.dumps(body, ensure_ascii=False)}"
             )
+            # 必须主动关闭并重连：此后消息回调不会再路由到本连接
+            self._is_connected = False
+            if self._ws:
+                try:
+                    await self._ws.close()
+                except Exception:
+                    pass
             return
 
         if event_type == "enter_chat":
