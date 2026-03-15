@@ -30,11 +30,27 @@ from services.wecom.wecom_ai_mixin import WecomAIMixin
 class WecomMessageService(WecomAIMixin):
     """企微消息处理核心：用户映射 → 对话管理 → Agent Loop 路由 → AI 生成 → 回复"""
 
+    # 企微会话级设置缓存（内存级，进程重启后重置）
+    # key = conversation_id, value = {"model": "...", "thinking_mode": "..."}
+    _session_settings: Dict[str, Dict[str, str]] = {}
+
     def __init__(self, db: Client):
         self.db = db
         self.settings = get_settings()
         self._user_svc = WecomUserMappingService(db)
         self._conv_svc = ConversationService(db)
+
+    @classmethod
+    def get_session_setting(cls, conv_id: str, key: str) -> Optional[str]:
+        """获取企微会话级设置"""
+        return cls._session_settings.get(conv_id, {}).get(key)
+
+    @classmethod
+    def set_session_setting(cls, conv_id: str, key: str, value: str) -> None:
+        """设置企微会话级设置"""
+        if conv_id not in cls._session_settings:
+            cls._session_settings[conv_id] = {}
+        cls._session_settings[conv_id][key] = value
 
     async def handle_message(
         self,
@@ -59,30 +75,57 @@ class WecomMessageService(WecomAIMixin):
                 chattype=msg.chattype,
             )
 
-            # 3. 保存用户消息到 DB
+            # 2.5 指令拦截：匹配成功则直接回复卡片，跳过 AI 路由
+            if msg.text_content and msg.msgtype in (
+                WecomMsgType.TEXT, WecomMsgType.VOICE,
+            ):
+                from services.wecom.command_handler import CommandHandler
+                cmd = CommandHandler(self.db)
+                if await cmd.try_handle(
+                    msg.text_content, user_id, conversation_id, reply_ctx
+                ):
+                    return
+
+            # 3. 多模态资源下载（图片 URL → OSS 永久 URL，需在保存前完成）
+            oss_image_urls = await self._download_media(
+                msg, user_id, reply_ctx
+            )
+
+            # 4. 保存用户消息到 DB（含图片 OSS URL）
             await self._save_user_message(
                 conversation_id=conversation_id,
                 user_id=user_id,
                 text_content=msg.text_content or "",
+                image_urls=oss_image_urls,
             )
 
-            # 4. 创建 assistant 占位消息
+            # 5. 创建 assistant 占位消息
             assistant_message_id = await self._create_assistant_placeholder(
                 conversation_id=conversation_id,
             )
 
-            # 5. 根据消息类型处理
-            if msg.msgtype in (WecomMsgType.TEXT, WecomMsgType.VOICE):
+            # 6. 根据消息类型处理
+            if msg.msgtype in (
+                WecomMsgType.TEXT, WecomMsgType.VOICE,
+                WecomMsgType.IMAGE, WecomMsgType.MIXED,
+            ):
                 await self._handle_text(
                     user_id=user_id,
                     conversation_id=conversation_id,
                     message_id=assistant_message_id,
                     text_content=msg.text_content or "",
                     reply_ctx=reply_ctx,
+                    image_urls=oss_image_urls,
+                )
+            elif msg.msgtype in (WecomMsgType.FILE, WecomMsgType.VIDEO):
+                # 文件/视频暂不支持 AI 分析，提示用户
+                await self._reply_text(
+                    reply_ctx,
+                    "收到你的文件，目前暂不支持文件内容分析，发文字或图片给我试试~",
                 )
             else:
                 await self._reply_text(
-                    reply_ctx, "暂时只支持文本消息哦，发文字给我试试~"
+                    reply_ctx, "暂时不支持这种消息类型，发文字或图片给我试试~"
                 )
 
             elapsed = int((time.monotonic() - start_time) * 1000)
@@ -98,6 +141,40 @@ class WecomMessageService(WecomAIMixin):
             )
             await self._reply_text(reply_ctx, "抱歉，处理消息时出了点问题，请稍后再试。")
 
+    # ── 多媒体下载 ──────────────────────────────────────
+
+    async def _download_media(
+        self,
+        msg: WecomIncomingMessage,
+        user_id: str,
+        reply_ctx: WecomReplyContext,
+    ) -> List[str]:
+        """下载企微图片到 OSS，返回 OSS URL 列表。
+
+        图片 URL 有 5 分钟有效期，必须在路由前下载。
+        """
+        if not msg.image_urls:
+            return []
+
+        from services.wecom.media_downloader import WecomMediaDownloader
+        downloader = WecomMediaDownloader()
+
+        oss_urls = []
+        for url in msg.image_urls:
+            aeskey = msg.aeskeys.get(url)
+            oss_url = await downloader.download_and_store(
+                url=url,
+                user_id=user_id,
+                aeskey=aeskey,
+                media_type="image",
+            )
+            if oss_url:
+                oss_urls.append(oss_url)
+            else:
+                logger.warning(f"Wecom image download failed | url={url[:80]}")
+
+        return oss_urls
+
     # ── AI 路由 + 分发 ──────────────────────────────────
 
     async def _handle_text(
@@ -107,8 +184,10 @@ class WecomMessageService(WecomAIMixin):
         message_id: str,
         text_content: str,
         reply_ctx: WecomReplyContext,
+        image_urls: Optional[List[str]] = None,
     ) -> None:
-        """文本消息处理：Agent Loop 路由 → 按类型分发"""
+        """文本/多模态消息处理：Agent Loop 路由 → 按类型分发"""
+        from schemas.message import ImagePart
         from services.wecom.stream_keepalive import StreamKeepAlive
 
         keepalive: StreamKeepAlive | None = None
@@ -124,7 +203,14 @@ class WecomMessageService(WecomAIMixin):
                 keepalive = StreamKeepAlive(reply_ctx, self._push_stream_chunk)
                 await keepalive.start()
 
-            content_parts: List[ContentPart] = [TextPart(text=text_content)]
+            # 构建多模态 content_parts
+            content_parts: List[ContentPart] = []
+            if text_content:
+                content_parts.append(TextPart(text=text_content))
+            for url in (image_urls or []):
+                content_parts.append(ImagePart(url=url))
+            if not content_parts:
+                content_parts.append(TextPart(text="（用户发送了一张图片）"))
 
             # 并行：Agent Loop + 记忆预取（保活在后台持续运行）
             agent_raw, memory_raw = await asyncio.gather(
@@ -157,6 +243,7 @@ class WecomMessageService(WecomAIMixin):
                 await self._handle_chat_response(
                     user_id, conversation_id, message_id,
                     text_content, reply_ctx, agent_result, memory_prompt,
+                    image_urls=image_urls,
                 )
             elif gen_type == GenerationType.IMAGE:
                 await self._handle_image_response(
@@ -257,12 +344,21 @@ class WecomMessageService(WecomAIMixin):
         conversation_id: str,
         user_id: str,
         text_content: str,
+        image_urls: Optional[List[str]] = None,
     ) -> str:
-        """保存用户消息到 DB"""
+        """保存用户消息到 DB（支持多模态内容）"""
+        content: List[Dict[str, str]] = []
+        if text_content:
+            content.append({"type": "text", "text": text_content})
+        for url in (image_urls or []):
+            content.append({"type": "image", "url": url})
+        if not content:
+            content.append({"type": "text", "text": ""})
+
         msg_data = {
             "conversation_id": conversation_id,
             "role": "user",
-            "content": [{"type": "text", "text": text_content}],
+            "content": content,
             "status": "completed",
         }
         result = self.db.table("messages").insert(msg_data).execute()
@@ -342,6 +438,21 @@ class WecomMessageService(WecomAIMixin):
         elif reply_ctx.channel == "app":
             await self._send_app_message(reply_ctx, text)
 
+    async def _reply_credits_insufficient(
+        self, reply_ctx: WecomReplyContext,
+        needed: int, balance: int, action: str,
+    ) -> None:
+        """积分不足时回复模板卡片（智能机器人）或文本（自建应用）"""
+        if reply_ctx.channel == "smart_robot" and reply_ctx.ws_client:
+            from services.wecom.card_builder import WecomCardBuilder
+            card = WecomCardBuilder.credits_insufficient_card(needed, balance, action)
+            await reply_ctx.ws_client.send_template_card(reply_ctx.req_id, card)
+        else:
+            await self._reply_text(
+                reply_ctx,
+                f"积分不足，生成{action}需要 {needed} 积分，当前余额 {balance}。",
+            )
+
     async def _send_app_message(
         self, reply_ctx: WecomReplyContext, text: str
     ) -> None:
@@ -355,27 +466,13 @@ class WecomMessageService(WecomAIMixin):
         adapted, msgtype = adapt_for_app(text)
         chunks = split_long_message(adapted, max_bytes=2000)
 
+        uid, aid = reply_ctx.wecom_userid, reply_ctx.agent_id
         for i, chunk in enumerate(chunks):
+            sent = False
             if msgtype == "markdown":
-                ok = await send_markdown(
-                    wecom_userid=reply_ctx.wecom_userid,
-                    content=chunk,
-                    agent_id=reply_ctx.agent_id,
-                )
-                # markdown 发送失败，降级为纯文本
-                if not ok:
-                    await send_text(
-                        wecom_userid=reply_ctx.wecom_userid,
-                        content=chunk,
-                        agent_id=reply_ctx.agent_id,
-                    )
-            else:
-                await send_text(
-                    wecom_userid=reply_ctx.wecom_userid,
-                    content=chunk,
-                    agent_id=reply_ctx.agent_id,
-                )
-            # 多条消息间延迟，避免乱序
+                sent = await send_markdown(wecom_userid=uid, content=chunk, agent_id=aid)
+            if not sent:
+                await send_text(wecom_userid=uid, content=chunk, agent_id=aid)
             if i < len(chunks) - 1:
                 await asyncio.sleep(0.3)
 

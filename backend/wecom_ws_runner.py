@@ -47,10 +47,57 @@ async def main() -> None:
         msgtype = body.get("msgtype", "")
 
         text_content = None
+        image_urls = []
+        file_url = None
+        file_name = None
+        aeskeys: dict = {}
+
         if msgtype == WecomMsgType.TEXT:
             text_content = body.get("text", {}).get("content", "")
+
         elif msgtype == WecomMsgType.VOICE:
             text_content = body.get("voice", {}).get("content", "")
+
+        elif msgtype == WecomMsgType.IMAGE:
+            img = body.get("image", {})
+            url = img.get("url", "")
+            if url:
+                image_urls.append(url)
+                aes = img.get("aeskey")
+                if aes:
+                    aeskeys[url] = aes
+
+        elif msgtype == WecomMsgType.FILE:
+            f = body.get("file", {})
+            file_url = f.get("url", "")
+            file_name = f.get("name", "")
+            aes = f.get("aeskey")
+            if aes and file_url:
+                aeskeys[file_url] = aes
+
+        elif msgtype == WecomMsgType.VIDEO:
+            vid = body.get("video", {})
+            file_url = vid.get("url", "")
+            file_name = vid.get("name", "")
+            aes = vid.get("aeskey")
+            if aes and file_url:
+                aeskeys[file_url] = aes
+
+        elif msgtype == WecomMsgType.MIXED:
+            for item in body.get("mixed", {}).get("msg_item", []):
+                item_type = item.get("type", "")
+                if item_type == "text":
+                    text_content = (text_content or "") + item.get(
+                        "text", {}
+                    ).get("content", "")
+                elif item_type == "image":
+                    img = item.get("image", {})
+                    url = img.get("url", "")
+                    if url:
+                        image_urls.append(url)
+                        aes = img.get("aeskey")
+                        if aes:
+                            aeskeys[url] = aes
 
         msg = WecomIncomingMessage(
             msgid=body.get("msgid", ""),
@@ -61,6 +108,10 @@ async def main() -> None:
             msgtype=msgtype,
             channel="smart_robot",
             text_content=text_content,
+            image_urls=image_urls,
+            file_url=file_url,
+            file_name=file_name,
+            aeskeys=aeskeys,
             raw_data=body,
         )
 
@@ -72,10 +123,58 @@ async def main() -> None:
 
         await msg_svc.handle_message(msg, reply_ctx)
 
+    async def _on_card_event(data: dict) -> None:
+        """处理模板卡片事件回调"""
+        body = data.get("body", {})
+        event = body.get("event", {})
+        card_event = event.get("template_card_event", {})
+
+        event_key = card_event.get("event_key", "")
+        task_id = card_event.get("task_id", "")
+        card_type = card_event.get("card_type", "")
+        selected_items = card_event.get("selected_items")
+
+        wecom_userid = body.get("from", {}).get("userid", "")
+        chatid = body.get("chatid", "")
+        req_id = data.get("headers", {}).get("req_id", "")
+
+        # 用户映射 + 获取对话 ID
+        from services.wecom.user_mapping_service import WecomUserMappingService
+        user_svc = WecomUserMappingService(db)
+        user_id = await user_svc.get_or_create_user(
+            wecom_userid=wecom_userid,
+            corp_id=settings.wecom_corp_id or "",
+            channel="smart_robot",
+        )
+        conversation_id = await msg_svc._get_or_create_conversation(
+            user_id=user_id,
+            chatid=chatid,
+            chattype=body.get("chattype", "single"),
+        )
+
+        reply_ctx = WecomReplyContext(
+            channel="smart_robot",
+            ws_client=ws_client,
+            req_id=req_id,
+        )
+
+        from services.wecom.card_event_handler import WecomCardEventHandler
+        handler = WecomCardEventHandler(db)
+        await handler.handle(
+            event_key=event_key,
+            task_id=task_id,
+            card_type=card_type,
+            selected_items=selected_items,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            reply_ctx=reply_ctx,
+        )
+
     ws_client = WecomWSClient(
         bot_id=settings.wecom_bot_id,
         secret=settings.wecom_bot_secret,
         on_message=_on_message,
+        on_card_event=_on_card_event,
     )
 
     # 优雅关闭

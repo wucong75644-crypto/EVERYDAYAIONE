@@ -285,8 +285,8 @@ class TestHandleMessage:
         assert call_kwargs["text_content"] == "你好"
 
     @pytest.mark.asyncio
-    async def test_unsupported_msgtype_replies_hint(self):
-        """不支持的消息类型 → 回复提示"""
+    async def test_image_message_calls_handle_text(self):
+        """图片消息 → 走 _handle_text（多模态）"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
 
@@ -303,10 +303,33 @@ class TestHandleMessage:
 
         await svc.handle_message(msg, ctx)
 
+        svc._handle_text.assert_called_once()
+        call_kwargs = svc._handle_text.call_args.kwargs
+        assert call_kwargs["image_urls"] == []
+
+    @pytest.mark.asyncio
+    async def test_unsupported_msgtype_replies_hint(self):
+        """不支持的消息类型 → 回复提示"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+
+        svc._user_svc = MagicMock()
+        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._get_or_create_conversation = AsyncMock(return_value="conv1")
+        svc._save_user_message = AsyncMock(return_value="umsg1")
+        svc._create_assistant_placeholder = AsyncMock(return_value="amsg1")
+        svc._handle_text = AsyncMock()
+        svc._reply_text = AsyncMock()
+
+        msg = _make_msg(msgtype="location")
+        ctx = _make_reply_ctx()
+
+        await svc.handle_message(msg, ctx)
+
         svc._handle_text.assert_not_called()
         svc._reply_text.assert_called_once()
         reply_text = svc._reply_text.call_args[0][1]
-        assert "文字" in reply_text
+        assert "文字" in reply_text or "图片" in reply_text
 
     @pytest.mark.asyncio
     async def test_exception_sends_error_reply(self):
@@ -788,3 +811,166 @@ class TestMessagePersistence:
         assert update_data["status"] == "completed"
         assert update_data["content"][0]["text"] == "回复内容"
         chain.eq.assert_called_with("id", "m1")
+
+    @pytest.mark.asyncio
+    async def test_save_user_message_with_images(self):
+        """保存含图片的用户消息"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+
+        chain = MagicMock()
+        chain.insert.return_value = chain
+        mock_result = MagicMock()
+        mock_result.data = [{"id": "msg-u2"}]
+        chain.execute.return_value = mock_result
+        db.table = MagicMock(return_value=chain)
+
+        msg_id = await svc._save_user_message(
+            "c1", "u1", "看这张图",
+            image_urls=["https://oss.example.com/img1.jpg"],
+        )
+        assert msg_id == "msg-u2"
+
+        insert_data = chain.insert.call_args[0][0]
+        content = insert_data["content"]
+        assert len(content) == 2
+        assert content[0] == {"type": "text", "text": "看这张图"}
+        assert content[1] == {"type": "image", "url": "https://oss.example.com/img1.jpg"}
+
+    @pytest.mark.asyncio
+    async def test_save_user_message_image_only(self):
+        """只有图片无文本"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+
+        chain = MagicMock()
+        chain.insert.return_value = chain
+        mock_result = MagicMock()
+        mock_result.data = [{"id": "msg-u3"}]
+        chain.execute.return_value = mock_result
+        db.table = MagicMock(return_value=chain)
+
+        msg_id = await svc._save_user_message(
+            "c1", "u1", "",
+            image_urls=["https://oss.example.com/img1.jpg"],
+        )
+        assert msg_id == "msg-u3"
+
+        insert_data = chain.insert.call_args[0][0]
+        content = insert_data["content"]
+        assert len(content) == 1
+        assert content[0]["type"] == "image"
+
+    @pytest.mark.asyncio
+    async def test_save_user_message_no_content(self):
+        """无文本无图片 → 兜底空文本"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+
+        chain = MagicMock()
+        chain.insert.return_value = chain
+        mock_result = MagicMock()
+        mock_result.data = [{"id": "msg-u4"}]
+        chain.execute.return_value = mock_result
+        db.table = MagicMock(return_value=chain)
+
+        msg_id = await svc._save_user_message("c1", "u1", "", image_urls=[])
+        assert msg_id == "msg-u4"
+
+        insert_data = chain.insert.call_args[0][0]
+        content = insert_data["content"]
+        assert content == [{"type": "text", "text": ""}]
+
+
+# ============================================================
+# TestDownloadMedia
+# ============================================================
+
+
+class TestDownloadMedia:
+    """_download_media 多媒体下载"""
+
+    @pytest.mark.asyncio
+    async def test_no_images_returns_empty(self):
+        """无图片 → 空列表"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        msg = _make_msg()
+        ctx = _make_reply_ctx()
+
+        result = await svc._download_media(msg, "u1", ctx)
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_downloads_images_to_oss(self):
+        """有图片 → 调用 downloader → 返回 OSS URL"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+
+        msg = WecomIncomingMessage(
+            msgid="msg002",
+            wecom_userid="user_abc",
+            corp_id="corp1",
+            chatid="user_abc",
+            chattype=WecomChatType.SINGLE,
+            msgtype=WecomMsgType.IMAGE,
+            channel="smart_robot",
+            image_urls=["https://wecom.example.com/img1.jpg"],
+            aeskeys={"https://wecom.example.com/img1.jpg": "aes123"},
+        )
+        ctx = _make_reply_ctx()
+
+        with patch(
+            "services.wecom.media_downloader.WecomMediaDownloader.download_and_store",
+            new=AsyncMock(return_value="https://oss.example.com/stored.jpg"),
+        ):
+            result = await svc._download_media(msg, "u1", ctx)
+
+        assert result == ["https://oss.example.com/stored.jpg"]
+
+    @pytest.mark.asyncio
+    async def test_download_failure_skips(self):
+        """下载失败 → 跳过该图片"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+
+        msg = WecomIncomingMessage(
+            msgid="msg003",
+            wecom_userid="user_abc",
+            corp_id="corp1",
+            chatid="user_abc",
+            chattype=WecomChatType.SINGLE,
+            msgtype=WecomMsgType.IMAGE,
+            channel="smart_robot",
+            image_urls=["https://wecom.example.com/img_bad.jpg"],
+        )
+        ctx = _make_reply_ctx()
+
+        with patch(
+            "services.wecom.media_downloader.WecomMediaDownloader.download_and_store",
+            new=AsyncMock(return_value=None),
+        ):
+            result = await svc._download_media(msg, "u1", ctx)
+
+        assert result == []
+
+
+# ============================================================
+# TestSessionSettings
+# ============================================================
+
+
+class TestSessionSettings:
+    """会话级设置缓存"""
+
+    def test_set_and_get(self):
+        WecomMessageService.set_session_setting("c1", "model", "deepseek-v3.2")
+        assert WecomMessageService.get_session_setting("c1", "model") == "deepseek-v3.2"
+
+    def test_get_nonexistent(self):
+        assert WecomMessageService.get_session_setting("nonexistent", "model") is None
+
+    def test_overwrite(self):
+        WecomMessageService.set_session_setting("c2", "model", "gpt-4")
+        WecomMessageService.set_session_setting("c2", "model", "deepseek-r1")
+        assert WecomMessageService.get_session_setting("c2", "model") == "deepseek-r1"

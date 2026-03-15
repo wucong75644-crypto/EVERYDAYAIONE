@@ -367,6 +367,120 @@ class TestErpRoutingPrompt:
         from config.erp_tools import ERP_ROUTING_PROMPT
         assert "time_type" in ERP_ROUTING_PROMPT
 
+    # ── P0 高频决策树 ──────────────────────────────────
+
+    def test_p0_stock_query_5_actions(self):
+        """P0: 库存查询覆盖 5 种 action"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        for action in [
+            "stock_status", "warehouse_stock", "stock_in_out",
+            "batch_stock_list", "goods_section_list",
+        ]:
+            assert action in ERP_ROUTING_PROMPT, f"Missing stock action: {action}"
+
+    def test_p0_aftersales_cross_tool(self):
+        """P0: 售后查询跨3个工具的决策"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        for keyword in [
+            "aftersale_list", "refund_list", "refund_warehouse",
+            "replenish_list", "repair_list", "aftersale_log",
+        ]:
+            assert keyword in ERP_ROUTING_PROMPT, f"Missing aftersales: {keyword}"
+
+    def test_p0_outstock_cross_tool(self):
+        """P0: 出库查询跨3个工具的决策"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        for keyword in [
+            "outstock_query", "outstock_order_query",
+            "other_out_list", "other_in_list",
+        ]:
+            assert keyword in ERP_ROUTING_PROMPT, f"Missing outstock: {keyword}"
+
+    def test_p0_archive_difference(self):
+        """P0: 三个月归档差异（订单 query_type vs 采购换 action）"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        assert "query_type=1" in ERP_ROUTING_PROMPT
+        for history_action in [
+            "purchase_order_history", "warehouse_entry_history",
+            "purchase_return_history", "shelf_history",
+        ]:
+            assert history_action in ERP_ROUTING_PROMPT, (
+                f"Missing archive action: {history_action}"
+            )
+
+    def test_p0_trade_vs_taobao_query(self):
+        """P0: erp_trade_query vs erp_taobao_query 选择指南"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        assert "erp_trade_query" in ERP_ROUTING_PROMPT
+        assert "erp_taobao_query" in ERP_ROUTING_PROMPT
+        # 时间参数不兼容警告
+        assert "date_type=1" in ERP_ROUTING_PROMPT
+        assert "时间参数不兼容" in ERP_ROUTING_PROMPT
+
+    def test_p0_required_params_trap(self):
+        """P0: 必填参数陷阱提示"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        # refund_warehouse 必须传 time_type
+        assert "refund_warehouse" in ERP_ROUTING_PROMPT
+        # order_log 只接受 system_ids
+        assert "order_log" in ERP_ROUTING_PROMPT
+        assert "system_ids" in ERP_ROUTING_PROMPT
+        # history_cost_price 要两个 ID
+        assert "history_cost_price" in ERP_ROUTING_PROMPT
+
+    # ── P1 中频决策树 ──────────────────────────────────
+
+    def test_p1_product_query_actions(self):
+        """P1: 商品查询 action 选择覆盖"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        for action in [
+            "product_list", "product_detail", "multi_product",
+            "sku_list", "multicode_query", "item_supplier_list",
+        ]:
+            assert action in ERP_ROUTING_PROMPT, f"Missing product action: {action}"
+
+    def test_p1_purchase_chain_4_stages(self):
+        """P1: 采购链路 4 阶段覆盖"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        for action in [
+            "purchase_order_list", "warehouse_entry_list",
+            "shelf_list", "purchase_return_list", "purchase_strategy",
+        ]:
+            assert action in ERP_ROUTING_PROMPT, f"Missing purchase action: {action}"
+
+    def test_p1_order_id_vs_system_id(self):
+        """P1: 订单号 vs 系统单号策略"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        assert "order_id" in ERP_ROUTING_PROMPT
+        assert "system_id" in ERP_ROUTING_PROMPT
+        assert "先用 order_id 查" in ERP_ROUTING_PROMPT
+
+    # ── P2 多步链路 ────────────────────────────────────
+
+    def test_p2_statistics_strategy(self):
+        """P2: 统计类汇总策略"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        assert "退货率" in ERP_ROUTING_PROMPT
+        assert "各仓库库存" in ERP_ROUTING_PROMPT
+        assert "shop_list" in ERP_ROUTING_PROMPT
+
+    def test_p2_fallback_strategy(self):
+        """P2: 查不到时的降级策略"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        assert "查不到" in ERP_ROUTING_PROMPT or "降级" in ERP_ROUTING_PROMPT
+        assert "ask_user" in ERP_ROUTING_PROMPT
+
+    # ── 状态值完整性 ───────────────────────────────────
+
+    def test_order_status_mapping_complete(self):
+        """订单状态日常用语映射覆盖所有 6 个核心状态"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        for status in [
+            "WAIT_BUYER_PAY", "WAIT_AUDIT", "WAIT_SEND_GOODS",
+            "SELLER_SEND_GOODS", "FINISHED", "CLOSED",
+        ]:
+            assert status in ERP_ROUTING_PROMPT, f"Missing status: {status}"
+
 
 # ============================================================
 # TestAgentSystemPromptRegenRules — 重新生成引导规则

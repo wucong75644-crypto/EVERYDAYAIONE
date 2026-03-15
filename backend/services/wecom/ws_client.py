@@ -47,10 +47,12 @@ class WecomWSClient:
         bot_id: str,
         secret: str,
         on_message: Optional[MessageHandler] = None,
+        on_card_event: Optional[MessageHandler] = None,
     ):
         self.bot_id = bot_id
         self.secret = secret
         self.on_message = on_message
+        self.on_card_event = on_card_event
 
         self._ws: Optional[websockets.ClientConnection] = None
         self._is_connected = False
@@ -135,6 +137,49 @@ class WecomWSClient:
                     "finish": finish,
                     "content": content,
                 },
+            },
+        }
+        await self._safe_send(msg)
+
+    async def send_template_card(
+        self, req_id: str, card: dict
+    ) -> None:
+        """回复模板卡片消息（被动回复，需要 req_id）
+
+        Args:
+            req_id: 原始请求 ID（来自 aibot_msg_callback / aibot_event_callback）
+            card: 卡片 JSON（由 WecomCardBuilder 构建）
+        """
+        if not self._ws or not self._is_connected:
+            logger.warning("Wecom WS: cannot send template card, not connected")
+            return
+
+        msg = {
+            "cmd": WecomCommand.RESPOND_MSG,
+            "headers": {"req_id": req_id},
+            "body": {"msgtype": "template_card", "template_card": card},
+        }
+        await self._safe_send(msg)
+
+    async def send_update_card(
+        self, req_id: str, card: dict
+    ) -> None:
+        """更新已发送的模板卡片（收到 template_card_event 后 5 秒内调用）
+
+        Args:
+            req_id: 卡片事件回调的 req_id
+            card: 更新后的卡片 JSON
+        """
+        if not self._ws or not self._is_connected:
+            logger.warning("Wecom WS: cannot update card, not connected")
+            return
+
+        msg = {
+            "cmd": WecomCommand.RESPOND_UPDATE,
+            "headers": {"req_id": req_id},
+            "body": {
+                "response_type": "update_template_card",
+                "template_card": card,
             },
         }
         await self._safe_send(msg)
@@ -345,7 +390,7 @@ class WecomWSClient:
                 )
 
     async def _handle_event_callback(self, data: dict) -> None:
-        """处理事件回调（如 enter_chat、disconnected_event）"""
+        """处理事件回调（disconnected_event / enter_chat / template_card_event）"""
         body = data.get("body", {})
         event = body.get("event", {})
         event_type = event.get("eventtype", "")
@@ -356,7 +401,6 @@ class WecomWSClient:
                 f"另一个连接将本连接顶掉，主动关闭触发重连 | "
                 f"body={json.dumps(body, ensure_ascii=False)}"
             )
-            # 必须主动关闭并重连：此后消息回调不会再路由到本连接
             self._is_connected = False
             if self._ws:
                 try:
@@ -367,16 +411,30 @@ class WecomWSClient:
 
         if event_type == "enter_chat":
             req_id = data.get("headers", {}).get("req_id", "")
+            from services.wecom.card_builder import WecomCardBuilder
             welcome = {
                 "cmd": WecomCommand.RESPOND_WELCOME,
                 "headers": {"req_id": req_id},
                 "body": {
-                    "msgtype": "text",
-                    "text": {"content": "你好！我是 AI 助手，有什么可以帮你的？"},
+                    "msgtype": "template_card",
+                    "template_card": WecomCardBuilder.welcome_card(),
                 },
             }
             await self._safe_send(welcome)
-            logger.info(f"Wecom WS: welcome sent | event={event_type}")
+            logger.info(f"Wecom WS: welcome card sent | event={event_type}")
+            return
+
+        if event_type == "template_card_event":
+            if self.on_card_event:
+                try:
+                    await self.on_card_event(data)
+                except Exception as e:
+                    logger.error(f"Wecom WS: card event handler error | error={e}")
+            else:
+                logger.debug("Wecom WS: template_card_event received but no handler")
+            return
+
+        logger.debug(f"Wecom WS: unhandled event | eventtype={event_type}")
 
     # ── 工具方法 ──────────────────────────────────────────
 
