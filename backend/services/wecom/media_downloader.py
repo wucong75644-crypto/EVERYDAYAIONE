@@ -123,7 +123,9 @@ class WecomMediaDownloader:
         - 填充：PKCS#7（块大小 32 字节）
         """
         try:
-            key = base64.b64decode(aeskey)
+            # 企微 aeskey 是 43 字符 base64，需补齐 padding
+            padded = aeskey + "=" * (-len(aeskey) % 4)
+            key = base64.b64decode(padded)
             iv = key[:16]
             cipher = AES.new(key, AES.MODE_CBC, iv)
             decrypted = cipher.decrypt(data)

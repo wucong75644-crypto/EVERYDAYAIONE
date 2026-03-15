@@ -167,7 +167,14 @@ class WecomAIMixin:
             )
             return
 
-        await self._reply_text(reply_ctx, "正在为你生成图片，请稍等...")
+        # 用 stream 显示进度（不 finish，生成完成后再更新文字）
+        if reply_ctx.active_stream_id:
+            await self._push_stream_chunk(
+                reply_ctx, reply_ctx.active_stream_id,
+                "正在为你生成图片，请稍等...", finish=False,
+            )
+        else:
+            await self._reply_text(reply_ctx, "正在为你生成图片，请稍等...")
 
         adapter = create_image_adapter(model_id)
         try:
@@ -189,6 +196,14 @@ class WecomAIMixin:
 
         self._deduct_credits(user_id, credits_needed, f"Wecom Image: {model_id}")
         await self._send_media_to_wecom(reply_ctx, urls, "image", message_id)
+
+        # 更新进度文字为"图片生成完成"
+        if reply_ctx.active_stream_id:
+            await self._push_stream_chunk(
+                reply_ctx, reply_ctx.active_stream_id,
+                "图片生成完成", finish=True,
+            )
+            reply_ctx.active_stream_id = None
 
     async def _handle_video_response(
         self,
@@ -222,7 +237,14 @@ class WecomAIMixin:
             )
             return
 
-        await self._reply_text(reply_ctx, "正在为你生成视频，预计需要 1-2 分钟，请耐心等待...")
+        # 用 stream 显示进度（不 finish，生成完成后再更新文字）
+        if reply_ctx.active_stream_id:
+            await self._push_stream_chunk(
+                reply_ctx, reply_ctx.active_stream_id,
+                "正在为你生成视频，预计需要 1-2 分钟，请耐心等待...", finish=False,
+            )
+        else:
+            await self._reply_text(reply_ctx, "正在为你生成视频，预计需要 1-2 分钟，请耐心等待...")
 
         adapter = create_video_adapter(model_id)
         try:
@@ -244,6 +266,14 @@ class WecomAIMixin:
 
         self._deduct_credits(user_id, credits_needed, f"Wecom Video: {model_id}")
         await self._send_media_to_wecom(reply_ctx, [video_url], "video", message_id)
+
+        # 更新进度文字为"视频生成完成"
+        if reply_ctx.active_stream_id:
+            await self._push_stream_chunk(
+                reply_ctx, reply_ctx.active_stream_id,
+                "视频生成完成", finish=True,
+            )
+            reply_ctx.active_stream_id = None
 
     # ── 媒体发送 + 流式生成 ──────────────────────────────
 
@@ -408,6 +438,35 @@ class WecomAIMixin:
             messages.append({"role": "user", "content": text_content})
 
         return messages
+
+    # ── 图片 msg_item 构建 ──────────────────────────────
+
+    async def _build_image_msg_items(
+        self, urls: List[str],
+    ) -> List[Dict[str, Any]]:
+        """下载图片并构建 msg_item 列表（base64 + md5）"""
+        import base64
+        import hashlib
+        import httpx
+
+        items: List[Dict[str, Any]] = []
+        async with httpx.AsyncClient(timeout=15) as client:
+            for url in urls:
+                try:
+                    resp = await client.get(url)
+                    if resp.status_code != 200:
+                        continue
+                    data = resp.content
+                    items.append({
+                        "msgtype": "image",
+                        "image": {
+                            "base64": base64.b64encode(data).decode(),
+                            "md5": hashlib.md5(data).hexdigest(),
+                        },
+                    })
+                except Exception as e:
+                    logger.warning(f"Image download for msg_item failed | error={e}")
+        return items
 
     # ── 积分 ────────────────────────────────────────────
 
