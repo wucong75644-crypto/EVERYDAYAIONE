@@ -12,6 +12,7 @@
 import asyncio
 import json
 import logging
+import time
 import uuid
 from collections import OrderedDict
 from typing import Any, Callable, Coroutine, Dict, Optional
@@ -35,6 +36,13 @@ MSG_DEDUP_CAPACITY = 10000       # 消息去重缓存上限
 
 # 消息回调类型：async def handler(data: dict) -> None
 MessageHandler = Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]
+
+
+def _gen_req_id(prefix: str = "") -> str:
+    """生成 req_id，匹配官方 SDK 格式：{prefix}_{timestamp_ms}_{random_hex_8}"""
+    ts = int(time.time() * 1000)
+    rand = uuid.uuid4().hex[:8]
+    return f"{prefix}_{ts}_{rand}" if prefix else f"{ts}_{rand}"
 
 
 class WecomWSClient:
@@ -182,7 +190,7 @@ class WecomWSClient:
         """发送订阅消息，认证 Bot"""
         msg = {
             "cmd": WecomCommand.SUBSCRIBE,
-            "headers": {"req_id": str(uuid.uuid4())},
+            "headers": {"req_id": _gen_req_id("aibot_subscribe")},
             "body": {"bot_id": self.bot_id, "secret": self.secret},
         }
         await self._ws.send(json.dumps(msg))
@@ -221,7 +229,7 @@ class WecomWSClient:
             if self._ws and self._is_connected:
                 ping = {
                     "cmd": WecomCommand.PING,
-                    "headers": {"req_id": f"ping_{uuid.uuid4().hex[:8]}"},
+                    "headers": {"req_id": _gen_req_id("ping")},
                 }
                 try:
                     await asyncio.wait_for(
