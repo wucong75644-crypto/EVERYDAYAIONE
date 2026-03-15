@@ -19,8 +19,9 @@ DISTRIBUTION_REGISTRY = {
             "title": "title",
             "request_source": "requestSource",
         },
-        required_params=["distributor_company_id", "supplier_company_id"],
+        required_params=["distributor_company_id", "supplier_company_id", "request_source"],
         formatter="format_generic_list",
+        response_key="data",
     ),
     "distributor_item_detail": ApiEntry(
         method="kmt.api.dms.query.detail.distributor.item",
@@ -147,7 +148,7 @@ DISTRIBUTION_REGISTRY = {
         },
         required_params=[
             "supplier_company_id", "distributor_company_name",
-            "main_phone", "default_user_name", "default_password",
+            "source", "main_phone", "default_user_name", "default_password",
         ],
         is_write=True,
         response_key=None,

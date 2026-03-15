@@ -12,11 +12,7 @@ PRODUCT_REGISTRY = {
         method="item.list.query",
         description="查询商品列表",
         param_map={
-            "keyword": "title",  # ⚠️ 官方文档未列出，保留待验证
-            "outer_id": "outerId",  # ⚠️ 官方文档未列出，保留待验证
-            "barcode": "barcode",  # ⚠️ 官方文档未列出，保留待验证
             "status": "activeStatus",
-            "tag_name": "tagName",  # ⚠️ 官方文档未列出，保留待验证
             "start_date": "startModified",
             "end_date": "endModified",
             "item_type": "type",
@@ -43,6 +39,7 @@ PRODUCT_REGISTRY = {
         param_map={
             "sku_id": "sysSkuId",
             "sku_outer_id": "skuOuterId",
+            "return_purchase": "whetherReturnPurchase",
         },
         formatter="format_sku_info",
         response_key=None,
@@ -53,9 +50,10 @@ PRODUCT_REGISTRY = {
         param_map={
             "outer_id": "outerId",
             "item_id": "sysItemId",
+            "return_purchase": "whetherReturnPurchase",
         },
         formatter="format_sku_info",
-        response_key="items",
+        response_key="itemSkus",
     ),
     "multi_product": ApiEntry(
         method="erp.item.list.get",
@@ -77,7 +75,7 @@ PRODUCT_REGISTRY = {
         },
         required_params=["code"],
         formatter="format_product_list",
-        response_key="items",
+        response_key="list",
     ),
     # ── 库存查询 ──────────────────────────────────────
     "stock_status": ApiEntry(
@@ -86,7 +84,6 @@ PRODUCT_REGISTRY = {
         param_map={
             "outer_id": "mainOuterId",
             "sku_outer_id": "skuOuterId",
-            "keyword": "title",  # ⚠️ 官方文档未列出，保留待验证
             "warehouse_id": "warehouseId",
             "stock_statuses": "stockStatuses",
             "item_type": "itemType",
@@ -107,8 +104,6 @@ PRODUCT_REGISTRY = {
         param_map={
             "outer_id": "outerId",
             "sku_outer_id": "skuOuterId",
-            "item_id": "sysItemId",  # ⚠️ 官方文档未列出，保留待验证
-            "warehouse_id": "warehouseId",  # ⚠️ 官方文档未列出，保留待验证
         },
         formatter="format_warehouse_stock",
     ),
@@ -117,7 +112,6 @@ PRODUCT_REGISTRY = {
         description="查询商品出入库记录",
         param_map={
             "outer_id": "outerId",
-            "item_id": "sysItemId",  # ⚠️ 官方文档未列出，保留待验证
             "warehouse_id": "warehouseId",
             "start_date": "operateTimeBegin",
             "end_date": "operateTimeEnd",
@@ -133,6 +127,7 @@ PRODUCT_REGISTRY = {
             "name": "name",
         },
         formatter="format_generic_list",
+        response_key="list",
     ),
     "history_cost_price": ApiEntry(
         method="erp.item.history.cost.price.query",
@@ -180,6 +175,7 @@ PRODUCT_REGISTRY = {
             "outer_ids": "outerIds",
             "platform_ids": "numIidList",
             "shop_id": "userId",
+            "taobao_id": "taobaoId",
         },
         formatter="format_generic_list",
         response_key="itemOuterIdInfos",
@@ -371,7 +367,7 @@ PRODUCT_REGISTRY = {
             "over_stock_num": "overStockNum",
             "under_stock_num": "underStockNum",
         },
-        required_params=["warehouse_id", "stock_num"],
+        required_params=["warehouse_id"],
         is_write=True,
         response_key=None,
         formatter="format_generic_detail",

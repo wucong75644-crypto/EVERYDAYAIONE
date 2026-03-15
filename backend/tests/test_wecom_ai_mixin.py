@@ -81,10 +81,9 @@ class TestStreamAndReply:
 
         await svc._stream_and_reply(adapter, [], ctx, "msg1")
 
-        # 每 5 个 chunk 推送一次 (chunk_count=5, 10) + 最终 finish
+        # 初始 "正在思考..." 1次 + 每 5 chunk 推送 2次 (5, 10) + 最终 finish 1次 = 4次
         push_calls = svc._push_stream_chunk.call_args_list
-        # 中间推送 2 次 (chunk 5, 10) + 最终 finish 1 次 = 3 次
-        assert len(push_calls) == 3
+        assert len(push_calls) == 4
         # 最后一次 finish=True
         assert push_calls[-1].kwargs.get("finish") or push_calls[-1][0][-1] is True
 
