@@ -115,6 +115,7 @@ class WecomWSClient:
         content: str,
         finish: bool = False,
         feedback_id: Optional[str] = None,
+        msg_items: Optional[list] = None,
     ) -> None:
         """
         发送流式回复的一个 chunk。
@@ -125,6 +126,7 @@ class WecomWSClient:
             content: 累积全文（企微协议要求全量替换，非增量）
             finish: 是否结束流
             feedback_id: 反馈标识（设置后企微会显示赞/踩按钮）
+            msg_items: 附加消息项（图片等），仅 finish=True 时有效
         """
         if not self._ws or not self._is_connected:
             return
@@ -136,6 +138,8 @@ class WecomWSClient:
         }
         if feedback_id:
             stream_body["feedback"] = {"id": feedback_id}
+        if msg_items and finish:
+            stream_body["msg_item"] = msg_items
 
         msg = {
             "cmd": WecomCommand.RESPOND_MSG,
