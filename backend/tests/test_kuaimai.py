@@ -1382,12 +1382,13 @@ class TestTradeRegistryParamMap:
         assert "time_type" in entry.param_map
         assert entry.param_map["time_type"] == "timeType"
 
-    def test_order_list_has_shop_name_mapping(self):
-        """order_list param_map 包含 shop_name → shopName 映射"""
+    def test_order_list_no_phantom_params(self):
+        """order_list param_map 不含 API 无效的幽灵参数"""
         from services.kuaimai.registry import TRADE_REGISTRY
         entry = TRADE_REGISTRY["order_list"]
-        assert "shop_name" in entry.param_map
-        assert entry.param_map["shop_name"] == "shopName"
+        for phantom in ("shop_name", "outer_id", "receiver_name",
+                        "receiver_phone", "warehouse_name"):
+            assert phantom not in entry.param_map
 
     def test_time_type_mapped_correctly(self):
         """time_type 参数通过 param_map 正确映射到 timeType"""
@@ -2523,12 +2524,12 @@ class TestTradeFieldNameFixes:
         assert entry.param_map["no_need_total"] == "noNeedTotal"
 
     def test_order_list_has_cursor_params(self):
-        """order_list 补全的光标/仓库参数"""
+        """order_list 补全的光标参数（warehouseName 已确认无效已移除）"""
         entry = self._reg()["order_list"]
         assert entry.param_map["use_has_next"] == "useHasNext"
         assert entry.param_map["use_cursor"] == "useCursor"
         assert entry.param_map["cursor"] == "cursor"
-        assert entry.param_map["warehouse_name"] == "warehouseName"
+        assert "warehouse_name" not in entry.param_map
 
 
 class TestProductFieldNameFixes:
@@ -2562,13 +2563,14 @@ class TestProductFieldNameFixes:
         assert entry.param_map["stock_end"] == "endStockModified"
 
     def test_stock_update_uses_plural_outerIds(self):
-        """stock_update: outerIds/skuOuterIds（复数）+ stockNum"""
+        """stock_update: outerIds/skuOuterIds（复数）+ stockNum 三选一非必填"""
         entry = self._reg()["stock_update"]
         assert entry.param_map["outer_ids"] == "outerIds"
         assert entry.param_map["sku_outer_ids"] == "skuOuterIds"
         assert entry.param_map["stock_num"] == "stockNum"
         assert "warehouse_id" in entry.required_params
-        assert "stock_num" in entry.required_params
+        # stockNum/overStockNum/underStockNum 三选一，非 required
+        assert "stock_num" not in entry.required_params
 
     def test_virtual_stock_update_has_full_params(self):
         """virtual_stock_update: 完整 param_map"""
@@ -2617,12 +2619,11 @@ class TestProductFieldNameFixes:
         assert entry.param_map["supplier_ids"] == "supplierIds"
         assert entry.param_map["supplier_codes"] == "supplierCodes"
 
-    def test_phantom_params_marked(self):
-        """phantom 参数应存在于 param_map（保留待验证）"""
-        # warehouse_stock 的 sysItemId/warehouseId 是 phantom
+    def test_phantom_params_removed(self):
+        """warehouse_stock 的 sysItemId/warehouseId 已确认 API 无效，已移除"""
         entry = self._reg()["warehouse_stock"]
-        assert "item_id" in entry.param_map
-        assert "warehouse_id" in entry.param_map
+        assert "item_id" not in entry.param_map
+        assert "warehouse_id" not in entry.param_map
 
 
 class TestPurchaseNewParamMaps:
@@ -2907,3 +2908,169 @@ class TestBasicAndDistributionFixes:
         assert entry.param_map["item_info_list"] == "itemInfoList"
         assert "type" in entry.required_params
         assert "item_info_list" in entry.required_params
+
+
+class TestRegistryDocAlignment:
+    """API文档对齐修正验证：确认所有 registry 与官方文档一致"""
+
+    # ── product.py 修正 ──
+
+    def test_sku_info_has_return_purchase(self):
+        """sku_info: 补全 whetherReturnPurchase"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["sku_info"]
+        assert entry.param_map["return_purchase"] == "whetherReturnPurchase"
+
+    def test_sku_list_response_key_itemSkus(self):
+        """sku_list: response_key 应为 itemSkus（非 items）"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["sku_list"]
+        assert entry.response_key == "itemSkus"
+        assert entry.param_map["return_purchase"] == "whetherReturnPurchase"
+
+    def test_multicode_query_response_key_list(self):
+        """multicode_query: response_key 应为 list（非 items）"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["multicode_query"]
+        assert entry.response_key == "list"
+
+    def test_virtual_warehouse_response_key_list(self):
+        """virtual_warehouse: 补全 response_key=list"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["virtual_warehouse"]
+        assert entry.response_key == "list"
+
+    def test_outer_id_list_has_taobao_id(self):
+        """outer_id_list: 补全 taobaoId"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["outer_id_list"]
+        assert entry.param_map["taobao_id"] == "taobaoId"
+
+    def test_product_list_no_phantom_params(self):
+        """product_list: 已移除 API 无效的幽灵参数"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["product_list"]
+        for phantom in ("keyword", "outer_id", "barcode", "tag_name"):
+            assert phantom not in entry.param_map
+
+    # ── trade.py 修正 ──
+
+    def test_outstock_query_no_phantom_and_has_official_params(self):
+        """outstock_query: 移除幽灵参数 + 补全官方参数"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        entry = TRADE_REGISTRY["outstock_query"]
+        # 幽灵参数已移除
+        assert "shop_name" not in entry.param_map
+        assert "warehouse_name" not in entry.param_map
+        # 官方参数已补全
+        assert entry.param_map["except_ids"] == "exceptIds"
+        assert entry.param_map["exception_status"] == "exceptionStatus"
+        assert entry.param_map["only_contain"] == "onlyContain"
+        assert entry.param_map["use_has_next"] == "useHasNext"
+        assert entry.param_map["use_cursor"] == "useCursor"
+        assert entry.param_map["cursor"] == "cursor"
+
+    def test_fast_stock_update_rewritten_param_map(self):
+        """fast_stock_update: 重写后的完整 param_map"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        entry = TRADE_REGISTRY["fast_stock_update"]
+        assert entry.param_map["outer_id"] == "outerId"
+        assert entry.param_map["num"] == "num"
+        assert entry.param_map["type"] == "type"
+        assert entry.param_map["need_goods_section"] == "needGoodsSection"
+        assert entry.param_map["warehouse_code"] == "warehouseCode"
+        # 旧的 sid 已移除
+        assert "system_id" not in entry.param_map
+
+    def test_unique_code_validate_rewritten_param_map(self):
+        """unique_code_validate: 重写后的完整 param_map"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        entry = TRADE_REGISTRY["unique_code_validate"]
+        assert entry.param_map["unique_codes"] == "uniqueCodes"
+        assert entry.param_map["start_time"] == "startTime"
+        assert entry.param_map["end_time"] == "endTime"
+        # 旧参数已移除
+        assert "wave_id" not in entry.param_map
+        assert "system_id" not in entry.param_map
+
+    # ── purchase.py 修正 ──
+
+    def test_purchase_strategy_response_key(self):
+        """purchase_strategy: response_key 应为 purchaseStrategyList"""
+        from services.kuaimai.registry import PURCHASE_REGISTRY
+        entry = PURCHASE_REGISTRY["purchase_strategy"]
+        assert entry.response_key == "purchaseStrategyList"
+
+    def test_purchase_detail_entries_have_required_params(self):
+        """采购详情接口：都有 required_params"""
+        from services.kuaimai.registry import PURCHASE_REGISTRY
+        checks = {
+            "purchase_return_detail": ["return_id"],
+            "warehouse_entry_detail": ["entry_id"],
+            "shelf_detail": ["shelf_id"],
+            "purchase_order_history_detail": ["purchase_id"],
+            "warehouse_entry_history_detail": ["entry_id"],
+            "purchase_return_history_detail": ["return_id"],
+            "shelf_history_detail": ["shelf_id"],
+        }
+        for key, expected in checks.items():
+            entry = PURCHASE_REGISTRY[key]
+            for param in expected:
+                assert param in entry.required_params, f"{key} 缺少 required_param: {param}"
+
+    # ── aftersales.py 修正 ──
+
+    def test_refund_warehouse_requires_time_type(self):
+        """refund_warehouse: time_type 为必填"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        entry = AFTERSALES_REGISTRY["refund_warehouse"]
+        assert "time_type" in entry.required_params
+
+    def test_workorder_explains_requires_is_append(self):
+        """workorder_explains_update: is_append 为必填"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        entry = AFTERSALES_REGISTRY["workorder_explains_update"]
+        assert "is_append" in entry.required_params
+
+    def test_repair_process_requires_has_fee_and_failure_cause(self):
+        """repair_process: has_fee/failure_cause 为必填"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        entry = AFTERSALES_REGISTRY["repair_process"]
+        assert "has_fee" in entry.required_params
+        assert "failure_cause" in entry.required_params
+
+    def test_repair_pay_requires_received_time_and_price(self):
+        """repair_pay: received_time/current_price 为必填"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        entry = AFTERSALES_REGISTRY["repair_pay"]
+        assert "received_time" in entry.required_params
+        assert "current_price" in entry.required_params
+
+    def test_update_platform_refund_money_requires_amount(self):
+        """update_platform_refund_money: platform_refund_money 为必填"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        entry = AFTERSALES_REGISTRY["update_platform_refund_money"]
+        assert "platform_refund_money" in entry.required_params
+
+    # ── warehouse.py 修正 ──
+
+    def test_goods_section_delete_not_write(self):
+        """goods_section_delete: 不是写操作（查询接口）"""
+        from services.kuaimai.registry import WAREHOUSE_REGISTRY
+        entry = WAREHOUSE_REGISTRY["goods_section_delete"]
+        assert entry.is_write is False
+
+    # ── distribution.py 修正 ──
+
+    def test_distributor_item_list_response_key_data(self):
+        """distributor_item_list: response_key 应为 data + request_source 必填"""
+        from services.kuaimai.registry import DISTRIBUTION_REGISTRY
+        entry = DISTRIBUTION_REGISTRY["distributor_item_list"]
+        assert entry.response_key == "data"
+        assert "request_source" in entry.required_params
+
+    def test_add_distributor_requires_source(self):
+        """add_distributor: source 为必填"""
+        from services.kuaimai.registry import DISTRIBUTION_REGISTRY
+        entry = DISTRIBUTION_REGISTRY["add_distributor"]
+        assert "source" in entry.required_params

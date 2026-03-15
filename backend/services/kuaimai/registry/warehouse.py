@@ -332,7 +332,6 @@ WAREHOUSE_REGISTRY = {
     "goods_section_delete": ApiEntry(
         method="asso.goods.section.sku.del.query",
         description="货位库存删除数据列表",
-        is_write=True,
         response_key=None,
         formatter="format_generic_detail",
     ),
