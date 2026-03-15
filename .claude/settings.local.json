@@ -117,7 +117,11 @@
       "Bash(./deploy/deploy.sh)",
       "Bash(python -m pytest tests/test_ip_location_service.py -v --tb=short)",
       "Bash(python -m pytest backend/tests/test_wecom_message_service.py -q --tb=short)",
-      "Bash(python -m pytest backend/tests/test_app_message_sender.py -v --tb=short)"
+      "Bash(python -m pytest backend/tests/test_app_message_sender.py -v --tb=short)",
+      "WebFetch(domain:open.kuaimai.com)",
+      "Bash(python -m pytest tests/test_wecom_ai_mixin.py::TestStreamAndReply::test_accumulates_and_pushes_chunks -q --tb=short)",
+      "Bash(python -m pytest tests/test_kuaimai.py -v --tb=no)",
+      "Bash(python -m pytest tests/test_kuaimai.py::TestRegistryDocAlignment -v --tb=short)"
     ]
   }
 }

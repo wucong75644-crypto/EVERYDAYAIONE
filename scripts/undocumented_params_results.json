@@ -1,0 +1,91 @@
+[
+  {
+    "label": "item.list.query - title(关键词搜索: '套件')",
+    "method": "item.list.query",
+    "param": "title",
+    "value": "套件",
+    "total_without": 12225,
+    "total_with": 12225,
+    "status": "NO_EFFECT"
+  },
+  {
+    "label": "item.list.query - outerId(商家编码: 'TJ-DBTXL01')",
+    "method": "item.list.query",
+    "param": "outerId",
+    "value": "TJ-DBTXL01",
+    "total_without": 12225,
+    "total_with": 12225,
+    "status": "NO_EFFECT"
+  },
+  {
+    "label": "item.list.query - title(不存在的关键词)",
+    "method": "item.list.query",
+    "param": "title",
+    "value": "ZZZZZ_不可能存在的商品名_99999",
+    "total_without": 12225,
+    "total_with": 12225,
+    "status": "NO_EFFECT"
+  },
+  {
+    "label": "item.list.query - tagName(不存在的标签)",
+    "method": "item.list.query",
+    "param": "tagName",
+    "value": "ZZZZZ_不存在的标签_99999",
+    "total_without": 12225,
+    "total_with": 12225,
+    "status": "NO_EFFECT"
+  },
+  {
+    "label": "stock.api.status.query - title(关键词: '套件')",
+    "method": "stock.api.status.query",
+    "param": "title",
+    "value": "套件",
+    "total_without": 20352,
+    "total_with": 20352,
+    "status": "NO_EFFECT"
+  },
+  {
+    "label": "erp.item.warehouse.list.get - sysItemId(720000987140608)",
+    "method": "erp.item.warehouse.list.get",
+    "param": "sysItemId",
+    "value": "720000987140608",
+    "total_without": "N/A",
+    "total_with": "N/A",
+    "status": "NO_EFFECT"
+  },
+  {
+    "label": "erp.trade.list.query - outerId('TJ-DBTXL01')",
+    "status": "base_error",
+    "error": "快麦ERP: 页数为空或不符合规定"
+  },
+  {
+    "label": "erp.trade.list.query - receiverName(不存在的收件人)",
+    "status": "base_error",
+    "error": "快麦ERP: 页数为空或不符合规定"
+  },
+  {
+    "label": "erp.trade.list.query - shopName(不存在的店铺名)",
+    "status": "base_error",
+    "error": "快麦ERP: 页数为空或不符合规定"
+  },
+  {
+    "label": "erp.trade.list.query - warehouseName(不存在的仓库名)",
+    "status": "base_error",
+    "error": "快麦ERP: 页数为空或不符合规定"
+  },
+  {
+    "label": "erp.trade.list.query - receiverPhone('00000000000')",
+    "status": "base_error",
+    "error": "快麦ERP: 页数为空或不符合规定"
+  },
+  {
+    "label": "erp.trade.outstock.simple.query - shopName(不存在的店铺名)",
+    "status": "base_error",
+    "error": "快麦ERP: 页数为空或不符合规定"
+  },
+  {
+    "label": "erp.trade.outstock.simple.query - warehouseName(不存在的仓库名)",
+    "status": "base_error",
+    "error": "快麦ERP: 页数为空或不符合规定"
+  }
+]
