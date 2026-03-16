@@ -15,6 +15,77 @@ from services.kuaimai.registry.base import ApiEntry
 # 大脑传 page/page_size → mapper 转为 API 的 pageNo/pageSize
 _COMMON_PARAMS = {"action", "page", "page_size", "pageNo", "pageSize"}
 
+# 中文/常见别名 → 标准参数名（跨注册表通用）
+# LLM 传入别名时自动转换，无需修改注册表和工具描述
+PARAM_ALIASES: Dict[str, str] = {
+    # 主商家编码
+    "商家编码": "outer_id",
+    "商品编码": "outer_id",
+    "主商家编码": "outer_id",
+    "编码": "outer_id",
+    "货号": "outer_id",
+    "商品货号": "outer_id",
+    # 规格商家编码
+    "规格商家编码": "sku_outer_id",
+    "SKU商家编码": "sku_outer_id",
+    "SKU编码": "sku_outer_id",
+    "规格编码": "sku_outer_id",
+    # 条码
+    "条码": "code",
+    "商品条码": "code",
+    # 订单号
+    "订单号": "order_id",
+    "平台订单号": "order_id",
+    "单号": "order_id",
+    # 系统单号
+    "系统单号": "system_id",
+    "ERP单号": "system_id",
+    "系统订单号": "system_id",
+    # 买家
+    "买家": "buyer",
+    "买家昵称": "buyer",
+    "客户": "buyer",
+    # 仓库 / 店铺
+    "仓库": "warehouse_id",
+    "仓库ID": "warehouse_id",
+    "店铺": "shop_ids",
+    "店铺ID": "shop_ids",
+    # 批量
+    "多个编码": "outer_ids",
+    "批量编码": "outer_ids",
+    # 快递
+    "快递单号": "express_no",
+    "运单号": "express_no",
+    # 商品名称（product_list 的 keyword 模糊搜索）
+    "商品名称": "keyword",
+    "商品名": "keyword",
+    "产品名称": "keyword",
+    "产品名": "keyword",
+    # 规格名称（API 无直接按规格名搜索，兜底走 keyword 模糊搜索）
+    "规格名称": "keyword",
+    "规格名": "keyword",
+}
+
+
+def _resolve_aliases(
+    user_params: Dict[str, Any], valid_keys: set,
+) -> Dict[str, Any]:
+    """别名解析：仅当 key 不在当前 action 有效参数集时才转换
+
+    优先保留标准参数名，避免别名覆盖已有值。
+    """
+    resolved: Dict[str, Any] = {}
+    for key, value in user_params.items():
+        if key in valid_keys or key in _COMMON_PARAMS:
+            resolved[key] = value
+        elif key in PARAM_ALIASES:
+            std_name = PARAM_ALIASES[key]
+            if std_name not in resolved:
+                resolved[std_name] = value
+        else:
+            resolved[key] = value
+    return resolved
+
 
 def map_params(
     entry: ApiEntry, user_params: Dict[str, Any],
@@ -31,6 +102,9 @@ def map_params(
     mapped: Dict[str, Any] = {}
     warnings: List[str] = []
     valid_keys = set(entry.param_map.keys()) | _COMMON_PARAMS
+
+    # 别名解析：中文/常见名 → 标准参数名
+    user_params = _resolve_aliases(user_params, valid_keys)
 
     # 应用默认值
     for key, default in entry.defaults.items():
