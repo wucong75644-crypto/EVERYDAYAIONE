@@ -1390,6 +1390,81 @@ class TestParamMapper:
         assert "00:00:00" in result["start"]
 
 
+class TestParamAliases:
+    """参数别名解析测试"""
+
+    def _make_entry(self, **overrides):
+        from services.kuaimai.registry.base import ApiEntry
+        defaults = {
+            "method": "erp.test",
+            "description": "test",
+            "param_map": {
+                "outer_id": "mainOuterId",
+                "sku_outer_id": "skuOuterId",
+                "code": "code",
+                "order_id": "tid",
+            },
+            "defaults": {},
+            "page_size": 20,
+        }
+        defaults.update(overrides)
+        return ApiEntry(**defaults)
+
+    def test_chinese_alias_resolves(self):
+        """中文别名'商品编码'解析为 outer_id"""
+        from services.kuaimai.param_mapper import _resolve_aliases, _COMMON_PARAMS
+        valid_keys = {"outer_id", "code"} | _COMMON_PARAMS
+        result = _resolve_aliases({"商品编码": "ABC123"}, valid_keys)
+        assert result == {"outer_id": "ABC123"}
+
+    def test_standard_key_preserved(self):
+        """标准参数名不被别名覆盖"""
+        from services.kuaimai.param_mapper import _resolve_aliases, _COMMON_PARAMS
+        valid_keys = {"outer_id", "code"} | _COMMON_PARAMS
+        result = _resolve_aliases(
+            {"编码": "A", "outer_id": "B"}, valid_keys,
+        )
+        assert result["outer_id"] == "B"
+
+    def test_unknown_key_passthrough(self):
+        """未知 key 原样保留（进入 warning 流程）"""
+        from services.kuaimai.param_mapper import _resolve_aliases, _COMMON_PARAMS
+        valid_keys = {"outer_id"} | _COMMON_PARAMS
+        result = _resolve_aliases({"未知参数": "X"}, valid_keys)
+        assert result == {"未知参数": "X"}
+
+    def test_sku_alias_resolves(self):
+        """规格商家编码别名解析为 sku_outer_id"""
+        from services.kuaimai.param_mapper import _resolve_aliases, _COMMON_PARAMS
+        valid_keys = {"outer_id", "sku_outer_id"} | _COMMON_PARAMS
+        result = _resolve_aliases({"规格商家编码": "ABC-01"}, valid_keys)
+        assert result == {"sku_outer_id": "ABC-01"}
+
+    def test_map_params_e2e_with_alias(self):
+        """端到端：中文别名经 map_params 正确映射到 API 参数"""
+        from services.kuaimai.param_mapper import map_params
+        entry = self._make_entry()
+        result, warnings = map_params(entry, {"商品编码": "HM-2026"})
+        assert result["mainOuterId"] == "HM-2026"
+        assert warnings == []
+
+    def test_map_params_e2e_barcode_alias(self):
+        """端到端：条码别名正确映射"""
+        from services.kuaimai.param_mapper import map_params
+        entry = self._make_entry()
+        result, warnings = map_params(entry, {"条码": "6901234567890"})
+        assert result["code"] == "6901234567890"
+        assert warnings == []
+
+    def test_map_params_e2e_order_alias(self):
+        """端到端：订单号别名正确映射"""
+        from services.kuaimai.param_mapper import map_params
+        entry = self._make_entry()
+        result, warnings = map_params(entry, {"订单号": "123456789012345678"})
+        assert result["tid"] == "123456789012345678"
+        assert warnings == []
+
+
 class TestTradeRegistryParamMap:
 
     def test_order_list_has_time_type_mapping(self):
