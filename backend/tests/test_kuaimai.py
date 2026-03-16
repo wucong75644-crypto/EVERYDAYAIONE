@@ -848,9 +848,23 @@ class TestToolExecutorERP:
 
         with patch.object(executor, "_get_erp_dispatcher", return_value=mock_dispatcher):
             result = await executor._erp_dispatch(
-                "erp_trade_query", {"action": "order_list"}
+                "erp_trade_query",
+                {"action": "order_list", "params": {"order_id": "123"}},
             )
         assert "失败" in result
+
+    async def test_erp_dispatch_step1_returns_doc(self):
+        """两步调用 Step 1：无 params 时返回参数文档"""
+        from services.tool_executor import ToolExecutor
+        executor = ToolExecutor(
+            db=MagicMock(), user_id="u1", conversation_id="c1"
+        )
+        result = await executor._erp_dispatch(
+            "erp_trade_query", {"action": "order_list"}
+        )
+        assert "order_list" in result
+        assert "参数" in result
+        assert "order_id" in result
 
 
 # ============================================================
@@ -1069,16 +1083,19 @@ class TestToolRegistration:
         assert "order_list" in props["action"]["enum"]
         assert "outstock_query" in props["action"]["enum"]
 
-    def test_erp_product_query_has_keyword_param(self):
-        """商品查询工具有 keyword 和 outer_id 参数"""
+    def test_erp_product_query_has_params_object(self):
+        """商品查询工具使用 params: object（两步调用模式）"""
         from config.agent_tools import AGENT_TOOLS
         tool = next(
             t for t in AGENT_TOOLS
             if t["function"]["name"] == "erp_product_query"
         )
         props = tool["function"]["parameters"]["properties"]
-        assert "keyword" in props
-        assert "outer_id" in props
+        assert "params" in props
+        assert props["params"]["type"] == "object"
+        # action 描述包含 keyword 等关键参数名
+        action_desc = props["action"]["description"]
+        assert "keyword" in action_desc
 
 
 # ============================================================
@@ -1865,6 +1882,7 @@ class TestAllRegistryStructure:
             "modifiedTimeStart", "modifiedTimeEnd",
             "updateTimeBegin", "updateTimeEnd",
             "operateTimeBegin", "operateTimeEnd",
+            "operateTimeStart",
             "receiveTimeStart", "receiveTimeEnd",
             "createStart", "createEnd",
             "receivedTime", "operatorTime",
@@ -1892,9 +1910,7 @@ class TestAllRegistryStructure:
                                "start", "end"]
                     if api_key in ("timeType", "activeStatus", "customType",
                                    "operateType", "updateStart", "updateEnd",
-                                   "consignStart", "consignEnd",
-                                   # order_log 的时间是 Unix 时间戳(long)
-                                   "operateTimeStart", "operateTimeEnd"):
+                                   "consignStart", "consignEnd"):
                         continue
                     if is_date_like and len(api_key) > 6:
                         # 只检查看起来明确是日期时间的 key
@@ -2297,32 +2313,28 @@ class TestBuildErpTools:
                 f"{tool['function']['name']} 缺少 page"
             )
 
-    def test_trade_query_has_shop_ids(self):
-        """erp_trade_query 有 shop_ids 参数"""
+    def test_query_tools_have_params_object(self):
+        """所有查询工具有 params: object 参数（两步调用模式）"""
+        from config.erp_tools import build_erp_tools
+        tools = build_erp_tools()
+        for tool in tools[:7]:  # 前 7 个是查询工具
+            props = tool["function"]["parameters"]["properties"]
+            assert "params" in props, (
+                f"{tool['function']['name']} 缺少 params"
+            )
+            assert props["params"]["type"] == "object"
+
+    def test_trade_action_desc_has_key_params(self):
+        """erp_trade_query action 描述包含关键参数名"""
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
         trade_tool = [t for t in tools
                       if t["function"]["name"] == "erp_trade_query"][0]
-        props = trade_tool["function"]["parameters"]["properties"]
-        assert "shop_ids" in props
-
-    def test_trade_query_has_order_types(self):
-        """erp_trade_query 有 order_types 参数"""
-        from config.erp_tools import build_erp_tools
-        tools = build_erp_tools()
-        trade_tool = [t for t in tools
-                      if t["function"]["name"] == "erp_trade_query"][0]
-        props = trade_tool["function"]["parameters"]["properties"]
-        assert "order_types" in props
-
-    def test_product_query_has_sku_outer_id(self):
-        """erp_product_query 有 sku_outer_id 参数"""
-        from config.erp_tools import build_erp_tools
-        tools = build_erp_tools()
-        prod_tool = [t for t in tools
-                     if t["function"]["name"] == "erp_product_query"][0]
-        props = prod_tool["function"]["parameters"]["properties"]
-        assert "sku_outer_id" in props
+        action_desc = trade_tool["function"]["parameters"][
+            "properties"]["action"]["description"]
+        # action 描述包含 shop_ids/order_types 等关键参数
+        assert "shop_ids" in action_desc
+        assert "order_types" in action_desc
 
     def test_execute_tool_has_category_enum(self):
         """erp_execute 有 category enum"""
@@ -2946,11 +2958,13 @@ class TestRegistryDocAlignment:
         entry = PRODUCT_REGISTRY["outer_id_list"]
         assert entry.param_map["taobao_id"] == "taobaoId"
 
-    def test_product_list_no_phantom_params(self):
-        """product_list: 已移除 API 无效的幽灵参数"""
+    def test_product_list_keyword_mapped(self):
+        """product_list: keyword 已映射到 API 参数"""
         from services.kuaimai.registry import PRODUCT_REGISTRY
         entry = PRODUCT_REGISTRY["product_list"]
-        for phantom in ("keyword", "outer_id", "barcode", "tag_name"):
+        assert entry.param_map["keyword"] == "keyword"
+        # outer_id/barcode/tag_name 仍不在 product_list（各有专属 action）
+        for phantom in ("outer_id", "barcode", "tag_name"):
             assert phantom not in entry.param_map
 
     # ── trade.py 修正 ──
@@ -3074,3 +3088,307 @@ class TestRegistryDocAlignment:
         from services.kuaimai.registry import DISTRIBUTION_REGISTRY
         entry = DISTRIBUTION_REGISTRY["add_distributor"]
         assert "source" in entry.required_params
+
+
+# ============================================================
+# TestParamDocsCoverage — param_docs 覆盖率
+# ============================================================
+
+
+class TestParamDocsCoverage:
+    """验证每个读操作的 param_map key 都有 param_docs 条目"""
+
+    @staticmethod
+    def _all_registries():
+        from services.kuaimai.registry import (
+            BASIC_REGISTRY, PRODUCT_REGISTRY, TRADE_REGISTRY,
+            AFTERSALES_REGISTRY, WAREHOUSE_REGISTRY,
+            PURCHASE_REGISTRY, DISTRIBUTION_REGISTRY, QIMEN_REGISTRY,
+        )
+        return {
+            "basic": BASIC_REGISTRY,
+            "product": PRODUCT_REGISTRY,
+            "trade": TRADE_REGISTRY,
+            "aftersales": AFTERSALES_REGISTRY,
+            "warehouse": WAREHOUSE_REGISTRY,
+            "purchase": PURCHASE_REGISTRY,
+            "distribution": DISTRIBUTION_REGISTRY,
+            "qimen": QIMEN_REGISTRY,
+        }
+
+    def test_all_read_actions_have_param_docs(self):
+        """每个读操作的 param_map key 必须有 param_docs 条目"""
+        missing = []
+        for cat, reg in self._all_registries().items():
+            for name, entry in reg.items():
+                if entry.is_write:
+                    continue
+                for key in entry.param_map:
+                    if key not in entry.param_docs:
+                        missing.append(f"{cat}.{name}.{key}")
+        assert not missing, (
+            f"缺失 param_docs 的参数 ({len(missing)} 个): "
+            + ", ".join(missing[:20])
+        )
+
+    def test_param_docs_no_empty_values(self):
+        """param_docs 的值不能为空字符串"""
+        empty = []
+        for cat, reg in self._all_registries().items():
+            for name, entry in reg.items():
+                if entry.is_write:
+                    continue
+                for key, doc in entry.param_docs.items():
+                    if not doc.strip():
+                        empty.append(f"{cat}.{name}.{key}")
+        assert not empty, (
+            f"空 param_docs ({len(empty)} 个): "
+            + ", ".join(empty[:20])
+        )
+
+    def test_param_docs_keys_match_param_map(self):
+        """param_docs 的 key 不能有 param_map 中不存在的"""
+        extra = []
+        for cat, reg in self._all_registries().items():
+            for name, entry in reg.items():
+                if entry.is_write:
+                    continue
+                for key in entry.param_docs:
+                    if key not in entry.param_map:
+                        extra.append(f"{cat}.{name}.{key}")
+        assert not extra, (
+            f"param_docs 多余的 key ({len(extra)} 个): "
+            + ", ".join(extra[:20])
+        )
+
+
+# ============================================================
+# TestParamDocGeneration — 参数文档生成器
+# ============================================================
+
+
+class TestParamDocGeneration:
+    """验证 generate_param_doc() 输出格式"""
+
+    def test_unknown_tool(self):
+        """未知工具返回提示"""
+        from services.kuaimai.param_doc import generate_param_doc
+        result = generate_param_doc("erp_nonexistent", "foo")
+        assert "未知工具" in result
+
+    def test_unknown_action(self):
+        """未知操作返回可用操作列表"""
+        from services.kuaimai.param_doc import generate_param_doc
+        result = generate_param_doc("erp_trade_query", "nonexistent")
+        assert "未知操作" in result
+        assert "order_list" in result  # 应列出可用操作
+
+    def test_valid_action_returns_doc(self):
+        """合法操作返回参数文档"""
+        from services.kuaimai.param_doc import generate_param_doc
+        result = generate_param_doc("erp_trade_query", "order_list")
+        assert "order_list" in result
+        assert "参数:" in result
+        assert "order_id" in result
+        assert "通用参数:" in result
+        assert "page" in result
+
+    def test_required_params_marked(self):
+        """必填参数有标记"""
+        from services.kuaimai.param_doc import generate_param_doc
+        from services.kuaimai.registry import TRADE_REGISTRY
+        # 找一个有 required_params 的 action
+        for name, entry in TRADE_REGISTRY.items():
+            if entry.required_params and not entry.is_write:
+                result = generate_param_doc("erp_trade_query", name)
+                assert "必填" in result
+                break
+
+    def test_no_param_action(self):
+        """无参数的操作输出正确"""
+        from services.kuaimai.param_doc import generate_param_doc
+        from services.kuaimai.registry import TRADE_REGISTRY
+        for name, entry in TRADE_REGISTRY.items():
+            if not entry.param_map and not entry.is_write:
+                result = generate_param_doc("erp_trade_query", name)
+                assert "仅需指定 action" in result
+                break
+
+    def test_includes_param_docs_content(self):
+        """输出包含 param_docs 中的描述"""
+        from services.kuaimai.param_doc import generate_param_doc
+        result = generate_param_doc("erp_trade_query", "order_list")
+        # order_list 的 param_docs 应包含"平台订单号"
+        assert "平台订单号" in result or "订单号" in result
+
+    def test_no_error_codes_when_action_has_none(self):
+        """无 error_codes 的 action 不显示错误码区域"""
+        from services.kuaimai.param_doc import generate_param_doc
+        result = generate_param_doc("erp_trade_query", "wave_query")
+        assert "错误码:" not in result
+
+    def test_shows_api_specific_error_codes_only(self):
+        """有 error_codes 的 action 只显示自身的专属错误码"""
+        from services.kuaimai.param_doc import generate_param_doc
+        result = generate_param_doc("erp_trade_query", "order_log")
+        assert "错误码:" in result
+        assert "20009" in result  # API 专属
+        assert "20001" in result  # API 专属
+
+
+# ============================================================
+# TestErrorCodes — 错误码机制
+# ============================================================
+
+
+class TestErrorCodes:
+    """验证 error_codes 字段和 GLOBAL_ERROR_CODES"""
+
+    def test_global_error_codes_exists(self):
+        """GLOBAL_ERROR_CODES 包含关键错误码"""
+        from services.kuaimai.registry.base import GLOBAL_ERROR_CODES
+        assert "1" in GLOBAL_ERROR_CODES
+        assert "50" in GLOBAL_ERROR_CODES
+        assert "401" in GLOBAL_ERROR_CODES
+
+    def test_error_codes_field_default_empty(self):
+        """ApiEntry 默认 error_codes 为空"""
+        from services.kuaimai.registry.base import ApiEntry
+        entry = ApiEntry(method="test", description="test")
+        assert entry.error_codes == {}
+
+    def test_trade_order_log_has_error_codes(self):
+        """order_log 有 API 专属错误码"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        entry = TRADE_REGISTRY["order_log"]
+        assert "20009" in entry.error_codes
+        assert "20020" in entry.error_codes
+        assert "20021" in entry.error_codes
+
+    def test_api_search_shows_action_error_codes(self):
+        """api_search 精确查询只显示 action 专属错误码"""
+        from services.kuaimai.api_search import search_erp_api
+        result = search_erp_api("erp_trade_query:order_log")
+        assert "错误码:" in result
+        assert "20009" in result   # API 专属
+
+    def test_api_search_no_error_codes_when_empty(self):
+        """无 error_codes 的 action 不显示错误码区域"""
+        from services.kuaimai.api_search import search_erp_api
+        result = search_erp_api("erp_trade_query:wave_query")
+        assert "错误码:" not in result
+
+
+# ============================================================
+# TestParamDocsAccuracy — param_docs 枚举值准确性
+# ============================================================
+
+
+class TestParamDocsAccuracy:
+    """验证 param_docs 中的关键枚举值与官方文档一致"""
+
+    def test_order_list_status_uses_official_values(self):
+        """order_list status 使用官方 WAIT_BUYER_PAY 格式"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        doc = TRADE_REGISTRY["order_list"].param_docs["status"]
+        assert "WAIT_BUYER_PAY" in doc
+        assert "WAIT_AUDIT" in doc
+        assert "SELLER_SEND_GOODS" in doc
+        # 不应包含旧的错误值
+        assert "wait_check" not in doc
+
+    def test_order_list_time_type_uses_official_values(self):
+        """order_list time_type 使用官方 created/pay_time 格式"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        doc = TRADE_REGISTRY["order_list"].param_docs["time_type"]
+        assert "created" in doc
+        assert "pay_time" in doc
+        assert "upd_time" in doc
+
+    def test_order_list_query_type_is_archive_scope(self):
+        """query_type 是查询范围（三个月内/归档），不是排序"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        doc = TRADE_REGISTRY["order_list"].param_docs["query_type"]
+        assert "归档" in doc
+        assert "排序" not in doc
+
+    def test_outstock_order_status_uses_integer_codes(self):
+        """outstock_order_query status_list 使用整数状态码"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        doc = TRADE_REGISTRY["outstock_order_query"].param_docs["status_list"]
+        assert "10=" in doc
+        assert "70=" in doc
+        # 不应包含旧的 0-5 值
+        assert "0(待拣货)" not in doc
+
+    def test_stock_status_uses_official_values(self):
+        """stock_statuses 使用官方 1-6 值"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        doc = PRODUCT_REGISTRY["stock_status"].param_docs["stock_statuses"]
+        assert "1=正常" in doc
+        assert "4=超卖" in doc
+        assert "6=有货" in doc
+
+    def test_product_list_status_is_active_status(self):
+        """product_list status 是启用/停用"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        doc = PRODUCT_REGISTRY["product_list"].param_docs["status"]
+        assert "0=停用" in doc
+        assert "1=启用" in doc
+
+    def test_aftersale_type_3_is_reissue_not_exchange(self):
+        """aftersale_list type=3 是补发，4 是换货（不能搞反）"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        doc = AFTERSALES_REGISTRY["aftersale_list"].param_docs["type"]
+        assert "3=补发" in doc
+        assert "4=换货" in doc
+
+    def test_refund_warehouse_status_starts_from_1(self):
+        """refund_warehouse status 从 1 开始"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        doc = AFTERSALES_REGISTRY["refund_warehouse"].param_docs["status"]
+        assert "1=等待收货" in doc
+        assert "0(待入库)" not in doc
+
+    def test_repair_list_status_includes_negative(self):
+        """repair_list status 包含 -1=已作废"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        doc = AFTERSALES_REGISTRY["repair_list"].param_docs["status"]
+        assert "-1=已作废" in doc
+
+
+# ============================================================
+# TestTwoStepToolSchema — 两步调用模式 Schema
+# ============================================================
+
+
+class TestTwoStepToolSchema:
+    """验证两步调用模式的工具 Schema"""
+
+    def test_all_query_tools_have_4_params(self):
+        """查询工具只有 action/params/page/page_size 4 个属性"""
+        from config.erp_tools import build_erp_tools
+        tools = build_erp_tools()
+        expected_keys = {"action", "params", "page", "page_size"}
+        for tool in tools[:7]:
+            props = tool["function"]["parameters"]["properties"]
+            assert set(props.keys()) == expected_keys, (
+                f"{tool['function']['name']} 属性不符: {set(props.keys())}"
+            )
+
+    def test_params_description_mentions_two_step(self):
+        """params 描述提到两步调用"""
+        from config.erp_tools import build_erp_tools
+        tools = build_erp_tools()
+        trade = [t for t in tools
+                 if t["function"]["name"] == "erp_trade_query"][0]
+        params_desc = trade["function"]["parameters"][
+            "properties"]["params"]["description"]
+        assert "参数文档" in params_desc
+        assert "action" in params_desc
+
+    def test_routing_prompt_has_two_step_instructions(self):
+        """ERP_ROUTING_PROMPT 包含两步调用指引"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        assert "两步查询模式" in ERP_ROUTING_PROMPT
+        assert "参数文档" in ERP_ROUTING_PROMPT

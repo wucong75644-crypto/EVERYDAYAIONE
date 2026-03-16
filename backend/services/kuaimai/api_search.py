@@ -136,7 +136,11 @@ def _format_entry_detail(
         param_lines = []
         for user_key, api_key in params.items():
             marker = "（必填）" if user_key in required else ""
-            param_lines.append(f"  - {user_key}{marker} → {api_key}")
+            doc = entry.param_docs.get(user_key, "")
+            doc_str = f": {doc}" if doc else ""
+            param_lines.append(
+                f"  - {user_key}{marker}{doc_str} → {api_key}"
+            )
         lines.append("参数:")
         lines.extend(param_lines)
     else:
@@ -147,6 +151,11 @@ def _format_entry_detail(
 
     if entry.is_write:
         lines.append("类型: 写操作（需用户确认）")
+
+    if entry.error_codes:
+        lines.append("错误码:")
+        for code, desc in entry.error_codes.items():
+            lines.append(f"  - {code}: {desc}")
 
     return "\n".join(lines)
 

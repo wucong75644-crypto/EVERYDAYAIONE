@@ -290,9 +290,20 @@ class TestSearchKnowledge:
 class TestERPTools:
 
     @pytest.mark.asyncio
+    async def test_step1_returns_param_doc(self):
+        """两步调用 Step 1：无 params 时返回参数文档（纯本地）"""
+        exe = _make_executor()
+        result = await exe._erp_dispatch(
+            "erp_trade_query", {"action": "order_list"},
+        )
+        assert "order_list" in result
+        assert "参数" in result
+        assert "order_id" in result
+
+    @pytest.mark.asyncio
     @patch("services.kuaimai.client.KuaiMaiClient")
     async def test_erp_not_configured(self, MockClient):
-        """ERP 未配置→返回友好提示"""
+        """ERP 未配置→返回友好提示（Step 2 带 params 时）"""
         mock_client = AsyncMock()
         mock_client.is_configured = False
         mock_client.close = AsyncMock()
@@ -300,7 +311,8 @@ class TestERPTools:
 
         exe = _make_executor()
         result = await exe._erp_dispatch(
-            "erp_trade_query", {"action": "order_list"},
+            "erp_trade_query",
+            {"action": "order_list", "params": {"order_id": "123"}},
         )
         assert "未配置" in result
 
@@ -308,7 +320,7 @@ class TestERPTools:
     @patch("services.kuaimai.dispatcher.ErpDispatcher")
     @patch("services.kuaimai.client.KuaiMaiClient")
     async def test_trade_query_success(self, MockClient, MockDispatcher):
-        """交易查询成功→返回结果"""
+        """交易查询成功→返回结果（两步调用 Step 2）"""
         mock_client = AsyncMock()
         mock_client.is_configured = True
         mock_client.load_cached_token = AsyncMock()
@@ -322,8 +334,10 @@ class TestERPTools:
         exe = _make_executor()
         result = await exe._erp_dispatch("erp_trade_query", {
             "action": "order_list",
-            "start_date": "2026-03-01",
-            "end_date": "2026-03-10",
+            "params": {
+                "start_date": "2026-03-01",
+                "end_date": "2026-03-10",
+            },
         })
         assert result == "订单数据"
         mock_disp.execute.assert_called_once_with(
@@ -348,7 +362,8 @@ class TestERPTools:
 
         exe = _make_executor()
         result = await exe._erp_dispatch(
-            "erp_trade_query", {"action": "order_list"},
+            "erp_trade_query",
+            {"action": "order_list", "params": {"order_id": "123"}},
         )
         assert "失败" in result
 
@@ -369,7 +384,9 @@ class TestERPTools:
 
         exe = _make_executor()
         result = await exe._erp_dispatch("erp_product_query", {
-            "action": "product_list", "page": 1,
+            "action": "product_list",
+            "params": {"keyword": "手机壳"},
+            "page": 1,
         })
         assert result == "商品列表"
 
@@ -390,7 +407,8 @@ class TestERPTools:
 
         exe = _make_executor()
         result = await exe._erp_dispatch(
-            "erp_product_query", {"action": "product_list"},
+            "erp_product_query",
+            {"action": "product_list", "params": {"keyword": "测试"}},
         )
         assert "失败" in result
 
@@ -398,7 +416,7 @@ class TestERPTools:
     @patch("services.kuaimai.dispatcher.ErpDispatcher")
     @patch("services.kuaimai.client.KuaiMaiClient")
     async def test_product_stock_query(self, MockClient, MockDispatcher):
-        """库存查询走 erp_product_query"""
+        """库存查询走 erp_product_query（两步调用 Step 2）"""
         mock_client = AsyncMock()
         mock_client.is_configured = True
         mock_client.load_cached_token = AsyncMock()
@@ -411,7 +429,8 @@ class TestERPTools:
 
         exe = _make_executor()
         result = await exe._erp_dispatch("erp_product_query", {
-            "action": "stock_status", "outer_id": "SKU001",
+            "action": "stock_status",
+            "params": {"outer_id": "SKU001"},
         })
         assert result == "库存数据"
         mock_disp.execute.assert_called_once_with(
@@ -484,7 +503,7 @@ class TestERPTools:
     async def test_execute_delegates_to_erp_dispatch(
         self, MockClient, MockDispatcher,
     ):
-        """execute() 委托 erp_trade_query 到 _erp_dispatch"""
+        """execute() 委托 erp_trade_query 到 _erp_dispatch（Step 2 带 params）"""
         mock_client = AsyncMock()
         mock_client.is_configured = True
         mock_client.load_cached_token = AsyncMock()
@@ -497,7 +516,8 @@ class TestERPTools:
 
         exe = _make_executor()
         result = await exe.execute(
-            "erp_trade_query", {"action": "outstock_query"},
+            "erp_trade_query",
+            {"action": "outstock_query", "params": {"order_id": "123"}},
         )
         assert result == "物流信息"
 

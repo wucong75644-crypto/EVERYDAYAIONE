@@ -263,68 +263,49 @@ class TestBuildErpTools:
         for tool in ERP_SYNC_TOOLS:
             assert tool in ERP_TOOL_SCHEMAS
 
-    def test_trade_query_has_time_type_param(self):
-        """erp_trade_query 包含 time_type 参数"""
+    def test_query_tools_have_params_object(self):
+        """查询工具使用 params: object（两步调用模式）"""
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
-        trade = [t for t in tools
-                 if t["function"]["name"] == "erp_trade_query"][0]
-        props = trade["function"]["parameters"]["properties"]
-        assert "time_type" in props
-        assert "created" in props["time_type"]["description"]
-        assert "pay_time" in props["time_type"]["description"]
+        query_tools = [t for t in tools
+                       if t["function"]["name"] != "erp_execute"]
+        for tool in query_tools:
+            props = tool["function"]["parameters"]["properties"]
+            assert "params" in props, (
+                f"{tool['function']['name']} 缺少 params"
+            )
+            assert props["params"]["type"] == "object"
 
-    def test_trade_query_has_shop_name_param(self):
-        """erp_trade_query 包含 shop_name 参数"""
+    def test_query_tools_no_flat_params(self):
+        """查询工具不含扁平化的业务参数（已迁移到 params object）"""
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
-        trade = [t for t in tools
-                 if t["function"]["name"] == "erp_trade_query"][0]
-        props = trade["function"]["parameters"]["properties"]
-        assert "shop_name" in props
-
-    def test_trade_query_status_has_enum_values(self):
-        """erp_trade_query status 描述包含具体枚举值"""
-        from config.erp_tools import build_erp_tools
-        tools = build_erp_tools()
-        trade = [t for t in tools
-                 if t["function"]["name"] == "erp_trade_query"][0]
-        status_desc = trade["function"]["parameters"]["properties"]["status"]["description"]
-        assert "WAIT_AUDIT" in status_desc
-        assert "SELLER_SEND_GOODS" in status_desc
+        flat_params = {
+            "shop_name", "shop_ids", "order_types", "time_type",
+            "status", "buyer", "order_id", "system_id",
+            "sku_outer_id", "shop_id", "refund_type", "date_type",
+        }
+        for tool in tools:
+            if tool["function"]["name"] == "erp_execute":
+                continue
+            props = tool["function"]["parameters"]["properties"]
+            found = flat_params & set(props.keys())
+            assert not found, (
+                f"{tool['function']['name']} 仍有扁平参数: {found}"
+            )
 
 
 class TestErpTaobaoQueryTool:
 
-    def test_taobao_query_has_status_enum(self):
-        """erp_taobao_query 包含 status 参数及淘宝状态枚举"""
+    def test_taobao_query_has_params_object(self):
+        """erp_taobao_query 使用 params: object（两步调用模式）"""
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
         taobao = [t for t in tools
                   if t["function"]["name"] == "erp_taobao_query"][0]
         props = taobao["function"]["parameters"]["properties"]
-        assert "status" in props
-        assert "WAIT_BUYER_PAY" in props["status"]["description"]
-        assert "SELLER_SEND_GOODS" in props["status"]["description"]
-
-    def test_taobao_query_has_date_type(self):
-        """erp_taobao_query 包含 date_type（integer 类型）"""
-        from config.erp_tools import build_erp_tools
-        tools = build_erp_tools()
-        taobao = [t for t in tools
-                  if t["function"]["name"] == "erp_taobao_query"][0]
-        props = taobao["function"]["parameters"]["properties"]
-        assert "date_type" in props
-        assert props["date_type"]["type"] == "integer"
-
-    def test_taobao_query_has_shop_id(self):
-        """erp_taobao_query 包含 shop_id 参数"""
-        from config.erp_tools import build_erp_tools
-        tools = build_erp_tools()
-        taobao = [t for t in tools
-                  if t["function"]["name"] == "erp_taobao_query"][0]
-        props = taobao["function"]["parameters"]["properties"]
-        assert "shop_id" in props
+        assert "params" in props
+        assert props["params"]["type"] == "object"
 
     def test_taobao_query_has_page_size(self):
         """erp_taobao_query 包含 page_size 参数"""
@@ -335,14 +316,17 @@ class TestErpTaobaoQueryTool:
         props = taobao["function"]["parameters"]["properties"]
         assert "page_size" in props
 
-    def test_taobao_query_has_refund_type(self):
-        """erp_taobao_query 包含 refund_type 参数"""
+    def test_taobao_query_action_desc_has_params(self):
+        """erp_taobao_query action 描述包含参数信息"""
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
         taobao = [t for t in tools
                   if t["function"]["name"] == "erp_taobao_query"][0]
-        props = taobao["function"]["parameters"]["properties"]
-        assert "refund_type" in props
+        action_desc = taobao["function"]["parameters"][
+            "properties"]["action"]["description"]
+        # action 描述应包含 status/date_type 等参数名
+        assert "status" in action_desc
+        assert "date_type" in action_desc
 
 
 class TestErpRoutingPrompt:

@@ -16,6 +16,11 @@ BASIC_REGISTRY = {
             "code": "code",
             "warehouse_id": "id",
         },
+        param_docs={
+            "name": "仓库名称（模糊搜索）。示例: 北京仓",
+            "code": "仓库编码。示例: WH001",
+            "warehouse_id": "仓库ID。示例: 1001",
+        },
         formatter="format_warehouse_list",
     ),
     "shop_list": ApiEntry(
@@ -26,6 +31,11 @@ BASIC_REGISTRY = {
             "shop_id": "id",
             "short_name": "shortName",
         },
+        param_docs={
+            "name": "店铺名称（模糊搜索）。示例: 天猫旗舰店",
+            "shop_id": "店铺ID。示例: 12345",
+            "short_name": "店铺简称（模糊搜索）。示例: 旗舰店",
+        },
         formatter="format_shop_list",
     ),
     "tag_list": ApiEntry(
@@ -33,6 +43,9 @@ BASIC_REGISTRY = {
         description="获取标签列表",
         param_map={
             "tag_type": "tagType",
+        },
+        param_docs={
+            "tag_type": "标签类型。可选值: 1(订单标签), 2(售后标签)。不传则返回所有类型。示例: 1",
         },
         formatter="format_tag_list",
     ),
@@ -46,6 +59,13 @@ BASIC_REGISTRY = {
             "level": "level",
             "status": "enableStatus",
         },
+        param_docs={
+            "name": "客户名称（模糊搜索）。示例: 张三",
+            "code": "客户编码。示例: CM001",
+            "nick": "客户昵称（模糊搜索）。示例: 小张",
+            "level": "客户等级。可选值: 1(普通), 2(VIP), 3(SVIP)。示例: 2",
+            "status": "启用状态。可选值: 1(启用), 2(停用)。示例: 1",
+        },
         formatter="format_customer_list",
     ),
     "distributor_list": ApiEntry(
@@ -55,6 +75,11 @@ BASIC_REGISTRY = {
             "name": "distributorName",
             "state": "state",
             "ids": "distributorCompanyIds",
+        },
+        param_docs={
+            "name": "分销商名称（模糊搜索）。示例: 华东分销",
+            "state": "分销商状态。可选值: 1(合作中), 2(已终止)。示例: 1",
+            "ids": "分销商公司ID（多个逗号隔开）。示例: 100,200",
         },
         formatter="format_distributor_list",
     ),
