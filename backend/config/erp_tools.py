@@ -88,9 +88,12 @@ def _build_query_tool(
     name: str,
     desc: str,
     registry: dict,
-    extra_params: Dict[str, Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """构建单个查询工具定义"""
+    """构建单个查询工具定义（两步调用模式）
+
+    Step 1: LLM 只传 action → 系统返回参数文档
+    Step 2: LLM 在 params 中传入具体参数 → 系统执行查询
+    """
     actions, action_desc = _read_actions(registry)
     params = {
         "action": {
@@ -98,14 +101,21 @@ def _build_query_tool(
             "enum": actions,
             "description": action_desc,
         },
-        **extra_params,
+        "params": {
+            "type": "object",
+            "description": (
+                "操作参数。首次调用只传action获取参数文档，"
+                "然后根据文档传入具体参数再次调用。"
+                "已确定参数时可直接传入跳过文档。"
+            ),
+        },
         "page": {
             "type": "integer",
             "description": "页码（默认1）",
         },
         "page_size": {
             "type": "integer",
-            "description": "每页条数（默认20，仅取计数可设1，查全量可设100-200）",
+            "description": "每页条数（默认20，最小20）",
         },
     }
     return {
@@ -124,7 +134,13 @@ def _build_query_tool(
 
 # ── ERP 工具 Schema（用于参数验证） ──────────────────
 ERP_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
-    tool: {"required": ["action"], "properties": {"action": {"type": "string"}}}
+    tool: {
+        "required": ["action"],
+        "properties": {
+            "action": {"type": "string"},
+            "params": {"type": "object"},
+        },
+    }
     for tool in ERP_SYNC_TOOLS if tool != "erp_execute"
 }
 ERP_TOOL_SCHEMAS["erp_execute"] = {
@@ -145,252 +161,36 @@ def build_erp_tools() -> List[Dict[str, Any]]:
             "erp_info_query",
             "查询ERP基础信息：仓库、店铺、标签、客户、分销商。",
             BASIC_REGISTRY,
-            {
-                "name": {
-                    "type": "string",
-                    "description": "名称（仓库名/店铺名/客户名等）",
-                },
-                "code": {
-                    "type": "string",
-                    "description": "编码",
-                },
-            },
         ),
         # 2. 商品查询
         _build_query_tool(
             "erp_product_query",
             "查询ERP商品/SKU/库存/标签/分类/品牌信息。",
             PRODUCT_REGISTRY,
-            {
-                "keyword": {
-                    "type": "string",
-                    "description": "商品名称关键词",
-                },
-                "outer_id": {
-                    "type": "string",
-                    "description": "商家编码",
-                },
-                "item_id": {
-                    "type": "string",
-                    "description": "系统商品ID",
-                },
-                "barcode": {
-                    "type": "string",
-                    "description": "商品条码",
-                },
-                "warehouse_id": {
-                    "type": "string",
-                    "description": "仓库ID",
-                },
-                "sku_outer_id": {
-                    "type": "string",
-                    "description": (
-                        "SKU商家编码（与主编码二选一，"
-                        "多个逗号隔开）"
-                    ),
-                },
-                "brand": {
-                    "type": "string",
-                    "description": "品牌名称（多个逗号隔开）",
-                },
-                "start_date": {
-                    "type": "string",
-                    "description": "起始日期 yyyy-MM-dd",
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "结束日期 yyyy-MM-dd",
-                },
-            },
         ),
         # 3. 交易查询
         _build_query_tool(
             "erp_trade_query",
             "查询ERP订单/出库/物流/波次/唯一码信息。",
             TRADE_REGISTRY,
-            {
-                "order_id": {
-                    "type": "string",
-                    "description": "平台订单号",
-                },
-                "system_id": {
-                    "type": "string",
-                    "description": "系统单号",
-                },
-                "buyer": {
-                    "type": "string",
-                    "description": "买家昵称",
-                },
-                "status": {
-                    "type": "string",
-                    "description": (
-                        "系统状态(多个逗号隔开): "
-                        "WAIT_BUYER_PAY(待付款), WAIT_AUDIT(待审核), "
-                        "WAIT_FINANCE_AUDIT(待财审), FINISHED_AUDIT(审核完成), "
-                        "WAIT_EXPRESS_PRINT(待打印快递单), WAIT_PACKAGE(待打包), "
-                        "WAIT_WEIGHT(待称重), WAIT_SEND_GOODS(待发货), "
-                        "SELLER_SEND_GOODS(已发货), "
-                        "FINISHED(交易完成), CLOSED(交易关闭)"
-                    ),
-                },
-                "time_type": {
-                    "type": "string",
-                    "description": (
-                        "时间类型: created(下单时间), "
-                        "pay_time(付款时间), "
-                        "consign_time(发货时间), "
-                        "audit_time(审核时间), "
-                        "upd_time(修改时间,默认)"
-                    ),
-                },
-                "start_date": {
-                    "type": "string",
-                    "description": "起始日期 yyyy-MM-dd",
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "结束日期 yyyy-MM-dd",
-                },
-                "shop_name": {
-                    "type": "string",
-                    "description": "店铺名称筛选",
-                },
-                "shop_ids": {
-                    "type": "string",
-                    "description": (
-                        "店铺ID（多个逗号隔开，最多10组，"
-                        "通过 shop_list 查询获取）"
-                    ),
-                },
-                "order_types": {
-                    "type": "string",
-                    "description": (
-                        "订单类型（逗号分隔: 0=普通,7=合并,"
-                        "8=拆分,24=京东直发,33=分销,99=出库单）"
-                    ),
-                },
-                "tag_ids": {
-                    "type": "string",
-                    "description": (
-                        "标签ID（多个逗号隔开，最多10组，"
-                        "通过 tag_list 查询获取）"
-                    ),
-                },
-                "express_no": {
-                    "type": "string",
-                    "description": "快递单号（多个逗号隔开）",
-                },
-                "query_type": {
-                    "type": "integer",
-                    "description": (
-                        "查询范围: 0=三个月内订单(默认), "
-                        "1=归档订单(三个月前)"
-                    ),
-                },
-            },
         ),
         # 4. 售后查询
         _build_query_tool(
             "erp_aftersales_query",
             "查询ERP售后工单/退货/维修单/补款/日志。",
             AFTERSALES_REGISTRY,
-            {
-                "order_id": {
-                    "type": "string",
-                    "description": "平台订单号",
-                },
-                "work_order_id": {
-                    "type": "string",
-                    "description": "售后工单号/ID",
-                },
-                "type": {
-                    "type": "string",
-                    "description": (
-                        "售后类型(仅aftersale_list): "
-                        "0=其他,1=已发货仅退款,2=退货,3=补发,"
-                        "4=换货,5=未发货仅退款,7=拒收退货,9=维修"
-                    ),
-                },
-                "shop_ids": {
-                    "type": "string",
-                    "description": (
-                        "店铺ID（多个逗号隔开，"
-                        "通过 shop_list 查询获取）"
-                    ),
-                },
-                "status": {
-                    "type": "string",
-                    "description": (
-                        "状态筛选（不同action值不同，"
-                        "维修单用repairStatus: 0=待审核,1=待收货,"
-                        "2=待维修,3=待寄出,4=已完成,-1=已作废）"
-                    ),
-                },
-                "start_date": {
-                    "type": "string",
-                    "description": "起始日期 yyyy-MM-dd",
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "结束日期 yyyy-MM-dd",
-                },
-            },
         ),
         # 5. 仓储查询
         _build_query_tool(
             "erp_warehouse_query",
             "查询ERP调拨/入出库/盘点/下架/货位/加工单信息。",
             WAREHOUSE_REGISTRY,
-            {
-                "code": {
-                    "type": "string",
-                    "description": "单据号/业务单据号",
-                },
-                "status": {
-                    "type": "string",
-                    "description": "状态筛选（不同action值不同）",
-                },
-                "start_date": {
-                    "type": "string",
-                    "description": "起始日期 yyyy-MM-dd",
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "结束日期 yyyy-MM-dd",
-                },
-            },
         ),
         # 6. 采购查询
         _build_query_tool(
             "erp_purchase_query",
             "查询ERP供应商/采购单/收货单/采退单/上架单/采购建议。",
             PURCHASE_REGISTRY,
-            {
-                "code": {
-                    "type": "string",
-                    "description": "单据号/采购单号",
-                },
-                "outer_code": {
-                    "type": "string",
-                    "description": "外部采购订单号",
-                },
-                "status": {
-                    "type": "string",
-                    "description": (
-                        "状态筛选（不同action值不同，"
-                        "采购单: WAIT_VERIFY=草稿,VERIFYING=待审核,"
-                        "GOODS_NOT_ARRIVED=未到货,FINISHED=已完成）"
-                    ),
-                },
-                "start_date": {
-                    "type": "string",
-                    "description": "起始日期 yyyy-MM-dd",
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "结束日期 yyyy-MM-dd",
-                },
-            },
         ),
         # 7. 淘宝奇门查询（通过淘宝网关）
         _build_query_tool(
@@ -398,77 +198,9 @@ def build_erp_tools() -> List[Dict[str, Any]]:
             (
                 "查询淘宝/天猫平台的订单和售后单（通过奇门接口）。"
                 "返回 {total, trades/workOrders[]}。"
-                "page_size=1 可只取计数。支持 shop_id 按店铺筛选。"
+                "page_size最小20。支持 shop_id 按店铺筛选。"
             ),
             QIMEN_REGISTRY,
-            {
-                "tid": {
-                    "type": "string",
-                    "description": "平台订单号",
-                },
-                "sid": {
-                    "type": "string",
-                    "description": "系统订单号",
-                },
-                "status": {
-                    "type": "string",
-                    "description": (
-                        "订单状态: WAIT_BUYER_PAY(待付款), "
-                        "WAIT_AUDIT(待审核), "
-                        "WAIT_SEND_GOODS(待发货), "
-                        "SELLER_SEND_GOODS(已发货), "
-                        "FINISHED(交易完成), CLOSED(交易关闭)"
-                    ),
-                },
-                "date_type": {
-                    "type": "integer",
-                    "description": (
-                        "时间类型: 0=修改时间(默认), "
-                        "1=创建时间, 2=线上下单时间, 3=发货时间"
-                    ),
-                },
-                "shop_id": {
-                    "type": "integer",
-                    "description": "店铺编号",
-                },
-                "warehouse_id": {
-                    "type": "integer",
-                    "description": "订单分仓ID",
-                },
-                "start_date": {
-                    "type": "string",
-                    "description": "起始时间 yyyy-MM-dd",
-                },
-                "end_date": {
-                    "type": "string",
-                    "description": "结束时间 yyyy-MM-dd",
-                },
-                "types": {
-                    "type": "string",
-                    "description": (
-                        "订单类型(逗号分隔): "
-                        "0=普通, 7=合并, 8=拆分, 33=分销, 99=出库单 等"
-                    ),
-                },
-                "refund_type": {
-                    "type": "integer",
-                    "description": (
-                        "售后类型(仅refund_list): "
-                        "1=退款, 2=退货, 3=补发, 4=换货, 5=发货前退款"
-                    ),
-                },
-                "refund_id": {
-                    "type": "integer",
-                    "description": "售后工单号(仅refund_list)",
-                },
-                "tag_ids": {
-                    "type": "string",
-                    "description": (
-                        "标签ID（多个逗号隔开，"
-                        "仅order_list，通过 tag_list 查询获取）"
-                    ),
-                },
-            },
         ),
         # 8. 写入/执行操作
         {
@@ -511,6 +243,12 @@ def build_erp_tools() -> List[Dict[str, Any]]:
 
 # ERP 路由提示词片段
 ERP_ROUTING_PROMPT = (
+    "## ERP两步查询模式\n"
+    "1. 第一步只传 action → 系统返回该 action 的详细参数文档\n"
+    "2. 第二步在 params 中传入具体参数 → 系统执行查询\n"
+    "3. 简单统计查询（如'今天多少单'）可直接传 params 跳过文档\n"
+    "4. page/page_size 在 tool 级别传，不放 params 里\n"
+    "5. 需要用户提供的参数（如订单号、编码等），参照参数文档中的示例格式提示用户\n\n"
     "## ERP数据查询规则\n"
     "- 基础信息（仓库/店铺/标签/客户/分销商） → erp_info_query\n"
     "- 商品/SKU/库存/品牌/分类 → erp_product_query\n"
@@ -523,7 +261,7 @@ ERP_ROUTING_PROMPT = (
     "- 写操作（新增/修改/删除/作废） → erp_execute\n"
     "- 如果ERP未配置，直接告知用户需要配置快麦ERP\n\n"
     "## ERP多步查询策略\n"
-    "- 统计类问题（如'今天多少单'）：用 page_size=1 只取 total，不要翻页\n"
+    "- 统计类问题（如'今天多少单'）：用默认page_size只取total字段，不要翻页，不要传status\n"
     "- 分维度统计（如'每个平台多少单'）：先查 shop_list 获取店铺列表，"
     "再按 shop_id 逐个查 total\n"
     "- 只在用户需要看明细时才用大 page_size\n"
@@ -595,7 +333,8 @@ ERP_ROUTING_PROMPT = (
     "- 「已完成」→ status=\"FINISHED\"\n"
     "- 「已关闭/已取消」→ status=\"CLOSED\"\n"
     "- 「未完成的订单」→ status=\"WAIT_AUDIT,WAIT_SEND_GOODS,SELLER_SEND_GOODS\"（多状态逗号分隔）\n"
-    "- 「异常订单」「有问题的」→ 含义不明确，必须用 ask_user 追问具体什么状态\n\n"
+    "- 「异常订单」「有问题的」→ 含义不明确，必须用 ask_user 追问具体什么状态\n"
+    "- 重要：以上status仅在用户明确提到状态关键词时才传。「今天多少单」「今日成交」等统计类问题不要传status\n\n"
     "### 必填参数陷阱（缺失会报错）\n"
     "- refund_warehouse: 必须传 time_type（如 time_type=\"created\"）\n"
     "- history_cost_price: 必须传 item_id + sku_id（两个都要）\n"
@@ -609,10 +348,10 @@ ERP_ROUTING_PROMPT = (
     "- 「物流公司列表」→ erp_trade_query(logistics_company_list) 配置数据\n"
     "- 「获取快递单号」→ erp_trade_query(waybill_get, system_ids=XX)\n"
     "- 不要把「查快递」误选成 logistics_company_list\n\n"
-    "### shop_name vs shop_ids 使用策略\n"
-    "- erp_trade_query 支持 shop_name 直接传店铺名称（模糊匹配）\n"
-    "- 统计场景（分店铺汇总）→ 必须先 shop_list 拿 shop_ids，逐个精确查\n"
-    "- 单次查询筛选 → 可以直接用 shop_name\n\n"
+    "### shop_ids 使用策略\n"
+    "- erp_trade_query 只接受 shop_ids（数字ID），不支持名称筛选\n"
+    "- 按店铺查时先 shop_list 获取ID再传 shop_ids\n"
+    "- 统计场景（分店铺汇总）→ 必须先 shop_list 拿 shop_ids，逐个精确查\n\n"
     "## 易混淆场景决策（P1 中频）\n"
     "### 商品查询action选择\n"
     "- 「搜商品/商品列表」→ product_list（列表搜索，支持状态/日期筛选）\n"
@@ -643,8 +382,7 @@ ERP_ROUTING_PROMPT = (
     "### 订单号vs系统单号\n"
     "- 用户说「订单号」通常指平台订单号 → 用 order_id 参数\n"
     "- 用户说「系统单号」「ERP单号」→ 用 system_id 参数\n"
-    "- 不确定时：先用 order_id 查，无结果再用 system_id 查\n"
-    "- 纯数字长串（如20位+）多为平台订单号，短编号多为系统单号\n\n"
+    "- 不确定时：先用 order_id 查，无结果再用 system_id 查\n\n"
     "### 分销商查询\n"
     "- 「分销商列表」（简单信息）→ erp_info_query(distributor_list)\n"
     "- 「分销商品/供销小店」→ 涉及分销模块，用 erp_api_search(\"分销\") 查文档\n\n"
@@ -656,9 +394,9 @@ ERP_ROUTING_PROMPT = (
     "→ 再 warehouse_entry_list 关联查询\n"
     "- 「某商品在哪个店铺卖」→ outer_id_list(outer_ids=XX) 查对应关系\n\n"
     "### 统计类汇总策略\n"
-    "- 「今天成交多少钱」→ 不能只看total，需要page_size=20拉明细算payment总和\n"
-    "- 「退货率」→ 先查订单总量(page_size=1取total)，"
-    "再查退货总量(page_size=1取total)，计算比率\n"
+    "- 「今天成交多少钱」→ 不能只看total，需要翻页拉明细算payment总和\n"
+    "- 「退货率」→ 先查订单总量(取total)，"
+    "再查退货总量(取total)，计算比率\n"
     "- 「各仓库库存」→ 先 warehouse_list 获取仓库列表，"
     "再逐仓库 stock_status(warehouse_id=XX)\n"
     "- 「各店铺XX」→ 先 shop_list 获取店铺列表，再逐店铺查询\n\n"
@@ -670,8 +408,8 @@ ERP_ROUTING_PROMPT = (
     "## ERP调用示例\n"
     "用户：「今天多少订单」\n"
     "→ erp_trade_query(action=\"order_list\", time_type=\"created\", "
-    "start_date=\"{today}\", end_date=\"{today}\", page_size=1)\n"
-    "→ 只看 total 字段，不需要翻页\n\n"
+    "start_date=\"{today}\", end_date=\"{today}\")\n"
+    "→ 只看 total 字段，不需要翻页，不传status\n\n"
     "用户：「统计今日成交」\n"
     "→ 第1步: erp_info_query(action=\"shop_list\") 获取所有店铺ID和名称\n"
     "→ 第2步: 对每个店铺 erp_trade_query(action=\"order_list\", "
@@ -686,13 +424,24 @@ ERP_ROUTING_PROMPT = (
     "→ 第1步: erp_info_query(action=\"shop_list\") 获取所有店铺\n"
     "→ 第2步: 对每个店铺 erp_trade_query(action=\"order_list\", "
     "shop_ids=\"店铺ID\", time_type=\"consign_time\", "
-    "start_date=\"{today}\", end_date=\"{today}\", page_size=1)\n"
+    "start_date=\"{today}\", end_date=\"{today}\")\n"
     "→ 汇总各店铺 total\n\n"
     "用户：「商品ABC123的库存」\n"
     "→ erp_product_query(action=\"stock_status\", outer_id=\"ABC123\")\n\n"
     "用户：「最近7天的退货单」\n"
     "→ erp_aftersales_query(action=\"aftersale_list\", "
-    "start_date=\"{7天前}\", end_date=\"{today}\")\n"
+    "start_date=\"{7天前}\", end_date=\"{today}\")\n\n"
+    "## 订单号识别与查询策略\n"
+    "### 格式识别规则（按特征匹配）\n"
+    "- P+18位数字 → 小红书平台单号，用 order_id\n"
+    "- 6位日期-数字串（如260305-xxx）→ 拼多多平台单号，用 order_id\n"
+    "- 18位纯数字 → 淘宝/天猫平台单号，用 order_id\n"
+    "- 19位纯数字 → 抖音或1688平台单号，用 order_id\n"
+    "- 16位纯数字 → 可能是京东/快手平台单号，也可能是ERP系统单号(sid)，优先当 order_id 查\n"
+    "- 8位纯数字 → ERP短号(shortId)，仓库操作用\n"
+    "### 兜底策略\n"
+    "- 如果用 order_id 查无结果，自动改用 system_id 重试一次\n"
+    "- 如果用 system_id 也查无结果，告知用户未找到并建议核实单号\n"
 )
 
 

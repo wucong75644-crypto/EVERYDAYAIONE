@@ -61,7 +61,7 @@ def map_params(
         or entry.page_size
     )
     mapped["pageNo"] = page_no
-    mapped["pageSize"] = page_size
+    mapped["pageSize"] = max(int(page_size), 20)
 
     # 处理日期：如果有start_date/end_date且未转换，补全时间部分
     _normalize_dates(mapped)
@@ -94,6 +94,8 @@ def _normalize_dates(params: Dict[str, Any]) -> None:
         "updateTimeBegin", "updateTimeEnd",
         # 出入库记录
         "operateTimeBegin", "operateTimeEnd",
+        # 订单操作日志
+        "operateTimeStart",
         # 唯一码
         "receiveTimeStart", "receiveTimeEnd",
         "createStart", "createEnd",

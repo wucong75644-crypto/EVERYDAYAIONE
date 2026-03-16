@@ -41,3 +41,20 @@ class ApiEntry:
     base_url: Optional[str] = None
     # 额外系统参数（如奇门的 target_app_key）
     system_params: Dict[str, Any] = field(default_factory=dict)
+    # 每个用户参数的中文描述（key 与 param_map 的 key 对应）
+    # 用于两步调用模式：Step 1 返回参数文档给 LLM
+    param_docs: Dict[str, str] = field(default_factory=dict)
+    # API 专属错误码（code → 描述），用于 Step 1 文档展示
+    error_codes: Dict[str, str] = field(default_factory=dict)
+
+
+# 全局通用错误码（所有 API 共享）
+GLOBAL_ERROR_CODES = {
+    "1": "服务不可用，联系管理员",
+    "9": "业务逻辑出错，联系管理员",
+    "20": "缺少会话参数，检查签名是否完整",
+    "22": "缺少应用键参数",
+    "25": "签名无效",
+    "50": "非法参数",
+    "401": "资源异常或签名参数不完整",
+}

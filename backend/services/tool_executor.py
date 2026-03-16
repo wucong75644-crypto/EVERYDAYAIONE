@@ -179,18 +179,22 @@ class ToolExecutor:
     async def _erp_dispatch(
         self, tool_name: str, args: Dict[str, Any]
     ) -> str:
-        """ERP工具统一调度：查注册表 → 映射参数 → 调API → 格式化"""
-        dispatcher = await self._get_erp_dispatcher()
-        if isinstance(dispatcher, str):
-            return dispatcher
+        """ERP工具统一调度（两步模式）
 
-        try:
-            # erp_execute 用 category 查找注册表
-            if tool_name == "erp_execute":
+        查询工具：
+        - Step 1: 只传 action → 返回参数文档（纯本地，无 API 调用）
+        - Step 2: 传 action + params → 映射参数 → 调API → 格式化
+        写入工具(erp_execute)：保持原逻辑不变
+        """
+        # erp_execute 用 category 查找注册表（不走两步模式）
+        if tool_name == "erp_execute":
+            dispatcher = await self._get_erp_dispatcher()
+            if isinstance(dispatcher, str):
+                return dispatcher
+            try:
                 category = args.get("category", "")
                 action = args.get("action", "")
                 params = args.get("params") or {}
-                # 映射 category → 对应的查询工具名
                 cat_tool_map = {
                     "basic": "erp_info_query",
                     "product": "erp_product_query",
@@ -202,12 +206,37 @@ class ToolExecutor:
                 }
                 actual_tool = cat_tool_map.get(category, "erp_execute")
                 return await dispatcher.execute(actual_tool, action, params)
+            except Exception as e:
+                logger.error(
+                    f"ToolExecutor erp_dispatch | tool={tool_name} | error={e}"
+                )
+                return f"ERP操作失败：{e}"
+            finally:
+                await dispatcher.close()
 
-            # 查询工具：action + 其余参数
-            action = args.pop("action", "")
-            if not action:
-                return "缺少 action 参数"
-            return await dispatcher.execute(tool_name, action, args)
+        # 查询工具：两步模式
+        action = args.get("action", "")
+        if not action:
+            return "缺少 action 参数"
+
+        params = args.get("params")
+
+        # Step 1: 无 params → 返回参数文档（纯本地，无需 dispatcher）
+        if not params:
+            from services.kuaimai.param_doc import generate_param_doc
+            return generate_param_doc(tool_name, action)
+
+        # Step 2: 有 params → 注入分页参数 → 执行查询
+        if args.get("page") is not None:
+            params["page"] = args["page"]
+        if args.get("page_size") is not None:
+            params["page_size"] = args["page_size"]
+
+        dispatcher = await self._get_erp_dispatcher()
+        if isinstance(dispatcher, str):
+            return dispatcher
+        try:
+            return await dispatcher.execute(tool_name, action, params)
         except Exception as e:
             logger.error(
                 f"ToolExecutor erp_dispatch | tool={tool_name} | error={e}"
