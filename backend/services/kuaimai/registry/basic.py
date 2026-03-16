@@ -21,6 +21,8 @@ BASIC_REGISTRY = {
             "code": "仓库编码。示例: WH001",
             "warehouse_id": "仓库ID。示例: 1001",
         },
+        fetch_all=True,
+        page_size=500,
         formatter="format_warehouse_list",
     ),
     "shop_list": ApiEntry(
@@ -36,6 +38,8 @@ BASIC_REGISTRY = {
             "shop_id": "店铺ID。示例: 12345",
             "short_name": "店铺简称（模糊搜索）。示例: 旗舰店",
         },
+        fetch_all=True,
+        page_size=500,
         formatter="format_shop_list",
     ),
     "tag_list": ApiEntry(
@@ -47,6 +51,8 @@ BASIC_REGISTRY = {
         param_docs={
             "tag_type": "标签类型。可选值: 1(订单标签), 2(售后标签)。不传则返回所有类型。示例: 1",
         },
+        fetch_all=True,
+        page_size=500,
         formatter="format_tag_list",
     ),
     "customer_list": ApiEntry(
@@ -81,6 +87,8 @@ BASIC_REGISTRY = {
             "state": "分销商状态。可选值: 1(合作中), 2(已终止)。示例: 1",
             "ids": "分销商公司ID（多个逗号隔开）。示例: 100,200",
         },
+        fetch_all=True,
+        page_size=500,
         formatter="format_distributor_list",
     ),
     # ── 写入 ──────────────────────────────────────────

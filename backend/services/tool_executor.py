@@ -35,6 +35,7 @@ class ToolExecutor:
             "social_crawler": self._social_crawler,
             "erp_api_search": self._erp_api_search,
             "model_search": self._model_search,
+            "code_execute": self._code_execute,
         }
         # 注册7个ERP工具，统一委托给 _erp_dispatch
         for tool_name in ERP_SYNC_TOOLS:
@@ -171,6 +172,128 @@ class ToolExecutor:
         if not query:
             return "请输入搜索关键词"
         return search_models(query)
+
+    # ========================================
+    # 代码执行沙盒
+    # ========================================
+
+    async def _code_execute(self, args: Dict[str, Any]) -> str:
+        """在安全沙盒中执行 Python 代码"""
+        import asyncio
+        import time as _time
+
+        from core.config import get_settings
+        from services.sandbox.functions import (
+            build_sandbox_executor,
+            compute_code_hash,
+        )
+
+        settings = get_settings()
+        if not settings.sandbox_enabled:
+            return "代码执行功能已关闭，请联系管理员启用"
+
+        code = args.get("code", "")
+        description = args.get("description", "")
+        if not code:
+            return "代码不能为空"
+
+        # 获取 ERP dispatcher（可选，无则沙盒内 ERP 函数返回错误）
+        dispatcher = await self._get_erp_dispatcher()
+        erp_dispatcher = dispatcher if not isinstance(dispatcher, str) else None
+
+        start_ms = int(_time.monotonic() * 1000)
+        status = "success"
+        result = ""
+
+        try:
+            executor = build_sandbox_executor(
+                dispatcher=erp_dispatcher,
+                api_concurrency=settings.sandbox_api_concurrency,
+                timeout=settings.sandbox_timeout,
+                max_result_chars=settings.sandbox_max_result_chars,
+                max_pages=settings.sandbox_max_pages,
+            )
+            result = await executor.execute(code, description)
+
+            # 判断执行状态
+            if result.startswith("❌"):
+                status = "failed"
+            elif result.startswith("⏱"):
+                status = "timeout"
+
+            return result
+        except Exception as e:
+            status = "failed"
+            result = f"沙盒执行异常: {e}"
+            return result
+        finally:
+            if erp_dispatcher is not None:
+                await erp_dispatcher.close()
+
+            # Fire-and-forget: 记录执行指标
+            elapsed_ms = int(_time.monotonic() * 1000) - start_ms
+            self._record_sandbox_metric(
+                description=description,
+                code=code,
+                status=status,
+                elapsed_ms=elapsed_ms,
+                result_length=len(result),
+            )
+
+            # 失败时触发知识提取
+            if status == "failed":
+                self._record_sandbox_knowledge(description, result)
+
+    def _record_sandbox_metric(
+        self,
+        description: str,
+        code: str,
+        status: str,
+        elapsed_ms: int,
+        result_length: int,
+    ) -> None:
+        """Fire-and-forget 记录沙盒执行指标"""
+        import asyncio
+
+        from services.sandbox.functions import compute_code_hash
+
+        try:
+            from services.knowledge_metrics import record_metric
+            asyncio.create_task(
+                record_metric(
+                    task_type="sandbox_execution",
+                    model_id="python_sandbox",
+                    status=status,
+                    cost_time_ms=elapsed_ms,
+                    params={
+                        "description": description,
+                        "code_hash": compute_code_hash(code),
+                        "code_length": len(code),
+                        "result_length": result_length,
+                    },
+                    user_id=self.user_id,
+                )
+            )
+        except Exception as e:
+            logger.debug(f"Sandbox metric recording skipped | error={e}")
+
+    @staticmethod
+    def _record_sandbox_knowledge(description: str, error_result: str) -> None:
+        """Fire-and-forget 记录沙盒失败知识"""
+        import asyncio
+
+        try:
+            from services.knowledge_extractor import extract_and_save
+            asyncio.create_task(
+                extract_and_save(
+                    task_type="sandbox_execution",
+                    model_id="python_sandbox",
+                    status="failed",
+                    error_message=f"[{description}] {error_result[:500]}",
+                )
+            )
+        except Exception as e:
+            logger.debug(f"Sandbox knowledge recording skipped | error={e}")
 
     # ========================================
     # ERP 统一调度

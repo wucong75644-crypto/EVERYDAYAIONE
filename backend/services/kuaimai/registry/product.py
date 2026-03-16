@@ -261,11 +261,15 @@ PRODUCT_REGISTRY = {
         param_docs={
             "name": "标签名称（模糊搜索）。不传则返回所有标签。示例: 爆款",
         },
+        fetch_all=True,
+        page_size=500,
         formatter="format_tag_list",
     ),
     "cat_list": ApiEntry(
         method="erp.item.seller.cat.list.get",
         description="查询商品分类信息",
+        fetch_all=True,
+        page_size=500,
         formatter="format_generic_list",
         response_key="sellerCats",
     ),
@@ -275,6 +279,8 @@ PRODUCT_REGISTRY = {
         error_codes={
             "20101": "查询类目列表有误",
         },
+        fetch_all=True,
+        page_size=500,
         formatter="format_generic_list",
         response_key="classifies",
     ),
@@ -286,6 +292,8 @@ PRODUCT_REGISTRY = {
             "20002": "页数为空或不符合规定",
             "20102": "查询品牌列表有误",
         },
+        fetch_all=True,
+        page_size=500,
         formatter="format_generic_list",
         response_key="items",
     ),

@@ -33,6 +33,8 @@ class ApiEntry:
     response_key: Optional[str] = "list"
     # 默认分页大小
     page_size: int = 20
+    # 是否自动翻页拉取全量（适用于店铺、仓库等配置列表）
+    fetch_all: bool = False
     # 是否为写操作
     is_write: bool = False
     # 写操作确认提示模板

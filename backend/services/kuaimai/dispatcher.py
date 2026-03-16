@@ -83,12 +83,17 @@ class ErpDispatcher:
         # 4. 构建网关参数 + 调用API
         base_url, system_params = self._build_gateway_params(entry)
         try:
-            data = await self._client.request_with_retry(
-                entry.method,
-                api_params,
-                base_url=base_url,
-                extra_system_params=system_params,
-            )
+            if entry.fetch_all:
+                data = await self._fetch_all_pages(
+                    entry, api_params, base_url, system_params,
+                )
+            else:
+                data = await self._client.request_with_retry(
+                    entry.method,
+                    api_params,
+                    base_url=base_url,
+                    extra_system_params=system_params,
+                )
         except Exception as e:
             logger.error(
                 f"ErpDispatcher API error | tool={tool_name} "
@@ -123,6 +128,47 @@ class ErpDispatcher:
             )
         except Exception as e:
             logger.debug(f"Param knowledge recording skipped | error={e}")
+
+    async def _fetch_all_pages(
+        self,
+        entry: ApiEntry,
+        api_params: Dict[str, Any],
+        base_url: str | None,
+        system_params: dict[str, Any] | None,
+    ) -> Dict[str, Any]:
+        """自动翻页拉取全量数据（店铺、仓库等配置列表）
+
+        终止算法：当页返回数 < pageSize 即表示最后一页。
+        """
+        page_size = int(api_params.get("pageSize", 100))
+        response_key = entry.response_key or "list"
+        all_items: list = []
+        last_data: Dict[str, Any] = {}
+        page = 0
+
+        while True:
+            page += 1
+            api_params["pageNo"] = page
+            data = await self._client.request_with_retry(
+                entry.method,
+                api_params,
+                base_url=base_url,
+                extra_system_params=system_params,
+            )
+            last_data = data
+            items = data.get(response_key) or []
+            all_items.extend(items)
+
+            # API 返回数 < pageSize → 已到最后一页
+            if len(items) < page_size:
+                break
+
+        logger.info(
+            f"ErpDispatcher fetch_all | method={entry.method} "
+            f"pages={page} total_items={len(all_items)}"
+        )
+        last_data[response_key] = all_items
+        return last_data
 
     @staticmethod
     def _build_gateway_params(
@@ -199,6 +245,70 @@ class ErpDispatcher:
 
         # 非dict响应
         return str(data)[:2000]
+
+    async def execute_raw(
+        self,
+        tool_name: str,
+        action: str,
+        params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """执行 ERP API 调用，返回原始 dict（供沙盒代码处理）
+
+        与 execute() 共享步骤 1-3（注册表查找 → 参数校验 → API 调用），
+        但跳过步骤 4（格式化），直接返回 API 原始响应数据。
+        写操作被拦截，返回 error dict。
+
+        Args:
+            tool_name: 工具名（如 erp_trade_query）
+            action: 操作名（如 order_list）
+            params: 用户参数
+
+        Returns:
+            API 原始响应 dict，或包含 error 字段的 dict
+        """
+        # 1. 查注册表
+        registry = TOOL_REGISTRIES.get(tool_name)
+        if not registry:
+            return {"error": f"未知的ERP工具: {tool_name}"}
+
+        entry: Optional[ApiEntry] = registry.get(action)
+        if not entry:
+            available = ", ".join(sorted(registry.keys()))
+            return {"error": f"未知操作「{action}」，可选: {available}"}
+
+        # 拦截写操作（沙盒只允许查询）
+        if entry.is_write:
+            return {"error": f"沙盒内禁止写操作: {action}"}
+
+        # 2. 校验必填参数
+        missing = [p for p in entry.required_params if not params.get(p)]
+        if missing:
+            return {"error": f"缺少必填参数: {', '.join(missing)}"}
+
+        # 3. 映射参数
+        api_params, _ = map_params(entry, params)
+        logger.info(
+            f"ErpDispatcher execute_raw | tool={tool_name} action={action} "
+            f"method={entry.method} params={api_params}"
+        )
+
+        # 4. 调用 API（不格式化）
+        base_url, system_params = self._build_gateway_params(entry)
+        try:
+            data = await self._client.request_with_retry(
+                entry.method,
+                api_params,
+                base_url=base_url,
+                extra_system_params=system_params,
+            )
+        except Exception as e:
+            logger.error(
+                f"ErpDispatcher execute_raw error | tool={tool_name} "
+                f"action={action} error={e}"
+            )
+            return {"error": f"ERP接口调用失败: {e}"}
+
+        return data
 
     async def close(self) -> None:
         """关闭底层客户端"""

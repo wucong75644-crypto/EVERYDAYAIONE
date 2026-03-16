@@ -17,6 +17,8 @@ PURCHASE_REGISTRY = {
         param_docs={
             "status": "供应商状态。可选值: 1=启用, 2=停用。示例: 1",
         },
+        fetch_all=True,
+        page_size=500,
         formatter="format_supplier_list",
     ),
     # ── 采购单 查询 ───────────────────────────────────
