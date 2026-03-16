@@ -44,8 +44,8 @@ def format_shop_list(data: Any, entry: ApiEntry) -> str:
         return "暂无店铺信息"
     lines = [f"共 {len(items)} 个店铺：\n"]
     for s in items:
-        name = s.get("name") or ""
-        shop_id = s.get("id") or ""
+        name = s.get("title") or s.get("name") or ""
+        shop_id = s.get("userId") or ""
         short = s.get("shortTitle") or ""
         source = s.get("source") or ""
         active = "启用" if s.get("active") == 1 else "停用"

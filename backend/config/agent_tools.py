@@ -10,6 +10,12 @@ Agent 工具定义
 
 from typing import Any, Dict, List, Set
 
+from config.code_tools import (
+    CODE_INFO_TOOLS,
+    CODE_ROUTING_PROMPT,
+    CODE_TOOL_SCHEMAS,
+    build_code_tools,
+)
 from config.crawler_tools import (
     CRAWLER_INFO_TOOLS,
     CRAWLER_ROUTING_PROMPT,
@@ -37,7 +43,7 @@ from config.smart_model_config import (
 INFO_TOOLS: Set[str] = {
     "web_search", "get_conversation_context", "search_knowledge",
     "erp_api_search", "model_search",
-} | ERP_SYNC_TOOLS | CRAWLER_INFO_TOOLS
+} | ERP_SYNC_TOOLS | CRAWLER_INFO_TOOLS | CODE_INFO_TOOLS
 
 ROUTING_TOOLS: Set[str] = {
     "route_to_chat", "route_to_image", "route_to_video", "ask_user",
@@ -110,6 +116,8 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     **ERP_TOOL_SCHEMAS,
     # === 爬虫工具 ===
     **CRAWLER_TOOL_SCHEMAS,
+    # === 代码执行工具 ===
+    **CODE_TOOL_SCHEMAS,
 }
 
 
@@ -200,6 +208,8 @@ def build_agent_tools() -> List[Dict[str, Any]]:
         *build_erp_tools(),
         # === 社交媒体爬虫工具（从 crawler_tools.py 导入） ===
         *build_crawler_tools(),
+        # === 代码执行沙盒工具（从 code_tools.py 导入） ===
+        *build_code_tools(),
         # === 搜索工具（按需发现 API/模型文档） ===
         build_erp_search_tool(),
         {
@@ -427,6 +437,7 @@ def build_agent_system_prompt() -> str:
         "- 不确定选哪个模型时 → 先调 model_search 搜索合适的模型\n\n"
         + ERP_ROUTING_PROMPT
         + CRAWLER_ROUTING_PROMPT
+        + CODE_ROUTING_PROMPT
         + "重新生成/修改规则：\n"
         "- 用户说「重新生成」「再来一张」「换一个」「改一下」等，"
         "必须从对话记录中找到上一次生成的提示词（标注为 [图片已生成，使用的提示词: ...]），"

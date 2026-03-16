@@ -923,9 +923,9 @@ class TestToolRegistration:
         assert validate_tool_call("unknown_erp_tool", {}) is False
 
     def test_agent_tools_count(self):
-        """工具总数验证（4 路由 + 3 信息 + 2 搜索 + 8 ERP + 1 爬虫 = 18）"""
+        """工具总数验证（4 路由 + 3 信息 + 2 搜索 + 8 ERP + 1 爬虫 + 1 沙盒 = 19）"""
         from config.agent_tools import AGENT_TOOLS
-        assert len(AGENT_TOOLS) == 18
+        assert len(AGENT_TOOLS) == 19
 
     def test_agent_tools_names(self):
         """所有ERP工具名在定义中"""
@@ -2373,11 +2373,11 @@ class TestFormatShopList:
         assert "暂无" in result
 
     def test_includes_shop_id(self):
-        """输出包含店铺 ID"""
+        """输出包含店铺 ID（API 返回 userId 字段）"""
         from services.kuaimai.formatters.basic import format_shop_list
         data = {
             "list": [
-                {"name": "京东旗舰店", "id": 12345,
+                {"title": "京东旗舰店", "userId": 12345,
                  "source": "jd", "active": 1},
             ]
         }

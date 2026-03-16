@@ -171,6 +171,14 @@ class Settings(BaseSettings):
     crawler_cookies_tieba: Optional[str] = None
     crawler_cookies_zhihu: Optional[str] = None
 
+    # 代码执行沙盒配置
+    sandbox_enabled: bool = True                  # 沙盒总开关（False 时返回"功能关闭"）
+    sandbox_timeout: float = 120.0                # 代码执行超时（秒）
+    sandbox_max_result_chars: int = 8000           # 结果最大字符数
+    sandbox_max_code_length: int = 5000            # 代码最大字符数
+    sandbox_api_concurrency: int = 10              # ERP API 并发限制
+    sandbox_max_pages: int = 200                   # erp_query_all 最大翻页数
+
     # 超时分级配置（按任务类型差异化超时）
     chat_stream_timeout: float = 60.0         # 聊天流式超时（普通模型）
     chat_thinking_timeout: float = 120.0      # 聊天流式超时（推理模型，如 deepseek-r1, o4-mini）

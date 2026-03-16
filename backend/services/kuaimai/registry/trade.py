@@ -268,6 +268,8 @@ TRADE_REGISTRY = {
         param_docs={
             "warehouse_id": "仓库ID（通过warehouse_list获取）。不传则返回所有仓库的物流公司。示例: 1001",
         },
+        fetch_all=True,
+        page_size=500,
         formatter="format_logistics_company",
     ),
     "logistics_template_list": ApiEntry(
