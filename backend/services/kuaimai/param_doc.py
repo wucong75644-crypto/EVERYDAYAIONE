@@ -49,6 +49,9 @@ def _format_param_doc(action: str, entry: ApiEntry) -> str:
             marker = "（必填）" if user_key in required else ""
             doc = entry.param_docs.get(user_key, "")
             lines.append(f"  - {user_key}{marker}: {doc}")
+            hint = entry.param_hints.get(user_key)
+            if hint:
+                lines.append(f"    ⚠ {hint}")
     else:
         lines.append("参数: 无（仅需指定 action）")
 

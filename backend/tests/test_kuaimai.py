@@ -1278,6 +1278,165 @@ class TestErpDispatcher:
 
 
 # ============================================================
+# TestDispatcherGuardrails — dispatcher 集成护栏
+# ============================================================
+
+
+class TestDispatcherGuardrails:
+    """测试 dispatcher 集成 preprocess_params + diagnose_empty_result"""
+
+    def _make_entry(self, **overrides):
+        from services.kuaimai.registry.base import ApiEntry
+        defaults = {
+            "method": "erp.test.query",
+            "description": "测试接口",
+            "param_map": {
+                "outer_id": "mainOuterId",
+                "sku_outer_id": "skuOuterId",
+            },
+            "response_key": "list",
+        }
+        defaults.update(overrides)
+        return ApiEntry(**defaults)
+
+    def _make_dispatcher(self, client=None):
+        from services.kuaimai.dispatcher import ErpDispatcher
+        return ErpDispatcher(client or AsyncMock())
+
+    @pytest.mark.asyncio
+    async def test_corrections_shown_in_result(self):
+        """参数自动纠正记录出现在结果开头"""
+        entry = self._make_entry()
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.return_value = {
+            "list": [{"id": 1}], "total": 1,
+        }
+        d = self._make_dispatcher(mock_client)
+        with patch("services.kuaimai.dispatcher.TOOL_REGISTRIES", {
+            "erp_product_query": {"stock_status": entry},
+        }):
+            result = await d.execute(
+                "erp_product_query", "stock_status",
+                {"outer_id": "DBTXL01-02"},
+            )
+            assert "参数自动纠正" in result
+            assert "sku_outer_id" in result
+
+    @pytest.mark.asyncio
+    async def test_no_corrections_when_normal_code(self):
+        """普通编码不触发纠正"""
+        entry = self._make_entry()
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.return_value = {
+            "list": [{"id": 1}], "total": 1,
+        }
+        d = self._make_dispatcher(mock_client)
+        with patch("services.kuaimai.dispatcher.TOOL_REGISTRIES", {
+            "erp_product_query": {"stock_status": entry},
+        }):
+            result = await d.execute(
+                "erp_product_query", "stock_status",
+                {"outer_id": "ABC123"},
+            )
+            assert "参数自动纠正" not in result
+
+    @pytest.mark.asyncio
+    async def test_diagnosis_suggestion_on_empty_result(self):
+        """零结果时诊断建议追加到结果末尾"""
+        entry = self._make_entry(
+            retry_alt_params={"outer_id": "sku_outer_id"},
+            response_key="list",
+        )
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.return_value = {
+            "list": [], "total": 0,
+        }
+        d = self._make_dispatcher(mock_client)
+        with patch("services.kuaimai.dispatcher.TOOL_REGISTRIES", {
+            "erp_product_query": {"stock_status": entry},
+        }):
+            result = await d.execute(
+                "erp_product_query", "stock_status",
+                {"outer_id": "ABC123"},
+            )
+            assert "sku_outer_id" in result
+            assert "重试" in result
+
+    @pytest.mark.asyncio
+    async def test_no_diagnosis_when_results_found(self):
+        """有结果时不生成诊断建议"""
+        entry = self._make_entry(
+            retry_alt_params={"outer_id": "sku_outer_id"},
+        )
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.return_value = {
+            "list": [{"id": 1}], "total": 1,
+        }
+        d = self._make_dispatcher(mock_client)
+        with patch("services.kuaimai.dispatcher.TOOL_REGISTRIES", {
+            "erp_product_query": {"stock_status": entry},
+        }):
+            result = await d.execute(
+                "erp_product_query", "stock_status",
+                {"outer_id": "ABC123"},
+            )
+            assert "重试" not in result
+
+    @pytest.mark.asyncio
+    async def test_broadened_query_replaces_empty_result(self):
+        """零结果时宽泛查询命中 → 结果包含匹配数据和说明"""
+        entry = self._make_entry(
+            retry_alt_params={"outer_id": "sku_outer_id"},
+            response_key="stockStatusVoList",
+        )
+        mock_client = AsyncMock()
+        # 第1次调用：初始查询返回空
+        # 第2次调用：宽泛查询(outer_id=DBTXL)返回多条
+        mock_client.request_with_retry.side_effect = [
+            {"stockStatusVoList": [], "total": 0},
+            {
+                "stockStatusVoList": [
+                    {"outerId": "DBTXL01-01", "mainOuterId": "DBTXL"},
+                    {"outerId": "DBTXL01-02", "mainOuterId": "DBTXL"},
+                ],
+                "total": 2,
+            },
+        ]
+        d = self._make_dispatcher(mock_client)
+        with patch("services.kuaimai.dispatcher.TOOL_REGISTRIES", {
+            "erp_product_query": {"stock_status": entry},
+        }):
+            result = await d.execute(
+                "erp_product_query", "stock_status",
+                {"outer_id": "DBTXL01-02"},
+            )
+            assert "编码智能匹配" in result
+            assert "DBTXL" in result
+
+    @pytest.mark.asyncio
+    async def test_broadened_query_no_trigger_on_normal_code(self):
+        """纯字母编码（无数字）不触发宽泛查询"""
+        entry = self._make_entry(
+            retry_alt_params={"outer_id": "sku_outer_id"},
+        )
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.return_value = {
+            "list": [], "total": 0,
+        }
+        d = self._make_dispatcher(mock_client)
+        with patch("services.kuaimai.dispatcher.TOOL_REGISTRIES", {
+            "erp_product_query": {"stock_status": entry},
+        }):
+            result = await d.execute(
+                "erp_product_query", "stock_status",
+                {"outer_id": "DBTXL"},
+            )
+            assert "编码智能匹配" not in result
+            # 应走 diagnose_empty_result 路径
+            assert "重试" in result
+
+
+# ============================================================
 # TestParamMapper — 参数映射
 # ============================================================
 
@@ -3308,6 +3467,95 @@ class TestParamDocGeneration:
         assert "错误码:" in result
         assert "20009" in result  # API 专属
         assert "20001" in result  # API 专属
+
+    # ── param_hints 渲染 ──────────────────────────────
+
+    def test_param_hints_rendered_with_warning(self):
+        """有 param_hints 的参数显示 ⚠ 前缀提示"""
+        from services.kuaimai.param_doc import generate_param_doc
+        result = generate_param_doc("erp_product_query", "stock_status")
+        assert "⚠" in result
+        assert "sku_outer_id" in result
+
+    def test_param_hints_outer_id_shown(self):
+        """stock_status 的 outer_id 有歧义消解提示"""
+        from services.kuaimai.param_doc import generate_param_doc
+        result = generate_param_doc("erp_product_query", "stock_status")
+        # outer_id 的 hint 应提及 sku_outer_id
+        lines = result.split("\n")
+        hint_lines = [l for l in lines if l.strip().startswith("⚠")]
+        assert len(hint_lines) >= 1
+
+    def test_no_hints_when_entry_has_none(self):
+        """无 param_hints 的 action 不显示 ⚠"""
+        from services.kuaimai.param_doc import generate_param_doc
+        result = generate_param_doc("erp_trade_query", "order_log")
+        lines = result.split("\n")
+        hint_lines = [l for l in lines if l.strip().startswith("⚠")]
+        assert len(hint_lines) == 0
+
+    def test_order_list_hints_rendered(self):
+        """order_list 的 param_hints 正确渲染"""
+        from services.kuaimai.param_doc import generate_param_doc
+        result = generate_param_doc("erp_trade_query", "order_list")
+        assert "⚠" in result
+        assert "system_id" in result
+
+
+# ============================================================
+# TestFormatterEmptyMessages — 格式化器空结果增强提示
+# ============================================================
+
+
+class TestFormatterEmptyMessages:
+    """验证空结果增强提示文本"""
+
+    def _make_entry(self, **overrides):
+        from services.kuaimai.registry.base import ApiEntry
+        defaults = {
+            "method": "test",
+            "description": "测试",
+            "param_map": {},
+            "response_key": "list",
+        }
+        defaults.update(overrides)
+        return ApiEntry(**defaults)
+
+    def test_inventory_empty_mentions_param_type(self):
+        """库存空结果提示编码类型选错"""
+        from services.kuaimai.formatters.product import format_inventory_list
+        entry = self._make_entry(response_key="stockStatusVoList")
+        data = {"stockStatusVoList": [], "total": 0}
+        result = format_inventory_list(data, entry)
+        assert "0 条" in result
+        assert "outer_id/sku_outer_id" in result
+
+    def test_product_list_empty_mentions_param(self):
+        """商品空结果提示参数类型选错"""
+        from services.kuaimai.formatters.product import format_product_list
+        entry = self._make_entry()
+        data = {"items": [], "total": 0}
+        result = format_product_list(data, entry)
+        assert "0 条" in result
+
+    def test_warehouse_stock_empty_mentions_param(self):
+        """仓库库存空结果提示"""
+        from services.kuaimai.formatters.product import format_warehouse_stock
+        entry = self._make_entry()
+        data = {"list": []}
+        result = format_warehouse_stock(data, entry)
+        assert "0 条" in result
+
+    def test_nonempty_no_error_hint(self):
+        """有结果时不显示参数错误提示"""
+        from services.kuaimai.formatters.product import format_inventory_list
+        entry = self._make_entry(response_key="stockStatusVoList")
+        data = {
+            "stockStatusVoList": [{"title": "test", "totalAvailableStockSum": 10}],
+            "total": 1,
+        }
+        result = format_inventory_list(data, entry)
+        assert "参数类型选错" not in result
 
 
 # ============================================================

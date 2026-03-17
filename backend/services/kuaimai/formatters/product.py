@@ -24,7 +24,7 @@ def format_product_list(data: Any, entry: ApiEntry) -> str:
     items = data.get("items") or data.get("list") or []
     total = data.get("total", len(items))
     if not items:
-        return "未找到符合条件的商品"
+        return "查询返回 0 条商品（编码可能不存在或参数类型选错）"
     lines = [f"共找到 {total} 个商品：\n"]
     for item in items[:20]:
         lines.append(_format_product(item))
@@ -43,7 +43,7 @@ def format_inventory_list(data: Any, entry: ApiEntry) -> str:
     items = data.get("stockStatusVoList") or data.get("list") or []
     total = data.get("total", len(items))
     if not items:
-        return "未找到符合条件的库存记录"
+        return "查询返回 0 条库存记录（编码可能不存在或参数类型选错，如 outer_id/sku_outer_id 混用）"
     lines = [f"共找到 {total} 条库存记录：\n"]
     for item in items[:100]:
         lines.append(_format_inventory(item))
@@ -70,7 +70,7 @@ def format_warehouse_stock(data: Any, entry: ApiEntry) -> str:
     """仓库及商品库存"""
     items = data.get("list") or []
     if not items:
-        return "未找到仓库库存信息"
+        return "查询返回 0 条仓库库存（编码可能不存在或参数类型选错）"
     lines = [f"共 {len(items)} 条仓库库存：\n"]
     for item in items[:50]:
         name = item.get("title") or item.get("itemTitle") or ""

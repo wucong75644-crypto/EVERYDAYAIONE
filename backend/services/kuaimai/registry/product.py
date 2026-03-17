@@ -175,6 +175,14 @@ PRODUCT_REGISTRY = {
             "20305": "仓库ID不能为空或小于0",
             "20307": "商品类型不合法",
         },
+        param_hints={
+            "outer_id": "查整个商品（所有规格汇总）的库存。编码含 -数字后缀（如 DBTXL01-02）请改用 sku_outer_id",
+            "sku_outer_id": "查某个具体规格/SKU 的库存。带 -数字后缀的编码应用这个参数，完整传入不要拆分",
+        },
+        retry_alt_params={
+            "outer_id": "sku_outer_id",
+            "sku_outer_id": "outer_id",
+        },
         formatter="format_inventory_list",
         response_key="stockStatusVoList",
         page_size=50,
@@ -195,6 +203,14 @@ PRODUCT_REGISTRY = {
             "20302": "平台商家编码不支持多个查询",
             "20303": "平台规格商家编码不支持多个查询",
             "20304": "查询仓库及商品库存信息有误",
+        },
+        param_hints={
+            "outer_id": "查整个商品在各仓库的库存分布。编码含 -数字后缀请改用 sku_outer_id",
+            "sku_outer_id": "查某个规格在各仓库的库存分布。带 -数字后缀的编码用这个参数",
+        },
+        retry_alt_params={
+            "outer_id": "sku_outer_id",
+            "sku_outer_id": "outer_id",
         },
         formatter="format_warehouse_stock",
     ),
