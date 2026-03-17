@@ -1,5 +1,5 @@
 """
-奇门接口格式化器
+奇门接口格式化器（Phase 5B 标签映射表模式）
 
 格式化淘宝奇门接口（kuaimai.order.list.query / kuaimai.refund.list.query）
 的响应数据为 Agent 大脑可读的文本。
@@ -7,7 +7,7 @@
 
 from typing import Any, Callable, Dict
 
-from services.kuaimai.formatters.common import format_timestamp
+from services.kuaimai.formatters.common import format_item_with_labels, format_timestamp
 from services.kuaimai.registry.base import ApiEntry
 
 # 订单类型映射
@@ -30,6 +30,87 @@ _REFUND_STATUS_MAP = {
     9: "处理完成", 10: "作废",
 }
 
+# ---------------------------------------------------------------------------
+# 淘宝订单 — kuaimai.order.list.query
+# 补全收件人/物流字段
+# ---------------------------------------------------------------------------
+_QIMEN_ORDER_LABELS = {
+    "tid": "订单号", "sid": "系统单号",
+    "type": "类型",
+    "sysStatus": "状态", "chSysStatus": "中文状态",
+    "buyerNick": "买家",
+    "payment": "付款金额", "payAmount": "实付金额",
+    "postFee": "运费",
+    "shopName": "店铺", "source": "来源", "warehouseName": "仓库",
+    "outSid": "快递单号",
+    "receiverName": "收件人", "receiverMobile": "电话",
+    "receiverState": "省", "receiverCity": "市",
+    "receiverAddress": "地址",
+    "sellerMemo": "卖家备注", "buyerMessage": "买家留言",
+    "created": "下单时间", "payTime": "付款时间",
+    "consignTime": "发货时间",
+}
+_QIMEN_ORDER_TRANSFORMS: Dict[str, Callable] = {
+    "type": lambda v: _ORDER_TYPE_MAP.get(str(v), str(v)) if v is not None else "",
+    "buyerNick": lambda v: v or "（隐私保护）",
+    "payment": lambda v: f"¥{v}" if v else "",
+    "payAmount": lambda v: f"¥{v}" if v else "",
+    "postFee": lambda v: f"¥{v}" if v else "",
+    "created": format_timestamp, "payTime": format_timestamp,
+    "consignTime": format_timestamp,
+}
+
+# 淘宝订单子订单
+_QIMEN_SUB_ORDER_LABELS = {
+    "sysTitle": "商品", "title": "商品",
+    "sysOuterId": "编码", "outerId": "编码",
+    "num": "数量",
+}
+
+# ---------------------------------------------------------------------------
+# 淘宝售后工单 — kuaimai.refund.list.query
+# 补全退款/物流字段
+# ---------------------------------------------------------------------------
+_QIMEN_REFUND_LABELS = {
+    "id": "工单号",
+    "tid": "订单号", "sid": "系统单号",
+    "afterSaleType": "类型",
+    "status": "状态",
+    "shopName": "店铺", "source": "平台",
+    "buyerName": "买家姓名", "buyerPhone": "买家电话",
+    "refundMoney": "系统退款",
+    "rawRefundMoney": "平台实退",
+    "refundPostFee": "退运费",
+    "goodStatus": "货物状态",
+    "textReason": "原因",
+    "refundWarehouseName": "退货仓库",
+    "refundExpressCompany": "退回快递", "refundExpressId": "退回单号",
+    "platformId": "平台售后单号",
+    "reissueSid": "补发订单号",
+    "remark": "备注",
+    "created": "创建时间",
+    "finished": "完成时间",
+}
+_QIMEN_REFUND_TRANSFORMS: Dict[str, Callable] = {
+    "afterSaleType": lambda v: _REFUND_TYPE_MAP.get(v, str(v)),
+    "status": lambda v: _REFUND_STATUS_MAP.get(v, str(v)),
+    "goodStatus": lambda v: {1: "买家未发", 2: "买家已发",
+                             3: "卖家已收", 4: "无需退货"}.get(v, str(v)),
+    "refundMoney": lambda v: f"¥{v}" if v else "",
+    "rawRefundMoney": lambda v: f"¥{v}" if v else "",
+    "refundPostFee": lambda v: f"¥{v}" if v else "",
+    "created": format_timestamp,
+    "finished": format_timestamp,
+}
+
+# 售后嵌套商品
+_QIMEN_REFUND_ITEM_LABELS = {
+    "title": "商品", "outerId": "编码",
+    "receivableCount": "申请数",
+}
+
+
+# ===== 公开 formatter 函数 =====
 
 def format_qimen_order_list(data: Any, entry: ApiEntry) -> str:
     """淘宝订单列表（trades key）"""
@@ -39,7 +120,16 @@ def format_qimen_order_list(data: Any, entry: ApiEntry) -> str:
         return "未找到符合条件的淘宝订单"
     lines = [f"共找到 {total} 条淘宝订单：\n"]
     for order in items[:20]:
-        lines.append(_format_taobao_order(order))
+        main = "- " + format_item_with_labels(
+            order, _QIMEN_ORDER_LABELS, transforms=_QIMEN_ORDER_TRANSFORMS)
+        # 商品明细
+        sub_lines = []
+        for sub in (order.get("orders") or [])[:3]:
+            sub_lines.append("    · " + format_item_with_labels(
+                sub, _QIMEN_SUB_ORDER_LABELS))
+        if sub_lines:
+            main += "\n" + "\n".join(sub_lines)
+        lines.append(main)
     if int(total) > len(items):
         lines.append(f"\n（显示前{len(items)}条，共{total}条）")
     return "\n".join(lines)
@@ -53,98 +143,19 @@ def format_qimen_refund_list(data: Any, entry: ApiEntry) -> str:
         return "未找到符合条件的淘宝售后单"
     lines = [f"共找到 {total} 条售后单：\n"]
     for wo in items[:20]:
-        lines.append(_format_taobao_refund(wo))
+        main = "- " + format_item_with_labels(
+            wo, _QIMEN_REFUND_LABELS, transforms=_QIMEN_REFUND_TRANSFORMS)
+        # 售后商品明细
+        sub_lines = []
+        for item in (wo.get("items") or [])[:3]:
+            sub_lines.append("    · " + format_item_with_labels(
+                item, _QIMEN_REFUND_ITEM_LABELS))
+        if sub_lines:
+            main += "\n" + "\n".join(sub_lines)
+        lines.append(main)
     if int(total) > len(items):
         lines.append(f"\n（显示前{len(items)}条，共{total}条）")
     return "\n".join(lines)
-
-
-def _format_taobao_order(order: Dict[str, Any]) -> str:
-    """格式化单个淘宝订单"""
-    tid = order.get("tid") or ""
-    sid = order.get("sid") or ""
-    sys_status = order.get("sysStatus") or ""
-    ch_status = order.get("chSysStatus") or sys_status
-    buyer = order.get("buyerNick") or "（隐私保护）"
-    payment = order.get("payment") or "0"
-    shop = order.get("shopName") or ""
-    source = order.get("source") or ""
-    warehouse = order.get("warehouseName") or ""
-    created = format_timestamp(order.get("created"))
-    pay_time = format_timestamp(order.get("payTime"))
-    order_type = _ORDER_TYPE_MAP.get(str(order.get("type", "")), "")
-
-    line1 = f"- 订单: {tid} | 系统单号: {sid}"
-    parts2 = [f"状态: {ch_status}", f"买家: {buyer}", f"店铺: {shop}"]
-    if order_type:
-        parts2.append(f"类型: {order_type}")
-    if source:
-        parts2.append(f"来源: {source}")
-    if warehouse:
-        parts2.append(f"仓库: {warehouse}")
-    line2 = "  " + " | ".join(parts2)
-    line3 = f"  金额: ¥{payment} | 创建: {created} | 付款: {pay_time}"
-
-    # 商品明细（最多3条）
-    sub_lines = []
-    for sub in (order.get("orders") or [])[:3]:
-        title = sub.get("sysTitle") or sub.get("title") or ""
-        num = sub.get("num", 0)
-        outer_id = sub.get("sysOuterId") or sub.get("outerId") or ""
-        parts = [f"    · {title} x{num}"]
-        if outer_id:
-            parts.append(f"编码: {outer_id}")
-        sub_lines.append(" | ".join(parts))
-
-    result = f"{line1}\n{line2}\n{line3}"
-    if sub_lines:
-        result += "\n" + "\n".join(sub_lines)
-    return result
-
-
-def _format_taobao_refund(wo: Dict[str, Any]) -> str:
-    """格式化单个淘宝售后工单"""
-    wo_id = wo.get("id") or ""
-    tid = wo.get("tid") or ""
-    sid = wo.get("sid") or ""
-    shop = wo.get("shopName") or ""
-    as_type = _REFUND_TYPE_MAP.get(wo.get("afterSaleType"), "")
-    status = _REFUND_STATUS_MAP.get(wo.get("status"), str(wo.get("status", "")))
-    refund_money = wo.get("refundMoney") or 0
-    reason_code = wo.get("reason")
-    text_reason = wo.get("textReason") or ""
-    remark = wo.get("remark") or ""
-    created = format_timestamp(wo.get("created"))
-
-    line1 = f"- 工单: {wo_id} | 订单: {tid} | 系统单号: {sid}"
-    parts2 = []
-    if as_type:
-        parts2.append(f"类型: {as_type}")
-    parts2.append(f"状态: {status}")
-    if shop:
-        parts2.append(f"店铺: {shop}")
-    parts2.append(f"退款: ¥{refund_money}")
-    line2 = "  " + " | ".join(parts2)
-
-    result = f"{line1}\n{line2}"
-    if text_reason:
-        result += f"\n  原因: {text_reason}"
-    if remark:
-        result += f"\n  备注: {remark}"
-    if created:
-        result += f"\n  创建: {created}"
-
-    # 售后商品明细（最多3条）
-    for item in (wo.get("items") or [])[:3]:
-        title = item.get("title") or ""
-        count = item.get("receivableCount") or 0
-        outer_id = item.get("outerId") or ""
-        parts = [f"    · {title} x{count}"]
-        if outer_id:
-            parts.append(f"编码: {outer_id}")
-        result += "\n" + " | ".join(parts)
-
-    return result
 
 
 QIMEN_FORMATTERS: Dict[str, Callable] = {

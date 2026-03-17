@@ -3,13 +3,69 @@
 
 提供日期处理、分页信息、空结果处理等公共函数。
 从原 service.py 迁移 _format_timestamp / _parse_date。
+Phase 5B 新增: format_item_with_labels 标签映射表通用格式化。
 """
 
 import json
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from services.kuaimai.registry.base import ApiEntry
+
+# ---------------------------------------------------------------------------
+# 全局跳过字段（图片/系统ID等无业务价值的）
+# 注意：code 不在此集合——很多 item 用 code 作为单号字段
+# ---------------------------------------------------------------------------
+_GLOBAL_SKIP: Set[str] = {
+    "picPath", "skuPicPath", "itemPicPath",
+    "sysItemId", "sysSkuId",
+    "body", "forbiddenField", "solution", "subCode", "subMsg",
+    "msg", "traceId",  # 网关级字段
+    "companyId",  # 内部公司ID，无业务价值
+}
+
+
+def format_item_with_labels(
+    item: Dict[str, Any],
+    labels: Dict[str, str],
+    skip: Set[str] | None = None,
+    transforms: Dict[str, Callable] | None = None,
+) -> str:
+    """通用字段格式化：按标签表展示 + 未知非空字段兜底
+
+    Args:
+        item: API返回的单条数据
+        labels: {API字段名: 中文标签} 有序映射
+        skip: 额外跳过的字段（与_GLOBAL_SKIP合并）
+        transforms: {字段名: 转换函数} 如状态码→中文
+
+    Returns:
+        " | " 分隔的格式化字符串，如 "名称: XX | 编码: YY | ..."
+    """
+    all_skip = _GLOBAL_SKIP | (skip or set())
+    transforms = transforms or {}
+    parts: list[str] = []
+
+    # 1. 按标签表顺序展示已知字段
+    for key, label in labels.items():
+        val = item.get(key)
+        if val is None or val == "":
+            continue
+        if key in transforms:
+            val = transforms[key](val)
+        parts.append(f"{label}: {val}")
+
+    # 2. 未知字段兜底（防止未来API新增字段被遗漏）
+    for key, val in item.items():
+        if key in labels or key in all_skip:
+            continue
+        if val is None or val == "" or val == 0:
+            continue
+        if isinstance(val, (list, dict)):
+            continue  # 嵌套数据由各formatter自行处理
+        parts.append(f"{key}: {val}")
+
+    return " | ".join(parts)
 
 
 def format_timestamp(ts: Any) -> str:

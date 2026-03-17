@@ -156,6 +156,17 @@ class DocParser:
         1. display_name: '### ' 后面的文本
         2. api_method: 'method: ' 后面的文本
         3. params: 逐行解析参数组
+        4. response_fields: 解析响应字段列表（见 2.1.1）
+        """
+
+    def _parse_response_fields(self, block: str) -> list[ParsedResponseField]:
+        """解析响应字段（从完整文档的响应参数表格）
+
+        识别模式：
+        - '返回参数' / '响应参数' 段落后的字段列表
+        - 每个字段: name → type → description（与请求参数同格式）
+
+        输出: ParsedResponseField 列表，后续供 ResponseFormatter 使用
         """
 
     def _parse_params(self, lines: list[str]) -> list[ParsedParam]:
@@ -186,11 +197,18 @@ class ParsedParam:
     semantic_type: str      # 语义类型 (见第 4.5 节参数类型系统)
 
 @dataclass
+class ParsedResponseField:
+    name: str               # API 响应字段名 (如 "tid", "buyerNick")
+    field_type: str         # string/integer/long/array/object
+    description: str        # 中文描述 (如 "平台订单号")
+
+@dataclass
 class ParsedAction:
     category: str           # trade/basic/product...
     display_name: str       # 中文名 (如 "订单查询")
     api_method: str         # 方法名 (如 "erp.trade.list.query")
     params: list[ParsedParam]
+    response_fields: list[ParsedResponseField]  # ← 新增：响应字段列表
     raw_text: str           # 原始文本 (供 AI 增强用)
 ```
 
@@ -269,6 +287,48 @@ AI Prompt：
 "时间类型（可选值: created=下单时间, pay_time=付款时间, consign_time=发货时间, audit_time=审核时间, upd_time=修改时间）。需与 start_time/end_time 同时使用。默认按修改时间查。时间跨度建议≤1天"
 ```
 
+**任务 E：生成响应格式化配置（labels + transforms + skip）**
+
+这是 Phase 5B 手写在各 `formatters/*.py` 里的：
+```python
+# 现在手写：
+_ORDER_LABELS = {"tid": "订单号", "buyerNick": "买家", "payment": "付款金额", ...}
+_ORDER_TRANSFORMS = {"payment": lambda v: f"¥{v}", "created": format_timestamp, ...}
+```
+
+AI Prompt：
+```
+你是 ERP 数据展示专家。根据以下 API 响应字段列表，生成格式化配置。
+
+API: erp.trade.list.query (订单查询)
+响应字段：
+- tid (string): 平台订单号
+- sid (string): 系统订单号
+- buyerNick (string): 买家昵称
+- payment (string): 实付金额
+- status (integer): 订单状态 (0:普通 7:合并 8:拆分)
+- created (long): 创建时间（毫秒时间戳）
+- picPath (string): 商品图片路径
+
+请输出 JSON：
+{
+  "labels": {"tid": "订单号", "sid": "系统单号", "buyerNick": "买家", "payment": "实付金额", ...},
+  "transforms": {
+    "payment": "money",
+    "created": "timestamp",
+    "status": {"0": "普通", "7": "合并", "8": "拆分"}
+  },
+  "skip": ["picPath"],
+  "nested_keys": ["orders"]
+}
+
+transforms 类型说明：
+- "money" → 自动加 ¥ 前缀
+- "timestamp" → 毫秒时间戳转可读日期
+- "boolean" → 转为 是/否
+- {...} → 枚举映射（值→中文）
+```
+
 **任务 D：推断参数语义类型（semantic_type）**
 
 这是参数类型系统（见第 4.5 节）的核心输入。为每个参数标注语义类型，运行时自动获得对应的智能处理能力。
@@ -314,12 +374,13 @@ AI 增强 (分批, 每批 10 个 API):
     ├─ 任务A: generate_param_maps() → param_map
     ├─ 任务B: classify_write_ops() → is_write
     ├─ 任务C: enrich_param_docs() → param_docs
-    └─ 任务D: infer_semantic_types() → semantic_type (见 4.5 节)
+    ├─ 任务D: infer_semantic_types() → semantic_type (见 4.5 节)
+    └─ 任务E: generate_formatter_config() → labels/transforms/skip (见 4.6 节)
     ↓
-合并 → 写入 tool_actions 表
+合并 → 写入 tool_actions 表 + tool_formatter_configs 表
 ```
 
-**AI 调用量预估**：70个 API / 10 每批 = 7 次 AI 调用 × 4 任务 = ~28 次 qwen-plus 调用，总成本 < ¥1.5
+**AI 调用量预估**：70个 API / 10 每批 = 7 次 AI 调用 × 5 任务 = ~35 次 qwen-plus 调用，总成本 < ¥2
 
 ---
 
@@ -557,11 +618,15 @@ class DataProfiler:
         """
 ```
 
-**模块 C：字段映射表生成（新增，核心！）**
+**模块 C：字段映射表 + 格式化配置生成（核心！）**
+
+字段映射表同时服务两个目的：
+1. **沙盒代码引用**：AI 写 `code_execute` 时知道用 `p["outerCode"]` 而非 `p["code"]`
+2. **响应格式化配置**：自动生成 `_LABELS` + `_TRANSFORMS` + `_SKIP` 供 ResponseFormatter 使用
 
 ```python
     def _build_field_map(self, action_name: str, sample_items: list[dict]) -> dict:
-        """从样本数据的 key 列表自动生成字段映射
+        """从样本数据的 key 列表自动生成字段映射 + 格式化配置
 
         输入: order_list 返回的一条数据的所有 key:
         ["tid", "sid", "buyerNick", "status", "payment", "shopName",
@@ -587,6 +652,40 @@ class DataProfiler:
 
 这里 AI 的作用是**给字段名标注中文语义**（因为 `buyerNick`、`outerCode` 等缩写不直观），
 但字段名本身是从真实数据中 100% 确定的——不是猜的。
+
+**模块 C2：Transform 自动检测（统计 + 正则，无 LLM）**
+
+从样本数据的**值**自动推断每个字段需要什么 transform，无需 AI：
+
+```python
+    def _detect_transforms(self, action_name: str, sample_items: list[dict]) -> dict:
+        """从样本值自动检测字段的 transform 类型
+
+        检测规则（优先级从高到低）：
+        1. 时间戳: 值为 int/float 且 > 1e12 → "timestamp"
+        2. 金额: 字段名含 price/amount/fee/money/cost → "money"
+        3. 布尔: 值集合 ⊆ {0, 1, True, False} → "boolean"
+        4. 枚举: unique 值 < 20 且为 int 类型 → "enum" (值列表由 AI 补中文)
+        5. 跳过: 字段名匹配 pic/Path/Url/sysItemId/companyId → "skip"
+        6. 嵌套: 值为 list[dict] → "nested" (记录子项字段名，递归检测)
+
+        输出:
+        {
+            "created": "timestamp",
+            "payment": "money",
+            "isRefund": "boolean",
+            "status": {"type": "enum", "values": [0, 1, 7, 8]},
+            "picPath": "skip",
+            "orders": {"type": "nested", "child_fields": ["sysTitle", "num", ...]}
+        }
+        """
+```
+
+**关键**: Phase 5B 手写的 42 个 `_TRANSFORMS` dict 中，80% 可以由这个模块自动检测：
+- 时间戳字段（`created`, `payTime`, `consignTime` 等）→ 值 > 1e12，100% 准确
+- 金额字段（`payment`, `totalAmount`, `refundMoney` 等）→ 字段名特征，95% 准确
+- 枚举字段（`status`, `type`, `afterSaleType` 等）→ unique 值 < 20，90% 准确
+- 只有枚举值的**中文标签**需要 AI 补充（如 `1 → "退款", 2 → "退货"`）
 
 **模块 D：AI 总结（最终汇总）**
 
@@ -788,10 +887,12 @@ class ParamTypeEngine:
 
 ```
 DocParser (任务D)          → 推断 semantic_type → 存入 tool_actions
+DocParser (任务E)          → 生成 labels/transforms/skip → 存入 tool_formatter_configs
 RuleExtractor              → 提取枚举映射 → enum_value 类型运行时使用
-DataProfiler               → 验证/修正 semantic_type + 提取编码规律
+DataProfiler               → 验证/修正 semantic_type + 提取编码规律 + 检测 transforms
+ResponseFormatter          → 运行时从 DB 加载配置 → format_item_with_labels 格式化
 ParamTypeEngine            → 运行时按 semantic_type 执行预处理/后处理
-UniversalDispatcher        → 调用 ParamTypeEngine.preprocess → API → ParamTypeEngine.postprocess
+UniversalDispatcher        → ParamTypeEngine.preprocess → API → ResponseFormatter.format
 ```
 
 ### 迁移路径
@@ -807,6 +908,188 @@ UniversalDispatcher        → 调用 ParamTypeEngine.preprocess → API → Par
 | `param_mapper.PARAM_ALIASES` | `ParamTypeEngine.preprocess` | `semantic_type == "entity_id"` |
 | `param_guardrails.broadened_code_query` | `ParamTypeEngine.postprocess` | `semantic_type == "product_code"` |
 | `param_guardrails.diagnose_empty_result` | `ParamTypeEngine.postprocess` | `semantic_type == "order_number"` |
+| `formatters/*._LABELS` | `tool_formatter_configs.labels` | 所有 action |
+| `formatters/*._TRANSFORMS` | `tool_formatter_configs.transforms` | 所有 action |
+| `formatters/*._SKIP` | `tool_formatter_configs.skip` | 所有 action |
+| `formatters/common.format_item_with_labels` | `ResponseFormatter._build_transforms + format` | 所有 action |
+
+---
+
+## 4.6、ResponseFormatter — 响应格式化引擎
+
+### 问题（Phase 5B 实证）
+
+Phase 5B 手动重写 42 个 formatter，核心工作量：
+- 逐个 API 交叉比对文档，修正 **22 处字段名错误**（如 `refundId` → API 实际是 `id`）
+- 补全 **30+ 遗漏的高价值字段**（如采购在途、退款金额、收件人信息）
+- 为 **60+ 字段**手写 transform（时间戳→日期、状态码→中文、金额→¥）
+- 修复 **3 处嵌套结构不匹配**（如维修单详情 `{order, itemList, feeList}` 结构）
+
+**客户自注册 API 时不可能手写 42 个 formatter。** 需要自动化。
+
+### 解决方案：Phase 5B 模式 + 自动生成配置
+
+Phase 5B 已经建好了**运行时引擎**：`format_item_with_labels(item, labels, skip, transforms)`。
+缺的是**自动生成配置**（labels/transforms/skip）。
+
+### 配置来源（三层叠加）
+
+```
+Layer 1: DocParser 任务E — 从 API 文档的响应字段解析
+    ├─ labels: 字段名 → 中文描述（文档中 100% 有）
+    ├─ skip: 图片/内部ID 字段名模式匹配
+    └─ transforms: 根据字段类型推断（long=时间戳、含"金额"=money）
+
+Layer 2: DataProfiler 模块C2 — 从真实数据样本验证+补充
+    ├─ transforms 验证: 检查值是否真的是时间戳/金额（避免误判）
+    ├─ enum 发现: unique值<20 的字段自动标记为枚举
+    ├─ nested 检测: 值为 list[dict] 的字段标记为嵌套
+    └─ skip 补充: 所有样本中值全为 null/空 的字段自动跳过
+
+Layer 3: AI 精化（1次调用） — 枚举值中文标签
+    └─ 枚举映射: {0: "普通", 1: "退款", 2: "退货"} ← AI 根据上下文生成中文
+```
+
+### 配置存储（DB 表）
+
+```sql
+CREATE TABLE tool_formatter_configs (
+    id BIGINT PRIMARY KEY,
+    tool_id UUID REFERENCES tool_registrations(id),
+    action_name TEXT NOT NULL,           -- "order_list"
+    labels JSONB NOT NULL,               -- {"tid": "订单号", "buyerNick": "买家", ...}
+    transforms JSONB DEFAULT '{}',       -- {"created": "timestamp", "payment": "money", "status": {...}}
+    skip TEXT[] DEFAULT '{}',            -- ["picPath", "sysItemId"]
+    nested_keys JSONB DEFAULT '{}',      -- {"orders": {"labels": {...}, "transforms": {...}}}
+    response_key TEXT,                   -- "list" / "stockStatusVoList" / "trades"
+    empty_message TEXT,                  -- "未找到订单"
+    config_source TEXT DEFAULT 'auto',   -- auto / manual / ai_enhanced
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(tool_id, action_name)
+);
+```
+
+### 运行时流程
+
+```python
+# backend/services/tool_registry/response_formatter.py
+
+class ResponseFormatter:
+    """通用响应格式化器 — 运行时从 DB 加载配置"""
+
+    async def format(self, action_name: str, data: dict, tool_id: str) -> str:
+        """格式化 API 响应
+
+        1. 从 DB/缓存 加载 formatter_config
+        2. 提取列表数据: data[response_key]
+        3. 对每条记录调用 format_item_with_labels(item, labels, skip, transforms)
+        4. 处理嵌套结构: nested_keys 中的子列表递归格式化
+        5. 拼接 header + items + pagination
+
+        Returns: 格式化后的文本（与 Phase 5B 输出格式一致）
+        """
+        config = await self._get_config(tool_id, action_name)
+        if not config:
+            return format_generic_list(data, ...)  # 兜底：JSON 输出
+
+        # 构建运行时 transforms
+        runtime_transforms = self._build_transforms(config.transforms)
+
+        items = data.get(config.response_key) or data.get("list") or []
+        total = data.get("total", len(items))
+
+        if not items:
+            return config.empty_message or f"未找到{action_name}数据"
+
+        lines = [f"共 {total} 条记录：\n"]
+        for item in items[:20]:
+            main = "- " + format_item_with_labels(
+                item, config.labels, set(config.skip), runtime_transforms)
+
+            # 嵌套结构处理
+            for nested_key, nested_config in (config.nested_keys or {}).items():
+                sub_items = item.get(nested_key) or []
+                for sub in sub_items[:5]:
+                    nested_transforms = self._build_transforms(nested_config.get("transforms", {}))
+                    main += "\n    · " + format_item_with_labels(
+                        sub, nested_config["labels"], transforms=nested_transforms)
+
+            lines.append(main)
+
+        if int(total) > len(items):
+            lines.append(f"\n（显示前{len(items)}条，共{total}条）")
+        return "\n".join(lines)
+
+    def _build_transforms(self, transform_config: dict) -> dict[str, Callable]:
+        """将 DB 中的 transform 类型 → 运行时函数
+
+        类型映射：
+        - "timestamp" → format_timestamp
+        - "money" → lambda v: f"¥{v}" if v else ""
+        - "boolean" → lambda v: "是" if v else "否"
+        - {"0": "普通", "1": "退款"} → lambda v: mapping.get(v, str(v))
+        """
+        BUILTIN = {
+            "timestamp": format_timestamp,
+            "money": lambda v: f"¥{v}" if v else "",
+            "boolean": lambda v: "是" if v else "否",
+        }
+        result = {}
+        for field, spec in transform_config.items():
+            if isinstance(spec, str) and spec in BUILTIN:
+                result[field] = BUILTIN[spec]
+            elif isinstance(spec, dict):
+                mapping = spec
+                result[field] = lambda v, m=mapping: m.get(str(v), str(v))
+        return result
+```
+
+### 与现有 Phase 5B 代码的关系
+
+```
+Phase 5B 硬编码（现在）                    ResponseFormatter（迁移后）
+─────────────────────                    ──────────────────────────
+formatters/trade.py:                     tool_formatter_configs 表:
+  _ORDER_LABELS = {...}                    labels = {"tid":"订单号",...}
+  _ORDER_TRANSFORMS = {...}                transforms = {"created":"timestamp",...}
+  _ORDER_SKIP = set()                      skip = ["picPath",...]
+                                           nested_keys = {"orders":{...}}
+formatters/common.py:                    response_formatter.py:
+  format_item_with_labels()   ← 复用 →    format_item_with_labels()（同一函数）
+```
+
+Phase 5B 的 `format_item_with_labels` 不需要改，它是运行时引擎。
+迁移只是把各 formatter 文件中的 `_LABELS`/`_TRANSFORMS` dict 搬到 DB。
+
+### 客户自注册体验
+
+```
+客户注册新 API 后的格式化配置界面：
+
+API: my_custom.order.query
+响应字段（自动检测，可手动调整）：
+
+字段名          中文标签         格式化          操作
+──────────────────────────────────────────────────
+order_no       订单号          [原样 ▼]         ✓ 显示
+customer       客户名          [原样 ▼]         ✓ 显示
+amount         金额           [金额(¥) ▼]      ✓ 显示
+status         状态           [枚举映射 ▼]      ✓ 显示
+                              ├ 1 → [待处理]
+                              ├ 2 → [处理中]
+                              └ 3 → [已完成]
+created_at     创建时间        [时间戳 ▼]       ✓ 显示
+pic_url        图片           [—]              ✗ 隐藏
+internal_id    内部ID         [—]              ✗ 隐藏
+
+格式化类型下拉：原样 / 金额(¥) / 时间戳 / 布尔(是否) / 枚举映射
+
+[预览效果]
+- 订单号: ORD001 | 客户名: 张三 | 金额: ¥199.00 | 状态: 待处理 | 创建时间: 2026-03-18 14:00
+```
+
+**关键**：80% 的配置由 Layer 1+2 自动生成，客户只需微调枚举中文标签和隐藏不需要的字段。
 
 ---
 
@@ -897,14 +1180,20 @@ backend/services/tool_registry/
 │   ├── extract_with_ai()       # AI层：操作链/决策/隐含约束
 │   ├── extract_error_codes()   # 错误码提取
 │   └── save_to_db()            # 存入 tool_rules
-├── data_profiler.py         # 数据画像引擎 (~250行)
+├── data_profiler.py         # 数据画像引擎 (~300行)
 │   ├── profile()               # 入口：完整画像流程
 │   ├── _select_sample_actions() # 选择采样目标
 │   ├── _fetch_samples()         # 并发 API 采样
 │   ├── _analyze_encoding()      # 编码规律分析
 │   ├── _discover_enums()        # 枚举值发现
+│   ├── _detect_transforms()     # Transform 自动检测（时间戳/金额/枚举/嵌套）
 │   ├── _summarize_with_ai()     # AI 汇总
-│   └── save_to_db()             # 存入 tool_user_profiles
+│   └── save_to_db()             # 存入 tool_user_profiles + tool_formatter_configs
+├── response_formatter.py   # 响应格式化引擎 (~200行)
+│   ├── format()                # 入口：从 DB 加载配置 + 格式化
+│   ├── _get_config()           # 加载/缓存 formatter_config
+│   ├── _build_transforms()     # DB 配置 → 运行时函数
+│   └── _format_nested()        # 嵌套结构递归格式化
 ├── param_type_engine.py     # 参数类型运行时引擎 (~200行)
 │   ├── preprocess()            # 按 semantic_type 预处理参数
 │   ├── postprocess()           # 按 semantic_type 后处理结果（零结果兜底）
@@ -977,7 +1266,22 @@ QUERY_PATTERN_PROMPT = (
 
 替代 `_erp_dispatch`，用 `UniversalDispatcher`。
 
-### 7.5 失败记录
+### 7.5 响应格式化
+
+**位置**：`UniversalDispatcher.execute()` 的返回前
+
+```python
+# 现在: dispatcher.py → get_formatter(entry.formatter) → formatter(data, entry)
+# 迁移后: UniversalDispatcher → ResponseFormatter.format(action, data, tool_id)
+
+raw_data = await self._call_api(method, api_params)
+formatted = await self.response_formatter.format(action_name, raw_data, tool_id)
+return formatted
+```
+
+替代现有 `formatters/__init__.py` 的 `get_formatter()` + 42 个硬编码 formatter 函数。
+
+### 7.6 失败记录
 
 **位置**：`UniversalDispatcher.execute()` finally 块
 
@@ -1008,6 +1312,14 @@ async def migrate():
 
     # 4. 运行 DocParser 补充缺失信息
     #    （现有 ApiEntry 没有的：响应 schema、完整错误码）
+
+    # 5. 迁移 formatter 配置 → tool_formatter_configs
+    for module_name, formatters in ALL_FORMATTERS.items():
+        for func_name, func in formatters.items():
+            # 从 Phase 5B 的 _LABELS/_TRANSFORMS 常量提取配置
+            labels = extract_labels_from_module(module_name, func_name)
+            transforms = extract_transforms_from_module(module_name, func_name)
+            insert_formatter_config(tool_id, func_name, labels, transforms)
 ```
 
 ### 迁移后删除的文件
@@ -1025,12 +1337,25 @@ backend/services/kuaimai/param_doc.py  (被 UniversalDispatcher 替代)
 backend/services/kuaimai/param_guardrails.py  (运行时智能迁移到 param_type_engine.py)
 ```
 
+### 迁移后删除的文件（补充2）
+
+```
+backend/services/kuaimai/formatters/  (Phase 5B 的 42 个 formatter，配置迁移到 tool_formatter_configs 后删除)
+  ├── product.py   → 6 个 formatter 的 _LABELS/_TRANSFORMS 写入 DB
+  ├── trade.py     → 6 个 formatter 的配置写入 DB
+  ├── basic.py     → 5 个 formatter 的配置写入 DB
+  ├── warehouse.py → 10 个 formatter 的配置写入 DB
+  ├── purchase.py  → 7 个 formatter 的配置写入 DB
+  ├── aftersales.py → 6 个 formatter 的配置写入 DB
+  └── qimen.py     → 2 个 formatter 的配置写入 DB
+  注意: common.py 中的 format_item_with_labels() 迁移到 response_formatter.py 保留
+```
+
 ### 保留的文件
 
 ```
 backend/services/kuaimai/client.py  (HTTP + 签名认证, UniversalDispatcher 复用)
 backend/services/kuaimai/param_mapper.py  (别名解析/同义兜底/日期补全, 迁移到 param_type_engine 后删除)
-backend/services/kuaimai/formatters/  (格式化函数, 可选保留)
 ```
 
 ---
@@ -1038,11 +1363,11 @@ backend/services/kuaimai/formatters/  (格式化函数, 可选保留)
 ## 九、分阶段实施
 
 ### Phase 1: DocParser + 基础框架 + 参数类型系统
-- DB 迁移（tool_actions 含 semantic_type 字段）
-- 数据模型
-- DocParser（正则解析 + AI 增强，含任务D语义类型推断）
+- DB 迁移（tool_actions 含 semantic_type 字段 + tool_formatter_configs 表）
+- 数据模型（含 ParsedResponseField）
+- DocParser（正则解析 + AI 增强，含任务D语义类型推断 + 任务E响应格式化配置）
 - ParamTypeEngine（参数类型运行时引擎，从 param_mapper/param_guardrails 迁移）
-- ERP 数据迁移脚本
+- ERP 数据迁移脚本（含 formatter 配置迁移）
 - tool_builder + universal_dispatcher（集成 ParamTypeEngine）
 - 集成 agent_tools + tool_executor
 - 测试：解析 kuaimai_api_summary.md → 验证 actions 数量和质量 + 语义类型准确性
@@ -1054,11 +1379,13 @@ backend/services/kuaimai/formatters/  (格式化函数, 可选保留)
 - 替代 ERP_ROUTING_PROMPT
 - 测试：对比生成的规则与现有手写规则
 
-### Phase 3: DataProfiler
-- 采样 + 分析模块
-- AI 汇总
+### Phase 3: DataProfiler + ResponseFormatter
+- 采样 + 分析模块（含模块C2 Transform 自动检测）
+- ResponseFormatter 运行时引擎（从 DB 加载配置，复用 format_item_with_labels）
+- AI 汇总（含枚举值中文标签生成）
 - 画像注入到 agent_context
-- 测试：绑定 ERP 后自动生成画像
+- formatter 配置写入 tool_formatter_configs
+- 测试：绑定 ERP 后自动生成画像 + 格式化输出与 Phase 5B 一致
 
 ### Phase 4: FeedbackLoop
 - 调用日志记录
@@ -1066,18 +1393,29 @@ backend/services/kuaimai/formatters/  (格式化函数, 可选保留)
 - 自动修复
 - 测试：模拟失败场景验证规则自更新
 
+### Phase 5: Formatter 迁移 + 硬编码删除
+- 运行迁移脚本：Phase 5B 的 42 个 formatter 配置 → tool_formatter_configs
+- 对比验证：DB 驱动输出 vs 硬编码输出，逐 action diff
+- 删除 formatters/ 目录（保留 format_item_with_labels 到 response_formatter.py）
+- 端到端验证：用户对话查询 → 格式化输出与迁移前一致
+
 ---
 
 ## 十、验证方式
 
 1. **DocParser**：解析 `kuaimai_api_summary.md` → 对比输出的 actions 数量 vs 现有 registry 中的 actions 数量（应 ≥ 现有）
 2. **DocParser 任务D**：语义类型推断准确性 → 对比 vs 现有 param_mapper/param_guardrails 中的硬编码规则（覆盖率应 ≥ 90%）
-3. **ParamTypeEngine**：用 ERP 现有测试用例验证 → 同义兜底/编码宽泛查询/日期补全/分页标准化 行为与迁移前一致
-4. **RuleExtractor**：生成的规则 vs 现有 `ERP_ROUTING_PROMPT` 145 行 → 覆盖率应 ≥ 80%
-5. **DataProfiler**：用真实 ERP 账号采样 → 画像内容合理性人工验证
-6. **FeedbackLoop**：故意传错参数 → 验证规则自动生成
-7. **端到端**：用户正常对话查询 ERP → 功能与迁移前一致
-8. **客户自注册**：新 API 选参数类型后 → 验证运行时智能自动生效（同义兜底/编码查询等）
+3. **DocParser 任务E**：自动生成的 labels/transforms → 对比 vs Phase 5B 手写的 `_LABELS`/`_TRANSFORMS`（字段覆盖率 ≥ 85%，transform 类型准确率 ≥ 90%）
+4. **ParamTypeEngine**：用 ERP 现有测试用例验证 → 同义兜底/编码宽泛查询/日期补全/分页标准化 行为与迁移前一致
+5. **RuleExtractor**：生成的规则 vs 现有 `ERP_ROUTING_PROMPT` 145 行 → 覆盖率应 ≥ 80%
+6. **DataProfiler + ResponseFormatter**：
+   - 用真实 ERP 账号采样 → 画像内容合理性人工验证
+   - Transform 自动检测准确率 → 对比 vs Phase 5B 手写 transforms（时间戳 100%、金额 95%、枚举 90%）
+   - 格式化输出 diff → DB 驱动 vs Phase 5B 硬编码，逐 action 对比（差异率 < 5%）
+7. **FeedbackLoop**：故意传错参数 → 验证规则自动生成
+8. **端到端**：用户正常对话查询 ERP → 功能与迁移前一致
+9. **客户自注册**：新 API 选参数类型后 → 验证运行时智能自动生效（同义兜底/编码查询等）
+10. **客户自注册（格式化）**：新 API 注册后 → 自动生成 formatter 配置 → 格式化输出可读（非 raw JSON）
 
 ```bash
 source backend/venv/bin/activate && python -m pytest backend/tests/test_tool_registry/ -q --tb=short
