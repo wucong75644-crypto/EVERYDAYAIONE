@@ -10,9 +10,10 @@ AFTERSALES_REGISTRY = {
     # ── 查询 ──────────────────────────────────────────
     "aftersale_list": ApiEntry(
         method="erp.aftersale.list.query",
-        description="查询售后工单列表（退款/退货/换货/补发/维修等全类型）。支持订单号/工单ID/售后类型/店铺/时间等条件。ERP系统内的售后记录",
+        description="查询售后工单列表（退款/退货/换货/补发/维修等全类型）。支持订单号/系统单号/工单ID/售后类型/店铺/时间等条件。ERP系统内的售后记录",
         param_map={
             "order_id": "tid",
+            "system_id": "sid",
             "work_order_id": "id",
             "work_order_ids": "ids",
             "order_ids": "tids",
@@ -33,6 +34,7 @@ AFTERSALES_REGISTRY = {
         },
         param_docs={
             "order_id": "平台订单号。示例: 126036803257340376",
+            "system_id": "ERP系统单号（16位纯数字）。与order_id二选一。示例: 5759422420146938",
             "work_order_id": "售后工单ID（单个）。示例: 50001",
             "work_order_ids": "售后工单ID（多个逗号隔开）。示例: 50001,50002",
             "order_ids": "平台订单号（多个逗号隔开）。示例: 126036803257340376,126036803257340377",

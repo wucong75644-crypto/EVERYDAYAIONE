@@ -75,81 +75,8 @@ def _no_sku_entry() -> ApiEntry:
 
 
 # ── preprocess_params 测试 ────────────────────────────
-
-
-class TestPreprocessSKUCode:
-    """编码 -数字后缀 自动纠正"""
-
-    def test_sku_suffix_auto_correct(self):
-        """DBTXL01-02 应自动从 outer_id 改为 sku_outer_id"""
-        entry = _stock_entry()
-        params, corrections = preprocess_params(
-            entry, {"outer_id": "DBTXL01-02"},
-        )
-        assert "sku_outer_id" in params
-        assert params["sku_outer_id"] == "DBTXL01-02"
-        assert "outer_id" not in params
-        assert len(corrections) == 1
-        assert "sku_outer_id" in corrections[0]
-
-    def test_sku_suffix_various_formats(self):
-        """多种 -数字后缀 格式都应纠正"""
-        entry = _stock_entry()
-        cases = ["NXMWY01-02", "ABC-1", "TEST123-99", "A1B2C3-001"]
-        for code in cases:
-            params, corrections = preprocess_params(
-                entry, {"outer_id": code},
-            )
-            assert "sku_outer_id" in params, f"{code} should be corrected"
-            assert len(corrections) == 1
-
-    def test_normal_code_no_correction(self):
-        """普通编码（无 -数字后缀）不纠正"""
-        entry = _stock_entry()
-        params, corrections = preprocess_params(
-            entry, {"outer_id": "ABC123"},
-        )
-        assert "outer_id" in params
-        assert params["outer_id"] == "ABC123"
-        assert "sku_outer_id" not in params
-        assert len(corrections) == 0
-
-    def test_hyphen_non_digit_suffix_no_correction(self):
-        """连字符后非数字不纠正（如 HM-2026A）"""
-        entry = _stock_entry()
-        params, corrections = preprocess_params(
-            entry, {"outer_id": "HM-2026A"},
-        )
-        assert "outer_id" in params
-        assert len(corrections) == 0
-
-    def test_pure_number_dash_number_no_correction(self):
-        """纯数字-数字不纠正（如 260305-123456，拼多多订单号）"""
-        entry = _stock_entry()
-        params, corrections = preprocess_params(
-            entry, {"outer_id": "260305-123456"},
-        )
-        assert "outer_id" in params
-        assert len(corrections) == 0
-
-    def test_explicit_sku_outer_id_no_override(self):
-        """已明确传 sku_outer_id 时不覆盖"""
-        entry = _stock_entry()
-        params, corrections = preprocess_params(
-            entry, {"outer_id": "ABC-01", "sku_outer_id": "XYZ-02"},
-        )
-        assert params["outer_id"] == "ABC-01"
-        assert params["sku_outer_id"] == "XYZ-02"
-        assert len(corrections) == 0
-
-    def test_no_sku_param_in_entry_no_correction(self):
-        """action 不支持 sku_outer_id 时不纠正"""
-        entry = _no_sku_entry()
-        params, corrections = preprocess_params(
-            entry, {"outer_id": "ABC-01"},
-        )
-        assert "outer_id" in params
-        assert len(corrections) == 0
+# 编码互转（outer_id ↔ sku_outer_id）已移到 param_mapper 同义参数兜底
+# 此处仅测试 order_id → system_id 格式校验纠正
 
 
 class TestPreprocessSystemId:
@@ -192,10 +119,11 @@ class TestPreprocessNoSideEffects:
         """其他参数不受影响"""
         entry = _stock_entry()
         params, corrections = preprocess_params(
-            entry, {"outer_id": "ABC-01", "warehouse_id": "123"},
+            entry, {"outer_id": "ABC123", "warehouse_id": "123"},
         )
-        assert params["sku_outer_id"] == "ABC-01"
+        assert params["outer_id"] == "ABC123"
         assert params["warehouse_id"] == "123"
+        assert len(corrections) == 0
 
     def test_empty_params(self):
         """空参数不报错"""

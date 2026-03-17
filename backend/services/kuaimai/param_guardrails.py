@@ -14,11 +14,6 @@ from loguru import logger
 
 from services.kuaimai.registry.base import ApiEntry
 
-# 编码格式 → 参数建议的规则
-# 检测 -数字 后缀（如 NXMWY01-02, DBTXL01-02, A-1）
-# 排除纯数字-数字（如 260305-123 是拼多多订单号）
-_SKU_SUFFIX_PATTERN = re.compile(r"^(?=.*[A-Za-z]).+-\d+$")
-
 
 def preprocess_params(
     entry: ApiEntry,
@@ -38,11 +33,9 @@ def preprocess_params(
     corrections: List[str] = []
     result = dict(user_params)
 
-    # 规则1：编码带 -数字后缀 但传了 outer_id → 自动改为 sku_outer_id
-    _correct_sku_code(entry, result, corrections)
-
-    # 规则2：16位纯数字传了 order_id 但 action 只有 system_id
-    _correct_system_id(entry, result, corrections)
+    # 规则：order_id → system_id（16位纯数字格式校验）
+    # 编码互转（outer_id ↔ sku_outer_id）已移到 param_mapper 同义参数兜底
+    _correct_order_param(entry, result, corrections)
 
     if corrections:
         logger.info(
@@ -53,44 +46,28 @@ def preprocess_params(
     return result, corrections
 
 
-def _correct_sku_code(
+
+def _correct_order_param(
     entry: ApiEntry,
     params: Dict[str, Any],
     corrections: List[str],
 ) -> None:
-    """编码带 -数字后缀 → 自动从 outer_id 改为 sku_outer_id"""
-    if "outer_id" not in params or "sku_outer_id" in params:
-        return
-    if "sku_outer_id" not in entry.param_map:
-        return
+    """order_id → system_id/system_ids（单向，需16位纯数字格式校验）
 
-    val = str(params["outer_id"])
-    if _SKU_SUFFIX_PATTERN.match(val):
-        params["sku_outer_id"] = params.pop("outer_id")
-        corrections.append(
-            f"编码「{val}」含 -数字后缀，"
-            f"自动从 outer_id 改为 sku_outer_id"
-        )
-
-
-def _correct_system_id(
-    entry: ApiEntry,
-    params: Dict[str, Any],
-    corrections: List[str],
-) -> None:
-    """16位纯数字传了 order_id 但 action 只有 system_id/system_ids → 自动改"""
+    仅支持 order_id→system_id 方向：16位纯数字是 ERP 系统单号格式。
+    反向（system_id→order_id）不做：两者值不同，改了会查错。
+    """
     if "order_id" not in params:
         return
     if "order_id" in entry.param_map:
         return
 
-    # 找到 action 支持的 system_id 变体（singular 或 plural）
+    # 找到 action 支持的 system_id 变体
     target_key = None
     if "system_id" in entry.param_map:
         target_key = "system_id"
     elif "system_ids" in entry.param_map:
         target_key = "system_ids"
-
     if not target_key:
         return
 

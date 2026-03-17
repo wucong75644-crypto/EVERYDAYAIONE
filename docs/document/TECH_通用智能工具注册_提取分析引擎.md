@@ -183,6 +183,7 @@ class ParsedParam:
     description: str        # 中文描述
     required: bool          # 是否必填
     default_value: str      # 默认值 (如有)
+    semantic_type: str      # 语义类型 (见第 4.5 节参数类型系统)
 
 @dataclass
 class ParsedAction:
@@ -268,6 +269,38 @@ AI Prompt：
 "时间类型（可选值: created=下单时间, pay_time=付款时间, consign_time=发货时间, audit_time=审核时间, upd_time=修改时间）。需与 start_time/end_time 同时使用。默认按修改时间查。时间跨度建议≤1天"
 ```
 
+**任务 D：推断参数语义类型（semantic_type）**
+
+这是参数类型系统（见第 4.5 节）的核心输入。为每个参数标注语义类型，运行时自动获得对应的智能处理能力。
+
+AI Prompt：
+```
+你是 API 参数分析专家。为以下参数标注语义类型。
+
+可选类型：
+- product_code: 商品编码（商家编码/货号/SKU编码/条码等）
+- order_number: 订单号（平台订单号/系统单号/ERP单号等）
+- date_range: 日期时间（起始/结束时间）
+- pagination: 分页参数（页码/每页条数）
+- entity_id: 实体ID（店铺ID/仓库ID/分类ID等）
+- enum_value: 枚举值（状态/类型等有固定可选值的参数）
+- text_search: 文本搜索（关键词/名称/昵称等模糊查询）
+- generic: 以上都不是
+
+API: erp.trade.list.query (订单查询)
+参数：
+- tid (string): 平台订单号，多个逗号隔开
+- sid (string): 系统订单号，多个逗号隔开
+- timeType (string): 查询的时间类型
+- startTime (string): 起始时间
+- pageSize (integer): 每页多少条
+- userIds (string): 店铺ID，多个逗号隔开
+- status (string): 订单状态
+
+输出 JSON：
+{"tid": "order_number", "sid": "order_number", "timeType": "enum_value", "startTime": "date_range", "pageSize": "pagination", "userIds": "entity_id", "status": "enum_value"}
+```
+
 ### 2.3 解析流程
 
 ```
@@ -280,12 +313,13 @@ _parse_single_api() × 70 → 70+ ParsedAction (纯正则, ~0.5秒)
 AI 增强 (分批, 每批 10 个 API):
     ├─ 任务A: generate_param_maps() → param_map
     ├─ 任务B: classify_write_ops() → is_write
-    └─ 任务C: enrich_param_docs() → param_docs
+    ├─ 任务C: enrich_param_docs() → param_docs
+    └─ 任务D: infer_semantic_types() → semantic_type (见 4.5 节)
     ↓
 合并 → 写入 tool_actions 表
 ```
 
-**AI 调用量预估**：70个 API / 10 每批 = 7 次 AI 调用 × 3 任务 = ~21 次 qwen-plus 调用，总成本 < ¥1
+**AI 调用量预估**：70个 API / 10 每批 = 7 次 AI 调用 × 4 任务 = ~28 次 qwen-plus 调用，总成本 < ¥1.5
 
 ---
 
@@ -641,6 +675,141 @@ AI 汇总（1次 qwen-plus 调用）:
 
 ---
 
+## 4.5、ParamTypeEngine — 参数类型系统
+
+### 问题
+
+当前 `param_mapper.py` 和 `param_guardrails.py` 中的运行时智能全是硬编码：
+
+```python
+# param_mapper.py — 同义参数兜底（硬编码）
+_PARAM_SYNONYMS = {"sku_outer_id": "outer_id", "outer_id": "sku_outer_id", ...}
+
+# param_guardrails.py — 编码宽泛查询（硬编码）
+def extract_base_code(code): ...  # DBTXL01-02 → DBTXL
+
+# param_mapper.py — 日期补全（硬编码）
+def _normalize_dates(params): ...  # 2026-03-01 → 2026-03-01 00:00:00
+
+# param_guardrails.py — 订单号格式校验（硬编码）
+def _correct_order_param(): ...  # 16位数字 order_id → system_id
+```
+
+**客户自注册 API 时，这些能力不会自动生效。** 客户不会编程，不可能手写 synonym 映射或 base_code 提取逻辑。
+
+### 解决方案：语义类型驱动的运行时智能
+
+每个参数标注一个 `semantic_type`，运行时按类型自动套用对应的处理逻辑。客户只需选类型（或由 DocParser AI 自动推断），不需要写代码。
+
+### 类型定义与内置能力
+
+| semantic_type | 内置运行时能力 | 来源（现有硬编码） |
+|---------------|--------------|-------------------|
+| `product_code` | 同义兜底（outer_id ↔ sku_outer_id）+ 编码宽泛查询（extract_base_code + 匹配）+ 大小写不敏感 | `_PARAM_SYNONYMS` + `broadened_code_query` |
+| `order_number` | 格式校验互转（16位数字 order_id → system_id） | `_correct_order_param` |
+| `date_range` | 自动补全时分秒（start → 00:00:00, end → 23:59:59） | `_normalize_dates` |
+| `pagination` | pageNo/pageSize 标准化 + 最小值强制（≥20） | `map_params` 分页逻辑 |
+| `entity_id` | 中文别名解析（店铺→shop_ids, 仓库→warehouse_id） | `PARAM_ALIASES` |
+| `enum_value` | 中文→系统值映射（待发货→WAIT_SEND_GOODS） | `RuleExtractor` 枚举规则 |
+| `text_search` | 无特殊处理，直接透传 | — |
+| `generic` | 无特殊处理，直接透传 | — |
+
+### 类型检测方式（三层）
+
+```
+Layer 1: 正则规则（零成本，DocParser 解析时即可）
+    ├─ 参数名含 start/end/time/date → date_range
+    ├─ 参数名含 page/pageNo/pageSize → pagination
+    └─ 参数名含 status/type + 描述含枚举值 → enum_value
+
+Layer 2: AI 推断（DocParser 任务D，批量处理）
+    ├─ 描述含"编码/货号/outer" → product_code
+    ├─ 描述含"订单号/单号" → order_number
+    ├─ 描述含"ID/店铺/仓库" → entity_id
+    └─ 描述含"关键词/名称/昵称" → text_search
+
+Layer 3: DataProfiler 验证（从真实数据确认）
+    ├─ 字段值匹配编码格式（字母+数字+分隔符）→ 确认 product_code
+    └─ 字段值唯一值<20 → 确认 enum_value
+```
+
+### 运行时处理流程
+
+```python
+# backend/services/tool_registry/param_type_engine.py
+
+class ParamTypeEngine:
+    """参数类型驱动的运行时处理器"""
+
+    def preprocess(self, action_params: list[ActionParam], user_params: dict) -> tuple[dict, list[str]]:
+        """API 调用前的参数预处理
+
+        按每个参数的 semantic_type 应用对应的处理逻辑：
+        1. product_code → 同义参数兜底
+        2. order_number → 格式校验互转
+        3. date_range → 补全时分秒
+        4. pagination → 标准化 + 最小值
+        5. entity_id → 别名解析
+        """
+
+    def postprocess(self, action_params: list[ActionParam], user_params: dict,
+                    data: dict, client) -> tuple[dict, str]:
+        """API 调用后的结果增强（零结果时触发）
+
+        按参数类型决定兜底策略：
+        1. product_code → 编码宽泛查询（extract_base_code + 匹配）
+        2. order_number → 诊断建议（换参数重试）
+        3. 其他类型 → 不干预
+        """
+```
+
+### 客户自注册体验
+
+```
+客户注册新 API 时的参数配置界面：
+
+参数名: outerId
+类型: string
+描述: 商家编码
+语义类型: [商品编码 ▼]  ← 下拉选择（或 AI 自动推荐）
+         ├─ 商品编码        → 自动获得: 同义兜底 + 编码宽泛查询
+         ├─ 订单号          → 自动获得: 格式校验 + 互转
+         ├─ 日期范围        → 自动获得: 时分秒补全
+         ├─ 分页            → 自动获得: 标准化
+         ├─ 实体ID(店铺/仓库) → 自动获得: 别名解析
+         ├─ 枚举值          → 自动获得: 中文→系统值映射
+         ├─ 文本搜索        → 直接透传
+         └─ 通用            → 直接透传
+```
+
+**关键**：客户选了"商品编码"，就自动获得 `sku_outer_id ↔ outer_id` 同义兜底、`DBTXL01-02 → DBTXL` 编码拆分宽泛查询等所有能力，不需要写一行代码。
+
+### 与现有模块的关系
+
+```
+DocParser (任务D)          → 推断 semantic_type → 存入 tool_actions
+RuleExtractor              → 提取枚举映射 → enum_value 类型运行时使用
+DataProfiler               → 验证/修正 semantic_type + 提取编码规律
+ParamTypeEngine            → 运行时按 semantic_type 执行预处理/后处理
+UniversalDispatcher        → 调用 ParamTypeEngine.preprocess → API → ParamTypeEngine.postprocess
+```
+
+### 迁移路径
+
+现有硬编码 → ParamTypeEngine 的迁移：
+
+| 现有代码 | 迁移到 | 触发条件 |
+|---------|--------|---------|
+| `param_mapper._PARAM_SYNONYMS` | `ParamTypeEngine.preprocess` | `semantic_type == "product_code"` |
+| `param_guardrails._correct_order_param` | `ParamTypeEngine.preprocess` | `semantic_type == "order_number"` |
+| `param_mapper._normalize_dates` | `ParamTypeEngine.preprocess` | `semantic_type == "date_range"` |
+| `param_mapper` 分页逻辑 | `ParamTypeEngine.preprocess` | `semantic_type == "pagination"` |
+| `param_mapper.PARAM_ALIASES` | `ParamTypeEngine.preprocess` | `semantic_type == "entity_id"` |
+| `param_guardrails.broadened_code_query` | `ParamTypeEngine.postprocess` | `semantic_type == "product_code"` |
+| `param_guardrails.diagnose_empty_result` | `ParamTypeEngine.postprocess` | `semantic_type == "order_number"` |
+
+---
+
 ## 五、FeedbackLoop — 失败学习引擎
 
 ### 5.1 实时记录
@@ -720,7 +889,8 @@ backend/services/tool_registry/
 │   ├── enhance_with_ai()       # AI 增强层
 │   │   ├── _generate_param_maps()   # 任务A: 生成 param_map
 │   │   ├── _classify_write_ops()    # 任务B: 识别写操作
-│   │   └── _enrich_param_docs()     # 任务C: 增强参数文档
+│   │   ├── _enrich_param_docs()     # 任务C: 增强参数文档
+│   │   └── _infer_semantic_types()  # 任务D: 推断参数语义类型
 │   └── save_to_db()            # 存入 tool_actions
 ├── rule_extractor.py        # 规则提取引擎 (~250行)
 │   ├── extract_from_parsed()   # 正则层：约束/枚举/默认值
@@ -735,6 +905,14 @@ backend/services/tool_registry/
 │   ├── _discover_enums()        # 枚举值发现
 │   ├── _summarize_with_ai()     # AI 汇总
 │   └── save_to_db()             # 存入 tool_user_profiles
+├── param_type_engine.py     # 参数类型运行时引擎 (~200行)
+│   ├── preprocess()            # 按 semantic_type 预处理参数
+│   ├── postprocess()           # 按 semantic_type 后处理结果（零结果兜底）
+│   ├── _handle_product_code()  # 同义兜底 + 编码宽泛查询
+│   ├── _handle_order_number()  # 格式校验互转
+│   ├── _handle_date_range()    # 日期补全
+│   ├── _handle_pagination()    # 分页标准化
+│   └── _handle_entity_id()     # 别名解析
 ├── feedback_loop.py         # 失败学习引擎 (~200行)
 │   ├── record()                 # 记录调用日志
 │   ├── analyze_failures()       # 失败分析
@@ -841,11 +1019,17 @@ backend/services/kuaimai/dispatcher.py  (被 UniversalDispatcher 替代)
 backend/services/kuaimai/param_doc.py  (被 UniversalDispatcher 替代)
 ```
 
+### 迁移后删除的文件（补充）
+
+```
+backend/services/kuaimai/param_guardrails.py  (运行时智能迁移到 param_type_engine.py)
+```
+
 ### 保留的文件
 
 ```
 backend/services/kuaimai/client.py  (HTTP + 签名认证, UniversalDispatcher 复用)
-backend/services/kuaimai/param_mapper.py  (别名解析, 通用化后复用)
+backend/services/kuaimai/param_mapper.py  (别名解析/同义兜底/日期补全, 迁移到 param_type_engine 后删除)
 backend/services/kuaimai/formatters/  (格式化函数, 可选保留)
 ```
 
@@ -853,14 +1037,15 @@ backend/services/kuaimai/formatters/  (格式化函数, 可选保留)
 
 ## 九、分阶段实施
 
-### Phase 1: DocParser + 基础框架
-- DB 迁移
+### Phase 1: DocParser + 基础框架 + 参数类型系统
+- DB 迁移（tool_actions 含 semantic_type 字段）
 - 数据模型
-- DocParser（正则解析 + AI 增强）
+- DocParser（正则解析 + AI 增强，含任务D语义类型推断）
+- ParamTypeEngine（参数类型运行时引擎，从 param_mapper/param_guardrails 迁移）
 - ERP 数据迁移脚本
-- tool_builder + universal_dispatcher
+- tool_builder + universal_dispatcher（集成 ParamTypeEngine）
 - 集成 agent_tools + tool_executor
-- 测试：解析 kuaimai_api_summary.md → 验证 actions 数量和质量
+- 测试：解析 kuaimai_api_summary.md → 验证 actions 数量和质量 + 语义类型准确性
 
 ### Phase 2: RuleExtractor + PromptBuilder
 - 规则正则提取
@@ -886,10 +1071,13 @@ backend/services/kuaimai/formatters/  (格式化函数, 可选保留)
 ## 十、验证方式
 
 1. **DocParser**：解析 `kuaimai_api_summary.md` → 对比输出的 actions 数量 vs 现有 registry 中的 actions 数量（应 ≥ 现有）
-2. **RuleExtractor**：生成的规则 vs 现有 `ERP_ROUTING_PROMPT` 145 行 → 覆盖率应 ≥ 80%
-3. **DataProfiler**：用真实 ERP 账号采样 → 画像内容合理性人工验证
-4. **FeedbackLoop**：故意传错参数 → 验证规则自动生成
-5. **端到端**：用户正常对话查询 ERP → 功能与迁移前一致
+2. **DocParser 任务D**：语义类型推断准确性 → 对比 vs 现有 param_mapper/param_guardrails 中的硬编码规则（覆盖率应 ≥ 90%）
+3. **ParamTypeEngine**：用 ERP 现有测试用例验证 → 同义兜底/编码宽泛查询/日期补全/分页标准化 行为与迁移前一致
+4. **RuleExtractor**：生成的规则 vs 现有 `ERP_ROUTING_PROMPT` 145 行 → 覆盖率应 ≥ 80%
+5. **DataProfiler**：用真实 ERP 账号采样 → 画像内容合理性人工验证
+6. **FeedbackLoop**：故意传错参数 → 验证规则自动生成
+7. **端到端**：用户正常对话查询 ERP → 功能与迁移前一致
+8. **客户自注册**：新 API 选参数类型后 → 验证运行时智能自动生效（同义兜底/编码查询等）
 
 ```bash
 source backend/venv/bin/activate && python -m pytest backend/tests/test_tool_registry/ -q --tb=short
