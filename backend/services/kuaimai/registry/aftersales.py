@@ -10,7 +10,7 @@ AFTERSALES_REGISTRY = {
     # ── 查询 ──────────────────────────────────────────
     "aftersale_list": ApiEntry(
         method="erp.aftersale.list.query",
-        description="售后工单查询",
+        description="查询售后工单列表（退款/退货/换货/补发/维修等全类型）。支持订单号/工单ID/售后类型/店铺/时间等条件。ERP系统内的售后记录",
         param_map={
             "order_id": "tid",
             "work_order_id": "id",
@@ -56,7 +56,7 @@ AFTERSALES_REGISTRY = {
     ),
     "refund_warehouse": ApiEntry(
         method="erp.aftersale.refund.warehouse.query",
-        description="销退入库单查询",
+        description="查询退货入库单（退货商品的收货和上架记录）。查退货物流状态：等待收货→收货→上架。与aftersale_list的区别：侧重仓库收退货维度",
         param_map={
             "work_order_ids": "workOrderIds",
             "ids": "ids",
@@ -86,7 +86,7 @@ AFTERSALES_REGISTRY = {
     ),
     "replenish_list": ApiEntry(
         method="erp.aftersale.replenish.list.query",
-        description="登记补款查询",
+        description="查询登记补款记录（售后补偿金额）。补款是对买家的额外补偿，不是退款。退款信息在aftersale_list中",
         param_map={
             "order_id": "tid",
             "work_order_id": "id",
@@ -107,7 +107,7 @@ AFTERSALES_REGISTRY = {
     ),
     "repair_list": ApiEntry(
         method="erp.aftersale.repair.list.query",
-        description="维修单列表查询",
+        description="查询维修单列表（商品维修工单：待审核→待收货→待维修→待寄出→已完成）。查普通退货/退款用aftersale_list",
         param_map={
             "status": "repairStatus",
             "time_type": "timeType",
@@ -128,7 +128,7 @@ AFTERSALES_REGISTRY = {
     ),
     "repair_detail": ApiEntry(
         method="erp.aftersale.repair.detail.query",
-        description="维修单详情查询",
+        description="查询单个维修单的完整详情（维修项目/费用/进度）。必须传维修单号",
         param_map={
             "repair_no": "repairOrderNum",
         },
@@ -141,7 +141,7 @@ AFTERSALES_REGISTRY = {
     ),
     "aftersale_log": ApiEntry(
         method="erp.aftersale.operate.log.query",
-        description="售后日志查询",
+        description="查询售后工单的操作日志（处理记录）。必须传工单ID。查工单列表用aftersale_list",
         param_map={
             "work_order_id": "workOrderId",
         },

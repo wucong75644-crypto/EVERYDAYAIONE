@@ -10,7 +10,7 @@ WAREHOUSE_REGISTRY = {
     # ── 调拨 查询 ─────────────────────────────────────
     "allocate_list": ApiEntry(
         method="erp.allocate.task.query",
-        description="查询调拨单列表",
+        description="查询调拨单列表（仓库间商品转移）。按状态/单号/时间筛选。查调拨明细用allocate_detail",
         param_map={
             "status": "status",
             "code": "code",
@@ -29,7 +29,7 @@ WAREHOUSE_REGISTRY = {
     ),
     "allocate_detail": ApiEntry(
         method="erp.allocate.task.detail.query",
-        description="查询调拨单明细",
+        description="查询调拨单的商品明细（调拨了哪些商品/数量）。查调拨单列表用allocate_list",
         param_map={
             "code": "code",
             "start_date": "startModified",
@@ -47,7 +47,7 @@ WAREHOUSE_REGISTRY = {
     ),
     "allocate_in_list": ApiEntry(
         method="allocate.in.task.query",
-        description="查询调拨入库单列表",
+        description="查询调拨入库单列表（目标仓收货维度）。与allocate_list的区别：这个侧重入库端的收货状态",
         param_map={
             "status": "status",
             "code": "code",
@@ -66,7 +66,7 @@ WAREHOUSE_REGISTRY = {
     ),
     "allocate_in_detail": ApiEntry(
         method="allocate.in.task.get",
-        description="查询调拨入库单明细",
+        description="查询调拨入库单的商品收货明细。需要调拨入库单ID（从allocate_in_list获取）",
         param_map={"allocate_id": "id"},
         param_docs={
             "allocate_id": "调拨入库单ID（从allocate_in_list获取）。示例: 123456",
@@ -76,7 +76,7 @@ WAREHOUSE_REGISTRY = {
     ),
     "allocate_out_list": ApiEntry(
         method="allocate.out.task.query",
-        description="查询调拨出库单列表",
+        description="查询调拨出库单列表（源仓出库维度）。与allocate_list的区别：这个侧重出库端的发货状态",
         param_map={
             "status": "status",
             "code": "code",
@@ -95,7 +95,7 @@ WAREHOUSE_REGISTRY = {
     ),
     "allocate_out_detail": ApiEntry(
         method="allocate.out.task.get",
-        description="查询调拨出库单明细",
+        description="查询调拨出库单的商品出库明细。需要调拨出库单ID（从allocate_out_list获取）",
         param_map={"allocate_id": "id"},
         param_docs={
             "allocate_id": "调拨出库单ID（从allocate_out_list获取）。示例: 123456",
@@ -106,7 +106,7 @@ WAREHOUSE_REGISTRY = {
     # ── 其他入出库 查询 ────────────────────────────────
     "other_in_list": ApiEntry(
         method="other.in.order.query",
-        description="查询其他入库单",
+        description="查询其他入库单列表（非采购/非调拨的入库，如盘盈入库）。采购入库查warehouse_entry_list",
         param_map={
             "status": "status",
             "code": "code",
@@ -127,7 +127,7 @@ WAREHOUSE_REGISTRY = {
     ),
     "other_in_detail": ApiEntry(
         method="other.in.order.get",
-        description="查询其他入库单明细",
+        description="查询其他入库单的商品明细。需要入库单ID（从other_in_list获取）",
         param_map={"order_id": "id"},
         param_docs={
             "order_id": "入库单ID（从other_in_list获取）。示例: 123456",
@@ -137,7 +137,7 @@ WAREHOUSE_REGISTRY = {
     ),
     "other_out_list": ApiEntry(
         method="other.out.order.query",
-        description="查询其他出库单",
+        description="查询其他出库单列表（非销售/非调拨的出库，如报损出库）。销售出库查outstock_query",
         param_map={
             "status": "status",
             "code": "code",
@@ -158,7 +158,7 @@ WAREHOUSE_REGISTRY = {
     ),
     "other_out_detail": ApiEntry(
         method="other.out.order.get",
-        description="查询其他出库单明细",
+        description="查询其他出库单的商品明细。需要出库单ID（从other_out_list获取）",
         param_map={"order_id": "id"},
         param_docs={
             "order_id": "出库单ID（从other_out_list获取）。示例: 123456",
@@ -169,7 +169,7 @@ WAREHOUSE_REGISTRY = {
     # ── 盘点 查询 ─────────────────────────────────────
     "inventory_sheet_list": ApiEntry(
         method="inventory.sheet.query",
-        description="查询盘点单列表",
+        description="查询盘点单列表（库存盘点任务）。按状态/单号/时间筛选。查盘点明细用inventory_sheet_detail",
         param_map={
             "status": "status",
             "code": "code",
@@ -186,7 +186,7 @@ WAREHOUSE_REGISTRY = {
     ),
     "inventory_sheet_detail": ApiEntry(
         method="inventory.sheet.get",
-        description="查询盘点单明细",
+        description="查询盘点单的商品盘点明细（盘点数量/差异）。必须传盘点单号",
         param_map={
             "code": "code",
             "start_date": "startModified",
@@ -204,7 +204,7 @@ WAREHOUSE_REGISTRY = {
     # ── 下架 查询 ─────────────────────────────────────
     "unshelve_list": ApiEntry(
         method="erp.wms.unshelve.order.query",
-        description="查询下架单列表",
+        description="查询下架单列表（货位商品下架任务）。仓库管理场景使用",
         param_map={
             "code": "code",
             "start_date": "startModified",
@@ -219,7 +219,7 @@ WAREHOUSE_REGISTRY = {
     ),
     "unshelve_detail": ApiEntry(
         method="erp.wms.unshelve.order.get",
-        description="查询下架单明细",
+        description="查询下架单的商品明细。需要下架单ID（从unshelve_list获取）",
         param_map={"unshelve_id": "id"},
         param_docs={
             "unshelve_id": "下架单ID（从unshelve_list获取）。示例: 123456",
@@ -230,7 +230,7 @@ WAREHOUSE_REGISTRY = {
     # ── 货位/库存 查询 ────────────────────────────────
     "goods_section_list": ApiEntry(
         method="asso.goods.section.sku.query",
-        description="货位库存查询列表",
+        description="查询货位库存列表（商品在仓库货架的具体位置和数量）。精细化仓库管理场景使用",
         param_map={
             "start_date": "startModified",
             "end_date": "endModified",
@@ -243,7 +243,7 @@ WAREHOUSE_REGISTRY = {
     ),
     "batch_stock_list": ApiEntry(
         method="erp.wms.product.stock.query",
-        description="商品批次效期库存查询",
+        description="查询商品批次效期库存（保质期管理场景，如食品/化妆品）。必须传店铺ID。查普通库存用stock_status",
         param_map={
             "sku_ids": "skuIds",
             "num_iids": "numIids",
@@ -262,7 +262,7 @@ WAREHOUSE_REGISTRY = {
     # ── 加工单 查询 ───────────────────────────────────
     "process_order_list": ApiEntry(
         method="erp.stock.product.order.query",
-        description="查询加工单列表",
+        description="查询加工单列表（组装/拆卸任务）。商品组合加工场景使用。不是查商品信息",
         param_map={
             "status": "status",
             "code": "code",
@@ -293,7 +293,7 @@ WAREHOUSE_REGISTRY = {
     ),
     "process_order_detail": ApiEntry(
         method="erp.stock.product.order.get",
-        description="查询加工单明细",
+        description="查询加工单的商品加工明细（原料/成品/数量）。需要加工单ID（从process_order_list获取）",
         param_map={"product_order_id": "productOrderId"},
         param_docs={
             "product_order_id": "加工单ID（从process_order_list获取）。示例: 123456",
@@ -304,7 +304,7 @@ WAREHOUSE_REGISTRY = {
     # ── 货位进出记录 ──────────────────────────────────
     "section_record_list": ApiEntry(
         method="goods.section.in.out.record.query",
-        description="货位进出记录查询",
+        description="查询货位进出记录（商品上架/下架/移位的流水日志）。按单据号或操作时间查询",
         param_map={
             "order_number": "orderNumber",
             "start_date": "operateStartTime",
@@ -436,7 +436,7 @@ WAREHOUSE_REGISTRY = {
     ),
     "goods_section_delete": ApiEntry(
         method="asso.goods.section.sku.del.query",
-        description="货位库存删除数据列表",
+        description="查询货位库存已删除数据列表（历史记录）。这是查询接口，不是删除操作",
         response_key=None,
         formatter="format_generic_detail",
     ),

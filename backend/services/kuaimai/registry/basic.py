@@ -10,7 +10,7 @@ BASIC_REGISTRY = {
     # ── 查询 ──────────────────────────────────────────
     "warehouse_list": ApiEntry(
         method="erp.warehouse.list.query",
-        description="仓库查询",
+        description="查询仓库列表（实体仓库信息：名称/编码/地址）。按名称/编码/ID筛选。查虚拟仓用virtual_warehouse",
         param_map={
             "name": "name",
             "code": "code",
@@ -27,7 +27,7 @@ BASIC_REGISTRY = {
     ),
     "shop_list": ApiEntry(
         method="erp.shop.list.query",
-        description="店铺查询",
+        description="查询店铺列表（各平台店铺信息：名称/平台/状态）。按名称/简称/ID筛选。获取店铺ID用于其他查询的shop_ids参数",
         param_map={
             "name": "name",
             "shop_id": "id",
@@ -44,7 +44,7 @@ BASIC_REGISTRY = {
     ),
     "tag_list": ApiEntry(
         method="erp.trade.query.tag.list",
-        description="获取标签列表",
+        description="查询订单/售后标签列表（订单打标分类用）。这是订单标签，商品标签在erp_product_query的tag_list",
         param_map={
             "tag_type": "tagType",
         },
@@ -57,7 +57,7 @@ BASIC_REGISTRY = {
     ),
     "customer_list": ApiEntry(
         method="erp.query.customers.list",
-        description="客户基础资料查询",
+        description="查询客户基础资料列表（B2B客户管理）。按名称/编码/昵称/等级筛选。不是查买家信息，买家信息在order_list中",
         param_map={
             "name": "name",
             "code": "code",
@@ -76,7 +76,7 @@ BASIC_REGISTRY = {
     ),
     "distributor_list": ApiEntry(
         method="erp.distributor.list.query",
-        description="分销商查询",
+        description="查询分销商列表（分销合作伙伴信息）。按名称/状态/ID筛选",
         param_map={
             "name": "distributorName",
             "state": "state",

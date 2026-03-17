@@ -10,9 +10,8 @@ PRODUCT_REGISTRY = {
     # ── 商品查询 ──────────────────────────────────────
     "product_list": ApiEntry(
         method="item.list.query",
-        description="查询商品列表",
+        description="按条件搜索商品列表（状态/类型/修改时间）。不支持按名称搜索。返回商品基础信息，不含各仓库存明细。查库存用stock_status",
         param_map={
-            "keyword": "keyword",
             "status": "activeStatus",
             "start_date": "startModified",
             "end_date": "endModified",
@@ -21,7 +20,6 @@ PRODUCT_REGISTRY = {
             "return_purchase": "whetherReturnPurchase",
         },
         param_docs={
-            "keyword": "按商品名称模糊搜索。有编码时用outer_id更精准。示例: 手机壳",
             "status": "商品状态。可选值: 0=停用, 1=启用",
             "start_date": "起始修改日期。格式: YYYY-MM-DD。示例: 2026-03-01",
             "end_date": "结束修改日期。格式: YYYY-MM-DD。示例: 2026-03-15",
@@ -42,7 +40,7 @@ PRODUCT_REGISTRY = {
     ),
     "product_detail": ApiEntry(
         method="item.single.get",
-        description="查询单个商品明细",
+        description="查询单个商品完整信息（含SKU列表/价格/条码/重量）。用商家编码outer_id或系统ID查。不含库存数据，查库存用stock_status",
         param_map={
             "item_id": "sysItemId",
             "outer_id": "outerId",
@@ -62,7 +60,7 @@ PRODUCT_REGISTRY = {
     ),
     "sku_info": ApiEntry(
         method="erp.item.single.sku.get",
-        description="查询商品SKU信息",
+        description="查询单个SKU属性详情（规格名称/价格/条码/重量）。不含库存数据，查库存直接用stock_status",
         param_map={
             "sku_id": "sysSkuId",
             "sku_outer_id": "skuOuterId",
@@ -82,7 +80,7 @@ PRODUCT_REGISTRY = {
     ),
     "sku_list": ApiEntry(
         method="erp.item.sku.list.get",
-        description="查询商品SKU列表V2",
+        description="查询某商品下所有SKU列表（规格/价格/条码）。按主商品编码outer_id查。不含库存，查库存用stock_status",
         param_map={
             "outer_id": "outerId",
             "item_id": "sysItemId",
@@ -102,7 +100,7 @@ PRODUCT_REGISTRY = {
     ),
     "multi_product": ApiEntry(
         method="erp.item.list.get",
-        description="查询多个商品信息V2",
+        description="批量查询多个商品信息（最多20个）。用多个商家编码outer_ids或系统ID查。不含库存",
         param_map={
             "outer_ids": "outerIds",
             "item_ids": "sysItemIds",
@@ -126,7 +124,7 @@ PRODUCT_REGISTRY = {
     ),
     "multicode_query": ApiEntry(
         method="erp.item.multicode.query",
-        description="商品多码查询",
+        description="通过商品条码反查关联商品信息。仅支持条码查询，不支持商家编码或规格编码",
         param_map={
             "code": "code",
             "barcode": "code",
@@ -142,7 +140,7 @@ PRODUCT_REGISTRY = {
     # ── 库存查询 ──────────────────────────────────────
     "stock_status": ApiEntry(
         method="stock.api.status.query",
-        description="查询库存状态",
+        description="查询库存数量和状态（总库存/可售/锁定/预占，含各仓汇总）。支持主编码outer_id或规格编码sku_outer_id。查库存直接用这个，不需要先查sku_info验证",
         param_map={
             "outer_id": "mainOuterId",
             "sku_outer_id": "skuOuterId",
@@ -183,7 +181,7 @@ PRODUCT_REGISTRY = {
     ),
     "warehouse_stock": ApiEntry(
         method="erp.item.warehouse.list.get",
-        description="查询仓库及商品库存信息",
+        description="查询商品在各仓库的库存分布（按仓库维度展示）。只能查单个编码，不支持批量。查汇总库存用stock_status",
         param_map={
             "outer_id": "outerId",
             "sku_outer_id": "skuOuterId",
@@ -202,7 +200,7 @@ PRODUCT_REGISTRY = {
     ),
     "stock_in_out": ApiEntry(
         method="erp.item.stock.in.out.list",
-        description="查询商品出入库记录",
+        description="查询商品出入库流水记录（采购入库/销售出库/盘盈盘亏/调拨等历史变动）。查当前库存用stock_status，这个是查历史变动明细",
         param_map={
             "outer_id": "outerId",
             "warehouse_id": "warehouseId",
@@ -223,7 +221,7 @@ PRODUCT_REGISTRY = {
     ),
     "virtual_warehouse": ApiEntry(
         method="erp.virtual.warehouse.query",
-        description="查询虚拟仓",
+        description="查询虚拟仓列表（预售/活动等虚拟库存场景）。不是实体仓库，查实体仓库用warehouse_list",
         param_map={
             "name": "name",
         },
@@ -235,7 +233,7 @@ PRODUCT_REGISTRY = {
     ),
     "history_cost_price": ApiEntry(
         method="erp.item.history.cost.price.query",
-        description="商品历史成本价查询",
+        description="查询商品历史成本价变动记录。必须先知道系统商品ID和SKU ID（从product_detail或sku_list获取）",
         param_map={
             "item_id": "sysItemId",
             "sku_id": "sysSkuId",
@@ -256,7 +254,7 @@ PRODUCT_REGISTRY = {
     # ── 标签/分类/品牌 查询 ────────────────────────────
     "tag_list": ApiEntry(
         method="erp.item.tag.list",
-        description="查询商品标签",
+        description="查询商品标签列表（商品分类打标用）。这是商品标签，订单标签在erp_basic_query的tag_list",
         param_map={"name": "name"},
         param_docs={
             "name": "标签名称（模糊搜索）。不传则返回所有标签。示例: 爆款",
@@ -267,7 +265,7 @@ PRODUCT_REGISTRY = {
     ),
     "cat_list": ApiEntry(
         method="erp.item.seller.cat.list.get",
-        description="查询商品分类信息",
+        description="查询商品自定义分类列表（商家自己创建的分类体系）。不是平台类目",
         fetch_all=True,
         page_size=500,
         formatter="format_generic_list",
@@ -275,7 +273,7 @@ PRODUCT_REGISTRY = {
     ),
     "classify_list": ApiEntry(
         method="item.classify.list.get",
-        description="查询商品类目信息",
+        description="查询商品类目列表（系统标准类目）。与cat_list的区别：cat_list是商家自定义分类，这个是系统标准类目",
         error_codes={
             "20101": "查询类目列表有误",
         },
@@ -286,7 +284,7 @@ PRODUCT_REGISTRY = {
     ),
     "brand_list": ApiEntry(
         method="brand.list.get",
-        description="查询商品品牌信息",
+        description="查询商品品牌列表。返回所有已创建的品牌名称和ID",
         error_codes={
             "20001": "页码为空或不符合规定",
             "20002": "页数为空或不符合规定",
@@ -300,7 +298,7 @@ PRODUCT_REGISTRY = {
     # ── 对应关系/供应商 查询 ────────────────────────────
     "outer_id_list": ApiEntry(
         method="erp.item.outerid.list.get",
-        description="商品对应关系查询",
+        description="查询商品与平台商品的对应关系（ERP编码↔平台商品ID映射）。用于确认商品在哪些平台店铺有上架",
         param_map={
             "outer_ids": "outerIds",
             "platform_ids": "numIidList",
@@ -318,7 +316,7 @@ PRODUCT_REGISTRY = {
     ),
     "outer_id_by_item": ApiEntry(
         method="erp.item.outerid.list.byitem.get",
-        description="商品对应关系查询(按商品ID)",
+        description="按平台商品ID查询对应关系（已知平台商品ID反查ERP编码）。必须传platform_ids",
         param_map={
             "platform_ids": "numIidList",
             "shop_id": "userId",
@@ -335,7 +333,7 @@ PRODUCT_REGISTRY = {
     ),
     "item_supplier_list": ApiEntry(
         method="erp.item.supplier.list.get",
-        description="查询商品关联供应商信息",
+        description="查询商品关联的供应商信息（供货关系/采购价）。按商品编码或SKU编码查对应供应商",
         param_map={
             "item_ids": "sysItemIds",
             "sku_ids": "sysSkuIds",
