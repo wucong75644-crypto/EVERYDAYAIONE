@@ -10,7 +10,7 @@ PURCHASE_REGISTRY = {
     # ── 供应商 查询 ───────────────────────────────────
     "supplier_list": ApiEntry(
         method="supplier.list.query",
-        description="查询供应商列表",
+        description="查询供应商列表（供应商基础信息）。按启用/停用状态筛选。查商品关联的供应商用item_supplier_list",
         param_map={
             "status": "status",
         },
@@ -24,7 +24,7 @@ PURCHASE_REGISTRY = {
     # ── 采购单 查询 ───────────────────────────────────
     "purchase_order_list": ApiEntry(
         method="purchase.order.query",
-        description="采购单查询",
+        description="查询采购单列表（向供应商下的采购订单）。按状态/单号/时间筛选。查三个月前的用purchase_order_history",
         param_map={
             "code": "code",
             "outer_code": "outerCode",
@@ -47,7 +47,7 @@ PURCHASE_REGISTRY = {
     ),
     "purchase_order_detail": ApiEntry(
         method="purchase.order.get",
-        description="采购单详情",
+        description="查询采购单完整详情（含采购商品明细/数量/价格/到货情况）。需要采购单ID（从purchase_order_list获取）",
         param_map={
             "purchase_id": "id",
             "pt_order_id": "ptOrderId",
@@ -62,7 +62,7 @@ PURCHASE_REGISTRY = {
     # ── 采退单 查询 ───────────────────────────────────
     "purchase_return_list": ApiEntry(
         method="purchase.return.list.query",
-        description="采退单查询列表",
+        description="查询采购退货单列表（向供应商退货）。与售后退货不同，这是采购方向的退货",
         param_map={
             "status": "status",
             "code": "code",
@@ -87,7 +87,7 @@ PURCHASE_REGISTRY = {
     ),
     "purchase_return_detail": ApiEntry(
         method="purchase.return.list.get",
-        description="采退单详情",
+        description="查询采购退货单完整详情。需要采退单ID（从purchase_return_list获取）",
         param_map={"return_id": "id"},
         param_docs={
             "return_id": "采退单ID（必填，从purchase_return_list获取）。示例: 123456",
@@ -99,7 +99,7 @@ PURCHASE_REGISTRY = {
     # ── 收货单 查询 ───────────────────────────────────
     "warehouse_entry_list": ApiEntry(
         method="warehouse.entry.list.query",
-        description="收货单查询列表",
+        description="查询采购收货单列表（供应商送货到仓的收货记录）。按状态/单号/财务状态筛选",
         param_map={
             "status": "status",
             "code": "code",
@@ -126,7 +126,7 @@ PURCHASE_REGISTRY = {
     ),
     "warehouse_entry_detail": ApiEntry(
         method="warehouse.entry.list.get",
-        description="收货单详情",
+        description="查询收货单完整详情（收货商品/数量/差异）。需要收货单ID（从warehouse_entry_list获取）",
         param_map={"entry_id": "id"},
         param_docs={
             "entry_id": "收货单ID（必填，从warehouse_entry_list获取）。示例: 123456",
@@ -138,7 +138,7 @@ PURCHASE_REGISTRY = {
     # ── 上架单 查询 ───────────────────────────────────
     "shelf_list": ApiEntry(
         method="erp.purchase.shelf.query",
-        description="查询上架单",
+        description="查询上架单列表（采购收货后的上架任务）。按状态/收货单号/时间筛选",
         param_map={
             "status": "status",
             "time_type": "timeType",
@@ -157,7 +157,7 @@ PURCHASE_REGISTRY = {
     ),
     "shelf_detail": ApiEntry(
         method="erp.purchase.shelf.get",
-        description="查询上架单详情",
+        description="查询上架单完整详情（上架商品/数量/货位）。需要上架单ID（从shelf_list获取）",
         param_map={"shelf_id": "id"},
         param_docs={
             "shelf_id": "上架单ID（必填，从shelf_list获取）。示例: 123456",
@@ -169,7 +169,7 @@ PURCHASE_REGISTRY = {
     # ── 采购建议 ──────────────────────────────────────
     "purchase_strategy": ApiEntry(
         method="sale.purchase.strategy.query",
-        description="查询已售采购建议",
+        description="查询采购建议（根据销售数据推荐补货商品和数量）。按商品名称或编码搜索。不是查采购单，查采购单用purchase_order_list",
         param_map={
             "query_key": "queryKey",
         },
@@ -182,7 +182,7 @@ PURCHASE_REGISTRY = {
     ),
     "purchase_strategy_calculate": ApiEntry(
         method="sale.purchase.strategy.calculate",
-        description="计算已售采购建议",
+        description="触发采购建议计算任务（异步，用purchase_progress查进度）。计算完成后用purchase_strategy查看结果",
         param_map={
             "warehouse_code": "warehouseCode",
             "ignore_trade_out": "ignoreTradeOut",
@@ -199,7 +199,7 @@ PURCHASE_REGISTRY = {
     ),
     "purchase_progress": ApiEntry(
         method="purchase.progress.query",
-        description="进度获取",
+        description="查询采购建议计算进度（配合purchase_strategy_calculate使用）。不是查采购单进度",
         param_map={
             "progress_type": "progressType",
         },
@@ -244,7 +244,7 @@ PURCHASE_REGISTRY = {
     # ── 归档 查询 ─────────────────────────────────────
     "purchase_order_history": ApiEntry(
         method="purchase.order.history.query",
-        description="归档采购单查询",
+        description="查询归档采购单（三个月前的历史采购单）。必须传起止日期。近期采购单用purchase_order_list",
         param_map={
             "code": "code",
             "purchase_id": "id",
@@ -266,7 +266,7 @@ PURCHASE_REGISTRY = {
     ),
     "purchase_order_history_detail": ApiEntry(
         method="purchase.order.history.get",
-        description="归档采购单详情",
+        description="查询归档采购单完整详情。需要采购单ID（从purchase_order_history获取）",
         param_map={"purchase_id": "id"},
         param_docs={
             "purchase_id": "采购单ID（必填，从purchase_order_history获取）。示例: 123456",
@@ -277,7 +277,7 @@ PURCHASE_REGISTRY = {
     ),
     "warehouse_entry_history": ApiEntry(
         method="warehouse.entry.history.list.query",
-        description="归档收货单查询列表",
+        description="查询归档收货单列表（三个月前的历史收货单）。必须传起止日期",
         param_map={
             "code": "code",
             "status": "status",
@@ -299,7 +299,7 @@ PURCHASE_REGISTRY = {
     ),
     "warehouse_entry_history_detail": ApiEntry(
         method="warehouse.entry.history.list.get",
-        description="归档收货单详情",
+        description="查询归档收货单完整详情。需要收货单ID（从warehouse_entry_history获取）",
         param_map={"entry_id": "id"},
         param_docs={
             "entry_id": "收货单ID（必填，从warehouse_entry_history获取）。示例: 123456",
@@ -310,7 +310,7 @@ PURCHASE_REGISTRY = {
     ),
     "purchase_return_history": ApiEntry(
         method="purchase.return.history.list.query",
-        description="归档采退单查询列表",
+        description="查询归档采退单列表（三个月前的历史采购退货单）。必须传起止日期",
         param_map={
             "code": "code",
             "status": "status",
@@ -332,7 +332,7 @@ PURCHASE_REGISTRY = {
     ),
     "purchase_return_history_detail": ApiEntry(
         method="purchase.return.history.list.get",
-        description="归档采退单详情",
+        description="查询归档采退单完整详情。需要采退单ID（从purchase_return_history获取）",
         param_map={"return_id": "id"},
         param_docs={
             "return_id": "采退单ID（必填，从purchase_return_history获取）。示例: 123456",
@@ -343,7 +343,7 @@ PURCHASE_REGISTRY = {
     ),
     "shelf_history": ApiEntry(
         method="erp.purchase.shelf.history.query",
-        description="归档上架单查询",
+        description="查询归档上架单列表（三个月前的历史上架单）。必须传起止日期",
         param_map={
             "status": "status",
             "time_type": "timeType",
@@ -363,7 +363,7 @@ PURCHASE_REGISTRY = {
     ),
     "shelf_history_detail": ApiEntry(
         method="erp.purchase.shelf.history.get",
-        description="归档上架单详情查询",
+        description="查询归档上架单完整详情。需要上架单ID（从shelf_history获取）",
         param_map={"shelf_id": "id"},
         param_docs={
             "shelf_id": "上架单ID（必填，从shelf_history获取）。示例: 123456",

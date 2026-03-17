@@ -56,14 +56,6 @@ PARAM_ALIASES: Dict[str, str] = {
     # 快递
     "快递单号": "express_no",
     "运单号": "express_no",
-    # 商品名称（product_list 的 keyword 模糊搜索）
-    "商品名称": "keyword",
-    "商品名": "keyword",
-    "产品名称": "keyword",
-    "产品名": "keyword",
-    # 规格名称（API 无直接按规格名搜索，兜底走 keyword 模糊搜索）
-    "规格名称": "keyword",
-    "规格名": "keyword",
 }
 
 

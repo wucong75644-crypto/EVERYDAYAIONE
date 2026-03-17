@@ -10,7 +10,7 @@ TRADE_REGISTRY = {
     # ── 订单查询 ──────────────────────────────────────
     "order_list": ApiEntry(
         method="erp.trade.list.query",
-        description="订单查询",
+        description="查询订单列表（全状态：待付款到已完成）。支持订单号/系统单号/买家/店铺/状态/时间等条件。返回订单头信息+商品明细+收货地址",
         param_map={
             "order_id": "tid",
             "system_id": "sid",
@@ -60,7 +60,7 @@ TRADE_REGISTRY = {
     ),
     "order_log": ApiEntry(
         method="erp.trade.trace.list",
-        description="订单操作日志",
+        description="查询订单操作日志（审核/验货/发货/拦截/修改等操作记录）。追溯订单处理过程用这个。不是查订单信息，查订单用order_list",
         param_map={
             "system_ids": "sids",
             "operators": "operators",
@@ -89,7 +89,7 @@ TRADE_REGISTRY = {
     # ── 出库/物流 查询 ────────────────────────────────
     "outstock_query": ApiEntry(
         method="erp.trade.outstock.simple.query",
-        description="销售出库查询",
+        description="查询销售出库信息（含商品出库明细+快递单号）。已发货订单查出库详情用这个。与order_list的区别：侧重出库和物流维度",
         param_map={
             "order_id": "tid",
             "system_id": "sid",
@@ -138,7 +138,7 @@ TRADE_REGISTRY = {
     ),
     "express_query": ApiEntry(
         method="erp.trade.multi.packs.query",
-        description="多快递单号查询",
+        description="查询订单的包裹和快递信息（一单多包裹场景）。用系统单号sid或快递单号查。不含物流轨迹",
         param_map={
             "system_id": "sid",
             "express_no": "outSid",
@@ -151,7 +151,7 @@ TRADE_REGISTRY = {
     ),
     "outstock_order_query": ApiEntry(
         method="erp.wave.logistics.order.query",
-        description="销售出库单查询",
+        description="查询出库单列表（仓库作业维度：待打印/待称重/待出库/已发货）。与outstock_query的区别：按仓库作业状态查，支持波次ID和拣货单",
         param_map={
             "order_id": "tids",
             "system_id": "sids",
@@ -187,7 +187,7 @@ TRADE_REGISTRY = {
     # ── 波次 查询 ─────────────────────────────────────
     "wave_query": ApiEntry(
         method="erp.trade.waves.query",
-        description="波次信息查询",
+        description="查询波次信息（批量拣货任务）。波次是仓库批量处理订单的单位。查单个订单物流不用这个",
         param_map={
             "start_date": "start",
             "end_date": "end",
@@ -206,7 +206,7 @@ TRADE_REGISTRY = {
     ),
     "wave_sorting_query": ApiEntry(
         method="erp.trade.wave.sorting.query",
-        description="波次分拣信息查询",
+        description="查询波次内的分拣明细（各订单分配到哪个格口）。必须先有波次ID，通过wave_query获取",
         param_map={
             "wave_id": "waveId",
         },
@@ -219,7 +219,7 @@ TRADE_REGISTRY = {
     # ── 唯一码 查询 ───────────────────────────────────
     "unique_code_query": ApiEntry(
         method="erp.item.unique.code.query",
-        description="查询唯一码",
+        description="查询唯一码信息（SN码/IMEI/自定义码）。用于序列号管理的商品追踪。普通商品不用这个",
         param_map={
             "code": "uniqueCodes",
             "system_ids": "sids",
@@ -261,7 +261,7 @@ TRADE_REGISTRY = {
     # ── 物流 查询 ─────────────────────────────────────
     "logistics_company_list": ApiEntry(
         method="erp.trade.logistics.company.user.list",
-        description="用户物流公司列表",
+        description="查询已配置的物流公司列表（可按仓库筛选）。查看有哪些快递公司可选。不是查快递单号",
         param_map={
             "warehouse_id": "warehouseId",
         },
@@ -274,7 +274,7 @@ TRADE_REGISTRY = {
     ),
     "logistics_template_list": ApiEntry(
         method="erp.trade.logistics.template.user.list",
-        description="用户物流模板列表",
+        description="查询仓库的物流模板列表（面单模板配置）。必须传仓库ID。不是查快递单号",
         param_map={
             "warehouse_id": "warehouseId",
         },
@@ -286,7 +286,7 @@ TRADE_REGISTRY = {
     ),
     "waybill_get": ApiEntry(
         method="erp.trade.waybill.code.get",
-        description="获取物流单号",
+        description="根据系统单号获取已分配的物流单号（快递单号）。仅返回单号，不含物流轨迹。查包裹详情用express_query",
         param_map={
             "system_ids": "sids",
         },
@@ -298,7 +298,7 @@ TRADE_REGISTRY = {
     ),
     "upload_memo_flag": ApiEntry(
         method="erp.trade.upload.memo.flag",
-        description="上传备注与旗帜",
+        description="上传订单备注和旗帜到平台（同步到淘宝等平台显示）。需要订单号+店铺ID+备注+旗帜全部必填",
         param_map={
             "order_id": "tid",
             "memo": "memo",

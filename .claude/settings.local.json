@@ -128,7 +128,13 @@
       "Bash(python -c \"from services.wecom.wecom_message_service import WecomMessageService; WecomMessageService.set_session_setting\\(''conv1'', ''model'', ''deepseek-v3.2''\\); print\\(WecomMessageService.get_session_setting\\(''conv1'', ''model''\\)\\); print\\(WecomMessageService.get_session_setting\\(''conv1'', ''thinking_mode''\\)\\)\")",
       "Bash(python -c \"import py_compile; py_compile.compile\\(''wecom_ws_runner.py'', doraise=True\\); print\\(''OK''\\)\")",
       "Bash(python -c \"import py_compile; py_compile.compile\\(''services/wecom/wecom_message_service.py'', doraise=True\\); py_compile.compile\\(''services/wecom/wecom_ai_mixin.py'', doraise=True\\); print\\(''OK''\\)\")",
-      "Bash(python -m pytest backend/tests/test_wecom_ai_mixin.py backend/tests/test_wecom_card_builder.py backend/tests/test_wecom_command_handler.py backend/tests/test_wecom_card_event_handler.py -q --tb=short)"
+      "Bash(python -m pytest backend/tests/test_wecom_ai_mixin.py backend/tests/test_wecom_card_builder.py backend/tests/test_wecom_command_handler.py backend/tests/test_wecom_card_event_handler.py -q --tb=short)",
+      "Bash(python -m pytest tests/test_wecom_ws_client.py -v --tb=short)",
+      "Bash(ssh root@47.110.94.25 -p 22 \"journalctl -u everydayai-wecom --since ''2 minutes ago'' --no-pager | grep -v heartbeat\")",
+      "Bash(LC_ALL=C grep -an '20009\\\\|20020\\\\|20021\\\\|error_code\\\\|errorCode' /Users/wucong/EVERYDAYAIONE/docs/document/TECH_快麦API文档_完整.md)",
+      "Bash(python -m pytest tests/test_sandbox_validators.py tests/test_sandbox_executor.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_sandbox_functions.py -v --tb=short)",
+      "Bash(PYTHONPATH=. python scripts/test_sandbox_erp_real.py)"
     ]
   }
 }

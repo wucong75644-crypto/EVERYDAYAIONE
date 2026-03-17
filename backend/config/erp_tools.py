@@ -362,7 +362,7 @@ ERP_ROUTING_PROMPT = (
     "- 「搜商品/商品列表」→ product_list（列表搜索，支持状态/日期筛选）\n"
     "- 「某个商品详情」→ product_detail(outer_id=XX 或 item_id=XX) 按编码或ID查单个\n"
     "- 「批量查这几个商品」→ multi_product(outer_ids=\"A,B,C\") 多个编码\n"
-    "- 「商品SKU信息」→ sku_list(outer_id=XX) 或 sku_info(sku_outer_id=XX)\n"
+    "- 「商品SKU信息/规格列表」→ sku_list(outer_id=XX)。sku_info只查单个SKU属性，不含库存\n"
     "- 「条码查商品」→ multicode_query(code=XX) 多码查询\n"
     "- 「这个商品的供应商」→ item_supplier_list(outer_ids=XX)\n"
     "- 「商品成本价」→ history_cost_price(item_id=XX, sku_id=XX) 两个都必填\n"
@@ -464,11 +464,8 @@ ERP_ROUTING_PROMPT = (
     "用 code 查 multicode_query\n"
     "- 纯数字18位 → 淘宝订单号，用 order_id（已有规则覆盖）\n"
     "- 纯数字19位 → 抖音/1688订单号，用 order_id（已有规则覆盖）\n"
-    "- 纯中文 → 可能是买家昵称、商品名或规格名称，需结合上下文\n"
-    "  - 商品名称（如「蓝牙耳机」「手机壳」）→ 用 keyword 参数查 product_list\n"
-    "  - 规格名称（如「红色」「XL码」「大号」）→ API 无直接按规格名搜索参数，"
-    "需两步：先用 keyword 查 product_list 找到商品 → 再用 sku_list 查该商品所有规格\n"
-    "  - 无法区分是商品名还是规格名时 → ask_user 追问\n"
+    "- 纯中文 → 可能是买家昵称，快麦ERP不支持按商品名称或规格名称搜索\n"
+    "  - 用户说商品名称/规格名称查库存 → 必须 ask_user 要求提供商家编码\n"
     "- 以上均不匹配 → 禁止猜测，必须 ask_user\n\n"
 
     "## 禁止猜测原则\n"
@@ -477,7 +474,7 @@ ERP_ROUTING_PROMPT = (
     "4. 其他？请选择」\n"
     "- 多种参数都可能匹配时，优先按上下文推断"
     "（如用户说「查库存」→ outer_id），推断不了则 ask_user\n"
-    "- **禁止**将不确定的裸值填入 keyword 做模糊搜索碰运气\n"
+    "- **禁止**猜测编码做模糊搜索碰运气\n"
     "- **禁止**不传任何参数直接调 API 导致返回全量数据\n"
 )
 

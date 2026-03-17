@@ -1093,9 +1093,9 @@ class TestToolRegistration:
         props = tool["function"]["parameters"]["properties"]
         assert "params" in props
         assert props["params"]["type"] == "object"
-        # action 描述包含 keyword 等关键参数名
+        # action 描述包含 stock_status 等关键 action 名
         action_desc = props["action"]["description"]
-        assert "keyword" in action_desc
+        assert "stock_status" in action_desc
 
 
 # ============================================================
@@ -3033,13 +3033,12 @@ class TestRegistryDocAlignment:
         entry = PRODUCT_REGISTRY["outer_id_list"]
         assert entry.param_map["taobao_id"] == "taobaoId"
 
-    def test_product_list_keyword_mapped(self):
-        """product_list: keyword 已映射到 API 参数"""
+    def test_product_list_no_keyword(self):
+        """product_list: keyword 已移除（API实测不支持按名称搜索）"""
         from services.kuaimai.registry import PRODUCT_REGISTRY
         entry = PRODUCT_REGISTRY["product_list"]
-        assert entry.param_map["keyword"] == "keyword"
-        # outer_id/barcode/tag_name 仍不在 product_list（各有专属 action）
-        for phantom in ("outer_id", "barcode", "tag_name"):
+        # keyword 已确认为幽灵参数（API忽略），已移除
+        for phantom in ("keyword", "outer_id", "barcode", "tag_name"):
             assert phantom not in entry.param_map
 
     # ── trade.py 修正 ──
