@@ -2610,16 +2610,16 @@ class TestFormatShopList:
         assert "暂无" in result
 
     def test_includes_shop_id(self):
-        """输出包含店铺 ID（API 返回 userId 字段）"""
+        """输出包含店铺编码（API 返回 userId 字段）"""
         from services.kuaimai.formatters.basic import format_shop_list
         data = {
             "list": [
                 {"title": "京东旗舰店", "userId": 12345,
-                 "source": "jd", "active": 1},
+                 "source": "jd", "state": 3},
             ]
         }
         result = format_shop_list(data, None)
-        assert "ID: 12345" in result
+        assert "店铺编码: 12345" in result
         assert "京东旗舰店" in result
 
     def test_includes_platform(self):
@@ -2639,8 +2639,8 @@ class TestFormatShopList:
         from services.kuaimai.formatters.basic import format_shop_list
         data = {
             "list": [
-                {"name": "店铺A", "id": 1, "active": 1},
-                {"name": "店铺B", "id": 2, "active": 0},
+                {"title": "店铺A", "state": 3},
+                {"title": "店铺B", "state": 1},
             ]
         }
         result = format_shop_list(data, None)
@@ -3717,3 +3717,856 @@ class TestTwoStepToolSchema:
         from config.erp_tools import ERP_ROUTING_PROMPT
         assert "两步查询模式" in ERP_ROUTING_PROMPT
         assert "参数文档" in ERP_ROUTING_PROMPT
+
+
+# ============================================================
+# Phase 5B — format_item_with_labels 核心工具函数测试
+# ============================================================
+
+
+class TestFormatItemWithLabels:
+    """common.py: format_item_with_labels 核心工具函数"""
+
+    def test_basic_label_mapping(self):
+        """已知字段按标签映射输出"""
+        from services.kuaimai.formatters.common import format_item_with_labels
+        item = {"name": "测试商品", "code": "A001"}
+        labels = {"name": "名称", "code": "编码"}
+        result = format_item_with_labels(item, labels)
+        assert "名称: 测试商品" in result
+        assert "编码: A001" in result
+        assert " | " in result
+
+    def test_skip_none_and_empty(self):
+        """None 和空字符串字段不输出"""
+        from services.kuaimai.formatters.common import format_item_with_labels
+        item = {"name": "X", "code": None, "remark": ""}
+        labels = {"name": "名称", "code": "编码", "remark": "备注"}
+        result = format_item_with_labels(item, labels)
+        assert "名称: X" in result
+        assert "编码" not in result
+        assert "备注" not in result
+
+    def test_transforms_applied(self):
+        """transforms 转换函数生效"""
+        from services.kuaimai.formatters.common import format_item_with_labels
+        item = {"status": 1, "price": 99.5}
+        labels = {"status": "状态", "price": "价格"}
+        transforms = {
+            "status": lambda v: "正常" if v == 1 else "停用",
+            "price": lambda v: f"¥{v}",
+        }
+        result = format_item_with_labels(item, labels, transforms=transforms)
+        assert "状态: 正常" in result
+        assert "价格: ¥99.5" in result
+
+    def test_unknown_fields_fallback(self):
+        """未在 labels 中的非空标量字段兜底输出"""
+        from services.kuaimai.formatters.common import format_item_with_labels
+        item = {"name": "X", "newField": "hello"}
+        labels = {"name": "名称"}
+        result = format_item_with_labels(item, labels)
+        assert "名称: X" in result
+        assert "newField: hello" in result
+
+    def test_unknown_fields_skip_zero_and_nested(self):
+        """未知字段值为0/list/dict时不输出"""
+        from services.kuaimai.formatters.common import format_item_with_labels
+        item = {"name": "X", "count": 0, "items": [1, 2], "meta": {"k": "v"}}
+        labels = {"name": "名称"}
+        result = format_item_with_labels(item, labels)
+        assert "count" not in result
+        assert "items" not in result
+        assert "meta" not in result
+
+    def test_global_skip_fields(self):
+        """_GLOBAL_SKIP 中的字段不输出"""
+        from services.kuaimai.formatters.common import format_item_with_labels
+        item = {"name": "X", "picPath": "/img/1.jpg", "companyId": 999}
+        labels = {"name": "名称"}
+        result = format_item_with_labels(item, labels)
+        assert "picPath" not in result
+        assert "companyId" not in result
+
+    def test_custom_skip_set(self):
+        """自定义 skip 集合合并生效"""
+        from services.kuaimai.formatters.common import format_item_with_labels
+        item = {"name": "X", "shortTitle": "短标题"}
+        labels = {"name": "名称"}
+        result = format_item_with_labels(item, labels, skip={"shortTitle"})
+        assert "shortTitle" not in result
+
+    def test_labels_order_preserved(self):
+        """输出按 labels 字典的键顺序"""
+        from services.kuaimai.formatters.common import format_item_with_labels
+        item = {"b": "BBB", "a": "AAA"}
+        labels = {"a": "甲", "b": "乙"}
+        result = format_item_with_labels(item, labels)
+        assert result.index("甲") < result.index("乙")
+
+    def test_empty_item_returns_empty(self):
+        """空 item 返回空字符串"""
+        from services.kuaimai.formatters.common import format_item_with_labels
+        result = format_item_with_labels({}, {"name": "名称"})
+        assert result == ""
+
+
+# ============================================================
+# Phase 5B — trade.py formatter 测试
+# ============================================================
+
+
+class TestTradeFormatters:
+    """trade.py: 6个 formatter 功能验证"""
+
+    def test_order_list_empty(self):
+        from services.kuaimai.formatters.trade import format_order_list
+        result = format_order_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_order_list_with_data(self):
+        from services.kuaimai.formatters.trade import format_order_list
+        data = {
+            "list": [{
+                "tid": "T20260317001", "sid": "S001",
+                "sysStatus": "已发货", "buyerNick": "张三",
+                "payment": 199.0, "shopName": "天猫店",
+                "receiverState": "广东",
+            }],
+            "total": 1,
+        }
+        result = format_order_list(data, None)
+        assert "T20260317001" in result
+        assert "张三" in result
+        assert "¥199" in result
+        assert "省: 广东" in result
+
+    def test_order_list_with_sub_orders(self):
+        from services.kuaimai.formatters.trade import format_order_list
+        data = {
+            "list": [{
+                "tid": "T001", "sysStatus": "待发货",
+                "orders": [
+                    {"sysTitle": "蓝色T恤", "num": 2, "price": 59.0},
+                ],
+            }],
+            "total": 1,
+        }
+        result = format_order_list(data, None)
+        assert "蓝色T恤" in result
+        assert "数量: 2" in result
+
+    def test_shipment_list_empty(self):
+        from services.kuaimai.formatters.trade import format_shipment_list
+        result = format_shipment_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_shipment_list_with_data(self):
+        from services.kuaimai.formatters.trade import format_shipment_list
+        data = {
+            "list": [{
+                "tid": "T001", "outSid": "SF1234",
+                "expressCompanyName": "顺丰",
+            }],
+            "total": 1,
+        }
+        result = format_shipment_list(data, None)
+        assert "T001" in result
+        assert "SF1234" in result
+
+    def test_outstock_order_list_empty(self):
+        from services.kuaimai.formatters.trade import format_outstock_order_list
+        result = format_outstock_order_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_order_log_empty(self):
+        from services.kuaimai.formatters.trade import format_order_log
+        result = format_order_log({"list": []}, None)
+        assert "未找到" in result
+
+    def test_order_log_with_data(self):
+        from services.kuaimai.formatters.trade import format_order_log
+        data = {
+            "list": [{
+                "sid": "S001",
+                "operateTime": 1710648000000,
+                "action": "发货",
+                "operator": "李四",
+                "content": "已发货至顺丰",
+            }],
+        }
+        result = format_order_log(data, None)
+        assert "S001" in result
+        assert "李四" in result
+        assert "已发货至顺丰" in result
+
+    def test_express_list_flat_structure(self):
+        """快递单号 — 扁平结构（API实际格式）"""
+        from services.kuaimai.formatters.trade import format_express_list
+        data = {
+            "cpCode": "SF",
+            "outSids": ["SF001", "SF002"],
+            "expressName": "顺丰速运",
+        }
+        result = format_express_list(data, None)
+        assert "顺丰速运" in result
+        assert "SF001" in result
+        assert "SF002" in result
+
+    def test_express_list_empty(self):
+        from services.kuaimai.formatters.trade import format_express_list
+        data = {"cpCode": "", "outSids": [], "expressName": ""}
+        result = format_express_list(data, None)
+        assert "未找到" in result
+
+    def test_logistics_company_empty(self):
+        from services.kuaimai.formatters.trade import format_logistics_company
+        result = format_logistics_company({"list": []}, None)
+        assert "暂无" in result
+
+    def test_logistics_company_with_data(self):
+        from services.kuaimai.formatters.trade import format_logistics_company
+        data = {
+            "list": [{
+                "name": "顺丰速运", "cpCode": "SF",
+                "cpType": 1, "liveStatus": 1,
+            }],
+        }
+        result = format_logistics_company(data, None)
+        assert "顺丰速运" in result
+        assert "SF" in result
+        assert "直营" in result
+        assert "启用" in result
+
+
+# ============================================================
+# Phase 5B — aftersales.py formatter 测试
+# ============================================================
+
+
+class TestAftersalesFormatters:
+    """aftersales.py: 6个 formatter 功能验证"""
+
+    def test_aftersale_list_empty(self):
+        from services.kuaimai.formatters.aftersales import format_aftersale_list
+        result = format_aftersale_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_aftersale_list_uses_correct_field_names(self):
+        """售后工单使用修正后的字段名 id/refundMoney"""
+        from services.kuaimai.formatters.aftersales import format_aftersale_list
+        data = {
+            "list": [{
+                "id": "WO20260317001",
+                "tid": "T001", "sid": "S001",
+                "afterSaleType": 2,
+                "status": 9,
+                "refundMoney": 88.0,
+                "buyerNick": "王五",
+                "textReason": "尺码不合适",
+                "goodStatus": 3,
+            }],
+            "total": 1,
+        }
+        result = format_aftersale_list(data, None)
+        assert "WO20260317001" in result
+        assert "退货" in result
+        assert "处理完成" in result
+        assert "¥88" in result
+        assert "卖家已收" in result
+
+    def test_aftersale_list_with_nested_items(self):
+        """售后工单嵌套商品明细"""
+        from services.kuaimai.formatters.aftersales import format_aftersale_list
+        data = {
+            "list": [{
+                "id": "WO001",
+                "afterSaleType": 1,
+                "status": 4,
+                "items": [
+                    {"title": "红色T恤", "outerId": "SKU001",
+                     "receivableCount": 1, "type": 1},
+                ],
+            }],
+            "total": 1,
+        }
+        result = format_aftersale_list(data, None)
+        assert "红色T恤" in result
+        assert "SKU001" in result
+
+    def test_refund_warehouse_empty(self):
+        from services.kuaimai.formatters.aftersales import format_refund_warehouse
+        result = format_refund_warehouse({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_refund_warehouse_uses_correct_field_names(self):
+        """销退入库单使用修正后的字段名 id/wareHouseName"""
+        from services.kuaimai.formatters.aftersales import format_refund_warehouse
+        data = {
+            "list": [{
+                "id": "RW001",
+                "workOrderId": "WO001",
+                "sid": "S001", "tid": "T001",
+                "wareHouseName": "主仓",
+                "status": 3,
+                "receiveUser": "仓管员A",
+            }],
+            "total": 1,
+        }
+        result = format_refund_warehouse(data, None)
+        assert "RW001" in result
+        assert "主仓" in result
+        assert "已完成" in result
+        assert "仓管员A" in result
+
+    def test_replenish_list_empty(self):
+        from services.kuaimai.formatters.aftersales import format_replenish_list
+        result = format_replenish_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_replenish_list_uses_correct_field_name(self):
+        """补款使用修正后的字段名 refundMoney"""
+        from services.kuaimai.formatters.aftersales import format_replenish_list
+        data = {
+            "list": [{
+                "tid": "T001", "sid": "S001",
+                "refundMoney": 25.5,
+                "status": "已完成",
+                "sysMaker": "客服小王",
+            }],
+            "total": 1,
+        }
+        result = format_replenish_list(data, None)
+        assert "T001" in result
+        assert "¥25.5" in result
+        assert "客服小王" in result
+
+    def test_repair_list_empty(self):
+        from services.kuaimai.formatters.aftersales import format_repair_list
+        result = format_repair_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_repair_list_uses_correct_field_names(self):
+        """维修单使用修正后的字段名 repairOrderNum/repairStatus/userNick"""
+        from services.kuaimai.formatters.aftersales import format_repair_list
+        data = {
+            "list": [{
+                "repairOrderNum": "REP001",
+                "repairStatus": 1,
+                "userNick": "李先生",
+                "repairMoney": 150.0,
+                "repairWarehouseName": "维修仓",
+            }],
+            "total": 1,
+        }
+        result = format_repair_list(data, None)
+        assert "REP001" in result
+        assert "维修中" in result
+        assert "李先生" in result
+        assert "¥150" in result
+
+    def test_repair_detail_nested_structure(self):
+        """维修单详情 — API返回 {order, itemList, feeList}"""
+        from services.kuaimai.formatters.aftersales import format_repair_detail
+        data = {
+            "order": {
+                "repairOrderNum": "REP001",
+                "repairStatus": 3,
+                "userNick": "赵六",
+            },
+            "itemList": [
+                {"repairItemName": "主板", "repairItemCode": "MB001",
+                 "repairQuantity": 1},
+            ],
+            "feeList": [
+                {"currentPrice": 200.0, "operatorName": "技术员A"},
+            ],
+        }
+        result = format_repair_detail(data, None)
+        assert "REP001" in result
+        assert "已完成" in result
+        assert "主板" in result
+        assert "MB001" in result
+        assert "¥200" in result
+        assert "技术员A" in result
+
+    def test_aftersale_log_empty(self):
+        from services.kuaimai.formatters.aftersales import format_aftersale_log
+        result = format_aftersale_log({"list": []}, None)
+        assert "未找到" in result
+
+    def test_aftersale_log_uses_correct_field_names(self):
+        """售后日志使用修正后的字段名 operateTime/content/staffName/operateName"""
+        from services.kuaimai.formatters.aftersales import format_aftersale_log
+        data = {
+            "list": [{
+                "key": "WO001",
+                "operateTime": 1710648000000,
+                "operateType": "退款",
+                "content": "已退款到原支付方式",
+                "staffName": "admin",
+                "operateName": "客服小李",
+            }],
+        }
+        result = format_aftersale_log(data, None)
+        assert "WO001" in result
+        assert "已退款到原支付方式" in result
+        assert "客服小李" in result
+
+
+# ============================================================
+# Phase 5B — warehouse.py formatter 测试
+# ============================================================
+
+
+class TestWarehouseFormatters:
+    """warehouse.py: 10个 formatter 功能验证"""
+
+    def test_allocate_list_empty(self):
+        from services.kuaimai.formatters.warehouse import format_allocate_list
+        result = format_allocate_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_allocate_list_uses_correct_field_names(self):
+        """调拨单使用修正后的字段名 code/outWarehouseName/inWarehouseName"""
+        from services.kuaimai.formatters.warehouse import format_allocate_list
+        data = {
+            "list": [{
+                "code": "DB20260317001",
+                "outWarehouseName": "北京仓",
+                "inWarehouseName": "上海仓",
+                "status": "已完成",
+                "outNum": 100, "actualOutNum": 98,
+                "outTotalAmount": 5000.0,
+            }],
+            "total": 1,
+        }
+        result = format_allocate_list(data, None)
+        assert "DB20260317001" in result
+        assert "北京仓" in result
+        assert "上海仓" in result
+        assert "¥5000" in result
+
+    def test_allocate_detail_with_items(self):
+        from services.kuaimai.formatters.warehouse import format_allocate_detail
+        data = {
+            "code": "DB001",
+            "outWarehouseName": "A仓",
+            "items": [
+                {"itemOuterId": "SPU001", "outerId": "SKU001",
+                 "outNum": 10, "price": 25.0},
+            ],
+        }
+        result = format_allocate_detail(data, None)
+        assert "DB001" in result
+        assert "SPU001" in result
+        assert "¥25" in result
+
+    def test_other_in_out_list_empty(self):
+        from services.kuaimai.formatters.warehouse import format_other_in_out_list
+        result = format_other_in_out_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_other_in_out_list_uses_code(self):
+        """入出库单使用修正后的字段名 code"""
+        from services.kuaimai.formatters.warehouse import format_other_in_out_list
+        data = {
+            "list": [{
+                "code": "IO001",
+                "warehouseName": "主仓",
+                "status": "已完成",
+                "quantity": 50,
+            }],
+            "total": 1,
+        }
+        result = format_other_in_out_list(data, None)
+        assert "IO001" in result
+        assert "主仓" in result
+
+    def test_inventory_sheet_list_empty(self):
+        from services.kuaimai.formatters.warehouse import format_inventory_sheet_list
+        result = format_inventory_sheet_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_inventory_sheet_list_with_transforms(self):
+        """盘点单类型和状态转换"""
+        from services.kuaimai.formatters.warehouse import format_inventory_sheet_list
+        data = {
+            "list": [{
+                "code": "PD001",
+                "warehouseName": "主仓",
+                "type": 1, "status": 3,
+            }],
+            "total": 1,
+        }
+        result = format_inventory_sheet_list(data, None)
+        assert "PD001" in result
+        assert "正常盘点" in result
+        assert "已审核" in result
+
+    def test_inventory_sheet_detail_uses_correct_fields(self):
+        """盘点单明细使用修正后的字段名 beforeNum/afterNum/differentNum"""
+        from services.kuaimai.formatters.warehouse import format_inventory_sheet_detail
+        data = {
+            "code": "PD001",
+            "items": [
+                {"title": "蓝色T恤", "outerId": "SKU001",
+                 "beforeNum": 100, "afterNum": 98,
+                 "differentNum": -2, "qualityType": 1},
+            ],
+        }
+        result = format_inventory_sheet_detail(data, None)
+        assert "PD001" in result
+        assert "系统数: 100" in result
+        assert "实盘数: 98" in result
+        assert "差异数: -2" in result
+        assert "良品" in result
+
+    def test_unshelve_list_empty(self):
+        from services.kuaimai.formatters.warehouse import format_unshelve_list
+        result = format_unshelve_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_goods_section_list_empty(self):
+        from services.kuaimai.formatters.warehouse import format_goods_section_list
+        result = format_goods_section_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_goods_section_list_with_data(self):
+        from services.kuaimai.formatters.warehouse import format_goods_section_list
+        data = {
+            "list": [{"sectionName": "A-01-01", "title": "红色帽子",
+                       "quantity": 30}],
+            "total": 1,
+        }
+        result = format_goods_section_list(data, None)
+        assert "A-01-01" in result
+        assert "红色帽子" in result
+
+    def test_process_order_list_empty(self):
+        from services.kuaimai.formatters.warehouse import format_process_order_list
+        result = format_process_order_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_batch_stock_list_empty(self):
+        from services.kuaimai.formatters.warehouse import format_batch_stock_list
+        result = format_batch_stock_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_batch_stock_list_with_data(self):
+        from services.kuaimai.formatters.warehouse import format_batch_stock_list
+        data = {
+            "list": [{"title": "维生素C", "batchNo": "B2026001",
+                       "quantity": 500, "expireDate": "2027-01-01"}],
+            "total": 1,
+        }
+        result = format_batch_stock_list(data, None)
+        assert "维生素C" in result
+        assert "B2026001" in result
+
+    def test_section_record_list_empty(self):
+        from services.kuaimai.formatters.warehouse import format_section_record_list
+        result = format_section_record_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+
+# ============================================================
+# Phase 5B — purchase.py formatter 测试
+# ============================================================
+
+
+class TestPurchaseFormatters:
+    """purchase.py: 7个 formatter 功能验证"""
+
+    def test_supplier_list_empty(self):
+        from services.kuaimai.formatters.purchase import format_supplier_list
+        result = format_supplier_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_supplier_list_uses_correct_field_names(self):
+        """供应商使用修正后的字段名 contactName"""
+        from services.kuaimai.formatters.purchase import format_supplier_list
+        data = {
+            "list": [{
+                "name": "优质供应商",
+                "code": "SUP001",
+                "contactName": "张经理",
+                "mobile": "13800138000",
+                "status": 1,
+            }],
+            "total": 1,
+        }
+        result = format_supplier_list(data, None)
+        assert "优质供应商" in result
+        assert "张经理" in result
+        assert "正常" in result
+
+    def test_purchase_order_list_empty(self):
+        from services.kuaimai.formatters.purchase import format_purchase_order_list
+        result = format_purchase_order_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_purchase_order_list_uses_code(self):
+        """采购单使用修正后的字段名 code"""
+        from services.kuaimai.formatters.purchase import format_purchase_order_list
+        data = {
+            "list": [{
+                "code": "PO20260317001",
+                "supplierName": "优质供应商",
+                "status": "已到货",
+                "totalAmount": 10000.0,
+                "quantity": 200,
+                "arrivedQuantity": 200,
+            }],
+            "total": 1,
+        }
+        result = format_purchase_order_list(data, None)
+        assert "PO20260317001" in result
+        assert "优质供应商" in result
+        assert "¥10000" in result
+
+    def test_purchase_order_detail_with_items(self):
+        from services.kuaimai.formatters.purchase import format_purchase_order_detail
+        data = {
+            "code": "PO001",
+            "supplierName": "A供应商",
+            "items": [
+                {"itemOuterId": "SPU001", "outerId": "SKU001",
+                 "count": 50, "price": 10.0, "amount": 500.0},
+            ],
+        }
+        result = format_purchase_order_detail(data, None)
+        assert "PO001" in result
+        assert "SPU001" in result
+        assert "数量: 50" in result
+        assert "¥10" in result
+
+    def test_purchase_return_list_empty(self):
+        from services.kuaimai.formatters.purchase import format_purchase_return_list
+        result = format_purchase_return_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_purchase_return_list_uses_correct_fields(self):
+        """采退单使用修正后的字段名 code/gmCreate"""
+        from services.kuaimai.formatters.purchase import format_purchase_return_list
+        data = {
+            "list": [{
+                "code": "PR001",
+                "supplierName": "B供应商",
+                "totalAmount": 3000.0,
+                "totalCount": 30,
+                "gmCreate": 1710648000000,
+            }],
+            "total": 1,
+        }
+        result = format_purchase_return_list(data, None)
+        assert "PR001" in result
+        assert "¥3000" in result
+
+    def test_warehouse_entry_list_empty(self):
+        from services.kuaimai.formatters.purchase import format_warehouse_entry_list
+        result = format_warehouse_entry_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_shelf_list_empty(self):
+        from services.kuaimai.formatters.purchase import format_shelf_list
+        result = format_shelf_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_purchase_strategy_empty(self):
+        from services.kuaimai.formatters.purchase import format_purchase_strategy
+        result = format_purchase_strategy({"list": [], "total": 0}, None)
+        assert "暂无" in result
+
+    def test_purchase_strategy_uses_correct_fields(self):
+        """采购建议使用修正后的字段名 purchaseStock/stockoutNum/itemOuterId"""
+        from services.kuaimai.formatters.purchase import format_purchase_strategy
+        data = {
+            "purchaseStrategyList": [{
+                "itemOuterId": "SPU001", "outerId": "SKU001",
+                "purchaseStock": 100,
+                "stockoutNum": 20,
+                "itemCatName": "服装",
+            }],
+            "total": 1,
+        }
+        result = format_purchase_strategy(data, None)
+        assert "SPU001" in result
+        assert "建议采购数: 100" in result
+        assert "缺货数: 20" in result
+
+
+# ============================================================
+# Phase 5B — basic.py 未覆盖的 4 个 formatter 测试
+# ============================================================
+
+
+class TestBasicFormattersExtended:
+    """basic.py: 补充 warehouse/tag/customer/distributor 测试"""
+
+    def test_warehouse_list_empty(self):
+        from services.kuaimai.formatters.basic import format_warehouse_list
+        result = format_warehouse_list({"list": []}, None)
+        assert "暂无" in result
+
+    def test_warehouse_list_with_type_transform(self):
+        from services.kuaimai.formatters.basic import format_warehouse_list
+        data = {
+            "list": [{
+                "name": "主仓库", "code": "WH001",
+                "type": 0, "status": 1,
+                "city": "上海",
+            }],
+        }
+        result = format_warehouse_list(data, None)
+        assert "主仓库" in result
+        assert "自有" in result
+        assert "正常" in result
+        assert "上海" in result
+
+    def test_tag_list_empty(self):
+        from services.kuaimai.formatters.basic import format_tag_list
+        result = format_tag_list({"list": []}, None)
+        assert "暂无" in result
+
+    def test_tag_list_with_type_and_html_cleanup(self):
+        from services.kuaimai.formatters.basic import format_tag_list
+        data = {
+            "list": [{
+                "tagName": "VIP客户", "type": 0,
+                "remark": "重要客户<br/>需要特殊关注",
+            }],
+        }
+        result = format_tag_list(data, None)
+        assert "VIP客户" in result
+        assert "普通" in result
+        assert "<br/>" not in result
+
+    def test_customer_list_empty(self):
+        from services.kuaimai.formatters.basic import format_customer_list
+        result = format_customer_list({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_customer_list_with_transforms(self):
+        from services.kuaimai.formatters.basic import format_customer_list
+        data = {
+            "list": [{
+                "name": "优质客户", "code": "C001",
+                "type": 0, "status": 1,
+                "discountRate": 0.85,
+            }],
+            "total": 1,
+        }
+        result = format_customer_list(data, None)
+        assert "优质客户" in result
+        assert "分销商" in result
+        assert "正常" in result
+
+    def test_distributor_list_empty(self):
+        from services.kuaimai.formatters.basic import format_distributor_list
+        result = format_distributor_list({"list": []}, None)
+        assert "暂无" in result
+
+    def test_distributor_list_with_transforms(self):
+        from services.kuaimai.formatters.basic import format_distributor_list
+        data = {
+            "list": [{
+                "distributorCompanyName": "XX贸易公司",
+                "showState": 2,
+                "autoSyncStock": True,
+            }],
+        }
+        result = format_distributor_list(data, None)
+        assert "XX贸易公司" in result
+        assert "已生效" in result
+        assert "是" in result
+
+
+# ============================================================
+# Phase 5B — product.py 未覆盖的 3 个 formatter 测试
+# ============================================================
+
+
+class TestProductFormattersExtended:
+    """product.py: 补充 product_detail/sku_info/stock_in_out 测试"""
+
+    def test_product_detail_with_skus(self):
+        from services.kuaimai.formatters.product import format_product_detail
+        data = {
+            "title": "蓝色运动鞋",
+            "outerId": "SPU001",
+            "priceOutput": 299.0,
+            "type": 0,
+            "activeStatus": 1,
+            "items": [
+                {"skuOuterId": "SKU001", "propertiesName": "42码",
+                 "priceOutput": 299.0, "activeStatus": 1},
+                {"skuOuterId": "SKU002", "propertiesName": "43码",
+                 "priceOutput": 299.0, "activeStatus": 1},
+            ],
+            "sellerCats": [{"name": "运动鞋"}],
+        }
+        result = format_product_detail(data, None)
+        assert "蓝色运动鞋" in result
+        assert "¥299" in result
+        assert "SKU001" in result
+        assert "42码" in result
+        assert "运动鞋" in result
+        assert "共2个" in result
+
+    def test_product_detail_empty_skus(self):
+        from services.kuaimai.formatters.product import format_product_detail
+        data = {"title": "简单商品", "outerId": "SPU002"}
+        result = format_product_detail(data, None)
+        assert "简单商品" in result
+
+    def test_sku_info_list(self):
+        from services.kuaimai.formatters.product import format_sku_info
+        data = {
+            "items": [
+                {"skuOuterId": "SKU001", "propertiesName": "红色",
+                 "activeStatus": 1},
+                {"skuOuterId": "SKU002", "propertiesName": "蓝色",
+                 "activeStatus": 0},
+            ],
+        }
+        result = format_sku_info(data, None)
+        assert "SKU001" in result
+        assert "红色" in result
+        assert "启用" in result
+        assert "停用" in result
+
+    def test_sku_info_empty(self):
+        """空items时走单SKU详情兜底"""
+        from services.kuaimai.formatters.product import format_sku_info
+        result = format_sku_info({"items": []}, None)
+        assert "SKU详情" in result
+
+    def test_sku_info_single_detail(self):
+        """单个 SKU 详情（非列表）"""
+        from services.kuaimai.formatters.product import format_sku_info
+        data = {"skuOuterId": "SKU001", "propertiesName": "XL"}
+        result = format_sku_info(data, None)
+        assert "SKU001" in result
+        assert "XL" in result
+
+    def test_stock_in_out_empty(self):
+        from services.kuaimai.formatters.product import format_stock_in_out
+        result = format_stock_in_out({"list": [], "total": 0}, None)
+        assert "未找到" in result
+
+    def test_stock_in_out_with_data(self):
+        from services.kuaimai.formatters.product import format_stock_in_out
+        data = {
+            "list": [{
+                "outerId": "SKU001", "title": "红色T恤",
+                "bizType": "采购入库", "changeNum": 50,
+                "warehouseName": "主仓",
+                "created": 1710648000000,
+            }],
+            "total": 1,
+        }
+        result = format_stock_in_out(data, None)
+        assert "SKU001" in result
+        assert "采购入库" in result
+        assert "50" in result

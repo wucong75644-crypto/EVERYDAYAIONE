@@ -1,5 +1,5 @@
 """
-商品/库存 格式化器
+商品/库存 格式化器（Phase 5B 标签映射表模式）
 
 从 service.py 迁移: _format_product, _format_product_detail, _format_inventory
 新增: SKU列表、分类、品牌等格式化
@@ -7,17 +7,121 @@
 
 from typing import Any, Callable, Dict
 
-from services.kuaimai.formatters.common import format_timestamp
+from services.kuaimai.formatters.common import format_item_with_labels, format_timestamp
 from services.kuaimai.registry.base import ApiEntry
 
-# 库存状态映射
-_STOCK_STATUS_LABELS = {
-    0: "正常",
-    1: "警戒",
-    2: "无货",
-    3: "超卖",
+# ---------------------------------------------------------------------------
+# 库存状态 — stock.api.status.query
+# ---------------------------------------------------------------------------
+_INVENTORY_LABELS = {
+    "title": "名称", "mainOuterId": "编码",
+    "outerId": "SKU编码", "skuOuterId": "规格编码",
+    "propertiesName": "规格",
+    "totalAvailableStockSum": "总库存", "sellableNum": "可售",
+    "totalAvailableStock": "实际可用",
+    "totalLockStock": "锁定", "purchaseNum": "采购在途",
+    "onTheWayNum": "销退在途",
+    "allocateNum": "调拨", "totalDefectiveStock": "残次品",
+    "refundStock": "退款库存",
+    "purchaseStock": "入库暂存",
+    "virtualStock": "虚拟库存",
+    "purchasePrice": "采购价", "sellingPrice": "销售价", "marketPrice": "市场价",
+    "stockStatus": "状态", "wareHouseId": "仓库ID",
+    "brand": "品牌", "cidName": "分类",
+    "unit": "单位", "place": "产地",
+    "stockModifiedTime": "库存更新时间",
+    "itemBarcode": "条码", "skuBarcode": "SKU条码",
+    "supplierCodes": "供应商编码", "supplierNames": "供应商",
+}
+_INVENTORY_SKIP = {"shortTitle"}
+_INVENTORY_TRANSFORMS: Dict[str, Callable] = {
+    "stockStatus": lambda v: {0: "正常", 1: "警戒", 2: "无货", 3: "超卖",
+                              4: "超卖", 6: "有货"}.get(v, str(v)),
+    "purchasePrice": lambda v: f"¥{v}",
+    "sellingPrice": lambda v: f"¥{v}",
+    "marketPrice": lambda v: f"¥{v}",
+    "stockModifiedTime": format_timestamp,
 }
 
+# ---------------------------------------------------------------------------
+# 仓库库存 — erp.item.warehouse.list.get
+# 注意: 此API不返回 purchaseNum（仅 stock.api.status.query 有）
+# ---------------------------------------------------------------------------
+_WH_STOCK_LABELS = {
+    "name": "仓库", "id": "仓库ID", "code": "仓库编码",
+    "totalAvailableStockSum": "总库存", "sellableNum": "可售",
+    "totalAvailableStock": "实际可用",
+    "totalLockStock": "锁定", "totalDefectiveStock": "次品",
+    "stockStatus": "库存状态", "status": "仓库状态",
+}
+_WH_STOCK_TRANSFORMS: Dict[str, Callable] = {
+    "stockStatus": lambda v: {1: "正常", 2: "警戒", 3: "无货",
+                              4: "超卖", 6: "有货"}.get(v, str(v)),
+    "status": lambda v: {0: "停用", 1: "正常", 2: "禁止发货"}.get(v, str(v)),
+}
+
+# ---------------------------------------------------------------------------
+# 出入库流水 — erp.item.stock.in.out.list
+# 注意: API文档页面无法提取，字段名来自现有代码，待实际API验证
+# ---------------------------------------------------------------------------
+_STOCK_IO_LABELS = {
+    "outerId": "编码", "title": "名称",
+    "bizType": "类型", "changeNum": "变动数量",
+    "warehouseName": "仓库", "orderNumber": "单据号",
+    "created": "时间", "remark": "备注",
+}
+_STOCK_IO_TRANSFORMS: Dict[str, Callable] = {"created": format_timestamp}
+
+# ---------------------------------------------------------------------------
+# 商品列表 — item.list.query
+# 关键: 销售价字段名是 priceOutput（非 sellingPrice）
+# ---------------------------------------------------------------------------
+_PRODUCT_LABELS = {
+    "title": "名称", "outerId": "编码", "barcode": "条码",
+    "type": "商品类型",
+    "weight": "重量", "unit": "单位",
+    "purchasePrice": "采购价",
+    "priceOutput": "销售价",
+    "marketPrice": "市场价",
+    "brand": "品牌",
+    "isSkuItem": "多规格", "isVirtual": "虚拟商品", "makeGift": "赠品",
+    "activeStatus": "状态",
+    "remark": "备注",
+}
+_PRODUCT_SKIP = {"shortTitle"}
+_PRODUCT_TRANSFORMS: Dict[str, Callable] = {
+    "type": lambda v: {0: "普通", 1: "SKU套件", 2: "纯套件", 3: "包材"}.get(v, str(v)),
+    "isSkuItem": lambda v: "是" if v else "否",
+    "isVirtual": lambda v: "是" if v else "否",
+    "makeGift": lambda v: "是" if v else "否",
+    "activeStatus": lambda v: "启用" if v == 1 else "停用",
+    "weight": lambda v: f"{v}g" if v else "",
+    "purchasePrice": lambda v: f"¥{v}",
+    "priceOutput": lambda v: f"¥{v}",
+    "marketPrice": lambda v: f"¥{v}",
+}
+
+# ---------------------------------------------------------------------------
+# SKU行
+# ---------------------------------------------------------------------------
+_SKU_LABELS = {
+    "skuOuterId": "编码", "propertiesName": "规格",
+    "barcode": "条码",
+    "weight": "重量",
+    "purchasePrice": "采购价", "priceOutput": "销售价", "marketPrice": "市场价",
+    "unit": "单位",
+    "activeStatus": "状态",
+}
+_SKU_TRANSFORMS: Dict[str, Callable] = {
+    "activeStatus": lambda v: "启用" if v == 1 else "停用",
+    "weight": lambda v: f"{v}g" if v else "",
+    "purchasePrice": lambda v: f"¥{v}",
+    "priceOutput": lambda v: f"¥{v}",
+    "marketPrice": lambda v: f"¥{v}",
+}
+
+
+# ===== 公开 formatter 函数 =====
 
 def format_product_list(data: Any, entry: ApiEntry) -> str:
     """商品列表"""
@@ -27,7 +131,8 @@ def format_product_list(data: Any, entry: ApiEntry) -> str:
         return "查询返回 0 条商品（编码可能不存在或参数类型选错）"
     lines = [f"共找到 {total} 个商品：\n"]
     for item in items[:20]:
-        lines.append(_format_product(item))
+        lines.append("- " + format_item_with_labels(
+            item, _PRODUCT_LABELS, _PRODUCT_SKIP, _PRODUCT_TRANSFORMS))
     if int(total) > len(items):
         lines.append(f"\n（显示前{len(items)}个，共{total}个）")
     return "\n".join(lines)
@@ -35,7 +140,24 @@ def format_product_list(data: Any, entry: ApiEntry) -> str:
 
 def format_product_detail(data: Any, entry: ApiEntry) -> str:
     """商品详情"""
-    return _format_product_detail(data)
+    title = data.get("title", "")
+    lines = [f"商品详情：{title}"]
+    lines.append(format_item_with_labels(
+        data, _PRODUCT_LABELS, _PRODUCT_SKIP, _PRODUCT_TRANSFORMS))
+
+    cats = data.get("sellerCats") or []
+    if cats:
+        cat_names = [c.get("name", "") for c in cats if c.get("name")]
+        if cat_names:
+            lines.append(f"分类: {' > '.join(cat_names)}")
+
+    skus = data.get("items") or []
+    if skus:
+        lines.append(f"\nSKU列表（共{len(skus)}个）：")
+        for sku in skus[:10]:
+            lines.append("  - " + format_item_with_labels(
+                sku, _SKU_LABELS, transforms=_SKU_TRANSFORMS))
+    return "\n".join(lines)
 
 
 def format_inventory_list(data: Any, entry: ApiEntry) -> str:
@@ -46,7 +168,8 @@ def format_inventory_list(data: Any, entry: ApiEntry) -> str:
         return "查询返回 0 条库存记录（编码可能不存在或参数类型选错，如 outer_id/sku_outer_id 混用）"
     lines = [f"共找到 {total} 条库存记录：\n"]
     for item in items[:100]:
-        lines.append(_format_inventory(item))
+        lines.append("- " + format_item_with_labels(
+            item, _INVENTORY_LABELS, _INVENTORY_SKIP, _INVENTORY_TRANSFORMS))
     if int(total) > len(items):
         lines.append(f"\n（显示前{len(items)}条，共{total}条）")
     return "\n".join(lines)
@@ -57,12 +180,14 @@ def format_sku_info(data: Any, entry: ApiEntry) -> str:
     items = data.get("items") or data.get("list") or []
     if isinstance(data, dict) and not items:
         # 可能是单个SKU详情
-        return _format_sku_detail(data)
+        return "SKU详情: " + format_item_with_labels(
+            data, _SKU_LABELS, transforms=_SKU_TRANSFORMS)
     if not items:
         return "未找到SKU信息"
     lines = [f"共 {len(items)} 个SKU：\n"]
     for sku in items[:30]:
-        lines.append(_format_sku_line(sku))
+        lines.append("- " + format_item_with_labels(
+            sku, _SKU_LABELS, transforms=_SKU_TRANSFORMS))
     return "\n".join(lines)
 
 
@@ -73,11 +198,26 @@ def format_warehouse_stock(data: Any, entry: ApiEntry) -> str:
         return "查询返回 0 条仓库库存（编码可能不存在或参数类型选错）"
     lines = [f"共 {len(items)} 条仓库库存：\n"]
     for item in items[:50]:
-        name = item.get("title") or item.get("itemTitle") or ""
-        code = item.get("outerId") or ""
-        wh = item.get("warehouseName") or item.get("wareHouseId") or ""
-        qty = item.get("sellableNum") or item.get("quantity") or 0
-        lines.append(f"- {name} | 编码: {code} | 仓库: {wh} | 可售: {qty}")
+        # 顶层有 outerId，嵌套 skus[] -> mainWareHousesStock[]
+        outer_id = item.get("outerId") or ""
+        skus = item.get("skus") or []
+        if skus:
+            # 嵌套结构：展开每个SKU的每个仓库
+            for sku in skus:
+                sku_code = sku.get("skuOuterId") or outer_id
+                wh_stocks = sku.get("mainWareHousesStock") or []
+                for wh in wh_stocks:
+                    prefix = f"编码: {sku_code} | " if sku_code else ""
+                    lines.append("- " + prefix + format_item_with_labels(
+                        wh, _WH_STOCK_LABELS, transforms=_WH_STOCK_TRANSFORMS))
+        else:
+            # 扁平结构（兼容）
+            name = item.get("title") or item.get("itemTitle") or ""
+            code = item.get("outerId") or ""
+            wh = item.get("warehouseName") or item.get("name") or ""
+            qty = item.get("sellableNum") or item.get("quantity") or 0
+            lines.append(
+                f"- {name} | 编码: {code} | 仓库: {wh} | 可售: {qty}")
     return "\n".join(lines)
 
 
@@ -89,130 +229,10 @@ def format_stock_in_out(data: Any, entry: ApiEntry) -> str:
         return "未找到出入库记录"
     lines = [f"共 {total} 条出入库记录：\n"]
     for r in items[:20]:
-        time = format_timestamp(r.get("created") or r.get("modified"))
-        biz_type = r.get("bizType") or ""
-        qty = r.get("changeNum") or r.get("quantity") or 0
-        code = r.get("outerId") or ""
-        lines.append(f"- [{time}] {biz_type} | 编码: {code} | 变动: {qty}")
-    return "\n".join(lines)
-
-
-def _format_product(item: Dict[str, Any]) -> str:
-    """格式化商品列表项"""
-    title = item.get("title", "")
-    outer_id = item.get("outerId", "")
-    barcode = item.get("barcode", "")
-    active = item.get("activeStatus", 1)
-    is_sku = item.get("isSkuItem", 0)
-    weight = item.get("weight", 0)
-
-    parts = [f"- {title}"]
-    if outer_id:
-        parts.append(f"编码: {outer_id}")
-    if barcode:
-        parts.append(f"条码: {barcode}")
-    if weight:
-        parts.append(f"重量: {weight}g")
-    parts.append(f"多规格: {'是' if is_sku else '否'}")
-    parts.append(f"状态: {'启用' if active == 1 else '停用'}")
-    return " | ".join(parts)
-
-
-def _format_product_detail(item: Dict[str, Any]) -> str:
-    """格式化商品详情"""
-    title = item.get("title", "")
-    outer_id = item.get("outerId", "")
-    barcode = item.get("barcode", "")
-    weight = item.get("weight", "")
-    unit = item.get("unit", "")
-    active = item.get("activeStatus", 1)
-    is_sku = item.get("isSkuItem", 0)
-
-    lines = [f"商品详情：{title}"]
-    if outer_id:
-        lines.append(f"  商家编码: {outer_id}")
-    if barcode:
-        lines.append(f"  条形码: {barcode}")
-    if weight:
-        lines.append(f"  重量: {weight}g")
-    if unit:
-        lines.append(f"  单位: {unit}")
-    lines.append(f"  状态: {'启用' if active == 1 else '停用'}")
-    lines.append(f"  多规格: {'是' if is_sku else '否'}")
-
-    cats = item.get("sellerCats") or []
-    if cats:
-        cat_names = [c.get("name", "") for c in cats if c.get("name")]
-        if cat_names:
-            lines.append(f"  分类: {' > '.join(cat_names)}")
-
-    skus = item.get("items") or []
-    if skus:
-        lines.append(f"\n  SKU列表（共{len(skus)}个）：")
-        for sku in skus[:10]:
-            lines.append(_format_sku_line(sku, indent="    "))
-    return "\n".join(lines)
-
-
-def _format_inventory(item: Dict[str, Any]) -> str:
-    """格式化库存行"""
-    name = item.get("title", item.get("shortTitle", ""))
-    outer_id = item.get("mainOuterId", "")
-    sku_id = item.get("outerId", "")
-    props = item.get("propertiesName", "")
-    total_qty = item.get("totalAvailableStockSum", 0)
-    available = item.get("sellableNum", 0)
-    locked = item.get("totalLockStock", 0)
-    warehouse_id = item.get("wareHouseId", "")
-    status_code = item.get("stockStatus", 0)
-    status_label = _STOCK_STATUS_LABELS.get(status_code, str(status_code))
-    purchase_price = item.get("purchasePrice", "")
-
-    parts = [f"- {name}"]
-    if outer_id:
-        parts.append(f"编码: {outer_id}")
-    if sku_id and sku_id != outer_id:
-        parts.append(f"SKU: {sku_id}")
-    if props:
-        parts.append(f"规格: {props}")
-    parts.append(f"总库存: {total_qty}")
-    parts.append(f"可售: {available}")
-    if locked:
-        parts.append(f"锁定: {locked}")
-    if warehouse_id:
-        parts.append(f"仓库ID: {warehouse_id}")
-    if purchase_price:
-        parts.append(f"采购价: ¥{purchase_price}")
-    parts.append(f"状态: {status_label}")
-    return " | ".join(parts)
-
-
-def _format_sku_line(sku: Dict[str, Any], indent: str = "  ") -> str:
-    """格式化单个SKU行"""
-    code = sku.get("skuOuterId") or sku.get("outerId") or ""
-    props = sku.get("propertiesName") or ""
-    barcode = sku.get("barcode") or ""
-    active = sku.get("activeStatus", 1)
-    parts = [f"{indent}- {code}"]
-    if props:
-        parts.append(props)
-    if barcode:
-        parts.append(f"条码: {barcode}")
-    parts.append("启用" if active == 1 else "停用")
-    return " | ".join(parts)
-
-
-def _format_sku_detail(data: Dict[str, Any]) -> str:
-    """格式化单个SKU详情"""
-    code = data.get("skuOuterId") or data.get("outerId") or ""
-    title = data.get("title") or ""
-    props = data.get("propertiesName") or ""
-    barcode = data.get("barcode") or ""
-    lines = [f"SKU详情: {title} ({code})"]
-    if props:
-        lines.append(f"  规格: {props}")
-    if barcode:
-        lines.append(f"  条码: {barcode}")
+        lines.append("- " + format_item_with_labels(
+            r, _STOCK_IO_LABELS, transforms=_STOCK_IO_TRANSFORMS))
+    if int(total) > len(items):
+        lines.append(f"\n（显示前{len(items)}条，共{total}条）")
     return "\n".join(lines)
 
 

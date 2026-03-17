@@ -1,14 +1,103 @@
 """
-基础信息 格式化器
+基础信息 格式化器（Phase 5B 标签映射表模式）
 
 格式化仓库、店铺、标签、客户、分销商等基础查询结果。
 """
 
 from typing import Any, Callable, Dict
 
-from services.kuaimai.formatters.common import format_timestamp
+from services.kuaimai.formatters.common import format_item_with_labels, format_timestamp
 from services.kuaimai.registry.base import ApiEntry
 
+# ---------------------------------------------------------------------------
+# 仓库列表 — erp.warehouse.list.query
+# ---------------------------------------------------------------------------
+_WAREHOUSE_LABELS = {
+    "name": "名称", "code": "编码",
+    "type": "类型",
+    "status": "状态",
+    "contact": "联系人", "contactPhone": "电话",
+    "state": "省", "city": "市", "district": "区",
+    "address": "地址",
+    "externalCode": "外部编码",
+}
+_WAREHOUSE_TRANSFORMS: Dict[str, Callable] = {
+    "type": lambda v: {0: "自有", 1: "第三方", 2: "门店"}.get(v, str(v)),
+    "status": lambda v: {0: "停用", 1: "正常", 2: "禁止发货"}.get(v, str(v)),
+}
+
+# ---------------------------------------------------------------------------
+# 店铺列表 — erp.shop.list.query
+# 修正: active(2态) → state(4态)
+# ---------------------------------------------------------------------------
+_SHOP_LABELS = {
+    "title": "名称", "shortTitle": "简称",
+    "userId": "店铺编码", "shopId": "店铺ID",
+    "source": "平台", "nick": "昵称",
+    "state": "状态",
+    "deadline": "到期时间",
+    "groupName": "店铺组",
+}
+_SHOP_TRANSFORMS: Dict[str, Callable] = {
+    "state": lambda v: {1: "停用", 2: "未初始化", 3: "启用",
+                        4: "会话失效"}.get(v, str(v)),
+    "deadline": format_timestamp,
+}
+
+# ---------------------------------------------------------------------------
+# 标签列表 — erp.trade.query.tag.list / erp.item.tag.list
+# ---------------------------------------------------------------------------
+_TAG_LABELS = {
+    "tagName": "标签名", "name": "标签名", "id": "ID",
+    "type": "类型",
+    "remark": "说明",
+}
+_TAG_TRANSFORMS: Dict[str, Callable] = {
+    "type": lambda v: {0: "普通", 1: "自定义异常", 3: "系统",
+                       -1: "系统异常"}.get(v, str(v)),
+}
+
+# ---------------------------------------------------------------------------
+# 客户列表 — erp.query.customers.list
+# ---------------------------------------------------------------------------
+_CUSTOMER_LABELS = {
+    "name": "名称", "code": "编码",
+    "type": "类型",
+    "level": "等级",
+    "contact": "联系人", "contactPhone": "电话",
+    "discountRate": "折扣率",
+    "status": "状态",
+    "remark": "备注",
+    "invoiceTitle": "发票抬头",
+}
+_CUSTOMER_TRANSFORMS: Dict[str, Callable] = {
+    "type": lambda v: {0: "分销商", 1: "经销商", 2: "线下渠道",
+                       3: "其他", 4: "线上代发"}.get(v, str(v)),
+    "status": lambda v: "正常" if v == 1 else "停用",
+}
+
+# ---------------------------------------------------------------------------
+# 分销商列表 — erp.distributor.list.query
+# ---------------------------------------------------------------------------
+_DISTRIBUTOR_LABELS = {
+    "distributorCompanyName": "公司名称",
+    "distributorCompanyId": "公司ID",
+    "distributorLevel": "等级",
+    "saleStaffName": "业务员",
+    "showState": "状态",
+    "purchaseAccount": "采购账户",
+    "helpMsg": "助记符",
+    "remark": "备注",
+    "autoSyncStock": "自动同步库存",
+}
+_DISTRIBUTOR_TRANSFORMS: Dict[str, Callable] = {
+    "showState": lambda v: {1: "待审核", 2: "已生效", 3: "已作废",
+                            4: "已拒绝"}.get(v, str(v)),
+    "autoSyncStock": lambda v: "是" if v else "否",
+}
+
+
+# ===== 公开 formatter 函数 =====
 
 def format_warehouse_list(data: Any, entry: ApiEntry) -> str:
     """仓库列表"""
@@ -17,23 +106,8 @@ def format_warehouse_list(data: Any, entry: ApiEntry) -> str:
         return "暂无仓库信息"
     lines = [f"共 {len(items)} 个仓库：\n"]
     for w in items:
-        name = w.get("name") or ""
-        code = w.get("code") or ""
-        status = "启用" if w.get("status") == 1 else "停用"
-        addr = w.get("address") or ""
-        contact = w.get("contact") or ""
-        phone = w.get("contactPhone") or ""
-        parts = [f"- {name}"]
-        if code:
-            parts.append(f"编码: {code}")
-        parts.append(f"状态: {status}")
-        if contact:
-            parts.append(f"联系人: {contact}")
-        if phone:
-            parts.append(f"电话: {phone}")
-        if addr:
-            parts.append(f"地址: {addr}")
-        lines.append(" | ".join(parts))
+        lines.append("- " + format_item_with_labels(
+            w, _WAREHOUSE_LABELS, transforms=_WAREHOUSE_TRANSFORMS))
     return "\n".join(lines)
 
 
@@ -44,23 +118,8 @@ def format_shop_list(data: Any, entry: ApiEntry) -> str:
         return "暂无店铺信息"
     lines = [f"共 {len(items)} 个店铺：\n"]
     for s in items:
-        name = s.get("title") or s.get("name") or ""
-        shop_id = s.get("userId") or ""
-        short = s.get("shortTitle") or ""
-        source = s.get("source") or ""
-        active = "启用" if s.get("active") == 1 else "停用"
-        nick = s.get("nick") or ""
-        parts = [f"- {name}"]
-        if shop_id:
-            parts.append(f"ID: {shop_id}")
-        if short:
-            parts.append(f"简称: {short}")
-        if source:
-            parts.append(f"平台: {source}")
-        if nick:
-            parts.append(f"昵称: {nick}")
-        parts.append(f"状态: {active}")
-        lines.append(" | ".join(parts))
+        lines.append("- " + format_item_with_labels(
+            s, _SHOP_LABELS, transforms=_SHOP_TRANSFORMS))
     return "\n".join(lines)
 
 
@@ -71,16 +130,15 @@ def format_tag_list(data: Any, entry: ApiEntry) -> str:
         return "暂无标签信息"
     lines = [f"共 {len(items)} 个标签：\n"]
     for t in items:
-        name = t.get("tagName") or t.get("name") or ""
-        tag_id = t.get("id") or ""
+        # 特殊处理: remark 包含 HTML，需要清理
         remark = t.get("remark") or ""
-        line = f"- {name} (ID: {tag_id})"
         if remark:
-            clean = remark.replace("<br/>", " ").replace("<br>", " ")
-            if len(clean) > 60:
-                clean = clean[:60] + "..."
-            line += f" | {clean}"
-        lines.append(line)
+            remark = remark.replace("<br/>", " ").replace("<br>", " ")
+            if len(remark) > 60:
+                remark = remark[:60] + "..."
+            t = {**t, "remark": remark}
+        lines.append("- " + format_item_with_labels(
+            t, _TAG_LABELS, transforms=_TAG_TRANSFORMS))
     return "\n".join(lines)
 
 
@@ -92,20 +150,8 @@ def format_customer_list(data: Any, entry: ApiEntry) -> str:
         return "未找到客户信息"
     lines = [f"共 {total} 个客户：\n"]
     for c in items[:30]:
-        name = c.get("name") or c.get("nick") or ""
-        code = c.get("code") or ""
-        contact = c.get("contact") or ""
-        phone = c.get("contactPhone") or ""
-        status = "正常" if c.get("status") == 1 else "停用"
-        parts = [f"- {name}"]
-        if code:
-            parts.append(f"编码: {code}")
-        if contact:
-            parts.append(f"联系人: {contact}")
-        if phone:
-            parts.append(f"电话: {phone}")
-        parts.append(f"状态: {status}")
-        lines.append(" | ".join(parts))
+        lines.append("- " + format_item_with_labels(
+            c, _CUSTOMER_LABELS, transforms=_CUSTOMER_TRANSFORMS))
     if int(total) > len(items):
         lines.append(f"\n（显示前{len(items)}个，共{total}个）")
     return "\n".join(lines)
@@ -118,18 +164,8 @@ def format_distributor_list(data: Any, entry: ApiEntry) -> str:
         return "暂无分销商信息"
     lines = [f"共 {len(items)} 个分销商：\n"]
     for d in items[:30]:
-        name = d.get("distributorCompanyName") or ""
-        did = d.get("distributorCompanyId") or ""
-        level = d.get("distributorLevel") or ""
-        staff = d.get("saleStaffName") or ""
-        parts = [f"- {name}"]
-        if did:
-            parts.append(f"ID: {did}")
-        if level:
-            parts.append(f"等级: {level}")
-        if staff:
-            parts.append(f"业务员: {staff}")
-        lines.append(" | ".join(parts))
+        lines.append("- " + format_item_with_labels(
+            d, _DISTRIBUTOR_LABELS, transforms=_DISTRIBUTOR_TRANSFORMS))
     return "\n".join(lines)
 
 

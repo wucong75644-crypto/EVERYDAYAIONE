@@ -124,13 +124,13 @@ PRODUCT_REGISTRY = {
     ),
     "multicode_query": ApiEntry(
         method="erp.item.multicode.query",
-        description="通过商品条码反查关联商品信息。仅支持条码查询，不支持商家编码或规格编码",
+        description="通过编码反查关联商品信息。支持主商家编码、规格商家编码、商品条码三种编码查询",
         param_map={
             "code": "code",
             "barcode": "code",
         },
         param_docs={
-            "code": "商品条码。示例: 6901234567890",
+            "code": "主商家编码/规格商家编码/商品条码（三种均可）。示例: ABC123",
             "barcode": "商品条码（code的别名）。示例: 6901234567890",
         },
         required_params=["code"],
@@ -159,10 +159,10 @@ PRODUCT_REGISTRY = {
             "sku_outer_id": "SKU商家编码（多个逗号隔开）。示例: SKU001,SKU002",
             "warehouse_id": "仓库ID（通过warehouse_list获取）",
             "stock_statuses": "库存状态筛选（多个逗号隔开）。可选值: 1=正常, 2=警戒, 3=无货, 4=超卖, 6=有货。示例: 1,2",
-            "item_type": "商品类型。可选值: 0=单品, 1=套件, 2=组合装, 3=加工",
+            "item_type": "商品类型。可选值: 0=组合商品(仅单品), 1=套件, 2=组合装, 3=加工。默认0",
             "brand": "品牌名称（多个逗号隔开）。示例: 品牌A,品牌B",
-            "created": "创建日期。格式: YYYY-MM-DD",
-            "modified": "修改日期。格式: YYYY-MM-DD",
+            "created": "商品创建时间。格式: yyyy-MM-dd HH:mm:ss。示例: 2026-03-01 00:00:00",
+            "modified": "商品更新时间。格式: yyyy-MM-dd HH:mm:ss。示例: 2026-03-01 00:00:00",
             "stock_start": "库存变动起始日期。格式: YYYY-MM-DD。示例: 2026-03-01",
             "stock_end": "库存变动结束日期。格式: YYYY-MM-DD。示例: 2026-03-15",
             "relation_fields": "关联信息字段。指定需要额外返回的关联信息",
@@ -242,7 +242,7 @@ PRODUCT_REGISTRY = {
             "name": "name",
         },
         param_docs={
-            "name": "虚拟仓名称（模糊搜索）。示例: 预售仓",
+            "name": "虚拟仓名称。示例: 预售仓",
         },
         formatter="format_generic_list",
         response_key="list",
