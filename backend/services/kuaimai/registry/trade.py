@@ -56,6 +56,14 @@ TRADE_REGISTRY = {
         error_codes={
             "20009": "系统订单号格式不正确",
         },
+        param_hints={
+            "order_id": "平台订单号（淘宝/抖音/京东等）。不确定是平台单号还是系统单号时优先用这个",
+            "system_id": "ERP系统单号（16位数字）。用 order_id 查不到时改用这个",
+        },
+        retry_alt_params={
+            "order_id": "system_id",
+            "system_id": "order_id",
+        },
         formatter="format_order_list",
     ),
     "order_log": ApiEntry(
@@ -134,6 +142,14 @@ TRADE_REGISTRY = {
             "use_cursor": "是否使用游标分页。可选值: true, false。配合cursor使用。示例: true",
             "cursor": "分页游标。上一次查询返回的cursor值，用于翻页。示例: 1234567890",
         },
+        param_hints={
+            "order_id": "平台订单号。不确定是平台单号还是系统单号时优先用这个",
+            "system_id": "ERP系统单号（16位数字）。用 order_id 查不到时改用这个",
+        },
+        retry_alt_params={
+            "order_id": "system_id",
+            "system_id": "order_id",
+        },
         formatter="format_shipment_list",
     ),
     "express_query": ApiEntry(
@@ -181,6 +197,14 @@ TRADE_REGISTRY = {
             "32": "未设置单号时timeType/timeBegin/timeEnd参数必填",
             "33": "参数超限（pageSize≤200, 各ID≤50个）",
             "400": "资源异常",
+        },
+        param_hints={
+            "order_id": "平台订单号。不确定是平台单号还是系统单号时优先用这个",
+            "system_id": "ERP系统单号（16位数字）。用 order_id 查不到时改用这个",
+        },
+        retry_alt_params={
+            "order_id": "system_id",
+            "system_id": "order_id",
         },
         formatter="format_outstock_order_list",
     ),

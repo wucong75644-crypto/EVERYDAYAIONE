@@ -13,6 +13,11 @@ from loguru import logger
 
 from services.kuaimai.client import KuaiMaiClient
 from services.kuaimai.formatters import get_formatter
+from services.kuaimai.param_guardrails import (
+    broadened_code_query,
+    diagnose_empty_result,
+    preprocess_params,
+)
 from services.kuaimai.param_mapper import map_params
 from services.kuaimai.registry import TOOL_REGISTRIES
 from services.kuaimai.registry.base import ApiEntry
@@ -63,6 +68,9 @@ class ErpDispatcher:
                 f"该操作支持的参数: {', '.join(valid)}"
             )
 
+        # 2.5 参数预处理（格式规则自动纠正）
+        params, corrections = preprocess_params(entry, params)
+
         # 3. 映射参数（白名单校验）
         api_params, param_warnings = map_params(entry, params)
         if param_warnings:
@@ -101,8 +109,35 @@ class ErpDispatcher:
             )
             return f"ERP接口调用失败: {e}"
 
+        # 4.5 编码驱动宽泛查询（零结果时 主编码优先 + SKU兜底）
+        broadened_note = ""
+        broadened = await broadened_code_query(
+            entry, params, api_params, data,
+            self._client, base_url, system_params,
+        )
+        if broadened:
+            data, broadened_note = broadened
+
         # 5. 格式化返回（附带无效参数警告）
         result = self._format_response(data, entry, action)
+
+        # 5.3 宽泛查询说明
+        if broadened_note:
+            result = broadened_note + "\n\n" + result
+
+        # 5.5 参数自动纠正记录
+        if corrections:
+            result = (
+                "⚙ 参数自动纠正: "
+                + "; ".join(corrections) + "\n\n"
+                + result
+            )
+
+        # 5.6 零结果诊断建议
+        suggestion = diagnose_empty_result(entry, params, data)
+        if suggestion:
+            result += suggestion
+
         if param_warnings:
             valid = sorted(entry.param_map.keys())
             result += (

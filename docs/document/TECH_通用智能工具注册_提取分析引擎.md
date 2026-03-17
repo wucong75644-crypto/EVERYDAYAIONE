@@ -1,0 +1,896 @@
+# 通用智能工具注册 — 提取分析引擎技术方案
+
+## Context
+
+构建通用工具注册框架的**核心价值**不在 CRUD 框架，而在于三个提取分析引擎：
+1. **DocParser** — 从 API 文档自动提取 Schema
+2. **RuleExtractor** — 从文档+样本中提取使用规则
+3. **DataProfiler** — 从真实数据中提取用户画像 + 字段映射表
+
+以快麦 ERP 为第一个验证 case，迁移现有硬编码 → DB 驱动。
+
+---
+
+## 〇、核心查询范式：宽泛查询 + 本地计算
+
+### 问题
+
+现有模式让 AI **精确构造 API 参数**去匹配用户意图。为此写了 145 行路由规则教 AI 怎么传参，仍然经常出错。
+根因：我们不可能穷举所有参数组合，API 的过滤能力也有限。
+
+### 新范式
+
+```
+精确匹配（现在）                     宽泛查询 + 本地计算（新）
+───────────                         ─────────────────────
+AI 判断传 keyword 还是 outer_id      AI 只管调 product_list 宽泛拿数据
+AI 判断 timeType 选哪个              code_execute 沙盒做精确过滤/统计
+AI 传错参数 → 结果不对               代码过滤 → 结果精确
+需要 145 行路由规则                  只需 ~20 行分类级规则
+```
+
+### 对各引擎的影响
+
+| 引擎 | 精确匹配模式 | 宽泛查询模式 |
+|------|------------|------------|
+| **RuleExtractor** | 需提取每个参数的用法（70个action × N参数） | 只需提取分类级规则（7个分类怎么选） |
+| **DataProfiler** | 画像仅注入提示词 | 画像 = **字段映射表**，代码过滤依赖它 |
+| **PromptBuilder** | 145行参数级规则 | ~20行 + 字段映射 |
+| **AI 大脑** | 学会精确传参 | 学会"调哪个 API + 写过滤代码" |
+
+### 查询模式决策树
+
+```
+用户查询
+    ↓
+判断类型：
+    ├─ 精确查询（单个订单号/编码）→ 直接传 order_id/outer_id，无需沙盒
+    ├─ 模糊查询（名称/前缀/关键词）→ 宽泛查 keyword + 沙盒过滤
+    └─ 统计类（"今天多少单""各店铺销量"）→ 宽泛查 + 沙盒聚合计算
+```
+
+### 沙盒代码示例
+
+AI 大脑生成的沙盒代码（已有 `code_execute` + `execute_raw()` 基础设施）：
+
+```python
+# 用户问："TJ开头的商品有多少库存"
+# AI 生成以下沙盒代码：
+
+# Step 1: 宽泛查商品
+products = await erp.query("product_list", {"keyword": "TJ", "page_size": 200})
+# Step 2: 本地精确过滤
+tj_products = [p for p in products["list"] if p["outerCode"].startswith("TJ")]
+# Step 3: 查这些商品的库存
+for p in tj_products:
+    stock = await erp.query("stock_status", {"outer_id": p["outerCode"]})
+    p["stock"] = stock.get("totalQty", 0)
+# Step 4: 汇总
+total = sum(p["stock"] for p in tj_products)
+print(f"TJ开头共{len(tj_products)}个商品，总库存{total}")
+```
+
+**关键**：AI 要写出 `p["outerCode"]` 而不是 `p["code"]`，这就需要 DataProfiler 提供的**字段映射表**。
+
+---
+
+## 一、输入分析
+
+### 快麦 API 文档格式（已爬取为 MD）
+
+**主要输入**：`docs/kuaimai_api_summary.md`（5288行，精简版）
+
+每个 API 的格式高度规律：
+```markdown
+## trade                          ← 分类
+
+### 订单查询                       ← API 中文名
+method: erp.trade.list.query      ← API 方法名
+params:
+请求参数​
+全部展开
+参数名                            ← 表头（固定）
+类型
+描述
+必填
+[默认值]                          ← 可选列
+sid                               ← 参数名
+string                            ← 类型
+系统订单号，多个逗号隔开            ← 描述
+tid                               ← 下一个参数...
+string
+平台订单号，多个逗号隔开
+pageSize
+integer
+每页多少条，最大支持200，不能小于2
+```
+
+每个参数占 3-5 行：name → type → description → [必填] → [默认值]
+
+**补充输入**：`docs/document/TECH_快麦API文档_完整.md`（38490行，含响应示例+错误码）
+
+---
+
+## 二、DocParser — 文档解析引擎
+
+### 策略：结构化解析 + AI 增强
+
+**80% 正则解析**（确定性高、零成本）+ **20% AI 补充**（推断 param_map、分类归属）
+
+### 2.1 结构化解析器（纯 Python，无 LLM 调用）
+
+```python
+# backend/services/tool_registry/doc_parser.py
+
+class DocParser:
+    """API 文档解析引擎"""
+
+    def parse_summary_doc(self, md_text: str) -> list[ParsedAction]:
+        """解析 kuaimai_api_summary.md 格式的文档
+
+        Returns: 结构化的 action 列表
+        """
+        actions = []
+        current_category = ""
+
+        for block in self._split_api_blocks(md_text):
+            action = self._parse_single_api(block, current_category)
+            if action:
+                actions.append(action)
+
+        return actions
+
+    def _split_api_blocks(self, text: str) -> list[str]:
+        """按 '### API名' 分割文档为独立 API 块
+
+        识别模式：
+        - '## xxx' → 分类切换 (trade/basic/product...)
+        - '### xxx' → 新 API 开始
+        - 'method: xxx' → API 方法名
+        """
+
+    def _parse_single_api(self, block: str, category: str) -> ParsedAction | None:
+        """解析单个 API 块 → ParsedAction
+
+        提取：
+        1. display_name: '### ' 后面的文本
+        2. api_method: 'method: ' 后面的文本
+        3. params: 逐行解析参数组
+        """
+
+    def _parse_params(self, lines: list[str]) -> list[ParsedParam]:
+        """核心：参数解析状态机
+
+        状态机：
+        EXPECT_NAME → EXPECT_TYPE → EXPECT_DESC → EXPECT_FLAG → EXPECT_NAME
+
+        难点：
+        1. '必填'/'默认值' 是可选行 → 需要判断下一行是新参数名还是标记
+        2. 描述可能跨多行 → 如果下一行不是已知类型名，则追加到描述
+        3. 表头行 ('参数名','类型','描述','必填','默认值','全部展开') 要跳过
+
+        判断规则：
+        - 已知类型集合: {string, integer, int, long, float, double, boolean, array, object, Long, String, Integer}
+        - 如果当前在 EXPECT_TYPE 状态且行不在已知类型集合 → 说明上一行不是参数名，回退
+        - '必填' 单独成行 → 标记 required=True
+        - 其他单独成行（非类型、非空）→ 可能是默认值
+        """
+
+@dataclass
+class ParsedParam:
+    name: str               # API 原始参数名 (如 "tid", "pageSize")
+    param_type: str         # string/integer/array/object
+    description: str        # 中文描述
+    required: bool          # 是否必填
+    default_value: str      # 默认值 (如有)
+
+@dataclass
+class ParsedAction:
+    category: str           # trade/basic/product...
+    display_name: str       # 中文名 (如 "订单查询")
+    api_method: str         # 方法名 (如 "erp.trade.list.query")
+    params: list[ParsedParam]
+    raw_text: str           # 原始文本 (供 AI 增强用)
+```
+
+### 2.2 AI 增强层（LLM 调用，处理正则无法解决的部分）
+
+结构化解析完成后，AI 负责：
+
+**任务 A：生成 param_map（用户友好名 → API 参数名）**
+
+这是现在手写在 `registry/trade.py` 里的：
+```python
+# 现在手写：
+param_map = {"order_id": "tid", "system_id": "sid", "buyer": "buyerNick"}
+```
+
+AI Prompt：
+```
+你是 API 参数映射专家。给定以下 API 参数列表，为每个参数生成一个用户友好的英文别名。
+
+规则：
+1. 别名用 snake_case，简短有意义
+2. 中文业务用户会用别名查询，所以要直觉化
+3. 已有 API 参数名足够友好的（如 status, code），别名等于参数名本身
+4. 保留原始参数名作为 key，别名作为 value
+
+API: erp.trade.list.query (订单查询)
+参数：
+- tid (string): 平台订单号，多个逗号隔开
+- sid (string): 系统订单号，多个逗号隔开
+- buyerNick (string): 买家昵称
+- timeType (string): 查询的时间类型
+- startTime (string): 起始时间
+- endTime (string): 截止时间
+- userIds (string): 店铺ID，多个逗号隔开
+
+输出 JSON：
+{"tid": "order_id", "sid": "system_id", "buyerNick": "buyer", "timeType": "time_type", ...}
+```
+
+**任务 B：判断写操作**
+```
+以下 API 哪些是写操作（新增/修改/删除），哪些是查询操作？
+只返回写操作的 method 列表。
+
+API列表：
+- erp.trade.list.query: 订单查询
+- erp.trade.create: 创建系统手工单
+- erp.customer.create: 新增修改客户基本信息
+- ...
+```
+
+**任务 C：生成 param_docs（给 AI 看的参数文档）**
+
+这是现在手写在 `ApiEntry.param_docs` 里的：
+```python
+# 现在手写：
+param_docs = {
+    "order_id": "平台订单号（淘宝18位/抖音19位...）支持多个逗号隔开",
+}
+```
+
+AI Prompt：
+```
+你是 ERP 系统专家。为以下参数生成面向 AI 的使用文档。
+
+要求：
+1. 保留原始描述的核心信息
+2. 补充实际使用时的格式示例
+3. 如果描述中有枚举值，整理为清晰的列表
+4. 如果有隐含约束，显式指出
+
+参数：timeType (string)
+原始描述：查询的时间类型：[created:下单时间]--[pay_time:付款时间]--[consign_time:发货时间]--[audit_time:审核时间]--[upd_time:修改时间]；与startTime、endTime同时使用，时间跨度建议不超过一天。为空时，默认为修改时间
+
+期望输出：
+"时间类型（可选值: created=下单时间, pay_time=付款时间, consign_time=发货时间, audit_time=审核时间, upd_time=修改时间）。需与 start_time/end_time 同时使用。默认按修改时间查。时间跨度建议≤1天"
+```
+
+### 2.3 解析流程
+
+```
+kuaimai_api_summary.md
+    ↓
+_split_api_blocks() → 70+ API 块
+    ↓
+_parse_single_api() × 70 → 70+ ParsedAction (纯正则, ~0.5秒)
+    ↓
+AI 增强 (分批, 每批 10 个 API):
+    ├─ 任务A: generate_param_maps() → param_map
+    ├─ 任务B: classify_write_ops() → is_write
+    └─ 任务C: enrich_param_docs() → param_docs
+    ↓
+合并 → 写入 tool_actions 表
+```
+
+**AI 调用量预估**：70个 API / 10 每批 = 7 次 AI 调用 × 3 任务 = ~21 次 qwen-plus 调用，总成本 < ¥1
+
+---
+
+## 三、RuleExtractor — 规则提取引擎
+
+### 3.1 规则重心转移
+
+在「宽泛查询 + 本地计算」范式下，规则不再需要教 AI "每个参数怎么传"，而是聚焦于：
+
+| 规则层级 | 目的 | 举例 |
+|---------|------|------|
+| **分类路由** | 用户意图 → 哪个 API | "库存问题 → stock_status 或 product_list" |
+| **查询模式** | 何时精确查、何时宽泛查+沙盒 | "单个订单号 → 直传；统计类 → 宽泛查+code_execute" |
+| **字段语义** | API 返回字段的业务含义 | "outerCode=商家编码，barCode=条码，goodsNo=款号" |
+| **参数约束** | API 调用的硬性限制 | "pageSize 最小2最大200" |
+| **枚举映射** | 中文→系统值 | "待发货→WAIT_SEND_GOODS" |
+| **错误码** | 错误含义 + 自修复 | "20002 → pageSize 不正确" |
+
+**不再需要的规则**（由沙盒代码替代）：
+- ~~"tid 和 sid 怎么选"~~ → 沙盒代码直接用字段名过滤
+- ~~"timeType 选 created 还是 pay_time"~~ → 宽泛查时间范围，沙盒按需过滤
+- ~~"先查商品再查库存"~~ → 沙盒代码直接编排多步调用
+
+### 3.2 两层提取
+
+**Layer A：正则提取（从已解析的参数描述中，无 LLM）**
+
+```python
+class RuleExtractor:
+    def extract_from_parsed_actions(self, actions: list[ParsedAction]) -> list[ExtractedRule]:
+        """从结构化解析结果中提取规则"""
+        rules = []
+        for action in actions:
+            for param in action.params:
+                rules.extend(self._extract_constraints(action, param))
+                rules.extend(self._extract_enum_mappings(action, param))
+                rules.extend(self._extract_defaults(action, param))
+        return rules
+
+    def _extract_constraints(self, action, param) -> list[ExtractedRule]:
+        """正则模式：
+        - r'最大支持(\d+)' → max_value
+        - r'不能小于(\d+)' → min_value
+        - r'与(.+)同时使用' → dependency
+        - r'格式[：:](.+?)(?=[，。]|$)' → format_hint
+        """
+
+    def _extract_enum_mappings(self, action, param) -> list[ExtractedRule]:
+        """匹配模式：
+        - '[created:下单时间]--[pay_time:付款时间]' → 枚举映射
+        - '0.停用 1.正常' → 数值枚举
+        """
+```
+
+**Layer B：AI 推断（分类级规则 + 查询模式，按分类分批）**
+
+AI Prompt：
+```
+你是 ERP 数据查询专家。分析以下 API 列表，生成分类级路由规则和查询模式建议。
+
+## trade 分类（订单/交易相关）：
+1. 订单查询 (erp.trade.list.query) - 参数: sid, tid, timeType, startTime, endTime, status...
+2. 订单详情 (erp.trade.detail.query) - 参数: sid
+3. 出库查询 (erp.trade.outstock.query) - 参数: sid, tid...
+4. 物流查询 (erp.express.query) - 参数: sid, expressNo...
+
+请输出 JSON：
+{
+  "routing_rules": [
+    "用户问订单相关 → trade 分类",
+    "用户问物流/快递 → express_query"
+  ],
+  "query_patterns": [
+    {"scene": "查某个订单", "mode": "precise", "action": "order_list", "key_param": "tid"},
+    {"scene": "今天多少单", "mode": "broad_then_compute", "action": "order_list", "broad_params": {"timeType": "created", "startTime": "today"}, "compute": "count(results)"},
+    {"scene": "各店铺销量", "mode": "broad_then_compute", "action": "order_list", "compute": "group_by(shopName).count()"}
+  ]
+}
+```
+
+### 3.3 响应字段语义提取（新增，关键！）
+
+宽泛查询后沙盒代码要知道字段含义，才能正确过滤。这需要从 API 响应示例或真实数据中提取。
+
+```python
+    async def extract_field_semantics(self, tool_id: str, samples: dict[str, list]) -> list[ExtractedRule]:
+        """从样本数据中提取响应字段语义
+
+        输入: {"order_list": [{"tid": "123", "sid": "456", "buyerNick": "张三", ...}]}
+
+        输出规则 (rule_type='field_semantic'):
+        - "order_list 响应字段: tid=平台订单号, sid=系统单号, buyerNick=买家昵称, status=订单状态, payment=实付金额"
+        - "product_list 响应字段: outerCode=商家编码, name=商品名称, barCode=条码, totalQty=库存数量"
+        """
+```
+
+AI Prompt：
+```
+以下是 ERP API order_list 返回的一条样本数据：
+{
+  "tid": "3248751029571832",
+  "sid": "XS2403150001",
+  "buyerNick": "张三",
+  "status": "WAIT_SEND_GOODS",
+  "payment": "128.00",
+  "shopName": "天际旗舰店",
+  "warehouseName": "杭州主仓",
+  "outerCode": "TJ-0001",
+  "skuOuterCode": "TJ-0001-WH-XL",
+  "goodsName": "纯棉圆领T恤",
+  "num": 2,
+  "totalFee": "256.00",
+  "created": "2026-03-15 14:23:01"
+}
+
+请为每个字段生成中文语义说明（JSON格式）：
+{"tid": "平台订单号", "sid": "系统单号(ERP内部编号)", "buyerNick": "买家昵称", ...}
+```
+
+**这些字段语义存入 tool_rules (rule_type='field_semantic')，注入提示词后，AI 写沙盒代码时就知道用 `p["outerCode"]` 而不是 `p["code"]`。**
+
+### 3.4 错误码提取（从完整文档，正则）
+
+```python
+    def extract_error_codes(self, full_doc_text: str) -> list[ExtractedRule]:
+        """从完整文档中提取错误码表
+
+        匹配模式: '| 错误码 | 错误信息 | 解决方案 |'
+        分两类：
+        1. 全局错误码（"API错误码解释" 章节）
+        2. 每个 API 独有的错误码（各 API 的 "错误码解释" 小节）
+        """
+```
+
+### 3.5 提取流程
+
+```
+已解析的 ParsedAction 列表 (来自 DocParser)
+    ↓
+Layer A: 正则提取 (~0.1秒)
+    ├─ constraints: "pageSize 最大200，不能小于2"
+    ├─ enum_mappings: "timeType: created=下单时间, pay_time=付款时间..."
+    └─ defaults: "timeType 默认为修改时间"
+    ↓
+Layer B: AI 推断 (按分类分批, ~7次 AI 调用)
+    ├─ routing_rules: "库存问题 → product 分类"
+    ├─ query_patterns: "统计类 → broad_then_compute"
+    └─ field_semantics: "outerCode=商家编码, barCode=条码"  ← 新增关键
+    ↓
+错误码提取 (正则, 从完整文档)
+    ├─ 全局: {1: "服务不可用", 25: "签名无效", ...}
+    └─ 每API: {20002: "pageSize不正确", ...}
+    ↓
+合并去重 → 写入 tool_rules 表
+```
+
+---
+
+## 四、DataProfiler — 数据画像 + 字段映射引擎
+
+### 4.0 核心定位变化
+
+在「宽泛查询 + 本地计算」范式下，DataProfiler 不仅是"让 AI 更懂用户"的锦上添花，
+而是**沙盒代码能正确运行的必要前提**：
+
+```
+没有画像：AI 写 p["code"] → 实际字段是 p["outerCode"] → 代码报错
+有画像：  AI 知道编码字段叫 outerCode → 写出正确代码 → 结果准确
+```
+
+画像输出两部分：
+1. **用户特征**（注入提示词）：编码规律、店铺列表、品类分布
+2. **字段映射表**（注入提示词，供沙盒代码引用）：每个 API 返回的字段名 → 业务含义
+
+### 4.1 采样策略
+
+```python
+class DataProfiler:
+    """用户数据画像 + 字段映射生成器"""
+
+    PROFILE_ACTIONS = [
+        ("product_list", "商品编码+名称规律+响应字段"),
+        ("sku_list", "SKU编码+规格命名+响应字段"),
+        ("shop_list", "店铺列表"),
+        ("warehouse_list", "仓库列表"),
+        ("brand_list", "品牌列表"),
+        ("cat_list", "分类列表"),
+        ("order_list", "订单字段结构"),     # ← 新增：为沙盒代码提供订单字段映射
+    ]
+
+    async def profile(self, tool_id: str, user_id: str, dispatcher) -> dict:
+        """完整画像流程
+
+        1. 从 tool_actions 中获取可用的 list 类 actions
+        2. 并发调用（最多 7 个，每个拉 1 页）
+        3. 分析样本 → 用户特征 + 字段映射
+        4. 存入 tool_user_profiles
+        """
+```
+
+### 4.2 分析模块
+
+**模块 A：编码规律分析（正则 + 统计，无 LLM）**
+
+```python
+    def _analyze_encoding_patterns(self, items: list[dict], field_name: str) -> dict:
+        """分析编码字段的命名规律
+
+        输入：50 个商品的 outerCode 值
+        如: ["TJ-0001", "TJ-0002", "BK-1001"]
+
+        分析步骤：
+        1. 提取前缀: Counter(prefix) → {"TJ": 30, "BK": 20}
+        2. 检测格式: 正则匹配 → "字母前缀-4位数字"
+        3. 分隔符: 检测 -, _, . 等
+
+        输出:
+        {
+            "pattern": "前缀-4位数字",
+            "prefixes": {"TJ": "60%", "BK": "40%"},
+            "examples": ["TJ-0001", "BK-1001"]
+        }
+        """
+```
+
+**模块 B：枚举值发现（统计，无 LLM）**
+
+```python
+    def _discover_enums(self, items: list[dict]) -> dict:
+        """发现高频枚举值
+
+        对每个字段统计 unique 值:
+        - unique_count < 20 → 枚举字段 → 输出完整列表
+        如: {"杭州主仓": 50%, "义乌分仓": 30%, "广州仓": 20%}
+        """
+```
+
+**模块 C：字段映射表生成（新增，核心！）**
+
+```python
+    def _build_field_map(self, action_name: str, sample_items: list[dict]) -> dict:
+        """从样本数据的 key 列表自动生成字段映射
+
+        输入: order_list 返回的一条数据的所有 key:
+        ["tid", "sid", "buyerNick", "status", "payment", "shopName",
+         "warehouseName", "outerCode", "goodsName", "num", "created", ...]
+
+        输出（AI 辅助生成中文语义）:
+        {
+            "order_list": {
+                "tid": "平台订单号",
+                "sid": "系统单号",
+                "buyerNick": "买家昵称",
+                "status": "订单状态(枚举值)",
+                "payment": "实付金额(元)",
+                "shopName": "店铺名称",
+                "outerCode": "商家编码",
+                "goodsName": "商品名称",
+                "num": "购买数量",
+                "created": "下单时间"
+            }
+        }
+        """
+```
+
+这里 AI 的作用是**给字段名标注中文语义**（因为 `buyerNick`、`outerCode` 等缩写不直观），
+但字段名本身是从真实数据中 100% 确定的——不是猜的。
+
+**模块 D：AI 总结（最终汇总）**
+
+```python
+    async def _summarize_with_ai(self, raw_analysis: dict, field_maps: dict) -> dict:
+        """AI 汇总分析结果 → 生成画像 + 字段映射"""
+```
+
+AI Prompt：
+```
+你是数据分析师。根据以下 ERP 样本分析结果，生成用户数据画像和字段映射表。
+
+## 样本分析结果
+商品数据（50条）：
+- 编码字段: outerCode, 前缀分布: TJ=60%, BK=40%, 格式: 字母-4位数字
+- 名称字段: name, 示例: "纯棉圆领T恤 白色"
+
+店铺列表: [{"id":101,"name":"天际旗舰店"},{"id":102,"name":"天际拼多多店"}]
+仓库列表: [{"id":1,"name":"杭州主仓"},{"id":2,"name":"义乌分仓"}]
+
+## API 响应字段（从真实数据提取的 key）
+product_list: ["outerCode","name","barCode","goodsNo","catName","brandName","status","totalQty","created"]
+order_list: ["tid","sid","buyerNick","status","payment","shopName","warehouseName","outerCode","goodsName","num","created"]
+
+请输出 JSON（≤300字）：
+{
+  "user_profile": {
+    "encoding_patterns": {"商品编码": "TJ/BK + 连字符 + 4位数字"},
+    "entity_lists": {"店铺": [...], "仓库": [...]},
+    "statistics": {"商品总数": 2156},
+    "business_type": "服装，多平台"
+  },
+  "field_maps": {
+    "product_list": {"outerCode": "商家编码", "name": "商品名称", "barCode": "条码", "totalQty": "库存数量", ...},
+    "order_list": {"tid": "平台订单号", "sid": "系统单号", "buyerNick": "买家", "payment": "实付金额", ...}
+  }
+}
+```
+
+### 4.3 画像注入方式
+
+画像存入 DB 后，在对话时注入到 system_prompt 的**两个位置**：
+
+**位置 1：用户特征（给 AI 理解用户）**
+```
+用户数据特征：
+- 商品编码格式：TJ/BK + 连字符 + 4位数字，如 TJ-0001
+- 店铺：天际旗舰店(天猫)、天际拼多多店、天际抖音小店
+- 仓库：杭州主仓、义乌分仓
+- 商品约2156个，服装类目为主
+```
+
+**位置 2：字段映射表（给 AI 写沙盒代码时参考）**
+```
+ERP API 字段映射（写 code_execute 代码时使用）：
+- product_list: outerCode=商家编码, name=商品名称, barCode=条码, totalQty=库存
+- order_list: tid=平台订单号, sid=系统单号, buyerNick=买家, payment=实付金额, shopName=店铺
+- sku_list: skuOuterCode=SKU编码, spec=规格, price=单价
+```
+
+### 4.4 画像完整流程
+
+```
+触发：用户首次绑定 ERP（或手动"刷新画像"）
+    ↓
+选择采样 actions（list 类、非写操作）
+    ↓
+并发调用 API（每个 action 拉 1 页, page_size=50）
+    ↓
+分析（正则+统计，无 LLM）:
+    ├─ 编码规律（前缀/格式/分隔符）
+    ├─ 枚举发现（仓库/店铺/分类/品牌完整列表）
+    ├─ 数据量级（total 字段）
+    └─ 字段名提取（每个 API 响应的所有 key）
+    ↓
+AI 汇总（1次 qwen-plus 调用）:
+    ├─ 用户特征画像（≤200字）
+    └─ 字段映射表（每个 API 的 key→中文语义）
+    ↓
+存入 tool_user_profiles 表
+    ↓
+对话时注入 system_prompt（用户特征 + 字段映射）
+    ↓
+效果：AI 写沙盒代码时自动使用正确的字段名
+```
+
+---
+
+## 五、FeedbackLoop — 失败学习引擎
+
+### 5.1 实时记录
+
+```python
+class FeedbackLoop:
+    async def record(self, tool_id, action, params, success, error_code, error_msg, duration_ms):
+        """每次 API 调用后 fire-and-forget 记录"""
+        # 写入 tool_usage_logs 表
+```
+
+集成点：在 `UniversalDispatcher.execute()` 的 finally 块中调用。
+
+### 5.2 失败分析（定时触发或按需）
+
+```python
+    async def analyze_failures(self, tool_id: str, since_hours: int = 24) -> list[dict]:
+        """分析近期失败，发现新规则
+
+        触发条件：同一 error_code 出现 ≥3 次
+
+        流程：
+        1. 从 tool_usage_logs 查询近期失败记录
+        2. 按 (action, error_code) 聚合
+        3. 对高频失败模式调用 AI 分析
+        """
+```
+
+AI Prompt：
+```
+以下是 ERP API 近期的失败记录：
+
+action=order_list, error_code=20002, 共失败5次
+失败时的参数: [{"pageSize": 10}, {"pageSize": 5}, {"pageSize": 15}, ...]
+
+请分析失败原因并生成修复规则：
+{
+  "analysis": "pageSize 低于最小值导致失败",
+  "rule": {"type": "constraint", "rule_text": "pageSize 最小值为 20", "action": "order_list"},
+  "auto_fix": {"param": "pageSize", "condition": "< 20", "fix_to": 20}
+}
+```
+
+### 5.3 实时自修复
+
+```python
+    async def try_auto_fix(self, action: str, params: dict, error_code: str) -> dict | None:
+        """查找已有的 auto_fix 规则，尝试修正参数
+
+        从 tool_rules 中查找 rule_type='error_handling' 且有 auto_fix 的规则
+        匹配 error_code → 应用修正 → 返回修正后的 params
+        """
+```
+
+集成到 `UniversalDispatcher.execute()`：
+```python
+    result = await self._call_api(method, api_params)
+    if not result.get("success"):
+        fixed_params = await feedback.try_auto_fix(action, params, error_code)
+        if fixed_params:
+            result = await self._call_api(method, fixed_params)  # 自动重试
+```
+
+---
+
+## 六、文件结构
+
+```
+backend/services/tool_registry/
+├── __init__.py
+├── models.py               # 数据类 (~80行)
+├── doc_parser.py            # 文档解析引擎 (~300行)
+│   ├── parse_summary_doc()     # 入口：解析精简文档
+│   ├── _split_api_blocks()     # 按 ### 分割
+│   ├── _parse_single_api()     # 解析单个 API
+│   ├── _parse_params()         # 参数状态机（核心）
+│   ├── enhance_with_ai()       # AI 增强层
+│   │   ├── _generate_param_maps()   # 任务A: 生成 param_map
+│   │   ├── _classify_write_ops()    # 任务B: 识别写操作
+│   │   └── _enrich_param_docs()     # 任务C: 增强参数文档
+│   └── save_to_db()            # 存入 tool_actions
+├── rule_extractor.py        # 规则提取引擎 (~250行)
+│   ├── extract_from_parsed()   # 正则层：约束/枚举/默认值
+│   ├── extract_with_ai()       # AI层：操作链/决策/隐含约束
+│   ├── extract_error_codes()   # 错误码提取
+│   └── save_to_db()            # 存入 tool_rules
+├── data_profiler.py         # 数据画像引擎 (~250行)
+│   ├── profile()               # 入口：完整画像流程
+│   ├── _select_sample_actions() # 选择采样目标
+│   ├── _fetch_samples()         # 并发 API 采样
+│   ├── _analyze_encoding()      # 编码规律分析
+│   ├── _discover_enums()        # 枚举值发现
+│   ├── _summarize_with_ai()     # AI 汇总
+│   └── save_to_db()             # 存入 tool_user_profiles
+├── feedback_loop.py         # 失败学习引擎 (~200行)
+│   ├── record()                 # 记录调用日志
+│   ├── analyze_failures()       # 失败分析
+│   └── try_auto_fix()           # 实时自修复
+├── registry_service.py      # 注册 CRUD (~150行)
+├── tool_builder.py          # 生成 FC 工具定义 (~150行)
+├── prompt_builder.py        # 生成路由提示词 (~150行)
+└── universal_dispatcher.py  # 通用调度器 (~200行)
+```
+
+---
+
+## 七、集成点（与现有系统交互）
+
+### 7.1 提示词注入
+
+**位置**：`config/agent_tools.py:build_agent_system_prompt()` (L438)
+
+```python
++ ERP_ROUTING_PROMPT         # 迁移后 → 从 tool_rules 动态生成
++ CRAWLER_ROUTING_PROMPT     # 暂不动
++ CODE_ROUTING_PROMPT        # 暂不动
+```
+
+### 7.2 画像注入（用户特征 + 字段映射）
+
+**位置**：`services/agent_context.py:_build_system_prompt()` (L186)
+
+在知识库注入后追加：
+```python
+profile = await get_user_tool_profile(self.user_id)
+if profile:
+    # 用户特征（给 AI 理解业务上下文）
+    base_prompt += f"\n\n用户数据特征：\n{profile['user_profile']}"
+    # 字段映射（给 AI 写 code_execute 沙盒代码时参考）
+    base_prompt += f"\n\nERP API 字段映射（写 code_execute 代码时使用正确字段名）：\n{profile['field_maps']}"
+```
+
+### 7.2.1 查询模式引导
+
+**位置**：`config/agent_tools.py` 的 `CODE_ROUTING_PROMPT` 或 `ERP_ROUTING_PROMPT` 中追加：
+
+```python
+QUERY_PATTERN_PROMPT = (
+    "## 数据查询最佳实践\n"
+    "- 精确查询（单个订单号/商品编码）→ 直接传参数调 ERP 工具\n"
+    "- 模糊查询（名称/前缀/关键词）→ 宽泛查询 + code_execute 过滤\n"
+    "- 统计类（多少单/各店铺销量/TOP10）→ 宽泛查询 + code_execute 聚合计算\n"
+    "- 写 code_execute 代码时，参考「ERP API 字段映射」使用正确的字段名\n"
+)
+```
+
+### 7.3 工具注册
+
+**位置**：`config/agent_tools.py:build_agent_tools()` (L142)
+
+从 DB 动态加载工具定义，替代 `build_erp_tools()`。
+
+### 7.4 工具执行
+
+**位置**：`services/tool_executor.py` (L40)
+
+替代 `_erp_dispatch`，用 `UniversalDispatcher`。
+
+### 7.5 失败记录
+
+**位置**：`UniversalDispatcher.execute()` finally 块
+
+调用 `FeedbackLoop.record()`，复用现有 `knowledge_extractor` 的 fire-and-forget 模式。
+
+---
+
+## 八、ERP 迁移策略
+
+### 一次性数据迁移脚本
+
+```python
+# backend/scripts/migrate_erp_to_registry.py
+
+async def migrate():
+    """将现有 registry/*.py 数据迁移到 tool_registry 表"""
+
+    # 1. 创建 tool_registration
+    tool_id = create("kuaimai_erp", ...)
+
+    # 2. 遍历 TOOL_REGISTRIES → tool_actions
+    for tool_name, registry in TOOL_REGISTRIES.items():
+        for action_name, entry in registry.items():
+            insert_action(tool_id, action_name, entry)
+
+    # 3. 解析 ERP_ROUTING_PROMPT → tool_rules
+    #    用正则拆分 145 行规则为独立条目
+
+    # 4. 运行 DocParser 补充缺失信息
+    #    （现有 ApiEntry 没有的：响应 schema、完整错误码）
+```
+
+### 迁移后删除的文件
+
+```
+backend/services/kuaimai/registry/  (整个目录)
+backend/config/erp_tools.py  (build_erp_tools + ERP_ROUTING_PROMPT)
+backend/services/kuaimai/dispatcher.py  (被 UniversalDispatcher 替代)
+backend/services/kuaimai/param_doc.py  (被 UniversalDispatcher 替代)
+```
+
+### 保留的文件
+
+```
+backend/services/kuaimai/client.py  (HTTP + 签名认证, UniversalDispatcher 复用)
+backend/services/kuaimai/param_mapper.py  (别名解析, 通用化后复用)
+backend/services/kuaimai/formatters/  (格式化函数, 可选保留)
+```
+
+---
+
+## 九、分阶段实施
+
+### Phase 1: DocParser + 基础框架
+- DB 迁移
+- 数据模型
+- DocParser（正则解析 + AI 增强）
+- ERP 数据迁移脚本
+- tool_builder + universal_dispatcher
+- 集成 agent_tools + tool_executor
+- 测试：解析 kuaimai_api_summary.md → 验证 actions 数量和质量
+
+### Phase 2: RuleExtractor + PromptBuilder
+- 规则正则提取
+- 规则 AI 推断
+- prompt_builder 动态生成路由提示词
+- 替代 ERP_ROUTING_PROMPT
+- 测试：对比生成的规则与现有手写规则
+
+### Phase 3: DataProfiler
+- 采样 + 分析模块
+- AI 汇总
+- 画像注入到 agent_context
+- 测试：绑定 ERP 后自动生成画像
+
+### Phase 4: FeedbackLoop
+- 调用日志记录
+- 失败分析
+- 自动修复
+- 测试：模拟失败场景验证规则自更新
+
+---
+
+## 十、验证方式
+
+1. **DocParser**：解析 `kuaimai_api_summary.md` → 对比输出的 actions 数量 vs 现有 registry 中的 actions 数量（应 ≥ 现有）
+2. **RuleExtractor**：生成的规则 vs 现有 `ERP_ROUTING_PROMPT` 145 行 → 覆盖率应 ≥ 80%
+3. **DataProfiler**：用真实 ERP 账号采样 → 画像内容合理性人工验证
+4. **FeedbackLoop**：故意传错参数 → 验证规则自动生成
+5. **端到端**：用户正常对话查询 ERP → 功能与迁移前一致
+
+```bash
+source backend/venv/bin/activate && python -m pytest backend/tests/test_tool_registry/ -q --tb=short
+```
