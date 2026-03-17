@@ -59,6 +59,16 @@ PARAM_ALIASES: Dict[str, str] = {
 }
 
 
+# 同义参数：用户角度相同含义，不同 API 用不同参数名
+# 当 A 不在 param_map 但 B 在时，自动用 B 的映射
+_PARAM_SYNONYMS: Dict[str, str] = {
+    "sku_outer_id": "outer_id",
+    "outer_id": "sku_outer_id",
+    "sku_outer_ids": "outer_ids",
+    "outer_ids": "sku_outer_ids",
+}
+
+
 def _resolve_aliases(
     user_params: Dict[str, Any], valid_keys: set,
 ) -> Dict[str, Any]:
@@ -82,7 +92,7 @@ def _resolve_aliases(
 def map_params(
     entry: ApiEntry, user_params: Dict[str, Any],
 ) -> Tuple[Dict[str, Any], List[str]]:
-    """将用户参数映射为API参数（带白名单校验）
+    """将用户参数映射为API参数（带白名单校验 + 同义参数兜底）
 
     Args:
         entry: API注册条目
@@ -102,7 +112,7 @@ def map_params(
     for key, default in entry.defaults.items():
         mapped[key] = default
 
-    # 映射用户参数（白名单校验）
+    # 映射用户参数（白名单校验 + 同义参数兜底）
     for user_key, value in user_params.items():
         if value is None:
             continue
@@ -111,7 +121,12 @@ def map_params(
         elif user_key in _COMMON_PARAMS:
             mapped[user_key] = value
         else:
-            warnings.append(user_key)
+            # 同义参数兜底：如 sku_outer_id 不在白名单但 outer_id 在
+            synonym = _PARAM_SYNONYMS.get(user_key)
+            if synonym and synonym in entry.param_map:
+                mapped[entry.param_map[synonym]] = value
+            else:
+                warnings.append(user_key)
 
     # 统一分页参数（下划线/驼峰 → API 驼峰格式）
     mapped.pop("page", None)

@@ -1305,8 +1305,11 @@ class TestDispatcherGuardrails:
 
     @pytest.mark.asyncio
     async def test_corrections_shown_in_result(self):
-        """参数自动纠正记录出现在结果开头"""
-        entry = self._make_entry()
+        """参数自动纠正记录出现在结果开头（order_id→system_id）"""
+        entry = self._make_entry(param_map={
+            "system_id": "sid",
+            "status": "status",
+        })
         mock_client = AsyncMock()
         mock_client.request_with_retry.return_value = {
             "list": [{"id": 1}], "total": 1,
@@ -1317,14 +1320,14 @@ class TestDispatcherGuardrails:
         }):
             result = await d.execute(
                 "erp_product_query", "stock_status",
-                {"outer_id": "DBTXL01-02"},
+                {"order_id": "5759422420146938"},
             )
             assert "参数自动纠正" in result
-            assert "sku_outer_id" in result
+            assert "system_id" in result
 
     @pytest.mark.asyncio
-    async def test_no_corrections_when_normal_code(self):
-        """普通编码不触发纠正"""
+    async def test_no_corrections_when_normal_param(self):
+        """正常参数不触发纠正"""
         entry = self._make_entry()
         mock_client = AsyncMock()
         mock_client.request_with_retry.return_value = {
