@@ -4571,3 +4571,170 @@ class TestProductFormattersExtended:
         assert "SKU001" in result
         assert "采购入库" in result
         assert "50" in result
+
+
+# ═══════════════════════════════════════════════════════════
+# Phase 5C: API审计修复验证
+# ═══════════════════════════════════════════════════════════
+
+
+class TestApiAuditFixes:
+    """验证 API 审计发现的问题已修复"""
+
+    # ── H1: outstock_order_query statusList 枚举修正 ───
+
+    def test_outstock_order_status_correct_labels(self):
+        """statusList 使用API文档正确标签"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        doc = TRADE_REGISTRY["outstock_order_query"].param_docs["status_list"]
+        assert "10=待处理" in doc
+        assert "20=预处理完成" in doc
+        assert "30=发货中" in doc
+        assert "50=已发货" in doc
+        assert "70=已关闭" in doc
+        assert "90=已作废" in doc
+        # 旧的错误标签不应存在
+        assert "待打印" not in doc
+        assert "待称重" not in doc
+        assert "待出库" not in doc
+        assert "部分发货" not in doc
+        assert "已签收" not in doc
+
+    # ── H2: outstock_order_query timeType 枚举修正 ───
+
+    def test_outstock_order_time_type_correct(self):
+        """timeType 使用API文档正确标签"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        doc = TRADE_REGISTRY["outstock_order_query"].param_docs["time_type"]
+        assert "2=发货时间" in doc
+        assert "3=付款时间" in doc
+        assert "4=下单时间" in doc
+        assert "5=承诺时间" in doc
+        # 旧的错误标签
+        assert "出库时间" not in doc
+        assert "修改时间" not in doc
+        assert "称重时间" not in doc
+
+    # ── H4: aftersale_list sid 警告 ───
+
+    def test_aftersale_sid_has_warning(self):
+        """aftersale_list system_id 文档包含警告"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        entry = AFTERSALES_REGISTRY["aftersale_list"]
+        # system_id 保留在 param_map（否则 LLM 看不到警告）
+        assert "system_id" in entry.param_map
+        # param_docs 包含警告文字
+        doc = entry.param_docs["system_id"]
+        assert "不支持" in doc or "⚠" in doc
+
+    # ── H5: stock_in_out 销量引导 ───
+
+    def test_stock_in_out_description_mentions_sales(self):
+        """stock_in_out description 提到销量查询"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["stock_in_out"]
+        assert "销量" in entry.description or "销售出库" in entry.description
+
+    def test_stock_in_out_has_param_hints(self):
+        """stock_in_out 有 param_hints 引导 order_type"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["stock_in_out"]
+        assert entry.param_hints
+        assert "order_type" in entry.param_hints
+
+    def test_stock_in_out_has_fetch_all(self):
+        """stock_in_out 启用 fetch_all 自动翻页"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["stock_in_out"]
+        assert entry.fetch_all is True
+
+    def test_stock_in_out_has_response_key(self):
+        """stock_in_out 显式设置 response_key"""
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["stock_in_out"]
+        assert entry.response_key == "list"
+
+    # ── H6: only_contain 负向约束 ───
+
+    def test_order_list_only_contain_warning(self):
+        """order_list only_contain 包含负向约束"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        doc = TRADE_REGISTRY["order_list"].param_docs["only_contain"]
+        assert "不是商品编码" in doc or "不是" in doc
+
+    def test_outstock_query_only_contain_warning(self):
+        """outstock_query only_contain 包含负向约束"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        doc = TRADE_REGISTRY["outstock_query"].param_docs["only_contain"]
+        assert "不是商品编码" in doc or "不是" in doc
+
+    # ── M3: order_types 全量枚举 ───
+
+    def test_order_list_has_full_order_types(self):
+        """order_list order_types 包含全部38个值"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        doc = TRADE_REGISTRY["order_list"].param_docs["order_types"]
+        # 验证关键值存在
+        for val in ["0=普通", "1=货到付款", "6=预售", "33=分销",
+                     "51=抖音厂商代发", "99=出库单"]:
+            assert val in doc, f"缺少 {val}"
+
+    def test_outstock_query_has_full_order_types(self):
+        """outstock_query order_types 也包含全部38个值"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        doc = TRADE_REGISTRY["outstock_query"].param_docs["order_types"]
+        for val in ["0=普通", "1=货到付款", "6=预售", "33=分销",
+                     "51=抖音厂商代发", "99=出库单"]:
+            assert val in doc, f"缺少 {val}"
+
+    # ── M4: suiteSingle 描述修正 ───
+
+    def test_suite_single_correct_description(self):
+        """suiteSingle 描述是'套件信息'而非'套装拆单'"""
+        from services.kuaimai.registry import AFTERSALES_REGISTRY
+        doc = AFTERSALES_REGISTRY["aftersale_list"].param_docs["suite_single"]
+        assert "套件信息" in doc
+        assert "套装拆单" not in doc
+
+    # ── outstock_order_query description 同步更新 ───
+
+    def test_outstock_order_description_correct_status_names(self):
+        """outstock_order_query description 使用正确的状态名"""
+        from services.kuaimai.registry import TRADE_REGISTRY
+        desc = TRADE_REGISTRY["outstock_order_query"].description
+        assert "待处理" in desc
+        assert "待打印" not in desc
+
+
+class TestRoutingPromptAudit:
+    """验证路由提示词审计修复"""
+
+    def test_routing_has_sales_query_section(self):
+        """路由提示词包含'商品销量查询'场景"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        assert "商品销量查询" in ERP_ROUTING_PROMPT
+        assert "order_type=2" in ERP_ROUTING_PROMPT
+
+    def test_routing_warns_outstock_query_no_code_filter(self):
+        """路由提示词警告 outstock_query 不支持编码筛选"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        assert "outstock_query" in ERP_ROUTING_PROMPT
+        assert "不支持按商品编码筛选" in ERP_ROUTING_PROMPT or "不支持" in ERP_ROUTING_PROMPT
+
+    def test_routing_has_aftersale_sid_warning(self):
+        """路由提示词包含售后 system_id 警告"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        assert "aftersale_list不支持system_id" in ERP_ROUTING_PROMPT
+
+    def test_routing_has_num_accumulation_hint(self):
+        """路由提示词说明销量=num累加"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        assert "num" in ERP_ROUTING_PROMPT
+        assert "累加" in ERP_ROUTING_PROMPT
+
+    def test_routing_stock_in_out_order_types(self):
+        """路由提示词列出 stock_in_out 的 order_type 枚举"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        assert "1=采购入库" in ERP_ROUTING_PROMPT
+        assert "2=销售出库" in ERP_ROUTING_PROMPT
+        assert "6=调拨出库" in ERP_ROUTING_PROMPT

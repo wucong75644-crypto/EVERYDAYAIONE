@@ -217,7 +217,7 @@ PRODUCT_REGISTRY = {
     ),
     "stock_in_out": ApiEntry(
         method="erp.item.stock.in.out.list",
-        description="查询商品出入库流水记录（采购入库/销售出库/盘盈盘亏/调拨等历史变动）。查当前库存用stock_status，这个是查历史变动明细",
+        description="查询商品出入库流水记录（采购入库/销售出库/盘盈盘亏/调拨等历史变动）。查商品销量用order_type=2过滤销售出库，销量=各记录num累加。查当前库存用stock_status",
         param_map={
             "outer_id": "outerId",
             "warehouse_id": "warehouseId",
@@ -234,6 +234,12 @@ PRODUCT_REGISTRY = {
             "order_type": "单据类型。可选值: 1=采购入库, 2=销售出库, 3=盘盈入库, 4=盘亏出库, 5=调拨入库, 6=调拨出库",
             "order_number": "单据编号。精确匹配",
         },
+        param_hints={
+            "outer_id": "商家编码。查销量时必传，配合order_type=2",
+            "order_type": "查销量传2(销售出库)。不传返回所有类型混在一起",
+        },
+        response_key="list",
+        fetch_all=True,
         formatter="format_stock_in_out",
     ),
     "virtual_warehouse": ApiEntry(

@@ -196,6 +196,19 @@ def _normalize_dates(params: Dict[str, Any]) -> None:
             else:
                 params[key] = f"{val} 23:59:59"
 
+    # outstock_order_query 的 timeBegin/timeEnd 需要毫秒时间戳（API文档: long类型）
+    # 仅当 timeBegin 存在时转换（timeBegin 是 outstock_order_query 独有的，
+    # repair_list 用的是 timeStart，不会误伤）
+    if "timeBegin" in params:
+        for key in ("timeBegin", "timeEnd"):
+            val = params.get(key)
+            if val and isinstance(val, str):
+                try:
+                    dt = datetime.strptime(val, "%Y-%m-%d %H:%M:%S")
+                    params[key] = int(dt.timestamp() * 1000)
+                except ValueError:
+                    pass  # 非日期格式（可能用户已传ms），不处理
+
 
 def build_default_date_range(days: int = 7) -> Dict[str, str]:
     """生成默认的日期范围参数"""

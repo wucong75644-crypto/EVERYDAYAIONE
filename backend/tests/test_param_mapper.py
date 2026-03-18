@@ -155,3 +155,105 @@ class TestPaginationAndDates:
         entry = _stock_in_out_entry()
         mapped, _ = map_params(entry, {"start_date": "2026-03-01"})
         assert mapped["operateTimeBegin"] == "2026-03-01 00:00:00"
+
+
+# ── timeBegin/timeEnd 毫秒时间戳转换 ──────────────────
+
+
+def _outstock_order_entry() -> ApiEntry:
+    """outstock_order_query 条目（使用 timeBegin/timeEnd）"""
+    return ApiEntry(
+        method="erp.wave.logistics.order.query",
+        description="出库单查询",
+        param_map={
+            "start_date": "timeBegin",
+            "end_date": "timeEnd",
+            "status_list": "statusList",
+        },
+    )
+
+
+def _repair_list_entry() -> ApiEntry:
+    """repair_list 条目（使用 timeStart/timeEnd，不应被ms转换）"""
+    return ApiEntry(
+        method="erp.aftersale.repair.list.query",
+        description="维修单查询",
+        param_map={
+            "start_date": "timeStart",
+            "end_date": "timeEnd",
+        },
+    )
+
+
+class TestTimeBeginMsConversion:
+    """timeBegin/timeEnd 毫秒时间戳转换（仅 outstock_order_query）"""
+
+    def test_timebegin_converted_to_ms_timestamp(self):
+        """outstock_order_query 的 timeBegin 转为毫秒时间戳"""
+        entry = _outstock_order_entry()
+        mapped, _ = map_params(entry, {"start_date": "2026-03-01"})
+        # 应为整数毫秒时间戳，不是字符串
+        assert isinstance(mapped["timeBegin"], int)
+        assert mapped["timeBegin"] > 1_000_000_000_000  # 毫秒级
+
+    def test_timeend_converted_to_ms_timestamp(self):
+        """outstock_order_query 的 timeEnd 也转为毫秒时间戳"""
+        entry = _outstock_order_entry()
+        mapped, _ = map_params(entry, {
+            "start_date": "2026-03-01",
+            "end_date": "2026-03-15",
+        })
+        assert isinstance(mapped["timeEnd"], int)
+        # timeEnd 应该 > timeBegin
+        assert mapped["timeEnd"] > mapped["timeBegin"]
+
+    def test_timeend_padded_to_end_of_day(self):
+        """timeEnd 先pad到23:59:59再转ms"""
+        entry = _outstock_order_entry()
+        mapped, _ = map_params(entry, {
+            "start_date": "2026-03-01",
+            "end_date": "2026-03-01",
+        })
+        # timeEnd(23:59:59) 应该 > timeBegin(00:00:00)
+        assert mapped["timeEnd"] > mapped["timeBegin"]
+        # 差距应约为 86399 秒 = 86399000 毫秒
+        diff_ms = mapped["timeEnd"] - mapped["timeBegin"]
+        assert 86398000 <= diff_ms <= 86400000
+
+    def test_repair_list_timeend_not_converted(self):
+        """repair_list 的 timeEnd 不应被转为ms（没有 timeBegin 触发）"""
+        entry = _repair_list_entry()
+        mapped, _ = map_params(entry, {"end_date": "2026-03-15"})
+        # 应保持字符串格式
+        assert isinstance(mapped["timeEnd"], str)
+        assert "2026-03-15" in mapped["timeEnd"]
+
+    def test_full_datetime_string_also_converted(self):
+        """已有完整日期时间的字符串也能转换"""
+        entry = _outstock_order_entry()
+        mapped, _ = map_params(entry, {
+            "start_date": "2026-03-01 08:30:00",
+            "end_date": "2026-03-15 18:00:00",
+        })
+        assert isinstance(mapped["timeBegin"], int)
+        assert isinstance(mapped["timeEnd"], int)
+
+    def test_timebegin_already_int_not_broken(self):
+        """timeBegin 已是int(用户直接传ms)时不应报错"""
+        entry = _outstock_order_entry()
+        mapped, _ = map_params(entry, {
+            "start_date": 1709251200000,
+            "end_date": 1709856000000,
+        })
+        # int 值应原样保留（不是str，不会进入转换逻辑）
+        assert mapped["timeBegin"] == 1709251200000
+        assert mapped["timeEnd"] == 1709856000000
+
+    def test_only_end_date_no_start_date_no_conversion(self):
+        """只传end_date不传start_date时，timeBegin不存在→不触发ms转换"""
+        entry = _outstock_order_entry()
+        mapped, _ = map_params(entry, {"end_date": "2026-03-15"})
+        # timeBegin 不在 params 中，不触发转换
+        assert "timeBegin" not in mapped
+        # timeEnd 保持字符串
+        assert isinstance(mapped["timeEnd"], str)
