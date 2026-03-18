@@ -163,6 +163,7 @@ TRADE_REGISTRY = {
             "system_id": "ERP系统单号（16位纯数字，所有平台统一格式）。示例: 5759422420146938",
             "express_no": "快递单号。示例: SF1234567890",
         },
+        response_key=None,
         formatter="format_express_list",
     ),
     "outstock_order_query": ApiEntry(
