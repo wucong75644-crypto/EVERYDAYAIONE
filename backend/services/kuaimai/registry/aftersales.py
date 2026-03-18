@@ -34,7 +34,7 @@ AFTERSALES_REGISTRY = {
         },
         param_docs={
             "order_id": "平台订单号。示例: 126036803257340376",
-            "system_id": "ERP系统单号（16位纯数字）。与order_id二选一。示例: 5759422420146938",
+            "system_id": "⚠ 售后API不支持system_id查询！请改用order_id(平台订单号)或work_order_id(工单ID)。只有system_id时：先用order_list(system_id=XX)拿到order_id再查",
             "work_order_id": "售后工单ID（单个）。示例: 50001",
             "work_order_ids": "售后工单ID（多个逗号隔开）。示例: 50001,50002",
             "order_ids": "平台订单号（多个逗号隔开）。示例: 126036803257340376,126036803257340377",
@@ -51,7 +51,7 @@ AFTERSALES_REGISTRY = {
             "platform_id": "平台退款单号。示例: RF20260301001",
             "express_ids": "快递单号（多个逗号隔开）。示例: SF1234567890",
             "reissue_sid": "补发系统单号。示例: 5759422420146938",
-            "suite_single": "是否套装拆单。可选值: 0(否), 1(是)。示例: 0",
+            "suite_single": "是否返回套件信息。0=不返回(默认), 1=返回",
         },
         defaults={"asVersion": 2},
         formatter="format_aftersale_list",
