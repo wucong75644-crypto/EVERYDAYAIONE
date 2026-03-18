@@ -62,15 +62,16 @@ _WH_STOCK_TRANSFORMS: Dict[str, Callable] = {
 
 # ---------------------------------------------------------------------------
 # 出入库流水 — erp.item.stock.in.out.list
-# 注意: API文档页面无法提取，字段名来自现有代码，待实际API验证
+# 响应key: stockInOutRecordVos，字段已通过API实测验证(2026-03-18)
 # ---------------------------------------------------------------------------
 _STOCK_IO_LABELS = {
     "outerId": "编码", "title": "名称",
-    "bizType": "类型", "changeNum": "变动数量",
+    "propertiesName": "规格",
+    "orderType": "单据类型", "stockChange": "变动数量",
     "warehouseName": "仓库", "orderNumber": "单据号",
-    "created": "时间", "remark": "备注",
+    "operateTime": "时间",
 }
-_STOCK_IO_TRANSFORMS: Dict[str, Callable] = {"created": format_timestamp}
+_STOCK_IO_TRANSFORMS: Dict[str, Callable] = {"operateTime": format_timestamp}
 
 # ---------------------------------------------------------------------------
 # 商品列表 — item.list.query
@@ -223,7 +224,8 @@ def format_warehouse_stock(data: Any, entry: ApiEntry) -> str:
 
 def format_stock_in_out(data: Any, entry: ApiEntry) -> str:
     """商品出入库记录"""
-    items = data.get("list") or []
+    rk = entry.response_key or "stockInOutRecordVos"
+    items = data.get(rk) or []
     total = data.get("total", len(items))
     if not items:
         return "未找到出入库记录"

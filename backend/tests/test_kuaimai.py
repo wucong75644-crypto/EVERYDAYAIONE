@@ -4552,22 +4552,26 @@ class TestProductFormattersExtended:
         assert "XL" in result
 
     def test_stock_in_out_empty(self):
+        from types import SimpleNamespace
         from services.kuaimai.formatters.product import format_stock_in_out
-        result = format_stock_in_out({"list": [], "total": 0}, None)
+        entry = SimpleNamespace(response_key="stockInOutRecordVos")
+        result = format_stock_in_out({"stockInOutRecordVos": [], "total": 0}, entry)
         assert "未找到" in result
 
     def test_stock_in_out_with_data(self):
+        from types import SimpleNamespace
         from services.kuaimai.formatters.product import format_stock_in_out
+        entry = SimpleNamespace(response_key="stockInOutRecordVos")
         data = {
-            "list": [{
+            "stockInOutRecordVos": [{
                 "outerId": "SKU001", "title": "红色T恤",
-                "bizType": "采购入库", "changeNum": 50,
+                "orderType": "采购入库", "stockChange": 50,
                 "warehouseName": "主仓",
-                "created": 1710648000000,
+                "operateTime": 1710648000000,
             }],
             "total": 1,
         }
-        result = format_stock_in_out(data, None)
+        result = format_stock_in_out(data, entry)
         assert "SKU001" in result
         assert "采购入库" in result
         assert "50" in result
@@ -4652,7 +4656,7 @@ class TestApiAuditFixes:
         """stock_in_out 显式设置 response_key"""
         from services.kuaimai.registry import PRODUCT_REGISTRY
         entry = PRODUCT_REGISTRY["stock_in_out"]
-        assert entry.response_key == "list"
+        assert entry.response_key == "stockInOutRecordVos"
 
     # ── H6: only_contain 负向约束 ───
 
