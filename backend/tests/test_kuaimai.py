@@ -923,9 +923,9 @@ class TestToolRegistration:
         assert validate_tool_call("unknown_erp_tool", {}) is False
 
     def test_agent_tools_count(self):
-        """工具总数验证（4 路由 + 3 信息 + 2 搜索 + 8 ERP + 1 爬虫 + 1 沙盒 = 19）"""
+        """工具总数验证（4 路由 + 3 信息 + 2 搜索 + 9 ERP + 1 爬虫 + 1 沙盒 = 20）"""
         from config.agent_tools import AGENT_TOOLS
-        assert len(AGENT_TOOLS) == 19
+        assert len(AGENT_TOOLS) == 20
 
     def test_agent_tools_names(self):
         """所有ERP工具名在定义中"""
@@ -2525,37 +2525,46 @@ class TestNewDateKeys:
 class TestBuildErpTools:
     """验证 build_erp_tools 生成的工具定义结构"""
 
-    def test_returns_8_tools(self):
-        """build_erp_tools 返回 8 个工具"""
+    def test_returns_9_tools(self):
+        """build_erp_tools 返回 9 个工具（1 识别 + 6 查询 + 1 淘宝奇门 + 1 写入）"""
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
-        assert len(tools) == 8
+        assert len(tools) == 9
 
     def test_all_query_tools_have_page_size(self):
-        """所有查询工具都有 page_size 参数"""
+        """所有两步查询工具都有 page_size 参数"""
         from config.erp_tools import build_erp_tools
+        skip = {"erp_execute", "erp_identify"}
         tools = build_erp_tools()
-        for tool in tools[:7]:  # 前 7 个是查询工具
+        query_tools = [t for t in tools
+                       if t["function"]["name"] not in skip]
+        for tool in query_tools:
             props = tool["function"]["parameters"]["properties"]
             assert "page_size" in props, (
                 f"{tool['function']['name']} 缺少 page_size"
             )
 
     def test_all_query_tools_have_page(self):
-        """所有查询工具都有 page 参数"""
+        """所有两步查询工具都有 page 参数"""
         from config.erp_tools import build_erp_tools
+        skip = {"erp_execute", "erp_identify"}
         tools = build_erp_tools()
-        for tool in tools[:7]:
+        query_tools = [t for t in tools
+                       if t["function"]["name"] not in skip]
+        for tool in query_tools:
             props = tool["function"]["parameters"]["properties"]
             assert "page" in props, (
                 f"{tool['function']['name']} 缺少 page"
             )
 
     def test_query_tools_have_params_object(self):
-        """所有查询工具有 params: object 参数（两步调用模式）"""
+        """所有两步查询工具有 params: object 参数"""
         from config.erp_tools import build_erp_tools
+        skip = {"erp_execute", "erp_identify"}
         tools = build_erp_tools()
-        for tool in tools[:7]:  # 前 7 个是查询工具
+        query_tools = [t for t in tools
+                       if t["function"]["name"] not in skip]
+        for tool in query_tools:
             props = tool["function"]["parameters"]["properties"]
             assert "params" in props, (
                 f"{tool['function']['name']} 缺少 params"
@@ -3692,11 +3701,14 @@ class TestTwoStepToolSchema:
     """验证两步调用模式的工具 Schema"""
 
     def test_all_query_tools_have_4_params(self):
-        """查询工具只有 action/params/page/page_size 4 个属性"""
+        """两步查询工具只有 action/params/page/page_size 4 个属性"""
         from config.erp_tools import build_erp_tools
+        skip = {"erp_execute", "erp_identify"}
         tools = build_erp_tools()
         expected_keys = {"action", "params", "page", "page_size"}
-        for tool in tools[:7]:
+        query_tools = [t for t in tools
+                       if t["function"]["name"] not in skip]
+        for tool in query_tools:
             props = tool["function"]["parameters"]["properties"]
             assert set(props.keys()) == expected_keys, (
                 f"{tool['function']['name']} 属性不符: {set(props.keys())}"

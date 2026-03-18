@@ -1,7 +1,8 @@
 """
-ERP 工具定义（8个工具）
+ERP 工具定义（9个工具）
 
 Registry + Category Dispatch 架构：
+- 1个编码识别工具：erp_identify（通用适配器，直接调API）
 - 6个ERP查询工具：按类别分组，action enum 路由到具体API
 - 1个淘宝奇门查询工具：通过淘宝网关查询订单/售后
 - 1个执行工具：所有写操作，需用户确认
@@ -151,11 +152,41 @@ ERP_TOOL_SCHEMAS["erp_execute"] = {
         "params": {"type": "object"},
     },
 }
+ERP_TOOL_SCHEMAS["erp_identify"] = {
+    "required": ["code"],
+    "properties": {
+        "code": {"type": "string"},
+    },
+}
 
 
 def build_erp_tools() -> List[Dict[str, Any]]:
-    """构建8个ERP工具定义（6 ERP查询 + 1 淘宝奇门查询 + 1 写入）"""
+    """构建9个ERP工具定义（1编码识别 + 6 ERP查询 + 1 淘宝奇门查询 + 1 写入）"""
     tools = [
+        # 0. 编码识别（前置工具）
+        {
+            "type": "function",
+            "function": {
+                "name": "erp_identify",
+                "description": (
+                    "识别任意编码/单号的类型和关联信息。"
+                    "输入裸值，返回：编码类型、商品类型、关联参数"
+                    "(ID/编码/名称)。"
+                    "查库存/订单/采购等操作前先用这个确认编码身份，"
+                    "避免参数猜错"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "code": {
+                            "type": "string",
+                            "description": "要识别的编码或单号",
+                        },
+                    },
+                    "required": ["code"],
+                },
+            },
+        },
         # 1. 基础信息查询
         _build_query_tool(
             "erp_info_query",
@@ -258,7 +289,14 @@ ERP_ROUTING_PROMPT = (
     "- 供应商/采购/收货/上架 → erp_purchase_query\n"
     "- 淘宝/天猫订单或售后 → erp_taobao_query\n"
     "- 写操作 → erp_execute\n"
+    "- 编码/单号类型不确定 → erp_identify\n"
     "- 不确定用哪个action → 先调 erp_api_search 查文档\n\n"
+    "## 编码识别（前置步骤）\n"
+    "- 首次遇到裸值编码/单号 → 先 erp_identify(code=XX) 确认类型\n"
+    "- 返回: 编码类型 + 关联参数(ID/编码/名称/SKU列表)\n"
+    "- 套件(type=1/2)没有独立库存 → 告知用户需查子单品\n"
+    "- 识别后用返回的精确参数查询，不猜不试\n"
+    "- 同一编码在同一对话中只需识别一次\n\n"
     "## ERP多步查询策略\n"
     "- 统计类（如'今天多少单'）：只取total，不翻页，不传status\n"
     "- 分维度统计（如'每个平台多少单'）：先 shop_list 获取店铺，逐个查total\n"
@@ -322,16 +360,6 @@ ERP_ROUTING_PROMPT = (
     "- batch_stock_list: 必须传 shop_id\n"
     "- order_log: 只接受 system_ids！先 order_list 拿 system_id\n"
     "- _history action: 必须传 start_date + end_date\n\n"
-    "## 订单号识别\n"
-    "- P+18位 → 小红书 | 日期-数字串 → 拼多多 | 18位纯数字 → 淘宝\n"
-    "- 19位纯数字 → 抖音/1688 | 16位纯数字 → 京东/快手或ERP系统单号\n"
-    "- 以上均用 order_id。系统会在查不到时自动建议改用 system_id\n"
-    "- 13位以69开头 → EAN-13条码，用 multicode_query(code=XX)\n\n"
-    "## 裸值推断\n"
-    "- 字母+数字混合 → 商家编码（规格编码用sku_outer_id，主编码用outer_id）\n"
-    "- 编码带 -数字后缀（如DBTXL01-02）→ sku_outer_id（系统也会自动纠正）\n"
-    "- 纯中文 → 可能是买家昵称，ERP不支持按商品名称搜索→ask_user要编码\n"
-    "- 无法判断 → 必须 ask_user 追问\n\n"
     "## 查不到时的策略\n"
     "- 编码查询返回0条时，系统会自动用基础编码扩大查询并精确匹配，无需手动重试\n"
     "- 系统会自动建议替代参数（如 outer_id→sku_outer_id），按建议重试即可\n"
@@ -339,8 +367,8 @@ ERP_ROUTING_PROMPT = (
     "- 采购单查不到 → 换 _history action\n"
     "- 按名称查不到 → ask_user 确认名称\n\n"
     "## 禁止猜测原则\n"
-    "- 裸值无法确定参数类型 → 必须 ask_user 追问\n"
-    "- 禁止猜测编码做模糊搜索\n"
+    "- 裸值编码 → 先 erp_identify，不猜测参数类型\n"
+    "- 纯中文 → 可能是买家昵称，ask_user 要编码\n"
     "- 禁止不传参数直接调API返回全量数据\n"
 )
 

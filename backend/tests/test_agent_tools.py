@@ -200,11 +200,11 @@ class TestAgentToolsStructure:
 
 class TestBuildErpTools:
 
-    def test_returns_8_tools(self):
-        """build_erp_tools 返回 8 个工具（6 ERP查询 + 1 淘宝奇门 + 1 写入）"""
+    def test_returns_9_tools(self):
+        """build_erp_tools 返回 9 个工具（1 识别 + 6 ERP查询 + 1 淘宝奇门 + 1 写入）"""
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
-        assert len(tools) == 8
+        assert len(tools) == 9
 
     def test_each_tool_structure(self):
         """每个工具有完整的 function calling 结构"""
@@ -220,9 +220,10 @@ class TestBuildErpTools:
     def test_query_tools_have_action_enum(self):
         """6 个查询工具都有 action enum"""
         from config.erp_tools import build_erp_tools
+        skip = {"erp_execute", "erp_identify"}
         tools = build_erp_tools()
         query_tools = [t for t in tools
-                       if t["function"]["name"] != "erp_execute"]
+                       if t["function"]["name"] not in skip]
         for tool in query_tools:
             props = tool["function"]["parameters"]["properties"]
             assert "action" in props
@@ -267,8 +268,10 @@ class TestBuildErpTools:
         """查询工具使用 params: object（两步调用模式）"""
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
+        # erp_execute/erp_identify 不是两步查询工具
+        skip = {"erp_execute", "erp_identify"}
         query_tools = [t for t in tools
-                       if t["function"]["name"] != "erp_execute"]
+                       if t["function"]["name"] not in skip]
         for tool in query_tools:
             props = tool["function"]["parameters"]["properties"]
             assert "params" in props, (
@@ -285,8 +288,10 @@ class TestBuildErpTools:
             "status", "buyer", "order_id", "system_id",
             "sku_outer_id", "shop_id", "refund_type", "date_type",
         }
+        # erp_execute/erp_identify 不是两步查询工具
+        skip = {"erp_execute", "erp_identify"}
         for tool in tools:
-            if tool["function"]["name"] == "erp_execute":
+            if tool["function"]["name"] in skip:
                 continue
             props = tool["function"]["parameters"]["properties"]
             found = flat_params & set(props.keys())
