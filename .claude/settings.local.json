@@ -134,7 +134,8 @@
       "Bash(LC_ALL=C grep -an '20009\\\\|20020\\\\|20021\\\\|error_code\\\\|errorCode' /Users/wucong/EVERYDAYAIONE/docs/document/TECH_快麦API文档_完整.md)",
       "Bash(python -m pytest tests/test_sandbox_validators.py tests/test_sandbox_executor.py -v --tb=short)",
       "Bash(python -m pytest tests/test_sandbox_functions.py -v --tb=short)",
-      "Bash(PYTHONPATH=. python scripts/test_sandbox_erp_real.py)"
+      "Bash(PYTHONPATH=. python scripts/test_sandbox_erp_real.py)",
+      "Bash(python scripts/verify_response_keys.py)"
     ]
   }
 }
