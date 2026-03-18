@@ -51,6 +51,9 @@ class ApiEntry:
     # 参数歧义消解提示（key = 参数名，value = 使用场景说明）
     # 在 param_doc Step 1 中展示，帮助 LLM 选对参数
     param_hints: Dict[str, str] = field(default_factory=dict)
+    # 仅支持单值编码的API（如 warehouse_stock 不支持逗号分隔多个编码）
+    # True: 不打包宽泛编码，但仍做双参数依次试
+    single_code_only: bool = False
     # 零结果替代参数映射（key = 当前参数名，value = 替代参数名）
     # 当用 key 查询返回 0 条时，诊断建议改用 value 重试
     retry_alt_params: Dict[str, str] = field(default_factory=dict)
