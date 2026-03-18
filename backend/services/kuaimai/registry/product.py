@@ -107,8 +107,8 @@ PRODUCT_REGISTRY = {
             "return_skus": "returnSkus",
         },
         param_docs={
-            "outer_ids": "多个商家编码（逗号隔开）。示例: ABC123,DEF456",
-            "item_ids": "多个系统商品ID（逗号隔开）。示例: 10001,10002",
+            "outer_ids": "多个商家编码（逗号隔开，最多20个）。示例: ABC123,DEF456",
+            "item_ids": "多个系统商品ID（逗号隔开，最多20个）。示例: 10001,10002",
             "return_skus": "是否返回SKU信息。可选值: 0=不返回, 1=返回。默认返回",
         },
         defaults={"returnSkus": 1},
@@ -155,8 +155,8 @@ PRODUCT_REGISTRY = {
             "relation_fields": "relationInfoFields",
         },
         param_docs={
-            "outer_id": "商家编码（最常用的商品识别方式）。示例: ABC123",
-            "sku_outer_id": "SKU商家编码（多个逗号隔开）。示例: SKU001,SKU002",
+            "outer_id": "商家编码，支持逗号分隔传多个（最多5000个）。示例: ABC123 或 ABC123,DEF456",
+            "sku_outer_id": "SKU商家编码，支持逗号分隔传多个（最多5000个）。示例: SKU001,SKU002",
             "warehouse_id": "仓库ID（通过warehouse_list获取）",
             "stock_statuses": "库存状态筛选（多个逗号隔开）。可选值: 1=正常, 2=警戒, 3=无货, 4=超卖, 6=有货。示例: 1,2",
             "item_type": "商品类型。可选值: 0=组合商品(仅单品), 1=套件, 2=组合装, 3=加工。默认0",
@@ -195,8 +195,8 @@ PRODUCT_REGISTRY = {
             "sku_outer_id": "skuOuterId",
         },
         param_docs={
-            "outer_id": "商家编码（最常用的商品识别方式）。示例: ABC123",
-            "sku_outer_id": "SKU商家编码（多个逗号隔开）。示例: SKU001,SKU002",
+            "outer_id": "商家编码（仅支持单个，不支持逗号分隔多个）。示例: ABC123",
+            "sku_outer_id": "SKU商家编码（仅支持单个，不支持逗号分隔多个）。示例: SKU001",
         },
         error_codes={
             "20301": "主商家编码与SKU商家编码必须二选一",
@@ -208,6 +208,7 @@ PRODUCT_REGISTRY = {
             "outer_id": "查整个商品在各仓库的库存分布。编码含 -数字后缀请改用 sku_outer_id",
             "sku_outer_id": "查某个规格在各仓库的库存分布。带 -数字后缀的编码用这个参数",
         },
+        single_code_only=True,
         retry_alt_params={
             "outer_id": "sku_outer_id",
             "sku_outer_id": "outer_id",
@@ -322,7 +323,7 @@ PRODUCT_REGISTRY = {
             "taobao_id": "taobaoId",
         },
         param_docs={
-            "outer_ids": "多个商家编码（逗号隔开）。示例: ABC123,DEF456",
+            "outer_ids": "多个商家编码（逗号隔开，最多20个）。示例: ABC123,DEF456",
             "platform_ids": "平台商品ID。多个逗号隔开",
             "shop_id": "店铺ID（通过shop_list获取）",
             "taobao_id": "淘宝商品ID",
@@ -357,10 +358,10 @@ PRODUCT_REGISTRY = {
             "sku_outer_ids": "skuOuterIds",
         },
         param_docs={
-            "item_ids": "多个系统商品ID（逗号隔开）。示例: 10001,10002",
-            "sku_ids": "多个SKU系统ID（逗号隔开）",
-            "outer_ids": "多个商家编码（逗号隔开）。示例: ABC123,DEF456",
-            "sku_outer_ids": "多个SKU商家编码（逗号隔开）。示例: SKU001,SKU002",
+            "item_ids": "多个系统商品ID（逗号隔开，最多20个）。示例: 10001,10002",
+            "sku_ids": "多个SKU系统ID（逗号隔开，最多20个）",
+            "outer_ids": "多个商家编码（逗号隔开，最多20个）。示例: ABC123,DEF456",
+            "sku_outer_ids": "多个SKU商家编码（逗号隔开，最多20个）。示例: SKU001,SKU002",
         },
         error_codes={
             "20519": "系统主商品ID与系统商品skuId必须二选一",
@@ -556,7 +557,7 @@ PRODUCT_REGISTRY = {
     ),
     "stock_update": ApiEntry(
         method="erp.item.available.stock.update",
-        description="修改实际库存",
+        description="修改实际库存（编码最多20个）",
         param_map={
             "outer_ids": "outerIds",
             "sku_outer_ids": "skuOuterIds",
@@ -573,7 +574,7 @@ PRODUCT_REGISTRY = {
     ),
     "virtual_stock_update": ApiEntry(
         method="erp.item.virtual.stock.update",
-        description="修改虚拟库存",
+        description="修改虚拟库存（编码最多20个）",
         param_map={
             "item_ids": "itemIds",
             "warehouse_id": "warehouseId",

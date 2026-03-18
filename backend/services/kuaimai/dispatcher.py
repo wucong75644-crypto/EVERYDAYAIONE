@@ -14,9 +14,11 @@ from loguru import logger
 from services.kuaimai.client import KuaiMaiClient
 from services.kuaimai.formatters import get_formatter
 from services.kuaimai.param_guardrails import (
-    broadened_code_query,
+    apply_code_broadening,
     diagnose_empty_result,
     preprocess_params,
+    try_batch_dual_query,
+    try_broadened_queries,
 )
 from services.kuaimai.param_mapper import map_params
 from services.kuaimai.registry import TOOL_REGISTRIES
@@ -88,35 +90,43 @@ class ErpDispatcher:
             f"method={entry.method} params={api_params}"
         )
 
-        # 4. 构建网关参数 + 调用API
+        # 4. 构建网关参数 + 编码宽泛化预处理 + 调用API
         base_url, system_params = self._build_gateway_params(entry)
-        try:
-            if entry.fetch_all:
-                data = await self._fetch_all_pages(
-                    entry, api_params, base_url, system_params,
+        broadening = apply_code_broadening(entry, params, api_params)
+
+        broadened_note = ""
+        if broadening:
+            original_codes, packed_codes, api_keys, is_batch = broadening
+            if is_batch:
+                data, broadened_note = await try_batch_dual_query(
+                    entry, api_params, original_codes, packed_codes,
+                    api_keys, self._client, base_url, system_params,
                 )
             else:
-                data = await self._client.request_with_retry(
-                    entry.method,
-                    api_params,
-                    base_url=base_url,
-                    extra_system_params=system_params,
+                data, broadened_note = await try_broadened_queries(
+                    entry, api_params, original_codes, packed_codes,
+                    api_keys, self._client, base_url, system_params,
                 )
-        except Exception as e:
-            logger.error(
-                f"ErpDispatcher API error | tool={tool_name} "
-                f"action={action} error={e}"
-            )
-            return f"ERP接口调用失败: {e}"
-
-        # 4.5 编码驱动宽泛查询（零结果时 主编码优先 + SKU兜底）
-        broadened_note = ""
-        broadened = await broadened_code_query(
-            entry, params, api_params, data,
-            self._client, base_url, system_params,
-        )
-        if broadened:
-            data, broadened_note = broadened
+        else:
+            # 正常模式（无编码参数、或写操作）
+            try:
+                if entry.fetch_all:
+                    data = await self._fetch_all_pages(
+                        entry, api_params, base_url, system_params,
+                    )
+                else:
+                    data = await self._client.request_with_retry(
+                        entry.method,
+                        api_params,
+                        base_url=base_url,
+                        extra_system_params=system_params,
+                    )
+            except Exception as e:
+                logger.error(
+                    f"ErpDispatcher API error | tool={tool_name} "
+                    f"action={action} error={e}"
+                )
+                return f"ERP接口调用失败: {e}"
 
         # 5. 格式化返回（附带无效参数警告）
         result = self._format_response(data, entry, action)

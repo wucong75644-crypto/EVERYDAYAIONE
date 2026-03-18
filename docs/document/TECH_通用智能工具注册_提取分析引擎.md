@@ -804,7 +804,7 @@ def _correct_order_param(): ...  # 16位数字 order_id → system_id
 
 | semantic_type | 内置运行时能力 | 来源（现有硬编码） |
 |---------------|--------------|-------------------|
-| `product_code` | 同义兜底（outer_id ↔ sku_outer_id）+ 编码宽泛查询（extract_base_code + 匹配）+ 大小写不敏感 | `_PARAM_SYNONYMS` + `broadened_code_query` |
+| `product_code` | **6层编码智能**：①预打包（原始+基础编码）②双参数依次试（outer_id→sku_outer_id）③批量合并去重 ④本地精确/contains匹配 ⑤single_code_only模式（不打包但仍双参数试）⑥batch_limit>20自动降级 + 同义兜底 + 大小写不敏感 | `apply_code_broadening` + `try_broadened_queries` + `try_batch_dual_query` + `_PARAM_SYNONYMS` |
 | `order_number` | 格式校验互转（16位数字 order_id → system_id） | `_correct_order_param` |
 | `date_range` | 自动补全时分秒（start → 00:00:00, end → 23:59:59） | `_normalize_dates` |
 | `pagination` | pageNo/pageSize 标准化 + 最小值强制（≥20） | `map_params` 分页逻辑 |
@@ -832,33 +832,50 @@ Layer 3: DataProfiler 验证（从真实数据确认）
     └─ 字段值唯一值<20 → 确认 enum_value
 ```
 
-### 运行时处理流程
+### 运行时处理流程（三阶段架构）
+
+> **Phase 5A 实证**：编码宽泛查询从"后处理兜底"重构为"预处理打包→执行→本地匹配"三阶段。
+> 原因：后处理需要二次 API 调用（延迟翻倍），且无法利用双参数依次试的能力。
 
 ```python
 # backend/services/tool_registry/param_type_engine.py
 
 class ParamTypeEngine:
-    """参数类型驱动的运行时处理器"""
+    """参数类型驱动的运行时处理器（三阶段）"""
 
-    def preprocess(self, action_params: list[ActionParam], user_params: dict) -> tuple[dict, list[str]]:
-        """API 调用前的参数预处理
+    def preprocess(self, action_params: list[ActionParam], user_params: dict,
+                   api_params: dict) -> tuple[dict, list[str], BroadeningContext | None]:
+        """阶段1: API 调用前的参数预处理
 
         按每个参数的 semantic_type 应用对应的处理逻辑：
-        1. product_code → 同义参数兜底
+        1. product_code → 同义参数兜底 + 编码预打包（原始+基础编码）
+                          返回 BroadeningContext（original, packed, api_keys, is_batch）
+                          single_code_only=True 时不打包但保留双参数试
+                          batch_limit>20 时降级为仅用原始编码
         2. order_number → 格式校验互转
         3. date_range → 补全时分秒
         4. pagination → 标准化 + 最小值
         5. entity_id → 别名解析
         """
 
-    def postprocess(self, action_params: list[ActionParam], user_params: dict,
-                    data: dict, client) -> tuple[dict, str]:
-        """API 调用后的结果增强（零结果时触发）
+    def execute_with_broadening(self, broadening: BroadeningContext,
+                                entry, api_params: dict, client) -> tuple[dict, str]:
+        """阶段2: 编码智能查询执行（仅 product_code 类型触发）
 
-        按参数类型决定兜底策略：
-        1. product_code → 编码宽泛查询（extract_base_code + 匹配）
-        2. order_number → 诊断建议（换参数重试）
-        3. 其他类型 → 不干预
+        单条模式（is_batch=False）：
+            依次用每个 api_key 查询，首个有结果即停止
+        批量模式（is_batch=True）：
+            所有 api_key 并行查询 → 合并去重 → 本地匹配原始编码
+        无编码参数时：跳过此阶段，走正常 API 调用
+        """
+
+    def postprocess(self, action_params: list[ActionParam], user_params: dict,
+                    data: dict) -> Optional[str]:
+        """阶段3: 结果诊断（轻量，不做二次 API 调用）
+
+        1. order_number → 零结果诊断建议（换参数重试）
+        2. 其他类型 → 不干预
+        注意：product_code 的智能匹配已在阶段2完成，此处不再处理
         """
 ```
 
@@ -871,7 +888,7 @@ class ParamTypeEngine:
 类型: string
 描述: 商家编码
 语义类型: [商品编码 ▼]  ← 下拉选择（或 AI 自动推荐）
-         ├─ 商品编码        → 自动获得: 同义兜底 + 编码宽泛查询
+         ├─ 商品编码        → 自动获得: 同义兜底 + 编码预打包 + 双参数试 + 本地匹配
          ├─ 订单号          → 自动获得: 格式校验 + 互转
          ├─ 日期范围        → 自动获得: 时分秒补全
          ├─ 分页            → 自动获得: 标准化
@@ -879,9 +896,14 @@ class ParamTypeEngine:
          ├─ 枚举值          → 自动获得: 中文→系统值映射
          ├─ 文本搜索        → 直接透传
          └─ 通用            → 直接透传
+
+（商品编码选中后，展开高级选项）
+  ☐ 仅支持单值编码 (single_code_only)  ← API 不支持逗号分隔多值时勾选
+    说明: 勾选后不打包宽泛编码，但仍做双参数依次试
+  批量上限: [20]  ← batch_limit，宽泛后编码数超过此值则降级为仅用原始编码
 ```
 
-**关键**：客户选了"商品编码"，就自动获得 `sku_outer_id ↔ outer_id` 同义兜底、`DBTXL01-02 → DBTXL` 编码拆分宽泛查询等所有能力，不需要写一行代码。
+**关键**：客户选了"商品编码"，就自动获得 `sku_outer_id ↔ outer_id` 同义兜底、`DBTXL01-02 → DBTXL` 编码预打包、双参数依次试、本地精确/contains 匹配等全部6层能力，不需要写一行代码。`single_code_only` 和 `batch_limit` 覆盖了特殊 API 场景（如仓库库存不支持多值查询）。
 
 ### 与现有模块的关系
 
@@ -891,8 +913,8 @@ DocParser (任务E)          → 生成 labels/transforms/skip → 存入 tool_f
 RuleExtractor              → 提取枚举映射 → enum_value 类型运行时使用
 DataProfiler               → 验证/修正 semantic_type + 提取编码规律 + 检测 transforms
 ResponseFormatter          → 运行时从 DB 加载配置 → format_item_with_labels 格式化
-ParamTypeEngine            → 运行时按 semantic_type 执行预处理/后处理
-UniversalDispatcher        → ParamTypeEngine.preprocess → API → ResponseFormatter.format
+ParamTypeEngine            → 运行时按 semantic_type 执行三阶段（预处理→智能执行→诊断）
+UniversalDispatcher        → ParamTypeEngine.preprocess → execute_with_broadening/API → postprocess → ResponseFormatter.format
 ```
 
 ### 迁移路径
@@ -906,8 +928,14 @@ UniversalDispatcher        → ParamTypeEngine.preprocess → API → ResponseFo
 | `param_mapper._normalize_dates` | `ParamTypeEngine.preprocess` | `semantic_type == "date_range"` |
 | `param_mapper` 分页逻辑 | `ParamTypeEngine.preprocess` | `semantic_type == "pagination"` |
 | `param_mapper.PARAM_ALIASES` | `ParamTypeEngine.preprocess` | `semantic_type == "entity_id"` |
-| `param_guardrails.broadened_code_query` | `ParamTypeEngine.postprocess` | `semantic_type == "product_code"` |
+| `param_guardrails.apply_code_broadening` | `ParamTypeEngine.preprocess` | `semantic_type == "product_code"` |
+| `param_guardrails.try_broadened_queries` | `ParamTypeEngine.execute_with_broadening` | `product_code` 单条模式 |
+| `param_guardrails.try_batch_dual_query` | `ParamTypeEngine.execute_with_broadening` | `product_code` 批量模式 |
+| `param_guardrails._match_items` / `_match_items_batch` | `ParamTypeEngine.execute_with_broadening` 内部 | `product_code` 本地匹配 |
+| `param_guardrails._deduplicate_items` | `ParamTypeEngine.execute_with_broadening` 内部 | `product_code` 批量去重 |
+| `param_guardrails.extract_base_code` | `ParamTypeEngine.preprocess` 内部 | `product_code` 编码拆分 |
 | `param_guardrails.diagnose_empty_result` | `ParamTypeEngine.postprocess` | `semantic_type == "order_number"` |
+| `base.ApiEntry.single_code_only` | `ActionParam.single_code_only` | `product_code` 特殊 API |
 | `formatters/*._LABELS` | `tool_formatter_configs.labels` | 所有 action |
 | `formatters/*._TRANSFORMS` | `tool_formatter_configs.transforms` | 所有 action |
 | `formatters/*._SKIP` | `tool_formatter_configs.skip` | 所有 action |

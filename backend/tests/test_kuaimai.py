@@ -1373,7 +1373,7 @@ class TestDispatcherGuardrails:
         )
         mock_client = AsyncMock()
         mock_client.request_with_retry.return_value = {
-            "list": [{"id": 1}], "total": 1,
+            "list": [{"outerId": "ABC123"}], "total": 1,
         }
         d = self._make_dispatcher(mock_client)
         with patch("services.kuaimai.dispatcher.TOOL_REGISTRIES", {
@@ -1417,8 +1417,8 @@ class TestDispatcherGuardrails:
             assert "DBTXL" in result
 
     @pytest.mark.asyncio
-    async def test_broadened_query_no_trigger_on_normal_code(self):
-        """纯字母编码（无数字）不触发宽泛查询"""
+    async def test_broadened_query_pure_letter_code_still_dual_param(self):
+        """纯字母编码仍做双参数依次试（无宽泛打包，但双参数兜底）"""
         entry = self._make_entry(
             retry_alt_params={"outer_id": "sku_outer_id"},
         )
@@ -1434,8 +1434,9 @@ class TestDispatcherGuardrails:
                 "erp_product_query", "stock_status",
                 {"outer_id": "DBTXL"},
             )
-            assert "编码智能匹配" not in result
-            # 应走 diagnose_empty_result 路径
+            # 新架构：纯字母也会走双参数依次试
+            assert "编码智能匹配" in result
+            # diagnose_empty_result 路径仍生效
             assert "重试" in result
 
 

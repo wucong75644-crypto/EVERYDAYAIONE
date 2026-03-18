@@ -1,15 +1,20 @@
 """参数安全护栏测试"""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from services.kuaimai.param_guardrails import (
+    _find_code_param,
     _match_items,
-    broadened_code_query,
+    _match_items_batch,
+    _deduplicate_items,
+    apply_code_broadening,
     diagnose_empty_result,
     extract_base_code,
     preprocess_params,
+    try_batch_dual_query,
+    try_broadened_queries,
 )
 from services.kuaimai.registry.base import ApiEntry
 
@@ -31,6 +36,45 @@ def _stock_entry() -> ApiEntry:
             "sku_outer_id": "outer_id",
         },
         response_key="stockStatusVoList",
+    )
+
+
+def _warehouse_stock_entry() -> ApiEntry:
+    """warehouse_stock 模拟条目（single_code_only, response_key=None）"""
+    return ApiEntry(
+        method="erp.item.warehouse.list.get",
+        description="仓库库存查询",
+        param_map={
+            "outer_id": "outerId",
+            "sku_outer_id": "skuOuterId",
+        },
+        single_code_only=True,
+        response_key=None,
+    )
+
+
+def _batch_entry() -> ApiEntry:
+    """item_supplier_list 模拟条目（批量，支持 outer_ids + sku_outer_ids）"""
+    return ApiEntry(
+        method="erp.item.supplier.list.get",
+        description="供应商查询",
+        param_map={
+            "outer_ids": "outerIds",
+            "sku_outer_ids": "skuOuterIds",
+        },
+        response_key="suppliers",
+    )
+
+
+def _batch_single_param_entry() -> ApiEntry:
+    """multi_product 模拟条目（批量，只有 outer_ids）"""
+    return ApiEntry(
+        method="erp.item.list.get",
+        description="批量商品查询",
+        param_map={
+            "outer_ids": "outerIds",
+        },
+        response_key="items",
     )
 
 
@@ -216,27 +260,21 @@ class TestExtractBaseCode:
     """extract_base_code 编码拆分测试"""
 
     def test_sku_suffix(self):
-        """DBTXL01-02 → DBTXL"""
         assert extract_base_code("DBTXL01-02") == "DBTXL"
 
     def test_letters_digits(self):
-        """ABC123 → ABC"""
         assert extract_base_code("ABC123") == "ABC"
 
     def test_hyphen_digit_middle(self):
-        """HM-2026A → HM"""
         assert extract_base_code("HM-2026A") == "HM"
 
     def test_pure_digits_returns_none(self):
-        """纯数字 → None"""
         assert extract_base_code("12345") is None
 
     def test_pure_letters_returns_none(self):
-        """已是纯字母 → None"""
         assert extract_base_code("DBTXL") is None
 
     def test_short_prefix_returns_none(self):
-        """基础编码太短（<2字符）→ None"""
         assert extract_base_code("A-1") is None
 
 
@@ -244,7 +282,6 @@ class TestMatchItems:
     """_match_items 结果匹配测试"""
 
     def test_exact_match(self):
-        """outerId 精确匹配"""
         items = [
             {"outerId": "DBTXL01-01", "mainOuterId": "DBTXL"},
             {"outerId": "DBTXL01-02", "mainOuterId": "DBTXL"},
@@ -255,7 +292,6 @@ class TestMatchItems:
         assert matched[0]["outerId"] == "DBTXL01-02"
 
     def test_contains_match_fallback(self):
-        """无精确匹配时 contains 匹配"""
         items = [
             {"outerId": "PREFIX-DBTXL01-02-SUFFIX", "mainOuterId": "X"},
         ]
@@ -263,33 +299,183 @@ class TestMatchItems:
         assert len(matched) == 1
 
     def test_no_match(self):
-        """无匹配"""
-        items = [
-            {"outerId": "OTHER-01", "mainOuterId": "OTHER"},
-        ]
+        items = [{"outerId": "OTHER-01", "mainOuterId": "OTHER"}]
         matched = _match_items(items, "DBTXL01-02")
         assert len(matched) == 0
 
     def test_case_insensitive(self):
-        """大小写不敏感"""
-        items = [
-            {"outerId": "dbtxl01-02", "mainOuterId": "dbtxl"},
-        ]
+        items = [{"outerId": "dbtxl01-02", "mainOuterId": "dbtxl"}]
         matched = _match_items(items, "DBTXL01-02")
         assert len(matched) == 1
 
 
-class TestBroadenedCodeQuery:
-    """broadened_code_query 编码驱动宽泛查询测试"""
+# ── _find_code_param 测试 ─────────────────────────────
+
+
+class TestFindCodeParam:
+    """_find_code_param 编码参数识别"""
+
+    def test_outer_id(self):
+        result = _find_code_param({"outer_id": "ABC123"})
+        assert result == ("outer_id", "ABC123", False)
+
+    def test_sku_outer_id(self):
+        result = _find_code_param({"sku_outer_id": "SKU001"})
+        assert result == ("sku_outer_id", "SKU001", False)
+
+    def test_outer_ids_batch(self):
+        result = _find_code_param({"outer_ids": "A,B,C"})
+        assert result == ("outer_ids", "A,B,C", True)
+
+    def test_sku_outer_ids_batch(self):
+        result = _find_code_param({"sku_outer_ids": "S1,S2"})
+        assert result == ("sku_outer_ids", "S1,S2", True)
+
+    def test_singular_takes_priority(self):
+        """单数优先于复数（同时存在时）"""
+        result = _find_code_param({
+            "outer_id": "ABC", "outer_ids": "A,B,C",
+        })
+        assert result is not None
+        assert result[2] is False  # is_batch=False
+
+    def test_no_code_param(self):
+        result = _find_code_param({"warehouse_id": "123"})
+        assert result is None
+
+
+# ── apply_code_broadening 测试 ────────────────────────
+
+
+class TestApplyCodeBroadening:
+    """apply_code_broadening 编码宽泛化预处理"""
+
+    def test_single_normal_packing(self):
+        """单条正常编码：原始+宽泛打包"""
+        entry = _stock_entry()
+        api_params = {"mainOuterId": "DBTXL01-02"}
+        result = apply_code_broadening(
+            entry, {"outer_id": "DBTXL01-02"}, api_params,
+        )
+        assert result is not None
+        original, packed, api_keys, is_batch = result
+        assert original == "DBTXL01-02"
+        assert packed == "DBTXL01-02,DBTXL"
+        assert len(api_keys) == 2
+        assert is_batch is False
+        # api_params 中原有编码被清除
+        assert "mainOuterId" not in api_params
+
+    def test_single_pure_digit(self):
+        """单条纯数字：不宽泛但仍返回api_keys做双参数试"""
+        entry = _stock_entry()
+        result = apply_code_broadening(
+            entry, {"outer_id": "12345"}, {},
+        )
+        assert result is not None
+        original, packed, api_keys, is_batch = result
+        assert packed == "12345"  # 无宽泛
+        assert len(api_keys) == 2  # 仍有双参数
+
+    def test_single_code_only(self):
+        """single_code_only：不打包"""
+        entry = _warehouse_stock_entry()
+        result = apply_code_broadening(
+            entry, {"outer_id": "DBTXL01-02"}, {},
+        )
+        assert result is not None
+        original, packed, api_keys, is_batch = result
+        assert packed == "DBTXL01-02"  # 不打包宽泛
+        assert len(api_keys) == 2
+
+    def test_batch_dual_params(self):
+        """批量双参数：返回2个api_keys"""
+        entry = _batch_entry()
+        api_params = {"outerIds": "A1,B2"}
+        result = apply_code_broadening(
+            entry, {"outer_ids": "A1,B2"}, api_params,
+        )
+        assert result is not None
+        original, packed, api_keys, is_batch = result
+        assert is_batch is True
+        assert len(api_keys) == 2
+        assert "outerIds" not in api_params
+
+    def test_batch_single_param(self):
+        """批量单参数：返回1个api_key（不跳过）"""
+        entry = _batch_single_param_entry()
+        result = apply_code_broadening(
+            entry, {"outer_ids": "ABC123"}, {},
+        )
+        assert result is not None
+        _, _, api_keys, is_batch = result
+        assert is_batch is True
+        assert len(api_keys) == 1
+
+    def test_batch_over_20_drops_broadening(self):
+        """批量超20个放弃宽泛，packed=原始编码"""
+        entry = _batch_entry()
+        # 11个编码，每个有唯一基础编码 → 11 + 11 = 22 > 20
+        prefixes = ["AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH", "II", "JJ", "KK"]
+        codes = ",".join(f"{p}01" for p in prefixes)
+        result = apply_code_broadening(
+            entry, {"outer_ids": codes}, {},
+        )
+        assert result is not None
+        original, packed, _, _ = result
+        assert packed == codes  # 放弃宽泛
+
+    def test_write_operation_skipped(self):
+        """写操作跳过"""
+        entry = ApiEntry(
+            method="stock.update", description="更新库存",
+            param_map={"outer_id": "mainOuterId"}, is_write=True,
+        )
+        result = apply_code_broadening(
+            entry, {"outer_id": "ABC-01"}, {},
+        )
+        assert result is None
+
+    def test_no_code_param_skipped(self):
+        """无编码参数跳过"""
+        entry = _stock_entry()
+        result = apply_code_broadening(
+            entry, {"warehouse_id": "123"}, {},
+        )
+        assert result is None
+
+    def test_batch_no_matching_api_keys(self):
+        """批量无任何编码参数时跳过"""
+        entry = _order_entry()  # 没有 outer_ids / sku_outer_ids
+        result = apply_code_broadening(
+            entry, {"outer_ids": "A,B"}, {},
+        )
+        assert result is None
+
+    def test_api_params_code_cleared(self):
+        """api_params原有编码key被清除"""
+        entry = _stock_entry()
+        api_params = {
+            "mainOuterId": "X", "skuOuterId": "Y", "warehouseId": "1",
+        }
+        apply_code_broadening(
+            entry, {"outer_id": "DBTXL01-02"}, api_params,
+        )
+        assert "mainOuterId" not in api_params
+        assert "skuOuterId" not in api_params
+        assert api_params["warehouseId"] == "1"
+
+
+# ── try_broadened_queries 测试 ────────────────────────
+
+
+class TestTryBroadenedQueries:
+    """try_broadened_queries 单条宽泛查询"""
 
     @pytest.mark.asyncio
-    async def test_outer_id_broadened_match(self):
-        """主编码宽泛查询命中 + 匹配"""
+    async def test_list_api_first_key_match(self):
+        """List API：第一个参数就匹配到"""
         entry = _stock_entry()
-        user_params = {"sku_outer_id": "DBTXL01-02"}
-        api_params = {"skuOuterId": "DBTXL01-02"}
-        data = {"total": 0, "stockStatusVoList": []}
-
         mock_client = AsyncMock()
         mock_client.request_with_retry.return_value = {
             "total": 3,
@@ -300,126 +486,398 @@ class TestBroadenedCodeQuery:
             ],
         }
 
-        result = await broadened_code_query(
-            entry, user_params, api_params, data,
+        data, note = await try_broadened_queries(
+            entry, {}, "DBTXL01-02", "DBTXL01-02,DBTXL",
+            ["mainOuterId", "skuOuterId"],
             mock_client, None, None,
         )
-        assert result is not None
-        result_data, note = result
-        assert len(result_data["stockStatusVoList"]) == 1
-        assert result_data["stockStatusVoList"][0]["outerId"] == "DBTXL01-02"
-        assert "DBTXL" in note
-        assert "1/3" in note
+        assert len(data["stockStatusVoList"]) == 1
+        assert data["stockStatusVoList"][0]["outerId"] == "DBTXL01-02"
+        assert "匹配到1条" in note
 
     @pytest.mark.asyncio
-    async def test_outer_id_empty_sku_fallback(self):
-        """主编码返回0条 → SKU宽泛兜底"""
+    async def test_list_api_second_key_fallback(self):
+        """List API：第一个参数无匹配，第二个参数匹配到"""
         entry = _stock_entry()
-        user_params = {"outer_id": "DBTXL01-02"}
-        api_params = {"mainOuterId": "DBTXL01-02"}
-        data = {"total": 0, "stockStatusVoList": []}
-
         mock_client = AsyncMock()
-        # 第一次调用（outer_id=DBTXL）返回空
-        # 第二次调用（sku_outer_id=DBTXL）返回结果
         mock_client.request_with_retry.side_effect = [
             {"total": 0, "stockStatusVoList": []},
             {
                 "total": 2,
                 "stockStatusVoList": [
                     {"outerId": "DBTXL01-02", "skuOuterId": "DBTXL01-02"},
-                    {"outerId": "DBTXL03-01", "skuOuterId": "DBTXL03-01"},
+                    {"outerId": "OTHER", "skuOuterId": "OTHER"},
                 ],
             },
         ]
 
-        result = await broadened_code_query(
-            entry, user_params, api_params, data,
+        data, note = await try_broadened_queries(
+            entry, {}, "DBTXL01-02", "DBTXL01-02,DBTXL",
+            ["mainOuterId", "skuOuterId"],
             mock_client, None, None,
         )
-        assert result is not None
-        result_data, note = result
-        assert len(result_data["stockStatusVoList"]) == 1
+        assert len(data["stockStatusVoList"]) == 1
         assert "sku_outer_id" in note
 
     @pytest.mark.asyncio
-    async def test_both_empty_returns_none(self):
-        """主编码和SKU都返回0条 → None"""
+    async def test_list_api_no_match(self):
+        """List API：两个参数都无匹配"""
         entry = _stock_entry()
-        user_params = {"outer_id": "DBTXL01-02"}
-        api_params = {"mainOuterId": "DBTXL01-02"}
-        data = {"total": 0, "stockStatusVoList": []}
-
         mock_client = AsyncMock()
         mock_client.request_with_retry.return_value = {
             "total": 0, "stockStatusVoList": [],
         }
 
-        result = await broadened_code_query(
-            entry, user_params, api_params, data,
+        data, note = await try_broadened_queries(
+            entry, {}, "DBTXL01-02", "DBTXL01-02,DBTXL",
+            ["mainOuterId", "skuOuterId"],
             mock_client, None, None,
         )
-        assert result is None
+        assert data["stockStatusVoList"] == []
+        assert "所有参数均无匹配" in note
 
     @pytest.mark.asyncio
-    async def test_write_operation_skipped(self):
-        """写操作不启用宽泛查询"""
-        entry = ApiEntry(
-            method="stock.update",
-            description="更新库存",
-            param_map={"outer_id": "mainOuterId"},
-            is_write=True,
+    async def test_detail_api_first_key_success(self):
+        """Detail API（response_key=None）：第一个参数成功即返回"""
+        entry = _warehouse_stock_entry()
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.return_value = {
+            "warehouses": [{"name": "仓1", "stock": 10}],
+        }
+
+        data, note = await try_broadened_queries(
+            entry, {}, "DBTXL01-02", "DBTXL01-02",
+            ["outerId", "skuOuterId"],
+            mock_client, None, None,
         )
-        result = await broadened_code_query(
-            entry, {"outer_id": "ABC-01"}, {}, {"total": 0},
-            AsyncMock(), None, None,
-        )
-        assert result is None
+        assert "warehouses" in data
+        assert "命中" in note
 
     @pytest.mark.asyncio
-    async def test_no_code_param_skipped(self):
-        """无编码参数时跳过"""
+    async def test_detail_api_first_error_second_success(self):
+        """Detail API：第一个异常，第二个成功"""
+        entry = _warehouse_stock_entry()
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.side_effect = [
+            Exception("not found"),
+            {"warehouses": [{"name": "仓1"}]},
+        ]
+
+        data, note = await try_broadened_queries(
+            entry, {}, "DBTXL01-02", "DBTXL01-02",
+            ["outerId", "skuOuterId"],
+            mock_client, None, None,
+        )
+        assert "warehouses" in data
+        assert "sku_outer_id" in note
+
+    @pytest.mark.asyncio
+    async def test_all_api_errors(self):
+        """所有API调用异常时返回空"""
         entry = _stock_entry()
-        result = await broadened_code_query(
-            entry, {"warehouse_id": "123"}, {}, {"total": 0},
-            AsyncMock(), None, None,
-        )
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_nonempty_result_skipped(self):
-        """初始查询有结果时不触发"""
-        entry = _stock_entry()
-        data = {"total": 1, "stockStatusVoList": [{"outerId": "X"}]}
-        result = await broadened_code_query(
-            entry, {"outer_id": "ABC-01"}, {},
-            data, AsyncMock(), None, None,
-        )
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_api_error_returns_none(self):
-        """API 异常时安全返回 None"""
-        entry = _stock_entry()
-        user_params = {"outer_id": "DBTXL01-02"}
-        data = {"total": 0, "stockStatusVoList": []}
-
         mock_client = AsyncMock()
         mock_client.request_with_retry.side_effect = Exception("timeout")
 
-        result = await broadened_code_query(
-            entry, user_params, {}, data,
+        data, note = await try_broadened_queries(
+            entry, {}, "ABC01", "ABC01,ABC",
+            ["mainOuterId", "skuOuterId"],
             mock_client, None, None,
         )
-        assert result is None
+        assert data["stockStatusVoList"] == []
+        assert "所有参数均无匹配" in note
 
     @pytest.mark.asyncio
-    async def test_pure_digit_code_skipped(self):
-        """纯数字编码不触发宽泛查询"""
+    async def test_empty_items_skipped(self):
+        """List API 返回空列表时跳到下一个参数"""
         entry = _stock_entry()
-        result = await broadened_code_query(
-            entry, {"outer_id": "12345"}, {},
+        mock_client = AsyncMock()
+        # 第一个返回空列表，第二个返回有数据
+        mock_client.request_with_retry.side_effect = [
             {"total": 0, "stockStatusVoList": []},
-            AsyncMock(), None, None,
+            {
+                "total": 1,
+                "stockStatusVoList": [
+                    {"outerId": "ABC01", "mainOuterId": "ABC"},
+                ],
+            },
+        ]
+
+        data, note = await try_broadened_queries(
+            entry, {}, "ABC01", "ABC01,ABC",
+            ["mainOuterId", "skuOuterId"],
+            mock_client, None, None,
         )
-        assert result is None
+        assert len(data["stockStatusVoList"]) == 1
+
+
+# ── try_batch_dual_query 测试 ─────────────────────────
+
+
+class TestTryBatchDualQuery:
+    """try_batch_dual_query 批量双参数查询"""
+
+    @pytest.mark.asyncio
+    async def test_dual_param_merge(self):
+        """两个参数都有数据，合并去重+本地匹配"""
+        entry = _batch_entry()
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.side_effect = [
+            {"suppliers": [
+                {"outerId": "A1", "sysItemId": "1"},
+                {"outerId": "B2", "sysItemId": "2"},
+            ]},
+            {"suppliers": [
+                {"outerId": "A1-01", "skuOuterId": "A1-01", "sysItemId": "3"},
+            ]},
+        ]
+
+        data, note = await try_batch_dual_query(
+            entry, {}, "A1,A1-01,B2", "A1,A1-01,B2,ABC",
+            ["outerIds", "skuOuterIds"],
+            mock_client, None, None,
+        )
+        assert len(data["suppliers"]) == 3
+        assert "批量双参数查询" in note
+
+    @pytest.mark.asyncio
+    async def test_single_param_only(self):
+        """单参数批量查询（只有1个api_key）"""
+        entry = _batch_single_param_entry()
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.return_value = {
+            "items": [
+                {"outerId": "ABC123", "sysItemId": "1"},
+            ],
+        }
+
+        data, note = await try_batch_dual_query(
+            entry, {}, "ABC123", "ABC123,ABC",
+            ["outerIds"],
+            mock_client, None, None,
+        )
+        assert len(data["items"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_dedup_removes_duplicates(self):
+        """重复数据被去重"""
+        entry = _batch_entry()
+        mock_client = AsyncMock()
+        same_item = {"outerId": "A1", "sysItemId": "1"}
+        mock_client.request_with_retry.side_effect = [
+            {"suppliers": [same_item]},
+            {"suppliers": [same_item.copy()]},
+        ]
+
+        data, note = await try_batch_dual_query(
+            entry, {}, "A1", "A1",
+            ["outerIds", "skuOuterIds"],
+            mock_client, None, None,
+        )
+        assert len(data["suppliers"]) == 1
+        assert "合并去重后1条" in note
+
+    @pytest.mark.asyncio
+    async def test_api_error_skipped(self):
+        """API异常时跳过继续"""
+        entry = _batch_entry()
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.side_effect = [
+            Exception("timeout"),
+            {"suppliers": [{"outerId": "A1", "sysItemId": "1"}]},
+        ]
+
+        data, note = await try_batch_dual_query(
+            entry, {}, "A1", "A1",
+            ["outerIds", "skuOuterIds"],
+            mock_client, None, None,
+        )
+        assert len(data["suppliers"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_total_correct(self):
+        """去重后total正确"""
+        entry = _batch_entry()
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.side_effect = [
+            {"suppliers": [
+                {"outerId": "A1", "sysItemId": "1"},
+                {"outerId": "B2", "sysItemId": "2"},
+            ]},
+            {"suppliers": []},
+        ]
+
+        data, note = await try_batch_dual_query(
+            entry, {}, "A1,B2", "A1,B2",
+            ["outerIds", "skuOuterIds"],
+            mock_client, None, None,
+        )
+        assert data["total"] == 2
+
+    @pytest.mark.asyncio
+    async def test_no_exact_match_returns_all(self):
+        """本地匹配无精确命中时返回全部"""
+        entry = _batch_entry()
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.return_value = {
+            "suppliers": [
+                {"outerId": "DBTXL", "sysItemId": "1"},  # 宽泛编码命中
+            ],
+        }
+
+        data, note = await try_batch_dual_query(
+            entry, {}, "DBTXL01-02", "DBTXL01-02,DBTXL",
+            ["outerIds"],
+            mock_client, None, None,
+        )
+        # 原始编码DBTXL01-02没有精确匹配，返回全部
+        assert len(data["suppliers"]) == 1
+
+
+# ── _deduplicate_items 测试 ───────────────────────────
+
+
+class TestDeduplicateItems:
+    """去重辅助函数"""
+
+    def test_basic_dedup(self):
+        items = [
+            {"outerId": "A1", "sysItemId": "1"},
+            {"outerId": "A1", "sysItemId": "1"},
+            {"outerId": "B2", "sysItemId": "2"},
+        ]
+        result = _deduplicate_items(items)
+        assert len(result) == 2
+
+    def test_preserves_order(self):
+        items = [
+            {"outerId": "B2", "sysItemId": "2"},
+            {"outerId": "A1", "sysItemId": "1"},
+        ]
+        result = _deduplicate_items(items)
+        assert result[0]["outerId"] == "B2"
+        assert result[1]["outerId"] == "A1"
+
+
+# ── _match_items_batch 测试 ───────────────────────────
+
+
+class TestMatchItemsBatch:
+    """批量编码本地匹配"""
+
+    def test_exact_match_filter(self):
+        items = [
+            {"outerId": "A1"},
+            {"outerId": "B2"},
+            {"outerId": "DBTXL"},
+        ]
+        matched = _match_items_batch(items, ["A1", "B2"])
+        assert len(matched) == 2
+
+    def test_no_match_returns_all(self):
+        """无精确匹配时返回全部"""
+        items = [{"outerId": "DBTXL"}]
+        matched = _match_items_batch(items, ["DBTXL01-02"])
+        assert len(matched) == 1  # 返回全部
+
+    def test_case_insensitive(self):
+        items = [{"outerId": "abc123"}]
+        matched = _match_items_batch(items, ["ABC123"])
+        assert len(matched) == 1
+
+
+# ── _fetch_all_with_limit 测试 ────────────────────────
+
+from services.kuaimai.param_guardrails import _fetch_all_with_limit
+
+
+class TestFetchAllWithLimit:
+    """_fetch_all_with_limit 独立翻页函数"""
+
+    @pytest.mark.asyncio
+    async def test_single_page(self):
+        """单页即止（返回条数 < pageSize）"""
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.return_value = {
+            "list": [{"id": 1}, {"id": 2}], "total": 2,
+        }
+        params = {"pageSize": 100}
+        data = await _fetch_all_with_limit(
+            mock_client, "test.method", params, None, None,
+            response_key="list", max_pages=10,
+        )
+        assert len(data["list"]) == 2
+        assert mock_client.request_with_retry.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_multi_page_fetch(self):
+        """多页翻页：3页数据合并"""
+        mock_client = AsyncMock()
+        page_size = 2
+        mock_client.request_with_retry.side_effect = [
+            {"list": [{"id": 1}, {"id": 2}]},
+            {"list": [{"id": 3}, {"id": 4}]},
+            {"list": [{"id": 5}]},  # < pageSize → 最后一页
+        ]
+        params = {"pageSize": page_size}
+        data = await _fetch_all_with_limit(
+            mock_client, "test.method", params, None, None,
+            response_key="list", max_pages=10,
+        )
+        assert len(data["list"]) == 5
+        assert mock_client.request_with_retry.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_max_pages_truncation(self):
+        """max_pages 截断：限制最多拉2页"""
+        mock_client = AsyncMock()
+        page_size = 2
+        # 每页都满，理论上应该无限翻页
+        mock_client.request_with_retry.return_value = {
+            "list": [{"id": 1}, {"id": 2}],
+        }
+        params = {"pageSize": page_size}
+        data = await _fetch_all_with_limit(
+            mock_client, "test.method", params, None, None,
+            response_key="list", max_pages=2,
+        )
+        assert len(data["list"]) == 4  # 2页 × 2条
+        assert mock_client.request_with_retry.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_custom_response_key(self):
+        """自定义 response_key"""
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.return_value = {
+            "stockStatusVoList": [{"sku": "A1"}],
+        }
+        params = {"pageSize": 100}
+        data = await _fetch_all_with_limit(
+            mock_client, "test.method", params, None, None,
+            response_key="stockStatusVoList",
+        )
+        assert len(data["stockStatusVoList"]) == 1
+
+
+# ── apply_code_broadening pageSize 验证 ───────────────
+
+
+class TestApplyCodeBroadeningPageSize:
+    """apply_code_broadening 的 pageSize 设置"""
+
+    def test_broadening_sets_page_size_100(self):
+        """有宽泛打包时 pageSize 被设为 100"""
+        entry = _stock_entry()
+        api_params = {"mainOuterId": "DBTXL01-02", "pageSize": 20}
+        apply_code_broadening(
+            entry, {"outer_id": "DBTXL01-02"}, api_params,
+        )
+        assert api_params["pageSize"] == 100
+
+    def test_pure_digit_no_page_size_change(self):
+        """纯数字编码不设 pageSize（无宽泛打包）"""
+        entry = _stock_entry()
+        api_params = {"mainOuterId": "12345", "pageSize": 20}
+        apply_code_broadening(
+            entry, {"outer_id": "12345"}, api_params,
+        )
+        assert api_params["pageSize"] == 20

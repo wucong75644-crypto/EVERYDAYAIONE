@@ -22,8 +22,8 @@ DISTRIBUTION_REGISTRY = {
         param_docs={
             "distributor_company_id": "分销商公司ID（必填，从distributor_list获取）。示例: 100001",
             "supplier_company_id": "供应商公司ID（必填）。示例: 200001",
-            "outer_ids": "商家编码（多个逗号隔开）。示例: ABC123,DEF456",
-            "sku_outer_ids": "SKU商家编码（多个逗号隔开）。示例: SKU001,SKU002",
+            "outer_ids": "商家编码（逗号隔开，最多20个）。示例: ABC123,DEF456",
+            "sku_outer_ids": "SKU商家编码（逗号隔开，最多20个）。示例: SKU001,SKU002",
             "title": "商品标题（模糊搜索）。示例: 手机壳",
             "request_source": "请求来源（必填）。示例: erp",
         },
@@ -66,8 +66,8 @@ DISTRIBUTION_REGISTRY = {
         param_docs={
             "supplier_company_id": "供应商公司ID（必填）。示例: 200001",
             "shop_id": "店铺ID（必填，通过shop_list获取）。示例: 12345",
-            "outer_ids": "商家编码（多个逗号隔开）。示例: ABC123,DEF456",
-            "sku_outer_ids": "SKU商家编码（多个逗号隔开）。示例: SKU001,SKU002",
+            "outer_ids": "商家编码（逗号隔开，最多20个）。示例: ABC123,DEF456",
+            "sku_outer_ids": "SKU商家编码（逗号隔开，最多20个）。示例: SKU001,SKU002",
             "title": "商品标题（模糊搜索）。示例: 手机壳",
             "start_date": "更新起始日期。格式: YYYY-MM-DD。示例: 2026-03-01",
             "end_date": "更新结束日期。格式: YYYY-MM-DD。示例: 2026-03-15",
