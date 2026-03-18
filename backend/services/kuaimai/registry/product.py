@@ -142,7 +142,7 @@ PRODUCT_REGISTRY = {
     # ── 库存查询 ──────────────────────────────────────
     "stock_status": ApiEntry(
         method="stock.api.status.query",
-        description="查询库存数量和状态（总库存/可售/锁定/预占，含各仓汇总）。支持主编码outer_id或规格编码sku_outer_id。查库存直接用这个，不需要先查sku_info验证",
+        description="查询库存数量和状态（总库存/可售/锁定/预占/采购在途，含各仓汇总）。支持主编码outer_id或规格编码sku_outer_id。查库存直接用这个，不需要先查sku_info验证。采购在途只有数量，到货日期在采购单备注里(purchase_order_list, status=GOODS_NOT_ARRIVED)",
         param_map={
             "outer_id": "mainOuterId",
             "sku_outer_id": "skuOuterId",
