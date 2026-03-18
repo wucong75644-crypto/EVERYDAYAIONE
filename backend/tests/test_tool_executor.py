@@ -2,7 +2,7 @@
 ToolExecutor 单元测试
 
 覆盖：execute 分发、web_search、get_conversation_context、
-      search_knowledge、ERP 工具（query_erp_*）
+      search_knowledge、erp_identify、ERP 工具（query_erp_*）
 
 注意：tool_executor.py 使用函数内延迟导入，patch 路径需指向原始模块。
 """
@@ -280,6 +280,92 @@ class TestSearchKnowledge:
         exe = _make_executor()
         result = await exe._search_knowledge({"query": "不存在"})
         assert "未找到" in result
+
+
+# ============================================================
+# TestErpIdentify — 编码识别工具
+# ============================================================
+
+
+class TestErpIdentify:
+
+    @pytest.mark.asyncio
+    async def test_empty_code(self):
+        """空 code→返回提示"""
+        exe = _make_executor()
+        result = await exe._erp_identify({"code": ""})
+        assert "请提供" in result
+
+    @pytest.mark.asyncio
+    async def test_missing_code(self):
+        """无 code 键→返回提示"""
+        exe = _make_executor()
+        result = await exe._erp_identify({})
+        assert "请提供" in result
+
+    @pytest.mark.asyncio
+    @patch("services.kuaimai.client.KuaiMaiClient")
+    async def test_erp_not_configured(self, MockClient):
+        """ERP 未配置→返回友好提示"""
+        mock_client = AsyncMock()
+        mock_client.is_configured = False
+        mock_client.close = AsyncMock()
+        MockClient.return_value = mock_client
+
+        exe = _make_executor()
+        result = await exe._erp_identify({"code": "ABC123"})
+        assert "未配置" in result
+        mock_client.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("services.kuaimai.code_identifier.identify_code", new_callable=AsyncMock)
+    @patch("services.kuaimai.client.KuaiMaiClient")
+    async def test_identify_success(self, MockClient, mock_identify):
+        """正常识别→返回识别结果"""
+        mock_client = AsyncMock()
+        mock_client.is_configured = True
+        mock_client.load_cached_token = AsyncMock()
+        mock_client.close = AsyncMock()
+        MockClient.return_value = mock_client
+        mock_identify.return_value = "编码识别: ABC123\n✓ 商品存在"
+
+        exe = _make_executor()
+        result = await exe._erp_identify({"code": "ABC123"})
+        assert "商品存在" in result
+        mock_identify.assert_awaited_once_with(mock_client, "ABC123")
+        mock_client.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("services.kuaimai.code_identifier.identify_code", new_callable=AsyncMock)
+    @patch("services.kuaimai.client.KuaiMaiClient")
+    async def test_identify_exception(self, MockClient, mock_identify):
+        """identify_code 抛异常→返回错误信息"""
+        mock_client = AsyncMock()
+        mock_client.is_configured = True
+        mock_client.load_cached_token = AsyncMock()
+        mock_client.close = AsyncMock()
+        MockClient.return_value = mock_client
+        mock_identify.side_effect = Exception("API timeout")
+
+        exe = _make_executor()
+        result = await exe._erp_identify({"code": "XYZ"})
+        assert "编码识别失败" in result
+        assert "API timeout" in result
+        mock_client.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_execute_routes_to_erp_identify(self):
+        """execute 分发 erp_identify 到正确 handler"""
+        exe = _make_executor()
+        exe._handlers["erp_identify"] = AsyncMock(return_value="识别结果")
+        result = await exe.execute("erp_identify", {"code": "TEST01"})
+        assert result == "识别结果"
+
+    @pytest.mark.asyncio
+    async def test_handler_registered(self):
+        """erp_identify 已注册到 _handlers"""
+        exe = _make_executor()
+        assert "erp_identify" in exe._handlers
 
 
 # ============================================================

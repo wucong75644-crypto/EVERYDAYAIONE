@@ -42,7 +42,7 @@ from config.smart_model_config import (
 
 INFO_TOOLS: Set[str] = {
     "web_search", "get_conversation_context", "search_knowledge",
-    "erp_api_search", "model_search",
+    "erp_api_search", "erp_identify", "model_search",
 } | ERP_SYNC_TOOLS | CRAWLER_INFO_TOOLS | CODE_INFO_TOOLS
 
 ROUTING_TOOLS: Set[str] = {

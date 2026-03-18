@@ -8,6 +8,7 @@
 - web_search: 搜索互联网（复用 IntentRouter.execute_search）
 - get_conversation_context: 获取近期对话（复用 MessageService）
 - search_knowledge: 查询知识库（复用 knowledge_service）
+- erp_identify: 编码识别（委托 code_identifier）
 - erp_*_query: ERP查询工具（6个，委托 ErpDispatcher）
 - erp_execute: ERP写操作（委托 ErpDispatcher）
 - social_crawler: 社交媒体爬虫
@@ -34,6 +35,7 @@ class ToolExecutor:
             "search_knowledge": self._search_knowledge,
             "social_crawler": self._social_crawler,
             "erp_api_search": self._erp_api_search,
+            "erp_identify": self._erp_identify,
             "model_search": self._model_search,
             "code_execute": self._code_execute,
         }
@@ -172,6 +174,32 @@ class ToolExecutor:
         if not query:
             return "请输入搜索关键词"
         return search_models(query)
+
+    # ========================================
+    # ERP 编码识别
+    # ========================================
+
+    async def _erp_identify(self, args: Dict[str, Any]) -> str:
+        """编码识别工具：识别裸值编码/单号的类型和关联信息"""
+        from services.kuaimai.client import KuaiMaiClient
+        from services.kuaimai.code_identifier import identify_code
+
+        code = args.get("code", "").strip()
+        if not code:
+            return "请提供要识别的编码或单号"
+
+        client = KuaiMaiClient()
+        if not client.is_configured:
+            await client.close()
+            return "ERP系统未配置，请联系管理员设置快麦ERP的AppKey和AccessToken"
+        await client.load_cached_token()
+        try:
+            return await identify_code(client, code)
+        except Exception as e:
+            logger.error(f"ToolExecutor erp_identify | code={code} | error={e}")
+            return f"编码识别失败: {e}"
+        finally:
+            await client.close()
 
     # ========================================
     # 代码执行沙盒
