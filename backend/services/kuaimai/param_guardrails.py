@@ -141,6 +141,28 @@ _CODE_MATCH_FIELDS = ("outerId", "skuOuterId", "mainOuterId")
 _MIN_BASE_CODE_LEN = 2
 
 
+def _strip_sku_suffix(code: str) -> Optional[str]:
+    """按最后一个 `-` 拆分，保留较长的部分作为基础编码。
+
+    条件：后缀含数字（确认是型号/变体模式，非纯文字命名）。
+    等长时保留左侧。
+
+    Examples:
+        "SEVENTEENLSG01-01" → "SEVENTEENLSG01"
+        "DBTXL01-02" → "DBTXL01"
+        "HM-2026A" → "2026A"  (suffix更长)
+        "ABC-DEF" → None  (后缀纯字母)
+        "ABC123" → None  (无 -)
+    """
+    if "-" not in code:
+        return None
+    base, suffix = code.rsplit("-", 1)
+    if not (any(c.isdigit() for c in suffix) and base):
+        return None
+    result = base if len(base) >= len(suffix) else suffix
+    return result
+
+
 def extract_base_code(code: str) -> Optional[str]:
     """提取编码的字母前缀部分（到第一个数字为止）
 
@@ -208,12 +230,12 @@ def _match_items(
     if exact:
         return exact
 
-    # 再 contains 匹配
+    # 再 contains 匹配（双向：needle in val 或 val in needle）
     contains = []
     for item in items:
         for field in _CODE_MATCH_FIELDS:
             val = str(item.get(field, "")).upper()
-            if val and needle in val:
+            if val and (needle in val or val in needle):
                 contains.append(item)
                 break
     return contains
@@ -280,9 +302,22 @@ def apply_code_broadening(
         for k in ("mainOuterId", "skuOuterId", "outerId"):
             api_params.pop(k, None)
 
-        # single_code_only：不打包，只用原始编码依次试两个参数
+        # single_code_only：顺序宽泛查询（不打包逗号）
         if entry.single_code_only:
-            return original_codes, original_codes, api_keys, False
+            if entry.response_key:
+                # List API：宽泛优先，本地匹配过滤
+                codes: List[str] = []
+                stripped = _strip_sku_suffix(original_codes)
+                if stripped:
+                    codes.append(stripped)
+                letter_base = extract_base_code(original_codes)
+                if letter_base and letter_base not in codes:
+                    codes.append(letter_base)
+                codes.append(original_codes)
+                return original_codes, codes, api_keys, False
+            else:
+                # Detail API：只用原始编码（宽泛返回的是不同商品详情）
+                return original_codes, [original_codes], api_keys, False
 
         # 正常打包：原始编码 + 基础编码
         base_code = extract_base_code(original_codes)
@@ -331,54 +366,67 @@ async def try_broadened_queries(
     entry: ApiEntry,
     api_params: Dict[str, Any],
     original_code: str,
-    packed_code: str,
+    packed_code: "str | List[str]",
     api_keys: List[str],
     client: Any,
     base_url: Optional[str],
     system_params: Optional[Dict[str, Any]],
 ) -> Tuple[Dict[str, Any], str]:
-    """单条宽泛查询：原始+宽泛打包发送，依次用每个参数查，找到就停"""
+    """单条宽泛查询：依次用每个编码×每个参数查，命中即停
+
+    packed_code 可以是：
+    - str: 逗号打包编码（原始行为，兼容）
+    - List[str]: 顺序编码列表（single_code_only 宽泛优先模式）
+    """
     response_key = entry.response_key  # None = detail API
 
-    for i, api_key in enumerate(api_keys):
-        query_params = dict(api_params)
-        query_params[api_key] = packed_code
-        param_label = "outer_id" if i == 0 else "sku_outer_id"
-        try:
-            if response_key:
-                # List API：翻页拉取 + 本地匹配
-                data = await _fetch_all_with_limit(
-                    client, entry.method, query_params,
-                    base_url, system_params,
-                    response_key=response_key, max_pages=10,
+    # 兼容：str → [str]，list 保持不变
+    codes_to_try = packed_code if isinstance(packed_code, list) else [packed_code]
+
+    for code in codes_to_try:
+        for i, api_key in enumerate(api_keys):
+            query_params = dict(api_params)
+            query_params[api_key] = code
+            param_label = "outer_id" if i == 0 else "sku_outer_id"
+            try:
+                if response_key:
+                    # List API：翻页拉取 + 本地匹配
+                    if code != original_code:
+                        query_params["pageSize"] = 100
+                    data = await _fetch_all_with_limit(
+                        client, entry.method, query_params,
+                        base_url, system_params,
+                        response_key=response_key, max_pages=10,
+                    )
+                    items = data.get(response_key) or []
+                    if not items:
+                        continue
+                    matched = _match_items(items, original_code)
+                    if not matched:
+                        continue
+                    result = dict(data)
+                    result[response_key] = matched
+                    result["total"] = len(matched)
+                    note = (
+                        f"⚙ 编码智能匹配: 「{original_code}」→ "
+                        f"宽泛「{code}」({param_label})查到{len(items)}条，"
+                        f"匹配到{len(matched)}条"
+                    )
+                    return result, note
+                else:
+                    # Detail API：单次查询，命中即返回
+                    data = await client.request_with_retry(
+                        entry.method, query_params,
+                        base_url=base_url,
+                        extra_system_params=system_params,
+                    )
+                    note = f"⚙ 编码查询: {param_label}={code} → 命中"
+                    return data, note
+            except Exception as e:
+                logger.warning(
+                    f"BroadenedQuery error | key={api_key} code={code} | {e}"
                 )
-                items = data.get(response_key) or []
-                if not items:
-                    continue
-                matched = _match_items(items, original_code)
-                if not matched:
-                    continue
-                result = dict(data)
-                result[response_key] = matched
-                result["total"] = len(matched)
-                note = (
-                    f"⚙ 编码智能匹配: 「{original_code}」→ "
-                    f"打包「{packed_code}」({param_label})查到{len(items)}条，"
-                    f"匹配到{len(matched)}条"
-                )
-                return result, note
-            else:
-                # Detail API（如warehouse_stock）：单次查询，成功即命中
-                data = await client.request_with_retry(
-                    entry.method, query_params,
-                    base_url=base_url,
-                    extra_system_params=system_params,
-                )
-                note = f"⚙ 双参数依次试: {param_label}={packed_code} → 命中"
-                return data, note
-        except Exception as e:
-            logger.warning(f"BroadenedQuery error | key={api_key} | {e}")
-            continue
+                continue
 
     note = f"⚙ 编码智能匹配: 「{original_code}」所有参数均无匹配"
     empty: Dict[str, Any] = (

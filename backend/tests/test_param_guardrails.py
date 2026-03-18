@@ -9,6 +9,7 @@ from services.kuaimai.param_guardrails import (
     _match_items,
     _match_items_batch,
     _deduplicate_items,
+    _strip_sku_suffix,
     apply_code_broadening,
     diagnose_empty_result,
     extract_base_code,
@@ -377,15 +378,15 @@ class TestApplyCodeBroadening:
         assert packed == "12345"  # 无宽泛
         assert len(api_keys) == 2  # 仍有双参数
 
-    def test_single_code_only(self):
-        """single_code_only：不打包"""
+    def test_single_code_only_detail_api(self):
+        """single_code_only + Detail API：只用原始编码"""
         entry = _warehouse_stock_entry()
         result = apply_code_broadening(
             entry, {"outer_id": "DBTXL01-02"}, {},
         )
         assert result is not None
         original, packed, api_keys, is_batch = result
-        assert packed == "DBTXL01-02"  # 不打包宽泛
+        assert packed == ["DBTXL01-02"]  # Detail API 只原始编码
         assert len(api_keys) == 2
 
     def test_batch_dual_params(self):
@@ -881,3 +882,212 @@ class TestApplyCodeBroadeningPageSize:
             entry, {"outer_id": "12345"}, api_params,
         )
         assert api_params["pageSize"] == 20
+
+
+# ── _strip_sku_suffix 测试 ──────────────────────────
+
+
+class TestStripSkuSuffix:
+    """_strip_sku_suffix 编码后缀剥离"""
+
+    def test_normal_sku(self):
+        """SEVENTEENLSG01-01 → SEVENTEENLSG01（base更长）"""
+        assert _strip_sku_suffix("SEVENTEENLSG01-01") == "SEVENTEENLSG01"
+
+    def test_short_sku(self):
+        """DBTXL01-02 → DBTXL01（base更长）"""
+        assert _strip_sku_suffix("DBTXL01-02") == "DBTXL01"
+
+    def test_suffix_longer(self):
+        """HM-2026A → 2026A（suffix更长）"""
+        assert _strip_sku_suffix("HM-2026A") == "2026A"
+
+    def test_equal_length(self):
+        """ABC-123 → ABC（等长取左侧）"""
+        assert _strip_sku_suffix("ABC-123") == "ABC"
+
+    def test_no_hyphen(self):
+        """ABC123 → None（无 -）"""
+        assert _strip_sku_suffix("ABC123") is None
+
+    def test_pure_alpha_suffix(self):
+        """ABC-DEF → None（后缀无数字）"""
+        assert _strip_sku_suffix("ABC-DEF") is None
+
+    def test_empty_base(self):
+        """-01 → None（base为空）"""
+        assert _strip_sku_suffix("-01") is None
+
+
+# ── single_code_only + List API 宽泛优先测试 ─────────
+
+
+def _stock_in_out_entry() -> ApiEntry:
+    """stock_in_out 模拟条目（single_code_only + response_key）"""
+    return ApiEntry(
+        method="erp.item.stock.in.out.list",
+        description="出入库流水",
+        param_map={
+            "outer_id": "outerId",
+        },
+        single_code_only=True,
+        response_key="list",
+    )
+
+
+class TestSingleCodeOnlyListApi:
+    """single_code_only + List API 宽泛优先查询"""
+
+    def test_broadening_generates_codes_list(self):
+        """生成 [stripped, letter_base, original] 列表"""
+        entry = _stock_in_out_entry()
+        result = apply_code_broadening(
+            entry, {"outer_id": "SEVENTEENLSG01-01"}, {},
+        )
+        assert result is not None
+        original, codes, api_keys, is_batch = result
+        assert original == "SEVENTEENLSG01-01"
+        assert isinstance(codes, list)
+        # stripped = SEVENTEENLSG01, letter_base = SEVENTEENLSG, original
+        assert codes == [
+            "SEVENTEENLSG01", "SEVENTEENLSG", "SEVENTEENLSG01-01",
+        ]
+        assert is_batch is False
+
+    def test_no_stripped_only_letter_base(self):
+        """无后缀可剥离时只有 letter_base + original"""
+        entry = _stock_in_out_entry()
+        result = apply_code_broadening(
+            entry, {"outer_id": "ABC123"}, {},
+        )
+        assert result is not None
+        _, codes, _, _ = result
+        assert codes == ["ABC", "ABC123"]
+
+    def test_pure_digit_only_original(self):
+        """纯数字编码只有 original"""
+        entry = _stock_in_out_entry()
+        result = apply_code_broadening(
+            entry, {"outer_id": "12345"}, {},
+        )
+        assert result is not None
+        _, codes, _, _ = result
+        assert codes == ["12345"]
+
+    def test_stripped_equals_letter_base_no_dup(self):
+        """stripped 和 letter_base 相同时不重复"""
+        entry = _stock_in_out_entry()
+        # AB-01 → stripped=AB, letter_base=AB → 去重
+        result = apply_code_broadening(
+            entry, {"outer_id": "AB-01"}, {},
+        )
+        assert result is not None
+        _, codes, _, _ = result
+        assert codes.count("AB") == 1
+
+    @pytest.mark.asyncio
+    async def test_broadened_first_hit(self):
+        """宽泛编码先查到数据 → 本地匹配 → 返回"""
+        entry = _stock_in_out_entry()
+        mock_client = AsyncMock()
+        # 第一个code(SEVENTEENLSG01)查到数据
+        mock_client.request_with_retry.return_value = {
+            "list": [
+                {"outerId": "SEVENTEENLSG01-01", "skuOuterId": "SEVENTEENLSG01-01"},
+                {"outerId": "SEVENTEENLSG01-02", "skuOuterId": "SEVENTEENLSG01-02"},
+            ],
+        }
+
+        data, note = await try_broadened_queries(
+            entry, {}, "SEVENTEENLSG01-01",
+            ["SEVENTEENLSG01", "SEVENTEENLSG", "SEVENTEENLSG01-01"],
+            ["outerId"],
+            mock_client, None, None,
+        )
+        assert len(data["list"]) == 1
+        assert data["list"][0]["outerId"] == "SEVENTEENLSG01-01"
+        assert "宽泛" in note
+        assert "匹配到1条" in note
+
+    @pytest.mark.asyncio
+    async def test_codes_list_sequential_fallback(self):
+        """第一个code查不到 → 第二个code查到"""
+        entry = _stock_in_out_entry()
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.side_effect = [
+            {"list": []},  # SEVENTEENLSG01 空
+            {"list": [  # SEVENTEENLSG 查到
+                {"outerId": "SEVENTEENLSG01-01"},
+            ]},
+        ]
+
+        data, note = await try_broadened_queries(
+            entry, {}, "SEVENTEENLSG01-01",
+            ["SEVENTEENLSG01", "SEVENTEENLSG", "SEVENTEENLSG01-01"],
+            ["outerId"],
+            mock_client, None, None,
+        )
+        assert len(data["list"]) == 1
+        assert "SEVENTEENLSG" in note
+
+
+# ── _match_items 双向 contains 测试 ─────────────────
+
+
+class TestMatchItemsBidirectional:
+    """_match_items 双向 contains 匹配"""
+
+    def test_forward_contains(self):
+        """needle in val（原始行为）"""
+        items = [{"outerId": "PREFIX-DBTXL01-02-SUFFIX"}]
+        matched = _match_items(items, "DBTXL01-02")
+        assert len(matched) == 1
+
+    def test_reverse_contains(self):
+        """val in needle（新增：响应字段比原始编码短）"""
+        items = [{"outerId": "SEVENTEENLSG01"}]
+        matched = _match_items(items, "SEVENTEENLSG01-01")
+        assert len(matched) == 1
+
+    def test_exact_match_priority(self):
+        """精确匹配优先于 contains"""
+        items = [
+            {"outerId": "SEVENTEENLSG01"},
+            {"outerId": "SEVENTEENLSG01-01"},
+        ]
+        matched = _match_items(items, "SEVENTEENLSG01-01")
+        assert len(matched) == 1
+        assert matched[0]["outerId"] == "SEVENTEENLSG01-01"
+
+    def test_no_match_either_direction(self):
+        """双向都不匹配 → 空"""
+        items = [{"outerId": "TOTALLY-DIFFERENT"}]
+        matched = _match_items(items, "SEVENTEENLSG01-01")
+        assert len(matched) == 0
+
+
+# ── try_broadened_queries str 兼容测试 ───────────────
+
+
+class TestTryBroadenedQueriesStrCompat:
+    """try_broadened_queries 原始 str 参数兼容"""
+
+    @pytest.mark.asyncio
+    async def test_str_packed_code_still_works(self):
+        """传入 str 类型 packed_code 仍然正常工作"""
+        entry = _stock_entry()
+        mock_client = AsyncMock()
+        mock_client.request_with_retry.return_value = {
+            "total": 1,
+            "stockStatusVoList": [
+                {"outerId": "DBTXL01-02", "mainOuterId": "DBTXL"},
+            ],
+        }
+
+        data, note = await try_broadened_queries(
+            entry, {}, "DBTXL01-02", "DBTXL01-02,DBTXL",
+            ["mainOuterId", "skuOuterId"],
+            mock_client, None, None,
+        )
+        assert len(data["stockStatusVoList"]) == 1
+        assert "匹配到1条" in note
