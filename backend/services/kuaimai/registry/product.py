@@ -222,7 +222,6 @@ PRODUCT_REGISTRY = {
         description="查询商品出入库流水记录（采购入库/销售出库/盘盈盘亏/调拨等历史变动）。查商品销量用order_type=2过滤销售出库，销量=各记录num累加。查当前库存用stock_status",
         param_map={
             "outer_id": "outerId",
-            "sku_outer_id": "skuOuterId",
             "warehouse_id": "warehouseId",
             "start_date": "operateTimeBegin",
             "end_date": "operateTimeEnd",
@@ -230,8 +229,7 @@ PRODUCT_REGISTRY = {
             "order_number": "orderNumber",
         },
         param_docs={
-            "outer_id": "商家编码（主商品编码）。示例: ABC123",
-            "sku_outer_id": "SKU商家编码（规格编码）。带-数字后缀的编码用这个。示例: ABC123-01",
+            "outer_id": "商家编码。传主编码会返回所有SKU的流水，传SKU编码只返回该SKU的流水。示例: ABC123 或 ABC123-01",
             "warehouse_id": "仓库ID（通过warehouse_list获取）",
             "start_date": "起始操作日期。格式: YYYY-MM-DD。示例: 2026-03-01",
             "end_date": "结束操作日期。格式: YYYY-MM-DD。示例: 2026-03-15",
@@ -239,12 +237,11 @@ PRODUCT_REGISTRY = {
             "order_number": "单据编号。精确匹配",
         },
         param_hints={
-            "outer_id": "查整个商品的出入库流水。编码含-数字后缀请改用sku_outer_id",
-            "sku_outer_id": "查某个具体规格的出入库流水。带-数字后缀的编码用这个参数",
+            "outer_id": "商家编码。查销量时必传，配合order_type=2。主编码和SKU编码都可以传",
             "order_type": "查销量传2(销售出库)。不传返回所有类型混在一起",
         },
         single_code_only=True,
-        response_key="list",
+        response_key="stockInOutRecordVos",
         fetch_all=True,
         formatter="format_stock_in_out",
     ),
