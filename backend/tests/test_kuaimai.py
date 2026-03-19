@@ -3534,30 +3534,32 @@ class TestFormatterEmptyMessages:
         defaults.update(overrides)
         return ApiEntry(**defaults)
 
-    def test_inventory_empty_mentions_param_type(self):
-        """库存空结果提示编码类型选错"""
+    def test_inventory_empty_neutral_message(self):
+        """库存空结果使用中性文案（不暗示参数错误）"""
         from services.kuaimai.formatters.product import format_inventory_list
         entry = self._make_entry(response_key="stockStatusVoList")
         data = {"stockStatusVoList": [], "total": 0}
         result = format_inventory_list(data, entry)
         assert "0 条" in result
-        assert "outer_id/sku_outer_id" in result
+        assert "参数类型选错" not in result
 
-    def test_product_list_empty_mentions_param(self):
-        """商品空结果提示参数类型选错"""
+    def test_product_list_empty_neutral_message(self):
+        """商品空结果使用中性文案"""
         from services.kuaimai.formatters.product import format_product_list
         entry = self._make_entry()
         data = {"items": [], "total": 0}
         result = format_product_list(data, entry)
         assert "0 条" in result
+        assert "参数类型选错" not in result
 
-    def test_warehouse_stock_empty_mentions_param(self):
-        """仓库库存空结果提示"""
+    def test_warehouse_stock_empty_neutral_message(self):
+        """仓库库存空结果使用中性文案"""
         from services.kuaimai.formatters.product import format_warehouse_stock
         entry = self._make_entry()
         data = {"list": []}
         result = format_warehouse_stock(data, entry)
         assert "0 条" in result
+        assert "参数类型选错" not in result
 
     def test_nonempty_no_error_hint(self):
         """有结果时不显示参数错误提示"""
@@ -4754,3 +4756,85 @@ class TestRoutingPromptAudit:
         assert "1=采购入库" in ERP_ROUTING_PROMPT
         assert "2=销售出库" in ERP_ROUTING_PROMPT
         assert "6=调拨出库" in ERP_ROUTING_PROMPT
+
+
+# ============================================================
+# Phase 5B 补充: suitSingleList + diffStockNum
+# ============================================================
+
+
+class TestProductDetailSuitSingles:
+    """format_product_detail 套件子单品渲染"""
+
+    def test_product_detail_with_suit_singles(self):
+        """suitSingleList 有数据时渲染子单品列表"""
+        from services.kuaimai.formatters.product import format_product_detail
+        data = {
+            "title": "天竺棉套件",
+            "outerId": "TJ-CCNNTXL01",
+            "type": 1,
+            "suitSingleList": [
+                {"outerId": "DBXL01", "title": "单品A", "ratio": 1,
+                 "skuOuterId": "DBXL01-01", "propertiesName": "白色M"},
+                {"outerId": "DBTX02", "title": "单品B", "ratio": 2},
+            ],
+            "items": [],
+        }
+        result = format_product_detail(data, None)
+        assert "套件子单品" in result
+        assert "2个" in result
+        assert "DBXL01" in result
+        assert "单品A" in result
+        assert "x1" in result
+        assert "sku=DBXL01-01" in result
+        assert "白色M" in result
+        assert "DBTX02" in result
+        assert "x2" in result
+
+    def test_product_detail_empty_suit_singles(self):
+        """suitSingleList 为空时不渲染"""
+        from services.kuaimai.formatters.product import format_product_detail
+        data = {
+            "title": "普通商品",
+            "outerId": "SPU999",
+            "suitSingleList": [],
+        }
+        result = format_product_detail(data, None)
+        assert "套件子单品" not in result
+
+
+class TestSubOrderDiffStockNum:
+    """trade.py 子订单 diffStockNum 缺货数量渲染"""
+
+    def test_sub_order_with_diff_stock_num(self):
+        """子订单包含缺货数量字段"""
+        from services.kuaimai.formatters.trade import format_order_list
+        data = {
+            "list": [{
+                "tid": "T001", "sysStatus": "待发货",
+                "orders": [
+                    {"sysTitle": "白色T恤", "num": 3,
+                     "diffStockNum": 1, "price": 59.0},
+                ],
+            }],
+            "total": 1,
+        }
+        result = format_order_list(data, None)
+        assert "白色T恤" in result
+        assert "缺货数量: 1" in result
+
+    def test_sub_order_without_diff_stock_num(self):
+        """缺货数量为0时不显示"""
+        from services.kuaimai.formatters.trade import format_order_list
+        data = {
+            "list": [{
+                "tid": "T002", "sysStatus": "已发货",
+                "orders": [
+                    {"sysTitle": "黑色裤子", "num": 2, "price": 89.0},
+                ],
+            }],
+            "total": 1,
+        }
+        result = format_order_list(data, None)
+        assert "黑色裤子" in result
+        assert "缺货数量" not in result

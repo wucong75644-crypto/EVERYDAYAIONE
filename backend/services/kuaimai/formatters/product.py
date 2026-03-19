@@ -129,7 +129,7 @@ def format_product_list(data: Any, entry: ApiEntry) -> str:
     items = data.get("items") or data.get("list") or []
     total = data.get("total", len(items))
     if not items:
-        return "查询返回 0 条商品（编码可能不存在或参数类型选错）"
+        return "查询返回 0 条商品"
     lines = [f"共找到 {total} 个商品：\n"]
     for item in items[:20]:
         lines.append("- " + format_item_with_labels(
@@ -152,6 +152,23 @@ def format_product_detail(data: Any, entry: ApiEntry) -> str:
         if cat_names:
             lines.append(f"分类: {' > '.join(cat_names)}")
 
+    # 套件子单品
+    suit_singles = data.get("suitSingleList") or []
+    if suit_singles:
+        lines.append(f"\n套件子单品({len(suit_singles)}个)：")
+        for s in suit_singles[:20]:
+            outer = s.get("outerId", "")
+            title_s = s.get("title", "")
+            ratio = s.get("ratio", 1)
+            sku_outer = s.get("skuOuterId", "")
+            spec = s.get("propertiesName", "")
+            parts = [f"  - {outer} {title_s} x{ratio}"]
+            if sku_outer:
+                parts.append(f"sku={sku_outer}")
+            if spec:
+                parts.append(spec)
+            lines.append(" | ".join(parts))
+
     skus = data.get("items") or []
     if skus:
         lines.append(f"\nSKU列表（共{len(skus)}个）：")
@@ -166,7 +183,7 @@ def format_inventory_list(data: Any, entry: ApiEntry) -> str:
     items = data.get("stockStatusVoList") or data.get("list") or []
     total = data.get("total", len(items))
     if not items:
-        return "查询返回 0 条库存记录（编码可能不存在或参数类型选错，如 outer_id/sku_outer_id 混用）"
+        return "查询返回 0 条库存记录"
     lines = [f"共找到 {total} 条库存记录：\n"]
     for item in items[:100]:
         lines.append("- " + format_item_with_labels(
@@ -196,7 +213,7 @@ def format_warehouse_stock(data: Any, entry: ApiEntry) -> str:
     """仓库及商品库存"""
     items = data.get("list") or []
     if not items:
-        return "查询返回 0 条仓库库存（编码可能不存在或参数类型选错）"
+        return "查询返回 0 条仓库库存"
     lines = [f"共 {len(items)} 条仓库库存：\n"]
     for item in items[:50]:
         # 顶层有 outerId，嵌套 skus[] -> mainWareHousesStock[]
