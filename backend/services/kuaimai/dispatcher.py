@@ -6,13 +6,13 @@ ERP统一调度引擎
 """
 
 import asyncio
-import json
 from typing import Any, Dict, Optional
 
 from loguru import logger
 
 from services.kuaimai.client import KuaiMaiClient
 from services.kuaimai.formatters import get_formatter
+from services.kuaimai.formatters.common import format_generic_list
 from services.kuaimai.param_guardrails import (
     apply_code_broadening,
     diagnose_empty_result,
@@ -232,64 +232,43 @@ class ErpDispatcher:
 
         return entry.base_url, system_params or None
 
+    # 全局安全网：所有 formatter 输出的绝对上限（按行截断，不破坏数据）
+    _GLOBAL_CHAR_BUDGET = 4000
+
     def _format_response(
         self,
         data: Any,
         entry: ApiEntry,
         action: str,
     ) -> str:
-        """格式化API响应"""
-        # 获取格式化函数
+        """格式化API响应 + 全局字符预算安全网"""
         formatter = get_formatter(entry.formatter)
         if formatter:
             try:
-                return formatter(data, entry)
+                result = formatter(data, entry)
             except Exception as e:
                 logger.warning(
                     f"Formatter error: {entry.formatter} | {e}, "
                     f"falling back to generic"
                 )
+                result = format_generic_list(data, entry)
+        else:
+            result = format_generic_list(data, entry)
 
-        # 兜底：通用格式化
-        return self._generic_format(data, entry, action)
+        # 全局安全网：超预算时按行截断
+        if len(result) > self._GLOBAL_CHAR_BUDGET:
+            lines = result.split("\n")
+            truncated: list[str] = []
+            used = 0
+            for line in lines:
+                if used + len(line) + 1 > self._GLOBAL_CHAR_BUDGET:
+                    truncated.append("...(输出过长，已截断)")
+                    break
+                truncated.append(line)
+                used += len(line) + 1
+            result = "\n".join(truncated)
 
-    def _generic_format(
-        self,
-        data: Any,
-        entry: ApiEntry,
-        action: str,
-    ) -> str:
-        """通用格式化：提取列表数据，转JSON摘要"""
-        if isinstance(data, dict):
-            # 提取列表
-            items = data.get(entry.response_key) if entry.response_key else None
-            total = data.get("total", "")
-
-            if isinstance(items, list):
-                count = len(items)
-                header = f"查询到 {total or count} 条结果"
-                if not items:
-                    return f"{entry.description}：暂无数据"
-
-                # 截取前5条，JSON格式
-                preview = items[:5]
-                text = json.dumps(preview, ensure_ascii=False, indent=2)
-                if len(text) > 2000:
-                    text = text[:2000] + "\n..."
-
-                suffix = ""
-                if count < int(total or count):
-                    suffix = f"\n（显示前{count}条，共{total}条）"
-                return f"{header}{suffix}\n\n{text}"
-
-            # 非列表响应（详情类）
-            text = json.dumps(data, ensure_ascii=False, indent=2)
-            if len(text) > 2000:
-                text = text[:2000] + "\n..."
-            return f"{entry.description}结果:\n{text}"
-
-        # 非dict响应
-        return str(data)[:2000]
+        return result
 
     async def execute_raw(
         self,

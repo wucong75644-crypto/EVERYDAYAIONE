@@ -1248,33 +1248,47 @@ class TestErpDispatcher:
 
     def test_generic_format_list(self):
         """通用格式化：列表数据"""
-        entry = self._make_entry(response_key="list")
+        entry = self._make_entry(response_key="list", formatter="__nonexistent__")
         d = self._make_dispatcher()
         data = {"list": [{"name": "A"}, {"name": "B"}], "total": 2}
-        result = d._generic_format(data, entry, "test")
+        result = d._format_response(data, entry, "test")
         assert "2" in result
         assert "A" in result
 
     def test_generic_format_empty_list(self):
         """通用格式化：空列表"""
-        entry = self._make_entry(response_key="list")
+        entry = self._make_entry(response_key="list", formatter="__nonexistent__")
         d = self._make_dispatcher()
-        result = d._generic_format({"list": []}, entry, "test")
+        result = d._format_response({"list": []}, entry, "test")
         assert "暂无数据" in result
 
     def test_generic_format_detail(self):
         """通用格式化：非列表响应（详情类）"""
-        entry = self._make_entry(response_key=None)
+        entry = self._make_entry(response_key=None, formatter="__nonexistent__")
         d = self._make_dispatcher()
-        result = d._generic_format({"id": 1, "name": "A"}, entry, "test")
-        assert "结果" in result
+        result = d._format_response({"id": 1, "name": "A"}, entry, "test")
+        assert "测试接口" in result
 
     def test_generic_format_non_dict(self):
         """通用格式化：非dict响应"""
-        entry = self._make_entry()
+        entry = self._make_entry(formatter="__nonexistent__")
         d = self._make_dispatcher()
-        result = d._generic_format("plain text", entry, "test")
+        result = d._format_response("plain text", entry, "test")
         assert "plain text" in result
+
+    def test_global_char_budget_truncation(self):
+        """全局安全网：超长输出按行截断"""
+        entry = self._make_entry(
+            response_key="list",
+            formatter="format_generic_list",
+        )
+        d = self._make_dispatcher()
+        # 构造超长数据
+        big_items = [{"name": f"item_{i}", "desc": "x" * 200} for i in range(50)]
+        data = {"list": big_items, "total": 50}
+        result = d._format_response(data, entry, "test")
+        assert len(result) <= d._GLOBAL_CHAR_BUDGET + 50  # 允许尾部提示余量
+        assert "截断" in result or len(result) <= d._GLOBAL_CHAR_BUDGET
 
 
 # ============================================================
@@ -4589,6 +4603,168 @@ class TestProductFormattersExtended:
         assert "SKU001" in result
         assert "采购入库" in result
         assert "50" in result
+
+
+# ═══════════════════════════════════════════════════════════
+# 通用格式化器截断行为验证
+# ═══════════════════════════════════════════════════════════
+
+
+class TestGenericFormatterTruncation:
+    """验证 format_generic_list/detail 按边界截断，不破坏数据"""
+
+    def _make_entry(self, **overrides):
+        from services.kuaimai.registry.base import ApiEntry
+        defaults = {
+            "method": "erp.test",
+            "description": "测试接口",
+            "param_map": {},
+            "response_key": "list",
+        }
+        defaults.update(overrides)
+        return ApiEntry(**defaults)
+
+    def test_generic_list_item_boundary_truncation(self):
+        """超预算时停在完整条目边界，不截断到JSON一半"""
+        from services.kuaimai.formatters.common import format_generic_list
+        entry = self._make_entry()
+        # 每条约200字符，20条=4000字符，超预算
+        items = [{"id": i, "data": "x" * 180} for i in range(25)]
+        data = {"list": items, "total": 25}
+        result = format_generic_list(data, entry)
+        # 不应有残缺JSON（不以逗号或花括号中间结尾）
+        for line in result.split("\n"):
+            if line.startswith("- {"):
+                assert line.endswith("}"), f"条目未完整: {line[-30:]}"
+        assert "显示前" in result
+
+    def test_generic_list_respects_max_items(self):
+        """即使预算充裕，也不超过 _MAX_GENERIC_ITEMS 条"""
+        from services.kuaimai.formatters.common import (
+            format_generic_list, _MAX_GENERIC_ITEMS,
+        )
+        entry = self._make_entry()
+        items = [{"id": i} for i in range(30)]
+        data = {"list": items, "total": 30}
+        result = format_generic_list(data, entry)
+        item_lines = [l for l in result.split("\n") if l.startswith("- ")]
+        assert len(item_lines) <= _MAX_GENERIC_ITEMS
+
+    def test_generic_list_single_huge_item(self):
+        """单条数据极大时，至少显示1条"""
+        from services.kuaimai.formatters.common import format_generic_list
+        entry = self._make_entry()
+        huge = {"id": 1, "payload": "y" * 5000}
+        data = {"list": [huge], "total": 1}
+        result = format_generic_list(data, entry)
+        assert '"id": 1' in result
+
+    def test_generic_detail_key_value_boundary(self):
+        """detail 超预算时停在完整 key-value 边界"""
+        from services.kuaimai.formatters.common import format_generic_detail
+        entry = self._make_entry(response_key=None)
+        data = {f"field_{i}": "v" * 200 for i in range(30)}
+        result = format_generic_detail(data, entry)
+        assert "..." in result
+        # 每行完整（不截断到值的一半）
+        for line in result.split("\n"):
+            if line.strip() == "..." or not line.strip():
+                continue
+            if line.startswith("  "):
+                assert ": " in line
+
+    def test_format_dict_safe_skips_global_skip_fields(self):
+        """_format_dict_safe 跳过 _GLOBAL_SKIP 中的字段"""
+        from services.kuaimai.formatters.common import _format_dict_safe
+        data = {
+            "name": "测试",
+            "picPath": "http://img.com/1.jpg",
+            "sysItemId": 123456,
+            "status": "active",
+        }
+        result = _format_dict_safe(data, "测试", 4000)
+        assert "name" in result
+        assert "status" in result
+        assert "picPath" not in result
+        assert "sysItemId" not in result
+
+    def test_format_dict_safe_skips_empty_values(self):
+        """_format_dict_safe 跳过 None 和空字符串"""
+        from services.kuaimai.formatters.common import _format_dict_safe
+        data = {"name": "A", "empty": "", "none_val": None, "code": "B"}
+        result = _format_dict_safe(data, "测试", 4000)
+        assert "name" in result
+        assert "code" in result
+        assert "empty" not in result
+        assert "none_val" not in result
+
+
+class TestBasicFormatterLimits:
+    """验证 basic.py 列表上限 [:50]"""
+
+    def test_warehouse_list_truncates_at_50(self):
+        from services.kuaimai.formatters.basic import format_warehouse_list
+        items = [{"name": f"仓库{i}", "code": f"WH{i:03d}"} for i in range(80)]
+        result = format_warehouse_list({"list": items}, None)
+        assert "共 80 个仓库" in result
+        assert "仓库0" in result
+        assert "仓库49" in result
+        assert "仓库50" not in result
+
+    def test_shop_list_truncates_at_50(self):
+        from services.kuaimai.formatters.basic import format_shop_list
+        items = [{"title": f"店铺{i}"} for i in range(60)]
+        result = format_shop_list({"list": items}, None)
+        assert "共 60 个店铺" in result
+        assert "店铺49" in result
+        assert "店铺50" not in result
+
+    def test_tag_list_truncates_at_50(self):
+        from services.kuaimai.formatters.basic import format_tag_list
+        items = [{"tagName": f"标签{i}"} for i in range(55)]
+        result = format_tag_list({"list": items}, None)
+        assert "共 55 个标签" in result
+        assert "标签49" in result
+        assert "标签50" not in result
+
+
+class TestWarehouseStockNestedLimits:
+    """验证 product.py format_warehouse_stock 嵌套防爆"""
+
+    def test_nested_skus_limited_to_10(self):
+        from services.kuaimai.formatters.product import format_warehouse_stock
+        # 1个商品 × 20个SKU × 1个仓库 → 应只展示10个SKU
+        skus = [
+            {
+                "skuOuterId": f"SKU{i:03d}",
+                "mainWareHousesStock": [
+                    {"warehouseName": "主仓", "sellableNum": 10},
+                ],
+            }
+            for i in range(20)
+        ]
+        data = {"list": [{"outerId": "SPU001", "skus": skus}]}
+        result = format_warehouse_stock(data, None)
+        assert "SKU009" in result
+        assert "SKU010" not in result
+
+    def test_nested_warehouses_limited_to_10(self):
+        from services.kuaimai.formatters.product import format_warehouse_stock
+        # 1个商品 × 1个SKU × 15个仓库 → 应只展示10个仓库
+        wh_stocks = [
+            {"warehouseName": f"仓库{i}", "sellableNum": i * 10}
+            for i in range(15)
+        ]
+        data = {
+            "list": [{
+                "outerId": "SPU001",
+                "skus": [{"skuOuterId": "SKU001",
+                          "mainWareHousesStock": wh_stocks}],
+            }],
+        }
+        result = format_warehouse_stock(data, None)
+        assert "仓库9" in result
+        assert "仓库10" not in result
 
 
 # ═══════════════════════════════════════════════════════════
