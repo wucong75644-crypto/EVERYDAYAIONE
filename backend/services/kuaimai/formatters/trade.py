@@ -55,7 +55,8 @@ _ORDER_TRANSFORMS: Dict[str, Callable] = {
 _SUB_ORDER_LABELS = {
     "sysTitle": "商品", "sysOuterId": "编码", "outerSkuId": "SKU编码",
     "skuPropertiesName": "规格",
-    "num": "数量", "price": "单价", "payment": "实付",
+    "num": "数量", "diffStockNum": "缺货数量",
+    "price": "单价", "payment": "实付",
     "cost": "成本", "refundStatus": "退款状态",
 }
 _SUB_ORDER_TRANSFORMS: Dict[str, Callable] = {

@@ -15,6 +15,8 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from services.kuaimai.code_identifier import (
+    _fetch_suit_singles,
+    _format_suit_singles,
     _guess_code_type,
     _identify_barcode,
     _identify_order,
@@ -438,3 +440,366 @@ class TestFallbackMechanism:
         result = await identify_code(client, "P123456789012345678")
         assert "平台订单号(order_id)" in result
         assert "小红书" in result
+
+
+# ── 新增字段测试：_format_product ────────────────
+
+
+class TestFormatProductFields:
+
+    @pytest.mark.asyncio
+    async def test_suite_with_suit_single_list(self):
+        """套件商品含 suitSingleList → 输出子单品列表"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(return_value={
+            "title": "天竺棉套装", "type": 1, "outerId": "TJ-01",
+            "sysItemId": 23456, "items": [],
+            "suitSingleList": [
+                {"outerId": "DBXL01", "ratio": 1,
+                 "skuOuterId": "DBXL01-01", "propertiesName": "白色M"},
+                {"outerId": "DBTX02", "ratio": 2,
+                 "skuOuterId": "DBTX02-01", "propertiesName": "黑色L"},
+            ],
+        })
+        result = await _identify_product(client, "TJ-01")
+        assert "套件子单品(2个)" in result
+        assert "DBXL01(x1, sku=DBXL01-01, 白色M)" in result
+        assert "DBTX02(x2, sku=DBTX02-01, 黑色L)" in result
+        assert "stock_status(outer_id=子单品编码)" in result
+
+    @pytest.mark.asyncio
+    async def test_suite_empty_suit_single_list(self):
+        """套件但 suitSingleList 为空 → 不输出子单品行"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(return_value={
+            "title": "空套件", "type": 2, "outerId": "EMPTY-01",
+            "sysItemId": 34567, "items": [], "suitSingleList": [],
+        })
+        result = await _identify_product(client, "EMPTY-01")
+        assert "纯套件(type=2)" in result
+        assert "套件子单品" not in result
+
+    @pytest.mark.asyncio
+    async def test_product_stopped(self):
+        """activeStatus=0 → 显示停用"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(return_value={
+            "title": "停用商品", "type": 0, "outerId": "STOP01",
+            "sysItemId": 45678, "activeStatus": 0, "items": [],
+        })
+        result = await _identify_product(client, "STOP01")
+        assert "状态: 停用" in result
+
+    @pytest.mark.asyncio
+    async def test_product_virtual(self):
+        """isVirtual=1 → 显示虚拟商品"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(return_value={
+            "title": "虚拟卡", "type": 0, "outerId": "VIR01",
+            "sysItemId": 56789, "isVirtual": 1, "items": [],
+        })
+        result = await _identify_product(client, "VIR01")
+        assert "虚拟商品" in result
+
+    @pytest.mark.asyncio
+    async def test_product_with_barcode_price(self):
+        """barcode/purchasePrice 非空 → 输出条码和采购价"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(return_value={
+            "title": "有码商品", "type": 0, "outerId": "BC01",
+            "sysItemId": 67890, "barcode": "6901234567890",
+            "purchasePrice": 25.5, "items": [],
+        })
+        result = await _identify_product(client, "BC01")
+        assert "条码: 6901234567890" in result
+        assert "采购价: ¥25.5" in result
+
+
+# ── 新增字段测试：_format_sku ──────────────────
+
+
+class TestFormatSkuFields:
+
+    @pytest.mark.asyncio
+    async def test_sku_item_outer_id(self):
+        """itemOuterId 优先于 outerId 作为主编码"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(side_effect=[
+            KuaiMaiBusinessError(message="not found", code="20110"),
+            {"skuOuterId": "SKU-01", "sysSkuId": 100,
+             "propertiesName": "红色", "outerId": "OLD-MAIN",
+             "itemOuterId": "NEW-MAIN", "type": 0},
+        ])
+        result = await _identify_product(client, "SKU-01")
+        assert "对应主编码: NEW-MAIN" in result
+        assert "OLD-MAIN" not in result
+
+    @pytest.mark.asyncio
+    async def test_sku_suite_auto_fetch(self):
+        """套件 SKU → 自动获取子单品列表"""
+        client = AsyncMock()
+
+        async def mock_request(method, params, **kwargs):
+            if method == "item.single.get" and "outerId" in params:
+                if params["outerId"] == "SKU-SUITE":
+                    # 第一次查主编码 → 没有 sysItemId
+                    return {"item": {}}
+                # auto-fetch 子单品
+                return {"item": {
+                    "suitSingleList": [
+                        {"outerId": "SUB01", "ratio": 1,
+                         "skuOuterId": "SUB01-01", "propertiesName": "白M"},
+                    ],
+                }}
+            if method == "erp.item.single.sku.get":
+                return {"itemSku": [{
+                    "skuOuterId": "SKU-SUITE", "sysSkuId": 200,
+                    "propertiesName": "套装A", "outerId": "MAIN-SUITE",
+                    "itemOuterId": "MAIN-SUITE", "type": 1,
+                }]}
+            raise Exception("unexpected")
+
+        client.request_with_retry = AsyncMock(side_effect=mock_request)
+        result = await _identify_product(client, "SKU-SUITE")
+        assert "SKU编码(sku_outer_id)" in result
+        assert "套件子单品(1个)" in result
+        assert "SUB01(x1, sku=SUB01-01, 白M)" in result
+
+    @pytest.mark.asyncio
+    async def test_sku_suite_fetch_fail(self):
+        """套件 SKU 自动获取失败 → 输出提示"""
+        client = AsyncMock()
+
+        async def mock_request(method, params, **kwargs):
+            if method == "item.single.get":
+                raise Exception("timeout")
+            if method == "erp.item.single.sku.get":
+                return {"itemSku": [{
+                    "skuOuterId": "SKU-FAIL", "sysSkuId": 300,
+                    "propertiesName": "套装B", "outerId": "MAIN-FAIL",
+                    "type": 2,
+                }]}
+            raise Exception("unexpected")
+
+        client.request_with_retry = AsyncMock(side_effect=mock_request)
+        result = await _identify_product(client, "SKU-FAIL")
+        assert "套件SKU，查子单品请用" in result
+        assert "erp_identify(code=MAIN-FAIL)" in result
+
+    @pytest.mark.asyncio
+    async def test_sku_extras(self):
+        """SKU 含 barcode/price/brand → 输出可选行"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(side_effect=[
+            KuaiMaiBusinessError(message="not found", code="20110"),
+            {"skuOuterId": "SKU-EX", "sysSkuId": 400,
+             "propertiesName": "蓝L", "outerId": "MAIN-EX", "type": 0,
+             "barcode": "6909999999999", "purchasePrice": 18.8,
+             "brand": "对白"},
+        ])
+        result = await _identify_product(client, "SKU-EX")
+        assert "条码: 6909999999999" in result
+        assert "采购价: ¥18.8" in result
+        assert "品牌: 对白" in result
+
+
+# ── 新增字段测试：_format_order ──────────────────
+
+
+class TestFormatOrderFields:
+
+    @pytest.mark.asyncio
+    async def test_order_with_sub_orders(self):
+        """订单含 orders[] → 输出商品明细"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(return_value={
+            "list": [{
+                "tid": "126036803257340376", "sid": "5759422420146938",
+                "buyerNick": "张三", "sysStatus": "已发货", "source": "淘宝",
+                "orders": [
+                    {"sysOuterId": "DBTXL01-02", "sysTitle": "天竺棉T恤",
+                     "num": 2},
+                    {"sysOuterId": "ABC123", "sysTitle": "纯棉袜", "num": 1},
+                ],
+            }],
+        })
+        result = await _identify_order(client, "126036803257340376", "order_18")
+        assert "商品(3件)" in result
+        assert "DBTXL01-02 天竺棉T恤 x2" in result
+        assert "ABC123 纯棉袜 x1" in result
+
+    @pytest.mark.asyncio
+    async def test_order_sub_orders_truncated(self):
+        """>5 条子订单截断"""
+        client = AsyncMock()
+        orders = [
+            {"sysOuterId": f"SKU{i}", "sysTitle": f"商品{i}", "num": 1}
+            for i in range(7)
+        ]
+        client.request_with_retry = AsyncMock(return_value={
+            "list": [{
+                "tid": "126036803257340376", "sid": "5759422420146938",
+                "buyerNick": "李四", "sysStatus": "已发货", "source": "淘宝",
+                "orders": orders,
+            }],
+        })
+        result = await _identify_order(client, "126036803257340376", "order_18")
+        assert "等7件" in result
+        # 只显示前5条
+        assert "SKU0" in result
+        assert "SKU4" in result
+        assert "SKU5" not in result
+
+    @pytest.mark.asyncio
+    async def test_order_with_pay_amount(self):
+        """payAmount → 显示实付"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(return_value={
+            "list": [{
+                "tid": "126036803257340376", "sid": "5759422420146938",
+                "buyerNick": "王五", "sysStatus": "已发货", "source": "淘宝",
+                "payAmount": "128.00",
+            }],
+        })
+        result = await _identify_order(client, "126036803257340376", "order_18")
+        assert "实付: ¥128.00" in result
+
+    @pytest.mark.asyncio
+    async def test_order_with_logistics_memo(self):
+        """shopName/outSid/sellerMemo/buyerMessage → 输出"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(return_value={
+            "list": [{
+                "tid": "126036803257340376", "sid": "5759422420146938",
+                "buyerNick": "赵六", "sysStatus": "已发货", "source": "淘宝",
+                "shopName": "对白旗舰店", "warehouseName": "主仓",
+                "outSid": "SF1234567890",
+                "sellerMemo": "加急发", "buyerMessage": "请包装好",
+            }],
+        })
+        result = await _identify_order(client, "126036803257340376", "order_18")
+        assert "店铺: 对白旗舰店" in result
+        assert "仓库: 主仓" in result
+        assert "快递单号: SF1234567890" in result
+        assert "卖家备注: 加急发" in result
+        assert "买家留言: 请包装好" in result
+
+    @pytest.mark.asyncio
+    async def test_order_has_suit(self):
+        """hasSuit=1 → 商品行含(含套件)"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(return_value={
+            "list": [{
+                "tid": "126036803257340376", "sid": "5759422420146938",
+                "buyerNick": "孙七", "sysStatus": "已发货", "source": "淘宝",
+                "hasSuit": 1,
+                "orders": [
+                    {"sysOuterId": "TJ-01", "sysTitle": "套装", "num": 1},
+                ],
+            }],
+        })
+        result = await _identify_order(client, "126036803257340376", "order_18")
+        assert "(含套件)" in result
+
+
+# ── 新增字段测试：_identify_barcode ───────────────
+
+
+class TestBarcodeFields:
+
+    @pytest.mark.asyncio
+    async def test_barcode_with_sku_info(self):
+        """skuOuterId/propertiesName → 商品行含 SKU 信息"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(return_value={
+            "list": [{
+                "outerId": "MAIN01", "title": "测试商品",
+                "skuOuterId": "SKU01", "propertiesName": "白色M",
+            }],
+        })
+        result = await _identify_barcode(client, "6901234567890")
+        assert "sku_outer_id=SKU01" in result
+        assert "规格: 白色M" in result
+
+    @pytest.mark.asyncio
+    async def test_barcode_with_system_ids(self):
+        """sysItemId/sysSkuId → 系统 ID 行"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(return_value={
+            "list": [{
+                "outerId": "MAIN01", "title": "测试商品",
+                "sysItemId": 12345, "sysSkuId": 67890,
+            }],
+        })
+        result = await _identify_barcode(client, "6901234567890")
+        assert "item_id=12345" in result
+        assert "sku_id=67890" in result
+
+    @pytest.mark.asyncio
+    async def test_barcode_with_multi_codes(self):
+        """multiCodes >1 个 → 显示关联编码"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(return_value={
+            "list": [{
+                "outerId": "MAIN01", "title": "测试商品",
+                "multiCodes": ["AT1", "AT2", "6901234567890"],
+            }],
+        })
+        result = await _identify_barcode(client, "6901234567890")
+        assert "关联编码(3个)" in result
+        assert "AT1" in result
+        assert "AT2" in result
+
+
+# ── 辅助函数测试 ──────────────────────────────
+
+
+class TestSuitSinglesHelper:
+
+    def test_format_suit_singles(self):
+        """_format_suit_singles 格式化正确"""
+        items = [
+            {"outerId": "A01", "ratio": 1, "skuOuterId": "A01-01",
+             "propertiesName": "白M"},
+            {"outerId": "B02", "ratio": 2},
+        ]
+        result = _format_suit_singles(items)
+        assert "套件子单品(2个)" in result
+        assert "A01(x1, sku=A01-01, 白M)" in result
+        assert "B02(x2)" in result
+        assert "stock_status" in result
+
+    @pytest.mark.asyncio
+    async def test_fetch_suit_singles_success(self):
+        """_fetch_suit_singles 成功获取"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(return_value={
+            "item": {
+                "suitSingleList": [
+                    {"outerId": "SUB01", "ratio": 1},
+                ],
+            },
+        })
+        result = await _fetch_suit_singles(client, "MAIN-01")
+        assert result is not None
+        assert "套件子单品(1个)" in result
+
+    @pytest.mark.asyncio
+    async def test_fetch_suit_singles_empty(self):
+        """_fetch_suit_singles 无子单品 → None"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(return_value={
+            "item": {"suitSingleList": []},
+        })
+        result = await _fetch_suit_singles(client, "MAIN-01")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_fetch_suit_singles_error(self):
+        """_fetch_suit_singles API 异常 → None"""
+        client = AsyncMock()
+        client.request_with_retry = AsyncMock(
+            side_effect=Exception("timeout"),
+        )
+        result = await _fetch_suit_singles(client, "MAIN-01")
+        assert result is None
