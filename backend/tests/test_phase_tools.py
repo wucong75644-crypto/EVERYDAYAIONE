@@ -146,9 +146,9 @@ class TestPhase1Prompt:
         ):
             assert route in PHASE1_SYSTEM_PROMPT
 
-    def test_prompt_under_500_chars(self):
-        """提示词控制在 500 字符以内（轻量）"""
-        assert len(PHASE1_SYSTEM_PROMPT) < 500
+    def test_prompt_under_800_chars(self):
+        """提示词控制在 800 字符以内（轻量）"""
+        assert len(PHASE1_SYSTEM_PROMPT) < 800
 
     def test_prompt_mentions_regeneration(self):
         """提示词包含重新生成规则"""

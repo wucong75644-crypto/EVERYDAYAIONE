@@ -127,7 +127,7 @@ class Settings(BaseSettings):
     agent_loop_brain_context_limit: int = 10  # 注入对话历史条数
     agent_loop_brain_context_max_chars: int = 3000  # 历史文本最大字符数
     agent_loop_brain_max_images: int = 8  # 历史注入最大图片数（控制 token 消耗）
-    agent_loop_v2_enabled: bool = False  # v2 意图优先架构灰度开关（False=v1 全量工具）
+    agent_loop_v2_enabled: bool = True  # v2 意图优先架构（默认启用，False=降级v1）
 
     # Agent 知识库配置
     kb_enabled: bool = True                              # 知识库总开关

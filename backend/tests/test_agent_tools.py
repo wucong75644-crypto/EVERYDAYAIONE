@@ -72,11 +72,11 @@ class TestValidateToolCall:
             "system_prompt": "你是翻译", "model": "gemini-3-pro",
         }) is True
 
-    def test_route_to_chat_missing_model(self):
-        """route_to_chat 缺 model→False"""
+    def test_route_to_chat_without_model_valid(self):
+        """route_to_chat 无 model→True（v2 Phase2 由 _inject_phase1_model 注入）"""
         assert validate_tool_call(
             "route_to_chat", {"system_prompt": "你是翻译"},
-        ) is False
+        ) is True
 
     def test_route_to_chat_missing_system_prompt(self):
         """route_to_chat 缺 system_prompt→False"""

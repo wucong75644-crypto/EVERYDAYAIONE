@@ -220,11 +220,11 @@ def format_warehouse_stock(data: Any, entry: ApiEntry) -> str:
         outer_id = item.get("outerId") or ""
         skus = item.get("skus") or []
         if skus:
-            # 嵌套结构：展开每个SKU的每个仓库
-            for sku in skus:
+            # 嵌套结构：展开每个SKU的每个仓库（加上限防爆）
+            for sku in skus[:10]:
                 sku_code = sku.get("skuOuterId") or outer_id
                 wh_stocks = sku.get("mainWareHousesStock") or []
-                for wh in wh_stocks:
+                for wh in wh_stocks[:10]:
                     prefix = f"编码: {sku_code} | " if sku_code else ""
                     lines.append("- " + prefix + format_item_with_labels(
                         wh, _WH_STOCK_LABELS, transforms=_WH_STOCK_TRANSFORMS))

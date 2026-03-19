@@ -117,10 +117,15 @@ def parse_date(date_str: Optional[str], is_end: bool = False) -> str:
     return (now - timedelta(days=7)).strftime("%Y-%m-%d 00:00:00")
 
 
+# 通用格式化器字符预算（紧凑格式下约可容纳 20 条普通记录）
+_MAX_GENERIC_CHARS = 4000
+_MAX_GENERIC_ITEMS = 20
+
+
 def format_generic_list(data: Any, entry: ApiEntry) -> str:
-    """通用列表格式化器"""
+    """通用列表格式化器 — 按条目边界截断，保证每条数据完整"""
     if not isinstance(data, dict):
-        return str(data)[:2000]
+        return str(data)[:_MAX_GENERIC_CHARS]
 
     items = data.get(entry.response_key) if entry.response_key else None
     total = data.get("total", "")
@@ -129,24 +134,54 @@ def format_generic_list(data: Any, entry: ApiEntry) -> str:
         if not items:
             return f"{entry.description}：暂无数据"
         count = len(items)
-        text = json.dumps(items[:5], ensure_ascii=False, indent=2)
-        if len(text) > 2000:
-            text = text[:2000] + "\n..."
-        header = f"查询到 {total or count} 条结果"
-        if total and int(total) > count:
-            header += f"（显示前{count}条）"
-        return f"{header}\n\n{text}"
+        header = build_list_header(items, total, entry.description)
 
-    text = json.dumps(data, ensure_ascii=False, indent=2)
-    return text[:2000]
+        # 逐条拼接，超预算则停止（保证每条完整）
+        lines: list[str] = [header, ""]
+        budget = _MAX_GENERIC_CHARS - len(header) - 20  # 预留尾部提示
+        shown = 0
+        for item in items[:_MAX_GENERIC_ITEMS]:
+            line = "- " + json.dumps(item, ensure_ascii=False)
+            if shown > 0 and (sum(len(ln) for ln in lines) + len(line)) > budget:
+                break
+            lines.append(line)
+            shown += 1
+
+        if shown < count:
+            lines.append(f"\n（显示前{shown}条，共{total or count}条）")
+        return "\n".join(lines)
+
+    # 非列表响应 → 按 key-value 边界截断
+    return _format_dict_safe(data, entry.description, _MAX_GENERIC_CHARS)
 
 
 def format_generic_detail(data: Any, entry: ApiEntry) -> str:
-    """通用详情格式化器"""
+    """通用详情格式化器 — 按 key-value 边界截断"""
     if not isinstance(data, dict):
-        return str(data)[:2000]
-    text = json.dumps(data, ensure_ascii=False, indent=2)
-    return f"{entry.description}:\n{text[:2000]}"
+        return str(data)[:_MAX_GENERIC_CHARS]
+    return _format_dict_safe(data, entry.description, _MAX_GENERIC_CHARS)
+
+
+def _format_dict_safe(data: Dict, desc: str, budget: int) -> str:
+    """按 key-value 逐行输出 dict，超预算时停在完整行边界"""
+    header = f"{desc}:\n"
+    lines: list[str] = [header]
+    used = len(header)
+    for key, val in data.items():
+        if key in _GLOBAL_SKIP:
+            continue
+        if val is None or val == "":
+            continue
+        if isinstance(val, (list, dict)):
+            line = f"  {key}: {json.dumps(val, ensure_ascii=False)}"
+        else:
+            line = f"  {key}: {val}"
+        if used + len(line) + 1 > budget:
+            lines.append("  ...")
+            break
+        lines.append(line)
+        used += len(line) + 1
+    return "\n".join(lines)
 
 
 def build_list_header(

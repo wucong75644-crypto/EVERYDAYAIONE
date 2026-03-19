@@ -105,7 +105,7 @@ def format_warehouse_list(data: Any, entry: ApiEntry) -> str:
     if not items:
         return "暂无仓库信息"
     lines = [f"共 {len(items)} 个仓库：\n"]
-    for w in items:
+    for w in items[:50]:
         lines.append("- " + format_item_with_labels(
             w, _WAREHOUSE_LABELS, transforms=_WAREHOUSE_TRANSFORMS))
     return "\n".join(lines)
@@ -117,7 +117,7 @@ def format_shop_list(data: Any, entry: ApiEntry) -> str:
     if not items:
         return "暂无店铺信息"
     lines = [f"共 {len(items)} 个店铺：\n"]
-    for s in items:
+    for s in items[:50]:
         lines.append("- " + format_item_with_labels(
             s, _SHOP_LABELS, transforms=_SHOP_TRANSFORMS))
     return "\n".join(lines)
@@ -129,7 +129,7 @@ def format_tag_list(data: Any, entry: ApiEntry) -> str:
     if not items:
         return "暂无标签信息"
     lines = [f"共 {len(items)} 个标签：\n"]
-    for t in items:
+    for t in items[:50]:
         # 特殊处理: remark 包含 HTML，需要清理
         remark = t.get("remark") or ""
         if remark:

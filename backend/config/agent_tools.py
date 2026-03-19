@@ -84,7 +84,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     },
     # === 路由工具 ===
     "route_to_chat": {
-        "required": ["system_prompt", "model"],
+        "required": ["system_prompt"],
         "properties": {
             "system_prompt": {"type": "string"},
             "model": {"type": "string"},
@@ -92,14 +92,14 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         },
     },
     "route_to_image": {
-        "required": ["prompts", "model"],
+        "required": ["prompts"],
         "properties": {
             "prompts": {"type": "array"},
             "model": {"type": "string"},
         },
     },
     "route_to_video": {
-        "required": ["prompt", "model"],
+        "required": ["prompt"],
         "properties": {
             "prompt": {"type": "string"},
             "model": {"type": "string"},
