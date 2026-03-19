@@ -28,15 +28,25 @@ TOOL_RENDER_HINTS: Dict[str, Dict[str, str]] = {
 
 
 def build_chat_result(
-    text: str, context: List[str], turns: int, tokens: int,
+    text: str,
+    context: List[str],
+    turns: int,
+    tokens: int,
+    model: str = "",
 ) -> AgentResult:
-    """大脑直接文字回复 → 走 ChatHandler（兜底）"""
-    from config.smart_model_config import DEFAULT_CHAT_MODEL
+    """大脑直接文字回复 → 走 ChatHandler（兜底）
+
+    Args:
+        model: 指定模型（v2 传入 Phase 1 选定的模型，空=用默认）
+    """
+    if not model:
+        from config.smart_model_config import DEFAULT_CHAT_MODEL
+        model = DEFAULT_CHAT_MODEL
 
     search_ctx = "\n".join(context) if context else None
     return AgentResult(
         generation_type=GenerationType.CHAT,
-        model=DEFAULT_CHAT_MODEL,
+        model=model,
         search_context=search_ctx,
         direct_reply=text if text else None,
         turns_used=turns,
@@ -135,19 +145,26 @@ def build_graceful_timeout(
     context: List[str],
     turns: int,
     tokens: int,
+    model: str = "",
 ) -> AgentResult:
-    """超出轮次/token → 优雅终止（保存已有进度）"""
+    """超出轮次/token → 优雅终止（保存已有进度）
+
+    Args:
+        model: 指定模型（v2 传入 Phase 1 选定的模型，空=用默认）
+    """
     logger.warning(
         f"Agent loop graceful timeout | turns={turns} | tokens={tokens}"
     )
 
     if context:
-        return build_chat_result("", context, turns, tokens)
+        return build_chat_result("", context, turns, tokens, model=model)
 
-    from config.smart_model_config import DEFAULT_CHAT_MODEL
+    if not model:
+        from config.smart_model_config import DEFAULT_CHAT_MODEL
+        model = DEFAULT_CHAT_MODEL
     return AgentResult(
         generation_type=GenerationType.CHAT,
-        model=DEFAULT_CHAT_MODEL,
+        model=model,
         turns_used=turns,
         total_tokens=tokens,
     )
