@@ -18,7 +18,7 @@ from slowapi.errors import RateLimitExceeded
 
 from api.routes import (
     audio, auth, conversation, file, health, image, memory, message,
-    models, subscription, task, webhook, wecom, ws,
+    models, qimen, subscription, task, webhook, wecom, ws,
 )
 from core.config import get_settings
 from core.exceptions import AppException
@@ -317,6 +317,9 @@ def register_routers(app: FastAPI) -> None:
 
     # 企业微信回调（无需用户鉴权）
     app.include_router(wecom.router, prefix="/api")
+
+    # 奇门网关回调（无需用户鉴权，通过签名验证）
+    app.include_router(qimen.router, prefix="/api")
 
     # 模型 + 订阅
     app.include_router(models.router, prefix="/api")
