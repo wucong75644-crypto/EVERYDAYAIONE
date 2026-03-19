@@ -11,7 +11,7 @@ Agent Loop 基础设施 Mixin
 """
 
 import asyncio
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 from loguru import logger
@@ -27,9 +27,20 @@ class AgentInfraMixin:
     # ========================================
 
     async def _call_brain(
-        self, messages: list[Dict[str, Any]],
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[str] = None,
+        max_tokens: int = 4096,
     ) -> Dict[str, Any]:
-        """调用大脑（DashScope 或 OpenRouter，均为 OpenAI 兼容 API）"""
+        """调用大脑（DashScope 或 OpenRouter，均为 OpenAI 兼容 API）
+
+        Args:
+            messages: 对话消息列表
+            tools: 工具定义（None=使用 AGENT_TOOLS，v1 默认）
+            tool_choice: 工具选择策略（None="auto"）
+            max_tokens: 最大输出 token（Phase 1=256，Phase 2=4096）
+        """
         assert self._settings is not None
         client = await self._get_client()
 
@@ -40,8 +51,19 @@ class AgentInfraMixin:
             else self._settings.agent_loop_model
         )
 
+        resolved_tools = tools if tools is not None else AGENT_TOOLS
+        resolved_choice = tool_choice or "auto"
+
+        # OpenRouter 不一定支持 tool_choice="required"，降级为 "auto"
+        if provider == "openrouter" and resolved_choice == "required":
+            logger.debug(
+                "OpenRouter: tool_choice=required → auto (compat)",
+            )
+            resolved_choice = "auto"
+
         logger.info(
-            f"Brain calling | provider={provider} | model={model}"
+            f"Brain calling | provider={provider} | model={model} "
+            f"| tools={len(resolved_tools)} | choice={resolved_choice}",
         )
 
         response = await client.post(
@@ -49,10 +71,10 @@ class AgentInfraMixin:
             json={
                 "model": model,
                 "messages": messages,
-                "tools": AGENT_TOOLS,
-                "tool_choice": "auto",
+                "tools": resolved_tools,
+                "tool_choice": resolved_choice,
                 "temperature": 0.1,
-                "max_tokens": 4096,
+                "max_tokens": max_tokens,
                 "enable_thinking": False,
             },
         )

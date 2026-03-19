@@ -90,6 +90,24 @@ def get_image_to_video_model() -> str:
     return "sora-2-image-to-video"
 
 
+def get_model_keywords(category: str = "chat") -> Dict[str, str]:
+    """获取品牌关键词 → model_id 映射（按 priority 排序，先注册优先）
+
+    用于 model_selector 品牌命中（O(1) 查找）和 Phase 1 提示词动态生成。
+
+    Returns:
+        {"gpt": "openai/gpt-4.1", "claude": "anthropic/claude-sonnet-4", ...}
+    """
+    mapping: Dict[str, str] = {}
+    models = SMART_CONFIG.get(category, {}).get("models", [])
+    for m in models:
+        for kw in m.get("keywords", []):
+            kw_lower = kw.lower()
+            if kw_lower not in mapping:
+                mapping[kw_lower] = m["id"]
+    return mapping
+
+
 def _find_model_config(model_id: str) -> Optional[Dict[str, Any]]:
     """在 chat 模型列表中查找指定模型配置"""
     for m in SMART_CONFIG.get("chat", {}).get("models", []):

@@ -179,6 +179,33 @@ class AgentContextMixin:
         stripped = prompt.strip() if prompt else ""
         return stripped or None
 
+    @staticmethod
+    def _slice_text_only(
+        history_msgs: Optional[List[Dict[str, Any]]],
+        limit: int = 3,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """从完整历史中切最后 N 条，剥离图片 blocks（Phase 1 用）
+
+        Phase 1 只需纯文本上下文来判断意图（如"再来一张"引用上次生成），
+        不需要图片 URL（节省 tokens）。
+        从 _get_recent_history() 的完整结果中切片，零额外 DB 查询。
+        """
+        if not history_msgs:
+            return None
+        sliced = history_msgs[-limit:]
+        result = [
+            {
+                "role": m["role"],
+                "content": [
+                    b for b in m["content"]
+                    if b.get("type") == "text"
+                ],
+            }
+            for m in sliced
+            if any(b.get("type") == "text" for b in m["content"])
+        ]
+        return result or None
+
     # ========================================
     # 系统提示词
     # ========================================

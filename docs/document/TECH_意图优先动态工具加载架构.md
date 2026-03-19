@@ -1,7 +1,9 @@
 # 技术设计：意图优先 + 动态工具加载架构
 
-> **版本**: v1.2 | **日期**: 2026-03-18
+> **版本**: v1.4 | **日期**: 2026-03-19
 > **级别**: A级（≥3文件 + 核心架构重构）
+> **v1.4 变更**: 删除 1 处过度设计 + 补充 2 处信号映射遗漏
+> **v1.3 变更**: 补充 8 项设计间隙（4 逻辑 + 4 运营健壮性）
 > **v1.2 变更**: 深度审计修复 11 项衔接漏洞（5 CRITICAL + 6 HIGH）
 
 ## 1. 现有代码分析
@@ -57,8 +59,11 @@
 | AGENT_TOOLS / AGENT_SYSTEM_PROMPT **保留**为向后兼容导出 | `agent_tools.py` | 新函数并行存在，减少测试改动 |
 | `resolve_auto_model()` 内部委托 model_selector | `intent_router.py` | 函数签名不变，15+ 调用方零改动 |
 | `build_chat_result` / `build_graceful_timeout` 新增可选 model 参数 | `agent_result_builder.py` | 默认仍用 DEFAULT_CHAT_MODEL，Phase 2 传 `self._phase1_model` |
-| `_get_recent_history()` 新增 limit / max_images 参数 | `agent_context.py` | 默认值从 settings 读取（向后兼容），Phase 1 传 `limit=3, max_images=0` |
+| `_slice_text_only()` 新增辅助函数 | `agent_context.py` | 从完整历史切 Phase 1 精简版（`_get_recent_history()` 本身不改） |
 | Phase 1 需注入时间和位置上下文 | `agent_loop.py` | 动态拼接 `当前时间` + `用户位置` 到 PHASE1_PROMPT |
+| `_build_system_prompt()` 变为死代码 | `agent_context.py` | 知识查询移到 `_execute_loop()` 并行获取，原方法标记 deprecated 或内联 |
+| 新增 `agent_loop_v2_enabled` 配置开关 | `core/config.py` | 新增设置项，`_execute_loop()` 根据开关走 v1/v2 路径 |
+| Phase 1 指标记录（domain/延迟/回退） | `agent_loop.py` + `agent_loop_infra.py` | `_record_loop_signal` 扩展或新增 `_record_phase1_signal` |
 | 测试 mock 路径更新 | 6+ 测试文件 | mock patch 路径和断言更新 |
 
 ---
@@ -87,6 +92,12 @@
 | Phase 1 image/video 参数格式与下游不兼容 | `_execute_loop()` 中做格式转换：`["prompt"]` → `[{prompt, aspect_ratio}]` | `agent_loop.py` |
 | Phase 1 缺少时间/位置上下文 → 分类不准 | 动态拼接 `当前时间` + `用户位置` 到 PHASE1_PROMPT 尾部 | `agent_loop.py` |
 | Phase 2 消息包含 Phase 1 分类痕迹 → brain 困惑 | Phase 2 **从零构建 messages**，不继承 Phase 1 的 tool_call 消息 | `agent_loop.py` |
+| Phase 1 千问返回非法 JSON arguments | `_parse_phase1_response()` 内 try/except，解析失败兜底 `("chat", {})` | `agent_loop.py` |
+| OpenRouter provider 不支持 `tool_choice="required"` | Phase 1 检测 provider：OpenRouter 时降级为 `tool_choice="auto"` + 解析兜底 | `agent_loop.py` |
+| image/video domain 的 `needs_edit`/`needs_hd`/`needs_pro` 信号 | `model_selector` 按 domain 分支处理：image 匹配 `requires_image`/quality，video 匹配 pro 模型 | `model_selector.py` |
+| Phase 1 max_tokens 过大浪费（4096 vs 实际 ~50） | Phase 1 传 `max_tokens=256`，Phase 2 保持 4096 | `agent_loop.py` |
+| chat domain `needs_search` 信号名 ≠ 下游 `_needs_google_search` | 构建 AgentResult 时显式映射：`signals["needs_search"]` → `tool_params["_needs_google_search"]` | `agent_loop.py` |
+| ask_user 缺少 `_ask_reason` → 误触发意图学习 | 构建 AgentResult 时设 `tool_params={"_ask_reason": signals.get("reason", "need_info")}` | `agent_loop.py` |
 | web_search/search_knowledge 从 ERP domain 移除 | 可接受回退：极少数 ERP 中途需要搜索的场景走不通，如后续有需求可加回 | 文档记录 |
 
 ---
@@ -117,9 +128,10 @@
 | `backend/config/smart_model_config.py` | 新增 `select_model(signals)` 公开接口，读取 keywords |
 | `backend/services/agent_loop.py` | `_execute_loop()` 重构为 Phase 1 → Phase 2 流程 |
 | `backend/services/agent_loop_infra.py` | `_call_brain()` 接收 `tools` + `tool_choice` 参数（不再硬编码） |
-| `backend/services/agent_context.py` | `_get_recent_history()` 新增 `limit`/`max_images` 可选参数 |
+| `backend/services/agent_context.py` | 新增 `_slice_text_only()` 辅助函数 + `_build_system_prompt()` 标记 deprecated |
 | `backend/services/agent_result_builder.py` | `build_chat_result` / `build_graceful_timeout` 新增可选 `model` 参数 |
 | `backend/services/intent_router.py` | `resolve_auto_model()` 内部委托 model_selector（函数签名不变，15+ 调用方零改动） |
+| `backend/core/config.py` | 新增 `agent_loop_v2_enabled` 灰度开关配置项 |
 
 ### 不动的文件
 
@@ -234,7 +246,7 @@ if user_location:
     phase1_prompt += f"\n用户位置：{user_location}"  # 支持"附近好吃的"等位置感知分类
 ```
 
-**对话历史注入**：调用 `_get_recent_history(limit=3, max_images=0)` 获取最近 3 条纯文本历史（不含图片 URL），支持"再来一张"等引用场景。`_get_recent_history()` 新增 `limit` 和 `max_images` 可选参数，默认值仍从 settings 读取（向后兼容）。
+**对话历史注入**：从完整历史 `history_full` 中用 `_slice_text_only(history_full, limit=3)` 切最后 3 条纯文本（不含图片 URL），**零额外 DB 查询**。支持"再来一张"等引用场景。
 
 **API 调用参数**：
 ```python
@@ -266,7 +278,11 @@ def _parse_phase1_response(self, response: Dict) -> Tuple[str, Dict]:
     tc = tool_calls[0]  # 只取第一个，忽略并行调用
     func = tc.get("function", {})
     tool_name = func.get("name", "")
-    arguments = json.loads(func.get("arguments", "{}"))
+    try:
+        arguments = json.loads(func.get("arguments", "{}"))
+    except (json.JSONDecodeError, TypeError):
+        logger.warning(f"Phase1 JSON parse error | raw={func.get('arguments')}")
+        arguments = {}
 
     # 工具名 → domain 映射
     PHASE1_TOOL_TO_DOMAIN = {
@@ -434,7 +450,7 @@ def select_model(
 }
 ```
 
-**信号 → 能力映射**（唯一的"规则"配置）:
+**信号 → 能力映射**（chat domain 通用规则）:
 
 ```python
 SIGNAL_TO_CAPABILITY = {
@@ -442,6 +458,28 @@ SIGNAL_TO_CAPABILITY = {
     "needs_reasoning": "reasoning",
     "needs_math": "math",
 }
+```
+
+**domain 特有信号处理**（image/video 不走通用映射，走专属分支）:
+
+```python
+# select_model() 内部按 domain 分支
+if domain == "image":
+    if signals.get("needs_edit"):
+        # 编辑已有图片 → 过滤 requires_image=true 的模型
+        candidates = [m for m in image_models if m.get("requires_image")]
+    elif signals.get("needs_hd"):
+        # 高清/专业 → 过滤非默认模型（通常更高质量）
+        candidates = [m for m in image_models if m["id"] != DEFAULT_IMAGE_MODEL]
+    else:
+        return DEFAULT_IMAGE_MODEL
+
+if domain == "video":
+    if signals.get("needs_pro"):
+        # 专业级 → 选 priority 最高的视频模型
+        candidates = sorted(video_models, key=lambda m: m.get("priority", 99))
+    else:
+        return DEFAULT_VIDEO_MODEL
 ```
 
 新增模型只改 JSON，新增能力维度只加一行映射。
@@ -457,23 +495,26 @@ SIGNAL_TO_CAPABILITY = {
 
 重构后:
   _execute_loop()
-    ┌─ 并行获取 ─────────────────────────────────────────┐
-    │ history_full = _get_recent_history()    # 完整版（Phase 2 用）│
-    │ history_lite = _get_recent_history(limit=3, max_images=0)    │
+    ┌─ 并行获取（2 路，非 3 路）──────────────────────────────┐
+    │ history_full = _get_recent_history()    # 完整版（Phase 1 切片 + Phase 2 直接用）│
     │ knowledge = search_relevant(query=text)  # 知识库（Phase 2 用）│
     └────────────────────────────────────────────────────┘
+    # Phase 1 精简历史：从 history_full 切最后 3 条，剥离图片（零额外 DB 查询）
+    history_lite = _slice_text_only(history_full, limit=3)
 
     ── Phase 1: 轻量意图分类 ──
     → phase1_prompt = PHASE1_PROMPT + 时间 + 位置
     → phase1_messages = [system(phase1_prompt)] + history_lite + [user(content)]
-    → response = _call_brain(messages, tools=PHASE1_TOOLS, tool_choice="required")
+    → response = _call_brain(messages, tools=PHASE1_TOOLS, tool_choice="required", max_tokens=256)
     → domain, signals = _parse_phase1_response(response)
     → model_id = model_selector.select_model(domain, signals, has_image, thinking_mode)
     → self._phase1_model = model_id
 
     ── 按 domain 分发 ──
     → if domain == "chat":
-        → 直接构建 AgentResult(model=model_id, system_prompt=signals["system_prompt"], ...)
+        → 信号映射：signals["needs_search"] → tool_params["_needs_google_search"]
+        → 直接构建 AgentResult(model=model_id, system_prompt=signals["system_prompt"],
+            tool_params={"_needs_google_search": signals.get("needs_search", False)})
         → **不进入多轮循环，零额外 LLM 调用**
 
     → if domain == "image":
@@ -501,10 +542,34 @@ SIGNAL_TO_CAPABILITY = {
         → 同 ERP 出口逻辑
 
     → if domain == "ask_user":
-        → 直接返回 AgentResult(direct_reply=signals["message"])
+        → 直接返回 AgentResult(direct_reply=signals["message"],
+            tool_params={"_ask_reason": signals.get("reason", "need_info")})
 ```
 
 **Phase 1 失败回退**：如果 Phase 1 `_call_brain()` 抛异常或解析失败，回退到当前完整 Agent Loop（全量 `AGENT_TOOLS` + `AGENT_SYSTEM_PROMPT`），等同 v1.0 行为。
+
+**`_build_system_prompt()` 处理**：知识查询从 `_build_system_prompt()` 移到 `_execute_loop()` 的并行获取中。`_build_system_prompt()` 保留但标记 `@deprecated`，仅在 v1.0 回退路径中使用（v2 路径不调用）。待 v2 稳定后移除。
+
+**`_slice_text_only()` 辅助函数**（新增于 `agent_context.py`）：
+```python
+@staticmethod
+def _slice_text_only(
+    history_msgs: Optional[List[Dict]], limit: int = 3,
+) -> Optional[List[Dict]]:
+    """从完整历史中切最后 N 条，剥离图片 blocks（Phase 1 用）"""
+    if not history_msgs:
+        return None
+    sliced = history_msgs[-limit:]
+    return [
+        {"role": m["role"], "content": [
+            b for b in m["content"] if b.get("type") == "text"
+        ]}
+        for m in sliced
+        if any(b.get("type") == "text" for b in m["content"])
+    ] or None
+```
+
+**`_call_brain()` 新增 `max_tokens` 参数**：Phase 1 传 `max_tokens=256`（响应仅 tool_call ~50 tokens），Phase 2 保持默认 `4096`。减少 Phase 1 的延迟和 token 成本。
 
 **image/video 格式转换**（Phase 1 → `_apply_agent_result()` 兼容）：
 
@@ -515,6 +580,54 @@ raw_prompts = signals.get("prompts", [])
 aspect = signals.get("aspect_ratio", "1:1")
 converted_prompts = [{"prompt": p, "aspect_ratio": aspect} for p in raw_prompts]
 ```
+
+### 5.5 灰度发布 + 监控
+
+#### 5.5.1 灰度开关
+
+**新增配置项**（`core/config.py`）：
+
+```python
+agent_loop_v2_enabled: bool = Field(
+    default=False,
+    description="启用两阶段路由（Phase 1 + Phase 2），false 时走 v1.0 全量工具路径",
+)
+```
+
+**`_execute_loop()` 入口分流**：
+
+```python
+async def _execute_loop(self, content):
+    if not self._settings.agent_loop_v2_enabled:
+        return await self._execute_loop_v1(content)  # 现有逻辑原样保留
+    return await self._execute_loop_v2(content)       # 新两阶段逻辑
+```
+
+> 回滚只需 `agent_loop_v2_enabled=false`，无需回滚代码。现有 v1.0 逻辑封装为 `_execute_loop_v1()`，确保零改动。
+
+#### 5.5.2 Phase 1 监控指标
+
+在 Phase 1 完成后记录指标（fire-and-forget，不阻塞主流程）：
+
+```python
+self._record_phase1_signal(
+    domain=domain,                    # 分类结果
+    model_selected=model_id,          # 规则匹配的模型
+    phase1_latency_ms=elapsed_ms,     # Phase 1 延迟
+    phase1_tokens=usage_tokens,       # Phase 1 消耗 tokens
+    fallback_to_v1=False,             # 是否回退到 v1.0
+    signals=signals,                  # Phase 1 提取的信号（用于离线分析分类质量）
+)
+```
+
+**关键指标看板**（上线后关注）：
+
+| 指标 | 阈值 | 动作 |
+|------|------|------|
+| Phase 1 延迟 P99 | >1000ms | 检查 DashScope 负载 |
+| Phase 1 回退率 | >5% | 检查 Phase 1 提示词/工具定义 |
+| domain 分布偏差 | chat <60% 或 >90% | 校准分类阈值 |
+| Phase 1 tokens/请求 | >3000 | 检查历史注入量 |
 
 ---
 
@@ -536,7 +649,7 @@ converted_prompts = [{"prompt": p, "aspect_ratio": aspect} for p in raw_prompts]
 ### 阶段 1：模型选择器 + JSON 扩展（基础设施）
 
 - [ ] **任务 1.1**：`smart_models.json` 新增 keywords 字段（18 个 chat 模型 + image/video 模型）
-- [ ] **任务 1.2**：新建 `services/model_selector.py`（select_model 函数 + SIGNAL_TO_CAPABILITY 映射）
+- [ ] **任务 1.2**：新建 `services/model_selector.py`（select_model 函数 + SIGNAL_TO_CAPABILITY 映射 + image/video domain 特有信号分支）
 - [ ] **任务 1.3**：`smart_model_config.py` 新增 `get_model_keywords()` 读取 keywords
 - [ ] **任务 1.4**：单测覆盖 model_selector（品牌命中/硬约束/能力打分/熔断过滤/兜底）
 
@@ -550,18 +663,24 @@ converted_prompts = [{"prompt": p, "aspect_ratio": aspect} for p in raw_prompts]
 
 ### 阶段 3：Agent Loop 重构（核心 + 衔接层）
 
-- [ ] **任务 3.1**：`agent_loop_infra.py` — `_call_brain()` 接收 `tools` + `tool_choice` 参数（默认值向后兼容）
-- [ ] **任务 3.2**：`agent_context.py` — `_get_recent_history()` 新增 `limit` / `max_images` 可选参数
+- [ ] **任务 3.1**：`agent_loop_infra.py` — `_call_brain()` 接收 `tools` + `tool_choice` + `max_tokens` 参数（默认值向后兼容）
+- [ ] **任务 3.2**：`agent_context.py` — 新增 `_slice_text_only()` 辅助函数（`_get_recent_history()` 不改）
 - [ ] **任务 3.3**：`agent_result_builder.py` — `build_chat_result` / `build_graceful_timeout` 新增可选 `model` 参数
 - [ ] **任务 3.4**：`agent_loop.py` — 新增 `_parse_phase1_response()` 独立解析器
-- [ ] **任务 3.5**：`agent_loop.py` — `_execute_loop()` 拆为 Phase 1 → domain 分发 → Phase 2
-  - Phase 1: 构建精简消息 + `tool_choice="required"` + 独立解析
+- [ ] **任务 3.5**：`agent_loop.py` — `_execute_loop()` 拆为 v1/v2 分流 + Phase 1 → domain 分发 → Phase 2
+  - 灰度开关: `agent_loop_v2_enabled` → v1/v2 分流（v1 = 现有逻辑封装为 `_execute_loop_v1`）
+  - Phase 1: 构建精简消息 + `tool_choice="required"` + 独立解析 + `max_tokens=256`
+  - 单次历史查询: `history_full` + `_slice_text_only()` 切 Phase 1 精简版
   - chat/image/video: 直接构建 AgentResult（含 image 格式转换）
   - erp/crawler: 从零构建 Phase 2 消息 + 现有多轮循环
   - 出口: `self._phase1_model` 注入 + 兜底传递
   - 失败回退: 回退到全量 AGENT_TOOLS（v1.0 行为）
-- [ ] **任务 3.6**：`intent_router.py` — `resolve_auto_model()` 内部改为调 model_selector
-- [ ] **任务 3.7**：集成测试（聊天/ERP/图片/视频/爬虫/ask_user 六种路径）
+  - OpenRouter 兼容: 检测 provider，OpenRouter 时 `tool_choice` 降级为 `"auto"`
+- [ ] **任务 3.6**：`core/config.py` — 新增 `agent_loop_v2_enabled` 配置项（默认 false）
+- [ ] **任务 3.7**：`agent_loop_infra.py` — 新增 `_record_phase1_signal()` 监控函数（fire-and-forget）
+- [ ] **任务 3.8**：`agent_context.py` — `_build_system_prompt()` 标记 `@deprecated`，仅在 v1 回退路径中使用
+- [ ] **任务 3.9**：`intent_router.py` — `resolve_auto_model()` 内部改为调 model_selector
+- [ ] **任务 3.10**：集成测试（聊天/ERP/图片/视频/爬虫/ask_user 六种路径 + v1/v2 灰度分流）
 
 ### 阶段 4：测试修复 + 兼容性验证
 
@@ -598,6 +717,8 @@ converted_prompts = [{"prompt": p, "aspect_ratio": aspect} for p in raw_prompts]
 | IntentRouter 降级路径与新架构不一致 | 低 | IntentRouter 保持现有逻辑不动，仅作降级兜底 |
 | web_search / model_search 从 ERP/Crawler domain 移除 | 低 | ERP 中途需要搜索的场景极少；如后续有需求可加回（+1 个工具） |
 | Phase 1 失败导致路由不可用 | 低 | 回退到全量 AGENT_TOOLS（v1.0 行为），保证可用性 |
+| OpenRouter 不支持 `tool_choice="required"` | 中 | Phase 1 检测 provider：OpenRouter 时降级为 `"auto"` + 解析兜底；DashScope 正常使用 `"required"` |
+| 上线后无法评估 Phase 1 分类质量 | 中 | `_record_phase1_signal` 记录 domain/延迟/回退指标，支持离线分析；`agent_loop_v2_enabled` 灰度开关支持随时回滚 |
 
 ---
 
@@ -624,8 +745,19 @@ converted_prompts = [{"prompt": p, "aspect_ratio": aspect} for p in raw_prompts]
 - [x] **v1.2** image/video 参数格式转换对齐 `_apply_agent_result()` 预期
 - [x] **v1.2** AGENT_TOOLS / AGENT_SYSTEM_PROMPT 保留为向后兼容导出，减少测试破坏
 - [x] **v1.2** `_call_brain()` 新增 `tool_choice` 参数（Phase 1="required"，Phase 2="auto"）
-- [x] **v1.2** `_get_recent_history()` 新增可选参数（向后兼容默认值）
+- [x] ~~**v1.2** `_get_recent_history()` 新增可选参数~~ → **v1.4 删除**（`_slice_text_only()` 已替代，`_get_recent_history()` 不改）
 - [x] **v1.2** Phase 1 失败回退到 v1.0 全量 Agent Loop（保证可用性）
+- [x] **v1.3** 单次历史查询 + `_slice_text_only()` 切 Phase 1 精简版（避免双重 DB 查询）
+- [x] **v1.3** `_build_system_prompt()` 标记 deprecated，仅在 v1 回退路径中使用
+- [x] **v1.3** `_parse_phase1_response()` 内 JSON 解析 try/except 容错
+- [x] **v1.3** image/video domain 特有信号（needs_edit/needs_hd/needs_pro）→ model_selector 分支处理
+- [x] **v1.3** `agent_loop_v2_enabled` 灰度开关（回滚只需改配置，不需回滚代码）
+- [x] **v1.3** Phase 1 监控指标（domain/延迟/回退率/tokens），支持离线分析分类质量
+- [x] **v1.3** OpenRouter `tool_choice="required"` 兼容（检测 provider，降级为 `"auto"`）
+- [x] **v1.3** Phase 1 `max_tokens=256`（减少延迟和 token 浪费）
+- [x] **v1.4** 删除 `_get_recent_history()` 参数改造（过度设计，`_slice_text_only()` 已替代）
+- [x] **v1.4** chat domain `needs_search` → `_needs_google_search` 显式映射（防止下游搜索不触发）
+- [x] **v1.4** ask_user 设置 `_ask_reason` 到 tool_params（防止误触发意图学习）
 
 ---
 
