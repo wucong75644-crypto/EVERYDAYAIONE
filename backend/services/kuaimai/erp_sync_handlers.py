@@ -117,7 +117,7 @@ async def sync_receipt(
     client = svc._get_client()
     docs = await svc.fetch_all_pages(
         "warehouse.entry.list.query",
-        {"startModified": _fmt_d(start), "endModified": _fmt_d(end)},
+        {"startModified": _fmt_dt(start), "endModified": _fmt_dt(end)},
     )
     if not docs:
         return 0
@@ -175,7 +175,7 @@ async def sync_shelf(
     client = svc._get_client()
     docs = await svc.fetch_all_pages(
         "erp.purchase.shelf.query",
-        {"startModified": _fmt_d(start), "endModified": _fmt_d(end)},
+        {"startModified": _fmt_dt(start), "endModified": _fmt_dt(end)},
     )
     if not docs:
         return 0
@@ -284,8 +284,8 @@ async def sync_aftersale(
     docs = await svc.fetch_all_pages(
         "erp.aftersale.list.query",
         {
-            "startModified": _fmt_d(start),
-            "endModified": _fmt_d(end),
+            "startModified": _fmt_dt(start),
+            "endModified": _fmt_dt(end),
             "asVersion": 2,
         },
         page_size=200,
@@ -354,8 +354,8 @@ async def sync_order(
     docs = await svc.fetch_all_pages(
         "erp.trade.list.query",
         {
-            "startTime": _fmt_d(start),
-            "endTime": _fmt_d(end),
+            "startTime": _fmt_dt(start),
+            "endTime": _fmt_dt(end),
             "timeType": "upd_time",
         },
         page_size=200,

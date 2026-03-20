@@ -256,9 +256,12 @@ class ErpSyncService:
             # 无历史记录，从 initial_days 前开始
             start = now - timedelta(days=self.settings.erp_sync_initial_days)
         elif isinstance(last_sync, str):
-            start = datetime.fromisoformat(last_sync.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(last_sync.replace("Z", "+00:00"))
+            # 确保 timezone-aware（DB 可能返回不带时区的字符串）
+            start = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
         else:
-            start = last_sync
+            # datetime 对象：确保 timezone-aware
+            start = last_sync if last_sync.tzinfo else last_sync.replace(tzinfo=timezone.utc)
 
         # 回溯策略：商品/库存/供应商日期精度到天，多回溯1天
         if sync_type in ("product", "stock", "platform_map"):

@@ -31,9 +31,9 @@ def _strip_html(text: str | None) -> str | None:
     return _HTML_TAG_RE.sub("", text).strip()
 
 
-def _fmt_d(dt: datetime) -> str:
-    """YYYY-MM-DD 时间格式"""
-    return dt.strftime("%Y-%m-%d")
+def _fmt_dt(dt: datetime) -> str:
+    """yyyy-MM-dd HH:mm:ss 时间格式（快麦API统一要求）"""
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _pick(src: dict, *keys: str) -> dict:
@@ -71,7 +71,7 @@ async def sync_product(
     """商品增量同步：item.list.query → erp_products + erp_product_skus"""
     products = await svc.fetch_all_pages(
         "item.list.query",
-        {"startModified": _fmt_d(start), "endModified": _fmt_d(end)},
+        {"startModified": _fmt_dt(start), "endModified": _fmt_dt(end)},
         response_key="items",
         page_size=500,
     )
@@ -156,8 +156,8 @@ async def sync_stock(
     items = await svc.fetch_all_pages(
         "stock.api.status.query",
         {
-            "startStockModified": _fmt_d(start),
-            "endStockModified": _fmt_d(end),
+            "startStockModified": _fmt_dt(start),
+            "endStockModified": _fmt_dt(end),
         },
         response_key="stockStatusVoList",
         page_size=50,
@@ -213,9 +213,15 @@ async def sync_supplier(
     svc: ErpSyncService, start: datetime, end: datetime,
 ) -> int:
     """供应商全量同步：supplier.list.query → erp_suppliers"""
-    suppliers = await svc.fetch_all_pages(
-        "supplier.list.query", {}, page_size=500,
-    )
+    client = svc._get_client()
+    try:
+        data = await client.request_with_retry(
+            "supplier.list.query", {"pageSize": 500},
+        )
+        suppliers = data.get("list") or data.get("suppliers") or []
+    except Exception as e:
+        logger.warning(f"Supplier sync failed | error={e}")
+        return 0
     if not suppliers:
         return 0
 
@@ -249,37 +255,55 @@ async def sync_supplier(
 async def sync_platform_map(
     svc: ErpSyncService, start: datetime, end: datetime,
 ) -> int:
-    """平台映射同步：erp.item.outerid.list.get → erp_product_platform_map"""
-    items = await svc.fetch_all_pages(
-        "erp.item.outerid.list.get",
-        {},
-        response_key="itemOuterIdInfos",
-    )
-    if not items:
+    """平台映射同步：逐个商品查询 erp.item.outerid.list.get → erp_product_platform_map"""
+    # 该 API 要求传 outerId 参数，无法空参数全量查询
+    # 从 DB 中取已同步的商品列表逐个查询
+    try:
+        result = (
+            svc.db.table("erp_products")
+            .select("outer_id")
+            .neq("active_status", -1)
+            .limit(5000)
+            .execute()
+        )
+        outer_ids = [r["outer_id"] for r in (result.data or []) if r.get("outer_id")]
+    except Exception as e:
+        logger.warning(f"Platform map: failed to get product list | error={e}")
+        return 0
+    if not outer_ids:
         return 0
 
+    client = svc._get_client()
     rows: list[dict[str, Any]] = []
-    for item in items:
-        outer_id = item.get("outerId")
-        num_iid = item.get("numIid")
-        if not outer_id or not num_iid:
+    for oid in outer_ids:
+        try:
+            data = await client.request_with_retry(
+                "erp.item.outerid.list.get", {"outerId": oid},
+            )
+            items = data.get("itemOuterIdInfos") or []
+        except Exception:
             continue
 
-        # SKU 映射列表
-        sku_mappings = []
-        for sku in item.get("skuOuterIdInfos") or item.get("skuList") or []:
-            sku_mappings.append({
-                "skuOuterId": sku.get("skuOuterId"),
-                "skuNumIid": sku.get("skuNumIid"),
-            })
+        for item in items:
+            outer_id = item.get("outerId")
+            num_iid = item.get("numIid")
+            if not outer_id or not num_iid:
+                continue
 
-        rows.append({
-            "outer_id": outer_id,
-            "num_iid": str(num_iid),
-            "user_id": str(item.get("userId", "")),
-            "title": item.get("title"),
-            "sku_mappings": sku_mappings or None,
-        })
+            sku_mappings = []
+            for sku in item.get("skuOuterIdInfos") or item.get("skuList") or []:
+                sku_mappings.append({
+                    "skuOuterId": sku.get("skuOuterId"),
+                    "skuNumIid": sku.get("skuNumIid"),
+                })
+
+            rows.append({
+                "outer_id": outer_id,
+                "num_iid": str(num_iid),
+                "user_id": str(item.get("userId", "")),
+                "title": item.get("title"),
+                "sku_mappings": sku_mappings or None,
+            })
 
     count = _batch_upsert(
         svc.db, "erp_product_platform_map", rows, "outer_id,num_iid",
