@@ -260,7 +260,7 @@ class ErpSyncWorker:
             # 全量拉取 API 商品的 outer_id 集合（pageSize=500 减少调用次数）
             products = await svc.fetch_all_pages(
                 "item.list.query",
-                {"startModified": "2020-01-01", "endModified": "2099-12-31"},
+                {"startModified": "2020-01-01 00:00:00", "endModified": "2099-12-31 23:59:59"},
                 response_key="items",
                 page_size=500,
             )

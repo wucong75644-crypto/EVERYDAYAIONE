@@ -56,10 +56,10 @@ class TestStripHtml:
         assert _strip_html("<div><p>内容</p></div>") == "内容"
 
 
-class TestMasterFmtD:
-    def test_format_date(self):
-        from services.kuaimai.erp_sync_master_handlers import _fmt_d
-        assert _fmt_d(datetime(2026, 3, 18)) == "2026-03-18"
+class TestMasterFmtDt:
+    def test_format_datetime(self):
+        from services.kuaimai.erp_sync_master_handlers import _fmt_dt
+        assert _fmt_dt(datetime(2026, 3, 18)) == "2026-03-18 00:00:00"
 
 
 class TestMasterPick:
@@ -259,21 +259,31 @@ class TestSyncSupplier:
     @pytest.mark.asyncio
     async def test_empty_returns_zero(self):
         from services.kuaimai.erp_sync_master_handlers import sync_supplier
-        assert await sync_supplier(_mock_svc(), START, END) == 0
+        svc = _mock_svc()
+        mock_client = MagicMock()
+        mock_client.request_with_retry = AsyncMock(return_value={"list": []})
+        svc._get_client.return_value = mock_client
+        assert await sync_supplier(svc, START, END) == 0
 
     @pytest.mark.asyncio
     async def test_basic_supplier(self):
         from services.kuaimai.erp_sync_master_handlers import sync_supplier
-        svc = _mock_svc(pages=[{
+        svc = _mock_svc()
+        mock_client = MagicMock()
+        mock_client.request_with_retry = AsyncMock(return_value={"list": [{
             "code": "SUP001", "name": "供应商A", "status": 1,
             "contactName": "张三", "mobile": "13800138000",
-        }])
+        }]})
+        svc._get_client.return_value = mock_client
         assert await sync_supplier(svc, START, END) == 1
 
     @pytest.mark.asyncio
     async def test_skip_no_code(self):
         from services.kuaimai.erp_sync_master_handlers import sync_supplier
-        svc = _mock_svc(pages=[{"name": "无编码供应商"}])
+        svc = _mock_svc()
+        mock_client = MagicMock()
+        mock_client.request_with_retry = AsyncMock(return_value={"list": [{"name": "无编码供应商"}]})
+        svc._get_client.return_value = mock_client
         assert await sync_supplier(svc, START, END) == 0
 
 
@@ -282,43 +292,60 @@ class TestSyncSupplier:
 # ============================================================
 
 
+def _mock_svc_for_platform_map(db_outer_ids, api_responses):
+    """创建 platform_map 专用 mock（先查 DB 再逐个调 API）"""
+    svc = _mock_svc()
+    # mock DB 查询返回商品列表
+    mock_select = MagicMock()
+    mock_select.neq.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=[{"outer_id": oid} for oid in db_outer_ids],
+    )
+    svc.db.table.return_value.select.return_value = mock_select
+    # mock API 逐个调用
+    mock_client = MagicMock()
+    mock_client.request_with_retry = AsyncMock(side_effect=api_responses)
+    svc._get_client.return_value = mock_client
+    return svc
+
+
 class TestSyncPlatformMap:
     @pytest.mark.asyncio
-    async def test_empty_returns_zero(self):
+    async def test_empty_db_returns_zero(self):
         from services.kuaimai.erp_sync_master_handlers import sync_platform_map
-        assert await sync_platform_map(_mock_svc(), START, END) == 0
+        svc = _mock_svc_for_platform_map([], [])
+        assert await sync_platform_map(svc, START, END) == 0
 
     @pytest.mark.asyncio
     async def test_basic_platform_map(self):
         from services.kuaimai.erp_sync_master_handlers import sync_platform_map
-        items = [{
+        api_resp = {"itemOuterIdInfos": [{
             "outerId": "P01", "numIid": "12345", "userId": "shop01",
             "title": "商品A",
             "skuOuterIdInfos": [
                 {"skuOuterId": "P01-01", "skuNumIid": "S001"},
             ],
-        }]
-        svc = _mock_svc(pages=items)
+        }]}
+        svc = _mock_svc_for_platform_map(["P01"], [api_resp])
         assert await sync_platform_map(svc, START, END) == 1
 
     @pytest.mark.asyncio
     async def test_skip_missing_keys(self):
         """缺 outerId 或 numIid 跳过"""
         from services.kuaimai.erp_sync_master_handlers import sync_platform_map
-        items = [
+        api_resp = {"itemOuterIdInfos": [
             {"outerId": "P01"},
             {"numIid": "12345"},
-        ]
-        svc = _mock_svc(pages=items)
+        ]}
+        svc = _mock_svc_for_platform_map(["P01"], [api_resp])
         assert await sync_platform_map(svc, START, END) == 0
 
     @pytest.mark.asyncio
     async def test_sku_list_fallback(self):
         """skuOuterIdInfos 不存在时回退 skuList"""
         from services.kuaimai.erp_sync_master_handlers import sync_platform_map
-        items = [{
+        api_resp = {"itemOuterIdInfos": [{
             "outerId": "P01", "numIid": "12345",
             "skuList": [{"skuOuterId": "P01-01", "skuNumIid": "S001"}],
-        }]
-        svc = _mock_svc(pages=items)
+        }]}
+        svc = _mock_svc_for_platform_map(["P01"], [api_resp])
         assert await sync_platform_map(svc, START, END) == 1
