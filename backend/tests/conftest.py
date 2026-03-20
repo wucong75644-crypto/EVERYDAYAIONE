@@ -85,13 +85,40 @@ class MockSupabaseTable:
         self._data = data or []
         self._filters = {}
         self._in_filters = {}
+        self._ilike_filters = {}
+        self._gte_filters = {}
+        self._lt_filters = {}
+        self._lte_filters = {}
+        self._or_filters = []
         self._select_fields = "*"
+        self._count_mode = None
+        self._limit = None
+        self._single = False
+        self._is_delete = False
 
-    def select(self, fields: str = "*"):
+    def select(self, fields: str = "*", count: str | None = None):
+        # 重置查询状态（每次 select 开始新查询链）
+        self._filters = {}
+        self._in_filters = {}
+        self._ilike_filters = {}
+        self._gte_filters = {}
+        self._lt_filters = {}
+        self._lte_filters = {}
+        self._or_filters = []
         self._select_fields = fields
+        self._count_mode = count
+        self._limit = None
+        self._single = False
         return self
 
     def insert(self, data: dict | list):
+        if isinstance(data, dict):
+            data = [data]
+        self._data.extend(data)
+        return self
+
+    def upsert(self, data: list | dict, on_conflict: str = ""):
+        """UPSERT（简单实现：追加/覆盖）"""
         if isinstance(data, dict):
             data = [data]
         self._data.extend(data)
@@ -102,6 +129,7 @@ class MockSupabaseTable:
         return self
 
     def delete(self):
+        self._is_delete = True
         return self
 
     def eq(self, field: str, value):
@@ -110,6 +138,31 @@ class MockSupabaseTable:
 
     def in_(self, field: str, values: list):
         self._in_filters[field] = values
+        return self
+
+    def ilike(self, field: str, pattern: str):
+        """ILIKE 模糊匹配（去掉 % 后做 case-insensitive 子串匹配）"""
+        self._ilike_filters[field] = pattern.strip("%").lower()
+        return self
+
+    def gte(self, field: str, value):
+        """大于等于"""
+        self._gte_filters[field] = value
+        return self
+
+    def lt(self, field: str, value):
+        """小于"""
+        self._lt_filters[field] = value
+        return self
+
+    def lte(self, field: str, value):
+        """小于等于"""
+        self._lte_filters[field] = value
+        return self
+
+    def or_(self, filter_str: str):
+        """OR 过滤（简单实现：解析 field.eq.value 格式）"""
+        self._or_filters.append(filter_str)
         return self
 
     def order(self, column: str, **kwargs):
@@ -130,27 +183,72 @@ class MockSupabaseTable:
         self._single = True
         return self
 
-    def execute(self):
-        """执行查询并返回结果"""
-        result = MagicMock()
-
-        # 根据过滤条件筛选数据
-        filtered = self._data
+    def _apply_filters(self, data: list) -> list:
+        """应用所有过滤条件，返回匹配的行"""
+        filtered = data
         for field, value in self._filters.items():
             filtered = [d for d in filtered if d.get(field) == value]
 
-        # 应用 in_ 过滤
         for field, values in self._in_filters.items():
             filtered = [d for d in filtered if d.get(field) in values]
 
+        for field, substr in self._ilike_filters.items():
+            filtered = [
+                d for d in filtered
+                if substr in str(d.get(field, "")).lower()
+            ]
+
+        for field, value in self._gte_filters.items():
+            filtered = [
+                d for d in filtered if str(d.get(field, "")) >= str(value)
+            ]
+        for field, value in self._lt_filters.items():
+            filtered = [
+                d for d in filtered if str(d.get(field, "")) < str(value)
+            ]
+        for field, value in self._lte_filters.items():
+            filtered = [
+                d for d in filtered if str(d.get(field, "")) <= str(value)
+            ]
+
+        for or_str in self._or_filters:
+            parts = or_str.split(",")
+            or_matched = []
+            for row in filtered:
+                for part in parts:
+                    segs = part.split(".")
+                    if len(segs) >= 3 and segs[1] == "eq":
+                        if str(row.get(segs[0], "")) == segs[2]:
+                            or_matched.append(row)
+                            break
+            filtered = or_matched
+
+        return filtered
+
+    def execute(self):
+        """执行查询并返回结果"""
+        result = MagicMock()
+        filtered = self._apply_filters(self._data)
+
+        # DELETE 操作：从 _data 中移除匹配行
+        if self._is_delete:
+            self._data = [d for d in self._data if d not in filtered]
+            result.data = filtered
+            self._is_delete = False
+            return result
+
         # 应用 limit
-        if hasattr(self, '_limit'):
+        if self._limit is not None:
             filtered = filtered[:self._limit]
 
-        if hasattr(self, '_single') and self._single:
+        if self._single:
             result.data = filtered[0] if filtered else None
         else:
             result.data = filtered
+
+        # count 模式
+        if self._count_mode == "exact":
+            result.count = len(filtered)
 
         return result
 
@@ -229,6 +327,13 @@ class MockAsyncSupabaseTable:
         return self
 
     def insert(self, data: dict | list):
+        if isinstance(data, dict):
+            data = [data]
+        self._data.extend(data)
+        return self
+
+    def upsert(self, data: list | dict, on_conflict: str = ""):
+        """UPSERT（简单实现：追加/覆盖）"""
         if isinstance(data, dict):
             data = [data]
         self._data.extend(data)

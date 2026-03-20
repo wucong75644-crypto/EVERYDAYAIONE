@@ -2,7 +2,7 @@
 v2 ERP 综合模拟测试 — 覆盖9个ERP工具 × 多种提问方式
 
 覆盖维度：
-A. 编码识别 erp_identify（裸编码/条形码/订单号/SKU编码/套件）
+A. 编码识别 local_product_identify（裸编码/条形码/订单号/SKU编码/套件）
 B. 库存查询 erp_product_query（当前库存/分仓库存/出入库流水/虚拟库存）
 C. 商品查询 erp_product_query（商品列表/详情/多编码/SKU信息/标签/品牌）
 D. 订单查询 erp_trade_query（各平台订单号/状态筛选/时间类型/归档订单）
@@ -110,7 +110,7 @@ async def _run_multi_exec(lp, text, brain, exec_results):
 
 
 # ============================================================
-# A. 编码识别 erp_identify（5 场景）
+# A. 编码识别 local_product_identify（5 场景）
 # ============================================================
 
 
@@ -118,11 +118,11 @@ class TestERPIdentify:
 
     @pytest.mark.asyncio
     async def test_barcode_identify(self):
-        """条形码 → erp_identify → stock_status"""
+        """条形码 → local_product_identify → stock_status"""
         lp = _lp()
         brain = AsyncMock(side_effect=[
             _p1("route_erp", {}),
-            _p2t([("erp_identify", {"code": "6901234567890"})]),
+            _p2t([("local_product_identify", {"code": "6901234567890"})]),
             _p2t([("erp_product_query", {
                 "action": "stock_status",
                 "params": {"outer_id": "PROD-001"},
@@ -135,11 +135,11 @@ class TestERPIdentify:
 
     @pytest.mark.asyncio
     async def test_sku_code_identify(self):
-        """SKU编码（带-后缀）→ erp_identify → sku_info"""
+        """SKU编码（带-后缀）→ local_product_identify → sku_info"""
         lp = _lp()
         brain = AsyncMock(side_effect=[
             _p1("route_erp", {}),
-            _p2t([("erp_identify", {"code": "ABC-001-XL"})]),
+            _p2t([("local_product_identify", {"code": "ABC-001-XL"})]),
             _p2t([("erp_product_query", {
                 "action": "sku_info",
                 "params": {"sku_outer_id": "ABC-001-XL"},
@@ -152,11 +152,11 @@ class TestERPIdentify:
 
     @pytest.mark.asyncio
     async def test_kit_identify_then_child_stock(self):
-        """套件编码 → erp_identify 返回子单品 → 逐个查库存 → 汇总"""
+        """套件编码 → local_product_identify 返回子单品 → 逐个查库存 → 汇总"""
         lp = _lp()
         brain = AsyncMock(side_effect=[
             _p1("route_erp", {}),
-            _p2t([("erp_identify", {"code": "KIT-GIFT-01"})]),
+            _p2t([("local_product_identify", {"code": "KIT-GIFT-01"})]),
             # 套件返回子单品列表后，逐个查库存
             _p2t([
                 ("erp_product_query", {
@@ -183,11 +183,11 @@ class TestERPIdentify:
 
     @pytest.mark.asyncio
     async def test_platform_order_identify(self):
-        """平台订单号 → erp_identify → order_list"""
+        """平台订单号 → local_product_identify → order_list"""
         lp = _lp()
         brain = AsyncMock(side_effect=[
             _p1("route_erp", {}),
-            _p2t([("erp_identify", {"code": "126036803257340376"})]),
+            _p2t([("local_product_identify", {"code": "126036803257340376"})]),
             _p2t([("erp_trade_query", {
                 "action": "order_list",
                 "params": {"order_id": "126036803257340376"},
@@ -200,11 +200,11 @@ class TestERPIdentify:
 
     @pytest.mark.asyncio
     async def test_system_id_identify(self):
-        """系统单号（16位）→ erp_identify → order_list(system_id)"""
+        """系统单号（16位）→ local_product_identify → order_list(system_id)"""
         lp = _lp()
         brain = AsyncMock(side_effect=[
             _p1("route_erp", {}),
-            _p2t([("erp_identify", {"code": "1234567890123456"})]),
+            _p2t([("local_product_identify", {"code": "1234567890123456"})]),
             _p2t([("erp_trade_query", {
                 "action": "order_list",
                 "params": {"system_id": "1234567890123456"},
@@ -1368,11 +1368,11 @@ class TestERPColloquial:
 
     @pytest.mark.asyncio
     async def test_raw_number_ambiguous(self):
-        """纯数字 → erp_identify 先判断是什么"""
+        """纯数字 → local_product_identify 先判断是什么"""
         lp = _lp()
         brain = AsyncMock(side_effect=[
             _p1("route_erp", {}),
-            _p2t([("erp_identify", {"code": "9876543210"})]),
+            _p2t([("local_product_identify", {"code": "9876543210"})]),
             _p2t([("route_to_chat", {"system_prompt": "ERP助手"})]),
         ])
         r = await _run(lp, "9876543210",
@@ -1455,7 +1455,7 @@ class TestERPCrossToolChain:
         lp = _lp()
         brain = AsyncMock(side_effect=[
             _p1("route_erp", {}),
-            _p2t([("erp_identify", {"code": "HOODIE-XL"})]),
+            _p2t([("local_product_identify", {"code": "HOODIE-XL"})]),
             _p2t([
                 ("erp_product_query", {
                     "action": "product_detail",

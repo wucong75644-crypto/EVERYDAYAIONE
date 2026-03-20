@@ -1,20 +1,14 @@
 """
 端到端模拟测试：套件商品查库存全链路
 
-复现场景：用户问"TJ-CCNNTXL01-01 库存多少？"
-修复前：AI 重试 7 次烧掉 100K tokens（code_identifier 返回信息不足）
-修复后：一次 identify 即返回子单品列表 + 可执行指引
-
 测试链路：
-  Step 1: erp_identify(code="TJ-CCNNTXL01-01")
-    → code_identifier.identify_code → _identify_product
-    → 主编码命中 → _format_product → 含 suitSingleList + 指引
-  Step 2: erp_identify(code="TJ-CCNNTXL01-01-SKU01")
-    → SKU编码命中 → _format_sku → 自动 _fetch_suit_singles → 含子单品
   Step 3: stock_status(outer_id="DBXL01") 查子单品库存
     → format_inventory_list → 正常渲染库存
   Step 4: stock_status(outer_id="不存在的编码") 空结果
     → 中性文案，不含"参数类型选错"
+  Step 6: 路由提示词套件处理指引
+  Step 7: format_product_detail 套件子单品渲染
+  Step 8: 子订单缺货数量渲染
 """
 
 from unittest.mock import AsyncMock, patch
@@ -149,71 +143,6 @@ class TestE2ESuiteStockFlow:
         client.request_with_retry = AsyncMock(side_effect=make_api_router())
         return client
 
-    # ── Step 1: 主编码识别套件商品 ────────────────────
-
-    @pytest.mark.asyncio
-    async def test_step1_identify_suite_main_code(self, mock_client):
-        """主编码 TJ-CCNNTXL01 → 识别为套件 + 返回子单品列表"""
-        from services.kuaimai.code_identifier import identify_code
-
-        result = await identify_code(mock_client, "TJ-CCNNTXL01")
-        print("\n" + "=" * 60)
-        print("STEP 1: erp_identify(code='TJ-CCNNTXL01')")
-        print("=" * 60)
-        print(result)
-
-        # 基础识别
-        assert "✓ 商品存在" in result
-        assert "主编码(outer_id)" in result
-        assert "SKU套件" in result
-        assert "套件没有独立库存" in result
-
-        # 子单品列表
-        assert "套件子单品(3个)" in result
-        assert "DBXL01" in result
-        assert "天竺棉被套" in result or "DBXL01" in result
-        assert "CDDL02" in result
-        assert "ZTL03" in result
-
-        # 可执行指引
-        assert "stock_status" in result
-        assert "outer_id=子单品编码" in result
-
-        # SKU 列表
-        assert "TJ-CCNNTXL01-01" in result
-        assert "白色 1.5m" in result
-
-    # ── Step 2: SKU编码识别 → 自动获取子单品 ──────────
-
-    @pytest.mark.asyncio
-    async def test_step2_identify_suite_sku_code(self, mock_client):
-        """SKU编码 TJ-CCNNTXL01-01 → 识别为套件SKU + 自动获取子单品"""
-        from services.kuaimai.code_identifier import identify_code
-
-        # _fetch_suit_singles 会调用 item.single.get(outerId=TJ-CCNNTXL01)
-        # mock_client 已路由正确响应
-        result = await identify_code(mock_client, "TJ-CCNNTXL01-01")
-        print("\n" + "=" * 60)
-        print("STEP 2: erp_identify(code='TJ-CCNNTXL01-01')")
-        print("=" * 60)
-        print(result)
-
-        # SKU 识别
-        assert "✓ 商品存在" in result
-        assert "SKU编码(sku_outer_id)" in result
-        assert "对应主编码: TJ-CCNNTXL01" in result
-        assert "白色 1.5m" in result
-
-        # itemOuterId 优先级（不是 outerId）
-        assert "TJ-CCNNTXL01" in result
-
-        # 自动获取的子单品列表
-        assert "套件子单品" in result
-        assert "DBXL01" in result
-        assert "CDDL02" in result
-        assert "ZTL03" in result
-        assert "stock_status" in result
-
     # ── Step 3: 查子单品库存 ─────────────────────────
 
     @pytest.mark.asyncio
@@ -291,40 +220,6 @@ class TestE2ESuiteStockFlow:
         assert "参数类型选错" not in result
         assert "outer_id/sku_outer_id 混用" not in result
 
-    # ── Step 5: 套件 SKU 自动获取失败时的降级 ────────
-
-    @pytest.mark.asyncio
-    async def test_step5_suite_sku_fetch_fail_graceful(self):
-        """_fetch_suit_singles 失败时降级输出提示"""
-        from services.kuaimai.code_identifier import identify_code
-
-        client = AsyncMock()
-
-        async def route_with_fail(method, params=None, **kwargs):
-            params = params or {}
-            if method == "erp.item.single.sku.get":
-                return MOCK_SUITE_SKU
-            if method == "item.single.get":
-                # 模拟获取子单品失败（API 超时）
-                raise TimeoutError("API timeout")
-            return {}
-
-        client.request_with_retry = AsyncMock(side_effect=route_with_fail)
-
-        result = await identify_code(client, "TJ-CCNNTXL01-01")
-        print("\n" + "=" * 60)
-        print("STEP 5: SKU识别成功 but _fetch_suit_singles 失败")
-        print("=" * 60)
-        print(result)
-
-        # SKU 识别本身成功
-        assert "✓ 商品存在" in result
-        assert "SKU编码(sku_outer_id)" in result
-
-        # 降级提示（引导用户手动查主编码）
-        assert "套件SKU" in result
-        assert "erp_identify(code=TJ-CCNNTXL01)" in result
-
     # ── Step 6: 路由提示词可执行性验证 ───────────────
 
     def test_step6_routing_prompt_actionable(self):
@@ -336,8 +231,8 @@ class TestE2ESuiteStockFlow:
         print("=" * 60)
 
         # 关键：不再是不可执行的"告知用户需查子单品"
-        assert "erp_identify 会返回子单品列表" in ERP_ROUTING_PROMPT
-        assert "stock_status(outer_id=子单品编码)" in ERP_ROUTING_PROMPT
+        assert "local_product_identify 会返回子单品列表" in ERP_ROUTING_PROMPT
+        assert "local_stock_query" in ERP_ROUTING_PROMPT
         assert "汇总后告知用户" in ERP_ROUTING_PROMPT
 
         # 打印相关段落

@@ -1,17 +1,23 @@
 """
-ERP 工具定义（9个工具）
+ERP 工具定义（8个API工具 + 8个本地查询工具）
 
 Registry + Category Dispatch 架构：
-- 1个编码识别工具：erp_identify（通用适配器，直接调API）
 - 6个ERP查询工具：按类别分组，action enum 路由到具体API
 - 1个淘宝奇门查询工具：通过淘宝网关查询订单/售后
 - 1个执行工具：所有写操作，需用户确认
+- 8个本地查询工具：直接查PostgreSQL，毫秒级响应，优先使用
 
 工具定义从 Registry 动态生成，新增API只需修改注册表。
 """
 
 from typing import Any, Dict, List, Set
 
+from config.erp_local_tools import (
+    ERP_LOCAL_TOOLS,
+    LOCAL_ROUTING_PROMPT,
+    LOCAL_TOOL_SCHEMAS,
+    build_local_tools,
+)
 from services.kuaimai.registry import (
     AFTERSALES_REGISTRY,
     BASIC_REGISTRY,
@@ -152,41 +158,12 @@ ERP_TOOL_SCHEMAS["erp_execute"] = {
         "params": {"type": "object"},
     },
 }
-ERP_TOOL_SCHEMAS["erp_identify"] = {
-    "required": ["code"],
-    "properties": {
-        "code": {"type": "string"},
-    },
-}
+ERP_TOOL_SCHEMAS.update(LOCAL_TOOL_SCHEMAS)
 
 
 def build_erp_tools() -> List[Dict[str, Any]]:
-    """构建9个ERP工具定义（1编码识别 + 6 ERP查询 + 1 淘宝奇门查询 + 1 写入）"""
+    """构建16个ERP工具定义（8个API + 8个本地查询）"""
     tools = [
-        # 0. 编码识别（前置工具）
-        {
-            "type": "function",
-            "function": {
-                "name": "erp_identify",
-                "description": (
-                    "识别任意编码/单号的类型和关联信息。"
-                    "输入裸值，返回：编码类型、商品类型、关联参数"
-                    "(ID/编码/名称)。"
-                    "查库存/订单/采购等操作前先用这个确认编码身份，"
-                    "避免参数猜错"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "code": {
-                            "type": "string",
-                            "description": "要识别的编码或单号",
-                        },
-                    },
-                    "required": ["code"],
-                },
-            },
-        },
         # 1. 基础信息查询
         _build_query_tool(
             "erp_info_query",
@@ -269,7 +246,7 @@ def build_erp_tools() -> List[Dict[str, Any]]:
             },
         },
     ]
-    return tools
+    return tools + build_local_tools()
 
 
 # ERP 路由提示词片段
@@ -289,14 +266,14 @@ ERP_ROUTING_PROMPT = (
     "- 供应商/采购/收货/上架 → erp_purchase_query\n"
     "- 淘宝/天猫订单或售后 → erp_taobao_query\n"
     "- 写操作 → erp_execute\n"
-    "- 编码/单号类型不确定 → erp_identify\n"
+    "- 编码/单号类型不确定 → local_product_identify\n"
     "- 不确定用哪个action → 先调 erp_api_search 查文档\n\n"
     "## 编码识别（前置步骤）\n"
-    "- 首次遇到裸值编码/单号 → 先 erp_identify(code=XX) 确认类型\n"
+    "- 首次遇到裸值编码/单号 → 先 local_product_identify(code=XX) 确认类型\n"
     "- 返回: 编码类型 + 关联参数(ID/编码/名称/SKU列表)\n"
     "- 套件(type=1/2)没有独立库存:\n"
-    "  → erp_identify 会返回子单品列表（outer_id + sku_outer_id）\n"
-    "  → 对每个子单品调用 stock_status(outer_id=子单品编码) 查库存\n"
+    "  → local_product_identify 会返回子单品列表（outer_id + sku_outer_id）\n"
+    "  → 对每个子单品调用 local_stock_query 查库存\n"
     "  → 汇总后告知用户各子单品库存情况\n"
     "- 识别后用返回的精确参数查询，不猜不试\n"
     "- 同一编码在同一对话中只需识别一次\n\n"
@@ -370,10 +347,10 @@ ERP_ROUTING_PROMPT = (
     "- 采购单查不到 → 换 _history action\n"
     "- 按名称查不到 → ask_user 确认名称\n\n"
     "## 禁止猜测原则\n"
-    "- 裸值编码 → 先 erp_identify，不猜测参数类型\n"
+    "- 裸值编码 → 先 local_product_identify，不猜测参数类型\n"
     "- 纯中文 → 可能是买家昵称，ask_user 要编码\n"
-    "- 禁止不传参数直接调API返回全量数据\n"
-)
+    "- 禁止不传参数直接调API返回全量数据\n\n"
+) + LOCAL_ROUTING_PROMPT
 
 
 def build_erp_search_tool() -> Dict[str, Any]:

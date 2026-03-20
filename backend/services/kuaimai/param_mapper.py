@@ -208,11 +208,3 @@ def _normalize_dates(params: Dict[str, Any]) -> None:
                     params[key] = int(dt.timestamp() * 1000)
                 except ValueError:
                     pass  # 非日期格式（可能用户已传ms），不处理
-
-
-def build_default_date_range(days: int = 7) -> Dict[str, str]:
-    """生成默认的日期范围参数"""
-    now = datetime.now()
-    end = now.strftime("%Y-%m-%d %H:%M:%S")
-    start = (now - timedelta(days=days)).strftime("%Y-%m-%d 00:00:00")
-    return {"start": start, "end": end}

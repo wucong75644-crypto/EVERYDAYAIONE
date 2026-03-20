@@ -22,6 +22,7 @@ from config.crawler_tools import (
     CRAWLER_TOOL_SCHEMAS,
     build_crawler_tools,
 )
+from config.erp_local_tools import ERP_LOCAL_TOOLS
 from config.erp_tools import (
     ERP_ROUTING_PROMPT,
     ERP_SYNC_TOOLS,
@@ -42,8 +43,8 @@ from config.smart_model_config import (
 
 INFO_TOOLS: Set[str] = {
     "web_search", "get_conversation_context", "search_knowledge",
-    "erp_api_search", "erp_identify", "model_search",
-} | ERP_SYNC_TOOLS | CRAWLER_INFO_TOOLS | CODE_INFO_TOOLS
+    "erp_api_search", "model_search",
+} | ERP_SYNC_TOOLS | ERP_LOCAL_TOOLS | CRAWLER_INFO_TOOLS | CODE_INFO_TOOLS
 
 ROUTING_TOOLS: Set[str] = {
     "route_to_chat", "route_to_image", "route_to_video", "ask_user",

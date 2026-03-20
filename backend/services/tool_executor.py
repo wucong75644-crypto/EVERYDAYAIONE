@@ -3,15 +3,6 @@
 
 执行 Agent Loop 中的同步工具（结果回传大脑）。
 异常不在此处 catch — 调用方（AgentLoop）统一处理并回传大脑。
-
-工具列表：
-- web_search: 搜索互联网（复用 IntentRouter.execute_search）
-- get_conversation_context: 获取近期对话（复用 MessageService）
-- search_knowledge: 查询知识库（复用 knowledge_service）
-- erp_identify: 编码识别（委托 code_identifier）
-- erp_*_query: ERP查询工具（6个，委托 ErpDispatcher）
-- erp_execute: ERP写操作（委托 ErpDispatcher）
-- social_crawler: 社交媒体爬虫
 """
 
 from typing import Any, Callable, Coroutine, Dict
@@ -19,6 +10,7 @@ from typing import Any, Callable, Coroutine, Dict
 from loguru import logger
 from supabase import Client
 
+from config.erp_local_tools import ERP_LOCAL_TOOLS
 from config.erp_tools import ERP_SYNC_TOOLS
 
 
@@ -35,13 +27,15 @@ class ToolExecutor:
             "search_knowledge": self._search_knowledge,
             "social_crawler": self._social_crawler,
             "erp_api_search": self._erp_api_search,
-            "erp_identify": self._erp_identify,
             "model_search": self._model_search,
             "code_execute": self._code_execute,
         }
-        # 注册7个ERP工具，统一委托给 _erp_dispatch
+        # 注册7个ERP API工具，统一委托给 _erp_dispatch
         for tool_name in ERP_SYNC_TOOLS:
             self._handlers[tool_name] = self._make_erp_handler(tool_name)
+        # 注册8个本地查询工具，直接查DB
+        for tool_name in ERP_LOCAL_TOOLS:
+            self._handlers[tool_name] = self._make_local_handler(tool_name)
 
     def _make_erp_handler(
         self, tool_name: str
@@ -174,32 +168,6 @@ class ToolExecutor:
         if not query:
             return "请输入搜索关键词"
         return search_models(query)
-
-    # ========================================
-    # ERP 编码识别
-    # ========================================
-
-    async def _erp_identify(self, args: Dict[str, Any]) -> str:
-        """编码识别工具：识别裸值编码/单号的类型和关联信息"""
-        from services.kuaimai.client import KuaiMaiClient
-        from services.kuaimai.code_identifier import identify_code
-
-        code = args.get("code", "").strip()
-        if not code:
-            return "请提供要识别的编码或单号"
-
-        client = KuaiMaiClient()
-        if not client.is_configured:
-            await client.close()
-            return "ERP系统未配置，请联系管理员设置快麦ERP的AppKey和AccessToken"
-        await client.load_cached_token()
-        try:
-            return await identify_code(client, code)
-        except Exception as e:
-            logger.error(f"ToolExecutor erp_identify | code={code} | error={e}")
-            return f"编码识别失败: {e}"
-        finally:
-            await client.close()
 
     # ========================================
     # 代码执行沙盒
@@ -407,6 +375,61 @@ class ToolExecutor:
             return "ERP系统未配置，请联系管理员设置快麦ERP的AppKey和AccessToken"
         await client.load_cached_token()
         return ErpDispatcher(client)
+
+    # ========================================
+    # 本地查询工具
+    # ========================================
+
+    def _make_local_handler(
+        self, tool_name: str
+    ) -> Callable[..., Coroutine[Any, Any, str]]:
+        """为指定本地查询工具创建handler"""
+        async def handler(args: Dict[str, Any]) -> str:
+            return await self._local_dispatch(tool_name, args)
+        return handler
+
+    async def _local_dispatch(
+        self, tool_name: str, args: Dict[str, Any]
+    ) -> str:
+        """本地查询工具统一调度（直接查DB，毫秒级响应）"""
+        from services.kuaimai.erp_local_doc_query import local_doc_query
+        from services.kuaimai.erp_local_global_stats import local_global_stats
+        from services.kuaimai.erp_local_identify import local_product_identify
+        from services.kuaimai.erp_local_query import (
+            local_aftersale_query,
+            local_order_query,
+            local_platform_map_query,
+            local_product_flow,
+            local_purchase_query,
+            local_stock_query,
+        )
+        from services.kuaimai.erp_local_sync_trigger import trigger_erp_sync
+        from services.kuaimai.erp_stats_query import local_product_stats
+
+        dispatch: Dict[str, Any] = {
+            "local_purchase_query": local_purchase_query,
+            "local_aftersale_query": local_aftersale_query,
+            "local_order_query": local_order_query,
+            "local_product_stats": local_product_stats,
+            "local_product_flow": local_product_flow,
+            "local_stock_query": local_stock_query,
+            "local_product_identify": local_product_identify,
+            "local_platform_map_query": local_platform_map_query,
+            "local_doc_query": local_doc_query,
+            "local_global_stats": local_global_stats,
+            "trigger_erp_sync": trigger_erp_sync,
+        }
+
+        func = dispatch.get(tool_name)
+        if not func:
+            return f"Unknown local tool: {tool_name}"
+        try:
+            return await func(self.db, **args)
+        except Exception as e:
+            logger.error(
+                f"ToolExecutor local_dispatch | tool={tool_name} | error={e}"
+            )
+            return f"本地查询失败: {e}"
 
     # ========================================
     # 社交媒体爬虫工具

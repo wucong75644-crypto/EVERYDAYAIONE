@@ -171,6 +171,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     worker_task = asyncio.create_task(worker.start())
     logger.info("BackgroundTaskWorker started")
 
+    # 启动 ERP 同步工作器（独立 async task，与 BackgroundTaskWorker 并行）
+    from services.kuaimai.erp_sync_worker import ErpSyncWorker
+    erp_worker = ErpSyncWorker(db)
+    erp_worker_task = asyncio.create_task(erp_worker.start())
+    logger.info("ErpSyncWorker started")
+
     # 企微智能机器人 WS 长连接已拆为独立进程（wecom_ws_runner.py）
     # 由 systemd everydayai-wecom.service 管理，避免多 worker 竞争
 
@@ -189,6 +195,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     worker_task.cancel()
     try:
         await worker_task
+    except asyncio.CancelledError:
+        pass
+
+    # 停止 ERP 同步工作器
+    await erp_worker.stop()
+    erp_worker_task.cancel()
+    try:
+        await erp_worker_task
     except asyncio.CancelledError:
         pass
 
