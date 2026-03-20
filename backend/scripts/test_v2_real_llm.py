@@ -33,10 +33,10 @@ from services.agent_loop import AgentLoop
 
 # 用于 Phase 2 executor 的通用 mock 返回
 MOCK_ERP_RESULTS: Dict[str, str] = {
-    # erp_identify
-    "erp_identify": json.dumps({
+    # local_product_identify
+    "local_product_identify": json.dumps({
         "type": "product", "outer_id": "TEST-001",
-        "name": "测试商品", "item_id": 12345,
+        "name": "测试商品",
     }),
     # 各种查询默认返回
     "erp_product_query": json.dumps({

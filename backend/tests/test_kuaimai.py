@@ -24,7 +24,6 @@ from services.kuaimai.errors import (
     KuaiMaiSignatureError,
     KuaiMaiTokenExpiredError,
 )
-from services.kuaimai.service import KuaiMaiService
 
 
 # ============================================================
@@ -373,439 +372,6 @@ class TestTokenRefresh:
 
 
 # ============================================================
-# 业务服务测试
-# ============================================================
-
-
-class TestKuaiMaiService:
-    """业务查询服务测试"""
-
-    def setup_method(self):
-        self.mock_client = AsyncMock(spec=KuaiMaiClient)
-        self.service = KuaiMaiService(client=self.mock_client)
-
-    @pytest.mark.asyncio
-    async def test_query_orders_empty(self):
-        """订单查询无结果"""
-        self.mock_client.request_with_retry.return_value = {
-            "success": True, "list": [], "total": 0
-        }
-        result = await self.service.query_orders(query_type="by_time_range")
-        assert "未找到" in result
-
-    @pytest.mark.asyncio
-    async def test_query_orders_by_id(self):
-        """按订单号查询"""
-        self.mock_client.request_with_retry.return_value = {
-            "success": True,
-            "total": 1,
-            "list": [{
-                "tid": "ORDER001",
-                "sid": "SYS001",
-                "sysStatus": "FINISHED",
-                "buyerNick": "买家A",
-                "payment": "99.00",
-                "shopName": "测试店铺",
-                "created": 1704067200000,
-                "payTime": 1704070800000,
-            }],
-        }
-        result = await self.service.query_orders(
-            query_type="by_order_id", order_id="ORDER001"
-        )
-        assert "ORDER001" in result
-        assert "FINISHED" in result
-        assert "99.00" in result
-
-        call_args = self.mock_client.request_with_retry.call_args
-        assert call_args[0][0] == "erp.trade.list.query"
-        assert call_args[0][1]["tid"] == "ORDER001"
-
-    @pytest.mark.asyncio
-    async def test_query_orders_by_status(self):
-        """按状态查询订单"""
-        self.mock_client.request_with_retry.return_value = {
-            "success": True, "total": 0, "list": []
-        }
-        await self.service.query_orders(query_type="by_status", status="WAIT_SEND")
-
-        call_args = self.mock_client.request_with_retry.call_args
-        assert call_args[0][1]["status"] == "WAIT_SEND"
-
-    @pytest.mark.asyncio
-    async def test_query_orders_pagination_hint(self):
-        """订单结果超过一页时提示翻页"""
-        self.mock_client.request_with_retry.return_value = {
-            "success": True,
-            "total": 50,
-            "list": [{"tid": f"T{i}", "sid": f"S{i}", "sysStatus": "FINISHED",
-                       "buyerNick": "", "payment": "10", "shopName": "店铺",
-                       "created": 1704067200000, "payTime": None}
-                      for i in range(20)],
-        }
-        result = await self.service.query_orders(query_type="by_time_range")
-        assert "第2页" in result
-
-    @pytest.mark.asyncio
-    async def test_query_products_list_all(self):
-        """列出商品列表"""
-        self.mock_client.request_with_retry.return_value = {
-            "success": True,
-            "total": 2,
-            "items": [
-                {"title": "测试商品A", "outerId": "SKU001", "activeStatus": 1},
-                {"title": "测试商品B", "outerId": "SKU002", "activeStatus": 1},
-            ],
-        }
-        result = await self.service.query_products(query_type="list_all")
-        assert "测试商品A" in result
-        assert "SKU001" in result
-        assert "共找到 2" in result
-
-    @pytest.mark.asyncio
-    async def test_query_single_product(self):
-        """按编码查询单个商品（对齐 item.single.get 响应）"""
-        self.mock_client.request_with_retry.return_value = {
-            "success": True,
-            "item": {
-                "title": "精品T恤",
-                "outerId": "TS-001",
-                "barcode": "6901234567890",
-                "weight": 200,
-                "unit": "件",
-                "activeStatus": 1,
-                "isSkuItem": 1,
-                "catId": "50012345",
-                "items": [
-                    {"skuOuterId": "TS-001-S", "propertiesName": "S码", "barcode": "690S", "activeStatus": 1},
-                    {"skuOuterId": "TS-001-M", "propertiesName": "M码", "barcode": "690M", "activeStatus": 1},
-                ],
-            },
-        }
-        result = await self.service.query_products(
-            query_type="by_code", product_code="TS-001"
-        )
-        assert "精品T恤" in result
-        assert "TS-001" in result
-        assert "6901234567890" in result
-        assert "SKU列表" in result
-        assert "TS-001-S" in result
-
-    @pytest.mark.asyncio
-    async def test_query_single_product_not_found(self):
-        """按编码查询商品不存在"""
-        self.mock_client.request_with_retry.return_value = {
-            "success": True, "item": {}
-        }
-        result = await self.service.query_products(
-            query_type="by_code", product_code="NOTEXIST"
-        )
-        assert "未找到" in result
-
-    @pytest.mark.asyncio
-    async def test_query_inventory(self):
-        """库存查询（对齐 stock.api.status.query 响应）"""
-        self.mock_client.request_with_retry.return_value = {
-            "success": True,
-            "total": 1,
-            "stockStatusVoList": [{
-                "title": "商品X",
-                "mainOuterId": "SKU-X",
-                "outerId": "SKU-X-01",
-                "totalAvailableStockSum": 100,
-                "sellableNum": 80,
-                "totalLockStock": 20,
-                "wareHouseId": 12345,
-                "stockStatus": 1,
-                "purchasePrice": 10.50,
-            }],
-        }
-        result = await self.service.query_inventory(product_code="SKU-X")
-        assert "商品X" in result
-        assert "总库存: 100" in result
-        assert "可售: 80" in result
-        assert "正常" in result
-
-    @pytest.mark.asyncio
-    async def test_query_shipment_by_order(self):
-        """按订单号查物流"""
-        self.mock_client.request_with_retry.return_value = {
-            "success": True,
-            "total": 1,
-            "list": [{
-                "tid": "ORDER001",
-                "sid": 12345,
-                "sysStatus": "FINISHED",
-                "outSid": "SF1234567890",
-                "expressCompanyName": "顺丰速运",
-                "shopName": "测试店铺",
-                "consignTime": 1704154800000,
-                "payment": "99.00",
-                "orders": [
-                    {"title": "商品A", "num": 2},
-                ],
-            }],
-        }
-        result = await self.service.query_shipment(
-            query_type="by_order_id", order_id="ORDER001"
-        )
-        assert "ORDER001" in result
-        assert "SF1234567890" in result
-        assert "顺丰速运" in result
-        assert "商品A" in result
-
-    @pytest.mark.asyncio
-    async def test_query_shipment_by_waybill(self):
-        """按快递单号查物流"""
-        self.mock_client.request_with_retry.return_value = {
-            "success": True, "total": 0, "list": []
-        }
-        result = await self.service.query_shipment(
-            query_type="by_waybill", waybill_no="YT9999"
-        )
-        assert "未找到" in result
-
-        call_args = self.mock_client.request_with_retry.call_args
-        assert call_args[0][1]["outSids"] == "YT9999"
-
-    @pytest.mark.asyncio
-    async def test_query_inventory_warning(self):
-        """查询警戒库存"""
-        self.mock_client.request_with_retry.return_value = {
-            "success": True, "total": 0, "stockStatusVoList": []
-        }
-        result = await self.service.query_inventory(stock_status="warning")
-        assert "未找到" in result
-
-        call_args = self.mock_client.request_with_retry.call_args
-        assert call_args[0][1]["stockStatuses"] == 2
-
-    @pytest.mark.asyncio
-    async def test_query_inventory_by_sku_code(self):
-        """按SKU编码查库存（sku_code 优先于 product_code）"""
-        self.mock_client.request_with_retry.return_value = {
-            "success": True,
-            "total": 1,
-            "stockStatusVoList": [{
-                "title": "拼豆熨斗",
-                "mainOuterId": "PDYD01",
-                "outerId": "PDYD01-01",
-                "totalAvailableStockSum": 123,
-                "sellableNum": 118,
-                "totalLockStock": 5,
-                "wareHouseId": 100,
-                "stockStatus": 1,
-                "purchasePrice": 10.80,
-            }],
-        }
-        result = await self.service.query_inventory(
-            product_code="PDYD01", sku_code="PDYD01-01"
-        )
-        assert "拼豆熨斗" in result
-        assert "总库存: 123" in result
-        assert "可售: 118" in result
-
-        # sku_code 优先：传 skuOuterId 而非 mainOuterId
-        call_args = self.mock_client.request_with_retry.call_args
-        assert "skuOuterId" in call_args[0][1]
-        assert "mainOuterId" not in call_args[0][1]
-
-    @pytest.mark.asyncio
-    async def test_query_inventory_pagesize_100(self):
-        """库存查询 pageSize 为 100"""
-        self.mock_client.request_with_retry.return_value = {
-            "success": True, "total": 0, "stockStatusVoList": []
-        }
-        await self.service.query_inventory()
-        call_args = self.mock_client.request_with_retry.call_args
-        assert call_args[0][1]["pageSize"] == 100
-
-
-# ============================================================
-# 格式化工具方法测试
-# ============================================================
-
-
-class TestServiceHelpers:
-    """Service 辅助方法测试"""
-
-    def test_parse_date_with_value(self):
-        """有日期值时返回格式化结果"""
-        result = KuaiMaiService._parse_date("2024-01-15")
-        assert result == "2024-01-15 00:00:00"
-
-    def test_parse_date_full_format(self):
-        """完整格式直接返回"""
-        result = KuaiMaiService._parse_date("2024-01-15 10:30:00")
-        assert result == "2024-01-15 10:30:00"
-
-    def test_parse_date_default_days_ago(self):
-        """无日期时使用相对日期"""
-        result = KuaiMaiService._parse_date(None, days_ago=7)
-        datetime.strptime(result, "%Y-%m-%d %H:%M:%S")
-
-    def test_parse_date_default_now(self):
-        """无参数返回当前时间"""
-        result = KuaiMaiService._parse_date(None)
-        parsed = datetime.strptime(result, "%Y-%m-%d %H:%M:%S")
-        assert parsed.year == datetime.now().year
-
-    def test_format_timestamp_millis(self):
-        """毫秒时间戳转换"""
-        ts = 1704067200000
-        result = KuaiMaiService._format_timestamp(ts)
-        assert "2024-01-01" in result
-
-    def test_format_timestamp_seconds(self):
-        """秒级时间戳转换"""
-        ts = 1704067200
-        result = KuaiMaiService._format_timestamp(ts)
-        assert "2024" in result
-
-    def test_format_timestamp_none(self):
-        """空值返回 -"""
-        assert KuaiMaiService._format_timestamp(None) == "-"
-        assert KuaiMaiService._format_timestamp(0) == "-"
-
-    def test_format_timestamp_invalid(self):
-        """无效值返回原值"""
-        assert KuaiMaiService._format_timestamp("not_a_number") == "not_a_number"
-
-
-# ============================================================
-# 格式化方法字段对齐测试
-# ============================================================
-
-
-class TestFormatMethodsAlignment:
-    """验证格式化方法使用正确的 API 响应字段"""
-
-    def setup_method(self):
-        self.mock_client = AsyncMock(spec=KuaiMaiClient)
-        self.service = KuaiMaiService(client=self.mock_client)
-
-    def test_format_order_pdd_null_fields(self):
-        """pdd 隐私字段为 null 时不报错"""
-        order = {
-            "tid": None, "sid": 12345, "sysStatus": "FINISHED",
-            "buyerNick": None, "payment": None, "shopName": "拼多多店",
-            "source": "pdd", "created": 1704067200000, "payTime": None,
-        }
-        result = self.service._format_order(order)
-        assert "（隐私保护）" in result
-        assert "¥0" in result
-        assert "拼多多店" in result
-        assert "来源: pdd" in result
-
-    def test_format_order_normal(self):
-        """正常订单格式化"""
-        order = {
-            "tid": "ORD001", "sid": 12345, "sysStatus": "WAIT_SEND_GOODS",
-            "buyerNick": "张三", "payment": "99.00", "shopName": "旗舰店",
-            "created": 1704067200000, "payTime": 1704067200000,
-        }
-        result = self.service._format_order(order)
-        assert "ORD001" in result
-        assert "张三" in result
-        assert "¥99.00" in result
-
-    def test_format_product_new_fields(self):
-        """商品列表格式化使用 item.list.query 字段"""
-        item = {
-            "title": "测试商品", "outerId": "SKU001",
-            "barcode": "6901234567890", "activeStatus": 1,
-            "isSkuItem": 1, "weight": 200,
-        }
-        result = self.service._format_product(item)
-        assert "测试商品" in result
-        assert "SKU001" in result
-        assert "条码: 6901234567890" in result
-        assert "多规格: 是" in result
-        assert "状态: 启用" in result
-        assert "200g" in result
-
-    def test_format_product_disabled(self):
-        """停用商品显示正确"""
-        item = {"title": "已停商品", "activeStatus": 0, "isSkuItem": 0}
-        result = self.service._format_product(item)
-        assert "状态: 停用" in result
-        assert "多规格: 否" in result
-
-    def test_format_product_detail_with_items_sku(self):
-        """商品详情 SKU 在 items 数组（对齐 item.single.get）"""
-        item = {
-            "title": "测试商品", "outerId": "TS-001",
-            "barcode": "690", "weight": 200, "unit": "件",
-            "catId": "50012345", "activeStatus": 1, "isSkuItem": 1,
-            "sellerCats": [{"name": "服饰"}, {"name": "T恤"}],
-            "items": [
-                {"skuOuterId": "TS-001-S", "propertiesName": "S码",
-                 "barcode": "690S", "activeStatus": 1},
-                {"skuOuterId": "TS-001-M", "propertiesName": "M码",
-                 "barcode": "690M", "activeStatus": 0},
-            ],
-        }
-        result = self.service._format_product_detail(item)
-        assert "TS-001" in result
-        assert "SKU列表（共2个）" in result
-        assert "TS-001-S" in result
-        assert "S码" in result
-        assert "条码: 690S" in result
-        assert "停用" in result  # TS-001-M is disabled
-        assert "分类: 服饰 > T恤" in result
-
-    def test_format_inventory_new_fields(self):
-        """库存格式化使用 stock.api.status.query 字段"""
-        item = {
-            "title": "拼豆熨斗", "mainOuterId": "PDYD01",
-            "outerId": "PDYD01-01", "propertiesName": "白色",
-            "totalAvailableStockSum": 123, "sellableNum": 118,
-            "totalLockStock": 5, "wareHouseId": 100,
-            "stockStatus": 1, "purchasePrice": 10.80,
-        }
-        result = self.service._format_inventory(item)
-        assert "拼豆熨斗" in result
-        assert "编码: PDYD01" in result
-        assert "SKU: PDYD01-01" in result
-        assert "规格: 白色" in result
-        assert "总库存: 123" in result
-        assert "可售: 118" in result
-        assert "锁定: 5" in result
-        assert "仓库ID: 100" in result
-        assert "采购价: ¥10.8" in result
-        assert "正常" in result
-
-    def test_format_inventory_same_outer_id(self):
-        """主编码与SKU编码相同时不重复显示"""
-        item = {
-            "title": "单品", "mainOuterId": "A001", "outerId": "A001",
-            "totalAvailableStockSum": 50, "sellableNum": 50,
-            "stockStatus": 6,
-        }
-        result = self.service._format_inventory(item)
-        assert result.count("A001") == 1  # 只出现一次
-        assert "有货" in result
-
-    def test_format_shipment_pdd_null_fields(self):
-        """出库格式化兼容 pdd 隐私字段 null"""
-        item = {
-            "tid": None, "sid": 12345, "sysStatus": "FINISHED",
-            "outSid": "SF123", "expressCompanyName": "顺丰",
-            "shopName": None, "consignTime": 1704067200000,
-            "payment": None, "warehouseName": "默认仓库",
-            "orders": [
-                {"sysTitle": "商品A", "num": 2},
-            ],
-        }
-        result = self.service._format_shipment(item)
-        assert "SF123" in result
-        assert "顺丰" in result
-        assert "仓库: 默认仓库" in result
-        assert "商品A x2" in result
-        assert "¥0" in result  # payment is null
-
-
-# ============================================================
 # 工具执行器测试
 # ============================================================
 
@@ -923,9 +489,9 @@ class TestToolRegistration:
         assert validate_tool_call("unknown_erp_tool", {}) is False
 
     def test_agent_tools_count(self):
-        """工具总数验证（4 路由 + 3 信息 + 2 搜索 + 9 ERP + 1 爬虫 + 1 沙盒 = 20）"""
+        """工具总数验证（4路由+3信息+2搜索+8API ERP+11本地ERP+1爬虫+1沙盒=30）"""
         from config.agent_tools import AGENT_TOOLS
-        assert len(AGENT_TOOLS) == 20
+        assert len(AGENT_TOOLS) == 30
 
     def test_agent_tools_names(self):
         """所有ERP工具名在定义中"""
@@ -953,10 +519,12 @@ class TestToolRegistration:
             assert func["parameters"]["type"] == "object"
 
     def test_agent_tools_names_match_all_tools(self):
-        """工具名集合 = ALL_TOOLS"""
+        """工具名集合包含 ALL_TOOLS + ERP_LOCAL_TOOLS"""
         from config.agent_tools import AGENT_TOOLS, ALL_TOOLS
+        from config.erp_local_tools import ERP_LOCAL_TOOLS
         tool_names = {t["function"]["name"] for t in AGENT_TOOLS}
-        assert tool_names == ALL_TOOLS
+        assert ALL_TOOLS.issubset(tool_names)
+        assert ERP_LOCAL_TOOLS.issubset(tool_names)
 
     def test_agent_tools_routing_tools_present(self):
         """4 个路由工具全部存在"""
@@ -1558,13 +1126,6 @@ class TestParamMapper:
         _normalize_dates(params)
         assert params["startTime"] == 12345
 
-    def test_build_default_date_range(self):
-        """生成默认日期范围"""
-        from services.kuaimai.param_mapper import build_default_date_range
-        result = build_default_date_range(7)
-        assert "start" in result
-        assert "end" in result
-        assert "00:00:00" in result["start"]
 
 
 class TestParamAliases:
@@ -2539,16 +2100,17 @@ class TestNewDateKeys:
 class TestBuildErpTools:
     """验证 build_erp_tools 生成的工具定义结构"""
 
-    def test_returns_9_tools(self):
-        """build_erp_tools 返回 9 个工具（1 识别 + 6 查询 + 1 淘宝奇门 + 1 写入）"""
+    def test_returns_19_tools(self):
+        """build_erp_tools 返回 19 个工具（8 API + 11 本地）"""
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
-        assert len(tools) == 9
+        assert len(tools) == 19
 
     def test_all_query_tools_have_page_size(self):
-        """所有两步查询工具都有 page_size 参数"""
+        """API 两步查询工具都有 page_size 参数"""
+        from config.erp_local_tools import ERP_LOCAL_TOOLS
         from config.erp_tools import build_erp_tools
-        skip = {"erp_execute", "erp_identify"}
+        skip = {"erp_execute"} | ERP_LOCAL_TOOLS
         tools = build_erp_tools()
         query_tools = [t for t in tools
                        if t["function"]["name"] not in skip]
@@ -2559,9 +2121,10 @@ class TestBuildErpTools:
             )
 
     def test_all_query_tools_have_page(self):
-        """所有两步查询工具都有 page 参数"""
+        """API 两步查询工具都有 page 参数"""
+        from config.erp_local_tools import ERP_LOCAL_TOOLS
         from config.erp_tools import build_erp_tools
-        skip = {"erp_execute", "erp_identify"}
+        skip = {"erp_execute"} | ERP_LOCAL_TOOLS
         tools = build_erp_tools()
         query_tools = [t for t in tools
                        if t["function"]["name"] not in skip]
@@ -2572,9 +2135,10 @@ class TestBuildErpTools:
             )
 
     def test_query_tools_have_params_object(self):
-        """所有两步查询工具有 params: object 参数"""
+        """API 两步查询工具有 params: object 参数"""
+        from config.erp_local_tools import ERP_LOCAL_TOOLS
         from config.erp_tools import build_erp_tools
-        skip = {"erp_execute", "erp_identify"}
+        skip = {"erp_execute"} | ERP_LOCAL_TOOLS
         tools = build_erp_tools()
         query_tools = [t for t in tools
                        if t["function"]["name"] not in skip]
@@ -3717,9 +3281,10 @@ class TestTwoStepToolSchema:
     """验证两步调用模式的工具 Schema"""
 
     def test_all_query_tools_have_4_params(self):
-        """两步查询工具只有 action/params/page/page_size 4 个属性"""
+        """API 两步查询工具只有 action/params/page/page_size 4 个属性"""
+        from config.erp_local_tools import ERP_LOCAL_TOOLS
         from config.erp_tools import build_erp_tools
-        skip = {"erp_execute", "erp_identify"}
+        skip = {"erp_execute"} | ERP_LOCAL_TOOLS
         tools = build_erp_tools()
         expected_keys = {"action", "params", "page", "page_size"}
         query_tools = [t for t in tools

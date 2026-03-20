@@ -96,11 +96,11 @@ class TestERPWorkflows:
 
     @pytest.mark.asyncio
     async def test_identify_then_query(self):
-        """裸编码 → erp_identify → erp_product_query → 汇总"""
+        """裸编码 → local_product_identify → erp_product_query → 汇总"""
         lp = _loop()
         brain = AsyncMock(side_effect=[
             _p1("route_erp", {}),
-            _p2t([("erp_identify", {"code": "6901234567890"})]),
+            _p2t([("local_product_identify", {"code": "6901234567890"})]),
             _p2t([("erp_product_query", {
                 "action": "stock_status",
                 "params": {"outer_id": "SKU001"},

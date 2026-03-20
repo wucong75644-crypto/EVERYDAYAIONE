@@ -126,7 +126,7 @@ PRODUCT_REGISTRY = {
     ),
     "multicode_query": ApiEntry(
         method="erp.item.multicode.query",
-        description="通过编码反查关联商品信息。支持主商家编码、规格商家编码、商品条码三种编码查询",
+        description="通过编码反查关联商品信息。支持主商家编码、规格商家编码、商品条码三种编码查询。⚠ 仅支持开启「一品多码」的商品，未开启的商品查不到",
         param_map={
             "code": "code",
             "barcode": "code",

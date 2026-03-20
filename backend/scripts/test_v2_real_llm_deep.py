@@ -35,9 +35,9 @@ from services.agent_loop import AgentLoop
 # ============================================================
 
 MOCK_RESULTS: Dict[str, str] = {
-    "erp_identify": json.dumps({
+    "local_product_identify": json.dumps({
         "type": "product", "outer_id": "TEST-001",
-        "name": "测试商品", "item_id": 12345,
+        "name": "测试商品",
     }),
     "erp_product_query": json.dumps({
         "total": 5, "items": [

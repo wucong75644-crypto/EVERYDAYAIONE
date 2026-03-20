@@ -149,6 +149,15 @@ class Settings(BaseSettings):
     kuaimai_base_url: str = "https://gw.superboss.cc/router"
     kuaimai_timeout: float = 10.0  # 请求超时（秒）
 
+    # 快麦ERP 本地索引同步配置
+    erp_sync_enabled: bool = True              # 同步总开关（False 时不启动 ErpSyncWorker）
+    erp_sync_interval: int = 60                # 增量同步间隔（秒），默认1分钟
+    erp_archive_retention_days: int = 90       # 热表保留天数，超过后归档到冷表
+    erp_platform_map_interval: int = 21600     # 平台映射同步间隔（秒），默认6小时
+    erp_sync_lock_ttl: int = 300               # Redis 分布式锁 TTL（秒），默认5分钟
+    erp_sync_initial_days: int = 90            # 首次全量回溯天数
+    erp_sync_shard_days: int = 7               # 时间窗口分片大小（天）
+
     # 快麦奇门自定义接口配置（淘宝网关，需单独申请凭证）
     qimen_app_key: Optional[str] = None  # 淘宝平台 appKey（非ERP的appKey）
     qimen_app_secret: Optional[str] = None  # 淘宝平台 appSecret（签名用）

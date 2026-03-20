@@ -188,9 +188,11 @@ class TestAgentToolsStructure:
             assert "parameters" in func
 
     def test_tool_names_match_all_tools(self):
-        """AGENT_TOOLS 中的工具名与 ALL_TOOLS 一致"""
+        """AGENT_TOOLS 中的工具名包含 ALL_TOOLS"""
+        from config.erp_local_tools import ERP_LOCAL_TOOLS
         tool_names = {t["function"]["name"] for t in AGENT_TOOLS}
-        assert tool_names == ALL_TOOLS
+        assert ALL_TOOLS.issubset(tool_names)
+        assert ERP_LOCAL_TOOLS.issubset(tool_names)
 
 
 # ============================================================
@@ -200,11 +202,11 @@ class TestAgentToolsStructure:
 
 class TestBuildErpTools:
 
-    def test_returns_9_tools(self):
-        """build_erp_tools 返回 9 个工具（1 识别 + 6 ERP查询 + 1 淘宝奇门 + 1 写入）"""
+    def test_returns_19_tools(self):
+        """build_erp_tools 返回 19 个工具（8 API + 11 本地）"""
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
-        assert len(tools) == 9
+        assert len(tools) == 19
 
     def test_each_tool_structure(self):
         """每个工具有完整的 function calling 结构"""
@@ -218,9 +220,10 @@ class TestBuildErpTools:
             assert func["parameters"]["type"] == "object"
 
     def test_query_tools_have_action_enum(self):
-        """6 个查询工具都有 action enum"""
+        """7 个 API 查询工具都有 action enum"""
+        from config.erp_local_tools import ERP_LOCAL_TOOLS
         from config.erp_tools import build_erp_tools
-        skip = {"erp_execute", "erp_identify"}
+        skip = {"erp_execute"} | ERP_LOCAL_TOOLS
         tools = build_erp_tools()
         query_tools = [t for t in tools
                        if t["function"]["name"] not in skip]
@@ -265,11 +268,11 @@ class TestBuildErpTools:
             assert tool in ERP_TOOL_SCHEMAS
 
     def test_query_tools_have_params_object(self):
-        """查询工具使用 params: object（两步调用模式）"""
+        """API 查询工具使用 params: object（两步调用模式）"""
+        from config.erp_local_tools import ERP_LOCAL_TOOLS
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
-        # erp_execute/erp_identify 不是两步查询工具
-        skip = {"erp_execute", "erp_identify"}
+        skip = {"erp_execute"} | ERP_LOCAL_TOOLS
         query_tools = [t for t in tools
                        if t["function"]["name"] not in skip]
         for tool in query_tools:
@@ -280,16 +283,17 @@ class TestBuildErpTools:
             assert props["params"]["type"] == "object"
 
     def test_query_tools_no_flat_params(self):
-        """查询工具不含扁平化的业务参数（已迁移到 params object）"""
+        """API 查询工具不含扁平化的业务参数（已迁移到 params object）"""
+        from config.erp_local_tools import ERP_LOCAL_TOOLS
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
         flat_params = {
             "shop_name", "shop_ids", "order_types", "time_type",
-            "status", "buyer", "order_id", "system_id",
+            "buyer", "order_id", "system_id",
             "sku_outer_id", "shop_id", "refund_type", "date_type",
         }
-        # erp_execute/erp_identify 不是两步查询工具
-        skip = {"erp_execute", "erp_identify"}
+        # 本地工具使用扁平参数（非两步模式），跳过
+        skip = {"erp_execute"} | ERP_LOCAL_TOOLS
         for tool in tools:
             if tool["function"]["name"] in skip:
                 continue

@@ -189,7 +189,7 @@ class TestPhase2DomainTools:
         # 必须包含 ERP 工具 + route_to_chat + ask_user
         assert "route_to_chat" in names
         assert "ask_user" in names
-        assert "erp_identify" in names
+        assert "local_product_identify" in names
         assert len(tools) >= 10
 
     def test_crawler_tools_loaded(self):
