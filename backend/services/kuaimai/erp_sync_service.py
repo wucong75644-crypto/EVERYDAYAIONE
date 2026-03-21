@@ -19,6 +19,7 @@ from supabase import Client
 from core.config import get_settings
 from services.kuaimai.client import KuaiMaiClient
 from services.kuaimai.erp_sync_handlers import (
+    _API_SEM,
     sync_aftersale,
     sync_order,
     sync_purchase,
@@ -307,10 +308,8 @@ class ErpSyncService:
         """翻页拉取全部数据
 
         终止判断：返回条数 < 请求 pageSize 或返回空列表。
-        限速：每页间 sleep 0.1s（10 req/s，低于 API 15 req/s 限制）。
+        限速：通过全局 _API_SEM 信号量控制并发（类型并行时共享限流）。
         """
-        import asyncio
-
         client = self._get_client()
         all_items: list[dict[str, Any]] = []
         page = 0
@@ -319,16 +318,14 @@ class ErpSyncService:
             page += 1
             params["pageNo"] = page
             params["pageSize"] = page_size
-            data = await client.request_with_retry(method, params)
+            async with _API_SEM:
+                data = await client.request_with_retry(method, params)
             items = data.get(response_key) or []
             all_items.extend(items)
 
             # 终止：返回条数 < 请求的 pageSize，说明已到最后一页
             if len(items) < page_size:
                 break
-
-            # 限速：避免高频调用触发 API 连接拒绝
-            await asyncio.sleep(0.1)
         else:
             logger.warning(
                 f"fetch_all_pages hit limit | method={method} | "
