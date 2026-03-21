@@ -57,10 +57,14 @@ def _safe_ts(val: Any) -> str | None:
     if val is None:
         return None
     if isinstance(val, str):
+        # 纯数字字符串 → 当作毫秒时间戳处理（如 "946656000000"）
+        if val.isdigit() and len(val) >= 10:
+            return _safe_ts(int(val))
         return val
     try:
         ts = int(val)
-        if ts > 1e12:
+        # 超过 year-3000 的秒值一定是毫秒时间戳
+        if ts > 32503680000:  # 3000-01-01 00:00:00 UTC in seconds
             ts = ts / 1000
         return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
     except (TypeError, ValueError, OSError):
