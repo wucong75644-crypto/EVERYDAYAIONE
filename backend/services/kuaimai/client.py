@@ -335,6 +335,9 @@ class KuaiMaiClient:
         except Exception as e:
             logger.debug(f"KuaiMai load cached token skipped | error={e}")
 
+    _NETWORK_MAX_RETRIES = 3
+    _NETWORK_RETRY_DELAY = 2.0  # 首次重试等待秒数，指数退避
+
     async def request_with_retry(
         self,
         method: str,
@@ -343,11 +346,40 @@ class KuaiMaiClient:
         base_url: Optional[str] = None,
         extra_system_params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """带 Token 自动刷新的请求
+        """带 Token 自动刷新 + 网络层重试的请求
 
-        如果首次请求因 Token 过期失败，自动刷新后重试一次。
+        1. 网络错误（断连/超时/连接重置）→ 指数退避重试最多3次
+        2. Token 过期 → 刷新后重试一次
         """
+        import asyncio as _asyncio
+
         kwargs = {"base_url": base_url, "extra_system_params": extra_system_params}
+        network_errors = (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout)
+
+        last_exc: Exception | None = None
+        for attempt in range(1, self._NETWORK_MAX_RETRIES + 1):
+            try:
+                return await self._request_with_token_retry(method, biz_params, **kwargs)
+            except network_errors as e:
+                last_exc = e
+                if attempt < self._NETWORK_MAX_RETRIES:
+                    delay = self._NETWORK_RETRY_DELAY * (2 ** (attempt - 1))
+                    logger.warning(
+                        f"KuaiMai network error, retrying | method={method} | "
+                        f"attempt={attempt}/{self._NETWORK_MAX_RETRIES} | "
+                        f"delay={delay}s | error={e}"
+                    )
+                    await _asyncio.sleep(delay)
+
+        raise last_exc  # type: ignore[misc]
+
+    async def _request_with_token_retry(
+        self,
+        method: str,
+        biz_params: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Token 过期自动刷新重试（内部方法）"""
         try:
             return await self.request(method, biz_params, **kwargs)
         except KuaiMaiTokenExpiredError:

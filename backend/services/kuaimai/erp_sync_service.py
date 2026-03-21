@@ -39,6 +39,12 @@ from services.kuaimai.erp_sync_master_handlers import (
 class ErpSyncService:
     """ERP 同步核心服务"""
 
+    # 各类型首次同步天数覆盖（订单/售后只需近90天，其他走全局 erp_sync_initial_days）
+    INITIAL_DAYS_OVERRIDE: dict[str, int] = {
+        "order": 90,
+        "aftersale": 90,
+    }
+
     # item_index 排序键（设计文档 BUG-2：保证跨调用稳定）
     ITEM_SORT_KEYS: dict[str, list[str]] = {
         "order": ["oid"],
@@ -261,8 +267,11 @@ class ErpSyncService:
         last_sync = state.get("last_sync_time")
 
         if last_sync is None:
-            # 无历史记录，从 initial_days 前开始
-            start = now - timedelta(days=self.settings.erp_sync_initial_days)
+            # 无历史记录，按类型取首次同步天数
+            initial_days = self.INITIAL_DAYS_OVERRIDE.get(
+                sync_type, self.settings.erp_sync_initial_days
+            )
+            start = now - timedelta(days=initial_days)
         elif isinstance(last_sync, str):
             parsed = datetime.fromisoformat(last_sync.replace("Z", "+00:00"))
             # 确保 timezone-aware（DB 可能返回不带时区的字符串）
