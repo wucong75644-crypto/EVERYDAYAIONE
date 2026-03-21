@@ -16,10 +16,20 @@ from services.kuaimai.erp_sync_service import ErpSyncService
 # ── 工厂函数 ─────────────────────────────────────────
 
 
+async def _async_gen_pages(pages):
+    """将 pages 列表包装为 async generator（模拟流式拉取）"""
+    if pages:
+        yield pages
+
+
 def _mock_svc(pages=None, detail=None):
     """创建 mock ErpSyncService 实例"""
     svc = MagicMock()
     svc.fetch_all_pages = AsyncMock(return_value=pages or [])
+    svc.fetch_pages_streaming = MagicMock(
+        return_value=_async_gen_pages(pages or [])
+    )
+    svc.FLUSH_THRESHOLD = 1000
     client = MagicMock()
     client.request_with_retry = AsyncMock(return_value=detail or {})
     svc._get_client.return_value = client
