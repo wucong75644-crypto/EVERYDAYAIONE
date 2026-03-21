@@ -19,14 +19,13 @@ from core.config import get_settings
 class ErpSyncWorker:
     """ERP 同步调度器（独立 async task + Redis 分布式锁）"""
 
-    # 高频同步类型（每轮执行，分组并行避免打满 DB 连接）
-    # 第1组：数据量大的类型（order/aftersale 初始同步各 30+ 分片）
-    # 第2组：中等数据量
-    # 第3组：小数据量
-    SYNC_GROUPS = [
-        ["order", "aftersale", "product"],
-        ["purchase", "receipt", "stock"],
-        ["shelf", "purchase_return", "supplier"],
+    # 高频同步类型（每轮逐个串行执行）
+    # 串行避免 Supabase 连接过载（EOF SSL error），API 速率限制器保证 QPS 安全
+    HIGH_FREQ_TYPES = [
+        "product", "stock", "supplier",          # 已完成初始同步，增量快
+        "purchase", "receipt", "shelf",           # 已完成初始同步，增量快
+        "purchase_return",                         # 已完成初始同步，增量快
+        "order", "aftersale",                      # 初始同步未完成，数据量大放最后
     ]
     # 低频同步类型
     LOW_FREQ_TYPES = ["platform_map"]
@@ -75,25 +74,23 @@ class ErpSyncWorker:
         await self._release_lock()
 
     async def _run_sync_round(self) -> None:
-        """执行一轮同步（获取锁→分组并行→释放锁）
+        """执行一轮同步（获取锁→逐个串行→释放锁）
 
-        9 个类型分 3 组执行（每组 3 个并行），组间串行。
-        避免 9 类型全并行导致 Supabase 连接池被打满（EOF SSL error）。
-        API 调用由全局 _API_SEM 速率限制器限流（≤12 QPS）。
-        platform_map 依赖 product 数据，必须在所有组完成后单独执行。
+        所有类型串行执行，避免 Supabase 连接过载（EOF SSL error）。
+        API 调用由全局速率限制器限流（≤12 QPS）。
+        已完成初始同步的类型增量很快（通常 <5s），大类型放最后。
+        platform_map 依赖 product 数据，在全部完成后单独执行。
         """
         if not await self._acquire_lock():
             return  # 其他 Worker 在执行，跳过
 
         try:
-            # 分组并行（每组 ≤3 类型，组间串行，避免 DB 连接过载）
-            for group in self.SYNC_GROUPS:
+            # 逐个串行执行（避免 DB 连接过载）
+            for sync_type in self.HIGH_FREQ_TYPES:
                 if not self.is_running:
                     break
                 await self._extend_lock()
-                await asyncio.gather(
-                    *[self._execute_sync(t) for t in group]
-                )
+                await self._execute_sync(sync_type)
 
             # platform_map 依赖 product 表，必须在 product 同步完成后执行
             if self.is_running and self._should_run_low_freq():
