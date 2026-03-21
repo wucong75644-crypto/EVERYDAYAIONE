@@ -277,30 +277,24 @@ class TestSyncSupplier:
     async def test_empty_returns_zero(self):
         from services.kuaimai.erp_sync_master_handlers import sync_supplier
         svc = _mock_svc()
-        mock_client = MagicMock()
-        mock_client.request_with_retry = AsyncMock(return_value={"list": []})
-        svc._get_client.return_value = mock_client
+        svc.fetch_all_pages = AsyncMock(return_value=[])
         assert await sync_supplier(svc, START, END) == 0
 
     @pytest.mark.asyncio
     async def test_basic_supplier(self):
         from services.kuaimai.erp_sync_master_handlers import sync_supplier
         svc = _mock_svc()
-        mock_client = MagicMock()
-        mock_client.request_with_retry = AsyncMock(return_value={"list": [{
+        svc.fetch_all_pages = AsyncMock(return_value=[{
             "code": "SUP001", "name": "供应商A", "status": 1,
             "contactName": "张三", "mobile": "13800138000",
-        }]})
-        svc._get_client.return_value = mock_client
+        }])
         assert await sync_supplier(svc, START, END) == 1
 
     @pytest.mark.asyncio
     async def test_skip_no_code(self):
         from services.kuaimai.erp_sync_master_handlers import sync_supplier
         svc = _mock_svc()
-        mock_client = MagicMock()
-        mock_client.request_with_retry = AsyncMock(return_value={"list": [{"name": "无编码供应商"}]})
-        svc._get_client.return_value = mock_client
+        svc.fetch_all_pages = AsyncMock(return_value=[{"name": "无编码供应商"}])
         assert await sync_supplier(svc, START, END) == 0
 
 

@@ -331,6 +331,17 @@ class ErpSyncService:
                 f"pages={page} | total_items={len(all_items)}"
             )
 
+        if all_items:
+            logger.info(
+                f"fetch_all_pages done | method={method} | "
+                f"pages={page} | total={len(all_items)}"
+            )
+        else:
+            logger.debug(
+                f"fetch_all_pages empty | method={method} | "
+                f"pages={page} | params={params}"
+            )
+
         return all_items
 
     # ── item_index 稳定排序 ───────────────────────────────

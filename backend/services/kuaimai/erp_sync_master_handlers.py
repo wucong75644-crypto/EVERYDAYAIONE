@@ -238,16 +238,12 @@ async def sync_stock(
 async def sync_supplier(
     svc: ErpSyncService, start: datetime, end: datetime,
 ) -> int:
-    """供应商全量同步：supplier.list.query → erp_suppliers"""
-    client = svc._get_client()
-    try:
-        data = await client.request_with_retry(
-            "supplier.list.query", {"pageSize": 500},
-        )
-        suppliers = data.get("list") or data.get("suppliers") or []
-    except Exception as e:
-        logger.warning(f"Supplier sync failed | error={e}")
-        return 0
+    """供应商全量同步：supplier.list.query → erp_suppliers（翻页拉取）"""
+    suppliers = await svc.fetch_all_pages(
+        "supplier.list.query", {},
+        response_key="list",
+        page_size=200,  # API max=200
+    )
     if not suppliers:
         return 0
 
