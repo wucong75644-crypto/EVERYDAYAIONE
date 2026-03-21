@@ -102,16 +102,21 @@ def _safe_ts(val: Any) -> str | None:
     """安全转换时间值（毫秒时间戳或字符串）→ ISO 字符串
 
     快麦API部分字段返回毫秒时间戳（如 1767457525000），
-    另一些返回 ISO 字符串（如 '2026-01-03 15:25:25'）。
+    另一些返回 ISO 字符串（如 '2026-01-03 15:25:25'），
+    还有些返回字符串形式的毫秒时间戳（如 "946656000000"）。
     PostgreSQL TIMESTAMP 列无法接受裸毫秒数字。
     """
     if val is None:
         return None
     if isinstance(val, str):
-        return val  # 已经是字符串，直接写入
+        # 纯数字字符串 → 当作毫秒时间戳处理（如 "946656000000"）
+        if val.isdigit() and len(val) >= 10:
+            return _safe_ts(int(val))
+        return val  # 已经是日期字符串，直接写入
     try:
         ts = int(val)
-        if ts > 1e12:  # 毫秒时间戳
+        # 超过 year-3000 的秒值一定是毫秒时间戳（946656000000 < 1e12 但显然是 ms）
+        if ts > 32503680000:  # 3000-01-01 00:00:00 UTC in seconds
             ts = ts / 1000
         return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
     except (TypeError, ValueError, OSError):
