@@ -80,6 +80,7 @@ class ErpSyncWorker:
             for sync_type in self.HIGH_FREQ_TYPES:
                 if not self.is_running:
                     break
+                await self._extend_lock()  # 每个类型同步前续期锁
                 await self._execute_sync(sync_type)
 
             # 低频同步（平台映射，每6小时）
@@ -87,11 +88,13 @@ class ErpSyncWorker:
                 for sync_type in self.LOW_FREQ_TYPES:
                     if not self.is_running:
                         break
+                    await self._extend_lock()
                     await self._execute_sync(sync_type)
                 self._last_platform_map_sync = datetime.now(timezone.utc)
 
             # 日维护任务（归档 + 聚合兜底 + 删除检测，每24小时）
             if self.is_running and self._should_run_daily():
+                await self._extend_lock()
                 await self._run_daily_maintenance()
                 self._last_daily_maintenance = datetime.now(timezone.utc)
         finally:
@@ -101,7 +104,7 @@ class ErpSyncWorker:
         """执行单个类型的同步（委托给 ErpSyncService）"""
         try:
             from services.kuaimai.erp_sync_service import ErpSyncService
-            service = ErpSyncService(self.db)
+            service = ErpSyncService(self.db, lock_extend_fn=self._extend_lock)
             await service.sync(sync_type)
         except Exception as e:
             logger.error(
@@ -339,6 +342,19 @@ class ErpSyncWorker:
             # DB 也不可用，保守跳过本轮
             logger.error(f"DB lock failed | error={e}")
             return False
+
+    async def _extend_lock(self) -> None:
+        """续期分布式锁（防止长时间同步导致锁过期）"""
+        if self._lock_token:
+            try:
+                from core.redis import RedisClient
+                ok = await RedisClient.extend_lock(
+                    "erp_sync", self._lock_token, self.settings.erp_sync_lock_ttl,
+                )
+                if not ok:
+                    logger.warning("ERP sync lock extend failed (token mismatch)")
+            except Exception:
+                pass
 
     async def _release_lock(self) -> None:
         """释放 Redis 锁（DB 锁通过 TTL 自动释放）"""

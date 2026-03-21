@@ -47,10 +47,11 @@ class ErpSyncService:
         "shelf": ["outerId", "itemOuterId"],
     }
 
-    def __init__(self, db: Client) -> None:
+    def __init__(self, db: Client, lock_extend_fn=None) -> None:
         self.db = db
         self.settings = get_settings()
         self._client: KuaiMaiClient | None = None
+        self._lock_extend_fn = lock_extend_fn
 
     def _get_client(self) -> KuaiMaiClient:
         if self._client is None:
@@ -109,6 +110,9 @@ class ErpSyncService:
                 count = await self._sync_window(sync_type, start, end)
                 total_synced += count
                 self._update_sync_state_progress(sync_type, end)
+                # 每个 shard 后续期锁，防止长时间全量同步导致锁过期
+                if self._lock_extend_fn:
+                    await self._lock_extend_fn()
                 logger.info(
                     f"ERP initial sync | type={sync_type} | "
                     f"shard={idx}/{total_shards} | synced={count}"
