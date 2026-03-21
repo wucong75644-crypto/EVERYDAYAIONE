@@ -47,6 +47,26 @@ def _to_float(val: Any) -> float:
         return 0.0
 
 
+def _safe_ts(val: Any) -> str | None:
+    """安全转换时间值（毫秒时间戳或字符串）→ ISO 字符串
+
+    快麦API部分字段返回毫秒时间戳（如 1767457525000），
+    另一些返回 ISO 字符串（如 '2026-01-03 15:25:25'）。
+    PostgreSQL TIMESTAMP 列无法接受裸毫秒数字。
+    """
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val  # 已经是字符串，直接写入
+    try:
+        ts = int(val)
+        if ts > 1e12:  # 毫秒时间戳
+            ts = ts / 1000
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OSError):
+        return str(val)
+
+
 # ── 采购单 (purchase) ──────────────────────────────────
 
 
@@ -86,8 +106,8 @@ async def sync_purchase(
                 "doc_id": str(doc["id"]),
                 "doc_code": doc.get("code"),
                 "doc_status": doc.get("status"),
-                "doc_created_at": doc.get("created"),
-                "doc_modified_at": doc.get("modified"),
+                "doc_created_at": _safe_ts(doc.get("created")),
+                "doc_modified_at": _safe_ts(doc.get("modified")),
                 "item_index": item["_item_index"],
                 "outer_id": item.get("outerId"),
                 "sku_outer_id": item.get("itemOuterId"),
@@ -99,7 +119,7 @@ async def sync_purchase(
                 "supplier_name": detail.get("supplierName"),
                 "warehouse_name": detail.get("warehouseName"),
                 "creator_name": detail.get("createrName"),
-                "delivery_date": detail.get("deliveryDate"),
+                "delivery_date": _safe_ts(detail.get("deliveryDate")),
                 "remark": detail.get("remark"),
                 "extra_json": extra,
             })
@@ -147,8 +167,8 @@ async def sync_receipt(
                 "doc_id": str(doc["id"]),
                 "doc_code": doc.get("code"),
                 "doc_status": doc.get("status"),
-                "doc_created_at": doc.get("created"),
-                "doc_modified_at": doc.get("modified"),
+                "doc_created_at": _safe_ts(doc.get("created")),
+                "doc_modified_at": _safe_ts(doc.get("modified")),
                 "item_index": item["_item_index"],
                 "outer_id": item.get("outerId"),
                 "sku_outer_id": item.get("itemOuterId"),
@@ -202,8 +222,8 @@ async def sync_shelf(
                 "doc_id": str(doc["id"]),
                 "doc_code": doc.get("code"),
                 "doc_status": doc.get("status"),
-                "doc_created_at": doc.get("created"),
-                "doc_modified_at": doc.get("modified"),
+                "doc_created_at": _safe_ts(doc.get("created")),
+                "doc_modified_at": _safe_ts(doc.get("modified")),
                 "item_index": item["_item_index"],
                 "outer_id": item.get("outerId"),
                 "sku_outer_id": item.get("itemOuterId"),
@@ -258,7 +278,7 @@ async def sync_purchase_return(
                 "doc_id": str(doc["id"]),
                 "doc_code": doc.get("code"),
                 "doc_status": str(doc.get("status", "")),
-                "doc_created_at": doc.get("gmCreate"),  # 设计文档：字段名为 gmCreate
+                "doc_created_at": _safe_ts(doc.get("gmCreate")),  # 设计文档：字段名为 gmCreate
                 "item_index": item["_item_index"],
                 "outer_id": item.get("itemOuterId"),     # 设计文档：itemOuterId→outer_id
                 "sku_outer_id": item.get("outerId"),     # 设计文档：outerId→sku_outer_id
@@ -309,7 +329,7 @@ async def sync_aftersale(
             "doc_type": "aftersale",
             "doc_id": str(doc["id"]),
             "doc_status": doc.get("status"),
-            "doc_created_at": doc.get("created"),
+            "doc_created_at": _safe_ts(doc.get("created")),
             "shop_name": doc.get("shopName"),
             "platform": doc.get("source"),
             "order_no": doc.get("tid"),
@@ -317,7 +337,7 @@ async def sync_aftersale(
             "refund_money": doc.get("refundMoney"),
             "raw_refund_money": doc.get("rawRefundMoney"),
             "text_reason": doc.get("textReason"),
-            "finished_at": doc.get("finished"),
+            "finished_at": _safe_ts(doc.get("finished")),
             "remark": doc.get("remark"),
         }
 
@@ -397,8 +417,8 @@ async def sync_order(
                 "doc_type": "order",
                 "doc_id": str(doc.get("sid", "")),
                 "doc_status": doc.get("sysStatus"),
-                "doc_created_at": doc.get("created"),
-                "doc_modified_at": doc.get("modified"),
+                "doc_created_at": _safe_ts(doc.get("created")),
+                "doc_modified_at": _safe_ts(doc.get("modified")),
                 "item_index": idx,
                 "outer_id": item.get("sysOuterId"),
                 "sku_outer_id": item.get("outerSkuId"),
@@ -418,8 +438,8 @@ async def sync_order(
                 "shop_name": doc.get("shopName"),
                 "platform": doc.get("source"),
                 "warehouse_name": doc.get("warehouseName"),
-                "pay_time": doc.get("payTime"),
-                "consign_time": doc.get("consignTime"),
+                "pay_time": _safe_ts(doc.get("payTime")),
+                "consign_time": _safe_ts(doc.get("consignTime")),
                 "remark": doc.get("sellerMemo"),
                 "sys_memo": doc.get("sysMemo"),
                 "buyer_message": doc.get("buyerMessage"),
