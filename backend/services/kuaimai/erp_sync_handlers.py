@@ -10,6 +10,7 @@ purchase / receipt / shelf / purchase_return / aftersale / order
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -47,9 +48,34 @@ def _to_float(val: Any) -> float:
         return 0.0
 
 
-_API_SEM = asyncio.Semaphore(4)
-"""全局 API 限流信号量：最多 4 并发请求（avg 0.3s → ~13 req/s < 15 req/s 限额）。
-所有 API 调用（detail / list 翻页）共享此信号量，保证类型并行时不超限。"""
+class _ApiRateLimiter:
+    """全局 API 速率限制器（Leaky Bucket）
+
+    Semaphore 只限并发数，无法控制 QPS（云服务器内网延迟 ~30ms 时 Sem(4)=133 req/s）。
+    此限制器确保请求启动间隔 ≥ 1/max_qps 秒，多请求可并发执行但启动节奏受控。
+    """
+
+    def __init__(self, max_qps: float = 12.0) -> None:
+        self._min_interval = 1.0 / max_qps
+        self._lock = asyncio.Lock()
+        self._last_request_time = 0.0
+
+    async def __aenter__(self):
+        async with self._lock:
+            now = time.monotonic()
+            wait = self._min_interval - (now - self._last_request_time)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_request_time = time.monotonic()
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+
+_API_SEM = _ApiRateLimiter(max_qps=12)
+"""全局 API 限流器：≤12 req/s（低于 API 15 req/s 限额，留安全余量）。
+所有 API 调用（detail / list 翻页）共享此限流器。"""
 
 
 async def _fetch_details(
