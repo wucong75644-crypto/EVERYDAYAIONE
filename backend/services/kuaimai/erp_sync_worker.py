@@ -19,10 +19,14 @@ from core.config import get_settings
 class ErpSyncWorker:
     """ERP 同步调度器（独立 async task + Redis 分布式锁）"""
 
-    # 高频同步类型（每轮执行）
-    HIGH_FREQ_TYPES = [
-        "purchase", "receipt", "shelf", "purchase_return",
-        "aftersale", "order", "product", "stock", "supplier",
+    # 高频同步类型（每轮执行，分组并行避免打满 DB 连接）
+    # 第1组：数据量大的类型（order/aftersale 初始同步各 30+ 分片）
+    # 第2组：中等数据量
+    # 第3组：小数据量
+    SYNC_GROUPS = [
+        ["order", "aftersale", "product"],
+        ["purchase", "receipt", "stock"],
+        ["shelf", "purchase_return", "supplier"],
     ]
     # 低频同步类型
     LOW_FREQ_TYPES = ["platform_map"]
@@ -71,20 +75,24 @@ class ErpSyncWorker:
         await self._release_lock()
 
     async def _run_sync_round(self) -> None:
-        """执行一轮同步（获取锁→并行执行→释放锁）
+        """执行一轮同步（获取锁→分组并行→释放锁）
 
-        9 个独立类型通过 asyncio.gather 并行执行，
-        API 调用由全局 _API_SEM 信号量限流（≤4 并发 ≈ 13 req/s < 15 限额）。
-        platform_map 依赖 product 数据，必须在并行组完成后单独执行。
+        9 个类型分 3 组执行（每组 3 个并行），组间串行。
+        避免 9 类型全并行导致 Supabase 连接池被打满（EOF SSL error）。
+        API 调用由全局 _API_SEM 速率限制器限流（≤12 QPS）。
+        platform_map 依赖 product 数据，必须在所有组完成后单独执行。
         """
         if not await self._acquire_lock():
             return  # 其他 Worker 在执行，跳过
 
         try:
-            # 9 类型并行（全局 _API_SEM 保证 QPS 安全）
-            if self.is_running:
+            # 分组并行（每组 ≤3 类型，组间串行，避免 DB 连接过载）
+            for group in self.SYNC_GROUPS:
+                if not self.is_running:
+                    break
+                await self._extend_lock()
                 await asyncio.gather(
-                    *[self._execute_sync(t) for t in self.HIGH_FREQ_TYPES]
+                    *[self._execute_sync(t) for t in group]
                 )
 
             # platform_map 依赖 product 表，必须在 product 同步完成后执行

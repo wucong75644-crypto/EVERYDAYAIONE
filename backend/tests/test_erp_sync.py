@@ -267,11 +267,13 @@ class TestErpSyncWorkerInit:
         worker = ErpSyncWorker(db)
         assert worker.is_running is False
 
-    def test_high_freq_types(self):
-        """高频同步类型定义"""
+    def test_sync_groups(self):
+        """同步分组定义（分组并行避免 DB 连接过载）"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
-        assert "order" in ErpSyncWorker.HIGH_FREQ_TYPES
-        assert "purchase" in ErpSyncWorker.HIGH_FREQ_TYPES
+        all_types = [t for g in ErpSyncWorker.SYNC_GROUPS for t in g]
+        assert "order" in all_types
+        assert "purchase" in all_types
+        assert len(ErpSyncWorker.SYNC_GROUPS) == 3
 
     def test_low_freq_types(self):
         """低频同步类型定义"""
