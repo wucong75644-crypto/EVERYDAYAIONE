@@ -93,7 +93,7 @@ async def sync_purchase(
             continue
         await asyncio.sleep(0.1)  # 限速：detail API 每单一次调用
 
-        items = detail.get("items") or []
+        items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "purchase")
         extra = _pick(
             detail, "shortId", "totalAmount", "actualTotalAmount",
@@ -155,7 +155,7 @@ async def sync_receipt(
             continue
         await asyncio.sleep(0.1)  # 限速：detail API
 
-        items = detail.get("items") or detail.get("details") or []
+        items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "receipt")
         extra = _pick(
             detail, "shelvedQuantity", "getGoodNum", "getBadNum",
@@ -214,7 +214,7 @@ async def sync_shelf(
             continue
         await asyncio.sleep(0.1)  # 限速：detail API
 
-        items = detail.get("items") or detail.get("details") or []
+        items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "shelf")
         for item in items:
             all_rows.append({
@@ -263,7 +263,7 @@ async def sync_purchase_return(
             continue
         await asyncio.sleep(0.1)  # 限速：detail API
 
-        items = detail.get("items") or []
+        items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "purchase_return")
         extra = _pick(
             detail, "shortId", "totalAmount", "financeStatus",

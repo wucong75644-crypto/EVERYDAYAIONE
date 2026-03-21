@@ -103,7 +103,7 @@ class TestSyncPurchase:
         docs = [{"id": 101, "code": "PO001", "status": "FINISHED",
                  "created": "2026-03-18", "modified": "2026-03-18"}]
         detail = {
-            "items": [
+            "list": [
                 {"outerId": "C01", "itemOuterId": "C01-01",
                  "title": "商品A", "purchaseNum": 100,
                  "price": 10.0, "amount": 1000.0},
@@ -126,7 +126,7 @@ class TestSyncPurchase:
         from services.kuaimai.erp_sync_handlers import sync_purchase
         svc = _mock_svc(pages=[{"id": 101}, {"id": 102}])
         svc._get_client().request_with_retry = AsyncMock(
-            side_effect=[Exception("timeout"), {"items": []}],
+            side_effect=[Exception("timeout"), {"list": []}],
         )
         count = await sync_purchase(svc, START, END)
         assert count == 0
@@ -149,7 +149,7 @@ class TestSyncReceipt:
         docs = [{"id": 201, "code": "RC001", "status": "FINISHED",
                  "created": "2026-03-18", "modified": "2026-03-18"}]
         detail = {
-            "items": [
+            "list": [
                 {"outerId": "C01", "itemOuterId": "C01-01",
                  "title": "商品A", "quantity": 50, "price": 10.0,
                  "amount": 500.0},
@@ -182,7 +182,7 @@ class TestSyncShelf:
         docs = [{"id": 301, "code": "SH001", "status": "FINISHED",
                  "created": "2026-03-18", "modified": "2026-03-18"}]
         detail = {
-            "items": [{"outerId": "C01", "title": "商品A", "quantity": 50}],
+            "list": [{"outerId": "C01", "title": "商品A", "quantity": 50}],
             "warehouseName": "仓库1",
         }
         svc = _mock_svc(pages=docs, detail=detail)
@@ -211,7 +211,7 @@ class TestSyncPurchaseReturn:
         docs = [{"id": 401, "code": "RT001", "status": "1",
                  "gmCreate": "2026-03-18"}]
         detail = {
-            "items": [
+            "list": [
                 {"outerId": "SKU01", "itemOuterId": "MAIN01",
                  "title": "商品A", "returnNum": 10, "price": 10.0},
             ],
