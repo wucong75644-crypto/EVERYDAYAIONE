@@ -71,25 +71,26 @@ class ErpSyncWorker:
         await self._release_lock()
 
     async def _run_sync_round(self) -> None:
-        """执行一轮同步（获取锁→执行→释放锁）"""
+        """执行一轮同步（获取锁→并行执行→释放锁）
+
+        9 个独立类型通过 asyncio.gather 并行执行，
+        API 调用由全局 _API_SEM 信号量限流（≤4 并发 ≈ 13 req/s < 15 限额）。
+        platform_map 依赖 product 数据，必须在并行组完成后单独执行。
+        """
         if not await self._acquire_lock():
             return  # 其他 Worker 在执行，跳过
 
         try:
-            # 高频同步
-            for sync_type in self.HIGH_FREQ_TYPES:
-                if not self.is_running:
-                    break
-                await self._extend_lock()  # 每个类型同步前续期锁
-                await self._execute_sync(sync_type)
+            # 9 类型并行（全局 _API_SEM 保证 QPS 安全）
+            if self.is_running:
+                await asyncio.gather(
+                    *[self._execute_sync(t) for t in self.HIGH_FREQ_TYPES]
+                )
 
-            # 低频同步（平台映射，每6小时）
+            # platform_map 依赖 product 表，必须在 product 同步完成后执行
             if self.is_running and self._should_run_low_freq():
-                for sync_type in self.LOW_FREQ_TYPES:
-                    if not self.is_running:
-                        break
-                    await self._extend_lock()
-                    await self._execute_sync(sync_type)
+                await self._extend_lock()
+                await self._execute_sync("platform_map")
                 self._last_platform_map_sync = datetime.now(timezone.utc)
 
             # 日维护任务（归档 + 聚合兜底 + 删除检测，每24小时）
@@ -103,6 +104,7 @@ class ErpSyncWorker:
     async def _execute_sync(self, sync_type: str) -> None:
         """执行单个类型的同步（委托给 ErpSyncService）"""
         try:
+            await self._extend_lock()  # 并行任务启动时续期锁
             from services.kuaimai.erp_sync_service import ErpSyncService
             service = ErpSyncService(self.db, lock_extend_fn=self._extend_lock)
             await service.sync(sync_type)

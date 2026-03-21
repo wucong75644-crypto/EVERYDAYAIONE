@@ -47,6 +47,31 @@ def _to_float(val: Any) -> float:
         return 0.0
 
 
+_API_SEM = asyncio.Semaphore(4)
+"""全局 API 限流信号量：最多 4 并发请求（avg 0.3s → ~13 req/s < 15 req/s 限额）。
+所有 API 调用（detail / list 翻页）共享此信号量，保证类型并行时不超限。"""
+
+
+async def _fetch_details(
+    client, method: str, docs: list[dict],
+) -> list[tuple[dict, dict]]:
+    """并发获取单据详情（通过全局 _API_SEM 限流）"""
+
+    async def _one(doc: dict):
+        async with _API_SEM:
+            try:
+                detail = await client.request_with_retry(method, {"id": doc["id"]})
+                return (doc, detail)
+            except Exception as e:
+                logger.warning(
+                    f"Detail failed | method={method} | id={doc.get('id')} | error={e}"
+                )
+                return None
+
+    results = await asyncio.gather(*[_one(d) for d in docs])
+    return [r for r in results if r is not None]
+
+
 def _safe_ts(val: Any) -> str | None:
     """安全转换时间值（毫秒时间戳或字符串）→ ISO 字符串
 
@@ -83,16 +108,7 @@ async def sync_purchase(
         return 0
 
     all_rows: list[dict[str, Any]] = []
-    for doc in docs:
-        try:
-            detail = await client.request_with_retry(
-                "purchase.order.get", {"id": doc["id"]},
-            )
-        except Exception as e:
-            logger.warning(f"Purchase detail failed | id={doc.get('id')} | error={e}")
-            continue
-        await asyncio.sleep(0.1)  # 限速：detail API 每单一次调用
-
+    for doc, detail in await _fetch_details(client, "purchase.order.get", docs):
         items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "purchase")
         extra = _pick(
@@ -145,16 +161,7 @@ async def sync_receipt(
         return 0
 
     all_rows: list[dict[str, Any]] = []
-    for doc in docs:
-        try:
-            detail = await client.request_with_retry(
-                "warehouse.entry.list.get", {"id": doc["id"]},
-            )
-        except Exception as e:
-            logger.warning(f"Receipt detail failed | id={doc.get('id')} | error={e}")
-            continue
-        await asyncio.sleep(0.1)  # 限速：detail API
-
+    for doc, detail in await _fetch_details(client, "warehouse.entry.list.get", docs):
         items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "receipt")
         extra = _pick(
@@ -204,16 +211,7 @@ async def sync_shelf(
         return 0
 
     all_rows: list[dict[str, Any]] = []
-    for doc in docs:
-        try:
-            detail = await client.request_with_retry(
-                "erp.purchase.shelf.get", {"id": doc["id"]},
-            )
-        except Exception as e:
-            logger.warning(f"Shelf detail failed | id={doc.get('id')} | error={e}")
-            continue
-        await asyncio.sleep(0.1)  # 限速：detail API
-
+    for doc, detail in await _fetch_details(client, "erp.purchase.shelf.get", docs):
         items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "shelf")
         for item in items:
@@ -253,16 +251,7 @@ async def sync_purchase_return(
         return 0
 
     all_rows: list[dict[str, Any]] = []
-    for doc in docs:
-        try:
-            detail = await client.request_with_retry(
-                "purchase.return.list.get", {"id": doc["id"]},
-            )
-        except Exception as e:
-            logger.warning(f"Return detail failed | id={doc.get('id')} | error={e}")
-            continue
-        await asyncio.sleep(0.1)  # 限速：detail API
-
+    for doc, detail in await _fetch_details(client, "purchase.return.list.get", docs):
         items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "purchase_return")
         extra = _pick(
