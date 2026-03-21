@@ -52,6 +52,21 @@ def _pick(src: dict, *keys: str) -> dict:
     return {k: src[k] for k in keys if k in src and src[k] is not None}
 
 
+def _safe_ts(val: Any) -> str | None:
+    """安全转换时间值（毫秒时间戳或字符串）→ ISO 字符串"""
+    if val is None:
+        return None
+    if isinstance(val, str):
+        return val
+    try:
+        ts = int(val)
+        if ts > 1e12:
+            ts = ts / 1000
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OSError):
+        return str(val)
+
+
 def _batch_upsert(
     db: Any, table: str, rows: list[dict], on_conflict: str,
     batch_size: int = 100,
@@ -115,8 +130,8 @@ async def sync_product(
             "brand": p.get("brand"),
             "shipper": p.get("shipper"),
             "remark": _strip_html(p.get("remark")),
-            "created_at": p.get("created"),
-            "modified_at": p.get("modified"),
+            "created_at": _safe_ts(p.get("created")),
+            "modified_at": _safe_ts(p.get("modified")),
             "pic_url": p.get("picPath"),
             "suit_singles": p.get("singleList"),
             "extra_json": _pick(
