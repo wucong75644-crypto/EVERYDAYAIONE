@@ -36,6 +36,17 @@ def _fmt_dt(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _ms_to_iso(val: Any) -> str | None:
+    """毫秒时间戳 → ISO 8601 字符串（API返回stockModifiedTime为毫秒数）"""
+    if val is None:
+        return None
+    try:
+        ts = int(val) / 1000
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OSError):
+        return None
+
+
 def _pick(src: dict, *keys: str) -> dict:
     """提取存在且非 None 的键值对"""
     return {k: src[k] for k in keys if k in src and src[k] is not None}
@@ -193,7 +204,7 @@ async def sync_stock(
             "supplier_codes": item.get("supplierCodes"),
             "supplier_names": item.get("supplierNames"),
             "warehouse_id": item.get("wareHouseId") or "",
-            "stock_modified_time": item.get("stockModifiedTime"),
+            "stock_modified_time": _ms_to_iso(item.get("stockModifiedTime")),
             "extra_json": _pick(
                 item, "brand", "cidName", "unit", "place",
                 "itemBarcode", "skuBarcode",

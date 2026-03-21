@@ -62,6 +62,23 @@ class TestMasterFmtDt:
         assert _fmt_dt(datetime(2026, 3, 18)) == "2026-03-18 00:00:00"
 
 
+class TestMsToIso:
+    def test_converts_milliseconds(self):
+        from services.kuaimai.erp_sync_master_handlers import _ms_to_iso
+        # 1730447751000 ms = 2024-11-01 某时刻
+        result = _ms_to_iso(1730447751000)
+        assert result is not None
+        assert result.startswith("2024-")
+
+    def test_none_returns_none(self):
+        from services.kuaimai.erp_sync_master_handlers import _ms_to_iso
+        assert _ms_to_iso(None) is None
+
+    def test_invalid_returns_none(self):
+        from services.kuaimai.erp_sync_master_handlers import _ms_to_iso
+        assert _ms_to_iso("not_a_number") is None
+
+
 class TestMasterPick:
     def test_picks_non_none(self):
         from services.kuaimai.erp_sync_master_handlers import _pick
