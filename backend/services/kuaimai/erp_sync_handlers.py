@@ -9,6 +9,7 @@ purchase / receipt / shelf / purchase_return / aftersale / order
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -70,6 +71,7 @@ async def sync_purchase(
         except Exception as e:
             logger.warning(f"Purchase detail failed | id={doc.get('id')} | error={e}")
             continue
+        await asyncio.sleep(0.1)  # 限速：detail API 每单一次调用
 
         items = detail.get("items") or []
         items = svc.sort_and_assign_index(items, "purchase")
@@ -131,6 +133,7 @@ async def sync_receipt(
         except Exception as e:
             logger.warning(f"Receipt detail failed | id={doc.get('id')} | error={e}")
             continue
+        await asyncio.sleep(0.1)  # 限速：detail API
 
         items = detail.get("items") or detail.get("details") or []
         items = svc.sort_and_assign_index(items, "receipt")
@@ -189,6 +192,7 @@ async def sync_shelf(
         except Exception as e:
             logger.warning(f"Shelf detail failed | id={doc.get('id')} | error={e}")
             continue
+        await asyncio.sleep(0.1)  # 限速：detail API
 
         items = detail.get("items") or detail.get("details") or []
         items = svc.sort_and_assign_index(items, "shelf")
@@ -237,6 +241,7 @@ async def sync_purchase_return(
         except Exception as e:
             logger.warning(f"Return detail failed | id={doc.get('id')} | error={e}")
             continue
+        await asyncio.sleep(0.1)  # 限速：detail API
 
         items = detail.get("items") or []
         items = svc.sort_and_assign_index(items, "purchase_return")

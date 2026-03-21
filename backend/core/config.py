@@ -156,7 +156,7 @@ class Settings(BaseSettings):
     erp_platform_map_interval: int = 21600     # 平台映射同步间隔（秒），默认6小时
     erp_sync_lock_ttl: int = 300               # Redis 分布式锁 TTL（秒），默认5分钟
     erp_sync_initial_days: int = 90            # 首次全量回溯天数
-    erp_sync_shard_days: int = 7               # 时间窗口分片大小（天）
+    erp_sync_shard_days: int = 3               # 时间窗口分片大小（天）
 
     # 快麦奇门自定义接口配置（淘宝网关，需单独申请凭证）
     qimen_app_key: Optional[str] = None  # 淘宝平台 appKey（非ERP的appKey）
