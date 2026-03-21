@@ -11,6 +11,7 @@ item_index 稳定排序、upsert 入库、聚合计算等基础设施。
 
 from datetime import datetime, timedelta, timezone
 from functools import partial
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from loguru import logger
@@ -47,6 +48,8 @@ class ErpSyncService:
         "receipt": ["outerId", "itemOuterId"],
         "shelf": ["outerId", "itemOuterId"],
     }
+
+    FLUSH_THRESHOLD = 1000  # 每积累N条写一次库，控制内存峰值
 
     def __init__(self, db: Client, lock_extend_fn=None) -> None:
         self.db = db
@@ -344,6 +347,53 @@ class ErpSyncService:
             )
 
         return all_items
+
+    async def fetch_pages_streaming(
+        self,
+        method: str,
+        params: dict[str, Any],
+        response_key: str = "list",
+        page_size: int = 50,
+    ) -> AsyncGenerator[list[dict[str, Any]], None]:
+        """逐页拉取数据（流式），每次 yield 一页，避免全量堆积在内存
+
+        与 fetch_all_pages 相同的翻页/限流/终止逻辑，
+        但每页拉完立刻 yield 给调用方处理，内存峰值 = 1页数据。
+        """
+        client = self._get_client()
+        page = 0
+        total = 0
+
+        while page < self.MAX_PAGES:
+            page += 1
+            params["pageNo"] = page
+            params["pageSize"] = page_size
+            async with _API_SEM:
+                data = await client.request_with_retry(method, params)
+            items = data.get(response_key) or []
+            total += len(items)
+
+            if items:
+                yield items
+
+            if len(items) < page_size:
+                break
+        else:
+            logger.warning(
+                f"fetch_pages_streaming hit limit | method={method} | "
+                f"pages={page} | total_items={total}"
+            )
+
+        if total > 0:
+            logger.info(
+                f"fetch_all_pages done | method={method} | "
+                f"pages={page} | total={total}"
+            )
+        else:
+            logger.debug(
+                f"fetch_all_pages empty | method={method} | "
+                f"pages={page} | params={params}"
+            )
 
     # ── item_index 稳定排序 ───────────────────────────────
 
