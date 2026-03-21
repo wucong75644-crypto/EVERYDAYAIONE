@@ -84,7 +84,7 @@ async def sync_product(
         "item.list.query",
         {"startModified": _fmt_dt(start), "endModified": _fmt_dt(end)},
         response_key="items",
-        page_size=500,
+        page_size=200,
     )
     if not products:
         return 0
