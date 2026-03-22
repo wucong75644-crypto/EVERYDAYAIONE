@@ -123,9 +123,10 @@ class DataConsistencyChecker:
             },
         }
 
-        # 🔥 发送告警（只告警，不修复）
+        # 🔥 发送告警 + 自动修复
         if total_issues > 0:
             self._send_alert(results)
+            self._auto_fix(completed_without_url, pending_with_url)
         else:
             logger.info(
                 f"✅ Data consistency check passed | "
@@ -214,3 +215,34 @@ class DataConsistencyChecker:
                 logger.info("Alert sent to Sentry")
             except Exception as e:
                 logger.error(f"Failed to send Sentry alert | error={e}")
+
+    def _auto_fix(
+        self,
+        completed_without_url: List[Dict[str, Any]],
+        pending_with_url: List[Dict[str, Any]],
+    ) -> None:
+        """自动修复可纠正的数据不一致"""
+        fixed = 0
+
+        # completed 但无 URL → 改为 failed
+        for item in completed_without_url:
+            try:
+                self.db.table("messages").update(
+                    {"status": "failed"}
+                ).eq("id", item["id"]).execute()
+                fixed += 1
+            except Exception as e:
+                logger.warning(f"Auto-fix failed | id={item['id']} | error={e}")
+
+        # pending 但有 URL → 改为 completed
+        for item in pending_with_url:
+            try:
+                self.db.table("messages").update(
+                    {"status": "completed"}
+                ).eq("id", item["id"]).execute()
+                fixed += 1
+            except Exception as e:
+                logger.warning(f"Auto-fix failed | id={item['id']} | error={e}")
+
+        if fixed:
+            logger.info(f"Auto-fixed {fixed} inconsistent messages")

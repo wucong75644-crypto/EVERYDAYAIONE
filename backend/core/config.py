@@ -212,6 +212,10 @@ class Settings(BaseSettings):
     wecom_token: Optional[str] = None                # 回调验证 Token
     wecom_encoding_aes_key: Optional[str] = None     # 回调消息加密密钥（43 位）
 
+    # 企微 OAuth 扫码登录配置
+    frontend_url: Optional[str] = None  # 前端域名（OAuth 回调重定向目标）
+    wecom_oauth_redirect_uri: Optional[str] = None  # 企微 OAuth 回调地址（需在企微后台配置）
+
     # 企微通用配置
     wecom_stream_timeout: float = 300.0  # 企微流式回复超时（秒），企微上限 6 分钟
 

@@ -353,6 +353,10 @@ class AuthService:
         if phone and len(phone) >= 7:
             masked_phone = f"{phone[:3]}****{phone[-4:]}"
 
+        # 判断企微绑定状态：login_methods 包含 "wecom" 即为已绑定
+        login_methods = user.get("login_methods") or []
+        wecom_bound = "wecom" in login_methods
+
         return {
             "id": user["id"],
             "nickname": user["nickname"],
@@ -361,4 +365,5 @@ class AuthService:
             "role": user["role"],
             "credits": user["credits"],
             "created_at": user["created_at"],
+            "wecom_bound": wecom_bound,
         }

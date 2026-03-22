@@ -44,7 +44,7 @@ class RedisClient:
     async def close(cls) -> None:
         """关闭 Redis 连接"""
         if cls._instance:
-            await cls._instance.close()
+            await cls._instance.aclose()
             cls._instance = None
             logger.info("Redis 连接已关闭")
 

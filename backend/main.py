@@ -18,7 +18,7 @@ from slowapi.errors import RateLimitExceeded
 
 from api.routes import (
     audio, auth, conversation, file, health, image, memory, message,
-    models, qimen, subscription, task, webhook, wecom, ws,
+    models, qimen, subscription, task, webhook, wecom, wecom_auth, ws,
 )
 from core.config import get_settings
 from core.exceptions import AppException
@@ -57,8 +57,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
 
-        # 防止点击劫持
-        response.headers["X-Frame-Options"] = "DENY"
+        # 防止点击劫持（SAMEORIGIN 允许同域 iframe，企微扫码 SDK 需要）
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
 
         # 防止 MIME 类型嗅探
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -79,12 +79,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # 开发环境 CSP：允许内联脚本和样式（Vite 需要）
             csp_policy = (
                 "default-src 'self'; "
-                "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "  # Vite HMR 需要
+                "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://wwcdn.weixin.qq.com; "  # Vite HMR + 企微 SDK
                 "style-src 'self' 'unsafe-inline'; "  # Vite 样式注入需要
                 "img-src 'self' data: https://*.aliyuncs.com https://cdn.everydayai.com.cn https://qcaatwmlzqqnzfjdzlzm.supabase.co; "
                 "media-src 'self' https://*.aliyuncs.com https://cdn.everydayai.com.cn; "
                 "font-src 'self' data:; "
-                "connect-src 'self' https://qcaatwmlzqqnzfjdzlzm.supabase.co https://api.kie.ai ws://localhost:*; "  # 添加 WebSocket 支持
+                "connect-src 'self' https://qcaatwmlzqqnzfjdzlzm.supabase.co https://api.kie.ai ws://localhost:*; "
+                "frame-src https://login.work.weixin.qq.com; "  # 企微扫码 iframe
                 "object-src 'none'; "
                 "base-uri 'self'; "
                 "form-action 'self'; "
@@ -95,12 +96,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # 生产环境 CSP：严格策略，禁止 unsafe-eval 和 unsafe-inline
             csp_policy = (
                 "default-src 'self'; "
-                "script-src 'self'; "  # 移除 unsafe-inline 和 unsafe-eval
-                "style-src 'self'; "  # 移除 unsafe-inline
+                "script-src 'self' https://wwcdn.weixin.qq.com; "  # 企微扫码 SDK
+                "style-src 'self'; "
                 "img-src 'self' data: https://*.aliyuncs.com https://cdn.everydayai.com.cn https://qcaatwmlzqqnzfjdzlzm.supabase.co; "
                 "media-src 'self' https://*.aliyuncs.com https://cdn.everydayai.com.cn; "
                 "font-src 'self' data:; "
                 "connect-src 'self' https://qcaatwmlzqqnzfjdzlzm.supabase.co https://api.kie.ai; "
+                "frame-src https://login.work.weixin.qq.com; "  # 企微扫码 iframe
                 "object-src 'none'; "
                 "base-uri 'self'; "
                 "form-action 'self'; "
@@ -149,14 +151,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning(f"Mem0 pre-warm failed (non-critical) | error={e}")
 
-    # 预热知识库连接 + 导入种子知识
+    # 预热知识库连接 + 导入种子知识（用锁避免多 worker 重复加载）
     try:
         from services.knowledge_config import _get_pg_pool, is_kb_available
         pool = await _get_pg_pool()
         if pool and is_kb_available():
-            from services.knowledge_service import load_seed_knowledge
-            imported = await load_seed_knowledge()
-            logger.info(f"Knowledge base ready | seed_imported={imported}")
+            lock_token = await RedisClient.acquire_lock("seed_knowledge_load", timeout=60)
+            if lock_token:
+                try:
+                    from services.knowledge_service import load_seed_knowledge
+                    imported = await load_seed_knowledge()
+                    logger.info(f"Knowledge base ready | seed_imported={imported}")
+                finally:
+                    await RedisClient.release_lock("seed_knowledge_load", lock_token)
+            else:
+                logger.info("Knowledge base seed loading skipped (another worker is loading)")
         else:
             logger.info("Knowledge base not configured or disabled")
     except Exception as e:
@@ -331,6 +340,9 @@ def register_routers(app: FastAPI) -> None:
 
     # 企业微信回调（无需用户鉴权）
     app.include_router(wecom.router, prefix="/api")
+
+    # 企微 OAuth 扫码登录
+    app.include_router(wecom_auth.router, prefix="/api")
 
     # 奇门网关回调（无需用户鉴权，通过签名验证）
     app.include_router(qimen.router, prefix="/api")

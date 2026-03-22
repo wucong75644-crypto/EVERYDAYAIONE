@@ -778,6 +778,43 @@
 | `send_video` | `backend/services/wecom/app_message_sender.py` | 发送视频消息给企微用户 | wecom_userid, media_id, title, description, agent_id | bool |
 | `upload_temp_media` | `backend/services/wecom/app_message_sender.py` | 下载文件并上传到企微临时素材库 | file_url, media_type | Optional[str] |
 
+### 企微 OAuth 认证模块 (WeChat Work OAuth)
+
+#### 后端函数 — WecomOAuthService (`backend/services/wecom_oauth_service.py`)
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `WecomOAuthService.generate_state` | `backend/services/wecom_oauth_service.py` | 生成 OAuth state token | state_type, user_id? | str |
+| `WecomOAuthService.validate_state` | `backend/services/wecom_oauth_service.py` | 校验并消费 state（Redis GETDEL） | state | dict |
+| `WecomOAuthService.exchange_code` | `backend/services/wecom_oauth_service.py` | 用授权 code 换取企微 userid | code | str |
+| `WecomOAuthService.login_or_create` | `backend/services/wecom_oauth_service.py` | 企微用户登录或自动创建账号 | wecom_userid, nickname? | User |
+| `WecomOAuthService.bind_account` | `backend/services/wecom_oauth_service.py` | 绑定企微账号到已有用户 | user_id, wecom_userid, nickname? | None |
+| `WecomOAuthService.unbind_account` | `backend/services/wecom_oauth_service.py` | 解绑企微账号 | user_id | None |
+| `WecomOAuthService.get_binding_status` | `backend/services/wecom_oauth_service.py` | 查询用户企微绑定状态 | user_id | dict |
+| `WecomOAuthService.build_qr_url` | `backend/services/wecom_oauth_service.py` | 构建企微扫码登录 URL | state | str |
+
+#### 后端函数 — 账号合并 (`backend/services/wecom_account_merge.py`)
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `merge_users` | `backend/services/wecom_account_merge.py` | 合并两个用户的数据（对话/消息/积分等） | db, keep_user_id, remove_user_id, ... | None |
+
+#### 后端函数 — 企微 OAuth 路由 (`backend/api/routes/wecom_auth.py`)
+
+| 路由 | 文件路径 | 功能描述 | 方法 | 返回值 |
+|------|----------|----------|------|--------|
+| `/api/auth/wecom/qr-url` | `backend/api/routes/wecom_auth.py` | 获取企微扫码登录 URL | GET | `{url, state}` |
+| `/api/auth/wecom/callback` | `backend/api/routes/wecom_auth.py` | OAuth 授权回调处理 | GET | 重定向/Token |
+| `/api/auth/wecom/binding` | `backend/api/routes/wecom_auth.py` | 解绑企微账号 | DELETE | `{success}` |
+| `/api/auth/wecom/binding-status` | `backend/api/routes/wecom_auth.py` | 查询企微绑定状态 | GET | `{bound, wecom_userid}` |
+
+#### 前端组件
+
+| 组件名 | 文件路径 | 功能描述 | Props | 说明 |
+|--------|----------|----------|-------|------|
+| `WecomQrLogin` | `frontend/src/components/auth/WecomQrLogin.tsx` | 企微二维码登录组件 | - | 展示企微扫码二维码，轮询登录状态 |
+| `WecomCallback` | `frontend/src/pages/WecomCallback.tsx` | OAuth 回调着陆页 | - | 处理企微 OAuth 回调，完成登录/绑定流程 |
+
 ---
 
 ## 函数分类索引
@@ -809,6 +846,7 @@
 - **快麦参数映射模块**：1个后端函数修改（✨参数映射增强）
 - **性能监控模块**：9个前端函数
 - **企业微信 AI 路由模块**：11个后端函数（WecomAIMixin）+ 3个后端函数（app_message_sender）（✨企微Agent Loop对接）
+- **企微 OAuth 认证模块**：8个后端函数（WecomOAuthService）+ 1个后端函数（账号合并）+ 4个路由 + 2个前端组件（✨企微扫码登录与账号绑定）
 - **测试工具模块**：4个前端函数
 - **消息服务模块**：8个后端函数 + 5个前端函数
 - **图像生成模块**：3个后端函数 + 5个前端函数
@@ -831,17 +869,18 @@
 - **积分操作**：`lock_credits`, `confirm_deduct`, `refund_credits`, `credit_lock`, `deduct_atomic`, `get_balance`
 - **对话管理**：`create_conversation`, `update_conversation_title`, `get_conversation_list`, `delete_conversation`
 - **标题管理**：`generate_auto_title`, `generateAutoTitle`, `updateConversationTitle`, `syncTitleToNavbar`, `handleTitleEdit`
+- **企微 OAuth 认证**：`WecomOAuthService.generate_state`, `validate_state`, `exchange_code`, `login_or_create`, `bind_account`, `unbind_account`, `build_qr_url`, `merge_users`
 
 ---
 
 ## 统计信息
-- **总函数数**：约 270+ 个（规划中 + 已实现）
-- **已实现组件**：35 个（30 聊天组件 + 4 认证组件 + 1 通用组件）
+- **总函数数**：约 285+ 个（规划中 + 已实现）
+- **已实现组件**：37 个（30 聊天组件 + 6 认证组件 + 1 通用组件）
 - **已实现 Hooks**：50+ 个自定义 Hooks（含消息处理、滚动管理、重新生成等）
-- **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息处理、消息服务、滚动管理、重新生成、轮询管理、**统一消息发送**（含 mediaSender）、媒体重新生成、**任务通知**、**图片URL工具**、**统一日志**、**任务协调器**、**消息合并**、性能监控、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理、测试工具、认证弹窗模块、通用组件模块、占位符管理模块、**Webhook 回调与任务完成服务**、**批次完成处理服务**、**ERP API 搜索**、**AI 模型搜索**、**智能模型配置**、**ERP 工具定义**
+- **已实现模块**：Redis 基础设施、任务限制服务、积分服务、消息处理、消息服务、滚动管理、重新生成、轮询管理、**统一消息发送**（含 mediaSender）、媒体重新生成、**任务通知**、**图片URL工具**、**统一日志**、**任务协调器**、**消息合并**、性能监控、图像生成、视频生成、用户设置、KIE 适配器、聊天模块、任务状态管理、测试工具、认证弹窗模块、通用组件模块、占位符管理模块、**Webhook 回调与任务完成服务**、**批次完成处理服务**、**ERP API 搜索**、**AI 模型搜索**、**智能模型配置**、**ERP 工具定义**、**企微 OAuth 认证**
 - **测试覆盖率目标**：80%+（Vitest + Testing Library）
 - **性能监控**：13个预定义性能标记，支持关键路径监控
-- **最后更新**：2026-03-12（快麦 ERP + 淘宝奇门接入 + Agent 多 provider 支持 + 爬虫框架）
+- **最后更新**：2026-03-22（企微扫码登录与账号绑定）
 
 ---
 

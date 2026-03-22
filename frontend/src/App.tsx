@@ -8,6 +8,7 @@ import LoadingScreen from './components/common/LoadingScreen';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import Home from './pages/Home';
 import ForgotPassword from './pages/ForgotPassword';
+import WecomCallback from './pages/WecomCallback';
 import Chat from './pages/Chat';
 
 function App() {
@@ -32,6 +33,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/auth/wecom/callback" element={<WecomCallback />} />
           {/* 受保护的路由：需要登录才能访问 */}
           <Route
             path="/chat"

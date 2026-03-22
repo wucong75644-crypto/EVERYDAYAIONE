@@ -16,6 +16,7 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
 
 from core.security import decode_access_token
+from core.exceptions import TokenExpiredError
 from schemas.websocket import (
     WSMessageType,
     build_error,
@@ -30,7 +31,7 @@ from core.database import get_supabase_client
 router = APIRouter(tags=["WebSocket"])
 
 
-async def get_user_from_token(token: str) -> Optional[str]:
+async def get_user_from_token(token: str) -> tuple[Optional[str], str]:
     """
     从 token 获取用户 ID
 
@@ -38,14 +39,17 @@ async def get_user_from_token(token: str) -> Optional[str]:
         token: JWT token
 
     Returns:
-        用户 ID，验证失败返回 None
+        (用户 ID, 错误类型)。成功时 error_type 为空字符串
     """
     try:
         payload = decode_access_token(token)
-        return payload.get("sub")  # user_id
+        return payload.get("sub"), ""
+    except TokenExpiredError:
+        logger.debug("Token expired")
+        return None, "expired"
     except Exception as e:
-        logger.warning(f"Token verification failed | error={e}")
-        return None
+        logger.warning(f"Token invalid | error={e}")
+        return None, "invalid"
 
 
 @router.websocket("/ws")
@@ -63,9 +67,11 @@ async def websocket_endpoint(
     4. 消息循环
     """
     # 1. 认证
-    user_id = await get_user_from_token(token)
+    user_id, error_type = await get_user_from_token(token)
     if not user_id:
-        await websocket.close(code=4001, reason="Unauthorized")
+        code = 4002 if error_type == "expired" else 4001
+        reason = "Token expired" if error_type == "expired" else "Unauthorized"
+        await websocket.close(code=code, reason=reason)
         return
 
     # 2. 注册连接

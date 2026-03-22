@@ -7,8 +7,22 @@
 - 数据一致性专用日志文件
 """
 
+import warnings
 from pathlib import Path
 from loguru import logger
+
+# 模块加载时立即抑制第三方库 websockets 的废弃警告（google-genai 内部使用旧版 API）
+warnings.filterwarnings(
+    "ignore",
+    message="remove second argument of ws_handler",
+    category=DeprecationWarning,
+)
+# 抑制 redis-py close() 废弃警告（已改用 aclose，但第三方依赖可能仍调用）
+warnings.filterwarnings(
+    "ignore",
+    message="Call to deprecated close",
+    category=DeprecationWarning,
+)
 
 
 def setup_logging():

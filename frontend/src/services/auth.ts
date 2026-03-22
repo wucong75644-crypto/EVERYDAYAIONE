@@ -10,6 +10,7 @@ import type {
   PhoneRegisterRequest,
   SendCodeRequest,
   User,
+  WecomQrUrlResponse,
 } from '../types/auth';
 
 /**
@@ -63,6 +64,40 @@ export async function getCurrentUser(): Promise<User> {
   return request({
     method: 'GET',
     url: '/auth/me',
+  });
+}
+
+/**
+ * 获取企微扫码登录 URL
+ */
+export async function getWecomQrUrl(): Promise<WecomQrUrlResponse> {
+  return request({
+    method: 'GET',
+    url: '/auth/wecom/qr-url',
+  });
+}
+
+/**
+ * 查询企微绑定状态
+ */
+export async function getWecomBindingStatus(): Promise<{
+  bound: boolean;
+  wecom_nickname: string | null;
+  bound_at: string | null;
+}> {
+  return request({
+    method: 'GET',
+    url: '/auth/wecom/binding-status',
+  });
+}
+
+/**
+ * 解绑企微账号
+ */
+export async function unbindWecom(): Promise<{ success: boolean; message: string }> {
+  return request({
+    method: 'DELETE',
+    url: '/auth/wecom/binding',
   });
 }
 

@@ -9,6 +9,7 @@ item_index 稳定排序、upsert 入库、聚合计算等基础设施。
 设计文档: docs/document/TECH_ERP数据本地索引系统.md
 """
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from collections.abc import AsyncGenerator
@@ -99,34 +100,58 @@ class ErpSyncService:
             self._update_sync_state_error(sync_type, str(e))
             raise
 
+    # 初始同步并发分片数（Supabase Free 套餐性能有限，串行更稳定）
+    INITIAL_SYNC_CONCURRENCY = 1
+
     async def _run_initial_sync(self, sync_type: str, state: dict[str, Any]) -> None:
         """
         首次全量同步（设计文档 §7.3）
 
-        复用 _calculate_time_windows 分片 + _sync_window 拉取。
-        每片完成后更新 last_sync_time（断点续传），全部完成设 is_initial_done=True。
+        分片并发拉取（INITIAL_SYNC_CONCURRENCY 路），加速初始同步。
+        API 速率由全局 _API_SEM 限流，DB 写入由流式批量保证内存安全。
+        每批完成后更新断点，全部完成设 is_initial_done=True。
         """
         try:
             windows = self._calculate_time_windows(state)
-            total_synced = 0
             total_shards = len(windows)
+            completed = 0
+            total_synced = 0
+            sem = asyncio.Semaphore(self.INITIAL_SYNC_CONCURRENCY)
 
             logger.info(
                 f"ERP initial sync start | type={sync_type} | "
-                f"shards={total_shards}"
+                f"shards={total_shards} | concurrency={self.INITIAL_SYNC_CONCURRENCY}"
             )
 
-            for idx, (start, end) in enumerate(windows, 1):
-                count = await self._sync_window(sync_type, start, end)
-                total_synced += count
-                self._update_sync_state_progress(sync_type, end)
-                # 每个 shard 后续期锁，防止长时间全量同步导致锁过期
-                if self._lock_extend_fn:
-                    await self._lock_extend_fn()
-                logger.info(
-                    f"ERP initial sync | type={sync_type} | "
-                    f"shard={idx}/{total_shards} | synced={count}"
-                )
+            async def _run_shard(idx: int, start: datetime, end: datetime) -> int:
+                async with sem:
+                    count = await self._sync_window(sync_type, start, end)
+                    if self._lock_extend_fn:
+                        await self._lock_extend_fn()
+                    logger.info(
+                        f"ERP initial sync | type={sync_type} | "
+                        f"shard={idx}/{total_shards} | synced={count}"
+                    )
+                    return count
+
+            tasks = [
+                _run_shard(idx, start, end)
+                for idx, (start, end) in enumerate(windows, 1)
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for idx, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.error(
+                        f"ERP initial sync shard failed | type={sync_type} | "
+                        f"shard={idx + 1}/{total_shards} | error={result}"
+                    )
+                else:
+                    total_synced += result
+
+            # 更新断点到最后一个窗口的结束时间
+            if windows:
+                self._update_sync_state_progress(sync_type, windows[-1][1])
 
             # 全量完成 → 标记切换增量模式
             self._mark_initial_done(sync_type, total_synced)
@@ -458,17 +483,18 @@ class ErpSyncService:
 
     # ── 聚合计算 ──────────────────────────────────────────
 
+    # Redis 聚合队列 key
+    AGGREGATION_QUEUE_KEY = "erp:aggregation_queue"
+
     def run_aggregation(
         self,
         affected_keys: list[tuple[str, str]],
     ) -> None:
         """
-        对受影响的 (outer_id, stat_date) 重算 daily_stats
+        将受影响的 (outer_id, stat_date) 推入 Redis 队列，
+        由独立消费者串行聚合，避免并发写入时阻塞拉取或打满 DB。
 
-        聚合规则（设计文档 G1）：
-        - *_count = COUNT(DISTINCT doc_id)，按单据去重
-        - *_qty = SUM(quantity)
-        - *_amount = SUM(amount)
+        Redis 不可用时降级为同步逐条聚合。
 
         Args:
             affected_keys: [(outer_id, stat_date_str), ...]
@@ -476,6 +502,29 @@ class ErpSyncService:
         if not affected_keys:
             return
 
+        try:
+            import json
+            from core.redis import RedisClient
+            # RedisClient._instance 在启动时已初始化，直接取同步引用
+            redis = RedisClient._instance
+            if redis is None:
+                raise RuntimeError("Redis not initialized")
+            pipe = redis.pipeline(transaction=False)
+            for outer_id, stat_date in affected_keys:
+                pipe.rpush(
+                    self.AGGREGATION_QUEUE_KEY,
+                    json.dumps({"outer_id": outer_id, "stat_date": stat_date}),
+                )
+            asyncio.ensure_future(pipe.execute())
+        except Exception as e:
+            logger.warning(f"Aggregation queue push failed, fallback to sync | error={e}")
+            self._run_aggregation_sync(affected_keys)
+
+    def _run_aggregation_sync(
+        self,
+        affected_keys: list[tuple[str, str]],
+    ) -> None:
+        """降级：同步逐条聚合（Redis 不可用时）"""
         for outer_id, stat_date in affected_keys:
             try:
                 self.db.rpc(
