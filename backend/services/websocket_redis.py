@@ -77,14 +77,14 @@ class RedisPubSubMixin:
         if self._pubsub:
             try:
                 await self._pubsub.unsubscribe(WS_CHANNEL)
-                await self._pubsub.close()
+                await self._pubsub.aclose()
             except Exception:
                 pass
             self._pubsub = None
 
         if hasattr(self, "_pubsub_redis") and self._pubsub_redis:
             try:
-                await self._pubsub_redis.close()
+                await self._pubsub_redis.aclose()
             except Exception:
                 pass
 

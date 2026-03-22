@@ -423,6 +423,30 @@ class TestAuthServiceHelpers:
         # Assert
         assert result["phone"] is None  # 手机号太短，不显示
 
+    def test_format_user_response_wecom_bound_true(self, auth_service):
+        """测试：login_methods 包含 wecom → wecom_bound=True"""
+        user = create_test_user()
+        user["login_methods"] = ["phone", "wecom"]
+
+        result = auth_service._format_user_response(user)
+        assert result["wecom_bound"] is True
+
+    def test_format_user_response_wecom_bound_false(self, auth_service):
+        """测试：login_methods 不含 wecom → wecom_bound=False"""
+        user = create_test_user()
+        user["login_methods"] = ["phone"]
+
+        result = auth_service._format_user_response(user)
+        assert result["wecom_bound"] is False
+
+    def test_format_user_response_wecom_bound_none_methods(self, auth_service):
+        """测试：login_methods 为 None → wecom_bound=False"""
+        user = create_test_user()
+        user["login_methods"] = None
+
+        result = auth_service._format_user_response(user)
+        assert result["wecom_bound"] is False
+
     def test_create_token_response(self, auth_service):
         """测试：Token 响应格式"""
         # Act

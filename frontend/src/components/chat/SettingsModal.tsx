@@ -4,8 +4,10 @@
  * 显示用户信息和账户操作
  */
 
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { getWecomBindingStatus, unbindWecom, getWecomQrUrl } from '../../services/auth';
 import Modal from '../common/Modal';
 
 interface SettingsModalProps {
@@ -16,6 +18,46 @@ interface SettingsModalProps {
 export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const navigate = useNavigate();
   const { user, clearAuth, refreshUser } = useAuthStore();
+
+  const [wecomStatus, setWecomStatus] = useState<{
+    bound: boolean;
+    wecom_nickname: string | null;
+    bound_at: string | null;
+  } | null>(null);
+  const [wecomLoading, setWecomLoading] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      getWecomBindingStatus()
+        .then(setWecomStatus)
+        .catch(() => setWecomStatus(null));
+    }
+  }, [isOpen]);
+
+  const handleWecomBind = async () => {
+    setWecomLoading(true);
+    try {
+      const qrData = await getWecomQrUrl();
+      window.location.href = qrData.qr_url;
+    } catch {
+      setWecomLoading(false);
+    }
+  };
+
+  const handleWecomUnbind = async () => {
+    if (!confirm('确定要解绑企业微信吗？')) return;
+    setWecomLoading(true);
+    try {
+      await unbindWecom();
+      setWecomStatus({ bound: false, wecom_nickname: null, bound_at: null });
+      await refreshUser();
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      alert(error.response?.data?.detail || '解绑失败');
+    } finally {
+      setWecomLoading(false);
+    }
+  };
 
   const handleLogout = () => {
     clearAuth();
@@ -126,6 +168,40 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <span className="text-gray-700 text-sm">注册时间</span>
             </div>
             <span className="text-gray-900 text-sm">{formatDate(user?.created_at)}</span>
+          </div>
+        </div>
+
+        {/* 企微绑定 */}
+        <div className="bg-white rounded-xl border border-gray-100 p-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <svg className="w-5 h-5 text-blue-500" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 01.213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 00.167-.054l1.903-1.114a.864.864 0 01.717-.098 10.16 10.16 0 002.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178A1.17 1.17 0 014.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178 1.17 1.17 0 01-1.162-1.178c0-.651.52-1.18 1.162-1.18z" />
+              </svg>
+              <div>
+                <span className="text-gray-700 text-sm">企业微信</span>
+                {wecomStatus?.bound && wecomStatus.wecom_nickname && (
+                  <p className="text-xs text-gray-400">{wecomStatus.wecom_nickname}</p>
+                )}
+              </div>
+            </div>
+            {wecomStatus?.bound ? (
+              <button
+                onClick={handleWecomUnbind}
+                disabled={wecomLoading}
+                className="text-sm text-red-500 hover:text-red-600 disabled:opacity-50"
+              >
+                {wecomLoading ? '处理中...' : '解绑'}
+              </button>
+            ) : (
+              <button
+                onClick={handleWecomBind}
+                disabled={wecomLoading}
+                className="text-sm text-blue-600 hover:text-blue-500 disabled:opacity-50"
+              >
+                {wecomLoading ? '跳转中...' : '绑定'}
+              </button>
+            )}
           </div>
         </div>
 

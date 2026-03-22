@@ -10,6 +10,15 @@ export interface User {
   role: 'user' | 'admin' | 'super_admin';
   credits: number;
   created_at: string;
+  wecom_bound?: boolean;
+}
+
+export interface WecomQrUrlResponse {
+  qr_url: string;
+  state: string;
+  appid: string;
+  agentid: string;
+  redirect_uri: string;
 }
 
 export interface TokenInfo {

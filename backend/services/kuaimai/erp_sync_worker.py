@@ -56,6 +56,9 @@ class ErpSyncWorker:
             f"platform_map_interval={self.settings.erp_platform_map_interval}s"
         )
 
+        # 启动聚合消费者协程（串行从 Redis 队列取 key 做聚合）
+        agg_task = asyncio.create_task(self._aggregation_consumer())
+
         while self.is_running:
             try:
                 await self._run_sync_round()
@@ -66,6 +69,7 @@ class ErpSyncWorker:
 
             await asyncio.sleep(self.settings.erp_sync_interval)
 
+        agg_task.cancel()
         logger.info("ErpSyncWorker stopped")
 
     async def stop(self) -> None:
@@ -372,3 +376,49 @@ class ErpSyncWorker:
             except Exception:
                 pass  # Redis 不可用时锁会 TTL 过期
             self._lock_token = None
+
+    # ── 聚合队列消费者 ────────────────────────────────────
+
+    AGGREGATION_QUEUE_KEY = "erp:aggregation_queue"
+
+    async def _aggregation_consumer(self) -> None:
+        """串行消费 Redis 聚合队列，逐条调用 RPC，不阻塞数据拉取"""
+        import json
+        from core.redis import RedisClient
+
+        logger.info("Aggregation consumer started")
+        idle_interval = 10  # 队列空时轮询间隔（秒），避免打爆 Upstash
+        while self.is_running:
+            try:
+                redis = await RedisClient.get_client()
+                # 批量取最多 50 条，减少 Upstash 请求次数
+                items = []
+                for _ in range(50):
+                    item = await redis.lpop(self.AGGREGATION_QUEUE_KEY)
+                    if not item:
+                        break
+                    items.append(item)
+
+                if not items:
+                    await asyncio.sleep(idle_interval)
+                    continue
+
+                for item in items:
+                    data = json.loads(item)
+                    try:
+                        self.db.rpc(
+                            "erp_aggregate_daily_stats",
+                            {"p_outer_id": data["outer_id"], "p_stat_date": data["stat_date"]},
+                        ).execute()
+                    except Exception as e:
+                        logger.warning(
+                            f"Aggregation consumer error | outer_id={data['outer_id']} | "
+                            f"date={data['stat_date']} | error={e}"
+                        )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Aggregation consumer loop error | error={e}")
+                await asyncio.sleep(30)
+
+        logger.info("Aggregation consumer stopped")

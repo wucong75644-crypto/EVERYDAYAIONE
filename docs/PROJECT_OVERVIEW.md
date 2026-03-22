@@ -87,6 +87,7 @@ EVERYDAYAIONE/
 │   │   ├── deps.py                   # 依赖注入
 │   │   └── routes/                   # 路由模块
 │   │       ├── auth.py                   # 认证路由
+│   │       ├── wecom_auth.py                # 企微 OAuth 路由（扫码URL、回调、绑定/解绑）
 │   │       ├── health.py                 # 健康检查
 │   │       ├── conversation.py           # 对话路由
 │   │       ├── message.py                # 统一消息路由（/generate）
@@ -120,6 +121,8 @@ EVERYDAYAIONE/
 │   │   ├── memory_config.py         # 记忆基础设施（Mem0 配置/单例/缓存/格式化）
 │   │   ├── memory_service.py        # 记忆服务（CRUD、对话提取、智能检索）
 │   │   ├── memory_filter.py         # 记忆智能过滤器（千问精排，降级链）
+│   │   ├── wecom_oauth_service.py  # 企微 OAuth 扫码登录服务（state管理、code换userid、登录/创建/绑定/解绑）
+│   │   ├── wecom_account_merge.py  # 企微账号合并服务（数据迁移+积分合并+用户删除）
 │   │   ├── handlers/                 # 统一消息处理器
 │   │   │   ├── __init__.py               # Handler 工厂
 │   │   │   ├── base.py                   # Handler 基类
@@ -145,8 +148,10 @@ EVERYDAYAIONE/
 │   │       │   └── video_adapter.py          # 视频生成适配器
 │   │       └── google/                   # Google API 适配器
 │   │           └── image_adapter.py          # Imagen 图片适配器
-│   └── config/                   # 配置文件
-│       └── kie_models.py             # KIE 模型配置
+│   ├── config/                   # 配置文件
+│   │   └── kie_models.py             # KIE 模型配置
+│   └── migrations/              # 数据库迁移脚本
+│       └── 034_wecom_oauth_support.sql  # 企微 OAuth 数据库迁移
 │
 └── frontend/                 # 前端代码（React/TypeScript）
     ├── package.json              # 前端依赖
@@ -160,7 +165,8 @@ EVERYDAYAIONE/
         ├── pages/                    # 页面组件
         │   ├── Home.tsx                  # 首页（含认证弹窗入口）
         │   ├── ForgotPassword.tsx        # 忘记密码页
-        │   └── Chat.tsx                  # 聊天页（主功能页）
+        │   ├── Chat.tsx                  # 聊天页（主功能页）
+        │   └── WecomCallback.tsx         # 企微 OAuth 回调着陆页
         ├── components/               # 组件
         │   ├── common/                   # 通用组件
         │   │   └── Modal.tsx                 # 通用弹窗组件（动画、ESC关闭、遮罩层）
@@ -168,6 +174,7 @@ EVERYDAYAIONE/
         │   │   ├── AuthModal.tsx             # 认证弹窗容器（登录/注册切换）
         │   │   ├── LoginForm.tsx             # 登录表单（密码/验证码双模式）
         │   │   ├── RegisterForm.tsx          # 注册表单（手机号+验证码）
+        │   │   ├── WecomQrLogin.tsx          # 企微二维码扫码登录组件
         │   │   └── ProtectedRoute.tsx        # 路由守卫组件
         │   └── chat/                     # 聊天相关组件
         │       ├── Sidebar.tsx               # 左侧栏（对话列表、用户菜单）
