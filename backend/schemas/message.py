@@ -28,6 +28,7 @@ class MessageStatus(str, Enum):
     """消息状态"""
     PENDING = "pending"
     STREAMING = "streaming"
+    GENERATING = "generating"
     COMPLETED = "completed"
     FAILED = "failed"
 

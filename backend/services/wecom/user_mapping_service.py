@@ -195,3 +195,45 @@ class WecomUserMappingService:
         except Exception as e:
             logger.warning(f"Wecom chatid lookup failed | user_id={user_id} | error={e}")
             return None
+
+    async def upsert_chat_target(
+        self, chatid: str, chattype: str, corp_id: str,
+    ) -> None:
+        """记录聊天目标（群聊/私聊），用于定时任务推送目标选择。
+
+        upsert 逻辑：已存在则更新活跃时间和消息计数，不存在则插入。
+        """
+        try:
+            # 先尝试查询是否已存在
+            existing = (
+                self.db.table("wecom_chat_targets")
+                .select("id, message_count")
+                .eq("chatid", chatid)
+                .eq("corp_id", corp_id)
+                .limit(1)
+                .execute()
+            )
+
+            if existing.data:
+                # 已存在：更新活跃时间和消息计数
+                row = existing.data[0]
+                self.db.table("wecom_chat_targets").update({
+                    "last_active": "now()",
+                    "message_count": row["message_count"] + 1,
+                    "is_active": True,
+                }).eq("id", row["id"]).execute()
+            else:
+                # 不存在：插入新记录
+                self.db.table("wecom_chat_targets").insert({
+                    "chatid": chatid,
+                    "chat_type": chattype,
+                    "corp_id": corp_id,
+                }).execute()
+                logger.info(
+                    f"New chat target discovered | chatid={chatid} | "
+                    f"type={chattype} | corp_id={corp_id}"
+                )
+        except Exception as e:
+            logger.warning(
+                f"Upsert chat target failed | chatid={chatid} | error={e}"
+            )

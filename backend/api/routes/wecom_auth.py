@@ -46,7 +46,11 @@ async def get_qr_url(
         raise HTTPException(status_code=503, detail="OAuth 回调地址未配置")
 
     state_type = "bind" if user_id else "login"
-    state = await svc.generate_state(state_type, user_id=user_id)
+    try:
+        state = await svc.generate_state(state_type, user_id=user_id)
+    except Exception as e:
+        logger.warning(f"Generate OAuth state failed | error={e}")
+        raise HTTPException(status_code=503, detail="服务暂时不可用，请稍后重试")
 
     return svc.build_qr_url(state)
 
