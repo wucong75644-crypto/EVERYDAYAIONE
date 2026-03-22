@@ -233,7 +233,9 @@
       "Bash(scp /Users/wucong/EVERYDAYAIONE/backend/schemas/message.py root@47.110.94.25:/var/www/everydayai/backend/schemas/message.py)",
       "Bash(scp /Users/wucong/EVERYDAYAIONE/backend/migrations/035_add_merge_credits_enum.sql root@47.110.94.25:/var/www/everydayai/backend/migrations/)",
       "Bash(python -m pytest backend/tests/test_wecom_message_service.py backend/tests/test_wecom_user_mapping.py -q --tb=short)",
-      "Bash(./git-push.sh \"feat: 群聊目标被动收集，消息到达时自动upsert wecom_chat_targets\")"
+      "Bash(./git-push.sh \"feat: 群聊目标被动收集，消息到达时自动upsert wecom_chat_targets\")",
+      "Bash(grep -n \"ALTER TABLE wecom_user_mappings\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(scp /Users/wucong/EVERYDAYAIONE/backend/core/config.py root@47.110.94.25:/var/www/everydayai/backend/core/config.py)"
     ]
   }
 }

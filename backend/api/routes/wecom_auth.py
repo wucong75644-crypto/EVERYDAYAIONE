@@ -141,6 +141,37 @@ async def get_binding_status(
     return await svc.get_binding_status(user_id)
 
 
+@router.post("/sync-employees", summary="同步企微通讯录")
+async def sync_employees(
+    user_id: CurrentUserId,
+    db: Database,
+):
+    """
+    手动触发企微通讯录同步（部门 + 员工）。
+
+    需要管理员权限，且自建应用需有通讯录读取权限。
+    """
+    # 权限校验：仅管理员可触发
+    user = db.table("users").select("role").eq("id", user_id).single().execute()
+    if not user.data or user.data["role"] not in ("admin", "super_admin"):
+        raise HTTPException(status_code=403, detail="仅管理员可执行同步")
+
+    from services.wecom.employee_sync_service import EmployeeSyncService
+    svc = EmployeeSyncService(db)
+    result = await svc.sync_all()
+
+    if result["errors"]:
+        logger.warning(f"Employee sync had errors | errors={result['errors']}")
+
+    return {
+        "success": len(result["errors"]) == 0,
+        "departments": result["departments"],
+        "employees": result["employees"],
+        "departed": result["departed"],
+        "errors": result["errors"],
+    }
+
+
 def _classify_error(error_msg: str) -> str:
     """根据错误消息分类错误码"""
     if "过期" in error_msg or "无效" in error_msg:
