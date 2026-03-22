@@ -222,7 +222,8 @@
       "Bash(/tmp/merge_audit.md:*)",
       "Read(//tmp/**)",
       "Bash(python -m pytest backend/tests/test_wecom_oauth_service.py backend/tests/test_wecom_account_merge.py -q --tb=short)",
-      "Bash(python -c \"from api.routes.wecom_auth import router; print\\(f''wecom_auth router loaded: {len\\(router.routes\\)} routes''\\)\")"
+      "Bash(python -c \"from api.routes.wecom_auth import router; print\\(f''wecom_auth router loaded: {len\\(router.routes\\)} routes''\\)\")",
+      "Bash(./deploy/deploy.sh -f)"
     ]
   }
 }

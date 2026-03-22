@@ -33,42 +33,57 @@ const SDK_SCRIPT_ID = 'wecom-wwlogin-sdk';
 export default function WecomQrLogin({ onBack }: WecomQrLoginProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const containerRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const initedRef = useRef(false);
+  // 每个实例用唯一 ID，避免多个组件冲突
+  const containerId = useRef(`wecom-qr-${Date.now()}`);
 
-  const initQrCode = useCallback(async () => {
+  useEffect(() => {
     if (initedRef.current) return;
     initedRef.current = true;
 
-    try {
-      // 1. 获取 QR 参数
-      const qrData = await getWecomQrUrl();
+    let cancelled = false;
 
-      // 2. 加载 SDK（如果尚未加载）
-      await loadSdk();
+    (async () => {
+      try {
+        const qrData = await getWecomQrUrl();
+        await loadSdk();
 
-      // 3. 渲染二维码
-      if (containerRef.current && window.WwLogin) {
-        new window.WwLogin({
-          id: 'wecom-qr-container',
-          appid: qrData.appid,
-          agentid: qrData.agentid,
-          redirect_uri: encodeURIComponent(qrData.redirect_uri),
-          state: qrData.state,
-          lang: 'zh',
-        });
+        if (cancelled || !wrapperRef.current) return;
+
+        // 手动创建 SDK 容器（React 不管理其子节点，避免 removeChild 冲突）
+        const sdkDiv = document.createElement('div');
+        sdkDiv.id = containerId.current;
+        wrapperRef.current.appendChild(sdkDiv);
+
+        if (window.WwLogin) {
+          new window.WwLogin({
+            id: containerId.current,
+            appid: qrData.appid,
+            agentid: qrData.agentid,
+            redirect_uri: encodeURIComponent(qrData.redirect_uri),
+            state: qrData.state,
+            lang: 'zh',
+          });
+        }
+
+        if (!cancelled) setLoading(false);
+      } catch {
+        if (!cancelled) {
+          setError('加载企微二维码失败，请刷新重试');
+          setLoading(false);
+        }
       }
+    })();
 
-      setLoading(false);
-    } catch {
-      setError('加载企微二维码失败，请刷新重试');
-      setLoading(false);
-    }
+    return () => {
+      cancelled = true;
+      // 卸载时清理 SDK 创建的 DOM
+      if (wrapperRef.current) {
+        wrapperRef.current.innerHTML = '';
+      }
+    };
   }, []);
-
-  useEffect(() => {
-    initQrCode();
-  }, [initQrCode]);
 
   return (
     <div className="flex flex-col items-center">
@@ -82,13 +97,9 @@ export default function WecomQrLogin({ onBack }: WecomQrLoginProps) {
         </div>
       )}
 
-      {/* 二维码容器 */}
-      <div
-        id="wecom-qr-container"
-        ref={containerRef}
-        className="w-[300px] h-[400px] flex items-center justify-center"
-      >
-        {loading && (
+      {/* loading 状态（独立于 SDK 容器） */}
+      {loading && (
+        <div className="w-[300px] h-[400px] flex items-center justify-center">
           <div className="flex flex-col items-center text-gray-400">
             <svg className="animate-spin h-8 w-8 mb-2" viewBox="0 0 24 24" fill="none">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
@@ -96,14 +107,19 @@ export default function WecomQrLogin({ onBack }: WecomQrLoginProps) {
             </svg>
             <span className="text-sm">加载中...</span>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* SDK 容器（React 不管理子节点，由 SDK 直接操作 DOM） */}
+      <div
+        ref={wrapperRef}
+        className={loading ? 'hidden' : 'w-[300px] h-[400px]'}
+      />
 
       <p className="text-sm text-gray-500 mt-2 mb-4">
         请使用企业微信 App 扫码
       </p>
 
-      {/* 返回按钮 */}
       <button
         type="button"
         onClick={onBack}
