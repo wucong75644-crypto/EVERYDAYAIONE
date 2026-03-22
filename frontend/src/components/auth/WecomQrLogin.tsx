@@ -9,8 +9,10 @@ import { useState, useEffect, useRef } from 'react';
 import { getWecomQrUrl } from '../../services/auth';
 
 interface WecomQrLoginProps {
-  /** 点击"返回密码登录"的回调 */
+  /** 点击返回的回调 */
   onBack: () => void;
+  /** 使用场景：login=登录页，bind=设置页绑定 */
+  mode?: 'login' | 'bind';
 }
 
 declare global {
@@ -30,7 +32,7 @@ declare global {
 const SDK_URL = 'https://wwcdn.weixin.qq.com/node/wework/wwopen/js/wwLogin-1.2.7.js';
 const SDK_SCRIPT_ID = 'wecom-wwlogin-sdk';
 
-export default function WecomQrLogin({ onBack }: WecomQrLoginProps) {
+export default function WecomQrLogin({ onBack, mode = 'login' }: WecomQrLoginProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -88,7 +90,7 @@ export default function WecomQrLogin({ onBack }: WecomQrLoginProps) {
   return (
     <div className="flex flex-col items-center">
       <h3 className="text-base font-medium text-gray-900 mb-3">
-        企业微信扫码登录
+        {mode === 'bind' ? '扫码绑定企业微信' : '企业微信扫码登录'}
       </h3>
 
       {error && (
@@ -125,7 +127,7 @@ export default function WecomQrLogin({ onBack }: WecomQrLoginProps) {
         onClick={onBack}
         className="text-sm text-blue-600 hover:text-blue-500 transition-colors"
       >
-        返回密码登录
+        {mode === 'bind' ? '取消绑定' : '返回密码登录'}
       </button>
     </div>
   );

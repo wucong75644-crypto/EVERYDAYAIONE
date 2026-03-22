@@ -217,7 +217,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         {/* 右侧：企微二维码（展开时显示） */}
         {showWecomQr && !wecomStatus?.bound && (
           <div className="w-[340px] shrink-0 border-l border-gray-100 pl-6">
-            <WecomQrLogin onBack={() => setShowWecomQr(false)} />
+            <WecomQrLogin mode="bind" onBack={() => setShowWecomQr(false)} />
           </div>
         )}
       </div>
