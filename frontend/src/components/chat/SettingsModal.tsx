@@ -7,7 +7,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
-import { getWecomBindingStatus, unbindWecom, getWecomQrUrl } from '../../services/auth';
+import { getWecomBindingStatus, unbindWecom } from '../../services/auth';
+import WecomQrLogin from '../auth/WecomQrLogin';
 import Modal from '../common/Modal';
 
 interface SettingsModalProps {
@@ -25,6 +26,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     bound_at: string | null;
   } | null>(null);
   const [wecomLoading, setWecomLoading] = useState(false);
+  const [showWecomQr, setShowWecomQr] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -34,14 +36,8 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     }
   }, [isOpen]);
 
-  const handleWecomBind = async () => {
-    setWecomLoading(true);
-    try {
-      const qrData = await getWecomQrUrl();
-      window.location.href = qrData.qr_url;
-    } catch {
-      setWecomLoading(false);
-    }
+  const handleWecomBind = () => {
+    setShowWecomQr(true);
   };
 
   const handleWecomUnbind = async () => {
@@ -199,10 +195,16 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 disabled={wecomLoading}
                 className="text-sm text-blue-600 hover:text-blue-500 disabled:opacity-50"
               >
-                {wecomLoading ? '跳转中...' : '绑定'}
+                绑定
               </button>
             )}
           </div>
+          {/* 企微二维码（弹窗内展示） */}
+          {showWecomQr && !wecomStatus?.bound && (
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <WecomQrLogin onBack={() => setShowWecomQr(false)} />
+            </div>
+          )}
         </div>
 
         {/* 操作按钮 */}
