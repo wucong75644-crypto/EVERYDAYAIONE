@@ -5,7 +5,7 @@
  * 扫码后企微会将整个页面重定向到 callback URL。
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { getWecomQrUrl } from '../../services/auth';
 
 interface WecomQrLoginProps {
