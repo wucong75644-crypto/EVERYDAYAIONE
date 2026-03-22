@@ -73,6 +73,11 @@ class WecomMessageService(WecomAIMixin):
                 msg.wecom_userid, msg.corp_id, msg.chatid, msg.chattype,
             )
 
+            # 1.6 记录聊天目标（定时任务推送目标选择用）
+            await self._user_svc.upsert_chat_target(
+                msg.chatid, msg.chattype, msg.corp_id,
+            )
+
             # 2. 获取或创建对话
             conversation_id = await self._get_or_create_conversation(
                 user_id=user_id,

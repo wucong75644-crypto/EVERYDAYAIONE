@@ -223,7 +223,17 @@
       "Read(//tmp/**)",
       "Bash(python -m pytest backend/tests/test_wecom_oauth_service.py backend/tests/test_wecom_account_merge.py -q --tb=short)",
       "Bash(python -c \"from api.routes.wecom_auth import router; print\\(f''wecom_auth router loaded: {len\\(router.routes\\)} routes''\\)\")",
-      "Bash(./deploy/deploy.sh -f)"
+      "Bash(./deploy/deploy.sh -f)",
+      "WebFetch(domain:developer.work.weixin.qq.com)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(grep -r \"credits_change_type\\\\|ALTER TYPE\" /Users/wucong/EVERYDAYAIONE/docs/database/migrations --include=*.sql)",
+      "Bash(grep -r \"CREATE TYPE\\\\|credits_change_type\" /Users/wucong/EVERYDAYAIONE/backend --include=*.sql)",
+      "Bash(scp /Users/wucong/EVERYDAYAIONE/backend/api/routes/wecom_auth.py root@47.110.94.25:/var/www/everydayai/backend/api/routes/wecom_auth.py)",
+      "Bash(scp /Users/wucong/EVERYDAYAIONE/backend/schemas/message.py root@47.110.94.25:/var/www/everydayai/backend/schemas/message.py)",
+      "Bash(scp /Users/wucong/EVERYDAYAIONE/backend/migrations/035_add_merge_credits_enum.sql root@47.110.94.25:/var/www/everydayai/backend/migrations/)",
+      "Bash(python -m pytest backend/tests/test_wecom_message_service.py backend/tests/test_wecom_user_mapping.py -q --tb=short)",
+      "Bash(./git-push.sh \"feat: 群聊目标被动收集，消息到达时自动upsert wecom_chat_targets\")"
     ]
   }
 }
