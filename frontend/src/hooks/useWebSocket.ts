@@ -64,6 +64,7 @@ export type WSMessageType =
   | 'subscribe'
   | 'unsubscribe'
   | 'subscribed'
+  | 'conversation_updated'
   | 'server_restarting'
   | 'error';
 

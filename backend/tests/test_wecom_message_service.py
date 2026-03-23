@@ -904,9 +904,8 @@ class TestDownloadMedia:
         db = _make_db_mock()
         svc = WecomMessageService(db)
         msg = _make_msg()
-        ctx = _make_reply_ctx()
 
-        result = await svc._download_media(msg, "u1", ctx)
+        result = await svc._download_media(msg, "u1")
         assert result == []
 
     @pytest.mark.asyncio
@@ -926,13 +925,12 @@ class TestDownloadMedia:
             image_urls=["https://wecom.example.com/img1.jpg"],
             aeskeys={"https://wecom.example.com/img1.jpg": "aes123"},
         )
-        ctx = _make_reply_ctx()
 
         with patch(
             "services.wecom.media_downloader.WecomMediaDownloader.download_and_store",
             new=AsyncMock(return_value="https://oss.example.com/stored.jpg"),
         ):
-            result = await svc._download_media(msg, "u1", ctx)
+            result = await svc._download_media(msg, "u1")
 
         assert result == ["https://oss.example.com/stored.jpg"]
 
@@ -952,13 +950,12 @@ class TestDownloadMedia:
             channel="smart_robot",
             image_urls=["https://wecom.example.com/img_bad.jpg"],
         )
-        ctx = _make_reply_ctx()
 
         with patch(
             "services.wecom.media_downloader.WecomMediaDownloader.download_and_store",
             new=AsyncMock(return_value=None),
         ):
-            result = await svc._download_media(msg, "u1", ctx)
+            result = await svc._download_media(msg, "u1")
 
         assert result == []
 
@@ -1155,3 +1152,72 @@ class TestFileVideoHint:
             await svc.handle_message(msg, ctx)
             mock_reply.assert_called_once()
             assert "暂不支持" in mock_reply.call_args[0][1]
+
+
+# ============================================================
+# TestNotifyWebConversationUpdated
+# ============================================================
+
+
+class TestNotifyWebConversationUpdated:
+    """_notify_web_conversation_updated WS 推送"""
+
+    @pytest.mark.asyncio
+    async def test_sends_to_user_via_ws_manager(self):
+        """正常调用 → ws_manager.send_to_user 被调用"""
+        with patch(
+            "services.wecom.wecom_message_service.ws_manager"
+        ) as mock_ws:
+            mock_ws.send_to_user = AsyncMock()
+            await WecomMessageService._notify_web_conversation_updated(
+                "uid1", "conv1",
+            )
+            mock_ws.send_to_user.assert_awaited_once_with(
+                "uid1",
+                {"type": "conversation_updated", "conversation_id": "conv1"},
+            )
+
+    @pytest.mark.asyncio
+    async def test_exception_does_not_propagate(self):
+        """ws_manager 异常 → 不抛出，仅 warning"""
+        with patch(
+            "services.wecom.wecom_message_service.ws_manager"
+        ) as mock_ws:
+            mock_ws.send_to_user = AsyncMock(
+                side_effect=ConnectionError("redis down")
+            )
+            # 不应抛出异常
+            await WecomMessageService._notify_web_conversation_updated(
+                "uid1", "conv1",
+            )
+
+
+class TestHandleMessageNotify:
+    """handle_message 流程中 _notify_web_conversation_updated 被调用"""
+
+    @pytest.mark.asyncio
+    async def test_notify_called_after_save_user_message(self):
+        """保存用户消息后 → 调用 notify"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+
+        svc._user_svc = MagicMock()
+        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.update_last_chatid = AsyncMock()
+        svc._user_svc.upsert_chat_target = AsyncMock()
+        svc._get_or_create_conversation = AsyncMock(return_value="conv1")
+        svc._download_media = AsyncMock(return_value=[])
+        svc._save_user_message = AsyncMock(return_value="m1")
+        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
+        svc._handle_text = AsyncMock()
+
+        msg = _make_msg()
+        ctx = _make_reply_ctx()
+
+        with patch.object(
+            WecomMessageService,
+            "_notify_web_conversation_updated",
+            new=AsyncMock(),
+        ) as mock_notify:
+            await svc.handle_message(msg, ctx)
+            mock_notify.assert_awaited_once_with("uid1", "conv1")

@@ -235,7 +235,21 @@
       "Bash(python -m pytest backend/tests/test_wecom_message_service.py backend/tests/test_wecom_user_mapping.py -q --tb=short)",
       "Bash(./git-push.sh \"feat: 群聊目标被动收集，消息到达时自动upsert wecom_chat_targets\")",
       "Bash(grep -n \"ALTER TABLE wecom_user_mappings\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
-      "Bash(scp /Users/wucong/EVERYDAYAIONE/backend/core/config.py root@47.110.94.25:/var/www/everydayai/backend/core/config.py)"
+      "Bash(scp /Users/wucong/EVERYDAYAIONE/backend/core/config.py root@47.110.94.25:/var/www/everydayai/backend/core/config.py)",
+      "Bash(ssh -o ConnectTimeout=10 root@47.110.94.25 'cd /var/www/everydayai/backend && source venv/bin/activate && python3 -c \"\":*)",
+      "Bash(ssh -o ConnectTimeout=10 root@47.110.94.25 'journalctl -u everydayai-backend --no-pager --since \"\"2026-03-23 09:12:00\"\" 2>/dev/null | grep -E \"\"platform_map.*sync|Platform map|shard.*platform\"\" | tail -5; echo \"\"===\"\"; cd /var/www/everydayai/backend && source venv/bin/activate && python3 -c \"\":*)",
+      "Bash(ssh -o ConnectTimeout=10 root@47.110.94.25 'echo \"\"=== ERRORS ===\"\"; journalctl -u everydayai-backend --no-pager --since \"\"2026-03-23 09:18:00\"\" 2>/dev/null | grep -c \"\"ERROR\"\"; echo; echo \"\"=== PLATFORM MAP ===\"\"; journalctl -u everydayai-backend --no-pager --since \"\"2026-03-23 09:18:00\"\" 2>/dev/null | grep -E \"\"platform_map|shard.*platform\"\" | tail -5; echo; cd /var/www/everydayai/backend && source venv/bin/activate && python3 -c \"\":*)",
+      "Bash(scp /Users/wucong/EVERYDAYAIONE/backend/services/kuaimai/erp_sync_master_handlers.py root@47.110.94.25:/var/www/everydayai/backend/services/kuaimai/erp_sync_master_handlers.py)",
+      "Bash(ssh -o ConnectTimeout=10 root@47.110.94.25 'echo \"\"=== ERRORS ===\"\"; journalctl -u everydayai-backend --no-pager --since \"\"2026-03-23 09:21:00\"\" 2>/dev/null | grep -c \"\"ERROR\"\"; echo; cd /var/www/everydayai/backend && source venv/bin/activate && python3 -c \"\":*)",
+      "Bash(grep -r \"send_to_user\\\\|send_to_connection\\\\|send_to_task\" backend/services/wecom/ --include=*.py)",
+      "Bash(grep -E \"\\\\.\\(sql|py\\)$\")",
+      "Bash(grep -r \"conversation_list\\\\|loadConversations\\\\|refreshConversations\\\\|wecom.*conversation\" frontend/src --include=*.ts --include=*.tsx)",
+      "Bash(grep -r \"wecom\\\\|企微\\\\|WeCom\\\\|tabSync\\\\|broadcast\" frontend/src/pages/Chat.tsx --include=*.tsx)",
+      "Bash(grep -n \"def _notify_progress\\\\|def _slice_text_only\\\\|def _extract_text\" /Users/wucong/EVERYDAYAIONE/backend/services/agent_loop*.py /Users/wucong/EVERYDAYAIONE/backend/services/agent_context.py)",
+      "Bash(python -m pytest /Users/wucong/EVERYDAYAIONE/backend/tests/test_wecom_message_service.py -v --tb=short)",
+      "Bash(npx vitest:*)",
+      "Bash(scp /Users/wucong/EVERYDAYAIONE/backend/config/erp_tools.py root@47.110.94.25:/var/www/everydayai/backend/config/erp_tools.py)",
+      "Bash(./git-push.sh \"fix: ERP同步全面优化+本地查询优先+多处bug修复:*)"
     ]
   }
 }

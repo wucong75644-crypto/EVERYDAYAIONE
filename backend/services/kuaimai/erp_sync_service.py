@@ -44,6 +44,7 @@ class ErpSyncService:
     INITIAL_DAYS_OVERRIDE: dict[str, int] = {
         "order": 90,
         "aftersale": 90,
+        "platform_map": 1,  # 不按时间分片，跑一遍即可
     }
 
     # item_index 排序键（设计文档 BUG-2：保证跨调用稳定）
@@ -58,11 +59,12 @@ class ErpSyncService:
 
     FLUSH_THRESHOLD = 1000  # 每积累N条写一次库，控制内存峰值
 
-    def __init__(self, db: Client, lock_extend_fn=None) -> None:
+    def __init__(self, db: Client, lock_extend_fn=None, aggregation_queue: asyncio.Queue | None = None) -> None:
         self.db = db
         self.settings = get_settings()
         self._client: KuaiMaiClient | None = None
         self._lock_extend_fn = lock_extend_fn
+        self._aggregation_queue = aggregation_queue
 
     def _get_client(self) -> KuaiMaiClient:
         if self._client is None:
@@ -100,8 +102,8 @@ class ErpSyncService:
             self._update_sync_state_error(sync_type, str(e))
             raise
 
-    # 初始同步并发分片数（Supabase Free 套餐性能有限，串行更稳定）
-    INITIAL_SYNC_CONCURRENCY = 1
+    # 初始同步并发分片数（API 限流由全局 _API_SEM 12QPS 保护）
+    INITIAL_SYNC_CONCURRENCY = 3
 
     async def _run_initial_sync(self, sync_type: str, state: dict[str, Any]) -> None:
         """
@@ -483,18 +485,15 @@ class ErpSyncService:
 
     # ── 聚合计算 ──────────────────────────────────────────
 
-    # Redis 聚合队列 key
-    AGGREGATION_QUEUE_KEY = "erp:aggregation_queue"
-
     def run_aggregation(
         self,
         affected_keys: list[tuple[str, str]],
     ) -> None:
         """
-        将受影响的 (outer_id, stat_date) 推入 Redis 队列，
+        将受影响的 (outer_id, stat_date) 推入内存队列，
         由独立消费者串行聚合，避免并发写入时阻塞拉取或打满 DB。
 
-        Redis 不可用时降级为同步逐条聚合。
+        无内存队列时降级为同步逐条聚合。
 
         Args:
             affected_keys: [(outer_id, stat_date_str), ...]
@@ -502,29 +501,26 @@ class ErpSyncService:
         if not affected_keys:
             return
 
-        try:
-            import json
-            from core.redis import RedisClient
-            # RedisClient._instance 在启动时已初始化，直接取同步引用
-            redis = RedisClient._instance
-            if redis is None:
-                raise RuntimeError("Redis not initialized")
-            pipe = redis.pipeline(transaction=False)
-            for outer_id, stat_date in affected_keys:
-                pipe.rpush(
-                    self.AGGREGATION_QUEUE_KEY,
-                    json.dumps({"outer_id": outer_id, "stat_date": stat_date}),
-                )
-            asyncio.ensure_future(pipe.execute())
-        except Exception as e:
-            logger.warning(f"Aggregation queue push failed, fallback to sync | error={e}")
+        if self._aggregation_queue is not None:
+            for key in affected_keys:
+                try:
+                    self._aggregation_queue.put_nowait(key)
+                except asyncio.QueueFull:
+                    logger.warning("Aggregation queue full, dropping oldest")
+                    try:
+                        self._aggregation_queue.get_nowait()
+                        self._aggregation_queue.put_nowait(key)
+                    except Exception:
+                        pass
+        else:
+            # 无队列时同步聚合（兜底）
             self._run_aggregation_sync(affected_keys)
 
     def _run_aggregation_sync(
         self,
         affected_keys: list[tuple[str, str]],
     ) -> None:
-        """降级：同步逐条聚合（Redis 不可用时）"""
+        """降级：同步逐条聚合"""
         for outer_id, stat_date in affected_keys:
             try:
                 self.db.rpc(

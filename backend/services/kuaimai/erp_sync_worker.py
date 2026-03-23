@@ -43,6 +43,8 @@ class ErpSyncWorker:
         self._last_platform_map_sync: datetime | None = None
         self._last_daily_maintenance: datetime | None = None
         self._last_deletion_detection: datetime | None = None
+        # 内存聚合队列（替代 Redis 队列，消除网络超时问题）
+        self.aggregation_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue(maxsize=10000)
 
     async def start(self) -> None:
         """启动同步循环"""
@@ -115,7 +117,7 @@ class ErpSyncWorker:
         try:
             await self._extend_lock()  # 并行任务启动时续期锁
             from services.kuaimai.erp_sync_service import ErpSyncService
-            service = ErpSyncService(self.db, lock_extend_fn=self._extend_lock)
+            service = ErpSyncService(self.db, lock_extend_fn=self._extend_lock, aggregation_queue=self.aggregation_queue)
             await service.sync(sync_type)
         except Exception as e:
             logger.error(
@@ -271,12 +273,12 @@ class ErpSyncWorker:
             from services.kuaimai.erp_sync_service import ErpSyncService
             svc = ErpSyncService(self.db)
 
-            # 全量拉取 API 商品的 outer_id 集合（pageSize=500 减少调用次数）
+            # 全量拉取 API 商品的 outer_id 集合
             products = await svc.fetch_all_pages(
                 "item.list.query",
                 {"startModified": "2020-01-01 00:00:00", "endModified": "2099-12-31 23:59:59"},
                 response_key="items",
-                page_size=500,
+                page_size=100,
             )
             api_ids = {p.get("outerId") for p in products if p.get("outerId")}
 
@@ -379,46 +381,33 @@ class ErpSyncWorker:
 
     # ── 聚合队列消费者 ────────────────────────────────────
 
-    AGGREGATION_QUEUE_KEY = "erp:aggregation_queue"
-
     async def _aggregation_consumer(self) -> None:
-        """串行消费 Redis 聚合队列，逐条调用 RPC，不阻塞数据拉取"""
-        import json
-        from core.redis import RedisClient
-
+        """串行消费内存聚合队列，逐条调用 RPC，不阻塞数据拉取"""
         logger.info("Aggregation consumer started")
-        idle_interval = 10  # 队列空时轮询间隔（秒），避免打爆 Upstash
         while self.is_running:
             try:
-                redis = await RedisClient.get_client()
-                # 批量取最多 50 条，减少 Upstash 请求次数
-                items = []
-                for _ in range(50):
-                    item = await redis.lpop(self.AGGREGATION_QUEUE_KEY)
-                    if not item:
-                        break
-                    items.append(item)
-
-                if not items:
-                    await asyncio.sleep(idle_interval)
+                # 阻塞等待，1 秒超时（避免 shutdown 时卡住）
+                try:
+                    outer_id, stat_date = await asyncio.wait_for(
+                        self.aggregation_queue.get(), timeout=1.0
+                    )
+                except asyncio.TimeoutError:
                     continue
 
-                for item in items:
-                    data = json.loads(item)
-                    try:
-                        self.db.rpc(
-                            "erp_aggregate_daily_stats",
-                            {"p_outer_id": data["outer_id"], "p_stat_date": data["stat_date"]},
-                        ).execute()
-                    except Exception as e:
-                        logger.warning(
-                            f"Aggregation consumer error | outer_id={data['outer_id']} | "
-                            f"date={data['stat_date']} | error={e}"
-                        )
+                try:
+                    self.db.rpc(
+                        "erp_aggregate_daily_stats",
+                        {"p_outer_id": outer_id, "p_stat_date": stat_date},
+                    ).execute()
+                except Exception as e:
+                    logger.warning(
+                        f"Aggregation consumer error | outer_id={outer_id} | "
+                        f"date={stat_date} | error={e}"
+                    )
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.warning(f"Aggregation consumer loop error | error={e}")
-                await asyncio.sleep(30)
+                logger.warning(f"Aggregation consumer error | error={e}")
+                await asyncio.sleep(5)
 
         logger.info("Aggregation consumer stopped")
