@@ -1,13 +1,13 @@
 # TECH_工具系统统一架构方案
 
-> **版本**：V4.0 | **日期**：2026-03-23 | **状态**：方案确认
+> **版本**：V4.1 | **日期**：2026-03-23 | **状态**：方案确认
 
 ---
 
 ## 一、一句话总结
 
-**现在**：AI 每次要翻 350 页说明书从 18 个工具里选一个。
-**优化后**：系统自动挑 8 个最相关的工具给 AI，不够时自动补充。
+**现在**：AI 每次要翻 350 页说明书从 18 个工具 + 178 个 action 里选。
+**优化后**：系统自动挑 ~8 个工具 + ~8 个 action，不够时自动补充。
 
 ---
 
@@ -24,9 +24,9 @@
 
 ### 导致的问题
 
-1. **AI 选错工具** — 18 个工具眼花，本地工具和远程工具分不清
+1. **AI 选错工具** — 18 个工具眼花，本地和远程分不清
 2. **查询慢** — 选了远程 API（2-5 秒）而不是本地数据库（5 毫秒）
-3. **查不到** — 远程 API 没有的数据，本地数据库有但没用上
+3. **查不到** — 远程 API 没数据，本地有但没用上
 4. **维护难** — 新增工具要改 3-4 个文件 + 改提示词
 
 ---
@@ -36,155 +36,266 @@
 ### 核心思路：两个改动
 
 ```
-改动 1：统一工具注册（给每个工具贴标签 + 标优先级）
-改动 2：智能筛选 + 兜底扩充（AI 只看相关工具，不够时自动补）
+改动 1：统一工具注册（给每个工具和 action 贴标签 + 标优先级）
+改动 2：双层智能筛选 + 兜底扩充
+        第一层：筛工具（18 → ~8）
+        第二层：筛 action（178 → ~8 per tool）
+        兜底：AI 调用了不在列表的工具/action 时自动补充
 ```
 
-### 改动 1：统一工具注册
+---
 
-所有工具按统一格式注册，带 tags 和 priority：
+## 四、改动 1：统一工具注册
+
+### 工具注册格式
 
 ```python
 {
-    name: "local_stock_query",          # 工具名
-    domain: "erp",                      # 所属领域
-    description: "查询库存数量和状态",    # 一句话描述
-    tags: ["库存", "可售", "锁定", "预占"],  # 语义标签（用于筛选匹配）
-    priority: 1,                        # 1=本地优先排前面，2=远程排后面
-    always_include: False,              # True=始终包含（如 route_to_chat）
+    name: "local_stock_query",
+    domain: "erp",
+    description: "查询库存数量和状态",
+    tags: ["库存", "可售", "锁定", "预占"],   # 语义标签
+    priority: 1,                              # 1=本地优先，2=远程
+    always_include: False,                    # True=始终包含
 }
 ```
 
-**新增工具只要注册一条**，系统自动筛选、自动排序，不需要改提示词。
+### action 也有标签（关键新增）
 
-### 改动 2：智能筛选 + 兜底扩充
+现在 erp_product_query 有 35 个 action，每个 action 在 registry 里已有 description。
+用 description 做匹配，筛选后**只保留相关的 action**：
 
-#### 正常流程（95% 的情况）
+```
+erp_product_query 的 35 个 action：
+
+  product_list     → description 含 "商品列表"
+  stock_status     → description 含 "库存快照"     ← 用户问"库存"，匹配！
+  warehouse_stock  → description 含 "仓库库存"     ← 用户问"库存"，匹配！
+  brand_list       → description 含 "品牌"         ← 用户没问品牌，排除
+  tag_list         → description 含 "标签"         ← 排除
+  sku_list         → description 含 "SKU规格"      ← 排除
+  ...
+
+筛选后 AI 只看到：
+  erp_product_query(action: enum["stock_status", "warehouse_stock", "product_list"])
+  而不是 35 个 action 全列出来
+```
+
+**效果**：单个工具的 token 从 ~2,600 字降到 ~600 字。
+
+---
+
+## 五、改动 2：双层智能筛选 + 兜底
+
+### 第一层：筛工具（18 → ~8）
 
 ```
 用户："SEVENTEENLSG01-01 库存多少"
   ↓
-系统用 tags 匹配用户输入（代码做，不消耗 AI）：
+分词 → ["SEVENTEENLSG01-01", "库存", "多少"]
+  ↓
+匹配工具 tags：
   "库存" → 命中 local_stock_query、erp_product_query
-  "编码" → 命中 local_product_identify
+  编码格式 → 命中 local_product_identify
   ↓
-按 priority 排序，取 Top 8：
-  1. local_product_identify   ← priority=1，本地，排前面
-  2. local_stock_query        ← priority=1，本地，排前面
-  3. erp_product_query        ← priority=2，远程，排后面
-  4. local_product_stats      ← 相关性次高
-  5. code_execute             ← 常驻（always_include=True）
-  6. erp_api_search           ← 常驻
-  7. route_to_chat            ← 常驻
-  8. ask_user                 ← 常驻
+排序规则：先 priority（本地排前面），同 priority 再按命中数
+  1. local_product_identify   ← priority=1
+  2. local_stock_query        ← priority=1
+  3. erp_product_query        ← priority=2
+  + 常驻工具
   ↓
-AI 看到 8 个工具 → 轻松选对 → 5 毫秒返回结果
+AI 看到 ~8 个工具
 ```
 
-#### 兜底流程（5% 的极端情况）
+### 第二层：筛 action（35 → ~8）
 
 ```
-用户："SEVENTEENLSG01-01 库存多少，顺便看下这个月退货情况"
+erp_product_query 被选中后：
   ↓
-第一轮筛选：匹配到"库存"相关的 8 个工具
-  → AI 查了库存 ✅
-  → AI 想查退货，但售后工具没在列表里
-  → AI 回复："我需要查售后数据但当前没有售后查询工具"
+用分词结果匹配 35 个 action 的 description：
+  "库存" → stock_status ✓、warehouse_stock ✓
+  "商品" → product_list ✓、product_detail ✓
+  其余 31 个 action → 不匹配 → 不给 AI 看
   ↓
-系统检测到"工具不足"信号
-  ↓
-自动用 AI 的回复重新筛选 → 补充售后工具
-  ↓
-第二轮：AI 用新补充的工具查退货 ✅
-  ↓
-全部完成 → 汇总回复用户
+AI 看到 erp_product_query(action: enum["stock_status", "warehouse_stock", ...])
+  只有 ~4 个 action，不是 35 个
 ```
 
-**用户完全无感知**，系统自动处理。
+### 兜底：AI 调了不存在的工具/action → 自动补充
+
+```
+AI 工具循环中：
+  ↓
+AI 返回 tool_call：
+  ├─ 工具名在列表中 + action 在列表中 → 正常执行 ✅
+  ├─ 工具名不在列表中 → 触发工具扩充 🔄
+  │    系统自动把该工具加入列表，重跑这一轮
+  └─ action 不在列表中 → 触发 action 扩充 🔄
+       系统自动把该 action 加入工具的 enum，重跑这一轮
+
+兜底最多触发 1 次，防止无限循环。
+```
+
+**为什么这样设计**：
+- 不靠 AI 的文字内容判断"缺不缺工具"（不可靠）
+- 直接看 AI 的行为——它调了一个不存在的工具名/action，100% 说明它需要
 
 ---
 
-## 四、完整流程图
+## 六、完整流程图
 
 ```
 用户发消息
   ↓
-Phase 1：AI 判断意图（不变，6 个选项）
+Phase 1：AI 判断意图（不变）
   → 聊天 / ERP查询 / 爬虫 / 图片 / 视频 / 追问
   ↓
 Phase 2：工具循环（优化部分）
   ↓
-┌─────────────────────────────────────────────┐
-│ Step 1：智能筛选（代码做，不消耗 AI）          │
-│                                             │
-│  用户输入分词 → 匹配工具 tags                 │
-│  → 按 priority 排序（本地排前，远程排后）      │
-│  → 取 Top 8 + 常驻工具                       │
-│  → 生成精简提示词（~20 行）                   │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│ Step 1：双层筛选（代码做，~1ms，不消耗 AI）        │
+│                                                  │
+│  用户输入分词                                     │
+│    ↓                                             │
+│  第一层：匹配工具 tags → 按 priority 排序 → Top 8  │
+│    ↓                                             │
+│  第二层：每个选中的工具，筛 action → 只保留匹配的    │
+│    ↓                                             │
+│  + 常驻工具（code_execute, route_to_chat, ask_user）│
+│    ↓                                             │
+│  生成精简提示词（~20 行核心规则）                    │
+└──────────────────────────────────────────────────┘
   ↓
-┌─────────────────────────────────────────────┐
-│ Step 2：AI 选工具执行（多轮循环）              │
-│                                             │
-│  轮次 1：AI 选工具 → 执行 → 结果回传          │
-│  轮次 2：AI 继续选 → 执行 → 结果回传          │
-│  ...                                        │
-│  轮次 N：数据够了 → route_to_chat 汇总回复    │
-│                                             │
-│  如果 AI 说"缺工具" → 触发兜底扩充            │
-│  → 重新筛选补充工具 → 继续循环                │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│ Step 2：AI 选工具执行（多轮循环）                   │
+│                                                  │
+│  轮次 1：AI 选工具 → 执行 → 结果回传               │
+│  轮次 2：AI 继续选 → 执行 → 结果回传               │
+│  ...                                             │
+│  轮次 N：数据够了 → route_to_chat 汇总回复          │
+│                                                  │
+│  ⚡ 如果 AI 调了不在列表的工具/action               │
+│  → 自动补充到列表（最多 1 次）→ 重跑这一轮          │
+└──────────────────────────────────────────────────┘
   ↓
 AI 汇总所有数据 → 回复用户
 ```
 
 ---
 
-## 五、数据对比
+## 七、用实际场景走一遍
+
+### 场景 1：简单查询
+
+```
+用户："SEVENTEENLSG01-01 库存多少"
+
+Step 1 筛选：
+  工具：local_product_identify、local_stock_query、erp_product_query + 常驻
+  action：stock_status、warehouse_stock（erp_product_query 只保留这 2 个）
+
+Step 2 AI 执行：
+  轮次 1：local_product_identify(code="SEVENTEENLSG01-01") → 识别出商品
+  轮次 2：local_stock_query(product_code="SEVENTEENLSG01") → 返回库存
+  轮次 3：route_to_chat → 汇总回复
+
+  总耗时 ~1 秒（3 轮 AI 调用 + 本地查询毫秒级）
+```
+
+### 场景 2：多任务查询
+
+```
+用户："SEVENTEENLSG01-01 库存多少，顺便看下退货情况"
+
+Step 1 筛选：
+  分词 → ["库存", "退货"]
+  工具：local_product_identify、local_stock_query、local_aftersale_query、erp_product_query + 常驻
+  → "库存"和"退货"都命中了，8 个工具够用 ✅
+
+Step 2 AI 执行：
+  轮次 1：local_product_identify → 识别商品
+  轮次 2：local_stock_query → 库存数据
+  轮次 3：local_aftersale_query → 退货数据
+  轮次 4：route_to_chat → 汇总回复
+```
+
+### 场景 3：兜底扩充
+
+```
+用户："帮我看下 ABC123 的物流到哪了"
+
+Step 1 筛选：
+  分词 → ["ABC123", "物流"]
+  工具：local_product_identify、local_doc_query、erp_trade_query + 常驻
+  action：erp_trade_query 只保留了 order_list、outstock_query
+         但 express_query（物流轨迹）被筛掉了
+
+Step 2 AI 执行：
+  轮次 1：local_product_identify → 识别编码
+  轮次 2：AI 调 erp_trade_query(action="express_query")
+          → express_query 不在当前 action 列表中！
+          → 系统自动补充 express_query 到 enum → 重跑
+  轮次 2（重跑）：erp_trade_query(action="express_query") → 物流信息 ✅
+  轮次 3：route_to_chat → 回复
+```
+
+---
+
+## 八、排序规则（修复漏洞 4）
+
+```python
+# ❌ 错误：命中数优先 → 远程工具可能排在本地前面
+scored.sort(key=lambda x: (-hits, priority))
+
+# ✅ 正确：priority 优先 → 本地始终排前面，同级再按命中数
+scored.sort(key=lambda x: (priority, -hits))
+```
+
+示例：
+
+| 工具 | priority | 命中数 | 排序结果 |
+|------|----------|--------|---------|
+| local_stock_query | 1 | 1 | 第 1 |
+| local_product_identify | 1 | 1 | 第 2 |
+| erp_product_query | 2 | 3 | 第 3 |
+
+即使远程工具命中数更高，本地工具仍排前面。
+
+---
+
+## 九、数据对比
 
 ### AI 工作量
 
 | 指标 | 现在 | 优化后 | 变化 |
 |------|------|--------|------|
-| 每次看的工具数 | 18 个 | ~8 个 | -56% |
-| 每次读的文字量 | ~7,700 字 | ~3,450 字 | -55% |
-| 提示词规则 | 350 行 | ~20 行 | -94% |
-| 工具说明 | 178 个 action | ~50 个 action | -72% |
+| 工具数 | 18 个 | ~8 个 | -56% |
+| action 数 | 178 个 | ~8 个/工具 | -72% |
+| 总文字量 | ~7,700 字 | ~2,000 字 | **-74%** |
+| 提示词 | 350 行 | ~20 行 | -94% |
 
 ### 用户体验
 
-| 指标 | 现在 | 优化后 | 变化 |
-|------|------|--------|------|
-| 商品查询速度 | 2-5 秒 | 5-50 毫秒 | 快 100 倍 |
-| 工具选对率 | ~70% | ~90%+ | +20% |
-| 多任务查询 | 可能漏工具 | 兜底自动补充 | 更可靠 |
-
-### 开发维护
-
-| 指标 | 现在 | 优化后 | 变化 |
-|------|------|--------|------|
-| 新增一个工具 | 改 3-4 个文件 + 改提示词 | 注册 1 条带标签 | 简单 |
-| 新增一个领域 | 写工具 + 写提示词 + 改多文件 | 注册工具 + 标签 | 简单 |
+| 指标 | 现在 | 优化后 |
+|------|------|--------|
+| 商品查询速度 | 2-5 秒 | 5-50 毫秒 |
+| 工具选对率 | ~70% | ~90%+ |
+| 多任务查询 | 可能漏工具 | 兜底自动补充 |
 
 ---
 
-## 六、提示词精简
+## 十、提示词精简
 
-### 现在（每次全量加载）
+### 现在 → 优化后
 
 ```
-BASE_AGENT_PROMPT           ~170 字
-ERP_ROUTING_PROMPT          ~11,000 字   ← 75%，太长
-LOCAL_ROUTING_PROMPT        ~3,300 字
-CODE_ROUTING_PROMPT         ~500 字
-────────────────────────────
-总计 ~14,970 字 ≈ 3,663 tokens
+现在：~14,970 字 ≈ 3,663 tokens
+优化：~600 字 ≈ 150 tokens（降 96%）
 ```
 
-### 优化后（只保留核心规则）
+### 精简后的核心规则（全部内容）
 
-```python
-ERP_CORE_PROMPT = """
+```
 ## 工作模式
 1. 两步查询：先传 action 拿参数文档 → 再传 params 执行
 2. 简单统计（如"今天多少单"）可直接传 params
@@ -200,19 +311,18 @@ ERP_CORE_PROMPT = """
 ## 规则
 - 禁止猜测参数类型，不确定时 ask_user
 - 数据采集完毕 → route_to_chat 汇总回复
-"""
-# ~600 字 ≈ 150 tokens（降 89%）
 ```
 
-**可以删除的提示词**（功能已由代码保证）：
-- 本地/远程工具选择指导 → 智能筛选已排好序
-- LOCAL_ROUTING_PROMPT 全部 → 筛选器自动选本地工具
+**350 行的规则为什么能删**：
+- 工具选择指导 → 智能筛选已排好序，不需要提示词指导
+- 本地/远程优先级 → priority 排序保证
 - 高频易混淆场景 → 工具少了不会混淆
 - 必填参数陷阱 → 两步模式 Step 1 已返回参数文档
+- action 选择说明 → action 已筛选，只剩相关的
 
 ---
 
-## 七、tags 设计示例
+## 十一、tags 设计
 
 ### ERP 本地工具
 
@@ -242,7 +352,7 @@ ERP_CORE_PROMPT = """
 | erp_taobao_query | 淘宝, 天猫, 奇门 | 2 |
 | erp_execute | 修改, 更新, 创建, 标记 | 2 |
 
-### 常驻工具
+### 常驻工具（始终包含）
 
 | 工具 | always_include |
 |------|---------------|
@@ -251,40 +361,26 @@ ERP_CORE_PROMPT = """
 | route_to_chat | True |
 | ask_user | True |
 
-### 其他领域
-
-| 工具 | domain | tags | priority |
-|------|--------|------|----------|
-| social_crawler | crawler | 小红书, 抖音, 搜索, 口碑 | 1 |
-| code_execute | code | 计算, 统计, 聚合, Python | 1 |
-
 ---
 
-## 八、筛选算法
+## 十二、筛选算法
+
+### 工具筛选
 
 ```python
 def select_tools(domain, user_input, top_k=8):
-    """根据用户输入筛选最相关的工具"""
-
-    # 1. 获取该领域所有工具
     all_tools = get_domain_tools(domain)
+    user_words = tokenize(user_input)
 
-    # 2. 用户输入分词
-    user_words = jieba.cut(user_input)
-
-    # 3. 计算每个工具的匹配度 = tags 命中数
     scored = []
     for tool in all_tools:
-        hits = len(set(user_words) & set(tool.tags))
-        scored.append((hits, tool.priority, tool))
+        hits = len(user_words & set(tool.tags))
+        scored.append((tool.priority, -hits, tool))  # priority 优先
 
-    # 4. 排序：先按命中数降序，再按 priority 升序（本地排前面）
-    scored.sort(key=lambda x: (-x[0], x[1]))
-
-    # 5. 取 Top K
+    scored.sort()
     result = [tool for _, _, tool in scored[:top_k]]
 
-    # 6. 确保常驻工具始终包含
+    # 常驻工具去重后追加
     for tool in all_tools:
         if tool.always_include and tool not in result:
             result.append(tool)
@@ -292,38 +388,62 @@ def select_tools(domain, user_input, top_k=8):
     return result
 ```
 
+### action 筛选
+
+```python
+def filter_actions(tool_entry, user_words, max_actions=8):
+    """筛选工具内的 action，只保留和用户输入相关的"""
+    if not tool_entry.actions:
+        return tool_entry.schema  # 无 action 的工具直接返回
+
+    scored = {}
+    for action_name, action_entry in tool_entry.actions.items():
+        # 用 action 的 description 匹配用户分词
+        desc_words = set(tokenize(action_entry.description))
+        hits = len(user_words & desc_words)
+        scored[action_name] = hits
+
+    # 取匹配度最高的 Top N action
+    top_actions = sorted(scored, key=lambda k: -scored[k])[:max_actions]
+
+    # 生成精简 schema：action enum 只包含 top_actions
+    return build_filtered_schema(tool_entry, top_actions)
+```
+
 ### 兜底扩充
 
 ```python
-async def phase2_loop_with_fallback(domain, user_input, messages):
-    """Phase 2 循环 + 工具不足时自动扩充"""
+async def execute_with_fallback(tool_calls, current_tools, current_actions):
+    """执行工具调用，不存在的工具/action 自动补充"""
+    expanded = False
 
-    tools = select_tools(domain, user_input)
+    for tc in tool_calls:
+        tool_name = tc["function"]["name"]
+        args = json.loads(tc["function"]["arguments"])
+        action = args.get("action")
 
-    for turn in range(max_turns):
-        response = await call_brain(messages, tools)
+        # 工具不在列表 → 补充工具
+        if tool_name not in current_tools:
+            new_tool = TOOL_REGISTRY.get(tool_name)
+            if new_tool and not expanded:
+                current_tools.append(new_tool)
+                expanded = True  # 最多补充 1 次
+                return "RETRY"   # 重跑这一轮
 
-        # 检查 AI 是否表示工具不足
-        if ai_says_need_more_tools(response):
-            # 用 AI 的回复重新筛选，补充新工具
-            ai_text = extract_text(response)
-            extra_tools = select_tools(domain, ai_text)
-            for t in extra_tools:
-                if t not in tools:
-                    tools.append(t)
-            continue  # 用扩充后的工具列表重新跑
+        # action 不在 enum → 补充 action
+        if action and action not in current_actions.get(tool_name, []):
+            if not expanded:
+                current_actions[tool_name].append(action)
+                expanded = True
+                return "RETRY"
 
-        # 正常执行工具
-        execute_tools(response)
-
-        # 检查是否完成
-        if is_routing_decision(response):
-            break
+        # 正常执行
+        await execute(tc)
 ```
 
 ---
 
-## 九、实施计划
+## 十三、实施计划
 
 ### 第一步（2 天）：统一注册
 
@@ -338,31 +458,31 @@ async def phase2_loop_with_fallback(domain, user_input, messages):
 
 验证：所有现有测试通过，功能不变。
 
-### 第二步（2-3 天）：智能筛选 + 兜底 + 提示词精简
+### 第二步（2-3 天）：双层筛选 + 兜底 + 提示词精简
 
 | 文件 | 做什么 |
 |------|--------|
-| `services/tool_selector.py`（新建） | tags 筛选 + 兜底扩充逻辑 |
-| `services/agent_loop_v2.py` | 工具加载从全量改为 select_tools() |
+| `services/tool_selector.py`（新建） | 工具筛选 + action 筛选 + 兜底逻辑 |
+| `services/agent_loop_v2.py` | 工具加载改为 select_tools() + 兜底循环 |
 | `config/phase_tools.py` | 调整工具构建入口 |
 | `config/erp_tools.py` | 提示词精简为 ERP_CORE_PROMPT |
 | `config/erp_local_tools.py` | 删除 LOCAL_ROUTING_PROMPT |
 
 验证：
-- 工具数从 18 降到 ~8
-- 总 token 降 55%
-- 多任务查询兜底扩充生效
-- 混合意图正常处理
+- 工具数 18 → ~8，action 数 178 → ~8/工具
+- 总 token 降 74%
+- 兜底扩充：AI 调不存在的工具/action 时自动补充
+- 多任务查询正常
 
 ### 第三步（持续）：监控调优
 
-- 工具选择准确率日志
-- tags 效果调优
+- 工具/action 筛选命中率
+- 兜底触发频率
 - top_k 参数调优
 
 ---
 
-## 十、文件影响范围
+## 十四、文件影响范围
 
 ### 要改（10 个文件）
 
@@ -374,10 +494,10 @@ async def phase2_loop_with_fallback(domain, user_input, messages):
 | `config/crawler_tools.py` | 小改 | 第一步 |
 | `config/code_tools.py` | 小改 | 第一步 |
 | `config/agent_tools.py` | 小改 | 第一步 |
-| `services/tool_selector.py` | 新建 ~80 行 | 第二步 |
-| `services/agent_loop_v2.py` | 改几行 | 第二步 |
+| `services/tool_selector.py` | 新建 ~120 行 | 第二步 |
+| `services/agent_loop_v2.py` | 改 ~20 行 | 第二步 |
 | `config/phase_tools.py` | 小改 | 第二步 |
-| 测试文件 | 新增测试 | 第一步+第二步 |
+| 测试文件 | 新增 | 第一步+第二步 |
 
 ### 不动
 
@@ -389,12 +509,13 @@ async def phase2_loop_with_fallback(domain, user_input, messages):
 
 ---
 
-## 十一、风险和兜底
+## 十五、风险和兜底
 
 | 风险 | 兜底方案 |
 |------|---------|
-| tags 筛选漏了关键工具 | 常驻工具始终包含 + AI 反馈后自动扩充 |
-| 筛选服务出错 | 降级为全量加载（回到现在的逻辑） |
-| 多任务工具不够 | 兜底扩充自动补充缺失工具 |
-| v1 降级 | ToolEntry.to_openai_schema() 自动转格式 |
+| tags 匹配漏了工具 | 常驻工具 + 兜底自动补充 |
+| action 筛选漏了关键 action | 兜底检测 AI 调用不存在的 action → 自动补充 |
+| 筛选服务出错 | 降级为全量加载（现有逻辑不变） |
+| 多任务工具不够 | 兜底最多扩充 1 次 |
+| v1 降级 | to_openai_schema() 自动转格式 |
 | 提示词精简后规则遗漏 | 保留核心规则（两步查询/编码识别/时间类型） |

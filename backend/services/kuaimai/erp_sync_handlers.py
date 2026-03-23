@@ -450,8 +450,8 @@ async def sync_order(
                     "doc_created_at": _safe_ts(doc.get("created")),
                     "doc_modified_at": _safe_ts(doc.get("modified")),
                     "item_index": idx,
-                    "outer_id": item.get("sysOuterId"),
-                    "sku_outer_id": item.get("outerSkuId"),
+                    "outer_id": item.get("sysItemOuterId"),   # 主编码
+                    "sku_outer_id": item.get("sysOuterId"),    # SKU编码
                     "item_name": item.get("title"),
                     "quantity": item.get("num"),
                     "price": item.get("price"),
