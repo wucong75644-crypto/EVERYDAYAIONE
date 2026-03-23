@@ -249,7 +249,10 @@
       "Bash(python -m pytest /Users/wucong/EVERYDAYAIONE/backend/tests/test_wecom_message_service.py -v --tb=short)",
       "Bash(npx vitest:*)",
       "Bash(scp /Users/wucong/EVERYDAYAIONE/backend/config/erp_tools.py root@47.110.94.25:/var/www/everydayai/backend/config/erp_tools.py)",
-      "Bash(./git-push.sh \"fix: ERP同步全面优化+本地查询优先+多处bug修复:*)"
+      "Bash(./git-push.sh \"fix: ERP同步全面优化+本地查询优先+多处bug修复:*)",
+      "Bash(grep -E \"\\\\.py$\")",
+      "Bash(grep -c \"ApiEntry\\(\" /Users/wucong/EVERYDAYAIONE/backend/services/kuaimai/registry/*.py)",
+      "Bash(./git-push.sh \"fix: 采购/收货/上架单同步字段映射修正（outer_id↔sku_outer_id对调，quantity取count，remark从doc头取）\")"
     ]
   }
 }

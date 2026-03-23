@@ -79,13 +79,24 @@ def parse_csv(sku_map: dict[str, str]) -> tuple[dict[str, list[dict]], int]:
     seen: dict[str, set] = defaultdict(set)
     unmapped = 0
 
+    min_cols = COL_RATIO + 1  # 至少需要142列
+
     with open(CSV_PATH, "r", encoding="gbk") as f:
         reader = csv.reader(f)
         next(reader)  # 跳过空行
         next(reader)  # 跳过表头
 
+        pending: list[str] | None = None  # 被拆行的前半段
         for row in reader:
-            if len(row) <= COL_RATIO:
+            # 处理被换行符拆成两行的情况：前半段列数不足，与后半段合并
+            if len(row) < min_cols and row[0].strip():
+                pending = row
+                continue
+            if pending is not None:
+                # 字段内含换行导致拆行：前半段末列 + 后半段首列 = 原始完整字段
+                row = pending[:-1] + [pending[-1] + row[0]] + row[1:]
+                pending = None
+            if len(row) < min_cols:
                 continue
 
             suite_outer_id = row[COL_OUTER_ID].strip()

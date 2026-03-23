@@ -156,18 +156,18 @@ async def sync_purchase(
                 "doc_created_at": _safe_ts(doc.get("created")),
                 "doc_modified_at": _safe_ts(doc.get("modified")),
                 "item_index": item["_item_index"],
-                "outer_id": item.get("outerId"),
-                "sku_outer_id": item.get("itemOuterId"),
+                "outer_id": item.get("itemOuterId"),      # itemOuterId=主编码
+                "sku_outer_id": item.get("outerId"),      # outerId=SKU编码
                 "item_name": item.get("title"),
-                "quantity": item.get("purchaseNum"),
+                "quantity": item.get("count"),
                 "quantity_received": item.get("arrivedQuantity"),
                 "price": item.get("price"),
                 "amount": item.get("amount") or item.get("totalFee"),
-                "supplier_name": detail.get("supplierName"),
+                "supplier_name": item.get("supplierName") or detail.get("supplierName"),
                 "warehouse_name": detail.get("warehouseName"),
                 "creator_name": detail.get("createrName"),
-                "delivery_date": _safe_ts(detail.get("deliveryDate")),
-                "remark": detail.get("remark"),
+                "delivery_date": _safe_ts(item.get("deliveryDate") or detail.get("deliveryDate")),
+                "remark": doc.get("remark"),
                 "extra_json": extra,
             })
 
@@ -208,10 +208,10 @@ async def sync_receipt(
                 "doc_created_at": _safe_ts(doc.get("created")),
                 "doc_modified_at": _safe_ts(doc.get("modified")),
                 "item_index": item["_item_index"],
-                "outer_id": item.get("outerId"),
-                "sku_outer_id": item.get("itemOuterId"),
+                "outer_id": item.get("itemOuterId"),      # itemOuterId=主编码
+                "sku_outer_id": item.get("outerId"),      # outerId=SKU编码
                 "item_name": item.get("title"),
-                "quantity": item.get("quantity"),
+                "quantity": item.get("count"),
                 "price": item.get("price"),
                 "amount": item.get("amount"),
                 "supplier_name": detail.get("supplierName"),
@@ -254,10 +254,10 @@ async def sync_shelf(
                 "doc_created_at": _safe_ts(doc.get("created")),
                 "doc_modified_at": _safe_ts(doc.get("modified")),
                 "item_index": item["_item_index"],
-                "outer_id": item.get("outerId"),
-                "sku_outer_id": item.get("itemOuterId"),
+                "outer_id": item.get("itemOuterId"),      # itemOuterId=主编码
+                "sku_outer_id": item.get("outerId"),      # outerId=SKU编码
                 "item_name": item.get("title"),
-                "quantity": item.get("quantity"),
+                "quantity": item.get("count"),
                 "warehouse_name": detail.get("warehouseName"),
             })
 
