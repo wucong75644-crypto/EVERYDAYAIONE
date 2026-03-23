@@ -92,18 +92,31 @@ class RedisPubSubMixin:
         logger.info(f"Redis Pub/Sub stopped | worker={self._worker_id}")
 
     async def _redis_listen_loop(self) -> None:
-        """Redis 监听循环：接收其他 Worker 发来的消息（含自动重连）"""
+        """Redis 监听循环：接收其他 Worker 发来的消息（含自动重连 + 心跳保活）"""
         retry_delay = 2
         max_delay = 30
         consecutive_failures = 0
+        ping_interval = 60  # 每 60 秒发一次 ping，防止 Upstash 空闲断连
 
         while True:
             try:
                 got_message = False
+                last_ping = asyncio.get_event_loop().time()
+
                 async for raw_msg in self._pubsub.listen():
                     got_message = True
                     consecutive_failures = 0
-                    if raw_msg["type"] != "message":
+
+                    # 定期 ping 保活
+                    now = asyncio.get_event_loop().time()
+                    if now - last_ping > ping_interval:
+                        try:
+                            await self._pubsub.ping()
+                        except Exception:
+                            pass
+                        last_ping = now
+
+                    if raw_msg["type"] not in ("message",):
                         continue
 
                     try:

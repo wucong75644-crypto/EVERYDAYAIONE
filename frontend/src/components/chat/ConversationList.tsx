@@ -163,6 +163,23 @@ export default function ConversationList({
     loadConversations(true);
   }, [loadConversations]);
 
+  // 监听企微消息到达时的对话列表刷新通知（1s 防抖，防止群聊连续消息导致 API 风暴）
+  useEffect(() => {
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const handler = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        loadConversations();
+      }, 1000);
+    };
+    window.addEventListener('conversation-list-refresh', handler);
+    return () => {
+      window.removeEventListener('conversation-list-refresh', handler);
+      if (debounceTimer) clearTimeout(debounceTimer);
+    };
+  }, [loadConversations]);
+
   // 乐观更新：消息更新时移动对话到最前
   useEffect(() => {
     if (!optimisticUpdate) return;

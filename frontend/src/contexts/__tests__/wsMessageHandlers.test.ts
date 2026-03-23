@@ -81,6 +81,7 @@ function createMockStore(): MessageStoreActions {
     setAgentStepHint: vi.fn(),
     clearAgentStepHint: vi.fn(),
     appendStreamingThinking: vi.fn(),
+    markForceRefresh: vi.fn(),
   };
 }
 
@@ -123,11 +124,13 @@ describe('wsMessageHandlers', () => {
   // ========================================
 
   describe('createWSMessageHandlers', () => {
-    it('should return all 9 handlers', () => {
+    it('should return all 14 handlers', () => {
       const expectedTypes = [
         'message_start', 'message_chunk', 'message_progress',
         'message_done', 'message_error', 'image_partial_update',
-        'credits_changed', 'subscribed', 'error',
+        'credits_changed', 'subscribed', 'conversation_updated',
+        'memory_extracted', 'thinking_chunk', 'agent_step',
+        'routing_complete', 'error',
       ];
 
       for (const type of expectedTypes) {
@@ -749,7 +752,50 @@ describe('wsMessageHandlers', () => {
   });
 
   // ========================================
-  // 12. error handler
+  // 12. conversation_updated
+  // ========================================
+
+  describe('conversation_updated', () => {
+    it('should dispatch CustomEvent and markForceRefresh', () => {
+      const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+
+      handlers.conversation_updated({
+        type: 'conversation_updated',
+        conversation_id: 'conv_wecom_1',
+        payload: {},
+        timestamp: Date.now(),
+      });
+
+      // CustomEvent dispatched
+      expect(dispatchSpy).toHaveBeenCalledTimes(1);
+      const event = dispatchSpy.mock.calls[0][0] as CustomEvent;
+      expect(event.type).toBe('conversation-list-refresh');
+      expect(event.detail).toEqual({ conversationId: 'conv_wecom_1' });
+
+      // markForceRefresh called
+      expect((store as any).markForceRefresh).toHaveBeenCalledWith('conv_wecom_1');
+
+      dispatchSpy.mockRestore();
+    });
+
+    it('should ignore when conversation_id is missing', () => {
+      const dispatchSpy = vi.spyOn(window, 'dispatchEvent');
+
+      handlers.conversation_updated({
+        type: 'conversation_updated',
+        payload: {},
+        timestamp: Date.now(),
+      });
+
+      expect(dispatchSpy).not.toHaveBeenCalled();
+      expect((store as any).markForceRefresh).not.toHaveBeenCalled();
+
+      dispatchSpy.mockRestore();
+    });
+  });
+
+  // ========================================
+  // 13. error handler
   // ========================================
 
   describe('error', () => {

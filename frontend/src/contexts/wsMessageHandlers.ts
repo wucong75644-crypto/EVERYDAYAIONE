@@ -478,6 +478,26 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       }
     },
 
+    conversation_updated: (msg) => {
+      const { conversation_id } = msg;
+      if (!conversation_id) return;
+
+      logger.info('ws:conversation', 'conversation updated (wecom)', { conversationId: conversation_id });
+
+      // 通知 ConversationList 刷新列表
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('conversation-list-refresh', {
+            detail: { conversationId: conversation_id },
+          }),
+        );
+      }
+
+      // 标记该对话消息需要强制刷新（用户切入时重新加载）
+      const store = deps.getStore();
+      store.markForceRefresh(conversation_id);
+    },
+
     error: (msg) => {
       const message = msg.message ?? msg.payload?.message;
       logger.error('ws:error', 'error received', undefined, { error: message });

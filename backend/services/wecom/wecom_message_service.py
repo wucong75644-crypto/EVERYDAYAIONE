@@ -23,6 +23,7 @@ from schemas.wecom import (
     WecomReplyContext,
 )
 from services.conversation_service import ConversationService
+from services.websocket_manager import ws_manager
 from services.wecom.user_mapping_service import WecomUserMappingService
 from services.wecom.wecom_ai_mixin import WecomAIMixin
 
@@ -97,9 +98,7 @@ class WecomMessageService(WecomAIMixin):
                     return
 
             # 3. 多模态资源下载（图片 URL → OSS 永久 URL，需在保存前完成）
-            oss_image_urls = await self._download_media(
-                msg, user_id, reply_ctx
-            )
+            oss_image_urls = await self._download_media(msg, user_id)
 
             # 4. 保存用户消息到 DB（含图片 OSS URL）
             await self._save_user_message(
@@ -107,6 +106,11 @@ class WecomMessageService(WecomAIMixin):
                 user_id=user_id,
                 text_content=msg.text_content or "",
                 image_urls=oss_image_urls,
+            )
+
+            # 4.5 通知 Web 前端对话列表有更新
+            await self._notify_web_conversation_updated(
+                user_id, conversation_id,
             )
 
             # 5. 创建 assistant 占位消息
@@ -157,7 +161,6 @@ class WecomMessageService(WecomAIMixin):
         self,
         msg: WecomIncomingMessage,
         user_id: str,
-        reply_ctx: WecomReplyContext,
     ) -> List[str]:
         """下载企微图片到 OSS，返回 OSS URL 列表。
 
@@ -469,7 +472,6 @@ class WecomMessageService(WecomAIMixin):
         self, reply_ctx: WecomReplyContext, text: str
     ) -> None:
         """自建应用消息发送：格式适配 + 长消息分割"""
-        import asyncio
         from services.wecom.app_message_sender import (
             send_text, send_markdown,
         )
@@ -487,6 +489,24 @@ class WecomMessageService(WecomAIMixin):
                 await send_text(wecom_userid=uid, content=chunk, agent_id=aid)
             if i < len(chunks) - 1:
                 await asyncio.sleep(0.3)
+
+    # ── Web 前端通知 ─────────────────────────────────────
+
+    @staticmethod
+    async def _notify_web_conversation_updated(
+        user_id: str, conversation_id: str,
+    ) -> None:
+        """通知 Web 前端：企微对话有新消息，刷新对话列表"""
+        try:
+            await ws_manager.send_to_user(user_id, {
+                "type": "conversation_updated",
+                "conversation_id": conversation_id,
+            })
+        except Exception as e:
+            logger.warning(
+                f"WS notify conversation_updated failed | "
+                f"user_id={user_id} | error={e}"
+            )
 
     # ── 工具方法 ──────────────────────────────────────────
 

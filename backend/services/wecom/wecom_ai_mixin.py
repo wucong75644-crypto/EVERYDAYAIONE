@@ -439,35 +439,6 @@ class WecomAIMixin:
 
         return messages
 
-    # ── 图片 msg_item 构建 ──────────────────────────────
-
-    async def _build_image_msg_items(
-        self, urls: List[str],
-    ) -> List[Dict[str, Any]]:
-        """下载图片并构建 msg_item 列表（base64 + md5）"""
-        import base64
-        import hashlib
-        import httpx
-
-        items: List[Dict[str, Any]] = []
-        async with httpx.AsyncClient(timeout=15) as client:
-            for url in urls:
-                try:
-                    resp = await client.get(url)
-                    if resp.status_code != 200:
-                        continue
-                    data = resp.content
-                    items.append({
-                        "msgtype": "image",
-                        "image": {
-                            "base64": base64.b64encode(data).decode(),
-                            "md5": hashlib.md5(data).hexdigest(),
-                        },
-                    })
-                except Exception as e:
-                    logger.warning(f"Image download for msg_item failed | error={e}")
-        return items
-
     # ── 积分 ────────────────────────────────────────────
 
     def _get_user_balance(self, user_id: str) -> int:

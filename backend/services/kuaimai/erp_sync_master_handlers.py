@@ -281,30 +281,34 @@ async def sync_supplier(
 async def sync_platform_map(
     svc: ErpSyncService, start: datetime, end: datetime,
 ) -> int:
-    """平台映射同步：逐个商品查询 erp.item.outerid.list.get → erp_product_platform_map"""
-    # 该 API 要求传 outerId 参数，无法空参数全量查询
-    # 从 DB 中取已同步的商品列表逐个查询
+    """平台映射同步：批量查询 erp.item.outerid.list.get → erp_product_platform_map
+
+    API 要求参数 outerIds（SKU 最小粒度编码，逗号分隔），不支持 SPU 编码。
+    """
+    # 从 DB 取所有 SKU 编码
     try:
         result = (
-            svc.db.table("erp_products")
-            .select("outer_id")
-            .neq("active_status", -1)
-            .limit(5000)
+            svc.db.table("erp_product_skus")
+            .select("sku_outer_id")
+            .limit(10000)
             .execute()
         )
-        outer_ids = [r["outer_id"] for r in (result.data or []) if r.get("outer_id")]
+        sku_ids = [r["sku_outer_id"] for r in (result.data or []) if r.get("sku_outer_id")]
     except Exception as e:
-        logger.warning(f"Platform map: failed to get product list | error={e}")
+        logger.warning(f"Platform map: failed to get SKU list | error={e}")
         return 0
-    if not outer_ids:
+    if not sku_ids:
         return 0
 
     client = svc._get_client()
     rows: list[dict[str, Any]] = []
-    for oid in outer_ids:
+    batch_size = 20  # 每次批量查 20 个 SKU
+
+    for i in range(0, len(sku_ids), batch_size):
+        batch = sku_ids[i:i + batch_size]
         try:
             data = await client.request_with_retry(
-                "erp.item.outerid.list.get", {"outerId": oid},
+                "erp.item.outerid.list.get", {"outerIds": ",".join(batch)},
             )
             items = data.get("itemOuterIdInfos") or []
         except Exception:
@@ -312,26 +316,31 @@ async def sync_platform_map(
 
         for item in items:
             outer_id = item.get("outerId")
-            num_iid = item.get("numIid")
-            if not outer_id or not num_iid:
+            if not outer_id:
                 continue
-
-            sku_mappings = []
-            for sku in item.get("skuOuterIdInfos") or item.get("skuList") or []:
-                sku_mappings.append({
-                    "skuOuterId": sku.get("skuOuterId"),
-                    "skuNumIid": sku.get("skuNumIid"),
+            # API 返回 tbItemList 数组，每条是一个平台商品映射
+            for tb in item.get("tbItemList") or []:
+                num_iid = tb.get("numIid")
+                if not num_iid:
+                    continue
+                rows.append({
+                    "outer_id": outer_id,
+                    "num_iid": str(num_iid),
+                    "user_id": str(tb.get("userId", "")),
+                    "title": tb.get("title"),
+                    "sku_mappings": [{"skuOuterId": tb.get("skuOuterId"), "skuNumIid": tb.get("skuId")}] if tb.get("skuOuterId") else None,
                 })
 
-            rows.append({
-                "outer_id": outer_id,
-                "num_iid": str(num_iid),
-                "user_id": str(item.get("userId", "")),
-                "title": item.get("title"),
-                "sku_mappings": sku_mappings or None,
-            })
+    # API 可能返回重复映射，按 (outer_id, num_iid) 去重
+    seen: set[tuple[str, str]] = set()
+    unique_rows: list[dict[str, Any]] = []
+    for row in rows:
+        key = (row["outer_id"], row["num_iid"])
+        if key not in seen:
+            seen.add(key)
+            unique_rows.append(row)
 
     count = _batch_upsert(
-        svc.db, "erp_product_platform_map", rows, "outer_id,num_iid",
+        svc.db, "erp_product_platform_map", unique_rows, "outer_id,num_iid",
     )
     return count
