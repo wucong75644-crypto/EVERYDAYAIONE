@@ -30,6 +30,33 @@ class QueryResponse:
     count: Optional[int] = None
 
 
+def _serialize_row(row: dict) -> dict:
+    """将 PostgreSQL 原生类型（UUID、datetime、Decimal 等）转为 JSON 可序列化类型
+
+    Supabase SDK 返回的都是字符串/数字，本地 PostgreSQL 返回原生 Python 类型。
+    此函数在查询结果返回前统一转换，确保上层业务代码无需关心数据库差异。
+    """
+    import uuid
+    from datetime import datetime, date, time
+    from decimal import Decimal
+
+    result = {}
+    for k, v in row.items():
+        if isinstance(v, uuid.UUID):
+            result[k] = str(v)
+        elif isinstance(v, datetime):
+            result[k] = v.isoformat()
+        elif isinstance(v, date):
+            result[k] = v.isoformat()
+        elif isinstance(v, time):
+            result[k] = v.isoformat()
+        elif isinstance(v, Decimal):
+            result[k] = float(v)
+        else:
+            result[k] = v
+    return result
+
+
 # ============================================================
 # 查询构造器（链式 API）
 # ============================================================
@@ -386,6 +413,10 @@ class QueryBuilder:
                     count_sql, count_params = self._build_count_query()
                     cur.execute(count_sql, count_params)
                     total_count = cur.fetchone()["count"]
+
+        # PostgreSQL 返回原生类型（UUID、datetime 等），
+        # 统一转为字符串以兼容 Supabase SDK 的行为
+        rows = [_serialize_row(r) for r in rows]
 
         # 单行模式
         if self._single:

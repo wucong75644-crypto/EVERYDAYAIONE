@@ -9,87 +9,22 @@ product / stock / supplier / platform_map
 
 from __future__ import annotations
 
-import re
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from services.kuaimai.erp_sync_utils import (  # noqa: F401 — re-export for backward compat
+    _batch_upsert,
+    _fmt_dt,
+    _ms_to_iso,
+    _pick,
+    _safe_ts,
+    _strip_html,
+)
+
 if TYPE_CHECKING:
     from services.kuaimai.erp_sync_service import ErpSyncService
-
-
-# ── 工具函数 ────────────────────────────────────────────
-
-_HTML_TAG_RE = re.compile(r"<[^>]+>")
-
-
-def _strip_html(text: str | None) -> str | None:
-    """清洗 HTML 标签（商品备注可能含 HTML）"""
-    if not text:
-        return text
-    return _HTML_TAG_RE.sub("", text).strip()
-
-
-def _fmt_dt(dt: datetime) -> str:
-    """yyyy-MM-dd HH:mm:ss 时间格式（快麦API统一要求）"""
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _ms_to_iso(val: Any) -> str | None:
-    """毫秒时间戳 → ISO 8601 字符串（API返回stockModifiedTime为毫秒数）"""
-    if val is None:
-        return None
-    try:
-        ts = int(val) / 1000
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
-    except (TypeError, ValueError, OSError):
-        return None
-
-
-def _pick(src: dict, *keys: str) -> dict:
-    """提取存在且非 None 的键值对"""
-    return {k: src[k] for k in keys if k in src and src[k] is not None}
-
-
-def _safe_ts(val: Any) -> str | None:
-    """安全转换时间值（毫秒时间戳或字符串）→ ISO 字符串"""
-    if val is None:
-        return None
-    if isinstance(val, str):
-        # 纯数字字符串 → 当作毫秒时间戳处理（如 "946656000000"）
-        if val.isdigit() and len(val) >= 10:
-            return _safe_ts(int(val))
-        return val
-    try:
-        ts = int(val)
-        # 超过 year-3000 的秒值一定是毫秒时间戳
-        if ts > 32503680000:  # 3000-01-01 00:00:00 UTC in seconds
-            ts = ts / 1000
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
-    except (TypeError, ValueError, OSError):
-        return str(val)
-
-
-def _batch_upsert(
-    db: Any, table: str, rows: list[dict], on_conflict: str,
-    batch_size: int = 100,
-) -> int:
-    """通用批量 upsert（与 ErpSyncService.upsert_document_items 类似）"""
-    if not rows:
-        return 0
-    total = 0
-    for i in range(0, len(rows), batch_size):
-        batch = rows[i : i + batch_size]
-        try:
-            db.table(table).upsert(batch, on_conflict=on_conflict).execute()
-            total += len(batch)
-        except Exception as e:
-            logger.error(
-                f"Upsert {table} failed | batch={i // batch_size} | "
-                f"rows={len(batch)} | error={e}"
-            )
-    return total
 
 
 # ── 商品同步 (product) ──────────────────────────────────

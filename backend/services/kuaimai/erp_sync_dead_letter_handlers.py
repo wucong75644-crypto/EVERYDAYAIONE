@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from services.kuaimai.erp_sync_handlers import _pick, _safe_ts
+from services.kuaimai.erp_sync_utils import _pick, _safe_ts
 from services.kuaimai.erp_sync_service import ErpSyncService
 
 
