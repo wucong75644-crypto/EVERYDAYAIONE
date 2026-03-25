@@ -1,27 +1,23 @@
 """
 ERP 数据本地索引同步核心框架
 
-提供状态管理、增量时间窗口、窗口分片、翻页拉取、
-item_index 稳定排序、upsert 入库、聚合计算等基础设施。
-
-各 sync_type 的具体实现（字段映射/解析逻辑）在阶段2任务中补充。
+提供状态管理、增量时间窗口、窗口分片、翻页拉取等基础设施。
+数据持久化（upsert/聚合/排序）委托给 erp_sync_persistence 模块。
 
 设计文档: docs/document/TECH_ERP数据本地索引系统.md
 """
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from functools import partial
 from collections.abc import AsyncGenerator
 from typing import Any
 
 from loguru import logger
 
-
 from core.config import get_settings
 from services.kuaimai.client import KuaiMaiClient
 from services.kuaimai.erp_sync_handlers import (
-    _API_SEM,
     sync_aftersale,
     sync_order,
     sync_purchase,
@@ -36,6 +32,13 @@ from services.kuaimai.erp_sync_master_handlers import (
     sync_stock_full,
     sync_supplier,
 )
+from services.kuaimai.erp_sync_persistence import (
+    collect_affected_keys as _collect_affected_keys,
+    run_aggregation as _run_aggregation,
+    sort_and_assign_index as _sort_and_assign_index,
+    upsert_document_items as _upsert_document_items,
+)
+from services.kuaimai.erp_sync_utils import _API_SEM
 
 
 class ErpSyncService:
@@ -46,16 +49,6 @@ class ErpSyncService:
         "order": 90,
         "aftersale": 90,
         "platform_map": 1,  # 不按时间分片，跑一遍即可
-    }
-
-    # item_index 排序键（设计文档 BUG-2：保证跨调用稳定）
-    ITEM_SORT_KEYS: dict[str, list[str]] = {
-        "order": ["sysOuterId", "sysItemOuterId"],
-        "aftersale": ["mainOuterId", "outerId"],
-        "purchase": ["outerId", "itemOuterId"],
-        "purchase_return": ["outerId", "itemOuterId"],
-        "receipt": ["outerId", "itemOuterId"],
-        "shelf": ["outerId", "itemOuterId"],
     }
 
     FLUSH_THRESHOLD = 1000  # 每积累N条写一次库，控制内存峰值
@@ -473,162 +466,23 @@ class ErpSyncService:
                 f"pages={page} | params={params}"
             )
 
-    # ── item_index 稳定排序 ───────────────────────────────
+    # ── 委托到 erp_sync_persistence ─────────────────────
 
     @classmethod
     def sort_and_assign_index(
-        cls, items: list[dict[str, Any]], sync_type: str
+        cls, items: list[dict[str, Any]], sync_type: str,
     ) -> list[dict[str, Any]]:
-        """
-        按确定性字段排序后分配顺序 item_index（0, 1, 2...）
-
-        配合 upsert_document_items 的事务性删+插策略，
-        确保单据更新时旧数据被完整替换，不会因 index 变化而错位。
-        """
-        sort_keys = cls.ITEM_SORT_KEYS.get(sync_type, ["outerId", "itemOuterId"])
-
-        def sort_key(item: dict) -> tuple:
-            return tuple(str(item.get(k, "")) for k in sort_keys)
-
-        sorted_items = sorted(items, key=sort_key)
-        for idx, item in enumerate(sorted_items):
-            item["_item_index"] = idx
-        return sorted_items
-
-    # ── 数据入库 ──────────────────────────────────────────
+        """按确定性字段排序后分配顺序 item_index"""
+        return _sort_and_assign_index(items, sync_type)
 
     def upsert_document_items(self, rows: list[dict[str, Any]]) -> int:
-        """
-        事务性写入 erp_document_items（按单据分组：删旧→插新）
+        """事务性写入 erp_document_items（按单据分组：删旧→插新）"""
+        return _upsert_document_items(self.db, rows)
 
-        对每个 (doc_type, doc_id) 在同一事务内先删除旧行再插入新行，
-        保证原子性：要么全部成功，要么全部回滚，不会丢数据。
-        不同单据之间互不影响，单个单据失败不阻塞其他单据。
+    def run_aggregation(self, affected_keys: list[tuple[str, str]]) -> None:
+        """将受影响的 (outer_id, stat_date) 推入聚合队列"""
+        return _run_aggregation(self.db, self._aggregation_queue, affected_keys)
 
-        Returns:
-            成功写入的行数
-        """
-        if not rows:
-            return 0
-
-        # 按 (doc_type, doc_id) 分组
-        from collections import defaultdict
-        groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
-        for row in rows:
-            key = (row.get("doc_type", ""), row.get("doc_id", ""))
-            groups[key].append(row)
-
-        total = 0
-        pool = getattr(self.db, "_pool", None)
-
-        for (doc_type, doc_id), doc_rows in groups.items():
-            try:
-                if pool:
-                    # 直接用 psycopg 事务：删+插原子执行
-                    with pool.connection() as conn:
-                        with conn.transaction():
-                            conn.execute(
-                                "DELETE FROM erp_document_items "
-                                "WHERE doc_type = %s AND doc_id = %s",
-                                (doc_type, doc_id),
-                            )
-                            for row in doc_rows:
-                                cols = list(row.keys())
-                                vals = []
-                                for c in cols:
-                                    v = row[c]
-                                    # dict/list → JSON 字符串（PostgreSQL JSONB 列）
-                                    if isinstance(v, (dict, list)):
-                                        import json
-                                        v = json.dumps(v, ensure_ascii=False)
-                                    vals.append(v)
-                                placeholders = ", ".join(["%s"] * len(cols))
-                                col_names = ", ".join(cols)
-                                conn.execute(
-                                    f"INSERT INTO erp_document_items "
-                                    f"({col_names}) VALUES ({placeholders})",
-                                    vals,
-                                )
-                    total += len(doc_rows)
-                else:
-                    # 降级：ORM upsert（无事务保证）
-                    self.db.table("erp_document_items").upsert(
-                        doc_rows,
-                        on_conflict="doc_type,doc_id,item_index",
-                    ).execute()
-                    total += len(doc_rows)
-            except Exception as e:
-                logger.error(
-                    f"Doc write failed | doc_type={doc_type} | "
-                    f"doc_id={doc_id} | rows={len(doc_rows)} | error={e}"
-                )
-        return total
-
-    # ── 聚合计算 ──────────────────────────────────────────
-
-    def run_aggregation(
-        self,
-        affected_keys: list[tuple[str, str]],
-    ) -> None:
-        """
-        将受影响的 (outer_id, stat_date) 推入内存队列，
-        由独立消费者串行聚合，避免并发写入时阻塞拉取或打满 DB。
-
-        无内存队列时降级为同步逐条聚合。
-
-        Args:
-            affected_keys: [(outer_id, stat_date_str), ...]
-        """
-        if not affected_keys:
-            return
-
-        if self._aggregation_queue is not None:
-            for key in affected_keys:
-                try:
-                    self._aggregation_queue.put_nowait(key)
-                except asyncio.QueueFull:
-                    logger.warning("Aggregation queue full, dropping oldest")
-                    try:
-                        self._aggregation_queue.get_nowait()
-                        self._aggregation_queue.put_nowait(key)
-                    except Exception:
-                        pass
-        else:
-            # 无队列时同步聚合（兜底）
-            self._run_aggregation_sync(affected_keys)
-
-    def _run_aggregation_sync(
-        self,
-        affected_keys: list[tuple[str, str]],
-    ) -> None:
-        """降级：同步逐条聚合"""
-        for outer_id, stat_date in affected_keys:
-            try:
-                self.db.rpc(
-                    "erp_aggregate_daily_stats",
-                    {"p_outer_id": outer_id, "p_stat_date": stat_date},
-                ).execute()
-            except Exception as e:
-                logger.error(
-                    f"Aggregation failed | outer_id={outer_id} | "
-                    f"date={stat_date} | error={e}"
-                )
-
-    def collect_affected_keys(
-        self, rows: list[dict[str, Any]]
-    ) -> list[tuple[str, str]]:
+    def collect_affected_keys(self, rows: list[dict[str, Any]]) -> list[tuple[str, str]]:
         """从入库行中收集受影响的 (outer_id, stat_date) 对"""
-        seen: set[tuple[str, str]] = set()
-        for row in rows:
-            outer_id = row.get("outer_id")
-            created_at = row.get("doc_created_at")
-            if outer_id and created_at:
-                # 提取日期部分
-                if isinstance(created_at, str):
-                    stat_date = created_at[:10]
-                elif isinstance(created_at, datetime):
-                    stat_date = created_at.strftime("%Y-%m-%d")
-                else:
-                    continue
-                seen.add((outer_id, stat_date))
-        return list(seen)
+        return _collect_affected_keys(rows)

@@ -301,6 +301,40 @@ class ErpSyncWorker:
             logger.error(f"Fallback reaggregation failed | error={e}")
             return 0
 
+    @staticmethod
+    def _collect_api_product_ids(
+        products: list[dict],
+    ) -> tuple[set[str], set[str]]:
+        """从 API 商品列表收集 SPU 和 SKU ID 集合"""
+        spu_ids: set[str] = set()
+        sku_ids: set[str] = set()
+        for p in products:
+            outer_id = p.get("outerId")
+            if outer_id:
+                spu_ids.add(outer_id)
+            for sku in p.get("skus") or []:
+                sku_id = sku.get("skuOuterId")
+                if sku_id:
+                    sku_ids.add(sku_id)
+        return spu_ids, sku_ids
+
+    def _mark_deleted_items(
+        self, table: str, id_col: str, deleted_ids: set[str],
+    ) -> int:
+        """批量标记已删除的 SPU/SKU（active_status=-1）"""
+        count = 0
+        for item_id in deleted_ids:
+            try:
+                self.db.table(table).update({
+                    "active_status": -1,
+                }).eq(id_col, item_id).execute()
+                count += 1
+            except Exception as e:
+                logger.warning(
+                    f"Mark deleted failed | {id_col}={item_id} | error={e}"
+                )
+        return count
+
     async def _run_deletion_detection(self) -> int:
         """
         商品删除检测（SPU + SKU 级别）
@@ -311,7 +345,6 @@ class ErpSyncWorker:
             from services.kuaimai.erp_sync_service import ErpSyncService
             svc = ErpSyncService(self.db)
 
-            # 全量拉取 API 商品（含 skus 数组）
             products = await svc.fetch_all_pages(
                 "item.list.query",
                 {"startModified": "2020-01-01 00:00:00", "endModified": "2099-12-31 23:59:59"},
@@ -319,21 +352,10 @@ class ErpSyncWorker:
                 page_size=100,
             )
 
-            # 构建 API 中的 SPU 和 SKU 集合
-            api_spu_ids: set[str] = set()
-            api_sku_ids: set[str] = set()
-            for p in products:
-                outer_id = p.get("outerId")
-                if outer_id:
-                    api_spu_ids.add(outer_id)
-                for sku in p.get("skus") or []:
-                    sku_id = sku.get("skuOuterId")
-                    if sku_id:
-                        api_sku_ids.add(sku_id)
-
+            api_spu_ids, api_sku_ids = self._collect_api_product_ids(products)
             count = 0
 
-            # ── SPU 删除检测 ──
+            # SPU 删除检测
             result = (
                 self.db.table("erp_products")
                 .select("outer_id")
@@ -342,20 +364,11 @@ class ErpSyncWorker:
             )
             db_spu_ids = {r["outer_id"] for r in (result.data or [])}
             deleted_spus = db_spu_ids - api_spu_ids
-
-            for outer_id in deleted_spus:
-                try:
-                    self.db.table("erp_products").update({
-                        "active_status": -1,
-                    }).eq("outer_id", outer_id).execute()
-                    count += 1
-                except Exception as e:
-                    logger.warning(f"Mark SPU deleted failed | outer_id={outer_id} | error={e}")
-
+            count += self._mark_deleted_items("erp_products", "outer_id", deleted_spus)
             if deleted_spus:
                 logger.info(f"SPU deletion detected | count={len(deleted_spus)}")
 
-            # ── SKU 删除检测 ──
+            # SKU 删除检测（分页加载）
             db_sku_ids: set[str] = set()
             offset = 0
             while True:
@@ -375,16 +388,7 @@ class ErpSyncWorker:
                     break
 
             deleted_skus = db_sku_ids - api_sku_ids
-
-            for sku_id in deleted_skus:
-                try:
-                    self.db.table("erp_product_skus").update({
-                        "active_status": -1,
-                    }).eq("sku_outer_id", sku_id).execute()
-                    count += 1
-                except Exception as e:
-                    logger.warning(f"Mark SKU deleted failed | sku_outer_id={sku_id} | error={e}")
-
+            count += self._mark_deleted_items("erp_product_skus", "sku_outer_id", deleted_skus)
             if deleted_skus:
                 logger.info(f"SKU deletion detected | count={len(deleted_skus)}")
 

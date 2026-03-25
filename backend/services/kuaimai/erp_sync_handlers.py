@@ -9,152 +9,24 @@ purchase / receipt / shelf / purchase_return / aftersale / order
 
 from __future__ import annotations
 
-import asyncio
-import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from services.kuaimai.erp_sync_utils import (  # noqa: F401 — re-export for backward compat
+    _API_SEM,
+    _DetailResult,
+    _fetch_details,
+    _fmt_d,
+    _fmt_dt,
+    _pick,
+    _safe_ts,
+    _to_float,
+)
+
 if TYPE_CHECKING:
     from services.kuaimai.erp_sync_service import ErpSyncService
-
-
-# ── 工具函数 ────────────────────────────────────────────
-
-
-def _fmt_dt(dt: datetime) -> str:
-    """yyyy-MM-dd HH:mm:ss（采购/采退时间参数格式）"""
-    return dt.strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _fmt_d(dt: datetime) -> str:
-    """YYYY-MM-DD（收货/上架/售后/订单时间参数格式）"""
-    return dt.strftime("%Y-%m-%d")
-
-
-def _pick(src: dict, *keys: str) -> dict:
-    """从 dict 中提取存在且非 None 的键值对（用于 extra_json）"""
-    return {k: src[k] for k in keys if k in src and src[k] is not None}
-
-
-def _to_float(val: Any) -> float:
-    """安全转 float（用于折扣分摊计算）"""
-    if val is None:
-        return 0.0
-    try:
-        return float(val)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-class _ApiRateLimiter:
-    """全局 API 速率限制器（Leaky Bucket）
-
-    Semaphore 只限并发数，无法控制 QPS（云服务器内网延迟 ~30ms 时 Sem(4)=133 req/s）。
-    此限制器确保请求启动间隔 ≥ 1/max_qps 秒，多请求可并发执行但启动节奏受控。
-    """
-
-    def __init__(self, max_qps: float = 12.0) -> None:
-        self._min_interval = 1.0 / max_qps
-        self._lock: asyncio.Lock | None = None
-        self._lock_loop_id: int | None = None
-        self._last_request_time = 0.0
-
-    def _get_lock(self) -> asyncio.Lock:
-        """延迟创建 Lock，事件循环变化时自动重建"""
-        loop_id = id(asyncio.get_event_loop())
-        if self._lock is None or self._lock_loop_id != loop_id:
-            self._lock = asyncio.Lock()
-            self._lock_loop_id = loop_id
-        return self._lock
-
-    async def __aenter__(self):
-        async with self._get_lock():
-            now = time.monotonic()
-            wait = self._min_interval - (now - self._last_request_time)
-            if wait > 0:
-                await asyncio.sleep(wait)
-            self._last_request_time = time.monotonic()
-        return self
-
-    async def __aexit__(self, *args):
-        pass
-
-
-_API_SEM = _ApiRateLimiter(max_qps=12)
-"""全局 API 限流器：≤12 req/s（低于 API 15 req/s 限额，留安全余量）。
-所有 API 调用（detail / list 翻页）共享此限流器。"""
-
-
-class _DetailResult:
-    """_fetch_details 返回结果，包含成功列表和失败列表"""
-    __slots__ = ("succeeded", "failed")
-
-    def __init__(self) -> None:
-        self.succeeded: list[tuple[dict, dict]] = []
-        self.failed: list[dict] = []
-
-    def __iter__(self):
-        """向后兼容：for doc, detail in await _fetch_details(...)"""
-        return iter(self.succeeded)
-
-
-async def _fetch_details(
-    client, method: str, docs: list[dict],
-) -> _DetailResult:
-    """并发获取单据详情（通过全局 _API_SEM 限流）
-
-    Returns:
-        _DetailResult: .succeeded 为成功的 (doc, detail) 列表，
-                       .failed 为 detail 调用失败的 doc 列表。
-    """
-
-    async def _one(doc: dict):
-        async with _API_SEM:
-            try:
-                detail = await client.request_with_retry(method, {"id": doc["id"]})
-                return ("ok", doc, detail)
-            except Exception as e:
-                logger.warning(
-                    f"Detail failed | method={method} | id={doc.get('id')} | error={e}"
-                )
-                return ("fail", doc, str(e))
-
-    raw_results = await asyncio.gather(*[_one(d) for d in docs])
-
-    result = _DetailResult()
-    for r in raw_results:
-        if r[0] == "ok":
-            result.succeeded.append((r[1], r[2]))
-        else:
-            result.failed.append(r[1])
-    return result
-
-
-def _safe_ts(val: Any) -> str | None:
-    """安全转换时间值（毫秒时间戳或字符串）→ ISO 字符串
-
-    快麦API部分字段返回毫秒时间戳（如 1767457525000），
-    另一些返回 ISO 字符串（如 '2026-01-03 15:25:25'），
-    还有些返回字符串形式的毫秒时间戳（如 "946656000000"）。
-    PostgreSQL TIMESTAMP 列无法接受裸毫秒数字。
-    """
-    if val is None:
-        return None
-    if isinstance(val, str):
-        # 纯数字字符串 → 当作毫秒时间戳处理（如 "946656000000"）
-        if val.isdigit() and len(val) >= 10:
-            return _safe_ts(int(val))
-        return val  # 已经是日期字符串，直接写入
-    try:
-        ts = int(val)
-        # 超过 year-3000 的秒值一定是毫秒时间戳（946656000000 < 1e12 但显然是 ms）
-        if ts > 32503680000:  # 3000-01-01 00:00:00 UTC in seconds
-            ts = ts / 1000
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
-    except (TypeError, ValueError, OSError):
-        return str(val)
 
 
 # ── 采购单 (purchase) ──────────────────────────────────

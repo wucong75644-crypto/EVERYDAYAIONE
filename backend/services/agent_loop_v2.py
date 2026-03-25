@@ -407,6 +407,19 @@ class AgentLoopV2Mixin:
         )
 
     @staticmethod
+    def _get_action_enum(
+        tool_schema: Dict[str, Any],
+    ) -> List[str]:
+        """从工具 schema 中提取 action 的 enum 列表"""
+        return (
+            tool_schema.get("function", {})
+            .get("parameters", {})
+            .get("properties", {})
+            .get("action", {})
+            .get("enum", [])
+        )
+
+    @staticmethod
     def _try_expand_tools(
         tool_calls: List[Dict[str, Any]],
         current_tools: List[Dict[str, Any]],
@@ -422,6 +435,7 @@ class AgentLoopV2Mixin:
         import json as _json
 
         current_names = {t["function"]["name"] for t in current_tools}
+        current_map = {t["function"]["name"]: t for t in current_tools}
         all_map = {t["function"]["name"]: t for t in all_tools}
 
         for tc in tool_calls:
@@ -449,44 +463,27 @@ class AgentLoopV2Mixin:
                 continue
 
             # 检查 action 是否在当前 enum 中
-            for tool_schema in current_tools:
-                if tool_schema["function"]["name"] != tool_name:
-                    continue
-                action_prop = (
-                    tool_schema.get("function", {})
-                    .get("parameters", {})
-                    .get("properties", {})
-                    .get("action", {})
-                )
-                current_enum = action_prop.get("enum", [])
-                if action in current_enum:
-                    break  # action 已在列表中
-                if expand_state["action_expanded"]:
-                    break
-                # 从全量 schema 获取完整 enum
-                full_schema = all_map.get(tool_name)
-                if not full_schema:
-                    break
-                full_enum = (
-                    full_schema.get("function", {})
-                    .get("parameters", {})
-                    .get("properties", {})
-                    .get("action", {})
-                    .get("enum", [])
-                )
-                if action in full_enum:
-                    expand_state["action_expanded"] = True
-                    logger.info(
-                        f"Action expansion: {tool_name}.{action}"
-                    )
-                    # 替换当前工具为全量版本
-                    new_tools = [
-                        full_schema if t["function"]["name"] == tool_name
-                        else t
-                        for t in current_tools
-                    ]
-                    return new_tools
-                break
+            cur_schema = current_map.get(tool_name)
+            if not cur_schema:
+                continue
+            if action in AgentLoopV2Mixin._get_action_enum(cur_schema):
+                continue  # action 已在列表中
+            if expand_state["action_expanded"]:
+                continue
+
+            # 从全量 schema 获取完整 enum
+            full_schema = all_map.get(tool_name)
+            if not full_schema:
+                continue
+            if action not in AgentLoopV2Mixin._get_action_enum(full_schema):
+                continue
+
+            expand_state["action_expanded"] = True
+            logger.info(f"Action expansion: {tool_name}.{action}")
+            return [
+                full_schema if t["function"]["name"] == tool_name else t
+                for t in current_tools
+            ]
 
         return None
 
