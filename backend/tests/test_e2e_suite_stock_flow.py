@@ -290,3 +290,35 @@ class TestE2ESuiteStockFlow:
 
         assert "天竺棉被套" in result
         assert "缺货数量: 1" in result
+
+    # ── Step 9: stockStatus 映射修复验证 ────────────────
+
+    def test_step9_stock_status_mapping_correct(self):
+        """_INVENTORY_TRANSFORMS: 1→正常, 2→警戒, 3→无货（修复 off-by-one）"""
+        from services.kuaimai.formatters.product import format_inventory_list
+        from services.kuaimai.registry.base import ApiEntry
+
+        entry = ApiEntry(
+            method="stock.api.status.query",
+            description="test",
+            response_key="stockStatusVoList",
+        )
+
+        for status_val, expected_text in [
+            (1, "正常"), (2, "警戒"), (3, "无货"),
+            (4, "超卖"), (6, "有货"),
+        ]:
+            data = {
+                "stockStatusVoList": [{
+                    "mainOuterId": "TEST01",
+                    "title": "测试",
+                    "stockStatus": status_val,
+                    "sellableNum": 10,
+                }],
+                "total": 1,
+            }
+            result = format_inventory_list(data, entry)
+            assert expected_text in result, (
+                f"stockStatus={status_val} should map to '{expected_text}', "
+                f"got: {result}"
+            )
