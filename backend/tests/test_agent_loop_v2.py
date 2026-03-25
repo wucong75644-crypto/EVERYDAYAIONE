@@ -53,9 +53,8 @@ def _make_phase1_response(tool_name: str, arguments: dict) -> dict:
 
 
 def _v2_settings():
-    """v2 启用的 mock settings"""
+    """mock settings（v1 已废弃，全量走 v2）"""
     return MagicMock(
-        agent_loop_v2_enabled=True,
         agent_loop_max_turns=3,
         agent_loop_max_tokens=5000,
         agent_loop_provider="dashscope",
@@ -71,32 +70,12 @@ def _v2_settings():
 # ============================================================
 
 
-class TestV2GrayscaleSwitch:
+class TestV2EntryPoint:
 
     @pytest.mark.asyncio
-    async def test_v2_disabled_uses_v1(self):
-        """v2=False → 走 v1 路径"""
+    async def test_execute_loop_calls_v2(self):
+        """_execute_loop 无条件走 v2 路径"""
         loop = _make_loop()
-        loop._execute_loop_v1 = AsyncMock(
-            return_value=AgentResult(
-                generation_type=GenerationType.CHAT,
-                model="test", turns_used=1, total_tokens=0,
-            ),
-        )
-        loop._execute_loop_v2 = AsyncMock()
-
-        with patch("core.config.get_settings") as mock_s:
-            mock_s.return_value = MagicMock(agent_loop_v2_enabled=False)
-            await loop._execute_loop(_text_content("hi"))
-
-        loop._execute_loop_v1.assert_awaited_once()
-        loop._execute_loop_v2.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_v2_enabled_uses_v2(self):
-        """v2=True → 走 v2 路径"""
-        loop = _make_loop()
-        loop._execute_loop_v1 = AsyncMock()
         loop._execute_loop_v2 = AsyncMock(
             return_value=AgentResult(
                 generation_type=GenerationType.CHAT,
@@ -105,11 +84,10 @@ class TestV2GrayscaleSwitch:
         )
 
         with patch("core.config.get_settings") as mock_s:
-            mock_s.return_value = MagicMock(agent_loop_v2_enabled=True)
+            mock_s.return_value = _v2_settings()
             await loop._execute_loop(_text_content("hi"))
 
         loop._execute_loop_v2.assert_awaited_once()
-        loop._execute_loop_v1.assert_not_awaited()
 
 
 # ============================================================

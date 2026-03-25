@@ -127,7 +127,7 @@ class TestSyncPurchase:
         assert count == 1
         rows = svc.upsert_document_items.call_args[0][0]
         assert rows[0]["doc_type"] == "purchase"
-        assert rows[0]["outer_id"] == "C01"
+        assert rows[0]["outer_id"] == "C01-01"  # itemOuterId → outer_id（主编码）
         assert rows[0]["supplier_name"] == "供应商A"
 
     @pytest.mark.asyncio

@@ -26,7 +26,7 @@ from schemas.websocket import (
     build_message_error,
 )
 from services.websocket_manager import HEARTBEAT_INTERVAL, ws_manager
-from core.database import get_supabase_client
+from core.database import get_db
 
 router = APIRouter(tags=["WebSocket"])
 
@@ -192,7 +192,7 @@ async def _get_task_accumulated_content(task_id: str, user_id: str) -> Optional[
     仅查询 running 状态的 chat 任务，已完成的由 _check_and_send_completed_task 处理
     """
     try:
-        db = get_supabase_client()
+        db = get_db()
         # 尝试 external_task_id 和 client_task_id 两种方式查询
         for field in ["external_task_id", "client_task_id"]:
             result = db.table("tasks").select(
@@ -221,7 +221,7 @@ async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: st
     解决问题：前端订阅时任务可能已完成，需要补发完成消息
     """
     try:
-        db = get_supabase_client()
+        db = get_db()
 
         # 1. 查询任务（支持 id 或 external_task_id）
         task = await _find_task_by_any_id(db, task_id, user_id)

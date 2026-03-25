@@ -661,21 +661,16 @@ class TestBuildLocalTools:
                 )
 
 
-class TestLocalRoutingPrompt:
+class TestLocalToolRegistry:
 
-    def test_routing_prompt_contains_local_tools(self):
-        """ERP_ROUTING_PROMPT 包含本地工具路由"""
-        from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "local_doc_query" in ERP_ROUTING_PROMPT
-        assert "local_product_identify" in ERP_ROUTING_PROMPT
-        assert "local_global_stats" in ERP_ROUTING_PROMPT
-        assert "trigger_erp_sync" in ERP_ROUTING_PROMPT
-        assert "本地" in ERP_ROUTING_PROMPT
-
-    def test_routing_prompt_has_priority_rules(self):
-        """路由提示词包含优先规则"""
-        from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "优先" in ERP_ROUTING_PROMPT
+    def test_local_tools_registered_in_tool_registry(self):
+        """本地工具在 tool_registry 中注册且 priority=1"""
+        from config.tool_registry import TOOL_REGISTRY
+        from config.erp_local_tools import ERP_LOCAL_TOOLS
+        for name in ERP_LOCAL_TOOLS:
+            entry = TOOL_REGISTRY.get(name)
+            assert entry is not None, f"{name} 未注册"
+            assert entry.priority == 1, f"{name} priority={entry.priority}"
 
 
 class TestToolExecutorLocalDispatch:

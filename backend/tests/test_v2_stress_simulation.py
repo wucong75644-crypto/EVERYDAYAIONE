@@ -26,7 +26,6 @@ from services.agent_types import AgentResult
 def _make_loop() -> AgentLoop:
     loop = AgentLoop(db=None, user_id="stress", conversation_id="stress_c")
     loop._settings = MagicMock()
-    loop._settings.agent_loop_v2_enabled = True
     loop._settings.agent_loop_max_turns = 3
     loop._settings.agent_loop_max_tokens = 5000
     loop._has_image = False
@@ -72,6 +71,11 @@ def _p2_empty() -> dict:
     return {"choices": [], "usage": {"total_tokens": 50}}
 
 
+async def _passthrough_selector(domain, user_input, all_tools):
+    """Bypass tool selector — return all tools unchanged"""
+    return all_tools
+
+
 def _base_patches(loop, brain, history=None, knowledge=None):
     """返回 Phase 1/2 共用的 mock 上下文列表"""
     return [
@@ -84,6 +88,8 @@ def _base_patches(loop, brain, history=None, knowledge=None):
                      new_callable=AsyncMock),
         patch.object(loop, "_fire_and_forget_knowledge"),
         patch.object(loop, "_record_ask_user_context"),
+        patch("services.tool_selector.select_and_filter_tools",
+              side_effect=_passthrough_selector),
     ]
 
 
@@ -101,7 +107,7 @@ class TestPhase1Malformed:
         resp = {"choices": [], "usage": {"total_tokens": 100}}
         brain = AsyncMock(return_value=resp)
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="x")])
         # _parse_phase1_response 返回 ("chat", {})
         assert result.generation_type == GenerationType.CHAT
@@ -117,7 +123,7 @@ class TestPhase1Malformed:
         }
         brain = AsyncMock(return_value=resp)
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="x")])
         assert result.generation_type == GenerationType.CHAT
 
@@ -137,7 +143,7 @@ class TestPhase1Malformed:
         }
         brain = AsyncMock(return_value=resp)
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="x")])
         assert result.generation_type == GenerationType.CHAT
 
@@ -147,7 +153,7 @@ class TestPhase1Malformed:
         loop = _make_loop()
         brain = AsyncMock(return_value=_p1("route_unknown_xyz", {}))
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="x")])
         assert result.generation_type == GenerationType.CHAT
 
@@ -157,7 +163,7 @@ class TestPhase1Malformed:
         loop = _make_loop()
         brain = AsyncMock(side_effect=TimeoutError("brain timeout"))
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="x")])
         assert result.generation_type == GenerationType.CHAT
         assert brain.await_count == 2
@@ -169,7 +175,7 @@ class TestPhase1Malformed:
         loop = _make_loop()
         brain = AsyncMock(side_effect=ConnectionError("refused"))
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="x")])
         assert result.generation_type == GenerationType.CHAT
         assert brain.await_count == 2
@@ -191,7 +197,7 @@ class TestPhase1Malformed:
         }
         brain = AsyncMock(return_value=resp)
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="x")])
         assert result.generation_type == GenerationType.CHAT
         assert result.total_tokens == 0
@@ -275,7 +281,7 @@ class TestPhase2ToolFailures:
             _p2_text("抱歉，查询超时了"),
         ])
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], \
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6], \
                 patch.object(
                     loop.executor, "execute",
                     new_callable=AsyncMock,
@@ -296,7 +302,7 @@ class TestPhase2ToolFailures:
             _p2_text("系统暂时无法查询"),
         ])
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], \
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6], \
                 patch.object(
                     loop.executor, "execute",
                     new_callable=AsyncMock,
@@ -315,7 +321,7 @@ class TestPhase2ToolFailures:
             _p2_text("已为您查询"),
         ])
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="查库存")])
         assert result.generation_type == GenerationType.CHAT
 
@@ -328,7 +334,7 @@ class TestPhase2ToolFailures:
             _p2_empty(),
         ])
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="查订单")])
         assert result.generation_type == GenerationType.CHAT
 
@@ -359,7 +365,7 @@ class TestPhase2ToolFailures:
             return f'{{"result": "ok_{call_count}"}}'
 
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], \
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6], \
                 patch.object(loop.executor, "execute",
                              new_callable=AsyncMock,
                              side_effect=mock_execute):
@@ -387,7 +393,7 @@ class TestPhase2ToolFailures:
             _p2_text("已重试"),
         ])
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="查订单")])
         assert result.generation_type == GenerationType.CHAT
 
@@ -412,7 +418,7 @@ class TestGuardrailsTriggered:
             })], tokens=500),
         ])
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], \
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6], \
                 patch.object(loop.executor, "execute",
                              new_callable=AsyncMock,
                              return_value="{}"):
@@ -438,7 +444,7 @@ class TestGuardrailsTriggered:
             # Turn 2 不会执行（max_turns=2）
         ])
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], \
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6], \
                 patch.object(loop.executor, "execute",
                              new_callable=AsyncMock,
                              return_value="{}"):
@@ -461,7 +467,7 @@ class TestGuardrailsTriggered:
             _p2_tools([same_call]),  # 第3次 → 触发循环检测
         ])
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], \
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6], \
                 patch.object(loop.executor, "execute",
                              new_callable=AsyncMock,
                              return_value="{}"):
@@ -486,7 +492,7 @@ class TestMalformedData:
         }
         brain = AsyncMock(return_value=_p1("route_image", signals))
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="画")])
         assert result.generation_type == GenerationType.IMAGE
         assert result.batch_prompts is not None
@@ -499,7 +505,7 @@ class TestMalformedData:
         loop = _make_loop()
         brain = AsyncMock(return_value=_p1("route_chat", {}))
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="")])
         assert result.generation_type == GenerationType.CHAT
 
@@ -513,7 +519,7 @@ class TestMalformedData:
         }
         brain = AsyncMock(return_value=_p1("route_chat", signals))
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="hi")])
         assert result.generation_type == GenerationType.CHAT
 
@@ -523,7 +529,7 @@ class TestMalformedData:
         loop = _make_loop()
         brain = AsyncMock(return_value=_p1("route_video", {}))
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="视频")])
         assert result.generation_type == GenerationType.VIDEO
         assert result.tool_params.get("prompt") == ""
@@ -534,7 +540,7 @@ class TestMalformedData:
         loop = _make_loop()
         brain = AsyncMock(return_value=_p1("ask_user", {}))
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="?")])
         assert result.generation_type == GenerationType.CHAT
         assert result.direct_reply == ""
@@ -559,7 +565,7 @@ class TestModelInjectionEdge:
             })]),
         ])
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="查")])
         assert result.model == "user_chosen_model"
 
@@ -572,7 +578,7 @@ class TestModelInjectionEdge:
             _p1("route_erp", {}, tokens=300),
         ])
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="查")])
         # 虽然超时，model 仍来自 Phase 1 select_model
         assert result.model != ""
@@ -586,7 +592,7 @@ class TestModelInjectionEdge:
             _p2_text("我不知道怎么查"),
         ])
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5]:
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6]:
             result = await loop._execute_loop_v2([TextPart(text="查")])
         assert result.model != ""
         assert result.generation_type == GenerationType.CHAT
@@ -630,7 +636,7 @@ class TestCompoundFailures:
             return '{"order":"222","status":"ok"}'
 
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], \
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6], \
                 patch.object(loop.executor, "execute",
                              new_callable=AsyncMock,
                              side_effect=mock_exec):
@@ -657,7 +663,7 @@ class TestCompoundFailures:
             })]),
         ])
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], \
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6], \
                 patch.object(loop.executor, "execute",
                              new_callable=AsyncMock,
                              return_value='{"ok":true}'):
@@ -677,7 +683,7 @@ class TestCompoundFailures:
             _p2_text("抱歉，社交平台暂时无法访问"),
         ])
         ctx = _base_patches(loop, brain)
-        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], \
+        with ctx[0], ctx[1], ctx[2], ctx[3], ctx[4], ctx[5], ctx[6], \
                 patch.object(loop.executor, "execute",
                              new_callable=AsyncMock,
                              side_effect=asyncio.TimeoutError()):

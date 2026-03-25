@@ -13,7 +13,7 @@ import asyncio
 import time
 
 from loguru import logger
-from supabase import Client
+
 
 _VALID_TYPES = {
     "product", "stock", "supplier", "platform_map",
@@ -22,7 +22,7 @@ _VALID_TYPES = {
 }
 
 
-async def trigger_erp_sync(db: Client, sync_type: str) -> str:
+async def trigger_erp_sync(db, sync_type: str) -> str:
     """手动触发 ERP 同步（带超时保护 + 新鲜度检查）"""
     if sync_type not in _VALID_TYPES:
         return (
@@ -57,7 +57,7 @@ async def trigger_erp_sync(db: Client, sync_type: str) -> str:
         return f"✗ {sync_type} 同步失败: {e}"
 
 
-def _is_recently_synced(db: Client, sync_type: str) -> bool:
+def _is_recently_synced(db, sync_type: str) -> bool:
     """检查2分钟内是否同步过"""
     try:
         state = (

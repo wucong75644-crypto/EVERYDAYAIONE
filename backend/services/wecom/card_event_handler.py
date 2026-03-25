@@ -8,7 +8,7 @@
 from typing import Any, Dict, Optional
 
 from loguru import logger
-from supabase import Client
+
 
 from core.config import get_settings
 from schemas.wecom import WecomReplyContext
@@ -18,7 +18,7 @@ from services.wecom.card_builder import WecomCardBuilder
 class WecomCardEventHandler:
     """处理 template_card_event 回调"""
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
         self._settings = get_settings()
 

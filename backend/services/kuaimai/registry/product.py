@@ -219,7 +219,7 @@ PRODUCT_REGISTRY = {
     ),
     "stock_in_out": ApiEntry(
         method="erp.item.stock.in.out.list",
-        description="查询商品出入库流水记录（采购入库/销售出库/盘盈盘亏/调拨等历史变动）。查商品销量用order_type=2过滤销售出库，销量=各记录num累加。查当前库存用stock_status",
+        description="查询商品出入库流水记录（采购入库/销售出库/盘盈盘亏/调拨等历史变动）。查商品销量用order_type=2过滤销售出库，销量=各记录num累加。查当前库存用stock_status（⚠️必须传outer_id或sku_outer_id，否则返回全量数据）",
         param_map={
             "outer_id": "outerId",
             "warehouse_id": "warehouseId",
@@ -259,7 +259,7 @@ PRODUCT_REGISTRY = {
     ),
     "history_cost_price": ApiEntry(
         method="erp.item.history.cost.price.query",
-        description="查询商品历史成本价变动记录。必须先知道系统商品ID和SKU ID（从product_detail或sku_list获取）",
+        description="查询商品历史成本价变动记录。必须先知道系统商品ID和SKU ID（从product_detail或sku_list获取）（⚠️必传item_id+sku_id）",
         param_map={
             "item_id": "sysItemId",
             "sku_id": "sysSkuId",

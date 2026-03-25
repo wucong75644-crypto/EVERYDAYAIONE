@@ -9,10 +9,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from loguru import logger
-from supabase import Client
 
 
-def check_sync_health(db: Client, sync_types: list[str]) -> str:
+
+def check_sync_health(db, sync_types: list[str]) -> str:
     """检查同步健康状态，返回警告文本（无异常返回空字符串）
 
     设计文档 §6.0：error_count>=3 或 last_run_at>5分钟 时附加警告。
@@ -59,7 +59,7 @@ def cutoff_iso(days: int) -> str:
 
 
 def query_doc_items(
-    db: Client, doc_type: str, code: str, days: int,
+    db, doc_type: str, code: str, days: int,
     extra_filters: dict | None = None,
 ) -> list[dict]:
     """查询 erp_document_items（days>90 自动 UNION 冷表）"""

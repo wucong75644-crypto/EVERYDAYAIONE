@@ -16,7 +16,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from loguru import logger
-from supabase import Client
+
 
 from core.config import get_settings
 from services.kuaimai.client import KuaiMaiClient
@@ -59,7 +59,7 @@ class ErpSyncService:
 
     FLUSH_THRESHOLD = 1000  # 每积累N条写一次库，控制内存峰值
 
-    def __init__(self, db: Client, lock_extend_fn=None, aggregation_queue: asyncio.Queue | None = None) -> None:
+    def __init__(self, db, lock_extend_fn=None, aggregation_queue: asyncio.Queue | None = None) -> None:
         self.db = db
         self.settings = get_settings()
         self._client: KuaiMaiClient | None = None
@@ -105,18 +105,22 @@ class ErpSyncService:
     # 初始同步并发分片数（API 限流由全局 _API_SEM 12QPS 保护）
     INITIAL_SYNC_CONCURRENCY = 3
 
+    # 单个分片最大重试次数
+    SHARD_MAX_RETRIES = 3
+    # 分片重试间隔（秒）
+    SHARD_RETRY_DELAY = 10
+
     async def _run_initial_sync(self, sync_type: str, state: dict[str, Any]) -> None:
         """
         首次全量同步（设计文档 §7.3）
 
         分片并发拉取（INITIAL_SYNC_CONCURRENCY 路），加速初始同步。
-        API 速率由全局 _API_SEM 限流，DB 写入由流式批量保证内存安全。
-        每批完成后更新断点，全部完成设 is_initial_done=True。
+        每个分片失败后自动重试（最多 SHARD_MAX_RETRIES 次），
+        全部分片成功才标记 is_initial_done=True。
         """
         try:
             windows = self._calculate_time_windows(state)
             total_shards = len(windows)
-            completed = 0
             total_synced = 0
             sem = asyncio.Semaphore(self.INITIAL_SYNC_CONCURRENCY)
 
@@ -125,25 +129,53 @@ class ErpSyncService:
                 f"shards={total_shards} | concurrency={self.INITIAL_SYNC_CONCURRENCY}"
             )
 
-            async def _run_shard(idx: int, start: datetime, end: datetime) -> int:
+            async def _run_shard_with_retry(
+                idx: int, start: datetime, end: datetime,
+            ) -> int:
                 async with sem:
-                    count = await self._sync_window(sync_type, start, end)
-                    if self._lock_extend_fn:
-                        await self._lock_extend_fn()
-                    logger.info(
-                        f"ERP initial sync | type={sync_type} | "
-                        f"shard={idx}/{total_shards} | synced={count}"
-                    )
-                    return count
+                    last_error: Exception | None = None
+                    for attempt in range(1, self.SHARD_MAX_RETRIES + 1):
+                        try:
+                            count = await self._sync_window(sync_type, start, end)
+                            if self._lock_extend_fn:
+                                await self._lock_extend_fn()
+                            if attempt > 1:
+                                logger.info(
+                                    f"ERP initial sync shard recovered | "
+                                    f"type={sync_type} | shard={idx}/{total_shards} | "
+                                    f"attempt={attempt} | synced={count}"
+                                )
+                            else:
+                                logger.info(
+                                    f"ERP initial sync | type={sync_type} | "
+                                    f"shard={idx}/{total_shards} | synced={count}"
+                                )
+                            return count
+                        except Exception as e:
+                            last_error = e
+                            if attempt < self.SHARD_MAX_RETRIES:
+                                logger.warning(
+                                    f"ERP initial sync shard retry | "
+                                    f"type={sync_type} | shard={idx}/{total_shards} | "
+                                    f"attempt={attempt}/{self.SHARD_MAX_RETRIES} | "
+                                    f"error={e}"
+                                )
+                                await asyncio.sleep(
+                                    self.SHARD_RETRY_DELAY * attempt
+                                )
+                    # 重试耗尽，抛出异常让 gather 捕获
+                    raise last_error  # type: ignore[misc]
 
             tasks = [
-                _run_shard(idx, start, end)
+                _run_shard_with_retry(idx, start, end)
                 for idx, (start, end) in enumerate(windows, 1)
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
+            failed_shards = 0
             for idx, result in enumerate(results):
                 if isinstance(result, Exception):
+                    failed_shards += 1
                     logger.error(
                         f"ERP initial sync shard failed | type={sync_type} | "
                         f"shard={idx + 1}/{total_shards} | error={result}"
@@ -155,7 +187,16 @@ class ErpSyncService:
             if windows:
                 self._update_sync_state_progress(sync_type, windows[-1][1])
 
-            # 全量完成 → 标记切换增量模式
+            # 有分片失败 → 不标记完成，下次启动重新全量
+            if failed_shards > 0:
+                logger.error(
+                    f"ERP initial sync incomplete | type={sync_type} | "
+                    f"failed_shards={failed_shards}/{total_shards} | "
+                    f"synced={total_synced} | will retry on next round"
+                )
+                return
+
+            # 全量完成（零失败）→ 标记切换增量模式
             self._mark_initial_done(sync_type, total_synced)
             logger.info(
                 f"ERP initial sync done | type={sync_type} | "
@@ -222,7 +263,7 @@ class ErpSyncService:
         try:
             self.db.table("erp_sync_state").update({
                 "status": "idle",
-                "last_run_at": datetime.now(timezone.utc).isoformat(),
+                "last_run_at": datetime.now().isoformat(),
                 "error_count": 0,
                 "last_error": None,
                 "total_synced": self.db.table("erp_sync_state")
@@ -242,7 +283,7 @@ class ErpSyncService:
             error_count = (state.get("error_count", 0) + 1) if state else 1
             self.db.table("erp_sync_state").update({
                 "status": "error",
-                "last_run_at": datetime.now(timezone.utc).isoformat(),
+                "last_run_at": datetime.now().isoformat(),
                 "error_count": error_count,
                 "last_error": error_msg[:500],
             }).eq("sync_type", sync_type).execute()
@@ -270,7 +311,7 @@ class ErpSyncService:
             self.db.table("erp_sync_state").update({
                 "is_initial_done": True,
                 "status": "idle",
-                "last_run_at": datetime.now(timezone.utc).isoformat(),
+                "last_run_at": datetime.now().isoformat(),
                 "error_count": 0,
                 "last_error": None,
                 "total_synced": total_synced,
@@ -289,7 +330,7 @@ class ErpSyncService:
         设计文档 §7.2：窗口 > 7天自动按 shard_days 切分。
         回溯策略：单据类型5分钟，商品/库存类型1天。
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now()
         sync_type = state["sync_type"]
         last_sync = state.get("last_sync_time")
 
@@ -301,11 +342,11 @@ class ErpSyncService:
             start = now - timedelta(days=initial_days)
         elif isinstance(last_sync, str):
             parsed = datetime.fromisoformat(last_sync.replace("Z", "+00:00"))
-            # 确保 timezone-aware（DB 可能返回不带时区的字符串）
-            start = parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            # 去掉时区信息（DB 存的是北京时间 naive datetime）
+            start = parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
         else:
-            # datetime 对象：确保 timezone-aware
-            start = last_sync if last_sync.tzinfo else last_sync.replace(tzinfo=timezone.utc)
+            # datetime 对象：去掉时区信息
+            start = last_sync.replace(tzinfo=None) if last_sync.tzinfo else last_sync
 
         # 回溯策略：商品/库存/供应商日期精度到天，多回溯1天
         if sync_type in ("product", "stock", "platform_map"):
@@ -434,24 +475,32 @@ class ErpSyncService:
     # ── item_index 稳定排序 ───────────────────────────────
 
     @classmethod
+    @staticmethod
+    def _stable_hash_index(key: str) -> int:
+        """基于内容的稳定哈希 index（MD5 前8位 hex → 0~999999）
+
+        同一个 key 永远返回同一个 index，不受排序顺序或增删影响。
+        """
+        import hashlib
+        h = hashlib.md5(key.encode()).hexdigest()
+        return int(h[:8], 16) % 1000000
+
+    @classmethod
     def sort_and_assign_index(
         cls, items: list[dict[str, Any]], sync_type: str
     ) -> list[dict[str, Any]]:
         """
-        按确定性字段排序后分配 item_index（设计文档 BUG-2）
+        分配稳定的 item_index（基于内容哈希，不受 API 返回顺序影响）
 
-        API 返回的子项数组排序不保证跨调用稳定。
-        排序后再分配 item_index 保证同一单据多次同步产生一致结果。
+        用 sort_keys 对应的字段值拼接后取哈希，同一个 item 无论
+        API 返回顺序如何变化、单据增删了哪些行，index 始终稳定。
         """
         sort_keys = cls.ITEM_SORT_KEYS.get(sync_type, ["outerId", "itemOuterId"])
 
-        def sort_key(item: dict) -> tuple:
-            return tuple(str(item.get(k, "")) for k in sort_keys)
-
-        sorted_items = sorted(items, key=sort_key)
-        for idx, item in enumerate(sorted_items):
-            item["_item_index"] = idx
-        return sorted_items
+        for item in items:
+            key = "|".join(str(item.get(k, "")) for k in sort_keys)
+            item["_item_index"] = cls._stable_hash_index(key)
+        return items
 
     # ── 数据入库 ──────────────────────────────────────────
 

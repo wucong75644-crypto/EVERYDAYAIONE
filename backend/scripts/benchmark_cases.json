@@ -1,0 +1,6995 @@
+[
+  {
+    "input": "YSL01-红色 还有多少库存",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "爆款够不够卖到月底",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "仓库里那个01的货还剩多少",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "查下SK2024的可用库存",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "A001这个款现在锁了多少单",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "SKU001-黑色还有多少能直接发货的库存",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "XBG03的可售库存够不够支撑今天的订单",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "爆款HOT005锁了多少库存不能动",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "仓库里08号货品还剩多少件现货",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "预售款YS002被预占了多少库存",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "CLN07是不是已经缺货没法下单了",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "红色款01库存要不要紧急补货",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "MIX09各分仓的库存加起来有多少",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "BST04实时库存现在是多少",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "KSC06触发库存预警了没有",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "ZXT02可用库存还能卖几天",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "QWE10退货回库后库存更新了吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "天猫店JKL02库存同步正常吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "京东店VBN03还剩多少现货",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "拼多多UIO04库存够不够发活动单",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "抖音PAS05库存有没有被超卖",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "临期款DFG07还剩多少库存要清",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "赠品ZXC08库存够不够随单送",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "组合款KJH09拆分后单品库存多少",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "清仓款LKJ10货还在仓库吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "新款MNB02首批到货库存多少",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "活动款VCX03库存能撑到活动结束吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "保税仓ZAS04可售库存查一下",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "海外仓QAZ05还有多少库存没发",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "中心仓WSX06库存占用情况",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "门店仓EDC07库存实时数据",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "第三方仓RFV08到货后入库了吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "TGB09盘点后库存差异大吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "YHN10入库后最新库存数",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "UJM02出库后库存扣减完成没",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "IKO03有多少库存被冻结了",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "OLP04建议补多少货合适",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "PL05近期缺货次数多不多",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "MK06有没有超卖风险",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "SN07多仓库存对比表发我",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "GD08近一个月库存变动记录",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "HJ09现在库存状态正常不",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "KL10滞销款库存压了多久",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "ZX11季节款库存还剩多少",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "CV12跨境款库存够发往海外吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "BN13前置仓库存够不够当日达",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "NM14区域仓库存调配情况",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "BB15云仓库存同步失败了吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "CC16自营仓库存准确率多少",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "XX17托管仓库存还剩多少",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "ZZ18破损款库存单独列出来",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "QQ19定制款库存能不能加急生产",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "WW20日常款库存稳定吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "EE21节日款库存备足了没",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "RR22老款库存清仓进度",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "TT23被占用的库存什么时候释放",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "YY24库存占用明细发给我",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "UU25这款货补货周期要几天",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "II26建议补货数量是多少",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "OO27库存周转率达标了吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "PP28安全库存设置是否合理",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "AA29这款货有没有在途库存",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "SS30调拨后库存有没有更新",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "DD31这款货库存够不够做直播",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "FF32预售锁定库存多少",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "stock"
+  },
+  {
+    "input": "今天全平台一共出了多少单",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "帮我看下待发货订单列表",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "待审核订单还有多少没批",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "ORD20260324009这个单号查下状态",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "未付款超时订单清理一下",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "已取消订单原因统计",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "今天全天成交额是多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "今天客单价相比昨天涨了吗",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "超时48小时没发货的订单",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "标了加急的订单优先处理",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "3月预售订单总共有多少",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "定金已付未付尾款的订单",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "活动专场订单汇总一下",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "大促当天订单量峰值多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "淘宝旗舰店今天订单数",
+    "expected_tools": [
+      "local_order_query",
+      "erp_taobao_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "天猫超市订单发货状态",
+    "expected_tools": [
+      "local_order_query",
+      "erp_taobao_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "京东自营店待出库订单",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "拼多多百亿补贴订单查一下",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "抖音直播回流订单有多少",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "批发大额订单单独列出来",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "团购拼单订单完成了吗",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "系统标记异常订单排查",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "收件地址错误的订单",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "支付未成功重试的订单",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "SKU004最近一周的订单",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "订单拣货完成多久了",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "订单复核有没有问题",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "打包完成待揽收的订单",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "订单称重记录核对一下",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "已签收订单占比多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "用户拒收的订单有哪些",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "最近妥投率达标了吗",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "这个订单发的哪家快递",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "订单运费金额对不对",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "满减优惠用了多少",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "优惠券抵扣明细查一下",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "会员折扣订单统计",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "跨境订单税费计算",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "订单开票状态更新没",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "用户备注特殊要求的订单",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "买家留言需要注意的",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "新客户订单占比多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "老客复购订单有多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "订单修改记录查一下",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "谁操作了这个订单",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "订单导出Excel给我",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "订单转化漏斗数据",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "昨天订单量环比怎么样",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "未发货订单预警提醒",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "拆分发货的子订单",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "合并发货的订单核对",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "货到付款订单有多少",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "自提订单用户没来取",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "企业采购订单审批",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "礼品单需要单独包装",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "漏发订单补发处理",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "错发订单更正流程",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "PO20260320这批采购货到仓了吗",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "3月15号下的采购单进度",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "供应商A什么时候能发货",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购单PO20260322收货完成没",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "SKU006采购到货上架了吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "待入库采购单还有多少",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "已完成采购单对账",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购异常缺货原因",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购退货处理好了吗",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "这款货采购价是多少",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购批次保质期查一下",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购入库记录核对",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购商品验收通过没",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "大促备货采购计划",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "供应商平均供货时效",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "三家供应商报价对比",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购合同电子版在哪",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购单付款完成了吗",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "在途采购商品还有多久到",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "待付款采购单提醒",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "待收货采购单列表",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购商品质检不合格",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购临期商品处理",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购赠品同步入库",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "组合款采购拆分入库",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "保税仓采购清关进度",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "多仓采购分配数量",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购占用库存多少",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "预售采购备货量",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "最低安全采购量",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购库存预警线",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购报表导出三月",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "供应商供货稳定性",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购费用总计多少",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购破损商品赔付",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "海外采购物流时效",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购单修改记录",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购优先级调整",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "紧急采购加急处理",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "最近整体退货率高不高",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "SKU007被退货多少次了",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "用户退款申请处理完没",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "换货申请发出去了吗",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "补发商品物流单号",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "维修工单进度查一下",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "待处理售后单还有多少",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后拒绝原因是什么",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "退回商品物流到哪了",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后退款金额对不对",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "七天无理由退货单",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "超时未处理售后单",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后纠纷平台介入没",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "换货商品已发出吗",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "维修商品多久能好",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "退货入库完成了吗",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "退回商品质检结果",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后破损商品报废",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "本月退款率超标了吗",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后投诉处理好了没",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后满意度怎么样",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后历史记录导出",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "质量问题退货占比",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后平均处理时长",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "用户不喜欢退货单",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "错发漏发售后单",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后运费谁来承担",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后仲裁结果出来没",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "二次销售退货商品",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后问题分类统计",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "加急售后优先处理",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后关闭订单原因",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "退款成功但未到账",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "补发丢件重新处理",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后换货地址核对",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "SF1357924680这个快递到哪了",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "昨天发的货用户签收了吗",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "物流异常停在中转站的",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "派送中的包裹有哪些",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "快递丢失理赔进度",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "包裹破损怎么处理",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "物流时效超过预计时间",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "改地址后的物流轨迹",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "包裹拦截成功了吗",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "快递员重新派件了没",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "签收凭证照片有没有",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "物流费用本月总计",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "合作快递折扣多少",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "揽收超时的订单",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "中转记录查询一下",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "拒收退回物流进度",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "物流妥投率统计",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "快递丢件率高不高",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "物流满意度调查",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "跨境物流清关完成没",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "集运包裹合并了吗",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "大件物流安装预约",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "冷链物流温度正常吗",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "快递面单打印失败",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "物流轨迹不更新",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "乡镇派送延迟原因",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "国际快递税单查询",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "快递柜超时未取",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "物流重货额外收费",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "这个月销量比上个月高吗",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "热销TOP10商品榜单",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "MK003近30天销量趋势",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "各平台销量对比图",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "滞销商品排名列表",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "本月利润总计多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "商品毛利率计算一下",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "成本结构分析报表",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "推广费用占比多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "店铺流量转化数据",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "商品加购率怎么样",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "地域销售分布热力图",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "时段销量高峰几点",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "活动效果复盘数据",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "同比环比增长分析",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "销量下滑原因分析",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "SKU008销量对比同类",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "全平台销售总报表",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "季度销售总结报告",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "用户复购率统计",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "新老客户销量占比",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "单品SKU009销售排行",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "直播带货销量统计",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "短视频引流销量",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "会员专享销量多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "折扣活动带动销量",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "库存周转天数统计",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "动销率达标了吗",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "商品曝光点击率",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "退款金额占营收比",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "SKU010近7天销量波动",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "年度销售目标完成度",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "区域仓销量对比",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "不同价位段销量",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "活动期与日常对比",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "商品收藏转化销量",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "批发零售销量拆分",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "跨境国内销量对比",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "单品利润贡献排行",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "销售数据导出 pivot 表",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "6923701852413这个条码对应哪个商品",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "白色中码卫衣有没有这个货",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "SKU011的详细规格参数",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "这款货属于哪个分类",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "商品品牌授权资质",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "商品尺寸重量详情",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "有哪些颜色尺码可选",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "商品产地是哪里",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "上下架状态是什么",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "售价成本价对比",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "活动价与日常价差",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "商品图片详情素材",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "商品属性标签有哪些",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "关键词搜索匹配商品",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "套装商品包含哪些SKU",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "定制款商品可选项",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "临期商品标识状态",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "破损商品标记状态",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "商品在哪些平台上架",
+    "expected_tools": [
+      "local_platform_map_query"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "同款商品不同编码",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "商品认证证书编号",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "商品材质成分说明",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "商品保质期多久",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "商品批发价阶梯",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "商品关联赠品信息",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "A仓调200件到B仓流程",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "今日盘点差异金额多少",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "SKU012放在哪个货位",
+    "expected_tools": [
+      "local_product_identify",
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "今日入库总数量",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "今日出库总数量",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "仓库货位利用率多少",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "调拨在途商品有多少",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "盘点盈亏记录查询",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "入库时效平均多久",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "出库拣选时效",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "仓库报废商品清单",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "移库操作记录查询",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "仓库锁库原因是什么",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "仓库作业日志导出",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "仓库人效分析报表",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "临期商品库位移动",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "破损商品隔离库位",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "仓库温湿度记录",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "批次管理商品追踪",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "仓库安全巡检记录",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "ZK005库存多少顺便看下退货情况",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "今天单量和昨天对比再看下退货排名",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "查下SKU013库存和最近采购进度",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_purchase_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "看下热销榜同时查下各平台销量",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "这个商品订单和售后一起发我",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "采购到货和仓库入库一起核对",
+    "expected_tools": [
+      "local_purchase_query",
+      "erp_warehouse_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "查下物流轨迹和订单签收状态",
+    "expected_tools": [
+      "local_doc_query",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "商品信息和上架平台一起看下",
+    "expected_tools": [
+      "local_product_identify",
+      "local_platform_map_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "库存预警和补货建议一起给我",
+    "expected_tools": [
+      "local_stock_query",
+      "local_purchase_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "订单发货和售后补发同步处理",
+    "expected_tools": [
+      "local_order_query",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "销量趋势和库存周转一起分析",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats",
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "仓库调拨和采购在途一起查",
+    "expected_tools": [
+      "erp_warehouse_query",
+      "local_purchase_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "退货入库和订单取消一起核对",
+    "expected_tools": [
+      "local_aftersale_query",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "查下SKU014销量和物流异常",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats",
+      "local_doc_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "采购价格和售后成本一起算",
+    "expected_tools": [
+      "local_purchase_query",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "订单审核和物流揽收一起盯",
+    "expected_tools": [
+      "local_order_query",
+      "local_doc_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "商品上架和库存同步一起做",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "售后纠纷和订单拦截一起处理",
+    "expected_tools": [
+      "local_aftersale_query",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "盘点结果和采购对账一起核对",
+    "expected_tools": [
+      "erp_warehouse_query",
+      "local_purchase_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "销量下滑和售后增多一起看",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "SKU条码和货位一起查一下",
+    "expected_tools": [
+      "local_product_identify",
+      "erp_warehouse_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "订单运费和采购费用一起统计",
+    "expected_tools": [
+      "local_order_query",
+      "local_purchase_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "售后补发和物流改派一起跟进",
+    "expected_tools": [
+      "local_aftersale_query",
+      "local_doc_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "库存不足和超卖风险一起评估",
+    "expected_tools": [
+      "local_stock_query",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "采购质检和售后质检一起看",
+    "expected_tools": [
+      "local_purchase_query",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "仓库出库和订单发货一起确认",
+    "expected_tools": [
+      "erp_warehouse_query",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "销售报表和库存报表一起导出",
+    "expected_tools": [
+      "local_global_stats",
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "物流丢件和售后理赔一起办",
+    "expected_tools": [
+      "local_doc_query",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "采购补货和预售订单一起配",
+    "expected_tools": [
+      "local_purchase_query",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "库存冻结和订单预留一起设",
+    "expected_tools": [
+      "local_stock_query",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "仓库移库和库存调整一起做",
+    "expected_tools": [
+      "erp_warehouse_query",
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "订单加购和最终销量一起算",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "供应商信息和采购合同一起查",
+    "expected_tools": [
+      "local_purchase_query",
+      "erp_info_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "物流时效和用户体验一起看",
+    "expected_tools": [
+      "local_doc_query",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "商品分类和库存分布一起统计",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "查下SKU015全链路流转数据",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_flow"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "今日订单和售后总数一起发",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "采购在途和仓库待收一起等",
+    "expected_tools": [
+      "local_purchase_query",
+      "erp_warehouse_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "商品利润和销量排行一起看",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "退货原因和订单信息一起查",
+    "expected_tools": [
+      "local_aftersale_query",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "库存数量和可售天数一起算",
+    "expected_tools": [
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "平台销量和店铺排名一起查",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "采购到货和商品上架一起催",
+    "expected_tools": [
+      "local_purchase_query",
+      "local_product_identify"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "售后时长和订单时效一起比",
+    "expected_tools": [
+      "local_aftersale_query",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "仓库库存和在途采购一起加",
+    "expected_tools": [
+      "erp_warehouse_query",
+      "local_purchase_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "商品卖点和转化数据一起看",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "物流费用和订单毛利一起算",
+    "expected_tools": [
+      "local_doc_query",
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "库存盘点和差异调整一起做",
+    "expected_tools": [
+      "erp_warehouse_query",
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "新客订单和老客复购一起统计",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "SKU016订单、库存、售后三合一",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query",
+      "local_stock_query",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "活动销量和日常销量一起对比",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "采购周期和库存周转一起优化",
+    "expected_tools": [
+      "local_purchase_query",
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "物流签收和订单完成一起确认",
+    "expected_tools": [
+      "local_doc_query",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "售后退款和订单金额一起核对",
+    "expected_tools": [
+      "local_aftersale_query",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "仓库货位和商品批次一起查",
+    "expected_tools": [
+      "erp_warehouse_query",
+      "local_product_identify"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "销量目标和完成进度一起看",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "采购缺货和库存不足一起找原因",
+    "expected_tools": [
+      "local_purchase_query",
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "订单备注和物流要求一起看",
+    "expected_tools": [
+      "local_order_query",
+      "local_doc_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "商品资质和平台规则一起核对",
+    "expected_tools": [
+      "local_product_identify",
+      "local_platform_map_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "退货入库和库存更新一起做",
+    "expected_tools": [
+      "local_aftersale_query",
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "这个产品的卖点文案怎么写",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发票抬头换成有限公司",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退一步说这个方案行不通",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "帮我写一份活动策划方案",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "明天上午开会几点开始",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个设计图改一下颜色",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发一份公司制度文档给我",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退群之前说一声再见",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "卖个关子下次再告诉你",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发货前的准备工作清单",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退押金流程怎么走",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发票税率是多少个点",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "卖点视频拍摄脚本",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发货包装用什么材料",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退货原因怎么写好看",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "卖不动就搞降价促销",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退差价申请怎么提交",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发票打印设置怎么调",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "下班之后一起吃饭吗",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "周末要不要一起团建",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个电脑有点卡怎么办",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发个红包助助兴",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退而求其次选另一个",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "卖点提炼成一句话",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发货时间改到下周",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退货商品不要影响二次销售",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "卖假货要承担法律责任",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退订机票手续费多少",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发票遗失怎么补办",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "办公室卫生谁来打扫",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "快递柜取件码多少",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退订酒店要提前多久",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "卖点不够突出怎么办",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发货人姓名填错了",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退货包装要包好一点",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "卖完这批就放假",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退卡需要什么资料",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发票增量怎么申请",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "今天天气怎么样",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "下班顺路带我一段",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发个表情包搞笑一下",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退一步海阔天空嘛",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "卖点不够图片来凑",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发货清单打印几份",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退货快递选哪家便宜",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "卖家人挺好说话的",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退股协议怎么起草",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发票认证流程是什么",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "会议室预订好了吗",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "打印机没纸了换一下",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "网络掉线了重新连",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发个定位共享一下",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退款不是我的本意",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "卖点不够优惠来凑",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发货延迟道歉话术",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退货凭证拍照上传",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "卖惨博取用户同情",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退学费怎么申请",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发票冲红怎么操作",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "办公室空调开一下",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "那个啥02的货还有没有剩",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "丁单帮我查一下呗",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "够不够卖啊老哥",
+    "expected_tools": [
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今天单量爆了没",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "催下供应商那批货啥时候到",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "那个谁退的货收到没",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这货咋还没物流信息",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "爆款03还能撑几天",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今天出了多少单子瞅瞅",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "采够的货咋还没入库",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "退回来的货咋处理",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "快递到哪疙瘩了",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这货卖得咋样最近",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "条码扫不出来是啥玩意",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "仓里还有多少存货",
+    "expected_tools": [
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "俩仓库调货弄完没",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "顺便看下库存和退货呗",
+    "expected_tools": [
+      "local_stock_query",
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "发票别搞错咯跟发货没关系",
+    "expected_tools": [],
+    "category": "colloquial"
+  },
+  {
+    "input": "这货缺不缺啊",
+    "expected_tools": [
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "丁子还没审核完",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今天赚了多少毛爷爷",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "供应商磨磨唧唧的催下",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "售后单堆成山了处理下",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "快递咋还不派送",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这货排第几名销量",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这货叫啥名条码搜下",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "货位咋找不到了",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "库存订单售后一块发我",
+    "expected_tools": [
+      "local_stock_query",
+      "local_order_query",
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "够不够发今天的单啊",
+    "expected_tools": [
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "查下那个单号呗",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今天爆单了没老铁",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "采购的啥时候能到啊",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "退的货质检完没",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "物流卡半路了咋整",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这货最近卖得火不火",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这货是哪个牌子的",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "盘点差异大不大啊",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "库存够不够补货",
+    "expected_tools": [
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "丁单状态变了没",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今天单量拉胯了没",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "催下采购赶紧到货",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "售后咋还没处理完",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "签收了没这个件",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "188****5678 这个单号查一下",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "今天成交了多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "SK001 最近的订单看下",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "DD20260324001 这个订单啥情况",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "昨天发了多少单",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "查查A1001这个品最近出了多少单",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "那个未发货的订单列表拉出来",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "订单号202603249999 帮忙追踪下",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "最近一小时下了多少单",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "B2002这个款有没有异常订单",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "查下待审核的订单有多少",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "订单 1357924680 的状态",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "今天上午的单量比昨天多吗",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "C3003 最近三天成交明细",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "那个退款中的订单有哪些",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "单号 SF123456 对应的订单查下",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "全店今天总共卖了多少单",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "D4004 这个品有没有大单",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "查下已发货但未签收的订单",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "订单号 9876543210 的详情",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "昨晚爆单了吗",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "E5005 最近的订单趋势",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "那个挂起的订单处理了吗",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "查下单号 PO2026032401",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "各平台今天的订单量对比",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "F6006 这个款有没有退货订单",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "待付款的订单有多少",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "订单 2468135790 的物流信息",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "这个月订单总量多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "G7007 最近一周的订单量",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "查下异常订单列表",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "单号 1122334455 的状态",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "今天哪个时间段单最多",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "H8008 这个品有没有刷单嫌疑",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "那个加急订单处理没",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "查下单号 DK2026032405",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "上周订单完成率多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "I9009 最近的订单分布",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "查下待打单的订单",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "订单 5566778899 的备注",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "今天新客订单占比多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "J1010 这个款有没有重复下单",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "那个缺货的订单有哪些",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "查下单号 TB2026032408",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "本月订单同比增长多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "K2020 最近的订单来源",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "查下已取消的订单",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "订单 9988776655 的金额",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "今天复购率怎么样",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "L3030 这个品有没有差评订单",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "那个待确认的订单处理没",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "查下单号 JD2026032411",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "上周订单平均金额多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "M4040 最近的订单转化",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "查下待揽收的订单",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "订单 1234509876 的收件人",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "今天各店铺订单排名",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "N5050 这个款有没有大额订单",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "那个待打包的订单有哪些",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "查下单号 PDD2026032414",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "上周订单退款率多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "O6060 最近的订单地域分布",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "order"
+  },
+  {
+    "input": "上周下的那批货到了没",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "PO20260301 这个采购单",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "查查A1001的采购进度",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "供应商说的那批货什么时候到",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购单 20260324001 的状态",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "B2002 这个品还要补货吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "最近有哪些采购单到货了",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "查下单号 CG2026032403",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "C3003 的在途采购量",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "那批急单采购回来了没",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购单 9876543210 的明细",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "D4004 还需要采购多少",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "最近采购入库的情况",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "查下单号 PO2026032406",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "E5005 的采购周期",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "供应商发货了吗",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购单 1122334455 的状态",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "F6006 的采购订单有哪些",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "那批货质检过了没",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "查下单号 CG2026032409",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "G7007 的采购成本",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "最近采购异常情况",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购单 5566778899 的到货时间",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "H8008 还要不要下单",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "那批货入库了吗",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "查下单号 PO2026032412",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "I9009 的采购历史",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "供应商那边进度怎么样",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购单 9988776655 的明细",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "J1010 的采购计划",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "最近采购订单汇总",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "查下单号 CG2026032415",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "K2020 的采购状态",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "那批货什么时候上架",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购单 1234509876 的状态",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "L3030 的采购数量",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "最近采购到货率",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "查下单号 PO2026032418",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "M4040 的采购供应商",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "那批货有问题吗",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "采购单 2468135790 的明细",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "N5050 的采购时间",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "purchase"
+  },
+  {
+    "input": "最近退货多不多",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "BH001 这个被退了几次",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "查查A1001的售后情况",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "最近退款率高吗",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后单 20260324001 的状态",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "B2002 这个品退货原因是什么",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "最近有哪些售后单",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "查下单号 SH2026032403",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "C3003 的退货率",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "那个质量问题退货多吗",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后单 9876543210 的明细",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "D4004 有没有恶意退货",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "最近售后处理进度",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "查下单号 TK2026032406",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "E5005 的售后统计",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "那个换货的单子处理没",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后单 1122334455 的状态",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "F6006 的退货明细",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "最近退款金额多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "查下单号 SH2026032409",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "G7007 的售后原因分布",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "那个拒收的单子多吗",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后单 5566778899 的进度",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "H8008 有没有批量退货",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "最近售后满意度",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "查下单号 TK2026032412",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "I9009 的退货趋势",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "那个仅退款的单子处理没",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后单 9988776655 的详情",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "J1010 的售后记录",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "最近退货排名",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "查下单号 SH2026032415",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "K2020 的退货原因",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "那个维修的单子多吗",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "售后单 1234509876 的状态",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "L3030 的售后统计",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "最近售后时效",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "查下单号 TK2026032418",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "M4040 的退货比例",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "那个补发的单子处理没",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "aftersale"
+  },
+  {
+    "input": "SF1234567890 到哪了",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "昨天发的货签收了吗",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "查查A1001的物流状态",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "快递单号 1234567890 的轨迹",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "最近发货及时率",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "B2002 这个品发货了吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "那个滞留的包裹多吗",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "查下单号 YT2026032403",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "C3003 的物流异常",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "最近签收率怎么样",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "快递单号 9876543210 的状态",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "D4004 有没有丢件",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "最近物流投诉",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "查下单号 ZT2026032406",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "E5005 的发货时效",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "那个派件失败的包裹",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "快递单号 1122334455 的详情",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "F6006 的物流轨迹",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "最近平均配送时长",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "查下单号 SF2026032409",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "G7007 有没有破损",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "那个退回的包裹多吗",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "快递单号 5566778899 的状态",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "H8008 的物流信息",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "最近物流成本",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "查下单号 YT2026032412",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "I9009 的发货状态",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "那个超时的包裹",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "快递单号 9988776655 的轨迹",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "J1010 的物流异常率",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query"
+    ],
+    "category": "logistics"
+  },
+  {
+    "input": "这个月比上个月卖得好吗",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "TOP10 热销款是哪些",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "MK-003 上个月销量趋势",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "今天全店销售额",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "查查A1001的销量对比",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "各平台销售排名",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "B2002 这个品卖得怎么样",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "最近流量转化",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "查下单品 C3003 的统计",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "本月毛利",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "D4004 的销售趋势",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "各店铺业绩对比",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "E5005 的销量分析",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "最近客单价",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "查下单品 F6006 的数据",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "本周增长情况",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "G7007 的销售表现",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "各品类占比",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "H8008 的销量统计",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "最近复购率",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "查下单品 I9009 的趋势",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "今日实时数据",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "J1010 的销售排行",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "各渠道效果",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "K2020 的销量对比",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "最近利润率",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "查下单品 L3030 的分析",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "本月目标达成",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "M4040 的销售数据",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "各区域销售",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "N5050 的销量走势",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "最近转化率",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "查下单品 O6060 的统计",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "今日爆款",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "P7070 的销售表现",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "各时段销量",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "Q8080 的销量分析",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "最近访客数",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "stats"
+  },
+  {
+    "input": "69012345 这个条码是哪个商品",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "红色运动鞋 有这个吗",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "查查A1001的商品信息",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "那个新款上衣的详情",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "B2002 这个品的规格",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "有没有黑色的裤子",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "查下单品 C3003 的资料",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "那个爆款裙子的信息",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "D4004 这个款的图片",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "有没有大码的T恤",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "查下单品 E5005 的描述",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "那个热卖外套的详情",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "F6006 这个品的价格",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "有没有白色的衬衫",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "查下单品 G7007 的属性",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "那个新品鞋子的信息",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "H8008 这个款的材质",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "有没有蓝色的帽子",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "查下单品 I9009 的参数",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "那个经典包包的详情",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "J1010 这个品的产地",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "有没有灰色的围巾",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "查下单品 K2020 的标签",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "那个限量手表的信息",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "L3030 这个款的尺寸",
+    "expected_tools": [
+      "local_product_identify"
+    ],
+    "category": "product"
+  },
+  {
+    "input": "A 仓调 100 件到 B 仓",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "今天盘点差异多少",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "查查A1001的货位",
+    "expected_tools": [
+      "local_product_identify",
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "那个移库的单子处理没",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "B2002 这个品在哪个库区",
+    "expected_tools": [
+      "local_product_identify",
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "最近入库多少",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "查下单品 C3003 的库存位置",
+    "expected_tools": [
+      "local_product_identify",
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "那个出库的单据",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "D4004 这个款的货位调整",
+    "expected_tools": [
+      "local_product_identify",
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "最近盘点结果",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "查下单品 E5005 的仓库分布",
+    "expected_tools": [
+      "local_product_identify",
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "那个调拨的进度",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "F6006 这个品的入出库",
+    "expected_tools": [
+      "local_product_identify",
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "最近库存调整",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "查下单品 G7007 的货位",
+    "expected_tools": [
+      "local_product_identify",
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "那个报废的单据",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "H8008 这个款的库龄",
+    "expected_tools": [
+      "local_product_identify",
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "最近拣货效率",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "查下单品 I9009 的库存状态",
+    "expected_tools": [
+      "local_product_identify",
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "那个复核的差异",
+    "expected_tools": [
+      "erp_warehouse_query"
+    ],
+    "category": "warehouse"
+  },
+  {
+    "input": "ZK-005 库存多少顺便看下最近退货情况",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "今天单量和昨天比，另外退货排名也看下",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "A1001 的库存和销量",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_product_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "查查B2002的采购和售后",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "今天发货了多少，物流异常多吗",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "C3003 的订单和库存",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query",
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "那个D4004的采购进度和到货时间",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "最近销售额和利润",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "E5005 的销量和退货",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "查查F6006的库存和货位",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "erp_warehouse_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "今天订单和退款",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "G7007 的采购和销售",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query",
+      "local_product_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "那个H8008的售后和物流",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "最近流量和转化",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "I9009 的库存和订单",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "查查J1010的采购和库存",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query",
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "今天客单价和复购",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "K2020 的销量和评价",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "那个L3030的订单和物流",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query",
+      "local_doc_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "最近毛利和成本",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "M4040 的库存和采购",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_purchase_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "查查N5050的售后和销量",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query",
+      "local_product_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "今天新客和老客",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "O6060 的订单和退货",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "那个P7070的采购和到货",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "最近访客和下单",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "Q8080 的库存和销售",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_product_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "查查R9090的物流和售后",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "今天爆款和滞销",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "S1011 的订单和采购",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query",
+      "local_purchase_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "那个T2022的库存和货位",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "erp_warehouse_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "最近转化和留存",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "U3033 的销量和退货",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "查查V4044的采购和销售",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query",
+      "local_product_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "今天收入和支出",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "W5055 的订单和物流",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query",
+      "local_doc_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "那个X6066的售后和库存",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query",
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "最近点击和购买",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "Y7077 的采购和到货",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "查查Z8088的销量和评价",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "今天活动和平时",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "AA9099 的库存和订单",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "那个BB1100的物流和售后",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "最近搜索和收藏",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "CC2211 的采购和库存",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query",
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "查查DD3322的销售和退货",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats",
+      "local_aftersale_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "今天线上和线下",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "EE4433 的订单和采购",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query",
+      "local_purchase_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "那个FF5544的库存和货位",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "erp_warehouse_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "最近加购和支付",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "GG6655 的销量和物流",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats",
+      "local_order_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "查查HH7766的售后和采购",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query",
+      "local_purchase_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "今天国内和国外",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "II8877 的订单和库存",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query",
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "那个JJ9988的物流和销售",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query",
+      "local_product_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "最近浏览和下单",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "KK0099 的采购和到货",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "查查LL1100的退货和库存",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query",
+      "local_stock_query"
+    ],
+    "category": "multi"
+  },
+  {
+    "input": "这个产品的卖点怎么提炼",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发票抬头改成公司名",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退一步说这个方案不可行",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "你帮我写个活动方案吧",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "明天开会几点",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个颜色显白吗",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "老板说下周要裁员",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "中午吃什么好",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个文案怎么写才吸引人",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "放假安排出来了吗",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "我觉得这个设计不好看",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么提升团队凝聚力",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个视频怎么剪辑",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "周末去哪里玩",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个照片怎么修图",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么跟客户沟通比较好",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个代码怎么改",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么做预算",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个PPT怎么做",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么招聘合适的人",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个合同怎么审",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么做市场调研",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个海报怎么设计",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么培训新员工",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个报表怎么做",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么做品牌推广",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个活动怎么策划",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么管理时间",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个邮件怎么回",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么做绩效考核",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个会议怎么开",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么提高执行力",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个报告怎么写",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么做项目管理",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个需求怎么提",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么解决冲突",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个流程怎么优化",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么做成本控制",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个风险怎么控",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么激励员工",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个制度怎么定",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么做文化建设",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个战略怎么定",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么转型创新",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个模式怎么跑",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么做用户增长",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个产品怎么迭代",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么打造爆款",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个渠道怎么拓",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么做私域流量",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个内容怎么产",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么搞直播",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个达人怎么找",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么做投放",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个素材怎么测",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么算ROI",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个数据怎么看",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么做复盘",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "这个经验怎么沉",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "怎么带新人",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "那个啥01的货还有没有",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "丁单 查一下",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "够不够卖啊兄弟",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "爆了没今天",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "催一下供应商那批货",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这玩意儿还有多少底",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "单子咋样了",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "卖疯了吗今天",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "货到了没啊",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "退回来的东西弄好没",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这货还能撑几天",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "单儿查一下子",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今儿个卖得咋样",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "那批货有信儿没",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "退货搞定了没",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这品还有多少家当",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "订单瞅一眼",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今天火不火",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "采购那事儿咋样了",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "售后那摊子理完没",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这货还够呛不",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "单子扫一下",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今儿业绩咋地",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "进货那档子事",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "退款那事儿平了没",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这玩意儿库存虚不虚",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "订单过一遍",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今天凉没凉",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "补货那茬儿",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "退换货那堆事",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这货还有多少存货",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "单子核对下",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今儿赚没赚钱",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "订货那事儿",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "售后那堆麻烦",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这品库存紧不紧",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "订单理一理",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今天行不行",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "采买那进度",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "退换那情况",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这货余量足不足",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "单子盘一盘",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今儿成不成",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "进货那速度",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "售后那进度",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这品储备够不够",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "订单清一清",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今天顺不顺",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "采购那效率",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "退换那效率",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这货存量多不多",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "单子整一整",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今儿旺不旺",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "订货那节奏",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "售后那状态",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这品库存稳不稳",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "订单理理顺",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今天热不热",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "补货那情况",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "退换那结果",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "这货底子厚不厚",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "单子查清楚",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "今儿牛不牛",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "进货那结果",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "售后那结局",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "colloquial"
+  },
+  {
+    "input": "WB001的库存看一眼，顺便这品最近出了多少单",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_order_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "够不够卖？现在未发货积压多少？",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_order_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "TX002还有多少，不够赶紧让采购补",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_purchase_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "这个品的采购到了库存怎么还没更新",
+    "expected_tools": [
+      "local_product_identify",
+      "local_purchase_query",
+      "local_stock_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "MK003退货率高不高，库存现在还剩多少",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query",
+      "local_stock_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "DD20260324001这单发了没，快递到哪了",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "TB123456789这个单的快递号是多少，签收没",
+    "expected_tools": [
+      "local_doc_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "最近订单退款比例是多少，哪些品退得最多",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "SK007这个品的订单和售后情况都看看",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query",
+      "local_aftersale_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "今天成交了多少钱，毛利算出来没",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "HK001这个品卖了多少单，赚不赚钱",
+    "expected_tools": [
+      "local_product_identify",
+      "local_order_query",
+      "local_product_stats"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "各店铺利润排名看下，亏钱的是哪家",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "ZK005的库存够不够，不够看采购进度，再查下这品最近单量",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_purchase_query",
+      "local_order_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "上次补的那批货到了没，库存更新了吗，今天出了多少单",
+    "expected_tools": [
+      "local_purchase_query",
+      "local_stock_query",
+      "local_global_stats"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "退货率这么高利润还行吗",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "BH001退了那么多还赚钱吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_aftersale_query",
+      "local_product_stats"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "滞销款有哪些，要不要减少采购",
+    "expected_tools": [
+      "local_global_stats",
+      "local_purchase_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "TOP10的品采购够不够，要不要加单",
+    "expected_tools": [
+      "local_global_stats",
+      "local_purchase_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "YK003从采购到销售整个流程过一遍",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_flow"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "这个品从进货到卖出到退货的完整情况",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_flow"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "淘宝和京东哪个卖得好，各自退货率呢",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "抖音店今天成交和退货都看看",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "最近签收率低售后就多了吧",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "物流破损导致的退货有多少",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "A仓的01号货调100件到B仓，顺便看下库存够不够",
+    "expected_tools": [
+      "erp_warehouse_query",
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "盘点完差异多少，系统库存准不准",
+    "expected_tools": [
+      "erp_warehouse_query",
+      "local_stock_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "SKU01在哪些平台有卖，各平台库存同步了没",
+    "expected_tools": [
+      "local_product_identify",
+      "local_platform_map_query",
+      "local_stock_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "那个事儿都弄好了没，上次说的库存和采购",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_purchase_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "帮我把01的情况整体过一遍",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_flow"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "你看看整体数据，各项指标拉出来",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "那几个问题都处理了没",
+    "expected_tools": [
+      "local_order_query",
+      "local_aftersale_query",
+      "local_stock_query"
+    ],
+    "category": "multi_complex"
+  },
+  {
+    "input": "发票税点是多少",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发布新品详情页",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发个朋友圈推一下",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "发言稿准备好了没",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退一步海阔天空",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退出登录怎么操作",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退伍军人优惠政策",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "退休年龄是多少",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "卖点提炼文案",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "卖相不错拍个图",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "卖关子呢你",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "卖力气活",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "简单说明一下流程",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "单独给VIP发优惠",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "单元测试怎么写",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "单身节活动方案",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "数据库怎么备份",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "素材库更新了没",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "知识库补充一下",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "车库门坏了",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "周末团建去哪",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "中午点什么外卖",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "空调太冷了",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "明天几点开会",
+    "expected_tools": [],
+    "category": "negative"
+  },
+  {
+    "input": "酷存还有多少",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "丁单帮我查一下",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "才购进度咋样",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "tui货处理完没",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "订淡太多了",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "fhl没啊",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "kc够不够",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "dd查一下",
+    "expected_tools": [
+      "local_order_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "sh处理完没",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "cg到了没",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "那个01的还有货吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "上回那个品卖得咋样",
+    "expected_tools": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "就那个红色的还有吗",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "昨天说的那批到了没",
+    "expected_tools": [
+      "local_purchase_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "之前查的那个品库存多少",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "急！！！SKU01还有没有货",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "完蛋了库存要炸了",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "我去今天单量起飞了",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "天塌了退货率50%",
+    "expected_tools": [
+      "local_global_stats"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "格个东西还有伐",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "弄啥嘞这个库存",
+    "expected_tools": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "category": "typo_slang"
+  },
+  {
+    "input": "搞么子退这么多",
+    "expected_tools": [
+      "local_aftersale_query"
+    ],
+    "category": "typo_slang"
+  }
+]

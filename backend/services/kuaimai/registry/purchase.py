@@ -244,7 +244,7 @@ PURCHASE_REGISTRY = {
     # ── 归档 查询 ─────────────────────────────────────
     "purchase_order_history": ApiEntry(
         method="purchase.order.history.query",
-        description="查询归档采购单（三个月前的历史采购单）。必须传起止日期。近期采购单用purchase_order_list",
+        description="查询归档采购单（三个月前的历史采购单）。必须传起止日期。近期采购单用purchase_order_list（⚠️必传start_date+end_date）",
         param_map={
             "code": "code",
             "purchase_id": "id",
@@ -266,7 +266,7 @@ PURCHASE_REGISTRY = {
     ),
     "purchase_order_history_detail": ApiEntry(
         method="purchase.order.history.get",
-        description="查询归档采购单完整详情。需要采购单ID（从purchase_order_history获取）",
+        description="查询归档采购单完整详情。需要采购单ID（从purchase_order_history获取）（⚠️必传start_date+end_date）",
         param_map={"purchase_id": "id"},
         param_docs={
             "purchase_id": "采购单ID（必填，从purchase_order_history获取）。示例: 123456",
@@ -277,7 +277,7 @@ PURCHASE_REGISTRY = {
     ),
     "warehouse_entry_history": ApiEntry(
         method="warehouse.entry.history.list.query",
-        description="查询归档收货单列表（三个月前的历史收货单）。必须传起止日期",
+        description="查询归档收货单列表（三个月前的历史收货单）。必须传起止日期（⚠️必传start_date+end_date）",
         param_map={
             "code": "code",
             "status": "status",
@@ -299,7 +299,7 @@ PURCHASE_REGISTRY = {
     ),
     "warehouse_entry_history_detail": ApiEntry(
         method="warehouse.entry.history.list.get",
-        description="查询归档收货单完整详情。需要收货单ID（从warehouse_entry_history获取）",
+        description="查询归档收货单完整详情。需要收货单ID（从warehouse_entry_history获取）（⚠️必传start_date+end_date）",
         param_map={"entry_id": "id"},
         param_docs={
             "entry_id": "收货单ID（必填，从warehouse_entry_history获取）。示例: 123456",
@@ -310,7 +310,7 @@ PURCHASE_REGISTRY = {
     ),
     "purchase_return_history": ApiEntry(
         method="purchase.return.history.list.query",
-        description="查询归档采退单列表（三个月前的历史采购退货单）。必须传起止日期",
+        description="查询归档采退单列表（三个月前的历史采购退货单）。必须传起止日期（⚠️必传start_date+end_date）",
         param_map={
             "code": "code",
             "status": "status",
@@ -332,7 +332,7 @@ PURCHASE_REGISTRY = {
     ),
     "purchase_return_history_detail": ApiEntry(
         method="purchase.return.history.list.get",
-        description="查询归档采退单完整详情。需要采退单ID（从purchase_return_history获取）",
+        description="查询归档采退单完整详情。需要采退单ID（从purchase_return_history获取）（⚠️必传start_date+end_date）",
         param_map={"return_id": "id"},
         param_docs={
             "return_id": "采退单ID（必填，从purchase_return_history获取）。示例: 123456",
@@ -343,7 +343,7 @@ PURCHASE_REGISTRY = {
     ),
     "shelf_history": ApiEntry(
         method="erp.purchase.shelf.history.query",
-        description="查询归档上架单列表（三个月前的历史上架单）。必须传起止日期",
+        description="查询归档上架单列表（三个月前的历史上架单）。必须传起止日期（⚠️必传start_date+end_date）",
         param_map={
             "status": "status",
             "time_type": "timeType",
@@ -363,7 +363,7 @@ PURCHASE_REGISTRY = {
     ),
     "shelf_history_detail": ApiEntry(
         method="erp.purchase.shelf.history.get",
-        description="查询归档上架单完整详情。需要上架单ID（从shelf_history获取）",
+        description="查询归档上架单完整详情。需要上架单ID（从shelf_history获取）（⚠️必传start_date+end_date）",
         param_map={"shelf_id": "id"},
         param_docs={
             "shelf_id": "上架单ID（必填，从shelf_history获取）。示例: 123456",

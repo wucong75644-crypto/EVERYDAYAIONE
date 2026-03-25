@@ -7,7 +7,7 @@
 from typing import Optional
 
 from loguru import logger
-from supabase import Client
+
 
 from core.exceptions import NotFoundError, PermissionDeniedError
 
@@ -15,7 +15,7 @@ from core.exceptions import NotFoundError, PermissionDeniedError
 class ConversationService:
     """对话服务类"""
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
 
     async def create_conversation(

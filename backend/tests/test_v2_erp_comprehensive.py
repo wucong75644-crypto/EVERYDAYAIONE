@@ -35,7 +35,6 @@ from services.agent_loop import AgentLoop
 def _lp(has_image=False):
     lp = AgentLoop(db=None, user_id="erp_u", conversation_id="erp_c")
     lp._settings = MagicMock()
-    lp._settings.agent_loop_v2_enabled = True
     lp._settings.agent_loop_max_turns = 8
     lp._settings.agent_loop_max_tokens = 80000
     lp._has_image = has_image

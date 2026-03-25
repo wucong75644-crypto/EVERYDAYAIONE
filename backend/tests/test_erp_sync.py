@@ -112,7 +112,7 @@ class TestTimeWindows:
 
     def test_product_type_has_day_backtrack(self):
         """product 类型回溯1天"""
-        now = datetime.now(timezone.utc)
+        now = datetime.now()
         recent = (now - timedelta(minutes=10)).isoformat()
         state = _sync_state("product", last_sync_time=recent)
         service = _make_service([state])
@@ -129,30 +129,55 @@ class TestTimeWindows:
 
 class TestSortAndAssignIndex:
 
-    def test_order_items_sorted_by_oid(self):
-        """order 类型按 oid 排序"""
+    def test_stable_hash_index_deterministic(self):
+        """同一 key 哈希结果稳定"""
         from services.kuaimai.erp_sync_service import ErpSyncService
         items = [
             {"oid": "C", "product": "P1"},
             {"oid": "A", "product": "P2"},
             {"oid": "B", "product": "P3"},
         ]
-        result = ErpSyncService.sort_and_assign_index(items, "order")
-        assert result[0]["oid"] == "A"
-        assert result[1]["oid"] == "B"
-        assert result[2]["oid"] == "C"
-        assert result[0]["_item_index"] == 0
-        assert result[2]["_item_index"] == 2
+        result1 = ErpSyncService.sort_and_assign_index(items, "order")
+        indices1 = [r["_item_index"] for r in result1]
 
-    def test_purchase_items_sorted_by_outerId(self):
-        """purchase 类型按 outerId 排序"""
+        # 重新构造同样的 items，确认结果一致
+        items2 = [
+            {"oid": "C", "product": "P1"},
+            {"oid": "A", "product": "P2"},
+            {"oid": "B", "product": "P3"},
+        ]
+        result2 = ErpSyncService.sort_and_assign_index(items2, "order")
+        indices2 = [r["_item_index"] for r in result2]
+        assert indices1 == indices2
+
+    def test_same_item_different_order_same_index(self):
+        """不同输入顺序，同一 item 得到相同 index"""
         from services.kuaimai.erp_sync_service import ErpSyncService
-        items = [
+        items_a = [
             {"outerId": "Z", "itemOuterId": "A"},
             {"outerId": "A", "itemOuterId": "Z"},
         ]
-        result = ErpSyncService.sort_and_assign_index(items, "purchase")
-        assert result[0]["outerId"] == "A"
+        items_b = [
+            {"outerId": "A", "itemOuterId": "Z"},
+            {"outerId": "Z", "itemOuterId": "A"},
+        ]
+        result_a = ErpSyncService.sort_and_assign_index(items_a, "purchase")
+        result_b = ErpSyncService.sort_and_assign_index(items_b, "purchase")
+        # 找到 outerId=Z 的 index 在两次结果中一致
+        idx_a = next(r["_item_index"] for r in result_a if r["outerId"] == "Z")
+        idx_b = next(r["_item_index"] for r in result_b if r["outerId"] == "Z")
+        assert idx_a == idx_b
+
+    def test_add_item_does_not_change_existing_index(self):
+        """新增 item 不影响已有 item 的 index"""
+        from services.kuaimai.erp_sync_service import ErpSyncService
+        items_before = [{"oid": "A"}, {"oid": "B"}]
+        items_after = [{"oid": "A"}, {"oid": "B"}, {"oid": "C"}]
+        r1 = ErpSyncService.sort_and_assign_index(items_before, "order")
+        r2 = ErpSyncService.sort_and_assign_index(items_after, "order")
+        idx_a1 = next(r["_item_index"] for r in r1 if r["oid"] == "A")
+        idx_a2 = next(r["_item_index"] for r in r2 if r["oid"] == "A")
+        assert idx_a1 == idx_a2
 
     def test_empty_items_returns_empty(self):
         """空列表返回空"""
@@ -294,7 +319,7 @@ class TestShouldRunDaily:
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
         db = MockSupabaseClient()
         worker = ErpSyncWorker(db)
-        worker._last_daily_maintenance = datetime.now(timezone.utc)
+        worker._last_daily_maintenance = datetime.now()
         assert worker._should_run_daily() is False
 
 
@@ -452,7 +477,7 @@ class TestShouldRunLowFreq:
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
         db = MockSupabaseClient()
         worker = ErpSyncWorker(db)
-        worker._last_platform_map_sync = datetime.now(timezone.utc)
+        worker._last_platform_map_sync = datetime.now()
         assert worker._should_run_low_freq() is False
 
 
@@ -620,34 +645,44 @@ class TestRunDeletionDetection:
 
     @pytest.mark.asyncio
     async def test_run_deletion_detection_marks_deleted(self):
-        """检测到已删除商品标记 active_status=-1"""
+        """检测到已删除的 SPU 和 SKU 标记 active_status=-1"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
         db = MockSupabaseClient()
-        # DB 中有 A、B 两个商品
+        # DB 中有 SPU A、B，SKU A-01、A-02、B-01
         db.set_table_data("erp_products", [
             {"outer_id": "A", "active_status": 1},
             {"outer_id": "B", "active_status": 1},
         ])
+        db.set_table_data("erp_product_skus", [
+            {"sku_outer_id": "A-01", "active_status": 1},
+            {"sku_outer_id": "A-02", "active_status": 1},
+            {"sku_outer_id": "B-01", "active_status": 1},
+        ])
 
         worker = ErpSyncWorker(db)
 
-        # mock ErpSyncService — 函数内 lazy import
+        # API 只返回 A（含 SKU A-01），B 和 SKU A-02、B-01 视为已删除
         mock_svc = MagicMock()
         mock_svc.fetch_all_pages = AsyncMock(return_value=[
-            {"outerId": "A"},  # B 不在 API → 视为已删除
+            {"outerId": "A", "skus": [{"skuOuterId": "A-01"}]},
         ])
 
-        # mock neq (不在 MockSupabaseTable 中)
-        products_table = db.table("erp_products")
-        original_select = products_table.select
+        # mock neq/range（不在 MockSupabaseTable 中）
+        def _patch_table(table_name):
+            tbl = db.table(table_name)
+            original_select = tbl.select
 
-        def patched_select(fields="*", count=None):
-            result = original_select(fields, count)
-            result.neq = lambda f, v: result
-            return result
+            def patched_select(fields="*", count=None):
+                result = original_select(fields, count)
+                result.neq = lambda f, v: result
+                result.range = lambda s, e: result
+                return result
 
-        products_table.select = patched_select
+            tbl.select = patched_select
+
+        _patch_table("erp_products")
+        _patch_table("erp_product_skus")
 
         with patch(
             "services.kuaimai.erp_sync_service.ErpSyncService",
@@ -655,7 +690,8 @@ class TestRunDeletionDetection:
         ):
             count = await worker._run_deletion_detection()
 
-        assert count == 1
+        # B(SPU) + A-02(SKU) + B-01(SKU) = 3
+        assert count == 3
 
     @pytest.mark.asyncio
     async def test_run_deletion_detection_no_api(self):
@@ -712,3 +748,126 @@ class TestDailyMaintenanceOrchestration:
             await worker._run_daily_maintenance()
 
         assert call_order == ["archive", "reagg", "deletion"]
+
+
+# ============================================================
+# TestDeadLetterQueue — 死信队列
+# ============================================================
+
+
+class TestFetchDetailsWithFailures:
+    """_fetch_details 返回成功和失败列表"""
+
+    @pytest.mark.asyncio
+    async def test_success_and_failure_split(self):
+        """成功的进 succeeded，失败的进 failed"""
+        from services.kuaimai.erp_sync_handlers import _fetch_details
+
+        mock_client = AsyncMock()
+
+        async def _mock_request(method, params):
+            if params["id"] == "bad":
+                raise Exception("network error")
+            return {"list": [{"outerId": "A"}]}
+
+        mock_client.request_with_retry = _mock_request
+
+        docs = [{"id": "good"}, {"id": "bad"}]
+        result = await _fetch_details(mock_client, "test.get", docs)
+
+        assert len(result.succeeded) == 1
+        assert result.succeeded[0][0]["id"] == "good"
+        assert len(result.failed) == 1
+        assert result.failed[0]["id"] == "bad"
+
+    def test_iter_backward_compat(self):
+        """__iter__ 向后兼容：for doc, detail in result"""
+        from services.kuaimai.erp_sync_handlers import _DetailResult
+
+        result = _DetailResult()
+        result.succeeded = [
+            ({"id": "d1"}, {"list": []}),
+            ({"id": "d2"}, {"list": []}),
+        ]
+
+        items = [(doc, detail) for doc, detail in result]
+        assert len(items) == 2
+
+
+class TestRecordDeadLetter:
+    """dead letter 写入"""
+
+    def test_record_writes_to_db(self):
+        """失败的 doc 写入死信表"""
+        from services.kuaimai.erp_sync_dead_letter import record_dead_letter
+
+        db = MockSupabaseClient()
+        failed_docs = [{"id": "123"}, {"id": "456"}]
+
+        count = record_dead_letter(
+            db, "purchase", "purchase.order.get", failed_docs, "timeout",
+        )
+
+        assert count == 2
+        dl_table = db.table("erp_sync_dead_letter")
+        assert len(dl_table._data) == 2
+
+    def test_empty_docs_returns_zero(self):
+        """空列表不写入"""
+        from services.kuaimai.erp_sync_dead_letter import record_dead_letter
+
+        db = MockSupabaseClient()
+        count = record_dead_letter(db, "purchase", "purchase.order.get", [])
+        assert count == 0
+
+
+class TestCalcNextRetry:
+    """指数退避计算"""
+
+    def test_exponential_backoff(self):
+        """延迟随重试次数指数增长"""
+        from services.kuaimai.erp_sync_dead_letter import _calc_next_retry
+
+        t0 = _calc_next_retry(0)  # 5s
+        t1 = _calc_next_retry(1)  # 10s
+        t2 = _calc_next_retry(2)  # 20s
+        # 只要后者比前者晚即可
+        assert t1 > t0
+        assert t2 > t1
+
+    def test_max_cap(self):
+        """超大重试次数不会溢出"""
+        from services.kuaimai.erp_sync_dead_letter import _calc_next_retry
+
+        # retry_count=100 不应报错
+        result = _calc_next_retry(100)
+        assert isinstance(result, str)
+
+
+class TestBuildRowsFromDetail:
+    """死信重试时的行构建"""
+
+    def test_build_purchase_rows(self):
+        """采购单行构建"""
+        from services.kuaimai.erp_sync_dead_letter_handlers import build_rows_from_detail
+
+        doc = {"id": "123", "code": "CG123", "status": "FINISHED",
+               "created": "2026-03-25 10:00:00", "modified": "2026-03-25 11:00:00",
+               "remark": "test remark"}
+        detail = {"list": [
+            {"itemOuterId": "A01", "outerId": "A01-01", "count": 10,
+             "price": 100, "amount": 1000, "_item_index": 0},
+        ], "supplierName": "供应商A", "warehouseName": "仓库1"}
+
+        rows = build_rows_from_detail("purchase", doc, detail)
+        assert len(rows) == 1
+        assert rows[0]["doc_type"] == "purchase"
+        assert rows[0]["remark"] == "test remark"
+        assert rows[0]["supplier_name"] == "供应商A"
+
+    def test_unknown_type_returns_empty(self):
+        """未知类型返回空"""
+        from services.kuaimai.erp_sync_dead_letter_handlers import build_rows_from_detail
+
+        rows = build_rows_from_detail("unknown_type", {}, {})
+        assert rows == []

@@ -230,10 +230,10 @@ class TestE2ESuiteStockFlow:
         print("STEP 6: 路由提示词套件处理指引")
         print("=" * 60)
 
-        # 关键：不再是不可执行的"告知用户需查子单品"
-        assert "local_product_identify 会返回子单品列表" in ERP_ROUTING_PROMPT
-        assert "local_stock_query" in ERP_ROUTING_PROMPT
-        assert "汇总后告知用户" in ERP_ROUTING_PROMPT
+        # 套件无独立库存，需查子单品
+        assert "套件" in ERP_ROUTING_PROMPT
+        assert "local_product_identify" in ERP_ROUTING_PROMPT
+        assert "两步查询" in ERP_ROUTING_PROMPT
 
         # 打印相关段落
         for line in ERP_ROUTING_PROMPT.split("\n"):

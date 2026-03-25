@@ -6,7 +6,7 @@
 """
 
 from loguru import logger
-from supabase import Client
+
 
 
 # 可直接 UPDATE user_id 的表（无唯一约束冲突风险）
@@ -26,7 +26,7 @@ DELETE_TABLES = [
 
 
 async def merge_users(
-    db: Client,
+    db,
     keep_user_id: str,
     remove_user_id: str,
     wecom_userid: str,
@@ -101,7 +101,7 @@ async def merge_users(
     )
 
 
-def _merge_credits(db: Client, keep_user_id: str, remove_user_id: str) -> None:
+def _merge_credits(db, keep_user_id: str, remove_user_id: str) -> None:
     """合并积分：W 的积分转移到 K"""
     remove_user = (
         db.table("users").select("credits")
@@ -130,7 +130,7 @@ def _merge_credits(db: Client, keep_user_id: str, remove_user_id: str) -> None:
     }).execute()
 
 
-def _add_login_method(db: Client, user_id: str, method: str) -> None:
+def _add_login_method(db, user_id: str, method: str) -> None:
     """向用户的 login_methods 数组添加方法（去重）"""
     user = (
         db.table("users").select("login_methods")

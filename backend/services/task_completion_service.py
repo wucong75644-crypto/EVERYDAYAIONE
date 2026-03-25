@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 from datetime import datetime, timezone
 
 from loguru import logger
-from supabase import Client
+
 
 from services.adapters.base import (
     ImageGenerateResult,
@@ -70,7 +70,7 @@ class TaskCompletionService:
     不关心结果来自 Webhook 还是轮询、来自哪个 Provider。
     """
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
 
     def get_task(self, external_task_id: str) -> Optional[Dict[str, Any]]:

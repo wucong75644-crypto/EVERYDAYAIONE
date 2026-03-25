@@ -11,7 +11,7 @@ import asyncio
 from datetime import datetime, timezone
 
 from loguru import logger
-from supabase import Client
+
 
 from core.config import get_settings
 
@@ -35,7 +35,7 @@ class ErpSyncWorker:
     # 删除检测间隔（秒）：7天（商品删除低频，无需每天全量扫描）
     DELETION_INTERVAL = 604800
 
-    def __init__(self, db: Client) -> None:
+    def __init__(self, db) -> None:
         self.db = db
         self.settings = get_settings()
         self.is_running = False
@@ -61,6 +61,12 @@ class ErpSyncWorker:
         # 启动聚合消费者协程（串行从 Redis 队列取 key 做聚合）
         agg_task = asyncio.create_task(self._aggregation_consumer())
 
+        # 启动死信消费者协程（指数退避重试失败的 detail 调用）
+        from services.kuaimai.erp_sync_dead_letter import consume_dead_letters
+        dl_task = asyncio.create_task(
+            consume_dead_letters(self.db, lambda: self.is_running)
+        )
+
         while self.is_running:
             try:
                 await self._run_sync_round()
@@ -72,6 +78,7 @@ class ErpSyncWorker:
             await asyncio.sleep(self.settings.erp_sync_interval)
 
         agg_task.cancel()
+        dl_task.cancel()
         logger.info("ErpSyncWorker stopped")
 
     async def stop(self) -> None:
@@ -102,13 +109,13 @@ class ErpSyncWorker:
             if self.is_running and self._should_run_low_freq():
                 await self._extend_lock()
                 await self._execute_sync("platform_map")
-                self._last_platform_map_sync = datetime.now(timezone.utc)
+                self._last_platform_map_sync = datetime.now()
 
             # 日维护任务（归档 + 聚合兜底 + 删除检测，每24小时）
             if self.is_running and self._should_run_daily():
                 await self._extend_lock()
                 await self._run_daily_maintenance()
-                self._last_daily_maintenance = datetime.now(timezone.utc)
+                self._last_daily_maintenance = datetime.now()
         finally:
             await self._release_lock()
 
@@ -130,7 +137,7 @@ class ErpSyncWorker:
         if self._last_platform_map_sync is None:
             return True
         elapsed = (
-            datetime.now(timezone.utc) - self._last_platform_map_sync
+            datetime.now() - self._last_platform_map_sync
         ).total_seconds()
         return elapsed >= self.settings.erp_platform_map_interval
 
@@ -139,7 +146,7 @@ class ErpSyncWorker:
         if self._last_daily_maintenance is None:
             return True
         elapsed = (
-            datetime.now(timezone.utc) - self._last_daily_maintenance
+            datetime.now() - self._last_daily_maintenance
         ).total_seconds()
         return elapsed >= self.DAILY_INTERVAL
 
@@ -148,7 +155,7 @@ class ErpSyncWorker:
         if self._last_deletion_detection is None:
             return True
         elapsed = (
-            datetime.now(timezone.utc) - self._last_deletion_detection
+            datetime.now() - self._last_deletion_detection
         ).total_seconds()
         return elapsed >= self.DELETION_INTERVAL
 
@@ -163,7 +170,7 @@ class ErpSyncWorker:
             deleted = 0
             if self._should_run_deletion():
                 deleted = await self._run_deletion_detection()
-                self._last_deletion_detection = datetime.now(timezone.utc)
+                self._last_deletion_detection = datetime.now()
             logger.info(
                 f"ERP daily maintenance done | archived={archived} | "
                 f"reaggregated={reagg} | deleted={deleted}"
@@ -179,7 +186,7 @@ class ErpSyncWorker:
         """
         from datetime import timedelta
         cutoff = (
-            datetime.now(timezone.utc) - timedelta(days=self.settings.erp_archive_retention_days)
+            datetime.now() - timedelta(days=self.settings.erp_archive_retention_days)
         ).isoformat()
 
         total_archived = 0
@@ -226,7 +233,7 @@ class ErpSyncWorker:
         """
         from datetime import timedelta
         cutoff = (
-            datetime.now(timezone.utc) - timedelta(days=7)
+            datetime.now() - timedelta(days=7)
         ).strftime("%Y-%m-%d")
 
         try:
@@ -265,49 +272,91 @@ class ErpSyncWorker:
 
     async def _run_deletion_detection(self) -> int:
         """
-        商品删除检测（设计文档任务3.5）
+        商品删除检测（SPU + SKU 级别）
 
-        全量拉取 API 商品列表 vs DB，标记已删除商品 active_status=-1。
+        全量拉取 API 商品列表 vs DB，标记已删除的 SPU 和 SKU active_status=-1。
         """
         try:
             from services.kuaimai.erp_sync_service import ErpSyncService
             svc = ErpSyncService(self.db)
 
-            # 全量拉取 API 商品的 outer_id 集合
+            # 全量拉取 API 商品（含 skus 数组）
             products = await svc.fetch_all_pages(
                 "item.list.query",
                 {"startModified": "2020-01-01 00:00:00", "endModified": "2099-12-31 23:59:59"},
                 response_key="items",
                 page_size=100,
             )
-            api_ids = {p.get("outerId") for p in products if p.get("outerId")}
 
-            # 获取 DB 中所有 active 商品 outer_id
+            # 构建 API 中的 SPU 和 SKU 集合
+            api_spu_ids: set[str] = set()
+            api_sku_ids: set[str] = set()
+            for p in products:
+                outer_id = p.get("outerId")
+                if outer_id:
+                    api_spu_ids.add(outer_id)
+                for sku in p.get("skus") or []:
+                    sku_id = sku.get("skuOuterId")
+                    if sku_id:
+                        api_sku_ids.add(sku_id)
+
+            count = 0
+
+            # ── SPU 删除检测 ──
             result = (
                 self.db.table("erp_products")
                 .select("outer_id")
                 .neq("active_status", -1)
                 .execute()
             )
-            db_ids = {r["outer_id"] for r in (result.data or [])}
+            db_spu_ids = {r["outer_id"] for r in (result.data or [])}
+            deleted_spus = db_spu_ids - api_spu_ids
 
-            # 标记不在 API 中的商品为已删除
-            deleted_ids = db_ids - api_ids
-            if not deleted_ids:
-                return 0
-
-            count = 0
-            for outer_id in deleted_ids:
+            for outer_id in deleted_spus:
                 try:
                     self.db.table("erp_products").update({
                         "active_status": -1,
                     }).eq("outer_id", outer_id).execute()
                     count += 1
                 except Exception as e:
-                    logger.warning(f"Mark deleted failed | outer_id={outer_id} | error={e}")
+                    logger.warning(f"Mark SPU deleted failed | outer_id={outer_id} | error={e}")
 
-            if count:
-                logger.info(f"Product deletion detected | count={count}")
+            if deleted_spus:
+                logger.info(f"SPU deletion detected | count={len(deleted_spus)}")
+
+            # ── SKU 删除检测 ──
+            db_sku_ids: set[str] = set()
+            offset = 0
+            while True:
+                r = (
+                    self.db.table("erp_product_skus")
+                    .select("sku_outer_id")
+                    .neq("active_status", -1)
+                    .range(offset, offset + 999)
+                    .execute()
+                )
+                if not r.data:
+                    break
+                for row in r.data:
+                    db_sku_ids.add(row["sku_outer_id"])
+                offset += 1000
+                if len(r.data) < 1000:
+                    break
+
+            deleted_skus = db_sku_ids - api_sku_ids
+
+            for sku_id in deleted_skus:
+                try:
+                    self.db.table("erp_product_skus").update({
+                        "active_status": -1,
+                    }).eq("sku_outer_id", sku_id).execute()
+                    count += 1
+                except Exception as e:
+                    logger.warning(f"Mark SKU deleted failed | sku_outer_id={sku_id} | error={e}")
+
+            if deleted_skus:
+                logger.info(f"SKU deletion detected | count={len(deleted_skus)}")
+
             return count
         except Exception as e:
             logger.error(f"Deletion detection failed | error={e}")

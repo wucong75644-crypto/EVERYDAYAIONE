@@ -1,7 +1,8 @@
 """
 Agent 工具定义单元测试
 
-覆盖：validate_tool_call、工具分类集合、AGENT_TOOLS 结构
+覆盖：validate_tool_call、工具分类集合、ERP 工具构建、路由提示词
+v1 AGENT_TOOLS/AGENT_SYSTEM_PROMPT 已移除，相关测试已清理。
 """
 
 import sys
@@ -13,7 +14,6 @@ if str(backend_dir) not in sys.path:
 
 from config.agent_tools import (
     ALL_TOOLS,
-    AGENT_TOOLS,
     INFO_TOOLS,
     ROUTING_TOOLS,
     TOOL_SCHEMAS,
@@ -45,16 +45,6 @@ class TestValidateToolCall:
         assert validate_tool_call(
             "get_conversation_context", {"limit": 5},
         ) is True
-
-    def test_web_search_with_required(self):
-        """web_search 有必填参数→True"""
-        assert validate_tool_call(
-            "web_search", {"search_query": "天气"},
-        ) is True
-
-    def test_web_search_missing_required(self):
-        """web_search 缺少必填参数→False"""
-        assert validate_tool_call("web_search", {}) is False
 
     def test_search_knowledge_with_required(self):
         """search_knowledge 有必填参数→True"""
@@ -152,47 +142,14 @@ class TestToolSets:
         assert expected <= ROUTING_TOOLS
 
     def test_info_tools_has_core(self):
-        """INFO 工具包含 3 个核心工具"""
-        expected = {"web_search", "get_conversation_context", "search_knowledge"}
+        """INFO 工具包含核心工具"""
+        expected = {"get_conversation_context", "search_knowledge"}
         assert expected <= INFO_TOOLS
 
     def test_all_tools_have_schemas(self):
         """所有工具都有 schema 定义"""
         for tool in ALL_TOOLS:
             assert tool in TOOL_SCHEMAS, f"Missing schema for {tool}"
-
-
-# ============================================================
-# TestAgentToolsStructure — AGENT_TOOLS 结构验证
-# ============================================================
-
-
-class TestAgentToolsStructure:
-
-    def test_tools_are_list(self):
-        """AGENT_TOOLS 是列表"""
-        assert isinstance(AGENT_TOOLS, list)
-
-    def test_tools_not_empty(self):
-        """AGENT_TOOLS 非空"""
-        assert len(AGENT_TOOLS) > 0
-
-    def test_each_tool_has_function(self):
-        """每个工具有 type=function 和 function 字段"""
-        for tool in AGENT_TOOLS:
-            assert tool["type"] == "function"
-            assert "function" in tool
-            func = tool["function"]
-            assert "name" in func
-            assert "description" in func
-            assert "parameters" in func
-
-    def test_tool_names_match_all_tools(self):
-        """AGENT_TOOLS 中的工具名包含 ALL_TOOLS"""
-        from config.erp_local_tools import ERP_LOCAL_TOOLS
-        tool_names = {t["function"]["name"] for t in AGENT_TOOLS}
-        assert ALL_TOOLS.issubset(tool_names)
-        assert ERP_LOCAL_TOOLS.issubset(tool_names)
 
 
 # ============================================================
@@ -292,7 +249,6 @@ class TestBuildErpTools:
             "buyer", "order_id", "system_id",
             "sku_outer_id", "shop_id", "refund_type", "date_type",
         }
-        # 本地工具使用扁平参数（非两步模式），跳过
         skip = {"erp_execute"} | ERP_LOCAL_TOOLS
         for tool in tools:
             if tool["function"]["name"] in skip:
@@ -333,7 +289,6 @@ class TestErpTaobaoQueryTool:
                   if t["function"]["name"] == "erp_taobao_query"][0]
         action_desc = taobao["function"]["parameters"][
             "properties"]["action"]["description"]
-        # action 描述应包含 status/date_type 等参数名
         assert "status" in action_desc
         assert "date_type" in action_desc
 
@@ -341,82 +296,45 @@ class TestErpTaobaoQueryTool:
 class TestErpRoutingPrompt:
 
     def test_multistep_strategy_present(self):
-        """ERP_ROUTING_PROMPT 包含多步查询策略"""
+        """ERP_ROUTING_PROMPT 包含两步查询策略"""
         from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "多步查询策略" in ERP_ROUTING_PROMPT
+        assert "两步查询" in ERP_ROUTING_PROMPT
 
     def test_no_immediate_route_to_chat(self):
         """ERP_ROUTING_PROMPT 不再要求查询后立即 route_to_chat"""
         from config.erp_tools import ERP_ROUTING_PROMPT
         assert "ERP查询结果返回后，用 route_to_chat 总结回复用户" not in ERP_ROUTING_PROMPT
 
-    def test_encourages_pagination(self):
-        """ERP_ROUTING_PROMPT 鼓励翻页"""
-        from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "翻页" in ERP_ROUTING_PROMPT
-
     def test_mentions_time_type(self):
         """ERP_ROUTING_PROMPT 提到 time_type 用法"""
         from config.erp_tools import ERP_ROUTING_PROMPT
         assert "time_type" in ERP_ROUTING_PROMPT
 
-    # ── P0 高频决策树 ──────────────────────────────────
-
-    def test_p0_stock_query_core_actions(self):
-        """P0: 库存查询覆盖核心 action"""
-        from config.erp_tools import ERP_ROUTING_PROMPT
-        for action in [
-            "stock_status", "warehouse_stock", "stock_in_out",
-        ]:
-            assert action in ERP_ROUTING_PROMPT, f"Missing stock action: {action}"
-        # batch_stock_list 在必填参数陷阱中提及
-        assert "batch_stock_list" in ERP_ROUTING_PROMPT
-
     def test_p0_aftersales_cross_tool(self):
-        """P0: 售后查询跨3个工具的决策"""
+        """P0: 售后查询跨工具的决策"""
         from config.erp_tools import ERP_ROUTING_PROMPT
         for keyword in [
             "aftersale_list", "refund_list", "refund_warehouse",
-            "replenish_list", "repair_list",
         ]:
             assert keyword in ERP_ROUTING_PROMPT, f"Missing aftersales: {keyword}"
-
-    def test_p0_outstock_cross_tool(self):
-        """P0: 出库查询跨3个工具的决策"""
-        from config.erp_tools import ERP_ROUTING_PROMPT
-        for keyword in [
-            "outstock_query", "outstock_order_query",
-            "other_out_list", "other_in_list",
-        ]:
-            assert keyword in ERP_ROUTING_PROMPT, f"Missing outstock: {keyword}"
 
     def test_p0_archive_difference(self):
         """P0: 归档差异（订单 query_type vs 采购换 action）"""
         from config.erp_tools import ERP_ROUTING_PROMPT
         assert "query_type=1" in ERP_ROUTING_PROMPT
-        # 采购归档在 prompt 中简要提及，详细列表在 api_search 场景指南中
         assert "purchase_order_history" in ERP_ROUTING_PROMPT or "_history" in ERP_ROUTING_PROMPT
 
     def test_p0_trade_vs_taobao_query(self):
-        """P0: erp_trade_query vs erp_taobao_query 时间参数差异"""
+        """P0: erp_taobao_query 时间参数 date_type 在提示词中"""
         from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "erp_trade_query" in ERP_ROUTING_PROMPT
-        assert "erp_taobao_query" in ERP_ROUTING_PROMPT
-        # 时间参数差异（date_type 整数 vs time_type 字符串）
         assert "date_type" in ERP_ROUTING_PROMPT
+        assert "erp_taobao_query" in ERP_ROUTING_PROMPT
 
     def test_p0_required_params_trap(self):
         """P0: 必填参数陷阱提示"""
         from config.erp_tools import ERP_ROUTING_PROMPT
-        # refund_warehouse 必须传 time_type
         assert "refund_warehouse" in ERP_ROUTING_PROMPT
-        # order_log 只接受 system_ids
-        assert "order_log" in ERP_ROUTING_PROMPT
-        assert "system_ids" in ERP_ROUTING_PROMPT
-        # history_cost_price 要两个 ID
-        assert "history_cost_price" in ERP_ROUTING_PROMPT
-
-    # ── P1/P2 场景指南（已迁移到 api_search 按需加载） ──
+        assert "time_type" in ERP_ROUTING_PROMPT
 
     def test_p1_product_query_in_scenario_docs(self):
         """P1: 商品查询 action 选择在场景指南中"""
@@ -438,11 +356,12 @@ class TestErpRoutingPrompt:
         ]:
             assert action in doc, f"Missing purchase action: {action}"
 
-    def test_p1_order_id_vs_system_id(self):
-        """P1: 订单号 vs 系统单号策略（prompt + 场景指南）"""
+    def test_p1_relay_keys(self):
+        """P1: 中继键 sid/order_no/outer_id 在提示词中"""
         from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "order_id" in ERP_ROUTING_PROMPT
-        assert "system_id" in ERP_ROUTING_PROMPT
+        assert "sid" in ERP_ROUTING_PROMPT
+        assert "order_no" in ERP_ROUTING_PROMPT
+        assert "outer_id" in ERP_ROUTING_PROMPT
 
     def test_p2_statistics_in_scenario_docs(self):
         """P2: 统计类汇总策略在场景指南中"""
@@ -463,42 +382,42 @@ class TestErpRoutingPrompt:
         assert "基础编码" in ERP_ROUTING_PROMPT
         assert "无需手动重试" in ERP_ROUTING_PROMPT
 
-    # ── 状态值完整性 ───────────────────────────────────
-
-    def test_order_status_mapping_complete(self):
-        """订单状态日常用语映射覆盖所有 6 个核心状态"""
-        from config.erp_tools import ERP_ROUTING_PROMPT
-        for status in [
-            "WAIT_BUYER_PAY", "WAIT_AUDIT", "WAIT_SEND_GOODS",
-            "SELLER_SEND_GOODS", "FINISHED", "CLOSED",
-        ]:
-            assert status in ERP_ROUTING_PROMPT, f"Missing status: {status}"
 
 
 # ============================================================
-# TestAgentSystemPromptRegenRules — 重新生成引导规则
+# TestToolRegistry — 新注册表验证
 # ============================================================
 
 
-class TestAgentSystemPromptRegenRules:
+class TestToolRegistry:
 
-    def test_regen_rules_present(self):
-        """系统提示词包含重新生成/修改规则"""
-        from config.agent_tools import AGENT_SYSTEM_PROMPT
-        assert "重新生成/修改规则" in AGENT_SYSTEM_PROMPT
+    def test_registry_has_all_erp_tools(self):
+        """注册表包含所有 ERP 工具"""
+        from config.tool_registry import TOOL_REGISTRY
+        from config.erp_tools import ERP_SYNC_TOOLS
+        from config.erp_local_tools import ERP_LOCAL_TOOLS
+        for tool in ERP_SYNC_TOOLS | ERP_LOCAL_TOOLS:
+            assert tool in TOOL_REGISTRY, f"Missing: {tool}"
 
-    def test_regen_references_history_prompt(self):
-        """规则要求从历史提示词标注中获取上次 prompt"""
-        from config.agent_tools import AGENT_SYSTEM_PROMPT
-        assert "[图片已生成，使用的提示词:" in AGENT_SYSTEM_PROMPT
+    def test_registry_has_always_include(self):
+        """注册表有 6 个常驻工具"""
+        from config.tool_registry import TOOL_REGISTRY
+        always = [t for t in TOOL_REGISTRY.values() if t.always_include]
+        assert len(always) == 6
 
-    def test_regen_preserves_original(self):
-        """规则要求保留原始提示词核心描述"""
-        from config.agent_tools import AGENT_SYSTEM_PROMPT
-        assert "保留原始提示词的核心描述" in AGENT_SYSTEM_PROMPT
+    def test_local_tools_priority_1(self):
+        """本地工具 priority=1"""
+        from config.tool_registry import TOOL_REGISTRY
+        from config.erp_local_tools import ERP_LOCAL_TOOLS
+        for name in ERP_LOCAL_TOOLS:
+            entry = TOOL_REGISTRY.get(name)
+            if entry:
+                assert entry.priority == 1, f"{name} priority={entry.priority}"
 
-    def test_regen_keywords_covered(self):
-        """规则覆盖多种重新生成关键词"""
-        from config.agent_tools import AGENT_SYSTEM_PROMPT
-        for keyword in ["重新生成", "再来一张", "换一个", "改一下"]:
-            assert keyword in AGENT_SYSTEM_PROMPT, f"Missing keyword: {keyword}"
+    def test_synonym_expansion(self):
+        """同义词扩展正常工作"""
+        from config.tool_registry import expand_synonyms
+        result = expand_synonyms("库存卖了多少")
+        assert "销量" in result
+        assert "订单" in result
+        assert "统计" in result

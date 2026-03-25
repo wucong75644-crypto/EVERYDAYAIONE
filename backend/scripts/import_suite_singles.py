@@ -29,7 +29,7 @@ os.chdir(os.path.join(os.path.dirname(__file__), ".."))
 from dotenv import load_dotenv
 load_dotenv()
 
-from core.database import get_supabase_client
+from core.database import get_db
 
 CSV_PATH = os.path.expanduser(
     "~/Downloads/快麦导出_自定义套件商品明细导出表20260323132006_65109_L8Lpcp.csv"
@@ -45,7 +45,7 @@ COL_RATIO = 141           # 组合比例
 
 def load_sku_to_outer_map() -> dict[str, str]:
     """从 erp_product_skus 加载 sku_outer_id → outer_id 映射"""
-    db = get_supabase_client()
+    db = get_db()
     mapping: dict[str, str] = {}
 
     # 分页加载全部 SKU 映射
@@ -135,7 +135,7 @@ def parse_csv(sku_map: dict[str, str]) -> tuple[dict[str, list[dict]], int]:
 
 def import_to_db(products: dict[str, list[dict]]) -> None:
     """批量 update suit_singles 到 erp_products（仅更新已有记录）"""
-    db = get_supabase_client()
+    db = get_db()
 
     total = len(products)
     updated = 0
@@ -208,7 +208,7 @@ def main() -> None:
 
     # 写入后验证
     print("\n=== 写入后验证 ===")
-    db = get_supabase_client()
+    db = get_db()
     r = (
         db.table("erp_products")
         .select("outer_id,suit_singles")

@@ -81,10 +81,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "default-src 'self'; "
                 "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://wwcdn.weixin.qq.com; "  # Vite HMR + 企微 SDK
                 "style-src 'self' 'unsafe-inline'; "  # Vite 样式注入需要
-                "img-src 'self' data: https://*.aliyuncs.com https://cdn.everydayai.com.cn https://qcaatwmlzqqnzfjdzlzm.supabase.co; "
+                "img-src 'self' data: https://*.aliyuncs.com https://cdn.everydayai.com.cn; "
                 "media-src 'self' https://*.aliyuncs.com https://cdn.everydayai.com.cn; "
                 "font-src 'self' data:; "
-                "connect-src 'self' https://qcaatwmlzqqnzfjdzlzm.supabase.co https://api.kie.ai ws://localhost:*; "
+                "connect-src 'self' https://api.kie.ai ws://localhost:*; "
                 "frame-src https://login.work.weixin.qq.com; "  # 企微扫码 iframe
                 "object-src 'none'; "
                 "base-uri 'self'; "
@@ -98,10 +98,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "default-src 'self'; "
                 "script-src 'self' https://wwcdn.weixin.qq.com; "  # 企微扫码 SDK
                 "style-src 'self'; "
-                "img-src 'self' data: https://*.aliyuncs.com https://cdn.everydayai.com.cn https://qcaatwmlzqqnzfjdzlzm.supabase.co; "
+                "img-src 'self' data: https://*.aliyuncs.com https://cdn.everydayai.com.cn; "
                 "media-src 'self' https://*.aliyuncs.com https://cdn.everydayai.com.cn; "
                 "font-src 'self' data:; "
-                "connect-src 'self' https://qcaatwmlzqqnzfjdzlzm.supabase.co https://api.kie.ai; "
+                "connect-src 'self' https://api.kie.ai; "
                 "frame-src https://login.work.weixin.qq.com; "  # 企微扫码 iframe
                 "object-src 'none'; "
                 "base-uri 'self'; "
@@ -172,19 +172,40 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.warning(f"Knowledge base init failed (non-critical) | error={e}")
 
     # 启动后台任务工作器
-    from core.database import get_supabase_client
+    from core.database import get_db
     import asyncio
 
-    db = get_supabase_client()
+    db = get_db()
     worker = BackgroundTaskWorker(db)
     worker_task = asyncio.create_task(worker.start())
     logger.info("BackgroundTaskWorker started")
 
-    # 启动 ERP 同步工作器（独立 async task，与 BackgroundTaskWorker 并行）
-    from services.kuaimai.erp_sync_worker import ErpSyncWorker
-    erp_worker = ErpSyncWorker(db)
-    erp_worker_task = asyncio.create_task(erp_worker.start())
-    logger.info("ErpSyncWorker started")
+    # 启动 ERP 同步工作器（仅在第一个 worker 中启动，避免多 worker 重复抢锁浪费 API 配额）
+    import os
+    _worker_pid = os.getpid()
+    _parent_pid = os.getppid()
+    # uvicorn 多 worker 模式：取 PID 最小的 worker 来跑 ERP 同步
+    # 通过 Redis 原子操作竞选，第一个写入的 worker 获胜
+    from core.redis import get_redis
+    _redis = await get_redis()
+    _elected = False
+    if _redis:
+        _elected = await _redis.set(
+            "erp_sync_elected_worker", str(_worker_pid),
+            nx=True, ex=300,  # 5分钟过期自动重新竞选
+        )
+    else:
+        _elected = True  # Redis 不可用时默认启动
+
+    if _elected:
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+        erp_worker = ErpSyncWorker(db)
+        erp_worker_task = asyncio.create_task(erp_worker.start())
+        logger.info(f"ErpSyncWorker started | elected_worker={_worker_pid}")
+    else:
+        erp_worker = None
+        erp_worker_task = None
+        logger.info(f"ErpSyncWorker skipped (another worker elected) | pid={_worker_pid}")
 
     # 企微智能机器人 WS 长连接已拆为独立进程（wecom_ws_runner.py）
     # 由 systemd everydayai-wecom.service 管理，避免多 worker 竞争

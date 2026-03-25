@@ -12,7 +12,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
-from supabase import Client
+
 
 from core.config import get_settings
 from schemas.message import ContentPart, GenerationType, TextPart
@@ -35,7 +35,7 @@ class WecomMessageService(WecomAIMixin):
     # key = conversation_id, value = {"model": "...", "thinking_mode": "..."}
     _session_settings: Dict[str, Dict[str, str]] = {}
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
         self.settings = get_settings()
         self._user_svc = WecomUserMappingService(db)

@@ -10,7 +10,7 @@ ERP 本地编码识别工具
 from __future__ import annotations
 
 from loguru import logger
-from supabase import Client
+
 
 from services.kuaimai.erp_local_helpers import check_sync_health
 
@@ -18,7 +18,7 @@ _TYPE_MAP = {0: "普通", 1: "SKU套件", 2: "纯套件", 3: "包材"}
 
 
 async def local_product_identify(
-    db: Client,
+    db,
     code: str | None = None,
     name: str | None = None,
     spec: str | None = None,
@@ -34,7 +34,7 @@ async def local_product_identify(
     return await _search_by_spec(db, spec.strip())
 
 
-async def _identify_by_code(db: Client, code: str) -> str:
+async def _identify_by_code(db, code: str) -> str:
     """编码模式：主编码 → SKU编码 → 条码 → 未识别"""
     # 1. 主编码匹配
     try:
@@ -112,7 +112,7 @@ async def _identify_by_code(db: Client, code: str) -> str:
     )
 
 
-async def _search_by_name(db: Client, name: str) -> str:
+async def _search_by_name(db, name: str) -> str:
     """名称搜索模式：pg_trgm ILIKE"""
     try:
         result = (
@@ -145,7 +145,7 @@ async def _search_by_name(db: Client, name: str) -> str:
     return "\n".join(lines)
 
 
-async def _search_by_spec(db: Client, spec: str) -> str:
+async def _search_by_spec(db, spec: str) -> str:
     """规格搜索模式：pg_trgm ILIKE on properties_name"""
     try:
         result = (
@@ -191,7 +191,7 @@ async def _search_by_spec(db: Client, spec: str) -> str:
 # ── API 兜底 ──────────────────────────────────────────
 
 
-async def _api_fallback_identify(db: Client, code: str) -> str | None:
+async def _api_fallback_identify(db, code: str) -> str | None:
     """本地未找到时，调 item.single.get API 兜底
 
     有结果→写入本地→返回格式化文本；无结果→返回 None。
@@ -232,7 +232,7 @@ async def _api_fallback_identify(db: Client, code: str) -> str | None:
         return None
 
 
-def _upsert_product_from_api(db: Client, p: dict) -> None:
+def _upsert_product_from_api(db, p: dict) -> None:
     """将 API 单条商品数据 upsert 到本地 erp_products + erp_product_skus"""
     import re
     outer_id = p.get("outerId")
@@ -306,7 +306,7 @@ def _upsert_product_from_api(db: Client, p: dict) -> None:
 # ── 格式化 ────────────────────────────────────────────
 
 
-def _format_product(db: Client, code: str, p: dict) -> str:
+def _format_product(db, code: str, p: dict) -> str:
     """格式化主编码识别结果"""
     item_type = p.get("item_type", 0)
     type_name = _TYPE_MAP.get(item_type, str(item_type))
@@ -366,7 +366,7 @@ def _format_product(db: Client, code: str, p: dict) -> str:
     return "\n".join(lines)
 
 
-def _format_sku(db: Client, code: str, s: dict) -> str:
+def _format_sku(db, code: str, s: dict) -> str:
     """格式化SKU编码识别结果"""
     lines = [
         f"编码识别: {code}",
@@ -380,7 +380,7 @@ def _format_sku(db: Client, code: str, s: dict) -> str:
     return "\n".join(lines)
 
 
-def _get_sku_count(db: Client, outer_id: str) -> int:
+def _get_sku_count(db, outer_id: str) -> int:
     """获取 SKU 数量"""
     try:
         result = (
@@ -394,7 +394,7 @@ def _get_sku_count(db: Client, outer_id: str) -> int:
         return 0
 
 
-def _get_doc_summary(db: Client, code: str) -> str:
+def _get_doc_summary(db, code: str) -> str:
     """获取关联单据统计摘要"""
     try:
         result = (

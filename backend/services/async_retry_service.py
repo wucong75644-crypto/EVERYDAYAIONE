@@ -10,7 +10,7 @@ import uuid
 from typing import Any, Dict, Optional, Union
 
 from loguru import logger
-from supabase import Client
+
 
 from schemas.message import GenerationType
 from services.adapters.base import (
@@ -24,7 +24,7 @@ TaskResult = Union[ImageGenerateResult, VideoGenerateResult]
 class AsyncRetryService:
     """异步任务 smart_mode 重试"""
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
 
     async def attempt_retry(

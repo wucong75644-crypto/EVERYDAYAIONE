@@ -35,8 +35,8 @@ _INVENTORY_LABELS = {
 }
 _INVENTORY_SKIP = {"shortTitle"}
 _INVENTORY_TRANSFORMS: Dict[str, Callable] = {
-    "stockStatus": lambda v: {0: "正常", 1: "警戒", 2: "无货", 3: "超卖",
-                              4: "超卖", 6: "有货"}.get(v, str(v)),
+    "stockStatus": lambda v: {0: "正常", 1: "正常", 2: "警戒", 3: "无货", 4: "超卖",
+                              6: "有货"}.get(v, str(v)),
     "purchasePrice": lambda v: f"¥{v}",
     "sellingPrice": lambda v: f"¥{v}",
     "marketPrice": lambda v: f"¥{v}",

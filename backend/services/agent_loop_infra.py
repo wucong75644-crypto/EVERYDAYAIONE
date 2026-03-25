@@ -16,9 +16,6 @@ from typing import Any, Dict, List, Optional
 import httpx
 from loguru import logger
 
-from config.agent_tools import AGENT_TOOLS
-
-
 class AgentInfraMixin:
     """Agent 基础设施方法集（Mixin，由 AgentLoop 继承）"""
 
@@ -37,11 +34,12 @@ class AgentInfraMixin:
 
         Args:
             messages: 对话消息列表
-            tools: 工具定义（None=使用 AGENT_TOOLS，v1 默认）
+            tools: 工具定义（必须由调用方传入）
             tool_choice: 工具选择策略（None="auto"）
             max_tokens: 最大输出 token（Phase 1=256，Phase 2=4096）
         """
         assert self._settings is not None
+        assert tools is not None, "tools must be provided by caller"
         client = await self._get_client()
 
         provider = self._settings.agent_loop_provider
@@ -51,7 +49,7 @@ class AgentInfraMixin:
             else self._settings.agent_loop_model
         )
 
-        resolved_tools = tools if tools is not None else AGENT_TOOLS
+        resolved_tools = tools
         resolved_choice = tool_choice or "auto"
 
         # OpenRouter 不一定支持 tool_choice="required"，降级为 "auto"

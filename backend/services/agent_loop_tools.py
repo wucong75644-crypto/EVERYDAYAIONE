@@ -25,6 +25,16 @@ _SLOW_TOOL_TIMEOUT = {
 }
 
 
+class ToolExpansionNeeded(Exception):
+    """AI 调了不在筛选列表但系统支持的工具/action → 需要扩充后重跑"""
+
+    def __init__(self, tool_name: str, action: str = ""):
+        self.tool_name = tool_name
+        self.action = action
+        detail = f"{tool_name}.{action}" if action else tool_name
+        super().__init__(f"扩充: {detail}")
+
+
 class AgentToolsMixin:
     """Agent 工具处理方法集（Mixin，由 AgentLoop 继承）"""
 

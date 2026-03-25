@@ -303,16 +303,16 @@ class TestSyncSupplier:
 # ============================================================
 
 
-def _mock_svc_for_platform_map(db_outer_ids, api_responses):
-    """创建 platform_map 专用 mock（先查 DB 再逐个调 API）"""
+def _mock_svc_for_platform_map(db_sku_ids, api_responses):
+    """创建 platform_map 专用 mock（先查 DB SKU 列表再批量调 API）"""
     svc = _mock_svc()
-    # mock DB 查询返回商品列表
+    # mock DB 查询：erp_product_skus.select("sku_outer_id").limit(10000)
     mock_select = MagicMock()
-    mock_select.neq.return_value.limit.return_value.execute.return_value = MagicMock(
-        data=[{"outer_id": oid} for oid in db_outer_ids],
+    mock_select.limit.return_value.execute.return_value = MagicMock(
+        data=[{"sku_outer_id": oid} for oid in db_sku_ids],
     )
     svc.db.table.return_value.select.return_value = mock_select
-    # mock API 逐个调用
+    # mock API 批量调用
     mock_client = MagicMock()
     mock_client.request_with_retry = AsyncMock(side_effect=api_responses)
     svc._get_client.return_value = mock_client
@@ -330,11 +330,11 @@ class TestSyncPlatformMap:
     async def test_basic_platform_map(self):
         from services.kuaimai.erp_sync_master_handlers import sync_platform_map
         api_resp = {"itemOuterIdInfos": [{
-            "outerId": "P01", "numIid": "12345", "userId": "shop01",
-            "title": "商品A",
-            "skuOuterIdInfos": [
-                {"skuOuterId": "P01-01", "skuNumIid": "S001"},
-            ],
+            "outerId": "P01",
+            "tbItemList": [{
+                "numIid": "12345", "userId": "shop01", "title": "商品A",
+                "skuOuterId": "P01-01", "skuId": "S001",
+            }],
         }]}
         svc = _mock_svc_for_platform_map(["P01"], [api_resp])
         assert await sync_platform_map(svc, START, END) == 1
@@ -352,11 +352,14 @@ class TestSyncPlatformMap:
 
     @pytest.mark.asyncio
     async def test_sku_list_fallback(self):
-        """skuOuterIdInfos 不存在时回退 skuList"""
+        """tbItemList 含多条映射时全部入库"""
         from services.kuaimai.erp_sync_master_handlers import sync_platform_map
         api_resp = {"itemOuterIdInfos": [{
-            "outerId": "P01", "numIid": "12345",
-            "skuList": [{"skuOuterId": "P01-01", "skuNumIid": "S001"}],
+            "outerId": "P01",
+            "tbItemList": [
+                {"numIid": "12345", "userId": "shop01", "title": "商品A"},
+                {"numIid": "67890", "userId": "shop02", "title": "商品A"},
+            ],
         }]}
         svc = _mock_svc_for_platform_map(["P01"], [api_resp])
-        assert await sync_platform_map(svc, START, END) == 1
+        assert await sync_platform_map(svc, START, END) == 2

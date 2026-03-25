@@ -10,7 +10,7 @@ AFTERSALES_REGISTRY = {
     # ── 查询 ──────────────────────────────────────────
     "aftersale_list": ApiEntry(
         method="erp.aftersale.list.query",
-        description="查询售后工单列表（退款/退货/换货/补发/维修等全类型）。支持订单号/系统单号/工单ID/售后类型/店铺/时间等条件。ERP系统内的售后记录",
+        description="查询售后工单列表（退款/退货/换货/补发/维修等全类型）。支持订单号/系统单号/工单ID/售后类型/店铺/时间等条件。ERP系统内的售后记录（⚠️不支持system_id筛选，须用order_id或work_order_id）",
         param_map={
             "order_id": "tid",
             "system_id": "sid",
@@ -58,7 +58,7 @@ AFTERSALES_REGISTRY = {
     ),
     "refund_warehouse": ApiEntry(
         method="erp.aftersale.refund.warehouse.query",
-        description="查询退货入库单（退货商品的收货和上架记录）。查退货物流状态：等待收货→收货→上架。与aftersale_list的区别：侧重仓库收退货维度",
+        description="查询退货入库单（退货商品的收货和上架记录）。查退货物流状态：等待收货→收货→上架。与aftersale_list的区别：侧重仓库收退货维度（⚠️必传time_type参数）",
         param_map={
             "work_order_ids": "workOrderIds",
             "ids": "ids",

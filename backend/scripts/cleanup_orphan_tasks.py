@@ -18,13 +18,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from datetime import datetime, UTC
-from core.database import get_supabase_client
+from core.database import get_db
 from loguru import logger
 
 
 def cleanup_orphan_tasks():
     """清理孤儿任务"""
-    db = get_supabase_client()
+    db = get_db()
 
     # 1. 查询所有孤儿任务
     logger.info("正在查询孤儿任务...")

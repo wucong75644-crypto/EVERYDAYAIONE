@@ -488,182 +488,29 @@ class TestToolRegistration:
         # 未知工具
         assert validate_tool_call("unknown_erp_tool", {}) is False
 
-    def test_agent_tools_count(self):
-        """工具总数验证（4路由+3信息+2搜索+8API ERP+11本地ERP+1爬虫+1沙盒=30）"""
-        from config.agent_tools import AGENT_TOOLS
-        assert len(AGENT_TOOLS) == 30
-
-    def test_agent_tools_names(self):
-        """所有ERP工具名在定义中"""
-        from config.agent_tools import AGENT_TOOLS
-        tool_names = {t["function"]["name"] for t in AGENT_TOOLS}
-        assert "erp_info_query" in tool_names
-        assert "erp_product_query" in tool_names
-        assert "erp_trade_query" in tool_names
-        assert "erp_aftersales_query" in tool_names
-        assert "erp_warehouse_query" in tool_names
-        assert "erp_purchase_query" in tool_names
-        assert "erp_taobao_query" in tool_names
-        assert "erp_execute" in tool_names
-
-    def test_agent_tools_all_have_valid_structure(self):
-        """每个工具有 type=function + function.name/description/parameters"""
-        from config.agent_tools import AGENT_TOOLS
-        for tool in AGENT_TOOLS:
-            assert tool["type"] == "function"
-            func = tool["function"]
-            assert "name" in func
-            assert "description" in func
-            assert len(func["description"]) > 10
-            assert "parameters" in func
-            assert func["parameters"]["type"] == "object"
-
-    def test_agent_tools_names_match_all_tools(self):
-        """工具名集合包含 ALL_TOOLS + ERP_LOCAL_TOOLS"""
-        from config.agent_tools import AGENT_TOOLS, ALL_TOOLS
-        from config.erp_local_tools import ERP_LOCAL_TOOLS
-        tool_names = {t["function"]["name"] for t in AGENT_TOOLS}
-        assert ALL_TOOLS.issubset(tool_names)
-        assert ERP_LOCAL_TOOLS.issubset(tool_names)
-
-    def test_agent_tools_routing_tools_present(self):
-        """4 个路由工具全部存在"""
-        from config.agent_tools import AGENT_TOOLS
-        tool_names = {t["function"]["name"] for t in AGENT_TOOLS}
-        for name in ("route_to_chat", "route_to_image",
-                      "route_to_video", "ask_user"):
-            assert name in tool_names
-
-    def test_agent_tools_info_tools_present(self):
-        """信息工具全部存在"""
-        from config.agent_tools import AGENT_TOOLS, INFO_TOOLS
-        tool_names = {t["function"]["name"] for t in AGENT_TOOLS}
-        for name in INFO_TOOLS:
-            assert name in tool_names
-
-    def test_route_to_chat_has_model_enum(self):
-        """route_to_chat 的 model 参数有 enum 列表"""
-        from config.agent_tools import AGENT_TOOLS
-        tool = next(
-            t for t in AGENT_TOOLS
-            if t["function"]["name"] == "route_to_chat"
-        )
-        props = tool["function"]["parameters"]["properties"]
-        assert "model" in props
-        assert "enum" in props["model"]
-        assert len(props["model"]["enum"]) > 0
-
-    def test_route_to_image_has_prompts_array(self):
-        """route_to_image 的 prompts 参数是数组类型"""
-        from config.agent_tools import AGENT_TOOLS
-        tool = next(
-            t for t in AGENT_TOOLS
-            if t["function"]["name"] == "route_to_image"
-        )
-        props = tool["function"]["parameters"]["properties"]
-        assert props["prompts"]["type"] == "array"
-        assert props["prompts"]["minItems"] == 1
-        assert props["prompts"]["maxItems"] == 8
-
-    def test_route_to_image_required_fields(self):
-        """route_to_image 必填字段：prompts + model"""
-        from config.agent_tools import AGENT_TOOLS
-        tool = next(
-            t for t in AGENT_TOOLS
-            if t["function"]["name"] == "route_to_image"
-        )
-        required = tool["function"]["parameters"]["required"]
-        assert "prompts" in required
-        assert "model" in required
-
-    def test_system_prompt_contains_erp_rules(self):
-        """系统提示词包含 ERP 路由规则"""
-        from config.agent_tools import AGENT_SYSTEM_PROMPT
-        assert "erp_info_query" in AGENT_SYSTEM_PROMPT
-        assert "erp_product_query" in AGENT_SYSTEM_PROMPT
-        assert "erp_trade_query" in AGENT_SYSTEM_PROMPT
-        assert "erp_execute" in AGENT_SYSTEM_PROMPT
-
-    def test_system_prompt_contains_routing_keywords(self):
-        """系统提示词包含路由核心关键词"""
-        from config.agent_tools import AGENT_SYSTEM_PROMPT
-        assert "意图路由器" in AGENT_SYSTEM_PROMPT
-        assert "route_to_chat" in AGENT_SYSTEM_PROMPT
-        assert "route_to_image" in AGENT_SYSTEM_PROMPT
-        assert "route_to_video" in AGENT_SYSTEM_PROMPT
-        assert "ask_user" in AGENT_SYSTEM_PROMPT
-
-    def test_system_prompt_contains_core_identity(self):
-        """系统提示词包含核心身份和职责边界"""
-        from config.agent_tools import AGENT_SYSTEM_PROMPT
-        assert "意图路由器" in AGENT_SYSTEM_PROMPT
-        assert "不直接回答用户问题" in AGENT_SYSTEM_PROMPT
-        assert "填好工具参数" in AGENT_SYSTEM_PROMPT
-
-    def test_system_prompt_contains_prohibitions(self):
-        """系统提示词包含禁止事项"""
-        from config.agent_tools import AGENT_SYSTEM_PROMPT
-        assert "禁止直接回复用户" in AGENT_SYSTEM_PROMPT
-        assert "禁止调用不存在的工具" in AGENT_SYSTEM_PROMPT
-
-    def test_system_prompt_contains_model_hints(self):
-        """系统提示词包含模型选择提示"""
-        from config.agent_tools import AGENT_SYSTEM_PROMPT
-        assert "视频" in AGENT_SYSTEM_PROMPT
-        assert "模型选择" in AGENT_SYSTEM_PROMPT
-
-    def test_erp_tools_have_descriptions(self):
-        """ERP 工具有清晰的描述"""
-        from config.agent_tools import AGENT_TOOLS
-        erp_names = {
+    def test_all_tools_contains_erp_and_routing(self):
+        """ALL_TOOLS 包含 ERP 工具和路由工具"""
+        erp_tools = {
             "erp_info_query", "erp_product_query", "erp_trade_query",
             "erp_aftersales_query", "erp_warehouse_query",
-            "erp_purchase_query", "erp_execute",
+            "erp_purchase_query", "erp_taobao_query", "erp_execute",
         }
-        for tool in AGENT_TOOLS:
-            if tool["function"]["name"] in erp_names:
-                desc = tool["function"]["description"]
-                assert len(desc) > 10
+        routing_tools = {
+            "route_to_chat", "route_to_image",
+            "route_to_video", "ask_user",
+        }
+        assert erp_tools.issubset(ALL_TOOLS)
+        assert routing_tools.issubset(ALL_TOOLS)
 
-    def test_erp_product_query_has_action_enum(self):
-        """商品查询工具有 action 枚举"""
-        from config.agent_tools import AGENT_TOOLS
-        tool = next(
-            t for t in AGENT_TOOLS
-            if t["function"]["name"] == "erp_product_query"
-        )
-        props = tool["function"]["parameters"]["properties"]
-        assert "action" in props
-        assert "enum" in props["action"]
-        assert "product_list" in props["action"]["enum"]
-        assert "stock_status" in props["action"]["enum"]
-
-    def test_erp_trade_query_has_action_enum(self):
-        """交易查询工具有 action 枚举"""
-        from config.agent_tools import AGENT_TOOLS
-        tool = next(
-            t for t in AGENT_TOOLS
-            if t["function"]["name"] == "erp_trade_query"
-        )
-        props = tool["function"]["parameters"]["properties"]
-        assert "action" in props
-        assert "enum" in props["action"]
-        assert "order_list" in props["action"]["enum"]
-        assert "outstock_query" in props["action"]["enum"]
-
-    def test_erp_product_query_has_params_object(self):
-        """商品查询工具使用 params: object（两步调用模式）"""
-        from config.agent_tools import AGENT_TOOLS
-        tool = next(
-            t for t in AGENT_TOOLS
-            if t["function"]["name"] == "erp_product_query"
-        )
-        props = tool["function"]["parameters"]["properties"]
-        assert "params" in props
-        assert props["params"]["type"] == "object"
-        # action 描述包含 stock_status 等关键 action 名
-        action_desc = props["action"]["description"]
-        assert "stock_status" in action_desc
+    def test_erp_tool_schemas_have_action(self):
+        """ERP 查询工具 Schema 有 action 必填字段"""
+        for tool_name in [
+            "erp_product_query", "erp_trade_query",
+            "erp_aftersales_query", "erp_warehouse_query",
+            "erp_purchase_query",
+        ]:
+            schema = TOOL_SCHEMAS[tool_name]
+            assert "action" in schema["required"]
 
 
 # ============================================================
@@ -3307,9 +3154,9 @@ class TestTwoStepToolSchema:
         assert "action" in params_desc
 
     def test_routing_prompt_has_two_step_instructions(self):
-        """ERP_ROUTING_PROMPT 包含两步调用指引"""
+        """ERP_ROUTING_PROMPT 包含两步查询指引"""
         from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "两步查询模式" in ERP_ROUTING_PROMPT
+        assert "两步查询" in ERP_ROUTING_PROMPT
         assert "参数文档" in ERP_ROUTING_PROMPT
 
 
@@ -4469,34 +4316,16 @@ class TestRoutingPromptAudit:
     """验证路由提示词审计修复"""
 
     def test_routing_has_sales_query_section(self):
-        """路由提示词包含'商品销量查询'场景"""
+        """路由提示词包含销量计算说明"""
         from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "商品销量查询" in ERP_ROUTING_PROMPT
-        assert "order_type=2" in ERP_ROUTING_PROMPT
-
-    def test_routing_warns_outstock_query_no_code_filter(self):
-        """路由提示词警告 outstock_query 不支持编码筛选"""
-        from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "outstock_query" in ERP_ROUTING_PROMPT
-        assert "不支持按商品编码筛选" in ERP_ROUTING_PROMPT or "不支持" in ERP_ROUTING_PROMPT
-
-    def test_routing_has_aftersale_sid_warning(self):
-        """路由提示词包含售后 system_id 警告"""
-        from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "aftersale_list不支持system_id" in ERP_ROUTING_PROMPT
+        assert "销量" in ERP_ROUTING_PROMPT
+        assert "num" in ERP_ROUTING_PROMPT
 
     def test_routing_has_num_accumulation_hint(self):
-        """路由提示词说明销量=num累加"""
+        """路由提示词说明销量=sum(num)"""
         from config.erp_tools import ERP_ROUTING_PROMPT
         assert "num" in ERP_ROUTING_PROMPT
-        assert "累加" in ERP_ROUTING_PROMPT
-
-    def test_routing_stock_in_out_order_types(self):
-        """路由提示词列出 stock_in_out 的 order_type 枚举"""
-        from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "1=采购入库" in ERP_ROUTING_PROMPT
-        assert "2=销售出库" in ERP_ROUTING_PROMPT
-        assert "6=调拨出库" in ERP_ROUTING_PROMPT
+        assert "销量" in ERP_ROUTING_PROMPT
 
 
 # ============================================================

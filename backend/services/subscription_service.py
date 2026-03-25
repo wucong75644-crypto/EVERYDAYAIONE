@@ -6,7 +6,7 @@
 """
 
 from loguru import logger
-from supabase import Client
+
 
 from core.exceptions import NotFoundError, ValidationError
 
@@ -46,7 +46,7 @@ KNOWN_MODEL_IDS = frozenset([
 class SubscriptionService:
     """订阅管理服务"""
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
 
     def get_all_models(self) -> list[dict]:

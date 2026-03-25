@@ -177,10 +177,8 @@ TEST_CASES: List[TestCase] = [
 def _make_real_loop() -> AgentLoop:
     """创建带真实 _call_brain 的 AgentLoop"""
     loop = AgentLoop(db=None, user_id="real_test", conversation_id="real_conv")
-    # 使用真实 settings
+    # 使用真实 settings（v1 已废弃，全量走 v2）
     loop._settings = settings
-    # 强制开启 v2
-    loop._settings.agent_loop_v2_enabled = True
     loop._has_image = False
     loop._thinking_mode = None
     loop._user_location = None

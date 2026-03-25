@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 from datetime import datetime
 
 from loguru import logger
-from supabase import Client
+
 
 from schemas.message import (
     ContentPart,
@@ -53,7 +53,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
     - MessageMixin: 消息处理
     """
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
 
     @property

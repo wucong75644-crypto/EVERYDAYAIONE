@@ -106,7 +106,7 @@ WAREHOUSE_REGISTRY = {
     # ── 其他入出库 查询 ────────────────────────────────
     "other_in_list": ApiEntry(
         method="other.in.order.query",
-        description="查询其他入库单列表（非采购/非调拨的入库，如盘盈入库）。采购入库查warehouse_entry_list",
+        description="查询其他入库单列表（非采购/非调拨的入库，如盘盈入库）。采购入库查warehouse_entry_list（手工入库单，非采购入库用此action）",
         param_map={
             "status": "status",
             "code": "code",
@@ -137,7 +137,7 @@ WAREHOUSE_REGISTRY = {
     ),
     "other_out_list": ApiEntry(
         method="other.out.order.query",
-        description="查询其他出库单列表（非销售/非调拨的出库，如报损出库）。销售出库查outstock_query",
+        description="查询其他出库单列表（非销售/非调拨的出库，如报损出库）。销售出库查outstock_query（手工出库单，非销售出库用此action）",
         param_map={
             "status": "status",
             "code": "code",
@@ -243,7 +243,7 @@ WAREHOUSE_REGISTRY = {
     ),
     "batch_stock_list": ApiEntry(
         method="erp.wms.product.stock.query",
-        description="查询商品批次效期库存（保质期管理场景，如食品/化妆品）。必须传店铺ID。查普通库存用stock_status",
+        description="查询商品批次效期库存（保质期管理场景，如食品/化妆品）。必须传店铺ID。查普通库存用stock_status（⚠️必传shop_id）",
         param_map={
             "sku_ids": "skuIds",
             "num_iids": "numIids",

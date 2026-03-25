@@ -10,7 +10,7 @@ ERP 本地查询工具（6个）
 from __future__ import annotations
 
 from loguru import logger
-from supabase import Client
+
 
 from services.kuaimai.erp_local_helpers import check_sync_health, query_doc_items
 
@@ -19,7 +19,7 @@ from services.kuaimai.erp_local_helpers import check_sync_health, query_doc_item
 
 
 async def local_purchase_query(
-    db: Client, product_code: str,
+    db, product_code: str,
     status: str | None = None,
     include_return: bool = True,
     days: int = 30,
@@ -106,7 +106,7 @@ _AFTERSALE_TYPE_MAP = {
 
 
 async def local_aftersale_query(
-    db: Client, product_code: str,
+    db, product_code: str,
     aftersale_type: str | None = None,
     days: int = 30,
 ) -> str:
@@ -161,7 +161,7 @@ async def local_aftersale_query(
 
 
 async def local_order_query(
-    db: Client, product_code: str,
+    db, product_code: str,
     shop_name: str | None = None,
     platform: str | None = None,
     status: str | None = None,
@@ -231,7 +231,7 @@ async def local_order_query(
 
 
 async def local_product_flow(
-    db: Client, product_code: str, days: int = 30,
+    db, product_code: str, days: int = 30,
 ) -> str:
     """按商品编码查完整流转（采购→收货→上架→销售→售后→采退）"""
     doc_types = [
@@ -281,7 +281,7 @@ _STOCK_STATUS_MAP = {
 
 
 async def local_stock_query(
-    db: Client, product_code: str,
+    db, product_code: str,
     stock_status: str | None = None,
     low_stock: bool = False,
 ) -> str:
@@ -381,7 +381,7 @@ def _format_stock_row(
 
 
 async def local_platform_map_query(
-    db: Client,
+    db,
     product_code: str | None = None,
     num_iid: str | None = None,
     user_id: str | None = None,

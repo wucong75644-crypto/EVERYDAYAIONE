@@ -6,7 +6,7 @@ Handler 工厂
 
 from typing import Dict, Type
 
-from supabase import Client
+
 
 from schemas.message import GenerationType
 from services.handlers.base import BaseHandler
@@ -25,7 +25,7 @@ class HandlerFactory:
     }
 
     @classmethod
-    def get(cls, gen_type: GenerationType, db: Client) -> BaseHandler:
+    def get(cls, gen_type: GenerationType, db) -> BaseHandler:
         """
         获取 Handler 实例
 
@@ -56,7 +56,7 @@ class HandlerFactory:
         cls._handlers[gen_type] = handler_cls
 
 
-def get_handler(gen_type: GenerationType, db: Client) -> BaseHandler:
+def get_handler(gen_type: GenerationType, db) -> BaseHandler:
     """
     便捷函数：获取 Handler 实例
 

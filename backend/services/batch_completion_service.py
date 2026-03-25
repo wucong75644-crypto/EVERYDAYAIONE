@@ -15,7 +15,7 @@ import json
 from typing import Any, Dict, List
 
 from loguru import logger
-from supabase import Client
+
 
 from schemas.websocket import (
     build_image_partial_update,
@@ -27,7 +27,7 @@ from services.websocket_manager import ws_manager
 class BatchCompletionService:
     """多图批次完成处理"""
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
 
     async def handle_image_complete(

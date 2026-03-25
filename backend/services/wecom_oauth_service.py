@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 import httpx
 from loguru import logger
-from supabase import Client
+
 
 from core.config import get_settings
 from core.redis import get_redis
@@ -35,7 +35,7 @@ OAUTH_STATE_TTL = 300  # 5 分钟
 class WecomOAuthService:
     """企微 OAuth 扫码登录服务"""
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
         self.settings = get_settings()
 

@@ -10,7 +10,7 @@ from typing import Optional
 
 import httpx
 from loguru import logger
-from supabase import Client
+
 
 from core.config import get_settings
 from services.wecom.access_token_manager import get_access_token
@@ -22,7 +22,7 @@ USER_SIMPLELIST_URL = "https://qyapi.weixin.qq.com/cgi-bin/user/simplelist"
 class EmployeeSyncService:
     """企微通讯录同步"""
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
         self.settings = get_settings()
 

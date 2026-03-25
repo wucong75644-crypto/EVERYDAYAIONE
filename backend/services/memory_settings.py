@@ -3,7 +3,7 @@
 from typing import Any, Dict
 
 from loguru import logger
-from supabase import Client
+
 
 from core.config import settings
 from core.exceptions import AppException
@@ -13,7 +13,7 @@ from services.memory_config import _get_mem0
 class MemorySettingsService:
     """用户记忆设置 CRUD"""
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
 
     async def get_settings(self, user_id: str) -> Dict[str, Any]:

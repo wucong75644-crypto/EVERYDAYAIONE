@@ -133,7 +133,7 @@ class TestFireAndForgetKnowledge:
         """正常调用→create_task 被执行"""
         loop = _make_loop()
         mock_task = MagicMock()
-        with patch("services.agent_loop.asyncio.create_task", mock_task), \
+        with patch("services.agent_loop_infra.asyncio.create_task", mock_task), \
              patch(
                  "services.knowledge_extractor.extract_and_save",
                  new_callable=AsyncMock,
@@ -159,7 +159,7 @@ class TestFireAndForgetKnowledge:
         loop = _make_loop()
         loop._has_image = True
         mock_task = MagicMock()
-        with patch("services.agent_loop.asyncio.create_task", mock_task), \
+        with patch("services.agent_loop_infra.asyncio.create_task", mock_task), \
              patch(
                  "services.knowledge_extractor.extract_and_save",
                  new_callable=AsyncMock,
@@ -186,7 +186,7 @@ class TestFireAndForgetKnowledge:
         context = []
 
         mock_task = MagicMock()
-        with patch("services.agent_loop.asyncio.create_task", mock_task):
+        with patch("services.agent_loop_infra.asyncio.create_task", mock_task):
             await loop._process_tool_call(
                 tc, 1, guardrails, tool_results, context, routing,
             )
@@ -331,7 +331,10 @@ class TestCallBrainModelSelection:
         mock_client.is_closed = False
         loop._client = mock_client
 
-        result = await loop._call_brain([{"role": "user", "content": "test"}])
+        dummy_tools = [{"type": "function", "function": {"name": "test_tool"}}]
+        result = await loop._call_brain(
+            [{"role": "user", "content": "test"}], tools=dummy_tools,
+        )
 
         call_json = mock_client.post.call_args[1]["json"]
         assert call_json["model"] == "anthropic/claude-sonnet-4.6"
@@ -357,7 +360,10 @@ class TestCallBrainModelSelection:
         mock_client.is_closed = False
         loop._client = mock_client
 
-        result = await loop._call_brain([{"role": "user", "content": "test"}])
+        dummy_tools = [{"type": "function", "function": {"name": "test_tool"}}]
+        result = await loop._call_brain(
+            [{"role": "user", "content": "test"}], tools=dummy_tools,
+        )
 
         call_json = mock_client.post.call_args[1]["json"]
         assert call_json["model"] == "qwen3.5-plus"

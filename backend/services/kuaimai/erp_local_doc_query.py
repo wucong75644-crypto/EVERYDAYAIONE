@@ -10,7 +10,7 @@ ERP 本地多维度单据查询
 from __future__ import annotations
 
 from loguru import logger
-from supabase import Client
+
 
 from services.kuaimai.erp_local_helpers import check_sync_health, cutoff_iso
 
@@ -25,7 +25,7 @@ _DOC_TYPE_NAMES = {
 
 
 async def local_doc_query(
-    db: Client,
+    db,
     product_code: str | None = None,
     order_no: str | None = None,
     doc_code: str | None = None,
@@ -59,7 +59,7 @@ async def local_doc_query(
 
 
 def _execute_query(
-    db: Client,
+    db,
     product_code: str | None,
     order_no: str | None,
     doc_code: str | None,
@@ -114,7 +114,7 @@ def _execute_query(
     return rows
 
 
-def _format_doc_results(db: Client, rows: list[dict]) -> str:
+def _format_doc_results(db, rows: list[dict]) -> str:
     """格式化结果，按 doc_id 聚合，暴露所有中转钥匙"""
     # 按 doc_id 聚合
     docs: dict[str, list[dict]] = {}

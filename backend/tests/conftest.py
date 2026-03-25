@@ -300,8 +300,8 @@ class MockAsyncSupabaseClient:
         self._tables[name] = MockAsyncSupabaseTable(data)
 
     def rpc(self, fn_name: str, params: dict = None):
-        """Mock RPC 调用"""
-        mock = AsyncMock()
+        """Mock RPC 调用（同步，与 LocalDB 兼容层一致）"""
+        mock = MagicMock()
         if fn_name in self._rpc_results:
             mock.execute.return_value.data = self._rpc_results[fn_name]
         else:
@@ -373,8 +373,8 @@ class MockAsyncSupabaseTable:
         self._offset = count
         return self
 
-    async def execute(self):
-        """异步执行查询"""
+    def execute(self):
+        """执行查询（同步，与 LocalDB 兼容层一致）"""
         result = MagicMock()
 
         filtered = self._data

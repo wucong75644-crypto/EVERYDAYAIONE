@@ -9,7 +9,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
-from supabase import Client
+
 
 from schemas.message import (
     ContentPart,
@@ -33,7 +33,7 @@ from services.websocket_manager import ws_manager
 class ChatHandler(ChatRoutingMixin, ChatStreamSupportMixin, ChatContextMixin, BaseHandler):
     """聊天消息处理器：流式生成 + WebSocket 推送 + 多模态输入"""
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         super().__init__(db)
         self._adapter = None
 

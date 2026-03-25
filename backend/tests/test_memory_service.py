@@ -926,11 +926,11 @@ class TestMem0Init:
         assert cfg._mem0_available is False
 
     def test_build_config_missing_db_url(self):
-        """缺少 SUPABASE_DB_URL 时返回 None"""
+        """缺少 DB URL 时返回 None"""
         from services.memory_config import _build_mem0_config
 
         with patch("services.memory_config.settings") as mock_settings:
-            mock_settings.supabase_db_url = None
+            mock_settings.effective_db_url = None
             mock_settings.dashscope_api_key = "test-key"
 
             result = _build_mem0_config()
@@ -942,7 +942,7 @@ class TestMem0Init:
         from services.memory_config import _build_mem0_config
 
         with patch("services.memory_config.settings") as mock_settings:
-            mock_settings.supabase_db_url = "postgresql://..."
+            mock_settings.effective_db_url = "postgresql://..."
             mock_settings.dashscope_api_key = None
 
             result = _build_mem0_config()
@@ -954,10 +954,11 @@ class TestMem0Init:
         from services.memory_config import _build_mem0_config
 
         with patch("services.memory_config.settings") as mock_settings:
-            mock_settings.supabase_db_url = "postgresql://test"
+            mock_settings.effective_db_url = "postgresql://test"
             mock_settings.dashscope_api_key = "sk-test-dashscope-key"
             mock_settings.memory_extraction_model = "qwen-plus"
             mock_settings.memory_embedding_model = "text-embedding-v3"
+            mock_settings.dashscope_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
             result = _build_mem0_config()
 
