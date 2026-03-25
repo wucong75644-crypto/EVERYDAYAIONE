@@ -458,85 +458,107 @@ async def sync_aftersale(
 # ── 销售订单 (order) ────────────────────────────────────
 
 
+def _build_order_rows(
+    doc: dict, svc: ErpSyncService,
+) -> list[dict[str, Any]]:
+    """从单个订单 doc 构建 DB 行（供 sync_order 和死信重试共用）"""
+    items = doc.get("orders") or []
+    if not items:
+        return []
+    items = svc.sort_and_assign_index(items, "order")
+
+    total_discount = _to_float(doc.get("discountFee"))
+    total_payment = sum(_to_float(i.get("payment")) for i in items) or 1
+    doc_extra = _pick(
+        doc, "type", "payAmount",
+        "isCancel", "isRefund", "isExcep", "isHalt", "isUrgent",
+    )
+
+    rows: list[dict[str, Any]] = []
+    discount_used = 0.0
+    for pos, item in enumerate(items):
+        payment = _to_float(item.get("payment"))
+        is_last = (pos == len(items) - 1)
+        if not is_last:
+            item_discount = round(total_discount * payment / total_payment, 2)
+            discount_used += item_discount
+        else:
+            item_discount = round(total_discount - discount_used, 2)
+
+        rows.append({
+            "doc_type": "order",
+            "doc_id": str(doc.get("sid", "")),
+            "doc_status": doc.get("sysStatus"),
+            "doc_created_at": _safe_ts(doc.get("created")),
+            "doc_modified_at": _safe_ts(doc.get("modified")),
+            "item_index": item["_item_index"],
+            "outer_id": item.get("sysItemOuterId"),   # 主编码
+            "sku_outer_id": item.get("sysOuterId"),    # SKU编码
+            "item_name": item.get("title"),
+            "quantity": item.get("num"),
+            "price": item.get("price"),
+            "amount": item.get("payment"),
+            "cost": item.get("cost"),
+            "refund_status": item.get("refundStatus"),
+            "discount_fee": item_discount if total_discount else None,
+            "post_fee": doc.get("postFee") if pos == 0 else None,
+            "gross_profit": doc.get("grossProfit") if pos == 0 else None,
+            "order_no": doc.get("tid"),
+            "order_status": doc.get("sysStatus"),
+            "express_no": doc.get("outSid"),
+            "express_company": doc.get("expressCompanyName"),
+            "shop_name": doc.get("shopName"),
+            "platform": doc.get("source"),
+            "warehouse_name": doc.get("warehouseName"),
+            "pay_time": _safe_ts(doc.get("payTime")),
+            "consign_time": _safe_ts(doc.get("consignTime")),
+            "remark": doc.get("sellerMemo"),
+            "sys_memo": doc.get("sysMemo"),
+            "buyer_message": doc.get("buyerMessage"),
+            "extra_json": {**doc_extra, "payment": item.get("payment")},
+        })
+    return rows
+
+
+# 订单同步的时间维度：upd_time 拉变更，pay_time 补漏
+# （部分订单 modified=None，upd_time 查不到，pay_time 兜底）
+_ORDER_TIME_TYPES = ["upd_time", "pay_time"]
+
+
 async def sync_order(
     svc: ErpSyncService, start: datetime, end: datetime,
 ) -> int:
-    """订单同步：流式拉取 + 每1000条刷库，避免内存堆积"""
+    """订单同步：双维度拉取（upd_time + pay_time），upsert 自动去重"""
     flush_size = svc.FLUSH_THRESHOLD
     all_rows: list[dict[str, Any]] = []
     affected_key_set: set[tuple[str, str]] = set()
     total_count = 0
+    seen_sids: set[str] = set()  # 跨维度去重
 
-    async for page_docs in svc.fetch_pages_streaming(
-        "erp.trade.list.query",
-        {
-            "startTime": _fmt_dt(start),
-            "endTime": _fmt_dt(end),
-            "timeType": "upd_time",
-        },
-        page_size=200,
-    ):
-        for doc in page_docs:
-            items = doc.get("orders") or []
-            if not items:
-                continue
-            items = svc.sort_and_assign_index(items, "order")
+    for time_type in _ORDER_TIME_TYPES:
+        async for page_docs in svc.fetch_pages_streaming(
+            "erp.trade.list.query",
+            {
+                "startTime": _fmt_dt(start),
+                "endTime": _fmt_dt(end),
+                "timeType": time_type,
+            },
+            page_size=200,
+        ):
+            for doc in page_docs:
+                sid = str(doc.get("sid", ""))
+                if sid in seen_sids:
+                    continue  # 跨维度去重，同一订单只处理一次
+                seen_sids.add(sid)
 
-            total_discount = _to_float(doc.get("discountFee"))
-            total_payment = sum(_to_float(i.get("payment")) for i in items) or 1
-            doc_extra = _pick(
-                doc, "type", "payAmount",
-                "isCancel", "isRefund", "isExcep", "isHalt", "isUrgent",
-            )
+                rows = _build_order_rows(doc, svc)
+                all_rows.extend(rows)
 
-            discount_used = 0.0
-            for pos, item in enumerate(items):
-                payment = _to_float(item.get("payment"))
-                is_last = (pos == len(items) - 1)
-                if not is_last:
-                    item_discount = round(total_discount * payment / total_payment, 2)
-                    discount_used += item_discount
-                else:
-                    item_discount = round(total_discount - discount_used, 2)
-
-                all_rows.append({
-                    "doc_type": "order",
-                    "doc_id": str(doc.get("sid", "")),
-                    "doc_status": doc.get("sysStatus"),
-                    "doc_created_at": _safe_ts(doc.get("created")),
-                    "doc_modified_at": _safe_ts(doc.get("modified")),
-                    "item_index": item["_item_index"],
-                    "outer_id": item.get("sysItemOuterId"),   # 主编码
-                    "sku_outer_id": item.get("sysOuterId"),    # SKU编码
-                    "item_name": item.get("title"),
-                    "quantity": item.get("num"),
-                    "price": item.get("price"),
-                    "amount": item.get("payment"),
-                    "cost": item.get("cost"),
-                    "refund_status": item.get("refundStatus"),
-                    "discount_fee": item_discount if total_discount else None,
-                    "post_fee": doc.get("postFee") if pos == 0 else None,
-                    "gross_profit": doc.get("grossProfit") if pos == 0 else None,
-                    "order_no": doc.get("tid"),
-                    "order_status": doc.get("sysStatus"),
-                    "express_no": doc.get("outSid"),
-                    "express_company": doc.get("expressCompanyName"),
-                    "shop_name": doc.get("shopName"),
-                    "platform": doc.get("source"),
-                    "warehouse_name": doc.get("warehouseName"),
-                    "pay_time": _safe_ts(doc.get("payTime")),
-                    "consign_time": _safe_ts(doc.get("consignTime")),
-                    "remark": doc.get("sellerMemo"),
-                    "sys_memo": doc.get("sysMemo"),
-                    "buyer_message": doc.get("buyerMessage"),
-                    "extra_json": {**doc_extra, "payment": item.get("payment")},
-                })
-
-        # 每 1000 条刷一次库，释放内存
-        if len(all_rows) >= flush_size:
-            total_count += svc.upsert_document_items(all_rows)
-            affected_key_set.update(svc.collect_affected_keys(all_rows))
-            all_rows.clear()
+            # 每 1000 条刷一次库，释放内存
+            if len(all_rows) >= flush_size:
+                total_count += svc.upsert_document_items(all_rows)
+                affected_key_set.update(svc.collect_affected_keys(all_rows))
+                all_rows.clear()
 
     # 剩余数据刷库
     if all_rows:
