@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from loguru import logger
-from supabase import Client
+
 
 from core.config import get_settings
 from core.exceptions import (
@@ -28,7 +28,7 @@ from services.sms_service import get_sms_service
 class AuthService:
     """认证服务类"""
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
         self.settings = get_settings()
 

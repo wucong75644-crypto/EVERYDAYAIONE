@@ -82,8 +82,9 @@ CACHE_TTL = 300  # 5 分钟
 
 def _build_mem0_config() -> Optional[Dict[str, Any]]:
     """构建 Mem0 配置，缺少必要配置时返回 None"""
-    if not settings.supabase_db_url:
-        logger.warning("SUPABASE_DB_URL not configured, memory feature disabled")
+    db_url = settings.effective_db_url
+    if not db_url:
+        logger.warning("DATABASE_URL/SUPABASE_DB_URL not configured, memory feature disabled")
         return None
     if not settings.dashscope_api_key:
         logger.warning("DASHSCOPE_API_KEY not configured, memory feature disabled")
@@ -112,7 +113,7 @@ def _build_mem0_config() -> Optional[Dict[str, Any]]:
         "vector_store": {
             "provider": "pgvector",
             "config": {
-                "connection_string": settings.supabase_db_url,
+                "connection_string": db_url,
                 "embedding_model_dims": 1024,
             },
         },

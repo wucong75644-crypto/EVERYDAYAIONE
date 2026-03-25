@@ -8,7 +8,7 @@
 from typing import Optional
 
 from loguru import logger
-from supabase import Client
+
 
 from core.config import get_settings
 
@@ -16,7 +16,7 @@ from core.config import get_settings
 class WecomUserMappingService:
     """企微用户 → 系统用户映射"""
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
         self.settings = get_settings()
 

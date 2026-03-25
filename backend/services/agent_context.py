@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
-from config.agent_tools import AGENT_SYSTEM_PROMPT
 from schemas.message import ContentPart, FilePart, ImagePart, TextPart
 
 
@@ -214,7 +213,10 @@ class AgentContextMixin:
         self, content: List[ContentPart],
     ) -> str:
         """Agent 系统提示词 + 知识库经验注入"""
-        base_prompt = AGENT_SYSTEM_PROMPT
+        # v1 遗留方法，v2 Phase 2 用 build_domain_prompt() 替代
+        # 保留方法签名兼容性，使用 Phase 1 提示词作为 fallback
+        from config.phase_tools import PHASE1_SYSTEM_PROMPT
+        base_prompt = PHASE1_SYSTEM_PROMPT
 
         text = self._extract_text(content)
         if not text:

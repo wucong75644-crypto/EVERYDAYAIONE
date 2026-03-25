@@ -261,16 +261,17 @@ class TestHandleError:
         handler = WecomCardEventHandler(_make_db())
         ctx = _make_reply_ctx()
 
-        # 让 _handle_check_credits 内部抛异常
-        with patch.object(
-            handler, "_handle_check_credits",
-            new=AsyncMock(side_effect=RuntimeError("DB crash")),
-        ):
-            # 不应抛出
+        # patch 类级别的 _EVENT_HANDLERS 字典，替换 check_credits 对应的 handler
+        failing_handler = AsyncMock(side_effect=RuntimeError("DB crash"))
+        original_handlers = WecomCardEventHandler._EVENT_HANDLERS.copy()
+        WecomCardEventHandler._EVENT_HANDLERS["check_credits"] = failing_handler
+        try:
             await handler.handle(
                 "check_credits", "t1", "button_interaction", None,
                 "u1", "c1", ctx,
             )
+        finally:
+            WecomCardEventHandler._EVENT_HANDLERS = original_handlers
 
         # 应回复"操作失败"（send_reply 使用位置参数）
         ctx.ws_client.send_reply.assert_called_once()

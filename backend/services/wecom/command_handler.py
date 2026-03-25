@@ -11,7 +11,7 @@ import re
 from typing import List, Optional, Tuple
 
 from loguru import logger
-from supabase import Client
+
 
 from core.config import get_settings
 from schemas.wecom import WecomReplyContext
@@ -36,7 +36,7 @@ _COMMAND_PATTERNS: List[Tuple[re.Pattern, str]] = [
 class CommandHandler:
     """企微文本指令识别 + 卡片/文本回复"""
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
         self._settings = get_settings()
 

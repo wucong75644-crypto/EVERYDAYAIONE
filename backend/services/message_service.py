@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 from loguru import logger
-from supabase import Client
+
 
 from core.exceptions import NotFoundError, PermissionDeniedError
 from services.conversation_service import ConversationService
@@ -18,7 +18,7 @@ from services.message_utils import format_message
 class MessageService:
     """消息服务类"""
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
         self.conversation_service = ConversationService(db)
 

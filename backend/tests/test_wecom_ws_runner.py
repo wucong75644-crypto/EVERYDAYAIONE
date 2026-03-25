@@ -56,7 +56,7 @@ async def _capture_callbacks():
     with (
         patch("wecom_ws_runner.setup_logging"),
         patch("wecom_ws_runner.get_settings", return_value=mock_settings),
-        patch("wecom_ws_runner.get_supabase_client", return_value=MagicMock()),
+        patch("wecom_ws_runner.get_db", return_value=MagicMock()),
         patch("wecom_ws_runner.WecomMessageService", return_value=mock_msg_svc),
         patch("wecom_ws_runner.WecomWSClient", side_effect=capture_ws_client),
         patch("asyncio.Event") as mock_event_cls,
@@ -90,7 +90,7 @@ class TestMainExitEarly:
         with (
             patch("wecom_ws_runner.setup_logging"),
             patch("wecom_ws_runner.get_settings", return_value=mock_settings),
-            patch("wecom_ws_runner.get_supabase_client") as mock_db,
+            patch("wecom_ws_runner.get_db") as mock_db,
             patch("wecom_ws_runner.WecomWSClient") as mock_ws_cls,
         ):
             from wecom_ws_runner import main
@@ -107,7 +107,7 @@ class TestMainExitEarly:
         with (
             patch("wecom_ws_runner.setup_logging"),
             patch("wecom_ws_runner.get_settings", return_value=mock_settings),
-            patch("wecom_ws_runner.get_supabase_client") as mock_db,
+            patch("wecom_ws_runner.get_db") as mock_db,
             patch("wecom_ws_runner.WecomWSClient") as mock_ws_cls,
         ):
             from wecom_ws_runner import main
@@ -147,7 +147,7 @@ class TestOnMessage:
         with (
             patch("wecom_ws_runner.setup_logging"),
             patch("wecom_ws_runner.get_settings", return_value=mock_settings),
-            patch("wecom_ws_runner.get_supabase_client", return_value=mock_db),
+            patch("wecom_ws_runner.get_db", return_value=mock_db),
             patch("wecom_ws_runner.WecomMessageService", return_value=mock_msg_svc),
             patch("wecom_ws_runner.WecomWSClient", side_effect=capture_ws_client),
             patch("asyncio.Event") as mock_event_cls,
@@ -213,7 +213,7 @@ class TestOnMessage:
         with (
             patch("wecom_ws_runner.setup_logging"),
             patch("wecom_ws_runner.get_settings", return_value=mock_settings),
-            patch("wecom_ws_runner.get_supabase_client", return_value=MagicMock()),
+            patch("wecom_ws_runner.get_db", return_value=MagicMock()),
             patch("wecom_ws_runner.WecomMessageService", return_value=mock_msg_svc),
             patch("wecom_ws_runner.WecomWSClient", side_effect=capture_ws_client),
             patch("asyncio.Event") as mock_event_cls,
@@ -265,7 +265,7 @@ class TestOnMessage:
         with (
             patch("wecom_ws_runner.setup_logging"),
             patch("wecom_ws_runner.get_settings", return_value=mock_settings),
-            patch("wecom_ws_runner.get_supabase_client", return_value=MagicMock()),
+            patch("wecom_ws_runner.get_db", return_value=MagicMock()),
             patch("wecom_ws_runner.WecomMessageService", return_value=mock_msg_svc),
             patch("wecom_ws_runner.WecomWSClient", side_effect=capture_ws_client),
             patch("asyncio.Event") as mock_event_cls,
@@ -315,7 +315,7 @@ class TestOnMessage:
         with (
             patch("wecom_ws_runner.setup_logging"),
             patch("wecom_ws_runner.get_settings", return_value=mock_settings),
-            patch("wecom_ws_runner.get_supabase_client", return_value=MagicMock()),
+            patch("wecom_ws_runner.get_db", return_value=MagicMock()),
             patch("wecom_ws_runner.WecomMessageService", return_value=mock_msg_svc),
             patch("wecom_ws_runner.WecomWSClient", side_effect=capture_ws_client),
             patch("asyncio.Event") as mock_event_cls,
@@ -363,7 +363,7 @@ class TestSignalHandling:
         with (
             patch("wecom_ws_runner.setup_logging"),
             patch("wecom_ws_runner.get_settings", return_value=mock_settings),
-            patch("wecom_ws_runner.get_supabase_client", return_value=MagicMock()),
+            patch("wecom_ws_runner.get_db", return_value=MagicMock()),
             patch("wecom_ws_runner.WecomMessageService", return_value=MagicMock()),
             patch("wecom_ws_runner.WecomWSClient", return_value=mock_ws_instance),
             patch("asyncio.Event", return_value=mock_stop_event),
@@ -396,7 +396,7 @@ class TestSignalHandling:
         with (
             patch("wecom_ws_runner.setup_logging"),
             patch("wecom_ws_runner.get_settings", return_value=mock_settings),
-            patch("wecom_ws_runner.get_supabase_client", return_value=MagicMock()),
+            patch("wecom_ws_runner.get_db", return_value=MagicMock()),
             patch("wecom_ws_runner.WecomMessageService", return_value=MagicMock()),
             patch("wecom_ws_runner.WecomWSClient", return_value=mock_ws_instance),
             patch("asyncio.Event", return_value=mock_stop_event),

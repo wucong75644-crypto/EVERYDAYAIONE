@@ -683,20 +683,33 @@
 
 ---
 
-### AI 模型搜索模块 (Model Search)
+### 工具注册表模块 (Tool Registry)
 
-> **新增于智能模型配置增强**：支持模型精确查询、能力搜索、中文场景搜索。
+> **新增于工具系统统一架构**：统一工具元数据（tags/priority/domain）+ 同义词扩展表。
 
 #### 后端函数
 
 | 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
 |--------|----------|----------|------|--------|
-| `search_models` | `backend/services/model_search.py` | 搜索可用 AI 模型及其能力 | query: str | str |
-| `_exact_search` | `backend/services/model_search.py` | 精确查询：按模型 ID 匹配（不分区分大小写） | query: str | str \| None |
-| `_capability_search` | `backend/services/model_search.py` | 能力/场景搜索，计分排序，返回 top 5 | query: str | str |
-| `_calc_score` | `backend/services/model_search.py` | 计算模型匹配分数（场景/能力+3, ID+2, 描述+1） | keywords, model, category | int |
-| `_format_model_detail` | `backend/services/model_search.py` | 格式化单个模型的完整信息（能力/图片理解/搜索支持） | model, category | str |
-| `_format_model_brief` | `backend/services/model_search.py` | 格式化模型简要摘要（含能力标签） | model, category | str |
+| `register` | `backend/config/tool_registry.py` | 注册工具到全局表 | entry: ToolEntry | ToolEntry |
+| `get_domain_tools` | `backend/config/tool_registry.py` | 获取指定 domain 的所有工具（含 always_include） | domain: str | List[ToolEntry] |
+| `expand_synonyms` | `backend/config/tool_registry.py` | 同义词扩展（子串匹配，零依赖） | user_input: str | Set[str] |
+
+---
+
+### 工具智能筛选器 (Tool Selector)
+
+> **新增于工具系统统一架构**：三级匹配（同义词+tags+qwen-turbo）+ action 筛选 + 兜底扩充。
+
+#### 后端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `select_and_filter_tools` | `backend/services/tool_selector.py` | 主入口：三级匹配 + action 筛选，返回过滤后的 tool schemas | domain, user_input, all_tool_schemas | List[Dict] |
+| `select_tools` | `backend/services/tool_selector.py` | Level 1+2 工具筛选（同义词+tags 子串匹配） | domain, user_input, top_k | (List[ToolEntry], Set[str]) |
+| `_score_actions` | `backend/services/tool_selector.py` | 筛选工具内 action（子串匹配+权重） | tool_name, user_input, match_words | Optional[List[str]] |
+| `_semantic_tool_match` | `backend/services/tool_selector.py` | Level 3: qwen-turbo 语义匹配（L1+L2 命中 < 3 时触发） | user_input, candidate_tools | List[str] |
+| `_filter_tool_schema_actions` | `backend/services/tool_selector.py` | 深拷贝 schema 并过滤 action enum | schema, allowed_actions | Dict |
 
 ---
 

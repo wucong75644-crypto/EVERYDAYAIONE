@@ -71,14 +71,12 @@ class TestAgentToolsIntegration:
             {"code": "1+1"},  # missing description
         )
 
-    def test_agent_tools_include_code_execute(self):
-        from config.agent_tools import AGENT_TOOLS
-        names = [t["function"]["name"] for t in AGENT_TOOLS]
-        assert "code_execute" in names
-
-    def test_system_prompt_includes_code_routing(self):
-        from config.agent_tools import AGENT_SYSTEM_PROMPT
-        assert "代码执行沙盒" in AGENT_SYSTEM_PROMPT
+    def test_code_execute_in_tool_schemas(self):
+        """code_execute schema registered with required fields"""
+        from config.agent_tools import TOOL_SCHEMAS
+        schema = TOOL_SCHEMAS["code_execute"]
+        assert "code" in schema["required"]
+        assert "description" in schema["required"]
 
 
 class TestAgentLoopTimeout:

@@ -10,42 +10,40 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any
 
 from loguru import logger
-from supabase import Client
-
-
 class DataConsistencyChecker:
     """数据一致性检查器（只告警不修复）"""
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
 
     async def check_and_alert(self) -> Dict[str, Any]:
         """
         检查数据一致性并发送告警（不修复）
 
-        异常情况：
-        1. completed 状态但 content 中没有图片/视频 URL
-        2. pending 状态但 content 中有 URL（应该已完成）
-        3. 超过24小时的 pending 消息
+        检查 messages 表中 generation_params 不为空的消息，
+        判断是否存在内容缺失或状态异常。
 
         Returns:
             检查结果统计
         """
-        # 查询所有媒体任务消息（最近7天）
+        # 查询最近7天有 generation_params 的消息
         seven_days_ago = (
             datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
             - timedelta(days=7)
         ).isoformat()
 
         result = self.db.table("messages").select(
-            "id, conversation_id, status, content, generation_params, task_id, created_at"
-        ).in_(
-            "generation_params->>type", ["image", "video"]
+            "id, conversation_id, content, generation_params, is_error, created_at"
         ).gte(
             "created_at", seven_days_ago
         ).execute()
 
-        messages = result.data
+        # 过滤有 generation_params 且 type 为 image/video 的消息
+        messages = [
+            m for m in (result.data or [])
+            if isinstance(m.get("generation_params"), dict)
+            and m["generation_params"].get("type") in ("image", "video")
+        ]
 
         if not messages:
             logger.info("✅ Data consistency check passed | no media messages found")
@@ -66,44 +64,33 @@ class DataConsistencyChecker:
 
         for msg in messages:
             msg_id = msg['id']
-            status = msg['status']
+            is_error = msg.get('is_error', False)
             content = msg.get('content', [])
             gen_type = msg.get('generation_params', {}).get('type')
-            task_id = msg.get('task_id')
-            created_at = datetime.fromisoformat(msg['created_at'].replace("Z", "+00:00"))
+            created_at_str = msg.get('created_at', '')
+            if isinstance(created_at_str, str):
+                created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+            else:
+                created_at = created_at_str
 
             # 检查是否有有效的 URL
             has_valid_url = self._has_valid_media_url(content, gen_type)
 
-            # 异常1：completed 但没有 URL
-            if status == 'completed' and not has_valid_url:
+            # 异常1：非错误消息但没有媒体 URL（可能生成失败未标记）
+            if not is_error and not has_valid_url:
                 completed_without_url.append({
                     "id": msg_id,
                     "type": gen_type,
-                    "task_id": task_id,
-                    "created_at": msg['created_at'],
+                    "created_at": msg.get('created_at'),
                 })
 
-            # 异常2：pending 但有 URL
-            elif status == 'pending' and has_valid_url:
+            # 异常2：错误消息但有 URL（状态矛盾）
+            elif is_error and has_valid_url:
                 pending_with_url.append({
                     "id": msg_id,
                     "type": gen_type,
-                    "task_id": task_id,
-                    "created_at": msg['created_at'],
+                    "created_at": msg.get('created_at'),
                 })
-
-            # 异常3：超过24小时的 pending
-            elif status == 'pending':
-                age_hours = (datetime.now(timezone.utc) - created_at).total_seconds() / 3600
-                if age_hours > 24:
-                    stale_pending.append({
-                        "id": msg_id,
-                        "type": gen_type,
-                        "task_id": task_id,
-                        "age_hours": round(age_hours, 1),
-                        "created_at": msg['created_at'],
-                    })
 
         # 统计结果
         total_issues = (
@@ -224,21 +211,21 @@ class DataConsistencyChecker:
         """自动修复可纠正的数据不一致"""
         fixed = 0
 
-        # completed 但无 URL → 改为 failed
+        # 非错误但无 URL → 标记为错误
         for item in completed_without_url:
             try:
                 self.db.table("messages").update(
-                    {"status": "failed"}
+                    {"is_error": True}
                 ).eq("id", item["id"]).execute()
                 fixed += 1
             except Exception as e:
                 logger.warning(f"Auto-fix failed | id={item['id']} | error={e}")
 
-        # pending 但有 URL → 改为 completed
+        # 错误但有 URL → 取消错误标记
         for item in pending_with_url:
             try:
                 self.db.table("messages").update(
-                    {"status": "completed"}
+                    {"is_error": False}
                 ).eq("id", item["id"]).execute()
                 fixed += 1
             except Exception as e:

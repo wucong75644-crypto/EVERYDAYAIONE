@@ -8,7 +8,7 @@ import uuid
 from typing import Optional
 
 from loguru import logger
-from supabase import Client
+
 
 from core.config import get_settings
 from core.exceptions import AppException, ValidationError
@@ -32,7 +32,7 @@ class AudioService:
     # 最大文件大小 (25MB)
     MAX_FILE_SIZE = 25 * 1024 * 1024
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
         self.settings = get_settings()
 

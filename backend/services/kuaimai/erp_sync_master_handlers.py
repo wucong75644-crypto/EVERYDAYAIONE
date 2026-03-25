@@ -117,7 +117,7 @@ async def sync_product(
             continue
 
         # SPU 行
-        spu_rows.append({
+        spu_row: dict[str, Any] = {
             "outer_id": outer_id,
             "title": p.get("title"),
             "item_type": p.get("type", 0),
@@ -137,12 +137,16 @@ async def sync_product(
             "created_at": _safe_ts(p.get("created")),
             "modified_at": _safe_ts(p.get("modified")),
             "pic_url": p.get("picPath"),
-            "suit_singles": p.get("singleList"),
             "extra_json": _pick(
                 p, "sellerCats", "classify", "standard", "safekind",
                 "x", "y", "z", "boxnum", "customAttribute",
             ),
-        })
+        }
+        # suit_singles: 仅当 API 实际返回 singleList 时才写入，
+        # 避免 None 覆盖掉从 CSV 导入的子商品数据
+        if p.get("singleList") is not None:
+            spu_row["suit_singles"] = p["singleList"]
+        spu_rows.append(spu_row)
 
         # SKU 行（商品 list API 含 skus 数组）
         for sku in p.get("skus") or []:

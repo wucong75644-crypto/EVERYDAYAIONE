@@ -48,8 +48,9 @@ async def _get_pg_pool():
         if _pg_pool is not None:
             return _pg_pool
 
-        if not settings.supabase_db_url:
-            logger.warning("SUPABASE_DB_URL not configured, knowledge base disabled")
+        db_url = settings.effective_db_url
+        if not db_url:
+            logger.warning("DATABASE_URL/SUPABASE_DB_URL not configured, knowledge base disabled")
             _kb_available = False
             return None
 
@@ -57,7 +58,7 @@ async def _get_pg_pool():
             from psycopg_pool import AsyncConnectionPool
 
             _pg_pool = AsyncConnectionPool(
-                conninfo=settings.supabase_db_url,
+                conninfo=db_url,
                 min_size=1,
                 max_size=3,
                 open=False,

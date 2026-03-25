@@ -57,11 +57,20 @@ class _ApiRateLimiter:
 
     def __init__(self, max_qps: float = 12.0) -> None:
         self._min_interval = 1.0 / max_qps
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock | None = None
+        self._lock_loop_id: int | None = None
         self._last_request_time = 0.0
 
+    def _get_lock(self) -> asyncio.Lock:
+        """延迟创建 Lock，事件循环变化时自动重建"""
+        loop_id = id(asyncio.get_event_loop())
+        if self._lock is None or self._lock_loop_id != loop_id:
+            self._lock = asyncio.Lock()
+            self._lock_loop_id = loop_id
+        return self._lock
+
     async def __aenter__(self):
-        async with self._lock:
+        async with self._get_lock():
             now = time.monotonic()
             wait = self._min_interval - (now - self._last_request_time)
             if wait > 0:
@@ -78,24 +87,49 @@ _API_SEM = _ApiRateLimiter(max_qps=12)
 所有 API 调用（detail / list 翻页）共享此限流器。"""
 
 
+class _DetailResult:
+    """_fetch_details 返回结果，包含成功列表和失败列表"""
+    __slots__ = ("succeeded", "failed")
+
+    def __init__(self) -> None:
+        self.succeeded: list[tuple[dict, dict]] = []
+        self.failed: list[dict] = []
+
+    def __iter__(self):
+        """向后兼容：for doc, detail in await _fetch_details(...)"""
+        return iter(self.succeeded)
+
+
 async def _fetch_details(
     client, method: str, docs: list[dict],
-) -> list[tuple[dict, dict]]:
-    """并发获取单据详情（通过全局 _API_SEM 限流）"""
+) -> _DetailResult:
+    """并发获取单据详情（通过全局 _API_SEM 限流）
+
+    Returns:
+        _DetailResult: .succeeded 为成功的 (doc, detail) 列表，
+                       .failed 为 detail 调用失败的 doc 列表。
+    """
 
     async def _one(doc: dict):
         async with _API_SEM:
             try:
                 detail = await client.request_with_retry(method, {"id": doc["id"]})
-                return (doc, detail)
+                return ("ok", doc, detail)
             except Exception as e:
                 logger.warning(
                     f"Detail failed | method={method} | id={doc.get('id')} | error={e}"
                 )
-                return None
+                return ("fail", doc, str(e))
 
-    results = await asyncio.gather(*[_one(d) for d in docs])
-    return [r for r in results if r is not None]
+    raw_results = await asyncio.gather(*[_one(d) for d in docs])
+
+    result = _DetailResult()
+    for r in raw_results:
+        if r[0] == "ok":
+            result.succeeded.append((r[1], r[2]))
+        else:
+            result.failed.append(r[1])
+    return result
 
 
 def _safe_ts(val: Any) -> str | None:
@@ -138,8 +172,13 @@ async def sync_purchase(
     if not docs:
         return 0
 
+    detail_result = await _fetch_details(client, "purchase.order.get", docs)
+    if detail_result.failed:
+        from services.kuaimai.erp_sync_dead_letter import record_dead_letter
+        record_dead_letter(svc.db, "purchase", "purchase.order.get", detail_result.failed)
+
     all_rows: list[dict[str, Any]] = []
-    for doc, detail in await _fetch_details(client, "purchase.order.get", docs):
+    for doc, detail in detail_result:
         items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "purchase")
         extra = _pick(
@@ -191,8 +230,13 @@ async def sync_receipt(
     if not docs:
         return 0
 
+    detail_result = await _fetch_details(client, "warehouse.entry.list.get", docs)
+    if detail_result.failed:
+        from services.kuaimai.erp_sync_dead_letter import record_dead_letter
+        record_dead_letter(svc.db, "receipt", "warehouse.entry.list.get", detail_result.failed)
+
     all_rows: list[dict[str, Any]] = []
-    for doc, detail in await _fetch_details(client, "warehouse.entry.list.get", docs):
+    for doc, detail in detail_result:
         items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "receipt")
         extra = _pick(
@@ -241,8 +285,13 @@ async def sync_shelf(
     if not docs:
         return 0
 
+    detail_result = await _fetch_details(client, "erp.purchase.shelf.get", docs)
+    if detail_result.failed:
+        from services.kuaimai.erp_sync_dead_letter import record_dead_letter
+        record_dead_letter(svc.db, "shelf", "erp.purchase.shelf.get", detail_result.failed)
+
     all_rows: list[dict[str, Any]] = []
-    for doc, detail in await _fetch_details(client, "erp.purchase.shelf.get", docs):
+    for doc, detail in detail_result:
         items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "shelf")
         for item in items:
@@ -281,8 +330,13 @@ async def sync_purchase_return(
     if not docs:
         return 0
 
+    detail_result = await _fetch_details(client, "purchase.return.list.get", docs)
+    if detail_result.failed:
+        from services.kuaimai.erp_sync_dead_letter import record_dead_letter
+        record_dead_letter(svc.db, "purchase_return", "purchase.return.list.get", detail_result.failed)
+
     all_rows: list[dict[str, Any]] = []
-    for doc, detail in await _fetch_details(client, "purchase.return.list.get", docs):
+    for doc, detail in detail_result:
         items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "purchase_return")
         extra = _pick(
@@ -299,6 +353,7 @@ async def sync_purchase_return(
                 "doc_code": doc.get("code"),
                 "doc_status": str(doc.get("status", "")),
                 "doc_created_at": _safe_ts(doc.get("gmCreate")),  # 设计文档：字段名为 gmCreate
+                "doc_modified_at": _safe_ts(doc.get("modified") or doc.get("gmModified")),
                 "item_index": item["_item_index"],
                 "outer_id": item.get("itemOuterId"),     # 设计文档：itemOuterId→outer_id
                 "sku_outer_id": item.get("outerId"),     # 设计文档：outerId→sku_outer_id
@@ -351,6 +406,7 @@ async def sync_aftersale(
                 "doc_id": str(doc["id"]),
                 "doc_status": doc.get("status"),
                 "doc_created_at": _safe_ts(doc.get("created")),
+                "doc_modified_at": _safe_ts(doc.get("modified")),
                 "shop_name": doc.get("shopName"),
                 "platform": doc.get("source"),
                 "order_no": doc.get("tid"),
@@ -434,10 +490,10 @@ async def sync_order(
             )
 
             discount_used = 0.0
-            for item in items:
-                idx = item["_item_index"]
+            for pos, item in enumerate(items):
                 payment = _to_float(item.get("payment"))
-                if idx < len(items) - 1:
+                is_last = (pos == len(items) - 1)
+                if not is_last:
                     item_discount = round(total_discount * payment / total_payment, 2)
                     discount_used += item_discount
                 else:
@@ -449,7 +505,7 @@ async def sync_order(
                     "doc_status": doc.get("sysStatus"),
                     "doc_created_at": _safe_ts(doc.get("created")),
                     "doc_modified_at": _safe_ts(doc.get("modified")),
-                    "item_index": idx,
+                    "item_index": item["_item_index"],
                     "outer_id": item.get("sysItemOuterId"),   # 主编码
                     "sku_outer_id": item.get("sysOuterId"),    # SKU编码
                     "item_name": item.get("title"),
@@ -459,8 +515,8 @@ async def sync_order(
                     "cost": item.get("cost"),
                     "refund_status": item.get("refundStatus"),
                     "discount_fee": item_discount if total_discount else None,
-                    "post_fee": doc.get("postFee") if idx == 0 else None,
-                    "gross_profit": doc.get("grossProfit") if idx == 0 else None,
+                    "post_fee": doc.get("postFee") if pos == 0 else None,
+                    "gross_profit": doc.get("grossProfit") if pos == 0 else None,
                     "order_no": doc.get("tid"),
                     "order_status": doc.get("sysStatus"),
                     "express_no": doc.get("outSid"),

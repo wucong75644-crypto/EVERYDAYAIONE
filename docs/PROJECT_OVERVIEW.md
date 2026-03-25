@@ -515,6 +515,13 @@ cache = client.caches.create(
   - Handler 基类新增 `_build_callback_url()` 回调地址构建
   - `BackgroundTaskWorker` 轮询间隔从 30s 降级到 120s，仅作兜底
   - 消除双路径格式不一致问题（polling/handler 统一走 TaskCompletionService）
+- **2026-03-23**：工具系统统一架构（v5.0）
+  - 新增 `config/tool_registry.py`：统一工具注册表（ToolEntry + 26 工具 + 同义词表）
+  - 新增 `services/tool_selector.py`：三级匹配（同义词+tags+qwen-turbo）+ action 筛选
+  - 废弃 v1 Agent Loop：删除 `_execute_loop_v1`、`AGENT_TOOLS`、`AGENT_SYSTEM_PROMPT`、`model_search.py`
+  - 提示词精简：ERP_ROUTING_PROMPT 105行→40行，LOCAL_ROUTING_PROMPT 删除
+  - action description 内嵌 13 条危险模式警告（5 个 registry 文件）
+  - 兜底扩充机制：ToolExpansionNeeded（工具/action 各最多补充 1 次）
 - **2026-02-04**：完成聊天任务刷新恢复功能
   - 新增 `ChatStreamManager` 后台协程管理器，支持 SSE 断开后继续处理
   - 新增 `/tasks/{task_id}/stream` SSE 恢复端点，支持断点续传

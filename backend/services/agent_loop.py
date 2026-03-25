@@ -15,9 +15,7 @@ Agent Loop — 多步工具编排引擎 (ReAct 模式)
 - Schema 验证（拒绝幻觉工具调用）
 """
 
-import asyncio
 import json
-import time as _time
 from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
@@ -26,20 +24,17 @@ import httpx
 from schemas.message import ContentPart, FilePart, ImagePart
 from services.agent_context import AgentContextMixin
 from services.agent_loop_infra import AgentInfraMixin
-from services.agent_loop_tools import AgentToolsMixin, _SLOW_TOOL_TIMEOUT
+from services.agent_loop_tools import (
+    AgentToolsMixin, ToolExpansionNeeded, _SLOW_TOOL_TIMEOUT,
+)
 from services.agent_loop_v2 import AgentLoopV2Mixin
 from services.agent_types import AgentResult, PendingAsyncTool, AgentGuardrails
-from services.agent_result_builder import (
-    build_chat_result,
-    build_final_result,
-    build_graceful_timeout,
-)
 from services.tool_executor import ToolExecutor
 
 # 向后兼容：外部通过 from services.agent_loop import ... 导入
 __all__ = [
     "AgentLoop", "AgentResult", "PendingAsyncTool",
-    "AgentGuardrails", "_SLOW_TOOL_TIMEOUT",
+    "AgentGuardrails", "ToolExpansionNeeded", "_SLOW_TOOL_TIMEOUT",
 ]
 
 
@@ -129,156 +124,8 @@ class AgentLoop(
         return domain, arguments
 
     async def _execute_loop(self, content: List[ContentPart]) -> AgentResult:
-        """Agent Loop 入口 — 根据灰度开关选择 v1/v2"""
+        """Agent Loop 入口 — 全量走 v2（意图优先 + 动态工具加载）"""
         from core.config import get_settings
 
         self._settings = get_settings()
-        if self._settings.agent_loop_v2_enabled is True:
-            return await self._execute_loop_v2(content)
-        return await self._execute_loop_v1(content)
-
-    async def _execute_loop_v1(self, content: List[ContentPart]) -> AgentResult:
-        """Agent Loop v1 — 全量工具 + 多步编排（原有逻辑，零修改）"""
-        guardrails = AgentGuardrails(
-            max_turns=self._settings.agent_loop_max_turns,
-            max_total_tokens=self._settings.agent_loop_max_tokens,
-        )
-
-        # 构建初始消息：系统提示词 + 对话历史（并行获取，无交叉依赖）
-        prompt_result, history_result = await asyncio.gather(
-            self._build_system_prompt(content),
-            self._get_recent_history(),
-            return_exceptions=True,
-        )
-
-        # 安全解包：异常降级（两个函数内部已有 try/except，这里兜底防御）
-        if isinstance(prompt_result, BaseException):
-            logger.warning(f"Agent system prompt failed | error={prompt_result}")
-            from config.agent_tools import AGENT_SYSTEM_PROMPT
-            system_prompt = AGENT_SYSTEM_PROMPT
-        else:
-            system_prompt = prompt_result
-
-        history_msgs = (
-            history_result
-            if not isinstance(history_result, BaseException)
-            else None
-        )
-        if isinstance(history_result, BaseException):
-            logger.warning(f"Agent history failed | error={history_result}")
-
-        now = _time.strftime("%Y-%m-%d %H:%M", _time.localtime())
-        system_prompt += f"\n\n当前时间：{now}"
-
-        # 用户位置注入（IP 定位，辅助天气/本地搜索查询）
-        user_location = getattr(self, "_user_location", None)
-        if user_location:
-            system_prompt += f"\n用户所在位置：{user_location}"
-
-        # 深度思考模式提示（用户开启时，优先选支持深度思考的模型）
-        thinking_mode = getattr(self, "_thinking_mode", None)
-        if thinking_mode == "deep_think":
-            system_prompt += (
-                "\n\n用户已开启深度思考模式，"
-                "请优先选择 深度思考:✓ 的模型。"
-            )
-
-        messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": system_prompt},
-        ]
-        if history_msgs:
-            messages.append({
-                "role": "system",
-                "content": "以下是最近的对话记录：",
-            })
-            messages.extend(history_msgs)
-            messages.append({
-                "role": "system",
-                "content": "以上是历史记录。以下是用户当前的新消息：",
-            })
-
-        # 当前用户消息（多模态：文本 + 图片 content blocks）
-        user_content = self._build_user_content(content)
-        messages.append({"role": "user", "content": user_content})
-
-        routing_holder: Dict[str, Any] = {}
-        accumulated_context: List[str] = []
-
-        for turn in range(guardrails.max_turns):
-            # 1. 检查 token 预算
-            if guardrails.should_abort():
-                logger.warning(
-                    f"Agent loop token budget exceeded | "
-                    f"tokens={guardrails.tokens_used} | turn={turn}"
-                )
-                return build_graceful_timeout(
-                    accumulated_context, turn, guardrails.tokens_used,
-                )
-
-            # 2. 调用大脑
-            start_ts = _time.monotonic()
-            response = await self._call_brain(messages)
-            elapsed_ms = int((_time.monotonic() - start_ts) * 1000)
-
-            # 累加 token
-            usage = response.get("usage", {})
-            guardrails.add_tokens(usage.get("total_tokens", 0))
-
-            # 3. 解析 tool_calls
-            choices = response.get("choices", [])
-            if not choices:
-                return build_chat_result(
-                    "", accumulated_context, turn + 1, guardrails.tokens_used,
-                )
-
-            message = choices[0].get("message", {})
-            tool_calls = message.get("tool_calls")
-
-            # 无 tool_calls → 大脑判断完毕 → 循环结束
-            if not tool_calls:
-                text_content = message.get("content", "")
-                return build_chat_result(
-                    text_content, accumulated_context,
-                    turn + 1, guardrails.tokens_used,
-                )
-
-            # 4. 处理每个 tool_call
-            tool_results: List[Dict[str, Any]] = []
-            for tc in tool_calls:
-                await self._process_tool_call(
-                    tc, turn, guardrails, tool_results,
-                    accumulated_context, routing_holder,
-                )
-                # 循环检测导致的中止
-                if routing_holder.get("_loop_abort"):
-                    return build_graceful_timeout(
-                        accumulated_context, turn + 1,
-                        guardrails.tokens_used,
-                    )
-
-            # 5. 所有结果回传大脑
-            messages.append({"role": "assistant", "tool_calls": tool_calls})
-            for tr in tool_results:
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tr["tool_call_id"],
-                    "content": tr["content"],
-                })
-
-            # 6. 如果已有路由决策，不再继续循环
-            if routing_holder.get("decision"):
-                return build_final_result(
-                    routing_holder, accumulated_context,
-                    turn + 1, guardrails.tokens_used,
-                )
-
-        # 超出轮次 → 优雅终止
-        if routing_holder.get("decision"):
-            return build_final_result(
-                routing_holder, accumulated_context,
-                guardrails.max_turns, guardrails.tokens_used,
-            )
-        return build_graceful_timeout(
-            accumulated_context,
-            guardrails.max_turns, guardrails.tokens_used,
-        )
+        return await self._execute_loop_v2(content)

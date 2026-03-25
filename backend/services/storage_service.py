@@ -8,7 +8,7 @@ import base64
 from typing import Optional
 
 from loguru import logger
-from supabase import Client
+
 
 from services.oss_service import get_oss_service
 
@@ -33,7 +33,7 @@ class StorageService:
     # 最大文档大小 (50MB)
     MAX_DOCUMENT_SIZE = 50 * 1024 * 1024
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         """
         初始化存储服务
 

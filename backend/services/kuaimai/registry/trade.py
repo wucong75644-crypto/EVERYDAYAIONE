@@ -68,7 +68,7 @@ TRADE_REGISTRY = {
     ),
     "order_log": ApiEntry(
         method="erp.trade.trace.list",
-        description="查询订单操作日志（审核/验货/发货/拦截/修改等操作记录）。追溯订单处理过程用这个。不是查订单信息，查订单用order_list",
+        description="查询订单操作日志（审核/验货/发货/拦截/修改等操作记录）。追溯订单处理过程用这个。不是查订单信息，查订单用order_list（⚠️只接受system_ids参数，需先从order_list获取system_id）",
         param_map={
             "system_ids": "sids",
             "operators": "operators",
@@ -97,7 +97,7 @@ TRADE_REGISTRY = {
     # ── 出库/物流 查询 ────────────────────────────────
     "outstock_query": ApiEntry(
         method="erp.trade.outstock.simple.query",
-        description="查询销售出库信息（含商品出库明细+快递单号）。已发货订单查出库详情用这个。与order_list的区别：侧重出库和物流维度",
+        description="查询销售出库信息（含商品出库明细+快递单号）。已发货订单查出库详情用这个。与order_list的区别：侧重出库和物流维度（⚠️必须传order_id/system_id，仅传日期范围数据量大会超时）",
         param_map={
             "order_id": "tid",
             "system_id": "sid",

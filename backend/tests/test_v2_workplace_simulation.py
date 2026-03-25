@@ -31,7 +31,6 @@ from services.agent_loop import AgentLoop
 def _loop(has_image=False, location=None, thinking=None):
     lp = AgentLoop(db=None, user_id="wp", conversation_id="wp_c")
     lp._settings = MagicMock()
-    lp._settings.agent_loop_v2_enabled = True
     lp._settings.agent_loop_max_turns = 6
     lp._settings.agent_loop_max_tokens = 80000
     lp._has_image = has_image

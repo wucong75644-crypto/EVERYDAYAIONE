@@ -41,7 +41,7 @@ def mock_settings():
         mock_s.kb_cache_ttl = 600
         mock_s.kb_confidence_boost = 0.1
         mock_s.kb_confidence_decay_days = 30
-        mock_s.supabase_db_url = "postgresql://test"
+        mock_s.database_url = "postgresql://test"
         mock_s.dashscope_api_key = "test-key"
         mock_s.dashscope_base_url = "https://test.api.com"
         yield mock_s
@@ -142,7 +142,7 @@ class TestKnowledgeConfig:
     @pytest.mark.asyncio
     async def test_kb_unavailable_without_db_url(self, mock_settings):
         """无 DB URL 时知识库不可用"""
-        mock_settings.supabase_db_url = None
+        mock_settings.effective_db_url = None
         from services.knowledge_config import _get_pg_pool, is_kb_available
 
         import services.knowledge_config as cfg

@@ -8,7 +8,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
-from supabase import Client
+
 
 from schemas.message import (
     ContentPart,
@@ -31,7 +31,7 @@ class VideoHandler(BaseHandler):
     - 通过 WebSocket 推送完成状态
     """
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         super().__init__(db)
 
     @property

@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from loguru import logger
 
 from core.config import get_settings
-from core.database import get_supabase_client
+from core.database import get_db
 from core.logging_config import setup_logging
 from schemas.wecom import (
     WecomIncomingMessage,
@@ -43,7 +43,7 @@ async def main() -> None:
         logger.error("WECOM_BOT_ID / WECOM_BOT_SECRET not configured, exiting")
         return
 
-    db = get_supabase_client()
+    db = get_db()
     msg_svc = WecomMessageService(db)
 
     # WS 客户端引用（回调闭包中需要）

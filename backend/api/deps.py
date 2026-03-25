@@ -4,10 +4,9 @@ FastAPI 依赖注入
 提供通用的依赖注入函数，如获取当前用户、数据库连接等。
 """
 
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 from fastapi import Depends, Header
-from supabase import Client
 from loguru import logger
 
 from core.database import get_db
@@ -52,7 +51,7 @@ async def get_current_user_id(
 
 async def get_current_user(
     user_id: Annotated[str, Depends(get_current_user_id)],
-    db: Annotated[Client, Depends(get_db)],
+    db: Annotated[Any, Depends(get_db)],
 ) -> dict:
     """
     获取当前登录用户的完整信息
@@ -114,5 +113,5 @@ async def get_task_limit_service() -> Optional[TaskLimitService]:
 CurrentUserId = Annotated[str, Depends(get_current_user_id)]
 CurrentUser = Annotated[dict, Depends(get_current_user)]
 OptionalUserId = Annotated[Optional[str], Depends(get_optional_user_id)]
-Database = Annotated[Client, Depends(get_db)]
+Database = Annotated[Any, Depends(get_db)]
 TaskLimitSvc = Annotated[Optional[TaskLimitService], Depends(get_task_limit_service)]

@@ -15,7 +15,7 @@ import random
 from datetime import datetime, timezone
 
 from loguru import logger
-from supabase import Client
+
 
 from core.config import Settings, get_settings
 from core.task_config import IMAGE_TASK_TIMEOUT_MINUTES, VIDEO_TASK_TIMEOUT_MINUTES
@@ -47,7 +47,7 @@ def _resolve_poll_interval(settings: Settings) -> int:
 class BackgroundTaskWorker:
     """后台任务轮询器（自适应模式，带执行锁防止重叠）"""
 
-    def __init__(self, db: Client):
+    def __init__(self, db):
         self.db = db
         self.settings: Settings = get_settings()
         self.poll_interval = _resolve_poll_interval(self.settings)

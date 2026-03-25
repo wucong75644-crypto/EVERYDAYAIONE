@@ -20,10 +20,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Supabase 配置
-    supabase_url: str
-    supabase_anon_key: str
-    supabase_service_role_key: Optional[str] = None
+    # 数据库配置（本地 PostgreSQL）
+    database_url: str  # PostgreSQL 连接串（必填）
+    db_pool_min: int = 2  # 连接池最小连接数
+    db_pool_max: int = 10  # 连接池最大连接数
 
     # JWT 配置
     jwt_secret_key: str
@@ -88,7 +88,10 @@ class Settings(BaseSettings):
     openrouter_app_title: str = "EverydayAI"
 
     # 记忆功能配置（Mem0）
-    supabase_db_url: Optional[str] = None  # PostgreSQL 直连串（Mem0 pgvector 使用）
+    @property
+    def effective_db_url(self) -> str:
+        """Mem0/知识库用的 PostgreSQL URL（与主数据库相同）"""
+        return self.database_url
     memory_extraction_model: str = "qwen3.5-plus"  # 记忆提取用 LLM（DashScope）
     memory_embedding_model: str = "text-embedding-v3"  # 嵌入模型（1024维，DashScope）
     memory_enabled_default: bool = True  # 新用户默认开启记忆
@@ -127,7 +130,7 @@ class Settings(BaseSettings):
     agent_loop_brain_context_limit: int = 10  # 注入对话历史条数
     agent_loop_brain_context_max_chars: int = 3000  # 历史文本最大字符数
     agent_loop_brain_max_images: int = 8  # 历史注入最大图片数（控制 token 消耗）
-    agent_loop_v2_enabled: bool = True  # v2 意图优先架构（默认启用，False=降级v1）
+    # agent_loop_v2_enabled 已移除：v1 已废弃，全量走 v2
 
     # Agent 知识库配置
     kb_enabled: bool = True                              # 知识库总开关

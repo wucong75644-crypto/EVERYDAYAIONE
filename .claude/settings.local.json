@@ -252,7 +252,29 @@
       "Bash(./git-push.sh \"fix: ERP同步全面优化+本地查询优先+多处bug修复:*)",
       "Bash(grep -E \"\\\\.py$\")",
       "Bash(grep -c \"ApiEntry\\(\" /Users/wucong/EVERYDAYAIONE/backend/services/kuaimai/registry/*.py)",
-      "Bash(./git-push.sh \"fix: 采购/收货/上架单同步字段映射修正（outer_id↔sku_outer_id对调，quantity取count，remark从doc头取）\")"
+      "Bash(./git-push.sh \"fix: 采购/收货/上架单同步字段映射修正（outer_id↔sku_outer_id对调，quantity取count，remark从doc头取）\")",
+      "Bash(python -c \"from config.tool_registry import TOOL_REGISTRY, expand_synonyms, get_domain_tools; print\\(f''注册工具: {len\\(TOOL_REGISTRY\\)}''\\); erp = get_domain_tools\\(''erp''\\); print\\(f''ERP域工具: {len\\(erp\\)}''\\); s = expand_synonyms\\(''库存卖了多少''\\); print\\(f''同义词扩展\\(库存卖了多少\\): {s}''\\)\")",
+      "Bash(python -c \"from config.tool_registry import TOOL_REGISTRY, expand_synonyms, get_domain_tools; print\\(f''注册工具: {len\\(TOOL_REGISTRY\\)}''\\); erp = get_domain_tools\\(''erp''\\); print\\(f''ERP域工具: {len\\(erp\\)}''\\); s = expand_synonyms\\(''库存卖了多少''\\); print\\(f''同义词扩展: {s}''\\)\")",
+      "Bash(python -m pytest backend/tests/test_kuaimai.py backend/tests/test_tool_executor.py backend/tests/test_agent_loop_v2.py backend/tests/test_agent_loop_infra.py backend/tests/test_code_tools.py -q --tb=short)",
+      "Bash(python -m pytest tests/test_kuaimai.py tests/test_tool_executor.py tests/test_agent_loop_v2.py tests/test_agent_loop_infra.py tests/test_code_tools.py -q --tb=short)",
+      "Bash(python -m pytest tests/ -q --tb=line)",
+      "Bash(python -m pytest tests/test_kuaimai.py tests/test_tool_executor.py tests/test_agent_loop_v2.py tests/test_agent_loop_infra.py tests/test_code_tools.py -q --tb=line)",
+      "Bash(python -m pytest backend/tests/test_agent_loop_infra.py::TestFireAndForgetKnowledge -q --tb=short)",
+      "Bash(python -c \"from services.tool_selector import select_and_filter_tools, select_tools; entries, mw = select_tools\\(''erp'', ''库存多少''\\); print\\(f''选中: {len\\(entries\\)}, 匹配词: {mw}''\\); print\\([e.name for e in entries if not e.always_include]\\)\")",
+      "Bash(python -c \"from services.agent_loop import AgentLoop, ToolExpansionNeeded; print\\(''''OK''''\\)\")",
+      "Bash(python -m pytest tests/test_v2_stress_simulation.py::TestPhase2ToolFailures::test_multiple_tools_single_turn tests/test_v2_stress_simulation.py::TestGuardrailsTriggered::test_loop_detection_abort -q --tb=short)",
+      "Bash(python -m pytest tests/test_v2_stress_simulation.py -q --tb=short)",
+      "Bash(python -m pytest tests/test_v2_stress_simulation.py -q --tb=line)",
+      "Bash(python -m pytest tests/test_agent_tools.py::TestErpRoutingPrompt tests/test_kuaimai.py::TestTwoStepToolSchema tests/test_kuaimai.py::TestRoutingPromptAudit tests/test_erp_local.py::TestLocalRoutingPrompt tests/test_e2e_suite_stock_flow.py::TestE2ESuiteStockFlow::test_step6_routing_prompt_actionable -q --tb=short)",
+      "Bash(python -m pytest tests/test_tool_selector.py -q --tb=short)",
+      "Bash(python -m pytest backend/tests/test_tool_selector.py -q --tb=short)",
+      "Bash(python -m pytest backend/tests/ --ignore=backend/tests/manual -q --tb=short)",
+      "Bash(ssh root@47.110.94.25 -p 22 'journalctl -u everydayai-backend --since \"\"5 min ago\"\" --no-pager | grep -iE \"\"error|warning|fail\"\" | tail -15')",
+      "Bash(ssh root@47.110.94.25 -p 22 'systemctl stop everydayai-backend && echo \"\"✓ 后端已停止\"\"')",
+      "Bash(python scripts/benchmark_tool_selector.py --load scripts/benchmark_cases.json)",
+      "Bash(python backend/scripts/fix_order_outer_id.py)",
+      "Bash(ssh root@47.110.94.25 -p 22 'journalctl -u everydayai-backend --since \"\"2 min ago\"\" --no-pager | grep -iE \"\"error|warning\"\" | tail -5')",
+      "Bash(PGPASSWORD='WlnbhzE5sYYZd9t9Xw08w4I0' psql -h 47.110.94.25 -U everydayai -d everydayai -c \":*)"
     ]
   }
 }

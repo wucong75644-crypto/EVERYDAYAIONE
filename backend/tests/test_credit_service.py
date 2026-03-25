@@ -187,7 +187,7 @@ class TestCreditServiceConfirmAndRefund:
     async def test_confirm_deduct(self, credit_service, mock_async_db):
         """测试：确认扣除"""
         # Arrange
-        mock_async_db.table("credit_transactions").execute = AsyncMock(
+        mock_async_db.table("credit_transactions").execute = MagicMock(
             return_value=MagicMock(data=[{}])
         )
 
@@ -206,10 +206,10 @@ class TestCreditServiceConfirmAndRefund:
         }
         mock_async_db.set_table_data("credit_transactions", [tx_data])
 
-        mock_async_db.table("credit_transactions").execute = AsyncMock(
+        mock_async_db.table("credit_transactions").execute = MagicMock(
             return_value=MagicMock(data=tx_data)
         )
-        mock_async_db.rpc("refund_credits", {}).execute = AsyncMock(
+        mock_async_db.rpc("refund_credits", {}).execute = MagicMock(
             return_value=MagicMock(data={})
         )
 
@@ -233,7 +233,7 @@ class TestCreditServiceConfirmAndRefund:
         mock_table.select = MagicMock(return_value=mock_table)
         mock_table.eq = MagicMock(return_value=mock_table)
         mock_table.single = MagicMock(return_value=mock_table)
-        mock_table.execute = AsyncMock(return_value=MagicMock(data=tx_data))
+        mock_table.execute = MagicMock(return_value=MagicMock(data=tx_data))
 
         # Act - 应该静默返回，不退回
         await credit_service.refund_credits("tx_123")

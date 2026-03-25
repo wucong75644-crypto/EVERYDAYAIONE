@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from loguru import logger
-from supabase import Client
+
 
 from services.kuaimai.erp_local_helpers import check_sync_health
 
@@ -27,7 +27,7 @@ _DOC_TYPE_NAMES = {
 
 
 async def local_global_stats(
-    db: Client,
+    db,
     doc_type: str,
     date: str | None = None,
     period: str = "day",
@@ -124,7 +124,7 @@ def _calc_period(
 
 def _format_summary(
     data: dict, type_name: str, period_label: str,
-    db: Client, doc_type: str,
+    db, doc_type: str,
 ) -> str:
     """格式化总计统计（RPC 总计模式返回）"""
     doc_count = data.get("doc_count", 0)

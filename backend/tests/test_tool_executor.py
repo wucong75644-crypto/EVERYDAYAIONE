@@ -58,63 +58,6 @@ class TestExecuteDispatch:
 # ============================================================
 
 
-class TestWebSearch:
-
-    @pytest.mark.asyncio
-    async def test_empty_query(self):
-        """空 query→返回错误提示"""
-        exe = _make_executor()
-        result = await exe._web_search({"search_query": ""})
-        assert "不能为空" in result
-
-    @pytest.mark.asyncio
-    async def test_missing_query(self):
-        """无 search_query 键→返回错误提示"""
-        exe = _make_executor()
-        result = await exe._web_search({})
-        assert "不能为空" in result
-
-    @pytest.mark.asyncio
-    @patch("services.intent_router.IntentRouter")
-    async def test_successful_search(self, MockRouter):
-        """正常搜索→返回结果"""
-        mock_router = AsyncMock()
-        mock_router.execute_search.return_value = "搜索结果：天气晴"
-        mock_router.close = AsyncMock()
-        MockRouter.return_value = mock_router
-
-        exe = _make_executor()
-        result = await exe._web_search({"search_query": "今天天气"})
-        assert "天气晴" in result
-        mock_router.close.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    @patch("services.intent_router.IntentRouter")
-    async def test_search_no_result(self, MockRouter):
-        """搜索无结果→返回提示"""
-        mock_router = AsyncMock()
-        mock_router.execute_search.return_value = None
-        mock_router.close = AsyncMock()
-        MockRouter.return_value = mock_router
-
-        exe = _make_executor()
-        result = await exe._web_search({"search_query": "xyzabc"})
-        assert "未找到" in result
-
-    @pytest.mark.asyncio
-    @patch("services.intent_router.IntentRouter")
-    async def test_search_empty_string_result(self, MockRouter):
-        """搜索返回空字符串→返回未找到提示"""
-        mock_router = AsyncMock()
-        mock_router.execute_search.return_value = ""
-        mock_router.close = AsyncMock()
-        MockRouter.return_value = mock_router
-
-        exe = _make_executor()
-        result = await exe._web_search({"search_query": "test"})
-        assert "未找到" in result
-
-
 # ============================================================
 # TestGetConversationContext
 # ============================================================
@@ -657,24 +600,6 @@ class TestSearchHandlers:
         assert "请输入" in result
 
     @pytest.mark.asyncio
-    async def test_model_search_calls_search(self):
-        """_model_search 调用 search_models 并返回结果"""
-        exe = _make_executor()
-        with patch(
-            "services.model_search.search_models",
-            return_value="找到 2 个匹配",
-        ):
-            result = await exe._model_search({"query": "code"})
-        assert "匹配" in result
-
-    @pytest.mark.asyncio
-    async def test_model_search_empty_query(self):
-        """_model_search 空查询→提示输入"""
-        exe = _make_executor()
-        result = await exe._model_search({"query": ""})
-        assert "请输入" in result
-
-    @pytest.mark.asyncio
     async def test_execute_routes_to_erp_api_search(self):
         """execute 分发 erp_api_search 到正确 handler"""
         exe = _make_executor()
@@ -685,13 +610,3 @@ class TestSearchHandlers:
             result = await exe.execute("erp_api_search", {"query": "库存"})
         assert result == "结果"
 
-    @pytest.mark.asyncio
-    async def test_execute_routes_to_model_search(self):
-        """execute 分发 model_search 到正确 handler"""
-        exe = _make_executor()
-        with patch(
-            "services.model_search.search_models",
-            return_value="模型列表",
-        ):
-            result = await exe.execute("model_search", {"query": "推理"})
-        assert result == "模型列表"

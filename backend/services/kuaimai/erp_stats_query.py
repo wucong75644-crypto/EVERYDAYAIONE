@@ -11,13 +11,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from loguru import logger
-from supabase import Client
+
 
 from services.kuaimai.erp_local_helpers import check_sync_health
 
 
 async def local_product_stats(
-    db: Client, product_code: str,
+    db, product_code: str,
     period: str = "month",
     start_date: str | None = None,
     end_date: str | None = None,

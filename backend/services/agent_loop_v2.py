@@ -299,6 +299,7 @@ class AgentLoopV2Mixin:
     ) -> AgentResult:
         """Phase 2: ERP/crawler 多步工具编排循环"""
         from config.phase_tools import build_domain_tools
+        from services.tool_selector import select_and_filter_tools
 
         guardrails = AgentGuardrails(
             max_turns=self._settings.agent_loop_max_turns,
@@ -306,7 +307,12 @@ class AgentLoopV2Mixin:
         )
         guardrails.add_tokens(phase1_tokens)
 
-        domain_tools = build_domain_tools(domain)
+        # 全量工具 schema → 智能筛选（Level 1+2+3 + action 过滤）
+        all_tools = build_domain_tools(domain)
+        user_text = self._extract_text(content)
+        domain_tools = await select_and_filter_tools(
+            domain, user_text, all_tools,
+        )
         messages = self._build_phase2_messages(
             domain, user_content, history_full, knowledge_items,
         )
@@ -314,6 +320,9 @@ class AgentLoopV2Mixin:
         routing_holder: Dict[str, Any] = {}
         accumulated_context: List[str] = []
         model = self._phase1_model
+
+        # 兜底扩充状态（工具/action 各最多补充 1 次）
+        expand_state = {"tool_expanded": False, "action_expanded": False}
 
         for turn in range(guardrails.max_turns):
             if guardrails.should_abort():
@@ -343,6 +352,18 @@ class AgentLoopV2Mixin:
                     msg.get("content", ""), accumulated_context,
                     turn + 1, guardrails.tokens_used, model=model,
                 )
+
+            # 兜底扩充检测：AI 调了不在筛选列表的工具/action
+            expanded = self._try_expand_tools(
+                tool_calls, domain_tools, all_tools, expand_state,
+            )
+            if expanded:
+                domain_tools = expanded
+                logger.info(
+                    f"Tool expansion | turn={turn} | "
+                    f"tools={len(domain_tools)} | state={expand_state}"
+                )
+                continue  # 重跑这一轮（不消耗 turn）
 
             tool_results: List[Dict[str, Any]] = []
             for tc in tool_calls:
@@ -384,6 +405,90 @@ class AgentLoopV2Mixin:
             accumulated_context,
             guardrails.max_turns, guardrails.tokens_used, model=model,
         )
+
+    @staticmethod
+    def _try_expand_tools(
+        tool_calls: List[Dict[str, Any]],
+        current_tools: List[Dict[str, Any]],
+        all_tools: List[Dict[str, Any]],
+        expand_state: Dict[str, bool],
+    ) -> Optional[List[Dict[str, Any]]]:
+        """检测 AI 调了不在筛选列表的工具/action，自动补充
+
+        Returns:
+            None — 无需扩充
+            List — 扩充后的工具列表（替换 current_tools）
+        """
+        import json as _json
+
+        current_names = {t["function"]["name"] for t in current_tools}
+        all_map = {t["function"]["name"]: t for t in all_tools}
+
+        for tc in tool_calls:
+            func = tc.get("function", {})
+            tool_name = func.get("name", "")
+
+            # 工具不在筛选列表 → 尝试从全量列表补充
+            if tool_name not in current_names:
+                if expand_state["tool_expanded"]:
+                    continue
+                full_schema = all_map.get(tool_name)
+                if full_schema:
+                    expand_state["tool_expanded"] = True
+                    logger.info(f"Tool expansion: adding {tool_name}")
+                    return current_tools + [full_schema]
+                continue
+
+            # action 不在筛选列表 → 尝试从全量 schema 补充
+            try:
+                args = _json.loads(func.get("arguments", "{}"))
+            except (ValueError, TypeError):
+                continue
+            action = args.get("action")
+            if not action:
+                continue
+
+            # 检查 action 是否在当前 enum 中
+            for tool_schema in current_tools:
+                if tool_schema["function"]["name"] != tool_name:
+                    continue
+                action_prop = (
+                    tool_schema.get("function", {})
+                    .get("parameters", {})
+                    .get("properties", {})
+                    .get("action", {})
+                )
+                current_enum = action_prop.get("enum", [])
+                if action in current_enum:
+                    break  # action 已在列表中
+                if expand_state["action_expanded"]:
+                    break
+                # 从全量 schema 获取完整 enum
+                full_schema = all_map.get(tool_name)
+                if not full_schema:
+                    break
+                full_enum = (
+                    full_schema.get("function", {})
+                    .get("parameters", {})
+                    .get("properties", {})
+                    .get("action", {})
+                    .get("enum", [])
+                )
+                if action in full_enum:
+                    expand_state["action_expanded"] = True
+                    logger.info(
+                        f"Action expansion: {tool_name}.{action}"
+                    )
+                    # 替换当前工具为全量版本
+                    new_tools = [
+                        full_schema if t["function"]["name"] == tool_name
+                        else t
+                        for t in current_tools
+                    ]
+                    return new_tools
+                break
+
+        return None
 
     @staticmethod
     def _inject_phase1_model(

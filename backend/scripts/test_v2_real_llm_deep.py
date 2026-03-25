@@ -291,7 +291,6 @@ COMBO_CASES: List[TestCase] = [
 def _make_loop() -> AgentLoop:
     loop = AgentLoop(db=None, user_id="deep_test", conversation_id="deep_conv")
     loop._settings = settings
-    loop._settings.agent_loop_v2_enabled = True
     loop._has_image = False
     loop._thinking_mode = None
     loop._user_location = None

@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from uuid import uuid4
 from datetime import datetime, timezone
 
-from supabase import AsyncClient as SupabaseClient
+
 from redis.asyncio import Redis
 from loguru import logger
 
@@ -26,14 +26,14 @@ class CreditService:
     2. 锁定模式（credit_lock）：复杂场景，先锁定再确认/退回
     """
 
-    def __init__(self, db: SupabaseClient, redis: Optional[Redis] = None):
+    def __init__(self, db, redis: Optional[Redis] = None):
         self.db = db
         self.redis = redis
 
     async def get_balance(self, user_id: str) -> int:
         """获取用户积分余额"""
         try:
-            result = await self.db.table("users").select("credits").eq("id", user_id).single().execute()
+            result = self.db.table("users").select("credits").eq("id", user_id).single().execute()
             if not result.data:
                 return 0
             return result.data.get("credits", 0)
@@ -72,7 +72,7 @@ class CreditService:
             InsufficientCreditsError: 余额不足
         """
         try:
-            result = await self.db.rpc(
+            result = self.db.rpc(
                 'deduct_credits_atomic',
                 {
                     'p_user_id': user_id,
@@ -155,7 +155,7 @@ class CreditService:
 
             # 2. 原子扣除（使用乐观锁）
             new_balance = current_credits - amount
-            update_result = await self.db.table("users").update({
+            update_result = self.db.table("users").update({
                 "credits": new_balance,
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }).eq("id", user_id).eq("credits", current_credits).execute()
@@ -185,7 +185,7 @@ class CreditService:
                 )
 
             # 3. 记录事务
-            await self.db.table("credit_transactions").insert({
+            self.db.table("credit_transactions").insert({
                 "id": transaction_id,
                 "task_id": task_id,
                 "user_id": user_id,
@@ -223,7 +223,7 @@ class CreditService:
             transaction_id: 事务ID
         """
         try:
-            await self.db.table("credit_transactions").update({
+            self.db.table("credit_transactions").update({
                 "status": "confirmed",
                 "confirmed_at": datetime.now(timezone.utc).isoformat()
             }).eq("id", transaction_id).execute()
@@ -246,7 +246,7 @@ class CreditService:
         """
         try:
             # 1. 获取事务信息
-            tx_result = await self.db.table("credit_transactions").select("*").eq("id", transaction_id).single().execute()
+            tx_result = self.db.table("credit_transactions").select("*").eq("id", transaction_id).single().execute()
             if not tx_result.data:
                 logger.warning("退回失败：事务不存在", transaction_id=transaction_id)
                 return
@@ -261,7 +261,7 @@ class CreditService:
                 return
 
             # 2. 退回积分
-            await self.db.rpc(
+            self.db.rpc(
                 'refund_credits',
                 {
                     'p_user_id': tx["user_id"],
@@ -270,7 +270,7 @@ class CreditService:
             ).execute()
 
             # 3. 更新事务状态
-            await self.db.table("credit_transactions").update({
+            self.db.table("credit_transactions").update({
                 "status": "refunded",
                 "confirmed_at": datetime.now(timezone.utc).isoformat()
             }).eq("id", transaction_id).execute()

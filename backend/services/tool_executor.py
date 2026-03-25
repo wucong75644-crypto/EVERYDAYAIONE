@@ -8,7 +8,7 @@
 from typing import Any, Callable, Coroutine, Dict
 
 from loguru import logger
-from supabase import Client
+
 
 from config.erp_local_tools import ERP_LOCAL_TOOLS
 from config.erp_tools import ERP_SYNC_TOOLS
@@ -17,17 +17,15 @@ from config.erp_tools import ERP_SYNC_TOOLS
 class ToolExecutor:
     """同步工具执行器"""
 
-    def __init__(self, db: Client, user_id: str, conversation_id: str) -> None:
+    def __init__(self, db, user_id: str, conversation_id: str) -> None:
         self.db = db
         self.user_id = user_id
         self.conversation_id = conversation_id
         self._handlers: Dict[str, Callable[..., Coroutine[Any, Any, str]]] = {
-            "web_search": self._web_search,
             "get_conversation_context": self._get_conversation_context,
             "search_knowledge": self._search_knowledge,
             "social_crawler": self._social_crawler,
             "erp_api_search": self._erp_api_search,
-            "model_search": self._model_search,
             "code_execute": self._code_execute,
         }
         # 注册7个ERP API工具，统一委托给 _erp_dispatch
@@ -45,6 +43,10 @@ class ToolExecutor:
             return await self._erp_dispatch(tool_name, args)
         return handler
 
+    def has_handler(self, tool_name: str) -> bool:
+        """检查工具是否有已注册的 handler（兜底扩充用）"""
+        return tool_name in self._handlers
+
     async def execute(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """执行同步工具，返回结果文本
 
@@ -60,28 +62,6 @@ class ToolExecutor:
     # ========================================
     # 工具实现
     # ========================================
-
-    async def _web_search(self, args: Dict[str, Any]) -> str:
-        """搜索互联网（复用 IntentRouter.execute_search）"""
-        from services.intent_router import IntentRouter
-
-        query = args.get("search_query", "")
-        if not query:
-            return "搜索查询不能为空"
-
-        router = IntentRouter()
-        try:
-            result = await router.execute_search(
-                query=query,
-                user_text=query,
-                system_prompt=None,
-            )
-            if result:
-                logger.info(f"ToolExecutor web_search | query={query} | len={len(result)}")
-                return result
-            return f"搜索「{query}」未找到相关结果"
-        finally:
-            await router.close()
 
     async def _get_conversation_context(self, args: Dict[str, Any]) -> str:
         """获取近期对话记录（含图片 URL）"""
@@ -160,14 +140,6 @@ class ToolExecutor:
         if not query:
             return "请输入搜索关键词"
         return search_erp_api(query)
-
-    async def _model_search(self, args: Dict[str, Any]) -> str:
-        """搜索可用 AI 模型及其能力"""
-        from services.model_search import search_models
-        query = args.get("query", "").strip()
-        if not query:
-            return "请输入搜索关键词"
-        return search_models(query)
 
     # ========================================
     # 代码执行沙盒

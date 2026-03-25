@@ -2,8 +2,8 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 
-# Supabase 客户端
-supabase==2.11.0
+# PostgreSQL 客户端（LocalDB 兼容层）
+psycopg[binary,pool]==3.3.3
 
 # 配置管理
 pydantic==2.10.4
@@ -52,3 +52,4 @@ pandas==2.2.3
 # 测试
 pytest==8.3.4
 pytest-asyncio==0.25.2
+jieba==0.42.1

@@ -27,7 +27,6 @@ def _make_loop(has_image: bool = False) -> AgentLoop:
     """创建模拟 AgentLoop 实例"""
     loop = AgentLoop(db=None, user_id="sim_user", conversation_id="sim_conv")
     loop._settings = MagicMock()
-    loop._settings.agent_loop_v2_enabled = True
     loop._settings.agent_loop_max_turns = 5
     loop._settings.agent_loop_max_tokens = 50000
     loop._has_image = has_image
