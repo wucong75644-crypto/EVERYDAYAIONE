@@ -33,6 +33,7 @@ from services.kuaimai.erp_sync_master_handlers import (
     sync_platform_map,
     sync_product,
     sync_stock,
+    sync_stock_full,
     sync_supplier,
 )
 
@@ -475,7 +476,6 @@ class ErpSyncService:
     # ── item_index 稳定排序 ───────────────────────────────
 
     @classmethod
-    @classmethod
     def sort_and_assign_index(
         cls, items: list[dict[str, Any]], sync_type: str
     ) -> list[dict[str, Any]]:
@@ -534,7 +534,14 @@ class ErpSyncService:
                             )
                             for row in doc_rows:
                                 cols = list(row.keys())
-                                vals = [row[c] for c in cols]
+                                vals = []
+                                for c in cols:
+                                    v = row[c]
+                                    # dict/list → JSON 字符串（PostgreSQL JSONB 列）
+                                    if isinstance(v, (dict, list)):
+                                        import json
+                                        v = json.dumps(v, ensure_ascii=False)
+                                    vals.append(v)
                                 placeholders = ", ".join(["%s"] * len(cols))
                                 col_names = ", ".join(cols)
                                 conn.execute(

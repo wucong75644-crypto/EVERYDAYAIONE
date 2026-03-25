@@ -160,6 +160,8 @@ class Settings(BaseSettings):
     erp_sync_lock_ttl: int = 300               # Redis 分布式锁 TTL（秒），默认5分钟
     erp_sync_initial_days: int = 1825          # 首次全量回溯天数（5年覆盖全部历史）
     erp_sync_shard_days: int = 1               # 时间窗口分片大小（天），快麦API单次查询数据量有限
+    erp_warehouse_ids: str = "87227,436208,444522"  # 库存同步仓库ID列表（逗号分隔）
+    erp_stock_full_refresh_interval: int = 3600     # 库存全量刷新间隔（秒），默认1小时
 
     # 快麦奇门自定义接口配置（淘宝网关，需单独申请凭证）
     qimen_app_key: Optional[str] = None  # 淘宝平台 appKey（非ERP的appKey）
