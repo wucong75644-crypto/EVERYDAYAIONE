@@ -475,61 +475,85 @@ class ErpSyncService:
     # ── item_index 稳定排序 ───────────────────────────────
 
     @classmethod
-    @staticmethod
-    def _stable_hash_index(key: str) -> int:
-        """基于内容的稳定哈希 index（MD5 前7位 hex → 0~268,435,455）
-
-        同一个 key 永远返回同一个 index，不受排序顺序或增删影响。
-        空间 2.68 亿，单订单内碰撞概率极低。
-        """
-        import hashlib
-        h = hashlib.md5(key.encode()).hexdigest()
-        return int(h[:7], 16)  # 0 ~ 268,435,455
-
     @classmethod
     def sort_and_assign_index(
         cls, items: list[dict[str, Any]], sync_type: str
     ) -> list[dict[str, Any]]:
         """
-        分配稳定的 item_index（基于内容哈希，不受 API 返回顺序影响）
+        按确定性字段排序后分配顺序 item_index（0, 1, 2...）
 
-        用 sort_keys 对应的字段值拼接后取哈希，同一个 item 无论
-        API 返回顺序如何变化、单据增删了哪些行，index 始终稳定。
+        配合 upsert_document_items 的事务性删+插策略，
+        确保单据更新时旧数据被完整替换，不会因 index 变化而错位。
         """
         sort_keys = cls.ITEM_SORT_KEYS.get(sync_type, ["outerId", "itemOuterId"])
 
-        for item in items:
-            key = "|".join(str(item.get(k, "")) for k in sort_keys)
-            item["_item_index"] = cls._stable_hash_index(key)
-        return items
+        def sort_key(item: dict) -> tuple:
+            return tuple(str(item.get(k, "")) for k in sort_keys)
+
+        sorted_items = sorted(items, key=sort_key)
+        for idx, item in enumerate(sorted_items):
+            item["_item_index"] = idx
+        return sorted_items
 
     # ── 数据入库 ──────────────────────────────────────────
 
     def upsert_document_items(self, rows: list[dict[str, Any]]) -> int:
         """
-        批量 upsert 到 erp_document_items
+        事务性写入 erp_document_items（按单据分组：删旧→插新）
+
+        对每个 (doc_type, doc_id) 在同一事务内先删除旧行再插入新行，
+        保证原子性：要么全部成功，要么全部回滚，不会丢数据。
+        不同单据之间互不影响，单个单据失败不阻塞其他单据。
 
         Returns:
-            成功写入/更新的行数
+            成功写入的行数
         """
         if not rows:
             return 0
 
-        # 分批提交（每批100条，避免单次 payload 过大）
-        batch_size = 100
+        # 按 (doc_type, doc_id) 分组
+        from collections import defaultdict
+        groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+        for row in rows:
+            key = (row.get("doc_type", ""), row.get("doc_id", ""))
+            groups[key].append(row)
+
         total = 0
-        for i in range(0, len(rows), batch_size):
-            batch = rows[i : i + batch_size]
+        pool = getattr(self.db, "_pool", None)
+
+        for (doc_type, doc_id), doc_rows in groups.items():
             try:
-                self.db.table("erp_document_items").upsert(
-                    batch,
-                    on_conflict="doc_type,doc_id,item_index",
-                ).execute()
-                total += len(batch)
+                if pool:
+                    # 直接用 psycopg 事务：删+插原子执行
+                    with pool.connection() as conn:
+                        with conn.transaction():
+                            conn.execute(
+                                "DELETE FROM erp_document_items "
+                                "WHERE doc_type = %s AND doc_id = %s",
+                                (doc_type, doc_id),
+                            )
+                            for row in doc_rows:
+                                cols = list(row.keys())
+                                vals = [row[c] for c in cols]
+                                placeholders = ", ".join(["%s"] * len(cols))
+                                col_names = ", ".join(cols)
+                                conn.execute(
+                                    f"INSERT INTO erp_document_items "
+                                    f"({col_names}) VALUES ({placeholders})",
+                                    vals,
+                                )
+                    total += len(doc_rows)
+                else:
+                    # 降级：ORM upsert（无事务保证）
+                    self.db.table("erp_document_items").upsert(
+                        doc_rows,
+                        on_conflict="doc_type,doc_id,item_index",
+                    ).execute()
+                    total += len(doc_rows)
             except Exception as e:
                 logger.error(
-                    f"Upsert failed | batch={i // batch_size} | "
-                    f"rows={len(batch)} | error={e}"
+                    f"Doc write failed | doc_type={doc_type} | "
+                    f"doc_id={doc_id} | rows={len(doc_rows)} | error={e}"
                 )
         return total
 
