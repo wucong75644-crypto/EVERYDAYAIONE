@@ -49,7 +49,7 @@ class ErpSyncService:
 
     # item_index 排序键（设计文档 BUG-2：保证跨调用稳定）
     ITEM_SORT_KEYS: dict[str, list[str]] = {
-        "order": ["oid"],
+        "order": ["sysOuterId", "sysItemOuterId"],
         "aftersale": ["mainOuterId", "outerId"],
         "purchase": ["outerId", "itemOuterId"],
         "purchase_return": ["outerId", "itemOuterId"],
@@ -477,13 +477,14 @@ class ErpSyncService:
     @classmethod
     @staticmethod
     def _stable_hash_index(key: str) -> int:
-        """基于内容的稳定哈希 index（MD5 前8位 hex → 0~999999）
+        """基于内容的稳定哈希 index（MD5 前7位 hex → 0~268,435,455）
 
         同一个 key 永远返回同一个 index，不受排序顺序或增删影响。
+        空间 2.68 亿，单订单内碰撞概率极低。
         """
         import hashlib
         h = hashlib.md5(key.encode()).hexdigest()
-        return int(h[:8], 16) % 1000000
+        return int(h[:7], 16)  # 0 ~ 268,435,455
 
     @classmethod
     def sort_and_assign_index(
