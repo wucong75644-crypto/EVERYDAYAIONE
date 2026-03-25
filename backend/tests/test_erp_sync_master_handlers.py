@@ -325,6 +325,101 @@ class TestMapStockItem:
         assert row["warehouse_id"] == "WH-001"
 
 
+class TestSyncStockWarehouseError:
+    """增量同步单仓库异常不中断其他仓库"""
+
+    @pytest.mark.asyncio
+    async def test_one_warehouse_fails_others_continue(self, monkeypatch):
+        from services.kuaimai.erp_sync_master_handlers import sync_stock
+        monkeypatch.setattr(
+            "core.config.get_settings",
+            lambda: MagicMock(erp_warehouse_ids="111,222"),
+        )
+        call_log = []
+
+        async def _mock_request(method, params):
+            wh = params.get("warehouseId")
+            if wh == 111:
+                raise ConnectionError("timeout")
+            call_log.append(wh)
+            if "mainOuterId" in params:
+                return {"stockStatusVoList": [{
+                    "mainOuterId": "P01", "skuOuterId": "P01-01",
+                    "sellableNum": 10, "wareHouseId": "222",
+                }], "total": 1}
+            return {"stockStatusVoList": [
+                {"mainOuterId": "P01", "skuOuterId": "P01-01"},
+            ], "total": 1}
+
+        svc = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request_with_retry = _mock_request
+        svc._get_client.return_value = mock_client
+        mock_table = MagicMock()
+        mock_table.upsert.return_value.execute.return_value = MagicMock()
+        svc.db = MagicMock()
+        svc.db.table.return_value = mock_table
+
+        result = await sync_stock(svc, START, END)
+        assert result == 1
+        assert 222 in call_log
+
+
+class TestSyncStockFullDbError:
+    """全量刷新 DB 查询异常返回 0"""
+
+    @pytest.mark.asyncio
+    async def test_db_error_returns_zero(self):
+        from services.kuaimai.erp_sync_master_handlers import sync_stock_full
+        svc = _mock_stock_svc()
+        svc.db.table.return_value.select.return_value.eq.return_value \
+            .limit.return_value.execute.side_effect = Exception("DB down")
+        assert await sync_stock_full(svc) == 0
+
+
+class TestFetchStockByCodes:
+    """_fetch_stock_by_codes 翻页和空列表"""
+
+    @pytest.mark.asyncio
+    async def test_empty_codes_returns_zero(self):
+        from services.kuaimai.erp_sync_master_handlers import _fetch_stock_by_codes
+        svc = _mock_stock_svc(code_items=[])
+        assert await _fetch_stock_by_codes(svc, []) == 0
+
+    @pytest.mark.asyncio
+    async def test_pagination(self):
+        """超过100条结果需要翻页"""
+        from services.kuaimai.erp_sync_master_handlers import _fetch_stock_by_codes
+
+        page_call = {"n": 0}
+
+        async def _mock_request(method, params):
+            page_call["n"] += 1
+            page = params.get("pageNo", 1)
+            if page == 1:
+                return {"stockStatusVoList": [
+                    {"mainOuterId": f"P{i:03d}", "sellableNum": i, "wareHouseId": "WH"}
+                    for i in range(100)
+                ], "total": 150}
+            return {"stockStatusVoList": [
+                {"mainOuterId": f"P{i:03d}", "sellableNum": i, "wareHouseId": "WH"}
+                for i in range(100, 150)
+            ], "total": 150}
+
+        svc = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.request_with_retry = _mock_request
+        svc._get_client.return_value = mock_client
+        mock_table = MagicMock()
+        mock_table.upsert.return_value.execute.return_value = MagicMock()
+        svc.db = MagicMock()
+        svc.db.table.return_value = mock_table
+
+        result = await _fetch_stock_by_codes(svc, ["P001"])
+        assert result == 150
+        assert page_call["n"] == 2
+
+
 # ============================================================
 # TestSyncSupplier — 供应商同步
 # ============================================================
