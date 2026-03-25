@@ -191,80 +191,138 @@ class TestSyncProduct:
 # ============================================================
 
 
+def _mock_stock_svc(wh_items=None, code_items=None):
+    """创建 stock 专用 mock（模拟按仓库查 + 按编码查两步）
+
+    wh_items: 按仓库+时间查返回的变动记录（Step1）
+    code_items: 按编码精准查返回的最新记录（Step2）
+    """
+    svc = MagicMock()
+    mock_client = AsyncMock()
+
+    call_count = {"n": 0}
+    wh_data = wh_items or []
+    code_data = code_items or []
+
+    async def _mock_request(method, params):
+        call_count["n"] += 1
+        if "warehouseId" in params:
+            # Step1: 按仓库+时间查
+            return {"stockStatusVoList": wh_data, "total": len(wh_data)}
+        # Step2: 按编码精准查
+        return {"stockStatusVoList": code_data, "total": len(code_data)}
+
+    mock_client.request_with_retry = _mock_request
+    svc._get_client.return_value = mock_client
+
+    mock_table = MagicMock()
+    mock_table.upsert.return_value.execute.return_value = MagicMock()
+    svc.db = MagicMock()
+    svc.db.table.return_value = mock_table
+    return svc
+
+
 class TestSyncStock:
     @pytest.mark.asyncio
-    async def test_empty_returns_zero(self):
+    async def test_no_changes_returns_zero(self, monkeypatch):
+        """所有仓库无变动 → 返回 0"""
         from services.kuaimai.erp_sync_master_handlers import sync_stock
-        assert await sync_stock(_mock_svc(), START, END) == 0
-
-    @pytest.mark.asyncio
-    async def test_basic_stock(self):
-        from services.kuaimai.erp_sync_master_handlers import sync_stock
-        items = [{
-            "mainOuterId": "P01", "skuOuterId": "P01-01",
-            "title": "商品A",
-            "totalAvailableStockSum": 100, "sellableNum": 80,
-            "totalLockStock": 10, "onTheWayNum": 50,
-        }]
-        svc = _mock_svc(pages=items)
-        assert await sync_stock(svc, START, END) == 1
-
-    @pytest.mark.asyncio
-    async def test_skip_no_outer_id(self):
-        from services.kuaimai.erp_sync_master_handlers import sync_stock
-        svc = _mock_svc(pages=[{"title": "无编码"}])
+        monkeypatch.setattr(
+            "core.config.get_settings",
+            lambda: MagicMock(erp_warehouse_ids="87227,436208"),
+        )
+        svc = _mock_stock_svc(wh_items=[], code_items=[])
         assert await sync_stock(svc, START, END) == 0
 
     @pytest.mark.asyncio
-    async def test_fallback_outer_id(self):
-        """mainOuterId 不存在时使用 outerId"""
+    async def test_incremental_collects_and_queries(self, monkeypatch):
+        """增量：仓库查到变动编码 → 按编码精准查 → upsert"""
         from services.kuaimai.erp_sync_master_handlers import sync_stock
-        items = [{"outerId": "P01", "title": "商品A"}]
-        svc = _mock_svc(pages=items)
+        monkeypatch.setattr(
+            "core.config.get_settings",
+            lambda: MagicMock(erp_warehouse_ids="87227"),
+        )
+        wh = [{"mainOuterId": "P01", "skuOuterId": "P01-01"}]
+        precise = [{
+            "mainOuterId": "P01", "skuOuterId": "P01-01",
+            "title": "商品A", "sellableNum": 80,
+            "totalAvailableStockSum": 100, "wareHouseId": "87227",
+        }]
+        svc = _mock_stock_svc(wh_items=wh, code_items=precise)
         assert await sync_stock(svc, START, END) == 1
 
     @pytest.mark.asyncio
-    async def test_warehouse_id_null_safe(self):
-        """API 返回 wareHouseId=None 时写入空字符串（NOT NULL 兼容）"""
+    async def test_empty_warehouse_ids_returns_zero(self, monkeypatch):
+        """erp_warehouse_ids 为空 → 跳过"""
         from services.kuaimai.erp_sync_master_handlers import sync_stock
-        items = [{
+        monkeypatch.setattr(
+            "core.config.get_settings",
+            lambda: MagicMock(erp_warehouse_ids=""),
+        )
+        svc = _mock_stock_svc()
+        assert await sync_stock(svc, START, END) == 0
+
+
+class TestSyncStockFull:
+    @pytest.mark.asyncio
+    async def test_full_refresh_basic(self):
+        """全量刷新：从商品表取编码 → 按编码查 → upsert"""
+        from services.kuaimai.erp_sync_master_handlers import sync_stock_full
+        svc = _mock_stock_svc(code_items=[{
             "mainOuterId": "P01", "skuOuterId": "P01-01",
-            "title": "商品A", "wareHouseId": None,
-        }]
-        svc = _mock_svc(pages=items)
-        await sync_stock(svc, START, END)
-        # 验证 upsert 传入的 warehouse_id 是空字符串而非 None
-        call_args = svc.db.table("erp_stock_status").upsert.call_args
-        row = call_args[0][0][0]  # 第一批第一行
-        assert row["warehouse_id"] == ""
+            "title": "商品A", "sellableNum": 50, "wareHouseId": "87227",
+        }])
+        # mock 商品表查询
+        mock_select = MagicMock()
+        mock_select.eq.return_value.limit.return_value.execute.return_value = MagicMock(
+            data=[{"outer_id": "P01"}],
+        )
+        svc.db.table.return_value.select.return_value = mock_select
+        assert await sync_stock_full(svc) == 1
 
     @pytest.mark.asyncio
-    async def test_warehouse_id_with_value(self):
-        """API 返回 wareHouseId 有值时正常写入"""
-        from services.kuaimai.erp_sync_master_handlers import sync_stock
-        items = [{
-            "mainOuterId": "P01", "skuOuterId": "P01-01",
-            "title": "商品A", "wareHouseId": "WH-001",
-        }]
-        svc = _mock_svc(pages=items)
-        await sync_stock(svc, START, END)
-        call_args = svc.db.table("erp_stock_status").upsert.call_args
-        row = call_args[0][0][0]
-        assert row["warehouse_id"] == "WH-001"
+    async def test_full_refresh_empty_products(self):
+        """商品表为空 → 返回 0"""
+        from services.kuaimai.erp_sync_master_handlers import sync_stock_full
+        svc = _mock_stock_svc()
+        mock_select = MagicMock()
+        mock_select.eq.return_value.limit.return_value.execute.return_value = MagicMock(
+            data=[],
+        )
+        svc.db.table.return_value.select.return_value = mock_select
+        assert await sync_stock_full(svc) == 0
 
-    @pytest.mark.asyncio
-    async def test_on_conflict_includes_warehouse(self):
-        """on_conflict 包含 warehouse_id（多仓不互相覆盖）"""
-        from services.kuaimai.erp_sync_master_handlers import sync_stock
-        items = [{
+
+class TestMapStockItem:
+    def test_basic_mapping(self):
+        from services.kuaimai.erp_sync_master_handlers import _map_stock_item
+        row = _map_stock_item({
             "mainOuterId": "P01", "skuOuterId": "P01-01",
             "title": "商品A", "wareHouseId": "WH-A",
-        }]
-        svc = _mock_svc(pages=items)
-        await sync_stock(svc, START, END)
-        call_args = svc.db.table("erp_stock_status").upsert.call_args
-        on_conflict = call_args[1].get("on_conflict", "")
-        assert "warehouse_id" in on_conflict
+            "sellableNum": 80, "totalAvailableStockSum": 100,
+        })
+        assert row["outer_id"] == "P01"
+        assert row["warehouse_id"] == "WH-A"
+        assert row["sellable_num"] == 80
+
+    def test_skip_no_outer_id(self):
+        from services.kuaimai.erp_sync_master_handlers import _map_stock_item
+        assert _map_stock_item({"title": "无编码"}) is None
+
+    def test_fallback_outer_id(self):
+        from services.kuaimai.erp_sync_master_handlers import _map_stock_item
+        row = _map_stock_item({"outerId": "P01"})
+        assert row["outer_id"] == "P01"
+
+    def test_warehouse_id_null_safe(self):
+        from services.kuaimai.erp_sync_master_handlers import _map_stock_item
+        row = _map_stock_item({"mainOuterId": "P01", "wareHouseId": None})
+        assert row["warehouse_id"] == ""
+
+    def test_warehouse_id_with_value(self):
+        from services.kuaimai.erp_sync_master_handlers import _map_stock_item
+        row = _map_stock_item({"mainOuterId": "P01", "wareHouseId": "WH-001"})
+        assert row["warehouse_id"] == "WH-001"
 
 
 # ============================================================

@@ -41,6 +41,7 @@ class ErpSyncWorker:
         self.is_running = False
         self._lock_token: str | None = None
         self._last_platform_map_sync: datetime | None = None
+        self._last_stock_full_refresh: datetime | None = None
         self._last_daily_maintenance: datetime | None = None
         self._last_deletion_detection: datetime | None = None
         # 内存聚合队列（替代 Redis 队列，消除网络超时问题）
@@ -105,6 +106,12 @@ class ErpSyncWorker:
                 await self._extend_lock()
                 await self._execute_sync(sync_type)
 
+            # 库存全量刷新兜底（按配置间隔，默认每小时）
+            if self.is_running and self._should_run_stock_full():
+                await self._extend_lock()
+                await self._execute_stock_full_refresh()
+                self._last_stock_full_refresh = datetime.now()
+
             # platform_map 依赖 product 表，必须在 product 同步完成后执行
             if self.is_running and self._should_run_low_freq():
                 await self._extend_lock()
@@ -131,6 +138,30 @@ class ErpSyncWorker:
                 f"ERP sync failed | sync_type={sync_type} | error={e}",
                 exc_info=True,
             )
+
+    def _should_run_stock_full(self) -> bool:
+        """判断库存全量刷新是否到期"""
+        if self._last_stock_full_refresh is None:
+            return True
+        elapsed = (
+            datetime.now() - self._last_stock_full_refresh
+        ).total_seconds()
+        return elapsed >= self.settings.erp_stock_full_refresh_interval
+
+    async def _execute_stock_full_refresh(self) -> None:
+        """执行库存全量刷新（委托给 sync_stock_full）"""
+        try:
+            from services.kuaimai.erp_sync_master_handlers import sync_stock_full
+            from services.kuaimai.erp_sync_service import ErpSyncService
+            service = ErpSyncService(
+                self.db, lock_extend_fn=self._extend_lock,
+                aggregation_queue=self.aggregation_queue,
+            )
+            count = await sync_stock_full(service)
+            if count > 0:
+                logger.info(f"Stock full refresh done | synced={count}")
+        except Exception as e:
+            logger.error(f"Stock full refresh failed | error={e}", exc_info=True)
 
     def _should_run_low_freq(self) -> bool:
         """判断低频任务是否到期"""
