@@ -467,7 +467,7 @@ class WecomOAuthService:
 
     def _create_token_response(self, user_id: str) -> dict:
         """创建 JWT token 响应"""
-        access_token = create_access_token({"sub": user_id})
+        access_token = create_access_token({"sub": str(user_id)})
         expires_in = self.settings.jwt_access_token_expire_minutes * 60
         return {
             "access_token": access_token,
