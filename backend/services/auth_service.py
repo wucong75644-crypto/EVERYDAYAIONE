@@ -358,12 +358,12 @@ class AuthService:
         wecom_bound = "wecom" in login_methods
 
         return {
-            "id": user["id"],
+            "id": str(user["id"]),
             "nickname": user["nickname"],
             "avatar_url": user.get("avatar_url"),
             "phone": masked_phone,
             "role": user["role"],
             "credits": user["credits"],
-            "created_at": user["created_at"],
+            "created_at": str(user["created_at"]),
             "wecom_bound": wecom_bound,
         }
