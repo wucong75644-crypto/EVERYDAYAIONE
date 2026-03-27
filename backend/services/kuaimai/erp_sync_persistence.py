@@ -51,11 +51,11 @@ def sort_and_assign_index(
 # ── 事务性写入 ────────────────────────────────────────
 
 
-def _write_doc_group_txn(
+async def _write_doc_group_txn(
     conn, doc_type: str, doc_id: str, doc_rows: list[dict],
 ) -> None:
     """在已有事务连接上执行单个单据组的删+插（消除深层嵌套）"""
-    conn.execute(
+    await conn.execute(
         "DELETE FROM erp_document_items "
         "WHERE doc_type = %s AND doc_id = %s",
         (doc_type, doc_id),
@@ -70,14 +70,14 @@ def _write_doc_group_txn(
             vals.append(v)
         placeholders = ", ".join(["%s"] * len(cols))
         col_names = ", ".join(cols)
-        conn.execute(
+        await conn.execute(
             f"INSERT INTO erp_document_items "
             f"({col_names}) VALUES ({placeholders})",
             vals,
         )
 
 
-def upsert_document_items(db, rows: list[dict[str, Any]]) -> int:
+async def upsert_document_items(db, rows: list[dict[str, Any]]) -> int:
     """
     事务性写入 erp_document_items（按单据分组：删旧→插新）
 
@@ -103,13 +103,13 @@ def upsert_document_items(db, rows: list[dict[str, Any]]) -> int:
     for (doc_type, doc_id), doc_rows in groups.items():
         try:
             if pool:
-                with pool.connection() as conn:
-                    with conn.transaction():
-                        _write_doc_group_txn(conn, doc_type, doc_id, doc_rows)
+                async with pool.connection() as conn:
+                    async with conn.transaction():
+                        await _write_doc_group_txn(conn, doc_type, doc_id, doc_rows)
                 total += len(doc_rows)
             else:
                 # 降级：ORM upsert（无事务保证）
-                db.table("erp_document_items").upsert(
+                await db.table("erp_document_items").upsert(
                     doc_rows,
                     on_conflict="doc_type,doc_id,item_index",
                 ).execute()
@@ -129,11 +129,14 @@ def run_aggregation(
     db,
     aggregation_queue: asyncio.Queue | None,
     affected_keys: list[tuple[str, str]],
+    *,
+    pending: set[tuple[str, str]] | None = None,
 ) -> None:
     """
     将受影响的 (outer_id, stat_date) 推入内存队列，
     由独立消费者串行聚合，避免并发写入时阻塞拉取或打满 DB。
 
+    pending set 做去重屏障：聚合幂等，同一 key 在队列中只需存在一次。
     无内存队列时降级为同步逐条聚合。
     """
     if not affected_keys:
@@ -141,26 +144,32 @@ def run_aggregation(
 
     if aggregation_queue is not None:
         for key in affected_keys:
+            # 幂等去重：key 已在队列中等待处理，无需重复入队
+            if pending is not None:
+                if key in pending:
+                    continue
+                pending.add(key)
             try:
                 aggregation_queue.put_nowait(key)
             except asyncio.QueueFull:
-                logger.warning("Aggregation queue full, dropping oldest")
-                try:
-                    aggregation_queue.get_nowait()
-                    aggregation_queue.put_nowait(key)
-                except Exception:
-                    pass
+                # 10000 个唯一 key 都在排队 — 真正的背压，记录并跳过
+                if pending is not None:
+                    pending.discard(key)
+                logger.warning(
+                    f"Aggregation queue full (10000 unique keys pending), "
+                    f"skipping key={key} — daily reaggregation will catch up"
+                )
     else:
-        _run_aggregation_sync(db, affected_keys)
+        asyncio.get_running_loop().create_task(_run_aggregation_async(db, affected_keys))
 
 
-def _run_aggregation_sync(
+async def _run_aggregation_async(
     db, affected_keys: list[tuple[str, str]],
 ) -> None:
-    """降级：同步逐条聚合"""
+    """降级：异步逐条聚合"""
     for outer_id, stat_date in affected_keys:
         try:
-            db.rpc(
+            await db.rpc(
                 "erp_aggregate_daily_stats",
                 {"p_outer_id": outer_id, "p_stat_date": stat_date},
             ).execute()

@@ -108,8 +108,8 @@ async def sync_product(
                 ),
             })
 
-    spu_count = _batch_upsert(svc.db, "erp_products", spu_rows, "outer_id")
-    sku_count = _batch_upsert(svc.db, "erp_product_skus", sku_rows, "sku_outer_id")
+    spu_count = await _batch_upsert(svc.db, "erp_products", spu_rows, "outer_id")
+    sku_count = await _batch_upsert(svc.db, "erp_product_skus", sku_rows, "sku_outer_id")
     if spu_count or sku_count:
         logger.info(f"Product sync | spu={spu_count} sku={sku_count}")
     return spu_count + sku_count
@@ -183,7 +183,7 @@ async def _fetch_stock_by_codes(
 
     if not rows:
         return 0
-    return _batch_upsert(
+    return await _batch_upsert(
         svc.db, "erp_stock_status", rows, "outer_id,sku_outer_id,warehouse_id",
     )
 
@@ -255,7 +255,7 @@ async def sync_stock_full(svc: ErpSyncService) -> int:
     12000 编码 ÷ 100/批 = 120 次 API 调用，串行约 10 秒。
     """
     try:
-        result = (
+        result = await (
             svc.db.table("erp_products")
             .select("outer_id")
             .eq("active_status", 1)
@@ -309,7 +309,7 @@ async def sync_supplier(
             "remark": s.get("remark"),
         })
 
-    count = _batch_upsert(svc.db, "erp_suppliers", rows, "code")
+    count = await _batch_upsert(svc.db, "erp_suppliers", rows, "code")
     return count
 
 
@@ -325,7 +325,7 @@ async def sync_platform_map(
     """
     # 从 DB 取所有 SKU 编码
     try:
-        result = (
+        result = await (
             svc.db.table("erp_product_skus")
             .select("sku_outer_id")
             .limit(10000)
@@ -378,7 +378,7 @@ async def sync_platform_map(
             seen.add(key)
             unique_rows.append(row)
 
-    count = _batch_upsert(
+    count = await _batch_upsert(
         svc.db, "erp_product_platform_map", unique_rows, "outer_id,num_iid",
     )
     return count

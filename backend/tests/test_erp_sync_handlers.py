@@ -34,9 +34,9 @@ def _mock_svc(pages=None, detail=None):
     client.request_with_retry = AsyncMock(return_value=detail or {})
     svc._get_client.return_value = client
     svc.sort_and_assign_index = ErpSyncService.sort_and_assign_index
-    svc.upsert_document_items = MagicMock(side_effect=lambda rows: len(rows))
+    svc.upsert_document_items = AsyncMock(side_effect=lambda rows: len(rows))
     svc.collect_affected_keys = MagicMock(return_value=[])
-    svc.run_aggregation = MagicMock()
+    svc.run_aggregation = AsyncMock()
     return svc
 
 

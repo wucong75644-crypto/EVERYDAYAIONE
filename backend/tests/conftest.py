@@ -5,6 +5,7 @@ pytest 配置和公共 fixtures
 """
 
 import pytest
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -283,8 +284,20 @@ class MockSupabaseClient:
         self._rpc_results[fn_name] = result
 
 
+class MockAsyncRpcCaller:
+    """Mock 异步 RPC 调用器"""
+
+    def __init__(self, data: Any = None):
+        self._data = data
+
+    async def execute(self):
+        result = MagicMock()
+        result.data = self._data
+        return result
+
+
 class MockAsyncSupabaseClient:
-    """Mock 异步 Supabase 客户端"""
+    """Mock 异步 Supabase 客户端（同步 execute，兼容 CreditService 等）"""
 
     def __init__(self):
         self._tables = {}
@@ -300,7 +313,7 @@ class MockAsyncSupabaseClient:
         self._tables[name] = MockAsyncSupabaseTable(data)
 
     def rpc(self, fn_name: str, params: dict = None):
-        """Mock RPC 调用（同步，与 LocalDB 兼容层一致）"""
+        """Mock RPC 调用（同步 execute）"""
         mock = MagicMock()
         if fn_name in self._rpc_results:
             mock.execute.return_value.data = self._rpc_results[fn_name]
@@ -322,8 +335,26 @@ class MockAsyncSupabaseTable:
         self._select_fields = "*"
         self._single = False
 
-    def select(self, fields: str = "*"):
+    def select(self, fields: str = "*", count: str | None = None):
+        self._filters = {}
         self._select_fields = fields
+        self._count_mode = count
+        self._single = False
+        # Reset optional filter dicts
+        if hasattr(self, '_neq_filters'):
+            del self._neq_filters
+        if hasattr(self, '_in_filters'):
+            del self._in_filters
+        if hasattr(self, '_lt_filters'):
+            del self._lt_filters
+        if hasattr(self, '_gte_filters'):
+            del self._gte_filters
+        if hasattr(self, '_lte_filters'):
+            del self._lte_filters
+        if hasattr(self, '_offset'):
+            del self._offset
+        if hasattr(self, '_limit'):
+            del self._limit
         return self
 
     def insert(self, data: dict | list):
@@ -344,10 +375,61 @@ class MockAsyncSupabaseTable:
         return self
 
     def delete(self):
+        self._is_delete = True
         return self
 
     def eq(self, field: str, value):
         self._filters[field] = value
+        return self
+
+    def neq(self, field: str, value):
+        """不等于过滤"""
+        if not hasattr(self, '_neq_filters'):
+            self._neq_filters = {}
+        self._neq_filters[field] = value
+        return self
+
+    def in_(self, field: str, values: list):
+        """IN 过滤"""
+        if not hasattr(self, '_in_filters'):
+            self._in_filters = {}
+        self._in_filters[field] = values
+        return self
+
+    def lt(self, field: str, value):
+        """小于过滤"""
+        if not hasattr(self, '_lt_filters'):
+            self._lt_filters = {}
+        self._lt_filters[field] = value
+        return self
+
+    def gte(self, field: str, value):
+        """大于等于过滤"""
+        if not hasattr(self, '_gte_filters'):
+            self._gte_filters = {}
+        self._gte_filters[field] = value
+        return self
+
+    def lte(self, field: str, value):
+        """小于等于过滤"""
+        if not hasattr(self, '_lte_filters'):
+            self._lte_filters = {}
+        self._lte_filters[field] = value
+        return self
+
+    def range(self, start: int, end: int):
+        """范围过滤（offset + limit 语义）"""
+        self._offset = start
+        self._limit = end - start + 1
+        return self
+
+    @property
+    def not_(self):
+        """返回 self 用于链式调用（如 .not_.is_()）"""
+        return self
+
+    def is_(self, field: str, value: str):
+        """IS 过滤（简化实现，配合 not_ 使用时忽略）"""
         return self
 
     def single(self):
@@ -373,13 +455,48 @@ class MockAsyncSupabaseTable:
         self._offset = count
         return self
 
-    def execute(self):
-        """执行查询（同步，与 LocalDB 兼容层一致）"""
+    def _execute_impl(self):
+        """执行查询的核心逻辑（同步/异步共用）"""
         result = MagicMock()
 
         filtered = self._data
         for field, value in self._filters.items():
             filtered = [d for d in filtered if d.get(field) == value]
+
+        # DELETE 操作：从 _data 中移除匹配行
+        if getattr(self, '_is_delete', False):
+            # 应用 in_ 过滤
+            if hasattr(self, '_in_filters'):
+                for field, values in self._in_filters.items():
+                    filtered = [d for d in filtered if d.get(field) in values]
+            self._data = [d for d in self._data if d not in filtered]
+            result.data = filtered
+            self._is_delete = False
+            return result
+
+        # 应用 neq 过滤
+        if hasattr(self, '_neq_filters'):
+            for field, value in self._neq_filters.items():
+                filtered = [d for d in filtered if d.get(field) != value]
+
+        # 应用 in_ 过滤
+        if hasattr(self, '_in_filters'):
+            for field, values in self._in_filters.items():
+                filtered = [d for d in filtered if d.get(field) in values]
+
+        # 应用 lt 过滤
+        if hasattr(self, '_lt_filters'):
+            for field, value in self._lt_filters.items():
+                filtered = [
+                    d for d in filtered if str(d.get(field, "")) < str(value)
+                ]
+
+        # 应用 gte 过滤
+        if hasattr(self, '_gte_filters'):
+            for field, value in self._gte_filters.items():
+                filtered = [
+                    d for d in filtered if str(d.get(field, "")) >= str(value)
+                ]
 
         # 应用 offset 和 limit
         if hasattr(self, '_offset'):
@@ -393,6 +510,44 @@ class MockAsyncSupabaseTable:
             result.data = filtered
 
         return result
+
+    def execute(self):
+        """执行查询（同步，兼容 CreditService 等同步调用方）"""
+        return self._execute_impl()
+
+
+# ============ ERP Async Mock（AsyncLocalDBClient 兼容，execute 是 async）============
+
+
+class MockErpAsyncTable(MockAsyncSupabaseTable):
+    """ERP 专用 async mock table — execute() 是 async"""
+
+    async def execute(self):
+        return self._execute_impl()
+
+
+class MockErpAsyncDBClient:
+    """ERP 专用 async mock DB client — 模拟 AsyncLocalDBClient"""
+
+    def __init__(self):
+        self._tables: dict[str, MockErpAsyncTable] = {}
+        self._rpc_results: dict[str, Any] = {}
+
+    def table(self, name: str) -> MockErpAsyncTable:
+        if name not in self._tables:
+            self._tables[name] = MockErpAsyncTable()
+        return self._tables[name]
+
+    def set_table_data(self, name: str, data: list):
+        self._tables[name] = MockErpAsyncTable(data)
+
+    def rpc(self, fn_name: str, params: dict = None) -> MockAsyncRpcCaller:
+        if fn_name in self._rpc_results:
+            return MockAsyncRpcCaller(self._rpc_results[fn_name])
+        return MockAsyncRpcCaller({"success": True})
+
+    def set_rpc_result(self, fn_name: str, result):
+        self._rpc_results[fn_name] = result
 
 
 # ============ Fixtures ============

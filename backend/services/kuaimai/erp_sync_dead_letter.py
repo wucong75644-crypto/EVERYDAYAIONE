@@ -34,7 +34,7 @@ CONSUMER_BATCH_SIZE = 20
 # ── 写入（主同步流程调用）────────────────────────────────
 
 
-def record_dead_letter(
+async def record_dead_letter(
     db: Any,
     doc_type: str,
     detail_method: str,
@@ -63,7 +63,7 @@ def record_dead_letter(
             continue
         try:
             # 检查是否已有 pending 记录（条件唯一索引不支持 ON CONFLICT）
-            existing = (
+            existing = await (
                 db.table("erp_sync_dead_letter")
                 .select("id")
                 .eq("doc_type", doc_type)
@@ -74,12 +74,12 @@ def record_dead_letter(
             )
             if existing.data:
                 # 已有 pending 记录，更新错误信息和时间
-                db.table("erp_sync_dead_letter").update({
+                await db.table("erp_sync_dead_letter").update({
                     "last_error": str(error_msg)[:500],
                     "updated_at": datetime.now().isoformat(),
                 }).eq("id", existing.data[0]["id"]).execute()
             else:
-                db.table("erp_sync_dead_letter").insert({
+                await db.table("erp_sync_dead_letter").insert({
                     "doc_type": doc_type,
                     "doc_id": doc_id,
                     "detail_method": detail_method,
@@ -149,7 +149,7 @@ async def _process_batch(db: Any, client: Any = None) -> int:
     # 查询到期的 pending 记录
     now = datetime.now().isoformat()
     try:
-        result = (
+        result = await (
             db.table("erp_sync_dead_letter")
             .select("*")
             .eq("status", "pending")
@@ -210,7 +210,7 @@ async def _retry_one(db: Any, client: Any, row: dict) -> None:
         new_count = retry_count + 1
         if new_count >= max_retries:
             # 超过上限 → 标记 dead
-            db.table("erp_sync_dead_letter").update({
+            await db.table("erp_sync_dead_letter").update({
                 "status": "dead",
                 "retry_count": new_count,
                 "last_error": str(e)[:500],
@@ -222,7 +222,7 @@ async def _retry_one(db: Any, client: Any, row: dict) -> None:
             )
         else:
             # 递增重试次数 + 指数退避
-            db.table("erp_sync_dead_letter").update({
+            await db.table("erp_sync_dead_letter").update({
                 "retry_count": new_count,
                 "next_retry_at": _calc_next_retry(new_count),
                 "last_error": str(e)[:500],
@@ -245,27 +245,27 @@ async def _retry_one(db: Any, client: Any, row: dict) -> None:
         if rows:
             from services.kuaimai.erp_sync_service import ErpSyncService
             svc = ErpSyncService(db)
-            count = svc.upsert_document_items(rows)
-            svc.run_aggregation(svc.collect_affected_keys(rows))
+            count = await svc.upsert_document_items(rows)
+            await svc.run_aggregation(svc.collect_affected_keys(rows))
             logger.info(
                 f"Dead letter recovered | doc_type={doc_type} | "
                 f"doc_id={doc_id} | rows={count}"
             )
 
         # 删除已处理的死信
-        db.table("erp_sync_dead_letter").delete().eq("id", dl_id).execute()
+        await db.table("erp_sync_dead_letter").delete().eq("id", dl_id).execute()
     except Exception as e:
         # upsert 失败也要递增 retry_count + 退避，防止无限重试
         new_count = retry_count + 1
         if new_count >= max_retries:
-            db.table("erp_sync_dead_letter").update({
+            await db.table("erp_sync_dead_letter").update({
                 "status": "dead",
                 "retry_count": new_count,
                 "last_error": f"upsert failed: {e}"[:500],
                 "updated_at": datetime.now().isoformat(),
             }).eq("id", dl_id).execute()
         else:
-            db.table("erp_sync_dead_letter").update({
+            await db.table("erp_sync_dead_letter").update({
                 "retry_count": new_count,
                 "next_retry_at": _calc_next_retry(new_count),
                 "last_error": f"upsert failed: {e}"[:500],

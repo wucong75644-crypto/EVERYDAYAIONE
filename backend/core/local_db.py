@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 import psycopg
 from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
+from psycopg_pool import AsyncConnectionPool, ConnectionPool
 from loguru import logger
 
 
@@ -547,5 +547,144 @@ class LocalDBClient:
 
     @property
     def pool(self) -> ConnectionPool:
+        """暴露连接池，供需要原生 SQL 的场景使用"""
+        return self._pool
+
+
+# ============================================================
+# 异步查询构造器（复用 QueryBuilder 的 SQL 构建，仅重写 execute）
+# ============================================================
+
+class AsyncQueryBuilder(QueryBuilder):
+    """异步版 QueryBuilder — SQL 构建逻辑 100% 复用父类，execute() 改为 async"""
+
+    async def execute(self) -> QueryResponse:
+        builders = {
+            "select": self._build_select,
+            "insert": self._build_insert,
+            "upsert": self._build_upsert,
+            "update": self._build_update,
+            "delete": self._build_delete,
+        }
+        sql, params = builders[self._operation]()
+        if not sql:
+            return QueryResponse(data=[])
+
+        total_count = None
+
+        async with self._pool.connection() as conn:
+            await conn.set_autocommit(True)
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(sql, params)
+                if cur.description:
+                    rows = await cur.fetchall()
+                else:
+                    rows = []
+
+                if self._count_mode == "exact" and self._operation == "select":
+                    count_sql, count_params = self._build_count_query()
+                    await cur.execute(count_sql, count_params)
+                    row = await cur.fetchone()
+                    total_count = row["count"] if row else 0
+
+        rows = [_serialize_row(r) for r in rows]
+
+        if self._single:
+            if not rows:
+                raise ValueError(
+                    f"Row not found in table '{self._table}'"
+                )
+            return QueryResponse(data=rows[0], count=total_count)
+
+        if self._maybe_single:
+            return QueryResponse(data=rows[0] if rows else None, count=total_count)
+
+        return QueryResponse(data=rows, count=total_count)
+
+
+# ============================================================
+# 异步 RPC 调用器
+# ============================================================
+
+class AsyncRpcCaller(RpcCaller):
+    """异步版 RpcCaller — execute() 改为 async"""
+
+    async def execute(self) -> QueryResponse:
+        if self._params:
+            named_args = ", ".join(
+                f"{k} := %s" for k in self._params
+            )
+            sql = f'SELECT "{self._func_name}"({named_args})'
+            params = list(self._params.values())
+        else:
+            sql = f'SELECT "{self._func_name}"()'
+            params = []
+
+        async with self._pool.connection() as conn:
+            await conn.set_autocommit(True)
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(sql, params)
+                if cur.description:
+                    rows = await cur.fetchall()
+                    if len(rows) == 1 and len(rows[0]) == 1:
+                        val = list(rows[0].values())[0]
+                        if isinstance(val, str):
+                            stripped = val.strip()
+                            if stripped and stripped[0] in ('{', '['):
+                                try:
+                                    val = json.loads(val)
+                                except json.JSONDecodeError:
+                                    pass
+                        return QueryResponse(data=val)
+                    return QueryResponse(data=rows)
+                return QueryResponse(data=None)
+
+
+# ============================================================
+# 异步主客户端类
+# ============================================================
+
+class AsyncLocalDBClient:
+    """
+    异步版本地 PostgreSQL 客户端，链式查询接口与 LocalDBClient 一致。
+
+    用法：
+        client = AsyncLocalDBClient("postgresql://user:pass@localhost:5432/db")
+        await client.open()
+        result = await client.table("users").select("*").eq("id", uid).execute()
+        await client.close()
+    """
+
+    def __init__(self, database_url: str, *, min_size: int = 2, max_size: int = 10):
+        self._pool = AsyncConnectionPool(
+            conninfo=database_url,
+            min_size=min_size,
+            max_size=max_size,
+            kwargs={"row_factory": dict_row},
+            open=False,
+        )
+        self._min_size = min_size
+        self._max_size = max_size
+
+    async def open(self) -> None:
+        """打开连接池（必须在 async 上下文中调用）"""
+        await self._pool.open()
+        logger.info(
+            f"AsyncLocalDB 连接池已打开 | min={self._min_size} max={self._max_size}"
+        )
+
+    async def close(self) -> None:
+        """关闭连接池"""
+        await self._pool.close()
+        logger.info("AsyncLocalDB 连接池已关闭")
+
+    def table(self, table_name: str) -> AsyncQueryBuilder:
+        return AsyncQueryBuilder(self._pool, table_name)
+
+    def rpc(self, func_name: str, params: Optional[dict] = None) -> AsyncRpcCaller:
+        return AsyncRpcCaller(self._pool, func_name, params or {})
+
+    @property
+    def pool(self) -> AsyncConnectionPool:
         """暴露连接池，供需要原生 SQL 的场景使用"""
         return self._pool
