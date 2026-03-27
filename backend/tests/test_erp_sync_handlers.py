@@ -74,6 +74,46 @@ class TestPick:
         assert _pick({}, "a", "b") == {}
 
 
+class TestSafeTs:
+    """_safe_ts：时间值安全转换"""
+
+    def test_none_returns_none(self):
+        from services.kuaimai.erp_sync_handlers import _safe_ts
+        assert _safe_ts(None) is None
+
+    def test_iso_string_passthrough(self):
+        from services.kuaimai.erp_sync_handlers import _safe_ts
+        assert _safe_ts("2026-03-18 15:30:45") == "2026-03-18 15:30:45"
+
+    def test_millis_int(self):
+        from services.kuaimai.erp_sync_handlers import _safe_ts
+        result = _safe_ts(1767457525000)
+        assert isinstance(result, str)
+        assert "2026" in result
+
+    def test_seconds_int(self):
+        from services.kuaimai.erp_sync_handlers import _safe_ts
+        result = _safe_ts(1767457525)
+        assert isinstance(result, str)
+        assert "2026" in result
+
+    def test_digit_string_as_millis(self):
+        from services.kuaimai.erp_sync_handlers import _safe_ts
+        result = _safe_ts("1767457525000")
+        assert isinstance(result, str)
+        assert "2026" in result
+
+    def test_short_digit_string_passthrough(self):
+        """短于10位的纯数字字符串直接返回"""
+        from services.kuaimai.erp_sync_handlers import _safe_ts
+        assert _safe_ts("12345") == "12345"
+
+    def test_invalid_value_returns_str(self):
+        from services.kuaimai.erp_sync_handlers import _safe_ts
+        result = _safe_ts(object())
+        assert isinstance(result, str)
+
+
 class TestToFloat:
     def test_normal_float(self):
         from services.kuaimai.erp_sync_handlers import _to_float

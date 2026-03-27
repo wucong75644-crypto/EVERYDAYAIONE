@@ -450,6 +450,155 @@ class TestBuildPhase2Messages:
 # ============================================================
 
 
+class TestGetActionEnum:
+    """_get_action_enum：从 schema 提取 action enum 列表"""
+
+    def test_extracts_enum(self):
+        schema = {
+            "function": {
+                "name": "erp_tool",
+                "parameters": {
+                    "properties": {
+                        "action": {"type": "string", "enum": ["query", "create"]},
+                    }
+                }
+            }
+        }
+        result = AgentLoopV2Mixin._get_action_enum(schema)
+        assert result == ["query", "create"]
+
+    def test_missing_action_returns_empty(self):
+        schema = {"function": {"name": "t", "parameters": {"properties": {}}}}
+        assert AgentLoopV2Mixin._get_action_enum(schema) == []
+
+    def test_missing_enum_returns_empty(self):
+        schema = {
+            "function": {
+                "name": "t",
+                "parameters": {"properties": {"action": {"type": "string"}}},
+            }
+        }
+        assert AgentLoopV2Mixin._get_action_enum(schema) == []
+
+    def test_empty_schema(self):
+        assert AgentLoopV2Mixin._get_action_enum({}) == []
+
+
+class TestTryExpandTools:
+    """_try_expand_tools：工具/action 兜底扩充"""
+
+    def _tool_schema(self, name, actions=None):
+        """构建工具 schema"""
+        schema = {"function": {"name": name, "parameters": {"properties": {}}}}
+        if actions:
+            schema["function"]["parameters"]["properties"]["action"] = {
+                "type": "string", "enum": actions,
+            }
+        return schema
+
+    def _tool_call(self, name, arguments=None):
+        return {
+            "id": "tc1",
+            "function": {
+                "name": name,
+                "arguments": json.dumps(arguments or {}),
+            },
+        }
+
+    def test_no_expansion_needed(self):
+        """工具和 action 都在列表中 → 返回 None"""
+        t1 = self._tool_schema("erp", ["query"])
+        tc = self._tool_call("erp", {"action": "query"})
+        state = {"tool_expanded": False, "action_expanded": False}
+        result = AgentLoopV2Mixin._try_expand_tools([tc], [t1], [t1], state)
+        assert result is None
+
+    def test_tool_expansion(self):
+        """工具不在筛选列表 → 从全量补充"""
+        t_current = self._tool_schema("erp", ["query"])
+        t_missing = self._tool_schema("crawler")
+        tc = self._tool_call("crawler")
+        state = {"tool_expanded": False, "action_expanded": False}
+        result = AgentLoopV2Mixin._try_expand_tools(
+            [tc], [t_current], [t_current, t_missing], state,
+        )
+        assert result is not None
+        assert len(result) == 2
+        assert state["tool_expanded"] is True
+
+    def test_tool_expansion_only_once(self):
+        """工具扩充仅限 1 次"""
+        t_current = self._tool_schema("erp")
+        t_missing = self._tool_schema("crawler")
+        tc = self._tool_call("crawler")
+        state = {"tool_expanded": True, "action_expanded": False}
+        result = AgentLoopV2Mixin._try_expand_tools(
+            [tc], [t_current], [t_current, t_missing], state,
+        )
+        assert result is None
+
+    def test_action_expansion(self):
+        """action 不在当前 enum → 从全量 schema 补充"""
+        t_partial = self._tool_schema("erp", ["query"])
+        t_full = self._tool_schema("erp", ["query", "create", "delete"])
+        tc = self._tool_call("erp", {"action": "create"})
+        state = {"tool_expanded": False, "action_expanded": False}
+        result = AgentLoopV2Mixin._try_expand_tools(
+            [tc], [t_partial], [t_full], state,
+        )
+        assert result is not None
+        assert state["action_expanded"] is True
+        # 返回的 schema 应该包含完整 enum
+        expanded_enum = AgentLoopV2Mixin._get_action_enum(result[0])
+        assert "create" in expanded_enum
+
+    def test_action_expansion_only_once(self):
+        """action 扩充仅限 1 次"""
+        t_partial = self._tool_schema("erp", ["query"])
+        t_full = self._tool_schema("erp", ["query", "create"])
+        tc = self._tool_call("erp", {"action": "create"})
+        state = {"tool_expanded": False, "action_expanded": True}
+        result = AgentLoopV2Mixin._try_expand_tools(
+            [tc], [t_partial], [t_full], state,
+        )
+        assert result is None
+
+    def test_unknown_tool_ignored(self):
+        """全量列表中也不存在的工具 → 跳过"""
+        t1 = self._tool_schema("erp")
+        tc = self._tool_call("nonexistent")
+        state = {"tool_expanded": False, "action_expanded": False}
+        result = AgentLoopV2Mixin._try_expand_tools([tc], [t1], [t1], state)
+        assert result is None
+
+    def test_no_action_in_args(self):
+        """tool_call 无 action 参数 → 跳过 action 检查"""
+        t1 = self._tool_schema("erp", ["query"])
+        tc = self._tool_call("erp", {"keyword": "test"})
+        state = {"tool_expanded": False, "action_expanded": False}
+        result = AgentLoopV2Mixin._try_expand_tools([tc], [t1], [t1], state)
+        assert result is None
+
+    def test_invalid_json_arguments(self):
+        """arguments 非法 JSON → 跳过"""
+        t1 = self._tool_schema("erp", ["query"])
+        tc = {"id": "tc1", "function": {"name": "erp", "arguments": "not-json{"}}
+        state = {"tool_expanded": False, "action_expanded": False}
+        result = AgentLoopV2Mixin._try_expand_tools([tc], [t1], [t1], state)
+        assert result is None
+
+    def test_action_not_in_full_enum(self):
+        """action 在全量 enum 中也不存在 → 不扩充"""
+        t1 = self._tool_schema("erp", ["query"])
+        t_full = self._tool_schema("erp", ["query", "create"])
+        tc = self._tool_call("erp", {"action": "nonexistent"})
+        state = {"tool_expanded": False, "action_expanded": False}
+        result = AgentLoopV2Mixin._try_expand_tools(
+            [tc], [t1], [t_full], state,
+        )
+        assert result is None
+
+
 class TestInjectPhase1Model:
 
     def test_injects_when_empty(self):

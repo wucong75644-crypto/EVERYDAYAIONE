@@ -527,6 +527,103 @@ class TestLocalStockQuery:
         assert "C01-01" not in result
 
 
+class TestLocalStockQueryKitFallback:
+    """套件库存物化视图 fallback 分支"""
+
+    @pytest.mark.asyncio
+    async def test_kit_fallback_when_stock_empty(self):
+        """erp_stock_status 无数据时 fallback 到 mv_kit_stock"""
+        from services.kuaimai.erp_local_query import local_stock_query
+        db = _make_db(
+            erp_stock_status=[],
+            mv_kit_stock=[
+                {
+                    "outer_id": "TJ-KIT01",
+                    "sku_outer_id": "TJ-KIT01-01",
+                    "item_name": "套件测试",
+                    "properties_name": "规格A",
+                    "warehouse_id": "",
+                    "sellable_num": 100,
+                    "total_stock": 150,
+                    "lock_stock": 0,
+                    "purchase_num": 50,
+                    "stock_status": 1,
+                },
+            ],
+            erp_sync_state=[_sync_state("stock")],
+        )
+        result = await local_stock_query(db, "TJ-KIT01-01")
+        assert "套件" in result
+        assert "100" in result
+
+    @pytest.mark.asyncio
+    async def test_kit_fallback_with_status_filter(self):
+        """套件查询透传 stock_status 过滤"""
+        from services.kuaimai.erp_local_query import local_stock_query
+        db = _make_db(
+            erp_stock_status=[],
+            mv_kit_stock=[
+                {
+                    "outer_id": "TJ-KIT01",
+                    "sku_outer_id": "TJ-KIT01-01",
+                    "item_name": "套件测试",
+                    "properties_name": "规格A",
+                    "warehouse_id": "",
+                    "sellable_num": 100,
+                    "total_stock": 150,
+                    "lock_stock": 0,
+                    "purchase_num": 50,
+                    "stock_status": 1,
+                },
+            ],
+            erp_sync_state=[_sync_state("stock")],
+        )
+        # stock_status=3(无货) 不匹配 status=1 的数据 → 无结果
+        result = await local_stock_query(db, "TJ-KIT01-01", stock_status="3")
+        assert "无库存记录" in result or "无" in result
+
+    @pytest.mark.asyncio
+    async def test_kit_fallback_table_not_exist(self):
+        """mv_kit_stock 表不存在时静默降级"""
+        from services.kuaimai.erp_local_query import local_stock_query
+        db = _make_db(
+            erp_stock_status=[],
+            erp_sync_state=[_sync_state("stock")],
+        )
+        # mv_kit_stock 未设置数据 → MockDB 会抛异常或返回空
+        result = await local_stock_query(db, "TJ-NOKIT")
+        assert "无库存记录" in result or "无" in result
+
+    @pytest.mark.asyncio
+    async def test_normal_stock_takes_priority(self):
+        """erp_stock_status 有数据时不走 kit fallback"""
+        from services.kuaimai.erp_local_query import local_stock_query
+        db = _make_db(
+            erp_stock_status=[
+                _stock("C01", "C01-01", sellable_num=200),
+            ],
+            mv_kit_stock=[
+                {
+                    "outer_id": "C01",
+                    "sku_outer_id": "C01-01",
+                    "item_name": "不应出现",
+                    "properties_name": "",
+                    "warehouse_id": "",
+                    "sellable_num": 999,
+                    "total_stock": 999,
+                    "lock_stock": 0,
+                    "purchase_num": 0,
+                    "stock_status": 1,
+                },
+            ],
+            erp_sync_state=[_sync_state("stock")],
+        )
+        result = await local_stock_query(db, "C01")
+        # 应显示普通库存 200，不是套件的 999
+        assert "套件" not in result
+        assert "200" in result
+
+
 class TestLocalPlatformMapQuery:
 
     @pytest.mark.asyncio

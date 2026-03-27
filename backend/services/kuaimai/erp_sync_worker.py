@@ -133,6 +133,9 @@ class ErpSyncWorker:
             from services.kuaimai.erp_sync_service import ErpSyncService
             service = ErpSyncService(self.db, lock_extend_fn=self._extend_lock, aggregation_queue=self.aggregation_queue)
             await service.sync(sync_type)
+            # stock 同步后刷新套件库存物化视图
+            if sync_type == "stock":
+                self._refresh_kit_stock()
         except Exception as e:
             logger.error(
                 f"ERP sync failed | sync_type={sync_type} | error={e}",
@@ -160,8 +163,22 @@ class ErpSyncWorker:
             count = await sync_stock_full(service)
             if count > 0:
                 logger.info(f"Stock full refresh done | synced={count}")
+            self._refresh_kit_stock()
         except Exception as e:
             logger.error(f"Stock full refresh failed | error={e}", exc_info=True)
+
+    def _refresh_kit_stock(self) -> None:
+        """刷新套件库存物化视图（stock 同步后调用，~1s）"""
+        try:
+            with self.db.pool.connection() as conn:
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kit_stock"
+                    )
+            logger.debug("Kit stock materialized view refreshed")
+        except Exception as e:
+            logger.warning(f"Kit stock refresh failed | error={e}")
 
     def _should_run_low_freq(self) -> bool:
         """判断低频任务是否到期"""
