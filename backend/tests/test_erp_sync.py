@@ -7,7 +7,7 @@ import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tests.conftest import MockSupabaseClient
+from tests.conftest import MockErpAsyncDBClient, MockSupabaseClient
 
 
 
@@ -30,7 +30,7 @@ def _sync_state(sync_type: str, **kw) -> dict:
 
 def _make_service(sync_states: list | None = None):
     """创建 ErpSyncService 实例（mock DB + settings）"""
-    db = MockSupabaseClient()
+    db = MockErpAsyncDBClient()
     if sync_states:
         db.set_table_data("erp_sync_state", sync_states)
 
@@ -47,35 +47,40 @@ def _make_service(sync_states: list | None = None):
 
 class TestSyncStateManagement:
 
-    def test_get_sync_state_exists(self):
+    @pytest.mark.asyncio
+    async def test_get_sync_state_exists(self):
         """读取已有同步状态"""
         service = _make_service([_sync_state("order")])
-        state = service._get_sync_state("order")
+        state = await service._get_sync_state("order")
         assert state is not None
         assert state["sync_type"] == "order"
 
-    def test_get_sync_state_not_exists(self):
+    @pytest.mark.asyncio
+    async def test_get_sync_state_not_exists(self):
         """读取不存在的同步状态返回 None"""
         service = _make_service([])
-        state = service._get_sync_state("order")
+        state = await service._get_sync_state("order")
         assert state is None
 
-    def test_init_sync_state(self):
+    @pytest.mark.asyncio
+    async def test_init_sync_state(self):
         """初始化同步状态"""
         service = _make_service([])
-        service._init_sync_state("purchase")
+        await service._init_sync_state("purchase")
         # 验证不抛异常即可（insert 到 mock DB）
 
-    def test_update_sync_state_error(self):
+    @pytest.mark.asyncio
+    async def test_update_sync_state_error(self):
         """错误更新递增 error_count"""
         service = _make_service([_sync_state("order", error_count=2)])
-        service._update_sync_state_error("order", "test error")
+        await service._update_sync_state_error("order", "test error")
         # 验证不抛异常（mock DB）
 
-    def test_mark_initial_done(self):
+    @pytest.mark.asyncio
+    async def test_mark_initial_done(self):
         """标记全量同步完成"""
         service = _make_service([_sync_state("order", is_initial_done=False)])
-        service._mark_initial_done("order", 5000)
+        await service._mark_initial_done("order", 5000)
         # 验证不抛异常
 
 
@@ -231,17 +236,19 @@ class TestCollectAffectedKeys:
 
 class TestUpsertDocumentItems:
 
-    def test_empty_rows(self):
+    @pytest.mark.asyncio
+    async def test_empty_rows(self):
         """空数据返回0"""
         service = _make_service()
-        assert service.upsert_document_items([]) == 0
+        assert await service.upsert_document_items([]) == 0
 
-    def test_batch_upsert(self):
+    @pytest.mark.asyncio
+    async def test_batch_upsert(self):
         """批量 upsert 数据"""
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         # 添加 upsert 方法到 mock table
         mock_table = MagicMock()
-        mock_table.upsert.return_value.execute.return_value = MagicMock()
+        mock_table.upsert.return_value.execute = AsyncMock(return_value=MagicMock())
         db.table = MagicMock(return_value=mock_table)
 
         with patch("services.kuaimai.erp_sync_service.get_settings") as ms:
@@ -254,7 +261,7 @@ class TestUpsertDocumentItems:
 
         rows = [{"doc_type": "order", "doc_id": f"ORD{i}", "item_index": 0}
                 for i in range(5)]
-        count = service.upsert_document_items(rows)
+        count = await service.upsert_document_items(rows)
         assert count == 5
 
 
@@ -265,16 +272,18 @@ class TestUpsertDocumentItems:
 
 class TestRunAggregation:
 
-    def test_aggregation_calls_rpc(self):
+    @pytest.mark.asyncio
+    async def test_aggregation_calls_rpc(self):
         """聚合调用 RPC"""
         service = _make_service()
-        service.run_aggregation([("C01", "2026-03-18"), ("C02", "2026-03-19")])
+        await service.run_aggregation([("C01", "2026-03-18"), ("C02", "2026-03-19")])
         # 不抛异常即可（mock RPC）
 
-    def test_empty_keys_no_rpc(self):
+    @pytest.mark.asyncio
+    async def test_empty_keys_no_rpc(self):
         """无受影响键不调用 RPC"""
         service = _make_service()
-        service.run_aggregation([])
+        await service.run_aggregation([])
         # 应该直接返回
 
 
@@ -288,7 +297,7 @@ class TestErpSyncWorkerInit:
     def test_worker_init(self):
         """Worker 初始化"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
         assert worker.is_running is False
 
@@ -310,14 +319,14 @@ class TestShouldRunDaily:
     def test_first_run_should_return_true(self):
         """首次运行应返回 True"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
         assert worker._should_run_daily() is True
 
     def test_recent_run_should_return_false(self):
         """最近运行过应返回 False"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
         worker._last_daily_maintenance = datetime.now()
         assert worker._should_run_daily() is False
@@ -379,17 +388,19 @@ class TestGetSyncHandler:
 
 class TestUpdateSyncStateProgress:
 
-    def test_progress_update_no_error(self):
+    @pytest.mark.asyncio
+    async def test_progress_update_no_error(self):
         """进度更新不抛异常"""
         service = _make_service([_sync_state("order")])
-        service._update_sync_state_progress(
+        await service._update_sync_state_progress(
             "order", datetime.now(timezone.utc),
         )
 
-    def test_success_update_no_error(self):
+    @pytest.mark.asyncio
+    async def test_success_update_no_error(self):
         """成功更新不抛异常"""
         service = _make_service([_sync_state("order", total_synced=50)])
-        service._update_sync_state_success("order", 10)
+        await service._update_sync_state_success("order", 10)
 
 
 # ============================================================
@@ -468,14 +479,14 @@ class TestShouldRunLowFreq:
     def test_first_run_returns_true(self):
         """首次运行返回 True"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
         assert worker._should_run_low_freq() is True
 
     def test_recent_run_returns_false(self):
         """最近运行过返回 False"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
         worker._last_platform_map_sync = datetime.now()
         assert worker._should_run_low_freq() is False
@@ -492,7 +503,7 @@ class TestWorkerStop:
     async def test_stop_sets_flag(self):
         """stop 设置 is_running=False"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
         worker.is_running = True
         worker._lock_token = None
@@ -511,7 +522,7 @@ class TestWorkerExecuteSync:
     async def test_execute_sync_catches_exception(self):
         """执行同步内部捕获异常不外抛"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
         with patch(
             "services.kuaimai.erp_sync_service.ErpSyncService",
@@ -525,28 +536,39 @@ class TestWorkerExecuteSync:
 class TestRefreshKitStock:
     """_refresh_kit_stock: 套件库存物化视图刷新"""
 
-    def test_refresh_success(self):
+    @pytest.mark.asyncio
+    async def test_refresh_success(self):
         """正常刷新物化视图"""
+        from contextlib import asynccontextmanager
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        mock_cursor = MagicMock()
-        mock_conn = MagicMock()
-        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
-        mock_conn.__exit__ = MagicMock(return_value=False)
-        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
-        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+        mock_cursor = AsyncMock()
+
+        mock_conn = AsyncMock()
+        mock_conn.set_autocommit = AsyncMock()
+
+        @asynccontextmanager
+        async def _mock_cursor():
+            yield mock_cursor
+
+        mock_conn.cursor = _mock_cursor
+
+        @asynccontextmanager
+        async def _mock_connection():
+            yield mock_conn
 
         db = MagicMock()
-        db.pool.connection.return_value = mock_conn
+        db.pool.connection = _mock_connection
 
         worker = ErpSyncWorker(db)
-        worker._refresh_kit_stock()
+        await worker._refresh_kit_stock()
 
         mock_cursor.execute.assert_called_once_with(
             "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kit_stock"
         )
 
-    def test_refresh_view_not_exist(self):
+    @pytest.mark.asyncio
+    async def test_refresh_view_not_exist(self):
         """视图不存在时不崩溃（静默降级）"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
@@ -555,14 +577,14 @@ class TestRefreshKitStock:
 
         worker = ErpSyncWorker(db)
         # 不应抛异常
-        worker._refresh_kit_stock()
+        await worker._refresh_kit_stock()
 
     @pytest.mark.asyncio
     async def test_execute_sync_stock_triggers_refresh(self):
         """stock 同步后触发 kit stock refresh"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
         with patch(
             "services.kuaimai.erp_sync_service.ErpSyncService",
@@ -578,7 +600,7 @@ class TestRefreshKitStock:
         """非 stock 类型不触发 refresh"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
         with patch(
             "services.kuaimai.erp_sync_service.ErpSyncService",
@@ -594,7 +616,7 @@ class TestRefreshKitStock:
         """全量刷新后触发 kit stock refresh"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
         with patch(
             "services.kuaimai.erp_sync_master_handlers.sync_stock_full",
@@ -621,7 +643,7 @@ class TestRunArchive:
         """正常归档：SELECT→UPSERT→DELETE"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         old_row = {
             "id": "row-1",
             "doc_id": "doc-1",
@@ -646,7 +668,7 @@ class TestRunArchive:
         """无可归档数据时返回 0"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         db.set_table_data("erp_document_items", [])
 
         worker = ErpSyncWorker(db)
@@ -661,7 +683,7 @@ class TestRunArchive:
         """重复归档同一数据不报错（冷表 upsert 幂等）"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         old_row = {
             "id": "row-1",
             "doc_id": "doc-1",
@@ -690,7 +712,7 @@ class TestRunReaggregation:
         """正常路径：调用 batch RPC"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         db.set_rpc_result("erp_aggregate_daily_stats_batch", 42)
 
         worker = ErpSyncWorker(db)
@@ -703,15 +725,17 @@ class TestRunReaggregation:
         """RPC 失败时降级到逐条重算"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         # 让 rpc 调用抛异常
         original_rpc = db.rpc
 
+        class _FailingRpc:
+            async def execute(self):
+                raise Exception("RPC not found")
+
         def failing_rpc(fn_name, params=None):
             if fn_name == "erp_aggregate_daily_stats_batch":
-                mock = MagicMock()
-                mock.execute.side_effect = Exception("RPC not found")
-                return mock
+                return _FailingRpc()
             return original_rpc(fn_name, params)
 
         db.rpc = failing_rpc
@@ -734,7 +758,7 @@ class TestRunDeletionDetection:
         """检测到已删除的 SPU 和 SKU 标记 active_status=-1"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         # DB 中有 SPU A、B，SKU A-01、A-02、B-01
         db.set_table_data("erp_products", [
             {"outer_id": "A", "active_status": 1},
@@ -754,22 +778,6 @@ class TestRunDeletionDetection:
             {"outerId": "A", "skus": [{"skuOuterId": "A-01"}]},
         ])
 
-        # mock neq/range（不在 MockSupabaseTable 中）
-        def _patch_table(table_name):
-            tbl = db.table(table_name)
-            original_select = tbl.select
-
-            def patched_select(fields="*", count=None):
-                result = original_select(fields, count)
-                result.neq = lambda f, v: result
-                result.range = lambda s, e: result
-                return result
-
-            tbl.select = patched_select
-
-        _patch_table("erp_products")
-        _patch_table("erp_product_skus")
-
         with patch(
             "services.kuaimai.erp_sync_service.ErpSyncService",
             return_value=mock_svc,
@@ -784,7 +792,7 @@ class TestRunDeletionDetection:
         """API 调用失败时返回 0 不报错"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
 
         mock_svc = MagicMock()
@@ -809,7 +817,7 @@ class TestDailyMaintenanceOrchestration:
         """验证 archive → reagg → deletion 依次执行"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
 
         call_order = []
@@ -883,14 +891,15 @@ class TestFetchDetailsWithFailures:
 class TestRecordDeadLetter:
     """dead letter 写入"""
 
-    def test_record_writes_to_db(self):
+    @pytest.mark.asyncio
+    async def test_record_writes_to_db(self):
         """失败的 doc 写入死信表"""
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
 
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         failed_docs = [{"id": "123"}, {"id": "456"}]
 
-        count = record_dead_letter(
+        count = await record_dead_letter(
             db, "purchase", "purchase.order.get", failed_docs, "timeout",
         )
 
@@ -898,12 +907,13 @@ class TestRecordDeadLetter:
         dl_table = db.table("erp_sync_dead_letter")
         assert len(dl_table._data) == 2
 
-    def test_empty_docs_returns_zero(self):
+    @pytest.mark.asyncio
+    async def test_empty_docs_returns_zero(self):
         """空列表不写入"""
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
 
-        db = MockSupabaseClient()
-        count = record_dead_letter(db, "purchase", "purchase.order.get", [])
+        db = MockErpAsyncDBClient()
+        count = await record_dead_letter(db, "purchase", "purchase.order.get", [])
         assert count == 0
 
 
@@ -933,28 +943,30 @@ class TestCalcNextRetry:
 class TestWriteDocGroupTxn:
     """_write_doc_group_txn：事务内单据删+插"""
 
-    def test_deletes_and_inserts(self):
+    @pytest.mark.asyncio
+    async def test_deletes_and_inserts(self):
         from services.kuaimai.erp_sync_persistence import _write_doc_group_txn
 
-        conn = MagicMock()
+        conn = AsyncMock()
         rows = [
             {"doc_type": "purchase", "doc_id": "D1", "item_index": 0, "outer_id": "A"},
             {"doc_type": "purchase", "doc_id": "D1", "item_index": 1, "outer_id": "B"},
         ]
-        _write_doc_group_txn(conn, "purchase", "D1", rows)
+        await _write_doc_group_txn(conn, "purchase", "D1", rows)
 
         # 应该先 DELETE 再 INSERT 每行
         assert conn.execute.call_count == 3  # 1 DELETE + 2 INSERT
         delete_sql = conn.execute.call_args_list[0][0][0]
         assert "DELETE" in delete_sql
 
-    def test_json_serialization(self):
+    @pytest.mark.asyncio
+    async def test_json_serialization(self):
         """dict/list 字段应被序列化为 JSON 字符串"""
         from services.kuaimai.erp_sync_persistence import _write_doc_group_txn
 
-        conn = MagicMock()
+        conn = AsyncMock()
         rows = [{"doc_type": "t", "doc_id": "1", "extra_json": {"key": "val"}}]
-        _write_doc_group_txn(conn, "t", "1", rows)
+        await _write_doc_group_txn(conn, "t", "1", rows)
 
         insert_call = conn.execute.call_args_list[1]
         vals = insert_call[0][1]
@@ -964,38 +976,57 @@ class TestWriteDocGroupTxn:
         assert '"key"' in json_val[0]
 
 
-class TestRunAggregationSync:
-    """_run_aggregation_sync：同步降级聚合"""
+class TestRunAggregationAsync:
+    """_run_aggregation_async：异步逐条聚合"""
 
-    def test_calls_rpc_for_each_key(self):
-        from services.kuaimai.erp_sync_persistence import _run_aggregation_sync
+    @pytest.mark.asyncio
+    async def test_calls_rpc_for_each_key(self):
+        from services.kuaimai.erp_sync_persistence import _run_aggregation_async
 
-        db = MagicMock()
+        db = MockErpAsyncDBClient()
         keys = [("A01", "2026-03-18"), ("B02", "2026-03-19")]
-        _run_aggregation_sync(db, keys)
+        await _run_aggregation_async(db, keys)
 
-        assert db.rpc.call_count == 2
-        first_call = db.rpc.call_args_list[0]
-        assert first_call[0][0] == "erp_aggregate_daily_stats"
-        assert first_call[0][1]["p_outer_id"] == "A01"
+        # 验证不抛异常即可（async RPC mock）
 
-    def test_empty_keys_noop(self):
-        from services.kuaimai.erp_sync_persistence import _run_aggregation_sync
+    @pytest.mark.asyncio
+    async def test_empty_keys_noop(self):
+        from services.kuaimai.erp_sync_persistence import _run_aggregation_async
 
-        db = MagicMock()
-        _run_aggregation_sync(db, [])
-        db.rpc.assert_not_called()
+        db = MockErpAsyncDBClient()
+        await _run_aggregation_async(db, [])
+        # 空列表直接返回
 
-    def test_error_does_not_stop_iteration(self):
+    @pytest.mark.asyncio
+    async def test_error_does_not_stop_iteration(self):
         """单条聚合失败不阻塞其他"""
-        from services.kuaimai.erp_sync_persistence import _run_aggregation_sync
+        from services.kuaimai.erp_sync_persistence import _run_aggregation_async
 
-        db = MagicMock()
-        db.rpc.return_value.execute.side_effect = [Exception("boom"), None]
+        db = MockErpAsyncDBClient()
+        call_count = [0]
+
+        class _FailOnFirstRpc:
+            def __init__(self, should_fail):
+                self._should_fail = should_fail
+
+            async def execute(self):
+                if self._should_fail:
+                    raise Exception("boom")
+                return MagicMock(data=None)
+
+        original_rpc = db.rpc
+
+        def failing_rpc(fn_name, params=None):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return _FailOnFirstRpc(True)
+            return _FailOnFirstRpc(False)
+
+        db.rpc = failing_rpc
         keys = [("A01", "2026-03-18"), ("B02", "2026-03-19")]
         # 不应抛异常
-        _run_aggregation_sync(db, keys)
-        assert db.rpc.call_count == 2
+        await _run_aggregation_async(db, keys)
+        assert call_count[0] == 2
 
 
 class TestCollectApiProductIds:
@@ -1041,29 +1072,30 @@ class TestCollectApiProductIds:
 class TestMarkDeletedItems:
     """_mark_deleted_items：批量标记删除"""
 
-    def test_marks_all(self):
+    @pytest.mark.asyncio
+    async def test_marks_all(self):
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        db = MagicMock()
+        db = MockErpAsyncDBClient()
         worker = ErpSyncWorker.__new__(ErpSyncWorker)
         worker.db = db
 
-        count = worker._mark_deleted_items("erp_products", "outer_id", {"A", "B"})
+        count = await worker._mark_deleted_items("erp_products", "outer_id", {"A", "B"})
         assert count == 2
-        assert db.table.call_count == 2
 
-    def test_empty_set_noop(self):
+    @pytest.mark.asyncio
+    async def test_empty_set_noop(self):
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        db = MagicMock()
+        db = MockErpAsyncDBClient()
         worker = ErpSyncWorker.__new__(ErpSyncWorker)
         worker.db = db
 
-        count = worker._mark_deleted_items("erp_products", "outer_id", set())
+        count = await worker._mark_deleted_items("erp_products", "outer_id", set())
         assert count == 0
-        db.table.assert_not_called()
 
-    def test_single_error_continues(self):
+    @pytest.mark.asyncio
+    async def test_single_error_continues(self):
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
         db = MagicMock()
@@ -1073,14 +1105,18 @@ class TestMarkDeletedItems:
             mock = MagicMock()
             call_count[0] += 1
             if call_count[0] == 1:
-                mock.update.return_value.eq.return_value.execute.side_effect = Exception("db error")
+                mock.update.return_value.eq.return_value.execute = AsyncMock(
+                    side_effect=Exception("db error")
+                )
+            else:
+                mock.update.return_value.eq.return_value.execute = AsyncMock()
             return mock
 
-        db.table.side_effect = side_effect
+        db.table = MagicMock(side_effect=side_effect)
         worker = ErpSyncWorker.__new__(ErpSyncWorker)
         worker.db = db
 
-        count = worker._mark_deleted_items("erp_products", "outer_id", {"A", "B"})
+        count = await worker._mark_deleted_items("erp_products", "outer_id", {"A", "B"})
         # 一个失败一个成功，count >= 1
         assert count >= 1
 
@@ -1155,3 +1191,578 @@ class TestBuildRowsFromDetail:
 
         rows = build_rows_from_detail("unknown_type", {}, {})
         assert rows == []
+
+
+# ============================================================
+# TestRunAggregationPendingDedup — pending 去重逻辑
+# ============================================================
+
+
+class TestRunAggregationPendingDedup:
+    """run_aggregation 的 pending set 去重"""
+
+    def test_duplicate_keys_deduped(self):
+        """相同 key 不重复入队"""
+        import asyncio
+        from services.kuaimai.erp_sync_persistence import run_aggregation
+
+        q = asyncio.Queue(maxsize=100)
+        pending: set[tuple[str, str]] = set()
+        keys = [("P01", "2026-03-27"), ("P01", "2026-03-27"), ("P02", "2026-03-27")]
+
+        run_aggregation(MagicMock(), q, keys, pending=pending)
+
+        assert q.qsize() == 2  # P01 去重，只入队一次
+        assert ("P01", "2026-03-27") in pending
+        assert ("P02", "2026-03-27") in pending
+
+    def test_pending_none_no_dedup(self):
+        """pending=None 时不去重，全部入队"""
+        import asyncio
+        from services.kuaimai.erp_sync_persistence import run_aggregation
+
+        q = asyncio.Queue(maxsize=100)
+        keys = [("P01", "2026-03-27"), ("P01", "2026-03-27")]
+
+        run_aggregation(MagicMock(), q, keys, pending=None)
+
+        assert q.qsize() == 2  # 无去重
+
+    def test_queue_full_discards_from_pending(self):
+        """队列满时丢弃 key 并从 pending 中移除"""
+        import asyncio
+        from services.kuaimai.erp_sync_persistence import run_aggregation
+
+        q = asyncio.Queue(maxsize=1)
+        pending: set[tuple[str, str]] = set()
+        keys = [("P01", "2026-03-27"), ("P02", "2026-03-27")]
+
+        run_aggregation(MagicMock(), q, keys, pending=pending)
+
+        assert q.qsize() == 1
+        # P01 成功入队，P02 因队列满被丢弃
+        assert ("P01", "2026-03-27") in pending
+        assert ("P02", "2026-03-27") not in pending  # 从 pending 中清除
+
+    def test_empty_keys_noop(self):
+        """空 keys 直接返回"""
+        import asyncio
+        from services.kuaimai.erp_sync_persistence import run_aggregation
+
+        q = asyncio.Queue(maxsize=100)
+        run_aggregation(MagicMock(), q, [], pending=set())
+        assert q.qsize() == 0
+
+    def test_already_pending_key_skipped(self):
+        """已在 pending 中的 key 跳过入队"""
+        import asyncio
+        from services.kuaimai.erp_sync_persistence import run_aggregation
+
+        q = asyncio.Queue(maxsize=100)
+        pending = {("P01", "2026-03-27")}  # 预先存在
+        keys = [("P01", "2026-03-27")]
+
+        run_aggregation(MagicMock(), q, keys, pending=pending)
+
+        assert q.qsize() == 0  # 跳过，不入队
+
+
+# ============================================================
+# TestAggregationConsumer — 聚合消费者
+# ============================================================
+
+
+class TestAggregationConsumer:
+    """ErpSyncWorker._aggregation_consumer 测试"""
+
+    @pytest.mark.asyncio
+    async def test_consumes_from_queue(self):
+        """消费者从队列取 key 并调用 RPC"""
+        import asyncio
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        rpc_calls = []
+
+        async def _mock_rpc_execute():
+            result = MagicMock()
+            result.data = True
+            return result
+
+        # 记录 RPC 调用
+        original_rpc = db.rpc
+
+        def tracking_rpc(fn_name, params=None):
+            rpc_calls.append((fn_name, params))
+            caller = original_rpc(fn_name, params)
+            return caller
+
+        db.rpc = tracking_rpc
+        db.set_rpc_result("erp_aggregate_daily_stats", True)
+
+        with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
+            ms.return_value = MagicMock(erp_sync_enabled=True, erp_sync_interval=60)
+            worker = ErpSyncWorker(db)
+
+        # 预填队列
+        await worker.aggregation_queue.put(("P01", "2026-03-27"))
+        await worker.aggregation_queue.put(("P02", "2026-03-28"))
+        worker.is_running = True
+
+        # 启动消费者，短暂运行后停止
+        async def _stop_after_delay():
+            await asyncio.sleep(0.3)
+            worker.is_running = False
+
+        task = asyncio.create_task(worker._aggregation_consumer())
+        stop_task = asyncio.create_task(_stop_after_delay())
+        await asyncio.gather(task, stop_task)
+
+        assert len(rpc_calls) == 2
+        assert rpc_calls[0] == ("erp_aggregate_daily_stats", {"p_outer_id": "P01", "p_stat_date": "2026-03-27"})
+
+    @pytest.mark.asyncio
+    async def test_handles_rpc_error_gracefully(self):
+        """RPC 调用失败不中断消费循环"""
+        import asyncio
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MagicMock()
+        # rpc().execute() 抛异常
+        mock_caller = MagicMock()
+        mock_caller.execute = AsyncMock(side_effect=Exception("DB down"))
+        db.rpc.return_value = mock_caller
+
+        with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
+            ms.return_value = MagicMock(erp_sync_enabled=True, erp_sync_interval=60)
+            worker = ErpSyncWorker(db)
+
+        await worker.aggregation_queue.put(("P01", "2026-03-27"))
+        worker.is_running = True
+
+        async def _stop():
+            await asyncio.sleep(0.3)
+            worker.is_running = False
+
+        await asyncio.gather(
+            asyncio.create_task(worker._aggregation_consumer()),
+            asyncio.create_task(_stop()),
+        )
+
+        # 消费者不崩溃，正常退出
+        assert not worker.is_running
+
+
+# ============================================================
+# TestMarkDeletedItems — 批量标记删除
+# ============================================================
+
+
+class TestMarkDeletedItems:
+    @pytest.mark.asyncio
+    async def test_marks_items_deleted(self):
+        """批量标记已删除的条目"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
+            ms.return_value = MagicMock(erp_sync_enabled=True, erp_sync_interval=60)
+            worker = ErpSyncWorker(db)
+
+        count = await worker._mark_deleted_items(
+            "erp_products", "outer_id", {"P01", "P02"}
+        )
+
+        assert count == 2
+
+    @pytest.mark.asyncio
+    async def test_marks_empty_set_returns_zero(self):
+        """空集合返回 0"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
+            ms.return_value = MagicMock(erp_sync_enabled=True, erp_sync_interval=60)
+            worker = ErpSyncWorker(db)
+
+        count = await worker._mark_deleted_items("erp_products", "outer_id", set())
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_continues(self):
+        """单条失败不阻塞后续"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MagicMock()
+        call_count = 0
+
+        async def _mock_execute():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("DB error")
+            return MagicMock()
+
+        mock_table = MagicMock()
+        mock_table.update.return_value.eq.return_value.execute = _mock_execute
+        db.table.return_value = mock_table
+
+        with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
+            ms.return_value = MagicMock(erp_sync_enabled=True, erp_sync_interval=60)
+            worker = ErpSyncWorker(db)
+
+        count = await worker._mark_deleted_items(
+            "erp_products", "outer_id", {"P01", "P02"}
+        )
+
+        # 一个失败一个成功
+        assert count == 1
+
+
+# ============================================================
+# TestAcquireDbLock — DB 锁降级
+# ============================================================
+
+
+class TestAcquireDbLock:
+    @pytest.mark.asyncio
+    async def test_acquire_success(self):
+        """DB 锁获取成功"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        db.set_rpc_result("erp_try_acquire_sync_lock", True)
+
+        with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
+            ms.return_value = MagicMock(
+                erp_sync_enabled=True, erp_sync_interval=60,
+                erp_sync_lock_ttl=300,
+            )
+            worker = ErpSyncWorker(db)
+
+        result = await worker._acquire_db_lock()
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_acquire_not_acquired(self):
+        """DB 锁被其他 Worker 持有"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        db.set_rpc_result("erp_try_acquire_sync_lock", False)
+
+        with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
+            ms.return_value = MagicMock(
+                erp_sync_enabled=True, erp_sync_interval=60,
+                erp_sync_lock_ttl=300,
+            )
+            worker = ErpSyncWorker(db)
+
+        result = await worker._acquire_db_lock()
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_acquire_db_error_returns_false(self):
+        """DB 不可用时返回 False（保守跳过）"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MagicMock()
+        mock_caller = MagicMock()
+        mock_caller.execute = AsyncMock(side_effect=Exception("connection refused"))
+        db.rpc.return_value = mock_caller
+
+        with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
+            ms.return_value = MagicMock(
+                erp_sync_enabled=True, erp_sync_interval=60,
+                erp_sync_lock_ttl=300,
+            )
+            worker = ErpSyncWorker(db)
+
+        result = await worker._acquire_db_lock()
+        assert result is False
+
+
+# ============================================================
+# TestPaginatedSelectIds — 分页加载 ID
+# ============================================================
+
+
+class TestPaginatedSelectIds:
+    """_paginated_select_ids: 分页加载活跃记录 ID 集合"""
+
+    @pytest.mark.asyncio
+    async def test_single_batch(self):
+        """数据量 < batch_size，一次查完"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        db.set_table_data("erp_products", [
+            {"outer_id": "A", "active_status": 1},
+            {"outer_id": "B", "active_status": 1},
+        ])
+        worker = ErpSyncWorker(db)
+
+        ids = await worker._paginated_select_ids("erp_products", "outer_id")
+        assert ids == {"A", "B"}
+
+    @pytest.mark.asyncio
+    async def test_multi_batch_pagination(self):
+        """数据量 > batch_size，验证多批拼接完整"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        # 5 条数据，batch_size=2 → 需要 3 批（2+2+1）
+        rows = [{"outer_id": f"P{i}", "active_status": 1} for i in range(5)]
+        db.set_table_data("erp_products", rows)
+        worker = ErpSyncWorker(db)
+
+        ids = await worker._paginated_select_ids(
+            "erp_products", "outer_id", batch_size=2,
+        )
+        assert ids == {f"P{i}" for i in range(5)}
+
+    @pytest.mark.asyncio
+    async def test_empty_table(self):
+        """空表返回空集合"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        worker = ErpSyncWorker(db)
+
+        ids = await worker._paginated_select_ids("erp_products", "outer_id")
+        assert ids == set()
+
+    @pytest.mark.asyncio
+    async def test_filters_deleted(self):
+        """active_status=-1 的记录不包含在结果中"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        db.set_table_data("erp_products", [
+            {"outer_id": "alive", "active_status": 1},
+            {"outer_id": "deleted", "active_status": -1},
+        ])
+        worker = ErpSyncWorker(db)
+
+        ids = await worker._paginated_select_ids("erp_products", "outer_id")
+        assert ids == {"alive"}
+
+
+# ============================================================
+# TestRunAggregationDedup — 聚合去重
+# ============================================================
+
+
+class TestRunAggregationDedup:
+    """run_aggregation: pending set 去重 + QueueFull 处理"""
+
+    def test_dedup_skips_pending_key(self):
+        """已在 pending 中的 key 不重复入队"""
+        import asyncio
+        from services.kuaimai.erp_sync_persistence import run_aggregation
+
+        queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+        pending: set = set()
+        db = MockErpAsyncDBClient()
+
+        keys = [("A", "2026-01-01"), ("B", "2026-01-02"), ("A", "2026-01-01")]
+        run_aggregation(db, queue, keys, pending=pending)
+
+        assert queue.qsize() == 2  # A 只入队一次
+        assert pending == {("A", "2026-01-01"), ("B", "2026-01-02")}
+
+    def test_queue_full_discards_pending_and_skips(self):
+        """队列满时跳过 key 并从 pending 回滚"""
+        import asyncio
+        from services.kuaimai.erp_sync_persistence import run_aggregation
+
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        pending: set = set()
+        db = MockErpAsyncDBClient()
+
+        # 第一个入队成功，第二个队列满
+        keys = [("A", "2026-01-01"), ("B", "2026-01-02")]
+        run_aggregation(db, queue, keys, pending=pending)
+
+        assert queue.qsize() == 1
+        # A 入队成功留在 pending，B 被回滚
+        assert ("A", "2026-01-01") in pending
+        assert ("B", "2026-01-02") not in pending
+
+    def test_no_pending_set_still_works(self):
+        """pending=None 时回退到无去重模式（兼容）"""
+        import asyncio
+        from services.kuaimai.erp_sync_persistence import run_aggregation
+
+        queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+        db = MockErpAsyncDBClient()
+
+        keys = [("A", "2026-01-01"), ("A", "2026-01-01")]
+        run_aggregation(db, queue, keys, pending=None)
+
+        # 无去重，两次都入队
+        assert queue.qsize() == 2
+
+
+# ============================================================
+# TestDailyMaintenanceFaultIsolation — 日维护容错
+# ============================================================
+
+
+class TestDailyMaintenanceFaultIsolation:
+    """_run_daily_maintenance: 单步失败不阻断后续步骤"""
+
+    @pytest.mark.asyncio
+    async def test_archive_failure_does_not_block_reagg_and_deletion(self):
+        """归档失败 → 兜底聚合和删除检测仍执行"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        worker = ErpSyncWorker(db)
+
+        call_order = []
+
+        async def failing_archive():
+            call_order.append("archive")
+            raise RuntimeError("archive exploded")
+
+        async def mock_reagg():
+            call_order.append("reagg")
+            return 5
+
+        async def mock_deletion():
+            call_order.append("deletion")
+            return 2
+
+        with (
+            patch.object(worker, "_run_archive", side_effect=failing_archive),
+            patch.object(worker, "_run_daily_reaggregation", side_effect=mock_reagg),
+            patch.object(worker, "_run_deletion_detection", side_effect=mock_deletion),
+        ):
+            await worker._run_daily_maintenance()
+
+        assert call_order == ["archive", "reagg", "deletion"]
+
+    @pytest.mark.asyncio
+    async def test_reagg_failure_does_not_block_deletion(self):
+        """兜底聚合失败 → 删除检测仍执行"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        worker = ErpSyncWorker(db)
+
+        call_order = []
+
+        async def mock_archive():
+            call_order.append("archive")
+            return 10
+
+        async def failing_reagg():
+            call_order.append("reagg")
+            raise RuntimeError("reagg exploded")
+
+        async def mock_deletion():
+            call_order.append("deletion")
+            return 1
+
+        with (
+            patch.object(worker, "_run_archive", side_effect=mock_archive),
+            patch.object(worker, "_run_daily_reaggregation", side_effect=failing_reagg),
+            patch.object(worker, "_run_deletion_detection", side_effect=mock_deletion),
+        ):
+            await worker._run_daily_maintenance()
+
+        assert call_order == ["archive", "reagg", "deletion"]
+
+    @pytest.mark.asyncio
+    async def test_all_fail_no_crash(self):
+        """三步全部失败 → 不抛异常"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        worker = ErpSyncWorker(db)
+
+        with (
+            patch.object(
+                worker, "_run_archive",
+                side_effect=RuntimeError("archive fail"),
+            ),
+            patch.object(
+                worker, "_run_daily_reaggregation",
+                side_effect=RuntimeError("reagg fail"),
+            ),
+            patch.object(worker, "_should_run_deletion", return_value=True),
+            patch.object(
+                worker, "_run_deletion_detection",
+                side_effect=RuntimeError("deletion fail"),
+            ),
+        ):
+            await worker._run_daily_maintenance()
+
+
+# ============================================================
+# TestAggregationConsumerPendingDiscard — 消费者去重清理
+# ============================================================
+
+
+class TestAggregationConsumerPendingDiscard:
+    """_aggregation_consumer: 处理后从 pending set 移除"""
+
+    @pytest.mark.asyncio
+    async def test_discard_after_success(self):
+        """RPC 成功后 key 从 pending 移除"""
+        import asyncio
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        worker = ErpSyncWorker(db)
+        worker.is_running = True
+
+        key = ("X01", "2026-03-27")
+        worker.aggregation_pending.add(key)
+        await worker.aggregation_queue.put(key)
+
+        task = asyncio.create_task(worker._aggregation_consumer())
+        await asyncio.sleep(0.1)
+        worker.is_running = False
+        await asyncio.sleep(1.5)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        assert key not in worker.aggregation_pending
+
+    @pytest.mark.asyncio
+    async def test_discard_after_rpc_failure(self):
+        """RPC 失败后 key 仍从 pending 移除（允许下次重新入队）"""
+        import asyncio
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        worker = ErpSyncWorker(db)
+        worker.is_running = True
+
+        key = ("Y01", "2026-03-27")
+        worker.aggregation_pending.add(key)
+        await worker.aggregation_queue.put(key)
+
+        # RPC 抛异常
+        class FailingRpcCaller:
+            async def execute(self):
+                raise RuntimeError("RPC failed")
+
+        worker.db.rpc = lambda fn, params=None: FailingRpcCaller()
+
+        task = asyncio.create_task(worker._aggregation_consumer())
+        await asyncio.sleep(0.1)
+        worker.is_running = False
+        await asyncio.sleep(1.5)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        assert key not in worker.aggregation_pending

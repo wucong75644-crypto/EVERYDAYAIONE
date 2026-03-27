@@ -198,8 +198,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _elected = True  # Redis 不可用时默认启动
 
     if _elected:
+        from core.database import get_async_db, close_async_db
+        async_db = await get_async_db()
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
-        erp_worker = ErpSyncWorker(db)
+        erp_worker = ErpSyncWorker(async_db)
         erp_worker_task = asyncio.create_task(erp_worker.start())
         logger.info(f"ErpSyncWorker started | elected_worker={_worker_pid}")
     else:
@@ -229,11 +231,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         pass
 
     # 停止 ERP 同步工作器
-    await erp_worker.stop()
-    erp_worker_task.cancel()
+    if erp_worker is not None:
+        await erp_worker.stop()
+        erp_worker_task.cancel()
+        try:
+            await erp_worker_task
+        except asyncio.CancelledError:
+            pass
+
+    # 关闭异步数据库连接池
     try:
-        await erp_worker_task
-    except asyncio.CancelledError:
+        from core.database import close_async_db
+        await close_async_db()
+    except Exception:
         pass
 
     # 关闭 Redis 连接

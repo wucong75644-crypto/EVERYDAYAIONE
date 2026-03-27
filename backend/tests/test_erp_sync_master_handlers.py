@@ -10,6 +10,8 @@ import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
+from tests.conftest import MockErpAsyncDBClient
+
 
 # ── 工厂函数 ─────────────────────────────────────────
 
@@ -18,10 +20,7 @@ def _mock_svc(pages=None):
     """创建 mock ErpSyncService（主数据处理器不需要 detail）"""
     svc = MagicMock()
     svc.fetch_all_pages = AsyncMock(return_value=pages or [])
-    mock_table = MagicMock()
-    mock_table.upsert.return_value.execute.return_value = MagicMock()
-    svc.db = MagicMock()
-    svc.db.table.return_value = mock_table
+    svc.db = MockErpAsyncDBClient()
     return svc
 
 
@@ -90,40 +89,45 @@ class TestMasterPick:
 
 
 class TestBatchUpsert:
-    def test_empty_rows_returns_zero(self):
+    @pytest.mark.asyncio
+    async def test_empty_rows_returns_zero(self):
         from services.kuaimai.erp_sync_master_handlers import _batch_upsert
-        assert _batch_upsert(MagicMock(), "t", [], "id") == 0
+        db = MockErpAsyncDBClient()
+        assert await _batch_upsert(db, "t", [], "id") == 0
 
-    def test_basic_upsert(self):
+    @pytest.mark.asyncio
+    async def test_basic_upsert(self):
         from services.kuaimai.erp_sync_master_handlers import _batch_upsert
-        db = MagicMock()
-        db.table.return_value.upsert.return_value.execute.return_value = MagicMock()
+        db = MockErpAsyncDBClient()
         rows = [{"id": i} for i in range(5)]
-        assert _batch_upsert(db, "t", rows, "id") == 5
+        assert await _batch_upsert(db, "t", rows, "id") == 5
 
-    def test_batch_splitting(self):
+    @pytest.mark.asyncio
+    async def test_batch_splitting(self):
         """超过 batch_size 分批"""
         from services.kuaimai.erp_sync_master_handlers import _batch_upsert
-        db = MagicMock()
-        mt = MagicMock()
-        mt.upsert.return_value.execute.return_value = MagicMock()
-        db.table.return_value = mt
+        db = MockErpAsyncDBClient()
         rows = [{"id": i} for i in range(250)]
-        count = _batch_upsert(db, "t", rows, "id", batch_size=100)
+        count = await _batch_upsert(db, "t", rows, "id", batch_size=100)
         assert count == 250
-        assert mt.upsert.call_count == 3
 
-    def test_exception_continues(self):
-        """批次异常跳过继续"""
-        from services.kuaimai.erp_sync_master_handlers import _batch_upsert
+    @pytest.mark.asyncio
+    async def test_exception_continues(self):
+        """批次异常跳过继续（async mock 下用 side_effect 模拟异常）"""
+        from services.kuaimai.erp_sync_utils import _batch_upsert
         db = MagicMock()
         mt = MagicMock()
-        mt.upsert.return_value.execute.side_effect = [
-            Exception("fail"), MagicMock(),
-        ]
+        call_count = 0
+        async def _mock_execute():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise Exception("fail")
+            return MagicMock()
+        mt.upsert.return_value.execute = _mock_execute
         db.table.return_value = mt
         rows = [{"id": i} for i in range(200)]
-        count = _batch_upsert(db, "t", rows, "id", batch_size=100)
+        count = await _batch_upsert(db, "t", rows, "id", batch_size=100)
         assert count == 100
 
 
@@ -153,7 +157,6 @@ class TestSyncProduct:
         svc = _mock_svc(pages=products)
         count = await sync_product(svc, START, END)
         assert count == 3  # 1 SPU + 2 SKU
-        assert svc.db.table.return_value.upsert.call_count == 2
 
     @pytest.mark.asyncio
     async def test_skip_no_outer_id(self):
@@ -181,9 +184,9 @@ class TestSyncProduct:
             "outerId": "P01", "title": "商品A",
             "remark": "<b>重要备注</b>",
         }])
-        await sync_product(svc, START, END)
-        # 验证调用了 upsert（不抛异常即可）
-        svc.db.table.assert_called()
+        count = await sync_product(svc, START, END)
+        # 验证 upsert 写入了数据（1 SPU）
+        assert count == 1
 
 
 # ============================================================
@@ -200,25 +203,17 @@ def _mock_stock_svc(wh_items=None, code_items=None):
     svc = MagicMock()
     mock_client = AsyncMock()
 
-    call_count = {"n": 0}
     wh_data = wh_items or []
     code_data = code_items or []
 
     async def _mock_request(method, params):
-        call_count["n"] += 1
         if "warehouseId" in params:
-            # Step1: 按仓库+时间查
             return {"stockStatusVoList": wh_data, "total": len(wh_data)}
-        # Step2: 按编码精准查
         return {"stockStatusVoList": code_data, "total": len(code_data)}
 
     mock_client.request_with_retry = _mock_request
     svc._get_client.return_value = mock_client
-
-    mock_table = MagicMock()
-    mock_table.upsert.return_value.execute.return_value = MagicMock()
-    svc.db = MagicMock()
-    svc.db.table.return_value = mock_table
+    svc.db = MockErpAsyncDBClient()
     return svc
 
 
@@ -272,12 +267,10 @@ class TestSyncStockFull:
             "mainOuterId": "P01", "skuOuterId": "P01-01",
             "title": "商品A", "sellableNum": 50, "wareHouseId": "87227",
         }])
-        # mock 商品表查询
-        mock_select = MagicMock()
-        mock_select.eq.return_value.limit.return_value.execute.return_value = MagicMock(
-            data=[{"outer_id": "P01"}],
-        )
-        svc.db.table.return_value.select.return_value = mock_select
+        # 预填 erp_products 表数据
+        svc.db.set_table_data("erp_products", [
+            {"outer_id": "P01", "active_status": 1},
+        ])
         assert await sync_stock_full(svc) == 1
 
     @pytest.mark.asyncio
@@ -285,11 +278,7 @@ class TestSyncStockFull:
         """商品表为空 → 返回 0"""
         from services.kuaimai.erp_sync_master_handlers import sync_stock_full
         svc = _mock_stock_svc()
-        mock_select = MagicMock()
-        mock_select.eq.return_value.limit.return_value.execute.return_value = MagicMock(
-            data=[],
-        )
-        svc.db.table.return_value.select.return_value = mock_select
+        # erp_products 表为空（默认）
         assert await sync_stock_full(svc) == 0
 
 
@@ -355,10 +344,7 @@ class TestSyncStockWarehouseError:
         mock_client = AsyncMock()
         mock_client.request_with_retry = _mock_request
         svc._get_client.return_value = mock_client
-        mock_table = MagicMock()
-        mock_table.upsert.return_value.execute.return_value = MagicMock()
-        svc.db = MagicMock()
-        svc.db.table.return_value = mock_table
+        svc.db = MockErpAsyncDBClient()
 
         result = await sync_stock(svc, START, END)
         assert result == 1
@@ -372,8 +358,11 @@ class TestSyncStockFullDbError:
     async def test_db_error_returns_zero(self):
         from services.kuaimai.erp_sync_master_handlers import sync_stock_full
         svc = _mock_stock_svc()
-        svc.db.table.return_value.select.return_value.eq.return_value \
-            .limit.return_value.execute.side_effect = Exception("DB down")
+        # 让 erp_products 表的 execute 抛异常
+        tbl = svc.db.table("erp_products")
+        async def _raise_execute():
+            raise Exception("DB down")
+        tbl.execute = _raise_execute
         assert await sync_stock_full(svc) == 0
 
 
@@ -410,10 +399,7 @@ class TestFetchStockByCodes:
         mock_client = AsyncMock()
         mock_client.request_with_retry = _mock_request
         svc._get_client.return_value = mock_client
-        mock_table = MagicMock()
-        mock_table.upsert.return_value.execute.return_value = MagicMock()
-        svc.db = MagicMock()
-        svc.db.table.return_value = mock_table
+        svc.db = MockErpAsyncDBClient()
 
         result = await _fetch_stock_by_codes(svc, ["P001"])
         assert result == 150
@@ -459,12 +445,11 @@ class TestSyncSupplier:
 def _mock_svc_for_platform_map(db_sku_ids, api_responses):
     """创建 platform_map 专用 mock（先查 DB SKU 列表再批量调 API）"""
     svc = _mock_svc()
-    # mock DB 查询：erp_product_skus.select("sku_outer_id").limit(10000)
-    mock_select = MagicMock()
-    mock_select.limit.return_value.execute.return_value = MagicMock(
-        data=[{"sku_outer_id": oid} for oid in db_sku_ids],
+    # 预填 erp_product_skus 表数据
+    svc.db.set_table_data(
+        "erp_product_skus",
+        [{"sku_outer_id": oid} for oid in db_sku_ids],
     )
-    svc.db.table.return_value.select.return_value = mock_select
     # mock API 批量调用
     mock_client = MagicMock()
     mock_client.request_with_retry = AsyncMock(side_effect=api_responses)

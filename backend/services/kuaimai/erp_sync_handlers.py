@@ -47,7 +47,7 @@ async def sync_purchase(
     detail_result = await _fetch_details(client, "purchase.order.get", docs)
     if detail_result.failed:
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
-        record_dead_letter(svc.db, "purchase", "purchase.order.get", detail_result.failed)
+        await record_dead_letter(svc.db, "purchase", "purchase.order.get", detail_result.failed)
 
     all_rows: list[dict[str, Any]] = []
     for doc, detail in detail_result:
@@ -82,8 +82,8 @@ async def sync_purchase(
                 "extra_json": extra,
             })
 
-    count = svc.upsert_document_items(all_rows)
-    svc.run_aggregation(svc.collect_affected_keys(all_rows))
+    count = await svc.upsert_document_items(all_rows)
+    await svc.run_aggregation(svc.collect_affected_keys(all_rows))
     return count
 
 
@@ -105,7 +105,7 @@ async def sync_receipt(
     detail_result = await _fetch_details(client, "warehouse.entry.list.get", docs)
     if detail_result.failed:
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
-        record_dead_letter(svc.db, "receipt", "warehouse.entry.list.get", detail_result.failed)
+        await record_dead_letter(svc.db, "receipt", "warehouse.entry.list.get", detail_result.failed)
 
     all_rows: list[dict[str, Any]] = []
     for doc, detail in detail_result:
@@ -137,8 +137,8 @@ async def sync_receipt(
                 "extra_json": extra,
             })
 
-    count = svc.upsert_document_items(all_rows)
-    svc.run_aggregation(svc.collect_affected_keys(all_rows))
+    count = await svc.upsert_document_items(all_rows)
+    await svc.run_aggregation(svc.collect_affected_keys(all_rows))
     return count
 
 
@@ -160,7 +160,7 @@ async def sync_shelf(
     detail_result = await _fetch_details(client, "erp.purchase.shelf.get", docs)
     if detail_result.failed:
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
-        record_dead_letter(svc.db, "shelf", "erp.purchase.shelf.get", detail_result.failed)
+        await record_dead_letter(svc.db, "shelf", "erp.purchase.shelf.get", detail_result.failed)
 
     all_rows: list[dict[str, Any]] = []
     for doc, detail in detail_result:
@@ -182,8 +182,8 @@ async def sync_shelf(
                 "warehouse_name": detail.get("warehouseName"),
             })
 
-    count = svc.upsert_document_items(all_rows)
-    svc.run_aggregation(svc.collect_affected_keys(all_rows))
+    count = await svc.upsert_document_items(all_rows)
+    await svc.run_aggregation(svc.collect_affected_keys(all_rows))
     return count
 
 
@@ -205,7 +205,7 @@ async def sync_purchase_return(
     detail_result = await _fetch_details(client, "purchase.return.list.get", docs)
     if detail_result.failed:
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
-        record_dead_letter(svc.db, "purchase_return", "purchase.return.list.get", detail_result.failed)
+        await record_dead_letter(svc.db, "purchase_return", "purchase.return.list.get", detail_result.failed)
 
     all_rows: list[dict[str, Any]] = []
     for doc, detail in detail_result:
@@ -241,8 +241,8 @@ async def sync_purchase_return(
                 "extra_json": extra,
             })
 
-    count = svc.upsert_document_items(all_rows)
-    svc.run_aggregation(svc.collect_affected_keys(all_rows))
+    count = await svc.upsert_document_items(all_rows)
+    await svc.run_aggregation(svc.collect_affected_keys(all_rows))
     return count
 
 
@@ -314,16 +314,16 @@ async def sync_aftersale(
 
         # 每 1000 条刷一次库，释放内存
         if len(all_rows) >= flush_size:
-            total_count += svc.upsert_document_items(all_rows)
+            total_count += await svc.upsert_document_items(all_rows)
             affected_key_set.update(svc.collect_affected_keys(all_rows))
             all_rows.clear()
 
     # 剩余数据刷库
     if all_rows:
-        total_count += svc.upsert_document_items(all_rows)
+        total_count += await svc.upsert_document_items(all_rows)
         affected_key_set.update(svc.collect_affected_keys(all_rows))
 
-    svc.run_aggregation(list(affected_key_set))
+    await svc.run_aggregation(list(affected_key_set))
     return total_count
 
 
@@ -428,14 +428,14 @@ async def sync_order(
 
             # 每 1000 条刷一次库，释放内存
             if len(all_rows) >= flush_size:
-                total_count += svc.upsert_document_items(all_rows)
+                total_count += await svc.upsert_document_items(all_rows)
                 affected_key_set.update(svc.collect_affected_keys(all_rows))
                 all_rows.clear()
 
     # 剩余数据刷库
     if all_rows:
-        total_count += svc.upsert_document_items(all_rows)
+        total_count += await svc.upsert_document_items(all_rows)
         affected_key_set.update(svc.collect_affected_keys(all_rows))
 
-    svc.run_aggregation(list(affected_key_set))
+    await svc.run_aggregation(list(affected_key_set))
     return total_count

@@ -98,7 +98,7 @@ def _strip_html(text: str | None) -> str | None:
 # ── 批量写入 ──────────────────────────────────────────
 
 
-def _batch_upsert(
+async def _batch_upsert(
     db: Any, table: str, rows: list[dict], on_conflict: str,
     batch_size: int = 100,
 ) -> int:
@@ -109,7 +109,7 @@ def _batch_upsert(
     for i in range(0, len(rows), batch_size):
         batch = rows[i : i + batch_size]
         try:
-            db.table(table).upsert(batch, on_conflict=on_conflict).execute()
+            await db.table(table).upsert(batch, on_conflict=on_conflict).execute()
             total += len(batch)
         except Exception as e:
             logger.error(

@@ -53,12 +53,17 @@ class ErpSyncService:
 
     FLUSH_THRESHOLD = 1000  # 每积累N条写一次库，控制内存峰值
 
-    def __init__(self, db, lock_extend_fn=None, aggregation_queue: asyncio.Queue | None = None) -> None:
+    def __init__(
+        self, db, lock_extend_fn=None,
+        aggregation_queue: asyncio.Queue | None = None,
+        aggregation_pending: set[tuple[str, str]] | None = None,
+    ) -> None:
         self.db = db
         self.settings = get_settings()
         self._client: KuaiMaiClient | None = None
         self._lock_extend_fn = lock_extend_fn
         self._aggregation_queue = aggregation_queue
+        self._aggregation_pending = aggregation_pending
 
     def _get_client(self) -> KuaiMaiClient:
         if self._client is None:
@@ -69,10 +74,13 @@ class ErpSyncService:
 
     async def sync(self, sync_type: str) -> None:
         """执行指定类型的增量同步"""
-        state = self._get_sync_state(sync_type)
+        state = await self._get_sync_state(sync_type)
         if state is None:
-            self._init_sync_state(sync_type)
-            state = self._get_sync_state(sync_type)
+            await self._init_sync_state(sync_type)
+            state = await self._get_sync_state(sync_type)
+            if state is None:
+                logger.error(f"Failed to init sync state | type={sync_type}")
+                return
 
         # 首次全量未完成 → 走全量逻辑（分片拉取 + 断点续传）
         if not state.get("is_initial_done", False):
@@ -87,13 +95,13 @@ class ErpSyncService:
                 count = await self._sync_window(sync_type, start, end)
                 total_synced += count
                 # 每片完成后更新 last_sync_time（断点续传）
-                self._update_sync_state_progress(sync_type, end)
+                await self._update_sync_state_progress(sync_type, end)
 
-            self._update_sync_state_success(sync_type, total_synced)
+            await self._update_sync_state_success(sync_type, total_synced)
             if total_synced > 0:
                 logger.info(f"ERP sync done | type={sync_type} | synced={total_synced}")
         except Exception as e:
-            self._update_sync_state_error(sync_type, str(e))
+            await self._update_sync_state_error(sync_type, str(e))
             raise
 
     # 初始同步并发分片数（API 限流由全局 _API_SEM 12QPS 保护）
@@ -179,7 +187,7 @@ class ErpSyncService:
 
             # 更新断点到最后一个窗口的结束时间
             if windows:
-                self._update_sync_state_progress(sync_type, windows[-1][1])
+                await self._update_sync_state_progress(sync_type, windows[-1][1])
 
             # 有分片失败 → 不标记完成，下次启动重新全量
             if failed_shards > 0:
@@ -191,13 +199,13 @@ class ErpSyncService:
                 return
 
             # 全量完成（零失败）→ 标记切换增量模式
-            self._mark_initial_done(sync_type, total_synced)
+            await self._mark_initial_done(sync_type, total_synced)
             logger.info(
                 f"ERP initial sync done | type={sync_type} | "
                 f"total={total_synced}"
             )
         except Exception as e:
-            self._update_sync_state_error(sync_type, str(e))
+            await self._update_sync_state_error(sync_type, str(e))
             raise
 
     async def _sync_window(self, sync_type: str, start: datetime, end: datetime) -> int:
@@ -227,10 +235,10 @@ class ErpSyncService:
 
     # ── 状态管理 ──────────────────────────────────────────
 
-    def _get_sync_state(self, sync_type: str) -> dict[str, Any] | None:
+    async def _get_sync_state(self, sync_type: str) -> dict[str, Any] | None:
         """读取同步状态"""
         try:
-            result = (
+            result = await (
                 self.db.table("erp_sync_state")
                 .select("*")
                 .eq("sync_type", sync_type)
@@ -241,10 +249,10 @@ class ErpSyncService:
             logger.error(f"Failed to read sync state | type={sync_type} | error={e}")
             return None
 
-    def _init_sync_state(self, sync_type: str) -> None:
+    async def _init_sync_state(self, sync_type: str) -> None:
         """初始化同步状态行"""
         try:
-            self.db.table("erp_sync_state").insert({
+            await self.db.table("erp_sync_state").insert({
                 "sync_type": sync_type,
                 "status": "idle",
                 "is_initial_done": False,
@@ -252,30 +260,34 @@ class ErpSyncService:
         except Exception as e:
             logger.warning(f"Failed to init sync state | type={sync_type} | error={e}")
 
-    def _update_sync_state_success(self, sync_type: str, synced_count: int) -> None:
+    async def _update_sync_state_success(self, sync_type: str, synced_count: int) -> None:
         """同步成功后更新状态"""
         try:
-            self.db.table("erp_sync_state").update({
+            current = await (
+                self.db.table("erp_sync_state")
+                .select("total_synced")
+                .eq("sync_type", sync_type)
+                .execute()
+            )
+            new_total = (current.data[0]["total_synced"] or 0) + synced_count
+            await self.db.table("erp_sync_state").update({
                 "status": "idle",
                 "last_run_at": datetime.now().isoformat(),
                 "error_count": 0,
                 "last_error": None,
-                "total_synced": self.db.table("erp_sync_state")
-                    .select("total_synced")
-                    .eq("sync_type", sync_type)
-                    .execute().data[0]["total_synced"] + synced_count,
+                "total_synced": new_total,
             }).eq("sync_type", sync_type).execute()
         except Exception as e:
             logger.error(f"Failed to update sync state | type={sync_type} | error={e}")
 
     ALERT_ERROR_THRESHOLD = 5  # 连续失败次数告警阈值
 
-    def _update_sync_state_error(self, sync_type: str, error_msg: str) -> None:
+    async def _update_sync_state_error(self, sync_type: str, error_msg: str) -> None:
         """同步失败后更新状态"""
         try:
-            state = self._get_sync_state(sync_type)
+            state = await self._get_sync_state(sync_type)
             error_count = (state.get("error_count", 0) + 1) if state else 1
-            self.db.table("erp_sync_state").update({
+            await self.db.table("erp_sync_state").update({
                 "status": "error",
                 "last_run_at": datetime.now().isoformat(),
                 "error_count": error_count,
@@ -290,19 +302,19 @@ class ErpSyncService:
         except Exception as e:
             logger.error(f"Failed to update error state | type={sync_type} | error={e}")
 
-    def _update_sync_state_progress(self, sync_type: str, time_point: datetime) -> None:
+    async def _update_sync_state_progress(self, sync_type: str, time_point: datetime) -> None:
         """分片同步中更新进度（断点续传）"""
         try:
-            self.db.table("erp_sync_state").update({
+            await self.db.table("erp_sync_state").update({
                 "last_sync_time": time_point.isoformat(),
             }).eq("sync_type", sync_type).execute()
         except Exception as e:
             logger.error(f"Failed to update progress | type={sync_type} | error={e}")
 
-    def _mark_initial_done(self, sync_type: str, total_synced: int) -> None:
+    async def _mark_initial_done(self, sync_type: str, total_synced: int) -> None:
         """全量同步完成后标记切换增量模式"""
         try:
-            self.db.table("erp_sync_state").update({
+            await self.db.table("erp_sync_state").update({
                 "is_initial_done": True,
                 "status": "idle",
                 "last_run_at": datetime.now().isoformat(),
@@ -475,13 +487,16 @@ class ErpSyncService:
         """按确定性字段排序后分配顺序 item_index"""
         return _sort_and_assign_index(items, sync_type)
 
-    def upsert_document_items(self, rows: list[dict[str, Any]]) -> int:
+    async def upsert_document_items(self, rows: list[dict[str, Any]]) -> int:
         """事务性写入 erp_document_items（按单据分组：删旧→插新）"""
-        return _upsert_document_items(self.db, rows)
+        return await _upsert_document_items(self.db, rows)
 
-    def run_aggregation(self, affected_keys: list[tuple[str, str]]) -> None:
+    async def run_aggregation(self, affected_keys: list[tuple[str, str]]) -> None:
         """将受影响的 (outer_id, stat_date) 推入聚合队列"""
-        return _run_aggregation(self.db, self._aggregation_queue, affected_keys)
+        return _run_aggregation(
+            self.db, self._aggregation_queue, affected_keys,
+            pending=self._aggregation_pending,
+        )
 
     def collect_affected_keys(self, rows: list[dict[str, Any]]) -> list[tuple[str, str]]:
         """从入库行中收集受影响的 (outer_id, stat_date) 对"""
