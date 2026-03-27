@@ -300,6 +300,26 @@ async def local_stock_query(
         logger.error(f"Stock query failed | code={product_code} | error={e}")
         return f"库存查询失败: {e}"
 
+    # 普通库存无结果时，查套件库存物化视图
+    is_kit = False
+    if not rows:
+        try:
+            kit_q = (
+                db.table("mv_kit_stock")
+                .select("*")
+                .or_(
+                    f"outer_id.eq.{product_code},"
+                    f"sku_outer_id.eq.{product_code}"
+                )
+            )
+            if stock_status:
+                kit_q = kit_q.eq("stock_status", stock_status)
+            kit_result = kit_q.limit(100).execute()
+            rows = kit_result.data or []
+            is_kit = bool(rows)
+        except Exception as e:
+            logger.debug(f"Kit stock query failed | code={product_code} | error={e}")
+
     if not rows:
         health = check_sync_health(db, ["stock"])
         return f"商品 {product_code} 无库存记录\n{health}".strip()
@@ -309,7 +329,8 @@ async def local_stock_query(
         if not rows:
             return f"商品 {product_code} 无库存预警SKU"
 
-    lines = [f"商品 {product_code} 库存状态：\n"]
+    kit_label = "（套件，按子单品计算）" if is_kit else ""
+    lines = [f"商品 {product_code} 库存状态{kit_label}：\n"]
 
     # 检测是否多仓
     warehouses = {r.get("warehouse_id", "") for r in rows}

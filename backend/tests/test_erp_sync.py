@@ -522,6 +522,92 @@ class TestWorkerExecuteSync:
             await worker._execute_sync("order")
 
 
+class TestRefreshKitStock:
+    """_refresh_kit_stock: 套件库存物化视图刷新"""
+
+    def test_refresh_success(self):
+        """正常刷新物化视图"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        mock_cursor = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+        db = MagicMock()
+        db.pool.connection.return_value = mock_conn
+
+        worker = ErpSyncWorker(db)
+        worker._refresh_kit_stock()
+
+        mock_cursor.execute.assert_called_once_with(
+            "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kit_stock"
+        )
+
+    def test_refresh_view_not_exist(self):
+        """视图不存在时不崩溃（静默降级）"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MagicMock()
+        db.pool.connection.side_effect = Exception("relation mv_kit_stock does not exist")
+
+        worker = ErpSyncWorker(db)
+        # 不应抛异常
+        worker._refresh_kit_stock()
+
+    @pytest.mark.asyncio
+    async def test_execute_sync_stock_triggers_refresh(self):
+        """stock 同步后触发 kit stock refresh"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockSupabaseClient()
+        worker = ErpSyncWorker(db)
+        with patch(
+            "services.kuaimai.erp_sync_service.ErpSyncService",
+        ) as mock_cls, patch.object(worker, "_refresh_kit_stock") as mock_refresh:
+            mock_svc = MagicMock()
+            mock_svc.sync = AsyncMock()
+            mock_cls.return_value = mock_svc
+            await worker._execute_sync("stock")
+            mock_refresh.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_execute_sync_non_stock_no_refresh(self):
+        """非 stock 类型不触发 refresh"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockSupabaseClient()
+        worker = ErpSyncWorker(db)
+        with patch(
+            "services.kuaimai.erp_sync_service.ErpSyncService",
+        ) as mock_cls, patch.object(worker, "_refresh_kit_stock") as mock_refresh:
+            mock_svc = MagicMock()
+            mock_svc.sync = AsyncMock()
+            mock_cls.return_value = mock_svc
+            await worker._execute_sync("order")
+            mock_refresh.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stock_full_refresh_triggers_kit_refresh(self):
+        """全量刷新后触发 kit stock refresh"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockSupabaseClient()
+        worker = ErpSyncWorker(db)
+        with patch(
+            "services.kuaimai.erp_sync_master_handlers.sync_stock_full",
+            new_callable=AsyncMock, return_value=100,
+        ), patch(
+            "services.kuaimai.erp_sync_service.ErpSyncService",
+        ), patch.object(worker, "_refresh_kit_stock") as mock_refresh, patch.object(
+            worker, "_extend_lock", new_callable=AsyncMock,
+        ):
+            await worker._execute_stock_full_refresh()
+            mock_refresh.assert_called_once()
+
+
 # ============================================================
 # 归档/维护流程测试（原40个测试零覆盖）
 # ============================================================
@@ -842,6 +928,204 @@ class TestCalcNextRetry:
         # retry_count=100 不应报错
         result = _calc_next_retry(100)
         assert isinstance(result, str)
+
+
+class TestWriteDocGroupTxn:
+    """_write_doc_group_txn：事务内单据删+插"""
+
+    def test_deletes_and_inserts(self):
+        from services.kuaimai.erp_sync_persistence import _write_doc_group_txn
+
+        conn = MagicMock()
+        rows = [
+            {"doc_type": "purchase", "doc_id": "D1", "item_index": 0, "outer_id": "A"},
+            {"doc_type": "purchase", "doc_id": "D1", "item_index": 1, "outer_id": "B"},
+        ]
+        _write_doc_group_txn(conn, "purchase", "D1", rows)
+
+        # 应该先 DELETE 再 INSERT 每行
+        assert conn.execute.call_count == 3  # 1 DELETE + 2 INSERT
+        delete_sql = conn.execute.call_args_list[0][0][0]
+        assert "DELETE" in delete_sql
+
+    def test_json_serialization(self):
+        """dict/list 字段应被序列化为 JSON 字符串"""
+        from services.kuaimai.erp_sync_persistence import _write_doc_group_txn
+
+        conn = MagicMock()
+        rows = [{"doc_type": "t", "doc_id": "1", "extra_json": {"key": "val"}}]
+        _write_doc_group_txn(conn, "t", "1", rows)
+
+        insert_call = conn.execute.call_args_list[1]
+        vals = insert_call[0][1]
+        # extra_json 的值应该是 JSON 字符串
+        json_val = [v for v in vals if isinstance(v, str) and "{" in v]
+        assert len(json_val) == 1
+        assert '"key"' in json_val[0]
+
+
+class TestRunAggregationSync:
+    """_run_aggregation_sync：同步降级聚合"""
+
+    def test_calls_rpc_for_each_key(self):
+        from services.kuaimai.erp_sync_persistence import _run_aggregation_sync
+
+        db = MagicMock()
+        keys = [("A01", "2026-03-18"), ("B02", "2026-03-19")]
+        _run_aggregation_sync(db, keys)
+
+        assert db.rpc.call_count == 2
+        first_call = db.rpc.call_args_list[0]
+        assert first_call[0][0] == "erp_aggregate_daily_stats"
+        assert first_call[0][1]["p_outer_id"] == "A01"
+
+    def test_empty_keys_noop(self):
+        from services.kuaimai.erp_sync_persistence import _run_aggregation_sync
+
+        db = MagicMock()
+        _run_aggregation_sync(db, [])
+        db.rpc.assert_not_called()
+
+    def test_error_does_not_stop_iteration(self):
+        """单条聚合失败不阻塞其他"""
+        from services.kuaimai.erp_sync_persistence import _run_aggregation_sync
+
+        db = MagicMock()
+        db.rpc.return_value.execute.side_effect = [Exception("boom"), None]
+        keys = [("A01", "2026-03-18"), ("B02", "2026-03-19")]
+        # 不应抛异常
+        _run_aggregation_sync(db, keys)
+        assert db.rpc.call_count == 2
+
+
+class TestCollectApiProductIds:
+    """_collect_api_product_ids：从 API 商品列表收集 SPU/SKU ID"""
+
+    def test_collects_spu_and_sku(self):
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        products = [
+            {"outerId": "SPU1", "skus": [
+                {"skuOuterId": "SKU1"}, {"skuOuterId": "SKU2"},
+            ]},
+            {"outerId": "SPU2", "skus": [{"skuOuterId": "SKU3"}]},
+        ]
+        spu_ids, sku_ids = ErpSyncWorker._collect_api_product_ids(products)
+        assert spu_ids == {"SPU1", "SPU2"}
+        assert sku_ids == {"SKU1", "SKU2", "SKU3"}
+
+    def test_skips_none_outer_id(self):
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        products = [{"outerId": None, "skus": [{"skuOuterId": "S1"}]}]
+        spu_ids, sku_ids = ErpSyncWorker._collect_api_product_ids(products)
+        assert spu_ids == set()
+        assert sku_ids == {"S1"}
+
+    def test_empty_skus(self):
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        products = [{"outerId": "SPU1", "skus": None}]
+        spu_ids, sku_ids = ErpSyncWorker._collect_api_product_ids(products)
+        assert spu_ids == {"SPU1"}
+        assert sku_ids == set()
+
+    def test_empty_list(self):
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        spu_ids, sku_ids = ErpSyncWorker._collect_api_product_ids([])
+        assert spu_ids == set()
+        assert sku_ids == set()
+
+
+class TestMarkDeletedItems:
+    """_mark_deleted_items：批量标记删除"""
+
+    def test_marks_all(self):
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MagicMock()
+        worker = ErpSyncWorker.__new__(ErpSyncWorker)
+        worker.db = db
+
+        count = worker._mark_deleted_items("erp_products", "outer_id", {"A", "B"})
+        assert count == 2
+        assert db.table.call_count == 2
+
+    def test_empty_set_noop(self):
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MagicMock()
+        worker = ErpSyncWorker.__new__(ErpSyncWorker)
+        worker.db = db
+
+        count = worker._mark_deleted_items("erp_products", "outer_id", set())
+        assert count == 0
+        db.table.assert_not_called()
+
+    def test_single_error_continues(self):
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MagicMock()
+        call_count = [0]
+
+        def side_effect(*args, **kwargs):
+            mock = MagicMock()
+            call_count[0] += 1
+            if call_count[0] == 1:
+                mock.update.return_value.eq.return_value.execute.side_effect = Exception("db error")
+            return mock
+
+        db.table.side_effect = side_effect
+        worker = ErpSyncWorker.__new__(ErpSyncWorker)
+        worker.db = db
+
+        count = worker._mark_deleted_items("erp_products", "outer_id", {"A", "B"})
+        # 一个失败一个成功，count >= 1
+        assert count >= 1
+
+
+class TestApiRateLimiter:
+    """_ApiRateLimiter：Leaky Bucket QPS 限流"""
+
+    @pytest.mark.asyncio
+    async def test_basic_acquire(self):
+        from services.kuaimai.erp_sync_utils import _ApiRateLimiter
+
+        limiter = _ApiRateLimiter(max_qps=1000)
+        async with limiter:
+            pass  # 不抛异常即成功
+
+    @pytest.mark.asyncio
+    async def test_enforces_interval(self):
+        """连续两次请求间隔应 >= 1/max_qps"""
+        import time
+        from services.kuaimai.erp_sync_utils import _ApiRateLimiter
+
+        limiter = _ApiRateLimiter(max_qps=50)  # 20ms 间隔
+        t0 = time.monotonic()
+        async with limiter:
+            pass
+        async with limiter:
+            pass
+        elapsed = time.monotonic() - t0
+        # 两次请求应至少间隔 ~20ms
+        assert elapsed >= 0.015
+
+    @pytest.mark.asyncio
+    async def test_lock_recreation_on_loop_change(self):
+        """事件循环变化时 Lock 应自动重建"""
+        from services.kuaimai.erp_sync_utils import _ApiRateLimiter
+
+        limiter = _ApiRateLimiter(max_qps=1000)
+        # 第一次使用，创建 lock
+        async with limiter:
+            first_lock = limiter._lock
+        # 模拟 loop_id 变化
+        limiter._lock_loop_id = -1
+        async with limiter:
+            second_lock = limiter._lock
+        assert first_lock is not second_lock
 
 
 class TestBuildRowsFromDetail:

@@ -276,7 +276,8 @@
       "Bash(ssh root@47.110.94.25 -p 22 'journalctl -u everydayai-backend --since \"\"2 min ago\"\" --no-pager | grep -iE \"\"error|warning\"\" | tail -5')",
       "Bash(PGPASSWORD='WlnbhzE5sYYZd9t9Xw08w4I0' psql -h 47.110.94.25 -U everydayai -d everydayai -c \":*)",
       "Bash(python -m pytest backend/tests/ -q --tb=short --ignore=backend/tests/manual)",
-      "Bash(./git-push.sh \"fix: 企微登录同样的UUID序列化错误\")"
+      "Bash(./git-push.sh \"fix: 企微登录同样的UUID序列化错误\")",
+      "Bash(python -m pytest tests/test_erp_sync_handlers.py::TestSafeTs tests/test_agent_loop_v2.py::TestGetActionEnum tests/test_agent_loop_v2.py::TestTryExpandTools tests/test_erp_sync.py::TestWriteDocGroupTxn tests/test_erp_sync.py::TestRunAggregationSync tests/test_erp_sync.py::TestCollectApiProductIds tests/test_erp_sync.py::TestMarkDeletedItems tests/test_erp_sync.py::TestApiRateLimiter -v --tb=short)"
     ]
   }
 }

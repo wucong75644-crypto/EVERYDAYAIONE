@@ -43,7 +43,11 @@ def check_sync_health(db, sync_types: list[str]) -> str:
                 last = datetime.fromisoformat(
                     str(row["last_run_at"]).replace("Z", "+00:00")
                 )
-                if (now - last).total_seconds() > 300:
+                # 统一为 naive datetime 比较（避免 aware/naive 混用）
+                if last.tzinfo is not None:
+                    last = last.replace(tzinfo=None)
+                now_naive = now.replace(tzinfo=None) if now.tzinfo else now
+                if (now_naive - last).total_seconds() > 300:
                     warnings.append(
                         f"⚠ {st} 数据可能未及时更新"
                         f"（最后成功：{row['last_run_at']}）"
