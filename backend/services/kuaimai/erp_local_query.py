@@ -12,7 +12,11 @@ from __future__ import annotations
 from loguru import logger
 
 
-from services.kuaimai.erp_local_helpers import check_sync_health, query_doc_items
+from services.kuaimai.erp_local_helpers import (
+    _apply_org,
+    check_sync_health,
+    query_doc_items,
+)
 
 
 # ── 工具1：采购查询（含采退）────────────────────────────
@@ -23,17 +27,18 @@ async def local_purchase_query(
     status: str | None = None,
     include_return: bool = True,
     days: int = 30,
+    org_id: str | None = None,
 ) -> str:
     """按商品编码查采购到货进度（含采退）"""
     extra = {"doc_status": status} if status else None
-    rows = query_doc_items(db, "purchase", product_code, days, extra)
+    rows = query_doc_items(db, "purchase", product_code, days, extra, org_id=org_id)
 
     return_rows: list[dict] = []
     if include_return:
-        return_rows = query_doc_items(db, "purchase_return", product_code, days)
+        return_rows = query_doc_items(db, "purchase_return", product_code, days, org_id=org_id)
 
     if not rows and not return_rows:
-        health = check_sync_health(db, ["purchase", "purchase_return"])
+        health = check_sync_health(db, ["purchase", "purchase_return"], org_id=org_id)
         return f"商品 {product_code} 近{days}天无采购/采退记录\n{health}".strip()
 
     # 按 doc_id 聚合采购单
@@ -90,7 +95,7 @@ async def local_purchase_query(
         summary += f"；{ret_count}笔采退，退货{total_ret_qty}件"
     lines.append(summary)
 
-    health = check_sync_health(db, ["purchase", "purchase_return"])
+    health = check_sync_health(db, ["purchase", "purchase_return"], org_id=org_id)
     if health:
         lines.append(health)
     return "\n".join(lines)
@@ -109,13 +114,14 @@ async def local_aftersale_query(
     db, product_code: str,
     aftersale_type: str | None = None,
     days: int = 30,
+    org_id: str | None = None,
 ) -> str:
     """按商品编码查售后情况"""
     extra = {"aftersale_type": aftersale_type} if aftersale_type else None
-    rows = query_doc_items(db, "aftersale", product_code, days, extra)
+    rows = query_doc_items(db, "aftersale", product_code, days, extra, org_id=org_id)
 
     if not rows:
-        health = check_sync_health(db, ["aftersale"])
+        health = check_sync_health(db, ["aftersale"], org_id=org_id)
         return f"商品 {product_code} 近{days}天无售后记录\n{health}".strip()
 
     # 按类型统计
@@ -151,7 +157,7 @@ async def local_aftersale_query(
             f" — {str(r.get('doc_created_at', ''))[:10]}"
         )
 
-    health = check_sync_health(db, ["aftersale"])
+    health = check_sync_health(db, ["aftersale"], org_id=org_id)
     if health:
         lines.append(f"\n{health}")
     return "\n".join(lines)
@@ -166,9 +172,10 @@ async def local_order_query(
     platform: str | None = None,
     status: str | None = None,
     days: int = 30,
+    org_id: str | None = None,
 ) -> str:
     """按商品编码查销售订单"""
-    rows = query_doc_items(db, "order", product_code, days)
+    rows = query_doc_items(db, "order", product_code, days, org_id=org_id)
 
     if shop_name:
         rows = [r for r in rows if shop_name in (r.get("shop_name") or "")]
@@ -178,7 +185,7 @@ async def local_order_query(
         rows = [r for r in rows if r.get("order_status") == status]
 
     if not rows:
-        health = check_sync_health(db, ["order"])
+        health = check_sync_health(db, ["order"], org_id=org_id)
         return f"商品 {product_code} 近{days}天无订单记录\n{health}".strip()
 
     unique_docs = {r["doc_id"] for r in rows}
@@ -221,7 +228,7 @@ async def local_order_query(
             f" — {str(r.get('doc_created_at', ''))[:10]}"
         )
 
-    health = check_sync_health(db, ["order"])
+    health = check_sync_health(db, ["order"], org_id=org_id)
     if health:
         lines.append(f"\n{health}")
     return "\n".join(lines)
@@ -232,6 +239,7 @@ async def local_order_query(
 
 async def local_product_flow(
     db, product_code: str, days: int = 30,
+    org_id: str | None = None,
 ) -> str:
     """按商品编码查完整流转（采购→收货→上架→销售→售后→采退）"""
     doc_types = [
@@ -239,14 +247,14 @@ async def local_product_flow(
     ]
     stats: dict[str, dict] = {}
     for dt in doc_types:
-        rows = query_doc_items(db, dt, product_code, days)
+        rows = query_doc_items(db, dt, product_code, days, org_id=org_id)
         unique_docs = {r["doc_id"] for r in rows}
         total_qty = sum(r.get("quantity") or 0 for r in rows)
         total_amount = sum(float(r.get("amount") or 0) for r in rows)
         stats[dt] = {"count": len(unique_docs), "qty": total_qty, "amount": total_amount}
 
     if all(s["count"] == 0 for s in stats.values()):
-        health = check_sync_health(db, doc_types)
+        health = check_sync_health(db, doc_types, org_id=org_id)
         return f"商品 {product_code} 近{days}天无流转记录\n{health}".strip()
 
     lines = [f"商品 {product_code} 全链路流转（近{days}天）：\n"]
@@ -267,7 +275,7 @@ async def local_product_flow(
             f"\n售后率：{s['aftersale']['count']}/{s['order']['count']} = {rate:.1f}%"
         )
 
-    health = check_sync_health(db, doc_types)
+    health = check_sync_health(db, doc_types, org_id=org_id)
     if health:
         lines.append(f"\n{health}")
     return "\n".join(lines)
@@ -284,6 +292,7 @@ async def local_stock_query(
     db, product_code: str,
     stock_status: str | None = None,
     low_stock: bool = False,
+    org_id: str | None = None,
 ) -> str:
     """按商品编码查库存状态（支持多仓分组展示）"""
     try:
@@ -292,6 +301,7 @@ async def local_stock_query(
             .select("*")
             .or_(f"outer_id.eq.{product_code},sku_outer_id.eq.{product_code}")
         )
+        q = _apply_org(q, org_id)
         if stock_status:
             q = q.eq("stock_status", stock_status)
         result = q.limit(100).execute()
@@ -312,6 +322,7 @@ async def local_stock_query(
                     f"sku_outer_id.eq.{product_code}"
                 )
             )
+            kit_q = _apply_org(kit_q, org_id)
             if stock_status:
                 kit_q = kit_q.eq("stock_status", stock_status)
             kit_result = kit_q.limit(100).execute()
@@ -321,7 +332,7 @@ async def local_stock_query(
             logger.debug(f"Kit stock query failed | code={product_code} | error={e}")
 
     if not rows:
-        health = check_sync_health(db, ["stock"])
+        health = check_sync_health(db, ["stock"], org_id=org_id)
         return f"商品 {product_code} 无库存记录\n{health}".strip()
 
     if low_stock:
@@ -369,7 +380,7 @@ async def local_stock_query(
         f"总库存{total_stock}件，总在途{total_onway}件"
     )
 
-    health = check_sync_health(db, ["stock"])
+    health = check_sync_health(db, ["stock"], org_id=org_id)
     if health:
         lines.append(health)
     return "\n".join(lines)
@@ -406,6 +417,7 @@ async def local_platform_map_query(
     product_code: str | None = None,
     num_iid: str | None = None,
     user_id: str | None = None,
+    org_id: str | None = None,
 ) -> str:
     """下架检查：ERP编码↔平台商品映射"""
     if not product_code and not num_iid:
@@ -413,6 +425,7 @@ async def local_platform_map_query(
 
     try:
         q = db.table("erp_product_platform_map").select("*")
+        q = _apply_org(q, org_id)
         if product_code:
             q = q.eq("outer_id", product_code)
         if num_iid:
@@ -426,20 +439,19 @@ async def local_platform_map_query(
         return f"平台映射查询失败: {e}"
 
     if not rows:
-        health = check_sync_health(db, ["platform_map"])
+        health = check_sync_health(db, ["platform_map"], org_id=org_id)
         code = product_code or num_iid
         return f"编码 {code} 无平台映射记录\n{health}".strip()
 
     code = product_code or rows[0].get("outer_id", "")
     product_info = ""
     try:
-        pr = (
+        pr_q = (
             db.table("erp_products")
             .select("title,shipper,active_status")
             .eq("outer_id", code)
-            .limit(1)
-            .execute()
         )
+        pr = _apply_org(pr_q, org_id).limit(1).execute()
         if pr.data:
             p = pr.data[0]
             st = "启用" if p.get("active_status", 1) != -1 else "已删除"
@@ -466,7 +478,7 @@ async def local_platform_map_query(
     if len(rows) > 1:
         lines.append(f"\n⚠ 下架此商品将影响 {len(rows)} 个店铺的商品链接！")
 
-    health = check_sync_health(db, ["platform_map"])
+    health = check_sync_health(db, ["platform_map"], org_id=org_id)
     if health:
         lines.append(health)
     return "\n".join(lines)

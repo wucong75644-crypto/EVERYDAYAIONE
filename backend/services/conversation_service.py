@@ -23,6 +23,7 @@ class ConversationService:
         user_id: str,
         title: Optional[str] = None,
         model_id: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> dict:
         """
         创建新对话
@@ -41,6 +42,7 @@ class ConversationService:
                 "title": title or "新对话",
                 "message_count": 0,
                 "credits_consumed": 0,
+                "org_id": org_id,
             }
 
             if model_id:
@@ -72,7 +74,9 @@ class ConversationService:
                 status_code=500,
             )
 
-    async def get_conversation(self, conversation_id: str, user_id: str) -> dict:
+    async def get_conversation(
+        self, conversation_id: str, user_id: str, org_id: Optional[str] = None,
+    ) -> dict:
         """
         获取单个对话
 
@@ -92,21 +96,22 @@ class ConversationService:
             if not conversation_id or conversation_id in ("null", "undefined", "None"):
                 raise NotFoundError("对话", conversation_id)
 
-            result = (
+            query = (
                 self.db.table("conversations")
                 .select("*")
                 .eq("id", conversation_id)
-                .execute()
+                .eq("user_id", user_id)
             )
+            if org_id:
+                query = query.eq("org_id", org_id)
+            else:
+                query = query.is_("org_id", "null")
+            result = query.execute()
 
             if not result.data:
                 raise NotFoundError("对话", conversation_id)
 
             conversation = result.data[0]
-
-            if conversation["user_id"] != user_id:
-                raise PermissionDeniedError("无权访问此对话")
-
             return self._format_conversation(conversation)
         except (NotFoundError, PermissionDeniedError):
             raise
@@ -127,6 +132,7 @@ class ConversationService:
         user_id: str,
         limit: int = 50,
         offset: int = 0,
+        org_id: Optional[str] = None,
     ) -> dict:
         """
         获取用户对话列表
@@ -141,10 +147,17 @@ class ConversationService:
         """
         try:
             # 单次查询同时获取数据和总数（count="exact" 在同一请求中返回计数）
-            result = (
+            query = (
                 self.db.table("conversations")
                 .select("id, title, last_message_preview, model_id, updated_at", count="exact")
                 .eq("user_id", user_id)
+            )
+            if org_id:
+                query = query.eq("org_id", org_id)
+            else:
+                query = query.is_("org_id", "null")
+            result = (
+                query
                 .order("updated_at", desc=True)
                 .range(offset, offset + limit - 1)
                 .execute()
@@ -185,6 +198,7 @@ class ConversationService:
         user_id: str,
         title: Optional[str] = None,
         model_id: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> dict:
         """
         更新对话信息
@@ -204,7 +218,7 @@ class ConversationService:
         """
         try:
             # 先验证权限
-            await self.get_conversation(conversation_id, user_id)
+            await self.get_conversation(conversation_id, user_id, org_id)
 
             # 构建更新数据
             update_data = {}
@@ -214,15 +228,19 @@ class ConversationService:
                 update_data["model_id"] = model_id
 
             if not update_data:
-                # 如果没有任何更新数据，直接返回当前对话
-                return await self.get_conversation(conversation_id, user_id)
+                return await self.get_conversation(conversation_id, user_id, org_id)
 
-            result = (
+            query = (
                 self.db.table("conversations")
                 .update(update_data)
                 .eq("id", conversation_id)
-                .execute()
+                .eq("user_id", user_id)
             )
+            if org_id:
+                query = query.eq("org_id", org_id)
+            else:
+                query = query.is_("org_id", "null")
+            result = query.execute()
 
             if not result.data:
                 raise NotFoundError("对话", conversation_id)
@@ -246,7 +264,9 @@ class ConversationService:
                 status_code=500,
             )
 
-    async def delete_conversation(self, conversation_id: str, user_id: str) -> bool:
+    async def delete_conversation(
+        self, conversation_id: str, user_id: str, org_id: Optional[str] = None,
+    ) -> bool:
         """
         删除对话
 
@@ -263,10 +283,15 @@ class ConversationService:
         """
         try:
             # 先验证权限
-            await self.get_conversation(conversation_id, user_id)
+            await self.get_conversation(conversation_id, user_id, org_id)
 
             # 删除对话（任务和消息会通过外键 CASCADE 级联删除）
-            self.db.table("conversations").delete().eq("id", conversation_id).execute()
+            query = self.db.table("conversations").delete().eq("id", conversation_id).eq("user_id", user_id)
+            if org_id:
+                query = query.eq("org_id", org_id)
+            else:
+                query = query.is_("org_id", "null")
+            query.execute()
 
             logger.info(
                 f"Conversation deleted | conversation_id={conversation_id} | user_id={user_id}"

@@ -17,10 +17,11 @@ from config.erp_tools import ERP_SYNC_TOOLS
 class ToolExecutor:
     """同步工具执行器"""
 
-    def __init__(self, db, user_id: str, conversation_id: str) -> None:
+    def __init__(self, db, user_id: str, conversation_id: str, org_id: str | None = None) -> None:
         self.db = db
         self.user_id = user_id
         self.conversation_id = conversation_id
+        self.org_id = org_id
         self._handlers: Dict[str, Callable[..., Coroutine[Any, Any, str]]] = {
             "get_conversation_context": self._get_conversation_context,
             "search_knowledge": self._search_knowledge,
@@ -28,12 +29,12 @@ class ToolExecutor:
             "erp_api_search": self._erp_api_search,
             "code_execute": self._code_execute,
         }
-        # 注册7个ERP API工具，统一委托给 _erp_dispatch
-        for tool_name in ERP_SYNC_TOOLS:
-            self._handlers[tool_name] = self._make_erp_handler(tool_name)
-        # 注册8个本地查询工具，直接查DB
-        for tool_name in ERP_LOCAL_TOOLS:
-            self._handlers[tool_name] = self._make_local_handler(tool_name)
+        # 散客不注册 ERP 工具（散客无 ERP 功能）
+        if org_id is not None:
+            for tool_name in ERP_SYNC_TOOLS:
+                self._handlers[tool_name] = self._make_erp_handler(tool_name)
+            for tool_name in ERP_LOCAL_TOOLS:
+                self._handlers[tool_name] = self._make_local_handler(tool_name)
 
     def _make_erp_handler(
         self, tool_name: str
@@ -74,6 +75,7 @@ class ToolExecutor:
             conversation_id=self.conversation_id,
             user_id=self.user_id,
             limit=limit,
+            org_id=self.org_id,
         )
 
         messages = result.get("messages", [])
@@ -165,9 +167,11 @@ class ToolExecutor:
         if not code:
             return "代码不能为空"
 
-        # 获取 ERP dispatcher（可选，无则沙盒内 ERP 函数返回错误）
-        dispatcher = await self._get_erp_dispatcher()
-        erp_dispatcher = dispatcher if not isinstance(dispatcher, str) else None
+        # 获取 ERP dispatcher（企业用户才有，散客无 ERP 沙盒函数）
+        erp_dispatcher = None
+        if self.org_id:
+            dispatcher = await self._get_erp_dispatcher()
+            erp_dispatcher = dispatcher if not isinstance(dispatcher, str) else None
 
         start_ms = int(_time.monotonic() * 1000)
         status = "success"
@@ -337,10 +341,27 @@ class ToolExecutor:
             await dispatcher.close()
 
     async def _get_erp_dispatcher(self):
-        """获取ERP调度器实例，未配置时返回友好提示"""
+        """获取ERP调度器实例，企业用户优先用企业凭证，未配置时返回友好提示"""
         from services.kuaimai.client import KuaiMaiClient
         from services.kuaimai.dispatcher import ErpDispatcher
 
+        # 企业用户：从 org_configs 加载企业自有凭证
+        if self.org_id:
+            try:
+                from services.org.config_resolver import OrgConfigResolver
+                resolver = OrgConfigResolver(self.db)
+                creds = resolver.get_erp_credentials(self.org_id)
+                client = KuaiMaiClient(
+                    app_key=creds["kuaimai_app_key"],
+                    app_secret=creds["kuaimai_app_secret"],
+                    access_token=creds["kuaimai_access_token"],
+                    refresh_token=creds["kuaimai_refresh_token"],
+                )
+                return ErpDispatcher(client)
+            except ValueError as e:
+                return str(e)
+
+        # 散客/降级：使用系统全局凭证
         client = KuaiMaiClient()
         if not client.is_configured:
             await client.close()
@@ -396,7 +417,7 @@ class ToolExecutor:
         if not func:
             return f"Unknown local tool: {tool_name}"
         try:
-            return await func(self.db, **args)
+            return await func(self.db, **args, org_id=self.org_id)
         except Exception as e:
             logger.error(
                 f"ToolExecutor local_dispatch | tool={tool_name} | error={e}"

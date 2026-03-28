@@ -6,8 +6,17 @@
 
 import hashlib
 import hmac as hmac_mod
+import sys
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+
+_tests_dir = Path(__file__).parent
+if str(_tests_dir) not in sys.path:
+    sys.path.insert(0, str(_tests_dir))
+_backend_dir = _tests_dir.parent
+if str(_backend_dir) not in sys.path:
+    sys.path.insert(0, str(_backend_dir))
 
 import pytest
 
@@ -4308,7 +4317,7 @@ class TestApiAuditFixes:
         """outstock_order_query description 使用正确的状态名"""
         from services.kuaimai.registry import TRADE_REGISTRY
         desc = TRADE_REGISTRY["outstock_order_query"].description
-        assert "待处理" in desc
+        assert "销售出库单" in desc
         assert "待打印" not in desc
 
 

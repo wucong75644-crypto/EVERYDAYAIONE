@@ -37,6 +37,7 @@ async def local_global_stats(
     warehouse_name: str | None = None,
     rank_by: str | None = None,
     group_by: str | None = None,
+    org_id: str | None = None,
 ) -> str:
     """全局统计/排名（DB 端 RPC 聚合，无 LIMIT 截断）"""
     start_iso, end_iso, period_label = _calc_period(date, period)
@@ -55,6 +56,7 @@ async def local_global_stats(
         "p_warehouse": warehouse_name or None,
         "p_group_by": rpc_group,
         "p_limit": 20,
+        "p_org_id": org_id,
     }
 
     try:
@@ -66,7 +68,7 @@ async def local_global_stats(
 
     # RPC 返回校验
     if not data or data == {} or data == []:
-        health = check_sync_health(db, [doc_type])
+        health = check_sync_health(db, [doc_type], org_id=org_id)
         return f"{type_name}{period_label}内无记录\n{health}".strip()
 
     if isinstance(data, dict) and "error" in data:
@@ -74,7 +76,7 @@ async def local_global_stats(
 
     # 根据返回类型格式化
     if rpc_group is None:
-        return _format_summary(data, type_name, period_label, db, doc_type)
+        return _format_summary(data, type_name, period_label, db, doc_type, org_id=org_id)
 
     if rank_by:
         return _format_ranking(data, rank_by, type_name, period_label)
@@ -124,7 +126,7 @@ def _calc_period(
 
 def _format_summary(
     data: dict, type_name: str, period_label: str,
-    db, doc_type: str,
+    db, doc_type: str, org_id: str | None = None,
 ) -> str:
     """格式化总计统计（RPC 总计模式返回）"""
     doc_count = data.get("doc_count", 0)
@@ -137,7 +139,7 @@ def _format_summary(
         f" | 金额 ¥{total_amount:,.2f}"
     )
 
-    health = check_sync_health(db, [doc_type])
+    health = check_sync_health(db, [doc_type], org_id=org_id)
     if health:
         lines.append(f"\n{health}")
     return "\n".join(lines)

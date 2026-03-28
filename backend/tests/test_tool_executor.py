@@ -26,8 +26,8 @@ from services.tool_executor import ToolExecutor
 # ============================================================
 
 
-def _make_executor() -> ToolExecutor:
-    return ToolExecutor(db=MagicMock(), user_id="u1", conversation_id="c1")
+def _make_executor(org_id: str | None = "org-test") -> ToolExecutor:
+    return ToolExecutor(db=MagicMock(), user_id="u1", conversation_id="c1", org_id=org_id)
 
 
 # ============================================================
@@ -232,6 +232,20 @@ class TestSearchKnowledge:
 
 class TestERPTools:
 
+    @pytest.fixture(autouse=True)
+    def mock_config_resolver(self):
+        """所有 ERP API 测试自动 mock OrgConfigResolver，返回假凭证"""
+        with patch("services.org.config_resolver.OrgConfigResolver") as MockResolver:
+            mock_instance = MagicMock()
+            mock_instance.get_erp_credentials.return_value = {
+                "kuaimai_app_key": "test_key",
+                "kuaimai_app_secret": "test_secret",
+                "kuaimai_access_token": "test_token",
+                "kuaimai_refresh_token": "test_refresh",
+            }
+            MockResolver.return_value = mock_instance
+            yield
+
     @pytest.mark.asyncio
     async def test_step1_returns_param_doc(self):
         """两步调用 Step 1：无 params 时返回参数文档（纯本地）"""
@@ -244,20 +258,21 @@ class TestERPTools:
         assert "order_id" in result
 
     @pytest.mark.asyncio
-    @patch("services.kuaimai.client.KuaiMaiClient")
-    async def test_erp_not_configured(self, MockClient):
-        """ERP 未配置→返回友好提示（Step 2 带 params 时）"""
-        mock_client = AsyncMock()
-        mock_client.is_configured = False
-        mock_client.close = AsyncMock()
-        MockClient.return_value = mock_client
+    async def test_erp_not_configured(self):
+        """企业 ERP 未配置→返回友好提示"""
+        with patch("services.org.config_resolver.OrgConfigResolver") as MockRes:
+            mock_inst = MagicMock()
+            mock_inst.get_erp_credentials.side_effect = ValueError(
+                "企业 ERP 未配置 kuaimai_app_key，请联系管理员"
+            )
+            MockRes.return_value = mock_inst
 
-        exe = _make_executor()
-        result = await exe._erp_dispatch(
-            "erp_trade_query",
-            {"action": "order_list", "params": {"order_id": "123"}},
-        )
-        assert "未配置" in result
+            exe = _make_executor()
+            result = await exe._erp_dispatch(
+                "erp_trade_query",
+                {"action": "order_list", "params": {"order_id": "123"}},
+            )
+            assert "未配置" in result
 
     @pytest.mark.asyncio
     @patch("services.kuaimai.dispatcher.ErpDispatcher")

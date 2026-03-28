@@ -40,14 +40,15 @@ class ErpSyncWorker:
         self.settings = get_settings()
         self.is_running = False
         self._lock_token: str | None = None
-        self._last_platform_map_sync: datetime | None = None
-        self._last_stock_full_refresh: datetime | None = None
-        self._last_daily_maintenance: datetime | None = None
-        self._last_deletion_detection: datetime | None = None
-        # 内存聚合队列（替代 Redis 队列，消除网络超时问题）
-        self.aggregation_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue(maxsize=10000)
-        # 去重集合：聚合幂等，同一 key 在队列中只需出现一次
-        self.aggregation_pending: set[tuple[str, str]] = set()
+        # 按企业隔离的时间戳（key=org_id or None）
+        self._org_last_platform_map: dict[str | None, datetime] = {}
+        self._org_last_stock_full: dict[str | None, datetime] = {}
+        self._org_last_daily: dict[str | None, datetime] = {}
+        self._org_last_deletion: dict[str | None, datetime] = {}
+        # 内存聚合队列：三元组 (outer_id, stat_date, org_id)
+        self.aggregation_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue(maxsize=10000)
+        # 去重集合
+        self.aggregation_pending: set[tuple[str, str, str | None]] = set()
 
     async def start(self) -> None:
         """启动同步循环"""
@@ -90,74 +91,144 @@ class ErpSyncWorker:
         await self._release_lock()
 
     async def _run_sync_round(self) -> None:
-        """执行一轮同步（获取锁→逐个串行→释放锁）
+        """执行一轮同步（获取锁→遍历企业→每个企业独立完整执行→释放锁）
 
-        所有类型串行执行，避免 Supabase 连接过载（EOF SSL error）。
-        API 调用由全局速率限制器限流（≤12 QPS）。
-        已完成初始同步的类型增量很快（通常 <5s），大类型放最后。
-        platform_map 依赖 product 数据，在全部完成后单独执行。
+        每个企业独立执行：高频同步 → 库存全量 → 低频同步 → 日维护。
+        企业之间串行（避免 DB 过载），但状态互相隔离。
         """
         if not await self._acquire_lock():
-            return  # 其他 Worker 在执行，跳过
+            return
 
         try:
-            # 逐个串行执行（避免 DB 连接过载）
-            for sync_type in self.HIGH_FREQ_TYPES:
+            orgs = await self._load_erp_orgs()
+
+            for org_id, client in orgs:
                 if not self.is_running:
                     break
-                await self._extend_lock()
-                await self._execute_sync(sync_type)
-
-            # 库存全量刷新兜底（按配置间隔，默认每小时）
-            if self.is_running and self._should_run_stock_full():
-                await self._extend_lock()
-                await self._execute_stock_full_refresh()
-                self._last_stock_full_refresh = datetime.now()
-
-            # platform_map 依赖 product 表，必须在 product 同步完成后执行
-            if self.is_running and self._should_run_low_freq():
-                await self._extend_lock()
-                await self._execute_sync("platform_map")
-                self._last_platform_map_sync = datetime.now()
-
-            # 日维护任务（归档 + 聚合兜底 + 删除检测，每24小时）
-            if self.is_running and self._should_run_daily():
-                await self._extend_lock()
-                await self._run_daily_maintenance()
-                self._last_daily_maintenance = datetime.now()
+                try:
+                    await self._run_org_sync(org_id, client)
+                except Exception as e:
+                    logger.error(f"Org sync round failed | org_id={org_id} | error={e}", exc_info=True)
+                finally:
+                    if client:
+                        await client.close()
         finally:
             await self._release_lock()
 
-    async def _execute_sync(self, sync_type: str) -> None:
+    async def _run_org_sync(self, org_id: str | None, client) -> None:
+        """单个企业的完整同步周期"""
+        logger.info(f"ERP sync org start | org_id={org_id}")
+
+        # 高频同步
+        for sync_type in self.HIGH_FREQ_TYPES:
+            if not self.is_running:
+                return
+            await self._extend_lock()
+            await self._execute_sync(sync_type, org_id=org_id, client=client)
+
+        # 库存全量刷新（按企业独立计时）
+        if self.is_running and self._should_run_stock_full(org_id):
+            await self._extend_lock()
+            await self._execute_stock_full_refresh(org_id=org_id, client=client)
+            self._org_last_stock_full[org_id] = datetime.now()
+
+        # 低频同步（platform_map）
+        if self.is_running and self._should_run_low_freq(org_id):
+            await self._extend_lock()
+            await self._execute_sync("platform_map", org_id=org_id, client=client)
+            self._org_last_platform_map[org_id] = datetime.now()
+
+        # 日维护（归档+聚合兜底+删除检测）
+        if self.is_running and self._should_run_daily(org_id):
+            await self._extend_lock()
+            await self._run_daily_maintenance(org_id=org_id, client=client)
+            self._org_last_daily[org_id] = datetime.now()
+
+        logger.info(f"ERP sync org done | org_id={org_id}")
+
+    async def _load_erp_orgs(self) -> list[tuple[str | None, "KuaiMaiClient | None"]]:
+        """加载所有 ERP 功能已开启的企业，返回 (org_id, client) 列表。
+
+        无企业时降级为散客模式（全局凭证）。
+        """
+        from services.kuaimai.client import KuaiMaiClient
+
+        orgs: list[tuple[str | None, KuaiMaiClient | None]] = []
+
+        try:
+            result = await (
+                self.db.table("organizations")
+                .select("id, features")
+                .eq("status", "active")
+                .execute()
+            )
+            for org in (result.data or []):
+                features = org.get("features") or {}
+                if not features.get("erp"):
+                    continue
+                org_id = str(org["id"])
+                try:
+                    from services.org.config_resolver import OrgConfigResolver
+                    resolver = OrgConfigResolver(self.db)
+                    creds = resolver.get_erp_credentials(org_id)
+                    client = KuaiMaiClient(
+                        app_key=creds["kuaimai_app_key"],
+                        app_secret=creds["kuaimai_app_secret"],
+                        access_token=creds["kuaimai_access_token"],
+                        refresh_token=creds["kuaimai_refresh_token"],
+                    )
+                    orgs.append((org_id, client))
+                except ValueError as e:
+                    logger.warning(f"Skip org {org_id} ERP sync: {e}")
+        except Exception as e:
+            logger.error(f"Failed to load ERP orgs | error={e}")
+
+        # 无企业时降级：使用全局凭证（散客兼容）
+        if not orgs:
+            client = KuaiMaiClient()
+            if client.is_configured:
+                orgs.append((None, client))
+            else:
+                await client.close()
+
+        return orgs
+
+    async def _execute_sync(
+        self, sync_type: str,
+        org_id: str | None = None,
+        client: "KuaiMaiClient | None" = None,
+    ) -> None:
         """执行单个类型的同步（委托给 ErpSyncService）"""
         try:
-            await self._extend_lock()  # 并行任务启动时续期锁
+            await self._extend_lock()
             from services.kuaimai.erp_sync_service import ErpSyncService
             service = ErpSyncService(
                 self.db, lock_extend_fn=self._extend_lock,
                 aggregation_queue=self.aggregation_queue,
                 aggregation_pending=self.aggregation_pending,
+                org_id=org_id,
+                client=client,
             )
             await service.sync(sync_type)
-            # stock 同步后刷新套件库存物化视图
             if sync_type == "stock":
                 await self._refresh_kit_stock()
         except Exception as e:
             logger.error(
-                f"ERP sync failed | sync_type={sync_type} | error={e}",
+                f"ERP sync failed | sync_type={sync_type} | org_id={org_id} | error={e}",
                 exc_info=True,
             )
 
-    def _should_run_stock_full(self) -> bool:
-        """判断库存全量刷新是否到期"""
-        if self._last_stock_full_refresh is None:
+    def _should_run_stock_full(self, org_id: str | None = None) -> bool:
+        """判断库存全量刷新是否到期（按企业隔离计时）"""
+        last = self._org_last_stock_full.get(org_id)
+        if last is None:
             return True
-        elapsed = (
-            datetime.now() - self._last_stock_full_refresh
-        ).total_seconds()
+        elapsed = (datetime.now() - last).total_seconds()
         return elapsed >= self.settings.erp_stock_full_refresh_interval
 
-    async def _execute_stock_full_refresh(self) -> None:
+    async def _execute_stock_full_refresh(
+        self, org_id: str | None = None, client: "KuaiMaiClient | None" = None,
+    ) -> None:
         """执行库存全量刷新（委托给 sync_stock_full）"""
         try:
             from services.kuaimai.erp_sync_master_handlers import sync_stock_full
@@ -166,6 +237,8 @@ class ErpSyncWorker:
                 self.db, lock_extend_fn=self._extend_lock,
                 aggregation_queue=self.aggregation_queue,
                 aggregation_pending=self.aggregation_pending,
+                org_id=org_id,
+                client=client,
             )
             count = await sync_stock_full(service)
             if count > 0:
@@ -187,69 +260,69 @@ class ErpSyncWorker:
         except Exception as e:
             logger.warning(f"Kit stock refresh failed | error={e}")
 
-    def _should_run_low_freq(self) -> bool:
-        """判断低频任务是否到期"""
-        if self._last_platform_map_sync is None:
+    def _should_run_low_freq(self, org_id: str | None = None) -> bool:
+        """判断低频任务是否到期（按企业隔离计时）"""
+        last = self._org_last_platform_map.get(org_id)
+        if last is None:
             return True
-        elapsed = (
-            datetime.now() - self._last_platform_map_sync
-        ).total_seconds()
+        elapsed = (datetime.now() - last).total_seconds()
         return elapsed >= self.settings.erp_platform_map_interval
 
-    def _should_run_daily(self) -> bool:
-        """判断日维护任务是否到期"""
-        if self._last_daily_maintenance is None:
+    def _should_run_daily(self, org_id: str | None = None) -> bool:
+        """判断日维护任务是否到期（按企业隔离计时）"""
+        last = self._org_last_daily.get(org_id)
+        if last is None:
             return True
-        elapsed = (
-            datetime.now() - self._last_daily_maintenance
-        ).total_seconds()
+        elapsed = (datetime.now() - last).total_seconds()
         return elapsed >= self.DAILY_INTERVAL
 
-    def _should_run_deletion(self) -> bool:
-        """判断删除检测是否到期（每周一次）"""
-        if self._last_deletion_detection is None:
+    def _should_run_deletion(self, org_id: str | None = None) -> bool:
+        """判断删除检测是否到期（每周一次，按企业隔离计时）"""
+        last = self._org_last_deletion.get(org_id)
+        if last is None:
             return True
-        elapsed = (
-            datetime.now() - self._last_deletion_detection
-        ).total_seconds()
+        elapsed = (datetime.now() - last).total_seconds()
         return elapsed >= self.DELETION_INTERVAL
 
     # ── 日维护任务 ────────────────────────────────────────
 
-    async def _run_daily_maintenance(self) -> None:
-        """执行日维护：归档 → 聚合兜底 → 删除检测"""
-        logger.info("ERP daily maintenance started")
+    async def _run_daily_maintenance(
+        self, org_id: str | None = None, client=None,
+    ) -> None:
+        """执行日维护：归档 → 聚合兜底 → 删除检测（按企业隔离）"""
+        logger.info(f"ERP daily maintenance started | org_id={org_id}")
         archived, reagg, deleted = 0, 0, 0
 
         try:
-            archived = await self._run_archive()
+            archived = await self._run_archive(org_id=org_id)
         except Exception as e:
-            logger.error(f"Daily maintenance: archive failed | error={e}", exc_info=True)
+            logger.error(f"Daily maintenance: archive failed | org_id={org_id} | error={e}", exc_info=True)
 
         try:
-            reagg = await self._run_daily_reaggregation()
+            reagg = await self._run_daily_reaggregation(org_id=org_id)
         except Exception as e:
-            logger.error(f"Daily maintenance: reaggregation failed | error={e}", exc_info=True)
+            logger.error(f"Daily maintenance: reaggregation failed | org_id={org_id} | error={e}", exc_info=True)
 
         try:
-            if self._should_run_deletion():
-                deleted = await self._run_deletion_detection()
-                self._last_deletion_detection = datetime.now()
+            if self._should_run_deletion(org_id):
+                deleted = await self._run_deletion_detection(org_id=org_id, client=client)
+                self._org_last_deletion[org_id] = datetime.now()
         except Exception as e:
-            logger.error(f"Daily maintenance: deletion detection failed | error={e}", exc_info=True)
+            logger.error(f"Daily maintenance: deletion detection failed | org_id={org_id} | error={e}", exc_info=True)
 
         logger.info(
-            f"ERP daily maintenance done | archived={archived} | "
+            f"ERP daily maintenance done | org_id={org_id} | archived={archived} | "
             f"reaggregated={reagg} | deleted={deleted}"
         )
 
-    async def _run_archive(self) -> int:
+    async def _run_archive(self, org_id: str | None = None) -> int:
         """
         热表→冷表归档（设计文档 §5.1）
 
         分批 SELECT→UPSERT(archive)→DELETE(hot)，upsert 幂等保证安全。
         """
         from datetime import timedelta
+        from services.kuaimai.erp_local_helpers import _apply_org
         cutoff = (
             datetime.now() - timedelta(days=self.settings.erp_archive_retention_days)
         ).isoformat()
@@ -259,14 +332,8 @@ class ErpSyncWorker:
 
         while True:
             try:
-                # 查询待归档行（按 id 分批）
-                result = await (
-                    self.db.table("erp_document_items")
-                    .select("*")
-                    .lt("doc_modified_at", cutoff)
-                    .limit(batch_size)
-                    .execute()
-                )
+                q = self.db.table("erp_document_items").select("*").lt("doc_modified_at", cutoff)
+                result = await _apply_org(q, org_id).limit(batch_size).execute()
                 rows = result.data or []
                 if not rows:
                     break
@@ -290,7 +357,7 @@ class ErpSyncWorker:
 
         return total_archived
 
-    async def _run_daily_reaggregation(self) -> int:
+    async def _run_daily_reaggregation(self, org_id: str | None = None) -> int:
         """
         每日聚合兜底（设计文档 §5.1）
 
@@ -305,32 +372,34 @@ class ErpSyncWorker:
             # 获取近7天所有受影响的 (outer_id, stat_date) 对
             result = await self.db.rpc(
                 "erp_aggregate_daily_stats_batch",
-                {"p_since_date": cutoff},
+                {"p_since_date": cutoff, "p_org_id": org_id},
             ).execute()
             count = result.data if isinstance(result.data, int) else 0
             return count
         except Exception as e:
             # RPC 不存在时降级为逐条聚合
             logger.warning(f"Batch reaggregation unavailable, fallback | error={e}")
-            return await self._reaggregate_fallback(cutoff)
+            return await self._reaggregate_fallback(cutoff, org_id=org_id)
 
-    async def _reaggregate_fallback(self, since_date: str) -> int:
+    async def _reaggregate_fallback(self, since_date: str, org_id: str | None = None) -> int:
         """逐条降级聚合：查询近7天的 distinct (outer_id, date) 并逐一重算"""
         try:
             from services.kuaimai.erp_sync_service import ErpSyncService
+            from services.kuaimai.erp_local_helpers import _apply_org
             svc = ErpSyncService(
                 self.db,
                 aggregation_queue=self.aggregation_queue,
                 aggregation_pending=self.aggregation_pending,
+                org_id=org_id,
             )
 
-            result = await (
+            q = (
                 self.db.table("erp_document_items")
                 .select("outer_id,doc_created_at")
                 .gte("doc_created_at", since_date)
                 .not_.is_("outer_id", "null")
-                .execute()
             )
+            result = await _apply_org(q, org_id).execute()
             rows = result.data or []
             keys = svc.collect_affected_keys(rows)
             await svc.run_aggregation(keys)
@@ -358,18 +427,15 @@ class ErpSyncWorker:
 
     async def _paginated_select_ids(
         self, table: str, id_column: str, *, batch_size: int = 1000,
+        org_id: str | None = None,
     ) -> set[str]:
-        """分页加载表中所有活跃记录的指定列，返回 ID 集合"""
+        """分页加载表中所有活跃记录的指定列，返回 ID 集合（按企业过滤）"""
+        from services.kuaimai.erp_local_helpers import _apply_org
         ids: set[str] = set()
         offset = 0
         while True:
-            r = await (
-                self.db.table(table)
-                .select(id_column)
-                .neq("active_status", -1)
-                .range(offset, offset + batch_size - 1)
-                .execute()
-            )
+            q = self.db.table(table).select(id_column).neq("active_status", -1)
+            r = await _apply_org(q, org_id).range(offset, offset + batch_size - 1).execute()
             if not r.data:
                 break
             for row in r.data:
@@ -381,14 +447,17 @@ class ErpSyncWorker:
 
     async def _mark_deleted_items(
         self, table: str, id_col: str, deleted_ids: set[str],
+        org_id: str | None = None,
     ) -> int:
-        """批量标记已删除的 SPU/SKU（active_status=-1）"""
+        """批量标记已删除的 SPU/SKU（active_status=-1，按企业隔离）"""
+        from services.kuaimai.erp_local_helpers import _apply_org
         count = 0
         for item_id in deleted_ids:
             try:
-                await self.db.table(table).update({
+                q = self.db.table(table).update({
                     "active_status": -1,
-                }).eq(id_col, item_id).execute()
+                }).eq(id_col, item_id)
+                await _apply_org(q, org_id).execute()
                 count += 1
             except Exception as e:
                 logger.warning(
@@ -396,15 +465,17 @@ class ErpSyncWorker:
                 )
         return count
 
-    async def _run_deletion_detection(self) -> int:
+    async def _run_deletion_detection(
+        self, org_id: str | None = None, client=None,
+    ) -> int:
         """
-        商品删除检测（SPU + SKU 级别）
+        商品删除检测（SPU + SKU 级别，按企业隔离）
 
         全量拉取 API 商品列表 vs DB，标记已删除的 SPU 和 SKU active_status=-1。
         """
         try:
             from services.kuaimai.erp_sync_service import ErpSyncService
-            svc = ErpSyncService(self.db)
+            svc = ErpSyncService(self.db, org_id=org_id, client=client)
 
             products = await svc.fetch_all_pages(
                 "item.list.query",
@@ -417,16 +488,16 @@ class ErpSyncWorker:
             count = 0
 
             # SPU 删除检测
-            db_spu_ids = await self._paginated_select_ids("erp_products", "outer_id")
+            db_spu_ids = await self._paginated_select_ids("erp_products", "outer_id", org_id=org_id)
             deleted_spus = db_spu_ids - api_spu_ids
-            count += await self._mark_deleted_items("erp_products", "outer_id", deleted_spus)
+            count += await self._mark_deleted_items("erp_products", "outer_id", deleted_spus, org_id=org_id)
             if deleted_spus:
-                logger.info(f"SPU deletion detected | count={len(deleted_spus)}")
+                logger.info(f"SPU deletion detected | org_id={org_id} | count={len(deleted_spus)}")
 
             # SKU 删除检测
-            db_sku_ids = await self._paginated_select_ids("erp_product_skus", "sku_outer_id")
+            db_sku_ids = await self._paginated_select_ids("erp_product_skus", "sku_outer_id", org_id=org_id)
             deleted_skus = db_sku_ids - api_sku_ids
-            count += await self._mark_deleted_items("erp_product_skus", "sku_outer_id", deleted_skus)
+            count += await self._mark_deleted_items("erp_product_skus", "sku_outer_id", deleted_skus, org_id=org_id)
             if deleted_skus:
                 logger.info(f"SKU deletion detected | count={len(deleted_skus)}")
 
@@ -510,7 +581,7 @@ class ErpSyncWorker:
             try:
                 # 阻塞等待，1 秒超时（避免 shutdown 时卡住）
                 try:
-                    outer_id, stat_date = await asyncio.wait_for(
+                    outer_id, stat_date, agg_org_id = await asyncio.wait_for(
                         self.aggregation_queue.get(), timeout=1.0
                     )
                 except asyncio.TimeoutError:
@@ -519,16 +590,15 @@ class ErpSyncWorker:
                 try:
                     await self.db.rpc(
                         "erp_aggregate_daily_stats",
-                        {"p_outer_id": outer_id, "p_stat_date": stat_date},
+                        {"p_outer_id": outer_id, "p_stat_date": stat_date, "p_org_id": agg_org_id},
                     ).execute()
                 except Exception as e:
                     logger.warning(
                         f"Aggregation consumer error | outer_id={outer_id} | "
-                        f"date={stat_date} | error={e}"
+                        f"date={stat_date} | org_id={agg_org_id} | error={e}"
                     )
                 finally:
-                    # 处理完毕（无论成败），从去重集合移除，允许后续同 key 重新入队
-                    self.aggregation_pending.discard((outer_id, stat_date))
+                    self.aggregation_pending.discard((outer_id, stat_date, agg_org_id))
             except asyncio.CancelledError:
                 break
             except Exception as e:

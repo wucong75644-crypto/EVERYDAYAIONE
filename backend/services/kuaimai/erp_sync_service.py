@@ -57,16 +57,24 @@ class ErpSyncService:
         self, db, lock_extend_fn=None,
         aggregation_queue: asyncio.Queue | None = None,
         aggregation_pending: set[tuple[str, str]] | None = None,
+        org_id: str | None = None,
+        client: KuaiMaiClient | None = None,
     ) -> None:
         self.db = db
         self.settings = get_settings()
-        self._client: KuaiMaiClient | None = None
+        self.org_id = org_id
+        self._client: KuaiMaiClient | None = client
         self._lock_extend_fn = lock_extend_fn
         self._aggregation_queue = aggregation_queue
         self._aggregation_pending = aggregation_pending
 
     def _get_client(self) -> KuaiMaiClient:
         if self._client is None:
+            if self.org_id:
+                logger.warning(
+                    f"ErpSyncService._get_client fallback to global credentials | "
+                    f"org_id={self.org_id} — should have been passed a client"
+                )
             self._client = KuaiMaiClient()
         return self._client
 
@@ -235,15 +243,17 @@ class ErpSyncService:
 
     # ── 状态管理 ──────────────────────────────────────────
 
+    def _apply_org(self, q):
+        """给查询追加 org_id 过滤"""
+        if self.org_id:
+            return q.eq("org_id", self.org_id)
+        return q.is_("org_id", "null")
+
     async def _get_sync_state(self, sync_type: str) -> dict[str, Any] | None:
         """读取同步状态"""
         try:
-            result = await (
-                self.db.table("erp_sync_state")
-                .select("*")
-                .eq("sync_type", sync_type)
-                .execute()
-            )
+            q = self.db.table("erp_sync_state").select("*").eq("sync_type", sync_type)
+            result = await self._apply_org(q).execute()
             return result.data[0] if result.data else None
         except Exception as e:
             logger.error(f"Failed to read sync state | type={sync_type} | error={e}")
@@ -254,6 +264,7 @@ class ErpSyncService:
         try:
             await self.db.table("erp_sync_state").insert({
                 "sync_type": sync_type,
+                "org_id": self.org_id,
                 "status": "idle",
                 "is_initial_done": False,
             }).execute()
@@ -263,20 +274,17 @@ class ErpSyncService:
     async def _update_sync_state_success(self, sync_type: str, synced_count: int) -> None:
         """同步成功后更新状态"""
         try:
-            current = await (
-                self.db.table("erp_sync_state")
-                .select("total_synced")
-                .eq("sync_type", sync_type)
-                .execute()
-            )
+            q = self.db.table("erp_sync_state").select("total_synced").eq("sync_type", sync_type)
+            current = await self._apply_org(q).execute()
             new_total = (current.data[0]["total_synced"] or 0) + synced_count
-            await self.db.table("erp_sync_state").update({
+            uq = self.db.table("erp_sync_state").update({
                 "status": "idle",
                 "last_run_at": datetime.now().isoformat(),
                 "error_count": 0,
                 "last_error": None,
                 "total_synced": new_total,
-            }).eq("sync_type", sync_type).execute()
+            }).eq("sync_type", sync_type)
+            await self._apply_org(uq).execute()
         except Exception as e:
             logger.error(f"Failed to update sync state | type={sync_type} | error={e}")
 
@@ -287,12 +295,13 @@ class ErpSyncService:
         try:
             state = await self._get_sync_state(sync_type)
             error_count = (state.get("error_count", 0) + 1) if state else 1
-            await self.db.table("erp_sync_state").update({
+            uq = self.db.table("erp_sync_state").update({
                 "status": "error",
                 "last_run_at": datetime.now().isoformat(),
                 "error_count": error_count,
                 "last_error": error_msg[:500],
-            }).eq("sync_type", sync_type).execute()
+            }).eq("sync_type", sync_type)
+            await self._apply_org(uq).execute()
 
             if error_count >= self.ALERT_ERROR_THRESHOLD:
                 logger.error(
@@ -305,23 +314,25 @@ class ErpSyncService:
     async def _update_sync_state_progress(self, sync_type: str, time_point: datetime) -> None:
         """分片同步中更新进度（断点续传）"""
         try:
-            await self.db.table("erp_sync_state").update({
+            uq = self.db.table("erp_sync_state").update({
                 "last_sync_time": time_point.isoformat(),
-            }).eq("sync_type", sync_type).execute()
+            }).eq("sync_type", sync_type)
+            await self._apply_org(uq).execute()
         except Exception as e:
             logger.error(f"Failed to update progress | type={sync_type} | error={e}")
 
     async def _mark_initial_done(self, sync_type: str, total_synced: int) -> None:
         """全量同步完成后标记切换增量模式"""
         try:
-            await self.db.table("erp_sync_state").update({
+            uq = self.db.table("erp_sync_state").update({
                 "is_initial_done": True,
                 "status": "idle",
                 "last_run_at": datetime.now().isoformat(),
                 "error_count": 0,
                 "last_error": None,
                 "total_synced": total_synced,
-            }).eq("sync_type", sync_type).execute()
+            }).eq("sync_type", sync_type)
+            await self._apply_org(uq).execute()
         except Exception as e:
             logger.error(f"Failed to mark initial done | type={sync_type} | error={e}")
 
@@ -489,13 +500,14 @@ class ErpSyncService:
 
     async def upsert_document_items(self, rows: list[dict[str, Any]]) -> int:
         """事务性写入 erp_document_items（按单据分组：删旧→插新）"""
-        return await _upsert_document_items(self.db, rows)
+        return await _upsert_document_items(self.db, rows, org_id=self.org_id)
 
     async def run_aggregation(self, affected_keys: list[tuple[str, str]]) -> None:
         """将受影响的 (outer_id, stat_date) 推入聚合队列"""
         return _run_aggregation(
             self.db, self._aggregation_queue, affected_keys,
             pending=self._aggregation_pending,
+            org_id=self.org_id,
         )
 
     def collect_affected_keys(self, rows: list[dict[str, Any]]) -> list[tuple[str, str]]:

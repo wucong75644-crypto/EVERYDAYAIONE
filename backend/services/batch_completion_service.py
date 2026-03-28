@@ -12,6 +12,7 @@
 """
 
 import json
+from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from loguru import logger
@@ -204,6 +205,10 @@ class BatchCompletionService:
         batch_tasks: List[Dict[str, Any]],
     ) -> None:
         """根据操作类型分发到对应的 finalize 方法"""
+        if not batch_tasks:
+            logger.warning(f"dispatch_finalize called with empty batch | batch_id={batch_id}")
+            return
+
         first_task = batch_tasks[0]
         request_params = first_task.get("request_params") or {}
         if isinstance(request_params, str):
@@ -445,13 +450,27 @@ class BatchCompletionService:
         try:
             self.db.table("credit_transactions").update({
                 "status": "confirmed",
+                "confirmed_at": datetime.now(timezone.utc).isoformat(),
             }).eq("id", transaction_id).eq("status", "pending").execute()
         except Exception as e:
             logger.error(f"Failed to confirm credits | tx={transaction_id} | error={e}")
 
     def _refund_credits(self, transaction_id: str) -> None:
-        """退回积分（调用 RPC 原子操作）"""
+        """退回积分（原子操作：CAS检查+退回余额+更新状态在单个SQL事务内完成）"""
         try:
-            self.db.rpc("refund_credits", {"p_transaction_id": transaction_id}).execute()
+            result = self.db.rpc(
+                'atomic_refund_credits',
+                {'p_transaction_id': transaction_id}
+            ).execute()
+
+            data = result.data
+            if data and data.get('refunded'):
+                logger.info(
+                    f"Credits refunded | transaction_id={transaction_id} | "
+                    f"user_id={data.get('user_id')} | amount={data.get('amount')}"
+                )
+            else:
+                reason = data.get('reason', 'unknown') if data else 'no_response'
+                logger.warning(f"Refund skipped | tx={transaction_id} | reason={reason}")
         except Exception as e:
             logger.error(f"Failed to refund credits | tx={transaction_id} | error={e}")

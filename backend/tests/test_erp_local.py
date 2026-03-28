@@ -12,7 +12,17 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from datetime import datetime, timezone
 
-from tests.conftest import MockSupabaseClient
+import sys
+from pathlib import Path
+
+_tests_dir = Path(__file__).parent
+if str(_tests_dir) not in sys.path:
+    sys.path.insert(0, str(_tests_dir))
+_backend_dir = _tests_dir.parent
+if str(_backend_dir) not in sys.path:
+    sys.path.insert(0, str(_backend_dir))
+
+from conftest import MockSupabaseClient
 
 
 # ── 测试数据工厂 ─────────────────────────────────────
@@ -777,6 +787,6 @@ class TestToolExecutorLocalDispatch:
         from config.erp_local_tools import ERP_LOCAL_TOOLS
         from services.tool_executor import ToolExecutor
         db = MockSupabaseClient()
-        executor = ToolExecutor(db, "test_user", "test_conv")
+        executor = ToolExecutor(db, "test_user", "test_conv", org_id="org-test")
         for tool_name in ERP_LOCAL_TOOLS:
             assert tool_name in executor._handlers

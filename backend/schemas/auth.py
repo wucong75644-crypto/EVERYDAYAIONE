@@ -155,3 +155,35 @@ class ResetPasswordRequest(BaseModel):
         if not re.search(r"\d", v):
             raise ValueError("密码必须包含数字")
         return v
+
+
+class OrgLoginRequest(BaseModel):
+    """企业密码登录请求"""
+
+    org_name: str = Field(..., min_length=1, max_length=100, description="企业全称（精确匹配）")
+    phone: str = Field(..., description="手机号")
+    password: str = Field(..., min_length=6, max_length=32, description="密码")
+
+    @field_validator("phone")
+    @classmethod
+    def validate_phone(cls, v: str) -> str:
+        phone_pattern = re.compile(r"^1[3-9]\d{9}$")
+        if not phone_pattern.match(v):
+            raise ValueError("手机号格式不正确")
+        return v
+
+
+class OrgInfo(BaseModel):
+    """企业信息（登录响应中携带）"""
+
+    org_id: str = Field(..., description="企业ID")
+    org_name: str = Field(..., description="企业名称")
+    org_role: str = Field(..., description="成员角色")
+
+
+class OrgLoginResponse(BaseModel):
+    """企业登录响应"""
+
+    token: TokenResponse = Field(..., description="令牌信息")
+    user: UserResponse = Field(..., description="用户信息")
+    org: OrgInfo = Field(..., description="企业信息")

@@ -199,6 +199,99 @@ class AuthService:
             "user": self._format_user_response(user),
         }
 
+    async def login_by_org_password(
+        self, org_name: str, phone: str, password: str,
+    ) -> dict:
+        """
+        企业密码登录
+
+        流程：精确匹配企业名 → 查用户 → 校验成员资格 → 验证密码 → 设置 current_org_id
+
+        Returns:
+            包含 token、用户信息、企业信息的字典
+
+        Raises:
+            AuthenticationError: 企业/用户/密码/状态异常
+        """
+        LOGIN_FAILED = "企业名称、手机号或密码错误"
+
+        # 1. 精确匹配企业
+        org_result = (
+            self.db.table("organizations")
+            .select("id, name, status")
+            .eq("name", org_name)
+            .execute()
+        )
+        if not org_result.data:
+            raise AuthenticationError(LOGIN_FAILED)
+
+        org = org_result.data[0]
+        if org["status"] != "active":
+            raise AuthenticationError(LOGIN_FAILED)
+
+        org_id = str(org["id"])
+
+        # 2. 查找用户
+        user_result = (
+            self.db.table("users")
+            .select("*")
+            .eq("phone", phone)
+            .execute()
+        )
+        if not user_result.data:
+            raise AuthenticationError(LOGIN_FAILED)
+
+        user = user_result.data[0]
+        user_id = str(user["id"])
+
+        # 3. 检查账号状态
+        if user["status"] != "active":
+            raise AuthenticationError(LOGIN_FAILED)
+
+        # 4. 校验成员资格
+        member_result = (
+            self.db.table("org_members")
+            .select("role, status")
+            .eq("org_id", org_id)
+            .eq("user_id", user_id)
+            .single()
+            .execute()
+        )
+        if not member_result.data:
+            raise AuthenticationError(LOGIN_FAILED)
+        if member_result.data["status"] != "active":
+            raise AuthenticationError(LOGIN_FAILED)
+
+        # 5. 验证密码
+        if not user.get("password_hash"):
+            raise AuthenticationError(LOGIN_FAILED)
+        if not verify_password(password, user["password_hash"]):
+            raise AuthenticationError(LOGIN_FAILED)
+
+        # 6. 更新 current_org_id + last_login_at
+        self.db.table("users").update({
+            "current_org_id": org_id,
+            "last_login_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", user_id).execute()
+
+        logger.info(
+            f"User logged in via org | user_id={user_id} | "
+            f"org_id={org_id} | org_name={org_name}"
+        )
+
+        # 7. 返回 token + 用户信息 + 企业信息
+        token = self._create_token_response(user_id)
+
+        return {
+            "token": token,
+            "user": self._format_user_response(user),
+            "org": {
+                "org_id": org_id,
+                "org_name": org["name"],
+                "org_role": member_result.data["role"],
+            },
+        }
+
     async def send_verification_code(self, phone: str, purpose: str) -> bool:
         """
         发送验证码

@@ -100,11 +100,15 @@ def _strip_html(text: str | None) -> str | None:
 
 async def _batch_upsert(
     db: Any, table: str, rows: list[dict], on_conflict: str,
-    batch_size: int = 100,
+    batch_size: int = 100, org_id: str | None = None,
 ) -> int:
     """通用批量 upsert（与 ErpSyncService.upsert_document_items 类似）"""
     if not rows:
         return 0
+    # 注入 org_id
+    if org_id is not None:
+        for row in rows:
+            row["org_id"] = org_id
     total = 0
     for i in range(0, len(rows), batch_size):
         batch = rows[i : i + batch_size]

@@ -32,6 +32,7 @@ class MessageService:
         limit: int = 50,
         offset: int = 0,
         before_id: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> dict:
         """
         获取对话消息列表
@@ -52,7 +53,7 @@ class MessageService:
         """
         try:
             # 验证对话权限
-            await self.conversation_service.get_conversation(conversation_id, user_id)
+            await self.conversation_service.get_conversation(conversation_id, user_id, org_id)
 
             # 查询消息（按创建时间降序：从新到旧，确保首次加载显示最新消息）
             query = (
@@ -118,6 +119,7 @@ class MessageService:
         conversation_id: str,
         message_id: str,
         user_id: str,
+        org_id: Optional[str] = None,
     ) -> dict:
         """
         获取单条消息
@@ -136,7 +138,7 @@ class MessageService:
         """
         try:
             # 验证对话权限
-            await self.conversation_service.get_conversation(conversation_id, user_id)
+            await self.conversation_service.get_conversation(conversation_id, user_id, org_id)
 
             result = (
                 self.db.table("messages")
@@ -154,16 +156,7 @@ class MessageService:
                 )
                 raise NotFoundError("消息不存在")
 
-            message = result.data
-
-            # 再次验证权限
-            conversation = await self.conversation_service.get_conversation(
-                conversation_id, user_id
-            )
-            if conversation["user_id"] != user_id:
-                raise PermissionDeniedError("无权访问此消息")
-
-            return format_message(message)
+            return format_message(result.data)
         except (NotFoundError, PermissionDeniedError):
             raise
         except Exception as e:
@@ -182,6 +175,7 @@ class MessageService:
         self,
         message_id: str,
         user_id: str,
+        org_id: Optional[str] = None,
     ) -> dict:
         """
         删除消息
@@ -221,16 +215,10 @@ class MessageService:
                 )
                 raise
 
-            # 验证对话权限（确保用户拥有该对话）
-            conversation = await self.conversation_service.get_conversation(
-                conversation_id, user_id
+            # 验证对话权限（get_conversation 已在 SQL 层过滤 user_id + org_id）
+            await self.conversation_service.get_conversation(
+                conversation_id, user_id, org_id
             )
-            if conversation["user_id"] != user_id:
-                logger.warning(
-                    f"Permission denied for delete | message_id={message_id} | "
-                    f"user_id={user_id} | owner_id={conversation['user_id']}"
-                )
-                raise PermissionDeniedError("无权删除此消息")
 
             # 执行删除
             self.db.table("messages").delete().eq("id", message_id).execute()
@@ -318,13 +306,14 @@ class MessageService:
         conversation_id: str,
         user_id: str,
         content: str,
+        org_id: Optional[str] = None,
     ) -> None:
         """如果是第一条消息，更新对话标题"""
         conversation = await self.conversation_service.get_conversation(
-            conversation_id, user_id
+            conversation_id, user_id, org_id
         )
         if conversation["message_count"] == 1 and conversation["title"] == "新对话":
             new_title = content[:20] + ("..." if len(content) > 20 else "")
             await self.conversation_service.update_conversation(
-                conversation_id, user_id, new_title
+                conversation_id, user_id, new_title, org_id=org_id
             )

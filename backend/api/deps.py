@@ -4,9 +4,11 @@ FastAPI 依赖注入
 提供通用的依赖注入函数，如获取当前用户、数据库连接等。
 """
 
+from dataclasses import dataclass
 from typing import Annotated, Any, Optional
+from uuid import UUID
 
-from fastapi import Depends, Header
+from fastapi import Depends, Header, HTTPException, Request
 from loguru import logger
 
 from core.database import get_db
@@ -109,9 +111,77 @@ async def get_task_limit_service() -> Optional[TaskLimitService]:
         return None
 
 
+# ── Org 上下文 ─────────────────────────────────────────────
+
+
+@dataclass
+class OrgContext:
+    """企业上下文，由 X-Org-Id Header 决定"""
+
+    user_id: str
+    org_id: str | None = None       # None = 散客
+    org_role: str | None = None     # owner / admin / member / None
+
+
+async def get_org_context(
+    request: Request,
+    user_id: str = Depends(get_current_user_id),
+    db: Any = Depends(get_db),
+) -> OrgContext:
+    """
+    从 X-Org-Id Header 解析企业上下文。
+
+    - 无 Header → 散客模式（org_id=None）
+    - 有 Header → 校验 UUID 格式 → 校验企业状态 → 校验成员资格
+    """
+    raw_org_id = request.headers.get("X-Org-Id")
+    if not raw_org_id:
+        return OrgContext(user_id=user_id)
+
+    # 校验 UUID 格式
+    try:
+        UUID(raw_org_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="X-Org-Id 格式无效")
+
+    # 校验企业存在且活跃
+    org_result = (
+        db.table("organizations")
+        .select("status")
+        .eq("id", raw_org_id)
+        .single()
+        .execute()
+    )
+    if not org_result.data:
+        raise HTTPException(status_code=403, detail="企业不存在")
+    if org_result.data["status"] != "active":
+        raise HTTPException(status_code=403, detail="该企业已被停用")
+
+    # 校验用户是该企业的有效成员
+    member = (
+        db.table("org_members")
+        .select("role, status")
+        .eq("org_id", raw_org_id)
+        .eq("user_id", user_id)
+        .single()
+        .execute()
+    )
+    if not member.data:
+        raise HTTPException(status_code=403, detail="您不是该企业成员")
+    if member.data["status"] != "active":
+        raise HTTPException(status_code=403, detail="您在该企业中已被禁用")
+
+    return OrgContext(
+        user_id=user_id,
+        org_id=raw_org_id,
+        org_role=member.data["role"],
+    )
+
+
 # 类型别名，简化依赖注入的使用
 CurrentUserId = Annotated[str, Depends(get_current_user_id)]
 CurrentUser = Annotated[dict, Depends(get_current_user)]
 OptionalUserId = Annotated[Optional[str], Depends(get_optional_user_id)]
 Database = Annotated[Any, Depends(get_db)]
+OrgCtx = Annotated[OrgContext, Depends(get_org_context)]
 TaskLimitSvc = Annotated[Optional[TaskLimitService], Depends(get_task_limit_service)]

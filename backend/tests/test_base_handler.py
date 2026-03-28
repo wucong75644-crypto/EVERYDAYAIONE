@@ -364,14 +364,12 @@ class TestBaseHandlerCredits:
         handler._confirm_deduct("tx_123")
 
     def test_refund_credits_success(self, handler, mock_db):
-        """测试：退回积分成功"""
-        tx_data = {
-            "id": "tx_123",
+        """测试：退回积分成功（原子RPC）"""
+        mock_db.set_rpc_result("atomic_refund_credits", {
+            "refunded": True,
             "user_id": "user_123",
-            "amount": 10,
-            "status": "pending",
-        }
-        mock_db.set_table_data("credit_transactions", [tx_data])
+            "amount": 10
+        })
 
         # 应该不抛异常
         handler._refund_credits("tx_123")

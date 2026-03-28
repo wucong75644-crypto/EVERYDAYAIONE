@@ -55,6 +55,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
 
     def __init__(self, db):
         self.db = db
+        self.org_id: str | None = None
 
     @property
     @abstractmethod
@@ -208,10 +209,14 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
         Returns:
             标准 task_data 字典
         """
+        # 从 request_params 提取 org_id（路由层注入），不存入 request_params
+        org_id = request_params.pop("_org_id", None) if request_params else None
+
         task_data = {
             "external_task_id": task_id,
             "conversation_id": conversation_id,
             "user_id": user_id,
+            "org_id": org_id,
             "type": task_type,
             "status": status,
             "model_id": model_id,

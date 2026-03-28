@@ -11,7 +11,7 @@ from fastapi import APIRouter, Path, Request
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from api.deps import CurrentUser, Database
+from api.deps import CurrentUser, Database, OrgCtx
 from core.exceptions import (
     AppException,
     NotFoundError,
@@ -37,7 +37,7 @@ router = APIRouter(prefix="/tasks", tags=["任务管理"])
 @limiter.limit("30/minute")
 async def get_pending_tasks(
     request: Request,
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     db: Database,
 ) -> Dict[str, Any]:
     """
@@ -47,42 +47,35 @@ async def get_pending_tasks(
     - 进行中的任务 (status in ['pending', 'running'])
     - 最近 5 分钟内终结的任务 (status in ['completed', 'failed'])，包括所有类型
 
-    这样设计的原因：
-    - 页面刷新期间任务可能刚好完成/失败
-    - 前端需要知道这些任务的最终状态，以便：
-      - 聊天任务：避免用户消息"莫名其妙消失"
-      - 媒体任务：清理缓存触发消息重新加载
-
     速率限制：每分钟最多 30 次请求
     """
     try:
-        # 计算 5 分钟前的时间点
         cutoff_time = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
 
+        def _apply_org(q):
+            if ctx.org_id:
+                return q.eq("org_id", ctx.org_id)
+            return q.is_("org_id", "null")
+
+        task_fields = (
+            "id, external_task_id, client_task_id, conversation_id, type, status, "
+            "request_params, credits_locked, placeholder_message_id, "
+            "placeholder_created_at, started_at, last_polled_at, "
+            "accumulated_content, model_id, error_message, assistant_message_id"
+        )
+
         # 查询进行中的任务
-        pending_response = db.table("tasks").select(
-            "id, external_task_id, client_task_id, conversation_id, type, status, "
-            "request_params, credits_locked, placeholder_message_id, "
-            "placeholder_created_at, started_at, last_polled_at, "
-            "accumulated_content, model_id, error_message, assistant_message_id"
-        ).eq("user_id", current_user["id"]).in_(
-            "status", ["pending", "running"]
-        ).order("started_at", desc=False).execute()
+        pending_q = db.table("tasks").select(task_fields).eq(
+            "user_id", ctx.user_id
+        ).in_("status", ["pending", "running"])
+        pending_response = _apply_org(pending_q).order("started_at", desc=False).execute()
 
-        # 查询最近 5 分钟内终结的任务（包括所有类型）
-        # 前端需要知道刷新期间完成的任务，以便清理缓存触发重新加载
-        recent_completed_response = db.table("tasks").select(
-            "id, external_task_id, client_task_id, conversation_id, type, status, "
-            "request_params, credits_locked, placeholder_message_id, "
-            "placeholder_created_at, started_at, last_polled_at, "
-            "accumulated_content, model_id, error_message, assistant_message_id"
-        ).eq("user_id", current_user["id"]).in_(
-            "status", ["completed", "failed"]
-        ).gte(
-            "completed_at", cutoff_time
-        ).order("started_at", desc=False).execute()
+        # 查询最近 5 分钟内终结的任务
+        completed_q = db.table("tasks").select(task_fields).eq(
+            "user_id", ctx.user_id
+        ).in_("status", ["completed", "failed"]).gte("completed_at", cutoff_time)
+        recent_completed_response = _apply_org(completed_q).order("started_at", desc=False).execute()
 
-        # 合并结果
         all_tasks = pending_response.data + recent_completed_response.data
 
         return {
@@ -98,7 +91,7 @@ async def get_pending_tasks(
         raise
     except Exception as e:
         logger.error(
-            f"Get pending tasks failed | user_id={current_user['id']} | error={str(e)}"
+            f"Get pending tasks failed | user_id={ctx.user_id} | error={str(e)}"
         )
         raise AppException(
             code="GET_PENDING_TASKS_ERROR",
@@ -112,15 +105,20 @@ async def get_pending_tasks(
 async def get_chat_task_content(
     request: Request,
     task_id: str,
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     db: Database,
 ) -> Dict[str, Any]:
     """获取 chat 类型任务的当前状态和累积内容"""
     try:
-        task = db.table("tasks").select(
+        q = db.table("tasks").select(
             "id, status, accumulated_content, error_message, completed_at, "
             "conversation_id, assistant_message_id"
-        ).eq("id", task_id).eq("user_id", current_user["id"]).single().execute()
+        ).eq("id", task_id).eq("user_id", ctx.user_id)
+        if ctx.org_id:
+            q = q.eq("org_id", ctx.org_id)
+        else:
+            q = q.is_("org_id", "null")
+        task = q.single().execute()
 
         if not task.data:
             raise NotFoundError(resource="任务", resource_id=task_id)
@@ -144,7 +142,7 @@ async def get_chat_task_content(
     except Exception as e:
         logger.error(
             f"Get chat task content failed | task_id={task_id} | "
-            f"user_id={current_user['id']} | error={str(e)}"
+            f"user_id={ctx.user_id} | error={str(e)}"
         )
         raise AppException(
             code="GET_CHAT_TASK_CONTENT_ERROR",
@@ -157,7 +155,7 @@ async def get_chat_task_content(
 @limiter.limit("60/minute")
 async def cancel_task_by_message_id(
     request: Request,
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     db: Database,
     message_id: str = Path(
         ...,
@@ -167,22 +165,19 @@ async def cancel_task_by_message_id(
 ) -> Dict[str, Any]:
     """
     通过消息 ID 取消关联的后台任务
-
-    用于用户删除 streaming/pending 占位符消息时，清理 tasks 表中的关联记录，
-    防止刷新页面后占位符重新出现。
-
-    匹配规则：查找 placeholder_message_id 或 assistant_message_id 等于 message_id
-    且状态为 pending/running 的任务，将其标记为 failed。
     """
     try:
-        # 查找关联任务（通过 placeholder_message_id 或 assistant_message_id）
-        # 只取消属于当前用户且仍在进行中的任务
         for field in ("placeholder_message_id", "assistant_message_id"):
-            result = db.table("tasks").select("id, external_task_id").eq(
+            q = db.table("tasks").select("id, external_task_id").eq(
                 field, message_id
-            ).eq("user_id", current_user["id"]).in_(
+            ).eq("user_id", ctx.user_id).in_(
                 "status", ["pending", "running"]
-            ).execute()
+            )
+            if ctx.org_id:
+                q = q.eq("org_id", ctx.org_id)
+            else:
+                q = q.is_("org_id", "null")
+            result = q.execute()
 
             if result.data:
                 for task in result.data:
@@ -194,7 +189,7 @@ async def cancel_task_by_message_id(
 
                     logger.info(
                         f"Task cancelled by message deletion | task_id={task['id']} | "
-                        f"message_id={message_id} | user_id={current_user['id']}"
+                        f"message_id={message_id} | user_id={ctx.user_id}"
                     )
 
                 return {"success": True, "cancelled_count": len(result.data)}
@@ -210,7 +205,7 @@ async def cancel_task_by_message_id(
     except Exception as e:
         logger.error(
             f"Cancel task by message_id failed | message_id={message_id} | "
-            f"user_id={current_user['id']} | error={str(e)}"
+            f"user_id={ctx.user_id} | error={str(e)}"
         )
         raise AppException(
             code="CANCEL_TASK_BY_MESSAGE_ERROR",
@@ -223,7 +218,7 @@ async def cancel_task_by_message_id(
 @limiter.limit("60/minute")
 async def mark_task_failed(
     req: Request,
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     db: Database,
     external_task_id: str = Path(
         ...,
@@ -235,25 +230,30 @@ async def mark_task_failed(
     """
     手动标记任务为失败状态
 
-    用于前端超时或用户主动取消任务。
-
     速率限制：每分钟最多 60 次请求
     """
     try:
-        # 验证任务属于当前用户
-        task = db.table("tasks").select("id").eq(
+        # 验证任务属于当前用户 + org 隔离
+        q = db.table("tasks").select("id").eq(
             "external_task_id", external_task_id
-        ).eq("user_id", current_user["id"]).single().execute()
+        ).eq("user_id", ctx.user_id)
+        if ctx.org_id:
+            q = q.eq("org_id", ctx.org_id)
+        else:
+            q = q.is_("org_id", "null")
+        task = q.single().execute()
 
         if not task.data:
             raise NotFoundError(resource="任务", resource_id=external_task_id)
 
-        # 更新状态
+        # 更新状态（带 user_id 过滤防越权）
         db.table("tasks").update({
             "status": "failed",
             "error_message": request.reason,
             "completed_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("external_task_id", external_task_id).execute()
+        }).eq("external_task_id", external_task_id).eq(
+            "user_id", ctx.user_id
+        ).execute()
 
         return {"success": True, "message": "任务已标记为失败"}
     except (
@@ -266,7 +266,7 @@ async def mark_task_failed(
     except Exception as e:
         logger.error(
             f"Mark task failed error | external_task_id={external_task_id} | "
-            f"user_id={current_user['id']} | reason={request.reason} | error={str(e)}"
+            f"user_id={ctx.user_id} | reason={request.reason} | error={str(e)}"
         )
         raise AppException(
             code="MARK_TASK_FAILED_ERROR",

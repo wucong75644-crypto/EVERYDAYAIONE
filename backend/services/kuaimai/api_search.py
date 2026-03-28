@@ -20,6 +20,13 @@ _MAX_RESULTS = 5
 # 场景指南文档（P1/P2 易混淆决策指南）
 # 从 ERP_ROUTING_PROMPT 迁移，按需加载而非全部塞进系统提示词
 _SCENARIO_DOCS: dict[str, str] = {
+    "订单查询": (
+        "订单查询有3个action，按场景选择：\n"
+        "- 查全平台全状态订单（含淘宝/1688，含待审核/待付款） → outstock_query\n"
+        "- 需要拼多多订单号(tid)和金额(payment) → outstock_order_query（仅已发货或发货流程中的订单，不含淘宝/1688）\n"
+        "- 需要收货地址（非淘宝/1688） → order_list\n"
+        "- 默认推荐 outstock_query，覆盖最全"
+    ),
     "商品查询": (
         "商品查询action选择指南：\n"
         "- 搜商品/商品列表 → product_list（支持状态/日期筛选）\n"
@@ -63,7 +70,7 @@ _SCENARIO_DOCS: dict[str, str] = {
     ),
     "统计": (
         "统计类汇总策略：\n"
-        "- 今天成交多少钱 → 需翻页拉明细算payment总和，不能只看total\n"
+        "- 今天成交多少钱 → outstock_query 翻页拉明细算payment总和，不能只看total；拼多多无payment，需用outstock_order_query（仅已发货订单）\n"
         "- 退货率 → 订单total ÷ 退货total\n"
         "- 各仓库库存 → 先 warehouse_list 再逐仓 stock_status(warehouse_id=XX)\n"
         "- 各店铺XX → 先 shop_list 再逐店铺查\n"
@@ -77,7 +84,7 @@ _SCENARIO_DOCS: dict[str, str] = {
     ),
     "多步查询": (
         "需要先查ID再查详情的多步链路：\n"
-        "- 某订单的快递 → 先 order_list(order_id=XX) 拿 system_id → "
+        "- 某订单的快递 → 先 outstock_query(order_id=XX) 拿 system_id → "
         "再 express_query(system_id=XX)\n"
         "- 某采购单收货了没 → 先 purchase_order_detail → "
         "再 warehouse_entry_list 关联查询\n"

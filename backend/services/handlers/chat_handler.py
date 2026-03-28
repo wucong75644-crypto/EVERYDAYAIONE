@@ -351,6 +351,7 @@ class ChatHandler(ChatRoutingMixin, ChatStreamSupportMixin, ChatContextMixin, Ba
                 amount=credits_consumed,
                 reason=f"Chat: {model_id}",
                 change_type="conversation_cost",
+                org_id=self.org_id,
             )
         return credits_consumed
 

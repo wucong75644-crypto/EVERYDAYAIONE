@@ -12,19 +12,26 @@ from loguru import logger
 
 
 
-def check_sync_health(db, sync_types: list[str]) -> str:
+def _apply_org(q, org_id: str | None):
+    """给查询追加 org_id 过滤"""
+    if org_id:
+        return q.eq("org_id", org_id)
+    return q.is_("org_id", "null")
+
+
+def check_sync_health(db, sync_types: list[str], org_id: str | None = None) -> str:
     """检查同步健康状态，返回警告文本（无异常返回空字符串）
 
     设计文档 §6.0：error_count>=3 或 last_run_at>5分钟 时附加警告。
     """
     warnings: list[str] = []
     try:
-        result = (
+        q = (
             db.table("erp_sync_state")
             .select("sync_type,last_run_at,error_count,is_initial_done")
             .in_("sync_type", sync_types)
-            .execute()
         )
+        result = _apply_org(q, org_id).execute()
         now = datetime.now(timezone.utc)
         for row in result.data or []:
             st = row["sync_type"]
@@ -65,6 +72,7 @@ def cutoff_iso(days: int) -> str:
 def query_doc_items(
     db, doc_type: str, code: str, days: int,
     extra_filters: dict | None = None,
+    org_id: str | None = None,
 ) -> list[dict]:
     """查询 erp_document_items（days>90 自动 UNION 冷表）"""
     cutoff = cutoff_iso(days)
@@ -76,13 +84,12 @@ def query_doc_items(
             .eq("doc_type", doc_type)
             .or_(f"outer_id.eq.{code},sku_outer_id.eq.{code}")
             .gte("doc_created_at", cutoff)
-            .order("doc_created_at", desc=True)
-            .limit(500)
         )
+        q = _apply_org(q, org_id)
         if extra_filters:
             for k, v in extra_filters.items():
                 q = q.eq(k, v)
-        return q.execute().data or []
+        return q.order("doc_created_at", desc=True).limit(500).execute().data or []
 
     try:
         rows = _do_query("erp_document_items")

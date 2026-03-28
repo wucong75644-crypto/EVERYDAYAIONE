@@ -54,12 +54,24 @@ def sort_and_assign_index(
 async def _write_doc_group_txn(
     conn, doc_type: str, doc_id: str, doc_rows: list[dict],
 ) -> None:
-    """在已有事务连接上执行单个单据组的删+插（消除深层嵌套）"""
-    await conn.execute(
-        "DELETE FROM erp_document_items "
-        "WHERE doc_type = %s AND doc_id = %s",
-        (doc_type, doc_id),
-    )
+    """在已有事务连接上执行单个单据组的删+插（消除深层嵌套）
+
+    注意：DELETE 按 org_id 过滤（从行数据提取），防止跨企业误删。
+    """
+    # 从行数据提取 org_id（所有行的 org_id 相同）
+    org_id = doc_rows[0].get("org_id") if doc_rows else None
+    if org_id is not None:
+        await conn.execute(
+            "DELETE FROM erp_document_items "
+            "WHERE doc_type = %s AND doc_id = %s AND org_id = %s",
+            (doc_type, doc_id, org_id),
+        )
+    else:
+        await conn.execute(
+            "DELETE FROM erp_document_items "
+            "WHERE doc_type = %s AND doc_id = %s AND org_id IS NULL",
+            (doc_type, doc_id),
+        )
     for row in doc_rows:
         cols = list(row.keys())
         vals = []
@@ -77,7 +89,7 @@ async def _write_doc_group_txn(
         )
 
 
-async def upsert_document_items(db, rows: list[dict[str, Any]]) -> int:
+async def upsert_document_items(db, rows: list[dict[str, Any]], org_id: str | None = None) -> int:
     """
     事务性写入 erp_document_items（按单据分组：删旧→插新）
 
@@ -90,6 +102,11 @@ async def upsert_document_items(db, rows: list[dict[str, Any]]) -> int:
     """
     if not rows:
         return 0
+
+    # 注入 org_id
+    if org_id is not None:
+        for row in rows:
+            row["org_id"] = org_id
 
     # 按 (doc_type, doc_id) 分组
     groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
@@ -131,6 +148,7 @@ def run_aggregation(
     affected_keys: list[tuple[str, str]],
     *,
     pending: set[tuple[str, str]] | None = None,
+    org_id: str | None = None,
 ) -> None:
     """
     将受影响的 (outer_id, stat_date) 推入内存队列，
@@ -144,34 +162,36 @@ def run_aggregation(
 
     if aggregation_queue is not None:
         for key in affected_keys:
+            # 扩展为三元组 (outer_id, stat_date, org_id)
+            full_key = (key[0], key[1], org_id)
             # 幂等去重：key 已在队列中等待处理，无需重复入队
             if pending is not None:
-                if key in pending:
+                if full_key in pending:
                     continue
-                pending.add(key)
+                pending.add(full_key)
             try:
-                aggregation_queue.put_nowait(key)
+                aggregation_queue.put_nowait(full_key)
             except asyncio.QueueFull:
                 # 10000 个唯一 key 都在排队 — 真正的背压，记录并跳过
                 if pending is not None:
-                    pending.discard(key)
+                    pending.discard(full_key)
                 logger.warning(
                     f"Aggregation queue full (10000 unique keys pending), "
                     f"skipping key={key} — daily reaggregation will catch up"
                 )
     else:
-        asyncio.get_running_loop().create_task(_run_aggregation_async(db, affected_keys))
+        asyncio.get_running_loop().create_task(_run_aggregation_async(db, affected_keys, org_id=org_id))
 
 
 async def _run_aggregation_async(
-    db, affected_keys: list[tuple[str, str]],
+    db, affected_keys: list[tuple[str, str]], org_id: str | None = None,
 ) -> None:
     """降级：异步逐条聚合"""
     for outer_id, stat_date in affected_keys:
         try:
             await db.rpc(
                 "erp_aggregate_daily_stats",
-                {"p_outer_id": outer_id, "p_stat_date": stat_date},
+                {"p_outer_id": outer_id, "p_stat_date": stat_date, "p_org_id": org_id},
             ).execute()
         except Exception as e:
             logger.error(

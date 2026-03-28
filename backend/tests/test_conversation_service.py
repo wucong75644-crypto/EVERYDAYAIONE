@@ -48,6 +48,7 @@ def create_test_conversation(
     conversation_id: str = None,
     user_id: str = None,
     title: str = "测试对话",
+    org_id: str = None,
 ) -> dict:
     """创建测试对话数据"""
     from datetime import datetime, timezone
@@ -58,6 +59,7 @@ def create_test_conversation(
         "model_id": "gpt-4",
         "message_count": 0,
         "credits_consumed": 0,
+        "org_id": org_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -129,6 +131,7 @@ class TestConversationServiceGet:
         mock_query = MagicMock()
         mock_query.select.return_value = mock_query
         mock_query.eq.return_value = mock_query
+        mock_query.is_.return_value = mock_query
         mock_query.execute.return_value = MagicMock(data=[conversation])
         mock_db.table = MagicMock(return_value=mock_query)
 
@@ -148,6 +151,7 @@ class TestConversationServiceGet:
         mock_query = MagicMock()
         mock_query.select.return_value = mock_query
         mock_query.eq.return_value = mock_query
+        mock_query.is_.return_value = mock_query
         mock_query.execute.return_value = MagicMock(data=[])
         mock_db.table = MagicMock(return_value=mock_query)
 
@@ -159,21 +163,17 @@ class TestConversationServiceGet:
             )
 
     @pytest.mark.asyncio
-    async def test_get_conversation_permission_denied(self, conversation_service, mock_db):
-        """测试：无权访问时抛出 PermissionDeniedError"""
-        # Arrange
+    async def test_get_conversation_other_user_not_found(self, conversation_service, mock_db):
+        """测试：其他用户访问时返回 NotFoundError（SQL 层过滤，不暴露存在性）"""
+        # Arrange: 使用 MockSupabaseClient，user_id 不匹配时查询结果为空
         owner = create_test_user(user_id="owner_123")
         other_user = create_test_user(user_id="other_123")
         conversation = create_test_conversation(user_id=owner["id"])
 
-        mock_query = MagicMock()
-        mock_query.select.return_value = mock_query
-        mock_query.eq.return_value = mock_query
-        mock_query.execute.return_value = MagicMock(data=[conversation])
-        mock_db.table = MagicMock(return_value=mock_query)
+        mock_db.set_table_data("conversations", [conversation])
 
         # Act & Assert
-        with pytest.raises(PermissionDeniedError):
+        with pytest.raises(NotFoundError):
             await conversation_service.get_conversation(
                 conversation_id=conversation["id"],
                 user_id=other_user["id"]
@@ -186,6 +186,7 @@ class TestConversationServiceGet:
         mock_query = MagicMock()
         mock_query.select.return_value = mock_query
         mock_query.eq.return_value = mock_query
+        mock_query.is_.return_value = mock_query
         mock_query.execute.side_effect = Exception("Database error")
         mock_db.table = MagicMock(return_value=mock_query)
 
@@ -241,6 +242,7 @@ class TestConversationServiceUpdate:
         mock_query = MagicMock()
         mock_query.select.return_value = mock_query
         mock_query.eq.return_value = mock_query
+        mock_query.is_.return_value = mock_query
         mock_query.update.return_value = mock_query
         mock_query.execute.side_effect = [
             MagicMock(data=[conversation]),  # get_conversation 调用
@@ -276,6 +278,7 @@ class TestConversationServiceDelete:
         mock_query = MagicMock()
         mock_query.select.return_value = mock_query
         mock_query.eq.return_value = mock_query
+        mock_query.is_.return_value = mock_query
         mock_query.delete.return_value = mock_query
         mock_query.execute.side_effect = [
             MagicMock(data=[conversation]),  # get_conversation 调用
@@ -291,3 +294,103 @@ class TestConversationServiceDelete:
 
         # Assert
         assert result is True
+
+
+# ── 企业模式（org_id）隔离测试 ─────────────────────────────
+
+
+class TestConversationServiceOrgIsolation:
+    """企业模式 org_id 隔离测试（使用 MockSupabaseClient 真实过滤）"""
+
+    @pytest.fixture
+    def svc(self, mock_db):
+        return ConversationService(mock_db)
+
+    @pytest.mark.asyncio
+    async def test_create_with_org_id(self, svc, mock_db):
+        """企业模式创建对话带 org_id"""
+        org_id = "org-001"
+        user_id = "user-001"
+        conv = create_test_conversation(user_id=user_id, org_id=org_id, title="企业对话")
+        mock_db.set_table_data("conversations", [conv])
+
+        # MagicMock for insert (insert 不走 _apply_filters)
+        mock_query = MagicMock()
+        mock_query.insert.return_value = mock_query
+        mock_query.execute.return_value = MagicMock(data=[conv])
+        mock_db.table = MagicMock(return_value=mock_query)
+
+        result = await svc.create_conversation(
+            user_id=user_id, title="企业对话", org_id=org_id,
+        )
+        assert result["title"] == "企业对话"
+        # 验证 insert 被调用时包含 org_id
+        insert_data = mock_query.insert.call_args[0][0]
+        assert insert_data["org_id"] == org_id
+
+    @pytest.mark.asyncio
+    async def test_get_org_conversation_success(self, svc, mock_db):
+        """企业成员能查到自己企业的对话"""
+        org_id = "org-001"
+        user_id = "user-001"
+        conv = create_test_conversation(user_id=user_id, org_id=org_id)
+        mock_db.set_table_data("conversations", [conv])
+
+        result = await svc.get_conversation(conv["id"], user_id, org_id=org_id)
+        assert result["id"] == conv["id"]
+
+    @pytest.mark.asyncio
+    async def test_get_org_conversation_wrong_org(self, svc, mock_db):
+        """不同企业看不到对方的对话"""
+        conv = create_test_conversation(user_id="user-001", org_id="org-001")
+        mock_db.set_table_data("conversations", [conv])
+
+        with pytest.raises(NotFoundError):
+            await svc.get_conversation(conv["id"], "user-001", org_id="org-999")
+
+    @pytest.mark.asyncio
+    async def test_get_org_conversation_personal_cant_see_org(self, svc, mock_db):
+        """散客看不到企业对话（org_id IS NULL 过滤不到 org_id=org-001 的数据）"""
+        conv = create_test_conversation(user_id="user-001", org_id="org-001")
+        mock_db.set_table_data("conversations", [conv])
+
+        with pytest.raises(NotFoundError):
+            await svc.get_conversation(conv["id"], "user-001", org_id=None)
+
+    @pytest.mark.asyncio
+    async def test_get_org_conversation_org_cant_see_personal(self, svc, mock_db):
+        """企业模式看不到散客对话（org_id=org-001 过滤不到 org_id=None 的数据）"""
+        conv = create_test_conversation(user_id="user-001", org_id=None)
+        mock_db.set_table_data("conversations", [conv])
+
+        with pytest.raises(NotFoundError):
+            await svc.get_conversation(conv["id"], "user-001", org_id="org-001")
+
+    @pytest.mark.asyncio
+    async def test_list_org_conversations_isolated(self, svc, mock_db):
+        """对话列表按 org_id 隔离"""
+        user_id = "user-001"
+        conv_personal = create_test_conversation(user_id=user_id, org_id=None, title="散客对话")
+        conv_org1 = create_test_conversation(user_id=user_id, org_id="org-001", title="企业1对话")
+        conv_org2 = create_test_conversation(user_id=user_id, org_id="org-002", title="企业2对话")
+        mock_db.set_table_data("conversations", [conv_personal, conv_org1, conv_org2])
+
+        # 散客模式：只看到散客对话
+        result = await svc.get_conversation_list(user_id, org_id=None)
+        assert len(result["conversations"]) == 1
+        assert result["conversations"][0]["title"] == "散客对话"
+
+        # 企业1模式：只看到企业1对话
+        mock_db.set_table_data("conversations", [conv_personal, conv_org1, conv_org2])
+        result = await svc.get_conversation_list(user_id, org_id="org-001")
+        assert len(result["conversations"]) == 1
+        assert result["conversations"][0]["title"] == "企业1对话"
+
+    @pytest.mark.asyncio
+    async def test_delete_org_conversation_wrong_org_rejected(self, svc, mock_db):
+        """不能删除其他企业的对话"""
+        conv = create_test_conversation(user_id="user-001", org_id="org-001")
+        mock_db.set_table_data("conversations", [conv])
+
+        with pytest.raises(NotFoundError):
+            await svc.delete_conversation(conv["id"], "user-001", org_id="org-999")

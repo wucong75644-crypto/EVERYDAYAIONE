@@ -16,6 +16,7 @@ from starlette.testclient import TestClient
 from datetime import datetime, timezone
 
 from schemas.message import GenerationType, Message, TextPart, MessageOperation
+from api.deps import OrgContext
 
 
 def _make_message(msg_id="msg_1"):
@@ -191,7 +192,7 @@ class TestPrefetchedSummaryInjection:
                 request=_make_request(),
                 conversation_id="c1",
                 body=body,
-                current_user={"id": "u1"},
+                ctx=OrgContext(user_id="u1"),
                 db=MagicMock(),
                 task_limit_service=None,
             )
@@ -223,7 +224,7 @@ class TestPrefetchedSummaryInjection:
                 request=_make_request(),
                 conversation_id="c1",
                 body=body,
-                current_user={"id": "u1"},
+                ctx=OrgContext(user_id="u1"),
                 db=MagicMock(),
                 task_limit_service=None,
             )
@@ -291,7 +292,7 @@ class TestUserLocationInjection:
                 request=request,
                 conversation_id="c1",
                 body=body,
-                current_user={"id": "u1"},
+                ctx=OrgContext(user_id="u1"),
                 db=MagicMock(),
                 task_limit_service=None,
             )
@@ -325,7 +326,7 @@ class TestUserLocationInjection:
                 request=request,
                 conversation_id="c1",
                 body=body,
-                current_user={"id": "u1"},
+                ctx=OrgContext(user_id="u1"),
                 db=MagicMock(),
                 task_limit_service=None,
             )
@@ -359,7 +360,7 @@ class TestUserLocationInjection:
                 request=request,
                 conversation_id="c1",
                 body=body,
-                current_user={"id": "u1"},
+                ctx=OrgContext(user_id="u1"),
                 db=MagicMock(),
                 task_limit_service=None,
             )

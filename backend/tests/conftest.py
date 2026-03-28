@@ -161,6 +161,12 @@ class MockSupabaseTable:
         self._lte_filters[field] = value
         return self
 
+    def is_(self, field: str, value: str):
+        """IS NULL 过滤：.is_("org_id", "null") → WHERE org_id IS NULL"""
+        if value == "null" or value is None:
+            self._filters[field] = None
+        return self
+
     def or_(self, filter_str: str):
         """OR 过滤（简单实现：解析 field.eq.value 格式）"""
         self._or_filters.append(filter_str)
@@ -173,6 +179,11 @@ class MockSupabaseTable:
     def limit(self, count: int):
         """限制结果数量"""
         self._limit = count
+        return self
+
+    def range(self, start: int, end: int):
+        """分页范围（简化实现：转为 offset + limit）"""
+        self._limit = end - start + 1
         return self
 
     def single(self):

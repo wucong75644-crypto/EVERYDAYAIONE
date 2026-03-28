@@ -229,6 +229,9 @@ class Settings(BaseSettings):
     ip_location_timeout: float = 3.0             # 高德 API 请求超时（秒）
     ip_location_cache_ttl: int = 86400           # IP→城市 Redis 缓存 TTL（秒，默认 24h）
 
+    # 企业配置加密密钥（AES-256-GCM，32 字节 base64 编码）
+    org_config_encrypt_key: Optional[str] = None
+
     # Sentry 错误监控配置
     sentry_dsn: Optional[str] = None
     environment: str = "development"

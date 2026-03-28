@@ -65,6 +65,7 @@ class CreditMixin:
         user_id: str,
         amount: int,
         reason: str = "",
+        org_id: str | None = None,
     ) -> str:
         """
         预扣积分（锁定）
@@ -119,7 +120,8 @@ class CreditMixin:
             "amount": amount,
             "type": "lock",
             "status": "pending",
-            "reason": reason
+            "reason": reason,
+            "org_id": org_id,
         }).execute()
 
         logger.info(
@@ -144,48 +146,24 @@ class CreditMixin:
         logger.info(f"Credits confirmed | transaction_id={transaction_id}")
 
     def _refund_credits(self, transaction_id: str) -> None:
-        """
-        退回积分（任务失败时调用）
+        """退回积分（原子操作：CAS检查+退回余额+更新状态在单个SQL事务内完成）"""
+        try:
+            result = self.db.rpc(
+                'atomic_refund_credits',
+                {'p_transaction_id': transaction_id}
+            ).execute()
 
-        Args:
-            transaction_id: 事务 ID
-        """
-        # 1. 获取事务信息
-        tx_result = self.db.table("credit_transactions").select("*").eq(
-            "id", transaction_id
-        ).maybe_single().execute()
-
-        if not tx_result.data:
-            logger.warning(f"Refund failed: transaction not found | id={transaction_id}")
-            return
-
-        tx = tx_result.data
-        if tx["status"] != "pending":
-            logger.warning(
-                f"Refund failed: status not pending | "
-                f"id={transaction_id} | status={tx['status']}"
-            )
-            return
-
-        # 2. 退回积分（原子增加）
-        self.db.rpc(
-            'refund_credits',
-            {
-                'p_user_id': tx["user_id"],
-                'p_amount': tx["amount"]
-            }
-        ).execute()
-
-        # 3. 更新事务状态
-        self.db.table("credit_transactions").update({
-            "status": "refunded",
-            "confirmed_at": datetime.now(timezone.utc).isoformat()
-        }).eq("id", transaction_id).execute()
-
-        logger.info(
-            f"Credits refunded | transaction_id={transaction_id} | "
-            f"user_id={tx['user_id']} | amount={tx['amount']}"
-        )
+            data = result.data
+            if data and data.get('refunded'):
+                logger.info(
+                    f"Credits refunded | transaction_id={transaction_id} | "
+                    f"user_id={data.get('user_id')} | amount={data.get('amount')}"
+                )
+            else:
+                reason = data.get('reason', 'unknown') if data else 'no_response'
+                logger.warning(f"Refund skipped | tx={transaction_id} | reason={reason}")
+        except Exception as e:
+            logger.error(f"Failed to refund credits | tx={transaction_id} | error={e}")
 
     def _deduct_directly(
         self,
@@ -193,6 +171,7 @@ class CreditMixin:
         amount: int,
         reason: str,
         change_type: str,
+        org_id: str | None = None,
     ) -> int:
         """
         直接扣除积分（Chat 完成后使用）
@@ -216,7 +195,8 @@ class CreditMixin:
                     'p_user_id': user_id,
                     'p_amount': amount,
                     'p_reason': reason,
-                    'p_change_type': change_type
+                    'p_change_type': change_type,
+                    'p_org_id': org_id,
                 }
             ).execute()
 

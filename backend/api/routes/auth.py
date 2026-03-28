@@ -9,6 +9,8 @@ from fastapi import APIRouter, Depends
 from api.deps import CurrentUser, Database
 from schemas.auth import (
     LoginResponse,
+    OrgLoginRequest,
+    OrgLoginResponse,
     PasswordLoginRequest,
     PhoneLoginRequest,
     PhoneRegisterRequest,
@@ -158,6 +160,26 @@ async def login_by_password(
     except Exception as e:
         # 业务异常会被全局异常处理器捕获
         raise
+
+
+@router.post("/login/org", response_model=OrgLoginResponse, summary="企业密码登录")
+async def login_by_org(
+    request: OrgLoginRequest,
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    """
+    企业密码登录
+
+    - **org_name**: 企业全称（精确匹配）
+    - **phone**: 手机号
+    - **password**: 密码
+    """
+    result = await auth_service.login_by_org_password(
+        org_name=request.org_name,
+        phone=request.phone,
+        password=request.password,
+    )
+    return result
 
 
 @router.get("/me", response_model=UserResponse, summary="获取当前用户信息")
