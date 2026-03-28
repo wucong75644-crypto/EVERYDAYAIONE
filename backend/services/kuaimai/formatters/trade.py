@@ -216,6 +216,9 @@ def _format_order(order: Dict[str, Any]) -> str:
 
 def _format_shipment(item: Dict[str, Any]) -> str:
     """格式化出库/物流行"""
+    # statusName 优先（中文状态如"已发货"），覆盖 sysStatus 英文码
+    if item.get("statusName"):
+        item = {**item, "sysStatus": item["statusName"]}
     main = "- " + format_item_with_labels(
         item, _ORDER_LABELS, transforms=_ORDER_TRANSFORMS)
 
@@ -227,9 +230,15 @@ def _format_shipment(item: Dict[str, Any]) -> str:
                  or sub.get("itemOuterId") or "")
         num = sub.get("num", 0)
         outer_id = sub.get("sysOuterId") or sub.get("outerId") or ""
+        price = sub.get("price")
+        payment = sub.get("payment")
         parts = [f"    · {title} x{num}"]
         if outer_id:
             parts.append(f"编码: {outer_id}")
+        if price is not None:
+            parts.append(f"单价: ¥{price}")
+        if payment is not None:
+            parts.append(f"实付: ¥{payment}")
         sub_lines.append(" | ".join(parts))
 
     if sub_lines:
