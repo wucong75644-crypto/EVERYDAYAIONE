@@ -165,11 +165,13 @@ class TestMemberManagement:
     def test_list_members(self, db, svc):
         # _require_role: organizations + org_members
         self._setup_require_role(db, "member")
-        # 实际查询成员列表
+        # 实际查询成员列表（分步查：先 org_members 再 users）
         db.set_table("org_members", data=[{
             "user_id": "u1", "role": "owner", "status": "active",
-            "joined_at": "2026-01-01", "users": {"nickname": "张三", "phone": "13800138000"},
+            "joined_at": "2026-01-01",
         }])
+        # 分步查 users 表
+        db.set_table("users", data={"nickname": "张三", "phone": "13800138000"})
         members = svc.list_members("org-1", "u1")
         assert len(members) == 1
         assert members[0]["phone"] == "138****8000"
@@ -282,13 +284,14 @@ class TestInvitation:
 class TestListUserOrgs:
 
     def test_list_orgs(self, db, svc):
+        # 分步查：先 org_members 再 organizations
         db.set_table("org_members", data=[{
             "org_id": "org-1", "role": "member", "status": "active",
-            "organizations": {
-                "id": "org-1", "name": "测试企业",
-                "logo_url": None, "status": "active", "features": {},
-            },
         }])
+        db.set_table("organizations", data={
+            "id": "org-1", "name": "测试企业",
+            "logo_url": None, "status": "active", "features": {},
+        })
         orgs = svc.list_user_organizations("user-1")
         assert len(orgs) == 1
         assert orgs[0]["name"] == "测试企业"
@@ -296,10 +299,10 @@ class TestListUserOrgs:
     def test_list_orgs_excludes_suspended(self, db, svc):
         db.set_table("org_members", data=[{
             "org_id": "org-1", "role": "member", "status": "active",
-            "organizations": {
-                "id": "org-1", "name": "已停用", "logo_url": None,
-                "status": "suspended", "features": {},
-            },
         }])
+        db.set_table("organizations", data={
+            "id": "org-1", "name": "已停用", "logo_url": None,
+            "status": "suspended", "features": {},
+        })
         orgs = svc.list_user_organizations("user-1")
         assert len(orgs) == 0

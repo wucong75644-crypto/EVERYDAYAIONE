@@ -161,14 +161,21 @@ class OrgService:
 
         result = (
             self.db.table("org_members")
-            .select("user_id, role, status, joined_at, users(nickname, phone)")
+            .select("user_id, role, status, joined_at")
             .eq("org_id", org_id)
             .order("joined_at")
             .execute()
         )
         members = []
         for row in result.data or []:
-            user_info = row.get("users") or {}
+            # 分步查用户信息（兼容 LocalDB，不依赖 PostgREST 嵌套语法）
+            user_info = {}
+            try:
+                u = self.db.table("users").select("nickname, phone").eq("id", row["user_id"]).single().execute()
+                if u.data:
+                    user_info = u.data
+            except Exception:
+                pass
             phone = user_info.get("phone") or ""
             masked = f"{phone[:3]}****{phone[-4:]}" if len(phone) >= 7 else phone
             members.append({
@@ -442,18 +449,29 @@ class OrgService:
         """列出用户所属的所有企业"""
         result = (
             self.db.table("org_members")
-            .select("org_id, role, status, organizations(id, name, logo_url, status, features)")
+            .select("org_id, role, status")
             .eq("user_id", user_id)
             .eq("status", "active")
             .execute()
         )
         orgs = []
         for row in result.data or []:
-            org_info = row.get("organizations") or {}
+            # 分步查企业信息（兼容 LocalDB）
+            try:
+                org_result = (
+                    self.db.table("organizations")
+                    .select("id, name, logo_url, status, features")
+                    .eq("id", row["org_id"])
+                    .single()
+                    .execute()
+                )
+                org_info = org_result.data or {}
+            except Exception:
+                continue
             if org_info.get("status") != "active":
                 continue
             orgs.append({
-                "org_id": org_info["id"],
+                "org_id": str(org_info["id"]),
                 "name": org_info["name"],
                 "logo_url": org_info.get("logo_url"),
                 "role": row["role"],

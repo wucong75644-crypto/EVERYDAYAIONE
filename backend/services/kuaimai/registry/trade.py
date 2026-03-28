@@ -187,8 +187,8 @@ TRADE_REGISTRY = {
             "shop_ids": "店铺ID（多个逗号隔开，通过shop_list获取）。示例: 12345,67890",
             "status_list": "出库单状态列表（多个逗号隔开）。可选值: 10=待处理, 20=预处理完成, 30=发货中, 50=已发货, 70=已关闭, 90=已作废。示例: 50",
             "time_type": "时间类型（整数）。可选值: 1=创建时间, 2=发货时间, 3=付款时间, 4=下单时间, 5=承诺时间, 6=打印时间。示例: 1",
-            "start_date": "起始日期。格式: YYYY-MM-DD。示例: 2026-03-01",
-            "end_date": "结束日期。格式: YYYY-MM-DD。示例: 2026-03-15",
+            "start_date": "起始日期。格式: YYYY-MM-DD（系统自动转换为毫秒时间戳）。示例: 2026-03-01",
+            "end_date": "结束日期。格式: YYYY-MM-DD（系统自动转换为毫秒时间戳）。示例: 2026-03-15",
             "express_nos": "快递单号（多个逗号隔开）。示例: SF1234567890,YT9876543210",
             "wave_ids": "波次ID（多个逗号隔开）。示例: 10001,10002",
             "short_ids": "拣货单短ID（多个逗号隔开）。示例: S001,S002",
@@ -202,6 +202,8 @@ TRADE_REGISTRY = {
         param_hints={
             "order_id": "平台订单号。不确定是平台单号还是系统单号时优先用这个",
             "system_id": "ERP系统单号（16位数字）。用 order_id 查不到时改用这个",
+            "status_list": "出库单状态（注意：与order_list/outstock_query的status参数不同，这里用status_list，值为数字如50=已发货）",
+            "time_type": "时间类型（注意：与order_list/outstock_query不同，这里用整数1-6，不是字符串如pay_time）",
         },
         retry_alt_params={
             "order_id": "system_id",
