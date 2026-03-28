@@ -35,6 +35,7 @@ async def local_doc_query(
     doc_type: str | None = None,
     status: str | None = None,
     days: int = 30,
+    org_id: str | None = None,
 ) -> str:
     """多维度单据查询，返回完整信息含所有中转钥匙"""
     if not any([product_code, order_no, doc_code, express_no,
@@ -45,6 +46,7 @@ async def local_doc_query(
         rows = _execute_query(
             db, product_code, order_no, doc_code, express_no,
             supplier_name, shop_name, doc_type, status, days,
+            org_id=org_id,
         )
     except Exception as e:
         logger.error(f"local_doc_query failed | error={e}", exc_info=True)
@@ -52,7 +54,7 @@ async def local_doc_query(
 
     if not rows:
         types = [doc_type] if doc_type else ["order", "purchase", "aftersale"]
-        health = check_sync_health(db, types)
+        health = check_sync_health(db, types, org_id=org_id)
         return f"未查到匹配记录（近{days}天）\n{health}".strip()
 
     return _format_doc_results(db, rows)
@@ -69,12 +71,14 @@ def _execute_query(
     doc_type: str | None,
     status: str | None,
     days: int,
+    org_id: str | None = None,
 ) -> list[dict]:
     """构建并执行查询（热表 + 冷表 UNION）"""
+    from services.kuaimai.erp_local_helpers import _apply_org
     cutoff = cutoff_iso(days)
 
     def _query_table(table: str) -> list[dict]:
-        q = db.table(table).select("*")
+        q = _apply_org(db.table(table).select("*"), org_id)
         if product_code:
             q = q.or_(
                 f"outer_id.eq.{product_code},"

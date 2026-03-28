@@ -20,7 +20,7 @@ DO $$ BEGIN CREATE TYPE account_status AS ENUM ('active', 'disabled'); EXCEPTION
 DO $$ BEGIN CREATE TYPE model_type AS ENUM ('text', 'image', 'multimodal'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE model_status AS ENUM ('active', 'maintenance', 'coming_soon'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE message_role AS ENUM ('user', 'assistant', 'system'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE TYPE credits_change_type AS ENUM ('register_gift', 'admin_adjust', 'conversation_cost', 'image_generation_cost', 'daily_checkin', 'purchase', 'video_generation_cost', 'merge'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE credits_change_type AS ENUM ('register_gift', 'admin_adjust', 'conversation_cost', 'image_generation_cost', 'daily_checkin', 'purchase', 'video_generation_cost', 'merge', 'refund'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 -- ============================================================
 -- 2. 核心表
@@ -778,50 +778,62 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 退回积分
-CREATE OR REPLACE FUNCTION refund_credits(
-    p_user_id UUID,
-    p_amount INTEGER
-) RETURNS VOID AS $$
-BEGIN
-    UPDATE users SET credits = credits + p_amount, updated_at = NOW() WHERE id = p_user_id;
-END;
-$$ LANGUAGE plpgsql;
-
--- 原子扣除积分（带行锁）
-CREATE OR REPLACE FUNCTION deduct_credits(
-  p_user_id UUID,
-  p_amount INT,
-  p_description TEXT,
-  p_change_type TEXT
-) RETURNS INT AS $$
+-- 原子退款（CAS检查pending + 退回余额 + 更新状态，单事务防双倍退款）
+CREATE OR REPLACE FUNCTION atomic_refund_credits(
+    p_transaction_id UUID,
+    p_final_status TEXT DEFAULT 'refunded'
+) RETURNS JSONB AS $$
 DECLARE
-  v_current_credits INT;
-  v_new_balance INT;
+    v_user_id UUID;
+    v_amount INTEGER;
+    v_org_id UUID;
+    v_status TEXT;
 BEGIN
-  SELECT credits INTO v_current_credits FROM users WHERE id = p_user_id FOR UPDATE;
-  IF v_current_credits IS NULL THEN RAISE EXCEPTION 'User not found: %', p_user_id; END IF;
-  IF v_current_credits < p_amount THEN RAISE EXCEPTION 'Insufficient credits: current=%, required=%', v_current_credits, p_amount; END IF;
-  v_new_balance := v_current_credits - p_amount;
-  UPDATE users SET credits = v_new_balance WHERE id = p_user_id;
-  INSERT INTO credits_history (user_id, change_amount, balance_after, change_type, description)
-  VALUES (p_user_id, -p_amount, v_new_balance, p_change_type::credits_change_type, p_description);
-  RETURN v_new_balance;
+    -- CAS: 只有 pending 状态才能退款，同时锁行防并发
+    UPDATE credit_transactions
+    SET status = p_final_status, confirmed_at = NOW()
+    WHERE id = p_transaction_id AND status = 'pending'
+    RETURNING user_id, amount, org_id INTO v_user_id, v_amount, v_org_id;
+
+    IF v_user_id IS NULL THEN
+        SELECT status INTO v_status
+        FROM credit_transactions WHERE id = p_transaction_id;
+        IF v_status IS NULL THEN
+            RETURN jsonb_build_object('refunded', false, 'reason', 'not_found');
+        ELSE
+            RETURN jsonb_build_object('refunded', false, 'reason', 'status_' || v_status);
+        END IF;
+    END IF;
+
+    UPDATE users SET credits = credits + v_amount, updated_at = NOW()
+    WHERE id = v_user_id;
+
+    INSERT INTO credits_history (user_id, change_amount, balance_after, change_type, description, org_id)
+    SELECT v_user_id, v_amount,
+           (SELECT credits FROM users WHERE id = v_user_id),
+           'refund'::credits_change_type,
+           'Refund for transaction ' || p_transaction_id,
+           v_org_id;
+
+    RETURN jsonb_build_object('refunded', true, 'user_id', v_user_id, 'amount', v_amount);
 END;
 $$ LANGUAGE plpgsql;
 
--- 清理过期积分锁定
+-- 清理过期积分锁定（使用原子退款函数）
 CREATE OR REPLACE FUNCTION cleanup_expired_credit_locks() RETURNS INTEGER AS $$
 DECLARE
     v_count INTEGER := 0;
     v_tx RECORD;
+    v_result JSONB;
 BEGIN
     FOR v_tx IN
-        SELECT id, user_id, amount FROM credit_transactions WHERE status = 'pending' AND expires_at < NOW()
+        SELECT id FROM credit_transactions
+        WHERE status = 'pending' AND expires_at < NOW()
     LOOP
-        PERFORM refund_credits(v_tx.user_id, v_tx.amount);
-        UPDATE credit_transactions SET status = 'expired', confirmed_at = NOW() WHERE id = v_tx.id;
-        v_count := v_count + 1;
+        v_result := atomic_refund_credits(v_tx.id, 'expired');
+        IF (v_result->>'refunded')::boolean THEN
+            v_count := v_count + 1;
+        END IF;
     END LOOP;
     RETURN v_count;
 END;
@@ -942,7 +954,73 @@ $$;
 -- 注意：erp_global_stats_query 函数较复杂，请单独执行 backend/migrations/032_stock_warehouse_and_global_stats.sql 中的函数部分
 
 -- ============================================================
--- 9. 初始化默认模型数据
+-- 9. 多租户企业表（039 迁移）
+-- ============================================================
+
+-- organizations
+CREATE TABLE IF NOT EXISTS organizations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(100) NOT NULL UNIQUE,
+    logo_url VARCHAR(500),
+    owner_id UUID NOT NULL REFERENCES users(id),
+    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'suspended')),
+    max_members INTEGER NOT NULL DEFAULT 50,
+    features JSONB NOT NULL DEFAULT '{"erp": false, "image_gen": true, "agent": true}',
+    wecom_corp_id VARCHAR(100),
+    wecom_agent_id VARCHAR(100),
+    wecom_secret_encrypted TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_org_owner ON organizations(owner_id);
+CREATE INDEX IF NOT EXISTS idx_org_status ON organizations(status);
+
+CREATE TRIGGER update_organizations_updated_at
+    BEFORE UPDATE ON organizations
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- org_members
+CREATE TABLE IF NOT EXISTS org_members (
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role VARCHAR(20) NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'admin', 'member')),
+    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+    permissions JSONB NOT NULL DEFAULT '{}',
+    invited_by UUID REFERENCES users(id),
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (org_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_org_members_user ON org_members(user_id);
+
+-- org_configs
+CREATE TABLE IF NOT EXISTS org_configs (
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    config_key VARCHAR(100) NOT NULL,
+    config_value_encrypted TEXT NOT NULL,
+    updated_by UUID REFERENCES users(id),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (org_id, config_key)
+);
+
+-- org_invitations
+CREATE TABLE IF NOT EXISTS org_invitations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    phone VARCHAR(20) NOT NULL,
+    role VARCHAR(20) NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member')),
+    invite_token VARCHAR(100) UNIQUE NOT NULL,
+    invited_by UUID NOT NULL REFERENCES users(id),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'expired')),
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_org_invitations_phone ON org_invitations(phone);
+CREATE INDEX IF NOT EXISTS idx_org_invitations_token ON org_invitations(invite_token);
+CREATE INDEX IF NOT EXISTS idx_org_invitations_org ON org_invitations(org_id, status);
+
+-- ============================================================
+-- 10. 初始化默认模型数据
 -- ============================================================
 
 INSERT INTO models (name, provider, model_key, description, type, status, is_default, credits_per_request)

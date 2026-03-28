@@ -108,8 +108,8 @@ async def sync_product(
                 ),
             })
 
-    spu_count = await _batch_upsert(svc.db, "erp_products", spu_rows, "outer_id")
-    sku_count = await _batch_upsert(svc.db, "erp_product_skus", sku_rows, "sku_outer_id")
+    spu_count = await _batch_upsert(svc.db, "erp_products", spu_rows, "outer_id", org_id=svc.org_id)
+    sku_count = await _batch_upsert(svc.db, "erp_product_skus", sku_rows, "sku_outer_id", org_id=svc.org_id)
     if spu_count or sku_count:
         logger.info(f"Product sync | spu={spu_count} sku={sku_count}")
     return spu_count + sku_count
@@ -185,6 +185,7 @@ async def _fetch_stock_by_codes(
         return 0
     return await _batch_upsert(
         svc.db, "erp_stock_status", rows, "outer_id,sku_outer_id,warehouse_id",
+        org_id=svc.org_id,
     )
 
 
@@ -201,12 +202,22 @@ async def sync_stock(
     from core.config import get_settings
     from services.kuaimai.erp_sync_handlers import _API_SEM
 
-    settings = get_settings()
-    wh_ids = [
-        wid.strip() for wid in settings.erp_warehouse_ids.split(",") if wid.strip()
-    ]
+    # 优先读企业配置，降级到全局 settings
+    wh_config = None
+    if svc.org_id:
+        try:
+            from services.org.config_resolver import OrgConfigResolver
+            resolver = OrgConfigResolver(svc.db)
+            wh_config = resolver.get(svc.org_id, "erp_warehouse_ids")
+        except Exception:
+            pass
+    if not wh_config:
+        settings = get_settings()
+        wh_config = settings.erp_warehouse_ids or ""
+
+    wh_ids = [wid.strip() for wid in wh_config.split(",") if wid.strip()]
     if not wh_ids:
-        logger.warning("sync_stock: erp_warehouse_ids is empty, skip incremental")
+        logger.warning(f"sync_stock: warehouse IDs empty | org_id={svc.org_id}, skip incremental")
         return 0
 
     # Step 1: 遍历每个仓库，收集有变动的主编码
@@ -255,13 +266,9 @@ async def sync_stock_full(svc: ErpSyncService) -> int:
     12000 编码 ÷ 100/批 = 120 次 API 调用，串行约 10 秒。
     """
     try:
-        result = await (
-            svc.db.table("erp_products")
-            .select("outer_id")
-            .eq("active_status", 1)
-            .limit(50000)
-            .execute()
-        )
+        q = svc.db.table("erp_products").select("outer_id").eq("active_status", 1)
+        q = svc._apply_org(q)
+        result = await q.limit(50000).execute()
         codes = [r["outer_id"] for r in (result.data or []) if r.get("outer_id")]
     except Exception as e:
         logger.error(f"sync_stock_full: failed to load product codes | error={e}")
@@ -309,7 +316,7 @@ async def sync_supplier(
             "remark": s.get("remark"),
         })
 
-    count = await _batch_upsert(svc.db, "erp_suppliers", rows, "code")
+    count = await _batch_upsert(svc.db, "erp_suppliers", rows, "code", org_id=svc.org_id)
     return count
 
 
@@ -325,12 +332,8 @@ async def sync_platform_map(
     """
     # 从 DB 取所有 SKU 编码
     try:
-        result = await (
-            svc.db.table("erp_product_skus")
-            .select("sku_outer_id")
-            .limit(10000)
-            .execute()
-        )
+        q = svc.db.table("erp_product_skus").select("sku_outer_id")
+        result = await svc._apply_org(q).limit(10000).execute()
         sku_ids = [r["sku_outer_id"] for r in (result.data or []) if r.get("sku_outer_id")]
     except Exception as e:
         logger.warning(f"Platform map: failed to get SKU list | error={e}")
@@ -380,5 +383,6 @@ async def sync_platform_map(
 
     count = await _batch_upsert(
         svc.db, "erp_product_platform_map", unique_rows, "outer_id,num_iid",
+        org_id=svc.org_id,
     )
     return count

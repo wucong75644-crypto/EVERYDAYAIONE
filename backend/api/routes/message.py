@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 from loguru import logger
 
-from api.deps import CurrentUser, CurrentUserId, Database, TaskLimitSvc
+from api.deps import CurrentUser, CurrentUserId, Database, OrgCtx, TaskLimitSvc
 from core.limiter import limiter, RATE_LIMITS
 from schemas.message import (
     DeleteMessageResponse,
@@ -61,7 +61,7 @@ def get_conversation_service(db: Database) -> ConversationService:
 # ============================================================
 
 
-async def _resolve_generation_type(body, user_id: str, conversation_id: str, db=None):
+async def _resolve_generation_type(body, user_id: str, conversation_id: str, db=None, org_id: str | None = None):
     """推断生成类型：Agent Loop → IntentRouter 降级 → 关键词兜底"""
     from loguru import logger
     from services.intent_router import SMART_MODEL_ID
@@ -77,7 +77,7 @@ async def _resolve_generation_type(body, user_id: str, conversation_id: str, db=
     if get_settings().agent_loop_enabled and db is not None:
         from services.agent_loop import AgentLoop
 
-        agent = AgentLoop(db, user_id, conversation_id)
+        agent = AgentLoop(db, user_id, conversation_id, org_id=org_id)
         try:
             thinking_mode = (body.params or {}).get("thinking_mode")
             result = await agent.run(body.content, thinking_mode=thinking_mode)
@@ -193,7 +193,7 @@ async def generate_message(
     request: Request,
     conversation_id: str,
     body: GenerateRequest,
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     db: Database,
     task_limit_service: TaskLimitSvc,
 ):
@@ -210,7 +210,7 @@ async def generate_message(
     - retry: 重试失败的 AI 消息（不创建用户消息 + 原地更新）
     - regenerate: 重新生成成功的 AI 消息（创建用户消息 + 创建 AI 消息）
     """
-    user_id = current_user["id"]
+    user_id = ctx.user_id
 
     # 1. 检查任务限制
     if task_limit_service:
@@ -244,7 +244,7 @@ async def generate_message(
     else:
         # 非智能模式 / retry / regenerate → 同步路由（原有逻辑）
         gen_type, routing_decision = await _resolve_generation_type(
-            body, user_id, conversation_id, db=db,
+            body, user_id, conversation_id, db=db, org_id=ctx.org_id,
         )
 
         # 智能模型：标记 smart_mode + 解析实际工作模型
@@ -324,7 +324,7 @@ async def generate_message(
 
     if needs_user_message:
         conv_result, msg_result = await asyncio.gather(
-            conversation_service.get_conversation(conversation_id, user_id),
+            conversation_service.get_conversation(conversation_id, user_id, ctx.org_id),
             create_user_message(
                 db=db,
                 conversation_id=conversation_id,
@@ -337,12 +337,13 @@ async def generate_message(
         user_message = msg_result
     else:
         conversation = await conversation_service.get_conversation(
-            conversation_id, user_id,
+            conversation_id, user_id, ctx.org_id,
         )
 
     if body.params is None:
         body.params = {}
     body.params["_prefetched_summary"] = conversation.get("context_summary")
+    body.params["_org_id"] = ctx.org_id
 
     # 5. 处理助手消息（根据操作类型）
     if body.operation == MessageOperation.RETRY:
@@ -392,6 +393,7 @@ async def generate_message(
 
     # 6. 获取 Handler 并启动任务
     handler = get_handler(gen_type, db)
+    handler.org_id = ctx.org_id
 
     external_task_id = await start_generation_task(
         db=db,
@@ -428,7 +430,7 @@ async def generate_message(
 @router.get("", response_model=MessageListResult, summary="获取消息列表")
 async def get_messages(
     conversation_id: str,
-    current_user_id: CurrentUserId,
+    ctx: OrgCtx,
     limit: int = Query(default=100, ge=1, le=1000, description="每页数量"),
     offset: int = Query(default=0, ge=0, description="偏移量"),
     before_id: Optional[str] = Query(default=None, description="获取此消息之前的消息"),
@@ -441,10 +443,11 @@ async def get_messages(
     """
     result = await service.get_messages(
         conversation_id=conversation_id,
-        user_id=current_user_id,
+        user_id=ctx.user_id,
         limit=limit,
         offset=offset,
         before_id=before_id,
+        org_id=ctx.org_id,
     )
     return result
 
@@ -453,14 +456,15 @@ async def get_messages(
 async def get_message(
     conversation_id: str,
     message_id: str,
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     service: MessageService = Depends(get_message_service),
 ):
     """获取单条消息的详细信息"""
     result = await service.get_message(
         conversation_id=conversation_id,
         message_id=message_id,
-        user_id=current_user["id"],
+        user_id=ctx.user_id,
+        org_id=ctx.org_id,
     )
     return result
 
@@ -471,7 +475,7 @@ async def get_message(
 @message_router.delete("/{message_id}", response_model=DeleteMessageResponse, summary="删除消息")
 async def delete_message(
     message_id: str,
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     service: MessageService = Depends(get_message_service),
 ):
     """
@@ -481,6 +485,7 @@ async def delete_message(
     """
     result = await service.delete_message(
         message_id=message_id,
-        user_id=current_user["id"],
+        user_id=ctx.user_id,
+        org_id=ctx.org_id,
     )
     return result

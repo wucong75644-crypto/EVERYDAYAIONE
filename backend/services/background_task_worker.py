@@ -329,44 +329,25 @@ class BackgroundTaskWorker:
 
     async def _refund_credits(self, transaction_id: str) -> None:
         """
-        退回积分（chat 任务超时时调用）
+        退回积分（原子操作：CAS检查+退回余额+更新状态在单个SQL事务内完成）
 
-        image/video 超时走 TaskCompletionService → handler.on_error() 自动退回
+        chat 任务超时时调用；image/video 超时走 TaskCompletionService → handler.on_error()
         """
         try:
-            tx_result = self.db.table("credit_transactions").select("*").eq(
-                "id", transaction_id
-            ).maybe_single().execute()
-
-            if not tx_result.data:
-                logger.warning(f"Refund failed: transaction not found | id={transaction_id}")
-                return
-
-            tx = tx_result.data
-            if tx["status"] != "pending":
-                logger.warning(
-                    f"Refund skipped: status={tx['status']} | id={transaction_id}"
-                )
-                return
-
-            self.db.rpc(
-                'refund_credits',
-                {
-                    'p_user_id': tx["user_id"],
-                    'p_amount': tx["amount"]
-                }
+            result = self.db.rpc(
+                'atomic_refund_credits',
+                {'p_transaction_id': transaction_id}
             ).execute()
 
-            self.db.table("credit_transactions").update({
-                "status": "refunded",
-                "confirmed_at": datetime.now(timezone.utc).isoformat()
-            }).eq("id", transaction_id).execute()
-
-            logger.info(
-                f"Credits refunded | transaction_id={transaction_id} | "
-                f"user_id={tx['user_id']} | amount={tx['amount']}"
-            )
-
+            data = result.data
+            if data and data.get('refunded'):
+                logger.info(
+                    f"Credits refunded | transaction_id={transaction_id} | "
+                    f"user_id={data.get('user_id')} | amount={data.get('amount')}"
+                )
+            else:
+                reason = data.get('reason', 'unknown') if data else 'no_response'
+                logger.warning(f"Refund skipped | tx={transaction_id} | reason={reason}")
         except Exception as e:
             logger.error(f"Refund failed | transaction_id={transaction_id} | error={e}")
 

@@ -10,7 +10,17 @@ import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
-from tests.conftest import MockErpAsyncDBClient
+import sys
+from pathlib import Path
+
+_tests_dir = Path(__file__).parent
+if str(_tests_dir) not in sys.path:
+    sys.path.insert(0, str(_tests_dir))
+_backend_dir = _tests_dir.parent
+if str(_backend_dir) not in sys.path:
+    sys.path.insert(0, str(_backend_dir))
+
+from conftest import MockErpAsyncDBClient
 
 
 # ── 工厂函数 ─────────────────────────────────────────
@@ -21,6 +31,8 @@ def _mock_svc(pages=None):
     svc = MagicMock()
     svc.fetch_all_pages = AsyncMock(return_value=pages or [])
     svc.db = MockErpAsyncDBClient()
+    svc.org_id = None
+    svc._apply_org = lambda q: q
     return svc
 
 
@@ -214,6 +226,8 @@ def _mock_stock_svc(wh_items=None, code_items=None):
     mock_client.request_with_retry = _mock_request
     svc._get_client.return_value = mock_client
     svc.db = MockErpAsyncDBClient()
+    svc.org_id = None
+    svc._apply_org = lambda q: q  # 散客模式不过滤
     return svc
 
 
@@ -341,6 +355,7 @@ class TestSyncStockWarehouseError:
             ], "total": 1}
 
         svc = MagicMock()
+        svc.org_id = None
         mock_client = AsyncMock()
         mock_client.request_with_retry = _mock_request
         svc._get_client.return_value = mock_client

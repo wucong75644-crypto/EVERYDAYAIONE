@@ -84,6 +84,12 @@ class TestErpApiSearch:
         assert "场景指南" in result
         assert "express_query" in result
 
+    def test_scenario_order_query_hit(self):
+        """订单关键词命中订单查询场景指南"""
+        result = search_erp_api("订单")
+        assert "场景指南" in result
+        assert "outstock_query" in result
+
     def test_scenario_no_hit(self):
         """不相关关键词不命中场景指南"""
         result = search_erp_api("zzz_impossible_xyz")
@@ -128,7 +134,7 @@ class TestScenarioDocsCompleteness:
 
     def test_all_categories_present(self):
         """场景指南包含所有预期分类"""
-        expected = ["商品查询", "调拨", "采购", "物流", "统计", "分销", "多步查询", "订单号"]
+        expected = ["订单查询", "商品查询", "调拨", "采购", "物流", "统计", "分销", "多步查询", "订单号"]
         for cat in expected:
             assert cat in _SCENARIO_DOCS, f"Missing category: {cat}"
 
@@ -149,3 +155,32 @@ class TestScenarioDocsCompleteness:
             "sku_list", "multicode_query",
         ]:
             assert action in doc, f"Missing in product: {action}"
+
+    def test_order_query_guide_has_three_actions(self):
+        """订单查询场景指南包含三个action引导"""
+        doc = _SCENARIO_DOCS["订单查询"]
+        assert "outstock_query" in doc
+        assert "outstock_order_query" in doc
+        assert "order_list" in doc
+
+    def test_order_query_guide_mentions_pdd(self):
+        """订单查询场景指南提到拼多多"""
+        doc = _SCENARIO_DOCS["订单查询"]
+        assert "拼多多" in doc
+
+    def test_order_query_guide_default_recommendation(self):
+        """订单查询场景指南默认推荐outstock_query"""
+        doc = _SCENARIO_DOCS["订单查询"]
+        assert "默认推荐 outstock_query" in doc
+
+    def test_multistep_uses_outstock_query(self):
+        """多步查询场景指南已更新为outstock_query"""
+        doc = _SCENARIO_DOCS["多步查询"]
+        assert "outstock_query" in doc
+        assert "order_list" not in doc
+
+    def test_statistics_mentions_pdd_payment(self):
+        """统计场景指南提到拼多多无payment的注意事项"""
+        doc = _SCENARIO_DOCS["统计"]
+        assert "拼多多" in doc
+        assert "outstock_order_query" in doc

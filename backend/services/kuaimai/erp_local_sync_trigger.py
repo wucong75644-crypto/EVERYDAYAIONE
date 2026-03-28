@@ -22,7 +22,7 @@ _VALID_TYPES = {
 }
 
 
-async def trigger_erp_sync(db, sync_type: str) -> str:
+async def trigger_erp_sync(db, sync_type: str, org_id: str | None = None) -> str:
     """手动触发 ERP 同步（带超时保护 + 新鲜度检查）"""
     if sync_type not in _VALID_TYPES:
         return (

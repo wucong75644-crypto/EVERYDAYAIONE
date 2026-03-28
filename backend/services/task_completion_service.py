@@ -203,7 +203,7 @@ class TaskCompletionService:
             return await batch_svc.handle_image_complete(task, content_parts)
 
         # 6. 其他任务（video）走原有 Handler 路径
-        handler = self._create_handler(task_type)
+        handler = self._create_handler(task_type, org_id=task.get("org_id"))
         await handler.on_complete(
             task_id=external_task_id,
             result=content_parts,
@@ -237,7 +237,7 @@ class TaskCompletionService:
             )
 
         # 其他任务走原有 Handler 路径
-        handler = self._create_handler(task_type)
+        handler = self._create_handler(task_type, org_id=task.get("org_id"))
         await handler.on_error(
             task_id=external_task_id,
             error_code=result.fail_code or "UNKNOWN",
@@ -467,16 +467,18 @@ class TaskCompletionService:
 
         return parts
 
-    def _create_handler(self, task_type: str):
+    def _create_handler(self, task_type: str, org_id: str | None = None):
         """根据任务类型创建 Handler"""
         if task_type == "image":
             from services.handlers.image_handler import ImageHandler
-            return ImageHandler(self.db)
+            h = ImageHandler(self.db)
         elif task_type == "video":
             from services.handlers.video_handler import VideoHandler
-            return VideoHandler(self.db)
+            h = VideoHandler(self.db)
         else:
             raise ValueError(f"Unknown task type: {task_type}")
+        h.org_id = org_id
+        return h
 
 
 def _empty_result(original: TaskResult, fail_code: str, fail_msg: str) -> TaskResult:

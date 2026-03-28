@@ -149,7 +149,7 @@ class ChatRoutingMixin:
         thinking_mode = params.get("thinking_mode")
 
         if settings.agent_loop_enabled:
-            agent = AgentLoop(self.db, user_id, conversation_id)
+            agent = AgentLoop(self.db, user_id, conversation_id, org_id=self.org_id)
             try:
                 result = await agent.run(
                     content, thinking_mode=thinking_mode, task_id=task_id,
@@ -284,6 +284,7 @@ class ChatRoutingMixin:
 
         # 3. 委派给对应 Handler（routing_complete 已在 _route_and_stream 中发送）
         handler = get_handler(gen_type, self.db)
+        handler.org_id = self.org_id
         new_metadata = TaskMetadata(
             client_task_id=metadata.client_task_id
             if hasattr(metadata, "client_task_id")

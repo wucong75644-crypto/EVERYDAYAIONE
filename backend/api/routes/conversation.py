@@ -7,7 +7,7 @@
 from fastapi import APIRouter, Depends, Query
 from loguru import logger
 
-from api.deps import CurrentUser, CurrentUserId, Database
+from api.deps import CurrentUser, CurrentUserId, Database, OrgCtx
 from core.exceptions import (
     AppException,
     AuthenticationError,
@@ -35,7 +35,7 @@ def get_conversation_service(db: Database) -> ConversationService:
 @router.post("", response_model=ConversationResponse, summary="创建对话")
 async def create_conversation(
     request: ConversationCreate,
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     service: ConversationService = Depends(get_conversation_service),
 ):
     """
@@ -46,9 +46,10 @@ async def create_conversation(
     """
     try:
         result = await service.create_conversation(
-            user_id=current_user["id"],
+            user_id=ctx.user_id,
             title=request.title,
             model_id=request.model_id,
+            org_id=ctx.org_id,
         )
         return result
     except (
@@ -62,7 +63,7 @@ async def create_conversation(
         raise
     except Exception as e:
         logger.error(
-            f"Error in create_conversation route | user_id={current_user['id']} | "
+            f"Error in create_conversation route | user_id={ctx.user_id} | "
             f"title={request.title} | model_id={request.model_id} | error={str(e)}"
         )
         raise AppException(
@@ -74,7 +75,7 @@ async def create_conversation(
 
 @router.get("", response_model=ConversationListResult, summary="获取对话列表")
 async def get_conversation_list(
-    current_user_id: CurrentUserId,
+    ctx: OrgCtx,
     limit: int = Query(default=50, ge=1, le=100, description="每页数量"),
     offset: int = Query(default=0, ge=0, description="偏移量"),
     service: ConversationService = Depends(get_conversation_service),
@@ -86,9 +87,10 @@ async def get_conversation_list(
     """
     try:
         result = await service.get_conversation_list(
-            user_id=current_user_id,
+            user_id=ctx.user_id,
             limit=limit,
             offset=offset,
+            org_id=ctx.org_id,
         )
         return result
     except (
@@ -102,7 +104,7 @@ async def get_conversation_list(
         raise
     except Exception as e:
         logger.error(
-            f"Error in get_conversation_list route | user_id={current_user_id} | "
+            f"Error in get_conversation_list route | user_id={ctx.user_id} | "
             f"limit={limit} | offset={offset} | error={str(e)}"
         )
         raise AppException(
@@ -115,7 +117,7 @@ async def get_conversation_list(
 @router.get("/{conversation_id}", response_model=ConversationResponse, summary="获取对话详情")
 async def get_conversation(
     conversation_id: str,
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     service: ConversationService = Depends(get_conversation_service),
 ):
     """
@@ -124,7 +126,8 @@ async def get_conversation(
     try:
         result = await service.get_conversation(
             conversation_id=conversation_id,
-            user_id=current_user["id"],
+            user_id=ctx.user_id,
+            org_id=ctx.org_id,
         )
         return result
     except (
@@ -139,7 +142,7 @@ async def get_conversation(
     except Exception as e:
         logger.error(
             f"Error in get_conversation route | conversation_id={conversation_id} | "
-            f"user_id={current_user['id']} | error={str(e)}"
+            f"user_id={ctx.user_id} | error={str(e)}"
         )
         raise AppException(
             code="ROUTE_GET_CONVERSATION_ERROR",
@@ -152,7 +155,7 @@ async def get_conversation(
 async def update_conversation(
     conversation_id: str,
     request: ConversationUpdate,
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     service: ConversationService = Depends(get_conversation_service),
 ):
     """
@@ -164,9 +167,10 @@ async def update_conversation(
     try:
         result = await service.update_conversation(
             conversation_id=conversation_id,
-            user_id=current_user["id"],
+            user_id=ctx.user_id,
             title=request.title,
             model_id=request.model_id,
+            org_id=ctx.org_id,
         )
         return result
     except (
@@ -181,7 +185,7 @@ async def update_conversation(
     except Exception as e:
         logger.error(
             f"Error in update_conversation route | conversation_id={conversation_id} | "
-            f"user_id={current_user['id']} | title={request.title} | "
+            f"user_id={ctx.user_id} | title={request.title} | "
             f"model_id={request.model_id} | error={str(e)}"
         )
         raise AppException(
@@ -194,7 +198,7 @@ async def update_conversation(
 @router.delete("/{conversation_id}", summary="删除对话")
 async def delete_conversation(
     conversation_id: str,
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     service: ConversationService = Depends(get_conversation_service),
 ):
     """
@@ -205,7 +209,8 @@ async def delete_conversation(
     try:
         await service.delete_conversation(
             conversation_id=conversation_id,
-            user_id=current_user["id"],
+            user_id=ctx.user_id,
+            org_id=ctx.org_id,
         )
         return {"message": "对话已删除"}
     except (
@@ -220,7 +225,7 @@ async def delete_conversation(
     except Exception as e:
         logger.error(
             f"Error in delete_conversation route | conversation_id={conversation_id} | "
-            f"user_id={current_user['id']} | error={str(e)}"
+            f"user_id={ctx.user_id} | error={str(e)}"
         )
         raise AppException(
             code="ROUTE_DELETE_CONVERSATION_ERROR",

@@ -200,6 +200,7 @@ class ImageHandler(BaseHandler):
             user_id=user_id,
             amount=per_image_credits,
             reason=f"Image[{index}]: {model_id}",
+            org_id=self.org_id,
         )
 
         try:
@@ -287,6 +288,7 @@ class ImageHandler(BaseHandler):
                 user_id=user_id,
                 amount=per_image_credits,
                 reason=f"Image[{index}] retry: {new_model}",
+                org_id=self.org_id,
             )
 
             try:

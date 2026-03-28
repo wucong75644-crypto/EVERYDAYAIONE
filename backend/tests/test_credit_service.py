@@ -196,44 +196,25 @@ class TestCreditServiceConfirmAndRefund:
 
     @pytest.mark.asyncio
     async def test_refund_credits_success(self, credit_service, mock_async_db):
-        """测试：退回积分成功"""
-        # Arrange
-        tx_data = {
-            "id": "tx_123",
+        """测试：退回积分成功（原子RPC）"""
+        # Arrange - mock atomic_refund_credits RPC 返回成功
+        mock_async_db.set_rpc_result("atomic_refund_credits", {
+            "refunded": True,
             "user_id": "user_123",
-            "amount": 10,
-            "status": "pending"
-        }
-        mock_async_db.set_table_data("credit_transactions", [tx_data])
-
-        mock_async_db.table("credit_transactions").execute = MagicMock(
-            return_value=MagicMock(data=tx_data)
-        )
-        mock_async_db.rpc("refund_credits", {}).execute = MagicMock(
-            return_value=MagicMock(data={})
-        )
+            "amount": 10
+        })
 
         # Act - 应该不抛异常
         await credit_service.refund_credits("tx_123")
 
     @pytest.mark.asyncio
     async def test_refund_credits_not_pending(self, credit_service, mock_async_db):
-        """测试：非 pending 状态不退回"""
-        # Arrange
-        tx_data = {
-            "id": "tx_123",
-            "user_id": "user_123",
-            "amount": 10,
-            "status": "confirmed"  # 已确认
-        }
-        mock_async_db.set_table_data("credit_transactions", [tx_data])
-
-        # 模拟 single().execute() 返回
-        mock_table = mock_async_db.table("credit_transactions")
-        mock_table.select = MagicMock(return_value=mock_table)
-        mock_table.eq = MagicMock(return_value=mock_table)
-        mock_table.single = MagicMock(return_value=mock_table)
-        mock_table.execute = MagicMock(return_value=MagicMock(data=tx_data))
+        """测试：非 pending 状态不退回（原子RPC返回 refunded=false）"""
+        # Arrange - mock atomic_refund_credits RPC 返回跳过
+        mock_async_db.set_rpc_result("atomic_refund_credits", {
+            "refunded": False,
+            "reason": "status_confirmed"
+        })
 
         # Act - 应该静默返回，不退回
         await credit_service.refund_credits("tx_123")

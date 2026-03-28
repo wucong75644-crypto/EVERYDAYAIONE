@@ -406,3 +406,17 @@ class TestSyncOrder:
         rows = svc.upsert_document_items.call_args[0][0]
         assert rows[0]["post_fee"] == "15.00"
         assert rows[1]["post_fee"] is None
+
+    @pytest.mark.asyncio
+    async def test_sync_order_calls_outstock_simple_query(self):
+        """sync_order 应调用 erp.trade.outstock.simple.query（全平台版）"""
+        from services.kuaimai.erp_sync_handlers import sync_order
+        svc = _mock_svc()
+        await sync_order(svc, START, END)
+        # fetch_pages_streaming 被调用两次（upd_time + pay_time）
+        calls = svc.fetch_pages_streaming.call_args_list
+        for call in calls:
+            method = call[0][0]
+            assert method == "erp.trade.outstock.simple.query", (
+                f"Expected outstock.simple.query, got {method}"
+            )

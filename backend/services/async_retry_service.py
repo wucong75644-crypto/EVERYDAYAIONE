@@ -211,7 +211,7 @@ class AsyncRetryService:
         if old_tx:
             try:
                 self.db.rpc(
-                    "refund_credits", {"p_transaction_id": old_tx}
+                    "atomic_refund_credits", {"p_transaction_id": old_tx}
                 ).execute()
             except Exception as e:
                 logger.warning(

@@ -10,7 +10,7 @@ TRADE_REGISTRY = {
     # ── 订单查询 ──────────────────────────────────────
     "order_list": ApiEntry(
         method="erp.trade.list.query",
-        description="查询订单列表（全状态：待付款到已完成）。支持订单号/系统单号/买家/店铺/状态/时间等条件。返回订单头信息+商品明细+收货地址",
+        description="查询订单列表（待付款/待审核/待财审/待打印/待包装/待称重/待发货/已发货/已完成/已关闭）。支持订单号/系统单号/买家/店铺/状态/时间等条件。返回订单头信息+商品明细+收货地址。⚠️不含淘宝和1688订单；拼多多不返回订单号(tid)和金额(payment)。需要拼多多完整数据请用outstock_order_query（仅含已发货或发货流程中的订单）；需要淘宝/1688请用outstock_query",
         param_map={
             "order_id": "tid",
             "system_id": "sid",
@@ -97,7 +97,7 @@ TRADE_REGISTRY = {
     # ── 出库/物流 查询 ────────────────────────────────
     "outstock_query": ApiEntry(
         method="erp.trade.outstock.simple.query",
-        description="查询销售出库信息（含商品出库明细+快递单号）。已发货订单查出库详情用这个。与order_list的区别：侧重出库和物流维度（⚠️必须传order_id/system_id，仅传日期范围数据量大会超时）",
+        description="查询订单列表-全平台全状态版（待付款/待审核/待财审/待打印/待包装/待称重/待发货/已发货/已完成/已关闭，对应ERP后台【交易→订单查询】）。覆盖全平台含全状态（含淘宝/1688/拼多多/抖音/京东/快手/小红书）。支持订单号/系统单号/买家/店铺/状态/时间等条件。返回订单头信息+商品明细+快递单号。⚠️拼多多不返回订单号(tid)和金额(payment)；需要拼多多完整数据请用outstock_order_query（仅含已发货或发货流程中的订单）",
         param_map={
             "order_id": "tid",
             "system_id": "sid",
@@ -168,7 +168,7 @@ TRADE_REGISTRY = {
     ),
     "outstock_order_query": ApiEntry(
         method="erp.wave.logistics.order.query",
-        description="查询出库单列表（仓库作业维度：待处理/预处理完成/发货中/已发货/已关闭/已作废）。与outstock_query的区别：按仓库作业状态查，支持波次ID和拣货单",
+        description="销售出库单查询（仅含已发货或发货流程中的订单，对应ERP后台【仓储→波次→销售出库单】）。所有平台均返回完整订单号(tid)和金额(payment/payAmount)，包括拼多多。支持系统单号/平台单号/物流单号/店铺/时间等条件。返回订单头+商品出库明细+快递信息。⚠️待审核/待付款等未进入发货流程的订单查不到；不含淘宝和1688",
         param_map={
             "order_id": "tids",
             "system_id": "sids",

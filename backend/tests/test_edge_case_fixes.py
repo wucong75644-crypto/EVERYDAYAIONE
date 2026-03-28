@@ -129,7 +129,6 @@ class TestIdempotencyNoneTypeGuard:
                 ct.update.return_value = ct
                 ct.eq.return_value = ct
                 ct.maybe_single.return_value = ct
-                # _refund_credits 用 maybe_single，期望 data 是 dict
                 ct.execute.return_value = MagicMock(data={
                     "id": "tx_123", "user_id": "user_123",
                     "amount": 10, "status": "pending",

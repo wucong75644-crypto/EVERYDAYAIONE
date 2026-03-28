@@ -251,8 +251,8 @@ class TestMessageServiceDelete:
             )
 
     @pytest.mark.asyncio
-    async def test_delete_message_permission_denied(self, message_service, mock_db):
-        """测试：无权删除他人消息"""
+    async def test_delete_message_other_user_rejected(self, message_service, mock_db):
+        """测试：其他用户删除消息时，get_conversation SQL 层过滤返回 NotFoundError"""
         # Arrange
         owner = create_test_user(user_id="owner_123")
         other_user = create_test_user(user_id="other_123")
@@ -265,16 +265,16 @@ class TestMessageServiceDelete:
         mock_query.execute.return_value = MagicMock(data=[message])
         mock_db.table = MagicMock(return_value=mock_query)
 
+        # get_conversation 在 SQL 层过滤 user_id，其他用户查不到 → NotFoundError
         with patch.object(
             message_service.conversation_service,
             "get_conversation",
-            return_value=conversation
+            side_effect=NotFoundError("对话", conversation["id"])
         ):
-            # Act & Assert
-            with pytest.raises(PermissionDeniedError):
+            with pytest.raises(NotFoundError):
                 await message_service.delete_message(
                     message_id=message["id"],
-                    user_id=other_user["id"]  # 非所有者
+                    user_id=other_user["id"]
                 )
 
 

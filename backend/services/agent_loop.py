@@ -55,11 +55,13 @@ class AgentLoop(
         db: Any,
         user_id: str,
         conversation_id: str,
+        org_id: str | None = None,
     ) -> None:
         self.db = db
         self.user_id = user_id
         self.conversation_id = conversation_id
-        self.executor = ToolExecutor(db, user_id, conversation_id)
+        self.org_id = org_id
+        self.executor = ToolExecutor(db, user_id, conversation_id, org_id=org_id)
         self._client: Optional[httpx.AsyncClient] = None
         self._settings: Optional[Any] = None
 

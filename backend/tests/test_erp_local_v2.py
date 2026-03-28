@@ -13,7 +13,17 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from tests.conftest import MockSupabaseClient
+import sys
+from pathlib import Path
+
+_tests_dir = Path(__file__).parent
+if str(_tests_dir) not in sys.path:
+    sys.path.insert(0, str(_tests_dir))
+_backend_dir = _tests_dir.parent
+if str(_backend_dir) not in sys.path:
+    sys.path.insert(0, str(_backend_dir))
+
+from conftest import MockSupabaseClient
 
 
 # ── 测试数据工厂 ─────────────────────────────────────

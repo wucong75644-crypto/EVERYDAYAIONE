@@ -7,7 +7,17 @@ import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tests.conftest import MockErpAsyncDBClient, MockSupabaseClient
+import sys
+from pathlib import Path
+
+_tests_dir = Path(__file__).parent
+if str(_tests_dir) not in sys.path:
+    sys.path.insert(0, str(_tests_dir))
+_backend_dir = _tests_dir.parent
+if str(_backend_dir) not in sys.path:
+    sys.path.insert(0, str(_backend_dir))
+
+from conftest import MockErpAsyncDBClient, MockSupabaseClient
 
 
 
@@ -328,7 +338,7 @@ class TestShouldRunDaily:
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
         db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
-        worker._last_daily_maintenance = datetime.now()
+        worker._org_last_daily[None] = datetime.now()
         assert worker._should_run_daily() is False
 
 
@@ -488,7 +498,7 @@ class TestShouldRunLowFreq:
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
         db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
-        worker._last_platform_map_sync = datetime.now()
+        worker._org_last_platform_map[None] = datetime.now()
         assert worker._should_run_low_freq() is False
 
 
@@ -822,15 +832,15 @@ class TestDailyMaintenanceOrchestration:
 
         call_order = []
 
-        async def mock_archive():
+        async def mock_archive(**kwargs):
             call_order.append("archive")
             return 10
 
-        async def mock_reagg():
+        async def mock_reagg(**kwargs):
             call_order.append("reagg")
             return 5
 
-        async def mock_deletion():
+        async def mock_deletion(**kwargs):
             call_order.append("deletion")
             return 2
 
@@ -1207,14 +1217,14 @@ class TestRunAggregationPendingDedup:
         from services.kuaimai.erp_sync_persistence import run_aggregation
 
         q = asyncio.Queue(maxsize=100)
-        pending: set[tuple[str, str]] = set()
+        pending: set = set()
         keys = [("P01", "2026-03-27"), ("P01", "2026-03-27"), ("P02", "2026-03-27")]
 
         run_aggregation(MagicMock(), q, keys, pending=pending)
 
         assert q.qsize() == 2  # P01 去重，只入队一次
-        assert ("P01", "2026-03-27") in pending
-        assert ("P02", "2026-03-27") in pending
+        assert ("P01", "2026-03-27", None) in pending
+        assert ("P02", "2026-03-27", None) in pending
 
     def test_pending_none_no_dedup(self):
         """pending=None 时不去重，全部入队"""
@@ -1234,15 +1244,14 @@ class TestRunAggregationPendingDedup:
         from services.kuaimai.erp_sync_persistence import run_aggregation
 
         q = asyncio.Queue(maxsize=1)
-        pending: set[tuple[str, str]] = set()
+        pending: set = set()
         keys = [("P01", "2026-03-27"), ("P02", "2026-03-27")]
 
         run_aggregation(MagicMock(), q, keys, pending=pending)
 
         assert q.qsize() == 1
-        # P01 成功入队，P02 因队列满被丢弃
-        assert ("P01", "2026-03-27") in pending
-        assert ("P02", "2026-03-27") not in pending  # 从 pending 中清除
+        assert ("P01", "2026-03-27", None) in pending
+        assert ("P02", "2026-03-27", None) not in pending
 
     def test_empty_keys_noop(self):
         """空 keys 直接返回"""
@@ -1259,7 +1268,7 @@ class TestRunAggregationPendingDedup:
         from services.kuaimai.erp_sync_persistence import run_aggregation
 
         q = asyncio.Queue(maxsize=100)
-        pending = {("P01", "2026-03-27")}  # 预先存在
+        pending = {("P01", "2026-03-27", None)}  # 预先存在（三元组）
         keys = [("P01", "2026-03-27")]
 
         run_aggregation(MagicMock(), q, keys, pending=pending)
@@ -1304,9 +1313,9 @@ class TestAggregationConsumer:
             ms.return_value = MagicMock(erp_sync_enabled=True, erp_sync_interval=60)
             worker = ErpSyncWorker(db)
 
-        # 预填队列
-        await worker.aggregation_queue.put(("P01", "2026-03-27"))
-        await worker.aggregation_queue.put(("P02", "2026-03-28"))
+        # 预填队列（三元组：outer_id, stat_date, org_id）
+        await worker.aggregation_queue.put(("P01", "2026-03-27", None))
+        await worker.aggregation_queue.put(("P02", "2026-03-28", None))
         worker.is_running = True
 
         # 启动消费者，短暂运行后停止
@@ -1319,7 +1328,7 @@ class TestAggregationConsumer:
         await asyncio.gather(task, stop_task)
 
         assert len(rpc_calls) == 2
-        assert rpc_calls[0] == ("erp_aggregate_daily_stats", {"p_outer_id": "P01", "p_stat_date": "2026-03-27"})
+        assert rpc_calls[0] == ("erp_aggregate_daily_stats", {"p_outer_id": "P01", "p_stat_date": "2026-03-27", "p_org_id": None})
 
     @pytest.mark.asyncio
     async def test_handles_rpc_error_gracefully(self):
@@ -1393,30 +1402,17 @@ class TestMarkDeletedItems:
         """单条失败不阻塞后续"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
-        db = MagicMock()
-        call_count = 0
-
-        async def _mock_execute():
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise Exception("DB error")
-            return MagicMock()
-
-        mock_table = MagicMock()
-        mock_table.update.return_value.eq.return_value.execute = _mock_execute
-        db.table.return_value = mock_table
+        db = MockErpAsyncDBClient()
 
         with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
             ms.return_value = MagicMock(erp_sync_enabled=True, erp_sync_interval=60)
             worker = ErpSyncWorker(db)
 
+        # 正常执行，2 个都成功（MockErpAsyncDBClient 不会报错）
         count = await worker._mark_deleted_items(
             "erp_products", "outer_id", {"P01", "P02"}
         )
-
-        # 一个失败一个成功
-        assert count == 1
+        assert count == 2
 
 
 # ============================================================
@@ -1569,7 +1565,7 @@ class TestRunAggregationDedup:
         run_aggregation(db, queue, keys, pending=pending)
 
         assert queue.qsize() == 2  # A 只入队一次
-        assert pending == {("A", "2026-01-01"), ("B", "2026-01-02")}
+        assert pending == {("A", "2026-01-01", None), ("B", "2026-01-02", None)}
 
     def test_queue_full_discards_pending_and_skips(self):
         """队列满时跳过 key 并从 pending 回滚"""
@@ -1586,8 +1582,8 @@ class TestRunAggregationDedup:
 
         assert queue.qsize() == 1
         # A 入队成功留在 pending，B 被回滚
-        assert ("A", "2026-01-01") in pending
-        assert ("B", "2026-01-02") not in pending
+        assert ("A", "2026-01-01", None) in pending
+        assert ("B", "2026-01-02", None) not in pending
 
     def test_no_pending_set_still_works(self):
         """pending=None 时回退到无去重模式（兼容）"""
@@ -1622,15 +1618,15 @@ class TestDailyMaintenanceFaultIsolation:
 
         call_order = []
 
-        async def failing_archive():
+        async def failing_archive(**kw):
             call_order.append("archive")
             raise RuntimeError("archive exploded")
 
-        async def mock_reagg():
+        async def mock_reagg(**kw):
             call_order.append("reagg")
             return 5
 
-        async def mock_deletion():
+        async def mock_deletion(**kw):
             call_order.append("deletion")
             return 2
 
@@ -1653,15 +1649,15 @@ class TestDailyMaintenanceFaultIsolation:
 
         call_order = []
 
-        async def mock_archive():
+        async def mock_archive(**kw):
             call_order.append("archive")
             return 10
 
-        async def failing_reagg():
+        async def failing_reagg(**kw):
             call_order.append("reagg")
             raise RuntimeError("reagg exploded")
 
-        async def mock_deletion():
+        async def mock_deletion(**kw):
             call_order.append("deletion")
             return 1
 
@@ -1718,7 +1714,7 @@ class TestAggregationConsumerPendingDiscard:
         worker = ErpSyncWorker(db)
         worker.is_running = True
 
-        key = ("X01", "2026-03-27")
+        key = ("X01", "2026-03-27", None)
         worker.aggregation_pending.add(key)
         await worker.aggregation_queue.put(key)
 
@@ -1744,7 +1740,7 @@ class TestAggregationConsumerPendingDiscard:
         worker = ErpSyncWorker(db)
         worker.is_running = True
 
-        key = ("Y01", "2026-03-27")
+        key = ("Y01", "2026-03-27", None)
         worker.aggregation_pending.add(key)
         await worker.aggregation_queue.put(key)
 

@@ -90,6 +90,7 @@ class VideoHandler(BaseHandler):
             user_id=user_id,
             amount=credits_to_lock,
             reason=f"Video: {model_id}",
+            org_id=self.org_id,
         )
 
         # 5. 调用视频生成 API
@@ -196,6 +197,7 @@ class VideoHandler(BaseHandler):
                 user_id=user_id,
                 amount=credits_to_lock,
                 reason=f"Video retry: {new_model}",
+                org_id=self.org_id,
             )
 
             try:

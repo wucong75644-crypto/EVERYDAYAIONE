@@ -73,6 +73,7 @@ class FakeMixin(ChatRoutingMixin):
 
     def __init__(self):
         self.db = _make_db_mock()
+        self.org_id = None
         self._extract_text_content = MagicMock(return_value="你好")
         self._build_memory_prompt = AsyncMock(return_value="记忆内容")
         self._stream_generate = AsyncMock()

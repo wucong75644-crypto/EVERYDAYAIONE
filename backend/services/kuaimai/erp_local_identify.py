@@ -12,7 +12,7 @@ from __future__ import annotations
 from loguru import logger
 
 
-from services.kuaimai.erp_local_helpers import check_sync_health
+from services.kuaimai.erp_local_helpers import _apply_org, check_sync_health
 
 _TYPE_MAP = {0: "普通", 1: "SKU套件", 2: "纯套件", 3: "包材"}
 
@@ -22,43 +22,36 @@ async def local_product_identify(
     code: str | None = None,
     name: str | None = None,
     spec: str | None = None,
+    org_id: str | None = None,
 ) -> str:
     """本地编码识别（code/name/spec 至少传一个）"""
     if not code and not name and not spec:
         return "请提供 code、name 或 spec 至少一个参数"
 
     if code:
-        return await _identify_by_code(db, code.strip())
+        return await _identify_by_code(db, code.strip(), org_id=org_id)
     if name:
-        return await _search_by_name(db, name.strip())
-    return await _search_by_spec(db, spec.strip())
+        return await _search_by_name(db, name.strip(), org_id=org_id)
+    return await _search_by_spec(db, spec.strip(), org_id=org_id)
 
 
-async def _identify_by_code(db, code: str) -> str:
+async def _identify_by_code(db, code: str, org_id: str | None = None) -> str:
     """编码模式：主编码 → SKU编码 → 条码 → 未识别"""
     # 1. 主编码匹配
     try:
-        result = (
-            db.table("erp_products")
-            .select("*")
-            .eq("outer_id", code)
-            .limit(1)
-            .execute()
-        )
+        result = _apply_org(
+            db.table("erp_products").select("*").eq("outer_id", code), org_id
+        ).limit(1).execute()
         if result.data:
-            return _format_product(db, code, result.data[0])
+            return _format_product(db, code, result.data[0], org_id=org_id)
     except Exception as e:
         logger.debug(f"Local identify product | code={code} | {e}")
 
     # 2. SKU编码匹配
     try:
-        result = (
-            db.table("erp_product_skus")
-            .select("*")
-            .eq("sku_outer_id", code)
-            .limit(1)
-            .execute()
-        )
+        result = _apply_org(
+            db.table("erp_product_skus").select("*").eq("sku_outer_id", code), org_id
+        ).limit(1).execute()
         if result.data:
             return _format_sku(db, code, result.data[0])
     except Exception as e:
@@ -66,13 +59,9 @@ async def _identify_by_code(db, code: str) -> str:
 
     # 3. 条码匹配
     try:
-        result = (
-            db.table("erp_products")
-            .select("*")
-            .eq("barcode", code)
-            .limit(1)
-            .execute()
-        )
+        result = _apply_org(
+            db.table("erp_products").select("*").eq("barcode", code), org_id
+        ).limit(1).execute()
         if result.data:
             p = result.data[0]
             return (
@@ -81,13 +70,9 @@ async def _identify_by_code(db, code: str) -> str:
                 f"对应商品: outer_id={p['outer_id']} | 名称: {p.get('title', '')}"
             )
         # SKU 条码
-        result = (
-            db.table("erp_product_skus")
-            .select("*")
-            .eq("barcode", code)
-            .limit(1)
-            .execute()
-        )
+        result = _apply_org(
+            db.table("erp_product_skus").select("*").eq("barcode", code), org_id
+        ).limit(1).execute()
         if result.data:
             s = result.data[0]
             return (
@@ -101,7 +86,7 @@ async def _identify_by_code(db, code: str) -> str:
         logger.debug(f"Local identify barcode | code={code} | {e}")
 
     # 4. API 兜底：单条查询确认是否存在
-    api_result = await _api_fallback_identify(db, code)
+    api_result = await _api_fallback_identify(db, code, org_id=org_id)
     if api_result:
         return api_result
 
@@ -112,23 +97,20 @@ async def _identify_by_code(db, code: str) -> str:
     )
 
 
-async def _search_by_name(db, name: str) -> str:
+async def _search_by_name(db, name: str, org_id: str | None = None) -> str:
     """名称搜索模式：pg_trgm ILIKE"""
     try:
-        result = (
-            db.table("erp_products")
-            .select("outer_id,title,shipper,pic_url,active_status")
-            .ilike("title", f"%{name}%")
-            .limit(20)
-            .execute()
-        )
+        q = db.table("erp_products").select(
+            "outer_id,title,shipper,pic_url,active_status"
+        ).ilike("title", f"%{name}%")
+        result = _apply_org(q, org_id).limit(20).execute()
         rows = result.data or []
     except Exception as e:
         logger.error(f"Name search failed | name={name} | error={e}")
         return f"商品名搜索失败: {e}"
 
     if not rows:
-        health = check_sync_health(db, ["product"])
+        health = check_sync_health(db, ["product"], org_id=org_id)
         return f"搜索\"{name}\"未匹配到商品\n{health}".strip()
 
     lines = [f"搜索\"{name}\"匹配到{len(rows)}个商品：\n"]
@@ -136,8 +118,7 @@ async def _search_by_name(db, name: str) -> str:
         status = "" if r.get("active_status", 1) != -1 else " [已停用]"
         shipper = f" | 货主: {r['shipper']}" if r.get("shipper") else ""
         pic = f"\n   图片: {r['pic_url']}" if r.get("pic_url") else ""
-        # 获取 SKU 数量
-        sku_count = _get_sku_count(db, r["outer_id"])
+        sku_count = _get_sku_count(db, r["outer_id"], org_id=org_id)
         lines.append(
             f"{i}. {r['outer_id']} — {r.get('title', '')}{status}{shipper}"
             f"\n   SKU: {sku_count}个{pic}"
@@ -145,35 +126,30 @@ async def _search_by_name(db, name: str) -> str:
     return "\n".join(lines)
 
 
-async def _search_by_spec(db, spec: str) -> str:
+async def _search_by_spec(db, spec: str, org_id: str | None = None) -> str:
     """规格搜索模式：pg_trgm ILIKE on properties_name"""
     try:
-        result = (
-            db.table("erp_product_skus")
-            .select("sku_outer_id,outer_id,properties_name,pic_url")
-            .ilike("properties_name", f"%{spec}%")
-            .limit(20)
-            .execute()
-        )
+        q = db.table("erp_product_skus").select(
+            "sku_outer_id,outer_id,properties_name,pic_url"
+        ).ilike("properties_name", f"%{spec}%")
+        result = _apply_org(q, org_id).limit(20).execute()
         rows = result.data or []
     except Exception as e:
         logger.error(f"Spec search failed | spec={spec} | error={e}")
         return f"规格搜索失败: {e}"
 
     if not rows:
-        health = check_sync_health(db, ["product"])
+        health = check_sync_health(db, ["product"], org_id=org_id)
         return f"搜索规格\"{spec}\"未匹配到SKU\n{health}".strip()
 
     # 关联商品名称
     outer_ids = list({r["outer_id"] for r in rows})
     title_map: dict[str, str] = {}
     try:
-        pr = (
-            db.table("erp_products")
-            .select("outer_id,title")
-            .in_("outer_id", outer_ids)
-            .execute()
-        )
+        pr = _apply_org(
+            db.table("erp_products").select("outer_id,title").in_("outer_id", outer_ids),
+            org_id,
+        ).execute()
         title_map = {r["outer_id"]: r.get("title", "") for r in (pr.data or [])}
     except Exception:
         pass
@@ -191,7 +167,7 @@ async def _search_by_spec(db, spec: str) -> str:
 # ── API 兜底 ──────────────────────────────────────────
 
 
-async def _api_fallback_identify(db, code: str) -> str | None:
+async def _api_fallback_identify(db, code: str, org_id: str | None = None) -> str | None:
     """本地未找到时，调 item.single.get API 兜底
 
     有结果→写入本地→返回格式化文本；无结果→返回 None。
@@ -215,24 +191,21 @@ async def _api_fallback_identify(db, code: str) -> str | None:
             return None
 
         # 写入本地 erp_products（复用 sync handler 字段映射）
-        _upsert_product_from_api(db, data)
+        _upsert_product_from_api(db, data, org_id=org_id)
         # 重新走本地查询
-        result = (
-            db.table("erp_products")
-            .select("*")
-            .eq("outer_id", data["outerId"])
-            .limit(1)
-            .execute()
-        )
+        result = _apply_org(
+            db.table("erp_products").select("*").eq("outer_id", data["outerId"]),
+            org_id,
+        ).limit(1).execute()
         if result.data:
-            return _format_product(db, code, result.data[0])
+            return _format_product(db, code, result.data[0], org_id=org_id)
         return None
     except Exception as e:
         logger.debug(f"API fallback identify failed | code={code} | {e}")
         return None
 
 
-def _upsert_product_from_api(db, p: dict) -> None:
+def _upsert_product_from_api(db, p: dict, org_id: str | None = None) -> None:
     """将 API 单条商品数据 upsert 到本地 erp_products + erp_product_skus"""
     import re
     outer_id = p.get("outerId")
@@ -246,6 +219,7 @@ def _upsert_product_from_api(db, p: dict) -> None:
 
     spu_row = {
         "outer_id": outer_id,
+        "org_id": org_id,
         "title": p.get("title"),
         "item_type": p.get("type", 0),
         "is_virtual": bool(p.get("isVirtual")),
@@ -280,6 +254,7 @@ def _upsert_product_from_api(db, p: dict) -> None:
             continue
         sku_row = {
             "outer_id": outer_id,
+            "org_id": org_id,
             "sku_outer_id": sku_outer_id,
             "properties_name": sku.get("propertiesName"),
             "barcode": sku.get("barcode"),
@@ -306,7 +281,7 @@ def _upsert_product_from_api(db, p: dict) -> None:
 # ── 格式化 ────────────────────────────────────────────
 
 
-def _format_product(db, code: str, p: dict) -> str:
+def _format_product(db, code: str, p: dict, org_id: str | None = None) -> str:
     """格式化主编码识别结果"""
     item_type = p.get("item_type", 0)
     type_name = _TYPE_MAP.get(item_type, str(item_type))
@@ -330,13 +305,12 @@ def _format_product(db, code: str, p: dict) -> str:
 
     # SKU 列表
     try:
-        result = (
+        result = _apply_org(
             db.table("erp_product_skus")
             .select("sku_outer_id,properties_name")
-            .eq("outer_id", code)
-            .limit(10)
-            .execute()
-        )
+            .eq("outer_id", code),
+            org_id,
+        ).limit(10).execute()
         skus = result.data or []
         if skus:
             parts = [
@@ -359,7 +333,7 @@ def _format_product(db, code: str, p: dict) -> str:
             lines.append("⚠ 查库存: 对每个子单品用 local_stock_query 查询")
 
     # 关联单据统计
-    doc_summary = _get_doc_summary(db, code)
+    doc_summary = _get_doc_summary(db, code, org_id=org_id)
     if doc_summary:
         lines.append(f"关联单据: {doc_summary}")
 
@@ -380,30 +354,29 @@ def _format_sku(db, code: str, s: dict) -> str:
     return "\n".join(lines)
 
 
-def _get_sku_count(db, outer_id: str) -> int:
+def _get_sku_count(db, outer_id: str, org_id: str | None = None) -> int:
     """获取 SKU 数量"""
     try:
-        result = (
+        result = _apply_org(
             db.table("erp_product_skus")
             .select("sku_outer_id", count="exact")
-            .eq("outer_id", outer_id)
-            .execute()
-        )
+            .eq("outer_id", outer_id),
+            org_id,
+        ).execute()
         return result.count or 0
     except Exception:
         return 0
 
 
-def _get_doc_summary(db, code: str) -> str:
+def _get_doc_summary(db, code: str, org_id: str | None = None) -> str:
     """获取关联单据统计摘要"""
     try:
-        result = (
+        result = _apply_org(
             db.table("erp_document_items")
             .select("doc_type,doc_id")
-            .or_(f"outer_id.eq.{code},sku_outer_id.eq.{code}")
-            .limit(1000)
-            .execute()
-        )
+            .or_(f"outer_id.eq.{code},sku_outer_id.eq.{code}"),
+            org_id,
+        ).limit(1000).execute()
         rows = result.data or []
         if not rows:
             return ""

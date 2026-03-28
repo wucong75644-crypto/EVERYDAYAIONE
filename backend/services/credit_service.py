@@ -50,7 +50,8 @@ class CreditService:
         user_id: str,
         amount: int,
         reason: str,
-        change_type: str
+        change_type: str,
+        org_id: str | None = None,
     ) -> int:
         """
         原子扣除积分
@@ -78,7 +79,8 @@ class CreditService:
                     'p_user_id': user_id,
                     'p_amount': amount,
                     'p_reason': reason,
-                    'p_change_type': change_type
+                    'p_change_type': change_type,
+                    'p_org_id': org_id,
                 }
             ).execute()
 
@@ -121,6 +123,7 @@ class CreditService:
         amount: int,
         reason: str = "",
         _retry_count: int = 0,
+        org_id: str | None = None,
     ) -> str:
         """
         预扣积分（锁定）
@@ -181,7 +184,8 @@ class CreditService:
                 )
                 return await self.lock_credits(
                     task_id, user_id, amount, reason,
-                    _retry_count=_retry_count + 1
+                    _retry_count=_retry_count + 1,
+                    org_id=org_id,
                 )
 
             # 3. 记录事务
@@ -192,7 +196,8 @@ class CreditService:
                 "amount": amount,
                 "type": "lock",
                 "status": "pending",
-                "reason": reason
+                "reason": reason,
+                "org_id": org_id,
             }).execute()
 
             logger.info(
@@ -239,48 +244,28 @@ class CreditService:
 
     async def refund_credits(self, transaction_id: str) -> None:
         """
-        退回积分（任务失败时调用）
+        退回积分（原子操作：CAS检查+退回余额+更新状态在单个SQL事务内完成）
 
         Args:
             transaction_id: 事务ID
         """
         try:
-            # 1. 获取事务信息
-            tx_result = self.db.table("credit_transactions").select("*").eq("id", transaction_id).single().execute()
-            if not tx_result.data:
-                logger.warning("退回失败：事务不存在", transaction_id=transaction_id)
-                return
-
-            tx = tx_result.data
-            if tx["status"] != "pending":
-                logger.warning(
-                    "退回失败：事务状态不是 pending",
-                    transaction_id=transaction_id,
-                    status=tx["status"]
-                )
-                return
-
-            # 2. 退回积分
-            self.db.rpc(
-                'refund_credits',
-                {
-                    'p_user_id': tx["user_id"],
-                    'p_amount': tx["amount"]
-                }
+            result = self.db.rpc(
+                'atomic_refund_credits',
+                {'p_transaction_id': transaction_id}
             ).execute()
 
-            # 3. 更新事务状态
-            self.db.table("credit_transactions").update({
-                "status": "refunded",
-                "confirmed_at": datetime.now(timezone.utc).isoformat()
-            }).eq("id", transaction_id).execute()
-
-            logger.info(
-                "积分退回成功",
-                transaction_id=transaction_id,
-                user_id=tx["user_id"],
-                amount=tx["amount"]
-            )
+            data = result.data
+            if data and data.get('refunded'):
+                logger.info(
+                    "积分退回成功",
+                    transaction_id=transaction_id,
+                    user_id=data.get('user_id'),
+                    amount=data.get('amount')
+                )
+            else:
+                reason = data.get('reason', 'unknown') if data else 'no_response'
+                logger.warning("退回跳过", transaction_id=transaction_id, reason=reason)
         except Exception as e:
             logger.error("退回积分失败", transaction_id=transaction_id, error=str(e))
             raise AppException(
@@ -295,7 +280,8 @@ class CreditService:
         task_id: str,
         user_id: str,
         amount: int,
-        reason: str = ""
+        reason: str = "",
+        org_id: str | None = None,
     ):
         """
         积分锁定上下文管理器
@@ -309,7 +295,7 @@ class CreditService:
                 # 成功则自动确认
             # 异常则自动退回
         """
-        transaction_id = await self.lock_credits(task_id, user_id, amount, reason)
+        transaction_id = await self.lock_credits(task_id, user_id, amount, reason, org_id=org_id)
         try:
             yield transaction_id
             # 正常退出，确认扣除

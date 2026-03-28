@@ -390,6 +390,153 @@ class TestAuthServiceResetPasswordInvalidCode:
                 await auth_service.reset_password(user["phone"], "wrong", "newpwd")
 
 
+class TestAuthServiceLoginByOrg:
+    """企业密码登录测试"""
+
+    @pytest.fixture
+    def auth_service(self, mock_db, mock_settings):
+        with patch("services.auth_service.get_settings", return_value=mock_settings):
+            return AuthService(mock_db)
+
+    def _setup_org_login(self, mock_db, org_status="active", member_role="member",
+                         member_status="active", user_status="active",
+                         password_hash="hashed_pw"):
+        """统一设置企业登录所需的表数据"""
+        org_id = "org-001"
+        user_id = "user-001"
+
+        mock_db.set_table_data("organizations", [{
+            "id": org_id, "name": "测试企业", "status": org_status,
+        }])
+        mock_db.set_table_data("users", [{
+            **create_test_user(user_id=user_id, phone="13800138000",
+                               status=user_status, password_hash=password_hash),
+        }])
+        mock_db.set_table_data("org_members", [{
+            "org_id": org_id, "user_id": user_id,
+            "role": member_role, "status": member_status,
+        }])
+        return org_id, user_id
+
+    @pytest.mark.asyncio
+    async def test_login_org_success(self, auth_service, mock_db):
+        """企业登录成功"""
+        self._setup_org_login(mock_db)
+
+        with patch("services.auth_service.verify_password", return_value=True):
+            result = await auth_service.login_by_org_password(
+                "测试企业", "13800138000", "password123"
+            )
+
+        assert "token" in result
+        assert "user" in result
+        assert "org" in result
+        assert result["org"]["org_name"] == "测试企业"
+        assert result["org"]["org_role"] == "member"
+
+    @pytest.mark.asyncio
+    async def test_login_org_not_found(self, auth_service, mock_db):
+        """企业名不存在"""
+        mock_db.set_table_data("organizations", [])
+
+        with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
+            await auth_service.login_by_org_password(
+                "不存在的企业", "13800138000", "pw"
+            )
+
+    @pytest.mark.asyncio
+    async def test_login_org_suspended(self, auth_service, mock_db):
+        """企业已停用"""
+        self._setup_org_login(mock_db, org_status="suspended")
+
+        with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
+            await auth_service.login_by_org_password(
+                "测试企业", "13800138000", "pw"
+            )
+
+    @pytest.mark.asyncio
+    async def test_login_org_phone_not_registered(self, auth_service, mock_db):
+        """手机号未注册"""
+        mock_db.set_table_data("organizations", [{
+            "id": "org-001", "name": "测试企业", "status": "active",
+        }])
+        mock_db.set_table_data("users", [])
+
+        with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
+            await auth_service.login_by_org_password(
+                "测试企业", "13800138000", "pw"
+            )
+
+    @pytest.mark.asyncio
+    async def test_login_org_user_disabled(self, auth_service, mock_db):
+        """用户账号已禁用"""
+        self._setup_org_login(mock_db, user_status="disabled")
+
+        with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
+            await auth_service.login_by_org_password(
+                "测试企业", "13800138000", "pw"
+            )
+
+    @pytest.mark.asyncio
+    async def test_login_org_not_member(self, auth_service, mock_db):
+        """不是企业成员"""
+        mock_db.set_table_data("organizations", [{
+            "id": "org-001", "name": "测试企业", "status": "active",
+        }])
+        mock_db.set_table_data("users", [
+            create_test_user(user_id="user-001", phone="13800138000"),
+        ])
+        mock_db.set_table_data("org_members", [])  # 空成员表
+
+        with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
+            await auth_service.login_by_org_password(
+                "测试企业", "13800138000", "pw"
+            )
+
+    @pytest.mark.asyncio
+    async def test_login_org_member_disabled(self, auth_service, mock_db):
+        """成员已被禁用"""
+        self._setup_org_login(mock_db, member_status="disabled")
+
+        with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
+            await auth_service.login_by_org_password(
+                "测试企业", "13800138000", "pw"
+            )
+
+    @pytest.mark.asyncio
+    async def test_login_org_no_password(self, auth_service, mock_db):
+        """未设置密码"""
+        self._setup_org_login(mock_db, password_hash=None)
+
+        with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
+            await auth_service.login_by_org_password(
+                "测试企业", "13800138000", "pw"
+            )
+
+    @pytest.mark.asyncio
+    async def test_login_org_wrong_password(self, auth_service, mock_db):
+        """密码错误"""
+        self._setup_org_login(mock_db)
+
+        with patch("services.auth_service.verify_password", return_value=False):
+            with pytest.raises(AuthenticationError, match="企业名称、手机号或密码错误"):
+                await auth_service.login_by_org_password(
+                    "测试企业", "13800138000", "wrong"
+                )
+
+    @pytest.mark.asyncio
+    async def test_login_org_admin_role(self, auth_service, mock_db):
+        """admin 角色正确返回"""
+        self._setup_org_login(mock_db, member_role="admin")
+
+        with patch("services.auth_service.verify_password", return_value=True):
+            result = await auth_service.login_by_org_password(
+                "测试企业", "13800138000", "pw"
+            )
+
+        assert result["org"]["org_role"] == "admin"
+
+
 class TestAuthServiceHelpers:
     """辅助方法测试"""
 

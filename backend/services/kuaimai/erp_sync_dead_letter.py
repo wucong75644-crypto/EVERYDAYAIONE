@@ -40,6 +40,7 @@ async def record_dead_letter(
     detail_method: str,
     failed_docs: list[dict],
     error_msg: str = "",
+    org_id: str | None = None,
 ) -> int:
     """将失败的单据写入死信表
 
@@ -89,6 +90,7 @@ async def record_dead_letter(
                     "next_retry_at": datetime.now().isoformat(),
                     "status": "pending",
                     "last_error": str(error_msg)[:500],
+                    "org_id": org_id,
                     "created_at": datetime.now().isoformat(),
                     "updated_at": datetime.now().isoformat(),
                 }).execute()
@@ -166,20 +168,49 @@ async def _process_batch(db: Any, client: Any = None) -> int:
     if not rows:
         return 0
 
-    if client is None:
-        from services.kuaimai.client import KuaiMaiClient
-        client = KuaiMaiClient()
+    # 按 org_id 分组，每组用对应企业的 client
+    from services.kuaimai.client import KuaiMaiClient
+
+    org_groups: dict[str | None, list[dict]] = {}
+    for row in rows:
+        org_id = row.get("org_id")
+        org_groups.setdefault(org_id, []).append(row)
 
     processed = 0
-    for row in rows:
+    for org_id, org_rows in org_groups.items():
+        # 为每个企业加载凭证
+        org_client = client
+        if org_client is None:
+            if org_id:
+                try:
+                    from services.org.config_resolver import OrgConfigResolver
+                    resolver = OrgConfigResolver(db)
+                    creds = resolver.get_erp_credentials(org_id)
+                    org_client = KuaiMaiClient(
+                        app_key=creds["kuaimai_app_key"],
+                        app_secret=creds["kuaimai_app_secret"],
+                        access_token=creds["kuaimai_access_token"],
+                        refresh_token=creds["kuaimai_refresh_token"],
+                    )
+                except ValueError as e:
+                    logger.warning(f"Skip dead letter retry for org {org_id}: {e}")
+                    continue
+            else:
+                org_client = KuaiMaiClient()
+
         try:
-            await _retry_one(db, client, row)
-            processed += 1
-        except Exception as e:
-            logger.error(
-                f"Dead letter retry error | id={row.get('id')} | "
-                f"doc_type={row.get('doc_type')} | error={e}"
-            )
+            for row in org_rows:
+                try:
+                    await _retry_one(db, org_client, row)
+                    processed += 1
+                except Exception as e:
+                    logger.error(
+                        f"Dead letter retry error | id={row.get('id')} | "
+                        f"doc_type={row.get('doc_type')} | org_id={org_id} | error={e}"
+                    )
+        finally:
+            if org_client is not client and org_client:
+                await org_client.close()
 
     return processed
 
@@ -244,7 +275,8 @@ async def _retry_one(db: Any, client: Any, row: dict) -> None:
 
         if rows:
             from services.kuaimai.erp_sync_service import ErpSyncService
-            svc = ErpSyncService(db)
+            dl_org_id = row.get("org_id")
+            svc = ErpSyncService(db, org_id=dl_org_id)
             count = await svc.upsert_document_items(rows)
             await svc.run_aggregation(svc.collect_affected_keys(rows))
             logger.info(

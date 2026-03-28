@@ -47,7 +47,7 @@ async def sync_purchase(
     detail_result = await _fetch_details(client, "purchase.order.get", docs)
     if detail_result.failed:
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
-        await record_dead_letter(svc.db, "purchase", "purchase.order.get", detail_result.failed)
+        await record_dead_letter(svc.db, "purchase", "purchase.order.get", detail_result.failed, org_id=svc.org_id)
 
     all_rows: list[dict[str, Any]] = []
     for doc, detail in detail_result:
@@ -105,7 +105,7 @@ async def sync_receipt(
     detail_result = await _fetch_details(client, "warehouse.entry.list.get", docs)
     if detail_result.failed:
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
-        await record_dead_letter(svc.db, "receipt", "warehouse.entry.list.get", detail_result.failed)
+        await record_dead_letter(svc.db, "receipt", "warehouse.entry.list.get", detail_result.failed, org_id=svc.org_id)
 
     all_rows: list[dict[str, Any]] = []
     for doc, detail in detail_result:
@@ -160,7 +160,7 @@ async def sync_shelf(
     detail_result = await _fetch_details(client, "erp.purchase.shelf.get", docs)
     if detail_result.failed:
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
-        await record_dead_letter(svc.db, "shelf", "erp.purchase.shelf.get", detail_result.failed)
+        await record_dead_letter(svc.db, "shelf", "erp.purchase.shelf.get", detail_result.failed, org_id=svc.org_id)
 
     all_rows: list[dict[str, Any]] = []
     for doc, detail in detail_result:
@@ -205,7 +205,7 @@ async def sync_purchase_return(
     detail_result = await _fetch_details(client, "purchase.return.list.get", docs)
     if detail_result.failed:
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
-        await record_dead_letter(svc.db, "purchase_return", "purchase.return.list.get", detail_result.failed)
+        await record_dead_letter(svc.db, "purchase_return", "purchase.return.list.get", detail_result.failed, org_id=svc.org_id)
 
     all_rows: list[dict[str, Any]] = []
     for doc, detail in detail_result:
@@ -409,7 +409,7 @@ async def sync_order(
 
     for time_type in _ORDER_TIME_TYPES:
         async for page_docs in svc.fetch_pages_streaming(
-            "erp.trade.list.query",
+            "erp.trade.outstock.simple.query",
             {
                 "startTime": _fmt_dt(start),
                 "endTime": _fmt_dt(end),
