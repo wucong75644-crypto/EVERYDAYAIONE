@@ -1762,3 +1762,112 @@ class TestAggregationConsumerPendingDiscard:
             pass
 
         assert key not in worker.aggregation_pending
+
+
+# ============================================================
+# TestMultiTenantSync — 多企业同步隔离
+# ============================================================
+
+
+class TestMultiTenantSync:
+    """多企业场景下的同步隔离验证"""
+
+    def test_org_timing_isolation(self):
+        """每个企业独立计时"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
+            ms.return_value = MagicMock(
+                erp_sync_enabled=True, erp_sync_interval=60,
+                erp_stock_full_refresh_interval=3600,
+                erp_platform_map_interval=7200,
+            )
+            worker = ErpSyncWorker(db)
+
+        worker._org_last_stock_full["org-A"] = datetime.now()
+        assert worker._should_run_stock_full("org-A") is False
+        assert worker._should_run_stock_full("org-B") is True
+
+        worker._org_last_daily["org-A"] = datetime.now()
+        assert worker._should_run_daily("org-A") is False
+        assert worker._should_run_daily("org-B") is True
+
+    def test_aggregation_queue_3tuple(self):
+        """聚合队列使用三元组"""
+        import asyncio
+        from services.kuaimai.erp_sync_persistence import run_aggregation
+
+        q = asyncio.Queue(maxsize=100)
+        pending = set()
+        run_aggregation(MagicMock(), q, [("P01", "2026-03-28")], pending=pending, org_id="org-A")
+        item = q.get_nowait()
+        assert item == ("P01", "2026-03-28", "org-A")
+        assert ("P01", "2026-03-28", "org-A") in pending
+
+    def test_aggregation_different_orgs_not_deduped(self):
+        """不同企业的相同 key 不互相去重"""
+        import asyncio
+        from services.kuaimai.erp_sync_persistence import run_aggregation
+
+        q = asyncio.Queue(maxsize=100)
+        pending = set()
+        run_aggregation(MagicMock(), q, [("P01", "2026-03-28")], pending=pending, org_id="org-A")
+        run_aggregation(MagicMock(), q, [("P01", "2026-03-28")], pending=pending, org_id="org-B")
+        assert q.qsize() == 2
+
+    def test_sync_service_apply_org_enterprise(self):
+        """_apply_org 企业模式"""
+        from services.kuaimai.erp_sync_service import ErpSyncService
+        svc = ErpSyncService.__new__(ErpSyncService)
+        svc.org_id = "org-test"
+        mock_q = MagicMock()
+        mock_q.eq.return_value = mock_q
+        svc._apply_org(mock_q)
+        mock_q.eq.assert_called_with("org_id", "org-test")
+
+    def test_sync_service_apply_org_personal(self):
+        """_apply_org 散客模式"""
+        from services.kuaimai.erp_sync_service import ErpSyncService
+        svc = ErpSyncService.__new__(ErpSyncService)
+        svc.org_id = None
+        mock_q = MagicMock()
+        mock_q.is_.return_value = mock_q
+        svc._apply_org(mock_q)
+        mock_q.is_.assert_called_with("org_id", "null")
+
+    @pytest.mark.asyncio
+    async def test_load_erp_orgs_empty_fallback(self):
+        """无企业时降级散客"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+        db = MockErpAsyncDBClient()
+        db.set_table_data("organizations", [])
+        with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
+            ms.return_value = MagicMock(erp_sync_enabled=True, erp_sync_interval=60)
+            worker = ErpSyncWorker(db)
+        with patch("services.kuaimai.client.KuaiMaiClient") as MC:
+            MC.return_value = MagicMock(is_configured=True)
+            orgs = await worker._load_erp_orgs()
+        assert len(orgs) == 1
+        assert orgs[0][0] is None
+
+    @pytest.mark.asyncio
+    async def test_load_erp_orgs_skip_no_erp(self):
+        """ERP 未开启的企业被跳过"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+        db = MockErpAsyncDBClient()
+        db.set_table_data("organizations", [
+            {"id": "org-1", "features": {"erp": False}, "status": "active"},
+            {"id": "org-2", "features": {"erp": True}, "status": "active"},
+        ])
+        with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
+            ms.return_value = MagicMock(erp_sync_enabled=True, erp_sync_interval=60)
+            worker = ErpSyncWorker(db)
+        with patch("services.org.config_resolver.OrgConfigResolver") as MR:
+            MR.return_value = MagicMock(get_erp_credentials=MagicMock(return_value={
+                "kuaimai_app_key": "k", "kuaimai_app_secret": "s",
+                "kuaimai_access_token": "t", "kuaimai_refresh_token": "r",
+            }))
+            orgs = await worker._load_erp_orgs()
+        assert len(orgs) == 1
+        assert orgs[0][0] == "org-2"

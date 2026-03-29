@@ -682,5 +682,104 @@ class TestHandleCompleteCommonTaskReuse:
         handler._complete_task.assert_called_once_with("task_123", task=task_data)
 
 
+# ============================================================
+# TestCreditMixinOrgId — 积分操作 org_id 传递
+# ============================================================
+
+
+class TestCreditMixinOrgId:
+    """验证 _lock_credits / _deduct_directly 正确传递 org_id"""
+
+    @pytest.fixture
+    def handler(self, mock_db):
+        h = TestHandler(mock_db)
+        h.org_id = "org-test"
+        return h
+
+    def test_lock_credits_writes_org_id(self, handler, mock_db):
+        """_lock_credits(org_id) INSERT credit_transactions 包含 org_id"""
+        user = create_test_user(credits=100)
+        mock_db.set_table_data("users", [user])
+        mock_db.set_table_data("credit_transactions", [])
+
+        tx_id = handler._lock_credits(
+            task_id="task_1", user_id=user["id"], amount=10,
+            reason="test", org_id="org-123",
+        )
+        assert tx_id is not None
+
+        # 验证 credit_transactions 表中写入了 org_id
+        rows = mock_db.table("credit_transactions")._data
+        assert any(r.get("org_id") == "org-123" for r in rows)
+
+    def test_lock_credits_none_org_id(self, handler, mock_db):
+        """散客模式 org_id=None 也能正常工作"""
+        user = create_test_user(credits=100)
+        mock_db.set_table_data("users", [user])
+        mock_db.set_table_data("credit_transactions", [])
+
+        tx_id = handler._lock_credits(
+            task_id="task_1", user_id=user["id"], amount=10,
+        )
+        assert tx_id is not None
+
+    def test_deduct_directly_passes_org_id_to_rpc(self, handler, mock_db):
+        """_deduct_directly(org_id) 将 p_org_id 传给 RPC"""
+        mock_db.set_rpc_result("deduct_credits_atomic", {
+            "success": True, "new_balance": 90,
+        })
+
+        rpc_calls = []
+        original_rpc = mock_db.rpc
+
+        def tracking_rpc(fn_name, params=None):
+            rpc_calls.append((fn_name, params))
+            return original_rpc(fn_name, params)
+
+        mock_db.rpc = tracking_rpc
+
+        handler._deduct_directly(
+            user_id="u1", amount=10, reason="test",
+            change_type="conversation_cost", org_id="org-456",
+        )
+
+        assert len(rpc_calls) == 1
+        assert rpc_calls[0][1]["p_org_id"] == "org-456"
+
+    def test_build_task_data_extracts_org_id(self, handler):
+        """_build_task_data 从 request_params 中 pop _org_id 写入 task_data"""
+        from services.handlers.base import TaskMetadata
+        params = {"model": "test", "_org_id": "org-789"}
+        metadata = TaskMetadata(client_task_id="ct1")
+
+        task_data = handler._build_task_data(
+            task_id="t1", message_id="m1", conversation_id="c1",
+            user_id="u1", task_type="chat", status="running",
+            model_id="test", request_params=params, metadata=metadata,
+        )
+
+        assert task_data["org_id"] == "org-789"
+        assert "_org_id" not in params  # 已被 pop
+
+
+# ============================================================
+# TestBaseHandlerOrgIdDefault — BaseHandler.org_id 默认值
+# ============================================================
+
+
+class TestBaseHandlerOrgIdDefault:
+
+    def test_default_org_id_is_none(self, mock_db):
+        """BaseHandler 默认 org_id=None"""
+        h = TestHandler(mock_db)
+        assert h.org_id is None
+
+    def test_org_id_can_be_set(self, mock_db):
+        """org_id 可以外部设置"""
+        h = TestHandler(mock_db)
+        h.org_id = "org-test"
+        assert h.org_id == "org-test"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
