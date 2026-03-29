@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # 数据库配置（本地 PostgreSQL）
     database_url: str  # PostgreSQL 连接串（必填）
     db_pool_min: int = 2  # 连接池最小连接数
-    db_pool_max: int = 10  # 连接池最大连接数
+    db_pool_max: int = 20  # 连接池最大连接数（支持 10 Worker 并发 + 聚合/死信消费者）
 
     # JWT 配置
     jwt_secret_key: str
@@ -162,6 +162,11 @@ class Settings(BaseSettings):
     erp_sync_shard_days: int = 1               # 时间窗口分片大小（天），快麦API单次查询数据量有限
     erp_warehouse_ids: str = "87227,436208,444522"  # 库存同步仓库ID列表（逗号分隔）
     erp_stock_full_refresh_interval: int = 3600     # 库存全量刷新间隔（秒），默认1小时
+    erp_sync_worker_count: int = 10               # Worker 协程数（并发消费任务）
+    erp_sync_max_org_concurrency: int = 3         # 单企业最大并发同步数（防大企业霸占 Worker）
+    erp_sync_task_lock_ttl: int = 60              # per-(org, sync_type) 任务锁 TTL（秒），配合续期
+    erp_sync_kit_refresh_throttle: int = 30       # 套件库存物化视图刷新节流（秒）
+    erp_sync_queue_key: str = "erp_tasks"         # Redis Sorted Set 队列名
 
     # 快麦奇门自定义接口配置（淘宝网关，需单独申请凭证）
     qimen_app_key: Optional[str] = None  # 淘宝平台 appKey（非ERP的appKey）
@@ -193,6 +198,10 @@ class Settings(BaseSettings):
     sandbox_max_code_length: int = 5000            # 代码最大字符数
     sandbox_api_concurrency: int = 10              # ERP API 并发限制
     sandbox_max_pages: int = 200                   # erp_query_all 最大翻页数
+
+    # 文件操作配置
+    file_workspace_enabled: bool = True                          # 文件操作总开关
+    file_workspace_root: str = "/mnt/oss-workspace/workspace"    # ossfs 挂载路径（生产）或本地路径（开发）
 
     # 超时分级配置（按任务类型差异化超时）
     chat_stream_timeout: float = 60.0         # 聊天流式超时（普通模型）

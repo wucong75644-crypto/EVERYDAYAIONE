@@ -434,22 +434,31 @@ class TestOSSServiceHelperMethods:
                 return OSSService()
 
     def test_generate_object_key(self, oss_service):
-        """测试：生成对象键"""
-        # Act
+        """测试：生成对象键（散客 + 企业）"""
+        import hashlib
+        user_hash = hashlib.md5("user_123".encode()).hexdigest()[:8]
+
+        # 散客（无 org_id）→ personal/{user_hash}/...
         object_key = oss_service._generate_object_key(
             user_id="user_123",
             category="generated",
             ext="png",
             prefix="images"
         )
-
-        # Assert
-        assert object_key.startswith("images/generated/")
+        assert object_key.startswith(f"personal/{user_hash}/images/generated/")
         assert object_key.endswith(".png")
-        # 对象键包含用户ID的MD5哈希（前8位），不是原始user_id
-        import hashlib
-        user_hash = hashlib.md5("user_123".encode()).hexdigest()[:8]
         assert user_hash in object_key
+
+        # 企业用户 → org/{org_id}/...
+        object_key_org = oss_service._generate_object_key(
+            user_id="user_123",
+            category="generated",
+            ext="png",
+            prefix="images",
+            org_id="org_abc",
+        )
+        assert object_key_org.startswith("org/org_abc/images/generated/")
+        assert object_key_org.endswith(".png")
 
     def test_get_extension_from_url(self, oss_service):
         """测试：从 URL 提取扩展名"""

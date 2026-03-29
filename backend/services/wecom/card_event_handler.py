@@ -31,6 +31,7 @@ class WecomCardEventHandler:
         user_id: str,
         conversation_id: str,
         reply_ctx: WecomReplyContext,
+        org_id: str | None = None,
     ) -> None:
         """根据 event_key 路由到对应处理逻辑。
 
@@ -43,6 +44,8 @@ class WecomCardEventHandler:
             conversation_id: 当前对话 ID
             reply_ctx: 回复上下文
         """
+        self._org_id = org_id
+
         logger.info(
             f"Card event | key={event_key} | task_id={task_id} | "
             f"user_id={user_id}"
@@ -102,7 +105,7 @@ class WecomCardEventHandler:
     ) -> None:
         from services.memory_service import MemoryService
         mem_svc = MemoryService()
-        memories = await mem_svc.get_all_memories(user_id)
+        memories = await mem_svc.get_all_memories(user_id, org_id=self._org_id)
         ws = reply_ctx.ws_client
         if ws and reply_ctx.req_id:
             if memories:
@@ -117,7 +120,7 @@ class WecomCardEventHandler:
     ) -> None:
         from services.memory_service import MemoryService
         mem_svc = MemoryService()
-        await mem_svc.delete_all_memories(user_id)
+        await mem_svc.delete_all_memories(user_id, org_id=self._org_id)
         ws = reply_ctx.ws_client
         if ws and reply_ctx.req_id:
             await ws.send_update_card(

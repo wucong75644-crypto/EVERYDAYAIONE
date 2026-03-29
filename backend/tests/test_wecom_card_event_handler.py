@@ -93,7 +93,7 @@ class TestClearAllMemory:
             MockMS.return_value.delete_all_memories = AsyncMock()
             await handler.handle("clear_all_memory", "t1", "button_interaction",
                                  None, "u1", "c1", ctx)
-            MockMS.return_value.delete_all_memories.assert_called_once_with("u1")
+            MockMS.return_value.delete_all_memories.assert_called_once_with("u1", org_id=None)
         ctx.ws_client.send_update_card.assert_called_once()
 
 

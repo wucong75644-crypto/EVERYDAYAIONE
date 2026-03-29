@@ -181,7 +181,8 @@ class TaskCompletionService:
         raw_urls = self._extract_urls(result, task_type)
 
         # 2. OSS 上传（临时 URL → 持久化）
-        oss_urls = await self._upload_urls_to_oss(raw_urls, user_id, task_type)
+        org_id = task.get("org_id")
+        oss_urls = await self._upload_urls_to_oss(raw_urls, user_id, task_type, org_id=org_id)
 
         # 3. 构建 ContentPart 列表（含元数据）
         content_parts = self._build_content_parts(oss_urls, task_type, task)
@@ -276,6 +277,7 @@ class TaskCompletionService:
         user_id: str,
         task_type: str,
         max_concurrent: int = 3,
+        org_id: str | None = None,
     ) -> List[str]:
         """
         批量上传媒体到 OSS（并发上传）
@@ -302,7 +304,7 @@ class TaskCompletionService:
         async def upload_with_limit(url: str) -> str:
             """带限流的上传"""
             async with semaphore:
-                return await self._upload_single_to_oss(url, user_id, task_type)
+                return await self._upload_single_to_oss(url, user_id, task_type, org_id=org_id)
 
         # 并发上传所有 URL（部分成功模式）
         results = await asyncio.gather(
@@ -338,6 +340,7 @@ class TaskCompletionService:
         user_id: str,
         media_type: str,
         max_retries: int = 3,
+        org_id: str | None = None,
     ) -> str:
         """
         上传单个 URL 到 OSS，失败抛异常
@@ -385,6 +388,7 @@ class TaskCompletionService:
                     user_id=user_id,
                     category="generated",
                     media_type=media_type,
+                    org_id=org_id,
                 )
 
                 logger.info(

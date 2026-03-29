@@ -174,6 +174,7 @@ class ChatRoutingMixin:
             decision = await router.route(
                 content=content, user_id=user_id,
                 conversation_id=conversation_id,
+                org_id=self.org_id,
             )
             # 包装为 AgentResult 兼容格式
             from services.agent_types import AgentResult

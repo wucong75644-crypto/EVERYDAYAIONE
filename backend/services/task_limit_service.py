@@ -22,18 +22,25 @@ class TaskLimitService:
         self.global_limit = settings.rate_limit_global_tasks
         self.conversation_limit = settings.rate_limit_conversation_tasks
 
-    def _global_key(self, user_id: str) -> str:
-        """全局任务计数键"""
-        return f"task:global:{user_id}"
+    @staticmethod
+    def _org_prefix(org_id: str | None) -> str:
+        return org_id if org_id else "personal"
 
-    def _conversation_key(self, user_id: str, conversation_id: str) -> str:
+    def _global_key(self, user_id: str, org_id: str | None = None) -> str:
+        """全局任务计数键"""
+        return f"task:global:{self._org_prefix(org_id)}:{user_id}"
+
+    def _conversation_key(
+        self, user_id: str, conversation_id: str, org_id: str | None = None
+    ) -> str:
         """单对话任务计数键"""
-        return f"task:conv:{user_id}:{conversation_id}"
+        return f"task:conv:{self._org_prefix(org_id)}:{user_id}:{conversation_id}"
 
     async def check_and_acquire(
         self,
         user_id: str,
-        conversation_id: str
+        conversation_id: str,
+        org_id: str | None = None,
     ) -> bool:
         """
         检查限制并获取槽位
@@ -41,6 +48,7 @@ class TaskLimitService:
         Args:
             user_id: 用户ID
             conversation_id: 对话ID
+            org_id: 企业ID（散客为None）
 
         Returns:
             True 表示获取成功
@@ -49,8 +57,8 @@ class TaskLimitService:
             TaskQueueFullError: 超过限制时抛出
         """
         try:
-            global_key = self._global_key(user_id)
-            conv_key = self._conversation_key(user_id, conversation_id)
+            global_key = self._global_key(user_id, org_id)
+            conv_key = self._conversation_key(user_id, conversation_id, org_id)
 
             # 批量读取两个计数（1次往返替代2次）
             async with self.redis.pipeline(transaction=False) as pipe:
@@ -110,7 +118,8 @@ class TaskLimitService:
     async def release(
         self,
         user_id: str,
-        conversation_id: str
+        conversation_id: str,
+        org_id: str | None = None,
     ) -> None:
         """
         释放槽位
@@ -118,10 +127,11 @@ class TaskLimitService:
         Args:
             user_id: 用户ID
             conversation_id: 对话ID
+            org_id: 企业ID（散客为None）
         """
         try:
-            global_key = self._global_key(user_id)
-            conv_key = self._conversation_key(user_id, conversation_id)
+            global_key = self._global_key(user_id, org_id)
+            conv_key = self._conversation_key(user_id, conversation_id, org_id)
 
             async with self.redis.pipeline() as pipe:
                 await pipe.decr(global_key)
@@ -139,7 +149,8 @@ class TaskLimitService:
     async def get_active_count(
         self,
         user_id: str,
-        conversation_id: Optional[str] = None
+        conversation_id: Optional[str] = None,
+        org_id: str | None = None,
     ) -> dict:
         """
         获取活跃任务数量
@@ -147,16 +158,17 @@ class TaskLimitService:
         Args:
             user_id: 用户ID
             conversation_id: 对话ID（可选）
+            org_id: 企业ID（散客为None）
 
         Returns:
             包含 global 和 conversation 计数的字典
         """
-        global_count = await self.redis.get(self._global_key(user_id)) or 0
+        global_count = await self.redis.get(self._global_key(user_id, org_id)) or 0
 
         conv_count = 0
         if conversation_id:
             conv_count = await self.redis.get(
-                self._conversation_key(user_id, conversation_id)
+                self._conversation_key(user_id, conversation_id, org_id)
             ) or 0
 
         return {
@@ -169,7 +181,8 @@ class TaskLimitService:
     async def can_start_task(
         self,
         user_id: str,
-        conversation_id: str
+        conversation_id: str,
+        org_id: str | None = None,
     ) -> bool:
         """
         检查是否可以启动新任务（不抛异常）
@@ -177,12 +190,13 @@ class TaskLimitService:
         Args:
             user_id: 用户ID
             conversation_id: 对话ID
+            org_id: 企业ID（散客为None）
 
         Returns:
             True 表示可以启动
         """
         try:
-            counts = await self.get_active_count(user_id, conversation_id)
+            counts = await self.get_active_count(user_id, conversation_id, org_id)
             return (
                 counts["global"] < self.global_limit and
                 counts["conversation"] < self.conversation_limit

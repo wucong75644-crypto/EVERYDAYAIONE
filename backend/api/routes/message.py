@@ -96,10 +96,10 @@ async def _resolve_generation_type(body, user_id: str, conversation_id: str, db=
             await agent.close()
 
     # 降级到旧路由（IntentRouter 单步路由）
-    return await _legacy_resolve(body, user_id, conversation_id)
+    return await _legacy_resolve(body, user_id, conversation_id, org_id=org_id)
 
 
-async def _legacy_resolve(body, user_id: str, conversation_id: str):
+async def _legacy_resolve(body, user_id: str, conversation_id: str, org_id: str | None = None):
     """旧路由降级路径（IntentRouter 单步路由）"""
     from services.intent_router import IntentRouter
 
@@ -107,6 +107,7 @@ async def _legacy_resolve(body, user_id: str, conversation_id: str):
     try:
         decision = await router.route(
             content=body.content, user_id=user_id, conversation_id=conversation_id,
+            org_id=org_id,
         )
 
         # web_search：执行搜索，将结果作为上下文注入
@@ -214,7 +215,7 @@ async def generate_message(
 
     # 1. 检查任务限制
     if task_limit_service:
-        await task_limit_service.check_and_acquire(user_id, conversation_id)
+        await task_limit_service.check_and_acquire(user_id, conversation_id, org_id=ctx.org_id)
 
     # 1.5 异步获取用户 IP 位置（与路由并行，不阻塞主流程）
     from services.ip_location_service import extract_client_ip, get_location_by_ip

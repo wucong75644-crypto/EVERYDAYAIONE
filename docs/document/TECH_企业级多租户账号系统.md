@@ -458,57 +458,55 @@ worker 启动 → 遍历所有 status='active' 且 features.erp=true 的企业
 
 ---
 
-## 十、非数据库资源隔离
+## 十、非数据库资源隔离（Phase 9 ✅ 已完成 2026-03-29）
 
-### 10.1 Redis 键隔离
+### 10.1 Redis 键隔离 ✅
 
-| 现有 Key | 改造后 | 文件 |
-|----------|--------|------|
-| `task:global:{user_id}` | `task:global:{org_id or 'personal'}:{user_id}` | task_limit_service.py |
-| `task:conv:{user_id}:{conv_id}` | `task:conv:{org_id or 'personal'}:{user_id}:{conv_id}` | task_limit_service.py |
-| `kuaimai:access_token` | `kuaimai:token:{org_id}` | kuaimai/client.py |
-| `kuaimai:refresh_token` | `kuaimai:refresh:{org_id}` | kuaimai/client.py |
-| `lock:erp_sync` | `lock:erp_sync:{org_id}` | erp_sync_service.py |
-| `wecom:oauth:state:{state}` | 不变（一次性消费，无隔离需求） | wecom_oauth_service.py |
-| `ws:broadcast` | 不变（WebSocket 层做 org 过滤） | websocket_redis.py |
+| 现有 Key | 改造后 | 文件 | 状态 |
+|----------|--------|------|------|
+| `task:global:{user_id}` | `task:global:{org_id or 'personal'}:{user_id}` | task_limit_service.py | ✅ |
+| `task:conv:{user_id}:{conv_id}` | `task:conv:{org_id or 'personal'}:{user_id}:{conv_id}` | task_limit_service.py | ✅ |
+| `kuaimai:access_token` | `kuaimai:token:{org_id or 'default'}` | kuaimai/client.py | ✅ |
+| `kuaimai:refresh_token` | `kuaimai:refresh:{org_id or 'default'}` | kuaimai/client.py | ✅ |
+| `lock:erp_sync` | 不变（全局锁防多worker并发，企业串行遍历，拆分会破坏设计） | erp_sync_worker.py | ✅ 跳过 |
+| `wecom:oauth:state:{state}` | 不变（一次性消费，无隔离需求） | wecom_oauth_service.py | ✅ 跳过 |
+| `ws:broadcast` | 不变（WebSocket 层做 org 过滤） | websocket_redis.py | ✅ |
 
-### 10.2 OSS 存储路径隔离
+**额外改动**：KuaiMaiClient 新增 `org_id` 构造参数，`tool_executor.py`、`erp_sync_worker.py`、`erp_sync_dead_letter.py` 创建企业 client 时传入 org_id。
+**旧 key 兼容**：旧 Redis key（`kuaimai:access_token` 等）29天 TTL 后自然过期，无需手动清理。
+
+### 10.2 OSS 存储路径隔离 ✅
 
 ```
-现有:   images/{filename}
-改造后: org/{org_id}/images/{filename}      -- 企业用户
-        personal/{user_id}/images/{filename} -- 散客
+旧格式:   {prefix}/{category}/{date}/{hash}_{uuid}.{ext}
+新格式:   org/{org_id}/{prefix}/{category}/{date}/{hash}_{uuid}.{ext}     -- 企业用户
+          personal/{user_hash}/{prefix}/{category}/{date}/{hash}_{uuid}.{ext} -- 散客
 ```
 
-**影响文件**: `services/oss_service.py` — `_validate_and_upload()` 路径生成逻辑
+**改动文件**:
+- `oss_service.py` — `_generate_object_key()` / `_validate_and_upload()` / `upload_from_url()` / `upload_bytes()` 新增 `org_id` 参数
+- `oss_service.py` — `_extract_object_key()` 识别 `org/` / `personal/` 前缀（兼容旧路径）
+- `task_completion_service.py` — `_handle_success()` 从 task dict 取 org_id 传入 OSS 上传链路
+- **待补（Phase 13）**: `storage_service.py` 的 `upload_image` / `upload_file` 链路缺 org_id，需前端加 X-Org-Id 后通过路由注入
 
-### 10.3 内存缓存隔离
+### 10.3 内存缓存隔离 ✅
 
-| 缓存 | 文件 | 改造 |
-|------|------|------|
-| `_memory_cache[user_id]` | memory_config.py | key 改为 org-scoped mem0_user_id |
-| `_search_cache[key]` | knowledge_config.py | cache_key 加 `{org_id}:` 前缀 |
-| `_mem0_instance` | memory_config.py | 全局单例不变，调用时传 org-scoped user_id |
+| 缓存 | 文件 | 改造 | 状态 |
+|------|------|------|------|
+| `_memory_cache[user_id]` | memory_config.py | key 改为 `{org_id or 'personal'}:{user_id}` | ✅ 接口就绪，Phase 12 传 org_id |
+| `_search_cache[key]` | knowledge_config.py | cache_key 已含 `scope` 字段 | ✅ 跳过，Phase 10 传 org_id 即可 |
+| `_mem0_instance` | memory_config.py | 全局单例不变，调用时传 org-scoped user_id | ✅ 不变 |
 
-### 10.4 WebSocket 隔离
+### 10.4 WebSocket 隔离 ✅
 
-**文件**: `services/websocket_manager.py`
+**改动文件**:
+- `websocket_manager.py` — Connection dataclass 新增 `org_id` 字段，`connect()` 接受 `org_id`，`broadcast_all()` 按 org_id 过滤
+- `websocket_redis.py` — `_publish()` 新增 `org_id` 参数，`_deliver_from_redis()` broadcast 类型按 org_id 过滤（修复跨进程广播未隔离问题）
+- `ws.py` — 新增 `org_id` query parameter + **org_members 归属校验**（防伪造）
 
-```python
-# Connection 对象新增 org_id
-@dataclass
-class Connection:
-    websocket: WebSocket
-    user_id: str
-    org_id: str | None    # ← 新增
-    conn_id: str
-
-# broadcast 类型过滤
-async def broadcast(self, data, org_id=None):
-    for conn in self._connections.values():
-        if org_id and conn.org_id != org_id:
-            continue  # 跳过其他企业的连接
-```
+**审查中发现并修复的安全问题**:
+1. ws.py `org_id` query param 未校验用户是否属于该企业 → 加 `org_members` 表验证，不通过则降级为散客
+2. broadcast 跨进程 Redis Pub/Sub 投递未携带 org_id → `_publish` 传 org_id，接收端也做过滤
 
 ### 10.5 Rate Limiting
 
@@ -518,15 +516,44 @@ async def broadcast(self, data, org_id=None):
 建议：**暂保持 IP 级别**，后续按需改为 `{org_id}:{user_id}`。
 原因：IP 级别已可防刷，改造优先级低。
 
-### 10.6 知识图谱隔离
+### 10.6 task_limit_service.release() 未被调用（Pre-existing，已修复）
 
-**影响文件**:
-- `services/knowledge_service.py` — 所有 SQL 查询加 `WHERE org_id = ?`
-- `services/graph_service.py` — 图关系查询加 org 过滤
-- `services/knowledge_metrics.py` — 指标写入带 org_id
-- `services/model_scorer.py` — 评分日志带 org_id
-- `services/intent_distiller.py` — 意图蒸馏按企业隔离
-- `services/intent_learning.py` — 意图学习按企业隔离
+`check_and_acquire()` 递增 Redis 计数后，`release()` 在生产代码中从未被调用。
+当前依赖 1 小时 TTL 自动过期释放槽位。虽然 TTL 兜底可用，但长任务完成后槽位不会立即释放，
+可能导致用户在高并发期间被误限流。
+
+**修复**: 在 `handlers/mixins/message_mixin.py` 的 `_handle_complete_common()` 和 `_handle_error_common()`
+末尾调用 `_release_task_limit(user_id, conversation_id, org_id)`，通过 `get_task_limit_service()` 获取
+TaskLimitService 实例并释放槽位。所有 handler（chat/image/video）的完成和失败路径均经过此处。
+
+### 10.6 知识图谱隔离 ✅ 2026-03-29
+
+**隔离策略**:
+- **系统知识**（seed/模型评分/蒸馏规则）：`org_id IS NULL`，全局共享
+- **企业知识**（用户确认的意图模式）：`org_id = ?`，仅本企业可见
+- **读取规则**：`WHERE (org_id = ? OR org_id IS NULL)` — 系统共享 + 本企业私有
+- **写入规则**：企业用户带 org_id，散客 org_id=NULL
+
+**已改动文件**:
+- `knowledge_service.py` — `add_knowledge(org_id)` INSERT 含 org_id，`search_relevant(org_id)` 查询含 org 过滤，`_dedup_by_hash/_dedup_by_vector` 同 org 范围内去重，节点上限淘汰按 org 维度
+- `graph_service.py` — `find_related/get_subgraph` 通过 JOIN knowledge_nodes.org_id 间接过滤
+- `knowledge_metrics.py` — `record_metric(org_id)` INSERT 含 org_id
+- `intent_learning.py` — `record_ask_user_context/check_and_record_intent/_write_intent_pattern` 传 org_id
+- `intent_router.py` — `route(org_id)` → `_enhance_with_knowledge(org_id)` → `search_relevant(org_id)`
+
+**跳过（全局共享，不按企业隔离）**:
+- `model_scorer.py` — 模型评分是系统级的，所有企业共用同一批模型
+- `intent_distiller.py` — 蒸馏规则是跨用户共享的通用规则
+
+**调用方已更新**:
+- `agent_loop_infra.py` — `_record_loop_signal/_record_ask_user_context/_check_intent_learning` 传 self.org_id
+- `agent_loop_v2.py` — `_fetch_knowledge` 传 self.org_id
+- `agent_context.py` — `_inject_knowledge` 传 self.org_id
+- `tool_executor.py` — `_search_knowledge` + sandbox record_metric 传 self.org_id
+- `handlers/chat_stream_support_mixin.py` — record_metric 传 self.org_id
+- `handlers/mixins/message_mixin.py` — record_metric 传 task.org_id
+- `handlers/chat_routing_mixin.py` — router.route 传 self.org_id
+- `api/routes/message.py` — `_legacy_resolve` 传 org_id
 
 ### 10.7 RPC 函数审计
 
@@ -711,10 +738,10 @@ logger.info(f"操作描述 | org_id={ctx.org_id} | user_id={ctx.user_id}")
 | **Phase 6** | org_configs + AES加解密 + 配置解析链 | services/org/config_resolver.py, core/crypto.py |
 | **Phase 7** | ToolExecutor改造 + ERP数据隔离 + 散客工具过滤 | tool_executor.py, erp_local_*.py |
 | **Phase 8** | ERP同步改造: 按企业遍历同步 | erp_sync_service.py, erp_sync_worker.py。**已完成**: 主同步链路（sync_state/document_items/products/stock/suppliers/platform_map/dead_letter）全部带 org_id。**待做**: 日维护（归档+聚合兜底+删除检测）需按企业遍历——当前对散客数据(org_id=NULL)安全，多企业部署前须改造。具体：`_run_daily_maintenance`/`_run_daily_reaggregation`/`_run_deletion_detection`/`_paginated_select_ids` 需加 org_id 参数遍历企业 |
-| **Phase 9** | 非DB资源隔离: Redis键/OSS路径/内存缓存/WebSocket | 见第十节 |
-| **Phase 10** | 知识图谱隔离 + 意图蒸馏/学习隔离 | knowledge_service.py, graph_service.py等 |
-| **Phase 11** | 企业企微扫码(改造WecomOAuthService) | wecom_oauth_service.py |
-| **Phase 12** | Mem0 记忆隔离 | memory_service.py, memory_filter.py |
+| **Phase 9** | ✅ 非DB资源隔离: Redis键/OSS路径/内存缓存/WebSocket | 见第十节。额外修复: WS org_id校验+跨进程broadcast隔离+release()调用 |
+| **Phase 10** | ✅ 知识图谱隔离 + 意图学习隔离 | knowledge_service(CRUD+搜索) + graph_service(JOIN过滤) + knowledge_metrics(INSERT) + intent_learning + 调用方11处。模型评分/蒸馏保持全局共享 |
+| **Phase 11** | ✅ 企微机器人 org_id 注入 | ws_runner(corp_id→org_id映射) + message_service(全链路) + user_mapping(查询/创建+自动加org_members) + ai_mixin(AgentLoop/IntentRouter) + command/card_handler |
+| **Phase 12** | ✅ Mem0 记忆隔离 | memory_service(_mem0_uid转换) + chat_context_mixin + wecom_ai_mixin。API路由待Phase13前端发X-Org-Id后补 |
 | **Phase 13** | 前端: 登录页改造 + X-Org-Id + 企业切换器 | LoginForm.tsx, api.ts, useAuthStore.ts |
 | **Phase 14** | 前端: 企业管理页面 | 新增页面组件 |
 | **Phase 15** | 邀请系统 + 权限细化 + 用量统计 | 邀请流程 |

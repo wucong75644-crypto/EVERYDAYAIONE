@@ -217,7 +217,7 @@ class TestBatchPartialSuccess:
             "https://kie.com/img4.png",
         ]
 
-        async def mock_upload(url, user_id, media_type, max_retries=3):
+        async def mock_upload(url, user_id, media_type, max_retries=3, org_id=None):
             if url == "https://kie.com/img3.png":
                 raise Exception("timeout")
             return f"https://cdn.example.com/oss_{url.split('/')[-1]}"
@@ -241,7 +241,7 @@ class TestBatchPartialSuccess:
 
         urls = ["https://kie.com/img1.png", "https://kie.com/img2.png"]
 
-        async def mock_upload(url, user_id, media_type, max_retries=3):
+        async def mock_upload(url, user_id, media_type, max_retries=3, org_id=None):
             return f"https://cdn.example.com/oss_{url.split('/')[-1]}"
 
         with patch.object(service, '_upload_single_to_oss', side_effect=mock_upload):

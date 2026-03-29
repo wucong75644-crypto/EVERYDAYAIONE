@@ -22,6 +22,7 @@ from config.agent_tools import INFO_TOOLS, ROUTING_TOOLS, validate_tool_call
 _SLOW_TOOL_TIMEOUT = {
     "social_crawler": 180.0,
     "code_execute": 120.0,
+    "file_search": 60.0,
 }
 
 

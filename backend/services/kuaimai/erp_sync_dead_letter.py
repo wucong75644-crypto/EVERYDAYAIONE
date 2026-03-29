@@ -122,32 +122,73 @@ def _calc_next_retry(retry_count: int) -> str:
 async def consume_dead_letters(db: Any, is_running_fn) -> None:
     """死信消费者主循环
 
+    维护 org_clients 缓存，跨批次复用企业 client，避免每批重建。
+
     Args:
-        db: 数据库客户端
+        db: 数据库客户端（AsyncLocalDBClient）
         is_running_fn: callable，返回 False 时退出循环
     """
     from services.kuaimai.client import KuaiMaiClient
-    client = KuaiMaiClient()
+
+    # 企业 client 缓存：{org_id: KuaiMaiClient}，跨批次复用
+    org_clients: dict[str | None, KuaiMaiClient] = {}
+    # 缓存创建时间，30 分钟后过期重建（凭证刷新后生效）
+    client_ages: dict[str | None, float] = {}
 
     logger.info("Dead letter consumer started")
 
-    while is_running_fn():
-        try:
-            processed = await _process_batch(db, client)
-            if processed > 0:
-                logger.info(f"Dead letter processed | count={processed}")
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.error(f"Dead letter consumer error | error={e}")
+    try:
+        while is_running_fn():
+            try:
+                processed = await _process_batch(db, org_clients, client_ages)
+                if processed > 0:
+                    logger.info(f"Dead letter processed | count={processed}")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Dead letter consumer error | error={e}")
 
-        await asyncio.sleep(CONSUMER_POLL_INTERVAL)
+            await asyncio.sleep(CONSUMER_POLL_INTERVAL)
+    finally:
+        # 统一清理所有缓存的 client
+        for c in org_clients.values():
+            try:
+                await c.close()
+            except Exception:
+                pass
+        org_clients.clear()
 
     logger.info("Dead letter consumer stopped")
 
 
-async def _process_batch(db: Any, client: Any = None) -> int:
-    """处理一批待重试的死信"""
+_CLIENT_CACHE_TTL = 1800  # 30 分钟后过期重建（凭证刷新后生效）
+
+
+async def _process_batch(
+    db: Any,
+    org_clients: dict[str | None, Any],
+    client_ages: dict[str | None, float],
+) -> int:
+    """处理一批待重试的死信
+
+    Args:
+        db: 异步数据库客户端
+        org_clients: 企业 client 缓存（跨批次复用，由 consume_dead_letters 管理）
+        client_ages: client 创建时间戳（TTL 过期用）
+    """
+    # 清理过期的缓存 client
+    import time as _time
+    now_ts = _time.time()
+    for org_id in list(client_ages):
+        if now_ts - client_ages[org_id] > _CLIENT_CACHE_TTL:
+            old_client = org_clients.pop(org_id, None)
+            client_ages.pop(org_id, None)
+            if old_client:
+                try:
+                    await old_client.close()
+                except Exception:
+                    pass
+
     # 查询到期的 pending 记录
     now = datetime.now().isoformat()
     try:
@@ -168,9 +209,7 @@ async def _process_batch(db: Any, client: Any = None) -> int:
     if not rows:
         return 0
 
-    # 按 org_id 分组，每组用对应企业的 client
-    from services.kuaimai.client import KuaiMaiClient
-
+    # 按 org_id 分组
     org_groups: dict[str | None, list[dict]] = {}
     for row in rows:
         org_id = row.get("org_id")
@@ -178,41 +217,94 @@ async def _process_batch(db: Any, client: Any = None) -> int:
 
     processed = 0
     for org_id, org_rows in org_groups.items():
-        # 为每个企业加载凭证
-        org_client = client
+        # 从缓存获取或创建企业 client
+        org_client = await _get_or_create_client(db, org_clients, client_ages, org_id)
         if org_client is None:
-            if org_id:
-                try:
-                    from services.org.config_resolver import OrgConfigResolver
-                    resolver = OrgConfigResolver(db)
-                    creds = resolver.get_erp_credentials(org_id)
-                    org_client = KuaiMaiClient(
-                        app_key=creds["kuaimai_app_key"],
-                        app_secret=creds["kuaimai_app_secret"],
-                        access_token=creds["kuaimai_access_token"],
-                        refresh_token=creds["kuaimai_refresh_token"],
-                    )
-                except ValueError as e:
-                    logger.warning(f"Skip dead letter retry for org {org_id}: {e}")
-                    continue
-            else:
-                org_client = KuaiMaiClient()
+            # 凭证不可用，递增 retry_count 防止僵尸记录
+            await _mark_batch_retry_failed(db, org_rows, "Client unavailable (credentials missing)")
+            continue
 
-        try:
-            for row in org_rows:
-                try:
-                    await _retry_one(db, org_client, row)
-                    processed += 1
-                except Exception as e:
-                    logger.error(
-                        f"Dead letter retry error | id={row.get('id')} | "
-                        f"doc_type={row.get('doc_type')} | org_id={org_id} | error={e}"
-                    )
-        finally:
-            if org_client is not client and org_client:
-                await org_client.close()
+        for row in org_rows:
+            try:
+                await _retry_one(db, org_client, row)
+                processed += 1
+            except Exception as e:
+                logger.error(
+                    f"Dead letter retry error | id={row.get('id')} | "
+                    f"doc_type={row.get('doc_type')} | org_id={org_id} | error={e}"
+                )
 
     return processed
+
+
+async def _get_or_create_client(
+    db: Any,
+    org_clients: dict[str | None, Any],
+    client_ages: dict[str | None, float],
+    org_id: str | None,
+) -> Any | None:
+    """从缓存获取或创建企业 KuaiMaiClient"""
+    if org_id in org_clients:
+        return org_clients[org_id]
+
+    import time as _time
+    from services.kuaimai.client import KuaiMaiClient
+
+    if org_id is None:
+        # 散客模式
+        client = KuaiMaiClient()
+        if client.is_configured:
+            org_clients[None] = client
+            client_ages[None] = _time.time()
+            return client
+        await client.close()
+        return None
+
+    # 企业模式：用 AsyncOrgConfigResolver 加载凭证
+    try:
+        from services.org.config_resolver import AsyncOrgConfigResolver
+        resolver = AsyncOrgConfigResolver(db)
+        creds = await resolver.get_erp_credentials(org_id)
+        client = KuaiMaiClient(
+            app_key=creds["kuaimai_app_key"],
+            app_secret=creds["kuaimai_app_secret"],
+            access_token=creds["kuaimai_access_token"],
+            refresh_token=creds["kuaimai_refresh_token"],
+            org_id=org_id,
+        )
+        org_clients[org_id] = client
+        client_ages[org_id] = _time.time()
+        return client
+    except ValueError as e:
+        logger.warning(f"Skip dead letter retry for org {org_id}: {e}")
+        return None
+
+
+async def _mark_batch_retry_failed(
+    db: Any, rows: list[dict], error_msg: str,
+) -> None:
+    """凭证不可用时，递增这批死信的 retry_count，防止僵尸记录。"""
+    for row in rows:
+        dl_id = row["id"]
+        new_count = row["retry_count"] + 1
+        max_retries = row["max_retries"]
+        try:
+            if new_count >= max_retries:
+                await db.table("erp_sync_dead_letter").update({
+                    "status": "dead",
+                    "retry_count": new_count,
+                    "last_error": error_msg[:500],
+                    "updated_at": datetime.now().isoformat(),
+                }).eq("id", dl_id).execute()
+            else:
+                await db.table("erp_sync_dead_letter").update({
+                    "retry_count": new_count,
+                    "next_retry_at": _calc_next_retry(new_count),
+                    "last_error": error_msg[:500],
+                    "updated_at": datetime.now().isoformat(),
+                }).eq("id", dl_id).execute()
+        except Exception as e:
+            logger.warning(f"Failed to mark dead letter retry | id={dl_id} | error={e}")
 
 
 async def _retry_one(db: Any, client: Any, row: dict) -> None:

@@ -22,6 +22,17 @@ from schemas.message import (
 )
 
 
+async def _release_task_limit(user_id: str, conversation_id: str, org_id: str | None) -> None:
+    """释放任务限制槽位（任务完成/失败时调用）"""
+    try:
+        from api.deps import get_task_limit_service
+        service = await get_task_limit_service()
+        if service:
+            await service.release(user_id, conversation_id, org_id=org_id)
+    except Exception as e:
+        logger.debug(f"Task limit release skipped | error={e}")
+
+
 class MessageMixin:
     """
     消息处理 Mixin
@@ -290,13 +301,16 @@ class MessageMixin:
             asyncio.create_task(
                 self._record_knowledge_metric(
                     task_type=handler_type, model_id=model_id,
-                    status="success", user_id=task.get("user_id"),
+                    status="success", user_id=task.get("user_id"), org_id=task.get("org_id"),
                     params=request_params,
                     cost_time_ms=self._calc_task_elapsed_ms(task),
                     retried=bool(request_params.get("_retried")),
                     retry_from_model=request_params.get("_retry_from_model"),
                 )
             )
+
+        # 释放任务限制槽位
+        await _release_task_limit(task["user_id"], conversation_id, task.get("org_id"))
 
         return message
 
@@ -370,7 +384,7 @@ class MessageMixin:
                 self._record_knowledge_metric(
                     task_type=handler_type, model_id=model_id,
                     status="failed", error_code=error_code,
-                    user_id=task.get("user_id"),
+                    user_id=task.get("user_id"), org_id=task.get("org_id"),
                     cost_time_ms=self._calc_task_elapsed_ms(task),
                     params=request_params,
                     retried=bool(request_params.get("_retried")),
@@ -383,5 +397,8 @@ class MessageMixin:
                     error_message=error_message,
                 )
             )
+
+        # 释放任务限制槽位
+        await _release_task_limit(task["user_id"], conversation_id, task.get("org_id"))
 
         return message

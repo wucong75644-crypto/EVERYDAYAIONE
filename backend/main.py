@@ -184,8 +184,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     import os
     _worker_pid = os.getpid()
     _parent_pid = os.getppid()
-    # uvicorn 多 worker 模式：取 PID 最小的 worker 来跑 ERP 同步
-    # 通过 Redis 原子操作竞选，第一个写入的 worker 获胜
+    # uvicorn 多 worker 模式：通过 Redis 原子操作竞选，第一个写入的 worker 获胜
     from core.redis import get_redis
     _redis = await get_redis()
     _elected = False
@@ -200,14 +199,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if _elected:
         from core.database import get_async_db, close_async_db
         async_db = await get_async_db()
-        from services.kuaimai.erp_sync_worker import ErpSyncWorker
-        erp_worker = ErpSyncWorker(async_db)
-        erp_worker_task = asyncio.create_task(erp_worker.start())
-        logger.info(f"ErpSyncWorker started | elected_worker={_worker_pid}")
+        from services.kuaimai.erp_sync_orchestrator import ErpSyncOrchestrator
+        erp_orchestrator = ErpSyncOrchestrator(async_db)
+        erp_orchestrator_task = asyncio.create_task(erp_orchestrator.start())
+        logger.info(f"ErpSyncOrchestrator started | elected_worker={_worker_pid}")
     else:
-        erp_worker = None
-        erp_worker_task = None
-        logger.info(f"ErpSyncWorker skipped (another worker elected) | pid={_worker_pid}")
+        erp_orchestrator = None
+        erp_orchestrator_task = None
+        logger.info(f"ErpSyncOrchestrator skipped (another worker elected) | pid={_worker_pid}")
 
     # 企微智能机器人 WS 长连接已拆为独立进程（wecom_ws_runner.py）
     # 由 systemd everydayai-wecom.service 管理，避免多 worker 竞争
@@ -230,12 +229,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except asyncio.CancelledError:
         pass
 
-    # 停止 ERP 同步工作器
-    if erp_worker is not None:
-        await erp_worker.stop()
-        erp_worker_task.cancel()
+    # 停止 ERP 同步编排器
+    if erp_orchestrator is not None:
+        await erp_orchestrator.stop()
+        erp_orchestrator_task.cancel()
         try:
-            await erp_worker_task
+            await erp_orchestrator_task
         except asyncio.CancelledError:
             pass
 

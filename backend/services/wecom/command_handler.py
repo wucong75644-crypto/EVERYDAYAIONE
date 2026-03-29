@@ -46,6 +46,7 @@ class CommandHandler:
         user_id: str,
         conversation_id: str,
         reply_ctx: WecomReplyContext,
+        org_id: str | None = None,
     ) -> bool:
         """尝试匹配并处理指令。
 
@@ -69,7 +70,8 @@ class CommandHandler:
                     f"user_id={user_id}"
                 )
                 await self._dispatch(
-                    cmd_name, match, user_id, conversation_id, reply_ctx
+                    cmd_name, match, user_id, conversation_id, reply_ctx,
+                    org_id=org_id,
                 )
                 return True
 
@@ -82,6 +84,7 @@ class CommandHandler:
         user_id: str,
         conversation_id: str,
         reply_ctx: WecomReplyContext,
+        org_id: str | None = None,
     ) -> None:
         """分发到对应处理逻辑"""
         ws = reply_ctx.ws_client
@@ -104,7 +107,7 @@ class CommandHandler:
         elif cmd_name == "memory":
             from services.memory_service import MemoryService
             mem_svc = MemoryService()
-            memories = await mem_svc.get_all_memories(user_id)
+            memories = await mem_svc.get_all_memories(user_id, org_id=org_id)
             if memories:
                 card = WecomCardBuilder.memory_list_card(memories)
             else:
@@ -114,7 +117,7 @@ class CommandHandler:
         elif cmd_name == "clear_memory":
             from services.memory_service import MemoryService
             mem_svc = MemoryService()
-            await mem_svc.delete_all_memories(user_id)
+            await mem_svc.delete_all_memories(user_id, org_id=org_id)
             await ws.send_reply(
                 reply_ctx.req_id, "text", {"content": "已清空所有记忆"}
             )

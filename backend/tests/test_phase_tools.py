@@ -27,17 +27,17 @@ from services.agent_context import AgentContextMixin
 
 class TestPhase1Tools:
 
-    def test_phase1_has_six_tools(self):
-        """Phase 1 包含 6 个路由工具"""
+    def test_phase1_has_seven_tools(self):
+        """Phase 1 包含 7 个路由工具"""
         tools = build_phase1_tools()
-        assert len(tools) == 6
+        assert len(tools) == 7
 
     def test_phase1_tool_names(self):
         """Phase 1 工具名覆盖所有 domain"""
         names = {t["function"]["name"] for t in PHASE1_TOOLS}
         expected = {
             "route_chat", "route_erp", "route_crawler",
-            "route_image", "route_video", "ask_user",
+            "route_computer", "route_image", "route_video", "ask_user",
         }
         assert names == expected
 
@@ -146,9 +146,9 @@ class TestPhase1Prompt:
         ):
             assert route in PHASE1_SYSTEM_PROMPT
 
-    def test_prompt_under_800_chars(self):
-        """提示词控制在 800 字符以内（轻量）"""
-        assert len(PHASE1_SYSTEM_PROMPT) < 800
+    def test_prompt_under_1000_chars(self):
+        """提示词控制在 1000 字符以内（轻量）"""
+        assert len(PHASE1_SYSTEM_PROMPT) < 1000
 
     def test_prompt_mentions_regeneration(self):
         """提示词包含重新生成规则"""
@@ -171,7 +171,7 @@ class TestPhase1ToolToDomain:
     def test_mapping_values(self):
         """映射值覆盖所有 domain"""
         values = set(PHASE1_TOOL_TO_DOMAIN.values())
-        expected = {"chat", "erp", "crawler", "image", "video", "ask_user"}
+        expected = {"chat", "erp", "crawler", "computer", "image", "video", "ask_user"}
         assert values == expected
 
 

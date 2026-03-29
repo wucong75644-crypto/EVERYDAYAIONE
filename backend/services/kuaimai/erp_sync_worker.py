@@ -168,14 +168,15 @@ class ErpSyncWorker:
                     continue
                 org_id = str(org["id"])
                 try:
-                    from services.org.config_resolver import OrgConfigResolver
-                    resolver = OrgConfigResolver(self.db)
-                    creds = resolver.get_erp_credentials(org_id)
+                    from services.org.config_resolver import AsyncOrgConfigResolver
+                    resolver = AsyncOrgConfigResolver(self.db)
+                    creds = await resolver.get_erp_credentials(org_id)
                     client = KuaiMaiClient(
                         app_key=creds["kuaimai_app_key"],
                         app_secret=creds["kuaimai_app_secret"],
                         access_token=creds["kuaimai_access_token"],
                         refresh_token=creds["kuaimai_refresh_token"],
+                        org_id=org_id,
                     )
                     orgs.append((org_id, client))
                 except ValueError as e:

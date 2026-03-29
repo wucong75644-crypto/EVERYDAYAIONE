@@ -154,11 +154,44 @@ export default function InputControls(props: InputControlsProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfFileInputRef = useRef<HTMLInputElement>(null);
+  const workspaceFileInputRef = useRef<HTMLInputElement>(null);
+  const [workspaceUploading, setWorkspaceUploading] = useState(false);
   const uploadMenuRef = useRef<HTMLDivElement>(null);
   const advancedMenuRef = useRef<HTMLDivElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
 
   const { isDragging } = useDragDropUpload({ dropZoneRef, textareaRef, onImageDrop, onImagePaste, maxImages, maxFileSize });
+
+  // Workspace 文件上传处理
+  const handleWorkspaceFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // 清空 input 值（允许重复选择同一文件）
+    e.target.value = '';
+
+    setWorkspaceUploading(true);
+    try {
+      const { uploadToWorkspace } = await import('../../services/workspaceUpload');
+      const result = await uploadToWorkspace(file);
+      // 上传成功后在输入框追加提示
+      const hint = `[已上传文件: ${result.filename}]`;
+      onPromptChange(prompt ? `${prompt}\n${hint}` : hint);
+    } catch (err: unknown) {
+      // 处理 AxiosError（后端返回的错误信息）和普通 Error
+      let msg = '上传失败';
+      if (err && typeof err === 'object') {
+        const axiosErr = err as { response?: { data?: { detail?: string } } };
+        if (axiosErr.response?.data?.detail) {
+          msg = axiosErr.response.data.detail;
+        } else if (err instanceof Error) {
+          msg = err.message;
+        }
+      }
+      alert(`工作区文件上传失败: ${msg}`);
+    } finally {
+      setWorkspaceUploading(false);
+    }
+  };
 
   // 自动调整文本框高度（最多5行，约120px）
   useEffect(() => {
@@ -365,12 +398,15 @@ export default function InputControls(props: InputControlsProps) {
             <div ref={uploadMenuRef} className="relative">
               <button
                 onClick={() => setShowUploadMenu(!showUploadMenu)}
+                disabled={workspaceUploading}
                 className={`p-2 rounded-lg transition-all ${
-                  uploadButtonGlowing
+                  workspaceUploading
+                    ? 'text-blue-500 animate-pulse cursor-wait'
+                    : uploadButtonGlowing
                     ? 'text-red-500 animate-upload-glow'
                     : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
                 }`}
-                title={requiresImageUpload ? '点击上传图片' : '上传文件'}
+                title={workspaceUploading ? '正在上传...' : requiresImageUpload ? '点击上传图片' : '上传文件'}
               >
                 <Paperclip className="w-4 h-4" />
               </button>
@@ -380,6 +416,7 @@ export default function InputControls(props: InputControlsProps) {
                 selectedModel={selectedModel}
                 onImageUpload={() => fileInputRef.current?.click()}
                 onFileUpload={() => pdfFileInputRef.current?.click()}
+                onWorkspaceUpload={() => workspaceFileInputRef.current?.click()}
                 onClose={closeUploadMenu}
               />
             </div>
@@ -453,6 +490,17 @@ export default function InputControls(props: InputControlsProps) {
         className="hidden"
         aria-label="选择 PDF 文件"
         title="选择 PDF 文件"
+      />
+
+      {/* 隐藏的 workspace 文件输入 */}
+      <input
+        ref={workspaceFileInputRef}
+        type="file"
+        accept=".txt,.csv,.json,.yaml,.yml,.xml,.md,.log,.tsv,.py,.js,.ts,.html,.css,.sql,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.zip"
+        onChange={handleWorkspaceFileSelect}
+        className="hidden"
+        aria-label="选择工作区文件"
+        title="选择工作区文件"
       />
     </div>
   );

@@ -1863,8 +1863,8 @@ class TestMultiTenantSync:
         with patch("services.kuaimai.erp_sync_worker.get_settings") as ms:
             ms.return_value = MagicMock(erp_sync_enabled=True, erp_sync_interval=60)
             worker = ErpSyncWorker(db)
-        with patch("services.org.config_resolver.OrgConfigResolver") as MR:
-            MR.return_value = MagicMock(get_erp_credentials=MagicMock(return_value={
+        with patch("services.org.config_resolver.AsyncOrgConfigResolver") as MR:
+            MR.return_value = MagicMock(get_erp_credentials=AsyncMock(return_value={
                 "kuaimai_app_key": "k", "kuaimai_app_secret": "s",
                 "kuaimai_access_token": "t", "kuaimai_refresh_token": "r",
             }))

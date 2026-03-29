@@ -29,8 +29,14 @@ class OSSService:
     # 支持的视频格式
     SUPPORTED_VIDEO_FORMATS = {"mp4", "webm", "mov"}
 
+    # 支持的文档格式
+    SUPPORTED_DOC_FORMATS = {
+        "pdf", "txt", "csv", "md", "json", "yaml", "xml",
+        "xls", "xlsx", "ppt", "pptx", "doc", "docx", "zip",
+    }
+
     # 所有支持的格式
-    SUPPORTED_FORMATS = SUPPORTED_IMAGE_FORMATS | SUPPORTED_VIDEO_FORMATS
+    SUPPORTED_FORMATS = SUPPORTED_IMAGE_FORMATS | SUPPORTED_VIDEO_FORMATS | SUPPORTED_DOC_FORMATS
 
     # 存储路径前缀
     IMAGE_PREFIX = "images"
@@ -92,6 +98,7 @@ class OSSService:
         user_id: str,
         category: str,
         media_type: str,
+        org_id: Optional[str] = None,
     ) -> tuple[str, str]:
         """
         验证格式并上传到 OSS
@@ -103,6 +110,7 @@ class OSSService:
             user_id: 用户 ID
             category: 分类
             media_type: 媒体类型
+            org_id: 企业ID（散客为None）
 
         Returns:
             (object_key, access_url): 对象键和访问 URL
@@ -124,7 +132,7 @@ class OSSService:
 
         # 生成对象键（按日期分目录）
         prefix = self.VIDEO_PREFIX if media_type == "video" else self.IMAGE_PREFIX
-        object_key = self._generate_object_key(user_id, category, ext, prefix)
+        object_key = self._generate_object_key(user_id, category, ext, prefix, org_id=org_id)
 
         # 上传到 OSS（使用线程池避免阻塞event loop）
         try:
@@ -164,6 +172,7 @@ class OSSService:
         user_id: str,
         category: str = "generated",
         media_type: str = "image",
+        org_id: Optional[str] = None,
     ) -> dict:
         """
         从远程 URL 下载文件并上传到 OSS
@@ -194,7 +203,7 @@ class OSSService:
 
         # 2. 验证并上传
         object_key, access_url = await self._validate_and_upload(
-            content, content_type, url, user_id, category, media_type
+            content, content_type, url, user_id, category, media_type, org_id=org_id
         )
 
         # 3. 返回结果
@@ -212,6 +221,7 @@ class OSSService:
         ext: str = "png",
         category: str = "uploaded",
         content_type: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> dict:
         """
         直接上传字节数据到 OSS
@@ -227,9 +237,9 @@ class OSSService:
             同 upload_from_url
         """
         if ext not in self.SUPPORTED_FORMATS:
-            raise ValueError(f"不支持的图片格式: {ext}")
+            raise ValueError(f"不支持的文件格式: {ext}")
 
-        object_key = self._generate_object_key(user_id, category, ext)
+        object_key = self._generate_object_key(user_id, category, ext, org_id=org_id)
         content_type = content_type or f"image/{ext}"
 
         try:
@@ -352,11 +362,13 @@ class OSSService:
         category: str,
         ext: str,
         prefix: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> str:
         """
         生成对象键
 
-        格式：{prefix}/{category}/{yyyy}/{mm}/{dd}/{user_hash}_{uuid}.{ext}
+        企业用户: org/{org_id}/{prefix}/{category}/{date}/{hash}_{uuid}.{ext}
+        散客:     personal/{user_hash}/{prefix}/{category}/{date}/{hash}_{uuid}.{ext}
         """
         now = datetime.now(timezone.utc)
         date_path = now.strftime("%Y/%m/%d")
@@ -370,7 +382,13 @@ class OSSService:
         # 默认使用图片前缀
         prefix = prefix or self.IMAGE_PREFIX
 
-        return f"{prefix}/{category}/{date_path}/{user_hash}_{file_id}.{ext}"
+        # 企业/散客路径隔离
+        if org_id:
+            tenant = f"org/{org_id}"
+        else:
+            tenant = f"personal/{user_hash}"
+
+        return f"{tenant}/{prefix}/{category}/{date_path}/{user_hash}_{file_id}.{ext}"
 
     def _get_extension(
         self,
@@ -419,8 +437,12 @@ class OSSService:
         # 移除开头的斜杠
         path = parsed.path.lstrip("/")
 
-        # 检查是否是有效的 OSS 路径（图片或视频）
-        if path.startswith(self.IMAGE_PREFIX) or path.startswith(self.VIDEO_PREFIX):
+        # 检查是否是有效的 OSS 路径（旧格式或多租户新格式）
+        valid_prefixes = (
+            self.IMAGE_PREFIX, self.VIDEO_PREFIX,
+            "org/", "personal/",
+        )
+        if any(path.startswith(p) for p in valid_prefixes):
             return path
 
         return None

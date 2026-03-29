@@ -613,6 +613,7 @@ class TestGetOrCreateConversation:
         chain.select.return_value = chain
         chain.eq.return_value = chain
         chain.like.return_value = chain
+        chain.is_.return_value = chain
         chain.order.return_value = chain
         chain.limit.return_value = chain
         mock_result = MagicMock()
@@ -633,6 +634,7 @@ class TestGetOrCreateConversation:
         chain.select.return_value = chain
         chain.eq.return_value = chain
         chain.like.return_value = chain
+        chain.is_.return_value = chain
         chain.order.return_value = chain
         chain.limit.return_value = chain
         mock_result = MagicMock()
@@ -661,6 +663,7 @@ class TestGetOrCreateConversation:
         chain.select.return_value = chain
         chain.eq.return_value = chain
         chain.like.return_value = chain
+        chain.is_.return_value = chain
         chain.order.return_value = chain
         chain.limit.return_value = chain
         mock_result = MagicMock()

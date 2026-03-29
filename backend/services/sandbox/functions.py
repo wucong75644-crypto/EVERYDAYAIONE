@@ -188,6 +188,8 @@ def build_sandbox_executor(
     timeout: float = 120.0,
     max_result_chars: int = 8000,
     max_pages: int = 200,
+    user_id: str = "",
+    org_id: Optional[str] = None,
 ) -> SandboxExecutor:
     """构建沙盒执行器并注册所有数据源
 
@@ -236,6 +238,34 @@ def build_sandbox_executor(
     executor.register("erp_query_all", _erp_query_all)
     executor.register("web_search", sandbox_web_search)
     executor.register("search_knowledge", sandbox_search_knowledge)
+
+    # 注册文件操作函数（闭包绑定用户信息，沙盒内可 await 调用）
+    from core.config import get_settings as _get_settings
+    from services.file_executor import FileExecutor as _FileExecutor
+
+    _file_settings = _get_settings()
+
+    def _make_file_executor() -> "_FileExecutor":
+        return _FileExecutor(
+            workspace_root=_file_settings.file_workspace_root,
+            user_id=user_id,
+            org_id=org_id,
+        )
+
+    async def _read_file(path: str, encoding: str = "utf-8") -> str:
+        return await _make_file_executor().file_read(path, encoding=encoding)
+
+    async def _write_file(
+        path: str, content: str, mode: str = "overwrite",
+    ) -> str:
+        return await _make_file_executor().file_write(path, content, mode=mode)
+
+    async def _list_dir(path: str = ".") -> str:
+        return await _make_file_executor().file_list(path)
+
+    executor.register("read_file", _read_file)
+    executor.register("write_file", _write_file)
+    executor.register("list_dir", _list_dir)
 
     return executor
 

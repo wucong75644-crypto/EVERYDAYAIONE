@@ -12,6 +12,7 @@ from loguru import logger
 
 from config.erp_local_tools import ERP_LOCAL_TOOLS
 from config.erp_tools import ERP_SYNC_TOOLS
+from config.file_tools import FILE_INFO_TOOLS
 
 
 class ToolExecutor:
@@ -29,6 +30,9 @@ class ToolExecutor:
             "erp_api_search": self._erp_api_search,
             "code_execute": self._code_execute,
         }
+        # 注册文件操作工具
+        for tool_name in FILE_INFO_TOOLS:
+            self._handlers[tool_name] = self._make_file_handler(tool_name)
         # 散客不注册 ERP 工具（散客无 ERP 功能）
         if org_id is not None:
             for tool_name in ERP_SYNC_TOOLS:
@@ -119,7 +123,7 @@ class ToolExecutor:
         if not query:
             return "查询关键词不能为空"
 
-        items = await search_relevant(query=query, limit=5)
+        items = await search_relevant(query=query, limit=5, org_id=self.org_id)
         if not items:
             return f"知识库中未找到与「{query}」相关的经验"
 
@@ -184,6 +188,8 @@ class ToolExecutor:
                 timeout=settings.sandbox_timeout,
                 max_result_chars=settings.sandbox_max_result_chars,
                 max_pages=settings.sandbox_max_pages,
+                user_id=self.user_id,
+                org_id=self.org_id,
             )
             result = await executor.execute(code, description)
 
@@ -244,6 +250,7 @@ class ToolExecutor:
                         "result_length": result_length,
                     },
                     user_id=self.user_id,
+                    org_id=self.org_id,
                 )
             )
         except Exception as e:
@@ -266,6 +273,56 @@ class ToolExecutor:
             )
         except Exception as e:
             logger.debug(f"Sandbox knowledge recording skipped | error={e}")
+
+    # ========================================
+    # 文件操作工具
+    # ========================================
+
+    def _make_file_handler(
+        self, tool_name: str
+    ) -> Callable[..., Coroutine[Any, Any, str]]:
+        """为指定文件工具创建handler"""
+        async def handler(args: Dict[str, Any]) -> str:
+            return await self._file_dispatch(tool_name, args)
+        return handler
+
+    async def _file_dispatch(
+        self, tool_name: str, args: Dict[str, Any]
+    ) -> str:
+        """文件工具统一调度"""
+        from core.config import get_settings
+        from services.file_executor import FileExecutor
+
+        settings = get_settings()
+        if not settings.file_workspace_enabled:
+            return "文件操作功能已关闭，请联系管理员启用"
+
+        executor = FileExecutor(
+            workspace_root=settings.file_workspace_root,
+            user_id=self.user_id,
+            org_id=self.org_id,
+        )
+
+        dispatch = {
+            "file_read": executor.file_read,
+            "file_write": executor.file_write,
+            "file_list": executor.file_list,
+            "file_search": executor.file_search,
+            "file_info": executor.file_info,
+        }
+
+        func = dispatch.get(tool_name)
+        if not func:
+            return f"Unknown file tool: {tool_name}"
+
+        try:
+            return await func(**args)
+        except PermissionError as e:
+            logger.warning(f"ToolExecutor file_dispatch | tool={tool_name} | perm_error={e}")
+            return f"权限不足: {e}"
+        except Exception as e:
+            logger.error(f"ToolExecutor file_dispatch | tool={tool_name} | error={e}")
+            return f"文件操作失败: {e}"
 
     # ========================================
     # ERP 统一调度
@@ -356,6 +413,7 @@ class ToolExecutor:
                     app_secret=creds["kuaimai_app_secret"],
                     access_token=creds["kuaimai_access_token"],
                     refresh_token=creds["kuaimai_refresh_token"],
+                    org_id=self.org_id,
                 )
                 return ErpDispatcher(client)
             except ValueError as e:

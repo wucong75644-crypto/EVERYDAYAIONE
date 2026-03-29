@@ -166,26 +166,32 @@ async def _get_mem0():
 
 # ===== 内存缓存 =====
 
-# 全局记忆列表缓存: {user_id: {"data": [...], "ts": float}}
+# 全局记忆列表缓存: {cache_key: {"data": [...], "ts": float}}
 _memory_cache: Dict[str, Dict[str, Any]] = {}
 
 
-def _get_cached_memories(user_id: str) -> Optional[List[Dict[str, Any]]]:
+def _cache_key(user_id: str, org_id: str | None = None) -> str:
+    """生成按企业隔离的缓存键"""
+    prefix = org_id if org_id else "personal"
+    return f"{prefix}:{user_id}"
+
+
+def _get_cached_memories(user_id: str, org_id: str | None = None) -> Optional[List[Dict[str, Any]]]:
     """从缓存获取记忆列表，过期返回 None"""
-    entry = _memory_cache.get(user_id)
+    entry = _memory_cache.get(_cache_key(user_id, org_id))
     if entry and (time.monotonic() - entry["ts"]) < CACHE_TTL:
         return entry["data"]
     return None
 
 
-def _set_cached_memories(user_id: str, data: List[Dict[str, Any]]) -> None:
+def _set_cached_memories(user_id: str, data: List[Dict[str, Any]], org_id: str | None = None) -> None:
     """写入缓存"""
-    _memory_cache[user_id] = {"data": data, "ts": time.monotonic()}
+    _memory_cache[_cache_key(user_id, org_id)] = {"data": data, "ts": time.monotonic()}
 
 
-def _invalidate_cache(user_id: str) -> None:
+def _invalidate_cache(user_id: str, org_id: str | None = None) -> None:
     """使缓存失效"""
-    _memory_cache.pop(user_id, None)
+    _memory_cache.pop(_cache_key(user_id, org_id), None)
 
 
 # ===== 格式化工具 =====

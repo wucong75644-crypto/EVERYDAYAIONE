@@ -221,6 +221,46 @@ register(ToolEntry(
 ))
 
 # ============================================================
+# 文件操作工具（computer domain）
+# ============================================================
+
+register(ToolEntry(
+    name="file_read",
+    domain="computer",
+    description="读取workspace内的文件内容",
+    tags=["读取", "文件", "查看", "打开", "内容"],
+    priority=1,
+))
+register(ToolEntry(
+    name="file_write",
+    domain="computer",
+    description="在workspace内创建或写入文件",
+    tags=["写入", "创建", "保存", "文件"],
+    priority=1,
+))
+register(ToolEntry(
+    name="file_list",
+    domain="computer",
+    description="列出workspace内目录内容",
+    tags=["目录", "文件夹", "列表", "ls"],
+    priority=1,
+))
+register(ToolEntry(
+    name="file_search",
+    domain="computer",
+    description="在workspace内搜索文件（按名称或内容）",
+    tags=["搜索", "查找", "文件"],
+    priority=1,
+))
+register(ToolEntry(
+    name="file_info",
+    domain="computer",
+    description="获取文件或目录的元信息",
+    tags=["信息", "属性", "大小", "文件"],
+    priority=1,
+))
+
+# ============================================================
 # 爬虫工具
 # ============================================================
 

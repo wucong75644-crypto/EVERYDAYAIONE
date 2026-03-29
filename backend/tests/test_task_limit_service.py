@@ -196,7 +196,13 @@ class TestKeyGeneration:
     """Redis key 格式验证"""
 
     def test_global_key_format(self, service):
-        assert service._global_key("user_abc") == "task:global:user_abc"
+        # 散客（无 org_id）
+        assert service._global_key("user_abc") == "task:global:personal:user_abc"
+        # 企业用户
+        assert service._global_key("user_abc", org_id="org_1") == "task:global:org_1:user_abc"
 
     def test_conversation_key_format(self, service):
-        assert service._conversation_key("user_abc", "conv_123") == "task:conv:user_abc:conv_123"
+        # 散客
+        assert service._conversation_key("user_abc", "conv_123") == "task:conv:personal:user_abc:conv_123"
+        # 企业用户
+        assert service._conversation_key("user_abc", "conv_123", org_id="org_1") == "task:conv:org_1:user_abc:conv_123"
