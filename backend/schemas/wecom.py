@@ -19,6 +19,7 @@ class WecomIncomingMessage:
     chattype: str                           # "single" | "group"
     msgtype: str                            # "text" | "image" | "voice" | "mixed"
     channel: str                            # "smart_robot" | "app"
+    org_id: Optional[str] = None            # 企业 org_id（corp_id 映射）
     text_content: Optional[str] = None      # 文本内容
     image_urls: List[str] = field(default_factory=list)  # 图片 URL 列表
     file_url: Optional[str] = None          # 文件下载 URL

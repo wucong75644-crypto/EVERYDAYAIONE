@@ -176,11 +176,14 @@ class TestBuildSandboxExecutor:
 
     def test_creates_executor_with_functions(self):
         executor = build_sandbox_executor()
-        # 应注册 4 个数据源函数
+        # 应注册 7 个数据源函数（4 原有 + 3 文件操作）
         assert "erp_query" in executor._registered_funcs
         assert "erp_query_all" in executor._registered_funcs
         assert "web_search" in executor._registered_funcs
         assert "search_knowledge" in executor._registered_funcs
+        assert "read_file" in executor._registered_funcs
+        assert "write_file" in executor._registered_funcs
+        assert "list_dir" in executor._registered_funcs
 
     def test_custom_timeout(self):
         executor = build_sandbox_executor(timeout=60.0)
@@ -208,6 +211,35 @@ class TestBuildSandboxExecutor:
         code = "data = await erp_query('erp_trade_query', 'shop_list')\nstr(data)"
         result = await executor.execute(code, "测试无dispatcher")
         assert "error" in result
+
+
+    def test_file_functions_bound_to_user(self):
+        """文件函数绑定了 user_id 和 org_id"""
+        executor = build_sandbox_executor(
+            user_id="test-user", org_id="test-org",
+        )
+        # 闭包内捕获了用户信息，函数可调用
+        assert callable(executor._registered_funcs["read_file"])
+        assert callable(executor._registered_funcs["write_file"])
+        assert callable(executor._registered_funcs["list_dir"])
+
+    @pytest.mark.asyncio
+    async def test_sandbox_list_dir(self, tmp_path):
+        """沙盒内 list_dir 可执行（空目录）"""
+        from unittest.mock import patch, MagicMock
+
+        mock_settings = MagicMock()
+        mock_settings.file_workspace_root = str(tmp_path)
+
+        with patch(
+            "core.config.get_settings",
+            return_value=mock_settings,
+        ):
+            executor = build_sandbox_executor(user_id="sandbox-test")
+            code = "result = await list_dir('.')\nresult"
+            result = await executor.execute(code, "测试目录列表")
+            # 应该返回空目录或目录信息（不是错误）
+            assert "❌" not in result
 
 
 class TestComputeCodeHash:

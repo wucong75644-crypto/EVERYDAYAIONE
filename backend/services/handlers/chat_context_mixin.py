@@ -145,7 +145,7 @@ class ChatContextMixin:
                 return None
 
             memories = await memory_service.get_relevant_memories(
-                user_id, query
+                user_id, query, org_id=self.org_id
             )
             if not memories:
                 return None
@@ -190,7 +190,7 @@ class ChatContextMixin:
             ]
 
             extracted = await memory_service.extract_memories_from_conversation(
-                user_id, messages, conversation_id
+                user_id, messages, conversation_id, org_id=self.org_id
             )
 
             if extracted:

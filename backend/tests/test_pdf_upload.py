@@ -73,7 +73,7 @@ class TestStorageServiceUploadFile:
                 storage.upload_file(
                     user_id="user1",
                     file_data=b"fake",
-                    content_type="application/zip",
+                    content_type="application/x-executable",
                 )
             )
 

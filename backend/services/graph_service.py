@@ -20,6 +20,7 @@ class GraphService:
         node_id: str,
         depth: int = 2,
         relation_types: Optional[List[str]] = None,
+        org_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         查找 N 跳以内的相关节点
@@ -87,9 +88,11 @@ class GraphService:
         FROM traversal t
         JOIN knowledge_nodes n ON n.id = t.node_id
         WHERE n.is_deleted = FALSE
+            AND (n.org_id = %(org_id)s OR n.org_id IS NULL)
         ORDER BY n.id, t.depth ASC
         LIMIT 20;
         """
+        params["org_id"] = org_id
 
         try:
             async with conn_ctx as conn:
@@ -214,6 +217,7 @@ class GraphService:
         self,
         node_ids: List[str],
         include_edges: bool = True,
+        org_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         获取指定节点的子图
@@ -234,9 +238,10 @@ class GraphService:
                         SELECT id, category, subcategory, node_type, title, content,
                                confidence, metadata
                         FROM knowledge_nodes
-                        WHERE id = ANY(%(ids)s) AND is_deleted = FALSE;
+                        WHERE id = ANY(%(ids)s) AND is_deleted = FALSE
+                            AND (org_id = %(org_id)s OR org_id IS NULL);
                         """,
-                        {"ids": node_ids},
+                        {"ids": node_ids, "org_id": org_id},
                     )
                     node_rows = await cur.fetchall()
                     node_cols = [desc.name for desc in cur.description]

@@ -27,6 +27,7 @@ async def record_ask_user_context(
     user_id: str,
     original_message: str,
     ask_options: str,
+    org_id: str | None = None,
 ) -> None:
     """
     ask_user 触发时，存储上下文到 knowledge_metrics（pending 状态）
@@ -42,6 +43,7 @@ async def record_ask_user_context(
         model_id="agent_loop",
         status="pending",
         user_id=user_id,
+        org_id=org_id,
         params={
             "conversation_id": conversation_id,
             "original_message": original_message[:500],
@@ -60,6 +62,7 @@ async def check_and_record_intent(
     user_id: str,
     user_response: str,
     confirmed_tool: str,
+    org_id: str | None = None,
 ) -> None:
     """
     路由成功后，检查是否有 pending 的 ask_user → 记录意图模式
@@ -90,6 +93,7 @@ async def check_and_record_intent(
         confirmed_tool=confirmed_tool,
         user_response=user_response,
         ask_options=ask_options,
+        org_id=org_id,
     )
 
     # 3. 标记已处理
@@ -98,6 +102,7 @@ async def check_and_record_intent(
         model_id="agent_loop",
         status="confirmed",
         user_id=user_id,
+        org_id=org_id,
         params={
             "conversation_id": conversation_id,
             "original_message": original_message[:500],
@@ -150,6 +155,7 @@ async def _write_intent_pattern(
     confirmed_tool: str,
     user_response: str,
     ask_options: str,
+    org_id: str | None = None,
 ) -> Optional[str]:
     """将意图模式写入 knowledge_nodes"""
     from services.knowledge_service import add_knowledge
@@ -183,4 +189,5 @@ async def _write_intent_pattern(
         source="user_confirmed",
         confidence=0.8,
         scope="global",
+        org_id=org_id,
     )

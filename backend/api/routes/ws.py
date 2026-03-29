@@ -55,7 +55,8 @@ async def get_user_from_token(token: str) -> tuple[Optional[str], str]:
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
-    token: str = Query(..., description="认证 token")
+    token: str = Query(..., description="认证 token"),
+    org_id: Optional[str] = Query(None, alias="org_id", description="企业ID"),
 ):
     """
     WebSocket 主端点
@@ -74,8 +75,23 @@ async def websocket_endpoint(
         await websocket.close(code=code, reason=reason)
         return
 
+    # 1.5 验证 org_id 归属（防止伪造）
+    verified_org_id = None
+    if org_id:
+        try:
+            db = get_db()
+            member = db.table("org_members").select("status").eq(
+                "org_id", org_id
+            ).eq("user_id", user_id).maybe_single().execute()
+            if member and member.data and member.data.get("status") == "active":
+                verified_org_id = org_id
+            else:
+                logger.warning(f"WS org_id rejected | user={user_id} | org_id={org_id}")
+        except Exception as e:
+            logger.warning(f"WS org_id verify failed | error={e}")
+
     # 2. 注册连接
-    conn_id = await ws_manager.connect(websocket, user_id)
+    conn_id = await ws_manager.connect(websocket, user_id, org_id=verified_org_id)
 
     # 3. 启动心跳任务
     heartbeat_task = asyncio.create_task(

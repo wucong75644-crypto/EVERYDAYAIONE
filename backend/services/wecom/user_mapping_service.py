@@ -26,6 +26,7 @@ class WecomUserMappingService:
         corp_id: str,
         channel: str = "smart_robot",
         nickname: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> str:
         """
         查找或创建企微用户对应的系统用户。
@@ -40,7 +41,7 @@ class WecomUserMappingService:
             系统 user_id（UUID 字符串）
         """
         # 1. 查找已有映射
-        mapping = await self._find_mapping(wecom_userid, corp_id)
+        mapping = await self._find_mapping(wecom_userid, corp_id, org_id=org_id)
         if mapping:
             logger.debug(
                 f"Wecom user found | wecom_userid={wecom_userid} | "
@@ -50,7 +51,7 @@ class WecomUserMappingService:
 
         # 2. 创建新系统用户 + 映射
         user_id = await self._create_wecom_user(
-            wecom_userid, corp_id, channel, nickname
+            wecom_userid, corp_id, channel, nickname, org_id=org_id
         )
         logger.info(
             f"Wecom user created | wecom_userid={wecom_userid} | "
@@ -59,18 +60,21 @@ class WecomUserMappingService:
         return user_id
 
     async def _find_mapping(
-        self, wecom_userid: str, corp_id: str
+        self, wecom_userid: str, corp_id: str, org_id: str | None = None,
     ) -> Optional[dict]:
         """查找已有的企微→系统用户映射"""
         try:
-            result = (
+            query = (
                 self.db.table("wecom_user_mappings")
                 .select("user_id, wecom_nickname")
                 .eq("wecom_userid", wecom_userid)
                 .eq("corp_id", corp_id)
-                .limit(1)
-                .execute()
             )
+            if org_id:
+                query = query.eq("org_id", org_id)
+            else:
+                query = query.is_("org_id", "null")
+            result = query.limit(1).execute()
             return result.data[0] if result.data else None
         except Exception as e:
             logger.error(
@@ -85,6 +89,7 @@ class WecomUserMappingService:
         corp_id: str,
         channel: str,
         nickname: Optional[str],
+        org_id: Optional[str] = None,
     ) -> str:
         """
         创建系统用户 + 企微映射记录。
@@ -128,13 +133,31 @@ class WecomUserMappingService:
         }).execute()
 
         # 创建映射
-        self.db.table("wecom_user_mappings").insert({
+        mapping_data = {
             "wecom_userid": wecom_userid,
             "corp_id": corp_id,
             "user_id": user_id,
             "channel": channel,
             "wecom_nickname": display_name,
-        }).execute()
+        }
+        if org_id:
+            mapping_data["org_id"] = org_id
+        self.db.table("wecom_user_mappings").insert(mapping_data).execute()
+
+        # 企业用户：自动加入企业成员
+        if org_id:
+            try:
+                self.db.table("org_members").insert({
+                    "org_id": org_id,
+                    "user_id": user_id,
+                    "role": "member",
+                    "status": "active",
+                }).execute()
+            except Exception as e:
+                logger.error(
+                    f"Auto add org member failed, user created but not in org | "
+                    f"org_id={org_id} | user_id={user_id} | error={e}"
+                )
 
         return user_id
 
@@ -198,6 +221,7 @@ class WecomUserMappingService:
 
     async def upsert_chat_target(
         self, chatid: str, chattype: str, corp_id: str,
+        org_id: Optional[str] = None,
     ) -> None:
         """记录聊天目标（群聊/私聊），用于定时任务推送目标选择。
 
@@ -224,11 +248,14 @@ class WecomUserMappingService:
                 }).eq("id", row["id"]).execute()
             else:
                 # 不存在：插入新记录
-                self.db.table("wecom_chat_targets").insert({
+                insert_data = {
                     "chatid": chatid,
                     "chat_type": chattype,
                     "corp_id": corp_id,
-                }).execute()
+                }
+                if org_id:
+                    insert_data["org_id"] = org_id
+                self.db.table("wecom_chat_targets").insert(insert_data).execute()
                 logger.info(
                     f"New chat target discovered | chatid={chatid} | "
                     f"type={chattype} | corp_id={corp_id}"

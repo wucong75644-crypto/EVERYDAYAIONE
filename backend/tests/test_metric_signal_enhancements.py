@@ -407,6 +407,7 @@ class TestAgentLoopSignal:
         # 构造最小化 AgentLoop 实例
         agent = AgentLoop.__new__(AgentLoop)
         agent.user_id = "user_2"
+        agent.org_id = None
 
         with patch(
             "services.knowledge_service.record_metric",

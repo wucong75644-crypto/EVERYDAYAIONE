@@ -30,14 +30,17 @@ from services.knowledge_metrics import record_metric  # noqa: F401
 # ===== 知识 CRUD =====
 
 
-async def _dedup_by_hash(cur, conn, content_hash: str, source: str) -> Optional[str]:
+async def _dedup_by_hash(
+    cur, conn, content_hash: str, source: str, org_id: str | None = None,
+) -> Optional[str]:
     """Hash 完全匹配去重：匹配则更新 confidence，返回已有节点 ID"""
+    org_filter = "AND org_id = %(org_id)s" if org_id else "AND org_id IS NULL"
     await cur.execute(
-        """
+        f"""
         SELECT id, source, confidence FROM knowledge_nodes
-        WHERE content_hash = %(hash)s AND is_deleted = FALSE;
+        WHERE content_hash = %(hash)s AND is_deleted = FALSE {org_filter};
         """,
-        {"hash": content_hash},
+        {"hash": content_hash, "org_id": org_id},
     )
     existing = await cur.fetchone()
     if not existing:
@@ -65,20 +68,23 @@ async def _dedup_by_vector(
     cur, conn, *, category: str, embedding: list,
     source: str, title: str, content: str,
     content_hash: str, metadata: Optional[Dict[str, Any]],
+    org_id: str | None = None,
 ) -> Optional[str]:
     """向量相似度 > 0.9 去重：匹配则合并内容，返回已有节点 ID"""
+    org_filter = "AND org_id = %(org_id)s" if org_id else "AND org_id IS NULL"
     await cur.execute(
-        """
+        f"""
         SELECT id, source, confidence
         FROM knowledge_nodes
         WHERE is_deleted = FALSE
             AND category = %(category)s
             AND embedding IS NOT NULL
             AND 1 - (embedding <=> %(emb)s::vector) > 0.9
+            {org_filter}
         ORDER BY embedding <=> %(emb)s::vector ASC
         LIMIT 1;
         """,
-        {"category": category, "emb": str(embedding)},
+        {"category": category, "emb": str(embedding), "org_id": org_id},
     )
     similar = await cur.fetchone()
     if not similar:
@@ -122,6 +128,7 @@ async def add_knowledge(
     source: str = "auto",
     confidence: float = 0.5,
     scope: str = "global",
+    org_id: Optional[str] = None,
 ) -> Optional[str]:
     """
     添加知识条目（含去重 + 向量化）
@@ -147,7 +154,7 @@ async def add_knowledge(
         async with conn_ctx as conn:
             async with conn.cursor() as cur:
                 # 1. Hash 去重
-                dup_id = await _dedup_by_hash(cur, conn, content_hash, source)
+                dup_id = await _dedup_by_hash(cur, conn, content_hash, source, org_id=org_id)
                 if dup_id:
                     return dup_id
 
@@ -159,11 +166,12 @@ async def add_knowledge(
                         category=category, embedding=embedding,
                         source=source, title=title, content=content,
                         content_hash=content_hash, metadata=metadata,
+                        org_id=org_id,
                     )
                     if dup_id:
                         return dup_id
 
-                # 3. 节点数量上限淘汰
+                # 3. 节点数量上限淘汰（全局计数，淘汰最低 confidence 节点）
                 await cur.execute(
                     "SELECT COUNT(*) FROM knowledge_nodes WHERE is_deleted = FALSE;"
                 )
@@ -187,11 +195,12 @@ async def add_knowledge(
                     """
                     INSERT INTO knowledge_nodes (
                         category, subcategory, node_type, title, content,
-                        metadata, embedding, source, confidence, scope, content_hash
+                        metadata, embedding, source, confidence, scope,
+                        content_hash, org_id
                     ) VALUES (
                         %(category)s, %(subcategory)s, %(node_type)s, %(title)s,
                         %(content)s, %(metadata)s, %(embedding)s::vector, %(source)s,
-                        %(confidence)s, %(scope)s, %(hash)s
+                        %(confidence)s, %(scope)s, %(hash)s, %(org_id)s
                     )
                     RETURNING id;
                     """,
@@ -207,6 +216,7 @@ async def add_knowledge(
                         "confidence": confidence,
                         "scope": scope,
                         "hash": content_hash,
+                        "org_id": org_id,
                     },
                 )
                 result = await cur.fetchone()
@@ -230,6 +240,7 @@ async def search_relevant(
     threshold: Optional[float] = None,
     category: Optional[str] = None,
     scope: str = "global",
+    org_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     向量检索相关知识（用于路由注入）
@@ -243,8 +254,8 @@ async def search_relevant(
     limit = limit or settings.kb_search_limit
     threshold = threshold or settings.kb_search_threshold
 
-    # 缓存检查
-    cache_key = f"{query[:100]}|{category}|{scope}|{limit}"
+    # 缓存检查（含 org_id 隔离）
+    cache_key = f"{query[:100]}|{category}|{scope}|{org_id or 'global'}|{limit}"
     cached = get_cached_search(cache_key)
     if cached is not None:
         return cached
@@ -258,11 +269,15 @@ async def search_relevant(
         return []
 
     category_filter = "AND category = %(category)s" if category else ""
+    # 企业用户看到：系统知识(org_id IS NULL) + 本企业知识
+    # 散客看到：系统知识(org_id IS NULL)
+    org_filter = "AND (org_id = %(org_id)s OR org_id IS NULL)" if org_id else "AND org_id IS NULL"
     params: Dict[str, Any] = {
         "emb": str(embedding),
         "threshold": threshold,
         "limit": limit,
         "scope": scope,
+        "org_id": org_id,
     }
     if category:
         params["category"] = category
@@ -275,6 +290,7 @@ async def search_relevant(
     WHERE is_deleted = FALSE
         AND embedding IS NOT NULL
         AND (scope = %(scope)s OR scope = 'global')
+        {org_filter}
         {category_filter}
         AND 1 - (embedding <=> %(emb)s::vector) > %(threshold)s
     ORDER BY similarity DESC
@@ -316,6 +332,7 @@ async def get_node_by_metadata(
     key: str,
     value: str,
     category: Optional[str] = None,
+    org_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """根据 metadata 字段查找节点（用于查找模型/工具实体节点）"""
     if not is_kb_available():
@@ -326,7 +343,8 @@ async def get_node_by_metadata(
         return None
 
     category_filter = "AND category = %(category)s" if category else ""
-    params: Dict[str, Any] = {"key": key, "value": value}
+    org_filter = "AND (org_id = %(org_id)s OR org_id IS NULL)" if org_id else "AND org_id IS NULL"
+    params: Dict[str, Any] = {"key": key, "value": value, "org_id": org_id}
     if category:
         params["category"] = category
 
@@ -340,6 +358,7 @@ async def get_node_by_metadata(
                     FROM knowledge_nodes
                     WHERE is_deleted = FALSE
                         AND metadata->>%(key)s = %(value)s
+                        {org_filter}
                         {category_filter}
                     LIMIT 1;
                     """,

@@ -10,7 +10,7 @@ from typing import List, Optional
 
 # 禁止导入的模块（文件系统/进程/网络/编译）
 _BLOCKED_MODULES = frozenset({
-    "os", "sys", "subprocess", "shutil", "pathlib",
+    "os", "sys", "subprocess", "shutil",
     "socket", "http", "urllib", "requests", "httpx",
     "ctypes", "importlib", "code", "codeop", "compileall",
     "multiprocessing", "threading", "signal", "resource",

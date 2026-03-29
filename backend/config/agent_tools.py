@@ -12,6 +12,11 @@ from config.code_tools import (
     CODE_TOOL_SCHEMAS,
     build_code_tools,
 )
+from config.file_tools import (
+    FILE_INFO_TOOLS,
+    FILE_TOOL_SCHEMAS,
+    build_file_tools,
+)
 from config.crawler_tools import (
     CRAWLER_INFO_TOOLS,
     CRAWLER_TOOL_SCHEMAS,
@@ -38,7 +43,7 @@ from config.smart_model_config import (
 INFO_TOOLS: Set[str] = {
     "get_conversation_context", "search_knowledge",
     "erp_api_search",
-} | ERP_SYNC_TOOLS | ERP_LOCAL_TOOLS | CRAWLER_INFO_TOOLS | CODE_INFO_TOOLS
+} | ERP_SYNC_TOOLS | ERP_LOCAL_TOOLS | CRAWLER_INFO_TOOLS | CODE_INFO_TOOLS | FILE_INFO_TOOLS
 
 ROUTING_TOOLS: Set[str] = {
     "route_to_chat", "route_to_image", "route_to_video", "ask_user",
@@ -105,6 +110,8 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     **CRAWLER_TOOL_SCHEMAS,
     # === 代码执行工具 ===
     **CODE_TOOL_SCHEMAS,
+    # === 文件操作工具 ===
+    **FILE_TOOL_SCHEMAS,
 }
 
 

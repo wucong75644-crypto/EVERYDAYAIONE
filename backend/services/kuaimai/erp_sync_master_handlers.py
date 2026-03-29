@@ -206,9 +206,9 @@ async def sync_stock(
     wh_config = None
     if svc.org_id:
         try:
-            from services.org.config_resolver import OrgConfigResolver
-            resolver = OrgConfigResolver(svc.db)
-            wh_config = resolver.get(svc.org_id, "erp_warehouse_ids")
+            from services.org.config_resolver import AsyncOrgConfigResolver
+            resolver = AsyncOrgConfigResolver(svc.db)
+            wh_config = await resolver.get(svc.org_id, "erp_warehouse_ids")
         except Exception:
             pass
     if not wh_config:

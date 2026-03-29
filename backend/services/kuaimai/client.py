@@ -44,6 +44,7 @@ class KuaiMaiClient:
         refresh_token: Optional[str] = None,
         base_url: Optional[str] = None,
         timeout: Optional[float] = None,
+        org_id: Optional[str] = None,
     ) -> None:
         self._app_key = app_key or settings.kuaimai_app_key or ""
         self._app_secret = app_secret or settings.kuaimai_app_secret or ""
@@ -52,6 +53,7 @@ class KuaiMaiClient:
         self._base_url = base_url or settings.kuaimai_base_url
         self._timeout = timeout or settings.kuaimai_timeout
         self._client: Optional[httpx.AsyncClient] = None
+        self._org_id = org_id
 
     @property
     def is_configured(self) -> bool:
@@ -304,17 +306,22 @@ class KuaiMaiClient:
             logger.error(f"KuaiMai token refresh exception | error={e}")
             return False
 
+    def _token_cache_key(self, kind: str) -> str:
+        """生成按企业隔离的 token 缓存键"""
+        org = self._org_id or "default"
+        return f"kuaimai:{kind}:{org}"
+
     async def _cache_token(self) -> None:
-        """将 Token 写入 Redis 缓存"""
+        """将 Token ���入 Redis 缓存"""
         try:
             from core.redis import get_redis
 
             redis = await get_redis()
             if redis:
                 ttl = 29 * 24 * 3600  # 29天
-                await redis.set("kuaimai:access_token", self._access_token, ex=ttl)
+                await redis.set(self._token_cache_key("token"), self._access_token, ex=ttl)
                 if self._refresh_token:
-                    await redis.set("kuaimai:refresh_token", self._refresh_token, ex=ttl)
+                    await redis.set(self._token_cache_key("refresh"), self._refresh_token, ex=ttl)
         except Exception as e:
             logger.debug(f"KuaiMai cache token skipped | error={e}")
 
@@ -325,11 +332,11 @@ class KuaiMaiClient:
 
             redis = await get_redis()
             if redis:
-                cached = await redis.get("kuaimai:access_token")
+                cached = await redis.get(self._token_cache_key("token"))
                 if cached:
                     self._access_token = cached
-                    logger.info("KuaiMai token loaded from Redis cache")
-                cached_refresh = await redis.get("kuaimai:refresh_token")
+                    logger.info(f"KuaiMai token loaded from Redis cache | org={self._org_id}")
+                cached_refresh = await redis.get(self._token_cache_key("refresh"))
                 if cached_refresh:
                     self._refresh_token = cached_refresh
         except Exception as e:

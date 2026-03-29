@@ -169,6 +169,7 @@ class AgentInfraMixin:
                     model_id="agent_loop",
                     status="success",
                     user_id=self.user_id,
+                    org_id=self.org_id,
                     params={
                         "routing_tool": result.generation_type.value,
                         "routed_by": "agent_loop",
@@ -201,6 +202,7 @@ class AgentInfraMixin:
                     user_id=self.user_id,
                     original_message=user_text,
                     ask_options=ask_message,
+                    org_id=self.org_id,
                 )
             except Exception as e:
                 logger.debug(f"Intent pending record skipped | error={e}")
@@ -229,6 +231,7 @@ class AgentInfraMixin:
                     user_id=self.user_id,
                     user_response=user_text,
                     confirmed_tool=confirmed_tool,
+                    org_id=self.org_id,
                 )
             except Exception as e:
                 logger.debug(f"Intent learning check skipped | error={e}")

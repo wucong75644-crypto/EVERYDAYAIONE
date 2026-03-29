@@ -27,11 +27,18 @@ from services.memory_settings import MemorySettingsService
 class MemoryService(MemorySettingsService):
     """记忆服务类（继承设置管理，提供 CRUD + 对话集成）"""
 
+    @staticmethod
+    def _mem0_uid(user_id: str, org_id: str | None = None) -> str:
+        """生成 Mem0 的 org-scoped user_id"""
+        if org_id:
+            return f"org_{org_id}:{user_id}"
+        return f"personal:{user_id}"
+
     # ===== 记忆 CRUD =====
 
-    async def get_all_memories(self, user_id: str) -> List[Dict[str, Any]]:
+    async def get_all_memories(self, user_id: str, org_id: str | None = None) -> List[Dict[str, Any]]:
         """获取用户所有记忆（带内存缓存）"""
-        cached = _get_cached_memories(user_id)
+        cached = _get_cached_memories(user_id, org_id=org_id)
         if cached is not None:
             return cached
 
@@ -39,12 +46,13 @@ class MemoryService(MemorySettingsService):
         if mem0 is None:
             return []
 
+        mem0_uid = self._mem0_uid(user_id, org_id)
         try:
             result = await asyncio.wait_for(
-                mem0.get_all(user_id=user_id), timeout=MEM0_TIMEOUT
+                mem0.get_all(user_id=mem0_uid), timeout=MEM0_TIMEOUT
             )
             memories = format_memory_list(result)
-            _set_cached_memories(user_id, memories)
+            _set_cached_memories(user_id, memories, org_id=org_id)
             return memories
         except asyncio.TimeoutError:
             logger.error(
@@ -70,6 +78,7 @@ class MemoryService(MemorySettingsService):
         user_id: str,
         content: str,
         source: str = "manual",
+        org_id: str | None = None,
     ) -> List[Dict[str, Any]]:
         """添加记忆，返回所有提取到的记忆列表（Mem0 可能从一句话提取多条）"""
         mem0 = await _get_mem0()
@@ -80,7 +89,7 @@ class MemoryService(MemorySettingsService):
                 status_code=503,
             )
 
-        count = await self.get_memory_count(user_id)
+        count = await self.get_memory_count(user_id, org_id=org_id)
         if count >= MAX_MEMORIES_PER_USER:
             raise AppException(
                 code="MEMORY_LIMIT_REACHED",
@@ -88,12 +97,13 @@ class MemoryService(MemorySettingsService):
                 status_code=400,
             )
 
+        mem0_uid = self._mem0_uid(user_id, org_id)
         try:
             t0 = time.monotonic()
             result = await asyncio.wait_for(
                 mem0.add(
                     messages=[{"role": "user", "content": content}],
-                    user_id=user_id,
+                    user_id=mem0_uid,
                     metadata={"source": source},
                 ),
                 timeout=MEM0_TIMEOUT,
@@ -112,7 +122,7 @@ class MemoryService(MemorySettingsService):
                     added.append(formatted)
 
             if added:
-                _invalidate_cache(user_id)
+                _invalidate_cache(user_id, org_id=org_id)
                 logger.info(
                     f"Memory added | user_id={user_id} | source={source} | "
                     f"count={len(added)}"
@@ -140,7 +150,8 @@ class MemoryService(MemorySettingsService):
             )
 
     async def update_memory(
-        self, memory_id: str, content: str, user_id: str = ""
+        self, memory_id: str, content: str, user_id: str = "",
+        org_id: str | None = None,
     ) -> Dict[str, Any]:
         """更新一条记忆（带归属验证）"""
         mem0 = await _get_mem0()
@@ -151,8 +162,9 @@ class MemoryService(MemorySettingsService):
                 status_code=503,
             )
 
+        mem0_uid = self._mem0_uid(user_id, org_id) if user_id else ""
         if user_id:
-            await verify_memory_ownership(mem0, memory_id, user_id)
+            await verify_memory_ownership(mem0, memory_id, mem0_uid)
 
         try:
             result = await asyncio.wait_for(
@@ -160,7 +172,7 @@ class MemoryService(MemorySettingsService):
                 timeout=MEM0_TIMEOUT,
             )
             if user_id:
-                _invalidate_cache(user_id)
+                _invalidate_cache(user_id, org_id=org_id)
             logger.info(f"Memory updated | memory_id={memory_id}")
             return {
                 "id": memory_id,
@@ -188,7 +200,9 @@ class MemoryService(MemorySettingsService):
                 status_code=500,
             )
 
-    async def delete_memory(self, memory_id: str, user_id: str = "") -> None:
+    async def delete_memory(
+        self, memory_id: str, user_id: str = "", org_id: str | None = None,
+    ) -> None:
         """删除一条记忆（带归属验证）"""
         mem0 = await _get_mem0()
         if mem0 is None:
@@ -198,15 +212,16 @@ class MemoryService(MemorySettingsService):
                 status_code=503,
             )
 
+        mem0_uid = self._mem0_uid(user_id, org_id) if user_id else ""
         if user_id:
-            await verify_memory_ownership(mem0, memory_id, user_id)
+            await verify_memory_ownership(mem0, memory_id, mem0_uid)
 
         try:
             await asyncio.wait_for(
                 mem0.delete(memory_id=memory_id), timeout=MEM0_TIMEOUT
             )
             if user_id:
-                _invalidate_cache(user_id)
+                _invalidate_cache(user_id, org_id=org_id)
             logger.info(f"Memory deleted | memory_id={memory_id}")
         except (AppException, PermissionDeniedError, NotFoundError):
             raise
@@ -229,7 +244,7 @@ class MemoryService(MemorySettingsService):
                 status_code=500,
             )
 
-    async def delete_all_memories(self, user_id: str) -> None:
+    async def delete_all_memories(self, user_id: str, org_id: str | None = None) -> None:
         """清空用户所有记忆"""
         mem0 = await _get_mem0()
         if mem0 is None:
@@ -239,11 +254,12 @@ class MemoryService(MemorySettingsService):
                 status_code=503,
             )
 
+        mem0_uid = self._mem0_uid(user_id, org_id)
         try:
             await asyncio.wait_for(
-                mem0.delete_all(user_id=user_id), timeout=MEM0_TIMEOUT
+                mem0.delete_all(user_id=mem0_uid), timeout=MEM0_TIMEOUT
             )
-            _invalidate_cache(user_id)
+            _invalidate_cache(user_id, org_id=org_id)
             logger.info(f"All memories deleted | user_id={user_id}")
         except asyncio.TimeoutError:
             logger.error(
@@ -264,18 +280,19 @@ class MemoryService(MemorySettingsService):
                 status_code=500,
             )
 
-    async def get_memory_count(self, user_id: str) -> int:
+    async def get_memory_count(self, user_id: str, org_id: str | None = None) -> int:
         """获取用户记忆数量（优先读缓存）"""
-        cached = _get_cached_memories(user_id)
+        cached = _get_cached_memories(user_id, org_id=org_id)
         if cached is not None:
             return len(cached)
         mem0 = await _get_mem0()
         if mem0 is None:
             return 0
+        mem0_uid = self._mem0_uid(user_id, org_id)
         try:
             t0 = time.monotonic()
             result = await asyncio.wait_for(
-                mem0.get_all(user_id=user_id), timeout=MEM0_TIMEOUT
+                mem0.get_all(user_id=mem0_uid), timeout=MEM0_TIMEOUT
             )
             elapsed = time.monotonic() - t0
             if elapsed > 2:
@@ -294,16 +311,18 @@ class MemoryService(MemorySettingsService):
         user_id: str,
         query: str,
         limit: int = MAX_INJECTION_COUNT,
+        org_id: str | None = None,
     ) -> List[Dict[str, Any]]:
         """检索与当前对话相关的记忆（两级过滤：Mem0 阈值初筛 + 千问精排）"""
         mem0 = await _get_mem0()
         if mem0 is None:
             return []
 
+        mem0_uid = self._mem0_uid(user_id, org_id)
         try:
             if not query or query.strip() == "":
                 result = await asyncio.wait_for(
-                    mem0.get_all(user_id=user_id), timeout=MEM0_TIMEOUT
+                    mem0.get_all(user_id=mem0_uid), timeout=MEM0_TIMEOUT
                 )
                 memories = format_memory_list(result)
                 return memories[:limit]
@@ -312,7 +331,7 @@ class MemoryService(MemorySettingsService):
             search_limit = limit * 3
             result = await asyncio.wait_for(
                 mem0.search(
-                    query=query, user_id=user_id,
+                    query=query, user_id=mem0_uid,
                     limit=search_limit, threshold=MEMORY_SEARCH_THRESHOLD,
                 ),
                 timeout=MEM0_TIMEOUT,
@@ -340,6 +359,7 @@ class MemoryService(MemorySettingsService):
             # 记录记忆检索效果信号
             self._record_memory_search_signal(
                 user_id=user_id,
+                org_id=org_id,
                 mem0_returned=len(memories),
                 filtered_count=len(filtered),
                 filter_latency_ms=filter_latency_ms,
@@ -360,6 +380,7 @@ class MemoryService(MemorySettingsService):
         filtered_count: int,
         filter_latency_ms: int,
         query_length: int,
+        org_id: str | None = None,
     ) -> None:
         """记录记忆检索效果信号到 knowledge_metrics（fire-and-forget）"""
 
@@ -371,6 +392,7 @@ class MemoryService(MemorySettingsService):
                     model_id="mem0",
                     status="success",
                     user_id=user_id,
+                    org_id=org_id,
                     params={
                         "mem0_returned": mem0_returned,
                         "filtered_count": filtered_count,
@@ -390,17 +412,19 @@ class MemoryService(MemorySettingsService):
         user_id: str,
         messages: List[Dict[str, Any]],
         conversation_id: str,
+        org_id: str | None = None,
     ) -> List[Dict[str, Any]]:
         """从对话中提取记忆（由 Mem0 LLM 自动识别关键信息）"""
         mem0 = await _get_mem0()
         if mem0 is None:
             return []
 
+        mem0_uid = self._mem0_uid(user_id, org_id)
         try:
             result = await asyncio.wait_for(
                 mem0.add(
                     messages=messages,
-                    user_id=user_id,
+                    user_id=mem0_uid,
                     metadata={
                         "source": "auto",
                         "conversation_id": conversation_id,
@@ -423,7 +447,7 @@ class MemoryService(MemorySettingsService):
                     })
 
             if extracted:
-                _invalidate_cache(user_id)
+                _invalidate_cache(user_id, org_id=org_id)
                 logger.info(
                     f"Memories extracted | user_id={user_id} | "
                     f"conversation_id={conversation_id} | count={len(extracted)}"

@@ -37,6 +37,7 @@ class Connection:
     websocket: WebSocket
     user_id: str
     conn_id: str
+    org_id: str | None = None
     connected_at: float = field(default_factory=time.time)
     last_heartbeat: float = field(default_factory=time.time)
     subscribed_tasks: Set[str] = field(default_factory=set)
@@ -70,7 +71,8 @@ class WebSocketManager(RedisPubSubMixin):
         self,
         websocket: WebSocket,
         user_id: str,
-        conn_id: Optional[str] = None
+        conn_id: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> str:
         """注册新连接"""
         await websocket.accept()
@@ -81,7 +83,8 @@ class WebSocketManager(RedisPubSubMixin):
         connection = Connection(
             websocket=websocket,
             user_id=user_id,
-            conn_id=conn_id
+            conn_id=conn_id,
+            org_id=org_id,
         )
 
         async with self._lock:
@@ -263,12 +266,19 @@ class WebSocketManager(RedisPubSubMixin):
 
         await self._publish("user", user_id, message)
 
-    async def broadcast_all(self, message: Dict[str, Any]):
-        """广播消息到所有连接（本地 + 跨进程）"""
-        for conn_id in list(self._conn_index.keys()):
+    async def broadcast_all(self, message: Dict[str, Any], org_id: str | None = None):
+        """广播消息到所有连接（本地 + 跨进程）
+
+        Args:
+            message: 消息数据
+            org_id: 指定企业ID时只发给该企业的连接，None则发给所有
+        """
+        for conn_id, conn in list(self._conn_index.items()):
+            if org_id is not None and conn.org_id != org_id:
+                continue
             await self.send_to_connection(conn_id, message)
 
-        await self._publish("broadcast", "", message)
+        await self._publish("broadcast", "", message, org_id=org_id)
 
     # ================================================================
     # 心跳与清理

@@ -225,7 +225,7 @@ class AgentContextMixin:
         try:
             from services.knowledge_service import search_relevant
 
-            items = await search_relevant(query=text, limit=3)
+            items = await search_relevant(query=text, limit=3, org_id=self.org_id)
             if items:
                 knowledge_text = "\n".join(
                     f"- {k['title']}: {k['content']}" for k in items

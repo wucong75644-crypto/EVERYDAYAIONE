@@ -242,7 +242,7 @@ class TestMemoryCRUD:
         assert result[0]["id"] == "mem-1"
         assert result[0]["memory"] == "用户是程序员"
         assert result[1]["metadata"]["source"] == "manual"
-        mock_mem0.get_all.assert_awaited_once_with(user_id=user_id)
+        mock_mem0.get_all.assert_awaited_once_with(user_id=f"personal:{user_id}")
 
     @pytest.mark.asyncio
     async def test_get_all_memories_mem0_unavailable(
@@ -473,7 +473,7 @@ class TestMemoryCRUD:
         mock_mem0.get.return_value = {
             "id": "mem-1",
             "memory": "原始记忆",
-            "user_id": user_id,
+            "user_id": f"personal:{user_id}",
         }
         mock_mem0.update.return_value = {"updated_at": "2026-03-06T12:00:00Z"}
 
@@ -493,7 +493,7 @@ class TestMemoryCRUD:
 
         await memory_service.delete_all_memories(user_id)
 
-        mock_mem0.delete_all.assert_awaited_once_with(user_id=user_id)
+        mock_mem0.delete_all.assert_awaited_once_with(user_id=f"personal:{user_id}")
 
     @pytest.mark.asyncio
     async def test_delete_all_memories_mem0_unavailable(
@@ -564,7 +564,7 @@ class TestChatIntegration:
 
         assert len(result) == 1
         mock_mem0.search.assert_awaited_once_with(
-            query="用户的职业", user_id=user_id, limit=15, threshold=0.6
+            query="用户的职业", user_id=f"personal:{user_id}", limit=15, threshold=0.6
         )
 
     @pytest.mark.asyncio
@@ -581,7 +581,7 @@ class TestChatIntegration:
         result = await memory_service.get_relevant_memories(user_id, query="")
 
         assert len(result) == 2
-        mock_mem0.get_all.assert_awaited_once_with(user_id=user_id)
+        mock_mem0.get_all.assert_awaited_once_with(user_id=f"personal:{user_id}")
         mock_mem0.search.assert_not_awaited()
 
     @pytest.mark.asyncio

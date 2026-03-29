@@ -62,11 +62,14 @@ class WecomMessageService(WecomAIMixin):
         start_time = time.monotonic()
 
         try:
+            org_id = msg.org_id
+
             # 1. 用户映射
             user_id = await self._user_svc.get_or_create_user(
                 wecom_userid=msg.wecom_userid,
                 corp_id=msg.corp_id,
                 channel=msg.channel,
+                org_id=org_id,
             )
 
             # 1.5 更新 chatid（主动推送用）
@@ -76,7 +79,7 @@ class WecomMessageService(WecomAIMixin):
 
             # 1.6 记录聊天目标（定时任务推送目标选择用）
             await self._user_svc.upsert_chat_target(
-                msg.chatid, msg.chattype, msg.corp_id,
+                msg.chatid, msg.chattype, msg.corp_id, org_id=org_id,
             )
 
             # 2. 获取或创建对话
@@ -84,6 +87,7 @@ class WecomMessageService(WecomAIMixin):
                 user_id=user_id,
                 chatid=msg.chatid,
                 chattype=msg.chattype,
+                org_id=org_id,
             )
 
             # 2.5 指令拦截：匹配成功则直接回复卡片，跳过 AI 路由
@@ -93,7 +97,8 @@ class WecomMessageService(WecomAIMixin):
                 from services.wecom.command_handler import CommandHandler
                 cmd = CommandHandler(self.db)
                 if await cmd.try_handle(
-                    msg.text_content, user_id, conversation_id, reply_ctx
+                    msg.text_content, user_id, conversation_id, reply_ctx,
+                    org_id=org_id,
                 ):
                     return
 
@@ -130,6 +135,7 @@ class WecomMessageService(WecomAIMixin):
                     text_content=msg.text_content or "",
                     reply_ctx=reply_ctx,
                     image_urls=oss_image_urls,
+                    org_id=org_id,
                 )
             elif msg.msgtype in (WecomMsgType.FILE, WecomMsgType.VIDEO):
                 # 文件/视频暂不支持 AI 分析，提示用户
@@ -198,6 +204,7 @@ class WecomMessageService(WecomAIMixin):
         text_content: str,
         reply_ctx: WecomReplyContext,
         image_urls: Optional[List[str]] = None,
+        org_id: Optional[str] = None,
     ) -> None:
         """文本/多模态消息处理：Agent Loop 路由 → 按类型分发"""
         from schemas.message import ImagePart
@@ -227,8 +234,8 @@ class WecomMessageService(WecomAIMixin):
 
             # 并行：Agent Loop + 记忆预取（保活在后台持续运行）
             agent_raw, memory_raw = await asyncio.gather(
-                self._run_agent_loop(user_id, conversation_id, content_parts),
-                self._build_memory_prompt(user_id, text_content),
+                self._run_agent_loop(user_id, conversation_id, content_parts, org_id=org_id),
+                self._build_memory_prompt(user_id, text_content, org_id=org_id),
                 return_exceptions=True,
             )
 
@@ -288,14 +295,22 @@ class WecomMessageService(WecomAIMixin):
         user_id: str,
         chatid: str,
         chattype: str,
+        org_id: Optional[str] = None,
     ) -> str:
-        """获取或创建企微对话。按 user_id 查找最近的企微对话。"""
+        """获取或创建企微对话。按 user_id + org_id 查找最近的企微对话。"""
         try:
-            result = (
+            query = (
                 self.db.table("conversations")
                 .select("id")
                 .eq("user_id", user_id)
                 .like("title", "企微%")
+            )
+            if org_id:
+                query = query.eq("org_id", org_id)
+            else:
+                query = query.is_("org_id", "null")
+            result = (
+                query
                 .order("updated_at", desc=True)
                 .limit(1)
                 .execute()
@@ -309,6 +324,7 @@ class WecomMessageService(WecomAIMixin):
                 user_id=user_id,
                 title=title,
                 model_id="auto",
+                org_id=org_id,
             )
             return conv["id"]
 

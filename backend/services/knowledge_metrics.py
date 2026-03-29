@@ -22,6 +22,7 @@ async def record_metric(
     retried: bool = False,
     retry_from_model: Optional[str] = None,
     user_id: Optional[str] = None,
+    org_id: Optional[str] = None,
 ) -> None:
     """记录任务执行指标（fire-and-forget，不抛异常）"""
     if not is_kb_available():
@@ -39,12 +40,12 @@ async def record_metric(
                     INSERT INTO knowledge_metrics (
                         task_type, model_id, status, error_code, cost_time_ms,
                         prompt_tokens, completion_tokens, prompt_category,
-                        params, retried, retry_from_model, user_id
+                        params, retried, retry_from_model, user_id, org_id
                     ) VALUES (
                         %(task_type)s, %(model_id)s, %(status)s, %(error_code)s,
                         %(cost_time_ms)s, %(prompt_tokens)s, %(completion_tokens)s,
                         %(prompt_category)s, %(params)s, %(retried)s,
-                        %(retry_from_model)s, %(user_id)s
+                        %(retry_from_model)s, %(user_id)s, %(org_id)s
                     );
                     """,
                     {
@@ -60,6 +61,7 @@ async def record_metric(
                         "retried": retried,
                         "retry_from_model": retry_from_model,
                         "user_id": user_id,
+                        "org_id": org_id,
                     },
                 )
             await conn.commit()

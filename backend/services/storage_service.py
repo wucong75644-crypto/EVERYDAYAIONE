@@ -29,6 +29,20 @@ class StorageService:
     # 允许的文档类型
     ALLOWED_FILE_TYPES = {
         "application/pdf": "pdf",
+        "text/plain": "txt",
+        "text/csv": "csv",
+        "text/markdown": "md",
+        "application/json": "json",
+        "application/vnd.ms-excel": "xls",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+        "application/vnd.ms-powerpoint": "ppt",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+        "application/msword": "doc",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+        "application/zip": "zip",
+        "application/x-yaml": "yaml",
+        "text/yaml": "yaml",
+        "text/xml": "xml",
     }
     # 最大文档大小 (50MB)
     MAX_DOCUMENT_SIZE = 50 * 1024 * 1024

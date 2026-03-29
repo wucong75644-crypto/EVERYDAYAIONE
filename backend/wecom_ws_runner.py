@@ -46,6 +46,26 @@ async def main() -> None:
     db = get_db()
     msg_svc = WecomMessageService(db)
 
+    # corp_id → org_id 映射（启动时查一次，缓存至进程重启。
+    # 此映射几乎不变，若 organizations.wecom_corp_id 修改需重启 wecom 服务）
+    _org_id: str | None = None
+    if settings.wecom_corp_id:
+        try:
+            org_result = (
+                db.table("organizations")
+                .select("id")
+                .eq("wecom_corp_id", settings.wecom_corp_id)
+                .maybe_single()
+                .execute()
+            )
+            if org_result and org_result.data:
+                _org_id = str(org_result.data["id"])
+                logger.info(f"Wecom corp_id mapped to org_id | corp={settings.wecom_corp_id} | org={_org_id}")
+            else:
+                logger.warning(f"No org found for wecom_corp_id={settings.wecom_corp_id}, running as guest")
+        except Exception as e:
+            logger.warning(f"Wecom org_id lookup failed | error={e}")
+
     # WS 客户端引用（回调闭包中需要）
     ws_client: WecomWSClient | None = None
 
@@ -115,6 +135,7 @@ async def main() -> None:
             chattype=body.get("chattype", "single"),
             msgtype=msgtype,
             channel="smart_robot",
+            org_id=_org_id,
             text_content=text_content,
             image_urls=image_urls,
             file_url=file_url,
@@ -153,11 +174,13 @@ async def main() -> None:
             wecom_userid=wecom_userid,
             corp_id=settings.wecom_corp_id or "",
             channel="smart_robot",
+            org_id=_org_id,
         )
         conversation_id = await msg_svc._get_or_create_conversation(
             user_id=user_id,
             chatid=chatid,
             chattype=body.get("chattype", "single"),
+            org_id=_org_id,
         )
 
         reply_ctx = WecomReplyContext(
@@ -176,6 +199,7 @@ async def main() -> None:
             user_id=user_id,
             conversation_id=conversation_id,
             reply_ctx=reply_ctx,
+            org_id=_org_id,
         )
 
     global _ws_client

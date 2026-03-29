@@ -211,11 +211,18 @@ class RedisPubSubMixin:
                 await self.send_to_connection(conn_id, message)
 
         elif target_type == "broadcast":
-            for conn_id in list(self._conn_index.keys()):
+            broadcast_org_id = data.get("org_id")
+            for conn_id, conn in list(self._conn_index.items()):
+                if broadcast_org_id is not None and conn.org_id != broadcast_org_id:
+                    continue
                 await self.send_to_connection(conn_id, message)
 
     async def _publish(
-        self, target_type: str, target_id: str, message: Dict[str, Any]
+        self,
+        target_type: str,
+        target_id: str,
+        message: Dict[str, Any],
+        org_id: str | None = None,
     ) -> None:
         """发布消息到 Redis Channel，供其他 Worker 接收"""
         if not self._redis_available:
@@ -224,12 +231,15 @@ class RedisPubSubMixin:
         try:
             from core.redis import RedisClient
             client = await RedisClient.get_client()
-            payload = json.dumps({
+            data: Dict[str, Any] = {
                 "source": self._worker_id,
                 "target_type": target_type,
                 "target_id": target_id,
                 "message": message,
-            }, ensure_ascii=False)
+            }
+            if org_id is not None:
+                data["org_id"] = org_id
+            payload = json.dumps(data, ensure_ascii=False)
             await client.publish(WS_CHANNEL, payload)
         except Exception as e:
             logger.warning(f"Redis publish failed | error={e}")

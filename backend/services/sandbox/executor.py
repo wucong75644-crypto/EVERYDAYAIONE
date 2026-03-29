@@ -37,6 +37,8 @@ _ALLOWED_IMPORT_MODULES = frozenset({
     "math", "json", "decimal", "numbers", "fractions", "statistics",
     # 日期/时间（datetime 内部依赖 time）
     "datetime", "time", "calendar", "zoneinfo",
+    # 文件路径（沙盒内受限使用，配合注入的文件函数）
+    "pathlib",
     # 集合/迭代
     "collections", "itertools", "functools", "operator", "copy",
     # 字符串/正则

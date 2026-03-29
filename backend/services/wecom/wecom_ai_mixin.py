@@ -28,6 +28,7 @@ class WecomAIMixin:
         user_id: str,
         conversation_id: str,
         content: List[ContentPart],
+        org_id: str | None = None,
     ) -> "AgentResult":
         """执行 Agent Loop 路由，失败降级到 IntentRouter → 兜底 CHAT"""
         from services.agent_types import AgentResult
@@ -35,7 +36,7 @@ class WecomAIMixin:
         if self.settings.agent_loop_enabled:
             from services.agent_loop import AgentLoop
 
-            agent = AgentLoop(self.db, user_id, conversation_id)
+            agent = AgentLoop(self.db, user_id, conversation_id, org_id=org_id)
             try:
                 result = await agent.run(content, thinking_mode=None)
                 logger.info(
@@ -53,7 +54,7 @@ class WecomAIMixin:
 
         router = IntentRouter()
         try:
-            decision = await router.route(content, user_id, conversation_id)
+            decision = await router.route(content, user_id, conversation_id, org_id=org_id)
             return AgentResult(
                 generation_type=decision.generation_type,
                 model=decision.recommended_model or "",
@@ -70,7 +71,7 @@ class WecomAIMixin:
             await router.close()
 
     async def _build_memory_prompt(
-        self, user_id: str, query: str,
+        self, user_id: str, query: str, org_id: str | None = None,
     ) -> Optional[str]:
         """构建记忆 system prompt（失败返回 None）"""
         try:
@@ -81,7 +82,7 @@ class WecomAIMixin:
             if not await svc.is_memory_enabled(user_id):
                 return None
 
-            memories = await svc.get_relevant_memories(user_id, query)
+            memories = await svc.get_relevant_memories(user_id, query, org_id=org_id)
             if not memories:
                 return None
 

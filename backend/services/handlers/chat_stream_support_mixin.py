@@ -102,6 +102,7 @@ class ChatStreamSupportMixin:
                     else None
                 ),
                 user_id=user_id,
+                org_id=self.org_id,
             )
         )
         if retry_context and retry_context.failed_attempts:
@@ -149,7 +150,7 @@ class ChatStreamSupportMixin:
                 self._record_knowledge_metric(
                     task_type="chat", model_id=model_id, status="failed",
                     error_code="GENERATION_FAILED", cost_time_ms=elapsed_ms,
-                    user_id=user_id,
+                    user_id=user_id, org_id=self.org_id,
                 )
             )
             asyncio.create_task(

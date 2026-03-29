@@ -242,7 +242,7 @@ class AgentLoopV2Mixin:
             return None
         try:
             from services.knowledge_service import search_relevant
-            return await search_relevant(query=text, limit=3)
+            return await search_relevant(query=text, limit=3, org_id=self.org_id)
         except Exception as e:
             logger.debug(f"Knowledge fetch skipped | error={e}")
             return None

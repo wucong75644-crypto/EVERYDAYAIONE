@@ -20,6 +20,7 @@ PHASE1_SYSTEM_PROMPT = (
     "- route_chat: 普通对话/问答/写作/代码/分析/翻译\n"
     "- route_erp: 查询ERP数据（订单/库存/商品/售后/采购/物流/仓储/店铺/销量）\n"
     "- route_crawler: 搜索社交平台内容（小红书/抖音/B站/微博/知乎）\n"
+    "- route_computer: 操作文件（读取/写入/搜索/分析文件，编写代码处理数据）\n"
     "- route_image: 要求生成/画/绘制/编辑图片（包括口语：搞张图/来个图/出个图）\n"
     "- route_video: 要求生成/制作视频\n"
     "- ask_user: 完全无法判断意图时才追问\n\n"
@@ -31,6 +32,12 @@ PHASE1_SYSTEM_PROMPT = (
     "含电商平台名(淘宝/天猫/京东/拼多多/抖店/小红书店铺/1688)"
     "且涉及订单/销量/发货/退款 → route_erp（不是 crawler）\n"
     "含「我的订单」「查个单」「丁单」（错字）→ route_erp\n\n"
+    "## 文件操作判定规则\n"
+    "含以下关键词 → route_computer：\n"
+    "读取文件/打开文件/查看文件/文件内容/写入文件/保存文件/创建文件/"
+    "搜索文件/查找文件/文件列表/目录/文件夹/"
+    "分析数据/处理CSV/处理Excel/整理文件/文件大小/文件信息\n"
+    "用户上传了文件或提到 workspace 中的文件 → route_computer\n\n"
     "## 其他规则\n"
     "普通搜索(天气/新闻)用 route_chat + needs_search=true，"
     "社交平台搜索(口碑/推荐/评测)用 route_crawler。\n"
@@ -43,6 +50,7 @@ PHASE1_TOOL_TO_DOMAIN: Dict[str, str] = {
     "route_chat": "chat",
     "route_erp": "erp",
     "route_crawler": "crawler",
+    "route_computer": "computer",
     "route_image": "image",
     "route_video": "video",
     "ask_user": "ask_user",
@@ -170,6 +178,25 @@ def build_phase1_tools() -> List[Dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "route_computer",
+                "description": (
+                    "用户要求操作本地文件：读取/写入/搜索/分析文件，"
+                    "处理数据（CSV/Excel/JSON），整理目录等"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "system_prompt": {
+                            "type": "string",
+                            "description": "角色设定",
+                        },
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "route_image",
                 "description": (
                     "用户要求生成/画/绘制/编辑图片"
@@ -273,6 +300,7 @@ def build_domain_tools(domain: str) -> List[Dict[str, Any]]:
     from config.code_tools import build_code_tools
     from config.crawler_tools import build_crawler_tools
     from config.erp_tools import build_erp_search_tool, build_erp_tools
+    from config.file_tools import build_file_tools
 
     builders: Dict[str, Any] = {
         "erp": lambda: [
@@ -284,6 +312,12 @@ def build_domain_tools(domain: str) -> List[Dict[str, Any]]:
         ],
         "crawler": lambda: [
             *build_crawler_tools(),
+            _build_phase2_route_to_chat_tool(),
+            _build_ask_user_tool(),
+        ],
+        "computer": lambda: [
+            *build_file_tools(),
+            *build_code_tools(),
             _build_phase2_route_to_chat_tool(),
             _build_ask_user_tool(),
         ],
@@ -301,6 +335,7 @@ def build_domain_prompt(domain: str) -> str:
     from config.code_tools import CODE_ROUTING_PROMPT
     from config.crawler_tools import CRAWLER_ROUTING_PROMPT
     from config.erp_tools import ERP_ROUTING_PROMPT
+    from config.file_tools import FILE_ROUTING_PROMPT
 
     prompts: Dict[str, Any] = {
         "erp": lambda: (
@@ -310,6 +345,11 @@ def build_domain_prompt(domain: str) -> str:
         ),
         "crawler": lambda: (
             BASE_AGENT_PROMPT + CRAWLER_ROUTING_PROMPT
+        ),
+        "computer": lambda: (
+            BASE_AGENT_PROMPT
+            + FILE_ROUTING_PROMPT
+            + CODE_ROUTING_PROMPT
         ),
     }
     builder = prompts.get(domain)
