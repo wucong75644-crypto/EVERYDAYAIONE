@@ -742,7 +742,7 @@ logger.info(f"操作描述 | org_id={ctx.org_id} | user_id={ctx.user_id}")
 | **Phase 10** | ✅ 知识图谱隔离 + 意图学习隔离 | knowledge_service(CRUD+搜索) + graph_service(JOIN过滤) + knowledge_metrics(INSERT) + intent_learning + 调用方11处。模型评分/蒸馏保持全局共享 |
 | **Phase 11** | ✅ 企微机器人 org_id 注入 | ws_runner(corp_id→org_id映射) + message_service(全链路) + user_mapping(查询/创建+自动加org_members) + ai_mixin(AgentLoop/IntentRouter) + command/card_handler |
 | **Phase 12** | ✅ Mem0 记忆隔离 | memory_service(_mem0_uid转换) + chat_context_mixin + wecom_ai_mixin。API路由待Phase13前端发X-Org-Id后补 |
-| **Phase 13** | 前端: 登录页改造 + X-Org-Id + 企业切换器 | LoginForm.tsx, api.ts, useAuthStore.ts |
+| **Phase 13** | ✅ 前端: 企业登录Tab + X-Org-Id header + org状态管理 + WS org_id | types/auth.ts, api.ts, auth.ts, useAuthStore.ts, useWebSocket.ts, LoginForm.tsx |
 | **Phase 14** | 前端: 企业管理页面 | 新增页面组件 |
 | **Phase 15** | 邀请系统 + 权限细化 + 用量统计 | 邀请流程 |
 

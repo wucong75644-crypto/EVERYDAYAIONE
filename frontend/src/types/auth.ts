@@ -54,6 +54,32 @@ export interface PasswordLoginRequest {
   password: string;
 }
 
+// ── 企业相关 ──
+
+export interface Organization {
+  org_id: string;
+  name: string;
+  role: 'owner' | 'admin' | 'member';
+  logo_url?: string | null;
+  features?: Record<string, boolean>;
+}
+
+export interface OrgLoginRequest {
+  org_name: string;
+  phone: string;
+  password: string;
+}
+
+export interface OrgLoginResponse {
+  token: TokenInfo;
+  user: User;
+  org: {
+    org_id: string;
+    org_name: string;
+    org_role: string;
+  };
+}
+
 export interface ApiError {
   code: string;
   message: string;

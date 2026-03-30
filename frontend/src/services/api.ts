@@ -17,12 +17,16 @@ const api: AxiosInstance = axios.create({
   },
 });
 
-// 请求拦截器：添加 token
+// 请求拦截器：添加 token + 企业上下文
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('access_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+    }
+    const orgId = localStorage.getItem('current_org_id');
+    if (orgId) {
+      config.headers['X-Org-Id'] = orgId;
     }
     return config;
   },
@@ -34,11 +38,11 @@ api.interceptors.response.use(
   (response) => response,
   (error: AxiosError<ApiErrorResponse>) => {
     if (error.response?.status === 401) {
-      // Token 过期或无效，清除本地存储
-      // 注意：项目使用 AuthModal 弹窗登录，没有 /login 页面
-      // 只有在受保护页面（/chat）才需要跳转，首页无需跳转
+      // Token 过期或无效，清除本地存储（含企业上下文）
       localStorage.removeItem('access_token');
       localStorage.removeItem('user');
+      localStorage.removeItem('current_org_id');
+      localStorage.removeItem('current_org');
       // 只在非首页时跳转，避免首页循环重定向
       if (window.location.pathname !== '/') {
         window.location.href = '/';

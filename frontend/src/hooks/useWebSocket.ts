@@ -217,7 +217,9 @@ export function useWebSocket(): UseWebSocketReturn {
     cleanup();
     setConnectionState('connecting');
 
-    const wsUrl = `${getWebSocketUrl()}?token=${encodeURIComponent(token)}`;
+    const orgId = localStorage.getItem('current_org_id');
+    const orgParam = orgId ? `&org_id=${encodeURIComponent(orgId)}` : '';
+    const wsUrl = `${getWebSocketUrl()}?token=${encodeURIComponent(token)}${orgParam}`;
     logger.info('ws:connection', 'Connecting', { url: wsUrl.replace(/token=.*/, 'token=***') });
 
     const ws = new WebSocket(wsUrl);
