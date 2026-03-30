@@ -254,3 +254,18 @@ PURCHASE_FORMATTERS: Dict[str, Callable] = {
     "format_shelf_list": format_shelf_list,
     "format_purchase_strategy": format_purchase_strategy,
 }
+
+# 返回字段注册表（供 erp_api_search 生成文档）
+PURCHASE_RESPONSE_FIELDS: Dict[str, Dict] = {
+    "format_supplier_list": {"main": _SUPPLIER_LABELS},
+    "format_purchase_order_list": {"main": _PURCHASE_ORDER_LABELS},
+    "format_purchase_order_detail": {
+        "main": _PURCHASE_ORDER_LABELS,
+        "items": _PURCHASE_DETAIL_LABELS,
+        "items_key": "items",
+    },
+    "format_purchase_return_list": {"main": _PURCHASE_RETURN_LABELS},
+    "format_warehouse_entry_list": {"main": _WH_ENTRY_LABELS},
+    "format_shelf_list": {"main": _SHELF_LABELS},
+    "format_purchase_strategy": {"main": _STRATEGY_LABELS},
+}

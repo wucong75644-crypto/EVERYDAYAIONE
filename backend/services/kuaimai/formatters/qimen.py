@@ -162,3 +162,17 @@ QIMEN_FORMATTERS: Dict[str, Callable] = {
     "format_qimen_order_list": format_qimen_order_list,
     "format_qimen_refund_list": format_qimen_refund_list,
 }
+
+# 返回字段注册表（供 erp_api_search 生成文档）
+QIMEN_RESPONSE_FIELDS: Dict[str, Dict] = {
+    "format_qimen_order_list": {
+        "main": _QIMEN_ORDER_LABELS,
+        "items": _QIMEN_SUB_ORDER_LABELS,
+        "items_key": "orders",
+    },
+    "format_qimen_refund_list": {
+        "main": _QIMEN_REFUND_LABELS,
+        "items": _QIMEN_REFUND_ITEM_LABELS,
+        "items_key": "items",
+    },
+}

@@ -184,3 +184,43 @@ class TestScenarioDocsCompleteness:
         doc = _SCENARIO_DOCS["统计"]
         assert "拼多多" in doc
         assert "outstock_order_query" in doc
+
+
+class TestResponseFieldsInSearch:
+    """搜索结果中的返回字段文档测试"""
+
+    def test_exact_search_includes_response_fields(self):
+        """精确搜索专用formatter的action→包含返回字段"""
+        result = search_erp_api("erp_trade_query:order_list")
+        assert "返回字段:" in result
+        assert "tid(订单号)" in result
+        assert "payment(付款金额)" in result
+
+    def test_exact_search_includes_sub_items(self):
+        """有子项的action→包含子项字段"""
+        result = search_erp_api("erp_trade_query:order_list")
+        assert "子项字段(orders[]):" in result
+        assert "sysTitle(商品)" in result
+
+    def test_generic_list_action_has_response_fields(self):
+        """generic_list action→也有返回字段"""
+        result = search_erp_api("erp_product_query:cat_list")
+        assert "返回字段:" in result
+        assert "cid(分类ID)" in result
+
+    def test_no_sub_items_for_flat_action(self):
+        """无嵌套的action→没有子项字段"""
+        result = search_erp_api("erp_purchase_query:supplier_list")
+        assert "返回字段:" in result
+        assert "子项字段" not in result
+
+    def test_detail_action_has_items(self):
+        """详情action→有子项字段"""
+        result = search_erp_api("erp_purchase_query:purchase_order_detail")
+        assert "返回字段:" in result
+        assert "子项字段(items[]):" in result
+
+    def test_write_action_no_response_fields(self):
+        """写操作用generic_detail→没有返回字段"""
+        result = search_erp_api("erp_trade_query:order_create")
+        assert "返回字段:" not in result
