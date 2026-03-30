@@ -9,12 +9,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { useCountdown } from '../../hooks/useCountdown';
 import { useAuthStore } from '../../stores/useAuthStore';
-import { sendCode, loginByPhone, loginByPassword } from '../../services/auth';
+import { sendCode, loginByPhone, loginByPassword, loginByOrg } from '../../services/auth';
 import type { ApiErrorResponse } from '../../types/auth';
 import { AxiosError } from 'axios';
 import WecomQrLogin from './WecomQrLogin';
 
-type LoginMode = 'password' | 'code' | 'wecom';
+type LoginMode = 'password' | 'code' | 'enterprise' | 'wecom';
 
 interface LoginFormProps {
   /** 登录成功后的回调 */
@@ -27,12 +27,13 @@ export default function LoginForm({
   onSuccess,
   onSwitchToRegister,
 }: LoginFormProps) {
-  const { setUser, setToken } = useAuthStore();
+  const { setUser, setToken, setCurrentOrg } = useAuthStore();
 
   const [loginMode, setLoginMode] = useState<LoginMode>('password');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
+  const [orgName, setOrgName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
@@ -102,7 +103,7 @@ export default function LoginForm({
       return;
     }
 
-    if (loginMode === 'password' && !password) {
+    if ((loginMode === 'password' || loginMode === 'enterprise') && !password) {
       setError('请输入密码');
       return;
     }
@@ -112,18 +113,38 @@ export default function LoginForm({
       return;
     }
 
+    if (loginMode === 'enterprise' && !orgName.trim()) {
+      setError('请输入企业名称');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
     try {
-      const response =
-        loginMode === 'password'
-          ? await loginByPassword({ phone, password })
-          : await loginByPhone({ phone, code });
-
-      // 保存 token 和用户信息
-      setToken(response.token.access_token);
-      setUser(response.user);
+      if (loginMode === 'enterprise') {
+        const response = await loginByOrg({
+          org_name: orgName.trim(),
+          phone,
+          password,
+        });
+        setToken(response.token.access_token);
+        setUser(response.user);
+        setCurrentOrg({
+          org_id: response.org.org_id,
+          name: response.org.org_name,
+          role: response.org.org_role as 'owner' | 'admin' | 'member',
+        });
+      } else {
+        // 个人登录 — 清除可能残留的企业上下文
+        setCurrentOrg(null);
+        const response =
+          loginMode === 'password'
+            ? await loginByPassword({ phone, password })
+            : await loginByPhone({ phone, code });
+        setToken(response.token.access_token);
+        setUser(response.user);
+      }
 
       // 记住手机号
       localStorage.setItem('last_login_phone', phone);
@@ -149,36 +170,24 @@ export default function LoginForm({
     <div>
       {/* 登录方式切换 */}
       <div className="flex border-b border-gray-200 mb-5">
-        <button
-          type="button"
-          tabIndex={-1}
-          className={`flex-1 py-2 text-center font-medium transition-colors ${
-            loginMode === 'password'
-              ? 'text-blue-600 border-b-2 border-blue-600'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-          onClick={() => {
-            setLoginMode('password');
-            setError('');
-          }}
-        >
-          密码登录
-        </button>
-        <button
-          type="button"
-          tabIndex={-1}
-          className={`flex-1 py-2 text-center font-medium transition-colors ${
-            loginMode === 'code'
-              ? 'text-blue-600 border-b-2 border-blue-600'
-              : 'text-gray-500 hover:text-gray-700'
-          }`}
-          onClick={() => {
-            setLoginMode('code');
-            setError('');
-          }}
-        >
-          验证码登录
-        </button>
+        {(['password', 'code', 'enterprise'] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            tabIndex={-1}
+            className={`flex-1 py-2 text-center font-medium transition-colors text-sm ${
+              loginMode === mode
+                ? 'text-blue-600 border-b-2 border-blue-600'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+            onClick={() => {
+              setLoginMode(mode);
+              setError('');
+            }}
+          >
+            {mode === 'password' ? '密码登录' : mode === 'code' ? '验证码登录' : '企业登录'}
+          </button>
+        ))}
       </div>
 
       {/* 表单 */}
@@ -186,6 +195,23 @@ export default function LoginForm({
         {error && (
           <div className="bg-red-50 text-red-600 p-2.5 rounded-lg text-sm">
             {error}
+          </div>
+        )}
+
+        {/* 企业名称（企业登录模式） */}
+        {loginMode === 'enterprise' && (
+          <div>
+            <label htmlFor="orgName" className="block text-sm font-medium text-gray-700">
+              企业名称
+            </label>
+            <input
+              id="orgName"
+              type="text"
+              value={orgName}
+              onChange={(e) => setOrgName(e.target.value)}
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              placeholder="请输入企业全称"
+            />
           </div>
         )}
 
@@ -209,8 +235,8 @@ export default function LoginForm({
           />
         </div>
 
-        {/* 密码登录模式 */}
-        {loginMode === 'password' && (
+        {/* 密码登录模式 / 企业登录模式 */}
+        {(loginMode === 'password' || loginMode === 'enterprise') && (
           <div>
             <label
               htmlFor="password"

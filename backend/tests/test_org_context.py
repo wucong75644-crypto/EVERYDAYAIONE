@@ -56,6 +56,10 @@ class FakeQueryBuilder:
         self._is_single = True
         return self
 
+    def maybe_single(self):
+        self._is_single = True
+        return self
+
     def execute(self):
         result = MagicMock()
         if self._is_single:
@@ -134,7 +138,7 @@ class TestGetOrgContext:
         with pytest.raises(HTTPException) as exc_info:
             await get_org_context(request, "user-1", db)
         assert exc_info.value.status_code == 403
-        assert "不存在" in exc_info.value.detail
+        assert "无权访问" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_suspended_org_raises_403(self):
@@ -146,7 +150,7 @@ class TestGetOrgContext:
         with pytest.raises(HTTPException) as exc_info:
             await get_org_context(request, "user-1", db)
         assert exc_info.value.status_code == 403
-        assert "停用" in exc_info.value.detail
+        assert "无权访问" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_not_member_raises_403(self):
@@ -159,7 +163,7 @@ class TestGetOrgContext:
         with pytest.raises(HTTPException) as exc_info:
             await get_org_context(request, "user-1", db)
         assert exc_info.value.status_code == 403
-        assert "成员" in exc_info.value.detail
+        assert "无权访问" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_disabled_member_raises_403(self):
@@ -172,7 +176,7 @@ class TestGetOrgContext:
         with pytest.raises(HTTPException) as exc_info:
             await get_org_context(request, "user-1", db)
         assert exc_info.value.status_code == 403
-        assert "禁用" in exc_info.value.detail
+        assert "无权访问" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_valid_member_returns_context(self):

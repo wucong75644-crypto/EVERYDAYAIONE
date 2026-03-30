@@ -5,6 +5,9 @@
 import { request } from './api';
 import type {
   LoginResponse,
+  Organization,
+  OrgLoginRequest,
+  OrgLoginResponse,
   PasswordLoginRequest,
   PhoneLoginRequest,
   PhoneRegisterRequest,
@@ -98,6 +101,27 @@ export async function unbindWecom(): Promise<{ success: boolean; message: string
   return request({
     method: 'DELETE',
     url: '/auth/wecom/binding',
+  });
+}
+
+/**
+ * 企业密码登录
+ */
+export async function loginByOrg(data: OrgLoginRequest): Promise<OrgLoginResponse> {
+  return request({
+    method: 'POST',
+    url: '/auth/login/org',
+    data,
+  });
+}
+
+/**
+ * 获取当前用户的企业列表
+ */
+export async function listMyOrganizations(): Promise<Organization[]> {
+  return request({
+    method: 'GET',
+    url: '/org',
   });
 }
 

@@ -144,18 +144,20 @@ async def get_org_context(
     except ValueError:
         raise HTTPException(status_code=400, detail="X-Org-Id 格式无效")
 
-    # 校验企业存在且活跃
+    # 校验企业存在且活跃（统一错误信息防枚举）
+    _deny = HTTPException(status_code=403, detail="无权访问该企业")
+
     org_result = (
         db.table("organizations")
         .select("status")
         .eq("id", raw_org_id)
-        .single()
+        .maybe_single()
         .execute()
     )
-    if not org_result.data:
-        raise HTTPException(status_code=403, detail="企业不存在")
+    if not org_result or not org_result.data:
+        raise _deny
     if org_result.data["status"] != "active":
-        raise HTTPException(status_code=403, detail="该企业已被停用")
+        raise _deny
 
     # 校验用户是该企业的有效成员
     member = (
@@ -163,13 +165,13 @@ async def get_org_context(
         .select("role, status")
         .eq("org_id", raw_org_id)
         .eq("user_id", user_id)
-        .single()
+        .maybe_single()
         .execute()
     )
-    if not member.data:
-        raise HTTPException(status_code=403, detail="您不是该企业成员")
+    if not member or not member.data:
+        raise _deny
     if member.data["status"] != "active":
-        raise HTTPException(status_code=403, detail="您在该企业中已被禁用")
+        raise _deny
 
     return OrgContext(
         user_id=user_id,
