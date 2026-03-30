@@ -136,7 +136,7 @@ function ErpConfigSection({ orgId }: { orgId: string }) {
 
       {ERP_CONFIG_KEYS.map(({ key, label }) => {
         const isConfigured = configuredKeys.includes(key);
-        const isEditing = values[key] !== undefined && values[key] !== '';
+        const isEditing = values[key] !== undefined;
         return (
           <div key={key} className="flex items-center space-x-2">
             <div className="w-36 text-sm text-gray-700 flex items-center">
@@ -492,7 +492,7 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
 
       {WECOM_CONFIG_KEYS.map(({ key, label, sensitive, isOrgField }) => {
         const isConfigured = isOrgField ? !!orgCorpId : configuredKeys.includes(key);
-        const isEditing = values[key] !== undefined && values[key] !== '';
+        const isEditing = values[key] !== undefined;
         return (
           <div key={key} className="flex items-center space-x-2">
             <div className="w-44 text-sm text-gray-700 flex items-center">
