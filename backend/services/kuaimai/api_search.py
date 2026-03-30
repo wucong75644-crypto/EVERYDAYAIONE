@@ -11,6 +11,7 @@ ERP API 搜索服务
 
 from typing import List, Tuple
 
+from services.kuaimai.formatters import get_response_fields
 from services.kuaimai.registry import TOOL_REGISTRIES
 from services.kuaimai.registry.base import ApiEntry
 
@@ -259,7 +260,29 @@ def _format_entry_detail(
         for code, desc in entry.error_codes.items():
             lines.append(f"  - {code}: {desc}")
 
+    # 返回字段文档（供沙盒 code_execute 使用）
+    resp_fields = get_response_fields(
+        entry.formatter, tool_name, action_name,
+    )
+    if resp_fields:
+        lines.extend(_format_response_fields(resp_fields))
+
     return "\n".join(lines)
+
+
+def _format_response_fields(fields: dict) -> list:
+    """将返回字段 dict 格式化为文档行"""
+    lines = []
+    main = fields.get("main")
+    if main:
+        parts = [f"{k}({v})" for k, v in main.items()]
+        lines.append(f"返回字段: {', '.join(parts)}")
+    items = fields.get("items")
+    if items:
+        items_key = fields.get("items_key", "items")
+        parts = [f"{k}({v})" for k, v in items.items()]
+        lines.append(f"子项字段({items_key}[]): {', '.join(parts)}")
+    return lines
 
 
 def _format_entry_brief(

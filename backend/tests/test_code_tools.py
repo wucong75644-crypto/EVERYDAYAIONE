@@ -37,6 +37,20 @@ class TestCodeToolsDefinition:
         assert "code" in params["properties"]
         assert "description" in params["properties"]
 
+    def test_erp_query_all_return_format_documented(self):
+        """code_execute 描述中包含 erp_query_all 返回格式说明"""
+        tool = build_code_tools()[0]
+        desc = tool["function"]["description"]
+        assert '"list"' in desc
+        assert '"total"' in desc
+
+    def test_erp_query_return_documented(self):
+        """code_execute 描述中包含 erp_query 说明"""
+        tool = build_code_tools()[0]
+        desc = tool["function"]["description"]
+        assert "erp_query(" in desc
+        assert "erp_query_all(" in desc
+
     def test_routing_prompt_not_empty(self):
         assert "code_execute" in CODE_ROUTING_PROMPT
         assert "数据聚合" in CODE_ROUTING_PROMPT

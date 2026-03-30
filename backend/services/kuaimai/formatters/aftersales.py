@@ -291,3 +291,21 @@ AFTERSALES_FORMATTERS: Dict[str, Callable] = {
     "format_repair_detail": format_repair_detail,
     "format_aftersale_log": format_aftersale_log,
 }
+
+# 返回字段注册表（供 erp_api_search 生成文档）
+AFTERSALES_RESPONSE_FIELDS: Dict[str, Dict] = {
+    "format_aftersale_list": {
+        "main": _AFTERSALE_LABELS,
+        "items": _AFTERSALE_ITEM_LABELS,
+        "items_key": "items",
+    },
+    "format_refund_warehouse": {"main": _REFUND_WH_LABELS},
+    "format_replenish_list": {"main": _REPLENISH_LABELS},
+    "format_repair_list": {"main": _REPAIR_LABELS},
+    "format_repair_detail": {
+        "main": _REPAIR_LABELS,
+        "items": _REPAIR_DETAIL_ITEM_LABELS,
+        "items_key": "itemList",
+    },
+    "format_aftersale_log": {"main": _AFTERSALE_LOG_LABELS},
+}

@@ -255,3 +255,30 @@ TRADE_FORMATTERS: Dict[str, Callable] = {
     "format_express_list": format_express_list,
     "format_logistics_company": format_logistics_company,
 }
+
+# 返回字段注册表（供 erp_api_search 生成文档）
+_EXPRESS_LABELS = {
+    "cpCode": "快递编码", "outSids": "快递单号列表",
+    "expressName": "快递公司",
+}
+
+TRADE_RESPONSE_FIELDS: Dict[str, Dict] = {
+    "format_order_list": {
+        "main": _ORDER_LABELS,
+        "items": _SUB_ORDER_LABELS,
+        "items_key": "orders",
+    },
+    "format_shipment_list": {
+        "main": _ORDER_LABELS,
+        "items": _SUB_ORDER_LABELS,
+        "items_key": "orders",
+    },
+    "format_outstock_order_list": {
+        "main": _ORDER_LABELS,
+        "items": _SUB_ORDER_LABELS,
+        "items_key": "orders",
+    },
+    "format_order_log": {"main": _ORDER_LOG_LABELS},
+    "format_express_list": {"main": _EXPRESS_LABELS},
+    "format_logistics_company": {"main": _LOGISTICS_COMPANY_LABELS},
+}

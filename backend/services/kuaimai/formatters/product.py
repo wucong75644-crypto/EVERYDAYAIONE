@@ -263,3 +263,17 @@ PRODUCT_FORMATTERS: Dict[str, Callable] = {
     "format_warehouse_stock": format_warehouse_stock,
     "format_stock_in_out": format_stock_in_out,
 }
+
+# 返回字段注册表（供 erp_api_search 生成文档）
+PRODUCT_RESPONSE_FIELDS: Dict[str, Dict] = {
+    "format_product_list": {"main": _PRODUCT_LABELS},
+    "format_product_detail": {
+        "main": _PRODUCT_LABELS,
+        "items": _SKU_LABELS,
+        "items_key": "items(SKU列表)",
+    },
+    "format_inventory_list": {"main": _INVENTORY_LABELS},
+    "format_sku_info": {"main": _SKU_LABELS},
+    "format_warehouse_stock": {"main": _WH_STOCK_LABELS},
+    "format_stock_in_out": {"main": _STOCK_IO_LABELS},
+}

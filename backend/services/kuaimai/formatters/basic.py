@@ -176,3 +176,12 @@ BASIC_FORMATTERS: Dict[str, Callable] = {
     "format_customer_list": format_customer_list,
     "format_distributor_list": format_distributor_list,
 }
+
+# 返回字段注册表（供 erp_api_search 生成文档）
+BASIC_RESPONSE_FIELDS: Dict[str, Dict] = {
+    "format_warehouse_list": {"main": _WAREHOUSE_LABELS},
+    "format_shop_list": {"main": _SHOP_LABELS},
+    "format_tag_list": {"main": _TAG_LABELS},
+    "format_customer_list": {"main": _CUSTOMER_LABELS},
+    "format_distributor_list": {"main": _DISTRIBUTOR_LABELS},
+}

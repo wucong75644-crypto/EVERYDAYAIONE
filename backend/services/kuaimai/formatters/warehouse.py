@@ -325,3 +325,25 @@ WAREHOUSE_FORMATTERS: Dict[str, Callable] = {
     "format_batch_stock_list": format_batch_stock_list,
     "format_section_record_list": format_section_record_list,
 }
+
+# 返回字段注册表（供 erp_api_search 生成文档）
+WAREHOUSE_RESPONSE_FIELDS: Dict[str, Dict] = {
+    "format_allocate_list": {"main": _ALLOCATE_LABELS},
+    "format_allocate_detail": {
+        "main": _ALLOCATE_LABELS,
+        "items": _ALLOCATE_DETAIL_LABELS,
+        "items_key": "items",
+    },
+    "format_other_in_out_list": {"main": _OTHER_IO_LABELS},
+    "format_inventory_sheet_list": {"main": _INV_SHEET_LABELS},
+    "format_inventory_sheet_detail": {
+        "main": _INV_SHEET_LABELS,
+        "items": _INV_SHEET_DETAIL_LABELS,
+        "items_key": "items",
+    },
+    "format_unshelve_list": {"main": _UNSHELVE_LABELS},
+    "format_goods_section_list": {"main": _GOODS_SECTION_LABELS},
+    "format_process_order_list": {"main": _PROCESS_ORDER_LABELS},
+    "format_batch_stock_list": {"main": _BATCH_STOCK_LABELS},
+    "format_section_record_list": {"main": _SECTION_RECORD_LABELS},
+}
