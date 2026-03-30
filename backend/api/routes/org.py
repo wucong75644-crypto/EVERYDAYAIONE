@@ -405,3 +405,27 @@ async def test_erp_connection(
         return {"success": False, "message": str(e)}
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
+
+
+@router.post("/{org_id}/configs/test-wecom", summary="测试企微机器人连接")
+async def test_wecom_connection(
+    org_id: str,
+    user_id: CurrentUserId,
+    svc: OrgService = Depends(_get_org_service),
+    resolver: OrgConfigResolver = Depends(_get_config_resolver),
+):
+    """用企业配置的企微机器人凭证测试 WSS 连接"""
+    try:
+        svc.require_role(org_id, user_id, ("owner", "admin"))
+        bot_id = resolver.get(org_id, "wecom_bot_id")
+        bot_secret = resolver.get(org_id, "wecom_bot_secret")
+        if not bot_id or not bot_secret:
+            return {"success": False, "message": "企微机器人 Bot ID 或 Secret 未配置"}
+
+        from services.wecom.ws_client import verify_bot_credentials
+        ok, msg = await verify_bot_credentials(bot_id, bot_secret)
+        return {"success": ok, "message": msg}
+    except ValueError as e:
+        return {"success": False, "message": str(e)}
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)

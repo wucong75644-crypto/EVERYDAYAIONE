@@ -11,6 +11,7 @@ import {
   listOrgConfigs,
   setOrgConfig,
   testErpConnection,
+  testWecomConnection,
   createInvitation,
   type OrgDetail,
   type OrgMember,
@@ -429,6 +430,7 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
   const [orgCorpId, setOrgCorpId] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(true);
@@ -471,7 +473,9 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
       }
       setSuccess(`${key} 已保存`);
       setValues((prev) => { const n = { ...prev }; delete n[key]; return n; });
-      if (!isOrgField) loadAll();
+      if (!isOrgField && !configuredKeys.includes(key)) {
+        setConfiguredKeys((prev) => [...prev, key]);
+      }
     } catch (err: any) {
       setError(err.response?.data?.detail || '保存失败');
     } finally {
@@ -548,6 +552,33 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
       <p className="text-xs text-gray-400 mt-2">
         注意：修改 Corp ID 后需重启企微服务才能生效。
       </p>
+
+      {/* 测试连接按钮：bot_id + bot_secret 都已配置时显示 */}
+      {configuredKeys.includes('wecom_bot_id') && configuredKeys.includes('wecom_bot_secret') && (
+        <button
+          onClick={async () => {
+            setTesting(true);
+            setError('');
+            setSuccess('');
+            try {
+              const result = await testWecomConnection(orgId);
+              if (result.success) {
+                setSuccess(result.message);
+              } else {
+                setError(result.message);
+              }
+            } catch {
+              setError('测试请求失败');
+            } finally {
+              setTesting(false);
+            }
+          }}
+          disabled={testing}
+          className="w-full py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+        >
+          {testing ? '测试中...' : '测试企微连接'}
+        </button>
+      )}
     </div>
   );
 }

@@ -39,6 +39,33 @@ def _gen_req_id(prefix: str = "") -> str:
     return f"{prefix}_{ts}_{rand}" if prefix else f"{ts}_{rand}"
 
 
+async def verify_bot_credentials(bot_id: str, secret: str) -> tuple[bool, str]:
+    """验证企微机器人凭证（连接 WSS → subscribe → 检查 errcode → 断开）"""
+    try:
+        async with websockets.connect(
+            WSS_URL, compression=None, ping_interval=None, open_timeout=10,
+        ) as ws:
+            msg = {
+                "cmd": WecomCommand.SUBSCRIBE,
+                "headers": {"req_id": _gen_req_id("verify")},
+                "body": {"bot_id": bot_id, "secret": secret},
+            }
+            await ws.send(json.dumps(msg))
+            raw = await asyncio.wait_for(ws.recv(), timeout=10)
+            resp = json.loads(raw)
+            errcode = resp.get("errcode")
+            if errcode is None:
+                errcode = resp.get("body", {}).get("errcode", -1)
+            if errcode != 0:
+                errmsg = resp.get("errmsg") or resp.get("body", {}).get("errmsg", "unknown")
+                return False, f"认证失败: errcode={errcode}, {errmsg}"
+            return True, "企微机器人连接测试成功"
+    except asyncio.TimeoutError:
+        return False, "连接超时（10s）"
+    except Exception as e:
+        return False, f"连接失败: {str(e)[:200]}"
+
+
 class WecomWSClient:
     """企微智能机器人 WebSocket 长连接客户端"""
 
