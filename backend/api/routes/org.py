@@ -407,6 +407,39 @@ async def test_erp_connection(
         raise HTTPException(status_code=e.status_code, detail=e.message)
 
 
+@router.get("/{org_id}/configs/wecom-status", summary="企微配置状态")
+async def wecom_config_status(
+    org_id: str,
+    user_id: CurrentUserId,
+    svc: OrgService = Depends(_get_org_service),
+    resolver: OrgConfigResolver = Depends(_get_config_resolver),
+):
+    """返回企微各字段的有效配置来源（org/system/null）"""
+    try:
+        svc.require_role(org_id, user_id, ("owner", "admin"))
+        org = svc.get_organization(org_id)
+        keys = ["wecom_bot_id", "wecom_bot_secret"]
+        status: dict[str, dict] = {}
+        # corp_id 在 organizations 表
+        corp_id = org.get("wecom_corp_id")
+        status["wecom_corp_id"] = {
+            "configured": bool(corp_id),
+            "source": "org" if corp_id else None,
+        }
+        # bot_id / bot_secret 可能在 org_configs 或 .env
+        for k in keys:
+            org_val = resolver._load_encrypted(org_id, k)
+            if org_val:
+                status[k] = {"configured": True, "source": "org"}
+            elif resolver._get_default(k):
+                status[k] = {"configured": True, "source": "system"}
+            else:
+                status[k] = {"configured": False, "source": None}
+        return {"success": True, "data": status}
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
+
 @router.post("/{org_id}/configs/test-wecom", summary="测试企微机器人连接")
 async def test_wecom_connection(
     org_id: str,

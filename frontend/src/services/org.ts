@@ -73,6 +73,17 @@ export async function testWecomConnection(
   return request({ method: 'POST', url: `/org/${orgId}/configs/test-wecom` });
 }
 
+export interface WecomFieldStatus {
+  configured: boolean;
+  source: 'org' | 'system' | null;
+}
+
+export async function getWecomStatus(
+  orgId: string,
+): Promise<{ success: boolean; data: Record<string, WecomFieldStatus> }> {
+  return request({ method: 'GET', url: `/org/${orgId}/configs/wecom-status` });
+}
+
 export async function updateOrg(
   orgId: string, data: Record<string, string | null>,
 ): Promise<{ success: boolean }> {
