@@ -37,6 +37,7 @@ class UpdateOrgRequest(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     logo_url: Optional[str] = None
     features: Optional[dict] = None
+    wecom_corp_id: Optional[str] = Field(None, max_length=100)
 
 
 class AddMemberRequest(BaseModel):
@@ -181,6 +182,7 @@ async def update_org(
         org = svc.update_organization(
             org_id, user_id,
             name=body.name, logo_url=body.logo_url, features=body.features,
+            wecom_corp_id=body.wecom_corp_id,
         )
         return {"success": True, "data": org}
     except AppException as e:

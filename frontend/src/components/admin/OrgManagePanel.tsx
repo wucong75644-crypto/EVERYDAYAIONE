@@ -415,14 +415,16 @@ function OrgInfoSection({ orgId }: { orgId: string }) {
 
 // ── 企微配置 ──
 
+// wecom_corp_id 存到 organizations 表（非敏感），其余存 org_configs（加密）
 const WECOM_CONFIG_KEYS = [
-  { key: 'wecom_corp_id', label: '企业 ID (Corp ID)', sensitive: false },
-  { key: 'wecom_bot_id', label: '智能机器人 Bot ID', sensitive: false },
-  { key: 'wecom_bot_secret', label: '智能机器人 Secret', sensitive: true },
+  { key: 'wecom_corp_id', label: '企业 ID (Corp ID)', sensitive: false, isOrgField: true },
+  { key: 'wecom_bot_id', label: '智能机器人 Bot ID', sensitive: false, isOrgField: false },
+  { key: 'wecom_bot_secret', label: '智能机器人 Secret', sensitive: true, isOrgField: false },
 ];
 
 function WecomConfigSection({ orgId }: { orgId: string }) {
   const [configuredKeys, setConfiguredKeys] = useState<string[]>([]);
+  const [orgCorpId, setOrgCorpId] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -430,14 +432,18 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadConfigs();
+    loadAll();
   }, [orgId]);
 
-  const loadConfigs = async () => {
+  const loadAll = async () => {
     setLoading(true);
     try {
-      const result = await listOrgConfigs(orgId);
-      setConfiguredKeys(result.data || []);
+      const [configResult, orgDetail] = await Promise.all([
+        listOrgConfigs(orgId),
+        getOrgDetail(orgId),
+      ]);
+      setConfiguredKeys(configResult.data || []);
+      setOrgCorpId((orgDetail as any).wecom_corp_id || null);
     } catch {
       setError('加载配置失败');
     } finally {
@@ -445,17 +451,25 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
     }
   };
 
-  const handleSave = async (key: string) => {
+  const handleSave = async (key: string, isOrgField: boolean) => {
     const value = values[key]?.trim();
     if (!value) return;
     setSaving(key);
     setError('');
     setSuccess('');
     try {
-      await setOrgConfig(orgId, key, value);
+      if (isOrgField) {
+        // wecom_corp_id → 直接写 organizations 表
+        const { updateOrg } = await import('../../services/org');
+        await updateOrg(orgId, { [key]: value });
+        setOrgCorpId(value);
+      } else {
+        // 其他配置 → 加密写 org_configs
+        await setOrgConfig(orgId, key, value);
+      }
       setSuccess(`${key} 已保存`);
       setValues((prev) => { const n = { ...prev }; delete n[key]; return n; });
-      loadConfigs();
+      if (!isOrgField) loadAll();
     } catch (err: any) {
       setError(err.response?.data?.detail || '保存失败');
     } finally {
@@ -476,8 +490,8 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
       {error && <div className="bg-red-50 text-red-600 p-2 rounded text-sm">{error}</div>}
       {success && <div className="bg-green-50 text-green-600 p-2 rounded text-sm">{success}</div>}
 
-      {WECOM_CONFIG_KEYS.map(({ key, label, sensitive }) => {
-        const isConfigured = configuredKeys.includes(key);
+      {WECOM_CONFIG_KEYS.map(({ key, label, sensitive, isOrgField }) => {
+        const isConfigured = isOrgField ? !!orgCorpId : configuredKeys.includes(key);
         const isEditing = values[key] !== undefined && values[key] !== '';
         return (
           <div key={key} className="flex items-center space-x-2">
@@ -509,7 +523,7 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
                   placeholder={isConfigured ? '输入新值覆盖' : '未配置'}
                 />
                 <button
-                  onClick={() => handleSave(key)}
+                  onClick={() => handleSave(key, isOrgField)}
                   disabled={saving === key || !values[key]?.trim()}
                   className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
                 >
