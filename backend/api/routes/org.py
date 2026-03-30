@@ -362,3 +362,44 @@ async def delete_org_config(
         return {"success": True, "message": f"配置 {config_key} 已删除"}
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
+
+
+@router.post("/{org_id}/configs/test-erp", summary="测试 ERP 连接")
+async def test_erp_connection(
+    org_id: str,
+    user_id: CurrentUserId,
+    svc: OrgService = Depends(_get_org_service),
+    resolver: OrgConfigResolver = Depends(_get_config_resolver),
+):
+    """用企业配置的 ERP 凭证发一个简单查询，验证连接是否正常"""
+    try:
+        svc.require_role(org_id, user_id, ("owner", "admin"))
+        creds = resolver.get_erp_credentials(org_id)
+
+        from services.kuaimai.client import KuaiMaiClient
+        client = KuaiMaiClient(
+            app_key=creds["kuaimai_app_key"],
+            app_secret=creds["kuaimai_app_secret"],
+            access_token=creds["kuaimai_access_token"],
+            refresh_token=creds["kuaimai_refresh_token"],
+            org_id=org_id,
+        )
+        try:
+            result = await client.request_with_retry(
+                "erp.warehouse.query", {"pageNo": 1, "pageSize": 1}
+            )
+            return {
+                "success": True,
+                "message": "ERP 连接测试成功",
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "message": f"ERP 连接失败: {str(e)[:200]}",
+            }
+        finally:
+            await client.close()
+    except ValueError as e:
+        return {"success": False, "message": str(e)}
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
