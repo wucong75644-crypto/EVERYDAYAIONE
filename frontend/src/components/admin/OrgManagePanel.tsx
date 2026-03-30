@@ -108,7 +108,7 @@ function ErpConfigSection({ orgId }: { orgId: string }) {
     try {
       await setOrgConfig(orgId, key, value);
       setSuccess(`${key} 已保存`);
-      setValues((prev) => ({ ...prev, [key]: '' }));
+      setValues((prev) => { const n = { ...prev }; delete n[key]; return n; });
       loadConfigs();
     } catch (err: any) {
       setError(err.response?.data?.detail || '保存失败');
@@ -132,6 +132,7 @@ function ErpConfigSection({ orgId }: { orgId: string }) {
 
       {ERP_CONFIG_KEYS.map(({ key, label }) => {
         const isConfigured = configuredKeys.includes(key);
+        const isEditing = values[key] !== undefined && values[key] !== '';
         return (
           <div key={key} className="flex items-center space-x-2">
             <div className="w-36 text-sm text-gray-700 flex items-center">
@@ -140,20 +141,47 @@ function ErpConfigSection({ orgId }: { orgId: string }) {
                 <span className="ml-1.5 w-2 h-2 bg-green-500 rounded-full inline-block" title="已配置" />
               )}
             </div>
-            <input
-              type="password"
-              value={values[key] || ''}
-              onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
-              className="flex-1 px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-              placeholder={isConfigured ? '已配置（输入新值覆盖）' : '未配置'}
-            />
-            <button
-              onClick={() => handleSave(key)}
-              disabled={saving === key || !values[key]?.trim()}
-              className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-            >
-              {saving === key ? '...' : '保存'}
-            </button>
+            {isConfigured && !isEditing ? (
+              /* 已配置：显示脱敏值 + 修改按钮 */
+              <>
+                <div className="flex-1 px-3 py-1.5 border rounded-lg text-sm bg-gray-50 text-gray-500 tracking-widest">
+                  ••••••••••••
+                </div>
+                <button
+                  onClick={() => setValues((prev) => ({ ...prev, [key]: '' }))}
+                  className="px-3 py-1.5 text-sm text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors whitespace-nowrap"
+                >
+                  修改
+                </button>
+              </>
+            ) : (
+              /* 未配置 或 正在编辑 */
+              <>
+                <input
+                  type="text"
+                  value={values[key] || ''}
+                  onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
+                  className="flex-1 px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  placeholder={isConfigured ? '输入新值覆盖' : '未配置'}
+                  autoFocus={isConfigured}
+                />
+                <button
+                  onClick={() => handleSave(key)}
+                  disabled={saving === key || !values[key]?.trim()}
+                  className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                >
+                  {saving === key ? '...' : '保存'}
+                </button>
+                {isConfigured && (
+                  <button
+                    onClick={() => setValues((prev) => { const n = { ...prev }; delete n[key]; return n; })}
+                    className="px-2 py-1.5 text-sm text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    取消
+                  </button>
+                )}
+              </>
+            )}
           </div>
         );
       })}
