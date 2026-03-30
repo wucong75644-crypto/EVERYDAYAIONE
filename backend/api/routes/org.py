@@ -117,7 +117,7 @@ async def list_all_orgs(
     for org in (result.data or []):
         # 查成员数
         members_result = db.table("org_members").select(
-            "id", count="exact"
+            "user_id"
         ).eq("org_id", org["id"]).eq("status", "active").execute()
         member_count = len(members_result.data) if members_result.data else 0
         orgs.append({
