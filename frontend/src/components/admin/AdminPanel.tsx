@@ -7,7 +7,7 @@
  * - member/散客: 不显示（入口不可见）
  */
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useAuthStore } from '../../stores/useAuthStore';
 import SuperAdminPanel from './SuperAdminPanel';
 import OrgManagePanel from './OrgManagePanel';
