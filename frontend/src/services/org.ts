@@ -68,7 +68,7 @@ export async function testErpConnection(
 }
 
 export async function updateOrg(
-  orgId: string, data: { wecom_corp_id?: string },
+  orgId: string, data: Record<string, string | null>,
 ): Promise<{ success: boolean }> {
   return request({ method: 'PATCH', url: `/org/${orgId}`, data });
 }

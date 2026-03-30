@@ -101,6 +101,7 @@ class OrgService:
         name: Optional[str] = None,
         logo_url: Optional[str] = None,
         features: Optional[dict] = None,
+        wecom_corp_id: Optional[str] = None,
     ) -> dict:
         """
         更新企业信息（owner/admin）。
@@ -130,6 +131,8 @@ class OrgService:
             updates["logo_url"] = logo_url
         if features is not None:
             updates["features"] = features
+        if wecom_corp_id is not None:
+            updates["wecom_corp_id"] = wecom_corp_id.strip() or None
 
         if not updates:
             raise ValidationError("没有需要更新的内容")
