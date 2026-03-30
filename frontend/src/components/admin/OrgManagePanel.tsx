@@ -490,7 +490,7 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
       {error && <div className="bg-red-50 text-red-600 p-2 rounded text-sm">{error}</div>}
       {success && <div className="bg-green-50 text-green-600 p-2 rounded text-sm">{success}</div>}
 
-      {WECOM_CONFIG_KEYS.map(({ key, label, sensitive, isOrgField }) => {
+      {WECOM_CONFIG_KEYS.map(({ key, label, isOrgField }) => {
         const field = fieldStatus[key];
         const isConfigured = field?.configured ?? false;
         const source = field?.source;
@@ -509,7 +509,7 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
             {isConfigured && !isEditing ? (
               <>
                 <div className="flex-1 px-3 py-1.5 border rounded-lg text-sm bg-gray-50 text-gray-500 tracking-widest">
-                  {sensitive ? '••••••••••••' : (source === 'system' ? '系统默认' : '已配置')}
+                  ••••••••••••
                 </div>
                 <button
                   onClick={() => setValues((prev) => ({ ...prev, [key]: '' }))}
