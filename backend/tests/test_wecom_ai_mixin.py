@@ -746,7 +746,7 @@ class TestHandleImageResponse:
                 "u1", "c1", "m1", "画猫", ctx, agent_result,
             )
 
-        svc._deduct_credits.assert_called_once_with("u1", 50, "Wecom Image: test-img")
+        svc._deduct_credits.assert_called_once_with("u1", 50, "Wecom Image: test-img", org_id=None)
         svc._send_media_to_wecom.assert_called_once()
 
     @pytest.mark.asyncio

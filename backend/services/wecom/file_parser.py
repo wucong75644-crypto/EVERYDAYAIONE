@@ -115,29 +115,31 @@ def _parse_xlsx(data: bytes) -> str:
     from openpyxl import load_workbook
 
     wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-    parts = []
-    total_len = 0
+    try:
+        parts = []
+        total_len = 0
 
-    for sheet_name in wb.sheetnames:
-        ws = wb[sheet_name]
-        rows = []
-        for row in ws.iter_rows(values_only=True):
-            cells = [str(c) if c is not None else "" for c in row]
-            if any(cells):
-                rows.append(" | ".join(cells))
-                total_len += len(rows[-1])
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                cells = [str(c) if c is not None else "" for c in row]
+                if any(cells):
+                    rows.append(" | ".join(cells))
+                    total_len += len(rows[-1])
+                if total_len > MAX_TEXT_LENGTH:
+                    break
+
+            if rows:
+                header = f"[Sheet: {sheet_name}]"
+                parts.append(f"{header}\n" + "\n".join(rows))
+
             if total_len > MAX_TEXT_LENGTH:
                 break
 
-        if rows:
-            header = f"[Sheet: {sheet_name}]"
-            parts.append(f"{header}\n" + "\n".join(rows))
-
-        if total_len > MAX_TEXT_LENGTH:
-            break
-
-    wb.close()
-    return "\n\n".join(parts)
+        return "\n\n".join(parts)
+    finally:
+        wb.close()
 
 
 def _parse_csv(data: bytes) -> str:

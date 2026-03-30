@@ -13,7 +13,7 @@ from fastapi import APIRouter, UploadFile, File
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from api.deps import CurrentUser, Database
+from api.deps import CurrentUser, Database, OrgCtx
 from core.exceptions import AppException, ValidationError
 from schemas.file import UploadFileResponse
 from services.storage_service import StorageService
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/files", tags=["文件"])
 
 @router.post("/upload", response_model=UploadFileResponse, summary="上传文件到OSS")
 async def upload_file(
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     db: Database,
     file: UploadFile = File(...),
 ):
@@ -40,10 +40,11 @@ async def upload_file(
         content = await file.read()
 
         result = await storage.upload_file(
-            user_id=current_user["id"],
+            user_id=ctx.user_id,
             file_data=content,
             content_type=file.content_type or "application/octet-stream",
             filename=file.filename,
+            org_id=ctx.org_id,
         )
 
         return UploadFileResponse(**result)
@@ -54,7 +55,7 @@ async def upload_file(
         raise
     except Exception as e:
         logger.error(
-            f"Upload file failed | user_id={current_user['id']} | "
+            f"Upload file failed | user_id={ctx.user_id} | "
             f"file={file.filename} | error={str(e)}"
         )
         raise AppException(

@@ -18,7 +18,7 @@ interface SettingsModalProps {
 
 export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const navigate = useNavigate();
-  const { user, clearAuth, refreshUser } = useAuthStore();
+  const { user, currentOrg, clearAuth, refreshUser } = useAuthStore();
 
   const [wecomStatus, setWecomStatus] = useState<{
     bound: boolean;
@@ -132,9 +132,13 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <h3 className="text-lg font-semibold text-gray-900">{user?.nickname || '用户'}</h3>
               <p className="text-sm text-gray-500">
                 {user?.role === 'admin' ? '管理员' : user?.role === 'super_admin' ? '超级管理员' : '普通用户'}
+                {currentOrg && (
+                  <span className="ml-2 text-blue-500">{currentOrg.name}</span>
+                )}
               </p>
             </div>
           </div>
+
 
           {/* 账户信息 */}
           <div className="bg-white rounded-xl border border-gray-100 divide-y divide-gray-100">

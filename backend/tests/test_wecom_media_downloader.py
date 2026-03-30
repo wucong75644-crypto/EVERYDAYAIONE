@@ -175,6 +175,89 @@ class TestDownloadAndStore:
 # ============================================================
 
 
+class TestDownloadAndDecrypt:
+    """download_and_decrypt — 下载+解密但不上传 OSS"""
+
+    @pytest.mark.asyncio
+    async def test_success_without_aeskey(self):
+        """无 aeskey → 返回原始字节"""
+        downloader = WecomMediaDownloader()
+
+        with patch.object(
+            downloader, "_download", new=AsyncMock(return_value=b"rawdata")
+        ):
+            result = await downloader.download_and_decrypt(
+                "https://wecom.example.com/file.txt",
+            )
+
+        assert result == b"rawdata"
+
+    @pytest.mark.asyncio
+    async def test_success_with_aeskey(self):
+        """有 aeskey → 下载+解密后返回"""
+        downloader = WecomMediaDownloader()
+        decrypted = b"decrypted_content"
+
+        with (
+            patch.object(
+                downloader, "_download", new=AsyncMock(return_value=b"encrypted"),
+            ),
+            patch.object(downloader, "_aes_decrypt", return_value=decrypted),
+        ):
+            result = await downloader.download_and_decrypt(
+                "https://wecom.example.com/file.txt",
+                aeskey="some_aes_key",
+            )
+
+        assert result == decrypted
+
+    @pytest.mark.asyncio
+    async def test_download_failure_returns_none(self):
+        """下载失败 → 返回 None"""
+        downloader = WecomMediaDownloader()
+
+        with patch.object(
+            downloader, "_download", new=AsyncMock(return_value=None)
+        ):
+            result = await downloader.download_and_decrypt(
+                "https://wecom.example.com/fail.txt",
+            )
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_decrypt_failure_returns_none(self):
+        """解密失败（_aes_decrypt 返回 None）→ 返回 None"""
+        downloader = WecomMediaDownloader()
+
+        with (
+            patch.object(
+                downloader, "_download", new=AsyncMock(return_value=b"encrypted"),
+            ),
+            patch.object(downloader, "_aes_decrypt", return_value=None),
+        ):
+            result = await downloader.download_and_decrypt(
+                "https://wecom.example.com/file.txt",
+                aeskey="bad_key",
+            )
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_exception_returns_none(self):
+        """内部异常 → 返回 None（不抛出）"""
+        downloader = WecomMediaDownloader()
+
+        with patch.object(
+            downloader, "_download", new=AsyncMock(side_effect=RuntimeError("boom")),
+        ):
+            result = await downloader.download_and_decrypt(
+                "https://wecom.example.com/file.txt",
+            )
+
+        assert result is None
+
+
 class TestDownloadDirect:
     """_download HTTP 流式下载"""
 

@@ -7,7 +7,7 @@
 from fastapi import APIRouter, Depends
 from loguru import logger
 
-from api.deps import CurrentUserId, Database
+from api.deps import CurrentUserId, Database, OrgCtx
 from core.exceptions import AppException
 from schemas.memory import (
     MemoryAddRequest,
@@ -85,12 +85,13 @@ async def update_memory_settings(
 
 @router.get("", response_model=MemoryListResponse, summary="获取记忆列表")
 async def get_memories(
-    current_user_id: CurrentUserId,
+    ctx: OrgCtx,
     service: MemoryService = Depends(get_memory_service),
 ):
     """获取当前用户的所有记忆"""
+    current_user_id = ctx.user_id
     try:
-        memories = await service.get_all_memories(current_user_id)
+        memories = await service.get_all_memories(current_user_id, org_id=ctx.org_id)
         return {"memories": memories, "total": len(memories)}
     except AppException:
         raise
@@ -108,15 +109,17 @@ async def get_memories(
 @router.post("", response_model=MemoryAddResponse, summary="添加记忆")
 async def add_memory(
     body: MemoryAddRequest,
-    current_user_id: CurrentUserId,
+    ctx: OrgCtx,
     service: MemoryService = Depends(get_memory_service),
 ):
     """手动添加一条记忆"""
+    current_user_id = ctx.user_id
     try:
         memories = await service.add_memory(
             user_id=current_user_id,
             content=body.content,
             source="manual",
+            org_id=ctx.org_id,
         )
         return {"memories": memories, "count": len(memories)}
     except AppException:
@@ -136,15 +139,17 @@ async def add_memory(
 async def update_memory(
     memory_id: str,
     body: MemoryUpdateRequest,
-    current_user_id: CurrentUserId,
+    ctx: OrgCtx,
     service: MemoryService = Depends(get_memory_service),
 ):
     """更新一条记忆的内容"""
+    current_user_id = ctx.user_id
     try:
         return await service.update_memory(
             memory_id=memory_id,
             content=body.content,
             user_id=current_user_id,
+            org_id=ctx.org_id,
         )
     except AppException:
         raise
@@ -163,12 +168,13 @@ async def update_memory(
 @router.delete("/{memory_id}", response_model=MemoryDeleteResponse, summary="删除记忆")
 async def delete_memory(
     memory_id: str,
-    current_user_id: CurrentUserId,
+    ctx: OrgCtx,
     service: MemoryService = Depends(get_memory_service),
 ):
     """删除一条记忆"""
+    current_user_id = ctx.user_id
     try:
-        await service.delete_memory(memory_id=memory_id, user_id=current_user_id)
+        await service.delete_memory(memory_id=memory_id, user_id=current_user_id, org_id=ctx.org_id)
         return {"message": "记忆已删除"}
     except AppException:
         raise
@@ -186,12 +192,13 @@ async def delete_memory(
 
 @router.delete("", response_model=MemoryDeleteAllResponse, summary="清空所有记忆")
 async def delete_all_memories(
-    current_user_id: CurrentUserId,
+    ctx: OrgCtx,
     service: MemoryService = Depends(get_memory_service),
 ):
     """清空当前用户的所有记忆"""
+    current_user_id = ctx.user_id
     try:
-        await service.delete_all_memories(current_user_id)
+        await service.delete_all_memories(current_user_id, org_id=ctx.org_id)
         return {"message": "所有记忆已清空"}
     except AppException:
         raise

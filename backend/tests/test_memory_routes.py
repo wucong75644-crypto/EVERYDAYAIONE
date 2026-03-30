@@ -26,6 +26,16 @@ def user_id():
 
 
 @pytest.fixture
+def mock_ctx(user_id):
+    """Mock OrgContext（散客模式）"""
+    ctx = MagicMock()
+    ctx.user_id = user_id
+    ctx.org_id = None
+    ctx.org_role = None
+    return ctx
+
+
+@pytest.fixture
 def mock_memory_service():
     """Mock MemoryService 实例"""
     service = AsyncMock()
@@ -159,12 +169,12 @@ class TestMemoryCRUDRoutes:
     """记忆 CRUD 路由测试"""
 
     @pytest.mark.asyncio
-    async def test_get_memories(self, mock_memory_service, user_id):
+    async def test_get_memories(self, mock_memory_service, user_id, mock_ctx):
         """GET /api/memories 返回记忆列表"""
         from api.routes.memory import get_memories
 
         result = await get_memories(
-            current_user_id=user_id,
+            ctx=mock_ctx,
             service=mock_memory_service,
         )
 
@@ -173,14 +183,14 @@ class TestMemoryCRUDRoutes:
         assert result["memories"][0]["id"] == "mem-1"
 
     @pytest.mark.asyncio
-    async def test_get_memories_empty(self, mock_memory_service, user_id):
+    async def test_get_memories_empty(self, mock_memory_service, user_id, mock_ctx):
         """GET /api/memories 无记忆时返回空列表"""
         from api.routes.memory import get_memories
 
         mock_memory_service.get_all_memories.return_value = []
 
         result = await get_memories(
-            current_user_id=user_id,
+            ctx=mock_ctx,
             service=mock_memory_service,
         )
 
@@ -188,7 +198,7 @@ class TestMemoryCRUDRoutes:
         assert result["memories"] == []
 
     @pytest.mark.asyncio
-    async def test_add_memory(self, mock_memory_service, user_id):
+    async def test_add_memory(self, mock_memory_service, user_id, mock_ctx):
         """POST /api/memories 添加记忆"""
         from api.routes.memory import add_memory
         from schemas.memory import MemoryAddRequest
@@ -197,18 +207,18 @@ class TestMemoryCRUDRoutes:
 
         result = await add_memory(
             body=body,
-            current_user_id=user_id,
+            ctx=mock_ctx,
             service=mock_memory_service,
         )
 
         assert result["count"] == 1
         assert result["memories"][0]["id"] == "mem-new"
         mock_memory_service.add_memory.assert_awaited_once_with(
-            user_id=user_id, content="我喜欢Python", source="manual"
+            user_id=user_id, content="我喜欢Python", source="manual", org_id=None
         )
 
     @pytest.mark.asyncio
-    async def test_add_memory_limit_reached(self, mock_memory_service, user_id):
+    async def test_add_memory_limit_reached(self, mock_memory_service, user_id, mock_ctx):
         """POST /api/memories 达到上限时传递 AppException"""
         from api.routes.memory import add_memory
         from core.exceptions import AppException
@@ -225,7 +235,7 @@ class TestMemoryCRUDRoutes:
         with pytest.raises(AppException) as exc_info:
             await add_memory(
                 body=body,
-                current_user_id=user_id,
+                ctx=mock_ctx,
                 service=mock_memory_service,
             )
 
@@ -233,7 +243,7 @@ class TestMemoryCRUDRoutes:
         assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_update_memory(self, mock_memory_service, user_id):
+    async def test_update_memory(self, mock_memory_service, user_id, mock_ctx):
         """PUT /api/memories/{id} 更新记忆"""
         from api.routes.memory import update_memory
         from schemas.memory import MemoryUpdateRequest
@@ -243,7 +253,7 @@ class TestMemoryCRUDRoutes:
         result = await update_memory(
             memory_id="mem-1",
             body=body,
-            current_user_id=user_id,
+            ctx=mock_ctx,
             service=mock_memory_service,
         )
 
@@ -251,23 +261,23 @@ class TestMemoryCRUDRoutes:
         assert result["memory"] == "更新后的记忆"
 
     @pytest.mark.asyncio
-    async def test_delete_memory(self, mock_memory_service, user_id):
+    async def test_delete_memory(self, mock_memory_service, user_id, mock_ctx):
         """DELETE /api/memories/{id} 删除记忆"""
         from api.routes.memory import delete_memory
 
         result = await delete_memory(
             memory_id="mem-1",
-            current_user_id=user_id,
+            ctx=mock_ctx,
             service=mock_memory_service,
         )
 
         assert result["message"] == "记忆已删除"
         mock_memory_service.delete_memory.assert_awaited_once_with(
-            memory_id="mem-1", user_id=user_id
+            memory_id="mem-1", user_id=user_id, org_id=None
         )
 
     @pytest.mark.asyncio
-    async def test_delete_memory_error(self, mock_memory_service, user_id):
+    async def test_delete_memory_error(self, mock_memory_service, user_id, mock_ctx):
         """DELETE /api/memories/{id} 异常时抛出 AppException"""
         from api.routes.memory import delete_memory
         from core.exceptions import AppException
@@ -277,29 +287,29 @@ class TestMemoryCRUDRoutes:
         with pytest.raises(AppException) as exc_info:
             await delete_memory(
                 memory_id="mem-1",
-                current_user_id=user_id,
+                ctx=mock_ctx,
                 service=mock_memory_service,
             )
 
         assert exc_info.value.code == "ROUTE_DELETE_MEMORY_ERROR"
 
     @pytest.mark.asyncio
-    async def test_delete_all_memories(self, mock_memory_service, user_id):
+    async def test_delete_all_memories(self, mock_memory_service, user_id, mock_ctx):
         """DELETE /api/memories 清空所有记忆"""
         from api.routes.memory import delete_all_memories
 
         result = await delete_all_memories(
-            current_user_id=user_id,
+            ctx=mock_ctx,
             service=mock_memory_service,
         )
 
         assert result["message"] == "所有记忆已清空"
         mock_memory_service.delete_all_memories.assert_awaited_once_with(
-            user_id
+            user_id, org_id=None
         )
 
     @pytest.mark.asyncio
-    async def test_delete_all_memories_error(self, mock_memory_service, user_id):
+    async def test_delete_all_memories_error(self, mock_memory_service, user_id, mock_ctx):
         """DELETE /api/memories 异常时抛出 AppException"""
         from api.routes.memory import delete_all_memories
         from core.exceptions import AppException
@@ -308,7 +318,7 @@ class TestMemoryCRUDRoutes:
 
         with pytest.raises(AppException) as exc_info:
             await delete_all_memories(
-                current_user_id=user_id,
+                ctx=mock_ctx,
                 service=mock_memory_service,
             )
 

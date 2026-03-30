@@ -12,6 +12,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useMessageStore } from '../stores/useMessageStore';
 import Sidebar from '../components/chat/Sidebar';
+import InvitationNotice from '../components/admin/InvitationNotice';
 import MessageArea from '../components/chat/MessageArea';
 import InputArea from '../components/chat/InputArea';
 import { ChatHeader } from '../components/chat/ChatHeader';
@@ -289,6 +290,9 @@ export default function Chat() {
 
   return (
     <div className="h-screen flex bg-gray-50">
+      {/* 邀请通知 */}
+      <InvitationNotice />
+
       {/* 左侧栏 */}
       <Sidebar
         collapsed={sidebarCollapsed}

@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, UploadFile, File, Form
 from loguru import logger
 
-from api.deps import CurrentUser, Database
+from api.deps import Database, OrgCtx
 from core.exceptions import (
     AppException,
     ValidationError,
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/images", tags=["图像"])
 
 @router.post("/upload", response_model=UploadImageResponse, summary="上传图片")
 async def upload_image(
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     db: Database,
     file: Optional[UploadFile] = File(None),
     image_data: Optional[str] = Form(None),
@@ -44,16 +44,18 @@ async def upload_image(
             # FormData 方式：直接上传文件
             content = await file.read()
             url = await storage.upload_image(
-                user_id=current_user["id"],
+                user_id=ctx.user_id,
                 file_data=content,
                 content_type=file.content_type or "image/jpeg",
                 filename=file.filename,
+                org_id=ctx.org_id,
             )
         elif image_data:
             # base64 方式：兼容旧版
             url = await storage.upload_base64_image(
-                user_id=current_user["id"],
+                user_id=ctx.user_id,
                 base64_data=image_data,
+                org_id=ctx.org_id,
             )
         else:
             raise ValidationError(message="请提供图片文件或 base64 数据")
@@ -67,7 +69,7 @@ async def upload_image(
         raise
     except Exception as e:
         logger.error(
-            f"Upload image failed | user_id={current_user['id']} | "
+            f"Upload image failed | user_id={ctx.user_id} | "
             f"file={file.filename if file else 'base64'} | error={str(e)}"
         )
         raise AppException(
