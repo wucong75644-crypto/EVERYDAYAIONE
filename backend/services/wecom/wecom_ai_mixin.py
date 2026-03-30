@@ -144,6 +144,7 @@ class WecomAIMixin:
         text_content: str,
         reply_ctx: WecomReplyContext,
         agent_result: "AgentResult",
+        org_id: str | None = None,
     ) -> None:
         """处理 IMAGE 类型：积分检查 → 生成 → 发送到企微"""
         from config.kie_models import calculate_image_cost
@@ -195,7 +196,7 @@ class WecomAIMixin:
             await self._reply_text(reply_ctx, "图片生成失败，未获得结果。")
             return
 
-        self._deduct_credits(user_id, credits_needed, f"Wecom Image: {model_id}")
+        self._deduct_credits(user_id, credits_needed, f"Wecom Image: {model_id}", org_id=org_id)
         await self._send_media_to_wecom(reply_ctx, urls, "image", message_id)
 
         # 更新进度文字为"图片生成完成"
@@ -214,6 +215,7 @@ class WecomAIMixin:
         text_content: str,
         reply_ctx: WecomReplyContext,
         agent_result: "AgentResult",
+        org_id: str | None = None,
     ) -> None:
         """处理 VIDEO 类型：积分检查 → 生成 → 发送到企微"""
         from config.kie_models import calculate_video_cost
@@ -265,7 +267,7 @@ class WecomAIMixin:
             await self._reply_text(reply_ctx, "视频生成失败，未获得结果。")
             return
 
-        self._deduct_credits(user_id, credits_needed, f"Wecom Video: {model_id}")
+        self._deduct_credits(user_id, credits_needed, f"Wecom Video: {model_id}", org_id=org_id)
         await self._send_media_to_wecom(reply_ctx, [video_url], "video", message_id)
 
         # 更新进度文字为"视频生成完成"
@@ -452,14 +454,19 @@ class WecomAIMixin:
         except Exception:
             return 0
 
-    def _deduct_credits(self, user_id: str, amount: int, reason: str) -> None:
+    def _deduct_credits(
+        self, user_id: str, amount: int, reason: str, org_id: str | None = None,
+    ) -> None:
         """直接扣除积分（生成成功后调用）"""
         try:
-            self.db.rpc("deduct_credits_atomic", {
+            params = {
                 "p_user_id": user_id,
                 "p_amount": amount,
                 "p_reason": reason,
                 "p_change_type": "conversation_cost",
-            }).execute()
+            }
+            if org_id:
+                params["p_org_id"] = org_id
+            self.db.rpc("deduct_credits_atomic", params).execute()
         except Exception as e:
             logger.warning(f"Wecom credit deduction failed | user_id={user_id} | error={e}")

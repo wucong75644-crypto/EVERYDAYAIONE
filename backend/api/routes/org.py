@@ -6,7 +6,7 @@
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from api.deps import CurrentUserId, Database
@@ -96,6 +96,64 @@ async def create_org(
         return {"success": True, "data": org}
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
+
+
+@router.get("/admin/all", summary="所有企业列表（超管）")
+async def list_all_orgs(
+    user_id: CurrentUserId,
+    db: Database,
+    svc: OrgService = Depends(_get_org_service),
+):
+    """仅超管可调用。列出平台所有企业。"""
+    user = db.table("users").select("role").eq("id", user_id).maybe_single().execute()
+    if not user or not user.data or user.data["role"] != "super_admin":
+        raise HTTPException(status_code=403, detail="仅超级管理员可查看")
+
+    result = db.table("organizations").select(
+        "id, name, status, owner_id, created_at"
+    ).order("created_at", desc=True).execute()
+
+    orgs = []
+    for org in (result.data or []):
+        # 查成员数
+        members_result = db.table("org_members").select(
+            "id", count="exact"
+        ).eq("org_id", org["id"]).eq("status", "active").execute()
+        member_count = len(members_result.data) if members_result.data else 0
+        orgs.append({
+            **org,
+            "member_count": member_count,
+        })
+    return orgs
+
+
+@router.get("/admin/search-user", summary="搜索用户（超管）")
+async def search_user(
+    phone: str = Query(..., pattern=r"^1[3-9]\d{9}$", description="手机号"),
+    user_id: CurrentUserId = None,
+    db: Database = None,
+):
+    """超管通过手机号搜索用户（用于指定 owner / 添加成员）"""
+    user = db.table("users").select("role").eq("id", user_id).maybe_single().execute()
+    if not user or not user.data or user.data["role"] != "super_admin":
+        raise HTTPException(status_code=403, detail="仅超级管理员可查看")
+
+    result = db.table("users").select(
+        "id, nickname, phone, status, created_at"
+    ).eq("phone", phone).execute()
+    if not result.data:
+        return {"found": False, "user": None}
+
+    u = result.data[0]
+    return {
+        "found": True,
+        "user": {
+            "id": u["id"],
+            "nickname": u["nickname"],
+            "phone": u["phone"][:3] + "****" + u["phone"][-4:] if u.get("phone") else None,
+            "status": u["status"],
+        },
+    }
 
 
 @router.get("/{org_id}", summary="获取企业信息")
@@ -202,6 +260,40 @@ async def create_invitation(
         return {"success": True, "data": inv}
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
+
+
+@router.get("/invitations/pending", summary="我的待接受邀请")
+async def list_pending_invitations(
+    user_id: CurrentUserId,
+    db: Database,
+):
+    """查询当前用户手机号的待接受邀请"""
+    # 获取用户手机号
+    user = db.table("users").select("phone").eq("id", user_id).maybe_single().execute()
+    if not user or not user.data or not user.data.get("phone"):
+        return []
+
+    phone = user.data["phone"]
+    result = (
+        db.table("org_invitations")
+        .select("invite_token, role, expires_at, org_id")
+        .eq("phone", phone)
+        .eq("status", "pending")
+        .execute()
+    )
+
+    invitations = []
+    for inv in (result.data or []):
+        # 查企业名
+        org = db.table("organizations").select("name").eq("id", inv["org_id"]).maybe_single().execute()
+        org_name = org.data["name"] if org and org.data else "未知企业"
+        invitations.append({
+            "invite_token": inv["invite_token"],
+            "org_name": org_name,
+            "role": inv["role"],
+            "expires_at": inv["expires_at"],
+        })
+    return invitations
 
 
 @router.post("/invitations/accept", summary="接受邀请")

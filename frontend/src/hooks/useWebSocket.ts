@@ -225,8 +225,11 @@ export function useWebSocket(): UseWebSocketReturn {
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
+    let wasConnected = false;
+
     ws.onopen = () => {
       logger.info('ws:connection', 'Connected');
+      wasConnected = true;
       setConnectionState('connected');
       reconnectAttemptsRef.current = 0;
       startHeartbeat();
@@ -239,6 +242,24 @@ export function useWebSocket(): UseWebSocketReturn {
       if (heartbeatIntervalRef.current) {
         clearInterval(heartbeatIntervalRef.current);
         heartbeatIntervalRef.current = null;
+      }
+
+      // 认证失败：4001/4002 或握手阶段直接被拒（1006 且从未连上过）
+      const isAuthError =
+        event.code === 4001 ||
+        event.code === 4002 ||
+        (!wasConnected && event.code === 1006);
+
+      if (isAuthError) {
+        logger.warn('ws:connection', 'Auth failed, clearing token', { code: event.code });
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('user');
+        localStorage.removeItem('current_org_id');
+        localStorage.removeItem('current_org');
+        if (window.location.pathname !== '/') {
+          window.location.href = '/';
+        }
+        return;
       }
 
       // 非正常关闭且不是主动清理，无限重连（指数退避，上限30s）

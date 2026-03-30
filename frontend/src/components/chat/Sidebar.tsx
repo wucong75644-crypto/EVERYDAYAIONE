@@ -12,10 +12,11 @@ import { Link } from 'react-router-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { useMessageStore } from '../../stores/useMessageStore';
 import { useClickOutside } from '../../hooks/useClickOutside';
-import { Brain } from 'lucide-react';
+import { Brain, Settings2 } from 'lucide-react';
 import ConversationList from './ConversationList';
 import SettingsModal from './SettingsModal';
 import MemoryModal from './MemoryModal';
+import AdminPanel from '../admin/AdminPanel';
 import { useMemoryStore } from '../../stores/useMemoryStore';
 
 /** 乐观更新参数 */
@@ -67,7 +68,11 @@ export default function Sidebar({
   onRename,
   onDelete,
 }: SidebarProps) {
-  const { user, clearAuth } = useAuthStore();
+  const { user, currentOrg, clearAuth } = useAuthStore();
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const showAdminEntry =
+    user?.role === 'super_admin' ||
+    (currentOrg && ['owner', 'admin'].includes(currentOrg.role));
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -199,6 +204,19 @@ export default function Sidebar({
         </button>
       </div>
 
+      {/* 管理后台入口（仅 super_admin / owner / admin 可见） */}
+      {showAdminEntry && (
+        <div className="px-3 pb-1">
+          <button
+            onClick={() => setShowAdminPanel(true)}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <Settings2 className="w-4 h-4" />
+            <span>管理后台</span>
+          </button>
+        </div>
+      )}
+
       {/* 底部用户区域 */}
       <div className="p-3">
         <div className="flex items-center justify-between">
@@ -260,6 +278,11 @@ export default function Sidebar({
 
       {/* 记忆管理弹框 */}
       <MemoryModal />
+
+      {/* 管理后台弹框 */}
+      {showAdminPanel && (
+        <AdminPanel onClose={() => setShowAdminPanel(false)} />
+      )}
     </aside>
   );
 }

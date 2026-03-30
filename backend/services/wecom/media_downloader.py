@@ -83,6 +83,27 @@ class WecomMediaDownloader:
             logger.error(f"Wecom media download failed | url={url[:100]} | error={e}")
             return None
 
+    async def download_and_decrypt(
+        self,
+        url: str,
+        aeskey: Optional[str] = None,
+    ) -> Optional[bytes]:
+        """下载企微资源 + AES 解密（如有 aeskey），返回原始字节
+
+        与 download_and_store 不同，本方法不上传 OSS，仅返回解密后的 bytes。
+        用于需要先解析内容再决定是否上传的场景（如文件消息）。
+        """
+        try:
+            raw_data = await self._download(url)
+            if raw_data is None:
+                return None
+            if aeskey:
+                raw_data = self._aes_decrypt(raw_data, aeskey)
+            return raw_data
+        except Exception as e:
+            logger.error(f"Wecom media download+decrypt failed | url={url[:100]} | error={e}")
+            return None
+
     async def _download(self, url: str) -> Optional[bytes]:
         """流式下载，限制 10MB"""
         try:

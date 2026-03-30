@@ -1133,11 +1133,11 @@ class TestCommandInterception:
 
 
 class TestFileVideoHint:
-    """FILE/VIDEO msgtype → 提示不支持"""
+    """FILE → _handle_file 调用, VIDEO → 提示不支持"""
 
     @pytest.mark.asyncio
-    async def test_file_replies_hint(self):
-        """FILE 消息 → 提示暂不支持"""
+    async def test_file_calls_handle_file(self):
+        """FILE 消息 → 调用 _handle_file"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
         svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
@@ -1149,12 +1149,146 @@ class TestFileVideoHint:
         svc._create_assistant_placeholder = AsyncMock(return_value="a1")
 
         msg = _make_msg(msgtype=WecomMsgType.FILE, text="")
+        msg.file_url = "https://example.com/test.pdf"
+        msg.file_name = "test.pdf"
+        ctx = _make_reply_ctx()
+
+        with patch.object(svc, "_handle_file", new=AsyncMock()) as mock_hf:
+            await svc.handle_message(msg, ctx)
+            mock_hf.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_file_skips_save_user_message(self):
+        """FILE 消息 → 不调用 _save_user_message（由 _handle_file 自行保存）"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.update_last_chatid = AsyncMock()
+        svc._user_svc.upsert_chat_target = AsyncMock()
+        svc._get_or_create_conversation = AsyncMock(return_value="conv1")
+        svc._download_media = AsyncMock(return_value=[])
+        svc._save_user_message = AsyncMock(return_value="m1")
+        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
+
+        msg = _make_msg(msgtype=WecomMsgType.FILE, text="")
+        msg.file_url = "https://example.com/test.pdf"
+        msg.file_name = "test.pdf"
+        ctx = _make_reply_ctx()
+
+        with patch.object(svc, "_handle_file", new=AsyncMock()):
+            await svc.handle_message(msg, ctx)
+            svc._save_user_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_video_replies_hint(self):
+        """VIDEO 消息 → 提示暂不支持"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.update_last_chatid = AsyncMock()
+        svc._user_svc.upsert_chat_target = AsyncMock()
+        svc._get_or_create_conversation = AsyncMock(return_value="conv1")
+        svc._download_media = AsyncMock(return_value=[])
+        svc._save_user_message = AsyncMock(return_value="m1")
+        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
+
+        msg = _make_msg(msgtype=WecomMsgType.VIDEO, text="")
         ctx = _make_reply_ctx()
 
         with patch.object(svc, "_reply_text", new=AsyncMock()) as mock_reply:
             await svc.handle_message(msg, ctx)
             mock_reply.assert_called_once()
             assert "暂不支持" in mock_reply.call_args[0][1]
+
+    @pytest.mark.asyncio
+    async def test_file_unsupported_format_replies_hint(self):
+        """不支持的文件格式 → 提示"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.update_last_chatid = AsyncMock()
+        svc._user_svc.upsert_chat_target = AsyncMock()
+        svc._get_or_create_conversation = AsyncMock(return_value="conv1")
+        svc._download_media = AsyncMock(return_value=[])
+        svc._save_user_message = AsyncMock(return_value="m1")
+        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
+
+        msg = _make_msg(msgtype=WecomMsgType.FILE, text="")
+        msg.file_url = "https://example.com/test.zip"
+        msg.file_name = "test.zip"
+        ctx = _make_reply_ctx()
+
+        with patch.object(svc, "_reply_text", new=AsyncMock()) as mock_reply:
+            with patch.object(svc, "_update_assistant_message", new=AsyncMock()):
+                await svc.handle_message(msg, ctx)
+                mock_reply.assert_called_once()
+                assert "暂不支持" in mock_reply.call_args[0][1]
+
+    @pytest.mark.asyncio
+    async def test_file_download_failure_replies_error(self):
+        """文件下载失败 → 提示用户"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.update_last_chatid = AsyncMock()
+        svc._user_svc.upsert_chat_target = AsyncMock()
+        svc._get_or_create_conversation = AsyncMock(return_value="conv1")
+        svc._download_media = AsyncMock(return_value=[])
+        svc._save_user_message = AsyncMock(return_value="m1")
+        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
+
+        msg = _make_msg(msgtype=WecomMsgType.FILE, text="")
+        msg.file_url = "https://example.com/test.txt"
+        msg.file_name = "test.txt"
+        ctx = _make_reply_ctx()
+
+        with patch(
+            "services.wecom.media_downloader.WecomMediaDownloader.download_and_decrypt",
+            new=AsyncMock(return_value=None),
+        ):
+            with patch.object(svc, "_reply_text", new=AsyncMock()) as mock_reply:
+                with patch.object(svc, "_update_assistant_message", new=AsyncMock()):
+                    await svc.handle_message(msg, ctx)
+                    assert any("下载失败" in str(c) for c in mock_reply.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_file_success_calls_handle_text(self):
+        """文件下载+解析成功 → 调用 _handle_text"""
+        db = _make_db_mock()
+        # 设置 messages.insert 返回值
+        msg_table = MagicMock()
+        msg_table.insert.return_value.execute.return_value = MagicMock(
+            data=[{"id": "m1"}]
+        )
+        db.table = MagicMock(side_effect=lambda name: msg_table if name == "messages" else MagicMock())
+        db.rpc = MagicMock(return_value=MagicMock(execute=MagicMock()))
+
+        svc = WecomMessageService(db)
+        svc._user_svc.get_or_create_user = AsyncMock(return_value="uid1")
+        svc._user_svc.update_last_chatid = AsyncMock()
+        svc._user_svc.upsert_chat_target = AsyncMock()
+        svc._get_or_create_conversation = AsyncMock(return_value="conv1")
+        svc._download_media = AsyncMock(return_value=[])
+        svc._save_user_message = AsyncMock(return_value="m1")
+        svc._create_assistant_placeholder = AsyncMock(return_value="a1")
+        svc._notify_web_conversation_updated = AsyncMock()
+        svc._upload_file_to_oss = AsyncMock(return_value="https://oss.example.com/file.txt")
+
+        msg = _make_msg(msgtype=WecomMsgType.FILE, text="")
+        msg.file_url = "https://example.com/test.txt"
+        msg.file_name = "test.txt"
+        ctx = _make_reply_ctx()
+
+        with patch(
+            "services.wecom.media_downloader.WecomMediaDownloader.download_and_decrypt",
+            new=AsyncMock(return_value=b"Hello file content"),
+        ):
+            with patch.object(svc, "_handle_text", new=AsyncMock()) as mock_ht:
+                await svc.handle_message(msg, ctx)
+                mock_ht.assert_called_once()
+                call_kwargs = mock_ht.call_args[1]
+                assert "test.txt" in call_kwargs["text_content"]
+                assert "Hello file content" in call_kwargs["text_content"]
 
 
 # ============================================================

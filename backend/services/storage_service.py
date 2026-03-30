@@ -62,6 +62,7 @@ class StorageService:
         file_data: bytes,
         content_type: str,
         filename: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> str:
         """
         上传图片到 OSS
@@ -104,6 +105,7 @@ class StorageService:
                 ext=extension,
                 category="uploaded",
                 content_type=content_type,
+                org_id=org_id,
             )
 
             logger.info(
@@ -123,6 +125,7 @@ class StorageService:
         file_data: bytes,
         content_type: str,
         filename: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> dict:
         """
         上传文档文件到 OSS（当前仅支持 PDF）
@@ -163,6 +166,7 @@ class StorageService:
                 ext=extension,
                 category="documents",
                 content_type=content_type,
+                org_id=org_id,
             )
 
             logger.info(
@@ -185,6 +189,7 @@ class StorageService:
         self,
         user_id: str,
         base64_data: str,
+        org_id: Optional[str] = None,
     ) -> str:
         """
         上传 base64 编码的图片
@@ -216,4 +221,5 @@ class StorageService:
             user_id=user_id,
             file_data=file_data,
             content_type=content_type,
+            org_id=org_id,
         )
