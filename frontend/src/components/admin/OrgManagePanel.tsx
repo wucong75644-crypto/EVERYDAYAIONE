@@ -12,9 +12,11 @@ import {
   setOrgConfig,
   testErpConnection,
   testWecomConnection,
+  getWecomStatus,
   createInvitation,
   type OrgDetail,
   type OrgMember,
+  type WecomFieldStatus,
 } from '../../services/org';
 
 // ERP 凭证的 key 列表和中文标签
@@ -426,8 +428,7 @@ const WECOM_CONFIG_KEYS = [
 ];
 
 function WecomConfigSection({ orgId }: { orgId: string }) {
-  const [configuredKeys, setConfiguredKeys] = useState<string[]>([]);
-  const [orgCorpId, setOrgCorpId] = useState<string | null>(null);
+  const [fieldStatus, setFieldStatus] = useState<Record<string, WecomFieldStatus>>({});
   const [values, setValues] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
@@ -436,18 +437,14 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadAll();
+    loadStatus();
   }, [orgId]);
 
-  const loadAll = async () => {
+  const loadStatus = async () => {
     setLoading(true);
     try {
-      const [configResult, orgDetail] = await Promise.all([
-        listOrgConfigs(orgId),
-        getOrgDetail(orgId),
-      ]);
-      setConfiguredKeys(configResult.data || []);
-      setOrgCorpId((orgDetail as any).wecom_corp_id || null);
+      const result = await getWecomStatus(orgId);
+      setFieldStatus(result.data || {});
     } catch {
       setError('加载配置失败');
     } finally {
@@ -463,19 +460,14 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
     setSuccess('');
     try {
       if (isOrgField) {
-        // wecom_corp_id → 直接写 organizations 表
         const { updateOrg } = await import('../../services/org');
         await updateOrg(orgId, { [key]: value });
-        setOrgCorpId(value);
       } else {
-        // 其他配置 → 加密写 org_configs
         await setOrgConfig(orgId, key, value);
       }
       setSuccess(`${key} 已保存`);
       setValues((prev) => { const n = { ...prev }; delete n[key]; return n; });
-      if (!isOrgField && !configuredKeys.includes(key)) {
-        setConfiguredKeys((prev) => [...prev, key]);
-      }
+      setFieldStatus((prev) => ({ ...prev, [key]: { configured: true, source: 'org' } }));
     } catch (err: any) {
       setError(err.response?.data?.detail || '保存失败');
     } finally {
@@ -487,6 +479,8 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
     return <div className="text-center text-gray-500 py-8">加载中...</div>;
   }
 
+  const botConfigured = fieldStatus.wecom_bot_id?.configured && fieldStatus.wecom_bot_secret?.configured;
+
   return (
     <div className="space-y-4">
       <p className="text-sm text-gray-500">
@@ -497,32 +491,37 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
       {success && <div className="bg-green-50 text-green-600 p-2 rounded text-sm">{success}</div>}
 
       {WECOM_CONFIG_KEYS.map(({ key, label, sensitive, isOrgField }) => {
-        const isConfigured = isOrgField ? !!orgCorpId : configuredKeys.includes(key);
+        const field = fieldStatus[key];
+        const isConfigured = field?.configured ?? false;
+        const source = field?.source;
         const isEditing = values[key] !== undefined;
         return (
           <div key={key} className="flex items-center space-x-2">
             <div className="w-44 text-sm text-gray-700 flex items-center">
               {label}
               {isConfigured && (
-                <span className="ml-1.5 w-2 h-2 bg-green-500 rounded-full inline-block" title="已配置" />
+                <span
+                  className={`ml-1.5 w-2 h-2 rounded-full inline-block ${source === 'system' ? 'bg-blue-400' : 'bg-green-500'}`}
+                  title={source === 'system' ? '使用系统默认' : '已配置'}
+                />
               )}
             </div>
             {isConfigured && !isEditing ? (
               <>
                 <div className="flex-1 px-3 py-1.5 border rounded-lg text-sm bg-gray-50 text-gray-500 tracking-widest">
-                  {sensitive ? '••••••••••••' : '已配置'}
+                  {sensitive ? '••••••••••••' : (source === 'system' ? '系统默认' : '已配置')}
                 </div>
                 <button
                   onClick={() => setValues((prev) => ({ ...prev, [key]: '' }))}
                   className="px-3 py-1.5 text-sm text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors whitespace-nowrap"
                 >
-                  修改
+                  {source === 'system' ? '覆盖' : '修改'}
                 </button>
               </>
             ) : (
               <>
                 <input
-                  type={sensitive ? 'text' : 'text'}
+                  type="text"
                   value={values[key] || ''}
                   onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
                   className="flex-1 px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -553,8 +552,8 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
         注意：修改 Corp ID 后需重启企微服务才能生效。
       </p>
 
-      {/* 测试连接按钮：bot_id + bot_secret 都已配置时显示 */}
-      {configuredKeys.includes('wecom_bot_id') && configuredKeys.includes('wecom_bot_secret') && (
+      {/* 测试连接按钮：bot_id + bot_secret 有配置（org 或 system）时显示 */}
+      {botConfigured && (
         <button
           onClick={async () => {
             setTesting(true);
