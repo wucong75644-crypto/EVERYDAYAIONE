@@ -67,6 +67,12 @@ export async function testErpConnection(
   return request({ method: 'POST', url: `/org/${orgId}/configs/test-erp` });
 }
 
+export async function testWecomConnection(
+  orgId: string,
+): Promise<{ success: boolean; message: string }> {
+  return request({ method: 'POST', url: `/org/${orgId}/configs/test-wecom` });
+}
+
 export async function updateOrg(
   orgId: string, data: Record<string, string | null>,
 ): Promise<{ success: boolean }> {
