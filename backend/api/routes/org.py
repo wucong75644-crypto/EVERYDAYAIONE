@@ -321,7 +321,7 @@ async def list_org_configs(
 ):
     """列出企业已配置的 key（不返回值），admin+ 可用"""
     try:
-        svc._require_role(org_id, user_id, ("owner", "admin"))
+        svc.require_role(org_id, user_id, ("owner", "admin"))
         keys = resolver.list_keys(org_id)
         return {"success": True, "data": keys}
     except AppException as e:
@@ -338,7 +338,7 @@ async def set_org_config(
 ):
     """写入企业配置（AES 加密存储），admin+ 可用"""
     try:
-        svc._require_role(org_id, user_id, ("owner", "admin"))
+        svc.require_role(org_id, user_id, ("owner", "admin"))
         resolver.set(org_id, body.key, body.value, updated_by=user_id)
         return {"success": True, "message": f"配置 {body.key} 已更新"}
     except ValueError as e:
@@ -357,7 +357,7 @@ async def delete_org_config(
 ):
     """删除企业配置，admin+ 可用"""
     try:
-        svc._require_role(org_id, user_id, ("owner", "admin"))
+        svc.require_role(org_id, user_id, ("owner", "admin"))
         resolver.delete(org_id, config_key)
         return {"success": True, "message": f"配置 {config_key} 已删除"}
     except AppException as e:
