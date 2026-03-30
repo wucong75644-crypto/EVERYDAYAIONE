@@ -61,6 +61,18 @@ export async function listOrgConfigs(orgId: string): Promise<{ success: boolean;
   return request({ method: 'GET', url: `/org/${orgId}/configs` });
 }
 
+export async function testErpConnection(
+  orgId: string,
+): Promise<{ success: boolean; message: string }> {
+  return request({ method: 'POST', url: `/org/${orgId}/configs/test-erp` });
+}
+
+export async function updateOrg(
+  orgId: string, data: { wecom_corp_id?: string },
+): Promise<{ success: boolean }> {
+  return request({ method: 'PATCH', url: `/org/${orgId}`, data });
+}
+
 export async function setOrgConfig(
   orgId: string, key: string, value: string,
 ): Promise<{ success: boolean; message: string }> {
