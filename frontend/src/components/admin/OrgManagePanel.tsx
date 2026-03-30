@@ -113,7 +113,9 @@ function ErpConfigSection({ orgId }: { orgId: string }) {
       await setOrgConfig(orgId, key, value);
       setSuccess(`${key} 已保存`);
       setValues((prev) => { const n = { ...prev }; delete n[key]; return n; });
-      loadConfigs();
+      if (!configuredKeys.includes(key)) {
+        setConfiguredKeys((prev) => [...prev, key]);
+      }
     } catch (err: any) {
       setError(err.response?.data?.detail || '保存失败');
     } finally {

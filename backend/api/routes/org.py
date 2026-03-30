@@ -388,7 +388,7 @@ async def test_erp_connection(
         )
         try:
             result = await client.request_with_retry(
-                "erp.warehouse.query", {"pageNo": 1, "pageSize": 1}
+                "erp.shop.list.query", {"pageNo": 1, "pageSize": 1}
             )
             return {
                 "success": True,
