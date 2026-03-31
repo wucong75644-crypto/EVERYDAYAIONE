@@ -177,12 +177,10 @@ class OrgConfigResolver(_ConfigResolverCore):
                 .select("config_value_encrypted")
                 .eq("org_id", org_id)
                 .eq("config_key", key)
-                .single()
+                .maybe_single()
                 .execute()
             )
             return self._decrypt_result(result.data)
-        except ValueError:
-            raise
         except Exception as e:
             logger.warning(
                 f"Failed to load org config | org_id={org_id} | key={key} | error={e}"
@@ -225,12 +223,10 @@ class AsyncOrgConfigResolver(_ConfigResolverCore):
                 .select("config_value_encrypted")
                 .eq("org_id", org_id)
                 .eq("config_key", key)
-                .single()
+                .maybe_single()
                 .execute()
             )
             return self._decrypt_result(result.data)
-        except ValueError:
-            raise
         except Exception as e:
             logger.warning(
                 f"Failed to load org config | org_id={org_id} | key={key} | error={e}"

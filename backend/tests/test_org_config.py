@@ -308,19 +308,20 @@ class TestOrgConfigResolver:
         orgs = resolver.list_orgs_with_wecom_bot()
         assert orgs == []
 
-    def test_encrypt_key_not_configured(self, db):
-        """加密密钥未配置时报错"""
+    def test_encrypt_key_not_configured_returns_fallback(self, db):
+        """加密密钥未配置时 _load_encrypted 静默失败，非企业key降级到 settings"""
         with patch("services.org.config_resolver.get_settings") as mock_settings:
             settings = MagicMock()
             settings.org_config_encrypt_key = None
+            settings.some_ai_key = "fallback"
             mock_settings.return_value = settings
             resolver = OrgConfigResolver(db)
 
             encrypted = aes_encrypt("test", TEST_KEY)
             db.set_table("org_configs", {"config_value_encrypted": encrypted})
 
-            with pytest.raises(ValueError, match="ORG_CONFIG_ENCRYPT_KEY"):
-                resolver.get("org-1", "some_key")
+            result = resolver.get("org-1", "some_ai_key")
+            assert result == "fallback"
 
 
 # ── AsyncOrgConfigResolver ────────────────────────────
@@ -339,6 +340,9 @@ class AsyncFakeQueryBuilder:
     def select(self, *a, **kw): return self
     def eq(self, *a, **kw): return self
     def single(self):
+        self._is_single = True
+        return self
+    def maybe_single(self):
         self._is_single = True
         return self
 
