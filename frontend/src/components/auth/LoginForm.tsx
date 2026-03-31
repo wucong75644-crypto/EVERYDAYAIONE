@@ -9,7 +9,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useCountdown } from '../../hooks/useCountdown';
 import { useAuthStore } from '../../stores/useAuthStore';
-import { sendCode, loginByPhone, loginByPassword, loginByOrg, getOrgNamePublic } from '../../services/auth';
+import { sendCode, loginByPhone, loginByPassword, loginByOrg, getOrgNamePublic, listMyOrganizations } from '../../services/auth';
 import type { ApiErrorResponse } from '../../types/auth';
 import { AxiosError } from 'axios';
 import WecomQrLogin from './WecomQrLogin';
@@ -148,18 +148,35 @@ export default function LoginForm({
           role: response.org.org_role as 'owner' | 'admin' | 'member',
         });
       } else {
-        // 个人登录 — 清除可能残留的企业上下文
-        setCurrentOrg(null);
         const response =
           loginMode === 'password'
             ? await loginByPassword({ phone, password })
             : await loginByPhone({ phone, code });
         setToken(response.token.access_token);
         setUser(response.user);
+
+        // 企业专属链接：登录后自动切入企业
+        if (orgId) {
+          try {
+            const orgs = await listMyOrganizations();
+            const targetOrg = orgs.find((o) => o.org_id === orgId);
+            if (targetOrg) {
+              setCurrentOrg(targetOrg);
+            }
+          } catch { /* 查不到企业不影响登录 */ }
+        } else {
+          // 普通登录 — 清除可能残留的企业上下文
+          setCurrentOrg(null);
+        }
       }
 
-      // 记住手机号
+      // 记住手机号 + 企业来源（退出时跳回企业登录页）
       localStorage.setItem('last_login_phone', phone);
+      if (orgId) {
+        localStorage.setItem('login_org_id', orgId);
+      } else {
+        localStorage.removeItem('login_org_id');
+      }
 
       // 触发成功回调
       onSuccess?.();

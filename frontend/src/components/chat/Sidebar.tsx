@@ -81,8 +81,13 @@ export default function Sidebar({
   const userMenuRef = useRef<HTMLDivElement>(null);
 
   const handleLogout = () => {
+    // 保留企业专属链接：退出后跳回企业登录页
+    const loginOrgId = localStorage.getItem('login_org_id');
     clearAuth();
     setShowUserMenu(false);
+    if (loginOrgId) {
+      window.location.href = `/?org=${loginOrgId}`;
+    }
   };
 
   // 点击外部关闭搜索框（仅在搜索框为空时）
