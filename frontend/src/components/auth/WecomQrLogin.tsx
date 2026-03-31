@@ -13,6 +13,8 @@ interface WecomQrLoginProps {
   onBack: () => void;
   /** 使用场景：login=登录页，bind=设置页绑定 */
   mode?: 'login' | 'bind';
+  /** 企业 ID（per-org 扫码登录） */
+  orgId?: string;
 }
 
 declare global {
@@ -32,7 +34,7 @@ declare global {
 const SDK_URL = 'https://wwcdn.weixin.qq.com/node/wework/wwopen/js/wwLogin-1.2.7.js';
 const SDK_SCRIPT_ID = 'wecom-wwlogin-sdk';
 
-export default function WecomQrLogin({ onBack, mode = 'login' }: WecomQrLoginProps) {
+export default function WecomQrLogin({ onBack, mode = 'login', orgId }: WecomQrLoginProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -48,7 +50,7 @@ export default function WecomQrLogin({ onBack, mode = 'login' }: WecomQrLoginPro
 
     (async () => {
       try {
-        const qrData = await getWecomQrUrl();
+        const qrData = await getWecomQrUrl(orgId);
         await loadSdk();
 
         if (cancelled || !wrapperRef.current) return;

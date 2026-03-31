@@ -73,10 +73,11 @@ export async function getCurrentUser(): Promise<User> {
 /**
  * 获取企微扫码登录 URL
  */
-export async function getWecomQrUrl(): Promise<WecomQrUrlResponse> {
+export async function getWecomQrUrl(orgId?: string): Promise<WecomQrUrlResponse> {
   return request({
     method: 'GET',
     url: '/auth/wecom/qr-url',
+    params: orgId ? { org_id: orgId } : undefined,
   });
 }
 

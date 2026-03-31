@@ -418,7 +418,7 @@ async def wecom_config_status(
     try:
         svc.require_role(org_id, user_id, ("owner", "admin"))
         org = svc.get_organization(org_id)
-        keys = ["wecom_bot_id", "wecom_bot_secret"]
+        keys = ["wecom_bot_id", "wecom_bot_secret", "wecom_agent_id", "wecom_agent_secret"]
         status: dict[str, dict] = {}
         # corp_id 在 organizations 表
         corp_id = org.get("wecom_corp_id")
