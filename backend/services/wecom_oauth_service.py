@@ -244,7 +244,7 @@ class WecomOAuthService:
         """查用户所属企业，优先返回指定企业"""
         query = (
             self.db.table("org_members")
-            .select("org_id, role, organizations(id, name, status)")
+            .select("org_id, role")
             .eq("user_id", user_id)
             .eq("status", "active")
         )
@@ -254,7 +254,16 @@ class WecomOAuthService:
         if not result.data:
             return None
         row = result.data[0]
-        org = row.get("organizations")
+        org_id = row["org_id"]
+        # 查企业名称和状态
+        org_result = (
+            self.db.table("organizations")
+            .select("id, name, status")
+            .eq("id", org_id)
+            .maybe_single()
+            .execute()
+        )
+        org = org_result.data if org_result else None
         if not org or org.get("status") != "active":
             return None
         return {"org_id": org["id"], "name": org["name"], "role": row["role"]}

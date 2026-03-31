@@ -90,7 +90,10 @@ export default function WecomCallback() {
         <h2 className="text-lg font-medium text-gray-900 mb-2">登录失败</h2>
         <p className="text-sm text-gray-500 mb-6">{error}</p>
         <button
-          onClick={() => navigate('/', { replace: true })}
+          onClick={() => {
+            const loginOrgId = localStorage.getItem('login_org_id');
+            navigate(loginOrgId ? `/?org=${loginOrgId}` : '/', { replace: true });
+          }}
           className="w-full py-2.5 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
         >
           返回登录
