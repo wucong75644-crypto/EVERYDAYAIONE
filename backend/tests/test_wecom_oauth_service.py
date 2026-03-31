@@ -467,6 +467,127 @@ class TestGetBindingStatus:
 # ----------------------------------------------------------------
 
 
+class TestEnsureOrgMember:
+    """_ensure_org_member 测试"""
+
+    def test_ensure_org_member_adds_when_not_exists(self):
+        """用户不在 org_members 中时自动插入"""
+        db = _make_db_mock()
+        members_table = db._table_mocks.setdefault("org_members", MagicMock())
+
+        # maybe_single 返回 None（不存在）
+        (members_table.select.return_value
+         .eq.return_value.eq.return_value.maybe_single.return_value
+         .execute.return_value) = MagicMock(data=None)
+
+        # insert 正常
+        members_table.insert.return_value.execute.return_value = MagicMock()
+
+        with patch("services.wecom_oauth_service.get_settings", return_value=_make_settings()):
+            svc = WecomOAuthService(db)
+            svc._ensure_org_member("uid-1", "org-abc")
+
+        members_table.insert.assert_called_once()
+        insert_data = members_table.insert.call_args[0][0]
+        assert insert_data["user_id"] == "uid-1"
+        assert insert_data["org_id"] == "org-abc"
+        assert insert_data["role"] == "member"
+
+    def test_ensure_org_member_skips_when_exists(self):
+        """用户已在 org_members 中时跳过插入"""
+        db = _make_db_mock()
+        members_table = db._table_mocks.setdefault("org_members", MagicMock())
+
+        # maybe_single 返回已有数据
+        (members_table.select.return_value
+         .eq.return_value.eq.return_value.maybe_single.return_value
+         .execute.return_value) = MagicMock(data={"user_id": "uid-1"})
+
+        with patch("services.wecom_oauth_service.get_settings", return_value=_make_settings()):
+            svc = WecomOAuthService(db)
+            svc._ensure_org_member("uid-1", "org-abc")
+
+        members_table.insert.assert_not_called()
+
+    def test_ensure_org_member_handles_insert_error(self):
+        """insert 异常时不抛出（仅记录日志）"""
+        db = _make_db_mock()
+        members_table = db._table_mocks.setdefault("org_members", MagicMock())
+
+        # maybe_single 返回 None
+        (members_table.select.return_value
+         .eq.return_value.eq.return_value.maybe_single.return_value
+         .execute.return_value) = MagicMock(data=None)
+
+        # insert 抛异常
+        members_table.insert.return_value.execute.side_effect = RuntimeError("DB error")
+
+        with patch("services.wecom_oauth_service.get_settings", return_value=_make_settings()):
+            svc = WecomOAuthService(db)
+            # 不应抛异常
+            svc._ensure_org_member("uid-1", "org-abc")
+
+
+class TestFindUserOrg:
+    """_find_user_org 测试"""
+
+    def test_find_user_org_returns_org_info(self):
+        """查到活跃企业成员时返回企业信息"""
+        db = _make_db_mock()
+        members_table = db._table_mocks.setdefault("org_members", MagicMock())
+
+        (members_table.select.return_value
+         .eq.return_value.eq.return_value.eq.return_value
+         .limit.return_value.execute.return_value) = MagicMock(data=[{
+            "org_id": "org-abc",
+            "role": "admin",
+            "organizations": {"id": "org-abc", "name": "蓝创科技", "status": "active"},
+        }])
+
+        with patch("services.wecom_oauth_service.get_settings", return_value=_make_settings()):
+            svc = WecomOAuthService(db)
+            result = svc._find_user_org("uid-1", preferred_org_id="org-abc")
+
+        assert result is not None
+        assert result["org_id"] == "org-abc"
+        assert result["name"] == "蓝创科技"
+        assert result["role"] == "admin"
+
+    def test_find_user_org_returns_none_when_not_member(self):
+        """用户不是任何企业成员时返回 None"""
+        db = _make_db_mock()
+        members_table = db._table_mocks.setdefault("org_members", MagicMock())
+
+        (members_table.select.return_value
+         .eq.return_value.eq.return_value
+         .limit.return_value.execute.return_value) = MagicMock(data=[])
+
+        with patch("services.wecom_oauth_service.get_settings", return_value=_make_settings()):
+            svc = WecomOAuthService(db)
+            result = svc._find_user_org("uid-1")
+
+        assert result is None
+
+    def test_find_user_org_returns_none_when_org_inactive(self):
+        """企业 status != active 时返回 None"""
+        db = _make_db_mock()
+        members_table = db._table_mocks.setdefault("org_members", MagicMock())
+
+        (members_table.select.return_value
+         .eq.return_value.eq.return_value.eq.return_value
+         .limit.return_value.execute.return_value) = MagicMock(data=[{
+            "org_id": "org-abc",
+            "role": "member",
+            "organizations": {"id": "org-abc", "name": "已停用公司", "status": "suspended"},
+        }])
+
+        with patch("services.wecom_oauth_service.get_settings", return_value=_make_settings()):
+            svc = WecomOAuthService(db)
+            result = svc._find_user_org("uid-1", preferred_org_id="org-abc")
+
+        assert result is None
+
+
 class TestBuildQrUrl:
     """build_qr_url 测试"""
 

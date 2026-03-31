@@ -18,7 +18,11 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from core.crypto import aes_encrypt, aes_decrypt, generate_encrypt_key
-from services.org.config_resolver import OrgConfigResolver, AsyncOrgConfigResolver
+from services.org.config_resolver import (
+    OrgConfigResolver,
+    AsyncOrgConfigResolver,
+    _ConfigResolverCore,
+)
 
 
 # ── AES 加解密 ─────────────────────────────────────────
@@ -257,6 +261,52 @@ class TestOrgConfigResolver:
         # 用非企业专属 key 测试降级逻辑
         result = resolver.get("org-1", "some_ai_key")
         assert result == "system_ai_default"
+
+    def test_enterprise_key_no_fallback_for_all_keys(self, resolver, db):
+        """所有 ENTERPRISE_ONLY_KEYS 未配置时均返回 None，不降级到 .env"""
+        for key in _ConfigResolverCore.ENTERPRISE_ONLY_KEYS:
+            db.set_table("org_configs", None)  # 每个 key 查询都无结果
+            result = resolver.get("org-1", key)
+            assert result is None, f"Expected None for enterprise key '{key}', got {result!r}"
+
+    def test_list_orgs_with_wecom_bot_returns_configured_orgs(self, resolver, db):
+        """配了 bot_id + bot_secret 的企业被正确返回"""
+        # 1) 查 wecom_bot_id 的 org_ids
+        db.set_table("org_configs", [{"org_id": "org-abc"}])
+        # 2) _load_encrypted(org-abc, wecom_bot_id)
+        encrypted_bot_id = aes_encrypt("bot-123", TEST_KEY)
+        db.set_table("org_configs", {"config_value_encrypted": encrypted_bot_id})
+        # 3) _load_encrypted(org-abc, wecom_bot_secret)
+        encrypted_secret = aes_encrypt("secret-456", TEST_KEY)
+        db.set_table("org_configs", {"config_value_encrypted": encrypted_secret})
+        # 4) organizations 表取 corp_id
+        db.set_table("organizations", {"wecom_corp_id": "ww_corp_xyz"})
+
+        orgs = resolver.list_orgs_with_wecom_bot()
+        assert len(orgs) == 1
+        assert orgs[0]["org_id"] == "org-abc"
+        assert orgs[0]["bot_id"] == "bot-123"
+        assert orgs[0]["bot_secret"] == "secret-456"
+        assert orgs[0]["corp_id"] == "ww_corp_xyz"
+
+    def test_list_orgs_with_wecom_bot_empty_when_no_orgs(self, resolver, db):
+        """无任何配了 wecom_bot_id 的企业时返回空列表"""
+        db.set_table("org_configs", [])  # 无 org 配了 wecom_bot_id
+        orgs = resolver.list_orgs_with_wecom_bot()
+        assert orgs == []
+
+    def test_list_orgs_with_wecom_bot_skips_incomplete(self, resolver, db):
+        """有 bot_id 但无 bot_secret 的企业被跳过"""
+        # 1) 查 wecom_bot_id 的 org_ids — 返回一个 org
+        db.set_table("org_configs", [{"org_id": "org-incomplete"}])
+        # 2) _load_encrypted(org-incomplete, wecom_bot_id) — 有值
+        encrypted_bot_id = aes_encrypt("bot-999", TEST_KEY)
+        db.set_table("org_configs", {"config_value_encrypted": encrypted_bot_id})
+        # 3) _load_encrypted(org-incomplete, wecom_bot_secret) — 无值
+        db.set_table("org_configs", None)
+
+        orgs = resolver.list_orgs_with_wecom_bot()
+        assert orgs == []
 
     def test_encrypt_key_not_configured(self, db):
         """加密密钥未配置时报错"""

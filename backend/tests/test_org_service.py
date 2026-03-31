@@ -70,6 +70,13 @@ class FakeQueryBuilder:
         self._is_single = True
         return self
 
+    def maybe_single(self):
+        self._is_single = True
+        return self
+
+    def limit(self, n):
+        return self
+
     def order(self, col):
         return self
 
