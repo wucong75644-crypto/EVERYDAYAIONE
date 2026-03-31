@@ -38,11 +38,11 @@ class TestCodeToolsDefinition:
         assert "description" in params["properties"]
 
     def test_erp_query_all_return_format_documented(self):
-        """code_execute 描述中包含 erp_query_all 返回格式说明"""
+        """code_execute 描述中包含 erp_query_all 说明"""
         tool = build_code_tools()[0]
         desc = tool["function"]["description"]
-        assert '"list"' in desc
-        assert '"total"' in desc
+        assert "erp_query_all" in desc
+        assert "total" in desc
 
     def test_erp_query_return_documented(self):
         """code_execute 描述中包含 erp_query 说明"""
@@ -53,7 +53,28 @@ class TestCodeToolsDefinition:
 
     def test_routing_prompt_not_empty(self):
         assert "code_execute" in CODE_ROUTING_PROMPT
-        assert "数据聚合" in CODE_ROUTING_PROMPT
+        assert "route_to_chat" in CODE_ROUTING_PROMPT
+
+    def test_routing_prompt_no_routing_directives(self):
+        """CODE_ROUTING_PROMPT 不包含链路指令（能力驱动架构）"""
+        assert "数据聚合" not in CODE_ROUTING_PROMPT
+        assert "典型场景" not in CODE_ROUTING_PROMPT
+        assert "→ code_execute" not in CODE_ROUTING_PROMPT
+        assert "→ 仍用" not in CODE_ROUTING_PROMPT
+
+    def test_code_execute_desc_no_scenario_guidance(self):
+        """code_execute 描述不包含场景引导"""
+        tool = build_code_tools()[0]
+        desc = tool["function"]["description"]
+        assert "使用场景" not in desc
+        assert "适用于需要" not in desc
+
+    def test_code_execute_desc_mentions_cost(self):
+        """code_execute 描述说明了 erp_query_all 的耗时代价"""
+        tool = build_code_tools()[0]
+        desc = tool["function"]["description"]
+        assert "耗时较长" in desc
+        assert "60秒" in desc
 
 
 class TestAgentToolsIntegration:

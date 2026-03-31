@@ -325,7 +325,8 @@
       "Bash(ssh -o ConnectTimeout=5 root@47.110.94.25 \":*)",
       "Bash(python -m pytest tests/test_erp_sync_worker_pool.py -q --tb=short)",
       "Bash(./git-push.sh \"debug: kit refresh error=0 添加 traceback 日志\")",
-      "Bash(python -m pytest tests/test_erp_sync_worker_pool.py::TestThrottledKitRefresh -v --tb=short)"
+      "Bash(python -m pytest tests/test_erp_sync_worker_pool.py::TestThrottledKitRefresh -v --tb=short)",
+      "Bash(python -m pytest tests/test_code_tools.py tests/test_sandbox_functions.py tests/test_agent_tools.py -q --tb=short)"
     ]
   }
 }

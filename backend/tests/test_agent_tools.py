@@ -382,6 +382,40 @@ class TestErpRoutingPrompt:
         assert "基础编码" in ERP_ROUTING_PROMPT
         assert "无需手动重试" in ERP_ROUTING_PROMPT
 
+    def test_tool_capability_section(self):
+        """ERP_ROUTING_PROMPT 包含工具能力说明（能力驱动架构）"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        assert "local_*" in ERP_ROUTING_PROMPT
+        assert "erp_*" in ERP_ROUTING_PROMPT
+        assert "毫秒级" in ERP_ROUTING_PROMPT
+        assert "远程ERP API" in ERP_ROUTING_PROMPT
+
+    def test_data_freshness_section(self):
+        """ERP_ROUTING_PROMPT 包含数据新鲜度和同步警告降级规则"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        assert "同步警告" in ERP_ROUTING_PROMPT
+        assert "trigger_erp_sync" in ERP_ROUTING_PROMPT
+
+    def test_no_routing_directives(self):
+        """ERP_ROUTING_PROMPT 不包含链路指令"""
+        from config.erp_tools import ERP_ROUTING_PROMPT
+        assert "简单统计" not in ERP_ROUTING_PROMPT
+        assert "→ code_execute" not in ERP_ROUTING_PROMPT
+
+    def test_remote_tools_labeled(self):
+        """远程 ERP 工具描述包含"远程API"标识"""
+        from config.erp_tools import build_erp_tools
+        tools = build_erp_tools()
+        remote_tools = [
+            t for t in tools
+            if t["function"]["name"].startswith("erp_")
+            and t["function"]["name"] != "erp_execute"
+        ]
+        for tool in remote_tools:
+            desc = tool["function"]["description"]
+            assert "远程API" in desc, (
+                f"{tool['function']['name']} 缺少远程API标识"
+            )
 
 
 # ============================================================
