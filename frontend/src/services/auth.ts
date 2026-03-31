@@ -71,6 +71,13 @@ export async function getCurrentUser(): Promise<User> {
 }
 
 /**
+ * 获取企业名称（公开接口，登录页用）
+ */
+export async function getOrgNamePublic(orgId: string): Promise<{ name: string }> {
+  return request({ method: 'GET', url: `/org/public/${orgId}/name` });
+}
+
+/**
  * 获取企微扫码登录 URL
  */
 export async function getWecomQrUrl(orgId?: string): Promise<WecomQrUrlResponse> {

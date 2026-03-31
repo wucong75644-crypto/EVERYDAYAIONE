@@ -33,7 +33,7 @@ export default function AuthModal() {
     <Modal
       isOpen={isOpen}
       onClose={close}
-      title={mode === 'login' ? '用户登录' : '用户注册'}
+      title={mode === 'login' ? (urlOrgId ? '企业登录' : '用户登录') : '用户注册'}
       maxWidth="max-w-md"
     >
       {mode === 'login' ? (
