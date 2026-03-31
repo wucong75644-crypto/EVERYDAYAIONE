@@ -17,11 +17,25 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from services.wecom.access_token_manager import (
-    REDIS_KEY,
+    _redis_key,
     get_access_token,
     _fetch_and_cache_token,
 )
-from services.wecom.app_message_sender import send_text, send_markdown
+from services.wecom.app_message_sender import send_text, send_markdown, OrgWecomCreds
+
+# 测试用常量
+TEST_ORG_ID = "org_test"
+TEST_CORP_ID = "corp_test"
+TEST_SECRET = "secret_test"
+
+
+def _make_creds(agent_id: int = 1000006) -> OrgWecomCreds:
+    return OrgWecomCreds(
+        org_id=TEST_ORG_ID,
+        corp_id=TEST_CORP_ID,
+        agent_id=agent_id,
+        agent_secret=TEST_SECRET,
+    )
 
 
 # ============================================================
@@ -42,10 +56,10 @@ class TestAccessTokenManager:
             "services.wecom.access_token_manager.get_redis",
             new=AsyncMock(return_value=mock_redis),
         ):
-            token = await get_access_token()
+            token = await get_access_token(TEST_ORG_ID, TEST_CORP_ID, TEST_SECRET)
 
         assert token == "cached_token_abc"
-        mock_redis.get.assert_called_once_with(REDIS_KEY)
+        mock_redis.get.assert_called_once_with(_redis_key(TEST_ORG_ID))
 
     @pytest.mark.asyncio
     async def test_fetches_on_cache_miss(self):
@@ -70,16 +84,10 @@ class TestAccessTokenManager:
             "services.wecom.access_token_manager.get_redis",
             new=AsyncMock(return_value=mock_redis),
         ), patch(
-            "services.wecom.access_token_manager.get_settings",
-            return_value=MagicMock(
-                wecom_corp_id="corp123",
-                wecom_agent_secret="secret456",
-            ),
-        ), patch(
             "services.wecom.access_token_manager.httpx.AsyncClient",
             return_value=mock_client,
         ):
-            token = await _fetch_and_cache_token()
+            token = await _fetch_and_cache_token(TEST_ORG_ID, TEST_CORP_ID, TEST_SECRET)
 
         assert token == "new_token_xyz"
         mock_redis.set.assert_called_once()
@@ -87,14 +95,7 @@ class TestAccessTokenManager:
     @pytest.mark.asyncio
     async def test_returns_none_on_missing_config(self):
         """未配置 corp_id/secret → 返回 None"""
-        with patch(
-            "services.wecom.access_token_manager.get_settings",
-            return_value=MagicMock(
-                wecom_corp_id=None,
-                wecom_agent_secret=None,
-            ),
-        ):
-            token = await _fetch_and_cache_token()
+        token = await _fetch_and_cache_token(TEST_ORG_ID, None, None)
 
         assert token is None
 
@@ -129,15 +130,12 @@ class TestAccessTokenManager:
             "services.wecom.access_token_manager.get_redis",
             new=AsyncMock(return_value=mock_redis),
         ), patch(
-            "services.wecom.access_token_manager.get_settings",
-            return_value=MagicMock(
-                wecom_corp_id="corp", wecom_agent_secret="sec",
-            ),
-        ), patch(
             "services.wecom.access_token_manager.httpx.AsyncClient",
             return_value=mock_client,
         ):
-            token = await _fetch_and_cache_token(retries=3)
+            token = await _fetch_and_cache_token(
+                TEST_ORG_ID, TEST_CORP_ID, TEST_SECRET, retries=3,
+            )
 
         assert token == "retry_ok"
         assert call_count == 3
@@ -157,15 +155,12 @@ class TestAccessTokenManager:
             "services.wecom.access_token_manager.get_redis",
             new=AsyncMock(return_value=None),
         ), patch(
-            "services.wecom.access_token_manager.get_settings",
-            return_value=MagicMock(
-                wecom_corp_id="corp", wecom_agent_secret="sec",
-            ),
-        ), patch(
             "services.wecom.access_token_manager.httpx.AsyncClient",
             return_value=mock_client,
         ):
-            token = await _fetch_and_cache_token(retries=2)
+            token = await _fetch_and_cache_token(
+                TEST_ORG_ID, TEST_CORP_ID, TEST_SECRET, retries=2,
+            )
 
         assert token is None
 
@@ -189,17 +184,16 @@ class TestAppMessageSender:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
+        creds = _make_creds()
+
         with patch(
             "services.wecom.app_message_sender.get_access_token",
             new=AsyncMock(return_value="test_token"),
         ), patch(
-            "services.wecom.app_message_sender.get_settings",
-            return_value=MagicMock(wecom_agent_id=1000006),
-        ), patch(
             "services.wecom.app_message_sender.httpx.AsyncClient",
             return_value=mock_client,
         ):
-            ok = await send_text("user123", "你好")
+            ok = await send_text("user123", "你好", creds)
 
         assert ok is True
         call_kwargs = mock_client.post.call_args
@@ -219,17 +213,16 @@ class TestAppMessageSender:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
+        creds = _make_creds(agent_id=100)
+
         with patch(
             "services.wecom.app_message_sender.get_access_token",
             new=AsyncMock(return_value="test_token"),
         ), patch(
-            "services.wecom.app_message_sender.get_settings",
-            return_value=MagicMock(wecom_agent_id=100),
-        ), patch(
             "services.wecom.app_message_sender.httpx.AsyncClient",
             return_value=mock_client,
         ):
-            ok = await send_markdown("user123", "# Hello")
+            ok = await send_markdown("user123", "# Hello", creds)
 
         assert ok is True
         payload = mock_client.post.call_args.kwargs["json"]
@@ -239,11 +232,12 @@ class TestAppMessageSender:
     @pytest.mark.asyncio
     async def test_send_fails_no_token(self):
         """无 token → 返回 False"""
+        creds = _make_creds()
         with patch(
             "services.wecom.app_message_sender.get_access_token",
             new=AsyncMock(return_value=None),
         ):
-            ok = await send_text("user123", "hi")
+            ok = await send_text("user123", "hi", creds)
 
         assert ok is False
 
@@ -258,23 +252,22 @@ class TestAppMessageSender:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
+        creds = _make_creds(agent_id=100)
+
         with patch(
             "services.wecom.app_message_sender.get_access_token",
             new=AsyncMock(return_value="token"),
         ), patch(
-            "services.wecom.app_message_sender.get_settings",
-            return_value=MagicMock(wecom_agent_id=100),
-        ), patch(
             "services.wecom.app_message_sender.httpx.AsyncClient",
             return_value=mock_client,
         ):
-            ok = await send_text("user123", "hi")
+            ok = await send_text("user123", "hi", creds)
 
         assert ok is False
 
     @pytest.mark.asyncio
     async def test_custom_agent_id(self):
-        """自定义 agent_id 传递"""
+        """自定义 agent_id 传递（通过 creds）"""
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"errcode": 0, "errmsg": "ok"}
 
@@ -283,6 +276,8 @@ class TestAppMessageSender:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
+        creds = _make_creds(agent_id=999)
+
         with patch(
             "services.wecom.app_message_sender.get_access_token",
             new=AsyncMock(return_value="token"),
@@ -290,7 +285,7 @@ class TestAppMessageSender:
             "services.wecom.app_message_sender.httpx.AsyncClient",
             return_value=mock_client,
         ):
-            await send_text("user123", "hi", agent_id=999)
+            await send_text("user123", "hi", creds)
 
         payload = mock_client.post.call_args.kwargs["json"]
         assert payload["agentid"] == 999

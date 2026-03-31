@@ -194,10 +194,10 @@ class TestPushAPI:
 
     @pytest.mark.asyncio
     async def test_push_ws_disconnected(self):
-        """WS 未就绪 → 返回失败"""
+        """WS 未就绪 -> 返回失败"""
         from api.routes.wecom import push_message, WecomPushRequest
 
-        req = WecomPushRequest(user_id="u1", message="hello")
+        req = WecomPushRequest(user_id="u1", org_id="org-1", message="hello")
 
         with patch("wecom_ws_runner.get_ws_client", return_value=None):
             result = await push_message(req, MagicMock())
@@ -207,11 +207,11 @@ class TestPushAPI:
 
     @pytest.mark.asyncio
     async def test_push_with_explicit_chatid(self):
-        """指定 chatid → 直接发送"""
+        """指定 chatid -> 直接发送"""
         from api.routes.wecom import push_message, WecomPushRequest
 
         req = WecomPushRequest(
-            user_id="u1", message="hello", chatid="chat_abc",
+            user_id="u1", org_id="org-1", message="hello", chatid="chat_abc",
         )
 
         mock_ws = MagicMock()
@@ -231,10 +231,10 @@ class TestPushAPI:
 
     @pytest.mark.asyncio
     async def test_push_lookup_chatid(self):
-        """未指定 chatid → 查找映射"""
+        """未指定 chatid -> 查找映射"""
         from api.routes.wecom import push_message, WecomPushRequest
 
-        req = WecomPushRequest(user_id="u1", message="hi")
+        req = WecomPushRequest(user_id="u1", org_id="org-1", message="hi")
 
         mock_ws = MagicMock()
         mock_ws.is_connected = True
@@ -261,10 +261,10 @@ class TestPushAPI:
 
     @pytest.mark.asyncio
     async def test_push_no_chatid_found(self):
-        """未指定 chatid + 查找失败 → 返回错误"""
+        """未指定 chatid + 查找失败 -> 返回错误"""
         from api.routes.wecom import push_message, WecomPushRequest
 
-        req = WecomPushRequest(user_id="u1", message="hi")
+        req = WecomPushRequest(user_id="u1", org_id="org-1", message="hi")
 
         mock_ws = MagicMock()
         mock_ws.is_connected = True

@@ -48,6 +48,9 @@ def _make_reply_ctx(channel: str = "smart_robot") -> WecomReplyContext:
         channel="app",
         wecom_userid="user_abc",
         agent_id=1000006,
+        org_id="org_test",
+        corp_id="corp_test",
+        agent_secret="secret_test",
     )
 
 
@@ -994,7 +997,11 @@ class TestSendMediaToWecom:
                 ctx, ["https://img.example.com/1.png"], "image", "m1",
             )
 
-        mock_send_img.assert_called_once_with("user_abc", "mid1", 1000006)
+        mock_send_img.assert_called_once()
+        call_args = mock_send_img.call_args
+        assert call_args[0][0] == "user_abc"
+        assert call_args[0][1] == "mid1"
+        assert call_args[1]["creds"].agent_id == 1000006
 
     @pytest.mark.asyncio
     async def test_app_channel_upload_failure_fallback(self):

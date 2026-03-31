@@ -259,7 +259,7 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
                 logger.warning(f"Wecom routing failed | error={agent_raw}")
                 await self._handle_chat_fallback(
                     user_id, conversation_id, message_id,
-                    text_content, reply_ctx,
+                    text_content, reply_ctx, org_id=org_id,
                 )
                 return
 
@@ -273,7 +273,7 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
                 await self._handle_chat_response(
                     user_id, conversation_id, message_id,
                     text_content, reply_ctx, agent_result, memory_prompt,
-                    image_urls=image_urls,
+                    image_urls=image_urls, org_id=org_id,
                 )
             elif gen_type == GenerationType.IMAGE:
                 await self._handle_image_response(
@@ -290,7 +290,7 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
             else:
                 await self._handle_chat_fallback(
                     user_id, conversation_id, message_id,
-                    text_content, reply_ctx,
+                    text_content, reply_ctx, org_id=org_id,
                 )
 
         except Exception as e:

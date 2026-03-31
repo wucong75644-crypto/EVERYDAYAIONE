@@ -50,8 +50,12 @@ async def get_qr_url(
         # per-org 模式：从 org_configs 读取该企业的自建应用凭证
         from services.org.config_resolver import OrgConfigResolver
         resolver = OrgConfigResolver(db)
-        org = db.table("organizations").select("wecom_corp_id").eq("id", org_id).maybe_single().execute()
-        corp_id = (org.data or {}).get("wecom_corp_id") if org else None
+        org = db.table("organizations").select("wecom_corp_id, status").eq("id", org_id).maybe_single().execute()
+        if not org or not org.data:
+            raise HTTPException(status_code=404, detail="企业不存在")
+        if org.data.get("status") != "active":
+            raise HTTPException(status_code=400, detail="企业已停用")
+        corp_id = org.data.get("wecom_corp_id")
         agent_id = resolver.get(org_id, "wecom_agent_id")
         if not corp_id or not agent_id:
             raise HTTPException(status_code=400, detail="该企业未配置企微自建应用（Corp ID 或 Agent ID 缺失）")

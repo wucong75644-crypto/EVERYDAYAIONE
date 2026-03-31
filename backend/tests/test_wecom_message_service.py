@@ -70,6 +70,9 @@ def _make_reply_ctx(channel: str = "smart_robot") -> WecomReplyContext:
         channel="app",
         wecom_userid="user_abc",
         agent_id=1000006,
+        org_id="org_test",
+        corp_id="corp_test",
+        agent_secret="secret_test",
     )
 
 
@@ -148,11 +151,11 @@ class TestReplyText:
         ):
             await svc._reply_text(ctx, "hi from app")
 
-        mock_send.assert_called_once_with(
-            wecom_userid="user_abc",
-            content="hi from app",
-            agent_id=1000006,
-        )
+        mock_send.assert_called_once()
+        call_kwargs = mock_send.call_args.kwargs
+        assert call_kwargs["wecom_userid"] == "user_abc"
+        assert call_kwargs["content"] == "hi from app"
+        assert call_kwargs["creds"].agent_id == 1000006
 
     @pytest.mark.asyncio
     async def test_app_channel_markdown(self):
@@ -223,11 +226,11 @@ class TestPushStreamChunk:
 
             # finish=True → 发送完整内容（纯文本走 send_text）
             await svc._push_stream_chunk(ctx, "s1", "full text", finish=True)
-            mock_send.assert_called_once_with(
-                wecom_userid="user_abc",
-                content="full text",
-                agent_id=1000006,
-            )
+            mock_send.assert_called_once()
+            call_kwargs = mock_send.call_args.kwargs
+            assert call_kwargs["wecom_userid"] == "user_abc"
+            assert call_kwargs["content"] == "full text"
+            assert call_kwargs["creds"].agent_id == 1000006
 
     @pytest.mark.asyncio
     async def test_app_finish_with_markdown_sends_markdown(self):
@@ -405,11 +408,11 @@ class TestSendAppMessage:
         ):
             await svc._send_app_message(ctx, "普通文本消息")
 
-        mock_send.assert_called_once_with(
-            wecom_userid="user_abc",
-            content="普通文本消息",
-            agent_id=1000006,
-        )
+        mock_send.assert_called_once()
+        call_kwargs = mock_send.call_args.kwargs
+        assert call_kwargs["wecom_userid"] == "user_abc"
+        assert call_kwargs["content"] == "普通文本消息"
+        assert call_kwargs["creds"].agent_id == 1000006
 
     @pytest.mark.asyncio
     async def test_markdown_sends_markdown(self):

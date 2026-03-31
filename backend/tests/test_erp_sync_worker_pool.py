@@ -247,15 +247,13 @@ class TestCreateClient:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_none_org_configured_returns_client(self):
+    async def test_none_org_returns_none(self):
+        """org_id=None -> 散客无 ERP，直接返回 None"""
         pool = _make_pool()
-        mock_client = MagicMock()
-        mock_client.is_configured = True
 
-        with patch("services.kuaimai.client.KuaiMaiClient", return_value=mock_client):
-            result = await pool._create_client(None)
+        result = await pool._create_client(None)
 
-        assert result is mock_client
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_org_resolver_failure_returns_none(self):
