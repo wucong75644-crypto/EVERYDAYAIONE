@@ -274,6 +274,122 @@ class TestUpsertDocumentItems:
         count = await service.upsert_document_items(rows)
         assert count == 5
 
+    @pytest.mark.asyncio
+    async def test_orm_fallback_on_conflict_includes_org_id(self):
+        """ORM 降级路径 on_conflict 包含 org_id"""
+        db = MockErpAsyncDBClient()
+        mock_table = MagicMock()
+        mock_table.upsert.return_value.execute = AsyncMock(
+            return_value=MagicMock(),
+        )
+        db.table = MagicMock(return_value=mock_table)
+
+        with patch("services.kuaimai.erp_sync_service.get_settings") as ms:
+            settings = MagicMock()
+            settings.erp_sync_initial_days = 90
+            settings.erp_sync_shard_days = 7
+            ms.return_value = settings
+            from services.kuaimai.erp_sync_service import ErpSyncService
+            service = ErpSyncService(db)
+
+        rows = [{"doc_type": "order", "doc_id": "ORD1", "item_index": 0}]
+        await service.upsert_document_items(rows)
+
+        # 验证 upsert 调用的 on_conflict 参数包含 org_id
+        call_kwargs = mock_table.upsert.call_args
+        on_conflict_str = call_kwargs[1].get(
+            "on_conflict", call_kwargs[0][1] if len(call_kwargs[0]) > 1 else "",
+        )
+        assert "org_id" in on_conflict_str
+
+
+class TestWriteDocGroupTxnOnConflict:
+    """_write_doc_group_txn ON CONFLICT 生成逻辑"""
+
+    @pytest.mark.asyncio
+    async def test_insert_sql_contains_on_conflict(self):
+        """INSERT 语句包含 ON CONFLICT DO UPDATE"""
+        from services.kuaimai.erp_sync_persistence import (
+            _write_doc_group_txn,
+        )
+        mock_conn = AsyncMock()
+        rows = [{
+            "doc_type": "order", "doc_id": "ORD1", "item_index": 0,
+            "org_id": "org-123", "outer_id": "A001", "quantity": 10,
+        }]
+
+        await _write_doc_group_txn(mock_conn, "order", "ORD1", rows)
+
+        # 收集所有 execute 调用的 SQL
+        sqls = [
+            call.args[0] for call in mock_conn.execute.call_args_list
+        ]
+        # 至少一条 INSERT 包含 ON CONFLICT
+        insert_sqls = [s for s in sqls if "INSERT" in s]
+        assert len(insert_sqls) == 1
+        assert "ON CONFLICT" in insert_sqls[0]
+        assert "DO UPDATE SET" in insert_sqls[0]
+
+    @pytest.mark.asyncio
+    async def test_conflict_cols_not_in_update_set(self):
+        """唯一约束列不出现在 SET 子句中"""
+        from services.kuaimai.erp_sync_persistence import (
+            _CONFLICT_COLS,
+            _write_doc_group_txn,
+        )
+        mock_conn = AsyncMock()
+        rows = [{
+            "doc_type": "order", "doc_id": "ORD1", "item_index": 0,
+            "org_id": "org-123", "outer_id": "A001",
+        }]
+
+        await _write_doc_group_txn(mock_conn, "order", "ORD1", rows)
+
+        insert_sql = [
+            call.args[0] for call in mock_conn.execute.call_args_list
+            if "INSERT" in call.args[0]
+        ][0]
+        # SET 子句部分
+        set_part = insert_sql.split("DO UPDATE SET")[-1]
+        for col in _CONFLICT_COLS:
+            assert f"{col} = EXCLUDED.{col}" not in set_part
+
+    @pytest.mark.asyncio
+    async def test_delete_runs_before_insert(self):
+        """DELETE 在 INSERT 之前执行"""
+        from services.kuaimai.erp_sync_persistence import (
+            _write_doc_group_txn,
+        )
+        mock_conn = AsyncMock()
+        rows = [{
+            "doc_type": "order", "doc_id": "ORD1", "item_index": 0,
+            "org_id": "org-123", "outer_id": "A001",
+        }]
+
+        await _write_doc_group_txn(mock_conn, "order", "ORD1", rows)
+
+        sqls = [
+            call.args[0] for call in mock_conn.execute.call_args_list
+        ]
+        delete_idx = next(i for i, s in enumerate(sqls) if "DELETE" in s)
+        insert_idx = next(i for i, s in enumerate(sqls) if "INSERT" in s)
+        assert delete_idx < insert_idx
+
+
+class TestConflictColsConstant:
+    """_CONFLICT_COLS 模块常量"""
+
+    def test_matches_db_constraint(self):
+        """常量与数据库唯一约束列一致"""
+        from services.kuaimai.erp_sync_persistence import _CONFLICT_COLS
+        expected = {"doc_type", "doc_id", "item_index", "org_id"}
+        assert _CONFLICT_COLS == expected
+
+    def test_is_frozen(self):
+        """常量是 frozenset（不可变）"""
+        from services.kuaimai.erp_sync_persistence import _CONFLICT_COLS
+        assert isinstance(_CONFLICT_COLS, frozenset)
+
 
 # ============================================================
 # TestRunAggregation — 聚合计算
