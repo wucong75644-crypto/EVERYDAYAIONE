@@ -51,6 +51,7 @@ export default function WecomCallback() {
           try {
             const orgData = JSON.parse(atob(orgB64));
             setCurrentOrg(orgData);
+            localStorage.setItem('login_org_id', orgData.org_id);
           } catch { /* ignore invalid org data */ }
         }
 

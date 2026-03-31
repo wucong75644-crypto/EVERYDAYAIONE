@@ -56,9 +56,11 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   };
 
   const handleLogout = () => {
+    // 保留企业专属链接：退出后跳回企业登录页
+    const loginOrgId = localStorage.getItem('login_org_id');
     clearAuth();
     onClose();
-    navigate('/');
+    navigate(loginOrgId ? `/?org=${loginOrgId}` : '/');
   };
 
   const handleRefresh = async () => {
