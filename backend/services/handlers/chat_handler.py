@@ -230,7 +230,9 @@ class ChatHandler(ChatRoutingMixin, ChatStreamSupportMixin, ChatContextMixin, Ba
             # 3. 创建适配器并流式生成
             from services.adapters.factory import create_chat_adapter
 
-            self._adapter = create_chat_adapter(model_id)
+            self._adapter = create_chat_adapter(
+                model_id, org_id=self.org_id, db=self.db,
+            )
             logger.info(
                 f"Stream generate starting | model={model_id} | "
                 f"adapter={type(self._adapter).__name__} | task={task_id}"

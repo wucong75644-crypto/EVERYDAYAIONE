@@ -429,9 +429,35 @@ DEFAULT_VIDEO_MODEL_ID = DEFAULT_VIDEO_MODEL
 # ============================================================
 
 
+def _resolve_ai_key(
+    org_id: Optional[str],
+    provider: str,
+    settings_attr: str,
+    db=None,
+) -> Optional[str]:
+    """获取 AI Key：企业自配 > 平台默认。
+
+    Args:
+        org_id: 企业 ID（None=散客，用平台默认）
+        provider: 提供商标识（dashscope/openrouter/kie/google）
+        settings_attr: settings 上的属性名（如 dashscope_api_key）
+        db: 数据库实例（有 org_id 时必须传入）
+    """
+    settings = get_settings()
+    if org_id and db:
+        from services.org.config_resolver import OrgConfigResolver
+        resolver = OrgConfigResolver(db)
+        org_key = resolver.get(org_id, f"ai_{provider}_api_key")
+        if org_key:
+            return org_key
+    return getattr(settings, settings_attr, None)
+
+
 def create_chat_adapter(
     model_id: Optional[str] = None,
     stream_timeout: Optional[float] = None,
+    org_id: Optional[str] = None,
+    db=None,
 ) -> BaseChatAdapter:
     """
     根据模型 ID 创建对应的聊天适配器
@@ -439,6 +465,8 @@ def create_chat_adapter(
     Args:
         model_id: 模型 ID，为空则使用默认模型
         stream_timeout: 流式超时（秒），为空则根据模型类型自动解析
+        org_id: 企业 ID（BYOK 时用企业自己的 Key）
+        db: 数据库实例（BYOK 时需要读 org_configs）
 
     Returns:
         对应 Provider 的聊天适配器实例
@@ -469,26 +497,29 @@ def create_chat_adapter(
         f"Chat adapter created | model={actual_model_id} | "
         f"provider={config.provider.value} | "
         f"provider_model={config.provider_model} | timeout={stream_timeout}s"
+        f"{f' | org_id={org_id}' if org_id else ''}"
     )
 
-    # 根据 Provider 创建适配器
+    # 根据 Provider 创建适配器（AI Key 支持 BYOK：企业自配 > 平台默认）
     if config.provider == ModelProvider.KIE:
         from .kie import KieClient, KieChatAdapter
 
-        if not settings.kie_api_key:
+        api_key = _resolve_ai_key(org_id, "kie", "kie_api_key", db)
+        if not api_key:
             raise ValueError("KIE API Key 未配置")
 
-        client = KieClient(settings.kie_api_key, stream_timeout=stream_timeout)
+        client = KieClient(api_key, stream_timeout=stream_timeout)
         return KieChatAdapter(client, config.provider_model)
 
     elif config.provider == ModelProvider.DASHSCOPE:
         from .dashscope import DashScopeChatAdapter
 
-        if not settings.dashscope_api_key:
+        api_key = _resolve_ai_key(org_id, "dashscope", "dashscope_api_key", db)
+        if not api_key:
             raise ValueError("DashScope API Key 未配置")
 
         return DashScopeChatAdapter(
-            api_key=settings.dashscope_api_key,
+            api_key=api_key,
             model=config.provider_model,
             base_url=settings.dashscope_base_url,
             stream_timeout=stream_timeout,
@@ -497,11 +528,12 @@ def create_chat_adapter(
     elif config.provider == ModelProvider.OPENROUTER:
         from .openrouter import OpenRouterChatAdapter
 
-        if not settings.openrouter_api_key:
+        api_key = _resolve_ai_key(org_id, "openrouter", "openrouter_api_key", db)
+        if not api_key:
             raise ValueError("OpenRouter API Key 未配置")
 
         return OpenRouterChatAdapter(
-            api_key=settings.openrouter_api_key,
+            api_key=api_key,
             model=config.provider_model,
             base_url=settings.openrouter_base_url,
             app_title=settings.openrouter_app_title,
@@ -509,16 +541,15 @@ def create_chat_adapter(
         )
 
     elif config.provider == ModelProvider.GOOGLE:
-        # Phase 6：Google SDK 管理自己的超时
         from .google import GoogleChatAdapter
 
-        google_api_key = getattr(settings, 'google_api_key', None)
-        if not google_api_key:
+        api_key = _resolve_ai_key(org_id, "google", "google_api_key", db)
+        if not api_key:
             raise ValueError("Google API Key 未配置")
 
         return GoogleChatAdapter(
             model_id=config.provider_model,
-            api_key=google_api_key,
+            api_key=api_key,
         )
 
     else:

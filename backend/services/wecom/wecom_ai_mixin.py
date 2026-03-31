@@ -130,7 +130,7 @@ class WecomAIMixin:
             image_urls=image_urls,
         )
 
-        adapter = create_chat_adapter(model_id)
+        adapter = create_chat_adapter(model_id, db=self.db)
         try:
             await self._stream_and_reply(adapter, messages, reply_ctx, message_id)
         finally:
@@ -341,7 +341,7 @@ class WecomAIMixin:
         reply_ctx: WecomReplyContext,
     ) -> None:
         """兜底：默认模型直接聊天（Agent Loop 完全失败时）"""
-        adapter = create_chat_adapter(DEFAULT_MODEL_ID)
+        adapter = create_chat_adapter(DEFAULT_MODEL_ID, db=self.db)
         try:
             messages = await self._build_chat_messages(
                 user_id=user_id,
