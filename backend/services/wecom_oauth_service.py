@@ -47,6 +47,7 @@ class WecomOAuthService:
         self,
         state_type: str = "login",
         user_id: Optional[str] = None,
+        org_id: Optional[str] = None,
     ) -> str:
         """
         生成 OAuth state token 并存入 Redis。
@@ -54,6 +55,7 @@ class WecomOAuthService:
         Args:
             state_type: "login"（扫码登录）或 "bind"（账号绑定）
             user_id: bind 模式下的当前用户 ID
+            org_id: 企业 ID（per-org 扫码登录时必传）
 
         Returns:
             state token 字符串
@@ -62,6 +64,7 @@ class WecomOAuthService:
         value = json.dumps({
             "type": state_type,
             "user_id": user_id,
+            "org_id": org_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
 
@@ -70,7 +73,7 @@ class WecomOAuthService:
             raise RuntimeError("Redis 不可用，无法生成 OAuth state")
 
         await redis.set(f"{OAUTH_STATE_PREFIX}{state}", value, ex=OAUTH_STATE_TTL)
-        logger.debug(f"OAuth state generated | type={state_type} | user_id={user_id}")
+        logger.debug(f"OAuth state generated | type={state_type} | user_id={user_id} | org_id={org_id}")
         return state
 
     async def validate_state(self, state: str) -> dict:
@@ -101,12 +104,21 @@ class WecomOAuthService:
     # 企微 API 调用
     # ----------------------------------------------------------------
 
-    async def exchange_code(self, code: str) -> dict:
+    async def exchange_code(
+        self,
+        code: str,
+        org_id: Optional[str] = None,
+        corp_id: Optional[str] = None,
+        agent_secret: Optional[str] = None,
+    ) -> dict:
         """
         用 OAuth code 换取企微 userid。
 
         Args:
             code: 企微授权码
+            org_id: 企业 ID（per-org 模式）
+            corp_id: 企微 corp_id（per-org 模式）
+            agent_secret: 自建应用 secret（per-org 模式）
 
         Returns:
             {"userid": str, "user_ticket": str|None}
@@ -114,7 +126,14 @@ class WecomOAuthService:
         Raises:
             ValueError: 非企业成员或 API 调用失败
         """
-        access_token = await get_access_token()
+        if org_id and corp_id and agent_secret:
+            access_token = await get_access_token(org_id, corp_id, agent_secret)
+        else:
+            # 兼容旧逻辑（bind 模式暂不走 per-org）
+            s = self.settings
+            access_token = await get_access_token(
+                org_id or "system", s.wecom_corp_id or "", s.wecom_agent_secret or "",
+            )
         if not access_token:
             raise ValueError("获取企微 access_token 失败")
 
@@ -154,22 +173,27 @@ class WecomOAuthService:
         self,
         wecom_userid: str,
         nickname: Optional[str] = None,
+        org_id: Optional[str] = None,
+        corp_id: Optional[str] = None,
     ) -> dict:
         """
         企微用户登录或自动创建账号。
 
         查找 wecom_user_mappings 中的映射：
-        - 找到 → 直接登录（生成 JWT）
-        - 未找到 → 创建用户 + 映射 → 登录
+        - 找到 → 直接登录（生成 JWT）+ 返回企业信息
+        - 未找到 → 创建用户 + 映射 + 加入企业 → 登录
 
         Args:
             wecom_userid: 企微用户 ID
             nickname: 企微昵称（可选）
+            org_id: 企业 ID（per-org 登录时传入）
+            corp_id: 企微 corp_id（per-org 登录时传入）
 
         Returns:
-            {"token": {...}, "user": {...}}
+            {"token": {...}, "user": {...}, "org": {...}|None}
         """
-        corp_id = self.settings.wecom_corp_id
+        if not corp_id:
+            corp_id = self.settings.wecom_corp_id
 
         # 查找已有映射
         mapping = (
@@ -183,10 +207,33 @@ class WecomOAuthService:
 
         if mapping.data:
             user_id = mapping.data[0]["user_id"]
-            return await self._login_existing_user(user_id, wecom_userid)
+            result = await self._login_existing_user(user_id, wecom_userid)
+        else:
+            result = await self._create_and_login(wecom_userid, corp_id, nickname, org_id)
 
-        # 未找到映射，创建新用户
-        return await self._create_and_login(wecom_userid, corp_id, nickname)
+        # 附加企业信息
+        user_id = result["user"]["id"]
+        result["org"] = self._find_user_org(user_id, org_id)
+        return result
+
+    def _find_user_org(self, user_id: str, preferred_org_id: Optional[str] = None) -> Optional[dict]:
+        """查用户所属企业，优先返回指定企业"""
+        query = (
+            self.db.table("org_members")
+            .select("org_id, role, organizations(id, name, status)")
+            .eq("user_id", user_id)
+            .eq("status", "active")
+        )
+        if preferred_org_id:
+            query = query.eq("org_id", preferred_org_id)
+        result = query.limit(1).execute()
+        if not result.data:
+            return None
+        row = result.data[0]
+        org = row.get("organizations")
+        if not org or org.get("status") != "active":
+            return None
+        return {"org_id": org["id"], "name": org["name"], "role": row["role"]}
 
     async def _login_existing_user(self, user_id: str, wecom_userid: str) -> dict:
         """已有映射的用户直接登录"""
@@ -221,8 +268,9 @@ class WecomOAuthService:
         wecom_userid: str,
         corp_id: str,
         nickname: Optional[str],
+        org_id: Optional[str] = None,
     ) -> dict:
-        """创建新用户 + 映射 + 登录"""
+        """创建新用户 + 映射 + 加入企业 + 登录"""
         display_name = nickname or f"企微用户_{wecom_userid[:8]}"
 
         # 创建系统用户
@@ -255,13 +303,31 @@ class WecomOAuthService:
         }).execute()
 
         # 创建映射
-        self.db.table("wecom_user_mappings").insert({
+        mapping_data = {
             "wecom_userid": wecom_userid,
             "corp_id": corp_id,
             "user_id": user_id,
             "channel": "oauth",
             "wecom_nickname": display_name,
-        }).execute()
+        }
+        if org_id:
+            mapping_data["org_id"] = org_id
+        self.db.table("wecom_user_mappings").insert(mapping_data).execute()
+
+        # 自动加入企业成员
+        if org_id:
+            try:
+                self.db.table("org_members").insert({
+                    "org_id": org_id,
+                    "user_id": user_id,
+                    "role": "member",
+                    "status": "active",
+                }).execute()
+            except Exception as e:
+                logger.error(
+                    f"OAuth auto add org member failed | org_id={org_id} | "
+                    f"user_id={user_id} | error={e}"
+                )
 
         logger.info(
             f"Wecom OAuth: new user created | user_id={user_id} | "
@@ -430,18 +496,25 @@ class WecomOAuthService:
     # QR URL 生成
     # ----------------------------------------------------------------
 
-    def build_qr_url(self, state: str) -> dict:
+    def build_qr_url(
+        self,
+        state: str,
+        corp_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> dict:
         """
         构建企微扫码登录 URL 和拆分参数。
 
         Args:
             state: OAuth state token
+            corp_id: 企微 corp_id（per-org 模式传入，否则用系统默认）
+            agent_id: 自建应用 agent_id（per-org 模式传入）
 
         Returns:
             包含 qr_url 和拆分参数的字典
         """
-        corp_id = self.settings.wecom_corp_id
-        agent_id = str(self.settings.wecom_agent_id)
+        corp_id = corp_id or self.settings.wecom_corp_id
+        agent_id = agent_id or str(self.settings.wecom_agent_id or "")
         redirect_uri = self.settings.wecom_oauth_redirect_uri
 
         qr_url = (
