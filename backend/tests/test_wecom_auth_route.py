@@ -42,8 +42,8 @@ class TestGetQrUrl:
     """GET /auth/wecom/qr-url 测试"""
 
     @pytest.mark.asyncio
-    async def test_returns_qr_url_for_login(self):
-        """未登录 → 返回 login 模式 QR URL"""
+    async def test_returns_qr_url_for_login_with_org_id(self):
+        """org_id 指定 -> 返回 login 模式 QR URL（per-org）"""
         from api.routes.wecom_auth import get_qr_url
 
         mock_svc = MagicMock()
@@ -57,19 +57,56 @@ class TestGetQrUrl:
         }
 
         settings_mock = MagicMock()
-        settings_mock.wecom_corp_id = "ww_corp"
-        settings_mock.wecom_agent_id = 1000006
         settings_mock.wecom_oauth_redirect_uri = "https://example.com/api/auth/wecom/callback"
 
-        with patch("api.routes.wecom_auth.get_settings", return_value=settings_mock):
-            result = await get_qr_url(user_id=None, svc=mock_svc)
+        # mock db: organizations 查询返回 corp_id
+        mock_db = MagicMock()
+        org_chain = MagicMock()
+        org_chain.select.return_value = org_chain
+        org_chain.eq.return_value = org_chain
+        org_chain.maybe_single.return_value = org_chain
+        org_chain.execute.return_value = MagicMock(
+            data={"wecom_corp_id": "ww_corp", "status": "active"}
+        )
+        mock_db.table.return_value = org_chain
+
+        # mock resolver for agent_id
+        mock_resolver = MagicMock()
+        mock_resolver.get.return_value = "1000006"
+
+        with (
+            patch("api.routes.wecom_auth.get_settings", return_value=settings_mock),
+            patch("services.org.config_resolver.OrgConfigResolver", return_value=mock_resolver),
+        ):
+            result = await get_qr_url(
+                user_id=None, db=mock_db, org_id="org-1", svc=mock_svc,
+            )
 
         assert result["state"] == "state_123"
-        mock_svc.generate_state.assert_called_once_with("login", user_id=None)
+        mock_svc.generate_state.assert_called_once_with(
+            "login", user_id=None, org_id="org-1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_org_no_user_raises_400(self):
+        """未登录 + 无 org_id -> 400"""
+        from api.routes.wecom_auth import get_qr_url
+        from fastapi import HTTPException
+
+        mock_svc = MagicMock()
+        settings_mock = MagicMock()
+        settings_mock.wecom_oauth_redirect_uri = "https://example.com/callback"
+
+        with patch("api.routes.wecom_auth.get_settings", return_value=settings_mock):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_qr_url(
+                    user_id=None, db=MagicMock(), org_id=None, svc=mock_svc,
+                )
+            assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
     async def test_returns_qr_url_for_bind(self):
-        """已登录 → 返回 bind 模式 QR URL"""
+        """已登录 + 无 org_id -> 返回 bind 模式 QR URL"""
         from api.routes.wecom_auth import get_qr_url
 
         mock_svc = MagicMock()
@@ -82,9 +119,13 @@ class TestGetQrUrl:
         settings_mock.wecom_oauth_redirect_uri = "https://example.com/callback"
 
         with patch("api.routes.wecom_auth.get_settings", return_value=settings_mock):
-            result = await get_qr_url(user_id="uid-123", svc=mock_svc)
+            result = await get_qr_url(
+                user_id="uid-123", db=MagicMock(), org_id=None, svc=mock_svc,
+            )
 
-        mock_svc.generate_state.assert_called_once_with("bind", user_id="uid-123")
+        mock_svc.generate_state.assert_called_once_with(
+            "bind", user_id="uid-123", org_id=None,
+        )
 
 
 class TestOAuthCallback:

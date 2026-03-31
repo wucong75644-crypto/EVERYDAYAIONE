@@ -208,6 +208,9 @@ class WecomOAuthService:
         if mapping.data:
             user_id = mapping.data[0]["user_id"]
             result = await self._login_existing_user(user_id, wecom_userid)
+            # 确保已有用户在目标企业的 org_members 中
+            if org_id:
+                self._ensure_org_member(user_id, org_id)
         else:
             result = await self._create_and_login(wecom_userid, corp_id, nickname, org_id)
 
@@ -215,6 +218,27 @@ class WecomOAuthService:
         user_id = result["user"]["id"]
         result["org"] = self._find_user_org(user_id, org_id)
         return result
+
+    def _ensure_org_member(self, user_id: str, org_id: str) -> None:
+        """确保用户在 org_members 中，不在则自动加入"""
+        existing = (
+            self.db.table("org_members")
+            .select("user_id")
+            .eq("user_id", user_id)
+            .eq("org_id", org_id)
+            .maybe_single()
+            .execute()
+        )
+        if existing and existing.data:
+            return
+        try:
+            self.db.table("org_members").insert({
+                "org_id": org_id, "user_id": user_id,
+                "role": "member", "status": "active",
+            }).execute()
+            logger.info(f"OAuth: auto added org member | user_id={user_id} | org_id={org_id}")
+        except Exception as e:
+            logger.warning(f"OAuth: ensure org member failed | user_id={user_id} | org_id={org_id} | error={e}")
 
     def _find_user_org(self, user_id: str, preferred_org_id: Optional[str] = None) -> Optional[dict]:
         """查用户所属企业，优先返回指定企业"""

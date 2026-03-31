@@ -16,6 +16,18 @@ if str(backend_dir) not in sys.path:
 import httpx
 import pytest
 
+from services.wecom.app_message_sender import OrgWecomCreds
+
+
+def _make_creds(agent_id: int = 1000) -> OrgWecomCreds:
+    return OrgWecomCreds(
+        org_id="org_test",
+        corp_id="corp_test",
+        agent_id=agent_id,
+        agent_secret="secret_test",
+    )
+
+
 # ============================================================
 # TestSend — 底层 _send 函数
 # ============================================================
@@ -42,7 +54,7 @@ class TestSend:
 
             from services.wecom.app_message_sender import _send
 
-            result = await _send({"touser": "u1", "msgtype": "text"})
+            result = await _send({"touser": "u1", "msgtype": "text"}, _make_creds())
             assert result is True
 
     @pytest.mark.asyncio
@@ -54,7 +66,7 @@ class TestSend:
         ):
             from services.wecom.app_message_sender import _send
 
-            result = await _send({"touser": "u1"})
+            result = await _send({"touser": "u1"}, _make_creds())
             assert result is False
 
     @pytest.mark.asyncio
@@ -75,7 +87,7 @@ class TestSend:
 
             from services.wecom.app_message_sender import _send
 
-            result = await _send({"touser": "u1"})
+            result = await _send({"touser": "u1"}, _make_creds())
             assert result is False
 
     @pytest.mark.asyncio
@@ -93,7 +105,7 @@ class TestSend:
 
             from services.wecom.app_message_sender import _send
 
-            result = await _send({"touser": "u1"})
+            result = await _send({"touser": "u1"}, _make_creds())
             assert result is False
 
 
@@ -114,7 +126,8 @@ class TestSendFunctions:
         ) as mock_send:
             from services.wecom.app_message_sender import send_text
 
-            await send_text("user1", "hello", agent_id=1000)
+            creds = _make_creds(agent_id=1000)
+            await send_text("user1", "hello", creds)
 
             payload = mock_send.call_args[0][0]
             assert payload["touser"] == "user1"
@@ -131,7 +144,8 @@ class TestSendFunctions:
         ) as mock_send:
             from services.wecom.app_message_sender import send_markdown_v2
 
-            await send_markdown_v2("user1", "# 标题", agent_id=2000)
+            creds = _make_creds(agent_id=2000)
+            await send_markdown_v2("user1", "# 标题", creds)
 
             payload = mock_send.call_args[0][0]
             assert payload["touser"] == "user1"
@@ -148,7 +162,8 @@ class TestSendFunctions:
         ) as mock_send:
             from services.wecom.app_message_sender import send_image
 
-            await send_image("user1", "media_abc", agent_id=3000)
+            creds = _make_creds(agent_id=3000)
+            await send_image("user1", "media_abc", creds)
 
             payload = mock_send.call_args[0][0]
             assert payload["touser"] == "user1"
@@ -165,8 +180,9 @@ class TestSendFunctions:
         ) as mock_send:
             from services.wecom.app_message_sender import send_video
 
+            creds = _make_creds(agent_id=4000)
             await send_video(
-                "user1", "media_vid", title="T", description="D", agent_id=4000
+                "user1", "media_vid", creds, title="T", description="D",
             )
 
             payload = mock_send.call_args[0][0]
@@ -178,19 +194,16 @@ class TestSendFunctions:
             assert payload["video"]["description"] == "D"
 
     @pytest.mark.asyncio
-    async def test_send_text_default_agent_id(self):
-        """agent_id=None → 从配置读取"""
+    async def test_send_text_uses_creds_agent_id(self):
+        """creds.agent_id → payload agentid"""
         with patch(
             "services.wecom.app_message_sender._send",
             new=AsyncMock(return_value=True),
-        ) as mock_send, patch(
-            "services.wecom.app_message_sender.get_settings",
-        ) as mock_settings:
-            mock_settings.return_value.wecom_agent_id = 9999
-
+        ) as mock_send:
             from services.wecom.app_message_sender import send_text
 
-            await send_text("user1", "hi")
+            creds = _make_creds(agent_id=9999)
+            await send_text("user1", "hi", creds)
 
             payload = mock_send.call_args[0][0]
             assert payload["agentid"] == 9999
@@ -228,7 +241,8 @@ class TestUploadTempMedia:
 
             from services.wecom.app_message_sender import upload_temp_media
 
-            result = await upload_temp_media("https://example.com/img.png", "image")
+            creds = _make_creds()
+            result = await upload_temp_media("https://example.com/img.png", creds, "image")
             assert result == "mid123"
 
     @pytest.mark.asyncio
@@ -240,7 +254,8 @@ class TestUploadTempMedia:
         ):
             from services.wecom.app_message_sender import upload_temp_media
 
-            result = await upload_temp_media("https://example.com/img.png")
+            creds = _make_creds()
+            result = await upload_temp_media("https://example.com/img.png", creds)
             assert result is None
 
     @pytest.mark.asyncio
@@ -267,7 +282,8 @@ class TestUploadTempMedia:
 
             from services.wecom.app_message_sender import upload_temp_media
 
-            result = await upload_temp_media("https://example.com/img.png")
+            creds = _make_creds()
+            result = await upload_temp_media("https://example.com/img.png", creds)
             assert result is None
 
     @pytest.mark.asyncio
@@ -285,7 +301,8 @@ class TestUploadTempMedia:
 
             from services.wecom.app_message_sender import upload_temp_media
 
-            result = await upload_temp_media("https://example.com/img.png")
+            creds = _make_creds()
+            result = await upload_temp_media("https://example.com/img.png", creds)
             assert result is None
 
     @pytest.mark.asyncio
@@ -312,7 +329,8 @@ class TestUploadTempMedia:
 
             from services.wecom.app_message_sender import upload_temp_media
 
-            result = await upload_temp_media("https://example.com/vid.mp4", "video")
+            creds = _make_creds()
+            result = await upload_temp_media("https://example.com/vid.mp4", creds, "video")
             assert result == "vid1"
             # 检查 timeout=60.0
             call_kwargs = mock_client_cls.call_args

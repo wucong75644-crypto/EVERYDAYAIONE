@@ -103,6 +103,7 @@ class WecomAIMixin:
         agent_result: "AgentResult",
         memory_prompt: Optional[str],
         image_urls: Optional[List[str]] = None,
+        org_id: Optional[str] = None,
     ) -> None:
         """处理 CHAT 类型：direct_reply 直接回复 / 否则流式生成"""
         if agent_result.direct_reply:
@@ -130,7 +131,7 @@ class WecomAIMixin:
             image_urls=image_urls,
         )
 
-        adapter = create_chat_adapter(model_id, db=self.db)
+        adapter = create_chat_adapter(model_id, org_id=org_id, db=self.db)
         try:
             await self._stream_and_reply(adapter, messages, reply_ctx, message_id)
         finally:
@@ -339,9 +340,10 @@ class WecomAIMixin:
         message_id: str,
         text_content: str,
         reply_ctx: WecomReplyContext,
+        org_id: Optional[str] = None,
     ) -> None:
         """兜底：默认模型直接聊天（Agent Loop 完全失败时）"""
-        adapter = create_chat_adapter(DEFAULT_MODEL_ID, db=self.db)
+        adapter = create_chat_adapter(DEFAULT_MODEL_ID, org_id=org_id, db=self.db)
         try:
             messages = await self._build_chat_messages(
                 user_id=user_id,

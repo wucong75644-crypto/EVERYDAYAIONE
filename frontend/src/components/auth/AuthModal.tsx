@@ -5,6 +5,7 @@
  * 使用 useAuthModalStore 管理状态
  */
 
+import { useMemo } from 'react';
 import Modal from '../common/Modal';
 import LoginForm from './LoginForm';
 import RegisterForm from './RegisterForm';
@@ -14,7 +15,10 @@ export default function AuthModal() {
   const { isOpen, mode, close, switchMode } = useAuthModalStore();
 
   // 从 URL 读取企业 ID（企业专属登录链接 ?org=xxx）
-  const urlOrgId = new URLSearchParams(window.location.search).get('org') || undefined;
+  const urlOrgId = useMemo(
+    () => new URLSearchParams(window.location.search).get('org') || undefined,
+    [],
+  );
 
   const handleSuccess = () => {
     // 登录/注册成功后关闭弹窗

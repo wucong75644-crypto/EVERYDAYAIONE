@@ -139,6 +139,8 @@ class TestOrgConfigResolver:
             settings.kuaimai_app_secret = None
             settings.kuaimai_access_token = None
             settings.kuaimai_refresh_token = None
+            # 非企业专属 key，用于测试降级
+            settings.some_ai_key = "system_ai_default"
             mock_settings.return_value = settings
             return OrgConfigResolver(db)
 
@@ -151,16 +153,28 @@ class TestOrgConfigResolver:
         assert result == "org_secret_key"
 
     def test_get_fallback_to_system_default(self, resolver, db):
-        """企业未配置时降级到系统默认"""
+        """企业未配置非企业专属 key 时降级到系统默认"""
         db.set_table("org_configs", None)  # 查询无结果
 
+        result = resolver.get("org-1", "some_ai_key")
+        assert result == "system_ai_default"
+
+    def test_get_enterprise_key_no_fallback(self, resolver, db):
+        """企业专属 key 未配置时返回 None，不降级到系统默认"""
+        db.set_table("org_configs", None)
+
         result = resolver.get("org-1", "kuaimai_app_key")
-        assert result == "system_default_key"
+        assert result is None
 
     def test_get_personal_returns_system_default(self, resolver):
-        """散客直接返回系统默认"""
+        """散客直接返回系统默认（非企业专属 key）"""
+        result = resolver.get(None, "some_ai_key")
+        assert result == "system_ai_default"
+
+    def test_get_personal_enterprise_key_returns_none(self, resolver):
+        """散客查询企业专属 key 返回 None"""
         result = resolver.get(None, "kuaimai_app_key")
-        assert result == "system_default_key"
+        assert result is None
 
     def test_get_nonexistent_key_returns_none(self, resolver, db):
         """系统也没有的 key 返回 None"""
@@ -230,7 +244,7 @@ class TestOrgConfigResolver:
             resolver.get_erp_credentials("org-1")
 
     def test_load_encrypted_db_error_returns_none(self, resolver, db):
-        """DB 查询异常时 _load_encrypted 返回 None（降级）"""
+        """DB 查询异常时 _load_encrypted 返回 None（降级到系统默认）"""
         from tests.test_org_service import FakeQueryBuilder
 
         # 创建一个会抛异常的 builder
@@ -240,9 +254,9 @@ class TestOrgConfigResolver:
 
         db._tables["org_configs"] = [ErrorBuilder()]
 
-        # get 应该降级到系统默认，不抛异常
-        result = resolver.get("org-1", "kuaimai_app_key")
-        assert result == "system_default_key"
+        # 用非企业专属 key 测试降级逻辑
+        result = resolver.get("org-1", "some_ai_key")
+        assert result == "system_ai_default"
 
     def test_encrypt_key_not_configured(self, db):
         """加密密钥未配置时报错"""
@@ -318,6 +332,8 @@ class TestAsyncOrgConfigResolver:
             settings.org_config_encrypt_key = TEST_KEY
             settings.kuaimai_app_key = "system_default_key"
             settings.kuaimai_app_secret = None
+            # 非企业专属 key，用于测试降级
+            settings.some_ai_key = "system_ai_default"
             mock_settings.return_value = settings
             return AsyncOrgConfigResolver(db)
 
@@ -332,17 +348,31 @@ class TestAsyncOrgConfigResolver:
 
     @pytest.mark.asyncio
     async def test_get_fallback_to_system_default(self, resolver, db):
-        """企业未配置时降级到系统默认"""
+        """企业未配置非企业专属 key 时降级到系统默认"""
+        db.set_table("org_configs", None)
+
+        result = await resolver.get("org-1", "some_ai_key")
+        assert result == "system_ai_default"
+
+    @pytest.mark.asyncio
+    async def test_get_enterprise_key_no_fallback(self, resolver, db):
+        """企业专属 key 未配置时返回 None"""
         db.set_table("org_configs", None)
 
         result = await resolver.get("org-1", "kuaimai_app_key")
-        assert result == "system_default_key"
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_get_personal_returns_system_default(self, resolver):
-        """散客直接返回系统默认"""
+        """散客直接返回系统默认（非企业专属 key）"""
+        result = await resolver.get(None, "some_ai_key")
+        assert result == "system_ai_default"
+
+    @pytest.mark.asyncio
+    async def test_get_personal_enterprise_key_returns_none(self, resolver):
+        """散客查询企业专属 key 返回 None"""
         result = await resolver.get(None, "kuaimai_app_key")
-        assert result == "system_default_key"
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_get_nonexistent_key_returns_none(self, resolver, db):
@@ -385,12 +415,13 @@ class TestAsyncOrgConfigResolver:
 
     @pytest.mark.asyncio
     async def test_load_encrypted_db_error_returns_none(self, resolver, db):
-        """DB 异常时 _load_encrypted 返回 None（降级）"""
+        """DB 异常时 _load_encrypted 返回 None（降级到系统默认）"""
         class ErrorBuilder(AsyncFakeQueryBuilder):
             async def execute(self):
                 raise RuntimeError("DB connection lost")
 
         db._tables["org_configs"] = [ErrorBuilder()]
 
-        result = await resolver.get("org-1", "kuaimai_app_key")
-        assert result == "system_default_key"
+        # 用非企业专属 key 测试降级逻辑
+        result = await resolver.get("org-1", "some_ai_key")
+        assert result == "system_ai_default"
