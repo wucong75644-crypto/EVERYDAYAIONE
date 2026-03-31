@@ -27,32 +27,51 @@ def _get_oauth_service(db: Database) -> WecomOAuthService:
 @router.get("/qr-url", summary="获取企微扫码登录 URL")
 async def get_qr_url(
     user_id: OptionalUserId,
+    db: Database,
+    org_id: str = Query(default=None, description="企业 ID（per-org 扫码登录）"),
     svc: WecomOAuthService = Depends(_get_oauth_service),
 ):
     """
     生成企微扫码登录 URL + state token。
 
-    - 未登录：登录流程（state.type = "login"）
-    - 已登录：绑定流程（state.type = "bind"）
-
-    返回完整 URL（用于全页跳转）和拆分参数（用于 JS SDK 嵌入）。
+    - org_id 不为空：使用该企业自己的 corp_id + agent_id 生成二维码
+    - org_id 为空 + 已登录：绑定流程
+    - org_id 为空 + 未登录：返回 503（需要指定企业）
     """
     settings = get_settings()
-
-    if not settings.wecom_corp_id or not settings.wecom_agent_id:
-        raise HTTPException(status_code=503, detail="企微配置缺失")
 
     if not settings.wecom_oauth_redirect_uri:
         raise HTTPException(status_code=503, detail="OAuth 回调地址未配置")
 
-    state_type = "bind" if user_id else "login"
+    corp_id = None
+    agent_id = None
+
+    if org_id:
+        # per-org 模式：从 org_configs 读取该企业的自建应用凭证
+        from services.org.config_resolver import OrgConfigResolver
+        resolver = OrgConfigResolver(db)
+        org = db.table("organizations").select("wecom_corp_id").eq("id", org_id).maybe_single().execute()
+        corp_id = (org.data or {}).get("wecom_corp_id") if org else None
+        agent_id = resolver.get(org_id, "wecom_agent_id")
+        if not corp_id or not agent_id:
+            raise HTTPException(status_code=400, detail="该企业未配置企微自建应用（Corp ID 或 Agent ID 缺失）")
+    else:
+        # 兼容旧逻辑：全局配置（bind 模式或无 org 参数）
+        if not user_id:
+            raise HTTPException(status_code=400, detail="请通过企业专属链接登录")
+        corp_id = settings.wecom_corp_id
+        agent_id = str(settings.wecom_agent_id) if settings.wecom_agent_id else None
+        if not corp_id or not agent_id:
+            raise HTTPException(status_code=503, detail="企微配置缺失")
+
+    state_type = "bind" if (user_id and not org_id) else "login"
     try:
-        state = await svc.generate_state(state_type, user_id=user_id)
+        state = await svc.generate_state(state_type, user_id=user_id, org_id=org_id)
     except Exception as e:
         logger.warning(f"Generate OAuth state failed | error={e}")
         raise HTTPException(status_code=503, detail="服务暂时不可用，请稍后重试")
 
-    return svc.build_qr_url(state)
+    return svc.build_qr_url(state, corp_id=corp_id, agent_id=agent_id)
 
 
 @router.get("/callback", summary="企微 OAuth 回调")
@@ -75,27 +94,54 @@ async def oauth_callback(
     try:
         # 1. 校验 state
         state_data = await svc.validate_state(state)
+        state_org_id = state_data.get("org_id")
 
-        # 2. 用 code 换取 userid
-        wecom_info = await svc.exchange_code(code)
+        # 2. 获取该企业的凭证（per-org 模式）
+        org_corp_id = None
+        org_agent_secret = None
+        if state_org_id:
+            from services.org.config_resolver import OrgConfigResolver
+            resolver = OrgConfigResolver(svc.db)
+            org = svc.db.table("organizations").select("wecom_corp_id").eq("id", state_org_id).maybe_single().execute()
+            org_corp_id = (org.data or {}).get("wecom_corp_id") if org else None
+            org_agent_secret = resolver.get(state_org_id, "wecom_agent_secret")
+
+        # 3. 用 code 换取 userid
+        wecom_info = await svc.exchange_code(
+            code,
+            org_id=state_org_id,
+            corp_id=org_corp_id,
+            agent_secret=org_agent_secret,
+        )
         wecom_userid = wecom_info["userid"]
 
-        # 3. 根据 state 类型处理
+        # 4. 根据 state 类型处理
         if state_data["type"] == "bind" and state_data.get("user_id"):
             result = await svc.bind_account(
                 user_id=state_data["user_id"],
                 wecom_userid=wecom_userid,
             )
         else:
-            result = await svc.login_or_create(wecom_userid)
+            result = await svc.login_or_create(
+                wecom_userid,
+                org_id=state_org_id,
+                corp_id=org_corp_id,
+            )
 
-        # 4. 成功 → 重定向到前端（带 token + user）
+        # 5. 成功 → 重定向到前端（带 token + user + org）
         token_json = json.dumps(result["token"])
         user_json = json.dumps(result["user"])
         token_b64 = base64.b64encode(token_json.encode()).decode()
         user_b64 = base64.b64encode(user_json.encode()).decode()
 
         redirect_url = f"{frontend_url}/auth/wecom/callback?token={token_b64}&user={user_b64}"
+
+        # 附加企业信息
+        org_info = result.get("org")
+        if org_info:
+            org_b64 = base64.b64encode(json.dumps(org_info).encode()).decode()
+            redirect_url += f"&org={org_b64}"
+
         return RedirectResponse(url=redirect_url, status_code=302)
 
     except ValueError as e:

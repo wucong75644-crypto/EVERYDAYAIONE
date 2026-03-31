@@ -21,7 +21,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 export default function WecomCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { setToken, setUser } = useAuthStore();
+  const { setToken, setUser, setCurrentOrg } = useAuthStore();
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -44,6 +44,15 @@ export default function WecomCallback() {
 
         setToken(tokenData.access_token);
         setUser(userData);
+
+        // 自动切入企业（如果有 org 参数）
+        const orgB64 = searchParams.get('org');
+        if (orgB64) {
+          try {
+            const orgData = JSON.parse(atob(orgB64));
+            setCurrentOrg(orgData);
+          } catch { /* ignore invalid org data */ }
+        }
 
         navigate('/chat', { replace: true });
       } catch {
