@@ -320,7 +320,10 @@ class ErpSyncWorkerPool:
                         )
             logger.debug("Kit stock materialized view refreshed")
         except Exception as e:
-            logger.warning(f"Kit stock refresh failed | error={e}")
+            logger.warning(
+                f"Kit stock refresh failed | error={e} | type={type(e).__name__}",
+                exc_info=True,
+            )
 
     # ── Client 创建 ───────────────────────────────────
 

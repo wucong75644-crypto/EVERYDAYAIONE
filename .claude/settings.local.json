@@ -321,7 +321,10 @@
       "Bash(ssh root@47.110.94.25 \"grep -E ''\\(Wecom message|agent_loop|Brain|sandbox|intent_router|memory|route_to|erp_query_all|elapsed|conv=\\)'' /var/www/everydayai/backend/logs/app_2026-03-31.log | tail -80\")",
       "Bash(python -m pytest tests/test_erp_sync.py::TestUpsertDocumentItems tests/test_erp_sync.py::TestWriteDocGroupTxnOnConflict tests/test_erp_sync.py::TestConflictColsConstant tests/test_erp_sync_worker_pool.py::TestThrottledKitRefresh -v --tb=short)",
       "Bash(python -m pytest tests/test_erp_sync.py::TestWriteDocGroupTxnOnConflict tests/test_erp_sync.py::TestConflictColsConstant tests/test_erp_sync.py::TestUpsertDocumentItems::test_orm_fallback_on_conflict_includes_org_id tests/test_erp_sync_worker_pool.py::TestThrottledKitRefresh -v --tb=short)",
-      "Bash(./git-push.sh \"fix: ERP同步duplicate key根治（约束加org_id+写入幂等+清理旧数据）+ 物化视图并发锁\")"
+      "Bash(./git-push.sh \"fix: ERP同步duplicate key根治（约束加org_id+写入幂等+清理旧数据）+ 物化视图并发锁\")",
+      "Bash(ssh -o ConnectTimeout=5 root@47.110.94.25 \":*)",
+      "Bash(python -m pytest tests/test_erp_sync_worker_pool.py -q --tb=short)",
+      "Bash(./git-push.sh \"debug: kit refresh error=0 添加 traceback 日志\")"
     ]
   }
 }
