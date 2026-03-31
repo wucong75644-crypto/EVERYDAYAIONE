@@ -305,9 +305,10 @@ class ErpSyncWorkerPool:
                 async with conn.cursor() as cur:
                     # advisory lock 防止多 worker 并发刷新
                     await cur.execute(
-                        "SELECT pg_try_advisory_lock(hashtext('mv_kit_stock'))"
+                        "SELECT pg_try_advisory_lock(hashtext('mv_kit_stock')) AS locked"
                     )
-                    locked = (await cur.fetchone())[0]
+                    row = await cur.fetchone()
+                    locked = row["locked"] if isinstance(row, dict) else row[0]
                     if not locked:
                         return  # 另一个 worker 正在刷新，跳过
                     try:
@@ -320,10 +321,7 @@ class ErpSyncWorkerPool:
                         )
             logger.debug("Kit stock materialized view refreshed")
         except Exception as e:
-            logger.warning(
-                f"Kit stock refresh failed | error={e} | type={type(e).__name__}",
-                exc_info=True,
-            )
+            logger.warning(f"Kit stock refresh failed | error={e}")
 
     # ── Client 创建 ───────────────────────────────────
 
