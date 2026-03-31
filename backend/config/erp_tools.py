@@ -166,45 +166,50 @@ def build_erp_tools() -> List[Dict[str, Any]]:
         # 1. 基础信息查询
         _build_query_tool(
             "erp_info_query",
-            "查询ERP基础信息：仓库、店铺、标签、客户、分销商。",
+            "远程API查询ERP基础信息：仓库、店铺、标签、客户、分销商。",
             BASIC_REGISTRY,
         ),
         # 2. 商品查询
         _build_query_tool(
             "erp_product_query",
-            "查询ERP商品/SKU/库存/标签/分类/品牌信息。",
+            "远程API查询ERP商品/SKU/库存/标签/分类/品牌信息。"
+            "适合本地工具不支持的字段或需要实时数据。",
             PRODUCT_REGISTRY,
         ),
         # 3. 交易查询
         _build_query_tool(
             "erp_trade_query",
-            "查询ERP订单/出库/物流/波次/唯一码信息。",
+            "远程API查询ERP订单/出库/物流/波次/唯一码信息。"
+            "适合本地工具不支持的操作或需要实时数据。",
             TRADE_REGISTRY,
         ),
         # 4. 售后查询
         _build_query_tool(
             "erp_aftersales_query",
-            "查询ERP售后工单/退货/维修单/补款/日志。",
+            "远程API查询ERP售后工单/退货/维修单/补款/日志。"
+            "适合本地工具不支持的操作。",
             AFTERSALES_REGISTRY,
         ),
         # 5. 仓储查询
         _build_query_tool(
             "erp_warehouse_query",
-            "查询ERP调拨/入出库/盘点/下架/货位/加工单信息。",
+            "远程API查询ERP调拨/入出库/盘点/下架/货位/加工单信息。"
+            "仓储操作无本地工具，必须使用此远程API。",
             WAREHOUSE_REGISTRY,
         ),
         # 6. 采购查询
         _build_query_tool(
             "erp_purchase_query",
-            "查询ERP供应商/采购单/收货单/采退单/上架单/采购建议。",
+            "远程API查询ERP供应商/采购单/收货单/采退单/上架单/采购建议。"
+            "适合本地工具不支持的操作。",
             PURCHASE_REGISTRY,
         ),
         # 7. 淘宝奇门查询（通过淘宝网关）
         _build_query_tool(
             "erp_taobao_query",
             (
-                "查询淘宝/天猫平台的订单和售后单（通过奇门接口）。"
-                "返回 {total, trades/workOrders[]}。"
+                "远程API查询淘宝/天猫平台的订单和售后单（通过奇门接口）。"
+                "返回平台原始数据 {total, trades/workOrders[]}。"
                 "page_size最小20。支持 shop_id 按店铺筛选。"
             ),
             QIMEN_REGISTRY,
@@ -248,17 +253,26 @@ def build_erp_tools() -> List[Dict[str, Any]]:
     return tools + build_local_tools()
 
 
-# ERP 精简提示词（~40 行核心规则，工具路由由 tool_selector 处理）
+# ERP 精简提示词（工具使用协议，不规定工具选择）
 ERP_ROUTING_PROMPT = (
-    "## 工作模式\n"
+    "## 工具能力说明\n"
+    "- local_* 工具：查本地数据库，毫秒级响应，数据来自每分钟自动同步\n"
+    "- erp_* 工具：查远程ERP API，适合本地工具不支持的操作或需要实时数据\n"
+    "- code_execute：代码沙盒，适合其他工具无法完成的复杂计算/文件生成\n"
+    "- 根据工具描述自行判断最合适的工具\n\n"
+    "## 数据新鲜度\n"
+    "- 如果 local 工具返回结果包含 ⚠ 同步警告，"
+    "先 trigger_erp_sync 触发同步再重查，或改用 erp_* 远程查询\n"
+    "- 查不到 + 同步正常 → 数据确实不存在，告知用户\n"
+    "- 商品/库存查不到 → 不用触发同步（identify 自动回退 API）\n\n"
+    "## ERP 远程工具使用协议\n"
     "1. 两步查询：先传 action 拿参数文档 → 再传 params 执行\n"
-    "2. 简单统计（如'今天多少单'）可直接传 params\n"
-    "3. page/page_size 在 tool 级别传，不放 params 里\n\n"
+    "2. page/page_size 在 tool 级别传，不放 params 里\n\n"
     "## 编码识别\n"
     "- 裸值编码/单号 → 先 local_product_identify(code=XX) 确认类型\n"
     "- 套件(type=1/2)无独立库存 → 查子单品逐个查\n"
     "- 同一编码每会话只识别一次\n\n"
-    "## 时间类型\n"
+    "## 时间类型（ERP远程工具专用）\n"
     "- 「多少订单」→ time_type=\"created\"\n"
     "- 「发了多少」→ time_type=\"consign_time\"\n"
     "- 不传 time_type 默认是 modified（通常不是用户想要的）\n"
@@ -276,10 +290,6 @@ ERP_ROUTING_PROMPT = (
     "- local_doc_query 返回的 sid/order_no/outer_id → 直接用于 API 跨查\n"
     "- 物流轨迹 → express_query(system_id=sid)\n"
     "- 操作日志 → order_log(system_ids=sid)\n\n"
-    "## 同步触发\n"
-    "- 查不到 + 同步状态有⚠ → trigger_erp_sync → 重查\n"
-    "- 查不到 + 同步正常 → 数据确实不存在，告知用户\n"
-    "- 商品/库存查不到 → 不用触发（identify 自动回退 API）\n\n"
     "## 规则\n"
     "- 禁止猜测参数类型，不确定时 ask_user\n"
     "- 名称搜索无结果 → 必须 ask_user 确认，禁止返回「未找到」\n"

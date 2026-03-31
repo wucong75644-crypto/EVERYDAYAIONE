@@ -71,7 +71,8 @@ def build_local_tools() -> List[Dict[str, Any]]:
         # 1. 采购到货查询（含采退）
         _tool(
             "local_purchase_query",
-            "按商品编码查采购到货进度（含采退单）。本地查询，毫秒级响应。",
+            "按商品编码查采购到货进度（含采退单）。毫秒级响应。"
+            "返回各采购单明细（单号/供应商/状态/到货数量），默认最近30天。",
             {
                 "product_code": _str("商品编码（主商家编码或SKU编码）"),
                 "status": _enum(
@@ -86,7 +87,8 @@ def build_local_tools() -> List[Dict[str, Any]]:
         # 2. 售后查询
         _tool(
             "local_aftersale_query",
-            "按商品编码查售后情况（退货/退款/换货/补发等）。本地查询。",
+            "按商品编码查售后情况（退货/退款/换货/补发等）。毫秒级响应。"
+            "返回按类型汇总 + 最近5条工单明细，默认最近30天。",
             {
                 "product_code": _str("商品编码"),
                 "aftersale_type": _enum(
@@ -101,7 +103,8 @@ def build_local_tools() -> List[Dict[str, Any]]:
         # 3. 销售订单查询
         _tool(
             "local_order_query",
-            "按商品编码查销售订单（支持按平台/店铺/状态过滤）。本地查询。",
+            "按商品编码查销售订单（支持按平台/店铺/状态过滤）。毫秒级响应。"
+            "返回平台汇总 + 最近5条订单明细（单号/金额/状态），默认最近30天。",
             {
                 "product_code": _str("商品编码（主商家编码或SKU编码）"),
                 "shop_name": _str("店铺名称过滤"),
@@ -121,8 +124,9 @@ def build_local_tools() -> List[Dict[str, Any]]:
         # 4. 统计报表查询
         _tool(
             "local_product_stats",
-            "按商品编码查统计数据（月度/周度/日度销售、采购、售后报表）。"
-            "查聚合表，秒级响应。",
+            "按商品编码查统计报表（日/周/月维度）。毫秒级响应。"
+            "返回聚合指标：订单数/销量/销售额、采购数/采购额、"
+            "售后数/退货数。支持日期范围对比。",
             {
                 "product_code": _str("商品编码"),
                 "period": _enum("统计周期", ["day", "week", "month"]),
@@ -135,7 +139,8 @@ def build_local_tools() -> List[Dict[str, Any]]:
         _tool(
             "local_product_flow",
             "按商品编码查完整供应链流转"
-            "（采购→收货→上架→销售→售后→采退）。本地查询。",
+            "（采购→收货→上架→销售→售后→采退）。毫秒级响应。"
+            "返回各环节汇总指标（笔数/数量/金额）+ 售后率。",
             {
                 "product_code": _str("商品编码"),
                 "days": _int("查询最近N天，默认30"),
@@ -145,7 +150,8 @@ def build_local_tools() -> List[Dict[str, Any]]:
         # 6. 库存查询
         _tool(
             "local_stock_query",
-            "按商品编码查库存状态（可售/总库存/锁定/在途）。本地查询。",
+            "按商品编码查库存状态（可售/总库存/锁定/在途）。毫秒级响应。"
+            "返回各仓库库存分布汇总。",
             {
                 "product_code": _str("商品编码（主商家编码或SKU编码）"),
                 "stock_status": _enum(
@@ -159,9 +165,11 @@ def build_local_tools() -> List[Dict[str, Any]]:
         # 7. 本地编码识别
         _tool(
             "local_product_identify",
-            "本地编码识别（替代API调用）。支持三种模式：编码精确匹配、"
-            "商品名模糊搜索、规格名模糊搜索。毫秒级响应。"
-            "code/name/spec 至少传一个。",
+            "编码识别与商品搜索。毫秒级响应。"
+            "三种模式：编码精确匹配（返回1条）、"
+            "商品名模糊搜索（返回最多20条）、"
+            "规格名模糊搜索（返回最多20条）。"
+            "返回编码/名称/规格/条码/供应商。code/name/spec 至少传一个。",
             {
                 "code": _str("商品编码/SKU编码/条码（精确匹配）"),
                 "name": _str("商品名称关键词（模糊搜索）"),
@@ -172,7 +180,8 @@ def build_local_tools() -> List[Dict[str, Any]]:
         # 8. 平台映射查询
         _tool(
             "local_platform_map_query",
-            "查ERP编码↔平台商品映射（下架检查）。"
+            "查ERP编码↔平台商品映射（上架/下架检查）。毫秒级响应。"
+            "返回编码在哪些平台有售，或平台商品ID反查ERP编码。"
             "product_code 和 num_iid 至少传一个。",
             {
                 "product_code": _str(
@@ -186,9 +195,11 @@ def build_local_tools() -> List[Dict[str, Any]]:
         # 9. 多维度单据查询
         _tool(
             "local_doc_query",
-            "多维度单据查询。支持按订单号/快递号/采购单号/供应商/店铺查询单据，"
-            "返回完整信息含所有关联ID（sid/order_no/express_no/outer_id），"
-            "可直接用于跨工具查询（如拿 sid 查物流）。毫秒级响应。",
+            "多维度单据查询（无需商品编码）。毫秒级响应。"
+            "支持按订单号/快递号/采购单号/供应商/店铺查询，"
+            "返回单据明细（最多20条）含所有关联ID"
+            "（sid/order_no/express_no/outer_id），"
+            "可直接用于跨工具查询（如拿 sid 查物流）。",
             {
                 "product_code": _str("商品编码（主编码或SKU编码）"),
                 "order_no": _str("平台订单号（淘宝/京东/拼多多等平台单号）"),
@@ -209,8 +220,11 @@ def build_local_tools() -> List[Dict[str, Any]]:
         # 10. 全局统计/排名
         _tool(
             "local_global_stats",
-            "全局统计查询（无需商品编码）。支持按时间/类型/店铺/供应商"
-            "统计订单数/销售额/退货数等，支持排名。本地查询。",
+            "全局统计查询（无需商品编码）。毫秒级响应。"
+            "直接返回聚合结果：总单数、总数量、总金额。"
+            "支持按店铺/平台/供应商/仓库分组，支持排名（TOP10）。"
+            "适合：今天多少单、各店铺销量排名、平台对比、"
+            "退货统计、销售额趋势等全局维度的统计需求。",
             {
                 "doc_type": _enum(
                     "统计类型",
@@ -237,7 +251,8 @@ def build_local_tools() -> List[Dict[str, Any]]:
         # 11. 手动触发同步
         _tool(
             "trigger_erp_sync",
-            "手动触发ERP数据同步。仅在本地查询无数据且同步状态异常时使用。"
+            "手动触发ERP数据同步。"
+            "仅在 local 工具返回 ⚠ 同步警告或查不到预期数据时使用。"
             "商品/库存查不到不要用此工具（local_product_identify 会自动兜底）。"
             "同步完成后重新调用原查询工具。",
             {

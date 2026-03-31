@@ -90,6 +90,7 @@ async def erp_query_all(
     all_items = []
     page = 0
     page_size = int(params.get("page_size", 100))
+    api_total = None  # API 第一页返回的 total 字段
 
     while page < max_pages:
         page += 1
@@ -114,6 +115,17 @@ async def erp_query_all(
                 break
             return data
 
+        # 第一页读取 API 返回的 total 字段
+        if page == 1 and api_total is None:
+            raw_total = data.get("total")
+            if raw_total is None:
+                raw_total = data.get("totalCount")
+            if raw_total is not None:
+                try:
+                    api_total = int(raw_total)
+                except (ValueError, TypeError):
+                    pass
+
         items, key = _extract_list(data)
         all_items.extend(items)
 
@@ -127,6 +139,8 @@ async def erp_query_all(
     )
 
     result = {"list": all_items, "total": len(all_items)}
+    if api_total is not None:
+        result["api_total"] = api_total
     if page >= max_pages:
         result["warning"] = f"已达翻页上限({max_pages}页)，数据可能不完整"
     return result

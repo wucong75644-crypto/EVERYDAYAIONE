@@ -170,6 +170,80 @@ class TestErpQueryAll:
         result = await erp_query_all("erp_trade_query", "order_list")
         assert "error" in result
 
+    @pytest.mark.asyncio
+    async def test_api_total_from_first_page(self):
+        """第一页 API 返回的 total 字段被保留为 api_total"""
+        async def mock_raw(tool, action, params):
+            return {"list": [{"id": 1}] * 50, "total": 8211}
+
+        mock_dispatcher = AsyncMock()
+        mock_dispatcher.execute_raw = mock_raw
+
+        result = await erp_query_all(
+            "erp_trade_query", "order_list",
+            {"page_size": 100},
+            _dispatcher=mock_dispatcher,
+        )
+        assert result["api_total"] == 8211
+        assert result["total"] == 50  # 实际拉取数
+
+    @pytest.mark.asyncio
+    async def test_api_total_zero(self):
+        """total=0 时 api_total 应为 0，不被跳过"""
+        mock_dispatcher = AsyncMock()
+        mock_dispatcher.execute_raw.return_value = {
+            "list": [], "total": 0,
+        }
+        result = await erp_query_all(
+            "erp_trade_query", "order_list",
+            {"page_size": 100},
+            _dispatcher=mock_dispatcher,
+        )
+        assert result["api_total"] == 0
+
+    @pytest.mark.asyncio
+    async def test_api_total_missing(self):
+        """API 未返回 total 字段时，结果不包含 api_total"""
+        mock_dispatcher = AsyncMock()
+        mock_dispatcher.execute_raw.return_value = {
+            "list": [{"id": 1}] * 50,
+        }
+        result = await erp_query_all(
+            "erp_trade_query", "order_list",
+            {"page_size": 100},
+            _dispatcher=mock_dispatcher,
+        )
+        assert "api_total" not in result
+        assert result["total"] == 50
+
+    @pytest.mark.asyncio
+    async def test_api_total_non_numeric(self):
+        """total 为非数字字符串时，不设置 api_total"""
+        mock_dispatcher = AsyncMock()
+        mock_dispatcher.execute_raw.return_value = {
+            "list": [{"id": 1}] * 50, "total": "invalid",
+        }
+        result = await erp_query_all(
+            "erp_trade_query", "order_list",
+            {"page_size": 100},
+            _dispatcher=mock_dispatcher,
+        )
+        assert "api_total" not in result
+
+    @pytest.mark.asyncio
+    async def test_api_total_from_totalCount_field(self):
+        """支持 totalCount 字段作为 fallback"""
+        mock_dispatcher = AsyncMock()
+        mock_dispatcher.execute_raw.return_value = {
+            "list": [{"id": 1}] * 50, "totalCount": 999,
+        }
+        result = await erp_query_all(
+            "erp_trade_query", "order_list",
+            {"page_size": 100},
+            _dispatcher=mock_dispatcher,
+        )
+        assert result["api_total"] == 999
+
 
 class TestBuildSandboxExecutor:
     """build_sandbox_executor 工厂函数测试"""
