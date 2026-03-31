@@ -471,3 +471,64 @@ class TestStreamTimeoutIntegration:
         mock_settings.return_value = _mock_settings()
         create_chat_adapter("gemini-3-pro", stream_timeout=None)
         mock_resolve.assert_called_once_with("gemini-3-pro")
+
+
+# ============================================================
+# TestResolveAiKey — BYOK 企业自配 Key 解析
+# ============================================================
+
+
+class TestResolveAiKey:
+
+    @patch("services.adapters.factory.get_settings")
+    @patch("services.adapters.factory.OrgConfigResolver", create=True)
+    def test_byok_key_used_when_org_has_config(self, MockResolver, mock_settings):
+        """企业自配 Key 优先于平台默认"""
+        mock_settings.return_value = _mock_settings()
+        mock_resolver_instance = MagicMock()
+        mock_resolver_instance.get.return_value = "org-custom-key"
+
+        with patch(
+            "services.org.config_resolver.OrgConfigResolver",
+            return_value=mock_resolver_instance,
+        ):
+            from services.adapters.factory import _resolve_ai_key
+            result = _resolve_ai_key("org-1", "kie", "kie_api_key", db=MagicMock())
+
+        assert result == "org-custom-key"
+
+    @patch("services.adapters.factory.get_settings")
+    def test_platform_key_used_when_no_org_config(self, mock_settings):
+        """企业未配 Key 时降级到平台默认"""
+        mock_settings.return_value = _mock_settings()
+        mock_resolver_instance = MagicMock()
+        mock_resolver_instance.get.return_value = None
+
+        with patch(
+            "services.org.config_resolver.OrgConfigResolver",
+            return_value=mock_resolver_instance,
+        ):
+            from services.adapters.factory import _resolve_ai_key
+            result = _resolve_ai_key("org-1", "kie", "kie_api_key", db=MagicMock())
+
+        assert result == "kie-test-key"
+
+    @patch("services.adapters.factory.get_settings")
+    def test_platform_key_used_when_no_org_id(self, mock_settings):
+        """散客（org_id=None）直接返回平台默认"""
+        mock_settings.return_value = _mock_settings()
+
+        from services.adapters.factory import _resolve_ai_key
+        result = _resolve_ai_key(None, "kie", "kie_api_key", db=None)
+
+        assert result == "kie-test-key"
+
+    @patch("services.adapters.factory.get_settings")
+    def test_none_when_no_key_anywhere(self, mock_settings):
+        """散客且 settings 也无 key 时返回 None"""
+        mock_settings.return_value = _mock_settings(kie_api_key=None)
+
+        from services.adapters.factory import _resolve_ai_key
+        result = _resolve_ai_key(None, "kie", "kie_api_key", db=None)
+
+        assert result is None
