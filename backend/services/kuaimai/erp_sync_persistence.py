@@ -15,6 +15,9 @@ from typing import Any
 
 from loguru import logger
 
+# 唯一约束列（ON CONFLICT 匹配列，冲突时不更新）
+_CONFLICT_COLS = frozenset({"doc_type", "doc_id", "item_index", "org_id"})
+
 
 # ── item_index 排序键 ────────────────────────────────
 
@@ -82,9 +85,26 @@ async def _write_doc_group_txn(
             vals.append(v)
         placeholders = ", ".join(["%s"] * len(cols))
         col_names = ", ".join(cols)
+
+        # ON CONFLICT 兜底：回溯窗口重复写入时静默覆盖
+        update_cols = [c for c in cols if c not in _CONFLICT_COLS]
+        if update_cols:
+            set_clause = ", ".join(
+                f"{c} = EXCLUDED.{c}" for c in update_cols
+            )
+            on_conflict = (
+                f"ON CONFLICT (doc_type, doc_id, item_index, org_id) "
+                f"DO UPDATE SET {set_clause}"
+            )
+        else:
+            on_conflict = (
+                "ON CONFLICT (doc_type, doc_id, item_index, org_id) "
+                "DO NOTHING"
+            )
+
         await conn.execute(
             f"INSERT INTO erp_document_items "
-            f"({col_names}) VALUES ({placeholders})",
+            f"({col_names}) VALUES ({placeholders}) {on_conflict}",
             vals,
         )
 
@@ -128,7 +148,7 @@ async def upsert_document_items(db, rows: list[dict[str, Any]], org_id: str | No
                 # 降级：ORM upsert（无事务保证）
                 await db.table("erp_document_items").upsert(
                     doc_rows,
-                    on_conflict="doc_type,doc_id,item_index",
+                    on_conflict="doc_type,doc_id,item_index,org_id",
                 ).execute()
                 total += len(doc_rows)
         except Exception as e:

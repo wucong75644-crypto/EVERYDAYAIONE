@@ -287,7 +287,11 @@ class ErpSyncWorkerPool:
     # ── 套件库存视图刷新（throttle）────────────────────
 
     async def _throttled_kit_refresh(self) -> None:
-        """刷新套件库存物化视图（节流：N秒内只允许一次）"""
+        """刷新套件库存物化视图（节流+并发锁双保险）
+
+        1. Redis 节流：N秒内只允许一次（控制频率）
+        2. pg_advisory_lock：同一时刻只有一个进程刷新（控制并发）
+        """
         try:
             from core.redis import RedisClient
             if not await RedisClient.try_throttle(
@@ -299,9 +303,21 @@ class ErpSyncWorkerPool:
             async with self.db.pool.connection() as conn:
                 await conn.set_autocommit(True)
                 async with conn.cursor() as cur:
+                    # advisory lock 防止多 worker 并发刷新
                     await cur.execute(
-                        "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kit_stock"
+                        "SELECT pg_try_advisory_lock(hashtext('mv_kit_stock'))"
                     )
+                    locked = (await cur.fetchone())[0]
+                    if not locked:
+                        return  # 另一个 worker 正在刷新，跳过
+                    try:
+                        await cur.execute(
+                            "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kit_stock"
+                        )
+                    finally:
+                        await cur.execute(
+                            "SELECT pg_advisory_unlock(hashtext('mv_kit_stock'))"
+                        )
             logger.debug("Kit stock materialized view refreshed")
         except Exception as e:
             logger.warning(f"Kit stock refresh failed | error={e}")

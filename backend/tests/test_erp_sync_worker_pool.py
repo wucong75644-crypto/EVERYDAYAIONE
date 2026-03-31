@@ -310,3 +310,80 @@ class TestReleaseAllLocks:
 
         assert pool._release_task_lock.call_count == 2
         assert len(pool._held_locks) == 0
+
+
+# ── 套件库存视图刷新 advisory lock ─────────────────
+
+
+class TestThrottledKitRefresh:
+    """_throttled_kit_refresh advisory lock 逻辑"""
+
+    @pytest.mark.asyncio
+    async def test_lock_acquired_executes_refresh(self):
+        """获取 advisory lock 成功 → 执行 REFRESH"""
+        pool = _make_pool()
+
+        mock_cur = AsyncMock()
+        mock_cur.fetchone = AsyncMock(return_value=(True,))
+        mock_conn = AsyncMock()
+        mock_conn.cursor = MagicMock(return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_cur),
+            __aexit__=AsyncMock(return_value=False),
+        ))
+        mock_conn.set_autocommit = AsyncMock()
+        pool.db.pool.connection = MagicMock(return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_conn),
+            __aexit__=AsyncMock(return_value=False),
+        ))
+
+        mock_redis = MagicMock()
+        mock_redis.try_throttle = AsyncMock(return_value=True)
+        with patch("core.redis.RedisClient", mock_redis):
+            await pool._throttled_kit_refresh()
+
+        executed_sqls = [
+            call.args[0] for call in mock_cur.execute.call_args_list
+        ]
+        assert any("REFRESH" in sql for sql in executed_sqls)
+        assert any("advisory_unlock" in sql for sql in executed_sqls)
+
+    @pytest.mark.asyncio
+    async def test_lock_not_acquired_skips_refresh(self):
+        """获取 advisory lock 失败 → 跳过 REFRESH"""
+        pool = _make_pool()
+
+        mock_cur = AsyncMock()
+        mock_cur.fetchone = AsyncMock(return_value=(False,))
+        mock_conn = AsyncMock()
+        mock_conn.cursor = MagicMock(return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_cur),
+            __aexit__=AsyncMock(return_value=False),
+        ))
+        mock_conn.set_autocommit = AsyncMock()
+        pool.db.pool.connection = MagicMock(return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=mock_conn),
+            __aexit__=AsyncMock(return_value=False),
+        ))
+
+        mock_redis = MagicMock()
+        mock_redis.try_throttle = AsyncMock(return_value=True)
+        with patch("core.redis.RedisClient", mock_redis):
+            await pool._throttled_kit_refresh()
+
+        executed_sqls = [
+            call.args[0] for call in mock_cur.execute.call_args_list
+        ]
+        assert not any("REFRESH" in sql for sql in executed_sqls)
+        assert not any("advisory_unlock" in sql for sql in executed_sqls)
+
+    @pytest.mark.asyncio
+    async def test_throttle_blocked_skips_all(self):
+        """Redis 节流未通过 → 完全跳过"""
+        pool = _make_pool()
+
+        mock_redis = MagicMock()
+        mock_redis.try_throttle = AsyncMock(return_value=False)
+        with patch("core.redis.RedisClient", mock_redis):
+            await pool._throttled_kit_refresh()
+
+        pool.db.pool.connection.assert_not_called()

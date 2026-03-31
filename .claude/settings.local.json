@@ -313,7 +313,15 @@
       "Bash(iconv -f UTF-8 -t UTF-8 /Users/wucong/EVERYDAYAIONE/docs/document/TECH_快麦API文档_完整.md)",
       "Bash(iconv -f UTF-8 -t UTF-8 -c /Users/wucong/EVERYDAYAIONE/docs/document/TECH_快麦API文档_完整.md)",
       "Bash(python -m pytest tests/test_response_fields.py tests/test_api_search.py tests/test_code_tools.py -v --tb=short)",
-      "Bash(./git-push.sh \"feat: ERP API搜索结果增加返回字段文档，Agent沙箱代码不再盲写\")"
+      "Bash(./git-push.sh \"feat: ERP API搜索结果增加返回字段文档，Agent沙箱代码不再盲写\")",
+      "Bash(tail -200 backend/logs/*.log)",
+      "Bash(ssh root@47.110.94.25 \"wc -l /var/www/everydayai/backend/logs/app_2026-03-31.log && tail -500 /var/www/everydayai/backend/logs/app_2026-03-31.log\")",
+      "Bash(ssh root@47.110.94.25 \"wc -l /var/www/everydayai/backend/logs/app_2026-03-31.log\")",
+      "Bash(ssh root@47.110.94.25 \"tail -100 /var/www/everydayai/backend/logs/app_2026-03-31.log\")",
+      "Bash(ssh root@47.110.94.25 \"grep -E ''\\(Wecom message|agent_loop|Brain|sandbox|intent_router|memory|route_to|erp_query_all|elapsed|conv=\\)'' /var/www/everydayai/backend/logs/app_2026-03-31.log | tail -80\")",
+      "Bash(python -m pytest tests/test_erp_sync.py::TestUpsertDocumentItems tests/test_erp_sync.py::TestWriteDocGroupTxnOnConflict tests/test_erp_sync.py::TestConflictColsConstant tests/test_erp_sync_worker_pool.py::TestThrottledKitRefresh -v --tb=short)",
+      "Bash(python -m pytest tests/test_erp_sync.py::TestWriteDocGroupTxnOnConflict tests/test_erp_sync.py::TestConflictColsConstant tests/test_erp_sync.py::TestUpsertDocumentItems::test_orm_fallback_on_conflict_includes_org_id tests/test_erp_sync_worker_pool.py::TestThrottledKitRefresh -v --tb=short)",
+      "Bash(./git-push.sh \"fix: ERP同步duplicate key根治（约束加org_id+写入幂等+清理旧数据）+ 物化视图并发锁\")"
     ]
   }
 }
