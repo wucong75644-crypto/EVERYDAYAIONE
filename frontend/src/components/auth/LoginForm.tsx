@@ -9,7 +9,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useCountdown } from '../../hooks/useCountdown';
 import { useAuthStore } from '../../stores/useAuthStore';
-import { sendCode, loginByPhone, loginByPassword, loginByOrg } from '../../services/auth';
+import { sendCode, loginByPhone, loginByPassword, loginByOrg, getOrgNamePublic } from '../../services/auth';
 import type { ApiErrorResponse } from '../../types/auth';
 import { AxiosError } from 'axios';
 import WecomQrLogin from './WecomQrLogin';
@@ -32,11 +32,12 @@ export default function LoginForm({
 }: LoginFormProps) {
   const { setUser, setToken, setCurrentOrg } = useAuthStore();
 
-  const [loginMode, setLoginMode] = useState<LoginMode>(orgId ? 'wecom' : 'password');
+  const [loginMode, setLoginMode] = useState<LoginMode>(orgId ? 'password' : 'password');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
   const [orgName, setOrgName] = useState('');
+  const [orgDisplayName, setOrgDisplayName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
@@ -48,6 +49,14 @@ export default function LoginForm({
   const passwordRef = useRef<HTMLInputElement>(null);
   const codeRef = useRef<HTMLInputElement>(null);
   const submitRef = useRef<HTMLButtonElement>(null);
+
+  // 企业专属链接：获取企业名称
+  useEffect(() => {
+    if (!orgId) return;
+    getOrgNamePublic(orgId)
+      .then((res) => setOrgDisplayName(res.name))
+      .catch(() => setOrgDisplayName(''));
+  }, [orgId]);
 
   // Tab 键焦点循环处理
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -171,9 +180,21 @@ export default function LoginForm({
 
   return (
     <div>
+      {/* 企业专属链接：显示企业名称 */}
+      {orgId && orgDisplayName && (
+        <div className="text-center mb-4">
+          <span className="inline-block px-3 py-1 bg-blue-50 text-blue-700 text-sm rounded-full font-medium">
+            {orgDisplayName}
+          </span>
+        </div>
+      )}
+
       {/* 登录方式切换 */}
       <div className="flex border-b border-gray-200 mb-5">
-        {(['password', 'code', 'enterprise'] as const).map((mode) => (
+        {(orgId
+          ? (['password', 'code'] as const)
+          : (['password', 'code', 'enterprise'] as const)
+        ).map((mode) => (
           <button
             key={mode}
             type="button"
@@ -188,7 +209,7 @@ export default function LoginForm({
               setError('');
             }}
           >
-            {mode === 'password' ? '密码登录' : mode === 'code' ? '验证码登录' : '企业登录'}
+            {mode === 'password' ? '账号登录' : mode === 'code' ? '验证码登录' : '企业登录'}
           </button>
         ))}
       </div>
@@ -323,19 +344,21 @@ export default function LoginForm({
         </button>
       </form>
 
-      {/* 分隔线 */}
-      <div className="mt-4">
-        <div className="relative">
-          <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-gray-300" />
-          </div>
-          <div className="relative flex justify-center text-sm">
-            <span className="px-2 bg-white text-gray-500">或</span>
+      {/* 分隔线 + 企微扫码 — 仅企业专属链接时显示 */}
+      {orgId && (
+        <>
+        <div className="mt-4">
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-300" />
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="px-2 bg-white text-gray-500">或</span>
+            </div>
           </div>
         </div>
-      </div>
-
-      {/* 企微扫码登录 — 仅企业专属链接（有 orgId）时显示 */}
+        </>
+      )}
       {orgId && (
         <div className="mt-4">
           <button
@@ -355,8 +378,8 @@ export default function LoginForm({
         </div>
       )}
 
-      {/* 注册链接 */}
-      {onSwitchToRegister && (
+      {/* 注册链接 — 企业专属链接不显示注册入口 */}
+      {onSwitchToRegister && !orgId && (
         <p className="mt-4 text-center text-sm text-gray-600">
           没有账号？
           <button
