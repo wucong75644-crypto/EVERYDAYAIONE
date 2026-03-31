@@ -75,11 +75,13 @@ class WecomWSClient:
         secret: str,
         on_message: Optional[MessageHandler] = None,
         on_card_event: Optional[MessageHandler] = None,
+        org_id: Optional[str] = None,
     ):
         self.bot_id = bot_id
         self.secret = secret
         self.on_message = on_message
         self.on_card_event = on_card_event
+        self.org_id = org_id
 
         self._ws: Optional[websockets.ClientConnection] = None
         self._is_connected = False

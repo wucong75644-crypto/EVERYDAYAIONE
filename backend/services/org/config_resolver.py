@@ -29,6 +29,18 @@ class _ConfigResolverCore:
         "kuaimai_refresh_token",
     ]
 
+    # 企业专属 key — 未配置时返回 None，不降级到 .env
+    # 这些凭证指向企业自己的资源，降级到别人的会导致数据泄露
+    ENTERPRISE_ONLY_KEYS = {
+        # ERP
+        "kuaimai_app_key", "kuaimai_app_secret",
+        "kuaimai_access_token", "kuaimai_refresh_token",
+        # 企微智能机器人
+        "wecom_bot_id", "wecom_bot_secret",
+        # 企微自建应用（扫码登录）
+        "wecom_agent_id", "wecom_agent_secret",
+    }
+
     def __init__(self, db):
         self.db = db
         self._settings = get_settings()
@@ -63,11 +75,14 @@ class OrgConfigResolver(_ConfigResolverCore):
     """同步企业配置解析器（传入同步 LocalDBClient）"""
 
     def get(self, org_id: str | None, key: str) -> str | None:
-        """获取配置值。优先企业配置，降级到系统默认。"""
+        """获取配置值。企业专属 key 不降级，AI/平台级 key 降级到 .env。"""
         if org_id:
             val = self._load_encrypted(org_id, key)
             if val is not None:
                 return val
+        # 企业专属 key：未配置时不降级到 .env
+        if key in self.ENTERPRISE_ONLY_KEYS:
+            return None
         return self._get_default(key)
 
     def set(
@@ -114,6 +129,46 @@ class OrgConfigResolver(_ConfigResolverCore):
             creds[k] = val
         return creds
 
+    def list_orgs_with_wecom_bot(self) -> list[dict]:
+        """返回所有配了 wecom_bot_id + wecom_bot_secret 的企业。
+
+        Returns:
+            [{"org_id": ..., "bot_id": ..., "bot_secret": ..., "corp_id": ...}, ...]
+        """
+        # 查所有配了 wecom_bot_id 的 org_id
+        result = (
+            self.db.table("org_configs")
+            .select("org_id")
+            .eq("config_key", "wecom_bot_id")
+            .execute()
+        )
+        org_ids = [r["org_id"] for r in (result.data or [])]
+        if not org_ids:
+            return []
+
+        orgs = []
+        for oid in org_ids:
+            bot_id = self._load_encrypted(oid, "wecom_bot_id")
+            bot_secret = self._load_encrypted(oid, "wecom_bot_secret")
+            if not bot_id or not bot_secret:
+                continue
+            # 从 organizations 表取 corp_id
+            org_result = (
+                self.db.table("organizations")
+                .select("wecom_corp_id")
+                .eq("id", oid)
+                .maybe_single()
+                .execute()
+            )
+            corp_id = (org_result.data or {}).get("wecom_corp_id", "")
+            orgs.append({
+                "org_id": oid,
+                "bot_id": bot_id,
+                "bot_secret": bot_secret,
+                "corp_id": corp_id or "",
+            })
+        return orgs
+
     def _load_encrypted(self, org_id: str, key: str) -> str | None:
         """从 org_configs 表读取并解密（同步）"""
         try:
@@ -142,11 +197,14 @@ class AsyncOrgConfigResolver(_ConfigResolverCore):
     """异步企业配置解析器（传入 AsyncLocalDBClient）"""
 
     async def get(self, org_id: str | None, key: str) -> str | None:
-        """获取配置值。优先企业配置，降级到系统默认。"""
+        """获取配置值。企业专属 key 不降级，AI/平台级 key 降级到 .env。"""
         if org_id:
             val = await self._load_encrypted(org_id, key)
             if val is not None:
                 return val
+        # 企业专属 key：未配置时不降级到 .env
+        if key in self.ENTERPRISE_ONLY_KEYS:
+            return None
         return self._get_default(key)
 
     async def get_erp_credentials(self, org_id: str) -> dict:

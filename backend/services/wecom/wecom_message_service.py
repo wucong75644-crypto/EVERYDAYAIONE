@@ -501,20 +501,28 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
     ) -> None:
         """自建应用消息发送：格式适配 + 长消息分割"""
         from services.wecom.app_message_sender import (
-            send_text, send_markdown,
+            send_text, send_markdown, OrgWecomCreds,
         )
         from services.wecom.markdown_adapter import adapt_for_app, split_long_message
 
         adapted, msgtype = adapt_for_app(text)
         chunks = split_long_message(adapted, max_bytes=2000)
 
-        uid, aid = reply_ctx.wecom_userid, reply_ctx.agent_id
+        # 构建企业凭证
+        creds = OrgWecomCreds(
+            org_id=reply_ctx.org_id or "",
+            corp_id=reply_ctx.corp_id or "",
+            agent_id=reply_ctx.agent_id or 0,
+            agent_secret=reply_ctx.agent_secret or "",
+        )
+
+        uid = reply_ctx.wecom_userid
         for i, chunk in enumerate(chunks):
             sent = False
             if msgtype == "markdown":
-                sent = await send_markdown(wecom_userid=uid, content=chunk, agent_id=aid)
+                sent = await send_markdown(wecom_userid=uid, content=chunk, creds=creds)
             if not sent:
-                await send_text(wecom_userid=uid, content=chunk, agent_id=aid)
+                await send_text(wecom_userid=uid, content=chunk, creds=creds)
             if i < len(chunks) - 1:
                 await asyncio.sleep(0.3)
 
