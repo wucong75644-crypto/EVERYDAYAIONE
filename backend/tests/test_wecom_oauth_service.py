@@ -532,17 +532,25 @@ class TestFindUserOrg:
     """_find_user_org 测试"""
 
     def test_find_user_org_returns_org_info(self):
-        """查到活跃企业成员时返回企业信息"""
+        """查到活跃企业成员时返回企业信息（两步查询）"""
         db = _make_db_mock()
         members_table = db._table_mocks.setdefault("org_members", MagicMock())
+        orgs_table = db._table_mocks.setdefault("organizations", MagicMock())
 
+        # 第一步：查 org_members
         (members_table.select.return_value
          .eq.return_value.eq.return_value.eq.return_value
          .limit.return_value.execute.return_value) = MagicMock(data=[{
             "org_id": "org-abc",
             "role": "admin",
-            "organizations": {"id": "org-abc", "name": "蓝创科技", "status": "active"},
         }])
+
+        # 第二步：查 organizations
+        (orgs_table.select.return_value
+         .eq.return_value.maybe_single.return_value
+         .execute.return_value) = MagicMock(data={
+            "id": "org-abc", "name": "蓝创科技", "status": "active",
+        })
 
         with patch("services.wecom_oauth_service.get_settings", return_value=_make_settings()):
             svc = WecomOAuthService(db)
