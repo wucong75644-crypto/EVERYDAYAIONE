@@ -429,7 +429,13 @@ function OrgInfoSection({ orgId }: { orgId: string }) {
             className="flex-1 px-2 py-1 text-xs bg-white border rounded text-gray-600"
           />
           <button
-            onClick={() => navigator.clipboard.writeText(`${window.location.origin}/login?org=${orgId}`)}
+            onClick={(e) => {
+              navigator.clipboard.writeText(`${window.location.origin}/login?org=${orgId}`);
+              const btn = e.currentTarget;
+              btn.textContent = '已复制 ✓';
+              btn.classList.replace('bg-blue-600', 'bg-green-600');
+              setTimeout(() => { btn.textContent = '复制'; btn.classList.replace('bg-green-600', 'bg-blue-600'); }, 1500);
+            }}
             className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors whitespace-nowrap"
           >
             复制
