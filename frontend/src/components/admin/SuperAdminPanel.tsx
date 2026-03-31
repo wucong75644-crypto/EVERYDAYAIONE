@@ -65,8 +65,13 @@ export default function SuperAdminPanel() {
     setCreating(true);
     setError('');
     try {
-      await createOrg(orgName.trim(), ownerPhone);
-      setSuccess(`企业「${orgName}」创建成功`);
+      const result = await createOrg(orgName.trim(), ownerPhone);
+      const newOrgId = result?.data?.id;
+      const loginLink = newOrgId ? `${window.location.origin}/login?org=${newOrgId}` : '';
+      setSuccess(
+        `企业「${orgName}」创建成功` +
+        (loginLink ? `\n专属登录链接：${loginLink}` : ''),
+      );
       setOrgName('');
       setOwnerPhone('');
       setSearchResult(null);
@@ -96,7 +101,11 @@ export default function SuperAdminPanel() {
 
       {/* 提示信息 */}
       {error && <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm">{error}</div>}
-      {success && <div className="bg-green-50 text-green-600 p-3 rounded-lg text-sm">{success}</div>}
+      {success && (
+        <div className="bg-green-50 text-green-600 p-3 rounded-lg text-sm whitespace-pre-line">
+          {success}
+        </div>
+      )}
 
       {/* 创建企业表单 */}
       {showCreate && (
@@ -159,12 +168,15 @@ export default function SuperAdminPanel() {
               key={org.id}
               className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
             >
-              <div>
+              <div className="flex-1 min-w-0">
                 <div className="font-medium text-sm text-gray-900">{org.name}</div>
                 <div className="text-xs text-gray-500 mt-0.5">
                   {org.member_count ?? 0} 人 &middot;
                   {org.status === 'active' ? ' 正常' : ' 已停用'} &middot;
                   {new Date(org.created_at).toLocaleDateString()}
+                </div>
+                <div className="text-xs text-gray-400 mt-0.5 truncate font-mono">
+                  登录链接：{window.location.origin}/login?org={org.id}
                 </div>
               </div>
               <span

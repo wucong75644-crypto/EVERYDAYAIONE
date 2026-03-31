@@ -72,9 +72,14 @@ export default function WecomQrLogin({ onBack, mode = 'login', orgId }: WecomQrL
         }
 
         if (!cancelled) setLoading(false);
-      } catch {
+      } catch (err: any) {
         if (!cancelled) {
-          setError('加载企微二维码失败，请刷新重试');
+          const detail = err?.response?.data?.detail;
+          if (detail && (detail.includes('未配置') || detail.includes('不存在') || detail.includes('停用'))) {
+            setError(detail);
+          } else {
+            setError('加载企微二维码失败，请刷新重试');
+          }
           setLoading(false);
         }
       }

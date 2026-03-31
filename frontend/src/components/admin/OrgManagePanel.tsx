@@ -417,6 +417,26 @@ function OrgInfoSection({ orgId }: { orgId: string }) {
           </span>
         </div>
       </div>
+
+      {/* 企业专属登录链接 */}
+      <div className="bg-blue-50 p-3 rounded-lg">
+        <p className="text-xs text-blue-700 font-medium mb-1">企业专属登录链接</p>
+        <div className="flex items-center space-x-2">
+          <input
+            type="text"
+            value={`${window.location.origin}/login?org=${orgId}`}
+            readOnly
+            className="flex-1 px-2 py-1 text-xs bg-white border rounded text-gray-600"
+          />
+          <button
+            onClick={() => navigator.clipboard.writeText(`${window.location.origin}/login?org=${orgId}`)}
+            className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors whitespace-nowrap"
+          >
+            复制
+          </button>
+        </div>
+        <p className="text-xs text-blue-500 mt-1">将此链接发给员工，员工打开后可扫码登录并自动绑定企业</p>
+      </div>
     </div>
   );
 }
@@ -489,11 +509,6 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
   }
 
   const botConfigured = fieldStatus.wecom_bot_id?.configured && fieldStatus.wecom_bot_secret?.configured;
-  const appConfigured = fieldStatus.wecom_agent_id?.configured && fieldStatus.wecom_agent_secret?.configured;
-  const corpConfigured = fieldStatus.wecom_corp_id?.configured;
-  const loginUrl = (corpConfigured && appConfigured)
-    ? `${window.location.origin}/login?org=${orgId}`
-    : null;
 
   // 渲染单个配置字段
   const renderField = ({ key, label, isOrgField }: { key: string; label: string; isOrgField: boolean }) => {
@@ -581,27 +596,6 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
         </div>
       </div>
 
-      {/* 企业专属登录链接 */}
-      {loginUrl && (
-        <div className="bg-blue-50 p-3 rounded-lg">
-          <p className="text-xs text-blue-700 font-medium mb-1">企业专属登录链接</p>
-          <div className="flex items-center space-x-2">
-            <input
-              type="text"
-              value={loginUrl}
-              readOnly
-              className="flex-1 px-2 py-1 text-xs bg-white border rounded text-gray-600"
-            />
-            <button
-              onClick={() => { navigator.clipboard.writeText(loginUrl); setSuccess('链接已复制'); }}
-              className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors whitespace-nowrap"
-            >
-              复制
-            </button>
-          </div>
-          <p className="text-xs text-blue-500 mt-1">将此链接发给员工，扫码即可登录并绑定企业</p>
-        </div>
-      )}
 
       <p className="text-xs text-gray-400">
         注意：修改 Corp ID 或机器人凭证后需重启企微服务才能生效。
