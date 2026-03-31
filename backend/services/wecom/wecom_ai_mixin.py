@@ -304,18 +304,24 @@ class WecomAIMixin:
                     )
         elif reply_ctx.channel == "app":
             from services.wecom.app_message_sender import (
-                upload_temp_media, send_image, send_video, send_text,
+                upload_temp_media, send_image, send_video, send_text, OrgWecomCreds,
+            )
+            creds = OrgWecomCreds(
+                org_id=reply_ctx.org_id or "",
+                corp_id=reply_ctx.corp_id or "",
+                agent_id=reply_ctx.agent_id or 0,
+                agent_secret=reply_ctx.agent_secret or "",
             )
             for url in urls:
-                media_id = await upload_temp_media(url, media_type)
+                media_id = await upload_temp_media(url, creds=creds, media_type=media_type)
                 if media_id:
                     if media_type == "image":
-                        await send_image(reply_ctx.wecom_userid, media_id, reply_ctx.agent_id)
+                        await send_image(reply_ctx.wecom_userid, media_id, creds=creds)
                     else:
-                        await send_video(reply_ctx.wecom_userid, media_id, agent_id=reply_ctx.agent_id)
+                        await send_video(reply_ctx.wecom_userid, media_id, creds=creds)
                 else:
                     label = "图片" if media_type == "image" else "视频"
-                    await send_text(reply_ctx.wecom_userid, f"{label}已生成：{url}", reply_ctx.agent_id)
+                    await send_text(reply_ctx.wecom_userid, f"{label}已生成：{url}", creds=creds)
 
         # 更新 DB 消息
         content_data = [{"type": media_type, "url": url} for url in urls]

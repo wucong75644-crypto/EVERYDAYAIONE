@@ -42,6 +42,11 @@ class WecomReplyContext:
     wecom_userid: Optional[str] = None      # 回复目标用户 ID
     agent_id: Optional[int] = None          # 应用 AgentID
 
+    # 企业凭证（per-org 消息发送需要）
+    org_id: Optional[str] = None
+    corp_id: Optional[str] = None
+    agent_secret: Optional[str] = None
+
     # 进行中的 stream（收到消息时立即创建，保持 req_id 活跃）
     active_stream_id: Optional[str] = None
 

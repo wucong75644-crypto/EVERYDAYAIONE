@@ -330,8 +330,8 @@ class ErpSyncWorkerPool:
         from services.kuaimai.client import KuaiMaiClient
 
         if org_id is None:
-            client = KuaiMaiClient()
-            return client if client.is_configured else None
+            # 散客无 ERP，不降级到系统默认凭证
+            return None
 
         try:
             from services.org.config_resolver import AsyncOrgConfigResolver

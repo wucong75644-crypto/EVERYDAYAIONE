@@ -152,6 +152,7 @@ from pydantic import BaseModel, Field
 class WecomPushRequest(BaseModel):
     """主动推送消息请求体"""
     user_id: str = Field(description="系统用户 ID")
+    org_id: str = Field(description="企业 ID（用于找到对应的 WS 客户端）")
     message: str = Field(description="消息内容（Markdown 格式）")
     chatid: str | None = Field(default=None, description="指定 chatid（不填则自动查找）")
     msgtype: str = Field(default="markdown", description="消息类型")
@@ -165,11 +166,11 @@ async def push_message(req: WecomPushRequest, db: Database) -> dict:
     """
     from services.wecom.user_mapping_service import WecomUserMappingService
 
-    # 1. 获取 ws_client 实例
+    # 1. 获取该企业的 ws_client 实例
     from wecom_ws_runner import get_ws_client
-    ws_client = get_ws_client()
+    ws_client = get_ws_client(req.org_id)
     if not ws_client or not ws_client.is_connected:
-        return {"success": False, "error": "WS 长连接未就绪"}
+        return {"success": False, "error": "该企业的 WS 长连接未就绪"}
 
     # 2. 确定 chatid
     chatid = req.chatid
