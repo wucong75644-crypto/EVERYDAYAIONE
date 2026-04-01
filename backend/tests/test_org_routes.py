@@ -34,6 +34,9 @@ class FakeQueryBuilder:
     def single(self):
         self._is_single = True
         return self
+    def maybe_single(self):
+        self._is_single = True
+        return self
 
     def execute(self):
         r = MagicMock()
@@ -274,3 +277,52 @@ class TestListMyOrgs:
         resp = client.get("/api/org")
         assert resp.status_code == 200
         assert len(resp.json()) == 1
+
+
+# ── 公开接口：get_org_name_public ─────────────────────────
+
+
+class TestGetOrgNamePublic:
+    """GET /org/public/{org_id}/name — 无需认证"""
+
+    def _build_app(self, db):
+        from fastapi import FastAPI
+        from api.routes.org import router
+        from api.deps import get_db
+
+        app = FastAPI()
+        app.include_router(router, prefix="/api")
+        app.dependency_overrides[get_db] = lambda: db
+        return app
+
+    def test_returns_org_name(self):
+        """正常返回企业名称"""
+        db = FakeDB()
+        db.add("organizations", {"name": "蓝创科技", "status": "active"})
+        app = self._build_app(db)
+
+        client = TestClient(app)
+        resp = client.get("/api/org/public/org-123/name")
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "蓝创科技"
+
+    def test_returns_404_when_not_found(self):
+        """企业不存在返回 404"""
+        db = FakeDB()
+        db.add("organizations", None)
+        app = self._build_app(db)
+
+        client = TestClient(app)
+        resp = client.get("/api/org/public/nonexistent/name")
+        assert resp.status_code == 404
+
+    def test_returns_400_when_inactive(self):
+        """企业停用返回 400"""
+        db = FakeDB()
+        db.add("organizations", {"name": "已停用企业", "status": "inactive"})
+        app = self._build_app(db)
+
+        client = TestClient(app)
+        resp = client.get("/api/org/public/org-456/name")
+        assert resp.status_code == 400
+        assert "停用" in resp.json()["detail"]
