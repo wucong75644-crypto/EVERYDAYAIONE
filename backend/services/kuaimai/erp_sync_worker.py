@@ -321,6 +321,9 @@ class ErpSyncWorker:
         热表→冷表归档（设计文档 §5.1）
 
         分批 SELECT→UPSERT(archive)→DELETE(hot)，upsert 幂等保证安全。
+        归档条件：doc_modified_at 和 synced_at 都超过保留期才归档。
+        synced_at 保底：防止 modified 为 ERP 零值（如 2000-01-01）的
+        补发单/手工单被误归档。
         """
         from datetime import timedelta
         from services.kuaimai.erp_local_helpers import _apply_org
@@ -333,7 +336,7 @@ class ErpSyncWorker:
 
         while True:
             try:
-                q = self.db.table("erp_document_items").select("*").lt("doc_modified_at", cutoff)
+                q = self.db.table("erp_document_items").select("*").lt("doc_modified_at", cutoff).lt("synced_at", cutoff)
                 result = await _apply_org(q, org_id).limit(batch_size).execute()
                 rows = result.data or []
                 if not rows:

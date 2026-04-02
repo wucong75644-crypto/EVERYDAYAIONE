@@ -829,6 +829,58 @@ class TestRunArchive:
 
         assert count == 1
 
+    @pytest.mark.asyncio
+    async def test_run_archive_skips_recent_synced_with_old_modified(self):
+        """synced_at 保底：modified=2000（ERP零值）但 synced_at 在保留期内 → 不归档"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        # 模拟补发/手工单：doc_modified_at 为 ERP 零值，但 synced_at 是近期
+        recent_synced_row = {
+            "id": "row-recent",
+            "doc_id": "doc-recent",
+            "item_index": 0,
+            "doc_type": "order",
+            "doc_modified_at": "2000-01-01T00:00:00+00:00",
+            "synced_at": "2026-04-02T10:00:00+00:00",
+        }
+        db.set_table_data("erp_document_items", [recent_synced_row])
+
+        worker = ErpSyncWorker(db)
+        with patch.object(worker, "settings") as mock_settings:
+            mock_settings.erp_archive_retention_days = 90
+            count = await worker._run_archive()
+
+        assert count == 0
+        # 主表数据不应被删除
+        hot_table = db.table("erp_document_items")
+        assert len(hot_table._data) == 1
+
+    @pytest.mark.asyncio
+    async def test_run_archive_archives_when_both_old(self):
+        """doc_modified_at 和 synced_at 都超过保留期 → 正常归档"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        both_old_row = {
+            "id": "row-old",
+            "doc_id": "doc-old",
+            "item_index": 0,
+            "doc_type": "order",
+            "doc_modified_at": "2024-01-01T00:00:00+00:00",
+            "synced_at": "2024-01-02T00:00:00+00:00",
+        }
+        db.set_table_data("erp_document_items", [both_old_row])
+
+        worker = ErpSyncWorker(db)
+        with patch.object(worker, "settings") as mock_settings:
+            mock_settings.erp_archive_retention_days = 90
+            count = await worker._run_archive()
+
+        assert count == 1
+        archive_table = db.table("erp_document_items_archive")
+        assert len(archive_table._data) == 1
+
 
 class TestRunReaggregation:
     """_run_daily_reaggregation: 每日聚合兜底"""

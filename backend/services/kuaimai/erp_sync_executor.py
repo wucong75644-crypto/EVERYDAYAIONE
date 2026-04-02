@@ -85,7 +85,12 @@ class ErpSyncExecutor:
     # ── 归档 ───────────────────────────────────────────
 
     async def _run_archive(self, org_id: str | None = None) -> int:
-        """热表→冷表归档：分批 SELECT→UPSERT(archive)→DELETE(hot)"""
+        """热表→冷表归档：分批 SELECT→UPSERT(archive)→DELETE(hot)
+
+        归档条件：doc_modified_at 和 synced_at 都超过保留期才归档。
+        synced_at 保底：防止 modified 为 ERP 零值（如 2000-01-01）的
+        补发单/手工单被误归档。
+        """
         from services.kuaimai.erp_local_helpers import _apply_org
 
         cutoff = (
@@ -101,6 +106,7 @@ class ErpSyncExecutor:
                     self.db.table("erp_document_items")
                     .select("*")
                     .lt("doc_modified_at", cutoff)
+                    .lt("synced_at", cutoff)
                 )
                 result = await _apply_org(q, org_id).limit(batch_size).execute()
                 rows = result.data or []
