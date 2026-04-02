@@ -72,9 +72,12 @@ async def sync_product(
             "created_at": _safe_ts(p.get("created")),
             "modified_at": _safe_ts(p.get("modified")),
             "pic_url": p.get("picPath"),
+            "length": p.get("x"),
+            "width": p.get("y"),
+            "height": p.get("z"),
             "extra_json": _pick(
                 p, "sellerCats", "classify", "standard", "safekind",
-                "x", "y", "z", "boxnum", "customAttribute",
+                "boxnum", "customAttribute",
             ),
         }
         # suit_singles: 仅当 API 实际返回 singleList 时才写入，
@@ -102,9 +105,12 @@ async def sync_product(
                 "pic_url": sku.get("skuPicPath"),
                 "sys_sku_id": sku.get("sysSkuId"),
                 "active_status": sku.get("activeStatus", 1),
+                "length": sku.get("x"),
+                "width": sku.get("y"),
+                "height": sku.get("z"),
                 "extra_json": _pick(
                     sku, "skuComponent", "skuRemark", "propertiesAlias",
-                    "x", "y", "z", "boxnum",
+                    "boxnum",
                 ),
             })
 
