@@ -1,0 +1,143 @@
+"""
+config/chat_tools.py 单元测试
+
+覆盖：SafetyLevel 枚举、get_safety_level()、is_concurrency_safe()、get_chat_tools()
+"""
+
+import sys
+from pathlib import Path
+
+backend_dir = Path(__file__).parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
+import pytest
+
+
+class TestSafetyLevel:
+    """SafetyLevel 枚举测试"""
+
+    def test_enum_values(self):
+        from config.chat_tools import SafetyLevel
+        assert SafetyLevel.SAFE.value == "safe"
+        assert SafetyLevel.CONFIRM.value == "confirm"
+        assert SafetyLevel.DANGEROUS.value == "dangerous"
+
+    def test_enum_is_str(self):
+        from config.chat_tools import SafetyLevel
+        assert isinstance(SafetyLevel.SAFE, str)
+        assert SafetyLevel.SAFE == "safe"
+
+
+class TestGetSafetyLevel:
+    """get_safety_level() 测试"""
+
+    def test_erp_query_is_safe(self):
+        from config.chat_tools import get_safety_level, SafetyLevel
+        assert get_safety_level("erp_product_query") == SafetyLevel.SAFE
+
+    def test_local_query_is_safe(self):
+        from config.chat_tools import get_safety_level, SafetyLevel
+        assert get_safety_level("local_stock_query") == SafetyLevel.SAFE
+
+    def test_search_is_safe(self):
+        from config.chat_tools import get_safety_level, SafetyLevel
+        assert get_safety_level("erp_api_search") == SafetyLevel.SAFE
+        assert get_safety_level("web_search") == SafetyLevel.SAFE
+
+    def test_generate_image_is_confirm(self):
+        from config.chat_tools import get_safety_level, SafetyLevel
+        assert get_safety_level("generate_image") == SafetyLevel.CONFIRM
+
+    def test_generate_video_is_confirm(self):
+        from config.chat_tools import get_safety_level, SafetyLevel
+        assert get_safety_level("generate_video") == SafetyLevel.CONFIRM
+
+    def test_erp_execute_is_dangerous(self):
+        from config.chat_tools import get_safety_level, SafetyLevel
+        assert get_safety_level("erp_execute") == SafetyLevel.DANGEROUS
+
+    def test_trigger_sync_is_dangerous(self):
+        from config.chat_tools import get_safety_level, SafetyLevel
+        assert get_safety_level("trigger_erp_sync") == SafetyLevel.DANGEROUS
+
+    def test_unknown_tool_defaults_safe(self):
+        from config.chat_tools import get_safety_level, SafetyLevel
+        assert get_safety_level("nonexistent_tool") == SafetyLevel.SAFE
+
+
+class TestIsConcurrencySafe:
+    """is_concurrency_safe() 测试"""
+
+    def test_query_tools_are_safe(self):
+        from config.chat_tools import is_concurrency_safe
+        safe_tools = [
+            "erp_product_query", "erp_trade_query",
+            "local_stock_query", "local_order_query",
+            "erp_api_search", "search_knowledge", "web_search",
+            "social_crawler", "code_execute",
+        ]
+        for tool in safe_tools:
+            assert is_concurrency_safe(tool), f"{tool} should be concurrent safe"
+
+    def test_write_tools_are_not_safe(self):
+        from config.chat_tools import is_concurrency_safe
+        assert not is_concurrency_safe("erp_execute")
+        assert not is_concurrency_safe("trigger_erp_sync")
+
+    def test_generate_tools_are_not_safe(self):
+        from config.chat_tools import is_concurrency_safe
+        assert not is_concurrency_safe("generate_image")
+        assert not is_concurrency_safe("generate_video")
+
+    def test_unknown_tool_not_safe(self):
+        """未注册工具默认不安全（保守策略）"""
+        from config.chat_tools import is_concurrency_safe
+        assert not is_concurrency_safe("nonexistent_tool")
+
+
+class TestGetChatTools:
+    """get_chat_tools() 测试"""
+
+    def test_returns_list(self):
+        from config.chat_tools import get_chat_tools
+        tools = get_chat_tools()
+        assert isinstance(tools, list)
+        assert len(tools) > 0
+
+    def test_tool_format(self):
+        """每个工具符合 OpenAI function calling 格式"""
+        from config.chat_tools import get_chat_tools
+        tools = get_chat_tools()
+        for tool in tools:
+            assert tool.get("type") == "function"
+            func = tool.get("function")
+            assert func is not None
+            assert "name" in func
+            assert "description" in func or "parameters" in func
+
+    def test_no_duplicates(self):
+        """工具名不重复"""
+        from config.chat_tools import get_chat_tools
+        tools = get_chat_tools()
+        names = [t["function"]["name"] for t in tools]
+        assert len(names) == len(set(names)), f"Duplicates: {[n for n in names if names.count(n) > 1]}"
+
+    def test_contains_key_tools(self):
+        """包含核心工具"""
+        from config.chat_tools import get_chat_tools
+        tools = get_chat_tools()
+        names = {t["function"]["name"] for t in tools}
+        expected = {
+            "erp_api_search", "search_knowledge", "web_search",
+            "generate_image", "generate_video",
+            "erp_product_query", "local_stock_query",
+        }
+        for name in expected:
+            assert name in names, f"Missing tool: {name}"
+
+    def test_total_count(self):
+        """工具总数在合理范围"""
+        from config.chat_tools import get_chat_tools
+        tools = get_chat_tools()
+        assert 20 <= len(tools) <= 40, f"Got {len(tools)} tools"

@@ -378,7 +378,7 @@ class ToolExecutor:
             from services.kuaimai.param_doc import generate_param_doc
             return generate_param_doc(tool_name, action)
 
-        # Step 2: 有 params → 注入分页参数 → 执行查询
+        # Step 2: 有 params → 注入分页参数 → 执行查询 → 附带精简参数提示
         if args.get("page") is not None:
             params["page"] = args["page"]
         if args.get("page_size") is not None:
@@ -388,7 +388,13 @@ class ToolExecutor:
         if isinstance(dispatcher, str):
             return dispatcher
         try:
-            return await dispatcher.execute(tool_name, action, params)
+            result = await dispatcher.execute(tool_name, action, params)
+            # 附带精简参数提示（缺少必填、歧义消解、可用参数）
+            from services.kuaimai.param_doc import generate_param_hints
+            hints = generate_param_hints(tool_name, action, params)
+            if hints:
+                return f"{result}\n\n---\n{hints}"
+            return result
         except Exception as e:
             logger.error(
                 f"ToolExecutor erp_dispatch | tool={tool_name} | error={e}"

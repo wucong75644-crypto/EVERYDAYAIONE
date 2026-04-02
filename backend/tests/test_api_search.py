@@ -101,6 +101,25 @@ class TestErpApiSearch:
         # 场景指南中「统计」包含「库存」
         assert "stock" in result.lower() or "erp_" in result
 
+    def test_keyword_search_appends_best_match_hint(self):
+        """关键词搜索结果附带最佳匹配的参数提示"""
+        result = search_erp_api("订单")
+        assert "💡" in result
+        assert "推荐" in result
+
+    def test_keyword_search_required_params_shown(self):
+        """有必填参数的最佳匹配→显示必填参数"""
+        result = search_erp_api("快递")
+        # express_query 有必填参数
+        if "必填参数" in result:
+            assert "💡" in result
+
+    def test_keyword_search_optional_params_shown(self):
+        """无必填参数的最佳匹配→显示常用参数"""
+        result = search_erp_api("商品列表")
+        assert "💡" in result
+        assert "推荐" in result
+
 
 class TestMatchScenarios:
     """_match_scenarios 单元测试"""

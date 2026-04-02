@@ -19,7 +19,7 @@ import type { OperationContext } from './WebSocketContext';
 
 import type { MessageStatus } from '../types/message';
 import type { WSMessage } from '../hooks/useWebSocket';
-import { getAgentStepText, getPlaceholderText } from '../constants/placeholder';
+import { getAgentStepText, getToolCallText, getPlaceholderText } from '../constants/placeholder';
 
 /**
  * WS 消息扩展类型 — 后端各消息类型可能携带的额外字段
@@ -497,6 +497,44 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       // 标记该对话消息需要强制刷新（用户切入时重新加载）
       const store = deps.getStore();
       store.markForceRefresh(conversation_id);
+    },
+
+    tool_call: (msg) => {
+      const { conversation_id } = msg;
+      const toolCalls = msg.payload?.tool_calls as Array<{ name: string }> | undefined;
+      const turn = msg.payload?.turn as number | undefined;
+      if (!conversation_id || !toolCalls?.length) return;
+
+      // 取第一个工具名展示提示（多工具时显示第一个）
+      const hint = getToolCallText(toolCalls[0].name);
+      const suffix = toolCalls.length > 1 ? ` 等${toolCalls.length}个工具` : '';
+      deps.getStore().setAgentStepHint(conversation_id, `${hint}${suffix}`);
+
+      logger.info('ws:tool', 'tool_call', { conversationId: conversation_id, tools: toolCalls.map(t => t.name), turn });
+    },
+
+    tool_result: (msg) => {
+      const { conversation_id } = msg;
+      const toolName = msg.payload?.tool_name as string | undefined;
+      const success = msg.payload?.success as boolean | undefined;
+      if (!conversation_id) return;
+
+      // 工具完成后清除提示（下一轮 stream 开始时会自动更新）
+      deps.getStore().clearAgentStepHint(conversation_id);
+
+      logger.info('ws:tool', 'tool_result', { conversationId: conversation_id, tool: toolName, success });
+    },
+
+    tool_confirm_request: (msg) => {
+      const { conversation_id, task_id } = msg;
+      const toolName = msg.payload?.tool_name as string | undefined;
+      const description = msg.payload?.description as string | undefined;
+      if (!conversation_id || !toolName) return;
+
+      // 显示确认提示（当前阶段仅显示提示，Phase 3 实现确认 UI）
+      deps.getStore().setAgentStepHint(conversation_id, `⚠ ${description || toolName} — 等待确认`);
+
+      logger.info('ws:tool', 'confirm_request', { conversationId: conversation_id, tool: toolName, taskId: task_id });
     },
 
     error: (msg) => {

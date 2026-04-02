@@ -1,0 +1,189 @@
+"""
+ChatHandler 工具执行 Mixin
+
+将工具调用的安全检查、分批并行/串行执行、错误处理等逻辑
+从 ChatHandler 主文件中拆分出来，保持单一职责。
+"""
+
+import asyncio
+import json
+from typing import Any, Dict, List
+
+from loguru import logger
+
+from schemas.websocket import (
+    build_tool_result,
+    build_tool_confirm_request,
+)
+from services.websocket_manager import ws_manager
+
+
+class ChatToolMixin:
+    """工具执行 Mixin：安全检查 + 并行/串行分批 + 错误回传"""
+
+    async def _execute_tool_calls(
+        self,
+        tool_calls: List[Dict[str, Any]],
+        task_id: str,
+        conversation_id: str,
+        message_id: str,
+        user_id: str,
+        turn: int,
+    ) -> List[tuple]:
+        """执行工具调用：安全检查 → 并行/串行分批 → 返回结果
+
+        Returns:
+            List of (tool_call_dict, result_text, is_error)
+        """
+        from config.chat_tools import is_concurrency_safe
+        from services.tool_executor import ToolExecutor
+
+        executor = ToolExecutor(
+            db=self.db, user_id=user_id,
+            conversation_id=conversation_id, org_id=self.org_id,
+        )
+        results: List[tuple] = []
+
+        # 按并发安全性分批
+        batches = _partition_tool_calls(tool_calls)
+
+        for is_safe, batch in batches:
+            if is_safe:
+                # 只读工具：并行执行
+                tasks = [
+                    self._execute_single_tool(
+                        tc, executor, task_id, conversation_id,
+                        message_id, turn,
+                    )
+                    for tc in batch
+                ]
+                batch_results = await asyncio.gather(*tasks)
+                results.extend(batch_results)
+            else:
+                # 写操作：逐个执行（含安全检查）
+                for tc in batch:
+                    result = await self._execute_single_tool(
+                        tc, executor, task_id, conversation_id,
+                        message_id, turn,
+                    )
+                    results.append(result)
+
+        return results
+
+    async def _execute_single_tool(
+        self,
+        tc: Dict[str, Any],
+        executor,
+        task_id: str,
+        conversation_id: str,
+        message_id: str,
+        turn: int,
+    ) -> tuple:
+        """执行单个工具：安全检查 → 执行 → 返回 (tc, result, is_error)"""
+        from config.chat_tools import get_safety_level, SafetyLevel
+
+        tool_name = tc["name"]
+        tool_call_id = tc["id"]
+        safety = get_safety_level(tool_name)
+
+        # dangerous 级别：需要用户确认
+        if safety == SafetyLevel.DANGEROUS:
+            try:
+                args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+            except json.JSONDecodeError:
+                args = {}
+            # 发确认请求
+            await ws_manager.send_to_task_subscribers(
+                task_id,
+                build_tool_confirm_request(
+                    task_id=task_id,
+                    conversation_id=conversation_id,
+                    message_id=message_id,
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    arguments=args,
+                    description=f"AI 要执行写操作: {tool_name}",
+                    safety_level=safety.value,
+                ),
+            )
+            # TODO: 等待用户确认（Phase 3 实现 ws.py 路由 + asyncio.Event）
+            # 当前阶段：dangerous 工具暂时拒绝执行，返回提示让 AI 告知用户
+            return (
+                tc,
+                f"⚠ 写操作 {tool_name} 需要用户确认，请告知用户操作内容并等待确认。",
+                True,
+            )
+
+        # confirm 级别：通知用户（不阻塞）
+        if safety == SafetyLevel.CONFIRM:
+            logger.info(f"Tool confirm notify | tool={tool_name} | task={task_id}")
+
+        # 执行工具
+        try:
+            args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+        except json.JSONDecodeError:
+            return (tc, f"参数解析失败: {tc['arguments'][:100]}", True)
+
+        try:
+            result = await executor.execute(tool_name, args)
+            # 通知前端工具完成
+            await ws_manager.send_to_task_subscribers(
+                task_id,
+                build_tool_result(
+                    task_id=task_id,
+                    conversation_id=conversation_id,
+                    message_id=message_id,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    success=True,
+                    summary=result[:100] if result else "",
+                    turn=turn,
+                ),
+            )
+            return (tc, result, False)
+        except Exception as e:
+            logger.error(f"Tool execution error | tool={tool_name} | task={task_id} | error={e}")
+            error_msg = f"工具执行失败: {e}"
+            await ws_manager.send_to_task_subscribers(
+                task_id,
+                build_tool_result(
+                    task_id=task_id,
+                    conversation_id=conversation_id,
+                    message_id=message_id,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    success=False,
+                    summary=str(e)[:100],
+                    turn=turn,
+                ),
+            )
+            return (tc, error_msg, True)
+
+
+def _partition_tool_calls(
+    tool_calls: List[Dict[str, Any]],
+) -> List[tuple]:
+    """按并发安全性分批：连续的只读工具合并为一批并行，写操作单独一批串行"""
+    from config.chat_tools import is_concurrency_safe
+
+    batches: List[tuple] = []
+    current_batch: List[Dict[str, Any]] = []
+    current_safe = True
+
+    for tc in tool_calls:
+        safe = is_concurrency_safe(tc["name"])
+        if safe and current_safe and current_batch:
+            current_batch.append(tc)
+        elif safe and not current_batch:
+            current_safe = True
+            current_batch = [tc]
+        else:
+            if current_batch:
+                batches.append((current_safe, current_batch))
+            current_batch = [tc]
+            current_safe = safe
+
+    if current_batch:
+        batches.append((current_safe, current_batch))
+
+    return batches

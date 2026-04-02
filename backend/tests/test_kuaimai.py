@@ -2950,6 +2950,78 @@ class TestParamDocGeneration:
 
 
 # ============================================================
+# TestParamHints — generate_param_hints 精简参数提示
+# ============================================================
+
+
+class TestParamHints:
+    """验证 generate_param_hints() 按需返回精简提示"""
+
+    def test_unknown_tool_returns_empty(self):
+        """未知工具→空字符串"""
+        from services.kuaimai.param_doc import generate_param_hints
+        result = generate_param_hints("nonexistent_tool", "action", {"k": "v"})
+        assert result == ""
+
+    def test_unknown_action_returns_empty(self):
+        """未知 action→空字符串"""
+        from services.kuaimai.param_doc import generate_param_hints
+        result = generate_param_hints("erp_trade_query", "nonexistent", {"k": "v"})
+        assert result == ""
+
+    def test_missing_required_param_warned(self):
+        """缺少必填参数→输出⚠提示"""
+        from services.kuaimai.param_doc import generate_param_hints
+        # multicode_query 必填 code，只传 keyword 触发缺失提示
+        result = generate_param_hints(
+            "erp_product_query", "multicode_query", {"keyword": "test"},
+        )
+        assert "⚠" in result
+        assert "缺少必填" in result
+
+    def test_hint_for_used_param(self):
+        """已传参数有 hint→输出💡提示"""
+        from services.kuaimai.param_doc import generate_param_hints
+        # order_list 的 order_id 有 param_hints
+        result = generate_param_hints(
+            "erp_trade_query", "order_list", {"order_id": "123"},
+        )
+        assert "💡" in result
+        assert "order_id" in result
+
+    def test_unused_params_suggested(self):
+        """未传但有文档的参数→输出📎提示"""
+        from services.kuaimai.param_doc import generate_param_hints
+        # product_list 有很多可选参数，只传 keyword
+        result = generate_param_hints(
+            "erp_product_query", "product_list", {"keyword": "手机"},
+        )
+        assert "📎" in result
+        assert "其他可用参数" in result
+
+    def test_skip_pagination_params(self):
+        """分页参数不出现在提示中"""
+        from services.kuaimai.param_doc import generate_param_hints
+        result = generate_param_hints(
+            "erp_trade_query", "order_list",
+            {"order_id": "123", "page": 1, "page_size": 20},
+        )
+        # page/page_size 不应被当作"已传参数"触发 hint
+        assert "page_size" not in result
+        assert "page:" not in result
+
+    def test_all_params_covered_returns_minimal(self):
+        """所有参数都传了→只返回 hint（无缺失、无推荐）"""
+        from services.kuaimai.param_doc import generate_param_hints
+        from services.kuaimai.registry import TOOL_REGISTRIES
+        entry = TOOL_REGISTRIES["erp_trade_query"]["order_list"]
+        all_params = {k: "test" for k in entry.param_map}
+        result = generate_param_hints("erp_trade_query", "order_list", all_params)
+        assert "缺少必填" not in result
+        assert "其他可用参数" not in result
+
+
+# ============================================================
 # TestFormatterEmptyMessages — 格式化器空结果增强提示
 # ============================================================
 
@@ -4024,6 +4096,49 @@ class TestProductFormattersExtended:
         assert "SKU001" in result
         assert "采购入库" in result
         assert "50" in result
+
+    def test_product_list_shows_dimensions(self):
+        """商品列表展示长宽高"""
+        from services.kuaimai.formatters.product import format_product_list
+        data = {
+            "items": [{
+                "title": "纸巾", "outerId": "P01",
+                "x": 29.2, "y": 21.6, "z": 3.8,
+                "weight": 262, "activeStatus": 1,
+            }],
+            "total": 1,
+        }
+        result = format_product_list(data, None)
+        assert "29.2" in result
+        assert "21.6" in result
+        assert "3.8" in result
+        assert "长(cm)" in result
+
+    def test_product_detail_shows_dimensions(self):
+        """商品详情展示长宽高（含SKU尺寸）"""
+        from services.kuaimai.formatters.product import format_product_detail
+        data = {
+            "title": "纸巾", "outerId": "P01",
+            "x": 29.2, "y": 21.6, "z": 3.8,
+            "items": [{
+                "skuOuterId": "P01-01", "propertiesName": "整箱",
+                "x": 10.0, "y": 8.0, "z": 2.0, "activeStatus": 1,
+            }],
+        }
+        result = format_product_detail(data, None)
+        assert "29.2" in result
+        assert "10.0" in result
+
+    def test_product_list_no_dimensions(self):
+        """无尺寸商品不报错"""
+        from services.kuaimai.formatters.product import format_product_list
+        data = {
+            "items": [{"title": "虚拟商品", "outerId": "V01", "activeStatus": 1}],
+            "total": 1,
+        }
+        result = format_product_list(data, None)
+        assert "虚拟商品" in result
+        assert "长(cm)" not in result
 
 
 # ═══════════════════════════════════════════════════════════

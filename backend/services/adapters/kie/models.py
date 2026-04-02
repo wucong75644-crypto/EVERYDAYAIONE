@@ -149,11 +149,26 @@ class ChatCompletionRequest(BaseModel):
     response_format: Optional[ResponseFormat] = None
 
 
+class ToolCallFunction(BaseModel):
+    """tool_call 中的函数信息"""
+    name: Optional[str] = None
+    arguments: Optional[str] = None  # JSON 字符串，流式中为增量片段
+
+
+class ToolCallChunkDelta(BaseModel):
+    """流式 tool_call 增量"""
+    index: int = 0
+    id: Optional[str] = None
+    type: Optional[str] = "function"
+    function: Optional[ToolCallFunction] = None
+
+
 class ChatCompletionChunkDelta(BaseModel):
     """流式响应增量"""
     role: Optional[str] = None
     content: Optional[str] = None
     reasoning_content: Optional[str] = None
+    tool_calls: Optional[List[ToolCallChunkDelta]] = None
 
 
 class ChatCompletionChunkChoice(BaseModel):
