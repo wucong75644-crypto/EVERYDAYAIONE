@@ -200,6 +200,47 @@ class TestSyncProduct:
         # 验证 upsert 写入了数据（1 SPU）
         assert count == 1
 
+    @pytest.mark.asyncio
+    async def test_dimensions_extracted_to_columns(self):
+        """x/y/z 提升为 length/width/height 独立列"""
+        from services.kuaimai.erp_sync_master_handlers import sync_product
+        svc = _mock_svc(pages=[{
+            "outerId": "P01", "title": "商品A",
+            "x": 29.2, "y": 21.6, "z": 3.8,
+            "skus": [
+                {"skuOuterId": "P01-01", "propertiesName": "红色",
+                 "x": 10.0, "y": 8.0, "z": 2.0},
+            ],
+        }])
+        count = await sync_product(svc, START, END)
+        assert count == 2  # 1 SPU + 1 SKU
+        # 验证 SPU 尺寸写入独立列
+        spu_data = svc.db._tables["erp_products"]._data
+        assert spu_data[0]["length"] == 29.2
+        assert spu_data[0]["width"] == 21.6
+        assert spu_data[0]["height"] == 3.8
+        # 验证 x/y/z 不再出现在 extra_json
+        assert "x" not in spu_data[0].get("extra_json", {})
+        # 验证 SKU 尺寸写入独立列
+        sku_data = svc.db._tables["erp_product_skus"]._data
+        assert sku_data[0]["length"] == 10.0
+        assert sku_data[0]["width"] == 8.0
+        assert sku_data[0]["height"] == 2.0
+
+    @pytest.mark.asyncio
+    async def test_dimensions_none_when_missing(self):
+        """API 未返回尺寸时，列值为 None"""
+        from services.kuaimai.erp_sync_master_handlers import sync_product
+        svc = _mock_svc(pages=[{
+            "outerId": "P02", "title": "无尺寸商品",
+        }])
+        count = await sync_product(svc, START, END)
+        assert count == 1
+        spu_data = svc.db._tables["erp_products"]._data
+        assert spu_data[0]["length"] is None
+        assert spu_data[0]["width"] is None
+        assert spu_data[0]["height"] is None
+
 
 # ============================================================
 # TestSyncStock — 库存同步
