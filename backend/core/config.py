@@ -7,6 +7,7 @@
 from functools import lru_cache
 from typing import Optional
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -83,7 +84,7 @@ class Settings(BaseSettings):
     dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
     # OpenRouter 配置（多模型统一网关）
-    openrouter_api_key: Optional[str] = None
+    openrouter_api_key: Optional[str] = Field(default=None, validation_alias="APP_OPENROUTER_API_KEY")
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     openrouter_app_title: str = "EverydayAI"
 
@@ -167,6 +168,9 @@ class Settings(BaseSettings):
     erp_sync_task_lock_ttl: int = 60              # per-(org, sync_type) 任务锁 TTL（秒），配合续期
     erp_sync_kit_refresh_throttle: int = 30       # 套件库存物化视图刷新节流（秒）
     erp_sync_queue_key: str = "erp_tasks"         # Redis Sorted Set 队列名
+    erp_reconcile_interval: int = 86400           # 订单对账间隔（秒），默认24小时
+    erp_reconcile_hour: int = 3                   # 对账触发时间（0-23），默认凌晨3点
+    erp_reconcile_tolerance: int = 5              # COUNT对账容差，≤此值视为一致
 
     # 快麦奇门自定义接口配置（淘宝网关，需单独申请凭证）
     qimen_app_key: Optional[str] = None  # 淘宝平台 appKey（非ERP的appKey）

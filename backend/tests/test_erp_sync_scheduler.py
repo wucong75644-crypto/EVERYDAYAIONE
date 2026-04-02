@@ -230,3 +230,74 @@ class TestPriorityWeights:
         all_types = HIGH_FREQ_TYPES + LOW_FREQ_TYPES + SPECIAL_TYPES
         for t in all_types:
             assert t in PRIORITY_WEIGHTS, f"Missing priority weight for {t}"
+
+    def test_reconcile_types_registered(self):
+        from services.kuaimai.erp_sync_scheduler import PRIORITY_WEIGHTS, SPECIAL_TYPES
+        assert "order_reconcile" in PRIORITY_WEIGHTS
+        assert "aftersale_reconcile" in PRIORITY_WEIGHTS
+        assert "order_reconcile" in SPECIAL_TYPES
+        assert "aftersale_reconcile" in SPECIAL_TYPES
+
+
+# ── 对账调度 ────────────────────────────────────────────
+
+
+class TestReconcileScheduling:
+
+    def _make_scheduler(self, reconcile_hour=3):
+        with patch("services.kuaimai.erp_sync_scheduler.get_settings") as mock:
+            settings = MagicMock()
+            settings.erp_sync_interval = 60
+            settings.erp_platform_map_interval = 21600
+            settings.erp_stock_full_refresh_interval = 3600
+            settings.erp_reconcile_hour = reconcile_hour
+            settings.erp_reconcile_interval = 86400
+            settings.erp_sync_queue_key = "erp_tasks"
+            settings.erp_sync_worker_count = 10
+            mock.return_value = settings
+            from services.kuaimai.erp_sync_scheduler import ErpSyncScheduler
+            s = ErpSyncScheduler(db=MagicMock())
+        return s
+
+    @patch("services.kuaimai.erp_sync_scheduler.datetime")
+    def test_reconcile_due_at_correct_hour(self, mock_dt):
+        mock_dt.now.return_value = datetime(2026, 4, 2, 3, 15, 0)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        s = self._make_scheduler(reconcile_hour=3)
+        s._first_round = False
+        due = s._get_due_types("org1")
+        assert "order_reconcile" in due
+        assert "aftersale_reconcile" in due
+
+    @patch("services.kuaimai.erp_sync_scheduler.datetime")
+    def test_reconcile_not_due_wrong_hour(self, mock_dt):
+        mock_dt.now.return_value = datetime(2026, 4, 2, 10, 0, 0)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        s = self._make_scheduler(reconcile_hour=3)
+        s._first_round = False
+        due = s._get_due_types("org1")
+        assert "order_reconcile" not in due
+        assert "aftersale_reconcile" not in due
+
+    @patch("services.kuaimai.erp_sync_scheduler.datetime")
+    def test_reconcile_not_due_if_recently_completed(self, mock_dt):
+        mock_dt.now.return_value = datetime(2026, 4, 2, 3, 30, 0)
+        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+        s = self._make_scheduler(reconcile_hour=3)
+        s._first_round = False
+        # 刚完成过
+        s._org_last_order_reconcile["org1"] = datetime(2026, 4, 2, 3, 5, 0)
+        s._org_last_aftersale_reconcile["org1"] = datetime(2026, 4, 2, 3, 5, 0)
+        due = s._get_due_types("org1")
+        assert "order_reconcile" not in due
+        assert "aftersale_reconcile" not in due
+
+    def test_mark_completed_independent_tracking(self):
+        """订单和售后完成时间戳独立追踪"""
+        s = self._make_scheduler()
+        s.mark_completed("org1", "order_reconcile")
+        assert "org1" in s._org_last_order_reconcile
+        assert "org1" not in s._org_last_aftersale_reconcile
+
+        s.mark_completed("org1", "aftersale_reconcile")
+        assert "org1" in s._org_last_aftersale_reconcile

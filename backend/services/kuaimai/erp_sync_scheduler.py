@@ -28,6 +28,8 @@ PRIORITY_WEIGHTS: dict[str, int] = {
     "platform_map": 0,
     "stock_full": 0,
     "daily_maintenance": 0,
+    "order_reconcile": 0,
+    "aftersale_reconcile": 0,
 }
 
 # 高频同步类型（每轮都入队）
@@ -42,7 +44,7 @@ HIGH_FREQ_TYPES = [
 LOW_FREQ_TYPES = ["platform_map"]
 
 # 特殊任务类型（按独立间隔调度）
-SPECIAL_TYPES = ["stock_full", "daily_maintenance"]
+SPECIAL_TYPES = ["stock_full", "daily_maintenance", "order_reconcile", "aftersale_reconcile"]
 
 
 class ErpSyncScheduler:
@@ -67,6 +69,8 @@ class ErpSyncScheduler:
         self._org_last_platform_map: dict[str | None, datetime] = {}
         self._org_last_stock_full: dict[str | None, datetime] = {}
         self._org_last_daily: dict[str | None, datetime] = {}
+        self._org_last_order_reconcile: dict[str | None, datetime] = {}
+        self._org_last_aftersale_reconcile: dict[str | None, datetime] = {}
 
     async def start(self) -> None:
         """启动调度循环"""
@@ -149,6 +153,19 @@ class ErpSyncScheduler:
         ):
             due.append("daily_maintenance")
 
+        # 订单+售后对账：仅在指定时点触发（默认凌晨3点），独立追踪
+        reconcile_hour = self.settings.erp_reconcile_hour
+        reconcile_interval = self.settings.erp_reconcile_interval
+        if datetime.now().hour == reconcile_hour:
+            if self._is_interval_due(
+                self._org_last_order_reconcile, org_id, reconcile_interval,
+            ):
+                due.append("order_reconcile")
+            if self._is_interval_due(
+                self._org_last_aftersale_reconcile, org_id, reconcile_interval,
+            ):
+                due.append("aftersale_reconcile")
+
         return due
 
     @staticmethod
@@ -175,6 +192,10 @@ class ErpSyncScheduler:
             self._org_last_stock_full[org_id] = datetime.now()
         elif sync_type == "daily_maintenance":
             self._org_last_daily[org_id] = datetime.now()
+        elif sync_type == "order_reconcile":
+            self._org_last_order_reconcile[org_id] = datetime.now()
+        elif sync_type == "aftersale_reconcile":
+            self._org_last_aftersale_reconcile[org_id] = datetime.now()
 
     async def _enqueue_task(self, org_id: str | None, sync_type: str) -> bool:
         """ZADD NX 入队，原子去重。"""

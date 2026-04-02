@@ -195,6 +195,10 @@ class ErpSyncWorkerPool:
                 )
             elif sync_type == "stock_full":
                 await self._run_stock_full(org_id, client, extend_fn)
+            elif sync_type == "order_reconcile":
+                await self._run_order_reconcile(org_id, client, extend_fn)
+            elif sync_type == "aftersale_reconcile":
+                await self._run_aftersale_reconcile(org_id, client, extend_fn)
             else:
                 await self._run_sync(sync_type, org_id, client, extend_fn)
 
@@ -283,6 +287,26 @@ class ErpSyncWorkerPool:
         使用长生命周期的 _executor（保持删除检测时间戳状态）。
         """
         await self._executor.run_daily_maintenance(org_id=org_id, client=client)
+
+    async def _run_order_reconcile(
+        self, org_id: str | None, client, extend_fn,
+    ) -> None:
+        """执行订单分层对账（委托给 executor）"""
+        count = await self._executor.run_order_reconcile(
+            org_id=org_id, client=client, lock_extend_fn=extend_fn,
+        )
+        if count > 0:
+            logger.info(f"Order reconcile done | org_id={org_id} backfilled={count}")
+
+    async def _run_aftersale_reconcile(
+        self, org_id: str | None, client, extend_fn,
+    ) -> None:
+        """执行售后分层对账（委托给 executor）"""
+        count = await self._executor.run_aftersale_reconcile(
+            org_id=org_id, client=client, lock_extend_fn=extend_fn,
+        )
+        if count > 0:
+            logger.info(f"Aftersale reconcile done | org_id={org_id} backfilled={count}")
 
     # ── 套件库存视图刷新（throttle）────────────────────
 
