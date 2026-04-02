@@ -282,3 +282,33 @@ class ErpSyncExecutor:
                     f"Mark deleted failed | {id_col}={item_id} | error={e}"
                 )
         return count
+
+    # ── 对账 ──────────────────────────────────────────────
+
+    async def run_order_reconcile(
+        self, org_id: str | None = None, client=None,
+        lock_extend_fn=None,
+    ) -> int:
+        """执行订单分层对账"""
+        from services.kuaimai.erp_sync_reconcile import reconcile_order
+        from services.kuaimai.erp_sync_service import ErpSyncService
+
+        svc = ErpSyncService(
+            self.db, lock_extend_fn=lock_extend_fn,
+            org_id=org_id, client=client,
+        )
+        return await reconcile_order(svc)
+
+    async def run_aftersale_reconcile(
+        self, org_id: str | None = None, client=None,
+        lock_extend_fn=None,
+    ) -> int:
+        """执行售后分层对账"""
+        from services.kuaimai.erp_sync_reconcile import reconcile_aftersale
+        from services.kuaimai.erp_sync_service import ErpSyncService
+
+        svc = ErpSyncService(
+            self.db, lock_extend_fn=lock_extend_fn,
+            org_id=org_id, client=client,
+        )
+        return await reconcile_aftersale(svc)

@@ -249,6 +249,56 @@ async def sync_purchase_return(
 # ── 售后工单 (aftersale) ────────────────────────────────
 
 
+def _build_aftersale_rows(
+    doc: dict, svc: ErpSyncService,
+) -> list[dict[str, Any]]:
+    """从单个售后 doc 构建 DB 行（供 sync_aftersale 和对账共用）"""
+    doc_extra = _pick(
+        doc, "goodStatus", "refundWarehouseName",
+        "refundExpressCompany", "refundExpressId",
+        "reissueSid", "platformId", "shortId",
+    )
+    doc_base = {
+        "doc_type": "aftersale",
+        "doc_id": str(doc["id"]),
+        "doc_status": doc.get("status"),
+        "doc_created_at": _safe_ts(doc.get("created")),
+        "doc_modified_at": _safe_ts(doc.get("modified")),
+        "shop_name": doc.get("shopName"),
+        "platform": doc.get("source"),
+        "order_no": doc.get("tid"),
+        "aftersale_type": doc.get("afterSaleType"),
+        "refund_money": doc.get("refundMoney"),
+        "raw_refund_money": doc.get("rawRefundMoney"),
+        "text_reason": doc.get("textReason"),
+        "finished_at": _safe_ts(doc.get("finished")),
+        "remark": doc.get("remark"),
+    }
+
+    items = doc.get("items") or []
+    if not items:
+        return [{**doc_base, "item_index": 0, "extra_json": doc_extra}]
+
+    items = svc.sort_and_assign_index(items, "aftersale")
+    rows: list[dict[str, Any]] = []
+    for item in items:
+        item_extra = _pick(item, "goodItemCount", "badItemCount", "type")
+        merged_extra = {**doc_extra, **item_extra} if item_extra else doc_extra
+        rows.append({
+            **doc_base,
+            "item_index": item["_item_index"],
+            "outer_id": item.get("mainOuterId"),
+            "sku_outer_id": item.get("outerId"),
+            "item_name": item.get("title"),
+            "quantity": item.get("receivableCount"),
+            "real_qty": item.get("itemRealQty"),
+            "price": item.get("price"),
+            "amount": item.get("payment"),
+            "extra_json": merged_extra,
+        })
+    return rows
+
+
 async def sync_aftersale(
     svc: ErpSyncService, start: datetime, end: datetime,
 ) -> int:
@@ -268,49 +318,7 @@ async def sync_aftersale(
         page_size=200,
     ):
         for doc in page_docs:
-            doc_extra = _pick(
-                doc, "goodStatus", "refundWarehouseName",
-                "refundExpressCompany", "refundExpressId",
-                "reissueSid", "platformId", "shortId",
-            )
-            doc_base = {
-                "doc_type": "aftersale",
-                "doc_id": str(doc["id"]),
-                "doc_status": doc.get("status"),
-                "doc_created_at": _safe_ts(doc.get("created")),
-                "doc_modified_at": _safe_ts(doc.get("modified")),
-                "shop_name": doc.get("shopName"),
-                "platform": doc.get("source"),
-                "order_no": doc.get("tid"),
-                "aftersale_type": doc.get("afterSaleType"),
-                "refund_money": doc.get("refundMoney"),
-                "raw_refund_money": doc.get("rawRefundMoney"),
-                "text_reason": doc.get("textReason"),
-                "finished_at": _safe_ts(doc.get("finished")),
-                "remark": doc.get("remark"),
-            }
-
-            items = doc.get("items") or []
-            if not items:
-                all_rows.append({**doc_base, "item_index": 0, "extra_json": doc_extra})
-                continue
-
-            items = svc.sort_and_assign_index(items, "aftersale")
-            for item in items:
-                item_extra = _pick(item, "goodItemCount", "badItemCount", "type")
-                merged_extra = {**doc_extra, **item_extra} if item_extra else doc_extra
-                all_rows.append({
-                    **doc_base,
-                    "item_index": item["_item_index"],
-                    "outer_id": item.get("mainOuterId"),
-                    "sku_outer_id": item.get("outerId"),
-                    "item_name": item.get("title"),
-                    "quantity": item.get("receivableCount"),
-                    "real_qty": item.get("itemRealQty"),
-                    "price": item.get("price"),
-                    "amount": item.get("payment"),
-                    "extra_json": merged_extra,
-                })
+            all_rows.extend(_build_aftersale_rows(doc, svc))
 
         # 每 1000 条刷一次库，释放内存
         if len(all_rows) >= flush_size:

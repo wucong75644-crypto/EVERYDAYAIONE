@@ -283,6 +283,41 @@ class TestSyncPurchaseReturn:
 # ============================================================
 
 
+class TestBuildAftersaleRows:
+    """_build_aftersale_rows 行构建测试"""
+
+    def test_with_items(self):
+        from services.kuaimai.erp_sync_handlers import _build_aftersale_rows
+        doc = {
+            "id": 501, "status": "FINISHED",
+            "items": [
+                {"mainOuterId": "P01", "outerId": "S01", "title": "item1",
+                 "receivableCount": 2, "price": 10, "payment": 20},
+            ],
+        }
+        svc = _mock_svc()
+        rows = _build_aftersale_rows(doc, svc)
+        assert len(rows) == 1
+        assert rows[0]["doc_type"] == "aftersale"
+        assert rows[0]["doc_id"] == "501"
+        assert rows[0]["outer_id"] == "P01"
+
+    def test_empty_items_returns_single_row(self):
+        from services.kuaimai.erp_sync_handlers import _build_aftersale_rows
+        doc = {"id": 502, "status": "OPEN", "items": []}
+        svc = _mock_svc()
+        rows = _build_aftersale_rows(doc, svc)
+        assert len(rows) == 1
+        assert rows[0]["item_index"] == 0
+
+    def test_no_items_key(self):
+        from services.kuaimai.erp_sync_handlers import _build_aftersale_rows
+        doc = {"id": 503, "status": "OPEN"}
+        svc = _mock_svc()
+        rows = _build_aftersale_rows(doc, svc)
+        assert len(rows) == 1
+
+
 class TestSyncAftersale:
     @pytest.mark.asyncio
     async def test_empty_returns_zero(self):
