@@ -55,6 +55,15 @@ class TaskStatus(str, Enum):
 
 
 @dataclass
+class ToolCallDelta:
+    """流式 tool_call 增量块（累积拼接后得到完整调用）"""
+    index: int                              # tool_call 在列表中的索引
+    id: Optional[str] = None                # tool_call ID（首帧有）
+    name: Optional[str] = None              # 工具名称（首帧有）
+    arguments_delta: Optional[str] = None   # JSON 参数增量片段
+
+
+@dataclass
 class StreamChunk:
     """
     统一流式响应块（OpenAI 兼容格式）
@@ -69,6 +78,8 @@ class StreamChunk:
     completion_tokens: int = 0
     # API 报告的实际积分消耗（优先使用，无则走本地估算）
     credits_consumed: Optional[float] = None
+    # 工具调用增量（流式累积，每帧可能只有 arguments 片段）
+    tool_calls: Optional[List[ToolCallDelta]] = None
 
     @property
     def has_content(self) -> bool:
@@ -81,6 +92,10 @@ class StreamChunk:
     @property
     def has_usage(self) -> bool:
         return self.prompt_tokens > 0 or self.completion_tokens > 0
+
+    @property
+    def has_tool_calls(self) -> bool:
+        return bool(self.tool_calls)
 
 
 @dataclass

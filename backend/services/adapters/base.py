@@ -17,6 +17,7 @@ from .types import (
     MediaType,
     TaskStatus,
     # 数据模型
+    ToolCallDelta,
     StreamChunk,
     ChatResponse,
     CostEstimate,
@@ -36,6 +37,7 @@ __all__ = [
     "MediaType",
     "TaskStatus",
     # 数据模型
+    "ToolCallDelta",
     "StreamChunk",
     "ChatResponse",
     "CostEstimate",

@@ -162,6 +162,41 @@ export function getAgentStepText(toolName: string): string {
   return AGENT_STEP_MAP[toolName] || 'AI 正在分析';
 }
 
+/** 工具调用名 → 前端展示文字（单循环 Agent 工具循环用） */
+const TOOL_CALL_MAP: Record<string, string> = {
+  // ERP 查询
+  erp_info_query: '正在查询基础信息',
+  erp_product_query: '正在查询商品信息',
+  erp_trade_query: '正在查询订单信息',
+  erp_aftersales_query: '正在查询售后信息',
+  erp_warehouse_query: '正在查询仓储信息',
+  erp_purchase_query: '正在查询采购信息',
+  erp_taobao_query: '正在查询平台订单',
+  erp_execute: '正在执行ERP操作',
+  // 本地查询
+  local_stock_query: '正在查询库存',
+  local_product_identify: '正在识别商品',
+  local_order_query: '正在查询订单',
+  local_purchase_query: '正在查询采购',
+  local_aftersale_query: '正在查询售后',
+  local_product_stats: '正在统计商品数据',
+  local_product_flow: '正在查询供应链',
+  local_global_stats: '正在统计全局数据',
+  // 搜索/通用
+  erp_api_search: '正在搜索ERP文档',
+  search_knowledge: '正在查阅知识库',
+  web_search: '正在搜索互联网',
+  social_crawler: '正在搜索社交平台',
+  code_execute: '正在执行代码',
+  generate_image: '正在生成图片',
+  generate_video: '正在生成视频',
+};
+
+/** 根据工具名获取工具调用展示文字 */
+export function getToolCallText(toolName: string): string {
+  return TOOL_CALL_MAP[toolName] || `正在执行 ${toolName}`;
+}
+
 /**
  * 判断是否为媒体占位符（图片/视频/音频）
  */

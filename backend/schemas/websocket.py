@@ -48,6 +48,10 @@ class WSMessageType(str, Enum):
     IMAGE_PARTIAL_UPDATE = "image_partial_update"
     AGENT_STEP = "agent_step"
     ROUTING_COMPLETE = "routing_complete"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    TOOL_CONFIRM_REQUEST = "tool_confirm_request"
+    TOOL_CONFIRM_RESPONSE = "tool_confirm_response"
 
     # === 系统消息 ===
     CREDITS_CHANGED = "credits_changed"
@@ -420,4 +424,82 @@ def build_agent_step(
         },
         conversation_id=conversation_id,
         task_id=task_id,
+    )
+
+
+def build_tool_call(
+    task_id: str,
+    conversation_id: str,
+    message_id: str,
+    tool_calls: list[Dict[str, Any]],
+    turn: int,
+) -> Dict[str, Any]:
+    """构建工具调用通知（AI 决定调用工具，前端显示工具执行中）"""
+    return _build_ws_message(
+        WSMessageType.TOOL_CALL,
+        {
+            "tool_calls": tool_calls,
+            "turn": turn,
+        },
+        task_id=task_id,
+        conversation_id=conversation_id,
+        message_id=message_id,
+    )
+
+
+def build_tool_result(
+    task_id: str,
+    conversation_id: str,
+    message_id: str,
+    tool_name: str,
+    tool_call_id: str,
+    success: bool,
+    summary: str,
+    turn: int,
+) -> Dict[str, Any]:
+    """构建工具执行结果通知（工具执行完成，前端更新状态）"""
+    return _build_ws_message(
+        WSMessageType.TOOL_RESULT,
+        {
+            "tool_name": tool_name,
+            "tool_call_id": tool_call_id,
+            "success": success,
+            "summary": summary,
+            "turn": turn,
+        },
+        task_id=task_id,
+        conversation_id=conversation_id,
+        message_id=message_id,
+    )
+
+
+def build_tool_confirm_request(
+    task_id: str,
+    conversation_id: str,
+    message_id: str,
+    tool_call_id: str,
+    tool_name: str,
+    arguments: Dict[str, Any],
+    description: str,
+    safety_level: str,
+    timeout: int = 60,
+) -> Dict[str, Any]:
+    """构建工具确认请求（dangerous 级别工具执行前发送，等用户确认）
+
+    前端收到后弹确认框，用户点确认/拒绝后发 TOOL_CONFIRM_RESPONSE 回来。
+    超时未回复视为拒绝。
+    """
+    return _build_ws_message(
+        WSMessageType.TOOL_CONFIRM_REQUEST,
+        {
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "arguments": arguments,
+            "description": description,
+            "safety_level": safety_level,
+            "timeout": timeout,
+        },
+        task_id=task_id,
+        conversation_id=conversation_id,
+        message_id=message_id,
     )

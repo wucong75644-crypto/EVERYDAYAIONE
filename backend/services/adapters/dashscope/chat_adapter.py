@@ -19,6 +19,7 @@ from ..base import (
     CostEstimate as BaseCostEstimate,
     ModelProvider,
     StreamChunk,
+    ToolCallDelta,
 )
 
 
@@ -114,6 +115,11 @@ class DashScopeChatAdapter(BaseChatAdapter):
             "stream_options": {"include_usage": True},
         }
 
+        # 工具定义（OpenAI function calling 格式）
+        tools = kwargs.get("tools")
+        if tools:
+            request_body["tools"] = tools
+
         # 思考模式：用户开了深度思考才启用，否则显式关闭（qwen3.5 默认开，必须显式关）
         if thinking_mode in ("enabled", "deep_think"):
             request_body["enable_thinking"] = True
@@ -160,12 +166,26 @@ class DashScopeChatAdapter(BaseChatAdapter):
                     content = None
                     thinking_content = None
                     finish_reason = None
+                    tc_deltas = None
                     choices = chunk.get("choices", [])
                     if choices:
                         delta = choices[0].get("delta", {})
                         content = delta.get("content")
                         thinking_content = delta.get("reasoning_content")
                         finish_reason = choices[0].get("finish_reason")
+
+                        # 提取 tool_calls 增量
+                        raw_tcs = delta.get("tool_calls")
+                        if raw_tcs:
+                            tc_deltas = [
+                                ToolCallDelta(
+                                    index=tc.get("index", 0),
+                                    id=tc.get("id"),
+                                    name=tc.get("function", {}).get("name"),
+                                    arguments_delta=tc.get("function", {}).get("arguments"),
+                                )
+                                for tc in raw_tcs
+                            ]
 
                     # 提取 usage（通常在最后一个 chunk，中间 chunk 为 null）
                     usage = chunk.get("usage") or {}
@@ -178,6 +198,7 @@ class DashScopeChatAdapter(BaseChatAdapter):
                         finish_reason=finish_reason,
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
+                        tool_calls=tc_deltas,
                     )
 
         except DashScopeAPIError:

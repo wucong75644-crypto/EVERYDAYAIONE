@@ -297,7 +297,7 @@ class TestERPTools:
                 "end_date": "2026-03-10",
             },
         })
-        assert result == "订单数据"
+        assert result.startswith("订单数据")
         mock_disp.execute.assert_called_once_with(
             "erp_trade_query", "order_list",
             {"start_date": "2026-03-01", "end_date": "2026-03-10"},
@@ -346,7 +346,7 @@ class TestERPTools:
             "params": {"keyword": "手机壳"},
             "page": 1,
         })
-        assert result == "商品列表"
+        assert result.startswith("商品列表")
 
     @pytest.mark.asyncio
     @patch("services.kuaimai.dispatcher.ErpDispatcher")
@@ -390,10 +390,35 @@ class TestERPTools:
             "action": "stock_status",
             "params": {"outer_id": "SKU001"},
         })
-        assert result == "库存数据"
+        assert result.startswith("库存数据")
         mock_disp.execute.assert_called_once_with(
             "erp_product_query", "stock_status", {"outer_id": "SKU001"},
         )
+
+    @pytest.mark.asyncio
+    @patch("services.kuaimai.dispatcher.ErpDispatcher")
+    @patch("services.kuaimai.client.KuaiMaiClient")
+    async def test_hints_appended_to_result(self, MockClient, MockDispatcher):
+        """Step2 返回结果后附带参数提示（hints 非空时有分隔线）"""
+        mock_client = AsyncMock()
+        mock_client.is_configured = True
+        mock_client.load_cached_token = AsyncMock()
+        MockClient.return_value = mock_client
+
+        mock_disp = AsyncMock()
+        mock_disp.execute.return_value = "查询结果"
+        mock_disp.close = AsyncMock()
+        MockDispatcher.return_value = mock_disp
+
+        exe = _make_executor()
+        # order_list + order_id 有 param_hints，会触发💡提示
+        result = await exe._erp_dispatch("erp_trade_query", {
+            "action": "order_list",
+            "params": {"order_id": "T123"},
+        })
+        assert result.startswith("查询结果")
+        assert "---" in result
+        assert "💡" in result or "📎" in result
 
     @pytest.mark.asyncio
     @patch("services.kuaimai.dispatcher.ErpDispatcher")
@@ -477,7 +502,7 @@ class TestERPTools:
             "erp_trade_query",
             {"action": "outstock_query", "params": {"order_id": "123"}},
         )
-        assert result == "物流信息"
+        assert result.startswith("物流信息")
 
 
 # ============================================================

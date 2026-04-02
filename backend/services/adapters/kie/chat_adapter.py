@@ -32,6 +32,7 @@ from .models import (
 from ..base import (
     BaseChatAdapter,
     ModelProvider,
+    ToolCallDelta,
     StreamChunk,
     ChatResponse,
     CostEstimate as BaseCostEstimate,
@@ -434,6 +435,20 @@ class KieChatAdapter(BaseChatAdapter):
         # 转换输出格式
         async for chunk in stream:
             delta = chunk.choices[0].delta if chunk.choices else None
+
+            # 提取 tool_calls 增量
+            tc_deltas = None
+            if delta and delta.tool_calls:
+                tc_deltas = [
+                    ToolCallDelta(
+                        index=tc.index,
+                        id=tc.id,
+                        name=tc.function.name if tc.function else None,
+                        arguments_delta=tc.function.arguments if tc.function else None,
+                    )
+                    for tc in delta.tool_calls
+                ]
+
             yield StreamChunk(
                 content=delta.content if delta else None,
                 thinking_content=delta.reasoning_content if delta else None,
@@ -441,6 +456,7 @@ class KieChatAdapter(BaseChatAdapter):
                 prompt_tokens=chunk.usage.prompt_tokens if chunk.usage else 0,
                 completion_tokens=chunk.usage.completion_tokens if chunk.usage else 0,
                 credits_consumed=chunk.credits_consumed,
+                tool_calls=tc_deltas,
             )
 
     async def chat_sync(

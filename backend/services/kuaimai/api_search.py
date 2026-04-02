@@ -186,6 +186,30 @@ def _keyword_search(query: str) -> str:
             lines.append(
                 _format_entry_brief(tool_name, action_name, entry)
             )
+        # 附带最佳匹配的必填参数提示，让 AI 可以直接调用
+        best = top[0]
+        _, best_tool, best_action, best_entry = best
+        required = set(best_entry.required_params)
+        if required:
+            parts = [
+                f"{k}: {best_entry.param_docs.get(k, '')}"
+                for k in required
+            ]
+            lines.append(
+                f"\n💡 推荐 {best_tool}:{best_action}，"
+                f"必填参数: {'; '.join(parts)}"
+            )
+        elif best_entry.param_map:
+            # 无必填但有可选参数，提示前 3 个
+            sample = list(best_entry.param_map.keys())[:3]
+            parts = [
+                f"{k}: {best_entry.param_docs.get(k, '')}"
+                for k in sample
+            ]
+            lines.append(
+                f"\n💡 推荐 {best_tool}:{best_action}，"
+                f"常用参数: {'; '.join(parts)}"
+            )
     return "\n".join(lines)
 
 
