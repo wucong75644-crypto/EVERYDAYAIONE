@@ -32,11 +32,13 @@ class AgentContextMixin:
 
         # 文本部分
         text = self._extract_text(content)
-        file_count = sum(1 for p in content if isinstance(p, FilePart))
-        if file_count > 0:
+        file_parts = [p for p in content if isinstance(p, FilePart)]
+        if file_parts:
+            names = ", ".join(p.name for p in file_parts if p.name)
             text = (
-                f"[上下文：用户附带了{file_count}份PDF文档，"
-                f"请选择支持PDF的模型]\n{text}"
+                f"[上下文：用户上传了{len(file_parts)}份文件"
+                f"（{names}），这是文件分析请求，"
+                f"必须选择 route_computer]\n{text}"
             )
         if text:
             blocks.append({"type": "text", "text": text})

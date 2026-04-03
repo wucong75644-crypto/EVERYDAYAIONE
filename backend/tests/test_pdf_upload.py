@@ -285,45 +285,69 @@ class TestAgentLoopPDFDetection:
 
         assert has_file is False
 
-    def test_pdf_context_injection_single(self):
-        """测试：单个 PDF 上下文提示注入"""
+    def test_file_context_injection_single(self):
+        """测试：单个文件上下文提示注入（通过 _build_user_content）"""
+        from services.agent_context import AgentContextMixin
+        ctx = AgentContextMixin()
         content = [
-            TextPart(text="分析"),
+            TextPart(text="分析文件"),
             FilePart(url="https://cdn.example.com/a.pdf", name="a.pdf", mime_type="application/pdf"),
         ]
-        user_text = "分析文件"
 
-        file_count = sum(1 for p in content if isinstance(p, FilePart))
-        if file_count > 0:
-            user_text = f"[上下文：用户附带了{file_count}份PDF文档，请选择支持PDF的模型]\n{user_text}"
+        result = ctx._build_user_content(content)
+        text = result[0]["text"]
 
-        assert "[上下文：用户附带了1份PDF文档" in user_text
+        assert "用户上传了1份文件" in text
+        assert "a.pdf" in text
+        assert "route_computer" in text
+        assert "分析文件" in text
 
-    def test_pdf_context_injection_multiple(self):
-        """测试：多个 PDF 上下文提示注入"""
+    def test_file_context_injection_multiple(self):
+        """测试：多个文件上下文提示注入"""
+        from services.agent_context import AgentContextMixin
+        ctx = AgentContextMixin()
         content = [
+            TextPart(text="对比文件"),
             FilePart(url="https://cdn.example.com/a.pdf", name="a.pdf", mime_type="application/pdf"),
-            FilePart(url="https://cdn.example.com/b.pdf", name="b.pdf", mime_type="application/pdf"),
+            FilePart(url="https://cdn.example.com/b.csv", name="b.csv", mime_type="text/csv"),
         ]
-        user_text = "对比文件"
 
-        file_count = sum(1 for p in content if isinstance(p, FilePart))
-        if file_count > 0:
-            user_text = f"[上下文：用户附带了{file_count}份PDF文档，请选择支持PDF的模型]\n{user_text}"
+        result = ctx._build_user_content(content)
+        text = result[0]["text"]
 
-        assert "[上下文：用户附带了2份PDF文档" in user_text
-        assert "对比文件" in user_text
+        assert "用户上传了2份文件" in text
+        assert "a.pdf" in text
+        assert "b.csv" in text
+        assert "route_computer" in text
+        assert "对比文件" in text
+
+    def test_file_context_injection_non_pdf(self):
+        """测试：非 PDF 文件（Excel）也正确注入"""
+        from services.agent_context import AgentContextMixin
+        ctx = AgentContextMixin()
+        content = [
+            TextPart(text="分析数据"),
+            FilePart(url="https://cdn.example.com/data.xlsx", name="data.xlsx", mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+        ]
+
+        result = ctx._build_user_content(content)
+        text = result[0]["text"]
+
+        assert "用户上传了1份文件" in text
+        assert "data.xlsx" in text
+        assert "route_computer" in text
 
     def test_no_injection_without_files(self):
         """测试：无文件时不注入"""
+        from services.agent_context import AgentContextMixin
+        ctx = AgentContextMixin()
         content = [TextPart(text="你好")]
-        user_text = "你好"
 
-        file_count = sum(1 for p in content if isinstance(p, FilePart))
-        if file_count > 0:
-            user_text = f"[上下文：用户附带了{file_count}份PDF文档]\n{user_text}"
+        result = ctx._build_user_content(content)
+        text = result[0]["text"]
 
-        assert user_text == "你好"
+        assert text == "你好"
+        assert "route_computer" not in text
 
 
 # ============ Google 适配器 _detect_mime_type ============
