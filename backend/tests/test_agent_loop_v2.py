@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from schemas.message import GenerationType, TextPart, ImagePart
+from schemas.message import GenerationType, TextPart, ImagePart, FilePart
 from services.agent_loop import AgentLoop
 from services.agent_loop_v2 import AgentLoopV2Mixin
 from services.agent_types import AgentResult, AgentGuardrails
@@ -597,6 +597,105 @@ class TestTryExpandTools:
             [tc], [t1], [t_full], state,
         )
         assert result is None
+
+
+# ============================================================
+# TestV2ComputerDomain — computer 域走 Phase 2
+# ============================================================
+
+
+class TestV2ComputerDomain:
+
+    @pytest.mark.asyncio
+    @patch("services.agent_loop_v2.AgentLoopV2Mixin._fetch_knowledge", new_callable=AsyncMock)
+    @patch("services.agent_loop.AgentLoop._get_recent_history", new_callable=AsyncMock)
+    @patch("services.agent_loop.AgentLoop._call_brain", new_callable=AsyncMock)
+    async def test_computer_domain_enters_phase2(
+        self, mock_brain, mock_history, mock_knowledge,
+    ):
+        """route_computer → 进入 Phase 2 工具循环（非 _dispatch_direct_domain）"""
+        mock_history.return_value = None
+        mock_knowledge.return_value = None
+
+        # Phase 1: route_computer
+        phase1_resp = _make_phase1_response("route_computer", {
+            "system_prompt": "文件分析助手",
+        })
+        # Phase 2: 调用 file_read → 然后 route_to_chat 退出
+        phase2_resp_tool = {
+            "choices": [{"message": {
+                "tool_calls": [{
+                    "id": "tc_route",
+                    "type": "function",
+                    "function": {
+                        "name": "route_to_chat",
+                        "arguments": json.dumps({
+                            "system_prompt": "文件分析完成",
+                        }),
+                    },
+                }],
+            }}],
+            "usage": {"total_tokens": 120},
+        }
+
+        mock_brain.side_effect = [phase1_resp, phase2_resp_tool]
+
+        loop = _make_loop()
+        loop._settings = _v2_settings()
+        loop._user_location = None
+
+        content = [
+            TextPart(text="帮我分析这个文件"),
+            FilePart(
+                url="https://cdn.example.com/report.xlsx",
+                name="report.xlsx",
+                mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
+        ]
+        result = await loop._execute_loop_v2(content)
+
+        assert result.generation_type == GenerationType.CHAT
+        # Phase 1 + Phase 2 = 至少 2 次大脑调用
+        assert mock_brain.await_count >= 2
+
+    @pytest.mark.asyncio
+    @patch("services.agent_loop_v2.AgentLoopV2Mixin._fetch_knowledge", new_callable=AsyncMock)
+    @patch("services.agent_loop.AgentLoop._get_recent_history", new_callable=AsyncMock)
+    @patch("services.agent_loop.AgentLoop._call_brain", new_callable=AsyncMock)
+    async def test_computer_domain_not_dispatched_directly(
+        self, mock_brain, mock_history, mock_knowledge,
+    ):
+        """computer 域不应走 _dispatch_direct_domain（否则会落入 video 兜底）"""
+        mock_history.return_value = None
+        mock_knowledge.return_value = None
+        mock_brain.return_value = _make_phase1_response("route_computer", {
+            "system_prompt": "文件助手",
+        })
+
+        loop = _make_loop()
+        loop._settings = _v2_settings()
+        loop._user_location = None
+
+        # 如果走了 _dispatch_direct_domain，computer 会落入 video 兜底
+        # 返回 VIDEO 类型，而不是期望的 CHAT
+        content = [
+            TextPart(text="分析文件"),
+            FilePart(
+                url="https://cdn.example.com/data.csv",
+                name="data.csv",
+                mime_type="text/csv",
+            ),
+        ]
+
+        # mock_brain 只返回了 Phase 1 响应
+        # 如果进入 Phase 2，第二次 _call_brain 会抛异常
+        # Phase 2 循环中调 _call_brain 但没有 side_effect → 返回同一个 Phase 1 响应
+        # 那个响应里 route_computer 不是 Phase 2 的出口工具
+        # → 最终会超出轮次 → 返回 graceful timeout → 但类型是 CHAT
+        result = await loop._execute_loop_v2(content)
+
+        # 关键断言：不应该是 VIDEO（那是 _dispatch_direct_domain 的兜底）
+        assert result.generation_type != GenerationType.VIDEO
 
 
 class TestInjectPhase1Model:

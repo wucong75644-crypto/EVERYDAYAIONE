@@ -115,12 +115,12 @@ class AgentLoopV2Mixin:
 
         # ── Domain Dispatch ──
         # chat/image/video/ask_user → 直接返回（零 Phase 2 调用）
-        if domain not in ("erp", "crawler"):
+        if domain not in ("erp", "crawler", "computer"):
             return self._dispatch_direct_domain(
                 domain, signals, model_id, phase1_tokens,
             )
 
-        # erp/crawler → Phase 2 多步工具循环
+        # erp/crawler/computer → Phase 2 多步工具循环
         return await self._execute_phase2_loop(
             domain, content, user_content,
             history_full, knowledge_items, phase1_tokens,
