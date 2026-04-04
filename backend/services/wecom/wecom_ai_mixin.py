@@ -89,14 +89,15 @@ class WecomAIMixin:
                     label = "图片" if media_type == "image" else "视频"
                     await send_text(reply_ctx.wecom_userid, f"{label}已生成：{url}", creds=creds)
 
-        # 更新 DB 消息
-        content_data = [{"type": media_type, "url": url} for url in urls]
-        try:
-            self.db.table("messages").update({
-                "content": content_data, "status": "completed",
-            }).eq("id", message_id).execute()
-        except Exception as e:
-            logger.warning(f"Update media message failed | error={e}")
+        # 更新 DB 消息（message_id=None 时跳过，由调用方统一保存）
+        if message_id:
+            content_data = [{"type": media_type, "url": url} for url in urls]
+            try:
+                self.db.table("messages").update({
+                    "content": content_data, "status": "completed",
+                }).eq("id", message_id).execute()
+            except Exception as e:
+                logger.warning(f"Update media message failed | error={e}")
 
     # ── 积分 ────────────────────────────────────────────
 
