@@ -149,8 +149,12 @@ class ERPAgent:
             from config.phase_tools import build_domain_prompt
             system_prompt = build_domain_prompt("erp")
 
+            import time as _time
+            now_str = _time.strftime("%Y-%m-%d %H:%M %A", _time.localtime())
+
             messages: List[Dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
+                {"role": "system", "content": f"当前时间：{now_str}"},
             ]
 
             # 注入筛选后的对话历史
