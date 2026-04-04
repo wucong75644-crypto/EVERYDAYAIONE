@@ -242,56 +242,27 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
             if not content_parts:
                 content_parts.append(TextPart(text="（用户发送了一张图片）"))
 
-            # 并行：Agent Loop + 记忆预取（保活在后台持续运行）
-            agent_raw, memory_raw = await asyncio.gather(
-                self._run_agent_loop(user_id, conversation_id, content_parts, org_id=org_id),
-                self._build_memory_prompt(user_id, text_content, org_id=org_id),
-                return_exceptions=True,
-            )
+            # ChatHandler 单循环生成（与 Web 端相同的工具编排）
+            from services.handlers.chat_handler import ChatHandler
+
+            handler = ChatHandler(db=self.db)
+            handler.org_id = org_id
 
             # 停止保活（即将发送真实内容）
             if keepalive:
                 await keepalive.stop()
                 keepalive = None
 
-            # Agent Loop 失败 → 兜底纯文本聊天
-            if isinstance(agent_raw, BaseException):
-                logger.warning(f"Wecom routing failed | error={agent_raw}")
-                await self._handle_chat_fallback(
-                    user_id, conversation_id, message_id,
-                    text_content, reply_ctx, org_id=org_id,
-                )
-                return
-
-            agent_result = agent_raw
-            memory_prompt = (
-                memory_raw if not isinstance(memory_raw, BaseException) else None
+            result_parts = await handler.generate_complete(
+                content=content_parts,
+                user_id=user_id,
+                conversation_id=conversation_id,
             )
-            gen_type = agent_result.generation_type
 
-            if gen_type == GenerationType.CHAT:
-                await self._handle_chat_response(
-                    user_id, conversation_id, message_id,
-                    text_content, reply_ctx, agent_result, memory_prompt,
-                    image_urls=image_urls, org_id=org_id,
-                )
-            elif gen_type == GenerationType.IMAGE:
-                await self._handle_image_response(
-                    user_id, conversation_id, message_id,
-                    text_content, reply_ctx, agent_result,
-                    org_id=org_id,
-                )
-            elif gen_type == GenerationType.VIDEO:
-                await self._handle_video_response(
-                    user_id, conversation_id, message_id,
-                    text_content, reply_ctx, agent_result,
-                    org_id=org_id,
-                )
-            else:
-                await self._handle_chat_fallback(
-                    user_id, conversation_id, message_id,
-                    text_content, reply_ctx, org_id=org_id,
-                )
+            # 按内容类型分发到企微
+            await self._dispatch_result_to_wecom(
+                result_parts, reply_ctx, message_id, org_id,
+            )
 
         except Exception as e:
             logger.error(f"Wecom _handle_text failed | user_id={user_id} | error={e}")
@@ -299,6 +270,52 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
         finally:
             if keepalive:
                 await keepalive.stop()
+
+    async def _dispatch_result_to_wecom(
+        self,
+        result_parts: List[ContentPart],
+        reply_ctx: WecomReplyContext,
+        message_id: str,
+        org_id: Optional[str] = None,
+    ) -> None:
+        """将 ChatHandler 生成结果按类型分发到企微"""
+        from schemas.message import ImagePart, VideoPart
+        from services.wecom.markdown_adapter import clean_for_stream
+
+        text_parts = []
+        media_urls = {"image": [], "video": []}
+
+        for part in result_parts:
+            if isinstance(part, TextPart) and part.text:
+                text_parts.append(part.text)
+            elif isinstance(part, ImagePart) and part.url:
+                media_urls["image"].append(part.url)
+            elif isinstance(part, VideoPart) and part.url:
+                media_urls["video"].append(part.url)
+
+        # 先发文本
+        if text_parts:
+            text = "\n".join(text_parts)
+            display = clean_for_stream(text)
+            if reply_ctx.active_stream_id:
+                await self._push_stream_chunk(
+                    reply_ctx, reply_ctx.active_stream_id,
+                    display, finish=True, feedback_id=message_id,
+                )
+                reply_ctx.active_stream_id = None
+            else:
+                await self._reply_text(reply_ctx, display)
+            await self._update_assistant_message(message_id, text)
+
+        # 再发媒体
+        for media_type in ("image", "video"):
+            urls = media_urls[media_type]
+            if urls:
+                await self._send_media_to_wecom(reply_ctx, urls, media_type, message_id)
+
+        # 无任何内容
+        if not text_parts and not media_urls["image"] and not media_urls["video"]:
+            await self._reply_text(reply_ctx, "抱歉，AI 没有生成回复内容。")
 
     # ── 对话管理 ──────────────────────────────────────────
 

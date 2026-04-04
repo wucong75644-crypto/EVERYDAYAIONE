@@ -481,121 +481,135 @@ class TestSendAppMessage:
 
 
 class TestHandleText:
-    """_handle_text Agent Loop 路由 + 分发"""
+    """_handle_text ChatHandler 统一生成 + 分发"""
 
     @pytest.mark.asyncio
-    async def test_routes_to_chat(self):
-        """Agent Loop 返回 CHAT → 调用 _handle_chat_response"""
-        from schemas.message import GenerationType
-        from services.agent_types import AgentResult
+    async def test_text_response_dispatched(self):
+        """ChatHandler 返回 TextPart → 推送到企微"""
+        from schemas.message import TextPart
 
         db = _make_db_mock()
         svc = WecomMessageService(db)
 
-        agent_result = AgentResult(
-            generation_type=GenerationType.CHAT,
-            turns_used=1, total_tokens=100,
-        )
-        svc._run_agent_loop = AsyncMock(return_value=agent_result)
-        svc._build_memory_prompt = AsyncMock(return_value="记忆")
-        svc._handle_chat_response = AsyncMock()
-        svc._handle_image_response = AsyncMock()
-        svc._handle_video_response = AsyncMock()
+        svc._dispatch_result_to_wecom = AsyncMock()
 
-        ctx = _make_reply_ctx("smart_robot")
-        await svc._handle_text("u1", "c1", "m1", "你好", ctx)
+        with patch(
+            "services.handlers.chat_handler.ChatHandler"
+        ) as MockHandler:
+            mock_instance = MagicMock()
+            mock_instance.generate_complete = AsyncMock(
+                return_value=[TextPart(text="你好，这是回复")]
+            )
+            MockHandler.return_value = mock_instance
 
-        svc._handle_chat_response.assert_called_once()
-        svc._handle_image_response.assert_not_called()
-        svc._handle_video_response.assert_not_called()
+            ctx = _make_reply_ctx("smart_robot")
+            await svc._handle_text("u1", "c1", "m1", "你好", ctx)
+
+        svc._dispatch_result_to_wecom.assert_called_once()
+        result_parts = svc._dispatch_result_to_wecom.call_args[0][0]
+        assert any(isinstance(p, TextPart) for p in result_parts)
 
     @pytest.mark.asyncio
-    async def test_routes_to_image(self):
-        """Agent Loop 返回 IMAGE → 调用 _handle_image_response"""
-        from schemas.message import GenerationType
-        from services.agent_types import AgentResult
+    async def test_image_response_dispatched(self):
+        """ChatHandler 返回 ImagePart → 推送图片到企微"""
+        from schemas.message import ImagePart, TextPart
 
         db = _make_db_mock()
         svc = WecomMessageService(db)
 
-        agent_result = AgentResult(
-            generation_type=GenerationType.IMAGE,
-            turns_used=1, total_tokens=100,
-        )
-        svc._run_agent_loop = AsyncMock(return_value=agent_result)
-        svc._build_memory_prompt = AsyncMock(return_value=None)
-        svc._handle_chat_response = AsyncMock()
-        svc._handle_image_response = AsyncMock()
+        svc._dispatch_result_to_wecom = AsyncMock()
 
-        ctx = _make_reply_ctx("smart_robot")
-        await svc._handle_text("u1", "c1", "m1", "画猫", ctx)
+        with patch(
+            "services.handlers.chat_handler.ChatHandler"
+        ) as MockHandler:
+            mock_instance = MagicMock()
+            mock_instance.generate_complete = AsyncMock(
+                return_value=[
+                    TextPart(text="图片如下"),
+                    ImagePart(url="https://example.com/cat.png"),
+                ]
+            )
+            MockHandler.return_value = mock_instance
 
-        svc._handle_image_response.assert_called_once()
-        svc._handle_chat_response.assert_not_called()
+            ctx = _make_reply_ctx("smart_robot")
+            await svc._handle_text("u1", "c1", "m1", "画猫", ctx)
+
+        result_parts = svc._dispatch_result_to_wecom.call_args[0][0]
+        assert any(isinstance(p, ImagePart) for p in result_parts)
 
     @pytest.mark.asyncio
-    async def test_routes_to_video(self):
-        """Agent Loop 返回 VIDEO → 调用 _handle_video_response"""
-        from schemas.message import GenerationType
-        from services.agent_types import AgentResult
+    async def test_video_response_dispatched(self):
+        """ChatHandler 返回 VideoPart → 推送视频到企微"""
+        from schemas.message import TextPart, VideoPart
 
         db = _make_db_mock()
         svc = WecomMessageService(db)
 
-        agent_result = AgentResult(
-            generation_type=GenerationType.VIDEO,
-            turns_used=1, total_tokens=100,
-        )
-        svc._run_agent_loop = AsyncMock(return_value=agent_result)
-        svc._build_memory_prompt = AsyncMock(return_value=None)
-        svc._handle_video_response = AsyncMock()
+        svc._dispatch_result_to_wecom = AsyncMock()
 
-        ctx = _make_reply_ctx("smart_robot")
-        await svc._handle_text("u1", "c1", "m1", "生成视频", ctx)
+        with patch(
+            "services.handlers.chat_handler.ChatHandler"
+        ) as MockHandler:
+            mock_instance = MagicMock()
+            mock_instance.generate_complete = AsyncMock(
+                return_value=[VideoPart(url="https://example.com/demo.mp4")]
+            )
+            MockHandler.return_value = mock_instance
 
-        svc._handle_video_response.assert_called_once()
+            ctx = _make_reply_ctx("smart_robot")
+            await svc._handle_text("u1", "c1", "m1", "生成视频", ctx)
+
+        result_parts = svc._dispatch_result_to_wecom.call_args[0][0]
+        assert any(isinstance(p, VideoPart) for p in result_parts)
 
     @pytest.mark.asyncio
-    async def test_agent_loop_failure_fallback(self):
-        """Agent Loop 异常 → 调用 _handle_chat_fallback"""
+    async def test_generate_failure_replies_error(self):
+        """ChatHandler 异常 → 回复错误信息"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
 
-        svc._run_agent_loop = AsyncMock(side_effect=RuntimeError("boom"))
-        svc._build_memory_prompt = AsyncMock(return_value=None)
-        svc._handle_chat_fallback = AsyncMock()
+        svc._reply_text = AsyncMock()
 
-        ctx = _make_reply_ctx("smart_robot")
-        await svc._handle_text("u1", "c1", "m1", "你好", ctx)
+        with patch(
+            "services.handlers.chat_handler.ChatHandler"
+        ) as MockHandler:
+            mock_instance = MagicMock()
+            mock_instance.generate_complete = AsyncMock(side_effect=RuntimeError("boom"))
+            MockHandler.return_value = mock_instance
 
-        svc._handle_chat_fallback.assert_called_once()
+            ctx = _make_reply_ctx("smart_robot")
+            await svc._handle_text("u1", "c1", "m1", "你好", ctx)
+
+        svc._reply_text.assert_called_once()
+        assert "问题" in svc._reply_text.call_args[0][1]
 
     @pytest.mark.asyncio
-    async def test_memory_failure_still_routes(self):
-        """记忆失败不影响路由"""
-        from schemas.message import GenerationType
-        from services.agent_types import AgentResult
+    async def test_handler_receives_org_id(self):
+        """ChatHandler.org_id 正确传递"""
+        from schemas.message import TextPart
 
         db = _make_db_mock()
         svc = WecomMessageService(db)
 
-        agent_result = AgentResult(
-            generation_type=GenerationType.CHAT,
-            turns_used=1, total_tokens=100,
-        )
-        svc._run_agent_loop = AsyncMock(return_value=agent_result)
-        svc._build_memory_prompt = AsyncMock(
-            side_effect=RuntimeError("mem fail"),
-        )
-        svc._handle_chat_response = AsyncMock()
+        svc._dispatch_result_to_wecom = AsyncMock()
+        captured_handler = None
 
-        ctx = _make_reply_ctx("smart_robot")
-        await svc._handle_text("u1", "c1", "m1", "你好", ctx)
+        with patch(
+            "services.handlers.chat_handler.ChatHandler"
+        ) as MockHandler:
+            def capture_handler(*args, **kwargs):
+                nonlocal captured_handler
+                captured_handler = MagicMock()
+                captured_handler.generate_complete = AsyncMock(
+                    return_value=[TextPart(text="ok")]
+                )
+                return captured_handler
+            MockHandler.side_effect = capture_handler
 
-        svc._handle_chat_response.assert_called_once()
-        # memory_prompt 应为 None
-        call_args = svc._handle_chat_response.call_args
-        assert call_args[0][6] is None  # 第 7 个位置参数 = memory_prompt
+            ctx = _make_reply_ctx("smart_robot")
+            await svc._handle_text("u1", "c1", "m1", "你好", ctx, org_id="org123")
+
+        assert captured_handler.org_id == "org123"
 
 
 # ============================================================

@@ -26,6 +26,7 @@ from schemas.websocket import (
 from services.adapters.factory import DEFAULT_MODEL_ID
 from services.handlers.base import BaseHandler, TaskMetadata
 from services.handlers.chat_context_mixin import ChatContextMixin
+from services.handlers.chat_generate_mixin import ChatGenerateMixin
 from services.handlers.chat_stream_support_mixin import ChatStreamSupportMixin
 from services.handlers.chat_tool_mixin import ChatToolMixin, accumulate_tool_call_delta
 from services.websocket_manager import ws_manager
@@ -34,7 +35,7 @@ from services.websocket_manager import ws_manager
 MAX_TOOL_TURNS = 10
 
 
-class ChatHandler(ChatToolMixin, ChatStreamSupportMixin, ChatContextMixin, BaseHandler):
+class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, ChatContextMixin, BaseHandler):
     """聊天消息处理器：流式生成 + WebSocket 推送 + 多模态输入"""
 
     def __init__(self, db):
