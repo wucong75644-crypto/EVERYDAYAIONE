@@ -122,33 +122,8 @@ RETRY_ROUTER_SYSTEM_PROMPT = (
 
 DASHSCOPE_BASE_URL = settings.dashscope_base_url
 
-# 智能模型 ID（前端 smartModel.ts 对应）
-SMART_MODEL_ID = "auto"
-
-# 向后兼容别名（旧代码可能直接引用这些名称）
-_MODEL_TO_GEN_TYPE = MODEL_TO_GEN_TYPE
-_AUTO_MODEL_DEFAULTS = AUTO_MODEL_DEFAULTS
-
-
-def resolve_auto_model(
-    gen_type: GenerationType,
-    content: List[ContentPart],
-    recommended_model: Optional[str] = None,
-) -> str:
-    """根据千问推荐 + 路由意图解析智能模型到实际工作模型"""
-    if recommended_model and recommended_model in MODEL_TO_GEN_TYPE:
-        if MODEL_TO_GEN_TYPE[recommended_model] == gen_type:
-            return recommended_model
-        logger.warning(
-            f"Model type mismatch | recommended={recommended_model} | "
-            f"gen_type={gen_type.value} | falling back to default"
-        )
-
-    if gen_type == GenerationType.VIDEO:
-        has_images = any(isinstance(p, ImagePart) for p in content)
-        if has_images:
-            return get_image_to_video_model()
-    return AUTO_MODEL_DEFAULTS.get(gen_type, DEFAULT_CHAT_MODEL)
+# 向后兼容：SMART_MODEL_ID 和 resolve_auto_model 已迁移到 config.smart_model_config
+from config.smart_model_config import SMART_MODEL_ID, resolve_auto_model  # noqa: F401
 
 
 # ============================================================
