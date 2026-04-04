@@ -155,6 +155,7 @@ async def _get_mem0():
             from mem0 import AsyncMemory
 
             _mem0_instance = await AsyncMemory.from_config(config)
+
             _mem0_available = True
             logger.info("Mem0 AsyncMemory initialized successfully")
             return _mem0_instance

@@ -969,3 +969,66 @@ class TestMem0Init:
         assert result["vector_store"]["provider"] == "pgvector"
         assert result["vector_store"]["config"]["connection_string"] == "postgresql://test"
         assert result["vector_store"]["config"]["embedding_model_dims"] == 1024
+
+    def test_openrouter_key_not_leaked_to_env(self):
+        """APP_OPENROUTER_API_KEY 不会以 OPENROUTER_API_KEY 暴露到 os.environ，
+        防止 Mem0 OpenAILLM 劫持（Mem0 硬编码检查 os.environ['OPENROUTER_API_KEY']）"""
+        import os
+
+        # 确保测试前环境干净
+        old_val = os.environ.pop("OPENROUTER_API_KEY", None)
+        os.environ["APP_OPENROUTER_API_KEY"] = "sk-or-test-value"
+        try:
+            assert "OPENROUTER_API_KEY" not in os.environ, (
+                "APP_OPENROUTER_API_KEY 不应同时暴露为 OPENROUTER_API_KEY"
+            )
+        finally:
+            os.environ.pop("APP_OPENROUTER_API_KEY", None)
+            if old_val is not None:
+                os.environ["OPENROUTER_API_KEY"] = old_val
+
+    def test_settings_reads_app_openrouter_key(self):
+        """Settings.openrouter_api_key 从 APP_OPENROUTER_API_KEY 读取"""
+        import os
+
+        old_app = os.environ.pop("APP_OPENROUTER_API_KEY", None)
+        old_raw = os.environ.pop("OPENROUTER_API_KEY", None)
+        os.environ["APP_OPENROUTER_API_KEY"] = "sk-or-from-app-prefix"
+        try:
+            from core.config import Settings
+            s = Settings(
+                _env_file="",  # 不读 .env 文件
+                database_url="postgresql://test",
+                jwt_secret_key="test",
+            )
+            assert s.openrouter_api_key == "sk-or-from-app-prefix"
+        finally:
+            os.environ.pop("APP_OPENROUTER_API_KEY", None)
+            if old_app is not None:
+                os.environ["APP_OPENROUTER_API_KEY"] = old_app
+            if old_raw is not None:
+                os.environ["OPENROUTER_API_KEY"] = old_raw
+
+    def test_settings_ignores_old_openrouter_key(self):
+        """Settings.openrouter_api_key 不从旧名 OPENROUTER_API_KEY 读取"""
+        import os
+
+        old_app = os.environ.pop("APP_OPENROUTER_API_KEY", None)
+        old_raw = os.environ.pop("OPENROUTER_API_KEY", None)
+        os.environ["OPENROUTER_API_KEY"] = "sk-or-leaked"
+        try:
+            from core.config import Settings
+            s = Settings(
+                _env_file="",
+                database_url="postgresql://test",
+                jwt_secret_key="test",
+            )
+            assert s.openrouter_api_key is None, (
+                "旧环境变量名 OPENROUTER_API_KEY 不应被 Settings 读取"
+            )
+        finally:
+            os.environ.pop("OPENROUTER_API_KEY", None)
+            if old_app is not None:
+                os.environ["APP_OPENROUTER_API_KEY"] = old_app
+            if old_raw is not None:
+                os.environ["OPENROUTER_API_KEY"] = old_raw
