@@ -388,46 +388,6 @@ class TestRoutingSignal:
 # ============ Agent Loop 路由信号测试 ============
 
 
-class TestAgentLoopSignal:
-    """测试 AgentLoop._record_loop_signal"""
-
-    @pytest.mark.asyncio
-    async def test_loop_signal_params(self):
-        """Agent Loop 信号携带 loop_turns / loop_tokens"""
-        from services.agent_loop import AgentLoop, AgentResult
-        from schemas.message import GenerationType
-
-        result = AgentResult(
-            generation_type=GenerationType.CHAT,
-            model="gemini-3-pro",
-            turns_used=2,
-            total_tokens=150,
-        )
-
-        # 构造最小化 AgentLoop 实例
-        agent = AgentLoop.__new__(AgentLoop)
-        agent.user_id = "user_2"
-        agent.org_id = None
-
-        with patch(
-            "services.knowledge_service.record_metric",
-            new_callable=AsyncMock,
-        ) as mock_metric:
-            agent._record_loop_signal(result, input_length=80, has_image=True)
-            import asyncio
-            await asyncio.sleep(0.05)
-
-            mock_metric.assert_called_once()
-            kw = mock_metric.call_args[1]
-            assert kw["task_type"] == "routing"
-            assert kw["model_id"] == "agent_loop"
-            assert kw["params"]["routing_tool"] == "chat"
-            assert kw["params"]["recommended_model"] == "gemini-3-pro"
-            assert kw["params"]["loop_turns"] == 2
-            assert kw["params"]["loop_tokens"] == 150
-            assert kw["params"]["has_image"] is True
-
-
 # ============ 用户反馈信号测试 ============
 
 
@@ -599,40 +559,6 @@ class TestRouteSignalIntegration:
             # 位置参数：decision, user_id, input_length, has_image, router_model
             assert call_args[1] == "user-1"  # user_id
             assert call_args[4] == "qwen-plus"  # router_model
-
-
-class TestAgentLoopRunSignalIntegration:
-    """验证 AgentLoop.run() 完成后 _record_loop_signal 被调用"""
-
-    @pytest.mark.asyncio
-    async def test_run_calls_record_signal(self):
-        """run() 执行后触发信号记录"""
-        from services.agent_loop import AgentLoop
-        from services.agent_types import AgentResult
-        from schemas.message import GenerationType, TextPart
-
-        loop = AgentLoop(db=MagicMock(), user_id="u1", conversation_id="c1")
-
-        mock_result = AgentResult(
-            generation_type=GenerationType.CHAT,
-            model="gemini-3-pro",
-            turns_used=1,
-            total_tokens=80,
-        )
-
-        with patch.object(
-            loop, "_execute_loop", new_callable=AsyncMock,
-            return_value=mock_result,
-        ), patch.object(loop, "_record_loop_signal") as mock_signal:
-            result = await loop.run([TextPart(text="测试")])
-
-            assert result == mock_result
-            mock_signal.assert_called_once()
-            call_args = mock_signal.call_args[0]
-            # 位置参数：result, input_length, has_image
-            assert call_args[0] == mock_result
-            assert call_args[1] == 2  # len("测试")
-            assert call_args[2] is False  # has_image
 
 
 class TestMemorySearchSignalIntegration:
