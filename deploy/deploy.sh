@@ -275,7 +275,13 @@ deploy_backend() {
         echo "5. 重启后端服务"
         sudo systemctl restart everydayai-backend
 
-        echo "6. 检查服务状态"
+        echo "6. 重启企微服务（共享后端代码）"
+        if systemctl is-enabled everydayai-wecom &>/dev/null; then
+            sudo systemctl restart everydayai-wecom
+            echo "企微服务已重启"
+        fi
+
+        echo "7. 检查服务状态"
         sudo systemctl status everydayai-backend --no-pager
 ENDSSH
 
