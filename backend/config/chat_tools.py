@@ -151,7 +151,7 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "用户的原始问题（保持原文，不要改写）",
+                            "description": "必须原样复制用户的消息文本，禁止改写/翻译/补充/添加日期。错误示例：用户说'昨天付款订单'你写'查询2026-04-04付款的订单列表'。正确做法：直接复制'昨天付款订单'。",
                         },
                     },
                 },
