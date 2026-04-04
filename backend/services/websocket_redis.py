@@ -46,9 +46,10 @@ class RedisPubSubMixin:
                 settings.redis_url,
                 encoding="utf-8",
                 decode_responses=True,
-                socket_timeout=300.0,
+                socket_timeout=None,  # Pub/Sub 长连接不超时
                 socket_connect_timeout=5.0,
                 socket_keepalive=True,
+                health_check_interval=60,  # 每60秒发心跳保活
             )
             self._pubsub = self._pubsub_redis.pubsub()
             await self._pubsub.subscribe(WS_CHANNEL)
