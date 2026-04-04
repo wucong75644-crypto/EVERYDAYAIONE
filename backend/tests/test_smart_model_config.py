@@ -426,3 +426,71 @@ class TestModelValidation:
     def test_validate_model_unknown(self):
         """不在 chat 列表中的模型 → 不做校验"""
         assert validate_model_choice("unknown-model") is None
+
+
+# ============================================================
+# resolve_auto_model + SMART_MODEL_ID
+# ============================================================
+
+
+class TestResolveAutoModel:
+    """resolve_auto_model 模型解析"""
+
+    def test_smart_model_id_is_auto(self):
+        from config.smart_model_config import SMART_MODEL_ID
+        assert SMART_MODEL_ID == "auto"
+
+    def test_default_chat_model(self):
+        from config.smart_model_config import resolve_auto_model, DEFAULT_CHAT_MODEL
+        from schemas.message import GenerationType, TextPart
+        result = resolve_auto_model(GenerationType.CHAT, [TextPart(text="hi")])
+        assert result == DEFAULT_CHAT_MODEL
+
+    def test_default_image_model(self):
+        from config.smart_model_config import resolve_auto_model, DEFAULT_IMAGE_MODEL
+        from schemas.message import GenerationType, TextPart
+        result = resolve_auto_model(GenerationType.IMAGE, [TextPart(text="draw")])
+        assert result == DEFAULT_IMAGE_MODEL
+
+    def test_default_video_model(self):
+        from config.smart_model_config import resolve_auto_model, DEFAULT_VIDEO_MODEL
+        from schemas.message import GenerationType, TextPart
+        result = resolve_auto_model(GenerationType.VIDEO, [TextPart(text="video")])
+        assert result == DEFAULT_VIDEO_MODEL
+
+    def test_recommended_model_used_when_matching(self):
+        from config.smart_model_config import resolve_auto_model, MODEL_TO_GEN_TYPE
+        from schemas.message import GenerationType, TextPart
+        # 找一个真实的 CHAT 模型
+        chat_model = next(
+            (m for m, g in MODEL_TO_GEN_TYPE.items() if g == GenerationType.CHAT), None
+        )
+        if chat_model:
+            result = resolve_auto_model(GenerationType.CHAT, [TextPart(text="hi")], chat_model)
+            assert result == chat_model
+
+    def test_recommended_model_ignored_when_type_mismatch(self):
+        from config.smart_model_config import resolve_auto_model, MODEL_TO_GEN_TYPE, DEFAULT_CHAT_MODEL
+        from schemas.message import GenerationType, TextPart
+        # 找一个 IMAGE 模型，传给 CHAT gen_type → 应该 fallback
+        image_model = next(
+            (m for m, g in MODEL_TO_GEN_TYPE.items() if g == GenerationType.IMAGE), None
+        )
+        if image_model:
+            result = resolve_auto_model(GenerationType.CHAT, [TextPart(text="hi")], image_model)
+            assert result == DEFAULT_CHAT_MODEL
+
+    def test_video_with_image_returns_i2v_model(self):
+        from config.smart_model_config import resolve_auto_model, get_image_to_video_model
+        from schemas.message import GenerationType, ImagePart, TextPart
+        result = resolve_auto_model(
+            GenerationType.VIDEO,
+            [TextPart(text="make video"), ImagePart(url="https://example.com/img.png")],
+        )
+        assert result == get_image_to_video_model()
+
+    def test_none_recommended_uses_default(self):
+        from config.smart_model_config import resolve_auto_model, DEFAULT_CHAT_MODEL
+        from schemas.message import GenerationType, TextPart
+        result = resolve_auto_model(GenerationType.CHAT, [TextPart(text="hi")], None)
+        assert result == DEFAULT_CHAT_MODEL

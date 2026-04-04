@@ -613,6 +613,93 @@ class TestHandleText:
 
 
 # ============================================================
+# TestDispatchResultToWecom
+# ============================================================
+
+
+class TestDispatchResultToWecom:
+    """_dispatch_result_to_wecom 分发 + DB统一写入"""
+
+    @pytest.mark.asyncio
+    async def test_text_only_dispatched(self):
+        """纯文字 → 推送文字 + DB 写入 TextPart"""
+        from schemas.message import TextPart
+
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._reply_text = AsyncMock()
+
+        ctx = _make_reply_ctx("smart_robot")
+        parts = [TextPart(text="回复内容")]
+        await svc._dispatch_result_to_wecom(parts, ctx, "m1")
+
+        # DB messages 表应被 update
+        msg_mock = db._table_mocks["messages"]
+        msg_mock.update.assert_called_once()
+        update_args = msg_mock.update.call_args[0][0]
+        assert update_args["status"] == "completed"
+        assert any(c["type"] == "text" for c in update_args["content"])
+
+    @pytest.mark.asyncio
+    async def test_mixed_text_and_image(self):
+        """文字+图片 → 都推送 + DB 一次性包含两种类型"""
+        from schemas.message import ImagePart, TextPart
+
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._reply_text = AsyncMock()
+        svc._send_media_to_wecom = AsyncMock()
+
+        ctx = _make_reply_ctx("smart_robot")
+        parts = [TextPart(text="图如下"), ImagePart(url="https://example.com/cat.png")]
+        await svc._dispatch_result_to_wecom(parts, ctx, "m1")
+
+        # 媒体应推送（message_id=None，不让内部更新 DB）
+        svc._send_media_to_wecom.assert_called_once()
+        call_kwargs = svc._send_media_to_wecom.call_args[1]
+        assert call_kwargs.get("message_id") is None
+
+        # DB 应包含 text + image
+        msg_mock = db._table_mocks["messages"]
+        update_args = msg_mock.update.call_args[0][0]
+        types = [c["type"] for c in update_args["content"]]
+        assert "text" in types
+        assert "image" in types
+
+    @pytest.mark.asyncio
+    async def test_empty_result_replies_error(self):
+        """空结果 → 回复错误信息"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._reply_text = AsyncMock()
+
+        ctx = _make_reply_ctx("smart_robot")
+        await svc._dispatch_result_to_wecom([], ctx, "m1")
+
+        svc._reply_text.assert_called_once()
+        assert "没有生成" in svc._reply_text.call_args[0][1]
+
+    @pytest.mark.asyncio
+    async def test_video_dispatched(self):
+        """视频 → 推送视频 + DB 包含 video"""
+        from schemas.message import TextPart, VideoPart
+
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._reply_text = AsyncMock()
+        svc._send_media_to_wecom = AsyncMock()
+
+        ctx = _make_reply_ctx("smart_robot")
+        parts = [TextPart(text="视频如下"), VideoPart(url="https://example.com/demo.mp4")]
+        await svc._dispatch_result_to_wecom(parts, ctx, "m1")
+
+        msg_mock = db._table_mocks["messages"]
+        update_args = msg_mock.update.call_args[0][0]
+        types = [c["type"] for c in update_args["content"]]
+        assert "video" in types
+
+
+# ============================================================
 # TestGetOrCreateConversation
 # ============================================================
 
