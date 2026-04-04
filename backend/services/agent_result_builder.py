@@ -168,3 +168,53 @@ def build_graceful_timeout(
         turns_used=turns,
         total_tokens=tokens,
     )
+
+
+def build_image_result(
+    signals: Dict[str, Any],
+    model_id: str,
+    phase1_tokens: int,
+) -> AgentResult:
+    """Phase 1 image 域 → 转换 prompts 格式并构建结果"""
+    raw_prompts = signals.get("prompts", [])
+    aspect = signals.get("aspect_ratio", "1:1")
+    render_hints = TOOL_RENDER_HINTS.get("route_to_image")
+
+    if not raw_prompts:
+        return build_chat_result(
+            "", [], 1, phase1_tokens, model=model_id,
+        )
+
+    if len(raw_prompts) == 1:
+        prompt_text = (
+            raw_prompts[0] if isinstance(raw_prompts[0], str)
+            else str(raw_prompts[0])
+        )
+        return AgentResult(
+            generation_type=GenerationType.IMAGE,
+            model=model_id,
+            tool_params={
+                "prompt": prompt_text,
+                "aspect_ratio": aspect,
+            },
+            render_hints=render_hints,
+            turns_used=1,
+            total_tokens=phase1_tokens,
+        )
+
+    batch = [
+        {
+            "prompt": (p if isinstance(p, str) else str(p)),
+            "aspect_ratio": aspect,
+        }
+        for p in raw_prompts
+    ]
+    return AgentResult(
+        generation_type=GenerationType.IMAGE,
+        model=model_id,
+        batch_prompts=batch,
+        tool_params=signals,
+        render_hints=render_hints,
+        turns_used=1,
+        total_tokens=phase1_tokens,
+    )

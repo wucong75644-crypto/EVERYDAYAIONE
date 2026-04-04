@@ -305,3 +305,60 @@ class TestExtractGenerationPrompt:
         """prompt 前后空白被去除"""
         msg = {"generation_params": {"prompt": "  hello world  "}}
         assert AgentLoop._extract_generation_prompt(msg) == "hello world"
+
+
+# -- TestBuildImageResult --
+
+class TestBuildImageResult:
+    """build_image_result 图片结果构建"""
+
+    def test_single_prompt(self):
+        from services.agent_result_builder import build_image_result
+        result = build_image_result(
+            signals={"prompts": ["a cute cat"], "aspect_ratio": "16:9"},
+            model_id="img-model",
+            phase1_tokens=100,
+        )
+        assert result.generation_type.value == "image"
+        assert result.tool_params["prompt"] == "a cute cat"
+        assert result.tool_params["aspect_ratio"] == "16:9"
+        assert result.model == "img-model"
+
+    def test_batch_prompts(self):
+        from services.agent_result_builder import build_image_result
+        result = build_image_result(
+            signals={"prompts": ["cat", "dog", "bird"], "aspect_ratio": "1:1"},
+            model_id="img-model",
+            phase1_tokens=100,
+        )
+        assert result.generation_type.value == "image"
+        assert result.batch_prompts is not None
+        assert len(result.batch_prompts) == 3
+        assert result.batch_prompts[0]["prompt"] == "cat"
+
+    def test_empty_prompts_fallback_to_chat(self):
+        from services.agent_result_builder import build_image_result
+        result = build_image_result(
+            signals={"prompts": []},
+            model_id="img-model",
+            phase1_tokens=50,
+        )
+        assert result.generation_type.value == "chat"
+
+    def test_default_aspect_ratio(self):
+        from services.agent_result_builder import build_image_result
+        result = build_image_result(
+            signals={"prompts": ["test"]},
+            model_id="m",
+            phase1_tokens=10,
+        )
+        assert result.tool_params["aspect_ratio"] == "1:1"
+
+    def test_non_string_prompt_converted(self):
+        from services.agent_result_builder import build_image_result
+        result = build_image_result(
+            signals={"prompts": [123]},
+            model_id="m",
+            phase1_tokens=10,
+        )
+        assert result.tool_params["prompt"] == "123"

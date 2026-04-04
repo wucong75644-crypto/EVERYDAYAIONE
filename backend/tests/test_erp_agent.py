@@ -240,7 +240,7 @@ class TestChatToolsERPAgent:
     def test_core_tools_count(self):
         from config.chat_tools import get_core_tools
         core = get_core_tools(org_id="test")
-        assert 6 <= len(core) <= 10  # ERP Agent 模式：7 个
+        assert 10 <= len(core) <= 16  # 13 个核心工具（含 file/crawler）
 
     def test_system_prompt_simplified(self):
         from config.chat_tools import get_tool_system_prompt
