@@ -7,7 +7,7 @@ ChatHandler 工具执行 Mixin
 
 import asyncio
 import json
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
@@ -29,8 +29,12 @@ class ChatToolMixin:
         message_id: str,
         user_id: str,
         turn: int,
+        messages: Optional[List[Dict[str, Any]]] = None,
     ) -> List[tuple]:
         """执行工具调用：安全检查 → 并行/串行分批 → 返回结果
+
+        Args:
+            messages: 当前对话 messages（传给 erp_agent 做上下文筛选）
 
         Returns:
             List of (tool_call_dict, result_text, is_error)
@@ -42,6 +46,9 @@ class ChatToolMixin:
             db=self.db, user_id=user_id,
             conversation_id=conversation_id, org_id=self.org_id,
         )
+        # 传递上下文给 erp_agent
+        executor._task_id = task_id
+        executor._parent_messages = messages
         results: List[tuple] = []
 
         # 按并发安全性分批

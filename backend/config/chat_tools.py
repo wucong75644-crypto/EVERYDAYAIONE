@@ -99,33 +99,21 @@ def get_safety_level(tool_name: str) -> SafetyLevel:
 
 TOOL_SYSTEM_PROMPT = """## 工具使用规则
 
-### 一、用户意图理解（口语/错别字/简称映射）
-用户是电商运营人员，说话口语化。遇到以下表达时按映射理解：
-- 订单类：「丁单」「单子」「多少单」→ 订单查询；「卖了多少」「成交」「爆单」→ 销量统计
-- 库存类：「酷存」「够不够卖」「缺货」「断货」「还剩多少」→ 库存查询
-- 采购类：「到了没」「到货」「进货」→ 采购到货查询
-- 发货类：「发了多少」「到哪了」→ 物流/发货查询
-- 售后类：「退了」「退货」「退款」→ 售后查询
-- 统计类：「多少钱」「赚了」「亏了」→ 销售额/利润统计
-- 平台：「淘宝」=天猫/淘宝，「拼多多」=PDD，「抖音」=抖店
+1. **ERP 业务问题**：用户问任何涉及订单、库存、采购、售后、发货、物流、商品、销量、统计的问题时，必须调用 erp_agent 工具。erp_agent 内部自动处理编码识别、工具选择、多步查询，支持口语化表达。
 
-### 二、工具选择规则
-1. **编码识别优先**：用户提到商品名称/简称/模糊编码时，先调 local_product_identify 确认精确编码，再用对应查询工具。同一编码每次对话只需识别一次。
+2. **知识库**：用户问业务规则、操作流程等非数据类问题时，用 search_knowledge。
 
-2. **本地优先远程**：local_* 工具查本地数据库（毫秒级），erp_* 工具查远程API（秒级）。优先用本地工具，本地查不到或需要实时数据时再用远程。
+3. **互联网搜索**：用户问天气、新闻等实时信息时，用 web_search。社交平台内容搜索不要用此工具。
 
-3. **不确定先搜索**：不确定用哪个工具时，必须先调 erp_api_search 搜索，不要猜测。
+4. **图片/视频生成**：用户要求画图/生成视频时，用 generate_image / generate_video。
 
-4. **多工具并行**：你可以在一次回复中调用多个工具。没有依赖关系的工具必须并行调用；有依赖关系的串行调用（如先 identify 拿编码再查库存）。
+5. **代码执行**：用户要求数据分析、计算、导出文件时，用 code_execute。
 
-5. **两步查询**：远程 erp_* 工具先传 action 获取参数文档，再传 params 执行。已确定参数时可一步完成。
+6. **多工具并行**：你可以在一次回复中调用多个工具。没有依赖关系的工具并行调用。
 
-6. **时间语义**：「多少订单」→ time_type="created"；「发了多少」→ time_type="consign_time"。
-
-### 三、禁止行为（CRITICAL）
-- NEVER 不调工具就回答业务数据问题——你就是ERP查询入口，必须查数据再回答
-- NEVER 说"我无法查看"或"建议您去ERP查看"——用你的工具查
-- NEVER 因为口语化/错别字就放弃理解用户意图"""
+### 禁止行为（CRITICAL）
+- NEVER 不调工具就回答业务数据问题——必须调 erp_agent 查数据再回答
+- NEVER 说"我无法查看"——用你的工具查"""
 
 
 def get_tool_system_prompt() -> str:
@@ -138,8 +126,34 @@ def get_tool_system_prompt() -> str:
 # ============================================================
 
 def _build_common_tools() -> List[Dict[str, Any]]:
-    """构建通用工具（非 ERP）"""
+    """构建通用工具（非 ERP 直接查询）"""
     return [
+        {
+            "type": "function",
+            "function": {
+                "name": "erp_agent",
+                "description": (
+                    "ERP 数据查询专员。用户问任何涉及以下内容时必须调用此工具：\n"
+                    "订单/库存/采购/售后/发货/物流/商品/销量/统计/仓储/价格/成本/对账/核对/盘点/调拨/补发/换货/退款/退货金额。\n"
+                    "口语/错别字映射：'丁单'=订单，'酷存'=库存，'够不够卖'=库存查询，"
+                    "'到了没'=采购到货，'退了'=售后，'爆单'=销量统计，"
+                    "'那个谁退的'=退货查询，'查一下呗'=数据查询。\n"
+                    "含操作性词汇也要先查数据：'对账'先查数据再对，'对不对'先查数据再核对，"
+                    "'处理'先查状态再建议，'优先处理'先查订单列表，'多少钱/价格'先查成本价。\n"
+                    "内部自动识别编码、选择最优查询工具、多步查询，返回完整数据结论。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "required": ["query"],
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "用户的原始问题（保持原文，不要改写）",
+                        },
+                    },
+                },
+            },
+        },
         {
             "type": "function",
             "function": {
@@ -283,30 +297,16 @@ def get_chat_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
 # ============================================================
 
 # 核心工具：每次请求都传给 LLM 的完整 schema
-# 选择标准：benchmark 990 例中出现率 >0.4% 的工具全部直接加载
-# 覆盖率：99.7%（1195/1198 次工具调用）
+# ERP Agent 模式：主 Agent 只持有 7 个工具（erp_agent 封装了 17 个 ERP 工具）
+# 主 Agent 只做 7 选 1 路由，ERP 的准确率由 erp_agent 内部保证
 _CORE_TOOLS: Set[str] = {
-    # 本地 ERP 查询（11个，覆盖日常业务，毫秒级响应）
-    "local_product_identify",   # 编码识别 30.7%
-    "local_global_stats",       # 全局统计 16.9%
-    "local_order_query",        # 订单查询 14.5%
-    "local_stock_query",        # 库存查询 14.1%
-    "local_purchase_query",     # 采购查询 12.2%
-    "local_doc_query",          # 单据查询 10.7%
-    "local_aftersale_query",    # 售后查询 10.5%
-    "local_product_stats",      # 商品统计 4.3%
-    "local_product_flow",       # 供应链流转 0.4%
-    "local_platform_map_query", # 平台映射 0.4%
-    "trigger_erp_sync",         # 手动同步（local 工具返回警告时需要）
-    # 远程 ERP（1个，调拨/仓储无本地工具，日常操作 5.9%）
-    "erp_warehouse_query",
-    # 搜索入口（发现延迟加载的远程 ERP 工具）
-    "erp_api_search",
-    # 通用工具
+    "erp_agent",                # ERP 独立 Agent（内含 17 个 ERP 工具）
+    "erp_api_search",           # ERP 工具搜索（辅助）
     "search_knowledge",         # 知识库
     "web_search",               # 互联网搜索
     "generate_image",           # 图片生成
     "generate_video",           # 视频生成
+    "code_execute",             # 代码执行
 }
 
 

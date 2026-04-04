@@ -32,6 +32,7 @@ class ToolExecutor:
             "web_search": self._web_search,
             "generate_image": self._generate_media_stub,
             "generate_video": self._generate_media_stub,
+            "erp_agent": self._erp_agent,
         }
         # 注册文件操作工具
         for tool_name in FILE_INFO_TOOLS:
@@ -166,6 +167,37 @@ class ToolExecutor:
             f"请告知用户直接说「画{prompt[:20]}」或「生成视频{prompt[:20]}」，"
             f"系统会自动路由到生成通道。"
         )
+
+    # ========================================
+    # ERP Agent（独立 Agent 作为工具调用）
+    # ========================================
+
+    async def _erp_agent(self, args: Dict[str, Any]) -> str:
+        """ERP 独立 Agent：接收用户问题，内部运行工具循环，返回结论"""
+        from services.erp_agent import ERPAgent
+
+        query = args.get("query", "").strip()
+        if not query:
+            return "请输入 ERP 相关问题"
+
+        agent = ERPAgent(
+            db=self.db,
+            user_id=self.user_id,
+            conversation_id=self.conversation_id,
+            org_id=self.org_id,
+            task_id=getattr(self, "_task_id", None),
+        )
+
+        # 传入父 Agent 的 messages 上下文（如果有）
+        parent_messages = getattr(self, "_parent_messages", None)
+
+        result = await agent.execute(query, parent_messages=parent_messages)
+
+        # 记录 token 消耗（供 ChatHandler 统一扣费）
+        self._erp_agent_tokens = getattr(self, "_erp_agent_tokens", 0)
+        self._erp_agent_tokens += result.tokens_used
+
+        return result.text
 
     # ========================================
     # 搜索工具（按需发现 API/模型文档）
