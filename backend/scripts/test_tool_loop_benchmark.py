@@ -34,21 +34,23 @@ from core.config import settings
 # ============================================================
 
 MOCK_TOOL_RESULTS: Dict[str, str] = {
-    "local_product_identify": "商品识别结果:\n商家编码: TEST-001\n名称: 测试商品\n类型: 单品",
-    "local_stock_query": "库存状态:\n可售: 128件\n锁定: 12件\n在途: 50件\n总计: 190件",
-    "local_order_query": "订单汇总:\n今日订单: 42笔\n待发货: 15笔\n已发货: 27笔",
-    "local_purchase_query": "采购进度:\n采购单 PO001: 已到货 200件\n采购单 PO002: 未到货",
-    "local_aftersale_query": "售后汇总:\n退货: 3笔\n退款: 2笔\n换货: 1笔",
-    "local_doc_query": "单据查询:\nsid: 5759422420146938\norder_no: 126036803257340376\nouter_id: TEST-001",
-    "local_product_stats": "统计报表:\n销售额: ¥52,380\n订单数: 156笔\n退货率: 2.3%",
-    "local_product_flow": "供应链流转:\n采购→收货→上架→销售→售后\n各环节数据正常",
-    "local_global_stats": "全局统计:\n今日订单: 328笔\n总销售额: ¥186,420\n退货率: 1.8%",
-    "local_platform_map_query": "平台映射:\nTEST-001 → 天猫/京东/拼多多 均有售",
-    "erp_api_search": "找到 3 个匹配:\n- erp_trade_query:order_list — 订单查询\n💡 推荐 erp_trade_query:order_list",
-    "trigger_erp_sync": "同步已触发，预计1分钟内完成",
+    # ERP Agent 返回模拟（主 Agent 视角只看到 erp_agent 的结论）
+    "erp_agent": (
+        "ERP 查询结果:\n"
+        "商品 TEST-001 库存充足\n"
+        "可售: 128件 | 锁定: 12件 | 在途: 50件\n"
+        "今日订单: 42笔 | 待发货: 15笔"
+    ),
+    # 其他工具 mock
+    "erp_api_search": "找到 3 个匹配:\n- erp_trade_query:order_list — 订单查询",
+    "web_search": "搜索结果: 今日杭州气温 25°C，晴转多云",
+    "search_knowledge": "知识库匹配: 退货流程详见《售后处理手册》",
+    "generate_image": "图片生成需要专用通道处理",
+    "generate_video": "视频生成需要专用通道处理",
+    "code_execute": "代码执行完成，结果: 平均金额 ¥256.8",
 }
 
-MAX_BENCHMARK_TURNS = 4
+MAX_BENCHMARK_TURNS = 2  # 主 Agent 只做路由，1-2 轮足够
 
 
 async def call_llm_with_tools(
@@ -58,7 +60,7 @@ async def call_llm_with_tools(
 ) -> Dict[str, Any]:
     """多轮工具循环：模拟真实 ChatHandler 行为，mock 工具返回"""
     from services.adapters.factory import create_chat_adapter
-    from config.chat_tools import get_tool_system_prompt, get_tools_by_names, extract_tool_names_from_result
+    from config.chat_tools import get_tool_system_prompt
 
     messages = [
         {"role": "system", "content": (
@@ -71,20 +73,11 @@ async def call_llm_with_tools(
 
     all_selected: List[str] = []
     text_acc = ""
-    discovered: set = set()
     current_tools = list(tools)
     turns_used = 0
 
     for turn in range(MAX_BENCHMARK_TURNS):
         turns_used = turn + 1
-
-        # 动态注入发现的工具
-        if discovered:
-            new_schemas = get_tools_by_names(discovered, org_id="benchmark")
-            core_names = {t["function"]["name"] for t in tools}
-            for t in new_schemas:
-                if t["function"]["name"] not in core_names:
-                    current_tools.append(t)
 
         adapter = create_chat_adapter(model_id)
         tc_acc: Dict[int, Dict[str, Any]] = {}
@@ -131,8 +124,6 @@ async def call_llm_with_tools(
         for tc in turn_tools:
             mock = MOCK_TOOL_RESULTS.get(tc["name"], f"{tc['name']} 执行成功")
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": mock})
-            if tc["name"] == "erp_api_search":
-                discovered.update(extract_tool_names_from_result(mock))
 
     return {
         "selected_tools": all_selected,
@@ -145,10 +136,36 @@ async def call_llm_with_tools(
 # 准确率评估
 # ============================================================
 
+# ERP 相关工具名（expected 里出现这些 → 应该路由到 erp_agent）
+_ERP_TOOL_NAMES = {
+    "local_product_identify", "local_stock_query", "local_order_query",
+    "local_purchase_query", "local_aftersale_query", "local_doc_query",
+    "local_product_stats", "local_product_flow", "local_global_stats",
+    "local_platform_map_query", "trigger_erp_sync",
+    "erp_info_query", "erp_product_query", "erp_trade_query",
+    "erp_aftersales_query", "erp_warehouse_query", "erp_purchase_query",
+    "erp_taobao_query", "erp_execute",
+}
+
+
 def evaluate(expected: List[str], actual: List[str]) -> Dict[str, Any]:
-    """评估工具选择准确率"""
+    """评估工具选择准确率（ERP Agent 模式）
+
+    评估逻辑：
+    - expected 含 ERP 工具 + actual 含 erp_agent → exact（路由正确）
+    - expected 为空 + actual 为空 → exact（正确不调工具）
+    - expected 为空 + actual 有工具 → false_positive
+    - expected 有工具 + actual 为空 → miss
+    """
     expected_set = set(expected)
     actual_set = set(actual)
+
+    # ERP Agent 路由评估：expected 里有 ERP 工具，actual 里有 erp_agent → 正确
+    expected_has_erp = bool(expected_set & _ERP_TOOL_NAMES)
+    actual_has_erp_agent = "erp_agent" in actual_set
+
+    if expected_has_erp and actual_has_erp_agent:
+        return {"match": "exact", "score": 1.0}
 
     if not expected and not actual:
         return {"match": "exact", "score": 1.0}
@@ -157,7 +174,7 @@ def evaluate(expected: List[str], actual: List[str]) -> Dict[str, Any]:
     if expected and not actual:
         return {"match": "miss", "score": 0.0, "missing": list(expected_set)}
 
-    # 核心指标：expected 中有多少被命中
+    # 非 ERP 工具的精确匹配
     hit = expected_set & actual_set
     recall = len(hit) / len(expected_set)
     precision = len(hit) / len(actual_set) if actual_set else 0

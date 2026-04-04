@@ -138,15 +138,15 @@ class TestExtractToolNamesAndCoreTools:
         core = get_core_tools(org_id="test")
         full = get_chat_tools(org_id="test")
         assert len(core) < len(full)
-        assert len(core) >= 15  # 17 个核心工具
+        assert len(core) >= 6  # ERP Agent 模式：7 个核心工具
 
     def test_get_core_tools_contains_essentials(self):
         from config.chat_tools import get_core_tools
         core = get_core_tools(org_id="test")
         names = {t["function"]["name"] for t in core}
+        assert "erp_agent" in names
         assert "erp_api_search" in names
-        assert "local_product_identify" in names
-        assert "local_stock_query" in names
+        assert "web_search" in names
 
     def test_get_tools_by_names(self):
         from config.chat_tools import get_tools_by_names
@@ -168,10 +168,10 @@ class TestExtractToolNamesAndCoreTools:
 
     def test_extract_excludes_core_tools(self):
         from config.chat_tools import extract_tool_names_from_result
-        text = "local_stock_query 和 erp_trade_query"
+        # erp_api_search 是核心工具，不应出现在 discovered 里
+        text = "erp_api_search 和 erp_trade_query"
         names = extract_tool_names_from_result(text, org_id="test_org")
-        # local_stock_query 是核心工具，不应出现在 discovered 里
-        assert "local_stock_query" not in names
+        assert "erp_api_search" not in names
         assert "erp_trade_query" in names
 
     def test_get_tool_system_prompt_not_empty(self):
