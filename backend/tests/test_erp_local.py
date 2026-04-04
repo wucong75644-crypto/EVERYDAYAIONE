@@ -678,7 +678,7 @@ class TestLocalProductStats:
             ],
             erp_sync_state=[_sync_state("order")],
         )
-        result = await local_product_stats(db, "C01")
+        result = await local_product_stats(db, "C01", start_date="2026-03-17", end_date="2026-03-18")
         assert "统计" in result
         assert "销售" in result
 
@@ -704,7 +704,7 @@ class TestLocalProductStats:
             ],
             erp_sync_state=[],
         )
-        result = await local_product_stats(db, "C01")
+        result = await local_product_stats(db, "C01", start_date="2026-03-18", end_date="2026-03-18")
         assert "售后率" in result
 
 
