@@ -29,6 +29,9 @@ class ToolExecutor:
             "social_crawler": self._social_crawler,
             "erp_api_search": self._erp_api_search,
             "code_execute": self._code_execute,
+            "web_search": self._web_search,
+            "generate_image": self._generate_media_stub,
+            "generate_video": self._generate_media_stub,
         }
         # 注册文件操作工具
         for tool_name in FILE_INFO_TOOLS:
@@ -134,6 +137,35 @@ class ToolExecutor:
             lines.append(f"- {title}: {content}")
 
         return "\n".join(lines)
+
+    # ========================================
+    # 互联网搜索
+    # ========================================
+
+    async def _web_search(self, args: Dict[str, Any]) -> str:
+        """搜索互联网获取实时信息"""
+        from services.sandbox.functions import sandbox_web_search
+        query = args.get("query", "").strip()
+        if not query:
+            return "搜索查询不能为空"
+        return await sandbox_web_search(query)
+
+    # ========================================
+    # 图片/视频生成（引导至专用 Handler）
+    # ========================================
+
+    async def _generate_media_stub(self, args: Dict[str, Any]) -> str:
+        """图片/视频生成桩：引导 AI 告知用户，实际生成由专用 Handler 处理
+
+        工具循环中 AI 调用 generate_image/generate_video 时，
+        返回引导文本让 AI 通知用户直接发送生成指令。
+        """
+        prompt = args.get("prompt", "")
+        return (
+            f"图片/视频生成需要专用通道处理（涉及积分预扣和异步任务）。\n"
+            f"请告知用户直接说「画{prompt[:20]}」或「生成视频{prompt[:20]}」，"
+            f"系统会自动路由到生成通道。"
+        )
 
     # ========================================
     # 搜索工具（按需发现 API/模型文档）

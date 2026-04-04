@@ -72,7 +72,9 @@ def build_local_tools() -> List[Dict[str, Any]]:
         _tool(
             "local_purchase_query",
             "按商品编码查采购到货进度（含采退单）。毫秒级响应。"
-            "返回各采购单明细（单号/供应商/状态/到货数量），默认最近30天。",
+            "返回各采购单明细（单号/供应商/状态/到货数量），默认最近30天。"
+            "⚠ 需精确编码，模糊时先 local_product_identify。"
+            "更多采购操作（上架/归档）用 erp_purchase_query。",
             {
                 "product_code": _str("商品编码（主商家编码或SKU编码）"),
                 "status": _enum(
@@ -88,7 +90,9 @@ def build_local_tools() -> List[Dict[str, Any]]:
         _tool(
             "local_aftersale_query",
             "按商品编码查售后情况（退货/退款/换货/补发等）。毫秒级响应。"
-            "返回按类型汇总 + 最近5条工单明细，默认最近30天。",
+            "返回按类型汇总 + 最近5条工单明细，默认最近30天。"
+            "⚠ 需精确编码，模糊时先 local_product_identify。"
+            "淘宝/天猫退款用 erp_taobao_query(refund_list)。",
             {
                 "product_code": _str("商品编码"),
                 "aftersale_type": _enum(
@@ -104,7 +108,9 @@ def build_local_tools() -> List[Dict[str, Any]]:
         _tool(
             "local_order_query",
             "按商品编码查销售订单（支持按平台/店铺/状态过滤）。毫秒级响应。"
-            "返回平台汇总 + 最近5条订单明细（单号/金额/状态），默认最近30天。",
+            "返回平台汇总 + 最近5条订单明细（单号/金额/状态），默认最近30天。"
+            "⚠ 需精确编码，模糊时先 local_product_identify。"
+            "需要收货地址/物流轨迹用 erp_trade_query。",
             {
                 "product_code": _str("商品编码（主商家编码或SKU编码）"),
                 "shop_name": _str("店铺名称过滤"),
@@ -126,7 +132,9 @@ def build_local_tools() -> List[Dict[str, Any]]:
             "local_product_stats",
             "按商品编码查统计报表（日/周/月维度）。毫秒级响应。"
             "返回聚合指标：订单数/销量/销售额、采购数/采购额、"
-            "售后数/退货数。支持日期范围对比。",
+            "售后数/退货数。支持日期范围对比。"
+            "⚠ 需精确编码，模糊时先 local_product_identify。"
+            "全局统计（不按商品）用 local_global_stats。",
             {
                 "product_code": _str("商品编码"),
                 "period": _enum("统计周期", ["day", "week", "month"]),
@@ -140,7 +148,8 @@ def build_local_tools() -> List[Dict[str, Any]]:
             "local_product_flow",
             "按商品编码查完整供应链流转"
             "（采购→收货→上架→销售→售后→采退）。毫秒级响应。"
-            "返回各环节汇总指标（笔数/数量/金额）+ 售后率。",
+            "返回各环节汇总指标（笔数/数量/金额）+ 售后率。"
+            "⚠ 需精确编码，模糊时先 local_product_identify。",
             {
                 "product_code": _str("商品编码"),
                 "days": _int("查询最近N天，默认30"),
@@ -150,8 +159,9 @@ def build_local_tools() -> List[Dict[str, Any]]:
         # 6. 库存查询
         _tool(
             "local_stock_query",
-            "按商品编码查库存状态（可售/总库存/锁定/在途）。毫秒级响应。"
-            "返回各仓库库存分布汇总。",
+            "按商品精确编码查库存（可售/总库存/锁定/在途/各仓分布）。毫秒级响应。"
+            "⚠ 需要精确编码，用户给模糊名称/简称时先调 local_product_identify 确认。"
+            "需要实时数据或本地查不到时改用 erp_product_query(stock_status)。",
             {
                 "product_code": _str("商品编码（主商家编码或SKU编码）"),
                 "stock_status": _enum(

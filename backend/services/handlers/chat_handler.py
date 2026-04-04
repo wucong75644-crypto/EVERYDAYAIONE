@@ -256,22 +256,55 @@ class ChatHandler(ChatToolMixin, ChatRoutingMixin, ChatStreamSupportMixin, ChatC
                 f"adapter={type(self._adapter).__name__} | task={task_id}"
             )
 
-            # 4. 加载工具列表
-            from config.chat_tools import get_chat_tools
-            tools = get_chat_tools(org_id=self.org_id)
+            # 4. 注入全局工具使用指引
+            from config.chat_tools import (
+                get_core_tools, get_tools_by_names, get_tool_system_prompt,
+            )
+            tool_prompt = get_tool_system_prompt()
+            if tool_prompt:
+                messages.append({"role": "system", "content": tool_prompt})
+
+            # 5. 加载核心工具（ToolSearch 模式：9 个核心直接加载）
+            core_tools = get_core_tools(org_id=self.org_id)
 
             # 按需启用 Google Search Grounding
             stream_kwargs: Dict[str, Any] = {}
             if needs_google_search and hasattr(self._adapter, 'supports_google_search') and self._adapter.supports_google_search:
                 google_tool = self._adapter.create_google_search_tool()
-                tools.append(google_tool)
+                core_tools.append(google_tool)
                 logger.info(f"Google Search Grounding enabled | model={model_id} | task={task_id}")
 
-            if tools:
-                stream_kwargs["tools"] = tools
+            # 6. 工具循环上下文
+            from services.handlers.tool_loop_context import ToolLoopContext
+            tool_context = ToolLoopContext(org_id=self.org_id)
 
-            # 5. 工具循环：流式生成 → 检测工具调用 → 执行 → 结果塞回 → 继续
+            # 7. 工具循环：流式生成 → 检测工具调用 → 执行 → 结果塞回 → 继续
             for turn in range(MAX_TOOL_TURNS):
+                # 每轮动态构建工具列表：核心工具 + 已发现的工具
+                current_tools = list(core_tools)
+                if tool_context.discovered_tools:
+                    discovered = get_tools_by_names(
+                        tool_context.discovered_tools, org_id=self.org_id,
+                    )
+                    # 去重（核心工具里可能已包含）
+                    core_names = {t["function"]["name"] for t in core_tools}
+                    current_tools.extend(
+                        t for t in discovered
+                        if t["function"]["name"] not in core_names
+                    )
+                    logger.info(
+                        f"Dynamic tools injected | turn={turn + 1} | "
+                        f"discovered={sorted(tool_context.discovered_tools)} | "
+                        f"total={len(current_tools)}"
+                    )
+                stream_kwargs["tools"] = current_tools
+
+                # 注入上一轮的上下文提示
+                if turn > 0:
+                    ctx_prompt = tool_context.build_context_prompt()
+                    if ctx_prompt:
+                        messages.append({"role": "system", "content": ctx_prompt})
+
                 turn_text = ""
                 turn_thinking = ""
                 tool_calls_acc: Dict[int, Dict[str, Any]] = {}  # index → {id, name, arguments}
@@ -364,13 +397,14 @@ class ChatHandler(ChatToolMixin, ChatRoutingMixin, ChatStreamSupportMixin, ChatC
                     user_id, turn + 1,
                 )
 
-                # 工具结果塞进 messages
+                # 工具结果塞进 messages + 更新上下文
                 for tc, result_text, is_error in tool_results:
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
                         "content": result_text,
                     })
+                    tool_context.update_from_result(tc["name"], result_text, is_error)
 
                 # 继续循环，让 AI 看到工具结果
                 logger.info(f"Tool turn {turn + 1} complete | task={task_id} | continuing loop")
