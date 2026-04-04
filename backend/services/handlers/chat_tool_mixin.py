@@ -206,6 +206,23 @@ _SUMMARY_THRESHOLD = 4000   # 超过此阈值触发摘要
 _SUMMARY_PREVIEW = 2000     # 摘要中保留前 N 字符
 
 
+def accumulate_tool_call_delta(
+    acc: Dict[int, Dict[str, Any]], deltas: list,
+) -> None:
+    """将流式 tool_call 增量累积到 acc 字典中"""
+    for tc_delta in deltas:
+        idx = tc_delta.index
+        if idx not in acc:
+            acc[idx] = {"id": "", "name": "", "arguments": ""}
+        entry = acc[idx]
+        if tc_delta.id:
+            entry["id"] = tc_delta.id
+        if tc_delta.name:
+            entry["name"] = tc_delta.name
+        if tc_delta.arguments_delta:
+            entry["arguments"] += tc_delta.arguments_delta
+
+
 def _summarize_if_needed(tool_name: str, result: str) -> str:
     """大结果自动摘要，引导 AI 用 code_execute 做全量分析
 

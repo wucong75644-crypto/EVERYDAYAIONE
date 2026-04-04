@@ -27,7 +27,7 @@ from services.adapters.factory import DEFAULT_MODEL_ID
 from services.handlers.base import BaseHandler, TaskMetadata
 from services.handlers.chat_context_mixin import ChatContextMixin
 from services.handlers.chat_stream_support_mixin import ChatStreamSupportMixin
-from services.handlers.chat_tool_mixin import ChatToolMixin
+from services.handlers.chat_tool_mixin import ChatToolMixin, accumulate_tool_call_delta
 from services.websocket_manager import ws_manager
 
 # 工具循环最大轮次（防止无限循环）
@@ -98,51 +98,22 @@ class ChatHandler(ChatToolMixin, ChatStreamSupportMixin, ChatContextMixin, BaseH
 
         return task_id
 
-    async def _stream_direct_reply(
-        self,
-        task_id: str,
-        message_id: str,
-        conversation_id: str,
-        text: str,
-    ) -> None:
+    async def _stream_direct_reply(self, task_id, message_id, conversation_id, text):
         """Agent Loop ask_user：大脑直接回复，跳过 LLM 调用"""
         try:
-            # 推送 start
-            start_msg = build_message_start(
-                task_id=task_id,
-                conversation_id=conversation_id,
-                message_id=message_id,
-                model="agent",
-            )
-            await ws_manager.send_to_task_subscribers(task_id, start_msg)
-
-            # 推送完整文字作为一个 chunk
-            chunk_msg = build_message_chunk(
-                task_id=task_id,
-                conversation_id=conversation_id,
-                message_id=message_id,
-                chunk=text,
-                accumulated=text,
-            )
-            await ws_manager.send_to_task_subscribers(task_id, chunk_msg)
-
-            # 完成回调（0 积分）
-            await self.on_complete(
-                task_id=task_id,
-                result=[TextPart(text=text)],
-                credits_consumed=0,
-            )
-
-            logger.info(
-                f"Direct reply sent | task_id={task_id} | len={len(text)}"
-            )
+            await ws_manager.send_to_task_subscribers(task_id, build_message_start(
+                task_id=task_id, conversation_id=conversation_id,
+                message_id=message_id, model="agent",
+            ))
+            await ws_manager.send_to_task_subscribers(task_id, build_message_chunk(
+                task_id=task_id, conversation_id=conversation_id,
+                message_id=message_id, chunk=text, accumulated=text,
+            ))
+            await self.on_complete(task_id=task_id, result=[TextPart(text=text)], credits_consumed=0)
+            logger.info(f"Direct reply sent | task_id={task_id} | len={len(text)}")
         except Exception as e:
             logger.error(f"Direct reply error | task_id={task_id} | error={e}")
-            await self.on_error(
-                task_id=task_id,
-                error_code="DIRECT_REPLY_FAILED",
-                error_message=str(e),
-            )
+            await self.on_error(task_id=task_id, error_code="DIRECT_REPLY_FAILED", error_message=str(e))
 
     async def _save_accumulated_content(self, task_id: str, content: str) -> None:
         """将累积内容写入数据库（供刷新恢复使用）"""
@@ -328,7 +299,7 @@ class ChatHandler(ChatToolMixin, ChatStreamSupportMixin, ChatContextMixin, BaseH
 
                     # 工具调用增量累积
                     if chunk.tool_calls:
-                        self._accumulate_tool_call_delta(tool_calls_acc, chunk.tool_calls)
+                        accumulate_tool_call_delta(tool_calls_acc, chunk.tool_calls)
 
                     # Token 使用量
                     if chunk.prompt_tokens or chunk.completion_tokens:
@@ -439,46 +410,20 @@ class ChatHandler(ChatToolMixin, ChatStreamSupportMixin, ChatContextMixin, BaseH
             if self._adapter:
                 await self._adapter.close()
 
-    @staticmethod
-    def _accumulate_tool_call_delta(
-        acc: Dict[int, Dict[str, Any]], deltas: list,
-    ) -> None:
-        """将流式 tool_call 增量累积到 acc 字典中"""
-        for tc_delta in deltas:
-            idx = tc_delta.index
-            if idx not in acc:
-                acc[idx] = {"id": "", "name": "", "arguments": ""}
-            entry = acc[idx]
-            if tc_delta.id:
-                entry["id"] = tc_delta.id
-            if tc_delta.name:
-                entry["name"] = tc_delta.name
-            if tc_delta.arguments_delta:
-                entry["arguments"] += tc_delta.arguments_delta
-
-    # 工具执行方法在 ChatToolMixin 中：
-    # _execute_tool_calls, _execute_single_tool
-
-    def _convert_content_parts_to_dicts(self, result: List[ContentPart]) -> List[Dict[str, Any]]:
+    def _convert_content_parts_to_dicts(self, result):
         """转换 ContentPart 为字典（支持 Text/Image/Video）"""
         from schemas.message import ImagePart, VideoPart
-
-        content_dicts = []
-        for part in result:
-            if isinstance(part, TextPart):
-                content_dicts.append({"type": "text", "text": part.text})
-            elif isinstance(part, ImagePart):
-                content_dicts.append({
-                    "type": "image", "url": part.url,
-                    "width": part.width, "height": part.height,
-                })
-            elif isinstance(part, VideoPart):
-                content_dicts.append({
-                    "type": "video", "url": part.url,
-                })
-            elif isinstance(part, dict):
-                content_dicts.append(part)
-        return content_dicts
+        dicts = []
+        for p in result:
+            if isinstance(p, TextPart):
+                dicts.append({"type": "text", "text": p.text})
+            elif isinstance(p, ImagePart):
+                dicts.append({"type": "image", "url": p.url, "width": p.width, "height": p.height})
+            elif isinstance(p, VideoPart):
+                dicts.append({"type": "video", "url": p.url})
+            elif isinstance(p, dict):
+                dicts.append(p)
+        return dicts
 
     async def _handle_credits_on_complete(
         self,
@@ -524,37 +469,20 @@ class ChatHandler(ChatToolMixin, ChatStreamSupportMixin, ChatContextMixin, BaseH
         return await self._handle_error_common(task_id, error_code, error_message)
 
     def _save_task(
-        self,
-        task_id: str,
-        message_id: str,
-        conversation_id: str,
-        user_id: str,
-        model_id: str,
-        content: List[ContentPart],
-        params: Dict[str, Any],
-        metadata: TaskMetadata,
-    ) -> None:
+        self, task_id, message_id, conversation_id, user_id,
+        model_id, content, params, metadata,
+    ):
         """保存任务到数据库"""
-        # 1. 序列化业务参数
         request_params = {
             "content": self._extract_text_content(content),
             "model_id": model_id,
             **self._serialize_params(params),
         }
-
-        # 2. 构建标准 task_data（使用基类方法）
         task_data = self._build_task_data(
-            task_id=task_id,
-            message_id=message_id,
-            conversation_id=conversation_id,
-            user_id=user_id,
-            task_type="chat",
-            status="running",
-            model_id=model_id,
-            request_params=request_params,
-            metadata=metadata,
+            task_id=task_id, message_id=message_id,
+            conversation_id=conversation_id, user_id=user_id,
+            task_type="chat", status="running", model_id=model_id,
+            request_params=request_params, metadata=metadata,
         )
-
-        # 3. 保存到数据库
         self.db.table("tasks").insert(task_data).execute()
 
