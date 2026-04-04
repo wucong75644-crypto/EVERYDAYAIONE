@@ -117,16 +117,16 @@ class TestGetChatTools:
             assert "description" in func or "parameters" in func
 
     def test_no_duplicates(self):
-        """工具名不重复"""
+        """工具名不重复（企业用户）"""
         from config.chat_tools import get_chat_tools
-        tools = get_chat_tools()
+        tools = get_chat_tools(org_id="test_org")
         names = [t["function"]["name"] for t in tools]
         assert len(names) == len(set(names)), f"Duplicates: {[n for n in names if names.count(n) > 1]}"
 
     def test_contains_key_tools(self):
-        """包含核心工具"""
+        """企业用户包含核心ERP工具"""
         from config.chat_tools import get_chat_tools
-        tools = get_chat_tools()
+        tools = get_chat_tools(org_id="test_org")
         names = {t["function"]["name"] for t in tools}
         expected = {
             "erp_api_search", "search_knowledge", "web_search",
@@ -137,7 +137,25 @@ class TestGetChatTools:
             assert name in names, f"Missing tool: {name}"
 
     def test_total_count(self):
-        """工具总数在合理范围"""
+        """企业用户工具总数在合理范围"""
         from config.chat_tools import get_chat_tools
-        tools = get_chat_tools()
+        tools = get_chat_tools(org_id="test_org")
         assert 20 <= len(tools) <= 40, f"Got {len(tools)} tools"
+
+    def test_guest_no_erp_tools(self):
+        """散客不加载ERP工具"""
+        from config.chat_tools import get_chat_tools
+        tools = get_chat_tools(org_id=None)
+        names = {t["function"]["name"] for t in tools}
+        assert "local_stock_query" not in names
+        assert "erp_product_query" not in names
+        # 通用工具仍在
+        assert "web_search" in names
+        assert "generate_image" in names
+
+    def test_guest_tool_count(self):
+        """散客工具数量少于企业"""
+        from config.chat_tools import get_chat_tools
+        guest = get_chat_tools(org_id=None)
+        enterprise = get_chat_tools(org_id="test_org")
+        assert len(guest) < len(enterprise)

@@ -126,6 +126,8 @@ class ChatToolMixin:
 
         try:
             result = await executor.execute(tool_name, args)
+            # 大结果摘要（防止撑爆 context）
+            result = _summarize_if_needed(tool_name, result)
             # 通知前端工具完成
             await ws_manager.send_to_task_subscribers(
                 task_id,
@@ -187,3 +189,29 @@ def _partition_tool_calls(
         batches.append((current_safe, current_batch))
 
     return batches
+
+
+# ============================================================
+# 结果摘要（与 dispatcher._GLOBAL_CHAR_BUDGET 对齐）
+# ============================================================
+
+_SUMMARY_THRESHOLD = 4000   # 超过此阈值触发摘要
+_SUMMARY_PREVIEW = 2000     # 摘要中保留前 N 字符
+
+
+def _summarize_if_needed(tool_name: str, result: str) -> str:
+    """大结果自动摘要，引导 AI 用 code_execute 做全量分析
+
+    远程 ERP 工具已有 dispatcher 4000 字符截断，此函数主要处理
+    本地工具（local_*）和其他无截断的工具返回。
+    """
+    if not result or len(result) <= _SUMMARY_THRESHOLD:
+        return result
+
+    preview = result[:_SUMMARY_PREVIEW]
+    return (
+        f"{preview}\n\n"
+        f"⚠ 结果较多（{len(result)}字符），以上为部分数据。\n"
+        f"如需全量数据分析/导出，可用 code_execute 调用 "
+        f"erp_query_all() 获取完整数据并用 pandas 分析。"
+    )
