@@ -14,6 +14,8 @@ if str(backend_dir) not in sys.path:
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from services.handlers.chat_tool_mixin import accumulate_tool_call_delta
+
 
 # ============================================================
 # _partition_tool_calls 分批逻辑
@@ -211,7 +213,7 @@ class TestExecuteSingleTool:
 
 
 class TestAccumulateToolCallDelta:
-    """ChatHandler._accumulate_tool_call_delta() 增量累积"""
+    """accumulate_tool_call_delta() 增量累积"""
 
     def test_single_complete_delta(self):
         """单个完整的 tool_call delta"""
@@ -220,7 +222,7 @@ class TestAccumulateToolCallDelta:
 
         acc = {}
         deltas = [ToolCallDelta(index=0, id="tc1", name="web_search", arguments_delta='{"query":"test"}')]
-        ChatHandler._accumulate_tool_call_delta(acc, deltas)
+        accumulate_tool_call_delta(acc, deltas)
 
         assert 0 in acc
         assert acc[0]["id"] == "tc1"
@@ -234,11 +236,11 @@ class TestAccumulateToolCallDelta:
 
         acc = {}
         # 第一帧：id + name + 部分 arguments
-        ChatHandler._accumulate_tool_call_delta(acc, [
+        accumulate_tool_call_delta(acc, [
             ToolCallDelta(index=0, id="tc1", name="erp_query", arguments_delta='{"action":'),
         ])
         # 第二帧：只有 arguments 增量
-        ChatHandler._accumulate_tool_call_delta(acc, [
+        accumulate_tool_call_delta(acc, [
             ToolCallDelta(index=0, arguments_delta='"order_list"}'),
         ])
 
@@ -252,7 +254,7 @@ class TestAccumulateToolCallDelta:
         from services.adapters.types import ToolCallDelta
 
         acc = {}
-        ChatHandler._accumulate_tool_call_delta(acc, [
+        accumulate_tool_call_delta(acc, [
             ToolCallDelta(index=0, id="tc1", name="local_stock_query", arguments_delta='{"code":"A"}'),
             ToolCallDelta(index=1, id="tc2", name="local_order_query", arguments_delta='{"code":"B"}'),
         ])
@@ -266,7 +268,7 @@ class TestAccumulateToolCallDelta:
         from services.handlers.chat_handler import ChatHandler
 
         acc = {}
-        ChatHandler._accumulate_tool_call_delta(acc, [])
+        accumulate_tool_call_delta(acc, [])
         assert len(acc) == 0
 
     def test_none_fields_ignored(self):
@@ -275,10 +277,10 @@ class TestAccumulateToolCallDelta:
         from services.adapters.types import ToolCallDelta
 
         acc = {}
-        ChatHandler._accumulate_tool_call_delta(acc, [
+        accumulate_tool_call_delta(acc, [
             ToolCallDelta(index=0, id="tc1", name="test"),
         ])
-        ChatHandler._accumulate_tool_call_delta(acc, [
+        accumulate_tool_call_delta(acc, [
             ToolCallDelta(index=0, id=None, name=None, arguments_delta="args"),
         ])
 
