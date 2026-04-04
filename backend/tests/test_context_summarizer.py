@@ -364,8 +364,8 @@ class TestUpdateSummaryIfNeeded:
 
     @pytest.mark.asyncio
     async def test_skips_when_few_messages(self, chat_handler):
-        """消息数 ≤20 时跳过"""
-        mock_db, _ = self._mock_db_for_update(message_count=15)
+        """消息数 ≤ chat_context_limit 时跳过"""
+        mock_db, _ = self._mock_db_for_update(message_count=8)
         chat_handler.db = mock_db
 
         await chat_handler._update_summary_if_needed("conv1")
@@ -415,10 +415,10 @@ class TestUpdateSummaryIfNeeded:
         ) as mock_summarize:
             await chat_handler._update_summary_if_needed("conv1")
 
-        # 只压缩前 5 条（25 - 20 = 5）
+        # 压缩前 15 条（25 - 10 = 15）
         mock_summarize.assert_called_once()
         summarized_msgs = mock_summarize.call_args.args[0]
-        assert len(summarized_msgs) == 5
+        assert len(summarized_msgs) == 15
 
         # 验证更新了 conversations 表
         conv_table.update.assert_called_once()
@@ -452,10 +452,10 @@ class TestUpdateSummaryIfNeeded:
         ) as mock_summarize:
             await chat_handler._update_summary_if_needed("conv1")
 
-        # 压缩前 15 条（35 - 20 = 15）
+        # 压缩前 25 条（35 - 10 = 25）
         mock_summarize.assert_called_once()
         summarized_msgs = mock_summarize.call_args.args[0]
-        assert len(summarized_msgs) == 15
+        assert len(summarized_msgs) == 25
 
     @pytest.mark.asyncio
     async def test_skips_when_summarizer_fails(self, chat_handler):
