@@ -133,8 +133,9 @@ class ChatToolMixin:
 
         try:
             result = await executor.execute(tool_name, args)
-            # 大结果摘要（防止撑爆 context）
-            result = _summarize_if_needed(tool_name, result)
+            # 工具结果压缩（完整数据已推送用户，messages 里只放精简版）
+            from services.handlers.context_compressor import compress_tool_result
+            result = compress_tool_result(tool_name, result)
             # 通知前端工具完成
             await ws_manager.send_to_task_subscribers(
                 task_id,

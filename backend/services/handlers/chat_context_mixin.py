@@ -25,11 +25,12 @@ class ChatContextMixin:
         user_id: str,
         conversation_id: str,
         text_content: str,
-        router_system_prompt: Optional[str] = None,
-        router_search_context: Optional[str] = None,
         prefetched_summary: Optional[str] = None,
         prefetched_memory: Optional[str] = None,
         user_location: Optional[str] = None,
+        # 向后兼容（已废弃，不再使用）
+        router_system_prompt: Optional[str] = None,
+        router_search_context: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """组装发送给 LLM 的完整消息列表"""
         image_urls = self._extract_image_urls(content)
@@ -128,6 +129,11 @@ class ChatContextMixin:
                 len(messages) - 1,
                 {"role": "system", "content": focus_prompt},
             )
+
+        # 层4: Token 预算兜底
+        from core.config import get_settings
+        from services.handlers.context_compressor import enforce_budget
+        enforce_budget(messages, get_settings().context_max_tokens)
 
         return messages
 

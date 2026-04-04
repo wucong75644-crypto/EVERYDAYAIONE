@@ -100,18 +100,19 @@ class Settings(BaseSettings):
     memory_filter_fallback_model: str = "qwen3.5-plus"  # 记忆精排备用模型
     memory_filter_timeout: float = 10.0  # 记忆精排读取超时（秒），connect=5s
 
-    # 对话上下文配置
-    chat_context_limit: int = 20  # 注入历史消息的最大条数
-    chat_context_max_chars: int = 8000  # 上下文最大字符数（≈12K token）
-    chat_context_max_images: int = 5  # 上下文历史图片最大数量（防止 token 爆炸）
+    # 对话上下文配置（滑动窗口 N=5 轮）
+    chat_context_limit: int = 10  # 注入历史消息条数（5轮 × 2条/轮）
+    chat_context_max_chars: int = 6000  # 上下文最大字符数
+    chat_context_max_images: int = 5  # 上下文历史图片最大数量
+    context_max_tokens: int = 28000  # messages 总 token 预算（层4 兜底）
 
     # 对话历史摘要压缩配置
     context_summary_enabled: bool = True  # 是否启用摘要压缩
     context_summary_model: str = "qwen3.5-flash"  # 摘要主模型
     context_summary_fallback_model: str = "qwen3.5-plus"  # 摘要备用模型
     context_summary_timeout: float = 30.0  # 摘要读取超时（秒），connect=5s
-    context_summary_max_chars: int = 500  # 摘要最大字符数
-    context_summary_update_interval: int = 10  # 每N条新消息更新摘要
+    context_summary_max_chars: int = 1000  # 摘要最大字符数（保留关键数字）
+    context_summary_update_interval: int = 5  # 每N条新消息更新摘要
 
     # 智能路由配置
     intent_router_model: str = "qwen3.5-plus"  # 主路由模型（DashScope）

@@ -81,6 +81,8 @@ class ChatGenerateMixin:
                     )
 
                 if turn > 0:
+                    from services.handlers.context_compressor import deduplicate_system_prompts
+                    deduplicate_system_prompts(messages)
                     ctx_prompt = tool_context.build_context_prompt()
                     if ctx_prompt:
                         messages.append({"role": "system", "content": ctx_prompt})
