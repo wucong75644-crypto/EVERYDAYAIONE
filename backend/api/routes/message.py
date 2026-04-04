@@ -162,7 +162,7 @@ async def generate_message(
     location_task = asyncio.create_task(get_location_by_ip(client_ip))
 
     # 2. 推断生成类型
-    from services.intent_router import SMART_MODEL_ID, resolve_auto_model
+    from config.smart_model_config import SMART_MODEL_ID, resolve_auto_model
 
     _is_smart = body.model == SMART_MODEL_ID
 

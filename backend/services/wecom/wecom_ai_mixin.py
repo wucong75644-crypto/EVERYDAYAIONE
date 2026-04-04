@@ -112,7 +112,7 @@ class WecomAIMixin:
             return
 
         from schemas.message import ImagePart
-        from services.intent_router import resolve_auto_model
+        from config.smart_model_config import resolve_auto_model
 
         content_parts: List[ContentPart] = [TextPart(text=text_content)]
         for url in (image_urls or []):
@@ -150,7 +150,7 @@ class WecomAIMixin:
         """处理 IMAGE 类型：积分检查 → 生成 → 发送到企微"""
         from config.kie_models import calculate_image_cost
         from services.adapters.factory import create_image_adapter
-        from services.intent_router import resolve_auto_model
+        from config.smart_model_config import resolve_auto_model
 
         content_parts = [TextPart(text=text_content)]
         model_id = resolve_auto_model(
@@ -221,7 +221,7 @@ class WecomAIMixin:
         """处理 VIDEO 类型：积分检查 → 生成 → 发送到企微"""
         from config.kie_models import calculate_video_cost
         from services.adapters.factory import create_video_adapter
-        from services.intent_router import resolve_auto_model
+        from config.smart_model_config import resolve_auto_model
 
         content_parts = [TextPart(text=text_content)]
         model_id = resolve_auto_model(

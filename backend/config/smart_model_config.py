@@ -436,3 +436,37 @@ def get_remaining_models(
                 seen.add(mid)
                 remaining.append(mid)
     return remaining
+
+
+# ============================================================
+# 智能模型解析
+# ============================================================
+
+# 智能模型 ID（前端 smartModel.ts 对应）
+SMART_MODEL_ID = "auto"
+
+
+def resolve_auto_model(
+    gen_type: GenerationType,
+    content: list,
+    recommended_model: Optional[str] = None,
+) -> str:
+    """将智能模型 ID ("auto") 解析为实际工作模型
+
+    优先使用推荐模型（如 Phase1 选定），否则按 gen_type 返回默认模型。
+    """
+    from schemas.message import ImagePart
+
+    if recommended_model and recommended_model in MODEL_TO_GEN_TYPE:
+        if MODEL_TO_GEN_TYPE[recommended_model] == gen_type:
+            return recommended_model
+        logger.warning(
+            f"Model type mismatch | recommended={recommended_model} | "
+            f"gen_type={gen_type.value} | falling back to default"
+        )
+
+    if gen_type == GenerationType.VIDEO:
+        has_images = any(isinstance(p, ImagePart) for p in content)
+        if has_images:
+            return get_image_to_video_model()
+    return AUTO_MODEL_DEFAULTS.get(gen_type, DEFAULT_CHAT_MODEL)

@@ -348,7 +348,7 @@ class TestHandleChatResponse:
             mock_create.return_value = mock_adapter
 
             with patch(
-                "services.intent_router.resolve_auto_model",
+                "config.smart_model_config.resolve_auto_model",
                 return_value="resolved-model",
             ):
                 await svc._handle_chat_response(
@@ -698,7 +698,7 @@ class TestHandleImageResponse:
             "config.kie_models.calculate_image_cost",
             return_value={"user_credits": 100},
         ), patch(
-            "services.intent_router.resolve_auto_model",
+            "config.smart_model_config.resolve_auto_model",
             return_value="test-img",
         ):
             await svc._handle_image_response(
@@ -739,7 +739,7 @@ class TestHandleImageResponse:
             "config.kie_models.calculate_image_cost",
             return_value={"user_credits": 50},
         ), patch(
-            "services.intent_router.resolve_auto_model",
+            "config.smart_model_config.resolve_auto_model",
             return_value="test-img",
         ), patch(
             "services.adapters.factory.create_image_adapter",
@@ -775,7 +775,7 @@ class TestHandleImageResponse:
             "config.kie_models.calculate_image_cost",
             return_value={"user_credits": 50},
         ), patch(
-            "services.intent_router.resolve_auto_model",
+            "config.smart_model_config.resolve_auto_model",
             return_value="test-img",
         ), patch(
             "services.adapters.factory.create_image_adapter",
@@ -817,7 +817,7 @@ class TestHandleVideoResponse:
             "config.kie_models.calculate_video_cost",
             return_value={"user_credits": 200},
         ), patch(
-            "services.intent_router.resolve_auto_model",
+            "config.smart_model_config.resolve_auto_model",
             return_value="test-vid",
         ):
             await svc._handle_video_response(
@@ -857,7 +857,7 @@ class TestHandleVideoResponse:
             "config.kie_models.calculate_video_cost",
             return_value={"user_credits": 200},
         ), patch(
-            "services.intent_router.resolve_auto_model",
+            "config.smart_model_config.resolve_auto_model",
             return_value="test-vid",
         ), patch(
             "services.adapters.factory.create_video_adapter",
@@ -899,7 +899,7 @@ class TestHandleVideoResponse:
             "config.kie_models.calculate_video_cost",
             return_value={"user_credits": 200},
         ), patch(
-            "services.intent_router.resolve_auto_model",
+            "config.smart_model_config.resolve_auto_model",
             return_value="test-vid",
         ), patch(
             "services.adapters.factory.create_video_adapter",
@@ -1159,7 +1159,7 @@ class TestHandleChatResponseWithImages:
                 return_value=MagicMock(close=AsyncMock()),
             ),
             patch(
-                "services.intent_router.resolve_auto_model",
+                "config.smart_model_config.resolve_auto_model",
                 return_value="test-model",
             ),
         ):
@@ -1213,7 +1213,7 @@ class TestHandleImageResponseEmpty:
             ),
             patch.object(svc, "_get_user_balance", return_value=100),
             patch(
-                "services.intent_router.resolve_auto_model",
+                "config.smart_model_config.resolve_auto_model",
                 return_value="test-img-model",
             ),
             patch(
@@ -1263,7 +1263,7 @@ class TestHandleVideoResponseException:
             ),
             patch.object(svc, "_get_user_balance", return_value=200),
             patch(
-                "services.intent_router.resolve_auto_model",
+                "config.smart_model_config.resolve_auto_model",
                 return_value="test-vid-model",
             ),
             patch(
