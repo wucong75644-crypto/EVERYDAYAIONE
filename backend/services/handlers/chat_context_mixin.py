@@ -58,17 +58,19 @@ class ChatContextMixin:
         # 并行获取：记忆 / 摘要 / 历史（三者完全独立，无交叉数据依赖）
         # 有预取记忆时跳过 _build_memory_prompt（已在上游并行获取）
         if prefetched_memory is not None:
-            summary_result, context_result = await asyncio.gather(
+            summary_result, context_result, knowledge_result = await asyncio.gather(
                 self._get_context_summary(conversation_id, prefetched=prefetched_summary),
                 self._build_context_messages(conversation_id, text_content),
+                self._fetch_knowledge(text_content),
                 return_exceptions=True,
             )
             memory_prompt = prefetched_memory
         else:
-            memory_result, summary_result, context_result = await asyncio.gather(
+            memory_result, summary_result, context_result, knowledge_result = await asyncio.gather(
                 self._build_memory_prompt(user_id, text_content),
                 self._get_context_summary(conversation_id, prefetched=prefetched_summary),
                 self._build_context_messages(conversation_id, text_content),
+                self._fetch_knowledge(text_content),
                 return_exceptions=True,
             )
             memory_prompt = (
@@ -84,10 +86,22 @@ class ChatContextMixin:
         context_messages = (
             context_result if not isinstance(context_result, BaseException) else []
         )
+        knowledge_items = (
+            knowledge_result if not isinstance(knowledge_result, BaseException) else None
+        )
         if isinstance(summary_result, BaseException):
             logger.warning(f"Summary gather failed | error={summary_result}")
         if isinstance(context_result, BaseException):
             logger.warning(f"Context gather failed | error={context_result}")
+        if isinstance(knowledge_result, BaseException):
+            logger.debug(f"Knowledge fetch failed | error={knowledge_result}")
+
+        # 知识库经验注入（系统积累的工具使用经验，帮助 LLM 做更准确的参数选择）
+        if knowledge_items:
+            knowledge_text = "\n".join(
+                f"- {k['title']}: {k['content']}" for k in knowledge_items
+            )
+            messages.insert(0, {"role": "system", "content": f"你已掌握的经验知识：\n{knowledge_text}"})
 
         # 记忆注入（失败不影响主流程）
         if memory_prompt:
@@ -168,6 +182,17 @@ class ChatContextMixin:
                 f"Memory injection failed, skipping | "
                 f"user_id={user_id} | error={e}"
             )
+            return None
+
+    async def _fetch_knowledge(self, query: str) -> Optional[list]:
+        """获取知识库经验（系统积累的工具使用经验）"""
+        if not query:
+            return None
+        try:
+            from services.knowledge_service import search_relevant
+            return await search_relevant(query=query, limit=3, org_id=self.org_id)
+        except Exception as e:
+            logger.debug(f"Knowledge fetch skipped | error={e}")
             return None
 
     async def _extract_memories_async(
