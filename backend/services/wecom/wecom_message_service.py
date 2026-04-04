@@ -293,7 +293,7 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
             elif isinstance(part, VideoPart) and part.url:
                 media_urls["video"].append(part.url)
 
-        # 先发文本
+        # 先推送文本到企微
         if text_parts:
             text = "\n".join(text_parts)
             display = clean_for_stream(text)
@@ -305,17 +305,36 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
                 reply_ctx.active_stream_id = None
             else:
                 await self._reply_text(reply_ctx, display)
-            await self._update_assistant_message(message_id, text)
 
-        # 再发媒体
+        # 再推送媒体到企微
         for media_type in ("image", "video"):
             urls = media_urls[media_type]
             if urls:
-                await self._send_media_to_wecom(reply_ctx, urls, media_type, message_id)
+                await self._send_media_to_wecom(
+                    reply_ctx, urls, media_type, message_id=None,  # 不让内部更新 DB
+                )
 
         # 无任何内容
         if not text_parts and not media_urls["image"] and not media_urls["video"]:
             await self._reply_text(reply_ctx, "抱歉，AI 没有生成回复内容。")
+            return
+
+        # 统一保存完整 content 到 DB（文字+图片+视频一次性写入，不分开覆盖）
+        content_dicts = []
+        for part in result_parts:
+            if isinstance(part, TextPart) and part.text:
+                content_dicts.append({"type": "text", "text": part.text})
+            elif isinstance(part, ImagePart) and part.url:
+                content_dicts.append({"type": "image", "url": part.url})
+            elif isinstance(part, VideoPart) and part.url:
+                content_dicts.append({"type": "video", "url": part.url})
+
+        try:
+            self.db.table("messages").update({
+                "content": content_dicts, "status": "completed",
+            }).eq("id", message_id).execute()
+        except Exception as e:
+            logger.warning(f"Update assistant message failed | msg_id={message_id} | error={e}")
 
     # ── 对话管理 ──────────────────────────────────────────
 
