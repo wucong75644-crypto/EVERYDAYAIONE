@@ -159,3 +159,53 @@ class TestGetChatTools:
         guest = get_chat_tools(org_id=None)
         enterprise = get_chat_tools(org_id="test_org")
         assert len(guest) < len(enterprise)
+
+
+class TestCoreToolsExpanded:
+    """扩展后的 _CORE_TOOLS 验证（13 个核心工具）"""
+
+    def test_core_tools_count(self):
+        from config.chat_tools import get_core_tools
+        tools = get_core_tools(org_id="test")
+        assert len(tools) == 13
+
+    def test_core_tools_include_file_tools(self):
+        from config.chat_tools import get_core_tools
+        names = {t["function"]["name"] for t in get_core_tools(org_id="test")}
+        for ft in ("file_read", "file_write", "file_list", "file_search", "file_info"):
+            assert ft in names, f"{ft} 应在核心工具中"
+
+    def test_core_tools_include_crawler(self):
+        from config.chat_tools import get_core_tools
+        names = {t["function"]["name"] for t in get_core_tools(org_id="test")}
+        assert "social_crawler" in names
+
+    def test_core_tools_include_media(self):
+        from config.chat_tools import get_core_tools
+        names = {t["function"]["name"] for t in get_core_tools(org_id="test")}
+        assert "generate_image" in names
+        assert "generate_video" in names
+
+
+class TestFileConcurrencySafe:
+    """file 工具并发安全标记"""
+
+    def test_file_read_is_safe(self):
+        from config.chat_tools import is_concurrency_safe
+        assert is_concurrency_safe("file_read")
+
+    def test_file_list_is_safe(self):
+        from config.chat_tools import is_concurrency_safe
+        assert is_concurrency_safe("file_list")
+
+    def test_file_search_is_safe(self):
+        from config.chat_tools import is_concurrency_safe
+        assert is_concurrency_safe("file_search")
+
+    def test_file_info_is_safe(self):
+        from config.chat_tools import is_concurrency_safe
+        assert is_concurrency_safe("file_info")
+
+    def test_file_write_is_not_safe(self):
+        from config.chat_tools import is_concurrency_safe
+        assert not is_concurrency_safe("file_write")

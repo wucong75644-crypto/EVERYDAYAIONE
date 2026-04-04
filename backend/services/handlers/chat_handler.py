@@ -26,7 +26,6 @@ from schemas.websocket import (
 from services.adapters.factory import DEFAULT_MODEL_ID
 from services.handlers.base import BaseHandler, TaskMetadata
 from services.handlers.chat_context_mixin import ChatContextMixin
-from services.handlers.chat_routing_mixin import ChatRoutingMixin
 from services.handlers.chat_stream_support_mixin import ChatStreamSupportMixin
 from services.handlers.chat_tool_mixin import ChatToolMixin
 from services.websocket_manager import ws_manager
@@ -35,7 +34,7 @@ from services.websocket_manager import ws_manager
 MAX_TOOL_TURNS = 10
 
 
-class ChatHandler(ChatToolMixin, ChatRoutingMixin, ChatStreamSupportMixin, ChatContextMixin, BaseHandler):
+class ChatHandler(ChatToolMixin, ChatStreamSupportMixin, ChatContextMixin, BaseHandler):
     """聊天消息处理器：流式生成 + WebSocket 推送 + 多模态输入"""
 
     def __init__(self, db):
@@ -74,45 +73,27 @@ class ChatHandler(ChatToolMixin, ChatRoutingMixin, ChatStreamSupportMixin, ChatC
             metadata=metadata,
         )
 
-        # 4. Smart mode 异步路由 vs 常规流式生成
-        needs_routing = params.get("_needs_routing", False)
-
-        if needs_routing:
-            # Smart mode: 路由在异步阶段执行（不阻塞 HTTP 响应）
-            asyncio.create_task(
-                self._route_and_stream(
-                    task_id=task_id,
-                    message_id=message_id,
-                    conversation_id=conversation_id,
-                    user_id=user_id,
-                    content=content,
-                    _params=params,
-                    metadata=metadata,
-                )
+        # 4. 启动流式生成（单循环工具编排，不再有异步路由分支）
+        asyncio.create_task(
+            self._stream_generate(
+                task_id=task_id,
+                message_id=message_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                content=content,
+                model_id=model_id,
+                thinking_effort=params.get("thinking_effort"),
+                thinking_mode=params.get("thinking_mode"),
+                router_system_prompt=params.get("_router_system_prompt"),
+                router_search_context=params.get("_router_search_context"),
+                needs_google_search=params.get("_needs_google_search", False),
+                _params=params,
             )
-        else:
-            # 常规路由：路由已在 HTTP 阶段完成
-            asyncio.create_task(
-                self._stream_generate(
-                    task_id=task_id,
-                    message_id=message_id,
-                    conversation_id=conversation_id,
-                    user_id=user_id,
-                    content=content,
-                    model_id=model_id,
-                    thinking_effort=params.get("thinking_effort"),
-                    thinking_mode=params.get("thinking_mode"),
-                    router_system_prompt=params.get("_router_system_prompt"),
-                    router_search_context=params.get("_router_search_context"),
-                    needs_google_search=params.get("_needs_google_search", False),
-                    _params=params,
-                )
-            )
+        )
 
         logger.info(
             f"Chat task started | task_id={task_id} | "
-            f"message_id={message_id} | model={model_id} | "
-            f"routing={'deferred' if needs_routing else 'resolved'}"
+            f"message_id={message_id} | model={model_id}"
         )
 
         return task_id
@@ -413,11 +394,13 @@ class ChatHandler(ChatToolMixin, ChatRoutingMixin, ChatStreamSupportMixin, ChatC
                 # 达到 MAX_TOOL_TURNS 上限
                 logger.warning(f"Max tool turns reached | task={task_id} | turns={MAX_TOOL_TURNS}")
 
-            # 6. 计算积分 → 完成回调
+            # 6. 计算积分 → 提取媒体 URL → 完成回调
             credits_consumed = self._calculate_credits(final_usage)
+            from services.handlers.media_extractor import extract_media_parts
+            result_parts = extract_media_parts(accumulated_text)
             await self.on_complete(
                 task_id=task_id,
-                result=[TextPart(text=accumulated_text)],
+                result=result_parts,
                 credits_consumed=credits_consumed,
                 thinking_content=accumulated_thinking or None,
             )
@@ -477,11 +460,22 @@ class ChatHandler(ChatToolMixin, ChatRoutingMixin, ChatStreamSupportMixin, ChatC
     # _execute_tool_calls, _execute_single_tool
 
     def _convert_content_parts_to_dicts(self, result: List[ContentPart]) -> List[Dict[str, Any]]:
-        """转换 TextPart 为字典"""
+        """转换 ContentPart 为字典（支持 Text/Image/Video）"""
+        from schemas.message import ImagePart, VideoPart
+
         content_dicts = []
         for part in result:
             if isinstance(part, TextPart):
                 content_dicts.append({"type": "text", "text": part.text})
+            elif isinstance(part, ImagePart):
+                content_dicts.append({
+                    "type": "image", "url": part.url,
+                    "width": part.width, "height": part.height,
+                })
+            elif isinstance(part, VideoPart):
+                content_dicts.append({
+                    "type": "video", "url": part.url,
+                })
             elif isinstance(part, dict):
                 content_dicts.append(part)
         return content_dicts

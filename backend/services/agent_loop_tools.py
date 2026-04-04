@@ -20,7 +20,9 @@ from config.agent_tools import INFO_TOOLS, ROUTING_TOOLS, validate_tool_call
 
 # 慢速工具超时配置（秒），未列出的工具默认 30s
 _SLOW_TOOL_TIMEOUT = {
+    "generate_video": 360.0,
     "social_crawler": 180.0,
+    "generate_image": 120.0,
     "code_execute": 120.0,
     "file_search": 60.0,
 }
@@ -253,3 +255,95 @@ class AgentToolsMixin:
             )
         except Exception as e:
             logger.debug(f"Knowledge recording skipped | error={e}")
+
+
+# ============================================================
+# 工具扩充工具函数（从 agent_loop_v2 迁移，Phase 2 循环使用）
+# ============================================================
+
+def get_action_enum(tool_schema: Dict[str, Any]) -> List[str]:
+    """从工具 schema 中��取 action 的 enum 列表"""
+    return (
+        tool_schema.get("function", {})
+        .get("parameters", {})
+        .get("properties", {})
+        .get("action", {})
+        .get("enum", [])
+    )
+
+
+def try_expand_tools(
+    tool_calls: List[Dict[str, Any]],
+    current_tools: List[Dict[str, Any]],
+    all_tools: List[Dict[str, Any]],
+    expand_state: Dict[str, bool],
+) -> Optional[List[Dict[str, Any]]]:
+    """检测 AI 调了不在筛选列表的工具/action，自动补充
+
+    Returns:
+        None — 无需扩充
+        List — 扩充后的工具列表（替换 current_tools）
+    """
+    import json as _json
+
+    current_names = {t["function"]["name"] for t in current_tools}
+    current_map = {t["function"]["name"]: t for t in current_tools}
+    all_map = {t["function"]["name"]: t for t in all_tools}
+
+    for tc in tool_calls:
+        func = tc.get("function", {})
+        tool_name = func.get("name", "")
+
+        # 工具不在筛选列表 → 尝试从全量列表补充
+        if tool_name not in current_names:
+            if expand_state["tool_expanded"]:
+                continue
+            full_schema = all_map.get(tool_name)
+            if full_schema:
+                expand_state["tool_expanded"] = True
+                logger.info(f"Tool expansion: adding {tool_name}")
+                return current_tools + [full_schema]
+            continue
+
+        # action 不在筛选列表 → 尝试从全量 schema 补充
+        try:
+            args = _json.loads(func.get("arguments", "{}"))
+        except (ValueError, TypeError):
+            continue
+        action = args.get("action")
+        if not action:
+            continue
+
+        # 检查 action 是否在当前 enum 中
+        cur_schema = current_map.get(tool_name)
+        if not cur_schema:
+            continue
+        if action in get_action_enum(cur_schema):
+            continue  # action 已在列表中
+        if expand_state["action_expanded"]:
+            continue
+
+        # 从全量 schema 获取完��� enum
+        full_schema = all_map.get(tool_name)
+        if not full_schema:
+            continue
+        if action not in get_action_enum(full_schema):
+            continue
+
+        expand_state["action_expanded"] = True
+        logger.info(f"Action expansion: {tool_name}.{action}")
+        return [
+            full_schema if t["function"]["name"] == tool_name else t
+            for t in current_tools
+        ]
+
+    return None
+
+
+def inject_phase1_model(
+    routing_holder: Dict[str, Any], model: str,
+) -> None:
+    """Phase 2 出口注入 Phase 1 选定的模型"""
+    decision = routing_holder.get("decision")
+    if decision and not decision["arguments"].get("model"):
+        decision["arguments"]["model"] = model

@@ -239,10 +239,10 @@ class TestToolExecutorNewHandlers:
         assert "generate_video" in exe._handlers
 
     @pytest.mark.asyncio
-    async def test_generate_media_stub_returns_guidance(self):
+    async def test_generate_image_handler_registered(self):
+        """generate_image 已从桩升级为真实工具"""
         from unittest.mock import MagicMock
         from services.tool_executor import ToolExecutor
         exe = ToolExecutor(db=MagicMock(), user_id="t", conversation_id="t", org_id=None)
-        result = await exe._generate_media_stub({"prompt": "猫咪"})
-        assert "专用通道" in result
-        assert "猫咪" in result
+        assert exe._handlers.get("generate_image") == exe._generate_image
+        assert exe._handlers.get("generate_video") == exe._generate_video

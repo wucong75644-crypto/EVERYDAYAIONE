@@ -55,7 +55,7 @@ class ChatContextMixin:
             logger.debug(f"Search context injected | len={len(router_search_context)}")
 
         # 并行获取：记忆 / 摘要 / 历史（三者完全独立，无交叉数据依赖）
-        # 有预取记忆时跳过 _build_memory_prompt（已在 _route_and_stream 中并行获取）
+        # 有预取记忆时跳过 _build_memory_prompt（已在上游并行获取）
         if prefetched_memory is not None:
             summary_result, context_result = await asyncio.gather(
                 self._get_context_summary(conversation_id, prefetched=prefetched_summary),

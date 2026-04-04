@@ -39,6 +39,7 @@ class ToolGroup(str, Enum):
 from config.erp_tools import build_erp_tools  # 已含 build_local_tools
 from config.crawler_tools import build_crawler_tools
 from config.code_tools import build_code_tools
+from config.file_tools import build_file_tools
 
 # ============================================================
 # 工具并发安全标记
@@ -59,6 +60,8 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     "social_crawler",
     # 代码执行（沙箱隔离，可并行）
     "code_execute",
+    # 文件操作（只读）
+    "file_read", "file_list", "file_search", "file_info",
 }
 
 # 写操作工具 — 必须串行
@@ -283,6 +286,9 @@ def get_chat_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
     # 爬虫工具
     tools.extend(build_crawler_tools())
 
+    # 文件操作工具
+    tools.extend(build_file_tools())
+
     # 代码执行工具
     tools.extend(build_code_tools())
 
@@ -300,13 +306,24 @@ def get_chat_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
 # ERP Agent 模式：主 Agent 只持有 7 个工具（erp_agent 封装了 17 个 ERP 工具）
 # 主 Agent 只做 7 选 1 路由，ERP 的准确率由 erp_agent 内部保证
 _CORE_TOOLS: Set[str] = {
+    # Agent（封装复杂多步工具）
     "erp_agent",                # ERP 独立 Agent（内含 17 个 ERP 工具）
+    # 搜索
     "erp_api_search",           # ERP 工具搜索（辅助）
     "search_knowledge",         # 知识库
     "web_search",               # 互联网搜索
+    "social_crawler",           # 社交平台爬虫（小红书/抖音/B站/微博/知乎）
+    # 生成
     "generate_image",           # 图片生成
     "generate_video",           # 视频生成
+    # 执行
     "code_execute",             # 代码执行
+    # 文件操作
+    "file_read",                # 文件读取
+    "file_write",               # 文件写入
+    "file_list",                # 目录列表
+    "file_search",              # 文件搜索
+    "file_info",                # 文件信息
 }
 
 

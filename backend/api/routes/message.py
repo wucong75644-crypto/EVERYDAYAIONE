@@ -61,71 +61,9 @@ def get_conversation_service(db: Database) -> ConversationService:
 # ============================================================
 
 
-async def _resolve_generation_type(body, user_id: str, conversation_id: str, db=None, org_id: str | None = None):
-    """推断生成类型：Agent Loop → IntentRouter 降级 → 关键词兜底"""
-    from loguru import logger
-    from services.intent_router import SMART_MODEL_ID
-
-    # 非智能模式 / retry / regenerate_single → 不走 Agent Loop
-    if body.model != SMART_MODEL_ID and body.generation_type:
-        return body.generation_type, None
-    if body.operation in (MessageOperation.RETRY, MessageOperation.REGENERATE_SINGLE):
-        return infer_generation_type(body.content), None
-
-    # Agent Loop（开关控制，可回退到 IntentRouter）
-    from core.config import get_settings
-    if get_settings().agent_loop_enabled and db is not None:
-        from services.agent_loop import AgentLoop
-
-        agent = AgentLoop(db, user_id, conversation_id, org_id=org_id)
-        try:
-            thinking_mode = (body.params or {}).get("thinking_mode")
-            result = await agent.run(body.content, thinking_mode=thinking_mode)
-            logger.info(
-                f"Agent loop completed | type={result.generation_type.value} | "
-                f"turns={result.turns_used} | tokens={result.total_tokens} | "
-                f"user_id={user_id}"
-            )
-            return result.generation_type, result
-        except Exception as e:
-            logger.warning(
-                f"Agent loop failed, legacy fallback | "
-                f"type={type(e).__name__} | error={e!r}"
-            )
-        finally:
-            await agent.close()
-
-    # 降级到旧路由（IntentRouter 单步路由）
-    return await _legacy_resolve(body, user_id, conversation_id, org_id=org_id)
-
-
-async def _legacy_resolve(body, user_id: str, conversation_id: str, org_id: str | None = None):
-    """旧路由降级路径（IntentRouter 单步路由）"""
-    from services.intent_router import IntentRouter
-
-    router = IntentRouter()
-    try:
-        decision = await router.route(
-            content=body.content, user_id=user_id, conversation_id=conversation_id,
-            org_id=org_id,
-        )
-
-        # web_search：执行搜索，将结果作为上下文注入
-        if decision.raw_tool_name == "web_search" and decision.search_query:
-            user_text = " ".join(p.text for p in body.content if hasattr(p, "text"))
-            search_result = await router.execute_search(
-                query=decision.search_query,
-                user_text=user_text,
-                system_prompt=decision.system_prompt,
-            )
-            if search_result:
-                decision.tool_params["_search_context"] = search_result
-
-        return decision.generation_type, decision
-    except Exception:
-        return infer_generation_type(body.content), None
-    finally:
-        await router.close()
+    # _resolve_generation_type / _legacy_resolve 已移除
+    # Web 端路由简化为: infer_generation_type (关键词) + ChatHandler 工具循环
+    # 企微端仍通过 wecom_ai_mixin 调用 AgentLoop
 
 
 # ============================================================
@@ -223,88 +161,25 @@ async def generate_message(
     client_ip = extract_client_ip(request)
     location_task = asyncio.create_task(get_location_by_ip(client_ip))
 
-    # 2. 推断生成类型（智能路由 / 关键词兜底）
+    # 2. 推断生成类型
     from services.intent_router import SMART_MODEL_ID, resolve_auto_model
 
-    # Smart mode + send → 异步路由：跳过 Agent Loop，ChatHandler 中异步执行
-    _is_smart_deferred = (
-        body.model == SMART_MODEL_ID
-        and body.operation == MessageOperation.SEND
-    )
+    _is_smart = body.model == SMART_MODEL_ID
 
-    if _is_smart_deferred:
-        # 使用 provisional chat 类型，路由在 ChatHandler 异步阶段完成
+    if _is_smart:
+        # 智能模式：全部走 CHAT → ChatHandler 工具循环
+        # LLM 自主决定调什么工具（generate_image/erp_agent/web_search 等）
         gen_type = GenerationType.CHAT
-        routing_decision = None
         if body.params is None:
             body.params = {}
         body.params["_is_smart_mode"] = True
-        body.params["_needs_routing"] = True
-        # provisional 模型（ChatHandler 路由完成后替换为实际模型）
         body.model = resolve_auto_model(gen_type, body.content, None)
+    elif body.generation_type:
+        # 非智能模式 + 客户端指定类型 → 直接使用
+        gen_type = body.generation_type
     else:
-        # 非智能模式 / retry / regenerate → 同步路由（原有逻辑）
-        gen_type, routing_decision = await _resolve_generation_type(
-            body, user_id, conversation_id, db=db, org_id=ctx.org_id,
-        )
-
-        # 智能模型：标记 smart_mode + 解析实际工作模型
-        if body.model == SMART_MODEL_ID:
-            if body.params is None:
-                body.params = {}
-            body.params["_is_smart_mode"] = True
-
-            from services.agent_loop import AgentResult
-            if isinstance(routing_decision, AgentResult):
-                recommended = routing_decision.model or None
-                if recommended:
-                    body.model = recommended
-                else:
-                    body.model = resolve_auto_model(gen_type, body.content, None)
-            else:
-                recommended = routing_decision.recommended_model if routing_decision else None
-                body.model = resolve_auto_model(gen_type, body.content, recommended)
-
-        # 将路由结果注入 params（供 handler 使用）
-        if routing_decision:
-            if body.params is None:
-                body.params = {}
-
-            if isinstance(routing_decision, AgentResult):
-                if routing_decision.system_prompt:
-                    body.params["_router_system_prompt"] = routing_decision.system_prompt
-                if routing_decision.search_context:
-                    body.params["_router_search_context"] = routing_decision.search_context
-                if routing_decision.direct_reply:
-                    body.params["_direct_reply"] = routing_decision.direct_reply
-                if routing_decision.batch_prompts:
-                    body.params["_batch_prompts"] = routing_decision.batch_prompts
-                    body.params["num_images"] = len(routing_decision.batch_prompts)
-                    first_ratio = routing_decision.batch_prompts[0].get("aspect_ratio", "1:1")
-                    if "aspect_ratio" not in body.params:
-                        body.params["aspect_ratio"] = first_ratio
-                if routing_decision.render_hints:
-                    body.params["_render"] = routing_decision.render_hints
-                if routing_decision.tool_params.get("_needs_google_search"):
-                    body.params["_needs_google_search"] = True
-                for key in ("prompt", "resolution", "aspect_ratio", "output_format"):
-                    val = routing_decision.tool_params.get(key)
-                    if val is not None:
-                        body.params[key] = val
-            else:
-                if routing_decision.system_prompt:
-                    body.params["_router_system_prompt"] = routing_decision.system_prompt
-                if routing_decision.tool_params.get("_search_context"):
-                    body.params["_router_search_context"] = routing_decision.tool_params["_search_context"]
-                for key in ("resolution", "aspect_ratio", "output_format"):
-                    val = routing_decision.tool_params.get(key)
-                    if val is not None:
-                        body.params[key] = val
-
-        # 智能模式下图片参数兜底
-        if gen_type == GenerationType.IMAGE and body.params:
-            if body.params.get("_is_smart_mode") and "aspect_ratio" not in body.params:
-                body.params["aspect_ratio"] = "1:1"
+        # 非智能模式 + 未指定类型 → 关键词推断
+        gen_type = infer_generation_type(body.content)
 
     # 2.5 等待 IP 位置结果并注入 params（与路由并行完成，此处仅 await 结果）
     try:
