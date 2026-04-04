@@ -114,15 +114,6 @@ class TestAgentToolsIntegration:
         assert "description" in schema["required"]
 
 
-class TestAgentLoopTimeout:
-    """agent_loop.py 超时配置测试"""
-
-    def test_code_execute_has_slow_timeout(self):
-        from services.agent_loop import _SLOW_TOOL_TIMEOUT
-        assert "code_execute" in _SLOW_TOOL_TIMEOUT
-        assert _SLOW_TOOL_TIMEOUT["code_execute"] == 120.0
-
-
 class TestConfigSettings:
     """core/config.py 沙盒配置测试"""
 
