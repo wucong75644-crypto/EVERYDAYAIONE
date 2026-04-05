@@ -126,25 +126,26 @@ class ERPAgent:
                 f"expanded={sorted(expanded)[:5]}"
             )
 
-            # 2. 构建 ERP 工具列表 + 预过滤
+            # 2. 构建工具列表（ToolSearch 模式：本地可见 + 远程按需发现）
             from config.phase_tools import build_domain_tools
-            from services.tool_selector import select_and_filter_tools
 
             all_tools = build_domain_tools("erp")
-            selected_tools = await select_and_filter_tools(
-                "erp", query, all_tools,
-            )
-            # [Fix E] 保留 erp_api_search（"不确定用什么时先搜文档"）
-            _ERP_EXCLUDE = {"code_execute", "search_knowledge",
-                            "get_conversation_context"}
+            self._all_tools = all_tools  # 保存全量，供自动扩展用
+
+            # 本地工具始终可见（毫秒级精确查询）
+            # 远程 erp_* 工具隐藏（通过 erp_api_search 按需发现 + 自动扩展注入）
+            _VISIBLE_PREFIXES = ("local_",)
+            _VISIBLE_NAMES = {"erp_api_search", "code_execute",
+                              "trigger_erp_sync", "route_to_chat", "ask_user"}
             selected_tools = [
-                t for t in selected_tools
-                if t["function"]["name"] not in _ERP_EXCLUDE
+                t for t in all_tools
+                if t["function"]["name"].startswith(_VISIBLE_PREFIXES)
+                or t["function"]["name"] in _VISIBLE_NAMES
             ]
             logger.info(
-                f"ERPAgent tools selected | "
-                f"total={len(all_tools)} | selected={len(selected_tools)} | "
-                f"names={[t['function']['name'] for t in selected_tools[:5]]}"
+                f"ERPAgent tools | visible={len(selected_tools)} | "
+                f"hidden={len(all_tools) - len(selected_tools)} | "
+                f"names={[t['function']['name'] for t in selected_tools]}"
             )
 
             # 3. 构建 messages
@@ -374,12 +375,19 @@ class ERPAgent:
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
             accumulated = result
 
-            # 自动扩展
+            # 自动扩展：千问调了隐藏的远程工具 → 从全量列表动态注入（去重）
             current = {t["function"]["name"] for t in selected_tools}
             if tool_name not in current and tool_name not in ("route_to_chat", "ask_user"):
-                from config.chat_tools import get_tools_by_names
-                extra = get_tools_by_names({tool_name}, org_id=self.org_id)
-                selected_tools.extend(extra)
+                all_map = {t["function"]["name"]: t for t in self._all_tools}
+                if tool_name in all_map:
+                    selected_tools.append(all_map[tool_name])
+                    logger.info(f"ERPAgent tool injected | {tool_name}")
+                    current.add(tool_name)  # 防止多轮重复注入
+                else:
+                    # 不在 ERP 全量列表中（可能是其他域工具），尝试从 chat_tools 获取
+                    from config.chat_tools import get_tools_by_names
+                    extra = get_tools_by_names({tool_name}, org_id=self.org_id)
+                    selected_tools.extend(extra)
                 logger.info(f"ERPAgent tool expansion | added={tool_name}")
 
         return accumulated
