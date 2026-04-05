@@ -6,11 +6,15 @@ ERP 独立 Agent
 - 同义词预处理（expand_synonyms）
 - 工具预过滤（3 级选择算法）
 - 独立工具循环（max 5 轮）
+- 知识库注入（独立检索 ERP 相关经验）
+- 安全护栏（循环检测 + Token 预算 + 超时控制）
 - WebSocket 进度推送
 
 被 ChatHandler 作为一个工具调用，内部独立运行，返回纯文本结论。
 """
 
+import asyncio
+import hashlib
 import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -40,10 +44,10 @@ def filter_erp_context(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """从主 Agent 的 messages 中筛选 ERP 相关上下文
 
     筛选规则：
-    - user 消息：全部保留（用户说的每句话都可能有 ERP 上下文）
+    - user 消息：全部保留
     - assistant + erp_agent 工具调用：保留
-    - assistant 其他工具调用（generate_image 等）：跳过
-    - tool 结果：保留（简化处理）
+    - assistant 其他工具调用：跳过
+    - tool 结果：保留
     - system 消息：跳过（ERP Agent 有自己的系统提示词）
     """
     result: List[Dict[str, Any]] = []
@@ -56,15 +60,23 @@ def filter_erp_context(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         elif role == "assistant":
             tool_calls = msg.get("tool_calls", [])
             if not tool_calls:
-                result.append(msg)  # 纯文字回复保留
+                result.append(msg)
             elif any(
                 tc.get("function", {}).get("name") == "erp_agent"
                 for tc in tool_calls
             ):
-                result.append(msg)  # ERP 相关保留
+                result.append(msg)
         elif role == "tool":
             result.append(msg)
     return result
+
+
+# ============================================================
+# 安全护栏
+# ============================================================
+
+_TOOL_TIMEOUT = 30.0  # 单个工具执行超时（秒）
+_MAX_TOTAL_TOKENS = 50000  # Token 预算上限
 
 
 # ============================================================
@@ -75,7 +87,7 @@ MAX_ERP_TURNS = 5
 
 
 class ERPAgent:
-    """ERP 独立 Agent：专用提示词 + 同义词 + 工具过滤 + 独立循环"""
+    """ERP 独立 Agent：专用提示词 + 同义词 + 工具过滤 + 独立循环 + 安全护栏"""
 
     def __init__(
         self,
@@ -96,19 +108,10 @@ class ERPAgent:
         query: str,
         parent_messages: Optional[List[Dict[str, Any]]] = None,
     ) -> ERPAgentResult:
-        """执行 ERP 查询
-
-        Args:
-            query: 用户原始问题
-            parent_messages: 主 Agent 的 messages（用于上下文筛选）
-
-        Returns:
-            ERPAgentResult 包含结论文本和 token 消耗
-        """
+        """执行 ERP 查询"""
         total_tokens = 0
         tools_called: List[str] = []
 
-        # 散客保护：无 org_id 不能使用 ERP 功能
         if not self.org_id:
             return ERPAgentResult(
                 text="当前账号未开通 ERP 功能，请联系管理员配置企业账号。",
@@ -131,10 +134,9 @@ class ERPAgent:
             selected_tools = await select_and_filter_tools(
                 "erp", query, all_tools,
             )
-            # 过滤掉 ERP Agent 内不需要的 always_include 工具
-            # 只保留 route_to_chat / ask_user 作为退出工具
-            _ERP_EXCLUDE = {"code_execute", "erp_api_search",
-                            "search_knowledge", "get_conversation_context"}
+            # [Fix E] 保留 erp_api_search（"不确定用什么时先搜文档"）
+            _ERP_EXCLUDE = {"code_execute", "search_knowledge",
+                            "get_conversation_context"}
             selected_tools = [
                 t for t in selected_tools
                 if t["function"]["name"] not in _ERP_EXCLUDE
@@ -145,7 +147,7 @@ class ERPAgent:
                 f"names={[t['function']['name'] for t in selected_tools[:5]]}"
             )
 
-            # 3. 构建 messages（ERP 专用提示词 + 筛选后的上下文）
+            # 3. 构建 messages
             from config.phase_tools import build_domain_prompt
             system_prompt = build_domain_prompt("erp")
 
@@ -157,17 +159,27 @@ class ERPAgent:
                 {"role": "system", "content": f"当前时间：{now_str}"},
             ]
 
+            # [Fix C] 独立获取知识库经验（和旧架构一样）
+            knowledge_items = await self._fetch_knowledge(query)
+            if knowledge_items:
+                knowledge_text = "\n".join(
+                    f"- {k['title']}: {k['content']}" for k in knowledge_items
+                )
+                messages.append({
+                    "role": "system",
+                    "content": f"你已掌握的经验知识：\n{knowledge_text}",
+                })
+
             # 注入筛选后的对话历史
             if parent_messages:
                 context = filter_erp_context(parent_messages)
-                # 限制历史长度（最近 10 条消息）
                 if len(context) > 10:
                     context = context[-10:]
                 messages.extend(context)
 
             messages.append({"role": "user", "content": query})
 
-            # 4. 创建 adapter（支持企业 BYOK）
+            # 4. 创建 adapter
             from services.adapters.factory import create_chat_adapter
             from core.config import settings
 
@@ -193,7 +205,6 @@ class ERPAgent:
             finally:
                 await adapter.close()
 
-            # 7. 构建结果
             return ERPAgentResult(
                 text=self._make_summary(text),
                 full_text=text,
@@ -208,9 +219,21 @@ class ERPAgent:
                 text=f"ERP 查询出错：{e}。请稍后重试或换个方式提问。",
                 full_text=str(e),
                 tokens_used=total_tokens,
-                turns_used=0,
                 tools_called=tools_called,
             )
+
+    # ── 知识库 ──────────────────────────────────────────
+
+    async def _fetch_knowledge(self, query: str) -> Optional[list]:
+        """[Fix C] 独立获取知识库经验（ERP 专业经验）"""
+        try:
+            from services.knowledge_service import search_relevant
+            return await search_relevant(query=query, limit=3, org_id=self.org_id)
+        except Exception as e:
+            logger.debug(f"ERPAgent knowledge fetch skipped | error={e}")
+            return None
+
+    # ── 工具循环 ────────────────────────────────────────
 
     async def _run_tool_loop(
         self,
@@ -220,24 +243,30 @@ class ERPAgent:
         selected_tools: List[Dict[str, Any]],
         tools_called: List[str],
     ) -> tuple:
-        """内部工具循环：调 LLM → 执行工具 → 结果回 LLM → 重复
-
-        Returns:
-            (accumulated_text, total_tokens, turns_used)
-        """
+        """内部工具循环，含安全护栏"""
         accumulated_text = ""
         total_tokens = 0
+        # [Fix G] 循环检测
+        recent_calls: List[str] = []
 
         for turn in range(MAX_ERP_TURNS):
+            # [Fix H] Token 预算检查
+            if total_tokens >= _MAX_TOTAL_TOKENS:
+                logger.warning(
+                    f"ERPAgent token budget exceeded | used={total_tokens}"
+                )
+                break
+
             await self._notify_progress(turn + 1, "thinking")
 
-            # 流式调 LLM
             tc_acc: Dict[int, Dict[str, Any]] = {}
             turn_text = ""
             turn_tokens = 0
 
+            # [Fix I] 显式传 temperature=0.1
             async for chunk in adapter.stream_chat(
                 messages=messages, tools=selected_tools,
+                temperature=0.1,
             ):
                 if chunk.content:
                     turn_text += chunk.content
@@ -262,14 +291,23 @@ class ERPAgent:
                 accumulated_text = turn_text
                 break
 
-            # 执行工具调用
             completed = sorted(tc_acc.values(), key=lambda x: x.get("id", ""))
+
+            # [Fix G] 循环检测：连续 3 次相同调用中止
+            call_key = "|".join(
+                f"{tc['name']}:{hashlib.md5(tc['arguments'].encode()).hexdigest()[:6]}"
+                for tc in completed
+            )
+            recent_calls.append(call_key)
+            if len(recent_calls) >= 3 and len(set(recent_calls[-3:])) == 1:
+                logger.warning(f"ERPAgent loop detected | call={call_key}")
+                break
+
             accumulated_text = await self._execute_tools(
                 completed, executor, messages, selected_tools,
                 tools_called, turn_text, turn + 1,
             )
 
-            # 检查是否已退出
             if any(tc["name"] in ("route_to_chat", "ask_user") for tc in completed):
                 break
 
@@ -287,8 +325,7 @@ class ERPAgent:
         turn_text: str,
         turn: int,
     ) -> str:
-        """执行一轮工具调用，返回累积文本"""
-        # assistant 消息塞进 messages
+        """执行一轮工具调用"""
         asst_msg: Dict[str, Any] = {"role": "assistant", "content": turn_text or None}
         asst_msg["tool_calls"] = [
             {"id": tc["id"], "type": "function",
@@ -302,7 +339,6 @@ class ERPAgent:
             tool_name = tc["name"]
             tools_called.append(tool_name)
 
-            # 路由工具：退出循环
             if tool_name in ("route_to_chat", "ask_user"):
                 try:
                     args = json.loads(tc["arguments"])
@@ -317,13 +353,20 @@ class ERPAgent:
 
             await self._notify_progress(turn, tool_name)
 
-            # 解析参数并执行
             try:
                 args = json.loads(tc["arguments"]) if tc["arguments"] else {}
             except json.JSONDecodeError:
                 args = {}
+
+            # [Fix F] 超时控制
             try:
-                result = await executor.execute(tool_name, args)
+                result = await asyncio.wait_for(
+                    executor.execute(tool_name, args),
+                    timeout=_TOOL_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"ERPAgent tool timeout | tool={tool_name}")
+                result = f"工具执行超时（{int(_TOOL_TIMEOUT)}秒），请缩小查询范围"
             except Exception as e:
                 logger.error(f"ERPAgent tool error | tool={tool_name} | error={e}")
                 result = f"工具执行失败: {e}"
@@ -331,7 +374,7 @@ class ERPAgent:
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
             accumulated = result
 
-            # 自动扩展：AI 需要不在列表中的工具
+            # 自动扩展
             current = {t["function"]["name"] for t in selected_tools}
             if tool_name not in current and tool_name not in ("route_to_chat", "ask_user"):
                 from config.chat_tools import get_tools_by_names
@@ -342,7 +385,7 @@ class ERPAgent:
         return accumulated
 
     def _make_summary(self, full_text: str, max_chars: int = 500) -> str:
-        """将完整结果压缩为精简结论（给 messages 的版本）"""
+        """将完整结果压缩为精简结论"""
         if not full_text or len(full_text) <= max_chars:
             return full_text
         return (
@@ -366,4 +409,4 @@ class ERPAgent:
             )
             await ws_manager.send_to_task_subscribers(self.task_id, msg)
         except Exception:
-            pass  # 进度通知失败不影响主流程
+            pass

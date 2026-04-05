@@ -120,6 +120,11 @@ class DashScopeChatAdapter(BaseChatAdapter):
         if tools:
             request_body["tools"] = tools
 
+        # Temperature（默认不指定，由模型决定）
+        temperature = kwargs.get("temperature")
+        if temperature is not None:
+            request_body["temperature"] = temperature
+
         # 思考模式：用户开了深度思考才启用，否则显式关闭（qwen3.5 默认开，必须显式关）
         if thinking_mode in ("enabled", "deep_think"):
             request_body["enable_thinking"] = True
