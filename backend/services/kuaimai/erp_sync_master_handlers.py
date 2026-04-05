@@ -75,6 +75,11 @@ async def sync_product(
             "length": p.get("x"),
             "width": p.get("y"),
             "height": p.get("z"),
+            "classify_name": (p.get("classify") or {}).get("name"),
+            "seller_cat_name": (
+                (p.get("sellerCats") or [{}])[0].get("fullName")
+                if p.get("sellerCats") else None
+            ),
             "extra_json": _pick(
                 p, "sellerCats", "classify", "standard", "safekind",
                 "boxnum", "customAttribute",
@@ -108,6 +113,7 @@ async def sync_product(
                 "length": sku.get("x"),
                 "width": sku.get("y"),
                 "height": sku.get("z"),
+                "sku_remark": sku.get("skuRemark") or None,
                 "extra_json": _pick(
                     sku, "skuComponent", "skuRemark", "propertiesAlias",
                     "boxnum",
@@ -153,6 +159,7 @@ def _map_stock_item(item: dict[str, Any]) -> dict[str, Any] | None:
         "supplier_names": item.get("supplierNames"),
         "warehouse_id": item.get("wareHouseId") or "",
         "stock_modified_time": _ms_to_iso(item.get("stockModifiedTime")),
+        "cid_name": item.get("cidName"),
         "extra_json": _pick(
             item, "brand", "cidName", "unit", "place",
             "itemBarcode", "skuBarcode",
