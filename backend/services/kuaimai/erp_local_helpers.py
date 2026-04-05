@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from loguru import logger
 
 # ERP 数据存储使用中国时间（快麦 API 返回北京时间），查询必须用同一时区
-_CN_TZ = timezone(timedelta(hours=8))
+CN_TZ = timezone(timedelta(hours=8))
 
 
 
@@ -69,7 +69,7 @@ def check_sync_health(db, sync_types: list[str], org_id: str | None = None) -> s
 
 def cutoff_iso(days: int) -> str:
     """计算截止日期 ISO 字符串（中国时间，与 doc_created_at 对齐）"""
-    return (datetime.now(_CN_TZ) - timedelta(days=days)).isoformat()
+    return (datetime.now(CN_TZ) - timedelta(days=days)).isoformat()
 
 
 def query_doc_items(

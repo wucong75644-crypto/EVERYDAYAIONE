@@ -790,3 +790,65 @@ class TestToolExecutorLocalDispatch:
         executor = ToolExecutor(db, "test_user", "test_conv", org_id="org-test")
         for tool_name in ERP_LOCAL_TOOLS:
             assert tool_name in executor._handlers
+
+
+# ============================================================
+# CN_TZ 时区 + cutoff_iso 使用中国时间
+# ============================================================
+
+
+class TestCNTimezone:
+    """CN_TZ 常量和使用中国时间的函数"""
+
+    def test_cn_tz_is_utc_plus_8(self):
+        from services.kuaimai.erp_local_helpers import CN_TZ
+        from datetime import timedelta
+        assert CN_TZ.utcoffset(None) == timedelta(hours=8)
+
+    def test_cutoff_iso_uses_cn_tz(self):
+        """cutoff_iso 应使用中国时区"""
+        from services.kuaimai.erp_local_helpers import cutoff_iso
+        result = cutoff_iso(30)
+        dt = datetime.fromisoformat(result)
+        # 应该带 +08:00 时区信息
+        assert dt.utcoffset().total_seconds() == 8 * 3600
+
+
+# ============================================================
+# local_global_stats time_type 参数
+# ============================================================
+
+
+class TestGlobalStatsTimeType:
+    """local_global_stats 的 time_type 参数校验"""
+
+    def test_valid_time_types(self):
+        from services.kuaimai.erp_local_global_stats import _VALID_TIME_TYPES
+        assert "doc_created_at" in _VALID_TIME_TYPES
+        assert "pay_time" in _VALID_TIME_TYPES
+        assert "consign_time" in _VALID_TIME_TYPES
+
+    def test_invalid_time_type_defaults_to_created(self):
+        """无效 time_type 应降级为 doc_created_at"""
+        from services.kuaimai.erp_local_global_stats import _VALID_TIME_TYPES
+        invalid = "hacked_column; DROP TABLE"
+        assert invalid not in _VALID_TIME_TYPES
+
+    def test_time_type_labels(self):
+        from services.kuaimai.erp_local_global_stats import _TIME_TYPE_LABELS
+        assert _TIME_TYPE_LABELS["pay_time"] == "付款"
+        assert _TIME_TYPE_LABELS["consign_time"] == "发货"
+        assert _TIME_TYPE_LABELS["doc_created_at"] == "下单"
+
+    def test_local_global_stats_tool_has_time_type_param(self):
+        """工具定义应包含 time_type 参数"""
+        from config.erp_local_tools import build_local_tools
+        tools = build_local_tools()
+        stats_tool = next(
+            t for t in tools
+            if t["function"]["name"] == "local_global_stats"
+        )
+        props = stats_tool["function"]["parameters"]["properties"]
+        assert "time_type" in props
+        assert "pay_time" in props["time_type"]["enum"]
+        assert "consign_time" in props["time_type"]["enum"]

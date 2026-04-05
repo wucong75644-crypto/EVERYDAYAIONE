@@ -77,7 +77,7 @@ async def sync_product(
             "height": p.get("z"),
             "classify_name": (p.get("classify") or {}).get("name"),
             "seller_cat_name": (
-                (p.get("sellerCats") or [{}])[0].get("fullName")
+                (p.get("sellerCats") or [{}])[-1].get("fullName")
                 if p.get("sellerCats") else None
             ),
             "extra_json": _pick(

@@ -455,3 +455,33 @@ class TestToolRegistry:
         assert "销量" in result
         assert "订单" in result
         assert "统计" in result
+
+
+# ============================================================
+# BASE_AGENT_PROMPT 退出规则
+# ============================================================
+
+
+class TestBaseAgentPrompt:
+    """BASE_AGENT_PROMPT 关键规则验证"""
+
+    def test_prompt_requires_tool_before_answer(self):
+        """提示词要求必须先调工具再总结"""
+        from config.phase_tools import BASE_AGENT_PROMPT
+        assert "禁止直接回答" in BASE_AGENT_PROMPT
+        assert "通过工具获取数据" in BASE_AGENT_PROMPT
+
+    def test_prompt_allows_text_output(self):
+        """提示词允许直接用文字总结结论"""
+        from config.phase_tools import BASE_AGENT_PROMPT
+        assert "直接用文字总结结论" in BASE_AGENT_PROMPT
+
+    def test_prompt_route_to_chat_optional(self):
+        """提示词表明 route_to_chat 是可选的"""
+        from config.phase_tools import BASE_AGENT_PROMPT
+        assert "不需要调 route_to_chat" in BASE_AGENT_PROMPT
+
+    def test_prompt_no_contradiction(self):
+        """提示词不应包含"必须通过工具退出循环"（旧规则已删）"""
+        from config.phase_tools import BASE_AGENT_PROMPT
+        assert "必须通过工具退出循环" not in BASE_AGENT_PROMPT

@@ -248,6 +248,7 @@ class ERPAgent:
         accumulated_text = ""
         total_tokens = 0
         is_llm_synthesis = False  # 标记最终结果是否为 LLM 合成
+        empty_turns = 0  # 连续空响应计数
         # [Fix G] 循环检测
         recent_calls: List[str] = []
 
@@ -290,7 +291,20 @@ class ERPAgent:
             total_tokens += turn_tokens
 
             if not tc_acc:
-                # LLM 不再调工具，直接输出结论 — 这是干净的合成结果
+                if not tools_called:
+                    # 还没调过任何工具就想输出文字 — 强制继续循环
+                    empty_turns += 1
+                    logger.info(
+                        f"ERPAgent skip empty turn #{empty_turns} | "
+                        f"text={turn_text[:50] if turn_text else '(empty)'}"
+                    )
+                    if empty_turns >= 2:
+                        # 连续 2 次空响应，不再浪费轮次
+                        break
+                    if turn_text:
+                        messages.append({"role": "assistant", "content": turn_text})
+                    continue
+                # 调过工具后输出纯文字 — 这是干净的合成结果
                 accumulated_text = turn_text
                 is_llm_synthesis = True
                 break
@@ -312,41 +326,24 @@ class ERPAgent:
                 tools_called, turn_text, turn + 1,
             )
 
+            # route_to_chat / ask_user 是退出信号
             if any(tc["name"] in ("route_to_chat", "ask_user") for tc in completed):
-                # route_to_chat 时 turn_text 就是 LLM 合成的结论
-                is_llm_synthesis = bool(turn_text)
+                # ask_user 的结论在 accumulated（args.message），不依赖 turn_text
+                has_ask_user = any(tc["name"] == "ask_user" for tc in completed)
+                is_llm_synthesis = has_ask_user or bool(turn_text)
                 break
 
             logger.info(f"ERPAgent turn {turn + 1} | tools={[tc['name'] for tc in completed]}")
 
         # 非正常退出（token超限/循环检测/max turns）且结果不是 LLM 合成的
-        # → 再调一次无工具 LLM，让它基于 messages 里的工具结果生成结论
-        if not is_llm_synthesis and messages:
-            logger.info(
-                f"ERPAgent forcing final synthesis | "
-                f"raw_len={len(accumulated_text)}"
+        if not is_llm_synthesis:
+            logger.warning(
+                f"ERPAgent exited without synthesis | "
+                f"raw_len={len(accumulated_text)} | turns={turn + 1}"
             )
-            try:
-                synth_text = ""
-                synth_tokens = 0
-                async for chunk in adapter.stream_chat(
-                    messages=messages, tools=[],
-                    temperature=0.1,
-                ):
-                    if chunk.content:
-                        synth_text += chunk.content
-                    if chunk.prompt_tokens or chunk.completion_tokens:
-                        synth_tokens = (chunk.prompt_tokens or 0) + (chunk.completion_tokens or 0)
-                total_tokens += synth_tokens
-                if synth_text:
-                    accumulated_text = synth_text
-                    logger.info(
-                        f"ERPAgent final synthesis done | "
-                        f"len={len(synth_text)}"
-                    )
-            except Exception as e:
-                logger.warning(f"ERPAgent final synthesis failed | error={e}")
-                # 合成失败，保留原始 accumulated_text
+            # 不尝试再调 LLM（上下文过长可能产出错误结论），
+            # 返回明确提示让主 Agent 告知用户
+            accumulated_text = "ERP 查询过程中未能生成完整结论，请重新提问或缩小查询范围。"
 
         return accumulated_text, total_tokens, min(turn + 1, MAX_ERP_TURNS)
 

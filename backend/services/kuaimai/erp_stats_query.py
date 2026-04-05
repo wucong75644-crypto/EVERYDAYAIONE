@@ -8,14 +8,11 @@ ERP 统计报表查询工具
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from loguru import logger
 
-from services.kuaimai.erp_local_helpers import _CN_TZ
-
-
-from services.kuaimai.erp_local_helpers import check_sync_health
+from services.kuaimai.erp_local_helpers import CN_TZ, check_sync_health
 
 
 async def local_product_stats(
@@ -26,7 +23,7 @@ async def local_product_stats(
     org_id: str | None = None,
 ) -> str:
     """按商品编码查统计数据（聚合表）"""
-    now = datetime.now(_CN_TZ)
+    now = datetime.now(CN_TZ)
 
     if not start_date:
         start_date = now.strftime("%Y-%m-01")

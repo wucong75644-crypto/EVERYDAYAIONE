@@ -514,7 +514,13 @@
       "Bash(grep -r \"timeType\\\\|startTime\\\\|endTime\" backend/tests/*.py)",
       "Bash(python -c \"from services.erp_agent import ERPAgent; print\\(''✅ OK''\\)\")",
       "Bash(ssh root@47.110.94.25 -p 22 'sudo journalctl -u everydayai-wecom --since \"\"2026-04-05 20:20\"\" --until \"\"2026-04-05 20:30\"\" --no-pager 2>/dev/null | grep -iE \"\"ERPAgent|local_global|turn|synth|forcing\"\" | head -20')",
-      "Bash(ssh root@47.110.94.25 -p 22 \"PGPASSWORD=WlnbhzE5sYYZd9t9Xw08w4I0 psql -h 127.0.0.1 -U everydayai -d everydayai\")"
+      "Bash(ssh root@47.110.94.25 -p 22 \"PGPASSWORD=WlnbhzE5sYYZd9t9Xw08w4I0 psql -h 127.0.0.1 -U everydayai -d everydayai\")",
+      "Bash(python -m pytest backend/tests/test_erp_local.py::TestCNTimezone backend/tests/test_erp_local.py::TestGlobalStatsTimeType -v --tb=short)",
+      "Bash(python -m pytest backend/tests/test_erp_sync_handlers.py::TestSyncOrder::test_order_new_fields_extracted backend/tests/test_erp_sync_handlers.py::TestAftersaleNewFields -v --tb=short)",
+      "Bash(python -m pytest backend/tests/test_erp_sync_handlers.py -k \"test_order_new_fields or TestAftersaleNewFields\" -v --tb=short)",
+      "Bash(python -m pytest tests/test_erp_sync_handlers.py -k \"test_order_new_fields or TestAftersaleNewFields\" -v --tb=short)",
+      "Bash(python -m pytest tests/test_erp_sync_master_handlers.py -k \"classify or seller_cat or sku_remark\" -v --tb=short)",
+      "Bash(./git-push.sh \"fix: Review 修复 + 测试补充 — 工具循环退出逻辑重构\\(Claude模式\\)、提示词统一、CN_TZ命名、22个新测试\")"
     ]
   }
 }
