@@ -234,7 +234,10 @@ def build_local_tools() -> List[Dict[str, Any]]:
             "直接返回聚合结果：总单数、总数量、总金额。"
             "支持按店铺/平台/供应商/仓库分组，支持排名（TOP10）。"
             "适合：今天多少单、各店铺销量排名、平台对比、"
-            "退货统计、销售额趋势等全局维度的统计需求。",
+            "退货统计、销售额趋势等全局维度的统计需求。"
+            "⚠ 含「付款/已付/支付/成交」→ time_type=\"pay_time\"；"
+            "含「发货/已发/物流」→ time_type=\"consign_time\"；"
+            "默认按下单时间。",
             {
                 "doc_type": _enum(
                     "统计类型",
@@ -243,6 +246,12 @@ def build_local_tools() -> List[Dict[str, Any]]:
                 ),
                 "date": _str("统计日期(YYYY-MM-DD)，默认今天"),
                 "period": _enum("统计周期", ["day", "week", "month"]),
+                "time_type": _enum(
+                    "时间类型（仅order类型有效）。"
+                    "含「付款/成交」用pay_time，含「发货」用consign_time，"
+                    "默认doc_created_at（下单时间）",
+                    ["doc_created_at", "pay_time", "consign_time"],
+                ),
                 "shop_name": _str("按店铺过滤（模糊匹配）"),
                 "platform": _str("按平台过滤(tb/jd/pdd/dy/xhs)"),
                 "supplier_name": _str("按供应商过滤（模糊匹配）"),

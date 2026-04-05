@@ -9,7 +9,7 @@ ERP 本地全局统计/排名查询
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from loguru import logger
 
@@ -25,11 +25,21 @@ _DOC_TYPE_NAMES = {
 }
 
 
+_VALID_TIME_TYPES = {"doc_created_at", "pay_time", "consign_time"}
+
+_TIME_TYPE_LABELS = {
+    "doc_created_at": "下单",
+    "pay_time": "付款",
+    "consign_time": "发货",
+}
+
+
 async def local_global_stats(
     db,
     doc_type: str,
     date: str | None = None,
     period: str = "day",
+    time_type: str | None = None,
     shop_name: str | None = None,
     platform: str | None = None,
     supplier_name: str | None = None,
@@ -42,6 +52,9 @@ async def local_global_stats(
     start_iso, end_iso, period_label = _calc_period(date, period)
     type_name = _DOC_TYPE_NAMES.get(doc_type, doc_type)
 
+    # 校验 time_type（防注入）
+    time_col = time_type if time_type in _VALID_TIME_TYPES else "doc_created_at"
+
     # 确定 RPC 的 group_by 参数
     rpc_group = group_by or _rank_by_to_group(rank_by)
 
@@ -49,6 +62,7 @@ async def local_global_stats(
         "p_doc_type": doc_type,
         "p_start": start_iso,
         "p_end": end_iso,
+        "p_time_col": time_col,
         "p_shop": shop_name or None,
         "p_platform": platform or None,
         "p_supplier": supplier_name or None,
@@ -73,9 +87,16 @@ async def local_global_stats(
     if isinstance(data, dict) and "error" in data:
         return f"查询参数错误: {data['error']}"
 
+    # 时间类型标注（非默认时附加说明）
+    time_label = ""
+    if time_col != "doc_created_at":
+        time_label = f"（按{_TIME_TYPE_LABELS.get(time_col, time_col)}时间）"
+
     # 根据返回类型格式化
     if rpc_group is None:
-        return _format_summary(data, type_name, period_label, db, doc_type, org_id=org_id)
+        return _format_summary(
+            data, type_name, period_label + time_label, db, doc_type, org_id=org_id,
+        )
 
     if rank_by:
         return _format_ranking(data, rank_by, type_name, period_label)
