@@ -13,8 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 from loguru import logger
 
-
-from services.kuaimai.erp_local_helpers import check_sync_health
+from services.kuaimai.erp_local_helpers import check_sync_health, _CN_TZ
 
 _DOC_TYPE_NAMES = {
     "purchase": "采购",
@@ -95,11 +94,11 @@ def _calc_period(
     date: str | None, period: str,
 ) -> tuple[str, str, str]:
     """计算统计时间范围，返回 (start_iso, end_iso, label)"""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(_CN_TZ)
     if date:
         try:
             base = datetime.strptime(date, "%Y-%m-%d").replace(
-                tzinfo=timezone.utc,
+                tzinfo=_CN_TZ,
             )
         except ValueError:
             base = now
