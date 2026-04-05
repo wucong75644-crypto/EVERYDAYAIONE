@@ -80,7 +80,7 @@ class TestCompressToolResult:
         assert "已省略" in compressed
 
     def test_erp_agent_not_compressed(self):
-        """erp_agent 返回不压缩（已有 _make_summary）"""
+        """erp_agent 返回不压缩（结果已是 LLM 合成的结论）"""
         result = "x" * 2000
         assert compress_tool_result("erp_agent", result) == result
 

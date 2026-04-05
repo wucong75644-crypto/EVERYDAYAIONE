@@ -1,7 +1,7 @@
 """
 ERPAgent 单元测试
 
-覆盖：filter_erp_context, ERPAgent.execute, ERPAgent._make_summary,
+覆盖：filter_erp_context, ERPAgent.execute,
       ToolExecutor._erp_agent handler, erp_agent 工具注册
 """
 
@@ -106,33 +106,6 @@ class TestFilterErpContext:
     def test_empty_messages(self):
         from services.erp_agent import filter_erp_context
         assert filter_erp_context([]) == []
-
-
-# ============================================================
-# ERPAgent._make_summary 结果精简
-# ============================================================
-
-
-class TestMakeSummary:
-    """ERPAgent._make_summary 结果精简"""
-
-    def test_short_text_unchanged(self):
-        from services.erp_agent import ERPAgent
-        agent = ERPAgent(db=None, user_id="t", conversation_id="t", org_id="t")
-        assert agent._make_summary("库存128件") == "库存128件"
-
-    def test_long_text_summarized(self):
-        from services.erp_agent import ERPAgent
-        agent = ERPAgent(db=None, user_id="t", conversation_id="t", org_id="t")
-        long_text = "x" * 1000
-        result = agent._make_summary(long_text, max_chars=500)
-        assert len(result) < 1000
-        assert "摘要" in result
-
-    def test_empty_text(self):
-        from services.erp_agent import ERPAgent
-        agent = ERPAgent(db=None, user_id="t", conversation_id="t", org_id="t")
-        assert agent._make_summary("") == ""
 
 
 # ============================================================
