@@ -1,0 +1,1239 @@
+[
+  {
+    "input": "最近整体退货率高不高",
+    "category": "aftersale",
+    "expected": [
+      "local_global_stats"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 5.06,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_global_stats",
+        "local_global_stats",
+        "local_global_stats",
+        "local_global_stats",
+        "erp_aftersales_query"
+      ],
+      "turns": 3,
+      "elapsed": 6.95,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 0.5,
+      "hit": [
+        "local_global_stats"
+      ],
+      "missing": [],
+      "extra": [
+        "erp_aftersales_query"
+      ]
+    }
+  },
+  {
+    "input": "SKU007被退货多少次了",
+    "category": "aftersale",
+    "expected": [
+      "local_product_identify",
+      "local_aftersale_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent",
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 5.65,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_aftersale_query"
+      ],
+      "turns": 2,
+      "elapsed": 7.37,
+      "match": "partial",
+      "score": 0.5,
+      "precision": 1.0,
+      "hit": [
+        "local_aftersale_query"
+      ],
+      "missing": [
+        "local_product_identify"
+      ],
+      "extra": []
+    }
+  },
+  {
+    "input": "用户退款申请处理完没",
+    "category": "aftersale",
+    "expected": [
+      "local_aftersale_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 5.66,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [],
+      "turns": 1,
+      "elapsed": 2.46,
+      "match": "miss",
+      "score": 0.0
+    }
+  },
+  {
+    "input": "那个啥02的货还有没有剩",
+    "category": "colloquial",
+    "expected": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 5.2,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_product_identify",
+        "local_stock_query"
+      ],
+      "turns": 3,
+      "elapsed": 4.41,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 1.0,
+      "hit": [
+        "local_product_identify",
+        "local_stock_query"
+      ],
+      "missing": [],
+      "extra": []
+    }
+  },
+  {
+    "input": "丁单帮我查一下呗",
+    "category": "colloquial",
+    "expected": [
+      "local_order_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 4.7,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [],
+      "turns": 1,
+      "elapsed": 2.48,
+      "match": "miss",
+      "score": 0.0
+    }
+  },
+  {
+    "input": "够不够卖啊老哥",
+    "category": "colloquial",
+    "expected": [
+      "local_stock_query"
+    ],
+    "mode_a": {
+      "tools": [],
+      "turns": 1,
+      "elapsed": 2.44,
+      "match": "miss",
+      "score": 0.0
+    },
+    "mode_b": {
+      "tools": [],
+      "turns": 1,
+      "elapsed": 1.85,
+      "match": "miss",
+      "score": 0.0
+    }
+  },
+  {
+    "input": "SF1357924680这个快递到哪了",
+    "category": "logistics",
+    "expected": [
+      "local_doc_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 5.89,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "erp_trade_query",
+        "local_doc_query",
+        "erp_trade_query"
+      ],
+      "turns": 3,
+      "elapsed": 4.86,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 0.5,
+      "hit": [
+        "local_doc_query"
+      ],
+      "missing": [],
+      "extra": [
+        "erp_trade_query"
+      ]
+    }
+  },
+  {
+    "input": "昨天发的货用户签收了吗",
+    "category": "logistics",
+    "expected": [
+      "local_doc_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 5.05,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "erp_trade_query",
+        "erp_trade_query",
+        "erp_trade_query"
+      ],
+      "turns": 3,
+      "elapsed": 7.54,
+      "match": "wrong",
+      "score": 0.0,
+      "precision": 0.0,
+      "hit": [],
+      "missing": [
+        "local_doc_query"
+      ],
+      "extra": [
+        "erp_trade_query"
+      ]
+    }
+  },
+  {
+    "input": "物流异常停在中转站的",
+    "category": "logistics",
+    "expected": [
+      "local_doc_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 6.61,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [],
+      "turns": 1,
+      "elapsed": 5.98,
+      "match": "miss",
+      "score": 0.0
+    }
+  },
+  {
+    "input": "ZK005库存多少顺便看下退货情况",
+    "category": "multi",
+    "expected": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_aftersale_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 4.58,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_stock_query",
+        "local_aftersale_query"
+      ],
+      "turns": 2,
+      "elapsed": 3.11,
+      "match": "partial",
+      "score": 0.6666666666666666,
+      "precision": 1.0,
+      "hit": [
+        "local_aftersale_query",
+        "local_stock_query"
+      ],
+      "missing": [
+        "local_product_identify"
+      ],
+      "extra": []
+    }
+  },
+  {
+    "input": "今天单量和昨天对比再看下退货排名",
+    "category": "multi",
+    "expected": [
+      "local_global_stats"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 4.61,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_global_stats",
+        "local_global_stats",
+        "local_global_stats",
+        "local_global_stats",
+        "local_global_stats",
+        "local_global_stats",
+        "local_global_stats",
+        "local_global_stats"
+      ],
+      "turns": 3,
+      "elapsed": 9.54,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 1.0,
+      "hit": [
+        "local_global_stats"
+      ],
+      "missing": [],
+      "extra": []
+    }
+  },
+  {
+    "input": "查下SKU013库存和最近采购进度",
+    "category": "multi",
+    "expected": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_purchase_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 3.91,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_stock_query",
+        "local_purchase_query"
+      ],
+      "turns": 2,
+      "elapsed": 4.28,
+      "match": "partial",
+      "score": 0.6666666666666666,
+      "precision": 1.0,
+      "hit": [
+        "local_purchase_query",
+        "local_stock_query"
+      ],
+      "missing": [
+        "local_product_identify"
+      ],
+      "extra": []
+    }
+  },
+  {
+    "input": "WB001的库存看一眼，顺便这品最近出了多少单",
+    "category": "multi_complex",
+    "expected": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_order_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 4.2,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_order_query",
+        "local_stock_query"
+      ],
+      "turns": 2,
+      "elapsed": 3.25,
+      "match": "partial",
+      "score": 0.6666666666666666,
+      "precision": 1.0,
+      "hit": [
+        "local_order_query",
+        "local_stock_query"
+      ],
+      "missing": [
+        "local_product_identify"
+      ],
+      "extra": []
+    }
+  },
+  {
+    "input": "够不够卖？现在未发货积压多少？",
+    "category": "multi_complex",
+    "expected": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_order_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 4.45,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [],
+      "turns": 1,
+      "elapsed": 2.69,
+      "match": "miss",
+      "score": 0.0
+    }
+  },
+  {
+    "input": "TX002还有多少，不够赶紧让采购补",
+    "category": "multi_complex",
+    "expected": [
+      "local_product_identify",
+      "local_stock_query",
+      "local_purchase_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 4.21,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_product_identify",
+        "local_stock_query",
+        "local_purchase_query"
+      ],
+      "turns": 3,
+      "elapsed": 5.02,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 1.0,
+      "hit": [
+        "local_product_identify",
+        "local_purchase_query",
+        "local_stock_query"
+      ],
+      "missing": [],
+      "extra": []
+    }
+  },
+  {
+    "input": "这个产品的卖点文案怎么写",
+    "category": "negative",
+    "expected": [],
+    "mode_a": {
+      "tools": [],
+      "turns": 1,
+      "elapsed": 4.13,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [],
+      "turns": 1,
+      "elapsed": 2.23,
+      "match": "correct",
+      "score": 1.0
+    }
+  },
+  {
+    "input": "发票抬头换成有限公司",
+    "category": "negative",
+    "expected": [],
+    "mode_a": {
+      "tools": [
+        "search_knowledge"
+      ],
+      "turns": 2,
+      "elapsed": 6.15,
+      "match": "false_positive",
+      "score": 0.0
+    },
+    "mode_b": {
+      "tools": [
+        "erp_trade_query"
+      ],
+      "turns": 2,
+      "elapsed": 5.69,
+      "match": "false_positive",
+      "score": 0.0
+    }
+  },
+  {
+    "input": "退一步说这个方案行不通",
+    "category": "negative",
+    "expected": [],
+    "mode_a": {
+      "tools": [],
+      "turns": 1,
+      "elapsed": 3.23,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [],
+      "turns": 1,
+      "elapsed": 2.44,
+      "match": "correct",
+      "score": 1.0
+    }
+  },
+  {
+    "input": "今天全平台一共出了多少单",
+    "category": "order",
+    "expected": [
+      "local_global_stats"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 3.08,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_global_stats"
+      ],
+      "turns": 2,
+      "elapsed": 5.13,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 1.0,
+      "hit": [
+        "local_global_stats"
+      ],
+      "missing": [],
+      "extra": []
+    }
+  },
+  {
+    "input": "帮我看下待发货订单列表",
+    "category": "order",
+    "expected": [
+      "local_order_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 4.56,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "erp_trade_query",
+        "erp_trade_query",
+        "erp_trade_query"
+      ],
+      "turns": 3,
+      "elapsed": 7.73,
+      "match": "wrong",
+      "score": 0.0,
+      "precision": 0.0,
+      "hit": [],
+      "missing": [
+        "local_order_query"
+      ],
+      "extra": [
+        "erp_trade_query"
+      ]
+    }
+  },
+  {
+    "input": "待审核订单还有多少没批",
+    "category": "order",
+    "expected": [
+      "local_order_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 4.98,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_global_stats"
+      ],
+      "turns": 2,
+      "elapsed": 4.78,
+      "match": "wrong",
+      "score": 0.0,
+      "precision": 0.0,
+      "hit": [],
+      "missing": [
+        "local_order_query"
+      ],
+      "extra": [
+        "local_global_stats"
+      ]
+    }
+  },
+  {
+    "input": "6923701852413这个条码对应哪个商品",
+    "category": "product",
+    "expected": [
+      "local_product_identify"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 4.21,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_product_identify"
+      ],
+      "turns": 2,
+      "elapsed": 4.96,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 1.0,
+      "hit": [
+        "local_product_identify"
+      ],
+      "missing": [],
+      "extra": []
+    }
+  },
+  {
+    "input": "白色中码卫衣有没有这个货",
+    "category": "product",
+    "expected": [
+      "local_product_identify"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 4.24,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_product_identify",
+        "local_stock_query"
+      ],
+      "turns": 3,
+      "elapsed": 4.24,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 0.5,
+      "hit": [
+        "local_product_identify"
+      ],
+      "missing": [],
+      "extra": [
+        "local_stock_query"
+      ]
+    }
+  },
+  {
+    "input": "SKU011的详细规格参数",
+    "category": "product",
+    "expected": [
+      "local_product_identify"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 5.39,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_product_identify",
+        "erp_product_query",
+        "erp_product_query"
+      ],
+      "turns": 3,
+      "elapsed": 5.78,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 0.5,
+      "hit": [
+        "local_product_identify"
+      ],
+      "missing": [],
+      "extra": [
+        "erp_product_query"
+      ]
+    }
+  },
+  {
+    "input": "PO20260320这批采购货到仓了吗",
+    "category": "purchase",
+    "expected": [
+      "local_doc_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 4.62,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_doc_query",
+        "erp_purchase_query",
+        "erp_purchase_query"
+      ],
+      "turns": 3,
+      "elapsed": 5.01,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 0.5,
+      "hit": [
+        "local_doc_query"
+      ],
+      "missing": [],
+      "extra": [
+        "erp_purchase_query"
+      ]
+    }
+  },
+  {
+    "input": "3月15号下的采购单进度",
+    "category": "purchase",
+    "expected": [
+      "local_purchase_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 5.85,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "erp_purchase_query",
+        "erp_purchase_query",
+        "erp_purchase_query"
+      ],
+      "turns": 3,
+      "elapsed": 10.22,
+      "match": "wrong",
+      "score": 0.0,
+      "precision": 0.0,
+      "hit": [],
+      "missing": [
+        "local_purchase_query"
+      ],
+      "extra": [
+        "erp_purchase_query"
+      ]
+    }
+  },
+  {
+    "input": "供应商A什么时候能发货",
+    "category": "purchase",
+    "expected": [
+      "local_purchase_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 5.11,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "erp_purchase_query",
+        "erp_purchase_query",
+        "erp_purchase_query"
+      ],
+      "turns": 3,
+      "elapsed": 5.14,
+      "match": "wrong",
+      "score": 0.0,
+      "precision": 0.0,
+      "hit": [],
+      "missing": [
+        "local_purchase_query"
+      ],
+      "extra": [
+        "erp_purchase_query"
+      ]
+    }
+  },
+  {
+    "input": "这个月销量比上个月高吗",
+    "category": "stats",
+    "expected": [
+      "local_global_stats"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 5.08,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_global_stats",
+        "code_execute",
+        "code_execute"
+      ],
+      "turns": 3,
+      "elapsed": 14.89,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 0.5,
+      "hit": [
+        "local_global_stats"
+      ],
+      "missing": [],
+      "extra": [
+        "code_execute"
+      ]
+    }
+  },
+  {
+    "input": "热销TOP10商品榜单",
+    "category": "stats",
+    "expected": [
+      "local_global_stats"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 4.31,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_global_stats",
+        "local_global_stats",
+        "code_execute"
+      ],
+      "turns": 3,
+      "elapsed": 10.63,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 0.5,
+      "hit": [
+        "local_global_stats"
+      ],
+      "missing": [],
+      "extra": [
+        "code_execute"
+      ]
+    }
+  },
+  {
+    "input": "MK003近30天销量趋势",
+    "category": "stats",
+    "expected": [
+      "local_product_identify",
+      "local_product_stats"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 8.46,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_product_stats"
+      ],
+      "turns": 2,
+      "elapsed": 3.41,
+      "match": "partial",
+      "score": 0.5,
+      "precision": 1.0,
+      "hit": [
+        "local_product_stats"
+      ],
+      "missing": [
+        "local_product_identify"
+      ],
+      "extra": []
+    }
+  },
+  {
+    "input": "YSL01-红色 还有多少库存",
+    "category": "stock",
+    "expected": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 3.56,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_product_identify",
+        "local_stock_query"
+      ],
+      "turns": 3,
+      "elapsed": 6.09,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 1.0,
+      "hit": [
+        "local_product_identify",
+        "local_stock_query"
+      ],
+      "missing": [],
+      "extra": []
+    }
+  },
+  {
+    "input": "爆款够不够卖到月底",
+    "category": "stock",
+    "expected": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 6.86,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_global_stats",
+        "local_global_stats",
+        "code_execute"
+      ],
+      "turns": 3,
+      "elapsed": 10.42,
+      "match": "wrong",
+      "score": 0.0,
+      "precision": 0.0,
+      "hit": [],
+      "missing": [
+        "local_product_identify",
+        "local_stock_query"
+      ],
+      "extra": [
+        "local_global_stats",
+        "code_execute"
+      ]
+    }
+  },
+  {
+    "input": "仓库里那个01的货还剩多少",
+    "category": "stock",
+    "expected": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 4.09,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_product_identify",
+        "local_stock_query"
+      ],
+      "turns": 3,
+      "elapsed": 5.73,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 1.0,
+      "hit": [
+        "local_product_identify",
+        "local_stock_query"
+      ],
+      "missing": [],
+      "extra": []
+    }
+  },
+  {
+    "input": "酷存还有多少",
+    "category": "typo_slang",
+    "expected": [
+      "local_product_identify",
+      "local_stock_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 3.95,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_product_identify",
+        "local_stock_query"
+      ],
+      "turns": 3,
+      "elapsed": 4.24,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 1.0,
+      "hit": [
+        "local_product_identify",
+        "local_stock_query"
+      ],
+      "missing": [],
+      "extra": []
+    }
+  },
+  {
+    "input": "丁单帮我查一下",
+    "category": "typo_slang",
+    "expected": [
+      "local_order_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 4.22,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [],
+      "turns": 1,
+      "elapsed": 2.51,
+      "match": "miss",
+      "score": 0.0
+    }
+  },
+  {
+    "input": "才购进度咋样",
+    "category": "typo_slang",
+    "expected": [
+      "local_purchase_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 4.59,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [],
+      "turns": 1,
+      "elapsed": 2.26,
+      "match": "miss",
+      "score": 0.0
+    }
+  },
+  {
+    "input": "A仓调200件到B仓流程",
+    "category": "warehouse",
+    "expected": [
+      "erp_warehouse_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "search_knowledge",
+        "erp_api_search"
+      ],
+      "turns": 2,
+      "elapsed": 3.03,
+      "match": "wrong",
+      "score": 0.0
+    },
+    "mode_b": {
+      "tools": [
+        "erp_api_search",
+        "erp_api_search",
+        "erp_info_query"
+      ],
+      "turns": 3,
+      "elapsed": 10.02,
+      "match": "wrong",
+      "score": 0.0,
+      "precision": 0.0,
+      "hit": [],
+      "missing": [
+        "erp_warehouse_query"
+      ],
+      "extra": [
+        "erp_info_query",
+        "erp_api_search"
+      ]
+    }
+  },
+  {
+    "input": "今日盘点差异金额多少",
+    "category": "warehouse",
+    "expected": [
+      "erp_warehouse_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 6.65,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "erp_warehouse_query",
+        "erp_warehouse_query",
+        "erp_warehouse_query"
+      ],
+      "turns": 3,
+      "elapsed": 8.06,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 1.0,
+      "hit": [
+        "erp_warehouse_query"
+      ],
+      "missing": [],
+      "extra": []
+    }
+  },
+  {
+    "input": "SKU012放在哪个货位",
+    "category": "warehouse",
+    "expected": [
+      "local_product_identify",
+      "erp_warehouse_query"
+    ],
+    "mode_a": {
+      "tools": [
+        "erp_agent"
+      ],
+      "turns": 2,
+      "elapsed": 6.16,
+      "match": "correct",
+      "score": 1.0
+    },
+    "mode_b": {
+      "tools": [
+        "local_product_identify",
+        "erp_warehouse_query",
+        "erp_warehouse_query"
+      ],
+      "turns": 3,
+      "elapsed": 5.22,
+      "match": "correct",
+      "score": 1.0,
+      "precision": 1.0,
+      "hit": [
+        "local_product_identify",
+        "erp_warehouse_query"
+      ],
+      "missing": [],
+      "extra": []
+    }
+  }
+]

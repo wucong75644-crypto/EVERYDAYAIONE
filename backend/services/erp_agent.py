@@ -207,7 +207,7 @@ class ERPAgent:
                 await adapter.close()
 
             return ERPAgentResult(
-                text=self._make_summary(text),
+                text=text,
                 full_text=text,
                 tokens_used=total_tokens,
                 turns_used=turns,
@@ -247,6 +247,7 @@ class ERPAgent:
         """内部工具循环，含安全护栏"""
         accumulated_text = ""
         total_tokens = 0
+        is_llm_synthesis = False  # 标记最终结果是否为 LLM 合成
         # [Fix G] 循环检测
         recent_calls: List[str] = []
 
@@ -289,7 +290,9 @@ class ERPAgent:
             total_tokens += turn_tokens
 
             if not tc_acc:
+                # LLM 不再调工具，直接输出结论 — 这是干净的合成结果
                 accumulated_text = turn_text
+                is_llm_synthesis = True
                 break
 
             completed = sorted(tc_acc.values(), key=lambda x: x.get("id", ""))
@@ -310,9 +313,40 @@ class ERPAgent:
             )
 
             if any(tc["name"] in ("route_to_chat", "ask_user") for tc in completed):
+                # route_to_chat 时 turn_text 就是 LLM 合成的结论
+                is_llm_synthesis = bool(turn_text)
                 break
 
             logger.info(f"ERPAgent turn {turn + 1} | tools={[tc['name'] for tc in completed]}")
+
+        # 非正常退出（token超限/循环检测/max turns）且结果不是 LLM 合成的
+        # → 再调一次无工具 LLM，让它基于 messages 里的工具结果生成结论
+        if not is_llm_synthesis and messages:
+            logger.info(
+                f"ERPAgent forcing final synthesis | "
+                f"raw_len={len(accumulated_text)}"
+            )
+            try:
+                synth_text = ""
+                synth_tokens = 0
+                async for chunk in adapter.stream_chat(
+                    messages=messages, tools=[],
+                    temperature=0.1,
+                ):
+                    if chunk.content:
+                        synth_text += chunk.content
+                    if chunk.prompt_tokens or chunk.completion_tokens:
+                        synth_tokens = (chunk.prompt_tokens or 0) + (chunk.completion_tokens or 0)
+                total_tokens += synth_tokens
+                if synth_text:
+                    accumulated_text = synth_text
+                    logger.info(
+                        f"ERPAgent final synthesis done | "
+                        f"len={len(synth_text)}"
+                    )
+            except Exception as e:
+                logger.warning(f"ERPAgent final synthesis failed | error={e}")
+                # 合成失败，保留原始 accumulated_text
 
         return accumulated_text, total_tokens, min(turn + 1, MAX_ERP_TURNS)
 
@@ -346,7 +380,8 @@ class ERPAgent:
                 except json.JSONDecodeError:
                     args = {}
                 if tool_name == "route_to_chat":
-                    accumulated = turn_text or args.get("system_prompt", "")
+                    # 优先用 LLM 本轮合成的文字，而不是 system_prompt（可能是原始数据）
+                    accumulated = turn_text if turn_text else ""
                 else:
                     accumulated = args.get("message", turn_text)
                 messages.append({"role": "tool", "tool_call_id": tc["id"], "content": "OK"})
@@ -391,15 +426,6 @@ class ERPAgent:
                 logger.info(f"ERPAgent tool expansion | added={tool_name}")
 
         return accumulated
-
-    def _make_summary(self, full_text: str, max_chars: int = 500) -> str:
-        """将完整结果压缩为精简结论"""
-        if not full_text or len(full_text) <= max_chars:
-            return full_text
-        return (
-            full_text[:max_chars]
-            + f"\n\n（以上为摘要，共{len(full_text)}字符）"
-        )
 
     async def _notify_progress(self, turn: int, tool_name: str) -> None:
         """通过 WebSocket 发送进度通知"""
