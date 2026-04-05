@@ -309,17 +309,67 @@ def _format_response_fields(fields: dict) -> list:
     return lines
 
 
+_TIME_KEYS = {"time_type", "date_type", "start_date", "end_date",
+              "start_time", "end_time"}
+
+
+def _extract_example(doc: str) -> str:
+    """从 param_docs 中提取示例值，无示例时返回占位符
+
+    严格从文档提取，不猜测。
+    """
+    if "示例:" in doc:
+        example = doc.split("示例:")[-1].strip().split("。")[0].split("，")[0]
+        if example:
+            return example[:30]
+    if "可选值:" in doc:
+        # 取第一个可选值作为示例
+        opts = doc.split("可选值:")[-1].strip()
+        first = opts.split(",")[0].split("(")[0].split("=")[0].strip()
+        if first:
+            return first[:20]
+    return "..."
+
+
 def _format_entry_brief(
     tool_name: str, action_name: str, entry: ApiEntry,
 ) -> str:
-    """格式化 API 操作的简要信息"""
-    params = list(entry.param_map.keys())
-    required = set(entry.required_params)
-    param_parts = [
-        f"*{p}" if p in required else p for p in params
-    ]
-    param_str = f"({'/'.join(param_parts)})" if param_parts else ""
-    return f"- {tool_name}:{action_name} — {entry.description}{param_str}"
+    """格式化 API 操作的简要信息（含传入示例 + 返回字段）
+
+    LLM 搜索到 action 时一次性看到：功能描述 + 怎么传参 + 能拿到什么。
+    """
+    lines = [f"- {tool_name}:{action_name} — {entry.description}"]
+
+    # 传入参数示例（必填优先 → 时间参数优先 → 其他，取前 4 个）
+    if entry.param_map:
+        required = set(entry.required_params)
+        sample_keys = list(required)
+        # 时间参数优先（最易出错）
+        for k in entry.param_map:
+            if k not in required and k in _TIME_KEYS and len(sample_keys) < 4:
+                sample_keys.append(k)
+        for k in entry.param_map:
+            if k not in sample_keys and len(sample_keys) < 4:
+                sample_keys.append(k)
+        parts = [
+            f'"{k}":"{_extract_example(entry.param_docs.get(k, ""))}"'
+            for k in sample_keys
+        ]
+        lines.append(f"  传入: {{{', '.join(parts)}}}")
+
+    # 返回字段摘要
+    resp_fields = get_response_fields(
+        entry.formatter, tool_name, action_name,
+    )
+    if resp_fields:
+        main = resp_fields.get("main")
+        if main:
+            field_names = list(main.values())[:8]
+            lines.append(f"  返回: {'/'.join(field_names)}")
+    else:
+        lines.append("  返回: 完整明细数据")
+
+    return "\n".join(lines)
 
 
 def _format_tool_actions(

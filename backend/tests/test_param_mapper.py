@@ -257,3 +257,83 @@ class TestTimeBeginMsConversion:
         assert "timeBegin" not in mapped
         # timeEnd 保持字符串
         assert isinstance(mapped["timeEnd"], str)
+
+
+# ── 反向映射兜底测试 ────────────────────────────────────
+
+
+def _order_list_entry() -> ApiEntry:
+    """订单查询（含时间参数映射）"""
+    return ApiEntry(
+        method="erp.trade.list.query",
+        description="订单查询",
+        param_map={
+            "order_id": "tid",
+            "system_id": "sid",
+            "time_type": "timeType",
+            "start_date": "startTime",
+            "end_date": "endTime",
+            "buyer": "buyerNick",
+        },
+    )
+
+
+class TestReverseMapping:
+    """反向映射兜底：LLM 传 API 原生参数名（camelCase）时不丢弃"""
+
+    def test_camel_case_time_params_not_discarded(self):
+        """timeType/startTime/endTime 不被标记为 invalid"""
+        entry = _order_list_entry()
+        mapped, warnings = map_params(entry, {
+            "timeType": "pay_time",
+            "startTime": "2026-04-04",
+            "endTime": "2026-04-04",
+        })
+        assert "timeType" not in warnings
+        assert "startTime" not in warnings
+        assert "endTime" not in warnings
+        assert mapped["timeType"] == "pay_time"
+
+    def test_camel_case_mapped_directly_as_api_name(self):
+        """API 原生名直接放入 mapped，不再翻译"""
+        entry = _order_list_entry()
+        mapped, _ = map_params(entry, {"timeType": "created"})
+        # timeType 本身就是 API 参数名，直接用
+        assert mapped["timeType"] == "created"
+
+    def test_snake_case_still_works(self):
+        """正常 snake_case 路径不受影响"""
+        entry = _order_list_entry()
+        mapped, warnings = map_params(entry, {
+            "time_type": "pay_time",
+            "start_date": "2026-04-04",
+        })
+        assert mapped["timeType"] == "pay_time"
+        assert mapped["startTime"] == "2026-04-04 00:00:00"
+        assert len(warnings) == 0
+
+    def test_mixed_snake_and_camel_both_work(self):
+        """混合传 snake_case 和 camelCase 都能处理"""
+        entry = _order_list_entry()
+        mapped, warnings = map_params(entry, {
+            "time_type": "pay_time",      # snake_case
+            "startTime": "2026-04-04",    # camelCase
+            "end_date": "2026-04-04",     # snake_case
+        })
+        assert mapped["timeType"] == "pay_time"
+        assert mapped["startTime"] == "2026-04-04 00:00:00"
+        assert mapped["endTime"] == "2026-04-04 23:59:59"
+        assert len(warnings) == 0
+
+    def test_api_name_tid_not_discarded(self):
+        """非时间参数的 API 原生名也不丢弃（如 tid）"""
+        entry = _order_list_entry()
+        mapped, warnings = map_params(entry, {"tid": "126036803257340376"})
+        assert mapped["tid"] == "126036803257340376"
+        assert "tid" not in warnings
+
+    def test_truly_invalid_param_still_warned(self):
+        """不在正向也不在反向映射的参数仍然被警告"""
+        entry = _order_list_entry()
+        _, warnings = map_params(entry, {"completely_wrong": "value"})
+        assert "completely_wrong" in warnings

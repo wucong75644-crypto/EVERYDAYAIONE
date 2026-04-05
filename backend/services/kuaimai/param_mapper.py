@@ -112,13 +112,20 @@ def map_params(
     for key, default in entry.defaults.items():
         mapped[key] = default
 
-    # 映射用户参数（白名单校验 + 同义参数兜底）
+    # 反向映射表：API 原生参数名 → 用户参数名（兜底用）
+    # 当 LLM 传了 camelCase（如 timeType）时，反查到 snake_case（如 time_type）
+    reverse_map = {v: k for k, v in entry.param_map.items()}
+
+    # 映射用户参数（白名单校验 + 反向映射兜底 + 同义参数兜底）
     for user_key, value in user_params.items():
         if value is None:
             continue
         if user_key in entry.param_map:
             mapped[entry.param_map[user_key]] = value
         elif user_key in _COMMON_PARAMS:
+            mapped[user_key] = value
+        elif user_key in reverse_map:
+            # 反向映射兜底：LLM 传了 API 原生名（如 timeType → time_type → timeType）
             mapped[user_key] = value
         else:
             # 同义参数兜底：如 sku_outer_id 不在白名单但 outer_id 在

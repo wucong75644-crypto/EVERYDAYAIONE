@@ -3123,6 +3123,166 @@ class TestErrorCodes:
 
 
 # ============================================================
+# TestExtractExample — 从 param_docs 提取示例值
+# ============================================================
+
+
+class TestExtractExample:
+    """_extract_example 从文档提取示例值"""
+
+    def test_extract_from_example_tag(self):
+        """从 '示例:' 标记提取"""
+        from services.kuaimai.api_search import _extract_example
+        doc = "平台订单号。示例: 126036803257340376"
+        assert _extract_example(doc) == "126036803257340376"
+
+    def test_extract_from_option_with_parentheses(self):
+        """从 '可选值:' 括号格式提取第一个值"""
+        from services.kuaimai.api_search import _extract_example
+        doc = "时间类型。可选值: created(下单时间), pay_time(付款时间)"
+        assert _extract_example(doc) == "created"
+
+    def test_extract_from_option_with_equals(self):
+        """从 '可选值:' 等号格式提取纯值"""
+        from services.kuaimai.api_search import _extract_example
+        doc = "异常查询状态。可选值: 1=仅包含, 2=排除, 3=同时包含"
+        assert _extract_example(doc) == "1"
+
+    def test_extract_from_option_mixed_equals_and_parens(self):
+        """等号+括号混合格式"""
+        from services.kuaimai.api_search import _extract_example
+        doc = "查询范围。可选值: 0=三个月内订单(默认), 1=归档订单"
+        assert _extract_example(doc) == "0"
+
+    def test_example_takes_priority_over_option(self):
+        """'示例:' 优先于 '可选值:'"""
+        from services.kuaimai.api_search import _extract_example
+        doc = "状态。可选值: 0=停用, 1=启用。示例: 1"
+        assert _extract_example(doc) == "1"
+
+    def test_no_example_no_option_returns_placeholder(self):
+        """无示例无可选值返回占位符"""
+        from services.kuaimai.api_search import _extract_example
+        assert _extract_example("一段普通描述") == "..."
+        assert _extract_example("") == "..."
+
+
+# ============================================================
+# TestFormatEntryBrief — 搜索结果格式（传入示例+返回字段）
+# ============================================================
+
+
+class TestFormatEntryBrief:
+    """_format_entry_brief 输出包含传入参数示例和返回字段"""
+
+    def test_brief_contains_input_example(self):
+        """搜索结果包含传入参数示例"""
+        from services.kuaimai.api_search import _format_entry_brief
+        from services.kuaimai.registry import TRADE_REGISTRY
+        entry = TRADE_REGISTRY["order_list"]
+        result = _format_entry_brief("erp_trade_query", "order_list", entry)
+        assert "传入:" in result
+        assert "time_type" in result
+
+    def test_brief_contains_return_fields(self):
+        """搜索结果包含返回字段"""
+        from services.kuaimai.api_search import _format_entry_brief
+        from services.kuaimai.registry import TRADE_REGISTRY
+        entry = TRADE_REGISTRY["order_list"]
+        result = _format_entry_brief("erp_trade_query", "order_list", entry)
+        assert "返回:" in result
+        assert "订单号" in result
+
+    def test_brief_time_params_prioritized(self):
+        """时间参数优先出现在示例中"""
+        from services.kuaimai.api_search import _format_entry_brief
+        from services.kuaimai.registry import TRADE_REGISTRY
+        entry = TRADE_REGISTRY["order_list"]
+        result = _format_entry_brief("erp_trade_query", "order_list", entry)
+        # time_type 应在示例中（因为优先级最高）
+        assert '"time_type"' in result
+
+    def test_brief_no_params_action(self):
+        """无参数 action 不显示传入行"""
+        from services.kuaimai.api_search import _format_entry_brief
+        from services.kuaimai.registry import PRODUCT_REGISTRY
+        entry = PRODUCT_REGISTRY["cat_list"]
+        result = _format_entry_brief("erp_product_query", "cat_list", entry)
+        assert "传入:" not in result
+        assert "返回:" in result
+
+    def test_keyword_search_uses_new_format(self):
+        """关键词搜索结果使用新格式（传入+返回）"""
+        from services.kuaimai.api_search import search_erp_api
+        result = search_erp_api("库存")
+        # 至少有一个匹配结果带传入示例
+        assert "传入:" in result
+
+
+# ============================================================
+# TestDispatcherRequiredParamsCompat — 必填参数兼容 API 原生名
+# ============================================================
+
+
+class TestDispatcherRequiredParamsCompat:
+    """dispatcher 必填参数校验兼容 camelCase API 原生名"""
+
+    def _make_entry(self, **overrides):
+        from services.kuaimai.registry.base import ApiEntry
+        defaults = {
+            "method": "erp.test.query",
+            "description": "测试",
+            "param_map": {"purchase_id": "purchaseId", "code": "code"},
+            "required_params": ["purchase_id"],
+        }
+        defaults.update(overrides)
+        return ApiEntry(**defaults)
+
+    def _make_dispatcher(self, client=None):
+        from services.kuaimai.dispatcher import ErpDispatcher
+        return ErpDispatcher(client or AsyncMock())
+
+    @pytest.mark.asyncio
+    async def test_snake_case_required_param_passes(self):
+        """snake_case 必填参数正常通过"""
+        entry = self._make_entry()
+        d = self._make_dispatcher()
+        with patch("services.kuaimai.dispatcher.TOOL_REGISTRIES", {
+            "erp_test": {"detail": entry},
+        }):
+            result = await d.execute("erp_test", "detail", {
+                "purchase_id": "PO-001",
+            })
+            assert "缺少必填参数" not in result
+
+    @pytest.mark.asyncio
+    async def test_camel_case_required_param_also_passes(self):
+        """API 原生名必填参数也通过（不误报缺失）"""
+        entry = self._make_entry()
+        d = self._make_dispatcher()
+        with patch("services.kuaimai.dispatcher.TOOL_REGISTRIES", {
+            "erp_test": {"detail": entry},
+        }):
+            result = await d.execute("erp_test", "detail", {
+                "purchaseId": "PO-001",
+            })
+            assert "缺少必填参数" not in result
+
+    @pytest.mark.asyncio
+    async def test_truly_missing_required_param_still_fails(self):
+        """真正缺少必填参数仍然报错"""
+        entry = self._make_entry()
+        d = self._make_dispatcher()
+        with patch("services.kuaimai.dispatcher.TOOL_REGISTRIES", {
+            "erp_test": {"detail": entry},
+        }):
+            result = await d.execute("erp_test", "detail", {
+                "code": "C001",
+            })
+            assert "缺少必填参数" in result
+
+
+# ============================================================
 # TestParamDocsAccuracy — param_docs 枚举值准确性
 # ============================================================
 
