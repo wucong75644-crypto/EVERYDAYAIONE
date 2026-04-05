@@ -512,7 +512,8 @@
       "Bash(ssh root@47.110.94.25 -p 22 'journalctl -u everydayai-wecom --since \"\"2 minutes ago\"\" --no-pager | grep -v DEBUG')",
       "Bash(ssh root@47.110.94.25 -p 22 'journalctl -u everydayai-wecom --since \"\"2026-04-05 09:05\"\" --until \"\"2026-04-05 09:08\"\" --no-pager | grep -v DEBUG')",
       "Bash(grep -r \"timeType\\\\|startTime\\\\|endTime\" backend/tests/*.py)",
-      "Bash(python -c \"from services.erp_agent import ERPAgent; print\\(''✅ OK''\\)\")"
+      "Bash(python -c \"from services.erp_agent import ERPAgent; print\\(''✅ OK''\\)\")",
+      "Bash(ssh root@47.110.94.25 -p 22 'sudo journalctl -u everydayai-wecom --since \"\"2026-04-05 20:20\"\" --until \"\"2026-04-05 20:30\"\" --no-pager 2>/dev/null | grep -iE \"\"ERPAgent|local_global|turn|synth|forcing\"\" | head -20')"
     ]
   }
 }
