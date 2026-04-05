@@ -273,6 +273,13 @@ def _build_aftersale_rows(
         "text_reason": doc.get("textReason"),
         "finished_at": _safe_ts(doc.get("finished")),
         "remark": doc.get("remark"),
+        "good_status": doc.get("goodStatus"),
+        "refund_warehouse_name": doc.get("refundWarehouseName"),
+        "refund_express_company": doc.get("refundExpressCompany"),
+        "refund_express_no": doc.get("refundExpressId"),
+        "reissue_sid": doc.get("reissueSid"),
+        "platform_refund_id": doc.get("platformId"),
+        "short_id": doc.get("shortId"),
     }
 
     items = doc.get("items") or []
@@ -294,6 +301,8 @@ def _build_aftersale_rows(
             "real_qty": item.get("itemRealQty"),
             "price": item.get("price"),
             "amount": item.get("payment"),
+            "good_item_count": item.get("goodItemCount"),
+            "bad_item_count": item.get("badItemCount"),
             "extra_json": merged_extra,
         })
     return rows
@@ -396,6 +405,12 @@ def _build_order_rows(
             "sys_memo": doc.get("sysMemo"),
             "buyer_message": doc.get("buyerMessage"),
             "order_type": doc.get("type"),
+            "pay_amount": doc.get("payAmount"),
+            "is_cancel": doc.get("isCancel"),
+            "is_refund": doc.get("isRefund"),
+            "is_exception": doc.get("isExcep"),
+            "is_halt": doc.get("isHalt"),
+            "is_urgent": doc.get("isUrgent"),
             "extra_json": {**doc_extra, "payment": item.get("payment")},
         })
     return rows
