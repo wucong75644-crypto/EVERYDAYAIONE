@@ -58,7 +58,12 @@ class ErpDispatcher:
             return f"未知的操作「{action}」，可选: {available}"
 
         # 2. 校验必填参数（增强错误信息：列出支持的参数）
-        missing = [p for p in entry.required_params if not params.get(p)]
+        # 同时检查 API 原生名（如 LLM 传了 purchaseId 而非 purchase_id）
+        missing = [
+            p for p in entry.required_params
+            if not params.get(p)
+            and not params.get(entry.param_map.get(p, ""))
+        ]
         if missing:
             valid = sorted(entry.param_map.keys())
             self._record_param_knowledge(

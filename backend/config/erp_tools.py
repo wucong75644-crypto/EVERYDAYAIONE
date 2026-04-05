@@ -13,7 +13,6 @@ Registry + Category Dispatch 架构：
 from typing import Any, Dict, List, Set
 
 from config.erp_local_tools import (
-    ERP_LOCAL_TOOLS,
     LOCAL_TOOL_SCHEMAS,
     build_local_tools,
 )
@@ -27,6 +26,7 @@ from services.kuaimai.registry import (
     TRADE_REGISTRY,
     WAREHOUSE_REGISTRY,
 )
+from services.kuaimai.registry.base import ApiEntry
 
 # ERP 工具名集合
 ERP_SYNC_TOOLS: Set[str] = {
@@ -41,7 +41,7 @@ ERP_SYNC_TOOLS: Set[str] = {
 }
 
 
-def _format_action_desc(name: str, entry: "ApiEntry") -> str:
+def _format_action_desc(name: str, entry: ApiEntry) -> str:
     """生成单个 action 的丰富描述：name=描述(参数列表)
 
     必填参数标记 * 前缀，无参数的 action 不加括号。
@@ -110,9 +110,9 @@ def _build_query_tool(
         "params": {
             "type": "object",
             "description": (
-                "操作参数。首次调用只传action获取参数文档，"
-                "然后根据文档传入具体参数再次调用。"
-                "已确定参数时可直接传入跳过文档。"
+                "操作参数（key 必须用下划线格式如 time_type/start_date，"
+                "禁止驼峰如 timeType/startTime）。"
+                "不确定参数时只传 action 可获取完整参数文档。"
             ),
         },
         "page": {
