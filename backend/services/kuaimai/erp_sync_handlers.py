@@ -395,6 +395,7 @@ def _build_order_rows(
             "remark": doc.get("sellerMemo"),
             "sys_memo": doc.get("sysMemo"),
             "buyer_message": doc.get("buyerMessage"),
+            "order_type": doc.get("type"),
             "extra_json": {**doc_extra, "payment": item.get("payment")},
         })
     return rows
