@@ -294,6 +294,193 @@ class TestERPAgentGuards:
             assert result.tokens_used == 150
 
 
+# ============================================================
+# _run_tool_loop 退出逻辑
+# ============================================================
+
+
+class TestRunToolLoopExitLogic:
+    """_run_tool_loop 各退出路径测试"""
+
+    def _make_agent(self):
+        from services.erp_agent import ERPAgent
+        agent = ERPAgent(
+            db=MagicMock(), user_id="t",
+            conversation_id="t", org_id="test",
+        )
+        agent._all_tools = []  # _run_tool_loop 直接调用时需要初始化
+        return agent
+
+    @pytest.mark.asyncio
+    async def test_empty_turn_skipped_when_no_tools_called(self):
+        """未调过工具时，LLM 直接输出文字应被跳过，强制继续循环"""
+        from services.erp_agent import ERPAgent
+        from services.adapters.types import StreamChunk, ToolCallDelta
+
+        agent = self._make_agent()
+        turn_counter = {"n": 0}
+
+        async def mock_stream(*args, **kwargs):
+            turn_counter["n"] += 1
+            if turn_counter["n"] == 1:
+                # Turn 1: 纯文字输出（没调工具），应被跳过
+                yield StreamChunk(content="好的帮你查", prompt_tokens=10, completion_tokens=5)
+            elif turn_counter["n"] == 2:
+                # Turn 2: 调工具
+                yield StreamChunk(
+                    tool_calls=[ToolCallDelta(index=0, id="tc1", name="local_stock_query", arguments_delta='{"product_code":"A"}')],
+                    prompt_tokens=20, completion_tokens=10,
+                )
+            else:
+                # Turn 3: 输出结论
+                yield StreamChunk(content="库存128件", prompt_tokens=15, completion_tokens=8)
+
+        mock_adapter = AsyncMock()
+        mock_adapter.stream_chat = mock_stream
+
+        mock_executor = AsyncMock()
+        mock_executor.execute = AsyncMock(return_value="库存128件")
+
+        text, tokens, turns = await agent._run_tool_loop(
+            mock_adapter, mock_executor,
+            [{"role": "user", "content": "查库存"}],
+            [], [],
+        )
+        assert text == "库存128件"
+        assert turn_counter["n"] == 3  # 跑了 3 轮
+
+    @pytest.mark.asyncio
+    async def test_consecutive_empty_turns_break(self):
+        """连续 2 次空响应应中止循环"""
+        from services.adapters.types import StreamChunk
+
+        agent = self._make_agent()
+
+        async def mock_stream(*args, **kwargs):
+            # 每轮都输出废话，不调工具
+            yield StreamChunk(content="让我想想...", prompt_tokens=10, completion_tokens=5)
+
+        mock_adapter = AsyncMock()
+        mock_adapter.stream_chat = mock_stream
+
+        text, tokens, turns = await agent._run_tool_loop(
+            mock_adapter, AsyncMock(),
+            [{"role": "user", "content": "查库存"}],
+            [], [],
+        )
+        # 应走兜底提示
+        assert "未能生成完整结论" in text
+        assert turns == 2  # 2 次空响应后中止
+
+    @pytest.mark.asyncio
+    async def test_text_output_after_tool_call_is_synthesis(self):
+        """调过工具后输出纯文字 = 合成结论，应正常返回"""
+        from services.adapters.types import StreamChunk, ToolCallDelta
+
+        agent = self._make_agent()
+        turn_counter = {"n": 0}
+
+        async def mock_stream(*args, **kwargs):
+            turn_counter["n"] += 1
+            if turn_counter["n"] == 1:
+                yield StreamChunk(
+                    tool_calls=[ToolCallDelta(index=0, id="tc1", name="local_global_stats", arguments_delta='{"doc_type":"order"}')],
+                    prompt_tokens=20, completion_tokens=10,
+                )
+            else:
+                yield StreamChunk(content="今天共8000单", prompt_tokens=15, completion_tokens=8)
+
+        mock_adapter = AsyncMock()
+        mock_adapter.stream_chat = mock_stream
+
+        mock_executor = AsyncMock()
+        mock_executor.execute = AsyncMock(return_value="统计结果：8000单")
+
+        text, tokens, turns = await agent._run_tool_loop(
+            mock_adapter, mock_executor,
+            [{"role": "user", "content": "今天多少单"}],
+            [], [],
+        )
+        assert text == "今天共8000单"
+        assert "未能生成" not in text
+
+    @pytest.mark.asyncio
+    async def test_ask_user_sets_synthesis_true(self):
+        """ask_user 退出时 is_llm_synthesis 应为 True"""
+        from services.adapters.types import StreamChunk, ToolCallDelta
+
+        agent = self._make_agent()
+
+        async def mock_stream(*args, **kwargs):
+            yield StreamChunk(
+                tool_calls=[ToolCallDelta(index=0, id="tc1", name="ask_user", arguments_delta='{"message":"请提供商品编码"}')],
+                prompt_tokens=20, completion_tokens=10,
+            )
+
+        mock_adapter = AsyncMock()
+        mock_adapter.stream_chat = mock_stream
+
+        mock_executor = AsyncMock()
+
+        text, tokens, turns = await agent._run_tool_loop(
+            mock_adapter, mock_executor,
+            [{"role": "user", "content": "查一下那个"}],
+            [], [],
+        )
+        # ask_user 的 message 应作为结果返回，不应走兜底
+        assert "未能生成" not in text
+        assert "请提供商品编码" in text
+
+    @pytest.mark.asyncio
+    async def test_route_to_chat_with_turn_text(self):
+        """route_to_chat 有 turn_text 时应返回 turn_text"""
+        from services.adapters.types import StreamChunk, ToolCallDelta
+
+        agent = self._make_agent()
+
+        async def mock_stream(*args, **kwargs):
+            yield StreamChunk(
+                content="今天共8000单",
+                tool_calls=[ToolCallDelta(index=0, id="tc1", name="route_to_chat", arguments_delta='{"system_prompt":"ERP分析师"}')],
+                prompt_tokens=20, completion_tokens=10,
+            )
+
+        mock_adapter = AsyncMock()
+        mock_adapter.stream_chat = mock_stream
+
+        # 需要先调过工具才不会被 empty_turns 拦截
+        text, tokens, turns = await agent._run_tool_loop(
+            mock_adapter, AsyncMock(),
+            [{"role": "user", "content": "查数据"}],
+            [], ["local_global_stats"],  # 模拟已调过工具
+        )
+        assert text == "今天共8000单"
+        assert "未能生成" not in text
+
+    @pytest.mark.asyncio
+    async def test_route_to_chat_without_turn_text_fallback(self):
+        """route_to_chat 无 turn_text 时应走兜底提示"""
+        from services.adapters.types import StreamChunk, ToolCallDelta
+
+        agent = self._make_agent()
+
+        async def mock_stream(*args, **kwargs):
+            yield StreamChunk(
+                tool_calls=[ToolCallDelta(index=0, id="tc1", name="route_to_chat", arguments_delta='{"system_prompt":"ERP分析师"}')],
+                prompt_tokens=20, completion_tokens=10,
+            )
+
+        mock_adapter = AsyncMock()
+        mock_adapter.stream_chat = mock_stream
+
+        text, tokens, turns = await agent._run_tool_loop(
+            mock_adapter, AsyncMock(),
+            [{"role": "user", "content": "查数据"}],
+            [], ["local_global_stats"],  # 模拟已调过工具
+        )
+        assert "未能生成" in text
+
+
 class TestFilterErpContextEdgeCases:
     """filter_erp_context 边缘场景补充"""
 

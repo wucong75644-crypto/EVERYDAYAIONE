@@ -455,3 +455,71 @@ class TestSyncOrder:
             assert method == "erp.trade.outstock.simple.query", (
                 f"Expected outstock.simple.query, got {method}"
             )
+
+    @pytest.mark.asyncio
+    async def test_order_new_fields_extracted(self):
+        """订单新增字段：order_type/pay_amount/is_cancel/is_refund/is_exception/is_halt/is_urgent"""
+        from services.kuaimai.erp_sync_handlers import sync_order
+        docs = [{
+            "sid": "S010", "sysStatus": "FINISHED",
+            "type": "4,5,14", "payAmount": "128.50",
+            "isCancel": 0, "isRefund": 1, "isExcep": 0,
+            "isHalt": 0, "isUrgent": 1,
+            "discountFee": None,
+            "orders": [
+                {"oid": "O1", "sysOuterId": "C01",
+                 "payment": 128.50, "num": 1, "price": 128.50},
+            ],
+        }]
+        svc = _mock_svc(pages=docs)
+        await sync_order(svc, START, END)
+        row = svc.upsert_document_items.call_args[0][0][0]
+        assert row["order_type"] == "4,5,14"
+        assert row["pay_amount"] == "128.50"
+        assert row["is_cancel"] == 0
+        assert row["is_refund"] == 1
+        assert row["is_exception"] == 0
+        assert row["is_halt"] == 0
+        assert row["is_urgent"] == 1
+
+
+# ============================================================
+# TestSyncAftersale — 售后新字段
+# ============================================================
+
+
+class TestAftersaleNewFields:
+    @pytest.mark.asyncio
+    async def test_aftersale_new_fields_extracted(self):
+        """售后新增字段：good_status/refund_express_no/reissue_sid 等"""
+        from services.kuaimai.erp_sync_handlers import sync_aftersale
+        docs = [{
+            "id": 601, "status": "FINISHED", "created": "2026-04-05",
+            "afterSaleType": 2, "refundMoney": 50.0,
+            "goodStatus": "1",
+            "refundWarehouseName": "主仓",
+            "refundExpressCompany": "顺丰",
+            "refundExpressId": "SF1234567890",
+            "reissueSid": "5789000001",
+            "platformId": "RF2026040500001",
+            "shortId": "60001",
+            "items": [
+                {"mainOuterId": "C01", "outerId": "C01-01",
+                 "title": "商品A", "receivableCount": 1,
+                 "goodItemCount": 1, "badItemCount": 0},
+            ],
+        }]
+        svc = _mock_svc(pages=docs)
+        await sync_aftersale(svc, START, END)
+        row = svc.upsert_document_items.call_args[0][0][0]
+        # 单据级字段
+        assert row["good_status"] == "1"
+        assert row["refund_warehouse_name"] == "主仓"
+        assert row["refund_express_company"] == "顺丰"
+        assert row["refund_express_no"] == "SF1234567890"
+        assert row["reissue_sid"] == "5789000001"
+        assert row["platform_refund_id"] == "RF2026040500001"
+        assert row["short_id"] == "60001"
+        # 行级字段
+        assert row["good_item_count"] == 1
+        assert row["bad_item_count"] == 0

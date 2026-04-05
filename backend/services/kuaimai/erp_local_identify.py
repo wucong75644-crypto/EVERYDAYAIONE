@@ -241,7 +241,7 @@ def _upsert_product_from_api(db, p: dict, org_id: str | None = None) -> None:
         "suit_singles": p.get("singleList"),
         "classify_name": (p.get("classify") or {}).get("name"),
         "seller_cat_name": (
-            (p.get("sellerCats") or [{}])[0].get("fullName")
+            (p.get("sellerCats") or [{}])[-1].get("fullName")
             if p.get("sellerCats") else None
         ),
     }

@@ -241,6 +241,61 @@ class TestSyncProduct:
         assert spu_data[0]["width"] is None
         assert spu_data[0]["height"] is None
 
+    @pytest.mark.asyncio
+    async def test_classify_and_seller_cat_extracted(self):
+        """classify_name 和 seller_cat_name 正确提取"""
+        from services.kuaimai.erp_sync_master_handlers import sync_product
+        svc = _mock_svc(pages=[{
+            "outerId": "P01", "title": "卡册A",
+            "classify": {"id": 9179, "name": "卡册", "parentId": -1},
+            "sellerCats": [
+                {"id": 1, "name": "亚克力", "fullName": '["亚克力"]'},
+                {"id": 2, "name": "立牌", "fullName": '["亚克力","立牌"]'},
+            ],
+        }])
+        await sync_product(svc, START, END)
+        spu_data = svc.db._tables["erp_products"]._data
+        assert spu_data[0]["classify_name"] == "卡册"
+        # 取最后一个（最具体的）分类
+        assert spu_data[0]["seller_cat_name"] == '["亚克力","立牌"]'
+
+    @pytest.mark.asyncio
+    async def test_classify_none_when_missing(self):
+        """API 未返回 classify 时为 None"""
+        from services.kuaimai.erp_sync_master_handlers import sync_product
+        svc = _mock_svc(pages=[{"outerId": "P01", "title": "商品A"}])
+        await sync_product(svc, START, END)
+        spu_data = svc.db._tables["erp_products"]._data
+        assert spu_data[0]["classify_name"] is None
+
+    @pytest.mark.asyncio
+    async def test_seller_cat_empty_array(self):
+        """sellerCats 为空数组时为 None"""
+        from services.kuaimai.erp_sync_master_handlers import sync_product
+        svc = _mock_svc(pages=[{
+            "outerId": "P01", "title": "商品A",
+            "sellerCats": [],
+        }])
+        await sync_product(svc, START, END)
+        spu_data = svc.db._tables["erp_products"]._data
+        assert spu_data[0]["seller_cat_name"] is None
+
+    @pytest.mark.asyncio
+    async def test_sku_remark_extracted(self):
+        """sku_remark 正确提取"""
+        from services.kuaimai.erp_sync_master_handlers import sync_product
+        svc = _mock_svc(pages=[{
+            "outerId": "P01", "title": "商品A",
+            "skus": [
+                {"skuOuterId": "P01-01", "skuRemark": "清完下"},
+                {"skuOuterId": "P01-02", "skuRemark": ""},
+            ],
+        }])
+        await sync_product(svc, START, END)
+        sku_data = svc.db._tables["erp_product_skus"]._data
+        assert sku_data[0]["sku_remark"] == "清完下"
+        assert sku_data[1]["sku_remark"] is None  # 空字符串转 None
+
 
 # ============================================================
 # TestSyncStock — 库存同步
