@@ -55,7 +55,9 @@ export default function WecomCallback() {
           } catch { /* ignore invalid org data */ }
         }
 
-        navigate('/chat', { replace: true });
+        // 跳转到首页（与密码/验证码登录一致，用户手动点"开始聊天"进入）
+        const loginOrgId = localStorage.getItem('login_org_id');
+        navigate(loginOrgId ? `/?org=${loginOrgId}` : '/', { replace: true });
       } catch {
         setError('登录数据解析失败，请重试');
       }

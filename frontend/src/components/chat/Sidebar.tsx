@@ -85,9 +85,7 @@ export default function Sidebar({
     const loginOrgId = localStorage.getItem('login_org_id');
     clearAuth();
     setShowUserMenu(false);
-    if (loginOrgId) {
-      window.location.href = `/?org=${loginOrgId}`;
-    }
+    window.location.href = loginOrgId ? `/?org=${loginOrgId}` : '/';
   };
 
   // 点击外部关闭搜索框（仅在搜索框为空时）
