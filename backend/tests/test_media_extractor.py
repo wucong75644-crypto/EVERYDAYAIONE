@@ -8,7 +8,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 import pytest
-from schemas.message import ImagePart, TextPart, VideoPart
+from schemas.message import FilePart, ImagePart, TextPart, VideoPart
 from services.handlers.media_extractor import extract_media_parts
 
 
@@ -113,3 +113,59 @@ class TestExtractMediaParts:
         assert len(images) == 1
         if texts:
             assert "https://example.com/result.jpg" not in texts[0].text
+
+
+# ============================================================
+# [FILE] 标记兜底解析
+# ============================================================
+
+
+class TestFilePartExtraction:
+    """[FILE] 标记的兜底解析"""
+
+    def test_single_file_marker(self):
+        """单个 [FILE] 标记 → FilePart"""
+        text = "报表已生成\n[FILE]https://cdn.example.com/a.xlsx|报表.xlsx|application/vnd.ms-excel|2048[/FILE]"
+        result = extract_media_parts(text)
+        files = [p for p in result if isinstance(p, FilePart)]
+        texts = [p for p in result if isinstance(p, TextPart)]
+        assert len(files) == 1
+        assert files[0].url == "https://cdn.example.com/a.xlsx"
+        assert files[0].name == "报表.xlsx"
+        assert files[0].mime_type == "application/vnd.ms-excel"
+        assert files[0].size == 2048
+        # [FILE] 标记应从文本中移除
+        if texts:
+            assert "[FILE]" not in texts[0].text
+
+    def test_multiple_file_markers(self):
+        """多个 [FILE] 标记 → 多个 FilePart"""
+        text = (
+            "[FILE]https://cdn.example.com/a.csv|数据.csv|text/csv|1024[/FILE]\n"
+            "中间文字\n"
+            "[FILE]https://cdn.example.com/b.xlsx|报表.xlsx|application/vnd.ms-excel|4096[/FILE]"
+        )
+        result = extract_media_parts(text)
+        files = [p for p in result if isinstance(p, FilePart)]
+        assert len(files) == 2
+        assert files[0].name == "数据.csv"
+        assert files[1].name == "报表.xlsx"
+
+    def test_file_and_image_mixed(self):
+        """[FILE] 标记 + 图片 URL 混合"""
+        text = (
+            "结果如下 https://cdn.example.com/chart.png\n"
+            "[FILE]https://cdn.example.com/data.xlsx|数据.xlsx|application/vnd.ms-excel|5000[/FILE]"
+        )
+        result = extract_media_parts(text)
+        images = [p for p in result if isinstance(p, ImagePart)]
+        files = [p for p in result if isinstance(p, FilePart)]
+        assert len(images) == 1
+        assert len(files) == 1
+
+    def test_no_file_marker_unchanged(self):
+        """无 [FILE] 标记 → 不影响原有逻辑"""
+        text = "普通文字，没有文件"
+        result = extract_media_parts(text)
+        assert len(result) == 1
+        assert isinstance(result[0], TextPart)
