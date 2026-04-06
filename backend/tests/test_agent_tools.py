@@ -383,12 +383,12 @@ class TestErpRoutingPrompt:
         assert "无需手动重试" in ERP_ROUTING_PROMPT
 
     def test_tool_capability_section(self):
-        """ERP_ROUTING_PROMPT 包含工具能力说明（能力驱动架构）"""
+        """ERP_ROUTING_PROMPT 包含工具选择规则"""
         from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "local_*" in ERP_ROUTING_PROMPT
+        assert "工具选择规则" in ERP_ROUTING_PROMPT
+        assert "local > erp > code_execute" in ERP_ROUTING_PROMPT
         assert "erp_*" in ERP_ROUTING_PROMPT
-        assert "毫秒级" in ERP_ROUTING_PROMPT
-        assert "远程ERP API" in ERP_ROUTING_PROMPT
+        assert "降级策略" in ERP_ROUTING_PROMPT
 
     def test_data_freshness_section(self):
         """ERP_ROUTING_PROMPT 包含数据新鲜度和同步警告降级规则"""
