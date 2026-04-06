@@ -184,6 +184,49 @@ class TestHandleTimeout:
         db._table_mock.update.assert_called()
 
     @pytest.mark.asyncio
+    @patch("services.task_utils.save_accumulated_to_message")
+    async def test_chat_timeout_saves_accumulated_with_correct_type(self, mock_save, worker, db):
+        """chat 超时回写时 task_type 应为实际任务类型"""
+        mock_save.return_value = True
+        task = self._make_task("chat",
+            accumulated_content="部分内容",
+            placeholder_message_id="msg-1",
+            conversation_id="conv-1",
+            model_id="gpt-4",
+            client_task_id="client-1",
+            credit_transaction_id=None,
+        )
+        await worker._handle_timeout(task, 10)
+
+        mock_save.assert_called_once()
+        call_kwargs = mock_save.call_args
+        assert call_kwargs[1]["task_type"] == "chat"
+
+    @pytest.mark.asyncio
+    @patch("services.task_utils.save_accumulated_to_message")
+    async def test_timeout_fallback_saves_with_actual_task_type(self, mock_save, worker, db):
+        """fallback 路径超时回写时 task_type 应为实际任务类型（非硬编码 chat）"""
+        mock_save.return_value = True
+        # image 任务走 service 失败后 fallback
+        with patch("services.background_task_worker.TaskCompletionService") as MockService:
+            mock_instance = AsyncMock()
+            mock_instance.process_result.side_effect = Exception("service error")
+            MockService.return_value = mock_instance
+
+            task = self._make_task("image",
+                accumulated_content="fallback内容",
+                placeholder_message_id="msg-2",
+                conversation_id="conv-2",
+                model_id="flux-pro",
+                client_task_id="client-2",
+            )
+            await worker._handle_timeout(task, 30)
+
+        mock_save.assert_called_once()
+        call_kwargs = mock_save.call_args
+        assert call_kwargs[1]["task_type"] == "image"
+
+    @pytest.mark.asyncio
     @patch("services.background_task_worker.TaskCompletionService")
     async def test_image_timeout_via_service(self, MockService, worker):
         """image 超时：通过 TaskCompletionService 处理"""
