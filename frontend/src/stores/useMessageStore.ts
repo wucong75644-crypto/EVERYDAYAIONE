@@ -48,7 +48,7 @@ export type {
 } from '../types/message';
 
 // 重新导出辅助函数，保持向后兼容
-export { getTextContent, getImageUrls, getVideoUrls, normalizeMessage } from '../utils/messageUtils';
+export { getTextContent, getImageUrls, getVideoUrls, getFiles, normalizeMessage } from '../utils/messageUtils';
 
 // ============================================================
 // Store 类型

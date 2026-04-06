@@ -297,6 +297,102 @@ class TestBuildSandboxExecutor:
         assert callable(executor._registered_funcs["write_file"])
         assert callable(executor._registered_funcs["list_dir"])
 
+    def test_upload_file_registered(self):
+        """upload_file 函数已注册"""
+        executor = build_sandbox_executor(user_id="u1", org_id="o1")
+        assert "upload_file" in executor._registered_funcs
+        assert callable(executor._registered_funcs["upload_file"])
+
+
+# ============================================================
+# _upload_file 函数执行测试
+# ============================================================
+
+
+class TestUploadFile:
+    """sandbox upload_file 函数测试"""
+
+    def _get_upload_func(self, user_id="test-user", org_id="test-org"):
+        executor = build_sandbox_executor(user_id=user_id, org_id=org_id)
+        return executor._registered_funcs["upload_file"]
+
+    @pytest.mark.asyncio
+    async def test_upload_success(self):
+        """正常上传 → 返回 [FILE] 标记"""
+        from unittest.mock import patch
+        upload_fn = self._get_upload_func()
+
+        mock_oss = MagicMock()
+        mock_oss.upload_bytes.return_value = {
+            "url": "https://cdn.example.com/test.xlsx",
+            "size": 1024,
+        }
+        with patch("services.oss_service.get_oss_service", return_value=mock_oss):
+            result = await upload_fn(b"test content", "报表.xlsx")
+
+        assert "✅ 文件已上传: 报表.xlsx" in result
+        assert "[FILE]https://cdn.example.com/test.xlsx|报表.xlsx|" in result
+        assert "|1024[/FILE]" in result
+        mock_oss.upload_bytes.assert_called_once()
+        call_kwargs = mock_oss.upload_bytes.call_args.kwargs
+        assert call_kwargs["user_id"] == "test-user"
+        assert call_kwargs["org_id"] == "test-org"
+        assert call_kwargs["ext"] == "xlsx"
+
+    @pytest.mark.asyncio
+    async def test_empty_filename(self):
+        """空文件名 → 返回错误提示"""
+        upload_fn = self._get_upload_func()
+        result = await upload_fn(b"data", "")
+        assert "文件名无效" in result
+
+    @pytest.mark.asyncio
+    async def test_no_extension(self):
+        """无扩展名 → 返回错误提示"""
+        upload_fn = self._get_upload_func()
+        result = await upload_fn(b"data", "noext")
+        assert "缺少扩展名" in result
+
+    @pytest.mark.asyncio
+    async def test_path_traversal_stripped(self):
+        """路径穿越文件名 → 只保留文件名部分"""
+        from unittest.mock import patch
+        upload_fn = self._get_upload_func()
+
+        mock_oss = MagicMock()
+        mock_oss.upload_bytes.return_value = {"url": "https://cdn.example.com/evil.csv", "size": 10}
+        with patch("services.oss_service.get_oss_service", return_value=mock_oss):
+            result = await upload_fn(b"data", "../../etc/evil.csv")
+
+        assert "evil.csv" in result
+        assert "../../" not in result
+
+    @pytest.mark.asyncio
+    async def test_oss_exception(self):
+        """OSS 上传失败 → 返回错误提示"""
+        from unittest.mock import patch
+        upload_fn = self._get_upload_func()
+
+        mock_oss = MagicMock()
+        mock_oss.upload_bytes.side_effect = Exception("OSS timeout")
+        with patch("services.oss_service.get_oss_service", return_value=mock_oss):
+            result = await upload_fn(b"data", "test.csv")
+
+        assert "上传失败" in result
+
+    @pytest.mark.asyncio
+    async def test_value_error_unsupported_format(self):
+        """OSS 抛 ValueError → 返回格式不支持"""
+        from unittest.mock import patch
+        upload_fn = self._get_upload_func()
+
+        mock_oss = MagicMock()
+        mock_oss.upload_bytes.side_effect = ValueError("exe not allowed")
+        with patch("services.oss_service.get_oss_service", return_value=mock_oss):
+            result = await upload_fn(b"data", "virus.exe")
+
+        assert "格式不支持" in result
+
     @pytest.mark.asyncio
     async def test_sandbox_list_dir(self, tmp_path):
         """沙盒内 list_dir 可执行（空目录）"""

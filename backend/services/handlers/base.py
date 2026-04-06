@@ -368,6 +368,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
         self,
         task_id: str,
         conversation_id: str,
+        user_id: str,
         new_model: str,
         attempt: int,
     ) -> None:
@@ -381,7 +382,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
             new_model=new_model,
             attempt=attempt,
         )
-        await ws_manager.send_to_task_subscribers(task_id, retry_msg)
+        await ws_manager.send_to_task_or_user(task_id, user_id, retry_msg)
 
     # ========================================
     # 知识库钩子（fire-and-forget）

@@ -9,7 +9,12 @@
 import re
 from typing import List
 
-from schemas.message import ContentPart, ImagePart, TextPart, VideoPart
+from schemas.message import ContentPart, FilePart, ImagePart, TextPart, VideoPart
+
+# 匹配 [FILE] 标记（沙盒 upload_file 返回的格式，兜底解析）
+_FILE_PATTERN = re.compile(
+    r'\[FILE\](https?://\S+?)\|([^|]+)\|([^|]+)\|(\d+)\[/FILE\]'
+)
 
 # 匹配图片 URL（常见图片扩展名 + 无扩展名的 CDN URL 带图片参数）
 _IMAGE_URL_PATTERN = re.compile(
@@ -36,16 +41,20 @@ def extract_media_parts(text: str) -> List[ContentPart]:
     if not text:
         return [TextPart(text="")]
 
+    # 兜底：提取 [FILE] 标记（正常情况下已在 ChatToolMixin 中提取）
+    file_matches = _FILE_PATTERN.findall(text)
     image_urls = _IMAGE_URL_PATTERN.findall(text)
     video_urls = _VIDEO_URL_PATTERN.findall(text)
 
-    if not image_urls and not video_urls:
+    if not image_urls and not video_urls and not file_matches:
         return [TextPart(text=text)]
 
-    # 清理文本中的 URL 和标记行
+    # 清理文本中的 URL 和标记
     clean_text = text
     for url in image_urls + video_urls:
         clean_text = clean_text.replace(url, "")
+    for m in _FILE_PATTERN.finditer(text):
+        clean_text = clean_text.replace(m.group(0), "")
     clean_text = _MEDIA_MARKER.sub("", clean_text).strip()
 
     parts: List[ContentPart] = []
@@ -55,5 +64,7 @@ def extract_media_parts(text: str) -> List[ContentPart]:
         parts.append(ImagePart(url=url))
     for url in video_urls:
         parts.append(VideoPart(url=url))
+    for url, name, mime_type, size in file_matches:
+        parts.append(FilePart(url=url, name=name, mime_type=mime_type, size=int(size)))
 
     return parts if parts else [TextPart(text=text)]

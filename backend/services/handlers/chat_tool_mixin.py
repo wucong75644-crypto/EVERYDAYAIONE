@@ -7,9 +7,15 @@ ChatHandler 工具执行 Mixin
 
 import asyncio
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
+
+# [FILE] 标记正则：沙盒 upload_file 返回的格式
+_FILE_PATTERN = re.compile(
+    r'\[FILE\](https?://\S+?)\|([^|]+)\|([^|]+)\|(\d+)\[/FILE\]'
+)
 
 from schemas.websocket import (
     build_tool_result,
@@ -60,7 +66,7 @@ class ChatToolMixin:
                 tasks = [
                     self._execute_single_tool(
                         tc, executor, task_id, conversation_id,
-                        message_id, turn,
+                        message_id, user_id, turn,
                     )
                     for tc in batch
                 ]
@@ -71,7 +77,7 @@ class ChatToolMixin:
                 for tc in batch:
                     result = await self._execute_single_tool(
                         tc, executor, task_id, conversation_id,
-                        message_id, turn,
+                        message_id, user_id, turn,
                     )
                     results.append(result)
 
@@ -84,6 +90,7 @@ class ChatToolMixin:
         task_id: str,
         conversation_id: str,
         message_id: str,
+        user_id: str,
         turn: int,
     ) -> tuple:
         """执行单个工具：安全检查 → 执行 → 返回 (tc, result, is_error)"""
@@ -100,8 +107,8 @@ class ChatToolMixin:
             except json.JSONDecodeError:
                 args = {}
             # 发确认请求
-            await ws_manager.send_to_task_subscribers(
-                task_id,
+            await ws_manager.send_to_task_or_user(
+                task_id, user_id,
                 build_tool_confirm_request(
                     task_id=task_id,
                     conversation_id=conversation_id,
@@ -133,12 +140,14 @@ class ChatToolMixin:
 
         try:
             result = await executor.execute(tool_name, args)
+            # 提取 [FILE] 标记 → FilePart 暂存到 ChatHandler（不经过 LLM）
+            result = self._extract_file_parts(result)
             # 工具结果压缩（完整数据已推送用户，messages 里只放精简版）
             from services.handlers.context_compressor import compress_tool_result
             result = compress_tool_result(tool_name, result)
             # 通知前端工具完成
-            await ws_manager.send_to_task_subscribers(
-                task_id,
+            await ws_manager.send_to_task_or_user(
+                task_id, user_id,
                 build_tool_result(
                     task_id=task_id,
                     conversation_id=conversation_id,
@@ -154,8 +163,8 @@ class ChatToolMixin:
         except Exception as e:
             logger.error(f"Tool execution error | tool={tool_name} | task={task_id} | error={e}")
             error_msg = f"工具执行失败: {e}"
-            await ws_manager.send_to_task_subscribers(
-                task_id,
+            await ws_manager.send_to_task_or_user(
+                task_id, user_id,
                 build_tool_result(
                     task_id=task_id,
                     conversation_id=conversation_id,
@@ -168,6 +177,30 @@ class ChatToolMixin:
                 ),
             )
             return (tc, error_msg, True)
+
+
+    def _extract_file_parts(self, result: str) -> str:
+        """从工具结果中提取 [FILE] 标记，暂存为 FilePart
+
+        [FILE] 标记替换为友好文本（LLM 可读），FilePart 存到
+        self._pending_file_parts，在 on_complete 时合并到消息中。
+        """
+        if not result or "[FILE]" not in result:
+            return result
+
+        from schemas.message import FilePart
+
+        if not hasattr(self, "_pending_file_parts"):
+            self._pending_file_parts = []
+
+        def _replace_match(m):
+            url, name, mime_type, size = m.groups()
+            self._pending_file_parts.append(FilePart(
+                url=url, name=name, mime_type=mime_type, size=int(size),
+            ))
+            return f"📎 文件: {name}"
+
+        return _FILE_PATTERN.sub(_replace_match, result)
 
 
 def _partition_tool_calls(

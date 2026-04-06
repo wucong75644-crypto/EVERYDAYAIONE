@@ -214,10 +214,7 @@ class MessageMixin:
         """推送 WebSocket 消息（Chat 走 task 订阅，Media 走 user 投递）"""
         from services.websocket_manager import ws_manager
 
-        if self.handler_type == GenerationType.CHAT:
-            await ws_manager.send_to_task_subscribers(client_task_id, ws_msg)
-        else:
-            await ws_manager.send_to_task_or_user(client_task_id, user_id, ws_msg)
+        await ws_manager.send_to_task_or_user(client_task_id, user_id, ws_msg)
 
     async def _handle_complete_common(
         self,

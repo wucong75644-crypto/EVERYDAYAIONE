@@ -10,6 +10,7 @@ import type {
   ContentPart,
   ImagePart,
   VideoPart,
+  FilePart,
 } from '../types/message';
 
 // ============================================================
@@ -50,6 +51,15 @@ export function getVideoUrls(message: Message): string[] {
   return message.content
     .filter((p): p is VideoPart => p.type === 'video')
     .map((p) => p.url);
+}
+
+/** 从 Message 提取文件列表 */
+export function getFiles(message: Message): FilePart[] {
+  if (!Array.isArray(message.content)) return [];
+
+  return message.content.filter(
+    (p): p is FilePart => p.type === 'file' && !!p.url,
+  );
 }
 
 // ============================================================

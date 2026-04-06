@@ -198,7 +198,7 @@ class ChatStreamSupportMixin:
 
         # WS 通知前端正在重试
         await self._send_retry_notification(
-            task_id, conversation_id, new_model, attempt,
+            task_id, conversation_id, user_id, new_model, attempt,
         )
 
         # 关闭旧 adapter

@@ -45,6 +45,8 @@ _ALLOWED_IMPORT_MODULES = frozenset({
     "re", "string",
     # 类型/枚举
     "typing", "enum", "dataclasses", "abc",
+    # IO（BytesIO 用于生成 Excel/CSV 等二进制文件）
+    "io",
     # 数据分析
     "pandas", "numpy",
     # 内部 C 扩展（被上述模块传递依赖）

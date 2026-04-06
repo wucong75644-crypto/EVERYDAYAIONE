@@ -101,9 +101,12 @@ class TestPartitionToolCalls:
 
 def _make_mixin():
     """构造一个 mock ChatToolMixin 实例"""
+    from services.handlers.chat_tool_mixin import ChatToolMixin
     mixin = MagicMock()
     mixin.db = MagicMock()
     mixin.org_id = None
+    # 绑定真实的 _extract_file_parts 方法（不 mock）
+    mixin._extract_file_parts = ChatToolMixin._extract_file_parts.__get__(mixin)
     return mixin
 
 
@@ -117,12 +120,12 @@ class TestExecuteSingleTool:
         from services.handlers.chat_tool_mixin import ChatToolMixin
 
         mixin = _make_mixin()
-        mock_ws.send_to_task_subscribers = AsyncMock()
+        mock_ws.send_to_task_or_user = AsyncMock()
         executor = AsyncMock()
 
         tc = {"name": "erp_execute", "id": "tc1", "arguments": '{"action":"cancel"}'}
         result = await ChatToolMixin._execute_single_tool(
-            mixin, tc, executor, "task1", "conv1", "msg1", 1,
+            mixin, tc, executor, "task1", "conv1", "msg1", "test_user", 1,
         )
         tc_out, text, is_error = result
         assert is_error is True
@@ -137,13 +140,13 @@ class TestExecuteSingleTool:
         from services.handlers.chat_tool_mixin import ChatToolMixin
 
         mixin = _make_mixin()
-        mock_ws.send_to_task_subscribers = AsyncMock()
+        mock_ws.send_to_task_or_user = AsyncMock()
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value="库存100件")
 
         tc = {"name": "local_stock_query", "id": "tc1", "arguments": '{"product_code":"SKU001"}'}
         result = await ChatToolMixin._execute_single_tool(
-            mixin, tc, executor, "task1", "conv1", "msg1", 1,
+            mixin, tc, executor, "task1", "conv1", "msg1", "test_user", 1,
         )
         tc_out, text, is_error = result
         assert is_error is False
@@ -157,13 +160,13 @@ class TestExecuteSingleTool:
         from services.handlers.chat_tool_mixin import ChatToolMixin
 
         mixin = _make_mixin()
-        mock_ws.send_to_task_subscribers = AsyncMock()
+        mock_ws.send_to_task_or_user = AsyncMock()
         executor = AsyncMock()
         executor.execute = AsyncMock(side_effect=Exception("API timeout"))
 
         tc = {"name": "erp_product_query", "id": "tc1", "arguments": '{"action":"product_list"}'}
         result = await ChatToolMixin._execute_single_tool(
-            mixin, tc, executor, "task1", "conv1", "msg1", 1,
+            mixin, tc, executor, "task1", "conv1", "msg1", "test_user", 1,
         )
         tc_out, text, is_error = result
         assert is_error is True
@@ -176,12 +179,12 @@ class TestExecuteSingleTool:
         from services.handlers.chat_tool_mixin import ChatToolMixin
 
         mixin = _make_mixin()
-        mock_ws.send_to_task_subscribers = AsyncMock()
+        mock_ws.send_to_task_or_user = AsyncMock()
         executor = AsyncMock()
 
         tc = {"name": "local_stock_query", "id": "tc1", "arguments": "not json{{{"}
         result = await ChatToolMixin._execute_single_tool(
-            mixin, tc, executor, "task1", "conv1", "msg1", 1,
+            mixin, tc, executor, "task1", "conv1", "msg1", "test_user", 1,
         )
         tc_out, text, is_error = result
         assert is_error is True
@@ -194,17 +197,84 @@ class TestExecuteSingleTool:
         from services.handlers.chat_tool_mixin import ChatToolMixin
 
         mixin = _make_mixin()
-        mock_ws.send_to_task_subscribers = AsyncMock()
+        mock_ws.send_to_task_or_user = AsyncMock()
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value="图片生成中")
 
         tc = {"name": "generate_image", "id": "tc1", "arguments": '{"prompt":"cat"}'}
         result = await ChatToolMixin._execute_single_tool(
-            mixin, tc, executor, "task1", "conv1", "msg1", 1,
+            mixin, tc, executor, "task1", "conv1", "msg1", "test_user", 1,
         )
         tc_out, text, is_error = result
         assert is_error is False
         executor.execute.assert_called_once()
+
+
+# ============================================================
+# _extract_file_parts 文件标记提取
+# ============================================================
+
+
+class TestExtractFileParts:
+    """_extract_file_parts() 从工具结果中提取 [FILE] 标记"""
+
+    def _make_instance(self):
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+        obj = MagicMock()
+        obj._extract_file_parts = ChatToolMixin._extract_file_parts.__get__(obj)
+        obj._pending_file_parts = []  # 初始化为真实列表，避免 MagicMock 自动属性
+        return obj
+
+    def test_no_file_marker_passthrough(self):
+        """无 [FILE] 标记 → 原样返回"""
+        obj = self._make_instance()
+        result = obj._extract_file_parts("库存100件")
+        assert result == "库存100件"
+        assert not hasattr(obj, "_pending_file_parts") or len(obj._pending_file_parts) == 0
+
+    def test_empty_string(self):
+        """空字符串 → 原样返回"""
+        obj = self._make_instance()
+        assert obj._extract_file_parts("") == ""
+
+    def test_none_input(self):
+        """None → 原样返回"""
+        obj = self._make_instance()
+        assert obj._extract_file_parts(None) is None
+
+    def test_single_file_extracted(self):
+        """单个 [FILE] 标记 → 提取 FilePart + 替换为友好文本"""
+        obj = self._make_instance()
+        text = "✅ 文件已上传: 报表.xlsx\n[FILE]https://cdn.example.com/a.xlsx|报表.xlsx|application/vnd.ms-excel|2048[/FILE]"
+        result = obj._extract_file_parts(text)
+        assert "📎 文件: 报表.xlsx" in result
+        assert "[FILE]" not in result
+        assert len(obj._pending_file_parts) == 1
+        fp = obj._pending_file_parts[0]
+        assert fp.url == "https://cdn.example.com/a.xlsx"
+        assert fp.name == "报表.xlsx"
+        assert fp.size == 2048
+
+    def test_multiple_files_extracted(self):
+        """多个 [FILE] 标记 → 全部提取"""
+        obj = self._make_instance()
+        text = (
+            "[FILE]https://cdn.example.com/a.csv|数据.csv|text/csv|1024[/FILE]\n"
+            "中间文字\n"
+            "[FILE]https://cdn.example.com/b.xlsx|报表.xlsx|application/vnd.ms-excel|4096[/FILE]"
+        )
+        result = obj._extract_file_parts(text)
+        assert "[FILE]" not in result
+        assert "📎 文件: 数据.csv" in result
+        assert "📎 文件: 报表.xlsx" in result
+        assert len(obj._pending_file_parts) == 2
+
+    def test_accumulates_across_calls(self):
+        """多次调用 → _pending_file_parts 累积"""
+        obj = self._make_instance()
+        obj._extract_file_parts("[FILE]https://a.com/1.csv|a.csv|text/csv|100[/FILE]")
+        obj._extract_file_parts("[FILE]https://a.com/2.csv|b.csv|text/csv|200[/FILE]")
+        assert len(obj._pending_file_parts) == 2
 
 
 # ============================================================

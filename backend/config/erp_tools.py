@@ -292,11 +292,16 @@ ERP_ROUTING_PROMPT = (
     "- local_doc_query 返回的 sid/order_no/outer_id → 直接用于 API 跨查\n"
     "- 物流轨迹 → express_query(system_id=sid)\n"
     "- 操作日志 → order_log(system_ids=sid)\n\n"
+    "## 输出格式选择（自动判断）\n"
+    "- 统计汇总（总数/金额/占比）→ 直接文字回复\n"
+    "- 结果 ≤20 条明细 → 直接文字回复\n"
+    "- 结果 >20 条明细 → 调 code_execute 生成 Excel 文件\n"
+    "- 用户要求「导出/报表/Excel/下载/文件」→ 调 code_execute 生成 Excel 文件\n"
+    "- 多维度对比/趋势分析 → 调 code_execute 计算，数据量大时同时生成 Excel\n\n"
     "## 规则\n"
     "- 禁止猜测参数类型，不确定时 ask_user\n"
     "- 名称搜索无结果 → 必须 ask_user 确认，禁止返回「未找到」\n"
-    "- 编码查询返回0条时，系统会自动用基础编码扩大查询并精确匹配，无需手动重试\n"
-    "- 数据采集完毕 → route_to_chat 汇总回复\n\n"
+    "- 编码查询返回0条时，系统会自动用基础编码扩大查询并精确匹配，无需手动重试\n\n"
 )
 
 
