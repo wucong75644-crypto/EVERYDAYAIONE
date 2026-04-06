@@ -281,6 +281,55 @@ def build_sandbox_executor(
     executor.register("write_file", _write_file)
     executor.register("list_dir", _list_dir)
 
+    # 注册文件上传函数（生成可下载的 CDN URL）
+    async def _upload_file(content: bytes, filename: str) -> str:
+        """上传文件到 OSS，返回格式化文本（含 [FILE] 标记）
+
+        沙盒代码用法：
+            buf = io.BytesIO()
+            df.to_excel(buf, index=False)
+            result = await upload_file(buf.getvalue(), "报表.xlsx")
+            print(result)
+        """
+        import mimetypes
+        from pathlib import Path
+
+        # 安全：文件名去除路径分隔符
+        safe_name = Path(filename).name
+        if not safe_name:
+            return "❌ 文件名无效"
+
+        ext = Path(safe_name).suffix.lstrip(".")
+        if not ext:
+            return "❌ 文件名缺少扩展名（如 .xlsx, .csv）"
+
+        mime_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+
+        try:
+            from services.oss_service import get_oss_service
+            oss = get_oss_service()
+            result = oss.upload_bytes(
+                content=content,
+                user_id=user_id,
+                ext=ext,
+                category="generated",
+                content_type=mime_type,
+                org_id=org_id,
+            )
+            url = result["url"]
+            size = result["size"]
+            return (
+                f"✅ 文件已上传: {safe_name}\n"
+                f"[FILE]{url}|{safe_name}|{mime_type}|{size}[/FILE]"
+            )
+        except ValueError as e:
+            return f"❌ 文件格式不支持: {e}"
+        except Exception as e:
+            logger.error(f"Sandbox upload_file failed | file={safe_name} | error={e}")
+            return f"❌ 文件上传失败: {e}"
+
+    executor.register("upload_file", _upload_file)
+
     return executor
 
 

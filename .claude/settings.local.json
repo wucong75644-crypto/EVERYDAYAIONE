@@ -520,7 +520,19 @@
       "Bash(python -m pytest backend/tests/test_erp_sync_handlers.py -k \"test_order_new_fields or TestAftersaleNewFields\" -v --tb=short)",
       "Bash(python -m pytest tests/test_erp_sync_handlers.py -k \"test_order_new_fields or TestAftersaleNewFields\" -v --tb=short)",
       "Bash(python -m pytest tests/test_erp_sync_master_handlers.py -k \"classify or seller_cat or sku_remark\" -v --tb=short)",
-      "Bash(./git-push.sh \"fix: Review 修复 + 测试补充 — 工具循环退出逻辑重构\\(Claude模式\\)、提示词统一、CN_TZ命名、22个新测试\")"
+      "Bash(./git-push.sh \"fix: Review 修复 + 测试补充 — 工具循环退出逻辑重构\\(Claude模式\\)、提示词统一、CN_TZ命名、22个新测试\")",
+      "Bash(python -m pytest backend/tests/test_chat_handler_stream.py::TestStreamDirectReply::test_sends_start_and_chunk -q --tb=short)",
+      "Bash(python -m pytest tests/test_chat_handler_stream.py::TestStreamDirectReply::test_sends_start_and_chunk -q --tb=short)",
+      "Bash(python -m pytest tests/test_chat_handler_stream.py tests/test_chat_context.py tests/test_chat_handler_thinking.py tests/test_chat_retry.py tests/test_chat_tool_mixin.py -q --tb=short)",
+      "Bash(python -m pytest backend/tests/test_sandbox*.py -q --tb=short)",
+      "Bash(python -m pytest tests/test_sandbox_executor.py -q --tb=short)",
+      "Bash(python -m pytest tests/test_sandbox_functions.py -q --tb=short)",
+      "Bash(python -m pytest tests/test_sandbox_functions.py tests/test_sandbox_executor.py -q --tb=short)",
+      "Bash(python -m pytest /Users/wucong/EVERYDAYAIONE/backend/tests/test_chat_tool_mixin.py -q --tb=short)",
+      "Bash(python -m pytest tests/test_chat_tool_mixin.py -q --tb=short)",
+      "Bash(python -m pytest backend/tests/test_chat_tool_mixin.py backend/tests/test_sandbox_functions.py backend/tests/test_sandbox_executor.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_chat_tool_mixin.py tests/test_sandbox_functions.py tests/test_sandbox_executor.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_chat_tool_mixin.py tests/test_sandbox_functions.py tests/test_sandbox_executor.py -q --tb=short)"
     ]
   }
 }

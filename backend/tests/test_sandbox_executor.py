@@ -156,6 +156,28 @@ class TestSecurityBlocking:
         assert "验证失败" in result
 
 
+class TestAllowedImports:
+    """允许的模块导入测试"""
+
+    @pytest.mark.asyncio
+    async def test_import_io_allowed(self, executor):
+        """io 模块可导入 — BytesIO 用于生成 Excel/CSV"""
+        result = await executor.execute(
+            "import io\nbuf = io.BytesIO()\nbuf.write(b'hello')\nbuf.tell()",
+            "io模块导入",
+        )
+        assert "5" in result
+
+    @pytest.mark.asyncio
+    async def test_import_json_allowed(self, executor):
+        """json 模块可导入"""
+        result = await executor.execute(
+            "import json\njson.dumps({'a': 1})",
+            "json模块导入",
+        )
+        assert '"a"' in result
+
+
 class TestAsyncExecution:
     """异步执行测试"""
 

@@ -87,7 +87,7 @@ class TestAttemptChatRetry:
 
             assert result is True
             mock_notify.assert_awaited_once_with(
-                "task-1", "conv-1", "gemini-3-flash", 1,
+                "task-1", "conv-1", "user-1", "gemini-3-flash", 1,
             )
             mock_stream.assert_awaited_once()
             call_kwargs = mock_stream.call_args.kwargs

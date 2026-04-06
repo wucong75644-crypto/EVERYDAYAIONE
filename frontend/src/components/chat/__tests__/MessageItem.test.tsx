@@ -77,6 +77,7 @@ vi.mock('../../../stores/useMessageStore', () => ({
       .filter((p: { type: string }) => p.type === 'image' && 'url' in p && (p as { url: string | null }).url)
       .map((p: { type: string }) => (p as { url: string }).url),
   getVideoUrls: () => [],
+  getFiles: () => [],
 }));
 
 vi.mock('../../../constants/placeholder', async (importOriginal) => {

@@ -99,14 +99,14 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
         return task_id
 
-    async def _stream_direct_reply(self, task_id, message_id, conversation_id, text):
+    async def _stream_direct_reply(self, task_id, message_id, conversation_id, user_id, text):
         """Agent Loop ask_user：大脑直接回复，跳过 LLM 调用"""
         try:
-            await ws_manager.send_to_task_subscribers(task_id, build_message_start(
+            await ws_manager.send_to_task_or_user(task_id, user_id, build_message_start(
                 task_id=task_id, conversation_id=conversation_id,
                 message_id=message_id, model="agent",
             ))
-            await ws_manager.send_to_task_subscribers(task_id, build_message_chunk(
+            await ws_manager.send_to_task_or_user(task_id, user_id, build_message_chunk(
                 task_id=task_id, conversation_id=conversation_id,
                 message_id=message_id, chunk=text, accumulated=text,
             ))
@@ -151,6 +151,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 task_id=task_id,
                 message_id=message_id,
                 conversation_id=conversation_id,
+                user_id=user_id,
                 text=direct_reply,
             )
             return
@@ -169,7 +170,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 message_id=message_id,
                 model=model_id,
             )
-            await ws_manager.send_to_task_subscribers(task_id, start_msg)
+            await ws_manager.send_to_task_or_user(task_id, user_id, start_msg)
 
             # 2. 组装消息列表（记忆未预取时并行预取）
             text_content = self._extract_text_content(content)
@@ -281,7 +282,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             chunk=chunk.thinking_content,
                             accumulated=accumulated_thinking,
                         )
-                        await ws_manager.send_to_task_subscribers(task_id, thinking_msg)
+                        await ws_manager.send_to_task_or_user(task_id, user_id, thinking_msg)
 
                     # 正文内容
                     if chunk.content:
@@ -294,7 +295,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             message_id=message_id,
                             chunk=chunk.content,
                         )
-                        await ws_manager.send_to_task_subscribers(task_id, chunk_msg)
+                        await ws_manager.send_to_task_or_user(task_id, user_id, chunk_msg)
                         if chunk_count % 20 == 0:
                             asyncio.create_task(
                                 self._save_accumulated_content(task_id, accumulated_text)
@@ -335,8 +336,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 messages.append(assistant_tool_msg)
 
                 # 通知前端：工具调用开始
-                await ws_manager.send_to_task_subscribers(
-                    task_id,
+                await ws_manager.send_to_task_or_user(
+                    task_id, user_id,
                     build_tool_call(
                         task_id=task_id,
                         conversation_id=conversation_id,
@@ -368,10 +369,14 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 # 达到 MAX_TOOL_TURNS 上限
                 logger.warning(f"Max tool turns reached | task={task_id} | turns={MAX_TOOL_TURNS}")
 
-            # 6. 计算积分 → 提取媒体 URL → 完成回调
+            # 6. 计算积分 → 提取媒体 URL → 合并文件 → 完成回调
             credits_consumed = self._calculate_credits(final_usage)
             from services.handlers.media_extractor import extract_media_parts
             result_parts = extract_media_parts(accumulated_text)
+            # 合并工具执行过程中积累的 FilePart（沙盒 upload_file 生成）
+            if hasattr(self, "_pending_file_parts") and self._pending_file_parts:
+                result_parts.extend(self._pending_file_parts)
+                self._pending_file_parts = []
             await self.on_complete(
                 task_id=task_id,
                 result=result_parts,
@@ -414,8 +419,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 await self._adapter.close()
 
     def _convert_content_parts_to_dicts(self, result):
-        """转换 ContentPart 为字典（支持 Text/Image/Video）"""
-        from schemas.message import ImagePart, VideoPart
+        """转换 ContentPart 为字典（支持 Text/Image/Video/File）"""
+        from schemas.message import FilePart, ImagePart, VideoPart
         dicts = []
         for p in result:
             if isinstance(p, TextPart):
@@ -424,6 +429,12 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 dicts.append({"type": "image", "url": p.url, "width": p.width, "height": p.height})
             elif isinstance(p, VideoPart):
                 dicts.append({"type": "video", "url": p.url})
+            elif isinstance(p, FilePart):
+                dicts.append({
+                    "type": "file", "url": p.url,
+                    "name": p.name, "mime_type": p.mime_type,
+                    "size": p.size,
+                })
             elif isinstance(p, dict):
                 dicts.append(p)
         return dicts

@@ -542,7 +542,7 @@ class TestStreamGenerateContextInjection:
              patch.object(chat_handler, "_extract_memories_async", new_callable=AsyncMock), \
              patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
              patch.object(chat_handler, "_update_summary_if_needed", new_callable=AsyncMock):
-            mock_ws.send_to_task_subscribers = AsyncMock()
+            mock_ws.send_to_task_or_user = AsyncMock()
 
             await chat_handler._stream_generate(
                 task_id="t1", message_id="m1", conversation_id="conv1",
@@ -582,7 +582,7 @@ class TestStreamGenerateContextInjection:
              patch.object(chat_handler, "_extract_memories_async", new_callable=AsyncMock), \
              patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
              patch.object(chat_handler, "_update_summary_if_needed", new_callable=AsyncMock):
-            mock_ws.send_to_task_subscribers = AsyncMock()
+            mock_ws.send_to_task_or_user = AsyncMock()
 
             await chat_handler._stream_generate(
                 task_id="t1", message_id="m1", conversation_id="conv1",
@@ -620,7 +620,7 @@ class TestStreamGenerateContextInjection:
              patch.object(chat_handler, "_extract_memories_async", new_callable=AsyncMock), \
              patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
              patch.object(chat_handler, "_update_summary_if_needed", new_callable=AsyncMock):
-            mock_ws.send_to_task_subscribers = AsyncMock()
+            mock_ws.send_to_task_or_user = AsyncMock()
 
             await chat_handler._stream_generate(
                 task_id="t1", message_id="m1", conversation_id="conv1",
@@ -654,7 +654,7 @@ class TestStreamGenerateContextInjection:
              patch.object(chat_handler, "_extract_memories_async", new_callable=AsyncMock), \
              patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
              patch.object(chat_handler, "_update_summary_if_needed", new_callable=AsyncMock):
-            mock_ws.send_to_task_subscribers = AsyncMock()
+            mock_ws.send_to_task_or_user = AsyncMock()
 
             await chat_handler._stream_generate(
                 task_id="t1", message_id="m1", conversation_id="conv1",

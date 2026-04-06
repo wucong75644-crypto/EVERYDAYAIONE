@@ -7,7 +7,7 @@
 
 import { memo, useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import type { Message } from '../../stores/useMessageStore';
-import { getTextContent, getImageUrls, getVideoUrls } from '../../stores/useMessageStore';
+import { getTextContent, getImageUrls, getVideoUrls, getFiles } from '../../stores/useMessageStore';
 import DeleteMessageModal from './DeleteMessageModal';
 import ImagePreviewModal from './ImagePreviewModal';
 import MessageMedia from './MessageMedia';
@@ -78,8 +78,10 @@ export default memo(function MessageItem({
   const textContent = getTextContent(message);
   const imageUrls = getImageUrls(message);
   const videoUrls = getVideoUrls(message);
+  const files = getFiles(message);
   const hasImage = imageUrls.length > 0;
   const hasVideo = videoUrls.length > 0;
+  const hasFiles = files.length > 0;
 
   // 判断是否为失败消息
   const isErrorMessage = message.status === 'failed' || message.is_error === true;
@@ -284,7 +286,7 @@ export default memo(function MessageItem({
   };
 
   // 判断是否有媒体内容（需要更宽的显示区域）
-  const hasMedia = hasImage || hasVideo || !!mediaPlaceholderInfo;
+  const hasMedia = hasImage || hasVideo || hasFiles || !!mediaPlaceholderInfo;
 
   return (
     <div
@@ -297,11 +299,12 @@ export default memo(function MessageItem({
         onMouseLeave={handleMouseLeave}
       >
         {/* 用户消息：图片在上，文字在下（因为上传时已获取 CDN URL，图片先准备好） */}
-        {isUser && (hasImage || hasVideo) && (
+        {isUser && (hasImage || hasVideo || hasFiles) && (
           <div className="mb-3 w-full">
             <MessageMedia
               imageUrls={imageUrls}
               videoUrls={videoUrls}
+              files={files}
               messageId={message.id}
               isUser={isUser}
               onImageClick={handleImageClick}
@@ -363,11 +366,12 @@ export default memo(function MessageItem({
           </div>
         </div>
 
-        {/* AI 消息：文字在上，图片在下 */}
+        {/* AI 消息：文字在上，图片/文件在下 */}
         {!isUser && (
           <MessageMedia
             imageUrls={imageUrls}
             videoUrls={videoUrls}
+            files={files}
             messageId={message.id}
             isUser={isUser}
             onImageClick={handleImageClick}
