@@ -344,6 +344,9 @@ export default memo(function MessageItem({
             {/* 加载状态：重新生成或流式输出开始但内容为空 */}
             {((isRegenerating || isStreaming) && !textContent) ? (
               <LoadingPlaceholder text={agentStepHint || PLACEHOLDER_TEXT.CHAT_THINKING} />
+            ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !isErrorMessage && !isStreaming && !isRegenerating) ? (
+              /* 已完成但无内容（用户取消等场景） */
+              <span className="text-gray-400 text-sm italic">已取消，点击「重新生成」重试</span>
             ) : bubbleTextInfo ? (
               /* 媒体任务气泡文字：图片/视频生成中或生成完成（仅 pending 状态） */
               bubbleTextInfo.hasAnimation ? (
