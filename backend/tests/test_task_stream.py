@@ -178,7 +178,7 @@ class TestConsume:
             ("200-0", {"user_id": "u1", "data": json.dumps({"type": "message_done"})}),
         ]
 
-        with patch("core.redis.RedisClient.get_client", return_value=mock_client):
+        with patch("services.task_stream._create_block_client", return_value=mock_client):
             messages = []
             async for stream_id, msg in consume("task1", "u1", "0"):
                 messages.append((stream_id, msg))
@@ -197,7 +197,7 @@ class TestConsume:
             ("300-0", {"user_id": "u1", "data": json.dumps({"type": "message_done"})}),
         ]
 
-        with patch("core.redis.RedisClient.get_client", return_value=mock_client):
+        with patch("services.task_stream._create_block_client", return_value=mock_client):
             async for _ in consume("task1", "u1", "200-0"):
                 pass
 
@@ -220,7 +220,7 @@ class TestConsume:
             ])],
         ]
 
-        with patch("core.redis.RedisClient.get_client", return_value=mock_client):
+        with patch("services.task_stream._create_block_client", return_value=mock_client):
             messages = []
             async for stream_id, msg in consume("t1", "u1"):
                 messages.append(msg["type"])
@@ -235,7 +235,7 @@ class TestConsume:
         mock_client.xread.return_value = []  # 超时无消息
         mock_client.exists.return_value = 0  # Stream 不存在
 
-        with patch("core.redis.RedisClient.get_client", return_value=mock_client):
+        with patch("services.task_stream._create_block_client", return_value=mock_client):
             messages = []
             async for stream_id, msg in consume("t1", "u1"):
                 messages.append(msg)
@@ -251,7 +251,7 @@ class TestConsume:
             ("200-0", {"user_id": "u1", "data": json.dumps({"type": "message_done"})}),
         ]
 
-        with patch("core.redis.RedisClient.get_client", return_value=mock_client):
+        with patch("services.task_stream._create_block_client", return_value=mock_client):
             messages = []
             async for stream_id, msg in consume("t1", "u1"):
                 messages.append(msg)
@@ -278,7 +278,7 @@ class TestConsume:
             ("100-0", {"user_id": "u1", "data": json.dumps({"type": "message_error"})}),
         ]
 
-        with patch("core.redis.RedisClient.get_client", return_value=mock_client):
+        with patch("services.task_stream._create_block_client", return_value=mock_client):
             messages = []
             async for stream_id, msg in consume("t1", "u1"):
                 messages.append(msg["type"])

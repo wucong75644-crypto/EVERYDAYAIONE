@@ -127,18 +127,19 @@ async def consume(
     Yields:
         (stream_id, message_dict) 元组
     """
-    from core.redis import RedisClient
-
     stream_key = f"{STREAM_KEY_PREFIX}{task_id}"
     cursor = last_stream_id
 
+    # XREAD BLOCK 需要独立的 Redis 连接（socket_timeout=None），
+    # 否则共享连接的 socket_timeout=5s 会杀掉阻塞读
+    block_client = None
     try:
-        client = await RedisClient.get_client()
+        block_client = await _create_block_client()
 
         # Phase 1: 补发历史消息（XRANGE：从 cursor 之后开始）
         # XRANGE 的 min 需要用 "(" 前缀表示排他（exclusive）
         range_min = f"({cursor}" if cursor != "0" else "-"
-        history = await client.xrange(stream_key, min=range_min, max="+")
+        history = await block_client.xrange(stream_key, min=range_min, max="+")
 
         for entry_id, fields in history:
             msg = _parse_entry(entry_id, fields, user_id)
@@ -152,7 +153,7 @@ async def consume(
 
         # Phase 2: 实时监听（XREAD BLOCK）
         while True:
-            entries = await client.xread(
+            entries = await block_client.xread(
                 {stream_key: cursor},
                 block=XREAD_BLOCK_MS,
                 count=50,
@@ -160,7 +161,7 @@ async def consume(
 
             if not entries:
                 # 超时无新消息，检查 Stream 是否还存在
-                exists = await client.exists(stream_key)
+                exists = await block_client.exists(stream_key)
                 if not exists:
                     # Stream 已过期（任务完成>10分钟），退出
                     logger.debug(
@@ -186,11 +187,32 @@ async def consume(
         logger.warning(
             f"Stream consume error | task={task_id} | cursor={cursor} | error={e}"
         )
+    finally:
+        # 关闭独立连接
+        if block_client:
+            try:
+                await block_client.aclose()
+            except Exception:
+                pass
 
 
 # ============================================================
 # 内部辅助函数
 # ============================================================
+
+
+async def _create_block_client():
+    """创建独立的 Redis 连接（socket_timeout=None，用于 XREAD BLOCK）"""
+    from core.config import settings
+    from redis.asyncio import Redis
+
+    return Redis.from_url(
+        settings.redis_url,
+        encoding="utf-8",
+        decode_responses=True,
+        socket_timeout=None,
+        socket_connect_timeout=5.0,
+    )
 
 
 def _parse_entry(
