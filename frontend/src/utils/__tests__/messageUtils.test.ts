@@ -13,6 +13,7 @@ import {
   getImageUrls,
   getTextContent,
   getVideoUrls,
+  getFiles,
   normalizeMessage,
 } from '../messageUtils';
 import type { Message, ContentPart } from '../../types/message';
@@ -247,5 +248,60 @@ describe('normalizeMessage', () => {
     const result = normalizeMessage(msg);
 
     expect(result.status).toBe('failed');
+  });
+});
+
+// ============================================================
+// getFiles
+// ============================================================
+
+describe('getFiles', () => {
+  const makeMsg = (content: ContentPart[]): Message => ({
+    id: 'msg-1',
+    conversation_id: 'conv-1',
+    role: 'assistant' as const,
+    content,
+    status: 'completed' as const,
+    created_at: '2026-04-06',
+  });
+
+  it('should extract FilePart from content', () => {
+    const result = getFiles(makeMsg([
+      { type: 'text', text: '报表已生成' },
+      { type: 'file', url: 'https://cdn.example.com/a.xlsx', name: '报表.xlsx', mime_type: 'application/vnd.ms-excel', size: 2048 },
+    ]));
+    expect(result).toHaveLength(1);
+    expect(result[0].name).toBe('报表.xlsx');
+    expect(result[0].size).toBe(2048);
+  });
+
+  it('should return empty array when no FilePart', () => {
+    const result = getFiles(makeMsg([
+      { type: 'text', text: '普通文字' },
+      { type: 'image', url: 'https://cdn.example.com/img.png' },
+    ]));
+    expect(result).toHaveLength(0);
+  });
+
+  it('should filter out FilePart with empty url', () => {
+    const result = getFiles(makeMsg([
+      { type: 'file', url: '', name: 'empty.xlsx', mime_type: 'application/vnd.ms-excel' },
+    ]));
+    expect(result).toHaveLength(0);
+  });
+
+  it('should handle non-array content', () => {
+    const msg = { id: 'msg-1', content: 'old string format' } as unknown as Message;
+    const result = getFiles(msg);
+    expect(result).toHaveLength(0);
+  });
+
+  it('should extract multiple FileParts', () => {
+    const result = getFiles(makeMsg([
+      { type: 'file', url: 'https://a.com/1.csv', name: 'a.csv', mime_type: 'text/csv', size: 100 },
+      { type: 'text', text: '中间文字' },
+      { type: 'file', url: 'https://a.com/2.xlsx', name: 'b.xlsx', mime_type: 'application/vnd.ms-excel', size: 200 },
+    ]));
+    expect(result).toHaveLength(2);
   });
 });

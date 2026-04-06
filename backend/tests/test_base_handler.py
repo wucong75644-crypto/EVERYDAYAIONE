@@ -635,6 +635,57 @@ class TestBaseHandlerEdgeCases:
         assert result[0]["text"] == "Hello"
 
 
+class TestChatHandlerFilePart:
+    """ChatHandler._convert_content_parts_to_dicts FilePart 支持"""
+
+    def test_file_part_serialized(self):
+        """FilePart 正确序列化为 dict"""
+        from services.handlers.chat_handler import ChatHandler
+        from schemas.message import FilePart
+        handler = ChatHandler(db=MagicMock())
+        content = [
+            TextPart(text="报表已生成"),
+            FilePart(
+                url="https://cdn.example.com/report.xlsx",
+                name="订单报表.xlsx",
+                mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                size=12345,
+            ),
+        ]
+        result = handler._convert_content_parts_to_dicts(content)
+        assert len(result) == 2
+        assert result[0] == {"type": "text", "text": "报表已生成"}
+        assert result[1]["type"] == "file"
+        assert result[1]["url"] == "https://cdn.example.com/report.xlsx"
+        assert result[1]["name"] == "订单报表.xlsx"
+        assert result[1]["mime_type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        assert result[1]["size"] == 12345
+
+    def test_mixed_text_image_file(self):
+        """Text + Image + File 混合序列化"""
+        from services.handlers.chat_handler import ChatHandler
+        from schemas.message import FilePart
+        handler = ChatHandler(db=MagicMock())
+        content = [
+            TextPart(text="结果"),
+            ImagePart(url="https://cdn.example.com/chart.png"),
+            FilePart(url="https://cdn.example.com/data.csv", name="data.csv",
+                     mime_type="text/csv", size=500),
+        ]
+        result = handler._convert_content_parts_to_dicts(content)
+        assert len(result) == 3
+        assert result[0]["type"] == "text"
+        assert result[1]["type"] == "image"
+        assert result[2]["type"] == "file"
+
+    def test_pending_file_parts_initialized(self):
+        """ChatHandler 初始化时 _pending_file_parts 为空列表"""
+        from services.handlers.chat_handler import ChatHandler
+        handler = ChatHandler(db=MagicMock())
+        assert hasattr(handler, "_pending_file_parts")
+        assert handler._pending_file_parts == []
+
+
 # ============ _handle_complete_common 集成测试 ============
 
 class TestHandleCompleteCommonTaskReuse:
