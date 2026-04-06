@@ -41,6 +41,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
     def __init__(self, db):
         super().__init__(db)
         self._adapter = None
+        self._pending_file_parts: list = []  # 沙盒 upload_file 生成的 FilePart 暂存
 
     @property
     def handler_type(self) -> GenerationType:
@@ -374,7 +375,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             from services.handlers.media_extractor import extract_media_parts
             result_parts = extract_media_parts(accumulated_text)
             # 合并工具执行过程中积累的 FilePart（沙盒 upload_file 生成）
-            if hasattr(self, "_pending_file_parts") and self._pending_file_parts:
+            if self._pending_file_parts:
                 result_parts.extend(self._pending_file_parts)
                 self._pending_file_parts = []
             await self.on_complete(

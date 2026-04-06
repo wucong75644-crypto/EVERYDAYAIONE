@@ -190,9 +190,6 @@ class ChatToolMixin:
 
         from schemas.message import FilePart
 
-        if not hasattr(self, "_pending_file_parts"):
-            self._pending_file_parts = []
-
         def _replace_match(m):
             url, name, mime_type, size = m.groups()
             self._pending_file_parts.append(FilePart(
