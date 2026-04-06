@@ -9,6 +9,7 @@ import { Search, LogOut } from 'lucide-react';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { useAuthModalStore } from '../../stores/useAuthModalStore';
 import { useClickOutside } from '../../hooks/useClickOutside';
+import { useLogout } from '../../hooks/useLogout';
 
 interface NavBarProps {
   searchQuery: string;
@@ -16,18 +17,17 @@ interface NavBarProps {
 }
 
 export default function NavBar({ searchQuery, onSearchChange }: NavBarProps) {
-  const { user, isAuthenticated, clearAuth } = useAuthStore();
+  const { user, isAuthenticated } = useAuthStore();
   const { openLogin, openRegister } = useAuthModalStore();
+  const logout = useLogout();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
   useClickOutside(userMenuRef, showUserMenu, () => setShowUserMenu(false));
 
   const handleLogout = () => {
-    const loginOrgId = localStorage.getItem('login_org_id');
-    clearAuth();
     setShowUserMenu(false);
-    window.location.href = loginOrgId ? `/?org=${loginOrgId}` : '/';
+    logout();
   };
 
   return (

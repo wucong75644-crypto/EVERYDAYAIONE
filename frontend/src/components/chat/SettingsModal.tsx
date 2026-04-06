@@ -5,8 +5,8 @@
  */
 
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { useLogout } from '../../hooks/useLogout';
 import { getWecomBindingStatus, unbindWecom } from '../../services/auth';
 import WecomQrLogin from '../auth/WecomQrLogin';
 import Modal from '../common/Modal';
@@ -17,8 +17,8 @@ interface SettingsModalProps {
 }
 
 export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
-  const navigate = useNavigate();
-  const { user, currentOrg, clearAuth, refreshUser } = useAuthStore();
+  const { user, currentOrg, refreshUser } = useAuthStore();
+  const logout = useLogout();
 
   const [wecomStatus, setWecomStatus] = useState<{
     bound: boolean;
@@ -56,11 +56,8 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   };
 
   const handleLogout = () => {
-    // 保留企业专属链接：退出后跳回企业登录页
-    const loginOrgId = localStorage.getItem('login_org_id');
-    clearAuth();
     onClose();
-    navigate(loginOrgId ? `/?org=${loginOrgId}` : '/');
+    logout();
   };
 
   const handleRefresh = async () => {

@@ -12,6 +12,7 @@ import { Link } from 'react-router-dom';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { useMessageStore } from '../../stores/useMessageStore';
 import { useClickOutside } from '../../hooks/useClickOutside';
+import { useLogout } from '../../hooks/useLogout';
 import { Brain, Settings2 } from 'lucide-react';
 import ConversationList from './ConversationList';
 import SettingsModal from './SettingsModal';
@@ -68,7 +69,8 @@ export default function Sidebar({
   onRename,
   onDelete,
 }: SidebarProps) {
-  const { user, currentOrg, clearAuth } = useAuthStore();
+  const { user, currentOrg } = useAuthStore();
+  const logout = useLogout();
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const showAdminEntry =
     user?.role === 'super_admin' ||
@@ -81,11 +83,8 @@ export default function Sidebar({
   const userMenuRef = useRef<HTMLDivElement>(null);
 
   const handleLogout = () => {
-    // 保留企业专属链接：退出后跳回企业登录页
-    const loginOrgId = localStorage.getItem('login_org_id');
-    clearAuth();
     setShowUserMenu(false);
-    window.location.href = loginOrgId ? `/?org=${loginOrgId}` : '/';
+    logout();
   };
 
   // 点击外部关闭搜索框（仅在搜索框为空时）

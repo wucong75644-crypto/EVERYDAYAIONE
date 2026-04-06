@@ -39,7 +39,8 @@ api.interceptors.response.use(
   (error: AxiosError<ApiErrorResponse>) => {
     if (error.response?.status === 401) {
       // Token 过期或无效，清除本地存储（含企业上下文）
-      const loginOrgId = localStorage.getItem('login_org_id');
+      // 优先用 login_org_id，兜底用 current_org_id（老版本登录的企业用户可能没有 login_org_id）
+      const loginOrgId = localStorage.getItem('login_org_id') || localStorage.getItem('current_org_id');
       localStorage.removeItem('access_token');
       localStorage.removeItem('user');
       localStorage.removeItem('current_org_id');
