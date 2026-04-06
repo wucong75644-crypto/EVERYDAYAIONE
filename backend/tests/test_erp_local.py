@@ -709,6 +709,86 @@ class TestLocalProductStats:
 
 
 # ============================================================
+# TestLocalShopList — 店铺列表查询
+# ============================================================
+
+
+class TestLocalShopList:
+
+    @pytest.mark.asyncio
+    async def test_with_data(self):
+        """正常返回多店铺，按平台分组"""
+        from services.kuaimai.erp_local_query import local_shop_list
+        db = _make_db(erp_sync_state=[_sync_state("order")])
+        db.set_rpc_result("erp_distinct_shops", [
+            {"shop_name": "旗舰店", "platform": "tb"},
+            {"shop_name": "拼多多官方店", "platform": "pdd"},
+            {"shop_name": "京东自营", "platform": "jd"},
+        ])
+        result = await local_shop_list(db)
+        assert "共 3 个店铺" in result
+        assert "旗舰店" in result
+        assert "【pdd】" in result
+        assert "【tb】" in result
+
+    @pytest.mark.asyncio
+    async def test_no_data(self):
+        """无店铺数据返回提示"""
+        from services.kuaimai.erp_local_query import local_shop_list
+        db = _make_db(erp_sync_state=[_sync_state("order")])
+        db.set_rpc_result("erp_distinct_shops", [])
+        result = await local_shop_list(db)
+        assert "暂无店铺数据" in result
+
+    @pytest.mark.asyncio
+    async def test_platform_filter(self):
+        """按平台过滤"""
+        from services.kuaimai.erp_local_query import local_shop_list
+        db = _make_db(erp_sync_state=[_sync_state("order")])
+        db.set_rpc_result("erp_distinct_shops", [
+            {"shop_name": "拼多多官方店", "platform": "pdd"},
+        ])
+        result = await local_shop_list(db, platform="pdd")
+        assert "拼多多官方店" in result
+        assert "共 1 个店铺" in result
+
+    @pytest.mark.asyncio
+    async def test_empty_shop_name_filtered(self):
+        """空店铺名被过滤"""
+        from services.kuaimai.erp_local_query import local_shop_list
+        db = _make_db(erp_sync_state=[_sync_state("order")])
+        db.set_rpc_result("erp_distinct_shops", [
+            {"shop_name": "", "platform": "tb"},
+            {"shop_name": "  ", "platform": "tb"},
+            {"shop_name": "旗舰店", "platform": "tb"},
+        ])
+        result = await local_shop_list(db)
+        assert "共 1 个店铺" in result
+
+    @pytest.mark.asyncio
+    async def test_rpc_error(self):
+        """RPC 报错返回错误信息"""
+        from services.kuaimai.erp_local_query import local_shop_list
+        db = _make_db()
+        # mock RPC 抛异常
+        from unittest.mock import MagicMock
+        mock_rpc = MagicMock()
+        mock_rpc.execute.side_effect = Exception("function erp_distinct_shops does not exist")
+        db.rpc = MagicMock(return_value=mock_rpc)
+        result = await local_shop_list(db)
+        assert "查询失败" in result
+
+    @pytest.mark.asyncio
+    async def test_no_data_with_platform_label(self):
+        """无数据时平台标签显示"""
+        from services.kuaimai.erp_local_query import local_shop_list
+        db = _make_db(erp_sync_state=[_sync_state("order")])
+        db.set_rpc_result("erp_distinct_shops", [])
+        result = await local_shop_list(db, platform="pdd")
+        assert "平台: pdd" in result
+
+
+# ============================================================
 # TestLocalToolDefinitions — 工具定义结构
 # ============================================================
 

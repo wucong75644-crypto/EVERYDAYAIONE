@@ -2771,6 +2771,58 @@ class TestRegistryDocAlignment:
 
 
 # ============================================================
+# TestTwoStepParamsDispatch — 两步调用 params 分发
+# ============================================================
+
+
+class TestTwoStepParamsDispatch:
+    """验证两步调用中 params=None vs params={} 的分发逻辑"""
+
+    @pytest.mark.asyncio
+    async def test_params_none_returns_param_doc(self):
+        """Step 1: params=None → 返回参数文档"""
+        from services.erp_tool_executor import ErpToolMixin
+
+        class FakeExecutor(ErpToolMixin):
+            def __init__(self):
+                self.db = None
+                self.user_id = "u1"
+                self.org_id = "org1"
+
+        executor = FakeExecutor()
+        result = await executor._erp_dispatch(
+            "erp_info_query", {"action": "shop_list"},
+        )
+        assert "📋 shop_list" in result
+        assert "参数" in result
+
+    @pytest.mark.asyncio
+    async def test_params_empty_dict_executes_query(self):
+        """Step 2: params={} → 执行查询（不回到 Step 1）"""
+        from services.erp_tool_executor import ErpToolMixin
+        from unittest.mock import AsyncMock, patch
+
+        class FakeExecutor(ErpToolMixin):
+            def __init__(self):
+                self.db = None
+                self.user_id = "u1"
+                self.org_id = "org1"
+
+        executor = FakeExecutor()
+        mock_dispatcher = AsyncMock()
+        mock_dispatcher.execute = AsyncMock(return_value="共3个店铺")
+        mock_dispatcher.close = AsyncMock()
+
+        with patch.object(executor, "_get_erp_dispatcher", return_value=mock_dispatcher):
+            result = await executor._erp_dispatch(
+                "erp_info_query", {"action": "shop_list", "params": {}},
+            )
+        # 应该执行查询，不应该返回参数文档
+        assert "📋 shop_list" not in result
+        mock_dispatcher.execute.assert_called_once()
+
+
+# ============================================================
 # TestParamDocsCoverage — param_docs 覆盖率
 # ============================================================
 

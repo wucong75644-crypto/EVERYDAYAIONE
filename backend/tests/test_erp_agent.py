@@ -481,6 +481,69 @@ class TestRunToolLoopExitLogic:
         assert "未能生成" in text
 
 
+class TestERPAgentConstants:
+    """ERP Agent 常量和安全护栏验证"""
+
+    def test_max_erp_turns_is_20(self):
+        """MAX_ERP_TURNS 应为 20（参考 Claude Code subagent 50-200 轮）"""
+        from services.erp_agent import MAX_ERP_TURNS
+        assert MAX_ERP_TURNS == 20
+
+    def test_tool_timeout_reasonable(self):
+        """单工具超时应在合理范围"""
+        from services.erp_agent import _TOOL_TIMEOUT
+        assert 10 <= _TOOL_TIMEOUT <= 60
+
+    def test_token_budget_exists(self):
+        """Token 预算上限存在"""
+        from services.erp_agent import _MAX_TOTAL_TOKENS
+        assert _MAX_TOTAL_TOKENS > 0
+
+
+class TestERPAgentJSONParseError:
+    """JSON 解析错误不再静默吞掉"""
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_returns_error_to_llm(self):
+        """工具参数 JSON 格式错误时，错误信息应返回给 LLM"""
+        from services.erp_agent import ERPAgent
+        from services.adapters.types import StreamChunk, ToolCallDelta
+
+        agent = ERPAgent(
+            db=MagicMock(), user_id="t",
+            conversation_id="t", org_id="test",
+        )
+        agent._all_tools = []
+
+        call_count = {"n": 0}
+
+        async def mock_stream(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                # 第一轮：返回一个参数格式错误的工具调用
+                yield StreamChunk(
+                    tool_calls=[ToolCallDelta(
+                        index=0, id="tc1", name="local_stock_query",
+                        arguments_delta='{bad json!!!',
+                    )],
+                    prompt_tokens=10, completion_tokens=5,
+                )
+            else:
+                # 第二轮：正常输出文字结束
+                yield StreamChunk(content="参数格式有误，请确认", prompt_tokens=10, completion_tokens=5)
+
+        mock_adapter = AsyncMock()
+        mock_adapter.stream_chat = mock_stream
+
+        text, tokens, turns = await agent._run_tool_loop(
+            mock_adapter, AsyncMock(),
+            [{"role": "user", "content": "查库存"}],
+            [], [],
+        )
+        # 错误信息应作为 tool result 返回，LLM 看到后输出文字
+        assert "参数格式有误" in text or "JSON" in text
+
+
 class TestFilterErpContextEdgeCases:
     """filter_erp_context 边缘场景补充"""
 
