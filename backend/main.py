@@ -176,6 +176,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     import asyncio
 
     db = get_db()
+
+    # 恢复孤儿任务：部署重启后，将中断的流式内容从 tasks.accumulated_content 回写到 messages 表
+    # 用 Redis 锁确保多 worker 只执行一次
+    _recovery_lock = await RedisClient.acquire_lock("orphan_task_recovery", timeout=30)
+    if _recovery_lock:
+        try:
+            from services.task_recovery import recover_orphan_tasks
+            recovered = await recover_orphan_tasks(db)
+            if recovered > 0:
+                logger.info(f"Orphan task recovery completed | recovered={recovered}")
+        except Exception as e:
+            logger.error(f"Orphan task recovery failed (non-critical) | error={e}")
+        finally:
+            await RedisClient.release_lock("orphan_task_recovery", _recovery_lock)
+
     worker = BackgroundTaskWorker(db)
     worker_task = asyncio.create_task(worker.start())
     logger.info("BackgroundTaskWorker started")
