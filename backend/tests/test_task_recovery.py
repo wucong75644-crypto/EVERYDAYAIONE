@@ -42,6 +42,7 @@ async def test_recover_task_with_accumulated_content():
     """有 accumulated_content 的任务应恢复到 messages 表"""
     tasks = [{
         "id": "task-1",
+        "type": "chat",
         "external_task_id": "ext-1",
         "placeholder_message_id": "msg-1",
         "conversation_id": "conv-1",
@@ -64,6 +65,50 @@ async def test_recover_task_with_accumulated_content():
     assert upsert_data["content"] == [{"type": "text", "text": "这是部分生成的内容"}]
     assert upsert_data["status"] == "completed"
     assert upsert_data["credits_cost"] == 0
+    assert upsert_data["generation_params"]["type"] == "chat"
+
+
+@pytest.mark.asyncio
+async def test_recover_task_preserves_task_type():
+    """恢复时 generation_params.type 应使用任务的实际类型，而非硬编码 chat"""
+    tasks = [{
+        "id": "task-img",
+        "type": "image",
+        "external_task_id": "ext-img",
+        "placeholder_message_id": "msg-img",
+        "conversation_id": "conv-1",
+        "model_id": "flux-pro",
+        "client_task_id": "client-img",
+        "accumulated_content": "部分内容",
+        "credit_transaction_id": None,
+    }]
+    db = _mock_db(tasks)
+    result = await recover_orphan_tasks(db)
+    assert result == 1
+
+    upsert_data = db.table.return_value.upsert.call_args[0][0]
+    assert upsert_data["generation_params"]["type"] == "image"
+    assert upsert_data["generation_params"]["model"] == "flux-pro"
+
+
+@pytest.mark.asyncio
+async def test_recover_task_type_defaults_to_chat():
+    """任务无 type 字段时默认 chat"""
+    tasks = [{
+        "id": "task-no-type",
+        "external_task_id": "ext-1",
+        "placeholder_message_id": "msg-1",
+        "conversation_id": "conv-1",
+        "model_id": "gpt-4",
+        "client_task_id": "client-1",
+        "accumulated_content": "内容",
+        "credit_transaction_id": None,
+    }]
+    db = _mock_db(tasks)
+    await recover_orphan_tasks(db)
+
+    upsert_data = db.table.return_value.upsert.call_args[0][0]
+    assert upsert_data["generation_params"]["type"] == "chat"
 
 
 @pytest.mark.asyncio
