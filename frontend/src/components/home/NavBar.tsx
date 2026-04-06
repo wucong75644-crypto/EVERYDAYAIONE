@@ -64,12 +64,12 @@ export default function NavBar({ searchQuery, onSearchChange }: NavBarProps) {
                     {user?.nickname}
                   </button>
                   {showUserMenu && (
-                    <div className="absolute right-0 mt-2 w-36 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-30">
+                    <div className="absolute right-0 mt-1 w-32 bg-white rounded-md shadow-md border border-gray-200 py-1 z-30">
                       <button
                         onClick={handleLogout}
-                        className="w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center space-x-2 transition-colors"
+                        className="w-full px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 flex items-center space-x-2 transition-colors"
                       >
-                        <LogOut className="w-4 h-4" />
+                        <LogOut className="w-3.5 h-3.5" />
                         <span>退出登录</span>
                       </button>
                     </div>
