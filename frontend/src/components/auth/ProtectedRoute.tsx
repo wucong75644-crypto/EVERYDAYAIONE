@@ -35,8 +35,8 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     // 如果弹窗从打开变为关闭，且用户仍未登录，跳转到首页
     if (wasOpenRef.current && !isOpen && !isAuthenticated) {
       // 企业用户跳回企业登录页
-      const loginOrgId = localStorage.getItem('login_org_id');
-      navigate(loginOrgId ? `/?org=${loginOrgId}` : '/', { replace: true });
+      const orgId = localStorage.getItem('login_org_id') || localStorage.getItem('current_org_id');
+      navigate(orgId ? `/?org=${orgId}` : '/', { replace: true });
     }
     wasOpenRef.current = isOpen;
   }, [isOpen, isAuthenticated, navigate]);

@@ -2,7 +2,7 @@
  * 企微 OAuth 回调着陆页
  *
  * 从 URL 解析 token + user（base64 编码）或 error，
- * 成功时存储认证信息并跳转到 /chat，失败时显示错误提示。
+ * 成功时存储认证信息并跳转到首页，失败时显示错误提示。
  */
 
 import { useEffect, useState } from 'react';
