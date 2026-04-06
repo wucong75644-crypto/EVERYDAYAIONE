@@ -310,6 +310,27 @@ class BackgroundTaskWorker:
             if transaction_id:
                 await self._refund_credits(transaction_id)
 
+            # Chat 超时：将已生成的部分内容回写到 messages 表（避免用户丢失内容）
+            accumulated = (task.get("accumulated_content") or "").strip()
+            message_id = task.get("placeholder_message_id")
+            if accumulated and message_id:
+                from services.task_utils import save_accumulated_to_message
+                client_task_id = task.get("client_task_id") or external_task_id
+                saved = save_accumulated_to_message(
+                    self.db,
+                    message_id=message_id,
+                    conversation_id=task["conversation_id"],
+                    accumulated_content=accumulated,
+                    model_id=task.get("model_id", "unknown"),
+                    client_task_id=client_task_id,
+                    task_type=task_type,
+                )
+                if saved:
+                    logger.info(
+                        f"Chat timeout: saved accumulated_content to messages | "
+                        f"task_id={external_task_id} | content_len={len(accumulated)}"
+                    )
+
             self.db.table("tasks").update({
                 "status": "failed",
                 "error_message": error_msg,

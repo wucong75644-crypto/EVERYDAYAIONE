@@ -192,6 +192,11 @@ async def cancel_task_by_message_id(
                         f"message_id={message_id} | user_id={ctx.user_id}"
                     )
 
+                # 同步更新消息状态，防止重新登录后仍为 streaming 显示空气泡
+                db.table("messages").update({
+                    "status": "completed",
+                }).eq("id", message_id).execute()
+
                 return {"success": True, "cancelled_count": len(result.data)}
 
         return {"success": True, "cancelled_count": 0}
