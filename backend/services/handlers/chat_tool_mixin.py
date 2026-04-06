@@ -21,7 +21,7 @@ from schemas.websocket import (
     build_tool_result,
     build_tool_confirm_request,
 )
-from services.websocket_manager import ws_manager
+from services.task_stream import publish as stream_publish
 
 
 class ChatToolMixin:
@@ -107,7 +107,7 @@ class ChatToolMixin:
             except json.JSONDecodeError:
                 args = {}
             # 发确认请求
-            await ws_manager.send_to_task_or_user(
+            await stream_publish(
                 task_id, user_id,
                 build_tool_confirm_request(
                     task_id=task_id,
@@ -146,7 +146,7 @@ class ChatToolMixin:
             from services.handlers.context_compressor import compress_tool_result
             result = compress_tool_result(tool_name, result)
             # 通知前端工具完成
-            await ws_manager.send_to_task_or_user(
+            await stream_publish(
                 task_id, user_id,
                 build_tool_result(
                     task_id=task_id,
@@ -163,7 +163,7 @@ class ChatToolMixin:
         except Exception as e:
             logger.error(f"Tool execution error | tool={tool_name} | task={task_id} | error={e}")
             error_msg = f"工具执行失败: {e}"
-            await ws_manager.send_to_task_or_user(
+            await stream_publish(
                 task_id, user_id,
                 build_tool_result(
                     task_id=task_id,

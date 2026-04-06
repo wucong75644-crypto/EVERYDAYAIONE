@@ -482,3 +482,57 @@ async def local_platform_map_query(
     if health:
         lines.append(health)
     return "\n".join(lines)
+
+
+# ── 工具7：店铺列表查询 ────────────────────────────────
+
+
+async def local_shop_list(
+    db,
+    platform: str | None = None,
+    org_id: str | None = None,
+) -> str:
+    """从本地订单数据中提取店铺列表（DISTINCT shop_name + platform）
+
+    数据来源：erp_document_items 的 order 记录。
+    返回所有出过单的店铺及其平台归属。
+    """
+    try:
+        params = {
+            "p_org_id": org_id,
+            "p_platform": platform or None,
+        }
+        result = db.rpc("erp_distinct_shops", params).execute()
+    except Exception as e:
+        logger.error(f"local_shop_list RPC failed | error={e}")
+        return f"店铺列表查询失败: {e}"
+
+    if not result.data:
+        platform_label = f"（平台: {platform}）" if platform else ""
+        health = check_sync_health(db, ["order"], org_id=org_id)
+        return f"暂无店铺数据{platform_label}\n{health}".strip()
+
+    # RPC 返回已去重的 [{shop_name, platform}]
+    seen: dict[str, str] = {}
+    for row in result.data:
+        name = (row.get("shop_name") or "").strip()
+        plat = row.get("platform") or "未知"
+        if name and name not in seen:
+            seen[name] = plat
+
+    # 按平台分组展示
+    by_platform: dict[str, list[str]] = {}
+    for name, plat in sorted(seen.items(), key=lambda x: (x[1], x[0])):
+        by_platform.setdefault(plat, []).append(name)
+
+    lines = [f"共 {len(seen)} 个店铺：\n"]
+    for plat, shops in sorted(by_platform.items()):
+        lines.append(f"【{plat}】({len(shops)}个)")
+        for i, name in enumerate(shops, 1):
+            lines.append(f"  {i}. {name}")
+        lines.append("")
+
+    health = check_sync_health(db, ["order"], org_id=org_id)
+    if health:
+        lines.append(health)
+    return "\n".join(lines)

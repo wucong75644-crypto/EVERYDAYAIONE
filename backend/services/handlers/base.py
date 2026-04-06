@@ -374,7 +374,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
     ) -> None:
         """推送重试通知给前端"""
         from schemas.websocket import build_message_retry
-        from services.websocket_manager import ws_manager
+        from services.task_stream import publish as stream_publish
 
         retry_msg = build_message_retry(
             task_id=task_id,
@@ -382,7 +382,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
             new_model=new_model,
             attempt=attempt,
         )
-        await ws_manager.send_to_task_or_user(task_id, user_id, retry_msg)
+        await stream_publish(task_id, user_id, retry_msg)
 
     # ========================================
     # 知识库钩子（fire-and-forget）

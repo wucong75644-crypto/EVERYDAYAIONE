@@ -92,7 +92,7 @@ export interface UseWebSocketReturn {
   isConnected: boolean;
   isConnecting: boolean;
   subscribe: (type: WSMessageType, handler: MessageHandler) => () => void;
-  subscribeTask: (taskId: string, lastIndex?: number) => void;
+  subscribeTask: (taskId: string, lastStreamId?: string) => void;
   unsubscribeTask: (taskId: string) => void;
   send: (message: Omit<WSMessage, 'timestamp'>) => void;
 }
@@ -118,6 +118,8 @@ export function useWebSocket(): UseWebSocketReturn {
   const isCleaningUpRef = useRef(false);
   // 用于打破 handleServerRestart <-> connect 循环依赖
   const connectRef = useRef<(() => void) | null>(null);
+  // WS 未连接时缓存订阅请求，连接后自动重发
+  const pendingSubscriptionsRef = useRef<Map<string, string>>(new Map());
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
 
@@ -233,6 +235,21 @@ export function useWebSocket(): UseWebSocketReturn {
       setConnectionState('connected');
       reconnectAttemptsRef.current = 0;
       startHeartbeat();
+
+      // 重连后重发 pending 订阅（断线期间缓存的任务订阅）
+      if (pendingSubscriptionsRef.current.size > 0) {
+        logger.info('ws:connection', 'Flushing pending subscriptions', {
+          count: pendingSubscriptionsRef.current.size,
+        });
+        pendingSubscriptionsRef.current.forEach((lastStreamId, taskId) => {
+          ws.send(JSON.stringify({
+            type: 'subscribe',
+            payload: { task_id: taskId, last_stream_id: lastStreamId },
+            timestamp: Date.now(),
+          }));
+        });
+        pendingSubscriptionsRef.current.clear();
+      }
     };
 
     ws.onclose = (event) => {
@@ -332,17 +349,21 @@ export function useWebSocket(): UseWebSocketReturn {
     };
   }, []);
 
-  // 订阅任务
-  const subscribeTask = useCallback((taskId: string, lastIndex: number = -1) => {
+  // 订阅任务（支持 Redis Stream 断点续传）
+  const subscribeTask = useCallback((taskId: string, lastStreamId: string = '0') => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
         JSON.stringify({
           type: 'subscribe',
-          payload: { task_id: taskId, last_index: lastIndex },
+          payload: { task_id: taskId, last_stream_id: lastStreamId },
           timestamp: Date.now(),
         })
       );
-      logger.info('ws:subscribe', 'Subscribed to task', { taskId });
+      logger.info('ws:subscribe', 'Subscribed to task', { taskId, lastStreamId });
+    } else {
+      // WS 未连接，缓存订阅请求，连接后自动重发
+      pendingSubscriptionsRef.current.set(taskId, lastStreamId);
+      logger.info('ws:subscribe', 'Queued pending subscription', { taskId, lastStreamId });
     }
   }, []);
 

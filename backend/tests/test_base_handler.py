@@ -720,9 +720,7 @@ class TestHandleCompleteCommonTaskReuse:
         handler._extract_extra_gen_params = MagicMock(return_value=None)
         handler._complete_task = MagicMock()
 
-        with patch("services.websocket_manager.ws_manager") as mock_ws:
-            mock_ws.send_to_task_or_user = AsyncMock()
-
+        with patch("services.task_stream.publish", new_callable=AsyncMock):
             await handler._handle_complete_common(
                 task_id="task_123",
                 result=[TextPart(text="hi")],

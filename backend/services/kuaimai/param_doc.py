@@ -74,7 +74,10 @@ def _format_param_doc(action: str, entry: ApiEntry) -> str:
         for code, desc in entry.error_codes.items():
             lines.append(f"  - {code}: {desc}")
 
-    lines.append("\n请在 params 中传入所需参数后再次调用。")
+    lines.append(
+        "\n请在 params 中传入所需参数后再次调用。"
+        "若无需筛选条件（查全部），直接传 params={} 即可。"
+    )
     return "\n".join(lines)
 
 

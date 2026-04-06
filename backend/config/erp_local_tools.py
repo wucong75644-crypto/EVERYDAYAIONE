@@ -21,6 +21,7 @@ ERP_LOCAL_TOOLS: Set[str] = {
     "local_platform_map_query",
     "local_doc_query",
     "local_global_stats",
+    "local_shop_list",
     "trigger_erp_sync",
 }
 
@@ -267,7 +268,23 @@ def build_local_tools() -> List[Dict[str, Any]]:
             },
             ["doc_type"],
         ),
-        # 11. 手动触发同步
+        # 11. 店铺列表
+        _tool(
+            "local_shop_list",
+            "查询店铺列表（从本地订单数据提取）。毫秒级响应。"
+            "返回所有出过单的店铺，按平台分组显示（名称+平台）。"
+            "支持按平台过滤（如只看拼多多店铺）。"
+            "适合：有哪些店铺、拼多多店铺列表、各平台店铺等查询。"
+            "⚠ 仅包含有订单记录的店铺，新开未出单的店铺需用远程 erp_info_query(shop_list)。",
+            {
+                "platform": _enum(
+                    "按平台过滤",
+                    ["tb", "jd", "pdd", "dy", "xhs", "1688"],
+                ),
+            },
+            [],
+        ),
+        # 12. 手动触发同步
         _tool(
             "trigger_erp_sync",
             "手动触发ERP数据同步。"
@@ -343,6 +360,12 @@ LOCAL_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "local_global_stats": {
         "required": ["doc_type"],
         "properties": {"doc_type": {"type": "string"}},
+    },
+    "local_shop_list": {
+        "required": [],
+        "properties": {
+            "platform": {"type": "string"},
+        },
     },
     "trigger_erp_sync": {
         "required": ["sync_type"],

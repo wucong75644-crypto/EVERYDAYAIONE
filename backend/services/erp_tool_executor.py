@@ -81,7 +81,8 @@ class ErpToolMixin:
         params = args.get("params")
 
         # Step 1: 无 params → 返回参数文档（纯本地，无需 dispatcher）
-        if not params:
+        # 注意：params={} 是合法的 Step 2（查全部），不能用 `not params`
+        if params is None:
             from services.kuaimai.param_doc import generate_param_doc
             return generate_param_doc(tool_name, action)
 
@@ -154,6 +155,7 @@ class ErpToolMixin:
             local_platform_map_query,
             local_product_flow,
             local_purchase_query,
+            local_shop_list,
             local_stock_query,
         )
         from services.kuaimai.erp_local_sync_trigger import trigger_erp_sync
@@ -170,6 +172,7 @@ class ErpToolMixin:
             "local_platform_map_query": local_platform_map_query,
             "local_doc_query": local_doc_query,
             "local_global_stats": local_global_stats,
+            "local_shop_list": local_shop_list,
             "trigger_erp_sync": trigger_erp_sync,
         }
 

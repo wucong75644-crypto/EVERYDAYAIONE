@@ -139,6 +139,17 @@ register(ToolEntry(
     priority=1,
 ))
 register(ToolEntry(
+    name="local_shop_list",
+    domain="erp",
+    description="查询店铺列表（按平台分组）",
+    tags=[
+        "店铺", "店铺列表", "哪些店铺", "拼多多店铺", "淘宝店铺",
+        "京东店铺", "抖音店铺", "小红书店铺", "1688店铺",
+        "所有店铺", "各店铺", "几个店", "开了哪些店",
+    ],
+    priority=1,
+))
+register(ToolEntry(
     name="trigger_erp_sync",
     domain="erp",
     description="手动触发ERP数据同步",

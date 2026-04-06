@@ -26,7 +26,12 @@ from schemas.websocket import (
     build_message_error,
 )
 from services.websocket_manager import HEARTBEAT_INTERVAL, ws_manager
+from services.task_stream import consume as stream_consume
 from core.database import get_db
+
+
+# 每个连接的 Stream consumer 协程：conn_id → {task_id → asyncio.Task}
+_consumer_tasks: Dict[str, Dict[str, asyncio.Task]] = {}
 
 router = APIRouter(tags=["WebSocket"])
 
@@ -117,6 +122,15 @@ async def websocket_endpoint(
     except Exception as e:
         logger.error(f"WebSocket error | conn={conn_id} | error={e}")
     finally:
+        # 取消所有 Stream consumer 协程并等待退出
+        consumers = list(_consumer_tasks.pop(conn_id, {}).values())
+        for consumer in consumers:
+            consumer.cancel()
+        for consumer in consumers:
+            try:
+                await consumer
+            except (asyncio.CancelledError, Exception):
+                pass
         heartbeat_task.cancel()
         try:
             await heartbeat_task
@@ -159,26 +173,35 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
         await ws_manager.update_heartbeat(conn_id)
 
     elif msg_type == WSMessageType.SUBSCRIBE.value:
-        # 订阅任务
+        # 订阅任务（通过 Redis Stream consumer 投递）
         task_id = payload.get("task_id")
+        last_stream_id = payload.get("last_stream_id", "0")
 
         if task_id:
             success = await ws_manager.subscribe_task(conn_id, task_id)
 
             if success:
-                # 查询最新累积内容（补全 Phase 1 到 Phase 2 之间的差异）
-                accumulated = await _get_task_accumulated_content(task_id, user_id)
-
                 await ws_manager.send_to_connection(conn_id, build_subscribed(
                     task_id=task_id,
-                    accumulated=accumulated or "",
-                    current_index=-1  # 不再使用索引
+                    accumulated="",
+                    current_index=-1,
                 ))
 
-                logger.info(f"Task subscribed | conn={conn_id} | task={task_id} | accumulated_len={len(accumulated or '')}")
+                # 启动 Stream consumer 协程（替代旧的 accumulated_content 补发）
+                if conn_id not in _consumer_tasks:
+                    _consumer_tasks[conn_id] = {}
 
-                # 检查任务是否已完成（解决订阅晚于任务完成的问题）
-                await _check_and_send_completed_task(conn_id, task_id, user_id)
+                # 避免重复订阅同一任务
+                if task_id not in _consumer_tasks[conn_id]:
+                    consumer = asyncio.create_task(
+                        _stream_consumer(conn_id, user_id, task_id, last_stream_id)
+                    )
+                    _consumer_tasks[conn_id][task_id] = consumer
+
+                logger.info(
+                    f"Task subscribed (stream) | conn={conn_id} | "
+                    f"task={task_id} | last_stream_id={last_stream_id}"
+                )
             else:
                 await ws_manager.send_to_connection(conn_id, build_error(
                     "Connection not found",
@@ -191,9 +214,12 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
             ))
 
     elif msg_type == WSMessageType.UNSUBSCRIBE.value:
-        # 取消订阅
+        # 取消订阅 + 停止 Stream consumer
         task_id = payload.get("task_id")
         if task_id:
+            consumer = _consumer_tasks.get(conn_id, {}).pop(task_id, None)
+            if consumer:
+                consumer.cancel()
             await ws_manager.unsubscribe_task(conn_id, task_id)
             logger.info(f"Task unsubscribed | conn={conn_id} | task={task_id}")
 
@@ -201,30 +227,53 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
         logger.warning(f"Unknown message type | conn={conn_id} | type={msg_type}")
 
 
-async def _get_task_accumulated_content(task_id: str, user_id: str) -> Optional[str]:
+async def _stream_consumer(
+    conn_id: str,
+    user_id: str,
+    task_id: str,
+    last_stream_id: str,
+) -> None:
     """
-    查询任务的累积内容（用于 subscribe 时返回最新内容）
+    从 Redis Stream 读取消息并推送到 WS 客户端。
 
-    仅查询 running 状态的 chat 任务，已完成的由 _check_and_send_completed_task 处理
+    流程：
+    1. stream_consume 先 XRANGE 补发历史，再 XREAD BLOCK 实时监听
+    2. 遇到 message_done / message_error 时自动结束
+    3. Stream 不存在（已过期）时 fallback 到 DB 查询最终结果
     """
+    message_count = 0
     try:
-        db = get_db()
-        # 尝试 external_task_id 和 client_task_id 两种方式查询
-        for field in ["external_task_id", "client_task_id"]:
-            result = db.table("tasks").select(
-                "accumulated_content"
-            ).eq(field, task_id).eq(
-                "user_id", user_id
-            ).eq("type", "chat").eq(
-                "status", "running"
-            ).maybe_single().execute()
+        async for stream_id, message in stream_consume(task_id, user_id, last_stream_id):
+            sent = await ws_manager.send_to_connection(conn_id, message)
+            if not sent:
+                # 连接已断开，退出
+                break
+            message_count += 1
 
-            if result and result.data and result.data.get("accumulated_content"):
-                return result.data["accumulated_content"]
-        return None
+        logger.info(
+            f"Stream consumer finished | conn={conn_id} | "
+            f"task={task_id} | messages={message_count}"
+        )
+
+    except asyncio.CancelledError:
+        return
     except Exception as e:
-        logger.warning(f"Failed to get accumulated_content | task_id={task_id} | error={e}")
-        return None
+        logger.warning(
+            f"Stream consumer error | conn={conn_id} | "
+            f"task={task_id} | error={e}"
+        )
+
+    # Fallback: Stream 为空或已过期时，从 DB 补发已完成的任务
+    # 仅在 stream 未投递任何消息时触发（避免重复发送 message_done）
+    if message_count == 0:
+        try:
+            await _check_and_send_completed_task(conn_id, task_id, user_id)
+        except Exception:
+            pass
+
+    # 清理 consumer 注册
+    _consumer_tasks.get(conn_id, {}).pop(task_id, None)
+
 
 
 async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: str):

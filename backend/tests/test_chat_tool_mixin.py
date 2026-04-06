@@ -114,13 +114,12 @@ class TestExecuteSingleTool:
     """_execute_single_tool() 安全检查 + 执行"""
 
     @pytest.mark.asyncio
-    @patch("services.handlers.chat_tool_mixin.ws_manager")
-    async def test_dangerous_tool_rejected(self, mock_ws):
+    @patch("services.handlers.chat_tool_mixin.stream_publish", new_callable=AsyncMock)
+    async def test_dangerous_tool_rejected(self, mock_publish):
         """dangerous 工具→拒绝执行，返回提示"""
         from services.handlers.chat_tool_mixin import ChatToolMixin
 
         mixin = _make_mixin()
-        mock_ws.send_to_task_or_user = AsyncMock()
         executor = AsyncMock()
 
         tc = {"name": "erp_execute", "id": "tc1", "arguments": '{"action":"cancel"}'}
@@ -134,13 +133,12 @@ class TestExecuteSingleTool:
         executor.execute.assert_not_called()
 
     @pytest.mark.asyncio
-    @patch("services.handlers.chat_tool_mixin.ws_manager")
-    async def test_safe_tool_executes(self, mock_ws):
+    @patch("services.handlers.chat_tool_mixin.stream_publish", new_callable=AsyncMock)
+    async def test_safe_tool_executes(self, mock_publish):
         """safe 工具→直接执行"""
         from services.handlers.chat_tool_mixin import ChatToolMixin
 
         mixin = _make_mixin()
-        mock_ws.send_to_task_or_user = AsyncMock()
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value="库存100件")
 
@@ -154,13 +152,12 @@ class TestExecuteSingleTool:
         executor.execute.assert_called_once()
 
     @pytest.mark.asyncio
-    @patch("services.handlers.chat_tool_mixin.ws_manager")
-    async def test_tool_execution_error_returns_error(self, mock_ws):
+    @patch("services.handlers.chat_tool_mixin.stream_publish", new_callable=AsyncMock)
+    async def test_tool_execution_error_returns_error(self, mock_publish):
         """工具执行异常→返回错误，不中断"""
         from services.handlers.chat_tool_mixin import ChatToolMixin
 
         mixin = _make_mixin()
-        mock_ws.send_to_task_or_user = AsyncMock()
         executor = AsyncMock()
         executor.execute = AsyncMock(side_effect=Exception("API timeout"))
 
@@ -173,13 +170,12 @@ class TestExecuteSingleTool:
         assert "失败" in text
 
     @pytest.mark.asyncio
-    @patch("services.handlers.chat_tool_mixin.ws_manager")
-    async def test_invalid_json_arguments(self, mock_ws):
+    @patch("services.handlers.chat_tool_mixin.stream_publish", new_callable=AsyncMock)
+    async def test_invalid_json_arguments(self, mock_publish):
         """无效 JSON 参数→返回解析错误"""
         from services.handlers.chat_tool_mixin import ChatToolMixin
 
         mixin = _make_mixin()
-        mock_ws.send_to_task_or_user = AsyncMock()
         executor = AsyncMock()
 
         tc = {"name": "local_stock_query", "id": "tc1", "arguments": "not json{{{"}
@@ -191,13 +187,12 @@ class TestExecuteSingleTool:
         assert "参数解析失败" in text
 
     @pytest.mark.asyncio
-    @patch("services.handlers.chat_tool_mixin.ws_manager")
-    async def test_confirm_tool_executes_with_log(self, mock_ws):
+    @patch("services.handlers.chat_tool_mixin.stream_publish", new_callable=AsyncMock)
+    async def test_confirm_tool_executes_with_log(self, mock_publish):
         """confirm 工具→正常执行（通知但不阻塞）"""
         from services.handlers.chat_tool_mixin import ChatToolMixin
 
         mixin = _make_mixin()
-        mock_ws.send_to_task_or_user = AsyncMock()
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value="图片生成中")
 

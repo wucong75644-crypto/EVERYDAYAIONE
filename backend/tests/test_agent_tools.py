@@ -160,10 +160,10 @@ class TestToolSets:
 class TestBuildErpTools:
 
     def test_returns_19_tools(self):
-        """build_erp_tools 返回 19 个工具（8 API + 11 本地）"""
+        """build_erp_tools 返回 20 个工具（8 API + 12 本地）"""
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
-        assert len(tools) == 19
+        assert len(tools) == 20
 
     def test_each_tool_structure(self):
         """每个工具有完整的 function calling 结构"""
