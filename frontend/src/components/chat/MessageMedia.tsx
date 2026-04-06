@@ -12,7 +12,7 @@ import AiImageGrid from './AiImageGrid';
 import ImageContextMenu from './ImageContextMenu';
 import styles from './shared.module.css';
 import type { ContentPart, FilePart } from '../../types/message';
-import { downloadFile } from '../../utils/downloadFile';
+import FileCardList from './FileCard';
 
 const IMAGE_RETRY_CONFIG = {
   maxRetries: 3,
@@ -489,75 +489,9 @@ export default memo(function MessageMedia({
       )}
 
       {/* 文件下载卡片 */}
-      {files.length > 0 && (
-        <div className="mt-3 space-y-2">
-          {files.map((file) => (
-            <FileCard key={file.url} file={file} />
-          ))}
-        </div>
-      )}
+      {files.length > 0 && <FileCardList files={files} />}
     </>
   );
 });
 
 
-/** 文件类型图标映射 */
-function getFileIcon(name: string): string {
-  const ext = name.split('.').pop()?.toLowerCase() || '';
-  if (['xlsx', 'xls', 'csv', 'tsv'].includes(ext)) return '\uD83D\uDCCA';
-  if (ext === 'pdf') return '\uD83D\uDCC4';
-  if (['doc', 'docx', 'txt', 'md'].includes(ext)) return '\uD83D\uDCC3';
-  if (['zip', 'rar', '7z'].includes(ext)) return '\uD83D\uDCE6';
-  return '\uD83D\uDCCE';
-}
-
-/** 格式化文件大小 */
-function formatFileSize(bytes?: number): string {
-  if (!bytes) return '';
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-}
-
-/** 文件下载卡片 */
-function FileCard({ file }: { file: FilePart }) {
-  const handleDownload = async () => {
-    try {
-      await downloadFile(file.url, file.name);
-    } catch {
-      toast.error('下载失败，请重试');
-    }
-  };
-
-  return (
-    <div
-      className="flex items-center gap-3 px-4 py-3 rounded-xl bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer border border-gray-200 dark:border-gray-700"
-      onClick={handleDownload}
-    >
-      <span className="text-2xl flex-shrink-0">{getFileIcon(file.name)}</span>
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
-          {file.name}
-        </div>
-        {file.size && (
-          <div className="text-xs text-gray-500 dark:text-gray-400">
-            {formatFileSize(file.size)}
-          </div>
-        )}
-      </div>
-      <svg
-        className="w-5 h-5 text-gray-400 flex-shrink-0"
-        fill="none"
-        stroke="currentColor"
-        viewBox="0 0 24 24"
-      >
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-        />
-      </svg>
-    </div>
-  );
-}

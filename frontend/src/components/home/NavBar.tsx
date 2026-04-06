@@ -4,9 +4,11 @@
  * Logo + 搜索框（紧贴Logo） + 用户信息/登录按钮
  */
 
-import { Search } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { Search, LogOut } from 'lucide-react';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { useAuthModalStore } from '../../stores/useAuthModalStore';
+import { useClickOutside } from '../../hooks/useClickOutside';
 
 interface NavBarProps {
   searchQuery: string;
@@ -14,8 +16,19 @@ interface NavBarProps {
 }
 
 export default function NavBar({ searchQuery, onSearchChange }: NavBarProps) {
-  const { user, isAuthenticated } = useAuthStore();
+  const { user, isAuthenticated, clearAuth } = useAuthStore();
   const { openLogin, openRegister } = useAuthModalStore();
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  useClickOutside(userMenuRef, showUserMenu, () => setShowUserMenu(false));
+
+  const handleLogout = () => {
+    const loginOrgId = localStorage.getItem('login_org_id');
+    clearAuth();
+    setShowUserMenu(false);
+    window.location.href = loginOrgId ? `/?org=${loginOrgId}` : '/';
+  };
 
   return (
     <nav className="bg-white shadow-sm sticky top-0 z-20">
@@ -43,9 +56,25 @@ export default function NavBar({ searchQuery, onSearchChange }: NavBarProps) {
                 <span className="text-sm text-gray-500">
                   {user?.credits ?? 0} 积分
                 </span>
-                <span className="text-sm font-medium text-gray-700">
-                  {user?.nickname}
-                </span>
+                <div className="relative" ref={userMenuRef}>
+                  <button
+                    onClick={() => setShowUserMenu((prev) => !prev)}
+                    className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors cursor-pointer"
+                  >
+                    {user?.nickname}
+                  </button>
+                  {showUserMenu && (
+                    <div className="absolute right-0 mt-2 w-36 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-30">
+                      <button
+                        onClick={handleLogout}
+                        className="w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center space-x-2 transition-colors"
+                      >
+                        <LogOut className="w-4 h-4" />
+                        <span>退出登录</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </>
             ) : (
               <>
