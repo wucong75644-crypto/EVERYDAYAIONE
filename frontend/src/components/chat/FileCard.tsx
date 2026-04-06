@@ -8,25 +8,8 @@ import { useState } from 'react';
 import toast from 'react-hot-toast';
 import type { FilePart } from '../../types/message';
 import { downloadFile } from '../../utils/downloadFile';
+import { getFileIcon, formatFileSize } from '../../utils/fileUtils';
 import FilePreviewModal, { canPreview } from './FilePreviewModal';
-
-/** 文件类型图标映射 */
-function getFileIcon(name: string): string {
-  const ext = name.split('.').pop()?.toLowerCase() || '';
-  if (['xlsx', 'xls', 'csv', 'tsv'].includes(ext)) return '\uD83D\uDCCA';
-  if (ext === 'pdf') return '\uD83D\uDCC4';
-  if (['doc', 'docx', 'txt', 'md'].includes(ext)) return '\uD83D\uDCC3';
-  if (['zip', 'rar', '7z'].includes(ext)) return '\uD83D\uDCE6';
-  return '\uD83D\uDCCE';
-}
-
-/** 格式化文件大小 */
-function formatFileSize(bytes?: number): string {
-  if (!bytes) return '';
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-}
 
 /** 文件卡片列表（含预览弹窗状态） */
 export default function FileCardList({ files }: { files: FilePart[] }) {

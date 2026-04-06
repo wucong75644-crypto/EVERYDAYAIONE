@@ -5,12 +5,13 @@
  * 参考 ImagePreviewModal 的全屏弹窗架构。
  */
 
-import { useState, useEffect, useCallback, memo } from 'react';
+import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Download, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { FilePart } from '../../types/message';
 import { downloadFile } from '../../utils/downloadFile';
+import { getFileIcon, formatFileSize } from '../../utils/fileUtils';
 
 interface FilePreviewModalProps {
   file: FilePart;
@@ -38,6 +39,8 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
   const [textContent, setTextContent] = useState<string | null>(null);
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [activeSheet, setActiveSheet] = useState(0);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const workbookRef = useRef<any>(null);  // 缓存 xlsx workbook，避免 sheet 切换重复 fetch
 
   const ext = file.name.split('.').pop()?.toLowerCase() || '';
   const isPdf = ext === 'pdf';
@@ -76,6 +79,7 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
           const buffer = await response.arrayBuffer();
           const wb = read(buffer);
           if (cancelled) return;
+          workbookRef.current = wb;  // 缓存 workbook
           setSheetNames(wb.SheetNames);
           const ws = wb.Sheets[wb.SheetNames[0]];
           setTableData(utils.sheet_to_json<string[]>(ws, { header: 1 }) as string[][]);
@@ -102,23 +106,19 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
     return () => { cancelled = true; };
   }, [file.url, isPdf, isExcel, isCsv, ext]);
 
-  // 切换 Sheet
+  // 切换 Sheet（从缓存读取，无需重新 fetch）
   const handleSheetChange = useCallback(async (index: number) => {
     setActiveSheet(index);
-    setLoading(true);
+    const wb = workbookRef.current;
+    if (!wb) return;
     try {
-      const { read, utils } = await import('xlsx');
-      const response = await fetch(file.url, { mode: 'cors', credentials: 'omit' });
-      const buffer = await response.arrayBuffer();
-      const wb = read(buffer);
+      const { utils } = await import('xlsx');
       const ws = wb.Sheets[wb.SheetNames[index]];
       setTableData(utils.sheet_to_json<string[]>(ws, { header: 1 }) as string[][]);
     } catch (e) {
       setError((e as Error).message);
-    } finally {
-      setLoading(false);
     }
-  }, [file.url]);
+  }, []);
 
   const handleDownload = async () => {
     try {
@@ -140,7 +140,7 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
           <span className="truncate font-medium">{file.name}</span>
           {file.size && (
             <span className="text-sm text-gray-400 flex-shrink-0">
-              {formatSize(file.size)}
+              {formatFileSize(file.size)}
             </span>
           )}
         </div>
@@ -262,16 +262,3 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
 });
 
 
-function getFileIcon(name: string): string {
-  const ext = name.split('.').pop()?.toLowerCase() || '';
-  if (['xlsx', 'xls', 'csv', 'tsv'].includes(ext)) return '\uD83D\uDCCA';
-  if (ext === 'pdf') return '\uD83D\uDCC4';
-  if (['doc', 'docx', 'txt', 'md'].includes(ext)) return '\uD83D\uDCC3';
-  return '\uD83D\uDCCE';
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-}
