@@ -1957,10 +1957,10 @@ class TestBuildErpTools:
     """验证 build_erp_tools 生成的工具定义结构"""
 
     def test_returns_19_tools(self):
-        """build_erp_tools 返回 19 个工具（8 API + 11 本地）"""
+        """build_erp_tools 返回 20 个工具（8 API + 12 本地）"""
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
-        assert len(tools) == 19
+        assert len(tools) == 20
 
     def test_all_query_tools_have_page_size(self):
         """API 两步查询工具都有 page_size 参数"""

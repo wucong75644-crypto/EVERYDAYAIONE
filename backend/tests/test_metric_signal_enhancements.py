@@ -151,9 +151,9 @@ class TestCompleteCommonMetricParams:
         with patch.object(handler, "_complete_task"), \
              patch.object(handler, "_record_knowledge_metric",
                           new_callable=AsyncMock) as mock_metric, \
-             patch("services.websocket_manager.ws_manager") as mock_ws, \
+             patch("services.task_stream.publish", new_callable=AsyncMock), \
              patch("schemas.websocket.build_message_done"):
-            mock_ws.send_to_task_or_user = AsyncMock()
+
 
             await handler.on_complete(
                 task_id="task_123",
@@ -181,9 +181,9 @@ class TestCompleteCommonMetricParams:
         with patch.object(handler, "_complete_task"), \
              patch.object(handler, "_record_knowledge_metric",
                           new_callable=AsyncMock) as mock_metric, \
-             patch("services.websocket_manager.ws_manager") as mock_ws, \
+             patch("services.task_stream.publish", new_callable=AsyncMock), \
              patch("schemas.websocket.build_message_done"):
-            mock_ws.send_to_task_or_user = AsyncMock()
+
 
             await handler.on_complete(
                 task_id="task_123",
@@ -298,9 +298,9 @@ class TestErrorCommonMetricParams:
                           new_callable=AsyncMock) as mock_metric, \
              patch.object(handler, "_extract_failure_knowledge",
                           new_callable=AsyncMock), \
-             patch("services.websocket_manager.ws_manager") as mock_ws, \
+             patch("services.task_stream.publish", new_callable=AsyncMock), \
              patch("schemas.websocket.build_message_error"):
-            mock_ws.send_to_task_or_user = AsyncMock()
+
 
             await handler.on_error(
                 task_id="task_123",
@@ -325,9 +325,9 @@ class TestErrorCommonMetricParams:
                           new_callable=AsyncMock) as mock_metric, \
              patch.object(handler, "_extract_failure_knowledge",
                           new_callable=AsyncMock), \
-             patch("services.websocket_manager.ws_manager") as mock_ws, \
+             patch("services.task_stream.publish", new_callable=AsyncMock), \
              patch("schemas.websocket.build_message_error"):
-            mock_ws.send_to_task_or_user = AsyncMock()
+
 
             await handler.on_error(
                 task_id="task_123",

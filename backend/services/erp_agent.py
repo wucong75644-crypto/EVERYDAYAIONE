@@ -83,7 +83,7 @@ _MAX_TOTAL_TOKENS = 50000  # Token 预算上限
 # ERP Agent 核心
 # ============================================================
 
-MAX_ERP_TURNS = 5
+MAX_ERP_TURNS = 20
 
 
 class ERPAgent:
@@ -299,7 +299,10 @@ class ERPAgent:
                         f"text={turn_text[:50] if turn_text else '(empty)'}"
                     )
                     if empty_turns >= 2:
-                        # 连续 2 次空响应，不再浪费轮次
+                        # 连续 2 次空响应，有文字则作为最终输出
+                        if turn_text:
+                            accumulated_text = turn_text
+                            is_llm_synthesis = True
                         break
                     if turn_text:
                         messages.append({"role": "assistant", "content": turn_text})
@@ -388,8 +391,12 @@ class ERPAgent:
 
             try:
                 args = json.loads(tc["arguments"]) if tc["arguments"] else {}
-            except json.JSONDecodeError:
-                args = {}
+            except json.JSONDecodeError as e:
+                logger.warning(f"ERPAgent bad JSON | tool={tool_name} | error={e}")
+                result = f"工具参数JSON格式错误: {e}，请检查参数格式"
+                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+                accumulated = result
+                continue
 
             # [Fix F] 超时控制
             try:
@@ -430,7 +437,7 @@ class ERPAgent:
             return
         try:
             from schemas.websocket import build_agent_step
-            from services.websocket_manager import ws_manager
+            from services.task_stream import publish as stream_publish
             msg = build_agent_step(
                 conversation_id=self.conversation_id,
                 tool_name=tool_name,
@@ -438,6 +445,6 @@ class ERPAgent:
                 turn=turn,
                 task_id=self.task_id,
             )
-            await ws_manager.send_to_task_subscribers(self.task_id, msg)
+            await stream_publish(self.task_id, self.user_id, msg)
         except Exception:
             pass

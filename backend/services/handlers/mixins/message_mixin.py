@@ -211,10 +211,10 @@ class MessageMixin:
     async def _push_ws_message(
         self, client_task_id: str, user_id: str, ws_msg: Dict[str, Any]
     ) -> None:
-        """推送 WebSocket 消息（Chat 走 task 订阅，Media 走 user 投递）"""
-        from services.websocket_manager import ws_manager
+        """推送 WebSocket 消息（通过 Redis Stream 持久化投递）"""
+        from services.task_stream import publish as stream_publish
 
-        await ws_manager.send_to_task_or_user(client_task_id, user_id, ws_msg)
+        await stream_publish(client_task_id, user_id, ws_msg)
 
     async def _handle_complete_common(
         self,
@@ -286,6 +286,10 @@ class MessageMixin:
             f"{self.handler_type.value.capitalize()} completed | "
             f"task_id={task_id} | message_id={message_id} | credits={actual_credits}"
         )
+
+        # 设置 Redis Stream 过期时间（任务完成后 10 分钟自动清理）
+        from services.task_stream import set_stream_expire
+        asyncio.create_task(set_stream_expire(client_task_id))
 
         # 知识库指标（Image/Video）
         handler_type = self.handler_type.value
@@ -368,6 +372,10 @@ class MessageMixin:
             f"{self.handler_type.value.capitalize()} failed | "
             f"task_id={task_id} | error_code={error_code} | error={error_message}"
         )
+
+        # 设置 Redis Stream 过期时间
+        from services.task_stream import set_stream_expire
+        asyncio.create_task(set_stream_expire(client_task_id))
 
         # 知识库指标（Image/Video）
         handler_type = self.handler_type.value

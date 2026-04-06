@@ -368,8 +368,8 @@ class TestRunToolLoopExitLogic:
             [{"role": "user", "content": "查库存"}],
             [], [],
         )
-        # 应走兜底提示
-        assert "未能生成完整结论" in text
+        # 有文字时应作为有效输出（不再走兜底提示）
+        assert text == "让我想想..."
         assert turns == 2  # 2 次空响应后中止
 
     @pytest.mark.asyncio

@@ -29,9 +29,9 @@ class TestThinkingStream:
 
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
-    @patch("services.handlers.chat_handler.ws_manager")
-    async def test_thinking_chunks_pushed_via_ws(self, mock_ws, mock_factory):
-        """thinking_content → build_thinking_chunk → send_to_task_or_user"""
+    @patch("services.handlers.chat_handler.stream_publish", new_callable=AsyncMock)
+    async def test_thinking_chunks_pushed_via_ws(self, mock_stream_pub, mock_factory):
+        """thinking_content → build_thinking_chunk → stream_publish"""
         handler = _make_handler()
         handler._build_llm_messages = AsyncMock(return_value=[
             {"role": "user", "content": "hi"},
@@ -51,7 +51,6 @@ class TestThinkingStream:
             model="test", estimated_cost_usd=Decimal("0"), estimated_credits=1,
         )
         mock_factory.return_value = mock_adapter
-        mock_ws.send_to_task_or_user = AsyncMock()
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
@@ -62,7 +61,7 @@ class TestThinkingStream:
         from schemas.websocket import WSMessageType
         thinking_msgs = [
             call.args[2]
-            for call in mock_ws.send_to_task_or_user.call_args_list
+            for call in mock_stream_pub.call_args_list
             if call.args[2].get("type") == WSMessageType.THINKING_CHUNK.value
         ]
         assert len(thinking_msgs) == 2
@@ -71,8 +70,8 @@ class TestThinkingStream:
 
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
-    @patch("services.handlers.chat_handler.ws_manager")
-    async def test_thinking_content_passed_to_on_complete(self, mock_ws, mock_factory):
+    @patch("services.handlers.chat_handler.stream_publish", new_callable=AsyncMock)
+    async def test_thinking_content_passed_to_on_complete(self, mock_stream_pub, mock_factory):
         """accumulated_thinking → on_complete(thinking_content=...)"""
         handler = _make_handler()
         handler._build_llm_messages = AsyncMock(return_value=[
@@ -92,7 +91,6 @@ class TestThinkingStream:
             model="test", estimated_cost_usd=Decimal("0"), estimated_credits=0,
         )
         mock_factory.return_value = mock_adapter
-        mock_ws.send_to_task_or_user = AsyncMock()
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
@@ -105,8 +103,8 @@ class TestThinkingStream:
 
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
-    @patch("services.handlers.chat_handler.ws_manager")
-    async def test_no_thinking_passes_none_to_on_complete(self, mock_ws, mock_factory):
+    @patch("services.handlers.chat_handler.stream_publish", new_callable=AsyncMock)
+    async def test_no_thinking_passes_none_to_on_complete(self, mock_stream_pub, mock_factory):
         """无 thinking chunk → on_complete(thinking_content=None)"""
         handler = _make_handler()
         handler._build_llm_messages = AsyncMock(return_value=[
@@ -125,7 +123,6 @@ class TestThinkingStream:
             model="test", estimated_cost_usd=Decimal("0"), estimated_credits=0,
         )
         mock_factory.return_value = mock_adapter
-        mock_ws.send_to_task_or_user = AsyncMock()
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
@@ -178,9 +175,7 @@ class TestHandleCompleteThinkingContent:
         handler._upsert_assistant_message = fake_upsert
         handler._complete_task = MagicMock()
 
-        with patch("services.websocket_manager.ws_manager") as mock_ws:
-            mock_ws.send_to_task_or_user = AsyncMock()
-
+        with patch("services.task_stream.publish", new_callable=AsyncMock):
             await handler._handle_complete_common(
                 task_id="task_1",
                 result=[TextPart(text="ok")],
@@ -228,9 +223,7 @@ class TestHandleCompleteThinkingContent:
         handler._upsert_assistant_message = fake_upsert
         handler._complete_task = MagicMock()
 
-        with patch("services.websocket_manager.ws_manager") as mock_ws:
-            mock_ws.send_to_task_or_user = AsyncMock()
-
+        with patch("services.task_stream.publish", new_callable=AsyncMock):
             await handler._handle_complete_common(
                 task_id="task_2",
                 result=[TextPart(text="ok")],

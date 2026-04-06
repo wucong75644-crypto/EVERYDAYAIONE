@@ -22,7 +22,7 @@ from schemas.websocket import (
     build_image_partial_update,
     build_message_done,
 )
-from services.websocket_manager import ws_manager
+from services.task_stream import publish as stream_publish
 
 
 class BatchCompletionService:
@@ -193,7 +193,7 @@ class BatchCompletionService:
         )
 
         # 优先推送到 task 订阅者，fallback 到 user
-        await ws_manager.send_to_task_or_user(
+        await stream_publish(
             task_id=client_task_id or task["external_task_id"],
             user_id=user_id,
             message=msg,
@@ -314,7 +314,7 @@ class BatchCompletionService:
                 credits_consumed=the_task.get("credits_locked", 0),
             )
 
-            await ws_manager.send_to_task_or_user(
+            await stream_publish(
                 task_id=client_task_id or the_task["external_task_id"],
                 user_id=user_id,
                 message=done_msg,
@@ -421,7 +421,7 @@ class BatchCompletionService:
             credits_consumed=total_credits,
         )
 
-        await ws_manager.send_to_task_or_user(
+        await stream_publish(
             task_id=client_task_id or first_task["external_task_id"],
             user_id=user_id,
             message=done_msg,

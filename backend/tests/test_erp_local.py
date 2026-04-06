@@ -715,11 +715,11 @@ class TestLocalProductStats:
 
 class TestBuildLocalTools:
 
-    def test_returns_11_tools(self):
-        """build_local_tools 返回 11 个工具（8原有 + 3新增）"""
+    def test_returns_12_tools(self):
+        """build_local_tools 返回 12 个工具（8原有 + 4新增）"""
         from config.erp_local_tools import build_local_tools
         tools = build_local_tools()
-        assert len(tools) == 11
+        assert len(tools) == 12
 
     def test_each_tool_structure(self):
         """每个工具有完整 function calling 结构"""
