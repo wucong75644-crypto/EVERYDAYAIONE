@@ -23,6 +23,7 @@ ERP_LOCAL_TOOLS: Set[str] = {
     "local_global_stats",
     "local_shop_list",
     "local_warehouse_list",
+    "local_db_export",
     "trigger_erp_sync",
 }
 
@@ -322,7 +323,36 @@ def build_local_tools() -> List[Dict[str, Any]]:
             },
             [],
         ),
-        # 13. 手动触发同步
+        # 13. 本地数据库导出（输出 staging 文件，给 code_execute 处理）
+        _tool(
+            "local_db_export",
+            "从本地数据库导出明细数据到 staging 文件。毫秒级响应。"
+            "适合：导出Excel、全量数据分析等需要完整原始数据的场景。"
+            "结果存 staging 文件，返回文件路径，配合 code_execute 生成 Excel。"
+            "⚠ 本地有的数据优先用本工具（毫秒级），"
+            "本地没有的数据（如物流轨迹）才用 fetch_all_pages（远程API）。",
+            {
+                "doc_type": _enum(
+                    "数据类型",
+                    ["order", "purchase", "aftersale", "receipt",
+                     "shelf", "purchase_return"],
+                ),
+                "days": _int("导出最近N天数据（默认1，即今天）"),
+                "time_type": _enum(
+                    "时间类型（仅order有效）。"
+                    "含「付款/成交」用pay_time，含「发货」用consign_time，"
+                    "默认doc_created_at（下单时间）",
+                    ["doc_created_at", "pay_time", "consign_time"],
+                ),
+                "shop_name": _str("按店铺过滤（模糊匹配）"),
+                "platform": _str("按平台过滤(tb/jd/pdd/dy/xhs)"),
+                "product_code": _str("按商品编码过滤"),
+                "status": _str("按状态过滤"),
+                "max_rows": _int("最大导出行数（默认5000，上限10000）"),
+            },
+            ["doc_type"],
+        ),
+        # 14. 手动触发同步
         _tool(
             "trigger_erp_sync",
             "手动触发ERP数据同步。"
@@ -417,6 +447,10 @@ LOCAL_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "properties": {
             "is_virtual": {"type": "boolean"},
         },
+    },
+    "local_db_export": {
+        "required": ["doc_type"],
+        "properties": {"doc_type": {"type": "string"}},
     },
     "trigger_erp_sync": {
         "required": ["sync_type"],

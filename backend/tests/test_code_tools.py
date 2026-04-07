@@ -66,6 +66,22 @@ class TestCodeToolsDefinition:
         assert "erp_query（" not in CODE_ROUTING_PROMPT
         assert "erp_query_all" not in CODE_ROUTING_PROMPT
 
+    def test_routing_prompt_jsonl_format(self):
+        """CODE_ROUTING_PROMPT 说明 JSONL 格式和 io.StringIO 用法"""
+        assert "JSONL" in CODE_ROUTING_PROMPT
+        assert "io.StringIO" in CODE_ROUTING_PROMPT
+
+    def test_code_execute_desc_jsonl(self):
+        """code_execute 描述中包含 JSONL 和 io.StringIO"""
+        tool = build_code_tools()[0]
+        desc = tool["function"]["description"]
+        assert "jsonl" in desc or "JSONL" in desc
+        assert "io.StringIO" in desc
+
+    def test_routing_prompt_mentions_local_db_export(self):
+        """CODE_ROUTING_PROMPT 提及 local_db_export"""
+        assert "local_db_export" in CODE_ROUTING_PROMPT
+
 
 class TestAgentToolsIntegration:
     """agent_tools.py 集成测试"""

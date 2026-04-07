@@ -257,11 +257,16 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         ts = int(_time.time())
         safe_tool = tool_name.replace("/", "_").replace("..", "_")
         safe_action = action.replace("/", "_").replace("..", "_")
-        filename = f"{safe_tool}_{safe_action}_{ts}.json"
+        filename = f"{safe_tool}_{safe_action}_{ts}.jsonl"
         staging_path = staging_dir / filename
-        staging_path.write_text(
-            json.dumps(items, ensure_ascii=False), encoding="utf-8",
-        )
+
+        # JSONL 流式写入（逐行，不占全量内存）
+        import aiofiles
+        async with aiofiles.open(staging_path, "w", encoding="utf-8") as f:
+            for item in items:
+                await f.write(
+                    json.dumps(item, ensure_ascii=False) + "\n"
+                )
 
         # 返回文件的相对路径（沙盒 read_file 用）
         rel_path = f"staging/{self.conversation_id or 'default'}/{filename}"
@@ -280,10 +285,11 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
 
         return (
             f"[数据已暂存] {rel_path}\n"
-            f"共 {len(items)} 条记录，耗时 {elapsed:.1f}秒。"
+            f"共 {len(items)} 条记录（JSONL格式），耗时 {elapsed:.1f}秒。"
             f"{warning}\n"
             f"如需处理请调 code_execute，"
-            f"用 read_file(\"{rel_path}\") 读取数据。\n\n"
+            f"用 raw=await read_file(\"{rel_path}\"); "
+            f"df=pd.read_json(io.StringIO(raw), lines=True) 读取。\n\n"
             f"前3条预览：\n{preview}"
         )
 
@@ -336,9 +342,6 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             result = f"沙盒执行异常: {e}"
             return result
         finally:
-            if erp_dispatcher is not None:
-                await erp_dispatcher.close()
-
             # Fire-and-forget: 记录执行指标
             elapsed_ms = int(_time.monotonic() * 1000) - start_ms
             self._record_sandbox_metric(

@@ -1956,11 +1956,11 @@ class TestNewDateKeys:
 class TestBuildErpTools:
     """验证 build_erp_tools 生成的工具定义结构"""
 
-    def test_returns_21_tools(self):
-        """build_erp_tools 返回 21 个工具（8 API + 13 本地）"""
+    def test_returns_22_tools(self):
+        """build_erp_tools 返回 22 个工具（8 API + 14 本地）"""
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
-        assert len(tools) == 21
+        assert len(tools) == 22
 
     def test_all_query_tools_have_page_size(self):
         """API 两步查询工具都有 page_size 参数"""

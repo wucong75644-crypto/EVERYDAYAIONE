@@ -160,6 +160,16 @@ register(ToolEntry(
     priority=1,
 ))
 register(ToolEntry(
+    name="local_db_export",
+    domain="erp",
+    description="从本地数据库导出明细数据到staging文件，配合code_execute生成Excel",
+    tags=[
+        "导出", "下载", "Excel", "报表", "全量数据", "明细数据",
+        "导出订单", "导出采购", "导出售后",
+    ],
+    priority=1,
+))
+register(ToolEntry(
     name="trigger_erp_sync",
     domain="erp",
     description="手动触发ERP数据同步",
