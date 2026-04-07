@@ -60,9 +60,9 @@ async def piggyback_order_log(
                 all_rows.append({
                     "system_id": str(log.get("sid") or ""),
                     "operator": log.get("operator") or log.get("operatorName"),
-                    "action": log.get("action") or log.get("operateAction"),
+                    "action": log.get("action") or log.get("operateAction") or "",
                     "content": log.get("content") or log.get("operateContent"),
-                    "operate_time": _safe_ts(log.get("operateTime")),
+                    "operate_time": _safe_ts(log.get("operateTime")) or "1970-01-01",
                     "extra_json": _pick(log, "traceId", "ip"),
                     "synced_at": now,
                 })
@@ -76,8 +76,7 @@ async def piggyback_order_log(
 
     count = await _batch_upsert(
         svc.db, "erp_order_logs", all_rows,
-        "system_id,COALESCE(operate_time, '1970-01-01'),COALESCE(action, ''),"
-        "COALESCE(org_id, '00000000-0000-0000-0000-000000000000')",
+        "system_id,operate_time,action,org_id",
         org_id=svc.org_id,
     )
     if count:
@@ -111,7 +110,7 @@ async def piggyback_express(
                     rows.append({
                         "system_id": sid,
                         "package_id": str(pack.get("packId") or pack.get("id") or ""),
-                        "express_no": pack.get("outSid") or pack.get("expressNo"),
+                        "express_no": pack.get("outSid") or pack.get("expressNo") or "",
                         "express_company": pack.get("expressCompanyName") or pack.get("company"),
                         "express_company_code": pack.get("expressCompanyCode"),
                         "items_json": pack.get("items") or pack.get("orderItems") or [],
@@ -146,8 +145,7 @@ async def piggyback_express(
 
     count = await _batch_upsert(
         svc.db, "erp_order_packages", all_rows,
-        "system_id,COALESCE(express_no, ''),COALESCE(package_id, ''),"
-        "COALESCE(org_id, '00000000-0000-0000-0000-000000000000')",
+        "system_id,express_no,package_id,org_id",
         org_id=svc.org_id,
     )
     if count:
@@ -181,9 +179,9 @@ async def piggyback_aftersale_log(
                     rows.append({
                         "work_order_id": wid,
                         "operator": log.get("operatorName") or log.get("operator"),
-                        "action": log.get("action") or log.get("operateType"),
+                        "action": log.get("action") or log.get("operateType") or "",
                         "content": log.get("content") or log.get("operateContent"),
-                        "operate_time": _safe_ts(log.get("operateTime") or log.get("created")),
+                        "operate_time": _safe_ts(log.get("operateTime") or log.get("created")) or "1970-01-01",
                         "extra_json": _pick(log, "logId", "ip"),
                         "synced_at": now,
                     })
@@ -202,8 +200,7 @@ async def piggyback_aftersale_log(
 
     count = await _batch_upsert(
         svc.db, "erp_aftersale_logs", all_rows,
-        "work_order_id,COALESCE(operate_time, '1970-01-01'),COALESCE(action, ''),"
-        "COALESCE(org_id, '00000000-0000-0000-0000-000000000000')",
+        "work_order_id,operate_time,action,org_id",
         org_id=svc.org_id,
     )
     if count:
@@ -298,13 +295,13 @@ async def sync_batch_stock(svc: ErpSyncService) -> int:
                         "outer_id": outer_id,
                         "sku_outer_id": item.get("skuOuterId") or "",
                         "item_name": item.get("title"),
-                        "batch_no": item.get("batchNo") or item.get("batchCode"),
+                        "batch_no": item.get("batchNo") or item.get("batchCode") or "",
                         "production_date": item.get("productionDate"),
                         "expiry_date": item.get("expiryDate") or item.get("shelfLifeDate"),
                         "shelf_life_days": item.get("shelfLifeDays"),
                         "stock_qty": item.get("stock") or item.get("quantity") or 0,
-                        "warehouse_name": item.get("warehouseName"),
-                        "shop_id": shop_id,
+                        "warehouse_name": item.get("warehouseName") or "",
+                        "shop_id": shop_id or "",
                         "extra_json": _pick(
                             item, "warehouseId", "sectionCode",
                             "inboundDate", "supplierId",
@@ -321,9 +318,7 @@ async def sync_batch_stock(svc: ErpSyncService) -> int:
 
     count = await _batch_upsert(
         svc.db, "erp_batch_stock", all_rows,
-        "outer_id,sku_outer_id,COALESCE(batch_no, ''),"
-        "COALESCE(shop_id, ''),COALESCE(warehouse_name, ''),"
-        "COALESCE(org_id, '00000000-0000-0000-0000-000000000000')",
+        "outer_id,sku_outer_id,batch_no,shop_id,warehouse_name,org_id",
         org_id=svc.org_id,
     )
     if count:
