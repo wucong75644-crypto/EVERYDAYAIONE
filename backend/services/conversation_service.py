@@ -24,6 +24,7 @@ class ConversationService:
         title: Optional[str] = None,
         model_id: Optional[str] = None,
         org_id: Optional[str] = None,
+        source: str = "web",
     ) -> dict:
         """
         创建新对话
@@ -32,6 +33,7 @@ class ConversationService:
             user_id: 用户 ID
             title: 对话标题（可选）
             model_id: 模型 ID（可选）
+            source: 来源（web / wecom）
 
         Returns:
             对话信息
@@ -43,6 +45,7 @@ class ConversationService:
                 "message_count": 0,
                 "credits_consumed": 0,
                 "org_id": org_id,
+                "source": source,
             }
 
             if model_id:
@@ -149,7 +152,7 @@ class ConversationService:
             # 单次查询同时获取数据和总数（count="exact" 在同一请求中返回计数）
             query = (
                 self.db.table("conversations")
-                .select("id, title, last_message_preview, model_id, updated_at", count="exact")
+                .select("id, title, last_message_preview, model_id, updated_at, source", count="exact")
                 .eq("user_id", user_id)
             )
             if org_id:
@@ -170,6 +173,7 @@ class ConversationService:
                     "last_message": conv.get("last_message_preview"),
                     "model_id": conv.get("model_id"),
                     "updated_at": conv["updated_at"],
+                    "source": conv.get("source", "web"),
                 }
                 for conv in result.data
             ]
@@ -311,24 +315,6 @@ class ConversationService:
                 message="删除对话失败",
                 status_code=500,
             )
-
-    async def _get_last_message(self, conversation_id: str) -> Optional[str]:
-        """获取对话最后一条消息内容"""
-        result = (
-            self.db.table("messages")
-            .select("content")
-            .eq("conversation_id", conversation_id)
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
-        )
-
-        if result.data:
-            content = result.data[0]["content"]
-            # 截断过长的内容
-            return content[:50] + "..." if len(content) > 50 else content
-
-        return None
 
     def _format_conversation(self, conversation: dict) -> dict:
         """格式化对话响应"""

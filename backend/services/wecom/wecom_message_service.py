@@ -222,6 +222,14 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
 
         keepalive: StreamKeepAlive | None = None
         try:
+            # 积分检查：余额为 0 时拒绝生成
+            balance = self._get_user_balance(user_id)
+            if balance <= 0:
+                await self._reply_credits_insufficient(
+                    reply_ctx, needed=1, balance=balance, action="回复",
+                )
+                return
+
             # 立即发送占位 + 启动保活（每 3 秒更新进度，防止 req_id 失效）
             if reply_ctx.channel == "smart_robot" and reply_ctx.ws_client:
                 import uuid
@@ -345,13 +353,13 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
         chattype: str,
         org_id: Optional[str] = None,
     ) -> str:
-        """获取或创建企微对话。按 user_id + org_id 查找最近的企微对话。"""
+        """获取或创建企微对话。按 user_id + org_id + source=wecom 查找最近的企微对话。"""
         try:
             query = (
                 self.db.table("conversations")
                 .select("id")
                 .eq("user_id", user_id)
-                .like("title", "企微%")
+                .eq("source", "wecom")
             )
             if org_id:
                 query = query.eq("org_id", org_id)
@@ -373,46 +381,13 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
                 title=title,
                 model_id="auto",
                 org_id=org_id,
+                source="wecom",
             )
             return conv["id"]
 
         except Exception as e:
             logger.error(f"Conversation get/create failed | user_id={user_id} | error={e}")
             raise
-
-    async def _get_conversation_history(
-        self,
-        conversation_id: str,
-        limit: int = 20,
-    ) -> List[Dict[str, Any]]:
-        """获取对话历史（role + content 格式）"""
-        try:
-            result = (
-                self.db.table("messages")
-                .select("role, content")
-                .eq("conversation_id", conversation_id)
-                .neq("status", "failed")
-                .order("created_at", desc=True)
-                .limit(limit)
-                .execute()
-            )
-
-            if not result.data:
-                return []
-
-            messages = []
-            for row in reversed(result.data):
-                content = row.get("content")
-                role = row.get("role", "user")
-                text = self._extract_text_from_content(content)
-                if text:
-                    messages.append({"role": role, "content": text})
-
-            return messages
-
-        except Exception as e:
-            logger.warning(f"Get conversation history failed | error={e}")
-            return []
 
     # ── 消息持久化 ────────────────────────────────────────
 

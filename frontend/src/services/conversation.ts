@@ -20,6 +20,7 @@ export interface ConversationListItem {
   last_message: string | null;
   model_id: string | null;
   updated_at: string;
+  source?: 'web' | 'wecom';
 }
 
 export interface ConversationListResponse {
