@@ -191,6 +191,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         finally:
             await RedisClient.release_lock("orphan_task_recovery", _recovery_lock)
 
+    # 启动时清理遗留的 staging 文件（兜底：防止进程崩溃后的孤儿文件）
+    try:
+        from pathlib import Path
+        import time as _time_mod
+        staging_root = Path(settings.file_workspace_root) / "staging"
+        if staging_root.exists():
+            import shutil
+            cutoff = _time_mod.time() - 3600  # 超过1小时的视为孤儿
+            cleaned = 0
+            for child in staging_root.iterdir():
+                if child.is_dir() and child.stat().st_mtime < cutoff:
+                    shutil.rmtree(child, ignore_errors=True)
+                    cleaned += 1
+            if cleaned:
+                logger.info(f"Staging orphan cleanup | removed={cleaned} dirs")
+    except Exception as e:
+        logger.debug(f"Staging cleanup skipped | error={e}")
+
     worker = BackgroundTaskWorker(db)
     worker_task = asyncio.create_task(worker.start())
     logger.info("BackgroundTaskWorker started")

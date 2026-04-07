@@ -256,11 +256,11 @@ def build_erp_tools() -> List[Dict[str, Any]]:
 # ERP 精简提示词（工具使用协议，不规定工具选择）
 ERP_ROUTING_PROMPT = (
     "## 工具选择规则（必须遵守）\n\n"
-    "### 层级：local > erp > code_execute\n"
+    "### 层级：local > erp > fetch_all_pages > code_execute\n"
     "- 禁止跳过 local 工具直接用 erp 远程 API，除非 local 工具明确不支持该操作\n"
     "- local 工具能完成的查询，禁止用 erp_api_search 搜索远程替代\n"
-    "- code_execute 用于：结果>20条需导出Excel、复杂计算/对比、"
-    "local+erp都无法满足时写自定义SQL\n\n"
+    "- code_execute 是纯计算沙盒，不能查询数据，只能处理已获取的 staging 数据\n"
+    "- 导出/全量处理流程：fetch_all_pages 拿数据 → code_execute 计算/导出\n\n"
     "### 各工具职责（含互相引用）\n"
     "- local_shop_list：查店铺列表（优先）。仅当 local 报错时才用 erp_info_query(shop_list)\n"
     "- local_global_stats：全局统计（按店铺/平台/商品分组）。"
@@ -323,9 +323,9 @@ ERP_ROUTING_PROMPT = (
     "## 输出格式选择（自动判断）\n"
     "- 统计汇总（总数/金额/占比）→ 直接文字回复\n"
     "- 结果 ≤20 条明细 → 直接文字回复\n"
-    "- 结果 >20 条明细 → 调 code_execute 生成 Excel 文件\n"
-    "- 用户要求「导出/报表/Excel/下载/文件」→ 调 code_execute 生成 Excel 文件\n"
-    "- 多维度对比/趋势分析 → 调 code_execute 计算，数据量大时同时生成 Excel\n\n"
+    "- 结果 >20 条明细 → fetch_all_pages 拿全量 → code_execute 生成 Excel\n"
+    "- 用户要求「导出/报表/Excel/下载/文件」→ fetch_all_pages → code_execute 生成 Excel\n"
+    "- 多维度对比/趋势分析 → fetch_all_pages 拿数据 → code_execute 计算+生成 Excel\n\n"
     "## 规则\n"
     "- 禁止猜测参数类型，不确定时 ask_user\n"
     "- 严格使用工具定义中的参数名，禁止臆造不存在的参数（如 payTimeStart）\n"
@@ -359,6 +359,63 @@ def build_erp_search_tool() -> Dict[str, Any]:
                     },
                 },
                 "required": ["query"],
+            },
+        },
+    }
+
+
+def build_fetch_all_pages_tool() -> Dict[str, Any]:
+    """构建 fetch_all_pages 工具定义（独立翻页工具）"""
+    return {
+        "type": "function",
+        "function": {
+            "name": "fetch_all_pages",
+            "description": (
+                "全量翻页工具。包装任意 erp_* 远程查询工具，自动翻页拉取全部数据。"
+                "适合：导出Excel、全量数据分析、跨数据源关联等需要完整数据的场景。"
+                "结果自动存为 staging 文件，返回文件路径。"
+                "配合 code_execute 使用：先用本工具拿全量数据，"
+                "再用 code_execute 的 read_file 读取并计算/导出。"
+                "⚠ 翻页耗时较长（100条/页，每页约1秒），"
+                "请根据预估数据量合理设置 max_pages。"
+                "⚠ 使用前需先通过 erp_* 工具的两步协议确认参数格式。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool": {
+                        "type": "string",
+                        "description": (
+                            "要翻页的查询工具名"
+                            "（如 erp_trade_query、erp_product_query）"
+                        ),
+                    },
+                    "action": {
+                        "type": "string",
+                        "description": "操作名（如 order_list、stock_status）",
+                    },
+                    "params": {
+                        "type": "object",
+                        "description": (
+                            "查询参数（与直接调用该工具时的 params 相同）"
+                        ),
+                    },
+                    "page_size": {
+                        "type": "integer",
+                        "description": (
+                            "每页条数（默认100，最小20，快麦API限制）"
+                        ),
+                    },
+                    "max_pages": {
+                        "type": "integer",
+                        "description": (
+                            "最大翻页数（默认200）。"
+                            "预估数据量少时设小可加速，"
+                            "如预估500条设 max_pages=5"
+                        ),
+                    },
+                },
+                "required": ["tool", "action"],
             },
         },
     }

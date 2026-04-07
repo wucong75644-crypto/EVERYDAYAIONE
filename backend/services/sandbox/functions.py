@@ -197,22 +197,31 @@ async def sandbox_search_knowledge(query: str) -> str:
 
 
 def build_sandbox_executor(
-    dispatcher: Any = None,
-    api_concurrency: int = 10,
     timeout: float = 120.0,
     max_result_chars: int = 8000,
-    max_pages: int = 200,
     user_id: str = "",
     org_id: Optional[str] = None,
 ) -> SandboxExecutor:
-    """构建沙盒执行器并注册所有数据源
+    """构建沙盒执行器（纯计算引擎）
+
+    沙盒只注册计算和输出能力，不注册数据获取函数。
+    数据获取必须走 Agent 工具层（local_* > erp_* > fetch_all_pages）。
+
+    已注册能力：
+    - read_file: 读取 staging 目录下的预获取数据（仅限 staging/）
+    - upload_file: 上传计算结果（Excel/CSV/图表）到 OSS
+    - 标准库: pandas, math, datetime, Decimal, Counter, io, json
+
+    已移除（走工具层）：
+    - erp_query / erp_query_all → fetch_all_pages 工具
+    - web_search → crawler 工具
+    - search_knowledge → 知识库工具
+    - write_file / list_dir → 文件工具
+    - get_persisted_result → staging 机制
 
     Args:
-        dispatcher: ErpDispatcher 实例（可选，无则 ERP 函数返回错误）
-        api_concurrency: API 并发限制
         timeout: 执行超时（秒）
         max_result_chars: 结果最大字符数
-        max_pages: erp_query_all 最大翻页数
 
     Returns:
         配置好的 SandboxExecutor 实例
@@ -222,48 +231,7 @@ def build_sandbox_executor(
         max_result_chars=max_result_chars,
     )
 
-    # API 并发信号量
-    semaphore = asyncio.Semaphore(api_concurrency)
-
-    # 注册 ERP 查询函数（闭包绑定 dispatcher）
-    async def _erp_query(
-        tool_name: str,
-        action: str,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        return await erp_query(
-            tool_name, action, params, _dispatcher=dispatcher,
-        )
-
-    async def _erp_query_all(
-        tool_name: str,
-        action: str,
-        params: Optional[Dict[str, Any]] = None,
-        max_pages_override: int = max_pages,
-    ) -> Dict[str, Any]:
-        return await erp_query_all(
-            tool_name, action, params,
-            max_pages=max_pages_override,
-            _dispatcher=dispatcher,
-            _semaphore=semaphore,
-        )
-
-    executor.register("erp_query", _erp_query)
-    executor.register("erp_query_all", _erp_query_all)
-    executor.register("web_search", sandbox_web_search)
-    executor.register("search_knowledge", sandbox_search_knowledge)
-
-    # 获取截断暂存的完整工具结果（由 tool_result_envelope 提供）
-    def _get_persisted_result(key: str) -> str:
-        from services.agent.tool_result_envelope import get_persisted
-        result = get_persisted(key)
-        if result is None:
-            return f"❌ 未找到暂存结果(key={key})，可能已过期。请用 erp_query_all() 重新查询。"
-        return result
-
-    executor.register("get_persisted_result", _get_persisted_result)
-
-    # 注册文件操作函数（闭包绑定用户信息，沙盒内可 await 调用）
+    # read_file: 仅允许读取 staging 目录（对标 OpenAI Code Interpreter）
     from core.config import get_settings as _get_settings
     from services.file_executor import FileExecutor as _FileExecutor
 
@@ -277,21 +245,16 @@ def build_sandbox_executor(
         )
 
     async def _read_file(path: str, encoding: str = "utf-8") -> str:
+        if not path.startswith("staging/"):
+            return (
+                "❌ 沙盒内只能读取 staging 目录下的数据文件。"
+                "请先用 fetch_all_pages 工具获取数据，数据会自动存到 staging 目录。"
+            )
         return await _make_file_executor().file_read(path, encoding=encoding)
 
-    async def _write_file(
-        path: str, content: str, mode: str = "overwrite",
-    ) -> str:
-        return await _make_file_executor().file_write(path, content, mode=mode)
-
-    async def _list_dir(path: str = ".") -> str:
-        return await _make_file_executor().file_list(path)
-
     executor.register("read_file", _read_file)
-    executor.register("write_file", _write_file)
-    executor.register("list_dir", _list_dir)
 
-    # 注册文件上传函数（生成可下载的 CDN URL）
+    # upload_file: 上传计算结果到 OSS
     async def _upload_file(content: bytes, filename: str) -> str:
         """上传文件到 OSS，返回格式化文本（含 [FILE] 标记）
 

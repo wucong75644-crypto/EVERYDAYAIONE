@@ -159,11 +159,11 @@ class TestToolSets:
 
 class TestBuildErpTools:
 
-    def test_returns_19_tools(self):
-        """build_erp_tools 返回 20 个工具（8 API + 12 本地）"""
+    def test_returns_21_tools(self):
+        """build_erp_tools 返回 21 个工具（8 API + 13 本地）"""
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
-        assert len(tools) == 20
+        assert len(tools) == 21
 
     def test_each_tool_structure(self):
         """每个工具有完整的 function calling 结构"""
@@ -386,7 +386,7 @@ class TestErpRoutingPrompt:
         """ERP_ROUTING_PROMPT 包含工具选择规则"""
         from config.erp_tools import ERP_ROUTING_PROMPT
         assert "工具选择规则" in ERP_ROUTING_PROMPT
-        assert "local > erp > code_execute" in ERP_ROUTING_PROMPT
+        assert "local > erp > fetch_all_pages > code_execute" in ERP_ROUTING_PROMPT
         assert "erp_*" in ERP_ROUTING_PROMPT
         assert "降级策略" in ERP_ROUTING_PROMPT
 
@@ -397,10 +397,32 @@ class TestErpRoutingPrompt:
         assert "trigger_erp_sync" in ERP_ROUTING_PROMPT
 
     def test_no_routing_directives(self):
-        """ERP_ROUTING_PROMPT 不包含链路指令"""
+        """ERP_ROUTING_PROMPT 不包含旧的链路指令"""
         from config.erp_tools import ERP_ROUTING_PROMPT
         assert "简单统计" not in ERP_ROUTING_PROMPT
-        assert "→ code_execute" not in ERP_ROUTING_PROMPT
+        # fetch_all_pages → code_execute 是新的合法链路
+        assert "erp_query_all" not in ERP_ROUTING_PROMPT
+
+    def test_fetch_all_pages_tool_definition(self):
+        """fetch_all_pages 工具定义正确"""
+        from config.erp_tools import build_fetch_all_pages_tool
+        tool = build_fetch_all_pages_tool()
+        func = tool["function"]
+        assert func["name"] == "fetch_all_pages"
+        params = func["parameters"]
+        assert "tool" in params["properties"]
+        assert "action" in params["properties"]
+        assert "params" in params["properties"]
+        assert "page_size" in params["properties"]
+        assert "max_pages" in params["properties"]
+        assert params["required"] == ["tool", "action"]
+
+    def test_fetch_all_pages_description_mentions_staging(self):
+        """fetch_all_pages 描述包含 staging 和耗时提醒"""
+        from config.erp_tools import build_fetch_all_pages_tool
+        desc = build_fetch_all_pages_tool()["function"]["description"]
+        assert "staging" in desc
+        assert "耗时" in desc
 
     def test_remote_tools_labeled(self):
         """远程 ERP 工具描述包含"远程API"标识"""

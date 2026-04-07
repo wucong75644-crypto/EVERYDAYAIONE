@@ -88,13 +88,16 @@ def build_domain_tools(domain: str) -> List[Dict[str, Any]]:
     """
     from config.code_tools import build_code_tools
     from config.crawler_tools import build_crawler_tools
-    from config.erp_tools import build_erp_search_tool, build_erp_tools
+    from config.erp_tools import (
+        build_erp_search_tool, build_erp_tools, build_fetch_all_pages_tool,
+    )
     from config.file_tools import build_file_tools
 
     builders: Dict[str, Any] = {
         "erp": lambda: [
             *build_erp_tools(),
             build_erp_search_tool(),
+            build_fetch_all_pages_tool(),
             *build_code_tools(),
             _build_phase2_route_to_chat_tool(),
             _build_ask_user_tool(),

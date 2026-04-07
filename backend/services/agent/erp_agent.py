@@ -75,6 +75,7 @@ class ERPAgent:
             # 远程 erp_* 工具隐藏（通过 erp_api_search 按需发现 + 自动扩展注入）
             _VISIBLE_PREFIXES = ("local_",)
             _VISIBLE_NAMES = {"erp_api_search", "code_execute",
+                              "fetch_all_pages",
                               "trigger_erp_sync", "route_to_chat", "ask_user"}
             selected_tools = [
                 t for t in all_tools
@@ -148,6 +149,8 @@ class ERPAgent:
                 total_tokens += tokens
             finally:
                 await adapter.close()
+                # 会话级 staging 延迟清理（5分钟后删除，防止 Agent 还没调 code_execute 就被清了）
+                asyncio.create_task(self._cleanup_staging_delayed())
 
             # 判断是否被截断（text 中包含截断信号）
             is_truncated = "⚠ 输出已截断" in text
@@ -607,3 +610,28 @@ class ERPAgent:
             )
         except Exception as e:
             logger.debug(f"ERPAgent {category} experience save failed | error={e}")
+
+    async def _cleanup_staging_delayed(self, delay: int = 300) -> None:
+        """会话级 staging 延迟清理：等待后删除本次会话的 staging 文件
+
+        延迟 5 分钟，避免 Agent 超时退出但 code_execute 还没读到 staging 文件。
+        """
+        import shutil
+        from pathlib import Path
+        from core.config import get_settings
+
+        try:
+            await asyncio.sleep(delay)
+            settings = get_settings()
+            staging_dir = (
+                Path(settings.file_workspace_root)
+                / "staging"
+                / (self.conversation_id or "default")
+            )
+            if staging_dir.exists():
+                shutil.rmtree(staging_dir, ignore_errors=True)
+                logger.info(
+                    f"ERPAgent staging cleaned | dir={staging_dir}"
+                )
+        except Exception as e:
+            logger.debug(f"ERPAgent staging cleanup failed | error={e}")
