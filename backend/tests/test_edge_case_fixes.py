@@ -161,9 +161,9 @@ class TestIdempotencyNoneTypeGuard:
 
         # patch 掉 _complete_task（测试重点不在这里）和 WS
         with patch.object(handler, "_complete_task"), \
-             patch("services.task_stream.publish", new_callable=AsyncMock), \
+             patch("services.websocket_manager.ws_manager") as mock_ws, \
              patch("schemas.websocket.build_message_done"):
-
+            mock_ws.send_to_task_or_user = AsyncMock()
             # 修复前：AttributeError: 'NoneType' object has no attribute 'data'
             # 修复后：走 fall-through 路径重建消息
             result = await handler.on_complete(
@@ -184,9 +184,9 @@ class TestIdempotencyNoneTypeGuard:
         )
 
         with patch.object(handler, "_complete_task"), \
-             patch("services.task_stream.publish", new_callable=AsyncMock), \
+             patch("services.websocket_manager.ws_manager") as mock_ws, \
              patch("schemas.websocket.build_message_done"):
-
+            mock_ws.send_to_task_or_user = AsyncMock()
             result = await handler.on_complete(
                 task_id="test_task_123",
                 result=[{"type": "image", "url": "https://oss.example.com/img.png", "width": 1024, "height": 1024}],
@@ -204,9 +204,9 @@ class TestIdempotencyNoneTypeGuard:
         )
 
         with patch.object(handler, "_fail_task"), \
-             patch("services.task_stream.publish", new_callable=AsyncMock), \
+             patch("services.websocket_manager.ws_manager") as mock_ws, \
              patch("schemas.websocket.build_message_error"):
-
+            mock_ws.send_to_task_or_user = AsyncMock()
             result = await handler.on_error(
                 task_id="test_task_123",
                 error_code="TEST_ERROR",

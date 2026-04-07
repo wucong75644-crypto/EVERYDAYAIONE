@@ -29,7 +29,7 @@ from services.handlers.chat_context_mixin import ChatContextMixin
 from services.handlers.chat_generate_mixin import ChatGenerateMixin
 from services.handlers.chat_stream_support_mixin import ChatStreamSupportMixin
 from services.handlers.chat_tool_mixin import ChatToolMixin, accumulate_tool_call_delta
-from services.task_stream import publish as stream_publish
+from services.websocket_manager import ws_manager
 
 # 工具循环最大轮次（防止无限循环）
 MAX_TOOL_TURNS = 10
@@ -103,11 +103,11 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
     async def _stream_direct_reply(self, task_id, message_id, conversation_id, user_id, text):
         """Agent Loop ask_user：大脑直接回复，跳过 LLM 调用"""
         try:
-            await stream_publish(task_id, user_id, build_message_start(
+            await ws_manager.send_to_task_or_user(task_id, user_id, build_message_start(
                 task_id=task_id, conversation_id=conversation_id,
                 message_id=message_id, model="agent",
             ))
-            await stream_publish(task_id, user_id, build_message_chunk(
+            await ws_manager.send_to_task_or_user(task_id, user_id, build_message_chunk(
                 task_id=task_id, conversation_id=conversation_id,
                 message_id=message_id, chunk=text, accumulated=text,
             ))
@@ -171,7 +171,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 message_id=message_id,
                 model=model_id,
             )
-            await stream_publish(task_id, user_id, start_msg)
+            await ws_manager.send_to_task_or_user(task_id, user_id, start_msg)
 
             # 2. 组装消息列表（记忆未预取时并行预取）
             text_content = self._extract_text_content(content)
@@ -283,7 +283,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             chunk=chunk.thinking_content,
                             accumulated=accumulated_thinking,
                         )
-                        await stream_publish(task_id, user_id, thinking_msg)
+                        await ws_manager.send_to_task_or_user(task_id, user_id, thinking_msg)
 
                     # 正文内容
                     if chunk.content:
@@ -296,7 +296,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             message_id=message_id,
                             chunk=chunk.content,
                         )
-                        await stream_publish(task_id, user_id, chunk_msg)
+                        await ws_manager.send_to_task_or_user(task_id, user_id, chunk_msg)
                         if chunk_count % 20 == 0:
                             asyncio.create_task(
                                 self._save_accumulated_content(task_id, accumulated_text)
@@ -337,7 +337,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 messages.append(assistant_tool_msg)
 
                 # 通知前端：工具调用开始
-                await stream_publish(
+                await ws_manager.send_to_task_or_user(
                     task_id, user_id,
                     build_tool_call(
                         task_id=task_id,

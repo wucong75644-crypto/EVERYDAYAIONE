@@ -92,7 +92,7 @@ export interface UseWebSocketReturn {
   isConnected: boolean;
   isConnecting: boolean;
   subscribe: (type: WSMessageType, handler: MessageHandler) => () => void;
-  subscribeTask: (taskId: string, lastStreamId?: string) => void;
+  subscribeTask: (taskId: string, lastIndex?: number) => void;
   unsubscribeTask: (taskId: string) => void;
   send: (message: Omit<WSMessage, 'timestamp'>) => void;
 }
@@ -116,10 +116,10 @@ export function useWebSocket(): UseWebSocketReturn {
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isCleaningUpRef = useRef(false);
+  // 服务器重启期间的重连不应被误判为认证失败
+  const isServerRestartingRef = useRef(false);
   // 用于打破 handleServerRestart <-> connect 循环依赖
   const connectRef = useRef<(() => void) | null>(null);
-  // WS 未连接时缓存订阅请求，连接后自动重发
-  const pendingSubscriptionsRef = useRef<Map<string, string>>(new Map());
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
 
@@ -188,10 +188,11 @@ export function useWebSocket(): UseWebSocketReturn {
   // 处理服务器重启消息
   const handleServerRestart = useCallback(() => {
     logger.info('ws:connection', 'Server restarting, will reconnect with jitter');
+    isServerRestartingRef.current = true;
     cleanup();
 
-    // 增加随机抖动（0-5秒），错开重连峰值
-    const jitter = Math.random() * 5000;
+    // 增加随机抖动（3-8秒），错开重连峰值，给后端足够启动时间
+    const jitter = 3000 + Math.random() * 5000;
     reconnectAttemptsRef.current = 0; // 重置重连计数
 
     reconnectTimeoutRef.current = setTimeout(() => {
@@ -232,24 +233,10 @@ export function useWebSocket(): UseWebSocketReturn {
     ws.onopen = () => {
       logger.info('ws:connection', 'Connected');
       wasConnected = true;
+      isServerRestartingRef.current = false;
       setConnectionState('connected');
       reconnectAttemptsRef.current = 0;
       startHeartbeat();
-
-      // 重连后重发 pending 订阅（断线期间缓存的任务订阅）
-      if (pendingSubscriptionsRef.current.size > 0) {
-        logger.info('ws:connection', 'Flushing pending subscriptions', {
-          count: pendingSubscriptionsRef.current.size,
-        });
-        pendingSubscriptionsRef.current.forEach((lastStreamId, taskId) => {
-          ws.send(JSON.stringify({
-            type: 'subscribe',
-            payload: { task_id: taskId, last_stream_id: lastStreamId },
-            timestamp: Date.now(),
-          }));
-        });
-        pendingSubscriptionsRef.current.clear();
-      }
     };
 
     ws.onclose = (event) => {
@@ -261,20 +248,22 @@ export function useWebSocket(): UseWebSocketReturn {
         heartbeatIntervalRef.current = null;
       }
 
-      // 认证失败：4001/4002 或握手阶段直接被拒（1006 且从未连上过）
+      // 认证失败：4001/4002 明确表示 token 无效
+      // 1006 在服务器重启期间是"服务器不可达"，不代表认证失败
       const isAuthError =
         event.code === 4001 ||
         event.code === 4002 ||
-        (!wasConnected && event.code === 1006);
+        (!wasConnected && event.code === 1006 && !isServerRestartingRef.current);
 
       if (isAuthError) {
         logger.warn('ws:connection', 'Auth failed, clearing token', { code: event.code });
+        const loginOrgId = localStorage.getItem('login_org_id') || localStorage.getItem('current_org_id');
         localStorage.removeItem('access_token');
         localStorage.removeItem('user');
         localStorage.removeItem('current_org_id');
         localStorage.removeItem('current_org');
         if (window.location.pathname !== '/') {
-          window.location.href = '/';
+          window.location.href = loginOrgId ? `/?org=${loginOrgId}` : '/';
         }
         return;
       }
@@ -349,21 +338,17 @@ export function useWebSocket(): UseWebSocketReturn {
     };
   }, []);
 
-  // 订阅任务（支持 Redis Stream 断点续传）
-  const subscribeTask = useCallback((taskId: string, lastStreamId: string = '0') => {
+  // 订阅任务
+  const subscribeTask = useCallback((taskId: string, lastIndex: number = -1) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
         JSON.stringify({
           type: 'subscribe',
-          payload: { task_id: taskId, last_stream_id: lastStreamId },
+          payload: { task_id: taskId, last_index: lastIndex },
           timestamp: Date.now(),
         })
       );
-      logger.info('ws:subscribe', 'Subscribed to task', { taskId, lastStreamId });
-    } else {
-      // WS 未连接，缓存订阅请求，连接后自动重发
-      pendingSubscriptionsRef.current.set(taskId, lastStreamId);
-      logger.info('ws:subscribe', 'Queued pending subscription', { taskId, lastStreamId });
+      logger.info('ws:subscribe', 'Subscribed to task', { taskId });
     }
   }, []);
 

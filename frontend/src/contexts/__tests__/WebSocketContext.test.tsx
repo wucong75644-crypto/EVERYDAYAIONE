@@ -529,7 +529,7 @@ describe('WebSocketContext - Provider & Hook', () => {
         result.current.subscribeTaskWithMapping('task_123', 'conv_123');
       });
 
-      expect(mockWs.subscribeTask).toHaveBeenCalledWith('task_123', '0');
+      expect(mockWs.subscribeTask).toHaveBeenCalledWith('task_123');
     });
 
     it('should not duplicate task subscription', () => {

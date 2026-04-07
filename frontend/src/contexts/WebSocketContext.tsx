@@ -65,9 +65,6 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   // 操作上下文映射
   const operationContextRef = useRef<Map<string, OperationContext>>(new Map());
 
-  // Redis Stream 断点追踪: task_id → 最后收到的 stream_id
-  const lastStreamIdRef = useRef<Map<string, string>>(new Map());
-
   // L1: chunk 缓冲（50ms 批量刷新，避免每个 token 都触发渲染）
   // 改进：同时存储 conversationId，避免额外映射维护
   const chunkBufferRef = useRef<Map<string, { chunk: string; conversationId: string }>>(new Map());
@@ -91,17 +88,9 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
     const handlers = createWSMessageHandlers(deps);
 
-    // 注册所有处理器 + stream_id 追踪
+    // 注册所有处理器
     const unsubscribes = Object.entries(handlers).map(([type, handler]) =>
-      ws.subscribe(type as WSMessageType, (msg) => {
-        // 追踪 Redis Stream 断点（每条消息都带 stream_id）
-        const streamId = (msg as unknown as Record<string, unknown>).stream_id as string | undefined;
-        const taskId = msg.task_id;
-        if (streamId && taskId) {
-          lastStreamIdRef.current.set(taskId, streamId);
-        }
-        handler(msg);
-      })
+      ws.subscribe(type as WSMessageType, handler)
     );
 
     return () => {
@@ -124,12 +113,9 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
     subscribedTasksRef.current.add(taskId);
     taskConversationMapRef.current.set(taskId, conversationId);
+    wsRef.current.subscribeTask(taskId);
 
-    // 使用 Redis Stream 断点续传：传入上次收到的 stream_id
-    const lastStreamId = lastStreamIdRef.current.get(taskId) || '0';
-    wsRef.current.subscribeTask(taskId, lastStreamId);
-
-    logger.debug('ws:subscribe', 'subscribed', { taskId, conversationId, lastStreamId });
+    logger.debug('ws:subscribe', 'subscribed', { taskId, conversationId });
   }, []);
 
   // subscribeTaskWithMapping ref（用于任务恢复，避免循环依赖）
