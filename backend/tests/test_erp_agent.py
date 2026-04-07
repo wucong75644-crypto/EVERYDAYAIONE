@@ -773,3 +773,69 @@ class TestErrorPrefixDetection:
         """Error: 在前100字符内应触发"""
         result = "查询结果 Error: invalid parameter\n详情..."
         assert "Error:" in result[:100]
+
+
+# ============================================================
+# F1/F2: 路由经验 + 失败记忆
+# ============================================================
+
+class TestRecordAgentExperience:
+    """F1/F2: _record_agent_experience 通用方法"""
+
+    def _make_agent(self):
+        from services.agent.erp_agent import ERPAgent
+        return ERPAgent(
+            db=MagicMock(), user_id="u1",
+            conversation_id="c1", org_id="org1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_routing_experience_calls_add_knowledge(self):
+        """成功路由记录到知识库"""
+        agent = self._make_agent()
+        with patch("services.knowledge_service.add_knowledge", new_callable=AsyncMock, return_value="node1") as mock_add:
+            await agent._record_agent_experience(
+                "routing", "查库存", ["local_product_identify", "local_stock_query"],
+                "轮次：2", confidence=0.6,
+            )
+            mock_add.assert_called_once()
+            call_kwargs = mock_add.call_args[1]
+            assert call_kwargs["category"] == "routing"
+            assert call_kwargs["confidence"] == 0.6
+            assert call_kwargs["max_per_category"] == 500
+            assert "local_product_identify → local_stock_query" in call_kwargs["content"]
+
+    @pytest.mark.asyncio
+    async def test_failure_memory_calls_add_knowledge(self):
+        """失败记忆记录到知识库"""
+        agent = self._make_agent()
+        with patch("services.knowledge_service.add_knowledge", new_callable=AsyncMock, return_value="node2") as mock_add:
+            await agent._record_agent_experience(
+                "failure", "查订单", ["local_order_query"],
+                "失败原因：超时",
+            )
+            call_kwargs = mock_add.call_args[1]
+            assert call_kwargs["category"] == "failure"
+            assert call_kwargs["confidence"] == 0.5  # 默认值
+            assert "查询失败" in call_kwargs["title"]
+
+    @pytest.mark.asyncio
+    async def test_knowledge_error_does_not_raise(self):
+        """知识库写入失败不抛异常"""
+        agent = self._make_agent()
+        with patch("services.knowledge_service.add_knowledge", new_callable=AsyncMock, side_effect=Exception("DB down")):
+            # 不应抛异常
+            await agent._record_agent_experience(
+                "routing", "查库存", ["local_stock_query"], "轮次：1",
+            )
+
+    @pytest.mark.asyncio
+    async def test_max_per_category_passed(self):
+        """淘汰上限参数正确传递"""
+        agent = self._make_agent()
+        agent._EXPERIENCE_MAX_PER_CATEGORY = 100  # 测试覆盖
+        with patch("services.knowledge_service.add_knowledge", new_callable=AsyncMock) as mock_add:
+            await agent._record_agent_experience(
+                "routing", "q", ["tool"], "detail",
+            )
+            assert mock_add.call_args[1]["max_per_category"] == 100

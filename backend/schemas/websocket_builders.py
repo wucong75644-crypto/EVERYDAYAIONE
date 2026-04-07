@@ -193,11 +193,25 @@ def build_routing_complete(
 def build_agent_step(
     conversation_id: str, tool_name: str, status: str, turn: int,
     task_id: Optional[str] = None,
+    max_turns: Optional[int] = None,
+    elapsed_s: Optional[float] = None,
+    tools_completed: Optional[list] = None,
+    estimated_s: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """构建 Agent Loop 步骤通知"""
+    """构建 Agent Loop 步骤通知（含进度和预期管理信息）"""
+    payload: Dict[str, Any] = {
+        "tool_name": tool_name, "status": status, "turn": turn,
+    }
+    if max_turns is not None:
+        payload["progress"] = f"{turn}/{max_turns}"
+    if elapsed_s is not None:
+        payload["elapsed_s"] = round(elapsed_s, 1)
+    if tools_completed:
+        payload["tools_completed"] = tools_completed
+    if estimated_s is not None:
+        payload["estimated_s"] = estimated_s
     return _build_ws_message(
-        WSMessageType.AGENT_STEP,
-        {"tool_name": tool_name, "status": status, "turn": turn},
+        WSMessageType.AGENT_STEP, payload,
         conversation_id=conversation_id, task_id=task_id,
     )
 

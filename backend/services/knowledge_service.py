@@ -129,6 +129,7 @@ async def add_knowledge(
     confidence: float = 0.5,
     scope: str = "global",
     org_id: Optional[str] = None,
+    max_per_category: Optional[int] = None,
 ) -> Optional[str]:
     """
     添加知识条目（含去重 + 向量化）
@@ -188,6 +189,34 @@ async def add_knowledge(
                         );
                         """
                     )
+
+                # 3.5 Per-category 淘汰（防止单类目挤占全局配额）
+                if max_per_category:
+                    cat_filter = "AND category = %(cat)s"
+                    if org_id:
+                        cat_filter += " AND org_id = %(oid)s"
+                    await cur.execute(
+                        f"""
+                        SELECT COUNT(*) FROM knowledge_nodes
+                        WHERE is_deleted = FALSE {cat_filter};
+                        """,
+                        {"cat": category, "oid": org_id},
+                    )
+                    cat_count = await cur.fetchone()
+                    if cat_count and cat_count[0] >= max_per_category:
+                        await cur.execute(
+                            f"""
+                            UPDATE knowledge_nodes SET is_deleted = TRUE
+                            WHERE id = (
+                                SELECT id FROM knowledge_nodes
+                                WHERE is_deleted = FALSE AND source != 'seed'
+                                {cat_filter}
+                                ORDER BY confidence ASC, updated_at ASC
+                                LIMIT 1
+                            );
+                            """,
+                            {"cat": category, "oid": org_id},
+                        )
 
                 # 4. 插入新节点
                 emb_value = str(embedding) if embedding else None
