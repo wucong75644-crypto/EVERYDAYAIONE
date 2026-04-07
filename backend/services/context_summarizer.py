@@ -42,12 +42,17 @@ def _build_summary_prompt(messages: List[Dict[str, Any]]) -> str:
 
 
 async def _call_summary_model(
-    model: str, messages_text: str
+    model: str, messages_text: str,
+    system_prompt_override: Optional[str] = None,
 ) -> Optional[str]:
-    """调用单个模型生成摘要，失败返回 None"""
+    """调用单个模型生成摘要，失败返回 None
+
+    Args:
+        system_prompt_override: 自定义 system prompt（不传则用默认对话摘要 prompt）
+    """
     client = await _ds_client.get()
     max_chars = settings.context_summary_max_chars
-    system_prompt = SUMMARY_SYSTEM_PROMPT.format(max_chars=max_chars)
+    system_prompt = system_prompt_override or SUMMARY_SYSTEM_PROMPT.format(max_chars=max_chars)
 
     try:
         response = await client.post(

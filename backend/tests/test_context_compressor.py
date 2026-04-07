@@ -1,4 +1,4 @@
-"""context_compressor 单元测试 — token预算 + system去重
+"""context_compressor 单元测试 — token预算 + system去重 + 工具结果归档 + 循环摘要
 
 注意：层1 工具结果截断已迁移到 tool_result_envelope.wrap()，
 对应测试在 test_tool_result_envelope.py 中。
@@ -12,7 +12,12 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 import pytest
+from unittest.mock import AsyncMock, patch
 from services.handlers.context_compressor import (
+    _build_loop_summary_input,
+    _identify_tool_turns,
+    compact_stale_tool_results,
+    compact_loop_with_summary,
     deduplicate_system_prompts,
     enforce_budget,
     estimate_tokens,
@@ -126,3 +131,238 @@ class TestEnforceBudget:
         enforce_budget(messages, max_tokens=100)
         # 最后几条不应被归档（protected_tail）
         assert messages[-1]["content"] == "current question"
+
+
+# ============================================================
+# 层4: 轮次识别
+# ============================================================
+
+
+def _make_tool_loop_messages(num_turns: int) -> list:
+    """构造 N 轮工具循环的 messages 列表"""
+    messages = [
+        {"role": "system", "content": "你是AI助手"},
+        {"role": "user", "content": "帮我查一下"},
+    ]
+    for t in range(num_turns):
+        # assistant + tool_calls
+        messages.append({
+            "role": "assistant", "content": f"turn{t}思考",
+            "tool_calls": [
+                {"id": f"tc{t}_0", "type": "function",
+                 "function": {"name": f"tool_{t}", "arguments": "{}"}},
+            ],
+        })
+        # tool result
+        messages.append({
+            "role": "tool", "tool_call_id": f"tc{t}_0",
+            "content": f"工具{t}的查询结果，包含大量数据 " + "x" * 500,
+        })
+    return messages
+
+
+class TestIdentifyToolTurns:
+    """轮次边界识别"""
+
+    def test_identifies_correct_turns(self):
+        msgs = _make_tool_loop_messages(3)
+        turns = _identify_tool_turns(msgs)
+        assert len(turns) == 3
+        # 每轮 1 个 tool
+        for turn_tools in turns:
+            assert len(turn_tools) == 1
+
+    def test_empty_messages(self):
+        assert _identify_tool_turns([]) == []
+
+    def test_no_tool_calls(self):
+        msgs = [
+            {"role": "system", "content": "hi"},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi there"},
+        ]
+        assert _identify_tool_turns(msgs) == []
+
+    def test_multi_tool_per_turn(self):
+        msgs = [
+            {"role": "user", "content": "查库存和订单"},
+            {"role": "assistant", "content": "",
+             "tool_calls": [
+                 {"id": "a", "function": {"name": "stock"}},
+                 {"id": "b", "function": {"name": "order"}},
+             ]},
+            {"role": "tool", "tool_call_id": "a", "content": "库存100"},
+            {"role": "tool", "tool_call_id": "b", "content": "订单50"},
+        ]
+        turns = _identify_tool_turns(msgs)
+        assert len(turns) == 1
+        assert len(turns[0]) == 2  # 2 个 tool 属于同一轮
+
+
+# ============================================================
+# 层4: 旧工具结果归档
+# ============================================================
+
+
+class TestCompactStaleToolResults:
+    """旧工具结果归档"""
+
+    def test_no_compact_when_few_turns(self):
+        msgs = _make_tool_loop_messages(2)
+        compacted = compact_stale_tool_results(msgs, keep_turns=2)
+        assert compacted == 0
+        # 所有 tool 消息保持原文
+        for m in msgs:
+            if m.get("role") == "tool":
+                assert not m["content"].startswith("[已归档")
+
+    def test_compacts_old_turns(self):
+        msgs = _make_tool_loop_messages(5)
+        compacted = compact_stale_tool_results(msgs, keep_turns=2)
+        assert compacted == 3  # turn 0,1,2 的 tool 被压缩
+
+        tool_msgs = [m for m in msgs if m.get("role") == "tool"]
+        # 前 3 条被归档
+        for m in tool_msgs[:3]:
+            assert m["content"].startswith("[已归档")
+        # 后 2 条保持原文
+        for m in tool_msgs[3:]:
+            assert not m["content"].startswith("[已归档")
+
+    def test_idempotent(self):
+        """多次调用不会重复压缩"""
+        msgs = _make_tool_loop_messages(4)
+        c1 = compact_stale_tool_results(msgs, keep_turns=2)
+        c2 = compact_stale_tool_results(msgs, keep_turns=2)
+        assert c1 == 2
+        assert c2 == 0  # 第二次无新压缩
+
+    def test_keep_turns_1(self):
+        msgs = _make_tool_loop_messages(3)
+        compacted = compact_stale_tool_results(msgs, keep_turns=1)
+        assert compacted == 2
+
+
+# ============================================================
+# 层5: 循环内 LLM 摘要
+# ============================================================
+
+
+class TestCompactLoopWithSummary:
+    """循环内摘要"""
+
+    @pytest.mark.asyncio
+    async def test_no_trigger_under_threshold(self):
+        msgs = _make_tool_loop_messages(2)
+        result = await compact_loop_with_summary(msgs, max_tokens=50000)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_no_trigger_few_turns(self):
+        """只有 2 轮时即使超阈值也不触发（没有可压缩的）"""
+        msgs = _make_tool_loop_messages(2)
+        # 人为制造超阈值
+        result = await compact_loop_with_summary(msgs, max_tokens=10, trigger_ratio=0.01)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_triggers_and_compresses(self):
+        """超阈值 + 足够轮次 → 触发摘要"""
+        msgs = _make_tool_loop_messages(5)
+        original_len = len(msgs)
+
+        with patch(
+            "services.context_summarizer._call_summary_model",
+            new=AsyncMock(return_value="摘要：查了5个工具，库存100，订单50"),
+        ):
+            result = await compact_loop_with_summary(
+                msgs, max_tokens=10, trigger_ratio=0.01,
+            )
+
+        assert result is True
+        assert len(msgs) < original_len
+        # 应该有一条摘要 system 消息
+        summary_msgs = [m for m in msgs if "[工具循环摘要]" in m.get("content", "")]
+        assert len(summary_msgs) == 1
+
+    @pytest.mark.asyncio
+    async def test_fallback_on_model_failure(self):
+        """LLM 调用失败 → 跳过，不崩溃"""
+        msgs = _make_tool_loop_messages(5)
+        original_len = len(msgs)
+
+        with patch(
+            "services.context_summarizer._call_summary_model",
+            new=AsyncMock(return_value=None),
+        ):
+            result = await compact_loop_with_summary(
+                msgs, max_tokens=10, trigger_ratio=0.01,
+            )
+
+        assert result is False
+        assert len(msgs) == original_len  # 未改动
+
+
+# ============================================================
+# 层5: 摘要输入格式化
+# ============================================================
+
+
+class TestBuildLoopSummaryInput:
+    """_build_loop_summary_input 格式化测试"""
+
+    def test_formats_assistant_with_tool_calls(self):
+        msgs = [
+            {"role": "assistant", "content": "让我查一下",
+             "tool_calls": [{"function": {"name": "local_stock_query"}}]},
+        ]
+        result = _build_loop_summary_input(msgs, [0])
+        assert "AI 调用工具: local_stock_query" in result
+        assert "AI: 让我查一下" in result
+
+    def test_formats_tool_result(self):
+        msgs = [
+            {"role": "tool", "tool_call_id": "tc1",
+             "content": "库存100件，金额¥5,000"},
+        ]
+        result = _build_loop_summary_input(msgs, [0])
+        assert "工具结果: 库存100件" in result
+
+    def test_formats_system_context(self):
+        msgs = [
+            {"role": "system", "content": "已识别编码: A→001"},
+        ]
+        result = _build_loop_summary_input(msgs, [0])
+        assert "系统: 已识别编码" in result
+
+    def test_truncates_long_content(self):
+        msgs = [
+            {"role": "tool", "tool_call_id": "tc1",
+             "content": "x" * 500},
+        ]
+        result = _build_loop_summary_input(msgs, [0])
+        assert "..." in result
+        assert len(result) < 500
+
+    def test_skips_long_system(self):
+        """超过200字的 system 消息不纳入摘要"""
+        msgs = [
+            {"role": "system", "content": "x" * 300},
+        ]
+        result = _build_loop_summary_input(msgs, [0])
+        assert result == ""
+
+    def test_empty_indices(self):
+        msgs = _make_tool_loop_messages(3)
+        result = _build_loop_summary_input(msgs, [])
+        assert result == ""
+
+    def test_assistant_no_content(self):
+        """assistant 无文字内容但有 tool_calls"""
+        msgs = [
+            {"role": "assistant", "content": None,
+             "tool_calls": [{"function": {"name": "erp_agent"}}]},
+        ]
+        result = _build_loop_summary_input(msgs, [0])
+        assert "AI 调用工具: erp_agent" in result
+        assert "AI:" not in result  # content=None 不输出

@@ -128,6 +128,19 @@ class ChatGenerateMixin:
                     })
                     tool_context.update_from_result(tc["name"], result_text, is_error)
 
+                # 层4+5: 旧工具结果归档 + 循环内摘要
+                from services.handlers.context_compressor import (
+                    compact_stale_tool_results, compact_loop_with_summary,
+                )
+                from core.config import get_settings as _get_settings
+                _s = _get_settings()
+                compact_stale_tool_results(messages, _s.context_tool_keep_turns)
+                if turn >= 3:
+                    await compact_loop_with_summary(
+                        messages, _s.context_max_tokens,
+                        _s.context_loop_summary_trigger,
+                    )
+
                 logger.info(
                     f"generate_complete tool turn {turn + 1} | "
                     f"tools={[c['name'] for c in completed_calls]}"
