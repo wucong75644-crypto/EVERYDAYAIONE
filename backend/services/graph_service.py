@@ -94,16 +94,12 @@ class GraphService:
         """
         params["org_id"] = org_id
 
-        try:
-            async with conn_ctx as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(query, params)
-                    rows = await cur.fetchall()
-                    columns = [desc.name for desc in cur.description]
-                    return [dict(zip(columns, row)) for row in rows]
-        except Exception as e:
-            logger.error(f"Graph find_related failed | node_id={node_id} | error={e}")
-            return []
+        async with conn_ctx as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, params)
+                rows = await cur.fetchall()
+                columns = [desc.name for desc in cur.description]
+                return [dict(zip(columns, row)) for row in rows]
 
     async def find_path(
         self,
@@ -150,23 +146,17 @@ class GraphService:
         LIMIT 1;
         """
 
-        try:
-            async with conn_ctx as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(query, {
-                        "from_id": from_id,
-                        "to_id": to_id,
-                        "max_depth": max_depth,
-                    })
-                    row = await cur.fetchone()
-                    if not row:
-                        return []
-                    return [{"path": row[0], "relations": row[1], "depth": row[2]}]
-        except Exception as e:
-            logger.error(
-                f"Graph find_path failed | from={from_id} to={to_id} | error={e}"
-            )
-            return []
+        async with conn_ctx as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(query, {
+                    "from_id": from_id,
+                    "to_id": to_id,
+                    "max_depth": max_depth,
+                })
+                row = await cur.fetchone()
+                if not row:
+                    return []
+                return [{"path": row[0], "relations": row[1], "depth": row[2]}]
 
     async def add_edge(
         self,

@@ -119,9 +119,10 @@ async def _search_by_name(db, name: str, org_id: str | None = None) -> str:
         shipper = f" | 货主: {r['shipper']}" if r.get("shipper") else ""
         pic = f"\n   图片: {r['pic_url']}" if r.get("pic_url") else ""
         sku_count = _get_sku_count(db, r["outer_id"], org_id=org_id)
+        sku_label = f"SKU: {sku_count}个" if sku_count is not None else "SKU: 查询失败"
         lines.append(
             f"{i}. {r['outer_id']} — {r.get('title', '')}{status}{shipper}"
-            f"\n   SKU: {sku_count}个{pic}"
+            f"\n   {sku_label}{pic}"
         )
     return "\n".join(lines)
 
@@ -145,16 +146,20 @@ async def _search_by_spec(db, spec: str, org_id: str | None = None) -> str:
     # 关联商品名称
     outer_ids = list({r["outer_id"] for r in rows})
     title_map: dict[str, str] = {}
+    title_query_failed = False
     try:
         pr = _apply_org(
             db.table("erp_products").select("outer_id,title").in_("outer_id", outer_ids),
             org_id,
         ).execute()
         title_map = {r["outer_id"]: r.get("title", "") for r in (pr.data or [])}
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Title enrichment failed | spec={spec} | {e}")
+        title_query_failed = True
 
     lines = [f"搜索规格\"{spec}\"匹配到{len(rows)}个SKU：\n"]
+    if title_query_failed:
+        lines.append("⚠ 商品名称查询失败，仅显示编码\n")
     for i, r in enumerate(rows, 1):
         title = title_map.get(r["outer_id"], "")
         lines.append(
@@ -324,8 +329,9 @@ def _format_product(db, code: str, p: dict, org_id: str | None = None) -> str:
                 for s in skus
             ]
             lines.append(f"SKU({len(skus)}个): {', '.join(parts)}")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"SKU list query failed | code={code} | {e}")
+        lines.append("SKU列表: 查询失败")
 
     # 套件子单品
     if item_type in (1, 2) and p.get("suit_singles"):
@@ -360,8 +366,8 @@ def _format_sku(db, code: str, s: dict) -> str:
     return "\n".join(lines)
 
 
-def _get_sku_count(db, outer_id: str, org_id: str | None = None) -> int:
-    """获取 SKU 数量"""
+def _get_sku_count(db, outer_id: str, org_id: str | None = None) -> int | None:
+    """获取 SKU 数量，DB 异常返回 None"""
     try:
         result = _apply_org(
             db.table("erp_product_skus")
@@ -370,8 +376,9 @@ def _get_sku_count(db, outer_id: str, org_id: str | None = None) -> int:
             org_id,
         ).execute()
         return result.count or 0
-    except Exception:
-        return 0
+    except Exception as e:
+        logger.warning(f"SKU count query failed | outer_id={outer_id} | {e}")
+        return None
 
 
 def _get_doc_summary(db, code: str, org_id: str | None = None) -> str:
@@ -400,5 +407,6 @@ def _get_doc_summary(db, code: str, org_id: str | None = None) -> str:
             for dt, ids in counts.items()
         ]
         return ", ".join(parts)
-    except Exception:
-        return ""
+    except Exception as e:
+        logger.warning(f"Doc summary query failed | code={code} | {e}")
+        return "查询失败"

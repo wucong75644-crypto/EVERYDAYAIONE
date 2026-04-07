@@ -83,12 +83,12 @@ class TestGetUserSubscriptions:
         result = service.get_user_subscriptions("u_new")
         assert result == []
 
-    def test_returns_empty_on_db_error(self):
+    def test_raises_on_db_error(self):
         db = MagicMock()
         db.table.side_effect = Exception("DB error")
         svc = SubscriptionService(db)
-        result = svc.get_user_subscriptions("u1")
-        assert result == []
+        with pytest.raises(Exception, match="DB error"):
+            svc.get_user_subscriptions("u1")
 
 
 # ============================================================

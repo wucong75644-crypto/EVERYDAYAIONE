@@ -58,14 +58,10 @@ class SubscriptionService:
 
     def get_user_subscriptions(self, user_id: str) -> list[dict]:
         """获取用户已订阅的模型列表"""
-        try:
-            result = self.db.table("user_subscriptions").select(
-                "model_id, subscribed_at"
-            ).eq("user_id", user_id).execute()
-            return result.data or []
-        except Exception as e:
-            logger.error(f"获取订阅列表失败 | user_id={user_id} | error={e}")
-            return []
+        result = self.db.table("user_subscriptions").select(
+            "model_id, subscribed_at"
+        ).eq("user_id", user_id).execute()
+        return result.data or []
 
     def subscribe(self, user_id: str, model_id: str) -> dict:
         """

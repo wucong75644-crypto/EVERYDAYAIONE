@@ -97,8 +97,10 @@ def _record_user_feedback_signal(
                         if isinstance(gp, str):
                             gp = _json.loads(gp)
                         original_model = gp.get("model")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to get original model | msg_id={original_message_id} | {e}"
+                    )
 
             from services.knowledge_service import record_metric
             await record_metric(
@@ -184,7 +186,8 @@ async def generate_message(
     # 2.5 等待 IP 位置结果并注入 params（与路由并行完成，此处仅 await 结果）
     try:
         user_location = await location_task
-    except Exception:
+    except Exception as e:
+        logger.warning(f"IP location lookup failed | ip={client_ip} | {e}")
         user_location = None
     if user_location:
         if body.params is None:

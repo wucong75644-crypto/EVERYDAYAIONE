@@ -103,27 +103,21 @@ class WecomAIMixin:
 
     def _get_user_balance(self, user_id: str) -> int:
         """获取用户积分余额"""
-        try:
-            result = self.db.table("users").select("credits").eq(
-                "id", user_id,
-            ).single().execute()
-            return result.data.get("credits", 0) if result.data else 0
-        except Exception:
-            return 0
+        result = self.db.table("users").select("credits").eq(
+            "id", user_id,
+        ).single().execute()
+        return result.data.get("credits", 0) if result.data else 0
 
     def _deduct_credits(
         self, user_id: str, amount: int, reason: str, org_id: str | None = None,
     ) -> None:
         """直接扣除积分（生成成功后调用）"""
-        try:
-            params = {
-                "p_user_id": user_id,
-                "p_amount": amount,
-                "p_reason": reason,
-                "p_change_type": "conversation_cost",
-            }
-            if org_id:
-                params["p_org_id"] = org_id
-            self.db.rpc("deduct_credits_atomic", params).execute()
-        except Exception as e:
-            logger.warning(f"Wecom credit deduction failed | user_id={user_id} | error={e}")
+        params = {
+            "p_user_id": user_id,
+            "p_amount": amount,
+            "p_reason": reason,
+            "p_change_type": "conversation_cost",
+        }
+        if org_id:
+            params["p_org_id"] = org_id
+        self.db.rpc("deduct_credits_atomic", params).execute()

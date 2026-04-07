@@ -47,9 +47,21 @@ async def local_global_stats(
     rank_by: str | None = None,
     group_by: str | None = None,
     org_id: str | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
 ) -> str:
     """全局统计/排名（DB 端 RPC 聚合，无 LIMIT 截断）"""
-    start_iso, end_iso, period_label = _calc_period(date, period)
+    if start_time or end_time:
+        if not (start_time and end_time):
+            return "参数错误: start_time 和 end_time 必须同时提供"
+        try:
+            start_iso, end_iso, period_label = _parse_custom_range(
+                start_time, end_time,
+            )
+        except ValueError as e:
+            return f"参数错误: {e}"
+    else:
+        start_iso, end_iso, period_label = _calc_period(date, period)
     type_name = _DOC_TYPE_NAMES.get(doc_type, doc_type)
 
     # 校验 time_type（防注入）
@@ -109,6 +121,49 @@ def _rank_by_to_group(rank_by: str | None) -> str | None:
     if rank_by:
         return "product"
     return None
+
+
+def _try_parse_time(raw: str, is_end: bool = False) -> datetime | None:
+    """解析时间字符串，支持 ISO 格式及空格分隔，失败返回 None
+
+    is_end=True 时，纯日期（YYYY-MM-DD）自动补全为 23:59:59。
+    """
+    normalized = raw.strip().replace(" ", "T")
+    try:
+        dt = datetime.fromisoformat(normalized)
+        # 纯日期输入（无时分秒）：start 补 00:00:00，end 补 23:59:59
+        if is_end and "T" not in normalized and dt.hour == 0 and dt.minute == 0:
+            dt = dt.replace(hour=23, minute=59, second=59)
+        return dt.replace(tzinfo=CN_TZ) if dt.tzinfo is None else dt.astimezone(CN_TZ)
+    except ValueError:
+        return None
+
+
+def _parse_custom_range(
+    start_time: str, end_time: str,
+) -> tuple[str, str, str]:
+    """解析自定义时间范围（支持精确到秒），失败抛 ValueError"""
+    start_dt = _try_parse_time(start_time)
+    if start_dt is None:
+        raise ValueError(
+            f"无法解析 start_time='{start_time}'，"
+            "格式应为 YYYY-MM-DD HH:MM 或 YYYY-MM-DD HH:MM:SS"
+        )
+    end_dt = _try_parse_time(end_time, is_end=True)
+    if end_dt is None:
+        raise ValueError(
+            f"无法解析 end_time='{end_time}'，"
+            "格式应为 YYYY-MM-DD HH:MM 或 YYYY-MM-DD HH:MM:SS"
+        )
+    if start_dt >= end_dt:
+        raise ValueError(
+            f"start_time({start_time}) >= end_time({end_time})"
+        )
+
+    s_str = start_dt.strftime("%m-%d %H:%M")
+    e_str = end_dt.strftime("%m-%d %H:%M")
+    label = f"{s_str} ~ {e_str}"
+    return start_dt.isoformat(), end_dt.isoformat(), label
 
 
 def _calc_period(

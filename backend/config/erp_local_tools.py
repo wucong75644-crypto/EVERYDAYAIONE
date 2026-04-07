@@ -234,8 +234,10 @@ def build_local_tools() -> List[Dict[str, Any]]:
             "全局统计查询（无需商品编码）。毫秒级响应。"
             "直接返回聚合结果：总单数、总数量、总金额。"
             "支持按店铺/平台/供应商/仓库分组，支持排名（TOP10）。"
+            "支持精确到分钟/秒的时间范围查询（用start_time+end_time），"
+            "如「到下午4点」「上午10点到12点」「某天某时段」等。"
             "适合：今天多少单、各店铺销量排名、平台对比、"
-            "退货统计、销售额趋势等全局维度的统计需求。"
+            "退货统计、销售额趋势、同时段对比等全局维度的统计需求。"
             "⚠ 含「付款/已付/支付/成交」→ time_type=\"pay_time\"；"
             "含「发货/已发/物流」→ time_type=\"consign_time\"；"
             "默认按下单时间。",
@@ -245,7 +247,8 @@ def build_local_tools() -> List[Dict[str, Any]]:
                     ["order", "purchase", "aftersale", "receipt",
                      "shelf", "purchase_return"],
                 ),
-                "date": _str("统计日期(YYYY-MM-DD)，默认今天"),
+                "date": _str("统计日期(YYYY-MM-DD)，默认今天。"
+                             "如需精确到小时，改用start_time+end_time"),
                 "period": _enum("统计周期", ["day", "week", "month"]),
                 "time_type": _enum(
                     "时间类型（仅order类型有效）。"
@@ -253,6 +256,14 @@ def build_local_tools() -> List[Dict[str, Any]]:
                     "默认doc_created_at（下单时间）",
                     ["doc_created_at", "pay_time", "consign_time"],
                 ),
+                "start_time": _str(
+                    "精确起始时间(YYYY-MM-DD HH:MM 或 YYYY-MM-DD HH:MM:SS)，"
+                    "如'2026-04-06 00:00'。"
+                    "与end_time配合使用，优先级高于date/period"),
+                "end_time": _str(
+                    "精确结束时间(YYYY-MM-DD HH:MM 或 YYYY-MM-DD HH:MM:SS)，"
+                    "如'2026-04-06 16:00'。"
+                    "与start_time配合使用，优先级高于date/period"),
                 "shop_name": _str("按店铺过滤（模糊匹配）"),
                 "platform": _str("按平台过滤(tb/jd/pdd/dy/xhs)"),
                 "supplier_name": _str("按供应商过滤（模糊匹配）"),
