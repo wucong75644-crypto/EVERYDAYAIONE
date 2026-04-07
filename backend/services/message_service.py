@@ -301,19 +301,3 @@ class MessageService:
 
         return history
 
-    async def _update_conversation_title_if_first_message(
-        self,
-        conversation_id: str,
-        user_id: str,
-        content: str,
-        org_id: Optional[str] = None,
-    ) -> None:
-        """如果是第一条消息，更新对话标题"""
-        conversation = await self.conversation_service.get_conversation(
-            conversation_id, user_id, org_id
-        )
-        if conversation["message_count"] == 1 and conversation["title"] == "新对话":
-            new_title = content[:20] + ("..." if len(content) > 20 else "")
-            await self.conversation_service.update_conversation(
-                conversation_id, user_id, new_title, org_id=org_id
-            )
