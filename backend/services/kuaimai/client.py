@@ -344,6 +344,8 @@ class KuaiMaiClient:
 
     _NETWORK_MAX_RETRIES = 3
     _NETWORK_RETRY_DELAY = 2.0  # 首次重试等待秒数，指数退避
+    _RATE_LIMIT_MAX_RETRIES = 3
+    _RATE_LIMIT_BASE_DELAY = 5.0  # 429 退避起始秒数（5s → 10s → 20s）
 
     async def request_with_retry(
         self,
@@ -353,10 +355,11 @@ class KuaiMaiClient:
         base_url: Optional[str] = None,
         extra_system_params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """带 Token 自动刷新 + 网络层重试的请求
+        """带 Token 自动刷新 + 网络层重试 + 429 退避的请求
 
         1. 网络错误（断连/超时/连接重置）→ 指数退避重试最多3次
-        2. Token 过期 → 刷新后重试一次
+        2. HTTP 429（API 限流）→ 指数退避重试最多3次（5s/10s/20s）
+        3. Token 过期 → 刷新后重试一次
         """
         import asyncio as _asyncio
 
@@ -367,6 +370,19 @@ class KuaiMaiClient:
         for attempt in range(1, self._NETWORK_MAX_RETRIES + 1):
             try:
                 return await self._request_with_token_retry(method, biz_params, **kwargs)
+            except httpx.HTTPStatusError as e:
+                # 429 Too Many Requests → 指数退避重试
+                if e.response.status_code == 429 and attempt < self._RATE_LIMIT_MAX_RETRIES:
+                    delay = self._RATE_LIMIT_BASE_DELAY * (2 ** (attempt - 1))
+                    logger.warning(
+                        f"KuaiMai 429 rate limited, backing off | method={method} | "
+                        f"attempt={attempt}/{self._RATE_LIMIT_MAX_RETRIES} | "
+                        f"delay={delay}s"
+                    )
+                    await _asyncio.sleep(delay)
+                    last_exc = e
+                    continue
+                raise  # 非 429 的 HTTP 错误直接抛出
             except network_errors as e:
                 last_exc = e
                 if attempt < self._NETWORK_MAX_RETRIES:
