@@ -22,6 +22,7 @@ ERP_LOCAL_TOOLS: Set[str] = {
     "local_doc_query",
     "local_global_stats",
     "local_shop_list",
+    "local_warehouse_list",
     "trigger_erp_sync",
 }
 
@@ -296,21 +297,32 @@ def build_local_tools() -> List[Dict[str, Any]]:
         # 11. 店铺列表
         _tool(
             "local_shop_list",
-            "查询店铺列表（从本地订单数据提取）。毫秒级响应。"
-            "返回所有出过单的店铺，按平台分组显示（名称+平台）。"
+            "查询店铺列表（含所有店铺，包括新开未出单的）。毫秒级响应。"
+            "返回店铺名称/平台/状态/ID，按平台分组显示。"
             "支持按平台过滤（如只看拼多多店铺）。"
             "适合：有哪些店铺、拼多多店铺列表、各平台店铺等查询。"
-            "⚠ 仅包含有订单记录的店铺，新开未出单的店铺需用远程 erp_info_query(shop_list)。"
             "相关工具：拿到店铺名后可用 local_global_stats(shop_name=...) 统计该店铺数据。",
             {
                 "platform": _enum(
                     "按平台过滤",
-                    ["tb", "jd", "pdd", "dy", "xhs", "1688"],
+                    ["淘宝", "天猫", "京东", "拼多多", "抖音", "快手", "小红书", "1688"],
                 ),
             },
             [],
         ),
-        # 12. 手动触发同步
+        # 12. 仓库列表
+        _tool(
+            "local_warehouse_list",
+            "查询仓库列表（实体仓+虚拟仓）。毫秒级响应。"
+            "返回仓库名称/编码/类型/状态/地址。"
+            "适合：有哪些仓库、仓库地址、仓库编码等查询。"
+            "相关工具：拿到仓库名后可用 local_stock_query 查库存分布。",
+            {
+                "is_virtual": _bool("是否只查虚拟仓（true=只看虚拟仓, false=只看实体仓, 不传=全部）"),
+            },
+            [],
+        ),
+        # 13. 手动触发同步
         _tool(
             "trigger_erp_sync",
             "手动触发ERP数据同步。"
@@ -323,7 +335,9 @@ def build_local_tools() -> List[Dict[str, Any]]:
                     "同步类型",
                     ["order", "purchase", "receipt", "shelf",
                      "aftersale", "purchase_return",
-                     "product", "stock", "supplier", "platform_map"],
+                     "product", "stock", "supplier", "platform_map",
+                     "shop", "warehouse", "tag", "category",
+                     "logistics_company"],
                 ),
             },
             ["sync_type"],
@@ -392,6 +406,12 @@ LOCAL_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "required": [],
         "properties": {
             "platform": {"type": "string"},
+        },
+    },
+    "local_warehouse_list": {
+        "required": [],
+        "properties": {
+            "is_virtual": {"type": "boolean"},
         },
     },
     "trigger_erp_sync": {

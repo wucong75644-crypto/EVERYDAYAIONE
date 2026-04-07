@@ -32,6 +32,13 @@ from services.kuaimai.erp_sync_master_handlers import (
     sync_stock_full,
     sync_supplier,
 )
+from services.kuaimai.erp_sync_config_handlers import (
+    sync_category,
+    sync_logistics_company,
+    sync_shop,
+    sync_tag,
+    sync_warehouse,
+)
 from services.kuaimai.erp_sync_persistence import (
     collect_affected_keys as _collect_affected_keys,
     run_aggregation as _run_aggregation,
@@ -238,6 +245,11 @@ class ErpSyncService:
             "stock": partial(sync_stock, self),
             "supplier": partial(sync_supplier, self),
             "platform_map": partial(sync_platform_map, self),
+            "shop": partial(sync_shop, self),
+            "warehouse": partial(sync_warehouse, self),
+            "tag": partial(sync_tag, self),
+            "category": partial(sync_category, self),
+            "logistics_company": partial(sync_logistics_company, self),
         }
         return handlers.get(sync_type)
 
