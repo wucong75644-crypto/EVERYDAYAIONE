@@ -228,11 +228,8 @@ export function useWebSocket(): UseWebSocketReturn {
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
-    let wasConnected = false;
-
     ws.onopen = () => {
       logger.info('ws:connection', 'Connected');
-      wasConnected = true;
       isServerRestartingRef.current = false;
       setConnectionState('connected');
       reconnectAttemptsRef.current = 0;
@@ -248,12 +245,11 @@ export function useWebSocket(): UseWebSocketReturn {
         heartbeatIntervalRef.current = null;
       }
 
-      // 认证失败：4001/4002 明确表示 token 无效
-      // 1006 在服务器重启期间是"服务器不可达"，不代表认证失败
+      // 认证失败：只有后端明确返回 4001/4002 才是 token 无效
+      // 1006 是"异常关闭"（网络断开/服务器重启），不代表认证失败
       const isAuthError =
         event.code === 4001 ||
-        event.code === 4002 ||
-        (!wasConnected && event.code === 1006 && !isServerRestartingRef.current);
+        event.code === 4002;
 
       if (isAuthError) {
         logger.warn('ws:connection', 'Auth failed, clearing token', { code: event.code });
