@@ -268,9 +268,8 @@ export function useWebSocket(): UseWebSocketReturn {
         return;
       }
 
-      // 非正常关闭且不是主动清理，无限重连（指数退避，上限30s）
+      // 非主动清理时自动重连（含服务器重启 code=1000 的场景）
       if (
-        event.code !== 1000 &&
         !isCleaningUpRef.current &&
         isAuthenticated()
       ) {
