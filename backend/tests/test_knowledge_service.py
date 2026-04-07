@@ -490,3 +490,85 @@ class TestSeedKnowledge:
 
             result = await load_seed_knowledge("/nonexistent/path.json")
             assert result == 0
+
+
+# ============ Per-Category Eviction ============
+
+
+class TestMaxPerCategoryEviction:
+    """知识库 per-category 淘汰机制"""
+
+    def _setup_mocks(self, fetchone_side_effect):
+        """构造完整的 pg mock 链"""
+        cursor = AsyncMock()
+        cursor.execute = AsyncMock()
+        cursor.fetchone = AsyncMock(side_effect=fetchone_side_effect)
+
+        conn = AsyncMock()
+        conn.cursor = MagicMock(return_value=AsyncMock(
+            __aenter__=AsyncMock(return_value=cursor),
+            __aexit__=AsyncMock(return_value=False),
+        ))
+        conn.commit = AsyncMock()
+
+        conn_ctx = AsyncMock()
+        conn_ctx.__aenter__ = AsyncMock(return_value=conn)
+        conn_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        return cursor, conn_ctx
+
+    @pytest.mark.asyncio
+    async def test_eviction_triggered_when_over_limit(self):
+        """超过 max_per_category 时触发淘汰"""
+        cursor, conn_ctx = self._setup_mocks([
+            None, (600,), (501,), None, ("new-id",),
+        ])
+        with patch("services.knowledge_service.get_pg_connection", new_callable=AsyncMock, return_value=conn_ctx), \
+             patch("services.knowledge_service.is_kb_available", return_value=True), \
+             patch("services.knowledge_service.compute_embedding", new_callable=AsyncMock, return_value=None):
+            from services.knowledge_service import add_knowledge
+            await add_knowledge(
+                category="routing", node_type="experience",
+                title="test", content="test content",
+                max_per_category=500,
+            )
+            sqls = [str(c) for c in cursor.execute.call_args_list]
+            eviction = [s for s in sqls if "is_deleted = TRUE" in s and "category" in s]
+            assert len(eviction) == 1
+
+    @pytest.mark.asyncio
+    async def test_no_eviction_when_under_limit(self):
+        """未超过 max_per_category 时不淘汰"""
+        cursor, conn_ctx = self._setup_mocks([
+            None, (100,), (50,), ("new-id",),
+        ])
+        with patch("services.knowledge_service.get_pg_connection", new_callable=AsyncMock, return_value=conn_ctx), \
+             patch("services.knowledge_service.is_kb_available", return_value=True), \
+             patch("services.knowledge_service.compute_embedding", new_callable=AsyncMock, return_value=None):
+            from services.knowledge_service import add_knowledge
+            await add_knowledge(
+                category="routing", node_type="experience",
+                title="test", content="test content",
+                max_per_category=500,
+            )
+            sqls = [str(c) for c in cursor.execute.call_args_list]
+            eviction = [s for s in sqls if "is_deleted = TRUE" in s and "category" in s]
+            assert len(eviction) == 0
+
+    @pytest.mark.asyncio
+    async def test_no_eviction_when_max_per_category_none(self):
+        """max_per_category=None 时跳过 per-category 检查"""
+        cursor, conn_ctx = self._setup_mocks([
+            None, (100,), ("new-id",),
+        ])
+        with patch("services.knowledge_service.get_pg_connection", new_callable=AsyncMock, return_value=conn_ctx), \
+             patch("services.knowledge_service.is_kb_available", return_value=True), \
+             patch("services.knowledge_service.compute_embedding", new_callable=AsyncMock, return_value=None):
+            from services.knowledge_service import add_knowledge
+            await add_knowledge(
+                category="routing", node_type="experience",
+                title="test", content="test content",
+            )
+            sqls = [str(c) for c in cursor.execute.call_args_list]
+            cat_count = [s for s in sqls if "COUNT" in s and "category" in s]
+            assert len(cat_count) == 0

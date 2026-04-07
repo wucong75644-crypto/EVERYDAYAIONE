@@ -311,6 +311,63 @@ class TestBuildAgentStepWithTaskId:
         assert msg["payload"]["tool_name"] == "kuaimai_search"
 
 
+class TestBuildAgentStepProgressFields:
+    """E1+E2: build_agent_step 进度和预估字段"""
+
+    def test_progress_field_with_max_turns(self):
+        from schemas.websocket import build_agent_step
+        msg = build_agent_step(
+            conversation_id="c1", tool_name="tool", status="running",
+            turn=3, max_turns=20,
+        )
+        assert msg["payload"]["progress"] == "3/20"
+
+    def test_no_progress_without_max_turns(self):
+        from schemas.websocket import build_agent_step
+        msg = build_agent_step(
+            conversation_id="c1", tool_name="tool", status="running", turn=1,
+        )
+        assert "progress" not in msg["payload"]
+
+    def test_elapsed_s_field(self):
+        from schemas.websocket import build_agent_step
+        msg = build_agent_step(
+            conversation_id="c1", tool_name="tool", status="running",
+            turn=1, elapsed_s=12.345,
+        )
+        assert msg["payload"]["elapsed_s"] == 12.3
+
+    def test_tools_completed_field(self):
+        from schemas.websocket import build_agent_step
+        msg = build_agent_step(
+            conversation_id="c1", tool_name="tool", status="running",
+            turn=2, tools_completed=["local_stock_query", "local_order_query"],
+        )
+        assert msg["payload"]["tools_completed"] == ["local_stock_query", "local_order_query"]
+
+    def test_estimated_s_field(self):
+        from schemas.websocket import build_agent_step
+        msg = build_agent_step(
+            conversation_id="c1", tool_name="tool", status="running",
+            turn=1, estimated_s=51,
+        )
+        assert msg["payload"]["estimated_s"] == 51
+
+    def test_no_optional_fields_when_omitted(self):
+        from schemas.websocket import build_agent_step
+        msg = build_agent_step(
+            conversation_id="c1", tool_name="tool", status="running", turn=1,
+        )
+        payload = msg["payload"]
+        assert "progress" not in payload
+        assert "elapsed_s" not in payload
+        assert "tools_completed" not in payload
+        assert "estimated_s" not in payload
+        # 基础字段仍在
+        assert payload["tool_name"] == "tool"
+        assert payload["turn"] == 1
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

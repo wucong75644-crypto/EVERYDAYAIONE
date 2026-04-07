@@ -158,6 +158,18 @@ class ERPAgent:
             elif is_truncated:
                 status = "partial"
 
+            # [F1/F2] 经验记录：成功记路由，失败记原因
+            if status == "success" and tools_called:
+                asyncio.create_task(self._record_agent_experience(
+                    "routing", query, tools_called,
+                    f"轮次：{turns}", budget, confidence=0.6,
+                ))
+            elif tools_called:
+                asyncio.create_task(self._record_agent_experience(
+                    "failure", query, tools_called,
+                    f"失败原因：{text[:200]}", budget,
+                ))
+
             return ERPAgentResult(
                 text=text,
                 full_text=text,
@@ -170,6 +182,12 @@ class ERPAgent:
 
         except Exception as e:
             logger.error(f"ERPAgent error | query={query[:50]} | error={e}")
+            # [F2] 异常退出也记录失败记忆
+            if tools_called:
+                asyncio.create_task(self._record_agent_experience(
+                    "failure", query, tools_called,
+                    f"异常：{str(e)[:200]}", budget,
+                ))
             return ERPAgentResult(
                 text=f"ERP 查询出错：{e}。请稍后重试或换个方式提问。",
                 full_text=str(e),
@@ -231,7 +249,13 @@ class ERPAgent:
                 )
                 enforce_budget(messages, budget_70)
 
-            await self._notify_progress(turn + 1, "thinking")
+            # [E1+E2] 推送进度（含已完成工具列表 + 耗时 + 预估）
+            _estimated = len(selected_tools) * 3 if turn == 0 else None  # 首轮粗估
+            await self._notify_progress(
+                turn + 1, "thinking",
+                tools_called=tools_called, budget=budget,
+                estimated_s=_estimated,
+            )
 
             tc_acc: Dict[int, Dict[str, Any]] = {}
             turn_text = ""
@@ -375,7 +399,7 @@ class ERPAgent:
                 messages.append({"role": "tool", "tool_call_id": tc["id"], "content": "OK"})
                 break
 
-            await self._notify_progress(turn, tool_name)
+            await self._notify_progress(turn, tool_name, tools_called=tools_called, budget=budget)
 
             try:
                 args = json.loads(tc["arguments"]) if tc["arguments"] else {}
@@ -467,8 +491,13 @@ class ERPAgent:
 
         return accumulated
 
-    async def _notify_progress(self, turn: int, tool_name: str) -> None:
-        """通过 WebSocket 发送进度通知"""
+    async def _notify_progress(
+        self, turn: int, tool_name: str,
+        tools_called: Optional[List[str]] = None,
+        budget: Optional[Any] = None,
+        estimated_s: Optional[int] = None,
+    ) -> None:
+        """通过 WebSocket 发送进度通知（含进度比例/耗时/已完成工具）"""
         if not self.task_id:
             return
         try:
@@ -480,6 +509,10 @@ class ERPAgent:
                 status="running",
                 turn=turn,
                 task_id=self.task_id,
+                max_turns=MAX_ERP_TURNS,
+                elapsed_s=budget.elapsed if budget else None,
+                tools_completed=list(dict.fromkeys(tools_called)) if tools_called else None,
+                estimated_s=estimated_s,
             )
             await stream_publish(self.task_id, self.user_id, msg)
         except Exception as e:
@@ -543,3 +576,34 @@ class ERPAgent:
         import time as _time
         key = self._cache_key(tool_name, args)
         self._query_cache[key] = (result, _time.monotonic())
+
+    _EXPERIENCE_MAX_PER_CATEGORY = 500  # 每个 category 最多保留 500 条，淘汰 confidence 最低的
+
+    async def _record_agent_experience(
+        self, category: str, query: str, tools_called: List[str],
+        detail: str, budget: Optional[Any] = None,
+        confidence: float = 0.5,
+    ) -> None:
+        """[F1/F2] 记录路由经验或失败记忆到知识库（通用方法，含 per-category 淘汰）"""
+        try:
+            from services.knowledge_service import add_knowledge
+            elapsed = f"{budget.elapsed:.1f}s" if budget else "N/A"
+            unique_tools = list(dict.fromkeys(tools_called))
+            prefix = "查询路由" if category == "routing" else "查询失败"
+            await add_knowledge(
+                category=category,
+                node_type="experience",
+                title=f"{prefix}：{query[:30]}",
+                content=(
+                    f"查询：{query}\n"
+                    f"路径：{' → '.join(unique_tools)}\n"
+                    f"{detail}\n耗时：{elapsed}"
+                ),
+                source="erp_agent",
+                confidence=confidence,
+                scope="org",
+                org_id=self.org_id,
+                max_per_category=self._EXPERIENCE_MAX_PER_CATEGORY,
+            )
+        except Exception as e:
+            logger.debug(f"ERPAgent {category} experience save failed | error={e}")
