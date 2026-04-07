@@ -316,6 +316,7 @@ async def sync_aftersale(
     all_rows: list[dict[str, Any]] = []
     affected_key_set: set[tuple[str, str]] = set()
     total_count = 0
+    seen_wids: set[str] = set()  # 收集工单 ID 用于搭便车
 
     async for page_docs in svc.fetch_pages_streaming(
         "erp.aftersale.list.query",
@@ -327,6 +328,9 @@ async def sync_aftersale(
         page_size=200,
     ):
         for doc in page_docs:
+            wid = doc.get("id")
+            if wid:
+                seen_wids.add(str(wid))
             all_rows.extend(_build_aftersale_rows(doc, svc))
 
         # 每 1000 条刷一次库，释放内存
@@ -341,6 +345,15 @@ async def sync_aftersale(
         affected_key_set.update(svc.collect_affected_keys(all_rows))
 
     await svc.run_aggregation(list(affected_key_set))
+
+    # 搭便车：售后操作日志
+    if seen_wids:
+        try:
+            from services.kuaimai.erp_sync_piggyback_handlers import piggyback_aftersale_log
+            await piggyback_aftersale_log(svc, list(seen_wids))
+        except Exception as e:
+            logger.warning(f"Aftersale log piggyback failed (non-fatal) | error={e}")
+
     return total_count
 
 
@@ -462,4 +475,18 @@ async def sync_order(
         affected_key_set.update(svc.collect_affected_keys(all_rows))
 
     await svc.run_aggregation(list(affected_key_set))
+
+    # 搭便车：订单操作日志 + 包裹信息
+    if seen_sids:
+        try:
+            from services.kuaimai.erp_sync_piggyback_handlers import (
+                piggyback_express,
+                piggyback_order_log,
+            )
+            sid_list = list(seen_sids)
+            await piggyback_order_log(svc, sid_list)
+            await piggyback_express(svc, sid_list)
+        except Exception as e:
+            logger.warning(f"Order piggyback failed (non-fatal) | error={e}")
+
     return total_count
