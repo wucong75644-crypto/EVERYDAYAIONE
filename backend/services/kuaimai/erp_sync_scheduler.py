@@ -25,11 +25,30 @@ PRIORITY_WEIGHTS: dict[str, int] = {
     "receipt": 10,
     "shelf": 10,
     "purchase_return": 10,
+    # 仓库单据（中频，低优先级）
+    "allocate": 5,
+    "allocate_in": 5,
+    "allocate_out": 5,
+    "other_in": 5,
+    "other_out": 5,
+    "inventory_sheet": 5,
+    "unshelve": 5,
+    "process_order": 5,
+    "section_record": 5,
+    "goods_section": 5,
+    # 低频/特殊
     "platform_map": 0,
     "stock_full": 0,
+    "batch_stock": 0,
     "daily_maintenance": 0,
     "order_reconcile": 0,
     "aftersale_reconcile": 0,
+    # 配置（低频）
+    "shop": 0,
+    "warehouse": 0,
+    "tag": 0,
+    "category": 0,
+    "logistics_company": 0,
 }
 
 # 高频同步类型（每轮都入队）
@@ -40,11 +59,22 @@ HIGH_FREQ_TYPES = [
     "order", "aftersale",
 ]
 
+# 中频同步类型（每 5 分钟入队）
+WAREHOUSE_TYPES = [
+    "allocate", "allocate_in", "allocate_out",
+    "other_in", "other_out",
+    "inventory_sheet", "unshelve", "process_order",
+    "section_record", "goods_section",
+]
+
 # 低频同步类型
 LOW_FREQ_TYPES = ["platform_map"]
 
+# 配置数据同步类型（每 12 小时入队）
+CONFIG_TYPES = ["shop", "warehouse", "tag", "category", "logistics_company"]
+
 # 特殊任务类型（按独立间隔调度）
-SPECIAL_TYPES = ["stock_full", "daily_maintenance", "order_reconcile", "aftersale_reconcile"]
+SPECIAL_TYPES = ["stock_full", "batch_stock", "daily_maintenance", "order_reconcile", "aftersale_reconcile"]
 
 
 class ErpSyncScheduler:
@@ -59,6 +89,12 @@ class ErpSyncScheduler:
 
     # 日维护间隔（秒）：24小时
     DAILY_INTERVAL = 86400
+    # 仓库单据间隔（秒）：5分钟
+    WAREHOUSE_INTERVAL = 300
+    # 配置数据间隔（秒）：12小时
+    CONFIG_INTERVAL = 43200
+    # 批次库存间隔（秒）：6小时
+    BATCH_STOCK_INTERVAL = 21600
 
     def __init__(self, db) -> None:
         self.db = db
@@ -71,6 +107,9 @@ class ErpSyncScheduler:
         self._org_last_daily: dict[str | None, datetime] = {}
         self._org_last_order_reconcile: dict[str | None, datetime] = {}
         self._org_last_aftersale_reconcile: dict[str | None, datetime] = {}
+        self._org_last_warehouse: dict[str | None, datetime] = {}
+        self._org_last_config: dict[str | None, datetime] = {}
+        self._org_last_batch_stock: dict[str | None, datetime] = {}
 
     async def start(self) -> None:
         """启动调度循环"""
@@ -132,6 +171,20 @@ class ErpSyncScheduler:
         if self._first_round:
             return due
 
+        # 仓库单据类型：每 5 分钟入队
+        if self._is_interval_due(
+            self._org_last_warehouse, org_id,
+            self.WAREHOUSE_INTERVAL,
+        ):
+            due.extend(WAREHOUSE_TYPES)
+
+        # 配置数据类型：每 12 小时入队
+        if self._is_interval_due(
+            self._org_last_config, org_id,
+            self.CONFIG_INTERVAL,
+        ):
+            due.extend(CONFIG_TYPES)
+
         # 低频类型：按间隔判断
         if self._is_interval_due(
             self._org_last_platform_map, org_id,
@@ -145,6 +198,13 @@ class ErpSyncScheduler:
             self.settings.erp_stock_full_refresh_interval,
         ):
             due.append("stock_full")
+
+        # 批次效期库存：每 6 小时
+        if self._is_interval_due(
+            self._org_last_batch_stock, org_id,
+            self.BATCH_STOCK_INTERVAL,
+        ):
+            due.append("batch_stock")
 
         # 日维护
         if self._is_interval_due(
@@ -186,16 +246,23 @@ class ErpSyncScheduler:
         低频/特殊任务需要更新时间戳以控制下次调度时间。
         高频任务每轮都入队，不需要时间戳控制。
         """
+        now = datetime.now()
         if sync_type == "platform_map":
-            self._org_last_platform_map[org_id] = datetime.now()
+            self._org_last_platform_map[org_id] = now
         elif sync_type == "stock_full":
-            self._org_last_stock_full[org_id] = datetime.now()
+            self._org_last_stock_full[org_id] = now
+        elif sync_type == "batch_stock":
+            self._org_last_batch_stock[org_id] = now
         elif sync_type == "daily_maintenance":
-            self._org_last_daily[org_id] = datetime.now()
+            self._org_last_daily[org_id] = now
         elif sync_type == "order_reconcile":
-            self._org_last_order_reconcile[org_id] = datetime.now()
+            self._org_last_order_reconcile[org_id] = now
         elif sync_type == "aftersale_reconcile":
-            self._org_last_aftersale_reconcile[org_id] = datetime.now()
+            self._org_last_aftersale_reconcile[org_id] = now
+        elif sync_type in WAREHOUSE_TYPES:
+            self._org_last_warehouse[org_id] = now
+        elif sync_type in CONFIG_TYPES:
+            self._org_last_config[org_id] = now
 
     async def _enqueue_task(self, org_id: str | None, sync_type: str) -> bool:
         """ZADD NX 入队，原子去重。"""
