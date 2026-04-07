@@ -53,7 +53,7 @@ async def piggyback_order_log(
             async with _API_SEM:
                 data = await client.request_with_retry(
                     "erp.trade.trace.list",
-                    {"sids": ",".join(batch), "pageNo": 1, "pageSize": 500},
+                    {"sids": ",".join(batch), "pageNo": 1, "pageSize": 20},
                 )
             logs = data.get("list") or data.get("traces") or []
             for log in logs:
