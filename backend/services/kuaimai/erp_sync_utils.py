@@ -105,10 +105,11 @@ async def _batch_upsert(
     """通用批量 upsert（与 ErpSyncService.upsert_document_items 类似）"""
     if not rows:
         return 0
-    # 注入 org_id
-    if org_id is not None:
-        for row in rows:
-            row["org_id"] = org_id
+    # 注入 org_id（NULL → 默认 UUID，确保唯一索引 on_conflict 可用）
+    _default_org = "00000000-0000-0000-0000-000000000000"
+    resolved_org = org_id or _default_org
+    for row in rows:
+        row["org_id"] = resolved_org
     total = 0
     for i in range(0, len(rows), batch_size):
         batch = rows[i : i + batch_size]

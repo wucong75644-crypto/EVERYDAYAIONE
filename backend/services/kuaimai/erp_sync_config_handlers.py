@@ -64,7 +64,7 @@ async def sync_shop(
 
     count = await _batch_upsert(
         svc.db, "erp_shops", rows,
-        "shop_id,COALESCE(org_id, '00000000-0000-0000-0000-000000000000')",
+        "shop_id,org_id",
         org_id=svc.org_id,
     )
     if count:
@@ -146,7 +146,7 @@ async def sync_warehouse(
         return 0
     count = await _batch_upsert(
         svc.db, "erp_warehouses", rows,
-        "warehouse_id,COALESCE(org_id, '00000000-0000-0000-0000-000000000000')",
+        "warehouse_id,org_id",
         org_id=svc.org_id,
     )
     if count:
@@ -211,7 +211,7 @@ async def sync_tag(
         return 0
     count = await _batch_upsert(
         svc.db, "erp_tags", rows,
-        "tag_id,tag_source,COALESCE(org_id, '00000000-0000-0000-0000-000000000000')",
+        "tag_id,tag_source,org_id",
         org_id=svc.org_id,
     )
     if count:
@@ -274,7 +274,7 @@ async def sync_category(
         return 0
     count = await _batch_upsert(
         svc.db, "erp_categories", rows,
-        "cat_id,cat_source,COALESCE(org_id, '00000000-0000-0000-0000-000000000000')",
+        "cat_id,cat_source,org_id",
         org_id=svc.org_id,
     )
     if count:
@@ -315,7 +315,7 @@ async def sync_logistics_company(
         return 0
     count = await _batch_upsert(
         svc.db, "erp_logistics_companies", rows,
-        "company_id,COALESCE(org_id, '00000000-0000-0000-0000-000000000000')",
+        "company_id,org_id",
         org_id=svc.org_id,
     )
     if count:
