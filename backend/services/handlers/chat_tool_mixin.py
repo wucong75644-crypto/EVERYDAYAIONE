@@ -138,14 +138,20 @@ class ChatToolMixin:
         except json.JSONDecodeError:
             return (tc, f"参数解析失败: {tc['arguments'][:100]}", True)
 
+        import time as _time
+        _audit_start = _time.monotonic()
         try:
             result = await executor.execute(tool_name, args)
+            _audit_elapsed = int((_time.monotonic() - _audit_start) * 1000)
             # 提取 [FILE] 标记 → FilePart 暂存到 ChatHandler（不经过 LLM）
             result = self._extract_file_parts(result)
-            # 工具结果压缩（完整数据已推送用户，messages 里只放精简版）
-            from services.handlers.context_compressor import compress_tool_result
-            result = compress_tool_result(tool_name, result)
-            # 通知前端工具完成
+            # 先用完整结果生成 summary 推送前端（用户看到完整摘要）
+            raw_summary = result[:100] if result else ""
+            # 再截断+信号（messages 里只放精简版给 LLM）
+            from services.agent.tool_result_envelope import wrap
+            is_truncated = len(result) > 2000 if result else False
+            result = wrap(tool_name, result)
+            # 通知前端工具完成（summary 基于截断前的原始结果）
             await ws_manager.send_to_task_or_user(
                 task_id, user_id,
                 build_tool_result(
@@ -155,12 +161,19 @@ class ChatToolMixin:
                     tool_name=tool_name,
                     tool_call_id=tool_call_id,
                     success=True,
-                    summary=result[:100] if result else "",
+                    summary=raw_summary,
                     turn=turn,
                 ),
             )
+            # [C1] 审计日志（fire-and-forget）
+            self._emit_tool_audit(
+                task_id, conversation_id, user_id, tool_name,
+                tool_call_id, turn, args, len(result),
+                _audit_elapsed, "success", is_truncated,
+            )
             return (tc, result, False)
         except Exception as e:
+            _audit_elapsed = int((_time.monotonic() - _audit_start) * 1000)
             logger.error(f"Tool execution error | tool={tool_name} | task={task_id} | error={e}")
             error_msg = f"工具执行失败: {e}"
             await ws_manager.send_to_task_or_user(
@@ -176,8 +189,32 @@ class ChatToolMixin:
                     turn=turn,
                 ),
             )
+            self._emit_tool_audit(
+                task_id, conversation_id, user_id, tool_name,
+                tool_call_id, turn, args, len(error_msg),
+                _audit_elapsed, "error",
+            )
             return (tc, error_msg, True)
 
+
+    def _emit_tool_audit(
+        self, task_id: str, conversation_id: str, user_id: str,
+        tool_name: str, tool_call_id: str, turn: int,
+        args: dict, result_length: int, elapsed_ms: int,
+        status: str, is_truncated: bool = False,
+    ) -> None:
+        """[C1] fire-and-forget 审计日志"""
+        from services.agent.tool_audit import (
+            ToolAuditEntry, build_args_hash, record_tool_audit,
+        )
+        asyncio.create_task(record_tool_audit(self.db, ToolAuditEntry(
+            task_id=task_id, conversation_id=conversation_id,
+            user_id=user_id, org_id=self.org_id or "",
+            tool_name=tool_name, tool_call_id=tool_call_id,
+            turn=turn, args_hash=build_args_hash(args),
+            result_length=result_length, elapsed_ms=elapsed_ms,
+            status=status, is_truncated=is_truncated,
+        )))
 
     def _extract_file_parts(self, result: str) -> str:
         """从工具结果中提取 [FILE] 标记，暂存为 FilePart
@@ -229,14 +266,6 @@ def _partition_tool_calls(
     return batches
 
 
-# ============================================================
-# 结果摘要（与 dispatcher._GLOBAL_CHAR_BUDGET 对齐）
-# ============================================================
-
-_SUMMARY_THRESHOLD = 4000   # 超过此阈值触发摘要
-_SUMMARY_PREVIEW = 2000     # 摘要中保留前 N 字符
-
-
 def accumulate_tool_call_delta(
     acc: Dict[int, Dict[str, Any]], deltas: list,
 ) -> None:
@@ -252,21 +281,3 @@ def accumulate_tool_call_delta(
             entry["name"] = tc_delta.name
         if tc_delta.arguments_delta:
             entry["arguments"] += tc_delta.arguments_delta
-
-
-def _summarize_if_needed(tool_name: str, result: str) -> str:
-    """大结果自动摘要，引导 AI 用 code_execute 做全量分析
-
-    远程 ERP 工具已有 dispatcher 4000 字符截断，此函数主要处理
-    本地工具（local_*）和其他无截断的工具返回。
-    """
-    if not result or len(result) <= _SUMMARY_THRESHOLD:
-        return result
-
-    preview = result[:_SUMMARY_PREVIEW]
-    return (
-        f"{preview}\n\n"
-        f"⚠ 结果较多（{len(result)}字符），以上为部分数据。\n"
-        f"如需全量数据分析/导出，可用 code_execute 调用 "
-        f"erp_query_all() 获取完整数据并用 pandas 分析。"
-    )

@@ -186,32 +186,45 @@ class TestExtractToolNamesAndCoreTools:
         assert ToolGroup.MEDIA.value == "media"
 
 
-class TestSummarizeIfNeeded:
-    """_summarize_if_needed 测试"""
+class TestToolResultEnvelope:
+    """tool_result_envelope.wrap 测试（替代已删除的 _summarize_if_needed）"""
 
     def test_short_result_unchanged(self):
-        from services.handlers.chat_tool_mixin import _summarize_if_needed
+        from services.agent.tool_result_envelope import wrap
         result = "库存100件"
-        assert _summarize_if_needed("local_stock_query", result) == result
+        assert wrap("local_stock_query", result) == result
 
-    def test_long_result_summarized(self):
-        from services.handlers.chat_tool_mixin import _summarize_if_needed
+    def test_long_result_truncated_with_signal(self):
+        from services.agent.tool_result_envelope import wrap, MAIN_AGENT_BUDGET
         result = "x" * 5000
-        summary = _summarize_if_needed("local_stock_query", result)
-        assert len(summary) < len(result)
-        assert "结果较多" in summary
-        assert "5000" in summary
+        wrapped = wrap("some_tool", result)
+        assert len(wrapped) < len(result)
+        assert "截断" in wrapped
+        assert "5000" in wrapped
 
     def test_empty_result_unchanged(self):
-        from services.handlers.chat_tool_mixin import _summarize_if_needed
-        assert _summarize_if_needed("tool", "") == ""
+        from services.agent.tool_result_envelope import wrap
+        assert wrap("tool", "") == ""
+        assert wrap("tool", None) is None
 
-    def test_threshold_boundary(self):
-        from services.handlers.chat_tool_mixin import _summarize_if_needed, _SUMMARY_THRESHOLD
-        exact = "x" * _SUMMARY_THRESHOLD
-        assert _summarize_if_needed("tool", exact) == exact
-        over = "x" * (_SUMMARY_THRESHOLD + 1)
-        assert _summarize_if_needed("tool", over) != over
+    def test_erp_agent_budget(self):
+        from services.agent.tool_result_envelope import wrap, ERP_AGENT_RESULT_BUDGET
+        result = "x" * (ERP_AGENT_RESULT_BUDGET + 500)
+        wrapped = wrap("erp_agent", result)
+        assert "截断" in wrapped
+
+    def test_no_truncate_tools(self):
+        from services.agent.tool_result_envelope import wrap
+        result = "x" * 10000
+        assert wrap("generate_image", result) == result
+
+    def test_erp_result_preserves_summary_lines(self):
+        from services.agent.tool_result_envelope import wrap_for_erp_agent
+        lines = ["订单查询结果"] + [f"订单{i}" for i in range(100)] + ["合计：100单"]
+        result = "\n".join(lines)
+        wrapped = wrap_for_erp_agent("local_order_query", result)
+        assert "订单查询结果" in wrapped
+        assert "合计：100单" in wrapped
 
 
 class TestToolExecutorNewHandlers:
