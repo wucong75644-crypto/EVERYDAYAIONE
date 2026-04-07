@@ -795,11 +795,11 @@ class TestLocalShopList:
 
 class TestBuildLocalTools:
 
-    def test_returns_12_tools(self):
-        """build_local_tools 返回 12 个工具（8原有 + 4新增）"""
+    def test_returns_13_tools(self):
+        """build_local_tools 返回 13 个工具（12原有 + local_warehouse_list）"""
         from config.erp_local_tools import build_local_tools
         tools = build_local_tools()
-        assert len(tools) == 12
+        assert len(tools) == 13
 
     def test_each_tool_structure(self):
         """每个工具有完整 function calling 结构"""

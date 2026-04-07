@@ -29,11 +29,15 @@ class ErpSyncWorker:
     ]
     # 低频同步类型
     LOW_FREQ_TYPES = ["platform_map"]
+    # 配置数据同步类型（每天 2 次，全量刷新）
+    CONFIG_TYPES = ["shop", "warehouse", "tag", "category", "logistics_company"]
 
     # 日维护间隔（秒）：24小时
     DAILY_INTERVAL = 86400
     # 删除检测间隔（秒）：7天（商品删除低频，无需每天全量扫描）
     DELETION_INTERVAL = 604800
+    # 配置数据同步间隔（秒）：12小时（每天 2 次）
+    CONFIG_INTERVAL = 43200
 
     def __init__(self, db) -> None:
         self.db = db
@@ -45,6 +49,7 @@ class ErpSyncWorker:
         self._org_last_stock_full: dict[str | None, datetime] = {}
         self._org_last_daily: dict[str | None, datetime] = {}
         self._org_last_deletion: dict[str | None, datetime] = {}
+        self._org_last_config: dict[str | None, datetime] = {}
         # 内存聚合队列：三元组 (outer_id, stat_date, org_id)
         self.aggregation_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue(maxsize=10000)
         # 去重集合
@@ -137,6 +142,15 @@ class ErpSyncWorker:
             await self._extend_lock()
             await self._execute_sync("platform_map", org_id=org_id, client=client)
             self._org_last_platform_map[org_id] = datetime.now()
+
+        # 配置数据同步（shop/warehouse/tag/category/logistics_company）
+        if self.is_running and self._should_run_config(org_id):
+            for config_type in self.CONFIG_TYPES:
+                if not self.is_running:
+                    break
+                await self._extend_lock()
+                await self._execute_sync(config_type, org_id=org_id, client=client)
+            self._org_last_config[org_id] = datetime.now()
 
         # 日维护（归档+聚合兜底+删除检测）
         if self.is_running and self._should_run_daily(org_id):
@@ -268,6 +282,14 @@ class ErpSyncWorker:
             return True
         elapsed = (datetime.now() - last).total_seconds()
         return elapsed >= self.settings.erp_platform_map_interval
+
+    def _should_run_config(self, org_id: str | None = None) -> bool:
+        """判断配置数据同步是否到期（按企业隔离计时，每 12 小时）"""
+        last = self._org_last_config.get(org_id)
+        if last is None:
+            return True
+        elapsed = (datetime.now() - last).total_seconds()
+        return elapsed >= self.CONFIG_INTERVAL
 
     def _should_run_daily(self, org_id: str | None = None) -> bool:
         """判断日维护任务是否到期（按企业隔离计时）"""

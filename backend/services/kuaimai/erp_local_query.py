@@ -492,16 +492,55 @@ async def local_shop_list(
     platform: str | None = None,
     org_id: str | None = None,
 ) -> str:
-    """从本地订单数据中提取店铺列表（DISTINCT shop_name + platform）
+    """查询本地店铺列表（优先 erp_shops 同步表，降级到订单提取）
 
-    数据来源：erp_document_items 的 order 记录。
-    返回所有出过单的店铺及其平台归属。
+    数据来源：erp_shops 表（API 全量同步），包含未出单的新店。
+    降级：erp_shops 无数据时回退到 erp_distinct_shops RPC（仅出过单的店铺）。
     """
+    rows: list[dict] = []
+
+    # 优先查 erp_shops 同步表
     try:
-        params = {
-            "p_org_id": org_id,
-            "p_platform": platform or None,
-        }
+        q = db.table("erp_shops").select("name, platform, state, shop_id, short_name")
+        if org_id:
+            q = q.eq("org_id", org_id)
+        else:
+            q = q.is_("org_id", "null")
+        if platform:
+            q = q.eq("platform", platform)
+        result = q.order("platform").execute()
+        rows = result.data or []
+    except Exception:
+        pass  # 表可能尚未创建，降级
+
+    if rows:
+        # 状态枚举：1=停用, 2=未初始化, 3=启用, 4=会话失效
+        state_map = {1: "停用", 2: "未初始化", 3: "启用", 4: "会话失效"}
+        by_platform: dict[str, list[dict]] = {}
+        for r in rows:
+            plat = r.get("platform") or "未知"
+            by_platform.setdefault(plat, []).append(r)
+
+        total = len(rows)
+        lines = [f"共 {total} 个店铺：\n"]
+        for plat, shops in sorted(by_platform.items()):
+            lines.append(f"【{plat}】({len(shops)}个)")
+            for i, s in enumerate(shops, 1):
+                name = s.get("name") or s.get("short_name") or "未命名"
+                state = state_map.get(s.get("state"), "")
+                sid = s.get("shop_id", "")
+                suffix = f" [{state}]" if state and state != "启用" else ""
+                lines.append(f"  {i}. {name}{suffix} (ID:{sid})")
+            lines.append("")
+
+        health = check_sync_health(db, ["shop"], org_id=org_id)
+        if health:
+            lines.append(health)
+        return "\n".join(lines)
+
+    # 降级：从订单数据提取
+    try:
+        params = {"p_org_id": org_id, "p_platform": platform or None}
         result = db.rpc("erp_distinct_shops", params).execute()
     except Exception as e:
         logger.error(f"local_shop_list RPC failed | error={e}")
@@ -512,7 +551,6 @@ async def local_shop_list(
         health = check_sync_health(db, ["order"], org_id=org_id)
         return f"暂无店铺数据{platform_label}\n{health}".strip()
 
-    # RPC 返回已去重的 [{shop_name, platform}]
     seen: dict[str, str] = {}
     for row in result.data:
         name = (row.get("shop_name") or "").strip()
@@ -520,12 +558,11 @@ async def local_shop_list(
         if name and name not in seen:
             seen[name] = plat
 
-    # 按平台分组展示
     by_platform: dict[str, list[str]] = {}
     for name, plat in sorted(seen.items(), key=lambda x: (x[1], x[0])):
         by_platform.setdefault(plat, []).append(name)
 
-    lines = [f"共 {len(seen)} 个店铺：\n"]
+    lines = [f"共 {len(seen)} 个店铺（来源: 订单数据，可能不含新店）：\n"]
     for plat, shops in sorted(by_platform.items()):
         lines.append(f"【{plat}】({len(shops)}个)")
         for i, name in enumerate(shops, 1):
@@ -533,6 +570,74 @@ async def local_shop_list(
         lines.append("")
 
     health = check_sync_health(db, ["order"], org_id=org_id)
+    if health:
+        lines.append(health)
+    return "\n".join(lines)
+
+
+async def local_warehouse_list(
+    db,
+    is_virtual: bool | None = None,
+    org_id: str | None = None,
+) -> str:
+    """查询本地仓库列表（erp_warehouses 同步表）
+
+    包含实体仓库和虚拟仓库，返回名称/编码/类型/状态/地址。
+    """
+    try:
+        q = db.table("erp_warehouses").select(
+            "warehouse_id, name, code, warehouse_type, status, "
+            "is_virtual, contact, contact_phone, province, city, district, address"
+        )
+        if org_id:
+            q = q.eq("org_id", org_id)
+        else:
+            q = q.is_("org_id", "null")
+        if is_virtual is not None:
+            q = q.eq("is_virtual", is_virtual)
+        result = q.order("is_virtual").order("name").execute()
+    except Exception as e:
+        logger.error(f"local_warehouse_list failed | error={e}")
+        return f"仓库列表查询失败: {e}"
+
+    rows = result.data or []
+    if not rows:
+        health = check_sync_health(db, ["warehouse"], org_id=org_id)
+        return f"暂无仓库数据\n{health}".strip()
+
+    type_map = {0: "自有", 1: "第三方", 2: "门店"}
+    status_map = {0: "停用", 1: "正常", 2: "禁止发货"}
+
+    real_wh = [r for r in rows if not r.get("is_virtual")]
+    virtual_wh = [r for r in rows if r.get("is_virtual")]
+
+    lines = [f"共 {len(rows)} 个仓库（实体 {len(real_wh)}，虚拟 {len(virtual_wh)}）：\n"]
+
+    if real_wh:
+        lines.append("【实体仓库】")
+        for i, w in enumerate(real_wh, 1):
+            name = w.get("name") or "未命名"
+            code = w.get("code") or ""
+            wtype = type_map.get(w.get("warehouse_type"), "")
+            status = status_map.get(w.get("status"), "")
+            addr_parts = [w.get(k) or "" for k in ("province", "city", "district")]
+            addr = "".join(addr_parts)
+            if w.get("address"):
+                addr += w["address"]
+            code_str = f" 编码:{code}" if code else ""
+            type_str = f" {wtype}" if wtype else ""
+            status_str = f" [{status}]" if status and status != "正常" else ""
+            addr_str = f" 地址:{addr}" if addr.strip() else ""
+            lines.append(f"  {i}. {name}{code_str}{type_str}{status_str}{addr_str}")
+        lines.append("")
+
+    if virtual_wh:
+        lines.append("【虚拟仓库】")
+        for i, w in enumerate(virtual_wh, 1):
+            lines.append(f"  {i}. {w.get('name') or '未命名'}")
+        lines.append("")
+
+    health = check_sync_health(db, ["warehouse"], org_id=org_id)
     if health:
         lines.append(health)
     return "\n".join(lines)

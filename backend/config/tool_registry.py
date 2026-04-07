@@ -150,6 +150,16 @@ register(ToolEntry(
     priority=1,
 ))
 register(ToolEntry(
+    name="local_warehouse_list",
+    domain="erp",
+    description="查询仓库列表（实体仓+虚拟仓）",
+    tags=[
+        "仓库", "仓库列表", "哪些仓库", "仓库地址", "仓库编码",
+        "实体仓", "虚拟仓", "几个仓库", "发货仓",
+    ],
+    priority=1,
+))
+register(ToolEntry(
     name="trigger_erp_sync",
     domain="erp",
     description="手动触发ERP数据同步",
