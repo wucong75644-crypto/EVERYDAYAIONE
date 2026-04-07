@@ -202,6 +202,7 @@ class ErpToolMixin:
             local_stock_query,
             local_warehouse_list,
         )
+        from services.kuaimai.erp_local_db_export import local_db_export
         from services.kuaimai.erp_local_sync_trigger import trigger_erp_sync
         from services.kuaimai.erp_stats_query import local_product_stats
 
@@ -218,6 +219,7 @@ class ErpToolMixin:
             "local_global_stats": local_global_stats,
             "local_shop_list": local_shop_list,
             "local_warehouse_list": local_warehouse_list,
+            "local_db_export": local_db_export,
             "trigger_erp_sync": trigger_erp_sync,
         }
 
@@ -225,6 +227,13 @@ class ErpToolMixin:
         if not func:
             return f"Unknown local tool: {tool_name}"
         try:
+            # local_db_export 需要额外的 conversation_id 确定 staging 路径
+            if tool_name == "local_db_export":
+                return await func(
+                    self.db, **args,
+                    org_id=self.org_id,
+                    conversation_id=self.conversation_id,
+                )
             return await func(self.db, **args, org_id=self.org_id)
         except Exception as e:
             logger.error(

@@ -795,11 +795,11 @@ class TestLocalShopList:
 
 class TestBuildLocalTools:
 
-    def test_returns_13_tools(self):
-        """build_local_tools 返回 13 个工具（12原有 + local_warehouse_list）"""
+    def test_returns_14_tools(self):
+        """build_local_tools 返回 14 个工具（12原有 + local_warehouse_list + local_db_export）"""
         from config.erp_local_tools import build_local_tools
         tools = build_local_tools()
-        assert len(tools) == 13
+        assert len(tools) == 14
 
     def test_each_tool_structure(self):
         """每个工具有完整 function calling 结构"""
@@ -846,6 +846,30 @@ class TestBuildLocalTools:
                 assert "product_code" in tool["function"]["parameters"]["required"], (
                     f"{name} 缺少 product_code 必填"
                 )
+
+
+    def test_db_export_tool_definition(self):
+        """local_db_export 工具定义正确"""
+        from config.erp_local_tools import build_local_tools
+        tools = build_local_tools()
+        export = [t for t in tools
+                  if t["function"]["name"] == "local_db_export"][0]
+        params = export["function"]["parameters"]
+        assert "doc_type" in params["required"]
+        assert "shop_name" in params["properties"]
+        assert "platform" in params["properties"]
+        assert "max_rows" in params["properties"]
+        assert "staging" in export["function"]["description"]
+
+    def test_db_export_max_rows_description(self):
+        """local_db_export 描述中的默认值与代码一致"""
+        from config.erp_local_tools import build_local_tools
+        tools = build_local_tools()
+        export = [t for t in tools
+                  if t["function"]["name"] == "local_db_export"][0]
+        desc = export["function"]["parameters"]["properties"]["max_rows"]["description"]
+        assert "5000" in desc  # 默认值
+        assert "10000" in desc  # 上限
 
 
 class TestLocalToolRegistry:
