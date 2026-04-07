@@ -114,6 +114,10 @@ class Settings(BaseSettings):
     context_summary_max_chars: int = 1000  # 摘要最大字符数（保留关键数字）
     context_summary_update_interval: int = 5  # 每N条新消息更新摘要
 
+    # 工具循环上下文压缩配置（层2+层3）
+    context_tool_keep_turns: int = 2  # 层2: 保留最近 N 轮工具结果原文，更早的归档
+    context_loop_summary_trigger: float = 0.8  # 层3: token 占比超此值时触发循环内摘要
+
     # 智能路由配置
     intent_router_model: str = "qwen3.5-plus"  # 主路由模型（DashScope）
     intent_router_fallback_model: str = "qwen3.5-flash"  # 降级路由模型

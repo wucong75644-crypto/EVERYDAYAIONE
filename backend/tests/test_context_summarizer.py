@@ -495,3 +495,68 @@ class TestUpdateSummaryIfNeeded:
 
         # 不应抛异常
         await chat_handler._update_summary_if_needed("conv1")
+
+
+# ============ Test _call_summary_model system_prompt_override ============
+
+
+class TestCallSummaryModelOverride:
+    """_call_summary_model 自定义 prompt 测试"""
+
+    @pytest.mark.asyncio
+    async def test_uses_override_prompt(self):
+        """传入 system_prompt_override 时使用自定义 prompt"""
+        from services.context_summarizer import _call_summary_model
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "工具摘要结果"}}]
+        }
+
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.post.return_value = mock_response
+
+        custom_prompt = "你是工具调用记录压缩器。"
+
+        with patch("services.context_summarizer._ds_client.get", return_value=mock_client), \
+             patch("services.context_summarizer.settings") as mock_settings:
+            mock_settings.context_summary_max_chars = 500
+
+            result = await _call_summary_model(
+                "qwen-turbo", "工具调用内容",
+                system_prompt_override=custom_prompt,
+            )
+
+        assert result == "工具摘要结果"
+        # 验证传给 LLM 的 system prompt 是自定义的
+        call_json = mock_client.post.call_args[1]["json"]
+        system_msg = call_json["messages"][0]
+        assert system_msg["content"] == custom_prompt
+
+    @pytest.mark.asyncio
+    async def test_uses_default_prompt_when_no_override(self):
+        """不传 override 时使用默认对话摘要 prompt"""
+        from services.context_summarizer import _call_summary_model, SUMMARY_SYSTEM_PROMPT
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "对话摘要"}}]
+        }
+
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.post.return_value = mock_response
+
+        with patch("services.context_summarizer._ds_client.get", return_value=mock_client), \
+             patch("services.context_summarizer.settings") as mock_settings:
+            mock_settings.context_summary_max_chars = 500
+
+            await _call_summary_model("qwen-turbo", "对话内容")
+
+        call_json = mock_client.post.call_args[1]["json"]
+        system_msg = call_json["messages"][0]
+        # 应包含默认 prompt 的关键词
+        assert "对话摘要" in system_msg["content"] or "压缩" in system_msg["content"]
