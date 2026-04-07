@@ -262,42 +262,4 @@ class MessageService:
                 status_code=500,
             )
 
-    async def _get_conversation_history(
-        self,
-        conversation_id: str,
-        user_id: str,
-        limit: int = 0,  # ✅ 修改：10 → 0，完全移除上下文记忆（避免污染）
-    ) -> List[Dict[str, Any]]:
-        """
-        获取对话历史（用于 AI 上下文）
-
-        ⚠️ 任务0.2扩展修复（2026-02-01）：
-        - 默认 limit=0，完全移除上下文记忆
-        - 原因：避免历史对话污染新话题（如税收政策被回答为产品设计）
-        - 副作用：失去连续对话能力，用户无法引用之前内容
-        - 如需恢复：将 limit 改为 3-5（保留最近几条消息）
-
-        Args:
-            conversation_id: 对话 ID
-            user_id: 用户 ID
-            limit: 历史消息数量限制（默认0=无上下文）
-
-        Returns:
-            格式化的历史消息列表
-        """
-        result = await self.get_messages(
-            conversation_id=conversation_id,
-            user_id=user_id,
-            limit=limit,
-        )
-
-        history = []
-        for msg in result["messages"]:
-            if msg["role"] in ("user", "assistant"):
-                history.append({
-                    "role": msg["role"],
-                    "content": msg["content"],
-                })
-
-        return history
 
