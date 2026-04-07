@@ -31,6 +31,13 @@ class ErpSyncWorker:
     LOW_FREQ_TYPES = ["platform_map"]
     # 配置数据同步类型（每天 2 次，全量刷新）
     CONFIG_TYPES = ["shop", "warehouse", "tag", "category", "logistics_company"]
+    # 仓库单据同步类型（每 5 分钟，增量同步）
+    WAREHOUSE_TYPES = [
+        "allocate", "allocate_in", "allocate_out",
+        "other_in", "other_out",
+        "inventory_sheet", "unshelve", "process_order",
+        "section_record", "goods_section",
+    ]
 
     # 日维护间隔（秒）：24小时
     DAILY_INTERVAL = 86400
@@ -38,6 +45,10 @@ class ErpSyncWorker:
     DELETION_INTERVAL = 604800
     # 配置数据同步间隔（秒）：12小时（每天 2 次）
     CONFIG_INTERVAL = 43200
+    # 仓库单据同步间隔（秒）：5分钟
+    WAREHOUSE_INTERVAL = 300
+    # 批次库存同步间隔（秒）：6小时
+    BATCH_STOCK_INTERVAL = 21600
 
     def __init__(self, db) -> None:
         self.db = db
@@ -50,6 +61,8 @@ class ErpSyncWorker:
         self._org_last_daily: dict[str | None, datetime] = {}
         self._org_last_deletion: dict[str | None, datetime] = {}
         self._org_last_config: dict[str | None, datetime] = {}
+        self._org_last_warehouse: dict[str | None, datetime] = {}
+        self._org_last_batch_stock: dict[str | None, datetime] = {}
         # 内存聚合队列：三元组 (outer_id, stat_date, org_id)
         self.aggregation_queue: asyncio.Queue[tuple[str, str, str | None]] = asyncio.Queue(maxsize=10000)
         # 去重集合
@@ -131,6 +144,15 @@ class ErpSyncWorker:
             await self._extend_lock()
             await self._execute_sync(sync_type, org_id=org_id, client=client)
 
+        # 仓库单据同步（每 5 分钟）
+        if self.is_running and self._should_run_warehouse(org_id):
+            for wh_type in self.WAREHOUSE_TYPES:
+                if not self.is_running:
+                    break
+                await self._extend_lock()
+                await self._execute_sync(wh_type, org_id=org_id, client=client)
+            self._org_last_warehouse[org_id] = datetime.now()
+
         # 库存全量刷新（按企业独立计时）
         if self.is_running and self._should_run_stock_full(org_id):
             await self._extend_lock()
@@ -151,6 +173,12 @@ class ErpSyncWorker:
                 await self._extend_lock()
                 await self._execute_sync(config_type, org_id=org_id, client=client)
             self._org_last_config[org_id] = datetime.now()
+
+        # 批次效期库存同步（每 6 小时，遍历店铺全量）
+        if self.is_running and self._should_run_batch_stock(org_id):
+            await self._extend_lock()
+            await self._execute_batch_stock(org_id=org_id, client=client)
+            self._org_last_batch_stock[org_id] = datetime.now()
 
         # 日维护（归档+聚合兜底+删除检测）
         if self.is_running and self._should_run_daily(org_id):
@@ -262,6 +290,24 @@ class ErpSyncWorker:
         except Exception as e:
             logger.error(f"Stock full refresh failed | error={e}", exc_info=True)
 
+    async def _execute_batch_stock(
+        self, org_id: str | None = None, client: "KuaiMaiClient | None" = None,
+    ) -> None:
+        """执行批次效期库存全量同步（遍历店铺）"""
+        try:
+            from services.kuaimai.erp_sync_piggyback_handlers import sync_batch_stock
+            from services.kuaimai.erp_sync_service import ErpSyncService
+            service = ErpSyncService(
+                self.db, lock_extend_fn=self._extend_lock,
+                org_id=org_id,
+                client=client,
+            )
+            count = await sync_batch_stock(service)
+            if count > 0:
+                logger.info(f"Batch stock sync done | synced={count}")
+        except Exception as e:
+            logger.error(f"Batch stock sync failed | error={e}", exc_info=True)
+
     async def _refresh_kit_stock(self) -> None:
         """刷新套件库存物化视图（stock 同步后调用，~1s）"""
         try:
@@ -282,6 +328,22 @@ class ErpSyncWorker:
             return True
         elapsed = (datetime.now() - last).total_seconds()
         return elapsed >= self.settings.erp_platform_map_interval
+
+    def _should_run_batch_stock(self, org_id: str | None = None) -> bool:
+        """判断批次库存同步是否到期（按企业隔离计时，每 6 小时）"""
+        last = self._org_last_batch_stock.get(org_id)
+        if last is None:
+            return True
+        elapsed = (datetime.now() - last).total_seconds()
+        return elapsed >= self.BATCH_STOCK_INTERVAL
+
+    def _should_run_warehouse(self, org_id: str | None = None) -> bool:
+        """判断仓库单据同步是否到期（按企业隔离计时，每 5 分钟）"""
+        last = self._org_last_warehouse.get(org_id)
+        if last is None:
+            return True
+        elapsed = (datetime.now() - last).total_seconds()
+        return elapsed >= self.WAREHOUSE_INTERVAL
 
     def _should_run_config(self, org_id: str | None = None) -> bool:
         """判断配置数据同步是否到期（按企业隔离计时，每 12 小时）"""

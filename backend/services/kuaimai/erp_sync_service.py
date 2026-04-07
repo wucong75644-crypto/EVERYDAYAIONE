@@ -39,6 +39,20 @@ from services.kuaimai.erp_sync_config_handlers import (
     sync_tag,
     sync_warehouse,
 )
+from services.kuaimai.erp_sync_warehouse_handlers import (
+    sync_allocate,
+    sync_allocate_in,
+    sync_allocate_out,
+    sync_inventory_sheet,
+    sync_other_in,
+    sync_other_out,
+    sync_process_order,
+    sync_section_record,
+    sync_unshelve,
+)
+from services.kuaimai.erp_sync_piggyback_handlers import (
+    sync_goods_section,
+)
 from services.kuaimai.erp_sync_persistence import (
     collect_affected_keys as _collect_affected_keys,
     run_aggregation as _run_aggregation,
@@ -250,6 +264,16 @@ class ErpSyncService:
             "tag": partial(sync_tag, self),
             "category": partial(sync_category, self),
             "logistics_company": partial(sync_logistics_company, self),
+            "allocate": partial(sync_allocate, self),
+            "allocate_in": partial(sync_allocate_in, self),
+            "allocate_out": partial(sync_allocate_out, self),
+            "other_in": partial(sync_other_in, self),
+            "other_out": partial(sync_other_out, self),
+            "inventory_sheet": partial(sync_inventory_sheet, self),
+            "unshelve": partial(sync_unshelve, self),
+            "process_order": partial(sync_process_order, self),
+            "section_record": partial(sync_section_record, self),
+            "goods_section": partial(sync_goods_section, self),
         }
         return handlers.get(sync_type)
 
