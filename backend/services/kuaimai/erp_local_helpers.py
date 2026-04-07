@@ -63,7 +63,8 @@ def check_sync_health(db, sync_types: list[str], org_id: str | None = None) -> s
                         f"（最后成功：{row['last_run_at']}）"
                     )
     except Exception as e:
-        logger.debug(f"Health check failed | error={e}")
+        logger.warning(f"Health check failed | error={e}")
+        return "⚠ 同步状态检查失败，数据可能不完整"
     return "\n".join(warnings)
 
 
@@ -94,18 +95,12 @@ def query_doc_items(
                 q = q.eq(k, v)
         return q.order("doc_created_at", desc=True).limit(500).execute().data or []
 
-    try:
-        rows = _do_query("erp_document_items")
-        if days > 90:
-            archive_rows = _do_query("erp_document_items_archive")
-            seen = {(r["doc_id"], r["item_index"]) for r in rows}
-            for r in archive_rows:
-                if (r["doc_id"], r["item_index"]) not in seen:
-                    rows.append(r)
-            rows.sort(key=lambda r: r.get("doc_created_at", ""), reverse=True)
-        return rows
-    except Exception as e:
-        logger.error(
-            f"Local query failed | type={doc_type} | code={code} | error={e}"
-        )
-        return []
+    rows = _do_query("erp_document_items")
+    if days > 90:
+        archive_rows = _do_query("erp_document_items_archive")
+        seen = {(r["doc_id"], r["item_index"]) for r in rows}
+        for r in archive_rows:
+            if (r["doc_id"], r["item_index"]) not in seen:
+                rows.append(r)
+        rows.sort(key=lambda r: r.get("doc_created_at", ""), reverse=True)
+    return rows

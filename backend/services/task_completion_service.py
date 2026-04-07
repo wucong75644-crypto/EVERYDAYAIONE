@@ -75,20 +75,14 @@ class TaskCompletionService:
 
     def get_task(self, external_task_id: str) -> Optional[Dict[str, Any]]:
         """根据 external_task_id 查询任务"""
-        try:
-            result = (
-                self.db.table("tasks")
-                .select("*")
-                .eq("external_task_id", external_task_id)
-                .maybe_single()
-                .execute()
-            )
-            return result.data if result.data else None
-        except Exception as e:
-            logger.warning(
-                f"get_task query failed | task_id={external_task_id} | error={e}"
-            )
-            return None
+        result = (
+            self.db.table("tasks")
+            .select("*")
+            .eq("external_task_id", external_task_id)
+            .maybe_single()
+            .execute()
+        )
+        return result.data if result.data else None
 
     async def process_result(self, external_task_id: str, result: TaskResult) -> bool:
         """

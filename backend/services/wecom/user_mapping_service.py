@@ -63,25 +63,18 @@ class WecomUserMappingService:
         self, wecom_userid: str, corp_id: str, org_id: str | None = None,
     ) -> Optional[dict]:
         """查找已有的企微→系统用户映射"""
-        try:
-            query = (
-                self.db.table("wecom_user_mappings")
-                .select("user_id, wecom_nickname")
-                .eq("wecom_userid", wecom_userid)
-                .eq("corp_id", corp_id)
-            )
-            if org_id:
-                query = query.eq("org_id", org_id)
-            else:
-                query = query.is_("org_id", "null")
-            result = query.limit(1).execute()
-            return result.data[0] if result.data else None
-        except Exception as e:
-            logger.error(
-                f"Wecom mapping query failed | wecom_userid={wecom_userid} | "
-                f"error={e}"
-            )
-            return None
+        query = (
+            self.db.table("wecom_user_mappings")
+            .select("user_id, wecom_nickname")
+            .eq("wecom_userid", wecom_userid)
+            .eq("corp_id", corp_id)
+        )
+        if org_id:
+            query = query.eq("org_id", org_id)
+        else:
+            query = query.is_("org_id", "null")
+        result = query.limit(1).execute()
+        return result.data[0] if result.data else None
 
     async def _create_wecom_user(
         self,

@@ -383,6 +383,7 @@ async def try_broadened_queries(
     # 兼容：str → [str]，list 保持不变
     codes_to_try = packed_code if isinstance(packed_code, list) else [packed_code]
 
+    error_count = 0
     for code in codes_to_try:
         for i, api_key in enumerate(api_keys):
             query_params = dict(api_params)
@@ -426,9 +427,12 @@ async def try_broadened_queries(
                 logger.warning(
                     f"BroadenedQuery error | key={api_key} code={code} | {e}"
                 )
+                error_count += 1
                 continue
 
     note = f"⚙ 编码智能匹配: 「{original_code}」所有参数均无匹配"
+    if error_count:
+        note += f"（其中{error_count}次查询报错）"
     empty: Dict[str, Any] = (
         {response_key: [], "total": 0} if response_key else {}
     )
@@ -450,6 +454,7 @@ async def try_batch_dual_query(
     all_items: List[Dict] = []
     query_labels: List[str] = []
 
+    error_count = 0
     for i, api_key in enumerate(api_keys):
         query_params = dict(api_params)
         query_params[api_key] = packed_codes
@@ -461,6 +466,7 @@ async def try_batch_dual_query(
             )
         except Exception as e:
             logger.warning(f"BatchDualQuery error | key={api_key} | {e}")
+            error_count += 1
             continue
 
         items = data.get(response_key) or []
@@ -483,6 +489,8 @@ async def try_batch_dual_query(
         f"{' + '.join(query_labels)}，"
         f"合并去重后{len(deduped)}条，匹配原始编码后{len(matched)}条"
     )
+    if error_count:
+        note += f"（其中{error_count}次查询报错）"
     return result, note
 
 

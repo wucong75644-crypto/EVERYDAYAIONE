@@ -140,35 +140,19 @@ class TestGetOrCreateUser:
         assert user_data["nickname"] == "企微用户_abcdefgh"
 
     @pytest.mark.asyncio
-    async def test_db_query_error_returns_none_mapping(self):
-        """DB 查询异常 → _find_mapping 返回 None → 走创建流程"""
+    async def test_db_query_error_raises(self):
+        """DB 查询异常 → _find_mapping 抛异常（不再静默创建重复用户）"""
         db = _make_db_mock()
 
         mapping_mock = db._table_mocks.setdefault("wecom_user_mappings", MagicMock())
-        # 查询抛异常
-        mapping_mock.select.side_effect = RuntimeError("DB connection lost")
-
-        users_mock = db._table_mocks.setdefault("users", MagicMock())
-        users_mock.insert.return_value.execute.return_value = MagicMock(
-            data=[{"id": "u3"}]
-        )
-        db._table_mocks.setdefault("credits_history", MagicMock()).insert.return_value.execute.return_value = MagicMock()
+        mapping_mock.select.side_effect = RuntimeError("DB error")
 
         svc = WecomUserMappingService(db)
         with patch.object(svc, "settings", MagicMock()):
-            # _find_mapping 异常返回 None，然后 _create_wecom_user 被调用
-            # 但 _create_wecom_user 也需要 mapping_mock.insert，
-            # 这里 select 有 side_effect 但 insert 没有
-            mapping_mock.select.side_effect = RuntimeError("DB error")
-            # 重置 insert 使其可用
-            mapping_mock.insert = MagicMock()
-            mapping_mock.insert.return_value.execute.return_value = MagicMock()
-
-            user_id = await svc.get_or_create_user(
-                wecom_userid="err_user", corp_id="corp",
-            )
-
-        assert user_id == "u3"
+            with pytest.raises(RuntimeError, match="DB error"):
+                await svc.get_or_create_user(
+                    wecom_userid="err_user", corp_id="corp",
+                )
 
     @pytest.mark.asyncio
     async def test_create_user_failure_raises(self):

@@ -490,6 +490,7 @@ class TestHandleText:
 
         db = _make_db_mock()
         svc = WecomMessageService(db)
+        svc._get_user_balance = MagicMock(return_value=100)
 
         svc._dispatch_result_to_wecom = AsyncMock()
 
@@ -516,6 +517,7 @@ class TestHandleText:
 
         db = _make_db_mock()
         svc = WecomMessageService(db)
+        svc._get_user_balance = MagicMock(return_value=100)
 
         svc._dispatch_result_to_wecom = AsyncMock()
 
@@ -544,6 +546,7 @@ class TestHandleText:
 
         db = _make_db_mock()
         svc = WecomMessageService(db)
+        svc._get_user_balance = MagicMock(return_value=100)
 
         svc._dispatch_result_to_wecom = AsyncMock()
 
@@ -567,6 +570,7 @@ class TestHandleText:
         """ChatHandler 异常 → 回复错误信息"""
         db = _make_db_mock()
         svc = WecomMessageService(db)
+        svc._get_user_balance = MagicMock(return_value=100)
 
         svc._reply_text = AsyncMock()
 
@@ -590,6 +594,7 @@ class TestHandleText:
 
         db = _make_db_mock()
         svc = WecomMessageService(db)
+        svc._get_user_balance = MagicMock(return_value=100)
 
         svc._dispatch_result_to_wecom = AsyncMock()
         captured_handler = None
@@ -610,6 +615,23 @@ class TestHandleText:
             await svc._handle_text("u1", "c1", "m1", "你好", ctx, org_id="org123")
 
         assert captured_handler.org_id == "org123"
+
+    @pytest.mark.asyncio
+    async def test_credits_insufficient_replies_card(self):
+        """余额为 0 → 调用 _reply_credits_insufficient，不调 ChatHandler"""
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._get_user_balance = MagicMock(return_value=0)
+        svc._reply_credits_insufficient = AsyncMock()
+
+        with patch(
+            "services.handlers.chat_handler.ChatHandler"
+        ) as MockHandler:
+            ctx = _make_reply_ctx("smart_robot")
+            await svc._handle_text("u1", "c1", "m1", "你好", ctx)
+
+        svc._reply_credits_insufficient.assert_called_once()
+        MockHandler.assert_not_called()
 
 
 # ============================================================
@@ -787,72 +809,6 @@ class TestGetOrCreateConversation:
 
         create_call = svc._conv_svc.create_conversation.call_args
         assert create_call.kwargs["title"] == "企微群聊"
-
-
-# ============================================================
-# TestGetConversationHistory
-# ============================================================
-
-
-class TestGetConversationHistory:
-    """_get_conversation_history 历史消息"""
-
-    @pytest.mark.asyncio
-    async def test_returns_messages(self):
-        """有历史 → 返回 role+content 列表"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        chain = MagicMock()
-        chain.select.return_value = chain
-        chain.eq.return_value = chain
-        chain.neq.return_value = chain
-        chain.order.return_value = chain
-        chain.limit.return_value = chain
-        mock_result = MagicMock()
-        mock_result.data = [
-            {"role": "assistant", "content": [{"type": "text", "text": "回答"}]},
-            {"role": "user", "content": [{"type": "text", "text": "问题"}]},
-        ]
-        chain.execute.return_value = mock_result
-        db.table = MagicMock(return_value=chain)
-
-        messages = await svc._get_conversation_history("c1", limit=10)
-
-        # reversed: user先，assistant后
-        assert len(messages) == 2
-        assert messages[0]["role"] == "user"
-        assert messages[1]["role"] == "assistant"
-
-    @pytest.mark.asyncio
-    async def test_empty_history(self):
-        """无历史 → 空列表"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-
-        chain = MagicMock()
-        chain.select.return_value = chain
-        chain.eq.return_value = chain
-        chain.neq.return_value = chain
-        chain.order.return_value = chain
-        chain.limit.return_value = chain
-        mock_result = MagicMock()
-        mock_result.data = []
-        chain.execute.return_value = mock_result
-        db.table = MagicMock(return_value=chain)
-
-        messages = await svc._get_conversation_history("c1")
-        assert messages == []
-
-    @pytest.mark.asyncio
-    async def test_exception_returns_empty(self):
-        """异常 → 空列表"""
-        db = _make_db_mock()
-        svc = WecomMessageService(db)
-        db.table = MagicMock(side_effect=RuntimeError("DB down"))
-
-        messages = await svc._get_conversation_history("c1")
-        assert messages == []
 
 
 # ============================================================
