@@ -12,6 +12,7 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react';
+import { useAuthStore } from '../stores/useAuthStore';
 import { logger } from '../utils/logger';
 
 // === 配置常量 ===
@@ -120,6 +121,8 @@ export function useWebSocket(): UseWebSocketReturn {
   const isServerRestartingRef = useRef(false);
   // 用于打破 handleServerRestart <-> connect 循环依赖
   const connectRef = useRef<(() => void) | null>(null);
+  // WS 未连接时缓存订阅请求，连接后自动重发
+  const pendingSubscriptionsRef = useRef<Map<string, number>>(new Map());
 
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
 
@@ -234,6 +237,21 @@ export function useWebSocket(): UseWebSocketReturn {
       setConnectionState('connected');
       reconnectAttemptsRef.current = 0;
       startHeartbeat();
+
+      // 重连后重发 pending 订阅（WS 断线期间缓存的任务订阅）
+      if (pendingSubscriptionsRef.current.size > 0) {
+        logger.info('ws:connection', 'Flushing pending subscriptions', {
+          count: pendingSubscriptionsRef.current.size,
+        });
+        pendingSubscriptionsRef.current.forEach((lastIndex, taskId) => {
+          ws.send(JSON.stringify({
+            type: 'subscribe',
+            payload: { task_id: taskId, last_index: lastIndex },
+            timestamp: Date.now(),
+          }));
+        });
+        pendingSubscriptionsRef.current.clear();
+      }
     };
 
     ws.onclose = (event) => {
@@ -333,7 +351,7 @@ export function useWebSocket(): UseWebSocketReturn {
     };
   }, []);
 
-  // 订阅任务
+  // 订阅任务（WS 未连接时入队列，连接后自动重发）
   const subscribeTask = useCallback((taskId: string, lastIndex: number = -1) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
@@ -344,6 +362,9 @@ export function useWebSocket(): UseWebSocketReturn {
         })
       );
       logger.info('ws:subscribe', 'Subscribed to task', { taskId });
+    } else {
+      pendingSubscriptionsRef.current.set(taskId, lastIndex);
+      logger.info('ws:subscribe', 'Queued pending subscription', { taskId });
     }
   }, []);
 
@@ -408,23 +429,22 @@ export function useWebSocket(): UseWebSocketReturn {
     return () => window.removeEventListener('online', handleOnline);
   }, []);
 
-  // 监听认证状态变化
+  // 监听认证状态变化（Zustand 状态驱动，同 tab 登录/退出也能感知）
   useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'access_token') {
-        if (e.newValue) {
-          // Token 设置，尝试连接
-          connect();
-        } else {
-          // Token 清除，断开连接
-          cleanup();
-          setConnectionState('disconnected');
-        }
+    const unsubscribe = useAuthStore.subscribe((state, prevState) => {
+      if (state.isAuthenticated && !prevState.isAuthenticated) {
+        // 登录：建立 WS 连接
+        logger.info('ws:connection', 'Auth state changed to authenticated, connecting');
+        connect();
+      } else if (!state.isAuthenticated && prevState.isAuthenticated) {
+        // 退出：断开 WS 连接
+        logger.info('ws:connection', 'Auth state changed to unauthenticated, disconnecting');
+        cleanup();
+        setConnectionState('disconnected');
       }
-    };
+    });
 
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
+    return unsubscribe;
   }, [connect, cleanup]);
 
   // 自动连接
