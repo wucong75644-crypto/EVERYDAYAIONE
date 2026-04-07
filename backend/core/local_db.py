@@ -532,6 +532,7 @@ class LocalDBClient:
             min_size=min_size,
             max_size=max_size,
             kwargs={"row_factory": dict_row},
+            open=True,
         )
         logger.info(f"LocalDB 连接池已创建 | min={min_size} max={max_size}")
 
