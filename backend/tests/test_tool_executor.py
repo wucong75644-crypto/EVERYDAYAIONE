@@ -439,9 +439,10 @@ class TestERPTools:
         assert "action" in result
 
     @pytest.mark.asyncio
+    @patch("core.redis.get_redis", new_callable=AsyncMock, return_value=None)
     @patch("services.kuaimai.dispatcher.ErpDispatcher")
     @patch("services.kuaimai.client.KuaiMaiClient")
-    async def test_erp_execute_write(self, MockClient, MockDispatcher):
+    async def test_erp_execute_write(self, MockClient, MockDispatcher, mock_redis):
         """erp_execute 写操作→通过 category 路由"""
         mock_client = AsyncMock()
         mock_client.is_configured = True
@@ -463,6 +464,172 @@ class TestERPTools:
         mock_disp.execute.assert_called_once_with(
             "erp_trade_query", "order_cancel", {"order_id": "T123"},
         )
+
+    @pytest.mark.asyncio
+    @patch("core.redis.get_redis", new_callable=AsyncMock)
+    @patch("services.kuaimai.dispatcher.ErpDispatcher")
+    @patch("services.kuaimai.client.KuaiMaiClient")
+    async def test_erp_execute_idempotency_blocks_duplicate(
+        self, MockClient, MockDispatcher, mock_get_redis,
+    ):
+        """B5: 10分钟内相同写操作被拦截"""
+        mock_client = AsyncMock()
+        mock_client.is_configured = True
+        mock_client.load_cached_token = AsyncMock()
+        MockClient.return_value = mock_client
+
+        mock_disp = AsyncMock()
+        mock_disp.execute.return_value = "操作成功"
+        mock_disp.close = AsyncMock()
+        MockDispatcher.return_value = mock_disp
+
+        # Redis 返回 "1" 表示已执行过
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = "1"
+        mock_get_redis.return_value = mock_redis
+
+        exe = _make_executor()
+        result = await exe._erp_dispatch("erp_execute", {
+            "category": "trade",
+            "action": "order_cancel",
+            "params": {"order_id": "T123"},
+        })
+        assert "已执行过" in result
+        # dispatcher 不应被调用
+        mock_disp.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("core.redis.get_redis", new_callable=AsyncMock)
+    @patch("services.kuaimai.dispatcher.ErpDispatcher")
+    @patch("services.kuaimai.client.KuaiMaiClient")
+    async def test_erp_execute_idempotency_blocks_concurrent(
+        self, MockClient, MockDispatcher, mock_get_redis,
+    ):
+        """B5: 相同操作正在执行中被拦截"""
+        mock_client = AsyncMock()
+        mock_client.is_configured = True
+        mock_client.load_cached_token = AsyncMock()
+        MockClient.return_value = mock_client
+
+        mock_disp = AsyncMock()
+        mock_disp.close = AsyncMock()
+        MockDispatcher.return_value = mock_disp
+
+        # Redis: 未完成但锁被占
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = None  # 未完成
+        mock_get_redis.return_value = mock_redis
+
+        with patch("core.redis.RedisClient.acquire_lock", new_callable=AsyncMock, return_value=None):
+            exe = _make_executor()
+            result = await exe._erp_dispatch("erp_execute", {
+                "category": "trade",
+                "action": "order_cancel",
+                "params": {"order_id": "T123"},
+            })
+        assert "正在执行中" in result
+        mock_disp.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("core.redis.get_redis", new_callable=AsyncMock, return_value=None)
+    @patch("services.kuaimai.dispatcher.ErpDispatcher")
+    @patch("services.kuaimai.client.KuaiMaiClient")
+    async def test_erp_execute_redis_unavailable_allows_execution(
+        self, MockClient, MockDispatcher, mock_get_redis,
+    ):
+        """B5: Redis 不可用时放行执行"""
+        mock_client = AsyncMock()
+        mock_client.is_configured = True
+        mock_client.load_cached_token = AsyncMock()
+        MockClient.return_value = mock_client
+
+        mock_disp = AsyncMock()
+        mock_disp.execute.return_value = "操作成功"
+        mock_disp.close = AsyncMock()
+        MockDispatcher.return_value = mock_disp
+
+        exe = _make_executor()
+        result = await exe._erp_dispatch("erp_execute", {
+            "category": "trade",
+            "action": "order_cancel",
+            "params": {"order_id": "T123"},
+        })
+        assert result == "操作成功"
+        mock_disp.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("core.redis.get_redis", new_callable=AsyncMock)
+    @patch("services.kuaimai.dispatcher.ErpDispatcher")
+    @patch("services.kuaimai.client.KuaiMaiClient")
+    async def test_erp_execute_success_marks_result_key(
+        self, MockClient, MockDispatcher, mock_get_redis,
+    ):
+        """B5: 执行成功后 Redis 写入完成标记"""
+        mock_client = AsyncMock()
+        mock_client.is_configured = True
+        mock_client.load_cached_token = AsyncMock()
+        MockClient.return_value = mock_client
+
+        mock_disp = AsyncMock()
+        mock_disp.execute.return_value = "操作成功"
+        mock_disp.close = AsyncMock()
+        MockDispatcher.return_value = mock_disp
+
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = None  # 未执行过
+        mock_get_redis.return_value = mock_redis
+
+        with patch("core.redis.RedisClient.acquire_lock", new_callable=AsyncMock, return_value="token123"), \
+             patch("core.redis.RedisClient.release_lock", new_callable=AsyncMock):
+            exe = _make_executor()
+            result = await exe._erp_dispatch("erp_execute", {
+                "category": "trade", "action": "order_cancel",
+                "params": {"order_id": "T123"},
+            })
+
+        assert result == "操作成功"
+        # 验证完成标记写入 Redis（SET key "1" EX 600）
+        mock_redis.set.assert_called_once()
+        call_args = mock_redis.set.call_args
+        assert call_args[0][1] == "1"  # value
+        assert call_args[1]["ex"] == 600  # TTL 10 分钟
+
+    @pytest.mark.asyncio
+    @patch("core.redis.get_redis", new_callable=AsyncMock)
+    @patch("services.kuaimai.dispatcher.ErpDispatcher")
+    @patch("services.kuaimai.client.KuaiMaiClient")
+    async def test_erp_execute_failure_releases_lock_no_mark(
+        self, MockClient, MockDispatcher, mock_get_redis,
+    ):
+        """B5: 执行失败后释放锁但不标记完成（允许重试）"""
+        mock_client = AsyncMock()
+        mock_client.is_configured = True
+        mock_client.load_cached_token = AsyncMock()
+        MockClient.return_value = mock_client
+
+        mock_disp = AsyncMock()
+        mock_disp.execute.side_effect = Exception("ERP API error")
+        mock_disp.close = AsyncMock()
+        MockDispatcher.return_value = mock_disp
+
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = None
+        mock_get_redis.return_value = mock_redis
+
+        mock_release = AsyncMock()
+        with patch("core.redis.RedisClient.acquire_lock", new_callable=AsyncMock, return_value="token456"), \
+             patch("core.redis.RedisClient.release_lock", mock_release):
+            exe = _make_executor()
+            result = await exe._erp_dispatch("erp_execute", {
+                "category": "trade", "action": "order_cancel",
+                "params": {"order_id": "T123"},
+            })
+
+        assert "ERP操作失败" in result
+        # 不应标记完成（允许重试）
+        mock_redis.set.assert_not_called()
+        # 锁应该被释放
+        mock_release.assert_called_once()
 
     @pytest.mark.asyncio
     @patch("services.kuaimai.dispatcher.ErpDispatcher")

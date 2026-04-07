@@ -234,7 +234,20 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             tool_context = ToolLoopContext(org_id=self.org_id)
 
             # 7. 工具循环：流式生成 → 检测工具调用 → 执行 → 结果塞回 → 继续
+            # [B3] 全局时间预算（推理模型 120s，普通模型 60s）
+            from services.agent.execution_budget import ExecutionBudget
+            from core.config import get_settings as _get_settings
+            _s = _get_settings()
+            _deadline = (
+                _s.chat_thinking_timeout if thinking_mode
+                else _s.chat_stream_timeout
+            )
+            _budget = ExecutionBudget(_deadline)
+
             for turn in range(MAX_TOOL_TURNS):
+                if not _budget.check_or_log(f"main_agent turn={turn + 1}"):
+                    logger.warning(f"Main agent budget expired | task={task_id}")
+                    break
                 # 每轮动态构建工具列表：核心工具 + 已发现的工具
                 current_tools = list(core_tools)
                 if tool_context.discovered_tools:
@@ -418,6 +431,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         finally:
             if self._adapter:
                 await self._adapter.close()
+            # 清理截断暂存的大结果（请求级生命周期）
+            from services.agent.tool_result_envelope import clear_persisted
+            clear_persisted()
 
     def _convert_content_parts_to_dicts(self, result):
         """转换 ContentPart 为字典（支持 Text/Image/Video/File）"""

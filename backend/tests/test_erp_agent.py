@@ -564,3 +564,212 @@ class TestFilterErpContextEdgeCases:
         ]
         result = filter_erp_context(messages)
         assert len(result) == 1
+
+
+# ============================================================
+# is_context_length_error — 上下文超限检测
+# ============================================================
+
+class TestIsContextLengthError:
+    """B6: 上下文超限错误关键词匹配"""
+
+    def test_context_length_exceeded(self):
+        from services.agent.erp_agent_types import is_context_length_error
+        assert is_context_length_error(Exception("context_length_exceeded"))
+
+    def test_input_too_large(self):
+        from services.agent.erp_agent_types import is_context_length_error
+        assert is_context_length_error(Exception("input too large for model"))
+
+    def test_maximum_context_length(self):
+        from services.agent.erp_agent_types import is_context_length_error
+        assert is_context_length_error(Exception("maximum context length is 128000"))
+
+    def test_token_limit(self):
+        from services.agent.erp_agent_types import is_context_length_error
+        assert is_context_length_error(Exception("token limit exceeded"))
+
+    def test_max_token(self):
+        from services.agent.erp_agent_types import is_context_length_error
+        assert is_context_length_error(Exception("max_token reached"))
+
+    def test_normal_error_not_matched(self):
+        from services.agent.erp_agent_types import is_context_length_error
+        assert not is_context_length_error(Exception("connection timeout"))
+
+    def test_rate_limit_not_matched(self):
+        from services.agent.erp_agent_types import is_context_length_error
+        assert not is_context_length_error(Exception("rate_limit_exceeded"))
+
+    def test_empty_error(self):
+        from services.agent.erp_agent_types import is_context_length_error
+        assert not is_context_length_error(Exception(""))
+
+
+# ============================================================
+# ERPAgentResult — D1 结构化增强
+# ============================================================
+
+class TestERPAgentResultStructured:
+    """D1: status / is_truncated 字段"""
+
+    def test_default_status_is_success(self):
+        from services.erp_agent import ERPAgentResult
+        r = ERPAgentResult(text="OK")
+        assert r.status == "success"
+        assert r.is_truncated is False
+
+    def test_error_status(self):
+        from services.erp_agent import ERPAgentResult
+        r = ERPAgentResult(text="出错了", status="error")
+        assert r.status == "error"
+
+    def test_partial_status(self):
+        from services.erp_agent import ERPAgentResult
+        r = ERPAgentResult(text="部分结果", status="partial", is_truncated=True)
+        assert r.status == "partial"
+        assert r.is_truncated is True
+
+    def test_all_fields_populated(self):
+        from services.erp_agent import ERPAgentResult
+        r = ERPAgentResult(
+            text="结论",
+            full_text="完整文本",
+            status="success",
+            tokens_used=1000,
+            turns_used=3,
+            tools_called=["local_stock_query", "local_order_query"],
+            is_truncated=False,
+        )
+        assert r.tokens_used == 1000
+        assert r.turns_used == 3
+        assert len(r.tools_called) == 2
+
+
+# ============================================================
+# B4: QueryCache — 缓存行为
+# ============================================================
+
+class TestERPAgentCache:
+    """B4: 会话级读工具缓存"""
+
+    def _make_agent(self):
+        from services.agent.erp_agent import ERPAgent
+        return ERPAgent(
+            db=MagicMock(), user_id="u", conversation_id="c", org_id="org",
+        )
+
+    def test_cacheable_tool_returns_true(self):
+        agent = self._make_agent()
+        # local_stock_query 在 _CONCURRENT_SAFE_TOOLS 中
+        assert agent._is_cacheable("local_stock_query") is True
+
+    def test_non_cacheable_tool_returns_false(self):
+        agent = self._make_agent()
+        # erp_execute 是写操作，不可缓存
+        assert agent._is_cacheable("erp_execute") is False
+
+    def test_cache_put_and_get(self):
+        agent = self._make_agent()
+        agent._cache_put("local_stock_query", {"sku": "A1"}, "库存100")
+        cached = agent._cache_get("local_stock_query", {"sku": "A1"})
+        assert cached == "库存100"
+
+    def test_cache_miss_different_args(self):
+        agent = self._make_agent()
+        agent._cache_put("local_stock_query", {"sku": "A1"}, "库存100")
+        cached = agent._cache_get("local_stock_query", {"sku": "B2"})
+        assert cached is None
+
+    def test_cache_skip_non_cacheable_tool(self):
+        agent = self._make_agent()
+        agent._cache_put("erp_execute", {"action": "create"}, "OK")
+        cached = agent._cache_get("erp_execute", {"action": "create"})
+        assert cached is None  # 写工具不缓存
+
+    def test_cache_skip_large_result(self):
+        agent = self._make_agent()
+        large = "x" * 10000  # 超过 _CACHE_MAX_VALUE_CHARS
+        agent._cache_put("local_stock_query", {"sku": "A1"}, large)
+        cached = agent._cache_get("local_stock_query", {"sku": "A1"})
+        assert cached is None  # 大结果不缓存
+
+    def test_cache_max_entries(self):
+        agent = self._make_agent()
+        # 填满缓存
+        for i in range(55):
+            agent._cache_put("local_stock_query", {"i": i}, f"result_{i}")
+        # 前50个应该被缓存，第51个开始被跳过
+        assert agent._cache_get("local_stock_query", {"i": 0}) == "result_0"
+        assert agent._cache_get("local_stock_query", {"i": 50}) is None
+
+    def test_cache_key_deterministic(self):
+        agent = self._make_agent()
+        k1 = agent._cache_key("tool", {"b": 2, "a": 1})
+        k2 = agent._cache_key("tool", {"a": 1, "b": 2})
+        assert k1 == k2  # sort_keys=True 保证顺序无关
+
+    def test_cache_ttl_expiration(self):
+        """过期条目返回 None 且被删除"""
+        import time
+        agent = self._make_agent()
+        agent._CACHE_TTL = 0.05  # 50ms TTL 便于测试
+        agent._cache_put("local_stock_query", {"sku": "A1"}, "库存100")
+        # 未过期
+        assert agent._cache_get("local_stock_query", {"sku": "A1"}) == "库存100"
+        # 等待过期
+        time.sleep(0.06)
+        assert agent._cache_get("local_stock_query", {"sku": "A1"}) is None
+        # 过期条目应已被删除，释放空间
+        key = agent._cache_key("local_stock_query", {"sku": "A1"})
+        assert key not in agent._query_cache
+
+
+# ============================================================
+# A2: 失败反思 — 错误前缀检测
+# ============================================================
+
+class TestErrorPrefixDetection:
+    """A2: 只匹配工具框架生成的错误前缀"""
+
+    def test_tool_failure_prefix_detected(self):
+        """工具执行失败前缀应触发"""
+        result = "工具执行失败: ConnectionError"
+        _error_prefixes = (
+            "工具执行失败:", "工具执行超时", "工具参数JSON格式错误:",
+            "❌", "Traceback",
+        )
+        assert result.startswith(_error_prefixes)
+
+    def test_timeout_prefix_detected(self):
+        result = "工具执行超时（30秒），请缩小查询范围"
+        _error_prefixes = (
+            "工具执行失败:", "工具执行超时", "工具参数JSON格式错误:",
+            "❌", "Traceback",
+        )
+        assert result.startswith(_error_prefixes)
+
+    def test_business_data_not_detected(self):
+        """业务数据中的"错误"不应触发"""
+        result = "商品名称：错误检测仪\n库存：50件"
+        _error_prefixes = (
+            "工具执行失败:", "工具执行超时", "工具参数JSON格式错误:",
+            "❌", "Traceback",
+        )
+        assert not result.startswith(_error_prefixes)
+        assert "Error:" not in result[:100]
+
+    def test_order_remark_with_failure_not_detected(self):
+        """订单备注中的"失败"不应触发"""
+        result = "订单备注：发货失败请重新安排\n状态：待处理"
+        _error_prefixes = (
+            "工具执行失败:", "工具执行超时", "工具参数JSON格式错误:",
+            "❌", "Traceback",
+        )
+        assert not result.startswith(_error_prefixes)
+        assert "Error:" not in result[:100]
+
+    def test_error_in_content_detected(self):
+        """Error: 在前100字符内应触发"""
+        result = "查询结果 Error: invalid parameter\n详情..."
+        assert "Error:" in result[:100]

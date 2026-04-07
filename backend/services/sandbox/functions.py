@@ -253,6 +253,16 @@ def build_sandbox_executor(
     executor.register("web_search", sandbox_web_search)
     executor.register("search_knowledge", sandbox_search_knowledge)
 
+    # 获取截断暂存的完整工具结果（由 tool_result_envelope 提供）
+    def _get_persisted_result(key: str) -> str:
+        from services.agent.tool_result_envelope import get_persisted
+        result = get_persisted(key)
+        if result is None:
+            return f"❌ 未找到暂存结果(key={key})，可能已过期。请用 erp_query_all() 重新查询。"
+        return result
+
+    executor.register("get_persisted_result", _get_persisted_result)
+
     # 注册文件操作函数（闭包绑定用户信息，沙盒内可 await 调用）
     from core.config import get_settings as _get_settings
     from services.file_executor import FileExecutor as _FileExecutor
