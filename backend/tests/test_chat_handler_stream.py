@@ -124,8 +124,8 @@ class TestStreamGenerate:
 
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
-    @patch("services.handlers.chat_handler.stream_publish", new_callable=AsyncMock)
-    async def test_normal_stream_3_chunks(self, mock_stream_pub, mock_factory):
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_normal_stream_3_chunks(self, mock_ws, mock_factory):
         """正常流式 3 chunk 累加文字"""
         handler = _make_handler()
         handler._build_llm_messages = AsyncMock(return_value=[
@@ -150,7 +150,7 @@ class TestStreamGenerate:
             model="test", estimated_cost_usd=Decimal("0"), estimated_credits=2,
         )
         mock_factory.return_value = mock_adapter
-        
+        mock_ws.send_to_task_or_user = AsyncMock()
 
         await handler._stream_generate(
             task_id="t1",
@@ -172,8 +172,8 @@ class TestStreamGenerate:
 
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
-    @patch("services.handlers.chat_handler.stream_publish", new_callable=AsyncMock)
-    async def test_adapter_exception_calls_handle_failure(self, mock_stream_pub, mock_factory):
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_adapter_exception_calls_handle_failure(self, mock_ws, mock_factory):
         """adapter 异常→_handle_stream_failure"""
         handler = _make_handler()
         handler._build_llm_messages = AsyncMock(return_value=[])
@@ -187,7 +187,7 @@ class TestStreamGenerate:
         mock_adapter.stream_chat = failing_stream
         mock_adapter.close = AsyncMock()
         mock_factory.return_value = mock_adapter
-        
+        mock_ws.send_to_task_or_user = AsyncMock()
 
         await handler._stream_generate(
             task_id="t1",
@@ -203,8 +203,8 @@ class TestStreamGenerate:
 
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
-    @patch("services.handlers.chat_handler.stream_publish", new_callable=AsyncMock)
-    async def test_finally_always_closes_adapter(self, mock_stream_pub, mock_factory):
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_finally_always_closes_adapter(self, mock_ws, mock_factory):
         """finally 始终关闭 adapter"""
         handler = _make_handler()
         handler._build_llm_messages = AsyncMock(return_value=[])
@@ -221,7 +221,7 @@ class TestStreamGenerate:
             model="test", estimated_cost_usd=Decimal("0"), estimated_credits=0,
         )
         mock_factory.return_value = mock_adapter
-        
+        mock_ws.send_to_task_or_user = AsyncMock()
         handler.on_complete = AsyncMock()
         handler._dispatch_post_tasks = MagicMock()
 
@@ -243,12 +243,12 @@ class TestStreamGenerate:
 class TestStreamDirectReply:
 
     @pytest.mark.asyncio
-    @patch("services.handlers.chat_handler.stream_publish", new_callable=AsyncMock)
-    async def test_sends_start_and_chunk(self, mock_stream_pub):
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_sends_start_and_chunk(self, mock_ws):
         """发送 message_start + message_chunk WS 消息"""
         handler = _make_handler()
         handler.on_complete = AsyncMock()
-        
+        mock_ws.send_to_task_or_user = AsyncMock()
 
         await handler._stream_direct_reply(
             task_id="t1",
@@ -259,19 +259,21 @@ class TestStreamDirectReply:
         )
 
         # 应该发送 2 次 WS 消息（start + chunk）
-        assert mock_stream_pub.await_count == 2
+        assert mock_ws.send_to_task_or_user.await_count == 2
         # on_complete 积分=0
         handler.on_complete.assert_awaited_once()
         call_args = handler.on_complete.call_args
         assert call_args.kwargs["credits_consumed"] == 0
 
     @pytest.mark.asyncio
-    @patch("services.handlers.chat_handler.stream_publish", new_callable=AsyncMock)
-    async def test_exception_calls_on_error(self, mock_stream_pub):
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_exception_calls_on_error(self, mock_ws):
         """异常调 on_error"""
         handler = _make_handler()
         handler.on_error = AsyncMock()
-        mock_stream_pub.side_effect = Exception("ws down")
+        mock_ws.send_to_task_or_user = AsyncMock(
+            side_effect=Exception("ws down"),
+        )
 
         await handler._stream_direct_reply(
             task_id="t1",
@@ -383,8 +385,8 @@ class TestStreamOptimizations:
 
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
-    @patch("services.handlers.chat_handler.stream_publish", new_callable=AsyncMock)
-    async def test_chunk_msg_no_accumulated_field(self, mock_stream_pub, mock_factory):
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_chunk_msg_no_accumulated_field(self, mock_ws, mock_factory):
         """build_message_chunk 不再传 accumulated（O(n²)流量优化）"""
         handler = _make_handler()
         handler._build_llm_messages = AsyncMock(return_value=[
@@ -404,7 +406,7 @@ class TestStreamOptimizations:
             model="test", estimated_cost_usd=Decimal("0"), estimated_credits=1,
         )
         mock_factory.return_value = mock_adapter
-        
+        mock_ws.send_to_task_or_user = AsyncMock()
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
@@ -413,7 +415,7 @@ class TestStreamOptimizations:
 
         # 检查所有 WS 推送的 chunk 消息不含 accumulated
         from schemas.websocket import WSMessageType
-        for call in mock_stream_pub.call_args_list:
+        for call in mock_ws.send_to_task_or_user.call_args_list:
             msg = call.args[2]
             if msg.get("type") == WSMessageType.MESSAGE_CHUNK.value:
                 assert "accumulated" not in msg.get("data", {}), \
@@ -421,8 +423,8 @@ class TestStreamOptimizations:
 
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
-    @patch("services.handlers.chat_handler.stream_publish", new_callable=AsyncMock)
-    async def test_prefetched_summary_passed_to_build_llm_messages(self, mock_stream_pub, mock_factory):
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_prefetched_summary_passed_to_build_llm_messages(self, mock_ws, mock_factory):
         """_prefetched_summary 从 _params 传递到 _build_llm_messages"""
         handler = _make_handler()
 
@@ -447,7 +449,7 @@ class TestStreamOptimizations:
             model="test", estimated_cost_usd=Decimal("0"), estimated_credits=0,
         )
         mock_factory.return_value = mock_adapter
-        
+        mock_ws.send_to_task_or_user = AsyncMock()
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
@@ -459,8 +461,8 @@ class TestStreamOptimizations:
 
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
-    @patch("services.handlers.chat_handler.stream_publish", new_callable=AsyncMock)
-    async def test_prefetched_memory_passed_to_build_llm_messages(self, mock_stream_pub, mock_factory):
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_prefetched_memory_passed_to_build_llm_messages(self, mock_ws, mock_factory):
         """_prefetched_memory 从 _params 传递到 _build_llm_messages"""
         handler = _make_handler()
 
@@ -485,7 +487,7 @@ class TestStreamOptimizations:
             model="test", estimated_cost_usd=Decimal("0"), estimated_credits=0,
         )
         mock_factory.return_value = mock_adapter
-        
+        mock_ws.send_to_task_or_user = AsyncMock()
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
@@ -504,8 +506,8 @@ class TestUserLocationPassthrough:
 
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
-    @patch("services.handlers.chat_handler.stream_publish", new_callable=AsyncMock)
-    async def test_user_location_passed_to_build_llm(self, mock_stream_pub, mock_factory):
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_user_location_passed_to_build_llm(self, mock_ws, mock_factory):
         """_params['_user_location'] → _build_llm_messages(user_location=...)"""
         handler = _make_handler()
         captured_kwargs = {}
@@ -534,7 +536,7 @@ class TestUserLocationPassthrough:
             model="test", estimated_cost_usd=Decimal("0"), estimated_credits=1,
         )
         mock_factory.return_value = mock_adapter
-        
+        mock_ws.send_to_task_or_user = AsyncMock()
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
@@ -546,8 +548,8 @@ class TestUserLocationPassthrough:
 
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
-    @patch("services.handlers.chat_handler.stream_publish", new_callable=AsyncMock)
-    async def test_no_user_location_passes_none(self, mock_stream_pub, mock_factory):
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_no_user_location_passes_none(self, mock_ws, mock_factory):
         """_params 无 _user_location → user_location=None"""
         handler = _make_handler()
         captured_kwargs = {}
@@ -576,7 +578,7 @@ class TestUserLocationPassthrough:
             model="test", estimated_cost_usd=Decimal("0"), estimated_credits=1,
         )
         mock_factory.return_value = mock_adapter
-        
+        mock_ws.send_to_task_or_user = AsyncMock()
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
