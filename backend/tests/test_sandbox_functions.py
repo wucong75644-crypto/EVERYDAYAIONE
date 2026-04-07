@@ -250,14 +250,16 @@ class TestBuildSandboxExecutor:
 
     def test_creates_executor_with_functions(self):
         executor = build_sandbox_executor()
-        # 应注册 7 个数据源函数（4 原有 + 3 文件操作）
-        assert "erp_query" in executor._registered_funcs
-        assert "erp_query_all" in executor._registered_funcs
-        assert "web_search" in executor._registered_funcs
-        assert "search_knowledge" in executor._registered_funcs
+        # 沙盒瘦身后只注册 2 个函数（read_file + upload_file）
         assert "read_file" in executor._registered_funcs
-        assert "write_file" in executor._registered_funcs
-        assert "list_dir" in executor._registered_funcs
+        assert "upload_file" in executor._registered_funcs
+        # 数据获取函数已移除
+        assert "erp_query" not in executor._registered_funcs
+        assert "erp_query_all" not in executor._registered_funcs
+        assert "web_search" not in executor._registered_funcs
+        assert "search_knowledge" not in executor._registered_funcs
+        assert "write_file" not in executor._registered_funcs
+        assert "list_dir" not in executor._registered_funcs
 
     def test_custom_timeout(self):
         executor = build_sandbox_executor(timeout=60.0)
@@ -268,34 +270,27 @@ class TestBuildSandboxExecutor:
         assert executor._max_result_chars == 5000
 
     @pytest.mark.asyncio
-    async def test_erp_query_with_dispatcher(self):
-        mock_dispatcher = AsyncMock()
-        mock_dispatcher.execute_raw.return_value = {"list": [], "total": 0}
-
-        executor = build_sandbox_executor(dispatcher=mock_dispatcher)
-
-        code = "data = await erp_query('erp_trade_query', 'shop_list')\ndata['total']"
-        result = await executor.execute(code, "测试ERP查询")
-        assert "0" in result
+    async def test_erp_query_removed_from_sandbox(self):
+        """erp_query 已从沙盒移除，调用应 NameError"""
+        executor = build_sandbox_executor()
+        code = "data = await erp_query('erp_trade_query', 'shop_list')"
+        result = await executor.execute(code, "测试已移除函数")
+        assert "erp_query" in result  # NameError 信息中包含函数名
 
     @pytest.mark.asyncio
-    async def test_erp_query_without_dispatcher(self):
+    async def test_read_file_restricted_to_staging(self):
+        """read_file 只允许读取 staging 目录"""
         executor = build_sandbox_executor()
+        code = "result = await read_file('some/other/path.json')\nprint(result)"
+        result = await executor.execute(code, "测试路径限制")
+        assert "staging" in result  # 错误提示中包含 staging
 
-        code = "data = await erp_query('erp_trade_query', 'shop_list')\nstr(data)"
-        result = await executor.execute(code, "测试无dispatcher")
-        assert "error" in result
-
-
-    def test_file_functions_bound_to_user(self):
-        """文件函数绑定了 user_id 和 org_id"""
+    def test_file_write_removed(self):
+        """write_file 已从沙盒移除"""
         executor = build_sandbox_executor(
             user_id="test-user", org_id="test-org",
         )
-        # 闭包内捕获了用户信息，函数可调用
-        assert callable(executor._registered_funcs["read_file"])
-        assert callable(executor._registered_funcs["write_file"])
-        assert callable(executor._registered_funcs["list_dir"])
+        assert "write_file" not in executor._registered_funcs
 
     def test_upload_file_registered(self):
         """upload_file 函数已注册"""
@@ -394,22 +389,12 @@ class TestUploadFile:
         assert "格式不支持" in result
 
     @pytest.mark.asyncio
-    async def test_sandbox_list_dir(self, tmp_path):
-        """沙盒内 list_dir 可执行（空目录）"""
-        from unittest.mock import patch, MagicMock
-
-        mock_settings = MagicMock()
-        mock_settings.file_workspace_root = str(tmp_path)
-
-        with patch(
-            "core.config.get_settings",
-            return_value=mock_settings,
-        ):
-            executor = build_sandbox_executor(user_id="sandbox-test")
-            code = "result = await list_dir('.')\nresult"
-            result = await executor.execute(code, "测试目录列表")
-            # 应该返回空目录或目录信息（不是错误）
-            assert "❌" not in result
+    async def test_list_dir_removed_from_sandbox(self):
+        """list_dir 已从沙盒移除"""
+        executor = build_sandbox_executor(user_id="sandbox-test")
+        code = "result = await list_dir('.')"
+        result = await executor.execute(code, "测试已移除函数")
+        assert "list_dir" in result  # NameError
 
 
 class TestComputeCodeHash:

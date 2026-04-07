@@ -779,6 +779,52 @@ class TestErrorPrefixDetection:
 # F1/F2: 路由经验 + 失败记忆
 # ============================================================
 
+class TestFetchAllPagesVisibility:
+    """fetch_all_pages 在 ERP Agent 可见工具中"""
+
+    def test_visible_names_includes_fetch_all_pages(self):
+        """_VISIBLE_NAMES 包含 fetch_all_pages"""
+        # 验证源码中的常量（不实例化 Agent，避免 DB 依赖）
+        import inspect
+        from services.agent.erp_agent import ERPAgent
+        source = inspect.getsource(ERPAgent.execute)
+        assert "fetch_all_pages" in source
+
+
+class TestStagingCleanup:
+    """staging 延迟清理测试"""
+
+    def _make_agent(self):
+        from services.agent.erp_agent import ERPAgent
+        return ERPAgent(
+            db=MagicMock(), user_id="u1",
+            conversation_id="test-conv-123", org_id="org1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_cleanup_removes_staging_dir(self, tmp_path):
+        """清理删除对应会话的 staging 目录"""
+        agent = self._make_agent()
+        staging_dir = tmp_path / "staging" / "test-conv-123"
+        staging_dir.mkdir(parents=True)
+        (staging_dir / "data.json").write_text('[]')
+
+        with patch("core.config.get_settings") as mock_settings:
+            mock_settings.return_value.file_workspace_root = str(tmp_path)
+            await agent._cleanup_staging_delayed(delay=0)
+
+        assert not staging_dir.exists()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_noop_when_no_staging(self, tmp_path):
+        """无 staging 目录时不报错"""
+        agent = self._make_agent()
+        with patch("core.config.get_settings") as mock_settings:
+            mock_settings.return_value.file_workspace_root = str(tmp_path)
+            await agent._cleanup_staging_delayed(delay=0)
+        # 不抛异常即通过
+
+
 class TestRecordAgentExperience:
     """F1/F2: _record_agent_experience 通用方法"""
 

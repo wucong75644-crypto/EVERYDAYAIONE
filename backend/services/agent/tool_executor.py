@@ -46,6 +46,7 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             self._handlers[tool_name] = self._make_file_handler(tool_name)
         # 散客不注册 ERP 工具（散客无 ERP 功能）
         if org_id is not None:
+            self._handlers["fetch_all_pages"] = self._fetch_all_pages
             for tool_name in ERP_SYNC_TOOLS:
                 self._handlers[tool_name] = self._make_erp_handler(tool_name)
             for tool_name in ERP_LOCAL_TOOLS:
@@ -196,6 +197,97 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         return search_erp_api(query)
 
     # ========================================
+    # 全量翻页工具（独立可组合工具）
+    # ========================================
+
+    async def _fetch_all_pages(self, args: Dict[str, Any]) -> str:
+        """包装任意 erp_* 远程查询工具，自动翻页拉取全部数据并存 staging"""
+        import asyncio
+        import json
+        import time as _time
+        from pathlib import Path
+
+        from core.config import get_settings
+        from services.sandbox.functions import erp_query_all
+
+        tool_name = args.get("tool", "")
+        action = args.get("action", "")
+        params = args.get("params") or {}
+        page_size = max(args.get("page_size", 100), 20)  # 最小20
+        max_pages = min(args.get("max_pages", 200), 500)  # 上限500
+
+        if not tool_name or not action:
+            return "❌ 必须指定 tool 和 action 参数"
+
+        # 获取 ERP dispatcher
+        dispatcher = await self._get_erp_dispatcher()
+        if isinstance(dispatcher, str):
+            return dispatcher  # 错误信息
+
+        settings = get_settings()
+        semaphore = asyncio.Semaphore(
+            settings.sandbox_api_concurrency,
+        )
+
+        start = _time.monotonic()
+
+        # 复用 erp_query_all 的翻页逻辑
+        result = await erp_query_all(
+            tool_name, action, {**params, "page_size": page_size},
+            max_pages=max_pages,
+            _dispatcher=dispatcher,
+            _semaphore=semaphore,
+        )
+
+        elapsed = _time.monotonic() - start
+
+        if "error" in result and not result.get("list"):
+            return f"❌ 翻页查询失败: {result['error']}"
+
+        items = result.get("list", [])
+        if not items:
+            return f"查询结果为空（{tool_name}:{action}）"
+
+        # 存 staging 文件
+        staging_dir = Path(settings.file_workspace_root) / "staging" / (
+            self.conversation_id or "default"
+        )
+        staging_dir.mkdir(parents=True, exist_ok=True)
+
+        ts = int(_time.time())
+        safe_tool = tool_name.replace("/", "_").replace("..", "_")
+        safe_action = action.replace("/", "_").replace("..", "_")
+        filename = f"{safe_tool}_{safe_action}_{ts}.json"
+        staging_path = staging_dir / filename
+        staging_path.write_text(
+            json.dumps(items, ensure_ascii=False), encoding="utf-8",
+        )
+
+        # 返回文件的相对路径（沙盒 read_file 用）
+        rel_path = f"staging/{self.conversation_id or 'default'}/{filename}"
+
+        # 预览前3条
+        preview_lines = []
+        for item in items[:3]:
+            preview_lines.append(
+                json.dumps(item, ensure_ascii=False)[:200]
+            )
+        preview = "\n".join(preview_lines)
+
+        warning = ""
+        if result.get("warning"):
+            warning = f"\n⚠ {result['warning']}"
+
+        return (
+            f"[数据已暂存] {rel_path}\n"
+            f"共 {len(items)} 条记录，耗时 {elapsed:.1f}秒。"
+            f"{warning}\n"
+            f"如需处理请调 code_execute，"
+            f"用 read_file(\"{rel_path}\") 读取数据。\n\n"
+            f"前3条预览：\n{preview}"
+        )
+
+    # ========================================
     # 代码执行沙盒
     # ========================================
 
@@ -219,23 +311,14 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         if not code:
             return "代码不能为空"
 
-        # 获取 ERP dispatcher（企业用户才有，散客无 ERP 沙盒函数）
-        erp_dispatcher = None
-        if self.org_id:
-            dispatcher = await self._get_erp_dispatcher()
-            erp_dispatcher = dispatcher if not isinstance(dispatcher, str) else None
-
         start_ms = int(_time.monotonic() * 1000)
         status = "success"
         result = ""
 
         try:
             executor = build_sandbox_executor(
-                dispatcher=erp_dispatcher,
-                api_concurrency=settings.sandbox_api_concurrency,
                 timeout=settings.sandbox_timeout,
                 max_result_chars=settings.sandbox_max_result_chars,
-                max_pages=settings.sandbox_max_pages,
                 user_id=self.user_id,
                 org_id=self.org_id,
             )

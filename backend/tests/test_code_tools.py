@@ -37,44 +37,34 @@ class TestCodeToolsDefinition:
         assert "code" in params["properties"]
         assert "description" in params["properties"]
 
-    def test_erp_query_all_return_format_documented(self):
-        """code_execute 描述中包含 erp_query_all 说明"""
+    def test_sandbox_is_pure_computation(self):
+        """code_execute 描述不包含数据获取函数"""
         tool = build_code_tools()[0]
         desc = tool["function"]["description"]
-        assert "erp_query_all" in desc
-        assert "total" in desc
+        assert "erp_query" not in desc
+        assert "web_search" not in desc
+        assert "纯计算" in desc or "staging" in desc
 
-    def test_erp_query_return_documented(self):
-        """code_execute 描述中包含 erp_query 说明"""
+    def test_read_file_staging_documented(self):
+        """code_execute 描述中说明 read_file 限 staging"""
         tool = build_code_tools()[0]
         desc = tool["function"]["description"]
-        assert "erp_query(" in desc
-        assert "erp_query_all(" in desc
+        assert "read_file" in desc
+        assert "staging" in desc
 
     def test_routing_prompt_not_empty(self):
         assert "code_execute" in CODE_ROUTING_PROMPT
-        assert "route_to_chat" in CODE_ROUTING_PROMPT
+        assert "fetch_all_pages" in CODE_ROUTING_PROMPT
 
-    def test_routing_prompt_no_routing_directives(self):
-        """CODE_ROUTING_PROMPT 不包含链路指令（能力驱动架构）"""
-        assert "数据聚合" not in CODE_ROUTING_PROMPT
-        assert "典型场景" not in CODE_ROUTING_PROMPT
-        assert "→ code_execute" not in CODE_ROUTING_PROMPT
-        assert "→ 仍用" not in CODE_ROUTING_PROMPT
+    def test_routing_prompt_mentions_fetch_all_pages(self):
+        """CODE_ROUTING_PROMPT 包含 fetch_all_pages 协议"""
+        assert "fetch_all_pages" in CODE_ROUTING_PROMPT
+        assert "staging" in CODE_ROUTING_PROMPT
 
-    def test_code_execute_desc_no_scenario_guidance(self):
-        """code_execute 描述不包含场景引导"""
-        tool = build_code_tools()[0]
-        desc = tool["function"]["description"]
-        assert "使用场景" not in desc
-        assert "适用于需要" not in desc
-
-    def test_code_execute_desc_mentions_cost(self):
-        """code_execute 描述说明了 erp_query_all 的耗时代价"""
-        tool = build_code_tools()[0]
-        desc = tool["function"]["description"]
-        assert "耗时较长" in desc
-        assert "60秒" in desc
+    def test_routing_prompt_no_erp_query(self):
+        """CODE_ROUTING_PROMPT 不再提及 erp_query"""
+        assert "erp_query（" not in CODE_ROUTING_PROMPT
+        assert "erp_query_all" not in CODE_ROUTING_PROMPT
 
 
 class TestAgentToolsIntegration:
@@ -149,3 +139,93 @@ class TestToolExecutorRegistration:
         mock_db = MagicMock()
         executor = ToolExecutor(mock_db, "user1", "conv1")
         assert "code_execute" in executor._handlers
+
+    def test_fetch_all_pages_registered_for_org(self):
+        """企业用户注册 fetch_all_pages"""
+        from services.tool_executor import ToolExecutor
+        mock_db = MagicMock()
+        executor = ToolExecutor(mock_db, "user1", "conv1", org_id="org1")
+        assert "fetch_all_pages" in executor._handlers
+
+    def test_fetch_all_pages_not_for_guest(self):
+        """散客不注册 fetch_all_pages"""
+        from services.tool_executor import ToolExecutor
+        mock_db = MagicMock()
+        executor = ToolExecutor(mock_db, "user1", "conv1", org_id=None)
+        assert "fetch_all_pages" not in executor._handlers
+
+
+class TestFetchAllPagesExecution:
+    """_fetch_all_pages 执行逻辑测试"""
+
+    def _make_executor(self):
+        from services.tool_executor import ToolExecutor
+        return ToolExecutor(MagicMock(), "user1", "conv1", org_id="org1")
+
+    @pytest.mark.asyncio
+    async def test_missing_tool_param(self):
+        """缺少 tool 参数返回错误"""
+        executor = self._make_executor()
+        result = await executor._fetch_all_pages({"action": "order_list"})
+        assert "❌" in result
+
+    @pytest.mark.asyncio
+    async def test_missing_action_param(self):
+        """缺少 action 参数返回错误"""
+        executor = self._make_executor()
+        result = await executor._fetch_all_pages({"tool": "erp_trade_query"})
+        assert "❌" in result
+
+    @pytest.mark.asyncio
+    async def test_page_size_min_20(self):
+        """page_size 最小值为 20"""
+        executor = self._make_executor()
+        mock_dispatcher = AsyncMock()
+        mock_dispatcher.execute_raw.return_value = {"list": [], "total": 0}
+
+        with patch.object(executor, "_get_erp_dispatcher", return_value=mock_dispatcher), \
+             patch("core.config.get_settings") as mock_s:
+            mock_s.return_value.sandbox_api_concurrency = 10
+            mock_s.return_value.file_workspace_root = "/tmp/test_workspace"
+            result = await executor._fetch_all_pages({
+                "tool": "erp_trade_query", "action": "order_list",
+                "page_size": 5,  # 小于20
+            })
+        # page_size 被强制为 20
+        call_params = mock_dispatcher.execute_raw.call_args[0][2]
+        assert call_params["page_size"] >= 20
+
+    @pytest.mark.asyncio
+    async def test_path_traversal_sanitized(self):
+        """tool_name 包含 ../ 时路径安全"""
+        executor = self._make_executor()
+        mock_dispatcher = AsyncMock()
+        mock_dispatcher.execute_raw.return_value = {
+            "list": [{"id": 1}], "total": 1,
+        }
+
+        with patch.object(executor, "_get_erp_dispatcher", return_value=mock_dispatcher), \
+             patch("core.config.get_settings") as mock_s:
+            mock_s.return_value.sandbox_api_concurrency = 10
+            mock_s.return_value.file_workspace_root = "/tmp/test_workspace"
+            result = await executor._fetch_all_pages({
+                "tool": "../../../etc", "action": "passwd",
+            })
+        # 文件名中不包含 ../
+        assert "../" not in result
+
+    @pytest.mark.asyncio
+    async def test_empty_result(self):
+        """查询结果为空"""
+        executor = self._make_executor()
+        mock_dispatcher = AsyncMock()
+        mock_dispatcher.execute_raw.return_value = {"list": [], "total": 0}
+
+        with patch.object(executor, "_get_erp_dispatcher", return_value=mock_dispatcher), \
+             patch("core.config.get_settings") as mock_s:
+            mock_s.return_value.sandbox_api_concurrency = 10
+            mock_s.return_value.file_workspace_root = "/tmp/test_workspace"
+            result = await executor._fetch_all_pages({
+                "tool": "erp_trade_query", "action": "order_list",
+            })
+        assert "为空" in result

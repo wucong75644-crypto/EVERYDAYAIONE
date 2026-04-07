@@ -28,6 +28,19 @@ class TestBuildDomainTools:
         erp_names = [n for n in names if n.startswith("erp_")]
         assert len(erp_names) >= 3
 
+    def test_erp_contains_fetch_all_pages(self):
+        """ERP 域工具包含 fetch_all_pages"""
+        tools = build_domain_tools("erp")
+        names = {t["function"]["name"] for t in tools}
+        assert "fetch_all_pages" in names
+
+    def test_fetch_all_pages_not_in_other_domains(self):
+        """fetch_all_pages 只在 ERP 域"""
+        for domain in ("crawler", "computer"):
+            tools = build_domain_tools(domain)
+            names = {t["function"]["name"] for t in tools}
+            assert "fetch_all_pages" not in names
+
     def test_crawler_returns_tools(self):
         tools = build_domain_tools("crawler")
         names = {t["function"]["name"] for t in tools}
