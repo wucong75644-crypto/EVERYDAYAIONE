@@ -104,31 +104,50 @@ async def piggyback_express(
                 data = await client.request_with_retry(
                     "erp.trade.multi.packs.query", {"sid": sid},
                 )
-                packs = data.get("packs") or data.get("list") or []
                 rows = []
-                for pack in packs:
-                    rows.append({
-                        "system_id": sid,
-                        "package_id": str(pack.get("packId") or pack.get("id") or ""),
-                        "express_no": pack.get("outSid") or pack.get("expressNo") or "",
-                        "express_company": pack.get("expressCompanyName") or pack.get("company"),
-                        "express_company_code": pack.get("expressCompanyCode"),
-                        "items_json": pack.get("items") or pack.get("orderItems") or [],
-                        "extra_json": _pick(pack, "weight", "packType", "consignTime"),
-                        "synced_at": now,
-                    })
-                # 如果 API 返回的是扁平结构（无 packs 数组）
-                if not packs and data.get("outSid"):
-                    rows.append({
-                        "system_id": sid,
-                        "package_id": "",
-                        "express_no": data.get("outSid"),
-                        "express_company": data.get("expressCompanyName"),
-                        "express_company_code": data.get("expressCompanyCode"),
-                        "items_json": [],
-                        "extra_json": _pick(data, "weight", "consignTime"),
-                        "synced_at": now,
-                    })
+                # 格式 1: packs 数组（多包裹场景）
+                packs = data.get("packs") or data.get("list") or []
+                if packs:
+                    for pack in packs:
+                        rows.append({
+                            "system_id": sid,
+                            "package_id": str(pack.get("packId") or pack.get("id") or ""),
+                            "express_no": pack.get("outSid") or pack.get("expressNo") or "",
+                            "express_company": pack.get("expressCompanyName") or pack.get("company"),
+                            "express_company_code": pack.get("expressCompanyCode") or pack.get("cpCode"),
+                            "items_json": pack.get("items") or pack.get("orderItems") or [],
+                            "extra_json": _pick(pack, "weight", "packType", "consignTime"),
+                            "synced_at": now,
+                        })
+                else:
+                    # 格式 2: 扁平结构 {cpCode, outSids[], expressName}
+                    out_sids = data.get("outSids") or []
+                    express_name = data.get("expressName") or ""
+                    cp_code = data.get("cpCode") or ""
+                    if isinstance(out_sids, list):
+                        for express_no in out_sids:
+                            rows.append({
+                                "system_id": sid,
+                                "package_id": "",
+                                "express_no": str(express_no) if express_no else "",
+                                "express_company": express_name,
+                                "express_company_code": cp_code,
+                                "items_json": [],
+                                "extra_json": {},
+                                "synced_at": now,
+                            })
+                    elif data.get("outSid"):
+                        # 格式 3: 单个 outSid 字符串
+                        rows.append({
+                            "system_id": sid,
+                            "package_id": "",
+                            "express_no": data.get("outSid") or "",
+                            "express_company": express_name,
+                            "express_company_code": cp_code,
+                            "items_json": [],
+                            "extra_json": {},
+                            "synced_at": now,
+                        })
                 return rows
             except Exception as e:
                 logger.debug(f"piggyback_express skip | sid={sid} | error={e}")
@@ -198,8 +217,17 @@ async def piggyback_aftersale_log(
     if not all_rows:
         return 0
 
+    # 去重：同一 (work_order_id, operate_time, action) 只保留第一条
+    seen: set[tuple] = set()
+    unique_rows: list[dict[str, Any]] = []
+    for row in all_rows:
+        key = (row["work_order_id"], row["operate_time"], row["action"])
+        if key not in seen:
+            seen.add(key)
+            unique_rows.append(row)
+
     count = await _batch_upsert(
-        svc.db, "erp_aftersale_logs", all_rows,
+        svc.db, "erp_aftersale_logs", unique_rows,
         "work_order_id,operate_time,action,org_id",
         org_id=svc.org_id,
     )
