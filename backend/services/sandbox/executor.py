@@ -144,8 +144,8 @@ class SandboxExecutor:
             f"code_len={len(code)} | funcs={list(self._registered_funcs.keys())}"
         )
 
-        # 2. 记录执行前的文件列表（用于检测新生成的文件）
-        pre_files = self._snapshot_output_dir()
+        # 2. 清空输出目录（每次执行都是干净环境，对标 OpenAI Code Interpreter）
+        self._clean_output_dir()
 
         # 3. 构建受限执行环境
         sandbox_globals = self._build_globals()
@@ -167,8 +167,8 @@ class SandboxExecutor:
             short_tb = "\n".join(tb_lines[-3:])
             return f"❌ 执行错误:\n{short_tb}"
 
-        # 5. 自动检测新生成的文件并上传
-        file_results = await self._auto_upload_new_files(pre_files)
+        # 5. 自动检测生成的文件并上传
+        file_results = await self._auto_upload_new_files()
         if file_results:
             result = (result or "") + "\n" + "\n".join(file_results)
 
@@ -216,18 +216,19 @@ class SandboxExecutor:
     # 自动文件检测与上传
     # ========================================
 
-    def _snapshot_output_dir(self) -> set[str]:
-        """记录执行前输出目录中的文件（用于 diff）"""
+    def _clean_output_dir(self) -> None:
+        """清空输出目录（每次执行前调用，确保干净环境）"""
         if not self._output_dir:
-            return set()
+            return
         from pathlib import Path
+        import shutil
         output_path = Path(self._output_dir)
-        if not output_path.exists():
-            return set()
-        return {str(f) for f in output_path.iterdir() if f.is_file()}
+        if output_path.exists():
+            shutil.rmtree(output_path, ignore_errors=True)
+        output_path.mkdir(parents=True, exist_ok=True)
 
-    async def _auto_upload_new_files(self, pre_files: set[str]) -> list[str]:
-        """检测新文件并自动上传，返回 [FILE] 标记列表"""
+    async def _auto_upload_new_files(self) -> list[str]:
+        """扫描输出目录中的文件并自动上传，上传后删除"""
         if not self._output_dir or not self._upload_fn:
             return []
 
@@ -240,8 +241,6 @@ class SandboxExecutor:
         for f in output_path.iterdir():
             if not f.is_file():
                 continue
-            if str(f) in pre_files:
-                continue  # 执行前已存在，跳过
             if f.suffix.lower() not in self._AUTO_UPLOAD_EXTENSIONS:
                 continue
 
@@ -249,6 +248,8 @@ class SandboxExecutor:
                 content = f.read_bytes()
                 upload_result = await self._upload_fn(content, f.name)
                 results.append(upload_result)
+                # 上传成功后删除文件，不占磁盘
+                f.unlink(missing_ok=True)
                 logger.info(
                     f"SandboxExecutor auto-upload | file={f.name} | "
                     f"size={len(content)}"
