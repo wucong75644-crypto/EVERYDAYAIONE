@@ -24,17 +24,18 @@ _TIME_COL_MAP = {
     "consign_time": "consign_time",
 }
 
-# 导出字段（不导出 id/org_id/raw 等内部字段）
+# 导出字段（不导出 id/org_id/extra_json/synced_at 等内部字段）
 _EXPORT_COLUMNS = (
     "doc_type,doc_id,doc_code,doc_status,"
     "doc_created_at,doc_modified_at,"
     "outer_id,sku_outer_id,item_name,"
-    "quantity,price,amount,"
+    "quantity,quantity_received,price,amount,"
     "supplier_name,warehouse_name,shop_name,platform,"
-    "order_no,order_status,express_no,"
-    "buyer_nick,"
-    "payment,post_fee,gross_profit,"
-    "aftersale_type,refund_money,pay_time,consign_time"
+    "order_no,order_status,express_no,express_company,"
+    "cost,pay_time,consign_time,"
+    "post_fee,gross_profit,pay_amount,"
+    "aftersale_type,refund_money,raw_refund_money,"
+    "order_type,remark"
 )
 
 # PII 脱敏字段
