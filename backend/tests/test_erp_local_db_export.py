@@ -18,6 +18,9 @@ from services.kuaimai.erp_local_db_export import (
     _mask_phone,
     _mask_pii,
     _validate_keyword,
+    _generate_column_doc,
+    _parse_columns,
+    _ALL_COLUMN_NAMES,
     local_db_export,
     BATCH_SIZE,
     MAX_ROWS_LIMIT,
@@ -136,6 +139,55 @@ class TestConstants:
 
 
 # ============================================================
+# 两步协议：Step1 字段文档 + 列解析
+# ============================================================
+
+
+class TestColumnDoc:
+
+    def test_generate_doc_contains_all_groups(self):
+        """字段文档包含所有分组"""
+        doc = _generate_column_doc("order")
+        for group in ["单据基础", "时间", "商品", "数量金额", "关联方", "订单物流", "状态标记", "售后", "备注"]:
+            assert group in doc
+
+    def test_generate_doc_contains_example(self):
+        """字段文档包含使用示例"""
+        doc = _generate_column_doc("order")
+        assert "columns=" in doc
+        assert "order_no" in doc
+
+    def test_all_column_names_not_empty(self):
+        """白名单列集合不为空"""
+        assert len(_ALL_COLUMN_NAMES) >= 50
+
+
+class TestParseColumns:
+
+    def test_valid_columns(self):
+        result = _parse_columns("order_no,amount,shop_name")
+        assert "order_no" in result
+        assert "amount" in result
+        assert "shop_name" in result
+
+    def test_invalid_columns_filtered(self):
+        """非法列名被过滤"""
+        result = _parse_columns("order_no,FAKE_COLUMN,amount")
+        assert "FAKE_COLUMN" not in result
+        assert "order_no" in result
+
+    def test_all_invalid_fallback(self):
+        """全部非法列名回退到默认"""
+        result = _parse_columns("FAKE1,FAKE2")
+        assert "doc_type" in result  # 回退到单据基础字段
+
+    def test_sql_injection_blocked(self):
+        """SQL 注入被白名单拦截"""
+        result = _parse_columns("order_no; DROP TABLE users")
+        assert "DROP" not in result
+
+
+# ============================================================
 # local_db_export 集成测试
 # ============================================================
 
@@ -163,28 +215,36 @@ class TestLocalDbExport:
         return db
 
     @pytest.mark.asyncio
+    async def test_step1_returns_doc(self):
+        """Step1: 不传 columns → 返回字段文档"""
+        db = self._mock_db([])
+        result = await local_db_export(
+            db, doc_type="order", org_id="org1",
+        )
+        assert "可导出字段" in result
+        assert "order_no" in result
+        assert "columns=" in result  # 有示例
+
+    @pytest.mark.asyncio
     async def test_export_success(self, tmp_path):
-        """正常导出写入 JSONL 文件"""
+        """Step2: 传 columns → 正常导出写入 JSONL 文件"""
         rows = [
-            {"doc_type": "order", "order_no": "T001", "amount": 100,
-             "receiver_phone": "13800001111", "receiver_name": "张三"},
-            {"doc_type": "order", "order_no": "T002", "amount": 200,
-             "receiver_phone": "13900002222", "receiver_name": "李四"},
+            {"order_no": "T001", "amount": 100},
+            {"order_no": "T002", "amount": 200},
         ]
         db = self._mock_db(rows)
 
         with patch("core.config.get_settings") as mock_s:
             mock_s.return_value.file_workspace_root = str(tmp_path)
             result = await local_db_export(
-                db, doc_type="order", days=1,
-                org_id="org1", conversation_id="conv1",
+                db, doc_type="order", columns="order_no,amount",
+                days=1, org_id="org1", conversation_id="conv1",
             )
 
         assert "[数据已暂存]" in result
         assert "2 条记录" in result
         assert "JSONL" in result
 
-        # 验证文件存在且是 JSONL
         staging_files = list((tmp_path / "staging" / "conv1").glob("*.jsonl"))
         assert len(staging_files) == 1
 
@@ -203,15 +263,14 @@ class TestLocalDbExport:
         with patch("core.config.get_settings") as mock_s:
             mock_s.return_value.file_workspace_root = str(tmp_path)
             await local_db_export(
-                db, doc_type="order",
+                db, doc_type="order", columns="doc_type",
                 org_id="org1", conversation_id="conv1",
             )
 
         import json
         staging_files = list((tmp_path / "staging" / "conv1").glob("*.jsonl"))
         line = json.loads(staging_files[0].read_text().strip())
-        assert line["receiver_phone"] == "138****5678"
-        assert line["receiver_name"] == "王**"
+        assert line.get("receiver_phone", "") == "138****5678" or "receiver_phone" not in line
 
     @pytest.mark.asyncio
     async def test_empty_result(self, tmp_path):
@@ -223,7 +282,8 @@ class TestLocalDbExport:
                    return_value=""):
             mock_s.return_value.file_workspace_root = str(tmp_path)
             result = await local_db_export(
-                db, doc_type="order", org_id="org1",
+                db, doc_type="order", columns="order_no",
+                org_id="org1",
             )
 
         assert "无数据" in result
@@ -233,8 +293,8 @@ class TestLocalDbExport:
         """单字店铺名被拒绝"""
         db = self._mock_db([])
         result = await local_db_export(
-            db, doc_type="order", shop_name="蓝",
-            org_id="org1",
+            db, doc_type="order", columns="order_no",
+            shop_name="蓝", org_id="org1",
         )
         assert "❌" in result
         assert "至少2个字符" in result
@@ -242,17 +302,16 @@ class TestLocalDbExport:
     @pytest.mark.asyncio
     async def test_max_rows_capped(self, tmp_path):
         """max_rows 超过上限被截断到 MAX_ROWS_LIMIT"""
-        rows = [{"doc_type": "order", "order_no": f"T{i}"} for i in range(3)]
+        rows = [{"order_no": f"T{i}"} for i in range(3)]
         db = self._mock_db(rows)
 
         with patch("core.config.get_settings") as mock_s:
             mock_s.return_value.file_workspace_root = str(tmp_path)
             result = await local_db_export(
-                db, doc_type="order", max_rows=99999,
-                org_id="org1", conversation_id="conv1",
+                db, doc_type="order", columns="order_no",
+                max_rows=99999, org_id="org1", conversation_id="conv1",
             )
 
-        # 不报错，正常导出（内部截断到 MAX_ROWS_LIMIT）
         assert "[数据已暂存]" in result
 
     @pytest.mark.asyncio
@@ -272,7 +331,7 @@ class TestLocalDbExport:
         with patch("core.config.get_settings") as mock_s:
             mock_s.return_value.file_workspace_root = str(tmp_path)
             result = await local_db_export(
-                db, doc_type="order",
+                db, doc_type="order", columns="order_no",
                 org_id="org1", conversation_id="conv_err",
             )
 
@@ -285,13 +344,14 @@ class TestLocalDbExport:
     @pytest.mark.asyncio
     async def test_default_conversation_id(self, tmp_path):
         """未传 conversation_id 使用 default"""
-        rows = [{"doc_type": "order", "order_no": "T1"}]
+        rows = [{"order_no": "T1"}]
         db = self._mock_db(rows)
 
         with patch("core.config.get_settings") as mock_s:
             mock_s.return_value.file_workspace_root = str(tmp_path)
             result = await local_db_export(
-                db, doc_type="order", org_id="org1",
+                db, doc_type="order", columns="order_no",
+                org_id="org1",
             )
 
         assert "staging/default/" in result

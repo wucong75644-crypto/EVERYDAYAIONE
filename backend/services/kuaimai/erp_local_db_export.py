@@ -1,8 +1,12 @@
 """
-本地数据库导出工具
+本地数据库导出工具（两步协议）
 
-从 erp_document_items 表分批查询明细数据，以 JSONL 格式流式写入 staging 文件。
-供 code_execute 沙盒用 pd.read_json(path, lines=True) 读取后生成 Excel/CSV。
+Step 1: 只传 doc_type → 返回可用字段文档，Agent 选择需要的列
+Step 2: 传 doc_type + columns → 按字段从 erp_document_items 查询，JSONL 写入 staging
+
+与远程 erp_* 工具的两步协议统一：
+  远程: action 无 params → 参数文档 | action + params → 执行查询
+  本地: doc_type 无 columns → 字段文档 | doc_type + columns → 执行导出
 """
 
 import json
@@ -24,29 +28,115 @@ _TIME_COL_MAP = {
     "consign_time": "consign_time",
 }
 
-# 导出字段（不导出 id/org_id/extra_json/synced_at 等内部字段）
-# 注意：必须与 erp_document_items 实际列名严格一致
-_EXPORT_COLUMNS = (
-    "doc_type,doc_id,doc_code,doc_status,"
-    "doc_created_at,doc_modified_at,"
-    "outer_id,sku_outer_id,item_name,"
-    "quantity,quantity_received,price,amount,"
-    "supplier_name,warehouse_name,shop_name,platform,"
-    "order_no,order_status,express_no,express_company,"
-    "cost,pay_time,consign_time,"
-    "post_fee,gross_profit,discount_fee,pay_amount,"
-    "aftersale_type,refund_money,raw_refund_money,text_reason,"
-    "order_type,delivery_date,purchase_order_code,"
-    "remark,sys_memo,buyer_message,creator_name"
-)
+# 全量可导出字段（排除 id/org_id/extra_json/synced_at 等内部字段）
+# 按业务分组，用于生成字段文档
+_ALL_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    "单据基础": [
+        ("doc_type", "单据类型(order/purchase/aftersale/receipt/shelf/purchase_return)"),
+        ("doc_id", "单据ID"),
+        ("doc_code", "单据编号"),
+        ("doc_status", "单据状态"),
+        ("item_index", "明细行序号（同一单据内多SKU区分）"),
+        ("short_id", "短ID"),
+    ],
+    "时间": [
+        ("doc_created_at", "创建时间"),
+        ("doc_modified_at", "修改时间"),
+        ("pay_time", "付款时间（仅订单）"),
+        ("consign_time", "发货时间（仅订单）"),
+        ("finished_at", "完成时间"),
+        ("delivery_date", "预计到货日期（仅采购）"),
+    ],
+    "商品": [
+        ("outer_id", "主商家编码（SPU级）"),
+        ("sku_outer_id", "SKU编码"),
+        ("item_name", "商品名称"),
+    ],
+    "数量金额": [
+        ("quantity", "数量"),
+        ("quantity_received", "已到货数量（仅采购）"),
+        ("real_qty", "实际数量"),
+        ("price", "单价"),
+        ("amount", "金额"),
+        ("cost", "成本"),
+        ("pay_amount", "实付金额"),
+        ("post_fee", "运费"),
+        ("discount_fee", "优惠金额"),
+        ("gross_profit", "毛利"),
+    ],
+    "关联方": [
+        ("supplier_name", "供应商名称（采购/收货/采退）"),
+        ("warehouse_name", "仓库名称"),
+        ("shop_name", "店铺名称（订单/售后）"),
+        ("platform", "来源平台(tb/jd/pdd/dy/xhs/1688)"),
+        ("creator_name", "创建人"),
+    ],
+    "订单物流": [
+        ("order_no", "平台订单号"),
+        ("order_status", "订单状态"),
+        ("order_type", "订单类型"),
+        ("express_no", "快递单号"),
+        ("express_company", "快递公司"),
+        ("purchase_order_code", "采购单号"),
+    ],
+    "状态标记": [
+        ("is_cancel", "是否取消"),
+        ("is_refund", "是否退款"),
+        ("is_exception", "是否异常"),
+        ("is_halt", "是否拦截"),
+        ("is_urgent", "是否加急"),
+        ("good_status", "货物状态"),
+    ],
+    "售后": [
+        ("aftersale_type", "售后类型(0=其他/1=已发货仅退款/2=退货/3=补发/4=换货/5=未发货仅退款)"),
+        ("refund_status", "退款状态"),
+        ("refund_money", "系统退款金额"),
+        ("raw_refund_money", "平台实退金额"),
+        ("actual_return_qty", "实际退货数量"),
+        ("text_reason", "退货原因"),
+        ("refund_warehouse_name", "退货仓库"),
+        ("refund_express_company", "退货快递公司"),
+        ("refund_express_no", "退货快递单号"),
+        ("reissue_sid", "补发单号"),
+        ("platform_refund_id", "平台退款单号"),
+        ("good_item_count", "良品数"),
+        ("bad_item_count", "次品数"),
+    ],
+    "备注": [
+        ("remark", "备注"),
+        ("sys_memo", "系统备注"),
+        ("buyer_message", "买家留言"),
+    ],
+}
 
-# PII 脱敏字段
-_PII_FIELDS = ("receiver_name", "receiver_phone")
+# 全部可导出列名（白名单，防注入）
+_ALL_COLUMN_NAMES: set[str] = {
+    col for group in _ALL_COLUMNS.values() for col, _ in group
+}
 
 # 分批查询配置
 BATCH_SIZE = 5000
 MAX_ROWS_LIMIT = 10000
 DEFAULT_MAX_ROWS = 5000
+
+
+def _generate_column_doc(doc_type: str) -> str:
+    """生成字段文档（Step 1 返回给 Agent）"""
+    lines = [
+        f"## local_db_export 可导出字段（doc_type={doc_type}）\n",
+        "在 columns 参数中传入需要的字段名（逗号分隔），不传则导出全部字段。\n",
+    ]
+    for group_name, columns in _ALL_COLUMNS.items():
+        lines.append(f"\n### {group_name}")
+        for col_name, col_desc in columns:
+            lines.append(f"  - `{col_name}`: {col_desc}")
+
+    lines.append(f"\n### 示例")
+    lines.append(
+        f'local_db_export(doc_type="{doc_type}", '
+        f'columns="order_no,shop_name,amount,pay_time", days=1)'
+    )
+    return "\n".join(lines)
 
 
 def _mask_phone(phone: str) -> str:
@@ -57,7 +147,7 @@ def _mask_phone(phone: str) -> str:
 
 
 def _mask_pii(row: dict) -> dict:
-    """脱敏 PII 字段（就地修改，不复制）"""
+    """脱敏 PII 字段（就地修改，防御性设计）"""
     if "receiver_phone" in row:
         row["receiver_phone"] = _mask_phone(row.get("receiver_phone", ""))
     if "receiver_name" in row:
@@ -68,22 +158,28 @@ def _mask_pii(row: dict) -> dict:
 
 
 def _validate_keyword(keyword: str, field_name: str) -> tuple[str | None, str | None]:
-    """验证模糊搜索关键词长度，返回 (error_msg, match_pattern)
-
-    1 字符：拒绝
-    2 字符：前缀匹配（keyword%）
-    3+ 字符：模糊匹配（%keyword%）
-    """
+    """验证模糊搜索关键词长度，返回 (error_msg, match_pattern)"""
     if len(keyword) < 2:
         return f"❌ {field_name}关键词至少2个字符", None
     if len(keyword) == 2:
-        return None, f"{keyword}%"  # 前缀匹配
-    return None, f"%{keyword}%"  # 模糊匹配
+        return None, f"{keyword}%"
+    return None, f"%{keyword}%"
+
+
+def _parse_columns(columns: str) -> str:
+    """解析并验证 columns 参数，返回安全的 SELECT 列表"""
+    requested = [c.strip() for c in columns.split(",") if c.strip()]
+    # 白名单过滤，防止 SQL 注入
+    safe = [c for c in requested if c in _ALL_COLUMN_NAMES]
+    if not safe:
+        return ",".join(col for col, _ in _ALL_COLUMNS["单据基础"])
+    return ",".join(safe)
 
 
 async def local_db_export(
     db: Any,
     doc_type: str,
+    columns: str | None = None,
     days: int = 1,
     time_type: str | None = None,
     shop_name: str | None = None,
@@ -94,22 +190,30 @@ async def local_db_export(
     org_id: str | None = None,
     conversation_id: str | None = None,
 ) -> str:
-    """从本地数据库分批导出明细数据到 JSONL staging 文件"""
+    """本地数据库导出（两步协议）
+
+    Step 1: columns=None → 返回字段文档
+    Step 2: columns="col1,col2,..." → 按字段导出到 JSONL staging
+    """
+    # Step 1: 无 columns → 返回字段文档
+    if columns is None:
+        return _generate_column_doc(doc_type)
+
+    # Step 2: 有 columns → 执行导出
     from services.kuaimai.erp_local_helpers import _apply_org, check_sync_health
 
-    # 参数校验
+    select_cols = _parse_columns(columns)
     max_rows = min(max_rows or DEFAULT_MAX_ROWS, MAX_ROWS_LIMIT)
     time_col = _TIME_COL_MAP.get(time_type or "doc_created_at", "doc_created_at")
     cutoff = (datetime.now(CN_TZ) - timedelta(days=max(days, 1))).isoformat()
 
     # 匹配精度校验
+    shop_pattern = None
     if shop_name:
         err, pattern = _validate_keyword(shop_name, "店铺名")
         if err:
             return err
         shop_pattern = pattern
-    else:
-        shop_pattern = None
 
     # 准备 staging 文件路径
     from core.config import get_settings
@@ -134,16 +238,14 @@ async def local_db_export(
             while offset < max_rows:
                 batch_limit = min(BATCH_SIZE, max_rows - offset)
 
-                # 构建查询
                 q = (
                     db.table("erp_document_items")
-                    .select(_EXPORT_COLUMNS)
+                    .select(select_cols)
                     .eq("doc_type", doc_type)
                     .gte(time_col, cutoff)
                 )
                 q = _apply_org(q, org_id)
 
-                # 可选筛选（SQL 层执行）
                 if shop_pattern:
                     q = q.ilike("shop_name", shop_pattern)
                 if platform:
@@ -170,26 +272,22 @@ async def local_db_export(
                 if not batch:
                     break
 
-                # 逐行写入 JSONL（流式，不占内存）
                 for row in batch:
                     _mask_pii(row)
                     line = json.dumps(row, ensure_ascii=False, default=str)
                     await f.write(line + "\n")
 
-                # 保存前 3 条作为预览
                 if not preview_rows:
                     preview_rows = batch[:3]
 
                 total_rows += len(batch)
                 offset += len(batch)
 
-                # 最后一批不满 → 数据已查完
                 if len(batch) < batch_limit:
                     break
 
     except Exception as e:
         logger.error(f"local_db_export failed | error={e}")
-        # 清理不完整的文件
         if staging_path.exists():
             staging_path.unlink(missing_ok=True)
         return f"导出查询失败: {e}"
@@ -197,12 +295,10 @@ async def local_db_export(
     elapsed = _time.monotonic() - start
 
     if total_rows == 0:
-        # 无数据，清理空文件
         staging_path.unlink(missing_ok=True)
         health = check_sync_health(db, [doc_type], org_id=org_id)
         return f"无数据（{doc_type}，近{days}天）\n{health}".strip()
 
-    # 预览
     preview_lines = []
     for row in preview_rows:
         preview_lines.append(
@@ -212,8 +308,7 @@ async def local_db_export(
 
     logger.info(
         f"local_db_export | doc_type={doc_type} | rows={total_rows} | "
-        f"batches={offset // BATCH_SIZE + 1} | "
-        f"elapsed={elapsed:.3f}s | path={rel_path}"
+        f"cols={select_cols[:50]} | elapsed={elapsed:.3f}s | path={rel_path}"
     )
 
     return (
