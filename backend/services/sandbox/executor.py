@@ -165,7 +165,16 @@ class SandboxExecutor:
             tb = traceback.format_exc()
             tb_lines = tb.strip().split("\n")
             short_tb = "\n".join(tb_lines[-3:])
+            logger.warning(
+                f"SandboxExecutor exec error | desc={description} | "
+                f"error={short_tb[:200]}"
+            )
             return f"❌ 执行错误:\n{short_tb}"
+
+        logger.info(
+            f"SandboxExecutor result | desc={description} | "
+            f"result_len={len(result)} | result={result[:200]}"
+        )
 
         # 5. 自动检测生成的文件并上传
         file_results = await self._auto_upload_new_files()
