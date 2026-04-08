@@ -102,7 +102,7 @@ def get_safety_level(tool_name: str) -> SafetyLevel:
 
 TOOL_SYSTEM_PROMPT = """## 工具使用规则
 
-1. **ERP 业务问题**：用户问任何涉及订单、库存、采购、售后、发货、物流、商品、销量、统计的问题时，必须调用 erp_agent 工具。erp_agent 内部自动处理编码识别、工具选择、多步查询，支持口语化表达。
+1. **ERP 业务问题**：用户问任何涉及订单、库存、采购、售后、发货、物流、商品、销量、统计、导出、报表、Excel 的问题时，必须调用 erp_agent 工具。erp_agent 内部自动处理编码识别、工具选择、数据导出、多步查询，支持口语化表达。
 
 2. **知识库**：用户问业务规则、操作流程等非数据类问题时，用 search_knowledge。
 
@@ -110,7 +110,7 @@ TOOL_SYSTEM_PROMPT = """## 工具使用规则
 
 4. **图片/视频生成**：用户要求画图/生成视频时，用 generate_image / generate_video。
 
-5. **代码执行**：用户要求数据分析、计算、导出文件时，用 code_execute。
+5. **代码执行**：用户要求非 ERP 场景的数据分析、计算时，用 code_execute。ERP 数据导出/报表由 erp_agent 内部处理，不要直接调 code_execute。
 
 6. **多工具并行**：你可以在一次回复中调用多个工具。没有依赖关系的工具并行调用。
 
