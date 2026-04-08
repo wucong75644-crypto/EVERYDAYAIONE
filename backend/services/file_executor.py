@@ -38,7 +38,7 @@ _TEXT_EXTENSIONS = frozenset({
     ".sh", ".bash", ".zsh", ".fish",
     ".sql", ".graphql", ".proto",
     ".ini", ".cfg", ".conf", ".env.example",
-    ".log", ".tsv", ".rst", ".tex", ".org",
+    ".log", ".tsv", ".rst", ".tex", ".org", ".jsonl",
     ".dockerfile", ".gitignore", ".editorconfig",
     ".vue", ".svelte", ".astro",
 })
