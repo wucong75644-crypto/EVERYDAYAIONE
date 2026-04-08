@@ -303,7 +303,7 @@ async def sync_logistics_company(
         page_size=500,
     )
 
-    logger.debug(f"logistics_company initial fetch | count={len(items)} | response_sample={items[:1] if items else 'empty'}")
+    logger.info(f"logistics_company initial fetch | count={len(items)} | response_sample={items[:1] if items else 'empty'}")
 
     # 如果空，按仓库逐个拉
     if not items:

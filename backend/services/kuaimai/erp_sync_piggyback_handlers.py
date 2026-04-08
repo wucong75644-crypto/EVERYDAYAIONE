@@ -107,7 +107,7 @@ async def piggyback_express(
                 rows = []
                 # DEBUG: 临时日志，查看 API 返回结构
                 if not rows:  # 首次进入
-                    logger.debug(
+                    logger.info(
                         f"piggyback_express raw | sid={sid} | "
                         f"keys={list(data.keys())[:10]} | "
                         f"has_packs={'packs' in data} | "
