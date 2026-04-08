@@ -248,9 +248,15 @@ def build_sandbox_executor(
         if not path.startswith("staging/"):
             return (
                 "❌ 沙盒内只能读取 staging 目录下的数据文件。"
-                "请先用 fetch_all_pages 工具获取数据，数据会自动存到 staging 目录。"
+                "请先用 local_db_export 或 fetch_all_pages 工具获取数据。"
             )
-        return await _make_file_executor().file_read(path, encoding=encoding)
+        # 直接读原始文件内容（不走 file_read 的行号格式化），
+        # 这样 pandas 的 pd.read_json(io.StringIO(raw), lines=True) 能正确解析
+        fe = _make_file_executor()
+        target = fe.resolve_safe_path(path)
+        if not target.exists():
+            return f"❌ 文件不存在: {path}"
+        return target.read_text(encoding=encoding)
 
     executor.register("read_file", _read_file)
 
