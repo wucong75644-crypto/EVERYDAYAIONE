@@ -105,6 +105,15 @@ async def piggyback_express(
                     "erp.trade.multi.packs.query", {"sid": sid},
                 )
                 rows = []
+                # DEBUG: 临时日志，查看 API 返回结构
+                if not rows:  # 首次进入
+                    logger.debug(
+                        f"piggyback_express raw | sid={sid} | "
+                        f"keys={list(data.keys())[:10]} | "
+                        f"has_packs={'packs' in data} | "
+                        f"has_outSids={'outSids' in data} | "
+                        f"has_outSid={'outSid' in data}"
+                    )
                 # 格式 1: packs 数组（多包裹场景）
                 packs = data.get("packs") or data.get("list") or []
                 if packs:
