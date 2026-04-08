@@ -147,8 +147,10 @@ class ErpSyncScheduler:
                 if await self._enqueue_task(org_id, sync_type):
                     enqueued += 1
 
-        if enqueued > 0:
-            logger.debug(f"Scheduler enqueued | count={enqueued}")
+        logger.warning(
+            f"Scheduler round | enqueued={enqueued} | "
+            f"first_round={self._first_round} | orgs={len(org_ids)}"
+        )
 
         if self._first_round:
             self._first_round = False
