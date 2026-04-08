@@ -288,23 +288,60 @@ async def sync_category(
 async def sync_logistics_company(
     svc: ErpSyncService, start: datetime, end: datetime,
 ) -> int:
-    """物流公司全量同步：erp.trade.logistics.company.user.list → erp_logistics_companies"""
+    """物流公司全量同步：按仓库遍历拉取 → erp_logistics_companies
+
+    此 API 需要传 warehouseId，不传则可能返回空。
+    遍历 erp_warehouses 的仓库 ID 逐个查询。
+    """
+    from services.kuaimai.erp_local_helpers import _apply_org
+    from services.kuaimai.erp_sync_utils import _API_SEM
+
+    # 先尝试不传 warehouseId 拉全量
     items = await svc.fetch_all_pages(
         "erp.trade.logistics.company.user.list", {},
         response_key="list",
         page_size=500,
     )
+
+    # 如果空，按仓库逐个拉
+    if not items:
+        try:
+            q = svc.db.table("erp_warehouses").select("warehouse_id").eq("is_virtual", False)
+            q = _apply_org(q, svc.org_id)
+            result = await q.execute()
+            wh_ids = [r["warehouse_id"] for r in (result.data or []) if r.get("warehouse_id")]
+        except Exception:
+            wh_ids = []
+
+        client = svc._get_client()
+        for wh_id in wh_ids:
+            try:
+                async with _API_SEM:
+                    data = await client.request_with_retry(
+                        "erp.trade.logistics.company.user.list",
+                        {"warehouseId": int(wh_id)},
+                    )
+                wh_items = data.get("list") or []
+                items.extend(wh_items)
+            except Exception as e:
+                logger.debug(f"Logistics company fetch skip | wh_id={wh_id} | error={e}")
+
     if not items:
         return 0
 
     rows: list[dict[str, Any]] = []
     now = datetime.now().isoformat()
+    seen_ids: set[str] = set()
     for lc in items:
         cid = lc.get("id") or lc.get("logisticsId")
         if not cid:
             continue
+        cid_str = str(cid)
+        if cid_str in seen_ids:
+            continue
+        seen_ids.add(cid_str)
         rows.append({
-            "company_id": str(cid),
+            "company_id": cid_str,
             "name": lc.get("logisticsName") or lc.get("name") or "",
             "code": lc.get("logisticsCode") or lc.get("code"),
             "extra_json": _pick(lc, "logisticsType", "warehouseId", "warehouseName"),
