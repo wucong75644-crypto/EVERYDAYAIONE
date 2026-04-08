@@ -71,6 +71,12 @@ class ErpSyncService:
         "order": 90,
         "aftersale": 90,
         "platform_map": 1,  # 不按时间分片，跑一遍即可
+        # 全量类型（handler 内忽略 start/end，跑一遍标记 done）
+        "shop": 1,
+        "warehouse": 1,
+        "tag": 1,
+        "category": 1,
+        "logistics_company": 1,
     }
 
     FLUSH_THRESHOLD = 1000  # 每积累N条写一次库，控制内存峰值
