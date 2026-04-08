@@ -12,15 +12,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from loguru import logger
 
-from api.deps import CurrentUserId, Database, OptionalUserId
+from api.deps import CurrentUserId, Database, OptionalUserId, ScopedDB
 from core.config import get_settings
 from services.wecom_oauth_service import WecomOAuthService
 
 router = APIRouter(prefix="/auth/wecom", tags=["企微登录"])
 
 
-def _get_oauth_service(db: Database) -> WecomOAuthService:
-    """获取 OAuth 服务实例"""
+def _get_oauth_service(db: ScopedDB) -> WecomOAuthService:
+    """获取 OAuth 服务实例（租户隔离）"""
     return WecomOAuthService(db)
 
 
@@ -194,7 +194,7 @@ async def get_binding_status(
 @router.post("/sync-employees", summary="同步企微通讯录")
 async def sync_employees(
     user_id: CurrentUserId,
-    db: Database,
+    db: ScopedDB,
 ):
     """
     手动触发企微通讯录同步（部门 + 员工）。

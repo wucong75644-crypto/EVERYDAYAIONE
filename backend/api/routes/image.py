@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, UploadFile, File, Form
 from loguru import logger
 
-from api.deps import Database, OrgCtx
+from api.deps import Database, OrgCtx, ScopedDB
 from core.exceptions import (
     AppException,
     ValidationError,
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/images", tags=["图像"])
 @router.post("/upload", response_model=UploadImageResponse, summary="上传图片")
 async def upload_image(
     ctx: OrgCtx,
-    db: Database,
+    db: ScopedDB,
     file: Optional[UploadFile] = File(None),
     image_data: Optional[str] = Form(None),
 ):

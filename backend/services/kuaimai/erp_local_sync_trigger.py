@@ -36,8 +36,10 @@ async def trigger_erp_sync(db, sync_type: str, org_id: str | None = None) -> str
 
     start = time.monotonic()
     try:
+        from core.org_scoped_db import OrgScopedDB
         from services.kuaimai.erp_sync_service import ErpSyncService
-        svc = ErpSyncService(db)
+        scoped_db = OrgScopedDB(db, org_id)
+        svc = ErpSyncService(scoped_db, org_id=org_id)
         await asyncio.wait_for(svc.sync(sync_type), timeout=120)
         elapsed = time.monotonic() - start
         return (

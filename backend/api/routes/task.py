@@ -11,7 +11,7 @@ from fastapi import APIRouter, Path, Request
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from api.deps import CurrentUser, Database, OrgCtx
+from api.deps import CurrentUser, Database, OrgCtx, ScopedDB
 from core.exceptions import (
     AppException,
     NotFoundError,
@@ -38,7 +38,7 @@ router = APIRouter(prefix="/tasks", tags=["任务管理"])
 async def get_pending_tasks(
     request: Request,
     ctx: OrgCtx,
-    db: Database,
+    db: ScopedDB,
 ) -> Dict[str, Any]:
     """
     获取当前用户的活跃任务
@@ -106,7 +106,7 @@ async def get_chat_task_content(
     request: Request,
     task_id: str,
     ctx: OrgCtx,
-    db: Database,
+    db: ScopedDB,
 ) -> Dict[str, Any]:
     """获取 chat 类型任务的当前状态和累积内容"""
     try:
@@ -156,7 +156,7 @@ async def get_chat_task_content(
 async def cancel_task_by_message_id(
     request: Request,
     ctx: OrgCtx,
-    db: Database,
+    db: ScopedDB,
     message_id: str = Path(
         ...,
         regex=r"^[a-zA-Z0-9_-]{1,100}$",
@@ -224,7 +224,7 @@ async def cancel_task_by_message_id(
 async def mark_task_failed(
     req: Request,
     ctx: OrgCtx,
-    db: Database,
+    db: ScopedDB,
     external_task_id: str = Path(
         ...,
         regex=r"^[a-zA-Z0-9_-]{1,100}$",

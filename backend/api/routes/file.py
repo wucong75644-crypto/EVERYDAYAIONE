@@ -13,7 +13,7 @@ from fastapi import APIRouter, UploadFile, File
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from api.deps import CurrentUser, Database, OrgCtx
+from api.deps import CurrentUser, Database, OrgCtx, ScopedDB
 from core.exceptions import AppException, ValidationError
 from schemas.file import UploadFileResponse
 from services.storage_service import StorageService
@@ -29,7 +29,7 @@ router = APIRouter(prefix="/files", tags=["文件"])
 @router.post("/upload", response_model=UploadFileResponse, summary="上传文件到OSS")
 async def upload_file(
     ctx: OrgCtx,
-    db: Database,
+    db: ScopedDB,
     file: UploadFile = File(...),
 ):
     """
@@ -111,8 +111,8 @@ class WorkspaceListResponse(BaseModel):
     summary="上传文件到workspace（供AI分析）",
 )
 async def upload_to_workspace(
-    current_user: CurrentUser,
-    db: Database,
+    ctx: OrgCtx,
+    db: ScopedDB,
     file: UploadFile = File(...),
 ):
     """
@@ -147,8 +147,8 @@ async def upload_to_workspace(
             message=f"文件过大: {len(content) / 1024 / 1024:.1f}MB，上限 50MB"
         )
 
-    user_id = current_user["id"]
-    org_id = current_user.get("org_id")
+    user_id = ctx.user_id
+    org_id = ctx.org_id
 
     try:
         executor = FileExecutor(
@@ -199,8 +199,8 @@ async def upload_to_workspace(
     summary="列出workspace文件",
 )
 async def list_workspace(
-    current_user: CurrentUser,
-    db: Database,
+    ctx: OrgCtx,
+    db: ScopedDB,
     path: str = ".",
 ):
     """列出用户 workspace 目录内容"""
@@ -215,8 +215,8 @@ async def list_workspace(
             status_code=403,
         )
 
-    user_id = current_user["id"]
-    org_id = current_user.get("org_id")
+    user_id = ctx.user_id
+    org_id = ctx.org_id
 
     executor = FileExecutor(
         workspace_root=settings.file_workspace_root,

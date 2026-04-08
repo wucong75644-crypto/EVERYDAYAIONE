@@ -84,12 +84,12 @@ class TestMemorySettingsRoutes:
     """记忆设置路由测试"""
 
     @pytest.mark.asyncio
-    async def test_get_settings(self, mock_memory_service, user_id):
+    async def test_get_settings(self, mock_memory_service, mock_ctx, user_id):
         """GET /api/memories/settings 返回用户设置"""
         from api.routes.memory import get_memory_settings
 
         result = await get_memory_settings(
-            current_user_id=user_id,
+            ctx=mock_ctx,
             service=mock_memory_service,
         )
 
@@ -98,7 +98,7 @@ class TestMemorySettingsRoutes:
         mock_memory_service.get_settings.assert_awaited_once_with(user_id)
 
     @pytest.mark.asyncio
-    async def test_get_settings_error(self, mock_memory_service, user_id):
+    async def test_get_settings_error(self, mock_memory_service, mock_ctx):
         """GET /api/memories/settings 异常时抛出 AppException"""
         from api.routes.memory import get_memory_settings
         from core.exceptions import AppException
@@ -107,14 +107,14 @@ class TestMemorySettingsRoutes:
 
         with pytest.raises(AppException) as exc_info:
             await get_memory_settings(
-                current_user_id=user_id,
+                ctx=mock_ctx,
                 service=mock_memory_service,
             )
 
         assert exc_info.value.code == "ROUTE_GET_MEMORY_SETTINGS_ERROR"
 
     @pytest.mark.asyncio
-    async def test_update_settings(self, mock_memory_service, user_id):
+    async def test_update_settings(self, mock_memory_service, mock_ctx, user_id):
         """PUT /api/memories/settings 更新设置"""
         from api.routes.memory import update_memory_settings
         from schemas.memory import MemorySettingsUpdateRequest
@@ -125,7 +125,7 @@ class TestMemorySettingsRoutes:
 
         result = await update_memory_settings(
             body=body,
-            current_user_id=user_id,
+            ctx=mock_ctx,
             service=mock_memory_service,
         )
 
@@ -137,7 +137,7 @@ class TestMemorySettingsRoutes:
 
     @pytest.mark.asyncio
     async def test_update_settings_app_exception_passthrough(
-        self, mock_memory_service, user_id
+        self, mock_memory_service, mock_ctx,
     ):
         """PUT /api/memories/settings AppException 直接传递"""
         from api.routes.memory import update_memory_settings
@@ -155,7 +155,7 @@ class TestMemorySettingsRoutes:
         with pytest.raises(AppException) as exc_info:
             await update_memory_settings(
                 body=body,
-                current_user_id=user_id,
+                ctx=mock_ctx,
                 service=mock_memory_service,
             )
 
