@@ -927,7 +927,8 @@ CREATE OR REPLACE FUNCTION deduct_credits_atomic(
     p_user_id UUID,
     p_amount INTEGER,
     p_reason TEXT,
-    p_change_type TEXT
+    p_change_type TEXT,
+    p_org_id UUID DEFAULT NULL
 ) RETURNS JSONB AS $$
 DECLARE
     v_new_balance INTEGER;
@@ -941,8 +942,8 @@ BEGIN
         RETURN jsonb_build_object('success', false, 'message', 'Insufficient credits');
     END IF;
 
-    INSERT INTO credits_history (user_id, change_type, change_amount, balance_after, description)
-    VALUES (p_user_id, p_change_type::credits_change_type, -p_amount, v_new_balance, p_reason);
+    INSERT INTO credits_history (user_id, change_type, change_amount, balance_after, description, org_id)
+    VALUES (p_user_id, p_change_type::credits_change_type, -p_amount, v_new_balance, p_reason, p_org_id);
 
     RETURN jsonb_build_object('success', true, 'new_balance', v_new_balance);
 END;
@@ -1010,32 +1011,55 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 递增消息计数
-CREATE OR REPLACE FUNCTION increment_message_count(conv_id UUID)
+CREATE OR REPLACE FUNCTION increment_message_count(
+    conv_id UUID,
+    p_org_id UUID DEFAULT NULL
+)
 RETURNS void LANGUAGE plpgsql AS $$
 BEGIN
-    UPDATE conversations SET message_count = message_count + 1, updated_at = NOW() WHERE id = conv_id;
+    UPDATE conversations
+    SET message_count = message_count + 1, updated_at = NOW()
+    WHERE id = conv_id
+      AND (
+          (p_org_id IS NULL AND org_id IS NULL)
+          OR org_id = p_org_id
+      );
 END;
 $$;
 
--- ERP 同步锁
-CREATE OR REPLACE FUNCTION erp_try_acquire_sync_lock(p_lock_ttl_seconds INT DEFAULT 300)
+-- ERP 同步锁（多租户：按 org_id 隔离锁）
+CREATE OR REPLACE FUNCTION erp_try_acquire_sync_lock(
+    p_lock_ttl_seconds INT DEFAULT 300,
+    p_org_id UUID DEFAULT NULL
+)
 RETURNS BOOLEAN LANGUAGE plpgsql AS $$
 DECLARE v_acquired BOOLEAN;
 BEGIN
     UPDATE erp_sync_state SET status = 'running', last_run_at = NOW()
     WHERE sync_type = 'purchase'
-      AND (status != 'running' OR last_run_at < NOW() - (p_lock_ttl_seconds || ' seconds')::INTERVAL);
+      AND (status != 'running' OR last_run_at < NOW() - (p_lock_ttl_seconds || ' seconds')::INTERVAL)
+      AND ((p_org_id IS NULL AND org_id IS NULL) OR org_id = p_org_id);
     GET DIAGNOSTICS v_acquired = ROW_COUNT;
     RETURN v_acquired > 0;
 END;
 $$;
 
--- ERP 聚合
-CREATE OR REPLACE FUNCTION erp_aggregate_daily_stats(p_outer_id VARCHAR, p_stat_date DATE)
+-- ERP 聚合（多租户：按 org_id 隔离）
+-- ERP 聚合（多租户：DELETE + INSERT 替代 ON CONFLICT，避免表达式索引不兼容）
+CREATE OR REPLACE FUNCTION erp_aggregate_daily_stats(
+    p_outer_id VARCHAR, p_stat_date DATE, p_org_id UUID DEFAULT NULL
+)
 RETURNS VOID LANGUAGE plpgsql AS $$
 BEGIN
+    -- 先删除旧记录（按 org_id 隔离）
+    DELETE FROM erp_product_daily_stats
+    WHERE stat_date = p_stat_date AND outer_id = p_outer_id
+      AND ((p_org_id IS NULL AND org_id IS NULL) OR org_id = p_org_id);
+
+    -- 再插入新聚合数据
     INSERT INTO erp_product_daily_stats (
         stat_date, outer_id, sku_outer_id, item_name,
+        org_id,
         purchase_count, purchase_qty, purchase_received_qty, purchase_amount,
         receipt_count, receipt_qty, shelf_count, shelf_qty,
         purchase_return_count, purchase_return_qty, purchase_return_amount,
@@ -1048,7 +1072,7 @@ BEGIN
         order_refund_count, order_cancelled_count, order_cost, updated_at
     )
     SELECT
-        p_stat_date, p_outer_id, NULL, MAX(item_name),
+        p_stat_date, p_outer_id, NULL, MAX(item_name), p_org_id,
         COUNT(DISTINCT doc_id) FILTER(WHERE doc_type = 'purchase'),
         COALESCE(SUM(quantity) FILTER(WHERE doc_type = 'purchase'), 0),
         COALESCE(SUM(quantity_received) FILTER(WHERE doc_type = 'purchase'), 0),
@@ -1083,37 +1107,24 @@ BEGIN
     WHERE outer_id = p_outer_id
       AND doc_created_at >= p_stat_date
       AND doc_created_at < p_stat_date + INTERVAL '1 day'
-    ON CONFLICT (stat_date, outer_id, COALESCE(sku_outer_id, ''))
-    DO UPDATE SET
-        item_name = EXCLUDED.item_name,
-        purchase_count = EXCLUDED.purchase_count, purchase_qty = EXCLUDED.purchase_qty,
-        purchase_received_qty = EXCLUDED.purchase_received_qty, purchase_amount = EXCLUDED.purchase_amount,
-        receipt_count = EXCLUDED.receipt_count, receipt_qty = EXCLUDED.receipt_qty,
-        shelf_count = EXCLUDED.shelf_count, shelf_qty = EXCLUDED.shelf_qty,
-        purchase_return_count = EXCLUDED.purchase_return_count, purchase_return_qty = EXCLUDED.purchase_return_qty,
-        purchase_return_amount = EXCLUDED.purchase_return_amount,
-        aftersale_count = EXCLUDED.aftersale_count, aftersale_refund_count = EXCLUDED.aftersale_refund_count,
-        aftersale_return_count = EXCLUDED.aftersale_return_count, aftersale_exchange_count = EXCLUDED.aftersale_exchange_count,
-        aftersale_reissue_count = EXCLUDED.aftersale_reissue_count, aftersale_reject_count = EXCLUDED.aftersale_reject_count,
-        aftersale_repair_count = EXCLUDED.aftersale_repair_count, aftersale_other_count = EXCLUDED.aftersale_other_count,
-        aftersale_qty = EXCLUDED.aftersale_qty, aftersale_amount = EXCLUDED.aftersale_amount,
-        order_count = EXCLUDED.order_count, order_qty = EXCLUDED.order_qty, order_amount = EXCLUDED.order_amount,
-        order_shipped_count = EXCLUDED.order_shipped_count, order_finished_count = EXCLUDED.order_finished_count,
-        order_refund_count = EXCLUDED.order_refund_count, order_cancelled_count = EXCLUDED.order_cancelled_count,
-        order_cost = EXCLUDED.order_cost, updated_at = NOW();
+      AND ((p_org_id IS NULL AND org_id IS NULL) OR org_id = p_org_id);
 END;
 $$;
 
--- ERP 批量聚合
-CREATE OR REPLACE FUNCTION erp_aggregate_daily_stats_batch(p_since_date DATE)
+-- ERP 批量聚合（多租户：按 org_id 隔离）
+CREATE OR REPLACE FUNCTION erp_aggregate_daily_stats_batch(
+    p_since_date DATE, p_org_id UUID DEFAULT NULL
+)
 RETURNS INTEGER LANGUAGE plpgsql AS $$
 DECLARE v_count INTEGER := 0; v_rec RECORD;
 BEGIN
     FOR v_rec IN
         SELECT DISTINCT outer_id, (doc_created_at::DATE)::TEXT AS stat_date
-        FROM erp_document_items WHERE doc_created_at >= p_since_date AND outer_id IS NOT NULL
+        FROM erp_document_items
+        WHERE doc_created_at >= p_since_date AND outer_id IS NOT NULL
+          AND ((p_org_id IS NULL AND org_id IS NULL) OR org_id = p_org_id)
     LOOP
-        PERFORM erp_aggregate_daily_stats(v_rec.outer_id, v_rec.stat_date);
+        PERFORM erp_aggregate_daily_stats(v_rec.outer_id, v_rec.stat_date::DATE, p_org_id);
         v_count := v_count + 1;
     END LOOP;
     RETURN v_count;
