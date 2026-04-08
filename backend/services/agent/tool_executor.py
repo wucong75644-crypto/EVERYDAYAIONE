@@ -327,6 +327,7 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
                 max_result_chars=settings.sandbox_max_result_chars,
                 user_id=self.user_id,
                 org_id=self.org_id,
+                conversation_id=self.conversation_id,
             )
             result = await executor.execute(code, description)
 

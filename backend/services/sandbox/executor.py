@@ -100,14 +100,25 @@ _SAFE_BUILTINS = {
 class SandboxExecutor:
     """通用 Python 代码沙盒执行器"""
 
+    # 自动检测并上传的文件扩展名
+    _AUTO_UPLOAD_EXTENSIONS = frozenset({
+        ".xlsx", ".xls", ".csv", ".tsv",
+        ".png", ".jpg", ".jpeg", ".svg", ".pdf",
+        ".json", ".jsonl", ".txt",
+    })
+
     def __init__(
         self,
         timeout: float = 120.0,
         max_result_chars: int = 8000,
+        output_dir: Optional[str] = None,
+        upload_fn: Optional[Callable] = None,
     ) -> None:
         self._timeout = timeout
         self._max_result_chars = max_result_chars
         self._registered_funcs: Dict[str, Callable] = {}
+        self._output_dir = output_dir  # 沙盒内代码写文件的目录
+        self._upload_fn = upload_fn    # 文件上传函数（注入）
 
     def register(self, name: str, func: Callable) -> None:
         """注册外部数据源函数（沙盒内可直接调用）"""
@@ -133,10 +144,13 @@ class SandboxExecutor:
             f"code_len={len(code)} | funcs={list(self._registered_funcs.keys())}"
         )
 
-        # 2. 构建受限执行环境
+        # 2. 记录执行前的文件列表（用于检测新生成的文件）
+        pre_files = self._snapshot_output_dir()
+
+        # 3. 构建受限执行环境
         sandbox_globals = self._build_globals()
 
-        # 3. 执行（带超时）
+        # 4. 执行（带超时）
         try:
             result = await asyncio.wait_for(
                 self._run_code(code, sandbox_globals),
@@ -149,10 +163,14 @@ class SandboxExecutor:
             )
         except Exception as e:
             tb = traceback.format_exc()
-            # 只保留最后 3 行 traceback（去掉沙盒内部调用栈）
             tb_lines = tb.strip().split("\n")
             short_tb = "\n".join(tb_lines[-3:])
             return f"❌ 执行错误:\n{short_tb}"
+
+        # 5. 自动检测新生成的文件并上传
+        file_results = await self._auto_upload_new_files(pre_files)
+        if file_results:
+            result = (result or "") + "\n" + "\n".join(file_results)
 
         return truncate_result(result, self._max_result_chars)
 
@@ -184,7 +202,65 @@ class SandboxExecutor:
         for name, func in self._registered_funcs.items():
             g[name] = func
 
+        # 注入输出目录路径（沙盒代码用 to_excel(OUTPUT_DIR + "/x.xlsx") 写到这里）
+        if self._output_dir:
+            from pathlib import Path as _Path
+            # 按需创建输出目录
+            _Path(self._output_dir).mkdir(parents=True, exist_ok=True)
+            g["OUTPUT_DIR"] = self._output_dir
+            g["Path"] = _Path
+
         return g
+
+    # ========================================
+    # 自动文件检测与上传
+    # ========================================
+
+    def _snapshot_output_dir(self) -> set[str]:
+        """记录执行前输出目录中的文件（用于 diff）"""
+        if not self._output_dir:
+            return set()
+        from pathlib import Path
+        output_path = Path(self._output_dir)
+        if not output_path.exists():
+            return set()
+        return {str(f) for f in output_path.iterdir() if f.is_file()}
+
+    async def _auto_upload_new_files(self, pre_files: set[str]) -> list[str]:
+        """检测新文件并自动上传，返回 [FILE] 标记列表"""
+        if not self._output_dir or not self._upload_fn:
+            return []
+
+        from pathlib import Path
+        output_path = Path(self._output_dir)
+        if not output_path.exists():
+            return []
+
+        results = []
+        for f in output_path.iterdir():
+            if not f.is_file():
+                continue
+            if str(f) in pre_files:
+                continue  # 执行前已存在，跳过
+            if f.suffix.lower() not in self._AUTO_UPLOAD_EXTENSIONS:
+                continue
+
+            try:
+                content = f.read_bytes()
+                upload_result = await self._upload_fn(content, f.name)
+                results.append(upload_result)
+                logger.info(
+                    f"SandboxExecutor auto-upload | file={f.name} | "
+                    f"size={len(content)}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"SandboxExecutor auto-upload failed | file={f.name} | "
+                    f"error={e}"
+                )
+                results.append(f"❌ 文件上传失败: {f.name} ({e})")
+
+        return results
 
     async def _run_code(
         self, code: str, sandbox_globals: Dict[str, Any],

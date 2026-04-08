@@ -201,34 +201,68 @@ def build_sandbox_executor(
     max_result_chars: int = 8000,
     user_id: str = "",
     org_id: Optional[str] = None,
+    conversation_id: str = "",
 ) -> SandboxExecutor:
     """构建沙盒执行器（纯计算引擎）
 
     沙盒只注册计算和输出能力，不注册数据获取函数。
     数据获取必须走 Agent 工具层（local_* > erp_* > fetch_all_pages）。
 
+    文件自动检测：
+    - LLM 代码写 df.to_excel("output.xlsx") 到 OUTPUT_DIR
+    - 执行完后平台自动检测新文件 → 上传 OSS → 返回下载链接
+    - LLM 不需要写 upload_file 代码
+
     已注册能力：
     - read_file: 读取 staging 目录下的预获取数据（仅限 staging/）
-    - upload_file: 上传计算结果（Excel/CSV/图表）到 OSS
+    - upload_file: 手动上传（仍保留，兼容旧代码）
     - 标准库: pandas, math, datetime, Decimal, Counter, io, json
-
-    已移除（走工具层）：
-    - erp_query / erp_query_all → fetch_all_pages 工具
-    - web_search → crawler 工具
-    - search_knowledge → 知识库工具
-    - write_file / list_dir → 文件工具
-    - get_persisted_result → staging 机制
 
     Args:
         timeout: 执行超时（秒）
         max_result_chars: 结果最大字符数
+        conversation_id: 会话ID（用于隔离输出目录）
 
     Returns:
         配置好的 SandboxExecutor 实例
     """
+    from core.config import get_settings as _get_settings
+    from pathlib import Path
+
+    _file_settings = _get_settings()
+
+    # 沙盒输出目录（LLM 代码写文件到这里，执行后自动检测上传）
+    # 延迟创建：目录在 SandboxExecutor._snapshot_output_dir 或代码执行时按需创建
+    _conv_id = conversation_id or "default"
+    _output_dir = str(
+        Path(_file_settings.file_workspace_root) / "sandbox_output" / _conv_id
+    )
+
+    # upload 函数（供自动文件检测使用）
+    async def _auto_upload(content: bytes, filename: str) -> str:
+        import mimetypes
+        safe_name = Path(filename).name
+        ext = Path(safe_name).suffix.lstrip(".")
+        mime_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+        try:
+            from services.oss_service import get_oss_service
+            oss = get_oss_service()
+            result = oss.upload_bytes(
+                content=content, user_id=user_id, ext=ext,
+                category="generated", content_type=mime_type, org_id=org_id,
+            )
+            return (
+                f"✅ 文件已生成: {safe_name}\n"
+                f"[FILE]{result['url']}|{safe_name}|{mime_type}|{result['size']}[/FILE]"
+            )
+        except Exception as e:
+            return f"❌ 文件上传失败: {safe_name} ({e})"
+
     executor = SandboxExecutor(
         timeout=timeout,
         max_result_chars=max_result_chars,
+        output_dir=_output_dir,
+        upload_fn=_auto_upload,
     )
 
     # read_file: 仅允许读取 staging 目录（对标 OpenAI Code Interpreter）

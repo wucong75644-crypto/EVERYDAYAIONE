@@ -1,7 +1,7 @@
 """沙盒数据源函数测试"""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -270,17 +270,21 @@ class TestBuildSandboxExecutor:
         assert executor._max_result_chars == 5000
 
     @pytest.mark.asyncio
-    async def test_erp_query_removed_from_sandbox(self):
+    async def test_erp_query_removed_from_sandbox(self, tmp_path):
         """erp_query 已从沙盒移除，调用应 NameError"""
-        executor = build_sandbox_executor()
+        with patch("core.config.get_settings") as mock_s:
+            mock_s.return_value.file_workspace_root = str(tmp_path)
+            executor = build_sandbox_executor()
         code = "data = await erp_query('erp_trade_query', 'shop_list')"
         result = await executor.execute(code, "测试已移除函数")
         assert "erp_query" in result  # NameError 信息中包含函数名
 
     @pytest.mark.asyncio
-    async def test_read_file_restricted_to_staging(self):
+    async def test_read_file_restricted_to_staging(self, tmp_path):
         """read_file 只允许读取 staging 目录"""
-        executor = build_sandbox_executor()
+        with patch("core.config.get_settings") as mock_s:
+            mock_s.return_value.file_workspace_root = str(tmp_path)
+            executor = build_sandbox_executor()
         code = "result = await read_file('some/other/path.json')\nprint(result)"
         result = await executor.execute(code, "测试路径限制")
         assert "staging" in result  # 错误提示中包含 staging
@@ -389,9 +393,11 @@ class TestUploadFile:
         assert "格式不支持" in result
 
     @pytest.mark.asyncio
-    async def test_list_dir_removed_from_sandbox(self):
+    async def test_list_dir_removed_from_sandbox(self, tmp_path):
         """list_dir 已从沙盒移除"""
-        executor = build_sandbox_executor(user_id="sandbox-test")
+        with patch("core.config.get_settings") as mock_s:
+            mock_s.return_value.file_workspace_root = str(tmp_path)
+            executor = build_sandbox_executor(user_id="sandbox-test")
         code = "result = await list_dir('.')"
         result = await executor.execute(code, "测试已移除函数")
         assert "list_dir" in result  # NameError
