@@ -323,12 +323,12 @@ def build_local_tools() -> List[Dict[str, Any]]:
             },
             [],
         ),
-        # 13. 本地数据库导出（输出 staging 文件，给 code_execute 处理）
+        # 13. 本地数据库导出（两步协议 + staging 文件）
         _tool(
             "local_db_export",
-            "从本地数据库导出明细数据到 staging 文件。毫秒级响应。"
-            "适合：导出Excel、全量数据分析等需要完整原始数据的场景。"
-            "结果存 staging 文件，返回文件路径，配合 code_execute 生成 Excel。"
+            "从本地数据库导出明细数据到 staging 文件（两步协议）。毫秒级响应。"
+            "Step1: 只传 doc_type（不传 columns）→ 返回可导出字段文档。"
+            "Step2: 传 doc_type + columns → 按字段导出到 staging，配合 code_execute 生成 Excel。"
             "⚠ 本地有的数据优先用本工具（毫秒级），"
             "本地没有的数据（如物流轨迹）才用 fetch_all_pages（远程API）。",
             {
@@ -336,6 +336,10 @@ def build_local_tools() -> List[Dict[str, Any]]:
                     "数据类型",
                     ["order", "purchase", "aftersale", "receipt",
                      "shelf", "purchase_return"],
+                ),
+                "columns": _str(
+                    "导出字段（逗号分隔）。不传=返回字段文档（Step1），"
+                    "传入=按字段导出（Step2）。如: order_no,shop_name,amount,pay_time"
                 ),
                 "days": _int("导出最近N天数据（默认1，即今天）"),
                 "time_type": _enum(
