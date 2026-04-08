@@ -25,6 +25,7 @@ _TIME_COL_MAP = {
 }
 
 # 导出字段（不导出 id/org_id/extra_json/synced_at 等内部字段）
+# 注意：必须与 erp_document_items 实际列名严格一致
 _EXPORT_COLUMNS = (
     "doc_type,doc_id,doc_code,doc_status,"
     "doc_created_at,doc_modified_at,"
@@ -33,9 +34,10 @@ _EXPORT_COLUMNS = (
     "supplier_name,warehouse_name,shop_name,platform,"
     "order_no,order_status,express_no,express_company,"
     "cost,pay_time,consign_time,"
-    "post_fee,gross_profit,pay_amount,"
-    "aftersale_type,refund_money,raw_refund_money,"
-    "order_type,remark"
+    "post_fee,gross_profit,discount_fee,pay_amount,"
+    "aftersale_type,refund_money,raw_refund_money,text_reason,"
+    "order_type,delivery_date,purchase_order_code,"
+    "remark,sys_memo,buyer_message,creator_name"
 )
 
 # PII 脱敏字段
