@@ -22,6 +22,7 @@ from services.kuaimai.erp_sync_utils import (
     _DetailResult,
     _fetch_details,
     _fmt_d,
+    _fmt_dt,
     _pick,
     _safe_ts,
 )
@@ -246,7 +247,7 @@ async def sync_inventory_sheet(
     client = svc._get_client()
     docs = await svc.fetch_all_pages(
         "inventory.sheet.query",
-        {"startModified": _fmt_d(start), "endModified": _fmt_d(end)},
+        {"startModified": _fmt_dt(start), "endModified": _fmt_dt(end)},
     )
     if not docs:
         return 0
@@ -377,7 +378,7 @@ async def sync_process_order(
     client = svc._get_client()
     docs = await svc.fetch_all_pages(
         "erp.stock.product.order.query",
-        {"modifiedStart": _fmt_d(start), "modifiedEnd": _fmt_d(end)},
+        {"modifiedStart": _fmt_dt(start), "modifiedEnd": _fmt_dt(end)},
     )
     if not docs:
         return 0
