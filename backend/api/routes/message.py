@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Request
 from loguru import logger
 
-from api.deps import CurrentUser, CurrentUserId, Database, OrgCtx, TaskLimitSvc
+from api.deps import CurrentUser, CurrentUserId, Database, OrgCtx, ScopedDB, TaskLimitSvc
 from core.limiter import limiter, RATE_LIMITS
 from schemas.message import (
     DeleteMessageResponse,
@@ -46,13 +46,13 @@ router = APIRouter(prefix="/conversations/{conversation_id}/messages", tags=["�
 message_router = APIRouter(prefix="/messages", tags=["消息"])
 
 
-def get_message_service(db: Database) -> MessageService:
-    """获取消息服务实例"""
+def get_message_service(db: ScopedDB) -> MessageService:
+    """获取消息服务实例（租户隔离）"""
     return MessageService(db)
 
 
-def get_conversation_service(db: Database) -> ConversationService:
-    """获取对话服务实例"""
+def get_conversation_service(db: ScopedDB) -> ConversationService:
+    """获取对话服务实例（租户隔离）"""
     return ConversationService(db)
 
 
@@ -135,7 +135,7 @@ async def generate_message(
     conversation_id: str,
     body: GenerateRequest,
     ctx: OrgCtx,
-    db: Database,
+    db: ScopedDB,
     task_limit_service: TaskLimitSvc,
 ):
     """

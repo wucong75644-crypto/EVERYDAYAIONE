@@ -7,7 +7,7 @@
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Query
 from loguru import logger
 
-from api.deps import CurrentUser, Database
+from api.deps import CurrentUser, Database, OrgCtx, ScopedDB
 from schemas.audio import (
     AudioUploadResponse,
     AudioInfoResponse,
@@ -18,14 +18,14 @@ from services.audio_service import AudioService
 router = APIRouter(prefix="/audio", tags=["音频"])
 
 
-def get_audio_service(db: Database) -> AudioService:
-    """获取音频服务实例"""
+def get_audio_service(db: ScopedDB) -> AudioService:
+    """获取音频服务实例（租户隔离）"""
     return AudioService(db)
 
 
 @router.post("/upload", response_model=AudioUploadResponse, summary="上传音频")
 async def upload_audio(
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     service: AudioService = Depends(get_audio_service),
     file: UploadFile = File(...),
 ):
@@ -45,7 +45,7 @@ async def upload_audio(
 
     try:
         result = await service.upload_audio(
-            user_id=current_user["id"],
+            user_id=ctx.user_id,
             file_data=file_data,
             content_type=content_type,
             filename=file.filename,
@@ -68,7 +68,7 @@ async def upload_audio(
 
 @router.get("/info", response_model=AudioInfoResponse, summary="获取音频信息")
 async def get_audio_info(
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     service: AudioService = Depends(get_audio_service),
     url: str = Query(..., description="音频文件 URL"),
 ):
@@ -97,7 +97,7 @@ async def get_audio_info(
 @router.delete("/delete", summary="删除音频")
 async def delete_audio(
     request: AudioDeleteRequest,
-    current_user: CurrentUser,
+    ctx: OrgCtx,
     service: AudioService = Depends(get_audio_service),
 ):
     """

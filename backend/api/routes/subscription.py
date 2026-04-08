@@ -6,7 +6,7 @@
 
 from fastapi import APIRouter, Depends
 
-from api.deps import CurrentUser, Database
+from api.deps import CurrentUser, Database, ScopedDB
 from schemas.subscription import (
     SubscriptionActionResponse,
     SubscriptionListResponse,
@@ -16,8 +16,8 @@ from services.subscription_service import SubscriptionService
 router = APIRouter(prefix="/subscriptions", tags=["订阅管理"])
 
 
-def get_subscription_service(db: Database) -> SubscriptionService:
-    """获取订阅服务实例"""
+def get_subscription_service(db: ScopedDB) -> SubscriptionService:
+    """获取订阅服务实例（租户隔离）"""
     return SubscriptionService(db)
 
 

@@ -102,14 +102,14 @@ async def _batch_upsert(
     db: Any, table: str, rows: list[dict], on_conflict: str,
     batch_size: int = 100, org_id: str | None = None,
 ) -> int:
-    """通用批量 upsert（与 ErpSyncService.upsert_document_items 类似）"""
+    """通用批量 upsert
+
+    org_id 注入由 OrgScopedDB._inject_org_id() 自动完成，
+    此函数不再手动注入（V1.6 多租户隔离架构 §4.4）。
+    org_id 参数保留以保持调用方兼容，P12 阶段统一清理。
+    """
     if not rows:
         return 0
-    # 注入 org_id（NULL → 默认 UUID，确保唯一索引 on_conflict 可用）
-    _default_org = "00000000-0000-0000-0000-000000000000"
-    resolved_org = org_id or _default_org
-    for row in rows:
-        row["org_id"] = resolved_org
     total = 0
     for i in range(0, len(rows), batch_size):
         batch = rows[i : i + batch_size]

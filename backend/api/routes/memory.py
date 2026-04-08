@@ -7,7 +7,7 @@
 from fastapi import APIRouter, Depends
 from loguru import logger
 
-from api.deps import CurrentUserId, Database, OrgCtx
+from api.deps import CurrentUserId, Database, OrgCtx, ScopedDB
 from core.exceptions import AppException
 from schemas.memory import (
     MemoryAddRequest,
@@ -25,8 +25,8 @@ from services.memory_service import MemoryService
 router = APIRouter(prefix="/memories", tags=["记忆"])
 
 
-def get_memory_service(db: Database) -> MemoryService:
-    """获取记忆服务实例"""
+def get_memory_service(db: ScopedDB) -> MemoryService:
+    """获取记忆服务实例（租户隔离）"""
     return MemoryService(db)
 
 
@@ -35,17 +35,17 @@ def get_memory_service(db: Database) -> MemoryService:
 
 @router.get("/settings", response_model=MemorySettingsResponse, summary="获取记忆设置")
 async def get_memory_settings(
-    current_user_id: CurrentUserId,
+    ctx: OrgCtx,
     service: MemoryService = Depends(get_memory_service),
 ):
     """获取当前用户的记忆功能设置"""
     try:
-        return await service.get_settings(current_user_id)
+        return await service.get_settings(ctx.user_id)
     except AppException:
         raise
     except Exception as e:
         logger.error(
-            f"Error in get_memory_settings | user_id={current_user_id} | error={e}"
+            f"Error in get_memory_settings | user_id={ctx.user_id} | error={e}"
         )
         raise AppException(
             code="ROUTE_GET_MEMORY_SETTINGS_ERROR",
@@ -57,13 +57,13 @@ async def get_memory_settings(
 @router.put("/settings", response_model=MemorySettingsResponse, summary="更新记忆设置")
 async def update_memory_settings(
     body: MemorySettingsUpdateRequest,
-    current_user_id: CurrentUserId,
+    ctx: OrgCtx,
     service: MemoryService = Depends(get_memory_service),
 ):
     """更新当前用户的记忆功能设置（开关、保留天数）"""
     try:
         return await service.update_settings(
-            current_user_id,
+            ctx.user_id,
             memory_enabled=body.memory_enabled,
             retention_days=body.retention_days,
         )
@@ -71,7 +71,7 @@ async def update_memory_settings(
         raise
     except Exception as e:
         logger.error(
-            f"Error in update_memory_settings | user_id={current_user_id} | error={e}"
+            f"Error in update_memory_settings | user_id={ctx.user_id} | error={e}"
         )
         raise AppException(
             code="ROUTE_UPDATE_MEMORY_SETTINGS_ERROR",

@@ -366,9 +366,11 @@ async def _retry_one(db: Any, client: Any, row: dict) -> None:
         rows = build_rows_from_detail(doc_type, doc, detail)
 
         if rows:
+            from core.org_scoped_db import OrgScopedDB
             from services.kuaimai.erp_sync_service import ErpSyncService
             dl_org_id = row.get("org_id")
-            svc = ErpSyncService(db, org_id=dl_org_id)
+            scoped_db = OrgScopedDB(db, dl_org_id)
+            svc = ErpSyncService(scoped_db, org_id=dl_org_id)
             count = await svc.upsert_document_items(rows)
             await svc.run_aggregation(svc.collect_affected_keys(rows))
             logger.info(

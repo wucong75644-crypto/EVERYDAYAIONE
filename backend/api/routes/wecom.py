@@ -12,7 +12,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import PlainTextResponse
 from loguru import logger
 
-from api.deps import Database
+from api.deps import Database, ScopedDB
 from core.config import get_settings
 from schemas.wecom import (
     WecomChatType,
@@ -173,10 +173,13 @@ async def push_message(req: WecomPushRequest, db: Database) -> dict:
         return {"success": False, "error": "该企业的 WS 长连接未就绪"}
 
     # 2. 确定 chatid
+    from core.org_scoped_db import OrgScopedDB
+    scoped_db = OrgScopedDB(db, req.org_id)
+
     chatid = req.chatid
     chattype = "single"
     if not chatid:
-        user_svc = WecomUserMappingService(db)
+        user_svc = WecomUserMappingService(scoped_db)
         info = await user_svc.get_chatid_by_user_id(req.user_id)
         if not info:
             return {"success": False, "error": "未找到该用户的 chatid，请先让用户发送消息"}

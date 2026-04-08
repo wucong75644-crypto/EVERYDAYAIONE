@@ -7,7 +7,7 @@
 from fastapi import APIRouter, Depends, Query
 from loguru import logger
 
-from api.deps import CurrentUser, CurrentUserId, Database, OrgCtx
+from api.deps import CurrentUser, CurrentUserId, Database, OrgCtx, ScopedDB
 from core.exceptions import (
     AppException,
     AuthenticationError,
@@ -27,8 +27,8 @@ from services.conversation_service import ConversationService
 router = APIRouter(prefix="/conversations", tags=["对话"])
 
 
-def get_conversation_service(db: Database) -> ConversationService:
-    """获取对话服务实例"""
+def get_conversation_service(db: ScopedDB) -> ConversationService:
+    """获取对话服务实例（租户隔离）"""
     return ConversationService(db)
 
 

@@ -151,11 +151,13 @@ class ErpSyncExecutor:
     ) -> int:
         """逐条降级聚合"""
         try:
+            from core.org_scoped_db import OrgScopedDB
             from services.kuaimai.erp_sync_service import ErpSyncService
             from services.kuaimai.erp_local_helpers import _apply_org
 
+            scoped_db = OrgScopedDB(self.db, org_id)
             svc = ErpSyncService(
-                self.db,
+                scoped_db,
                 aggregation_queue=self._aggregation_queue,
                 aggregation_pending=self._aggregation_pending,
                 org_id=org_id,
@@ -183,9 +185,11 @@ class ErpSyncExecutor:
     ) -> int:
         """商品删除检测（SPU + SKU 级别，按企业隔离）"""
         try:
+            from core.org_scoped_db import OrgScopedDB
             from services.kuaimai.erp_sync_service import ErpSyncService
 
-            svc = ErpSyncService(self.db, org_id=org_id, client=client)
+            scoped_db = OrgScopedDB(self.db, org_id)
+            svc = ErpSyncService(scoped_db, org_id=org_id, client=client)
             products = await svc.fetch_all_pages(
                 "item.list.query",
                 {
@@ -296,11 +300,13 @@ class ErpSyncExecutor:
         lock_extend_fn=None,
     ) -> int:
         """执行订单分层对账"""
+        from core.org_scoped_db import OrgScopedDB
         from services.kuaimai.erp_sync_reconcile import reconcile_order
         from services.kuaimai.erp_sync_service import ErpSyncService
 
+        scoped_db = OrgScopedDB(self.db, org_id)
         svc = ErpSyncService(
-            self.db, lock_extend_fn=lock_extend_fn,
+            scoped_db, lock_extend_fn=lock_extend_fn,
             org_id=org_id, client=client,
         )
         return await reconcile_order(svc)
@@ -310,11 +316,13 @@ class ErpSyncExecutor:
         lock_extend_fn=None,
     ) -> int:
         """执行售后分层对账"""
+        from core.org_scoped_db import OrgScopedDB
         from services.kuaimai.erp_sync_reconcile import reconcile_aftersale
         from services.kuaimai.erp_sync_service import ErpSyncService
 
+        scoped_db = OrgScopedDB(self.db, org_id)
         svc = ErpSyncService(
-            self.db, lock_extend_fn=lock_extend_fn,
+            scoped_db, lock_extend_fn=lock_extend_fn,
             org_id=org_id, client=client,
         )
         return await reconcile_aftersale(svc)

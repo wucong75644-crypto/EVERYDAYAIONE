@@ -252,9 +252,11 @@ class ErpSyncWorkerPool:
         client, extend_fn,
     ) -> None:
         """执行常规增量同步"""
+        from core.org_scoped_db import OrgScopedDB
         from services.kuaimai.erp_sync_service import ErpSyncService
+        scoped_db = OrgScopedDB(self.db, org_id)
         service = ErpSyncService(
-            self.db,
+            scoped_db,
             lock_extend_fn=extend_fn,
             aggregation_queue=self.aggregation_queue,
             aggregation_pending=self.aggregation_pending,
@@ -267,10 +269,12 @@ class ErpSyncWorkerPool:
         self, org_id: str | None, client, extend_fn,
     ) -> None:
         """执行库存全量刷新"""
+        from core.org_scoped_db import OrgScopedDB
         from services.kuaimai.erp_sync_master_handlers import sync_stock_full
         from services.kuaimai.erp_sync_service import ErpSyncService
+        scoped_db = OrgScopedDB(self.db, org_id)
         service = ErpSyncService(
-            self.db,
+            scoped_db,
             lock_extend_fn=extend_fn,
             aggregation_queue=self.aggregation_queue,
             aggregation_pending=self.aggregation_pending,
@@ -285,10 +289,12 @@ class ErpSyncWorkerPool:
         self, org_id: str | None, client, extend_fn,
     ) -> None:
         """执行批次效期库存全量同步（遍历店铺）"""
+        from core.org_scoped_db import OrgScopedDB
         from services.kuaimai.erp_sync_piggyback_handlers import sync_batch_stock
         from services.kuaimai.erp_sync_service import ErpSyncService
+        scoped_db = OrgScopedDB(self.db, org_id)
         service = ErpSyncService(
-            self.db,
+            scoped_db,
             lock_extend_fn=extend_fn,
             org_id=org_id,
             client=client,

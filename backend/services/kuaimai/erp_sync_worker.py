@@ -244,9 +244,11 @@ class ErpSyncWorker:
         """执行单个类型的同步（委托给 ErpSyncService）"""
         try:
             await self._extend_lock()
+            from core.org_scoped_db import OrgScopedDB
             from services.kuaimai.erp_sync_service import ErpSyncService
+            scoped_db = OrgScopedDB(self.db, org_id)
             service = ErpSyncService(
-                self.db, lock_extend_fn=self._extend_lock,
+                scoped_db, lock_extend_fn=self._extend_lock,
                 aggregation_queue=self.aggregation_queue,
                 aggregation_pending=self.aggregation_pending,
                 org_id=org_id,
@@ -274,10 +276,12 @@ class ErpSyncWorker:
     ) -> None:
         """执行库存全量刷新（委托给 sync_stock_full）"""
         try:
+            from core.org_scoped_db import OrgScopedDB
             from services.kuaimai.erp_sync_master_handlers import sync_stock_full
             from services.kuaimai.erp_sync_service import ErpSyncService
+            scoped_db = OrgScopedDB(self.db, org_id)
             service = ErpSyncService(
-                self.db, lock_extend_fn=self._extend_lock,
+                scoped_db, lock_extend_fn=self._extend_lock,
                 aggregation_queue=self.aggregation_queue,
                 aggregation_pending=self.aggregation_pending,
                 org_id=org_id,
@@ -295,10 +299,12 @@ class ErpSyncWorker:
     ) -> None:
         """执行批次效期库存全量同步（遍历店铺）"""
         try:
+            from core.org_scoped_db import OrgScopedDB
             from services.kuaimai.erp_sync_piggyback_handlers import sync_batch_stock
             from services.kuaimai.erp_sync_service import ErpSyncService
+            scoped_db = OrgScopedDB(self.db, org_id)
             service = ErpSyncService(
-                self.db, lock_extend_fn=self._extend_lock,
+                scoped_db, lock_extend_fn=self._extend_lock,
                 org_id=org_id,
                 client=client,
             )
@@ -472,10 +478,12 @@ class ErpSyncWorker:
     async def _reaggregate_fallback(self, since_date: str, org_id: str | None = None) -> int:
         """逐条降级聚合：查询近7天的 distinct (outer_id, date) 并逐一重算"""
         try:
+            from core.org_scoped_db import OrgScopedDB
             from services.kuaimai.erp_sync_service import ErpSyncService
             from services.kuaimai.erp_local_helpers import _apply_org
+            scoped_db = OrgScopedDB(self.db, org_id)
             svc = ErpSyncService(
-                self.db,
+                scoped_db,
                 aggregation_queue=self.aggregation_queue,
                 aggregation_pending=self.aggregation_pending,
                 org_id=org_id,
@@ -563,7 +571,9 @@ class ErpSyncWorker:
         """
         try:
             from services.kuaimai.erp_sync_service import ErpSyncService
-            svc = ErpSyncService(self.db, org_id=org_id, client=client)
+            from core.org_scoped_db import OrgScopedDB
+            scoped_db = OrgScopedDB(self.db, org_id)
+            svc = ErpSyncService(scoped_db, org_id=org_id, client=client)
 
             products = await svc.fetch_all_pages(
                 "item.list.query",

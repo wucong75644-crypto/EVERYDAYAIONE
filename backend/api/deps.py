@@ -13,6 +13,7 @@ from loguru import logger
 
 from core.database import get_db
 from core.exceptions import AuthenticationError, InvalidTokenError
+from core.org_scoped_db import OrgScopedDB
 from core.security import decode_access_token
 from core.redis import RedisClient
 from services.task_limit_service import TaskLimitService
@@ -180,10 +181,38 @@ async def get_org_context(
     )
 
 
+# ── 多租户隔离 DB ────────────────────────────────────────
+
+
+async def get_scoped_db(
+    request: Request,
+    user_id: str = Depends(get_current_user_id),
+    db: Any = Depends(get_db),
+) -> OrgScopedDB:
+    """
+    构造租户隔离的数据库客户端。
+
+    从 X-Org-Id Header 解析 org_id，包装 raw db 为 OrgScopedDB。
+    TENANT_TABLES 中的表查询自动注入 org_id 过滤。
+
+    注意：不重复校验 org_members（OrgCtx 已校验过），仅提取 org_id。
+    """
+    raw_org_id = request.headers.get("X-Org-Id")
+    org_id: str | None = None
+    if raw_org_id:
+        try:
+            UUID(raw_org_id)
+            org_id = raw_org_id
+        except ValueError:
+            pass  # 格式无效时当散客处理，OrgCtx 会拦截
+    return OrgScopedDB(db, org_id)
+
+
 # 类型别名，简化依赖注入的使用
 CurrentUserId = Annotated[str, Depends(get_current_user_id)]
 CurrentUser = Annotated[dict, Depends(get_current_user)]
 OptionalUserId = Annotated[Optional[str], Depends(get_optional_user_id)]
 Database = Annotated[Any, Depends(get_db)]
 OrgCtx = Annotated[OrgContext, Depends(get_org_context)]
+ScopedDB = Annotated[OrgScopedDB, Depends(get_scoped_db)]
 TaskLimitSvc = Annotated[Optional[TaskLimitService], Depends(get_task_limit_service)]

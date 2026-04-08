@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from api.deps import CurrentUserId, Database
+from api.deps import CurrentUserId, Database, ScopedDB
 from core.exceptions import AppException
 from services.org.config_resolver import OrgConfigResolver
 from services.org.org_service import OrgService
@@ -17,11 +17,11 @@ from services.org.org_service import OrgService
 router = APIRouter(prefix="/org", tags=["企业管理"])
 
 
-def _get_org_service(db: Database) -> OrgService:
+def _get_org_service(db: ScopedDB) -> OrgService:
     return OrgService(db)
 
 
-def _get_config_resolver(db: Database) -> OrgConfigResolver:
+def _get_config_resolver(db: ScopedDB) -> OrgConfigResolver:
     return OrgConfigResolver(db)
 
 
