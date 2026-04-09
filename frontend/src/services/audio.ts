@@ -25,11 +25,14 @@ export async function uploadAudio(audioBlob: Blob): Promise<AudioUploadResponse>
 
   // 使用原生 fetch 上传，因为需要设置 multipart/form-data
   const token = localStorage.getItem('access_token');
+  const orgId = localStorage.getItem('current_org_id');
+  const headers: Record<string, string> = {};
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (orgId) headers['X-Org-Id'] = orgId;
+
   const response = await fetch(`${API_BASE_URL}/audio/upload`, {
     method: 'POST',
-    headers: {
-      'Authorization': token ? `Bearer ${token}` : '',
-    },
+    headers,
     body: formData,
   });
 
