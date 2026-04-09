@@ -77,7 +77,7 @@ async def check_and_record_intent(
         return
 
     # 1. 查最近的 intent_pending（同会话、30分钟内）
-    pending = await _find_recent_pending(conversation_id)
+    pending = await _find_recent_pending(conversation_id, org_id=org_id)
     if not pending:
         return
 
@@ -116,26 +116,34 @@ async def check_and_record_intent(
     )
 
 
-async def _find_recent_pending(conversation_id: str) -> Optional[Dict[str, Any]]:
-    """查询最近 30 分钟内同会话的 intent_pending"""
+async def _find_recent_pending(
+    conversation_id: str, org_id: str | None = None,
+) -> Optional[Dict[str, Any]]:
+    """查询最近 30 分钟内同会话的 intent_pending（按 org 隔离）"""
     try:
         conn_ctx = await get_pg_connection()
         if conn_ctx is None:
             return None
 
+        org_filter = (
+            "AND org_id = %(org_id)s" if org_id
+            else "AND org_id IS NULL"
+        )
+
         async with conn_ctx as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    """
+                    f"""
                     SELECT params FROM knowledge_metrics
                     WHERE task_type = 'intent_pending'
                       AND status = 'pending'
                       AND params->>'conversation_id' = %(conv_id)s
                       AND created_at > NOW() - make_interval(secs => %(ttl)s)
+                      {org_filter}
                     ORDER BY created_at DESC
                     LIMIT 1;
                     """,
-                    {"conv_id": conversation_id, "ttl": _PENDING_TTL_SECONDS},
+                    {"conv_id": conversation_id, "ttl": _PENDING_TTL_SECONDS, "org_id": org_id},
                 )
                 row = await cur.fetchone()
                 if not row:

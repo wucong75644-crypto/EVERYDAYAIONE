@@ -192,15 +192,23 @@ class TestOrgScopedDBWithOrgId:
 
     # ── RPC ──
 
-    def test_rpc_passthrough_no_injection(self):
-        """V1.5: RPC 不自动注入 p_org_id"""
-        params = {"p_transaction_id": "tx-123"}
-        self.db.rpc("atomic_refund_credits", params)
+    def test_rpc_auto_injects_org_id(self):
+        """普通 RPC 自动注入 p_org_id"""
+        self.db.rpc("erp_aggregate_daily_stats", {"p_outer_id": "A01"})
+        self.raw_db.rpc.assert_called_once_with(
+            "erp_aggregate_daily_stats",
+            {"p_outer_id": "A01", "p_org_id": ORG_ID},
+        )
+
+    def test_rpc_blacklist_no_injection(self):
+        """黑名单函数不注入 p_org_id"""
+        self.db.rpc("atomic_refund_credits", {"p_transaction_id": "tx-123"})
         self.raw_db.rpc.assert_called_once_with(
             "atomic_refund_credits", {"p_transaction_id": "tx-123"},
         )
 
     def test_rpc_preserves_explicit_org_id(self):
+        """已有 p_org_id 不覆盖"""
         params = {"p_outer_id": "A01", "p_org_id": ORG_ID}
         self.db.rpc("erp_aggregate_daily_stats", params)
         self.raw_db.rpc.assert_called_once_with(
@@ -331,11 +339,12 @@ class TestEdgeCases:
         t2 = db.table("messages")
         assert t1 is not t2
 
-    def test_rpc_with_none_params(self):
+    def test_rpc_with_none_params_auto_injects(self):
+        """params=None 时自动创建 dict 并注入 p_org_id"""
         raw_db = _make_mock_db()
         db = OrgScopedDB(raw_db, org_id=ORG_ID)
         db.rpc("some_func", None)
-        raw_db.rpc.assert_called_once_with("some_func", None)
+        raw_db.rpc.assert_called_once_with("some_func", {"p_org_id": ORG_ID})
 
     def test_upsert_list_injects_all(self):
         raw_db = _make_mock_db()
