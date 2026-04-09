@@ -133,6 +133,9 @@ class _TenantScopedTable:
         on_conflict: str = "",
         **kwargs: Any,
     ) -> Any:
+        # 自动追加 org_id 到 on_conflict（匹配含 org_id 的唯一索引）
+        if on_conflict and "org_id" not in on_conflict:
+            on_conflict = f"{on_conflict},org_id"
         return self._table.upsert(
             _inject_org_id(data, self._org_id),
             on_conflict=on_conflict,
