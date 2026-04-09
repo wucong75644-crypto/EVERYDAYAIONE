@@ -74,7 +74,8 @@ LOW_FREQ_TYPES = ["platform_map"]
 CONFIG_TYPES = ["shop", "warehouse", "tag", "category", "logistics_company"]
 
 # 特殊任务类型（按独立间隔调度）
-SPECIAL_TYPES = ["stock_full", "batch_stock", "daily_maintenance", "order_reconcile", "aftersale_reconcile"]
+SPECIAL_TYPES = ["stock_full", "daily_maintenance", "order_reconcile", "aftersale_reconcile"]
+# batch_stock 已禁用（企业未开启批次管理功能，API 返回空）
 
 
 class ErpSyncScheduler:
@@ -201,12 +202,7 @@ class ErpSyncScheduler:
         ):
             due.append("stock_full")
 
-        # 批次效期库存：每 6 小时
-        if self._is_interval_due(
-            self._org_last_batch_stock, org_id,
-            self.BATCH_STOCK_INTERVAL,
-        ):
-            due.append("batch_stock")
+        # batch_stock 已禁用（企业未开启批次管理）
 
         # 日维护
         if self._is_interval_due(
