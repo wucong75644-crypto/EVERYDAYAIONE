@@ -340,10 +340,10 @@ class TestLocalDbExport:
             )
 
         assert "导出查询失败" in result
-        # 不完整文件已清理
+        # Parquet 在异常时不会生成（数据在内存中，未写入）
         staging_dir = tmp_path / "staging" / "conv_err"
         if staging_dir.exists():
-            assert len(list(staging_dir.glob("*.jsonl"))) == 0
+            assert len(list(staging_dir.glob("*.parquet"))) == 0
 
     @pytest.mark.asyncio
     async def test_default_conversation_id(self, tmp_path):
