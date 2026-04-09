@@ -1374,6 +1374,7 @@ class TestNotifyWebConversationUpdated:
             mock_ws.send_to_user.assert_awaited_once_with(
                 "uid1",
                 {"type": "conversation_updated", "conversation_id": "conv1"},
+                org_id=None,
             )
 
     @pytest.mark.asyncio
@@ -1419,4 +1420,4 @@ class TestHandleMessageNotify:
             new=AsyncMock(),
         ) as mock_notify:
             await svc.handle_message(msg, ctx)
-            mock_notify.assert_awaited_once_with("uid1", "conv1")
+            mock_notify.assert_awaited_once_with("uid1", "conv1", org_id=None)

@@ -231,7 +231,7 @@ class ChatContextMixin:
                         "memories": extracted,
                         "count": len(extracted),
                     },
-                })
+                }, org_id=self.org_id)
         except Exception as e:
             logger.warning(
                 f"Memory extraction failed | user_id={user_id} | "
