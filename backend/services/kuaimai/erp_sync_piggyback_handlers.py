@@ -335,6 +335,8 @@ async def sync_batch_stock(svc: ErpSyncService) -> int:
     now = datetime.now().isoformat()
 
     for user_id, num_ids in shop_numids.items():
+        if not user_id:
+            continue  # 跳过无店铺 ID 的映射
         # 每批最多 20 个 numIid
         for i in range(0, len(num_ids), 20):
             batch_ids = num_ids[i:i + 20]

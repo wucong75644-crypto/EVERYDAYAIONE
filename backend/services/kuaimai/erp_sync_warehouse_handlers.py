@@ -41,7 +41,7 @@ async def sync_allocate(
     client = svc._get_client()
     docs = await svc.fetch_all_pages(
         "erp.allocate.task.query",
-        {"startModified": _fmt_d(start), "endModified": _fmt_d(end)},
+        {"startModified": _fmt_dt(start), "endModified": _fmt_dt(end)},
     )
     if not docs:
         return 0
@@ -131,7 +131,7 @@ async def sync_allocate_in(
     client = svc._get_client()
     docs = await svc.fetch_all_pages(
         "allocate.in.task.query",
-        {"startModified": _fmt_d(start), "endModified": _fmt_d(end)},
+        {"startModified": _fmt_dt(start), "endModified": _fmt_dt(end)},
     )
     if not docs:
         return 0
@@ -160,7 +160,7 @@ async def sync_allocate_out(
     client = svc._get_client()
     docs = await svc.fetch_all_pages(
         "allocate.out.task.query",
-        {"startModified": _fmt_d(start), "endModified": _fmt_d(end)},
+        {"startModified": _fmt_dt(start), "endModified": _fmt_dt(end)},
     )
     if not docs:
         return 0
@@ -189,7 +189,7 @@ async def sync_other_in(
     client = svc._get_client()
     docs = await svc.fetch_all_pages(
         "other.in.order.query",
-        {"startModified": _fmt_d(start), "endModified": _fmt_d(end)},
+        {"startModified": _fmt_dt(start), "endModified": _fmt_dt(end)},
     )
     if not docs:
         return 0
@@ -218,7 +218,7 @@ async def sync_other_out(
     client = svc._get_client()
     docs = await svc.fetch_all_pages(
         "other.out.order.query",
-        {"startModified": _fmt_d(start), "endModified": _fmt_d(end)},
+        {"startModified": _fmt_dt(start), "endModified": _fmt_dt(end)},
     )
     if not docs:
         return 0
@@ -349,7 +349,7 @@ async def sync_unshelve(
     client = svc._get_client()
     docs = await svc.fetch_all_pages(
         "erp.wms.unshelve.order.query",
-        {"startModified": _fmt_d(start), "endModified": _fmt_d(end)},
+        {"startModified": _fmt_dt(start), "endModified": _fmt_dt(end)},
     )
     if not docs:
         return 0
@@ -469,7 +469,7 @@ async def sync_section_record(
     """货位进出记录同步：仅 list，无 detail（交易日志）"""
     records = await svc.fetch_all_pages(
         "goods.section.in.out.record.query",
-        {"operateStartTime": _fmt_d(start), "operateEndTime": _fmt_d(end)},
+        {"operateStartTime": _fmt_dt(start), "operateEndTime": _fmt_dt(end)},
     )
     if not records:
         return 0
