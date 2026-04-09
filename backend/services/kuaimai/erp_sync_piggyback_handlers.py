@@ -254,7 +254,7 @@ async def sync_goods_section(
     """货位库存同步：标准增量，写入 erp_document_items"""
     records = await svc.fetch_all_pages(
         "asso.goods.section.sku.query",
-        {"startModified": _fmt_d(start), "endModified": _fmt_d(end)},
+        {"startModified": _fmt_dt(start), "endModified": _fmt_dt(end)},
     )
     if not records:
         return 0
