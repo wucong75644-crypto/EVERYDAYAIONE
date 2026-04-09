@@ -46,16 +46,19 @@ REVIEW_MIN_SAMPLE_COUNT = 20
 # ===== 主入口 =====
 
 
-async def aggregate_model_scores() -> None:
+async def aggregate_model_scores(org_id: str | None = None) -> None:
     """
-    每小时聚合模型评分（由 BackgroundTaskWorker 调用）
+    每小时聚合模型评分（由 BackgroundTaskWorker 按 org 迭代调用）
 
     流程：聚合 SQL → 计算 raw_score → EMA → 审核判断 → 写入知识库/日志
+
+    Args:
+        org_id: 企业 ID（None=散客数据）
     """
     if not is_kb_available():
         return
 
-    rows = await _query_aggregated_metrics()
+    rows = await _query_aggregated_metrics(org_id=org_id)
     if not rows:
         logger.debug("Model scoring skipped | no metrics data")
         return
@@ -66,7 +69,9 @@ async def aggregate_model_scores() -> None:
     for row in rows:
         try:
             raw_score = _compute_raw_score(row)
-            old_score = await _get_latest_score(row["model_id"], row["task_type"])
+            old_score = await _get_latest_score(
+                row["model_id"], row["task_type"], org_id=org_id,
+            )
             ema_score = _apply_ema(raw_score, old_score)
             confidence = _get_confidence(row["total"])
             status = _determine_status(ema_score, old_score, row["total"])
@@ -74,14 +79,14 @@ async def aggregate_model_scores() -> None:
             node_id = None
             if status == "auto_applied":
                 node_id = await _write_score_to_knowledge(
-                    row, ema_score, confidence
+                    row, ema_score, confidence, org_id=org_id,
                 )
                 applied_count += 1
             else:
                 review_count += 1
 
             await _write_audit_log(
-                row, old_score, ema_score, status, node_id
+                row, old_score, ema_score, status, node_id, org_id=org_id,
             )
         except Exception as e:
             logger.warning(
@@ -98,13 +103,20 @@ async def aggregate_model_scores() -> None:
 # ===== 聚合查询 =====
 
 
-async def _query_aggregated_metrics() -> List[Dict[str, Any]]:
-    """从 knowledge_metrics 聚合 7 天内模型表现数据"""
+async def _query_aggregated_metrics(
+    org_id: str | None = None,
+) -> List[Dict[str, Any]]:
+    """从 knowledge_metrics 聚合 7 天内模型表现数据（按 org 隔离）"""
     conn_ctx = await get_pg_connection()
     if conn_ctx is None:
         return []
 
-    sql = """
+    org_filter = (
+        "AND org_id = %(org_id)s" if org_id
+        else "AND org_id IS NULL"
+    )
+
+    sql = f"""
     SELECT
         model_id,
         task_type,
@@ -122,15 +134,16 @@ async def _query_aggregated_metrics() -> List[Dict[str, Any]]:
         MIN(created_at) AS period_start,
         MAX(created_at) AS period_end
     FROM knowledge_metrics
-    WHERE created_at > NOW() - INTERVAL '%s days'
+    WHERE created_at > NOW() - INTERVAL '{AGGREGATION_WINDOW_DAYS} days'
+      {org_filter}
     GROUP BY model_id, task_type
     HAVING COUNT(*) >= 1;
-    """ % AGGREGATION_WINDOW_DAYS
+    """
 
     try:
         async with conn_ctx as conn:
             async with conn.cursor() as cur:
-                await cur.execute(sql)
+                await cur.execute(sql, {"org_id": org_id})
                 rows = await cur.fetchall()
                 if not rows:
                     return []
@@ -211,26 +224,32 @@ def _determine_status(
 
 
 async def _get_latest_score(
-    model_id: str, task_type: str
+    model_id: str, task_type: str, org_id: str | None = None,
 ) -> Optional[float]:
-    """查询最近一次已生效的评分（auto_applied 或 approved）"""
+    """查询最近一次已生效的评分（auto_applied 或 approved，按 org 隔离）"""
     conn_ctx = await get_pg_connection()
     if conn_ctx is None:
         return None
+
+    org_filter = (
+        "AND org_id = %(org_id)s" if org_id
+        else "AND org_id IS NULL"
+    )
 
     try:
         async with conn_ctx as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    """
+                    f"""
                     SELECT new_score FROM scoring_audit_log
                     WHERE model_id = %(model_id)s
                         AND task_type = %(task_type)s
                         AND status IN ('auto_applied', 'approved')
+                        {org_filter}
                     ORDER BY created_at DESC
                     LIMIT 1;
                     """,
-                    {"model_id": model_id, "task_type": task_type},
+                    {"model_id": model_id, "task_type": task_type, "org_id": org_id},
                 )
                 row = await cur.fetchone()
                 return float(row[0]) if row else None
@@ -246,7 +265,8 @@ async def _get_latest_score(
 
 
 async def _write_score_to_knowledge(
-    row: Dict[str, Any], score: float, confidence: float
+    row: Dict[str, Any], score: float, confidence: float,
+    org_id: str | None = None,
 ) -> Optional[str]:
     """将评分作为知识节点写入（add_knowledge 自动 hash 去重/更新）"""
     model_id = row["model_id"]
@@ -288,6 +308,7 @@ async def _write_score_to_knowledge(
         metadata=metadata,
         source="aggregated",
         confidence=confidence,
+        org_id=org_id,
     )
 
 
@@ -300,8 +321,9 @@ async def _write_audit_log(
     new_score: float,
     status: str,
     knowledge_node_id: Optional[str],
+    org_id: str | None = None,
 ) -> None:
-    """写入 scoring_audit_log 审核记录"""
+    """写入 scoring_audit_log 审核记录（按 org 隔离）"""
     conn_ctx = await get_pg_connection()
     if conn_ctx is None:
         return
@@ -329,12 +351,13 @@ async def _write_audit_log(
                     INSERT INTO scoring_audit_log (
                         model_id, task_type, old_score, new_score,
                         score_change, sample_count, metrics,
-                        period_start, period_end, status, knowledge_node_id
+                        period_start, period_end, status, knowledge_node_id,
+                        org_id
                     ) VALUES (
                         %(model_id)s, %(task_type)s, %(old_score)s, %(new_score)s,
                         %(score_change)s, %(sample_count)s, %(metrics)s,
                         %(period_start)s, %(period_end)s, %(status)s,
-                        %(knowledge_node_id)s
+                        %(knowledge_node_id)s, %(org_id)s
                     );
                     """,
                     {
@@ -349,6 +372,7 @@ async def _write_audit_log(
                         "period_end": period_end,
                         "status": status,
                         "knowledge_node_id": knowledge_node_id,
+                        "org_id": org_id,
                     },
                 )
             await conn.commit()

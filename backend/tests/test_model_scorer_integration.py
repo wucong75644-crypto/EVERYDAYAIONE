@@ -313,7 +313,7 @@ class TestAggregateModelScoresExtra:
         async def track_log(*args, **kwargs):
             log_calls.append(args)
 
-        async def get_score(model_id, task_type):
+        async def get_score(model_id, task_type, org_id=None):
             return 0.90  # 与 bad-model 差距大
 
         with patch("services.model_scorer.is_kb_available", return_value=True), \
@@ -362,9 +362,10 @@ class TestRunModelScoring:
         worker = self._make_worker()
         assert worker._last_scoring_aggregation is None
 
-        with patch("services.model_scorer.aggregate_model_scores", new_callable=AsyncMock) as mock_agg:
+        with patch("services.model_scorer.aggregate_model_scores", new_callable=AsyncMock) as mock_agg, \
+             patch.object(worker, "_get_active_org_ids", new_callable=AsyncMock, return_value=[]):
             await worker._run_model_scoring()
-            mock_agg.assert_called_once()
+            mock_agg.assert_called_once()  # 散客 org_id=None
             assert worker._last_scoring_aggregation is not None
 
     @pytest.mark.asyncio
@@ -383,7 +384,8 @@ class TestRunModelScoring:
         worker = self._make_worker()
         worker._last_scoring_aggregation = datetime.now(timezone.utc) - timedelta(hours=2)
 
-        with patch("services.model_scorer.aggregate_model_scores", new_callable=AsyncMock) as mock_agg:
+        with patch("services.model_scorer.aggregate_model_scores", new_callable=AsyncMock) as mock_agg, \
+             patch.object(worker, "_get_active_org_ids", new_callable=AsyncMock, return_value=[]):
             await worker._run_model_scoring()
             mock_agg.assert_called_once()
 
@@ -392,10 +394,10 @@ class TestRunModelScoring:
         """异常被捕获，且 _last_scoring_aggregation 仍被更新（finally）"""
         worker = self._make_worker()
 
-        with patch("services.model_scorer.aggregate_model_scores", new_callable=AsyncMock) as mock_agg:
+        with patch("services.model_scorer.aggregate_model_scores", new_callable=AsyncMock) as mock_agg, \
+             patch.object(worker, "_get_active_org_ids", new_callable=AsyncMock, return_value=[]):
             mock_agg.side_effect = RuntimeError("DB down")
             await worker._run_model_scoring()
-            # 不应抛异常
             assert worker._last_scoring_aggregation is not None
 
 
@@ -422,9 +424,10 @@ class TestRunIntentDistillation:
         worker = self._make_worker()
         assert worker._last_intent_distillation is None
 
-        with patch("services.intent_distiller.distill_intent_patterns", new_callable=AsyncMock) as mock_distill:
+        with patch("services.intent_distiller.distill_intent_patterns", new_callable=AsyncMock) as mock_distill, \
+             patch.object(worker, "_get_active_org_ids", new_callable=AsyncMock, return_value=[]):
             await worker._run_intent_distillation()
-            mock_distill.assert_called_once()
+            mock_distill.assert_called_once()  # 散客 org_id=None
             assert worker._last_intent_distillation is not None
 
     @pytest.mark.asyncio
@@ -443,7 +446,8 @@ class TestRunIntentDistillation:
         worker = self._make_worker()
         worker._last_intent_distillation = datetime.now(timezone.utc) - timedelta(hours=25)
 
-        with patch("services.intent_distiller.distill_intent_patterns", new_callable=AsyncMock) as mock_distill:
+        with patch("services.intent_distiller.distill_intent_patterns", new_callable=AsyncMock) as mock_distill, \
+             patch.object(worker, "_get_active_org_ids", new_callable=AsyncMock, return_value=[]):
             await worker._run_intent_distillation()
             mock_distill.assert_called_once()
 
@@ -452,7 +456,8 @@ class TestRunIntentDistillation:
         """异常被捕获，_last_intent_distillation 仍被更新"""
         worker = self._make_worker()
 
-        with patch("services.intent_distiller.distill_intent_patterns", new_callable=AsyncMock) as mock_distill:
+        with patch("services.intent_distiller.distill_intent_patterns", new_callable=AsyncMock) as mock_distill, \
+             patch.object(worker, "_get_active_org_ids", new_callable=AsyncMock, return_value=[]):
             mock_distill.side_effect = RuntimeError("distill error")
             await worker._run_intent_distillation()
             assert worker._last_intent_distillation is not None

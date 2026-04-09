@@ -472,7 +472,7 @@ class TestAggregateModelScores:
         async def mock_log(*args, **kwargs):
             call_count["log"] += 1
 
-        async def bad_latest(model_id, task_type):
+        async def bad_latest(model_id, task_type, org_id=None):
             if model_id == "model-bad":
                 raise RuntimeError("DB error")
             return 0.90
