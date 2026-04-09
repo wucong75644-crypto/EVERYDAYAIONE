@@ -48,7 +48,7 @@ _ALLOWED_IMPORT_MODULES = frozenset({
     # IO（BytesIO 用于生成 Excel/CSV 等二进制文件）
     "io",
     # 数据分析
-    "pandas", "numpy",
+    "pandas", "numpy", "pyarrow",
     # 内部 C 扩展（被上述模块传递依赖）
     "_datetime", "_decimal", "_collections_abc", "_operator",
     "_functools", "_re", "_string", "_json", "_strptime",
@@ -112,13 +112,15 @@ class SandboxExecutor:
         timeout: float = 120.0,
         max_result_chars: int = 8000,
         output_dir: Optional[str] = None,
+        staging_dir: Optional[str] = None,
         upload_fn: Optional[Callable] = None,
     ) -> None:
         self._timeout = timeout
         self._max_result_chars = max_result_chars
         self._registered_funcs: Dict[str, Callable] = {}
-        self._output_dir = output_dir  # 沙盒内代码写文件的目录
-        self._upload_fn = upload_fn    # 文件上传函数（注入）
+        self._output_dir = output_dir    # 沙盒输出目录（自动上传）
+        self._staging_dir = staging_dir  # staging 数据目录（pd.read_parquet 用）
+        self._upload_fn = upload_fn      # 文件上传函数（注入）
 
     def register(self, name: str, func: Callable) -> None:
         """注册外部数据源函数（沙盒内可直接调用）"""
@@ -211,13 +213,18 @@ class SandboxExecutor:
         for name, func in self._registered_funcs.items():
             g[name] = func
 
-        # 注入输出目录路径（沙盒代码用 to_excel(OUTPUT_DIR + "/x.xlsx") 写到这里）
+        # 注入目录路径
+        from pathlib import Path as _Path
+        g["Path"] = _Path
+
+        # STAGING_DIR: staging 数据目录（pd.read_parquet 用）
+        if self._staging_dir:
+            g["STAGING_DIR"] = self._staging_dir
+
+        # OUTPUT_DIR: 输出目录（写文件到这里自动上传）
         if self._output_dir:
-            from pathlib import Path as _Path
-            # 按需创建输出目录
             _Path(self._output_dir).mkdir(parents=True, exist_ok=True)
             g["OUTPUT_DIR"] = self._output_dir
-            g["Path"] = _Path
 
         return g
 

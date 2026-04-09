@@ -258,10 +258,16 @@ def build_sandbox_executor(
         except Exception as e:
             return f"❌ 文件上传失败: {safe_name} ({e})"
 
+    # staging 数据目录（local_db_export 写 parquet 到这里）
+    _staging_dir = str(
+        Path(_file_settings.file_workspace_root) / "staging" / _conv_id
+    )
+
     executor = SandboxExecutor(
         timeout=timeout,
         max_result_chars=max_result_chars,
         output_dir=_output_dir,
+        staging_dir=_staging_dir,
         upload_fn=_auto_upload,
     )
 
@@ -283,6 +289,11 @@ def build_sandbox_executor(
             return (
                 "❌ 沙盒内只能读取 staging 目录下的数据文件。"
                 "请先用 local_db_export 或 fetch_all_pages 工具获取数据。"
+            )
+        if path.endswith(".parquet"):
+            return (
+                "❌ Parquet 文件不能用 read_file 读取，"
+                "请用 pd.read_parquet(STAGING_DIR + '/文件名') 读取。"
             )
         # 直接读原始文件内容（不走 file_read 的行号格式化），
         # 这样 pandas 的 pd.read_json(io.StringIO(raw), lines=True) 能正确解析

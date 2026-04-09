@@ -2,7 +2,9 @@
 本地数据库导出工具（两步协议）
 
 Step 1: 只传 doc_type → 返回可用字段文档，Agent 选择需要的列
-Step 2: 传 doc_type + columns → 按字段从 erp_document_items 查询，JSONL 写入 staging
+Step 2: 传 doc_type + columns → 按字段从 erp_document_items 查询，Parquet 写入 staging
+
+Parquet 格式：类型/null/日期零解析问题，pandas read_parquet 100% 可靠。
 
 与远程 erp_* 工具的两步协议统一：
   远程: action 无 params → 参数文档 | action + params → 执行查询
@@ -15,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import aiofiles
+import pandas as pd
 from loguru import logger
 
 # 中国时间（与 erp_document_items.doc_created_at 对齐）
@@ -224,98 +226,90 @@ async def local_db_export(
     staging_dir.mkdir(parents=True, exist_ok=True)
 
     ts = int(_time.time())
-    filename = f"local_{doc_type}_{ts}.jsonl"
+    filename = f"local_{doc_type}_{ts}.parquet"
     staging_path = staging_dir / filename
     rel_path = f"staging/{conv_id}/{filename}"
 
     start = _time.monotonic()
-    total_rows = 0
-    preview_rows: list[dict] = []
+    all_rows: list[dict] = []
 
     try:
-        async with aiofiles.open(staging_path, "w", encoding="utf-8") as f:
-            offset = 0
-            while offset < max_rows:
-                batch_limit = min(BATCH_SIZE, max_rows - offset)
+        offset = 0
+        while offset < max_rows:
+            batch_limit = min(BATCH_SIZE, max_rows - offset)
 
-                q = (
-                    db.table("erp_document_items")
-                    .select(select_cols)
-                    .eq("doc_type", doc_type)
-                    .gte(time_col, cutoff)
+            q = (
+                db.table("erp_document_items")
+                .select(select_cols)
+                .eq("doc_type", doc_type)
+                .gte(time_col, cutoff)
+            )
+            q = _apply_org(q, org_id)
+
+            if shop_pattern:
+                q = q.ilike("shop_name", shop_pattern)
+            if platform:
+                q = q.eq("platform", platform)
+            if product_code:
+                q = q.or_(
+                    f"outer_id.eq.{product_code},"
+                    f"sku_outer_id.eq.{product_code}"
                 )
-                q = _apply_org(q, org_id)
-
-                if shop_pattern:
-                    q = q.ilike("shop_name", shop_pattern)
-                if platform:
-                    q = q.eq("platform", platform)
-                if product_code:
-                    q = q.or_(
-                        f"outer_id.eq.{product_code},"
-                        f"sku_outer_id.eq.{product_code}"
-                    )
-                if status:
-                    status_col = (
-                        "order_status" if doc_type == "order" else "doc_status"
-                    )
-                    q = q.eq(status_col, status)
-
-                q = (
-                    q.order(time_col, desc=True)
-                    .range(offset, offset + batch_limit - 1)
+            if status:
+                status_col = (
+                    "order_status" if doc_type == "order" else "doc_status"
                 )
+                q = q.eq(status_col, status)
 
-                result = q.execute()
-                batch = result.data or []
+            q = (
+                q.order(time_col, desc=True)
+                .range(offset, offset + batch_limit - 1)
+            )
 
-                if not batch:
-                    break
+            result = q.execute()
+            batch = result.data or []
 
-                for row in batch:
-                    _mask_pii(row)
-                    line = json.dumps(row, ensure_ascii=False, default=str)
-                    await f.write(line + "\n")
+            if not batch:
+                break
 
-                if not preview_rows:
-                    preview_rows = batch[:3]
+            for row in batch:
+                _mask_pii(row)
+            all_rows.extend(batch)
 
-                total_rows += len(batch)
-                offset += len(batch)
-
-                if len(batch) < batch_limit:
-                    break
+            offset += len(batch)
+            if len(batch) < batch_limit:
+                break
 
     except Exception as e:
         logger.error(f"local_db_export failed | error={e}")
-        if staging_path.exists():
-            staging_path.unlink(missing_ok=True)
         return f"导出查询失败: {e}"
 
     elapsed = _time.monotonic() - start
 
-    if total_rows == 0:
-        staging_path.unlink(missing_ok=True)
+    if not all_rows:
         health = check_sync_health(db, [doc_type], org_id=org_id)
         return f"无数据（{doc_type}，近{days}天）\n{health}".strip()
 
-    preview_lines = []
-    for row in preview_rows:
-        preview_lines.append(
-            json.dumps(row, ensure_ascii=False, default=str)[:200]
-        )
-    preview = "\n".join(preview_lines)
+    # 写 Parquet（类型/null/日期零解析问题）
+    df = pd.DataFrame(all_rows)
+    df.to_parquet(staging_path, index=False, engine="pyarrow")
+
+    # 预览前 3 条
+    preview = df.head(3).to_string(index=False, max_colwidth=30)
+
+    file_size_kb = staging_path.stat().st_size / 1024
 
     logger.info(
-        f"local_db_export | doc_type={doc_type} | rows={total_rows} | "
-        f"cols={select_cols[:50]} | elapsed={elapsed:.3f}s | path={rel_path}"
+        f"local_db_export | doc_type={doc_type} | rows={len(all_rows)} | "
+        f"cols={select_cols[:50]} | size={file_size_kb:.0f}KB | "
+        f"elapsed={elapsed:.3f}s | path={rel_path}"
     )
 
     return (
         f"[数据已暂存] {rel_path}\n"
-        f"共 {total_rows} 条记录（JSONL格式），查询耗时 {elapsed:.3f}秒。\n"
+        f"共 {len(all_rows)} 条记录（Parquet格式，{file_size_kb:.0f}KB），"
+        f"查询耗时 {elapsed:.3f}秒。\n"
         f"如需处理请调 code_execute，"
-        f"用 raw=await read_file(\"{rel_path}\"); "
-        f"df=pd.read_json(io.StringIO(raw), lines=True) 读取。\n\n"
+        f"用 df = pd.read_parquet(STAGING_DIR + '/{filename}') 读取。\n\n"
         f"前3条预览：\n{preview}"
     )
