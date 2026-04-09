@@ -196,20 +196,29 @@ class WebSocketManager(RedisPubSubMixin):
             await self.disconnect(conn_id)
             return False
 
-    async def send_to_user(self, user_id: str, message: Dict[str, Any]):
-        """发送消息到用户的所有连接（本地 + 跨进程）"""
+    async def send_to_user(
+        self, user_id: str, message: Dict[str, Any],
+        org_id: str | None = None,
+    ):
+        """发送消息到用户的连接（按 org 过滤，本地 + 跨进程）
+
+        Args:
+            org_id: 传入时只发给该 org 的连接；None 时发给所有连接（向后兼容）
+        """
         connections = self._connections.get(user_id, {})
 
         logger.debug(
-            f"send_to_user | user={user_id} | "
+            f"send_to_user | user={user_id} | org={org_id} | "
             f"msg_type={message.get('type')} | "
             f"local_connections={len(connections)}"
         )
 
-        for conn_id in list(connections.keys()):
+        for conn_id, conn in list(connections.items()):
+            if org_id is not None and getattr(conn, "org_id", None) != org_id:
+                continue
             await self.send_to_connection(conn_id, message)
 
-        await self._publish("user", user_id, message)
+        await self._publish("user", user_id, message, org_id=org_id)
 
     async def send_to_task_subscribers(
         self,
