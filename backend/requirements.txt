@@ -53,6 +53,7 @@ openpyxl==3.1.5
 
 # 数据分析（沙盒代码执行）
 pandas==2.2.3
+pyarrow==23.0.1
 
 # 测试
 pytest==8.3.4

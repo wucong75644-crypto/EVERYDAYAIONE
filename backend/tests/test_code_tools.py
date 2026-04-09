@@ -45,12 +45,12 @@ class TestCodeToolsDefinition:
         assert "web_search" not in desc
         assert "纯计算" in desc or "staging" in desc
 
-    def test_read_file_staging_documented(self):
-        """code_execute 描述中说明 read_file 限 staging"""
+    def test_parquet_staging_documented(self):
+        """code_execute 描述中说明 Parquet + STAGING_DIR"""
         tool = build_code_tools()[0]
         desc = tool["function"]["description"]
-        assert "read_file" in desc
-        assert "staging" in desc
+        assert "STAGING_DIR" in desc
+        assert "parquet" in desc.lower()
 
     def test_routing_prompt_not_empty(self):
         assert "code_execute" in CODE_ROUTING_PROMPT
@@ -66,17 +66,17 @@ class TestCodeToolsDefinition:
         assert "erp_query（" not in CODE_ROUTING_PROMPT
         assert "erp_query_all" not in CODE_ROUTING_PROMPT
 
-    def test_routing_prompt_jsonl_format(self):
-        """CODE_ROUTING_PROMPT 说明 JSONL 格式和 io.StringIO 用法"""
-        assert "JSONL" in CODE_ROUTING_PROMPT
-        assert "io.StringIO" in CODE_ROUTING_PROMPT
+    def test_routing_prompt_parquet_format(self):
+        """CODE_ROUTING_PROMPT 说明 Parquet 格式"""
+        assert "Parquet" in CODE_ROUTING_PROMPT
+        assert "read_parquet" in CODE_ROUTING_PROMPT
 
-    def test_code_execute_desc_jsonl(self):
-        """code_execute 描述中包含 JSONL 和 io.StringIO"""
+    def test_code_execute_desc_parquet(self):
+        """code_execute 描述中包含 Parquet 和 read_parquet"""
         tool = build_code_tools()[0]
         desc = tool["function"]["description"]
-        assert "jsonl" in desc or "JSONL" in desc
-        assert "io.StringIO" in desc
+        assert "parquet" in desc.lower()
+        assert "OUTPUT_DIR" in desc
 
     def test_routing_prompt_mentions_local_db_export(self):
         """CODE_ROUTING_PROMPT 提及 local_db_export"""

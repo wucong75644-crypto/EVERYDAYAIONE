@@ -254,30 +254,23 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         )
         staging_dir.mkdir(parents=True, exist_ok=True)
 
+        import pandas as _pd
+
         ts = int(_time.time())
         safe_tool = tool_name.replace("/", "_").replace("..", "_")
         safe_action = action.replace("/", "_").replace("..", "_")
-        filename = f"{safe_tool}_{safe_action}_{ts}.jsonl"
+        filename = f"{safe_tool}_{safe_action}_{ts}.parquet"
         staging_path = staging_dir / filename
 
-        # JSONL 流式写入（逐行，不占全量内存）
-        import aiofiles
-        async with aiofiles.open(staging_path, "w", encoding="utf-8") as f:
-            for item in items:
-                await f.write(
-                    json.dumps(item, ensure_ascii=False) + "\n"
-                )
+        # Parquet 写入（类型/null/日期零解析问题）
+        df = _pd.DataFrame(items)
+        df.to_parquet(staging_path, index=False, engine="pyarrow")
 
-        # 返回文件的相对路径（沙盒 read_file 用）
         rel_path = f"staging/{self.conversation_id or 'default'}/{filename}"
+        file_size_kb = staging_path.stat().st_size / 1024
 
         # 预览前3条
-        preview_lines = []
-        for item in items[:3]:
-            preview_lines.append(
-                json.dumps(item, ensure_ascii=False)[:200]
-            )
-        preview = "\n".join(preview_lines)
+        preview = df.head(3).to_string(index=False, max_colwidth=30)
 
         warning = ""
         if result.get("warning"):
@@ -285,11 +278,10 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
 
         return (
             f"[数据已暂存] {rel_path}\n"
-            f"共 {len(items)} 条记录（JSONL格式），耗时 {elapsed:.1f}秒。"
-            f"{warning}\n"
+            f"共 {len(items)} 条记录（Parquet格式，{file_size_kb:.0f}KB），"
+            f"耗时 {elapsed:.1f}秒。{warning}\n"
             f"如需处理请调 code_execute，"
-            f"用 raw=await read_file(\"{rel_path}\"); "
-            f"df=pd.read_json(io.StringIO(raw), lines=True) 读取。\n\n"
+            f"用 df = pd.read_parquet(STAGING_DIR + '/{filename}') 读取。\n\n"
             f"前3条预览：\n{preview}"
         )
 
