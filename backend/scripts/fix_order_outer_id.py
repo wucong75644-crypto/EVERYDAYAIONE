@@ -4,6 +4,9 @@
 使用预生成的本地映射文件 /tmp/sku_map.json，
 按 SKU 编码批量查订单（走索引），逐条更新。
 
+⚠️ 多租户警告：此脚本操作 erp_document_items（租户表），
+运行前必须确认目标 org_id，避免跨企业误操作。
+
 用法：
     source backend/venv/bin/activate
     python backend/scripts/fix_order_outer_id.py
