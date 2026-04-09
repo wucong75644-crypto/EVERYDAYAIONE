@@ -355,3 +355,99 @@ class TestEdgeCases:
         injected = table_mock.upsert.call_args[0][0]
         assert len(injected) == 5
         assert all(r["org_id"] == ORG_ID for r in injected)
+
+
+# ── RPC 自动注入补充测试 ─────────────────────────────────
+
+
+class TestRPCAutoInjection:
+    """RPC p_org_id 自动注入（黑名单模式）"""
+
+    def setup_method(self):
+        self.raw_db = _make_mock_db()
+        self.db = OrgScopedDB(self.raw_db, org_id=ORG_ID)
+
+    def test_normal_rpc_injects_org_id(self):
+        """普通 RPC 自动注入 p_org_id"""
+        self.db.rpc("increment_message_count", {"conv_id": "c1"})
+        self.raw_db.rpc.assert_called_once_with(
+            "increment_message_count",
+            {"conv_id": "c1", "p_org_id": ORG_ID},
+        )
+
+    def test_blacklisted_rpc_no_injection(self):
+        """黑名单 RPC（atomic_refund_credits）不注入"""
+        self.db.rpc("atomic_refund_credits", {"p_transaction_id": "tx1"})
+        self.raw_db.rpc.assert_called_once_with(
+            "atomic_refund_credits", {"p_transaction_id": "tx1"},
+        )
+
+    def test_explicit_org_id_not_overwritten(self):
+        """已有 p_org_id 不覆盖"""
+        other_org = "other-org-id"
+        self.db.rpc("some_func", {"p_org_id": other_org})
+        args = self.raw_db.rpc.call_args[0]
+        assert args[1]["p_org_id"] == other_org
+
+    def test_personal_user_injects_none(self):
+        """散客用户注入 p_org_id=None"""
+        db = OrgScopedDB(self.raw_db, org_id=None)
+        db.rpc("some_func", {"key": "val"})
+        args = self.raw_db.rpc.call_args[0]
+        assert args[1]["p_org_id"] is None
+
+    def test_empty_params_injects(self):
+        """空 params 自动创建 dict 并注入"""
+        self.db.rpc("some_func")
+        self.raw_db.rpc.assert_called_once_with(
+            "some_func", {"p_org_id": ORG_ID},
+        )
+
+
+# ── Upsert on_conflict 自动追加补充测试 ──────────────────
+
+
+class TestUpsertOnConflictAutoAppend:
+    """upsert on_conflict 自动追加 org_id"""
+
+    def setup_method(self):
+        self.raw_db = _make_mock_db()
+        self.db = OrgScopedDB(self.raw_db, org_id=ORG_ID)
+
+    def test_auto_appends_org_id(self):
+        """单列 on_conflict 自动追加 ,org_id"""
+        self.db.table("erp_products").upsert(
+            {"outer_id": "A01"}, on_conflict="outer_id",
+        )
+        kwargs = self.raw_db.table.return_value.upsert.call_args[1]
+        assert kwargs["on_conflict"] == "outer_id,org_id"
+
+    def test_multi_column_appends(self):
+        """多列 on_conflict 也追加"""
+        self.db.table("erp_document_items").upsert(
+            {"doc_type": "order"}, on_conflict="doc_type,doc_id,item_index",
+        )
+        kwargs = self.raw_db.table.return_value.upsert.call_args[1]
+        assert kwargs["on_conflict"] == "doc_type,doc_id,item_index,org_id"
+
+    def test_already_has_org_id_no_duplicate(self):
+        """已含 org_id 不重复追加"""
+        self.db.table("erp_products").upsert(
+            {"outer_id": "A01"}, on_conflict="outer_id,org_id",
+        )
+        kwargs = self.raw_db.table.return_value.upsert.call_args[1]
+        assert kwargs["on_conflict"] == "outer_id,org_id"
+
+    def test_empty_on_conflict_not_appended(self):
+        """空 on_conflict 不追加"""
+        self.db.table("erp_products").upsert({"outer_id": "A01"})
+        kwargs = self.raw_db.table.return_value.upsert.call_args[1]
+        assert kwargs["on_conflict"] == ""
+
+    def test_exempt_table_no_append(self):
+        """豁免表不经过 _TenantScopedTable，on_conflict 不变"""
+        self.db.table("users").upsert(
+            {"phone": "123"}, on_conflict="phone",
+        )
+        kwargs = self.raw_db.table.return_value.upsert.call_args[1]
+        assert kwargs["on_conflict"] == "phone"
