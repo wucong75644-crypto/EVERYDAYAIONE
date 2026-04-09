@@ -280,7 +280,6 @@ async def sync_stock_full(svc: ErpSyncService) -> int:
     """
     try:
         q = svc.db.table("erp_products").select("outer_id").eq("active_status", 1)
-        q = svc._apply_org(q)
         result = await q.limit(50000).execute()
         codes = [r["outer_id"] for r in (result.data or []) if r.get("outer_id")]
     except Exception as e:
@@ -346,7 +345,7 @@ async def sync_platform_map(
     # 从 DB 取所有 SKU 编码
     try:
         q = svc.db.table("erp_product_skus").select("sku_outer_id")
-        result = await svc._apply_org(q).limit(10000).execute()
+        result = await q.limit(10000).execute()
         sku_ids = [r["sku_outer_id"] for r in (result.data or []) if r.get("sku_outer_id")]
     except Exception as e:
         logger.warning(f"Platform map: failed to get SKU list | error={e}")

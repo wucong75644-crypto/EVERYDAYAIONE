@@ -31,7 +31,6 @@ async def local_product_stats(
         end_date = now.strftime("%Y-%m-%d")
 
     try:
-        from services.kuaimai.erp_local_helpers import _apply_org
         q = (
             db.table("erp_product_daily_stats")
             .select("*")
@@ -39,7 +38,7 @@ async def local_product_stats(
             .gte("stat_date", start_date)
             .lte("stat_date", end_date)
         )
-        result = _apply_org(q, org_id).order("stat_date", desc=True).execute()
+        result = q.order("stat_date", desc=True).execute()
         rows = result.data or []
     except Exception as e:
         logger.error(f"Stats query failed | code={product_code} | error={e}")

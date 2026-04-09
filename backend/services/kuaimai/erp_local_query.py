@@ -13,7 +13,6 @@ from loguru import logger
 
 
 from services.kuaimai.erp_local_helpers import (
-    _apply_org,
     check_sync_health,
     query_doc_items,
 )
@@ -301,7 +300,6 @@ async def local_stock_query(
             .select("*")
             .or_(f"outer_id.eq.{product_code},sku_outer_id.eq.{product_code}")
         )
-        q = _apply_org(q, org_id)
         if stock_status:
             q = q.eq("stock_status", stock_status)
         result = q.limit(100).execute()
@@ -322,7 +320,6 @@ async def local_stock_query(
                     f"sku_outer_id.eq.{product_code}"
                 )
             )
-            kit_q = _apply_org(kit_q, org_id)
             if stock_status:
                 kit_q = kit_q.eq("stock_status", stock_status)
             kit_result = kit_q.limit(100).execute()
@@ -425,7 +422,6 @@ async def local_platform_map_query(
 
     try:
         q = db.table("erp_product_platform_map").select("*")
-        q = _apply_org(q, org_id)
         if product_code:
             q = q.eq("outer_id", product_code)
         if num_iid:
@@ -451,7 +447,7 @@ async def local_platform_map_query(
             .select("title,shipper,active_status")
             .eq("outer_id", code)
         )
-        pr = _apply_org(pr_q, org_id).limit(1).execute()
+        pr = pr_q.limit(1).execute()
         if pr.data:
             p = pr.data[0]
             st = "启用" if p.get("active_status", 1) != -1 else "已删除"

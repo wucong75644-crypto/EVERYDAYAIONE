@@ -293,7 +293,6 @@ async def sync_logistics_company(
     此 API 需要传 warehouseId，不传则可能返回空。
     遍历 erp_warehouses 的仓库 ID 逐个查询。
     """
-    from services.kuaimai.erp_local_helpers import _apply_org
     from services.kuaimai.erp_sync_utils import _API_SEM
 
     # 先尝试不传 warehouseId 拉全量
@@ -309,7 +308,6 @@ async def sync_logistics_company(
     if not items:
         try:
             q = svc.db.table("erp_warehouses").select("warehouse_id").eq("is_virtual", False)
-            q = _apply_org(q, svc.org_id)
             result = await q.execute()
             wh_ids = [r["warehouse_id"] for r in (result.data or []) if r.get("warehouse_id")]
         except Exception:

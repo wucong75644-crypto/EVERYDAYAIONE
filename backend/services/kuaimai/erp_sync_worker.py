@@ -320,9 +320,22 @@ class ErpSyncWorker:
             async with self.db.pool.connection() as conn:
                 await conn.set_autocommit(True)
                 async with conn.cursor() as cur:
+                    # advisory lock 防止多进程并发刷新
                     await cur.execute(
-                        "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kit_stock"
+                        "SELECT pg_try_advisory_lock(hashtext('mv_kit_stock')) AS locked"
                     )
+                    row = await cur.fetchone()
+                    locked = row["locked"] if isinstance(row, dict) else row[0]
+                    if not locked:
+                        return  # 另一个进程正在刷新，跳过
+                    try:
+                        await cur.execute(
+                            "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kit_stock"
+                        )
+                    finally:
+                        await cur.execute(
+                            "SELECT pg_advisory_unlock(hashtext('mv_kit_stock'))"
+                        )
             logger.debug("Kit stock materialized view refreshed")
         except Exception as e:
             logger.warning(f"Kit stock refresh failed | error={e}")
@@ -416,7 +429,6 @@ class ErpSyncWorker:
         补发单/手工单被误归档。
         """
         from datetime import timedelta
-        from services.kuaimai.erp_local_helpers import _apply_org
         cutoff = (
             datetime.now() - timedelta(days=self.settings.erp_archive_retention_days)
         ).isoformat()
@@ -427,7 +439,7 @@ class ErpSyncWorker:
         while True:
             try:
                 q = self.db.table("erp_document_items").select("*").lt("doc_modified_at", cutoff).lt("synced_at", cutoff)
-                result = await _apply_org(q, org_id).limit(batch_size).execute()
+                result = await q.limit(batch_size).execute()
                 rows = result.data or []
                 if not rows:
                     break
@@ -480,7 +492,6 @@ class ErpSyncWorker:
         try:
             from core.org_scoped_db import OrgScopedDB
             from services.kuaimai.erp_sync_service import ErpSyncService
-            from services.kuaimai.erp_local_helpers import _apply_org
             scoped_db = OrgScopedDB(self.db, org_id)
             svc = ErpSyncService(
                 scoped_db,
@@ -495,7 +506,7 @@ class ErpSyncWorker:
                 .gte("doc_created_at", since_date)
                 .not_.is_("outer_id", "null")
             )
-            result = await _apply_org(q, org_id).execute()
+            result = await q.execute()
             rows = result.data or []
             keys = svc.collect_affected_keys(rows)
             await svc.run_aggregation(keys)
@@ -526,12 +537,11 @@ class ErpSyncWorker:
         org_id: str | None = None,
     ) -> set[str]:
         """分页加载表中所有活跃记录的指定列，返回 ID 集合（按企业过滤）"""
-        from services.kuaimai.erp_local_helpers import _apply_org
         ids: set[str] = set()
         offset = 0
         while True:
             q = self.db.table(table).select(id_column).neq("active_status", -1)
-            r = await _apply_org(q, org_id).range(offset, offset + batch_size - 1).execute()
+            r = await q.range(offset, offset + batch_size - 1).execute()
             if not r.data:
                 break
             for row in r.data:
@@ -546,14 +556,13 @@ class ErpSyncWorker:
         org_id: str | None = None,
     ) -> int:
         """批量标记已删除的 SPU/SKU（active_status=-1，按企业隔离）"""
-        from services.kuaimai.erp_local_helpers import _apply_org
         count = 0
         for item_id in deleted_ids:
             try:
                 q = self.db.table(table).update({
                     "active_status": -1,
                 }).eq(id_col, item_id)
-                await _apply_org(q, org_id).execute()
+                await q.execute()
                 count += 1
             except Exception as e:
                 logger.warning(

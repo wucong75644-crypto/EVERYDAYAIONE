@@ -74,11 +74,10 @@ def _execute_query(
     org_id: str | None = None,
 ) -> list[dict]:
     """构建并执行查询（热表 + 冷表 UNION）"""
-    from services.kuaimai.erp_local_helpers import _apply_org
     cutoff = cutoff_iso(days)
 
     def _query_table(table: str) -> list[dict]:
-        q = _apply_org(db.table(table).select("*"), org_id)
+        q = db.table(table).select("*")
         if product_code:
             q = q.or_(
                 f"outer_id.eq.{product_code},"

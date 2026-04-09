@@ -19,8 +19,8 @@ from services.wecom_oauth_service import WecomOAuthService
 router = APIRouter(prefix="/auth/wecom", tags=["企微登录"])
 
 
-def _get_oauth_service(db: ScopedDB) -> WecomOAuthService:
-    """获取 OAuth 服务实例（租户隔离）"""
+def _get_oauth_service(db: Database) -> WecomOAuthService:
+    """获取 OAuth 服务实例（登录路由为公开接口，使用无需登录的 Database）"""
     return WecomOAuthService(db)
 
 

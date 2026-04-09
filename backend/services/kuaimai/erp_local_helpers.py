@@ -15,11 +15,6 @@ CN_TZ = timezone(timedelta(hours=8))
 
 
 
-def _apply_org(q, org_id: str | None = None):
-    """已废弃：OrgScopedDB 自动处理 org_id 过滤，此函数保留为空操作（向后兼容）"""
-    return q
-
-
 def check_sync_health(db, sync_types: list[str], org_id: str | None = None) -> str:
     """检查同步健康状态，返回警告文本（无异常返回空字符串）
 
@@ -32,7 +27,7 @@ def check_sync_health(db, sync_types: list[str], org_id: str | None = None) -> s
             .select("sync_type,last_run_at,error_count,is_initial_done")
             .in_("sync_type", sync_types)
         )
-        result = _apply_org(q, org_id).execute()
+        result = q.execute()
         now = datetime.now(timezone.utc)
         for row in result.data or []:
             st = row["sync_type"]
@@ -87,7 +82,6 @@ def query_doc_items(
             .or_(f"outer_id.eq.{code},sku_outer_id.eq.{code}")
             .gte("doc_created_at", cutoff)
         )
-        q = _apply_org(q, org_id)
         if extra_filters:
             for k, v in extra_filters.items():
                 q = q.eq(k, v)
