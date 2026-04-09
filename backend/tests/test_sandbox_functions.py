@@ -403,6 +403,35 @@ class TestUploadFile:
         assert "list_dir" in result  # NameError
 
 
+    @pytest.mark.asyncio
+    async def test_read_file_parquet_blocked(self, tmp_path):
+        """read_file 对 .parquet 后缀返回友好提示"""
+        with patch("core.config.get_settings") as mock_s:
+            mock_s.return_value.file_workspace_root = str(tmp_path)
+            executor = build_sandbox_executor()
+        code = "result = await read_file('staging/test.parquet')\nprint(result)"
+        result = await executor.execute(code, "测试parquet拦截")
+        assert "pd.read_parquet" in result
+
+    def test_staging_dir_injected(self, tmp_path):
+        """STAGING_DIR 变量注入到沙盒 globals"""
+        with patch("core.config.get_settings") as mock_s:
+            mock_s.return_value.file_workspace_root = str(tmp_path)
+            executor = build_sandbox_executor(conversation_id="test-conv")
+        g = executor._build_globals()
+        assert "STAGING_DIR" in g
+        assert "test-conv" in g["STAGING_DIR"]
+
+    def test_output_dir_injected(self, tmp_path):
+        """OUTPUT_DIR 变量注入到沙盒 globals"""
+        with patch("core.config.get_settings") as mock_s:
+            mock_s.return_value.file_workspace_root = str(tmp_path)
+            executor = build_sandbox_executor(conversation_id="test-conv")
+        g = executor._build_globals()
+        assert "OUTPUT_DIR" in g
+        assert "test-conv" in g["OUTPUT_DIR"]
+
+
 class TestComputeCodeHash:
     """compute_code_hash 测试"""
 
