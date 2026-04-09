@@ -46,16 +46,19 @@ _DISTILL_SYSTEM_PROMPT = """你是一个意图分析专家。
 - 只输出 JSON，不要额外解释"""
 
 
-async def distill_intent_patterns() -> None:
+async def distill_intent_patterns(org_id: str | None = None) -> None:
     """
     主入口：聚合 → 分组 → 提炼 → 写入知识库
 
-    由 BackgroundTaskWorker 每日调用。
+    由 BackgroundTaskWorker 按 org 迭代调用。
+
+    Args:
+        org_id: 企业 ID（None=散客数据）
     """
     if not is_kb_available():
         return
 
-    patterns = await _aggregate_user_patterns()
+    patterns = await _aggregate_user_patterns(org_id=org_id)
     if not patterns:
         logger.debug("Intent distillation skipped | no user_confirmed patterns")
         return
@@ -73,7 +76,7 @@ async def distill_intent_patterns() -> None:
 
         result = await _distill_for_tool(tool_name, tool_patterns)
         if result:
-            await _write_distilled_rule(tool_name, result, len(tool_patterns))
+            await _write_distilled_rule(tool_name, result, len(tool_patterns), org_id=org_id)
             distilled_count += 1
 
     logger.info(
@@ -82,27 +85,35 @@ async def distill_intent_patterns() -> None:
     )
 
 
-async def _aggregate_user_patterns() -> List[Dict[str, Any]]:
-    """查询最近 30 天的 user_confirmed 意图模式"""
+async def _aggregate_user_patterns(
+    org_id: str | None = None,
+) -> List[Dict[str, Any]]:
+    """查询最近 30 天的 user_confirmed 意图模式（按 org 隔离）"""
     try:
         conn_ctx = await get_pg_connection()
         if conn_ctx is None:
             return []
 
+        org_filter = (
+            "AND org_id = %(org_id)s" if org_id
+            else "AND org_id IS NULL"
+        )
+
         async with conn_ctx as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    """
+                    f"""
                     SELECT subcategory, title, content, metadata
                     FROM knowledge_nodes
                     WHERE source = 'user_confirmed'
                       AND node_type = 'intent_pattern'
                       AND is_deleted = FALSE
                       AND created_at > NOW() - make_interval(days => %(days)s)
+                      {org_filter}
                     ORDER BY created_at DESC
                     LIMIT 500;
                     """,
-                    {"days": _AGGREGATION_WINDOW_DAYS},
+                    {"days": _AGGREGATION_WINDOW_DAYS, "org_id": org_id},
                 )
                 rows = await cur.fetchall()
                 columns = [desc.name for desc in cur.description]
@@ -201,6 +212,7 @@ async def _write_distilled_rule(
     tool_name: str,
     result: Dict[str, Any],
     sample_count: int,
+    org_id: str | None = None,
 ) -> Optional[str]:
     """将提炼规则写入知识库"""
     # 工具名到中文映射
@@ -233,4 +245,5 @@ async def _write_distilled_rule(
         source="distilled",
         confidence=confidence,
         scope="global",
+        org_id=org_id,
     )

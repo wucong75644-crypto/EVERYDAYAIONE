@@ -57,6 +57,20 @@ class BackgroundTaskWorker:
         self._last_scoring_aggregation = None  # 上次模型评分聚合时间
         self._last_intent_distillation = None  # 上次意图提炼时间
 
+    async def _get_active_org_ids(self) -> list[str]:
+        """获取所有活跃企业的 org_id 列表（用于后台任务按 org 迭代）"""
+        try:
+            result = (
+                self.db.table("organizations")
+                .select("id")
+                .eq("status", "active")
+                .execute()
+            )
+            return [str(row["id"]) for row in (result.data or [])]
+        except Exception as e:
+            logger.warning(f"Failed to load active orgs | error={e}")
+            return []
+
     async def start(self):
         """启动后台工作器"""
         self.is_running = True
@@ -393,8 +407,17 @@ class BackgroundTaskWorker:
                 return
 
         try:
-            checker = DataConsistencyChecker(self.db)
-            results = await checker.check_and_alert()  # 🔥 改为只告警
+            from core.org_scoped_db import OrgScopedDB
+
+            # 按企业迭代 + 散客（多租户隔离）
+            all_results = {"total_checked": 0, "total_issues": 0}
+            for oid in [*await self._get_active_org_ids(), None]:
+                scoped_db = OrgScopedDB(self.db, oid)
+                checker = DataConsistencyChecker(scoped_db)
+                results = await checker.check_and_alert()
+                all_results["total_checked"] += results.get("total_checked", 0)
+                all_results["total_issues"] += results.get("total_issues", 0)
+            results = all_results
 
             self._last_consistency_check = now
 
@@ -418,7 +441,10 @@ class BackgroundTaskWorker:
         try:
             from services.model_scorer import aggregate_model_scores
 
-            await aggregate_model_scores()
+            # 按企业迭代 + 散客（多租户隔离）
+            for oid in await self._get_active_org_ids():
+                await aggregate_model_scores(org_id=oid)
+            await aggregate_model_scores(org_id=None)
         except Exception as e:
             logger.error(f"Model scoring aggregation failed | error={e}")
         finally:
@@ -435,7 +461,10 @@ class BackgroundTaskWorker:
         try:
             from services.intent_distiller import distill_intent_patterns
 
-            await distill_intent_patterns()
+            # 按企业迭代 + 散客（多租户隔离）
+            for oid in await self._get_active_org_ids():
+                await distill_intent_patterns(org_id=oid)
+            await distill_intent_patterns(org_id=None)
         except Exception as e:
             logger.error(f"Intent distillation failed | error={e}")
         finally:
