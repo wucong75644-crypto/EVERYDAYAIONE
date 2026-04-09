@@ -1,9 +1,8 @@
 """
-数据隔离工具函数
+数据隔离工具函数（已废弃）
 
-统一注入 org_id 过滤条件，确保多租户数据隔离：
-- 散客：org_id IS NULL + user_id 过滤
-- 企业成员：org_id = X 过滤
+已被 OrgScopedDB（core/org_scoped_db.py）全自动替代。
+保留此文件仅为向后兼容旧测试，新代码不应引用此模块。
 """
 
 from __future__ import annotations

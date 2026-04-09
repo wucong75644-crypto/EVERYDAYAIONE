@@ -1984,25 +1984,14 @@ class TestMultiTenantSync:
         run_aggregation(MagicMock(), q, [("P01", "2026-03-28")], pending=pending, org_id="org-B")
         assert q.qsize() == 2
 
-    def test_sync_service_apply_org_enterprise(self):
-        """_apply_org 企业模式"""
+    def test_sync_service_apply_org_noop(self):
+        """_apply_org 已废弃，返回原始 query（OrgScopedDB 接管过滤）"""
         from services.kuaimai.erp_sync_service import ErpSyncService
         svc = ErpSyncService.__new__(ErpSyncService)
         svc.org_id = "org-test"
         mock_q = MagicMock()
-        mock_q.eq.return_value = mock_q
-        svc._apply_org(mock_q)
-        mock_q.eq.assert_called_with("org_id", "org-test")
-
-    def test_sync_service_apply_org_personal(self):
-        """_apply_org 散客模式"""
-        from services.kuaimai.erp_sync_service import ErpSyncService
-        svc = ErpSyncService.__new__(ErpSyncService)
-        svc.org_id = None
-        mock_q = MagicMock()
-        mock_q.is_.return_value = mock_q
-        svc._apply_org(mock_q)
-        mock_q.is_.assert_called_with("org_id", "null")
+        result = svc._apply_org(mock_q)
+        assert result is mock_q  # 空操作，直接返回
 
     @pytest.mark.asyncio
     async def test_load_erp_orgs_empty_fallback(self):
