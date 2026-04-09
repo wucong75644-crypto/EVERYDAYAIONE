@@ -87,8 +87,17 @@ class OrgScopedDB:
             return _TenantScopedTable(self._db.table(name), self.org_id)
         return self._db.table(name)
 
+    # 不接受 p_org_id 参数的 RPC 函数（黑名单，极少数特例）
+    # atomic_refund_credits 通过 p_transaction_id 内部继承 org_id
+    _RPC_NO_ORG: frozenset[str] = frozenset({
+        "atomic_refund_credits",
+    })
+
     def rpc(self, fn_name: str, params: dict | None = None) -> Any:
-        """调用 RPC 函数（透传，不自动注入 p_org_id）"""
+        """调用 RPC 函数，默认自动注入 p_org_id（黑名单函数除外）"""
+        params = dict(params or {})
+        if fn_name not in self._RPC_NO_ORG and "p_org_id" not in params:
+            params["p_org_id"] = self.org_id
         return self._db.rpc(fn_name, params)
 
     def unscoped(self, reason: str) -> Any:
