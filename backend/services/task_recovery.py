@@ -17,6 +17,9 @@ async def recover_orphan_tasks(db) -> int:
     扫描所有 status=running/pending 的任务，将有 accumulated_content 的内容
     回写到 messages 表，并标记任务为 completed。
 
+    注意：此函数使用 raw db（无 org_id 过滤），因为启动恢复需要一次性
+    处理所有租户的中断任务。每个 task 按自身 ID 独立处理，不存在跨租户泄露。
+
     Returns:
         恢复的任务数量
     """
