@@ -109,7 +109,13 @@ class BatchCompletionService:
         # 1. 退回积分
         transaction_id = task.get("credit_transaction_id")
         if transaction_id:
-            self._refund_credits(transaction_id)
+            try:
+                self._refund_credits(transaction_id)
+            except Exception as refund_err:
+                logger.critical(
+                    f"Batch image refund failed | ext_task_id={ext_task_id} | "
+                    f"tx={transaction_id} | error={refund_err}"
+                )
 
         # 2. 标记 task failed
         self.db.table("tasks").update({
@@ -456,7 +462,11 @@ class BatchCompletionService:
             logger.error(f"Failed to confirm credits | tx={transaction_id} | error={e}")
 
     def _refund_credits(self, transaction_id: str) -> None:
-        """退回积分（原子操作：CAS检查+退回余额+更新状态在单个SQL事务内完成）"""
+        """
+        退回积分（原子操作：CAS检查+退回余额+更新状态在单个SQL事务内完成）。
+
+        失败时向上抛出异常，由调用方决策处理。
+        """
         try:
             result = self.db.rpc(
                 'atomic_refund_credits',
@@ -473,4 +483,5 @@ class BatchCompletionService:
                 reason = data.get('reason', 'unknown') if data else 'no_response'
                 logger.warning(f"Refund skipped | tx={transaction_id} | reason={reason}")
         except Exception as e:
-            logger.error(f"Failed to refund credits | tx={transaction_id} | error={e}")
+            logger.critical(f"CREDIT_LOSS_RISK: refund failed | tx={transaction_id} | error={e}")
+            raise

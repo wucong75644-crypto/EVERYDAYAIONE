@@ -173,14 +173,14 @@ class TestStreamGenerate:
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
     @patch("services.handlers.chat_handler.ws_manager")
-    async def test_adapter_exception_calls_handle_failure(self, mock_ws, mock_factory):
-        """adapter 异常→_handle_stream_failure"""
+    async def test_adapter_retryable_exception_calls_handle_failure(self, mock_ws, mock_factory):
+        """可重试错误（如 ConnectionError）→ _handle_stream_failure"""
         handler = _make_handler()
         handler._build_llm_messages = AsyncMock(return_value=[])
         handler._handle_stream_failure = AsyncMock()
 
         async def failing_stream(**kwargs):
-            raise RuntimeError("connection reset")
+            raise ConnectionError("connection reset")
             yield  # noqa: unreachable
 
         mock_adapter = MagicMock()
@@ -199,6 +199,39 @@ class TestStreamGenerate:
         )
 
         handler._handle_stream_failure.assert_awaited_once()
+        mock_adapter.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("services.adapters.factory.create_chat_adapter")
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_adapter_non_retryable_exception_skips_retry(self, mock_ws, mock_factory):
+        """不可重试错误（如 RuntimeError）→ 直接 on_error，不走 _handle_stream_failure"""
+        handler = _make_handler()
+        handler._build_llm_messages = AsyncMock(return_value=[])
+        handler._handle_stream_failure = AsyncMock()
+        handler.on_error = AsyncMock(return_value=None)
+
+        async def failing_stream(**kwargs):
+            raise RuntimeError("unexpected internal error")
+            yield  # noqa: unreachable
+
+        mock_adapter = MagicMock()
+        mock_adapter.stream_chat = failing_stream
+        mock_adapter.close = AsyncMock()
+        mock_factory.return_value = mock_adapter
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await handler._stream_generate(
+            task_id="t1",
+            message_id="m1",
+            conversation_id="c1",
+            user_id="u1",
+            content=[TextPart(text="hi")],
+            model_id="test-model",
+        )
+
+        handler._handle_stream_failure.assert_not_awaited()
+        handler.on_error.assert_awaited_once()
         mock_adapter.close.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -587,3 +620,118 @@ class TestUserLocationPassthrough:
         )
 
         assert captured_kwargs.get("user_location") is None
+
+
+# -- TestBoundary2PersistPhase --
+
+
+class TestBoundary2PersistPhase:
+    """Boundary 2: LLM 成功后持久化失败的处理"""
+
+    @pytest.mark.asyncio
+    @patch("services.adapters.factory.create_chat_adapter")
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_on_complete_failure_triggers_on_error(self, mock_ws, mock_factory):
+        """on_complete 抛异常 → 调用 on_error 兜底"""
+        handler = _make_handler()
+        handler._build_llm_messages = AsyncMock(return_value=[])
+        handler.on_complete = AsyncMock(side_effect=Exception("DB upsert failed"))
+        handler.on_error = AsyncMock(return_value=None)
+        handler._dispatch_post_tasks = MagicMock()
+
+        async def success_stream(**kwargs):
+            yield StreamChunk(content="hello", prompt_tokens=10, completion_tokens=5)
+
+        mock_adapter = MagicMock()
+        mock_adapter.stream_chat = success_stream
+        mock_adapter.close = AsyncMock()
+        mock_adapter.estimate_cost_unified.return_value = CostEstimate(
+            model="test", estimated_cost_usd=Decimal("0"), estimated_credits=1,
+        )
+        mock_factory.return_value = mock_adapter
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await handler._stream_generate(
+            task_id="t1",
+            message_id="m1",
+            conversation_id="c1",
+            user_id="u1",
+            content=[TextPart(text="hi")],
+            model_id="test-model",
+        )
+
+        # on_complete 被调用且失败
+        handler.on_complete.assert_awaited_once()
+        # on_error 兜底被调用
+        handler.on_error.assert_awaited_once()
+        args = handler.on_error.call_args
+        assert args.kwargs["error_code"] == "INTERNAL_ERROR"
+
+    @pytest.mark.asyncio
+    @patch("services.adapters.factory.create_chat_adapter")
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_on_complete_failure_does_not_trigger_retry(self, mock_ws, mock_factory):
+        """on_complete 抛异常 → 不走 _handle_stream_failure（不换模型重试）"""
+        handler = _make_handler()
+        handler._build_llm_messages = AsyncMock(return_value=[])
+        handler.on_complete = AsyncMock(side_effect=Exception("DB error"))
+        handler.on_error = AsyncMock(return_value=None)
+        handler._handle_stream_failure = AsyncMock()
+        handler._dispatch_post_tasks = MagicMock()
+
+        async def success_stream(**kwargs):
+            yield StreamChunk(content="ok", prompt_tokens=5, completion_tokens=3)
+
+        mock_adapter = MagicMock()
+        mock_adapter.stream_chat = success_stream
+        mock_adapter.close = AsyncMock()
+        mock_adapter.estimate_cost_unified.return_value = CostEstimate(
+            model="test", estimated_cost_usd=Decimal("0"), estimated_credits=0,
+        )
+        mock_factory.return_value = mock_adapter
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await handler._stream_generate(
+            task_id="t1",
+            message_id="m1",
+            conversation_id="c1",
+            user_id="u1",
+            content=[TextPart(text="hi")],
+            model_id="test-model",
+        )
+
+        # 绝对不走重试路径
+        handler._handle_stream_failure.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("services.adapters.factory.create_chat_adapter")
+    @patch("services.handlers.chat_handler.ws_manager")
+    async def test_on_error_also_fails_no_crash(self, mock_ws, mock_factory):
+        """on_complete 和 on_error 都失败 → 不崩溃"""
+        handler = _make_handler()
+        handler._build_llm_messages = AsyncMock(return_value=[])
+        handler.on_complete = AsyncMock(side_effect=Exception("persist fail"))
+        handler.on_error = AsyncMock(side_effect=Exception("error handler also fail"))
+        handler._dispatch_post_tasks = MagicMock()
+
+        async def success_stream(**kwargs):
+            yield StreamChunk(content="hi", prompt_tokens=1, completion_tokens=1)
+
+        mock_adapter = MagicMock()
+        mock_adapter.stream_chat = success_stream
+        mock_adapter.close = AsyncMock()
+        mock_adapter.estimate_cost_unified.return_value = CostEstimate(
+            model="test", estimated_cost_usd=Decimal("0"), estimated_credits=0,
+        )
+        mock_factory.return_value = mock_adapter
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        # 不应抛异常
+        await handler._stream_generate(
+            task_id="t1",
+            message_id="m1",
+            conversation_id="c1",
+            user_id="u1",
+            content=[TextPart(text="hi")],
+            model_id="test-model",
+        )

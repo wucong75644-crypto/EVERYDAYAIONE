@@ -162,6 +162,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         accumulated_thinking = ""
         final_usage: Dict[str, Any] = {"prompt_tokens": 0, "completion_tokens": 0}
         chunk_count = 0
+        _llm_succeeded = False
+        _completion_args: Optional[Dict[str, Any]] = None
 
         try:
             # 1. 推送开始消息
@@ -396,7 +398,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 # 达到 MAX_TOOL_TURNS 上限
                 logger.warning(f"Max tool turns reached | task={task_id} | turns={MAX_TOOL_TURNS}")
 
-            # 6. 计算积分 → 提取媒体 URL → 合并文件 → 完成回调
+            # 6. 计算积分 → 提取媒体 URL → 合并文件（纯内存操作）
             credits_consumed = self._calculate_credits(final_usage)
             from services.handlers.media_extractor import extract_media_parts
             result_parts = extract_media_parts(accumulated_text)
@@ -404,42 +406,53 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             if self._pending_file_parts:
                 result_parts.extend(self._pending_file_parts)
                 self._pending_file_parts = []
-            await self.on_complete(
-                task_id=task_id,
-                result=result_parts,
-                credits_consumed=credits_consumed,
-                thinking_content=accumulated_thinking or None,
-            )
 
-            # 7. 熔断器：记录成功
-            self._record_breaker_result(model_id, success=True)
-
-            # 8. Fire-and-forget 后置任务
-            elapsed_ms = int((_time.monotonic() - _start_time) * 1000)
-            self._dispatch_post_tasks(
-                user_id=user_id, conversation_id=conversation_id,
-                text_content=text_content, accumulated_text=accumulated_text,
-                model_id=model_id, final_usage=final_usage,
-                elapsed_ms=elapsed_ms, retry_context=_retry_context,
-            )
+            # 标记 LLM 阶段成功，持久化在 try 外执行
+            _llm_succeeded = True
+            _completion_args = {
+                "task_id": task_id,
+                "result": result_parts,
+                "credits_consumed": credits_consumed,
+                "thinking_content": accumulated_thinking or None,
+            }
 
         except Exception as e:
             logger.error(
                 f"Chat stream error | task_id={task_id} | "
                 f"model={model_id} | error={str(e)}"
             )
-            self._record_breaker_result(model_id, success=False, error=e)
-            elapsed_ms = int((_time.monotonic() - _start_time) * 1000)
-            await self._handle_stream_failure(
-                error=e, task_id=task_id, message_id=message_id,
-                conversation_id=conversation_id, user_id=user_id,
-                content=content, model_id=model_id,
-                thinking_effort=thinking_effort, thinking_mode=thinking_mode,
-                router_system_prompt=router_system_prompt,
-                router_search_context=router_search_context,
-                _params=_params, _retry_context=_retry_context,
-                elapsed_ms=elapsed_ms,
-            )
+            from core.error_classifier import classify_error
+            classified = classify_error(e)
+
+            # 只有模型相关错误才记入熔断器
+            if classified.should_record_breaker:
+                self._record_breaker_result(model_id, success=False, error=e)
+
+            # 只有可重试错误才尝试换模型
+            if classified.is_retryable:
+                elapsed_ms = int((_time.monotonic() - _start_time) * 1000)
+                await self._handle_stream_failure(
+                    error=e, task_id=task_id, message_id=message_id,
+                    conversation_id=conversation_id, user_id=user_id,
+                    content=content, model_id=model_id,
+                    thinking_effort=thinking_effort, thinking_mode=thinking_mode,
+                    router_system_prompt=router_system_prompt,
+                    router_search_context=router_search_context,
+                    _params=_params, _retry_context=_retry_context,
+                    elapsed_ms=elapsed_ms,
+                )
+            else:
+                # 非可重试错误（DB/业务/未知）→ 直接报错，不触发换模型
+                logger.warning(
+                    f"Non-retryable error, skipping model retry | "
+                    f"task_id={task_id} | category={classified.category.value} | "
+                    f"error_code={classified.error_code}"
+                )
+                await self.on_error(
+                    task_id=task_id,
+                    error_code=classified.error_code,
+                    error_message=str(e),
+                )
 
         finally:
             if self._adapter:
@@ -447,6 +460,38 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             # 清理截断暂存的大结果（请求级生命周期）
             from services.agent.tool_result_envelope import clear_persisted
             clear_persisted()
+
+        # ── Boundary 2: 持久化（LLM 成功后执行，错误不触发重试）──
+        if _llm_succeeded and _completion_args:
+            try:
+                await self.on_complete(**_completion_args)
+
+                # 熔断器：记录成功
+                self._record_breaker_result(model_id, success=True)
+
+                # Fire-and-forget 后置任务
+                elapsed_ms = int((_time.monotonic() - _start_time) * 1000)
+                self._dispatch_post_tasks(
+                    user_id=user_id, conversation_id=conversation_id,
+                    text_content=text_content, accumulated_text=accumulated_text,
+                    model_id=model_id, final_usage=final_usage,
+                    elapsed_ms=elapsed_ms, retry_context=_retry_context,
+                )
+            except Exception as persist_err:
+                logger.critical(
+                    f"Persist phase failed after LLM success | "
+                    f"task_id={task_id} | error={persist_err}"
+                )
+                try:
+                    await self.on_error(
+                        task_id=task_id,
+                        error_code="INTERNAL_ERROR",
+                        error_message=f"保存结果失败: {persist_err}",
+                    )
+                except Exception as err_err:
+                    logger.critical(
+                        f"on_error also failed | task_id={task_id} | error={err_err}"
+                    )
 
     def _convert_content_parts_to_dicts(self, result):
         """转换 ContentPart 为字典（支持 Text/Image/Video/File）"""

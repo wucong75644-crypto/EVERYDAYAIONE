@@ -452,5 +452,101 @@ class TestBuildTaskDataMultiImage:
         assert task_data.get("batch_id") is None
 
 
+# ============ 错误处理改造测试 ============
+
+
+class TestImageHandlerErrorHandling:
+    """_save_task 和 _refund_credits 失败场景"""
+
+    def _make_handler(self):
+        db = MagicMock()
+        handler = ImageHandler(db=db)
+        return handler, db
+
+    @pytest.mark.asyncio
+    async def test_save_task_failure_does_not_crash(self):
+        """主路径 _save_task 失败 → 不崩溃，返回 external_task_id"""
+        handler, db = self._make_handler()
+
+        # mock adapter.generate 成功
+        mock_adapter = MagicMock()
+        mock_result = MagicMock()
+        mock_result.task_id = "ext_123"
+        mock_adapter.generate = AsyncMock(return_value=mock_result)
+        mock_adapter.close = AsyncMock()
+        mock_adapter.provider = MagicMock(value="kie")
+
+        # _lock_credits 成功
+        handler._lock_credits = MagicMock(return_value="tx_1")
+
+        # _save_task 失败
+        handler._save_task = MagicMock(side_effect=Exception("DB down"))
+
+        # _attempt_image_sync_retry 不应被调用
+        handler._attempt_image_sync_retry = AsyncMock()
+
+        metadata = TaskMetadata(client_task_id="client_1")
+
+        result = await handler._create_single_task(
+            adapter=mock_adapter,
+            index=0,
+            batch_id="batch_1",
+            generate_kwargs={"prompt": "test"},
+            message_id="msg_1",
+            conversation_id="conv_1",
+            user_id="user_1",
+            model_id="test-model",
+            per_image_credits=5,
+            params={},
+            prompt="test",
+            metadata=metadata,
+        )
+
+        # 返回 task_id（API 已成功）
+        assert result == "ext_123"
+        # _save_task 被调用（虽然失败了）
+        handler._save_task.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_refund_failure_in_api_error_path_no_crash(self):
+        """API 失败 + refund 也失败 → 不崩溃"""
+        handler, db = self._make_handler()
+
+        # mock adapter.generate 失败
+        mock_adapter = MagicMock()
+        mock_adapter.generate = AsyncMock(side_effect=Exception("API timeout"))
+        mock_adapter.close = AsyncMock()
+        mock_adapter.provider = MagicMock(value="kie")
+
+        # _lock_credits 成功
+        handler._lock_credits = MagicMock(return_value="tx_1")
+
+        # _refund_credits 也失败
+        handler._refund_credits = MagicMock(side_effect=Exception("refund DB down"))
+
+        # 不触发 smart mode 重试
+        handler._attempt_image_sync_retry = AsyncMock(return_value=None)
+
+        metadata = TaskMetadata(client_task_id="client_1")
+
+        # 不崩溃，返回 None
+        result = await handler._create_single_task(
+            adapter=mock_adapter,
+            index=0,
+            batch_id="batch_1",
+            generate_kwargs={"prompt": "test"},
+            message_id="msg_1",
+            conversation_id="conv_1",
+            user_id="user_1",
+            model_id="test-model",
+            per_image_credits=5,
+            params={},
+            prompt="test",
+            metadata=metadata,
+        )
+
+        assert result is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

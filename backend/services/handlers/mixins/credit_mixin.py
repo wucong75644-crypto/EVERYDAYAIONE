@@ -146,7 +146,11 @@ class CreditMixin:
         logger.info(f"Credits confirmed | transaction_id={transaction_id}")
 
     def _refund_credits(self, transaction_id: str) -> None:
-        """退回积分（原子操作：CAS检查+退回余额+更新状态在单个SQL事务内完成）"""
+        """
+        退回积分（原子操作：CAS检查+退回余额+更新状态在单个SQL事务内完成）。
+
+        失败时向上抛出异常，由调用方决策处理。
+        """
         try:
             result = self.db.rpc(
                 'atomic_refund_credits',
@@ -163,7 +167,8 @@ class CreditMixin:
                 reason = data.get('reason', 'unknown') if data else 'no_response'
                 logger.warning(f"Refund skipped | tx={transaction_id} | reason={reason}")
         except Exception as e:
-            logger.error(f"Failed to refund credits | tx={transaction_id} | error={e}")
+            logger.critical(f"CREDIT_LOSS_RISK: refund failed | tx={transaction_id} | error={e}")
+            raise
 
     def _deduct_directly(
         self,
@@ -214,6 +219,9 @@ class CreditMixin:
         except Exception as e:
             if "InsufficientCreditsError" in str(type(e)):
                 raise
-            logger.error(f"Credit deduction failed | user_id={user_id} | error={e}")
-            # 扣除失败时不阻塞任务完成，只记录日志
-            return -1
+            logger.critical(
+                f"CREDIT_DEDUCT_FAILED: user may not be charged | "
+                f"user_id={user_id} | amount={amount} | error={e}"
+            )
+            # 扣除失败时不阻塞任务完成，返回 0（避免写入 -1 脏数据）
+            return 0
