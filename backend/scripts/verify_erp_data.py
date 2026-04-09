@@ -1,6 +1,9 @@
 """
 ERP 数据校验脚本 — 逐表对比 API 与本地数据库
 
+⚠️ 多租户警告：此脚本全局 COUNT 所有 ERP 表，不区分企业。
+多企业环境下统计结果是所有企业的合计，不反映单个企业的数据准确性。
+
 用法：
     cd /var/www/everydayai/backend
     source venv/bin/activate

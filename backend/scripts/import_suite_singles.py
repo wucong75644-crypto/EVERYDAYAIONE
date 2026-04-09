@@ -1,6 +1,9 @@
 """
 从快麦导出的套件商品明细 CSV 导入 suit_singles 到 erp_products
 
+⚠️ 多租户警告：此脚本操作 erp_products（租户表），
+UPDATE 无 org_id 过滤，多企业环境下可能影响其他企业同编码商品。
+
 用途：API 的 singleList 字段暂时拿不到，用导出数据补齐
 格式对齐 API 的 singleList，API 修复后会自然覆盖
 
