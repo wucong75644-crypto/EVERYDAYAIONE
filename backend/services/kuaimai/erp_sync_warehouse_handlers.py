@@ -21,7 +21,6 @@ from services.kuaimai.erp_sync_utils import (
     _API_SEM,
     _DetailResult,
     _fetch_details,
-    _fmt_d,
     _fmt_dt,
     _pick,
     _safe_ts,

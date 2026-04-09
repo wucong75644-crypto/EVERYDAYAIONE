@@ -24,7 +24,6 @@ from loguru import logger
 from services.kuaimai.erp_sync_utils import (
     _API_SEM,
     _batch_upsert,
-    _fmt_d,
     _pick,
     _safe_ts,
 )
