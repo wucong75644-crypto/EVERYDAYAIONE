@@ -202,7 +202,7 @@ async def local_db_export(
         return _generate_column_doc(doc_type)
 
     # Step 2: 有 columns → 执行导出
-    from services.kuaimai.erp_local_helpers import _apply_org, check_sync_health
+    from services.kuaimai.erp_local_helpers import check_sync_health
 
     select_cols = _parse_columns(columns)
     max_rows = min(max_rows or DEFAULT_MAX_ROWS, MAX_ROWS_LIMIT)
@@ -244,7 +244,6 @@ async def local_db_export(
                 .eq("doc_type", doc_type)
                 .gte(time_col, cutoff)
             )
-            q = _apply_org(q, org_id)
 
             if shop_pattern:
                 q = q.ilike("shop_name", shop_pattern)

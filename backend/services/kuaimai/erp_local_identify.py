@@ -12,7 +12,7 @@ from __future__ import annotations
 from loguru import logger
 
 
-from services.kuaimai.erp_local_helpers import _apply_org, check_sync_health
+from services.kuaimai.erp_local_helpers import check_sync_health
 
 _TYPE_MAP = {0: "普通", 1: "SKU套件", 2: "纯套件", 3: "包材"}
 
@@ -39,9 +39,7 @@ async def _identify_by_code(db, code: str, org_id: str | None = None) -> str:
     """编码模式：主编码 → SKU编码 → 条码 → 未识别"""
     # 1. 主编码匹配
     try:
-        result = _apply_org(
-            db.table("erp_products").select("*").eq("outer_id", code), org_id
-        ).limit(1).execute()
+        result = db.table("erp_products").select("*").eq("outer_id", code).limit(1).execute()
         if result.data:
             return _format_product(db, code, result.data[0], org_id=org_id)
     except Exception as e:
@@ -49,9 +47,7 @@ async def _identify_by_code(db, code: str, org_id: str | None = None) -> str:
 
     # 2. SKU编码匹配
     try:
-        result = _apply_org(
-            db.table("erp_product_skus").select("*").eq("sku_outer_id", code), org_id
-        ).limit(1).execute()
+        result = db.table("erp_product_skus").select("*").eq("sku_outer_id", code).limit(1).execute()
         if result.data:
             return _format_sku(db, code, result.data[0])
     except Exception as e:
@@ -59,9 +55,7 @@ async def _identify_by_code(db, code: str, org_id: str | None = None) -> str:
 
     # 3. 条码匹配
     try:
-        result = _apply_org(
-            db.table("erp_products").select("*").eq("barcode", code), org_id
-        ).limit(1).execute()
+        result = db.table("erp_products").select("*").eq("barcode", code).limit(1).execute()
         if result.data:
             p = result.data[0]
             return (
@@ -70,9 +64,7 @@ async def _identify_by_code(db, code: str, org_id: str | None = None) -> str:
                 f"对应商品: outer_id={p['outer_id']} | 名称: {p.get('title', '')}"
             )
         # SKU 条码
-        result = _apply_org(
-            db.table("erp_product_skus").select("*").eq("barcode", code), org_id
-        ).limit(1).execute()
+        result = db.table("erp_product_skus").select("*").eq("barcode", code).limit(1).execute()
         if result.data:
             s = result.data[0]
             return (
@@ -103,7 +95,7 @@ async def _search_by_name(db, name: str, org_id: str | None = None) -> str:
         q = db.table("erp_products").select(
             "outer_id,title,shipper,pic_url,active_status"
         ).ilike("title", f"%{name}%")
-        result = _apply_org(q, org_id).limit(20).execute()
+        result = q.limit(20).execute()
         rows = result.data or []
     except Exception as e:
         logger.error(f"Name search failed | name={name} | error={e}")
@@ -133,7 +125,7 @@ async def _search_by_spec(db, spec: str, org_id: str | None = None) -> str:
         q = db.table("erp_product_skus").select(
             "sku_outer_id,outer_id,properties_name,pic_url"
         ).ilike("properties_name", f"%{spec}%")
-        result = _apply_org(q, org_id).limit(20).execute()
+        result = q.limit(20).execute()
         rows = result.data or []
     except Exception as e:
         logger.error(f"Spec search failed | spec={spec} | error={e}")
@@ -148,10 +140,7 @@ async def _search_by_spec(db, spec: str, org_id: str | None = None) -> str:
     title_map: dict[str, str] = {}
     title_query_failed = False
     try:
-        pr = _apply_org(
-            db.table("erp_products").select("outer_id,title").in_("outer_id", outer_ids),
-            org_id,
-        ).execute()
+        pr = db.table("erp_products").select("outer_id,title").in_("outer_id", outer_ids).execute()
         title_map = {r["outer_id"]: r.get("title", "") for r in (pr.data or [])}
     except Exception as e:
         logger.warning(f"Title enrichment failed | spec={spec} | {e}")
@@ -198,10 +187,7 @@ async def _api_fallback_identify(db, code: str, org_id: str | None = None) -> st
         # 写入本地 erp_products（复用 sync handler 字段映射）
         _upsert_product_from_api(db, data, org_id=org_id)
         # 重新走本地查询
-        result = _apply_org(
-            db.table("erp_products").select("*").eq("outer_id", data["outerId"]),
-            org_id,
-        ).limit(1).execute()
+        result = db.table("erp_products").select("*").eq("outer_id", data["outerId"]).limit(1).execute()
         if result.data:
             return _format_product(db, code, result.data[0], org_id=org_id)
         return None
@@ -316,12 +302,11 @@ def _format_product(db, code: str, p: dict, org_id: str | None = None) -> str:
 
     # SKU 列表
     try:
-        result = _apply_org(
+        result = (
             db.table("erp_product_skus")
             .select("sku_outer_id,properties_name")
-            .eq("outer_id", code),
-            org_id,
-        ).limit(10).execute()
+            .eq("outer_id", code).limit(10).execute()
+        )
         skus = result.data or []
         if skus:
             parts = [
@@ -369,12 +354,11 @@ def _format_sku(db, code: str, s: dict) -> str:
 def _get_sku_count(db, outer_id: str, org_id: str | None = None) -> int | None:
     """获取 SKU 数量，DB 异常返回 None"""
     try:
-        result = _apply_org(
+        result = (
             db.table("erp_product_skus")
             .select("sku_outer_id", count="exact")
-            .eq("outer_id", outer_id),
-            org_id,
-        ).execute()
+            .eq("outer_id", outer_id).execute()
+        )
         return result.count or 0
     except Exception as e:
         logger.warning(f"SKU count query failed | outer_id={outer_id} | {e}")
@@ -384,12 +368,11 @@ def _get_sku_count(db, outer_id: str, org_id: str | None = None) -> int | None:
 def _get_doc_summary(db, code: str, org_id: str | None = None) -> str:
     """获取关联单据统计摘要"""
     try:
-        result = _apply_org(
+        result = (
             db.table("erp_document_items")
             .select("doc_type,doc_id")
-            .or_(f"outer_id.eq.{code},sku_outer_id.eq.{code}"),
-            org_id,
-        ).limit(1000).execute()
+            .or_(f"outer_id.eq.{code},sku_outer_id.eq.{code}").limit(1000).execute()
+        )
         rows = result.data or []
         if not rows:
             return ""

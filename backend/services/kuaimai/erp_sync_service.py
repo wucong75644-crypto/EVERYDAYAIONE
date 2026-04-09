@@ -286,15 +286,12 @@ class ErpSyncService:
 
     # ── 状态管理 ──────────────────────────────────────────
 
-    def _apply_org(self, q):
-        """已废弃：OrgScopedDB 自动处理 org_id 过滤，此方法保留为空操作"""
-        return q
 
     async def _get_sync_state(self, sync_type: str) -> dict[str, Any] | None:
         """读取同步状态"""
         try:
             q = self.db.table("erp_sync_state").select("*").eq("sync_type", sync_type)
-            result = await self._apply_org(q).execute()
+            result = await q.execute()
             return result.data[0] if result.data else None
         except Exception as e:
             logger.error(f"Failed to read sync state | type={sync_type} | error={e}")
@@ -316,7 +313,7 @@ class ErpSyncService:
         """同步成功后更新状态"""
         try:
             q = self.db.table("erp_sync_state").select("total_synced").eq("sync_type", sync_type)
-            current = await self._apply_org(q).execute()
+            current = await q.execute()
             new_total = (current.data[0]["total_synced"] or 0) + synced_count
             uq = self.db.table("erp_sync_state").update({
                 "status": "idle",
@@ -325,7 +322,7 @@ class ErpSyncService:
                 "last_error": None,
                 "total_synced": new_total,
             }).eq("sync_type", sync_type)
-            await self._apply_org(uq).execute()
+            await uq.execute()
         except Exception as e:
             logger.error(f"Failed to update sync state | type={sync_type} | error={e}")
 
@@ -342,7 +339,7 @@ class ErpSyncService:
                 "error_count": error_count,
                 "last_error": error_msg[:500],
             }).eq("sync_type", sync_type)
-            await self._apply_org(uq).execute()
+            await uq.execute()
 
             if error_count >= self.ALERT_ERROR_THRESHOLD:
                 logger.error(
@@ -358,7 +355,7 @@ class ErpSyncService:
             uq = self.db.table("erp_sync_state").update({
                 "last_sync_time": time_point.isoformat(),
             }).eq("sync_type", sync_type)
-            await self._apply_org(uq).execute()
+            await uq.execute()
         except Exception as e:
             logger.error(f"Failed to update progress | type={sync_type} | error={e}")
 
@@ -373,7 +370,7 @@ class ErpSyncService:
                 "last_error": None,
                 "total_synced": total_synced,
             }).eq("sync_type", sync_type)
-            await self._apply_org(uq).execute()
+            await uq.execute()
         except Exception as e:
             logger.error(f"Failed to mark initial done | type={sync_type} | error={e}")
 

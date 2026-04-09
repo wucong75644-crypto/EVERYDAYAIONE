@@ -669,6 +669,8 @@ class TestRefreshKitStock:
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
         mock_cursor = AsyncMock()
+        # advisory lock 返回 True（获取成功）
+        mock_cursor.fetchone = AsyncMock(return_value={"locked": True})
 
         mock_conn = AsyncMock()
         mock_conn.set_autocommit = AsyncMock()
@@ -689,9 +691,45 @@ class TestRefreshKitStock:
         worker = ErpSyncWorker(db)
         await worker._refresh_kit_stock()
 
-        mock_cursor.execute.assert_called_once_with(
-            "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kit_stock"
-        )
+        calls = [c.args[0] for c in mock_cursor.execute.call_args_list]
+        assert any("pg_try_advisory_lock" in c for c in calls)
+        assert any("REFRESH MATERIALIZED VIEW" in c for c in calls)
+        assert any("pg_advisory_unlock" in c for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_refresh_skip_when_locked(self):
+        """另一个进程持有锁时跳过刷新"""
+        from contextlib import asynccontextmanager
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        mock_cursor = AsyncMock()
+        # advisory lock 返回 False（已被其他进程持有）
+        mock_cursor.fetchone = AsyncMock(return_value={"locked": False})
+
+        mock_conn = AsyncMock()
+        mock_conn.set_autocommit = AsyncMock()
+
+        @asynccontextmanager
+        async def _mock_cursor():
+            yield mock_cursor
+
+        mock_conn.cursor = _mock_cursor
+
+        @asynccontextmanager
+        async def _mock_connection():
+            yield mock_conn
+
+        db = MagicMock()
+        db.pool.connection = _mock_connection
+
+        worker = ErpSyncWorker(db)
+        await worker._refresh_kit_stock()
+
+        calls = [c.args[0] for c in mock_cursor.execute.call_args_list]
+        assert any("pg_try_advisory_lock" in c for c in calls)
+        # 不应执行 REFRESH 和 unlock
+        assert not any("REFRESH" in c for c in calls)
+        assert not any("pg_advisory_unlock" in c for c in calls)
 
     @pytest.mark.asyncio
     async def test_refresh_view_not_exist(self):

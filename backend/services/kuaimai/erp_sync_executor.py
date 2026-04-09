@@ -91,7 +91,6 @@ class ErpSyncExecutor:
         synced_at 保底：防止 modified 为 ERP 零值（如 2000-01-01）的
         补发单/手工单被误归档。
         """
-        from services.kuaimai.erp_local_helpers import _apply_org
 
         cutoff = (
             datetime.now() - timedelta(days=self.settings.erp_archive_retention_days)
@@ -108,7 +107,7 @@ class ErpSyncExecutor:
                     .lt("doc_modified_at", cutoff)
                     .lt("synced_at", cutoff)
                 )
-                result = await _apply_org(q, org_id).limit(batch_size).execute()
+                result = await q.limit(batch_size).execute()
                 rows = result.data or []
                 if not rows:
                     break
@@ -153,7 +152,6 @@ class ErpSyncExecutor:
         try:
             from core.org_scoped_db import OrgScopedDB
             from services.kuaimai.erp_sync_service import ErpSyncService
-            from services.kuaimai.erp_local_helpers import _apply_org
 
             scoped_db = OrgScopedDB(self.db, org_id)
             svc = ErpSyncService(
@@ -169,7 +167,7 @@ class ErpSyncExecutor:
                 .gte("doc_created_at", since_date)
                 .not_.is_("outer_id", "null")
             )
-            result = await _apply_org(q, org_id).execute()
+            result = await q.execute()
             rows = result.data or []
             keys = svc.collect_affected_keys(rows)
             await svc.run_aggregation(keys)
@@ -254,13 +252,12 @@ class ErpSyncExecutor:
         org_id: str | None = None,
     ) -> set[str]:
         """分页加载表中所有活跃记录的指定列"""
-        from services.kuaimai.erp_local_helpers import _apply_org
 
         ids: set[str] = set()
         offset = 0
         while True:
             q = self.db.table(table).select(id_column).neq("active_status", -1)
-            r = await _apply_org(q, org_id).range(
+            r = await q.range(
                 offset, offset + batch_size - 1,
             ).execute()
             if not r.data:
@@ -277,7 +274,6 @@ class ErpSyncExecutor:
         org_id: str | None = None,
     ) -> int:
         """批量标记已删除的 SPU/SKU"""
-        from services.kuaimai.erp_local_helpers import _apply_org
 
         count = 0
         for item_id in deleted_ids:
@@ -285,7 +281,7 @@ class ErpSyncExecutor:
                 q = self.db.table(table).update({
                     "active_status": -1,
                 }).eq(id_col, item_id)
-                await _apply_org(q, org_id).execute()
+                await q.execute()
                 count += 1
             except Exception as e:
                 logger.warning(

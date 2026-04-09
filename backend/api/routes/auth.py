@@ -6,7 +6,7 @@
 
 from fastapi import APIRouter, Depends
 
-from api.deps import CurrentUser, Database, ScopedDB
+from api.deps import CurrentUser, Database
 from schemas.auth import (
     LoginResponse,
     OrgLoginRequest,
@@ -24,8 +24,8 @@ from services.auth_service import AuthService
 router = APIRouter(prefix="/auth", tags=["认证"])
 
 
-def get_auth_service(db: ScopedDB) -> AuthService:
-    """获取认证服务实例（租户隔离）"""
+def get_auth_service(db: Database) -> AuthService:
+    """获取认证服务实例（认证路由为公开接口，使用无需登录的 Database）"""
     return AuthService(db)
 
 
