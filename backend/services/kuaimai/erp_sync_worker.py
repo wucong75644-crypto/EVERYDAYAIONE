@@ -636,7 +636,7 @@ class ErpSyncWorker:
         try:
             result = await self.db.rpc(
                 "erp_try_acquire_sync_lock",
-                {"p_lock_ttl_seconds": self.settings.erp_sync_lock_ttl},
+                {"p_lock_ttl_seconds": self.settings.erp_sync_lock_ttl, "p_org_id": None},
             ).execute()
             acquired = bool(result.data)
             if acquired:
