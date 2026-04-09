@@ -444,10 +444,6 @@ async def sync_order(
     total_count = 0
     seen_sids: set[str] = set()  # 跨维度去重
 
-    # 已发货/已完成的 sids（搭便车 express 只查这些）
-    shipped_sids: set[str] = set()
-    _SHIPPED_STATUSES = {"SELLER_SEND_GOODS", "FINISHED"}
-
     for time_type in _ORDER_TIME_TYPES:
         async for page_docs in svc.fetch_pages_streaming(
             "erp.trade.outstock.simple.query",
@@ -463,8 +459,6 @@ async def sync_order(
                 if sid in seen_sids:
                     continue  # 跨维度去重，同一订单只处理一次
                 seen_sids.add(sid)
-                if doc.get("sysStatus") in _SHIPPED_STATUSES:
-                    shipped_sids.add(sid)
 
                 rows = _build_order_rows(doc, svc)
                 all_rows.extend(rows)
@@ -482,16 +476,12 @@ async def sync_order(
 
     await svc.run_aggregation(list(affected_key_set))
 
-    # 搭便车：订单操作日志（全部 sids）+ 包裹信息（仅已发货）
+    # 搭便车：订单操作日志
+    # express 搭便车已禁用（多包裹极少，单包裹快递信息订单同步已存）
     if seen_sids:
         try:
-            from services.kuaimai.erp_sync_piggyback_handlers import (
-                piggyback_express,
-                piggyback_order_log,
-            )
+            from services.kuaimai.erp_sync_piggyback_handlers import piggyback_order_log
             await piggyback_order_log(svc, list(seen_sids))
-            if shipped_sids:
-                await piggyback_express(svc, list(shipped_sids))
         except Exception as e:
             logger.warning(f"Order piggyback failed (non-fatal) | error={e}")
 
