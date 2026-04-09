@@ -38,6 +38,10 @@ class GraphService:
             return []
 
         type_filter = ""
+        edge_org_filter = (
+            "AND (e.org_id = %(org_id)s OR e.org_id IS NULL)"
+            if org_id else "AND e.org_id IS NULL"
+        )
         params: Dict[str, Any] = {"node_id": node_id, "depth": depth}
         if relation_types:
             type_filter = "AND e.relation_type = ANY(%(relation_types)s)"
@@ -53,7 +57,7 @@ class GraphService:
                 1 AS depth
             FROM knowledge_edges e
             WHERE e.source_id = %(node_id)s
-                {type_filter}
+                {type_filter} {edge_org_filter}
 
             UNION
 
@@ -65,7 +69,7 @@ class GraphService:
                 1 AS depth
             FROM knowledge_edges e
             WHERE e.target_id = %(node_id)s
-                {type_filter}
+                {type_filter} {edge_org_filter}
 
             UNION ALL
 
@@ -77,6 +81,7 @@ class GraphService:
                 t.depth + 1
             FROM traversal t
             JOIN knowledge_edges e ON (e.source_id = t.node_id OR e.target_id = t.node_id)
+                {edge_org_filter}
             WHERE t.depth < %(depth)s
                 AND CASE WHEN e.source_id = t.node_id THEN e.target_id ELSE e.source_id END != %(node_id)s
                 {type_filter}
@@ -106,9 +111,10 @@ class GraphService:
         from_id: str,
         to_id: str,
         max_depth: int = 3,
+        org_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        查找两个节点间的最短路径
+        查找两个节点间的最短路径（按 org 隔离 edges）
 
         Returns:
             路径上的节点列表（含关系），空列表表示无路径
@@ -117,7 +123,12 @@ class GraphService:
         if conn_ctx is None:
             return []
 
-        query = """
+        org_filter = (
+            "AND (e.org_id = %(org_id)s OR e.org_id IS NULL)"
+            if org_id else "AND e.org_id IS NULL"
+        )
+
+        query = f"""
         WITH RECURSIVE path_search AS (
             SELECT
                 e.target_id AS node_id,
@@ -125,7 +136,7 @@ class GraphService:
                 ARRAY[e.relation_type] AS relations,
                 1 AS depth
             FROM knowledge_edges e
-            WHERE e.source_id = %(from_id)s
+            WHERE e.source_id = %(from_id)s {org_filter}
 
             UNION ALL
 
@@ -136,6 +147,7 @@ class GraphService:
                 p.depth + 1
             FROM path_search p
             JOIN knowledge_edges e ON (e.source_id = p.node_id OR e.target_id = p.node_id)
+                {org_filter}
             WHERE p.depth < %(max_depth)s
                 AND NOT (CASE WHEN e.source_id = p.node_id THEN e.target_id ELSE e.source_id END = ANY(p.path))
         )
@@ -152,6 +164,7 @@ class GraphService:
                     "from_id": from_id,
                     "to_id": to_id,
                     "max_depth": max_depth,
+                    "org_id": org_id,
                 })
                 row = await cur.fetchone()
                 if not row:
@@ -165,9 +178,10 @@ class GraphService:
         relation_type: str,
         weight: float = 1.0,
         metadata: Optional[Dict[str, Any]] = None,
+        org_id: Optional[str] = None,
     ) -> Optional[str]:
         """
-        添加关系边（重复边则更新权重）
+        添加关系边（重复边则更新权重，按 org 隔离）
 
         Returns:
             边的 ID，失败返回 None
@@ -177,10 +191,10 @@ class GraphService:
             return None
 
         query = """
-        INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, metadata)
-        VALUES (%(source_id)s, %(target_id)s, %(relation_type)s, %(weight)s, %(metadata)s)
+        INSERT INTO knowledge_edges (source_id, target_id, relation_type, weight, metadata, org_id)
+        VALUES (%(source_id)s, %(target_id)s, %(relation_type)s, %(weight)s, %(metadata)s, %(org_id)s)
         ON CONFLICT (source_id, target_id, relation_type)
-        DO UPDATE SET weight = EXCLUDED.weight, metadata = EXCLUDED.metadata
+        DO UPDATE SET weight = EXCLUDED.weight, metadata = EXCLUDED.metadata, org_id = EXCLUDED.org_id
         RETURNING id;
         """
 
@@ -193,6 +207,7 @@ class GraphService:
                         "relation_type": relation_type,
                         "weight": weight,
                         "metadata": metadata or {},
+                        "org_id": org_id,
                     })
                     result = await cur.fetchone()
                     await conn.commit()
@@ -243,9 +258,10 @@ class GraphService:
                             """
                             SELECT id, source_id, target_id, relation_type, weight, metadata
                             FROM knowledge_edges
-                            WHERE source_id = ANY(%(ids)s) AND target_id = ANY(%(ids)s);
+                            WHERE source_id = ANY(%(ids)s) AND target_id = ANY(%(ids)s)
+                              AND (org_id = %(org_id)s OR org_id IS NULL);
                             """,
-                            {"ids": node_ids},
+                            {"ids": node_ids, "org_id": org_id},
                         )
                         edge_rows = await cur.fetchall()
                         edge_cols = [desc.name for desc in cur.description]

@@ -172,29 +172,31 @@ async def add_knowledge(
                     if dup_id:
                         return dup_id
 
-                # 3. 节点数量上限淘汰（全局计数，淘汰最低 confidence 节点）
+                # 3. 节点数量上限淘汰（按 org 隔离计数，淘汰最低 confidence 节点）
+                _org_f = "AND org_id = %(oid)s" if org_id else "AND org_id IS NULL"
                 await cur.execute(
-                    "SELECT COUNT(*) FROM knowledge_nodes WHERE is_deleted = FALSE;"
+                    f"SELECT COUNT(*) FROM knowledge_nodes WHERE is_deleted = FALSE {_org_f};",
+                    {"oid": org_id},
                 )
                 count_row = await cur.fetchone()
                 if count_row and count_row[0] >= settings.kb_max_nodes:
                     await cur.execute(
-                        """
+                        f"""
                         UPDATE knowledge_nodes SET is_deleted = TRUE
                         WHERE id = (
                             SELECT id FROM knowledge_nodes
                             WHERE is_deleted = FALSE AND source != 'seed'
+                            {_org_f}
                             ORDER BY confidence ASC, updated_at ASC
                             LIMIT 1
                         );
-                        """
+                        """,
+                        {"oid": org_id},
                     )
 
-                # 3.5 Per-category 淘汰（防止单类目挤占全局配额）
+                # 3.5 Per-category 淘汰（防止单类目挤占全局配额，按 org 隔离）
                 if max_per_category:
-                    cat_filter = "AND category = %(cat)s"
-                    if org_id:
-                        cat_filter += " AND org_id = %(oid)s"
+                    cat_filter = f"AND category = %(cat)s {_org_f}"
                     await cur.execute(
                         f"""
                         SELECT COUNT(*) FROM knowledge_nodes
@@ -438,10 +440,10 @@ async def load_seed_knowledge(seed_file: Optional[str] = None) -> int:
             async with conn_ctx as conn:
                 async with conn.cursor() as cur:
                     await cur.execute(
-                        "DELETE FROM knowledge_nodes WHERE source = 'seed'"
+                        "DELETE FROM knowledge_nodes WHERE source = 'seed' AND org_id IS NULL"
                     )
                     deleted = cur.rowcount
-                    # 同时清理孤立的边
+                    # 清理孤立边（两端节点已不存在的边，全局清理）
                     await cur.execute("""
                         DELETE FROM knowledge_edges
                         WHERE source_id NOT IN (SELECT id FROM knowledge_nodes)
