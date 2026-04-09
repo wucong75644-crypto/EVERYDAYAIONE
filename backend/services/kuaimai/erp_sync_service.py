@@ -287,10 +287,8 @@ class ErpSyncService:
     # ── 状态管理 ──────────────────────────────────────────
 
     def _apply_org(self, q):
-        """给查询追加 org_id 过滤"""
-        if self.org_id:
-            return q.eq("org_id", self.org_id)
-        return q.is_("org_id", "null")
+        """已废弃：OrgScopedDB 自动处理 org_id 过滤，此方法保留为空操作"""
+        return q
 
     async def _get_sync_state(self, sync_type: str) -> dict[str, Any] | None:
         """读取同步状态"""

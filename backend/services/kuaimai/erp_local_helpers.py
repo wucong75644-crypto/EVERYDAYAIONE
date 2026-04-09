@@ -15,11 +15,9 @@ CN_TZ = timezone(timedelta(hours=8))
 
 
 
-def _apply_org(q, org_id: str | None):
-    """给查询追加 org_id 过滤"""
-    if org_id:
-        return q.eq("org_id", org_id)
-    return q.is_("org_id", "null")
+def _apply_org(q, org_id: str | None = None):
+    """已废弃：OrgScopedDB 自动处理 org_id 过滤，此函数保留为空操作（向后兼容）"""
+    return q
 
 
 def check_sync_health(db, sync_types: list[str], org_id: str | None = None) -> str:

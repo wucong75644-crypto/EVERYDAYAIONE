@@ -52,11 +52,6 @@ async def get_pending_tasks(
     try:
         cutoff_time = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
 
-        def _apply_org(q):
-            if ctx.org_id:
-                return q.eq("org_id", ctx.org_id)
-            return q.is_("org_id", "null")
-
         task_fields = (
             "id, external_task_id, client_task_id, conversation_id, type, status, "
             "request_params, credits_locked, placeholder_message_id, "
@@ -64,17 +59,19 @@ async def get_pending_tasks(
             "accumulated_content, model_id, error_message, assistant_message_id"
         )
 
-        # 查询进行中的任务
-        pending_q = db.table("tasks").select(task_fields).eq(
+        # 查询进行中的任务（OrgScopedDB 自动加 org_id 过滤）
+        pending_response = db.table("tasks").select(task_fields).eq(
             "user_id", ctx.user_id
-        ).in_("status", ["pending", "running"])
-        pending_response = _apply_org(pending_q).order("started_at", desc=False).execute()
+        ).in_("status", ["pending", "running"]).order(
+            "started_at", desc=False
+        ).execute()
 
         # 查询最近 5 分钟内终结的任务
-        completed_q = db.table("tasks").select(task_fields).eq(
+        recent_completed_response = db.table("tasks").select(task_fields).eq(
             "user_id", ctx.user_id
-        ).in_("status", ["completed", "failed"]).gte("completed_at", cutoff_time)
-        recent_completed_response = _apply_org(completed_q).order("started_at", desc=False).execute()
+        ).in_("status", ["completed", "failed"]).gte(
+            "completed_at", cutoff_time
+        ).order("started_at", desc=False).execute()
 
         all_tasks = pending_response.data + recent_completed_response.data
 
