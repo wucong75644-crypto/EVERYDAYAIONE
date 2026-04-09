@@ -94,7 +94,6 @@ class MessageMixin:
 
         if is_error:
             message_data["is_error"] = True
-            message_data["error"] = error_dict
 
         # 2. Upsert 到数据库
         upsert_result = self.db.table("messages").upsert(
@@ -317,7 +316,11 @@ class MessageMixin:
         error_code: str,
         error_message: str,
     ) -> Message:
-        """通用错误处理：积分退回 + 错误消息 upsert + WS 推送 + 任务状态更新"""
+        """
+        通用错误处理：积分退回 + 错误消息 upsert + WS 推送 + 任务状态更新。
+
+        内部有完整保护：即使 upsert/WS 失败，也确保任务最终进入终态。
+        """
         task = self._get_task_context(task_id)
         message_id = task["placeholder_message_id"]
         conversation_id = task["conversation_id"]
@@ -329,47 +332,68 @@ class MessageMixin:
         if existing:
             return existing
 
-        # 积分退回
-        await self._handle_credits_on_error(task)
+        # 积分退回（失败不阻塞后续流程）
+        try:
+            await self._handle_credits_on_error(task)
+        except Exception as credit_err:
+            logger.critical(
+                f"Credits refund failed in error handler | "
+                f"task_id={task_id} | error={credit_err}"
+            )
 
-        # Upsert 错误消息
+        # Upsert 错误消息（失败时仍要确保任务进入终态）
+        message = None
         extra_gen_params = self._extract_extra_gen_params(task)
+        try:
+            message, msg_data = self._upsert_assistant_message(
+                message_id=message_id,
+                conversation_id=conversation_id,
+                content_dicts=[{"type": "text", "text": error_message}],
+                status=MessageStatus.FAILED,
+                credits_cost=0,
+                client_task_id=client_task_id,
+                generation_type=self.handler_type.value,
+                model_id=model_id,
+                is_error=True,
+                error_dict={"code": error_code, "message": error_message},
+                extra_generation_params=extra_gen_params,
+            )
+        except Exception as upsert_err:
+            logger.critical(
+                f"Error message upsert failed | task_id={task_id} | "
+                f"error={upsert_err}"
+            )
 
-        message, msg_data = self._upsert_assistant_message(
-            message_id=message_id,
-            conversation_id=conversation_id,
-            content_dicts=[{"type": "text", "text": error_message}],
-            status=MessageStatus.FAILED,
-            credits_cost=0,
-            client_task_id=client_task_id,
-            generation_type=self.handler_type.value,
-            model_id=model_id,
-            is_error=True,
-            error_dict={"code": error_code, "message": error_message},
-            extra_generation_params=extra_gen_params,
-        )
+        # WebSocket 推送（失败不阻塞）
+        try:
+            from schemas.websocket import build_message_error
 
-        # WebSocket 推送
-        from schemas.websocket import build_message_error
+            error_msg = build_message_error(
+                task_id=client_task_id,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                error_code=error_code,
+                error_message=error_message,
+            )
+            await self._push_ws_message(client_task_id, task["user_id"], error_msg)
+        except Exception as ws_err:
+            logger.warning(f"Error WS push failed | task_id={task_id} | error={ws_err}")
 
-        error_msg = build_message_error(
-            task_id=client_task_id,
-            conversation_id=conversation_id,
-            message_id=message_id,
-            error_code=error_code,
-            error_message=error_message,
-        )
-        await self._push_ws_message(client_task_id, task["user_id"], error_msg)
-
-        # 更新任务状态（复用已查询的 task 数据，省去重复 SELECT）
-        self._fail_task(task_id, error_message, task=task)
+        # 确保任务进入终态（最关键的一步）
+        try:
+            self._fail_task(task_id, error_message, task=task)
+        except Exception as fail_err:
+            logger.critical(
+                f"_fail_task failed, task may be stuck | "
+                f"task_id={task_id} | error={fail_err}"
+            )
 
         logger.error(
             f"{self.handler_type.value.capitalize()} failed | "
             f"task_id={task_id} | error_code={error_code} | error={error_message}"
         )
 
-        # 知识库指标（Image/Video）
+        # 知识库指标（Image/Video）—— fire-and-forget
         handler_type = self.handler_type.value
         if handler_type in ("image", "video"):
             request_params = task.get("request_params") or {}

@@ -731,9 +731,57 @@ class TestBatchCompletionServiceCredits:
         """测试：确认积分不抛异常"""
         service._confirm_credits("tx_123")
 
-    def test_refund_credits_no_exception(self, service):
-        """测试：退回积分不抛异常"""
+    def test_refund_credits_success_no_exception(self, service):
+        """测试：退回积分成功不抛异常"""
         service._refund_credits("tx_123")
+
+    def test_refund_credits_rpc_failure_raises(self, service, db):
+        """测试：退回积分 RPC 失败时向上抛出异常"""
+        # 让 rpc().execute() 抛异常
+        mock_rpc = MagicMock()
+        mock_rpc.execute.side_effect = Exception("DB connection lost")
+        db.rpc = MagicMock(return_value=mock_rpc)
+
+        with pytest.raises(Exception, match="DB connection lost"):
+            service._refund_credits("tx_fail")
+
+    def test_handle_image_failure_refund_error_no_crash(self, service, db):
+        """测试：handle_image_failure 中 refund 失败不崩溃"""
+        task = create_batch_task(
+            index=0,
+            batch_id="batch_1",
+            transaction_id="tx_fail",
+        )
+
+        # 让 refund RPC 失败
+        mock_rpc = MagicMock()
+        mock_rpc.execute.side_effect = Exception("refund RPC timeout")
+        original_rpc = db.rpc
+
+        def selective_rpc(fn_name, params=None):
+            if fn_name == "atomic_refund_credits":
+                return mock_rpc
+            return original_rpc(fn_name, params)
+
+        db.rpc = selective_rpc
+
+        # 设置 batch tasks 让它不进入 finalize
+        db.set_table_data("tasks", [
+            {**task, "status": "failed", "batch_id": "batch_1"},
+            create_batch_task(index=1, batch_id="batch_1", status="pending"),
+        ])
+
+        import asyncio
+        # 不应崩溃
+        loop = asyncio.new_event_loop()
+        try:
+            with patch("services.batch_completion_service.ws_manager") as mock_ws:
+                mock_ws.send_to_task_or_user = AsyncMock()
+                loop.run_until_complete(
+                    service.handle_image_failure(task, "FAIL", "test error")
+                )
+        finally:
+            loop.close()
 
 
 if __name__ == "__main__":

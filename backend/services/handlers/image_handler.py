@@ -207,7 +207,10 @@ class ImageHandler(BaseHandler):
             result = await adapter.generate(**generate_kwargs)
             external_task_id = result.task_id
         except Exception as e:
-            self._refund_credits(transaction_id)
+            try:
+                self._refund_credits(transaction_id)
+            except Exception as refund_err:
+                logger.critical(f"Image refund also failed | tx={transaction_id} | error={refund_err}")
             logger.warning(
                 f"Image task[{index}] API failed | "
                 f"batch_id={batch_id} | error={e}"
@@ -223,20 +226,28 @@ class ImageHandler(BaseHandler):
             )
             return retry_result  # None if retry also failed
 
-        self._save_task(
-            task_id=external_task_id,
-            message_id=message_id,
-            conversation_id=conversation_id,
-            user_id=user_id,
-            model_id=model_id,
-            prompt=prompt,
-            params=params,
-            metadata=metadata,
-            credits_locked=per_image_credits,
-            transaction_id=transaction_id,
-            image_index=index,
-            batch_id=batch_id,
-        )
+        try:
+            self._save_task(
+                task_id=external_task_id,
+                message_id=message_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                model_id=model_id,
+                prompt=prompt,
+                params=params,
+                metadata=metadata,
+                credits_locked=per_image_credits,
+                transaction_id=transaction_id,
+                image_index=index,
+                batch_id=batch_id,
+            )
+        except Exception as save_err:
+            # API 任务已创建，不退积分（回调可能还会回来）
+            logger.critical(
+                f"Image _save_task failed | external_task_id={external_task_id} | "
+                f"batch_id={batch_id} | transaction_id={transaction_id} | "
+                f"error={save_err}"
+            )
 
         return external_task_id
 
@@ -297,8 +308,22 @@ class ImageHandler(BaseHandler):
                     new_adapter.provider.value
                 )
                 result = await new_adapter.generate(**new_kwargs)
+            except Exception as retry_err:
+                try:
+                    self._refund_credits(new_tx)
+                except Exception as refund_err:
+                    logger.critical(f"Image retry refund failed | tx={new_tx} | error={refund_err}")
+                ctx.add_failure(new_model, str(retry_err))
+                logger.warning(
+                    f"Image sync retry failed | index={index} | "
+                    f"model={new_model} | error={retry_err}"
+                )
+                continue
+            finally:
+                await new_adapter.close()
 
-                # 注入重试元数据（完成时记录到 knowledge_metrics）
+            # API 成功 → 持久化（在 try 外，DB 错误不触发重试/退积分）
+            try:
                 retry_params = {
                     **params,
                     "_retried": True,
@@ -318,16 +343,12 @@ class ImageHandler(BaseHandler):
                     image_index=index,
                     batch_id=batch_id,
                 )
-                return result.task_id
-            except Exception as retry_err:
-                self._refund_credits(new_tx)
-                ctx.add_failure(new_model, str(retry_err))
-                logger.warning(
-                    f"Image sync retry failed | index={index} | "
-                    f"model={new_model} | error={retry_err}"
+            except Exception as save_err:
+                logger.critical(
+                    f"Image retry _save_task failed | index={index} | "
+                    f"external_task_id={result.task_id} | error={save_err}"
                 )
-            finally:
-                await new_adapter.close()
+            return result.task_id
 
         return None
 

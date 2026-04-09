@@ -112,7 +112,10 @@ class VideoHandler(BaseHandler):
             external_task_id = result.task_id
         except Exception as e:
             # API 调用失败，退回积分
-            self._refund_credits(transaction_id)
+            try:
+                self._refund_credits(transaction_id)
+            except Exception as refund_err:
+                logger.critical(f"Video refund also failed | tx={transaction_id} | error={refund_err}")
 
             # Smart mode 重试
             retry_result = await self._attempt_video_sync_retry(
@@ -129,18 +132,25 @@ class VideoHandler(BaseHandler):
             await adapter.close()
 
         # 6. 保存任务到数据库（使用 external_task_id 作为主 ID）
-        self._save_task(
-            task_id=external_task_id,
-            message_id=message_id,
-            conversation_id=conversation_id,
-            user_id=user_id,
-            model_id=model_id,
-            prompt=prompt,
-            params=params,
-            metadata=metadata,
-            credits_locked=credits_to_lock,
-            transaction_id=transaction_id,
-        )
+        try:
+            self._save_task(
+                task_id=external_task_id,
+                message_id=message_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                model_id=model_id,
+                prompt=prompt,
+                params=params,
+                metadata=metadata,
+                credits_locked=credits_to_lock,
+                transaction_id=transaction_id,
+            )
+        except Exception as save_err:
+            # API 任务已创建，不退积分（回调可能还会回来）
+            logger.critical(
+                f"Video _save_task failed | external_task_id={external_task_id} | "
+                f"transaction_id={transaction_id} | error={save_err}"
+            )
 
         logger.info(
             f"Video task started | external_task_id={external_task_id} | "
@@ -206,8 +216,22 @@ class VideoHandler(BaseHandler):
                     new_adapter.provider.value
                 )
                 result = await new_adapter.generate(**new_kwargs)
+            except Exception as retry_err:
+                try:
+                    self._refund_credits(new_tx)
+                except Exception as refund_err:
+                    logger.critical(f"Video retry refund failed | tx={new_tx} | error={refund_err}")
+                ctx.add_failure(new_model, str(retry_err))
+                logger.warning(
+                    f"Video sync retry failed | model={new_model} | "
+                    f"error={retry_err}"
+                )
+                continue
+            finally:
+                await new_adapter.close()
 
-                # 注入重试元数据（完成时记录到 knowledge_metrics）
+            # API 成功 → 持久化（在 try 外，DB 错误不触发重试/退积分）
+            try:
                 retry_params = {
                     **params,
                     "_retried": True,
@@ -225,22 +249,17 @@ class VideoHandler(BaseHandler):
                     credits_locked=credits_to_lock,
                     transaction_id=new_tx,
                 )
-
-                logger.info(
-                    f"Video retry succeeded | task_id={result.task_id} | "
-                    f"model={new_model}"
+            except Exception as save_err:
+                logger.critical(
+                    f"Video retry _save_task failed | "
+                    f"external_task_id={result.task_id} | error={save_err}"
                 )
-                return metadata.client_task_id or result.task_id
 
-            except Exception as retry_err:
-                self._refund_credits(new_tx)
-                ctx.add_failure(new_model, str(retry_err))
-                logger.warning(
-                    f"Video sync retry failed | model={new_model} | "
-                    f"error={retry_err}"
-                )
-            finally:
-                await new_adapter.close()
+            logger.info(
+                f"Video retry succeeded | task_id={result.task_id} | "
+                f"model={new_model}"
+            )
+            return metadata.client_task_id or result.task_id
 
         return None
 
