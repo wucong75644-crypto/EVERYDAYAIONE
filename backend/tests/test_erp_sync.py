@@ -2022,14 +2022,10 @@ class TestMultiTenantSync:
         run_aggregation(MagicMock(), q, [("P01", "2026-03-28")], pending=pending, org_id="org-B")
         assert q.qsize() == 2
 
-    def test_sync_service_apply_org_noop(self):
-        """_apply_org 已废弃，返回原始 query（OrgScopedDB 接管过滤）"""
+    def test_sync_service_no_apply_org(self):
+        """_apply_org 已删除（OrgScopedDB 接管过滤）"""
         from services.kuaimai.erp_sync_service import ErpSyncService
-        svc = ErpSyncService.__new__(ErpSyncService)
-        svc.org_id = "org-test"
-        mock_q = MagicMock()
-        result = svc._apply_org(mock_q)
-        assert result is mock_q  # 空操作，直接返回
+        assert not hasattr(ErpSyncService, "_apply_org")
 
     @pytest.mark.asyncio
     async def test_load_erp_orgs_empty_fallback(self):
