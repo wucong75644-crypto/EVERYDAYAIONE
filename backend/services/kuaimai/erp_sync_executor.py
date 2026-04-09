@@ -114,7 +114,7 @@ class ErpSyncExecutor:
                     break
 
                 await self.db.table("erp_document_items_archive").upsert(
-                    rows, on_conflict="doc_type,doc_id,item_index",
+                    rows, on_conflict="doc_type,doc_id,item_index,org_id",
                 ).execute()
 
                 ids = [r["id"] for r in rows]
