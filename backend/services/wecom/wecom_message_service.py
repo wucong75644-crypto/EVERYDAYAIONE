@@ -65,6 +65,11 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
         try:
             org_id = msg.org_id
 
+            # 用 OrgScopedDB 包装 db（企微回调没有 HTTP 上下文，需手动构造）
+            from core.org_scoped_db import OrgScopedDB
+            if not isinstance(self.db, OrgScopedDB):
+                self.db = OrgScopedDB(self.db, org_id)
+
             # 1. 用户映射
             user_id = await self._user_svc.get_or_create_user(
                 wecom_userid=msg.wecom_userid,
@@ -117,7 +122,7 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
 
             # 4.5 通知 Web 前端对话列表有更新
             await self._notify_web_conversation_updated(
-                user_id, conversation_id,
+                user_id, conversation_id, org_id=org_id,
             )
 
             # 5. 创建 assistant 占位消息
@@ -543,13 +548,14 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
     @staticmethod
     async def _notify_web_conversation_updated(
         user_id: str, conversation_id: str,
+        org_id: str | None = None,
     ) -> None:
         """通知 Web 前端：企微对话有新消息，刷新对话列表"""
         try:
             await ws_manager.send_to_user(user_id, {
                 "type": "conversation_updated",
                 "conversation_id": conversation_id,
-            })
+            }, org_id=org_id)
         except Exception as e:
             logger.warning(
                 f"WS notify conversation_updated failed | "
