@@ -149,16 +149,26 @@ class TestOrgScopedDBWithOrgId:
         args = table_mock.upsert.call_args
         assert args[0][0] == {"outer_id": "A01", "org_id": ORG_ID}
 
-    def test_upsert_on_conflict_not_modified(self):
-        """V1.5: on_conflict 不自动追加 org_id"""
+    def test_upsert_on_conflict_auto_appends_org_id(self):
+        """on_conflict 自动追加 org_id"""
         self.db.table("erp_products").upsert(
             {"outer_id": "A01"}, on_conflict="outer_id",
         )
         table_mock = self.raw_db.table.return_value
         kwargs = table_mock.upsert.call_args[1]
-        assert kwargs["on_conflict"] == "outer_id"
+        assert kwargs["on_conflict"] == "outer_id,org_id"
+
+    def test_upsert_on_conflict_already_has_org_id(self):
+        """on_conflict 已含 org_id 时不重复追加"""
+        self.db.table("erp_products").upsert(
+            {"outer_id": "A01"}, on_conflict="outer_id,org_id",
+        )
+        table_mock = self.raw_db.table.return_value
+        kwargs = table_mock.upsert.call_args[1]
+        assert kwargs["on_conflict"] == "outer_id,org_id"
 
     def test_upsert_empty_on_conflict_preserved(self):
+        """空 on_conflict 不追加"""
         self.db.table("erp_products").upsert({"outer_id": "A01"})
         table_mock = self.raw_db.table.return_value
         kwargs = table_mock.upsert.call_args[1]
