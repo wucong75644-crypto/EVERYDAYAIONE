@@ -418,6 +418,7 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
 
         self.db.rpc("increment_message_count", {
             "conv_id": conversation_id,
+            "p_org_id": getattr(self.db, "org_id", None),
         }).execute()
 
         return msg_id

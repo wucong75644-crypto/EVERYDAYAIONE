@@ -839,10 +839,12 @@ class TestMessagePersistence:
         insert_data = chain.insert.call_args[0][0]
         assert insert_data["role"] == "user"
         assert insert_data["status"] == "completed"
-        # 验证 rpc 递增
-        db.rpc.assert_called_once_with(
-            "increment_message_count", {"conv_id": "c1"},
-        )
+        # 验证 rpc 递增（含 p_org_id 参数）
+        db.rpc.assert_called_once()
+        rpc_args = db.rpc.call_args[0]
+        assert rpc_args[0] == "increment_message_count"
+        assert rpc_args[1]["conv_id"] == "c1"
+        assert "p_org_id" in rpc_args[1]
 
     @pytest.mark.asyncio
     async def test_create_assistant_placeholder(self):

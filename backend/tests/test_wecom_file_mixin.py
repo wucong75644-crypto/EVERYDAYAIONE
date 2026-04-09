@@ -159,7 +159,10 @@ class TestHandleFile:
 
         # 验证 messages.insert 被调用
         db.table.assert_any_call("messages")
-        db.rpc.assert_called_with("increment_message_count", {"conv_id": "conv1"})
+        rpc_args = db.rpc.call_args[0]
+        assert rpc_args[0] == "increment_message_count"
+        assert rpc_args[1]["conv_id"] == "conv1"
+        assert "p_org_id" in rpc_args[1]
 
     @pytest.mark.asyncio
     async def test_truncated_content_includes_hint(self):
@@ -341,7 +344,10 @@ class TestSaveFileMessage:
 
         svc._save_file_message("conv1", "f.txt", "text", None)
 
-        db.rpc.assert_called_with("increment_message_count", {"conv_id": "conv1"})
+        rpc_args = db.rpc.call_args[0]
+        assert rpc_args[0] == "increment_message_count"
+        assert rpc_args[1]["conv_id"] == "conv1"
+        assert "p_org_id" in rpc_args[1]
 
 
 # ============================================================
