@@ -239,18 +239,28 @@ export function useWebSocket(): UseWebSocketReturn {
       startHeartbeat();
 
       // 重连后重发 pending 订阅（WS 断线期间缓存的任务订阅）
+      // 多租户隔离：如果 org 已切换，清空旧 org 的 pending 订阅
       if (pendingSubscriptionsRef.current.size > 0) {
-        logger.info('ws:connection', 'Flushing pending subscriptions', {
-          count: pendingSubscriptionsRef.current.size,
-        });
-        pendingSubscriptionsRef.current.forEach((lastIndex, taskId) => {
-          ws.send(JSON.stringify({
-            type: 'subscribe',
-            payload: { task_id: taskId, last_index: lastIndex },
-            timestamp: Date.now(),
-          }));
-        });
-        pendingSubscriptionsRef.current.clear();
+        const currentOrg = localStorage.getItem('current_org_id') || '';
+        const wsOrg = orgId || '';
+        if (currentOrg !== wsOrg) {
+          logger.info('ws:connection', 'Org changed, clearing pending subscriptions', {
+            oldOrg: wsOrg, newOrg: currentOrg,
+          });
+          pendingSubscriptionsRef.current.clear();
+        } else {
+          logger.info('ws:connection', 'Flushing pending subscriptions', {
+            count: pendingSubscriptionsRef.current.size,
+          });
+          pendingSubscriptionsRef.current.forEach((lastIndex, taskId) => {
+            ws.send(JSON.stringify({
+              type: 'subscribe',
+              payload: { task_id: taskId, last_index: lastIndex },
+              timestamp: Date.now(),
+            }));
+          });
+          pendingSubscriptionsRef.current.clear();
+        }
       }
     };
 
