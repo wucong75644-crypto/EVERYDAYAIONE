@@ -292,35 +292,40 @@ async def sync_goods_section(
 async def sync_batch_stock(svc: ErpSyncService) -> int:
     """批次效期库存同步：遍历 erp_shops × erp_product_platform_map 查询
 
-    API 需要 shopId + (skuIds 或 numIids)，不能只传 shopId。
-    遍历店铺，按店铺的 platform mapping 取 num_iid 批量查询。
-    适用于食品/化妆品等有保质期管理的场景。
+    API 需要 shopId（快麦店铺 ID）+ numIids。
+    通过 erp_shops.extra_json->>'userId' 关联 platform_map.user_id，
+    用 shop_id（而非 user_id）调 API。
     """
-    from services.kuaimai.erp_local_helpers import _apply_org
-
-    # 取所有启用店铺
+    # 1. 取所有启用店铺（shop_id + userId 映射）
     try:
-        q = svc.db.table("erp_shops").select("shop_id").eq("state", 3)
-        result = await _apply_org(q, svc.org_id).execute()
-        shop_ids = [r["shop_id"] for r in (result.data or []) if r.get("shop_id")]
+        result = await svc.db.table("erp_shops").select(
+            "shop_id, extra_json"
+        ).eq("state", 3).execute()
+        # 构建 userId → shop_id 映射
+        userid_to_shopid: dict[str, str] = {}
+        for r in (result.data or []):
+            shop_id = r.get("shop_id")
+            user_id = (r.get("extra_json") or {}).get("userId")
+            if shop_id and user_id:
+                userid_to_shopid[str(user_id)] = str(shop_id)
     except Exception as e:
         logger.warning(f"sync_batch_stock: failed to load shops | error={e}")
         return 0
 
-    if not shop_ids:
-        logger.debug("sync_batch_stock: no shops found, skip")
+    if not userid_to_shopid:
+        logger.debug("sync_batch_stock: no shops with userId found, skip")
         return 0
 
-    # 取所有平台映射的 num_iid（按 user_id 分组）
+    # 2. 取所有平台映射的 num_iid（按 user_id 分组）
     try:
-        q = svc.db.table("erp_product_platform_map").select("num_iid,user_id")
-        result = await _apply_org(q, svc.org_id).limit(50000).execute()
-        # user_id 就是 shop 的 userId
+        result = await svc.db.table("erp_product_platform_map").select(
+            "num_iid,user_id"
+        ).limit(50000).execute()
         shop_numids: dict[str, list[str]] = {}
         for r in (result.data or []):
             uid = r.get("user_id") or ""
             nid = r.get("num_iid")
-            if nid:
+            if uid and nid:
                 shop_numids.setdefault(uid, []).append(nid)
     except Exception as e:
         logger.warning(f"sync_batch_stock: failed to load platform map | error={e}")
@@ -330,13 +335,15 @@ async def sync_batch_stock(svc: ErpSyncService) -> int:
         logger.debug("sync_batch_stock: no platform mappings, skip")
         return 0
 
+    # 3. 遍历店铺调 API（用 shop_id 而非 user_id）
     client = svc._get_client()
     all_rows: list[dict[str, Any]] = []
     now = datetime.now().isoformat()
 
     for user_id, num_ids in shop_numids.items():
-        if not user_id:
-            continue  # 跳过无店铺 ID 的映射
+        shop_id = userid_to_shopid.get(user_id)
+        if not shop_id:
+            continue  # 该 userId 找不到对应的 shop_id，跳过
         # 每批最多 20 个 numIid
         for i in range(0, len(num_ids), 20):
             batch_ids = num_ids[i:i + 20]
@@ -344,7 +351,7 @@ async def sync_batch_stock(svc: ErpSyncService) -> int:
                 async with _API_SEM:
                     data = await client.request_with_retry(
                         "erp.wms.product.stock.query",
-                        {"shopId": user_id, "numIids": ",".join(batch_ids)},
+                        {"shopId": shop_id, "numIids": ",".join(batch_ids)},
                     )
                 items = data.get("list") or []
                 for item in items:
@@ -361,7 +368,7 @@ async def sync_batch_stock(svc: ErpSyncService) -> int:
                         "shelf_life_days": item.get("shelfLifeDays"),
                         "stock_qty": item.get("stock") or item.get("quantity") or 0,
                         "warehouse_name": item.get("warehouseName") or "",
-                        "shop_id": user_id or "",
+                        "shop_id": shop_id,
                         "extra_json": _pick(
                             item, "warehouseId", "sectionCode",
                             "inboundDate", "supplierId",
@@ -369,7 +376,7 @@ async def sync_batch_stock(svc: ErpSyncService) -> int:
                         "synced_at": now,
                     })
             except Exception as e:
-                logger.debug(f"sync_batch_stock: batch failed | shop={user_id} | error={e}")
+                logger.debug(f"sync_batch_stock: batch failed | shop={shop_id} | error={e}")
 
     if not all_rows:
         return 0
