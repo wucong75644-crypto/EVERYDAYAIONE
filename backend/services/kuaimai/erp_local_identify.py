@@ -252,7 +252,7 @@ def _upsert_product_from_api(db, p: dict, org_id: str | None = None) -> None:
     }
     try:
         db.table("erp_products").upsert(
-            spu_row, on_conflict="outer_id",
+            spu_row, on_conflict="outer_id,org_id",
         ).execute()
     except Exception as e:
         logger.warning(f"Upsert product failed | outer_id={outer_id} | {e}")
@@ -281,7 +281,7 @@ def _upsert_product_from_api(db, p: dict, org_id: str | None = None) -> None:
         }
         try:
             db.table("erp_product_skus").upsert(
-                sku_row, on_conflict="sku_outer_id",
+                sku_row, on_conflict="sku_outer_id,org_id",
             ).execute()
         except Exception as e:
             logger.warning(

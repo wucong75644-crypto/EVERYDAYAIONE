@@ -435,7 +435,7 @@ class ErpSyncWorker:
                 # UPSERT 到归档表（幂等）
                 await self.db.table("erp_document_items_archive").upsert(
                     rows,
-                    on_conflict="doc_type,doc_id,item_index",
+                    on_conflict="doc_type,doc_id,item_index,org_id",
                 ).execute()
 
                 # DELETE 已归档行

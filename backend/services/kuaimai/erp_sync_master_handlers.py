@@ -120,8 +120,8 @@ async def sync_product(
                 ),
             })
 
-    spu_count = await _batch_upsert(svc.db, "erp_products", spu_rows, "outer_id", org_id=svc.org_id)
-    sku_count = await _batch_upsert(svc.db, "erp_product_skus", sku_rows, "sku_outer_id", org_id=svc.org_id)
+    spu_count = await _batch_upsert(svc.db, "erp_products", spu_rows, "outer_id,org_id", org_id=svc.org_id)
+    sku_count = await _batch_upsert(svc.db, "erp_product_skus", sku_rows, "sku_outer_id,org_id", org_id=svc.org_id)
     if spu_count or sku_count:
         logger.info(f"Product sync | spu={spu_count} sku={sku_count}")
     return spu_count + sku_count
@@ -197,7 +197,7 @@ async def _fetch_stock_by_codes(
     if not rows:
         return 0
     return await _batch_upsert(
-        svc.db, "erp_stock_status", rows, "outer_id,sku_outer_id,warehouse_id",
+        svc.db, "erp_stock_status", rows, "outer_id,sku_outer_id,warehouse_id,org_id",
         org_id=svc.org_id,
     )
 
@@ -329,7 +329,7 @@ async def sync_supplier(
             "remark": s.get("remark"),
         })
 
-    count = await _batch_upsert(svc.db, "erp_suppliers", rows, "code", org_id=svc.org_id)
+    count = await _batch_upsert(svc.db, "erp_suppliers", rows, "code,org_id", org_id=svc.org_id)
     return count
 
 
@@ -395,7 +395,7 @@ async def sync_platform_map(
             unique_rows.append(row)
 
     count = await _batch_upsert(
-        svc.db, "erp_product_platform_map", unique_rows, "outer_id,num_iid",
+        svc.db, "erp_product_platform_map", unique_rows, "outer_id,num_iid,org_id",
         org_id=svc.org_id,
     )
     return count
