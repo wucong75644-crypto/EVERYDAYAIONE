@@ -69,6 +69,9 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
             from core.org_scoped_db import OrgScopedDB
             if not isinstance(self.db, OrgScopedDB):
                 self.db = OrgScopedDB(self.db, org_id)
+                # 同步子服务的 db 引用（不重建实例，避免覆盖外部 mock）
+                self._user_svc.db = self.db
+                self._conv_svc.db = self.db
 
             # 1. 用户映射
             user_id = await self._user_svc.get_or_create_user(

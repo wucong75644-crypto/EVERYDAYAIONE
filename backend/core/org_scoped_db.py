@@ -8,8 +8,8 @@
 核心行为:
   - SELECT/UPDATE/DELETE: 自动追加 .eq("org_id", x) 或 .is_("org_id", "null")
   - INSERT/UPSERT: 自动将 org_id 注入到数据 dict 中
-  - RPC: 透传，不自动注入 p_org_id（部分函数不接受该参数）
-  - on_conflict: 透传，不自动追加（COALESCE 表达式索引不兼容）
+  - UPSERT on_conflict: 非空时自动追加 ",org_id"（已含则跳过）
+  - RPC: 默认自动注入 p_org_id（黑名单函数除外，如 atomic_refund_credits）
   - unscoped("原因"): 显式跳过隔离，grep 可审计
 """
 
@@ -122,7 +122,7 @@ class _TenantScopedTable:
 
     - select/update/delete: 返回的 query 自动追加 org_id WHERE 条件
     - insert/upsert: 自动将 org_id 注入到数据 dict
-    - on_conflict: 透传，不自动追加（COALESCE 表达式索引不兼容）
+    - upsert on_conflict: 非空时自动追加 ",org_id"（已含则跳过）
     """
 
     def __init__(self, table: Any, org_id: str | None) -> None:
