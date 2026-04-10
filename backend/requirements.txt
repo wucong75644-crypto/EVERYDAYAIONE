@@ -55,7 +55,12 @@ openpyxl==3.1.5
 pandas==2.2.3
 pyarrow==23.0.1
 
+# 时间事实层（设计文档：docs/document/TECH_ERP时间准确性架构.md）
+tzdata==2024.2                  # IANA 时区数据库（容器内兜底）
+chinese-calendar==1.11.0        # 中国法定节假日 + 调休 (覆盖到 2026)。每年 12 月需手动升级到次年版本
+
 # 测试
 pytest==8.3.4
 pytest-asyncio==0.25.2
+time-machine==2.14.1            # 时间冻结（asyncio + zoneinfo + Pydantic v2 兼容）
 jieba==0.42.1

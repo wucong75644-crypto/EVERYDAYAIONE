@@ -10,8 +10,10 @@ from datetime import datetime, timedelta, timezone
 
 from loguru import logger
 
-# ERP 数据存储使用中国时间（快麦 API 返回北京时间），查询必须用同一时区
-CN_TZ = timezone(timedelta(hours=8))
+# ERP 数据存储使用中国时间（快麦 API 返回北京时间），查询必须用同一时区。
+# 改用 ZoneInfo（IANA 标准），向后兼容旧 import 路径。
+# 设计文档：docs/document/TECH_ERP时间准确性架构.md §4.4
+from utils.time_context import CN_TZ  # noqa: F401  (re-export for backward compat)
 
 
 

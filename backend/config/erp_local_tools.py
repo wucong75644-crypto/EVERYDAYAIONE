@@ -21,6 +21,7 @@ ERP_LOCAL_TOOLS: Set[str] = {
     "local_platform_map_query",
     "local_doc_query",
     "local_global_stats",
+    "local_compare_stats",  # 时间事实层 — 同比/环比 (PR1 §6.2.3)
     "local_shop_list",
     "local_warehouse_list",
     "local_db_export",
@@ -121,8 +122,8 @@ def build_local_tools() -> List[Dict[str, Any]]:
                 "product_code": _str("商品编码（主商家编码或SKU编码）"),
                 "shop_name": _str("店铺名称过滤"),
                 "platform": _enum(
-                    "平台过滤",
-                    ["tb", "jd", "pdd", "dy", "xhs", "1688"],
+                    "平台过滤(tb=淘宝,jd=京东,pdd=拼多多,fxg=抖音,kuaishou=快手,xhs=小红书)",
+                    ["tb", "jd", "pdd", "fxg", "kuaishou", "xhs", "1688"],
                 ),
                 "status": _enum(
                     "订单状态过滤",
@@ -281,7 +282,7 @@ def build_local_tools() -> List[Dict[str, Any]]:
                     "如'2026-04-06 16:00'。"
                     "与start_time配合使用，优先级高于date/period"),
                 "shop_name": _str("按店铺过滤（模糊匹配）"),
-                "platform": _str("按平台过滤(tb/jd/pdd/dy/xhs)"),
+                "platform": _str("按平台过滤(tb=淘宝/jd=京东/pdd=拼多多/fxg=抖音/kuaishou=快手/xhs=小红书/1688)"),
                 "supplier_name": _str("按供应商过滤（模糊匹配）"),
                 "warehouse_name": _str("按仓库过滤"),
                 "rank_by": _enum(
@@ -295,6 +296,61 @@ def build_local_tools() -> List[Dict[str, Any]]:
             },
             ["doc_type"],
         ),
+        # 10b. 同比/环比对比统计 (时间事实层 §6.2.3)
+        _tool(
+            "local_compare_stats",
+            "时间维度对比统计（同比/环比/任意区间对比）。毫秒级响应。"
+            "由后端确定地计算对比基线（含中文星期/相对时间标签），"
+            "返回结构化双时间块 + 数据对比。"
+            "⚠ 涉及「对比/同比/环比/比上周/比上月/比去年」的查询必须用本工具，"
+            "禁止调用 local_global_stats 两次再让模型口述对比。"
+            "适合：今天 vs 昨天、本周 vs 上周、本月 vs 上月同期、订单同比去年同期等。",
+            {
+                "doc_type": _enum(
+                    "统计类型",
+                    ["order", "purchase", "aftersale", "receipt",
+                     "shelf", "purchase_return"],
+                ),
+                "compare_kind": _enum(
+                    "对比模式：wow=环比上周同期；mom=环比上月同期；"
+                    "yoy=同比去年同期；spring_aligned=春节对齐同比（电商专用）；"
+                    "custom=自定义两个区间",
+                    ["wow", "mom", "yoy", "spring_aligned", "custom"],
+                ),
+                "current_period": _enum(
+                    "当前期：today=今天；yesterday=昨天；this_week=本周；"
+                    "this_month=本月；last_n_days=最近 N 天（配合 current_n）；"
+                    "custom=自定义（配合 current_start/current_end）",
+                    ["today", "yesterday", "this_week", "this_month",
+                     "last_n_days", "custom"],
+                ),
+                "current_n": _int(
+                    "current_period=last_n_days 时使用，如 7 表示最近 7 天",
+                ),
+                "current_start": _str(
+                    "current_period=custom 时使用，"
+                    "格式 YYYY-MM-DD HH:MM:SS 或 YYYY-MM-DD",
+                ),
+                "current_end": _str("同上"),
+                "baseline_start": _str(
+                    "compare_kind=custom 时使用，自定义基线起始时间",
+                ),
+                "baseline_end": _str("同上"),
+                "time_type": _enum(
+                    "时间类型（仅 order 类型有效）。"
+                    "默认 doc_created_at（下单时间）",
+                    ["doc_created_at", "pay_time", "consign_time"],
+                ),
+                "shop_name": _str("按店铺过滤（模糊匹配）"),
+                "platform": _str(
+                    "按平台过滤(tb=淘宝/jd=京东/pdd=拼多多/fxg=抖音/"
+                    "kuaishou=快手/xhs=小红书/1688)",
+                ),
+                "supplier_name": _str("按供应商过滤（模糊匹配）"),
+                "warehouse_name": _str("按仓库过滤"),
+            },
+            ["doc_type", "compare_kind", "current_period"],
+        ),
         # 11. 店铺列表
         _tool(
             "local_shop_list",
@@ -305,8 +361,8 @@ def build_local_tools() -> List[Dict[str, Any]]:
             "相关工具：拿到店铺名后可用 local_global_stats(shop_name=...) 统计该店铺数据。",
             {
                 "platform": _enum(
-                    "按平台过滤",
-                    ["淘宝", "天猫", "京东", "拼多多", "抖音", "快手", "小红书", "1688"],
+                    "按平台过滤(tb=淘宝,jd=京东,pdd=拼多多,fxg=抖音,kuaishou=快手,xhs=小红书)",
+                    ["tb", "jd", "pdd", "fxg", "kuaishou", "xhs", "1688"],
                 ),
             },
             [],
@@ -349,7 +405,7 @@ def build_local_tools() -> List[Dict[str, Any]]:
                     ["doc_created_at", "pay_time", "consign_time"],
                 ),
                 "shop_name": _str("按店铺过滤（模糊匹配）"),
-                "platform": _str("按平台过滤(tb/jd/pdd/dy/xhs)"),
+                "platform": _str("按平台过滤(tb=淘宝/jd=京东/pdd=拼多多/fxg=抖音/kuaishou=快手/xhs=小红书/1688)"),
                 "product_code": _str("按商品编码过滤"),
                 "status": _str("按状态过滤"),
                 "max_rows": _int("最大导出行数（默认5000，上限10000）"),
@@ -439,6 +495,14 @@ LOCAL_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "local_global_stats": {
         "required": ["doc_type"],
         "properties": {"doc_type": {"type": "string"}},
+    },
+    "local_compare_stats": {
+        "required": ["doc_type", "compare_kind", "current_period"],
+        "properties": {
+            "doc_type": {"type": "string"},
+            "compare_kind": {"type": "string"},
+            "current_period": {"type": "string"},
+        },
     },
     "local_shop_list": {
         "required": [],

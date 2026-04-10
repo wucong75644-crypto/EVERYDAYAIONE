@@ -4,15 +4,23 @@ ERP 统计报表查询工具
 查询 erp_product_daily_stats 聚合表，支持月度/周度/日度统计。
 
 设计文档: docs/document/TECH_ERP数据本地索引系统.md §6 工具4
+时间事实层: docs/document/TECH_ERP时间准确性架构.md §6.2.2 (B5f)
 """
 
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Optional
 
 from loguru import logger
 
 from services.kuaimai.erp_local_helpers import CN_TZ, check_sync_health
+from utils.time_context import (
+    DateRange,
+    RequestContext,
+    format_time_header,
+    now_cn,
+)
 
 
 async def local_product_stats(
@@ -21,9 +29,10 @@ async def local_product_stats(
     start_date: str | None = None,
     end_date: str | None = None,
     org_id: str | None = None,
+    request_ctx: Optional[RequestContext] = None,
 ) -> str:
     """按商品编码查统计数据（聚合表）"""
-    now = datetime.now(CN_TZ)
+    now = request_ctx.now if request_ctx else now_cn()
 
     if not start_date:
         start_date = now.strftime("%Y-%m-01")
@@ -44,11 +53,23 @@ async def local_product_stats(
         logger.error(f"Stats query failed | code={product_code} | error={e}")
         return f"统计查询失败: {e}"
 
+    # 时间事实头
+    try:
+        s_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=CN_TZ)
+        e_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(
+            tzinfo=CN_TZ, hour=23, minute=59, second=59,
+        )
+        date_range = DateRange.custom(s_dt, e_dt, reference=now)
+        time_header = format_time_header(
+            ctx=request_ctx, range_=date_range, kind="统计区间",
+        )
+    except Exception:
+        time_header = ""
+
     if not rows:
         health = check_sync_health(db, ["order", "purchase", "aftersale"])
-        return (
-            f"商品 {product_code} 在 {start_date}~{end_date} 无统计数据\n{health}"
-        ).strip()
+        body = f"商品 {product_code} 在 {start_date}~{end_date} 无统计数据\n{health}".strip()
+        return f"{time_header}\n\n{body}" if time_header else body
 
     # 汇总各维度
     order_count = sum(r.get("order_count", 0) for r in rows)
@@ -67,9 +88,11 @@ async def local_product_stats(
     return_count = sum(r.get("return_count", 0) for r in rows)
     return_qty = sum(r.get("return_qty", 0) for r in rows)
 
-    lines = [
-        f"商品 {product_code} 统计（{start_date} ~ {end_date}）：\n",
-    ]
+    lines = []
+    if time_header:
+        lines.append(time_header)
+        lines.append("")
+    lines.append(f"商品 {product_code} 统计（{start_date} ~ {end_date}）：\n")
 
     if order_count:
         lines.append(

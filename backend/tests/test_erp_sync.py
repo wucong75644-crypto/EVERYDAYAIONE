@@ -474,9 +474,9 @@ class TestToolSchemaIntegration:
             assert tool in ERP_TOOL_SCHEMAS, f"{tool} 不在 Schema 中"
 
     def test_build_tools_count(self):
-        """build_erp_tools 返回 22 个工具（8 API + 14 本地）"""
+        """build_erp_tools 返回 23 个工具（8 API + 15 本地，含时间事实层 local_compare_stats）"""
         from config.erp_tools import build_erp_tools
-        assert len(build_erp_tools()) == 22
+        assert len(build_erp_tools()) == 23
 
     def test_routing_prompt_non_empty(self):
         """路由提示词不为空"""

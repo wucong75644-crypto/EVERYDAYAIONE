@@ -5,15 +5,23 @@ ERP 本地全局统计/排名查询
 支持分组和排名。通过 DB 端 RPC 聚合，无 LIMIT 截断。
 
 设计文档: docs/document/TECH_ERP本地优先统一查询架构.md §6 工具2
+时间事实层: docs/document/TECH_ERP时间准确性架构.md §6.2.2
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from typing import Optional
 
 from loguru import logger
 
 from services.kuaimai.erp_local_helpers import check_sync_health, CN_TZ
+from utils.time_context import (
+    DateRange,
+    RequestContext,
+    format_time_header,
+    now_cn,
+)
 
 _DOC_TYPE_NAMES = {
     "purchase": "采购",
@@ -49,19 +57,23 @@ async def local_global_stats(
     org_id: str | None = None,
     start_time: str | None = None,
     end_time: str | None = None,
+    request_ctx: Optional[RequestContext] = None,
 ) -> str:
     """全局统计/排名（DB 端 RPC 聚合，无 LIMIT 截断）"""
+    # 时间事实层 — 解析后立即构造 DateRange 用于结构化时间块
     if start_time or end_time:
         if not (start_time and end_time):
             return "参数错误: start_time 和 end_time 必须同时提供"
         try:
-            start_iso, end_iso, period_label = _parse_custom_range(
-                start_time, end_time,
+            start_iso, end_iso, period_label, date_range = _parse_custom_range(
+                start_time, end_time, request_ctx=request_ctx,
             )
         except ValueError as e:
             return f"参数错误: {e}"
     else:
-        start_iso, end_iso, period_label = _calc_period(date, period)
+        start_iso, end_iso, period_label, date_range = _calc_period(
+            date, period, request_ctx=request_ctx,
+        )
     type_name = _DOC_TYPE_NAMES.get(doc_type, doc_type)
 
     # 校验 time_type（防注入）
@@ -104,16 +116,23 @@ async def local_global_stats(
     if time_col != "doc_created_at":
         time_label = f"（按{_TIME_TYPE_LABELS.get(time_col, time_col)}时间）"
 
+    # 时间事实头（结构化时间块，禁止 LLM 自行推算 weekday）
+    # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.2 (B5a)
+    time_header = format_time_header(
+        ctx=request_ctx, range_=date_range, kind="统计区间",
+    )
+
     # 根据返回类型格式化
     if rpc_group is None:
-        return _format_summary(
+        body = _format_summary(
             data, type_name, period_label + time_label, db, doc_type, org_id=org_id,
         )
+    elif rank_by:
+        body = _format_ranking(data, rank_by, type_name, period_label)
+    else:
+        body = _format_grouped(data, group_by or "", type_name, period_label)
 
-    if rank_by:
-        return _format_ranking(data, rank_by, type_name, period_label)
-
-    return _format_grouped(data, group_by or "", type_name, period_label)
+    return f"{time_header}\n\n{body}" if time_header else body
 
 
 def _rank_by_to_group(rank_by: str | None) -> str | None:
@@ -141,8 +160,13 @@ def _try_parse_time(raw: str, is_end: bool = False) -> datetime | None:
 
 def _parse_custom_range(
     start_time: str, end_time: str,
-) -> tuple[str, str, str]:
-    """解析自定义时间范围（支持精确到秒），失败抛 ValueError"""
+    *,
+    request_ctx: Optional[RequestContext] = None,
+) -> tuple[str, str, str, DateRange]:
+    """解析自定义时间范围（支持精确到秒），失败抛 ValueError。
+
+    返回 (start_iso, end_iso, period_label, date_range)。
+    """
     start_dt = _try_parse_time(start_time)
     if start_dt is None:
         raise ValueError(
@@ -163,14 +187,18 @@ def _parse_custom_range(
     s_str = start_dt.strftime("%m-%d %H:%M")
     e_str = end_dt.strftime("%m-%d %H:%M")
     label = f"{s_str} ~ {e_str}"
-    return start_dt.isoformat(), end_dt.isoformat(), label
+    ref = request_ctx.now if request_ctx else now_cn()
+    date_range = DateRange.custom(start_dt, end_dt, reference=ref)
+    return start_dt.isoformat(), end_dt.isoformat(), label, date_range
 
 
 def _calc_period(
     date: str | None, period: str,
-) -> tuple[str, str, str]:
-    """计算统计时间范围，返回 (start_iso, end_iso, label)"""
-    now = datetime.now(CN_TZ)
+    *,
+    request_ctx: Optional[RequestContext] = None,
+) -> tuple[str, str, str, DateRange]:
+    """计算统计时间范围，返回 (start_iso, end_iso, label, date_range)。"""
+    now = request_ctx.now if request_ctx else now_cn()
     if date:
         try:
             base = datetime.strptime(date, "%Y-%m-%d").replace(
@@ -183,20 +211,23 @@ def _calc_period(
 
     if period == "week":
         start = base - timedelta(days=base.weekday())
-        start = start.replace(hour=0, minute=0, second=0)
+        start = start.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=7)
         label = f"本周（{start.strftime('%m-%d')}~{end.strftime('%m-%d')}）"
     elif period == "month":
-        start = base.replace(day=1, hour=0, minute=0, second=0)
+        start = base.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         next_month = (start + timedelta(days=32)).replace(day=1)
         end = next_month
         label = f"{start.strftime('%Y年%m月')}"
     else:
-        start = base.replace(hour=0, minute=0, second=0)
+        start = base.replace(hour=0, minute=0, second=0, microsecond=0)
         end = start + timedelta(days=1)
         label = f"{start.strftime('%Y-%m-%d')}"
 
-    return start.isoformat(), end.isoformat(), label
+    # 构造 DateRange（用 end - 1 微秒避免范围包含次日 00:00）
+    range_end = end - timedelta(microseconds=1)
+    date_range = DateRange.custom(start, range_end, reference=now)
+    return start.isoformat(), end.isoformat(), label, date_range
 
 
 def _format_summary(
@@ -245,6 +276,13 @@ def _format_ranking(
     return "\n".join(lines)
 
 
+_PLATFORM_CN = {
+    "tb": "淘宝", "jd": "京东", "pdd": "拼多多",
+    "fxg": "抖音", "kuaishou": "快手", "xhs": "小红书",
+    "1688": "1688", "sys": "系统", "wd": "微店",
+}
+
+
 def _format_grouped(
     data: list, group_by: str, type_name: str, period_label: str,
 ) -> str:
@@ -258,6 +296,11 @@ def _format_grouped(
         qty = item.get("total_qty", 0)
         amt = float(item.get("total_amount", 0))
         total_docs += doc_count
+        # group_by=shop 时 RPC 额外返回 platform，标注在店铺名后面
+        plat = item.get("platform")
+        if group_by == "shop" and plat:
+            plat_cn = _PLATFORM_CN.get(plat, plat)
+            key = f"{key}[{plat_cn}]"
         lines.append(
             f"  {key}: {doc_count}笔 | {qty}件"
             f" | ¥{amt:,.2f}"

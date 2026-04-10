@@ -7,7 +7,6 @@
 
 import hashlib
 import hmac as hmac_mod
-from datetime import datetime
 from typing import Any, Dict, Optional
 
 import httpx
@@ -27,6 +26,7 @@ from services.kuaimai.errors import (
     KuaiMaiSignatureError,
     KuaiMaiTokenExpiredError,
 )
+from utils.time_context import now_cn
 
 # Token 过期相关的错误码
 _TOKEN_EXPIRED_CODES = {"27", "105", "106"}
@@ -178,7 +178,9 @@ class KuaiMaiClient:
                 "method": method,
                 "app_key": qimen_key,
                 "session": self._access_token,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                # 快麦/淘宝奇门 API 签名时间戳必须用北京时间，否则签名校验失败 (P0)
+                # 参见 docs/document/TECH_ERP时间准确性架构.md §17 N1
+                "timestamp": now_cn().strftime("%Y-%m-%d %H:%M:%S"),
                 "v": "2.0",
                 "format": "json",
                 "sign_method": sign_method,
@@ -189,7 +191,8 @@ class KuaiMaiClient:
                 "method": method,
                 "appKey": self._app_key,
                 "session": self._access_token,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                # 快麦 API 签名时间戳必须用北京时间，否则签名校验失败 (P0)
+                "timestamp": now_cn().strftime("%Y-%m-%d %H:%M:%S"),
                 "version": "1.0",
                 "format": "json",
                 "sign_method": sign_method,
@@ -268,7 +271,8 @@ class KuaiMaiClient:
                 "appKey": self._app_key,
                 "session": self._access_token,
                 "refreshToken": self._refresh_token,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                # P0：签名时间戳必须用北京时间
+                "timestamp": now_cn().strftime("%Y-%m-%d %H:%M:%S"),
                 "version": "1.0",
                 "format": "json",
                 "sign_method": "hmac",
