@@ -177,6 +177,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     db = get_db()
 
+    # OrgScopedDB schema 反射：扫描含 org_id 的复合唯一索引所属的表，
+    # 让 upsert on_conflict 自动追加 ",org_id" 仅对真正有此索引的表生效，
+    # 避免对 messages/tasks 等 PK 仅 id 的表生成无效 ON CONFLICT 子句。
+    try:
+        from core.org_scoped_db import load_composite_org_id_tables
+        load_composite_org_id_tables(db)
+    except Exception as e:
+        logger.error(
+            f"OrgScopedDB schema reflection failed (non-critical) | error={e}"
+        )
+
     # 恢复孤儿任务：部署重启后，将中断的流式内容从 tasks.accumulated_content 回写到 messages 表
     # 用 Redis 锁确保多 worker 只执行一次
     _recovery_lock = await RedisClient.acquire_lock("orphan_task_recovery", timeout=30)
