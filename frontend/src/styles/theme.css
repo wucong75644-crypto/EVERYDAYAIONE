@@ -42,12 +42,12 @@
   --font-code: "SF Mono", "JetBrains Mono", ui-monospace,
                Menlo, Consolas, monospace;
 
-  /* ========== 圆角 ========== */
-  --radius-sm: 6px;       /* 小按钮、标签 */
-  --radius-md: 8px;       /* 标准按钮、卡片 */
-  --radius-lg: 12px;      /* 主按钮、输入框 */
-  --radius-xl: 16px;      /* 大卡片、视频容器 */
-  --radius-2xl: 24px;     /* 消息气泡 */
+  /* ========== 圆角（V3 Phase 3 微升级：整体上调 2~4px，视觉更精致） ========== */
+  --radius-sm: 8px;       /* 小按钮、标签（6 → 8） */
+  --radius-md: 10px;      /* 标准按钮、卡片（8 → 10） */
+  --radius-lg: 14px;      /* 主按钮、输入框（12 → 14） */
+  --radius-xl: 20px;      /* 大卡片、视频容器（16 → 20） */
+  --radius-2xl: 28px;     /* 消息气泡（24 → 28） */
   --radius-full: 9999px;  /* 头像、徽章 */
 
   /* ========== 动画时长 ========== */
@@ -108,8 +108,11 @@
   --color-warning: #d97706;           /* amber-600 */
   --color-warning-light: #fffbeb;     /* amber-50 */
 
-  /* 阴影（标准冷灰） */
+  /* 阴影（V3 Phase 3：classic 微升级加 ring shadow 变体 + whisper） */
   --shadow-ring: 0 0 0 1px rgba(0, 0, 0, 0.05);
+  --shadow-ring-hover: 0 0 0 1px rgba(0, 0, 0, 0.12);
+  --shadow-ring-active: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+  --shadow-whisper: 0 4px 24px rgba(0, 0, 0, 0.04);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
