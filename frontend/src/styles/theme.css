@@ -1,0 +1,276 @@
+/**
+ * Design Token 体系 - 多主题系统
+ *
+ * Z-index 层级体系（直接使用 Tailwind 标准 z-* 数字 class，文档化于此）：
+ * - z-0     默认
+ * - z-10    sticky 元素（CategoryTabs）
+ * - z-20    顶部导航栏
+ * - z-30    下拉菜单、popup
+ * - z-40    遮罩层
+ * - z-50    Modal/Dialog
+ * - z-[60]  Toast 通知
+ * - z-[9999] ErrorBoundary 崩溃屏
+ *
+ * 架构：
+ * - @theme 中定义共享 token（圆角、字体、动画时长、缓动）
+ * - 颜色 token 在 @theme 中定义 classic 默认值
+ * - html[data-theme="claude"] 运行时覆盖颜色变量
+ * - html.dark 在每个主题下定义暗色变量
+ *
+ * 切换机制：
+ * - 主题风格：<html data-theme="classic"> 或 <html data-theme="claude">
+ * - 明暗模式：<html class="dark"> 或 <html class="light">
+ * - 通过 useTheme Hook 管理，存入 localStorage
+ *
+ * Tailwind v4 兼容性：
+ * - @theme 中定义的变量自动生成 utility class（如 bg-accent, text-text-primary）
+ * - 生成的 class 使用 var() 引用，运行时覆盖有效（已 PoC 验证）
+ */
+
+/* ==========================================================
+ * 共享 Token（不随主题变化）
+ * ========================================================== */
+
+@theme {
+  /* ========== 字体（classic 默认 sans，claude 覆盖 heading 为 serif） ========== */
+  --font-heading: -apple-system, BlinkMacSystemFont, "PingFang SC",
+                  "Hiragino Sans GB", "Microsoft YaHei",
+                  system-ui, sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "PingFang SC",
+               "Hiragino Sans GB", "Microsoft YaHei",
+               system-ui, sans-serif;
+  --font-code: "SF Mono", "JetBrains Mono", ui-monospace,
+               Menlo, Consolas, monospace;
+
+  /* ========== 圆角 ========== */
+  --radius-sm: 6px;       /* 小按钮、标签 */
+  --radius-md: 8px;       /* 标准按钮、卡片 */
+  --radius-lg: 12px;      /* 主按钮、输入框 */
+  --radius-xl: 16px;      /* 大卡片、视频容器 */
+  --radius-2xl: 24px;     /* 消息气泡 */
+  --radius-full: 9999px;  /* 头像、徽章 */
+
+  /* ========== 动画时长 ========== */
+  --duration-instant: 50ms;   /* 微交互（tooltip） */
+  --duration-fast: 100ms;     /* 快速反馈 */
+  --duration-normal: 150ms;   /* 常规过渡 */
+  --duration-moderate: 200ms; /* 进入动画 */
+  --duration-slow: 250ms;     /* 强调动画 */
+  --duration-slower: 350ms;   /* 页面级过渡 */
+
+  /* ========== 缓动函数 ========== */
+  --ease-out: cubic-bezier(0.25, 0.46, 0.45, 0.94);     /* 自然减速 */
+  --ease-in: cubic-bezier(0.55, 0.06, 0.68, 0.19);      /* 自然加速 */
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);        /* 苹果弹性（核心） */
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);     /* 弹跳 */
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);          /* 平滑（Material） */
+
+  /* ==========================================================
+   * 主题 1：经典蓝（默认）
+   * 1:1 映射现有 Tailwind 颜色，迁移后视觉零变化
+   * ========================================================== */
+
+  /* 品牌色 */
+  --color-accent: #2563eb;            /* blue-600 */
+  --color-accent-hover: #1d4ed8;      /* blue-700 */
+  --color-accent-light: #dbeafe;      /* blue-100 */
+
+  /* 表面/背景 */
+  --color-surface: #f9fafb;           /* gray-50 */
+  --color-surface-card: #ffffff;      /* white */
+  --color-surface-elevated: #ffffff;  /* white */
+  --color-surface-dark: #1f2937;      /* gray-800 */
+  --color-surface-dark-card: #374151; /* gray-700 */
+
+  /* 文字 */
+  --color-text-primary: #111827;      /* gray-900 */
+  --color-text-secondary: #374151;    /* gray-700 */
+  --color-text-tertiary: #6b7280;     /* gray-500 */
+  --color-text-disabled: #9ca3af;     /* gray-400 */
+  --color-text-on-dark: #ffffff;
+  --color-text-on-accent: #ffffff;
+
+  /* 边框 */
+  --color-border-default: #e5e7eb;    /* gray-200 */
+  --color-border-light: #f3f4f6;      /* gray-100 */
+  --color-border-dark: #374151;       /* gray-700 */
+
+  /* 交互 */
+  --color-hover: #f3f4f6;             /* gray-100 */
+  --color-active: #e5e7eb;            /* gray-200 */
+  --color-focus-ring: #3b82f6;        /* blue-500 */
+
+  /* 语义色 */
+  --color-success: #16a34a;           /* green-600 */
+  --color-success-light: #f0fdf4;     /* green-50 */
+  --color-error: #dc2626;             /* red-600 */
+  --color-error-light: #fef2f2;       /* red-50 */
+  --color-warning: #d97706;           /* amber-600 */
+  --color-warning-light: #fffbeb;     /* amber-50 */
+
+  /* 阴影（标准冷灰） */
+  --shadow-ring: 0 0 0 1px rgba(0, 0, 0, 0.05);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+
+  /* 用户消息气泡渐变（保留现有紫色） */
+  --color-user-bubble-from: #a855f7;  /* purple-500 */
+  --color-user-bubble-to: #6366f1;    /* indigo-500 */
+}
+
+/* ==========================================================
+ * Tailwind v4 dark 模式配置
+ * 默认 dark: 前缀基于 prefers-color-scheme，改为 .dark class 策略
+ * 这样已有 26 处 dark: 前缀会基于 html.dark 而非系统设置
+ * ========================================================== */
+
+@variant dark (&:where(.dark, .dark *));
+
+/* ==========================================================
+ * 主题 2：Claude 暖色（运行时覆盖）
+ * 参考 Claude DESIGN.md —— 羊皮纸底+赤陶色+全系暖灰
+ * ========================================================== */
+
+html[data-theme="claude"] {
+  /* 字体：标题改用 serif（Claude 标志性） */
+  --font-heading: Georgia, "Noto Serif SC", "PingFang SC",
+                  "Hiragino Sans GB", serif;
+
+  /* 品牌色（赤陶色） */
+  --color-accent: #c96442;
+  --color-accent-hover: #b85a3a;
+  --color-accent-light: #f5ebe6;
+
+  /* 表面/背景（暖色羊皮纸） */
+  --color-surface: #f5f4ed;            /* Parchment */
+  --color-surface-card: #faf9f5;       /* Ivory */
+  --color-surface-elevated: #ffffff;
+  --color-surface-dark: #141413;       /* Near Black */
+  --color-surface-dark-card: #30302e;  /* Dark Surface */
+
+  /* 文字（全系暖灰） */
+  --color-text-primary: #141413;       /* Anthropic Near Black */
+  --color-text-secondary: #5e5d59;     /* Olive Gray */
+  --color-text-tertiary: #87867f;      /* Stone Gray */
+  --color-text-disabled: #b0aea5;      /* Warm Silver */
+  --color-text-on-dark: #faf9f5;       /* Ivory */
+  --color-text-on-accent: #faf9f5;
+
+  /* 边框（暖奶油色） */
+  --color-border-default: #e8e6dc;     /* Border Warm */
+  --color-border-light: #f0eee6;       /* Border Cream */
+  --color-border-dark: #30302e;
+
+  /* 交互 */
+  --color-hover: rgba(0, 0, 0, 0.04);
+  --color-active: rgba(0, 0, 0, 0.08);
+  --color-focus-ring: #3898ec;         /* Focus Blue（唯一冷色） */
+
+  /* 语义色（Claude 偏暖） */
+  --color-error: #b53333;              /* 暖红 */
+
+  /* 阴影（暖色调 ring shadow） */
+  --shadow-ring: 0 0 0 1px #f0eee6;
+  --shadow-sm: 0 1px 2px rgba(20, 20, 19, 0.05);
+  --shadow-md: 0 4px 12px rgba(20, 20, 19, 0.08);
+  --shadow-lg: 0 8px 24px rgba(20, 20, 19, 0.12);
+  --shadow-xl: 0 16px 48px rgba(20, 20, 19, 0.16);
+
+  /* 用户消息气泡（赤陶色渐变） */
+  --color-user-bubble-from: #c96442;
+  --color-user-bubble-to: #a85535;
+}
+
+/* ==========================================================
+ * Dark 模式（每个主题各有一套 dark 值）
+ * ========================================================== */
+
+html.dark {
+  color-scheme: dark;
+}
+
+html[data-theme="classic"].dark {
+  --color-surface: #111827;            /* gray-900 */
+  --color-surface-card: #1f2937;       /* gray-800 */
+  --color-surface-elevated: #374151;   /* gray-700 */
+  --color-text-primary: #f9fafb;       /* gray-50 */
+  --color-text-secondary: #d1d5db;     /* gray-300 */
+  --color-text-tertiary: #9ca3af;      /* gray-400 */
+  --color-text-disabled: #6b7280;      /* gray-500 */
+  --color-text-on-accent: #ffffff;
+  --color-border-default: #374151;     /* gray-700 */
+  --color-border-light: #1f2937;       /* gray-800 */
+  --color-hover: rgba(255, 255, 255, 0.06);
+  --color-active: rgba(255, 255, 255, 0.1);
+  --color-accent-light: #1e3a5f;       /* 暗色蓝色背景 */
+  --color-success-light: rgba(34, 197, 94, 0.15);
+  --color-error-light: rgba(239, 68, 68, 0.15);
+  --color-warning-light: rgba(245, 158, 11, 0.15);
+}
+
+html[data-theme="claude"].dark {
+  --color-surface: #141413;
+  --color-surface-card: #1e1e1c;
+  --color-surface-elevated: #30302e;
+  --color-text-primary: #faf9f5;
+  --color-text-secondary: #b0aea5;
+  --color-text-tertiary: #87867f;
+  --color-text-disabled: #5e5d59;
+  --color-text-on-accent: #faf9f5;
+  --color-border-default: #30302e;
+  --color-border-light: #3d3d3a;
+  --color-hover: rgba(255, 255, 255, 0.06);
+  --color-active: rgba(255, 255, 255, 0.1);
+  --color-accent-light: #2a1f1a;       /* 暗色赤陶色背景 */
+  --color-success-light: rgba(34, 197, 94, 0.15);
+  --color-error-light: rgba(181, 51, 51, 0.18);
+  --color-warning-light: rgba(217, 119, 6, 0.15);
+}
+
+/* ==========================================================
+ * 全局样式：选中文字、滚动条、减少动画
+ * ========================================================== */
+
+/* 选中文字样式（跟随主题强调色） */
+::selection {
+  background-color: var(--color-accent-light);
+  color: var(--color-text-primary);
+}
+
+/* 自定义滚动条（细线条，跟随主题） */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-default);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+}
+
+/* Firefox 滚动条 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-default) transparent;
+}
+
+/* 减少动画偏好（无障碍） */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

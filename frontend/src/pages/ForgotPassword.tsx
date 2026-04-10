@@ -172,19 +172,19 @@ export default function ForgotPassword() {
 
   if (success) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+      <div className="min-h-screen bg-surface flex flex-col justify-center py-12 sm:px-6 lg:px-8">
         <div className="sm:mx-auto sm:w-full sm:max-w-md">
-          <div className="bg-white py-8 px-4 shadow-lg sm:rounded-lg sm:px-10 text-center">
-            <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100 mb-4">
-              <svg className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <div className="bg-surface-card py-8 px-4 shadow-lg sm:rounded-lg sm:px-10 text-center">
+            <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-success-light mb-4">
+              <svg className="h-6 w-6 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">密码重置成功</h3>
-            <p className="text-sm text-gray-500 mb-4">即将跳转到首页...</p>
+            <h3 className="text-lg font-medium text-text-primary mb-2">密码重置成功</h3>
+            <p className="text-sm text-text-tertiary mb-4">即将跳转到首页...</p>
             <Link
               to="/"
-              className="text-blue-600 hover:text-blue-500 font-medium"
+              className="text-accent hover:text-accent font-medium"
             >
               返回首页
             </Link>
@@ -198,54 +198,54 @@ export default function ForgotPassword() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-surface flex flex-col justify-center py-12 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <Link to="/" tabIndex={-1} className="flex justify-center">
-          <span className="text-3xl font-bold text-blue-600">每日AI</span>
+          <span className="text-3xl font-bold text-accent">每日AI</span>
         </Link>
-        <h2 className="mt-6 text-center text-2xl font-bold text-gray-900">
+        <h2 className="mt-6 text-center text-2xl font-bold text-text-primary">
           {step === 'verify' ? '忘记密码' : '设置新密码'}
         </h2>
         {step === 'verify' && (
-          <p className="mt-2 text-center text-sm text-gray-600">
+          <p className="mt-2 text-center text-sm text-text-tertiary">
             请输入注册时使用的手机号
           </p>
         )}
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white py-8 px-4 shadow-lg sm:rounded-lg sm:px-10">
+        <div className="bg-surface-card py-8 px-4 shadow-lg sm:rounded-lg sm:px-10">
           {/* 步骤指示器 */}
           <div className="flex items-center justify-center mb-6">
             <div className="flex items-center">
               <div
                 className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
                   step === 'verify'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-green-500 text-white'
+                    ? 'bg-accent text-text-on-accent'
+                    : 'bg-success text-white'
                 }`}
               >
                 {step === 'verify' ? '1' : '✓'}
               </div>
-              <span className="ml-2 text-sm text-gray-600">验证手机</span>
+              <span className="ml-2 text-sm text-text-tertiary">验证手机</span>
             </div>
-            <div className="w-12 h-0.5 bg-gray-200 mx-3" />
+            <div className="w-12 h-0.5 bg-active mx-3" />
             <div className="flex items-center">
               <div
                 className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
                   step === 'reset'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-200 text-gray-500'
+                    ? 'bg-accent text-text-on-accent'
+                    : 'bg-active text-text-tertiary'
                 }`}
               >
                 2
               </div>
-              <span className="ml-2 text-sm text-gray-600">设置密码</span>
+              <span className="ml-2 text-sm text-text-tertiary">设置密码</span>
             </div>
           </div>
 
           {error && (
-            <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm mb-5">
+            <div className="bg-error-light text-error p-3 rounded-lg text-sm mb-5">
               {error}
             </div>
           )}
@@ -256,7 +256,7 @@ export default function ForgotPassword() {
               <div>
                 <label
                   htmlFor="phone"
-                  className="block text-sm font-medium text-gray-700"
+                  className="block text-sm font-medium text-text-secondary"
                 >
                   手机号
                 </label>
@@ -266,7 +266,7 @@ export default function ForgotPassword() {
                   type="tel"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  className="mt-1 block w-full px-3 py-2 border border-border-default rounded-lg shadow-sm focus:outline-none focus:ring-focus-ring focus:border-focus-ring"
                   placeholder="请输入手机号"
                   maxLength={11}
                 />
@@ -275,7 +275,7 @@ export default function ForgotPassword() {
               <div>
                 <label
                   htmlFor="code"
-                  className="block text-sm font-medium text-gray-700"
+                  className="block text-sm font-medium text-text-secondary"
                 >
                   验证码
                 </label>
@@ -287,7 +287,7 @@ export default function ForgotPassword() {
                     autoComplete="off"
                     value={code}
                     onChange={(e) => setCode(e.target.value)}
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    className="flex-1 px-3 py-2 border border-border-default rounded-lg shadow-sm focus:outline-none focus:ring-focus-ring focus:border-focus-ring"
                     placeholder="请输入验证码"
                     maxLength={6}
                   />
@@ -296,7 +296,7 @@ export default function ForgotPassword() {
                     tabIndex={-1}
                     onClick={handleSendCode}
                     disabled={sendingCode || countdown > 0}
-                    className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap transition-colors"
+                    className="px-4 py-2 bg-hover text-text-secondary rounded-lg hover:bg-active disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap transition-base"
                   >
                     {countdown > 0 ? `${countdown}s` : '获取验证码'}
                   </button>
@@ -307,7 +307,7 @@ export default function ForgotPassword() {
                 ref={verifySubmitRef}
                 type="submit"
                 disabled={loading}
-                className="w-full py-2.5 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                className="w-full py-2.5 px-4 bg-accent text-text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-focus-ring disabled:opacity-50 disabled:cursor-not-allowed transition-base font-medium"
               >
                 {loading ? '验证中...' : '下一步'}
               </button>
@@ -320,7 +320,7 @@ export default function ForgotPassword() {
               <div>
                 <label
                   htmlFor="password"
-                  className="block text-sm font-medium text-gray-700"
+                  className="block text-sm font-medium text-text-secondary"
                 >
                   新密码
                 </label>
@@ -331,13 +331,13 @@ export default function ForgotPassword() {
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 pr-10"
+                    className="block w-full px-3 py-2 border border-border-default rounded-lg shadow-sm focus:outline-none focus:ring-focus-ring focus:border-focus-ring pr-10"
                     placeholder="至少8位，包含字母和数字"
                   />
                   <button
                     type="button"
                     tabIndex={-1}
-                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-text-disabled hover:text-text-tertiary"
                     onClick={() => setShowPassword(!showPassword)}
                   >
                     {showPassword ? (
@@ -357,7 +357,7 @@ export default function ForgotPassword() {
               <div>
                 <label
                   htmlFor="confirmPassword"
-                  className="block text-sm font-medium text-gray-700"
+                  className="block text-sm font-medium text-text-secondary"
                 >
                   确认新密码
                 </label>
@@ -367,15 +367,15 @@ export default function ForgotPassword() {
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className={`mt-1 block w-full px-3 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${
+                  className={`mt-1 block w-full px-3 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-focus-ring focus:border-focus-ring ${
                     confirmPassword && confirmPassword !== password
-                      ? 'border-red-300'
-                      : 'border-gray-300'
+                      ? 'border-error/30'
+                      : 'border-border-default'
                   }`}
                   placeholder="请再次输入新密码"
                 />
                 {confirmPassword && confirmPassword !== password && (
-                  <p className="mt-1 text-xs text-red-500">两次输入的密码不一致</p>
+                  <p className="mt-1 text-xs text-error">两次输入的密码不一致</p>
                 )}
               </div>
 
@@ -383,7 +383,7 @@ export default function ForgotPassword() {
                 ref={resetSubmitRef}
                 type="submit"
                 disabled={loading}
-                className="w-full py-2.5 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                className="w-full py-2.5 px-4 bg-accent text-text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-focus-ring disabled:opacity-50 disabled:cursor-not-allowed transition-base font-medium"
               >
                 {loading ? '提交中...' : '重置密码'}
               </button>
@@ -391,11 +391,11 @@ export default function ForgotPassword() {
           )}
 
           {/* 返回首页 */}
-          <p className="mt-6 text-center text-sm text-gray-600">
+          <p className="mt-6 text-center text-sm text-text-tertiary">
             <Link
               to="/"
               tabIndex={-1}
-              className="font-medium text-blue-600 hover:text-blue-500"
+              className="font-medium text-accent hover:text-accent"
             >
               ← 返回首页
             </Link>

@@ -11,13 +11,13 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '../stores/useAuthStore';
 import { useMessageStore } from '../stores/useMessageStore';
-import Sidebar from '../components/chat/Sidebar';
+import Sidebar from '../components/chat/layout/Sidebar';
 import InvitationNotice from '../components/admin/InvitationNotice';
-import MessageArea from '../components/chat/MessageArea';
-import InputArea from '../components/chat/InputArea';
-import { ChatHeader } from '../components/chat/ChatHeader';
+import MessageArea from '../components/chat/message/MessageArea';
+import InputArea from '../components/chat/input/InputArea';
+import { ChatHeader } from '../components/chat/layout/ChatHeader';
 import { getConversation } from '../services/conversation';
-import { CONVERSATIONS_CACHE_KEY } from '../components/chat/conversationUtils';
+import { CONVERSATIONS_CACHE_KEY } from '../components/chat/layout/conversationUtils';
 import { useMessageCallbacks } from '../hooks/useMessageCallbacks';
 import { useConversationNavigation } from '../hooks/useConversationNavigation';
 import type { UnifiedModel } from '../constants/models';
@@ -147,6 +147,7 @@ export default function Chat() {
     const modelParam = searchParams.get('model');
     if (modelParam) {
       // 设置为对话模型，让 InputArea 的 useModelSelection 自动选中
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setConversationModelId(modelParam);
       // 清除 query 参数，避免刷新重复触发
       searchParams.delete('model');
@@ -289,7 +290,7 @@ export default function Chat() {
   );
 
   return (
-    <div className="h-screen flex bg-gray-50">
+    <div className="h-screen flex bg-surface">
       {/* 邀请通知 */}
       <InvitationNotice />
 

@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import AiImageGrid from '../AiImageGrid';
+import AiImageGrid from '../media/AiImageGrid';
 import type { ContentPart } from '../../../stores/useMessageStore';
 
 // Mock 依赖
@@ -18,7 +18,7 @@ vi.mock('react-intersection-observer', () => ({
   useInView: () => ({ ref: vi.fn(), inView: true }),
 }));
 
-vi.mock('../MediaPlaceholder', () => ({
+vi.mock('../media/MediaPlaceholder', () => ({
   FailedMediaPlaceholder: ({ onRetry, retryLabel }: { onRetry?: () => void; retryLabel?: string }) => (
     <div data-testid="failed-placeholder">
       {onRetry && <button onClick={onRetry}>{retryLabel}</button>}
@@ -26,7 +26,7 @@ vi.mock('../MediaPlaceholder', () => ({
   ),
 }));
 
-vi.mock('../shared.module.css', () => ({
+vi.mock('../menus/shared.module.css', () => ({
   default: { 'dynamic-aspect-ratio': 'dynamic-aspect-ratio' },
 }));
 

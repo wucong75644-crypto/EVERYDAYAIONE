@@ -24,21 +24,21 @@ export default function UnsubscribeModal({
 }: UnsubscribeModalProps) {
   return (
     <Modal isOpen={isOpen} onClose={onCancel} title="确认取消订阅？" maxWidth="max-w-sm">
-      <p className="text-sm text-gray-600">
-        取消订阅 <span className="font-medium text-gray-900">{modelName}</span> 后，将无法在聊天页使用该模型。
+      <p className="text-sm text-text-secondary">
+        取消订阅 <span className="font-medium text-text-primary">{modelName}</span> 后，将无法在聊天页使用该模型。
       </p>
       <div className="flex gap-3 mt-6">
         <button
           onClick={onCancel}
           disabled={isLoading}
-          className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-50"
+          className="flex-1 border border-border-default text-text-secondary py-2 rounded-lg text-sm font-medium hover:bg-hover transition-base disabled:opacity-50"
         >
           保持订阅
         </button>
         <button
           onClick={onConfirm}
           disabled={isLoading}
-          className="flex-1 bg-red-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex-1 bg-error text-text-on-accent py-2 rounded-lg text-sm font-medium hover:bg-error/90 transition-base disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isLoading ? (
             <span className="inline-flex items-center justify-center gap-1.5">

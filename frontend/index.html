@@ -5,6 +5,28 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>EVERYDAYAI</title>
+    <script>
+      // 主题初始化（在 React hydrate 之前同步执行，防闪白/闪色）
+      // 读取 localStorage 中的主题设置，写入 html 元素的 data-theme 属性和 class
+      (function () {
+        try {
+          var theme = localStorage.getItem('everydayai_theme') || 'classic';
+          var colorMode = localStorage.getItem('everydayai_color_mode') || 'system';
+          var isDark =
+            colorMode === 'dark' ||
+            (colorMode === 'system' &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+          var html = document.documentElement;
+          html.setAttribute('data-theme', theme);
+          html.classList.add(isDark ? 'dark' : 'light');
+        } catch (e) {
+          // localStorage 不可用时回退到默认值
+          document.documentElement.setAttribute('data-theme', 'classic');
+          document.documentElement.classList.add('light');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

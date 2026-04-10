@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import ThinkingBlock from '../ThinkingBlock';
+import ThinkingBlock from '../message/ThinkingBlock';
 
 describe('ThinkingBlock', () => {
   it('should not render when content is empty and not thinking', () => {

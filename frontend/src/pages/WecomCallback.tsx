@@ -69,34 +69,34 @@ export default function WecomCallback() {
 
   if (!error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="min-h-screen flex items-center justify-center bg-surface">
         <div className="text-center">
-          <svg className="animate-spin h-10 w-10 text-blue-600 mx-auto mb-4" viewBox="0 0 24 24" fill="none">
+          <svg className="animate-spin h-10 w-10 text-accent mx-auto mb-4" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
-          <p className="text-gray-600">登录成功，正在跳转...</p>
+          <p className="text-text-tertiary">登录成功，正在跳转...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="max-w-sm w-full bg-white rounded-xl shadow-sm p-8 text-center">
-        <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-          <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    <div className="min-h-screen flex items-center justify-center bg-surface">
+      <div className="max-w-sm w-full bg-surface-card rounded-xl shadow-sm p-8 text-center">
+        <div className="w-12 h-12 bg-error-light rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg className="h-6 w-6 text-error" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
           </svg>
         </div>
-        <h2 className="text-lg font-medium text-gray-900 mb-2">登录失败</h2>
-        <p className="text-sm text-gray-500 mb-6">{error}</p>
+        <h2 className="text-lg font-medium text-text-primary mb-2">登录失败</h2>
+        <p className="text-sm text-text-tertiary mb-6">{error}</p>
         <button
           onClick={() => {
             const loginOrgId = localStorage.getItem('login_org_id');
             navigate(loginOrgId ? `/?org=${loginOrgId}` : '/', { replace: true });
           }}
-          className="w-full py-2.5 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+          className="w-full py-2.5 px-4 bg-accent text-text-on-accent rounded-lg hover:bg-accent-hover transition-base font-medium"
         >
           返回登录
         </button>

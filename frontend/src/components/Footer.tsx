@@ -17,12 +17,12 @@ export default function Footer({ compact = false, className = '' }: FooterProps)
   if (compact) {
     // 紧凑模式：适用于侧边栏底部
     return (
-      <div className={`text-center text-xs text-gray-400 py-2 ${className}`}>
+      <div className={`text-center text-xs text-text-disabled py-2 ${className}`}>
         <a
           href="https://beian.mps.gov.cn/#/query/webSearch?code=33070302100828"
           rel="noreferrer"
           target="_blank"
-          className="inline-flex items-center gap-1 hover:text-gray-600 transition-colors"
+          className="inline-flex items-center gap-1 hover:text-text-tertiary transition-base"
         >
           <img
             src="/beian-icon.png"
@@ -37,14 +37,14 @@ export default function Footer({ compact = false, className = '' }: FooterProps)
 
   // 标准模式：适用于页面底部
   return (
-    <footer className={`py-4 text-center text-sm text-gray-500 ${className}`}>
+    <footer className={`py-4 text-center text-sm text-text-tertiary ${className}`}>
       <div className="flex items-center justify-center gap-4 flex-wrap">
         {/* 公安备案 */}
         <a
           href="https://beian.mps.gov.cn/#/query/webSearch?code=33070302100828"
           rel="noreferrer"
           target="_blank"
-          className="inline-flex items-center gap-1.5 hover:text-gray-700 transition-colors"
+          className="inline-flex items-center gap-1.5 hover:text-text-secondary transition-base"
         >
           <img
             src="/beian-icon.png"
@@ -55,18 +55,18 @@ export default function Footer({ compact = false, className = '' }: FooterProps)
         </a>
 
         {/* ICP 备案（如有，取消注释）
-        <span className="text-gray-300">|</span>
+        <span className="text-text-disabled">|</span>
         <a
           href="https://beian.miit.gov.cn/"
           rel="noreferrer"
           target="_blank"
-          className="hover:text-gray-700 transition-colors"
+          className="hover:text-text-secondary transition-base"
         >
           浙ICP备XXXXXXXX号
         </a>
         */}
       </div>
-      <div className="mt-2 text-xs text-gray-400">
+      <div className="mt-2 text-xs text-text-disabled">
         © {new Date().getFullYear()} EVERYDAYAI. All rights reserved.
       </div>
     </footer>

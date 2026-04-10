@@ -38,7 +38,7 @@ export default function OrgManagePanel({ orgId }: OrgManagePanelProps) {
 
   if (!orgId) {
     return (
-      <div className="text-center text-gray-500 py-12">
+      <div className="text-center text-text-tertiary py-12">
         <p>请先通过企业账号登录</p>
       </div>
     );
@@ -47,7 +47,7 @@ export default function OrgManagePanel({ orgId }: OrgManagePanelProps) {
   return (
     <div className="space-y-4">
       {/* 子 Tab */}
-      <div className="flex space-x-1 bg-gray-100 rounded-lg p-1">
+      <div className="flex space-x-1 bg-hover rounded-lg p-1">
         {([
           { key: 'erp' as SubTab, label: 'ERP 凭证' },
           { key: 'wecom' as SubTab, label: '企业微信' },
@@ -57,10 +57,10 @@ export default function OrgManagePanel({ orgId }: OrgManagePanelProps) {
         ]).map((tab) => (
           <button
             key={tab.key}
-            className={`flex-1 py-1.5 text-sm rounded-md transition-colors ${
+            className={`flex-1 py-1.5 text-sm rounded-md transition-base ${
               subTab === tab.key
-                ? 'bg-white text-gray-900 shadow-sm'
-                : 'text-gray-500 hover:text-gray-700'
+                ? 'bg-surface-card text-text-primary shadow-sm'
+                : 'text-text-tertiary hover:text-text-secondary'
             }`}
             onClick={() => setSubTab(tab.key)}
           >
@@ -130,38 +130,38 @@ function ErpConfigSection({ orgId }: { orgId: string }) {
   };
 
   if (loading) {
-    return <div className="text-center text-gray-500 py-8">加载中...</div>;
+    return <div className="text-center text-text-tertiary py-8">加载中...</div>;
   }
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-gray-500">
+      <p className="text-sm text-text-tertiary">
         配置快麦 ERP 凭证后，企业成员可使用 ERP 查询功能。凭证以 AES-256 加密存储。
       </p>
 
-      {error && <div className="bg-red-50 text-red-600 p-2 rounded text-sm">{error}</div>}
-      {success && <div className="bg-green-50 text-green-600 p-2 rounded text-sm">{success}</div>}
+      {error && <div className="bg-error-light text-error p-2 rounded text-sm">{error}</div>}
+      {success && <div className="bg-success-light text-success p-2 rounded text-sm">{success}</div>}
 
       {ERP_CONFIG_KEYS.map(({ key, label }) => {
         const isConfigured = configuredKeys.includes(key);
         const isEditing = values[key] !== undefined;
         return (
           <div key={key} className="flex items-center space-x-2">
-            <div className="w-36 text-sm text-gray-700 flex items-center">
+            <div className="w-36 text-sm text-text-secondary flex items-center">
               {label}
               {isConfigured && (
-                <span className="ml-1.5 w-2 h-2 bg-green-500 rounded-full inline-block" title="已配置" />
+                <span className="ml-1.5 w-2 h-2 bg-success rounded-full inline-block" title="已配置" />
               )}
             </div>
             {isConfigured && !isEditing ? (
               /* 已配置：显示脱敏值 + 修改按钮 */
               <>
-                <div className="flex-1 px-3 py-1.5 border rounded-lg text-sm bg-gray-50 text-gray-500 tracking-widest">
+                <div className="flex-1 px-3 py-1.5 border rounded-lg text-sm bg-surface text-text-tertiary tracking-widest">
                   ••••••••••••
                 </div>
                 <button
                   onClick={() => setValues((prev) => ({ ...prev, [key]: '' }))}
-                  className="px-3 py-1.5 text-sm text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors whitespace-nowrap"
+                  className="px-3 py-1.5 text-sm text-accent border border-accent/20 rounded-lg hover:bg-accent-light transition-base whitespace-nowrap"
                 >
                   修改
                 </button>
@@ -173,21 +173,21 @@ function ErpConfigSection({ orgId }: { orgId: string }) {
                   type="text"
                   value={values[key] || ''}
                   onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
-                  className="flex-1 px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  className="flex-1 px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-focus-ring"
                   placeholder={isConfigured ? '输入新值覆盖' : '未配置'}
                   autoFocus={isConfigured}
                 />
                 <button
                   onClick={() => handleSave(key)}
                   disabled={saving === key || !values[key]?.trim()}
-                  className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                  className="px-3 py-1.5 text-sm bg-accent text-text-on-accent rounded-lg hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-base whitespace-nowrap"
                 >
                   {saving === key ? '...' : '保存'}
                 </button>
                 {isConfigured && (
                   <button
                     onClick={() => setValues((prev) => { const n = { ...prev }; delete n[key]; return n; })}
-                    className="px-2 py-1.5 text-sm text-gray-400 hover:text-gray-600 transition-colors"
+                    className="px-2 py-1.5 text-sm text-text-disabled hover:text-text-tertiary transition-base"
                   >
                     取消
                   </button>
@@ -219,7 +219,7 @@ function ErpConfigSection({ orgId }: { orgId: string }) {
             }
           }}
           disabled={testing}
-          className="w-full py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+          className="w-full py-2 text-sm bg-success text-text-on-accent rounded-lg hover:bg-success/90 disabled:opacity-50 transition-base"
         >
           {testing ? '测试中...' : '测试 ERP 连接'}
         </button>
@@ -285,41 +285,41 @@ function MembersSection({ orgId }: { orgId: string }) {
   };
 
   if (loading) {
-    return <div className="text-center text-gray-500 py-8">加载中...</div>;
+    return <div className="text-center text-text-tertiary py-8">加载中...</div>;
   }
 
   return (
     <div className="space-y-3">
       {/* 操作栏 */}
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">共 {members.length} 名成员</p>
+        <p className="text-sm text-text-tertiary">共 {members.length} 名成员</p>
         <button
           onClick={() => { setShowInvite(!showInvite); setInviteError(''); setInviteMsg(''); }}
-          className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          className="px-3 py-1.5 text-sm bg-accent text-text-on-accent rounded-lg hover:bg-accent-hover transition-base"
         >
           {showInvite ? '取消' : '+ 邀请成员'}
         </button>
       </div>
 
-      {inviteMsg && <div className="bg-green-50 text-green-600 p-2 rounded text-sm">{inviteMsg}</div>}
-      {inviteError && <div className="bg-red-50 text-red-600 p-2 rounded text-sm">{inviteError}</div>}
+      {inviteMsg && <div className="bg-success-light text-success p-2 rounded text-sm">{inviteMsg}</div>}
+      {inviteError && <div className="bg-error-light text-error p-2 rounded text-sm">{inviteError}</div>}
 
       {/* 邀请表单 */}
       {showInvite && (
-        <div className="bg-gray-50 rounded-lg p-3 space-y-2 border">
+        <div className="bg-surface rounded-lg p-3 space-y-2 border">
           <div className="flex space-x-2">
             <input
               type="tel"
               value={invitePhone}
               onChange={(e) => setInvitePhone(e.target.value)}
-              className="flex-1 px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="flex-1 px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-focus-ring"
               placeholder="输入手机号"
               maxLength={11}
             />
             <select
               value={inviteRole}
               onChange={(e) => setInviteRole(e.target.value)}
-              className="px-3 py-1.5 border rounded-lg text-sm bg-white"
+              className="px-3 py-1.5 border rounded-lg text-sm bg-surface-card"
             >
               <option value="member">成员</option>
               <option value="admin">管理员</option>
@@ -328,7 +328,7 @@ function MembersSection({ orgId }: { orgId: string }) {
           <button
             onClick={handleInvite}
             disabled={inviting || !invitePhone}
-            className="w-full py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="w-full py-1.5 text-sm bg-accent text-text-on-accent rounded-lg hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-base"
           >
             {inviting ? '发送中...' : '发送邀请'}
           </button>
@@ -337,15 +337,15 @@ function MembersSection({ orgId }: { orgId: string }) {
       {members.map((m) => (
         <div
           key={m.user_id}
-          className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+          className="flex items-center justify-between p-3 bg-surface rounded-lg"
         >
           <div className="flex items-center space-x-3">
-            <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-sm font-medium">
+            <div className="w-8 h-8 bg-accent-light text-accent rounded-full flex items-center justify-center text-sm font-medium">
               {(m.nickname || '?')[0]}
             </div>
             <div>
-              <div className="text-sm font-medium text-gray-900">{m.nickname || '未知'}</div>
-              <div className="text-xs text-gray-500">
+              <div className="text-sm font-medium text-text-primary">{m.nickname || '未知'}</div>
+              <div className="text-xs text-text-tertiary">
                 {new Date(m.joined_at).toLocaleDateString()} 加入
               </div>
             </div>
@@ -353,10 +353,10 @@ function MembersSection({ orgId }: { orgId: string }) {
           <span
             className={`text-xs px-2 py-0.5 rounded-full ${
               m.role === 'owner'
-                ? 'bg-purple-100 text-purple-700'
+                ? 'bg-warning-light text-warning'
                 : m.role === 'admin'
-                ? 'bg-blue-100 text-blue-700'
-                : 'bg-gray-100 text-gray-600'
+                ? 'bg-accent-light text-accent'
+                : 'bg-hover text-text-tertiary'
             }`}
           >
             {roleLabels[m.role] || m.role}
@@ -390,58 +390,58 @@ function OrgInfoSection({ orgId }: { orgId: string }) {
   };
 
   if (loading || !org) {
-    return <div className="text-center text-gray-500 py-8">加载中...</div>;
+    return <div className="text-center text-text-tertiary py-8">加载中...</div>;
   }
 
   return (
     <div className="space-y-3">
-      <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+      <div className="bg-surface rounded-lg p-4 space-y-2">
         <div className="flex justify-between text-sm">
-          <span className="text-gray-500">企业名称</span>
-          <span className="text-gray-900 font-medium">{org.name}</span>
+          <span className="text-text-tertiary">企业名称</span>
+          <span className="text-text-primary font-medium">{org.name}</span>
         </div>
         <div className="flex justify-between text-sm">
-          <span className="text-gray-500">状态</span>
-          <span className={org.status === 'active' ? 'text-green-600' : 'text-red-600'}>
+          <span className="text-text-tertiary">状态</span>
+          <span className={org.status === 'active' ? 'text-success' : 'text-error'}>
             {org.status === 'active' ? '正常运行' : '已停用'}
           </span>
         </div>
         <div className="flex justify-between text-sm">
-          <span className="text-gray-500">企业 ID</span>
-          <span className="text-gray-400 text-xs font-mono">{org.id}</span>
+          <span className="text-text-tertiary">企业 ID</span>
+          <span className="text-text-disabled text-xs font-mono">{org.id}</span>
         </div>
         <div className="flex justify-between text-sm">
-          <span className="text-gray-500">创建时间</span>
-          <span className="text-gray-700">
+          <span className="text-text-tertiary">创建时间</span>
+          <span className="text-text-secondary">
             {new Date(org.created_at).toLocaleString()}
           </span>
         </div>
       </div>
 
       {/* 企业专属登录链接 */}
-      <div className="bg-blue-50 p-3 rounded-lg">
-        <p className="text-xs text-blue-700 font-medium mb-1">企业专属登录链接</p>
+      <div className="bg-accent-light p-3 rounded-lg">
+        <p className="text-xs text-accent font-medium mb-1">企业专属登录链接</p>
         <div className="flex items-center space-x-2">
           <input
             type="text"
             value={`${window.location.origin}/login?org=${orgId}`}
             readOnly
-            className="flex-1 px-2 py-1 text-xs bg-white border rounded text-gray-600"
+            className="flex-1 px-2 py-1 text-xs bg-surface-card border rounded text-text-tertiary"
           />
           <button
             onClick={(e) => {
               navigator.clipboard.writeText(`${window.location.origin}/login?org=${orgId}`);
               const btn = e.currentTarget;
               btn.textContent = '已复制 ✓';
-              btn.classList.replace('bg-blue-600', 'bg-green-600');
-              setTimeout(() => { btn.textContent = '复制'; btn.classList.replace('bg-green-600', 'bg-blue-600'); }, 1500);
+              btn.classList.replace('bg-accent', 'bg-success');
+              setTimeout(() => { btn.textContent = '复制'; btn.classList.replace('bg-success', 'bg-accent'); }, 1500);
             }}
-            className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors whitespace-nowrap"
+            className="px-3 py-1 text-xs bg-accent text-text-on-accent rounded hover:bg-accent-hover transition-base whitespace-nowrap"
           >
             复制
           </button>
         </div>
-        <p className="text-xs text-blue-500 mt-1">将此链接发给员工，员工打开后可扫码登录并自动绑定企业</p>
+        <p className="text-xs text-accent mt-1">将此链接发给员工，员工打开后可扫码登录并自动绑定企业</p>
       </div>
     </div>
   );
@@ -511,7 +511,7 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
   };
 
   if (loading) {
-    return <div className="text-center text-gray-500 py-8">加载中...</div>;
+    return <div className="text-center text-text-tertiary py-8">加载中...</div>;
   }
 
   const botConfigured = fieldStatus.wecom_bot_id?.configured && fieldStatus.wecom_bot_secret?.configured;
@@ -524,23 +524,23 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
     const isEditing = values[key] !== undefined;
     return (
       <div key={key} className="flex items-center space-x-2">
-        <div className="w-44 text-sm text-gray-700 flex items-center">
+        <div className="w-44 text-sm text-text-secondary flex items-center">
           {label}
           {isConfigured && (
             <span
-              className={`ml-1.5 w-2 h-2 rounded-full inline-block ${source === 'system' ? 'bg-blue-400' : 'bg-green-500'}`}
+              className={`ml-1.5 w-2 h-2 rounded-full inline-block ${source === 'system' ? 'bg-accent/60' : 'bg-success'}`}
               title={source === 'system' ? '使用系统默认' : '已配置'}
             />
           )}
         </div>
         {isConfigured && !isEditing ? (
           <>
-            <div className="flex-1 px-3 py-1.5 border rounded-lg text-sm bg-gray-50 text-gray-500 tracking-widest">
+            <div className="flex-1 px-3 py-1.5 border rounded-lg text-sm bg-surface text-text-tertiary tracking-widest">
               ••••••••••••
             </div>
             <button
               onClick={() => setValues((prev) => ({ ...prev, [key]: '' }))}
-              className="px-3 py-1.5 text-sm text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors whitespace-nowrap"
+              className="px-3 py-1.5 text-sm text-accent border border-accent/20 rounded-lg hover:bg-accent-light transition-base whitespace-nowrap"
             >
               修改
             </button>
@@ -551,20 +551,20 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
               type="text"
               value={values[key] || ''}
               onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
-              className="flex-1 px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="flex-1 px-3 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-focus-ring"
               placeholder={isConfigured ? '输入新值覆盖' : '未配置'}
             />
             <button
               onClick={() => handleSave(key, isOrgField)}
               disabled={saving === key || !values[key]?.trim()}
-              className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+              className="px-3 py-1.5 text-sm bg-accent text-text-on-accent rounded-lg hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-base whitespace-nowrap"
             >
               {saving === key ? '...' : '保存'}
             </button>
             {isConfigured && (
               <button
                 onClick={() => setValues((prev) => { const n = { ...prev }; delete n[key]; return n; })}
-                className="px-2 py-1.5 text-sm text-gray-400 hover:text-gray-600 transition-colors"
+                className="px-2 py-1.5 text-sm text-text-disabled hover:text-text-tertiary transition-base"
               >
                 取消
               </button>
@@ -577,18 +577,18 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
 
   return (
     <div className="space-y-5">
-      {error && <div className="bg-red-50 text-red-600 p-2 rounded text-sm">{error}</div>}
-      {success && <div className="bg-green-50 text-green-600 p-2 rounded text-sm">{success}</div>}
+      {error && <div className="bg-error-light text-error p-2 rounded text-sm">{error}</div>}
+      {success && <div className="bg-success-light text-success p-2 rounded text-sm">{success}</div>}
 
       {/* 企业 ID */}
       <div>
-        <h4 className="text-sm font-medium text-gray-800 mb-2">企业标识</h4>
+        <h4 className="text-sm font-medium text-text-primary mb-2">企业标识</h4>
         {renderField({ key: 'wecom_corp_id', label: '企业 ID (Corp ID)', isOrgField: true })}
       </div>
 
       {/* 智能机器人 */}
       <div>
-        <h4 className="text-sm font-medium text-gray-800 mb-2">智能机器人（群聊/私聊消息）</h4>
+        <h4 className="text-sm font-medium text-text-primary mb-2">智能机器人（群聊/私聊消息）</h4>
         <div className="space-y-2">
           {WECOM_BOT_KEYS.map(renderField)}
         </div>
@@ -596,14 +596,14 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
 
       {/* 自建应用 */}
       <div>
-        <h4 className="text-sm font-medium text-gray-800 mb-2">自建应用（扫码登录 + 消息推送）</h4>
+        <h4 className="text-sm font-medium text-text-primary mb-2">自建应用（扫码登录 + 消息推送）</h4>
         <div className="space-y-2">
           {WECOM_APP_KEYS.map(renderField)}
         </div>
       </div>
 
 
-      <p className="text-xs text-gray-400">
+      <p className="text-xs text-text-disabled">
         注意：修改 Corp ID 或机器人凭证后需重启企微服务才能生效。
       </p>
 
@@ -628,7 +628,7 @@ function WecomConfigSection({ orgId }: { orgId: string }) {
             }
           }}
           disabled={testing}
-          className="w-full py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+          className="w-full py-2 text-sm bg-success text-text-on-accent rounded-lg hover:bg-success/90 disabled:opacity-50 transition-base"
         >
           {testing ? '测试中...' : '测试企微连接'}
         </button>

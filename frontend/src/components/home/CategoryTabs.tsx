@@ -33,23 +33,23 @@ export default function CategoryTabs({
   counts,
 }: CategoryTabsProps) {
   return (
-    <div className="border-b border-gray-200 sticky top-16 bg-white z-10">
+    <div className="border-b border-border-default sticky top-16 bg-surface-card z-10">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex space-x-1 overflow-x-auto">
           {TABS.map((tab) => (
             <button
               key={tab.value}
               onClick={() => onTabChange(tab.value)}
-              className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors ${
+              className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-base ${
                 activeTab === tab.value
-                  ? 'text-blue-600 border-b-2 border-blue-600'
-                  : 'text-gray-500 hover:text-gray-700'
+                  ? 'text-accent border-b-2 border-accent'
+                  : 'text-text-tertiary hover:text-text-secondary'
               }`}
             >
               {tab.icon && `${tab.icon} `}
               {tab.label}
               {' '}
-              <span className="text-xs text-gray-400">
+              <span className="text-xs text-text-disabled">
                 ({counts[tab.value] ?? 0})
               </span>
             </button>

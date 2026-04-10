@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import MessageItem from '../MessageItem';
+import MessageItem from '../message/MessageItem';
 import type { Message } from '../../../stores/useMessageStore';
 
 // ============================================================
@@ -20,26 +20,26 @@ import type { Message } from '../../../stores/useMessageStore';
 // 捕获 MessageMedia 接收到的 props
 let capturedMediaProps: Record<string, unknown> = {};
 
-vi.mock('../MessageMedia', () => ({
+vi.mock('../message/MessageMedia', () => ({
   default: (props: Record<string, unknown>) => {
     capturedMediaProps = props;
     return <div data-testid="message-media" />;
   },
 }));
 
-vi.mock('../MessageActions', () => ({
+vi.mock('../message/MessageActions', () => ({
   default: () => <div data-testid="message-actions" />,
 }));
 
-vi.mock('../DeleteMessageModal', () => ({
+vi.mock('../modals/DeleteMessageModal', () => ({
   default: () => null,
 }));
 
-vi.mock('../ImagePreviewModal', () => ({
+vi.mock('../media/ImagePreviewModal', () => ({
   default: () => null,
 }));
 
-vi.mock('../LoadingPlaceholder', () => ({
+vi.mock('../message/LoadingPlaceholder', () => ({
   default: ({ text }: { text: string }) => <span>{text}</span>,
 }));
 

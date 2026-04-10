@@ -178,7 +178,7 @@ export default function RegisterForm({
     <div>
       <form onSubmit={handleSubmit} onKeyDown={handleKeyDown} className="space-y-3.5">
         {error && (
-          <div className="bg-red-50 text-red-600 p-2.5 rounded-lg text-sm">
+          <div className="bg-error-light text-error p-2.5 rounded-lg text-sm">
             {error}
           </div>
         )}
@@ -187,7 +187,7 @@ export default function RegisterForm({
         <div>
           <label
             htmlFor="nickname"
-            className="block text-sm font-medium text-gray-700"
+            className="block text-sm font-medium text-text-secondary"
           >
             昵称
           </label>
@@ -197,7 +197,7 @@ export default function RegisterForm({
             type="text"
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
-            className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+            className="mt-1 block w-full px-3 py-2 border border-border-default rounded-lg shadow-sm focus:outline-none focus:ring-focus-ring focus:border-focus-ring"
             placeholder="请输入昵称"
             maxLength={20}
           />
@@ -207,7 +207,7 @@ export default function RegisterForm({
         <div>
           <label
             htmlFor="phone"
-            className="block text-sm font-medium text-gray-700"
+            className="block text-sm font-medium text-text-secondary"
           >
             手机号
           </label>
@@ -216,7 +216,7 @@ export default function RegisterForm({
             type="tel"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+            className="mt-1 block w-full px-3 py-2 border border-border-default rounded-lg shadow-sm focus:outline-none focus:ring-focus-ring focus:border-focus-ring"
             placeholder="请输入手机号"
             maxLength={11}
           />
@@ -226,7 +226,7 @@ export default function RegisterForm({
         <div>
           <label
             htmlFor="code"
-            className="block text-sm font-medium text-gray-700"
+            className="block text-sm font-medium text-text-secondary"
           >
             验证码
           </label>
@@ -237,7 +237,7 @@ export default function RegisterForm({
               autoComplete="off"
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              className="flex-1 px-3 py-2 border border-border-default rounded-lg shadow-sm focus:outline-none focus:ring-focus-ring focus:border-focus-ring"
               placeholder="请输入验证码"
               maxLength={6}
             />
@@ -246,7 +246,7 @@ export default function RegisterForm({
               tabIndex={-1}
               onClick={handleSendCode}
               disabled={sendingCode || countdown > 0}
-              className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap transition-colors"
+              className="px-4 py-2 bg-hover text-text-secondary rounded-lg hover:bg-active disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap transition-base"
             >
               {countdown > 0 ? `${countdown}s` : '获取验证码'}
             </button>
@@ -257,7 +257,7 @@ export default function RegisterForm({
         <div>
           <label
             htmlFor="password"
-            className="block text-sm font-medium text-gray-700"
+            className="block text-sm font-medium text-text-secondary"
           >
             密码
           </label>
@@ -267,13 +267,13 @@ export default function RegisterForm({
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 pr-10"
+              className="block w-full px-3 py-2 border border-border-default rounded-lg shadow-sm focus:outline-none focus:ring-focus-ring focus:border-focus-ring pr-10"
               placeholder="至少8位，包含字母和数字"
             />
             <button
               type="button"
               tabIndex={-1}
-              className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+              className="absolute inset-y-0 right-0 pr-3 flex items-center text-text-disabled hover:text-text-tertiary"
               onClick={() => setShowPassword(!showPassword)}
             >
               {showPassword ? (
@@ -295,34 +295,34 @@ export default function RegisterForm({
                 <div
                   className={`h-1 flex-1 rounded ${
                     passwordStrength === 'weak'
-                      ? 'bg-red-400'
+                      ? 'bg-error'
                       : passwordStrength === 'medium'
-                      ? 'bg-yellow-400'
-                      : 'bg-green-400'
+                      ? 'bg-warning'
+                      : 'bg-success'
                   }`}
                 />
                 <div
                   className={`h-1 flex-1 rounded ${
                     passwordStrength === 'medium' || passwordStrength === 'strong'
                       ? passwordStrength === 'medium'
-                        ? 'bg-yellow-400'
-                        : 'bg-green-400'
-                      : 'bg-gray-200'
+                        ? 'bg-warning'
+                        : 'bg-success'
+                      : 'bg-active'
                   }`}
                 />
                 <div
                   className={`h-1 flex-1 rounded ${
-                    passwordStrength === 'strong' ? 'bg-green-400' : 'bg-gray-200'
+                    passwordStrength === 'strong' ? 'bg-success' : 'bg-active'
                   }`}
                 />
               </div>
               <span
                 className={`text-xs ${
                   passwordStrength === 'weak'
-                    ? 'text-red-500'
+                    ? 'text-error'
                     : passwordStrength === 'medium'
-                    ? 'text-yellow-600'
-                    : 'text-green-500'
+                    ? 'text-warning'
+                    : 'text-success'
                 }`}
               >
                 {passwordStrength === 'weak'
@@ -339,7 +339,7 @@ export default function RegisterForm({
         <div>
           <label
             htmlFor="confirmPassword"
-            className="block text-sm font-medium text-gray-700"
+            className="block text-sm font-medium text-text-secondary"
           >
             确认密码
           </label>
@@ -349,17 +349,17 @@ export default function RegisterForm({
               type={showConfirmPassword ? 'text' : 'password'}
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className={`block w-full px-3 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 pr-10 ${
+              className={`block w-full px-3 py-2 border rounded-lg shadow-sm focus:outline-none focus:ring-focus-ring focus:border-focus-ring pr-10 ${
                 confirmPassword && confirmPassword !== password
-                  ? 'border-red-300'
-                  : 'border-gray-300'
+                  ? 'border-error/30'
+                  : 'border-border-default'
               }`}
               placeholder="请再次输入密码"
             />
             <button
               type="button"
               tabIndex={-1}
-              className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+              className="absolute inset-y-0 right-0 pr-3 flex items-center text-text-disabled hover:text-text-tertiary"
               onClick={() => setShowConfirmPassword(!showConfirmPassword)}
             >
               {showConfirmPassword ? (
@@ -375,7 +375,7 @@ export default function RegisterForm({
             </button>
           </div>
           {confirmPassword && confirmPassword !== password && (
-            <p className="mt-1 text-xs text-red-500">两次输入的密码不一致</p>
+            <p className="mt-1 text-xs text-error">两次输入的密码不一致</p>
           )}
         </div>
 
@@ -384,7 +384,7 @@ export default function RegisterForm({
           ref={submitRef}
           type="submit"
           disabled={loading}
-          className="w-full py-2.5 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+          className="w-full py-2.5 px-4 bg-accent text-text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-focus-ring disabled:opacity-50 disabled:cursor-not-allowed transition-base font-medium"
         >
           {loading ? '注册中...' : '注册'}
         </button>
@@ -394,10 +394,10 @@ export default function RegisterForm({
       <div className="mt-4">
         <div className="relative">
           <div className="absolute inset-0 flex items-center">
-            <div className="w-full border-t border-gray-300" />
+            <div className="w-full border-t border-border-default" />
           </div>
           <div className="relative flex justify-center text-sm">
-            <span className="px-2 bg-white text-gray-500">或</span>
+            <span className="px-2 bg-surface-card text-text-tertiary">或</span>
           </div>
         </div>
       </div>
@@ -408,7 +408,7 @@ export default function RegisterForm({
           type="button"
           disabled
           tabIndex={-1}
-          className="w-full py-2.5 px-4 border border-gray-300 rounded-lg text-gray-400 bg-gray-50 cursor-not-allowed flex items-center justify-center space-x-2"
+          className="w-full py-2.5 px-4 border border-border-default rounded-lg text-text-disabled bg-surface cursor-not-allowed flex items-center justify-center space-x-2"
           title="微信注册功能即将上线"
         >
           <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
@@ -420,12 +420,12 @@ export default function RegisterForm({
 
       {/* 登录链接 */}
       {onSwitchToLogin && (
-        <p className="mt-4 text-center text-sm text-gray-600">
+        <p className="mt-4 text-center text-sm text-text-tertiary">
           已有账号？
           <button
             type="button"
             onClick={onSwitchToLogin}
-            className="font-medium text-blue-600 hover:text-blue-500 ml-1"
+            className="font-medium text-accent hover:text-accent ml-1"
           >
             去登录
           </button>

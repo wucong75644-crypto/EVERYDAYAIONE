@@ -31,20 +31,20 @@ export default function NavBar({ searchQuery, onSearchChange }: NavBarProps) {
   };
 
   return (
-    <nav className="bg-white shadow-sm sticky top-0 z-20">
+    <nav className="bg-surface-card shadow-sm sticky top-0 z-20">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16 items-center gap-4">
           {/* Logo + 搜索框（左侧紧贴） */}
           <div className="flex items-center gap-3 flex-1 min-w-0">
-            <span className="text-xl font-bold text-gray-900 shrink-0">EVERYDAYAI</span>
+            <span className="text-xl font-bold text-text-primary shrink-0">EVERYDAYAI</span>
             <div className="relative max-w-xs hidden sm:block">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-disabled" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => onSearchChange(e.target.value)}
               placeholder="搜索模型名称或描述..."
-              className="w-full pl-10 pr-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+              className="w-full pl-10 pr-4 py-2 rounded-xl border border-border-default text-text-primary bg-surface-card focus:outline-none focus:ring-2 focus:ring-focus-ring focus:border-focus-ring text-sm"
             />
             </div>
           </div>
@@ -53,21 +53,21 @@ export default function NavBar({ searchQuery, onSearchChange }: NavBarProps) {
           <div className="flex items-center space-x-3 shrink-0">
             {isAuthenticated ? (
               <>
-                <span className="text-sm text-gray-500">
+                <span className="text-sm text-text-tertiary">
                   {user?.credits ?? 0} 积分
                 </span>
                 <div className="relative" ref={userMenuRef}>
                   <button
                     onClick={() => setShowUserMenu((prev) => !prev)}
-                    className="text-sm font-medium text-gray-700 hover:text-gray-900 transition-colors cursor-pointer"
+                    className="text-sm font-medium text-text-secondary hover:text-text-primary transition-base cursor-pointer"
                   >
                     {user?.nickname}
                   </button>
                   {showUserMenu && (
-                    <div className="absolute left-1/2 -translate-x-1/2 mt-1 w-28 bg-white rounded-md shadow-md border border-gray-200 py-1 z-30">
+                    <div className="absolute left-1/2 -translate-x-1/2 mt-1 w-28 bg-surface-card rounded-md shadow-md border border-border-default py-1 z-30">
                       <button
                         onClick={handleLogout}
-                        className="w-full px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-100 flex items-center space-x-2 transition-colors"
+                        className="w-full px-3 py-1.5 text-sm text-text-secondary hover:bg-hover hover:text-text-primary flex items-center space-x-2 transition-base"
                       >
                         <LogOut className="w-3.5 h-3.5" />
                         <span>退出登录</span>
@@ -80,13 +80,13 @@ export default function NavBar({ searchQuery, onSearchChange }: NavBarProps) {
               <>
                 <button
                   onClick={openLogin}
-                  className="text-sm text-gray-600 hover:text-gray-900 transition-colors"
+                  className="text-sm text-text-tertiary hover:text-text-primary transition-base"
                 >
                   登录
                 </button>
                 <button
                   onClick={openRegister}
-                  className="text-sm bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                  className="text-sm bg-accent text-text-on-accent px-4 py-2 rounded-lg hover:bg-accent-hover transition-base font-medium"
                 >
                   免费注册
                 </button>
@@ -97,13 +97,13 @@ export default function NavBar({ searchQuery, onSearchChange }: NavBarProps) {
 
         {/* 移动端搜索框 */}
         <div className="pb-3 sm:hidden relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-disabled" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder="搜索模型名称或描述..."
-            className="w-full pl-10 pr-4 py-2 rounded-xl border border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+            className="w-full pl-10 pr-4 py-2 rounded-xl border border-border-default text-text-primary bg-surface-card focus:outline-none focus:ring-2 focus:ring-focus-ring focus:border-focus-ring text-sm"
           />
         </div>
       </div>

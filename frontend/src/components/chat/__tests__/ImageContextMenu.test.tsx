@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import ImageContextMenu from '../ImageContextMenu';
+import ImageContextMenu from '../media/ImageContextMenu';
 
 describe('ImageContextMenu', () => {
   const defaultProps = {
@@ -61,16 +61,16 @@ describe('ImageContextMenu', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it('should apply slideDown animation by default', () => {
+  it('should apply enter animation by default', () => {
     const { container } = render(<ImageContextMenu {...defaultProps} />);
     const menu = container.firstChild as HTMLElement;
-    expect(menu.className).toContain('animate-slideDown');
+    expect(menu.className).toContain('animate-dropdown-enter');
   });
 
-  it('should apply slideUp animation when closing', () => {
+  it('should apply exit animation when closing', () => {
     const { container } = render(<ImageContextMenu {...defaultProps} closing />);
     const menu = container.firstChild as HTMLElement;
-    expect(menu.className).toContain('animate-slideUp');
+    expect(menu.className).toContain('animate-dropdown-exit');
   });
 
   it('should position at specified coordinates', () => {

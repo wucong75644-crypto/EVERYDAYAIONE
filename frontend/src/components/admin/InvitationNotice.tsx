@@ -58,10 +58,10 @@ export default function InvitationNotice() {
       {invitations.map((inv) => (
         <div
           key={inv.invite_token}
-          className="bg-white rounded-lg shadow-lg border border-blue-200 p-4 animate-in fade-in"
+          className="bg-surface-card rounded-lg shadow-lg border border-accent/20 p-4 animate-in fade-in"
         >
-          <p className="text-sm text-gray-900 mb-2">
-            <span className="font-medium text-blue-600">{inv.org_name}</span>
+          <p className="text-sm text-text-primary mb-2">
+            <span className="font-medium text-accent">{inv.org_name}</span>
             {' '}邀请你加入，角色：
             {inv.role === 'admin' ? '管理员' : '成员'}
           </p>
@@ -69,13 +69,13 @@ export default function InvitationNotice() {
             <button
               onClick={() => handleAccept(inv)}
               disabled={accepting === inv.invite_token}
-              className="flex-1 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              className="flex-1 py-1.5 text-sm bg-accent text-text-on-accent rounded-lg hover:bg-accent-hover disabled:opacity-50 transition-base"
             >
               {accepting === inv.invite_token ? '加入中...' : '接受邀请'}
             </button>
             <button
               onClick={() => handleDismiss(inv.invite_token)}
-              className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+              className="px-3 py-1.5 text-sm text-text-tertiary hover:text-text-secondary transition-base"
             >
               忽略
             </button>

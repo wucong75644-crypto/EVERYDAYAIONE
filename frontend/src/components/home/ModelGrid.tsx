@@ -56,9 +56,9 @@ export default function ModelGrid({
   if (models.length === 0) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 text-center">
-        <Search className="mx-auto w-12 h-12 text-gray-300" />
-        <p className="text-gray-500 mt-4">未找到匹配的模型</p>
-        <p className="text-gray-400 text-sm mt-1">试试其他关键词</p>
+        <Search className="mx-auto w-12 h-12 text-text-disabled" />
+        <p className="text-text-tertiary mt-4">未找到匹配的模型</p>
+        <p className="text-text-disabled text-sm mt-1">试试其他关键词</p>
       </div>
     );
   }
@@ -94,7 +94,7 @@ export default function ModelGrid({
         if (groupModels.length === 0) return null;
         return (
           <section key={group.type} className={idx === 0 ? '' : 'mt-8'}>
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">
+            <h2 className="text-lg font-semibold text-text-primary mb-4">
               {group.icon} {group.label} ({groupModels.length})
             </h2>
             <div className={gridClass}>{groupModels.map(renderCard)}</div>

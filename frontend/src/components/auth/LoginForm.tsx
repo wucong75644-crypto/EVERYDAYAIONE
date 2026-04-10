@@ -200,14 +200,14 @@ export default function LoginForm({
       {/* 企业专属链接：显示企业名称 */}
       {orgId && orgDisplayName && (
         <div className="text-center mb-4">
-          <span className="inline-block px-3 py-1 bg-blue-50 text-blue-700 text-sm rounded-full font-medium">
+          <span className="inline-block px-3 py-1 bg-accent-light text-accent text-sm rounded-full font-medium">
             {orgDisplayName}
           </span>
         </div>
       )}
 
       {/* 登录方式切换 */}
-      <div className="flex border-b border-gray-200 mb-5">
+      <div className="flex border-b border-border-default mb-5">
         {(orgId
           ? (['password', 'code'] as const)
           : (['password', 'code', 'enterprise'] as const)
@@ -216,10 +216,10 @@ export default function LoginForm({
             key={mode}
             type="button"
             tabIndex={-1}
-            className={`flex-1 py-2 text-center font-medium transition-colors text-sm ${
+            className={`flex-1 py-2 text-center font-medium transition-base text-sm ${
               loginMode === mode
-                ? 'text-blue-600 border-b-2 border-blue-600'
-                : 'text-gray-500 hover:text-gray-700'
+                ? 'text-accent border-b-2 border-accent'
+                : 'text-text-tertiary hover:text-text-secondary'
             }`}
             onClick={() => {
               setLoginMode(mode);
@@ -234,7 +234,7 @@ export default function LoginForm({
       {/* 表单 */}
       <form onSubmit={handleSubmit} onKeyDown={handleKeyDown} className="space-y-3.5">
         {error && (
-          <div className="bg-red-50 text-red-600 p-2.5 rounded-lg text-sm">
+          <div className="bg-error-light text-error p-2.5 rounded-lg text-sm">
             {error}
           </div>
         )}
@@ -242,7 +242,7 @@ export default function LoginForm({
         {/* 企业名称（企业登录模式） */}
         {loginMode === 'enterprise' && (
           <div>
-            <label htmlFor="orgName" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="orgName" className="block text-sm font-medium text-text-secondary">
               企业名称
             </label>
             <input
@@ -250,7 +250,7 @@ export default function LoginForm({
               type="text"
               value={orgName}
               onChange={(e) => setOrgName(e.target.value)}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+              className="mt-1 block w-full px-3 py-2 border border-border-default rounded-lg shadow-sm focus:outline-none focus:ring-focus-ring focus:border-focus-ring"
               placeholder="请输入企业全称"
             />
           </div>
@@ -260,7 +260,7 @@ export default function LoginForm({
         <div>
           <label
             htmlFor="phone"
-            className="block text-sm font-medium text-gray-700"
+            className="block text-sm font-medium text-text-secondary"
           >
             手机号
           </label>
@@ -270,7 +270,7 @@ export default function LoginForm({
             type="tel"
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+            className="mt-1 block w-full px-3 py-2 border border-border-default rounded-lg shadow-sm focus:outline-none focus:ring-focus-ring focus:border-focus-ring"
             placeholder="请输入手机号"
             maxLength={11}
           />
@@ -281,7 +281,7 @@ export default function LoginForm({
           <div>
             <label
               htmlFor="password"
-              className="block text-sm font-medium text-gray-700"
+              className="block text-sm font-medium text-text-secondary"
             >
               密码
             </label>
@@ -292,13 +292,13 @@ export default function LoginForm({
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="block w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 pr-10"
+                className="block w-full px-3 py-2 border border-border-default rounded-lg shadow-sm focus:outline-none focus:ring-focus-ring focus:border-focus-ring pr-10"
                 placeholder="请输入密码"
               />
               <button
                 type="button"
                 tabIndex={-1}
-                className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                className="absolute inset-y-0 right-0 pr-3 flex items-center text-text-disabled hover:text-text-tertiary"
                 onClick={() => setShowPassword(!showPassword)}
               >
                 {showPassword ? (
@@ -321,7 +321,7 @@ export default function LoginForm({
           <div>
             <label
               htmlFor="code"
-              className="block text-sm font-medium text-gray-700"
+              className="block text-sm font-medium text-text-secondary"
             >
               验证码
             </label>
@@ -333,7 +333,7 @@ export default function LoginForm({
                 autoComplete="off"
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                className="flex-1 px-3 py-2 border border-border-default rounded-lg shadow-sm focus:outline-none focus:ring-focus-ring focus:border-focus-ring"
                 placeholder="请输入验证码"
                 maxLength={6}
               />
@@ -342,7 +342,7 @@ export default function LoginForm({
                 tabIndex={-1}
                 onClick={handleSendCode}
                 disabled={sendingCode || countdown > 0}
-                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap transition-colors"
+                className="px-4 py-2 bg-hover text-text-secondary rounded-lg hover:bg-active disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap transition-base"
               >
                 {countdown > 0 ? `${countdown}s` : '获取验证码'}
               </button>
@@ -355,7 +355,7 @@ export default function LoginForm({
           ref={submitRef}
           type="submit"
           disabled={loading}
-          className="w-full py-2.5 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+          className="w-full py-2.5 px-4 bg-accent text-text-on-accent rounded-lg hover:bg-accent-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-focus-ring disabled:opacity-50 disabled:cursor-not-allowed transition-base font-medium"
         >
           {loading ? '登录中...' : '登录'}
         </button>
@@ -367,10 +367,10 @@ export default function LoginForm({
         <div className="mt-4">
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-300" />
+              <div className="w-full border-t border-border-default" />
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-white text-gray-500">或</span>
+              <span className="px-2 bg-surface-card text-text-tertiary">或</span>
             </div>
           </div>
         </div>
@@ -385,9 +385,9 @@ export default function LoginForm({
               setLoginMode('wecom');
               setError('');
             }}
-            className="w-full py-2.5 px-4 border border-gray-300 rounded-lg text-gray-700 bg-white hover:bg-gray-50 flex items-center justify-center space-x-2 transition-colors"
+            className="w-full py-2.5 px-4 border border-border-default rounded-lg text-text-secondary bg-surface-card hover:bg-surface flex items-center justify-center space-x-2 transition-base"
           >
-            <svg className="h-5 w-5 text-blue-600" viewBox="0 0 24 24" fill="currentColor">
+            <svg className="h-5 w-5 text-accent" viewBox="0 0 24 24" fill="currentColor">
               <path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 01.213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 00.167-.054l1.903-1.114a.864.864 0 01.717-.098 10.16 10.16 0 002.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178A1.17 1.17 0 014.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178 1.17 1.17 0 01-1.162-1.178c0-.651.52-1.18 1.162-1.18zm5.34 2.867c-1.797-.052-3.746.512-5.28 1.786-1.72 1.428-2.687 3.72-1.78 6.22.942 2.453 3.666 4.229 6.884 4.229.826 0 1.622-.12 2.361-.336a.722.722 0 01.598.082l1.584.926a.272.272 0 00.14.045c.134 0 .24-.111.24-.247 0-.06-.023-.12-.038-.177l-.327-1.233a.582.582 0 01-.023-.156.49.49 0 01.201-.398C23.024 18.48 24 16.82 24 14.98c0-3.21-2.931-5.837-6.656-6.088V8.89c-.135-.01-.269-.03-.407-.03zm-2.53 3.274c.535 0 .969.44.969.982a.976.976 0 01-.969.983.976.976 0 01-.969-.983c0-.542.434-.982.97-.982zm4.844 0c.535 0 .969.44.969.982a.976.976 0 01-.969.983.976.976 0 01-.969-.983c0-.542.434-.982.969-.982z" />
             </svg>
             <span>企业微信扫码登录</span>
@@ -397,12 +397,12 @@ export default function LoginForm({
 
       {/* 注册链接 — 企业专属链接不显示注册入口 */}
       {onSwitchToRegister && !orgId && (
-        <p className="mt-4 text-center text-sm text-gray-600">
+        <p className="mt-4 text-center text-sm text-text-tertiary">
           没有账号？
           <button
             type="button"
             onClick={onSwitchToRegister}
-            className="font-medium text-blue-600 hover:text-blue-500 ml-1"
+            className="font-medium text-accent hover:text-accent ml-1"
           >
             立即注册
           </button>

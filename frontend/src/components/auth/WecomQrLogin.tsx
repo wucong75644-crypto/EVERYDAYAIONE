@@ -96,12 +96,12 @@ export default function WecomQrLogin({ onBack, mode = 'login', orgId }: WecomQrL
 
   return (
     <div className="flex flex-col items-center">
-      <h3 className="text-base font-medium text-gray-900 mb-3">
+      <h3 className="text-base font-medium text-text-primary mb-3">
         {mode === 'bind' ? '扫码绑定企业微信' : '企业微信扫码登录'}
       </h3>
 
       {error && (
-        <div className="w-full bg-red-50 text-red-600 p-2.5 rounded-lg text-sm mb-3">
+        <div className="w-full bg-error-light text-error p-2.5 rounded-lg text-sm mb-3">
           {error}
         </div>
       )}
@@ -109,7 +109,7 @@ export default function WecomQrLogin({ onBack, mode = 'login', orgId }: WecomQrL
       {/* loading 状态（独立于 SDK 容器） */}
       {loading && (
         <div className="w-[300px] h-[400px] flex items-center justify-center">
-          <div className="flex flex-col items-center text-gray-400">
+          <div className="flex flex-col items-center text-text-disabled">
             <svg className="animate-spin h-8 w-8 mb-2" viewBox="0 0 24 24" fill="none">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -125,14 +125,14 @@ export default function WecomQrLogin({ onBack, mode = 'login', orgId }: WecomQrL
         className={loading ? 'hidden' : 'w-[300px] h-[400px]'}
       />
 
-      <p className="text-sm text-gray-500 mt-2 mb-4">
+      <p className="text-sm text-text-tertiary mt-2 mb-4">
         请使用企业微信 App 扫码
       </p>
 
       <button
         type="button"
         onClick={onBack}
-        className="text-sm text-blue-600 hover:text-blue-500 transition-colors"
+        className="text-sm text-accent hover:text-accent transition-base"
       >
         {mode === 'bind' ? '取消绑定' : '返回密码登录'}
       </button>

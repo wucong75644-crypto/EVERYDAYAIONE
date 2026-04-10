@@ -148,46 +148,46 @@ export default function ModelDetailDrawer({
     <div className={`fixed inset-0 z-50 ${isClosing ? 'pointer-events-none' : ''}`}>
       {/* 遮罩 */}
       <div
-        className={`absolute inset-0 bg-black/40 ${isClosing ? 'animate-backdropExit' : 'animate-backdropEnter'}`}
+        className={`absolute inset-0 bg-black/40 ${isClosing ? 'animate-backdrop-exit' : 'animate-backdrop-enter'}`}
         onClick={handleClose}
         aria-hidden="true"
       />
 
       {/* 面板 */}
       <div
-        className={`fixed right-0 top-0 h-full w-full sm:w-[400px] bg-white shadow-2xl flex flex-col ${
-          isClosing ? 'animate-drawerSlideOut' : 'animate-drawerSlideIn'
+        className={`fixed right-0 top-0 h-full w-full sm:w-[400px] bg-surface-card shadow-2xl flex flex-col ${
+          isClosing ? 'animate-drawer-exit' : 'animate-drawer-enter'
         }`}
         role="dialog"
         aria-modal="true"
         aria-label={model.name}
       >
         {/* 头部 */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-gray-200">
-          <h2 className="text-xl font-bold text-gray-900 truncate pr-4">{model.name}</h2>
+        <div className="flex items-center justify-between px-6 py-5 border-b border-border-default">
+          <h2 className="text-xl font-bold text-text-primary font-heading truncate pr-4">{model.name}</h2>
           <button
             onClick={handleClose}
-            className="p-2 hover:bg-gray-100 rounded-lg transition-colors shrink-0"
+            className="p-2 hover:bg-hover rounded-lg transition-base shrink-0"
             aria-label="关闭"
           >
-            <X className="w-5 h-5 text-gray-500" />
+            <X className="w-5 h-5 text-text-tertiary" />
           </button>
         </div>
 
         {/* 内容区（可滚动） */}
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {/* 描述 */}
-          <p className="text-sm text-gray-600">{model.description}</p>
+          <p className="text-sm text-text-secondary">{model.description}</p>
 
           {/* 能力标签 */}
           {capabilities.length > 0 && (
             <>
-              <h3 className="text-sm font-semibold text-gray-800 mt-6 mb-3">模型能力</h3>
+              <h3 className="text-sm font-semibold text-text-primary mt-6 mb-3">模型能力</h3>
               <div className="flex flex-wrap gap-2">
                 {capabilities.map((tag) => (
                   <span
                     key={tag.key}
-                    className="inline-flex items-center px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 text-sm"
+                    className="inline-flex items-center px-2.5 py-1 rounded-lg bg-accent-light text-accent text-sm"
                   >
                     {tag.label}
                   </span>
@@ -199,12 +199,12 @@ export default function ModelDetailDrawer({
           {/* 规格参数 */}
           {specs.length > 0 && (
             <>
-              <h3 className="text-sm font-semibold text-gray-800 mt-6 mb-3">规格参数</h3>
+              <h3 className="text-sm font-semibold text-text-primary mt-6 mb-3">规格参数</h3>
               <div className="space-y-2.5">
                 {specs.map((spec) => (
                   <div key={spec.label} className="flex justify-between items-center">
-                    <span className="text-sm text-gray-500">{spec.label}</span>
-                    <span className="text-sm font-medium text-gray-900">{spec.value}</span>
+                    <span className="text-sm text-text-tertiary">{spec.label}</span>
+                    <span className="text-sm font-medium text-text-primary">{spec.value}</span>
                   </div>
                 ))}
               </div>
@@ -212,25 +212,25 @@ export default function ModelDetailDrawer({
           )}
 
           {/* 费用 */}
-          <h3 className="text-sm font-semibold text-gray-800 mt-6 mb-3">费用</h3>
+          <h3 className="text-sm font-semibold text-text-primary mt-6 mb-3">费用</h3>
           {renderCredits(model)}
         </div>
 
         {/* 底部操作区 */}
-        <div className="px-6 py-4 border-t border-gray-200 bg-white">
+        <div className="px-6 py-4 border-t border-border-default bg-surface-card">
           {!isAuthenticated ? (
             /* 未登录 */
             <div className="text-center">
-              <p className="text-sm text-gray-500 mb-3">登录后即可使用，注册送100积分</p>
+              <p className="text-sm text-text-tertiary mb-3">登录后即可使用，注册送100积分</p>
               <button
                 onClick={handleRegister}
-                className="w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium hover:bg-blue-700 transition-colors"
+                className="w-full bg-accent text-text-on-accent py-2.5 rounded-lg font-medium hover:bg-accent-hover transition-base"
               >
                 立即注册
               </button>
               <button
                 onClick={handleLogin}
-                className="text-sm text-blue-600 hover:text-blue-700 mt-2 block mx-auto"
+                className="text-sm text-accent hover:text-accent-hover mt-2 block mx-auto"
               >
                 已有账号？登录
               </button>
@@ -238,11 +238,11 @@ export default function ModelDetailDrawer({
           ) : !isSubscribed ? (
             /* 已登录 + 未订阅 */
             <div className="text-center">
-              <p className="text-sm text-gray-500 mb-3">请先订阅才能使用该模型</p>
+              <p className="text-sm text-text-tertiary mb-3">请先订阅才能使用该模型</p>
               <button
                 onClick={handleSubscribeClick}
                 disabled={isSubscribing}
-                className="w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full bg-accent text-text-on-accent py-2.5 rounded-lg font-medium hover:bg-accent-hover transition-base disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isSubscribing ? (
                   <span className="inline-flex items-center gap-2">
@@ -259,14 +259,14 @@ export default function ModelDetailDrawer({
             <div className="text-center">
               <button
                 onClick={handleGoChat}
-                className="w-full bg-blue-600 text-white py-2.5 rounded-lg font-medium hover:bg-blue-700 transition-colors inline-flex items-center justify-center gap-2"
+                className="w-full bg-accent text-text-on-accent py-2.5 rounded-lg font-medium hover:bg-accent-hover transition-base inline-flex items-center justify-center gap-2"
               >
                 <ExternalLink className="w-4 h-4" />
                 前往聊天页
               </button>
               <button
                 onClick={onUnsubscribe}
-                className="text-sm text-red-500 hover:text-red-600 mt-3 transition-colors"
+                className="text-sm text-error hover:text-error/80 mt-3 transition-base"
               >
                 取消订阅
               </button>
@@ -285,8 +285,8 @@ function renderCredits(model: UnifiedModel) {
     const isFree = model.credits === 0;
     return (
       <div className="flex justify-between items-center">
-        <span className="text-sm text-gray-500">单次消耗</span>
-        <span className={`text-sm font-medium ${isFree ? 'text-green-600' : 'text-gray-900'}`}>
+        <span className="text-sm text-text-tertiary">单次消耗</span>
+        <span className={`text-sm font-medium ${isFree ? 'text-success' : 'text-text-primary'}`}>
           {isFree ? '免费' : `${model.credits} 积分/次`}
         </span>
       </div>
@@ -300,19 +300,19 @@ function renderCredits(model: UnifiedModel) {
   if (model.videoPricing) {
     const videoEntries = Object.entries(model.videoPricing);
     return (
-      <div className="border border-gray-100 rounded-lg overflow-hidden">
+      <div className="border border-border-light rounded-lg overflow-hidden">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-gray-50">
-              <th className="text-left px-3 py-2 font-medium text-gray-600">时长</th>
-              <th className="text-right px-3 py-2 font-medium text-gray-600">费用</th>
+            <tr className="bg-hover">
+              <th className="text-left px-3 py-2 font-medium text-text-tertiary">时长</th>
+              <th className="text-right px-3 py-2 font-medium text-text-tertiary">费用</th>
             </tr>
           </thead>
           <tbody>
             {videoEntries.map(([duration, cost]) => (
-              <tr key={duration} className="border-t border-gray-100">
-                <td className="px-3 py-2 text-gray-700">{duration}秒</td>
-                <td className="px-3 py-2 text-right text-gray-900 font-medium">{cost} 积分</td>
+              <tr key={duration} className="border-t border-border-light">
+                <td className="px-3 py-2 text-text-secondary">{duration}秒</td>
+                <td className="px-3 py-2 text-right text-text-primary font-medium">{cost} 积分</td>
               </tr>
             ))}
           </tbody>
@@ -323,19 +323,19 @@ function renderCredits(model: UnifiedModel) {
 
   // 图片模型分辨率价格表
   return (
-    <div className="border border-gray-100 rounded-lg overflow-hidden">
+    <div className="border border-border-light rounded-lg overflow-hidden">
       <table className="w-full text-sm">
         <thead>
-          <tr className="bg-gray-50">
-            <th className="text-left px-3 py-2 font-medium text-gray-600">分辨率</th>
-            <th className="text-right px-3 py-2 font-medium text-gray-600">费用</th>
+          <tr className="bg-hover">
+            <th className="text-left px-3 py-2 font-medium text-text-tertiary">分辨率</th>
+            <th className="text-right px-3 py-2 font-medium text-text-tertiary">费用</th>
           </tr>
         </thead>
         <tbody>
           {entries.map(([res, cost]) => (
-            <tr key={res} className="border-t border-gray-100">
-              <td className="px-3 py-2 text-gray-700">{res}</td>
-              <td className="px-3 py-2 text-right text-gray-900 font-medium">{cost} 积分</td>
+            <tr key={res} className="border-t border-border-light">
+              <td className="px-3 py-2 text-text-secondary">{res}</td>
+              <td className="px-3 py-2 text-right text-text-primary font-medium">{cost} 积分</td>
             </tr>
           ))}
         </tbody>

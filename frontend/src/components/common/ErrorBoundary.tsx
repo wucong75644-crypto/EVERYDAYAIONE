@@ -46,75 +46,35 @@ export default class ErrorBoundary extends Component<Props, State> {
       const { error, errorInfo } = this.state;
 
       return (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          zIndex: 99999,
-          backgroundColor: '#fff',
-          padding: '24px',
-          overflow: 'auto',
-          fontFamily: 'monospace',
-        }}>
-          <h1 style={{ color: '#dc2626', fontSize: '20px', marginBottom: '16px' }}>
-            页面渲染崩溃
-          </h1>
+        <div className="fixed inset-0 z-[9999] bg-surface-card text-text-primary p-6 overflow-auto font-mono">
+          <h1 className="text-error text-xl font-bold mb-4">页面渲染崩溃</h1>
 
-          <div style={{
-            backgroundColor: '#fef2f2',
-            border: '1px solid #fca5a5',
-            borderRadius: '8px',
-            padding: '16px',
-            marginBottom: '16px',
-          }}>
-            <p style={{ fontWeight: 'bold', marginBottom: '8px' }}>
-              Error: {error?.message}
-            </p>
-            <pre style={{ fontSize: '12px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+          <div className="bg-error-light border border-error/30 rounded-lg p-4 mb-4">
+            <p className="font-bold mb-2">Error: {error?.message}</p>
+            <pre className="text-xs whitespace-pre-wrap break-all text-text-secondary">
               {error?.stack}
             </pre>
           </div>
 
           {errorInfo?.componentStack && (
-            <div style={{
-              backgroundColor: '#fffbeb',
-              border: '1px solid #fcd34d',
-              borderRadius: '8px',
-              padding: '16px',
-              marginBottom: '16px',
-            }}>
-              <p style={{ fontWeight: 'bold', marginBottom: '8px' }}>Component Stack:</p>
-              <pre style={{ fontSize: '12px', whiteSpace: 'pre-wrap' }}>
+            <div className="bg-warning-light border border-warning/30 rounded-lg p-4 mb-4">
+              <p className="font-bold mb-2">Component Stack:</p>
+              <pre className="text-xs whitespace-pre-wrap text-text-secondary">
                 {errorInfo.componentStack}
               </pre>
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: '12px' }}>
+          <div className="flex gap-3">
             <button
               onClick={this.handleReload}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: '#3b82f6',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontSize: '14px',
-              }}
+              className="px-4 py-2 bg-accent text-text-on-accent border-0 rounded-md cursor-pointer text-sm hover:bg-accent-hover transition-base"
             >
               刷新页面
             </button>
             <button
               onClick={this.handleDismiss}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: '#6b7280',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontSize: '14px',
-              }}
+              className="px-4 py-2 bg-text-tertiary text-text-on-accent border-0 rounded-md cursor-pointer text-sm hover:bg-text-secondary transition-base"
             >
               尝试恢复
             </button>

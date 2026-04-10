@@ -72,7 +72,7 @@ export function useMessageAnimation(options: UseMessageAnimationOptions): UseMes
 
     const genType = message.generation_params?.type;
     const isMediaMessage = genType === 'image' || genType === 'video';
-    return isMediaMessage ? 'animate-ai-message-fade-scale' : '';
+    return isMediaMessage ? 'animate-message-ai-in' : '';
   }, [isNewMessage, message.role, message.generation_params?.type]);
 
   // ==================== 删除动画管理 ====================
@@ -87,7 +87,7 @@ export function useMessageAnimation(options: UseMessageAnimationOptions): UseMes
     setIsDeleting(true);
   }, []);
 
-  const deleteAnimationClass = isDeleting ? 'animate-message-slide-out' : '';
+  const deleteAnimationClass = isDeleting ? 'animate-message-out' : '';
 
   // ==================== 返回值 ====================
 

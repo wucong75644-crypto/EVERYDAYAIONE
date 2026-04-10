@@ -19,10 +19,10 @@ export default function HeroSection({
 }: HeroSectionProps) {
   return (
     <section className="py-10 sm:py-14 text-center">
-      <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900">
+      <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-text-primary font-heading">
         EVERYDAYAI — 你的全能 AI 创作平台
       </h1>
-      <p className="text-base sm:text-lg text-gray-500 mt-2">
+      <p className="text-base sm:text-lg text-text-tertiary mt-2">
         {totalModels}+ 顶尖模型，聊天 · 绘图 · 视频一站搞定
       </p>
 
@@ -31,14 +31,14 @@ export default function HeroSection({
         {isAuthenticated ? (
           <Link
             to="/chat"
-            className="inline-block bg-blue-600 text-white px-8 py-3 rounded-lg text-lg font-medium hover:bg-blue-700 transition-colors"
+            className="inline-block bg-accent text-text-on-accent px-8 py-3 rounded-lg text-lg font-medium hover:bg-accent-hover transition-base"
           >
             开始聊天
           </Link>
         ) : (
           <button
             onClick={onStartChat}
-            className="inline-block bg-blue-600 text-white px-8 py-3 rounded-lg text-lg font-medium hover:bg-blue-700 transition-colors"
+            className="inline-block bg-accent text-text-on-accent px-8 py-3 rounded-lg text-lg font-medium hover:bg-accent-hover transition-base"
           >
             立即体验
           </button>
