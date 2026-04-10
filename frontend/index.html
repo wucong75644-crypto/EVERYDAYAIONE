@@ -8,12 +8,18 @@
     <script>
       // 主题初始化（在 React hydrate 之前同步执行，防闪白/闪色）
       // 读取 localStorage 中的主题设置，写入 html 元素的 data-theme 属性和 class
+      // 支持主题：classic / claude / linear
       (function () {
+        var VALID_THEMES = ['classic', 'claude', 'linear'];
         try {
-          var theme = localStorage.getItem('everydayai_theme') || 'classic';
+          var stored = localStorage.getItem('everydayai_theme');
+          var theme = VALID_THEMES.indexOf(stored) >= 0 ? stored : 'classic';
           var colorMode = localStorage.getItem('everydayai_color_mode') || 'system';
+          // Linear 主题强制 dark-first（DESIGN.md 要求 dark-mode-native），
+          // 除非用户显式选择 light
           var isDark =
             colorMode === 'dark' ||
+            (theme === 'linear' && colorMode !== 'light') ||
             (colorMode === 'system' &&
               window.matchMedia('(prefers-color-scheme: dark)').matches);
 
