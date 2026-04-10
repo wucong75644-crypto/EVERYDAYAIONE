@@ -1,0 +1,256 @@
+/**
+ * Theme: Claude（Anthropic）
+ *
+ * 按 https://github.com/wucong75644-crypto/awesome-design-md
+ * design-md/claude/DESIGN.md 完整落地。
+ *
+ * Vibe：温暖文学沙龙 — parchment 羊皮纸 + Anthropic Serif + 赤陶 + 暖色中性 + ring shadow
+ *
+ * 激活方式：<html data-theme="claude">
+ * 暗色：<html data-theme="claude" class="dark">
+ *
+ * 架构：
+ * - 同时覆盖旧 token（--color-*, --font-*, --shadow-*）保持现有组件兼容
+ * - 同时覆盖新 3 层 token 的语义层（--s-*）供 Phase 5+ 新组件消费
+ * - 所有新增的 Claude 专属 token 带 --claude-* 前缀
+ */
+
+/* ==========================================================
+ * Claude · Light Mode
+ * ========================================================== */
+
+html[data-theme="claude"] {
+  /* ==========================================================
+   * 字体：Serif 标题 + Sans UI + Mono 代码
+   * Anthropic Serif 是付费字体，使用 Georgia 作为主 fallback
+   * 中文 serif fallback：Noto Serif SC > Songti SC > Source Han Serif SC
+   * ========================================================== */
+  --font-heading: "Anthropic Serif", Georgia, "Noto Serif SC",
+                  "Songti SC", "Source Han Serif SC",
+                  "PingFang SC", "Hiragino Sans GB", serif;
+  --font-body: "Anthropic Sans", -apple-system, BlinkMacSystemFont,
+               "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+               system-ui, sans-serif;
+
+  /* 新 token 映射 */
+  --s-font-serif: var(--font-heading);
+  --s-font-sans: var(--font-body);
+  --s-font-heading: var(--font-heading);     /* Claude：标题走 serif */
+  --s-font-body: var(--font-body);
+
+  /* Claude 字重只用 500（signature weight） */
+  --s-weight-heading: 500;
+  --s-weight-emphasis: 500;
+
+  /* ==========================================================
+   * 颜色 · 品牌
+   * ========================================================== */
+  --claude-terracotta: #c96442;         /* Terracotta Brand */
+  --claude-coral: #d97757;              /* Coral Accent */
+
+  --color-accent: var(--claude-terracotta);
+  --color-accent-hover: #b85a3a;
+  --color-accent-light: #f5ebe6;
+
+  --s-accent: var(--claude-terracotta);
+  --s-accent-hover: #b85a3a;
+  --s-accent-active: #a85535;
+  --s-accent-soft: #f5ebe6;
+  --s-accent-ring: #3898ec;             /* 唯一冷色，focus ring */
+
+  /* ==========================================================
+   * 颜色 · 表面（暖色羊皮纸系）
+   * ========================================================== */
+  --claude-parchment: #f5f4ed;          /* Primary page background */
+  --claude-ivory: #faf9f5;              /* Card / elevated container */
+  --claude-white: #ffffff;              /* Max-contrast surface */
+  --claude-warm-sand: #e8e6dc;          /* Button bg */
+  --claude-dark-surface: #30302e;       /* Dark container */
+  --claude-near-black: #141413;         /* Dark page / primary text */
+
+  --color-surface: var(--claude-parchment);
+  --color-surface-card: var(--claude-ivory);
+  --color-surface-elevated: var(--claude-white);
+  --color-surface-dark: var(--claude-near-black);
+  --color-surface-dark-card: var(--claude-dark-surface);
+
+  --s-surface-base: var(--claude-parchment);
+  --s-surface-raised: var(--claude-ivory);
+  --s-surface-overlay: var(--claude-white);
+  --s-surface-sunken: var(--claude-warm-sand);
+  --s-surface-inverse: var(--claude-near-black);
+
+  /* ==========================================================
+   * 颜色 · 文字（全系暖灰，没有一丝冷蓝）
+   * ========================================================== */
+  --claude-charcoal-warm: #4d4c48;      /* Button text on light warm */
+  --claude-olive-gray: #5e5d59;         /* Secondary body text */
+  --claude-stone-gray: #87867f;         /* Tertiary, metadata */
+  --claude-dark-warm: #3d3d3a;          /* Dark text links */
+  --claude-warm-silver: #b0aea5;        /* Text on dark */
+
+  --color-text-primary: var(--claude-near-black);
+  --color-text-secondary: var(--claude-olive-gray);
+  --color-text-tertiary: var(--claude-stone-gray);
+  --color-text-disabled: var(--claude-warm-silver);
+  --color-text-on-dark: var(--claude-ivory);
+  --color-text-on-accent: var(--claude-ivory);
+
+  --s-text-primary: var(--claude-near-black);
+  --s-text-secondary: var(--claude-olive-gray);
+  --s-text-tertiary: var(--claude-stone-gray);
+  --s-text-disabled: var(--claude-warm-silver);
+  --s-text-inverse: var(--claude-ivory);
+  --s-text-on-accent: var(--claude-ivory);
+
+  /* ==========================================================
+   * 颜色 · 边框（暖奶油系）
+   * ========================================================== */
+  --claude-border-cream: #f0eee6;       /* 默认极淡 */
+  --claude-border-warm: #e8e6dc;        /* 强调边界 */
+
+  --color-border-default: var(--claude-border-warm);
+  --color-border-light: var(--claude-border-cream);
+  --color-border-dark: var(--claude-dark-surface);
+
+  --s-border-subtle: var(--claude-border-cream);
+  --s-border-default: var(--claude-border-warm);
+  --s-border-strong: #d8d6c8;
+
+  /* ==========================================================
+   * 颜色 · 交互
+   * ========================================================== */
+  --color-hover: rgba(0, 0, 0, 0.04);
+  --color-active: rgba(0, 0, 0, 0.08);
+  --color-focus-ring: #3898ec;
+
+  --s-hover: rgba(0, 0, 0, 0.04);
+  --s-active: rgba(0, 0, 0, 0.08);
+  --s-selected: rgba(201, 100, 66, 0.1);
+
+  /* ==========================================================
+   * 颜色 · 语义（暖偏移）
+   * ========================================================== */
+  --color-error: #b53333;
+  --s-error: #b53333;
+  --s-error-soft: #f8ebeb;
+
+  /* ==========================================================
+   * Ring Shadow 系统 · Claude 签名
+   * 不是传统 drop shadow，而是"环形阴影"模拟边框效果
+   * ========================================================== */
+  --claude-ring-warm: #d1cfc5;          /* 默认 hover ring */
+  --claude-ring-subtle: #dedbd1;        /* 次级 ring */
+  --claude-ring-deep: #c2c0b6;          /* active/pressed ring */
+
+  /* 旧 shadow token 兼容 */
+  --shadow-ring: 0 0 0 1px var(--claude-border-cream);
+  --shadow-sm: 0 1px 2px rgba(20, 20, 19, 0.05);
+  --shadow-md: 0 4px 12px rgba(20, 20, 19, 0.08);
+  --shadow-lg: 0 8px 24px rgba(20, 20, 19, 0.12);
+  --shadow-xl: 0 16px 48px rgba(20, 20, 19, 0.16);
+
+  /* 新 shadow token：Claude 用 ring shadow，drop shadow 极柔 */
+  --s-shadow-ring-default: 0 0 0 1px var(--claude-border-cream);
+  --s-shadow-ring-hover: 0 0 0 1px var(--claude-ring-warm);
+  --s-shadow-ring-active: inset 0 0 0 1px var(--claude-ring-deep);
+  --s-shadow-whisper: 0 4px 24px rgba(20, 20, 19, 0.05);
+  --s-shadow-drop-sm: 0 1px 2px rgba(20, 20, 19, 0.04);
+  --s-shadow-drop-md: 0 4px 12px rgba(20, 20, 19, 0.06);
+  --s-shadow-drop-lg: 0 8px 24px rgba(20, 20, 19, 0.08);
+  --s-shadow-drop-xl: 0 16px 48px rgba(20, 20, 19, 0.12);
+
+  /* ==========================================================
+   * 圆角 · Claude 比 classic 整体大一档，hero 到 32px
+   * 映射：4 → sharp, 6 → subtle, 8 → standard, 12 → generous, 16 → feature, 24 → highlight, 32 → hero
+   * ========================================================== */
+  --s-radius-control: 8px;              /* 标准按钮/输入框 */
+  --s-radius-card: 16px;                /* feature 卡片 */
+  --s-radius-panel: 24px;               /* 强调容器 */
+  --s-radius-hero: 32px;                /* hero / 嵌入媒体 */
+
+  /* ==========================================================
+   * 消息气泡（用户消息渐变 — Claude 赤陶 → 深赤陶）
+   * ========================================================== */
+  --color-user-bubble-from: var(--claude-terracotta);
+  --color-user-bubble-to: #a85535;
+
+  /* ==========================================================
+   * Glass 覆盖（Claude 毛玻璃用暖色半透明底）
+   * ========================================================== */
+  --s-glass-bg: rgba(245, 244, 237, 0.75);   /* parchment 半透 */
+  --s-glass-border: rgba(232, 230, 220, 0.5);
+}
+
+/* ==========================================================
+ * Claude · Dark Mode
+ * 暗色下保持暖色调，near-black 带轻微橄榄暖意
+ * ========================================================== */
+
+html[data-theme="claude"].dark {
+  --color-surface: var(--claude-near-black);
+  --color-surface-card: #1e1e1c;
+  --color-surface-elevated: var(--claude-dark-surface);
+  --color-text-primary: var(--claude-ivory);
+  --color-text-secondary: var(--claude-warm-silver);
+  --color-text-tertiary: var(--claude-stone-gray);
+  --color-text-disabled: var(--claude-olive-gray);
+  --color-text-on-accent: var(--claude-ivory);
+  --color-border-default: var(--claude-dark-surface);
+  --color-border-light: #3d3d3a;
+  --color-hover: rgba(255, 255, 255, 0.06);
+  --color-active: rgba(255, 255, 255, 0.1);
+  --color-accent-light: #2a1f1a;
+  --color-success-light: rgba(34, 197, 94, 0.15);
+  --color-error-light: rgba(181, 51, 51, 0.18);
+  --color-warning-light: rgba(217, 119, 6, 0.15);
+
+  --s-surface-base: var(--claude-near-black);
+  --s-surface-raised: #1e1e1c;
+  --s-surface-overlay: var(--claude-dark-surface);
+  --s-surface-sunken: #0e0e0d;
+  --s-surface-inverse: var(--claude-ivory);
+
+  --s-text-primary: var(--claude-ivory);
+  --s-text-secondary: var(--claude-warm-silver);
+  --s-text-tertiary: var(--claude-stone-gray);
+  --s-text-disabled: var(--claude-olive-gray);
+  --s-text-inverse: var(--claude-near-black);
+  --s-text-on-accent: var(--claude-ivory);
+
+  --s-border-subtle: #3d3d3a;
+  --s-border-default: var(--claude-dark-surface);
+  --s-border-strong: #4a4a47;
+
+  --s-hover: rgba(255, 255, 255, 0.06);
+  --s-active: rgba(255, 255, 255, 0.1);
+  --s-selected: rgba(201, 100, 66, 0.15);
+
+  --s-shadow-ring-default: 0 0 0 1px #3d3d3a;
+  --s-shadow-ring-hover: 0 0 0 1px #4a4a47;
+  --s-shadow-whisper: 0 4px 24px rgba(0, 0, 0, 0.3);
+
+  --s-glass-bg: rgba(20, 20, 19, 0.75);
+  --s-glass-border: rgba(48, 48, 46, 0.6);
+}
+
+/* ==========================================================
+ * Claude · 暗色段落节奏（alternating chapter util）
+ * 用于 home/ 首页把相邻 section 在 parchment/near-black 之间切换，
+ * 创造 Claude DESIGN.md 所说的"书章节式"阅读节奏。
+ * ========================================================== */
+
+html[data-theme="claude"] .claude-dark-section {
+  background-color: var(--claude-near-black);
+  color: var(--claude-ivory);
+}
+
+html[data-theme="claude"] .claude-dark-section h1,
+html[data-theme="claude"] .claude-dark-section h2,
+html[data-theme="claude"] .claude-dark-section h3 {
+  color: var(--claude-ivory);
+}
+
+html[data-theme="claude"] .claude-dark-section p {
+  color: var(--claude-warm-silver);
+}

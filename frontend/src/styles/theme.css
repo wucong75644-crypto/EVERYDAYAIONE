@@ -129,59 +129,10 @@
 @variant dark (&:where(.dark, .dark *));
 
 /* ==========================================================
- * 主题 2：Claude 暖色（运行时覆盖）
- * 参考 Claude DESIGN.md —— 羊皮纸底+赤陶色+全系暖灰
+ * 主题 2：Claude 暖色 — 已迁移到 styles/themes/claude.css
+ * 按 DESIGN.md 完整补齐（serif / ring shadow / warm scale / 32px 圆角 / serif UI）
+ * 在 index.css 中 themes/claude.css 后于 theme.css 引入即可生效。
  * ========================================================== */
-
-html[data-theme="claude"] {
-  /* 字体：标题改用 serif（Claude 标志性） */
-  --font-heading: Georgia, "Noto Serif SC", "PingFang SC",
-                  "Hiragino Sans GB", serif;
-
-  /* 品牌色（赤陶色） */
-  --color-accent: #c96442;
-  --color-accent-hover: #b85a3a;
-  --color-accent-light: #f5ebe6;
-
-  /* 表面/背景（暖色羊皮纸） */
-  --color-surface: #f5f4ed;            /* Parchment */
-  --color-surface-card: #faf9f5;       /* Ivory */
-  --color-surface-elevated: #ffffff;
-  --color-surface-dark: #141413;       /* Near Black */
-  --color-surface-dark-card: #30302e;  /* Dark Surface */
-
-  /* 文字（全系暖灰） */
-  --color-text-primary: #141413;       /* Anthropic Near Black */
-  --color-text-secondary: #5e5d59;     /* Olive Gray */
-  --color-text-tertiary: #87867f;      /* Stone Gray */
-  --color-text-disabled: #b0aea5;      /* Warm Silver */
-  --color-text-on-dark: #faf9f5;       /* Ivory */
-  --color-text-on-accent: #faf9f5;
-
-  /* 边框（暖奶油色） */
-  --color-border-default: #e8e6dc;     /* Border Warm */
-  --color-border-light: #f0eee6;       /* Border Cream */
-  --color-border-dark: #30302e;
-
-  /* 交互 */
-  --color-hover: rgba(0, 0, 0, 0.04);
-  --color-active: rgba(0, 0, 0, 0.08);
-  --color-focus-ring: #3898ec;         /* Focus Blue（唯一冷色） */
-
-  /* 语义色（Claude 偏暖） */
-  --color-error: #b53333;              /* 暖红 */
-
-  /* 阴影（暖色调 ring shadow） */
-  --shadow-ring: 0 0 0 1px #f0eee6;
-  --shadow-sm: 0 1px 2px rgba(20, 20, 19, 0.05);
-  --shadow-md: 0 4px 12px rgba(20, 20, 19, 0.08);
-  --shadow-lg: 0 8px 24px rgba(20, 20, 19, 0.12);
-  --shadow-xl: 0 16px 48px rgba(20, 20, 19, 0.16);
-
-  /* 用户消息气泡（赤陶色渐变） */
-  --color-user-bubble-from: #c96442;
-  --color-user-bubble-to: #a85535;
-}
 
 /* ==========================================================
  * Dark 模式（每个主题各有一套 dark 值）
@@ -210,24 +161,7 @@ html[data-theme="classic"].dark {
   --color-warning-light: rgba(245, 158, 11, 0.15);
 }
 
-html[data-theme="claude"].dark {
-  --color-surface: #141413;
-  --color-surface-card: #1e1e1c;
-  --color-surface-elevated: #30302e;
-  --color-text-primary: #faf9f5;
-  --color-text-secondary: #b0aea5;
-  --color-text-tertiary: #87867f;
-  --color-text-disabled: #5e5d59;
-  --color-text-on-accent: #faf9f5;
-  --color-border-default: #30302e;
-  --color-border-light: #3d3d3a;
-  --color-hover: rgba(255, 255, 255, 0.06);
-  --color-active: rgba(255, 255, 255, 0.1);
-  --color-accent-light: #2a1f1a;       /* 暗色赤陶色背景 */
-  --color-success-light: rgba(34, 197, 94, 0.15);
-  --color-error-light: rgba(181, 51, 51, 0.18);
-  --color-warning-light: rgba(217, 119, 6, 0.15);
-}
+/* html[data-theme="claude"].dark — 已迁移到 styles/themes/claude.css */
 
 /* ==========================================================
  * 全局样式：选中文字、滚动条、减少动画

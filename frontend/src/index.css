@@ -24,6 +24,7 @@
 @import "./styles/tokens/semantic.css";
 @import "./styles/tokens/component.css";
 @import "./styles/theme.css";
+@import "./styles/themes/claude.css";
 @import "./styles/animations.css";
 @import "./styles/glass.css";
 
