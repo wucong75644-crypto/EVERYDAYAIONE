@@ -34,13 +34,13 @@ export default function AdminPanel({ onClose }: AdminPanelProps) {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+      <div className="bg-surface-card rounded-xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
         {/* 头部 */}
         <div className="flex items-center justify-between px-6 py-4 border-b">
-          <h2 className="text-lg font-semibold text-gray-900">管理后台</h2>
+          <h2 className="text-lg font-semibold text-text-primary">管理后台</h2>
           <button
             onClick={onClose}
-            className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors"
+            className="p-1 rounded-lg hover:bg-hover text-text-disabled hover:text-text-tertiary transition-base"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -54,10 +54,10 @@ export default function AdminPanel({ onClose }: AdminPanelProps) {
             {visibleTabs.map((tab) => (
               <button
                 key={tab.key}
-                className={`px-4 py-2.5 text-sm font-medium transition-colors ${
+                className={`px-4 py-2.5 text-sm font-medium transition-base ${
                   activeTab === tab.key
-                    ? 'text-blue-600 border-b-2 border-blue-600'
-                    : 'text-gray-500 hover:text-gray-700'
+                    ? 'text-accent border-b-2 border-accent'
+                    : 'text-text-tertiary hover:text-text-secondary'
                 }`}
                 onClick={() => setActiveTab(tab.key)}
               >
@@ -74,7 +74,7 @@ export default function AdminPanel({ onClose }: AdminPanelProps) {
             <OrgManagePanel orgId={currentOrg?.org_id} />
           )}
           {!isOrgAdmin && !isSuperAdmin && activeTab === 'org' && (
-            <div className="text-center text-gray-500 py-12">
+            <div className="text-center text-text-tertiary py-12">
               <p>当前未加入任何企业，或您不是管理员</p>
             </div>
           )}

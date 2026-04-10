@@ -58,28 +58,28 @@ export default function ModelCard({
   return (
     <div
       onClick={() => onCardClick(model)}
-      className={`bg-white rounded-xl border cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex flex-col ${
+      className={`bg-surface-card rounded-xl border cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex flex-col ${
         isSubscribed
-          ? 'border-blue-200 bg-blue-50/30'
-          : 'border-gray-200'
+          ? 'border-accent/30 bg-accent-light/30'
+          : 'border-border-default'
       }`}
     >
       {/* 内容区 */}
       <div className="p-4 flex-1">
         {/* 标签 */}
         {isFree && (
-          <span className="inline-block bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded-full font-medium">
+          <span className="inline-block bg-success-light text-success text-xs px-2 py-0.5 rounded-full font-medium">
             免费
           </span>
         )}
 
         {/* 名称 */}
-        <h3 className="text-base font-semibold text-gray-900 mt-2 truncate">
+        <h3 className="text-base font-semibold text-text-primary mt-2 truncate">
           {model.name}
         </h3>
 
         {/* 描述 */}
-        <p className="text-sm text-gray-500 mt-1 line-clamp-1">
+        <p className="text-sm text-text-tertiary mt-1 line-clamp-1">
           {model.description}
         </p>
 
@@ -88,20 +88,20 @@ export default function ModelCard({
           {capabilities.slice(0, 4).map((tag) => (
             <span
               key={tag.key}
-              className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600"
+              className="text-xs px-1.5 py-0.5 rounded bg-hover text-text-tertiary"
             >
               {tag.label}
             </span>
           ))}
           {capabilities.length > 4 && (
-            <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-400">
+            <span className="text-xs px-1.5 py-0.5 rounded bg-hover text-text-disabled">
               +{capabilities.length - 4}
             </span>
           )}
         </div>
 
         {/* 费用 */}
-        <p className={`text-sm mt-2 font-medium ${isFree ? 'text-green-600' : 'text-gray-600'}`}>
+        <p className={`text-sm mt-2 font-medium ${isFree ? 'text-success' : 'text-text-tertiary'}`}>
           {getCreditsText(model)}
         </p>
       </div>
@@ -110,7 +110,7 @@ export default function ModelCard({
       {isAuthenticated &&
         (isSubscribing || isSubscribed ? (
           // 订阅中/已订阅：div 让点击冒泡到外层 → 打开详情抽屉
-          <div className="border-t border-gray-100 px-4 py-3 text-center text-sm text-gray-400">
+          <div className="border-t border-border-light px-4 py-3 text-center text-sm text-text-disabled">
             {isSubscribing ? '订阅中...' : '✓ 已订阅'}
           </div>
         ) : (
@@ -118,7 +118,7 @@ export default function ModelCard({
           <button
             type="button"
             onClick={handleSubscribeClick}
-            className="border-t border-gray-100 px-4 py-3 text-center text-sm font-medium w-full bg-transparent text-blue-600 hover:text-blue-700 hover:bg-blue-50/50 transition-colors"
+            className="border-t border-border-light px-4 py-3 text-center text-sm font-medium w-full bg-transparent text-accent hover:text-accent-hover hover:bg-accent-light/50 transition-base"
           >
             订阅
           </button>

@@ -40,15 +40,15 @@ export default function LoadingScreen({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+    <div className="min-h-screen bg-surface flex items-center justify-center">
       <div className="text-center">
         {/* 旋转加载图标 */}
         <div className="inline-flex items-center justify-center w-16 h-16 mb-4">
-          <div className="w-16 h-16 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+          <div className="w-16 h-16 border-4 border-accent/20 border-t-accent rounded-full animate-spin"></div>
         </div>
 
         {/* 加载文本 */}
-        <p className="text-gray-600 text-lg font-medium">{message}</p>
+        <p className="text-text-tertiary text-lg font-medium">{message}</p>
       </div>
     </div>
   );

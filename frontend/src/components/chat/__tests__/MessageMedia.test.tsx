@@ -10,14 +10,14 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import MessageMedia from '../MessageMedia';
+import MessageMedia from '../message/MessageMedia';
 
 // Mock 子组件，只关注 props 传递
 vi.mock('react-intersection-observer', () => ({
   useInView: () => ({ ref: vi.fn(), inView: true }),
 }));
 
-vi.mock('../MediaPlaceholder', () => ({
+vi.mock('../media/MediaPlaceholder', () => ({
   default: ({ type }: { type: string }) => <div data-testid={`placeholder-${type}`} />,
   FailedMediaPlaceholder: ({ onRetry }: { onRetry?: () => void }) => (
     <div data-testid="failed-placeholder">
@@ -26,14 +26,14 @@ vi.mock('../MediaPlaceholder', () => ({
   ),
 }));
 
-vi.mock('../shared.module.css', () => ({
+vi.mock('../menus/shared.module.css', () => ({
   default: {
     'dynamic-aspect-ratio': 'dynamic-aspect-ratio',
     'dynamic-max-width': 'dynamic-max-width',
   },
 }));
 
-vi.mock('../AiImageGrid', () => ({
+vi.mock('../media/AiImageGrid', () => ({
   default: (props: Record<string, unknown>) => (
     <div data-testid="ai-image-grid" data-num-images={props.numImages}>
       {/* 暴露 onImageClick 用于测试 */}

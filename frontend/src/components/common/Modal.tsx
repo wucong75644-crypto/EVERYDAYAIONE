@@ -1,4 +1,20 @@
-import { useEffect, useState, type ReactNode } from 'react';
+/**
+ * 通用模态框组件
+ *
+ * 改造点（V2.0 - 设计系统重构）：
+ * - 颜色全部用 token 变量（bg-surface-card / text-text-primary / border-border-default）
+ * - 动画用 animations.css 的新 class（modal-enter/exit + backdrop-enter/exit）
+ * - z-index 用标准数字（z-50）
+ * - 关闭按钮换 lucide-react 图标（移除内联 SVG）
+ * - 跟随主题切换（classic / claude）
+ *
+ * API 完全兼容旧版（isOpen/onClose/title/children/closeOnOverlay/closeOnEsc/showCloseButton/maxWidth）
+ */
+
+import { useEffect, type ReactNode } from 'react';
+import { X } from 'lucide-react';
+import { cn } from '../../utils/cn';
+import { useExitAnimation } from '../../hooks/useExitAnimation';
 
 interface ModalProps {
   isOpen: boolean;
@@ -15,6 +31,9 @@ interface ModalProps {
   maxWidth?: string;
 }
 
+/** 退出动画时长，与 animations.css 的 modal-exit (--duration-normal = 150ms) 一致 */
+const EXIT_ANIMATION_DURATION = 150;
+
 export default function Modal({
   isOpen,
   onClose,
@@ -25,39 +44,15 @@ export default function Modal({
   showCloseButton = true,
   maxWidth = 'max-w-md',
 }: ModalProps) {
-  const [isAnimating, setIsAnimating] = useState(false);
-  const [shouldRender, setShouldRender] = useState(isOpen);
-
-  // 控制渲染和动画
-  // 注意：同步 setState 是动画时序必需的（先渲染 DOM，再触发 CSS 动画）
-  useEffect(() => {
-    if (isOpen) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setShouldRender(true);
-      // 等待 DOM 渲染后触发进入动画
-      const timer = setTimeout(() => {
-        setIsAnimating(true);
-      }, 10); // 短暂延迟确保 DOM 已渲染
-      return () => clearTimeout(timer);
-    } else {
-      // 触发退出动画
-      setIsAnimating(false);
-      // 等待动画结束后卸载
-      const timer = setTimeout(() => {
-        setShouldRender(false);
-      }, 200); // 与动画时长匹配
-      return () => clearTimeout(timer);
-    }
-  }, [isOpen]);
+  // 退出动画状态机（统一复用 useExitAnimation Hook）
+  const { shouldRender, isClosing } = useExitAnimation(isOpen, EXIT_ANIMATION_DURATION);
 
   // ESC 键关闭
   useEffect(() => {
     if (!isOpen || !closeOnEsc) return;
 
     const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
+      if (e.key === 'Escape') onClose();
     };
 
     document.addEventListener('keydown', handleEsc);
@@ -83,29 +78,34 @@ export default function Modal({
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* 遮罩层 */}
       <div
-        className={`absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-200 ${
-          isAnimating ? 'opacity-100' : 'opacity-0'
-        }`}
+        className={cn(
+          'absolute inset-0 bg-black/50 backdrop-blur-sm',
+          isClosing ? 'animate-backdrop-exit' : 'animate-backdrop-enter',
+        )}
         onClick={closeOnOverlay ? onClose : undefined}
         aria-hidden="true"
       />
 
       {/* 弹窗内容 */}
       <div
-        className={`relative bg-white rounded-xl shadow-2xl ${maxWidth} w-full mx-4 transition-all duration-200 ${
-          isAnimating ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
-        }`}
+        className={cn(
+          'relative bg-surface-card text-text-primary',
+          'rounded-xl shadow-xl border border-border-light',
+          maxWidth,
+          'w-full mx-4',
+          isClosing ? 'animate-modal-exit' : 'animate-modal-enter',
+        )}
         role="dialog"
         aria-modal="true"
         aria-labelledby={title ? 'modal-title' : undefined}
       >
         {/* 头部 */}
         {(title || showCloseButton) && (
-          <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-200">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-border-default">
             {title && (
               <h2
                 id="modal-title"
-                className="text-lg font-semibold text-gray-900"
+                className="text-lg font-semibold text-text-primary"
               >
                 {title}
               </h2>
@@ -113,22 +113,14 @@ export default function Modal({
             {showCloseButton && (
               <button
                 onClick={onClose}
-                className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-100"
+                className={cn(
+                  'text-text-tertiary hover:text-text-primary hover:bg-hover',
+                  'p-1 rounded-lg transition-base',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring',
+                )}
                 aria-label="关闭"
               >
-                <svg
-                  className="w-5 h-5"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
+                <X className="w-5 h-5" />
               </button>
             )}
           </div>

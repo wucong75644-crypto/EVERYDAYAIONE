@@ -10,7 +10,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import ImagePreview from '../ImagePreview';
+import ImagePreview from '../media/ImagePreview';
 import type { UploadedImage } from '../../../hooks/useImageUpload';
 
 const createImage = (overrides: Partial<UploadedImage> = {}): UploadedImage => ({
