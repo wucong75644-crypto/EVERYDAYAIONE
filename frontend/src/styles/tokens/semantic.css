@@ -1,0 +1,140 @@
+/**
+ * Token Layer 2 — Semantic（语义层）
+ *
+ * 角色层：以用途命名（而非字面量），每个主题只需重写此层。
+ * 组件 CSS 只应该消费此层的变量，不应直接碰 atoms。
+ *
+ * 命名规范：`--s-{角色}-{子角色}`
+ *   s = semantic 前缀
+ *
+ * 注意：此文件只声明**默认值**（等同 classic + light mode）。
+ * 主题覆盖在 `styles/themes/{classic,claude,linear}.css`。
+ *
+ * V3 重构过渡期：旧 theme.css 的变量暂时保留，Phase 1/2/3 中：
+ * - Phase 1 Claude 主题引入 ring shadow / warm scale
+ * - Phase 2 Linear 主题引入近黑 / 透明分层
+ * - Phase 3 classic 微升级后会将 --color-xxx 映射到 --s-xxx
+ */
+
+@theme {
+  /* ==========================================================
+   * 颜色 — 表面（Surface）
+   * ========================================================== */
+  --s-surface-base: #f9fafb;          /* 页面底色 */
+  --s-surface-raised: #ffffff;        /* 卡片底色 */
+  --s-surface-overlay: #ffffff;       /* 弹窗/浮层底色 */
+  --s-surface-sunken: #f3f4f6;        /* 凹陷底色 */
+  --s-surface-inverse: #111827;       /* 反色（暗色区块） */
+
+  /* ==========================================================
+   * 颜色 — 文字（Text）
+   * ========================================================== */
+  --s-text-primary: #111827;
+  --s-text-secondary: #4b5563;
+  --s-text-tertiary: #6b7280;
+  --s-text-disabled: #9ca3af;
+  --s-text-inverse: #ffffff;
+  --s-text-on-accent: #ffffff;
+
+  /* ==========================================================
+   * 颜色 — 品牌 / 强调
+   * ========================================================== */
+  --s-accent: #2563eb;
+  --s-accent-hover: #1d4ed8;
+  --s-accent-active: #1e40af;
+  --s-accent-soft: #dbeafe;           /* 浅底强调 */
+  --s-accent-ring: #3b82f6;           /* focus ring */
+
+  /* ==========================================================
+   * 颜色 — 边框
+   * ========================================================== */
+  --s-border-subtle: #f3f4f6;
+  --s-border-default: #e5e7eb;
+  --s-border-strong: #d1d5db;
+  --s-border-focus: var(--s-accent-ring);
+
+  /* ==========================================================
+   * 颜色 — 交互
+   * ========================================================== */
+  --s-hover: rgba(0, 0, 0, 0.04);
+  --s-active: rgba(0, 0, 0, 0.08);
+  --s-selected: rgba(37, 99, 235, 0.08);
+
+  /* ==========================================================
+   * 颜色 — 语义状态
+   * ========================================================== */
+  --s-success: #16a34a;
+  --s-success-soft: #f0fdf4;
+  --s-warning: #d97706;
+  --s-warning-soft: #fffbeb;
+  --s-error: #dc2626;
+  --s-error-soft: #fef2f2;
+  --s-info: #0891b2;
+  --s-info-soft: #ecfeff;
+
+  /* ==========================================================
+   * 阴影 — 分为两派系
+   * 传统下投影（drop shadow）用于 light 主题
+   * Ring shadow（环形阴影）用于 Claude 主题
+   * 透明分层用于 Linear 主题（在 themes/linear.css 里覆盖）
+   * ========================================================== */
+  --s-shadow-drop-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --s-shadow-drop-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+  --s-shadow-drop-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.06);
+  --s-shadow-drop-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
+
+  --s-shadow-ring-default: 0 0 0 1px rgba(0, 0, 0, 0.06);
+  --s-shadow-ring-hover: 0 0 0 1px rgba(0, 0, 0, 0.12);
+  --s-shadow-ring-active: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+
+  --s-shadow-whisper: 0 4px 24px rgba(0, 0, 0, 0.05); /* Claude 风格"气息"阴影 */
+
+  /* 多层 dialog 阴影（Linear 风格，暗色时用） */
+  --s-shadow-dialog:
+    rgba(0, 0, 0, 0) 0 8px 2px,
+    rgba(0, 0, 0, 0.01) 0 5px 2px,
+    rgba(0, 0, 0, 0.04) 0 3px 2px,
+    rgba(0, 0, 0, 0.07) 0 1px 1px,
+    rgba(0, 0, 0, 0.08) 0 0 1px;
+
+  /* ==========================================================
+   * 毛玻璃（Glass）
+   * ========================================================== */
+  --s-glass-bg: rgba(255, 255, 255, 0.72);
+  --s-glass-border: rgba(255, 255, 255, 0.4);
+  --s-glass-blur: 20px;
+  --s-glass-saturate: 180%;
+
+  /* ==========================================================
+   * 字体族
+   * ========================================================== */
+  --s-font-sans: -apple-system, BlinkMacSystemFont, "Inter Variable", "Inter",
+                 "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+                 system-ui, sans-serif;
+  --s-font-serif: "Anthropic Serif", Georgia, "Noto Serif SC",
+                  "Songti SC", "Source Han Serif SC", serif;
+  --s-font-mono: "Berkeley Mono", "SF Mono", "JetBrains Mono", ui-monospace,
+                 Menlo, Consolas, monospace;
+
+  /* Heading / Body / Code 默认角色 */
+  --s-font-heading: var(--s-font-sans);
+  --s-font-body: var(--s-font-sans);
+  --s-font-code: var(--s-font-mono);
+
+  /* ==========================================================
+   * 字重角色
+   * ========================================================== */
+  --s-weight-body: var(--a-weight-400);
+  --s-weight-emphasis: var(--a-weight-500);
+  --s-weight-strong: var(--a-weight-600);
+  --s-weight-heading: var(--a-weight-600);
+
+  /* ==========================================================
+   * 圆角角色
+   * ========================================================== */
+  --s-radius-control: var(--a-radius-4);    /* 按钮/输入框 */
+  --s-radius-card: var(--a-radius-7);       /* 卡片 */
+  --s-radius-panel: var(--a-radius-8);      /* 面板 */
+  --s-radius-hero: var(--a-radius-10);      /* 英雄大卡片 */
+  --s-radius-pill: var(--a-radius-pill);    /* pill 按钮 / 徽章 */
+}

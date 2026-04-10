@@ -1,0 +1,44 @@
+/**
+ * Glass Morphism 毛玻璃工具类
+ *
+ * 苹果 iOS/macOS 标志性效果：半透明 + 饱和度增强 + 高斯模糊。
+ * 仅用在"浮层"：Sidebar / NavBar / Modal backdrop / Dropdown / Toast / Context menu。
+ *
+ * 性能注意：backdrop-filter 是 GPU 密集型，**不要**在大面积或高频滚动容器上使用。
+ * 不支持 backdrop-filter 的浏览器会 fallback 到 --s-glass-bg（半透明底）。
+ *
+ * 三档强度：
+ * - .glass-subtle : 10px blur，背景显隐依然清晰（浅层浮层用）
+ * - .glass        : 20px blur，标准毛玻璃（Sidebar / NavBar）
+ * - .glass-strong : 40px blur + 更高饱和（Modal / 强调浮层）
+ */
+
+.glass-subtle {
+  background-color: var(--s-glass-bg);
+  -webkit-backdrop-filter: saturate(150%) blur(10px);
+  backdrop-filter: saturate(150%) blur(10px);
+  border: 1px solid var(--s-glass-border);
+}
+
+.glass {
+  background-color: var(--s-glass-bg);
+  -webkit-backdrop-filter: saturate(var(--s-glass-saturate)) blur(var(--s-glass-blur));
+  backdrop-filter: saturate(var(--s-glass-saturate)) blur(var(--s-glass-blur));
+  border: 1px solid var(--s-glass-border);
+}
+
+.glass-strong {
+  background-color: var(--s-glass-bg);
+  -webkit-backdrop-filter: saturate(200%) blur(40px);
+  backdrop-filter: saturate(200%) blur(40px);
+  border: 1px solid var(--s-glass-border);
+}
+
+/* 不支持 backdrop-filter 的浏览器：fallback 到更不透明的底色 */
+@supports not (backdrop-filter: blur(1px)) {
+  .glass-subtle,
+  .glass,
+  .glass-strong {
+    background-color: var(--s-surface-overlay);
+  }
+}
