@@ -145,7 +145,7 @@ export default function ModelDetailDrawer({
   };
 
   return (
-    <div className="fixed inset-0 z-50">
+    <div className={`fixed inset-0 z-50 ${isClosing ? 'pointer-events-none' : ''}`}>
       {/* 遮罩 */}
       <div
         className={`absolute inset-0 bg-black/40 ${isClosing ? 'animate-backdropExit' : 'animate-backdropEnter'}`}

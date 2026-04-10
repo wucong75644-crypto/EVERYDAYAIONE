@@ -107,22 +107,22 @@ export default function ModelCard({
       </div>
 
       {/* 按钮区（仅已登录显示） */}
-      {isAuthenticated && (
-        <div className="border-t border-gray-100 px-4 py-3 text-center">
-          {isSubscribing ? (
-            <span className="text-sm text-gray-400">订阅中...</span>
-          ) : isSubscribed ? (
-            <span className="text-sm text-gray-400">✓ 已订阅</span>
-          ) : (
-            <button
-              onClick={handleSubscribeClick}
-              className="text-sm font-medium text-blue-600 hover:text-blue-700 transition-colors"
-            >
-              订阅
-            </button>
-          )}
-        </div>
-      )}
+      {isAuthenticated &&
+        (isSubscribing || isSubscribed ? (
+          // 订阅中/已订阅：div 让点击冒泡到外层 → 打开详情抽屉
+          <div className="border-t border-gray-100 px-4 py-3 text-center text-sm text-gray-400">
+            {isSubscribing ? '订阅中...' : '✓ 已订阅'}
+          </div>
+        ) : (
+          // 未订阅：整条底栏作为按钮，避免 padding 区域误触发开抽屉
+          <button
+            type="button"
+            onClick={handleSubscribeClick}
+            className="border-t border-gray-100 px-4 py-3 text-center text-sm font-medium w-full bg-transparent text-blue-600 hover:text-blue-700 hover:bg-blue-50/50 transition-colors"
+          >
+            订阅
+          </button>
+        ))}
     </div>
   );
 }
