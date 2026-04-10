@@ -208,6 +208,27 @@ async def get_scoped_db(
     return OrgScopedDB(db, org_id)
 
 
+# ── 时间事实层 RequestContext ────────────────────────────
+# 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B11)
+# 在 HTTP 入口构造一次，全链路传递，禁止下游重新计算 now（避免跨午夜漂移）。
+
+
+async def get_request_ctx(
+    request: Request,
+    org_ctx: OrgContext = Depends(get_org_context),
+):
+    """构造请求级 RequestContext（含 now / weekday / iso_week / 节假日）。
+
+    包装 OrgContext + 时间事实，是 HTTP/WebSocket/企微入口的统一注入方式。
+    """
+    from utils.time_context import RequestContext
+    return RequestContext.build(
+        user_id=org_ctx.user_id,
+        org_id=org_ctx.org_id,
+        request_id=request.headers.get("X-Request-Id", ""),
+    )
+
+
 # 类型别名，简化依赖注入的使用
 CurrentUserId = Annotated[str, Depends(get_current_user_id)]
 CurrentUser = Annotated[dict, Depends(get_current_user)]
@@ -216,3 +237,5 @@ Database = Annotated[Any, Depends(get_db)]
 OrgCtx = Annotated[OrgContext, Depends(get_org_context)]
 ScopedDB = Annotated[OrgScopedDB, Depends(get_scoped_db)]
 TaskLimitSvc = Annotated[Optional[TaskLimitService], Depends(get_task_limit_service)]
+# 时间事实层依赖 — 用法：def endpoint(req_ctx: RequestCtx, ...)
+RequestCtx = Annotated["Any", Depends(get_request_ctx)]

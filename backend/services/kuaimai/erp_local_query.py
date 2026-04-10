@@ -5,9 +5,12 @@ ERP 本地查询工具（6个）
 数据来源：erp_sync_service 后台同步写入的本地表。
 
 设计文档: docs/document/TECH_ERP数据本地索引系统.md §6
+时间事实层: docs/document/TECH_ERP时间准确性架构.md §6.2.2 (B5b-h)
 """
 
 from __future__ import annotations
+
+from typing import Optional
 
 from loguru import logger
 
@@ -16,6 +19,7 @@ from services.kuaimai.erp_local_helpers import (
     check_sync_health,
     query_doc_items,
 )
+from utils.time_context import RequestContext, make_n_days_header
 
 
 # ── 工具1：采购查询（含采退）────────────────────────────
@@ -27,6 +31,7 @@ async def local_purchase_query(
     include_return: bool = True,
     days: int = 30,
     org_id: str | None = None,
+    request_ctx: Optional[RequestContext] = None,
 ) -> str:
     """按商品编码查采购到货进度（含采退）"""
     extra = {"doc_status": status} if status else None
@@ -36,12 +41,14 @@ async def local_purchase_query(
     if include_return:
         return_rows = query_doc_items(db, "purchase_return", product_code, days, org_id=org_id)
 
+    time_header = make_n_days_header(ctx=request_ctx, days=days, kind="查询窗口")
+
     if not rows and not return_rows:
         health = check_sync_health(db, ["purchase", "purchase_return"], org_id=org_id)
-        return f"商品 {product_code} 近{days}天无采购/采退记录\n{health}".strip()
+        return f"{time_header}\n\n商品 {product_code} 近{days}天无采购/采退记录\n{health}".strip()
 
     # 按 doc_id 聚合采购单
-    lines = [f"商品 {product_code} 采购情况（近{days}天）：\n"]
+    lines = [time_header, "", f"商品 {product_code} 采购情况（近{days}天）：\n"]
     docs: dict[str, list[dict]] = {}
     for r in rows:
         docs.setdefault(r["doc_id"], []).append(r)
@@ -114,14 +121,17 @@ async def local_aftersale_query(
     aftersale_type: str | None = None,
     days: int = 30,
     org_id: str | None = None,
+    request_ctx: Optional[RequestContext] = None,
 ) -> str:
     """按商品编码查售后情况"""
     extra = {"aftersale_type": aftersale_type} if aftersale_type else None
     rows = query_doc_items(db, "aftersale", product_code, days, extra, org_id=org_id)
 
+    time_header = make_n_days_header(ctx=request_ctx, days=days, kind="查询窗口")
+
     if not rows:
         health = check_sync_health(db, ["aftersale"], org_id=org_id)
-        return f"商品 {product_code} 近{days}天无售后记录\n{health}".strip()
+        return f"{time_header}\n\n商品 {product_code} 近{days}天无售后记录\n{health}".strip()
 
     # 按类型统计
     type_counts: dict[str, int] = {}
@@ -130,7 +140,7 @@ async def local_aftersale_query(
         name = _AFTERSALE_TYPE_MAP.get(t, t)
         type_counts[name] = type_counts.get(name, 0) + 1
 
-    lines = [f"商品 {product_code} 售后情况（近{days}天）：\n"]
+    lines = [time_header, "", f"商品 {product_code} 售后情况（近{days}天）：\n"]
     lines.append("📊 售后汇总：")
     for name, count in type_counts.items():
         lines.append(f"  {name}: {count}笔")
@@ -172,6 +182,7 @@ async def local_order_query(
     status: str | None = None,
     days: int = 30,
     org_id: str | None = None,
+    request_ctx: Optional[RequestContext] = None,
 ) -> str:
     """按商品编码查销售订单"""
     rows = query_doc_items(db, "order", product_code, days, org_id=org_id)
@@ -183,9 +194,11 @@ async def local_order_query(
     if status:
         rows = [r for r in rows if r.get("order_status") == status]
 
+    time_header = make_n_days_header(ctx=request_ctx, days=days, kind="查询窗口")
+
     if not rows:
         health = check_sync_health(db, ["order"], org_id=org_id)
-        return f"商品 {product_code} 近{days}天无订单记录\n{health}".strip()
+        return f"{time_header}\n\n商品 {product_code} 近{days}天无订单记录\n{health}".strip()
 
     unique_docs = {r["doc_id"] for r in rows}
     total_qty = sum(r.get("quantity") or 0 for r in rows)
@@ -200,7 +213,7 @@ async def local_order_query(
         platform_stats[p]["docs"].add(r["doc_id"])
         platform_stats[p]["amount"] += float(r.get("amount") or 0)
 
-    lines = [f"商品 {product_code} 销售情况（近{days}天）：\n"]
+    lines = [time_header, "", f"商品 {product_code} 销售情况（近{days}天）：\n"]
     lines.append(f"销售汇总：总订单{len(unique_docs)}笔，销量{total_qty}件，¥{total_amount:,.2f}")
 
     if platform_stats:
@@ -239,6 +252,7 @@ async def local_order_query(
 async def local_product_flow(
     db, product_code: str, days: int = 30,
     org_id: str | None = None,
+    request_ctx: Optional[RequestContext] = None,
 ) -> str:
     """按商品编码查完整流转（采购→收货→上架→销售→售后→采退）"""
     doc_types = [
@@ -252,11 +266,13 @@ async def local_product_flow(
         total_amount = sum(float(r.get("amount") or 0) for r in rows)
         stats[dt] = {"count": len(unique_docs), "qty": total_qty, "amount": total_amount}
 
+    time_header = make_n_days_header(ctx=request_ctx, days=days, kind="查询窗口")
+
     if all(s["count"] == 0 for s in stats.values()):
         health = check_sync_health(db, doc_types, org_id=org_id)
-        return f"商品 {product_code} 近{days}天无流转记录\n{health}".strip()
+        return f"{time_header}\n\n商品 {product_code} 近{days}天无流转记录\n{health}".strip()
 
-    lines = [f"商品 {product_code} 全链路流转（近{days}天）：\n"]
+    lines = [time_header, "", f"商品 {product_code} 全链路流转（近{days}天）：\n"]
     s = stats
     lines.append(f"采购：{s['purchase']['count']}笔，共{s['purchase']['qty']}件")
     lines.append(f"收货：{s['receipt']['count']}笔，收货{s['receipt']['qty']}件")
@@ -517,10 +533,16 @@ async def local_shop_list(
             plat = r.get("platform") or "未知"
             by_platform.setdefault(plat, []).append(r)
 
+        _plat_cn = {
+            "tb": "淘宝", "jd": "京东", "pdd": "拼多多",
+            "fxg": "抖音", "kuaishou": "快手", "xhs": "小红书",
+            "1688": "1688", "sys": "系统", "wd": "微店",
+        }
         total = len(rows)
         lines = [f"共 {total} 个店铺：\n"]
         for plat, shops in sorted(by_platform.items()):
-            lines.append(f"【{plat}】({len(shops)}个)")
+            plat_label = _plat_cn.get(plat, plat)
+            lines.append(f"【{plat_label}】({len(shops)}个)")
             for i, s in enumerate(shops, 1):
                 name = s.get("name") or s.get("short_name") or "未命名"
                 state = state_map.get(s.get("state"), "")

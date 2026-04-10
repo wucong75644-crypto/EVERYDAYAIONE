@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from services.kuaimai.registry.base import ApiEntry
+from utils.time_context import now_cn
 
 # ---------------------------------------------------------------------------
 # 全局跳过字段（图片/系统ID等无业务价值的）
@@ -110,8 +111,8 @@ def parse_date(date_str: Optional[str], is_end: bool = False) -> str:
         return date_str + suffix
     if date_str:
         return date_str
-    # 默认值
-    now = datetime.now()
+    # 默认值（北京时间，禁止裸调 datetime.now()）
+    now = now_cn()
     if is_end:
         return now.strftime("%Y-%m-%d %H:%M:%S")
     return (now - timedelta(days=7)).strftime("%Y-%m-%d 00:00:00")

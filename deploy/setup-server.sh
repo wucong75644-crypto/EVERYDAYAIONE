@@ -60,10 +60,19 @@ install_basics() {
 
     if [ "$OS" = "ubuntu" ] || [ "$OS" = "debian" ]; then
         apt-get update
-        apt-get install -y curl wget git vim unzip software-properties-common
+        # tzdata: IANA 时区数据库（zoneinfo / loguru / logging 依赖），
+        # 配合 systemd unit 的 Environment=TZ=Asia/Shanghai 使用。
+        # 参见 docs/document/TECH_ERP时间准确性架构.md §17
+        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            curl wget git vim unzip software-properties-common tzdata
     elif [ "$OS" = "centos" ] || [ "$OS" = "rhel" ]; then
-        yum install -y curl wget git vim unzip epel-release
+        yum install -y curl wget git vim unzip epel-release tzdata
     fi
+
+    # 系统时区软链兜底（systemd 的 TZ 已是主防线，此处仅防御性同步）
+    ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime || true
+    echo "Asia/Shanghai" > /etc/timezone || true
+    log_info "系统时区已设置为 Asia/Shanghai"
 
     log_success "基础工具安装完成"
 }

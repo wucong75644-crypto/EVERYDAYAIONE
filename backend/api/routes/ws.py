@@ -52,6 +52,9 @@ async def get_user_from_token(token: str) -> tuple[Optional[str], str]:
         return None, "invalid"
 
 
+# TODO(time-context PR3): WebSocket 入口注入 RequestContext，全链路请求级 SSOT
+# 目前 ERPAgent / ChatHandler 内部用 RequestContext.build() fallback，时区正确。
+# 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B15)
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,

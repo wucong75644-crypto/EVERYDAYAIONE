@@ -189,6 +189,7 @@ class ErpToolMixin:
         self, tool_name: str, args: Dict[str, Any],
     ) -> str:
         """本地查询工具统一调度（直接查DB，毫秒级响应）"""
+        from services.kuaimai.erp_local_compare_stats import local_compare_stats
         from services.kuaimai.erp_local_doc_query import local_doc_query
         from services.kuaimai.erp_local_global_stats import local_global_stats
         from services.kuaimai.erp_local_identify import local_product_identify
@@ -217,6 +218,7 @@ class ErpToolMixin:
             "local_platform_map_query": local_platform_map_query,
             "local_doc_query": local_doc_query,
             "local_global_stats": local_global_stats,
+            "local_compare_stats": local_compare_stats,
             "local_shop_list": local_shop_list,
             "local_warehouse_list": local_warehouse_list,
             "local_db_export": local_db_export,
@@ -227,12 +229,30 @@ class ErpToolMixin:
         if not func:
             return f"Unknown local tool: {tool_name}"
         try:
+            # 时间事实层 — 把 RequestContext 透传给支持的工具
+            # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B16)
+            request_ctx = getattr(self, "request_ctx", None)
+
             # local_db_export 需要额外的 conversation_id 确定 staging 路径
             if tool_name == "local_db_export":
                 return await func(
                     self.db, **args,
                     org_id=self.org_id,
                     conversation_id=self.conversation_id,
+                    request_ctx=request_ctx,
+                )
+            # 时间相关工具透传 request_ctx；其他工具保留旧签名
+            _TIME_AWARE_TOOLS = {
+                "local_purchase_query", "local_aftersale_query",
+                "local_order_query", "local_product_flow",
+                "local_product_stats", "local_doc_query",
+                "local_global_stats", "local_compare_stats",
+            }
+            if tool_name in _TIME_AWARE_TOOLS:
+                return await func(
+                    self.db, **args,
+                    org_id=self.org_id,
+                    request_ctx=request_ctx,
                 )
             return await func(self.db, **args, org_id=self.org_id)
         except Exception as e:

@@ -5,14 +5,18 @@ ERP 本地多维度单据查询
 返回完整信息含所有中转钥匙（sid/order_no/express_no/outer_id）。
 
 设计文档: docs/document/TECH_ERP本地优先统一查询架构.md §6 工具1
+时间事实层: docs/document/TECH_ERP时间准确性架构.md §6.2.2 (B5g)
 """
 
 from __future__ import annotations
+
+from typing import Optional
 
 from loguru import logger
 
 
 from services.kuaimai.erp_local_helpers import check_sync_health, cutoff_iso
+from utils.time_context import RequestContext, make_n_days_header
 
 _DOC_TYPE_NAMES = {
     "purchase": "采购单",
@@ -36,6 +40,7 @@ async def local_doc_query(
     status: str | None = None,
     days: int = 30,
     org_id: str | None = None,
+    request_ctx: Optional[RequestContext] = None,
 ) -> str:
     """多维度单据查询，返回完整信息含所有中转钥匙"""
     if not any([product_code, order_no, doc_code, express_no,
@@ -52,12 +57,15 @@ async def local_doc_query(
         logger.error(f"local_doc_query failed | error={e}", exc_info=True)
         return f"单据查询失败: {e}"
 
+    time_header = make_n_days_header(ctx=request_ctx, days=days, kind="查询窗口")
+
     if not rows:
         types = [doc_type] if doc_type else ["order", "purchase", "aftersale"]
         health = check_sync_health(db, types, org_id=org_id)
-        return f"未查到匹配记录（近{days}天）\n{health}".strip()
+        return f"{time_header}\n\n未查到匹配记录（近{days}天）\n{health}".strip()
 
-    return _format_doc_results(db, rows)
+    body = _format_doc_results(db, rows)
+    return f"{time_header}\n\n{body}" if time_header else body
 
 
 def _execute_query(

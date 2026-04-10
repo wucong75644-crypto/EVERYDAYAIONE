@@ -4,12 +4,17 @@ ERP 独立 Agent — 专用提示词 + 工具循环 + 安全护栏
 类型/常量/工具函数见 erp_agent_types.py
 """
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from utils.time_context import RequestContext
 
 from services.agent.erp_agent_types import (
     ERPAgentResult,
@@ -32,12 +37,19 @@ class ERPAgent:
         conversation_id: str,
         org_id: str,
         task_id: Optional[str] = None,
+        request_ctx: Optional["RequestContext"] = None,
     ) -> None:
         self.db = db
         self.user_id = user_id
         self.conversation_id = conversation_id
         self.org_id = org_id
         self.task_id = task_id
+        # 时间事实层：请求级 SSOT。入口未传时构造一个新的（向后兼容）。
+        # 设计文档：docs/document/TECH_ERP时间准确性架构.md §4 / §6.2.4
+        from utils.time_context import RequestContext
+        self.request_ctx = request_ctx or RequestContext.build(
+            user_id=user_id, org_id=org_id, request_id=task_id or "",
+        )
         # [B4] 会话级读工具缓存（key=tool_name+args_hash → result, TTL 5分钟）
         self._query_cache: Dict[str, tuple] = {}  # {cache_key: (result, timestamp)}
 
@@ -92,12 +104,14 @@ class ERPAgent:
             from config.phase_tools import build_domain_prompt
             system_prompt = build_domain_prompt("erp")
 
-            import time as _time
-            now_str = _time.strftime("%Y-%m-%d %H:%M %A", _time.localtime())
+            # 时间事实层 — 用 RequestContext 注入结构化的"今天"
+            # 替代旧的 _time.strftime + _time.localtime（依赖 OS 时区，且只输出英文星期）
+            # 设计文档：docs/document/TECH_ERP时间准确性架构.md §4 / §6.2.1
+            time_injection = self.request_ctx.for_prompt_injection()
 
             messages: List[Dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
-                {"role": "system", "content": f"当前时间：{now_str}"},
+                {"role": "system", "content": time_injection},
             ]
 
             # [Fix C] 独立获取知识库经验（和旧架构一样）
@@ -129,12 +143,13 @@ class ERPAgent:
                 model_id, org_id=self.org_id, db=self.db,
             )
 
-            # 5. 创建工具执行器
+            # 5. 创建工具执行器（透传 RequestContext，供时间相关工具使用）
             from services.agent.tool_executor import ToolExecutor
             executor = ToolExecutor(
                 db=self.db, user_id=self.user_id,
                 conversation_id=self.conversation_id,
                 org_id=self.org_id,
+                request_ctx=self.request_ctx,
             )
 
             # 6. 独立工具循环（带全局时间预算）

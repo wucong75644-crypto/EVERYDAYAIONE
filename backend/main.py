@@ -18,7 +18,7 @@ from slowapi.errors import RateLimitExceeded
 
 from api.routes import (
     audio, auth, conversation, file, health, image, memory, message,
-    models, org, qimen, subscription, task, webhook, wecom, wecom_auth, ws,
+    models, org, pdd, qimen, subscription, task, webhook, wecom, wecom_auth, ws,
 )
 from core.config import get_settings
 from core.exceptions import AppException
@@ -34,6 +34,48 @@ from services.websocket_manager import ws_manager
 
 # 1. 配置日志（文件 + 控制台）
 setup_logging()
+
+
+# 1.5 时间事实层 sanity check（设计文档：docs/document/TECH_ERP时间准确性架构.md §11.3）
+def _time_arch_sanity_check() -> None:
+    """启动时校验时区/tzdata 配置，失败 fail-fast。
+
+    可设 SKIP_TIME_SANITY_CHECK=1 跳过（仅灾难恢复用）。
+    """
+    if os.environ.get("SKIP_TIME_SANITY_CHECK") == "1":
+        logger.warning("[time-arch] SKIP_TIME_SANITY_CHECK=1，跳过时区校验")
+        return
+
+    try:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+        try:
+            tz = ZoneInfo("Asia/Shanghai")
+        except ZoneInfoNotFoundError as e:
+            raise RuntimeError(
+                "tzdata 不可用，无法加载 Asia/Shanghai。"
+                "请确保容器/服务器安装了 tzdata 包，"
+                "或运行 pip install tzdata。"
+                f"原始错误: {e}"
+            )
+
+        from datetime import datetime
+        now_local = datetime.now(tz)
+        process_tz = os.environ.get("TZ", "(unset)")
+        logger.info(
+            f"[time-arch] sanity check ok | "
+            f"now={now_local.strftime('%Y-%m-%d %H:%M:%S %Z')} | "
+            f"TZ_env={process_tz} | tzdata=Asia/Shanghai"
+        )
+
+        # 检查 chinese-calendar 库覆盖年份
+        from utils.holiday import check_coverage_at_startup
+        check_coverage_at_startup()
+    except Exception as e:
+        logger.error(f"[time-arch] sanity check FAILED | {e}")
+        raise
+
+
+_time_arch_sanity_check()
 
 # 2. 配置 Sentry 错误监控（可选）
 settings = get_settings()
@@ -417,6 +459,9 @@ def register_routers(app: FastAPI) -> None:
 
     # 企微 OAuth 扫码登录
     app.include_router(wecom_auth.router, prefix="/api")
+
+    # 拼多多开放平台回调（无需用户鉴权）
+    app.include_router(pdd.router, prefix="/api")
 
     # 奇门网关回调（无需用户鉴权，通过签名验证）
     app.include_router(qimen.router, prefix="/api")

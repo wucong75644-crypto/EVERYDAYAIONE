@@ -59,6 +59,9 @@ async def verify_url(
     return PlainTextResponse(decrypted)
 
 
+# TODO(time-context PR3): receive_message + _process_callback_xml 注入 RequestContext
+# 目前 ERPAgent 内部用 RequestContext.build() fallback，时区正确但失去"请求级 SSOT"。
+# 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B13/B14)
 @router.post("/callback", summary="接收消息")
 async def receive_message(
     request: Request,

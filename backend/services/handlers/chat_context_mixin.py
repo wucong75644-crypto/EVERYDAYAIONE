@@ -7,13 +7,13 @@ Chat 上下文构建 Mixin
 
 import asyncio
 import json
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
 from schemas.message import ContentPart
 from services.websocket_manager import ws_manager
+from utils.time_context import RequestContext
 
 
 class ChatContextMixin:
@@ -112,9 +112,19 @@ class ChatContextMixin:
             messages.insert(0, {"role": "system", "content": router_system_prompt})
             logger.debug(f"Router system_prompt injected | len={len(router_system_prompt)}")
 
-        # 当前日期时间注入（让模型知道"今天"是哪天）
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
-        messages.insert(0, {"role": "system", "content": f"当前时间：{now_str}"})
+        # 时间事实层 — 用 RequestContext 注入结构化的"今天"
+        # 替代旧的 datetime.now()（无时区，模型还要做 Friday→周五 翻译，是 4-10 bug 的诱因之一）
+        # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.1
+        # 主聊天 Agent 暂不传 ctx，由 mixin 临时构造（请求级 SSOT 待 PR1 后续把 ctx 串到 handler）
+        _request_ctx = getattr(self, "request_ctx", None) or RequestContext.build(
+            user_id=user_id,
+            org_id=getattr(self, "org_id", None),
+            request_id=conversation_id or "",
+        )
+        messages.insert(
+            0,
+            {"role": "system", "content": _request_ctx.for_prompt_injection()},
+        )
 
         # 用户位置注入（IP 定位，辅助天气/本地查询）
         if user_location:

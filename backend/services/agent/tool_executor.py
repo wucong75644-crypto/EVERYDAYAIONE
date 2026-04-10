@@ -25,11 +25,18 @@ from services.media_tool_executor import MediaToolMixin
 class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
     """同步工具执行器"""
 
-    def __init__(self, db, user_id: str, conversation_id: str, org_id: str | None = None) -> None:
+    def __init__(
+        self, db, user_id: str, conversation_id: str,
+        org_id: str | None = None,
+        request_ctx=None,
+    ) -> None:
         self.db = db
         self.user_id = user_id
         self.conversation_id = conversation_id
         self.org_id = org_id
+        # 时间事实层 — 请求级 SSOT，由 ERPAgent 透传
+        # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B16)
+        self.request_ctx = request_ctx
         self._handlers: Dict[str, Callable[..., Coroutine[Any, Any, str]]] = {
             "get_conversation_context": self._get_conversation_context,
             "search_knowledge": self._search_knowledge,
@@ -169,6 +176,7 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             conversation_id=self.conversation_id,
             org_id=self.org_id,
             task_id=getattr(self, "_task_id", None),
+            request_ctx=self.request_ctx,  # 时间事实层透传 (B16)
         )
 
         # 传入父 Agent 的 messages 上下文（如果有）

@@ -795,11 +795,11 @@ class TestLocalShopList:
 
 class TestBuildLocalTools:
 
-    def test_returns_14_tools(self):
-        """build_local_tools 返回 14 个工具（12原有 + local_warehouse_list + local_db_export）"""
+    def test_returns_15_tools(self):
+        """build_local_tools 返回 15 个工具（含时间事实层 local_compare_stats）"""
         from config.erp_local_tools import build_local_tools
         tools = build_local_tools()
-        assert len(tools) == 14
+        assert len(tools) == 15
 
     def test_each_tool_structure(self):
         """每个工具有完整 function calling 结构"""
@@ -906,8 +906,11 @@ class TestCNTimezone:
 
     def test_cn_tz_is_utc_plus_8(self):
         from services.kuaimai.erp_local_helpers import CN_TZ
-        from datetime import timedelta
-        assert CN_TZ.utcoffset(None) == timedelta(hours=8)
+        from datetime import datetime, timedelta
+        # ZoneInfo 的 utcoffset 需要传一个 datetime 才能算（DST aware）
+        # 中国 1991 年起无夏令时，传任意 datetime 结果都是 +08:00
+        offset = CN_TZ.utcoffset(datetime(2026, 4, 10))
+        assert offset == timedelta(hours=8)
 
     def test_cutoff_iso_uses_cn_tz(self):
         """cutoff_iso 应使用中国时区"""

@@ -9,6 +9,52 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
 from uuid import uuid4
+from zoneinfo import ZoneInfo
+
+
+# ============ 时间事实层 fixtures ============
+# 设计文档：docs/document/TECH_ERP时间准确性架构.md §8.4
+
+_CN_TZ_TEST = ZoneInfo("Asia/Shanghai")
+
+
+@pytest.fixture
+def freeze_2026_04_10():
+    """Freeze 在 2026-04-10 13:05 周五（4-10 bug 复现时刻）。
+
+    使用 time-machine（asyncio + zoneinfo + Pydantic v2 兼容）。
+    """
+    import time_machine
+    with time_machine.travel(
+        datetime(2026, 4, 10, 13, 5, tzinfo=_CN_TZ_TEST),
+        tick=False,
+    ):
+        yield
+
+
+@pytest.fixture
+def freeze_spring_festival_2026():
+    """Freeze 在 2026 年春节当天（2026-02-17 周二）。"""
+    import time_machine
+    with time_machine.travel(
+        datetime(2026, 2, 17, 9, 0, tzinfo=_CN_TZ_TEST),
+        tick=False,
+    ):
+        yield
+
+
+@pytest.fixture
+def request_ctx_2026_04_10():
+    """构造 4-10 时刻的 RequestContext（不依赖系统时钟）。"""
+    from utils.time_context import RequestContext, TimePoint
+    now = datetime(2026, 4, 10, 13, 5, tzinfo=_CN_TZ_TEST)
+    return RequestContext(
+        now=now,
+        today=TimePoint.from_datetime(now, reference=now),
+        user_id="test_user",
+        org_id="test_org",
+        request_id="test_req",
+    )
 
 
 # ============ Mock 数据 ============
