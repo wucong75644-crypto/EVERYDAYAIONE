@@ -48,7 +48,7 @@ async def get_subscriptions(
 
 
 @router.post(
-    "/{model_id}",
+    "/{model_id:path}",
     response_model=SubscriptionActionResponse,
     summary="订阅模型",
 )
@@ -66,7 +66,7 @@ async def subscribe_model(
 
 
 @router.delete(
-    "/{model_id}",
+    "/{model_id:path}",
     response_model=SubscriptionActionResponse,
     summary="取消订阅",
 )

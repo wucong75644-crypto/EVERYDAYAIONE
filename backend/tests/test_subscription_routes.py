@@ -97,8 +97,8 @@ class TestSubscribeModel:
         assert result["model_id"] == "gemini-3-flash"
 
     @pytest.mark.asyncio
-    async def test_subscribe_model_with_slash(self, service, current_user):
-        """含斜杠的 OpenRouter 模型 ID"""
+    async def test_subscribe_model_with_slash_unit(self, service, current_user):
+        """含斜杠的 OpenRouter 模型 ID — service 层"""
         from api.routes.subscription import subscribe_model
 
         result = await subscribe_model(
@@ -176,3 +176,65 @@ class TestUnsubscribeModel:
         )
 
         assert result["message"] == "已取消订阅"
+
+
+# ============================================================
+# HTTP 路由层集成测试（TestClient — 真 HTTP 调用）
+#
+# 重要：这一层覆盖 path 参数解析、URL 解码、路由匹配等
+# Starlette/FastAPI 路由层行为，单元测试直接 import 函数无法覆盖。
+# 例如 model_id 含斜杠（openai/gpt-4.1）必须通过 TestClient 才能验证。
+# ============================================================
+
+class TestRoutingIntegration:
+    """订阅路由 HTTP 集成测试 — 用 TestClient 真 HTTP 调用"""
+
+    def _build_app(self, service):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from api.routes.subscription import router, get_subscription_service
+        from api.deps import get_current_user
+
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[get_current_user] = lambda: {"id": "user-123", "role": "user"}
+        app.dependency_overrides[get_subscription_service] = lambda: service
+        return TestClient(app)
+
+    def test_subscribe_no_slash_via_http(self, service):
+        """无斜杠的 model_id 走 HTTP 能正常订阅"""
+        client = self._build_app(service)
+        resp = client.post("/subscriptions/glm-5")
+        assert resp.status_code == 200
+        assert resp.json()["model_id"] == "glm-5"
+
+    def test_subscribe_with_slash_encoded_via_http(self, service):
+        """含斜杠的 model_id（encoded %2F）走 HTTP 能正常订阅 —— 防回归"""
+        client = self._build_app(service)
+        resp = client.post("/subscriptions/openai%2Fgpt-4.1")
+        assert resp.status_code == 200, f"路由 404 说明 path converter 没用 :path"
+        assert resp.json()["model_id"] == "openai/gpt-4.1"
+
+    def test_subscribe_with_slash_raw_via_http(self, service):
+        """含斜杠的 model_id（raw /）走 HTTP 能正常订阅 —— 防回归"""
+        client = self._build_app(service)
+        resp = client.post("/subscriptions/anthropic/claude-sonnet-4.6")
+        assert resp.status_code == 200
+        assert resp.json()["model_id"] == "anthropic/claude-sonnet-4.6"
+
+    def test_subscribe_image_model_with_slash_via_http(self, service):
+        """图片模型含斜杠 ID 走 HTTP 能正常订阅 —— 防回归"""
+        client = self._build_app(service)
+        resp = client.post("/subscriptions/google%2Fnano-banana")
+        assert resp.status_code == 200
+        assert resp.json()["model_id"] == "google/nano-banana"
+
+    def test_unsubscribe_with_slash_via_http(self, mock_db, service):
+        """含斜杠的 model_id 走 HTTP 能正常取消订阅 —— 防回归"""
+        mock_db.set_table_data("user_subscriptions", [
+            {"user_id": "user-123", "model_id": "openai/gpt-5.4"},
+        ])
+        client = self._build_app(service)
+        resp = client.delete("/subscriptions/openai%2Fgpt-5.4")
+        assert resp.status_code == 200
+        assert resp.json()["model_id"] == "openai/gpt-5.4"
