@@ -8,7 +8,10 @@
 核心行为:
   - SELECT/UPDATE/DELETE: 自动追加 .eq("org_id", x) 或 .is_("org_id", "null")
   - INSERT/UPSERT: 自动将 org_id 注入到数据 dict 中
-  - UPSERT on_conflict: 非空时自动追加 ",org_id"（已含则跳过）
+  - UPSERT on_conflict: 启动时反射 schema 收集"含 org_id 的复合唯一索引"
+    所属表（_COMPOSITE_ORG_ID_TABLES），仅这些表会自动追加 ",org_id"。
+    其他表（如 messages/tasks，PK 仅 id）保持透传，避免 Postgres 报
+    "no unique or exclusion constraint matching the ON CONFLICT specification"。
   - RPC: 默认自动注入 p_org_id（黑名单函数除外，如 atomic_refund_credits）
   - unscoped("原因"): 显式跳过隔离，grep 可审计
 """
@@ -23,6 +26,13 @@ from loguru import logger
 # 维护规则：新增租户表时同步加入此集合，豁免表不加。
 # 豁免表：organizations, org_members, org_configs, org_invitations,
 #         users, models, admin_action_logs, user_subscriptions
+
+# ── 复合唯一索引含 org_id 的表（启动时 schema 反射填充）─────
+# 由 load_composite_org_id_tables() 在应用启动时调用 pg_indexes 自动收集，
+# 永远不要手写——schema 才是唯一源。在 loader 调用之前为空 frozenset，
+# 此时 _TenantScopedTable.upsert 不会自动追加 org_id（行为退化为透传）。
+_COMPOSITE_ORG_ID_TABLES: frozenset[str] = frozenset()
+
 
 TENANT_TABLES: frozenset[str] = frozenset({
     # 对话/消息
@@ -84,7 +94,7 @@ class OrgScopedDB:
     def table(self, name: str) -> Any:
         """获取表查询构建器，租户表自动注入 org_id 过滤"""
         if name in TENANT_TABLES:
-            return _TenantScopedTable(self._db.table(name), self.org_id)
+            return _TenantScopedTable(name, self._db.table(name), self.org_id)
         return self._db.table(name)
 
     # 不接受 p_org_id 参数的 RPC 函数（黑名单，极少数特例）
@@ -122,10 +132,15 @@ class _TenantScopedTable:
 
     - select/update/delete: 返回的 query 自动追加 org_id WHERE 条件
     - insert/upsert: 自动将 org_id 注入到数据 dict
-    - upsert on_conflict: 非空时自动追加 ",org_id"（已含则跳过）
+    - upsert on_conflict: 仅当本表在 _COMPOSITE_ORG_ID_TABLES 中（即 schema
+      存在含 org_id 的复合唯一索引）才自动追加 ",org_id"，避免对
+      messages/tasks 等 PK 仅 id 的表生成无效 ON CONFLICT。
     """
 
-    def __init__(self, table: Any, org_id: str | None) -> None:
+    def __init__(
+        self, table_name: str, table: Any, org_id: str | None,
+    ) -> None:
+        self._table_name = table_name
         self._table = table
         self._org_id = org_id
 
@@ -142,8 +157,14 @@ class _TenantScopedTable:
         on_conflict: str = "",
         **kwargs: Any,
     ) -> Any:
-        # 自动追加 org_id 到 on_conflict（匹配含 org_id 的唯一索引）
-        if on_conflict and "org_id" not in on_conflict:
+        # 仅对存在含 org_id 的复合唯一索引的表自动追加 ",org_id"。
+        # 其他表（如 messages/tasks）保持透传，避免 Postgres 报
+        # "no unique or exclusion constraint matching the ON CONFLICT specification"。
+        if (
+            on_conflict
+            and "org_id" not in on_conflict
+            and self._table_name in _COMPOSITE_ORG_ID_TABLES
+        ):
             on_conflict = f"{on_conflict},org_id"
         return self._table.upsert(
             _inject_org_id(data, self._org_id),
@@ -177,3 +198,67 @@ def _inject_org_id(
     if isinstance(data, list):
         return [{**row, "org_id": org_id} for row in data]
     return {**data, "org_id": org_id}
+
+
+# ── Schema 反射 — 启动时填充 _COMPOSITE_ORG_ID_TABLES ───────
+
+
+def load_composite_org_id_tables(db: Any) -> frozenset[str]:
+    """
+    启动时反射 schema：扫描 public schema 下所有"含 org_id 列的唯一索引"
+    所属的表名，写入模块全局 _COMPOSITE_ORG_ID_TABLES。
+
+    由 `_TenantScopedTable.upsert` 在运行时使用：表名命中此集合时，
+    才会自动把 ",org_id" 追加到 on_conflict（匹配 ERP 复合唯一索引）。
+
+    必须在应用启动时（lifespan）调用且只调用一次。在此之前，
+    `_COMPOSITE_ORG_ID_TABLES` 为空 frozenset，自动追加完全不生效。
+
+    Args:
+        db: LocalDBClient 实例（需要有 .pool 属性）
+
+    Returns:
+        反射出的表名 frozenset（同时已写入模块全局）
+    """
+    global _COMPOSITE_ORG_ID_TABLES
+
+    sql = """
+        SELECT DISTINCT t.relname AS table_name
+        FROM pg_index i
+        JOIN pg_class t ON t.oid = i.indrelid
+        JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(i.indkey)
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        WHERE i.indisunique
+          AND a.attname = 'org_id'
+          AND n.nspname = 'public'
+    """
+
+    pool = getattr(db, "pool", None)
+    if pool is None:
+        logger.warning(
+            "OrgScopedDB: db has no .pool attribute, "
+            "schema reflection skipped (auto-append disabled)"
+        )
+        return frozenset()
+
+    try:
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                rows = cur.fetchall()
+        tables = frozenset(
+            (r["table_name"] if isinstance(r, dict) else r[0])
+            for r in rows
+        )
+    except Exception as e:
+        logger.error(
+            f"OrgScopedDB: schema reflection failed | error={e}"
+        )
+        return frozenset()
+
+    _COMPOSITE_ORG_ID_TABLES = tables
+    logger.info(
+        f"OrgScopedDB: composite-org_id tables loaded | "
+        f"count={len(tables)} | tables={sorted(tables)}"
+    )
+    return tables

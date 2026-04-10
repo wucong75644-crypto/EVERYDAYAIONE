@@ -15,9 +15,7 @@ OrgScopedDB 单元测试
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, call
-
-import pytest
+from unittest.mock import MagicMock
 
 backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
@@ -149,30 +147,7 @@ class TestOrgScopedDBWithOrgId:
         args = table_mock.upsert.call_args
         assert args[0][0] == {"outer_id": "A01", "org_id": ORG_ID}
 
-    def test_upsert_on_conflict_auto_appends_org_id(self):
-        """on_conflict 自动追加 org_id"""
-        self.db.table("erp_products").upsert(
-            {"outer_id": "A01"}, on_conflict="outer_id",
-        )
-        table_mock = self.raw_db.table.return_value
-        kwargs = table_mock.upsert.call_args[1]
-        assert kwargs["on_conflict"] == "outer_id,org_id"
-
-    def test_upsert_on_conflict_already_has_org_id(self):
-        """on_conflict 已含 org_id 时不重复追加"""
-        self.db.table("erp_products").upsert(
-            {"outer_id": "A01"}, on_conflict="outer_id,org_id",
-        )
-        table_mock = self.raw_db.table.return_value
-        kwargs = table_mock.upsert.call_args[1]
-        assert kwargs["on_conflict"] == "outer_id,org_id"
-
-    def test_upsert_empty_on_conflict_preserved(self):
-        """空 on_conflict 不追加"""
-        self.db.table("erp_products").upsert({"outer_id": "A01"})
-        table_mock = self.raw_db.table.return_value
-        kwargs = table_mock.upsert.call_args[1]
-        assert kwargs["on_conflict"] == ""
+    # on_conflict 自动追加/白名单回归测试见 test_org_scoped_db_upsert.py
 
     # ── UPDATE ──
 
@@ -404,50 +379,5 @@ class TestRPCAutoInjection:
         )
 
 
-# ── Upsert on_conflict 自动追加补充测试 ──────────────────
-
-
-class TestUpsertOnConflictAutoAppend:
-    """upsert on_conflict 自动追加 org_id"""
-
-    def setup_method(self):
-        self.raw_db = _make_mock_db()
-        self.db = OrgScopedDB(self.raw_db, org_id=ORG_ID)
-
-    def test_auto_appends_org_id(self):
-        """单列 on_conflict 自动追加 ,org_id"""
-        self.db.table("erp_products").upsert(
-            {"outer_id": "A01"}, on_conflict="outer_id",
-        )
-        kwargs = self.raw_db.table.return_value.upsert.call_args[1]
-        assert kwargs["on_conflict"] == "outer_id,org_id"
-
-    def test_multi_column_appends(self):
-        """多列 on_conflict 也追加"""
-        self.db.table("erp_document_items").upsert(
-            {"doc_type": "order"}, on_conflict="doc_type,doc_id,item_index",
-        )
-        kwargs = self.raw_db.table.return_value.upsert.call_args[1]
-        assert kwargs["on_conflict"] == "doc_type,doc_id,item_index,org_id"
-
-    def test_already_has_org_id_no_duplicate(self):
-        """已含 org_id 不重复追加"""
-        self.db.table("erp_products").upsert(
-            {"outer_id": "A01"}, on_conflict="outer_id,org_id",
-        )
-        kwargs = self.raw_db.table.return_value.upsert.call_args[1]
-        assert kwargs["on_conflict"] == "outer_id,org_id"
-
-    def test_empty_on_conflict_not_appended(self):
-        """空 on_conflict 不追加"""
-        self.db.table("erp_products").upsert({"outer_id": "A01"})
-        kwargs = self.raw_db.table.return_value.upsert.call_args[1]
-        assert kwargs["on_conflict"] == ""
-
-    def test_exempt_table_no_append(self):
-        """豁免表不经过 _TenantScopedTable，on_conflict 不变"""
-        self.db.table("users").upsert(
-            {"phone": "123"}, on_conflict="phone",
-        )
-        kwargs = self.raw_db.table.return_value.upsert.call_args[1]
-        assert kwargs["on_conflict"] == "phone"
+# Upsert on_conflict 自动追加（白名单驱动）+ schema 反射 loader 测试
+# 见 test_org_scoped_db_upsert.py
