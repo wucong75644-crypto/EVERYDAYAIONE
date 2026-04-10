@@ -1,0 +1,273 @@
+/**
+ * Theme: Linear
+ *
+ * 按 https://github.com/wucong75644-crypto/awesome-design-md
+ * design-md/linear.app/DESIGN.md 完整落地。
+ *
+ * Vibe：暗夜星光里的精密工程 — 近黑画布 + Inter Variable(cv01,ss03) + 510 weight +
+ *       靛紫唯一彩色 + 透明白边分层 + 多层 dialog shadow stack
+ *
+ * 激活方式：
+ * - <html data-theme="linear">                  → dark mode（默认，DESIGN.md 强调 dark-first）
+ * - <html data-theme="linear" class="dark">     → 同上
+ * - <html data-theme="linear" class="light">    → light mode（DESIGN.md "Light Mode Neutrals"）
+ *
+ * 架构：
+ * - 同时覆盖旧 token（保持现有组件兼容）
+ * - 同时覆盖新 3 层 token 语义层 --s-*
+ * - Linear 专属 token 带 --linear-* 前缀
+ */
+
+/* ==========================================================
+ * Linear · Dark Mode（默认，DESIGN.md 优先）
+ * ========================================================== */
+
+html[data-theme="linear"],
+html[data-theme="linear"].dark {
+  /* ==========================================================
+   * 字体：Inter Variable + OpenType features（cv01, ss03）
+   * 510 weight 是 Linear 签名，400/590 辅助
+   * ========================================================== */
+  --font-heading: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont,
+                  "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
+  --font-body: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont,
+               "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
+  --font-code: "Berkeley Mono", "GeistMono", "SF Mono", "JetBrains Mono",
+               ui-monospace, Menlo, Consolas, monospace;
+
+  --s-font-sans: var(--font-body);
+  --s-font-mono: var(--font-code);
+  --s-font-heading: var(--font-heading);
+  --s-font-body: var(--font-body);
+
+  /* Linear 签名权重 510（介于 regular/medium） */
+  --s-weight-body: 400;
+  --s-weight-emphasis: 510;
+  --s-weight-strong: 590;
+  --s-weight-heading: 510;
+
+  /* ==========================================================
+   * 颜色 · 品牌
+   * ========================================================== */
+  --linear-indigo: #5e6ad2;             /* Brand Indigo — CTA */
+  --linear-violet: #7170ff;             /* Accent Violet — links/active */
+  --linear-violet-hover: #828fff;       /* Accent Hover */
+  --linear-lavender: #7a7fad;           /* Security lavender */
+
+  --color-accent: var(--linear-indigo);
+  --color-accent-hover: var(--linear-violet);
+  --color-accent-light: rgba(94, 106, 210, 0.15);
+
+  --s-accent: var(--linear-indigo);
+  --s-accent-hover: var(--linear-violet);
+  --s-accent-active: var(--linear-violet-hover);
+  --s-accent-soft: rgba(94, 106, 210, 0.12);
+  --s-accent-ring: var(--linear-violet);
+
+  /* ==========================================================
+   * 颜色 · 表面（透明分层 — Linear 核心）
+   * DESIGN.md：Elevation via background luminance stepping,
+   * 每一级比上一级多 0.02 ~ 0.03 的白色 opacity。
+   * ========================================================== */
+  --linear-marketing-black: #08090a;    /* deepest canvas */
+  --linear-panel-dark: #0f1011;         /* panel bg */
+  --linear-level-3: #191a1b;            /* elevated surface */
+  --linear-level-4: #28282c;            /* hover / lightest dark */
+
+  --color-surface: var(--linear-marketing-black);
+  --color-surface-card: var(--linear-panel-dark);
+  --color-surface-elevated: var(--linear-level-3);
+  --color-surface-dark: var(--linear-marketing-black);
+  --color-surface-dark-card: var(--linear-panel-dark);
+
+  --s-surface-base: var(--linear-marketing-black);
+  --s-surface-raised: var(--linear-panel-dark);
+  --s-surface-overlay: var(--linear-level-3);
+  --s-surface-sunken: #010102;
+  --s-surface-inverse: #f7f8f8;
+
+  /* ==========================================================
+   * 颜色 · 文字（DESIGN.md 禁用纯白，用 #f7f8f8）
+   * ========================================================== */
+  --linear-text-primary: #f7f8f8;       /* near white */
+  --linear-text-secondary: #d0d6e0;     /* silver gray */
+  --linear-text-tertiary: #8a8f98;      /* muted */
+  --linear-text-quaternary: #62666d;    /* most subdued */
+
+  --color-text-primary: var(--linear-text-primary);
+  --color-text-secondary: var(--linear-text-secondary);
+  --color-text-tertiary: var(--linear-text-tertiary);
+  --color-text-disabled: var(--linear-text-quaternary);
+  --color-text-on-dark: var(--linear-text-primary);
+  --color-text-on-accent: #ffffff;
+
+  --s-text-primary: var(--linear-text-primary);
+  --s-text-secondary: var(--linear-text-secondary);
+  --s-text-tertiary: var(--linear-text-tertiary);
+  --s-text-disabled: var(--linear-text-quaternary);
+  --s-text-inverse: #141413;
+  --s-text-on-accent: #ffffff;
+
+  /* ==========================================================
+   * 颜色 · 边框（半透明白边 — Linear 核心）
+   * ========================================================== */
+  --linear-border-subtle: rgba(255, 255, 255, 0.05);
+  --linear-border-default: rgba(255, 255, 255, 0.08);
+  --linear-border-strong: rgba(255, 255, 255, 0.12);
+  --linear-border-solid: #23252a;
+
+  --color-border-default: var(--linear-border-default);
+  --color-border-light: var(--linear-border-subtle);
+  --color-border-dark: var(--linear-border-solid);
+
+  --s-border-subtle: var(--linear-border-subtle);
+  --s-border-default: var(--linear-border-default);
+  --s-border-strong: var(--linear-border-strong);
+
+  /* ==========================================================
+   * 颜色 · 交互（按钮背景 近零 opacity）
+   * ========================================================== */
+  --color-hover: rgba(255, 255, 255, 0.04);
+  --color-active: rgba(255, 255, 255, 0.08);
+  --color-focus-ring: var(--linear-violet);
+
+  --s-hover: rgba(255, 255, 255, 0.04);
+  --s-active: rgba(255, 255, 255, 0.08);
+  --s-selected: rgba(94, 106, 210, 0.15);
+
+  /* ==========================================================
+   * 颜色 · 语义
+   * ========================================================== */
+  --s-success: #10b981;
+  --s-success-soft: rgba(16, 185, 129, 0.15);
+  --s-error: #f87171;
+  --s-error-soft: rgba(248, 113, 113, 0.15);
+  --s-warning: #fbbf24;
+  --s-warning-soft: rgba(251, 191, 36, 0.15);
+
+  --color-error: var(--s-error);
+  --color-success-light: var(--s-success-soft);
+  --color-error-light: var(--s-error-soft);
+  --color-warning-light: var(--s-warning-soft);
+
+  /* ==========================================================
+   * 阴影（多层 stack — Linear dialog 签名）
+   * 传统 drop shadow 在暗面基本不可见，用 luminance stepping + 多层 stack
+   * ========================================================== */
+  --shadow-ring: 0 0 0 1px var(--linear-border-default);
+  --shadow-sm: rgba(0, 0, 0, 0.3) 0 1px 2px 0;
+  --shadow-md: rgba(0, 0, 0, 0.4) 0 2px 4px 0;
+  --shadow-lg: rgba(0, 0, 0, 0.5) 0 4px 12px 0;
+  --shadow-xl: rgba(0, 0, 0, 0.6) 0 8px 24px 0;
+
+  --s-shadow-drop-sm: rgba(0, 0, 0, 0.3) 0 1px 2px 0;
+  --s-shadow-drop-md: rgba(0, 0, 0, 0.4) 0 2px 4px 0;
+  --s-shadow-drop-lg: rgba(0, 0, 0, 0.5) 0 4px 12px 0;
+  --s-shadow-drop-xl: rgba(0, 0, 0, 0.6) 0 8px 24px 0;
+
+  --s-shadow-ring-default: rgba(0, 0, 0, 0.2) 0 0 0 1px;
+  --s-shadow-ring-hover: rgba(255, 255, 255, 0.1) 0 0 0 1px;
+  --s-shadow-ring-active: inset rgba(255, 255, 255, 0.05) 0 0 0 1px;
+
+  /* Linear 签名 dialog shadow：5 层 stack */
+  --s-shadow-dialog:
+    rgba(0, 0, 0, 0) 0 8px 2px,
+    rgba(0, 0, 0, 0.01) 0 5px 2px,
+    rgba(0, 0, 0, 0.04) 0 3px 2px,
+    rgba(0, 0, 0, 0.07) 0 1px 1px,
+    rgba(0, 0, 0, 0.08) 0 0 1px,
+    rgba(0, 0, 0, 0.5) 0 20px 40px 0;
+
+  /* recessed panel 内阴影 */
+  --linear-shadow-inset: rgba(0, 0, 0, 0.2) 0 0 12px 0 inset;
+
+  /* ==========================================================
+   * 圆角 · Linear 比 Claude 紧很多（2/4/6/8/12/22 px 级别）
+   * ========================================================== */
+  --s-radius-control: 6px;              /* 按钮 / 输入框 */
+  --s-radius-card: 8px;                 /* 卡片 / dropdown */
+  --s-radius-panel: 12px;               /* panel / featured */
+  --s-radius-hero: 22px;                /* 大面板 */
+
+  /* ==========================================================
+   * 消息气泡（Linear 指示紫渐变）
+   * ========================================================== */
+  --color-user-bubble-from: var(--linear-indigo);
+  --color-user-bubble-to: var(--linear-violet);
+
+  /* ==========================================================
+   * Glass 毛玻璃（Linear 用近黑半透明底）
+   * ========================================================== */
+  --s-glass-bg: rgba(15, 16, 17, 0.72);
+  --s-glass-border: rgba(255, 255, 255, 0.08);
+  --s-glass-blur: 24px;
+  --s-glass-saturate: 150%;
+}
+
+/* ==========================================================
+ * Linear · Light Mode（"Light Mode Neutrals" from DESIGN.md）
+ * DESIGN.md 里 Linear 有 light mode 但很少用；提供给用户选项
+ * ========================================================== */
+
+html[data-theme="linear"].light {
+  --s-surface-base: #f7f8f8;            /* Light Background */
+  --s-surface-raised: #ffffff;          /* Pure White */
+  --s-surface-overlay: #ffffff;
+  --s-surface-sunken: #f3f4f5;          /* Light Surface */
+  --s-surface-inverse: var(--linear-marketing-black);
+
+  --color-surface: #f7f8f8;
+  --color-surface-card: #ffffff;
+  --color-surface-elevated: #ffffff;
+
+  --s-text-primary: #141516;
+  --s-text-secondary: #454549;
+  --s-text-tertiary: #6b6e75;
+  --s-text-disabled: #a0a3ab;
+
+  --color-text-primary: #141516;
+  --color-text-secondary: #454549;
+  --color-text-tertiary: #6b6e75;
+  --color-text-disabled: #a0a3ab;
+
+  --s-border-subtle: #e6e6e6;
+  --s-border-default: #d0d6e0;
+  --s-border-strong: #b0b6c0;
+
+  --color-border-default: #d0d6e0;
+  --color-border-light: #e6e6e6;
+
+  --s-hover: rgba(0, 0, 0, 0.04);
+  --s-active: rgba(0, 0, 0, 0.08);
+
+  --color-hover: rgba(0, 0, 0, 0.04);
+  --color-active: rgba(0, 0, 0, 0.08);
+
+  --s-shadow-drop-sm: 0 1px 2px rgba(8, 9, 10, 0.05);
+  --s-shadow-drop-md: 0 4px 6px rgba(8, 9, 10, 0.08);
+  --s-shadow-drop-lg: 0 10px 15px rgba(8, 9, 10, 0.08);
+  --s-shadow-drop-xl: 0 20px 25px rgba(8, 9, 10, 0.1);
+
+  --s-glass-bg: rgba(255, 255, 255, 0.72);
+  --s-glass-border: rgba(208, 214, 224, 0.5);
+}
+
+/* ==========================================================
+ * Linear · OpenType features（全局启用 cv01, ss03）
+ * 这是 Linear 典型字形的核心，没有这两个 feature 就不是 Linear 的 Inter
+ * ========================================================== */
+
+html[data-theme="linear"],
+html[data-theme="linear"] * {
+  font-feature-settings: "cv01", "ss03";
+}
+
+/* ==========================================================
+ * Linear · Display 负字距（display 字号专用）
+ * 作为 util class，组件按需使用
+ * ========================================================== */
+
+html[data-theme="linear"] .linear-display-xl { letter-spacing: -1.584px; }
+html[data-theme="linear"] .linear-display-lg { letter-spacing: -1.408px; }
+html[data-theme="linear"] .linear-display-md { letter-spacing: -1.056px; }
+html[data-theme="linear"] .linear-display-sm { letter-spacing: -0.704px; }

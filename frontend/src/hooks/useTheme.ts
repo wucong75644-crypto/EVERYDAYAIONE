@@ -2,7 +2,7 @@
  * 主题切换 Hook
  *
  * 管理两个独立维度：
- * - theme: 主题风格（'classic' 经典蓝 / 'claude' Claude 暖色）
+ * - theme: 主题风格（'classic' 经典蓝 / 'claude' 暖色文学 / 'linear' 暗色工程）
  * - colorMode: 明暗模式（'light' / 'dark' / 'system' 跟随系统）
  *
  * 工作机制：
@@ -16,14 +16,15 @@
  * @example
  * ```tsx
  * const { theme, setTheme, colorMode, setColorMode, isDark } = useTheme();
- * setTheme('claude');     // 切换到 Claude 暖色主题
+ * setTheme('linear');     // 切换到 Linear 暗色工程主题
  * setColorMode('dark');   // 切换到深色模式
  * ```
  */
 
 import { useState, useEffect, useCallback } from 'react';
 
-export type ThemeName = 'classic' | 'claude';
+export type ThemeName = 'classic' | 'claude' | 'linear';
+const VALID_THEMES: readonly ThemeName[] = ['classic', 'claude', 'linear'] as const;
 export type ColorMode = 'light' | 'dark' | 'system';
 
 const THEME_KEY = 'everydayai_theme';
@@ -74,7 +75,9 @@ function applyTheme(theme: ThemeName, isDark: boolean): void {
 function getInitialTheme(): ThemeName {
   try {
     const stored = localStorage.getItem(THEME_KEY);
-    if (stored === 'classic' || stored === 'claude') return stored;
+    if (stored && (VALID_THEMES as readonly string[]).includes(stored)) {
+      return stored as ThemeName;
+    }
   } catch {
     // localStorage 不可用
   }

@@ -23,6 +23,7 @@ interface SettingsModalProps {
 const THEME_OPTIONS: { value: ThemeName; label: string; preview: string }[] = [
   { value: 'classic', label: '经典蓝', preview: '#2563eb' },
   { value: 'claude', label: 'Claude 暖色', preview: '#c96442' },
+  { value: 'linear', label: 'Linear 工程', preview: '#5e6ad2' },
 ];
 
 /** 明暗模式选项 */

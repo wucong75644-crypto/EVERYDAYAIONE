@@ -25,6 +25,7 @@
 @import "./styles/tokens/component.css";
 @import "./styles/theme.css";
 @import "./styles/themes/claude.css";
+@import "./styles/themes/linear.css";
 @import "./styles/animations.css";
 @import "./styles/glass.css";
 
