@@ -1,0 +1,79 @@
+/**
+ * Token Layer 3 — Component（组件层）
+ *
+ * 最具体的一层：把语义 token 绑定到具体组件角色。
+ * 让组件 CSS 只引用 `--c-{组件}-{部位}-{状态}` 这种最终 token。
+ *
+ * 消费者：ui/ 组件、primitives/ 组件
+ *
+ * 命名规范：`--c-{组件}-{部位}-{状态?}`
+ *   c = component 前缀
+ *
+ * Phase 0 先建少量示例，Phase 5 ui/ 组件重做时再按需扩充。
+ */
+
+@theme {
+  /* ==========================================================
+   * Button
+   * ========================================================== */
+  --c-button-radius: var(--s-radius-control);
+  --c-button-weight: var(--s-weight-emphasis);
+
+  --c-button-primary-bg: var(--s-accent);
+  --c-button-primary-bg-hover: var(--s-accent-hover);
+  --c-button-primary-bg-active: var(--s-accent-active);
+  --c-button-primary-fg: var(--s-text-on-accent);
+
+  --c-button-secondary-bg: var(--s-surface-raised);
+  --c-button-secondary-bg-hover: var(--s-hover);
+  --c-button-secondary-fg: var(--s-text-primary);
+  --c-button-secondary-border: var(--s-border-default);
+
+  --c-button-ghost-bg: transparent;
+  --c-button-ghost-bg-hover: var(--s-hover);
+  --c-button-ghost-fg: var(--s-text-secondary);
+
+  --c-button-danger-fg: var(--s-error);
+  --c-button-danger-bg-hover: var(--s-error-soft);
+
+  /* ==========================================================
+   * Card
+   * ========================================================== */
+  --c-card-bg: var(--s-surface-raised);
+  --c-card-border: var(--s-border-default);
+  --c-card-radius: var(--s-radius-card);
+  --c-card-shadow: var(--s-shadow-drop-sm);
+  --c-card-shadow-hover: var(--s-shadow-drop-lg);
+  --c-card-padding: 24px;
+
+  /* ==========================================================
+   * Input
+   * ========================================================== */
+  --c-input-bg: var(--s-surface-raised);
+  --c-input-border: var(--s-border-default);
+  --c-input-border-focus: var(--s-border-focus);
+  --c-input-fg: var(--s-text-primary);
+  --c-input-placeholder: var(--s-text-tertiary);
+  --c-input-radius: var(--s-radius-control);
+  --c-input-ring-focus: 0 0 0 3px rgba(59, 130, 246, 0.12);
+
+  /* ==========================================================
+   * Modal / Dialog
+   * ========================================================== */
+  --c-modal-bg: var(--s-surface-overlay);
+  --c-modal-border: var(--s-border-default);
+  --c-modal-radius: var(--s-radius-panel);
+  --c-modal-shadow: var(--s-shadow-drop-xl);
+  --c-modal-backdrop: rgba(0, 0, 0, 0.5);
+  --c-modal-backdrop-blur: 8px;
+
+  /* ==========================================================
+   * Dropdown / Popover
+   * ========================================================== */
+  --c-dropdown-bg: var(--s-surface-overlay);
+  --c-dropdown-border: var(--s-border-default);
+  --c-dropdown-radius: var(--s-radius-card);
+  --c-dropdown-shadow: var(--s-shadow-drop-lg);
+  --c-dropdown-item-hover: var(--s-hover);
+  --c-dropdown-item-active: var(--s-selected);
+}

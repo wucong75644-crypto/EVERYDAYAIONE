@@ -1,19 +1,31 @@
 /**
  * 全局样式入口
  *
- * 引入顺序：
- * 1. tailwindcss - Tailwind v4 核心
- * 2. theme.css - Design Token + 多主题（classic/claude）+ 全局样式
- * 3. animations.css - 动画系统
+ * 引入顺序（V3 设计系统重构）：
+ * 1. tailwindcss             - Tailwind v4 核心
+ * 2. tokens/atoms.css        - 3 层 token · 原子层（硬值）
+ * 3. tokens/semantic.css     - 3 层 token · 语义层（角色）
+ * 4. tokens/component.css    - 3 层 token · 组件层
+ * 5. theme.css               - 旧 token + classic/claude 主题 + 全局样式（过渡期保留）
+ * 6. animations.css          - CSS keyframes 动画系统
+ * 7. glass.css               - 毛玻璃工具类
+ *
+ * 过渡策略：新 tokens (--a-/--s-/--c-) 与旧 token (--color-/--radius-) 共存，
+ * Phase 1/2/3 逐步把旧变量映射到新体系，Phase 14 收尾时审计清理。
  *
  * 历史：
  * - V1（Phase 1）：保留旧动画 class 名兼容层
  * - V2（Phase 3.15）：所有组件已迁移到新动画 class 名，删除兼容层
+ * - V3（Phase 0）：引入 3 层 token + framer-motion + Radix 基座
  */
 
 @import "tailwindcss";
+@import "./styles/tokens/atoms.css";
+@import "./styles/tokens/semantic.css";
+@import "./styles/tokens/component.css";
 @import "./styles/theme.css";
 @import "./styles/animations.css";
+@import "./styles/glass.css";
 
 body {
   margin: 0;
