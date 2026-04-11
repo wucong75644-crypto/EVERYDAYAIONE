@@ -914,3 +914,158 @@ interface ThemeState {
 - 3.14 动画 class 全局替换（旧名 → 新名 + 测试断言更新）
 - 3.15 清理 index.css 中旧 keyframes 兼容层
 - 3.16 全量回归测试 + 构建验证
+
+---
+
+## V3 — 大厂级动效+组件+3 主题系统升级（2026-04-11）
+
+> 本节追加于 V2 (Phase 5 - chat/ 目录拆分) 之后，独立大章节。
+> 目标：全站引入 framer-motion + Radix + cva + 3 层 token + 第 3 主题（Linear）+ 路由懒加载。
+
+### 参考资料
+
+- https://github.com/wucong75644-crypto/awesome-design-md
+- `design-md/claude/DESIGN.md` — Claude 主题完整落地参考
+- `design-md/linear.app/DESIGN.md` — Linear 主题完整落地参考
+
+### 目标
+
+1. 动效：全站 framer-motion spring/layout/gesture，苹果级丝滑
+2. 组件：Radix UI 底座（a11y + portal + 键盘）+ cva variants（类型安全）
+3. 主题：第 3 主题 Linear 新增 + Claude 按 DESIGN.md 补齐 + classic 微升级
+4. 架构：修复 3 个架构隐患 — Portal / 虚拟滚动 / 路由懒加载
+5. 动画质量："更好看 + 更丝滑 + 更不生硬"
+
+### 技术决策
+
+| 项 | 选择 |
+|---|---|
+| 动画库 | framer-motion@^12 + LazyMotion + domAnimation（tree-shake） |
+| 基础组件 | @radix-ui/react-{dialog,dropdown-menu,popover,tooltip} |
+| Variants API | class-variance-authority (cva) |
+| 虚拟滚动 | ❌ 保留不做（与现有 use-stick-to-bottom 冲突，历史踩坑） |
+| Bundle 预算 | +50KB gzip（含 framer 35KB + radix 15KB） |
+| Storybook | ❌ 不加（超范围） |
+
+### 14 Phase 执行结果
+
+| Phase | 内容 | 状态 |
+|---|---|---|
+| 0 | 装依赖 + 3 层 token + motion/glass util + vitest motion-mock + main.tsx LazyMotion | ✅ |
+| 1 | Claude 主题按 DESIGN.md 完整补齐（serif + ring shadow + 32px 圆角 + 暖色阶） | ✅ |
+| 2 | Linear 主题新增（Inter cv01,ss03 + 510 weight + 近黑 + 靛紫 + 透明分层） | ✅ |
+| 3 | classic 主题微升级（圆角 +4px + ring shadow 变体 + whisper） | ✅ |
+| 4 | Radix + cva 基础层（Dialog/DropdownMenu/Popover/Tooltip + variants 工具） | ✅ |
+| 5 | ui/ 5 组件重做（Button/Card/Input/Badge/Dropdown 走 cva + framer） | ✅ |
+| 6 | motion/ 原语库（Reveal/PageTransition/Stagger/MagneticButton/LayoutTransition） | ✅ |
+| 7 | common/Modal 换 Radix 底座（🔧 隐患 2）+ 会话列表 FLIP 动画 | ✅ |
+| 8 | 消息区 layout 动画 + 气泡内高光 + ThinkingBlock spring（🔧 隐患 1 保留） | ⚠️ 部分 |
+| 9 | ModelSelector Magic Move + 发送按钮 spring hover/tap | ✅ |
+| 10 | 首页 HeroSection 磁吸 + CategoryTabs Magic Move + ModelCard 3D hover + NavBar glass | ✅ |
+| 11 | auth Login/Register crossfade | ✅ |
+| 12 | 路由懒加载 React.lazy + AnimatePresence mode="wait"（🔧 隐患 3） | ✅ |
+| 13 | Settings 主题选择器 3 卡片预览 + Magic Move 选中框 | ✅ |
+| 14 | 全量测试 + bundle 对比 + 文档 + MEMORY 更新 | ✅ |
+
+### 架构隐患处理
+
+| 隐患 | 原方案 | 实际处理 |
+|---|---|---|
+| 1. 虚拟滚动缺失 | @tanstack/react-virtual 接管 MessageArea | ⚠️ 保留。use-stick-to-bottom 是完整封装方案，历史记录（2026-02-04 commit）明确从 Virtua 迁到 stick-to-bottom 解决滚动问题。强接会重踩坑。替代：MessageItem 用 layout="position" 只动位置不动尺寸，长对话动画性能可接受。 |
+| 2. Modal 非 Portal | 换 Radix Dialog | ✅ Phase 7 完成。common/Modal 内部完全重写为 primitives/Dialog 薄封装，外部 API 100% 保留，6 个 Modal 使用者零修改 |
+| 3. 路由非懒加载 | React.lazy + Suspense | ✅ Phase 12 完成。4 个 page 全部 lazy import。index 主 chunk 从 1432KB 降到 474KB（-67%） |
+
+### Bundle 对比（收益）
+
+| 指标 | V2（Phase 5 后） | V3（Phase 14 后） | 变化 |
+|---|---|---|---|
+| index.js 主 chunk（原始） | 1432.56 KB | 473.95 KB | **-67%** |
+| index.js 主 chunk（gzip） | ~437 KB | ~154 KB | **-65%** |
+| 首屏 JS 下载量（gzip） | ~437 KB | **~154 KB** | **-283 KB** |
+| Chat chunk（独立，按需） | — | 964 KB | 按需 |
+| Home chunk（独立，按需） | — | 22.7 KB | 按需 |
+
+**关键洞察**：framer-motion (~35KB gzip) + Radix (~15KB gzip) + cva (~1KB gzip) **增量的 ~50KB 完全被懒加载省下的 283KB 覆盖**。
+实际结果：**首屏 JS 净减少 ~233KB gzip**，动效/组件/主题全部升级却反而更快加载。
+
+### 新增文件清单
+
+**基建（Phase 0）**
+- `styles/tokens/atoms.css` — 原子层 token（硬值）
+- `styles/tokens/semantic.css` — 语义层 token（角色）
+- `styles/tokens/component.css` — 组件层 token
+- `styles/glass.css` — 毛玻璃工具类
+- `utils/motion.ts` — framer spring preset + variants preset + gesture preset
+- `utils/variants.ts` — cva re-export
+- `test/motion-mock.ts` — jsdom IntersectionObserver/ResizeObserver polyfill + skipAnimations
+
+**主题**
+- `styles/themes/claude.css` — Claude 主题完整版
+- `styles/themes/linear.css` — Linear 主题完整版
+
+**Primitives（Radix 薄封装）**
+- `components/primitives/Dialog.tsx`
+- `components/primitives/DropdownMenu.tsx`
+- `components/primitives/Popover.tsx`
+- `components/primitives/Tooltip.tsx`
+- `components/primitives/index.ts`
+- `components/primitives/__tests__/*.test.tsx`（4 个测试文件，+26 测试）
+
+**Motion 原语**
+- `components/motion/Reveal.tsx`
+- `components/motion/PageTransition.tsx`
+- `components/motion/Stagger.tsx`
+- `components/motion/MagneticButton.tsx`
+- `components/motion/LayoutTransition.tsx`
+- `components/motion/index.ts`
+- `components/motion/__tests__/motion.test.tsx`（+15 测试）
+
+### 测试覆盖
+
+| 指标 | V2 | V3 |
+|---|---|---|
+| 测试总数 | 486 | **525** |
+| 新增测试 | — | **+39**（Dialog×10 / DropdownMenu×8 / Popover×5 / Tooltip×3 / Motion×15） |
+| 测试通过率 | 100% | 100% |
+| tsc 零错 | ✅ | ✅ |
+| vite build 通过 | ✅ | ✅ |
+
+### 已知未做事项
+
+- 虚拟滚动（与 use-stick-to-bottom 冲突，保留）
+- ChatHeader useScroll 滚动联动（原 Phase 7 装饰性项）
+- NavBar useScroll 收缩（部分做了毛玻璃，滚动收缩未做）
+- ModelDetailDrawer 拖动关闭手势（原 Phase 7 装饰性项）
+- UploadMenu/AdvancedSettingsMenu 换 Radix Popover（原 Phase 9 装饰性项）
+- AiImageGrid stagger 进场（原 Phase 9 装饰性项）
+- ImagePreviewModal 拖动关闭（原 Phase 9 装饰性项）
+- admin/ErrorBoundary/LoadingScreen 动效升级（原 Phase 11 低频页面）
+- ForgotPassword/WecomCallback 未包 PageTransition（Suspense fallback 已覆盖）
+- Storybook 组件文档（超范围）
+
+### 14 个 Commit 清单
+
+```
+7a215e3 Phase 0 — 基建
+5bc01ba Phase 1 — Claude 主题补齐
+3701f63 Phase 2 — Linear 主题新增
+c796f8b Phase 3 — classic 主题微升级
+08cd283 Phase 4 — Radix + cva 基础层
+bf05863 Phase 5 — ui/ 5 核心组件重做
+eb8069b Phase 6 — motion/ 原语库
+8490fa7 Phase 7 — Modal 换 Radix + 会话列表 FLIP
+e407c58 Phase 8 — 消息区 layout + 气泡高光
+be687b4 Phase 9 — ModelSelector Magic Move
+b74cbee Phase 10 — 首页动效升级
+dcafa2d Phase 11 — auth crossfade
+2b2774c Phase 12 — 路由懒加载 + 过渡
+c1f9599 Phase 13 — Settings 3 卡片预览
+```
+
+### 下期可做
+
+1. 虚拟滚动方案探索（找到与 use-stick-to-bottom 兼容的库或自研）
+2. Storybook 组件文档 + Chromatic 视觉回归
+3. admin 面板动效全面升级
+4. ChatHeader/NavBar useScroll 滚动联动
+5. 长按/拖动手势（图片预览/Drawer 拖动关闭）
