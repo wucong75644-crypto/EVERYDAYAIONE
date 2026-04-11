@@ -1,8 +1,10 @@
 """
 知识库服务
 
-提供知识 CRUD、去重、向量检索、种子知识导入。
+提供知识 CRUD、向量检索、种子知识导入。
 采用 psycopg 直连 PostgreSQL + pgvector。
+
+去重 / 淘汰逻辑见 knowledge_dedup.py（V2.2 §三 拆分）。
 """
 
 import json
@@ -23,98 +25,108 @@ from services.knowledge_config import (
     is_kb_available,
     set_cached_search,
 )
+from services.knowledge_dedup import (
+    dedup_by_hash,
+    dedup_by_vector,
+    evict_by_dimension,
+    evict_global,
+)
 # 向后兼容：record_metric 已移至 knowledge_metrics.py
 from services.knowledge_metrics import record_metric  # noqa: F401
+
+
+# ===== Schema 白名单（与 PG CHECK 约束对齐 + node_type 应用层约束） =====
+#
+# category：与 023_add_knowledge_base.sql:40 的 PG CHECK 约束严格对齐。
+# 修改时必须同步更新 migration（PG 层是真实白名单，这里只是早期拦截）。
+#
+# node_type：PG schema 没有 CHECK 约束，但应用层在此收敛命名空间，
+# 防止字段被滥用为"什么都往里塞"的杂物间。新增取值需在此追加。
+_VALID_CATEGORIES = frozenset({"model", "tool", "experience"})
+_VALID_NODE_TYPES = frozenset({
+    # seed / extractor 既有取值
+    "model", "parameter", "pattern", "capability",
+    # 业务模块既有取值
+    "performance",        # model_scorer
+    # ERPAgent 自学习经验（2026-04-11 方案 C 引入，
+    # 替代非法的 category="routing"/"failure"）
+    "routing_pattern",
+    "failure_pattern",
+})
 
 
 # ===== 知识 CRUD =====
 
 
-async def _dedup_by_hash(
-    cur, conn, content_hash: str, source: str, org_id: str | None = None,
+def _validate_node_schema(category: str, node_type: str, title: str) -> None:
+    """入口校验：category / node_type 必须在白名单。
+
+    在 PG CHECK 前拦截，把 schema 违反提到最早可见的位置。
+    日志包含完整上下文方便运维 grep。
+
+    Raises:
+        ValueError: 任一字段不在白名单
+    """
+    if category not in _VALID_CATEGORIES:
+        logger.error(
+            f"Knowledge schema violation | category={category!r} | "
+            f"node_type={node_type!r} | title={title[:50]} | "
+            f"valid_categories={sorted(_VALID_CATEGORIES)}"
+        )
+        raise ValueError(
+            f"add_knowledge: invalid category={category!r}, "
+            f"must be one of {sorted(_VALID_CATEGORIES)}"
+        )
+    if node_type not in _VALID_NODE_TYPES:
+        logger.error(
+            f"Knowledge schema violation | category={category} | "
+            f"node_type={node_type!r} | title={title[:50]} | "
+            f"valid_node_types={sorted(_VALID_NODE_TYPES)}"
+        )
+        raise ValueError(
+            f"add_knowledge: invalid node_type={node_type!r}, "
+            f"must be one of {sorted(_VALID_NODE_TYPES)}"
+        )
+
+
+async def _insert_node_row(
+    cur, *, category: str, subcategory: Optional[str], node_type: str,
+    title: str, content: str, metadata: Optional[Dict[str, Any]],
+    embedding: Optional[list], source: str, confidence: float,
+    scope: str, content_hash: str, org_id: Optional[str],
 ) -> Optional[str]:
-    """Hash 完全匹配去重：匹配则更新 confidence，返回已有节点 ID"""
-    org_filter = "AND org_id = %(org_id)s" if org_id else "AND org_id IS NULL"
-    await cur.execute(
-        f"""
-        SELECT id, source, confidence FROM knowledge_nodes
-        WHERE content_hash = %(hash)s AND is_deleted = FALSE {org_filter};
-        """,
-        {"hash": content_hash, "org_id": org_id},
-    )
-    existing = await cur.fetchone()
-    if not existing:
-        return None
-
-    existing_id, existing_source, existing_conf = existing
-    if existing_source == "seed" and source == "auto":
-        return str(existing_id)
-
-    new_conf = min(existing_conf + settings.kb_confidence_boost, 1.0)
+    """执行 INSERT 并返回新节点 ID（不 commit，由调用方负责）"""
+    emb_value = str(embedding) if embedding else None
     await cur.execute(
         """
-        UPDATE knowledge_nodes
-        SET confidence = %(conf)s, updated_at = NOW(), hit_count = hit_count + 1
-        WHERE id = %(id)s;
-        """,
-        {"conf": new_conf, "id": existing_id},
-    )
-    await conn.commit()
-    invalidate_search_cache()
-    return str(existing_id)
-
-
-async def _dedup_by_vector(
-    cur, conn, *, category: str, embedding: list,
-    source: str, title: str, content: str,
-    content_hash: str, metadata: Optional[Dict[str, Any]],
-    org_id: str | None = None,
-) -> Optional[str]:
-    """向量相似度 > 0.9 去重：匹配则合并内容，返回已有节点 ID"""
-    org_filter = "AND org_id = %(org_id)s" if org_id else "AND org_id IS NULL"
-    await cur.execute(
-        f"""
-        SELECT id, source, confidence
-        FROM knowledge_nodes
-        WHERE is_deleted = FALSE
-            AND category = %(category)s
-            AND embedding IS NOT NULL
-            AND 1 - (embedding <=> %(emb)s::vector) > 0.9
-            {org_filter}
-        ORDER BY embedding <=> %(emb)s::vector ASC
-        LIMIT 1;
-        """,
-        {"category": category, "emb": str(embedding), "org_id": org_id},
-    )
-    similar = await cur.fetchone()
-    if not similar:
-        return None
-
-    sim_id, sim_source, sim_conf = similar
-    if sim_source == "seed" and source == "auto":
-        return str(sim_id)
-
-    new_conf = min(sim_conf + settings.kb_confidence_boost, 1.0)
-    await cur.execute(
-        """
-        UPDATE knowledge_nodes
-        SET content = %(content)s, title = %(title)s,
-            content_hash = %(hash)s, confidence = %(conf)s,
-            embedding = %(emb)s::vector,
-            metadata = %(meta)s, updated_at = NOW()
-        WHERE id = %(id)s;
+        INSERT INTO knowledge_nodes (
+            category, subcategory, node_type, title, content,
+            metadata, embedding, source, confidence, scope,
+            content_hash, org_id
+        ) VALUES (
+            %(category)s, %(subcategory)s, %(node_type)s, %(title)s,
+            %(content)s, %(metadata)s, %(embedding)s::vector, %(source)s,
+            %(confidence)s, %(scope)s, %(hash)s, %(org_id)s
+        )
+        RETURNING id;
         """,
         {
-            "content": content, "title": title,
-            "hash": content_hash, "conf": new_conf,
-            "emb": str(embedding),
-            "meta": json.dumps(metadata or {}),
-            "id": sim_id,
+            "category": category,
+            "subcategory": subcategory,
+            "node_type": node_type,
+            "title": title,
+            "content": content,
+            "metadata": json.dumps(metadata or {}),
+            "embedding": emb_value,
+            "source": source,
+            "confidence": confidence,
+            "scope": scope,
+            "hash": content_hash,
+            "org_id": org_id,
         },
     )
-    await conn.commit()
-    invalidate_search_cache()
-    return str(sim_id)
+    result = await cur.fetchone()
+    return str(result[0]) if result else None
 
 
 async def add_knowledge(
@@ -130,18 +142,26 @@ async def add_knowledge(
     scope: str = "global",
     org_id: Optional[str] = None,
     max_per_category: Optional[int] = None,
+    max_per_node_type: Optional[int] = None,
 ) -> Optional[str]:
     """
-    添加知识条目（含去重 + 向量化）
+    添加知识条目（含入口校验 + 去重 + 多维度淘汰 + 向量化）
 
-    去重规则：
-    1. content_hash 完全匹配 → 更新 confidence/updated_at
-    2. 向量相似度 > 0.9 → 合并到已有节点
-    3. 无重复 → 插入新节点
+    流程：入口校验 → hash 去重 → 向量去重 → 多维度淘汰 → INSERT。
+
+    Args:
+        max_per_category: 该 category 最多保留多少条活跃节点（None=不限）
+        max_per_node_type: 该 node_type 最多保留多少条活跃节点（None=不限）
+            两个参数互相独立，共存时谁先触发谁淘汰。
+
+    Raises:
+        ValueError: category 或 node_type 不在白名单（schema 违反）
 
     Returns:
-        节点 ID（新增或已有），None 表示失败
+        节点 ID（新增或已有），None 表示 DB 写入失败
     """
+    _validate_node_schema(category, node_type, title)
+
     if not is_kb_available():
         return None
 
@@ -154,15 +174,17 @@ async def add_knowledge(
     try:
         async with conn_ctx as conn:
             async with conn.cursor() as cur:
-                # 1. Hash 去重
-                dup_id = await _dedup_by_hash(cur, conn, content_hash, source, org_id=org_id)
+                # Hash 去重
+                dup_id = await dedup_by_hash(
+                    cur, conn, content_hash, source, org_id=org_id,
+                )
                 if dup_id:
                     return dup_id
 
-                # 2. 向量去重
+                # 向量去重
                 embedding = await compute_embedding(f"{title} {content}")
                 if embedding:
-                    dup_id = await _dedup_by_vector(
+                    dup_id = await dedup_by_vector(
                         cur, conn,
                         category=category, embedding=embedding,
                         source=source, title=title, content=content,
@@ -172,96 +194,43 @@ async def add_knowledge(
                     if dup_id:
                         return dup_id
 
-                # 3. 节点数量上限淘汰（按 org 隔离计数，淘汰最低 confidence 节点）
-                _org_f = "AND org_id = %(oid)s" if org_id else "AND org_id IS NULL"
-                await cur.execute(
-                    f"SELECT COUNT(*) FROM knowledge_nodes WHERE is_deleted = FALSE {_org_f};",
-                    {"oid": org_id},
-                )
-                count_row = await cur.fetchone()
-                if count_row and count_row[0] >= settings.kb_max_nodes:
-                    await cur.execute(
-                        f"""
-                        UPDATE knowledge_nodes SET is_deleted = TRUE
-                        WHERE id = (
-                            SELECT id FROM knowledge_nodes
-                            WHERE is_deleted = FALSE AND source != 'seed'
-                            {_org_f}
-                            ORDER BY confidence ASC, updated_at ASC
-                            LIMIT 1
-                        );
-                        """,
-                        {"oid": org_id},
-                    )
-
-                # 3.5 Per-category 淘汰（防止单类目挤占全局配额，按 org 隔离）
+                # 多维度淘汰（global → per-category → per-node_type）
+                await evict_global(cur, settings.kb_max_nodes, org_id=org_id)
                 if max_per_category:
-                    cat_filter = f"AND category = %(cat)s {_org_f}"
-                    await cur.execute(
-                        f"""
-                        SELECT COUNT(*) FROM knowledge_nodes
-                        WHERE is_deleted = FALSE {cat_filter};
-                        """,
-                        {"cat": category, "oid": org_id},
+                    await evict_by_dimension(
+                        cur, dimension="category", value=category,
+                        max_count=max_per_category, org_id=org_id,
                     )
-                    cat_count = await cur.fetchone()
-                    if cat_count and cat_count[0] >= max_per_category:
-                        await cur.execute(
-                            f"""
-                            UPDATE knowledge_nodes SET is_deleted = TRUE
-                            WHERE id = (
-                                SELECT id FROM knowledge_nodes
-                                WHERE is_deleted = FALSE AND source != 'seed'
-                                {cat_filter}
-                                ORDER BY confidence ASC, updated_at ASC
-                                LIMIT 1
-                            );
-                            """,
-                            {"cat": category, "oid": org_id},
-                        )
+                if max_per_node_type:
+                    await evict_by_dimension(
+                        cur, dimension="node_type", value=node_type,
+                        max_count=max_per_node_type, org_id=org_id,
+                    )
 
-                # 4. 插入新节点
-                emb_value = str(embedding) if embedding else None
-                await cur.execute(
-                    """
-                    INSERT INTO knowledge_nodes (
-                        category, subcategory, node_type, title, content,
-                        metadata, embedding, source, confidence, scope,
-                        content_hash, org_id
-                    ) VALUES (
-                        %(category)s, %(subcategory)s, %(node_type)s, %(title)s,
-                        %(content)s, %(metadata)s, %(embedding)s::vector, %(source)s,
-                        %(confidence)s, %(scope)s, %(hash)s, %(org_id)s
-                    )
-                    RETURNING id;
-                    """,
-                    {
-                        "category": category,
-                        "subcategory": subcategory,
-                        "node_type": node_type,
-                        "title": title,
-                        "content": content,
-                        "metadata": json.dumps(metadata or {}),
-                        "embedding": emb_value,
-                        "source": source,
-                        "confidence": confidence,
-                        "scope": scope,
-                        "hash": content_hash,
-                        "org_id": org_id,
-                    },
+                # INSERT
+                node_id = await _insert_node_row(
+                    cur, category=category, subcategory=subcategory,
+                    node_type=node_type, title=title, content=content,
+                    metadata=metadata, embedding=embedding, source=source,
+                    confidence=confidence, scope=scope,
+                    content_hash=content_hash, org_id=org_id,
                 )
-                result = await cur.fetchone()
                 await conn.commit()
                 invalidate_search_cache()
-                node_id = str(result[0]) if result else None
                 logger.info(
                     f"Knowledge added | id={node_id} | category={category} | "
-                    f"title={title[:50]}"
+                    f"node_type={node_type} | title={title[:50]}"
                 )
                 return node_id
 
+    except ValueError:
+        # 入口校验失败 — 必须穿透 try，让调用方明确感知 schema 违反
+        raise
     except Exception as e:
-        logger.error(f"Knowledge add failed | title={title[:50]} | error={e}")
+        logger.error(
+            f"Knowledge add failed | category={category} | node_type={node_type} | "
+            f"title={title[:50]} | error={e}"
+        )
         return None
 
 
@@ -270,14 +239,25 @@ async def search_relevant(
     limit: Optional[int] = None,
     threshold: Optional[float] = None,
     category: Optional[str] = None,
+    node_type: Optional[str] = None,
+    min_confidence: Optional[float] = None,
     scope: str = "global",
     org_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     向量检索相关知识（用于路由注入）
 
+    排序：similarity * 0.7 + confidence * 0.3 DESC（加权防止低质量经验
+    在召回结果里淹没人工高 confidence 的 seed 知识）。
+
+    Args:
+        category: 可选，限定到某个 category（model/tool/experience）
+        node_type: 可选，限定到某个 node_type（如 routing_pattern）
+        min_confidence: 可选，过滤掉 confidence < 该值的节点；
+            ERPAgent 自学习经验默认 0.5/0.6 起步，传 0.6 可以屏蔽未被命中过的初始经验
+
     Returns:
-        格式化的知识列表，按相似度降序
+        格式化的知识列表，按加权得分降序
     """
     if not is_kb_available():
         return []
@@ -285,8 +265,11 @@ async def search_relevant(
     limit = limit or settings.kb_search_limit
     threshold = threshold or settings.kb_search_threshold
 
-    # 缓存检查（含 org_id 隔离）
-    cache_key = f"{query[:100]}|{category}|{scope}|{org_id or 'global'}|{limit}"
+    # 缓存检查（含 org_id + node_type + min_confidence 隔离）
+    cache_key = (
+        f"{query[:100]}|{category}|{node_type}|{min_confidence}|"
+        f"{scope}|{org_id or 'global'}|{limit}"
+    )
     cached = get_cached_search(cache_key)
     if cached is not None:
         return cached
@@ -300,6 +283,8 @@ async def search_relevant(
         return []
 
     category_filter = "AND category = %(category)s" if category else ""
+    node_type_filter = "AND node_type = %(node_type)s" if node_type else ""
+    min_conf_filter = "AND confidence >= %(min_conf)s" if min_confidence is not None else ""
     # 企业用户看到：系统知识(org_id IS NULL) + 本企业知识
     # 散客看到：系统知识(org_id IS NULL)
     org_filter = "AND (org_id = %(org_id)s OR org_id IS NULL)" if org_id else "AND org_id IS NULL"
@@ -312,6 +297,10 @@ async def search_relevant(
     }
     if category:
         params["category"] = category
+    if node_type:
+        params["node_type"] = node_type
+    if min_confidence is not None:
+        params["min_conf"] = min_confidence
 
     query_sql = f"""
     SELECT id, category, subcategory, node_type, title, content,
@@ -323,8 +312,10 @@ async def search_relevant(
         AND (scope = %(scope)s OR scope = 'global')
         {org_filter}
         {category_filter}
+        {node_type_filter}
+        {min_conf_filter}
         AND 1 - (embedding <=> %(emb)s::vector) > %(threshold)s
-    ORDER BY similarity DESC
+    ORDER BY (1 - (embedding <=> %(emb)s::vector)) * 0.7 + confidence * 0.3 DESC
     LIMIT %(limit)s;
     """
 

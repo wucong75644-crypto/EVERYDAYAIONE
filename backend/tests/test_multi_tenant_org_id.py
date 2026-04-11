@@ -209,45 +209,8 @@ class TestIntentRouterOrgId:
 # ============================================================
 # IntentLearning org_id 传递
 # ============================================================
-
-
-class TestIntentLearningOrgId:
-    """intent_learning 函数签名 org_id 传递"""
-
-    @pytest.mark.asyncio
-    async def test_record_ask_user_context_passes_org_id(self):
-        """record_ask_user_context 传 org_id 到 record_metric"""
-        with patch("services.intent_learning.record_metric", new_callable=AsyncMock) as mock_metric:
-            from services.intent_learning import record_ask_user_context
-            await record_ask_user_context(
-                conversation_id="c1",
-                user_id="u1",
-                original_message="测试消息",
-                ask_options="选项A|选项B",
-                org_id="org-abc",
-            )
-
-            mock_metric.assert_awaited_once()
-            call_kwargs = mock_metric.call_args[1]
-            assert call_kwargs["org_id"] == "org-abc"
-
-    @pytest.mark.asyncio
-    async def test_write_intent_pattern_passes_org_id(self):
-        """_write_intent_pattern 传 org_id 到 add_knowledge"""
-        with patch("services.knowledge_service.add_knowledge", new_callable=AsyncMock) as mock_add:
-            mock_add.return_value = "node-1"
-            from services.intent_learning import _write_intent_pattern
-            await _write_intent_pattern(
-                original_expression="帮我画一张图",
-                confirmed_tool="route_to_image",
-                user_response="图片生成",
-                ask_options="选项",
-                org_id="org-xyz",
-            )
-
-            mock_add.assert_awaited_once()
-            call_kwargs = mock_add.call_args[1]
-            assert call_kwargs["org_id"] == "org-xyz"
+# 注：intent_learning 模块已于 2026-04-11 删除（见 docs/document/DEPRECATED_intent_learning.md）。
+# 原 TestIntentLearningOrgId 类的 2 个测试随之移除。
 
 
 # ============================================================

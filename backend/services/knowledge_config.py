@@ -161,6 +161,7 @@ def format_knowledge_node(row: Dict[str, Any]) -> Dict[str, Any]:
         "id": str(row.get("id", "")),
         "category": row.get("category", ""),
         "subcategory": row.get("subcategory"),
+        "node_type": row.get("node_type", ""),
         "title": row.get("title", ""),
         "content": row.get("content", ""),
         "confidence": row.get("confidence", 0.5),
