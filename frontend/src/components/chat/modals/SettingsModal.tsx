@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { m, LayoutGroup } from 'framer-motion';
 import { Palette, Sun, Moon, Monitor, Check } from 'lucide-react';
 import { useAuthStore } from '../../../stores/useAuthStore';
 import { useLogout } from '../../../hooks/useLogout';
@@ -13,17 +14,45 @@ import { getWecomBindingStatus, unbindWecom } from '../../../services/auth';
 import WecomQrLogin from '../../auth/WecomQrLogin';
 import Modal from '../../common/Modal';
 import { cn } from '../../../utils/cn';
+import { SOFT_SPRING } from '../../../utils/motion';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-/** 主题风格选项 */
-const THEME_OPTIONS: { value: ThemeName; label: string; preview: string }[] = [
-  { value: 'classic', label: '经典蓝', preview: '#2563eb' },
-  { value: 'claude', label: 'Claude 暖色', preview: '#c96442' },
-  { value: 'linear', label: 'Linear 工程', preview: '#5e6ad2' },
+/**
+ * 主题风格选项
+ * V3 Phase 13：每个主题带 vibe 描述 + 背景+强调色双色预览
+ */
+const THEME_OPTIONS: {
+  value: ThemeName;
+  label: string;
+  vibe: string;
+  preview: string;        // 强调色
+  background: string;     // 卡片预览背景色
+}[] = [
+  {
+    value: 'classic',
+    label: '经典蓝',
+    vibe: '通用商务',
+    preview: '#2563eb',
+    background: '#f9fafb',
+  },
+  {
+    value: 'claude',
+    label: 'Claude 暖色',
+    vibe: '温暖文学',
+    preview: '#c96442',
+    background: '#f5f4ed',
+  },
+  {
+    value: 'linear',
+    label: 'Linear 工程',
+    vibe: '暗夜精密',
+    preview: '#5e6ad2',
+    background: '#08090a',
+  },
 ];
 
 /** 明暗模式选项 */
@@ -197,32 +226,61 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <h3 className="text-sm font-medium text-text-primary">外观</h3>
             </div>
 
-            {/* 主题风格选择 */}
+            {/* 主题风格选择（V3：预览卡片 + layoutId Magic Move） */}
             <div className="mb-4">
               <label className="block text-xs text-text-tertiary mb-2">主题风格</label>
-              <div className="grid grid-cols-2 gap-2">
-                {THEME_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => setTheme(opt.value)}
-                    className={cn(
-                      'flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-base',
-                      theme === opt.value
-                        ? 'border-accent bg-accent-light text-accent'
-                        : 'border-border-default text-text-secondary hover:bg-hover',
-                    )}
-                    aria-pressed={theme === opt.value}
-                  >
-                    <span
-                      className="w-4 h-4 rounded-full flex-shrink-0 border border-border-default"
-                      style={{ backgroundColor: opt.preview }}
-                    />
-                    <span className="flex-1 text-left">{opt.label}</span>
-                    {theme === opt.value && <Check className="w-4 h-4" />}
-                  </button>
-                ))}
-              </div>
+              <LayoutGroup id="settings-theme">
+                <div className="grid grid-cols-3 gap-2">
+                  {THEME_OPTIONS.map((opt) => {
+                    const isActive = theme === opt.value;
+                    return (
+                      <m.button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setTheme(opt.value)}
+                        whileHover={{ y: -2 }}
+                        whileTap={{ scale: 0.97 }}
+                        transition={SOFT_SPRING}
+                        className="relative flex flex-col items-start gap-1.5 p-3 rounded-lg text-left overflow-hidden"
+                        aria-pressed={isActive}
+                      >
+                        {/* 选中框 — Magic Move layoutId */}
+                        {isActive && (
+                          <m.div
+                            layoutId="theme-selected-ring"
+                            className="absolute inset-0 rounded-lg border-2 border-accent pointer-events-none"
+                            transition={SOFT_SPRING}
+                          />
+                        )}
+
+                        {/* 主题色预览条 */}
+                        <div
+                          className="w-full h-12 rounded-md relative overflow-hidden border border-border-default"
+                          style={{ backgroundColor: opt.background }}
+                        >
+                          <div
+                            className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full"
+                            style={{ backgroundColor: opt.preview }}
+                          />
+                        </div>
+
+                        {/* 标题 */}
+                        <div className="w-full flex items-center justify-between">
+                          <span className="text-xs font-medium text-text-primary">
+                            {opt.label}
+                          </span>
+                          {isActive && <Check className="w-3 h-3 text-accent" />}
+                        </div>
+
+                        {/* Vibe 描述 */}
+                        <span className="text-[10px] text-text-tertiary">
+                          {opt.vibe}
+                        </span>
+                      </m.button>
+                    );
+                  })}
+                </div>
+              </LayoutGroup>
             </div>
 
             {/* 明暗模式切换 */}
