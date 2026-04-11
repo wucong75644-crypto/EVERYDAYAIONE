@@ -65,6 +65,12 @@ TENANT_TABLES: frozenset[str] = frozenset({
     "mv_kit_stock",
     # 审计
     "tool_audit_log",
+    # 权限模型 V1（migration 060-068）
+    "org_departments", "org_positions", "org_roles",
+    "org_member_assignments", "position_default_roles",
+    "user_extra_grants", "user_revocations", "permission_audit_log",
+    # 定时任务（migration 069）
+    "scheduled_tasks", "scheduled_task_runs",
 })
 
 

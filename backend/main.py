@@ -18,7 +18,8 @@ from slowapi.errors import RateLimitExceeded
 
 from api.routes import (
     audio, auth, conversation, file, health, image, memory, message,
-    models, org, pdd, qimen, subscription, task, webhook, wecom, wecom_auth, ws,
+    models, org, org_members_assignments, pdd, qimen, scheduled_tasks,
+    subscription, task, webhook, wecom, wecom_auth, ws,
 )
 from core.config import get_settings
 from core.exceptions import AppException
@@ -487,6 +488,12 @@ def register_routers(app: FastAPI) -> None:
     # 模型 + 订阅
     app.include_router(models.router, prefix="/api")
     app.include_router(subscription.router, prefix="/api")
+
+    # 定时任务
+    app.include_router(scheduled_tasks.router, prefix="/api")
+
+    # 组织成员任职管理（权限模型 V1）
+    app.include_router(org_members_assignments.router, prefix="/api")
 
     # WebSocket
     app.include_router(ws.router, prefix="/api")

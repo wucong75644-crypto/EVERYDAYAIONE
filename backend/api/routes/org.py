@@ -7,6 +7,7 @@
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from loguru import logger
 from pydantic import BaseModel, Field
 
 from api.deps import CurrentUserId, Database, ScopedDB
@@ -114,6 +115,18 @@ async def create_org(
             raise HTTPException(status_code=400, detail=f"该用户已被禁用，无法设为企业 owner")
         owner_id = owner.data[0]["id"]
         org = svc.create_organization(body.name, owner_id)
+
+        # 权限模型 V1：自动初始化职位/角色/默认部门 + 把 owner 设为 boss
+        # 设计文档: docs/document/TECH_组织架构与权限模型.md §四
+        try:
+            from services.permissions.initialization import initialize_organization
+            await initialize_organization(db, org["id"], owner_id)
+        except Exception as init_err:
+            # 初始化失败不应该阻塞创建（但要明确记录，运维介入）
+            logger.error(
+                f"initialize_organization failed | org={org['id']} | error={init_err}"
+            )
+
         return {"success": True, "data": org}
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)

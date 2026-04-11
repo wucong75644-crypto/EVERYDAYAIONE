@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends
 
 from api.deps import CurrentUser, Database
 from schemas.auth import (
+    CurrentMember,
+    CurrentOrgInfo,
     LoginResponse,
     OrgLoginRequest,
     OrgLoginResponse,
@@ -20,6 +22,10 @@ from schemas.auth import (
     VerifyCodeRequest,
 )
 from services.auth_service import AuthService
+from services.permissions.effective_perms import (
+    compute_user_permissions,
+    get_member_context,
+)
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
@@ -183,18 +189,25 @@ async def login_by_org(
 
 
 @router.get("/me", response_model=UserResponse, summary="获取当前用户信息")
-async def get_current_user_info(current_user: CurrentUser) -> dict:
+async def get_current_user_info(
+    current_user: CurrentUser,
+    db: Database,
+) -> dict:
     """
     获取当前登录用户的信息
 
     需要在 Header 中携带 Authorization: Bearer <token>
+
+    V1.0+ 扩展返回字段：
+    - current_org: 当前组织 + 成员任职信息 + 扁平化权限码
+    - orgs: 用户所属的所有组织列表（用于切换）
     """
     phone = current_user.get("phone")
     masked_phone = None
     if phone and len(phone) >= 7:
         masked_phone = f"{phone[:3]}****{phone[-4:]}"
 
-    return {
+    response: dict = {
         "id": current_user["id"],
         "nickname": current_user["nickname"],
         "avatar_url": current_user.get("avatar_url"),
@@ -202,7 +215,93 @@ async def get_current_user_info(current_user: CurrentUser) -> dict:
         "role": current_user["role"],
         "credits": current_user["credits"],
         "created_at": current_user["created_at"],
+        "current_org": None,
+        "orgs": [],
     }
+
+    # 当前组织信息（V1.0+ 扩展）
+    user_id = current_user["id"]
+    current_org_id = current_user.get("current_org_id")
+
+    if current_org_id:
+        try:
+            # 1. 查组织基本信息
+            org_result = db.table("organizations") \
+                .select("id, name") \
+                .eq("id", current_org_id) \
+                .single() \
+                .execute()
+            org_info = org_result.data if org_result and org_result.data else None
+
+            # 2. 查 org_members.role（全局控制权限）
+            member_result = db.table("org_members") \
+                .select("role") \
+                .eq("org_id", current_org_id) \
+                .eq("user_id", user_id) \
+                .limit(1) \
+                .execute()
+            org_member_role = (
+                member_result.data[0]["role"]
+                if member_result and member_result.data
+                else "member"
+            )
+
+            # 3. 查任职信息（业务数据权限）
+            member_ctx = await get_member_context(db, user_id, current_org_id)
+            member_obj = None
+            if member_ctx:
+                member_obj = {
+                    "position_code": member_ctx["position_code"],
+                    "department_id": member_ctx.get("department_id"),
+                    "department_name": member_ctx.get("department_name"),
+                    "department_type": member_ctx.get("department_type"),
+                    "job_title": member_ctx.get("job_title"),
+                    "data_scope": member_ctx["data_scope"],
+                    "managed_departments": member_ctx.get("managed_departments"),
+                }
+
+            # 4. 计算扁平化权限码
+            permissions = await compute_user_permissions(db, user_id, current_org_id)
+
+            if org_info:
+                response["current_org"] = {
+                    "id": org_info["id"],
+                    "name": org_info["name"],
+                    "role": org_member_role,
+                    "member": member_obj,
+                    "permissions": permissions,
+                }
+        except Exception:
+            # 容错：组织信息查询失败不影响基础用户信息返回
+            pass
+
+    # 用户所属的所有组织列表（用于切换）
+    try:
+        orgs_result = db.table("org_members") \
+            .select("org_id, role") \
+            .eq("user_id", user_id) \
+            .eq("status", "active") \
+            .execute()
+        org_ids = [row["org_id"] for row in (orgs_result.data or [])]
+        if org_ids:
+            orgs_meta = db.table("organizations") \
+                .select("id, name") \
+                .in_("id", org_ids) \
+                .execute()
+            id_to_name = {o["id"]: o["name"] for o in (orgs_meta.data or [])}
+            response["orgs"] = [
+                {
+                    "id": row["org_id"],
+                    "name": id_to_name.get(row["org_id"], ""),
+                    "role": row["role"],
+                }
+                for row in (orgs_result.data or [])
+                if row["org_id"] in id_to_name
+            ]
+    except Exception:
+        pass
+
+    return response
 
 
 @router.post("/logout", summary="退出登录")

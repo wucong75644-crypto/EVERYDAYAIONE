@@ -17,6 +17,7 @@ import MessageArea from '../components/chat/message/MessageArea';
 import InputArea from '../components/chat/input/InputArea';
 import { ChatHeader } from '../components/chat/layout/ChatHeader';
 import SearchPanel from '../components/chat/search/SearchPanel';
+import ScheduledTaskPanel from '../components/scheduled-tasks/ScheduledTaskPanel';
 import { PageTransition } from '../components/motion';
 import { getConversation } from '../services/conversation';
 import { CONVERSATIONS_CACHE_KEY } from '../components/chat/layout/conversationUtils';
@@ -81,6 +82,8 @@ export default function Chat() {
   const [, setCurrentSelectedModel] = useState<UnifiedModel | null>(null);
   // 搜索面板开关（V3 Phase 4：cursor 分页 + 搜索）
   const [searchPanelOpen, setSearchPanelOpen] = useState(false);
+  // 定时任务面板开关
+  const [scheduledTaskPanelOpen, setScheduledTaskPanelOpen] = useState(false);
 
   // Cmd+F / Ctrl+F 全局快捷键打开搜索面板
   useEffect(() => {
@@ -356,6 +359,12 @@ export default function Chat() {
           onOpenSearch={
             currentConversationId ? () => setSearchPanelOpen(true) : undefined
           }
+          onOpenScheduledTasks={
+            // 仅企业用户显示定时任务入口（散客无 current_org，调 API 必 403）
+            user?.current_org
+              ? () => setScheduledTaskPanelOpen(true)
+              : undefined
+          }
         />
 
         {/* 消息区域 */}
@@ -388,6 +397,12 @@ export default function Chat() {
           onJumpToMessage={handleJumpToMessage}
         />
       )}
+
+      {/* 定时任务面板 */}
+      <ScheduledTaskPanel
+        isOpen={scheduledTaskPanelOpen}
+        onClose={() => setScheduledTaskPanelOpen(false)}
+      />
     </PageTransition>
   );
 }

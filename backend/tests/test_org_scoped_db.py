@@ -60,7 +60,8 @@ class TestTenantTables:
         assert isinstance(TENANT_TABLES, frozenset)
 
     def test_count(self):
-        assert len(TENANT_TABLES) == 36
+        # 36 张原有 + 8 张权限模型 V1（060-068）+ 2 张定时任务（069）
+        assert len(TENANT_TABLES) == 46
 
     def test_core_tables_present(self):
         for t in ("conversations", "messages", "tasks"):

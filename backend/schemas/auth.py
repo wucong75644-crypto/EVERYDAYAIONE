@@ -5,7 +5,7 @@
 """
 
 import re
-from typing import Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -86,6 +86,28 @@ class TokenResponse(BaseModel):
     expires_in: int = Field(..., description="过期时间（秒）")
 
 
+class CurrentMember(BaseModel):
+    """当前组织内的成员任职信息（V1.0+ 新增）"""
+
+    position_code: Literal["boss", "vp", "manager", "deputy", "member"] = Field(..., description="职位代码")
+    department_id: Optional[str] = Field(None, description="主部门 ID")
+    department_name: Optional[str] = Field(None, description="主部门名称")
+    department_type: Optional[Literal["ops", "finance", "warehouse", "service", "design", "hr", "other"]] = Field(None, description="部门类型")
+    job_title: Optional[str] = Field(None, description="自定义头衔")
+    data_scope: Literal["all", "dept_subtree", "self"] = Field(..., description="数据范围")
+    managed_departments: Optional[List[Dict[str, str]]] = Field(None, description="副总分管的部门列表 [{id, name}]")
+
+
+class CurrentOrgInfo(BaseModel):
+    """当前组织信息（V1.0+ 扩展）"""
+
+    id: str = Field(..., description="组织 ID")
+    name: str = Field(..., description="组织名称")
+    role: Literal["owner", "admin", "member"] = Field(..., description="组织内角色（org_members.role，全局控制）")
+    member: Optional[CurrentMember] = Field(None, description="成员任职信息（业务数据权限）")
+    permissions: List[str] = Field(default_factory=list, description="扁平化权限码列表")
+
+
 class UserResponse(BaseModel):
     """用户信息响应"""
 
@@ -96,6 +118,10 @@ class UserResponse(BaseModel):
     role: str = Field(..., description="用户角色")
     credits: int = Field(..., description="积分余额")
     created_at: str = Field(..., description="注册时间")
+
+    # 新增字段（V1.0+）
+    current_org: Optional[CurrentOrgInfo] = Field(None, description="当前组织信息（含成员任职 + 权限码）")
+    orgs: List[Dict[str, Any]] = Field(default_factory=list, description="所属组织列表 [{id, name, role}]，用于切换组织")
 
 
 class LoginResponse(BaseModel):

@@ -55,7 +55,11 @@ class BackgroundTaskWorker:
         self._poll_lock = asyncio.Lock()
         self._last_consistency_check = None  # 上次数据一致性检查时间
         self._last_scoring_aggregation = None  # 上次模型评分聚合时间
-        self._last_intent_distillation = None  # 上次意图提炼时间
+
+        # 定时任务扫描器（嵌入主循环）
+        # 设计文档: docs/document/TECH_定时任务心跳系统.md §4.2
+        from services.scheduler.scanner import ScheduledTaskScanner
+        self._scheduled_scanner = ScheduledTaskScanner(db)
 
     async def _get_active_org_ids(self) -> list[str]:
         """获取所有活跃企业的 org_id 列表（用于后台任务按 org 迭代）"""
@@ -91,9 +95,9 @@ class BackgroundTaskWorker:
                 async with self._poll_lock:
                     await self.poll_pending_tasks()
                     await self.cleanup_stale_tasks()
+                    await self._scheduled_scanner.poll()  # 定时任务扫描
                     await self.check_data_consistency()
                     await self._run_model_scoring()
-                    await self._run_intent_distillation()
 
             except Exception as e:
                 logger.error(f"BackgroundTaskWorker error: {e}", exc_info=True)
@@ -449,23 +453,3 @@ class BackgroundTaskWorker:
             logger.error(f"Model scoring aggregation failed | error={e}")
         finally:
             self._last_scoring_aggregation = now
-
-    async def _run_intent_distillation(self):
-        """每日执行意图模式提炼"""
-        now = datetime.now(timezone.utc)
-        if self._last_intent_distillation is not None:
-            elapsed = (now - self._last_intent_distillation).total_seconds()
-            if elapsed < 86400:  # 24 小时
-                return
-
-        try:
-            from services.intent_distiller import distill_intent_patterns
-
-            # 按企业迭代 + 散客（多租户隔离）
-            for oid in await self._get_active_org_ids():
-                await distill_intent_patterns(org_id=oid)
-            await distill_intent_patterns(org_id=None)
-        except Exception as e:
-            logger.error(f"Intent distillation failed | error={e}")
-        finally:
-            self._last_intent_distillation = now

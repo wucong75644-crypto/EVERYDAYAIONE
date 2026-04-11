@@ -1,967 +1,1035 @@
 # UI 设计方案：定时任务面板
 
-> 版本：V1.0 | 日期：2026-04-09
-> 设计基础：Linear 交互模式 + 现有项目颜色体系
+> 版本：V2.1 | 日期：2026-04-11
+> 基于：前端 V3 架构（3 层 token 系统 + cva 组件库 + framer-motion）
+> 自动适配：Classic / Claude / Linear 三套主题 + light/dark 模式
+> 权限集成：[TECH_组织架构与权限模型.md](./TECH_组织架构与权限模型.md)
 
 ---
 
 ## 一、设计原则
 
-| 原则 | 说明 |
-|------|------|
-| **信息密度优先** | 参考 Linear 的列表密度，一屏展示尽量多的任务 |
-| **状态一目了然** | 颜色 + 图标双通道传达状态，无需点击即可掌握全局 |
-| **操作零摩擦** | 自然语言创建 + 手动编辑并存，选最快的方式 |
-| **动画克制精致** | 所有动画服务于认知（帮用户理解变化），不服务于装饰 |
-| **风格统一** | 与现有聊天界面、文件面板保持一致的蓝色科技风 |
+| 原则 | 实现策略 |
+|------|---------|
+| **零自定义颜色** | 全部用 `--s-*` 语义 token，自动跟随主题切换 |
+| **零自定义组件** | 复用 `ui/Button`、`ui/Card`、`ui/Badge`、`ui/Input`、`ui/Dropdown` |
+| **零自定义动画** | 复用 `utils/motion.ts` 的 spring presets 和 `styles/animations.css` 的 keyframes |
+| **跟随面板模式** | 与 `SearchPanel` 一致：右侧 drawer 覆盖 + AnimatePresence + FLUID_SPRING |
+| **三主题兼容** | Classic / Claude / Linear 自动适配，无需为每套主题单独写样式 |
 
 ---
 
-## 二、颜色体系（复用现有）
+## 二、颜色 Token 映射
 
-### 基础色
+**禁止使用自定义颜色变量**，全部从现有 token 引用：
+
+### 2.1 基础颜色（语义层 `--s-*`）
 
 ```css
-/* 主色 */
---color-primary:        #3b82f6;  /* blue-600，按钮、选中态 */
---color-primary-hover:  #2563eb;  /* blue-700，悬停 */
---color-primary-light:  #eff6ff;  /* blue-50，选中背景 */
---color-primary-ring:   #93c5fd;  /* blue-300，focus ring */
-
-/* 强调渐变（与用户消息气泡一致） */
---gradient-accent: linear-gradient(to right, #a855f7, #6366f1);  /* purple-500 → indigo-500 */
-
-/* 背景 */
---color-bg:             #ffffff;
---color-bg-secondary:   #f9fafb;  /* gray-50 */
---color-bg-hover:       #f3f4f6;  /* gray-100 */
+/* 表面 */
+bg-surface          → var(--s-surface-base)      /* 页面背景 */
+bg-surface-card     → var(--s-surface-raised)    /* 卡片背景 */
+bg-surface-overlay  → var(--s-surface-overlay)   /* 模态/抽屉背景 */
+bg-surface-sunken   → var(--s-surface-sunken)    /* 嵌入区域 */
 
 /* 文字 */
---color-text-primary:   #111827;  /* gray-900 */
---color-text-secondary: #6b7280;  /* gray-500 */
---color-text-tertiary:  #9ca3af;  /* gray-400 */
+text-text-primary   → var(--s-text-primary)      /* 主文本 */
+text-text-secondary → var(--s-text-secondary)    /* 次文本 */
+text-text-tertiary  → var(--s-text-tertiary)     /* 弱化文本 */
+text-text-disabled  → var(--s-text-disabled)     /* 禁用 */
+
+/* 强调 */
+bg-accent           → var(--s-accent-default)    /* 主色 */
+bg-accent-hover     → var(--s-accent-hover)
+bg-accent-soft      → var(--s-accent-soft)       /* 选中态浅背景 */
 
 /* 边框 */
---color-border:         #e5e7eb;  /* gray-200 */
---color-border-focus:   #3b82f6;  /* blue-500 */
+border-border-subtle  → var(--s-border-subtle)
+border-border-default → var(--s-border-default)
+border-border-strong  → var(--s-border-strong)
+border-border-focus   → var(--s-border-focus)
 ```
 
-### 状态色
+### 2.2 状态色（语义层）
 
 ```css
 /* 运行中 */
---status-active-bg:     #ecfdf5;  /* green-50 */
---status-active-text:   #059669;  /* green-600 */
---status-active-dot:    #22c55e;  /* green-500，呼吸动画 */
+text-success → var(--s-success)
+bg-success-soft → var(--s-success-soft)
 
-/* 已暂停 */
---status-paused-bg:     #fffbeb;  /* yellow-50 */
---status-paused-text:   #d97706;  /* yellow-600 */
---status-paused-dot:    #eab308;  /* yellow-500 */
+/* 失败 */
+text-error → var(--s-error)
+bg-error-soft → var(--s-error-soft)
 
-/* 失败/错误 */
---status-error-bg:      #fef2f2;  /* red-50 */
---status-error-text:    #dc2626;  /* red-600 */
---status-error-dot:     #ef4444;  /* red-500 */
+/* 暂停 */
+text-warning → var(--s-warning)
+bg-warning-soft → var(--s-warning-soft)
+```
 
-/* 已停用 */
---status-disabled-bg:   #f9fafb;  /* gray-50 */
---status-disabled-text: #9ca3af;  /* gray-400 */
---status-disabled-dot:  #d1d5db;  /* gray-300 */
+### 2.3 主题适配验证
+
+| 元素 | Classic 蓝色 | Claude 暖色 | Linear 暗色 |
+|------|------------|------------|------------|
+| 主按钮 | `#2563eb` 蓝 | `#c96442` 赤陶 | `#5e6ad2` 靛蓝 |
+| 卡片背景 | `#ffffff` 白 | `#faf9f5` 象牙 | `rgba(255,255,255,0.02)` |
+| 主文字 | `#111827` 黑 | `#141413` 暖黑 | `#f7f8f8` 近白 |
+| 边框 | `#e5e7eb` 灰 | `#f0eee6` 奶油 | `rgba(255,255,255,0.08)` |
+
+**所有都通过同一套 token 引用自动切换，无需任何主题判断代码。**
+
+---
+
+## 三、组件复用策略
+
+### 3.1 使用现有 ui/ 组件
+
+| 用途 | 现有组件 | 配置 |
+|------|---------|------|
+| 创建/确认按钮 | `<Button variant="accent" size="md" />` | 主按钮 |
+| 暂停/恢复 | `<Button variant="ghost" size="sm" icon={...} />` | 图标按钮 |
+| 删除 | `<Button variant="danger" size="sm" />` | 危险按钮 |
+| 任务卡片 | `<Card variant="interactive" padding="md" />` | 可交互卡片 |
+| 任务详情 | `<Card variant="elevated" padding="lg" />` | 提升卡片 |
+| 状态标签 | `<Badge variant="success/error/warning" pulse />` | 内置脉冲 |
+| 任务名输入 | `<Input label="任务名" />` | 标准输入 |
+| 频率选择 | `<Dropdown />` | Radix 下拉 |
+
+### 3.2 不需要新建任何 UI 组件
+
+只需创建**业务组件**（组合现有 ui/ 组件）：
+
+```
+frontend/src/components/scheduled-tasks/
+├── ScheduledTaskPanel.tsx       # Drawer 主面板
+├── TaskList.tsx                 # 列表
+├── TaskCard.tsx                 # 业务卡片（组合 Card + Badge + Button）
+├── TaskForm.tsx                 # 业务表单（组合 Input + Dropdown + Button）
+├── NaturalLanguageInput.tsx     # 业务输入框（组合 Input + 解析逻辑）
+├── PushTargetSelector.tsx       # 业务选择器（组合 Dropdown + 自动补全）
+├── TaskRunHistory.tsx           # 业务列表
+├── EmptyState.tsx               # 业务空状态
+└── hooks/
+    ├── useScheduledTasks.ts
+    └── useTaskParse.ts
 ```
 
 ---
 
-## 三、布局结构
+## 四、布局结构
 
-### 3.1 面板位置
+### 4.1 面板集成方式（跟 SearchPanel 一致）
 
-任务面板作为**侧边栏 Tab** 集成，与现有文件面板并列：
+**右侧 drawer 覆盖式**，不是侧边栏 Tab：
 
+```tsx
+// frontend/src/pages/Chat.tsx 内
+<PageTransition className="h-screen flex bg-surface">
+  <Sidebar ... />
+  
+  <div className="flex-1 flex flex-col min-w-0">
+    <ChatHeader 
+      ... 
+      onOpenScheduledTasks={() => setTaskPanelOpen(true)}  // 新增
+    />
+    <MessageArea ... />
+    <InputArea ... />
+    
+    {/* 已有 */}
+    <SearchPanel isOpen={searchPanelOpen} onClose={...} />
+    
+    {/* 新增 */}
+    <ScheduledTaskPanel 
+      isOpen={taskPanelOpen} 
+      onClose={() => setTaskPanelOpen(false)} 
+    />
+  </div>
+</PageTransition>
 ```
-┌──────────────────────────────────────────────────────────┐
-│  顶部导航栏                                               │
-├──────────┬───────────────────────────────┬───────────────┤
-│          │                               │ 💬 聊天       │
-│  左侧    │      主聊天区域                │ 📁 文件       │
-│  会话    │                               │ ⏰ 任务 ← new │
-│  列表    │                               │               │
-│          │                               │  [任务面板]    │
-│          │                               │               │
-└──────────┴───────────────────────────────┴───────────────┘
+
+### 4.2 入口位置
+
+在 `ChatHeader` 添加打开按钮（跟搜索按钮并列）：
+
+```tsx
+<Button 
+  variant="ghost" 
+  size="sm" 
+  icon={<Clock size={18} />}
+  onClick={onOpenScheduledTasks}
+  aria-label="定时任务"
+/>
 ```
 
-### 3.2 面板内部结构
+### 4.3 ScheduledTaskPanel 结构
+
+```tsx
+import { motion, AnimatePresence } from 'framer-motion';
+import { FLUID_SPRING } from '@/utils/motion';
+
+export function ScheduledTaskPanel({ isOpen, onClose }) {
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <>
+          {/* 背景遮罩 */}
+          <motion.div
+            className="fixed inset-0 z-30 bg-black/40"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={onClose}
+          />
+          
+          {/* 抽屉面板 */}
+          <motion.div
+            className="fixed right-0 top-0 bottom-0 z-40 w-[420px] 
+                       bg-surface-card border-l border-border-default
+                       flex flex-col"
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={FLUID_SPRING}
+          >
+            <PanelHeader onClose={onClose} />
+            <NaturalLanguageInput />
+            <TaskList />
+            <TaskRunHistorySection />
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}
+```
+
+### 4.4 面板内部布局
 
 ```
 ┌─────────────────────────────────────┐
-│  ⏰ 定时任务              [+ 新建]  │  ← 面板头部
+│  ⏰ 定时任务              [×]        │  PanelHeader (sticky top)
 ├─────────────────────────────────────┤
-│  ┌─────────────────────────────┐    │
-│  │ ✨ 描述你想定时执行的任务...  │    │  ← 自然语言输入
-│  └─────────────────────────────┘    │
-│                                      │
-│  ── 运行中 (2) ──────────────────    │  ← 状态分组标题
 │                                      │
 │  ┌─────────────────────────────┐    │
-│  │ ● 每日销售日报               │    │
-│  │   09:00 · 运营群 · 上次 ✅   │    │  ← 任务卡片（折叠态）
-│  │                    ▶ ⏸ ⚙    │    │
+│  │ ✨ 描述任务...                │    │  NaturalLanguageInput
 │  └─────────────────────────────┘    │
 │                                      │
+│  运行中 (2)                          │  分组标题
 │  ┌─────────────────────────────┐    │
-│  │ ● 库存预警                   │    │
-│  │   08:00 · 仓管群 · 上次 ✅   │    │
-│  │                    ▶ ⏸ ⚙    │    │
+│  │ ● 每日销售日报          📎 ⚙ │    │  TaskCard
+│  │ 每天 09:00 · 运营群          │    │
 │  └─────────────────────────────┘    │
-│                                      │
-│  ── 已暂停 (1) ──────────────────    │
-│                                      │
 │  ┌─────────────────────────────┐    │
-│  │ ○ 周经营报告                  │    │
-│  │   周一 09:00 · 老板 · 上次 ✅ │    │
-│  │                    ▶ ⏸ ⚙    │    │
+│  │ ● 库存预警              ⚙   │    │
+│  │ 每天 08:00 · 仓管群          │    │
 │  └─────────────────────────────┘    │
 │                                      │
-│  ── 执行历史 ────────────────────    │  ← 底部折叠区
-│  │ 今天 09:01  每日销售日报 ✅    │    │
-│  │ 今天 08:00  库存预警     ✅    │    │
-│  │ 昨天 09:02  每日销售日报 ✅    │    │
+│  已暂停 (1)                          │
+│  ┌─────────────────────────────┐    │
+│  │ ○ 周经营报告            ⚙   │    │
+│  │ 每周一 09:00 · 老板          │    │
+│  └─────────────────────────────┘    │
+│                                      │
+├─────────────────────────────────────┤
+│  执行历史                  展开 ▾    │  TaskRunHistorySection
+│  04-11 09:01  日报 ✅ 12s  3积分    │
+│  04-10 09:02  日报 ✅ 14s  3积分    │
 └─────────────────────────────────────┘
 ```
 
+### 4.5 视图切换器（按职位显示）
+
+不同职位看到的视图切换器不同：
+
+| 职位 | 切换器 | 默认视图 |
+|------|-------|---------|
+| **老板** | `[全公司] [我的]` | 全公司 |
+| **全公司副总** | `[全公司] [我的]` | 全公司 |
+| **分管副总** | `[运营一部] [运营二部] [我的]` | 第一个分管部门 |
+| **主管** | `[运营一部] [我的]` | 本部门 |
+| **副主管 / 员工** | （无切换器） | 仅自己 |
+
+```tsx
+// frontend/src/components/scheduled-tasks/ViewSwitcher.tsx
+import { useAuthStore } from '@/stores/useAuthStore';
+
+export function ViewSwitcher({ value, onChange }) {
+  const { currentMember } = useAuthStore();
+  const positionCode = currentMember?.position_code;
+  
+  // 员工/副主管：不显示
+  if (positionCode === 'member' || positionCode === 'deputy') {
+    return null;
+  }
+  
+  const views = buildViews(currentMember);
+  
+  return (
+    <div className="flex gap-1 p-1 bg-surface-sunken rounded-lg">
+      {views.map(view => (
+        <button
+          key={view.id}
+          onClick={() => onChange(view.id)}
+          className={cn(
+            "px-3 py-1.5 text-sm font-medium rounded-md transition-all",
+            value === view.id
+              ? "bg-surface-card text-text-primary shadow-sm"
+              : "text-text-secondary hover:text-text-primary"
+          )}
+        >
+          {view.label} ({view.count})
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// 后端 /api/auth/me 返回的当前成员信息，分管部门已 join 部门表
+interface CurrentMember {
+  user_id: string;
+  position_code: 'boss' | 'vp' | 'manager' | 'deputy' | 'member';
+  department_id?: string;
+  department_name?: string;
+  data_scope: 'all' | 'dept_subtree' | 'self';
+  managed_departments?: Array<{ id: string; name: string }>;  // 副总的分管部门
+}
+
+function buildViews(member: CurrentMember) {
+  const views = [];
+  
+  if (member.position_code === 'boss' || 
+      (member.position_code === 'vp' && member.data_scope === 'all')) {
+    views.push({ id: 'all', label: '全公司', count: 0 });
+  } else if (member.position_code === 'vp') {
+    // 分管副总：每个分管部门一个 tab
+    member.managed_departments?.forEach(dept => {
+      views.push({ id: `dept:${dept.id}`, label: dept.name, count: 0 });
+    });
+  } else if (member.position_code === 'manager') {
+    views.push({ 
+      id: `dept:${member.department_id}`, 
+      label: member.department_name ?? '本部门', 
+      count: 0 
+    });
+  }
+  
+  // 所有人都有"我的"
+  views.push({ id: 'mine', label: '我的', count: 0 });
+  
+  return views;
+}
+```
+
+### 4.6 创建者徽标
+
+老板/副总/主管视角下，每张任务卡片显示**创建者头像 + 部门徽标 + 职位徽标**：
+
+```tsx
+// 任务卡片底部新增
+{showCreatorBadge && (
+  <div className="flex items-center gap-1.5 mt-2 text-xs">
+    <Avatar size="xs" name={task.creator.name} />
+    <span className="text-text-secondary">{task.creator.name}</span>
+    
+    <DepartmentBadge type={task.creator.department_type} />
+    <PositionBadge level={task.creator.position_code} />
+  </div>
+)}
+```
+
+**徽标颜色映射**：
+
+```ts
+// 部门徽标颜色
+export const DEPT_COLORS = {
+  ops:       { bg: '#dbeafe', text: '#1e40af', label: '运营' },  // 蓝
+  finance:   { bg: '#d1fae5', text: '#065f46', label: '财务' },  // 绿
+  warehouse: { bg: '#fed7aa', text: '#9a3412', label: '仓库' },  // 橙
+  service:   { bg: '#e9d5ff', text: '#6b21a8', label: '客服' },  // 紫
+  design:    { bg: '#fce7f3', text: '#9f1239', label: '设计' },  // 粉
+  hr:        { bg: '#cffafe', text: '#155e75', label: '人事' },  // 青
+};
+
+// 职位徽标颜色
+export const POSITION_COLORS = {
+  boss:    { bg: '#fef3c7', text: '#b45309', label: '老板' },    // 金
+  vp:      { bg: '#f3f4f6', text: '#374151', label: '副总' },    // 银
+  manager: { bg: '#dbeafe', text: '#1e3a8a', label: '主管' },    // 深蓝
+  deputy:  { bg: '#dbeafe', text: '#60a5fa', label: '副主管' },  // 浅蓝
+  member:  { bg: '#f3f4f6', text: '#6b7280', label: '员工' },    // 灰
+};
+```
+
+### 4.7 操作权限隐藏
+
+按钮根据权限自动显示/隐藏：
+
+```tsx
+import { usePermission } from '@/hooks/usePermission';
+
+function TaskCardActions({ task }) {
+  const canEdit = usePermission('task.edit', task);
+  const canDelete = usePermission('task.delete', task);
+  const canExecute = usePermission('task.execute', task);
+  
+  return (
+    <div className="flex gap-1">
+      {canEdit && (
+        <Button variant="ghost" size="sm" icon={<Settings />} ... />
+      )}
+      {canExecute && (
+        <Button variant="ghost" size="sm" icon={<Play />} ... />
+      )}
+      {canDelete && (
+        <Button variant="ghost" size="sm" icon={<Trash />} ... />
+      )}
+    </div>
+  );
+}
+```
+
+#### usePermission hook 实现（需新建）
+
+`usePermission` 完全在前端运行，**不调任何后端接口** — 数据来自 `/api/auth/me` 一次性返回的 `current_org.permissions` 和 `current_org.member`：
+
+```tsx
+// frontend/src/hooks/usePermission.ts
+import { useAuthStore } from '@/stores/useAuthStore';
+import type { ScheduledTask } from '@/types/scheduledTask';
+
+/**
+ * 检查当前用户对某资源的权限（前端纯逻辑）
+ * 
+ * 数据源：useAuthStore().user.current_org.permissions + .member
+ * 服务端会再校验一次（防绕过），前端只用于 UI 显示控制
+ */
+export function usePermission(
+  permissionCode: string,
+  resource?: ScheduledTask | { user_id: string; creator?: { department_id?: string } }
+): boolean {
+  const user = useAuthStore(s => s.user);
+  const currentOrg = user?.current_org;
+  
+  if (!currentOrg || !user) return false;
+  
+  // 1. 检查是否拥有该功能权限
+  if (!currentOrg.permissions.includes(permissionCode)) {
+    return false;
+  }
+  
+  // 2. 没有 resource 参数 → 列表查询，由后端 SQL 注入处理
+  if (!resource) return true;
+  
+  // 3. 检查数据范围
+  const member = currentOrg.member;
+  
+  // 老板 + 全公司副总：全部允许
+  if (member.position_code === 'boss' || 
+      (member.position_code === 'vp' && member.data_scope === 'all')) {
+    return true;
+  }
+  
+  // 分管副总：检查资源创建者是否在分管部门
+  if (member.position_code === 'vp' && member.managed_departments) {
+    const creatorDeptId = resource.creator?.department_id;
+    return member.managed_departments.some(d => d.id === creatorDeptId);
+  }
+  
+  // 主管：本部门所有人
+  if (member.position_code === 'manager') {
+    const creatorDeptId = resource.creator?.department_id;
+    return creatorDeptId === member.department_id;
+  }
+  
+  // 副主管/员工：只能操作自己创建的资源
+  return resource.user_id === user.id;
+}
+
+/**
+ * 立即执行权限：员工/副主管不能强制执行别人的任务
+ */
+export function useCanExecute(resource?: { user_id: string }): boolean {
+  const user = useAuthStore(s => s.user);
+  const member = user?.current_org?.member;
+  
+  if (!member) return false;
+  
+  // 老板/副总/主管：可以执行（受 usePermission 数据范围限制）
+  if (['boss', 'vp', 'manager'].includes(member.position_code)) {
+    return usePermission('task.execute', resource);
+  }
+  
+  // 员工/副主管：只能执行自己的
+  return resource?.user_id === user?.id;
+}
+```
+
+#### 数据来源说明
+
+`current_org.member` 和 `current_org.permissions` 由后端 `/api/auth/me` 端点返回，详见 [TECH_组织架构与权限模型.md 第七.五节](./TECH_组织架构与权限模型.md)。
+
+```typescript
+// /api/auth/me 返回示例
+{
+  id: "user_123",
+  nickname: "张三",
+  current_org: {
+    id: "org_456",
+    name: "蓝创科技",
+    role: "member",
+    member: {
+      position_code: "manager",
+      department_id: "dept_001",
+      department_name: "运营一部",
+      department_type: "ops",
+      data_scope: "dept_subtree",
+      managed_departments: null,  // 主管不需要这个字段
+    },
+    permissions: [
+      "task.view", "task.create", "task.edit", "task.delete", "task.execute",
+      "order.view", "order.edit", "order.export",
+      "product.view", "product.edit",
+    ]
+  },
+  orgs: [{ id: "org_456", name: "蓝创科技", role: "member" }]
+}
+```
+
+#### 前端 vs 后端权限校验
+
+| 用途 | 实现位置 | 备注 |
+|------|---------|------|
+| **UI 显示控制**（按钮显示/隐藏）| 前端 `usePermission` | 纯逻辑，无网络请求 |
+| **真实权限校验** | 后端 `check_permission` + `apply_data_scope` | 防绕过，最终拦截器 |
+
+**关键原则**：前端 hook 只是 UX 优化（不显示无权限的按钮），**所有写操作和数据查询都必须经过后端权限校验**。前端绕过 hook 直接构造请求，后端会拦截。
+
 ---
 
-## 四、组件样式
+## 五、组件实现示例
 
-### 4.1 任务卡片
+### 5.1 TaskCard
 
-#### 折叠态（默认，高密度列表）
+```tsx
+import { Card } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { Pause, Play, Settings, Paperclip } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { SOFT_SPRING } from '@/utils/motion';
 
-```
-┌────────────────────────────────────────────┐
-│  ● 每日销售日报                    📎 ▶ ⚙  │
-│  每天 09:00 · 运营群 · 下次: 明天 09:00    │
-│  上次: 今天 09:01 ✅ 耗时 12s 消耗 3积分    │
-└────────────────────────────────────────────┘
-```
-
-**样式规格**：
-- 背景: `white`，边框: `1px solid var(--color-border)`
-- 圆角: `8px`
-- 内边距: `12px 16px`
-- 悬停: `background: var(--color-bg-hover)`，`border-color: var(--color-primary-ring)`
-- 过渡: `all 150ms cubic-bezier(0.4, 0, 0.2, 1)`
-- 状态圆点: `8px` 圆形，带状态色
-
-**状态圆点样式**：
-```css
-/* 运行中 — 呼吸动画 */
-.dot-active {
-  width: 8px; height: 8px;
-  background: var(--status-active-dot);
-  border-radius: 50%;
-  animation: breathe 2s ease-in-out infinite;
+interface TaskCardProps {
+  task: ScheduledTask;
+  onToggle: (id: string) => void;
+  onEdit: (id: string) => void;
 }
 
-/* 已暂停 — 静态 */
-.dot-paused {
-  background: var(--status-paused-dot);
+export function TaskCard({ task, onToggle, onEdit }: TaskCardProps) {
+  const isRunning = task.status === 'active';
+  const isPaused = task.status === 'paused';
+  const isError = task.status === 'error';
+  
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: -8, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, x: 32, scale: 0.95 }}
+      transition={SOFT_SPRING}
+      className={isPaused ? 'opacity-65' : ''}
+    >
+      <Card variant="interactive" padding="md" className="group">
+        <div className="flex items-start justify-between gap-3">
+          {/* 状态点 + 任务信息 */}
+          <div className="flex items-start gap-2 min-w-0 flex-1">
+            <StatusDot status={task.status} />
+            
+            <div className="min-w-0 flex-1">
+              <h4 className="text-sm font-medium text-text-primary truncate">
+                {task.name}
+              </h4>
+              <p className="text-xs text-text-tertiary mt-0.5 truncate">
+                {task.cron_readable} · {task.push_target.chat_name || '推送目标'}
+              </p>
+              {task.last_run_at && (
+                <p className="text-xs text-text-tertiary mt-1">
+                  上次: {formatRelative(task.last_run_at)}
+                  {task.last_result?.status === 'success' && (
+                    <Badge variant="success" className="ml-1.5">✓</Badge>
+                  )}
+                  {isError && (
+                    <Badge variant="error" pulse className="ml-1.5">失败</Badge>
+                  )}
+                </p>
+              )}
+            </div>
+          </div>
+          
+          {/* 操作按钮（hover 显示） */}
+          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            {task.template_file && (
+              <span className="text-text-tertiary" title={task.template_file.name}>
+                <Paperclip size={14} />
+              </span>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={isRunning ? <Pause size={14} /> : <Play size={14} />}
+              onClick={() => onToggle(task.id)}
+              aria-label={isRunning ? '暂停' : '恢复'}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<Settings size={14} />}
+              onClick={() => onEdit(task.id)}
+              aria-label="编辑"
+            />
+          </div>
+        </div>
+      </Card>
+    </motion.div>
+  );
 }
 
-/* 失败 — 闪烁 */
-.dot-error {
-  background: var(--status-error-dot);
-  animation: blink 1.5s ease-in-out infinite;
-}
-```
-
-#### 展开态（点击卡片展开详情）
-
-```
-┌────────────────────────────────────────────┐
-│  ● 每日销售日报                    📎 ▶ ⚙  │
-│  每天 09:00 · 运营群 · 下次: 明天 09:00    │
-├────────────────────────────────────────────┤
-│                                             │
-│  任务指令                                    │
-│  ┌────────────────────────────────────┐     │
-│  │ 查询昨日各店铺销售数据，按销售额    │     │
-│  │ 降序生成汇总表格，对比前日标注增降幅 │     │
-│  └────────────────────────────────────┘     │
-│                                             │
-│  模板文件                                    │
-│  ┌────────────────────────────────────┐     │
-│  │ 📎 销售日报模板.xlsx    [更换] [移除]│     │
-│  └────────────────────────────────────┘     │
-│                                             │
-│  推送目标                                    │
-│  ┌────────────────────────────────────┐     │
-│  │ 👥 运营群     [更换]                │     │
-│  └────────────────────────────────────┘     │
-│                                             │
-│  执行记录                                    │
-│  ├ 04-09 09:01  ✅ 12s  3积分  📄 日报.xlsx │
-│  ├ 04-08 09:02  ✅ 15s  3积分  📄 日报.xlsx │
-│  ├ 04-07 09:01  ❌ "ERP接口超时"            │
-│  └ 04-06 09:03  ✅ 11s  3积分  📄 日报.xlsx │
-│                                             │
-│  [立即执行]          [暂停任务]    [删除任务] │
-└────────────────────────────────────────────┘
-```
-
-**展开动画**：
-```css
-.card-expand {
-  animation: expandCard 200ms cubic-bezier(0.4, 0, 0.2, 1);
-  transform-origin: top;
-}
-
-@keyframes expandCard {
-  from { max-height: 80px; opacity: 0.8; }
-  to   { max-height: 500px; opacity: 1; }
-}
-```
-
-### 4.2 状态指示器 Badge
-
-```css
-.badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  border-radius: 9999px;  /* pill 形 */
-  font-size: 12px;
-  font-weight: 500;
-  gap: 4px;
-  transition: all 150ms ease;
-}
-
-.badge-active {
-  background: var(--status-active-bg);
-  color: var(--status-active-text);
-}
-
-.badge-paused {
-  background: var(--status-paused-bg);
-  color: var(--status-paused-text);
-}
-
-.badge-error {
-  background: var(--status-error-bg);
-  color: var(--status-error-text);
-}
-
-.badge-success {
-  background: var(--status-active-bg);
-  color: var(--status-active-text);
+function StatusDot({ status }: { status: TaskStatus }) {
+  const colorMap = {
+    active: 'bg-success',
+    paused: 'bg-warning',
+    error: 'bg-error',
+    running: 'bg-accent',
+  };
+  
+  return (
+    <div className="relative mt-1.5 flex-shrink-0">
+      <div className={`w-2 h-2 rounded-full ${colorMap[status]}`} />
+      {status === 'active' && (
+        <div className={`absolute inset-0 rounded-full ${colorMap[status]} animate-breathe`} />
+      )}
+    </div>
+  );
 }
 ```
 
-### 4.3 自然语言输入框
+### 5.2 NaturalLanguageInput
 
-```
-┌──────────────────────────────────────────────────┐
-│ ✨ 描述你想定时执行的任务...                       │
-│                                                    │
-│   例: "每天早上9点把昨日销售日报发到运营群"          │
-└──────────────────────────────────────────────────┘
-```
+```tsx
+import { Input } from '@/components/ui/Input';
+import { Button } from '@/components/ui/Button';
+import { Sparkles } from 'lucide-react';
+import { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useTaskParse } from './hooks/useTaskParse';
 
-**样式**：
-```css
-.nl-input {
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  padding: 12px 16px;
-  font-size: 14px;
-  color: var(--color-text-primary);
-  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+export function NaturalLanguageInput({ onParsed }) {
+  const [text, setText] = useState('');
+  const { parse, parsing } = useTaskParse();
+  
+  const handleParse = async () => {
+    if (!text.trim()) return;
+    const result = await parse(text);
+    if (result) {
+      onParsed(result);
+      setText('');
+    }
+  };
+  
+  return (
+    <div className="p-4 border-b border-border-subtle">
+      <div className="relative">
+        <Input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="✨ 描述你想定时执行的任务..."
+          icon={<Sparkles size={16} className="text-accent" />}
+          fullWidth
+          onKeyDown={(e) => e.key === 'Enter' && handleParse()}
+        />
+        
+        <AnimatePresence>
+          {parsing && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute right-3 top-1/2 -translate-y-1/2"
+            >
+              <ParsingDots />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+      
+      <p className="text-xs text-text-tertiary mt-2">
+        例: "每天9点把昨日销售日报发到运营群"
+      </p>
+    </div>
+  );
 }
 
-.nl-input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  background: white;
-}
-
-.nl-input::placeholder {
-  color: var(--color-text-tertiary);
-}
-```
-
-### 4.4 创建/编辑表单（Modal 或面板内展开）
-
-Agent 解析自然语言后，展示结构化表单让用户确认：
-
-```
-┌──────────────────────────────────────────────┐
-│  ✨ AI 已理解你的需求，请确认：                │
-├──────────────────────────────────────────────┤
-│                                               │
-│  任务名称                                      │
-│  ┌──────────────────────────────────┐         │
-│  │ 每日销售日报                      │         │
-│  └──────────────────────────────────┘         │
-│                                               │
-│  执行时间                                      │
-│  ┌──────────────────────────────────┐         │
-│  │ 每天  ▾ │  09 : 00              │         │
-│  └──────────────────────────────────┘         │
-│                                               │
-│  任务指令                                      │
-│  ┌──────────────────────────────────┐         │
-│  │ 查询昨日各店铺销售数据，按销售额  │         │
-│  │ 降序生成汇总表格...              │         │
-│  └──────────────────────────────────┘         │
-│                                               │
-│  推送目标                                      │
-│  ┌──────────────────────────────────┐         │
-│  │ 👥 运营群 (chatid: xxx)     ✕   │         │
-│  │ [+ 添加推送目标]                  │         │
-│  └──────────────────────────────────┘         │
-│                                               │
-│  模板文件（可选）                               │
-│  ┌──────────────────────────────────┐         │
-│  │     📎 点击上传或拖拽模板文件      │         │
-│  │     支持 xlsx / csv / json       │         │
-│  └──────────────────────────────────┘         │
-│                                               │
-│  高级设置                              展开 ▾  │
-│  │ 单次最大积分:  10                          │
-│  │ 失败重试次数:  1                           │
-│  │ 执行超时:      180秒                       │
-│                                               │
-│         [取消]              [创建任务]          │
-└──────────────────────────────────────────────┘
-```
-
-**表单组件样式**：
-```css
-/* 输入框 */
-.form-input {
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 14px;
-  transition: border-color 150ms ease, box-shadow 150ms ease;
-}
-
-.form-input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-  outline: none;
-}
-
-/* 时间选择器 — 自定义下拉 */
-.time-picker {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 8px 12px;
-}
-
-/* 频率选择器 — Pill 切换组 */
-.frequency-pills {
-  display: flex;
-  gap: 4px;
-  background: var(--color-bg-secondary);
-  border-radius: 8px;
-  padding: 2px;
-}
-
-.frequency-pill {
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 150ms ease;
-}
-
-.frequency-pill.active {
-  background: white;
-  color: var(--color-primary);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+function ParsingDots() {
+  return (
+    <div className="flex gap-1">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="w-1 h-1 rounded-full bg-accent animate-dot-pulse"
+          style={{ animationDelay: `${i * 150}ms` }}
+        />
+      ))}
+    </div>
+  );
 }
 ```
 
----
+### 5.3 TaskList（按状态分组）
 
-## 五、交互动画规范
+```tsx
+import { AnimatePresence } from 'framer-motion';
 
-### 5.1 全局过渡曲线
-
-```css
-/* 标准过渡 — 大多数状态变化 */
---ease-standard: cubic-bezier(0.4, 0, 0.2, 1);  /* Material ease-in-out */
---duration-fast: 150ms;     /* 悬停、焦点 */
---duration-normal: 200ms;   /* 展开、收起 */
---duration-slow: 300ms;     /* 面板滑入、模态框 */
-
-/* 弹性过渡 — 创建成功、状态切换 */
---ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
---duration-spring: 400ms;
-
-/* 退出过渡 — 删除、关闭 */
---ease-exit: cubic-bezier(0.4, 0, 1, 1);
---duration-exit: 150ms;
-```
-
-### 5.2 任务卡片动画
-
-#### 创建（新任务出现）
-
-```css
-@keyframes taskSlideIn {
-  0% {
-    opacity: 0;
-    transform: translateY(-8px) scale(0.98);
-    max-height: 0;
-  }
-  60% {
-    opacity: 1;
-    transform: translateY(2px) scale(1.005);  /* 微弹 */
-    max-height: 100px;
-  }
-  100% {
-    transform: translateY(0) scale(1);
-    max-height: 100px;
-  }
+export function TaskList({ tasks, onToggle, onEdit }) {
+  const grouped = {
+    active: tasks.filter(t => t.status === 'active'),
+    paused: tasks.filter(t => t.status === 'paused'),
+    error: tasks.filter(t => t.status === 'error'),
+  };
+  
+  if (tasks.length === 0) return <EmptyState />;
+  
+  return (
+    <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+      {grouped.active.length > 0 && (
+        <Section title="运行中" count={grouped.active.length}>
+          <AnimatePresence>
+            {grouped.active.map(t => (
+              <TaskCard key={t.id} task={t} onToggle={onToggle} onEdit={onEdit} />
+            ))}
+          </AnimatePresence>
+        </Section>
+      )}
+      {grouped.paused.length > 0 && (
+        <Section title="已暂停" count={grouped.paused.length}>
+          <AnimatePresence>
+            {grouped.paused.map(t => (
+              <TaskCard key={t.id} task={t} onToggle={onToggle} onEdit={onEdit} />
+            ))}
+          </AnimatePresence>
+        </Section>
+      )}
+      {grouped.error.length > 0 && (
+        <Section title="失败" count={grouped.error.length}>
+          <AnimatePresence>
+            {grouped.error.map(t => (
+              <TaskCard key={t.id} task={t} onToggle={onToggle} onEdit={onEdit} />
+            ))}
+          </AnimatePresence>
+        </Section>
+      )}
+    </div>
+  );
 }
 
-.task-enter {
-  animation: taskSlideIn 400ms var(--ease-spring);
-}
-```
-
-#### 展开/收起
-
-```css
-.task-details {
-  display: grid;
-  grid-template-rows: 0fr;           /* 收起 */
-  opacity: 0;
-  transition: grid-template-rows var(--duration-normal) var(--ease-standard),
-              opacity var(--duration-fast) var(--ease-standard);
-}
-
-.task-details.expanded {
-  grid-template-rows: 1fr;           /* 展开 */
-  opacity: 1;
-}
-
-.task-details > .inner {
-  overflow: hidden;
-}
-```
-
-#### 删除
-
-```css
-@keyframes taskSlideOut {
-  0% {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-    max-height: 100px;
-  }
-  40% {
-    opacity: 0.5;
-    transform: translateX(16px) scale(0.98);
-  }
-  100% {
-    opacity: 0;
-    transform: translateX(32px) scale(0.95);
-    max-height: 0;
-    margin: 0;
-    padding: 0;
-  }
-}
-
-.task-exit {
-  animation: taskSlideOut 300ms var(--ease-exit) forwards;
-}
-```
-
-#### 状态切换（暂停 ↔ 恢复）
-
-```css
-/* 状态圆点颜色过渡 */
-.status-dot {
-  transition: background-color 300ms var(--ease-standard),
-              box-shadow 300ms var(--ease-standard);
-}
-
-/* 状态 badge 颜色过渡 */
-.status-badge {
-  transition: background-color 200ms var(--ease-standard),
-              color 200ms var(--ease-standard);
-}
-
-/* 暂停时卡片整体降低对比 */
-.task-card.paused {
-  opacity: 0.65;
-  transition: opacity 300ms var(--ease-standard);
-}
-
-.task-card.paused:hover {
-  opacity: 0.85;
-}
-```
-
-### 5.3 状态呼吸动画
-
-```css
-/* 运行中 — 呼吸光晕（柔和，不刺眼） */
-@keyframes breathe {
-  0%, 100% {
-    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.4);
-  }
-  50% {
-    box-shadow: 0 0 0 4px rgba(34, 197, 94, 0);
-  }
-}
-
-/* 失败 — 缓慢闪烁（提醒但不焦虑） */
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
-/* 执行中 — 旋转加载 */
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-.task-running .status-icon {
-  animation: spin 1.5s linear infinite;
-}
-```
-
-### 5.4 面板滑入/滑出
-
-```css
-/* 右侧面板滑入 */
-@keyframes panelSlideIn {
-  from {
-    transform: translateX(100%);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
-}
-
-.task-panel-enter {
-  animation: panelSlideIn 300ms var(--ease-standard);
-}
-
-/* 面板滑出 */
-@keyframes panelSlideOut {
-  from {
-    transform: translateX(0);
-    opacity: 1;
-  }
-  to {
-    transform: translateX(100%);
-    opacity: 0;
-  }
-}
-
-.task-panel-exit {
-  animation: panelSlideOut 200ms var(--ease-exit);
-}
-```
-
-### 5.5 按钮微交互
-
-```css
-/* 主按钮 */
-.btn-primary {
-  background: var(--color-primary);
-  color: white;
-  border-radius: 8px;
-  padding: 8px 16px;
-  font-size: 14px;
-  font-weight: 500;
-  transition: all var(--duration-fast) var(--ease-standard);
-}
-
-.btn-primary:hover {
-  background: var(--color-primary-hover);
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.25);
-}
-
-.btn-primary:active {
-  transform: translateY(0);
-  box-shadow: none;
-}
-
-/* 危险按钮（删除） */
-.btn-danger {
-  color: var(--status-error-text);
-  background: transparent;
-  border: 1px solid var(--color-border);
-  transition: all var(--duration-fast) var(--ease-standard);
-}
-
-.btn-danger:hover {
-  background: var(--status-error-bg);
-  border-color: #fecaca;  /* red-200 */
-}
-
-/* 图标按钮（播放/暂停/设置） */
-.btn-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all var(--duration-fast) var(--ease-standard);
-}
-
-.btn-icon:hover {
-  background: var(--color-bg-hover);
-}
-```
-
-### 5.6 模板文件上传交互
-
-```css
-/* 拖拽区域 */
-.upload-zone {
-  border: 2px dashed var(--color-border);
-  border-radius: 8px;
-  padding: 24px;
-  text-align: center;
-  transition: all 200ms var(--ease-standard);
-}
-
-/* 拖拽悬停态 */
-.upload-zone.drag-over {
-  border-color: var(--color-primary);
-  background: var(--color-primary-light);
-  transform: scale(1.01);
-}
-
-/* 上传成功 — 文件卡片弹入 */
-@keyframes fileCardIn {
-  0% {
-    opacity: 0;
-    transform: scale(0.9);
-  }
-  70% {
-    transform: scale(1.02);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.file-card-enter {
-  animation: fileCardIn 300ms var(--ease-spring);
-}
-```
-
-### 5.7 执行历史时间线
-
-```css
-/* 历史条目逐条淡入 */
-@keyframes historyFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.history-item {
-  animation: historyFadeIn 200ms var(--ease-standard);
-  animation-fill-mode: backwards;
-}
-
-/* 交错延迟 */
-.history-item:nth-child(1) { animation-delay: 0ms; }
-.history-item:nth-child(2) { animation-delay: 50ms; }
-.history-item:nth-child(3) { animation-delay: 100ms; }
-.history-item:nth-child(4) { animation-delay: 150ms; }
-.history-item:nth-child(5) { animation-delay: 200ms; }
-```
-
-### 5.8 "立即执行" 反馈
-
-```css
-/* 点击立即执行 → 按钮变为进度态 */
-.btn-run.running {
-  background: var(--color-primary-light);
-  color: var(--color-primary);
-  pointer-events: none;
-}
-
-.btn-run.running::after {
-  content: '';
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--color-primary);
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  margin-left: 8px;
-}
-
-/* 执行完成 → 弹出成功 */
-@keyframes checkmark {
-  0% { transform: scale(0); }
-  50% { transform: scale(1.2); }
-  100% { transform: scale(1); }
-}
-
-.run-success-icon {
-  animation: checkmark 400ms var(--ease-spring);
-  color: var(--status-active-text);
+function Section({ title, count, children }) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-2 px-1">
+        <span className="text-xs font-medium text-text-tertiary uppercase tracking-wider">
+          {title}
+        </span>
+        <span className="text-xs text-text-tertiary">({count})</span>
+      </div>
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
 }
 ```
 
 ---
 
-## 六、自然语言创建交互流程
+## 六、动画系统（复用现有）
 
-### 6.1 完整流程
+### 6.1 复用 motion.ts 的 Spring Presets
 
-```
-用户输入: "每天早上9点把昨日销售日报发到运营群"
-  │
-  ↓ (输入框下方出现加载动画)
-  │
-  ├─ AI 解析中...  [3个圆点呼吸动画，150ms间隔]
-  │
-  ↓ (200ms 后表单从输入框下方展开)
-  │
-  ├─ 预填充表单（AI 理解结果）:
-  │   名称: 每日销售日报
-  │   时间: 每天 09:00
-  │   指令: 查询昨日各店铺销售数据...
-  │   目标: 运营群
-  │
-  ↓ (用户可修改任意字段)
-  │
-  └─ 点击 [创建任务]
-      │
-      ├─ 按钮 → loading 态 (150ms)
-      ├─ 表单收起 (200ms ease-exit)
-      ├─ 新任务卡片从顶部滑入列表 (400ms spring)
-      └─ 成功 Toast: "已创建定时任务「每日销售日报」" (自动消失 3s)
-```
+| 场景 | Preset | 用途 |
+|------|--------|------|
+| 任务卡片创建/切换 | `SOFT_SPRING` | layout 动画、状态切换 |
+| 面板滑入/滑出 | `FLUID_SPRING` | 抽屉打开关闭 |
+| 按钮点击反馈 | `SNAPPY_SPRING` | hover/tap 微交互 |
+| 创建成功弹入 | `BOUNCY_SPRING` | 强反馈场景 |
 
-### 6.2 解析加载动画
+### 6.2 复用 animations.css 的 Keyframes
 
-```css
-/* AI 解析中的圆点动画 */
-@keyframes dotPulse {
-  0%, 80%, 100% {
-    opacity: 0.3;
-    transform: scale(0.8);
-  }
-  40% {
-    opacity: 1;
-    transform: scale(1);
-  }
+| 动画 | 类名 | 用途 |
+|------|------|------|
+| 状态点呼吸 | `animate-breathe` | 运行中状态指示 |
+| 解析加载 | `animate-dot-pulse` | NL 输入解析中 |
+| 任务出现 | `animate-message-in` | 列表新增 |
+| 任务消失 | `animate-message-out` | 列表删除 |
+| 抽屉滑入 | `animate-drawer-enter` | 面板打开（备选 framer） |
+| 历史淡入 | `animate-fade-in` | 历史记录加载 |
+| Toast 出现 | 已配置 react-hot-toast | 操作反馈 |
+
+### 6.3 不再自定义任何 keyframe
+
+之前 V1 文档里写的 `taskSlideIn` / `taskSlideOut` / `panelSlideIn` 等全部**作废**，使用 framer-motion + 现有 keyframes 替代。
+
+---
+
+## 七、状态管理
+
+### 7.1 复用 Zustand 模式
+
+新建 `useScheduledTaskStore.ts`，跟现有 store 模式一致：
+
+```tsx
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+
+interface ScheduledTaskStore {
+  tasks: ScheduledTask[];
+  loading: boolean;
+  
+  // CRUD
+  fetchTasks: () => Promise<void>;
+  createTask: (data: CreateTaskDto) => Promise<ScheduledTask>;
+  updateTask: (id: string, data: Partial<ScheduledTask>) => Promise<void>;
+  deleteTask: (id: string) => Promise<void>;
+  toggleTask: (id: string) => Promise<void>;
+  
+  // 乐观更新
+  optimisticAdd: (task: ScheduledTask) => void;
+  optimisticRemove: (id: string) => void;
+  optimisticUpdate: (id: string, data: Partial<ScheduledTask>) => void;
 }
 
-.parsing-dots span {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-primary);
-  margin: 0 2px;
-  animation: dotPulse 1.2s ease-in-out infinite;
-}
-
-.parsing-dots span:nth-child(2) { animation-delay: 150ms; }
-.parsing-dots span:nth-child(3) { animation-delay: 300ms; }
+export const useScheduledTaskStore = create<ScheduledTaskStore>()(
+  persist(
+    (set, get) => ({
+      tasks: [],
+      loading: false,
+      
+      fetchTasks: async () => { /* ... */ },
+      createTask: async (data) => { /* ... */ },
+      // ...
+    }),
+    { name: 'everydayai_scheduled_tasks' }
+  )
+);
 ```
 
-### 6.3 智能建议（输入过程中）
+### 7.2 WebSocket 实时更新
 
-当用户输入时，下方显示推送目标的自动补全（从 wecom_chat_targets 拉取）：
+复用现有 `WebSocketContext` + `wsMessageHandlers`：
 
+```tsx
+// frontend/src/contexts/wsMessageHandlers.ts 新增
+case 'scheduled_task_started':
+  useScheduledTaskStore.getState().optimisticUpdate(data.task_id, { status: 'running' });
+  break;
+
+case 'scheduled_task_completed':
+  useScheduledTaskStore.getState().optimisticUpdate(data.task_id, {
+    status: 'active',
+    last_run_at: data.finished_at,
+    last_result: data.result,
+  });
+  toast.success(`任务「${data.name}」执行完成`);
+  break;
+
+case 'scheduled_task_failed':
+  useScheduledTaskStore.getState().optimisticUpdate(data.task_id, {
+    status: data.new_status,
+    consecutive_failures: data.consecutive_failures,
+  });
+  toast.error(`任务「${data.name}」执行失败: ${data.error}`);
+  break;
 ```
-┌─────────────────────────────────────────────┐
-│ 每天9点推销售数据到运|                        │
-├─────────────────────────────────────────────┤
-│  💬 运营群        最近活跃: 今天             │
-│  💬 运营交流群    最近活跃: 昨天             │
-└─────────────────────────────────────────────┘
-```
 
-```css
-.autocomplete-dropdown {
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: white;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  animation: dropdownFadeIn 150ms var(--ease-standard);
-  overflow: hidden;
+---
+
+## 八、TypeScript 类型定义
+
+新建 `frontend/src/types/scheduledTask.ts`：
+
+```ts
+export type TaskStatus = 'active' | 'paused' | 'error' | 'running';
+
+export interface PushTarget {
+  type: 'wecom_group' | 'wecom_user' | 'web' | 'multi';
+  chatid?: string;
+  chat_name?: string;
+  wecom_userid?: string;
+  name?: string;
+  conversation_id?: string;
+  targets?: PushTarget[];
 }
 
-@keyframes dropdownFadeIn {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
+export interface TemplateFile {
+  path: string;
+  name: string;
+  url: string;
 }
 
-.autocomplete-item {
-  padding: 8px 12px;
-  cursor: pointer;
-  transition: background var(--duration-fast) ease;
+export interface ScheduledTaskCreator {
+  name: string;
+  avatar?: string;
+  department_id?: string;
+  department_name?: string;
+  department_type?: 'ops' | 'finance' | 'warehouse' | 'service' | 'design' | 'hr';
+  position_code?: 'boss' | 'vp' | 'manager' | 'deputy' | 'member';
 }
 
-.autocomplete-item:hover {
-  background: var(--color-bg-hover);
+export interface ScheduledTask {
+  id: string;
+  org_id: string;
+  user_id: string;                  // 创建者 user_id
+  creator?: ScheduledTaskCreator;   // 后端 join 返回的创建者展示信息
+  
+  name: string;
+  prompt: string;
+  cron_expr: string;
+  cron_readable: string;
+  timezone: string;
+  
+  push_target: PushTarget;
+  template_file?: TemplateFile;
+  
+  status: TaskStatus;
+  max_credits: number;
+  retry_count: number;
+  timeout_sec: number;
+  
+  last_summary?: string;
+  last_result?: TaskRunResult;
+  
+  next_run_at?: string;
+  last_run_at?: string;
+  run_count: number;
+  consecutive_failures: number;
+  
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskRunResult {
+  status: 'success' | 'failed';
+  tokens?: number;
+  duration_ms?: number;
+  files?: Array<{ url: string; name: string }>;
+}
+
+export interface TaskRun {
+  id: string;
+  task_id: string;
+  status: 'running' | 'success' | 'failed' | 'timeout';
+  started_at: string;
+  finished_at?: string;
+  duration_ms?: number;
+  result_summary?: string;
+  result_files?: Array<{ url: string; name: string }>;
+  push_status?: 'pushed' | 'push_failed' | 'skipped';
+  error_message?: string;
+  credits_used: number;
+  tokens_used: number;
 }
 ```
 
 ---
 
-## 七、响应式适配
+## 九、响应式适配
 
-### 7.1 断点策略
+跟随现有 Tailwind v4 断点：
 
-| 断点 | 任务面板行为 |
-|------|------------|
-| **桌面 ≥1280px** | 固定右侧面板，宽度 320px |
-| **小桌面 1024-1279px** | 固定右侧面板，宽度 280px |
-| **平板 768-1023px** | 浮动面板（点击 Tab 时覆盖聊天区右侧），宽度 320px |
-| **手机 <768px** | 全屏面板（从底部滑入），占满屏幕 |
+| 断点 | 行为 |
+|------|------|
+| `md` (768px+) | Drawer 宽度 420px |
+| `<md` | Drawer 全屏覆盖（`w-full`） |
 
-### 7.2 手机端适配
-
-```
-┌───────────────────────┐
-│  ← 定时任务    [+ 新建]│
-├───────────────────────┤
-│                        │
-│  ┌──────────────────┐  │
-│  │ ✨ 描述任务...    │  │
-│  └──────────────────┘  │
-│                        │
-│  ● 每日销售日报        │
-│    09:00 · 运营群      │
-│    上次 ✅ · ▶ ⏸ ⚙    │
-│  ─────────────────────│
-│  ● 库存预警            │
-│    08:00 · 仓管群      │
-│    上次 ✅ · ▶ ⏸ ⚙    │
-│  ─────────────────────│
-│                        │
-└───────────────────────┘
-```
-
-手机端任务卡片简化为**无边框列表**（分割线替代卡片边框），减少视觉负担。
-
----
-
-## 八、空状态设计
-
-```
-┌──────────────────────────────────────┐
-│                                       │
-│          ⏰                           │
-│                                       │
-│    还没有定时任务                      │
-│                                       │
-│    让 AI 帮你自动推送日报、预警、      │
-│    周报到企微群                        │
-│                                       │
-│    ┌──────────────────────────────┐   │
-│    │ ✨ 例如: "每天9点推销售日报"  │   │
-│    └──────────────────────────────┘   │
-│                                       │
-│    或 [手动创建]                       │
-│                                       │
-└──────────────────────────────────────┘
-```
-
-```css
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 48px 24px;
-  color: var(--color-text-secondary);
-  text-align: center;
-}
-
-.empty-state-icon {
-  font-size: 48px;
-  margin-bottom: 16px;
-  animation: float 3s ease-in-out infinite;
-}
-
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-8px); }
-}
+```tsx
+className="fixed right-0 top-0 bottom-0 z-40 
+           w-full md:w-[420px]
+           bg-surface-card border-l border-border-default"
 ```
 
 ---
 
-## 九、Toast 通知
+## 十、可访问性
 
-```css
-/* 成功 Toast */
-.toast {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  background: white;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 12px 16px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  z-index: 50;
-}
+- 所有按钮带 `aria-label`
+- Drawer 打开时锁定背景滚动
+- 键盘操作：Esc 关闭面板、Tab 焦点循环
+- 复用 Radix Dialog primitive 包装 Drawer（已有）
+- 状态色不依赖单一颜色，配合图标和文字
+- `prefers-reduced-motion` 自动禁用动画（已在 animations.css 全局处理）
 
-/* 滑入 */
-.toast-enter {
-  animation: toastIn 300ms var(--ease-spring);
-}
+---
 
-@keyframes toastIn {
-  from {
-    opacity: 0;
-    transform: translateY(16px) scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
+## 十一、文件清单
 
-/* 滑出 */
-.toast-exit {
-  animation: toastOut 200ms var(--ease-exit) forwards;
-}
+### 新增文件
 
-@keyframes toastOut {
-  to {
-    opacity: 0;
-    transform: translateY(8px) scale(0.98);
-  }
-}
 ```
+frontend/src/components/scheduled-tasks/
+├── ScheduledTaskPanel.tsx       (~120 行)
+├── PanelHeader.tsx              (~30 行)
+├── TaskList.tsx                 (~80 行)
+├── TaskCard.tsx                 (~120 行)
+├── TaskForm.tsx                 (~200 行)
+├── NaturalLanguageInput.tsx     (~80 行)
+├── PushTargetSelector.tsx       (~90 行)
+├── TemplateFileUploader.tsx     (~70 行)
+├── TaskRunHistory.tsx           (~80 行)
+├── EmptyState.tsx               (~40 行)
+└── hooks/
+    ├── useScheduledTasks.ts     (~60 行)
+    └── useTaskParse.ts          (~40 行)
+
+frontend/src/stores/
+└── useScheduledTaskStore.ts     (~150 行)
+
+frontend/src/types/
+└── scheduledTask.ts             (~80 行)
+
+frontend/src/services/
+└── scheduledTaskService.ts      (~120 行)
+```
+
+### 修改文件
+
+```
+frontend/src/pages/Chat.tsx                    +5 行  (集成面板)
+frontend/src/components/chat/layout/ChatHeader.tsx  +5 行  (新增按钮)
+frontend/src/contexts/wsMessageHandlers.ts     +20 行 (WS 事件)
+```
+
+**总计**：新增 ~1360 行，修改 ~30 行
+
+---
+
+## 十二、与 V1 文档的差异
+
+| 项目 | V1 (旧) | V2 (新) |
+|------|--------|--------|
+| 颜色 | 自定义 `--color-*` 变量 | 引用 `--s-*` / `--c-*` token |
+| 主题 | 仅蓝色 | Classic/Claude/Linear 自动适配 |
+| 组件 | 自己写 | 复用 ui/ 组件 |
+| 动画 | 自定义 keyframes | 复用 motion.ts + animations.css |
+| 面板模式 | 侧边栏 Tab | 右侧 Drawer 覆盖（同 SearchPanel） |
+| 状态管理 | 未指定 | Zustand store + slices 模式 |
+| TypeScript | 未指定 | 完整类型定义 + cva variants |
+
+---
+
+## 十三、实施清单
+
+> 前置依赖：[TECH_组织架构与权限模型.md](./TECH_组织架构与权限模型.md) Phase 1 完成（成员管理面板 + PermissionChecker V1）
+
+- [ ] Phase 1：类型 + Store + Service（含 creator 字段）
+- [ ] Phase 2：基础组件（Panel + List + Card + ViewSwitcher）
+- [ ] Phase 3：表单 + 自然语言输入
+- [ ] Phase 4：模板上传 + 推送目标选择
+- [ ] Phase 5：执行历史 + WebSocket 集成
+- [ ] Phase 6：创建者徽标 + 操作权限隐藏（usePermission hook）
+- [ ] Phase 7：集成到 ChatHeader + Chat.tsx
+- [ ] Phase 8：三主题视觉验证（Classic/Claude/Linear）+ 权限场景测试（5 个职位）
