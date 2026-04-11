@@ -213,6 +213,159 @@ class TestCreateTask:
             })
         assert resp.status_code == 200
 
+    def test_create_daily_via_schedule_type(self):
+        """schedule_type=daily + time_str → 自动组装 cron"""
+        db = FakeDB()
+        app = _build_app(db)
+
+        with patch(
+            "api.routes.scheduled_tasks.check_permission",
+            new=AsyncMock(return_value=True),
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/scheduled-tasks", json={
+                "name": "每天 9 点",
+                "prompt": "test",
+                "schedule_type": "daily",
+                "time_str": "09:00",
+                "push_target": {"type": "wecom_group", "chatid": "x"},
+            })
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["schedule_type"] == "daily"
+        assert data["cron_expr"] == "0 9 * * *"
+        assert data["cron_readable"] == "每天 09:00"
+
+    def test_create_weekly_multi_days(self):
+        """schedule_type=weekly + 多个 weekdays"""
+        db = FakeDB()
+        app = _build_app(db)
+
+        with patch(
+            "api.routes.scheduled_tasks.check_permission",
+            new=AsyncMock(return_value=True),
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/scheduled-tasks", json={
+                "name": "周一三五日报",
+                "prompt": "test",
+                "schedule_type": "weekly",
+                "time_str": "09:00",
+                "weekdays": [1, 3, 5],
+                "push_target": {"type": "wecom_group", "chatid": "x"},
+            })
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["schedule_type"] == "weekly"
+        assert data["cron_expr"] == "0 9 * * 1,3,5"
+        assert data["weekdays"] == [1, 3, 5]
+
+    def test_create_monthly(self):
+        db = FakeDB()
+        app = _build_app(db)
+
+        with patch(
+            "api.routes.scheduled_tasks.check_permission",
+            new=AsyncMock(return_value=True),
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/scheduled-tasks", json={
+                "name": "每月 15 日",
+                "prompt": "test",
+                "schedule_type": "monthly",
+                "time_str": "09:00",
+                "day_of_month": 15,
+                "push_target": {"type": "wecom_group", "chatid": "x"},
+            })
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["schedule_type"] == "monthly"
+        assert data["cron_expr"] == "0 9 15 * *"
+        assert data["day_of_month"] == 15
+
+    def test_create_once(self):
+        """schedule_type=once + run_at → 单次任务，cron_expr 为 None"""
+        db = FakeDB()
+        app = _build_app(db)
+
+        with patch(
+            "api.routes.scheduled_tasks.check_permission",
+            new=AsyncMock(return_value=True),
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/scheduled-tasks", json={
+                "name": "今晚 22:00",
+                "prompt": "test",
+                "schedule_type": "once",
+                "run_at": "2099-04-15T22:00:00+08:00",
+                "push_target": {"type": "wecom_group", "chatid": "x"},
+            })
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["schedule_type"] == "once"
+        assert data["cron_expr"] is None
+        assert data["run_at"] is not None
+
+    def test_create_once_in_past_rejected(self):
+        """单次任务的 run_at 是过去时间 → 400"""
+        db = FakeDB()
+        app = _build_app(db)
+
+        with patch(
+            "api.routes.scheduled_tasks.check_permission",
+            new=AsyncMock(return_value=True),
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/scheduled-tasks", json={
+                "name": "test",
+                "prompt": "test",
+                "schedule_type": "once",
+                "run_at": "2000-01-01T09:00:00+08:00",  # 远古时间
+                "push_target": {"type": "wecom_group", "chatid": "x"},
+            })
+        assert resp.status_code == 400
+        assert "执行时间" in resp.json()["detail"]
+
+    def test_create_once_missing_run_at(self):
+        db = FakeDB()
+        app = _build_app(db)
+
+        with patch(
+            "api.routes.scheduled_tasks.check_permission",
+            new=AsyncMock(return_value=True),
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/scheduled-tasks", json={
+                "name": "test",
+                "prompt": "test",
+                "schedule_type": "once",
+                "push_target": {"type": "wecom_group", "chatid": "x"},
+            })
+        assert resp.status_code == 400
+        assert "run_at" in resp.json()["detail"]
+
+    def test_create_weekly_missing_weekdays(self):
+        db = FakeDB()
+        app = _build_app(db)
+
+        with patch(
+            "api.routes.scheduled_tasks.check_permission",
+            new=AsyncMock(return_value=True),
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/scheduled-tasks", json={
+                "name": "test",
+                "prompt": "test",
+                "schedule_type": "weekly",
+                "time_str": "09:00",
+                "push_target": {"type": "wecom_group", "chatid": "x"},
+            })
+        assert resp.status_code == 400
+
 
 # ════════════════════════════════════════════════════════
 # 1.5 _is_push_to_self 辅助函数单测（覆盖 4 个分支）
@@ -557,34 +710,62 @@ class TestRunsAndChatTargets:
 
 
 class TestParseNL:
+    """parse_nl_task 路由 — 走 LLM 解析或兜底，返回结构化字段"""
 
     def test_daily_inferred(self):
         db = FakeDB()
         app = _build_app(db)
 
+        # mock LLM 返回每日类型
+        async def fake_parse(text, tz="Asia/Shanghai"):
+            return {
+                "name": "每日销售日报",
+                "prompt": "汇总并推送销售日报",
+                "schedule_type": "daily",
+                "time_str": "09:00",
+            }
+
         with patch(
             "api.routes.scheduled_tasks.check_permission",
             new=AsyncMock(return_value=True),
+        ), patch(
+            "services.scheduler.task_nl_parser.parse_task_nl",
+            new=fake_parse,
         ):
             client = TestClient(app)
             resp = client.post("/api/scheduled-tasks/parse", json={
                 "text": "每天9点推送销售日报"
             })
         body = resp.json()["data"]
-        assert body["cron_expr"] == "0 9 * * *"
-        assert "日报" in body["name"]
+        assert body["schedule_type"] == "daily"
+        assert body["time_str"] == "09:00"
+        assert body["cron_readable"] == "每天 09:00"
 
     def test_weekly_inferred(self):
         db = FakeDB()
         app = _build_app(db)
 
+        async def fake_parse(text, tz="Asia/Shanghai"):
+            return {
+                "name": "经营周报",
+                "prompt": "汇总并推送经营周报",
+                "schedule_type": "weekly",
+                "time_str": "09:00",
+                "weekdays": [1],
+            }
+
         with patch(
             "api.routes.scheduled_tasks.check_permission",
             new=AsyncMock(return_value=True),
+        ), patch(
+            "services.scheduler.task_nl_parser.parse_task_nl",
+            new=fake_parse,
         ):
             client = TestClient(app)
             resp = client.post("/api/scheduled-tasks/parse", json={
                 "text": "每周一推经营周报"
             })
         body = resp.json()["data"]
-        assert body["cron_expr"] == "0 9 * * 1"
+        assert body["schedule_type"] == "weekly"
+        assert body["weekdays"] == [1]
+        assert body["cron_readable"] == "每周一 09:00"

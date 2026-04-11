@@ -159,15 +159,29 @@ class ScheduledTaskExecutor:
         push_status: str,
         started_at: datetime,
     ) -> None:
-        """成功收尾：更新任务 + 记录日志 + WS 推送"""
-        next_run = calc_next_run(task["cron_expr"], task.get("timezone") or "Asia/Shanghai")
+        """成功收尾：更新任务 + 记录日志 + WS 推送
+
+        单次任务（schedule_type='once'）跑完后自动暂停，next_run_at=NULL，
+        不会被 Scanner 再次领取。
+        其他类型按 cron_expr 算下次执行时间。
+        """
         now = datetime.now(timezone.utc)
         duration_ms = int((now - started_at).total_seconds() * 1000)
 
+        is_once = task.get("schedule_type") == "once"
+        if is_once:
+            next_status = "paused"
+            next_run = None
+        else:
+            next_status = "active"
+            next_run = calc_next_run(
+                task["cron_expr"], task.get("timezone") or "Asia/Shanghai"
+            )
+
         try:
             self.db.table("scheduled_tasks").update({
-                "status": "active",
-                "next_run_at": next_run.isoformat(),
+                "status": next_status,
+                "next_run_at": next_run.isoformat() if next_run else None,
                 "last_run_at": now.isoformat(),
                 "last_summary": result.summary,
                 "last_result": {
@@ -206,7 +220,7 @@ class ScheduledTaskExecutor:
             "files": result.files,
             "duration_ms": duration_ms,
             "credits_used": task["max_credits"],
-            "next_run_at": next_run.isoformat(),
+            "next_run_at": next_run.isoformat() if next_run else None,
             "push_status": push_status,
         })
 
@@ -270,10 +284,18 @@ class ScheduledTaskExecutor:
                 f"attempt={attempts_used + 1}/{retry_count}"
             )
         else:
-            # 重试用完，按 cron 正常时间继续
-            next_run = calc_next_run(task["cron_expr"], task.get("timezone") or "Asia/Shanghai")
-            update["next_run_at"] = next_run.isoformat()
-            update["status"] = "active"
+            # 重试用完
+            if task.get("schedule_type") == "once":
+                # 单次任务失败后不再调度，直接暂停
+                update["next_run_at"] = None
+                update["status"] = "paused"
+            else:
+                # 周期任务按 cron 正常时间继续
+                next_run = calc_next_run(
+                    task["cron_expr"], task.get("timezone") or "Asia/Shanghai"
+                )
+                update["next_run_at"] = next_run.isoformat()
+                update["status"] = "active"
 
         try:
             self.db.table("scheduled_tasks").update(update).eq("id", task["id"]).execute()

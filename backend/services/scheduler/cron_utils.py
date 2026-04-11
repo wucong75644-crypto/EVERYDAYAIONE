@@ -87,3 +87,73 @@ def validate_cron(cron_expr: str) -> bool:
         return True
     except (ValueError, KeyError):
         return False
+
+
+def compose_cron(
+    schedule_type: str,
+    time_str: str,
+    weekdays: Optional[list[int]] = None,
+    day_of_month: Optional[int] = None,
+) -> Optional[str]:
+    """
+    把结构化频率配置组装成 cron 表达式。
+
+    Args:
+        schedule_type: 'once' / 'daily' / 'weekly' / 'monthly' / 'cron'
+        time_str: 'HH:MM' 格式（24 小时制），once 类型不需要
+        weekdays: 周几列表，cron dow 语义 [0=日, 1=一, ..., 6=六]，
+                  weekly 类型必填
+        day_of_month: 1-31，monthly 类型必填
+
+    Returns:
+        cron 表达式字符串；'once' 类型返回 None（用 run_at 字段调度）
+
+    Raises:
+        ValueError: 参数缺失或格式不合法
+
+    Examples:
+        compose_cron('daily', '09:00') → '0 9 * * *'
+        compose_cron('weekly', '09:00', weekdays=[1, 3, 5]) → '0 9 * * 1,3,5'
+        compose_cron('monthly', '09:00', day_of_month=15) → '0 9 15 * *'
+        compose_cron('once', ...) → None
+    """
+    if schedule_type == "once":
+        return None
+
+    if schedule_type == "cron":
+        # 由调用方直接传 cron_expr，本函数不处理
+        raise ValueError("cron 类型应直接使用用户传入的 cron_expr，不调用 compose_cron")
+
+    # 解析 HH:MM
+    if not time_str or ":" not in time_str:
+        raise ValueError(f"time_str 必须是 HH:MM 格式，收到: {time_str}")
+    try:
+        hh_str, mm_str = time_str.split(":", 1)
+        hh = int(hh_str)
+        mm = int(mm_str)
+    except (ValueError, AttributeError):
+        raise ValueError(f"time_str 解析失败: {time_str}")
+    if not (0 <= hh <= 23 and 0 <= mm <= 59):
+        raise ValueError(f"time_str 超出范围: {time_str}")
+
+    if schedule_type == "daily":
+        return f"{mm} {hh} * * *"
+
+    if schedule_type == "weekly":
+        if not weekdays:
+            raise ValueError("weekly 类型必须指定 weekdays")
+        # 校验 + 排序去重
+        valid = sorted({int(d) for d in weekdays if 0 <= int(d) <= 6})
+        if not valid:
+            raise ValueError(f"weekdays 无有效值: {weekdays}")
+        dow_str = ",".join(str(d) for d in valid)
+        return f"{mm} {hh} * * {dow_str}"
+
+    if schedule_type == "monthly":
+        if day_of_month is None:
+            raise ValueError("monthly 类型必须指定 day_of_month")
+        if not (1 <= day_of_month <= 31):
+            raise ValueError(f"day_of_month 超出范围: {day_of_month}")
+        return f"{mm} {hh} {day_of_month} * *"
+
+    raise ValueError(f"未知的 schedule_type: {schedule_type}")

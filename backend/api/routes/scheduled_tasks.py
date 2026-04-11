@@ -17,7 +17,7 @@
 - POST   /scheduled-tasks/parse              自然语言解析
 """
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
@@ -28,7 +28,12 @@ from pydantic import BaseModel, Field
 from api.deps import CurrentUserId, OrgCtx, ScopedDB, Database
 from services.permissions.checker import check_permission
 from services.permissions.scope_filter import apply_data_scope
-from services.scheduler.cron_utils import calc_next_run, parse_cron_readable, validate_cron
+from services.scheduler.cron_utils import (
+    calc_next_run,
+    compose_cron,
+    parse_cron_readable,
+    validate_cron,
+)
 
 
 router = APIRouter(prefix="/scheduled-tasks", tags=["定时任务"])
@@ -54,10 +59,12 @@ class TemplateFile(BaseModel):
     url: Optional[str] = None
 
 
+ScheduleType = Literal["once", "daily", "weekly", "monthly", "cron"]
+
+
 class CreateScheduledTaskRequest(BaseModel):
     name: str = Field(..., max_length=100)
     prompt: str = Field(..., max_length=5000)
-    cron_expr: str = Field(..., max_length=50)
     timezone: str = Field(default="Asia/Shanghai", max_length=50)
     push_target: Dict[str, Any]
     template_file: Optional[Dict[str, Any]] = None
@@ -65,17 +72,35 @@ class CreateScheduledTaskRequest(BaseModel):
     retry_count: int = Field(default=1, ge=0, le=5)
     timeout_sec: int = Field(default=180, ge=10, le=600)
 
+    # 频率结构化字段（V2）
+    schedule_type: ScheduleType = "cron"
+    # cron 类型：直接传 cron_expr
+    cron_expr: Optional[str] = Field(default=None, max_length=50)
+    # daily/weekly/monthly：传 time_str + (weekdays | day_of_month)
+    time_str: Optional[str] = Field(default=None, max_length=5)  # "HH:MM"
+    weekdays: Optional[List[int]] = None  # [0=日, 1=一, ..., 6=六]
+    day_of_month: Optional[int] = Field(default=None, ge=1, le=31)
+    # once：传 run_at（ISO 8601 含时区）
+    run_at: Optional[str] = Field(default=None, max_length=64)
+
 
 class UpdateScheduledTaskRequest(BaseModel):
     name: Optional[str] = None
     prompt: Optional[str] = None
-    cron_expr: Optional[str] = None
     timezone: Optional[str] = None
     push_target: Optional[Dict[str, Any]] = None
     template_file: Optional[Dict[str, Any]] = None
     max_credits: Optional[int] = None
     retry_count: Optional[int] = None
     timeout_sec: Optional[int] = None
+
+    # 频率结构化字段（V2，可选——只有传了 schedule_type 才走重新组装逻辑）
+    schedule_type: Optional[ScheduleType] = None
+    cron_expr: Optional[str] = None
+    time_str: Optional[str] = None
+    weekdays: Optional[List[int]] = None
+    day_of_month: Optional[int] = None
+    run_at: Optional[str] = None
 
 
 class ParseNLRequest(BaseModel):
@@ -136,6 +161,86 @@ def _format_task(row: Dict[str, Any]) -> Dict[str, Any]:
     if row.get("cron_expr"):
         row["cron_readable"] = parse_cron_readable(row["cron_expr"])
     return row
+
+
+def _resolve_schedule_fields(payload: Any, tz: str) -> Dict[str, Any]:
+    """
+    把 payload 里的频率结构化字段（schedule_type / time_str / weekdays /
+    day_of_month / run_at / cron_expr）解析成 DB 写入字段。
+
+    Returns:
+        {
+            "schedule_type": str,
+            "cron_expr": Optional[str],
+            "weekdays": Optional[List[int]],
+            "day_of_month": Optional[int],
+            "run_at": Optional[str],     # ISO timestamp
+            "next_run_at": str,          # ISO timestamp，必有
+        }
+
+    Raises:
+        HTTPException 400: 参数缺失或非法
+    """
+    schedule_type = (payload.schedule_type or "cron").lower()
+
+    result: Dict[str, Any] = {
+        "schedule_type": schedule_type,
+        "cron_expr": None,
+        "weekdays": None,
+        "day_of_month": None,
+        "run_at": None,
+    }
+
+    if schedule_type == "once":
+        if not payload.run_at:
+            raise HTTPException(400, "单次任务必须指定 run_at（ISO 8601 时间）")
+        try:
+            run_at_dt = datetime.fromisoformat(payload.run_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(400, f"run_at 格式无效: {payload.run_at}")
+        if run_at_dt.tzinfo is None:
+            from zoneinfo import ZoneInfo
+            run_at_dt = run_at_dt.replace(tzinfo=ZoneInfo(tz))
+        # 不允许过去时间（留 60 秒余量给客户端时钟漂移）
+        now_utc = datetime.now(timezone.utc)
+        if run_at_dt.astimezone(timezone.utc) < now_utc - timedelta(seconds=60):
+            raise HTTPException(400, "执行时间不能早于当前时间")
+        result["run_at"] = run_at_dt.isoformat()
+        result["next_run_at"] = run_at_dt.astimezone(timezone.utc).isoformat()
+        return result
+
+    if schedule_type == "cron":
+        if not payload.cron_expr:
+            raise HTTPException(400, "cron 类型必须指定 cron_expr")
+        if not validate_cron(payload.cron_expr):
+            raise HTTPException(400, f"cron 表达式无效: {payload.cron_expr}")
+        result["cron_expr"] = payload.cron_expr
+    else:
+        # daily / weekly / monthly → 组装 cron
+        try:
+            cron = compose_cron(
+                schedule_type=schedule_type,
+                time_str=payload.time_str or "",
+                weekdays=payload.weekdays,
+                day_of_month=payload.day_of_month,
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if not cron:
+            raise HTTPException(400, f"{schedule_type} 类型无法组装 cron")
+        result["cron_expr"] = cron
+        if schedule_type == "weekly":
+            result["weekdays"] = sorted({int(d) for d in (payload.weekdays or [])})
+        if schedule_type == "monthly":
+            result["day_of_month"] = payload.day_of_month
+
+    # 计算 next_run_at
+    try:
+        next_run = calc_next_run(result["cron_expr"], tz)
+    except Exception as e:
+        raise HTTPException(400, f"计算下次执行时间失败: {e}")
+    result["next_run_at"] = next_run.isoformat()
+    return result
 
 
 async def _enrich_with_creator(db: Any, tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -227,17 +332,10 @@ async def create_task(
                 403, "无权将定时任务推送给同事或群聊（需要管理职位）"
             )
 
-    # 2. 校验 cron 表达式
-    if not validate_cron(payload.cron_expr):
-        raise HTTPException(400, f"cron 表达式无效: {payload.cron_expr}")
+    # 2. 解析频率字段（once / daily / weekly / monthly / cron）
+    schedule = _resolve_schedule_fields(payload, payload.timezone)
 
-    # 3. 计算下次执行时间
-    try:
-        next_run = calc_next_run(payload.cron_expr, payload.timezone)
-    except Exception as e:
-        raise HTTPException(400, f"计算下次执行时间失败: {e}")
-
-    # 4. 创建记录（OrgScopedDB 自动注入 org_id）
+    # 3. 创建记录（OrgScopedDB 自动注入 org_id）
     task_id = str(uuid4())
     row = {
         "id": task_id,
@@ -245,7 +343,11 @@ async def create_task(
         "user_id": user_id,
         "name": payload.name,
         "prompt": payload.prompt,
-        "cron_expr": payload.cron_expr,
+        "cron_expr": schedule["cron_expr"],
+        "schedule_type": schedule["schedule_type"],
+        "weekdays": schedule["weekdays"],
+        "day_of_month": schedule["day_of_month"],
+        "run_at": schedule["run_at"],
         "timezone": payload.timezone,
         "push_target": payload.push_target,
         "template_file": payload.template_file,
@@ -253,7 +355,7 @@ async def create_task(
         "max_credits": payload.max_credits,
         "retry_count": payload.retry_count,
         "timeout_sec": payload.timeout_sec,
-        "next_run_at": next_run.isoformat(),
+        "next_run_at": schedule["next_run_at"],
         "run_count": 0,
         "consecutive_failures": 0,
     }
@@ -381,11 +483,23 @@ async def update_task(
         update["push_target"] = payload.push_target
     if payload.template_file is not None:
         update["template_file"] = payload.template_file
-    if payload.cron_expr is not None:
+
+    # 频率字段：只有传 schedule_type 时才走重新组装；
+    # 否则只兼容老接口（仅传 cron_expr）
+    if payload.schedule_type is not None:
+        tz = payload.timezone or task.get("timezone", "Asia/Shanghai")
+        schedule = _resolve_schedule_fields(payload, tz)
+        update["schedule_type"] = schedule["schedule_type"]
+        update["cron_expr"] = schedule["cron_expr"]
+        update["weekdays"] = schedule["weekdays"]
+        update["day_of_month"] = schedule["day_of_month"]
+        update["run_at"] = schedule["run_at"]
+        update["next_run_at"] = schedule["next_run_at"]
+    elif payload.cron_expr is not None:
+        # 老接口：仅传 cron_expr 时维持向后兼容
         if not validate_cron(payload.cron_expr):
             raise HTTPException(400, "cron 表达式无效")
         update["cron_expr"] = payload.cron_expr
-        # 更新 next_run_at
         update["next_run_at"] = calc_next_run(
             payload.cron_expr, payload.timezone or task.get("timezone", "Asia/Shanghai")
         ).isoformat()
@@ -538,38 +652,41 @@ async def parse_nl_task(
     org_ctx: OrgCtx,
     db: Database,
 ) -> Dict[str, Any]:
-    """V1 简化版：返回 prompt 原文 + 默认 cron，前端补全表单
+    """LLM 解析自然语言为结构化任务字段
 
-    V2: 用 LLM 解析自然语言为结构化字段
+    返回的字段直接对应 CreateScheduledTaskRequest:
+    - name / prompt / schedule_type / time_str / weekdays / day_of_month / run_at
+
+    LLM 不可用时降级到关键词兜底，永远返回可用结果。
     """
     org_id = _require_org(org_ctx)
     if not await check_permission(db, user_id, org_id, "task.create"):
         raise HTTPException(403, "无权创建定时任务")
 
-    text = payload.text.strip()
+    from services.scheduler.task_nl_parser import parse_task_nl
+    parsed = await parse_task_nl(payload.text, tz="Asia/Shanghai")
 
-    # 简单关键词推断 cron
-    cron_expr = "0 9 * * *"  # 默认每天 9 点
-    name = "新建任务"
-
-    if "每周" in text or "周一" in text:
-        cron_expr = "0 9 * * 1"
-        name = "周报推送"
-    elif "每月" in text or "1日" in text or "1号" in text:
-        cron_expr = "0 9 1 * *"
-        name = "月报推送"
-    elif "日报" in text:
-        name = "每日报表"
-    elif "预警" in text or "警报" in text:
-        name = "数据预警"
+    # 计算 cron_readable 用于 UI 展示（only for daily/weekly/monthly）
+    cron_readable: Optional[str] = None
+    schedule_type = parsed.get("schedule_type")
+    if schedule_type in ("daily", "weekly", "monthly"):
+        try:
+            cron = compose_cron(
+                schedule_type=schedule_type,
+                time_str=parsed.get("time_str") or "09:00",
+                weekdays=parsed.get("weekdays"),
+                day_of_month=parsed.get("day_of_month"),
+            )
+            if cron:
+                cron_readable = parse_cron_readable(cron)
+        except Exception:
+            pass
 
     return {
         "success": True,
         "data": {
-            "name": name,
-            "prompt": text,
-            "cron_expr": cron_expr,
-            "cron_readable": parse_cron_readable(cron_expr),
+            **parsed,
+            "cron_readable": cron_readable,
             "suggested_target": None,
         },
     }
