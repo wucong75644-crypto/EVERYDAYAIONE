@@ -1,15 +1,14 @@
 /**
- * 模型选择器组件
+ * 模型选择器组件（V3 — framer AnimatePresence + layoutId Magic Move）
  *
- * 显示当前选中的模型，并提供下拉菜单选择其他可用模型
- *
- * 改造（V2 - 设计系统重构）：
- * - 全 token 化（跟随主题）
- * - 8+ 处内联 SVG → lucide-react
- * - 改用 useExitAnimation 统一退出动画状态机
+ * V3 升级：
+ * - popup 进出场改用 framer AnimatePresence + spring
+ * - 选中项背景用 layoutId="model-selected-bg" 共享层，切换时背景平滑滑动到新 item
+ * - 保留 useExitAnimation 移除（被 AnimatePresence 替代）
  */
 
 import { useState, useRef, useEffect } from 'react';
+import { AnimatePresence, LayoutGroup, m } from 'framer-motion';
 import {
   Sparkles,
   MessageSquare,
@@ -22,10 +21,7 @@ import {
 } from 'lucide-react';
 import { type UnifiedModel } from '../../../constants/models';
 import { isSmartModel } from '../../../constants/smartModel';
-import { useExitAnimation } from '../../../hooks/useExitAnimation';
-
-/** 退出动画时长（与 popup-exit 一致 = --duration-fast 100ms） */
-const EXIT_DURATION = 100;
+import { slideUpVariants, SOFT_SPRING } from '../../../utils/motion';
 
 interface ModelSelectorProps {
   selectedModel: UnifiedModel;
@@ -47,9 +43,6 @@ export default function ModelSelector({
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const selectorRef = useRef<HTMLDivElement>(null);
-
-  // 退出动画状态机
-  const { shouldRender, isClosing } = useExitAnimation(isOpen, EXIT_DURATION);
 
   // 点击外部关闭下拉框
   useEffect(() => {
@@ -110,43 +103,60 @@ export default function ModelSelector({
         {!locked && !loading && <ChevronDown className="w-4 h-4 text-text-tertiary" />}
       </button>
 
-      {/* 下拉菜单 */}
-      {shouldRender && (
-        <div
-          className={`absolute bottom-full mb-2 left-0 w-64 bg-surface-card rounded-lg shadow-lg border border-border-default py-2 z-30 max-h-80 overflow-y-auto ${
-            isClosing ? 'animate-popup-exit' : 'animate-popup-enter'
-          }`}
-        >
-          {availableModels.map((model) => (
-            <button
-              key={model.id}
-              onClick={() => {
-                onSelectModel(model);
-                setIsOpen(false);
-              }}
-              className={`w-full px-4 py-2.5 text-left hover:bg-hover transition-base flex items-start space-x-3 ${
-                selectedModel.id === model.id ? 'bg-hover' : ''
-              }`}
-            >
-              {/* 图标 */}
-              <div className="flex-shrink-0 mt-0.5">
-                {renderModelIcon(model, 'w-5 h-5 text-text-tertiary')}
-              </div>
+      {/* 下拉菜单（framer AnimatePresence spring） */}
+      <AnimatePresence>
+        {isOpen && (
+          <m.div
+            className="absolute bottom-full mb-2 left-0 w-64 bg-surface-card rounded-lg shadow-lg border border-border-default py-2 z-30 max-h-80 overflow-y-auto"
+            variants={slideUpVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+          >
+            {/* LayoutGroup 包裹，让 layoutId 生效 */}
+            <LayoutGroup id="model-selector">
+              {availableModels.map((model) => {
+                const isSelected = selectedModel.id === model.id;
+                return (
+                  <button
+                    key={model.id}
+                    onClick={() => {
+                      onSelectModel(model);
+                      setIsOpen(false);
+                    }}
+                    className="relative w-full px-4 py-2.5 text-left hover:bg-hover transition-base flex items-start space-x-3"
+                  >
+                    {/* 选中项背景层 — Magic Move layoutId */}
+                    {isSelected && (
+                      <m.div
+                        layoutId="model-selected-bg"
+                        className="absolute inset-0 bg-accent-light pointer-events-none"
+                        transition={SOFT_SPRING}
+                      />
+                    )}
 
-              {/* 文字信息 */}
-              <div className="flex-1 min-w-0">
-                <div className="font-medium text-sm text-text-primary">{model.name}</div>
-                <div className="text-xs text-text-tertiary mt-0.5">{model.description}</div>
-              </div>
+                    {/* 图标 */}
+                    <div className="relative flex-shrink-0 mt-0.5">
+                      {renderModelIcon(model, 'w-5 h-5 text-text-tertiary')}
+                    </div>
 
-              {/* 选中标记 */}
-              {selectedModel.id === model.id && (
-                <Check className="w-5 h-5 text-accent flex-shrink-0" />
-              )}
-            </button>
-          ))}
-        </div>
-      )}
+                    {/* 文字信息 */}
+                    <div className="relative flex-1 min-w-0">
+                      <div className="font-medium text-sm text-text-primary">{model.name}</div>
+                      <div className="text-xs text-text-tertiary mt-0.5">{model.description}</div>
+                    </div>
+
+                    {/* 选中标记 */}
+                    {isSelected && (
+                      <Check className="relative w-5 h-5 text-accent flex-shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
+            </LayoutGroup>
+          </m.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

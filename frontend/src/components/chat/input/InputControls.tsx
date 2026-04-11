@@ -6,8 +6,10 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
+import { m } from 'framer-motion';
 import { Send, Square, Settings, Upload, Brain, Paperclip } from 'lucide-react';
 import { cn } from '../../../utils/cn';
+import { SOFT_SPRING } from '../../../utils/motion';
 import {
   type UnifiedModel,
   type AspectRatio,
@@ -432,19 +434,24 @@ export default function InputControls(props: InputControlsProps) {
                 <Square className="w-4 h-4 fill-current" />
               </button>
             ) : showSendButton ? (
-              <button
+              <m.button
                 onClick={onSubmit}
                 disabled={!canSubmit || isSubmitting}
                 title={sendError || sendButtonTooltip}
+                // V3：发送按钮 spring hover/tap 反馈（苹果级触感）
+                whileHover={canSubmit && !isSubmitting ? { scale: 1.08, y: -1 } : undefined}
+                whileTap={canSubmit && !isSubmitting ? { scale: 0.92 } : undefined}
+                transition={SOFT_SPRING}
                 className={cn(
-                  'p-2.5 rounded-full transition-all',
+                  'p-2.5 rounded-full',
+                  'transition-colors duration-[var(--a-duration-normal)]',
                   sendError && 'bg-error text-text-on-accent hover:bg-error/90 shadow-md hover:shadow-lg',
                   !sendError && canSubmit && !isSubmitting && 'bg-accent text-text-on-accent hover:bg-accent-hover shadow-md hover:shadow-lg',
                   !sendError && (!canSubmit || isSubmitting) && 'bg-active text-text-disabled cursor-not-allowed',
                 )}
               >
                 <Send className="w-4 h-4" />
-              </button>
+              </m.button>
             ) : showVoiceButton ? (
               <AudioRecorder
                 isRecording={recordingState === 'recording'}
