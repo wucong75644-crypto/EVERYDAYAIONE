@@ -12,29 +12,34 @@ describe('Button', () => {
     expect(screen.getByRole('button', { name: '点击我' })).toBeInTheDocument();
   });
 
-  it('默认 variant 为 accent', () => {
+  it('默认 variant 为 accent（含 primary-bg token class）', () => {
     render(<Button>btn</Button>);
     const btn = screen.getByRole('button');
-    expect(btn.className).toContain('bg-accent');
+    expect(btn.className).toContain('c-button-primary-bg');
   });
 
-  it('支持 secondary variant', () => {
+  it('支持 secondary variant（含 secondary-bg token）', () => {
     render(<Button variant="secondary">btn</Button>);
     const btn = screen.getByRole('button');
-    expect(btn.className).toContain('bg-surface-card');
+    expect(btn.className).toContain('c-button-secondary-bg');
   });
 
-  it('支持 ghost variant', () => {
+  it('支持 ghost variant（含 ghost-bg token）', () => {
     render(<Button variant="ghost">btn</Button>);
     const btn = screen.getByRole('button');
-    expect(btn.className).toContain('bg-transparent');
-    expect(btn.className).toContain('text-text-secondary');
+    expect(btn.className).toContain('c-button-ghost-bg');
   });
 
-  it('支持 danger variant', () => {
+  it('支持 danger variant（含 danger-fg token）', () => {
     render(<Button variant="danger">btn</Button>);
     const btn = screen.getByRole('button');
-    expect(btn.className).toContain('text-error');
+    expect(btn.className).toContain('c-button-danger-fg');
+  });
+
+  it('支持 glass variant（毛玻璃）', () => {
+    render(<Button variant="glass">btn</Button>);
+    const btn = screen.getByRole('button');
+    expect(btn.className).toContain('glass');
   });
 
   it('支持 size sm/md/lg', () => {
@@ -107,9 +112,14 @@ describe('Button', () => {
     expect(btn.className).toContain('focus-visible:ring-2');
   });
 
-  it('保留 active 微缩反馈', () => {
+  it('按钮 tap/press 反馈由 framer whileTap 提供（不走 CSS active）', () => {
+    // V3 改用 framer motion whileTap={{ scale: 0.96 }}
+    // 不再有 active:scale-[0.98] CSS class，tap 反馈在运行时由 framer 注入
     render(<Button>btn</Button>);
-    expect(screen.getByRole('button').className).toContain('active:scale-[0.98]');
+    const btn = screen.getByRole('button');
+    expect(btn).toBeInTheDocument();
+    // 验证没有旧的 CSS active class
+    expect(btn.className).not.toContain('active:scale-');
   });
 
   it('支持 forwardRef', () => {

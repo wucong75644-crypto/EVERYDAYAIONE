@@ -36,10 +36,11 @@ describe('Input', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('格式不正确');
   });
 
-  it('错误状态使用 error border 样式', () => {
+  it('错误状态使用 error token border 样式', () => {
     render(<Input error="错误" />);
     const input = screen.getByRole('textbox');
-    expect(input.className).toContain('border-error');
+    // V3：class 用 border-[var(--s-error)] 形式
+    expect(input.className).toContain('s-error');
   });
 
   it('支持前置图标', () => {

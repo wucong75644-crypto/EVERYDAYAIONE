@@ -12,26 +12,33 @@ describe('Card', () => {
     expect(screen.getByText('卡片内容')).toBeInTheDocument();
   });
 
-  it('默认 variant 应用基础样式', () => {
+  it('默认 variant 含 card-bg/card-border token 和主题圆角', () => {
     const { container } = render(<Card>x</Card>);
     const card = container.firstChild as HTMLElement;
-    expect(card.className).toContain('bg-surface-card');
-    expect(card.className).toContain('border-border-default');
-    expect(card.className).toContain('rounded-xl');
+    expect(card.className).toContain('c-card-bg');
+    expect(card.className).toContain('c-card-border');
+    expect(card.className).toContain('s-radius-card');
   });
 
-  it('elevated variant 添加阴影', () => {
+  it('elevated variant 含 whisper shadow token', () => {
     const { container } = render(<Card variant="elevated">x</Card>);
     const card = container.firstChild as HTMLElement;
-    expect(card.className).toContain('shadow-md');
+    expect(card.className).toContain('s-shadow-whisper');
   });
 
-  it('interactive variant 包含 hover 样式', () => {
+  it('interactive variant 含 cursor-pointer 和 hover shadow', () => {
     const { container } = render(<Card variant="interactive">x</Card>);
     const card = container.firstChild as HTMLElement;
     expect(card.className).toContain('cursor-pointer');
-    expect(card.className).toContain('hover:shadow-md');
-    expect(card.className).toContain('hover:-translate-y-0.5');
+    expect(card.className).toContain('c-card-shadow-hover');
+    // V3 改用 framer whileHover 提供 y 偏移，CSS 不再有 hover:-translate
+    expect(card.className).not.toContain('hover:-translate-y');
+  });
+
+  it('glass variant 使用毛玻璃工具类', () => {
+    const { container } = render(<Card variant="glass">x</Card>);
+    const card = container.firstChild as HTMLElement;
+    expect(card.className).toContain('glass');
   });
 
   it('支持 padding 控制', () => {
