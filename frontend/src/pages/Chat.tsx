@@ -61,6 +61,7 @@ export default function Chat() {
   const { id: urlConversationId } = useParams<{ id?: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user, refreshUser } = useAuthStore();
+  const currentOrg = useAuthStore((s) => s.currentOrg);
 
   // 性能监控：标记组件挂载时间
   const ttiMeasured = useRef(false);
@@ -360,8 +361,10 @@ export default function Chat() {
             currentConversationId ? () => setSearchPanelOpen(true) : undefined
           }
           onOpenScheduledTasks={
-            // 仅企业用户显示定时任务入口（散客无 current_org，调 API 必 403）
-            user?.current_org
+            // 仅企业用户显示定时任务入口（散客无 currentOrg，调 API 必 403）
+            // 注：用 store 顶层的 currentOrg（驼峰），不是 user.current_org
+            // 因为 user 是从 localStorage 恢复的，老用户的 user 缓存可能没有 current_org 字段
+            currentOrg
               ? () => setScheduledTaskPanelOpen(true)
               : undefined
           }
