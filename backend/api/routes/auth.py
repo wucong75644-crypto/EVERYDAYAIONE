@@ -6,7 +6,7 @@
 
 from fastapi import APIRouter, Depends
 
-from api.deps import CurrentUser, Database
+from api.deps import CurrentUser, Database, OrgCtx
 from schemas.auth import (
     CurrentMember,
     CurrentOrgInfo,
@@ -191,12 +191,14 @@ async def login_by_org(
 @router.get("/me", response_model=UserResponse, summary="获取当前用户信息")
 async def get_current_user_info(
     current_user: CurrentUser,
+    org_ctx: OrgCtx,
     db: Database,
 ) -> dict:
     """
     获取当前登录用户的信息
 
     需要在 Header 中携带 Authorization: Bearer <token>
+    可选 X-Org-Id Header：决定 current_org 字段返回哪个企业的上下文
 
     V1.0+ 扩展返回字段：
     - current_org: 当前组织 + 成员任职信息 + 扁平化权限码
@@ -220,8 +222,10 @@ async def get_current_user_info(
     }
 
     # 当前组织信息（V1.0+ 扩展）
+    # 优先用 X-Org-Id header（OrgCtx 已校验过成员资格），
+    # 回退到 token payload 里的 current_org_id（向后兼容老 token）
     user_id = current_user["id"]
-    current_org_id = current_user.get("current_org_id")
+    current_org_id = org_ctx.org_id or current_user.get("current_org_id")
 
     if current_org_id:
         try:

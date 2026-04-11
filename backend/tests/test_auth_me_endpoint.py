@@ -66,10 +66,15 @@ class FakeDB:
         return FakeQueryBuilder([])
 
 
-def _build_app(db, current_user):
-    """构建测试 app，mock 认证依赖"""
+def _build_app(db, current_user, org_id_from_header=None):
+    """构建测试 app，mock 认证依赖
+
+    Args:
+        org_id_from_header: 模拟 X-Org-Id header 解析后的 org_id，
+                            None = 散客（无 header）
+    """
     from api.routes.auth import router
-    from api.deps import get_current_user
+    from api.deps import get_current_user, get_org_context, OrgContext
     from core.database import get_db
 
     app = FastAPI()
@@ -77,6 +82,12 @@ def _build_app(db, current_user):
 
     app.dependency_overrides[get_current_user] = lambda: current_user
     app.dependency_overrides[get_db] = lambda: db
+    # mock OrgCtx：默认散客；测试可通过 org_id_from_header 模拟带 X-Org-Id
+    app.dependency_overrides[get_org_context] = lambda: OrgContext(
+        user_id=current_user["id"],
+        org_id=org_id_from_header,
+        org_role="owner" if org_id_from_header else None,
+    )
 
     return app
 
@@ -221,3 +232,41 @@ class TestAuthMeEndpoint:
         body = resp.json()
         assert body["current_org"]["permissions"] == []
         assert body["current_org"]["member"]["data_scope"] == "self"
+
+    def test_me_uses_x_org_id_header_over_token(self):
+        """X-Org-Id header 的 org_id 优先于 token 里的 current_org_id
+
+        修复 bug: 之前 /api/auth/me 只读 token.current_org_id,
+        但前端切换企业时只更新 X-Org-Id header,token 不变。
+        导致 current_org 永远是 null,permissions 数组拿不到。
+        """
+        # token 里 current_org_id=None（模拟老 token 没这个字段）
+        user = self._make_user(current_org_id=None)
+        db = FakeDB()
+        db.add("organizations", {"id": "org_lanchuang", "name": "蓝创"})
+        db.add("org_members", [{"role": "owner"}])
+        db.add("org_members", [{"org_id": "org_lanchuang", "role": "owner"}])
+        db.add("organizations", [{"id": "org_lanchuang", "name": "蓝创"}])
+
+        with patch("api.routes.auth.get_member_context", new=AsyncMock(return_value={
+            "position_code": "boss",
+            "department_id": None,
+            "department_name": None,
+            "department_type": None,
+            "job_title": None,
+            "data_scope": "all",
+            "managed_departments": None,
+        })), patch("api.routes.auth.compute_user_permissions", new=AsyncMock(return_value=[
+            "task.view", "sys.member.edit", "sys.member.add",
+        ])):
+            # 关键：mock OrgCtx 返回有效的 org_id（来自 X-Org-Id header）
+            app = _build_app(db, user, org_id_from_header="org_lanchuang")
+            client = TestClient(app)
+            resp = client.get("/api/auth/me")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        # 应该正确返回 current_org（即使 token 里 current_org_id 为 None）
+        assert body["current_org"] is not None
+        assert body["current_org"]["id"] == "org_lanchuang"
+        assert "sys.member.edit" in body["current_org"]["permissions"]
