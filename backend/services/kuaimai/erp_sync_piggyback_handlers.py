@@ -24,6 +24,7 @@ from loguru import logger
 from services.kuaimai.erp_sync_utils import (
     _API_SEM,
     _batch_upsert,
+    _fmt_dt,
     _pick,
     _safe_ts,
 )
@@ -72,6 +73,17 @@ async def piggyback_order_log(
 
     if not all_rows:
         return 0
+
+    # 按冲突键去重：同一批内可能有重复的 (system_id, operate_time, action)，
+    # PG 单条 upsert 不允许同一行被更新两次
+    seen: set[tuple] = set()
+    deduped: list[dict] = []
+    for row in all_rows:
+        key = (row["system_id"], row["operate_time"], row["action"])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(row)
+    all_rows = deduped
 
     count = await _batch_upsert(
         svc.db, "erp_order_logs", all_rows,
