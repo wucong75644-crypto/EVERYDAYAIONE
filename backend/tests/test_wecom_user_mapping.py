@@ -140,6 +140,64 @@ class TestGetOrCreateUser:
         assert user_data["nickname"] == "企微用户_abcdefgh"
 
     @pytest.mark.asyncio
+    async def test_uses_wecom_user_get_real_name_when_available(self):
+        """未传 nickname 但企微 user/get 拿到真名 → 用真名而不是兜底
+
+        Why: 修复 2026-04 之前所有企微用户名为 '企微用户_xxxxxxxx' 的根因。
+        实现方式: 按需调 cgi-bin/user/get（不依赖全量通讯录同步）。
+        """
+        db = _make_db_mock()
+
+        # 映射查询返回空 → 走创建流程
+        db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(data=[])
+        # 用户创建返回 user_id
+        db._table_mocks["users"].execute.return_value = MagicMock(data=[{"id": "u3"}])
+
+        async def fake_fetch(d, oid, uid, **kw):
+            return "王五"
+
+        svc = WecomUserMappingService(db)
+        with patch.object(svc, "settings", MagicMock()), \
+             patch(
+                 "services.wecom.wecom_contact_api.fetch_wecom_real_name",
+                 new=fake_fetch,
+             ):
+            await svc.get_or_create_user(
+                wecom_userid="wangwu_userid", corp_id="corp",
+                org_id="org-1",
+            )
+
+        user_data = db._table_mocks["users"].insert.call_args[0][0]
+        assert user_data["nickname"] == "王五"
+
+        # 同时映射表也应写入真名
+        mapping_data = db._table_mocks["wecom_user_mappings"].insert.call_args[0][0]
+        assert mapping_data["wecom_nickname"] == "王五"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_when_user_get_returns_none(self):
+        """企微 user/get 拿不到名（如不在可见范围）→ 兜底到 '企微用户_xxx'"""
+        db = _make_db_mock()
+        db._table_mocks["wecom_user_mappings"].execute.return_value = MagicMock(data=[])
+        db._table_mocks["users"].execute.return_value = MagicMock(data=[{"id": "u4"}])
+
+        async def fake_fetch(d, oid, uid, **kw):
+            return None  # 模拟 API 失败 / 不可见
+
+        svc = WecomUserMappingService(db)
+        with patch.object(svc, "settings", MagicMock()), \
+             patch(
+                 "services.wecom.wecom_contact_api.fetch_wecom_real_name",
+                 new=fake_fetch,
+             ):
+            await svc.get_or_create_user(
+                wecom_userid="abcdefgh_long", corp_id="corp", org_id="org-1",
+            )
+
+        user_data = db._table_mocks["users"].insert.call_args[0][0]
+        assert user_data["nickname"] == "企微用户_abcdefgh"
+
+    @pytest.mark.asyncio
     async def test_db_query_error_raises(self):
         """DB 查询异常 → _find_mapping 抛异常（不再静默创建重复用户）"""
         db = _make_db_mock()
