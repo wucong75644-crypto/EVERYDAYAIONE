@@ -170,32 +170,6 @@ async def sandbox_web_search(query: str) -> str:
         await router.close()
 
 
-async def sandbox_search_knowledge(query: str) -> str:
-    """沙盒内知识库查询
-
-    Args:
-        query: 查询关键词
-
-    Returns:
-        知识库匹配结果文本
-    """
-    from services.knowledge_service import search_relevant
-
-    if not query:
-        return "查询关键词不能为空"
-
-    items = await search_relevant(query=query, limit=5)
-    if not items:
-        return f"知识库中未找到与「{query}」相关的经验"
-
-    lines = []
-    for item in items:
-        title = item.get("title", "")
-        content = item.get("content", "")
-        lines.append(f"- {title}: {content}")
-    return "\n".join(lines)
-
-
 def build_sandbox_executor(
     timeout: float = 120.0,
     max_result_chars: int = 8000,
