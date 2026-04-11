@@ -105,6 +105,41 @@ class TestScanner:
         count = await scanner.poll()
         assert count == 0
 
+    @pytest.mark.asyncio
+    async def test_claim_due_tasks_passes_correct_param_types(self):
+        """回归测试：_claim_due_tasks 传给 RPC 的参数类型必须是 datetime + int
+
+        生产 bug 复盘（commit 5bd7b86）：
+        曾经传 now.isoformat() 字符串给 PG，被推断为 unknown 类型，
+        无法匹配函数签名 (timestamptz, integer)，导致整个 scanner 死循环报错。
+
+        防御要点：
+        - p_now 必须是 datetime 对象（不是 .isoformat() 字符串）
+        - p_limit 必须是 Python int（不是 numpy int / smallint 等）
+        """
+        from datetime import datetime, timezone
+
+        db = MagicMock()
+        rpc_call = MagicMock()
+        rpc_call.execute.return_value = MagicMock(data=[])
+        db.rpc.return_value = rpc_call
+
+        scanner = ScheduledTaskScanner(db, executor=MagicMock())
+        await scanner._claim_due_tasks(datetime.now(timezone.utc), 5)
+
+        # 验证 db.rpc 被调用且参数类型正确
+        db.rpc.assert_called_once()
+        call_args = db.rpc.call_args
+        assert call_args[0][0] == "claim_due_tasks", "RPC 名称必须正确"
+        params = call_args[0][1]
+        assert isinstance(params["p_now"], datetime), \
+            f"p_now 必须是 datetime 对象，实际是 {type(params['p_now']).__name__}"
+        assert type(params["p_limit"]) is int, \
+            f"p_limit 必须是 Python int，实际是 {type(params['p_limit']).__name__}"
+        # 防止某些类型检查"通过" isinstance 但实际是子类（如 numpy.int64）
+        assert not isinstance(params["p_now"], str), \
+            "p_now 不能是字符串（生产 bug 根因）"
+
 
 # ════════════════════════════════════════════════════════
 # Task Executor
