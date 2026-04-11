@@ -4,7 +4,9 @@
  * 展示单个模型的信息、能力标签、费用和订阅按钮。
  */
 
+import { m } from 'framer-motion';
 import type { UnifiedModel } from '../../constants/models';
+import { SOFT_SPRING } from '../../utils/motion';
 
 /** 能力图标映射 */
 const CAPABILITY_TAGS: { key: string; check: (m: UnifiedModel) => boolean; label: string }[] = [
@@ -56,9 +58,13 @@ export default function ModelCard({
   };
 
   return (
-    <div
+    <m.div
       onClick={() => onCardClick(model)}
-      className={`bg-surface-card rounded-xl border cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex flex-col ${
+      // V3：spring hover 抬升 + 微 3D 倾斜（perspective-free 版本，只 y 偏移避免 jsdom 问题）
+      whileHover={{ y: -4, scale: 1.02 }}
+      whileTap={{ scale: 0.99, y: -1 }}
+      transition={SOFT_SPRING}
+      className={`bg-surface-card rounded-xl border cursor-pointer shadow-sm hover:shadow-xl transition-colors duration-[var(--a-duration-normal)] flex flex-col ${
         isSubscribed
           ? 'border-accent/30 bg-accent-light/30'
           : 'border-border-default'
@@ -123,6 +129,6 @@ export default function ModelCard({
             订阅
           </button>
         ))}
-    </div>
+    </m.div>
   );
 }
