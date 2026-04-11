@@ -89,11 +89,24 @@ class WecomUserMappingService:
 
         用户属性：
         - phone: 空（企微用户无手机号）
-        - nickname: 企微昵称或默认名
+        - nickname: 企微昵称（优先级：传入 nickname > 企微 user/get 真名 > 兜底）
         - created_by: "wecom"（标识来源）
         - credits: 100（新用户赠送）
+
+        Why 调 user/get: 企微回调 / WS 事件不带昵称，传入的 nickname
+        基本永远是 None。如果不主动查企微 API，所有新用户都会被命名为
+        "企微用户_xxxxxx"——这就是 2026-04 之前的乱码 bug 根因。
+        采用按需 user/get 而非全量同步是因为 user/get 在自建应用 token
+        + 自己可见范围内可调，无需额外通讯录权限。
+        每个企微员工只在首次发消息时调一次（之后走 _find_mapping 直接 return）。
         """
-        display_name = nickname or f"企微用户_{wecom_userid[:8]}"
+        # 优先用传入的 nickname；否则按需调 user/get 拿真名
+        real_name = nickname
+        if not real_name and org_id:
+            from services.wecom.wecom_contact_api import fetch_wecom_real_name
+            real_name = await fetch_wecom_real_name(self.db, org_id, wecom_userid)
+
+        display_name = real_name or f"企微用户_{wecom_userid[:8]}"
 
         # 创建系统用户
         user_result = (
