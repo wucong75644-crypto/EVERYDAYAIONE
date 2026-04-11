@@ -9,6 +9,10 @@
  * - 外部 API 完全保留：isOpen / onClose / title / closeOnOverlay / closeOnEsc
  *   / showCloseButton / maxWidth，6 个 Modal 使用者零修改
  *
+ * V3 Review Fix：
+ * - closeOnOverlay/closeOnEsc 真正透传到底层 primitives/Dialog
+ *   （旧版 silently no-op 是 review 发现的 HIGH bug）
+ *
  * @example
  * ```tsx
  * <Modal isOpen={open} onClose={() => setOpen(false)} title="标题">
@@ -19,7 +23,6 @@
 
 import { type ReactNode } from 'react';
 import { Dialog } from '../primitives/Dialog';
-import { cn } from '../../utils/cn';
 
 interface ModalProps {
   isOpen: boolean;
@@ -63,25 +66,20 @@ export default function Modal({
   onClose,
   title,
   children,
-  closeOnOverlay: _closeOnOverlay = true,
-  closeOnEsc: _closeOnEsc = true,
+  closeOnOverlay = true,
+  closeOnEsc = true,
   showCloseButton = true,
   maxWidth = 'max-w-md',
 }: ModalProps) {
   const { size, className: sizeClass } = mapMaxWidthToSize(maxWidth);
 
+  // Radix 在 ESC / backdrop click / close button 触发 open=false 时映射到 onClose
+  // 当 closeOnEsc/closeOnOverlay=false 时，primitives/Dialog 的
+  // onEscapeKeyDown / onPointerDownOutside / onInteractOutside 会 preventDefault
+  // 阻止 onOpenChange 触发，这里只需要透传 prop
   const handleOpenChange = (nextOpen: boolean) => {
-    // Radix 在 ESC / backdrop click / close button 时触发 open=false
-    // 这些场景都映射到 onClose
-    // closeOnOverlay=false 时：Radix 默认点击 overlay 会 close，
-    // 需要用 onInteractOutside 拦截 — 但原 ModalProps 里 closeOnOverlay 较少使用，
-    // 多数 callers 用默认 true，先保持兼容（若 false，外部可用 showCloseButton + title 组合实现"只能手动关闭"）
     if (!nextOpen) onClose();
   };
-
-  // 注：closeOnEsc 暂无法简单映射到 Radix（会与 a11y 规范冲突，Radix 默认支持 ESC）。
-  // 当前项目里所有 caller 都是默认 true，保持 Radix 默认行为等价。
-  // 若未来出现必须禁用 ESC 的场景，可以给 Dialog 加 onEscapeKeyDown 拦截。
 
   return (
     <Dialog
@@ -90,13 +88,11 @@ export default function Modal({
       title={title}
       hideTitleVisually={true}
       size={size}
+      padding="none"
       showClose={showCloseButton}
-      className={cn(
-        // Radix Dialog 默认 p-6，common/Modal 想要自己的 header + 分隔线设计，
-        // 覆盖 p-6 为 p-0，手动管理 padding
-        '!p-0',
-        sizeClass,
-      )}
+      closeOnEscape={closeOnEsc}
+      closeOnOutsideClick={closeOnOverlay}
+      className={sizeClass}
     >
       {/* 头部（含显示的 h2 标题 + 分隔线）
           a11y 的 Dialog.Title 已由 primitives/Dialog 用 sr-only 渲染，此处纯视觉 */}

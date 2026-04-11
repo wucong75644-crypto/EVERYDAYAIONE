@@ -34,11 +34,15 @@ const TRANSITION_DURATION = 350; // 与 --duration-slower 一致
 
 /**
  * 计算 colorMode 在当前环境下实际生效的明暗
+ *
+ * 特殊规则：Linear 主题是 dark-first（DESIGN.md 强调"darkness as native medium"），
+ * 用户没有显式选 light 时强制走 dark，与 index.html 同步初始化脚本保持一致。
  */
-function resolveIsDark(colorMode: ColorMode): boolean {
+function resolveIsDark(colorMode: ColorMode, theme: ThemeName = 'classic'): boolean {
   if (colorMode === 'dark') return true;
   if (colorMode === 'light') return false;
-  // system: 跟随系统偏好
+  // system 模式：Linear 强制 dark，其他主题跟随系统偏好
+  if (theme === 'linear') return true;
   return window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 
@@ -113,11 +117,14 @@ interface UseThemeReturn {
 export function useTheme(): UseThemeReturn {
   const [theme, setThemeState] = useState<ThemeName>(getInitialTheme);
   const [colorMode, setColorModeState] = useState<ColorMode>(getInitialColorMode);
-  const [isDark, setIsDark] = useState<boolean>(() => resolveIsDark(getInitialColorMode()));
+  const [isDark, setIsDark] = useState<boolean>(() =>
+    resolveIsDark(getInitialColorMode(), getInitialTheme()),
+  );
 
-  // 监听系统明暗变化（仅在 colorMode === 'system' 时生效）
+  // 监听系统明暗变化（仅在 colorMode === 'system' 且非 Linear 主题时生效）
+  // Linear 是 dark-first，system 模式下不跟随系统切换
   useEffect(() => {
-    if (colorMode !== 'system') return;
+    if (colorMode !== 'system' || theme === 'linear') return;
 
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const handleChange = (e: MediaQueryListEvent) => {
@@ -137,12 +144,15 @@ export function useTheme(): UseThemeReturn {
     } catch {
       // localStorage 不可用，状态仅在内存中
     }
-    applyTheme(next, isDark);
-  }, [isDark]);
+    // 切换主题时重新解析 isDark（Linear 主题在 system 模式下强制 dark）
+    const nextIsDark = resolveIsDark(colorMode, next);
+    setIsDark(nextIsDark);
+    applyTheme(next, nextIsDark);
+  }, [colorMode]);
 
   const setColorMode = useCallback((mode: ColorMode) => {
     enableThemeTransition();
-    const nextIsDark = resolveIsDark(mode);
+    const nextIsDark = resolveIsDark(mode, theme);
     setColorModeState(mode);
     setIsDark(nextIsDark);
     try {

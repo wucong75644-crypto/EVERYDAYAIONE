@@ -50,6 +50,8 @@ interface MessageItemProps {
   streamingThinking?: string;
   /** 思考开始时间戳 */
   thinkingStartTime?: number;
+  /** 是否启用 framer layout 动画（长对话时父级会禁用以保性能） */
+  enableLayoutAnimation?: boolean;
 }
 
 export default memo(function MessageItem({
@@ -66,6 +68,7 @@ export default memo(function MessageItem({
   agentStepHint,
   streamingThinking,
   thinkingStartTime,
+  enableLayoutAnimation = true,
 }: MessageItemProps) {
   const isUser = message.role === 'user';
 
@@ -293,8 +296,10 @@ export default memo(function MessageItem({
       data-message-id={message.id}
       className={`flex mb-4 ${isUser ? 'justify-end' : 'justify-start'} ${entryAnimationClass} ${deleteAnimationClass}`}
       // framer layout：消息删除/插入/重排时其他消息 spring 过渡到新位置
-      // 注意：保留现有的 entry/delete CSS class 动画，layout 只管"位置位移"不干扰 opacity/transform
-      layout="position"
+      // - 用 "position" 只动位置不测尺寸（流式更新友好）
+      // - 长对话（>50 条）时父级传 enableLayoutAnimation=false 完全禁用，避免布局抖动
+      // - 流式消息（isStreaming）也禁用，避免每次 delta 都触发布局测量
+      layout={enableLayoutAnimation && !isStreaming ? 'position' : false}
     >
       <div
         className={`relative flex flex-col ${isUser ? 'items-end' : 'items-start'} ${hasMedia ? 'w-full max-w-[90%]' : 'max-w-[80%]'}`}

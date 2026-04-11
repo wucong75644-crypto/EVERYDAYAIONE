@@ -68,11 +68,12 @@ describe('Dialog', () => {
         <p>无标题内容</p>
       </Dialog>,
     );
-    // Dialog 内容通过 Portal 渲染到 body，用 body.querySelector 查
-    // sr-only 的 Title 保证 Radix 不报 a11y warning
-    const srOnlyTitle = document.body.querySelector('.sr-only');
+    // Dialog 内容通过 Portal 渲染到 body，用 role 查 heading 而不是 class
+    // 注意：Radix 同时渲染 sr-only Title + sr-only Description（aria-hidden）兜底
+    // Title 是 h2 role=heading，文本是 'Dialog'
+    const srOnlyTitle = screen.getByRole('heading', { name: 'Dialog' });
     expect(srOnlyTitle).toBeInTheDocument();
-    expect(srOnlyTitle).toHaveTextContent('Dialog');
+    expect(srOnlyTitle).toHaveClass('sr-only');
   });
 
   it('点击关闭按钮触发 onOpenChange(false)', () => {

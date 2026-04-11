@@ -44,13 +44,12 @@ export default function ModelSelector({
   const [isOpen, setIsOpen] = useState(false);
   const selectorRef = useRef<HTMLDivElement>(null);
 
-  // 点击外部关闭下拉框
+  // 点击外部关闭下拉框（仅在 open 时挂载 listener，避免无效执行）
   useEffect(() => {
+    if (!isOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (selectorRef.current && !selectorRef.current.contains(e.target as Node)) {
-        if (isOpen) {
-          setIsOpen(false);
-        }
+        setIsOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
