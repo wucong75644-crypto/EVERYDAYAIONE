@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { AnimatePresence } from 'framer-motion';
 import {
   getConversationList,
   deleteConversation,
@@ -429,25 +430,28 @@ export default function ConversationList({
           <div className="px-4 py-1.5 text-xs text-text-disabled font-normal uppercase tracking-wide">
             {group}
           </div>
-          {convs.map((conv) => (
-            <ConversationItem
-              key={conv.id}
-              conv={conv}
-              currentConversationId={currentConversationId}
-              isRenaming={renameId === conv.id}
-              renameTitle={renameTitle}
-              isHovered={hoveredId === conv.id}
-              isDropdownOpen={dropdownMenu?.id === conv.id}
-              onSelect={() => onSelectConversation(conv.id, conv.title, conv.model_id)}
-              onStartRename={() => handleStartRename(conv.id, conv.title)}
-              onContextMenu={(e) => handleContextMenu(e, conv.id, conv.title)}
-              onShowDropdown={(e) => handleShowDropdown(e, conv.id, conv.title)}
-              onHoverChange={(hovered) => setHoveredId(hovered ? conv.id : null)}
-              onRenameChange={setRenameTitle}
-              onRenameSubmit={handleSubmitRename}
-              onRenameCancel={() => setRenameId(null)}
-            />
-          ))}
+          {/* AnimatePresence popLayout：删除/插入时其他 item spring 过渡到新位置 */}
+          <AnimatePresence mode="popLayout" initial={false}>
+            {convs.map((conv) => (
+              <ConversationItem
+                key={conv.id}
+                conv={conv}
+                currentConversationId={currentConversationId}
+                isRenaming={renameId === conv.id}
+                renameTitle={renameTitle}
+                isHovered={hoveredId === conv.id}
+                isDropdownOpen={dropdownMenu?.id === conv.id}
+                onSelect={() => onSelectConversation(conv.id, conv.title, conv.model_id)}
+                onStartRename={() => handleStartRename(conv.id, conv.title)}
+                onContextMenu={(e) => handleContextMenu(e, conv.id, conv.title)}
+                onShowDropdown={(e) => handleShowDropdown(e, conv.id, conv.title)}
+                onHoverChange={(hovered) => setHoveredId(hovered ? conv.id : null)}
+                onRenameChange={setRenameTitle}
+                onRenameSubmit={handleSubmitRename}
+                onRenameCancel={() => setRenameId(null)}
+              />
+            ))}
+          </AnimatePresence>
         </div>
       ))}
 

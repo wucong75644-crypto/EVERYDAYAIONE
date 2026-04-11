@@ -49,6 +49,11 @@ interface DialogProps {
   title?: ReactNode;
   /** 描述文字（aria-description） */
   description?: ReactNode;
+  /**
+   * 视觉隐藏 title（仅供屏幕阅读器）。
+   * 用于上层组件自己绘制 header 的场景（如 common/Modal 有分隔线设计）。
+   */
+  hideTitleVisually?: boolean;
   /** 弹框尺寸 */
   size?: DialogSize;
   /** Backdrop 风格 */
@@ -74,6 +79,7 @@ export function Dialog({
   onOpenChange,
   title,
   description,
+  hideTitleVisually = false,
   size = 'md',
   backdrop = 'dim',
   showClose = true,
@@ -122,17 +128,27 @@ export function Dialog({
                 animate="animate"
                 exit="exit"
               >
-                {/* 标题（可选）*/}
+                {/* 标题（可选）
+                    - hideTitleVisually=true 时渲染 sr-only（a11y 但不显示）
+                    - 默认渲染可见的 h2 */}
                 {title && (
                   <RadixDialog.Title
-                    className={cn(
-                      'text-lg text-[var(--s-text-primary)]',
-                      'mb-2 pr-8',
-                    )}
-                    style={{
-                      fontFamily: 'var(--s-font-heading)',
-                      fontWeight: 'var(--s-weight-heading)',
-                    }}
+                    className={
+                      hideTitleVisually
+                        ? 'sr-only'
+                        : cn(
+                            'text-lg text-[var(--s-text-primary)]',
+                            'mb-2 pr-8',
+                          )
+                    }
+                    style={
+                      hideTitleVisually
+                        ? undefined
+                        : {
+                            fontFamily: 'var(--s-font-heading)',
+                            fontWeight: 'var(--s-weight-heading)',
+                          }
+                    }
                   >
                     {title}
                   </RadixDialog.Title>
