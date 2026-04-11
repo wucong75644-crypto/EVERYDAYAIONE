@@ -6,6 +6,8 @@
  */
 
 import { useState, useCallback, useMemo, memo } from 'react';
+import { AnimatePresence, m } from 'framer-motion';
+import { SOFT_SPRING } from '../../../utils/motion';
 
 interface ThinkingBlockProps {
   /** 思考内容文本 */
@@ -83,14 +85,23 @@ export default memo(function ThinkingBlock({
         )}
       </button>
 
-      {/* 展开的思考内容 */}
-      {expanded && content && (
-        <div className="thinking-content mt-1 ml-4 pl-3 border-l-2 border-border-default">
-          <div className="text-sm text-text-tertiary leading-relaxed whitespace-pre-wrap">
-            {content}
-          </div>
-        </div>
-      )}
+      {/* 展开的思考内容 — V3：framer spring 展开动画（替代 CSS max-height 跳变） */}
+      <AnimatePresence initial={false}>
+        {expanded && content && (
+          <m.div
+            key="thinking-content"
+            className="thinking-content mt-1 ml-4 pl-3 border-l-2 border-border-default overflow-hidden"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={SOFT_SPRING}
+          >
+            <div className="text-sm text-text-tertiary leading-relaxed whitespace-pre-wrap">
+              {content}
+            </div>
+          </m.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 });
