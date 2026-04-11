@@ -17,6 +17,7 @@ import CategoryTabs, { type TabValue } from '../components/home/CategoryTabs';
 import ModelGrid from '../components/home/ModelGrid';
 import ModelDetailDrawer from '../components/home/ModelDetailDrawer';
 import UnsubscribeModal from '../components/home/UnsubscribeModal';
+import { PageTransition } from '../components/motion';
 
 /** 排除智能模型 auto（路由层概念，非独立模型） */
 const DISPLAY_MODELS = ALL_MODELS.filter((m) => m.id !== 'auto');
@@ -143,7 +144,7 @@ export default function Home() {
   );
 
   return (
-    <div className="min-h-screen bg-surface flex flex-col">
+    <PageTransition className="min-h-screen bg-surface flex flex-col">
       <NavBar searchQuery={searchQuery} onSearchChange={setSearchQuery} />
 
       <HeroSection
@@ -191,6 +192,6 @@ export default function Home() {
         onConfirm={handleConfirmUnsub}
         onCancel={() => setUnsubModal({ open: false, model: null })}
       />
-    </div>
+    </PageTransition>
   );
 }

@@ -16,6 +16,7 @@ import InvitationNotice from '../components/admin/InvitationNotice';
 import MessageArea from '../components/chat/message/MessageArea';
 import InputArea from '../components/chat/input/InputArea';
 import { ChatHeader } from '../components/chat/layout/ChatHeader';
+import { PageTransition } from '../components/motion';
 import { getConversation } from '../services/conversation';
 import { CONVERSATIONS_CACHE_KEY } from '../components/chat/layout/conversationUtils';
 import { useMessageCallbacks } from '../hooks/useMessageCallbacks';
@@ -290,7 +291,7 @@ export default function Chat() {
   );
 
   return (
-    <div className="h-screen flex bg-surface">
+    <PageTransition className="h-screen flex bg-surface">
       {/* 邀请通知 */}
       <InvitationNotice />
 
@@ -341,6 +342,6 @@ export default function Chat() {
           onModelChange={setCurrentSelectedModel}
         />
       </div>
-    </div>
+    </PageTransition>
   );
 }
