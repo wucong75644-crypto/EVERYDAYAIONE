@@ -27,12 +27,19 @@ from conftest import MockErpAsyncDBClient
 
 
 def _mock_svc(pages=None):
-    """创建 mock ErpSyncService（主数据处理器不需要 detail）"""
+    """创建 mock ErpSyncService（主数据处理器不需要 detail）
+
+    注意：_lock_extend_fn 默认 None，让代码走干净的 None 分支。
+    需要测续锁的测试请显式设 svc._lock_extend_fn = AsyncMock()。
+    （MagicMock 默认属性是 truthy 且 await 时会抛 TypeError，
+    会被代码 try/except 隐藏从而掩盖问题。）
+    """
     svc = MagicMock()
     svc.fetch_all_pages = AsyncMock(return_value=pages or [])
     svc.db = MockErpAsyncDBClient()
     svc.org_id = None
     svc._apply_org = lambda q: q
+    svc._lock_extend_fn = None
     return svc
 
 
@@ -612,3 +619,249 @@ class TestSyncPlatformMap:
         }]}
         svc = _mock_svc_for_platform_map(["P01"], [api_resp])
         assert await sync_platform_map(svc, START, END) == 2
+
+
+# ============================================================
+# TestSyncPlatformMapIncremental — Bug 1+2 新增覆盖
+# ============================================================
+
+
+class TestSyncPlatformMapIncremental:
+    """Bug 1+2 修复后的增量 + 异常分类行为测试
+
+    覆盖场景：
+    - checked_at 写入（成功路径 + 20150 路径）
+    - 致命错误 raise（TokenExpired / Signature）
+    - 半批降级（payload too large）
+    - 未知业务错误 → DLQ
+    - 网络/未知错误 → 不标记 + 不抛
+    """
+
+    @pytest.mark.asyncio
+    async def test_marks_checked_at_on_success(self):
+        """成功响应后整批 SKU 应被 UPDATE checked_at"""
+        from services.kuaimai.erp_sync_master_handlers import sync_platform_map
+        api_resp = {"itemOuterIdInfos": [{
+            "outerId": "SKU01",
+            "tbItemList": [{
+                "numIid": "TBN1", "userId": "shop", "title": "X",
+            }],
+        }]}
+        svc = _mock_svc_for_platform_map(["SKU01"], [api_resp])
+        await sync_platform_map(svc, START, END)
+
+        # 校验 erp_product_skus 表的 update 被调用且包含 checked_at
+        # MockErpAsyncTable 的 update() 把数据存在 self._update_data
+        sku_table = svc.db._tables["erp_product_skus"]
+        assert hasattr(sku_table, "_update_data")
+        assert "platform_map_checked_at" in sku_table._update_data
+
+    @pytest.mark.asyncio
+    async def test_marks_checked_at_on_20150_business_error(self):
+        """整批无映射（20150）也应标记 checked_at（业务正常路径）"""
+        from services.kuaimai.errors import KuaiMaiBusinessError
+        from services.kuaimai.erp_sync_master_handlers import sync_platform_map
+
+        svc = _mock_svc_for_platform_map(["SKU_NO_MAP"], [])
+        # 让 client 抛 20150
+        mock_client = MagicMock()
+        mock_client.request_with_retry = AsyncMock(
+            side_effect=KuaiMaiBusinessError(
+                message="outerIds 不存在", code="20150",
+            )
+        )
+        svc._get_client.return_value = mock_client
+
+        # 不应抛异常
+        await sync_platform_map(svc, START, END)
+
+        # checked_at 应被标记
+        sku_table = svc.db._tables["erp_product_skus"]
+        assert hasattr(sku_table, "_update_data")
+        assert "platform_map_checked_at" in sku_table._update_data
+
+    @pytest.mark.asyncio
+    async def test_token_expired_raises_to_caller(self):
+        """TokenExpiredError 必须 raise 让 _update_sync_state_error 涨 error_count"""
+        from services.kuaimai.errors import KuaiMaiTokenExpiredError
+        from services.kuaimai.erp_sync_master_handlers import sync_platform_map
+
+        svc = _mock_svc_for_platform_map(["SKU1"], [])
+        mock_client = MagicMock()
+        mock_client.request_with_retry = AsyncMock(
+            side_effect=KuaiMaiTokenExpiredError()
+        )
+        svc._get_client.return_value = mock_client
+
+        with pytest.raises(KuaiMaiTokenExpiredError):
+            await sync_platform_map(svc, START, END)
+
+    @pytest.mark.asyncio
+    async def test_signature_error_raises_to_caller(self):
+        """SignatureError 同样必须 raise 触发告警"""
+        from services.kuaimai.errors import KuaiMaiSignatureError
+        from services.kuaimai.erp_sync_master_handlers import sync_platform_map
+
+        svc = _mock_svc_for_platform_map(["SKU1"], [])
+        mock_client = MagicMock()
+        mock_client.request_with_retry = AsyncMock(
+            side_effect=KuaiMaiSignatureError()
+        )
+        svc._get_client.return_value = mock_client
+
+        with pytest.raises(KuaiMaiSignatureError):
+            await sync_platform_map(svc, START, END)
+
+    @pytest.mark.asyncio
+    async def test_network_error_skips_batch_no_mark(self):
+        """网络/未知错误：跳过此批，不抛、不标记"""
+        from services.kuaimai.erp_sync_master_handlers import sync_platform_map
+
+        svc = _mock_svc_for_platform_map(["SKU1"], [])
+        mock_client = MagicMock()
+        mock_client.request_with_retry = AsyncMock(
+            side_effect=ConnectionError("network down")
+        )
+        svc._get_client.return_value = mock_client
+
+        # 不应抛异常
+        result = await sync_platform_map(svc, START, END)
+        assert result == 0
+
+        # 这一批未被标记 checked_at（_update_data 不应存在）
+        sku_table = svc.db._tables["erp_product_skus"]
+        assert not hasattr(sku_table, "_update_data")
+
+    @pytest.mark.asyncio
+    async def test_payload_too_large_splits_batch(self):
+        """code=1 payload too large 应触发半批降级递归"""
+        from unittest.mock import patch
+        from services.kuaimai.errors import KuaiMaiBusinessError
+        from services.kuaimai.erp_sync_master_handlers import sync_platform_map
+
+        # 80 个 SKU + ROUND_FRACTION=1 让本轮处理全部 80 个
+        sku_ids = [f"S{i:03d}" for i in range(80)]
+        svc = _mock_svc_for_platform_map(sku_ids, [])
+
+        call_sizes: list[int] = []
+
+        async def fake_request(method, params):
+            ids = params["outerIds"].split(",")
+            call_sizes.append(len(ids))
+            # 第一次（80 个）触发 payload too large；后续半批成功
+            if len(ids) >= 80:
+                raise KuaiMaiBusinessError(
+                    message="Data length too large: too big",
+                    code="1",
+                )
+            return {"itemOuterIdInfos": []}
+
+        mock_client = MagicMock()
+        mock_client.request_with_retry = AsyncMock(side_effect=fake_request)
+        svc._get_client.return_value = mock_client
+
+        # patch ROUND_FRACTION 让本轮处理全部 80 个 SKU
+        # 必须 patch 实际定义模块（platform_map.py），而不是 __init__ re-export
+        with patch(
+            "services.kuaimai.erp_sync_master_handlers.platform_map._PLATFORM_MAP_ROUND_FRACTION",
+            1,
+        ):
+            await sync_platform_map(svc, START, END)
+
+        # 应该至少调用 3 次：80 失败 → 40+40 各成功
+        assert call_sizes[0] == 80
+        assert any(s == 40 for s in call_sizes[1:])
+        assert len([s for s in call_sizes if s == 40]) == 2
+
+    @pytest.mark.asyncio
+    async def test_unknown_business_error_writes_to_dlq(self):
+        """未知业务错误（非 20150 / 非 1）写入死信队列"""
+        from services.kuaimai.errors import KuaiMaiBusinessError
+        from services.kuaimai.erp_sync_master_handlers import sync_platform_map
+        from unittest.mock import patch
+
+        svc = _mock_svc_for_platform_map(["SKU_X"], [])
+        mock_client = MagicMock()
+        mock_client.request_with_retry = AsyncMock(
+            side_effect=KuaiMaiBusinessError(
+                message="unknown business error", code="99999",
+            )
+        )
+        svc._get_client.return_value = mock_client
+
+        with patch(
+            "services.kuaimai.erp_sync_dead_letter.record_dead_letter",
+            new_callable=AsyncMock,
+        ) as mock_record:
+            await sync_platform_map(svc, START, END)
+
+        mock_record.assert_called_once()
+        # 校验 doc_type / detail_method
+        kwargs = mock_record.call_args.kwargs
+        assert kwargs["doc_type"] == "platform_map_batch"
+        assert kwargs["detail_method"] == "erp.item.outerid.list.get"
+        # failed_docs 里应包含 sku_ids
+        failed = kwargs["failed_docs"]
+        assert len(failed) == 1
+        assert failed[0]["sku_ids"] == ["SKU_X"]
+        assert failed[0]["id"].startswith("pm_batch_")  # hash doc_id
+
+    @pytest.mark.asyncio
+    async def test_increment_uses_count_query_for_round_size(self):
+        """增量化：本轮处理量 = total / 4（向上取整）"""
+        from services.kuaimai.erp_sync_master_handlers import sync_platform_map
+
+        # 100 个 SKU → 本轮应取 25
+        sku_ids = [f"S{i:03d}" for i in range(100)]
+        svc = _mock_svc_for_platform_map(sku_ids, [])
+        mock_client = MagicMock()
+        # 返回空结果，让 sync 顺利跑完
+        mock_client.request_with_retry = AsyncMock(
+            return_value={"itemOuterIdInfos": []}
+        )
+        svc._get_client.return_value = mock_client
+
+        await sync_platform_map(svc, START, END)
+
+        # 至少应调过一次 API
+        assert mock_client.request_with_retry.called
+        # 第一批传入的 outerIds 数量应是 min(25, BATCH_SIZE=400) = 25
+        first_call = mock_client.request_with_retry.call_args_list[0]
+        first_outer_ids = first_call.args[1]["outerIds"].split(",")
+        assert len(first_outer_ids) == 25
+
+    @pytest.mark.asyncio
+    async def test_lock_extend_called_periodically_with_small_batch(self):
+        """续锁路径：构造 > 10 批 让 lock_extend_fn 被调到至少 1 次。
+
+        用 patch 把 BATCH_SIZE 临时设小到 10，配合 ROUND_FRACTION=1，
+        让 110 个 SKU 拆出 11 批 → 第 10 批后触发续锁。
+        """
+        from unittest.mock import patch
+        from services.kuaimai.erp_sync_master_handlers import sync_platform_map
+
+        sku_ids = [f"S{i:04d}" for i in range(110)]
+        svc = _mock_svc_for_platform_map(sku_ids, [])
+        mock_client = MagicMock()
+        mock_client.request_with_retry = AsyncMock(
+            return_value={"itemOuterIdInfos": []},
+        )
+        svc._get_client.return_value = mock_client
+
+        # 显式注入 AsyncMock 续锁回调
+        lock_extend = AsyncMock()
+        svc._lock_extend_fn = lock_extend
+
+        # patch 实际定义模块（platform_map.py），而不是 __init__ re-export
+        with patch(
+            "services.kuaimai.erp_sync_master_handlers.platform_map._PLATFORM_MAP_BATCH_SIZE",
+            10,
+        ), patch(
+            "services.kuaimai.erp_sync_master_handlers.platform_map._PLATFORM_MAP_ROUND_FRACTION",
+            1,
+        ):
+            await sync_platform_map(svc, START, END)
+
+        # 110 SKU / 10 = 11 批 → 第 10 批后触发 1 次续锁
+        # 注意：第 11 批是最后一批，(11) % 10 != 0 不触发
+        assert lock_extend.call_count == 1
