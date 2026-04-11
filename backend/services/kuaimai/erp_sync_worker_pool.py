@@ -195,8 +195,6 @@ class ErpSyncWorkerPool:
                 )
             elif sync_type == "stock_full":
                 await self._run_stock_full(org_id, client, extend_fn)
-            elif sync_type == "batch_stock":
-                await self._run_batch_stock(org_id, client, extend_fn)
             elif sync_type == "order_reconcile":
                 await self._run_order_reconcile(org_id, client, extend_fn)
             elif sync_type == "aftersale_reconcile":
@@ -284,24 +282,6 @@ class ErpSyncWorkerPool:
         count = await sync_stock_full(service)
         if count > 0:
             logger.info(f"Stock full refresh done | org_id={org_id} synced={count}")
-
-    async def _run_batch_stock(
-        self, org_id: str | None, client, extend_fn,
-    ) -> None:
-        """执行批次效期库存全量同步（遍历店铺）"""
-        from core.org_scoped_db import OrgScopedDB
-        from services.kuaimai.erp_sync_piggyback_handlers import sync_batch_stock
-        from services.kuaimai.erp_sync_service import ErpSyncService
-        scoped_db = OrgScopedDB(self.db, org_id)
-        service = ErpSyncService(
-            scoped_db,
-            lock_extend_fn=extend_fn,
-            org_id=org_id,
-            client=client,
-        )
-        count = await sync_batch_stock(service)
-        if count > 0:
-            logger.info(f"Batch stock sync done | org_id={org_id} synced={count}")
 
     async def _run_daily_maintenance(
         self, org_id: str | None, client, extend_fn,
