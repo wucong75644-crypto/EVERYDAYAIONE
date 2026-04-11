@@ -2064,3 +2064,81 @@ class TestMultiTenantSync:
             orgs = await worker._load_erp_orgs()
         assert len(orgs) == 1
         assert orgs[0][0] == "org-2"
+
+
+# ============================================================
+# TestAggregationRaceMigration — 058 advisory lock 不变量
+# ============================================================
+#
+# 058 修复 erp_aggregate_daily_stats 在 READ COMMITTED 下 DELETE+INSERT 的
+# 并发竞态（duplicate key violation）。修复方式是函数体首句加事务级 advisory
+# lock，按 (outer_id, stat_date, org_id) 串行化同 key 并发。
+#
+# 这两个测试是不变量保护：禁止后续 PR 删掉 advisory lock，或迁移与部署脚本漂移。
+# 真正的运行时行为（锁是否真的串行化）依赖 PG，单测不覆盖。
+
+
+class TestAggregationRaceMigration:
+    """058 迁移：advisory lock 静态不变量"""
+
+    _MIGRATION_PATH = (
+        Path(__file__).parent.parent
+        / "migrations"
+        / "058_fix_aggregation_race.sql"
+    )
+    _DEPLOY_INIT_PATH = (
+        Path(__file__).parent.parent.parent
+        / "deploy"
+        / "init-database.sql"
+    )
+
+    def _extract_function_body(self, sql: str, fn_name: str) -> str:
+        """从 SQL 文本中提取函数体（CREATE OR REPLACE ... $$ ... $$）"""
+        import re
+        pattern = re.compile(
+            rf"CREATE OR REPLACE FUNCTION\s+{fn_name}\s*\([^$]*?\$\$(.*?)\$\$",
+            re.DOTALL,
+        )
+        match = pattern.search(sql)
+        assert match is not None, f"Function {fn_name} not found in SQL"
+        return match.group(1)
+
+    def test_058_migration_contains_advisory_lock(self):
+        """058 迁移必须在函数体首句加 pg_advisory_xact_lock"""
+        sql = self._MIGRATION_PATH.read_text()
+        body = self._extract_function_body(sql, "erp_aggregate_daily_stats")
+
+        assert "pg_advisory_xact_lock" in body, (
+            "058 迁移必须包含 pg_advisory_xact_lock — 否则并发竞态会复发"
+        )
+        # 锁键必须包含三元组 (outer_id, stat_date, org_id) 才能正确串行化
+        assert "p_outer_id" in body and "p_stat_date" in body and "p_org_id" in body
+        # 必须用 hashtextextended（64-bit）而非 hashtext（32-bit）
+        assert "hashtextextended" in body, (
+            "应使用 hashtextextended (bigint) 避免 32-bit 哈希碰撞"
+        )
+
+    def test_advisory_lock_is_before_delete_and_insert(self):
+        """advisory lock 必须在 DELETE/INSERT 之前，否则 read-then-write 窗口仍然存在"""
+        sql = self._MIGRATION_PATH.read_text()
+        body = self._extract_function_body(sql, "erp_aggregate_daily_stats")
+
+        lock_pos = body.find("pg_advisory_xact_lock")
+        delete_pos = body.find("DELETE FROM erp_product_daily_stats")
+        insert_pos = body.find("INSERT INTO erp_product_daily_stats")
+
+        assert lock_pos != -1
+        assert delete_pos != -1 and insert_pos != -1
+        assert lock_pos < delete_pos < insert_pos, (
+            "advisory lock 必须在 DELETE/INSERT 之前；放在后面等于没加"
+        )
+
+    def test_deploy_init_database_consistent_with_migration(self):
+        """deploy/init-database.sql 必须与 058 迁移保持一致（含 advisory lock）"""
+        sql = self._DEPLOY_INIT_PATH.read_text()
+        body = self._extract_function_body(sql, "erp_aggregate_daily_stats")
+
+        assert "pg_advisory_xact_lock" in body, (
+            "deploy/init-database.sql 与 058 迁移漂移 — 新部署的库不会有锁保护"
+        )
+        assert "hashtextextended" in body
