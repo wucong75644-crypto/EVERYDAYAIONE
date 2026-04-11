@@ -72,24 +72,42 @@ class TestGetOrCreateClient:
 
     @pytest.mark.asyncio
     async def test_org_credentials_success(self):
-        """企业凭证加载成功 → 缓存并返回"""
+        """企业凭证加载成功 → 注入 token_persister + 加载 Redis 缓存 → 缓存并返回"""
         from services.kuaimai.erp_sync_dead_letter import _get_or_create_client
 
+        # 关键：load_cached_token 必须是 AsyncMock，因为 _get_or_create_client
+        # 现在会 await client.load_cached_token() 拿最新 Redis token
         mock_client = MagicMock()
+        mock_client.load_cached_token = AsyncMock()
         org_clients: dict = {}
         client_ages: dict = {}
 
-        with patch("services.org.config_resolver.AsyncOrgConfigResolver") as MockResolver, \
-             patch("services.kuaimai.client.KuaiMaiClient", return_value=mock_client):
-            MockResolver.return_value.get_erp_credentials = AsyncMock(return_value={
-                "kuaimai_app_key": "k", "kuaimai_app_secret": "s",
-                "kuaimai_access_token": "t", "kuaimai_refresh_token": "r",
-            })
-            result = await _get_or_create_client(MagicMock(), org_clients, client_ages, "org-1")
+        mock_resolver_instance = MagicMock()
+        mock_resolver_instance.get_erp_credentials = AsyncMock(return_value={
+            "kuaimai_app_key": "k", "kuaimai_app_secret": "s",
+            "kuaimai_access_token": "t", "kuaimai_refresh_token": "r",
+        })
+        mock_resolver_instance.update_erp_token = AsyncMock()
+
+        with patch(
+            "services.org.config_resolver.AsyncOrgConfigResolver",
+            return_value=mock_resolver_instance,
+        ), patch(
+            "services.kuaimai.client.KuaiMaiClient", return_value=mock_client,
+        ) as MockClient:
+            result = await _get_or_create_client(
+                MagicMock(), org_clients, client_ages, "org-1",
+            )
 
         assert result is mock_client
         assert "org-1" in org_clients
         assert "org-1" in client_ages
+        # 验证 KuaiMaiClient 被注入了 token_persister
+        ctor_kwargs = MockClient.call_args.kwargs
+        assert ctor_kwargs["org_id"] == "org-1"
+        assert ctor_kwargs["token_persister"] is not None
+        # 验证 load_cached_token 被调用了（多租户也走 Redis 热缓存）
+        mock_client.load_cached_token.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_org_credentials_failure(self):

@@ -281,11 +281,26 @@ class TestKuaiMaiClient:
 # ============================================================
 
 
+@pytest.fixture
+def mock_redis_lock():
+    """fixture: mock RedisClient.acquire_lock / release_lock 让单测不依赖真实 Redis
+
+    refresh_token() 方法引入了 SETNX 并发互斥锁。所有涉及 refresh 的测试都
+    需要 mock 这层，否则会触达真实 Redis 连接（在跨 event loop 的测试场景
+    下导致 'Event loop is closed' 错误）。
+    """
+    with patch("core.redis.RedisClient.acquire_lock", new_callable=AsyncMock) as acquire, \
+         patch("core.redis.RedisClient.release_lock", new_callable=AsyncMock) as release:
+        acquire.return_value = "fake_lock_token"
+        release.return_value = True
+        yield acquire, release
+
+
 class TestTokenRefresh:
     """Token 刷新和缓存测试"""
 
     @pytest.mark.asyncio
-    async def test_refresh_token_success(self):
+    async def test_refresh_token_success(self, mock_redis_lock):
         """Token 刷新成功"""
         client = KuaiMaiClient(
             app_key="k", app_secret="s", access_token="old_token",
@@ -316,16 +331,24 @@ class TestTokenRefresh:
 
     @pytest.mark.asyncio
     async def test_refresh_token_no_refresh_token(self):
-        """无 refresh_token 时返回 False"""
-        client = KuaiMaiClient(
-            app_key="k", app_secret="s", access_token="t",
-            refresh_token="",
-        )
-        result = await client.refresh_token()
+        """无 refresh_token 时返回 False（不依赖 Redis 锁，因为提前返回）"""
+        # 用 patch 阻止 settings 兜底降级，确保 _refresh_token 真的为空
+        with patch("services.kuaimai.client.settings") as mock_settings:
+            mock_settings.kuaimai_app_key = "k"
+            mock_settings.kuaimai_app_secret = "s"
+            mock_settings.kuaimai_access_token = "t"
+            mock_settings.kuaimai_refresh_token = ""  # 关键：不降级到 .env
+            mock_settings.kuaimai_base_url = "https://gw"
+            mock_settings.kuaimai_timeout = 10.0
+            client = KuaiMaiClient(
+                app_key="k", app_secret="s", access_token="t",
+                refresh_token="",
+            )
+            result = await client.refresh_token()
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_refresh_token_api_failure(self):
+    async def test_refresh_token_api_failure(self, mock_redis_lock):
         """API 返回失败时返回 False"""
         client = KuaiMaiClient(
             app_key="k", app_secret="s", access_token="t",
@@ -345,6 +368,179 @@ class TestTokenRefresh:
 
         result = await client.refresh_token()
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_persists_to_db_when_persister_set(
+        self, mock_redis_lock,
+    ):
+        """关键回归测试：refresh 成功后必须调用 token_persister 写回 DB
+
+        Why: 这是 2026-04-10 token 雪崩根因的修复 — 多租户分支必须双写
+        Redis + DB，否则 Redis 失效后会回退到初始死态 token。
+        """
+        persister_calls = []
+
+        async def fake_persister(org_id: str, access: str, refresh: str) -> None:
+            persister_calls.append((org_id, access, refresh))
+
+        client = KuaiMaiClient(
+            app_key="k", app_secret="s", access_token="old_token",
+            refresh_token="refresh_old", org_id="org_test_123",
+            token_persister=fake_persister,
+        )
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "success": True,
+            "session": {
+                "accessToken": "new_access_999",
+                "refreshToken": "new_refresh_999",
+            },
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        mock_http.is_closed = False
+        client._client = mock_http
+
+        with patch.object(client, "_cache_token", new_callable=AsyncMock):
+            result = await client.refresh_token()
+
+        assert result is True
+        assert client._access_token == "new_access_999"
+        assert client._refresh_token == "new_refresh_999"
+        # persister 必须被调用一次，参数完全对得上新 token
+        assert len(persister_calls) == 1
+        assert persister_calls[0] == (
+            "org_test_123", "new_access_999", "new_refresh_999",
+        )
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_no_persister_still_succeeds(
+        self, mock_redis_lock,
+    ):
+        """没注入 persister 的场景（单租户/散客）refresh 仍正常工作"""
+        client = KuaiMaiClient(
+            app_key="k", app_secret="s", access_token="old",
+            refresh_token="r", org_id=None,  # 散客模式
+            token_persister=None,
+        )
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "success": True,
+            "session": {
+                "accessToken": "new_t",
+                "refreshToken": "new_r",
+            },
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        mock_http.is_closed = False
+        client._client = mock_http
+
+        with patch.object(client, "_cache_token", new_callable=AsyncMock):
+            result = await client.refresh_token()
+
+        assert result is True
+        assert client._access_token == "new_t"
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_persister_failure_does_not_break_refresh(
+        self, mock_redis_lock,
+    ):
+        """persister 抛异常不影响 refresh 主流程（已经写入 Redis 的 token 仍生效）"""
+        async def failing_persister(org_id: str, access: str, refresh: str) -> None:
+            raise RuntimeError("DB write failed")
+
+        client = KuaiMaiClient(
+            app_key="k", app_secret="s", access_token="old",
+            refresh_token="r", org_id="org_x",
+            token_persister=failing_persister,
+        )
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "success": True,
+            "session": {
+                "accessToken": "new_t",
+                "refreshToken": "new_r",
+            },
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        mock_http.is_closed = False
+        client._client = mock_http
+
+        with patch.object(client, "_cache_token", new_callable=AsyncMock):
+            result = await client.refresh_token()
+
+        # 主流程仍然成功，新 token 已生效
+        assert result is True
+        assert client._access_token == "new_t"
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_concurrent_lock_waits_and_reads_cache(self):
+        """并发场景：拿不到锁时等待 + 从 Redis 读最新缓存"""
+        client = KuaiMaiClient(
+            app_key="k", app_secret="s", access_token="stale",
+            refresh_token="r", org_id="org_y",
+        )
+
+        # mock acquire_lock 返回 None（已被其他 worker 持有）
+        with patch("core.redis.RedisClient.acquire_lock", new_callable=AsyncMock) as acquire, \
+             patch("core.redis.RedisClient.release_lock", new_callable=AsyncMock), \
+             patch.object(client, "load_cached_token", new_callable=AsyncMock) as load_cache, \
+             patch("services.kuaimai.client.asyncio.sleep", new_callable=AsyncMock):
+            acquire.return_value = None  # 拿不到锁
+
+            # 模拟 load_cached_token 把 _access_token 更新成最新值
+            async def fake_load():
+                client._access_token = "newest_from_redis"
+            load_cache.side_effect = fake_load
+
+            result = await client.refresh_token()
+
+        assert result is True  # 拿到了 Redis 缓存的新 token
+        assert client._access_token == "newest_from_redis"
+        load_cache.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_concurrent_lock_no_new_token_returns_false(self):
+        """并发场景：拿不到锁但 Redis 也没有新 token 时返回 False（不能误导调用方）
+
+        这是审查发现的边界 bug 修复回归测试：
+        旧实现 `return bool(self._access_token)` 永远为 True，
+        即使 Redis 没拿到新 token 也告诉调用方 "成功"，会导致下一次 request
+        继续用 stale token 失败 → 错误信息混乱。
+        修复：必须比对 token 是否真的变了。
+        """
+        client = KuaiMaiClient(
+            app_key="k", app_secret="s", access_token="stale_token",
+            refresh_token="r", org_id="org_z",
+        )
+
+        with patch("core.redis.RedisClient.acquire_lock", new_callable=AsyncMock) as acquire, \
+             patch("core.redis.RedisClient.release_lock", new_callable=AsyncMock), \
+             patch.object(client, "load_cached_token", new_callable=AsyncMock) as load_cache, \
+             patch("services.kuaimai.client.asyncio.sleep", new_callable=AsyncMock):
+            acquire.return_value = None  # 拿不到锁
+
+            # 模拟 Redis 没有新 token —— load_cached_token 不改变 _access_token
+            async def fake_load_unchanged():
+                pass  # token 仍是 "stale_token"
+            load_cache.side_effect = fake_load_unchanged
+
+            result = await client.refresh_token()
+
+        # 关键断言：token 没变 → 必须返回 False
+        assert result is False, (
+            "当 Redis 没有新 token 时 refresh 必须返回 False，"
+            "否则调用方会误以为成功并用 stale token 重试"
+        )
+        assert client._access_token == "stale_token"
 
     @pytest.mark.asyncio
     async def test_load_cached_token_from_redis(self):
@@ -378,6 +574,155 @@ class TestTokenRefresh:
             await client.load_cached_token()
 
         assert client._access_token == "env_token"
+
+
+# ============================================================
+# 不变量测试 — 锁定关键架构约束防止未来回归
+# ============================================================
+# 这些测试不验证业务逻辑，而是验证"架构约束本身"，
+# 保护 2026-04-10 token 雪崩根因永远不再被复活。
+
+
+class TestMultiTenantInvariant:
+    """多租户场景下的关键不变量
+
+    Why: 2026-04-10 雪崩根因是多租户分支构造 KuaiMaiClient 时漏传 token_persister。
+    这些测试是 CI 防线，任何未来重构如果把 persister 注入丢掉，必然挂在这些测试上。
+    """
+
+    def test_client_with_org_id_warns_when_no_persister(self, caplog):
+        """咽喉处不变量：org_id 非空但 persister 为空时必须 warning"""
+        import logging
+        # loguru 桥接到 stdlib logging 才能被 caplog 捕获 — 直接 mock logger
+        with patch("services.kuaimai.client.logger") as mock_logger:
+            KuaiMaiClient(
+                app_key="k", app_secret="s", access_token="t",
+                org_id="org-123",
+                token_persister=None,  # 关键：漏传
+            )
+            # 必须有 warning 调用，且消息包含关键字
+            assert mock_logger.warning.called
+            warning_msg = str(mock_logger.warning.call_args)
+            assert "org_id but no token_persister" in warning_msg
+            assert "2026-04-10" in warning_msg  # 历史教训提示
+
+    def test_client_with_org_id_and_persister_no_warning(self):
+        """正常路径：org_id + persister 都有时不应有 warning"""
+        async def fake_persister(*args):
+            pass
+
+        with patch("services.kuaimai.client.logger") as mock_logger:
+            KuaiMaiClient(
+                app_key="k", app_secret="s", access_token="t",
+                org_id="org-123",
+                token_persister=fake_persister,
+            )
+            # 不应有不变量 warning（其他 info 日志可以有）
+            warning_calls = [
+                str(c) for c in mock_logger.warning.call_args_list
+            ]
+            assert not any(
+                "no token_persister" in c for c in warning_calls
+            )
+
+    def test_client_without_org_id_no_warning(self):
+        """散客模式：无 org_id 时无 persister 是合法的，不应 warning"""
+        with patch("services.kuaimai.client.logger") as mock_logger:
+            KuaiMaiClient(
+                app_key="k", app_secret="s", access_token="t",
+                org_id=None,
+                token_persister=None,
+            )
+            warning_calls = [
+                str(c) for c in mock_logger.warning.call_args_list
+            ]
+            assert not any(
+                "no token_persister" in c for c in warning_calls
+            )
+
+    def test_all_production_construction_sites_inject_persister(self):
+        """穷举不变量：所有生产代码里的 KuaiMaiClient(...) 多租户分支必须传 token_persister
+
+        这个测试在源码层面 grep 所有非测试构造点，确保多租户分支一定有
+        token_persister 关键字。任何未来在 services/ 或 api/ 下加新的
+        多租户构造点如果忘了传 persister，会被这个测试拦住。
+        """
+        import re
+        from pathlib import Path
+
+        project_root = Path(__file__).resolve().parents[1]
+        # 排除 tests/ 和 scripts/ 目录
+        scan_dirs = [project_root / "services", project_root / "api"]
+
+        violations = []
+        for d in scan_dirs:
+            if not d.exists():
+                continue
+            for py_file in d.rglob("*.py"):
+                content = py_file.read_text(encoding="utf-8")
+                # 找所有 KuaiMaiClient( ... ) 构造调用
+                # 用 ( ... ) 配对简单点：找 KuaiMaiClient( 开头到对应右括号
+                for match in re.finditer(r"KuaiMaiClient\s*\(", content):
+                    start = match.end()
+                    # 简单括号配对
+                    depth = 1
+                    i = start
+                    while i < len(content) and depth > 0:
+                        if content[i] == "(":
+                            depth += 1
+                        elif content[i] == ")":
+                            depth -= 1
+                        i += 1
+                    if depth != 0:
+                        continue
+                    call_body = content[start:i - 1]
+                    # 跳过空构造（散客模式 KuaiMaiClient()）
+                    if not call_body.strip():
+                        continue
+                    # 多租户标志：传了 org_id= 的构造
+                    if "org_id=" in call_body:
+                        if "token_persister=" not in call_body:
+                            violations.append(
+                                f"{py_file.relative_to(project_root)}: "
+                                f"KuaiMaiClient({call_body[:80]}...) 传了 org_id 但漏 token_persister"
+                            )
+
+        assert not violations, (
+            f"发现 {len(violations)} 处多租户 KuaiMaiClient 构造漏注入 token_persister，"
+            f"会导致 2026-04-10 token 雪崩根因复活：\n" + "\n".join(violations)
+        )
+
+    def test_access_token_assignment_only_in_client_module(self):
+        """穷举不变量：_access_token 只能在 client.py 内部被赋值
+
+        防止未来有人在外部模块直接 client._access_token = "xxx" 绕过
+        持久化路径。这种"曲线救国"看似无害，实际上会让 refresh 链路
+        的所有保护层（Redis cache + DB persist + 并发锁）全部失效。
+        """
+        import re
+        from pathlib import Path
+
+        project_root = Path(__file__).resolve().parents[1]
+        scan_dirs = [project_root / "services", project_root / "api"]
+
+        violations = []
+        for d in scan_dirs:
+            for py_file in d.rglob("*.py"):
+                # 只允许 client.py 自己写
+                if py_file.name == "client.py" and py_file.parent.name == "kuaimai":
+                    continue
+                content = py_file.read_text(encoding="utf-8")
+                # 匹配 X._access_token = ...（注意不是读取）
+                for m in re.finditer(r"\._access_token\s*=(?!=)", content):
+                    line_no = content[: m.start()].count("\n") + 1
+                    violations.append(
+                        f"{py_file.relative_to(project_root)}:{line_no}"
+                    )
+
+        assert not violations, (
+            "_access_token 只允许 client.py 内部赋值，外部直接写会绕过 "
+            "Redis/DB 双写闭环：\n" + "\n".join(violations)
+        )
 
 
 # ============================================================

@@ -308,6 +308,34 @@ class TestOrgConfigResolver:
         orgs = resolver.list_orgs_with_wecom_bot()
         assert orgs == []
 
+    def test_update_erp_token_sync_persists_both_keys(self, resolver):
+        """同步版 update_erp_token 测试（供 erp_tool_executor 用）"""
+        upsert_calls = []
+
+        class SpyBuilder:
+            def upsert(self, data, on_conflict=""):
+                upsert_calls.append({"data": data, "on_conflict": on_conflict})
+                return self
+            def execute(self):
+                return MagicMock(data=[])
+
+        class SpyDB:
+            def table(self, name):
+                assert name == "org_configs"
+                return SpyBuilder()
+
+        resolver.db = SpyDB()
+        resolver.update_erp_token(
+            "org-sync", "access_v2", "refresh_v2",
+        )
+
+        assert len(upsert_calls) == 2
+        keys = {c["data"]["config_key"] for c in upsert_calls}
+        assert keys == {"kuaimai_access_token", "kuaimai_refresh_token"}
+        for call in upsert_calls:
+            assert call["data"]["updated_by"] is None
+            assert call["on_conflict"] == "org_id,config_key"
+
     def test_encrypt_key_not_configured_returns_fallback(self, db):
         """加密密钥未配置时 _load_encrypted 静默失败，非企业key降级到 settings"""
         with patch("services.org.config_resolver.get_settings") as mock_settings:
@@ -479,3 +507,65 @@ class TestAsyncOrgConfigResolver:
         # 用非企业专属 key 测试降级逻辑
         result = await resolver.get("org-1", "some_ai_key")
         assert result == "system_ai_default"
+
+    @pytest.mark.asyncio
+    async def test_update_erp_token_persists_both_keys(self, resolver):
+        """关键回归测试：update_erp_token 必须 upsert access + refresh 两个 key
+
+        Why: 这是 2026-04-10 token 雪崩根因的修复核心 — 自动 refresh 后必须
+        把新 token 加密回写到 org_configs，否则下次 client 重建会回到死态。
+        """
+        # 用 SpyDB 记录 upsert 调用
+        upsert_calls = []
+
+        class SpyBuilder:
+            def upsert(self, data, on_conflict=""):
+                upsert_calls.append({"data": data, "on_conflict": on_conflict})
+                return self
+            async def execute(self):
+                return MagicMock(data=[])
+
+        class SpyDB:
+            def table(self, name):
+                assert name == "org_configs"
+                return SpyBuilder()
+
+        # 替换 resolver 的 db
+        resolver.db = SpyDB()
+
+        await resolver.update_erp_token(
+            "org-spy", "new_access_xyz", "new_refresh_abc",
+        )
+
+        # 必须写入 access + refresh 两条记录
+        assert len(upsert_calls) == 2
+        keys = {c["data"]["config_key"] for c in upsert_calls}
+        assert keys == {"kuaimai_access_token", "kuaimai_refresh_token"}
+
+        # 验证 on_conflict 是复合唯一键
+        from datetime import datetime, timezone
+        for call in upsert_calls:
+            assert call["on_conflict"] == "org_id,config_key"
+            assert call["data"]["org_id"] == "org-spy"
+            assert call["data"]["updated_by"] is None  # 系统自动刷新无用户上下文
+            # 加密后的值不应等于原文（验证经过 AES）
+            assert call["data"]["config_value_encrypted"] not in (
+                "new_access_xyz", "new_refresh_abc",
+            )
+            # 必须显式传 updated_at（UPSERT 不会刷新列默认值）
+            assert "updated_at" in call["data"], (
+                "updated_at 必须显式传入，否则 UPSERT 触发 ON CONFLICT 时不会刷新"
+            )
+            assert isinstance(call["data"]["updated_at"], datetime)
+            assert call["data"]["updated_at"].tzinfo is not None  # 必须 timezone-aware
+
+        # 解密验证：能反向解出原文
+        from core.crypto import aes_decrypt
+        access_call = next(
+            c for c in upsert_calls
+            if c["data"]["config_key"] == "kuaimai_access_token"
+        )
+        decrypted = aes_decrypt(
+            access_call["data"]["config_value_encrypted"], TEST_KEY,
+        )
+        assert decrypted == "new_access_xyz"

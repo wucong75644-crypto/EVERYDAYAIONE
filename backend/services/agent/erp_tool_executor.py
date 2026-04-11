@@ -154,7 +154,7 @@ class ErpToolMixin:
             await dispatcher.close()
 
     async def _get_erp_dispatcher(self):
-        """获取ERP调度器实例，企业用户优先用企业凭证"""
+        """获取ERP调度器实例，企业用户优先用企业凭证（带 token 双写闭环）"""
         from services.kuaimai.client import KuaiMaiClient
         from services.kuaimai.dispatcher import ErpDispatcher
 
@@ -163,13 +163,25 @@ class ErpToolMixin:
                 from services.org.config_resolver import OrgConfigResolver
                 resolver = OrgConfigResolver(self.db)
                 creds = resolver.get_erp_credentials(self.org_id)
+
+                # token 双写闭环：refresh 后回写 DB
+                # 注意：这里的 resolver 是同步版，但 client 调 persister 是 async，
+                # 用 asyncio.to_thread 把同步 set 包装成 async 调用
+                import asyncio as _asyncio
+                async def _persist(oid: str, access: str, refresh: str) -> None:
+                    await _asyncio.to_thread(
+                        resolver.update_erp_token, oid, access, refresh,
+                    )
+
                 client = KuaiMaiClient(
                     app_key=creds["kuaimai_app_key"],
                     app_secret=creds["kuaimai_app_secret"],
                     access_token=creds["kuaimai_access_token"],
                     refresh_token=creds["kuaimai_refresh_token"],
                     org_id=self.org_id,
+                    token_persister=_persist,
                 )
+                await client.load_cached_token()  # 从 Redis 拿最新热缓存
                 return ErpDispatcher(client)
             except ValueError as e:
                 return str(e)
