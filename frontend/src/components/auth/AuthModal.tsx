@@ -6,10 +6,12 @@
  */
 
 import { useMemo } from 'react';
+import { AnimatePresence, m } from 'framer-motion';
 import Modal from '../common/Modal';
 import LoginForm from './LoginForm';
 import RegisterForm from './RegisterForm';
 import { useAuthModalStore } from '../../stores/useAuthModalStore';
+import { APPLE_EASE, EXIT_EASE } from '../../utils/motion';
 
 export default function AuthModal() {
   const { isOpen, mode, close, switchMode } = useAuthModalStore();
@@ -36,18 +38,30 @@ export default function AuthModal() {
       title={mode === 'login' ? (urlOrgId ? '企业登录' : '用户登录') : '用户注册'}
       maxWidth="max-w-md"
     >
-      {mode === 'login' ? (
-        <LoginForm
-          onSuccess={handleSuccess}
-          onSwitchToRegister={handleSwitchMode}
-          orgId={urlOrgId}
-        />
-      ) : (
-        <RegisterForm
-          onSuccess={handleSuccess}
-          onSwitchToLogin={handleSwitchMode}
-        />
-      )}
+      {/* V3：登录/注册切换用 framer crossfade
+          AnimatePresence mode="wait" 确保旧表单退出后再插入新表单
+          mode 作为 key 触发 enter/exit */}
+      <AnimatePresence mode="wait">
+        <m.div
+          key={mode}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0, transition: APPLE_EASE }}
+          exit={{ opacity: 0, y: -8, transition: EXIT_EASE }}
+        >
+          {mode === 'login' ? (
+            <LoginForm
+              onSuccess={handleSuccess}
+              onSwitchToRegister={handleSwitchMode}
+              orgId={urlOrgId}
+            />
+          ) : (
+            <RegisterForm
+              onSuccess={handleSuccess}
+              onSwitchToLogin={handleSwitchMode}
+            />
+          )}
+        </m.div>
+      </AnimatePresence>
     </Modal>
   );
 }
