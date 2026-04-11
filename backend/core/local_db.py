@@ -531,10 +531,13 @@ class LocalDBClient:
             conninfo=database_url,
             min_size=min_size,
             max_size=max_size,
-            kwargs={"row_factory": dict_row},
+            # options="-c timezone=Asia/Shanghai" 强制 PG session TZ 与 systemd TZ 解耦
+            # 防止迁云数据库 / Docker / 主从异地复制时 doc_created_at::date 等
+            # session-TZ-依赖的 cast 行为出错
+            kwargs={"row_factory": dict_row, "options": "-c timezone=Asia/Shanghai"},
             open=True,
         )
-        logger.info(f"LocalDB 连接池已创建 | min={min_size} max={max_size}")
+        logger.info(f"LocalDB 连接池已创建 | min={min_size} max={max_size} | tz=Asia/Shanghai")
 
     def table(self, table_name: str) -> QueryBuilder:
         return QueryBuilder(self._pool, table_name)
@@ -661,7 +664,10 @@ class AsyncLocalDBClient:
             conninfo=database_url,
             min_size=min_size,
             max_size=max_size,
-            kwargs={"row_factory": dict_row},
+            # options="-c timezone=Asia/Shanghai" 强制 PG session TZ 与 systemd TZ 解耦
+            # 防止迁云数据库 / Docker / 主从异地复制时 doc_created_at::date 等
+            # session-TZ-依赖的 cast 行为出错
+            kwargs={"row_factory": dict_row, "options": "-c timezone=Asia/Shanghai"},
             open=False,
         )
         self._min_size = min_size
