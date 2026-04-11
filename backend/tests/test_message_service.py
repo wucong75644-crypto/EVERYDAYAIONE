@@ -100,7 +100,7 @@ class TestMessageServiceGet:
 
     @pytest.mark.asyncio
     async def test_get_messages_success(self, message_service, mock_db):
-        """测试：获取消息列表"""
+        """测试：获取消息列表（首页 offset=0）"""
         # Arrange
         user = create_test_user()
         conversation = create_test_conversation(user_id=user["id"])
@@ -110,13 +110,13 @@ class TestMessageServiceGet:
         ]
         mock_db.set_table_data("messages", messages)
 
-        # Mock 链式调用
-        mock_query = MagicMock()
+        # Mock 链式调用 — PostgREST QueryBuilder 没有 .offset 方法，
+        # 必须用 .range(start, end)。spec 限制 mock attr 防止意外通过。
+        mock_query = MagicMock(spec=["select", "eq", "order", "range", "execute"])
         mock_query.select.return_value = mock_query
         mock_query.eq.return_value = mock_query
         mock_query.order.return_value = mock_query
-        mock_query.limit.return_value = mock_query
-        mock_query.offset.return_value = mock_query
+        mock_query.range.return_value = mock_query
         mock_query.execute.return_value = MagicMock(data=messages)
         mock_db.table = MagicMock(return_value=mock_query)
 
@@ -135,6 +135,87 @@ class TestMessageServiceGet:
         # Assert
         assert "messages" in result
         assert result["total"] == 2
+        # 验证使用 .range(0, 49) 而非 .offset() — 防止 .offset bug 回归
+        mock_query.range.assert_called_once_with(0, 49)
+
+    @pytest.mark.asyncio
+    async def test_get_messages_pagination_uses_range_not_offset(
+        self, message_service, mock_db
+    ):
+        """回归测试：翻页（offset>0）必须用 .range(start, end) 而非 .offset()
+
+        历史 bug：PostgREST QueryBuilder 没有 .offset() 方法，
+        旧代码 query.offset(offset) 在生产 offset>0 时全部 500。
+        本测试用 spec 严格 mock，确保未来不会再次调到不存在的 .offset。
+        """
+        # Arrange
+        user = create_test_user()
+        conversation = create_test_conversation(user_id=user["id"])
+        messages = [
+            create_test_message(conversation_id=conversation["id"], content=f"消息{i}")
+            for i in range(30)
+        ]
+
+        # spec 严格限制 mock 可调用的方法：没有 offset
+        # 如果生产代码再次调 .offset()，spec mock 会抛 AttributeError
+        mock_query = MagicMock(spec=["select", "eq", "order", "range", "execute"])
+        mock_query.select.return_value = mock_query
+        mock_query.eq.return_value = mock_query
+        mock_query.order.return_value = mock_query
+        mock_query.range.return_value = mock_query
+        mock_query.execute.return_value = MagicMock(data=messages)
+        mock_db.table = MagicMock(return_value=mock_query)
+
+        with patch.object(
+            message_service.conversation_service,
+            "get_conversation",
+            return_value=conversation,
+        ):
+            # Act：第二页（offset=30 limit=30）
+            result = await message_service.get_messages(
+                conversation_id=conversation["id"],
+                user_id=user["id"],
+                limit=30,
+                offset=30,
+            )
+
+        # Assert
+        assert result["total"] == 30
+        # range 是闭区间，offset=30 limit=30 → range(30, 59)
+        mock_query.range.assert_called_once_with(30, 59)
+        # 严格断言 .offset 从未被调用（spec 已经会抛 AttributeError，这里双保险）
+        assert not hasattr(mock_query, "offset") or not mock_query.offset.called
+
+    @pytest.mark.asyncio
+    async def test_get_messages_offset_zero_starts_from_beginning(
+        self, message_service, mock_db
+    ):
+        """边界测试：offset=0 时 range 从 0 开始"""
+        user = create_test_user()
+        conversation = create_test_conversation(user_id=user["id"])
+        messages = [create_test_message(conversation_id=conversation["id"])]
+
+        mock_query = MagicMock(spec=["select", "eq", "order", "range", "execute"])
+        mock_query.select.return_value = mock_query
+        mock_query.eq.return_value = mock_query
+        mock_query.order.return_value = mock_query
+        mock_query.range.return_value = mock_query
+        mock_query.execute.return_value = MagicMock(data=messages)
+        mock_db.table = MagicMock(return_value=mock_query)
+
+        with patch.object(
+            message_service.conversation_service,
+            "get_conversation",
+            return_value=conversation,
+        ):
+            await message_service.get_messages(
+                conversation_id=conversation["id"],
+                user_id=user["id"],
+                limit=10,
+                offset=0,
+            )
+
+        mock_query.range.assert_called_once_with(0, 9)
 
     @pytest.mark.asyncio
     async def test_get_message_success(self, message_service, mock_db):

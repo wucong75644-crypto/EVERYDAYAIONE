@@ -79,10 +79,13 @@ class MessageService:
                     "offset": offset,
                 }
 
+            # PostgREST QueryBuilder 没有 .offset() 方法，必须用 .range(start, end)
+            # range 是闭区间：range(0, 29) 取 30 条 / range(30, 59) 取下一页 30 条
+            # 注意：如果同时调用 .limit() 和 .range()，range 会覆盖 limit，所以二选一
             if limit > 0:
-                query = query.limit(limit)
-            if offset:
-                query = query.offset(offset)
+                start = offset
+                end = offset + limit - 1
+                query = query.range(start, end)
 
             result = query.execute()
 
