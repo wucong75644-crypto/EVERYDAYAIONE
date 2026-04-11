@@ -5,6 +5,11 @@ detail API 调用失败时，将单据信息写入 erp_sync_dead_letter 表。
 独立消费者协程以指数退避策略异步重试，不阻塞主同步流程。
 
 设计参考：Queue-Based Exponential Backoff + DLQ Pattern
+
+# TODO(time-context): 多处 ``datetime.now().isoformat()`` 用于死信
+# 状态时间戳（updated_at/created_at/next_retry_at）写入 DB。
+# 应迁移到 ``utils.time_context.now_cn()`` 统一为带时区时间戳。
+# 不在 PR1/PR2/PR3 范围。详见 §17.2 T1
 """
 
 from __future__ import annotations

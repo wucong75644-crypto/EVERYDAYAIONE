@@ -83,6 +83,29 @@ class TestBudgetLevels:
         wrapped = wrap_erp_agent_result(result)
         assert "⚠ 输出已截断" in wrapped
 
+    def test_erp_agent_result_pass_through_envelope(self):
+        """wrap_erp_agent_result 包裹 pass-through 提示词，
+        防止主 Agent 重述时改写结构化时间块。
+        """
+        result = "[当前期] 2026-04-10 周五（今天） 订单 1769 笔"
+        wrapped = wrap_erp_agent_result(result)
+        # 必须包含 envelope
+        assert "─── ERP 结果开始 ───" in wrapped
+        assert "─── ERP 结果结束 ───" in wrapped
+        # 必须含 pass-through 强约束
+        assert "禁止改写" in wrapped
+        assert "逐字保留" in wrapped
+        # 原结果完整保留
+        assert result in wrapped
+
+    def test_erp_agent_result_empty_no_envelope(self):
+        """空结果不加 envelope，避免发送"只有提示没数据"的奇怪回复。"""
+        wrapped = wrap_erp_agent_result("")
+        assert wrapped == ""
+        wrapped = wrap_erp_agent_result("   ")
+        # whitespace-only 也按空处理
+        assert "─── ERP 结果开始 ───" not in wrapped
+
     def test_erp_agent_budget_larger_than_main(self):
         assert ERP_AGENT_BUDGET > MAIN_AGENT_BUDGET
 

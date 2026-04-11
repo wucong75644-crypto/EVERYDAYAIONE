@@ -21,6 +21,7 @@ from services.kuaimai.erp_sync_handlers import (
     _build_order_rows,
 )
 from services.kuaimai.erp_sync_utils import _fmt_dt
+from utils.time_context import now_cn
 
 if TYPE_CHECKING:
     from services.kuaimai.erp_sync_service import ErpSyncService
@@ -34,8 +35,13 @@ _ALLOWED_TIME_COLS = frozenset({"pay_time", "doc_modified_at", "doc_created_at"}
 
 
 def _yesterday_range() -> tuple[datetime, datetime]:
-    """返回昨天 00:00 ~ 今天 00:00"""
-    now = datetime.now()
+    """返回昨天 00:00 ~ 今天 00:00（北京时间，aware datetime）。
+
+    旧实现用 ``datetime.now()`` 无时区，依赖 OS 时区导致：
+    - 容器 TZ=UTC 时凌晨对账查的是 UTC 昨天 = 北京时间 8:00–32:00，丢数据
+    - PR3 修复：统一改用 ``utils.time_context.now_cn()``。
+    """
+    now = now_cn()
     yesterday = (now - timedelta(days=1)).replace(
         hour=0, minute=0, second=0, microsecond=0,
     )

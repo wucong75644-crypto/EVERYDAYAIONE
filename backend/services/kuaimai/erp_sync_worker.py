@@ -5,6 +5,11 @@ ERP 数据本地索引同步 Worker
 通过 Redis 分布式锁保证多 Worker 部署下只有一个实例执行同步。
 
 设计文档: docs/document/TECH_ERP数据本地索引系统.md §7.0
+
+# TODO(time-context): 本文件中所有 ``datetime.now()`` 是 sync 调度内部
+# 状态时间戳（互相比较 elapsed，不进入 LLM 上下文，不影响业务正确性）。
+# 应迁移到 ``utils.time_context.now_cn()`` 统一时区语义，但属于工程清理任务，
+# 不在 PR1/PR2/PR3 范围。详见 docs/document/TECH_ERP时间准确性架构.md §17.2 T1
 """
 
 import asyncio
