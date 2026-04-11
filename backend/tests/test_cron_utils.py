@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from services.scheduler.cron_utils import (
     calc_next_run,
+    compose_cron,
     parse_cron_readable,
     validate_cron,
 )
@@ -98,3 +99,78 @@ class TestCalcNextRun:
         assert next_local.month == 5
         assert next_local.day == 1
         assert next_local.hour == 9
+
+
+# ════════════════════════════════════════════════════════════════
+# compose_cron — 结构化频率组装
+# ════════════════════════════════════════════════════════════════
+
+class TestComposeCron:
+    def test_once_returns_none(self):
+        assert compose_cron("once", "22:00") is None
+
+    def test_daily(self):
+        assert compose_cron("daily", "09:00") == "0 9 * * *"
+        assert compose_cron("daily", "22:30") == "30 22 * * *"
+        assert compose_cron("daily", "00:00") == "0 0 * * *"
+
+    def test_weekly_single_day(self):
+        assert compose_cron("weekly", "09:00", weekdays=[1]) == "0 9 * * 1"
+
+    def test_weekly_multiple_days(self):
+        # 周一三五
+        assert compose_cron("weekly", "09:00", weekdays=[1, 3, 5]) == "0 9 * * 1,3,5"
+
+    def test_weekly_dedup_and_sort(self):
+        # 重复 + 乱序 → 自动去重 + 排序
+        assert compose_cron("weekly", "09:00", weekdays=[5, 1, 1, 3]) == "0 9 * * 1,3,5"
+
+    def test_weekly_missing_weekdays_raises(self):
+        with pytest.raises(ValueError, match="weekdays"):
+            compose_cron("weekly", "09:00")
+
+    def test_weekly_invalid_weekday_filtered(self):
+        # 7 / -1 这种非法值会被过滤掉
+        with pytest.raises(ValueError, match="weekdays"):
+            compose_cron("weekly", "09:00", weekdays=[7, -1])
+
+    def test_monthly(self):
+        assert compose_cron("monthly", "09:00", day_of_month=15) == "0 9 15 * *"
+        assert compose_cron("monthly", "09:00", day_of_month=1) == "0 9 1 * *"
+        assert compose_cron("monthly", "09:00", day_of_month=31) == "0 9 31 * *"
+
+    def test_monthly_missing_day_raises(self):
+        with pytest.raises(ValueError, match="day_of_month"):
+            compose_cron("monthly", "09:00")
+
+    def test_monthly_out_of_range_raises(self):
+        with pytest.raises(ValueError, match="day_of_month"):
+            compose_cron("monthly", "09:00", day_of_month=32)
+        with pytest.raises(ValueError, match="day_of_month"):
+            compose_cron("monthly", "09:00", day_of_month=0)
+
+    def test_invalid_time_str(self):
+        with pytest.raises(ValueError):
+            compose_cron("daily", "abc")
+        with pytest.raises(ValueError):
+            compose_cron("daily", "25:00")
+        with pytest.raises(ValueError):
+            compose_cron("daily", "")
+
+    def test_cron_type_raises(self):
+        # cron 类型应直接用 cron_expr，调用 compose_cron 会报错
+        with pytest.raises(ValueError, match="cron"):
+            compose_cron("cron", "09:00")
+
+    def test_unknown_type(self):
+        with pytest.raises(ValueError, match="schedule_type"):
+            compose_cron("yearly", "09:00")
+
+    def test_composed_cron_is_valid(self):
+        """组装出的 cron 必须能被 croniter 接受"""
+        for cron in [
+            compose_cron("daily", "09:00"),
+            compose_cron("weekly", "09:00", weekdays=[1, 3, 5]),
+            compose_cron("monthly", "09:00", day_of_month=15),
+        ]:
+            assert validate_cron(cron)

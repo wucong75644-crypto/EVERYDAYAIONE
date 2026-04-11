@@ -7,6 +7,7 @@
 import type { PositionCode, DepartmentType } from './auth';
 
 export type TaskStatus = 'active' | 'paused' | 'error' | 'running';
+export type ScheduleType = 'once' | 'daily' | 'weekly' | 'monthly' | 'cron';
 
 export interface PushTarget {
   type: 'wecom_group' | 'wecom_user' | 'web' | 'multi';
@@ -49,8 +50,13 @@ export interface ScheduledTask {
 
   name: string;
   prompt: string;
-  cron_expr: string;
+  // 频率字段（V2: 结构化）
+  schedule_type: ScheduleType;
+  cron_expr: string | null;
   cron_readable?: string;
+  weekdays?: number[] | null;       // weekly: [0=日, 1=一, ..., 6=六]
+  day_of_month?: number | null;     // monthly
+  run_at?: string | null;           // once: ISO 8601
   timezone: string;
 
   push_target: PushTarget;
@@ -92,32 +98,49 @@ export interface TaskRun {
 export interface CreateTaskDto {
   name: string;
   prompt: string;
-  cron_expr: string;
   timezone?: string;
   push_target: PushTarget;
   template_file?: TemplateFile | null;
   max_credits?: number;
   retry_count?: number;
   timeout_sec?: number;
+  // 频率字段
+  schedule_type: ScheduleType;
+  cron_expr?: string;
+  time_str?: string;        // "HH:MM"
+  weekdays?: number[];
+  day_of_month?: number;
+  run_at?: string;          // ISO 8601 (含时区)
 }
 
 export interface UpdateTaskDto {
   name?: string;
   prompt?: string;
-  cron_expr?: string;
   timezone?: string;
   push_target?: PushTarget;
   template_file?: TemplateFile | null;
   max_credits?: number;
   retry_count?: number;
   timeout_sec?: number;
+  // 频率字段
+  schedule_type?: ScheduleType;
+  cron_expr?: string;
+  time_str?: string;
+  weekdays?: number[];
+  day_of_month?: number;
+  run_at?: string;
 }
 
 export interface ParseNLResult {
   name: string;
   prompt: string;
-  cron_expr: string;
-  cron_readable: string;
+  schedule_type: ScheduleType;
+  cron_expr?: string | null;
+  time_str?: string | null;
+  weekdays?: number[] | null;
+  day_of_month?: number | null;
+  run_at?: string | null;
+  cron_readable?: string | null;
   suggested_target: PushTarget | null;
 }
 
