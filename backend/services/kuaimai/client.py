@@ -30,7 +30,10 @@ from services.kuaimai.errors import (
 from utils.time_context import now_cn
 
 # Token 过期相关的错误码
-_TOKEN_EXPIRED_CODES = {"27", "105", "106"}
+# - 27/105/106: 快麦数字错误码（历史沿用）
+# - invalid_session: 快麦实际返回的字符串错误码（生产 24h 内 20+ 个 API 方法均返回此码），
+#   缺失此项会导致自动刷新从未触发（Bug 3）
+_TOKEN_EXPIRED_CODES = {"27", "105", "106", "invalid_session"}
 _SIGNATURE_ERROR_CODE = "25"
 
 # refresh 并发互斥锁的 TTL（秒）。refresh 实测 1~2s 完成，给 30s 容忍
@@ -346,10 +349,25 @@ class KuaiMaiClient:
             data = response.json()
 
             if not data.get("success"):
+                err_summary = (
+                    f"code={data.get('code')} msg={data.get('msg')}"
+                )
                 logger.error(
                     f"KuaiMai token refresh failed | "
-                    f"org={self._org_id} | code={data.get('code')} | msg={data.get('msg')}"
+                    f"org={self._org_id} | {err_summary}"
                 )
+                # 快档告警：refresh API 返回失败 → 立即推企微，不等 healthcheck
+                # best-effort，任何异常都不影响主流程
+                try:
+                    from services.kuaimai.erp_sync_healthcheck import (
+                        push_token_refresh_alert,
+                    )
+                    await push_token_refresh_alert(self._org_id, err_summary)
+                except Exception as e:
+                    logger.warning(
+                        f"KuaiMai refresh alert dispatch failed | "
+                        f"org={self._org_id} | error={e}"
+                    )
                 return False
 
             # 响应结构: {"session": {"accessToken": "...", "refreshToken": "..."}}
@@ -377,6 +395,19 @@ class KuaiMaiClient:
             logger.error(
                 f"KuaiMai token refresh exception | org={self._org_id} | error={e}"
             )
+            # 快档告警：refresh 调用本身抛异常（网络/签名/解析失败等）
+            try:
+                from services.kuaimai.erp_sync_healthcheck import (
+                    push_token_refresh_alert,
+                )
+                await push_token_refresh_alert(
+                    self._org_id, f"exception: {type(e).__name__}: {e}"
+                )
+            except Exception as alert_err:
+                logger.warning(
+                    f"KuaiMai refresh alert dispatch failed | "
+                    f"org={self._org_id} | error={alert_err}"
+                )
             return False
 
     async def _persist_token_to_db(self) -> None:
