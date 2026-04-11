@@ -403,7 +403,11 @@ class TestTokenRefresh:
         mock_http.is_closed = False
         client._client = mock_http
 
-        with patch.object(client, "_cache_token", new_callable=AsyncMock):
+        # mock _clear_persist_failure_marker 避免触达真实 Redis
+        with patch.object(client, "_cache_token", new_callable=AsyncMock), \
+             patch.object(
+                 client, "_clear_persist_failure_marker", new_callable=AsyncMock,
+             ):
             result = await client.refresh_token()
 
         assert result is True
@@ -450,7 +454,11 @@ class TestTokenRefresh:
     async def test_refresh_token_persister_failure_does_not_break_refresh(
         self, mock_redis_lock,
     ):
-        """persister 抛异常不影响 refresh 主流程（已经写入 Redis 的 token 仍生效）"""
+        """persister 抛异常不影响 refresh 主流程（已经写入 Redis 的 token 仍生效）
+
+        注意: 必须 mock _set_persist_failure_marker，否则它会尝试写真实 Redis
+        污染生产环境（org_x 不是合法 UUID 会让 healthcheck 扫到后告警失败）。
+        """
         async def failing_persister(org_id: str, access: str, refresh: str) -> None:
             raise RuntimeError("DB write failed")
 
@@ -474,12 +482,18 @@ class TestTokenRefresh:
         mock_http.is_closed = False
         client._client = mock_http
 
-        with patch.object(client, "_cache_token", new_callable=AsyncMock):
+        with patch.object(client, "_cache_token", new_callable=AsyncMock), \
+             patch.object(
+                 client, "_set_persist_failure_marker", new_callable=AsyncMock,
+             ) as mock_marker:
             result = await client.refresh_token()
 
         # 主流程仍然成功，新 token 已生效
         assert result is True
         assert client._access_token == "new_t"
+        # 验证持久化失败兜底机制被触发（隐性失败可见性）
+        mock_marker.assert_called_once()
+        assert "DB write failed" in str(mock_marker.call_args)
 
     @pytest.mark.asyncio
     async def test_refresh_token_concurrent_lock_waits_and_reads_cache(self):
