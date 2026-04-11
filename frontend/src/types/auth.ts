@@ -2,6 +2,31 @@
  * 认证相关类型定义
  */
 
+// ── 当前组织成员任职信息（V1.0+ 权限模型）──
+// 设计文档: docs/document/TECH_组织架构与权限模型.md §八
+
+export type PositionCode = 'boss' | 'vp' | 'manager' | 'deputy' | 'member';
+export type DepartmentType = 'ops' | 'finance' | 'warehouse' | 'service' | 'design' | 'hr' | 'other';
+export type DataScope = 'all' | 'dept_subtree' | 'self';
+
+export interface CurrentMember {
+  position_code: PositionCode;
+  department_id?: string | null;
+  department_name?: string | null;
+  department_type?: DepartmentType | null;
+  job_title?: string | null;
+  data_scope: DataScope;
+  managed_departments?: Array<{ id: string; name: string }> | null;
+}
+
+export interface CurrentOrg {
+  id: string;
+  name: string;
+  role: 'owner' | 'admin' | 'member';
+  member: CurrentMember | null;
+  permissions: string[];
+}
+
 export interface User {
   id: string;
   nickname: string;
@@ -11,6 +36,9 @@ export interface User {
   credits: number;
   created_at: string;
   wecom_bound?: boolean;
+  // V1.0+ 扩展（来自 /api/auth/me）
+  current_org?: CurrentOrg | null;
+  orgs?: Array<{ id: string; name: string; role: string }>;
 }
 
 export interface WecomQrUrlResponse {

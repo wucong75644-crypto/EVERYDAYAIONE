@@ -601,8 +601,9 @@ describe('WebSocketContext - Provider & Hook', () => {
 
       unmount();
 
-      // 17 个消息类型的订阅都应该被取消（含 image_partial_update, memory_extracted, agent_step, thinking_chunk, routing_complete, conversation_updated, tool_call, tool_result, tool_confirm_request）
-      expect(unsubscribe).toHaveBeenCalledTimes(17);
+      // 21 个消息类型的订阅都应该被取消
+      // 17 个原有 + 4 个定时任务事件（scheduled_task_started/completed/failed/notification）
+      expect(unsubscribe).toHaveBeenCalledTimes(21);
     });
 
     it('should clear flush timer on unmount', async () => {

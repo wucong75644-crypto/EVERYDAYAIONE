@@ -250,6 +250,48 @@ class WecomWSClient:
         )
         return True
 
+    async def send_proactive(
+        self,
+        chatid: str,
+        msgtype: str,
+        content: dict,
+    ) -> bool:
+        """主动推送消息（aibot_send_msg 协议，定时任务专用）
+
+        参考官方 SDK: https://github.com/WecomTeam/aibot-node-sdk/blob/main/src/client.ts
+        sendMessage(chatid, body) — 只传 chatid，企微服务器通过 chatid 自动判断会话类型
+
+        Args:
+            chatid: 目标会话 ID
+                - 单聊：填用户的 userid
+                - 群聊：填群聊的 chatid
+            msgtype: markdown / text / file / image / template_card / voice / video
+            content: msgtype 对应的内容字典，例如 {"content": "..."}
+
+        现有 ws_client 没有 ACK 机制，发送后直接返回 True。
+        如果发送失败会抛 WS 异常，由调用方捕获。
+        """
+        if not self._ws or not self._is_connected:
+            logger.warning("Wecom WS: cannot send_proactive, not connected")
+            return False
+
+        req_id = _gen_req_id("scheduled")
+        msg = {
+            "cmd": WecomCommand.SEND_MSG,
+            "headers": {"req_id": req_id},
+            "body": {
+                "chatid": chatid,
+                "msgtype": msgtype,
+                msgtype: content,
+            },
+        }
+        await self._safe_send(msg)
+        logger.info(
+            f"Wecom send_proactive | chatid={chatid} | "
+            f"msgtype={msgtype} | req_id={req_id}"
+        )
+        return True
+
     @property
     def is_connected(self) -> bool:
         return self._is_connected

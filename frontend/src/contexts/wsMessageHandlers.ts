@@ -541,6 +541,73 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       const message = msg.message ?? msg.payload?.message;
       logger.error('ws:error', 'error received', undefined, { error: message });
     },
+
+    // ── 定时任务事件 ──
+    scheduled_task_started: (msg) => {
+      const data = (msg.data || msg.payload) as { task_id?: string; task_name?: string };
+      if (!data?.task_id) return;
+      logger.info('ws:scheduled-task', 'started', data);
+      // 异步导入，避免循环依赖
+      import('../stores/useScheduledTaskStore').then(({ useScheduledTaskStore }) => {
+        useScheduledTaskStore.getState().optimisticUpdate(data.task_id!, {
+          status: 'running',
+        });
+      });
+    },
+
+    scheduled_task_completed: (msg) => {
+      const data = (msg.data || msg.payload) as {
+        task_id?: string;
+        task_name?: string;
+        next_run_at?: string;
+        summary?: string;
+        push_status?: string;
+      };
+      if (!data?.task_id) return;
+      logger.info('ws:scheduled-task', 'completed', data);
+      import('../stores/useScheduledTaskStore').then(({ useScheduledTaskStore }) => {
+        useScheduledTaskStore.getState().optimisticUpdate(data.task_id!, {
+          status: 'active',
+          last_run_at: new Date().toISOString(),
+          last_summary: data.summary || null,
+          next_run_at: data.next_run_at || null,
+        });
+        // 重新拉取执行历史
+        useScheduledTaskStore.getState().fetchRuns(data.task_id!);
+      });
+    },
+
+    scheduled_task_failed: (msg) => {
+      const data = (msg.data || msg.payload) as {
+        task_id?: string;
+        task_name?: string;
+        status?: string;
+        error?: string;
+        consecutive_failures?: number;
+        will_retry?: boolean;
+      };
+      if (!data?.task_id) return;
+      logger.warn('ws:scheduled-task', 'failed', data);
+      import('../stores/useScheduledTaskStore').then(({ useScheduledTaskStore }) => {
+        useScheduledTaskStore.getState().optimisticUpdate(data.task_id!, {
+          status: (data.status as any) || 'error',
+          consecutive_failures: data.consecutive_failures || 0,
+        });
+        useScheduledTaskStore.getState().fetchRuns(data.task_id!);
+      });
+    },
+
+    scheduled_task_notification: (msg) => {
+      const data = (msg.data || msg.payload) as {
+        task_id?: string;
+        task_name?: string;
+        level?: string;
+        message?: string;
+      };
+      if (!data?.message) return;
+      logger.warn('ws:scheduled-task', 'notification', data);
+      // 这里只记日志，实际 UI 提示由 toast 组件处理（如果有）
+    },
   };
   // WSIncomingMessage extends WSMessage — 运行时对象包含所有字段，类型断言安全
   return handlers as Record<string, (msg: WSMessage) => void>;

@@ -19,6 +19,7 @@ import {
   type WecomFieldStatus,
 } from '../../services/org';
 import AiConfigSection from './AiConfigSection';
+import { MemberAssignmentsSection } from './MemberAssignmentsSection';
 
 // ERP 凭证的 key 列表和中文标签
 const ERP_CONFIG_KEYS = [
@@ -33,7 +34,7 @@ interface OrgManagePanelProps {
 }
 
 export default function OrgManagePanel({ orgId }: OrgManagePanelProps) {
-  type SubTab = 'erp' | 'wecom' | 'ai' | 'members' | 'info';
+  type SubTab = 'erp' | 'wecom' | 'ai' | 'members' | 'assignments' | 'info';
   const [subTab, setSubTab] = useState<SubTab>('erp');
 
   if (!orgId) {
@@ -53,6 +54,7 @@ export default function OrgManagePanel({ orgId }: OrgManagePanelProps) {
           { key: 'wecom' as SubTab, label: '企业微信' },
           { key: 'ai' as SubTab, label: 'AI 配置' },
           { key: 'members' as SubTab, label: '成员管理' },
+          { key: 'assignments' as SubTab, label: '部门职位' },
           { key: 'info' as SubTab, label: '企业信息' },
         ]).map((tab) => (
           <button
@@ -73,6 +75,7 @@ export default function OrgManagePanel({ orgId }: OrgManagePanelProps) {
       {subTab === 'wecom' && <WecomConfigSection orgId={orgId} />}
       {subTab === 'ai' && <AiConfigSection orgId={orgId} />}
       {subTab === 'members' && <MembersSection orgId={orgId} />}
+      {subTab === 'assignments' && <MemberAssignmentsSection orgId={orgId} />}
       {subTab === 'info' && <OrgInfoSection orgId={orgId} />}
     </div>
   );

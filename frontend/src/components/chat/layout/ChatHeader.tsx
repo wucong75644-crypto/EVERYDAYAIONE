@@ -9,7 +9,7 @@
  */
 
 import { memo } from 'react';
-import { Brain, PanelLeftOpen, Search } from 'lucide-react';
+import { Brain, Clock, PanelLeftOpen, Search } from 'lucide-react';
 import { useMemoryStore } from '../../../stores/useMemoryStore';
 
 /** 组件属性接口 */
@@ -36,6 +36,8 @@ export interface ChatHeaderProps {
   userCredits: number;
   /** 打开消息搜索面板（V3 Phase 4，可选） */
   onOpenSearch?: () => void;
+  /** 打开定时任务面板（可选，仅企业用户可见） */
+  onOpenScheduledTasks?: () => void;
 }
 
 /**
@@ -55,6 +57,7 @@ export const ChatHeader = memo(function ChatHeader({
   onTitleCancel,
   userCredits,
   onOpenSearch,
+  onOpenScheduledTasks,
 }: ChatHeaderProps) {
   return (
     <header className="h-14 bg-surface-card flex items-center justify-between px-4 flex-shrink-0">
@@ -101,6 +104,16 @@ export const ChatHeader = memo(function ChatHeader({
             aria-label="搜索消息"
           >
             <Search className="w-5 h-5 text-text-tertiary" />
+          </button>
+        )}
+        {onOpenScheduledTasks && (
+          <button
+            onClick={onOpenScheduledTasks}
+            className="p-1.5 hover:bg-hover rounded-lg transition-base"
+            title="定时任务"
+            aria-label="定时任务"
+          >
+            <Clock className="w-5 h-5 text-text-tertiary" />
           </button>
         )}
         <button

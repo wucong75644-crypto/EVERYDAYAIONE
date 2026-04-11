@@ -269,6 +269,11 @@ async def main() -> None:
     _manager = WecomWSManager(db)
     await _manager.start()
 
+    # 定时任务推送订阅器（跨进程 IPC：web 进程 publish → ws_runner 这里 subscribe）
+    # 设计文档: docs/document/TECH_定时任务心跳系统.md §4.4
+    from services.scheduler.push_dispatcher import start_proactive_subscriber
+    proactive_task = asyncio.create_task(start_proactive_subscriber())
+
     if not _manager.clients:
         logger.warning("No bots to run, ws_runner will wait for signal")
 
@@ -287,6 +292,12 @@ async def main() -> None:
 
     # 阻塞直到收到关闭信号
     await stop_event.wait()
+
+    proactive_task.cancel()
+    try:
+        await proactive_task
+    except asyncio.CancelledError:
+        pass
 
     await _manager.stop()
     logger.info("Wecom WS runner stopped")
