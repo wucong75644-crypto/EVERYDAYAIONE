@@ -5,10 +5,12 @@
  */
 
 import { memo } from 'react';
+import { m } from 'framer-motion';
 import type { ConversationListItem } from '../../../services/conversation';
 import { useMessageStore } from '../../../stores/useMessageStore';
 import { MoreHorizontal } from 'lucide-react';
 import { cn } from '../../../utils/cn';
+import { SOFT_SPRING } from '../../../utils/motion';
 
 function WecomIcon({ className }: { className?: string }) {
   return (
@@ -117,7 +119,16 @@ export default memo(function ConversationItem({
   onHoverChange,
 }: ConversationItemProps) {
   return (
-    <div
+    <m.div
+      // layout 动画：删除/插入/重排时 spring 过渡到新位置
+      layout
+      // 进出场（配合外层 AnimatePresence）
+      initial={{ opacity: 0, height: 0, marginBottom: 0 }}
+      animate={{ opacity: 1, height: 'auto', marginBottom: 4 }}
+      exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+      transition={SOFT_SPRING}
+      // 按下微反馈
+      whileTap={isRenaming ? undefined : { scale: 0.985 }}
       onClick={() => {
         if (!isRenaming) {
           onSelect();
@@ -128,7 +139,7 @@ export default memo(function ConversationItem({
       onMouseEnter={() => onHoverChange(true)}
       onMouseLeave={() => onHoverChange(false)}
       className={cn(
-        'mx-2 mb-1 px-3 py-1.5 rounded-lg cursor-pointer transition-base outline-none',
+        'mx-2 px-3 py-1.5 rounded-lg cursor-pointer outline-none overflow-hidden',
         currentConversationId === conv.id ? 'bg-accent-light' : 'hover:bg-hover',
       )}
     >
@@ -160,6 +171,6 @@ export default memo(function ConversationItem({
           onShowDropdown={onShowDropdown}
         />
       )}
-    </div>
+    </m.div>
   );
 });
