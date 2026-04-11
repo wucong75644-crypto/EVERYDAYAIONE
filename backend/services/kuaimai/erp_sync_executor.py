@@ -3,10 +3,6 @@ ERP 同步执行器（纯执行逻辑）
 
 从 ErpSyncWorker 中提取的日维护、归档、聚合兜底、删除检测逻辑。
 不包含调度、锁管理、队列消费代码。
-
-# TODO(time-context): ``datetime.now()`` 用于内部状态时间戳和归档 cutoff
-# （不进入 LLM 上下文）。应迁移到 ``utils.time_context.now_cn()``，
-# 属于工程清理任务，不在 PR1/PR2/PR3 范围。详见 §17.2 T1
 """
 
 from __future__ import annotations
@@ -17,6 +13,7 @@ from datetime import datetime, timedelta
 from loguru import logger
 
 from core.config import get_settings
+from utils.time_context import now_cn
 
 # 删除检测间隔（秒）：7天
 DELETION_INTERVAL = 604800
@@ -68,7 +65,7 @@ class ErpSyncExecutor:
                 deleted = await self._run_deletion_detection(
                     org_id=org_id, client=client,
                 )
-                self._org_last_deletion[org_id] = datetime.now()
+                self._org_last_deletion[org_id] = now_cn()
         except Exception as e:
             logger.error(
                 f"Daily maintenance: deletion detection failed | org_id={org_id} | error={e}",
@@ -84,7 +81,7 @@ class ErpSyncExecutor:
         last = self._org_last_deletion.get(org_id)
         if last is None:
             return True
-        return (datetime.now() - last).total_seconds() >= DELETION_INTERVAL
+        return (now_cn() - last).total_seconds() >= DELETION_INTERVAL
 
     # ── 归档 ───────────────────────────────────────────
 
@@ -97,7 +94,7 @@ class ErpSyncExecutor:
         """
 
         cutoff = (
-            datetime.now() - timedelta(days=self.settings.erp_archive_retention_days)
+            now_cn() - timedelta(days=self.settings.erp_archive_retention_days)
         ).isoformat()
 
         total_archived = 0
@@ -136,7 +133,7 @@ class ErpSyncExecutor:
 
     async def _run_daily_reaggregation(self, org_id: str | None = None) -> int:
         """每日聚合兜底：对近7天数据重新聚合"""
-        cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        cutoff = (now_cn() - timedelta(days=7)).strftime("%Y-%m-%d")
 
         try:
             result = await self.db.rpc(

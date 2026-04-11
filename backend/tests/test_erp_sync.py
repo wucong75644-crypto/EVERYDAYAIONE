@@ -7,6 +7,8 @@ import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from utils.time_context import now_cn
+
 import sys
 from pathlib import Path
 
@@ -127,7 +129,7 @@ class TestTimeWindows:
 
     def test_product_type_has_day_backtrack(self):
         """product 类型回溯1天"""
-        now = datetime.now()
+        now = now_cn()
         recent = (now - timedelta(minutes=10)).isoformat()
         state = _sync_state("product", last_sync_time=recent)
         service = _make_service([state])
@@ -454,7 +456,7 @@ class TestShouldRunDaily:
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
         db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
-        worker._org_last_daily[None] = datetime.now()
+        worker._org_last_daily[None] = now_cn()
         assert worker._should_run_daily() is False
 
 
@@ -614,7 +616,7 @@ class TestShouldRunLowFreq:
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
         db = MockErpAsyncDBClient()
         worker = ErpSyncWorker(db)
-        worker._org_last_platform_map[None] = datetime.now()
+        worker._org_last_platform_map[None] = now_cn()
         assert worker._should_run_low_freq() is False
 
 
@@ -1991,11 +1993,11 @@ class TestMultiTenantSync:
             )
             worker = ErpSyncWorker(db)
 
-        worker._org_last_stock_full["org-A"] = datetime.now()
+        worker._org_last_stock_full["org-A"] = now_cn()
         assert worker._should_run_stock_full("org-A") is False
         assert worker._should_run_stock_full("org-B") is True
 
-        worker._org_last_daily["org-A"] = datetime.now()
+        worker._org_last_daily["org-A"] = now_cn()
         assert worker._should_run_daily("org-A") is False
         assert worker._should_run_daily("org-B") is True
 

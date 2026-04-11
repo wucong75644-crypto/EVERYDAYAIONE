@@ -28,6 +28,7 @@ from services.kuaimai.erp_sync_utils import (
     _pick,
     _safe_ts,
 )
+from utils.time_context import now_cn
 
 if TYPE_CHECKING:
     from services.kuaimai.erp_sync_service import ErpSyncService
@@ -45,7 +46,7 @@ async def piggyback_order_log(
 
     client = svc._get_client()
     all_rows: list[dict[str, Any]] = []
-    now = datetime.now().isoformat()
+    now = now_cn().isoformat()
 
     for i in range(0, len(system_ids), 200):
         batch = system_ids[i:i + 200]
@@ -107,7 +108,7 @@ async def piggyback_express(
 
     client = svc._get_client()
     all_rows: list[dict[str, Any]] = []
-    now = datetime.now().isoformat()
+    now = now_cn().isoformat()
 
     async def _fetch_one(sid: str) -> list[dict]:
         async with _API_SEM:
@@ -204,7 +205,7 @@ async def piggyback_aftersale_log(
 
     client = svc._get_client()
     all_rows: list[dict[str, Any]] = []
-    now = datetime.now().isoformat()
+    now = now_cn().isoformat()
 
     async def _fetch_one(wid: str) -> list[dict]:
         async with _API_SEM:
@@ -327,7 +328,7 @@ async def sync_batch_stock(svc: ErpSyncService) -> int:
 
     client = svc._get_client()
     all_rows: list[dict[str, Any]] = []
-    now = datetime.now().isoformat()
+    now = now_cn().isoformat()
 
     for user_id, num_ids in shop_numids.items():
         # 每批最多 20 个 numIid

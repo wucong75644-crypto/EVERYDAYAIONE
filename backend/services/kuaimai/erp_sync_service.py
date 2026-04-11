@@ -17,6 +17,7 @@ from loguru import logger
 
 from core.config import get_settings
 from services.kuaimai.client import KuaiMaiClient
+from utils.time_context import CN_TZ, now_cn
 from services.kuaimai.erp_sync_handlers import (
     sync_aftersale,
     sync_order,
@@ -317,7 +318,7 @@ class ErpSyncService:
             new_total = (current.data[0]["total_synced"] or 0) + synced_count
             uq = self.db.table("erp_sync_state").update({
                 "status": "idle",
-                "last_run_at": datetime.now().isoformat(),
+                "last_run_at": now_cn().isoformat(),
                 "error_count": 0,
                 "last_error": None,
                 "total_synced": new_total,
@@ -335,7 +336,7 @@ class ErpSyncService:
             error_count = (state.get("error_count", 0) + 1) if state else 1
             uq = self.db.table("erp_sync_state").update({
                 "status": "error",
-                "last_run_at": datetime.now().isoformat(),
+                "last_run_at": now_cn().isoformat(),
                 "error_count": error_count,
                 "last_error": error_msg[:500],
             }).eq("sync_type", sync_type)
@@ -365,7 +366,7 @@ class ErpSyncService:
             uq = self.db.table("erp_sync_state").update({
                 "is_initial_done": True,
                 "status": "idle",
-                "last_run_at": datetime.now().isoformat(),
+                "last_run_at": now_cn().isoformat(),
                 "error_count": 0,
                 "last_error": None,
                 "total_synced": total_synced,
@@ -385,7 +386,7 @@ class ErpSyncService:
         设计文档 §7.2：窗口 > 7天自动按 shard_days 切分。
         回溯策略：单据类型5分钟，商品/库存类型1天。
         """
-        now = datetime.now()
+        now = now_cn()
         sync_type = state["sync_type"]
         last_sync = state.get("last_sync_time")
 
@@ -397,11 +398,12 @@ class ErpSyncService:
             start = now - timedelta(days=initial_days)
         elif isinstance(last_sync, str):
             parsed = datetime.fromisoformat(last_sync.replace("Z", "+00:00"))
-            # 去掉时区信息（DB 存的是北京时间 naive datetime）
-            start = parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
+            # last_sync_time 列是 TIMESTAMP（naive），写入时 isoformat 可能带也可能不带 +08:00
+            # 统一为 CN_TZ aware，以便与 now (aware) 比较
+            start = parsed.astimezone(CN_TZ) if parsed.tzinfo else parsed.replace(tzinfo=CN_TZ)
         else:
-            # datetime 对象：去掉时区信息
-            start = last_sync.replace(tzinfo=None) if last_sync.tzinfo else last_sync
+            # datetime 对象：统一为 CN_TZ aware
+            start = last_sync.astimezone(CN_TZ) if last_sync.tzinfo else last_sync.replace(tzinfo=CN_TZ)
 
         # 回溯策略：商品/库存/供应商日期精度到天，多回溯1天
         if sync_type in ("product", "stock", "platform_map"):
