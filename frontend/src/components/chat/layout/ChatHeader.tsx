@@ -9,8 +9,10 @@
  */
 
 import { memo } from 'react';
-import { Brain, Clock, PanelLeftOpen, Search } from 'lucide-react';
+import { Brain, Clock, PanelLeftOpen, Search, Users } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useMemoryStore } from '../../../stores/useMemoryStore';
+import { usePermission } from '../../../hooks/usePermission';
 
 /** 组件属性接口 */
 export interface ChatHeaderProps {
@@ -59,6 +61,11 @@ export const ChatHeader = memo(function ChatHeader({
   onOpenSearch,
   onOpenScheduledTasks,
 }: ChatHeaderProps) {
+  const navigate = useNavigate();
+  // 仅管理员（boss/vp/manager/deputy 中的人事主管）能进组织管理
+  // 用 sys.member.edit 权限点判定（boss/vp/hr-manager 持有）
+  const canManageMembers = usePermission('sys.member.edit');
+
   return (
     <header className="h-14 bg-surface-card flex items-center justify-between px-4 flex-shrink-0">
       <div className="flex items-center space-x-3">
@@ -114,6 +121,16 @@ export const ChatHeader = memo(function ChatHeader({
             aria-label="定时任务"
           >
             <Clock className="w-5 h-5 text-text-tertiary" />
+          </button>
+        )}
+        {canManageMembers && (
+          <button
+            onClick={() => navigate('/settings/organization')}
+            className="p-1.5 hover:bg-hover rounded-lg transition-base"
+            title="组织管理"
+            aria-label="组织管理"
+          >
+            <Users className="w-5 h-5 text-text-tertiary" />
           </button>
         )}
         <button
