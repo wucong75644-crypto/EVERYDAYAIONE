@@ -1315,6 +1315,78 @@ resolved_org = org_id or _default_org
 | async_retry credit 重锁不校验 org | `async_retry_service.py:193` |
 | MockSupabaseTable 不强制 org_id | `tests/conftest.py` |
 
+### A.13 外部凭证双写原则（2026-04-11 事后补充 — 真实事故复盘）
+
+#### 事故经过
+
+**时间线**：
+- 2026-03-11 16:29  快麦技术为蓝创签发新 token（30 天硬寿命）
+- 2026-03-29 08:40  把这份 token 录入 `org_configs`（寿命时钟仍是 03-11 起算）
+- 2026-04-10 16:29  token 在快麦侧自然到期 → worker 调 refresh → 服务端返回"刷新的会话信息不存在"
+- 2026-04-10 16:29 ~ 04-11 11:00  **400 次连续失败 ~19 小时**，无人察觉
+- 2026-04-11 11:00  快麦技术重新签发 token，worker 自动恢复，缺失数据自动补齐
+
+#### 根因 — 多租户重构遗留的双写漏洞
+
+旧架构（单租户）：
+- `KuaiMaiClient` 是全局 singleton，启动时 `load_cached_token()` 从 Redis 加载
+- refresh 后的新 token 写入**内存 + Redis**
+- 内存常驻 → 滚动续期，token 永远不会到 30 天硬寿命
+
+新架构（多租户）：
+- `_create_client(org_id)` 每个任务**新建一个 client**，从 `org_configs` 读初始 token
+- refresh 后的新 token 只写入**内存 + Redis**，**不写回 DB**
+- client 用完即焚 → 内存丢失 → 下次任务重新从 DB 读，又是 03-29 那份初始 token
+
+12 天里所有 worker 都用初始 token，从未触发 refresh，到期日集体雪崩。
+
+更糟的是 `_create_client` **没调** `load_cached_token()`，所以 Redis 里写的 token 永远没人读。两层缓存（DB 是热存储 + Redis 是热缓存）变成两个孤岛。
+
+#### 修复 — 外部凭证双写原则
+
+任何"系统从外部 API 获取的会变化的凭证"（OAuth token、refresh token、session token 等），在多租户场景下必须遵循：
+
+**1. 双写 (Dual Write)**
+- 刷新成功后**同时**写入 Redis（热缓存）和 DB（持久化）
+- 缺一不可：Redis 挂了 DB 兜底；DB 写失败 Redis 保短期可用
+
+**2. 双读 (Dual Read)**
+- 创建 client 时，先从 DB 拉初始值，再从 Redis 拉最新值（Redis 可能比 DB 更新）
+- 优先级：Redis 热缓存 > DB 持久化 > 内存默认
+
+**3. 并发互斥 (Mutex)**
+- 多 worker 可能同时触发 refresh（会浪费 quota，且服务端可能作废前一次的 refreshToken）
+- 用 Redis SETNX 加 per-org 互斥锁（10s TTL 即可）
+- 拿不到锁的 worker 等待 + 重新读 Redis 缓存
+
+**4. 失败可见 (Visible Failure)**
+- 持久化失败必须 `logger.error`（不能 `logger.debug` 吞掉）
+- error_count 阈值告警（防止失声）
+
+#### 实现位置
+
+| 文件 | 关键改动 |
+|---|---|
+| `services/kuaimai/client.py` | `KuaiMaiClient.__init__` 加 `token_persister` 参数；`refresh_token()` 加 SETNX 锁 + 三层写入（内存/Redis/DB） |
+| `services/org/config_resolver.py` | 同步版 + 异步版各加 `update_erp_token(org_id, access, refresh)` 方法 |
+| `services/kuaimai/erp_sync_worker_pool.py` | `_create_client` 注入 persister 闭包 + 调 `load_cached_token()` |
+| `services/kuaimai/erp_sync_worker.py` | `_load_erp_orgs` 同步改造 |
+| `services/kuaimai/erp_sync_dead_letter.py` | `_get_or_create_client` 同步改造 |
+| `services/agent/erp_tool_executor.py` | `_get_erp_dispatcher` 多租户分支同步改造（同步 resolver 用 `asyncio.to_thread` 包装）|
+| `services/kuaimai/erp_sync_healthcheck.py` | **新建**：5 分钟扫一次 `erp_sync_state`，`error_count >= 10` 推企微告警，防止再次失声 |
+| `main.py` | 启动 healthcheck 后台任务（仅在 elected worker 上启动） |
+
+#### Checklist — 多租户重构外部 API 凭证时
+
+- [ ] 凭证有寿命？（access_token / refresh_token / session）
+- [ ] 服务端会作废旧凭证？（一次性 refresh / 滚动续期）
+- [ ] 客户端会自动刷新？（refresh 接口）
+- [ ] 刷新后的新凭证**写回 DB** 了吗？  ← 这次踩的坑
+- [ ] 多 worker 并发刷新有保护吗？
+- [ ] 刷新失败有告警吗？
+- [ ] error_count 阈值告警有吗？
+- [ ] 单测覆盖刷新+持久化路径吗？
+
 ### B. 参考资料
 
 - [AWS: Multi-tenant data isolation with PostgreSQL RLS](https://aws.amazon.com/blogs/database/multi-tenant-data-isolation-with-postgresql-row-level-security/)

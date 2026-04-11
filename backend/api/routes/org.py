@@ -398,6 +398,15 @@ async def test_erp_connection(
         svc.require_role(org_id, user_id, ("owner", "admin"))
         creds = resolver.get_erp_credentials(org_id)
 
+        # token 双写闭环：即使是手动测试连接，也要走持久化
+        # （万一测试时 token 刚好过期，refresh 后必须把新 token 持久化）
+        # resolver 是同步版，client 调 persister 是 async，用 to_thread 包装
+        import asyncio as _asyncio
+        async def _persist(oid: str, access: str, refresh: str) -> None:
+            await _asyncio.to_thread(
+                resolver.update_erp_token, oid, access, refresh,
+            )
+
         from services.kuaimai.client import KuaiMaiClient
         client = KuaiMaiClient(
             app_key=creds["kuaimai_app_key"],
@@ -405,7 +414,9 @@ async def test_erp_connection(
             access_token=creds["kuaimai_access_token"],
             refresh_token=creds["kuaimai_refresh_token"],
             org_id=org_id,
+            token_persister=_persist,
         )
+        await client.load_cached_token()  # 从 Redis 拿最新热缓存
         try:
             result = await client.request_with_retry(
                 "erp.shop.list.query", {"pageNo": 1, "pageSize": 1}

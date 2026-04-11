@@ -262,18 +262,25 @@ async def _get_or_create_client(
         await client.close()
         return None
 
-    # 企业模式：用 AsyncOrgConfigResolver 加载凭证
+    # 企业模式：用 AsyncOrgConfigResolver 加载凭证（带 token 双写闭环）
     try:
         from services.org.config_resolver import AsyncOrgConfigResolver
         resolver = AsyncOrgConfigResolver(db)
         creds = await resolver.get_erp_credentials(org_id)
+
+        # token 双写闭环：refresh 后回写 DB
+        async def _persist(oid: str, access: str, refresh: str) -> None:
+            await resolver.update_erp_token(oid, access, refresh)
+
         client = KuaiMaiClient(
             app_key=creds["kuaimai_app_key"],
             app_secret=creds["kuaimai_app_secret"],
             access_token=creds["kuaimai_access_token"],
             refresh_token=creds["kuaimai_refresh_token"],
             org_id=org_id,
+            token_persister=_persist,
         )
+        await client.load_cached_token()  # 从 Redis 拿最新热缓存
         org_clients[org_id] = client
         client_ages[org_id] = _time.time()
         return client

@@ -214,13 +214,24 @@ class ErpSyncWorker:
                     from services.org.config_resolver import AsyncOrgConfigResolver
                     resolver = AsyncOrgConfigResolver(self.db)
                     creds = await resolver.get_erp_credentials(org_id)
+
+                    # token 双写闭环：refresh 后回写 DB
+                    # 闭包默认参数捕获当前 resolver 实例（防止循环引用问题）
+                    async def _persist(
+                        oid: str, access: str, refresh: str,
+                        _r=resolver,
+                    ) -> None:
+                        await _r.update_erp_token(oid, access, refresh)
+
                     client = KuaiMaiClient(
                         app_key=creds["kuaimai_app_key"],
                         app_secret=creds["kuaimai_app_secret"],
                         access_token=creds["kuaimai_access_token"],
                         refresh_token=creds["kuaimai_refresh_token"],
                         org_id=org_id,
+                        token_persister=_persist,
                     )
+                    await client.load_cached_token()  # 从 Redis 拿最新热缓存
                     orgs.append((org_id, client))
                 except ValueError as e:
                     logger.warning(f"Skip org {org_id} ERP sync: {e}")

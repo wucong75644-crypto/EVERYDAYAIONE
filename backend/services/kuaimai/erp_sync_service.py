@@ -100,10 +100,17 @@ class ErpSyncService:
     def _get_client(self) -> KuaiMaiClient:
         if self._client is None:
             if self.org_id:
-                logger.warning(
-                    f"ErpSyncService._get_client fallback to global credentials | "
-                    f"org_id={self.org_id} — should have been passed a client"
+                # 多租户场景下绝对不能走 fallback —— 那会用 .env 的全局凭证
+                # （非企业 token）打企业接口，且没有 token_persister，
+                # refresh 后不会写回企业的 org_configs。这正是 2026-04-10
+                # 雪崩的根因模式，必须当成 bug 抛出。
+                raise RuntimeError(
+                    f"ErpSyncService._get_client invoked without injected client | "
+                    f"org_id={self.org_id} — caller MUST pass a properly configured "
+                    f"KuaiMaiClient with token_persister. Walking the fallback path "
+                    f"would silently downgrade to global credentials."
                 )
+            # 散客模式（org_id=None）：用 .env 全局凭证（无 persister 是 OK 的）
             self._client = KuaiMaiClient()
         return self._client
 

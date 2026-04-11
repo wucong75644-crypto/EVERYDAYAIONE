@@ -129,6 +129,40 @@ class OrgConfigResolver(_ConfigResolverCore):
             creds[k] = val
         return creds
 
+    def update_erp_token(
+        self, org_id: str, access_token: str, refresh_token: str,
+    ) -> None:
+        """ERP token 自动刷新成功后回写 DB（同步版）。
+
+        Why: 系统后台自动 refresh 没有用户上下文，updated_by 留空。
+        AES 加密后写入 org_configs，与初次绑定走的加密器一致。
+
+        原子性: 单条 upsert × 2 — schema 反射白名单已覆盖 org_configs
+        的复合唯一键 (org_id, config_key)，不需要显式事务。
+
+        显式 updated_at: 因为 UPSERT 触发 ON CONFLICT 时不会重新应用列默认值，
+        必须在 payload 里带上 updated_at，运维才能从该字段看到 token 最后刷新时间。
+        """
+        from datetime import datetime, timezone
+        encrypt_key = self._get_encrypt_key()
+        now = datetime.now(timezone.utc)
+        for key, val in [
+            ("kuaimai_access_token", access_token),
+            ("kuaimai_refresh_token", refresh_token),
+        ]:
+            encrypted = aes_encrypt(val, encrypt_key)
+            self.db.table("org_configs").upsert(
+                {
+                    "org_id": org_id,
+                    "config_key": key,
+                    "config_value_encrypted": encrypted,
+                    "updated_by": None,  # 系统自动刷新
+                    "updated_at": now,
+                },
+                on_conflict="org_id,config_key",
+            ).execute()
+        logger.info(f"ERP token auto-refreshed and persisted | org_id={org_id}")
+
     def list_orgs_with_wecom_bot(self) -> list[dict]:
         """返回所有配了 wecom_bot_id + wecom_bot_secret 的企业。
 
@@ -214,6 +248,44 @@ class AsyncOrgConfigResolver(_ConfigResolverCore):
                 raise ValueError(f"企业 ERP 未配置 {k}，请联系管理员")
             creds[k] = val
         return creds
+
+    async def update_erp_token(
+        self, org_id: str, access_token: str, refresh_token: str,
+    ) -> None:
+        """ERP token 自动刷新成功后回写 DB（异步版，供 worker / dead letter 用）。
+
+        Why: 后台 worker 自动 refresh 没有用户上下文，updated_by 留空。
+        AES 加密后写入 org_configs，与初次绑定走的加密器一致。
+
+        历史教训: 多租户改造前，KuaiMaiClient 是 singleton，refresh 后的新 token
+        靠内存 + Redis 续命，能扛住 token 30 天硬寿命。改成 per-task client
+        后内存丢失，DB 又没回写，于是 12 天里所有 worker 一直用初始 token，
+        到期日 16:29 集体雪崩。这个方法是闭环的关键节点。
+
+        显式 updated_at: 因为 UPSERT 触发 ON CONFLICT 时不会重新应用列默认值，
+        必须在 payload 里带上 updated_at，运维才能从该字段看到 token 最后刷新时间。
+        """
+        from datetime import datetime, timezone
+        encrypt_key = self._get_encrypt_key()
+        now = datetime.now(timezone.utc)
+        for key, val in [
+            ("kuaimai_access_token", access_token),
+            ("kuaimai_refresh_token", refresh_token),
+        ]:
+            encrypted = aes_encrypt(val, encrypt_key)
+            await (
+                self.db.table("org_configs").upsert(
+                    {
+                        "org_id": org_id,
+                        "config_key": key,
+                        "config_value_encrypted": encrypted,
+                        "updated_by": None,  # 系统自动刷新
+                        "updated_at": now,
+                    },
+                    on_conflict="org_id,config_key",
+                ).execute()
+            )
+        logger.info(f"ERP token auto-refreshed and persisted | org_id={org_id}")
 
     async def _load_encrypted(self, org_id: str, key: str) -> str | None:
         """从 org_configs 表读取并解密（异步）"""

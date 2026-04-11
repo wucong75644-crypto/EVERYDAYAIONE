@@ -289,9 +289,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         erp_orchestrator = ErpSyncOrchestrator(async_db)
         erp_orchestrator_task = asyncio.create_task(erp_orchestrator.start())
         logger.info(f"ErpSyncOrchestrator started | elected_worker={_worker_pid}")
+
+        # ERP 同步健康检查（5 分钟扫一次 erp_sync_state，error_count>=10 推企微告警）
+        # 防止类似 2026-04-10 的 token 雪崩 7 小时无人察觉
+        from services.kuaimai.erp_sync_healthcheck import healthcheck_loop
+        erp_healthcheck_task = asyncio.create_task(healthcheck_loop(async_db))
+        logger.info(f"ErpSyncHealthcheck started | elected_worker={_worker_pid}")
     else:
         erp_orchestrator = None
         erp_orchestrator_task = None
+        erp_healthcheck_task = None
         logger.info(f"ErpSyncOrchestrator skipped (another worker elected) | pid={_worker_pid}")
 
     # 企微智能机器人 WS 长连接已拆为独立进程（wecom_ws_runner.py）
@@ -321,6 +328,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         erp_orchestrator_task.cancel()
         try:
             await erp_orchestrator_task
+        except asyncio.CancelledError:
+            pass
+
+    # 停止 ERP 健康检查后台任务
+    if erp_healthcheck_task is not None:
+        erp_healthcheck_task.cancel()
+        try:
+            await erp_healthcheck_task
         except asyncio.CancelledError:
             pass
 

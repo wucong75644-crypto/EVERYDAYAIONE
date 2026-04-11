@@ -374,7 +374,16 @@ class ErpSyncWorkerPool:
     # ── Client 创建 ───────────────────────────────────
 
     async def _create_client(self, org_id: str | None):
-        """为企业创建 KuaiMaiClient。"""
+        """为企业创建 KuaiMaiClient（带 token 双写闭环）。
+
+        三层 token 来源优先级：
+        1. Redis 热缓存（load_cached_token）— 最新值，跨进程共享
+        2. DB org_configs（resolver.get_erp_credentials）— 持久化兜底
+        3. 内存（client 实例字段）— 当前任务期间使用
+
+        refresh 触发时通过 token_persister 回调写回 DB，
+        防止 Redis 失效后回退到初始死态 token（这是上次雪崩的根因）。
+        """
         from services.kuaimai.client import KuaiMaiClient
 
         if org_id is None:
@@ -385,13 +394,22 @@ class ErpSyncWorkerPool:
             from services.org.config_resolver import AsyncOrgConfigResolver
             resolver = AsyncOrgConfigResolver(self.db)
             creds = await resolver.get_erp_credentials(org_id)
-            return KuaiMaiClient(
+
+            # token 持久化回调闭包：refresh 成功后通过这个回调写回 org_configs
+            async def _persist(oid: str, access: str, refresh: str) -> None:
+                await resolver.update_erp_token(oid, access, refresh)
+
+            client = KuaiMaiClient(
                 app_key=creds["kuaimai_app_key"],
                 app_secret=creds["kuaimai_app_secret"],
                 access_token=creds["kuaimai_access_token"],
                 refresh_token=creds["kuaimai_refresh_token"],
                 org_id=org_id,
+                token_persister=_persist,
             )
+            # 从 Redis 加载最新热缓存（可能比 DB 更新，因为其他 worker 刚 refresh 过）
+            await client.load_cached_token()
+            return client
         except (ValueError, KeyError) as e:
             logger.warning(f"Cannot create client for org | org_id={org_id} error={e}")
             return None
