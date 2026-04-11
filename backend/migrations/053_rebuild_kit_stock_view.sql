@@ -78,11 +78,9 @@ LEFT JOIN erp_products p ON p.outer_id = ks.kit_outer_id AND p.org_id = ks.org_i
 LEFT JOIN erp_product_skus ps ON ps.sku_outer_id = ks.kit_sku_outer_id AND ps.org_id = ks.org_id;
 
 -- CONCURRENTLY 刷新必需的唯一索引（含 org_id）
+-- 注意：CONCURRENTLY 要求索引直接引用列名，不支持表达式（如 COALESCE）
 CREATE UNIQUE INDEX uq_mv_kit_stock
-    ON mv_kit_stock (
-        outer_id, sku_outer_id,
-        COALESCE(org_id, '00000000-0000-0000-0000-000000000000'::uuid)
-    );
+    ON mv_kit_stock (org_id, outer_id, sku_outer_id);
 
 -- 查询索引
 CREATE INDEX idx_mv_kit_stock_sku ON mv_kit_stock (sku_outer_id);
