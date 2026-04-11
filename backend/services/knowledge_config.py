@@ -61,11 +61,15 @@ async def _get_pg_pool():
                 conninfo=db_url,
                 min_size=1,
                 max_size=3,
+                # 与 core/local_db.py 保持一致：强制 PG session TZ=Asia/Shanghai
+                # 防止迁云数据库 / Docker / 主从异地复制时 timezone-sensitive 的
+                # cast 行为出错。详见 commit 39b6f81。
+                kwargs={"options": "-c timezone=Asia/Shanghai"},
                 open=False,
             )
             await _pg_pool.open()
             _kb_available = True
-            logger.info("Knowledge base PostgreSQL pool initialized")
+            logger.info("Knowledge base PostgreSQL pool initialized | tz=Asia/Shanghai")
             return _pg_pool
         except Exception as e:
             _kb_available = False
