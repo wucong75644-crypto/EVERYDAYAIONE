@@ -266,6 +266,27 @@
 }
 
 /* ============================================================
+ * 8.4 消息闪烁高亮（搜索跳转用）
+ * SearchPanel 点击搜索结果跳转后，目标消息闪 2 次，吸引视觉注意
+ * ============================================================ */
+
+@keyframes message-flash {
+  0%, 100% {
+    background-color: transparent;
+    box-shadow: none;
+  }
+  20%, 60% {
+    background-color: var(--s-accent-soft);
+    box-shadow: 0 0 0 4px var(--s-accent-soft);
+  }
+}
+
+.animate-message-flash {
+  animation: message-flash 1.4s var(--ease-spring);
+  border-radius: 12px;
+}
+
+/* ============================================================
  * 8.5 Tooltip 进出场（Radix data-state 驱动）
  * Radix Tooltip 暴露 data-state="delayed-open" / "closed"
  * 用 CSS keyframe 而非 framer，因为 Radix 没有 controlled open API

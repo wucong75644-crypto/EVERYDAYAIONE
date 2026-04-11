@@ -16,6 +16,7 @@ import InvitationNotice from '../components/admin/InvitationNotice';
 import MessageArea from '../components/chat/message/MessageArea';
 import InputArea from '../components/chat/input/InputArea';
 import { ChatHeader } from '../components/chat/layout/ChatHeader';
+import SearchPanel from '../components/chat/search/SearchPanel';
 import { PageTransition } from '../components/motion';
 import { getConversation } from '../services/conversation';
 import { CONVERSATIONS_CACHE_KEY } from '../components/chat/layout/conversationUtils';
@@ -78,6 +79,22 @@ export default function Chat() {
   const [conversationModelId, setConversationModelId] = useState<string | null>(null);
   // 当前选择的模型（由 InputArea 设置，用于将来扩展）
   const [, setCurrentSelectedModel] = useState<UnifiedModel | null>(null);
+  // 搜索面板开关（V3 Phase 4：cursor 分页 + 搜索）
+  const [searchPanelOpen, setSearchPanelOpen] = useState(false);
+
+  // Cmd+F / Ctrl+F 全局快捷键打开搜索面板
+  useEffect(() => {
+    if (!currentConversationId) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 仅在 meta+F (Mac) 或 ctrl+F (Win/Linux) 时拦截
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setSearchPanelOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentConversationId]);
 
   // 请求序号（用于防止快速切换对话时的竞态）
   const conversationRequestSeqRef = useRef(0);
@@ -290,6 +307,18 @@ export default function Chat() {
     [currentConversationId, setConversationOptimisticUpdate]
   );
 
+  // 搜索结果跳转到指定消息（Phase 5 实现具体滚动+闪烁逻辑）
+  // 当前先派发自定义事件，由 MessageArea 监听并响应
+  const handleJumpToMessage = useCallback(
+    (messageId: string) => {
+      // 派发全局事件，MessageArea 在 Phase 5 接管后会订阅
+      window.dispatchEvent(
+        new CustomEvent('chat:jump-to-message', { detail: { messageId } }),
+      );
+    },
+    [],
+  );
+
   return (
     <PageTransition className="h-screen flex bg-surface">
       {/* 邀请通知 */}
@@ -324,6 +353,9 @@ export default function Chat() {
           onTitleSubmit={handleTitleSubmit}
           onTitleCancel={cancelTitleEdit}
           userCredits={user?.credits ?? 0}
+          onOpenSearch={
+            currentConversationId ? () => setSearchPanelOpen(true) : undefined
+          }
         />
 
         {/* 消息区域 */}
@@ -342,6 +374,20 @@ export default function Chat() {
           onModelChange={setCurrentSelectedModel}
         />
       </div>
+
+      {/* 消息搜索面板（V3 Phase 4：cursor 分页 + 搜索方案）
+          - ChatHeader 🔍 按钮触发
+          - Cmd+F / Ctrl+F 全局快捷键触发
+          - ESC 关闭
+          - 仅在有当前对话时挂载（防止无对话状态打开搜索） */}
+      {currentConversationId && (
+        <SearchPanel
+          isOpen={searchPanelOpen}
+          onClose={() => setSearchPanelOpen(false)}
+          conversationId={currentConversationId}
+          onJumpToMessage={handleJumpToMessage}
+        />
+      )}
     </PageTransition>
   );
 }

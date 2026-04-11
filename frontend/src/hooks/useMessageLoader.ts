@@ -170,6 +170,10 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
   );
 
   // 加载更多历史消息（向上滚动时触发）
+  // 使用 cursor 分页（before_id），不再用 offset：
+  // - 翻一万页和翻第二页一样快
+  // - 翻页期间有新消息插入也不会重复/丢消息
+  // - 大厂标准做法（Slack/Discord/WhatsApp 都用 cursor）
   const loadMore = useCallback(async () => {
     if (!conversationId || loadingMore) return;
 
@@ -177,14 +181,22 @@ export function useMessageLoader({ conversationId, refreshTrigger = 0 }: UseMess
     const cached = store.getCachedMessages(conversationId);
 
     // 没有缓存或没有更多消息时不加载
-    if (!cached || !cached.hasMore) return;
+    if (!cached || !cached.hasMore || cached.messages.length === 0) return;
 
     setLoadingMore(true);
 
     try {
-      // 使用 offset 分页，从当前消息数量位置开始加载
-      const offset = cached.messages.length;
-      const response = await getMessages(conversationId, LOAD_MORE_LIMIT, offset);
+      // cursor = 当前缓存里最旧的消息 id（messages 已按时间升序）
+      // 后端用 before_id 找到该消息的 created_at，然后查 created_at < 该值的下一批
+      const oldestMessage = cached.messages[0];
+      const beforeId = oldestMessage?.id;
+
+      const response = await getMessages(
+        conversationId,
+        LOAD_MORE_LIMIT,
+        0, // offset 不再使用，传 0 让后端走 cursor 路径
+        beforeId,
+      );
 
       // 检查是否还有更多
       const newHasMore = response.messages.length >= LOAD_MORE_LIMIT;

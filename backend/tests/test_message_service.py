@@ -276,6 +276,149 @@ class TestMessageServiceGet:
                 )
 
 
+class TestMessageServiceSearch:
+    """消息搜索测试（Phase 1：cursor 分页 + 搜索方案）"""
+
+    @pytest.fixture
+    def message_service(self, mock_db):
+        return MessageService(mock_db)
+
+    @pytest.mark.asyncio
+    async def test_search_messages_returns_matches(self, message_service, mock_db):
+        """搜索关键词返回匹配的消息"""
+        user = create_test_user()
+        conversation = create_test_conversation(user_id=user["id"])
+        matching_msgs = [
+            create_test_message(conversation_id=conversation["id"], content="测试消息一"),
+            create_test_message(conversation_id=conversation["id"], content="测试消息二"),
+        ]
+
+        # spec 严格 mock：必须用 ilike + range（不能用 .offset()）
+        mock_query = MagicMock(
+            spec=["select", "eq", "ilike", "order", "range", "execute"]
+        )
+        mock_query.select.return_value = mock_query
+        mock_query.eq.return_value = mock_query
+        mock_query.ilike.return_value = mock_query
+        mock_query.order.return_value = mock_query
+        mock_query.range.return_value = mock_query
+        mock_query.execute.return_value = MagicMock(data=matching_msgs)
+        mock_db.table = MagicMock(return_value=mock_query)
+
+        with patch.object(
+            message_service.conversation_service,
+            "get_conversation",
+            return_value=conversation,
+        ):
+            result = await message_service.search_messages(
+                conversation_id=conversation["id"],
+                user_id=user["id"],
+                query="测试",
+                limit=20,
+            )
+
+        assert result["total"] == 2
+        assert result["query"] == "测试"
+        # 验证使用 ILIKE 而非全表扫描
+        mock_query.ilike.assert_called_once_with("content::text", "%测试%")
+        # 验证使用 range（local QueryBuilder 没有 .offset 方法）
+        mock_query.range.assert_called_once_with(0, 19)
+
+    @pytest.mark.asyncio
+    async def test_search_messages_empty_query_returns_empty(
+        self, message_service, mock_db
+    ):
+        """空字符串 query 直接返回空结果，不查数据库"""
+        result = await message_service.search_messages(
+            conversation_id="any",
+            user_id="any",
+            query="",
+        )
+        assert result["messages"] == []
+        assert result["total"] == 0
+        assert result["query"] == ""
+
+    @pytest.mark.asyncio
+    async def test_search_messages_whitespace_only_query_returns_empty(
+        self, message_service, mock_db
+    ):
+        """纯空白 query 也直接返回空"""
+        result = await message_service.search_messages(
+            conversation_id="any",
+            user_id="any",
+            query="   \t\n  ",
+        )
+        assert result["messages"] == []
+        assert result["total"] == 0
+
+    @pytest.mark.asyncio
+    async def test_search_messages_escapes_like_wildcards(
+        self, message_service, mock_db
+    ):
+        """ILIKE 通配符 % 和 _ 在用户输入中被转义，避免误匹配"""
+        user = create_test_user()
+        conversation = create_test_conversation(user_id=user["id"])
+
+        mock_query = MagicMock(
+            spec=["select", "eq", "ilike", "order", "range", "execute"]
+        )
+        mock_query.select.return_value = mock_query
+        mock_query.eq.return_value = mock_query
+        mock_query.ilike.return_value = mock_query
+        mock_query.order.return_value = mock_query
+        mock_query.range.return_value = mock_query
+        mock_query.execute.return_value = MagicMock(data=[])
+        mock_db.table = MagicMock(return_value=mock_query)
+
+        with patch.object(
+            message_service.conversation_service,
+            "get_conversation",
+            return_value=conversation,
+        ):
+            await message_service.search_messages(
+                conversation_id=conversation["id"],
+                user_id=user["id"],
+                query="50%_test",
+            )
+
+        # % 和 _ 被转义为 \% 和 \_
+        mock_query.ilike.assert_called_once_with("content::text", "%50\\%\\_test%")
+
+    @pytest.mark.asyncio
+    async def test_search_messages_caps_limit_at_100(
+        self, message_service, mock_db
+    ):
+        """limit 上限 100，超出会被截断"""
+        user = create_test_user()
+        conversation = create_test_conversation(user_id=user["id"])
+
+        mock_query = MagicMock(
+            spec=["select", "eq", "ilike", "order", "range", "execute"]
+        )
+        mock_query.select.return_value = mock_query
+        mock_query.eq.return_value = mock_query
+        mock_query.ilike.return_value = mock_query
+        mock_query.order.return_value = mock_query
+        mock_query.range.return_value = mock_query
+        mock_query.execute.return_value = MagicMock(data=[])
+        mock_db.table = MagicMock(return_value=mock_query)
+
+        with patch.object(
+            message_service.conversation_service,
+            "get_conversation",
+            return_value=conversation,
+        ):
+            await message_service.search_messages(
+                conversation_id=conversation["id"],
+                user_id=user["id"],
+                query="x",
+                limit=999,  # 超出
+            )
+
+        # 实际 range 应该是 (0, 99)
+        mock_query.range.assert_called_once_with(0, 99)
+
+
 class TestMessageServiceDelete:
     """消息删除测试"""
 

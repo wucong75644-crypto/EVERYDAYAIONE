@@ -22,6 +22,7 @@ from schemas.message import (
     MessageListResult,
     MessageOperation,
     MessageResponse,
+    MessageSearchResult,
     infer_generation_type,
 )
 from services.message_service import MessageService
@@ -326,6 +327,32 @@ async def get_messages(
         limit=limit,
         offset=offset,
         before_id=before_id,
+        org_id=ctx.org_id,
+    )
+    return result
+
+
+@router.get("/search", response_model=MessageSearchResult, summary="搜索消息")
+async def search_messages(
+    conversation_id: str,
+    ctx: OrgCtx,
+    q: str = Query(..., min_length=1, max_length=200, description="搜索关键词"),
+    limit: int = Query(default=20, ge=1, le=100, description="返回数量上限"),
+    service: MessageService = Depends(get_message_service),
+):
+    """
+    在指定对话内全文搜索消息
+
+    实现：JSONB content 字段 ILIKE 模糊匹配，按时间倒序返回最近的匹配消息。
+    用于"翻不到的远期消息"场景，配合前端 SearchPanel 组件使用。
+
+    注意：路由必须放在 /{message_id} 之前，否则会被贪婪 path 参数吃掉。
+    """
+    result = await service.search_messages(
+        conversation_id=conversation_id,
+        user_id=ctx.user_id,
+        query=q,
+        limit=limit,
         org_id=ctx.org_id,
     )
     return result

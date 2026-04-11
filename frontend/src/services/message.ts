@@ -60,6 +60,13 @@ export interface MessageListResponse {
   has_more: boolean;
 }
 
+/** 消息搜索响应 */
+export interface MessageSearchResponse {
+  messages: RawApiMessage[];
+  total: number;
+  query: string;  // 原始查询词，用于前端高亮
+}
+
 // ============================================================
 // API 函数
 // ============================================================
@@ -83,6 +90,31 @@ export async function getMessages(
     url: `/conversations/${conversationId}/messages`,
     method: 'GET',
     params: { limit, offset, before_id: beforeId },
+    signal,
+  });
+}
+
+/**
+ * 搜索对话内消息（关键词模糊匹配）
+ *
+ * 用于"翻不到的远期消息"场景，配合 SearchPanel UI 使用。
+ * 后端用 PostgreSQL ILIKE 在 JSONB content 字段上做模糊匹配。
+ *
+ * @param conversationId 对话 ID
+ * @param query 搜索关键词（≥1 字符，≤200 字符）
+ * @param limit 返回上限（默认 20，硬上限 100）
+ * @param signal AbortSignal 用于取消请求
+ */
+export async function searchMessages(
+  conversationId: string,
+  query: string,
+  limit = 20,
+  signal?: AbortSignal,
+): Promise<MessageSearchResponse> {
+  return request<MessageSearchResponse>({
+    url: `/conversations/${conversationId}/messages/search`,
+    method: 'GET',
+    params: { q: query, limit },
     signal,
   });
 }

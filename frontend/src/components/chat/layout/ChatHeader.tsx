@@ -9,7 +9,7 @@
  */
 
 import { memo } from 'react';
-import { Brain, PanelLeftOpen } from 'lucide-react';
+import { Brain, PanelLeftOpen, Search } from 'lucide-react';
 import { useMemoryStore } from '../../../stores/useMemoryStore';
 
 /** 组件属性接口 */
@@ -34,6 +34,8 @@ export interface ChatHeaderProps {
   onTitleCancel: () => void;
   /** 用户积分 */
   userCredits: number;
+  /** 打开消息搜索面板（V3 Phase 4，可选） */
+  onOpenSearch?: () => void;
 }
 
 /**
@@ -52,6 +54,7 @@ export const ChatHeader = memo(function ChatHeader({
   onTitleSubmit,
   onTitleCancel,
   userCredits,
+  onOpenSearch,
 }: ChatHeaderProps) {
   return (
     <header className="h-14 bg-surface-card flex items-center justify-between px-4 flex-shrink-0">
@@ -90,6 +93,16 @@ export const ChatHeader = memo(function ChatHeader({
         )}
       </div>
       <div className="flex items-center space-x-3 text-sm text-text-tertiary">
+        {onOpenSearch && (
+          <button
+            onClick={onOpenSearch}
+            className="p-1.5 hover:bg-hover rounded-lg transition-base"
+            title="搜索消息 (Cmd+F)"
+            aria-label="搜索消息"
+          >
+            <Search className="w-5 h-5 text-text-tertiary" />
+          </button>
+        )}
         <button
           onClick={useMemoryStore.getState().openModal}
           className="p-1.5 hover:bg-hover rounded-lg transition-base"

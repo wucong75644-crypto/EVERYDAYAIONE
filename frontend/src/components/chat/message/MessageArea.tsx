@@ -139,6 +139,56 @@ function ScrollOnSend() {
   return null;
 }
 
+/**
+ * 监听 chat:jump-to-message 事件，跳转到指定消息位置
+ * 用于 SearchPanel 点击搜索结果后定位 + 闪烁高亮
+ *
+ * 实现：用 [data-message-id] 选择器找 DOM，scrollIntoView 居中，
+ * 然后加 .animate-message-flash class 闪 1.4s，结束后清理。
+ *
+ * 注意：消息可能不在当前 DOM 里（懒加载分页只加载了最近 30 条），
+ * 这种情况下选择器找不到 → 后续可加"如果找不到则按 cursor 加载到该位置"逻辑，
+ * 当前先处理"消息已经在 DOM 里"的简单场景。
+ */
+function JumpToMessage() {
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const customEvent = e as CustomEvent<{ messageId: string }>;
+      const messageId = customEvent.detail?.messageId;
+      if (!messageId) return;
+
+      // 延迟一帧让 SearchPanel 关闭动画先开始
+      requestAnimationFrame(() => {
+        const el = document.querySelector<HTMLElement>(
+          `[data-message-id="${CSS.escape(messageId)}"]`,
+        );
+        if (!el) {
+          logger.warn('messageArea', '跳转目标消息不在 DOM 中，可能未加载', {
+            messageId,
+          });
+          return;
+        }
+
+        // 滚动到消息位置（block: 'center' 让消息在视口中央）
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        // 加闪烁高亮 class，动画结束后移除
+        el.classList.add('animate-message-flash');
+        const timeoutId = window.setTimeout(() => {
+          el.classList.remove('animate-message-flash');
+        }, 1500);
+        // 防止重复触发时累积 timer：用 dataset 标记
+        el.dataset.flashTimer = String(timeoutId);
+      });
+    };
+
+    window.addEventListener('chat:jump-to-message', handler);
+    return () => window.removeEventListener('chat:jump-to-message', handler);
+  }, []);
+
+  return null;
+}
+
 export default function MessageArea({
   conversationId,
   onDelete,
@@ -397,6 +447,9 @@ export default function MessageArea({
 
         {/* 监听发送事件，自动滚动到底部 */}
         <ScrollOnSend />
+
+        {/* 监听搜索跳转事件，scrollIntoView + 闪烁高亮（V3 Phase 5） */}
+        <JumpToMessage />
       </StickToBottom>
     </div>
   );
