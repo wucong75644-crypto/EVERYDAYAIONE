@@ -12,11 +12,13 @@
 
 import { memo, useMemo, lazy, Suspense } from 'react';
 import Markdown, { type Components } from 'react-markdown';
+import type { PluggableList } from 'unified';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import CodeBlock from './CodeBlock';
+import { escapeChineseMath } from '../../../utils/markdownPreprocess';
 import './markdown.css';
 
 // highlight.js 暗色主题（按需加载，仅注册常用语言）
@@ -53,9 +55,16 @@ function isImageUrl(text: string): boolean {
   }
 }
 
-/** remark/rehype 插件列表（静态，避免每次渲染重建） */
-const remarkPlugins = [remarkGfm, remarkMath];
-const rehypePlugins = [rehypeKatex, rehypeHighlight];
+/** remark/rehype 插件列表（静态，避免每次渲染重建）
+ *  rehypeKatex 配置 strict='ignore'：
+ *  即使 escapeChineseMath 漏网（比如未来扩展字符），KaTeX 也不会再 console.warn
+ *  污染控制台。是 markdownPreprocess 的兜底防线。
+ */
+const remarkPlugins: PluggableList = [remarkGfm, remarkMath];
+const rehypePlugins: PluggableList = [
+  [rehypeKatex, { strict: 'ignore' }],
+  rehypeHighlight,
+];
 
 /**
  * 自定义组件映射
@@ -149,6 +158,13 @@ export default memo(function MarkdownRenderer({
     return /[#*`~\[\]|>$-]/.test(content) || content.includes('```');
   }, [content]);
 
+  // 预处理：转义"含中文的伪 LaTeX 公式"，防止 KaTeX 对汉字 console.warn
+  // 真公式不动（$E=mc^2$ 等），仅对含 CJK 字符的 $...$ / $$...$$ 转义外层 $
+  const processedContent = useMemo(
+    () => (content ? escapeChineseMath(content) : content),
+    [content],
+  );
+
   // 纯文本快速路径：无 Markdown 语法时跳过解析
   if (!hasMarkdown) {
     return (
@@ -168,7 +184,7 @@ export default memo(function MarkdownRenderer({
         rehypePlugins={rehypePlugins}
         components={markdownComponents}
       >
-        {content}
+        {processedContent}
       </Markdown>
       {isStreaming && content && (
         <span className="inline-block w-2 h-4 bg-accent ml-0.5 animate-cursor-blink" />
