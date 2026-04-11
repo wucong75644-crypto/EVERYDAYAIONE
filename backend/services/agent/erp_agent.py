@@ -87,31 +87,21 @@ class ERPAgent:
 
             # 5. 独立工具循环（带全局时间预算）
             from services.agent.execution_budget import ExecutionBudget
-            from services.agent.erp_tool_execution import (
-                ToolLoopContext, ToolLoopExecutor,
-            )
             budget = ExecutionBudget(_ERP_AGENT_DEADLINE)
-
-            loop_ctx = ToolLoopContext(
-                db=self.db,
-                user_id=self.user_id,
-                conversation_id=self.conversation_id,
-                org_id=self.org_id,
-                task_id=self.task_id,
-                request_ctx=self.request_ctx,
-            )
-            tool_loop = ToolLoopExecutor(
-                adapter=adapter, executor=executor,
-                all_tools=all_tools, ctx=loop_ctx,
+            tool_loop, hook_ctx = self._build_tool_loop(
+                adapter, executor, all_tools,
             )
             try:
-                text, tokens, turns = await tool_loop.run(
+                result = await tool_loop.run(
                     messages=messages,
                     selected_tools=selected_tools,
                     tools_called=tools_called,
+                    hook_ctx=hook_ctx,
                     budget=budget,
                 )
-                total_tokens += tokens
+                text = result.text
+                turns = result.turns
+                total_tokens += result.total_tokens
             finally:
                 await adapter.close()
                 # 会话级 staging 延迟清理（5分钟后删除，防止 Agent 还没调 code_execute 就被清了）
@@ -163,6 +153,68 @@ class ERPAgent:
                 tokens_used=total_tokens,
                 tools_called=tools_called,
             )
+
+    def _build_tool_loop(
+        self,
+        adapter: Any,
+        executor: Any,
+        all_tools: List[Dict[str, Any]],
+    ) -> tuple:
+        """装配 ToolLoopExecutor + HookContext（ERP 默认配置）
+
+        返回 (tool_loop, hook_ctx)。所有 ERP 行为差异在这里集中表达：
+        - LoopConfig：MAX_ERP_TURNS / MAX_TOTAL_TOKENS / TOOL_TIMEOUT
+        - LoopStrategy：route_to_chat/ask_user 退出 + 工具自动扩展 + 强制先用工具
+        - Hooks：进度推送 + 审计 + L4 时间校验 + 失败反思
+        """
+        from services.agent.tool_loop_executor import ToolLoopExecutor
+        from services.agent.loop_types import (
+            HookContext, LoopConfig, LoopStrategy,
+        )
+        from services.agent.loop_hooks import (
+            FailureReflectionHook,
+            ProgressNotifyHook,
+            TemporalValidatorHook,
+            ToolAuditHook,
+        )
+        from services.agent.erp_agent_types import (
+            MAX_ERP_TURNS, MAX_TOTAL_TOKENS, TOOL_TIMEOUT,
+        )
+
+        hook_ctx = HookContext(
+            db=self.db,
+            user_id=self.user_id,
+            org_id=self.org_id,
+            conversation_id=self.conversation_id,
+            task_id=self.task_id,
+            request_ctx=self.request_ctx,
+        )
+
+        tool_loop = ToolLoopExecutor(
+            adapter=adapter,
+            executor=executor,
+            all_tools=all_tools,
+            config=LoopConfig(
+                max_turns=MAX_ERP_TURNS,
+                max_tokens=MAX_TOTAL_TOKENS,
+                tool_timeout=TOOL_TIMEOUT,
+                no_synthesis_fallback_text=(
+                    "ERP 查询过程中未能生成完整结论，"
+                    "请重新提问或缩小查询范围。"
+                ),
+            ),
+            strategy=LoopStrategy(
+                exit_signals=frozenset({"route_to_chat", "ask_user"}),
+                enable_tool_expansion=True,
+            ),
+            hooks=[
+                ProgressNotifyHook(max_turns=MAX_ERP_TURNS),
+                ToolAuditHook(),
+                TemporalValidatorHook(),
+                FailureReflectionHook(),
+            ],
+        )
+        return tool_loop, hook_ctx
 
     def _prepare_tools(
         self, query: str,
@@ -344,7 +396,15 @@ class ERPAgent:
                     f"路径：{' → '.join(unique_tools)}\n"
                     f"{detail}\n耗时：{elapsed}"
                 ),
-                source="erp_agent",
+                # source 必须在 PG CHECK 白名单内（auto/seed/manual/aggregated）。
+                # ERPAgent 经验属于自动写入，用 "auto"；
+                # 通过 metadata.writer 区分"哪个 Agent 写的"，便于运维聚合。
+                metadata={
+                    "writer": "erp_agent",
+                    "record_type": record_type,
+                    "tools": unique_tools,
+                },
+                source="auto",
                 confidence=confidence,
                 scope="org",
                 org_id=self.org_id,

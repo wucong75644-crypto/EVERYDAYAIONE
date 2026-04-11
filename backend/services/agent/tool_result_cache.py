@@ -1,7 +1,7 @@
-"""ERP Agent 工具结果缓存
+"""工具结果会话级 TTL 缓存
 
-从 erp_tool_execution.py 拆出（V2.2 §三 500 行红线），
-承载读工具的会话级 TTL 缓存。
+从 tool_loop_executor.py 拆出（V2.2 §三 500 行红线），
+被 ToolLoopExecutor 内部持有，承载读工具的会话级缓存。
 
 设计：
 - 仅缓存读工具（concurrency_safe），写工具不缓存

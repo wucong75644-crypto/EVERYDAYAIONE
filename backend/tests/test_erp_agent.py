@@ -311,18 +311,41 @@ class TestRunToolLoopExitLogic:
         return agent
 
     def _make_loop(self, agent, adapter, executor, all_tools=None):
-        """构造与 ERPAgent 配套的 ToolLoopExecutor 实例"""
-        from services.agent.erp_tool_execution import (
-            ToolLoopContext, ToolLoopExecutor,
+        """构造与 ERPAgent 配套的 ToolLoopExecutor 实例（ERP 默认装配）"""
+        from services.agent.tool_loop_executor import ToolLoopExecutor
+        from services.agent.erp_agent_types import (
+            MAX_ERP_TURNS, MAX_TOTAL_TOKENS, TOOL_TIMEOUT,
         )
-        ctx = ToolLoopContext(
-            db=agent.db, user_id=agent.user_id,
-            conversation_id=agent.conversation_id, org_id=agent.org_id,
-            task_id=agent.task_id, request_ctx=agent.request_ctx,
-        )
+        from services.agent.loop_types import LoopConfig, LoopStrategy
         return ToolLoopExecutor(
-            adapter=adapter, executor=executor,
-            all_tools=all_tools or [], ctx=ctx,
+            adapter=adapter,
+            executor=executor,
+            all_tools=all_tools or [],
+            config=LoopConfig(
+                max_turns=MAX_ERP_TURNS,
+                max_tokens=MAX_TOTAL_TOKENS,
+                tool_timeout=TOOL_TIMEOUT,
+                no_synthesis_fallback_text=(
+                    "ERP 查询过程中未能生成完整结论，请重新提问或缩小查询范围。"
+                ),
+            ),
+            strategy=LoopStrategy(
+                exit_signals=frozenset({"route_to_chat", "ask_user"}),
+                enable_tool_expansion=True,
+            ),
+            hooks=[],  # 测试场景默认不挂 hooks（每个测试自己挂）
+        )
+
+    def _make_hook_ctx(self, agent):
+        """构造测试用 HookContext"""
+        from services.agent.loop_types import HookContext
+        return HookContext(
+            db=agent.db,
+            user_id=agent.user_id,
+            org_id=agent.org_id,
+            conversation_id=agent.conversation_id,
+            task_id=agent.task_id,
+            request_ctx=agent.request_ctx,
         )
 
     @pytest.mark.asyncio
@@ -356,11 +379,12 @@ class TestRunToolLoopExitLogic:
         mock_executor.execute = AsyncMock(return_value="库存128件")
 
         loop = self._make_loop(agent, mock_adapter, mock_executor)
-        text, tokens, turns = await loop.run(
+        result = await loop.run(
             messages=[{"role": "user", "content": "查库存"}],
             selected_tools=[], tools_called=[],
+            hook_ctx=self._make_hook_ctx(agent),
         )
-        assert text == "库存128件"
+        assert result.text == "库存128件"
         assert turn_counter["n"] == 3  # 跑了 3 轮
 
     @pytest.mark.asyncio
@@ -378,13 +402,14 @@ class TestRunToolLoopExitLogic:
         mock_adapter.stream_chat = mock_stream
 
         loop = self._make_loop(agent, mock_adapter, AsyncMock())
-        text, tokens, turns = await loop.run(
+        result = await loop.run(
             messages=[{"role": "user", "content": "查库存"}],
             selected_tools=[], tools_called=[],
+            hook_ctx=self._make_hook_ctx(agent),
         )
         # 有文字时应作为有效输出（不再走兜底提示）
-        assert text == "让我想想..."
-        assert turns == 2  # 2 次空响应后中止
+        assert result.text == "让我想想..."
+        assert result.turns == 2  # 2 次空响应后中止
 
     @pytest.mark.asyncio
     async def test_text_output_after_tool_call_is_synthesis(self):
@@ -411,12 +436,13 @@ class TestRunToolLoopExitLogic:
         mock_executor.execute = AsyncMock(return_value="统计结果：8000单")
 
         loop = self._make_loop(agent, mock_adapter, mock_executor)
-        text, tokens, turns = await loop.run(
+        result = await loop.run(
             messages=[{"role": "user", "content": "今天多少单"}],
             selected_tools=[], tools_called=[],
+            hook_ctx=self._make_hook_ctx(agent),
         )
-        assert text == "今天共8000单"
-        assert "未能生成" not in text
+        assert result.text == "今天共8000单"
+        assert "未能生成" not in result.text
 
     @pytest.mark.asyncio
     async def test_ask_user_sets_synthesis_true(self):
@@ -437,13 +463,14 @@ class TestRunToolLoopExitLogic:
         mock_executor = AsyncMock()
 
         loop = self._make_loop(agent, mock_adapter, mock_executor)
-        text, tokens, turns = await loop.run(
+        result = await loop.run(
             messages=[{"role": "user", "content": "查一下那个"}],
             selected_tools=[], tools_called=[],
+            hook_ctx=self._make_hook_ctx(agent),
         )
         # ask_user 的 message 应作为结果返回，不应走兜底
-        assert "未能生成" not in text
-        assert "请提供商品编码" in text
+        assert "未能生成" not in result.text
+        assert "请提供商品编码" in result.text
 
     @pytest.mark.asyncio
     async def test_route_to_chat_with_turn_text(self):
@@ -464,12 +491,13 @@ class TestRunToolLoopExitLogic:
 
         # 需要先调过工具才不会被 empty_turns 拦截
         loop = self._make_loop(agent, mock_adapter, AsyncMock())
-        text, tokens, turns = await loop.run(
+        result = await loop.run(
             messages=[{"role": "user", "content": "查数据"}],
             selected_tools=[], tools_called=["local_global_stats"],
+            hook_ctx=self._make_hook_ctx(agent),
         )
-        assert text == "今天共8000单"
-        assert "未能生成" not in text
+        assert result.text == "今天共8000单"
+        assert "未能生成" not in result.text
 
     @pytest.mark.asyncio
     async def test_route_to_chat_without_turn_text_fallback(self):
@@ -488,11 +516,12 @@ class TestRunToolLoopExitLogic:
         mock_adapter.stream_chat = mock_stream
 
         loop = self._make_loop(agent, mock_adapter, AsyncMock())
-        text, tokens, turns = await loop.run(
+        result = await loop.run(
             messages=[{"role": "user", "content": "查数据"}],
             selected_tools=[], tools_called=["local_global_stats"],
+            hook_ctx=self._make_hook_ctx(agent),
         )
-        assert "未能生成" in text
+        assert "未能生成" in result.text
 
 
 class TestERPAgentConstants:
@@ -522,8 +551,12 @@ class TestERPAgentJSONParseError:
         """工具参数 JSON 格式错误时，错误信息应返回给 LLM"""
         from services.erp_agent import ERPAgent
         from services.adapters.types import StreamChunk, ToolCallDelta
-        from services.agent.erp_tool_execution import (
-            ToolLoopContext, ToolLoopExecutor,
+        from services.agent.tool_loop_executor import ToolLoopExecutor
+        from services.agent.erp_agent_types import (
+            MAX_ERP_TURNS, MAX_TOTAL_TOKENS, TOOL_TIMEOUT,
+        )
+        from services.agent.loop_types import (
+            HookContext, LoopConfig, LoopStrategy,
         )
 
         agent = ERPAgent(
@@ -551,21 +584,33 @@ class TestERPAgentJSONParseError:
         mock_adapter = AsyncMock()
         mock_adapter.stream_chat = mock_stream
 
-        ctx = ToolLoopContext(
+        loop = ToolLoopExecutor(
+            adapter=mock_adapter,
+            executor=AsyncMock(),
+            all_tools=[],
+            config=LoopConfig(
+                max_turns=MAX_ERP_TURNS,
+                max_tokens=MAX_TOTAL_TOKENS,
+                tool_timeout=TOOL_TIMEOUT,
+            ),
+            strategy=LoopStrategy(
+                exit_signals=frozenset({"route_to_chat", "ask_user"}),
+                enable_tool_expansion=True,
+            ),
+            hooks=[],
+        )
+        hook_ctx = HookContext(
             db=agent.db, user_id=agent.user_id,
-            conversation_id=agent.conversation_id, org_id=agent.org_id,
+            org_id=agent.org_id, conversation_id=agent.conversation_id,
             task_id=agent.task_id, request_ctx=agent.request_ctx,
         )
-        loop = ToolLoopExecutor(
-            adapter=mock_adapter, executor=AsyncMock(),
-            all_tools=[], ctx=ctx,
-        )
-        text, tokens, turns = await loop.run(
+        result = await loop.run(
             messages=[{"role": "user", "content": "查库存"}],
             selected_tools=[], tools_called=[],
+            hook_ctx=hook_ctx,
         )
         # 错误信息应作为 tool result 返回，LLM 看到后输出文字
-        assert "参数格式有误" in text or "JSON" in text
+        assert "参数格式有误" in result.text or "JSON" in result.text
 
 
 class TestFilterErpContextEdgeCases:
@@ -678,16 +723,16 @@ class TestERPAgentCache:
     """B4: 会话级读工具缓存（2026-04-11 拆出到 ToolResultCache）"""
 
     def _make_cache(self):
-        from services.agent.erp_tool_cache import ToolResultCache
+        from services.agent.tool_result_cache import ToolResultCache
         return ToolResultCache()
 
     def test_cacheable_tool_returns_true(self):
-        from services.agent.erp_tool_cache import ToolResultCache
+        from services.agent.tool_result_cache import ToolResultCache
         # local_stock_query 在 _CONCURRENT_SAFE_TOOLS 中
         assert ToolResultCache.is_cacheable("local_stock_query") is True
 
     def test_non_cacheable_tool_returns_false(self):
-        from services.agent.erp_tool_cache import ToolResultCache
+        from services.agent.tool_result_cache import ToolResultCache
         # erp_execute 是写操作，不可缓存
         assert ToolResultCache.is_cacheable("erp_execute") is False
 
@@ -726,7 +771,7 @@ class TestERPAgentCache:
         assert cache.get("local_stock_query", {"i": 50}) is None
 
     def test_cache_key_deterministic(self):
-        from services.agent.erp_tool_cache import ToolResultCache
+        from services.agent.tool_result_cache import ToolResultCache
         k1 = ToolResultCache._key("tool", {"b": 2, "a": 1})
         k2 = ToolResultCache._key("tool", {"a": 1, "b": 2})
         assert k1 == k2  # sort_keys=True 保证顺序无关
@@ -734,7 +779,7 @@ class TestERPAgentCache:
     def test_cache_ttl_expiration(self):
         """过期条目返回 None 且被删除"""
         import time
-        from services.agent.erp_tool_cache import ToolResultCache
+        from services.agent.tool_result_cache import ToolResultCache
         cache = ToolResultCache()
         cache._CACHE_TTL = 0.05  # 50ms TTL 便于测试
         cache.put("local_stock_query", {"sku": "A1"}, "库存100")
@@ -877,6 +922,11 @@ class TestRecordAgentExperience:
             assert call_kwargs["max_per_node_type"] == 400
             assert "max_per_category" not in call_kwargs
             assert "local_product_identify → local_stock_query" in call_kwargs["content"]
+            # source 必须在 PG CHECK 白名单内（不能是 erp_agent）
+            assert call_kwargs["source"] == "auto"
+            # writer/record_type 通过 metadata 区分 ERPAgent 经验来源
+            assert call_kwargs["metadata"]["writer"] == "erp_agent"
+            assert call_kwargs["metadata"]["record_type"] == "routing"
 
     @pytest.mark.asyncio
     async def test_failure_memory_calls_add_knowledge(self):
@@ -894,6 +944,9 @@ class TestRecordAgentExperience:
             assert call_kwargs["confidence"] == 0.5
             assert call_kwargs["max_per_node_type"] == 200
             assert "查询失败" in call_kwargs["title"]
+            assert call_kwargs["source"] == "auto"
+            assert call_kwargs["metadata"]["writer"] == "erp_agent"
+            assert call_kwargs["metadata"]["record_type"] == "failure"
 
     @pytest.mark.asyncio
     async def test_knowledge_error_does_not_raise(self):
