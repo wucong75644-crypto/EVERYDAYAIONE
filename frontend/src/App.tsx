@@ -22,6 +22,7 @@ const Home = lazy(() => import('./pages/Home'));
 const Chat = lazy(() => import('./pages/Chat'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const WecomCallback = lazy(() => import('./pages/WecomCallback'));
+const OrganizationSettings = lazy(() => import('./pages/OrganizationSettings'));
 
 /**
  * 路由动画包装器
@@ -65,6 +66,14 @@ function AnimatedRoutes() {
             element={
               <ProtectedRoute>
                 <Chat />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings/organization"
+            element={
+              <ProtectedRoute>
+                <OrganizationSettings />
               </ProtectedRoute>
             }
           />

@@ -6,8 +6,13 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { ChatHeader } from '../ChatHeader';
+
+// ChatHeader 内部用 useNavigate（组织管理入口），所有渲染都要 Router 包裹
+const render: typeof rtlRender = (ui, options) =>
+  rtlRender(<MemoryRouter>{ui}</MemoryRouter>, options);
 
 const baseProps = {
   sidebarCollapsed: false,
