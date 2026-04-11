@@ -373,6 +373,17 @@ class MessageListResult(BaseModel):
     has_more: bool = False
 
 
+class MessageSearchResult(BaseModel):
+    """消息搜索结果
+
+    专门用于 GET /messages/search 端点，比 MessageListResult 多一个 query
+    字段供前端做关键词高亮，少一个 has_more 字段（搜索一次性返回硬上限内的全部）。
+    """
+    messages: List[MessageResponse]
+    total: int
+    query: str
+
+
 class DeleteMessageResponse(BaseModel):
     """删除消息响应"""
     id: str
