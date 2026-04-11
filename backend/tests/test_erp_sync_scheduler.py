@@ -7,6 +7,15 @@ import pytest
 import time
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
+
+# PR3：scheduler 改用 utils.time_context.now_cn() (aware)
+# 测试 fixture 也必须用 aware datetime（CN_TZ）以匹配新行为
+#
+# 注意：原想用 time-machine 冻结时间，但发现在 macOS + Python 3.12 环境下
+# time-machine 与 pandas/pyarrow C 扩展联跑时会触发 segfault。
+# 回退到 unittest.mock.patch 直接 patch now_cn()，避免 C 扩展冲突。
+_CN = ZoneInfo("Asia/Shanghai")
 
 import sys
 from pathlib import Path
@@ -68,17 +77,17 @@ class TestIsIntervalDue:
 
     def test_not_due_yet(self):
         from services.kuaimai.erp_sync_scheduler import ErpSyncScheduler
-        last_map = {"org1": datetime.now() - timedelta(seconds=10)}
+        last_map = {"org1": datetime.now(_CN) - timedelta(seconds=10)}
         assert ErpSyncScheduler._is_interval_due(last_map, "org1", 3600) is False
 
     def test_is_due(self):
         from services.kuaimai.erp_sync_scheduler import ErpSyncScheduler
-        last_map = {"org1": datetime.now() - timedelta(seconds=7200)}
+        last_map = {"org1": datetime.now(_CN) - timedelta(seconds=7200)}
         assert ErpSyncScheduler._is_interval_due(last_map, "org1", 3600) is True
 
     def test_different_org_isolated(self):
         from services.kuaimai.erp_sync_scheduler import ErpSyncScheduler
-        last_map = {"org1": datetime.now()}
+        last_map = {"org1": datetime.now(_CN)}
         # org2 not in map → due
         assert ErpSyncScheduler._is_interval_due(last_map, "org2", 3600) is True
 
@@ -123,10 +132,11 @@ class TestGetDueTypes:
     def test_second_round_low_freq_not_due(self):
         s = self._make_scheduler()
         s._first_round = False
-        # Mark recent execution
-        s._org_last_platform_map["org1"] = datetime.now()
-        s._org_last_stock_full["org1"] = datetime.now()
-        s._org_last_daily["org1"] = datetime.now()
+        # Mark recent execution（aware datetime，匹配 PR3 后的 _is_interval_due）
+        now = datetime.now(_CN)
+        s._org_last_platform_map["org1"] = now
+        s._org_last_stock_full["org1"] = now
+        s._org_last_daily["org1"] = now
         due = s._get_due_types("org1")
         assert "platform_map" not in due
         assert "stock_full" not in due
@@ -259,35 +269,36 @@ class TestReconcileScheduling:
             s = ErpSyncScheduler(db=MagicMock())
         return s
 
-    @patch("services.kuaimai.erp_sync_scheduler.datetime")
-    def test_reconcile_due_at_correct_hour(self, mock_dt):
-        mock_dt.now.return_value = datetime(2026, 4, 2, 3, 15, 0)
-        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+    # PR3：scheduler 用 now_cn() 取北京时间。
+    # 用 unittest.mock.patch("services.kuaimai.erp_sync_scheduler.now_cn")
+    # 替代 time-machine 以避免 C 扩展 segfault（见模块顶部说明）。
+
+    @patch("services.kuaimai.erp_sync_scheduler.now_cn")
+    def test_reconcile_due_at_correct_hour(self, mock_now):
+        mock_now.return_value = datetime(2026, 4, 2, 3, 15, 0, tzinfo=_CN)
         s = self._make_scheduler(reconcile_hour=3)
         s._first_round = False
         due = s._get_due_types("org1")
         assert "order_reconcile" in due
         assert "aftersale_reconcile" in due
 
-    @patch("services.kuaimai.erp_sync_scheduler.datetime")
-    def test_reconcile_not_due_wrong_hour(self, mock_dt):
-        mock_dt.now.return_value = datetime(2026, 4, 2, 10, 0, 0)
-        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+    @patch("services.kuaimai.erp_sync_scheduler.now_cn")
+    def test_reconcile_not_due_wrong_hour(self, mock_now):
+        mock_now.return_value = datetime(2026, 4, 2, 10, 0, 0, tzinfo=_CN)
         s = self._make_scheduler(reconcile_hour=3)
         s._first_round = False
         due = s._get_due_types("org1")
         assert "order_reconcile" not in due
         assert "aftersale_reconcile" not in due
 
-    @patch("services.kuaimai.erp_sync_scheduler.datetime")
-    def test_reconcile_not_due_if_recently_completed(self, mock_dt):
-        mock_dt.now.return_value = datetime(2026, 4, 2, 3, 30, 0)
-        mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+    @patch("services.kuaimai.erp_sync_scheduler.now_cn")
+    def test_reconcile_not_due_if_recently_completed(self, mock_now):
+        mock_now.return_value = datetime(2026, 4, 2, 3, 30, 0, tzinfo=_CN)
         s = self._make_scheduler(reconcile_hour=3)
         s._first_round = False
-        # 刚完成过
-        s._org_last_order_reconcile["org1"] = datetime(2026, 4, 2, 3, 5, 0)
-        s._org_last_aftersale_reconcile["org1"] = datetime(2026, 4, 2, 3, 5, 0)
+        # 刚完成过（aware datetime，PR3 后必须带 tzinfo）
+        s._org_last_order_reconcile["org1"] = datetime(2026, 4, 2, 3, 5, 0, tzinfo=_CN)
+        s._org_last_aftersale_reconcile["org1"] = datetime(2026, 4, 2, 3, 5, 0, tzinfo=_CN)
         due = s._get_due_types("org1")
         assert "order_reconcile" not in due
         assert "aftersale_reconcile" not in due

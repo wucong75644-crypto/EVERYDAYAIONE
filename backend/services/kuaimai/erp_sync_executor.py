@@ -3,6 +3,10 @@ ERP 同步执行器（纯执行逻辑）
 
 从 ErpSyncWorker 中提取的日维护、归档、聚合兜底、删除检测逻辑。
 不包含调度、锁管理、队列消费代码。
+
+# TODO(time-context): ``datetime.now()`` 用于内部状态时间戳和归档 cutoff
+# （不进入 LLM 上下文）。应迁移到 ``utils.time_context.now_cn()``，
+# 属于工程清理任务，不在 PR1/PR2/PR3 范围。详见 §17.2 T1
 """
 
 from __future__ import annotations

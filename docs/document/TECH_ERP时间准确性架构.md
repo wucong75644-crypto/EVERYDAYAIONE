@@ -920,8 +920,55 @@ Phase 7 设计支持未来加更多 validator：
 |---|---|---|
 | **L1~L3（PR1）** | 工具返回带 `weekday_cn`，prompt 硬规则 | 模型读到事实就不会算错 |
 | **L4（PR2）** | 输出层正则扫描，自动 patch `周四→周五` | 模型违反硬规则自己算错时兜底 |
+| **B（PR3）** | wrap_erp_agent_result Pass-through prompt | 主 Agent 拿到 erp_agent 结果重述时不改写 |
 
-两层独立，互为冗余。
+三层独立，互为冗余。
+
+### 14.7 PR3 实施记录（2026-04-11 已完成）
+
+#### Pass-through 防御 (B)
+
+针对 PR2 审查发现的"主 Agent 重述盲点"：erp_agent 工具返回作为 tool_result
+进入主 Agent messages 后，主 Agent 会再 stream 一段自己的合成回复给前端，
+这次合成不走 ERPAgent 内部的 L4。
+
+修复方式（参考 Claude Code 的 Pass-through 模式，不是双层 L4）：
+
+- 修改 [`tool_result_envelope.py:wrap_erp_agent_result`](backend/services/agent/tool_result_envelope.py)
+- 在 erp_agent 返回的截断后文本前后包裹强约束提示词：
+  - 「⚠ 以下是 ERP 数据查询的最终结果，已包含正确的中文星期/日期/数字」
+  - 「**禁止改写**其中的日期或星期，结构化时间块和数据本身必须原文输出」
+  - `─── ERP 结果开始/结束 ───` 标记块包裹
+
+效果（理论）：
+- 主 Agent 再生成时遵守提示词，逐字复制时间块和数据
+- 残余幻觉率从约 1-3% 压到约 0.5%
+
+之所以**不做双层 L4**：
+1. 主 Agent 是流式输出，缓冲后 patch 会破坏打字机 UX
+2. 流式发完再发"修正消息"前端复杂度高
+3. 持久化层 patch 但前端看到错的体验更差
+4. ERPAgent 已 patch + Pass-through prompt 后，残余风险足够低
+
+#### sync 层 PR3 修复
+
+| 文件 | 修复 |
+|---|---|
+| [`erp_sync_reconcile.py:38`](backend/services/kuaimai/erp_sync_reconcile.py#L38) `_yesterday_range` | `datetime.now()` → `now_cn()` |
+| [`erp_sync_scheduler.py:217`](backend/services/kuaimai/erp_sync_scheduler.py#L217) 凌晨对账触发 | `datetime.now().hour` → `now_cn().hour` |
+| [`erp_sync_scheduler.py:239`](backend/services/kuaimai/erp_sync_scheduler.py#L239) `_is_interval_due` | `datetime.now()` → `now_cn()` |
+| [`erp_sync_scheduler.py:247`](backend/services/kuaimai/erp_sync_scheduler.py#L247) `mark_completed` | `datetime.now()` → `now_cn()` |
+
+#### sync 层 TODO 标记（不修复）
+
+以下文件加文件级别的 `# TODO(time-context)` 注释，标记后续工程清理任务：
+
+- [`erp_sync_worker.py`](backend/services/kuaimai/erp_sync_worker.py) — 17 处内部状态时间戳
+- [`erp_sync_executor.py`](backend/services/kuaimai/erp_sync_executor.py) — 4 处归档/cutoff 计算
+- [`erp_sync_dead_letter.py`](backend/services/kuaimai/erp_sync_dead_letter.py) — 12 处死信状态时间戳
+
+理由：这些都是 sync 内部状态时间戳（互相比较 elapsed），不进入 LLM 上下文，
+不影响业务正确性。统一迁移属于工程清理，不是业务正确性问题。
 
 ---
 

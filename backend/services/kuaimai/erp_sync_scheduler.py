@@ -13,6 +13,7 @@ from datetime import datetime
 from loguru import logger
 
 from core.config import get_settings
+from utils.time_context import now_cn
 
 # 同步类型优先级权重（越大 → score 越小 → 越先执行）
 PRIORITY_WEIGHTS: dict[str, int] = {
@@ -212,9 +213,11 @@ class ErpSyncScheduler:
             due.append("daily_maintenance")
 
         # 订单+售后对账：仅在指定时点触发（默认凌晨3点），独立追踪
+        # PR3 修复：用 now_cn() 替代 datetime.now()，防止容器 TZ 漂移
+        # 导致对账触发时点偏离北京时间
         reconcile_hour = self.settings.erp_reconcile_hour
         reconcile_interval = self.settings.erp_reconcile_interval
-        if datetime.now().hour == reconcile_hour:
+        if now_cn().hour == reconcile_hour:
             if self._is_interval_due(
                 self._org_last_order_reconcile, org_id, reconcile_interval,
             ):
@@ -232,11 +235,16 @@ class ErpSyncScheduler:
         org_id: str | None,
         interval_seconds: int,
     ) -> bool:
-        """判断某个企业的某类任务是否到期。"""
+        """判断某个企业的某类任务是否到期。
+
+        相对时间差比较，理论上可用 ``time.monotonic()`` 更纯粹，
+        但 last_map 里的 datetime 由 ``mark_completed`` 写入，需要保持
+        类型一致。统一改用 ``now_cn()`` 保证北京时间语义。
+        """
         last = last_map.get(org_id)
         if last is None:
             return True
-        return (datetime.now() - last).total_seconds() >= interval_seconds
+        return (now_cn() - last).total_seconds() >= interval_seconds
 
     def mark_completed(self, org_id: str | None, sync_type: str) -> None:
         """Worker 完成任务后回调，更新调度时间戳。
@@ -244,7 +252,7 @@ class ErpSyncScheduler:
         低频/特殊任务需要更新时间戳以控制下次调度时间。
         高频任务每轮都入队，不需要时间戳控制。
         """
-        now = datetime.now()
+        now = now_cn()
         if sync_type == "platform_map":
             self._org_last_platform_map[org_id] = now
         elif sync_type == "stock_full":

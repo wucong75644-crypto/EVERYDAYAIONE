@@ -246,7 +246,17 @@ def validate_and_patch(
         (patched_text, deviations)
         - patched_text: 修正后的文本（weekday 错误已替换）
         - deviations: 发现的偏离清单（供 L5 写日志）
+
+    Raises:
+        TypeError: 当 text 不是 str 类型时（防御 None 等意外输入）。
     """
+    # 防御：非 str 类型（尤其是 None）应明确拒绝，不能 silently 传递回 None
+    if text is None:
+        return "", []
+    if not isinstance(text, str):
+        raise TypeError(
+            f"validate_and_patch 要求 text: str，收到 {type(text).__name__}"
+        )
     if not text:
         return text, []
 

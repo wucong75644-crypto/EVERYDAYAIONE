@@ -6,12 +6,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-import pytest
-
-from services.agent.guardrails.temporal_validator import (
-    TemporalDeviation,
-    validate_and_patch,
-)
+from services.agent.guardrails.temporal_validator import validate_and_patch
 from utils.time_context import RequestContext, TimePoint
 
 CN = ZoneInfo("Asia/Shanghai")
@@ -210,6 +205,89 @@ class TestShouldNotPatch:
 # ────────────────────────────────────────────────────────────────────
 # 边界 / 鲁棒性
 # ────────────────────────────────────────────────────────────────────
+
+
+class TestInputValidation:
+    """输入类型防御（None / 非字符串）。"""
+
+    def test_none_input_returns_empty(self):
+        """None 输入返回 ('', [])，不静默传递 None。"""
+        patched, devs = validate_and_patch(None)  # type: ignore[arg-type]
+        assert patched == ""
+        assert devs == []
+
+    def test_non_string_raises_type_error(self):
+        """非字符串类型（int/dict 等）显式抛 TypeError。"""
+        import pytest as _pytest
+        with _pytest.raises(TypeError, match="validate_and_patch 要求 text: str"):
+            validate_and_patch(12345)  # type: ignore[arg-type]
+        with _pytest.raises(TypeError):
+            validate_and_patch({"text": "..."})  # type: ignore[arg-type]
+        with _pytest.raises(TypeError):
+            validate_and_patch(["list"])  # type: ignore[arg-type]
+
+
+class TestAdversarial:
+    """对抗性输入（正则 DoS / unicode / 代码块混合 / 超长）。"""
+
+    def test_huge_text_10kb_performance(self):
+        """10KB 文本扫描应在毫秒级（正则无回溯）。"""
+        import time
+        ctx = _make_ctx()
+        big = "无关文本" * 2500 + " 4月3日（上周四）"
+        start = time.monotonic()
+        patched, devs = validate_and_patch(big, ctx=ctx)
+        elapsed = time.monotonic() - start
+        assert elapsed < 0.5, f"扫描耗时 {elapsed*1000:.1f}ms 超过阈值"
+        assert len(devs) == 1
+        assert "上周五" in patched
+
+    def test_dense_date_weekday_pairs(self):
+        """紧邻重复的日期+星期不崩溃。"""
+        ctx = _make_ctx()
+        dense = "4月10日周四" * 100
+        patched, devs = validate_and_patch(dense, ctx=ctx)
+        # 100 个都应被识别并 patch
+        assert len(devs) == 100
+        assert "周四" not in patched
+
+    def test_many_code_block_markers_even_count_not_in_block(self):
+        """前置偶数个 ``` → 不在代码块内 → 应该 patch。"""
+        ctx = _make_ctx()
+        text = "```" * 10 + " 4月3日 周四 " + "```" * 10
+        # 前 10 个 ``` = 偶数 → 不在代码块内
+        patched, devs = validate_and_patch(text, ctx=ctx)
+        assert len(devs) == 1  # 被 patch
+
+    def test_many_code_block_markers_odd_count_in_block(self):
+        """前置奇数个 ``` → 在代码块内 → 应该跳过。"""
+        ctx = _make_ctx()
+        text = "```" * 9 + " 4月3日 周四 " + "```"
+        # 前 9 个 ``` = 奇数 → 在代码块内
+        patched, devs = validate_and_patch(text, ctx=ctx)
+        assert len(devs) == 0  # 跳过
+
+    def test_unicode_zero_width_in_connector(self):
+        """零宽空格不破坏匹配。"""
+        ctx = _make_ctx()
+        text = "4月3日\u200b周四"
+        patched, devs = validate_and_patch(text, ctx=ctx)
+        assert len(devs) == 1
+
+    def test_json_style_not_patched(self):
+        """JSON 风格（含逗号）connector 被逗号截断，不匹配。"""
+        ctx = _make_ctx()
+        text = '{"date": "2026-04-10", "weekday": "周四"}'
+        patched, devs = validate_and_patch(text, ctx=ctx)
+        # JSON 中间有逗号，connector 禁止跨逗号
+        assert len(devs) == 0
+
+    def test_evil_huge_connector_not_matched(self):
+        """connector 限 15 字符：超过 15 字符的连接不匹配。"""
+        ctx = _make_ctx()
+        text = "4月3日" + "a" * 30 + "周四"  # 30 个 a 超过 15 限制
+        patched, devs = validate_and_patch(text, ctx=ctx)
+        assert len(devs) == 0
 
 
 class TestRobustness:
