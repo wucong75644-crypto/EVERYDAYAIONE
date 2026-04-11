@@ -43,6 +43,7 @@ export function Stagger({
   const variants = staggerDelay === 0.04 && initialDelay === 0.02
     ? staggerContainer
     : {
+        initial: {},
         animate: {
           transition: {
             staggerChildren: staggerDelay,

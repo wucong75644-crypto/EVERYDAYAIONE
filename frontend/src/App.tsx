@@ -28,14 +28,26 @@ const WecomCallback = lazy(() => import('./pages/WecomCallback'));
  * - useLocation 拿当前 location（key 用于触发 AnimatePresence enter/exit）
  * - <AnimatePresence mode="wait"> 让旧页面退场动画播完再 mount 新页面
  * - 必须放在 <BrowserRouter> 内部才能调用 useLocation
+ *
+ * 关键：route key 用"路由段"而非完整 pathname，避免在动态参数路由内
+ * 切换时整个页面 unmount（例如 /chat/abc → /chat/xyz 应该是 Chat 内部
+ * 状态变化，而不是整页 fade in/out）。
  */
+function getRouteKey(pathname: string): string {
+  // 取第一段作为 key：'/' / '/chat' / '/forgot-password' / '/auth' 等
+  // /chat 和 /chat/xxx 都是 'chat'，不会触发 unmount
+  const seg = pathname.split('/').filter(Boolean)[0] || '';
+  return '/' + seg;
+}
+
 function AnimatedRoutes() {
   const location = useLocation();
+  const routeKey = getRouteKey(location.pathname);
 
   return (
     <Suspense fallback={<LoadingScreen message="加载中..." />}>
       <AnimatePresence mode="wait" initial={false}>
-        <Routes location={location} key={location.pathname}>
+        <Routes location={location} key={routeKey}>
           <Route path="/" element={<Home />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/auth/wecom/callback" element={<WecomCallback />} />

@@ -109,8 +109,10 @@ export const slideRightVariants: Variants = {
   exit: { x: '100%', transition: EXIT_EASE },
 };
 
-/** Stagger 容器（子元素依次入场） */
+/** Stagger 容器（子元素依次入场）
+ *  显式声明 initial:{} 让 Stagger 组件的 initial="initial" 不会 fallback 到 undefined */
 export const staggerContainer: Variants = {
+  initial: {},
   animate: {
     transition: {
       staggerChildren: 0.04,

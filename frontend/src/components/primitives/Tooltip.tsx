@@ -1,14 +1,20 @@
 /**
  * Tooltip Primitive
  *
- * 基于 Radix UI Tooltip + framer-motion 的薄封装。
+ * 基于 Radix UI Tooltip 的薄封装。
  *
  * 提供：
  * - 键盘聚焦也能显示（a11y）
  * - delay 可配置（默认 300ms）
  * - 箭头指示器
- * - 进出场动画（快速 fade + micro scale）
+ * - 进出场动画（CSS data-state 驱动 — Radix 原生方案）
  * - 3 主题 token
+ *
+ * 为什么不用 framer-motion：
+ * Radix Tooltip 没有暴露 controlled open API，open state 在内部管理。
+ * 用 framer 的 AnimatePresence + open prop 需要双 hook（useState + Radix），
+ * 反而复杂。Radix 推荐用 data-state="open|closed" 配 CSS keyframe，
+ * 简单且 exit 动画能正确播放。
  *
  * 使用前提：APP 根节点需要包 <TooltipProvider>，
  * 或者每个 Tooltip 自带 provider（这里选后者，避免侵入 App.tsx）。
@@ -23,7 +29,6 @@
 
 import { type ReactNode } from 'react';
 import * as RadixTooltip from '@radix-ui/react-tooltip';
-import { m } from 'framer-motion';
 import { cn } from '../../utils/cn';
 
 interface TooltipProps {
@@ -58,34 +63,30 @@ export function Tooltip({
         <RadixTooltip.Trigger asChild>{children}</RadixTooltip.Trigger>
         <RadixTooltip.Portal>
           <RadixTooltip.Content
-            asChild
             side={side}
             align={align}
             sideOffset={sideOffset}
             collisionPadding={8}
+            className={cn(
+              'z-[60] px-2.5 py-1.5',
+              'rounded-md',
+              'bg-[var(--s-surface-inverse)]',
+              'text-[var(--s-text-inverse)]',
+              'text-xs font-medium',
+              'shadow-[var(--s-shadow-drop-lg)]',
+              'max-w-xs pointer-events-none',
+              // Radix data-state 驱动的动画（origin 用 radix CSS var）
+              'origin-[var(--radix-tooltip-content-transform-origin)]',
+              'data-[state=delayed-open]:animate-tooltip-in',
+              'data-[state=closed]:animate-tooltip-out',
+            )}
           >
-            <m.div
-              className={cn(
-                'z-[60] px-2.5 py-1.5',
-                'rounded-md',
-                'bg-[var(--s-surface-inverse)]',
-                'text-[var(--s-text-inverse)]',
-                'text-xs font-medium',
-                'shadow-[var(--s-shadow-drop-lg)]',
-                'max-w-xs pointer-events-none',
-              )}
-              initial={{ opacity: 0, scale: 0.92 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.92 }}
-              transition={{ duration: 0.12, ease: [0.32, 0.72, 0, 1] }}
-            >
-              {content}
-              <RadixTooltip.Arrow
-                className="fill-[var(--s-surface-inverse)]"
-                width={10}
-                height={5}
-              />
-            </m.div>
+            {content}
+            <RadixTooltip.Arrow
+              className="fill-[var(--s-surface-inverse)]"
+              width={10}
+              height={5}
+            />
           </RadixTooltip.Content>
         </RadixTooltip.Portal>
       </RadixTooltip.Root>

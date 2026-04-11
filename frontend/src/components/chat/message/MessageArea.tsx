@@ -361,29 +361,34 @@ export default function MessageArea({
             onLoadMore={loadMore}
           />
 
-          {/* 消息列表 */}
+          {/* 消息列表
+              性能保护：消息数 > 50 时禁用 framer layout 动画，避免长对话卡顿 */}
           <div className="max-w-4xl mx-auto px-4 space-y-4">
-            {mergedMessages.map((message) => {
-              const isMessageStreaming = message.status === 'streaming';
-              const imageIndex = getImageIndex(message);
+            {(() => {
+              const enableLayoutAnimation = mergedMessages.length <= 50;
+              return mergedMessages.map((message) => {
+                const isMessageStreaming = message.status === 'streaming';
+                const imageIndex = getImageIndex(message);
 
-              return (
-                <MessageItem
-                  key={message.id}
-                  message={message}
-                  isStreaming={isMessageStreaming}
-                  agentStepHint={isMessageStreaming ? agentStepHint : undefined}
-                  streamingThinking={isMessageStreaming ? streamingThinking : undefined}
-                  onRegenerate={handleRegenerate}
-                  onDelete={handleDelete}
-                  onMediaLoaded={handleMediaLoaded}
-                  allImageUrls={allImageUrls}
-                  currentImageIndex={imageIndex >= 0 ? imageIndex : 0}
-                  skipEntryAnimation={loading || loadingMore}
-                  onRegenerateSingle={handleRegenerateSingle}
-                />
-              );
-            })}
+                return (
+                  <MessageItem
+                    key={message.id}
+                    message={message}
+                    isStreaming={isMessageStreaming}
+                    agentStepHint={isMessageStreaming ? agentStepHint : undefined}
+                    streamingThinking={isMessageStreaming ? streamingThinking : undefined}
+                    onRegenerate={handleRegenerate}
+                    onDelete={handleDelete}
+                    onMediaLoaded={handleMediaLoaded}
+                    allImageUrls={allImageUrls}
+                    currentImageIndex={imageIndex >= 0 ? imageIndex : 0}
+                    skipEntryAnimation={loading || loadingMore}
+                    onRegenerateSingle={handleRegenerateSingle}
+                    enableLayoutAnimation={enableLayoutAnimation}
+                  />
+                );
+              });
+            })()}
           </div>
         </StickToBottom.Content>
 

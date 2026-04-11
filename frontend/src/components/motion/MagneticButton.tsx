@@ -4,8 +4,12 @@
  * 鼠标靠近时按钮轻微"吸附"向光标方向移动，离开回弹。
  * 用在首页 Hero 的 CTA 按钮，增加"手感"吸引力。
  *
- * 实现：监听父级 mousemove，计算鼠标与按钮中心的距离，
- * 在 magnetThreshold 半径内时根据距离比例偏移。
+ * 实现：监听 mousemove，计算鼠标与按钮中心的偏移量。
+ *
+ * V3 Review Fix — 性能优化：
+ * - 旧版用 useState 存 offset，每次 mousemove (60~120Hz) setState → React rerender
+ * - 新版用 framer useMotionValue + useSpring，直接绕过 React，
+ *   值变化只会触发 framer 内部的 transform 写入，零 React rerender
  *
  * @example
  * ```tsx
@@ -15,8 +19,8 @@
  * ```
  */
 
-import { useRef, useState, type ReactNode, type MouseEvent } from 'react';
-import { m } from 'framer-motion';
+import { useRef, type ReactNode, type MouseEvent } from 'react';
+import { m, useMotionValue, useSpring } from 'framer-motion';
 import { SOFT_SPRING } from '../../utils/motion';
 
 interface MagneticButtonProps {
@@ -32,20 +36,27 @@ export function MagneticButton({
   className,
 }: MagneticButtonProps) {
   const ref = useRef<HTMLDivElement>(null);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
+
+  // motionValue 直接驱动 transform，不触发 React rerender
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  // 用 spring 包裹一层让回弹更自然
+  const sx = useSpring(x, SOFT_SPRING);
+  const sy = useSpring(y, SOFT_SPRING);
 
   const handleMouseMove = (e: MouseEvent<HTMLDivElement>) => {
     if (!ref.current) return;
     const rect = ref.current.getBoundingClientRect();
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
-    setOffset({
-      x: (e.clientX - cx) * strength,
-      y: (e.clientY - cy) * strength,
-    });
+    x.set((e.clientX - cx) * strength);
+    y.set((e.clientY - cy) * strength);
   };
 
-  const handleMouseLeave = () => setOffset({ x: 0, y: 0 });
+  const handleMouseLeave = () => {
+    x.set(0);
+    y.set(0);
+  };
 
   return (
     <m.div
@@ -53,9 +64,7 @@ export function MagneticButton({
       className={className}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
-      animate={offset}
-      transition={SOFT_SPRING}
-      style={{ display: 'inline-block' }}
+      style={{ x: sx, y: sy, display: 'inline-block' }}
     >
       {children}
     </m.div>

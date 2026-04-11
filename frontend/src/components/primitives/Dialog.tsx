@@ -40,6 +40,8 @@ import { scaleVariants, fadeVariants } from '../../utils/motion';
 export type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | 'full';
 export type DialogBackdrop = 'dim' | 'glass';
 
+export type DialogPadding = 'default' | 'none';
+
 interface DialogProps {
   /** 受控打开状态 */
   open: boolean;
@@ -58,8 +60,20 @@ interface DialogProps {
   size?: DialogSize;
   /** Backdrop 风格 */
   backdrop?: DialogBackdrop;
+  /** 内容 padding：default = p-6 / none = 由上层组件管理 */
+  padding?: DialogPadding;
   /** 是否显示右上角 X 关闭按钮 */
   showClose?: boolean;
+  /**
+   * 是否允许 ESC 键关闭（默认 true）
+   * false 时拦截 Radix 默认的 ESC 关闭行为
+   */
+  closeOnEscape?: boolean;
+  /**
+   * 是否允许点击 backdrop 关闭（默认 true）
+   * false 时拦截 Radix 默认的 outside click 关闭行为
+   */
+  closeOnOutsideClick?: boolean;
   /** 自定义 className（追加到 content 容器） */
   className?: string;
   /** 内容 */
@@ -82,7 +96,10 @@ export function Dialog({
   hideTitleVisually = false,
   size = 'md',
   backdrop = 'dim',
+  padding = 'default',
   showClose = true,
+  closeOnEscape = true,
+  closeOnOutsideClick = true,
   className,
   children,
 }: DialogProps) {
@@ -106,7 +123,22 @@ export function Dialog({
               />
             </RadixDialog.Overlay>
 
-            <RadixDialog.Content asChild forceMount>
+            <RadixDialog.Content
+              asChild
+              forceMount
+              // 拦截 ESC：preventDefault 阻止 Radix 默认关闭
+              onEscapeKeyDown={(e) => {
+                if (!closeOnEscape) e.preventDefault();
+              }}
+              // 拦截点击外部（pointer down outside content）
+              onPointerDownOutside={(e) => {
+                if (!closeOnOutsideClick) e.preventDefault();
+              }}
+              // 拦截"任意外部交互"（覆盖 focus 移出等场景）
+              onInteractOutside={(e) => {
+                if (!closeOnOutsideClick) e.preventDefault();
+              }}
+            >
               <m.div
                 className={cn(
                   'fixed left-1/2 top-1/2 z-50 w-[92vw]',
@@ -114,8 +146,9 @@ export function Dialog({
                   'border border-[var(--c-modal-border)]',
                   'rounded-[var(--c-modal-radius)]',
                   'shadow-[var(--c-modal-shadow)]',
-                  'p-6 overflow-hidden',
+                  'overflow-hidden',
                   'focus:outline-none',
+                  padding === 'default' && 'p-6',
                   SIZE_CLASSES[size],
                   className,
                 )}
@@ -155,8 +188,9 @@ export function Dialog({
                 )}
 
                 {/* 描述（可选，同时用于 aria-description）
-                    Radix 要求每个 Dialog 都有 Description 或显式 aria-describedby={undefined}，
-                    没传 description 时渲染 sr-only 兜底避免警告 */}
+                    Radix 要求每个 Dialog 都有 Description 元素，否则 console warning。
+                    无 description 时渲染 sr-only 空 Description 兜底，
+                    aria-hidden 让屏幕阅读器跳过（避免朗读冗余文本噪音） */}
                 {description ? (
                   <RadixDialog.Description
                     className="text-sm text-[var(--s-text-secondary)] mb-4"
@@ -164,9 +198,7 @@ export function Dialog({
                     {description}
                   </RadixDialog.Description>
                 ) : (
-                  <RadixDialog.Description className="sr-only">
-                    Dialog content
-                  </RadixDialog.Description>
+                  <RadixDialog.Description className="sr-only" aria-hidden="true" />
                 )}
 
                 {/* 没有 title 时，Radix 要求必须至少有 Title 供 aria，用 sr-only 兜底 */}
