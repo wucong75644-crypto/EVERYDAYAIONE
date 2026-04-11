@@ -189,6 +189,21 @@ class TestKuaiMaiClient:
             with pytest.raises(KuaiMaiTokenExpiredError):
                 client._handle_response(data, "test.api")
 
+    def test_handle_response_invalid_session_is_token_expired(self):
+        """Bug 3 regression: code='invalid_session' 必须被识别为 token 失效
+
+        快麦实际返回的 token 失效错误码是字符串 'invalid_session'，
+        不是 27/105/106。修复前此码会被当作普通业务错误，导致
+        自动 refresh 永远不被触发。
+        """
+        client = KuaiMaiClient(
+            app_key="k", app_secret="s", access_token="t"
+        )
+        data = {"success": False, "code": "invalid_session",
+                "msg": "刷新的会话信息不存在"}
+        with pytest.raises(KuaiMaiTokenExpiredError):
+            client._handle_response(data, "test.api")
+
     def test_handle_response_business_error(self):
         """其他业务错误抛出 KuaiMaiBusinessError"""
         client = KuaiMaiClient(
@@ -367,6 +382,105 @@ class TestTokenRefresh:
         client._client = mock_http
 
         result = await client.refresh_token()
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_api_failure_triggers_fast_alert(
+        self, mock_redis_lock,
+    ):
+        """Bug 3: refresh API 返回失败时立即推送企微告警（快档）
+
+        修复前：refresh 失败 → 返回 False → 上层涨 consecutive_errors →
+                等 healthcheck 5 分钟扫一次 + ALERT_THRESHOLD 次 = 18+ 小时
+        修复后：refresh 失败 → 直接调 push_token_refresh_alert → 秒级推送
+        """
+        client = KuaiMaiClient(
+            app_key="k", app_secret="s", access_token="t",
+            refresh_token="r", org_id="org_test_alert",
+        )
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "success": False, "code": "invalid_session",
+            "msg": "刷新的会话信息不存在",
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        mock_http.is_closed = False
+        client._client = mock_http
+
+        with patch(
+            "services.kuaimai.erp_sync_healthcheck.push_token_refresh_alert",
+            new_callable=AsyncMock,
+        ) as mock_alert:
+            result = await client.refresh_token()
+
+        assert result is False
+        mock_alert.assert_called_once()
+        # 第一个参数是 org_id
+        args, _ = mock_alert.call_args
+        assert args[0] == "org_test_alert"
+        # 第二个参数是 error 摘要，应该包含 code 和 msg
+        assert "invalid_session" in args[1]
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_exception_triggers_fast_alert(
+        self, mock_redis_lock,
+    ):
+        """Bug 3: refresh 调用本身抛异常时也要立即告警"""
+        client = KuaiMaiClient(
+            app_key="k", app_secret="s", access_token="t",
+            refresh_token="r", org_id="org_test_exc",
+        )
+
+        mock_http = AsyncMock()
+        mock_http.post.side_effect = RuntimeError("network exploded")
+        mock_http.is_closed = False
+        client._client = mock_http
+
+        with patch(
+            "services.kuaimai.erp_sync_healthcheck.push_token_refresh_alert",
+            new_callable=AsyncMock,
+        ) as mock_alert:
+            result = await client.refresh_token()
+
+        assert result is False
+        mock_alert.assert_called_once()
+        args, _ = mock_alert.call_args
+        assert args[0] == "org_test_exc"
+        assert "exception" in args[1].lower()
+        assert "network exploded" in args[1]
+
+    @pytest.mark.asyncio
+    async def test_refresh_token_alert_dispatch_failure_does_not_break(
+        self, mock_redis_lock,
+    ):
+        """告警 dispatch 失败必须不影响 refresh 主流程返回 False"""
+        client = KuaiMaiClient(
+            app_key="k", app_secret="s", access_token="t",
+            refresh_token="r", org_id="org_x",
+        )
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "success": False, "code": "99", "msg": "boom",
+        }
+        mock_response.raise_for_status = MagicMock()
+        mock_http = AsyncMock()
+        mock_http.post.return_value = mock_response
+        mock_http.is_closed = False
+        client._client = mock_http
+
+        # 让告警函数本身抛异常
+        with patch(
+            "services.kuaimai.erp_sync_healthcheck.push_token_refresh_alert",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("alert system down"),
+        ):
+            # 必须不抛异常，照常返回 False
+            result = await client.refresh_token()
+
         assert result is False
 
     @pytest.mark.asyncio

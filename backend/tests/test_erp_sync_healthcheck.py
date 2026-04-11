@@ -1,13 +1,13 @@
 """ERP 同步健康检查 — 单元测试
 
 覆盖：
-- 阈值过滤（error_count < 10 不告警）
+- 阈值过滤（error_count < ALERT_THRESHOLD 不告警）
 - 按 org 聚合
 - Redis dedupe（已告警过 1h 内不重复）
 - dedupe 顺序修复（推送失败时不持锁 1h）
 - 推送失败时主流程不抛异常
 - 管理员查询走 org_members（不是 users.role）
-- 指纹生成（按 error_count // 10 分档）
+- 指纹生成（按 error_count // ALERT_THRESHOLD 分档）
 - best-effort 通道：缺 wecom 配置时跳过
 """
 
@@ -49,17 +49,26 @@ class TestFingerprint:
         ]
         assert _fingerprint(items_a) == _fingerprint(items_b)
 
-    def test_error_count_bucketed_by_10(self):
-        """error_count 每 10 阶视为同一档（避免每次扫描数字+1 都重新告警）"""
-        items_a = [{"sync_type": "order", "error_count": 50}]
-        items_b = [{"sync_type": "order", "error_count": 55}]
-        items_c = [{"sync_type": "order", "error_count": 59}]
+    def test_error_count_bucketed_by_threshold(self):
+        """error_count 按 ALERT_THRESHOLD 分档（同档去重，避免数字 +1 刷屏）
+
+        2026-04-11: ALERT_THRESHOLD 10→3 后，分档粒度从 10 变 3。
+        例如阈值=3：3-5 同档，6-8 同档，9-11 同档。
+        """
+        from services.kuaimai.erp_sync_healthcheck import ALERT_THRESHOLD
+        # 同档：[ALERT_THRESHOLD * k, ALERT_THRESHOLD * (k+1) - 1]
+        base = ALERT_THRESHOLD * 5  # 任取一档起点
+        items_a = [{"sync_type": "order", "error_count": base}]
+        items_b = [{"sync_type": "order", "error_count": base + 1}]
+        items_c = [{"sync_type": "order", "error_count": base + ALERT_THRESHOLD - 1}]
         assert _fingerprint(items_a) == _fingerprint(items_b) == _fingerprint(items_c)
 
     def test_error_count_crosses_bucket(self):
-        """跨档（50→60）应生成不同指纹，重新触发告警"""
-        items_low = [{"sync_type": "order", "error_count": 59}]
-        items_high = [{"sync_type": "order", "error_count": 60}]
+        """跨档应生成不同指纹，重新触发告警"""
+        from services.kuaimai.erp_sync_healthcheck import ALERT_THRESHOLD
+        base = ALERT_THRESHOLD * 5
+        items_low = [{"sync_type": "order", "error_count": base + ALERT_THRESHOLD - 1}]
+        items_high = [{"sync_type": "order", "error_count": base + ALERT_THRESHOLD}]
         assert _fingerprint(items_low) != _fingerprint(items_high)
 
 
@@ -368,3 +377,116 @@ class TestPushToOrgAdmins:
         ):
             # 不应抛异常
             await _push_to_org_admins(db, "org-test", "test msg")
+
+
+# ── push_token_refresh_alert（Bug 3 快档告警）─────────────
+
+
+class TestPushTokenRefreshAlert:
+    """token refresh 失败立即告警的快档路径测试"""
+
+    @pytest.mark.asyncio
+    async def test_system_org_only_logs(self):
+        """org_id=None 时只打日志，不查 db / 不推送企微"""
+        from services.kuaimai.erp_sync_healthcheck import push_token_refresh_alert
+
+        with patch("core.redis.get_redis", new_callable=AsyncMock) as mock_redis, \
+             patch("core.database.get_async_db", new_callable=AsyncMock) as mock_db, \
+             patch(
+                 "services.kuaimai.erp_sync_healthcheck._push_to_org_admins",
+                 new_callable=AsyncMock,
+             ) as mock_push:
+            await push_token_refresh_alert(None, "code=invalid_session")
+
+        mock_redis.assert_not_called()
+        mock_db.assert_not_called()
+        mock_push.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_normal_org_pushes_to_admins(self):
+        """正常 org 应推送给管理员"""
+        from services.kuaimai.erp_sync_healthcheck import push_token_refresh_alert
+
+        mock_redis = AsyncMock()
+        mock_redis.exists = AsyncMock(return_value=0)
+        mock_redis.set = AsyncMock()
+
+        with patch("core.redis.get_redis", new_callable=AsyncMock, return_value=mock_redis), \
+             patch("core.database.get_async_db", new_callable=AsyncMock, return_value=MagicMock()), \
+             patch(
+                 "services.kuaimai.erp_sync_healthcheck._push_to_org_admins",
+                 new_callable=AsyncMock,
+             ) as mock_push:
+            await push_token_refresh_alert("org-x", "code=invalid_session msg=会话不存在")
+
+        mock_push.assert_called_once()
+        args, _ = mock_push.call_args
+        assert args[1] == "org-x"
+        # 消息里应包含 org_id 和原始错误
+        assert "org-x" in args[2]
+        assert "invalid_session" in args[2]
+        # 推送成功后才设置 dedupe key
+        mock_redis.set.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_dedupe_skips_if_recent_alert(self):
+        """1 小时内已告警过 → 跳过，不重发"""
+        from services.kuaimai.erp_sync_healthcheck import push_token_refresh_alert
+
+        mock_redis = AsyncMock()
+        mock_redis.exists = AsyncMock(return_value=1)  # 已存在
+        mock_redis.set = AsyncMock()
+
+        with patch("core.redis.get_redis", new_callable=AsyncMock, return_value=mock_redis), \
+             patch("core.database.get_async_db", new_callable=AsyncMock) as mock_db, \
+             patch(
+                 "services.kuaimai.erp_sync_healthcheck._push_to_org_admins",
+                 new_callable=AsyncMock,
+             ) as mock_push:
+            await push_token_refresh_alert("org-x", "code=invalid_session")
+
+        # 已告警过 → 不应再 db 查询 / 不应推送
+        mock_db.assert_not_called()
+        mock_push.assert_not_called()
+        mock_redis.set.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_push_failure_does_not_set_dedupe(self):
+        """推送失败时不设置 dedupe key，下次扫描可重试"""
+        from services.kuaimai.erp_sync_healthcheck import push_token_refresh_alert
+
+        mock_redis = AsyncMock()
+        mock_redis.exists = AsyncMock(return_value=0)
+        mock_redis.set = AsyncMock()
+
+        with patch("core.redis.get_redis", new_callable=AsyncMock, return_value=mock_redis), \
+             patch("core.database.get_async_db", new_callable=AsyncMock, return_value=MagicMock()), \
+             patch(
+                 "services.kuaimai.erp_sync_healthcheck._push_to_org_admins",
+                 new_callable=AsyncMock,
+                 side_effect=RuntimeError("wecom api down"),
+             ):
+            # 不应抛异常
+            await push_token_refresh_alert("org-x", "err")
+
+        # 推送失败 → dedupe key 不应被设置
+        mock_redis.set.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_redis_unavailable_still_attempts_push(self):
+        """Redis 不可用时不应阻塞推送，best-effort 走完整链路"""
+        from services.kuaimai.erp_sync_healthcheck import push_token_refresh_alert
+
+        with patch(
+            "core.redis.get_redis", new_callable=AsyncMock, return_value=None,
+        ), patch(
+            "core.database.get_async_db",
+            new_callable=AsyncMock,
+            return_value=MagicMock(),
+        ), patch(
+            "services.kuaimai.erp_sync_healthcheck._push_to_org_admins",
+            new_callable=AsyncMock,
+        ) as mock_push:
+            await push_token_refresh_alert("org-x", "err")
+
+        mock_push.assert_called_once()

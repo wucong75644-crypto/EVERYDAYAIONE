@@ -26,8 +26,11 @@ from typing import Any
 from loguru import logger
 
 # 告警阈值：error_count >= 此值才触发告警
-# 选 10 的原因：单次网络抖动/限流误差 1~3 次很常见，10 次必然是真问题
-ALERT_THRESHOLD = 10
+# 2026-04-11 调整：10 → 3
+#   选 10 的原因（旧）：单次网络抖动/限流误差 1~3 次很常见，10 次必然是真问题
+#   选 3 的原因（新）：platform_map 等低频同步 6h/轮，10 次=60h 才告警太晚；
+#                    client 层已有指数退避兜底瞬时抖动，到 sync 层连续 3 次必然是真问题
+ALERT_THRESHOLD = 3
 
 # 去重窗口：相同告警指纹在此窗口内只推一次（秒）
 DEDUPE_TTL = 3600  # 1 小时
@@ -124,9 +127,12 @@ async def _scan_and_alert(db: Any) -> None:
 
 def _fingerprint(items: list[dict]) -> str:
     """生成告警指纹用于去重 — 同 org 相同 sync_type 集合视为同一告警"""
+    # 用 ALERT_THRESHOLD 做分档：每升一档（再失败 ALERT_THRESHOLD 次）触发一次新告警
+    # 例如阈值=3：error_count 3-5 一档，6-8 一档，9-11 一档...
+    bucket = max(ALERT_THRESHOLD, 1)
     parts = sorted(
-        f"{i['sync_type']}:{i.get('error_count', 0) // 10}" for i in items
-    )  # error_count 每 10 阶视为一档，避免每次扫描数字+1 都触发新告警
+        f"{i['sync_type']}:{i.get('error_count', 0) // bucket}" for i in items
+    )
     s = ",".join(parts)
     return hashlib.md5(s.encode()).hexdigest()[:12]
 
@@ -294,4 +300,95 @@ async def _push_to_org_admins(db: Any, org_id: str, msg: str) -> None:
             logger.error(
                 f"ErpSyncHealthcheck send_text failed | "
                 f"userid={m['wecom_userid']} | error={e}"
+            )
+
+
+# ── Token 刷新失败实时告警（快档） ────────────────────────
+
+
+async def push_token_refresh_alert(
+    org_id: str | None, error_msg: str,
+) -> None:
+    """Token 刷新失败立即推送告警 — 不等 healthcheck 周期扫描。
+
+    场景：access_token + refresh_token 双重失效（30 天硬到期）。
+    此时 client.refresh_token() 会返回 False 并抛 KuaiMaiTokenExpiredError，
+    上层 sync 失败 → consecutive_errors 涨 → healthcheck 5 分钟后扫到。
+    但每轮 sync 间隔 6 小时，要等 ALERT_THRESHOLD（3）次失败 = 18 小时才告警。
+
+    本函数提供"快档"路径：refresh 失败时直接调用，秒级推送企微，
+    不依赖 sync 状态，不依赖 healthcheck 周期。
+
+    设计：
+    - 自己拿 async db（get_async_db 单例），调用方无需感知 db 细节
+    - 任何步骤失败都 best-effort（不抛异常），保证不影响 client 主流程
+    - Redis 状态位 `kuaimai:refresh_alert_fired:{org_id}` 去重，TTL 1 小时
+
+    Args:
+        org_id: 触发告警的企业 ID（None=散客模式只打日志）
+        error_msg: refresh 失败原因（包含 code/msg）
+    """
+    if not org_id:
+        # 散客模式无 org_members 链路，跳过推送
+        logger.error(
+            f"KuaiMai token refresh failed (system mode) | error={error_msg}"
+        )
+        return
+
+    # 1) 兜底日志（任何渠道失败时这是最后保险）
+    logger.error(
+        f"🔴 KuaiMai token refresh FAILED | org={org_id} | error={error_msg}"
+    )
+
+    # 2) Redis 去重检查
+    redis = None
+    try:
+        from core.redis import get_redis
+        redis = await get_redis()
+        if redis:
+            dedupe_key = f"kuaimai:refresh_alert_fired:{org_id}"
+            if await redis.exists(dedupe_key):
+                logger.info(
+                    f"KuaiMai refresh alert deduped | org={org_id}"
+                )
+                return
+    except Exception as e:
+        logger.warning(
+            f"KuaiMai refresh alert dedupe check failed | org={org_id} | error={e}"
+        )
+
+    # 3) 拿 async db 推送（best-effort）
+    msg = (
+        f"🔴 快麦 ERP Token 刷新失败\n"
+        f"org={org_id}\n"
+        f"错误：{error_msg[:200]}\n\n"
+        f"🛠 处理建议：\n"
+        f"  1. 联系快麦客服重新生成 access_token + refresh_token\n"
+        f"  2. 在管理面板更新企业 ERP 凭证\n"
+        f"  3. 重启 backend 服务（或等待 30 分钟 client 缓存自动失效）"
+    )
+
+    push_ok = False
+    try:
+        from core.database import get_async_db
+        db = await get_async_db()
+        await _push_to_org_admins(db, org_id, msg)
+        push_ok = True
+    except Exception as e:
+        logger.error(
+            f"KuaiMai refresh alert push failed | org={org_id} | error={e}"
+        )
+
+    # 4) 推送成功后才设置去重 key（推送失败下次还能再试）
+    if push_ok and redis:
+        try:
+            await redis.set(
+                f"kuaimai:refresh_alert_fired:{org_id}",
+                error_msg[:200],
+                ex=3600,  # 1 小时
+            )
+        except Exception as e:
+            logger.warning(
+                f"KuaiMai refresh alert dedupe set failed | "
+                f"org={org_id} | error={e}"
             )
