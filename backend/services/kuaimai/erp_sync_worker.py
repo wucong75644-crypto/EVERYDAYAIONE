@@ -5,20 +5,16 @@ ERP 数据本地索引同步 Worker
 通过 Redis 分布式锁保证多 Worker 部署下只有一个实例执行同步。
 
 设计文档: docs/document/TECH_ERP数据本地索引系统.md §7.0
-
-# TODO(time-context): 本文件中所有 ``datetime.now()`` 是 sync 调度内部
-# 状态时间戳（互相比较 elapsed，不进入 LLM 上下文，不影响业务正确性）。
-# 应迁移到 ``utils.time_context.now_cn()`` 统一时区语义，但属于工程清理任务，
-# 不在 PR1/PR2/PR3 范围。详见 docs/document/TECH_ERP时间准确性架构.md §17.2 T1
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime
 
 from loguru import logger
 
 
 from core.config import get_settings
+from utils.time_context import now_cn
 
 
 class ErpSyncWorker:
@@ -156,19 +152,19 @@ class ErpSyncWorker:
                     break
                 await self._extend_lock()
                 await self._execute_sync(wh_type, org_id=org_id, client=client)
-            self._org_last_warehouse[org_id] = datetime.now()
+            self._org_last_warehouse[org_id] = now_cn()
 
         # 库存全量刷新（按企业独立计时）
         if self.is_running and self._should_run_stock_full(org_id):
             await self._extend_lock()
             await self._execute_stock_full_refresh(org_id=org_id, client=client)
-            self._org_last_stock_full[org_id] = datetime.now()
+            self._org_last_stock_full[org_id] = now_cn()
 
         # 低频同步（platform_map）
         if self.is_running and self._should_run_low_freq(org_id):
             await self._extend_lock()
             await self._execute_sync("platform_map", org_id=org_id, client=client)
-            self._org_last_platform_map[org_id] = datetime.now()
+            self._org_last_platform_map[org_id] = now_cn()
 
         # 配置数据同步（shop/warehouse/tag/category/logistics_company）
         if self.is_running and self._should_run_config(org_id):
@@ -177,19 +173,19 @@ class ErpSyncWorker:
                     break
                 await self._extend_lock()
                 await self._execute_sync(config_type, org_id=org_id, client=client)
-            self._org_last_config[org_id] = datetime.now()
+            self._org_last_config[org_id] = now_cn()
 
         # 批次效期库存同步（每 6 小时，遍历店铺全量）
         if self.is_running and self._should_run_batch_stock(org_id):
             await self._extend_lock()
             await self._execute_batch_stock(org_id=org_id, client=client)
-            self._org_last_batch_stock[org_id] = datetime.now()
+            self._org_last_batch_stock[org_id] = now_cn()
 
         # 日维护（归档+聚合兜底+删除检测）
         if self.is_running and self._should_run_daily(org_id):
             await self._extend_lock()
             await self._run_daily_maintenance(org_id=org_id, client=client)
-            self._org_last_daily[org_id] = datetime.now()
+            self._org_last_daily[org_id] = now_cn()
 
         logger.info(f"ERP sync org done | org_id={org_id}")
 
@@ -273,7 +269,7 @@ class ErpSyncWorker:
         last = self._org_last_stock_full.get(org_id)
         if last is None:
             return True
-        elapsed = (datetime.now() - last).total_seconds()
+        elapsed = (now_cn() - last).total_seconds()
         return elapsed >= self.settings.erp_stock_full_refresh_interval
 
     async def _execute_stock_full_refresh(
@@ -350,7 +346,7 @@ class ErpSyncWorker:
         last = self._org_last_platform_map.get(org_id)
         if last is None:
             return True
-        elapsed = (datetime.now() - last).total_seconds()
+        elapsed = (now_cn() - last).total_seconds()
         return elapsed >= self.settings.erp_platform_map_interval
 
     def _should_run_batch_stock(self, org_id: str | None = None) -> bool:
@@ -358,7 +354,7 @@ class ErpSyncWorker:
         last = self._org_last_batch_stock.get(org_id)
         if last is None:
             return True
-        elapsed = (datetime.now() - last).total_seconds()
+        elapsed = (now_cn() - last).total_seconds()
         return elapsed >= self.BATCH_STOCK_INTERVAL
 
     def _should_run_warehouse(self, org_id: str | None = None) -> bool:
@@ -366,7 +362,7 @@ class ErpSyncWorker:
         last = self._org_last_warehouse.get(org_id)
         if last is None:
             return True
-        elapsed = (datetime.now() - last).total_seconds()
+        elapsed = (now_cn() - last).total_seconds()
         return elapsed >= self.WAREHOUSE_INTERVAL
 
     def _should_run_config(self, org_id: str | None = None) -> bool:
@@ -374,7 +370,7 @@ class ErpSyncWorker:
         last = self._org_last_config.get(org_id)
         if last is None:
             return True
-        elapsed = (datetime.now() - last).total_seconds()
+        elapsed = (now_cn() - last).total_seconds()
         return elapsed >= self.CONFIG_INTERVAL
 
     def _should_run_daily(self, org_id: str | None = None) -> bool:
@@ -382,7 +378,7 @@ class ErpSyncWorker:
         last = self._org_last_daily.get(org_id)
         if last is None:
             return True
-        elapsed = (datetime.now() - last).total_seconds()
+        elapsed = (now_cn() - last).total_seconds()
         return elapsed >= self.DAILY_INTERVAL
 
     def _should_run_deletion(self, org_id: str | None = None) -> bool:
@@ -390,7 +386,7 @@ class ErpSyncWorker:
         last = self._org_last_deletion.get(org_id)
         if last is None:
             return True
-        elapsed = (datetime.now() - last).total_seconds()
+        elapsed = (now_cn() - last).total_seconds()
         return elapsed >= self.DELETION_INTERVAL
 
     # ── 日维护任务 ────────────────────────────────────────
@@ -415,7 +411,7 @@ class ErpSyncWorker:
         try:
             if self._should_run_deletion(org_id):
                 deleted = await self._run_deletion_detection(org_id=org_id, client=client)
-                self._org_last_deletion[org_id] = datetime.now()
+                self._org_last_deletion[org_id] = now_cn()
         except Exception as e:
             logger.error(f"Daily maintenance: deletion detection failed | org_id={org_id} | error={e}", exc_info=True)
 
@@ -435,7 +431,7 @@ class ErpSyncWorker:
         """
         from datetime import timedelta
         cutoff = (
-            datetime.now() - timedelta(days=self.settings.erp_archive_retention_days)
+            now_cn() - timedelta(days=self.settings.erp_archive_retention_days)
         ).isoformat()
 
         total_archived = 0
@@ -476,7 +472,7 @@ class ErpSyncWorker:
         """
         from datetime import timedelta
         cutoff = (
-            datetime.now() - timedelta(days=7)
+            now_cn() - timedelta(days=7)
         ).strftime("%Y-%m-%d")
 
         try:

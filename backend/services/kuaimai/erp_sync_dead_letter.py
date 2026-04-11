@@ -5,21 +5,18 @@ detail API 调用失败时，将单据信息写入 erp_sync_dead_letter 表。
 独立消费者协程以指数退避策略异步重试，不阻塞主同步流程。
 
 设计参考：Queue-Based Exponential Backoff + DLQ Pattern
-
-# TODO(time-context): 多处 ``datetime.now().isoformat()`` 用于死信
-# 状态时间戳（updated_at/created_at/next_retry_at）写入 DB。
-# 应迁移到 ``utils.time_context.now_cn()`` 统一为带时区时间戳。
-# 不在 PR1/PR2/PR3 范围。详见 §17.2 T1
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from loguru import logger
+
+from utils.time_context import now_cn
 
 
 # ── 常量 ────────────────────────────────────────────────
@@ -82,7 +79,7 @@ async def record_dead_letter(
                 # 已有 pending 记录，更新错误信息和时间
                 await db.table("erp_sync_dead_letter").update({
                     "last_error": str(error_msg)[:500],
-                    "updated_at": datetime.now().isoformat(),
+                    "updated_at": now_cn().isoformat(),
                 }).eq("id", existing.data[0]["id"]).execute()
             else:
                 await db.table("erp_sync_dead_letter").insert({
@@ -92,12 +89,12 @@ async def record_dead_letter(
                     "doc_json": json.dumps(doc, ensure_ascii=False),
                     "retry_count": 0,
                     "max_retries": DEFAULT_MAX_RETRIES,
-                    "next_retry_at": datetime.now().isoformat(),
+                    "next_retry_at": now_cn().isoformat(),
                     "status": "pending",
                     "last_error": str(error_msg)[:500],
                     "org_id": org_id,
-                    "created_at": datetime.now().isoformat(),
-                    "updated_at": datetime.now().isoformat(),
+                    "created_at": now_cn().isoformat(),
+                    "updated_at": now_cn().isoformat(),
                 }).execute()
             count += 1
         except Exception as e:
@@ -121,7 +118,7 @@ def _calc_next_retry(retry_count: int) -> str:
         BACKOFF_BASE_SECONDS * (2 ** retry_count),
         BACKOFF_MAX_SECONDS,
     )
-    return (datetime.now() + timedelta(seconds=delay)).isoformat()
+    return (now_cn() + timedelta(seconds=delay)).isoformat()
 
 
 async def consume_dead_letters(db: Any, is_running_fn) -> None:
@@ -195,7 +192,7 @@ async def _process_batch(
                     pass
 
     # 查询到期的 pending 记录
-    now = datetime.now().isoformat()
+    now = now_cn().isoformat()
     try:
         result = await (
             db.table("erp_sync_dead_letter")
@@ -299,14 +296,14 @@ async def _mark_batch_retry_failed(
                     "status": "dead",
                     "retry_count": new_count,
                     "last_error": error_msg[:500],
-                    "updated_at": datetime.now().isoformat(),
+                    "updated_at": now_cn().isoformat(),
                 }).eq("id", dl_id).execute()
             else:
                 await db.table("erp_sync_dead_letter").update({
                     "retry_count": new_count,
                     "next_retry_at": _calc_next_retry(new_count),
                     "last_error": error_msg[:500],
-                    "updated_at": datetime.now().isoformat(),
+                    "updated_at": now_cn().isoformat(),
                 }).eq("id", dl_id).execute()
         except Exception as e:
             logger.warning(f"Failed to mark dead letter retry | id={dl_id} | error={e}")
@@ -342,7 +339,7 @@ async def _retry_one(db: Any, client: Any, row: dict) -> None:
                 "status": "dead",
                 "retry_count": new_count,
                 "last_error": str(e)[:500],
-                "updated_at": datetime.now().isoformat(),
+                "updated_at": now_cn().isoformat(),
             }).eq("id", dl_id).execute()
             logger.error(
                 f"Dead letter exhausted | doc_type={doc_type} | "
@@ -354,7 +351,7 @@ async def _retry_one(db: Any, client: Any, row: dict) -> None:
                 "retry_count": new_count,
                 "next_retry_at": _calc_next_retry(new_count),
                 "last_error": str(e)[:500],
-                "updated_at": datetime.now().isoformat(),
+                "updated_at": now_cn().isoformat(),
             }).eq("id", dl_id).execute()
             logger.warning(
                 f"Dead letter retry failed | doc_type={doc_type} | "
@@ -393,14 +390,14 @@ async def _retry_one(db: Any, client: Any, row: dict) -> None:
                 "status": "dead",
                 "retry_count": new_count,
                 "last_error": f"upsert failed: {e}"[:500],
-                "updated_at": datetime.now().isoformat(),
+                "updated_at": now_cn().isoformat(),
             }).eq("id", dl_id).execute()
         else:
             await db.table("erp_sync_dead_letter").update({
                 "retry_count": new_count,
                 "next_retry_at": _calc_next_retry(new_count),
                 "last_error": f"upsert failed: {e}"[:500],
-                "updated_at": datetime.now().isoformat(),
+                "updated_at": now_cn().isoformat(),
             }).eq("id", dl_id).execute()
         logger.error(
             f"Dead letter upsert failed | doc_type={doc_type} | "

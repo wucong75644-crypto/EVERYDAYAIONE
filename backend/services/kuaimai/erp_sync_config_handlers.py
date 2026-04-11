@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from services.kuaimai.erp_sync_utils import _batch_upsert, _pick
+from utils.time_context import now_cn
 
 if TYPE_CHECKING:
     from services.kuaimai.erp_sync_service import ErpSyncService
@@ -59,7 +60,7 @@ async def sync_shop(
             "group_name": s.get("groupName"),
             "deadline": str(s.get("deadline", "")) if s.get("deadline") else None,
             "extra_json": _pick(s, "userId", "source", "serviceName"),
-            "synced_at": datetime.now().isoformat(),
+            "synced_at": now_cn().isoformat(),
         })
 
     count = await _batch_upsert(
@@ -96,7 +97,7 @@ async def sync_warehouse(
     )
 
     rows: list[dict[str, Any]] = []
-    now = datetime.now().isoformat()
+    now = now_cn().isoformat()
 
     for w in (real_items or []):
         wid = w.get("id")
@@ -175,7 +176,7 @@ async def sync_tag(
     )
 
     rows: list[dict[str, Any]] = []
-    now = datetime.now().isoformat()
+    now = now_cn().isoformat()
 
     for t in (order_tags or []):
         tid = t.get("id")
@@ -240,7 +241,7 @@ async def sync_category(
     )
 
     rows: list[dict[str, Any]] = []
-    now = datetime.now().isoformat()
+    now = now_cn().isoformat()
 
     for c in (seller_cats or []):
         cid = c.get("cid") or c.get("id")
@@ -330,7 +331,7 @@ async def sync_logistics_company(
         return 0
 
     rows: list[dict[str, Any]] = []
-    now = datetime.now().isoformat()
+    now = now_cn().isoformat()
     seen_ids: set[str] = set()
     for lc in items:
         cid = lc.get("id") or lc.get("logisticsId")

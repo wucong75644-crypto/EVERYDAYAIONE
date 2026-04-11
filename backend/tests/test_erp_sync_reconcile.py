@@ -8,6 +8,8 @@ import pytest
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from utils.time_context import now_cn
+
 import sys
 from pathlib import Path
 
@@ -65,14 +67,14 @@ class TestAllowedTimeCols:
         from services.kuaimai.erp_sync_reconcile import _db_count_distinct
         pool = MagicMock()
         with pytest.raises(ValueError, match="Invalid time_col"):
-            await _db_count_distinct(pool, "order", "injected_col", datetime.now(), datetime.now(), None)
+            await _db_count_distinct(pool, "order", "injected_col", now_cn(), now_cn(), None)
 
     @pytest.mark.asyncio
     async def test_invalid_time_col_in_existing_ids(self):
         from services.kuaimai.erp_sync_reconcile import _db_existing_ids
         pool = MagicMock()
         with pytest.raises(ValueError, match="Invalid time_col"):
-            await _db_existing_ids(pool, "order", "bad_col", datetime.now(), datetime.now(), None)
+            await _db_existing_ids(pool, "order", "bad_col", now_cn(), now_cn(), None)
 
 
 # ── _yesterday_range ────────────────────────────────────
