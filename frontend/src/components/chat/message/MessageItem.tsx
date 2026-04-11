@@ -6,6 +6,7 @@
  */
 
 import { memo, useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { m } from 'framer-motion';
 import type { Message } from '../../../stores/useMessageStore';
 import { getTextContent, getImageUrls, getVideoUrls, getFiles } from '../../../stores/useMessageStore';
 import DeleteMessageModal from '../modals/DeleteMessageModal';
@@ -288,9 +289,12 @@ export default memo(function MessageItem({
   const hasMedia = hasImage || hasVideo || hasFiles || !!mediaPlaceholderInfo;
 
   return (
-    <div
+    <m.div
       data-message-id={message.id}
       className={`flex mb-4 ${isUser ? 'justify-end' : 'justify-start'} ${entryAnimationClass} ${deleteAnimationClass}`}
+      // framer layout：消息删除/插入/重排时其他消息 spring 过渡到新位置
+      // 注意：保留现有的 entry/delete CSS class 动画，layout 只管"位置位移"不干扰 opacity/transform
+      layout="position"
     >
       <div
         className={`relative flex flex-col ${isUser ? 'items-end' : 'items-start'} ${hasMedia ? 'w-full max-w-[90%]' : 'max-w-[80%]'}`}
@@ -316,13 +320,16 @@ export default memo(function MessageItem({
           </div>
         )}
 
-        {/* 消息气泡（仅文字内容） */}
+        {/* 消息气泡（仅文字内容）
+            V3：用户气泡加内高光 (inset 0 1px 0 rgba(255,255,255,0.2))，
+            制造"半透明玻璃"的光感效果 */}
         <div
           className={`rounded-2xl px-5 py-3 ${
             isUser
               ? 'bg-gradient-to-r from-[var(--color-user-bubble-from)] to-[var(--color-user-bubble-to)] text-text-on-accent'
               : 'bg-surface-card border border-border-default text-text-primary'
           }`}
+          style={isUser ? { boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.22), 0 4px 16px rgba(0,0,0,0.06)' } : undefined}
         >
           {/* 思考过程折叠块（仅 AI 消息） */}
           {!isUser && (() => {
@@ -430,6 +437,6 @@ export default memo(function MessageItem({
           onSelectImage={setPreviewIndex}
         />
       )}
-    </div>
+    </m.div>
   );
 });
