@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect, lazy, Suspense } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { AnimatePresence } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
 import { useAuthStore } from './stores/useAuthStore';
 import { WebSocketProvider } from './contexts/WebSocketContext';
@@ -7,10 +8,61 @@ import ProtectedRoute from './components/auth/ProtectedRoute';
 import AuthModal from './components/auth/AuthModal';
 import LoadingScreen from './components/common/LoadingScreen';
 import ErrorBoundary from './components/common/ErrorBoundary';
-import Home from './pages/Home';
-import ForgotPassword from './pages/ForgotPassword';
-import WecomCallback from './pages/WecomCallback';
-import Chat from './pages/Chat';
+
+/**
+ * V3 Phase 12：路由懒加载（架构隐患 3 修复）
+ *
+ * 4 个页面用 React.lazy 拆分代码块，首屏只下载当前页 + 公共代码。
+ * Home 是首页一定下，但 Chat/ForgotPassword/WecomCallback 按需加载。
+ *
+ * Vite/Rollup 会自动给每个 lazy 页面创建独立 chunk。
+ * Suspense fallback 用 LoadingScreen 提供过渡。
+ */
+const Home = lazy(() => import('./pages/Home'));
+const Chat = lazy(() => import('./pages/Chat'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const WecomCallback = lazy(() => import('./pages/WecomCallback'));
+
+/**
+ * 路由动画包装器
+ * - useLocation 拿当前 location（key 用于触发 AnimatePresence enter/exit）
+ * - <AnimatePresence mode="wait"> 让旧页面退场动画播完再 mount 新页面
+ * - 必须放在 <BrowserRouter> 内部才能调用 useLocation
+ */
+function AnimatedRoutes() {
+  const location = useLocation();
+
+  return (
+    <Suspense fallback={<LoadingScreen message="加载中..." />}>
+      <AnimatePresence mode="wait" initial={false}>
+        <Routes location={location} key={location.pathname}>
+          <Route path="/" element={<Home />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/auth/wecom/callback" element={<WecomCallback />} />
+          {/* 受保护的路由：需要登录才能访问 */}
+          <Route
+            path="/chat"
+            element={
+              <ProtectedRoute>
+                <Chat />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/chat/:id"
+            element={
+              <ProtectedRoute>
+                <Chat />
+              </ProtectedRoute>
+            }
+          />
+          {/* 未匹配路由重定向到首页 */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AnimatePresence>
+    </Suspense>
+  );
+}
 
 function App() {
   const { initAuth, isLoading } = useAuthStore();
@@ -60,30 +112,7 @@ function App() {
           }}
         />
 
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/forgot-password" element={<ForgotPassword />} />
-          <Route path="/auth/wecom/callback" element={<WecomCallback />} />
-          {/* 受保护的路由：需要登录才能访问 */}
-          <Route
-            path="/chat"
-            element={
-              <ProtectedRoute>
-                <Chat />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/chat/:id"
-            element={
-              <ProtectedRoute>
-                <Chat />
-              </ProtectedRoute>
-            }
-          />
-          {/* 未匹配路由重定向到首页 */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <AnimatedRoutes />
       </WebSocketProvider>
     </BrowserRouter>
     </ErrorBoundary>
