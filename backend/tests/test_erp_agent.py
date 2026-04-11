@@ -300,7 +300,7 @@ class TestERPAgentGuards:
 
 
 class TestRunToolLoopExitLogic:
-    """_run_tool_loop 各退出路径测试"""
+    """ToolLoopExecutor 各退出路径测试（原 _run_tool_loop，2026-04-11 拆出）"""
 
     def _make_agent(self):
         from services.erp_agent import ERPAgent
@@ -308,8 +308,22 @@ class TestRunToolLoopExitLogic:
             db=MagicMock(), user_id="t",
             conversation_id="t", org_id="test",
         )
-        agent._all_tools = []  # _run_tool_loop 直接调用时需要初始化
         return agent
+
+    def _make_loop(self, agent, adapter, executor, all_tools=None):
+        """构造与 ERPAgent 配套的 ToolLoopExecutor 实例"""
+        from services.agent.erp_tool_execution import (
+            ToolLoopContext, ToolLoopExecutor,
+        )
+        ctx = ToolLoopContext(
+            db=agent.db, user_id=agent.user_id,
+            conversation_id=agent.conversation_id, org_id=agent.org_id,
+            task_id=agent.task_id, request_ctx=agent.request_ctx,
+        )
+        return ToolLoopExecutor(
+            adapter=adapter, executor=executor,
+            all_tools=all_tools or [], ctx=ctx,
+        )
 
     @pytest.mark.asyncio
     async def test_empty_turn_skipped_when_no_tools_called(self):
@@ -341,10 +355,10 @@ class TestRunToolLoopExitLogic:
         mock_executor = AsyncMock()
         mock_executor.execute = AsyncMock(return_value="库存128件")
 
-        text, tokens, turns = await agent._run_tool_loop(
-            mock_adapter, mock_executor,
-            [{"role": "user", "content": "查库存"}],
-            [], [],
+        loop = self._make_loop(agent, mock_adapter, mock_executor)
+        text, tokens, turns = await loop.run(
+            messages=[{"role": "user", "content": "查库存"}],
+            selected_tools=[], tools_called=[],
         )
         assert text == "库存128件"
         assert turn_counter["n"] == 3  # 跑了 3 轮
@@ -363,10 +377,10 @@ class TestRunToolLoopExitLogic:
         mock_adapter = AsyncMock()
         mock_adapter.stream_chat = mock_stream
 
-        text, tokens, turns = await agent._run_tool_loop(
-            mock_adapter, AsyncMock(),
-            [{"role": "user", "content": "查库存"}],
-            [], [],
+        loop = self._make_loop(agent, mock_adapter, AsyncMock())
+        text, tokens, turns = await loop.run(
+            messages=[{"role": "user", "content": "查库存"}],
+            selected_tools=[], tools_called=[],
         )
         # 有文字时应作为有效输出（不再走兜底提示）
         assert text == "让我想想..."
@@ -396,10 +410,10 @@ class TestRunToolLoopExitLogic:
         mock_executor = AsyncMock()
         mock_executor.execute = AsyncMock(return_value="统计结果：8000单")
 
-        text, tokens, turns = await agent._run_tool_loop(
-            mock_adapter, mock_executor,
-            [{"role": "user", "content": "今天多少单"}],
-            [], [],
+        loop = self._make_loop(agent, mock_adapter, mock_executor)
+        text, tokens, turns = await loop.run(
+            messages=[{"role": "user", "content": "今天多少单"}],
+            selected_tools=[], tools_called=[],
         )
         assert text == "今天共8000单"
         assert "未能生成" not in text
@@ -422,10 +436,10 @@ class TestRunToolLoopExitLogic:
 
         mock_executor = AsyncMock()
 
-        text, tokens, turns = await agent._run_tool_loop(
-            mock_adapter, mock_executor,
-            [{"role": "user", "content": "查一下那个"}],
-            [], [],
+        loop = self._make_loop(agent, mock_adapter, mock_executor)
+        text, tokens, turns = await loop.run(
+            messages=[{"role": "user", "content": "查一下那个"}],
+            selected_tools=[], tools_called=[],
         )
         # ask_user 的 message 应作为结果返回，不应走兜底
         assert "未能生成" not in text
@@ -449,10 +463,10 @@ class TestRunToolLoopExitLogic:
         mock_adapter.stream_chat = mock_stream
 
         # 需要先调过工具才不会被 empty_turns 拦截
-        text, tokens, turns = await agent._run_tool_loop(
-            mock_adapter, AsyncMock(),
-            [{"role": "user", "content": "查数据"}],
-            [], ["local_global_stats"],  # 模拟已调过工具
+        loop = self._make_loop(agent, mock_adapter, AsyncMock())
+        text, tokens, turns = await loop.run(
+            messages=[{"role": "user", "content": "查数据"}],
+            selected_tools=[], tools_called=["local_global_stats"],
         )
         assert text == "今天共8000单"
         assert "未能生成" not in text
@@ -473,10 +487,10 @@ class TestRunToolLoopExitLogic:
         mock_adapter = AsyncMock()
         mock_adapter.stream_chat = mock_stream
 
-        text, tokens, turns = await agent._run_tool_loop(
-            mock_adapter, AsyncMock(),
-            [{"role": "user", "content": "查数据"}],
-            [], ["local_global_stats"],  # 模拟已调过工具
+        loop = self._make_loop(agent, mock_adapter, AsyncMock())
+        text, tokens, turns = await loop.run(
+            messages=[{"role": "user", "content": "查数据"}],
+            selected_tools=[], tools_called=["local_global_stats"],
         )
         assert "未能生成" in text
 
@@ -501,19 +515,21 @@ class TestERPAgentConstants:
 
 
 class TestERPAgentJSONParseError:
-    """JSON 解析错误不再静默吞掉"""
+    """JSON 解析错误不再静默吞掉（2026-04-11 拆出到 ToolLoopExecutor）"""
 
     @pytest.mark.asyncio
     async def test_malformed_json_returns_error_to_llm(self):
         """工具参数 JSON 格式错误时，错误信息应返回给 LLM"""
         from services.erp_agent import ERPAgent
         from services.adapters.types import StreamChunk, ToolCallDelta
+        from services.agent.erp_tool_execution import (
+            ToolLoopContext, ToolLoopExecutor,
+        )
 
         agent = ERPAgent(
             db=MagicMock(), user_id="t",
             conversation_id="t", org_id="test",
         )
-        agent._all_tools = []
 
         call_count = {"n": 0}
 
@@ -535,10 +551,18 @@ class TestERPAgentJSONParseError:
         mock_adapter = AsyncMock()
         mock_adapter.stream_chat = mock_stream
 
-        text, tokens, turns = await agent._run_tool_loop(
-            mock_adapter, AsyncMock(),
-            [{"role": "user", "content": "查库存"}],
-            [], [],
+        ctx = ToolLoopContext(
+            db=agent.db, user_id=agent.user_id,
+            conversation_id=agent.conversation_id, org_id=agent.org_id,
+            task_id=agent.task_id, request_ctx=agent.request_ctx,
+        )
+        loop = ToolLoopExecutor(
+            adapter=mock_adapter, executor=AsyncMock(),
+            all_tools=[], ctx=ctx,
+        )
+        text, tokens, turns = await loop.run(
+            messages=[{"role": "user", "content": "查库存"}],
+            selected_tools=[], tools_called=[],
         )
         # 错误信息应作为 tool result 返回，LLM 看到后输出文字
         assert "参数格式有误" in text or "JSON" in text
@@ -651,78 +675,77 @@ class TestERPAgentResultStructured:
 # ============================================================
 
 class TestERPAgentCache:
-    """B4: 会话级读工具缓存"""
+    """B4: 会话级读工具缓存（2026-04-11 拆出到 ToolResultCache）"""
 
-    def _make_agent(self):
-        from services.agent.erp_agent import ERPAgent
-        return ERPAgent(
-            db=MagicMock(), user_id="u", conversation_id="c", org_id="org",
-        )
+    def _make_cache(self):
+        from services.agent.erp_tool_cache import ToolResultCache
+        return ToolResultCache()
 
     def test_cacheable_tool_returns_true(self):
-        agent = self._make_agent()
+        from services.agent.erp_tool_cache import ToolResultCache
         # local_stock_query 在 _CONCURRENT_SAFE_TOOLS 中
-        assert agent._is_cacheable("local_stock_query") is True
+        assert ToolResultCache.is_cacheable("local_stock_query") is True
 
     def test_non_cacheable_tool_returns_false(self):
-        agent = self._make_agent()
+        from services.agent.erp_tool_cache import ToolResultCache
         # erp_execute 是写操作，不可缓存
-        assert agent._is_cacheable("erp_execute") is False
+        assert ToolResultCache.is_cacheable("erp_execute") is False
 
     def test_cache_put_and_get(self):
-        agent = self._make_agent()
-        agent._cache_put("local_stock_query", {"sku": "A1"}, "库存100")
-        cached = agent._cache_get("local_stock_query", {"sku": "A1"})
+        cache = self._make_cache()
+        cache.put("local_stock_query", {"sku": "A1"}, "库存100")
+        cached = cache.get("local_stock_query", {"sku": "A1"})
         assert cached == "库存100"
 
     def test_cache_miss_different_args(self):
-        agent = self._make_agent()
-        agent._cache_put("local_stock_query", {"sku": "A1"}, "库存100")
-        cached = agent._cache_get("local_stock_query", {"sku": "B2"})
+        cache = self._make_cache()
+        cache.put("local_stock_query", {"sku": "A1"}, "库存100")
+        cached = cache.get("local_stock_query", {"sku": "B2"})
         assert cached is None
 
     def test_cache_skip_non_cacheable_tool(self):
-        agent = self._make_agent()
-        agent._cache_put("erp_execute", {"action": "create"}, "OK")
-        cached = agent._cache_get("erp_execute", {"action": "create"})
+        cache = self._make_cache()
+        cache.put("erp_execute", {"action": "create"}, "OK")
+        cached = cache.get("erp_execute", {"action": "create"})
         assert cached is None  # 写工具不缓存
 
     def test_cache_skip_large_result(self):
-        agent = self._make_agent()
+        cache = self._make_cache()
         large = "x" * 10000  # 超过 _CACHE_MAX_VALUE_CHARS
-        agent._cache_put("local_stock_query", {"sku": "A1"}, large)
-        cached = agent._cache_get("local_stock_query", {"sku": "A1"})
+        cache.put("local_stock_query", {"sku": "A1"}, large)
+        cached = cache.get("local_stock_query", {"sku": "A1"})
         assert cached is None  # 大结果不缓存
 
     def test_cache_max_entries(self):
-        agent = self._make_agent()
+        cache = self._make_cache()
         # 填满缓存
         for i in range(55):
-            agent._cache_put("local_stock_query", {"i": i}, f"result_{i}")
+            cache.put("local_stock_query", {"i": i}, f"result_{i}")
         # 前50个应该被缓存，第51个开始被跳过
-        assert agent._cache_get("local_stock_query", {"i": 0}) == "result_0"
-        assert agent._cache_get("local_stock_query", {"i": 50}) is None
+        assert cache.get("local_stock_query", {"i": 0}) == "result_0"
+        assert cache.get("local_stock_query", {"i": 50}) is None
 
     def test_cache_key_deterministic(self):
-        agent = self._make_agent()
-        k1 = agent._cache_key("tool", {"b": 2, "a": 1})
-        k2 = agent._cache_key("tool", {"a": 1, "b": 2})
+        from services.agent.erp_tool_cache import ToolResultCache
+        k1 = ToolResultCache._key("tool", {"b": 2, "a": 1})
+        k2 = ToolResultCache._key("tool", {"a": 1, "b": 2})
         assert k1 == k2  # sort_keys=True 保证顺序无关
 
     def test_cache_ttl_expiration(self):
         """过期条目返回 None 且被删除"""
         import time
-        agent = self._make_agent()
-        agent._CACHE_TTL = 0.05  # 50ms TTL 便于测试
-        agent._cache_put("local_stock_query", {"sku": "A1"}, "库存100")
+        from services.agent.erp_tool_cache import ToolResultCache
+        cache = ToolResultCache()
+        cache._CACHE_TTL = 0.05  # 50ms TTL 便于测试
+        cache.put("local_stock_query", {"sku": "A1"}, "库存100")
         # 未过期
-        assert agent._cache_get("local_stock_query", {"sku": "A1"}) == "库存100"
+        assert cache.get("local_stock_query", {"sku": "A1"}) == "库存100"
         # 等待过期
         time.sleep(0.06)
-        assert agent._cache_get("local_stock_query", {"sku": "A1"}) is None
+        assert cache.get("local_stock_query", {"sku": "A1"}) is None
         # 过期条目应已被删除，释放空间
-        key = agent._cache_key("local_stock_query", {"sku": "A1"})
-        assert key not in agent._query_cache
+        key = ToolResultCache._key("local_stock_query", {"sku": "A1"})
+        assert key not in cache._store
 
 
 # ============================================================
@@ -783,11 +806,11 @@ class TestFetchAllPagesVisibility:
     """fetch_all_pages 在 ERP Agent 可见工具中"""
 
     def test_visible_names_includes_fetch_all_pages(self):
-        """_VISIBLE_NAMES 包含 fetch_all_pages"""
+        """_VISIBLE_NAMES 包含 fetch_all_pages（2026-04-11 拆到 _prepare_tools）"""
         # 验证源码中的常量（不实例化 Agent，避免 DB 依赖）
         import inspect
         from services.agent.erp_agent import ERPAgent
-        source = inspect.getsource(ERPAgent.execute)
+        source = inspect.getsource(ERPAgent._prepare_tools)
         assert "fetch_all_pages" in source
 
 
@@ -837,7 +860,7 @@ class TestRecordAgentExperience:
 
     @pytest.mark.asyncio
     async def test_routing_experience_calls_add_knowledge(self):
-        """成功路由记录到知识库"""
+        """成功路由 → category=experience / node_type=routing_pattern / subcategory=业务域"""
         agent = self._make_agent()
         with patch("services.knowledge_service.add_knowledge", new_callable=AsyncMock, return_value="node1") as mock_add:
             await agent._record_agent_experience(
@@ -846,14 +869,18 @@ class TestRecordAgentExperience:
             )
             mock_add.assert_called_once()
             call_kwargs = mock_add.call_args[1]
-            assert call_kwargs["category"] == "routing"
+            assert call_kwargs["category"] == "experience"
+            assert call_kwargs["node_type"] == "routing_pattern"
+            # tools_called 首工具 local_product_identify → product 业务域
+            assert call_kwargs["subcategory"] == "product"
             assert call_kwargs["confidence"] == 0.6
-            assert call_kwargs["max_per_category"] == 500
+            assert call_kwargs["max_per_node_type"] == 400
+            assert "max_per_category" not in call_kwargs
             assert "local_product_identify → local_stock_query" in call_kwargs["content"]
 
     @pytest.mark.asyncio
     async def test_failure_memory_calls_add_knowledge(self):
-        """失败记忆记录到知识库"""
+        """失败记忆 → category=experience / node_type=failure_pattern / max_per_node_type=200"""
         agent = self._make_agent()
         with patch("services.knowledge_service.add_knowledge", new_callable=AsyncMock, return_value="node2") as mock_add:
             await agent._record_agent_experience(
@@ -861,27 +888,102 @@ class TestRecordAgentExperience:
                 "失败原因：超时",
             )
             call_kwargs = mock_add.call_args[1]
-            assert call_kwargs["category"] == "failure"
-            assert call_kwargs["confidence"] == 0.5  # 默认值
+            assert call_kwargs["category"] == "experience"
+            assert call_kwargs["node_type"] == "failure_pattern"
+            assert call_kwargs["subcategory"] == "order"
+            assert call_kwargs["confidence"] == 0.5
+            assert call_kwargs["max_per_node_type"] == 200
             assert "查询失败" in call_kwargs["title"]
 
     @pytest.mark.asyncio
     async def test_knowledge_error_does_not_raise(self):
-        """知识库写入失败不抛异常"""
+        """知识库写入失败不抛异常（DB error 走 except Exception 兜底）"""
         agent = self._make_agent()
         with patch("services.knowledge_service.add_knowledge", new_callable=AsyncMock, side_effect=Exception("DB down")):
-            # 不应抛异常
             await agent._record_agent_experience(
                 "routing", "查库存", ["local_stock_query"], "轮次：1",
             )
 
     @pytest.mark.asyncio
-    async def test_max_per_category_passed(self):
-        """淘汰上限参数正确传递"""
+    async def test_schema_violation_does_not_raise(self):
+        """schema 违反（ValueError）也不应冒泡到 caller，但要打 ERROR 级日志
+
+        正常情况下不应发生（_record_agent_experience 内部 hardcoded 合法值），
+        此测试是防御性回归 — 防止未来 add_knowledge 校验被收紧时静默崩溃 task。
+        """
         agent = self._make_agent()
-        agent._EXPERIENCE_MAX_PER_CATEGORY = 100  # 测试覆盖
+        with patch(
+            "services.knowledge_service.add_knowledge",
+            new_callable=AsyncMock,
+            side_effect=ValueError("invalid node_type"),
+        ):
+            await agent._record_agent_experience(
+                "routing", "q", ["local_stock_query"], "detail",
+            )
+
+    @pytest.mark.asyncio
+    async def test_max_per_node_type_passed(self):
+        """淘汰上限参数（per-node_type）正确传递，routing/failure 用不同配额"""
+        agent = self._make_agent()
         with patch("services.knowledge_service.add_knowledge", new_callable=AsyncMock) as mock_add:
             await agent._record_agent_experience(
-                "routing", "q", ["tool"], "detail",
+                "routing", "q", ["local_stock_query"], "detail",
             )
-            assert mock_add.call_args[1]["max_per_category"] == 100
+            assert mock_add.call_args[1]["max_per_node_type"] == 400
+
+            mock_add.reset_mock()
+            await agent._record_agent_experience(
+                "failure", "q", ["local_order_query"], "detail",
+            )
+            assert mock_add.call_args[1]["max_per_node_type"] == 200
+
+    @pytest.mark.asyncio
+    async def test_unknown_record_type_returns_silently(self):
+        """未知 record_type 应打 ERROR 日志但不调 add_knowledge 也不抛异常"""
+        agent = self._make_agent()
+        with patch("services.knowledge_service.add_knowledge", new_callable=AsyncMock) as mock_add:
+            await agent._record_agent_experience(
+                "unknown_type", "q", ["local_stock_query"], "detail",
+            )
+            mock_add.assert_not_called()
+
+
+class TestInferBusinessDomain:
+    """方案 C：tool_name → business domain 推断测试"""
+
+    def test_local_query_extraction(self):
+        from services.agent.erp_agent import ERPAgent
+        assert ERPAgent._infer_business_domain(["local_stock_query"]) == "stock"
+        assert ERPAgent._infer_business_domain(["local_order_query"]) == "order"
+        assert ERPAgent._infer_business_domain(["local_product_identify"]) == "product"
+        assert ERPAgent._infer_business_domain(["local_purchase_query"]) == "purchase"
+        assert ERPAgent._infer_business_domain(["local_aftersale_query"]) == "aftersale"
+
+    def test_erp_remote_query_extraction(self):
+        from services.agent.erp_agent import ERPAgent
+        assert ERPAgent._infer_business_domain(["erp_warehouse_query"]) == "warehouse"
+        # erp_info_query → basic → 归一化为 info
+        assert ERPAgent._infer_business_domain(["erp_info_query"]) == "info"
+
+    def test_normalization(self):
+        from services.agent.erp_agent import ERPAgent
+        # erp_aftersales_query → aftersales → 归一化为 aftersale
+        assert ERPAgent._infer_business_domain(["erp_aftersales_query"]) == "aftersale"
+        # erp_trade_query → trade → 归一化为 order
+        assert ERPAgent._infer_business_domain(["erp_trade_query"]) == "order"
+
+    def test_first_match_wins(self):
+        from services.agent.erp_agent import ERPAgent
+        # 取首个能识别的业务域，跳过 identify 类前缀工具
+        assert ERPAgent._infer_business_domain(
+            ["local_product_identify", "local_stock_query"]
+        ) == "product"
+
+    def test_empty_list_returns_general(self):
+        from services.agent.erp_agent import ERPAgent
+        assert ERPAgent._infer_business_domain([]) == "general"
+
+    def test_unknown_tool_returns_general(self):
+        from services.agent.erp_agent import ERPAgent
+        assert ERPAgent._infer_business_domain(["some_random_tool"]) == "general"
+        assert ERPAgent._infer_business_domain(["route_to_chat"]) == "general"
