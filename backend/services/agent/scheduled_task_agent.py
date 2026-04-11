@@ -1,28 +1,27 @@
-"""定时任务独立 Agent — 参考 ERPAgent 模式
+"""定时任务独立 Agent — 共用 ToolLoopExecutor
 
 设计文档: docs/document/TECH_定时任务心跳系统.md §4.3
 
 核心设计：
 - 不重构 ChatHandler，照抄 erp_agent.py 的 headless 模式
-- 复用 ToolExecutor / ExecutionBudget / context_compressor / tool_result_envelope
-- 无 WebSocket 依赖，返回结构化结果
+- 复用 ToolLoopExecutor / LoopConfig / LoopStrategy / LoopHook
+- 无 WebSocket 依赖（task_id=None 让 ProgressNotifyHook 自然 no-op）
 - 沙盒输出文件从 [FILE] 标记正则解析
+
+2026-04-11 重构：删除 _run_tool_loop / _execute_tools 共 170 行重复代码，
+改为装配 LoopConfig + LoopStrategy + 单 ToolAuditHook 走共享内核。
 """
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, TYPE_CHECKING
 
 from loguru import logger
 
-from services.agent.tool_result_envelope import wrap_for_erp_agent
-
 if TYPE_CHECKING:
-    from utils.time_context import RequestContext
+    pass
 
 
 # ════════════════════════════════════════════════════════
@@ -44,7 +43,7 @@ class ScheduledTaskResult:
 
 
 # ════════════════════════════════════════════════════════
-# 安全护栏常量（参考 erp_agent_types.py）
+# 安全护栏常量
 # ════════════════════════════════════════════════════════
 
 TOOL_TIMEOUT = 30.0                # 单工具超时上限
@@ -65,7 +64,7 @@ _FILE_MARKER_RE = re.compile(
 # ════════════════════════════════════════════════════════
 
 class ScheduledTaskAgent:
-    """定时任务 Agent — 独立循环，无 WebSocket 依赖
+    """定时任务 Agent — 复用 ToolLoopExecutor，无 WebSocket 依赖
 
     用法:
         agent = ScheduledTaskAgent(db, task_dict)
@@ -109,7 +108,9 @@ class ScheduledTaskAgent:
             from services.adapters.factory import create_chat_adapter
             from core.config import get_settings
             settings = get_settings()
-            model_id = getattr(settings, "agent_loop_model", None) or "qwen3.5-plus"
+            model_id = (
+                getattr(settings, "agent_loop_model", None) or "qwen3.5-plus"
+            )
             adapter = create_chat_adapter(
                 model_id, org_id=self.org_id, db=self.db,
             )
@@ -129,11 +130,21 @@ class ScheduledTaskAgent:
             deadline = float(self.task.get("timeout_sec") or DEFAULT_DEADLINE)
             budget = ExecutionBudget(deadline)
 
-            # 7. 独立工具循环
-            text, tokens, turns = await self._run_tool_loop(
-                adapter, executor, messages, all_tools, tools_called, budget
+            # 7. 共享 ToolLoopExecutor（无 WS 推送 / 无时间校验 / 无失败反思）
+            tool_loop, hook_ctx = self._build_tool_loop(
+                adapter, executor, all_tools,
             )
-            total_tokens += tokens
+
+            result = await tool_loop.run(
+                messages=messages,
+                selected_tools=all_tools,  # 全工具可见
+                tools_called=tools_called,
+                hook_ctx=hook_ctx,
+                budget=budget,
+            )
+            total_tokens += result.total_tokens
+            text = result.text
+            turns = result.turns
 
             # 8. 提取沙盒输出的文件
             files = self._extract_files(text)
@@ -162,7 +173,9 @@ class ScheduledTaskAgent:
                 error_message="execution_timeout",
             )
         except Exception as e:
-            logger.error(f"ScheduledTask error | task={self.task_id} | error={e}")
+            logger.error(
+                f"ScheduledTask error | task={self.task_id} | error={e}"
+            )
             return ScheduledTaskResult(
                 text=f"任务执行出错: {e}",
                 status="error",
@@ -182,6 +195,57 @@ class ScheduledTaskAgent:
     # ════════════════════════════════════════════════════════
     # 内部方法
     # ════════════════════════════════════════════════════════
+
+    def _build_tool_loop(
+        self,
+        adapter: Any,
+        executor: Any,
+        all_tools: List[Dict[str, Any]],
+    ) -> tuple:
+        """装配 ToolLoopExecutor + HookContext（定时任务默认配置）
+
+        与 ERPAgent 的差异：
+        - 无 WebSocket 推送（task_id=None 让 ProgressNotifyHook 自然 no-op）
+        - 无退出信号工具集（无人交互场景）
+        - 无工具自动扩展（启动即 13 工具全可见）
+        - 允许直接文本回复（任务可能不需要工具）
+        - 仅挂 ToolAuditHook（不要 L4 校验/失败反思/进度推送）
+        """
+        from services.agent.tool_loop_executor import ToolLoopExecutor
+        from services.agent.loop_types import (
+            HookContext, LoopConfig, LoopStrategy,
+        )
+        from services.agent.loop_hooks import ToolAuditHook
+
+        hook_ctx = HookContext(
+            db=self.db,
+            user_id=self.user_id,
+            org_id=self.org_id,
+            conversation_id=self.conversation_id,
+            task_id=None,  # 无 WS 通道
+            request_ctx=self.request_ctx,
+        )
+
+        tool_loop = ToolLoopExecutor(
+            adapter=adapter,
+            executor=executor,
+            all_tools=all_tools,
+            config=LoopConfig(
+                max_turns=MAX_SCHEDULED_TURNS,
+                max_tokens=MAX_TOTAL_TOKENS,
+                tool_timeout=TOOL_TIMEOUT,
+                no_synthesis_fallback_text=(
+                    "定时任务执行未能生成完整结论，请检查任务指令。"
+                ),
+            ),
+            strategy=LoopStrategy(
+                exit_signals=frozenset(),
+                enable_tool_expansion=False,
+                force_tool_use_first=False,
+            ),
+            hooks=[ToolAuditHook()],
+        )
+        return tool_loop, hook_ctx
 
     def _build_light_context(self) -> List[Dict[str, Any]]:
         """轻量上下文：任务指令 + 模板提示 + 上次摘要"""
@@ -226,176 +290,6 @@ class ScheduledTaskAgent:
         messages.append({"role": "user", "content": user_msg})
         return messages
 
-    async def _run_tool_loop(
-        self,
-        adapter: Any,
-        executor: Any,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
-        tools_called: List[str],
-        budget: Any,
-    ) -> tuple:
-        """工具循环（参考 erp_agent._run_tool_loop，去掉流式推送）"""
-        accumulated_text = ""
-        total_tokens = 0
-        recent_calls: List[str] = []
-        context_recovery_used = False
-        turn = 0
-
-        from services.handlers.context_compressor import estimate_tokens, enforce_budget
-        from services.agent.erp_agent_types import is_context_length_error
-
-        for turn in range(MAX_SCHEDULED_TURNS):
-            # 时间预算检查
-            if not budget.check_or_log(f"scheduled_turn={turn + 1}"):
-                break
-
-            # Token 预算检查
-            if total_tokens >= MAX_TOTAL_TOKENS:
-                logger.warning(
-                    f"ScheduledTask token budget exceeded | task={self.task_id} | "
-                    f"used={total_tokens}"
-                )
-                break
-
-            # 上下文压缩
-            if estimate_tokens(messages) > int(MAX_TOTAL_TOKENS * 0.7):
-                enforce_budget(messages, int(MAX_TOTAL_TOKENS * 0.7))
-
-            tc_acc: Dict[int, Dict[str, Any]] = {}
-            turn_text = ""
-            turn_tokens = 0
-
-            # 调用 LLM
-            try:
-                async for chunk in adapter.stream_chat(
-                    messages=messages, tools=tools, temperature=0.1,
-                ):
-                    if chunk.content:
-                        turn_text += chunk.content
-                    if chunk.tool_calls:
-                        for tc_delta in chunk.tool_calls:
-                            idx = tc_delta.index
-                            if idx not in tc_acc:
-                                tc_acc[idx] = {"id": "", "name": "", "arguments": ""}
-                            entry = tc_acc[idx]
-                            if tc_delta.id:
-                                entry["id"] = tc_delta.id
-                            if tc_delta.name:
-                                entry["name"] = tc_delta.name
-                            if tc_delta.arguments_delta:
-                                entry["arguments"] += tc_delta.arguments_delta
-                    if chunk.prompt_tokens or chunk.completion_tokens:
-                        turn_tokens = (chunk.prompt_tokens or 0) + (chunk.completion_tokens or 0)
-            except Exception as stream_err:
-                if is_context_length_error(stream_err) and not context_recovery_used:
-                    context_recovery_used = True
-                    logger.warning(
-                        f"ScheduledTask context_length_exceeded | task={self.task_id} | "
-                        f"attempting recovery"
-                    )
-                    enforce_budget(messages, int(MAX_TOTAL_TOKENS * 0.5))
-                    messages.append({
-                        "role": "user",
-                        "content": "上下文过长已自动压缩，请继续完成任务。",
-                    })
-                    continue
-                raise
-
-            total_tokens += turn_tokens
-
-            # 没有工具调用 → 模型给出最终回复
-            if not tc_acc:
-                if turn_text:
-                    accumulated_text = turn_text
-                break
-
-            completed = sorted(tc_acc.values(), key=lambda x: x.get("id", ""))
-
-            # 循环检测：连续 3 次相同调用
-            call_key = "|".join(
-                f"{tc['name']}:{hashlib.md5(tc['arguments'].encode()).hexdigest()[:6]}"
-                for tc in completed
-            )
-            recent_calls.append(call_key)
-            if len(recent_calls) >= 3 and len(set(recent_calls[-3:])) == 1:
-                logger.warning(
-                    f"ScheduledTask loop detected | task={self.task_id} | call={call_key}"
-                )
-                break
-
-            # 执行工具
-            accumulated_text = await self._execute_tools(
-                completed, executor, messages, tools_called, turn_text, turn + 1, budget
-            )
-
-        return accumulated_text, total_tokens, min(turn + 1, MAX_SCHEDULED_TURNS)
-
-    async def _execute_tools(
-        self,
-        completed: List[Dict[str, Any]],
-        executor: Any,
-        messages: List[Dict[str, Any]],
-        tools_called: List[str],
-        turn_text: str,
-        turn: int,
-        budget: Any,
-    ) -> str:
-        """执行一轮工具调用"""
-        asst_msg: Dict[str, Any] = {"role": "assistant", "content": turn_text or None}
-        asst_msg["tool_calls"] = [
-            {
-                "id": tc["id"],
-                "type": "function",
-                "function": {"name": tc["name"], "arguments": tc["arguments"]},
-            }
-            for tc in completed
-        ]
-        messages.append(asst_msg)
-
-        accumulated = turn_text
-        for tc in completed:
-            tool_name = tc["name"]
-            tools_called.append(tool_name)
-
-            try:
-                args = json.loads(tc["arguments"]) if tc["arguments"] else {}
-            except json.JSONDecodeError as e:
-                result = f"工具参数 JSON 错误: {e}"
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": result,
-                })
-                accumulated = result
-                continue
-
-            # 执行工具（带超时）
-            tool_timeout = (
-                budget.tool_timeout(TOOL_TIMEOUT) if budget else TOOL_TIMEOUT
-            )
-            try:
-                result = await asyncio.wait_for(
-                    executor.execute(tool_name, args),
-                    timeout=tool_timeout,
-                )
-            except asyncio.TimeoutError:
-                result = f"工具执行超时（{int(tool_timeout)}秒）"
-            except Exception as e:
-                result = f"工具执行失败: {e}"
-
-            # 截断防爆
-            result = wrap_for_erp_agent(tool_name, result)
-
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": result,
-            })
-            accumulated = result
-
-        return accumulated
-
     def _extract_files(self, text: str) -> List[Dict[str, Any]]:
         """从文本中提取沙盒输出的 [FILE] 标记
 
@@ -431,12 +325,16 @@ class ScheduledTaskAgent:
                 {"role": "user", "content": text[:3000]},
             ]
             summary = ""
-            async for chunk in adapter.stream_chat(messages=messages, temperature=0.3):
+            async for chunk in adapter.stream_chat(
+                messages=messages, temperature=0.3,
+            ):
                 if chunk.content:
                     summary += chunk.content
             return summary[:500]
         except Exception as e:
-            logger.debug(f"_generate_summary failed | task={self.task_id} | error={e}")
+            logger.debug(
+                f"_generate_summary failed | task={self.task_id} | error={e}"
+            )
             return text[:500]
 
     async def _prepare_template(self) -> None:
@@ -488,7 +386,11 @@ class ScheduledTaskAgent:
             import shutil
 
             settings = get_settings()
-            staging_dir = Path(settings.file_workspace_root) / "staging" / self.conversation_id
+            staging_dir = (
+                Path(settings.file_workspace_root)
+                / "staging"
+                / self.conversation_id
+            )
             if staging_dir.exists():
                 shutil.rmtree(staging_dir, ignore_errors=True)
         except Exception as e:

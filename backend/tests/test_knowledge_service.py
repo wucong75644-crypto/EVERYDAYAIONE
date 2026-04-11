@@ -609,6 +609,28 @@ class TestSchemaValidation:
             mock_pg.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_rejects_invalid_source(self):
+        """非白名单 source 触发 ValueError 且不调用 PG
+
+        防"修一道露一道"：方案 C 修了 category/node_type 后，
+        source 是另一道 PG CHECK 闸门（'auto'/'seed'/'manual'/'aggregated'）。
+        旧 ERPAgent 用 source='erp_agent' 在生产触发了 source_check 失败，
+        本测试确保未来类似越界值在应用层被立即拦截。
+        """
+        from services.knowledge_service import add_knowledge
+
+        with patch("services.knowledge_service.is_kb_available", return_value=True), \
+             patch("services.knowledge_service.get_pg_connection", new_callable=AsyncMock) as mock_pg:
+            with pytest.raises(ValueError, match="invalid source"):
+                await add_knowledge(
+                    category="experience",
+                    node_type="routing_pattern",
+                    title="test", content="test content",
+                    source="erp_agent",  # 旧的非法值（PG CHECK 不允许）
+                )
+            mock_pg.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_accepts_routing_pattern(self):
         """方案 C 新增的 routing_pattern node_type 必须接受"""
         cursor = AsyncMock()

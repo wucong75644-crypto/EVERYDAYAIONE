@@ -37,12 +37,13 @@ from services.knowledge_metrics import record_metric  # noqa: F401
 
 # ===== Schema 白名单（与 PG CHECK 约束对齐 + node_type 应用层约束） =====
 #
-# category：与 023_add_knowledge_base.sql:40 的 PG CHECK 约束严格对齐。
+# category / source：与 023_add_knowledge_base.sql 的 PG CHECK 约束严格对齐。
 # 修改时必须同步更新 migration（PG 层是真实白名单，这里只是早期拦截）。
 #
 # node_type：PG schema 没有 CHECK 约束，但应用层在此收敛命名空间，
 # 防止字段被滥用为"什么都往里塞"的杂物间。新增取值需在此追加。
 _VALID_CATEGORIES = frozenset({"model", "tool", "experience"})
+_VALID_SOURCES = frozenset({"auto", "seed", "manual", "aggregated"})
 _VALID_NODE_TYPES = frozenset({
     # seed / extractor 既有取值
     "model", "parameter", "pattern", "capability",
@@ -58,8 +59,10 @@ _VALID_NODE_TYPES = frozenset({
 # ===== 知识 CRUD =====
 
 
-def _validate_node_schema(category: str, node_type: str, title: str) -> None:
-    """入口校验：category / node_type 必须在白名单。
+def _validate_node_schema(
+    category: str, node_type: str, source: str, title: str,
+) -> None:
+    """入口校验：category / node_type / source 必须在白名单。
 
     在 PG CHECK 前拦截，把 schema 违反提到最早可见的位置。
     日志包含完整上下文方便运维 grep。
@@ -70,7 +73,8 @@ def _validate_node_schema(category: str, node_type: str, title: str) -> None:
     if category not in _VALID_CATEGORIES:
         logger.error(
             f"Knowledge schema violation | category={category!r} | "
-            f"node_type={node_type!r} | title={title[:50]} | "
+            f"node_type={node_type!r} | source={source!r} | "
+            f"title={title[:50]} | "
             f"valid_categories={sorted(_VALID_CATEGORIES)}"
         )
         raise ValueError(
@@ -80,12 +84,24 @@ def _validate_node_schema(category: str, node_type: str, title: str) -> None:
     if node_type not in _VALID_NODE_TYPES:
         logger.error(
             f"Knowledge schema violation | category={category} | "
-            f"node_type={node_type!r} | title={title[:50]} | "
+            f"node_type={node_type!r} | source={source!r} | "
+            f"title={title[:50]} | "
             f"valid_node_types={sorted(_VALID_NODE_TYPES)}"
         )
         raise ValueError(
             f"add_knowledge: invalid node_type={node_type!r}, "
             f"must be one of {sorted(_VALID_NODE_TYPES)}"
+        )
+    if source not in _VALID_SOURCES:
+        logger.error(
+            f"Knowledge schema violation | category={category} | "
+            f"node_type={node_type} | source={source!r} | "
+            f"title={title[:50]} | "
+            f"valid_sources={sorted(_VALID_SOURCES)}"
+        )
+        raise ValueError(
+            f"add_knowledge: invalid source={source!r}, "
+            f"must be one of {sorted(_VALID_SOURCES)}"
         )
 
 
@@ -160,7 +176,7 @@ async def add_knowledge(
     Returns:
         节点 ID（新增或已有），None 表示 DB 写入失败
     """
-    _validate_node_schema(category, node_type, title)
+    _validate_node_schema(category, node_type, source, title)
 
     if not is_kb_available():
         return None
