@@ -25,9 +25,9 @@ if TYPE_CHECKING:
 
 # state 枚举：1=停用, 2=未初始化, 3=启用, 4=会话失效
 _PLATFORM_MAP = {
-    "taobao": "淘宝", "tmall": "天猫", "jd": "京东",
-    "pdd": "拼多多", "douyin": "抖音", "kuaishou": "快手",
-    "xhs": "小红书", "1688": "1688", "weidian": "微店",
+    "taobao": "tb", "tmall": "tb", "jd": "jd",
+    "pdd": "pdd", "douyin": "fxg", "kuaishou": "kuaishou",
+    "xhs": "xhs", "1688": "1688", "weidian": "wd",
 }
 
 
