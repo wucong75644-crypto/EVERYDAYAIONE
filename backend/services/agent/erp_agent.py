@@ -236,6 +236,7 @@ class ERPAgent:
         accumulated_text = ""
         total_tokens = 0
         is_llm_synthesis = False  # 标记最终结果是否为 LLM 合成
+        exit_via_ask_user = False  # L4 不校验追问消息
         empty_turns = 0  # 连续空响应计数
         # [Fix G] 循环检测
         recent_calls: List[str] = []
@@ -363,6 +364,7 @@ class ERPAgent:
                 # ask_user 的结论在 accumulated（args.message），不依赖 turn_text
                 has_ask_user = any(tc["name"] == "ask_user" for tc in completed)
                 is_llm_synthesis = has_ask_user or bool(turn_text)
+                exit_via_ask_user = has_ask_user  # L4 跳过追问消息
                 break
 
             logger.info(f"ERPAgent turn {turn + 1} | tools={[tc['name'] for tc in completed]}")
@@ -376,6 +378,37 @@ class ERPAgent:
             # 不尝试再调 LLM（上下文过长可能产出错误结论），
             # 返回明确提示让主 Agent 告知用户
             accumulated_text = "ERP 查询过程中未能生成完整结论，请重新提问或缩小查询范围。"
+
+        # ─────────────────────────────────────────────────────────
+        # L4 TemporalValidator — 事实正确性兜底（Phase 7）
+        # 只校验 LLM 合成的文字，不校验 ask_user 追问 / 原始工具数据
+        # 设计文档：docs/document/TECH_ERP时间准确性架构.md §14
+        # ─────────────────────────────────────────────────────────
+        if is_llm_synthesis and not exit_via_ask_user and accumulated_text:
+            try:
+                from services.agent.guardrails import (
+                    emit_deviation_records,
+                    validate_and_patch,
+                )
+                patched_text, deviations = validate_and_patch(
+                    accumulated_text, ctx=self.request_ctx,
+                )
+                if deviations:
+                    # L5 偏离日志（fire-and-forget）
+                    emit_deviation_records(
+                        db=self.db,
+                        deviations=deviations,
+                        task_id=self.task_id or "",
+                        conversation_id=self.conversation_id,
+                        user_id=self.user_id,
+                        org_id=self.org_id,
+                        turn=min(turn + 1, MAX_ERP_TURNS),
+                        patched=True,  # 当前策略：一律自动 patch
+                    )
+                    accumulated_text = patched_text
+            except Exception as e:
+                # 校验失败不阻塞主流程
+                logger.warning(f"L4 temporal_validator skipped | error={e}")
 
         return accumulated_text, total_tokens, min(turn + 1, MAX_ERP_TURNS)
 
