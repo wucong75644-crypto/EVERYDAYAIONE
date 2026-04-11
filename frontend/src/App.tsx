@@ -33,7 +33,7 @@ const WecomCallback = lazy(() => import('./pages/WecomCallback'));
  * 切换时整个页面 unmount（例如 /chat/abc → /chat/xyz 应该是 Chat 内部
  * 状态变化，而不是整页 fade in/out）。
  */
-function getRouteKey(pathname: string): string {
+export function getRouteKey(pathname: string): string {
   // 取第一段作为 key：'/' / '/chat' / '/forgot-password' / '/auth' 等
   // /chat 和 /chat/xxx 都是 'chat'，不会触发 unmount
   const seg = pathname.split('/').filter(Boolean)[0] || '';
