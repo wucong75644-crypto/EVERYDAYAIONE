@@ -42,7 +42,13 @@ DB_URL = settings.database_url
 # ============================================================
 
 def get_db():
-    return psycopg.connect(DB_URL, row_factory=dict_row)
+    # 与 core/local_db.py 保持一致：强制 PG session TZ=Asia/Shanghai
+    # 防止开发者在非 CN 时区机器上跑脚本时出现 ±8h 偏移
+    return psycopg.connect(
+        DB_URL,
+        row_factory=dict_row,
+        options="-c timezone=Asia/Shanghai",
+    )
 
 
 def log_result(table: str, check: str, passed: bool, detail: str = ""):
