@@ -1045,12 +1045,21 @@ END;
 $$;
 
 -- ERP 聚合（多租户：按 org_id 隔离）
--- ERP 聚合（多租户：DELETE + INSERT 替代 ON CONFLICT，避免表达式索引不兼容）
+-- ERP 聚合（多租户：DELETE + INSERT，advisory lock 串行化同 key 并发，058 迁移）
 CREATE OR REPLACE FUNCTION erp_aggregate_daily_stats(
     p_outer_id VARCHAR, p_stat_date DATE, p_org_id UUID DEFAULT NULL
 )
 RETURNS VOID LANGUAGE plpgsql AS $$
 BEGIN
+    -- 事务级 advisory lock：按 (outer_id, stat_date, org_id) 串行化同 key 并发
+    -- 详见 backend/migrations/058_fix_aggregation_race.sql
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended(
+            p_outer_id || '|' || p_stat_date::text || '|' || COALESCE(p_org_id::text, ''),
+            0
+        )
+    );
+
     -- 先删除旧记录（按 org_id 隔离）
     DELETE FROM erp_product_daily_stats
     WHERE stat_date = p_stat_date AND outer_id = p_outer_id
