@@ -92,6 +92,43 @@ def _require_org(org_ctx: Any) -> str:
     return org_ctx.org_id
 
 
+def _is_push_to_self(db: Any, current_user_id: str, push_target: Dict[str, Any]) -> bool:
+    """
+    判断 push_target 是否指向当前用户自己（无需 task.push_to_others 权限）。
+
+    判定规则：
+    - type == "web" 且 user_id == current_user_id  → 自己
+    - type == "wecom_user" 且 wecom_userid 在当前用户的 wecom_user_mappings 中 → 自己
+    - 其他（wecom_group / 别人的 wecom_user / multi）→ 不是自己
+    """
+    if not isinstance(push_target, dict):
+        return False
+
+    ptype = push_target.get("type")
+    if ptype == "web":
+        return push_target.get("user_id") == current_user_id
+
+    if ptype == "wecom_user":
+        target_wecom_userid = push_target.get("wecom_userid")
+        if not target_wecom_userid:
+            return False
+        try:
+            result = (
+                db.table("wecom_user_mappings")
+                .select("wecom_userid")
+                .eq("user_id", current_user_id)
+                .eq("wecom_userid", target_wecom_userid)
+                .limit(1)
+                .execute()
+            )
+            return bool(result.data)
+        except Exception as e:
+            logger.warning(f"_is_push_to_self lookup failed | error={e}")
+            return False
+
+    return False
+
+
 def _format_task(row: Dict[str, Any]) -> Dict[str, Any]:
     """格式化任务对象（加 cron_readable）"""
     if not row:
@@ -182,6 +219,13 @@ async def create_task(
     # 1. 权限校验
     if not await check_permission(db, user_id, org_id, "task.create"):
         raise HTTPException(403, "无权创建定时任务")
+
+    # 1.5 推送目标权限校验：推送给他人/群聊需要 task.push_to_others
+    if not _is_push_to_self(db, user_id, payload.push_target):
+        if not await check_permission(db, user_id, org_id, "task.push_to_others"):
+            raise HTTPException(
+                403, "无权将定时任务推送给同事或群聊（需要管理职位）"
+            )
 
     # 2. 校验 cron 表达式
     if not validate_cron(payload.cron_expr):
@@ -328,6 +372,12 @@ async def update_task(
         if val is not None:
             update[field] = val
     if payload.push_target is not None:
+        # 改推送目标也要校验权限：改成给他人/群聊需要 task.push_to_others
+        if not _is_push_to_self(db, user_id, payload.push_target):
+            if not await check_permission(db, user_id, org_id, "task.push_to_others"):
+                raise HTTPException(
+                    403, "无权将定时任务推送给同事或群聊（需要管理职位）"
+                )
         update["push_target"] = payload.push_target
     if payload.template_file is not None:
         update["template_file"] = payload.template_file

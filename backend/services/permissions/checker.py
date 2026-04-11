@@ -12,6 +12,7 @@ from loguru import logger
 
 from services.permissions.permission_points import (
     DEPT_TYPE_TO_PERMS,
+    MEMBER_DENIED_PERMS,
     ROLE_BOSS_FULL_PERMS,
     ROLE_VP_FULL_PERMS,
     is_system_permission,
@@ -86,6 +87,9 @@ class PermissionChecker:
         # 4. 副主管 / 员工：只能操作自己的资源
         if position_code in ("deputy", "member"):
             if is_system_permission(permission_code):
+                return False
+            # member 显式拒绝管理职位专属权限（如 task.push_to_others）
+            if position_code == "member" and permission_code in MEMBER_DENIED_PERMS:
                 return False
             if not self._has_dept_role_permission(assignment, permission_code):
                 return False

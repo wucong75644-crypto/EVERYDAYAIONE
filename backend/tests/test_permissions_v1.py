@@ -299,6 +299,33 @@ class TestPermissionChecker:
         checker = self._make_checker({})  # 空映射
         assert not await checker.check("ghost_user", "org_1", "task.view")
 
+    @pytest.mark.asyncio
+    async def test_member_cannot_push_to_others(self, member_assignment):
+        """member 职位不能 task.push_to_others（即使在自己资源上）"""
+        checker = self._make_checker({"user_zhangsan": member_assignment})
+        own = {"user_id": "user_zhangsan", "org_id": "org_1"}
+        # member 自己的任务可以编辑
+        assert await checker.check("user_zhangsan", "org_1", "task.edit", own)
+        # 但不能 push_to_others
+        assert not await checker.check("user_zhangsan", "org_1", "task.push_to_others")
+
+    @pytest.mark.asyncio
+    async def test_deputy_can_push_to_others(self, deputy_assignment):
+        """deputy 职位可以 task.push_to_others"""
+        checker = self._make_checker({"user_deputy": deputy_assignment})
+        assert await checker.check("user_deputy", "org_1", "task.push_to_others")
+
+    @pytest.mark.asyncio
+    async def test_manager_can_push_to_others(self, manager_assignment):
+        """manager 职位可以 task.push_to_others"""
+        checker = self._make_checker({"user_manager": manager_assignment})
+        assert await checker.check("user_manager", "org_1", "task.push_to_others")
+
+    @pytest.mark.asyncio
+    async def test_boss_can_push_to_others(self, boss_assignment):
+        checker = self._make_checker({"user_boss": boss_assignment})
+        assert await checker.check("user_boss", "org_1", "task.push_to_others")
+
 
 # ════════════════════════════════════════════════════════
 # 3. compute_user_permissions 扁平权限码
@@ -373,3 +400,40 @@ class TestComputeUserPermissions:
 
         perms = await compute_user_permissions(MagicMock(), "ghost", "org_1")
         assert perms == []
+
+    @pytest.mark.asyncio
+    async def test_member_does_not_have_push_to_others(self, monkeypatch):
+        """member 职位不应有 task.push_to_others"""
+        ops_member = {
+            "position_code": "member",
+            "department_type": "ops",
+            "data_scope": "self",
+        }
+        self._patch_checker(monkeypatch, ops_member)
+        perms = set(await compute_user_permissions(MagicMock(), "user_m", "org_1"))
+        assert "task.create" in perms  # 普通任务权限有
+        assert "task.push_to_others" not in perms  # 但不能推给别人
+
+    @pytest.mark.asyncio
+    async def test_deputy_has_push_to_others(self, monkeypatch):
+        """deputy 职位有 task.push_to_others"""
+        ops_deputy = {
+            "position_code": "deputy",
+            "department_type": "ops",
+            "data_scope": "self",
+        }
+        self._patch_checker(monkeypatch, ops_deputy)
+        perms = set(await compute_user_permissions(MagicMock(), "user_d", "org_1"))
+        assert "task.push_to_others" in perms
+
+    @pytest.mark.asyncio
+    async def test_manager_has_push_to_others(self, monkeypatch):
+        """manager 职位有 task.push_to_others"""
+        ops_manager = {
+            "position_code": "manager",
+            "department_type": "ops",
+            "data_scope": "dept_subtree",
+        }
+        self._patch_checker(monkeypatch, ops_manager)
+        perms = set(await compute_user_permissions(MagicMock(), "user_mgr", "org_1"))
+        assert "task.push_to_others" in perms
