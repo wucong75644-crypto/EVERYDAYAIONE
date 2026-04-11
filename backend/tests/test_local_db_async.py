@@ -494,3 +494,20 @@ class TestAsyncLocalDBClient:
             client = AsyncLocalDBClient("postgresql://localhost/test")
             await client.close()
             mock_pool.close.assert_awaited_once()
+
+    def test_pool_forces_session_timezone_asia_shanghai(self):
+        """连接池必须显式强制 PG session TZ=Asia/Shanghai
+
+        防止重构时不小心删掉 options 参数，导致整套时间架构回退到
+        依赖系统 TZ 的隐式链状态（迁云数据库/Docker/主从异地复制时
+        会出现 ±8h 偏移）。详见 commit 39b6f81。
+        """
+        with patch("core.local_db.AsyncConnectionPool") as MockPool:
+            AsyncLocalDBClient("postgresql://localhost/test")
+            call_kwargs = MockPool.call_args.kwargs
+            psycopg_kwargs = call_kwargs.get("kwargs", {})
+            assert psycopg_kwargs.get("options") == "-c timezone=Asia/Shanghai", (
+                "AsyncLocalDBClient must force PG session TZ via "
+                "options='-c timezone=Asia/Shanghai' to prevent implicit TZ "
+                "dependency. See commit 39b6f81."
+            )
