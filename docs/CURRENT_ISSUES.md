@@ -64,8 +64,31 @@
 
 ---
 
+### 2026-04-11 快麦同步加固（已修复 4 个 Bug + 4 处技术债）
+
+**修复内容**：
+- 🔴 Bug 1: `sync_platform_map .limit(10000)` 导致 78% SKU 自 3-23 起未同步 → 加 `platform_map_checked_at` 列 + 1/4 增量
+- 🟠 Bug 2: `except Exception` 吞掉 token 失效告警 → 异常分四类 + 未知错误接入 DLQ
+- 🔴 Bug 3: `_TOKEN_EXPIRED_CODES` 漏 `invalid_session` 导致自动刷新永不触发 → 加白名单 + refresh 失败立即推企微告警
+- 🟢 Bug 4: `sync_batch_stock` 死代码每天浪费 ~10k 次 API → 删除整条链路（保留 batch_stock_list 工具）
+
+**配套技术债**：
+- `master_handlers.py` 669 行 → 拆成 product/stock/supplier/platform_map 子包
+- `dead_letter.py` 561 行 → 拆成 queue/consumer/platform_map_retry 子包
+- `healthcheck ALERT_THRESHOLD` 10→3，告警延迟从 60h 降到 18h
+- 加 SQL 表达式索引匹配 COALESCE 查询（cost 5000→1170）
+- `_mock_svc` 默认 `_lock_extend_fn=None` 防 mock 隐藏 bug
+
+**剩余技术债**：
+- `client.py` 614 行（>500） — 单类设计，拆方法收益低，下次重构时再处理
+- `record_dead_letter` 已 `dead` 状态时唯一索引冲突 — 现有架构限制（非本次引入）
+- `erp_batch_stock` 表保留待将来 cleanup PR 一并 DROP
+
+---
+
 ## 更新记录
 
+- **2026-04-11**：快麦同步加固（4 Bug + 5 技术债，3478 测试全绿，新增 22 测试）
 - **2026-03-01**：修复刷新恢复场景僵尸消息（generation_params 类型 + WS 订阅 ID 不匹配 + debug print 清理）
 - **2026-02-02**：完成阶段5-7（状态管理重设计、占位符持久化、性能优化）
 - **2026-02-01**：完成聊天系统综合重构阶段0-4（缓存统一、发送器合并、轮询管理）

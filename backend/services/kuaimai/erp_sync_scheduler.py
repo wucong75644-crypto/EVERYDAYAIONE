@@ -40,7 +40,6 @@ PRIORITY_WEIGHTS: dict[str, int] = {
     # 低频/特殊
     "platform_map": 0,
     "stock_full": 0,
-    "batch_stock": 0,
     "daily_maintenance": 0,
     "order_reconcile": 0,
     "aftersale_reconcile": 0,
@@ -76,7 +75,6 @@ CONFIG_TYPES = ["shop", "warehouse", "tag", "category", "logistics_company"]
 
 # 特殊任务类型（按独立间隔调度）
 SPECIAL_TYPES = ["stock_full", "daily_maintenance", "order_reconcile", "aftersale_reconcile"]
-# batch_stock 已禁用（企业未开启批次管理功能，API 返回空）
 
 
 class ErpSyncScheduler:
@@ -95,8 +93,6 @@ class ErpSyncScheduler:
     WAREHOUSE_INTERVAL = 300
     # 配置数据间隔（秒）：12小时
     CONFIG_INTERVAL = 43200
-    # 批次库存间隔（秒）：6小时
-    BATCH_STOCK_INTERVAL = 21600
 
     def __init__(self, db) -> None:
         self.db = db
@@ -111,7 +107,6 @@ class ErpSyncScheduler:
         self._org_last_aftersale_reconcile: dict[str | None, datetime] = {}
         self._org_last_warehouse: dict[str | None, datetime] = {}
         self._org_last_config: dict[str | None, datetime] = {}
-        self._org_last_batch_stock: dict[str | None, datetime] = {}
 
     async def start(self) -> None:
         """启动调度循环"""
@@ -203,8 +198,6 @@ class ErpSyncScheduler:
         ):
             due.append("stock_full")
 
-        # batch_stock 已禁用（企业未开启批次管理）
-
         # 日维护
         if self._is_interval_due(
             self._org_last_daily, org_id,
@@ -257,8 +250,6 @@ class ErpSyncScheduler:
             self._org_last_platform_map[org_id] = now
         elif sync_type == "stock_full":
             self._org_last_stock_full[org_id] = now
-        elif sync_type == "batch_stock":
-            self._org_last_batch_stock[org_id] = now
         elif sync_type == "daily_maintenance":
             self._org_last_daily[org_id] = now
         elif sync_type == "order_reconcile":

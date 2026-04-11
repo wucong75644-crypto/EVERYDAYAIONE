@@ -52,7 +52,6 @@ from services.kuaimai.erp_sync_warehouse_handlers import (
     sync_unshelve,
 )
 from services.kuaimai.erp_sync_piggyback_handlers import (
-    sync_batch_stock,
     sync_goods_section,
 )
 from services.kuaimai.erp_sync_persistence import (

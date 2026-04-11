@@ -53,6 +53,8 @@ TENANT_TABLES: frozenset[str] = frozenset({
     "erp_tags", "erp_categories", "erp_logistics_companies",
     # ERP 单据/库存
     "erp_document_items", "erp_document_items_archive",
+    # erp_batch_stock: 同步链路 sync_batch_stock 已于 2026-04-11 删除（业务无保质期商品）
+    # 表本身保留以避免不可逆 DROP；将来真正清理表时此行也要删除
     "erp_batch_stock", "erp_product_daily_stats",
     "erp_product_platform_map",
     # ERP 搭便车

@@ -431,7 +431,7 @@ def build_local_tools() -> List[Dict[str, Any]]:
                      "allocate", "allocate_in", "allocate_out",
                      "other_in", "other_out",
                      "inventory_sheet", "unshelve", "process_order",
-                     "section_record", "goods_section", "batch_stock"],
+                     "section_record", "goods_section"],
                 ),
             },
             ["sync_type"],

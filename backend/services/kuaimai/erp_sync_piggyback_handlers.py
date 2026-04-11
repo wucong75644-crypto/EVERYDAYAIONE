@@ -10,7 +10,14 @@ ERP 搭便车 + 特殊模式同步处理器
 
 独立同步：
   - goods_section: 货位库存（标准增量 → erp_document_items）
-  - batch_stock:   批次效期库存（遍历店铺全量 → erp_batch_stock）
+
+历史：
+  2026-04-11 删除 sync_batch_stock 死代码（Bug 4）。原因：
+  - 业务无保质期商品，erp_batch_stock 表 19 天 0 行数据
+  - 函数本身有 NameError bug（len(shop_ids) 引用未定义变量）
+  - except logger.debug 静默吞所有错误，无可观测性
+  - 每天浪费 ~10000 次 API 调用挤占其他 sync 限流额度
+  - ERP Agent 仍可通过 batch_stock_list 工具实时查 API（registry 保留）
 """
 
 from __future__ import annotations
@@ -295,84 +302,4 @@ async def sync_goods_section(
 
     count = await svc.upsert_document_items(all_rows)
     await svc.run_aggregation(svc.collect_affected_keys(all_rows))
-    return count
-
-
-# ── 批次效期库存（遍历店铺全量同步）─────────────────────
-
-
-async def sync_batch_stock(svc: ErpSyncService) -> int:
-    """批次效期库存同步：遍历 platform_map 的 user_id 分组查询
-
-    API 参数名是 userId（平台账号 ID，6位），不是 shopId。
-    直接用 erp_product_platform_map.user_id + numIids 调 API。
-    """
-    # 取所有平台映射的 num_iid（按 user_id 分组）
-    try:
-        result = await svc.db.table("erp_product_platform_map").select(
-            "num_iid,user_id"
-        ).limit(50000).execute()
-        shop_numids: dict[str, list[str]] = {}
-        for r in (result.data or []):
-            uid = r.get("user_id") or ""
-            nid = r.get("num_iid")
-            if uid and nid:
-                shop_numids.setdefault(uid, []).append(nid)
-    except Exception as e:
-        logger.warning(f"sync_batch_stock: failed to load platform map | error={e}")
-        return 0
-
-    if not shop_numids:
-        logger.debug("sync_batch_stock: no platform mappings, skip")
-        return 0
-
-    client = svc._get_client()
-    all_rows: list[dict[str, Any]] = []
-    now = now_cn().isoformat()
-
-    for user_id, num_ids in shop_numids.items():
-        # 每批最多 20 个 numIid
-        for i in range(0, len(num_ids), 20):
-            batch_ids = num_ids[i:i + 20]
-            try:
-                async with _API_SEM:
-                    data = await client.request_with_retry(
-                        "erp.wms.product.stock.query",
-                        {"userId": user_id, "numIids": ",".join(batch_ids)},
-                    )
-                items = data.get("list") or []
-                for item in items:
-                    outer_id = item.get("outerId") or item.get("itemOuterId")
-                    if not outer_id:
-                        continue
-                    all_rows.append({
-                        "outer_id": outer_id,
-                        "sku_outer_id": item.get("skuOuterId") or "",
-                        "item_name": item.get("title"),
-                        "batch_no": item.get("batchNo") or item.get("batchCode") or "",
-                        "production_date": item.get("productionDate"),
-                        "expiry_date": item.get("expiryDate") or item.get("shelfLifeDate"),
-                        "shelf_life_days": item.get("shelfLifeDays"),
-                        "stock_qty": item.get("stock") or item.get("quantity") or 0,
-                        "warehouse_name": item.get("warehouseName") or "",
-                        "shop_id": user_id,
-                        "extra_json": _pick(
-                            item, "warehouseId", "sectionCode",
-                            "inboundDate", "supplierId",
-                        ),
-                        "synced_at": now,
-                    })
-            except Exception as e:
-                logger.debug(f"sync_batch_stock: batch failed | userId={user_id} | error={e}")
-
-    if not all_rows:
-        return 0
-
-    count = await _batch_upsert(
-        svc.db, "erp_batch_stock", all_rows,
-        "outer_id,sku_outer_id,batch_no,shop_id,warehouse_name,org_id",
-        org_id=svc.org_id,
-    )
-    if count:
-        logger.info(f"Batch stock sync | shops={len(shop_ids)} rows={count}")
     return count
