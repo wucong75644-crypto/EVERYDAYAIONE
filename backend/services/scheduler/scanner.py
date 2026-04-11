@@ -67,11 +67,16 @@ class ScheduledTaskScanner:
         return len(tasks)
 
     async def _claim_due_tasks(self, now: datetime, limit: int) -> List[dict]:
-        """通过 RPC 原子领取到期任务"""
+        """通过 RPC 原子领取到期任务
+
+        注意：直接传 datetime 对象（不是 isoformat 字符串），
+        让 psycopg 自动绑定为 timestamptz。否则 PG 把字符串当成
+        unknown 类型，找不到 (timestamptz, integer) 函数签名。
+        """
         try:
             result = self.db.rpc("claim_due_tasks", {
-                "p_now": now.isoformat(),
-                "p_limit": limit,
+                "p_now": now,
+                "p_limit": int(limit),
             }).execute()
             return list(result.data or [])
         except Exception as e:
