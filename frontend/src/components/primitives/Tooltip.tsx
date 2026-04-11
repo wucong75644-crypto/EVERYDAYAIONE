@@ -76,8 +76,14 @@ export function Tooltip({
               'shadow-[var(--s-shadow-drop-lg)]',
               'max-w-xs pointer-events-none',
               // Radix data-state 驱动的动画（origin 用 radix CSS var）
+              // Radix Tooltip 有 3 个 state 值：
+              // - delayed-open: 首次 hover 300ms 后打开
+              // - instant-open: delay 窗口内连续 hover 其他 trigger 时瞬时打开
+              // - closed: 关闭（退场）
+              // 两种 open 都要触发入场动画，否则 toolbar 连续 hover 场景无动画
               'origin-[var(--radix-tooltip-content-transform-origin)]',
               'data-[state=delayed-open]:animate-tooltip-in',
+              'data-[state=instant-open]:animate-tooltip-in',
               'data-[state=closed]:animate-tooltip-out',
             )}
           >
