@@ -555,6 +555,11 @@ class MockAsyncSupabaseTable:
                     d for d in filtered if str(d.get(field, "")) >= str(value)
                 ]
 
+        # count 模式（在 limit 之前算总数）
+        # 注意：select(count="exact") + limit(1) 是常用 pattern
+        # 此时 result.data 受 limit 影响，但 result.count 应该是 limit 之前的总数
+        total_count = len(filtered)
+
         # 应用 offset 和 limit
         if hasattr(self, '_offset'):
             filtered = filtered[self._offset:]
@@ -565,6 +570,14 @@ class MockAsyncSupabaseTable:
             result.data = filtered[0] if filtered else None
         else:
             result.data = filtered
+
+        # count 模式
+        if getattr(self, '_count_mode', None) == "exact":
+            result.count = total_count
+        else:
+            # 非 count 模式：MagicMock.count 默认是 MagicMock 对象，
+            # 显式设为 None 让 `getattr(result, "count", None) or 0` 工作
+            result.count = None
 
         return result
 

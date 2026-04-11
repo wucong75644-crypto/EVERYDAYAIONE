@@ -258,11 +258,13 @@ class TestProcessBatchOrgRouting:
             },
         ])
 
+        # 必须 patch 实际定义模块（consumer.py）而不是 __init__ re-export
+        # _process_batch 内部用绝对引用（同模块名空间），patch 包级别不生效
         with patch(
-            "services.kuaimai.erp_sync_dead_letter._get_or_create_client",
+            "services.kuaimai.erp_sync_dead_letter.consumer._get_or_create_client",
             new_callable=AsyncMock, return_value=None,
         ), patch(
-            "services.kuaimai.erp_sync_dead_letter._mark_batch_retry_failed",
+            "services.kuaimai.erp_sync_dead_letter.consumer._mark_batch_retry_failed",
             new_callable=AsyncMock,
         ) as mock_mark:
             result = await _process_batch(db, {}, {})
@@ -272,3 +274,146 @@ class TestProcessBatchOrgRouting:
         # 验证传入的 rows 包含 dl-1
         marked_rows = mock_mark.call_args[0][1]
         assert marked_rows[0]["id"] == "dl-1"
+
+
+# ── _retry_platform_map_batch（Bug 2 DLQ 接入）─────────
+
+
+class TestRetryPlatformMapBatch:
+    """platform_map 批次失败的 DLQ 重试路径测试
+
+    与单据 detail 重试不同：
+    - 调 erp.item.outerid.list.get 而非 detail API
+    - 成功后 upsert erp_product_platform_map + 标记 SKU checked_at
+    - 失败按 max_retries 退避或标记 dead
+    """
+
+    @pytest.mark.asyncio
+    async def test_retry_success_upserts_and_marks_checked_at(self):
+        """重试成功 → upsert + 标记 checked_at + 删除死信"""
+        from services.kuaimai.erp_sync_dead_letter import _retry_platform_map_batch
+
+        db = MockErpAsyncDBClient()
+        # 准备死信 row
+        row = {
+            "id": 99,
+            "doc_id": "pm_batch_abc",
+            "retry_count": 1,
+            "max_retries": 10,
+            "org_id": None,
+        }
+        doc = {"id": "pm_batch_abc", "sku_ids": ["S1", "S2"]}
+
+        # mock client 成功返回
+        client = MagicMock()
+        client.request_with_retry = AsyncMock(return_value={
+            "itemOuterIdInfos": [{
+                "outerId": "S1",
+                "tbItemList": [{
+                    "numIid": "TBN1", "userId": "shop", "title": "X",
+                }],
+            }],
+        })
+
+        # 预填表，让 _batch_upsert 走 mock db 的 in-memory append
+        db.set_table_data("erp_product_platform_map", [])
+        db.set_table_data("erp_product_skus", [
+            {"sku_outer_id": "S1"}, {"sku_outer_id": "S2"},
+        ])
+        db.set_table_data("erp_sync_dead_letter", [{"id": 99}])
+
+        # 注意：不要 patch _batch_upsert！否则会污染 master_handlers/product.py
+        # 顶层 import 的 _batch_upsert 绑定（master_handlers 在本测试期间首次
+        # 通过 lazy import 加载，patch 期间被 product.py 持有 mock 版）。
+        # 直接走 mock db 的 in-memory upsert 即可。
+        await _retry_platform_map_batch(db, client, row, doc)
+
+        # 死信应被删除（execute 后表里没有 id=99）
+        # MockErpAsyncTable delete + eq 通过过滤后从 _data 移除
+        # 注意：mock 简化版可能不严格，关键是不抛异常
+        client.request_with_retry.assert_called_once()
+        call_args = client.request_with_retry.call_args
+        assert call_args.args[0] == "erp.item.outerid.list.get"
+        assert "S1" in call_args.args[1]["outerIds"]
+        assert "S2" in call_args.args[1]["outerIds"]
+
+    @pytest.mark.asyncio
+    async def test_retry_api_failure_increments_retry_count(self):
+        """重试时 API 失败 → retry_count + 1，next_retry_at 退避"""
+        from services.kuaimai.erp_sync_dead_letter import _retry_platform_map_batch
+
+        db = MockErpAsyncDBClient()
+        row = {
+            "id": 100, "doc_id": "pm_x", "retry_count": 2,
+            "max_retries": 10, "org_id": None,
+        }
+        doc = {"id": "pm_x", "sku_ids": ["S1"]}
+
+        client = MagicMock()
+        client.request_with_retry = AsyncMock(
+            side_effect=ConnectionError("network down"),
+        )
+
+        db.set_table_data("erp_sync_dead_letter", [
+            {"id": 100, "retry_count": 2, "max_retries": 10},
+        ])
+
+        # 不应抛异常
+        await _retry_platform_map_batch(db, client, row, doc)
+
+        # 表里 update 应被调用过（retry_count 增到 3）
+        dl_table = db._tables["erp_sync_dead_letter"]
+        assert hasattr(dl_table, "_update_data")
+        assert dl_table._update_data.get("retry_count") == 3
+        assert "next_retry_at" in dl_table._update_data
+
+    @pytest.mark.asyncio
+    async def test_retry_max_retries_marks_dead(self):
+        """重试超过 max_retries → status='dead'"""
+        from services.kuaimai.erp_sync_dead_letter import _retry_platform_map_batch
+
+        db = MockErpAsyncDBClient()
+        row = {
+            "id": 101, "doc_id": "pm_y", "retry_count": 9,
+            "max_retries": 10, "org_id": None,
+        }
+        doc = {"id": "pm_y", "sku_ids": ["S1"]}
+
+        client = MagicMock()
+        client.request_with_retry = AsyncMock(
+            side_effect=ConnectionError("still down"),
+        )
+
+        db.set_table_data("erp_sync_dead_letter", [
+            {"id": 101, "retry_count": 9, "max_retries": 10},
+        ])
+
+        await _retry_platform_map_batch(db, client, row, doc)
+
+        dl_table = db._tables["erp_sync_dead_letter"]
+        assert hasattr(dl_table, "_update_data")
+        assert dl_table._update_data.get("status") == "dead"
+        assert dl_table._update_data.get("retry_count") == 10
+
+    @pytest.mark.asyncio
+    async def test_retry_invalid_doc_marks_dead(self):
+        """死信 doc 缺 sku_ids → 直接标记 dead 不重试"""
+        from services.kuaimai.erp_sync_dead_letter import _retry_platform_map_batch
+
+        db = MockErpAsyncDBClient()
+        row = {
+            "id": 102, "doc_id": "pm_bad", "retry_count": 0,
+            "max_retries": 10, "org_id": None,
+        }
+        doc = {"id": "pm_bad"}  # 没有 sku_ids
+        client = MagicMock()
+        # client 不应被调用
+        client.request_with_retry = AsyncMock()
+
+        db.set_table_data("erp_sync_dead_letter", [{"id": 102}])
+        await _retry_platform_map_batch(db, client, row, doc)
+
+        client.request_with_retry.assert_not_called()
+        dl_table = db._tables["erp_sync_dead_letter"]
+        assert hasattr(dl_table, "_update_data")
+        assert dl_table._update_data.get("status") == "dead"

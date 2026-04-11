@@ -1,124 +1,28 @@
-"""
-ERP 同步死信队列（Dead Letter Queue）
+"""ERP 死信队列消费者 — 后台协程
 
-detail API 调用失败时，将单据信息写入 erp_sync_dead_letter 表。
-独立消费者协程以指数退避策略异步重试，不阻塞主同步流程。
-
-设计参考：Queue-Based Exponential Backoff + DLQ Pattern
+定期扫描 erp_sync_dead_letter 表，按 next_retry_at 取出到期的死信
+按 org_id 分组重试（_retry_one），失败递增 retry_count + 退避，
+超过 max_retries 标记 dead。
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-from datetime import timedelta
 from typing import Any
 
 from loguru import logger
 
 from utils.time_context import now_cn
 
-
-# ── 常量 ────────────────────────────────────────────────
-
-# 退避基数（秒），实际延迟 = BASE * 2^retry_count
-BACKOFF_BASE_SECONDS = 5
-# 最大退避上限（秒），防止延迟过长
-BACKOFF_MAX_SECONDS = 3600
-# 默认最大重试次数
-DEFAULT_MAX_RETRIES = 10
-# 消费者扫描间隔（秒）
-CONSUMER_POLL_INTERVAL = 30
-# 每轮最多处理条数（避免一次性拉太多）
-CONSUMER_BATCH_SIZE = 20
+from services.kuaimai.erp_sync_dead_letter.queue import (
+    CONSUMER_BATCH_SIZE,
+    CONSUMER_POLL_INTERVAL,
+    _calc_next_retry,
+)
 
 
-# ── 写入（主同步流程调用）────────────────────────────────
-
-
-async def record_dead_letter(
-    db: Any,
-    doc_type: str,
-    detail_method: str,
-    failed_docs: list[dict],
-    error_msg: str = "",
-    org_id: str | None = None,
-) -> int:
-    """将失败的单据写入死信表
-
-    Args:
-        db: 数据库客户端
-        doc_type: 单据类型（purchase/receipt/shelf/...）
-        detail_method: detail API 方法名
-        failed_docs: list API 返回的 doc 列表（含 id 等字段）
-        error_msg: 最后一次错误信息
-
-    Returns:
-        写入成功的条数
-    """
-    if not failed_docs:
-        return 0
-
-    count = 0
-    for doc in failed_docs:
-        doc_id = str(doc.get("id", ""))
-        if not doc_id:
-            continue
-        try:
-            # 检查是否已有 pending 记录（条件唯一索引不支持 ON CONFLICT）
-            existing = await (
-                db.table("erp_sync_dead_letter")
-                .select("id")
-                .eq("doc_type", doc_type)
-                .eq("doc_id", doc_id)
-                .eq("status", "pending")
-                .limit(1)
-                .execute()
-            )
-            if existing.data:
-                # 已有 pending 记录，更新错误信息和时间
-                await db.table("erp_sync_dead_letter").update({
-                    "last_error": str(error_msg)[:500],
-                    "updated_at": now_cn().isoformat(),
-                }).eq("id", existing.data[0]["id"]).execute()
-            else:
-                await db.table("erp_sync_dead_letter").insert({
-                    "doc_type": doc_type,
-                    "doc_id": doc_id,
-                    "detail_method": detail_method,
-                    "doc_json": json.dumps(doc, ensure_ascii=False),
-                    "retry_count": 0,
-                    "max_retries": DEFAULT_MAX_RETRIES,
-                    "next_retry_at": now_cn().isoformat(),
-                    "status": "pending",
-                    "last_error": str(error_msg)[:500],
-                    "org_id": org_id,
-                    "created_at": now_cn().isoformat(),
-                    "updated_at": now_cn().isoformat(),
-                }).execute()
-            count += 1
-        except Exception as e:
-            logger.error(
-                f"Dead letter write failed | doc_type={doc_type} | "
-                f"doc_id={doc_id} | error={e}"
-            )
-    if count:
-        logger.info(
-            f"Dead letter recorded | doc_type={doc_type} | count={count}"
-        )
-    return count
-
-
-# ── 消费者（Worker 内独立协程）──────────────────────────
-
-
-def _calc_next_retry(retry_count: int) -> str:
-    """计算下次重试时间（指数退避 + 上限）"""
-    delay = min(
-        BACKOFF_BASE_SECONDS * (2 ** retry_count),
-        BACKOFF_MAX_SECONDS,
-    )
-    return (now_cn() + timedelta(seconds=delay)).isoformat()
+_CLIENT_CACHE_TTL = 1800  # 30 分钟后过期重建（凭证刷新后生效）
 
 
 async def consume_dead_letters(db: Any, is_running_fn) -> None:
@@ -161,9 +65,6 @@ async def consume_dead_letters(db: Any, is_running_fn) -> None:
         org_clients.clear()
 
     logger.info("Dead letter consumer stopped")
-
-
-_CLIENT_CACHE_TTL = 1800  # 30 分钟后过期重建（凭证刷新后生效）
 
 
 async def _process_batch(
@@ -331,6 +232,16 @@ async def _retry_one(db: Any, client: Any, row: dict) -> None:
         doc = json.loads(doc_json)
     else:
         doc = doc_json
+
+    # ── platform_map 批次重试（Bug 2）─────────────
+    # 与 detail API 重试不是同一种语义，单独走分支
+    if doc_type == "platform_map_batch":
+        # lazy import 避免循环：platform_map_retry → queue 已经是稳定方向
+        from services.kuaimai.erp_sync_dead_letter.platform_map_retry import (
+            _retry_platform_map_batch,
+        )
+        await _retry_platform_map_batch(db, client, row, doc)
+        return
 
     # 调 detail API
     try:
