@@ -169,6 +169,111 @@ class TestCreateTask:
             })
         assert resp.status_code == 400
 
+    def test_create_member_cannot_push_to_group(self):
+        """member 职位推送到群聊 → 403（缺 task.push_to_others）"""
+        db = FakeDB()
+        app = _build_app(db)
+
+        async def fake_check(db_, user_id_, org_id_, code, *a, **kw):
+            return code != "task.push_to_others"
+
+        with patch(
+            "api.routes.scheduled_tasks.check_permission",
+            new=fake_check,
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/scheduled-tasks", json={
+                "name": "test",
+                "prompt": "test",
+                "cron_expr": "0 9 * * *",
+                "push_target": {"type": "wecom_group", "chatid": "x"},
+            })
+        assert resp.status_code == 403
+        assert "管理职位" in resp.json()["detail"]
+
+    def test_create_member_can_push_to_self_via_web(self):
+        """member 推送到 web 自己 → 200（不需要 push_to_others）"""
+        db = FakeDB()
+        app = _build_app(db, user_id="user_1")
+
+        async def fake_check(db_, user_id_, org_id_, code, *a, **kw):
+            # member 没有 task.push_to_others
+            return code != "task.push_to_others"
+
+        with patch(
+            "api.routes.scheduled_tasks.check_permission",
+            new=fake_check,
+        ):
+            client = TestClient(app)
+            resp = client.post("/api/scheduled-tasks", json={
+                "name": "test",
+                "prompt": "test",
+                "cron_expr": "0 9 * * *",
+                "push_target": {"type": "web", "user_id": "user_1"},
+            })
+        assert resp.status_code == 200
+
+
+# ════════════════════════════════════════════════════════
+# 1.5 _is_push_to_self 辅助函数单测（覆盖 4 个分支）
+# ════════════════════════════════════════════════════════
+
+class TestIsPushToSelf:
+    """直接单测 _is_push_to_self，避免只靠 HTTP 集成测试覆盖"""
+
+    def test_web_target_self(self):
+        from api.routes.scheduled_tasks import _is_push_to_self
+        db = FakeDB()
+        target = {"type": "web", "user_id": "user_zhangsan"}
+        assert _is_push_to_self(db, "user_zhangsan", target) is True
+
+    def test_web_target_other(self):
+        from api.routes.scheduled_tasks import _is_push_to_self
+        db = FakeDB()
+        target = {"type": "web", "user_id": "user_lisi"}
+        assert _is_push_to_self(db, "user_zhangsan", target) is False
+
+    def test_wecom_user_self(self):
+        from api.routes.scheduled_tasks import _is_push_to_self
+        db = FakeDB()
+        # 当前用户的 wecom_user_mappings 中存在该 wecom_userid
+        db.add("wecom_user_mappings", [{"wecom_userid": "ww_zhangsan"}])
+        target = {"type": "wecom_user", "wecom_userid": "ww_zhangsan"}
+        assert _is_push_to_self(db, "user_zhangsan", target) is True
+
+    def test_wecom_user_other(self):
+        from api.routes.scheduled_tasks import _is_push_to_self
+        db = FakeDB()
+        # 当前用户的 wecom_user_mappings 中没有该 wecom_userid
+        db.add("wecom_user_mappings", [])
+        target = {"type": "wecom_user", "wecom_userid": "ww_other"}
+        assert _is_push_to_self(db, "user_zhangsan", target) is False
+
+    def test_wecom_user_missing_userid(self):
+        from api.routes.scheduled_tasks import _is_push_to_self
+        db = FakeDB()
+        target = {"type": "wecom_user"}  # 缺 wecom_userid
+        assert _is_push_to_self(db, "user_zhangsan", target) is False
+
+    def test_wecom_group_never_self(self):
+        from api.routes.scheduled_tasks import _is_push_to_self
+        db = FakeDB()
+        target = {"type": "wecom_group", "chatid": "group_xxx"}
+        assert _is_push_to_self(db, "user_zhangsan", target) is False
+
+    def test_multi_target_never_self(self):
+        from api.routes.scheduled_tasks import _is_push_to_self
+        db = FakeDB()
+        target = {"type": "multi", "targets": []}
+        assert _is_push_to_self(db, "user_zhangsan", target) is False
+
+    def test_invalid_target_type(self):
+        from api.routes.scheduled_tasks import _is_push_to_self
+        db = FakeDB()
+        # 不是 dict
+        assert _is_push_to_self(db, "user_zhangsan", None) is False
+        assert _is_push_to_self(db, "user_zhangsan", "invalid") is False
+
 
 # ════════════════════════════════════════════════════════
 # 2. GET /scheduled-tasks 列表

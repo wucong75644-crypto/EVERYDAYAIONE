@@ -8,11 +8,12 @@ from typing import Dict, Tuple
 # (module, action, name)
 PERMISSIONS: Dict[str, Tuple[str, str, str]] = {
     # ─── 定时任务 ───
-    "task.view":    ("task", "view",    "查看定时任务"),
-    "task.create":  ("task", "create",  "创建定时任务"),
-    "task.edit":    ("task", "edit",    "编辑定时任务"),
-    "task.delete":  ("task", "delete",  "删除定时任务"),
-    "task.execute": ("task", "execute", "立即执行定时任务"),
+    "task.view":            ("task", "view",            "查看定时任务"),
+    "task.create":          ("task", "create",          "创建定时任务"),
+    "task.edit":            ("task", "edit",            "编辑定时任务"),
+    "task.delete":          ("task", "delete",          "删除定时任务"),
+    "task.execute":         ("task", "execute",         "立即执行定时任务"),
+    "task.push_to_others":  ("task", "push_to_others",  "推送任务给他人"),
 
     # ─── 订单 ───
     "order.view":   ("order", "view",   "查看订单"),
@@ -52,40 +53,48 @@ def is_system_permission(code: str) -> bool:
 # 角色 → 权限映射（V1 硬编码，对应 migration 中的预填角色）
 # ────────────────────────────────────────────────────────────
 
+# task.push_to_others 的语义：允许把定时任务的 push_target 设为同事或群聊。
+# 在 6 个部门角色里都包含——但 member 职位会在 effective_perms / checker
+# 里被显式剥离，只有 deputy/manager（及以上 boss/vp）实际拥有此权限。
+_PUSH_TO_OTHERS = {"task.push_to_others"}
+
 # 业务角色（按部门类型自动分配）
 ROLE_OPS_PERMS = {
     "task.view", "task.create", "task.edit", "task.delete", "task.execute",
     "order.view", "order.edit", "order.export",
     "product.view", "product.edit",
-}
+} | _PUSH_TO_OTHERS
 
 ROLE_FINANCE_PERMS = {
     "task.view", "task.create", "task.edit", "task.delete", "task.execute",
     "finance.view", "finance.export", "finance.reconcile",
     "order.view", "order.export",
-}
+} | _PUSH_TO_OTHERS
 
 ROLE_WAREHOUSE_PERMS = {
     "task.view", "task.create", "task.edit", "task.delete", "task.execute",
     "stock.view", "stock.edit", "stock.inbound", "stock.outbound",
     "product.view",
-}
+} | _PUSH_TO_OTHERS
 
 ROLE_SERVICE_PERMS = {
     "task.view", "task.create", "task.edit", "task.delete", "task.execute",
     "order.view", "order.edit",
     "product.view",
-}
+} | _PUSH_TO_OTHERS
 
 ROLE_DESIGN_PERMS = {
     "task.view", "task.create", "task.edit", "task.delete",
     "product.view",
-}
+} | _PUSH_TO_OTHERS
 
 ROLE_HR_PERMS = {
     "task.view", "task.create", "task.edit", "task.delete",
     "sys.member.edit",  # 人事可以编辑员工部门职位
-}
+} | _PUSH_TO_OTHERS
+
+# 仅管理职位（manager/deputy/boss/vp）拥有，普通 member 被显式剥离
+MEMBER_DENIED_PERMS = frozenset({"task.push_to_others"})
 
 # 系统级角色
 ROLE_BOSS_FULL_PERMS = set(PERMISSIONS.keys())  # 老板：全部权限
