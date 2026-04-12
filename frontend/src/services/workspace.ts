@@ -84,7 +84,7 @@ export function uploadToWorkspace(
     method: 'POST',
     url: '/files/workspace/upload',
     data: formData,
-    // 不手动设置 Content-Type — 让 axios 自动生成含 boundary 的 multipart header
+    headers: { 'Content-Type': 'multipart/form-data' },
   });
 }
 
