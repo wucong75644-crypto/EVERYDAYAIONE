@@ -122,9 +122,9 @@ export function useWorkspace(): UseWorkspaceReturn {
 
   // 面包屑（memoized，避免子组件不必要的重渲染）
   const breadcrumbs = useMemo(() => {
-    if (currentPath === '.') return [{ label: '工作区', path: '.' }];
+    if (currentPath === '.') return [{ label: '根目录', path: '.' }];
     const parts = currentPath.split('/').filter(Boolean);
-    const crumbs = [{ label: '工作区', path: '.' }];
+    const crumbs = [{ label: '根目录', path: '.' }];
     let accumulated = '';
     for (const part of parts) {
       accumulated = accumulated ? `${accumulated}/${part}` : part;

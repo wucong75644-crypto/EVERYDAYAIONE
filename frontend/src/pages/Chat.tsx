@@ -308,15 +308,9 @@ export default function Chat() {
     setSidebarCollapsed((prev) => !prev);
   }, []);
 
-  // 切换工作区（toggle）— 打开时自动收起侧边栏
+  // 切换工作区（toggle）— 不自动收起侧边栏，让用户自己决定
   const handleToggleWorkspace = useCallback(() => {
-    setView((prev) => {
-      if (prev === 'chat') {
-        setSidebarCollapsed(true);
-        return 'workspace';
-      }
-      return 'chat';
-    });
+    setView((prev) => prev === 'chat' ? 'workspace' : 'chat');
   }, []);
 
   // 工作区："插入到聊天"回调（按 workspace_path 去重，不自动关闭工作区）
