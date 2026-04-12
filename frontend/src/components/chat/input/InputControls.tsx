@@ -105,8 +105,10 @@ interface InputControlsProps {
   workspaceFiles?: Array<{ name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }>;
   /** 移除工作区文件 */
   onRemoveWorkspaceFile?: (workspacePath: string) => void;
-  /** 打开工作区视图 */
+  /** 切换工作区视图（开/关） */
   onOpenWorkspace?: () => void;
+  /** 工作区是否已打开（用于 toggle 按钮状态） */
+  workspaceOpen?: boolean;
   /** 是否需要上传图片（用于显示引导提示） */
   requiresImageUpload?: boolean;
   /** 发送错误信息（用于显示错误状态） */
@@ -135,7 +137,7 @@ export default function InputControls(props: InputControlsProps) {
     onSaveSettings, onResetSettings,
     images, maxImages, maxFileSize, onRemoveImage, onImageSelect, onImageDrop, onImagePaste,
     files, maxPDFSize, onRemoveFile, onFileSelect,
-    workspaceFiles = [], onRemoveWorkspaceFile, onOpenWorkspace,
+    workspaceFiles = [], onRemoveWorkspaceFile, onOpenWorkspace, workspaceOpen = false,
     recordingState, audioBlob, audioDuration, onStartRecording, onStopRecording, onClearRecording,
     requiresImageUpload = false, sendError, hasQuotedImage = false,
     isStreaming = false, onStop,
@@ -386,12 +388,17 @@ export default function InputControls(props: InputControlsProps) {
               </button>
             )}
 
-            {/* 工作区按钮 */}
+            {/* 工作区按钮（toggle：点击开/关） */}
             {onOpenWorkspace && (
               <button
                 onClick={onOpenWorkspace}
-                className="flex items-center space-x-1 px-2 py-1.5 rounded-lg text-sm text-text-tertiary hover:text-text-primary hover:bg-hover transition-base"
-                title="打开工作区"
+                className={cn(
+                  'flex items-center space-x-1 px-2 py-1.5 rounded-lg text-sm transition-base',
+                  workspaceOpen
+                    ? 'bg-accent-light text-accent hover:bg-accent-light/80'
+                    : 'text-text-tertiary hover:text-text-primary hover:bg-hover',
+                )}
+                title={workspaceOpen ? '退出工作区' : '打开工作区'}
               >
                 <FolderOpen className="w-4 h-4" />
                 <span className="hidden sm:inline">工作区</span>

@@ -44,8 +44,10 @@ interface InputAreaProps {
   onRemoveWorkspaceFile?: (workspacePath: string) => void;
   /** 发送后清空工作区文件队列 */
   onWorkspaceFilesConsumed?: () => void;
-  /** 打开工作区视图（UploadMenu 菜单项用） */
+  /** 切换工作区视图 */
   onOpenWorkspace?: () => void;
+  /** 工作区是否已打开 */
+  workspaceOpen?: boolean;
 }
 
 export default function InputArea({
@@ -61,6 +63,7 @@ export default function InputArea({
   onRemoveWorkspaceFile,
   onWorkspaceFilesConsumed,
   onOpenWorkspace,
+  workspaceOpen = false,
 }: InputAreaProps) {
   // 基础状态 — prompt 支持受控和非受控两种模式（向后兼容）
   const [internalPrompt, setInternalPrompt] = useState('');
@@ -460,6 +463,7 @@ export default function InputArea({
           workspaceFiles={workspaceFiles}
           onRemoveWorkspaceFile={onRemoveWorkspaceFile}
           onOpenWorkspace={onOpenWorkspace}
+          workspaceOpen={workspaceOpen}
           recordingState={recordingState}
           audioBlob={audioBlob}
           audioDuration={audioDuration}
