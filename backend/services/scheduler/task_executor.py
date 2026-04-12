@@ -131,14 +131,19 @@ class ScheduledTaskExecutor:
     async def _push_result(
         self, task: Dict[str, Any], result: Any
     ) -> str:
-        """推送 Agent 执行结果到 push_target
+        """推送 Agent 执行结果到 push_target + 存入消息表
+
+        流程：
+        1. 通过 push_dispatcher 推送到企微（原有逻辑）
+        2. 通过 MessageGateway 存入 messages 表 + 通知 Web（新增）
 
         Returns:
             'pushed' / 'push_failed' / 'skipped'
         """
+        push_status = "skipped"
         try:
             from services.scheduler.push_dispatcher import push_dispatcher
-            return await push_dispatcher.dispatch(
+            push_status = await push_dispatcher.dispatch(
                 org_id=task["org_id"],
                 target=task["push_target"],
                 text=result.text,
@@ -146,10 +151,28 @@ class ScheduledTaskExecutor:
             )
         except ImportError:
             logger.warning("push_dispatcher 未实现，跳过推送")
-            return "skipped"
         except Exception as e:
             logger.error(f"_push_result failed | task={task['id']} | error={e}")
-            return "push_failed"
+            push_status = "push_failed"
+
+        # 存入 messages 表 + 通知 Web（企微已由上面推过，skip_wecom=True）
+        try:
+            from services.message_gateway import MessageGateway
+            gateway = MessageGateway(self.db)
+            await gateway.save_system_message(
+                user_id=task["user_id"],
+                org_id=task["org_id"],
+                text=result.text,
+                source="scheduled_task",
+                skip_wecom=True,
+            )
+        except Exception as e:
+            logger.warning(
+                f"_push_result save_system_message failed | "
+                f"task={task['id']} | error={e}"
+            )
+
+        return push_status
 
     async def _on_success(
         self,
@@ -335,27 +358,16 @@ class ScheduledTaskExecutor:
             "message": message,
         })
 
-        # 2. 企微推送：尝试推到用户的 wecom 单聊
+        # 2. 通过 MessageGateway 存消息 + 推企微（统一入口）
         try:
-            from services.scheduler.push_dispatcher import push_dispatcher
-
-            # 查 wecom_user_mapping 找用户对应的 wecom userid
-            mapping = self.db.table("wecom_user_mappings") \
-                .select("wecom_userid") \
-                .eq("user_id", task["user_id"]) \
-                .eq("org_id", task["org_id"]) \
-                .limit(1) \
-                .execute()
-            if mapping and mapping.data:
-                wecom_userid = mapping.data[0]["wecom_userid"]
-                await push_dispatcher.dispatch(
-                    org_id=task["org_id"],
-                    target={
-                        "type": "wecom_user",
-                        "wecom_userid": wecom_userid,
-                    },
-                    text=message,
-                    files=[],
-                )
+            from services.message_gateway import MessageGateway
+            gateway = MessageGateway(self.db)
+            await gateway.save_system_message(
+                user_id=task["user_id"],
+                org_id=task["org_id"],
+                text=message,
+                source="task_failure_alert",
+                skip_web=True,  # 上面 WS 已推过
+            )
         except Exception as e:
-            logger.debug(f"_notify_owner wecom push failed | {e}")
+            logger.debug(f"_notify_owner gateway failed | {e}")
