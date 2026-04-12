@@ -252,7 +252,7 @@ async def list_workspace(
 
     items = []
     for item in sorted(target.iterdir()):
-        if item.name.startswith("."):
+        if item.name.startswith(".") or item.name == "staging":
             continue
         try:
             st = item.stat()
