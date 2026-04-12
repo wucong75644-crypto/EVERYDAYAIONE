@@ -235,7 +235,7 @@ export default function InputControls(props: InputControlsProps) {
     <div
       ref={dropZoneRef}
       className={cn(
-        'relative border rounded-2xl bg-surface-card shadow-sm transition-all overflow-hidden',
+        'relative border rounded-2xl bg-surface-card shadow-sm transition-all',
         sendError && 'border-error border-2 shadow-md',
         !sendError && isDragging && 'border-accent border-2 bg-accent-light shadow-lg',
         !sendError && !isDragging && 'border-border-default hover:shadow-md',
@@ -314,7 +314,7 @@ export default function InputControls(props: InputControlsProps) {
         />
 
         {/* 底部工具栏 */}
-        <div className="flex items-center justify-between mt-1 overflow-hidden">
+        <div className="flex items-center justify-between mt-1">
           {/* 左侧：模型选择器、设置、深度思考 */}
           <div className="flex items-center space-x-1">
             {/* 模型选择器 */}
