@@ -27,6 +27,7 @@ class LoopConfig:
     tool_timeout: float                           # 单工具超时上限（秒）
     context_compression_threshold: float = 0.7   # 超过该比例触发主动压缩
     context_recovery_target: float = 0.5         # 上下文超限恢复时压缩到该比例
+    thinking_mode: Optional[str] = "enabled"     # 透传给 adapter（qwen3.5 需要开启才走 function calling）
     no_synthesis_fallback_text: str = (
         "查询过程中未能生成完整结论，请重新提问或缩小查询范围。"
     )

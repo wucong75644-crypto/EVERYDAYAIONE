@@ -332,6 +332,7 @@ class ToolLoopExecutor:
 
         async for chunk in self.adapter.stream_chat(
             messages=messages, tools=selected_tools, temperature=0.1,
+            thinking_mode=self.config.thinking_mode,
         ):
             if chunk.content:
                 turn_text += chunk.content
