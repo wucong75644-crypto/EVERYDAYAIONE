@@ -386,7 +386,7 @@ export default function Chat() {
       {/* 主内容区：对话（左） + 工作区（右，可选） */}
       <div className="flex-1 flex min-w-0">
         {/* 对话区（始终显示，工作区打开时取消 max-w 限制让对话区可被压缩） */}
-        <div className={cn('flex-1 flex flex-col', view === 'workspace' ? 'workspace-compact min-w-[300px]' : 'min-w-0')}>
+        <div className={cn('flex-1 flex flex-col', view === 'workspace' ? 'min-w-[300px]' : 'min-w-0')}>
           {/* 顶部导航栏 */}
           <ChatHeader
             sidebarCollapsed={sidebarCollapsed}
@@ -413,6 +413,7 @@ export default function Chat() {
           <MessageArea
             conversationId={currentConversationId}
             onDelete={handleMessageDelete}
+            compact={view === 'workspace'}
           />
 
           {/* 输入框区域（prompt 已提升到 Chat.tsx） */}
@@ -430,6 +431,7 @@ export default function Chat() {
             onWorkspaceFilesConsumed={handleWorkspaceFilesConsumed}
             onOpenWorkspace={handleToggleWorkspace}
             workspaceOpen={view === 'workspace'}
+            compact={view === 'workspace'}
           />
         </div>
 
