@@ -30,7 +30,6 @@ import { useUnifiedMessages } from '../hooks/useUnifiedMessages';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { tabSync } from '../utils/tabSync';
 import { logger } from '../utils/logger';
-import { cn } from '../utils/cn';
 
 // 用户信息刷新间隔（5 分钟）
 const USER_REFRESH_INTERVAL = 5 * 60 * 1000;
