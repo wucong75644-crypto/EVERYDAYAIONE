@@ -406,6 +406,110 @@ class FileExecutor:
         return "\n".join(info_lines)
 
     # ========================================
+    # 文件管理操作（工作区面板用）
+    # ========================================
+
+    async def file_delete(self, path: str) -> str:
+        """删除文件或空目录
+
+        - 文件：直接删除
+        - 目录：仅允许空目录（非空返回错误提示）
+
+        Returns:
+            操作结果描述
+        """
+        target = self.resolve_safe_path(path)
+
+        if not target.exists():
+            return f"路径不存在: {path}"
+
+        if target.is_file():
+            target.unlink()
+            logger.info(f"FileExecutor delete file | path={path}")
+            return f"已删除文件: {path}"
+
+        if target.is_dir():
+            # 检查是否为空
+            children = list(target.iterdir())
+            if children:
+                return f"目录不为空（{len(children)} 项），请先清空内容: {path}"
+            target.rmdir()
+            logger.info(f"FileExecutor delete dir | path={path}")
+            return f"已删除目录: {path}"
+
+        return f"无法删除: {path}"
+
+    async def file_mkdir(self, path: str) -> str:
+        """创建目录（含中间路径）
+
+        Returns:
+            操作结果描述
+        """
+        target = self.resolve_safe_path(path)
+
+        if target.exists():
+            if target.is_dir():
+                return f"目录已存在: {path}"
+            return f"同名文件已存在，无法创建目录: {path}"
+
+        target.mkdir(parents=True, exist_ok=True)
+        logger.info(f"FileExecutor mkdir | path={path}")
+        return f"已创建目录: {path}"
+
+    async def file_rename(self, old_path: str, new_path: str) -> str:
+        """重命名文件或目录（同目录下改名，不允许跨目录）
+
+        Returns:
+            操作结果描述
+        """
+        old_target = self.resolve_safe_path(old_path)
+        new_target = self.resolve_safe_path(new_path)
+
+        if not old_target.exists():
+            return f"源路径不存在: {old_path}"
+
+        # 不允许跨目录（跨目录用 file_move）
+        if old_target.parent != new_target.parent:
+            return f"重命名不允许跨目录，请使用移动功能"
+
+        if new_target.exists():
+            return f"目标已存在: {new_path}"
+
+        old_target.rename(new_target)
+        logger.info(f"FileExecutor rename | {old_path} → {new_path}")
+        return f"已重命名: {old_path} → {new_path}"
+
+    async def file_move(self, src_path: str, dest_dir: str) -> str:
+        """移动文件到目标目录
+
+        Args:
+            src_path: 源文件/目录相对路径
+            dest_dir: 目标目录相对路径
+
+        Returns:
+            操作结果描述（含新路径）
+        """
+        src_target = self.resolve_safe_path(src_path)
+        dest_target = self.resolve_safe_path(dest_dir)
+
+        if not src_target.exists():
+            return f"源路径不存在: {src_path}"
+
+        if not dest_target.exists() or not dest_target.is_dir():
+            return f"目标目录不存在: {dest_dir}"
+
+        new_target = dest_target / src_target.name
+
+        if new_target.exists():
+            return f"目标位置已有同名文件: {dest_dir}/{src_target.name}"
+
+        src_target.rename(new_target)
+        # 计算新的相对路径
+        new_rel = str(new_target.relative_to(self._root))
+        logger.info(f"FileExecutor move | {src_path} → {new_rel}")
+        return f"已移动: {src_path} → {new_rel}"
+
+    # ========================================
     # 辅助方法
     # ========================================
 

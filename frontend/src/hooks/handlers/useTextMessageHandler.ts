@@ -42,7 +42,7 @@ export function useTextMessageHandler({
     messageContent: string,
     currentConversationId: string,
     imageUrls: string[] | null = null,
-    files: { url: string; name: string; mime_type: string; size: number }[] | null = null,
+    files: { url: string; name: string; mime_type: string; size: number; workspace_path?: string }[] | null = null,
   ) => {
     try {
       // 构建 content（优先级：files > images > text）

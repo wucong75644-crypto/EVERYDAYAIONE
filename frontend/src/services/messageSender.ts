@@ -357,7 +357,7 @@ export function createTextWithImages(text: string, imageUrls: string[]): Content
 export function createTextWithFiles(
   text: string,
   imageUrls: string[] | null,
-  files: { url: string; name: string; mime_type: string; size: number }[],
+  files: { url: string; name: string; mime_type: string; size: number; workspace_path?: string }[],
 ): ContentPart[] {
   return [
     { type: 'text', text },
@@ -368,6 +368,7 @@ export function createTextWithFiles(
       name: f.name,
       mime_type: f.mime_type,
       size: f.size,
+      ...(f.workspace_path ? { workspace_path: f.workspace_path } : {}),
     })),
   ];
 }

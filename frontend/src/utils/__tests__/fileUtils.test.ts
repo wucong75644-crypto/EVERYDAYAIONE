@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { getFileIcon, formatFileSize } from '../fileUtils';
+import { getFileIcon, getFileIconColor, formatFileSize } from '../fileUtils';
 
 describe('getFileIcon', () => {
   it('should return chart icon for xlsx', () => {
@@ -34,6 +34,41 @@ describe('getFileIcon', () => {
 
   it('should handle no extension', () => {
     expect(getFileIcon('noext')).toBe('\uD83D\uDCCE');
+  });
+});
+
+describe('getFileIconColor', () => {
+  it('should return red for pdf', () => {
+    expect(getFileIconColor('doc.pdf')).toContain('red');
+  });
+
+  it('should return green for csv', () => {
+    expect(getFileIconColor('data.csv')).toContain('green');
+  });
+
+  it('should return green for xlsx', () => {
+    expect(getFileIconColor('report.xlsx')).toContain('green');
+  });
+
+  it('should return blue for docx', () => {
+    expect(getFileIconColor('file.docx')).toContain('blue');
+  });
+
+  it('should return orange for pptx', () => {
+    expect(getFileIconColor('slides.pptx')).toContain('orange');
+  });
+
+  it('should return purple for code files', () => {
+    expect(getFileIconColor('app.py')).toContain('purple');
+    expect(getFileIconColor('index.ts')).toContain('purple');
+  });
+
+  it('should return yellow for zip', () => {
+    expect(getFileIconColor('archive.zip')).toContain('yellow');
+  });
+
+  it('should return secondary color for unknown', () => {
+    expect(getFileIconColor('readme.txt')).toContain('--s-text-secondary');
   });
 });
 

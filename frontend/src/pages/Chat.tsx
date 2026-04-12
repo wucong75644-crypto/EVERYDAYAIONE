@@ -18,6 +18,8 @@ import InputArea from '../components/chat/input/InputArea';
 import { ChatHeader } from '../components/chat/layout/ChatHeader';
 import SearchPanel from '../components/chat/search/SearchPanel';
 import ScheduledTaskPanel from '../components/scheduled-tasks/ScheduledTaskPanel';
+import WorkspaceView from '../components/workspace/WorkspaceView';
+import type { WorkspaceFile } from '../services/workspace';
 import { PageTransition } from '../components/motion';
 import { getConversation } from '../services/conversation';
 import { CONVERSATIONS_CACHE_KEY } from '../components/chat/layout/conversationUtils';
@@ -75,6 +77,12 @@ export default function Chat() {
 
   // 基础状态
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // 视图切换：chat（对话）/ workspace（工作区文件浏览器）
+  const [view, setView] = useState<'chat' | 'workspace'>('chat');
+  // prompt 状态提升（从 InputArea 移到 Chat.tsx，避免切换 view 时丢失用户输入）
+  const [prompt, setPrompt] = useState('');
+  // 工作区文件待发送队列（"插入到聊天"功能）
+  const [pendingWorkspaceFiles, setPendingWorkspaceFiles] = useState<WorkspaceFile[]>([]);
   // 从缓存预读初始对话 ID，实现消息并行加载
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(getInitialConversationId);
   const [conversationTitle, setConversationTitle] = useState('新对话');
@@ -298,6 +306,24 @@ export default function Chat() {
     setSidebarCollapsed((prev) => !prev);
   }, []);
 
+  // 工作区："插入到聊天"回调（按 workspace_path 去重 + 自动切回对话）
+  const handleSendFromWorkspace = useCallback((file: WorkspaceFile) => {
+    setPendingWorkspaceFiles((prev) =>
+      prev.some((f) => f.workspace_path === file.workspace_path) ? prev : [...prev, file],
+    );
+    setView('chat');
+  }, []);
+
+  // 移除单个待发送的 workspace 文件
+  const handleRemoveWorkspaceFile = useCallback((workspacePath: string) => {
+    setPendingWorkspaceFiles((prev) => prev.filter((f) => f.workspace_path !== workspacePath));
+  }, []);
+
+  // 发送后清空 workspace 文件队列
+  const handleWorkspaceFilesConsumed = useCallback(() => {
+    setPendingWorkspaceFiles([]);
+  }, []);
+
   // 删除消息回调：更新侧边栏最后一条消息预览
   const handleMessageDelete = useCallback(
     (_messageId: string, newLastMessage?: string) => {
@@ -345,46 +371,60 @@ export default function Chat() {
 
       {/* 主内容区 */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* 顶部导航栏 */}
-        <ChatHeader
-          sidebarCollapsed={sidebarCollapsed}
-          onToggleSidebar={toggleSidebar}
-          conversationTitle={conversationTitle}
-          isEditingTitle={isEditingTitle}
-          editingTitle={editingTitle}
-          onEditingTitleChange={setEditingTitle}
-          onTitleDoubleClick={handleTitleDoubleClick}
-          onTitleSubmit={handleTitleSubmit}
-          onTitleCancel={cancelTitleEdit}
-          userCredits={user?.credits ?? 0}
-          onOpenSearch={
-            currentConversationId ? () => setSearchPanelOpen(true) : undefined
-          }
-          onOpenScheduledTasks={
-            // 仅企业用户显示定时任务入口（散客无 currentOrg，调 API 必 403）
-            // 注：用 store 顶层的 currentOrg（驼峰），不是 user.current_org
-            // 因为 user 是从 localStorage 恢复的，老用户的 user 缓存可能没有 current_org 字段
-            currentOrg
-              ? () => setScheduledTaskPanelOpen(true)
-              : undefined
-          }
-        />
+        {/* 视图切换：对话 / 工作区 */}
+        {view === 'chat' ? (
+          <>
+            {/* 顶部导航栏 */}
+            <ChatHeader
+              sidebarCollapsed={sidebarCollapsed}
+              onToggleSidebar={toggleSidebar}
+              conversationTitle={conversationTitle}
+              isEditingTitle={isEditingTitle}
+              editingTitle={editingTitle}
+              onEditingTitleChange={setEditingTitle}
+              onTitleDoubleClick={handleTitleDoubleClick}
+              onTitleSubmit={handleTitleSubmit}
+              onTitleCancel={cancelTitleEdit}
+              userCredits={user?.credits ?? 0}
+              onOpenSearch={
+                currentConversationId ? () => setSearchPanelOpen(true) : undefined
+              }
+              onOpenScheduledTasks={
+                currentOrg
+                  ? () => setScheduledTaskPanelOpen(true)
+                  : undefined
+              }
+              onOpenWorkspace={() => setView('workspace')}
+            />
 
-        {/* 消息区域 */}
-        <MessageArea
-          conversationId={currentConversationId}
-          onDelete={handleMessageDelete}
-        />
+            {/* 消息区域 */}
+            <MessageArea
+              conversationId={currentConversationId}
+              onDelete={handleMessageDelete}
+            />
 
-        {/* 输入框区域 */}
-        <InputArea
-          conversationId={currentConversationId}
-          conversationModelId={conversationModelId}
-          onConversationCreated={handleConversationCreated}
-          onMessagePending={handleMessagePending}
-          onMessageSent={handleMessageSent}
-          onModelChange={setCurrentSelectedModel}
-        />
+            {/* 输入框区域（prompt 已提升到 Chat.tsx） */}
+            <InputArea
+              conversationId={currentConversationId}
+              conversationModelId={conversationModelId}
+              onConversationCreated={handleConversationCreated}
+              onMessagePending={handleMessagePending}
+              onMessageSent={handleMessageSent}
+              onModelChange={setCurrentSelectedModel}
+              prompt={prompt}
+              onPromptChange={setPrompt}
+              workspaceFiles={pendingWorkspaceFiles}
+              onRemoveWorkspaceFile={handleRemoveWorkspaceFile}
+              onWorkspaceFilesConsumed={handleWorkspaceFilesConsumed}
+              onOpenWorkspace={() => setView('workspace')}
+            />
+          </>
+        ) : (
+          <WorkspaceView
+            onBack={() => setView('chat')}
+            onSendToChat={handleSendFromWorkspace}
+          />
+        )}
       </div>
 
       {/* 消息搜索面板（V3 Phase 4：cursor 分页 + 搜索方案）

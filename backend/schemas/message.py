@@ -92,6 +92,7 @@ class FilePart(BaseModel):
     name: str
     mime_type: str
     size: Optional[int] = None
+    workspace_path: Optional[str] = None  # 工作区相对路径（有值时 AI 用 file_read 读取）
 
 
 ContentPart = Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart]

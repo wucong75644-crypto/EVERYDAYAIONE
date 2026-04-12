@@ -5,9 +5,11 @@
  * - 全 token 化（跟随主题）
  * - 4 处内联 SVG → lucide-react
  * - 提取 MENU_ITEM_CLASS 常量减少重复
+ *
+ * V3 改造：工作区选项改为"打开工作区"（不再直接触发文件选择）
  */
 
-import { ImagePlus, Camera, FileText, Folder } from 'lucide-react';
+import { ImagePlus, Camera, FileText, FolderOpen } from 'lucide-react';
 import { type UnifiedModel } from '../../../constants/models';
 
 interface UploadMenuProps {
@@ -16,7 +18,8 @@ interface UploadMenuProps {
   selectedModel: UnifiedModel;
   onImageUpload: () => void;
   onFileUpload?: () => void;
-  onWorkspaceUpload?: () => void;
+  /** 打开工作区视图（替代原来的"上传到工作区"） */
+  onOpenWorkspace?: () => void;
   onClose: () => void;
 }
 
@@ -31,7 +34,7 @@ export default function UploadMenu({
   selectedModel,
   onImageUpload,
   onFileUpload,
-  onWorkspaceUpload,
+  onOpenWorkspace,
   onClose,
 }: UploadMenuProps) {
   if (!visible) return null;
@@ -112,23 +115,23 @@ export default function UploadMenu({
       {/* 分隔线 */}
       <div className="border-t border-border-light my-1" />
 
-      {/* 上传到工作区（供 AI 分析） */}
+      {/* 打开工作区 */}
       <button
         onClick={() => {
-          if (onWorkspaceUpload) {
-            onWorkspaceUpload();
+          if (onOpenWorkspace) {
+            onOpenWorkspace();
             onClose();
           }
         }}
-        disabled={!onWorkspaceUpload}
+        disabled={!onOpenWorkspace}
         className={`w-full px-4 py-2 text-left flex items-center space-x-3 transition-base ${
-          onWorkspaceUpload ? ITEM_ENABLED : ITEM_DISABLED
+          onOpenWorkspace ? ITEM_ENABLED : ITEM_DISABLED
         }`}
       >
-        <Folder className="w-5 h-5 text-text-tertiary" />
+        <FolderOpen className="w-5 h-5 text-text-tertiary" />
         <div>
-          <div className="text-sm font-medium">上传到工作区</div>
-          <div className="text-xs">CSV/Excel/文档等，AI 可读取分析</div>
+          <div className="text-sm font-medium">打开工作区</div>
+          <div className="text-xs">浏览和管理文件，AI 可读取分析</div>
         </div>
       </button>
     </div>
