@@ -5,7 +5,7 @@
  */
 
 import { useRef, useState, useCallback } from 'react';
-import { ArrowLeft, FolderPlus, Upload, LayoutList, LayoutGrid } from 'lucide-react';
+import { X, FolderPlus, Upload, LayoutList, LayoutGrid } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { cn } from '../../utils/cn';
 import WorkspaceBreadcrumb from './WorkspaceBreadcrumb';
@@ -69,13 +69,10 @@ export default function WorkspaceHeader({
 
   return (
     <header className="flex flex-col gap-2 px-4 py-3 border-b border-[var(--s-border-default)] bg-[var(--s-surface-overlay)] shrink-0">
-      {/* 第一行：返回 + 面包屑 + 工具按钮 */}
+      {/* 第一行：标题 + 面包屑 + 工具按钮 + 退出 */}
       <div className="flex items-center gap-2">
-        {/* 返回对话 */}
-        <Button variant="ghost" size="sm" onClick={onBack} className="shrink-0 !px-2">
-          <ArrowLeft className="w-4 h-4" />
-          <span className="text-sm">返回对话</span>
-        </Button>
+        {/* 工作区标题 */}
+        <span className="text-sm font-medium text-[var(--s-text-primary)] shrink-0">工作区</span>
 
         {/* 分隔线 */}
         <div className="w-px h-5 bg-[var(--s-border-subtle)]" />
@@ -130,6 +127,17 @@ export default function WorkspaceHeader({
           <Upload className="w-4 h-4" />
           <span>上传</span>
         </Button>
+
+        {/* 退出工作区 */}
+        <button
+          type="button"
+          onClick={onBack}
+          className="p-1.5 rounded-[var(--s-radius-control)] text-[var(--s-text-tertiary)] hover:text-[var(--s-text-primary)] hover:bg-[var(--s-hover)] transition-colors shrink-0"
+          title="退出工作区"
+          aria-label="退出工作区"
+        >
+          <X className="w-4 h-4" />
+        </button>
 
         <input
           ref={fileInputRef}

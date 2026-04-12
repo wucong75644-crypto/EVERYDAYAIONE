@@ -7,7 +7,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { m } from 'framer-motion';
-import { Send, Square, Settings, Upload, Brain, Paperclip } from 'lucide-react';
+import { Send, Square, Settings, Upload, Brain, Paperclip, FolderOpen } from 'lucide-react';
 import { cn } from '../../../utils/cn';
 import { SOFT_SPRING } from '../../../utils/motion';
 import { getFileIcon } from '../../../utils/fileUtils';
@@ -383,6 +383,18 @@ export default function InputControls(props: InputControlsProps) {
               >
                 <Brain className="w-4 h-4" />
                 <span className="hidden sm:inline">深度思考</span>
+              </button>
+            )}
+
+            {/* 工作区按钮 */}
+            {onOpenWorkspace && (
+              <button
+                onClick={onOpenWorkspace}
+                className="flex items-center space-x-1 px-2 py-1.5 rounded-lg text-sm text-text-tertiary hover:text-text-primary hover:bg-hover transition-base"
+                title="打开工作区"
+              >
+                <FolderOpen className="w-4 h-4" />
+                <span className="hidden sm:inline">工作区</span>
               </button>
             )}
           </div>

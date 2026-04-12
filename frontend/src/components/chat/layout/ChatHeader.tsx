@@ -9,7 +9,7 @@
  */
 
 import { memo } from 'react';
-import { Brain, Clock, FolderOpen, PanelLeftOpen, Search, Users } from 'lucide-react';
+import { Brain, Clock, PanelLeftOpen, Search, Users } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useMemoryStore } from '../../../stores/useMemoryStore';
 import { usePermission } from '../../../hooks/usePermission';
@@ -40,8 +40,6 @@ export interface ChatHeaderProps {
   onOpenSearch?: () => void;
   /** 打开定时任务面板（可选，仅企业用户可见） */
   onOpenScheduledTasks?: () => void;
-  /** 打开工作区文件浏览器 */
-  onOpenWorkspace?: () => void;
 }
 
 /**
@@ -62,7 +60,6 @@ export const ChatHeader = memo(function ChatHeader({
   userCredits,
   onOpenSearch,
   onOpenScheduledTasks,
-  onOpenWorkspace,
 }: ChatHeaderProps) {
   const navigate = useNavigate();
   // 仅管理员（boss/vp/manager/deputy 中的人事主管）能进组织管理
@@ -106,16 +103,6 @@ export const ChatHeader = memo(function ChatHeader({
         )}
       </div>
       <div className="flex items-center space-x-3 text-sm text-text-tertiary">
-        {onOpenWorkspace && (
-          <button
-            onClick={onOpenWorkspace}
-            className="p-1.5 hover:bg-hover rounded-lg transition-base"
-            title="工作区"
-            aria-label="打开工作区"
-          >
-            <FolderOpen className="w-5 h-5 text-text-tertiary" />
-          </button>
-        )}
         {onOpenSearch && (
           <button
             onClick={onOpenSearch}
