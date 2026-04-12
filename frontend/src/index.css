@@ -40,5 +40,10 @@ body {
 /* 工作区打开时：对话区取消 max-width 限制，让内容能被压缩到更窄 */
 .workspace-compact .max-w-4xl,
 .workspace-compact .max-w-3xl {
-  max-width: none;
+  max-width: none !important;
+}
+/* 工作区打开时：对话区内容区域减少内边距 */
+.workspace-compact .mx-auto {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
 }
