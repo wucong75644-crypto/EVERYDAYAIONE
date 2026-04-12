@@ -213,9 +213,10 @@ async def _maybe_alert_org(
 
 
 async def _push_to_org_admins(db: Any, org_id: str, msg: str) -> None:
-    """通过该企业的自建应用，推送告警给企业的 owner/admin。
+    """通过智能机器人 WS 推送告警给企业的 owner/admin。
 
-    链路：org_members(role=owner|admin) → wecom_user_mappings(user_id) → 自建应用 send_text。
+    链路：org_members(role=owner|admin) → wecom_user_mappings(user_id)
+         → push_dispatcher → Redis pub/sub → ws_runner → 智能机器人 WS。
     任一步缺失则跳过（这是 best-effort，不影响主流程）。
 
     注意: 必须查 org_members 表的 role 字段（多租户成员关系），
@@ -255,50 +256,26 @@ async def _push_to_org_admins(db: Any, org_id: str, msg: str) -> None:
         )
         return
 
-    # 3) 加载企业的自建应用凭证
-    from services.org.config_resolver import AsyncOrgConfigResolver
-    resolver = AsyncOrgConfigResolver(db)
-    agent_id_raw = await resolver.get(org_id, "wecom_agent_id")
-    agent_secret = await resolver.get(org_id, "wecom_agent_secret")
-    if not agent_id_raw or not agent_secret:
-        logger.info(
-            f"ErpSyncHealthcheck no wecom agent config | org={org_id}"
-        )
-        return
-
-    # 4) 取 corp_id
-    org_result = await (
-        db.table("organizations")
-        .select("wecom_corp_id")
-        .eq("id", org_id)
-        .maybe_single()
-        .execute()
-    )
-    corp_id = (org_result.data or {}).get("wecom_corp_id") if org_result else None
-    if not corp_id:
-        logger.info(
-            f"ErpSyncHealthcheck no corp_id on organization | org={org_id}"
-        )
-        return
-
-    # 5) 推送
-    from services.wecom.app_message_sender import OrgWecomCreds, send_text
-    creds = OrgWecomCreds(
-        org_id=org_id,
-        corp_id=corp_id,
-        agent_id=int(agent_id_raw),
-        agent_secret=agent_secret,
-    )
+    # 3) 通过智能机器人 WS 推送（与定时任务推送共用同一通道）
+    from services.scheduler.push_dispatcher import push_dispatcher
     for m in mappings:
         try:
-            await send_text(m["wecom_userid"], msg, creds)
+            status = await push_dispatcher.dispatch(
+                org_id=org_id,
+                target={
+                    "type": "wecom_user",
+                    "wecom_userid": m["wecom_userid"],
+                },
+                text=msg,
+                files=[],
+            )
             logger.info(
                 f"ErpSyncHealthcheck alert pushed | "
-                f"org={org_id} | userid={m['wecom_userid']}"
+                f"org={org_id} | userid={m['wecom_userid']} | status={status}"
             )
         except Exception as e:
             logger.error(
-                f"ErpSyncHealthcheck send_text failed | "
+                f"ErpSyncHealthcheck push failed | "
                 f"userid={m['wecom_userid']} | error={e}"
             )
 
