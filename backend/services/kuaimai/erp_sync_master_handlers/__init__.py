@@ -33,9 +33,9 @@ from services.kuaimai.erp_sync_master_handlers.supplier import sync_supplier
 from services.kuaimai.erp_sync_master_handlers.platform_map import (
     _PLATFORM_MAP_BATCH_SIZE,
     _PLATFORM_MAP_LOCK_EXTEND_EVERY,
-    _PLATFORM_MAP_ROUND_FRACTION,
     _PLATFORM_MAP_SPLIT_MAX_DEPTH,
     _PLATFORM_MAP_SPLIT_MIN_SIZE,
+    _PLATFORM_MAP_STALE_DAYS,
     _PLATFORM_MAP_UPDATE_CHUNK,
     _dedupe_platform_rows,
     _enqueue_failed_batch_to_dlq,
@@ -76,7 +76,7 @@ __all__ = [
     "_mark_skus_checked",
     # platform_map 常量（测试 patch 需要）
     "_PLATFORM_MAP_BATCH_SIZE",
-    "_PLATFORM_MAP_ROUND_FRACTION",
+    "_PLATFORM_MAP_STALE_DAYS",
     "_PLATFORM_MAP_SPLIT_MAX_DEPTH",
     "_PLATFORM_MAP_SPLIT_MIN_SIZE",
     "_PLATFORM_MAP_LOCK_EXTEND_EVERY",

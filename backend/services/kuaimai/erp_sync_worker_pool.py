@@ -119,6 +119,17 @@ class ErpSyncWorkerPool:
             await self._requeue_task(task_id)
             return
 
+        # 设置执行中标记 — 阻止 Scheduler 在执行期间重复入队
+        # TTL 10 分钟作为安全网（worker 挂了也不会永久锁死）
+        running_key = f"erp_sync:running:{task_id}"
+        try:
+            from core.redis import get_redis
+            _redis = await get_redis()
+            if _redis:
+                await _redis.set(running_key, "1", ex=600)
+        except Exception:
+            pass  # best-effort，Redis 不可用不阻塞主流程
+
         start_ts = time.time()
         try:
             logger.info(
@@ -153,6 +164,14 @@ class ErpSyncWorkerPool:
         finally:
             await self._release_task_lock(lock_key, token)
             await self._decr_org_concurrency(org_id)
+            # 清除执行中标记
+            try:
+                from core.redis import get_redis
+                _redis = await get_redis()
+                if _redis:
+                    await _redis.delete(running_key)
+            except Exception:
+                pass  # TTL 10 分钟会自动过期
 
     # ── 任务执行（委托给现有 Service 层）──────────────
 

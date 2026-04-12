@@ -13,7 +13,7 @@ Bug 1+2 修复 2026-04-11：
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
 from math import ceil
 from typing import TYPE_CHECKING, Any
 
@@ -33,16 +33,17 @@ if TYPE_CHECKING:
 
 
 # ── 常量 ─────────────────────────────────────────────────
-# 每个 API 批次的 SKU 上限。实测快麦响应 ~12KB/SKU，500 批次响应 ~6MB
-# 接近 8MB payload 上限。取 400 留 60% 安全余量。
-_PLATFORM_MAP_BATCH_SIZE = 400
-# 每轮 sync 处理总 SKU 的比例（1/4），配合 6 小时调度 → 24 小时全量覆盖。
-# 用 ORDER BY checked_at ASC NULLS FIRST LIMIT 实现：每轮自动取最旧的 1/4。
-_PLATFORM_MAP_ROUND_FRACTION = 4
-# 半批降级最大递归深度（400 → 200 → 100 → 50 → 放弃）
+# 每个 API 批次的 SKU 上限。
+# 2026-04-12: 400→200。生产 24h 内 42 次 payload too large 降级（400 太大）。
+# 实测 200 安全（响应 ~2.5MB，8MB 上限留 3.2 倍余量）。
+_PLATFORM_MAP_BATCH_SIZE = 200
+# SKU 平台映射过期天数。超过此天数的 checked_at 视为过期需重查。
+# 24 小时 = 用户接受的"新上架平台感知延迟"上限。
+_PLATFORM_MAP_STALE_DAYS = 1
+# 半批降级最大递归深度（200 → 100 → 50 → 25 → 放弃）
 _PLATFORM_MAP_SPLIT_MAX_DEPTH = 4
 # 半批降级最小批次（小于此值不再分割，直接放弃此批）
-_PLATFORM_MAP_SPLIT_MIN_SIZE = 50
+_PLATFORM_MAP_SPLIT_MIN_SIZE = 25
 # 续锁频率：每 N 个批次调一次 lock_extend_fn
 _PLATFORM_MAP_LOCK_EXTEND_EVERY = 10
 # 标记 checked_at 时 IN 子句的分块大小
@@ -198,55 +199,46 @@ async def _enqueue_failed_batch_to_dlq(
 
 async def _select_skus_for_round(
     svc: "ErpSyncService",
-) -> tuple[list[str], int]:
-    """取本轮要处理的 SKU 列表 + 总 SKU 数。
+) -> list[str]:
+    """取本轮要处理的 SKU 列表（仅"未检查"+"过期"的 SKU）。
 
-    Returns:
-        (sku_ids, total_skus)
+    2026-04-12 重构：从 ORDER BY COALESCE LIMIT 1/4 改为 WHERE stale/NULL。
+    好处：
+    - 只查真正需要的 SKU，不再用 ROUND_FRACTION 分轮
+    - 如果全部 SKU 都已检查且未过期 → 返回空列表 → sync 直接 return 0
+    - Scheduler 多入的队列任务会自然被 return 0 消化，不浪费 API
     """
-    # 总 SKU 数（决定本轮 LIMIT）
+    stale_cutoff = (
+        now_cn() - timedelta(days=_PLATFORM_MAP_STALE_DAYS)
+    ).isoformat()
+
     try:
-        count_q = svc.db.table("erp_product_skus").select(
-            "sku_outer_id", count="exact",
-        ).limit(1)
-        count_result = await count_q.execute()
-        total_skus = getattr(count_result, "count", None) or 0
-    except Exception as e:
-        logger.warning(f"platform_map: failed to count SKUs | error={e}")
-        return [], 0
-
-    if total_skus == 0:
-        return [], 0
-
-    per_round_limit = max(1, ceil(total_skus / _PLATFORM_MAP_ROUND_FRACTION))
-
-    # 取最旧 / 未检查的 1/4
-    # 注意：PostgreSQL 默认 ORDER BY ASC 时 NULL 排在最后，
-    # 我们想要 NULL 优先（让新 SKU 立刻被处理），所以用
-    # COALESCE 把 NULL 当成最旧时间。LocalDB 的 .order() 不支持
-    # nullsfirst 参数，但 _quote_col 会原样保留含括号的表达式。
-    # 索引：idx_skus_platform_map_checked 用同样的 COALESCE 表达式建立，
-    # PG 能匹配查询并走 Index Scan（见 059 迁移）。
-    try:
-        sku_q = (
+        # 查询 1：未检查（新增 SKU，checked_at 是 NULL）
+        null_res = await (
             svc.db.table("erp_product_skus")
             .select("sku_outer_id")
-            .order(
-                "COALESCE(platform_map_checked_at, '1970-01-01'::timestamp)",
-                desc=False,
-            )
-            .limit(per_round_limit)
+            .is_("platform_map_checked_at", "null")
+            .execute()
         )
-        sku_result = await sku_q.execute()
-        sku_ids = [
-            r["sku_outer_id"]
-            for r in (sku_result.data or [])
-            if r.get("sku_outer_id")
-        ]
-        return sku_ids, total_skus
+        # 查询 2：已过期（checked_at < 24h 前）
+        stale_res = await (
+            svc.db.table("erp_product_skus")
+            .select("sku_outer_id")
+            .lt("platform_map_checked_at", stale_cutoff)
+            .execute()
+        )
+        # 合并去重
+        seen: set[str] = set()
+        sku_ids: list[str] = []
+        for row in (null_res.data or []) + (stale_res.data or []):
+            oid = row.get("sku_outer_id")
+            if oid and oid not in seen:
+                seen.add(oid)
+                sku_ids.append(oid)
+        return sku_ids
     except Exception as e:
         logger.warning(f"platform_map: failed to load SKU list | error={e}")
-        return [], total_skus
+        return []
 
 
 def _dedupe_platform_rows(
@@ -289,29 +281,32 @@ async def _mark_skus_checked(
 async def sync_platform_map(
     svc: "ErpSyncService", start: datetime, end: datetime,
 ) -> int:
-    """平台映射增量同步（Bug 1+2 修复 2026-04-11）
+    """平台映射增量同步
 
-    设计：
-    - 按 ORDER BY COALESCE(platform_map_checked_at, '1970-01-01') ASC LIMIT (total/4)
-      取每轮 1/4 的 SKU（最旧的优先 + 新增 SKU 自动靠前）
-    - 配合 6 小时调度周期 → 24 小时全量覆盖
+    设计（2026-04-12 重构）：
+    - WHERE stale/NULL 查询：只取未检查 + 过期（> STALE_DAYS 天）的 SKU
+    - 如果全部 SKU 都已检查且未过期 → return 0（自然去重，不浪费 API）
     - 异常分类处理（见 _process_platform_map_batch）
 
+    调度行为：
+    - Scheduler 每 6 小时触发一次 platform_map
+    - 第 1 轮：处理所有 stale/NULL SKU（冷启动 ~10 分钟）
+    - Scheduler 若多入了队列任务 → 第 2 轮发现 0 stale → return 0（秒级）
+    - 24 小时后：所有 SKU 过期 → 再次全量
+
     API: erp.item.outerid.list.get
-    - 输入参数 outerIds（SKU 编码逗号分隔，单批上限 ≤500，取 400 安全）
+    - 输入参数 outerIds（SKU 编码逗号分隔，单批上限 ≤500，取 200 安全）
     - 返回 itemOuterIdInfos[] → 每条 outerId 的 tbItemList[] 平台商品列表
     - "整批 SKU 全无映射" 触发 20150；混合批静默跳过无效 SKU 不报错
     """
-    sku_ids, total_skus = await _select_skus_for_round(svc)
+    sku_ids = await _select_skus_for_round(svc)
     if not sku_ids:
-        if total_skus > 0:
-            logger.info("platform_map: no SKUs to process")
+        logger.debug("platform_map: no stale/new SKUs, skip")
         return 0
 
     logger.info(
         f"platform_map: round start | "
-        f"total_skus={total_skus} | this_round={len(sku_ids)} | "
-        f"batch_size={_PLATFORM_MAP_BATCH_SIZE}"
+        f"to_check={len(sku_ids)} | batch_size={_PLATFORM_MAP_BATCH_SIZE}"
     )
 
     client = svc._get_client()
@@ -325,7 +320,7 @@ async def sync_platform_map(
         batch = sku_ids[i:i + _PLATFORM_MAP_BATCH_SIZE]
         await _process_platform_map_batch(svc, client, batch, checked_ids, rows)
 
-        # 每 N 批续锁一次（防止冷启动 ~10 分钟超过 5 分钟锁 TTL）
+        # 每 N 批续锁一次（防止全量 ~10 分钟超过 5 分钟锁 TTL）
         if (
             (batch_idx + 1) % _PLATFORM_MAP_LOCK_EXTEND_EVERY == 0
             and svc._lock_extend_fn
@@ -354,6 +349,6 @@ async def sync_platform_map(
     logger.info(
         f"platform_map: round done | upserted={count} | "
         f"checked={len(checked_ids)} | skipped={skipped} | "
-        f"this_round={len(sku_ids)} | total_skus={total_skus}"
+        f"to_check={len(sku_ids)}"
     )
     return count

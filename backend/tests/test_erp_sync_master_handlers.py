@@ -739,7 +739,7 @@ class TestSyncPlatformMapIncremental:
         from services.kuaimai.errors import KuaiMaiBusinessError
         from services.kuaimai.erp_sync_master_handlers import sync_platform_map
 
-        # 80 个 SKU + ROUND_FRACTION=1 让本轮处理全部 80 个
+        # 80 个 SKU，新设计 WHERE stale/NULL 会全部取出（mock db 无 checked_at 列 = NULL）
         sku_ids = [f"S{i:03d}" for i in range(80)]
         svc = _mock_svc_for_platform_map(sku_ids, [])
 
@@ -760,13 +760,8 @@ class TestSyncPlatformMapIncremental:
         mock_client.request_with_retry = AsyncMock(side_effect=fake_request)
         svc._get_client.return_value = mock_client
 
-        # patch ROUND_FRACTION 让本轮处理全部 80 个 SKU
-        # 必须 patch 实际定义模块（platform_map.py），而不是 __init__ re-export
-        with patch(
-            "services.kuaimai.erp_sync_master_handlers.platform_map._PLATFORM_MAP_ROUND_FRACTION",
-            1,
-        ):
-            await sync_platform_map(svc, START, END)
+        # 不需要 patch ROUND_FRACTION — 新设计取所有 stale/NULL，mock 里 80 个全是 NULL
+        await sync_platform_map(svc, START, END)
 
         # 应该至少调用 3 次：80 失败 → 40+40 各成功
         assert call_sizes[0] == 80
@@ -823,18 +818,18 @@ class TestSyncPlatformMapIncremental:
 
         await sync_platform_map(svc, START, END)
 
-        # 至少应调过一次 API
+        # 新设计取所有 stale/NULL → mock 里 100 个全是 NULL → 全部取出
+        # BATCH_SIZE=200 → 100 个 SKU 只需 1 批
         assert mock_client.request_with_retry.called
-        # 第一批传入的 outerIds 数量应是 min(25, BATCH_SIZE=400) = 25
         first_call = mock_client.request_with_retry.call_args_list[0]
         first_outer_ids = first_call.args[1]["outerIds"].split(",")
-        assert len(first_outer_ids) == 25
+        assert len(first_outer_ids) == 100
 
     @pytest.mark.asyncio
     async def test_lock_extend_called_periodically_with_small_batch(self):
         """续锁路径：构造 > 10 批 让 lock_extend_fn 被调到至少 1 次。
 
-        用 patch 把 BATCH_SIZE 临时设小到 10，配合 ROUND_FRACTION=1，
+        用 patch 把 BATCH_SIZE 临时设小到 10，
         让 110 个 SKU 拆出 11 批 → 第 10 批后触发续锁。
         """
         from unittest.mock import patch
@@ -852,16 +847,12 @@ class TestSyncPlatformMapIncremental:
         lock_extend = AsyncMock()
         svc._lock_extend_fn = lock_extend
 
-        # patch 实际定义模块（platform_map.py），而不是 __init__ re-export
+        # patch BATCH_SIZE 让 110 SKU 拆成 11 批
         with patch(
             "services.kuaimai.erp_sync_master_handlers.platform_map._PLATFORM_MAP_BATCH_SIZE",
             10,
-        ), patch(
-            "services.kuaimai.erp_sync_master_handlers.platform_map._PLATFORM_MAP_ROUND_FRACTION",
-            1,
         ):
             await sync_platform_map(svc, START, END)
 
         # 110 SKU / 10 = 11 批 → 第 10 批后触发 1 次续锁
-        # 注意：第 11 批是最后一批，(11) % 10 != 0 不触发
         assert lock_extend.call_count == 1
