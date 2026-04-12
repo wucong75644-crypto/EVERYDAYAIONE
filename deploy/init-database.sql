@@ -455,6 +455,24 @@ CREATE TABLE IF NOT EXISTS erp_document_items (
     sys_memo TEXT,
     buyer_message TEXT,
     creator_name VARCHAR(64),
+    order_type SMALLINT,
+    pay_amount DECIMAL(12,2),
+    is_cancel BOOLEAN,
+    is_refund BOOLEAN,
+    is_exception BOOLEAN,
+    is_halt BOOLEAN,
+    is_urgent BOOLEAN,
+    buyer_nick VARCHAR(128),
+    receiver_name VARCHAR(64),
+    receiver_mobile VARCHAR(32),
+    receiver_phone VARCHAR(32),
+    receiver_state VARCHAR(32),
+    receiver_city VARCHAR(32),
+    receiver_district VARCHAR(32),
+    receiver_address VARCHAR(512),
+    status_name VARCHAR(32),
+    sku_properties_name VARCHAR(256),
+    diff_stock_num DECIMAL(12,2),
     extra_json JSONB DEFAULT '{}',
     synced_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -477,6 +495,11 @@ CREATE INDEX IF NOT EXISTS idx_doc_items_doc_code ON erp_document_items (doc_cod
 CREATE INDEX IF NOT EXISTS idx_doc_items_supplier ON erp_document_items (supplier_name, doc_type) WHERE supplier_name IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_doc_items_type_date ON erp_document_items (doc_type, doc_created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_doc_items_outer_created ON erp_document_items (outer_id, doc_created_at);
+CREATE INDEX IF NOT EXISTS idx_doc_items_buyer ON erp_document_items (buyer_nick) WHERE buyer_nick IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_doc_items_receiver_mobile ON erp_document_items (receiver_mobile) WHERE receiver_mobile IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_doc_items_is_exception ON erp_document_items (is_exception) WHERE is_exception = true;
+CREATE INDEX IF NOT EXISTS idx_doc_items_is_halt ON erp_document_items (is_halt) WHERE is_halt = true;
+CREATE INDEX IF NOT EXISTS idx_doc_items_order_type ON erp_document_items (order_type) WHERE order_type IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS erp_document_items_archive (
     id BIGSERIAL PRIMARY KEY,
@@ -522,6 +545,24 @@ CREATE TABLE IF NOT EXISTS erp_document_items_archive (
     sys_memo TEXT,
     buyer_message TEXT,
     creator_name VARCHAR(64),
+    order_type SMALLINT,
+    pay_amount DECIMAL(12,2),
+    is_cancel BOOLEAN,
+    is_refund BOOLEAN,
+    is_exception BOOLEAN,
+    is_halt BOOLEAN,
+    is_urgent BOOLEAN,
+    buyer_nick VARCHAR(128),
+    receiver_name VARCHAR(64),
+    receiver_mobile VARCHAR(32),
+    receiver_phone VARCHAR(32),
+    receiver_state VARCHAR(32),
+    receiver_city VARCHAR(32),
+    receiver_district VARCHAR(32),
+    receiver_address VARCHAR(512),
+    status_name VARCHAR(32),
+    sku_properties_name VARCHAR(256),
+    diff_stock_num DECIMAL(12,2),
     extra_json JSONB DEFAULT '{}',
     synced_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -598,6 +639,10 @@ CREATE TABLE IF NOT EXISTS erp_products (
     created_at TIMESTAMP,
     modified_at TIMESTAMP,
     pic_url VARCHAR(512),
+    is_sku_item BOOLEAN NOT NULL DEFAULT false,
+    length DECIMAL(10,2),
+    width DECIMAL(10,2),
+    height DECIMAL(10,2),
     suit_singles JSONB,
     extra_json JSONB DEFAULT '{}',
     synced_at TIMESTAMP NOT NULL DEFAULT NOW()
@@ -622,6 +667,9 @@ CREATE TABLE IF NOT EXISTS erp_product_skus (
     pic_url VARCHAR(512),
     sys_sku_id VARCHAR(64),
     active_status SMALLINT NOT NULL DEFAULT 1,
+    length DECIMAL(10,2),
+    width DECIMAL(10,2),
+    height DECIMAL(10,2),
     extra_json JSONB DEFAULT '{}',
     synced_at TIMESTAMP NOT NULL DEFAULT NOW()
 );

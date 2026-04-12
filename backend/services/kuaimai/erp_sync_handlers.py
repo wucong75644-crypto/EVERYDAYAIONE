@@ -371,10 +371,7 @@ def _build_order_rows(
 
     total_discount = _to_float(doc.get("discountFee"))
     total_payment = sum(_to_float(i.get("payment")) for i in items) or 1
-    doc_extra = _pick(
-        doc, "type", "payAmount",
-        "isCancel", "isRefund", "isExcep", "isHalt", "isUrgent",
-    )
+    doc_extra = _pick(doc, "payment")
 
     rows: list[dict[str, Any]] = []
     discount_used = 0.0
@@ -417,13 +414,27 @@ def _build_order_rows(
             "remark": doc.get("sellerMemo"),
             "sys_memo": doc.get("sysMemo"),
             "buyer_message": doc.get("buyerMessage"),
+            # 标记字段（独立列，boolean）
             "order_type": doc.get("type"),
             "pay_amount": doc.get("payAmount"),
-            "is_cancel": doc.get("isCancel"),
-            "is_refund": doc.get("isRefund"),
-            "is_exception": doc.get("isExcep"),
-            "is_halt": doc.get("isHalt"),
-            "is_urgent": doc.get("isUrgent"),
+            "is_cancel": bool(doc.get("isCancel")),
+            "is_refund": bool(doc.get("isRefund")),
+            "is_exception": bool(doc.get("isExcep")),
+            "is_halt": bool(doc.get("isHalt")),
+            "is_urgent": bool(doc.get("isUrgent")),
+            # 买家 + 收件人（订单头级别，仅首行存储避免冗余）
+            "buyer_nick": doc.get("buyerNick") if pos == 0 else None,
+            "receiver_name": doc.get("receiverName") if pos == 0 else None,
+            "receiver_mobile": doc.get("receiverMobile") if pos == 0 else None,
+            "receiver_phone": doc.get("receiverPhone") if pos == 0 else None,
+            "receiver_state": doc.get("receiverState") if pos == 0 else None,
+            "receiver_city": doc.get("receiverCity") if pos == 0 else None,
+            "receiver_district": doc.get("receiverDistrict") if pos == 0 else None,
+            "receiver_address": doc.get("receiverAddress") if pos == 0 else None,
+            "status_name": doc.get("statusName"),
+            # 子订单级字段
+            "sku_properties_name": item.get("skuPropertiesName") or item.get("propertiesName"),
+            "diff_stock_num": item.get("diffStockNum"),
             "extra_json": {**doc_extra, "payment": item.get("payment")},
         })
     return rows

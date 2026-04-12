@@ -458,29 +458,49 @@ class TestSyncOrder:
 
     @pytest.mark.asyncio
     async def test_order_new_fields_extracted(self):
-        """订单新增字段：order_type/pay_amount/is_cancel/is_refund/is_exception/is_halt/is_urgent"""
+        """订单新增字段：标记/买家/收件人/规格/缺货"""
         from services.kuaimai.erp_sync_handlers import sync_order
         docs = [{
-            "sid": "S010", "sysStatus": "FINISHED",
+            "sid": "S010", "sysStatus": "FINISHED", "statusName": "已完成",
             "type": "4,5,14", "payAmount": "128.50",
             "isCancel": 0, "isRefund": 1, "isExcep": 0,
             "isHalt": 0, "isUrgent": 1,
+            "buyerNick": "测试买家",
+            "receiverName": "张三", "receiverMobile": "13800138000",
+            "receiverPhone": "010-12345678",
+            "receiverState": "ZheJiang", "receiverCity": "HangZhou",
+            "receiverDistrict": "XiHu", "receiverAddress": "WenSanLu 100",
             "discountFee": None,
             "orders": [
                 {"oid": "O1", "sysOuterId": "C01",
-                 "payment": 128.50, "num": 1, "price": 128.50},
+                 "payment": 128.50, "num": 1, "price": 128.50,
+                 "skuPropertiesName": "颜色:红色;尺码:XL",
+                 "diffStockNum": 2},
             ],
         }]
         svc = _mock_svc(pages=docs)
         await sync_order(svc, START, END)
         row = svc.upsert_document_items.call_args[0][0][0]
+        # 标记字段（boolean）
         assert row["order_type"] == "4,5,14"
         assert row["pay_amount"] == "128.50"
-        assert row["is_cancel"] == 0
-        assert row["is_refund"] == 1
-        assert row["is_exception"] == 0
-        assert row["is_halt"] == 0
-        assert row["is_urgent"] == 1
+        assert row["is_cancel"] is False
+        assert row["is_refund"] is True
+        assert row["is_exception"] is False
+        assert row["is_halt"] is False
+        assert row["is_urgent"] is True
+        # 买家 + 收件人
+        assert row["buyer_nick"] == "测试买家"
+        assert row["receiver_name"] == "张三"
+        assert row["receiver_mobile"] == "13800138000"
+        assert row["receiver_state"] == "ZheJiang"
+        assert row["receiver_city"] == "HangZhou"
+        assert row["receiver_district"] == "XiHu"
+        assert row["receiver_address"] == "WenSanLu 100"
+        assert row["status_name"] == "已完成"
+        # 子订单级字段
+        assert row["sku_properties_name"] == "颜色:红色;尺码:XL"
+        assert row["diff_stock_num"] == 2
 
 
 # ============================================================
