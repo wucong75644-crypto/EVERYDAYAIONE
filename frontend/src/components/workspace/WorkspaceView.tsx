@@ -5,7 +5,7 @@
  * 严格使用设计系统 V3 token + ui/ 组件。
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useWorkspace } from '../../hooks/useWorkspace';
@@ -25,10 +25,30 @@ interface WorkspaceViewProps {
   onBack: () => void;
   /** 将文件插入到聊天 */
   onSendToChat: (file: WorkspaceFile) => void;
+  /** 从外部触发的待上传文件（如上传菜单） */
+  pendingUploadFiles?: File[];
+  /** 待上传文件已消费，清空队列 */
+  onPendingUploadConsumed?: () => void;
 }
 
-export default function WorkspaceView({ onBack, onSendToChat }: WorkspaceViewProps) {
+export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles, onPendingUploadConsumed }: WorkspaceViewProps) {
   const ws = useWorkspace();
+  const pendingConsumedRef = useRef(false);
+
+  // 接收从外部传入的文件并触发上传
+  useEffect(() => {
+    if (pendingUploadFiles && pendingUploadFiles.length > 0 && !pendingConsumedRef.current) {
+      pendingConsumedRef.current = true;
+      (async () => {
+        const success = await ws.upload(pendingUploadFiles);
+        if (success) {
+          toast.success(`已上传 ${pendingUploadFiles.length} 个文件`);
+        }
+        onPendingUploadConsumed?.();
+        pendingConsumedRef.current = false;
+      })();
+    }
+  }, [pendingUploadFiles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 预览弹窗
   const [previewFile, setPreviewFile] = useState<FilePart | null>(null);

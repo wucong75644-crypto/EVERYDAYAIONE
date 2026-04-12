@@ -107,6 +107,8 @@ interface InputControlsProps {
   onRemoveWorkspaceFile?: (workspacePath: string) => void;
   /** 切换工作区视图（开/关） */
   onOpenWorkspace?: () => void;
+  /** 上传文件到工作区 */
+  onUploadToWorkspace?: (files: File[]) => void;
   /** 工作区是否已打开（用于 toggle 按钮状态） */
   workspaceOpen?: boolean;
   /** 是否需要上传图片（用于显示引导提示） */
@@ -137,7 +139,7 @@ export default function InputControls(props: InputControlsProps) {
     onSaveSettings, onResetSettings,
     images, maxImages, maxFileSize, onRemoveImage, onImageSelect, onImageDrop, onImagePaste,
     files, maxPDFSize, onRemoveFile, onFileSelect,
-    workspaceFiles = [], onRemoveWorkspaceFile, onOpenWorkspace, workspaceOpen = false,
+    workspaceFiles = [], onRemoveWorkspaceFile, onOpenWorkspace, onUploadToWorkspace, workspaceOpen = false,
     recordingState, audioBlob, audioDuration, onStartRecording, onStopRecording, onClearRecording,
     requiresImageUpload = false, sendError, hasQuotedImage = false,
     isStreaming = false, onStop,
@@ -437,7 +439,7 @@ export default function InputControls(props: InputControlsProps) {
                 selectedModel={selectedModel}
                 onImageUpload={() => fileInputRef.current?.click()}
                 onFileUpload={() => pdfFileInputRef.current?.click()}
-                onOpenWorkspace={onOpenWorkspace}
+                onUploadToWorkspace={onUploadToWorkspace}
                 onClose={closeUploadMenu}
               />
             </div>

@@ -46,6 +46,8 @@ interface InputAreaProps {
   onWorkspaceFilesConsumed?: () => void;
   /** 切换工作区视图 */
   onOpenWorkspace?: () => void;
+  /** 上传文件到工作区 */
+  onUploadToWorkspace?: (files: File[]) => void;
   /** 工作区是否已打开 */
   workspaceOpen?: boolean;
   /** 紧凑模式：工作区打开时取消 max-w 限制 */
@@ -65,6 +67,7 @@ export default function InputArea({
   onRemoveWorkspaceFile,
   onWorkspaceFilesConsumed,
   onOpenWorkspace,
+  onUploadToWorkspace,
   workspaceOpen = false,
   compact = false,
 }: InputAreaProps) {
@@ -466,6 +469,7 @@ export default function InputArea({
           workspaceFiles={workspaceFiles}
           onRemoveWorkspaceFile={onRemoveWorkspaceFile}
           onOpenWorkspace={onOpenWorkspace}
+          onUploadToWorkspace={onUploadToWorkspace}
           workspaceOpen={workspaceOpen}
           recordingState={recordingState}
           audioBlob={audioBlob}

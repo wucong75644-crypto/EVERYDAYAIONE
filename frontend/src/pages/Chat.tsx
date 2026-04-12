@@ -83,6 +83,8 @@ export default function Chat() {
   const [prompt, setPrompt] = useState('');
   // 工作区文件待发送队列（"插入到聊天"功能）
   const [pendingWorkspaceFiles, setPendingWorkspaceFiles] = useState<WorkspaceFile[]>([]);
+  // 从上传菜单触发的待上传文件
+  const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
   // 工作区面板宽度（可拖拽调整）
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(480);
   // 从缓存预读初始对话 ID，实现消息并行加载
@@ -331,6 +333,16 @@ export default function Chat() {
     setPendingWorkspaceFiles([]);
   }, []);
 
+  // 从上传菜单上传文件到工作区：打开工作区 + 传入文件
+  const handleUploadToWorkspace = useCallback((files: File[]) => {
+    setPendingUploadFiles(files);
+    setView('workspace');
+  }, []);
+
+  const handlePendingUploadConsumed = useCallback(() => {
+    setPendingUploadFiles([]);
+  }, []);
+
   // 删除消息回调：更新侧边栏最后一条消息预览
   const handleMessageDelete = useCallback(
     (_messageId: string, newLastMessage?: string) => {
@@ -428,6 +440,7 @@ export default function Chat() {
             onRemoveWorkspaceFile={handleRemoveWorkspaceFile}
             onWorkspaceFilesConsumed={handleWorkspaceFilesConsumed}
             onOpenWorkspace={handleToggleWorkspace}
+            onUploadToWorkspace={handleUploadToWorkspace}
             workspaceOpen={view === 'workspace'}
           />
         </div>
@@ -469,6 +482,8 @@ export default function Chat() {
               <WorkspaceView
                 onBack={() => setView('chat')}
                 onSendToChat={handleSendFromWorkspace}
+                pendingUploadFiles={pendingUploadFiles}
+                onPendingUploadConsumed={handlePendingUploadConsumed}
               />
             </div>
           </div>
