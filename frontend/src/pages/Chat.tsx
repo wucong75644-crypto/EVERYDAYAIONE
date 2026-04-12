@@ -83,6 +83,8 @@ export default function Chat() {
   const [prompt, setPrompt] = useState('');
   // 工作区文件待发送队列（"插入到聊天"功能）
   const [pendingWorkspaceFiles, setPendingWorkspaceFiles] = useState<WorkspaceFile[]>([]);
+  // 工作区面板宽度（可拖拽调整）
+  const [workspacePanelWidth, setWorkspacePanelWidth] = useState(480);
   // 从缓存预读初始对话 ID，实现消息并行加载
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(getInitialConversationId);
   const [conversationTitle, setConversationTitle] = useState('新对话');
@@ -306,10 +308,15 @@ export default function Chat() {
     setSidebarCollapsed((prev) => !prev);
   }, []);
 
-  // 打开工作区 — 自动收起侧边栏腾出空间
-  const handleOpenWorkspace = useCallback(() => {
-    setView('workspace');
-    setSidebarCollapsed(true);
+  // 切换工作区（toggle）— 打开时自动收起侧边栏
+  const handleToggleWorkspace = useCallback(() => {
+    setView((prev) => {
+      if (prev === 'chat') {
+        setSidebarCollapsed(true);
+        return 'workspace';
+      }
+      return 'chat';
+    });
   }, []);
 
   // 工作区："插入到聊天"回调（按 workspace_path 去重，不自动关闭工作区）
@@ -375,18 +382,8 @@ export default function Chat() {
         onDelete={handleConversationDelete}
       />
 
-      {/* 主内容区：工作区打开时并排显示 */}
+      {/* 主内容区：对话（左） + 工作区（右，可选） */}
       <div className="flex-1 flex min-w-0">
-        {/* 工作区面板（左侧，打开时显示） */}
-        {view === 'workspace' && (
-          <div className="w-1/2 max-w-[600px] min-w-[320px] flex flex-col border-r border-[var(--s-border-default)]">
-            <WorkspaceView
-              onBack={() => setView('chat')}
-              onSendToChat={handleSendFromWorkspace}
-            />
-          </div>
-        )}
-
         {/* 对话区（始终显示） */}
         <div className="flex-1 flex flex-col min-w-0">
           {/* 顶部导航栏 */}
@@ -430,9 +427,50 @@ export default function Chat() {
             workspaceFiles={pendingWorkspaceFiles}
             onRemoveWorkspaceFile={handleRemoveWorkspaceFile}
             onWorkspaceFilesConsumed={handleWorkspaceFilesConsumed}
-            onOpenWorkspace={handleOpenWorkspace}
+            onOpenWorkspace={handleToggleWorkspace}
+            workspaceOpen={view === 'workspace'}
           />
         </div>
+
+        {/* 可拖拽分割线 + 工作区面板（右侧） */}
+        {view === 'workspace' && (
+          <>
+            {/* 拖拽分割线 */}
+            <div
+              className="w-1 cursor-col-resize bg-[var(--s-border-default)] hover:bg-[var(--s-accent)] active:bg-[var(--s-accent)] transition-colors shrink-0"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const startX = e.clientX;
+                const startWidth = workspacePanelWidth;
+                const onMouseMove = (ev: MouseEvent) => {
+                  // 工作区在右侧，鼠标往左拖 = 宽度增大
+                  const delta = startX - ev.clientX;
+                  const newWidth = Math.max(320, Math.min(800, startWidth + delta));
+                  setWorkspacePanelWidth(newWidth);
+                };
+                const onMouseUp = () => {
+                  document.removeEventListener('mousemove', onMouseMove);
+                  document.removeEventListener('mouseup', onMouseUp);
+                  document.body.style.cursor = '';
+                  document.body.style.userSelect = '';
+                };
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+              }}
+              title="拖拽调整宽度"
+            />
+
+            {/* 工作区面板 */}
+            <div className="flex flex-col shrink-0" style={{ width: workspacePanelWidth }}>
+              <WorkspaceView
+                onBack={() => setView('chat')}
+                onSendToChat={handleSendFromWorkspace}
+              />
+            </div>
+          </>
+        )}
       </div>
 
       {/* 消息搜索面板（V3 Phase 4：cursor 分页 + 搜索方案）
