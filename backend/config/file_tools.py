@@ -207,7 +207,7 @@ FILE_ROUTING_PROMPT = (
     "- 用户要求查看目录/列出文件 → file_list\n"
     "- 用户要求搜索/查找文件 → file_search\n"
     "- 用户要求查看文件信息/属性 → file_info\n"
-    "- 处理 Excel/图片等二进制文件 → code_execute（沙盒内用 read_file/write_file）\n"
+    "- 处理 Excel/图片等二进制文件 → code_execute（沙盒内用 WORKSPACE_DIR 定位文件）\n"
     "- 复杂数据分析（统计/筛选/聚合）→ code_execute\n"
     "- 文件操作完毕后，调 route_to_chat 汇总结果回复用户\n\n"
 )

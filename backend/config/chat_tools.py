@@ -102,7 +102,7 @@ def get_safety_level(tool_name: str) -> SafetyLevel:
 
 TOOL_SYSTEM_PROMPT = """## 工具使用规则
 
-1. **ERP 业务问题**：用户问任何涉及订单、库存、采购、售后、发货、物流、商品、销量、统计、导出、报表、Excel 的问题时，必须调用 erp_agent 工具。erp_agent 内部自动处理编码识别、工具选择、数据导出、多步查询，支持口语化表达。
+1. **ERP 业务问题**：用户问任何涉及订单、库存、采购、售后、发货、物流、商品、销量、统计、导出、报表的问题时，必须调用 erp_agent 工具。erp_agent 内部自动处理编码识别、工具选择、数据导出、多步查询，支持口语化表达。
 
 2. **知识库**：用户问业务规则、操作流程等非数据类问题时，用 search_knowledge。
 
@@ -112,11 +112,31 @@ TOOL_SYSTEM_PROMPT = """## 工具使用规则
 
 5. **代码执行**：用户要求非 ERP 场景的数据分析、计算时，用 code_execute。ERP 数据导出/报表由 erp_agent 内部处理，不要直接调 code_execute。
 
-6. **多工具并行**：你可以在一次回复中调用多个工具。没有依赖关系的工具并行调用。
+6. **工作区文件处理**：用户上传了 Excel/CSV 等文件并要求分析时，用 file_list 确认文件名，然后用 code_execute 读取处理（沙盒内 WORKSPACE_DIR 变量指向用户工作区）。Excel/二进制文件不能用 file_read，必须用 code_execute。
+
+7. **多工具并行**：你可以在一次回复中调用多个工具。没有依赖关系的工具并行调用。
+
+## 对话交互规范（分层处理）
+
+### 简单请求（查看、汇总、描述）
+直接执行，展示结果。不需要确认。
+示例："这个表有多少行？" → 直接 code_execute 读取并回答。
+
+### 分析请求（计算、对比、趋势）
+先用 1-3 句话说明分析思路和关键公式，然后立即执行，不等用户确认。
+示例："我会按店铺汇总销售额，计算公式：店铺销售额 = Σ(订单金额)，按降序排列。"然后执行 code_execute。
+
+### 复杂多步请求（≥3步的分析流程）
+先列出步骤计划，等用户确认后一次性执行全部步骤。
+示例："分析方案：1. 合并两份订单明细 2. 关联体积表计算总体积 3. 按运营人员汇总生成报表。需要调整吗？"用户确认后再执行。
+
+### 模糊请求
+选最可能的理解，说明假设，执行后在结尾提供替代选项。不要连问多个问题，最多问 1 个关键澄清。
 
 ### 禁止行为（CRITICAL）
 - NEVER 不调工具就回答业务数据问题——必须调 erp_agent 查数据再回答
-- NEVER 说"我无法查看"——用你的工具查"""
+- NEVER 说"我无法查看"——用你的工具查
+- NEVER 反复尝试不同方式读取 Excel——Excel/二进制文件直接用 code_execute + WORKSPACE_DIR"""
 
 
 def get_tool_system_prompt() -> str:
@@ -289,8 +309,8 @@ def get_chat_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
     # 文件操作工具
     tools.extend(build_file_tools())
 
-    # 代码执行工具
-    tools.extend(build_code_tools())
+    # 代码执行工具（主 Agent 版，含 WORKSPACE_DIR + 图表/文档能力）
+    tools.extend(build_code_tools(include_workspace=True))
 
     # 通用工具（搜索、知识库、图片、视频 — 始终加载）
     tools.extend(_build_common_tools())
