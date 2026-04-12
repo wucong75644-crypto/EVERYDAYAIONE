@@ -1234,7 +1234,12 @@
       "Bash(node -e \":*)",
       "Bash(./git-push.sh \"fix: workspace 上传按钮修复 Content-Type multipart/form-data 缺失\")",
       "Bash(ssh root@47.110.94.25 -p 22 'cat /opt/everydayai/frontend/dist/index.html | grep -o \"\"assets/[^\\\\\"\"]*\\\\.js\"\" | head -5')",
-      "Bash(python -c \"import ast; ast.parse\\(open\\(''api/routes/file.py''\\).read\\(\\)\\); print\\(''syntax ok''\\)\")"
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''api/routes/file.py''\\).read\\(\\)\\); print\\(''syntax ok''\\)\")",
+      "Bash(grep \"\\\\.py$\")",
+      "WebFetch(domain:e2b.dev)",
+      "WebFetch(domain:itnext.io)",
+      "WebFetch(domain:docs.docker.com)",
+      "Bash(./git-push.sh \"fix: 隐藏工作区 staging 目录\")"
     ],
     "additionalDirectories": [
       "/tmp"
