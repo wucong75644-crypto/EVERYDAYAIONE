@@ -1253,7 +1253,11 @@
       "WebFetch(domain:til.simonwillison.net)",
       "Bash(grep -n \"def build_\" /Users/wucong/EVERYDAYAIONE/backend/config/*.py)",
       "Bash(python -m pytest tests/test_sandbox_executor.py tests/test_sandbox_functions.py tests/test_code_tools.py -q --tb=short)",
-      "Bash(./git-push.sh \"feat: 沙盒能力扩展 — 架构隔离工具描述 + matplotlib/reportlab/docx/pptx 白名单 + 对话交互规范\")"
+      "Bash(./git-push.sh \"feat: 沙盒能力扩展 — 架构隔离工具描述 + matplotlib/reportlab/docx/pptx 白名单 + 对话交互规范\")",
+      "Bash(python -m pytest tests/test_sandbox_executor.py tests/test_sandbox_functions.py tests/test_code_tools.py -v --tb=short)",
+      "Bash(grep -r \"timeout\\\\|cancel\\\\|expired\" /Users/wucong/EVERYDAYAIONE/backend/services/handlers/*.py)",
+      "Bash(grep -r \"stream_chat\\\\|timeout\" /Users/wucong/EVERYDAYAIONE/backend/services/adapters/*.py)",
+      "Bash(./git-push.sh \"fix: 工作区文件注入按扩展名分类 — 二进制文件指引 code_execute，文本文件指引 file_read，修复 Excel 读取死循环\")"
     ],
     "additionalDirectories": [
       "/tmp"

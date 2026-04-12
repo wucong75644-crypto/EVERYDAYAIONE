@@ -293,3 +293,144 @@ class TestRegisterFunctions:
         result = await executor.execute("shared_var", "读取变量")
         # 第二次执行不应看到第一次的变量
         assert "执行错误" in result or "NameError" in result
+
+
+class TestMatplotlibIntegration:
+    """matplotlib 集成测试"""
+
+    @pytest.mark.asyncio
+    async def test_plt_injected_in_globals(self):
+        """plt 变量注入到沙盒 globals"""
+        executor = SandboxExecutor(timeout=5.0)
+        result = await executor.execute("print(str(plt))", "plt类型")
+        assert "matplotlib" in result
+
+    @pytest.mark.asyncio
+    async def test_matplotlib_injected_in_globals(self):
+        """matplotlib 模块注入到沙盒 globals"""
+        executor = SandboxExecutor(timeout=5.0)
+        result = await executor.execute(
+            "print(matplotlib.get_backend())", "matplotlib后端"
+        )
+        assert "agg" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_plt_close_called_after_execution(self):
+        """每次执行后 plt.close('all') 被调用，防止内存泄露"""
+        executor = SandboxExecutor(timeout=5.0)
+        # 创建一个 figure 但不关闭
+        await executor.execute(
+            "fig, ax = plt.subplots()\nax.plot([1,2,3])\nprint('plotted')",
+            "画图不关闭",
+        )
+        # 执行后 plt.close('all') 应已被调用，当前无残留 figure
+        import matplotlib.pyplot as check_plt
+        assert len(check_plt.get_fignums()) == 0
+
+    @pytest.mark.asyncio
+    async def test_plt_close_called_on_error(self):
+        """执行出错时也清理 matplotlib figure"""
+        executor = SandboxExecutor(timeout=5.0)
+        await executor.execute(
+            "fig, ax = plt.subplots()\nraise ValueError('boom')",
+            "画图后报错",
+        )
+        import matplotlib.pyplot as check_plt
+        assert len(check_plt.get_fignums()) == 0
+
+
+class TestWorkspaceDirInjection:
+    """WORKSPACE_DIR 注入测试"""
+
+    @pytest.mark.asyncio
+    async def test_workspace_dir_available(self):
+        """workspace_dir 参数注入到沙盒 globals"""
+        executor = SandboxExecutor(
+            timeout=5.0, workspace_dir="/tmp/test_ws",
+        )
+        result = await executor.execute("print(WORKSPACE_DIR)", "读workspace")
+        assert "/tmp/test_ws" in result
+
+    @pytest.mark.asyncio
+    async def test_workspace_dir_none_not_injected(self):
+        """workspace_dir 为 None 时不注入，访问 WORKSPACE_DIR 报错"""
+        executor = SandboxExecutor(timeout=5.0)
+        result = await executor.execute("print(WORKSPACE_DIR)", "访问未设workspace")
+        assert "执行错误" in result
+
+
+class TestExpandedWhitelist:
+    """扩展白名单模块测试"""
+
+    @pytest.mark.asyncio
+    async def test_import_matplotlib(self):
+        executor = SandboxExecutor(timeout=5.0)
+        result = await executor.execute(
+            "import matplotlib\nprint(matplotlib.__name__)", "导入matplotlib"
+        )
+        assert "matplotlib" in result
+
+    @pytest.mark.asyncio
+    async def test_import_seaborn(self):
+        executor = SandboxExecutor(timeout=10.0)
+        result = await executor.execute(
+            "import seaborn\nprint(seaborn.__name__)", "导入seaborn"
+        )
+        assert "seaborn" in result
+
+    @pytest.mark.asyncio
+    async def test_import_pil(self):
+        executor = SandboxExecutor(timeout=5.0)
+        result = await executor.execute(
+            "from PIL import Image\nprint(Image.__name__)", "导入PIL"
+        )
+        assert "Image" in result
+
+    @pytest.mark.asyncio
+    async def test_import_reportlab(self):
+        executor = SandboxExecutor(timeout=5.0)
+        result = await executor.execute(
+            "import reportlab\nprint(reportlab.__name__)", "导入reportlab"
+        )
+        assert "reportlab" in result
+
+    @pytest.mark.asyncio
+    async def test_import_docx(self):
+        executor = SandboxExecutor(timeout=5.0)
+        result = await executor.execute(
+            "from docx import Document\nprint(type(Document).__name__)",
+            "导入docx",
+        )
+        assert "执行错误" not in result
+
+    @pytest.mark.asyncio
+    async def test_import_pptx(self):
+        executor = SandboxExecutor(timeout=5.0)
+        result = await executor.execute(
+            "from pptx import Presentation\nprint(type(Presentation).__name__)",
+            "导入pptx",
+        )
+        assert "执行错误" not in result
+
+    @pytest.mark.asyncio
+    async def test_import_openpyxl(self):
+        executor = SandboxExecutor(timeout=5.0)
+        result = await executor.execute(
+            "import openpyxl\nprint(openpyxl.__name__)", "导入openpyxl"
+        )
+        assert "openpyxl" in result
+
+
+class TestAutoUploadExtensions:
+    """auto-upload 扩展名测试"""
+
+    def test_docx_in_auto_upload(self):
+        assert ".docx" in SandboxExecutor._AUTO_UPLOAD_EXTENSIONS
+
+    def test_pptx_in_auto_upload(self):
+        assert ".pptx" in SandboxExecutor._AUTO_UPLOAD_EXTENSIONS
+
+    def test_existing_extensions_preserved(self):
+        exts = SandboxExecutor._AUTO_UPLOAD_EXTENSIONS
+        for ext in [".xlsx", ".csv", ".png", ".pdf", ".json", ".txt"]:
+            assert ext in exts

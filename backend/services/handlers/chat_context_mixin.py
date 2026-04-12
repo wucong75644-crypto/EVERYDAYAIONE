@@ -55,7 +55,7 @@ class ChatContextMixin:
                 *media_parts,
             ]
 
-        # 工作区文件提示注入（让 AI 用 file_read 工具读取）
+        # 工作区文件提示注入（按文件类型指引正确的读取方式）
         if workspace_files:
             def _fmt_size(size):
                 if not size:
@@ -66,15 +66,33 @@ class ChatContextMixin:
                     return f"{size / 1024:.1f}KB"
                 return f"{size / 1024 / 1024:.1f}MB"
 
-            file_list = "\n".join(
-                f"- {f['workspace_path']} ({_fmt_size(f.get('size'))}, {f.get('mime_type', '未知类型')})"
-                for f in workspace_files
-            )
-            ws_prompt = (
-                f"用户上传了以下文件到工作区，你可以使用 file_read 工具读取分析：\n"
-                f"{file_list}\n"
-                f"请先读取文件内容，再回复用户。"
-            )
+            # 按文件类型分类：二进制文件用 code_execute，文本文件用 file_read
+            _BINARY_EXTS = {
+                ".xlsx", ".xls", ".doc", ".docx", ".ppt", ".pptx",
+                ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+                ".zip", ".tar", ".gz", ".parquet",
+            }
+            binary_files = []
+            text_files = []
+            for f in workspace_files:
+                path = f.get("workspace_path", "")
+                ext = path[path.rfind("."):].lower() if "." in path else ""
+                entry = f"- {path} ({_fmt_size(f.get('size'))}, {f.get('mime_type', '未知类型')})"
+                if ext in _BINARY_EXTS:
+                    binary_files.append(entry)
+                else:
+                    text_files.append(entry)
+
+            parts = ["用户工作区中有以下文件：\n"]
+            if text_files:
+                parts.append("文本文件（用 file_read 读取）：")
+                parts.extend(text_files)
+            if binary_files:
+                parts.append("二进制文件（用 code_execute + WORKSPACE_DIR 读取，"
+                             "如 pd.read_excel(WORKSPACE_DIR + '/文件名')）：")
+                parts.extend(binary_files)
+
+            ws_prompt = "\n".join(parts)
             messages.insert(0, {"role": "system", "content": ws_prompt})
             logger.debug(
                 f"Workspace files injected | count={len(workspace_files)} | "

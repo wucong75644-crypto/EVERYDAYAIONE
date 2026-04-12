@@ -82,6 +82,47 @@ class TestCodeToolsDefinition:
         """CODE_ROUTING_PROMPT 提及 local_db_export"""
         assert "local_db_export" in CODE_ROUTING_PROMPT
 
+    # ---- 架构隔离测试 ----
+
+    def test_base_version_no_workspace_dir(self):
+        """ERP Agent 版不含 WORKSPACE_DIR"""
+        tool = build_code_tools(include_workspace=False)[0]
+        desc = tool["function"]["description"]
+        assert "WORKSPACE_DIR" not in desc
+
+    def test_workspace_version_has_workspace_dir(self):
+        """主 Agent 版包含 WORKSPACE_DIR"""
+        tool = build_code_tools(include_workspace=True)[0]
+        desc = tool["function"]["description"]
+        assert "WORKSPACE_DIR" in desc
+
+    def test_architecture_isolation_symmetric(self):
+        """两版工具名和参数完全相同，只有描述不同"""
+        base = build_code_tools(include_workspace=False)[0]
+        ws = build_code_tools(include_workspace=True)[0]
+        assert base["function"]["name"] == ws["function"]["name"]
+        assert base["function"]["parameters"] == ws["function"]["parameters"]
+        assert base["function"]["description"] != ws["function"]["description"]
+
+    def test_workspace_version_has_doc_generation(self):
+        """主 Agent 版包含文档生成能力（reportlab/docx/pptx）"""
+        tool = build_code_tools(include_workspace=True)[0]
+        desc = tool["function"]["description"]
+        assert "reportlab" in desc
+        assert "docx" in desc
+        assert "Presentation" in desc
+
+    def test_base_version_no_doc_generation(self):
+        """ERP Agent 版不提及文档生成库"""
+        tool = build_code_tools(include_workspace=False)[0]
+        desc = tool["function"]["description"]
+        assert "reportlab" not in desc
+        assert "docx" not in desc.split("pandas")[0]  # docx 不在描述中（排除巧合匹配）
+
+    def test_routing_prompt_no_workspace_dir(self):
+        """CODE_ROUTING_PROMPT（ERP Agent 用）不含 WORKSPACE_DIR"""
+        assert "WORKSPACE_DIR" not in CODE_ROUTING_PROMPT
+
 
 class TestAgentToolsIntegration:
     """agent_tools.py 集成测试"""
