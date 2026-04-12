@@ -256,27 +256,25 @@ async def _push_to_org_admins(db: Any, org_id: str, msg: str) -> None:
         )
         return
 
-    # 3) 通过智能机器人 WS 推送（与定时任务推送共用同一通道）
-    from services.scheduler.push_dispatcher import push_dispatcher
+    # 3) 通过 MessageGateway 统一存消息 + 推企微（先存后推）
+    from services.message_gateway import MessageGateway
+    gateway = MessageGateway(db)
     for m in mappings:
         try:
-            status = await push_dispatcher.dispatch(
+            await gateway.save_system_message(
+                user_id=m["user_id"],
                 org_id=org_id,
-                target={
-                    "type": "wecom_user",
-                    "wecom_userid": m["wecom_userid"],
-                },
                 text=msg,
-                files=[],
+                source="error_alert",
             )
             logger.info(
-                f"ErpSyncHealthcheck alert pushed | "
-                f"org={org_id} | userid={m['wecom_userid']} | status={status}"
+                f"ErpSyncHealthcheck alert saved+pushed | "
+                f"org={org_id} | user_id={m['user_id']}"
             )
         except Exception as e:
             logger.error(
                 f"ErpSyncHealthcheck push failed | "
-                f"userid={m['wecom_userid']} | error={e}"
+                f"user_id={m['user_id']} | error={e}"
             )
 
 

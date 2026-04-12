@@ -286,6 +286,11 @@ class MessageMixin:
             f"task_id={task_id} | message_id={message_id} | credits={actual_credits}"
         )
 
+        # 企微同步：如果对话来源是企微，将 AI 回复推送到企微
+        asyncio.create_task(
+            self._maybe_fanout_to_wecom(conversation_id, content_dicts, task)
+        )
+
         # 知识库指标（Image/Video）
         handler_type = self.handler_type.value
         if handler_type in ("image", "video"):
@@ -309,6 +314,53 @@ class MessageMixin:
         await _release_task_limit(task["user_id"], conversation_id, task.get("org_id"))
 
         return message
+
+    async def _maybe_fanout_to_wecom(
+        self,
+        conversation_id: str,
+        content_dicts: list,
+        task: dict,
+    ) -> None:
+        """如果对话来源是企微（source=wecom），将 AI 回复推送到企微。
+
+        仅限 Web 端触发的生成（企微端自己的回复已在 wecom_message_service 推过）。
+        fire-and-forget，失败不影响主流程。
+        """
+        try:
+            conv = (
+                self.db.table("conversations")
+                .select("source, org_id")
+                .eq("id", conversation_id)
+                .maybe_single()
+                .execute()
+            )
+            if not conv or not conv.data:
+                return
+            if conv.data.get("source") != "wecom":
+                return
+
+            # 提取文本内容
+            text_parts = []
+            for part in content_dicts:
+                if part.get("type") == "text" and part.get("text"):
+                    text_parts.append(part["text"])
+            if not text_parts:
+                return
+
+            text = "\n".join(text_parts)
+            org_id = conv.data.get("org_id")
+            user_id = task.get("user_id")
+            if not org_id or not user_id:
+                return
+
+            from services.message_gateway import MessageGateway
+            gateway = MessageGateway(self.db)
+            await gateway.fanout_to_wecom(user_id, org_id, text)
+        except Exception as e:
+            logger.warning(
+                f"_maybe_fanout_to_wecom failed | "
+                f"conversation_id={conversation_id} | error={e}"
+            )
 
     async def _handle_error_common(
         self,
