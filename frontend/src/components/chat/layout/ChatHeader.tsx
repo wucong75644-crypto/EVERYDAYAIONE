@@ -67,8 +67,8 @@ export const ChatHeader = memo(function ChatHeader({
   const canManageMembers = usePermission('sys.member.edit');
 
   return (
-    <header className="h-14 bg-surface-card flex items-center justify-between px-4 flex-shrink-0">
-      <div className="flex items-center space-x-3">
+    <header className="h-14 bg-surface-card flex items-center justify-between px-4 flex-shrink-0 overflow-hidden">
+      <div className="flex items-center space-x-3 min-w-0">
         {sidebarCollapsed && (
           <button
             onClick={onToggleSidebar}
