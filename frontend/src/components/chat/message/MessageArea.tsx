@@ -29,6 +29,8 @@ import { useTaskRestorationStore } from '../../../stores/useTaskRestorationStore
 interface MessageAreaProps {
   conversationId: string | null;
   onDelete?: (messageId: string, newLastMessage?: string) => void;
+  /** 紧凑模式：工作区打开时取消 max-w 限制 */
+  compact?: boolean;
 }
 
 /**
@@ -192,6 +194,7 @@ function JumpToMessage() {
 export default function MessageArea({
   conversationId,
   onDelete,
+  compact = false,
 }: MessageAreaProps) {
   // 使用消息加载 Hook（负责从后端加载并写入缓存）
   const { loading, hasMore, loadMessages, loadMore, loadingMore } = useMessageLoader({ conversationId });
@@ -413,7 +416,7 @@ export default function MessageArea({
 
           {/* 消息列表
               性能保护：消息数 > 50 时禁用 framer layout 动画，避免长对话卡顿 */}
-          <div className="max-w-4xl mx-auto px-4 space-y-4">
+          <div className={compact ? "px-4 space-y-4" : "max-w-4xl mx-auto px-4 space-y-4"}>
             {(() => {
               const enableLayoutAnimation = mergedMessages.length <= 50;
               return mergedMessages.map((message) => {
