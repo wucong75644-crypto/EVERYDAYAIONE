@@ -97,9 +97,9 @@ class ScheduledTaskAgent:
             # 1. 模板文件复制到 staging（如有）
             await self._prepare_template()
 
-            # 2. 构建工具列表（chat 域全 13 工具集）
-            from config.phase_tools import build_domain_tools
-            all_tools = build_domain_tools("chat")
+            # 2. 构建工具列表（与主聊天流程一致的核心工具集）
+            from config.chat_tools import get_core_tools
+            all_tools = get_core_tools(org_id=self.org_id)
 
             # 3. 构建轻量上下文
             messages = self._build_light_context()
