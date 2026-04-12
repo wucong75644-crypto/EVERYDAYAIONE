@@ -6,11 +6,13 @@
  * - 4 处内联 SVG → lucide-react
  * - 提取 MENU_ITEM_CLASS 常量减少重复
  *
- * V3 改造：工作区选项改为"打开工作区"（不再直接触发文件选择）
+ * V3 改造：工作区选项改为直接上传文件到工作区
  */
 
-import { ImagePlus, Camera, FileText, FolderOpen } from 'lucide-react';
+import { useRef } from 'react';
+import { ImagePlus, Camera, FileText, Upload } from 'lucide-react';
 import { type UnifiedModel } from '../../../constants/models';
+import { WORKSPACE_ALLOWED_EXTENSIONS } from '../../../services/workspace';
 
 interface UploadMenuProps {
   visible: boolean;
@@ -18,8 +20,8 @@ interface UploadMenuProps {
   selectedModel: UnifiedModel;
   onImageUpload: () => void;
   onFileUpload?: () => void;
-  /** 打开工作区视图（替代原来的"上传到工作区"） */
-  onOpenWorkspace?: () => void;
+  /** 上传文件到工作区 */
+  onUploadToWorkspace?: (files: File[]) => void;
   onClose: () => void;
 }
 
@@ -34,9 +36,11 @@ export default function UploadMenu({
   selectedModel,
   onImageUpload,
   onFileUpload,
-  onOpenWorkspace,
+  onUploadToWorkspace,
   onClose,
 }: UploadMenuProps) {
+  const wsFileInputRef = useRef<HTMLInputElement>(null);
+
   if (!visible) return null;
 
   const supportsImageUpload =
@@ -115,25 +119,39 @@ export default function UploadMenu({
       {/* 分隔线 */}
       <div className="border-t border-border-light my-1" />
 
-      {/* 打开工作区 */}
+      {/* 上传到工作区 */}
       <button
         onClick={() => {
-          if (onOpenWorkspace) {
-            onOpenWorkspace();
-            onClose();
+          if (onUploadToWorkspace) {
+            wsFileInputRef.current?.click();
           }
         }}
-        disabled={!onOpenWorkspace}
+        disabled={!onUploadToWorkspace}
         className={`w-full px-4 py-2 text-left flex items-center space-x-3 transition-base ${
-          onOpenWorkspace ? ITEM_ENABLED : ITEM_DISABLED
+          onUploadToWorkspace ? ITEM_ENABLED : ITEM_DISABLED
         }`}
       >
-        <FolderOpen className="w-5 h-5 text-text-tertiary" />
+        <Upload className="w-5 h-5 text-text-tertiary" />
         <div>
-          <div className="text-sm font-medium">打开工作区</div>
-          <div className="text-xs">浏览和管理文件，AI 可读取分析</div>
+          <div className="text-sm font-medium">上传到工作区</div>
+          <div className="text-xs">上传文件供 AI 读取分析</div>
         </div>
       </button>
+      <input
+        ref={wsFileInputRef}
+        type="file"
+        multiple
+        accept={Array.from(WORKSPACE_ALLOWED_EXTENSIONS).map((ext) => `.${ext}`).join(',')}
+        onChange={(e) => {
+          const files = e.target.files;
+          if (files && files.length > 0 && onUploadToWorkspace) {
+            onUploadToWorkspace(Array.from(files));
+            onClose();
+          }
+          e.target.value = '';
+        }}
+        className="hidden"
+      />
     </div>
   );
 }
