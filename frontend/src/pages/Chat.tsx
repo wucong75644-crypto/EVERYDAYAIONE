@@ -383,10 +383,17 @@ export default function Chat() {
         onDelete={handleConversationDelete}
       />
 
-      {/* 主内容区：对话（左） + 工作区（右，可选） */}
-      <div className="flex-1 flex min-w-0">
-        {/* 对话区（始终显示，工作区打开时取消 max-w 限制让对话区可被压缩） */}
-        <div className={cn('flex-1 flex flex-col min-w-0', view === 'workspace' && 'overflow-hidden')}>
+      {/* 主内容区：用 CSS calc 显式计算宽度（VS Code 模式，不依赖 flex 自动收缩） */}
+      <div className="flex-1 flex min-w-0 relative">
+        {/* 对话区 — 显式宽度计算 */}
+        <div
+          className="flex flex-col overflow-hidden"
+          style={{
+            width: view === 'workspace'
+              ? `calc(100% - ${workspacePanelWidth}px - 4px)`
+              : '100%',
+          }}
+        >
           {/* 顶部导航栏 */}
           <ChatHeader
             sidebarCollapsed={sidebarCollapsed}
@@ -416,7 +423,7 @@ export default function Chat() {
             compact={view === 'workspace'}
           />
 
-          {/* 输入框区域（prompt 已提升到 Chat.tsx） */}
+          {/* 输入框区域 */}
           <InputArea
             conversationId={currentConversationId}
             conversationModelId={conversationModelId}
@@ -440,15 +447,18 @@ export default function Chat() {
           <>
             {/* 拖拽分割线 */}
             <div
-              className="w-1 cursor-col-resize bg-[var(--s-border-default)] hover:bg-[var(--s-accent)] active:bg-[var(--s-accent)] transition-colors shrink-0"
+              className="w-1 cursor-col-resize bg-[var(--s-border-default)] hover:bg-[var(--s-accent)] active:bg-[var(--s-accent)] transition-colors flex-shrink-0"
               onMouseDown={(e) => {
                 e.preventDefault();
                 const startX = e.clientX;
                 const startWidth = workspacePanelWidth;
+                const container = (e.currentTarget.parentElement as HTMLElement);
+                const containerWidth = container.offsetWidth;
                 const onMouseMove = (ev: MouseEvent) => {
-                  // 工作区在右侧，鼠标往左拖 = 宽度增大
                   const delta = startX - ev.clientX;
-                  const newWidth = Math.max(320, Math.min(800, startWidth + delta));
+                  // 工作区宽度范围：320px ~ 容器宽度的70%
+                  const maxW = Math.floor(containerWidth * 0.7);
+                  const newWidth = Math.max(320, Math.min(maxW, startWidth + delta));
                   setWorkspacePanelWidth(newWidth);
                 };
                 const onMouseUp = () => {
@@ -465,8 +475,11 @@ export default function Chat() {
               title="拖拽调整宽度"
             />
 
-            {/* 工作区面板 */}
-            <div className="flex flex-col shrink-0" style={{ width: workspacePanelWidth }}>
+            {/* 工作区面板 — 显式宽度 */}
+            <div
+              className="flex flex-col overflow-hidden flex-shrink-0"
+              style={{ width: workspacePanelWidth }}
+            >
               <WorkspaceView
                 onBack={() => setView('chat')}
                 onSendToChat={handleSendFromWorkspace}
