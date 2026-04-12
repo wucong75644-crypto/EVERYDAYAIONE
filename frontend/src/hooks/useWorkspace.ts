@@ -133,17 +133,54 @@ export function useWorkspace(): UseWorkspaceReturn {
     return crumbs;
   }, [currentPath]);
 
-  // 上传文件（返回 true=全部成功，false=有失败）
+  // 上传中的文件（占位 + 进度）
+  const [uploadingFiles, setUploadingFiles] = useState<Map<string, WorkspaceFileItem>>(new Map());
+
   const upload = useCallback(async (files: File[]): Promise<boolean> => {
     setError(null);
+
+    // 立即添加占位项
+    const placeholders = new Map<string, WorkspaceFileItem>();
+    for (const file of files) {
+      placeholders.set(file.name, {
+        name: file.name,
+        is_dir: false,
+        size: file.size,
+        modified: String(Math.floor(Date.now() / 1000)),
+        cdn_url: null,
+        mime_type: file.type || null,
+        uploadProgress: 0,
+      });
+    }
+    setUploadingFiles((prev) => new Map([...prev, ...placeholders]));
+
     for (const file of files) {
       try {
-        await uploadToWorkspace(file, currentPath);
+        await uploadToWorkspace(file, currentPath, (percent) => {
+          setUploadingFiles((prev) => {
+            const next = new Map(prev);
+            const item = next.get(file.name);
+            if (item) next.set(file.name, { ...item, uploadProgress: percent });
+            return next;
+          });
+        });
+        // 单个完成，移除占位
+        setUploadingFiles((prev) => {
+          const next = new Map(prev);
+          next.delete(file.name);
+          return next;
+        });
       } catch (err) {
         const msg = err instanceof Error ? err.message : '上传失败';
         setError(msg);
         logger.error('useWorkspace', `上传失败: ${file.name}`, err);
-        await fetchList(currentPath); // 已上传的部分也要刷新
+        // 失败也移除占位
+        setUploadingFiles((prev) => {
+          const next = new Map(prev);
+          next.delete(file.name);
+          return next;
+        });
+        await fetchList(currentPath);
         return false;
       }
     }
@@ -226,13 +263,16 @@ export function useWorkspace(): UseWorkspaceReturn {
 
   const clearError = useCallback(() => setError(null), []);
 
-  // 排序后的文件列表（文件夹在前，各自按名称排序）
+  // 排序后的文件列表（文件夹在前，各自按名称排序）+ 合并上传中占位
   const sortedItems = useMemo(() => {
-    return [...items].sort((a, b) => {
+    const existing = new Set(items.map((i) => i.name));
+    // 只添加尚未出现在真实列表中的占位项
+    const merged = [...items, ...Array.from(uploadingFiles.values()).filter((u) => !existing.has(u.name))];
+    return merged.sort((a, b) => {
       if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
-  }, [items]);
+  }, [items, uploadingFiles]);
 
   return {
     currentPath,

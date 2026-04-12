@@ -416,6 +416,27 @@ def create_app() -> FastAPI:
 def register_exception_handlers(app: FastAPI) -> None:
     """注册全局异常处理器"""
 
+    from fastapi.exceptions import RequestValidationError
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        """记录请求校验失败的详细信息"""
+        logger.warning(
+            f"ValidationError | path={request.url.path} | "
+            f"content_type={request.headers.get('content-type', 'N/A')} | "
+            f"detail={exc.errors()}"
+        )
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": "请求参数校验失败",
+                    "details": exc.errors(),
+                }
+            },
+        )
+
     @app.exception_handler(AppException)
     async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
         """处理应用自定义异常"""

@@ -17,6 +17,8 @@ export interface WorkspaceFileItem {
   modified: string;
   cdn_url: string | null;
   mime_type: string | null;
+  /** 上传进度 0~100，undefined 表示非上传状态 */
+  uploadProgress?: number;
 }
 
 export interface WorkspaceListResponse {
@@ -57,7 +59,7 @@ export const WORKSPACE_ALLOWED_EXTENSIONS = new Set([
   'zip',
 ]);
 
-export const WORKSPACE_MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+export const WORKSPACE_MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 
 // ============================================================
 // API 调用
@@ -76,6 +78,7 @@ export function listWorkspace(path = '.'): Promise<WorkspaceListResponse> {
 export function uploadToWorkspace(
   file: File,
   targetDir = '.',
+  onProgress?: (percent: number) => void,
 ): Promise<WorkspaceUploadResponse> {
   const formData = new FormData();
   formData.append('file', file);
@@ -84,7 +87,14 @@ export function uploadToWorkspace(
     method: 'POST',
     url: '/files/workspace/upload',
     data: formData,
-    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300000, // 大文件上传 5 分钟超时
+    onUploadProgress: onProgress
+      ? (e) => {
+          if (e.total) {
+            onProgress(Math.round((e.loaded * 100) / e.total));
+          }
+        }
+      : undefined,
   });
 }
 

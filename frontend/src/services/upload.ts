@@ -23,6 +23,5 @@ export async function uploadImageFile(file: File): Promise<UploadImageResponse> 
     method: 'POST',
     url: '/images/upload',
     data: formData,
-    headers: { 'Content-Type': 'multipart/form-data' },
   });
 }

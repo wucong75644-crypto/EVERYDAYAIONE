@@ -17,7 +17,7 @@ const api: AxiosInstance = axios.create({
   },
 });
 
-// 请求拦截器：添加 token + 企业上下文
+// 请求拦截器：添加 token + 企业上下文 + FormData Content-Type 修正
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('access_token');
@@ -27,6 +27,10 @@ api.interceptors.request.use(
     const orgId = localStorage.getItem('current_org_id');
     if (orgId) {
       config.headers['X-Org-Id'] = orgId;
+    }
+    // FormData 时删除 Content-Type，让浏览器自动设置含 boundary 的 multipart header
+    if (config.data instanceof FormData) {
+      delete config.headers['Content-Type'];
     }
     return config;
   },

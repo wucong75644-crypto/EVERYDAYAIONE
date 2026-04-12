@@ -83,8 +83,8 @@ _WORKSPACE_ALLOWED_EXTENSIONS = frozenset({
     "zip",
 })
 
-# workspace 单文件大小上限 (50MB)
-_WORKSPACE_MAX_FILE_SIZE = 50 * 1024 * 1024
+# workspace 单文件大小上限 (100MB)
+_WORKSPACE_MAX_FILE_SIZE = 100 * 1024 * 1024
 
 
 class WorkspaceUploadResponse(BaseModel):
@@ -150,12 +150,7 @@ async def upload_to_workspace(
             f"支持: {', '.join(sorted(_WORKSPACE_ALLOWED_EXTENSIONS))}"
         )
 
-    # 读取文件内容
-    content = await file.read()
-    if len(content) > _WORKSPACE_MAX_FILE_SIZE:
-        raise ValidationError(
-            message=f"文件过大: {len(content) / 1024 / 1024:.1f}MB，上限 50MB"
-        )
+    import aiofiles
 
     user_id = ctx.user_id
     org_id = ctx.org_id
@@ -174,20 +169,32 @@ async def upload_to_workspace(
         upload_path = f"{clean_dir}/{unique_name}" if clean_dir and clean_dir != "." else unique_name
         target = executor.resolve_safe_path(upload_path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
+
+        # 流式分块写入，固定占 ~1MB 内存
+        total_size = 0
+        async with aiofiles.open(target, 'wb') as f:
+            while chunk := await file.read(1024 * 1024):  # 每次读 1MB
+                total_size += len(chunk)
+                if total_size > _WORKSPACE_MAX_FILE_SIZE:
+                    await f.close()
+                    target.unlink(missing_ok=True)
+                    raise ValidationError(
+                        message=f"文件过大: {total_size / 1024 / 1024:.1f}MB，上限 100MB"
+                    )
+                await f.write(chunk)
 
         # 生成 CDN URL
         cdn_url = executor.get_cdn_url(upload_path)
 
         logger.info(
             f"Workspace upload | user={user_id} | file={filename} | "
-            f"size={len(content)} | path={upload_path}"
+            f"size={total_size} | path={upload_path}"
         )
 
         return WorkspaceUploadResponse(
             filename=unique_name,
             path=upload_path,
-            size=len(content),
+            size=total_size,
             cdn_url=cdn_url,
         )
 
