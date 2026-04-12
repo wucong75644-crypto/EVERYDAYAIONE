@@ -456,6 +456,7 @@ class MemoryService(MemorySettingsService):
         except Exception as e:
             logger.warning(
                 f"Memory extraction failed | user_id={user_id} | "
-                f"conversation_id={conversation_id} | error={e}"
+                f"conversation_id={conversation_id} | "
+                f"error_type={type(e).__name__} | error={e!r}"
             )
             return []
