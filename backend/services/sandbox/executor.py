@@ -113,14 +113,16 @@ class SandboxExecutor:
         max_result_chars: int = 8000,
         output_dir: Optional[str] = None,
         staging_dir: Optional[str] = None,
+        workspace_dir: Optional[str] = None,
         upload_fn: Optional[Callable] = None,
     ) -> None:
         self._timeout = timeout
         self._max_result_chars = max_result_chars
         self._registered_funcs: Dict[str, Callable] = {}
-        self._output_dir = output_dir    # 沙盒输出目录（自动上传）
-        self._staging_dir = staging_dir  # staging 数据目录（pd.read_parquet 用）
-        self._upload_fn = upload_fn      # 文件上传函数（注入）
+        self._output_dir = output_dir        # 沙盒输出目录（自动上传）
+        self._staging_dir = staging_dir      # staging 数据目录（pd.read_parquet 用）
+        self._workspace_dir = workspace_dir  # 用户 workspace 目录（只读，pd.read_excel 用）
+        self._upload_fn = upload_fn          # 文件上传函数（注入）
 
     def register(self, name: str, func: Callable) -> None:
         """注册外部数据源函数（沙盒内可直接调用）"""
@@ -216,6 +218,10 @@ class SandboxExecutor:
         # 注入目录路径
         from pathlib import Path as _Path
         g["Path"] = _Path
+
+        # WORKSPACE_DIR: 用户 workspace 目录（只读，pd.read_excel 用）
+        if self._workspace_dir:
+            g["WORKSPACE_DIR"] = self._workspace_dir
 
         # STAGING_DIR: staging 数据目录（pd.read_parquet 用）
         if self._staging_dir:

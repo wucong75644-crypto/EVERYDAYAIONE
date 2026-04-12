@@ -1239,7 +1239,9 @@
       "WebFetch(domain:e2b.dev)",
       "WebFetch(domain:itnext.io)",
       "WebFetch(domain:docs.docker.com)",
-      "Bash(./git-push.sh \"fix: 隐藏工作区 staging 目录\")"
+      "Bash(./git-push.sh \"fix: 隐藏工作区 staging 目录\")",
+      "Bash(python -m pytest tests/test_sandbox_executor.py tests/test_sandbox_functions.py -q --tb=short)",
+      "Bash(./git-push.sh \"feat: 沙盒注入 WORKSPACE_DIR — 打通用户上传文件到 code_execute 的访问路径\")"
     ],
     "additionalDirectories": [
       "/tmp"
