@@ -7,10 +7,12 @@
  * - member/散客: 不显示（入口不可见）
  */
 
-import { useState } from 'react';
+import { useState, lazy, Suspense } from 'react';
 import { useAuthStore } from '../../stores/useAuthStore';
 import SuperAdminPanel from './SuperAdminPanel';
 import OrgManagePanel from './OrgManagePanel';
+
+const ErrorMonitorPanel = lazy(() => import('./ErrorMonitorPanel'));
 
 interface AdminPanelProps {
   onClose: () => void;
@@ -22,12 +24,13 @@ export default function AdminPanel({ onClose }: AdminPanelProps) {
   const isSuperAdmin = user?.role === 'super_admin';
   const isOrgAdmin = currentOrg && ['owner', 'admin'].includes(currentOrg.role);
 
-  type Tab = 'platform' | 'org';
+  type Tab = 'platform' | 'org' | 'monitoring';
   const [activeTab, setActiveTab] = useState<Tab>(isSuperAdmin ? 'platform' : 'org');
 
   const tabs: { key: Tab; label: string; visible: boolean }[] = [
     { key: 'platform', label: '平台管理', visible: isSuperAdmin },
     { key: 'org', label: '企业管理', visible: !!isOrgAdmin || isSuperAdmin },
+    { key: 'monitoring', label: '系统监控', visible: isSuperAdmin },
   ];
 
   const visibleTabs = tabs.filter((t) => t.visible);
@@ -72,6 +75,11 @@ export default function AdminPanel({ onClose }: AdminPanelProps) {
           {activeTab === 'platform' && isSuperAdmin && <SuperAdminPanel />}
           {activeTab === 'org' && (isOrgAdmin || isSuperAdmin) && (
             <OrgManagePanel orgId={currentOrg?.org_id} />
+          )}
+          {activeTab === 'monitoring' && isSuperAdmin && (
+            <Suspense fallback={<div className="text-center py-8 text-text-tertiary">加载中...</div>}>
+              <ErrorMonitorPanel />
+            </Suspense>
           )}
           {!isOrgAdmin && !isSuperAdmin && activeTab === 'org' && (
             <div className="text-center text-text-tertiary py-12">
