@@ -412,6 +412,7 @@ export default function Chat() {
           <MessageArea
             conversationId={currentConversationId}
             onDelete={handleMessageDelete}
+            compact={view === 'workspace'}
           />
 
           {/* 输入框区域 */}
@@ -429,6 +430,7 @@ export default function Chat() {
             onWorkspaceFilesConsumed={handleWorkspaceFilesConsumed}
             onOpenWorkspace={handleToggleWorkspace}
             workspaceOpen={view === 'workspace'}
+            compact={view === 'workspace'}
           />
         </div>
 
