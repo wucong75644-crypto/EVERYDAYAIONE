@@ -30,6 +30,7 @@ import { useUnifiedMessages } from '../hooks/useUnifiedMessages';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { tabSync } from '../utils/tabSync';
 import { logger } from '../utils/logger';
+import { cn } from '../utils/cn';
 
 // 用户信息刷新间隔（5 分钟）
 const USER_REFRESH_INTERVAL = 5 * 60 * 1000;
@@ -384,8 +385,8 @@ export default function Chat() {
 
       {/* 主内容区：对话（左） + 工作区（右，可选） */}
       <div className="flex-1 flex min-w-0">
-        {/* 对话区（始终显示） */}
-        <div className="flex-1 flex flex-col min-w-0">
+        {/* 对话区（始终显示，工作区打开时取消 max-w 限制让对话区可被压缩） */}
+        <div className={cn('flex-1 flex flex-col min-w-0', view === 'workspace' && 'workspace-compact')}>
           {/* 顶部导航栏 */}
           <ChatHeader
             sidebarCollapsed={sidebarCollapsed}
