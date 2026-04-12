@@ -30,6 +30,16 @@ except ImportError:
     pd = None
     _PANDAS_AVAILABLE = False
 
+try:
+    import matplotlib as _mpl
+    _mpl.use("Agg")  # 无 GUI 后端，必须在 import pyplot 之前
+    import matplotlib.pyplot as _plt
+    _MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    _mpl = None
+    _plt = None
+    _MATPLOTLIB_AVAILABLE = False
+
 
 # 运行时允许 import 的模块白名单（AST 黑名单之后的第二道防线）
 _ALLOWED_IMPORT_MODULES = frozenset({
@@ -49,6 +59,12 @@ _ALLOWED_IMPORT_MODULES = frozenset({
     "io",
     # 数据分析
     "pandas", "numpy", "pyarrow",
+    # 可视化（matplotlib Agg 后端，无 GUI）
+    "matplotlib", "seaborn",
+    # 图片处理
+    "PIL",
+    # 文档生成（PDF / Word / PPT / Excel 直接操作）
+    "reportlab", "docx", "pptx", "openpyxl",
     # 内部 C 扩展（被上述模块传递依赖）
     "_datetime", "_decimal", "_collections_abc", "_operator",
     "_functools", "_re", "_string", "_json", "_strptime",
@@ -105,6 +121,7 @@ class SandboxExecutor:
         ".xlsx", ".xls", ".csv", ".tsv",
         ".png", ".jpg", ".jpeg", ".svg", ".pdf",
         ".json", ".jsonl", ".txt",
+        ".docx", ".pptx",
     })
 
     def __init__(
@@ -174,6 +191,10 @@ class SandboxExecutor:
                 f"error={short_tb[:200]}"
             )
             return f"❌ 执行错误:\n{short_tb}"
+        finally:
+            # 清理 matplotlib figure 防止内存泄露（用户代码可能忘记 plt.close）
+            if _MATPLOTLIB_AVAILABLE:
+                _plt.close("all")
 
         logger.info(
             f"SandboxExecutor result | desc={description} | "
@@ -210,6 +231,11 @@ class SandboxExecutor:
             g["pd"] = pd
             g["DataFrame"] = pd.DataFrame
             g["Series"] = pd.Series
+
+        # matplotlib（如果可用，Agg 后端已在模块加载时设置）
+        if _MATPLOTLIB_AVAILABLE:
+            g["plt"] = _plt
+            g["matplotlib"] = _mpl
 
         # 注册的外部数据源函数
         for name, func in self._registered_funcs.items():

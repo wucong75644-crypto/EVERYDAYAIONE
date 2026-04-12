@@ -1241,7 +1241,19 @@
       "WebFetch(domain:docs.docker.com)",
       "Bash(./git-push.sh \"fix: 隐藏工作区 staging 目录\")",
       "Bash(python -m pytest tests/test_sandbox_executor.py tests/test_sandbox_functions.py -q --tb=short)",
-      "Bash(./git-push.sh \"feat: 沙盒注入 WORKSPACE_DIR — 打通用户上传文件到 code_execute 的访问路径\")"
+      "Bash(./git-push.sh \"feat: 沙盒注入 WORKSPACE_DIR — 打通用户上传文件到 code_execute 的访问路径\")",
+      "Bash(python3 -c \"import sys,json; data=json.load\\(sys.stdin\\); [print\\(t[''''path'''']\\) for t in data.get\\(''''tree'''',[]\\) if ''''act'''' in t[''''path''''].lower\\(\\) and ''''plan'''' in t[''''path''''].lower\\(\\)]\")",
+      "WebFetch(domain:llmrefs.com)",
+      "Bash(pip list:*)",
+      "WebFetch(domain:community.openai.com)",
+      "WebFetch(domain:simonw.substack.com)",
+      "WebFetch(domain:simonwillison.net)",
+      "WebFetch(domain:365datascience.com)",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:til.simonwillison.net)",
+      "Bash(grep -n \"def build_\" /Users/wucong/EVERYDAYAIONE/backend/config/*.py)",
+      "Bash(python -m pytest tests/test_sandbox_executor.py tests/test_sandbox_functions.py tests/test_code_tools.py -q --tb=short)",
+      "Bash(./git-push.sh \"feat: 沙盒能力扩展 — 架构隔离工具描述 + matplotlib/reportlab/docx/pptx 白名单 + 对话交互规范\")"
     ],
     "additionalDirectories": [
       "/tmp"
