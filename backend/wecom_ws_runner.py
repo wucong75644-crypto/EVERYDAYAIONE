@@ -14,6 +14,13 @@ from pathlib import Path
 # 确保 backend 目录在 sys.path 中（systemd 启动时 cwd 可能不同）
 sys.path.insert(0, str(Path(__file__).parent))
 
+# 关键：python wecom_ws_runner.py 启动时，本文件被加载为 __main__ 模块。
+# 但 push_dispatcher 里 from wecom_ws_runner import get_ws_client 会重新导入
+# 作为独立的 wecom_ws_runner 模块（_manager=None）。
+# 注册到 sys.modules 确保 import 拿到同一份模块实例。
+if __name__ == "__main__" and "wecom_ws_runner" not in sys.modules:
+    sys.modules["wecom_ws_runner"] = sys.modules["__main__"]
+
 from loguru import logger
 
 from core.database import get_db
