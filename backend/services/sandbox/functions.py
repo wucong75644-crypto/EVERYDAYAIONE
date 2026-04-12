@@ -237,11 +237,24 @@ def build_sandbox_executor(
         Path(_file_settings.file_workspace_root) / "staging" / _conv_id
     )
 
+    # 用户 workspace 目录（对标 OpenAI /mnt/data，沙盒内只读访问）
+    # 直接算路径，不实例化 FileExecutor（避免 mkdir 副作用）
+    _ws_base = Path(_file_settings.file_workspace_root).resolve()
+    if org_id:
+        _workspace_dir = str(_ws_base / "org" / org_id / user_id)
+    elif user_id:
+        _workspace_dir = str(
+            _ws_base / "personal" / hashlib.md5(user_id.encode()).hexdigest()[:8]
+        )
+    else:
+        _workspace_dir = str(_ws_base)
+
     executor = SandboxExecutor(
         timeout=timeout,
         max_result_chars=max_result_chars,
         output_dir=_output_dir,
         staging_dir=_staging_dir,
+        workspace_dir=_workspace_dir,
         upload_fn=_auto_upload,
     )
 
