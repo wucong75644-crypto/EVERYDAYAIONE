@@ -17,9 +17,10 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from api.routes import (
-    audio, auth, conversation, file, health, image, memory, message,
-    models, org, org_members_assignments, pdd, qimen, scheduled_tasks,
-    subscription, task, webhook, wecom, wecom_auth, wecom_chat_targets, ws,
+    audio, auth, conversation, error_monitor, file, health, image, memory,
+    message, models, org, org_members_assignments, pdd, qimen,
+    scheduled_tasks, subscription, task, webhook, wecom, wecom_auth,
+    wecom_chat_targets, ws,
 )
 from core.config import get_settings
 from core.exceptions import AppException
@@ -283,8 +284,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         _elected = True  # Redis 不可用时默认启动
 
+    from core.database import get_async_db, close_async_db
+
     if _elected:
-        from core.database import get_async_db, close_async_db
         async_db = await get_async_db()
         from services.kuaimai.erp_sync_orchestrator import ErpSyncOrchestrator
         erp_orchestrator = ErpSyncOrchestrator(async_db)
@@ -301,6 +303,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         erp_orchestrator_task = None
         erp_healthcheck_task = None
         logger.info(f"ErpSyncOrchestrator skipped (another worker elected) | pid={_worker_pid}")
+
+    # 全局错误监控（loguru ERROR sink → DB 持久化 + 致命级推企微）
+    _error_monitor_db = await get_async_db()
+    from core.error_alert_sink import error_log_consumer, error_log_cleanup_loop
+    error_consumer_task = asyncio.create_task(error_log_consumer(_error_monitor_db))
+    error_cleanup_task = asyncio.create_task(error_log_cleanup_loop(_error_monitor_db))
 
     # 企微智能机器人 WS 长连接已拆为独立进程（wecom_ws_runner.py）
     # 由 systemd everydayai-wecom.service 管理，避免多 worker 竞争
@@ -337,6 +345,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         erp_healthcheck_task.cancel()
         try:
             await erp_healthcheck_task
+        except asyncio.CancelledError:
+            pass
+
+    # 停止全局错误监控
+    for _t in (error_consumer_task, error_cleanup_task):
+        _t.cancel()
+        try:
+            await _t
         except asyncio.CancelledError:
             pass
 
@@ -500,6 +516,9 @@ def register_routers(app: FastAPI) -> None:
 
     # WebSocket
     app.include_router(ws.router, prefix="/api")
+
+    # 系统错误监控
+    app.include_router(error_monitor.router, prefix="/api")
 
 
 # 创建应用实例

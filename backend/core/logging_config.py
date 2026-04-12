@@ -53,4 +53,12 @@ def setup_logging():
         encoding="utf-8",
     )
 
+    # 3. 错误监控 sink（ERROR+ → 内存队列 → 后台协程写 DB + 致命告警推企微）
+    from core.error_alert_sink import error_sink
+    logger.add(
+        error_sink,
+        level="ERROR",
+        format="{message}",  # sink 内部从 record 取原始字段，format 不影响
+    )
+
     logger.info(f"Logging configured | log_dir={log_dir.absolute()}")
