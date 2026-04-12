@@ -61,6 +61,7 @@ async def sync_product(
             "created_at": _safe_ts(p.get("created")),
             "modified_at": _safe_ts(p.get("modified")),
             "pic_url": p.get("picPath"),
+            "is_sku_item": bool(p.get("isSkuItem")),
             "length": p.get("x"),
             "width": p.get("y"),
             "height": p.get("z"),

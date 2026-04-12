@@ -77,13 +77,28 @@ _ALL_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("platform", "来源平台(tb/jd/pdd/dy/xhs/1688)"),
         ("creator_name", "创建人"),
     ],
+    "商品规格": [
+        ("sku_properties_name", "SKU规格属性"),
+        ("diff_stock_num", "缺货数量"),
+    ],
     "订单物流": [
         ("order_no", "平台订单号"),
         ("order_status", "订单状态"),
         ("order_type", "订单类型"),
+        ("status_name", "状态中文名"),
         ("express_no", "快递单号"),
         ("express_company", "快递公司"),
         ("purchase_order_code", "采购单号"),
+    ],
+    "买家收件人": [
+        ("buyer_nick", "买家昵称"),
+        ("receiver_name", "收件人"),
+        ("receiver_mobile", "手机号"),
+        ("receiver_phone", "电话"),
+        ("receiver_state", "省"),
+        ("receiver_city", "市"),
+        ("receiver_district", "区"),
+        ("receiver_address", "详细地址"),
     ],
     "状态标记": [
         ("is_cancel", "是否取消"),
@@ -154,8 +169,9 @@ def _mask_phone(phone: str) -> str:
 
 def _mask_pii(row: dict) -> dict:
     """脱敏 PII 字段（就地修改，防御性设计）"""
-    if "receiver_phone" in row:
-        row["receiver_phone"] = _mask_phone(row.get("receiver_phone", ""))
+    for phone_col in ("receiver_phone", "receiver_mobile"):
+        if phone_col in row:
+            row[phone_col] = _mask_phone(row.get(phone_col, ""))
     if "receiver_name" in row:
         name = row.get("receiver_name", "")
         if name and len(name) >= 2:
