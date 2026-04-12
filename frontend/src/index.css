@@ -36,3 +36,9 @@ body {
   color: var(--color-text-primary);
   background-color: var(--color-surface);
 }
+
+/* 工作区打开时：对话区取消 max-width 限制，让内容能被压缩到更窄 */
+.workspace-compact .max-w-4xl,
+.workspace-compact .max-w-3xl {
+  max-width: none;
+}
