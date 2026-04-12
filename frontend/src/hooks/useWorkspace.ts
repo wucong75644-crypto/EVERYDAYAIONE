@@ -48,8 +48,8 @@ export interface UseWorkspaceReturn {
   breadcrumbs: { label: string; path: string }[];
   /** 刷新当前目录 */
   refresh: () => Promise<void>;
-  /** 上传文件 */
-  upload: (files: File[]) => Promise<void>;
+  /** 上传文件（返回 true=全部成功） */
+  upload: (files: File[]) => Promise<boolean>;
   /** 删除 */
   remove: (path: string) => Promise<boolean>;
   /** 新建文件夹 */

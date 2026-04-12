@@ -8,7 +8,7 @@
 import { useState, useCallback } from 'react';
 import { Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useWorkspace, type ViewMode } from '../../hooks/useWorkspace';
+import { useWorkspace } from '../../hooks/useWorkspace';
 import Modal from '../common/Modal';
 import { Button } from '../ui/Button';
 import FilePreviewModal, { canPreview } from '../chat/media/FilePreviewModal';
