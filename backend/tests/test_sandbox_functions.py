@@ -302,6 +302,24 @@ class TestBuildSandboxExecutor:
         assert "upload_file" in executor._registered_funcs
         assert callable(executor._registered_funcs["upload_file"])
 
+    def test_workspace_dir_injected_for_org_user(self, tmp_path):
+        """企业用户 workspace_dir 注入正确路径"""
+        with patch("core.config.get_settings") as mock_s:
+            mock_s.return_value.file_workspace_root = str(tmp_path)
+            executor = build_sandbox_executor(
+                user_id="u1", org_id="org1",
+            )
+        assert executor._workspace_dir is not None
+        assert "org/org1/u1" in executor._workspace_dir
+
+    def test_workspace_dir_injected_for_personal_user(self, tmp_path):
+        """个人用户 workspace_dir 注入 personal/{hash} 路径"""
+        with patch("core.config.get_settings") as mock_s:
+            mock_s.return_value.file_workspace_root = str(tmp_path)
+            executor = build_sandbox_executor(user_id="u1")
+        assert executor._workspace_dir is not None
+        assert "personal/" in executor._workspace_dir
+
 
 # ============================================================
 # _upload_file 函数执行测试
