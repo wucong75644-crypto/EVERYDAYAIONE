@@ -262,10 +262,24 @@ class ErpSyncScheduler:
             self._org_last_config[org_id] = now
 
     async def _enqueue_task(self, org_id: str | None, sync_type: str) -> bool:
-        """ZADD NX 入队，原子去重。"""
-        from core.redis import RedisClient
+        """ZADD NX 入队，原子去重 + 执行中检查。
+
+        双重去重：
+        1. ZADD NX：队列里已存在的不重复入队
+        2. running key：worker 正在执行的不入队（防止执行期间被取走后重新入队）
+        """
+        from core.redis import RedisClient, get_redis
 
         task_id = _build_task_id(org_id, sync_type)
+
+        # 检查 worker 是否正在执行该任务
+        try:
+            redis = await get_redis()
+            if redis and await redis.exists(f"erp_sync:running:{task_id}"):
+                return False
+        except Exception:
+            pass  # Redis 不可用时不阻塞入队
+
         weight = PRIORITY_WEIGHTS.get(sync_type, 0)
         score = time.time() - weight
 
