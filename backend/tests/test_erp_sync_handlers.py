@@ -484,11 +484,11 @@ class TestSyncOrder:
         # 标记字段（boolean）
         assert row["order_type"] == "4,5,14"
         assert row["pay_amount"] == "128.50"
-        assert row["is_cancel"] is False
-        assert row["is_refund"] is True
-        assert row["is_exception"] is False
-        assert row["is_halt"] is False
-        assert row["is_urgent"] is True
+        assert row["is_cancel"] == 0
+        assert row["is_refund"] == 1
+        assert row["is_exception"] == 0
+        assert row["is_halt"] == 0
+        assert row["is_urgent"] == 1
         # 买家 + 收件人
         assert row["buyer_nick"] == "测试买家"
         assert row["receiver_name"] == "张三"

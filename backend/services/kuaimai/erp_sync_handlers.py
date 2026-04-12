@@ -417,11 +417,11 @@ def _build_order_rows(
             # 标记字段（独立列，boolean）
             "order_type": doc.get("type"),
             "pay_amount": doc.get("payAmount"),
-            "is_cancel": bool(doc.get("isCancel")),
-            "is_refund": bool(doc.get("isRefund")),
-            "is_exception": bool(doc.get("isExcep")),
-            "is_halt": bool(doc.get("isHalt")),
-            "is_urgent": bool(doc.get("isUrgent")),
+            "is_cancel": doc.get("isCancel"),
+            "is_refund": doc.get("isRefund"),
+            "is_exception": doc.get("isExcep"),
+            "is_halt": doc.get("isHalt"),
+            "is_urgent": doc.get("isUrgent"),
             # 买家 + 收件人（订单头级别，仅首行存储避免冗余）
             "buyer_nick": doc.get("buyerNick") if pos == 0 else None,
             "receiver_name": doc.get("receiverName") if pos == 0 else None,

@@ -455,13 +455,13 @@ CREATE TABLE IF NOT EXISTS erp_document_items (
     sys_memo TEXT,
     buyer_message TEXT,
     creator_name VARCHAR(64),
-    order_type SMALLINT,
+    order_type VARCHAR(32),
     pay_amount DECIMAL(12,2),
-    is_cancel BOOLEAN,
-    is_refund BOOLEAN,
-    is_exception BOOLEAN,
-    is_halt BOOLEAN,
-    is_urgent BOOLEAN,
+    is_cancel SMALLINT,
+    is_refund SMALLINT,
+    is_exception SMALLINT,
+    is_halt SMALLINT,
+    is_urgent SMALLINT,
     buyer_nick VARCHAR(128),
     receiver_name VARCHAR(64),
     receiver_mobile VARCHAR(32),
@@ -497,8 +497,8 @@ CREATE INDEX IF NOT EXISTS idx_doc_items_type_date ON erp_document_items (doc_ty
 CREATE INDEX IF NOT EXISTS idx_doc_items_outer_created ON erp_document_items (outer_id, doc_created_at);
 CREATE INDEX IF NOT EXISTS idx_doc_items_buyer ON erp_document_items (buyer_nick) WHERE buyer_nick IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_doc_items_receiver_mobile ON erp_document_items (receiver_mobile) WHERE receiver_mobile IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_doc_items_is_exception ON erp_document_items (is_exception) WHERE is_exception = true;
-CREATE INDEX IF NOT EXISTS idx_doc_items_is_halt ON erp_document_items (is_halt) WHERE is_halt = true;
+CREATE INDEX IF NOT EXISTS idx_doc_items_is_exception ON erp_document_items (is_exception) WHERE is_exception = 1;
+CREATE INDEX IF NOT EXISTS idx_doc_items_is_halt ON erp_document_items (is_halt) WHERE is_halt = 1;
 CREATE INDEX IF NOT EXISTS idx_doc_items_order_type ON erp_document_items (order_type) WHERE order_type IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS erp_document_items_archive (
@@ -545,13 +545,13 @@ CREATE TABLE IF NOT EXISTS erp_document_items_archive (
     sys_memo TEXT,
     buyer_message TEXT,
     creator_name VARCHAR(64),
-    order_type SMALLINT,
+    order_type VARCHAR(32),
     pay_amount DECIMAL(12,2),
-    is_cancel BOOLEAN,
-    is_refund BOOLEAN,
-    is_exception BOOLEAN,
-    is_halt BOOLEAN,
-    is_urgent BOOLEAN,
+    is_cancel SMALLINT,
+    is_refund SMALLINT,
+    is_exception SMALLINT,
+    is_halt SMALLINT,
+    is_urgent SMALLINT,
     buyer_nick VARCHAR(128),
     receiver_name VARCHAR(64),
     receiver_mobile VARCHAR(32),
