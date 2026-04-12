@@ -163,8 +163,9 @@ class TestExecuteHappyPath:
 
     @pytest.mark.asyncio
     async def test_single_turn_direct_reply(self):
-        """单轮直接回复（无工具调用） → success"""
+        """force_tool_use_first=True: 首轮纯文本被忽略，连续2次空工具后采用文本"""
         adapter = FakeAdapter([
+            {"text": "昨日销售总额 12.5 万元", "tool_calls": []},
             {"text": "昨日销售总额 12.5 万元", "tool_calls": []},
         ])
         executor = FakeToolExecutor()
@@ -408,11 +409,13 @@ class TestSummaryGeneration:
 
     @pytest.mark.asyncio
     async def test_long_text_triggers_summary_call(self):
-        """text 超过 500 字 → 调用 LLM 生成摘要"""
+        """text 超过 500 字 → 调用 LLM 生成摘要（force_tool_use_first 需连续2轮空工具）"""
         long_text = "数据" * 300  # 600 字
         adapter = FakeAdapter([
             {"text": long_text, "tool_calls": []},
-            # 第二次调用是 _generate_summary
+            # 第2轮：force_tool_use_first 强制再来一轮，仍输出长文本
+            {"text": long_text, "tool_calls": []},
+            # 第3次调用是 _generate_summary
             {"text": "200 字摘要", "tool_calls": []},
         ])
         executor = FakeToolExecutor()

@@ -241,7 +241,7 @@ class ScheduledTaskAgent:
             strategy=LoopStrategy(
                 exit_signals=frozenset(),
                 enable_tool_expansion=False,
-                force_tool_use_first=False,
+                force_tool_use_first=True,
             ),
             hooks=[ToolAuditHook()],
         )
