@@ -151,20 +151,25 @@ export default function WorkspaceFileItem({
     </Dropdown>
   );
 
+  const isUploading = item.uploadProgress !== undefined;
+
   // === 列表模式 ===
   if (mode === 'list') {
     return (
       <div
-        className="group flex items-center gap-3 px-3 py-2.5 hover:bg-[var(--s-hover)] rounded-[var(--s-radius-control)] cursor-pointer transition-colors"
-        onClick={handleClick}
-        onDoubleClick={() => { if (!item.is_dir) { setIsRenaming(true); setNewName(item.name); } }}
+        className={cn(
+          "group flex items-center gap-3 px-3 py-2.5 rounded-[var(--s-radius-control)] transition-colors",
+          isUploading ? 'opacity-70' : 'hover:bg-[var(--s-hover)] cursor-pointer',
+        )}
+        onClick={isUploading ? undefined : handleClick}
+        onDoubleClick={isUploading ? undefined : () => { if (!item.is_dir) { setIsRenaming(true); setNewName(item.name); } }}
       >
         {/* 图标 */}
         <span className={cn('text-xl shrink-0', item.is_dir ? 'text-blue-500 dark:text-blue-400' : getFileIconColor(item.name))}>
           {item.is_dir ? <Folder className="w-5 h-5 fill-current" /> : getFileIcon(item.name)}
         </span>
 
-        {/* 文件名 */}
+        {/* 文件名 + 进度 */}
         <div className="flex-1 min-w-0">
           {isRenaming ? (
             <input
@@ -181,21 +186,29 @@ export default function WorkspaceFileItem({
               {item.name}{item.is_dir && '/'}
             </span>
           )}
+          {isUploading && (
+            <div className="mt-1 h-1 w-full bg-[var(--s-border-subtle)] rounded-full overflow-hidden">
+              <div
+                className="h-full bg-[var(--s-accent)] rounded-full transition-[width] duration-200"
+                style={{ width: `${item.uploadProgress}%` }}
+              />
+            </div>
+          )}
         </div>
 
-        {/* 大小 */}
+        {/* 大小 / 进度百分比 */}
         <span className="text-xs text-[var(--s-text-tertiary)] w-16 text-right shrink-0">
-          {!item.is_dir && formatFileSize(item.size)}
+          {isUploading ? `${item.uploadProgress}%` : !item.is_dir && formatFileSize(item.size)}
         </span>
 
         {/* 修改时间 */}
         <span className="text-xs text-[var(--s-text-tertiary)] w-24 text-right shrink-0">
-          {formatTime(item.modified)}
+          {isUploading ? '上传中...' : formatTime(item.modified)}
         </span>
 
         {/* 操作菜单 */}
         <div onClick={(e) => e.stopPropagation()}>
-          {dropdownMenu}
+          {!isUploading && dropdownMenu}
         </div>
       </div>
     );
@@ -204,14 +217,19 @@ export default function WorkspaceFileItem({
   // === 图标模式 ===
   return (
     <div
-      className="group relative flex flex-col items-center gap-2 p-3 rounded-[var(--s-radius-card)] hover:bg-[var(--s-hover)] cursor-pointer transition-colors"
-      onClick={handleClick}
-      onDoubleClick={() => { if (!item.is_dir) { setIsRenaming(true); setNewName(item.name); } }}
+      className={cn(
+        "group relative flex flex-col items-center gap-2 p-3 rounded-[var(--s-radius-card)] transition-colors",
+        isUploading ? 'opacity-70' : 'hover:bg-[var(--s-hover)] cursor-pointer',
+      )}
+      onClick={isUploading ? undefined : handleClick}
+      onDoubleClick={isUploading ? undefined : () => { if (!item.is_dir) { setIsRenaming(true); setNewName(item.name); } }}
     >
       {/* 操作按钮（右上角） */}
-      <div className="absolute top-1 right-1" onClick={(e) => e.stopPropagation()}>
-        {dropdownMenu}
-      </div>
+      {!isUploading && (
+        <div className="absolute top-1 right-1" onClick={(e) => e.stopPropagation()}>
+          {dropdownMenu}
+        </div>
+      )}
 
       {/* 大图标 */}
       <span className={cn('text-4xl', item.is_dir ? 'text-blue-500 dark:text-blue-400' : getFileIconColor(item.name))}>
@@ -235,8 +253,20 @@ export default function WorkspaceFileItem({
         </span>
       )}
 
-      {/* 大小 */}
-      {!item.is_dir && (
+      {/* 进度条 / 大小 */}
+      {isUploading ? (
+        <div className="w-full px-1">
+          <div className="h-1 w-full bg-[var(--s-border-subtle)] rounded-full overflow-hidden">
+            <div
+              className="h-full bg-[var(--s-accent)] rounded-full transition-[width] duration-200"
+              style={{ width: `${item.uploadProgress}%` }}
+            />
+          </div>
+          <span className="text-[10px] text-[var(--s-text-tertiary)] block text-center mt-0.5">
+            {item.uploadProgress}%
+          </span>
+        </div>
+      ) : !item.is_dir && (
         <span className="text-[10px] text-[var(--s-text-tertiary)]">
           {formatFileSize(item.size)}
         </span>
