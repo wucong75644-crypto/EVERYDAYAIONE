@@ -376,14 +376,15 @@ export default function Chat() {
         onDelete={handleConversationDelete}
       />
 
-      {/* 主内容区（GitLab 模式：对话区始终 100%，工作区固定定位 + padding-right 腾空间）
-          优势：关闭工作区时对话区不 reflow（只移除 padding），消除滚动跳动 */}
-      <div className="flex-1 flex flex-col min-w-0 relative">
-        {/* 对话区 — 始终铺满，用 padding-right 给工作区腾空间 */}
+      {/* 主内容区 */}
+      <div className="flex-1 flex min-w-0 relative">
+        {/* 对话区 — 显式宽度，工作区打开时用 calc 收缩 */}
         <div
-          className="flex-1 flex flex-col min-w-0 overflow-hidden"
+          className="flex flex-col overflow-hidden"
           style={{
-            paddingRight: view === 'workspace' ? workspacePanelWidth + 4 : 0,
+            width: view === 'workspace'
+              ? `calc(100% - ${workspacePanelWidth + 4}px)`
+              : '100%',
           }}
         >
           {/* 顶部导航栏 */}
