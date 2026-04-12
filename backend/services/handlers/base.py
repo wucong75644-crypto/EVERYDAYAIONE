@@ -311,6 +311,32 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
                     urls.append(url)
         return urls
 
+    def _extract_workspace_files(self, content: List[ContentPart]) -> List[Dict[str, Any]]:
+        """提取含 workspace_path 的文件（用于注入 AI 提示，让 AI 用 file_read 读取）"""
+        from schemas.message import FilePart
+        files: List[Dict[str, Any]] = []
+        for part in content:
+            wp = None
+            if isinstance(part, FilePart) and part.workspace_path:
+                wp = {
+                    "workspace_path": part.workspace_path,
+                    "name": part.name,
+                    "size": part.size,
+                    "mime_type": part.mime_type,
+                    "url": part.url,
+                }
+            elif isinstance(part, dict) and part.get("type") == "file" and part.get("workspace_path"):
+                wp = {
+                    "workspace_path": part["workspace_path"],
+                    "name": part.get("name", ""),
+                    "size": part.get("size"),
+                    "mime_type": part.get("mime_type", ""),
+                    "url": part.get("url", ""),
+                }
+            if wp:
+                files.append(wp)
+        return files
+
     # ========================================
     # 智能重试方法
     # ========================================

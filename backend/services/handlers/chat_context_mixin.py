@@ -35,11 +35,17 @@ class ChatContextMixin:
         """组装发送给 LLM 的完整消息列表"""
         image_urls = self._extract_image_urls(content)
         file_urls = self._extract_file_urls(content)
+        workspace_files = self._extract_workspace_files(content)
+
+        # workspace 文件的 URL 不走 image_url 通道（AI 通过 file_read 工具读取）
+        if workspace_files:
+            ws_urls = {f["url"] for f in workspace_files if f.get("url")}
+            file_urls = [u for u in file_urls if u not in ws_urls]
 
         # 当前用户消息
         messages = [{"role": "user", "content": text_content}]
         if image_urls or file_urls:
-            # 图片和文件统一用 image_url 格式（Gemini 通过 MIME 自动识别 PDF）
+            # 图片和非工作区文件统一用 image_url 格式（Gemini 通过 MIME 自动识别 PDF）
             media_parts = [
                 *[{"type": "image_url", "image_url": {"url": url}} for url in image_urls],
                 *[{"type": "image_url", "image_url": {"url": url}} for url in file_urls],
@@ -48,6 +54,32 @@ class ChatContextMixin:
                 {"type": "text", "text": text_content},
                 *media_parts,
             ]
+
+        # 工作区文件提示注入（让 AI 用 file_read 工具读取）
+        if workspace_files:
+            def _fmt_size(size):
+                if not size:
+                    return "未知大小"
+                if size < 1024:
+                    return f"{size}B"
+                if size < 1024 * 1024:
+                    return f"{size / 1024:.1f}KB"
+                return f"{size / 1024 / 1024:.1f}MB"
+
+            file_list = "\n".join(
+                f"- {f['workspace_path']} ({_fmt_size(f.get('size'))}, {f.get('mime_type', '未知类型')})"
+                for f in workspace_files
+            )
+            ws_prompt = (
+                f"用户上传了以下文件到工作区，你可以使用 file_read 工具读取分析：\n"
+                f"{file_list}\n"
+                f"请先读取文件内容，再回复用户。"
+            )
+            messages.insert(0, {"role": "system", "content": ws_prompt})
+            logger.debug(
+                f"Workspace files injected | count={len(workspace_files)} | "
+                f"paths={[f['workspace_path'] for f in workspace_files]}"
+            )
 
         # 搜索上下文注入（作为 system prompt，让工作模型基于搜索结果回答）
         if router_search_context:

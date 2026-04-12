@@ -34,6 +34,18 @@ interface InputAreaProps {
   onMessageSent: (aiMessage?: Message | null) => void;
   /** 模型变化时调用（同步给父组件，用于重新生成） */
   onModelChange?: (model: UnifiedModel) => void;
+  /** 受控 prompt（状态提升到 Chat.tsx，切换工作区视图时不丢失） */
+  prompt?: string;
+  /** prompt 变更回调 */
+  onPromptChange?: (value: string) => void;
+  /** 工作区待发送文件（"插入到聊天"功能） */
+  workspaceFiles?: Array<{ name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }>;
+  /** 移除单个工作区文件 */
+  onRemoveWorkspaceFile?: (workspacePath: string) => void;
+  /** 发送后清空工作区文件队列 */
+  onWorkspaceFilesConsumed?: () => void;
+  /** 打开工作区视图（UploadMenu 菜单项用） */
+  onOpenWorkspace?: () => void;
 }
 
 export default function InputArea({
@@ -43,9 +55,17 @@ export default function InputArea({
   onMessagePending,
   onMessageSent,
   onModelChange,
+  prompt: controlledPrompt,
+  onPromptChange: controlledOnPromptChange,
+  workspaceFiles = [],
+  onRemoveWorkspaceFile,
+  onWorkspaceFilesConsumed,
+  onOpenWorkspace,
 }: InputAreaProps) {
-  // 基础状态
-  const [prompt, setPrompt] = useState('');
+  // 基础状态 — prompt 支持受控和非受控两种模式（向后兼容）
+  const [internalPrompt, setInternalPrompt] = useState('');
+  const prompt = controlledPrompt ?? internalPrompt;
+  const setPrompt = controlledOnPromptChange ?? setInternalPrompt;
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -263,7 +283,8 @@ export default function InputArea({
     }
 
     const anyUploading = isUploading || isFileUploading;
-    const sendButtonState = getSendButtonState(isSubmitting, anyUploading, !!(prompt.trim() || hasImages || hasFiles));
+    const hasWorkspaceFiles = workspaceFiles.length > 0;
+    const sendButtonState = getSendButtonState(isSubmitting, anyUploading, !!(prompt.trim() || hasImages || hasFiles || hasWorkspaceFiles));
     if (sendButtonState.disabled) return;
 
     // 检查全局任务限制
@@ -276,13 +297,22 @@ export default function InputArea({
     const messageContent = prompt.trim();
     // 准备图片 URL 数组：使用服务器 URL（确保图片已上传完成）
     const imageUrls = uploadedImageUrls.length > 0 ? [...uploadedImageUrls] : null;
-    // 准备 PDF 文件数组
-    const fileData = uploadedFileUrls.length > 0 ? [...uploadedFileUrls] : null;
+    // 准备文件数组（PDF 上传 + 工作区插入的文件合并）
+    const wsFileMapped = workspaceFiles.map((f) => ({
+      url: f.cdn_url || '',
+      name: f.name,
+      mime_type: f.mime_type || 'application/octet-stream',
+      size: f.size,
+      workspace_path: f.workspace_path,
+    }));
+    const mergedFiles = [...uploadedFileUrls, ...wsFileMapped];
+    const fileData = mergedFiles.length > 0 ? mergedFiles : null;
 
     // 立即清空输入（提升响应速度）
     setPrompt('');
     handleRemoveAllImages();  // 30秒后才会清理 ObjectURL
     handleRemoveAllFiles();
+    onWorkspaceFilesConsumed?.();  // 清空工作区待发送文件
     setIsSubmitting(true);
 
     // 发送消息时滚动到底部（用户可能在上方浏览历史）
@@ -340,7 +370,7 @@ export default function InputArea({
   };
 
   const anyUploadingState = isUploading || isFileUploading;
-  const sendButtonState = getSendButtonState(isSubmitting, anyUploadingState, !!(prompt.trim() || hasImages || hasFiles));
+  const sendButtonState = getSendButtonState(isSubmitting, anyUploadingState, !!(prompt.trim() || hasImages || hasFiles || workspaceFiles.length > 0));
 
   // 输入变化时清除发送错误状态
   const handlePromptChange = useCallback((value: string) => {
@@ -427,6 +457,9 @@ export default function InputArea({
           maxPDFSize={selectedModel.capabilities.maxPDFSize}
           onRemoveFile={handleRemoveFile}
           onFileSelect={handleFileSelect}
+          workspaceFiles={workspaceFiles}
+          onRemoveWorkspaceFile={onRemoveWorkspaceFile}
+          onOpenWorkspace={onOpenWorkspace}
           recordingState={recordingState}
           audioBlob={audioBlob}
           audioDuration={audioDuration}

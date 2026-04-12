@@ -435,3 +435,165 @@ class TestGetCdnUrl:
             mock_settings.return_value.oss_cdn_domain = None
             url = ex.get_cdn_url("any.txt")
         assert url is None
+
+
+# ============================================================
+# file_delete
+# ============================================================
+
+
+class TestFileDelete:
+
+    @pytest.mark.asyncio
+    async def test_delete_file(self, executor, workspace):
+        """删除文件"""
+        Path(workspace, "temp.txt").write_text("hello")
+        result = await executor.file_delete("temp.txt")
+        assert "已删除文件" in result
+        assert not Path(workspace, "temp.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_delete_empty_dir(self, executor, workspace):
+        """删除空目录"""
+        Path(workspace, "emptydir").mkdir()
+        result = await executor.file_delete("emptydir")
+        assert "已删除目录" in result
+        assert not Path(workspace, "emptydir").exists()
+
+    @pytest.mark.asyncio
+    async def test_delete_nonempty_dir(self, executor, workspace):
+        """非空目录拒绝删除"""
+        d = Path(workspace, "fulldir")
+        d.mkdir()
+        (d / "file.txt").write_text("x")
+        result = await executor.file_delete("fulldir")
+        assert "不为空" in result
+        assert d.exists()
+
+    @pytest.mark.asyncio
+    async def test_delete_not_found(self, executor):
+        """不存在的路径"""
+        result = await executor.file_delete("ghost.txt")
+        assert "不存在" in result
+
+
+# ============================================================
+# file_mkdir
+# ============================================================
+
+
+class TestFileMkdir:
+
+    @pytest.mark.asyncio
+    async def test_mkdir_simple(self, executor, workspace):
+        """创建目录"""
+        result = await executor.file_mkdir("newdir")
+        assert "已创建目录" in result
+        assert Path(workspace, "newdir").is_dir()
+
+    @pytest.mark.asyncio
+    async def test_mkdir_nested(self, executor, workspace):
+        """创建嵌套目录"""
+        result = await executor.file_mkdir("a/b/c")
+        assert "已创建目录" in result
+        assert Path(workspace, "a/b/c").is_dir()
+
+    @pytest.mark.asyncio
+    async def test_mkdir_exists(self, executor, workspace):
+        """目录已存在"""
+        Path(workspace, "existing").mkdir()
+        result = await executor.file_mkdir("existing")
+        assert "已存在" in result
+
+    @pytest.mark.asyncio
+    async def test_mkdir_conflict_with_file(self, executor, workspace):
+        """同名文件已存在"""
+        Path(workspace, "conflict").write_text("x")
+        result = await executor.file_mkdir("conflict")
+        assert "同名文件已存在" in result
+
+
+# ============================================================
+# file_rename
+# ============================================================
+
+
+class TestFileRename:
+
+    @pytest.mark.asyncio
+    async def test_rename_file(self, executor, workspace):
+        """重命名文件"""
+        Path(workspace, "old.txt").write_text("data")
+        result = await executor.file_rename("old.txt", "new.txt")
+        assert "已重命名" in result
+        assert not Path(workspace, "old.txt").exists()
+        assert Path(workspace, "new.txt").read_text() == "data"
+
+    @pytest.mark.asyncio
+    async def test_rename_target_exists(self, executor, workspace):
+        """目标已存在返回错误"""
+        Path(workspace, "a.txt").write_text("a")
+        Path(workspace, "b.txt").write_text("b")
+        result = await executor.file_rename("a.txt", "b.txt")
+        assert "已存在" in result
+        # 两个文件都应该还在
+        assert Path(workspace, "a.txt").exists()
+        assert Path(workspace, "b.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_rename_cross_dir_rejected(self, executor, workspace):
+        """跨目录重命名被拒绝"""
+        Path(workspace, "sub").mkdir()
+        Path(workspace, "root.txt").write_text("x")
+        result = await executor.file_rename("root.txt", "sub/moved.txt")
+        assert "不允许跨目录" in result
+
+    @pytest.mark.asyncio
+    async def test_rename_src_not_found(self, executor):
+        """源文件不存在"""
+        result = await executor.file_rename("ghost.txt", "new.txt")
+        assert "不存在" in result
+
+
+# ============================================================
+# file_move
+# ============================================================
+
+
+class TestFileMove:
+
+    @pytest.mark.asyncio
+    async def test_move_file(self, executor, workspace):
+        """移动文件到子目录"""
+        Path(workspace, "file.txt").write_text("data")
+        Path(workspace, "dest").mkdir()
+        result = await executor.file_move("file.txt", "dest")
+        assert "已移动" in result
+        assert not Path(workspace, "file.txt").exists()
+        assert Path(workspace, "dest/file.txt").read_text() == "data"
+
+    @pytest.mark.asyncio
+    async def test_move_conflict(self, executor, workspace):
+        """目标位置有同名文件"""
+        Path(workspace, "dup.txt").write_text("src")
+        dest = Path(workspace, "dest")
+        dest.mkdir()
+        (dest / "dup.txt").write_text("existing")
+        result = await executor.file_move("dup.txt", "dest")
+        assert "同名文件" in result
+        # 源文件还在
+        assert Path(workspace, "dup.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_move_dest_not_dir(self, executor, workspace):
+        """目标不是目录"""
+        Path(workspace, "file.txt").write_text("x")
+        result = await executor.file_move("file.txt", "nonexistent")
+        assert "不存在" in result
+
+    @pytest.mark.asyncio
+    async def test_move_src_not_found(self, executor, workspace):
+        """源文件不存在"""
+        Path(workspace, "dest").mkdir()
+        result = await executor.file_move("ghost.txt", "dest")
+        assert "不存在" in result

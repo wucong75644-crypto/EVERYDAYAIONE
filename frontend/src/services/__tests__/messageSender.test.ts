@@ -141,6 +141,39 @@ describe('createTextWithFiles', () => {
     expect(result).toHaveLength(1);
     expect(result[0]).toEqual({ type: 'text', text: '无文件' });
   });
+
+  it('should pass through workspace_path when present', () => {
+    const wsFile = {
+      url: 'https://cdn.example.com/ws/data.csv',
+      name: 'data.csv',
+      mime_type: 'text/csv',
+      size: 1024,
+      workspace_path: 'uploads/data.csv',
+    };
+    const result = createTextWithFiles('分析', null, [wsFile]);
+
+    expect(result).toHaveLength(2);
+    const filePart = result[1];
+    expect(filePart.type).toBe('file');
+    expect((filePart as { workspace_path?: string }).workspace_path).toBe('uploads/data.csv');
+  });
+
+  it('should not include workspace_path when not provided', () => {
+    const result = createTextWithFiles('分析', null, [testFile]);
+
+    const filePart = result[1];
+    expect(filePart.type).toBe('file');
+    expect((filePart as { workspace_path?: string }).workspace_path).toBeUndefined();
+  });
+
+  it('should handle mixed files with and without workspace_path', () => {
+    const wsFile = { url: 'https://cdn.example.com/ws/a.csv', name: 'a.csv', mime_type: 'text/csv', size: 100, workspace_path: 'a.csv' };
+    const result = createTextWithFiles('对比', null, [testFile, wsFile]);
+
+    expect(result).toHaveLength(3);
+    expect((result[1] as { workspace_path?: string }).workspace_path).toBeUndefined();
+    expect((result[2] as { workspace_path?: string }).workspace_path).toBe('a.csv');
+  });
 });
 
 // ============================================================

@@ -5,11 +5,16 @@
 - /upload: 上传到 OSS（CDN URL，用于聊天多模态内容）
 - /workspace/upload: 上传到 workspace（ossfs 目录，供 AI 分析）
 - /workspace/list: 列出用户 workspace 文件
+- /workspace/delete: 删除文件或空目录
+- /workspace/mkdir: 新建文件夹
+- /workspace/rename: 重命名
+- /workspace/move: 移动文件
 """
 
+import mimetypes
 from typing import List, Optional
 
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, Form, UploadFile, File
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -96,6 +101,8 @@ class WorkspaceFileItem(BaseModel):
     is_dir: bool
     size: int = 0
     modified: str = ""
+    cdn_url: Optional[str] = None
+    mime_type: Optional[str] = None
 
 
 class WorkspaceListResponse(BaseModel):
@@ -114,11 +121,14 @@ async def upload_to_workspace(
     ctx: OrgCtx,
     db: ScopedDB,
     file: UploadFile = File(...),
+    target_dir: str = Form(default="."),
 ):
     """
     上传文件到用户的 workspace 目录（ossfs 挂载），供 AI 读取分析。
 
-    文件存储路径: workspace/{org_id或personal}/{user_id}/uploads/{filename}
+    Args:
+        file: 上传的文件
+        target_dir: 目标目录（相对于用户 workspace 根目录，默认 "." 即根目录）
     """
     from core.config import get_settings
     from services.file_executor import FileExecutor
@@ -157,9 +167,11 @@ async def upload_to_workspace(
             org_id=org_id,
         )
 
-        # 生成唯一文件名防止覆盖，写入 uploads/ 子目录
+        # 生成唯一文件名防止覆盖，写入目标目录
         unique_name = executor.generate_unique_filename(filename)
-        upload_path = f"uploads/{unique_name}"
+        # target_dir="." 时放根目录，否则放指定子目录
+        clean_dir = target_dir.strip("/").strip("\\")
+        upload_path = f"{clean_dir}/{unique_name}" if clean_dir and clean_dir != "." else unique_name
         target = executor.resolve_safe_path(upload_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
@@ -228,19 +240,196 @@ async def list_workspace(
     if not target.exists() or not target.is_dir():
         return WorkspaceListResponse(path=path, items=[], total=0)
 
+    # 拼接相对路径前缀（用于 CDN URL 计算）
+    path_prefix = path.strip("/").strip("\\")
+
     items = []
     for item in sorted(target.iterdir()):
         if item.name.startswith("."):
             continue
         try:
             st = item.stat()
+            is_file = item.is_file()
+
+            # 文件：生成 CDN URL 和 MIME 类型
+            cdn_url = None
+            mime_type = None
+            if is_file:
+                rel_path = f"{path_prefix}/{item.name}" if path_prefix and path_prefix != "." else item.name
+                cdn_url = executor.get_cdn_url(rel_path)
+                mime_type = mimetypes.guess_type(item.name)[0]
+
             items.append(WorkspaceFileItem(
                 name=item.name,
                 is_dir=item.is_dir(),
-                size=st.st_size if item.is_file() else 0,
+                size=st.st_size if is_file else 0,
                 modified=str(int(st.st_mtime)),
+                cdn_url=cdn_url,
+                mime_type=mime_type,
             ))
         except (PermissionError, OSError):
             continue
 
     return WorkspaceListResponse(path=path, items=items, total=len(items))
+
+
+# ============================================================
+# Workspace 文件管理（删除/新建文件夹/重命名/移动）
+# ============================================================
+
+
+class WorkspacePathRequest(BaseModel):
+    """单路径请求"""
+    path: str = Field(..., description="相对路径", max_length=500)
+
+
+class WorkspaceMkdirResponse(BaseModel):
+    """新建文件夹响应"""
+    success: bool = True
+    path: str
+
+
+class WorkspaceRenameRequest(BaseModel):
+    """重命名请求"""
+    old_path: str = Field(..., description="原路径", max_length=500)
+    new_path: str = Field(..., description="新路径", max_length=500)
+
+
+class WorkspaceMoveRequest(BaseModel):
+    """移动请求"""
+    src_path: str = Field(..., description="源文件路径", max_length=500)
+    dest_dir: str = Field(..., description="目标目录", max_length=500)
+
+
+class WorkspaceMoveResponse(BaseModel):
+    """移动响应"""
+    success: bool = True
+    new_path: str
+
+
+class WorkspaceSuccessResponse(BaseModel):
+    """通用成功响应"""
+    success: bool = True
+
+
+def _get_executor(ctx: OrgCtx) -> "FileExecutor":
+    """构建 FileExecutor 实例（复用逻辑提取）"""
+    from core.config import get_settings
+    from services.file_executor import FileExecutor
+
+    settings = get_settings()
+    if not settings.file_workspace_enabled:
+        raise AppException(
+            code="FILE_WORKSPACE_DISABLED",
+            message="文件操作功能未启用",
+            status_code=403,
+        )
+    return FileExecutor(
+        workspace_root=settings.file_workspace_root,
+        user_id=ctx.user_id,
+        org_id=ctx.org_id,
+    )
+
+
+@router.post(
+    "/workspace/delete",
+    response_model=WorkspaceSuccessResponse,
+    summary="删除workspace文件或空目录",
+)
+async def delete_workspace_item(
+    ctx: OrgCtx,
+    db: ScopedDB,
+    body: WorkspacePathRequest,
+):
+    """删除文件或空目录。非空目录需先清空内容。"""
+    executor = _get_executor(ctx)
+    try:
+        result = await executor.file_delete(body.path)
+        if "不存在" in result or "不为空" in result or "无法删除" in result:
+            raise ValidationError(message=result)
+        return WorkspaceSuccessResponse()
+    except PermissionError as e:
+        raise ValidationError(message=str(e))
+
+
+@router.post(
+    "/workspace/mkdir",
+    response_model=WorkspaceMkdirResponse,
+    summary="新建workspace文件夹",
+)
+async def mkdir_workspace(
+    ctx: OrgCtx,
+    db: ScopedDB,
+    body: WorkspacePathRequest,
+):
+    """创建文件夹（含中间路径）。"""
+    executor = _get_executor(ctx)
+    try:
+        result = await executor.file_mkdir(body.path)
+        if "已存在" in result and "文件" in result:
+            raise AppException(
+                code="CONFLICT",
+                message=result,
+                status_code=409,
+            )
+        return WorkspaceMkdirResponse(path=body.path)
+    except PermissionError as e:
+        raise ValidationError(message=str(e))
+
+
+@router.post(
+    "/workspace/rename",
+    response_model=WorkspaceSuccessResponse,
+    summary="重命名workspace文件或目录",
+)
+async def rename_workspace_item(
+    ctx: OrgCtx,
+    db: ScopedDB,
+    body: WorkspaceRenameRequest,
+):
+    """重命名文件或目录（同目录下，跨目录请用 move）。"""
+    executor = _get_executor(ctx)
+    try:
+        result = await executor.file_rename(body.old_path, body.new_path)
+        if "不存在" in result:
+            raise ValidationError(message=result)
+        if "已存在" in result:
+            raise AppException(
+                code="CONFLICT",
+                message=result,
+                status_code=409,
+            )
+        if "不允许跨目录" in result:
+            raise ValidationError(message=result)
+        return WorkspaceSuccessResponse()
+    except PermissionError as e:
+        raise ValidationError(message=str(e))
+
+
+@router.post(
+    "/workspace/move",
+    response_model=WorkspaceMoveResponse,
+    summary="移动workspace文件",
+)
+async def move_workspace_item(
+    ctx: OrgCtx,
+    db: ScopedDB,
+    body: WorkspaceMoveRequest,
+):
+    """移动文件到指定目录。"""
+    executor = _get_executor(ctx)
+    try:
+        result = await executor.file_move(body.src_path, body.dest_dir)
+        if "不存在" in result:
+            raise ValidationError(message=result)
+        if "同名文件" in result:
+            raise AppException(
+                code="CONFLICT",
+                message=result,
+                status_code=409,
+            )
+        # 从结果中提取新路径
+        new_path = result.split("→")[-1].strip() if "→" in result else f"{body.dest_dir}/{body.src_path.split('/')[-1]}"
+        return WorkspaceMoveResponse(new_path=new_path)
+    except PermissionError as e:
+        raise ValidationError(message=str(e))

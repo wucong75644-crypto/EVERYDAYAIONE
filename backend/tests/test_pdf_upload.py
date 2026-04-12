@@ -314,3 +314,177 @@ class TestGoogleAdapterDetectMimeType:
         """测试：大小写不敏感"""
         result = adapter._detect_mime_type("https://cdn.example.com/DOC.PDF")
         assert result == "application/pdf"
+
+
+# ============ BaseHandler._extract_workspace_files ============
+
+
+class TestExtractWorkspaceFiles:
+    """测试 BaseHandler._extract_workspace_files()"""
+
+    @pytest.fixture
+    def handler(self, mock_db):
+        from services.handlers.chat_handler import ChatHandler
+        return ChatHandler(db=mock_db)
+
+    def test_extract_from_filepart_with_workspace_path(self, handler):
+        """从 FilePart 提取含 workspace_path 的文件"""
+        content = [
+            TextPart(text="分析"),
+            FilePart(
+                url="https://cdn.example.com/ws/data.csv",
+                name="data.csv",
+                mime_type="text/csv",
+                size=1024,
+                workspace_path="uploads/data.csv",
+            ),
+        ]
+        result = handler._extract_workspace_files(content)
+        assert len(result) == 1
+        assert result[0]["workspace_path"] == "uploads/data.csv"
+        assert result[0]["name"] == "data.csv"
+        assert result[0]["size"] == 1024
+
+    def test_skip_filepart_without_workspace_path(self, handler):
+        """无 workspace_path 的 FilePart 不提取（走 image_url 通道）"""
+        content = [
+            FilePart(url="https://cdn.example.com/report.pdf", name="report.pdf", mime_type="application/pdf"),
+        ]
+        result = handler._extract_workspace_files(content)
+        assert result == []
+
+    def test_extract_from_dict_with_workspace_path(self, handler):
+        """从 dict 格式提取"""
+        content = [
+            {"type": "file", "url": "https://cdn.example.com/ws/report.xlsx",
+             "name": "report.xlsx", "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+             "size": 5000, "workspace_path": "reports/report.xlsx"},
+        ]
+        result = handler._extract_workspace_files(content)
+        assert len(result) == 1
+        assert result[0]["workspace_path"] == "reports/report.xlsx"
+
+    def test_skip_dict_without_workspace_path(self, handler):
+        """dict 无 workspace_path 不提取"""
+        content = [
+            {"type": "file", "url": "https://cdn.example.com/doc.pdf", "name": "doc.pdf"},
+        ]
+        result = handler._extract_workspace_files(content)
+        assert result == []
+
+    def test_empty_content(self, handler):
+        """空内容返回空列表"""
+        assert handler._extract_workspace_files([]) == []
+
+    def test_mixed_content(self, handler):
+        """混合内容：只提取有 workspace_path 的文件"""
+        content = [
+            TextPart(text="分析这些文件"),
+            FilePart(url="https://cdn.example.com/a.pdf", name="a.pdf", mime_type="application/pdf"),
+            FilePart(url="https://cdn.example.com/ws/b.csv", name="b.csv", mime_type="text/csv", workspace_path="b.csv"),
+        ]
+        result = handler._extract_workspace_files(content)
+        assert len(result) == 1
+        assert result[0]["name"] == "b.csv"
+
+
+# ============ ChatContextMixin workspace 文件注入 ============
+
+
+class TestBuildLlmMessagesWorkspace:
+    """测试 workspace 文件在 _build_llm_messages 中的注入逻辑"""
+
+    @pytest.fixture
+    def chat_handler(self, mock_db):
+        from services.handlers.chat_handler import ChatHandler
+        return ChatHandler(db=mock_db)
+
+    @pytest.mark.asyncio
+    async def test_workspace_file_injects_system_prompt(self, chat_handler, mock_db):
+        """workspace 文件注入 system prompt，不作为 image_url"""
+        mock_db.set_table_data("messages", [])
+
+        content = [
+            TextPart(text="分析这个CSV"),
+            FilePart(
+                url="https://cdn.example.com/ws/sales.csv",
+                name="sales.csv",
+                mime_type="text/csv",
+                size=2048,
+                workspace_path="uploads/sales.csv",
+            ),
+        ]
+        with patch.object(chat_handler, '_build_memory_prompt', new_callable=AsyncMock, return_value=None):
+            result = await chat_handler._build_llm_messages(
+                content=content,
+                user_id="u1",
+                conversation_id="c1",
+                text_content="分析这个CSV",
+            )
+
+        # 用户消息应该是纯文本（workspace 文件不走 image_url）
+        user_msg = result[-1]
+        assert user_msg["role"] == "user"
+        assert user_msg["content"] == "分析这个CSV"
+
+        # 应该有一个 system prompt 包含 file_read 提示
+        system_prompts = [m["content"] for m in result if m["role"] == "system"]
+        ws_prompt = [p for p in system_prompts if "file_read" in p]
+        assert len(ws_prompt) == 1
+        assert "uploads/sales.csv" in ws_prompt[0]
+        assert "2.0KB" in ws_prompt[0]
+
+    @pytest.mark.asyncio
+    async def test_mixed_pdf_and_workspace(self, chat_handler, mock_db):
+        """PDF（无 workspace_path）走 image_url，workspace 文件走提示注入"""
+        mock_db.set_table_data("messages", [])
+
+        content = [
+            TextPart(text="对比这些"),
+            FilePart(url="https://cdn.example.com/report.pdf", name="report.pdf", mime_type="application/pdf"),
+            FilePart(url="https://cdn.example.com/ws/data.csv", name="data.csv", mime_type="text/csv", workspace_path="data.csv"),
+        ]
+        with patch.object(chat_handler, '_build_memory_prompt', new_callable=AsyncMock, return_value=None):
+            result = await chat_handler._build_llm_messages(
+                content=content,
+                user_id="u1",
+                conversation_id="c1",
+                text_content="对比这些",
+            )
+
+        user_msg = result[-1]
+        # 用户消息应该包含 image_url（仅 PDF，不含 workspace 文件）
+        assert isinstance(user_msg["content"], list)
+        image_urls = [
+            p["image_url"]["url"]
+            for p in user_msg["content"]
+            if isinstance(p, dict) and p.get("type") == "image_url"
+        ]
+        assert "https://cdn.example.com/report.pdf" in image_urls
+        assert "https://cdn.example.com/ws/data.csv" not in image_urls
+
+        # workspace 文件通过 system prompt 注入
+        system_prompts = [m["content"] for m in result if m["role"] == "system"]
+        ws_prompt = [p for p in system_prompts if "file_read" in p]
+        assert len(ws_prompt) == 1
+        assert "data.csv" in ws_prompt[0]
+
+    @pytest.mark.asyncio
+    async def test_no_workspace_files_no_injection(self, chat_handler, mock_db):
+        """无 workspace 文件时不注入额外 system prompt"""
+        mock_db.set_table_data("messages", [])
+
+        content = [
+            TextPart(text="普通问题"),
+        ]
+        with patch.object(chat_handler, '_build_memory_prompt', new_callable=AsyncMock, return_value=None):
+            result = await chat_handler._build_llm_messages(
+                content=content,
+                user_id="u1",
+                conversation_id="c1",
+                text_content="普通问题",
+            )
+
+        system_prompts = [m["content"] for m in result if m["role"] == "system"]
+        ws_prompt = [p for p in system_prompts if "file_read" in p]
+        assert ws_prompt == []

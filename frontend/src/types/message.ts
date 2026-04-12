@@ -51,6 +51,8 @@ export interface FilePart {
   name: string;
   mime_type: string;
   size?: number;
+  /** 工作区相对路径（有值时 AI 通过 file_read 读取，无值时走多模态 image_url） */
+  workspace_path?: string;
 }
 
 // ============================================================
