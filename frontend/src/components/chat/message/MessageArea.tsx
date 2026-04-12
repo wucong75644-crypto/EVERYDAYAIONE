@@ -416,7 +416,7 @@ export default function MessageArea({
 
           {/* 消息列表
               性能保护：消息数 > 50 时禁用 framer layout 动画，避免长对话卡顿 */}
-          <div className={compact ? "px-2 space-y-4" : "max-w-4xl mx-auto px-4 space-y-4"}>
+          <div className={compact ? "px-4 space-y-4" : "max-w-4xl mx-auto px-4 space-y-4"}>
             {(() => {
               const enableLayoutAnimation = mergedMessages.length <= 50;
               return mergedMessages.map((message) => {
