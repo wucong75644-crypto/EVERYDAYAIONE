@@ -153,55 +153,100 @@ push_dispatcher = PushDispatcher()
 # ws_runner 进程订阅器（供 wecom_ws_runner 启动时调用）
 # ════════════════════════════════════════════════════════
 
+async def _create_subscriber_redis() -> "Redis":
+    """创建 pubsub 专用 Redis 客户端（独立于全局 RedisClient）
+
+    参照 websocket_redis.py 的成功模式：
+    - socket_timeout=None：长连接不超时（全局的 5.0s 会导致空闲断连）
+    - socket_keepalive=True：TCP 保活
+    - health_check_interval=60：每 60 秒发心跳
+    """
+    from redis.asyncio import Redis
+    from core.config import settings
+
+    return Redis.from_url(
+        settings.redis_url,
+        encoding="utf-8",
+        decode_responses=True,
+        socket_timeout=None,
+        socket_connect_timeout=5.0,
+        socket_keepalive=True,
+        health_check_interval=60,
+    )
+
+
 async def start_proactive_subscriber() -> None:
     """ws_runner 进程订阅 Redis 频道，收到消息后调用 send_proactive
 
-    需要在 wecom_ws_runner.main() 中以 asyncio.create_task() 方式启动
+    需要在 wecom_ws_runner.main() 中以 asyncio.create_task() 方式启动。
+    内置指数退避重连（参照 websocket_redis._redis_listen_loop）。
     """
-    try:
-        from core.redis import RedisClient
-        client = await RedisClient.get_client()
-    except Exception as e:
-        logger.error(f"Proactive subscriber: redis unavailable | {e}")
-        return
+    retry_delay = 1.0
+    max_delay = 30.0
+    consecutive_failures = 0
 
-    pubsub = client.pubsub()
-    await pubsub.subscribe(WECOM_PROACTIVE_CHANNEL)
-    logger.info(f"Wecom proactive subscriber started | channel={WECOM_PROACTIVE_CHANNEL}")
-
-    try:
-        async for message in pubsub.listen():
-            if message.get("type") != "message":
-                continue
-            try:
-                raw = message["data"]
-                if isinstance(raw, bytes):
-                    raw = raw.decode("utf-8")
-                payload = json.loads(raw)
-
-                from wecom_ws_runner import get_ws_client
-                ws_client = get_ws_client(payload["org_id"])
-                if not ws_client or not ws_client.is_connected:
-                    logger.warning(
-                        f"Proactive subscriber: WS not connected | "
-                        f"org={payload['org_id']}"
-                    )
-                    continue
-
-                await ws_client.send_proactive(
-                    chatid=payload["chatid"],
-                    msgtype=payload["msgtype"],
-                    content=payload["content"],
-                )
-                logger.info(
-                    f"Proactive subscriber: sent | org={payload['org_id']} | "
-                    f"chatid={payload['chatid']}"
-                )
-            except Exception as e:
-                logger.error(f"Proactive subscriber: handle failed | {e}")
-    finally:
+    while True:
+        sub_redis = None
+        pubsub = None
         try:
-            await pubsub.unsubscribe(WECOM_PROACTIVE_CHANNEL)
-            await pubsub.close()
-        except Exception:
-            pass
+            sub_redis = await _create_subscriber_redis()
+            pubsub = sub_redis.pubsub()
+            await pubsub.subscribe(WECOM_PROACTIVE_CHANNEL)
+            logger.info(
+                f"Wecom proactive subscriber started | "
+                f"channel={WECOM_PROACTIVE_CHANNEL}"
+            )
+            consecutive_failures = 0
+
+            async for message in pubsub.listen():
+                if message.get("type") != "message":
+                    continue
+                try:
+                    raw = message["data"]
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8")
+                    payload = json.loads(raw)
+
+                    from wecom_ws_runner import get_ws_client
+                    ws_client = get_ws_client(payload["org_id"])
+                    if not ws_client or not ws_client.is_connected:
+                        logger.warning(
+                            f"Proactive subscriber: WS not connected | "
+                            f"org={payload['org_id']}"
+                        )
+                        continue
+
+                    await ws_client.send_proactive(
+                        chatid=payload["chatid"],
+                        msgtype=payload["msgtype"],
+                        content=payload["content"],
+                    )
+                    logger.info(
+                        f"Proactive subscriber: sent | "
+                        f"org={payload['org_id']} | chatid={payload['chatid']}"
+                    )
+                except Exception as e:
+                    logger.error(f"Proactive subscriber: handle failed | {e}")
+
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            consecutive_failures += 1
+            delay = min(retry_delay * (2 ** (consecutive_failures - 1)), max_delay)
+            logger.warning(
+                f"Proactive subscriber disconnected, reconnecting in {delay}s | "
+                f"attempt={consecutive_failures} | error={e}"
+            )
+            await asyncio.sleep(delay)
+        finally:
+            if pubsub:
+                try:
+                    await pubsub.unsubscribe(WECOM_PROACTIVE_CHANNEL)
+                    await pubsub.aclose()
+                except Exception:
+                    pass
+            if sub_redis:
+                try:
+                    await sub_redis.aclose()
+                except Exception:
+                    pass
