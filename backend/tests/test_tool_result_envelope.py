@@ -192,6 +192,29 @@ class TestTruncateCode:
         assert wrapped == result  # 原文返回
         assert "⚠ 输出已截断" not in wrapped
 
+    def test_file_read_no_truncate(self):
+        """file_read 免二次截断（Agent 需要完整表头信息）"""
+        result = "文件: data.csv | 共 50000 行\n" + "\n".join(
+            f"  {i}\tcol_{i}_data_value" for i in range(200)
+        )
+        assert len(result) > MAIN_AGENT_BUDGET
+        wrapped = wrap("file_read", result)
+        assert wrapped == result
+
+    def test_file_list_no_truncate(self):
+        """file_list 免二次截断"""
+        result = "目录: . | 共 50 项\n" + "\n".join(
+            f"  [文件] report_{i}.xlsx\t5.0MB" for i in range(50)
+        )
+        wrapped = wrap("file_list", result)
+        assert wrapped == result
+
+    def test_file_info_no_truncate(self):
+        """file_info 免二次截断"""
+        result = "路径: big_report.xlsx\n类型: 文件\n大小: 56.2MB\nMIME: application/vnd.openxmlformats"
+        wrapped = wrap("file_info", result)
+        assert wrapped == result
+
 
 # ============================================================
 # _truncate_erp — reserve 边界保护

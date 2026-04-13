@@ -22,8 +22,12 @@ from schemas.message import ContentPart, TextPart
 from services.handlers.chat_tool_mixin import accumulate_tool_call_delta
 
 
-# 与 ChatHandler 共享的最大轮次常量
-MAX_TOOL_TURNS = 10
+# 优雅降级提示（与 ChatHandler 保持一致）
+_STOP_MESSAGES = {
+    "max_turns": "查询涉及多个步骤，已达到工具调用上限。",
+    "max_tokens": "本次查询数据量过大。",
+    "wall_timeout": "查询耗时过长。",
+}
 
 
 class ChatGenerateMixin:
@@ -69,7 +73,18 @@ class ChatGenerateMixin:
 
         try:
             # 4. 工具循环（与 _stream_generate 相同逻辑，无 WebSocket 推送）
-            for turn in range(MAX_TOOL_TURNS):
+            from services.agent.execution_budget import ExecutionBudget
+            from core.config import get_settings as _get_budget_settings
+            _bs = _get_budget_settings()
+            _budget = ExecutionBudget(
+                max_turns=_bs.budget_max_turns,
+                max_tokens=_bs.budget_max_tokens,
+                max_wall_time=_bs.budget_max_wall_time,
+            )
+
+            while not _budget.stop_reason:
+                _budget.use_turn()
+                turn = _budget.turns_used - 1
                 current_tools = list(core_tools)
                 if tool_context.discovered_tools:
                     discovered = get_tools_by_names(
@@ -119,6 +134,7 @@ class ChatGenerateMixin:
                 tool_results = await self._execute_tool_calls(
                     completed_calls, "wecom_task", conversation_id,
                     "wecom_msg", user_id, turn + 1, messages=messages,
+                    budget=_budget,
                 )
                 for tc, result_text, is_error in tool_results:
                     messages.append({
@@ -145,6 +161,13 @@ class ChatGenerateMixin:
                     f"generate_complete tool turn {turn + 1} | "
                     f"tools={[c['name'] for c in completed_calls]}"
                 )
+
+            # 优雅降级
+            _stop = _budget.stop_reason
+            if _stop and accumulated_text:
+                accumulated_text += f"\n\n> ⚠️ {_STOP_MESSAGES.get(_stop, '执行超限')}"
+            elif _stop and not accumulated_text:
+                accumulated_text = _STOP_MESSAGES.get(_stop, "执行超限，请稍后重试")
 
         except Exception as e:
             logger.error(f"generate_complete error | error={e}")

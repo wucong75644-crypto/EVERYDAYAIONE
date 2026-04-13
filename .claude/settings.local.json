@@ -1267,7 +1267,13 @@
       "WebFetch(domain:forum.cursor.com)",
       "WebFetch(domain:langchain-doc.readthedocs.io)",
       "WebFetch(domain:openai.com)",
-      "Bash(./git-push.sh \"feat: 沙盒架构升级Phase2 — 输出控制\\(免二次截断+Code-as-Query\\) + staging 3天过期 + keep_turns 3\")"
+      "Bash(./git-push.sh \"feat: 沙盒架构升级Phase2 — 输出控制\\(免二次截断+Code-as-Query\\) + staging 3天过期 + keep_turns 3\")",
+      "Bash(python -m pytest tests/test_tool_result_envelope.py tests/test_code_tools.py -q --tb=short)",
+      "WebFetch(domain:docs.cursor.com)",
+      "WebFetch(domain:apidog.com)",
+      "WebFetch(domain:langchain-cn.readthedocs.io)",
+      "Bash(python -m pytest tests/test_erp_agent.py::TestERPAgentGuards::test_token_accumulation_across_turns -v --tb=long)",
+      "Bash(./git-push.sh \"feat: 多维预算系统 — 轮次为主控+token安全网+时间兜底+fork子Agent继承+优雅降级\")"
     ],
     "additionalDirectories": [
       "/tmp"
