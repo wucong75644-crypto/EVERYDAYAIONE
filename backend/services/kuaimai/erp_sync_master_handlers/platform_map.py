@@ -40,10 +40,10 @@ _PLATFORM_MAP_BATCH_SIZE = 200
 # SKU 平台映射过期天数。超过此天数的 checked_at 视为过期需重查。
 # 24 小时 = 用户接受的"新上架平台感知延迟"上限。
 _PLATFORM_MAP_STALE_DAYS = 1
-# 半批降级最大递归深度（200 → 100 → 50 → 25 → 放弃）
-_PLATFORM_MAP_SPLIT_MAX_DEPTH = 4
+# 半批降级最大递归深度（200 → 100 → 50 → 25 → 12 → 6 → 3 → 放弃）
+_PLATFORM_MAP_SPLIT_MAX_DEPTH = 7
 # 半批降级最小批次（小于此值不再分割，直接放弃此批）
-_PLATFORM_MAP_SPLIT_MIN_SIZE = 25
+_PLATFORM_MAP_SPLIT_MIN_SIZE = 3
 # 续锁频率：每 N 个批次调一次 lock_extend_fn
 _PLATFORM_MAP_LOCK_EXTEND_EVERY = 10
 # 标记 checked_at 时 IN 子句的分块大小
@@ -124,7 +124,8 @@ async def _process_platform_map_batch(
             ):
                 logger.error(
                     f"platform_map: batch too small to split, giving up | "
-                    f"size={len(batch)} | depth={depth}"
+                    f"size={len(batch)} | depth={depth} | "
+                    f"sku_ids={batch}"
                 )
                 return
             mid = len(batch) // 2
