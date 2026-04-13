@@ -7,27 +7,14 @@
 export async function downloadFile(
   url: string,
   filename: string,
-  options: { cors?: boolean } = {},
 ): Promise<void> {
-  const { cors = true } = options;
-  const fetchOptions: RequestInit = cors
-    ? { mode: 'cors', credentials: 'omit' }
-    : {};
-
-  const response = await fetch(url, fetchOptions);
-  if (!response.ok) {
-    throw new Error(`下载失败: ${response.status}`);
-  }
-
-  const blob = await response.blob();
-  const blobUrl = URL.createObjectURL(blob);
-
+  // 直接用 <a> 标签下载，不走 fetch（避免 CORS 问题）
   const link = document.createElement('a');
-  link.href = blobUrl;
+  link.href = url;
   link.download = filename;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-
-  URL.revokeObjectURL(blobUrl);
 }

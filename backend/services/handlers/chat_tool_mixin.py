@@ -73,6 +73,8 @@ class ChatToolMixin:
         # 传递 budget 约束 sandbox 超时
         if budget is not None:
             executor._budget = budget
+        # 子 Agent 生成的文件通过此列表透传到 ChatHandler
+        executor._pending_file_parts = []
         results: List[tuple] = []
 
         # 按并发安全性分批
@@ -98,6 +100,12 @@ class ChatToolMixin:
                         message_id, user_id, turn,
                     )
                     results.append(result)
+
+        # 收集子 Agent（如 ERP Agent）透传的 FilePart
+        if executor._pending_file_parts:
+            if hasattr(self, "_pending_file_parts"):
+                self._pending_file_parts.extend(executor._pending_file_parts)
+            executor._pending_file_parts.clear()
 
         return results
 
