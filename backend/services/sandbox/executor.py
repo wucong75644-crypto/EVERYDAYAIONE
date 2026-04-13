@@ -65,6 +65,8 @@ _ALLOWED_IMPORT_MODULES = frozenset({
     "PIL",
     # 文档生成（PDF / Word / PPT / Excel 直接操作）
     "reportlab", "docx", "pptx", "openpyxl",
+    # 高性能 Excel 读写引擎
+    "calamine", "xlsxwriter",
     # 内部 C 扩展（被上述模块传递依赖）
     "_datetime", "_decimal", "_collections_abc", "_operator",
     "_functools", "_re", "_string", "_json", "_strptime",

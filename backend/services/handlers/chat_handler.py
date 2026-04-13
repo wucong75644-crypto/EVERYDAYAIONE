@@ -366,7 +366,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 # 执行工具（安全检查 + 并行/串行分批 + 传 messages 给 erp_agent）
                 tool_results = await self._execute_tool_calls(
                     completed_calls, task_id, conversation_id, message_id,
-                    user_id, turn + 1, messages=messages,
+                    user_id, turn + 1, messages=messages, budget=_budget,
                 )
 
                 # 工具结果塞进 messages + 更新上下文
