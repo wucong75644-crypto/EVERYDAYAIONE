@@ -306,13 +306,13 @@ class SandboxExecutor:
                 continue
 
             try:
-                content = f.read_bytes()
-                upload_result = await self._upload_fn(content, f.name)
+                file_size = f.stat().st_size
+                upload_result = await self._upload_fn(f.name, file_size)
                 results.append(upload_result)
                 # 保留源文件（用户从工作区"下载/"文件夹直接下载）
                 logger.info(
                     f"SandboxExecutor auto-upload | file={f.name} | "
-                    f"size={len(content)}"
+                    f"size={file_size}"
                 )
             except Exception as e:
                 logger.error(
