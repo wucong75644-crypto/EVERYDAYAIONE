@@ -182,17 +182,15 @@ class TestTruncateCode:
         result = "输出: 42\n完成"
         assert wrap("code_execute", result) == result
 
-    def test_few_lines_but_long_chars_returns_full(self):
-        """行数少(<=15)但总字符超预算时，应返回全文而非截断"""
-        # 10 行，每行 300 字 → 总计 3000+ 字符，超 MAIN_AGENT_BUDGET=2000
+    def test_code_execute_no_truncate(self):
+        """code_execute 在 _NO_TRUNCATE 白名单中，不做二次截断
+        sandbox 自有 max_result_chars=8000 兜底，envelope 不再截断
+        """
         lines = [f"line{i}: " + "x" * 290 for i in range(10)]
         result = "\n".join(lines)
-        assert len(result) > MAIN_AGENT_BUDGET
         wrapped = wrap("code_execute", result)
-        # _truncate_code 返回全文，但 _smart_truncate 仍会追加截断信号
-        assert "⚠ 输出已截断" in wrapped
-        # 关键：不应丢失中间行
-        assert "line5" in wrapped
+        assert wrapped == result  # 原文返回
+        assert "⚠ 输出已截断" not in wrapped
 
 
 # ============================================================

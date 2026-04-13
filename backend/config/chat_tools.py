@@ -144,7 +144,8 @@ TOOL_SYSTEM_PROMPT = """## 工具使用规则
 - NEVER 不调工具就回答业务数据问题——必须调 erp_agent 查数据再回答
 - NEVER 说"我无法查看"——用你的工具查
 - NEVER 反复打开文件探索——读一次表头，想好方案，一步到位
-- NEVER 用 pd.read_excel() 不加 engine='calamine'——不加会超时"""
+- NEVER 用 pd.read_excel() 不加 engine='calamine'——不加会超时
+- NEVER 在 code_execute 中 print(df) 输出整个表——用 df.shape/df.describe()/df.head()，大结果写文件"""
 
 
 def get_tool_system_prompt() -> str:

@@ -80,8 +80,15 @@ ERP_AGENT_BUDGET = 3000
 # erp_agent 工具返回给主 Agent：结论文本，适度保留
 ERP_AGENT_RESULT_BUDGET = 4000
 
-# 不截断的工具（返回本身就短或有特殊含义）
-_NO_TRUNCATE = {"generate_image", "generate_video"}
+# 不截断的工具
+# - generate_image/video: 返回本身就短
+# - code_execute: sandbox 自有 max_result_chars=8000 兜底，不需要二次截断
+# - file_*: 返回通常 < 5K，且是 Agent 理解数据的关键信息
+_NO_TRUNCATE = {
+    "generate_image", "generate_video",
+    "code_execute",
+    "file_read", "file_write", "file_list", "file_search", "file_info",
+}
 
 # 汇总行关键词（ERP 结果以这些开头的行优先保留）
 _SUMMARY_LINE_RE = re.compile(

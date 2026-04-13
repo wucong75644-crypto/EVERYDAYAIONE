@@ -82,10 +82,12 @@ _DESCRIPTION_WORKSPACE = (
     "1. 先读表头了解结构: pd.read_excel(file, engine='calamine', nrows=5)\n"
     "2. 检查数据质量（空值/异常值/重复），如有问题先告知用户\n"
     "3. 确认计算方案后，一个 code_execute 完成全部: 读取→计算→输出\n"
-    "4. 数据量大(>50MB)时优先输出 CSV（打开更快）\n\n"
-    "注意：\n"
-    "- 禁止反复打开文件探索——读一次表头，想好方案，一步到位\n"
-    "- 禁止 import os/sys，写文件用 Path().write_text() 不要用 open()"
+    "4. 大结果写文件，只 print 确认信息（如 '已生成报表，共20条汇总'）\n"
+    "5. 数据量大(>50MB)时优先输出 CSV（打开更快）\n\n"
+    "⚠ 禁止事项：\n"
+    "- 禁止 print(df) / print(df.to_string()) — 用 df.shape, df.describe(), df.head()\n"
+    "- 禁止反复打开文件探索 — 读一次表头，想好方案，一步到位\n"
+    "- 禁止 import os/sys — 写文件用 Path().write_text() 不要用 open()"
 )
 
 

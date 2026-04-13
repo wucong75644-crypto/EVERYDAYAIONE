@@ -246,21 +246,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         finally:
             await RedisClient.release_lock("orphan_task_recovery", _recovery_lock)
 
-    # 启动时清理遗留的 staging 文件（兜底：防止进程崩溃后的孤儿文件）
+    # 启动时清理过期的 staging 文件（3 天过期，对标 OpenAI 容器生命周期模式）
+    # staging 是对话级临时数据库，数据跟着对话走，过期自动销毁
     try:
         from pathlib import Path
         import time as _time_mod
         staging_root = Path(settings.file_workspace_root) / "staging"
         if staging_root.exists():
             import shutil
-            cutoff = _time_mod.time() - 3600  # 超过1小时的视为孤儿
+            cutoff = _time_mod.time() - 3 * 86400  # 3 天过期
             cleaned = 0
             for child in staging_root.iterdir():
                 if child.is_dir() and child.stat().st_mtime < cutoff:
                     shutil.rmtree(child, ignore_errors=True)
                     cleaned += 1
             if cleaned:
-                logger.info(f"Staging orphan cleanup | removed={cleaned} dirs")
+                logger.info(f"Staging cleanup | removed={cleaned} dirs (>3 days)")
     except Exception as e:
         logger.debug(f"Staging cleanup skipped | error={e}")
 
