@@ -1301,7 +1301,8 @@
       "Bash(ssh root@47.110.94.25 -p 22 \"PGPASSWORD=''WlnbhzE5sYYZd9t9Xw08w4I0'' psql -U everydayai -d everydayai -t -c \"\"SELECT substring\\(content::text from ''https://cdn[^\\\\\"\"]*''\\) FROM messages WHERE role=''assistant'' AND content::text LIKE ''%FILE%'' ORDER BY created_at DESC LIMIT 10\"\"\")",
       "Bash(ssh root@47.110.94.25 -p 22 \"PGPASSWORD=''WlnbhzE5sYYZd9t9Xw08w4I0'' psql -U everydayai -d everydayai -t -c \"\"SELECT substring\\(content::text from ''https://cdn[^\\\\\\\\\\\\\"\"]*''\\) FROM messages WHERE role=''assistant'' AND content::text LIKE ''%type%file%'' ORDER BY created_at DESC LIMIT 10\"\"\")",
       "Bash(./git-push.sh \"fix: 统一文件下载 — FileCard 改 <a> 标签避免 CORS + ERP Agent [FILE] 标记透传到主 Agent\")",
-      "Bash(./git-push.sh \"perf: 沙盒输出文件不再重复上传 OSS — 直接用 workspace CDN URL，省一半流量和存储\")"
+      "Bash(./git-push.sh \"perf: 沙盒输出文件不再重复上传 OSS — 直接用 workspace CDN URL，省一半流量和存储\")",
+      "Bash(./git-push.sh \"fix: downloadFile 优先 fetch\\(能指定文件名\\) + 兜底 <a> 标签\\(CORS 失败时\\)\")"
     ],
     "additionalDirectories": [
       "/tmp"
