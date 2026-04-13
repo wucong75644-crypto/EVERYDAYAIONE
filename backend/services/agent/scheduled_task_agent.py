@@ -125,10 +125,13 @@ class ScheduledTaskAgent:
                 request_ctx=self.request_ctx,
             )
 
-            # 6. 全局时间预算
+            # 6. 多维执行预算
             from services.agent.execution_budget import ExecutionBudget
             deadline = float(self.task.get("timeout_sec") or DEFAULT_DEADLINE)
-            budget = ExecutionBudget(deadline)
+            budget = ExecutionBudget(
+                max_turns=MAX_SCHEDULED_TURNS,
+                max_wall_time=deadline,
+            )
 
             # 7. 共享 ToolLoopExecutor（无 WS 推送 / 无时间校验 / 无失败反思）
             tool_loop, hook_ctx = self._build_tool_loop(

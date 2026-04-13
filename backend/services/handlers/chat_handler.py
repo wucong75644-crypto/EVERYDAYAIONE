@@ -31,8 +31,12 @@ from services.handlers.chat_stream_support_mixin import ChatStreamSupportMixin
 from services.handlers.chat_tool_mixin import ChatToolMixin, accumulate_tool_call_delta
 from services.websocket_manager import ws_manager
 
-# 工具循环最大轮次（防止无限循环）
-MAX_TOOL_TURNS = 10
+# 优雅降级提示消息
+_STOP_MESSAGES = {
+    "max_turns": "查询涉及多个步骤，已达到单次对话工具调用上限。请缩小查询范围或分步提问。",
+    "max_tokens": "本次查询消耗的数据量过大，请缩小查询范围。",
+    "wall_timeout": "查询耗时过长，请稍后重试。",
+}
 
 
 class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, ChatContextMixin, BaseHandler):
@@ -236,20 +240,19 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             tool_context = ToolLoopContext(org_id=self.org_id)
 
             # 7. 工具循环：流式生成 → 检测工具调用 → 执行 → 结果塞回 → 继续
-            # [B3] 全局时间预算（推理模型 120s，普通模型 60s）
+            # 多维预算：轮次为主控，token 为安全网，时间纯兜底
             from services.agent.execution_budget import ExecutionBudget
             from core.config import get_settings as _get_settings
             _s = _get_settings()
-            _deadline = (
-                _s.chat_thinking_timeout if thinking_mode
-                else _s.chat_stream_timeout
+            _budget = ExecutionBudget(
+                max_turns=_s.budget_max_turns,
+                max_tokens=_s.budget_max_tokens,
+                max_wall_time=_s.budget_max_wall_time,
             )
-            _budget = ExecutionBudget(_deadline)
 
-            for turn in range(MAX_TOOL_TURNS):
-                if not _budget.check_or_log(f"main_agent turn={turn + 1}"):
-                    logger.warning(f"Main agent budget expired | task={task_id}")
-                    break
+            while not _budget.stop_reason:
+                _budget.use_turn()
+                turn = _budget.turns_used - 1  # 0-based for logging
                 # 每轮动态构建工具列表：核心工具 + 已发现的工具
                 current_tools = list(core_tools)
                 if tool_context.discovered_tools:
@@ -321,10 +324,12 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     if chunk.tool_calls:
                         accumulate_tool_call_delta(tool_calls_acc, chunk.tool_calls)
 
-                    # Token 使用量
+                    # Token 使用量（累加到 budget）
                     if chunk.prompt_tokens or chunk.completion_tokens:
+                        _turn_tokens = (chunk.prompt_tokens or 0) + (chunk.completion_tokens or 0)
                         final_usage["prompt_tokens"] = chunk.prompt_tokens or 0
                         final_usage["completion_tokens"] = chunk.completion_tokens or 0
+                        _budget.use_tokens(_turn_tokens)
                     if chunk.credits_consumed is not None:
                         final_usage["api_credits"] = chunk.credits_consumed
 
@@ -394,9 +399,23 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 # 继续循环，让 AI 看到工具结果
                 logger.info(f"Tool turn {turn + 1} complete | task={task_id} | continuing loop")
 
-            else:
-                # 达到 MAX_TOOL_TURNS 上限
-                logger.warning(f"Max tool turns reached | task={task_id} | turns={MAX_TOOL_TURNS}")
+            # 优雅降级：预算耗尽时追加提示或报错
+            _stop = _budget.stop_reason
+            if _stop:
+                logger.warning(
+                    f"Budget exhausted | task={task_id} | reason={_stop} | "
+                    f"turns={_budget.turns_used} | tokens={_budget.tokens_used}"
+                )
+                if accumulated_text:
+                    # 有部分结果 → 追加提示后正常返回
+                    accumulated_text += f"\n\n> ⚠️ 已达到执行上限（{_STOP_MESSAGES.get(_stop, _stop)}），以上为部分结果。"
+                else:
+                    # 无结果 → 走 error 路径
+                    await self.on_error(
+                        task_id=task_id,
+                        error_code="BUDGET_EXCEEDED",
+                        error_message=_STOP_MESSAGES.get(_stop, "执行超限，请稍后重试"),
+                    )
 
             # 6. 计算积分 → 提取媒体 URL → 合并文件（纯内存操作）
             credits_consumed = self._calculate_credits(final_usage)

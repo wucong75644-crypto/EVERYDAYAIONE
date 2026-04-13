@@ -18,6 +18,7 @@ from services.agent.erp_agent_types import (
     ERPAgentResult,
     filter_erp_context,
     ERP_AGENT_DEADLINE as _ERP_AGENT_DEADLINE,
+    MAX_ERP_TURNS,
 )
 
 
@@ -85,9 +86,16 @@ class ERPAgent:
                 request_ctx=self.request_ctx,
             )
 
-            # 5. 独立工具循环（带全局时间预算）
+            # 5. 独立工具循环（从父 budget fork 或独立创建）
             from services.agent.execution_budget import ExecutionBudget
-            budget = ExecutionBudget(_ERP_AGENT_DEADLINE)
+            _parent_budget = getattr(self, "_budget", None)
+            if _parent_budget is not None:
+                budget = _parent_budget.fork(max_turns=MAX_ERP_TURNS)
+            else:
+                budget = ExecutionBudget(
+                    max_turns=MAX_ERP_TURNS,
+                    max_wall_time=_ERP_AGENT_DEADLINE,
+                )
             tool_loop, hook_ctx = self._build_tool_loop(
                 adapter, executor, all_tools,
             )

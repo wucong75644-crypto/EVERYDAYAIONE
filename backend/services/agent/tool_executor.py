@@ -179,6 +179,11 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             request_ctx=self.request_ctx,  # 时间事实层透传 (B16)
         )
 
+        # 传递父 budget（fork 机制：子消耗回写父）
+        _parent_budget = getattr(self, "_budget", None)
+        if _parent_budget is not None:
+            agent._budget = _parent_budget
+
         # 传入父 Agent 的 messages 上下文（如果有）
         parent_messages = getattr(self, "_parent_messages", None)
 

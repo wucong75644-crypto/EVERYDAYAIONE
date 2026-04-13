@@ -212,9 +212,14 @@ class Settings(BaseSettings):
     file_workspace_enabled: bool = True                          # 文件操作总开关
     file_workspace_root: str = "/mnt/oss-workspace/workspace"    # ossfs 挂载路径（生产）或本地路径（开发）
 
-    # 超时分级配置（按任务类型差异化超时）
-    chat_stream_timeout: float = 60.0         # 聊天流式超时（普通模型）
-    chat_thinking_timeout: float = 120.0      # 聊天流式超时（推理模型，如 deepseek-r1, o4-mini）
+    # 多维预算配置（主 Agent 工具循环）
+    budget_max_turns: int = 15               # 轮次上限（主控制，对标 OpenAI/LangGraph）
+    budget_max_tokens: int = 100_000         # Token 上限（安全网）
+    budget_max_wall_time: float = 600.0      # 墙钟上限（纯兜底，10 分钟）
+
+    # 超时分级配置（按任务类型差异化超时，仅用于非 budget 场景）
+    chat_stream_timeout: float = 60.0         # 聊天流式超时（普通模型）— 已被 budget 替代
+    chat_thinking_timeout: float = 120.0      # 聊天流式超时（推理模型）— 已被 budget 替代
     image_generation_timeout: float = 180.0   # 图片生成轮询超时
     video_generation_timeout: float = 600.0   # 视频生成轮询超时（Sora 等，合理长时间）
 

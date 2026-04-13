@@ -123,6 +123,29 @@ class TestCodeToolsDefinition:
         """CODE_ROUTING_PROMPT（ERP Agent 用）不含 WORKSPACE_DIR"""
         assert "WORKSPACE_DIR" not in CODE_ROUTING_PROMPT
 
+    # ---- Code-as-Query 模式测试 ----
+
+    def test_workspace_version_forbids_print_df(self):
+        """主 Agent 版禁止 print(df)"""
+        tool = build_code_tools(include_workspace=True)[0]
+        desc = tool["function"]["description"]
+        assert "print(df)" in desc
+        assert "df.shape" in desc
+        assert "df.describe()" in desc
+
+    def test_workspace_version_has_data_workflow(self):
+        """主 Agent 版包含数据分析工作流"""
+        tool = build_code_tools(include_workspace=True)[0]
+        desc = tool["function"]["description"]
+        assert "nrows=5" in desc
+        assert "一步到位" in desc
+
+    def test_tool_system_prompt_forbids_print_df(self):
+        """TOOL_SYSTEM_PROMPT 包含 print(df) 禁令"""
+        from config.chat_tools import TOOL_SYSTEM_PROMPT
+        assert "print(df)" in TOOL_SYSTEM_PROMPT
+        assert "df.shape" in TOOL_SYSTEM_PROMPT
+
 
 class TestAgentToolsIntegration:
     """agent_tools.py 集成测试"""
@@ -186,6 +209,11 @@ class TestConfigSettings:
         assert defaults["sandbox_max_result_chars"] == 8000
         assert defaults["sandbox_api_concurrency"] == 10
         assert defaults["sandbox_max_pages"] == 200
+
+    def test_context_tool_keep_turns_default(self):
+        """keep_turns 默认值为 3（多步分析需要更多上下文）"""
+        from core.config import Settings
+        assert Settings.model_fields["context_tool_keep_turns"].default == 3
 
 
 class TestToolExecutorRegistration:
