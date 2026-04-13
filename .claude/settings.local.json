@@ -1259,7 +1259,15 @@
       "Bash(grep -r \"stream_chat\\\\|timeout\" /Users/wucong/EVERYDAYAIONE/backend/services/adapters/*.py)",
       "Bash(./git-push.sh \"fix: 工作区文件注入按扩展名分类 — 二进制文件指引 code_execute，文本文件指引 file_read，修复 Excel 读取死循环\")",
       "Bash(./git-push.sh \"perf: Excel 读写引擎优化\\(calamine+xlsxwriter\\) + sandbox 超时受 budget 约束 + 数据分析工作流规范\")",
-      "Bash(./git-push.sh \"chore: requirements.txt 补充沙盒依赖\\(calamine/matplotlib/reportlab/pptx/seaborn/pillow/xlsxwriter\\)\")"
+      "Bash(./git-push.sh \"chore: requirements.txt 补充沙盒依赖\\(calamine/matplotlib/reportlab/pptx/seaborn/pillow/xlsxwriter\\)\")",
+      "WebFetch(domain:www.mindstudio.ai)",
+      "WebFetch(domain:docs.crewai.com)",
+      "WebFetch(domain:discourse.jupyter.org)",
+      "WebFetch(domain:python.langchain.com)",
+      "WebFetch(domain:forum.cursor.com)",
+      "WebFetch(domain:langchain-doc.readthedocs.io)",
+      "WebFetch(domain:openai.com)",
+      "Bash(./git-push.sh \"feat: 沙盒架构升级Phase2 — 输出控制\\(免二次截断+Code-as-Query\\) + staging 3天过期 + keep_turns 3\")"
     ],
     "additionalDirectories": [
       "/tmp"
