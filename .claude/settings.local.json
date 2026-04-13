@@ -1296,7 +1296,11 @@
       "WebFetch(domain:e2b.mintlify.app)",
       "WebFetch(domain:docs.e2b.dev)",
       "Bash(./git-push.sh \"feat: file_list 返回 abs 绝对路径 — 架构级解决 code_execute 文件路径拼接问题\")",
-      "Bash(./git-push.sh \"feat: OUTPUT_DIR 改为 workspace/下载/ — 用户工作区直接可见可下载 + 文件快照检测新增\")"
+      "Bash(./git-push.sh \"feat: OUTPUT_DIR 改为 workspace/下载/ — 用户工作区直接可见可下载 + 文件快照检测新增\")",
+      "Bash(ssh root@47.110.94.25 -p 22 \"PGPASSWORD=''WlnbhzE5sYYZd9t9Xw08w4I0'' psql -U everydayai -d everydayai -t -c \"\"SELECT substring\\(content::text from ''https://cdn[^\\\\\"\"]*\\\\.xlsx''\\) FROM messages WHERE role=''assistant'' AND content::text LIKE ''%file%xlsx%'' ORDER BY created_at DESC LIMIT 5\"\"\")",
+      "Bash(ssh root@47.110.94.25 -p 22 \"PGPASSWORD=''WlnbhzE5sYYZd9t9Xw08w4I0'' psql -U everydayai -d everydayai -t -c \"\"SELECT substring\\(content::text from ''https://cdn[^\\\\\"\"]*''\\) FROM messages WHERE role=''assistant'' AND content::text LIKE ''%FILE%'' ORDER BY created_at DESC LIMIT 10\"\"\")",
+      "Bash(ssh root@47.110.94.25 -p 22 \"PGPASSWORD=''WlnbhzE5sYYZd9t9Xw08w4I0'' psql -U everydayai -d everydayai -t -c \"\"SELECT substring\\(content::text from ''https://cdn[^\\\\\\\\\\\\\"\"]*''\\) FROM messages WHERE role=''assistant'' AND content::text LIKE ''%type%file%'' ORDER BY created_at DESC LIMIT 10\"\"\")",
+      "Bash(./git-push.sh \"fix: 统一文件下载 — FileCard 改 <a> 标签避免 CORS + ERP Agent [FILE] 标记透传到主 Agent\")"
     ],
     "additionalDirectories": [
       "/tmp"

@@ -193,9 +193,30 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         self._erp_agent_tokens = getattr(self, "_erp_agent_tokens", 0)
         self._erp_agent_tokens += result.tokens_used
 
-        # erp_agent 结果截断（移出 _NO_COMPRESS，防止无限制塞进主 Agent 上下文）
+        # 提取 ERP Agent 结果中的 [FILE] 标记 → 透传到主 Agent 的 _pending_file_parts
+        # ERP Agent 内部 code_execute 生成的文件会产生 [FILE] 标记，
+        # 需要在这里提取，否则会被 LLM 改写成 markdown 链接丢失
+        import re
+        _file_re = re.compile(r'\[FILE\](.*?)\|(.*?)\|(.*?)\|(.*?)\[/FILE\]')
+        _file_matches = _file_re.findall(result.text)
+        if _file_matches:
+            from schemas.message import FilePart
+            _pending = getattr(self, "_pending_file_parts", None)
+            if _pending is not None:
+                for url, name, mime_type, size in _file_matches:
+                    _pending.append(FilePart(
+                        url=url, name=name, mime_type=mime_type, size=int(size),
+                    ))
+            # 从文本中移除 [FILE] 标记（防止 LLM 改写）
+            result_text = _file_re.sub(
+                lambda m: f"📎 文件已生成: {m.group(2)}", result.text,
+            )
+        else:
+            result_text = result.text
+
+        # erp_agent 结果截断
         from services.agent.tool_result_envelope import wrap_erp_agent_result
-        return wrap_erp_agent_result(result.text)
+        return wrap_erp_agent_result(result_text)
 
     # ========================================
     # 搜索工具（按需发现 API/模型文档）
