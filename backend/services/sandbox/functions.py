@@ -204,15 +204,28 @@ def build_sandbox_executor(
     from pathlib import Path
 
     _file_settings = _get_settings()
-
-    # 沙盒输出目录（LLM 代码写文件到这里，执行后自动检测上传）
-    # 延迟创建：目录在 SandboxExecutor._snapshot_output_dir 或代码执行时按需创建
     _conv_id = conversation_id or "default"
-    _output_dir = str(
-        Path(_file_settings.file_workspace_root) / "sandbox_output" / _conv_id
+
+    # 1. 用户 workspace 目录（对标 OpenAI /mnt/data）
+    _ws_base = Path(_file_settings.file_workspace_root).resolve()
+    if org_id:
+        _workspace_dir = str(_ws_base / "org" / org_id / user_id)
+    elif user_id:
+        _workspace_dir = str(
+            _ws_base / "personal" / hashlib.md5(user_id.encode()).hexdigest()[:8]
+        )
+    else:
+        _workspace_dir = str(_ws_base)
+
+    # 2. 输出目录 → workspace 下的 "下载/" 文件夹（对标电脑的下载文件夹）
+    _output_dir = str(Path(_workspace_dir) / "下载")
+
+    # 3. staging 数据目录（local_db_export 写 parquet 到这里）
+    _staging_dir = str(
+        Path(_file_settings.file_workspace_root) / "staging" / _conv_id
     )
 
-    # upload 函数（供自动文件检测使用）
+    # 4. upload 函数（供自动文件检测使用）
     async def _auto_upload(content: bytes, filename: str) -> str:
         import mimetypes
         safe_name = Path(filename).name
@@ -231,23 +244,6 @@ def build_sandbox_executor(
             )
         except Exception as e:
             return f"❌ 文件上传失败: {safe_name} ({e})"
-
-    # staging 数据目录（local_db_export 写 parquet 到这里）
-    _staging_dir = str(
-        Path(_file_settings.file_workspace_root) / "staging" / _conv_id
-    )
-
-    # 用户 workspace 目录（对标 OpenAI /mnt/data，沙盒内只读访问）
-    # 直接算路径，不实例化 FileExecutor（避免 mkdir 副作用）
-    _ws_base = Path(_file_settings.file_workspace_root).resolve()
-    if org_id:
-        _workspace_dir = str(_ws_base / "org" / org_id / user_id)
-    elif user_id:
-        _workspace_dir = str(
-            _ws_base / "personal" / hashlib.md5(user_id.encode()).hexdigest()[:8]
-        )
-    else:
-        _workspace_dir = str(_ws_base)
 
     executor = SandboxExecutor(
         timeout=timeout,

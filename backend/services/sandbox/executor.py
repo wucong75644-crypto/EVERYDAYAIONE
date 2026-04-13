@@ -167,8 +167,9 @@ class SandboxExecutor:
             f"code_len={len(code)} | funcs={list(self._registered_funcs.keys())}"
         )
 
-        # 2. 清空输出目录（每次执行都是干净环境，对标 OpenAI Code Interpreter）
+        # 2. 确保输出目录存在 + 快照现有文件（用于检测新生成的文件）
         self._clean_output_dir()
+        self._snapshot_before = self._snapshot_output_files()
 
         # 3. 构建受限执行环境
         sandbox_globals = self._build_globals()
@@ -267,18 +268,24 @@ class SandboxExecutor:
     # ========================================
 
     def _clean_output_dir(self) -> None:
-        """清空输出目录（每次执行前调用，确保干净环境）"""
+        """确保输出目录存在（不清空，下载文件夹是持久的）"""
         if not self._output_dir:
             return
         from pathlib import Path
-        import shutil
+        Path(self._output_dir).mkdir(parents=True, exist_ok=True)
+
+    def _snapshot_output_files(self) -> set:
+        """快照输出目录现有文件（执行前调用，用于检测新生成的文件）"""
+        if not self._output_dir:
+            return set()
+        from pathlib import Path
         output_path = Path(self._output_dir)
-        if output_path.exists():
-            shutil.rmtree(output_path, ignore_errors=True)
-        output_path.mkdir(parents=True, exist_ok=True)
+        if not output_path.exists():
+            return set()
+        return {f.name for f in output_path.iterdir() if f.is_file()}
 
     async def _auto_upload_new_files(self) -> list[str]:
-        """扫描输出目录中的文件并自动上传，上传后删除"""
+        """扫描输出目录中的新文件并自动上传（保留源文件供工作区下载）"""
         if not self._output_dir or not self._upload_fn:
             return []
 
@@ -287,10 +294,14 @@ class SandboxExecutor:
         if not output_path.exists():
             return []
 
+        # 只处理本次执行新生成的文件（对比执行前快照）
+        before = getattr(self, "_snapshot_before", set())
         results = []
         for f in output_path.iterdir():
             if not f.is_file():
                 continue
+            if f.name in before:
+                continue  # 执行前就存在的文件，跳过
             if f.suffix.lower() not in self._AUTO_UPLOAD_EXTENSIONS:
                 continue
 
@@ -298,8 +309,7 @@ class SandboxExecutor:
                 content = f.read_bytes()
                 upload_result = await self._upload_fn(content, f.name)
                 results.append(upload_result)
-                # 上传成功后删除文件，不占磁盘
-                f.unlink(missing_ok=True)
+                # 保留源文件（用户从工作区"下载/"文件夹直接下载）
                 logger.info(
                     f"SandboxExecutor auto-upload | file={f.name} | "
                     f"size={len(content)}"

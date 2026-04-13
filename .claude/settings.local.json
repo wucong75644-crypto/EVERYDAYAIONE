@@ -1295,7 +1295,8 @@
       "WebFetch(domain:www.deeplearning.ai)",
       "WebFetch(domain:e2b.mintlify.app)",
       "WebFetch(domain:docs.e2b.dev)",
-      "Bash(./git-push.sh \"feat: file_list 返回 abs 绝对路径 — 架构级解决 code_execute 文件路径拼接问题\")"
+      "Bash(./git-push.sh \"feat: file_list 返回 abs 绝对路径 — 架构级解决 code_execute 文件路径拼接问题\")",
+      "Bash(./git-push.sh \"feat: OUTPUT_DIR 改为 workspace/下载/ — 用户工作区直接可见可下载 + 文件快照检测新增\")"
     ],
     "additionalDirectories": [
       "/tmp"
