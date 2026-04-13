@@ -324,11 +324,11 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     if chunk.tool_calls:
                         accumulate_tool_call_delta(tool_calls_acc, chunk.tool_calls)
 
-                    # Token 使用量（累加到 budget）
+                    # Token 使用量（累加到 budget + final_usage）
                     if chunk.prompt_tokens or chunk.completion_tokens:
                         _turn_tokens = (chunk.prompt_tokens or 0) + (chunk.completion_tokens or 0)
-                        final_usage["prompt_tokens"] = chunk.prompt_tokens or 0
-                        final_usage["completion_tokens"] = chunk.completion_tokens or 0
+                        final_usage["prompt_tokens"] += chunk.prompt_tokens or 0
+                        final_usage["completion_tokens"] += chunk.completion_tokens or 0
                         _budget.use_tokens(_turn_tokens)
                     if chunk.credits_consumed is not None:
                         final_usage["api_credits"] = chunk.credits_consumed
@@ -401,6 +401,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
             # 优雅降级：预算耗尽时追加提示或报错
             _stop = _budget.stop_reason
+            _budget_error_sent = False
             if _stop:
                 logger.warning(
                     f"Budget exhausted | task={task_id} | reason={_stop} | "
@@ -410,12 +411,13 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     # 有部分结果 → 追加提示后正常返回
                     accumulated_text += f"\n\n> ⚠️ 已达到执行上限（{_STOP_MESSAGES.get(_stop, _stop)}），以上为部分结果。"
                 else:
-                    # 无结果 → 走 error 路径
+                    # 无结果 → 走 error 路径，阻止后续 on_complete
                     await self.on_error(
                         task_id=task_id,
                         error_code="BUDGET_EXCEEDED",
                         error_message=_STOP_MESSAGES.get(_stop, "执行超限，请稍后重试"),
                     )
+                    _budget_error_sent = True
 
             # 6. 计算积分 → 提取媒体 URL → 合并文件（纯内存操作）
             credits_consumed = self._calculate_credits(final_usage)
@@ -427,7 +429,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 self._pending_file_parts = []
 
             # 标记 LLM 阶段成功，持久化在 try 外执行
-            _llm_succeeded = True
+            # budget 超限已走 on_error 的不再走 on_complete
+            _llm_succeeded = not _budget_error_sent
             _completion_args = {
                 "task_id": task_id,
                 "result": result_parts,

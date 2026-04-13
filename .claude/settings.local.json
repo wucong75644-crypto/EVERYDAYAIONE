@@ -1273,7 +1273,8 @@
       "WebFetch(domain:apidog.com)",
       "WebFetch(domain:langchain-cn.readthedocs.io)",
       "Bash(python -m pytest tests/test_erp_agent.py::TestERPAgentGuards::test_token_accumulation_across_turns -v --tb=long)",
-      "Bash(./git-push.sh \"feat: 多维预算系统 — 轮次为主控+token安全网+时间兜底+fork子Agent继承+优雅降级\")"
+      "Bash(./git-push.sh \"feat: 多维预算系统 — 轮次为主控+token安全网+时间兜底+fork子Agent继承+优雅降级\")",
+      "Bash(./git-push.sh \"fix: budget 超限 on_error 后阻止 on_complete 重复推送 + final_usage 改累加修复积分少算\")"
     ],
     "additionalDirectories": [
       "/tmp"
