@@ -441,13 +441,13 @@ class TestUploadFile:
         assert "test-conv" in g["STAGING_DIR"]
 
     def test_output_dir_injected(self, tmp_path):
-        """OUTPUT_DIR 变量注入到沙盒 globals"""
+        """OUTPUT_DIR 指向 workspace 下的 '下载/' 文件夹"""
         with patch("core.config.get_settings") as mock_s:
             mock_s.return_value.file_workspace_root = str(tmp_path)
             executor = build_sandbox_executor(conversation_id="test-conv")
         g = executor._build_globals()
         assert "OUTPUT_DIR" in g
-        assert "test-conv" in g["OUTPUT_DIR"]
+        assert g["OUTPUT_DIR"].endswith("下载")
 
 
 class TestComputeCodeHash:
