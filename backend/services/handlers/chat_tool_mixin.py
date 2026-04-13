@@ -36,11 +36,13 @@ class ChatToolMixin:
         user_id: str,
         turn: int,
         messages: Optional[List[Dict[str, Any]]] = None,
+        budget=None,
     ) -> List[tuple]:
         """执行工具调用：安全检查 → 并行/串行分批 → 返回结果
 
         Args:
             messages: 当前对话 messages（传给 erp_agent 做上下文筛选）
+            budget: ExecutionBudget 实例（约束 sandbox 超时）
 
         Returns:
             List of (tool_call_dict, result_text, is_error)
@@ -68,6 +70,9 @@ class ChatToolMixin:
         # 传递上下文给 erp_agent
         executor._task_id = task_id
         executor._parent_messages = messages
+        # 传递 budget 约束 sandbox 超时
+        if budget is not None:
+            executor._budget = budget
         results: List[tuple] = []
 
         # 按并发安全性分批

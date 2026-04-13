@@ -1257,7 +1257,8 @@
       "Bash(python -m pytest tests/test_sandbox_executor.py tests/test_sandbox_functions.py tests/test_code_tools.py -v --tb=short)",
       "Bash(grep -r \"timeout\\\\|cancel\\\\|expired\" /Users/wucong/EVERYDAYAIONE/backend/services/handlers/*.py)",
       "Bash(grep -r \"stream_chat\\\\|timeout\" /Users/wucong/EVERYDAYAIONE/backend/services/adapters/*.py)",
-      "Bash(./git-push.sh \"fix: 工作区文件注入按扩展名分类 — 二进制文件指引 code_execute，文本文件指引 file_read，修复 Excel 读取死循环\")"
+      "Bash(./git-push.sh \"fix: 工作区文件注入按扩展名分类 — 二进制文件指引 code_execute，文本文件指引 file_read，修复 Excel 读取死循环\")",
+      "Bash(./git-push.sh \"perf: Excel 读写引擎优化\\(calamine+xlsxwriter\\) + sandbox 超时受 budget 约束 + 数据分析工作流规范\")"
     ],
     "additionalDirectories": [
       "/tmp"

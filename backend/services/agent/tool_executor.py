@@ -322,8 +322,14 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         result = ""
 
         try:
+            # sandbox 超时受 budget 约束（防止 sandbox 120s 但 budget 只剩 30s）
+            _timeout = settings.sandbox_timeout
+            _budget = getattr(self, "_budget", None)
+            if _budget is not None and hasattr(_budget, "remaining"):
+                _timeout = min(_timeout, max(_budget.remaining, 5.0))
+
             executor = build_sandbox_executor(
-                timeout=settings.sandbox_timeout,
+                timeout=_timeout,
                 max_result_chars=settings.sandbox_max_result_chars,
                 user_id=self.user_id,
                 org_id=self.org_id,
