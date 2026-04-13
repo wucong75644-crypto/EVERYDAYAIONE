@@ -54,6 +54,15 @@ openpyxl==3.1.5
 # 数据分析（沙盒代码执行）
 pandas==2.2.3
 pyarrow==23.0.1
+python-calamine==0.6.2
+matplotlib==3.10.8
+seaborn==0.13.2
+Pillow==12.2.0
+XlsxWriter==3.2.9
+
+# 文档生成（沙盒内 PDF/PPT）
+reportlab==4.4.10
+python-pptx==1.0.2
 
 # 时间事实层（设计文档：docs/document/TECH_ERP时间准确性架构.md）
 tzdata==2024.2                  # IANA 时区数据库（容器内兜底）
