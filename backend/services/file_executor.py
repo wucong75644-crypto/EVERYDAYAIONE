@@ -289,6 +289,7 @@ class FileExecutor:
                         "modified": datetime.fromtimestamp(
                             st.st_mtime, tz=timezone.utc,
                         ).strftime("%Y-%m-%d %H:%M"),
+                        "abs_path": str(item),
                     })
                 except (PermissionError, OSError):
                     continue
@@ -310,6 +311,7 @@ class FileExecutor:
         for f in files:
             size_str = self._format_size(f["size"])
             lines.append(f"  [文件] {f['name']}\t{size_str}\t{f['modified']}")
+            lines.append(f"         abs: {f['abs_path']}")
 
         if len(entries) >= _MAX_LIST_ENTRIES:
             lines.append(f"\n已达显示上限（{_MAX_LIST_ENTRIES}项），部分条目未显示")
