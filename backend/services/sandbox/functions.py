@@ -225,14 +225,34 @@ def build_sandbox_executor(
         Path(_file_settings.file_workspace_root) / "staging" / _conv_id
     )
 
-    # 4. upload 函数（供自动文件检测使用）
+    # 4. 文件检测函数 — 生成 workspace CDN URL（不上传 OSS，文件已通过 ossfs 在 OSS 上）
     async def _auto_upload(content: bytes, filename: str) -> str:
         import mimetypes
         safe_name = Path(filename).name
-        ext = Path(safe_name).suffix.lstrip(".")
         mime_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+        size = len(content)
+
+        # 直接算 workspace CDN URL（文件在 WORKSPACE_DIR/下载/ 下，ossfs 自动同步到 OSS）
+        from core.config import get_settings as _cdn_settings
+        _cs = _cdn_settings()
+        if _cs.oss_cdn_domain:
+            # object_key = 相对于 ossfs 挂载根的路径
+            _ws_base = Path(_cs.file_workspace_root).resolve()
+            _file_path = Path(_output_dir) / safe_name
+            try:
+                object_key = str(_file_path.relative_to(_ws_base))
+                url = f"https://{_cs.oss_cdn_domain}/workspace/{object_key}"
+                return (
+                    f"✅ 文件已生成: {safe_name}\n"
+                    f"[FILE]{url}|{safe_name}|{mime_type}|{size}[/FILE]"
+                )
+            except ValueError:
+                pass
+
+        # 兜底：无 CDN 配置时上传 OSS
         try:
             from services.oss_service import get_oss_service
+            ext = Path(safe_name).suffix.lstrip(".")
             oss = get_oss_service()
             result = oss.upload_bytes(
                 content=content, user_id=user_id, ext=ext,
@@ -243,7 +263,7 @@ def build_sandbox_executor(
                 f"[FILE]{result['url']}|{safe_name}|{mime_type}|{result['size']}[/FILE]"
             )
         except Exception as e:
-            return f"❌ 文件上传失败: {safe_name} ({e})"
+            return f"❌ 文件处理失败: {safe_name} ({e})"
 
     executor = SandboxExecutor(
         timeout=timeout,
