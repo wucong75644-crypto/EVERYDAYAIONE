@@ -170,6 +170,8 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         if not query:
             return "请输入 ERP 相关问题"
 
+        logger.info(f"ERPAgent dispatch | query={query[:200]}")
+
         agent = ERPAgent(
             db=self.db,
             user_id=self.user_id,
