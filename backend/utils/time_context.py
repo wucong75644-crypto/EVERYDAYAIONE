@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Literal, Optional
+from typing import Any, Literal, Optional, Union
 from zoneinfo import ZoneInfo
 
 # IANA 标准时区，替代 timezone(timedelta(hours=8)) 工程坏味道
@@ -40,7 +40,7 @@ def _to_cn_aware(dt: datetime) -> datetime:
     return dt.astimezone(CN_TZ)
 
 
-def _parse_iso_to_cn(value: Any) -> Optional[datetime]:
+def _parse_iso_to_cn(value: Optional[Union[str, datetime]]) -> Optional[datetime]:
     """将 DB 返回的 ISO 时间字符串/datetime 转为北京时间，解析失败返回 None。"""
     if value is None:
         return None

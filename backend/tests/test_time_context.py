@@ -322,3 +322,52 @@ def test_date_range_custom_start_must_be_less_than_end():
     with pytest.raises(ValueError, match="start.*must be < end"):
         DateRange.custom(same, same, reference=ctx.now)
 
+
+# ────────────────────────────────────────────────────────────────────
+# _parse_iso_to_cn — DB 时间字符串解析
+# ────────────────────────────────────────────────────────────────────
+
+
+class TestParseIsoToCn:
+    """_parse_iso_to_cn: DB 返回的各种时间格式 → 北京时间 datetime"""
+
+    def test_iso_string_with_tz(self):
+        """带时区的 ISO 字符串正确转为北京时间"""
+        from utils.time_context import _parse_iso_to_cn
+        result = _parse_iso_to_cn("2026-04-13T10:00:00Z")
+        assert result is not None
+        assert result.strftime("%m-%d %H:%M") == "04-13 18:00"
+
+    def test_datetime_input(self):
+        """datetime 对象直接转换"""
+        from utils.time_context import _parse_iso_to_cn, CN_TZ
+        dt = datetime(2026, 4, 14, 23, 44, tzinfo=CN_TZ)
+        result = _parse_iso_to_cn(dt)
+        assert result is not None
+        assert result.strftime("%m-%d %H:%M") == "04-14 23:44"
+
+    def test_none_returns_none(self):
+        """None 输入返回 None"""
+        from utils.time_context import _parse_iso_to_cn
+        assert _parse_iso_to_cn(None) is None
+
+    def test_invalid_string_returns_none(self):
+        """非法字符串返回 None，不抛异常"""
+        from utils.time_context import _parse_iso_to_cn
+        assert _parse_iso_to_cn("not-a-date") is None
+
+
+# ────────────────────────────────────────────────────────────────────
+# for_prompt_injection — 历史日期歧义警告
+# ────────────────────────────────────────────────────────────────────
+
+
+@time_machine.travel(FRI_4_10, tick=False)
+def test_prompt_injection_contains_history_date_warning():
+    """prompt 注入必须包含历史对话日期歧义警告。"""
+    ctx = RequestContext.build(user_id="u")
+    s = ctx.for_prompt_injection()
+    assert "历史对话" in s
+    assert "当时的日期" in s
+    assert "当前时间为准" in s
+
