@@ -104,7 +104,7 @@ async def reset_message_for_retry(
     update_data = {
         "status": MessageStatus.PENDING.value,
         "content": [],
-        "error": None,
+        "is_error": False,
         "generation_params": generation_params,
         "task_id": None,
     }

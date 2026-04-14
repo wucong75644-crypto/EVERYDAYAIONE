@@ -200,6 +200,23 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
             await ws_manager.unsubscribe_task(conn_id, task_id)
             logger.info(f"Task unsubscribed | conn={conn_id} | task={task_id}")
 
+    elif msg_type == WSMessageType.TOOL_CONFIRM_RESPONSE.value:
+        # 用户确认/拒绝写操作
+        tool_call_id = payload.get("tool_call_id")
+        approved = payload.get("approved", False)
+        if tool_call_id:
+            resolved = ws_manager.resolve_confirm(tool_call_id, bool(approved))
+            logger.info(
+                f"Tool confirm response | conn={conn_id} | "
+                f"tool_call_id={tool_call_id} | approved={approved} | "
+                f"resolved={resolved}"
+            )
+        else:
+            await ws_manager.send_to_connection(conn_id, build_error(
+                "tool_call_id is required",
+                code="MISSING_TOOL_CALL_ID",
+            ))
+
     else:
         logger.warning(f"Unknown message type | conn={conn_id} | type={msg_type}")
 

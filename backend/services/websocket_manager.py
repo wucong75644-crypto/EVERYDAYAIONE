@@ -15,7 +15,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fastapi import WebSocket
 from loguru import logger
@@ -58,6 +58,10 @@ class WebSocketManager(RedisPubSubMixin):
         self._task_subscribers: Dict[str, Set[str]] = {}
         self._conn_index: Dict[str, Connection] = {}
         self._lock = asyncio.Lock()
+
+        # 工具确认等待机制（Phase 3 B5）
+        # key = tool_call_id → (Event, approved: bool | None)
+        self._pending_confirms: Dict[str, Tuple[asyncio.Event, List]] = {}
 
         # Redis Pub/Sub
         self._worker_id = f"{os.getpid()}-{uuid.uuid4().hex[:6]}"
@@ -288,6 +292,53 @@ class WebSocketManager(RedisPubSubMixin):
             await self.send_to_connection(conn_id, message)
 
         await self._publish("broadcast", "", message, org_id=org_id)
+
+    # ================================================================
+    # 工具确认等待（Phase 3 B5）
+    # ================================================================
+
+    async def wait_for_confirm(
+        self, tool_call_id: str, timeout: float = 60.0,
+    ) -> bool:
+        """等待用户确认写操作。
+
+        Args:
+            tool_call_id: 工具调用 ID（唯一标识）
+            timeout: 超时秒数
+
+        Returns:
+            True = 用户确认执行，False = 用户拒绝或超时
+        """
+        event = asyncio.Event()
+        result_holder: List = [None]  # [bool | None]
+        self._pending_confirms[tool_call_id] = (event, result_holder)
+        try:
+            await asyncio.wait_for(event.wait(), timeout=timeout)
+            return result_holder[0] is True
+        except asyncio.TimeoutError:
+            logger.info(
+                f"Tool confirm timeout | tool_call_id={tool_call_id}"
+            )
+            return False
+        finally:
+            self._pending_confirms.pop(tool_call_id, None)
+
+    def resolve_confirm(self, tool_call_id: str, approved: bool) -> bool:
+        """前端确认/拒绝后调用，唤醒等待方。
+
+        Returns:
+            True = 找到并唤醒了等待方，False = 无匹配（已超时或不存在）
+        """
+        pending = self._pending_confirms.get(tool_call_id)
+        if not pending:
+            logger.warning(
+                f"Tool confirm resolve miss | tool_call_id={tool_call_id}"
+            )
+            return False
+        event, result_holder = pending
+        result_holder[0] = approved
+        event.set()
+        return True
 
     # ================================================================
     # 心跳与清理
