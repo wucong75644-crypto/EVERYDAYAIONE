@@ -56,6 +56,11 @@ export interface StreamingSlice {
   setAgentStepHint: (conversationId: string, hint: string) => void;
   clearAgentStepHint: (conversationId: string) => void;
 
+  // 建议问题: conversationId -> suggestions（不持久化，刷新消失）
+  suggestions: Map<string, string[]>;
+  setSuggestions: (conversationId: string, suggestions: string[]) => void;
+  clearSuggestions: (conversationId: string) => void;
+
   // 发送状态
   setIsSending: (sending: boolean) => void;
 }
@@ -81,6 +86,7 @@ export const createStreamingSlice: StateCreator<
   optimisticMessages: new Map<string, Message[]>(),
   streamingThinking: new Map<string, string>(),
   agentStepHint: new Map<string, string>(),
+  suggestions: new Map<string, string[]>(),
 
   // ========================================
   // 流式消息操作
@@ -208,7 +214,9 @@ export const createStreamingSlice: StateCreator<
       streamingThinking.delete(conversationId);
       const agentStepHint = new Map(state.agentStepHint);
       agentStepHint.delete(conversationId);
-      return { streamingMessages, streamingThinking, agentStepHint, isSending: false };
+      const suggestions = new Map(state.suggestions);
+      suggestions.delete(conversationId);
+      return { streamingMessages, streamingThinking, agentStepHint, suggestions, isSending: false };
     });
   },
 
@@ -227,8 +235,10 @@ export const createStreamingSlice: StateCreator<
       streamingThinking.delete(conversationId);
       const agentStepHint = new Map(state.agentStepHint);
       agentStepHint.delete(conversationId);
+      const suggestions = new Map(state.suggestions);
+      suggestions.delete(conversationId);
 
-      return { streamingMessages, optimisticMessages, streamingThinking, agentStepHint, isSending: false };
+      return { streamingMessages, optimisticMessages, streamingThinking, agentStepHint, suggestions, isSending: false };
     });
   },
 
@@ -363,6 +373,26 @@ export const createStreamingSlice: StateCreator<
       const agentStepHint = new Map(state.agentStepHint);
       agentStepHint.delete(conversationId);
       return { agentStepHint };
+    });
+  },
+
+  // ========================================
+  // 建议问题
+  // ========================================
+
+  setSuggestions: (conversationId, suggestions) => {
+    set((state) => {
+      const newSuggestions = new Map(state.suggestions);
+      newSuggestions.set(conversationId, suggestions);
+      return { suggestions: newSuggestions };
+    });
+  },
+
+  clearSuggestions: (conversationId) => {
+    set((state) => {
+      const newSuggestions = new Map(state.suggestions);
+      newSuggestions.delete(conversationId);
+      return { suggestions: newSuggestions };
     });
   },
 

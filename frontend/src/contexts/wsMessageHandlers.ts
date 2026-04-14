@@ -60,6 +60,7 @@ export interface MessageStoreActions {
   appendStreamingThinking: (conversationId: string, chunk: string) => void;
   appendContentBlock: (conversationId: string, block: Record<string, unknown>) => void;
   markForceRefresh: (conversationId: string) => void;
+  setSuggestions: (conversationId: string, suggestions: string[]) => void;
 }
 
 /** handler 工厂的依赖 */
@@ -533,6 +534,15 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
 
       deps.getStore().appendContentBlock(conversation_id, block);
       logger.info('ws:content', 'content_block_add', { conversationId: conversation_id, type: block.type });
+    },
+
+    suggestions_ready: (msg) => {
+      const { conversation_id } = msg;
+      const suggestions = msg.payload?.suggestions as string[] | undefined;
+      if (!conversation_id || !suggestions?.length) return;
+
+      deps.getStore().setSuggestions(conversation_id, suggestions);
+      logger.info('ws:suggestions', 'suggestions_ready', { conversationId: conversation_id, count: suggestions.length });
     },
 
     tool_confirm_request: (msg) => {

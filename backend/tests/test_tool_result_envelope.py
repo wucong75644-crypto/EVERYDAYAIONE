@@ -92,8 +92,8 @@ class TestBudgetLevels:
         # 必须包含 envelope
         assert "─── ERP 结果开始 ───" in wrapped
         assert "─── ERP 结果结束 ───" in wrapped
-        # 必须含 pass-through 强约束
-        assert "禁止重述或改写" in wrapped
+        # 必须含 pass-through 强约束（总结分析模式）
+        assert "总结分析" in wrapped
         assert "[ALREADY_DISPLAYED]" in wrapped
         # 原结果完整保留
         assert result in wrapped

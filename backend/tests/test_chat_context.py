@@ -124,6 +124,38 @@ def _make_msg(role, text, status="completed", conversation_id="conv1"):
     }
 
 
+# ============ Test _extract_user_query ============
+
+
+class TestExtractUserQuery:
+    """从 task.request_params 提取用户原始问题"""
+
+    def test_dict_with_content(self, chat_handler):
+        task = {"request_params": {"content": "昨天订单多少"}}
+        assert chat_handler._extract_user_query(task) == "昨天订单多少"
+
+    def test_json_string_params(self, chat_handler):
+        task = {"request_params": '{"content": "查一下库存"}'}
+        assert chat_handler._extract_user_query(task) == "查一下库存"
+
+    def test_missing_request_params(self, chat_handler):
+        task = {}
+        assert chat_handler._extract_user_query(task) == ""
+
+    def test_none_request_params(self, chat_handler):
+        task = {"request_params": None}
+        assert chat_handler._extract_user_query(task) == ""
+
+    def test_missing_content_key(self, chat_handler):
+        task = {"request_params": {"model_id": "gpt-4"}}
+        assert chat_handler._extract_user_query(task) == ""
+
+    def test_truncate_long_content(self, chat_handler):
+        task = {"request_params": {"content": "很长的文本" * 100}}
+        result = chat_handler._extract_user_query(task)
+        assert len(result) <= 200
+
+
 class TestBuildContextMessages:
     """构建对话历史上下文"""
 

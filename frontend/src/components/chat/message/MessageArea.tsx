@@ -217,8 +217,23 @@ export default function MessageArea({
     conversationId ? state.streamingThinking.get(conversationId) : undefined
   );
 
+  // 建议问题（message_done 后异步生成）
+  const suggestions = useMessageStore((state) =>
+    conversationId ? state.suggestions.get(conversationId) : undefined
+  );
+
   // 使用统一消息读取 Hook（自动合并持久化消息和临时消息）
   const mergedMessages = useUnifiedMessages(conversationId);
+
+  // 最后一条已完成的 AI 消息 ID（用于显示建议按钮）
+  const lastCompletedAiId = useMemo(() => {
+    for (let i = mergedMessages.length - 1; i >= 0; i--) {
+      if (mergedMessages[i].role === 'assistant' && mergedMessages[i].status !== 'streaming') {
+        return mergedMessages[i].id;
+      }
+    }
+    return null;
+  }, [mergedMessages]);
 
   // 使用 ref 存储 mergedMessages，避免 setMessages 依赖导致频繁重建
   const mergedMessagesRef = useRef(mergedMessages);
@@ -419,9 +434,11 @@ export default function MessageArea({
           <div className={compact ? "px-4 space-y-4" : "max-w-4xl mx-auto px-4 space-y-4"}>
             {(() => {
               const enableLayoutAnimation = mergedMessages.length <= 50;
+
               return mergedMessages.map((message) => {
                 const isMessageStreaming = message.status === 'streaming';
                 const imageIndex = getImageIndex(message);
+                const isLastAi = message.id === lastCompletedAiId;
 
                 return (
                   <MessageItem
@@ -438,6 +455,7 @@ export default function MessageArea({
                     skipEntryAnimation={loading || loadingMore}
                     onRegenerateSingle={handleRegenerateSingle}
                     enableLayoutAnimation={enableLayoutAnimation}
+                    suggestions={isLastAi ? suggestions : undefined}
                   />
                 );
               });

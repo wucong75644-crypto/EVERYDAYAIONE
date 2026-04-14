@@ -21,6 +21,7 @@ import LoadingPlaceholder from './LoadingPlaceholder';
 import MarkdownRenderer from './MarkdownRenderer';
 import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
+import SuggestionChips from './SuggestionChips';
 import { PLACEHOLDER_TEXT, RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../../constants/placeholder';
 import type { RenderInstruction } from '../../../types/render';
 import type { AspectRatio, VideoAspectRatio } from '../../../constants/models';
@@ -53,6 +54,8 @@ interface MessageItemProps {
   thinkingStartTime?: number;
   /** 是否启用 framer layout 动画（长对话时父级会禁用以保性能） */
   enableLayoutAnimation?: boolean;
+  /** 建议问题列表（仅最后一条 AI 消息显示） */
+  suggestions?: string[];
 }
 
 export default memo(function MessageItem({
@@ -70,6 +73,7 @@ export default memo(function MessageItem({
   streamingThinking,
   thinkingStartTime,
   enableLayoutAnimation = true,
+  suggestions,
 }: MessageItemProps) {
   const isUser = message.role === 'user';
 
@@ -332,14 +336,14 @@ export default memo(function MessageItem({
           </div>
         )}
 
-        {/* 消息气泡（仅文字内容）
+        {/* 消息气泡：用户消息有气泡框，AI 消息无框直接铺开（对齐千问/豆包风格）
             V3：用户气泡加内高光 (inset 0 1px 0 rgba(255,255,255,0.2))，
             制造"半透明玻璃"的光感效果 */}
         <div
-          className={`rounded-2xl px-5 py-3 ${
+          className={`${
             isUser
-              ? 'bg-gradient-to-r from-[var(--color-user-bubble-from)] to-[var(--color-user-bubble-to)] text-text-on-accent'
-              : 'bg-surface-card border border-border-default text-text-primary'
+              ? 'rounded-2xl px-5 py-3 bg-gradient-to-r from-[var(--color-user-bubble-from)] to-[var(--color-user-bubble-to)] text-text-on-accent'
+              : 'text-text-primary'
           }`}
           style={isUser ? { boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.22), 0 4px 16px rgba(0,0,0,0.06)' } : undefined}
         >
@@ -452,6 +456,11 @@ export default memo(function MessageItem({
           onMouseEnter={handleToolbarMouseEnter}
           onMouseLeave={handleToolbarMouseLeave}
         />
+
+        {/* 建议问题按钮（仅最后一条已完成的 AI 消息） */}
+        {!isUser && suggestions && suggestions.length > 0 && (
+          <SuggestionChips suggestions={suggestions} />
+        )}
       </div>
 
       {/* 删除确认弹框 */}
