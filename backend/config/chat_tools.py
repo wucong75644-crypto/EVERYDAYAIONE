@@ -338,7 +338,8 @@ _CORE_TOOLS: Set[str] = {
     # Agent（封装复杂多步工具）
     "erp_agent",                # ERP 独立 Agent（内含 17 个 ERP 工具）
     # 搜索
-    "erp_api_search",           # ERP 工具搜索（辅助）
+    # 注意：erp_api_search 已移至 ERP 域，主 Agent 不再直接使用
+    # ERP 相关查询统一走 erp_agent，erp_api_search 在其内部可用
     "search_knowledge",         # 知识库
     "web_search",               # 互联网搜索
     "social_crawler",           # 社交平台爬虫（小红书/抖音/B站/微博/知乎）
@@ -357,9 +358,15 @@ _CORE_TOOLS: Set[str] = {
 
 
 def get_core_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
-    """获取核心工具列表（ToolSearch 模式下初始传给 LLM 的工具）"""
+    """获取核心工具列表（ToolSearch 模式下初始传给 LLM 的工具）
+
+    双重过滤：_CORE_TOOLS 白名单 + 域隔离层兜底。
+    确保即使 _CORE_TOOLS 误加了 ERP 域工具，域过滤也会拦截。
+    """
+    from config.tool_domains import filter_tools_for_domain
     all_tools = get_chat_tools(org_id)
-    return [t for t in all_tools if t["function"]["name"] in _CORE_TOOLS]
+    core = [t for t in all_tools if t["function"]["name"] in _CORE_TOOLS]
+    return filter_tools_for_domain(core, "general")
 
 
 def get_tools_by_names(
@@ -377,14 +384,21 @@ _TOOL_NAME_PATTERN = re.compile(
 
 
 def extract_tool_names_from_result(
-    result_text: str, org_id: str | None = None,
+    result_text: str,
+    org_id: str | None = None,
+    agent_domain: str = "general",
 ) -> Set[str]:
-    """从 erp_api_search 返回结果中解析工具名
+    """从 erp_api_search 返回结果中解析工具名（域感知）
 
     提取格式如 "erp_trade_query:order_list" 或 "推荐 local_purchase_query" 中的工具名，
-    并过滤只保留系统中实际存在的工具（排除核心工具，避免重复注入）。
+    并按调用方的 agent_domain 过滤：只返回该域有权访问的工具。
+
+    主 Agent (domain="general") 无法通过此函数获取 ERP 域工具，
+    从架构上阻断 ToolSearch 泄漏路径。
     """
+    from config.tool_domains import can_access
     raw = set(_TOOL_NAME_PATTERN.findall(result_text))
-    # 用完整工具列表做白名单（传 org_id 确保包含 ERP 工具）
+    # 白名单：系统中实际存在的工具（排除核心工具，避免重复注入）
     valid = {t["function"]["name"] for t in get_chat_tools(org_id)} - _CORE_TOOLS
-    return raw & valid
+    # 域过滤：只返回当前 Agent 有权访问的工具
+    return {n for n in raw & valid if can_access(n, agent_domain)}

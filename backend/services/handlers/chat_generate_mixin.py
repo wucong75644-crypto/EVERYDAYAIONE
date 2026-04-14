@@ -68,7 +68,7 @@ class ChatGenerateMixin:
 
         # 3. 创建适配器
         adapter = create_chat_adapter(model_id, org_id=self.org_id, db=self.db)
-        tool_context = ToolLoopContext(org_id=self.org_id)
+        tool_context = ToolLoopContext(org_id=self.org_id, agent_domain="general")
         accumulated_text = ""
 
         try:
@@ -87,9 +87,11 @@ class ChatGenerateMixin:
                 turn = _budget.turns_used - 1
                 current_tools = list(core_tools)
                 if tool_context.discovered_tools:
+                    from config.tool_domains import filter_tools_for_domain
                     discovered = get_tools_by_names(
                         tool_context.discovered_tools, org_id=self.org_id,
                     )
+                    discovered = filter_tools_for_domain(discovered, "general")
                     core_names = {t["function"]["name"] for t in core_tools}
                     current_tools.extend(
                         t for t in discovered if t["function"]["name"] not in core_names

@@ -19,9 +19,14 @@ from loguru import logger
 class ToolLoopContext:
     """工具循环上下文，跨轮次累积信息"""
 
-    def __init__(self, org_id: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        org_id: Optional[str] = None,
+        agent_domain: str = "general",
+    ) -> None:
         self.org_id = org_id
-        self.identified_codes: Dict[str, str] = {}   # 模糊编码 → 精确编码
+        self.agent_domain = agent_domain              # 当前 Agent 所属域（域隔离过滤用）
+        self.identified_codes: Dict[str, str] = {}    # 模糊编码 → 精确编码
         self.sync_warnings: List[str] = []            # 同步警告
         self.used_tools: List[str] = []               # 已使用的工具
         self.failed_tools: List[str] = []             # 执行失败的工具
@@ -45,14 +50,17 @@ class ToolLoopContext:
             if warning and warning not in self.sync_warnings:
                 self.sync_warnings.append(warning)
 
-        # 提取 erp_api_search 发现的工具名
+        # 提取 erp_api_search 发现的工具名（域感知过滤）
         if tool_name == "erp_api_search" and not is_error:
             from config.chat_tools import extract_tool_names_from_result
-            new_tools = extract_tool_names_from_result(result, org_id=self.org_id)
+            new_tools = extract_tool_names_from_result(
+                result, org_id=self.org_id, agent_domain=self.agent_domain,
+            )
             if new_tools:
                 self.discovered_tools.update(new_tools)
                 logger.info(
-                    f"ToolLoopContext discovered tools: {sorted(new_tools)}"
+                    f"ToolLoopContext discovered tools | "
+                    f"domain={self.agent_domain} | tools={sorted(new_tools)}"
                 )
 
     def build_context_prompt(self) -> Optional[str]:

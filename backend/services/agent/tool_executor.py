@@ -216,6 +216,10 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
 
         # 保存原始展示文本 + 文件信息（供 ChatHandler 推送 content_block_add）
         self._erp_display_text = result_text
+        logger.debug(
+            f"ERP display text set | len={len(result_text)} | "
+            f"files={len(_file_matches) if _file_matches else 0}"
+        )
         self._erp_display_files = [
             {"url": url, "name": name, "mime_type": mime_type, "size": int(size)}
             for url, name, mime_type, size in _file_matches
