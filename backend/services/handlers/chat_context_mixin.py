@@ -370,7 +370,9 @@ class ChatContextMixin:
         设计文档：docs/document/TECH_上下文工程重构.md §四
         """
         try:
+            import re
             from core.config import settings
+            from utils.time_context import _parse_iso_to_cn
 
             budget = settings.context_history_token_budget  # 8000
             max_images = settings.chat_context_max_images   # 5
@@ -428,11 +430,18 @@ class ChatContextMixin:
                     else:
                         images = []
 
+                    # 时间戳前缀 — 让模型区分历史消息日期，防止旧"今天"污染当前请求
+                    ts_prefix = ""
+                    if row.get("created_at"):
+                        msg_time = _parse_iso_to_cn(row["created_at"])
+                        if msg_time:
+                            ts_prefix = f"[{msg_time.strftime('%m-%d %H:%M')}] "
+
                     # 有图片时用多模态格式，无图片时保持纯文本（节省 token）
                     if images:
                         parts: List[Dict[str, Any]] = []
                         if text:
-                            parts.append({"type": "text", "text": text})
+                            parts.append({"type": "text", "text": f"{ts_prefix}{text}"})
                         for url in images:
                             parts.append({
                                 "type": "image_url",
@@ -440,7 +449,7 @@ class ChatContextMixin:
                             })
                         context.append({"role": row["role"], "content": parts})
                     else:
-                        context.append({"role": row["role"], "content": text})
+                        context.append({"role": row["role"], "content": f"{ts_prefix}{text}"})
                     total_tokens += msg_tokens
 
                 if budget_exhausted:
@@ -457,7 +466,9 @@ class ChatContextMixin:
                     if isinstance(tail_content, list)
                     else tail_content
                 )
-                if tail.strip() == current_text.strip():
+                # 剥掉时间戳前缀 [MM-DD HH:MM] 后再比较
+                tail_stripped = re.sub(r"^\[\d{2}-\d{2} \d{2}:\d{2}\] ", "", tail).strip()
+                if tail_stripped == current_text.strip():
                     context.pop()
 
             if context:

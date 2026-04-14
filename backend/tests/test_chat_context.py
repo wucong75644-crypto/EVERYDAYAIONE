@@ -120,8 +120,17 @@ def _make_msg(role, text, status="completed", conversation_id="conv1"):
         "content": content,
         "status": status,
         "conversation_id": conversation_id,
-        "created_at": "2026-03-06T10:00:00Z",
+        "created_at": "2026-03-06T10:00:00Z",  # UTC → CN_TZ = 03-06 18:00
     }
+
+
+# 历史消息时间戳前缀（mock created_at 固定为 UTC 10:00 → CN 18:00）
+_TS = "[03-06 18:00] "
+
+
+def _ts(text: str) -> str:
+    """给预期文本加上时间戳前缀"""
+    return f"{_TS}{text}"
 
 
 # ============ Test _extract_user_query ============
@@ -173,10 +182,10 @@ class TestBuildContextMessages:
         result = await chat_handler._build_context_messages("conv1", "当前问题")
 
         assert len(result) == 4
-        assert result[0] == {"role": "user", "content": "第一个问题"}
-        assert result[1] == {"role": "assistant", "content": "AI回复1"}
-        assert result[2] == {"role": "user", "content": "第二个问题"}
-        assert result[3] == {"role": "assistant", "content": "AI回复2"}
+        assert result[0] == {"role": "user", "content": _ts("第一个问题")}
+        assert result[1] == {"role": "assistant", "content": _ts("AI回复1")}
+        assert result[2] == {"role": "user", "content": _ts("第二个问题")}
+        assert result[3] == {"role": "assistant", "content": _ts("AI回复2")}
 
     @pytest.mark.asyncio
     async def test_empty_history(self, chat_handler, mock_db):
@@ -198,7 +207,7 @@ class TestBuildContextMessages:
         result = await chat_handler._build_context_messages("conv1", "看看这张图")
 
         assert len(result) == 2
-        assert result[0] == {"role": "user", "content": "第一条消息"}
+        assert result[0] == {"role": "user", "content": _ts("第一条消息")}
         assert result[1]["role"] == "assistant"
         assert result[1]["content"] == [
             {"type": "image_url", "image_url": {"url": "https://img.png"}},
@@ -220,7 +229,7 @@ class TestBuildContextMessages:
         assert len(result) == 1
         assert result[0]["role"] == "user"
         assert result[0]["content"] == [
-            {"type": "text", "text": "画一只猫"},
+            {"type": "text", "text": _ts("画一只猫")},
             {"type": "image_url", "image_url": {"url": "https://cat.png"}},
         ]
 
@@ -235,7 +244,7 @@ class TestBuildContextMessages:
         result = await chat_handler._build_context_messages("conv1", "hello")
 
         assert len(result) == 1
-        assert result[0] == {"role": "assistant", "content": "world"}
+        assert result[0] == {"role": "assistant", "content": _ts("world")}
 
     @pytest.mark.asyncio
     async def test_dedup_keeps_non_matching_tail(self, chat_handler, mock_db):
@@ -248,8 +257,8 @@ class TestBuildContextMessages:
         result = await chat_handler._build_context_messages("conv1", "当前消息")
 
         assert len(result) == 2
-        assert result[0]["content"] == "reply"
-        assert result[1]["content"] == "不同的消息"
+        assert result[0]["content"] == _ts("reply")
+        assert result[1]["content"] == _ts("不同的消息")
 
     @pytest.mark.asyncio
     async def test_dedup_does_not_remove_assistant_tail(self, chat_handler, mock_db):
@@ -340,7 +349,7 @@ class TestBuildContextMessages:
 
         mock_table.in_.assert_called_once_with("role", ["user", "assistant"])
         assert len(result) == 1
-        assert result[0] == {"role": "user", "content": "用户消息"}
+        assert result[0] == {"role": "user", "content": _ts("用户消息")}
 
     @pytest.mark.asyncio
     async def test_retry_scenario_no_new_user_message(self, chat_handler, mock_db):
@@ -354,8 +363,8 @@ class TestBuildContextMessages:
         result = await chat_handler._build_context_messages("conv1", "画一只猫")
 
         assert len(result) == 2
-        assert result[0] == {"role": "user", "content": "你好"}
-        assert result[1] == {"role": "assistant", "content": "之前的回复"}
+        assert result[0] == {"role": "user", "content": _ts("你好")}
+        assert result[1] == {"role": "assistant", "content": _ts("之前的回复")}
 
     @pytest.mark.asyncio
     async def test_token_budget_truncates_oldest(self, chat_handler, mock_db):
@@ -387,8 +396,8 @@ class TestBuildContextMessages:
         result = await chat_handler._build_context_messages("conv1", "当前")
 
         assert len(result) == 2
-        assert result[0] == {"role": "user", "content": "短问题"}
-        assert result[1] == {"role": "assistant", "content": "短回复"}
+        assert result[0] == {"role": "user", "content": _ts("短问题")}
+        assert result[1] == {"role": "assistant", "content": _ts("短回复")}
 
     @pytest.mark.asyncio
     async def test_image_limit_caps_total_images(self, chat_handler, mock_db):
@@ -460,7 +469,7 @@ class TestBuildContextMessages:
 
         # 末尾 user 消息文本与 current_text 相同，应被去重
         assert len(result) == 1
-        assert result[0] == {"role": "assistant", "content": "回复"}
+        assert result[0] == {"role": "assistant", "content": _ts("回复")}
 
     @pytest.mark.asyncio
     async def test_image_null_url_skipped(self, chat_handler, mock_db):
@@ -477,7 +486,7 @@ class TestBuildContextMessages:
 
         assert len(result) == 1
         # url=None 的图片被跳过，只剩文本 → 纯文本格式
-        assert result[0] == {"role": "assistant", "content": "正在生成"}
+        assert result[0] == {"role": "assistant", "content": _ts("正在生成")}
 
 
 # ============ Test _extract_image_urls_from_content ============
@@ -589,8 +598,8 @@ class TestStreamGenerateContextInjection:
         assert captured[1]["role"] == "system"
         assert "当前时间" in captured[1]["content"]
         assert captured[2] == {"role": "system", "content": "你是AI助手"}
-        assert captured[3] == {"role": "user", "content": "你好"}
-        assert captured[4] == {"role": "assistant", "content": "你好！有什么可以帮你的？"}
+        assert captured[3] == {"role": "user", "content": _ts("你好")}
+        assert captured[4] == {"role": "assistant", "content": _ts("你好！有什么可以帮你的？")}
         # 话题聚焦指令（紧贴用户消息前）
         assert captured[5]["role"] == "system"
         assert "最新问题" in captured[5]["content"]
@@ -628,8 +637,8 @@ class TestStreamGenerateContextInjection:
         assert captured[0] == {"role": "system", "content": "请使用中文进行思考和推理。"}
         assert captured[1]["role"] == "system"
         assert "当前时间" in captured[1]["content"]
-        assert captured[2] == {"role": "user", "content": "之前的问题"}
-        assert captured[3] == {"role": "assistant", "content": "之前的回答"}
+        assert captured[2] == {"role": "user", "content": _ts("之前的问题")}
+        assert captured[3] == {"role": "assistant", "content": _ts("之前的回答")}
         # 话题聚焦指令
         assert captured[4]["role"] == "system"
         assert "最新问题" in captured[4]["content"]
@@ -703,8 +712,8 @@ class TestStreamGenerateContextInjection:
         assert captured[0] == {"role": "system", "content": "请使用中文进行思考和推理。"}
         assert captured[1]["role"] == "system"
         assert "当前时间" in captured[1]["content"]
-        assert captured[2] == {"role": "user", "content": "之前的对话"}
-        assert captured[3] == {"role": "assistant", "content": "之前的回复"}
+        assert captured[2] == {"role": "user", "content": _ts("之前的对话")}
+        assert captured[3] == {"role": "assistant", "content": _ts("之前的回复")}
         # 话题聚焦指令
         assert captured[4]["role"] == "system"
         assert "最新问题" in captured[4]["content"]
