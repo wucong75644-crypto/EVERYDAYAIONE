@@ -303,6 +303,80 @@ class TestSyncProduct:
         assert sku_data[0]["sku_remark"] == "清完下"
         assert sku_data[1]["sku_remark"] is None  # 空字符串转 None
 
+    @pytest.mark.asyncio
+    async def test_suit_singles_from_sku_level(self):
+        """套件 suitSingleList 从 SKU 级别汇总到 SPU"""
+        from services.kuaimai.erp_sync_master_handlers import sync_product
+        svc = _mock_svc(pages=[{
+            "outerId": "TJ-KC01", "title": "套件-卡册", "type": 1,
+            "skus": [
+                {
+                    "skuOuterId": "TJ-KC01-01",
+                    "propertiesName": "卡册+内页",
+                    "suitSingleList": [
+                        {"outerId": "KC01", "skuOuterId": "KC01-01",
+                         "title": "卡册", "ratio": 1},
+                        {"outerId": "NY01", "skuOuterId": "NY01-01",
+                         "title": "内页", "ratio": 1},
+                    ],
+                },
+            ],
+        }])
+        await sync_product(svc, START, END)
+        spu_data = svc.db._tables["erp_products"]._data
+        assert "suit_singles" in spu_data[0]
+        assert len(spu_data[0]["suit_singles"]) == 2
+        # SKU extra_json 也保存了原始 suitSingleList
+        sku_data = svc.db._tables["erp_product_skus"]._data
+        assert "suitSingleList" in sku_data[0]["extra_json"]
+
+    @pytest.mark.asyncio
+    async def test_suit_singles_dedup(self):
+        """同一子商品出现在多个 SKU 中，按 skuOuterId 去重"""
+        from services.kuaimai.erp_sync_master_handlers import sync_product
+        shared_child = {"outerId": "KC01", "skuOuterId": "KC01-01",
+                        "title": "卡册", "ratio": 1}
+        svc = _mock_svc(pages=[{
+            "outerId": "TJ-KC01", "title": "套件-卡册", "type": 1,
+            "skus": [
+                {
+                    "skuOuterId": "TJ-KC01-01",
+                    "suitSingleList": [
+                        shared_child,
+                        {"outerId": "NY01", "skuOuterId": "NY01-01",
+                         "title": "内页", "ratio": 1},
+                    ],
+                },
+                {
+                    "skuOuterId": "TJ-KC01-02",
+                    "suitSingleList": [
+                        shared_child,  # 重复子商品
+                        {"outerId": "DB01", "skuOuterId": "DB01-01",
+                         "title": "挡板", "ratio": 2},
+                    ],
+                },
+            ],
+        }])
+        await sync_product(svc, START, END)
+        spu_data = svc.db._tables["erp_products"]._data
+        singles = spu_data[0]["suit_singles"]
+        # KC01-01 只出现一次（去重），NY01-01 和 DB01-01 各一次
+        assert len(singles) == 3
+        sku_ids = [s["skuOuterId"] for s in singles]
+        assert sku_ids.count("KC01-01") == 1
+
+    @pytest.mark.asyncio
+    async def test_suit_singles_not_set_when_absent(self):
+        """非套件商品不写 suit_singles"""
+        from services.kuaimai.erp_sync_master_handlers import sync_product
+        svc = _mock_svc(pages=[{
+            "outerId": "P01", "title": "普通商品", "type": 0,
+            "skus": [{"skuOuterId": "P01-01", "propertiesName": "红色"}],
+        }])
+        await sync_product(svc, START, END)
+        spu_data = svc.db._tables["erp_products"]._data
+        assert "suit_singles" not in spu_data[0]
+
 
 # ============================================================
 # TestSyncStock — 库存同步
@@ -310,10 +384,10 @@ class TestSyncProduct:
 
 
 def _mock_stock_svc(wh_items=None, code_items=None):
-    """创建 stock 专用 mock（模拟按仓库查 + 按编码查两步）
+    """创建 stock 专用 mock
 
-    wh_items: 按仓库+时间查返回的变动记录（Step1）
-    code_items: 按编码精准查返回的最新记录（Step2）
+    wh_items: 按仓库+时间查返回的库存记录（增量同步直接 upsert）
+    code_items: 按编码查返回的库存记录（全量刷新专用）
     """
     svc = MagicMock()
     mock_client = AsyncMock()
@@ -347,20 +421,19 @@ class TestSyncStock:
         assert await sync_stock(svc, START, END) == 0
 
     @pytest.mark.asyncio
-    async def test_incremental_collects_and_queries(self, monkeypatch):
-        """增量：仓库查到变动编码 → 按编码精准查 → upsert"""
+    async def test_incremental_direct_upsert(self, monkeypatch):
+        """增量：仓库时间查询直接 upsert（一阶段）"""
         from services.kuaimai.erp_sync_master_handlers import sync_stock
         monkeypatch.setattr(
             "core.config.get_settings",
             lambda: MagicMock(erp_warehouse_ids="87227"),
         )
-        wh = [{"mainOuterId": "P01", "skuOuterId": "P01-01"}]
-        precise = [{
+        wh = [{
             "mainOuterId": "P01", "skuOuterId": "P01-01",
             "title": "商品A", "sellableNum": 80,
             "totalAvailableStockSum": 100, "wareHouseId": "87227",
         }]
-        svc = _mock_stock_svc(wh_items=wh, code_items=precise)
+        svc = _mock_stock_svc(wh_items=wh)
         assert await sync_stock(svc, START, END) == 1
 
     @pytest.mark.asyncio
@@ -448,14 +521,10 @@ class TestSyncStockWarehouseError:
             if wh == 111:
                 raise ConnectionError("timeout")
             call_log.append(wh)
-            if "mainOuterId" in params:
-                return {"stockStatusVoList": [{
-                    "mainOuterId": "P01", "skuOuterId": "P01-01",
-                    "sellableNum": 10, "wareHouseId": "222",
-                }], "total": 1}
-            return {"stockStatusVoList": [
-                {"mainOuterId": "P01", "skuOuterId": "P01-01"},
-            ], "total": 1}
+            return {"stockStatusVoList": [{
+                "mainOuterId": "P01", "skuOuterId": "P01-01",
+                "sellableNum": 10, "wareHouseId": "222",
+            }], "total": 1}
 
         svc = MagicMock()
         svc.org_id = None

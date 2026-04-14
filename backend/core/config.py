@@ -103,23 +103,25 @@ class Settings(BaseSettings):
     # 建议问题生成
     suggestion_generator_timeout: float = 5.0  # 建议生成读取超时（秒）
 
-    # 对话上下文配置（滑动窗口 N=5 轮）
-    chat_context_limit: int = 10  # 注入历史消息条数（5轮 × 2条/轮）
-    chat_context_max_chars: int = 6000  # 上下文最大字符数
+    # 对话上下文配置（token 预算驱动，替代旧的固定条数滑窗）
+    # 设计文档：docs/document/TECH_上下文工程重构.md
+    chat_context_limit: int = 20  # 摘要触发阈值（消息数超此值才生成摘要，_update_summary_if_needed 用）
     chat_context_max_images: int = 5  # 上下文历史图片最大数量
-    context_max_tokens: int = 28000  # messages 总 token 预算（层4 兜底）
+    context_history_token_budget: int = 8000  # 历史消息专属 token 预算（替代旧 chat_context_limit + chat_context_max_chars）
+    context_tool_token_budget: int = 6000  # 工具结果专属 token 预算
+    context_max_tokens: int = 32000  # messages 总 token 预算（分桶兜底）
 
     # 对话历史摘要压缩配置
     context_summary_enabled: bool = True  # 是否启用摘要压缩
     context_summary_model: str = "qwen3.5-flash"  # 摘要主模型
     context_summary_fallback_model: str = "qwen3.5-plus"  # 摘要备用模型
     context_summary_timeout: float = 30.0  # 摘要读取超时（秒），connect=5s
-    context_summary_max_chars: int = 1000  # 摘要最大字符数（保留关键数字）
+    context_summary_max_chars: int = 2000  # 摘要最大字符数（结构化模板需更多空间，原 1000）
     context_summary_update_interval: int = 5  # 每N条新消息更新摘要
 
-    # 工具循环上下文压缩配置（层2+层3）
-    context_tool_keep_turns: int = 3  # 层2: 保留最近 N 轮工具结果原文，更早的归档（多步分析需要更多上下文）
-    context_loop_summary_trigger: float = 0.8  # 层3: token 占比超此值时触发循环内摘要
+    # 工具循环上下文压缩配置（层4+层5）
+    context_tool_keep_turns: int = 3  # 层4: 保留最近 N 轮工具结果原文，更早的归档
+    context_loop_summary_trigger: float = 0.8  # 层5: token 占比超此值时触发循环内摘要
 
     # 智能路由配置
     intent_router_model: str = "qwen3.5-plus"  # 主路由模型（DashScope）
@@ -170,7 +172,7 @@ class Settings(BaseSettings):
     erp_sync_initial_days: int = 1825          # 首次全量回溯天数（5年覆盖全部历史）
     erp_sync_shard_days: int = 1               # 时间窗口分片大小（天），快麦API单次查询数据量有限
     erp_warehouse_ids: str = "87227,436208,444522"  # 库存同步仓库ID列表（逗号分隔）
-    erp_stock_full_refresh_interval: int = 3600     # 库存全量刷新间隔（秒），默认1小时
+    erp_stock_full_refresh_interval: int = 21600    # 库存全量刷新间隔（秒），默认6小时（增量已足够准确）
     erp_sync_worker_count: int = 10               # Worker 协程数（并发消费任务）
     erp_sync_max_org_concurrency: int = 3         # 单企业最大并发同步数（防大企业霸占 Worker）
     erp_sync_task_lock_ttl: int = 60              # per-(org, sync_type) 任务锁 TTL（秒），配合续期
