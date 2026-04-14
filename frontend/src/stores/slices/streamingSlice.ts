@@ -61,6 +61,16 @@ export interface StreamingSlice {
   setSuggestions: (conversationId: string, suggestions: string[]) => void;
   clearSuggestions: (conversationId: string) => void;
 
+  // 工具写操作确认请求（Phase 3 B5）
+  toolConfirmRequest: {
+    toolCallId: string;
+    toolName: string;
+    arguments: Record<string, unknown>;
+    description: string;
+    timeout: number;
+  } | null;
+  setToolConfirmRequest: (request: StreamingSlice['toolConfirmRequest']) => void;
+
   // 发送状态
   setIsSending: (sending: boolean) => void;
 }
@@ -87,6 +97,7 @@ export const createStreamingSlice: StateCreator<
   streamingThinking: new Map<string, string>(),
   agentStepHint: new Map<string, string>(),
   suggestions: new Map<string, string[]>(),
+  toolConfirmRequest: null,
 
   // ========================================
   // 流式消息操作
@@ -395,6 +406,8 @@ export const createStreamingSlice: StateCreator<
       return { suggestions: newSuggestions };
     });
   },
+
+  setToolConfirmRequest: (request) => set({ toolConfirmRequest: request }),
 
   setIsSending: (sending) => set({ isSending: sending }),
 });

@@ -61,6 +61,13 @@ export interface MessageStoreActions {
   appendContentBlock: (conversationId: string, block: Record<string, unknown>) => void;
   markForceRefresh: (conversationId: string) => void;
   setSuggestions: (conversationId: string, suggestions: string[]) => void;
+  setToolConfirmRequest: (request: {
+    toolCallId: string;
+    toolName: string;
+    arguments: Record<string, unknown>;
+    description: string;
+    timeout: number;
+  } | null) => void;
 }
 
 /** handler 工厂的依赖 */
@@ -72,6 +79,7 @@ export interface HandlerDeps {
   chunkBufferRef: React.RefObject<Map<string, { chunk: string; conversationId: string }>>;
   flushTimerRef: React.RefObject<ReturnType<typeof setTimeout> | null>;
   unsubscribeTask: (taskId: string) => void;
+  send: (message: { type: string; payload?: Record<string, unknown> }) => void;
 }
 
 // ============================================================
@@ -547,12 +555,24 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
 
     tool_confirm_request: (msg) => {
       const { conversation_id, task_id } = msg;
+      const toolCallId = msg.payload?.tool_call_id as string | undefined;
       const toolName = msg.payload?.tool_name as string | undefined;
       const description = msg.payload?.description as string | undefined;
-      if (!conversation_id || !toolName) return;
+      const args = (msg.payload?.arguments ?? {}) as Record<string, unknown>;
+      const timeout = (msg.payload?.timeout as number) || 60;
+      if (!conversation_id || !toolCallId || !toolName) return;
 
-      // 显示确认提示（当前阶段仅显示提示，Phase 3 实现确认 UI）
+      // 显示步骤提示
       deps.getStore().setAgentStepHint(conversation_id, `⚠ ${description || toolName} — 等待确认`);
+
+      // 触发确认弹窗
+      deps.getStore().setToolConfirmRequest({
+        toolCallId,
+        toolName,
+        arguments: args,
+        description: description || `AI 要执行: ${toolName}`,
+        timeout,
+      });
 
       logger.info('ws:tool', 'confirm_request', { conversationId: conversation_id, tool: toolName, taskId: task_id });
     },

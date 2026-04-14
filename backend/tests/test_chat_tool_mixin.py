@@ -116,11 +116,12 @@ class TestExecuteSingleTool:
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
     async def test_dangerous_tool_rejected(self, mock_ws):
-        """dangerous 工具→拒绝执行，返回提示"""
+        """dangerous 工具→用户拒绝→不执行，返回拒绝提示"""
         from services.handlers.chat_tool_mixin import ChatToolMixin
 
         mixin = _make_mixin()
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.wait_for_confirm = AsyncMock(return_value=False)
         executor = AsyncMock()
 
         tc = {"name": "erp_execute", "id": "tc1", "arguments": '{"action":"cancel"}'}
@@ -129,7 +130,7 @@ class TestExecuteSingleTool:
         )
         tc_out, text, is_error = result
         assert is_error is True
-        assert "用户确认" in text
+        assert "拒绝" in text or "超时" in text
         # 不应该调用 executor
         executor.execute.assert_not_called()
 

@@ -152,13 +152,17 @@ class ChatToolMixin:
                     safety_level=safety.value,
                 ),
             )
-            # TODO: 等待用户确认（Phase 3 实现 ws.py 路由 + asyncio.Event）
-            # 当前阶段：dangerous 工具暂时拒绝执行，返回提示让 AI 告知用户
-            return (
-                tc,
-                f"⚠ 写操作 {tool_name} 需要用户确认，请告知用户操作内容并等待确认。",
-                True,
+            # 等待用户确认（60s 超时）
+            approved = await ws_manager.wait_for_confirm(
+                tool_call_id, timeout=60.0,
             )
+            if not approved:
+                return (
+                    tc,
+                    f"⚠ 用户拒绝或超时未确认写操作 {tool_name}。"
+                    f"请告知用户操作未执行，询问是否需要重新确认。",
+                    True,
+                )
 
         # confirm 级别：通知用户（不阻塞）
         if safety == SafetyLevel.CONFIRM:

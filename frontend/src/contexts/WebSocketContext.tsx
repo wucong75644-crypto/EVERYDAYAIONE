@@ -10,7 +10,7 @@
  * 消息处理器逻辑提取到 wsMessageHandlers.ts
  */
 
-import { createContext, useContext, useEffect, useRef, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
 import { useWebSocket, type WSMessageType, type WSMessage } from '../hooks/useWebSocket';
 import { useMessageStore, normalizeMessage, type Message } from '../stores/useMessageStore';
 import { useTaskRestorationStore } from '../stores/useTaskRestorationStore';
@@ -23,6 +23,7 @@ import {
 import { getMessages } from '../services/message';
 import { logger } from '../utils/logger';
 import { createWSMessageHandlers } from './wsMessageHandlers';
+import ToolConfirmModal from '../components/chat/modals/ToolConfirmModal';
 
 /** 操作上下文（供完成回调使用） */
 export interface OperationContext {
@@ -84,6 +85,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
       chunkBufferRef,
       flushTimerRef,
       unsubscribeTask: ws.unsubscribeTask,
+      send: ws.send,
     };
 
     const handlers = createWSMessageHandlers(deps);
@@ -264,6 +266,25 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     logger.debug('ws:operation', 'registered', { taskId, type: context.type });
   }, []);
 
+  // 工具确认弹窗回调
+  const toolConfirmRequest = useMessageStore((s) => s.toolConfirmRequest);
+
+  const handleToolConfirm = useCallback((toolCallId: string) => {
+    ws.send({
+      type: 'tool_confirm_response',
+      payload: { tool_call_id: toolCallId, approved: true },
+    });
+    useMessageStore.getState().setToolConfirmRequest(null);
+  }, [ws]);
+
+  const handleToolReject = useCallback((toolCallId: string) => {
+    ws.send({
+      type: 'tool_confirm_response',
+      payload: { tool_call_id: toolCallId, approved: false },
+    });
+    useMessageStore.getState().setToolConfirmRequest(null);
+  }, [ws]);
+
   const contextValue: WebSocketContextValue = {
     isConnected: ws.isConnected,
     isConnecting: ws.isConnecting,
@@ -277,6 +298,11 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
   return (
     <WebSocketContext.Provider value={contextValue}>
       {children}
+      <ToolConfirmModal
+        request={toolConfirmRequest}
+        onConfirm={handleToolConfirm}
+        onReject={handleToolReject}
+      />
     </WebSocketContext.Provider>
   );
 }

@@ -357,6 +357,77 @@ class ToolLoopExecutor:
         return tc_acc, turn_text, turn_tokens
 
     # ========================================
+    # 写操作确认（Phase 3 B5）
+    # ========================================
+
+    async def _request_user_confirm(
+        self,
+        tool_name: str,
+        args: Dict[str, Any],
+        tool_call_id: str,
+        hook_ctx: HookContext,
+    ) -> str | None:
+        """向前端发起写操作确认，等待用户响应。
+
+        Returns:
+            None = 用户确认（继续执行）
+            str = 拒绝/超时的提示文本（跳过执行）
+        """
+        if not hook_ctx.task_id:
+            # headless 模式（无 WS 连接）：直接放行
+            return None
+
+        try:
+            from schemas.websocket_builders import build_tool_confirm_request
+            from services.websocket_manager import ws_manager
+
+            # 构建参数摘要供前端展示
+            args_summary = json.dumps(args, ensure_ascii=False)
+            if len(args_summary) > 200:
+                args_summary = args_summary[:200] + "..."
+
+            await ws_manager.send_to_task_or_user(
+                hook_ctx.task_id,
+                hook_ctx.user_id,
+                build_tool_confirm_request(
+                    task_id=hook_ctx.task_id,
+                    conversation_id=hook_ctx.conversation_id,
+                    message_id="",
+                    tool_call_id=tool_call_id,
+                    tool_name=tool_name,
+                    arguments=args,
+                    description=f"AI 要执行写操作: {tool_name}",
+                    safety_level="dangerous",
+                    timeout=60,
+                ),
+            )
+
+            approved = await ws_manager.wait_for_confirm(
+                tool_call_id, timeout=60.0,
+            )
+            if approved:
+                logger.info(
+                    f"Tool confirm approved | tool={tool_name} | "
+                    f"tool_call_id={tool_call_id}"
+                )
+                return None  # 继续执行
+
+            logger.info(
+                f"Tool confirm rejected/timeout | tool={tool_name} | "
+                f"tool_call_id={tool_call_id}"
+            )
+            return (
+                f"⚠ 用户拒绝或超时未确认写操作 {tool_name}。"
+                f"请用 ask_user 告知用户操作未执行，询问是否需要重新确认。"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Tool confirm error | tool={tool_name} | error={e}"
+            )
+            # 确认机制异常时放行（fail-open），不阻塞工具执行
+            return None
+
+    # ========================================
     # 单轮工具执行
     # ========================================
 
@@ -416,6 +487,22 @@ class ToolLoopExecutor:
                 })
                 accumulated = result
                 continue
+
+            # ── 安全检查：DANGEROUS 工具需用户确认 ──
+            from config.chat_tools import SafetyLevel, get_safety_level
+            safety = get_safety_level(tool_name)
+            if safety == SafetyLevel.DANGEROUS:
+                confirm_result = await self._request_user_confirm(
+                    tool_name, args, tc["id"], hook_ctx,
+                )
+                if confirm_result is not None:
+                    # 用户拒绝或超时 → 写入拒绝信息，继续下一个工具
+                    messages.append({
+                        "role": "tool", "tool_call_id": tc["id"],
+                        "content": confirm_result,
+                    })
+                    accumulated = confirm_result
+                    continue
 
             # ── 参数校验网关：过滤幻觉参数 + 必填检查 ──
             from services.agent.tool_args_validator import validate_tool_args
