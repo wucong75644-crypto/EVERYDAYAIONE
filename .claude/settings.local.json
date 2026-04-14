@@ -1365,7 +1365,14 @@
       "Bash(python -m pytest tests/test_chat_tool_mixin.py::TestExecuteSingleTool::test_dangerous_tool_rejected -v --tb=long)",
       "Bash(./git-push.sh \"feat: 写操作确认流 — DANGEROUS工具前后端完整确认机制（asyncio.Event等待+WS路由+确认弹窗+60s超时）\")",
       "Bash(grep -E \"\\\\.\\(py|txt\\)$\")",
-      "Bash(./git-push.sh \"fix: 修复写操作确认流TS类型错误（WSMessageType补全+Modal onClose+send类型对齐）\")"
+      "Bash(./git-push.sh \"fix: 修复写操作确认流TS类型错误（WSMessageType补全+Modal onClose+send类型对齐）\")",
+      "Bash(python -m pytest /Users/wucong/EVERYDAYAIONE/backend/tests/test_session_memory.py -q --tb=short)",
+      "Bash(python -m pytest /Users/wucong/EVERYDAYAIONE/backend/tests/test_session_memory.py /Users/wucong/EVERYDAYAIONE/backend/tests/test_context_compressor.py /Users/wucong/EVERYDAYAIONE/backend/tests/test_context_summarizer.py -q --tb=short)",
+      "Bash(npm list:*)",
+      "Bash(grep -r \"_prefetched_memory\\\\|_prefetched_summary\" /Users/wucong/EVERYDAYAIONE/backend/api/routes/*.py -B 3 -A 3)",
+      "Bash(grep -oP 'Go straight to the point[^`]*' /Users/wucong/.nvm/versions/node/v24.12.0/lib/node_modules/@anthropic-ai/claude-code/cli.js)",
+      "Bash(python -m pytest backend/tests/test_session_memory.py -q --tb=short)",
+      "Bash(./git-push.sh \"fix: ERP结果envelope提示词精简——1-2句结论替代冗余总结分析\")"
     ],
     "additionalDirectories": [
       "/tmp"
