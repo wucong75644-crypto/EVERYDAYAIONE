@@ -164,17 +164,17 @@ async def _extract_incremental_inner(
         extracted = json.loads(result)
         mem = get_session_memory()
 
-        # 增量合并（去重 + 限大小，就地修改 dict）
-        # 每个章节最多 20 条，防止长对话积累导致 format_session_memory 超长被截断在实体中间
+        # 增量合并（去重 + FIFO 淘汰，就地修改 dict）
+        # 每个章节最多 20 条，满了踢最早的（FIFO），保证新信息始终能进来
         MAX_ITEMS_PER_KEY = 20
         for key in ("topics", "entities", "conclusions", "pending"):
             new_items = extracted.get(key, [])
             if isinstance(new_items, list):
                 existing = set(mem[key])
                 for item in new_items:
-                    if len(mem[key]) >= MAX_ITEMS_PER_KEY:
-                        break
                     if isinstance(item, str) and item.strip() and item not in existing:
+                        if len(mem[key]) >= MAX_ITEMS_PER_KEY:
+                            mem[key].pop(0)  # FIFO：踢最早的
                         mem[key].append(item.strip())
 
         logger.debug(
