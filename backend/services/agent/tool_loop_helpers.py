@@ -37,17 +37,26 @@ def inject_tool(
         selected_tools.append(all_map[tool_name])
         logger.info(f"ToolLoop tool injected | {tool_name}")
     else:
-        # 不在 ERP 全量列表（可能是其他域工具），尝试 chat_tools
+        # 不在当前 Agent 的全量列表 → fallback 到全局池（带域检查）
         try:
             from config.chat_tools import get_tools_by_names
+            from config.tool_domains import can_access
             extra = get_tools_by_names({tool_name}, org_id=org_id)
+            # 域检查：推断当前域（all_tools 含 ERP 工具则为 erp 域）
+            _has_erp = any(
+                t["function"]["name"].startswith(("erp_", "local_"))
+                for t in all_tools[:5]
+            )
+            _domain = "erp" if _has_erp else "general"
+            extra = [t for t in extra if can_access(t["function"]["name"], _domain)]
             selected_tools.extend(extra)
+            if extra:
+                logger.info(f"ToolLoop fallback injected | {tool_name} | domain={_domain}")
         except Exception as e:
             logger.debug(
                 f"ToolLoop tool injection fallback failed | "
                 f"tool={tool_name} | error={e}"
             )
-    logger.info(f"ToolLoop tool expansion | added={tool_name}")
 
 
 async def invoke_tool_with_cache(

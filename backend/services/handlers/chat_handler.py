@@ -237,9 +237,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 core_tools.append(google_tool)
                 logger.info(f"Google Search Grounding enabled | model={model_id} | task={task_id}")
 
-            # 6. 工具循环上下文
+            # 6. 工具循环上下文（主 Agent = general 域）
             from services.handlers.tool_loop_context import ToolLoopContext
-            tool_context = ToolLoopContext(org_id=self.org_id)
+            tool_context = ToolLoopContext(org_id=self.org_id, agent_domain="general")
 
             # 7. 工具循环：流式生成 → 检测工具调用 → 执行 → 结果塞回 → 继续
             # 多维预算：轮次为主控，token 为安全网，时间纯兜底
@@ -255,12 +255,15 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             while not _budget.stop_reason:
                 _budget.use_turn()
                 turn = _budget.turns_used - 1  # 0-based for logging
-                # 每轮动态构建工具列表：核心工具 + 已发现的工具
+                # 每轮动态构建工具列表：核心工具 + 已发现的工具（域过滤兜底）
                 current_tools = list(core_tools)
                 if tool_context.discovered_tools:
+                    from config.tool_domains import filter_tools_for_domain
                     discovered = get_tools_by_names(
                         tool_context.discovered_tools, org_id=self.org_id,
                     )
+                    # 域过滤兜底：即使 discovered_tools 含 ERP 工具，也会被拦截
+                    discovered = filter_tools_for_domain(discovered, "general")
                     # 去重（核心工具里可能已包含）
                     core_names = {t["function"]["name"] for t in core_tools}
                     current_tools.extend(

@@ -72,6 +72,19 @@ def _time_arch_sanity_check() -> None:
         # 检查 chinese-calendar 库覆盖年份
         from utils.holiday import check_coverage_at_startup
         check_coverage_at_startup()
+
+        # 工具域注册完整性校验
+        # org_id 传非 None 值触发 ERP 工具加载，确保校验覆盖全量工具
+        from config.chat_tools import get_chat_tools
+        from config.tool_domains import validate_registry
+        _all_names = {t["function"]["name"] for t in get_chat_tools(org_id="__startup_check__")}
+        _missing = validate_registry(_all_names)
+        if _missing:
+            logger.warning(
+                f"[tool-domains] 未注册域的工具（默认拒绝访问）: {_missing}"
+            )
+        else:
+            logger.info("[tool-domains] 所有工具域注册完整")
     except Exception as e:
         logger.error(f"[time-arch] sanity check FAILED | {e}")
         raise

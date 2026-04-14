@@ -65,9 +65,10 @@ class TestUpdateFromResult:
         ctx.update_from_result("t2", "⚠ 数据同步延迟", False)
         assert len(ctx.sync_warnings) == 1
 
-    def test_discovers_tools_from_erp_api_search(self):
+    def test_discovers_tools_from_erp_api_search_erp_domain(self):
+        """ERP 域的 Agent 可以通过 erp_api_search 发现 ERP 底层工具"""
         from services.handlers.tool_loop_context import ToolLoopContext
-        ctx = ToolLoopContext(org_id="test_org")
+        ctx = ToolLoopContext(org_id="test_org", agent_domain="erp")
         result = (
             "找到 2 个匹配:\n"
             "- erp_trade_query:order_list — 订单查询\n"
@@ -77,6 +78,14 @@ class TestUpdateFromResult:
         ctx.update_from_result("erp_api_search", result, False)
         assert "erp_trade_query" in ctx.discovered_tools
         assert "erp_purchase_query" in ctx.discovered_tools
+
+    def test_general_domain_cannot_discover_erp_tools(self):
+        """主 Agent（general 域）无法通过 erp_api_search 发现 ERP 底层工具"""
+        from services.handlers.tool_loop_context import ToolLoopContext
+        ctx = ToolLoopContext(org_id="test_org", agent_domain="general")
+        result = "推荐 erp_trade_query:order_list"
+        ctx.update_from_result("erp_api_search", result, False)
+        assert "erp_trade_query" not in ctx.discovered_tools
 
     def test_no_discovery_on_error(self):
         from services.handlers.tool_loop_context import ToolLoopContext
@@ -145,8 +154,9 @@ class TestExtractToolNamesAndCoreTools:
         core = get_core_tools(org_id="test")
         names = {t["function"]["name"] for t in core}
         assert "erp_agent" in names
-        assert "erp_api_search" in names
         assert "web_search" in names
+        # erp_api_search 已移至 ERP 域，不在主 Agent 核心工具中
+        assert "erp_api_search" not in names
 
     def test_get_tools_by_names(self):
         from config.chat_tools import get_tools_by_names
@@ -159,20 +169,28 @@ class TestExtractToolNamesAndCoreTools:
         result = get_tools_by_names({"nonexistent"}, org_id="test")
         assert len(result) == 0
 
-    def test_extract_tool_names_from_search_result(self):
+    def test_extract_tool_names_erp_domain_can_see_erp_tools(self):
+        """ERP 域可以发现 ERP 底层工具"""
         from config.chat_tools import extract_tool_names_from_result
         text = "推荐 erp_trade_query:order_list\n- erp_purchase_query:list"
-        names = extract_tool_names_from_result(text, org_id="test_org")
+        names = extract_tool_names_from_result(text, org_id="test_org", agent_domain="erp")
         assert "erp_trade_query" in names
         assert "erp_purchase_query" in names
 
+    def test_extract_tool_names_general_domain_blocked(self):
+        """主 Agent（general 域）无法发现 ERP 底层工具"""
+        from config.chat_tools import extract_tool_names_from_result
+        text = "推荐 erp_trade_query:order_list\n- erp_purchase_query:list"
+        names = extract_tool_names_from_result(text, org_id="test_org", agent_domain="general")
+        assert "erp_trade_query" not in names
+        assert "erp_purchase_query" not in names
+
     def test_extract_excludes_core_tools(self):
         from config.chat_tools import extract_tool_names_from_result
-        # erp_api_search 是核心工具，不应出现在 discovered 里
-        text = "erp_api_search 和 erp_trade_query"
-        names = extract_tool_names_from_result(text, org_id="test_org")
+        # erp_api_search 是 ERP 域工具 + 核心工具排除，不应出现
+        text = "erp_api_search 和 code_execute"
+        names = extract_tool_names_from_result(text, org_id="test_org", agent_domain="general")
         assert "erp_api_search" not in names
-        assert "erp_trade_query" in names
 
     def test_get_tool_system_prompt_not_empty(self):
         from config.chat_tools import get_tool_system_prompt

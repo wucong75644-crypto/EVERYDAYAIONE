@@ -167,7 +167,8 @@ class TestCoreToolsExpanded:
     def test_core_tools_count(self):
         from config.chat_tools import get_core_tools
         tools = get_core_tools(org_id="test")
-        assert len(tools) == 13
+        # 12 个核心工具（erp_api_search 已移至 ERP 域，不在主 Agent 核心列表中）
+        assert len(tools) == 12
 
     def test_core_tools_include_file_tools(self):
         from config.chat_tools import get_core_tools
