@@ -241,6 +241,22 @@ def build_tool_result(
     )
 
 
+def build_content_block_add(
+    task_id: str, conversation_id: str, message_id: str,
+    block: Dict[str, Any],
+) -> Dict[str, Any]:
+    """构建内容块追加通知（工具结果等独立渲染块）
+
+    前端收到后将 block 追加到当前消息的 content 数组中，
+    后续 message_chunk 自动追加到新的 text block。
+    """
+    return _build_ws_message(
+        WSMessageType.CONTENT_BLOCK_ADD,
+        {"block": block},
+        task_id=task_id, conversation_id=conversation_id, message_id=message_id,
+    )
+
+
 def build_tool_confirm_request(
     task_id: str, conversation_id: str, message_id: str,
     tool_call_id: str, tool_name: str, arguments: Dict[str, Any],

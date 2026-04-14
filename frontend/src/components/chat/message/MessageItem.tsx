@@ -20,6 +20,7 @@ import { useMessageAnimation } from '../../../hooks/useMessageAnimation';
 import LoadingPlaceholder from './LoadingPlaceholder';
 import MarkdownRenderer from './MarkdownRenderer';
 import ThinkingBlock from './ThinkingBlock';
+import ToolResultBlock from './ToolResultBlock';
 import { PLACEHOLDER_TEXT, RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../../constants/placeholder';
 import type { RenderInstruction } from '../../../types/render';
 import type { AspectRatio, VideoAspectRatio } from '../../../constants/models';
@@ -86,6 +87,12 @@ export default memo(function MessageItem({
   const hasImage = imageUrls.length > 0;
   const hasVideo = videoUrls.length > 0;
   const hasFiles = files.length > 0;
+
+  // 检测是否为多内容块模式（含 tool_result block）
+  const hasMultiBlocks = useMemo(() => {
+    if (!Array.isArray(message.content)) return false;
+    return message.content.some((p) => p.type === 'tool_result');
+  }, [message.content]);
 
   // 判断是否为失败消息
   const isErrorMessage = message.status === 'failed' || message.is_error === true;
@@ -370,8 +377,36 @@ export default memo(function MessageItem({
             ) : isUser ? (
               /* 用户消息：保持纯文本 */
               <>{textContent}</>
+            ) : hasMultiBlocks ? (
+              /* AI 消息（多块模式）：遍历 content 按 type 分发渲染 */
+              <>
+                {message.content.map((part, idx) => {
+                  if (part.type === 'text' && (part as { text: string }).text) {
+                    const isLastBlock = idx === message.content.length - 1;
+                    return (
+                      <MarkdownRenderer
+                        key={idx}
+                        content={(part as { text: string }).text}
+                        isStreaming={isLastBlock && (isStreaming || isRegenerating)}
+                      />
+                    );
+                  }
+                  if (part.type === 'tool_result') {
+                    const tr = part as { tool_name: string; text: string; files?: Array<{ url: string; name: string; mime_type: string; size?: number }> };
+                    return (
+                      <ToolResultBlock
+                        key={idx}
+                        toolName={tr.tool_name}
+                        text={tr.text}
+                        files={tr.files}
+                      />
+                    );
+                  }
+                  return null;
+                })}
+              </>
             ) : (
-              /* AI 消息：Markdown 渲染 */
+              /* AI 消息（单块模式）：Markdown 渲染 */
               <MarkdownRenderer
                 content={textContent}
                 isStreaming={isStreaming || isRegenerating}

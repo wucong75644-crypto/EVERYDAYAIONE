@@ -37,6 +37,7 @@ class WSMessageType(str, Enum):
     TOOL_RESULT = "tool_result"
     TOOL_CONFIRM_REQUEST = "tool_confirm_request"
     TOOL_CONFIRM_RESPONSE = "tool_confirm_response"
+    CONTENT_BLOCK_ADD = "content_block_add"
 
     # === 积分变化 ===
     CREDITS_CHANGED = "credits_changed"

@@ -1304,7 +1304,18 @@
       "Bash(./git-push.sh \"perf: 沙盒输出文件不再重复上传 OSS — 直接用 workspace CDN URL，省一半流量和存储\")",
       "Bash(./git-push.sh \"fix: downloadFile 优先 fetch\\(能指定文件名\\) + 兜底 <a> 标签\\(CORS 失败时\\)\")",
       "Bash(grep -l \"content\\\\|messages\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
-      "Bash(./git-push.sh \"perf: _auto_upload 不再读取文件内容 — 只传文件名+size 算 CDN URL，零内存开销\")"
+      "Bash(./git-push.sh \"perf: _auto_upload 不再读取文件内容 — 只传文件名+size 算 CDN URL，零内存开销\")",
+      "Bash(grep -n \"build_domain_prompt\" /Users/wucong/EVERYDAYAIONE/backend/config/*.py)",
+      "Bash(grep -rn \"erp_agent\" /Users/wucong/EVERYDAYAIONE/backend/config/*.py)",
+      "Bash(python -m pytest tests/test_file_executor.py tests/test_sandbox_executor.py tests/test_sandbox_functions.py -q --tb=short)",
+      "Bash(python -m pytest backend/tests/test_tool_result_envelope.py -q --tb=long)",
+      "Bash(python -m pytest tests/test_tool_result_envelope.py -q --tb=short)",
+      "Bash(python -m pytest backend/tests/test_tool_args_validator.py -q --tb=short)",
+      "Bash(python -m pytest tests/test_tool_args_validator.py -q --tb=short)",
+      "Bash(pip3 list:*)",
+      "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python -m pytest /Users/wucong/EVERYDAYAIONE/backend/tests/ -q --tb=short)",
+      "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python -m pytest /Users/wucong/EVERYDAYAIONE/backend/tests/test_scheduled_task_agent_integration.py::TestExecuteHappyPath::test_multi_turn_tool_calling -q --tb=short)",
+      "Bash(./git-push.sh \"feat: 多内容块架构 — ERP Agent 结果独立渲染，解决抢跑覆盖问题\")"
     ],
     "additionalDirectories": [
       "/tmp"

@@ -417,6 +417,19 @@ class ToolLoopExecutor:
                 accumulated = result
                 continue
 
+            # ── 参数校验网关：过滤幻觉参数 + 必填检查 ──
+            from services.agent.tool_args_validator import validate_tool_args
+            args, validation_error = validate_tool_args(
+                tool_name, args, selected_tools,
+            )
+            if validation_error:
+                messages.append({
+                    "role": "tool", "tool_call_id": tc["id"],
+                    "content": validation_error,
+                })
+                accumulated = validation_error
+                continue
+
             # Hook 链：单工具执行前
             for hook in self.hooks:
                 await hook.on_tool_start(hook_ctx, tool_name, args)

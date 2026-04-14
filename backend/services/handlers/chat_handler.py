@@ -168,6 +168,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         chunk_count = 0
         _llm_succeeded = False
         _completion_args: Optional[Dict[str, Any]] = None
+        # 多内容块追踪：每轮 LLM 文本 = 独立 TextPart，工具结果 = ToolResultPart
+        _content_blocks: List[Dict[str, Any]] = []
 
         try:
             # 1. 推送开始消息
@@ -337,6 +339,10 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 if not tool_calls_acc:
                     break  # 无工具调用，输出完成
 
+                # 有工具调用 → 收割本轮文本为独立 block
+                if turn_text:
+                    _content_blocks.append({"type": "text", "text": turn_text})
+
                 # 有工具调用 → 执行工具循环
                 completed_calls = sorted(tool_calls_acc.values(), key=lambda x: x.get("id", ""))
                 logger.info(
@@ -375,6 +381,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 )
 
                 # 工具结果塞进 messages + 更新上下文
+                # 对 erp_agent: 提取原始结论推送 content_block_add
+                from schemas.websocket import build_content_block_add
                 for tc, result_text, is_error in tool_results:
                     messages.append({
                         "role": "tool",
@@ -382,6 +390,34 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         "content": result_text,
                     })
                     tool_context.update_from_result(tc["name"], result_text, is_error)
+
+                    # erp_agent 结果作为独立 content block 推送前端
+                    if tc["name"] == "erp_agent" and not is_error:
+                        _erp_display_text = getattr(
+                            self, "_last_erp_display_text", None,
+                        )
+                        if _erp_display_text:
+                            _erp_files = getattr(
+                                self, "_last_erp_display_files", [],
+                            )
+                            tool_block = {
+                                "type": "tool_result",
+                                "tool_name": "erp_agent",
+                                "text": _erp_display_text,
+                                "files": _erp_files,
+                            }
+                            _content_blocks.append(tool_block)
+                            await ws_manager.send_to_task_or_user(
+                                task_id, user_id,
+                                build_content_block_add(
+                                    task_id=task_id,
+                                    conversation_id=conversation_id,
+                                    message_id=message_id,
+                                    block=tool_block,
+                                ),
+                            )
+                            self._last_erp_display_text = None
+                            self._last_erp_display_files = []
 
                 # 层4+5: 旧工具结果归档 + 循环内摘要（减少下轮 LLM token 消耗）
                 from services.handlers.context_compressor import (
@@ -419,10 +455,39 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     )
                     _budget_error_sent = True
 
-            # 6. 计算积分 → 提取媒体 URL → 合并文件（纯内存操作）
+            # 6. 收割最后一轮文本 + 构建多块 result
             credits_consumed = self._calculate_credits(final_usage)
-            from services.handlers.media_extractor import extract_media_parts
-            result_parts = extract_media_parts(accumulated_text)
+
+            # 最后一轮的 turn_text（循环 break 后未被收割）
+            _final_turn_text = accumulated_text
+            # 从 accumulated_text 中减去已收割到 _content_blocks 的部分
+            _harvested = sum(
+                len(b["text"]) for b in _content_blocks if b["type"] == "text"
+            )
+            _final_turn_text = accumulated_text[_harvested:]
+
+            if _content_blocks:
+                # 多块模式：有工具结果插入
+                if _final_turn_text:
+                    _content_blocks.append({"type": "text", "text": _final_turn_text})
+                # 从 blocks 构建 result_parts
+                from schemas.message import ToolResultPart
+                from services.handlers.media_extractor import extract_media_parts
+                result_parts: list = []
+                for block in _content_blocks:
+                    if block["type"] == "text":
+                        result_parts.extend(extract_media_parts(block["text"]))
+                    elif block["type"] == "tool_result":
+                        result_parts.append(ToolResultPart(
+                            tool_name=block["tool_name"],
+                            text=block["text"],
+                            files=block.get("files", []),
+                        ))
+            else:
+                # 单块模式（无工具调用或工具未触发 content block）：兼容原逻辑
+                from services.handlers.media_extractor import extract_media_parts
+                result_parts = extract_media_parts(accumulated_text)
+
             # 合并工具执行过程中积累的 FilePart（沙盒 upload_file 生成）
             if self._pending_file_parts:
                 result_parts.extend(self._pending_file_parts)
@@ -516,8 +581,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     )
 
     def _convert_content_parts_to_dicts(self, result):
-        """转换 ContentPart 为字典（支持 Text/Image/Video/File）"""
-        from schemas.message import FilePart, ImagePart, VideoPart
+        """转换 ContentPart 为字典（支持 Text/Image/Video/File/ToolResult）"""
+        from schemas.message import FilePart, ImagePart, ToolResultPart, VideoPart
         dicts = []
         for p in result:
             if isinstance(p, TextPart):
@@ -531,6 +596,11 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     "type": "file", "url": p.url,
                     "name": p.name, "mime_type": p.mime_type,
                     "size": p.size,
+                })
+            elif isinstance(p, ToolResultPart):
+                dicts.append({
+                    "type": "tool_result", "tool_name": p.tool_name,
+                    "text": p.text, "files": p.files,
                 })
             elif isinstance(p, dict):
                 dicts.append(p)

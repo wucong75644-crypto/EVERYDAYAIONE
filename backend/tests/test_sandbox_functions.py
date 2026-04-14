@@ -325,6 +325,28 @@ class TestBuildSandboxExecutor:
 # ============================================================
 
 
+class TestAutoUploadSignature:
+    """_auto_upload 函数签名测试（filename + size，不读文件内容）"""
+
+    @pytest.mark.asyncio
+    async def test_auto_upload_accepts_filename_and_size(self, tmp_path):
+        """_auto_upload 接收 (filename, size) 而不是 (content, filename)"""
+        with patch("core.config.get_settings") as mock_s:
+            mock_s.return_value.file_workspace_root = str(tmp_path)
+            mock_s.return_value.oss_cdn_domain = "cdn.test.com"
+            executor = build_sandbox_executor(user_id="u1", org_id="o1")
+        # upload_fn 签名是 (filename: str, size: int)
+        # CDN 路径在 _auto_upload 内部再次调用 get_settings，需要持续 mock
+        with patch("core.config.get_settings") as mock_s2:
+            mock_s2.return_value.file_workspace_root = str(tmp_path)
+            mock_s2.return_value.oss_cdn_domain = "cdn.test.com"
+            result = await executor._upload_fn("report.xlsx", 1024)
+        assert "report.xlsx" in result
+        assert "1024" in result
+        assert "[FILE]" in result
+        assert "cdn.test.com" in result
+
+
 class TestSandboxFunctions:
     """沙盒注册函数测试"""
 

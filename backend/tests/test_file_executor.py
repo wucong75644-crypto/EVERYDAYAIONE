@@ -323,6 +323,14 @@ class TestFileList:
         assert ".git" not in result
         assert "ok.txt" in result
 
+    @pytest.mark.asyncio
+    async def test_list_includes_abs_path(self, executor, workspace):
+        """file_list 返回每个文件的 abs 绝对路径"""
+        Path(workspace, "report.xlsx").write_bytes(b"fake excel")
+        result = await executor.file_list()
+        assert "abs:" in result
+        assert str(Path(workspace, "report.xlsx")) in result
+
 
 # ============================================================
 # file_search

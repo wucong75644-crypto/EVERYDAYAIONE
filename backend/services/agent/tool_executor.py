@@ -214,7 +214,14 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         else:
             result_text = result.text
 
-        # erp_agent 结果截断
+        # 保存原始展示文本 + 文件信息（供 ChatHandler 推送 content_block_add）
+        self._erp_display_text = result_text
+        self._erp_display_files = [
+            {"url": url, "name": name, "mime_type": mime_type, "size": int(size)}
+            for url, name, mime_type, size in _file_matches
+        ] if _file_matches else []
+
+        # erp_agent 结果截断（给主 LLM 看的精简版）
         from services.agent.tool_result_envelope import wrap_erp_agent_result
         return wrap_erp_agent_result(result_text)
 

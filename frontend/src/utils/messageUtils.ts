@@ -17,7 +17,7 @@ import type {
 // 内容提取函数
 // ============================================================
 
-/** 从 Message 提取文本内容 */
+/** 从 Message 提取文本内容（多 text block 时拼接所有文本） */
 export function getTextContent(message: Message): string {
   // 兼容旧格式（content 可能是字符串而非 ContentPart[]）
   const rawContent = (message as unknown as { content: unknown }).content;
@@ -27,12 +27,13 @@ export function getTextContent(message: Message): string {
 
   if (!Array.isArray(message.content)) return '';
 
+  const texts: string[] = [];
   for (const part of message.content) {
-    if (part.type === 'text') {
-      return part.text;
+    if (part.type === 'text' && part.text) {
+      texts.push(part.text);
     }
   }
-  return '';
+  return texts.join('\n\n');
 }
 
 /** 从 Message 提取图片 URL */

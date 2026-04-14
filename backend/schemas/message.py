@@ -95,7 +95,19 @@ class FilePart(BaseModel):
     workspace_path: Optional[str] = None  # 工作区相对路径（有值时 AI 用 file_read 读取）
 
 
-ContentPart = Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart]
+class ToolResultPart(BaseModel):
+    """工具结果内容块（独立渲染，不被主 Agent 文本覆盖）
+
+    用于子 Agent（如 erp_agent）返回的结论，作为独立 content block
+    直接展示给用户，主 Agent 后续文本追加在此块下方。
+    """
+    type: Literal["tool_result"] = "tool_result"
+    tool_name: str
+    text: str
+    files: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+ContentPart = Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart, ToolResultPart]
 
 
 # ============================================================
