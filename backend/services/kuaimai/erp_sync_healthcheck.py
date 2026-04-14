@@ -257,8 +257,10 @@ async def _push_to_org_admins(db: Any, org_id: str, msg: str) -> None:
         return
 
     # 3) 通过 MessageGateway 统一存消息 + 推企微（先存后推）
+    # MessageGateway 内部 .execute() 是同步调用，必须传同步 db
+    from core.database import get_db
     from services.message_gateway import MessageGateway
-    gateway = MessageGateway(db)
+    gateway = MessageGateway(get_db())
     for m in mappings:
         try:
             await gateway.save_system_message(

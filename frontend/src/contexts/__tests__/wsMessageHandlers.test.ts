@@ -83,6 +83,7 @@ function createMockStore(): MessageStoreActions {
     appendStreamingThinking: vi.fn(),
     appendContentBlock: vi.fn(),
     markForceRefresh: vi.fn(),
+    setSuggestions: vi.fn(),
   };
 }
 
@@ -804,6 +805,47 @@ describe('wsMessageHandlers', () => {
       expect(() => {
         handlers.error({ message: 'WebSocket error' });
       }).not.toThrow();
+    });
+  });
+
+  // ========================================
+  // 14. suggestions_ready handler
+  // ========================================
+
+  describe('suggestions_ready', () => {
+    it('should call setSuggestions with correct data', () => {
+      handlers.suggestions_ready({
+        conversation_id: 'conv_1',
+        payload: { suggestions: ['按店铺分析', '和前天对比'] },
+      });
+
+      expect(store.setSuggestions).toHaveBeenCalledWith('conv_1', ['按店铺分析', '和前天对比']);
+    });
+
+    it('should ignore when conversation_id is missing', () => {
+      handlers.suggestions_ready({
+        payload: { suggestions: ['建议'] },
+      });
+
+      expect(store.setSuggestions).not.toHaveBeenCalled();
+    });
+
+    it('should ignore when suggestions is empty', () => {
+      handlers.suggestions_ready({
+        conversation_id: 'conv_1',
+        payload: { suggestions: [] },
+      });
+
+      expect(store.setSuggestions).not.toHaveBeenCalled();
+    });
+
+    it('should ignore when suggestions is missing', () => {
+      handlers.suggestions_ready({
+        conversation_id: 'conv_1',
+        payload: {},
+      });
+
+      expect(store.setSuggestions).not.toHaveBeenCalled();
     });
   });
 });

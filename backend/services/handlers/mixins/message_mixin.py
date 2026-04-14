@@ -313,6 +313,17 @@ class MessageMixin:
         # 释放任务限制槽位
         await _release_task_limit(task["user_id"], conversation_id, task.get("org_id"))
 
+        # 异步生成建议问题（仅 chat 类型，fire-and-forget）
+        if self.handler_type.value == "chat":
+            asyncio.create_task(
+                self._generate_suggestions(
+                    conversation_id=conversation_id,
+                    user_id=task["user_id"],
+                    user_query=self._extract_user_query(task),
+                    ai_reply=self._extract_text_from_content(content_dicts),
+                )
+            )
+
         return message
 
     async def _maybe_fanout_to_wecom(
@@ -359,6 +370,57 @@ class MessageMixin:
         except Exception as e:
             logger.warning(
                 f"_maybe_fanout_to_wecom failed | "
+                f"conversation_id={conversation_id} | error={e}"
+            )
+
+    @staticmethod
+    def _extract_user_query(task: dict) -> str:
+        """从 task 的 request_params 中提取用户原始问题文本"""
+        rp = task.get("request_params") or {}
+        if isinstance(rp, str):
+            import json
+            rp = json.loads(rp)
+        return rp.get("content", "")[:200]
+
+    @staticmethod
+    def _extract_text_from_content(content_dicts: list) -> str:
+        """从 content_dicts 中提取所有文本内容"""
+        parts = []
+        for part in content_dicts:
+            if part.get("type") == "text" and part.get("text"):
+                parts.append(part["text"])
+        return "\n".join(parts)
+
+    async def _generate_suggestions(
+        self,
+        conversation_id: str,
+        user_id: str,
+        user_query: str,
+        ai_reply: str,
+    ) -> None:
+        """异步生成建议问题并推送前端（fire-and-forget）"""
+        try:
+            if not user_query or not ai_reply:
+                return
+
+            from services.suggestion_generator import generate_suggestions
+            suggestions = await generate_suggestions(user_query, ai_reply)
+            if not suggestions:
+                return
+
+            from schemas.websocket_builders import build_suggestions_ready
+            from services.websocket_manager import ws_manager
+
+            ws_msg = build_suggestions_ready(conversation_id, suggestions)
+            await ws_manager.send_to_user(user_id, ws_msg)
+
+            logger.debug(
+                f"Suggestions sent | conversation_id={conversation_id} | "
+                f"count={len(suggestions)}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"_generate_suggestions failed | "
                 f"conversation_id={conversation_id} | error={e}"
             )
 

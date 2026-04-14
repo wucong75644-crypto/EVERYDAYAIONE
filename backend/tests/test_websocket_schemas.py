@@ -15,6 +15,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from schemas.websocket import build_image_partial_update, build_message_done, build_thinking_chunk
+from schemas.websocket_builders import build_suggestions_ready
 
 
 class TestBuildImagePartialUpdate:
@@ -366,6 +367,36 @@ class TestBuildAgentStepProgressFields:
         # 基础字段仍在
         assert payload["tool_name"] == "tool"
         assert payload["turn"] == 1
+
+
+class TestBuildSuggestionsReady:
+    """测试 build_suggestions_ready 消息构建"""
+
+    def test_payload_structure(self):
+        """payload 包含 suggestions 数组"""
+        msg = build_suggestions_ready(
+            conversation_id="conv_1",
+            suggestions=["按店铺分析", "和前天对比"],
+        )
+        assert msg["type"] == "suggestions_ready"
+        assert msg["payload"]["suggestions"] == ["按店铺分析", "和前天对比"]
+        assert msg["conversation_id"] == "conv_1"
+
+    def test_no_task_id(self):
+        """suggestions_ready 不绑定 task_id"""
+        msg = build_suggestions_ready("conv_1", ["建议"])
+        assert msg.get("task_id") is None
+
+    def test_has_timestamp(self):
+        """消息包含时间戳"""
+        msg = build_suggestions_ready("conv_1", ["建议"])
+        assert "timestamp" in msg
+        assert isinstance(msg["timestamp"], int)
+
+    def test_empty_suggestions_still_valid(self):
+        """空列表仍然构建合法消息（前端 guard 不渲染）"""
+        msg = build_suggestions_ready("conv_1", [])
+        assert msg["payload"]["suggestions"] == []
 
 
 if __name__ == "__main__":

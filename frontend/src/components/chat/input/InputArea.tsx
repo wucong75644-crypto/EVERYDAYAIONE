@@ -378,14 +378,41 @@ export default function InputArea({
     }
   };
 
+  // 监听建议按钮点击事件 → 自动发送
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const text = (e as CustomEvent<{ text: string }>).detail?.text;
+      if (!text || !conversationId) return;
+
+      // 清除建议
+      useMessageStore.getState().clearSuggestions(conversationId);
+
+      // 滚动到底部
+      window.dispatchEvent(new Event('chat:scroll-to-bottom'));
+
+      try {
+        await handleChatMessage(text, conversationId);
+      } catch (error) {
+        logger.error('inputArea', '发送建议失败', error);
+      }
+    };
+
+    window.addEventListener('chat:send-suggestion', handler);
+    return () => window.removeEventListener('chat:send-suggestion', handler);
+  }, [conversationId, handleChatMessage]);
+
   const anyUploadingState = isUploading || isFileUploading;
   const sendButtonState = getSendButtonState(isSubmitting, anyUploadingState, !!(prompt.trim() || hasImages || hasFiles || workspaceFiles.length > 0));
 
-  // 输入变化时清除发送错误状态
+  // 输入变化时清除发送错误状态 + 隐藏建议
   const handlePromptChange = useCallback((value: string) => {
     setPrompt(value);
     if (sendError) setSendError(null);
-  }, [sendError]);
+    // 用户开始输入时清除建议
+    if (value && conversationId) {
+      useMessageStore.getState().clearSuggestions(conversationId);
+    }
+  }, [sendError, conversationId]);
 
   return (
     <div className="bg-surface-card">

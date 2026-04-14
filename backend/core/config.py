@@ -100,6 +100,9 @@ class Settings(BaseSettings):
     memory_filter_fallback_model: str = "qwen3.5-plus"  # 记忆精排备用模型
     memory_filter_timeout: float = 10.0  # 记忆精排读取超时（秒），connect=5s
 
+    # 建议问题生成
+    suggestion_generator_timeout: float = 5.0  # 建议生成读取超时（秒）
+
     # 对话上下文配置（滑动窗口 N=5 轮）
     chat_context_limit: int = 10  # 注入历史消息条数（5轮 × 2条/轮）
     chat_context_max_chars: int = 6000  # 上下文最大字符数

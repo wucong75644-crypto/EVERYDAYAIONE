@@ -241,6 +241,22 @@ def build_tool_result(
     )
 
 
+def build_suggestions_ready(
+    conversation_id: str,
+    suggestions: list[str],
+) -> Dict[str, Any]:
+    """构建建议问题就绪通知
+
+    message_done 后异步生成，前端收到后渲染为可点击按钮。
+    不绑定 task_id（任务已结束），只按 conversation_id 投递。
+    """
+    return _build_ws_message(
+        WSMessageType.SUGGESTIONS_READY,
+        {"suggestions": suggestions},
+        conversation_id=conversation_id,
+    )
+
+
 def build_content_block_add(
     task_id: str, conversation_id: str, message_id: str,
     block: Dict[str, Any],
