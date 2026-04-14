@@ -313,7 +313,7 @@ export default memo(function MessageItem({
       layout={enableLayoutAnimation && !isStreaming ? 'position' : false}
     >
       <div
-        className={`relative flex flex-col ${isUser ? 'items-end' : 'items-start'} ${hasMedia ? 'w-full max-w-[90%]' : 'max-w-[80%]'}`}
+        className={`relative flex flex-col ${isUser ? 'items-end' : 'items-start w-full'} ${isUser ? (hasMedia ? 'max-w-[90%]' : 'max-w-[80%]') : ''}`}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
