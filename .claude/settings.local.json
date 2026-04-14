@@ -1315,7 +1315,8 @@
       "Bash(pip3 list:*)",
       "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python -m pytest /Users/wucong/EVERYDAYAIONE/backend/tests/ -q --tb=short)",
       "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python -m pytest /Users/wucong/EVERYDAYAIONE/backend/tests/test_scheduled_task_agent_integration.py::TestExecuteHappyPath::test_multi_turn_tool_calling -q --tb=short)",
-      "Bash(./git-push.sh \"feat: 多内容块架构 — ERP Agent 结果独立渲染，解决抢跑覆盖问题\")"
+      "Bash(./git-push.sh \"feat: 多内容块架构 — ERP Agent 结果独立渲染，解决抢跑覆盖问题\")",
+      "Bash(./git-push.sh \"fix: TS 编译修复 — appendContentBlock 类型声明 + import 清理\")"
     ],
     "additionalDirectories": [
       "/tmp"
