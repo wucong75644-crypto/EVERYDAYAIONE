@@ -101,6 +101,166 @@ def enforce_budget(
 
 
 # ============================================================
+# 层6-B: 工具结果分桶预算控制（Phase 2）
+# 设计文档：docs/document/TECH_上下文工程重构.md §五
+# ============================================================
+
+
+def _is_archived(msg: Dict[str, Any]) -> bool:
+    """检查消息是否已被归档（兼容多模态 content=list 的情况）"""
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        return content.startswith("[已归档")
+    return False
+
+
+def _msg_tokens(msg: Dict[str, Any]) -> int:
+    """单条消息的 token 估算"""
+    return estimate_tokens([msg])
+
+
+def enforce_tool_budget(
+    messages: List[Dict[str, Any]],
+    max_tokens: int,
+) -> None:
+    """工具结果桶：超预算时从最旧的 tool 消息开始归档（原地修改）
+
+    对标 Claude Code L3 Microcompact：旧工具结果替换为占位符。
+    保护最近 2 轮的 tool 结果不被压缩。
+    """
+    turns = _identify_tool_turns(messages)
+    if not turns:
+        return
+
+    # 计算 tool 消息总 token（排除已归档的）
+    all_tool_indices: set = set()
+    for turn in turns:
+        all_tool_indices.update(turn)
+    tool_tokens = sum(
+        _msg_tokens(messages[i]) for i in all_tool_indices
+        if not _is_archived(messages[i])
+    )
+
+    if tool_tokens <= max_tokens:
+        return
+
+    # 保护最近 2 轮
+    protected: set = set()
+    for turn in turns[-2:]:
+        protected.update(turn)
+
+    # 从最旧的开始归档
+    compacted = 0
+    for turn in turns[:-2]:
+        if tool_tokens <= max_tokens:
+            break
+        for idx in turn:
+            if tool_tokens <= max_tokens:
+                break
+            if _is_archived(messages[idx]):
+                continue
+            old = messages[idx].get("content", "")
+            saved = _msg_tokens(messages[idx])
+            messages[idx]["content"] = (
+                f"[已归档] 工具结果已压缩（原始 {len(old)} 字符）"
+            )
+            tool_tokens -= max(0, saved - 15)
+            compacted += 1
+
+    if compacted:
+        logger.info(
+            f"Tool budget enforced | compacted={compacted} | "
+            f"remaining_tokens={tool_tokens} | max={max_tokens}"
+        )
+
+
+# ============================================================
+# 层6-C: 历史消息分桶预算控制（Phase 2 + Phase 3 打分）
+# ============================================================
+
+
+def _enforce_history_budget_core(
+    messages: List[Dict[str, Any]],
+    max_tokens: int,
+    scores: List[float],
+    hist_indices: List[int],
+) -> None:
+    """历史桶核心逻辑：按分数排序淘汰（内部函数）"""
+    hist_tokens = sum(
+        _msg_tokens(messages[i]) for i in hist_indices
+        if not _is_archived(messages[i])
+    )
+    if hist_tokens <= max_tokens:
+        return
+
+    # 保护最后 4 条（当前轮 user+assistant + 上一轮）
+    protected_tail = 4
+    scoreable_indices = hist_indices[:-protected_tail] if len(hist_indices) > protected_tail else []
+    scoreable_scores = scores[:len(scoreable_indices)]
+    if not scoreable_indices:
+        return
+
+    ranked = sorted(
+        zip(scoreable_indices, scoreable_scores),
+        key=lambda x: x[1],  # 低分先删
+    )
+
+    compacted = 0
+    for idx, _score in ranked:
+        if hist_tokens <= max_tokens:
+            break
+        saved = _msg_tokens(messages[idx])
+        messages[idx]["content"] = "[已归档]"
+        hist_tokens -= saved
+        compacted += 1
+
+    if compacted:
+        logger.info(
+            f"History budget enforced | compacted={compacted} | "
+            f"remaining_tokens={hist_tokens} | max={max_tokens}"
+        )
+
+
+def enforce_history_budget_sync(
+    messages: List[Dict[str, Any]],
+    max_tokens: int,
+) -> None:
+    """同步版（工具循环内部用）：只用 A 层规则打分"""
+    from services.handlers.message_scorer import score_messages_sync
+
+    hist = [
+        (i, msg) for i, msg in enumerate(messages)
+        if msg.get("role") in ("user", "assistant")
+        and not _is_archived(msg)
+    ]
+    if not hist:
+        return
+    indices = [i for i, _ in hist]
+    scores = score_messages_sync([msg for _, msg in hist])
+    _enforce_history_budget_core(messages, max_tokens, scores, indices)
+
+
+async def enforce_history_budget(
+    messages: List[Dict[str, Any]],
+    max_tokens: int,
+    current_query: str = "",
+) -> None:
+    """异步版（_build_llm_messages 用）：A 层规则 + B 层 Embedding"""
+    from services.handlers.message_scorer import score_messages
+
+    hist = [
+        (i, msg) for i, msg in enumerate(messages)
+        if msg.get("role") in ("user", "assistant")
+        and not _is_archived(msg)
+    ]
+    if not hist:
+        return
+    indices = [i for i, _ in hist]
+    scores = await score_messages([msg for _, msg in hist], current_query=current_query)
+    _enforce_history_budget_core(messages, max_tokens, scores, indices)
+
+
+# ============================================================
 # 层4: 旧轮次工具结果归档（零 API 调用）
 # ============================================================
 
@@ -173,16 +333,12 @@ def compact_stale_tool_results(
 # ============================================================
 
 _LOOP_SUMMARY_PROMPT = (
-    "你是工具调用记录压缩器。请将以下工具调用过程压缩为简洁摘要（最多{max_chars}字）。\n\n"
-    "必须保留：\n"
-    "- 已查到的关键数据（金额、数量、编码、状态）\n"
-    "- 已确认的编码映射（模糊名→精确编码）\n"
-    "- 失败的操作及原因\n\n"
-    "可以丢弃：\n"
-    "- 中间查询过程、API 参数\n"
-    "- 重复的数据格式化\n"
-    "- 工具截断信号\n\n"
-    "直接输出摘要，不加前缀。"
+    "你是工具调用记录压缩器。按以下格式输出（最多{max_chars}字）：\n\n"
+    "【已查数据】列出关键数字（金额/数量/编码/状态），每条一行，数字必须精确\n"
+    "【编码映射】模糊名→精确编码（如有）\n"
+    "【失败操作】操作名+原因（如有）\n"
+    "【进行中】未完成的查询意图（如有）\n\n"
+    '某项无内容写"无"。数字禁止近似化。直接输出，不加前缀。'
 )
 
 
@@ -268,26 +424,38 @@ async def compact_loop_with_summary(
     if not summary_input:
         return False
 
-    # 调用 LLM 生成摘要（复用 context_summarizer 的降级链）
+    # Phase 5: 优先使用增量记忆（如果有，零 LLM 调用）
+    try:
+        from services.handlers.session_memory import format_session_memory
+        pre_built = format_session_memory()
+    except Exception:
+        pre_built = None
+
     try:
         from services.context_summarizer import _call_summary_model
         from core.config import settings
 
         max_chars = 500
-        loop_prompt = _LOOP_SUMMARY_PROMPT.format(max_chars=max_chars)
 
-        summary = await _call_summary_model(
-            settings.context_summary_model, summary_input,
-            system_prompt_override=loop_prompt,
-        )
-        if not summary:
+        if pre_built:
+            # 增量记忆可用，跳过 LLM 调用
+            summary = pre_built[:max_chars]
+            logger.info(f"Loop summary: using pre-built session memory | len={len(summary)}")
+        else:
+            # 退化为 LLM 摘要
+            loop_prompt = _LOOP_SUMMARY_PROMPT.format(max_chars=max_chars)
             summary = await _call_summary_model(
-                settings.context_summary_fallback_model, summary_input,
+                settings.context_summary_model, summary_input,
                 system_prompt_override=loop_prompt,
             )
-        if not summary:
-            logger.warning("Loop summary failed, skipping (fallback to enforce_budget)")
-            return False
+            if not summary:
+                summary = await _call_summary_model(
+                    settings.context_summary_fallback_model, summary_input,
+                    system_prompt_override=loop_prompt,
+                )
+            if not summary:
+                logger.warning("Loop summary failed, skipping (fallback to enforce_budget)")
+                return False
 
         # 截断超长摘要
         if len(summary) > max_chars:

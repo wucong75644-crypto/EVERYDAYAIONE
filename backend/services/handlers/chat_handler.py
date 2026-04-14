@@ -241,6 +241,10 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             from services.handlers.tool_loop_context import ToolLoopContext
             tool_context = ToolLoopContext(org_id=self.org_id, agent_domain="general")
 
+            # Phase 5: 初始化增量记忆（必须在主协程中调用）
+            from services.handlers.session_memory import init_session_memory
+            init_session_memory()
+
             # 7. 工具循环：流式生成 → 检测工具调用 → 执行 → 结果塞回 → 继续
             # 多维预算：轮次为主控，token 为安全网，时间纯兜底
             from services.agent.execution_budget import ExecutionBudget
@@ -353,6 +357,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     f"tools={[c['name'] for c in completed_calls]}"
                 )
 
+                # 记录追加前的位置（供 Phase 5 增量提取精确切片，包含 assistant + tool results）
+                _msg_pos_before_turn = len(messages)
                 # 将 assistant 消息（含 tool_calls）塞进 messages
                 assistant_tool_msg: Dict[str, Any] = {"role": "assistant", "content": turn_text or None}
                 assistant_tool_msg["tool_calls"] = [
@@ -422,13 +428,24 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             self._last_erp_display_text = None
                             self._last_erp_display_files = []
 
-                # 层4+5: 旧工具结果归档 + 循环内摘要（减少下轮 LLM token 消耗）
+                # Phase 5: fire-and-forget 增量记忆提取（精确切片：从 _msg_pos_before_turn 开始，含 assistant + tool results）
+                import asyncio as _asyncio
+                from services.handlers.session_memory import extract_incremental
+                _new_turn_msgs = messages[_msg_pos_before_turn:]
+                if _new_turn_msgs:
+                    _asyncio.create_task(extract_incremental(_new_turn_msgs))
+
+                # 层4+5+6: 旧工具结果归档 + 循环内摘要 + 分桶预算控制
+                # 设计文档：docs/document/TECH_上下文工程重构.md §五
                 from services.handlers.context_compressor import (
                     compact_stale_tool_results, compact_loop_with_summary,
+                    enforce_tool_budget, enforce_history_budget_sync,
                 )
                 from core.config import get_settings as _get_settings
                 _s = _get_settings()
                 compact_stale_tool_results(messages, _s.context_tool_keep_turns)
+                enforce_tool_budget(messages, _s.context_tool_token_budget)
+                enforce_history_budget_sync(messages, _s.context_history_token_budget)
                 if turn >= 3:
                     await compact_loop_with_summary(
                         messages, _s.context_max_tokens,

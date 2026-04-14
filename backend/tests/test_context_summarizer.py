@@ -13,6 +13,87 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from tests.conftest import MockSupabaseClient
 
 
+# ============ Test _validate_summary (Phase 4 校验层) ============
+
+
+class TestValidateSummary:
+    """_validate_summary：校验摘要结构和关键数字保留"""
+
+    def test_complete_summary_unchanged(self):
+        """完整摘要不被修改"""
+        from services.context_summarizer import _validate_summary
+
+        summary = (
+            "### 话题线索\n- 库存查询\n\n"
+            "### 关键实体\n- 订单号：123456789\n\n"
+            "### 已确认结论\n- 库存充足\n\n"
+            "### 待处理事项\n- 无"
+        )
+        msgs = [{"content": "订单号 123456789 库存查询"}]
+        result = _validate_summary(summary, msgs)
+        assert result == summary
+
+    def test_missing_sections_adds_warning(self):
+        """缺少章节追加警告"""
+        from services.context_summarizer import _validate_summary
+
+        summary = "### 话题线索\n- 库存\n\n### 关键实体\n- 无"
+        msgs = [{"content": "短消息"}]
+        result = _validate_summary(summary, msgs)
+        assert "摘要不完整" in result
+        assert "已确认结论" in result
+        assert "待处理事项" in result
+
+    def test_missing_numbers_appended(self):
+        """源消息中的长数字丢失时自动补充"""
+        from services.context_summarizer import _validate_summary
+
+        summary = (
+            "### 话题线索\n- 查订单\n\n"
+            "### 关键实体\n- 无\n\n"
+            "### 已确认结论\n- 无\n\n"
+            "### 待处理事项\n- 无"
+        )
+        msgs = [{"content": "订单号 1234567890 和 9876543210"}]
+        result = _validate_summary(summary, msgs)
+        assert "遗漏实体补充" in result
+        assert "1234567890" in result
+        assert "9876543210" in result
+
+    def test_numbers_present_no_supplement(self):
+        """数字已在摘要中不追加"""
+        from services.context_summarizer import _validate_summary
+
+        summary = (
+            "### 话题线索\n- 查订单\n\n"
+            "### 关键实体\n- 订单号：1234567890\n\n"
+            "### 已确认结论\n- 无\n\n"
+            "### 待处理事项\n- 无"
+        )
+        msgs = [{"content": "订单号 1234567890"}]
+        result = _validate_summary(summary, msgs)
+        assert "遗漏实体补充" not in result
+
+    def test_short_numbers_ignored(self):
+        """短数字（<6位）不检查"""
+        from services.context_summarizer import _validate_summary
+
+        summary = "### 话题线索\n- x\n\n### 关键实体\n- 无\n\n### 已确认结论\n- 无\n\n### 待处理事项\n- 无"
+        msgs = [{"content": "数量 123 价格 45"}]
+        result = _validate_summary(summary, msgs)
+        assert "遗漏实体补充" not in result
+
+    def test_non_string_content_skipped(self):
+        """多模态 content(list) 不参与数字检查"""
+        from services.context_summarizer import _validate_summary
+
+        summary = "### 话题线索\n- x\n\n### 关键实体\n- 无\n\n### 已确认结论\n- 无\n\n### 待处理事项\n- 无"
+        msgs = [{"content": [{"type": "text", "text": "1234567890"}]}]
+        result = _validate_summary(summary, msgs)
+        # list content 被跳过，不检查数字
+        assert "遗漏实体补充" not in result
+
+
 # ============ Fixtures ============
 
 
@@ -50,11 +131,11 @@ class TestBuildSummaryPrompt:
         from services.context_summarizer import _build_summary_prompt
 
         messages = [
-            {"role": "user", "content": "x" * 300},
+            {"role": "user", "content": "x" * 600},
         ]
         result = _build_summary_prompt(messages)
 
-        assert len(result) < 300
+        assert len(result) < 600
         assert "..." in result
 
     def test_empty_messages(self):
@@ -111,7 +192,7 @@ class TestSummarizeMessages:
                 {"role": "assistant", "content": "Python是很好的入门语言"},
             ])
 
-        assert result == "用户讨论了Python编程"
+        assert "用户讨论了Python编程" in result
         mock_client.post.assert_called_once()
 
     @pytest.mark.asyncio
@@ -144,7 +225,7 @@ class TestSummarizeMessages:
                 {"role": "user", "content": "测试消息"},
             ])
 
-        assert result == "备用模型生成的摘要"
+        assert "备用模型生成的摘要" in result
         assert mock_client.post.call_count == 2
 
     @pytest.mark.asyncio
@@ -196,7 +277,9 @@ class TestSummarizeMessages:
                 {"role": "user", "content": "测试"},
             ])
 
-        assert len(result) == 500
+        # _validate_summary 可能追加章节缺失警告，但核心摘要被截断到 max_chars
+        assert result is not None
+        assert len(result) >= 500  # 至少包含截断后的内容
 
 
 # ============ Test _get_context_summary (mixin) ============
@@ -415,10 +498,10 @@ class TestUpdateSummaryIfNeeded:
         ) as mock_summarize:
             await chat_handler._update_summary_if_needed("conv1")
 
-        # 压缩前 15 条（25 - 10 = 15）
+        # 压缩前 5 条（25 - 20 = 5，chat_context_limit=20）
         mock_summarize.assert_called_once()
         summarized_msgs = mock_summarize.call_args.args[0]
-        assert len(summarized_msgs) == 15
+        assert len(summarized_msgs) == 5
 
         # 验证更新了 conversations 表
         conv_table.update.assert_called_once()
@@ -452,10 +535,10 @@ class TestUpdateSummaryIfNeeded:
         ) as mock_summarize:
             await chat_handler._update_summary_if_needed("conv1")
 
-        # 压缩前 25 条（35 - 10 = 25）
+        # 压缩前 15 条（35 - 20 = 15，chat_context_limit=20）
         mock_summarize.assert_called_once()
         summarized_msgs = mock_summarize.call_args.args[0]
-        assert len(summarized_msgs) == 25
+        assert len(summarized_msgs) == 15
 
     @pytest.mark.asyncio
     async def test_skips_when_summarizer_fails(self, chat_handler):

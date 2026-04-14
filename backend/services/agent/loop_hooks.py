@@ -1,10 +1,11 @@
 """Tool Loop Executor Hook 实现
 
-LoopHook 基类（所有方法 no-op default）+ 4 个具体实现：
+LoopHook 基类（所有方法 no-op default）+ 5 个具体实现：
 - ProgressNotifyHook：WebSocket 进度推送（仅 task_id 存在时生效）
 - ToolAuditHook：fire-and-forget 工具审计日志
 - TemporalValidatorHook：L4 时间事实校验（合成阶段改写文本）
 - FailureReflectionHook：[A2] 工具失败时注入分析提示，引导模型自我纠错
+- AmbiguityDetectionHook：[A1] 工具返回多条匹配时注入提示，引导模型用 ask_user 确认
 
 设计参考：OpenAI Agents SDK RunHooks / Anthropic Claude Code 中间件链。
 每个 hook 单一职责，可独立单测，可任意组合。
@@ -12,6 +13,7 @@ LoopHook 基类（所有方法 no-op default）+ 4 个具体实现：
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any, Dict, Optional
 
 from loguru import logger
@@ -250,5 +252,60 @@ class FailureReflectionHook(LoopHook):
             "content": (
                 f"工具 {tool_name} 返回了错误。请分析原因后选择："
                 f"1) 换参数重试 2) 换工具 3) 用 ask_user 向用户确认"
+            ),
+        })
+
+
+# ============================================================
+# [A1] 歧义检测
+# ============================================================
+
+class AmbiguityDetectionHook(LoopHook):
+    """工具返回多条匹配时，注入 system message 引导模型用 ask_user 确认
+
+    触发条件：local_product_identify 返回"匹配到N个商品/SKU"且 N≥2。
+
+    副作用：mutate ctx.messages（追加 system 消息）。
+    """
+
+    # 匹配 local_product_identify 的返回格式
+    _IDENTIFY_MULTI_RE = re.compile(
+        r'匹配到(\d+)个(?:商品|SKU)',
+    )
+
+    # 需要检测歧义的工具集合
+    _AMBIGUITY_TOOLS = {
+        "local_product_identify",
+    }
+
+    async def on_tool_end(
+        self,
+        ctx: HookContext,
+        tool_name: str,
+        args: Dict[str, Any],
+        result: str,
+        status: str,
+        elapsed_ms: int,
+        is_cached: bool,
+        is_truncated: bool,
+        tool_call_id: str,
+    ) -> None:
+        if not result or tool_name not in self._AMBIGUITY_TOOLS:
+            return
+
+        match = self._IDENTIFY_MULTI_RE.search(result)
+        if not match:
+            return
+
+        count = int(match.group(1))
+        if count < 2:
+            return
+
+        ctx.messages.append({
+            "role": "system",
+            "content": (
+                f"⚠ {tool_name} 返回了 {count} 条匹配结果。"
+                f"禁止自行选择，必须用 ask_user 将候选列表展示给用户，"
+                f"让用户确认具体目标后再继续查询。"
             ),
         })

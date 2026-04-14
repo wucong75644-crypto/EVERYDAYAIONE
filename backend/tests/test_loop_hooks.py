@@ -1,10 +1,11 @@
-"""LoopHook 单元测试 — 4 个 hook 的独立行为验证
+"""LoopHook 单元测试 — 5 个 hook 的独立行为验证
 
 每个 hook 单一职责，可独立单测。覆盖：
 - ProgressNotifyHook：task_id 缺失时不推送 / 存在时调 stream_publish
 - ToolAuditHook：fire-and-forget 写入 tool_audit_log
 - TemporalValidatorHook：合成阶段改写文本
 - FailureReflectionHook：错误前缀触发 / 业务"错误"字串不触发
+- AmbiguityDetectionHook：多条匹配触发 / 单条不触发 / 非目标工具不触发
 """
 
 import sys
@@ -20,6 +21,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.agent.loop_hooks import (
+    AmbiguityDetectionHook,
     FailureReflectionHook,
     LoopHook,
     ProgressNotifyHook,
@@ -309,5 +311,113 @@ class TestFailureReflectionHook:
         await hook.on_tool_end(
             ctx, "test_tool", {}, "",
             "success", 100, False, False, "tc_001",
+        )
+        assert len(ctx.messages) == 0
+
+
+# ════════════════════════════════════════════════════════
+# AmbiguityDetectionHook
+# ════════════════════════════════════════════════════════
+
+class TestAmbiguityDetectionHook:
+    """AmbiguityDetectionHook：[A1] 多条匹配时注入 ask_user 提示"""
+
+    @pytest.mark.asyncio
+    async def test_multi_product_match_triggers(self):
+        """local_product_identify 返回多个商品时触发"""
+        hook = AmbiguityDetectionHook()
+        ctx = make_ctx()
+
+        result = (
+            '搜索"蓝色卫衣"匹配到5个商品：\n'
+            "1. BH-001 — 蓝色连帽卫衣\n"
+            "2. BH-002 — 深蓝色圆领卫衣\n"
+            "3. BH-003 — 天蓝色加绒卫衣\n"
+            "4. BH-004 — 蓝色短袖卫衣\n"
+            "5. BH-005 — 蓝色拼接卫衣"
+        )
+        await hook.on_tool_end(
+            ctx, "local_product_identify", {"name": "蓝色卫衣"},
+            result, "success", 50, False, False, "tc_001",
+        )
+        assert len(ctx.messages) == 1
+        assert ctx.messages[0]["role"] == "system"
+        assert "ask_user" in ctx.messages[0]["content"]
+        assert "5" in ctx.messages[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_multi_sku_match_triggers(self):
+        """local_product_identify 返回多个 SKU 时触发"""
+        hook = AmbiguityDetectionHook()
+        ctx = make_ctx()
+
+        result = (
+            '搜索规格"红色"匹配到3个SKU：\n'
+            "1. SK-001 — 红色T恤 | 规格: 红色 S码\n"
+            "2. SK-002 — 红色T恤 | 规格: 红色 M码\n"
+            "3. SK-003 — 红色外套 | 规格: 红色 L码"
+        )
+        await hook.on_tool_end(
+            ctx, "local_product_identify", {"spec": "红色"},
+            result, "success", 50, False, False, "tc_001",
+        )
+        assert len(ctx.messages) == 1
+        assert "3" in ctx.messages[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_single_match_does_not_trigger(self):
+        """精确匹配到1个结果不触发"""
+        hook = AmbiguityDetectionHook()
+        ctx = make_ctx()
+
+        result = (
+            '搜索"蓝色连帽卫衣"匹配到1个商品：\n'
+            "1. BH-001 — 蓝色连帽卫衣"
+        )
+        await hook.on_tool_end(
+            ctx, "local_product_identify", {"name": "蓝色连帽卫衣"},
+            result, "success", 50, False, False, "tc_001",
+        )
+        assert len(ctx.messages) == 0
+
+    @pytest.mark.asyncio
+    async def test_exact_code_match_does_not_trigger(self):
+        """编码精确识别（无"匹配到N个"格式）不触发"""
+        hook = AmbiguityDetectionHook()
+        ctx = make_ctx()
+
+        result = (
+            "编码识别: BH-001\n"
+            "✓ 商品存在 | 编码类型: 主编码(outer_id)\n"
+            "名称: 蓝色连帽卫衣"
+        )
+        await hook.on_tool_end(
+            ctx, "local_product_identify", {"code": "BH-001"},
+            result, "success", 50, False, False, "tc_001",
+        )
+        assert len(ctx.messages) == 0
+
+    @pytest.mark.asyncio
+    async def test_non_target_tool_does_not_trigger(self):
+        """非目标工具即使结果包含匹配格式也不触发"""
+        hook = AmbiguityDetectionHook()
+        ctx = make_ctx()
+
+        result = '搜索"蓝色"匹配到10个商品：\n1. ...'
+        await hook.on_tool_end(
+            ctx, "local_order_query", {"product_code": "A"},
+            result, "success", 50, False, False, "tc_001",
+        )
+        assert len(ctx.messages) == 0
+
+    @pytest.mark.asyncio
+    async def test_empty_result_does_not_trigger(self):
+        """空结果不触发"""
+        hook = AmbiguityDetectionHook()
+        ctx = make_ctx()
+
+        await hook.on_tool_end(
+            ctx, "local_product_identify", {"name": "xxx"},
+            "", "success", 50, False, False, "tc_001",
         )
         assert len(ctx.messages) == 0
