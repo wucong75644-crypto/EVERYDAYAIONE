@@ -40,6 +40,19 @@ def _to_cn_aware(dt: datetime) -> datetime:
     return dt.astimezone(CN_TZ)
 
 
+def _parse_iso_to_cn(value: Any) -> Optional[datetime]:
+    """将 DB 返回的 ISO 时间字符串/datetime 转为北京时间，解析失败返回 None。"""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return _to_cn_aware(value)
+    try:
+        from dateutil.parser import isoparse
+        return _to_cn_aware(isoparse(str(value)))
+    except Exception:
+        return None
+
+
 # ────────────────────────────────────────────────────────────────────
 # TimePoint — 单个时间点的结构化表示
 # ────────────────────────────────────────────────────────────────────
@@ -425,7 +438,9 @@ class RequestContext:
             f"{self.today.weekday_cn}"
             f"（中国时区 UTC+8，ISO 第 {self.today.iso_week} 周{holiday_part}）\n"
             f"⚠ 涉及日期/星期/相对时间时，必须直接使用工具返回的字段，"
-            f"禁止自行推算 weekday 或相对日期。"
+            f"禁止自行推算 weekday 或相对日期。\n"
+            f"⚠ 历史对话中的「今天」指的是当时的日期（见消息前的时间戳），"
+            f"不代表当前日期。用户说「今天」时，必须以上面的当前时间为准。"
         )
 
 
