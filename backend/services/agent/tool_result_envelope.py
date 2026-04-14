@@ -145,39 +145,31 @@ def wrap_for_erp_agent(tool_name: str, result: str) -> str:
     return wrap(tool_name, result, budget=ERP_AGENT_BUDGET)
 
 
-def wrap_agent_result(
-    result: str,
-    *,
-    is_summary: bool = False,
-    budget: int = ERP_AGENT_RESULT_BUDGET,
-) -> str:
-    """子 Agent 返回给主 Agent 的通用包装。
+def wrap_erp_agent_result(result: str) -> str:
+    """erp_agent 工具返回给主 Agent 的结论包装（预算 4000）。
 
-    Args:
-        result: 子 Agent 的输出文本
-        is_summary: True 表示已是完整结论，主 Agent 应直接透传；
-                    False 表示原始数据，主 Agent 需自行总结。
-        budget: 字符截断预算
+    不仅截断，还加 pass-through prompt：禁止主 Agent 改写 erp_agent
+    返回的结构化时间块和数据。这是对"主 Agent 重述时再产生 weekday
+    幻觉"的防御性提示词加固，对应 PR2 审查发现的盲点。
 
-    所有子 Agent（ERP / ScheduledTask / 未来新增）共用此函数，
-    主 Agent 通过 is_summary 标记决定输出策略（见 TOOL_SYSTEM_PROMPT 输出规则）。
+    设计文档：docs/document/TECH_ERP时间准确性架构.md §14.7
     """
-    truncated = wrap("agent_result", result, budget=budget)
+    truncated = wrap("erp_agent", result, budget=ERP_AGENT_RESULT_BUDGET)
+    # 空结果不加 envelope，避免给前端发"只有提示没数据"的奇怪回复
     if not truncated.strip():
         return truncated
     return (
-        f"[is_summary: {'true' if is_summary else 'false'}]\n"
-        f"{truncated}"
+        "[ALREADY_DISPLAYED]\n"
+        "⚠ 以下 ERP 查询结果已作为独立卡片直接展示给用户，用户已经看到了原始数据。\n"
+        "回复规则：\n"
+        "- 用结构化格式（列表/表格）呈现关键数据\n"
+        "- 禁止在数据之后再加「总结」「分析」「对比」段落\n"
+        "- 禁止改写日期/星期/数字\n"
+        "- 用户没要求对比/趋势时不要主动分析\n\n"
+        "─── ERP 结果开始 ───\n"
+        f"{truncated}\n"
+        "─── ERP 结果结束 ───"
     )
-
-
-def wrap_erp_agent_result(result: str) -> str:
-    """erp_agent 工具返回给主 Agent 的结论包装。
-
-    ERP Agent 自带结论（is_summary=True），主 Agent 直接透传。
-    设计文档：docs/document/TECH_ERP时间准确性架构.md §14.7
-    """
-    return wrap_agent_result(result, is_summary=True, budget=ERP_AGENT_RESULT_BUDGET)
 
 
 # ============================================================
