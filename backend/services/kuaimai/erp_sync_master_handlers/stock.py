@@ -1,4 +1,4 @@
-"""ERP 库存同步：增量（按变动 mainOuterId）+ 全量（活跃商品全扫）"""
+"""ERP 库存同步：增量（时间查询直接 upsert）+ 全量（活跃商品全扫）"""
 
 from __future__ import annotations
 
@@ -58,8 +58,8 @@ def _map_stock_item(item: dict[str, Any]) -> dict[str, Any] | None:
 async def _fetch_stock_by_codes(
     svc: ErpSyncService, codes: list[str],
 ) -> int:
-    """按编码批量精准查库存并 upsert（每批最多100个编码）"""
-    from services.kuaimai.erp_sync_handlers import _API_SEM
+    """按编码批量精准查库存并 upsert（每批最多100个编码，全量刷新专用）"""
+    from services.kuaimai.erp_sync_utils import _API_SEM
 
     rows: list[dict[str, Any]] = []
     for i in range(0, len(codes), 100):
@@ -93,15 +93,15 @@ async def _fetch_stock_by_codes(
 async def sync_stock(
     svc: ErpSyncService, start: datetime, end: datetime,
 ) -> int:
-    """库存增量同步：按仓库遍历收集变动编码 → 按编码精准查最新值 → upsert
+    """库存增量同步：按仓库遍历时间查询 → 直接 upsert
 
     快麦 API 不传 warehouseId 时只返回默认仓库的变动，
     遍历所有仓库才能捕获完整变动（实测覆盖率 92%+，配合全量兜底达 100%）。
-    时间查询返回的 sellableNum 是历史快照，所以只用来收集编码，
-    再用 mainOuterId 精准查拿实时值。
+    2026-04-14：快麦已修复时间查询返回实时数据（非历史快照），
+    验证20条×14字段 100% 一致，去掉二次精查，一步到位 upsert。
     """
     from core.config import get_settings
-    from services.kuaimai.erp_sync_handlers import _API_SEM
+    from services.kuaimai.erp_sync_utils import _API_SEM
 
     # 优先读企业配置，降级到全局 settings
     wh_config = None
@@ -123,8 +123,8 @@ async def sync_stock(
         )
         return 0
 
-    # Step 1: 遍历每个仓库，收集有变动的主编码
-    changed_codes: set[str] = set()
+    # 遍历每个仓库，时间查询直接收集库存行并 upsert
+    rows: list[dict[str, Any]] = []
     for wh_id in wh_ids:
         try:
             page = 0
@@ -143,9 +143,9 @@ async def sync_stock(
                     )
                 items = data.get("stockStatusVoList") or []
                 for item in items:
-                    code = item.get("mainOuterId") or item.get("outerId")
-                    if code:
-                        changed_codes.add(code)
+                    row = _map_stock_item(item)
+                    if row:
+                        rows.append(row)
                 if len(items) < 100:
                     break
         except Exception as e:
@@ -153,13 +153,14 @@ async def sync_stock(
                 f"sync_stock: warehouse {wh_id} query failed, skip | error={e}"
             )
 
-    if not changed_codes:
+    if not rows:
         return 0
 
-    logger.info(f"sync_stock incremental | changed_codes={len(changed_codes)}")
-
-    # Step 2: 按编码精准查最新库存值
-    return await _fetch_stock_by_codes(svc, list(changed_codes))
+    logger.info(f"sync_stock incremental | rows={len(rows)}")
+    return await _batch_upsert(
+        svc.db, "erp_stock_status", rows, "outer_id,sku_outer_id,warehouse_id,org_id",
+        org_id=svc.org_id,
+    )
 
 
 async def sync_stock_full(svc: ErpSyncService) -> int:

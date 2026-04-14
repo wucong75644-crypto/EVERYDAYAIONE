@@ -165,8 +165,8 @@ PRODUCT_REGISTRY = {
             "brand": "品牌名称（多个逗号隔开）。示例: 品牌A,品牌B",
             "created": "商品创建时间。格式: yyyy-MM-dd HH:mm:ss。示例: 2026-03-01 00:00:00",
             "modified": "商品更新时间。格式: yyyy-MM-dd HH:mm:ss。示例: 2026-03-01 00:00:00",
-            "stock_start": "库存变动起始日期。格式: YYYY-MM-DD。示例: 2026-03-01",
-            "stock_end": "库存变动结束日期。格式: YYYY-MM-DD。示例: 2026-03-15",
+            "stock_start": "库存变动起始时间。格式: yyyy-MM-dd HH:mm:ss。示例: 2026-03-01 00:00:00",
+            "stock_end": "库存变动结束时间。格式: yyyy-MM-dd HH:mm:ss。示例: 2026-03-15 23:59:59",
             "relation_fields": "关联信息字段。指定需要额外返回的关联信息",
         },
         error_codes={
