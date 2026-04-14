@@ -6,7 +6,7 @@
 
 import type { StateCreator } from 'zustand';
 import type { Message, GenerationParams } from '../../types/message';
-import { getTextContent, normalizeMessage } from '../../utils/messageUtils';
+import { normalizeMessage } from '../../utils/messageUtils';
 
 // ============================================================
 // 类型定义
@@ -169,7 +169,7 @@ export const createStreamingSlice: StateCreator<
       if (targetIndex === -1) return state;
 
       const target = list[targetIndex];
-      const content = [...target.content, block as Message['content'][number]];
+      const content = [...target.content, block as unknown as Message['content'][number]];
 
       const updatedList = [...list];
       updatedList[targetIndex] = { ...target, content };

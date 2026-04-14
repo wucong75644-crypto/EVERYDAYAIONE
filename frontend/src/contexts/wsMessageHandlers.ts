@@ -58,6 +58,7 @@ export interface MessageStoreActions {
   setAgentStepHint: (conversationId: string, hint: string) => void;
   clearAgentStepHint: (conversationId: string) => void;
   appendStreamingThinking: (conversationId: string, chunk: string) => void;
+  appendContentBlock: (conversationId: string, block: Record<string, unknown>) => void;
   markForceRefresh: (conversationId: string) => void;
 }
 
