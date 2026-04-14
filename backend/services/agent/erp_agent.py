@@ -180,6 +180,7 @@ class ERPAgent:
             HookContext, LoopConfig, LoopStrategy,
         )
         from services.agent.loop_hooks import (
+            AmbiguityDetectionHook,
             FailureReflectionHook,
             ProgressNotifyHook,
             TemporalValidatorHook,
@@ -220,6 +221,7 @@ class ERPAgent:
                 ToolAuditHook(),
                 TemporalValidatorHook(),
                 FailureReflectionHook(),
+                AmbiguityDetectionHook(),
             ],
         )
         return tool_loop, hook_ctx

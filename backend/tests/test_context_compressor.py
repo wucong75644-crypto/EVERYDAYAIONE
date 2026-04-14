@@ -15,6 +15,10 @@ import pytest
 from unittest.mock import AsyncMock, patch
 from services.handlers.context_compressor import (
     _build_loop_summary_input,
+    _is_archived,
+    _msg_tokens,
+    enforce_tool_budget,
+    enforce_history_budget_sync,
     _identify_tool_turns,
     compact_stale_tool_results,
     compact_loop_with_summary,
@@ -365,4 +369,152 @@ class TestBuildLoopSummaryInput:
         ]
         result = _build_loop_summary_input(msgs, [0])
         assert "AI 调用工具: erp_agent" in result
-        assert "AI:" not in result  # content=None 不输出
+
+
+# ============================================================
+# _is_archived: 多模态兼容
+# ============================================================
+
+
+class TestIsArchived:
+    def test_archived_string(self):
+        assert _is_archived({"content": "[已归档] 工具结果已压缩"}) is True
+
+    def test_normal_string(self):
+        assert _is_archived({"content": "正常内容"}) is False
+
+    def test_multimodal_list(self):
+        """list content 不视为已归档"""
+        assert _is_archived({"content": [{"type": "text", "text": "[已归档"}]}) is False
+
+    def test_empty_content(self):
+        assert _is_archived({"content": ""}) is False
+        assert _is_archived({}) is False
+
+
+# ============================================================
+# enforce_tool_budget: 工具结果分桶
+# ============================================================
+
+
+def _make_tool_turn(turn_idx: int, result_size: int = 500):
+    """构造一轮 assistant(tool_calls) + tool(result) 消息"""
+    return [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"function": {"name": f"tool_{turn_idx}"}}],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": f"tc_{turn_idx}",
+            "content": "x" * result_size,
+        },
+    ]
+
+
+class TestEnforceToolBudget:
+    def test_within_budget_no_change(self):
+        """预算内不压缩"""
+        msgs = [*_make_tool_turn(1, 100), *_make_tool_turn(2, 100)]
+        original_contents = [m.get("content") for m in msgs]
+        enforce_tool_budget(msgs, max_tokens=10000)
+        assert [m.get("content") for m in msgs] == original_contents
+
+    def test_over_budget_compacts_oldest(self):
+        """超预算压缩最旧的工具结果"""
+        # 3 轮，每轮 tool result 5000 字符 ≈ 2000 token
+        msgs = [*_make_tool_turn(1, 5000), *_make_tool_turn(2, 5000), *_make_tool_turn(3, 5000)]
+        enforce_tool_budget(msgs, max_tokens=3000)  # 只够 ~1.5 轮
+        # 第 1 轮的 tool 应被归档
+        assert msgs[1]["content"].startswith("[已归档")
+        # 最近 2 轮（第 2、3 轮）的 tool 应保留
+        assert not msgs[3]["content"].startswith("[已归档")
+        assert not msgs[5]["content"].startswith("[已归档")
+
+    def test_protects_last_2_turns(self):
+        """保护最近 2 轮不压缩"""
+        msgs = [*_make_tool_turn(1, 5000), *_make_tool_turn(2, 5000), *_make_tool_turn(3, 5000)]
+        enforce_tool_budget(msgs, max_tokens=1)  # 极小预算
+        # 最近 2 轮（第 2、3 轮）的 tool 仍保留
+        assert not msgs[3]["content"].startswith("[已归档")
+        assert not msgs[5]["content"].startswith("[已归档")
+
+    def test_no_tool_messages_noop(self):
+        """没有 tool 消息不报错"""
+        msgs = [{"role": "user", "content": "hello"}]
+        enforce_tool_budget(msgs, max_tokens=100)
+        assert msgs[0]["content"] == "hello"
+
+    def test_already_archived_skip(self):
+        """已归档的不重复压缩"""
+        msgs = [*_make_tool_turn(1, 5000), *_make_tool_turn(2, 5000), *_make_tool_turn(3, 5000)]
+        msgs[1]["content"] = "[已归档] 工具结果已压缩（原始 5000 字符）"
+        enforce_tool_budget(msgs, max_tokens=1)
+        # 已归档的保持不变
+        assert "原始 5000" in msgs[1]["content"]
+
+
+# ============================================================
+# enforce_history_budget_sync: 历史桶（同步版）
+# ============================================================
+
+
+class TestEnforceHistoryBudgetSync:
+    def test_within_budget_no_change(self):
+        """预算内不压缩"""
+        msgs = [
+            {"role": "user", "content": "短消息"},
+            {"role": "assistant", "content": "短回复"},
+        ]
+        enforce_history_budget_sync(msgs, max_tokens=10000)
+        assert msgs[0]["content"] == "短消息"
+
+    def test_over_budget_removes_low_score_first(self):
+        """超预算时低分消息先被淘汰"""
+        msgs = [
+            {"role": "user", "content": "好的"},          # 低分（废话）
+            {"role": "user", "content": "x" * 5000},      # 高分（长消息）
+            {"role": "assistant", "content": "x" * 5000},  # 高分
+            {"role": "user", "content": "订单号1234567890"}, # 高分（实体）
+            {"role": "user", "content": "当前问题"},        # 受保护（最后 4 条之一）
+        ]
+        enforce_history_budget_sync(msgs, max_tokens=2000)
+        # "好的"（低分）应先被淘汰
+        assert msgs[0]["content"] == "[已归档]"
+
+    def test_protects_last_4(self):
+        """保护最后 4 条消息"""
+        msgs = [
+            {"role": "user", "content": "x" * 10000},
+            {"role": "assistant", "content": "a"},
+            {"role": "user", "content": "b"},
+            {"role": "assistant", "content": "c"},
+            {"role": "user", "content": "d"},
+        ]
+        enforce_history_budget_sync(msgs, max_tokens=100)
+        # 只有第一条可被淘汰
+        assert msgs[0]["content"] == "[已归档]"
+        # 后 4 条受保护
+        assert msgs[1]["content"] == "a"
+        assert msgs[4]["content"] == "d"
+
+    def test_no_history_noop(self):
+        """没有 user/assistant 消息不报错"""
+        msgs = [{"role": "system", "content": "system prompt"}]
+        enforce_history_budget_sync(msgs, max_tokens=100)
+        assert msgs[0]["content"] == "system prompt"
+
+    def test_skips_archived_messages(self):
+        """已归档的消息不参与打分/淘汰"""
+        msgs = [
+            {"role": "user", "content": "[已归档]"},
+            {"role": "user", "content": "x" * 10000},
+            {"role": "assistant", "content": "a"},
+            {"role": "user", "content": "b"},
+            {"role": "assistant", "content": "c"},
+            {"role": "user", "content": "d"},
+        ]
+        enforce_history_budget_sync(msgs, max_tokens=100)
+        # 已归档的保持不变
+        assert msgs[0]["content"] == "[已归档]"

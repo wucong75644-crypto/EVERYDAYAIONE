@@ -1,10 +1,14 @@
 """
 对话历史摘要压缩
 
-将超过 20 条的早期对话消息压缩为 ≤500 字摘要，注入 system prompt 实现低成本"长记忆"。
+将超出窗口的早期对话消息压缩为结构化摘要，注入 system prompt 实现低成本"长记忆"。
 降级链：qwen-turbo → qwen-plus → 跳过（无摘要）
+
+Phase 4 重构：结构化模板 + 校验层，防止关键数字丢失。
+设计文档：docs/document/TECH_上下文工程重构.md §七
 """
 
+import re
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -13,16 +17,33 @@ from loguru import logger
 from core.config import settings
 from services.dashscope_client import DashScopeClient
 
-SUMMARY_SYSTEM_PROMPT = """你是一个对话摘要生成器。将给定的对话历史压缩为简洁摘要。
+SUMMARY_SYSTEM_PROMPT = """你是对话摘要压缩器。按以下固定模板输出，每个章节都必须填写。
 
-要求：
-- 必须保留：ERP 查询结论中的关键数字（金额、数量、日期、商品编码）
-- 必须保留：用户明确表达的意图和决策
-- 可以压缩：寒暄、确认、重复问答
-- 可以丢弃：工具调用的中间过程、API 参数细节
-- 按时间顺序，分话题段落概括
+## 模板（严格遵守，缺章节视为失败）
+
+### 话题线索
+- [按时间列出用户讨论过的话题，每个一行]
+
+### 关键实体（必填，禁止遗漏任何数字/编码/ID）
+- 订单号：[所有出现过的订单号，原样列出]
+- 商品编码/名称：[所有提到的商品]
+- 金额/数量：[所有关键数字，必须精确，禁止近似]
+- 日期/时间：[所有涉及的时间]
+- 人名/店铺：[所有提到的人或店铺]
+（某项无内容写"无"）
+
+### 已确认结论
+- [ERP 查询或计算得出的确定性结论]
+
+### 待处理事项
+- [用户提到但未完成的任务]
+
+## 约束
 - 最大{max_chars}字
-- 直接输出摘要文本，不要加前缀或解释"""
+- 关键实体章节是硬约束：对话中出现的任何数字/编码/ID 必须原样出现在此章节
+- 禁止添加对话中未提及的信息
+- 禁止近似化数字（20347 不可写成"约两万"）
+- 直接输出模板内容，不加前缀"""
 
 # 模块级 HTTP 客户端（延迟初始化）
 _ds_client = DashScopeClient("context_summary_timeout")
@@ -34,9 +55,9 @@ def _build_summary_prompt(messages: List[Dict[str, Any]]) -> str:
     for msg in messages:
         role = "用户" if msg["role"] == "user" else "AI"
         content = msg["content"]
-        # 截断过长的单条消息（避免 prompt 过大）
-        if len(content) > 200:
-            content = content[:200] + "..."
+        # 截断过长的单条消息（关键数据常在中后段，从 200→500）
+        if len(content) > 500:
+            content = content[:500] + "..."
         lines.append(f"{role}：{content}")
     return "\n".join(lines)
 
@@ -89,13 +110,46 @@ async def _call_summary_model(
         return None
 
 
+def _validate_summary(summary: str, source_messages: List[Dict[str, Any]]) -> str:
+    """校验摘要是否保留了源消息中的关键实体
+
+    检查项：
+    1. 必须包含"关键实体"章节
+    2. 源消息中的数字（>=6位）必须在摘要中出现
+    3. 章节不可为空
+
+    校验失败时追加补充信息，不丢弃摘要。
+    """
+    # 检查章节存在
+    required_sections = ["话题线索", "关键实体", "已确认结论", "待处理事项"]
+    missing = [s for s in required_sections if s not in summary]
+    if missing:
+        logger.warning(f"Summary missing sections: {missing}")
+        summary = f"[摘要不完整，缺: {', '.join(missing)}]\n\n{summary}"
+
+    # 检查关键数字保留
+    source_text = " ".join(
+        msg.get("content", "") for msg in source_messages
+        if isinstance(msg.get("content"), str)
+    )
+    source_numbers = set(re.findall(r'\d{6,}', source_text))
+    if source_numbers:
+        missing_nums = source_numbers - set(re.findall(r'\d{6,}', summary))
+        if missing_nums:
+            logger.warning(f"Summary lost numbers: {missing_nums}")
+            summary += f"\n\n### 遗漏实体补充\n- 数字/编码：{', '.join(sorted(missing_nums))}"
+
+    return summary
+
+
 async def summarize_messages(
     messages: List[Dict[str, Any]],
 ) -> Optional[str]:
     """
-    对消息列表生成压缩摘要。
+    对消息列表生成结构化压缩摘要。
 
     降级链：qwen-turbo → qwen-plus → 返回 None
+    Phase 4：结构化模板 + 校验层。
     """
     if not messages:
         return None
@@ -111,7 +165,7 @@ async def summarize_messages(
         settings.context_summary_model, messages_text
     )
     if summary:
-        return summary
+        return _validate_summary(summary, messages)
 
     # 第二级：备用模型
     logger.info("Context summary: falling back to secondary model")
@@ -119,7 +173,7 @@ async def summarize_messages(
         settings.context_summary_fallback_model, messages_text
     )
     if summary:
-        return summary
+        return _validate_summary(summary, messages)
 
     # 第三级：跳过
     logger.warning("Context summary: all models failed, skipping")

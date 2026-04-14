@@ -79,7 +79,8 @@ def build_local_tools() -> List[Dict[str, Any]]:
             "返回各采购单明细（单号/供应商/状态/到货数量），默认最近30天。"
             "⚠ 需精确编码，模糊时先 local_product_identify。"
             "相关工具：更多采购操作（上架/归档）用 erp_purchase_query；"
-            "查该商品库存用 local_stock_query。",
+            "查该商品库存用 local_stock_query；"
+            "查该商品售后/退货情况用 local_aftersale_query。",
             {
                 "product_code": _str("商品编码（主商家编码或SKU编码）"),
                 "status": _enum(
@@ -98,7 +99,7 @@ def build_local_tools() -> List[Dict[str, Any]]:
             "返回按类型汇总 + 最近5条工单明细，默认最近30天。"
             "⚠ 需精确编码，模糊时先 local_product_identify。"
             "相关工具：淘宝/天猫退款用 erp_taobao_query(refund_list)；"
-            "查该商品订单用 local_order_query。",
+            "查退货对应原订单详情用 local_order_query。",
             {
                 "product_code": _str("商品编码"),
                 "aftersale_type": _enum(
@@ -190,6 +191,7 @@ def build_local_tools() -> List[Dict[str, Any]]:
             "商品名模糊搜索（返回最多20条）、"
             "规格名模糊搜索（返回最多20条）。"
             "返回编码/名称/规格/条码/供应商。code/name/spec 至少传一个。"
+            "⚠ 返回多条匹配时，必须用 ask_user 让用户确认目标商品，禁止自行选择第一条。"
             "相关工具：识别到编码后可用 local_stock_query 查库存、local_order_query 查订单、"
             "local_product_stats 查统计、local_product_flow 查供应链流转。",
             {
@@ -206,7 +208,8 @@ def build_local_tools() -> List[Dict[str, Any]]:
             "返回编码在哪些平台有售，或平台商品ID反查ERP编码。"
             "product_code 和 num_iid 至少传一个。"
             "相关工具：编码模糊时先 local_product_identify；"
-            "查库存用 local_stock_query。",
+            "查库存用 local_stock_query；"
+            "查该商品在某平台的订单用 local_order_query(platform=...)。",
             {
                 "product_code": _str(
                     "ERP商品编码（查此编码在哪些平台有售）"
@@ -225,6 +228,7 @@ def build_local_tools() -> List[Dict[str, Any]]:
             "（sid/order_no/express_no/outer_id），"
             "可直接用于跨工具查询（如拿 sid 查物流）。"
             "相关工具：拿到编码后可用 local_stock_query/local_order_query 深入查询；"
+            "查到采购单后查到货进度用 local_purchase_query；"
             "需要物流轨迹用 erp_trade_query(express_query)。",
             {
                 "product_code": _str("商品编码（主编码或SKU编码）"),
@@ -304,7 +308,9 @@ def build_local_tools() -> List[Dict[str, Any]]:
             "返回结构化双时间块 + 数据对比。"
             "⚠ 涉及「对比/同比/环比/比上周/比上月/比去年」的查询必须用本工具，"
             "禁止调用 local_global_stats 两次再让模型口述对比。"
-            "适合：今天 vs 昨天、本周 vs 上周、本月 vs 上月同期、订单同比去年同期等。",
+            "适合：今天 vs 昨天、本周 vs 上周、本月 vs 上月同期、订单同比去年同期等。"
+            "相关工具：对比后需要明细数据用 local_db_export；"
+            "单商品对比趋势用 local_product_stats。",
             {
                 "doc_type": _enum(
                     "统计类型",
@@ -373,7 +379,8 @@ def build_local_tools() -> List[Dict[str, Any]]:
             "查询仓库列表（实体仓+虚拟仓）。毫秒级响应。"
             "返回仓库名称/编码/类型/状态/地址。"
             "适合：有哪些仓库、仓库地址、仓库编码等查询。"
-            "相关工具：拿到仓库名后可用 local_stock_query 查库存分布。",
+            "相关工具：拿到仓库名后可用 local_stock_query 查库存分布；"
+            "查某仓库出入库统计用 local_global_stats(warehouse_name=...)。",
             {
                 "is_virtual": _bool("是否只查虚拟仓（true=只看虚拟仓, false=只看实体仓, 不传=全部）"),
             },
@@ -386,7 +393,8 @@ def build_local_tools() -> List[Dict[str, Any]]:
             "Step1: 只传 doc_type（不传 columns）→ 返回可导出字段文档。"
             "Step2: 传 doc_type + columns → 按字段导出到 staging，配合 code_execute 生成 Excel。"
             "⚠ 本地有的数据优先用本工具（毫秒级），"
-            "本地没有的数据（如物流轨迹）才用 fetch_all_pages（远程API）。",
+            "本地没有的数据（如物流轨迹）才用 fetch_all_pages（远程API）。"
+            "⚠ Step2 导出 staging 后必须接 code_execute 生成 Excel/CSV 才能下载。",
             {
                 "doc_type": _enum(
                     "数据类型",

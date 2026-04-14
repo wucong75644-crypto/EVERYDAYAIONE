@@ -264,12 +264,13 @@ class TestBuildContextMessages:
         assert len(result) == 2
 
     @pytest.mark.asyncio
-    async def test_context_limit_zero_returns_empty(self, chat_handler, mock_db):
-        """chat_context_limit=0 时返回空"""
+    async def test_token_budget_zero_returns_empty(self, chat_handler, mock_db):
+        """context_history_token_budget=0 时返回空（禁用上下文加载）"""
         mock_db.set_table_data("messages", [_make_msg("user", "hello")])
 
         with patch("core.config.settings") as mock_settings:
-            mock_settings.chat_context_limit = 0
+            mock_settings.context_history_token_budget = 0
+            mock_settings.chat_context_max_images = 5
             result = await chat_handler._build_context_messages("conv1", "hello")
 
         assert result == []
@@ -299,7 +300,7 @@ class TestBuildContextMessages:
         mock_table.eq.return_value = mock_table
         mock_table.in_.return_value = mock_table
         mock_table.order.return_value = mock_table
-        mock_table.limit.return_value = mock_table
+        mock_table.range.return_value = mock_table
         mock_table.execute.return_value = MagicMock(data=[
             _make_msg("user", "msg1"),
         ])
@@ -325,7 +326,7 @@ class TestBuildContextMessages:
         mock_table.eq.return_value = mock_table
         mock_table.in_.return_value = mock_table
         mock_table.order.return_value = mock_table
-        mock_table.limit.return_value = mock_table
+        mock_table.range.return_value = mock_table
         # 模拟 DB 已过滤 system role，只返回 user/assistant
         mock_table.execute.return_value = MagicMock(data=[
             _make_msg("user", "当前"),
@@ -357,19 +358,20 @@ class TestBuildContextMessages:
         assert result[1] == {"role": "assistant", "content": "之前的回复"}
 
     @pytest.mark.asyncio
-    async def test_char_limit_truncates_oldest(self, chat_handler, mock_db):
-        """超过字符上限时优先保留最新消息，丢弃最旧的"""
-        # 每条消息 5000 字符，两条共 10000 > 8000 上限
-        long_text = "x" * 5000
+    async def test_token_budget_truncates_oldest(self, chat_handler, mock_db):
+        """超过 token 预算时优先保留最新消息，丢弃最旧的"""
+        # 8000 token = 20000 字符，每条消息 12000 字符（≈4800 token）
+        # 两条共 9600 token > 8000 预算
+        long_text = "x" * 12000
         mock_db.set_table_data("messages", [
             _make_msg("user", "当前"),
             _make_msg("assistant", long_text),  # 最新（DESC 第一条）
-            _make_msg("user", long_text),        # 最旧（DESC 第二条，被截断）
+            _make_msg("user", long_text),        # 最旧（DESC 第二条，超预算被截断）
         ])
 
         result = await chat_handler._build_context_messages("conv1", "当前")
 
-        # 从新→旧遍历：最新 assistant 5000 < 8000 保留，旧 user 累计超限被截断
+        # 从新→旧遍历：最新 assistant 4800 token < 8000 保留，旧 user 累计超限被截断
         assert len(result) == 1
         assert result[0]["role"] == "assistant"
 
@@ -409,8 +411,7 @@ class TestBuildContextMessages:
         ])
 
         with patch("core.config.settings") as mock_settings:
-            mock_settings.chat_context_limit = 20
-            mock_settings.chat_context_max_chars = 8000
+            mock_settings.context_history_token_budget = 8000
             mock_settings.chat_context_max_images = 4  # 只允许 4 张
 
             result = await chat_handler._build_context_messages("conv1", "当前")
@@ -720,9 +721,14 @@ class TestBuildLlmMessagesGatherDegradation:
     @pytest.mark.asyncio
     async def test_memory_exception_degrades_to_none(self, chat_handler, mock_db):
         """记忆检索异常 → 降级为 None，摘要和历史正常注入"""
+        # Phase 6 门控：context_messages > 5 条时才注入摘要，所以需要足够多的历史
         mock_db.set_table_data("messages", [
-            _make_msg("assistant", "之前的回复"),
-            _make_msg("user", "之前的问题"),
+            _make_msg("user", "问题1"),
+            _make_msg("assistant", "回复1"),
+            _make_msg("user", "问题2"),
+            _make_msg("assistant", "回复2"),
+            _make_msg("user", "问题3"),
+            _make_msg("assistant", "回复3"),
         ])
 
         with patch.object(
@@ -944,3 +950,62 @@ class TestBuildLlmMessagesUserLocation:
             and "用户所在位置" in m["content"]
         ]
         assert len(location_msgs) == 0
+
+
+# ============ Test _should_skip_knowledge (Phase 6 门控) ============
+
+
+class TestShouldSkipKnowledge:
+    """Phase 6 反向门控：排除明确不需要知识库的场景"""
+
+    @staticmethod
+    def _skip(text: str) -> bool:
+        from services.handlers.chat_context_mixin import ChatContextMixin
+        return ChatContextMixin._should_skip_knowledge(text)
+
+    def test_chitchat_skipped(self):
+        """纯问候/闲聊跳过"""
+        for text in ["你好", "早上好", "hi", "hello", "谢谢", "再见", "666"]:
+            assert self._skip(text) is True, f"'{text}' should be skipped"
+
+    def test_very_short_skipped(self):
+        """极短消息（<=3字）跳过"""
+        assert self._skip("嗯") is True
+        assert self._skip("好") is True
+
+    def test_creative_skipped(self):
+        """创作/娱乐意图跳过"""
+        assert self._skip("写一首关于春天的诗") is True
+        assert self._skip("画一个猫") is True
+        assert self._skip("讲个笑话") is True
+        assert self._skip("今天天气怎么样") is True
+
+    def test_general_qa_skipped(self):
+        """通用问答跳过（不含业务词）"""
+        assert self._skip("什么是REST API") is True
+        assert self._skip("如何学习Python") is True
+
+    def test_general_qa_with_business_not_skipped(self):
+        """通用问答含业务词不跳过"""
+        assert self._skip("什么是退货流程") is False
+        assert self._skip("解释一下库存锁定") is False
+
+    def test_business_queries_not_skipped(self):
+        """业务查询不跳过"""
+        for text in [
+            "蓝色连衣裙卖了多少",
+            "帮我查一下库存",
+            "订单1234567890什么状态",
+            "昨天的销量统计",
+            "对比一下本周和上周",
+        ]:
+            assert self._skip(text) is False, f"'{text}' should NOT be skipped"
+
+    def test_ambiguous_defaults_to_inject(self):
+        """模糊指令默认注入"""
+        assert self._skip("帮我看看那个") is False
+        assert self._skip("查一下呗") is False
+
+    def test_summary_request_not_skipped(self):
+        """'帮我写个总结'不跳过（可能是 ERP 数据总结）"""
+        assert self._skip("帮我写个总结") is False

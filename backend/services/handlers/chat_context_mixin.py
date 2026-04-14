@@ -3,10 +3,13 @@ Chat 上下文构建 Mixin
 
 负责 LLM 消息组装：记忆注入、搜索上下文、对话历史、路由人设。
 供 ChatHandler 混入使用。
+
+Phase 1-6 上下文工程重构。设计文档：docs/document/TECH_上下文工程重构.md
 """
 
 import asyncio
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -16,8 +19,50 @@ from services.websocket_manager import ws_manager
 from utils.time_context import RequestContext
 
 
+# ============================================================
+# Phase 6: 意图门控 — 排除集
+# 设计文档：docs/document/TECH_上下文工程重构.md §九
+# ============================================================
+
+_CHITCHAT_EXACT = frozenset({
+    '你好', '早上好', '下午好', '晚上好', '嗨', 'hi', 'hello',
+    '在吗', '你是谁', '你叫什么', '谢谢', '再见', '拜拜',
+    '哈哈', '666', '牛', '厉害',
+})
+
+_CREATIVE_RE = re.compile(
+    r'写[一首篇]|作[首篇]|翻译|画[一个张]|生成图|讲[个一]笑话|'
+    r'推荐[一部几本]|今天天气|星座|运势|聊[聊天]|陪我|无聊',
+)
+
+_GENERAL_QA_RE = re.compile(
+    r'^(什么是(?!.*?(订单|库存|退|发货|商品|采购|售后)))'
+    r'|^(解释一下(?!.*?(订单|库存|退|发货|商品|采购|售后)))'
+    r'|^(如何学习)',
+)
+
+
 class ChatContextMixin:
     """Chat 上下文构建能力：记忆、搜索、历史、消息组装"""
+
+    @staticmethod
+    def _should_skip_knowledge(text: str) -> bool:
+        """判断是否应跳过知识库注入（反向逻辑）
+
+        返回 True = 跳过（不注入）
+        返回 False = 注入（默认）
+        设计原则：误注入代价低（多几百 token），漏注入代价高（工具调用没经验参考）。
+        """
+        text = text.strip()
+        if len(text) <= 3:
+            return True
+        if text in _CHITCHAT_EXACT:
+            return True
+        if _CREATIVE_RE.search(text):
+            return True
+        if _GENERAL_QA_RE.match(text):
+            return True
+        return False
 
     async def _build_llm_messages(
         self,
@@ -146,8 +191,9 @@ class ChatContextMixin:
         if isinstance(knowledge_result, BaseException):
             logger.debug(f"Knowledge fetch failed | error={knowledge_result}")
 
-        # 知识库经验注入（系统积累的工具使用经验，帮助 LLM 做更准确的参数选择）
-        if knowledge_items:
+        # 知识库经验注入 — Phase 6 反向门控：排除明确不需要的，其他都注入
+        # 设计文档：docs/document/TECH_上下文工程重构.md §九
+        if knowledge_items and not self._should_skip_knowledge(text_content):
             knowledge_text = "\n".join(
                 f"- {k['title']}: {k['content']}" for k in knowledge_items
             )
@@ -186,8 +232,10 @@ class ChatContextMixin:
             {"role": "system", "content": "请使用中文进行思考和推理。"},
         )
 
-        # 对话历史摘要注入（覆盖 20 条之前的消息，失败不影响主流程）
-        if summary_prompt:
+        # 对话历史摘要注入 — Phase 6 门控：短对话不注入
+        # context_messages 的长度近似代表消息轮数（DB 只取 user/assistant）
+        _msg_count = len(context_messages) if context_messages else 0
+        if summary_prompt and _msg_count > 5:
             messages.insert(0, {"role": "system", "content": summary_prompt})
         if context_messages:
             pos = len(messages) - 1
@@ -204,10 +252,21 @@ class ChatContextMixin:
                 {"role": "system", "content": focus_prompt},
             )
 
-        # 层4: Token 预算兜底
+        # 层6: 分桶预算控制（Phase 2）
+        # 设计文档：docs/document/TECH_上下文工程重构.md §五
         from core.config import get_settings
-        from services.handlers.context_compressor import enforce_budget
-        enforce_budget(messages, get_settings().context_max_tokens)
+        from services.handlers.context_compressor import (
+            enforce_tool_budget, enforce_history_budget, enforce_budget,
+        )
+        _s = get_settings()
+        # 工具桶（初始组装时 messages 里没有 tool 消息，主要在工具循环内生效）
+        enforce_tool_budget(messages, _s.context_tool_token_budget)
+        # 历史桶（异步版，含 Embedding 打分）
+        await enforce_history_budget(
+            messages, _s.context_history_token_budget, current_query=text_content,
+        )
+        # 总预算兜底
+        enforce_budget(messages, _s.context_max_tokens)
 
         return messages
 
@@ -302,77 +361,90 @@ class ChatContextMixin:
     async def _build_context_messages(
         self, conversation_id: str, current_text: str
     ) -> List[Dict[str, Any]]:
-        """获取对话历史并构建多模态上下文（含图片，失败时降级为空）
+        """基于 token 预算加载对话历史（含图片，失败时降级为空）
 
-        历史消息中的图片会以 image_url 格式传给工作模型（Gemini/GPT），
-        使其能"看到"之前的图片，支持用户说"修改上一张图"等场景。
+        Phase 1 重写：替代旧的固定 10 条滑窗，改为 token 预算驱动。
+        - token 没满 → 尽可能多加载历史
+        - token 满了 → 才停止加载
+        - 分批查 DB（每批 20 条），短对话只查一次
+        设计文档：docs/document/TECH_上下文工程重构.md §四
         """
         try:
             from core.config import settings
 
-            limit = settings.chat_context_limit
-            if limit <= 0:
-                return []
+            budget = settings.context_history_token_budget  # 8000
+            max_images = settings.chat_context_max_images   # 5
+            BATCH_SIZE = 20
+            MAX_BATCHES = 5  # 安全上限 5×20=100 条
 
-            result = (
-                self.db.table("messages")
-                .select("role, content, status, created_at")
-                .eq("conversation_id", conversation_id)
-                .eq("status", "completed")
-                .in_("role", ["user", "assistant"])
-                .order("created_at", desc=True)
-                .limit(limit)
-                .execute()
-            )
-
-            if not result.data:
-                return []
-
-            # 从新→旧遍历，优先保留最近消息（防止旧长回复吃光字符预算）
-            context = []
-            total_chars = 0
+            context: List[Dict[str, Any]] = []
+            total_tokens = 0
             total_images = 0
-            max_chars = settings.chat_context_max_chars
-            max_images = settings.chat_context_max_images
-            for row in result.data:  # 已按 created_at DESC 排序
-                raw_content = row.get("content")
-                text = self._extract_text_from_content(raw_content)
-                # 图片配额未满时提取图片 URL
-                images = (
-                    self._extract_image_urls_from_content(raw_content)
-                    if total_images < max_images
-                    else []
+            offset = 0
+            has_more = True
+            batch_count = 0
+
+            while has_more and total_tokens < budget and batch_count < MAX_BATCHES:
+                batch_count += 1
+                result = (
+                    self.db.table("messages")
+                    .select("role, content, status, created_at")
+                    .eq("conversation_id", conversation_id)
+                    .eq("status", "completed")
+                    .in_("role", ["user", "assistant"])
+                    .order("created_at", desc=True)
+                    .range(offset, offset + BATCH_SIZE - 1)
+                    .execute()
                 )
+                if not result.data or len(result.data) == 0:
+                    break
+                has_more = len(result.data) == BATCH_SIZE
+                offset += BATCH_SIZE
 
-                if not text and not images:
-                    continue
+                budget_exhausted = False
+                for row in result.data:  # DESC 排序，最新在前
+                    raw_content = row.get("content")
+                    text = self._extract_text_from_content(raw_content)
+                    images = (
+                        self._extract_image_urls_from_content(raw_content)
+                        if total_images < max_images
+                        else []
+                    )
 
-                if text:
-                    total_chars += len(text)
-                    if total_chars > max_chars:
-                        break
+                    if not text and not images:
+                        continue
 
-                # 限制图片数量不超过配额
-                remaining = max_images - total_images
-                if images and remaining > 0:
-                    images = images[:remaining]
-                    total_images += len(images)
-                else:
-                    images = []
+                    # 估算这条消息的 token 数
+                    msg_tokens = int(len(text) / 2.5) if text else 0
+                    if total_tokens + msg_tokens > budget:
+                        budget_exhausted = True
+                        break  # 预算用完
 
-                # 有图片时用多模态格式，无图片时保持纯文本（节省 token）
-                if images:
-                    parts: List[Dict[str, Any]] = []
-                    if text:
-                        parts.append({"type": "text", "text": text})
-                    for url in images:
-                        parts.append({
-                            "type": "image_url",
-                            "image_url": {"url": url},
-                        })
-                    context.append({"role": row["role"], "content": parts})
-                else:
-                    context.append({"role": row["role"], "content": text})
+                    # 限制图片数量不超过配额
+                    remaining = max_images - total_images
+                    if images and remaining > 0:
+                        images = images[:remaining]
+                        total_images += len(images)
+                    else:
+                        images = []
+
+                    # 有图片时用多模态格式，无图片时保持纯文本（节省 token）
+                    if images:
+                        parts: List[Dict[str, Any]] = []
+                        if text:
+                            parts.append({"type": "text", "text": text})
+                        for url in images:
+                            parts.append({
+                                "type": "image_url",
+                                "image_url": {"url": url},
+                            })
+                        context.append({"role": row["role"], "content": parts})
+                    else:
+                        context.append({"role": row["role"], "content": text})
+                    total_tokens += msg_tokens
+
+                if budget_exhausted:
+                    break  # 跳出外层 while
 
             # 反转为正序（旧→新），LLM 需要按时间顺序读取
             context.reverse()
@@ -391,8 +463,8 @@ class ChatContextMixin:
             if context:
                 logger.debug(
                     f"Context injected | conversation_id={conversation_id} "
-                    f"| count={len(context)} | chars={total_chars} "
-                    f"| images={total_images}"
+                    f"| count={len(context)} | tokens={total_tokens} "
+                    f"| budget={budget} | images={total_images}"
                 )
 
             return context
