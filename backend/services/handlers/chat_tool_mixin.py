@@ -107,6 +107,12 @@ class ChatToolMixin:
                 self._pending_file_parts.extend(executor._pending_file_parts)
             executor._pending_file_parts.clear()
 
+        # 收集 ERP Agent 原始展示文本 + 文件（供 chat_handler 推送 content_block_add）
+        _erp_display = getattr(executor, "_erp_display_text", None)
+        if _erp_display:
+            self._last_erp_display_text = _erp_display
+            self._last_erp_display_files = getattr(executor, "_erp_display_files", [])
+
         return results
 
     async def _execute_single_tool(

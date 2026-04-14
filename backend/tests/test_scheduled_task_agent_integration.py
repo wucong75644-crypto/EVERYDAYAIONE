@@ -190,7 +190,7 @@ class TestExecuteHappyPath:
             # 第 1 轮：调 erp_agent
             {
                 "text": "",
-                "tool_calls": [{"id": "c1", "name": "erp_agent", "args": '{"q":"销售"}'}],
+                "tool_calls": [{"id": "c1", "name": "erp_agent", "args": '{"query":"销售"}'}],
             },
             # 第 2 轮：基于工具结果合成最终回复
             {"text": "昨日销售: A店 5万, B店 7万", "tool_calls": []},

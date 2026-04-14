@@ -434,3 +434,46 @@ class TestAutoUploadExtensions:
         exts = SandboxExecutor._AUTO_UPLOAD_EXTENSIONS
         for ext in [".xlsx", ".csv", ".png", ".pdf", ".json", ".txt"]:
             assert ext in exts
+
+
+class TestSnapshotAndAutoUpload:
+    """文件快照 + 新文件检测测试"""
+
+    def test_snapshot_captures_existing_files(self, tmp_path):
+        """快照捕获输出目录已有文件"""
+        (tmp_path / "old.xlsx").write_bytes(b"old")
+        executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
+        snapshot = executor._snapshot_output_files()
+        assert "old.xlsx" in snapshot
+
+    def test_snapshot_empty_dir(self, tmp_path):
+        """空目录快照为空集"""
+        executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
+        snapshot = executor._snapshot_output_files()
+        assert snapshot == set()
+
+    @pytest.mark.asyncio
+    async def test_auto_upload_only_new_files(self, tmp_path):
+        """auto_upload 只处理新生成的文件，跳过执行前已有的"""
+        # 模拟执行前已有文件
+        (tmp_path / "old.xlsx").write_bytes(b"old data")
+
+        results = []
+
+        async def mock_upload(filename, size):
+            results.append(filename)
+            return f"✅ {filename}"
+
+        executor = SandboxExecutor(
+            timeout=5.0, output_dir=str(tmp_path), upload_fn=mock_upload,
+        )
+        # 快照执行前状态
+        executor._snapshot_before = executor._snapshot_output_files()
+
+        # 模拟执行后新增文件
+        (tmp_path / "new.xlsx").write_bytes(b"new data")
+
+        await executor._auto_upload_new_files()
+        # 只上传新文件，不上传旧文件
+        assert "new.xlsx" in results
+        assert "old.xlsx" not in results

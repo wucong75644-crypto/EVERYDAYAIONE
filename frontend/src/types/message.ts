@@ -14,7 +14,8 @@ export type ContentPart =
   | ImagePart
   | VideoPart
   | AudioPart
-  | FilePart;
+  | FilePart
+  | ToolResultPart;
 
 export interface TextPart {
   type: 'text';
@@ -53,6 +54,14 @@ export interface FilePart {
   size?: number;
   /** 工作区相对路径（有值时 AI 通过 file_read 读取，无值时走多模态 image_url） */
   workspace_path?: string;
+}
+
+/** 工具结果内容块（独立渲染，不被主 Agent 文本覆盖） */
+export interface ToolResultPart {
+  type: 'tool_result';
+  tool_name: string;
+  text: string;
+  files?: Array<{ url: string; name: string; mime_type: string; size?: number }>;
 }
 
 // ============================================================

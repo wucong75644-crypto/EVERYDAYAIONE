@@ -525,6 +525,15 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       logger.info('ws:tool', 'tool_result', { conversationId: conversation_id, tool: toolName, success });
     },
 
+    content_block_add: (msg) => {
+      const { conversation_id } = msg;
+      const block = msg.payload?.block as Record<string, unknown> | undefined;
+      if (!conversation_id || !block) return;
+
+      deps.getStore().appendContentBlock(conversation_id, block);
+      logger.info('ws:content', 'content_block_add', { conversationId: conversation_id, type: block.type });
+    },
+
     tool_confirm_request: (msg) => {
       const { conversation_id, task_id } = msg;
       const toolName = msg.payload?.tool_name as string | undefined;

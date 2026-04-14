@@ -151,14 +151,14 @@ describe('getTextContent', () => {
     expect(getTextContent(msg)).toBe('Hello World');
   });
 
-  it('should return first text part', () => {
+  it('should join all text parts (multi-block mode)', () => {
     const msg = createTestMessage([
       { type: 'image', url: 'https://example.com/img.jpg' },
       { type: 'text', text: 'First' },
       { type: 'text', text: 'Second' },
     ]);
 
-    expect(getTextContent(msg)).toBe('First');
+    expect(getTextContent(msg)).toBe('First\n\nSecond');
   });
 
   it('should return empty string for no text parts', () => {

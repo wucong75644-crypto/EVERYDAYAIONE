@@ -30,6 +30,7 @@ export interface StreamingSlice {
   }) => void;
   registerStreamingId: (conversationId: string, messageId: string) => void;
   appendStreamingContent: (conversationId: string, chunk: string) => void;
+  appendContentBlock: (conversationId: string, block: Record<string, unknown>) => void;
   setStreamingContent: (conversationId: string, content: string) => void;
   completeStreaming: (conversationId: string) => void;
   completeStreamingWithMessage: (conversationId: string, message: Message) => void;
@@ -128,21 +129,51 @@ export const createStreamingSlice: StateCreator<
       const list = state.optimisticMessages.get(conversationId);
       if (!list) return state;
 
-      // 直接定位目标消息（避免 .map() 遍历全数组）
       const targetIndex = list.findIndex((m) => m.id === streamingId);
       if (targetIndex === -1) return state;
 
       const target = list[targetIndex];
-      const updatedMessage = {
-        ...target,
-        content: [{ type: 'text' as const, text: getTextContent(target) + chunk }],
-      };
+      const content = [...target.content];
 
-      // 只克隆目标对话的数组
+      // 多块模式：追加到最后一个 text block
+      // 如果最后一个 block 不是 text（如 tool_result），创建新 text block
+      const lastIndex = content.length - 1;
+      if (lastIndex >= 0 && content[lastIndex].type === 'text') {
+        content[lastIndex] = {
+          type: 'text' as const,
+          text: (content[lastIndex] as { text: string }).text + chunk,
+        };
+      } else {
+        // 没有 text block 或最后一个不是 text → 创建新 text block
+        content.push({ type: 'text' as const, text: chunk });
+      }
+
       const updatedList = [...list];
-      updatedList[targetIndex] = updatedMessage;
+      updatedList[targetIndex] = { ...target, content };
 
-      // 浅克隆 Map，只更新一个条目
+      const optimisticMessages = new Map(state.optimisticMessages);
+      optimisticMessages.set(conversationId, updatedList);
+      return { optimisticMessages };
+    });
+  },
+
+  appendContentBlock: (conversationId, block) => {
+    set((state) => {
+      const streamingId = state.streamingMessages.get(conversationId);
+      if (!streamingId) return state;
+
+      const list = state.optimisticMessages.get(conversationId);
+      if (!list) return state;
+
+      const targetIndex = list.findIndex((m) => m.id === streamingId);
+      if (targetIndex === -1) return state;
+
+      const target = list[targetIndex];
+      const content = [...target.content, block as Message['content'][number]];
+
+      const updatedList = [...list];
+      updatedList[targetIndex] = { ...target, content };
+
       const optimisticMessages = new Map(state.optimisticMessages);
       optimisticMessages.set(conversationId, updatedList);
       return { optimisticMessages };
