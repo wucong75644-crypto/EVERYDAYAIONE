@@ -365,7 +365,7 @@ export default memo(function MessageItem({
           <div className={isUser ? 'text-[15px] leading-relaxed whitespace-pre-wrap' : ''}>
             {/* 加载状态：重新生成或流式输出开始但内容为空，带气泡框 */}
             {((isRegenerating || isStreaming) && !textContent) ? (
-              <div className="rounded-2xl px-4 py-3 bg-surface-secondary">
+              <div className="rounded-2xl px-4 py-3 bg-hover">
                 <LoadingPlaceholder text={agentStepHint || PLACEHOLDER_TEXT.CHAT_THINKING} />
               </div>
             ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !isErrorMessage && !isStreaming && !isRegenerating) ? (

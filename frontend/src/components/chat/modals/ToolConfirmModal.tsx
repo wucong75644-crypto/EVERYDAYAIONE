@@ -83,7 +83,7 @@ export default function ToolConfirmModal({
 
       {/* 参数摘要 */}
       {argEntries.length > 0 && (
-        <div className="mt-3 p-3 rounded-lg bg-surface-secondary text-sm font-mono">
+        <div className="mt-3 p-3 rounded-lg bg-hover text-sm font-mono">
           {argEntries.map(([key, value]) => (
             <div key={key} className="flex gap-2 text-text-secondary">
               <span className="text-text-tertiary shrink-0">{key}:</span>
