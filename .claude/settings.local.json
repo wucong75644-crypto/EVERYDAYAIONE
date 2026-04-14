@@ -1372,7 +1372,9 @@
       "Bash(grep -r \"_prefetched_memory\\\\|_prefetched_summary\" /Users/wucong/EVERYDAYAIONE/backend/api/routes/*.py -B 3 -A 3)",
       "Bash(grep -oP 'Go straight to the point[^`]*' /Users/wucong/.nvm/versions/node/v24.12.0/lib/node_modules/@anthropic-ai/claude-code/cli.js)",
       "Bash(python -m pytest backend/tests/test_session_memory.py -q --tb=short)",
-      "Bash(./git-push.sh \"fix: ERP结果envelope提示词精简——1-2句结论替代冗余总结分析\")"
+      "Bash(./git-push.sh \"fix: ERP结果envelope提示词精简——1-2句结论替代冗余总结分析\")",
+      "Bash(python -m pytest tests/test_model_scorer_integration.py -q --tb=short)",
+      "Bash(./git-push.sh \"revert: 去掉ERP卡片推送+envelope回退到昨天版本——主Agent统一输出，消除重复展示\")"
     ],
     "additionalDirectories": [
       "/tmp"
