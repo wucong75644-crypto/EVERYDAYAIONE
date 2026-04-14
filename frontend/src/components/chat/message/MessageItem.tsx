@@ -363,9 +363,11 @@ export default memo(function MessageItem({
 
           {/* 消息文本 */}
           <div className={isUser ? 'text-[15px] leading-relaxed whitespace-pre-wrap' : ''}>
-            {/* 加载状态：重新生成或流式输出开始但内容为空 */}
+            {/* 加载状态：重新生成或流式输出开始但内容为空，带气泡框 */}
             {((isRegenerating || isStreaming) && !textContent) ? (
-              <LoadingPlaceholder text={agentStepHint || PLACEHOLDER_TEXT.CHAT_THINKING} />
+              <div className="rounded-2xl px-4 py-3 bg-surface-secondary">
+                <LoadingPlaceholder text={agentStepHint || PLACEHOLDER_TEXT.CHAT_THINKING} />
+              </div>
             ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !isErrorMessage && !isStreaming && !isRegenerating) ? (
               /* 已完成但无内容（用户取消等场景） */
               <span className="text-text-disabled text-sm italic">已取消，点击「重新生成」重试</span>

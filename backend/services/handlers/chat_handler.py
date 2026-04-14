@@ -390,8 +390,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 )
 
                 # 工具结果塞进 messages + 更新上下文
-                # 对 erp_agent: 提取原始结论推送 content_block_add
-                from schemas.websocket import build_content_block_add
                 for tc, result_text, is_error in tool_results:
                     messages.append({
                         "role": "tool",
@@ -399,34 +397,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         "content": result_text,
                     })
                     tool_context.update_from_result(tc["name"], result_text, is_error)
-
-                    # erp_agent 结果作为独立 content block 推送前端
-                    if tc["name"] == "erp_agent" and not is_error:
-                        _erp_display_text = getattr(
-                            self, "_last_erp_display_text", None,
-                        )
-                        if _erp_display_text:
-                            _erp_files = getattr(
-                                self, "_last_erp_display_files", [],
-                            )
-                            tool_block = {
-                                "type": "tool_result",
-                                "tool_name": "erp_agent",
-                                "text": _erp_display_text,
-                                "files": _erp_files,
-                            }
-                            _content_blocks.append(tool_block)
-                            await ws_manager.send_to_task_or_user(
-                                task_id, user_id,
-                                build_content_block_add(
-                                    task_id=task_id,
-                                    conversation_id=conversation_id,
-                                    message_id=message_id,
-                                    block=tool_block,
-                                ),
-                            )
-                            self._last_erp_display_text = None
-                            self._last_erp_display_files = []
 
                 # Phase 5: fire-and-forget 增量记忆提取（精确切片：从 _msg_pos_before_turn 开始，含 assistant + tool results）
                 import asyncio as _asyncio
