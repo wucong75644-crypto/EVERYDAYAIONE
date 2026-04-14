@@ -40,7 +40,7 @@ export default memo(function SuggestionChips({
             <m.button
               key={idx}
               type="button"
-              className="w-full cursor-pointer rounded-xl border border-border-default bg-surface-secondary px-4 py-2.5 text-left text-sm text-text-secondary transition-all duration-200 hover:border-[var(--color-user-bubble-from)] hover:bg-surface-hover hover:text-text-primary"
+              className="w-full cursor-pointer rounded-xl border border-border-default bg-hover px-4 py-2.5 text-left text-sm text-text-secondary transition-all duration-200 hover:border-[var(--color-user-bubble-from)] hover:bg-active hover:text-text-primary"
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{
