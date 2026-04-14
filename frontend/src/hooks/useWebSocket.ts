@@ -67,7 +67,16 @@ export type WSMessageType =
   | 'subscribed'
   | 'conversation_updated'
   | 'server_restarting'
-  | 'error';
+  | 'error'
+  // 工具确认
+  | 'tool_call'
+  | 'tool_result'
+  | 'tool_confirm_request'
+  | 'tool_confirm_response'
+  | 'content_block_add'
+  | 'suggestions_ready'
+  | 'thinking_chunk'
+  | 'image_partial_update';
 
 export interface WSMessage {
   type: WSMessageType;

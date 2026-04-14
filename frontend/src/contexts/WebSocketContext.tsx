@@ -10,7 +10,7 @@
  * 消息处理器逻辑提取到 wsMessageHandlers.ts
  */
 
-import { createContext, useContext, useEffect, useRef, useCallback, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { useWebSocket, type WSMessageType, type WSMessage } from '../hooks/useWebSocket';
 import { useMessageStore, normalizeMessage, type Message } from '../stores/useMessageStore';
 import { useTaskRestorationStore } from '../stores/useTaskRestorationStore';
@@ -271,7 +271,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
   const handleToolConfirm = useCallback((toolCallId: string) => {
     ws.send({
-      type: 'tool_confirm_response',
+      type: 'tool_confirm_response' as const,
       payload: { tool_call_id: toolCallId, approved: true },
     });
     useMessageStore.getState().setToolConfirmRequest(null);
@@ -279,7 +279,7 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
 
   const handleToolReject = useCallback((toolCallId: string) => {
     ws.send({
-      type: 'tool_confirm_response',
+      type: 'tool_confirm_response' as const,
       payload: { tool_call_id: toolCallId, approved: false },
     });
     useMessageStore.getState().setToolConfirmRequest(null);

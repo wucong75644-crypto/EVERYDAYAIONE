@@ -79,7 +79,7 @@ export interface HandlerDeps {
   chunkBufferRef: React.RefObject<Map<string, { chunk: string; conversationId: string }>>;
   flushTimerRef: React.RefObject<ReturnType<typeof setTimeout> | null>;
   unsubscribeTask: (taskId: string) => void;
-  send: (message: { type: string; payload?: Record<string, unknown> }) => void;
+  send: (message: Omit<WSMessage, 'timestamp'>) => void;
 }
 
 // ============================================================

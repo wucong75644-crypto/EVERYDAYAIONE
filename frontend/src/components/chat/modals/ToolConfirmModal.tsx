@@ -66,7 +66,7 @@ export default function ToolConfirmModal({
   const argEntries = Object.entries(request.arguments).slice(0, 5);
 
   return (
-    <Modal isOpen showCloseButton={false} maxWidth="max-w-md">
+    <Modal isOpen onClose={() => onReject(request.toolCallId)} showCloseButton={false} maxWidth="max-w-md">
       <div className="flex items-start gap-3">
         <div className="w-10 h-10 bg-warning-light rounded-full flex items-center justify-center flex-shrink-0">
           <AlertTriangle className="w-5 h-5 text-warning" />
