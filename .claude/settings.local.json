@@ -1363,7 +1363,9 @@
       "Bash(python -m pytest backend/tests/test_chat_tool_mixin.py::TestExecuteSingleTool::test_dangerous_tool_rejected backend/tests/test_tool_confirm.py -q --tb=short)",
       "Bash(python -m pytest /Users/wucong/EVERYDAYAIONE/backend/tests/ -q --tb=line)",
       "Bash(python -m pytest tests/test_chat_tool_mixin.py::TestExecuteSingleTool::test_dangerous_tool_rejected -v --tb=long)",
-      "Bash(./git-push.sh \"feat: 写操作确认流 — DANGEROUS工具前后端完整确认机制（asyncio.Event等待+WS路由+确认弹窗+60s超时）\")"
+      "Bash(./git-push.sh \"feat: 写操作确认流 — DANGEROUS工具前后端完整确认机制（asyncio.Event等待+WS路由+确认弹窗+60s超时）\")",
+      "Bash(grep -E \"\\\\.\\(py|txt\\)$\")",
+      "Bash(./git-push.sh \"fix: 修复写操作确认流TS类型错误（WSMessageType补全+Modal onClose+send类型对齐）\")"
     ],
     "additionalDirectories": [
       "/tmp"
