@@ -161,13 +161,44 @@ class TestGetChatTools:
         assert len(guest) < len(enterprise)
 
 
+class TestAskUserTool:
+    """ask_user 工具验证"""
+
+    def test_ask_user_in_chat_tools(self):
+        """get_chat_tools 返回列表中包含 ask_user"""
+        from config.chat_tools import get_chat_tools
+        tools = get_chat_tools(org_id="test_org")
+        names = {t["function"]["name"] for t in tools}
+        assert "ask_user" in names
+
+    def test_ask_user_in_guest_tools(self):
+        """散客也有 ask_user"""
+        from config.chat_tools import get_chat_tools
+        tools = get_chat_tools(org_id=None)
+        names = {t["function"]["name"] for t in tools}
+        assert "ask_user" in names
+
+    def test_ask_user_in_core_tools(self):
+        """ask_user 在 _CORE_TOOLS 集合中"""
+        from config.chat_tools import _CORE_TOOLS
+        assert "ask_user" in _CORE_TOOLS
+
+    def test_ask_user_schema(self):
+        """ask_user 工具 schema 包含 message 参数"""
+        from config.chat_tools import get_chat_tools
+        tools = get_chat_tools(org_id="test_org")
+        ask_user = next(t for t in tools if t["function"]["name"] == "ask_user")
+        params = ask_user["function"]["parameters"]
+        assert "message" in params["properties"]
+
+
 class TestCoreToolsExpanded:
-    """扩展后的 _CORE_TOOLS 验证（13 个核心工具）"""
+    """扩展后的 _CORE_TOOLS 验证"""
 
     def test_core_tools_count(self):
         from config.chat_tools import get_core_tools
         tools = get_core_tools(org_id="test")
-        # 12 个核心工具（erp_api_search 已移至 ERP 域，不在主 Agent 核心列表中）
+        # 12 个核心工具（ask_user 在 _CORE_TOOLS 但被 domain filter 过滤）
         assert len(tools) == 12
 
     def test_core_tools_include_file_tools(self):
