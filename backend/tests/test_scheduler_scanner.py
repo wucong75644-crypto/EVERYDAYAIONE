@@ -106,6 +106,144 @@ class TestScanner:
         assert count == 0
 
     @pytest.mark.asyncio
+    async def test_recover_stale_running_restores_periodic_task(self):
+        """卡死的周期任务被恢复为 active + 重新计算 next_run_at"""
+        db = MagicMock()
+
+        # scheduled_tasks 查询返回一条卡死任务
+        stale_task = {
+            "id": "stale_1",
+            "cron_expr": "0 9 * * *",
+            "timezone": "Asia/Shanghai",
+            "schedule_type": "daily",
+        }
+        select_chain = MagicMock()
+        select_chain.eq.return_value = select_chain
+        select_chain.lt.return_value = select_chain
+        select_chain.execute.return_value = MagicMock(data=[stale_task])
+
+        update_chain = MagicMock()
+        update_chain.eq.return_value = update_chain
+        update_chain.execute.return_value = MagicMock(data=[])
+
+        def table_router(name):
+            t = MagicMock()
+            t.select.return_value = select_chain
+            t.update.return_value = update_chain
+            return t
+
+        db.table.side_effect = table_router
+        # claim_due_tasks 不返回任何到期任务
+        rpc_call = MagicMock()
+        rpc_call.execute.return_value = MagicMock(data=[])
+        db.rpc.return_value = rpc_call
+
+        scanner = ScheduledTaskScanner(db, executor=MagicMock())
+        await scanner.poll()
+
+        # 验证 update 被调用且 status='active'
+        update_call_args = update_chain.eq.call_args_list
+        assert any("stale_1" in str(c) for c in update_call_args)
+
+    @pytest.mark.asyncio
+    async def test_recover_stale_running_pauses_once_task(self):
+        """卡死的单次任务恢复为 paused"""
+        db = MagicMock()
+        stale_task = {
+            "id": "once_1",
+            "cron_expr": None,
+            "timezone": "Asia/Shanghai",
+            "schedule_type": "once",
+        }
+        select_chain = MagicMock()
+        select_chain.eq.return_value = select_chain
+        select_chain.lt.return_value = select_chain
+        select_chain.execute.return_value = MagicMock(data=[stale_task])
+
+        update_chain = MagicMock()
+        update_chain.eq.return_value = update_chain
+        update_chain.execute.return_value = MagicMock(data=[])
+
+        def table_router(name):
+            t = MagicMock()
+            t.select.return_value = select_chain
+            t.update.return_value = update_chain
+            return t
+
+        db.table.side_effect = table_router
+        rpc_call = MagicMock()
+        rpc_call.execute.return_value = MagicMock(data=[])
+        db.rpc.return_value = rpc_call
+
+        scanner = ScheduledTaskScanner(db, executor=MagicMock())
+        await scanner.poll()
+
+        # update 应该被调用（任务表 + runs 表）
+        assert db.table.called
+
+    @pytest.mark.asyncio
+    async def test_recover_skips_when_no_stale(self):
+        """没有卡死任务时不做任何 update"""
+        db = MagicMock()
+        select_chain = MagicMock()
+        select_chain.eq.return_value = select_chain
+        select_chain.lt.return_value = select_chain
+        select_chain.execute.return_value = MagicMock(data=[])
+
+        update_chain = MagicMock()
+        update_chain.eq.return_value = update_chain
+        update_chain.execute.return_value = MagicMock(data=[])
+
+        def table_router(name):
+            t = MagicMock()
+            t.select.return_value = select_chain
+            t.update.return_value = update_chain
+            return t
+
+        db.table.side_effect = table_router
+        rpc_call = MagicMock()
+        rpc_call.execute.return_value = MagicMock(data=[])
+        db.rpc.return_value = rpc_call
+
+        scanner = ScheduledTaskScanner(db, executor=MagicMock())
+        await scanner.poll()
+
+        # data=[] 意味着没有 stale 任务，update 不应被调用
+        update_chain.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_recover_interval_throttle(self):
+        """恢复检查有间隔节流，短时间内不重复查"""
+        db = MagicMock()
+        select_chain = MagicMock()
+        select_chain.eq.return_value = select_chain
+        select_chain.lt.return_value = select_chain
+        select_chain.execute.return_value = MagicMock(data=[])
+
+        def table_router(name):
+            t = MagicMock()
+            t.select.return_value = select_chain
+            return t
+
+        db.table.side_effect = table_router
+        rpc_call = MagicMock()
+        rpc_call.execute.return_value = MagicMock(data=[])
+        db.rpc.return_value = rpc_call
+
+        scanner = ScheduledTaskScanner(db, executor=MagicMock())
+
+        # 第一次 poll → 触发恢复检查
+        await scanner.poll()
+        first_call_count = select_chain.execute.call_count
+
+        # 第二次 poll → 节流跳过
+        await scanner.poll()
+        second_call_count = select_chain.execute.call_count
+
+        # 第二次不应该增加查询次数（被节流）
+        assert second_call_count == first_call_count
+
+    @pytest.mark.asyncio
     async def test_claim_due_tasks_passes_correct_param_types(self):
         """回归测试：_claim_due_tasks 传给 RPC 的参数类型必须是 datetime + int
 

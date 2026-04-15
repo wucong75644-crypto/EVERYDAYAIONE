@@ -399,6 +399,78 @@ class TestBuildSuggestionsReady:
         assert msg["payload"]["suggestions"] == []
 
 
+class TestBuildAskUserRequest:
+    """测试 build_ask_user_request 消息构建"""
+
+    def test_basic_structure(self):
+        """基本字段齐全"""
+        from schemas.websocket_builders import build_ask_user_request
+
+        msg = build_ask_user_request(
+            task_id="t1",
+            conversation_id="c1",
+            message_id="m1",
+            interaction_id="int_1",
+            question="请问你要查哪个店铺？",
+        )
+        assert msg["type"] == "ask_user_request"
+        assert msg["task_id"] == "t1"
+        assert msg["conversation_id"] == "c1"
+        assert msg["message_id"] == "m1"
+        assert msg["payload"]["interaction_id"] == "int_1"
+        assert msg["payload"]["question"] == "请问你要查哪个店铺？"
+        assert "timestamp" in msg
+
+    def test_with_options(self):
+        """传入 options 时包含在 payload 中"""
+        from schemas.websocket_builders import build_ask_user_request
+
+        msg = build_ask_user_request(
+            task_id="t1",
+            conversation_id="c1",
+            message_id="m1",
+            interaction_id="int_2",
+            question="选择时间范围",
+            options=["今天", "昨天", "最近7天"],
+        )
+        assert msg["payload"]["options"] == ["今天", "昨天", "最近7天"]
+
+    def test_without_options(self):
+        """不传 options 时 payload 无该字段"""
+        from schemas.websocket_builders import build_ask_user_request
+
+        msg = build_ask_user_request(
+            task_id="t1",
+            conversation_id="c1",
+            message_id="m1",
+            interaction_id="int_3",
+            question="你想查什么？",
+        )
+        assert "options" not in msg["payload"]
+
+    def test_default_timeout(self):
+        """默认 timeout 为 86400"""
+        from schemas.websocket_builders import build_ask_user_request
+
+        msg = build_ask_user_request(
+            task_id="t1", conversation_id="c1",
+            message_id="m1", interaction_id="int_4",
+            question="q",
+        )
+        assert msg["payload"]["timeout"] == 86400
+
+    def test_custom_source(self):
+        """自定义 source 参数"""
+        from schemas.websocket_builders import build_ask_user_request
+
+        msg = build_ask_user_request(
+            task_id="t1", conversation_id="c1",
+            message_id="m1", interaction_id="int_5",
+            question="q", source="erp_agent",
+        )
+        assert msg["payload"]["source"] == "erp_agent"
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])
