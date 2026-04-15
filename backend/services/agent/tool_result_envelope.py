@@ -16,9 +16,7 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from contextvars import ContextVar
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -118,14 +116,14 @@ _NO_TRUNCATE = {
     "file_read", "file_write", "file_list", "file_search", "file_info",
 }
 
-# 汇总行关键词（ERP 结果以这些开头的行优先保留）
-_SUMMARY_LINE_RE = re.compile(
-    r"^(?:汇总|合计|共|总计|统计|小计)[：:]",
-    re.MULTILINE,
-)
+# 对齐 Claude Code 的 persisted-output 标签（防重入 + 截断检测）
+PERSISTED_OUTPUT_TAG = "<persisted-output>"
+PERSISTED_OUTPUT_CLOSING_TAG = "</persisted-output>"
+# 兼容旧标记（erp_agent.py 等用于 is_truncated 检测）
+STAGED_MARKER = PERSISTED_OUTPUT_TAG
 
-# 防重入标记（分流后的摘要包含此唯一标记，用于防重入检查和截断检测）
-STAGED_MARKER = "[STAGED→"
+# Preview 大小（对齐 Claude Code 的 PREVIEW_SIZE_BYTES = 2000）
+_PREVIEW_SIZE = 2000
 
 
 # ============================================================
@@ -155,7 +153,7 @@ def wrap(
         return result
 
     # 已经分流过的结果不再处理（防重入）
-    if STAGED_MARKER in result and "STAGING_DIR" in result:
+    if PERSISTED_OUTPUT_TAG in result:
         return result
 
     # 确定预算
@@ -221,14 +219,16 @@ def _stage_and_summarize(tool_name: str, result: str, budget: int) -> str:
     # 落盘 staging 文件
     rel_path = _persist_to_staging(staging_dir, tool_name, result)
     filename = rel_path.split("/")[-1]
-    # 生成摘要（元数据头 + 首行 + 数据条数 + 前几行预览）
-    summary = _build_summary(tool_name, result, budget)
-    # 路径提示（用 STAGING_DIR 绝对路径变量，沙盒内 open/Path/read_file 均可用）
-    signal = (
-        f"\n完整数据（{len(result)} 字符）{STAGED_MARKER} {filename}]，"
-        f'可用 code_execute 中 data = open(STAGING_DIR + "/{filename}").read() 读取。'
+    # 对齐 Claude Code 的 <persisted-output> 标签格式
+    preview = _generate_preview(result, _PREVIEW_SIZE)
+    return (
+        f"{PERSISTED_OUTPUT_TAG}\n"
+        f"Output too large ({len(result)} chars). "
+        f'Full output saved to: STAGING_DIR + "/{filename}"\n\n'
+        f"Preview (first {_PREVIEW_SIZE} chars):\n"
+        f"{preview}\n"
+        f"{PERSISTED_OUTPUT_CLOSING_TAG}"
     )
-    return summary + signal
 
 
 def _persist_to_staging(staging_dir: str, tool_name: str, result: str) -> str:
@@ -259,39 +259,12 @@ def _persist_to_staging(staging_dir: str, tool_name: str, result: str) -> str:
     return rel_path
 
 
-def _build_summary(tool_name: str, result: str, budget: int) -> str:
-    """从完整结果生成摘要（元数据头 + 首行 + 数据条数 + 前几行预览）"""
-    lines = result.split("\n")
-    non_empty = [l for l in lines if l.strip()]
-
-    # 元数据头（工具名 + 时间戳）
-    meta = f"[数据来源: {tool_name} | 获取时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]"
-
-    # 首行（通常是标题/汇总行，如"共 50 个店铺："）
-    first_line = lines[0] if lines else ""
-
-    # 汇总行
-    summary_set = {
-        l for l in lines if _SUMMARY_LINE_RE.search(l.strip())
-    }
-
-    # 数据预览（前几行，不超预算的 60%）
-    preview_budget = int(budget * 0.6)
-    preview_lines: List[str] = []
-    used = len(meta) + len(first_line)
-    for line in non_empty[1:]:
-        if line in summary_set:
-            continue
-        if used + len(line) + 1 > preview_budget:
-            break
-        preview_lines.append(line)
-        used += len(line) + 1
-
-    parts = [meta, first_line]
-    if preview_lines:
-        parts.extend(preview_lines)
-        parts.append(f"... 共 {len(non_empty)} 行数据")
-    if summary_set:
-        parts.extend(sorted(summary_set))
-
-    return "\n".join(parts)
+def _generate_preview(content: str, max_chars: int) -> str:
+    """生成预览文本，在换行符处截断（对齐 Claude Code 的 generatePreview）"""
+    if len(content) <= max_chars:
+        return content
+    truncated = content[:max_chars]
+    last_newline = truncated.rfind("\n")
+    # 如果换行符在合理位置（后半段），在换行符处截断
+    cut = last_newline if last_newline > max_chars * 0.5 else max_chars
+    return content[:cut] + "\n..."

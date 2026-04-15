@@ -55,13 +55,14 @@ class TestWrapBasic:
         assert wrap("some_tool", result) == result
 
     def test_over_budget_staged_with_summary(self):
-        """超阈值时落盘 staging + 返回摘要"""
+        """超阈值时落盘 staging + 返回 persisted-output 格式"""
         result = "标题行\n" + "x" * (MAIN_AGENT_BUDGET + 500)
         wrapped = wrap("some_tool", result)
         assert len(wrapped) < len(result)
-        assert STAGED_MARKER in wrapped
+        assert "<persisted-output>" in wrapped
+        assert "</persisted-output>" in wrapped
         assert "STAGING_DIR" in wrapped
-        assert "数据来源: some_tool" in wrapped
+        assert "Preview" in wrapped
 
     def test_no_truncate_tools_pass_through(self):
         result = "x" * 50000
@@ -138,43 +139,28 @@ class TestStagingPersist:
 
 class TestBuildSummary:
 
-    def test_summary_contains_metadata(self):
-        """摘要包含工具名和时间戳"""
+    def test_persisted_output_format(self):
+        """超阈值结果使用 <persisted-output> 标签格式"""
         result = "共 50 个店铺\n" + "\n".join(f"店铺{i}: " + "x" * 50 for i in range(100))
         wrapped = wrap("local_shop_list", result)
-        assert "数据来源: local_shop_list" in wrapped
-        assert "获取时间:" in wrapped
+        assert "<persisted-output>" in wrapped
+        assert "</persisted-output>" in wrapped
+        assert "Output too large" in wrapped
+        assert "STAGING_DIR" in wrapped
 
-    def test_summary_preserves_first_line(self):
-        """摘要保留首行"""
-        result = "订单查询结果(共50单)\n" + "\n".join(f"行{i}" for i in range(200))
+    def test_preview_preserves_first_line(self):
+        """preview 包含首行"""
+        result = "订单查询结果(共50单)\n" + "\n".join(f"行{i}: " + "x" * 30 for i in range(200))
         wrapped = wrap_for_erp_agent("local_order_query", result)
         assert "订单查询结果(共50单)" in wrapped
 
-    def test_summary_preserves_summary_lines(self):
-        """摘要保留汇总行"""
-        lines = (
-            ["库存汇总"] +
-            [f"商品{i}: 100件" for i in range(200)] +
-            ["合计：20000件"]
-        )
-        result = "\n".join(lines)
-        wrapped = wrap_for_erp_agent("local_stock_query", result)
-        assert "合计：20000件" in wrapped
-
-    def test_summary_has_row_count(self):
-        """摘要包含数据行数"""
-        lines = ["标题"] + [f"数据行{i}: " + "x" * 50 for i in range(100)]
+    def test_preview_has_data(self):
+        """preview 包含前几行数据"""
+        lines = ["标题"] + [f"数据行{i}: 内容内容" for i in range(200)]
         result = "\n".join(lines)
         wrapped = wrap("some_tool", result)
-        assert "共 101 行数据" in wrapped
-
-    def test_summary_has_preview_lines(self):
-        """摘要包含前几行预览"""
-        lines = ["标题"] + [f"数据行{i}: 内容" for i in range(100)]
-        result = "\n".join(lines)
-        wrapped = wrap("some_tool", result)
-        assert "数据行0: 内容" in wrapped
+        assert "数据行0: 内容内容" in wrapped
+        assert "Preview" in wrapped
 
 
 # ============================================================
