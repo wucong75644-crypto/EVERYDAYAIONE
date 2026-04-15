@@ -360,6 +360,24 @@ async def local_stock_query(
     warehouses = {r.get("warehouse_id", "") for r in rows}
     multi_warehouse = len(warehouses) > 1
 
+    # 批量查仓库名称
+    wh_name_map: dict[str, str] = {}
+    wh_ids = [w for w in warehouses if w]
+    if wh_ids:
+        try:
+            wh_q = (
+                db.table("erp_warehouses")
+                .select("warehouse_id,name")
+                .in_("warehouse_id", wh_ids)
+            )
+            if org_id:
+                wh_q = wh_q.eq("org_id", org_id)
+            wh_res = wh_q.execute()
+            for w in wh_res.data or []:
+                wh_name_map[w["warehouse_id"]] = w.get("name") or w["warehouse_id"]
+        except Exception as e:
+            logger.debug(f"Warehouse name lookup failed: {e}")
+
     total_sellable, total_stock, total_onway = 0, 0, 0
 
     if multi_warehouse:
@@ -367,7 +385,8 @@ async def local_stock_query(
         for wh_id in sorted(warehouses):
             wh_rows = [r for r in rows if r.get("warehouse_id", "") == wh_id]
             wh_sellable, wh_stock, wh_onway = 0, 0, 0
-            lines.append(f"仓库: {wh_id or '默认仓'}")
+            wh_label = wh_name_map.get(wh_id, wh_id) if wh_id else "默认仓"
+            lines.append(f"仓库: {wh_label}")
             for r in wh_rows:
                 s, t, o = _format_stock_row(r, lines)
                 wh_sellable += s
@@ -474,6 +493,27 @@ async def local_platform_map_query(
     except Exception:
         pass
 
+    # 批量查店铺名称
+    shop_ids = list({r.get("user_id", "") for r in rows if r.get("user_id")})
+    shop_name_map: dict[str, str] = {}
+    if shop_ids:
+        try:
+            shop_q = (
+                db.table("erp_shops")
+                .select("shop_id,name,platform")
+                .in_("shop_id", shop_ids)
+            )
+            if org_id:
+                shop_q = shop_q.eq("org_id", org_id)
+            shop_res = shop_q.execute()
+            for s in shop_res.data or []:
+                label = s.get("name") or s.get("shop_id", "")
+                if s.get("platform"):
+                    label += f"({s['platform']})"
+                shop_name_map[s["shop_id"]] = label
+        except Exception as e:
+            logger.debug(f"Shop name lookup failed: {e}")
+
     lines = [f"商品 {code} 平台上架情况：\n"]
     if product_info:
         lines.append(product_info)
@@ -482,8 +522,10 @@ async def local_platform_map_query(
     lines.append(f"平台映射（共{len(rows)}条）：")
     for i, r in enumerate(rows, 1):
         sku_count = len(r.get("sku_mappings") or [])
+        uid = r.get("user_id", "")
+        shop_label = shop_name_map.get(uid, uid)
         lines.append(
-            f"  {i}. 店铺{r.get('user_id', '')} — "
+            f"  {i}. {shop_label} — "
             f"平台ID: {r.get('num_iid', '')} — SKU映射: {sku_count}个"
         )
 
