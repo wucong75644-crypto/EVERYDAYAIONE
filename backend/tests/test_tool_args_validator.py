@@ -9,6 +9,9 @@
 6. 空 args → 有必填时报错
 7. 工具不在 selected_tools 中 → 跳过校验
 8. schema 无 properties → 跳过过滤
+9. 类型校验：string→object 成功/失败
+10. 类型校验：string→int 成功/失败, float→int
+11. 类型校验：string→bool 成功/失败
 """
 import pytest
 
@@ -53,6 +56,25 @@ TOOLS = [
         "local_shop_list",
         {
             "platform": {"type": "string", "description": "平台过滤"},
+        },
+        required=[],
+    ),
+    # 用于类型校验测试：覆盖 object / integer / boolean
+    _make_tool(
+        "erp_product_query",
+        {
+            "action": {"type": "string", "description": "操作名"},
+            "params": {"type": "object", "description": "操作参数"},
+            "page": {"type": "integer", "description": "页码"},
+            "page_size": {"type": "integer", "description": "每页条数"},
+        },
+        required=["action"],
+    ),
+    _make_tool(
+        "local_stock_query",
+        {
+            "product_code": {"type": "string", "description": "商品编码"},
+            "low_stock": {"type": "boolean", "description": "低库存过滤"},
         },
         required=[],
     ),
@@ -141,3 +163,145 @@ class TestValidateToolArgs:
         cleaned, err = validate_tool_args("local_shop_list", args, TOOLS)
         assert err is None
         assert cleaned == {}
+
+
+class TestTypeCoercionObject:
+    """object 类型校验：string→dict"""
+
+    def test_string_to_dict_success(self):
+        """JSON 字符串自动反序列化为 dict"""
+        args = {"action": "product_list", "params": '{"keyword": "T恤"}'}
+        cleaned, err = validate_tool_args("erp_product_query", args, TOOLS)
+        assert err is None
+        assert cleaned["params"] == {"keyword": "T恤"}
+
+    def test_string_to_dict_nested(self):
+        """嵌套 JSON 字符串也能正确还原"""
+        args = {"action": "product_list", "params": '{"keyword": "鞋", "start_date": "2026-04-01"}'}
+        cleaned, err = validate_tool_args("erp_product_query", args, TOOLS)
+        assert err is None
+        assert cleaned["params"]["keyword"] == "鞋"
+        assert cleaned["params"]["start_date"] == "2026-04-01"
+
+    def test_string_not_json_returns_error(self):
+        """非 JSON 字符串 → 返回错误"""
+        args = {"action": "product_list", "params": "keyword=T恤"}
+        cleaned, err = validate_tool_args("erp_product_query", args, TOOLS)
+        assert err is not None
+        assert "object" in err
+
+    def test_string_json_array_returns_error(self):
+        """JSON 数组字符串（不是 dict）→ 返回错误"""
+        args = {"action": "product_list", "params": '[1, 2, 3]'}
+        cleaned, err = validate_tool_args("erp_product_query", args, TOOLS)
+        assert err is not None
+        assert "object" in err
+
+    def test_dict_passes_through(self):
+        """正常 dict 不被修改"""
+        args = {"action": "product_list", "params": {"keyword": "T恤"}}
+        cleaned, err = validate_tool_args("erp_product_query", args, TOOLS)
+        assert err is None
+        assert cleaned["params"] == {"keyword": "T恤"}
+
+
+class TestTypeCoercionInteger:
+    """integer 类型校验：string→int, float→int"""
+
+    def test_string_to_int_success(self):
+        """字符串 "20" 自动转为 int 20"""
+        args = {"action": "product_list", "page": "2", "page_size": "20"}
+        cleaned, err = validate_tool_args("erp_product_query", args, TOOLS)
+        assert err is None
+        assert cleaned["page"] == 2
+        assert isinstance(cleaned["page"], int)
+        assert cleaned["page_size"] == 20
+
+    def test_float_to_int_success(self):
+        """float 20.0 自动转为 int 20"""
+        args = {"action": "product_list", "page": 1.0}
+        cleaned, err = validate_tool_args("erp_product_query", args, TOOLS)
+        assert err is None
+        assert cleaned["page"] == 1
+        assert isinstance(cleaned["page"], int)
+
+    def test_string_non_numeric_returns_error(self):
+        """非数字字符串 → 返回错误"""
+        args = {"action": "product_list", "page": "abc"}
+        cleaned, err = validate_tool_args("erp_product_query", args, TOOLS)
+        assert err is not None
+        assert "integer" in err
+
+    def test_int_passes_through(self):
+        """正常 int 不被修改"""
+        args = {"action": "product_list", "page": 3}
+        cleaned, err = validate_tool_args("erp_product_query", args, TOOLS)
+        assert err is None
+        assert cleaned["page"] == 3
+
+    def test_bool_as_int_passes_through(self):
+        """bool 是 int 子类，不触发 integer 校验"""
+        args = {"action": "product_list", "page": True}
+        cleaned, err = validate_tool_args("erp_product_query", args, TOOLS)
+        assert err is None
+        assert cleaned["page"] is True
+
+
+class TestTypeCoercionBoolean:
+    """boolean 类型校验：string→bool（最危险场景）"""
+
+    def test_string_true_to_bool(self):
+        """字符串 "true" 转为 True"""
+        args = {"low_stock": "true"}
+        cleaned, err = validate_tool_args("local_stock_query", args, TOOLS)
+        assert err is None
+        assert cleaned["low_stock"] is True
+
+    def test_string_false_to_bool(self):
+        """字符串 "false" 转为 False（核心：防止 "false" 被当 truthy）"""
+        args = {"low_stock": "false"}
+        cleaned, err = validate_tool_args("local_stock_query", args, TOOLS)
+        assert err is None
+        assert cleaned["low_stock"] is False
+
+    def test_string_TRUE_case_insensitive(self):
+        """大小写不敏感"""
+        args = {"low_stock": "TRUE"}
+        cleaned, err = validate_tool_args("local_stock_query", args, TOOLS)
+        assert err is None
+        assert cleaned["low_stock"] is True
+
+    def test_string_False_case_insensitive(self):
+        """混合大小写也能识别"""
+        args = {"low_stock": "False"}
+        cleaned, err = validate_tool_args("local_stock_query", args, TOOLS)
+        assert err is None
+        assert cleaned["low_stock"] is False
+
+    def test_string_1_to_true(self):
+        """字符串 "1" 转为 True"""
+        args = {"low_stock": "1"}
+        cleaned, err = validate_tool_args("local_stock_query", args, TOOLS)
+        assert err is None
+        assert cleaned["low_stock"] is True
+
+    def test_string_0_to_false(self):
+        """字符串 "0" 转为 False"""
+        args = {"low_stock": "0"}
+        cleaned, err = validate_tool_args("local_stock_query", args, TOOLS)
+        assert err is None
+        assert cleaned["low_stock"] is False
+
+    def test_string_invalid_returns_error(self):
+        """无法识别的字符串 → 返回错误"""
+        args = {"low_stock": "yes"}
+        cleaned, err = validate_tool_args("local_stock_query", args, TOOLS)
+        assert err is not None
+        assert "boolean" in err
+
+    def test_bool_passes_through(self):
+        """正常 bool 不被修改"""
+        args = {"low_stock": False}
+        cleaned, err = validate_tool_args("local_stock_query", args, TOOLS)
+        assert err is None
+        assert cleaned["low_stock"] is False
