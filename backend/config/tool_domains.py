@@ -49,6 +49,7 @@ TOOL_DOMAINS: Dict[str, ToolDomain] = {
 
     # === shared: 多个域的 Agent 内部都能用 ===
     "code_execute":     ToolDomain.SHARED,
+    "ask_user":         ToolDomain.SHARED,  # 主 Agent + ERP Agent 都需要追问能力
 
     # === erp: 仅 erp_agent 内部可用 ===
     "erp_api_search":           ToolDomain.ERP,
@@ -77,7 +78,6 @@ TOOL_DOMAINS: Dict[str, ToolDomain] = {
     "fetch_all_pages":          ToolDomain.ERP,
     "trigger_erp_sync":         ToolDomain.ERP,
     "route_to_chat":            ToolDomain.ERP,
-    "ask_user":                 ToolDomain.ERP,
 }
 
 
