@@ -148,7 +148,7 @@ async def compute_embedding(text: str) -> Optional[List[float]]:
             data = resp.json()
             return data["data"][0]["embedding"]
     except Exception as e:
-        logger.warning(f"Embedding compute failed | error={e}")
+        logger.warning(f"Embedding compute failed | error={type(e).__name__}: {e or 'no detail'}")
         return None
 
 

@@ -288,7 +288,7 @@ class IntentRouter:
                     )
                     return decision
             except Exception as e:
-                logger.warning(f"Retry router failed | model={router_model} | error={e}")
+                logger.warning(f"Retry router failed | model={router_model} | error={type(e).__name__}: {e or 'no detail'}")
 
         return self._deterministic_fallback(generation_type, failed_models)
 
@@ -346,6 +346,7 @@ class IntentRouter:
                 "enable_search": True,
                 "temperature": 0.3,
                 "max_tokens": 2000,
+                "enable_thinking": False,
             })
             response.raise_for_status()
             data = response.json()
@@ -358,7 +359,7 @@ class IntentRouter:
                     return content
 
         except Exception as e:
-            logger.warning(f"Web search failed | query={query} | error={e}")
+            logger.warning(f"Web search failed | query={query} | error={type(e).__name__}: {e or 'no detail'}")
 
         return None
 
@@ -387,6 +388,7 @@ class IntentRouter:
                 "tool_choice": "auto",
                 "temperature": 0.1,
                 "max_tokens": 200,
+                "enable_thinking": False,
             },
         )
         response.raise_for_status()

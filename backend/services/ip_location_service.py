@@ -110,7 +110,7 @@ async def _fetch_from_amap(ip: str) -> Optional[str]:
         return f"{province}{city}".strip() or None
 
     except Exception as e:
-        logger.warning(f"Amap IP location failed | ip={ip} | error={e}")
+        logger.warning(f"Amap IP location failed | ip={ip} | error={type(e).__name__}: {e or 'no detail'}")
         return None
 
 
