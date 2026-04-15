@@ -182,6 +182,51 @@ class TestToolExecutorERPAgent:
         assert "库存128件" in result
         mock_execute.assert_called_once()
 
+    @pytest.mark.asyncio
+    @patch("services.erp_agent.ERPAgent.execute")
+    async def test_erp_agent_ask_user_sets_pending(self, mock_execute):
+        """ERP Agent 返回 ask_user → ToolExecutor 设置 _ask_user_pending"""
+        from services.erp_agent import ERPAgentResult
+        from services.tool_executor import ToolExecutor
+
+        mock_execute.return_value = ERPAgentResult(
+            text="需要排除刷单吗？",
+            status="ask_user",
+            ask_user_question="需要排除刷单吗？",
+            tokens_used=100,
+        )
+
+        exe = ToolExecutor(
+            db=MagicMock(), user_id="t",
+            conversation_id="t", org_id="test",
+        )
+        exe._pending_file_parts = []
+        await exe._erp_agent({"query": "查销售额"})
+
+        assert hasattr(exe, "_ask_user_pending")
+        assert exe._ask_user_pending["message"] == "需要排除刷单吗？"
+        assert exe._ask_user_pending["source"] == "erp_agent"
+
+    @pytest.mark.asyncio
+    @patch("services.erp_agent.ERPAgent.execute")
+    async def test_erp_agent_normal_no_pending(self, mock_execute):
+        """ERP Agent 正常返回 → 不设置 _ask_user_pending"""
+        from services.erp_agent import ERPAgentResult
+        from services.tool_executor import ToolExecutor
+
+        mock_execute.return_value = ERPAgentResult(
+            text="查询结果", tokens_used=100,
+        )
+
+        exe = ToolExecutor(
+            db=MagicMock(), user_id="t",
+            conversation_id="t", org_id="test",
+        )
+        exe._pending_file_parts = []
+        await exe._erp_agent({"query": "查库存"})
+
+        assert not hasattr(exe, "_ask_user_pending") or exe._ask_user_pending is None
+
 
 # ============================================================
 # chat_tools.py erp_agent 工具定义
@@ -524,6 +569,53 @@ class TestRunToolLoopExitLogic:
         assert "未能生成" in result.text
 
 
+class TestToolLoopSteer:
+    """ToolLoopExecutor steer 打断 — 直接测试 check_steer 在 _execute_tools 中的行为"""
+
+    def test_steer_skips_remaining_and_injects_user_msg(self):
+        """steer 信号到达 → 跳过剩余工具 + 注入 user message 到 messages"""
+        from services.websocket_manager import ws_manager
+
+        task_id = "task-steer-test-1"
+        ws_manager.register_steer_listener(task_id)
+        ws_manager.resolve_steer(task_id, "帮我查库存")
+
+        # 模拟 _execute_tools 中的打断逻辑
+        messages = [{"role": "user", "content": "查销售额"}]
+        completed = [
+            {"id": "tc1", "name": "tool_a", "arguments": "{}"},
+            {"id": "tc2", "name": "tool_b", "arguments": "{}"},
+        ]
+
+        # 模拟第一个工具执行完后检查 steer
+        executed = []
+        for tc in completed:
+            executed.append(tc["name"])
+            messages.append({
+                "role": "tool", "tool_call_id": tc["id"], "content": "result",
+            })
+
+            _steer = ws_manager.check_steer(task_id)
+            if _steer:
+                remaining = completed[completed.index(tc) + 1:]
+                for r_tc in remaining:
+                    messages.append({
+                        "role": "tool", "tool_call_id": r_tc["id"],
+                        "content": "⚠ 用户发送了新消息，跳过此工具调用。",
+                    })
+                messages.append({"role": "user", "content": _steer})
+                break
+
+        # 验证：只执行了 tool_a
+        assert executed == ["tool_a"]
+        # messages 末尾有跳过标记 + 新 user 消息
+        skipped = [m for m in messages if "跳过此工具调用" in m.get("content", "")]
+        assert len(skipped) == 1  # tool_b 被跳过
+        assert messages[-1] == {"role": "user", "content": "帮我查库存"}
+
+        ws_manager.unregister_steer_listener(task_id)
+
+
 class TestERPAgentConstants:
     """ERP Agent 常量和安全护栏验证"""
 
@@ -713,6 +805,89 @@ class TestERPAgentResultStructured:
         assert r.tokens_used == 1000
         assert r.turns_used == 3
         assert len(r.tools_called) == 2
+
+
+# ============================================================
+# ask_user 冒泡：ERPAgent.execute → status="ask_user"
+# ============================================================
+
+
+class TestERPAgentAskUserBubble:
+    """ERPAgent.execute 检测 exit_via_ask_user → status + question"""
+
+    @pytest.mark.asyncio
+    async def test_ask_user_exit_sets_status(self):
+        """ToolLoopExecutor exit_via_ask_user=True → ERPAgentResult.status='ask_user'"""
+        from services.agent.erp_agent import ERPAgent
+        from services.agent.loop_types import LoopResult
+
+        agent = ERPAgent(
+            db=MagicMock(), user_id="u1",
+            conversation_id="c1", org_id="org1",
+        )
+
+        mock_result = LoopResult(
+            text="需要排除刷单吗？",
+            total_tokens=100,
+            turns=2,
+            is_llm_synthesis=True,
+            exit_via_ask_user=True,
+            collected_files=[],
+        )
+
+        with patch.object(agent, "_build_tool_loop") as mock_build, \
+             patch.object(agent, "_build_messages", new_callable=AsyncMock, return_value=[]), \
+             patch("services.adapters.factory.create_chat_adapter") as mock_adapter:
+
+            mock_loop = MagicMock()
+            mock_loop.run = AsyncMock(return_value=mock_result)
+            mock_build.return_value = (mock_loop, MagicMock())
+
+            adapter_inst = AsyncMock()
+            adapter_inst.close = AsyncMock()
+            mock_adapter.return_value = adapter_inst
+
+            result = await agent.execute("查上周销售额")
+
+        assert result.status == "ask_user"
+        assert result.ask_user_question == "需要排除刷单吗？"
+
+    @pytest.mark.asyncio
+    async def test_normal_exit_no_ask_user(self):
+        """正常退出 → status='success', ask_user_question=''"""
+        from services.agent.erp_agent import ERPAgent
+        from services.agent.loop_types import LoopResult
+
+        agent = ERPAgent(
+            db=MagicMock(), user_id="u1",
+            conversation_id="c1", org_id="org1",
+        )
+
+        mock_result = LoopResult(
+            text="上周销售额 356 笔",
+            total_tokens=200,
+            turns=3,
+            is_llm_synthesis=True,
+            exit_via_ask_user=False,
+            collected_files=[],
+        )
+
+        with patch.object(agent, "_build_tool_loop") as mock_build, \
+             patch.object(agent, "_build_messages", new_callable=AsyncMock, return_value=[]), \
+             patch("services.adapters.factory.create_chat_adapter") as mock_adapter:
+
+            mock_loop = MagicMock()
+            mock_loop.run = AsyncMock(return_value=mock_result)
+            mock_build.return_value = (mock_loop, MagicMock())
+
+            adapter_inst = AsyncMock()
+            adapter_inst.close = AsyncMock()
+            mock_adapter.return_value = adapter_inst
+
+            result = await agent.execute("查上周销售额")
+
+        assert result.status == "success"
+        assert result.ask_user_question == ""
 
 
 # ============================================================

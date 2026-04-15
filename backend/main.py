@@ -300,10 +300,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 清理过期的 pending_interaction（24h 过期）
     try:
+        from datetime import datetime, timezone
         expired = db.table("pending_interaction") \
             .update({"status": "expired"}) \
             .eq("status", "pending") \
-            .lt("expired_at", "now()") \
+            .lt("expired_at", datetime.now(timezone.utc).isoformat()) \
             .execute()
         _expired_count = len(expired.data) if expired.data else 0
         if _expired_count:
