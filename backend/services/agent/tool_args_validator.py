@@ -62,6 +62,71 @@ def validate_tool_args(
         )
     cleaned = {k: v for k, v in args.items() if k in valid_keys}
 
+    # ── 1.5 类型校验：LLM 常见类型偏差统一修正 ──
+    # object: string→dict | integer: string→int | boolean: string→bool
+    import json as _json
+    for key, prop in properties.items():
+        if key not in cleaned:
+            continue
+        expected_type = prop.get("type")
+        value = cleaned[key]
+
+        # object: LLM 双重序列化 → 尝试 json.loads 还原
+        if expected_type == "object" and isinstance(value, str):
+            try:
+                parsed = _json.loads(value)
+            except (ValueError, TypeError):
+                parsed = None
+            if isinstance(parsed, dict):
+                logger.warning(
+                    f"ToolArgsValidator type coerced | tool={tool_name} | "
+                    f"param={key} | string→object"
+                )
+                cleaned[key] = parsed
+            else:
+                return cleaned, (
+                    f"参数 `{key}` 类型错误：期望 object(dict)，"
+                    f"收到 string。请传 JSON 对象，例如 {key}={{\"keyword\": \"xxx\"}}"
+                )
+
+        # integer: "20" → 20, 20.0 → 20
+        elif expected_type == "integer" and not isinstance(value, int):
+            if isinstance(value, str):
+                try:
+                    cleaned[key] = int(value)
+                    logger.warning(
+                        f"ToolArgsValidator type coerced | tool={tool_name} | "
+                        f"param={key} | string→int"
+                    )
+                except ValueError:
+                    return cleaned, (
+                        f"参数 `{key}` 类型错误：期望 integer，"
+                        f"收到 \"{value}\"。请传整数，例如 {key}=20"
+                    )
+            elif isinstance(value, float) and value == int(value):
+                cleaned[key] = int(value)
+            else:
+                return cleaned, (
+                    f"参数 `{key}` 类型错误：期望 integer，收到 {type(value).__name__}"
+                )
+
+        # boolean: "true"/"false" → True/False（最危险：Python 中 "false" 是 truthy）
+        elif expected_type == "boolean" and isinstance(value, str):
+            lower = value.strip().lower()
+            if lower in ("true", "1"):
+                cleaned[key] = True
+            elif lower in ("false", "0"):
+                cleaned[key] = False
+            else:
+                return cleaned, (
+                    f"参数 `{key}` 类型错误：期望 boolean，"
+                    f"收到 \"{value}\"。请传 true 或 false"
+                )
+            logger.warning(
+                f"ToolArgsValidator type coerced | tool={tool_name} | "
+                f"param={key} | string→bool"
+            )
+
     # ── 2. 必填参数缺失检查 ──
     missing = required - set(cleaned.keys())
     if missing:
