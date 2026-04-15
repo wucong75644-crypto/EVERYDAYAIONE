@@ -59,14 +59,13 @@ async def _get_pg_pool():
 
             _pg_pool = AsyncConnectionPool(
                 conninfo=db_url,
-                min_size=0,
+                min_size=1,
                 max_size=3,
                 # 与 core/local_db.py 保持一致：强制 PG session TZ=Asia/Shanghai
                 # 防止迁云数据库 / Docker / 主从异地复制时 timezone-sensitive 的
                 # cast 行为出错。详见 commit 39b6f81。
                 kwargs={"options": "-c timezone=Asia/Shanghai"},
-                # min_size=0: 不保持空闲连接（此池仅每小时用一次，空闲连接必被PG服务端断开）
-                # check: 取连接前验活，死连接自动丢弃重建；DB真挂时异常照常上抛不会被吞
+                # check: 取连接前验活，死连接自动丢弃重建
                 check=AsyncConnectionPool.check_connection,
                 open=False,
             )
