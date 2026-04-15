@@ -204,37 +204,41 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         self._erp_agent_tokens = getattr(self, "_erp_agent_tokens", 0)
         self._erp_agent_tokens += result.tokens_used
 
-        # 提取 ERP Agent 结果中的 [FILE] 标记 → 透传到主 Agent 的 _pending_file_parts
-        # ERP Agent 内部 code_execute 生成的文件会产生 [FILE] 标记，
-        # 需要在这里提取，否则会被 LLM 改写成 markdown 链接丢失
-        import re
-        _file_re = re.compile(r'\[FILE\](.*?)\|(.*?)\|(.*?)\|(.*?)\[/FILE\]')
-        _file_matches = _file_re.findall(result.text)
-        if _file_matches:
+        # 透传 ToolLoopExecutor 提取的 [FILE] 标记 → 主 Agent 的 _pending_file_parts
+        # [FILE] 标记已在 ToolLoopExecutor._execute_tools 中提取，不再经过 LLM
+        collected = result.collected_files or []
+        if collected:
             from schemas.message import FilePart
             _pending = getattr(self, "_pending_file_parts", None)
             if _pending is not None:
-                for url, name, mime_type, size in _file_matches:
+                for f in collected:
                     _pending.append(FilePart(
-                        url=url, name=name, mime_type=mime_type, size=int(size),
+                        url=f["url"], name=f["name"],
+                        mime_type=f["mime_type"], size=f["size"],
                     ))
-            # 从文本中移除 [FILE] 标记（防止 LLM 改写）
-            result_text = _file_re.sub(
-                lambda m: f"📎 文件已生成: {m.group(2)}", result.text,
-            )
-        else:
-            result_text = result.text
+
+        result_text = result.text
+
+        # ask_user 冒泡：ERP Agent 内部调了 ask_user，需要冒泡到主循环冻结
+        if result.status == "ask_user" and result.ask_user_question:
+            self._ask_user_pending = {
+                "message": result.ask_user_question,
+                "reason": "need_info",
+                "tool_call_id": "",  # 主循环冻结时使用 erp_agent 的 tool_call_id
+                "source": "erp_agent",
+            }
 
         # 保存原始展示文本 + 文件信息（供 ChatHandler 推送 content_block_add）
         self._erp_display_text = result_text
         logger.debug(
             f"ERP display text set | len={len(result_text)} | "
-            f"files={len(_file_matches) if _file_matches else 0}"
+            f"files={len(collected)}"
         )
         self._erp_display_files = [
-            {"url": url, "name": name, "mime_type": mime_type, "size": int(size)}
-            for url, name, mime_type, size in _file_matches
-        ] if _file_matches else []
+            {"url": f["url"], "name": f["name"],
+             "mime_type": f["mime_type"], "size": f["size"]}
+            for f in collected
+        ]
 
         # erp_agent 结果截断（给主 LLM 看的精简版）
         from services.agent.tool_result_envelope import wrap_erp_agent_result

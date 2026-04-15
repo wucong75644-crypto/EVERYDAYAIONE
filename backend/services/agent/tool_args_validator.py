@@ -81,7 +81,7 @@ def validate_tool_args(
         error_msg = (
             f"参数校验失败 — 缺少必填参数:\n"
             + "\n".join(param_hints)
-            + "\n请补齐后重试。"
+            + "\n请调用 ask_user 向用户确认缺失的参数，禁止自行猜测参数值。"
         )
         return cleaned, error_msg
 

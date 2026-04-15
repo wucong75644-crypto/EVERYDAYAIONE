@@ -1,7 +1,6 @@
 """ScheduledTaskAgent 单元测试
 
 测试范围：
-- 文件解析（_extract_files 从 [FILE] 标记提取）
 - 上下文构建（_build_light_context）
 - 摘要生成
 - 完整执行流程（mock LLM adapter）
@@ -20,7 +19,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from services.agent.scheduled_task_agent import (
     ScheduledTaskAgent,
     ScheduledTaskResult,
-    _FILE_MARKER_RE,
 )
 
 
@@ -52,48 +50,7 @@ def make_task(**overrides) -> dict:
 
 
 # ════════════════════════════════════════════════════════
-# 1. _extract_files 文件提取
-# ════════════════════════════════════════════════════════
-
-class TestExtractFiles:
-    def test_single_file(self):
-        agent = ScheduledTaskAgent(MagicMock(), make_task())
-        text = (
-            "执行完成。\n"
-            "[FILE]https://cdn.example.com/report.xlsx|"
-            "销售日报.xlsx|application/vnd.openxmlformats|12345[/FILE]"
-        )
-        files = agent._extract_files(text)
-        assert len(files) == 1
-        assert files[0]["url"] == "https://cdn.example.com/report.xlsx"
-        assert files[0]["name"] == "销售日报.xlsx"
-        assert files[0]["size"] == 12345
-
-    def test_multiple_files(self):
-        agent = ScheduledTaskAgent(MagicMock(), make_task())
-        text = (
-            "[FILE]https://a.com/1.xlsx|file1.xlsx|app/xlsx|100[/FILE]\n"
-            "中间一些其他文字\n"
-            "[FILE]https://b.com/2.csv|file2.csv|text/csv|200[/FILE]"
-        )
-        files = agent._extract_files(text)
-        assert len(files) == 2
-        assert files[0]["name"] == "file1.xlsx"
-        assert files[1]["name"] == "file2.csv"
-
-    def test_no_file(self):
-        agent = ScheduledTaskAgent(MagicMock(), make_task())
-        files = agent._extract_files("普通文本，没有附件")
-        assert files == []
-
-    def test_empty_text(self):
-        agent = ScheduledTaskAgent(MagicMock(), make_task())
-        assert agent._extract_files("") == []
-        assert agent._extract_files(None) == []
-
-
-# ════════════════════════════════════════════════════════
-# 2. _build_light_context 上下文构建
+# 1. _build_light_context 上下文构建
 # ════════════════════════════════════════════════════════
 
 class TestBuildLightContext:
@@ -200,27 +157,9 @@ class TestScheduledTaskResult:
             tokens_used=1500,
             turns_used=3,
             tools_called=["erp_agent", "code_execute"],
-            files=[{"url": "https://x.com/a.xlsx", "name": "a.xlsx", "mime": "x", "size": 100}],
+            files=[{"url": "https://x.com/a.xlsx", "name": "a.xlsx", "mime_type": "x", "size": 100}],
         )
         assert result.tokens_used == 1500
         assert len(result.files) == 1
 
 
-# ════════════════════════════════════════════════════════
-# 5. _FILE_MARKER_RE 正则
-# ════════════════════════════════════════════════════════
-
-class TestFileMarkerRegex:
-    def test_matches_standard_format(self):
-        text = "[FILE]https://cdn.example.com/report.xlsx|销售日报.xlsx|application/vnd|12345[/FILE]"
-        match = _FILE_MARKER_RE.search(text)
-        assert match
-        assert match.group("url") == "https://cdn.example.com/report.xlsx"
-        assert match.group("name") == "销售日报.xlsx"
-        assert match.group("size") == "12345"
-
-    def test_no_match_invalid(self):
-        # 缺少字段
-        assert not _FILE_MARKER_RE.search("[FILE]incomplete[/FILE]")
-        # 没有标记
-        assert not _FILE_MARKER_RE.search("plain text")

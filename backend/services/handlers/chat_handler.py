@@ -130,6 +130,137 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         except Exception as e:
             logger.warning(f"Failed to save accumulated_content | task_id={task_id} | error={e}")
 
+    # ================================================================
+    # ask_user 冻结/恢复（设计文档：TECH_AI主动沟通与打断机制.md §4.2）
+    # ================================================================
+
+    async def _freeze_for_ask_user(
+        self,
+        ask_info: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+        task_id: str,
+        conversation_id: str,
+        message_id: str,
+        user_id: str,
+        model_id: str,
+        content_blocks: List[Dict[str, Any]],
+        tool_context_state: Dict[str, Any],
+        budget_snapshot: Dict[str, Any],
+    ) -> None:
+        """冻结当前工具循环状态到 DB，WS 推送追问给前端"""
+        import json as _json
+
+        interaction_id = str(uuid.uuid4())
+        question = ask_info["message"]
+
+        # 序列化 messages 和循环快照
+        loop_snapshot = {
+            "content_blocks": content_blocks,
+            "tool_context_state": tool_context_state,
+            "model_id": model_id,
+            "budget_snapshot": budget_snapshot,
+        }
+
+        try:
+            self.db.table("pending_interaction").insert({
+                "id": interaction_id,
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "org_id": self.org_id,
+                "frozen_messages": _json.dumps(messages, ensure_ascii=False),
+                "question": question,
+                "source": "chat",
+                "tool_call_id": ask_info["tool_call_id"],
+                "loop_snapshot": _json.dumps(loop_snapshot, ensure_ascii=False),
+                "status": "pending",
+            }).execute()
+        except Exception as e:
+            logger.error(f"Failed to freeze pending_interaction | error={e}")
+            return
+
+        # WS 推送追问请求给前端
+        from schemas.websocket_builders import build_ask_user_request
+        await ws_manager.send_to_task_or_user(
+            task_id, user_id,
+            build_ask_user_request(
+                task_id=task_id,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                interaction_id=interaction_id,
+                question=question,
+                source="chat",
+            ),
+        )
+        logger.info(
+            f"ask_user frozen | interaction={interaction_id} | "
+            f"conv={conversation_id} | question={question[:50]}"
+        )
+
+    def _check_pending_interaction(
+        self, conversation_id: str,
+    ) -> Optional[Dict[str, Any]]:
+        """检查是否有待恢复的 pending interaction"""
+        try:
+            result = self.db.table("pending_interaction") \
+                .select("*") \
+                .eq("conversation_id", conversation_id) \
+                .eq("status", "pending") \
+                .maybe_single() \
+                .execute()
+            data = result.data
+            # 类型校验：排除 MagicMock 等非法数据
+            if data and isinstance(data, dict) and "frozen_messages" in data:
+                return data
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to check pending_interaction | error={e}")
+            return None
+
+    def _restore_from_pending(
+        self,
+        pending: Dict[str, Any],
+        user_answer: str,
+    ) -> tuple:
+        """从 pending interaction 恢复冻结状态
+
+        Returns:
+            (messages, content_blocks, discovered_tools, budget_snapshot)
+        """
+        import json as _json
+
+        # 反序列化 frozen_messages
+        frozen = pending["frozen_messages"]
+        messages = _json.loads(frozen) if isinstance(frozen, str) else frozen
+
+        # 用户回答作为 tool_result 注入（和 Claude 一致）
+        messages.append({
+            "role": "tool",
+            "tool_call_id": pending["tool_call_id"],
+            "content": f"用户回答: {user_answer}",
+        })
+
+        # 恢复循环快照
+        snapshot_raw = pending.get("loop_snapshot", "{}")
+        snapshot = _json.loads(snapshot_raw) if isinstance(snapshot_raw, str) else snapshot_raw
+
+        content_blocks = snapshot.get("content_blocks", [])
+        tool_context_state = snapshot.get("tool_context_state", {})
+        budget_snapshot = snapshot.get("budget_snapshot", {})
+
+        # 原子标记为已恢复（防并发：只有 status=pending 才能抢到）
+        try:
+            res = self.db.table("pending_interaction") \
+                .update({"status": "resumed"}) \
+                .eq("id", pending["id"]) \
+                .eq("status", "pending") \
+                .execute()
+            if not res.data:
+                logger.warning(f"Pending already resumed by another request | id={pending['id']}")
+        except Exception as e:
+            logger.warning(f"Failed to mark pending as resumed | error={e}")
+
+        return messages, content_blocks, tool_context_state, budget_snapshot
+
     async def _stream_generate(
         self,
         task_id: str,
@@ -262,6 +393,32 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             set_staging_dir(resolve_staging_dir(
                 _s.file_workspace_root, user_id, self.org_id, conversation_id,
             ))
+
+            # ── ask_user 恢复检查：有 pending 则替换 messages ──
+            _pending = self._check_pending_interaction(conversation_id)
+            if _pending:
+                text_content = self._extract_text_content(content)
+                _restored = self._restore_from_pending(_pending, text_content)
+                messages, _content_blocks, _tc_state, _bs = _restored
+                # 恢复 tool_context discovered_tools
+                tool_context.discovered_tools = set(_tc_state.get("discovered_tools", []))
+                # 恢复预算消耗
+                _budget.use_tokens(_bs.get("tokens_used", 0))
+                for _ in range(_bs.get("turns_used", 0)):
+                    _budget.use_turn()
+                # 上下文压缩（frozen_messages 可能较大）
+                from services.handlers.context_compressor import (
+                    enforce_tool_budget, enforce_history_budget_sync,
+                )
+                enforce_tool_budget(messages, _s.context_tool_token_budget)
+                enforce_history_budget_sync(messages, _s.context_history_token_budget)
+                logger.info(
+                    f"Resumed from pending | conv={conversation_id} | "
+                    f"frozen_msgs={len(messages)} | budget_turns={_bs.get('turns_used', 0)}"
+                )
+
+            # ── 打断监听注册 ──
+            ws_manager.register_steer_listener(task_id)
 
             while not _budget.stop_reason:
                 _budget.use_turn()
@@ -405,6 +562,53 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     })
                     tool_context.update_from_result(tc["name"], result_text, is_error)
 
+                # ── ask_user 冻结检测 ──
+                _ask_info = getattr(self, "_ask_user_pending", None)
+                if _ask_info:
+                    self._ask_user_pending = None
+                    # 冻结当前状态到 DB
+                    await self._freeze_for_ask_user(
+                        ask_info=_ask_info,
+                        messages=messages,
+                        task_id=task_id,
+                        conversation_id=conversation_id,
+                        message_id=message_id,
+                        user_id=user_id,
+                        model_id=model_id,
+                        content_blocks=_content_blocks,
+                        tool_context_state={
+                            "discovered_tools": list(tool_context.discovered_tools),
+                        },
+                        budget_snapshot={
+                            "turns_used": _budget.turns_used,
+                            "tokens_used": _budget.tokens_used,
+                        },
+                    )
+                    # 追问文本作为本轮输出
+                    _ask_text = _ask_info["message"]
+                    _separator = "\n\n" if accumulated_text else ""
+                    accumulated_text += _separator + _ask_text
+                    await ws_manager.send_to_task_or_user(
+                        task_id, user_id,
+                        build_message_chunk(
+                            task_id=task_id,
+                            conversation_id=conversation_id,
+                            message_id=message_id,
+                            chunk=_separator + _ask_text,
+                        ),
+                    )
+                    break
+
+                # ── 打断检查点：用户在工具执行期间发了新消息 ──
+                _steer_msg = ws_manager.check_steer(task_id)
+                if _steer_msg:
+                    logger.info(
+                        f"Steer detected | task={task_id} | msg={_steer_msg[:50]}"
+                    )
+                    # 注入用户新消息，让 AI 下一轮看到并切换话题
+                    messages.append({"role": "user", "content": _steer_msg})
+                    # 不 break — 继续循环让 AI 基于新消息决策
+
                 # Phase 5: fire-and-forget 增量记忆提取（精确切片：从 _msg_pos_before_turn 开始，含 assistant + tool results）
                 import asyncio as _asyncio
                 from services.handlers.session_memory import extract_incremental
@@ -541,6 +745,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         finally:
             if self._adapter:
                 await self._adapter.close()
+            # 清理打断监听
+            ws_manager.unregister_steer_listener(task_id)
             # 清理截断暂存的大结果（请求级生命周期）
             from services.agent.tool_result_envelope import clear_persisted, clear_staging_dir
             clear_persisted()

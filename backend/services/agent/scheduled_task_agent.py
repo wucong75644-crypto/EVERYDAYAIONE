@@ -6,7 +6,7 @@
 - 不重构 ChatHandler，照抄 erp_agent.py 的 headless 模式
 - 复用 ToolLoopExecutor / LoopConfig / LoopStrategy / LoopHook
 - 无 WebSocket 依赖（task_id=None 让 ProgressNotifyHook 自然 no-op）
-- 沙盒输出文件从 [FILE] 标记正则解析
+- 沙盒输出文件由 ToolLoopExecutor 在独立通道提取（collected_files）
 
 2026-04-11 重构：删除 _run_tool_loop / _execute_tools 共 170 行重复代码，
 改为装配 LoopConfig + LoopStrategy + 单 ToolAuditHook 走共享内核。
@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, TYPE_CHECKING
 
@@ -50,13 +49,6 @@ TOOL_TIMEOUT = 30.0                # 单工具超时上限
 MAX_TOTAL_TOKENS = 50000           # Token 预算上限
 DEFAULT_DEADLINE = 180.0           # 默认总执行时间预算（秒）
 MAX_SCHEDULED_TURNS = 12           # 工具循环最大轮次（比 ERP 少，任务粒度更明确）
-
-# 沙盒输出文件标记正则
-# 来源：services/sandbox/functions.py 的 _auto_upload
-# 格式：[FILE]{url}|{filename}|{mime_type}|{size}[/FILE]
-_FILE_MARKER_RE = re.compile(
-    r"\[FILE\](?P<url>[^|]+)\|(?P<name>[^|]+)\|(?P<mime>[^|]+)\|(?P<size>\d+)\[/FILE\]"
-)
 
 
 # ════════════════════════════════════════════════════════
@@ -157,8 +149,8 @@ class ScheduledTaskAgent:
             text = result.text
             turns = result.turns
 
-            # 8. 提取沙盒输出的文件
-            files = self._extract_files(text)
+            # 8. 提取沙盒输出的文件（ToolLoopExecutor 已在独立通道透传）
+            files = result.collected_files or []
 
             # 9. 生成摘要
             summary = await self._generate_summary(text, adapter)
@@ -302,25 +294,6 @@ class ScheduledTaskAgent:
 
         messages.append({"role": "user", "content": user_msg})
         return messages
-
-    def _extract_files(self, text: str) -> List[Dict[str, Any]]:
-        """从文本中提取沙盒输出的 [FILE] 标记
-
-        沙盒 code_execute 的输出会自动包含 [FILE]url|name|mime|size[/FILE]
-        参考 backend/services/sandbox/functions.py 的 _auto_upload
-        """
-        files: List[Dict[str, Any]] = []
-        for match in _FILE_MARKER_RE.finditer(text or ""):
-            try:
-                files.append({
-                    "url": match.group("url"),
-                    "name": match.group("name"),
-                    "mime": match.group("mime"),
-                    "size": int(match.group("size")),
-                })
-            except (ValueError, KeyError):
-                continue
-        return files
 
     async def _generate_summary(self, text: str, adapter: Any) -> str:
         """生成 ≤500 字摘要，写回 last_summary 用于下次执行参考"""

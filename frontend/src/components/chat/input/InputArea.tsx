@@ -194,6 +194,22 @@ export default function InputArea({
     });
   }, [streamingMessageId, conversationId]);
 
+  // 打断当前执行（用户在 AI 执行中发送新消息）
+  const sendSteer = useCallback((message: string) => {
+    // 获取当前 streaming 任务的 task_id
+    const streamingMsg = streamingMessageId
+      ? useMessageStore.getState().getMessage(streamingMessageId)
+      : undefined;
+    const taskId = streamingMsg?.task_id;
+    if (!taskId || !conversationId) return;
+
+    // 通过 CustomEvent 通知 WebSocketContext 发送 user_steer
+    window.dispatchEvent(new CustomEvent('chat:user-steer', {
+      detail: { taskId, conversationId, message },
+    }));
+    logger.info('inputArea', '发送打断信号', { taskId, msgLen: message.length });
+  }, [streamingMessageId, conversationId]);
+
   // 对话切换时重置提交状态
   useEffect(() => {
     setIsSubmitting(false);
@@ -304,6 +320,12 @@ export default function InputArea({
     }
 
     const messageContent = prompt.trim();
+
+    // 打断：如果 AI 正在执行，先发 steer 信号
+    if (isStreaming && messageContent) {
+      sendSteer(messageContent);
+    }
+
     // 准备图片 URL 数组：使用服务器 URL（确保图片已上传完成）
     const imageUrls = uploadedImageUrls.length > 0 ? [...uploadedImageUrls] : null;
     // 准备文件数组（PDF 上传 + 工作区插入的文件合并）

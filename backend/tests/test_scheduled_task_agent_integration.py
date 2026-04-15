@@ -214,22 +214,23 @@ class TestExecuteHappyPath:
 
     @pytest.mark.asyncio
     async def test_extract_files_from_sandbox_output(self):
-        """工具结果中包含 [FILE] 标记 → 提取到 result.files"""
+        """工具结果中包含 [FILE] 标记 → ToolLoopExecutor 提取到 collected_files → result.files"""
         sandbox_output = (
             "已生成文件\n"
             "[FILE]https://cdn.example.com/report.xlsx|销售日报.xlsx|"
             "application/vnd.openxmlformats|12345[/FILE]"
         )
+        code_args = '{"code": "import pandas"}'
         adapter = FakeAdapter([
             {
                 "text": "",
-                "tool_calls": [{"id": "c1", "name": "code_execute", "args": "{}"}],
+                "tool_calls": [{"id": "c1", "name": "code_execute", "args": code_args}],
             },
-            {"text": sandbox_output, "tool_calls": []},
+            {"text": "已生成文件 📎 文件: 销售日报.xlsx", "tool_calls": []},
         ])
         executor = FakeToolExecutor(results={"code_execute": sandbox_output})
 
-        with patch("config.phase_tools.build_domain_tools", return_value=[]), \
+        with patch("config.chat_tools.get_core_tools", return_value=[]), \
              patch("services.adapters.factory.create_chat_adapter", return_value=adapter), \
              patch("services.agent.tool_executor.ToolExecutor", return_value=executor):
 
@@ -237,7 +238,7 @@ class TestExecuteHappyPath:
             result = await agent.execute()
 
         assert result.status == "success"
-        # 文件应该从最终 text 中提取
+        # [FILE] 标记在 ToolLoopExecutor 中提取，独立通道透传
         assert len(result.files) == 1
         assert result.files[0]["name"] == "销售日报.xlsx"
         assert result.files[0]["url"] == "https://cdn.example.com/report.xlsx"

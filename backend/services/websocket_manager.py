@@ -63,6 +63,12 @@ class WebSocketManager(RedisPubSubMixin):
         # key = tool_call_id → (Event, approved: bool | None)
         self._pending_confirms: Dict[str, Tuple[asyncio.Event, List]] = {}
 
+        # 用户打断机制（Steer）
+        # key = task_id → Event（打断信号）
+        self._steer_signals: Dict[str, asyncio.Event] = {}
+        # key = task_id → str（打断消息内容）
+        self._steer_messages: Dict[str, str] = {}
+
         # Redis Pub/Sub
         self._worker_id = f"{os.getpid()}-{uuid.uuid4().hex[:6]}"
         self._init_redis_state()
@@ -339,6 +345,46 @@ class WebSocketManager(RedisPubSubMixin):
         result_holder[0] = approved
         event.set()
         return True
+
+    # ================================================================
+    # 用户打断（Steer）— 参考 Claude Code steering 队列
+    # ================================================================
+
+    def register_steer_listener(self, task_id: str) -> None:
+        """注册打断监听（工具循环开始时调用）"""
+        self._steer_signals[task_id] = asyncio.Event()
+
+    def check_steer(self, task_id: str) -> str | None:
+        """非阻塞检查是否有打断信号（每个工具执行完后调用）
+
+        Returns:
+            打断消息文本，无打断时返回 None
+        """
+        event = self._steer_signals.get(task_id)
+        if event and event.is_set():
+            msg = self._steer_messages.pop(task_id, None)
+            self._steer_signals.pop(task_id, None)
+            return msg
+        return None
+
+    def resolve_steer(self, task_id: str, message: str) -> bool:
+        """前端打断消息到达时调用，唤醒等待方
+
+        Returns:
+            True = 找到并唤醒了监听方，False = 无匹配
+        """
+        self._steer_messages[task_id] = message
+        event = self._steer_signals.get(task_id)
+        if event:
+            event.set()
+            return True
+        logger.warning(f"Steer resolve miss | task_id={task_id}")
+        return False
+
+    def unregister_steer_listener(self, task_id: str) -> None:
+        """清理打断监听（工具循环结束时调用）"""
+        self._steer_signals.pop(task_id, None)
+        self._steer_messages.pop(task_id, None)
 
     # ================================================================
     # 心跳与清理

@@ -273,6 +273,34 @@ def build_content_block_add(
     )
 
 
+def build_ask_user_request(
+    task_id: str,
+    conversation_id: str,
+    message_id: str,
+    interaction_id: str,
+    question: str,
+    source: str = "chat",
+    options: Optional[list[str]] = None,
+    timeout: int = 86400,
+) -> Dict[str, Any]:
+    """构建 AI 追问请求（ask_user 工具触发）
+
+    前端收到后展示追问消息 + 快捷选项，等待用户回答。
+    """
+    payload: Dict[str, Any] = {
+        "interaction_id": interaction_id,
+        "question": question,
+        "source": source,
+        "timeout": timeout,
+    }
+    if options:
+        payload["options"] = options
+    return _build_ws_message(
+        WSMessageType.ASK_USER_REQUEST, payload,
+        task_id=task_id, conversation_id=conversation_id, message_id=message_id,
+    )
+
+
 def build_tool_confirm_request(
     task_id: str, conversation_id: str, message_id: str,
     tool_call_id: str, tool_name: str, arguments: Dict[str, Any],

@@ -217,6 +217,22 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
                 code="MISSING_TOOL_CALL_ID",
             ))
 
+    elif msg_type == WSMessageType.USER_STEER.value:
+        # 用户在 AI 执行中发送新消息（打断当前工具循环）
+        task_id = payload.get("task_id")
+        message = payload.get("message", "")
+        if task_id and message:
+            resolved = ws_manager.resolve_steer(task_id, message)
+            logger.info(
+                f"User steer | conn={conn_id} | task={task_id} | "
+                f"msg={message[:50]} | resolved={resolved}"
+            )
+        else:
+            await ws_manager.send_to_connection(conn_id, build_error(
+                "task_id and message are required",
+                code="MISSING_STEER_PARAMS",
+            ))
+
     else:
         logger.warning(f"Unknown message type | conn={conn_id} | type={msg_type}")
 

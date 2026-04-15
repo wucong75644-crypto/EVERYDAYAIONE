@@ -130,11 +130,16 @@ class ERPAgent:
             from services.agent.tool_result_envelope import STAGED_MARKER
             is_truncated = STAGED_MARKER in (text or "")
             # 判断 status
-            status = "success"
-            if "未能生成完整结论" in text:
+            ask_user_question = ""
+            if result.exit_via_ask_user:
+                status = "ask_user"
+                ask_user_question = text  # ask_user 的 message 已是 accumulated_text
+            elif "未能生成完整结论" in text:
                 status = "partial"
             elif is_truncated:
                 status = "partial"
+            else:
+                status = "success"
 
             # [F1/F2] 经验记录：成功记路由，失败记原因
             if status == "success" and tools_called:
@@ -156,6 +161,8 @@ class ERPAgent:
                 turns_used=turns,
                 tools_called=tools_called,
                 is_truncated=is_truncated,
+                collected_files=result.collected_files,
+                ask_user_question=ask_user_question,
             )
 
         except Exception as e:
