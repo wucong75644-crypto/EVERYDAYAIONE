@@ -67,6 +67,8 @@ async def _get_pg_pool():
                 kwargs={"options": "-c timezone=Asia/Shanghai"},
                 # check: 取连接前验活，死连接自动丢弃重建
                 check=AsyncConnectionPool.check_connection,
+                # 连接最多存活 10 分钟后主动回收，防止 PG 侧静默断开
+                max_lifetime=600,
                 open=False,
             )
             await _pg_pool.open()
@@ -85,6 +87,32 @@ async def get_pg_connection():
     if pool is None:
         return None
     return pool.connection()
+
+
+async def create_dedicated_connection(
+    statement_timeout_s: int = 15,
+):
+    """
+    创建独立的 psycopg 异步连接（不走共享池）。
+
+    用于后台批量任务（如 model_scorer 聚合），避免与在线业务争抢连接池。
+    调用方需用 async with 管理生命周期。
+
+    Args:
+        statement_timeout_s: 单条 SQL 超时秒数，防止慢查询无限 hang
+    """
+    import psycopg
+
+    db_url = settings.effective_db_url
+    if not db_url:
+        return None
+
+    return await psycopg.AsyncConnection.connect(
+        conninfo=db_url,
+        autocommit=False,
+        options=f"-c timezone=Asia/Shanghai -c statement_timeout={statement_timeout_s * 1000}",
+        connect_timeout=PG_CONNECT_TIMEOUT,
+    )
 
 
 def is_kb_available() -> bool:

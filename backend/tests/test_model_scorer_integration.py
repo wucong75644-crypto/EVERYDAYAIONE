@@ -210,42 +210,39 @@ class TestWriteAuditLogEdgeCases:
     """审核日志异常路径"""
 
     @pytest.mark.asyncio
-    async def test_old_score_none_score_change_zero(self, mock_pg_connection, mock_cursor):
+    async def test_old_score_none_score_change_zero(self, mock_conn, mock_cursor):
         """old_score=None 时 score_change 应为 0"""
-        with patch("services.model_scorer.get_pg_connection", return_value=mock_pg_connection):
-            from services.model_scorer import _write_audit_log
+        from services.model_scorer import _write_audit_log
 
-            await _write_audit_log(_make_row(), None, 0.88, "pending_review", None)
+        await _write_audit_log(mock_conn, _make_row(), None, 0.88, "pending_review", None)
 
-            call_args = mock_cursor.execute.call_args[0][1]
-            assert call_args["score_change"] == 0.0
-            assert call_args["old_score"] is None
+        call_args = mock_cursor.execute.call_args[0][1]
+        assert call_args["score_change"] == 0.0
+        assert call_args["old_score"] is None
 
     @pytest.mark.asyncio
-    async def test_db_exception_swallowed(self, mock_pg_connection, mock_cursor):
+    async def test_db_exception_swallowed(self, mock_conn, mock_cursor):
         """DB 执行异常被静默吞掉"""
         mock_cursor.execute = AsyncMock(side_effect=RuntimeError("DB error"))
 
-        with patch("services.model_scorer.get_pg_connection", return_value=mock_pg_connection):
-            from services.model_scorer import _write_audit_log
+        from services.model_scorer import _write_audit_log
 
-            # 不应抛异常
-            await _write_audit_log(_make_row(), 0.85, 0.88, "auto_applied", "node-1")
+        # 不应抛异常
+        await _write_audit_log(mock_conn, _make_row(), 0.85, 0.88, "auto_applied", "node-1")
 
 
 class TestQueryAggregatedMetricsEdgeCases:
     """聚合查询异常路径"""
 
     @pytest.mark.asyncio
-    async def test_sql_exception_returns_empty(self, mock_pg_connection, mock_cursor):
+    async def test_sql_exception_returns_empty(self, mock_conn, mock_cursor):
         """SQL 执行异常返回空列表"""
         mock_cursor.execute = AsyncMock(side_effect=RuntimeError("SQL timeout"))
 
-        with patch("services.model_scorer.get_pg_connection", return_value=mock_pg_connection):
-            from services.model_scorer import _query_aggregated_metrics
+        from services.model_scorer import _query_aggregated_metrics
 
-            rows = await _query_aggregated_metrics()
-            assert rows == []
+        rows = await _query_aggregated_metrics(mock_conn)
+        assert rows == []
 
 
 # ============ 主流程补充 ============
@@ -255,15 +252,19 @@ class TestAggregateModelScoresExtra:
     """主函数补充测试"""
 
     @pytest.mark.asyncio
-    async def test_write_knowledge_none_still_writes_audit(self):
+    async def test_write_knowledge_none_still_writes_audit(self, mock_conn):
         """write_knowledge 返回 None 时 audit_log 仍被调用且 node_id=None"""
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
         row = _make_row(total=100, success_count=95)
 
         with patch("services.model_scorer.is_kb_available", return_value=True), \
+             patch("services.model_scorer.create_dedicated_connection", new_callable=AsyncMock) as mock_c, \
              patch("services.model_scorer._query_aggregated_metrics", new_callable=AsyncMock) as mock_q, \
              patch("services.model_scorer._get_latest_score", new_callable=AsyncMock) as mock_old, \
              patch("services.model_scorer._write_score_to_knowledge", new_callable=AsyncMock) as mock_write, \
              patch("services.model_scorer._write_audit_log", new_callable=AsyncMock) as mock_log:
+            mock_c.return_value = mock_conn
             mock_q.return_value = [row]
             mock_old.return_value = 0.90
             mock_write.return_value = None  # 写入知识库失败
@@ -272,18 +273,22 @@ class TestAggregateModelScoresExtra:
             await aggregate_model_scores()
 
             mock_log.assert_called_once()
-            assert mock_log.call_args[0][4] is None  # node_id=None
+            assert mock_log.call_args[0][5] is None  # node_id=None (conn, row, old, new, status, node_id)
 
     @pytest.mark.asyncio
-    async def test_write_knowledge_exception_row_skipped(self):
+    async def test_write_knowledge_exception_row_skipped(self, mock_conn):
         """write_knowledge 异常时该模型被跳过，audit_log 不被调用"""
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
         row = _make_row()
 
         with patch("services.model_scorer.is_kb_available", return_value=True), \
+             patch("services.model_scorer.create_dedicated_connection", new_callable=AsyncMock) as mock_c, \
              patch("services.model_scorer._query_aggregated_metrics", new_callable=AsyncMock) as mock_q, \
              patch("services.model_scorer._get_latest_score", new_callable=AsyncMock) as mock_old, \
              patch("services.model_scorer._write_score_to_knowledge", new_callable=AsyncMock) as mock_write, \
              patch("services.model_scorer._write_audit_log", new_callable=AsyncMock) as mock_log:
+            mock_c.return_value = mock_conn
             mock_q.return_value = [row]
             mock_old.return_value = 0.90
             mock_write.side_effect = RuntimeError("KB write failed")
@@ -295,8 +300,10 @@ class TestAggregateModelScoresExtra:
             mock_log.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_multi_model_mixed_statuses(self):
+    async def test_multi_model_mixed_statuses(self, mock_conn):
         """多模型：一个 auto_applied + 一个 pending_review"""
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
         row_good = _make_row(model_id="good-model", total=100, success_count=95)
         row_bad = _make_row(
             model_id="bad-model", total=100, success_count=10,
@@ -313,14 +320,16 @@ class TestAggregateModelScoresExtra:
         async def track_log(*args, **kwargs):
             log_calls.append(args)
 
-        async def get_score(model_id, task_type, org_id=None):
+        async def get_score(conn, model_id, task_type, org_id=None):
             return 0.90  # 与 bad-model 差距大
 
         with patch("services.model_scorer.is_kb_available", return_value=True), \
+             patch("services.model_scorer.create_dedicated_connection", new_callable=AsyncMock) as mock_c, \
              patch("services.model_scorer._query_aggregated_metrics", new_callable=AsyncMock) as mock_q, \
              patch("services.model_scorer._get_latest_score", side_effect=get_score), \
              patch("services.model_scorer._write_score_to_knowledge", side_effect=track_write), \
              patch("services.model_scorer._write_audit_log", side_effect=track_log):
+            mock_c.return_value = mock_conn
             mock_q.return_value = [row_good, row_bad]
 
             from services.model_scorer import aggregate_model_scores
@@ -331,8 +340,8 @@ class TestAggregateModelScoresExtra:
             assert len(write_calls) == 1  # 只有 good-model 写知识库
             assert len(log_calls) == 2  # 两个都写审核日志
 
-            # 验证 status
-            statuses = [call[3] for call in log_calls]
+            # 验证 status (conn, row, old, new, status, node_id)
+            statuses = [call[4] for call in log_calls]
             assert "auto_applied" in statuses
             assert "pending_review" in statuses
 

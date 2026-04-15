@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
-from services.knowledge_config import get_pg_connection, is_kb_available
+from services.knowledge_config import create_dedicated_connection, is_kb_available
 from services.knowledge_service import add_knowledge
 
 # ===== 常量 =====
@@ -50,67 +50,72 @@ async def aggregate_model_scores(org_id: str | None = None) -> None:
     """
     每小时聚合模型评分（由 BackgroundTaskWorker 按 org 迭代调用）
 
-    流程：聚合 SQL → 计算 raw_score → EMA → 审核判断 → 写入知识库/日志
+    使用独立连接（不走共享池），避免后台批量任务与在线业务争抢连接。
+    单条 SQL 15 秒超时，防止慢查询无限 hang 拖垮 worker。
 
-    Args:
-        org_id: 企业 ID（None=散客数据）
+    流程：聚合 SQL → 计算 raw_score → EMA → 审核判断 → 写入知识库/日志
     """
     if not is_kb_available():
         return
 
-    rows = await _query_aggregated_metrics(org_id=org_id)
-    if not rows:
-        logger.debug("Model scoring skipped | no metrics data")
+    conn = await create_dedicated_connection(statement_timeout_s=15)
+    if conn is None:
         return
 
-    applied_count = 0
-    review_count = 0
+    try:
+        async with conn:
+            rows = await _query_aggregated_metrics(conn, org_id=org_id)
+            if not rows:
+                logger.debug("Model scoring skipped | no metrics data")
+                return
 
-    for row in rows:
-        try:
-            raw_score = _compute_raw_score(row)
-            old_score = await _get_latest_score(
-                row["model_id"], row["task_type"], org_id=org_id,
+            applied_count = 0
+            review_count = 0
+
+            for row in rows:
+                try:
+                    raw_score = _compute_raw_score(row)
+                    old_score = await _get_latest_score(
+                        conn, row["model_id"], row["task_type"], org_id=org_id,
+                    )
+                    ema_score = _apply_ema(raw_score, old_score)
+                    confidence = _get_confidence(row["total"])
+                    status = _determine_status(ema_score, old_score, row["total"])
+
+                    node_id = None
+                    if status == "auto_applied":
+                        node_id = await _write_score_to_knowledge(
+                            row, ema_score, confidence, org_id=org_id,
+                        )
+                        applied_count += 1
+                    else:
+                        review_count += 1
+
+                    await _write_audit_log(
+                        conn, row, old_score, ema_score, status, node_id,
+                        org_id=org_id,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Scoring failed for model | model={row['model_id']} | "
+                        f"task={row['task_type']} | error={e}"
+                    )
+
+            logger.info(
+                f"Model scoring completed | models={len(rows)} | "
+                f"applied={applied_count} | pending_review={review_count}"
             )
-            ema_score = _apply_ema(raw_score, old_score)
-            confidence = _get_confidence(row["total"])
-            status = _determine_status(ema_score, old_score, row["total"])
-
-            node_id = None
-            if status == "auto_applied":
-                node_id = await _write_score_to_knowledge(
-                    row, ema_score, confidence, org_id=org_id,
-                )
-                applied_count += 1
-            else:
-                review_count += 1
-
-            await _write_audit_log(
-                row, old_score, ema_score, status, node_id, org_id=org_id,
-            )
-        except Exception as e:
-            logger.warning(
-                f"Scoring failed for model | model={row['model_id']} | "
-                f"task={row['task_type']} | error={e}"
-            )
-
-    logger.info(
-        f"Model scoring completed | models={len(rows)} | "
-        f"applied={applied_count} | pending_review={review_count}"
-    )
+    except Exception as e:
+        logger.error(f"Model scoring connection failed | error={e}")
 
 
 # ===== 聚合查询 =====
 
 
 async def _query_aggregated_metrics(
-    org_id: str | None = None,
+    conn, org_id: str | None = None,
 ) -> List[Dict[str, Any]]:
     """从 knowledge_metrics 聚合 7 天内模型表现数据（按 org 隔离）"""
-    conn_ctx = await get_pg_connection()
-    if conn_ctx is None:
-        return []
-
     org_filter = (
         "AND org_id = %(org_id)s" if org_id
         else "AND org_id IS NULL"
@@ -141,14 +146,13 @@ async def _query_aggregated_metrics(
     """
 
     try:
-        async with conn_ctx as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(sql, {"org_id": org_id})
-                rows = await cur.fetchall()
-                if not rows:
-                    return []
-                columns = [desc.name for desc in cur.description]
-                return [dict(zip(columns, row)) for row in rows]
+        async with conn.cursor() as cur:
+            await cur.execute(sql, {"org_id": org_id})
+            rows = await cur.fetchall()
+            if not rows:
+                return []
+            columns = [desc.name for desc in cur.description]
+            return [dict(zip(columns, row)) for row in rows]
     except Exception as e:
         logger.error(f"Metrics aggregation query failed | error={e}")
         return []
@@ -224,35 +228,30 @@ def _determine_status(
 
 
 async def _get_latest_score(
-    model_id: str, task_type: str, org_id: str | None = None,
+    conn, model_id: str, task_type: str, org_id: str | None = None,
 ) -> Optional[float]:
     """查询最近一次已生效的评分（auto_applied 或 approved，按 org 隔离）"""
-    conn_ctx = await get_pg_connection()
-    if conn_ctx is None:
-        return None
-
     org_filter = (
         "AND org_id = %(org_id)s" if org_id
         else "AND org_id IS NULL"
     )
 
     try:
-        async with conn_ctx as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    f"""
-                    SELECT new_score FROM scoring_audit_log
-                    WHERE model_id = %(model_id)s
-                        AND task_type = %(task_type)s
-                        AND status IN ('auto_applied', 'approved')
-                        {org_filter}
-                    ORDER BY created_at DESC
-                    LIMIT 1;
-                    """,
-                    {"model_id": model_id, "task_type": task_type, "org_id": org_id},
-                )
-                row = await cur.fetchone()
-                return float(row[0]) if row else None
+        async with conn.cursor() as cur:
+            await cur.execute(
+                f"""
+                SELECT new_score FROM scoring_audit_log
+                WHERE model_id = %(model_id)s
+                    AND task_type = %(task_type)s
+                    AND status IN ('auto_applied', 'approved')
+                    {org_filter}
+                ORDER BY created_at DESC
+                LIMIT 1;
+                """,
+                {"model_id": model_id, "task_type": task_type, "org_id": org_id},
+            )
+            row = await cur.fetchone()
+            return float(row[0]) if row else None
     except Exception as e:
         logger.warning(
             f"Get latest score failed | model={model_id} | "
@@ -316,6 +315,7 @@ async def _write_score_to_knowledge(
 
 
 async def _write_audit_log(
+    conn,
     row: Dict[str, Any],
     old_score: Optional[float],
     new_score: float,
@@ -324,10 +324,6 @@ async def _write_audit_log(
     org_id: str | None = None,
 ) -> None:
     """写入 scoring_audit_log 审核记录（按 org 隔离）"""
-    conn_ctx = await get_pg_connection()
-    if conn_ctx is None:
-        return
-
     score_change = round(
         abs(new_score - (old_score if old_score is not None else new_score)), 4
     )
@@ -344,38 +340,37 @@ async def _write_audit_log(
     }
 
     try:
-        async with conn_ctx as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    """
-                    INSERT INTO scoring_audit_log (
-                        model_id, task_type, old_score, new_score,
-                        score_change, sample_count, metrics,
-                        period_start, period_end, status, knowledge_node_id,
-                        org_id
-                    ) VALUES (
-                        %(model_id)s, %(task_type)s, %(old_score)s, %(new_score)s,
-                        %(score_change)s, %(sample_count)s, %(metrics)s,
-                        %(period_start)s, %(period_end)s, %(status)s,
-                        %(knowledge_node_id)s, %(org_id)s
-                    );
-                    """,
-                    {
-                        "model_id": row["model_id"],
-                        "task_type": row["task_type"],
-                        "old_score": old_score,
-                        "new_score": new_score,
-                        "score_change": score_change,
-                        "sample_count": row["total"],
-                        "metrics": json.dumps(metrics),
-                        "period_start": period_start,
-                        "period_end": period_end,
-                        "status": status,
-                        "knowledge_node_id": knowledge_node_id,
-                        "org_id": org_id,
-                    },
-                )
-            await conn.commit()
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                INSERT INTO scoring_audit_log (
+                    model_id, task_type, old_score, new_score,
+                    score_change, sample_count, metrics,
+                    period_start, period_end, status, knowledge_node_id,
+                    org_id
+                ) VALUES (
+                    %(model_id)s, %(task_type)s, %(old_score)s, %(new_score)s,
+                    %(score_change)s, %(sample_count)s, %(metrics)s,
+                    %(period_start)s, %(period_end)s, %(status)s,
+                    %(knowledge_node_id)s, %(org_id)s
+                );
+                """,
+                {
+                    "model_id": row["model_id"],
+                    "task_type": row["task_type"],
+                    "old_score": old_score,
+                    "new_score": new_score,
+                    "score_change": score_change,
+                    "sample_count": row["total"],
+                    "metrics": json.dumps(metrics),
+                    "period_start": period_start,
+                    "period_end": period_end,
+                    "status": status,
+                    "knowledge_node_id": knowledge_node_id,
+                    "org_id": org_id,
+                },
+            )
+        await conn.commit()
     except Exception as e:
         logger.warning(
             f"Audit log write failed | model={row['model_id']} | "
