@@ -386,3 +386,98 @@ class TestPersistedConcurrentIsolation:
         )
 
         assert seen_by_writer[0] == "important_data"
+
+
+# ============================================================
+# _persist_to_staging 路径与 FileExecutor 对齐
+# ============================================================
+
+class TestStagingPathAlignment:
+    """验证 staging 落盘文件能被沙盒 read_file（FileExecutor）正确读取"""
+
+    def test_staged_file_resolvable_by_file_executor(self, tmp_path):
+        """分流写入的文件，通过 rel_path 能被 FileExecutor.resolve_safe_path 解析到"""
+        from pathlib import Path
+        from core.workspace import resolve_staging_dir
+        from services.file_executor import FileExecutor
+
+        org_id, user_id, conv_id = "org1", "user1", "conv-test"
+
+        # 设置 staging_dir 并触发分流
+        staging = resolve_staging_dir(str(tmp_path), user_id, org_id, conv_id)
+        set_staging_dir(staging)
+
+        result = "标题行\n" + "数据行\n" * 500
+        wrapped = wrap("local_shop_list", result)
+
+        # 从 wrapped 中提取 rel_path
+        import re
+        match = re.search(r'read_file\("([^"]+)"\)', wrapped)
+        assert match, f"摘要中未找到 read_file 路径: {wrapped[:200]}"
+        rel_path = match.group(1)
+
+        # FileExecutor 能解析到实际文件
+        fe = FileExecutor(
+            workspace_root=str(tmp_path),
+            user_id=user_id,
+            org_id=org_id,
+        )
+        resolved = fe.resolve_safe_path(rel_path)
+        assert resolved.exists()
+        assert resolved.read_text(encoding="utf-8") == result
+
+    def test_staged_file_in_user_workspace(self, tmp_path):
+        """staging 文件在用户 workspace 目录下（用户隔离）"""
+        from pathlib import Path
+        from core.workspace import resolve_staging_dir, resolve_workspace_dir
+
+        staging = resolve_staging_dir(str(tmp_path), "u1", "org1", "conv1")
+        set_staging_dir(staging)
+
+        result = "标题\n" + "x" * 5000
+        wrap("some_tool", result)
+
+        ws_dir = resolve_workspace_dir(str(tmp_path), "u1", "org1")
+        # staging 文件必须在用户 workspace 下
+        staged_files = list(Path(staging).glob("*.txt"))
+        assert len(staged_files) == 1
+        assert str(staged_files[0]).startswith(ws_dir)
+
+
+# ============================================================
+# _delayed_cleanup_staging
+# ============================================================
+
+class TestDelayedCleanupStaging:
+    """chat_handler._delayed_cleanup_staging 延迟清理测试"""
+
+    @pytest.mark.asyncio
+    async def test_cleanup_removes_staging_dir(self, tmp_path):
+        """清理后 staging 目录被删除"""
+        from pathlib import Path
+        from core.workspace import resolve_staging_dir
+        from services.handlers.chat_handler import _delayed_cleanup_staging
+        from unittest.mock import patch
+
+        staging = Path(resolve_staging_dir(
+            str(tmp_path), "u1", "org1", "conv-cleanup",
+        ))
+        staging.mkdir(parents=True)
+        (staging / "data.txt").write_text("test data")
+
+        with patch("core.config.get_settings") as mock_s:
+            mock_s.return_value.file_workspace_root = str(tmp_path)
+            await _delayed_cleanup_staging("conv-cleanup", "u1", "org1", delay=0)
+
+        assert not staging.exists()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_noop_when_no_dir(self, tmp_path):
+        """staging 目录不存在时不报错"""
+        from services.handlers.chat_handler import _delayed_cleanup_staging
+        from unittest.mock import patch
+
+        with patch("core.config.get_settings") as mock_s:
+            mock_s.return_value.file_workspace_root = str(tmp_path)
+            # 不应抛异常
+            await _delayed_cleanup_staging("nonexistent-conv", "u1", "org1", delay=0)
