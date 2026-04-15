@@ -89,6 +89,7 @@ async def _call_model(
                 ],
                 "temperature": 0.7,
                 "max_tokens": 200,
+                "enable_thinking": False,
             },
         )
         response.raise_for_status()
@@ -98,7 +99,7 @@ async def _call_model(
         return _parse_suggestions(text, max_items)
 
     except Exception as e:
-        logger.warning(f"suggestion_generator | model={model} error: {e}")
+        logger.warning(f"suggestion_generator | model={model} error: {type(e).__name__}: {e or 'no detail'}")
         return None
 
 

@@ -150,7 +150,7 @@ async def _batch_compute_embeddings(
                 orig_idx = chunk[j][0]
                 results[orig_idx] = emb_data["embedding"]
     except Exception as e:
-        logger.warning(f"Batch embedding failed | error={e}")
+        logger.warning(f"Batch embedding failed | error={type(e).__name__}: {e or 'no detail'}")
 
     return results
 
@@ -201,7 +201,7 @@ async def _compute_relevance_scores(
         return scores
 
     except Exception as e:
-        logger.warning(f"Embedding relevance scoring failed, fallback to rules | error={e}")
+        logger.warning(f"Embedding relevance scoring failed, fallback to rules | error={type(e).__name__}: {e or 'no detail'}")
         return [0.5] * len(messages)
 
 

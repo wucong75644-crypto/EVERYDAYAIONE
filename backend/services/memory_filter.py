@@ -112,6 +112,7 @@ async def _call_filter_model(
                 ],
                 "temperature": 0.0,
                 "max_tokens": 500,
+                "enable_thinking": False,
             },
         )
         response.raise_for_status()
@@ -132,7 +133,7 @@ async def _call_filter_model(
         logger.warning(f"Memory filter timeout | model={model}")
         return None
     except Exception as e:
-        logger.warning(f"Memory filter failed | model={model} | error={e}")
+        logger.warning(f"Memory filter failed | model={model} | error={type(e).__name__}: {e or 'no detail'}")
         return None
 
 

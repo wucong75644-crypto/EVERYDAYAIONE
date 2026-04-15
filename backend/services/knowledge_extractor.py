@@ -109,6 +109,7 @@ async def _call_extraction_model(
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.1,
                 "max_tokens": 1000,
+                "enable_thinking": False,
             },
         )
         response.raise_for_status()
@@ -123,7 +124,7 @@ async def _call_extraction_model(
         logger.warning(f"Knowledge extraction timeout | model={model}")
         return None
     except Exception as e:
-        logger.warning(f"Knowledge extraction failed | model={model} | error={e}")
+        logger.warning(f"Knowledge extraction failed | model={model} | error={type(e).__name__}: {e or 'no detail'}")
         return None
 
 
