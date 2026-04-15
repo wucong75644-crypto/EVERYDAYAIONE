@@ -68,8 +68,10 @@ class ScheduledTaskExecutor:
             "run_id": run_id,
         })
 
+        credit_handle = None
+        push_status = "skipped"
         try:
-            # 1. 用 credit_lock 上下文管理器锁定积分
+            # 1. 用 credit_lock 上下文管理器锁定积分（支持按量计费）
             from services.credit_service import CreditService
             credit_svc = CreditService(self.db, redis=None)
             async with credit_svc.credit_lock(
@@ -78,7 +80,7 @@ class ScheduledTaskExecutor:
                 amount=task["max_credits"],
                 reason=f"定时任务: {task['name']}",
                 org_id=task["org_id"],
-            ):
+            ) as credit_handle:
                 # 2. 跑 Agent
                 from services.agent.scheduled_task_agent import ScheduledTaskAgent
                 agent = ScheduledTaskAgent(self.db, task)
@@ -89,13 +91,20 @@ class ScheduledTaskExecutor:
                         f"Agent 执行失败: {result.text or result.error_message}"
                     )
 
-                # 3. 推送
+                # 3. 按量计费：用 token 换算实际积分
+                actual_credits = self._calc_actual_credits(
+                    result.tokens_used, task
+                )
+                credit_handle.set_actual(actual_credits)
+
+                # 4. 推送
                 push_status = await self._push_result(task, result)
 
-                # 4. 成功收尾（在 credit_lock 内，会自动 confirm 扣费）
-                await self._on_success(
-                    task, run_id, result, push_status, agent_run_started_at
-                )
+            # 5. 成功收尾（在 credit_lock 之后，退回已完成，可读取最终状态）
+            await self._on_success(
+                task, run_id, result, push_status,
+                agent_run_started_at, credit_handle.final_credits_used,
+            )
 
         except Exception as e:
             # credit_lock 会自动 refund
@@ -104,6 +113,46 @@ class ScheduledTaskExecutor:
     # ════════════════════════════════════════════════════════
     # 内部方法
     # ════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _calc_actual_credits(tokens_used: int, task: Dict[str, Any]) -> int:
+        """根据实际 token 消耗换算积分
+
+        直接使用 DASHSCOPE_PRICING 定价表计算，不构造 adapter 实例。
+        Agent 场景 input >> output，按 70/30 比例分配。
+        保底 1 积分，上限 max_credits。
+        """
+        if tokens_used <= 0:
+            return 1
+
+        try:
+            from decimal import Decimal
+            from services.adapters.dashscope.chat_adapter import DASHSCOPE_PRICING
+            from core.config import get_settings
+
+            settings = get_settings()
+            model_id = getattr(settings, "agent_loop_model", None) or "qwen3.5-plus"
+            pricing = DASHSCOPE_PRICING.get(model_id)
+
+            if pricing:
+                # Agent 场景 input 占 70%，output 占 30%
+                input_tokens = int(tokens_used * 0.7)
+                output_tokens = tokens_used - input_tokens
+                input_credits = int(
+                    Decimal(input_tokens) * pricing.credits_per_1m_input / 1_000_000
+                )
+                output_credits = int(
+                    Decimal(output_tokens) * pricing.credits_per_1m_output / 1_000_000
+                )
+                credits = max(1, input_credits + output_credits)
+            else:
+                credits = max(1, tokens_used // 5000)
+        except Exception:
+            # 兜底：每 5000 token = 1 积分，最低 1
+            credits = max(1, tokens_used // 5000)
+
+        max_credits = task.get("max_credits", 10)
+        return min(credits, max_credits)
 
     async def _create_run(self, task: Dict[str, Any]) -> Optional[str]:
         """创建执行记录
@@ -181,6 +230,7 @@ class ScheduledTaskExecutor:
         result: Any,
         push_status: str,
         started_at: datetime,
+        actual_credits: Optional[int] = None,
     ) -> None:
         """成功收尾：更新任务 + 记录日志 + WS 推送
 
@@ -188,6 +238,7 @@ class ScheduledTaskExecutor:
         不会被 Scanner 再次领取。
         其他类型按 cron_expr 算下次执行时间。
         """
+        credits_used = actual_credits if actual_credits is not None else task["max_credits"]
         now = datetime.now(timezone.utc)
         duration_ms = int((now - started_at).total_seconds() * 1000)
 
@@ -225,7 +276,7 @@ class ScheduledTaskExecutor:
                 "result_summary": result.summary,
                 "result_files": result.files,
                 "push_status": push_status,
-                "credits_used": task["max_credits"],
+                "credits_used": credits_used,
                 "tokens_used": result.tokens_used,
                 "duration_ms": duration_ms,
                 "finished_at": now.isoformat(),
@@ -242,7 +293,7 @@ class ScheduledTaskExecutor:
             "summary": result.summary,
             "files": result.files,
             "duration_ms": duration_ms,
-            "credits_used": task["max_credits"],
+            "credits_used": credits_used,
             "next_run_at": next_run.isoformat() if next_run else None,
             "push_status": push_status,
         })

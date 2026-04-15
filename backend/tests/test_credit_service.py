@@ -20,7 +20,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
-from services.credit_service import CreditService
+from services.credit_service import CreditService, CreditLockHandle
 from core.exceptions import InsufficientCreditsError
 
 # 测试辅助函数（避免导入冲突）
@@ -228,8 +228,8 @@ class TestCreditServiceContextManager:
         return CreditService(mock_async_db)
 
     @pytest.mark.asyncio
-    async def test_credit_lock_success(self, credit_service, mock_async_db):
-        """测试：上下文管理器正常退出自动确认"""
+    async def test_credit_lock_success_full_amount(self, credit_service, mock_async_db):
+        """测试：上下文管理器正常退出自动全额确认（未调用 set_actual）"""
         # Arrange
         user = create_test_user(credits=100)
         mock_async_db.set_table_data("users", [user])
@@ -244,11 +244,48 @@ class TestCreditServiceContextManager:
         credit_service.confirm_deduct = mock_confirm
 
         # Act
-        async with credit_service.credit_lock("task_1", user["id"], 10) as tx_id:
-            assert tx_id is not None
+        async with credit_service.credit_lock("task_1", user["id"], 10) as handle:
+            assert handle.transaction_id is not None
+            assert handle.locked_amount == 10
+
+        # Assert — 未调用 set_actual，全额确认，无退回
+        assert confirmed is True
+        assert handle.actual_amount == 10
+        assert handle.refund_amount == 0
+
+    @pytest.mark.asyncio
+    async def test_credit_lock_partial_confirm(self, credit_service, mock_async_db):
+        """测试：按量计费 — set_actual 后只扣实际量，退回差额"""
+        # Arrange
+        user = create_test_user(credits=100)
+        mock_async_db.set_table_data("users", [user])
+        mock_async_db.set_table_data("credit_transactions", [])
+
+        confirmed = False
+        partial_refunded = False
+
+        async def mock_confirm(_):
+            nonlocal confirmed
+            confirmed = True
+
+        async def mock_partial_refund(tx_id, user_id, amount, org_id=None):
+            nonlocal partial_refunded
+            partial_refunded = True
+            assert amount == 7  # 锁定10，实际3，退回7
+            return True
+
+        credit_service.confirm_deduct = mock_confirm
+        credit_service._partial_refund = mock_partial_refund
+
+        # Act
+        async with credit_service.credit_lock("task_1", user["id"], 10) as handle:
+            handle.set_actual(3)
 
         # Assert
         assert confirmed is True
+        assert partial_refunded is True
+        assert handle.actual_amount == 3
+        assert handle.refund_amount == 7
 
     @pytest.mark.asyncio
     async def test_credit_lock_exception_refunds(self, credit_service, mock_async_db):
@@ -272,6 +309,107 @@ class TestCreditServiceContextManager:
                 raise ValueError("模拟任务失败")
 
         assert refunded is True
+
+
+class TestCreditLockHandle:
+    """CreditLockHandle 单元测试"""
+
+    def test_default_actual_equals_locked(self):
+        """未调用 set_actual 时，actual = locked"""
+        handle = CreditLockHandle("tx_1", 10)
+        assert handle.actual_amount == 10
+        assert handle.refund_amount == 0
+
+    def test_set_actual_normal(self):
+        """正常设置实际量"""
+        handle = CreditLockHandle("tx_1", 10)
+        handle.set_actual(3)
+        assert handle.actual_amount == 3
+        assert handle.refund_amount == 7
+
+    def test_set_actual_clamp_to_min_1(self):
+        """实际量不能低于 1"""
+        handle = CreditLockHandle("tx_1", 10)
+        handle.set_actual(0)
+        assert handle.actual_amount == 1
+        assert handle.refund_amount == 9
+
+    def test_set_actual_clamp_to_max(self):
+        """实际量不能超过锁定量"""
+        handle = CreditLockHandle("tx_1", 10)
+        handle.set_actual(20)
+        assert handle.actual_amount == 10
+        assert handle.refund_amount == 0
+
+    def test_set_actual_equal_to_locked(self):
+        """实际量等于锁定量，无退回"""
+        handle = CreditLockHandle("tx_1", 5)
+        handle.set_actual(5)
+        assert handle.actual_amount == 5
+        assert handle.refund_amount == 0
+
+    def test_final_credits_used_no_refund_needed(self):
+        """无需退回时，final = actual = locked"""
+        handle = CreditLockHandle("tx_1", 10)
+        assert handle.final_credits_used == 10
+
+    def test_final_credits_used_refund_succeeded(self):
+        """退回成功时，final = actual"""
+        handle = CreditLockHandle("tx_1", 10)
+        handle.set_actual(3)
+        handle._refund_succeeded = True
+        assert handle.final_credits_used == 3
+
+    def test_final_credits_used_refund_failed(self):
+        """退回失败时，final = locked（用户被扣了全额）"""
+        handle = CreditLockHandle("tx_1", 10)
+        handle.set_actual(3)
+        handle._refund_succeeded = False
+        assert handle.final_credits_used == 10
+
+
+class TestPartialRefund:
+    """_partial_refund 独立测试"""
+
+    @pytest.fixture
+    def credit_service(self, mock_async_db):
+        return CreditService(mock_async_db)
+
+    @pytest.mark.asyncio
+    async def test_partial_refund_success(self, credit_service, mock_async_db):
+        """RPC 返回 refunded=True → 返回 True"""
+        mock_async_db.set_rpc_result("partial_refund_credits", {
+            "refunded": True, "new_balance": 97, "amount": 7,
+        })
+
+        result = await credit_service._partial_refund(
+            "tx_1", "user_1", 7, org_id="org_1"
+        )
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_partial_refund_user_not_found(self, credit_service, mock_async_db):
+        """RPC 返回 refunded=False → 返回 False"""
+        mock_async_db.set_rpc_result("partial_refund_credits", {
+            "refunded": False, "reason": "user_not_found",
+        })
+
+        result = await credit_service._partial_refund(
+            "tx_1", "user_1", 7,
+        )
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_partial_refund_rpc_exception(self, credit_service):
+        """RPC 抛异常 → 返回 False（不向上传播）"""
+        mock_rpc = MagicMock()
+        mock_rpc.execute.side_effect = Exception("connection timeout")
+        credit_service.db.rpc = MagicMock(return_value=mock_rpc)
+
+        result = await credit_service._partial_refund(
+            "tx_1", "user_1", 5,
+        )
+        assert result is False
 
 
 class TestCreditServiceEdgeCases:
