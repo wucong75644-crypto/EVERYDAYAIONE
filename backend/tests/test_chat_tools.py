@@ -198,8 +198,8 @@ class TestCoreToolsExpanded:
     def test_core_tools_count(self):
         from config.chat_tools import get_core_tools
         tools = get_core_tools(org_id="test")
-        # 12 个核心工具（ask_user 在 _CORE_TOOLS 但被 domain filter 过滤）
-        assert len(tools) == 12
+        # 13 个核心工具（ask_user 域改为 SHARED 后通过 domain filter）
+        assert len(tools) == 13
 
     def test_core_tools_include_file_tools(self):
         from config.chat_tools import get_core_tools
