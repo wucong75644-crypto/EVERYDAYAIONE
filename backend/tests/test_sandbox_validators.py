@@ -88,10 +88,10 @@ class TestValidateCode:
         assert result is not None
         assert "exec" in result
 
-    def test_blocked_call_open(self):
+    def test_open_passes_ast_validation(self):
+        """open() 不再被 AST 阻止（安全由运行时 _scoped_open 保证）"""
         result = validate_code("f = open('/etc/passwd')")
-        assert result is not None
-        assert "open" in result
+        assert result is None
 
     def test_blocked_call___import__(self):
         result = validate_code("__import__('os')")

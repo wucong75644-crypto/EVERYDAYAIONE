@@ -60,7 +60,7 @@ class TestWrapBasic:
         wrapped = wrap("some_tool", result)
         assert len(wrapped) < len(result)
         assert STAGED_MARKER in wrapped
-        assert "read_file" in wrapped
+        assert "STAGING_DIR" in wrapped
         assert "数据来源: some_tool" in wrapped
 
     def test_no_truncate_tools_pass_through(self):
@@ -310,7 +310,7 @@ class TestNonErpToolStaging:
         result = "\n".join(items)
         wrapped = wrap("web_search", result)
         assert STAGED_MARKER in wrapped
-        assert "read_file" in wrapped
+        assert "STAGING_DIR" in wrapped
 
     def test_social_crawler_staged(self):
         items = [f"• 帖子{i}: 内容" + "x" * 200 for i in range(20)]
@@ -396,7 +396,7 @@ class TestStagingPathAlignment:
     """验证 staging 落盘文件能被沙盒 read_file（FileExecutor）正确读取"""
 
     def test_staged_file_resolvable_by_file_executor(self, tmp_path):
-        """分流写入的文件，通过 rel_path 能被 FileExecutor.resolve_safe_path 解析到"""
+        """分流写入的文件能被 FileExecutor 和 scoped open 正确读取"""
         from pathlib import Path
         from core.workspace import resolve_staging_dir
         from services.file_executor import FileExecutor
@@ -410,18 +410,24 @@ class TestStagingPathAlignment:
         result = "标题行\n" + "数据行\n" * 500
         wrapped = wrap("local_shop_list", result)
 
-        # 从 wrapped 中提取 rel_path
+        # 从 wrapped 中提取 filename
         import re
-        match = re.search(r'read_file\("([^"]+)"\)', wrapped)
-        assert match, f"摘要中未找到 read_file 路径: {wrapped[:200]}"
-        rel_path = match.group(1)
+        match = re.search(r'STAGING_DIR \+ "/([^"]+)"', wrapped)
+        assert match, f"摘要中未找到 STAGING_DIR 文件名: {wrapped[:200]}"
+        filename = match.group(1)
 
-        # FileExecutor 能解析到实际文件
+        # staging 文件存在且内容正确
+        staged_file = Path(staging) / filename
+        assert staged_file.exists()
+        assert staged_file.read_text(encoding="utf-8") == result
+
+        # FileExecutor 也能通过相对路径解析到
         fe = FileExecutor(
             workspace_root=str(tmp_path),
             user_id=user_id,
             org_id=org_id,
         )
+        rel_path = f"staging/{conv_id}/{filename}"
         resolved = fe.resolve_safe_path(rel_path)
         assert resolved.exists()
         assert resolved.read_text(encoding="utf-8") == result
@@ -481,3 +487,109 @@ class TestDelayedCleanupStaging:
             mock_s.return_value.file_workspace_root = str(tmp_path)
             # 不应抛异常
             await _delayed_cleanup_staging("nonexistent-conv", "u1", "org1", delay=0)
+
+
+# ============================================================
+# _scoped_open — workspace-scoped open 安全测试
+# ============================================================
+
+class TestScopedOpen:
+    """验证沙盒内 open() 的路径解析和安全边界"""
+
+    def _build_executor(self, tmp_path):
+        """构建绑定 workspace 的 SandboxExecutor"""
+        from pathlib import Path
+        from core.workspace import resolve_workspace_dir, resolve_staging_dir
+
+        ws_dir = resolve_workspace_dir(str(tmp_path), "u1", "org1")
+        staging = resolve_staging_dir(str(tmp_path), "u1", "org1", "conv1")
+        output = str(Path(ws_dir) / "下载")
+
+        from services.sandbox.executor import SandboxExecutor
+        return SandboxExecutor(
+            timeout=5.0,
+            workspace_dir=ws_dir,
+            staging_dir=staging,
+            output_dir=output,
+        )
+
+    @pytest.mark.asyncio
+    async def test_relative_path_resolves_to_workspace(self, tmp_path):
+        """open('staging/conv1/file.txt') 自动解析到 workspace 下"""
+        from pathlib import Path
+        from core.workspace import resolve_staging_dir
+
+        executor = self._build_executor(tmp_path)
+        staging = Path(resolve_staging_dir(str(tmp_path), "u1", "org1", "conv1"))
+        staging.mkdir(parents=True)
+        (staging / "data.txt").write_text("hello world")
+
+        result = await executor.execute(
+            'result = open("staging/conv1/data.txt").read()\nprint(result)',
+            description="test relative open",
+        )
+        assert "hello world" in result
+
+    @pytest.mark.asyncio
+    async def test_staging_dir_absolute_path(self, tmp_path):
+        """open(STAGING_DIR + '/file.txt') 使用绝对路径正常读取"""
+        from pathlib import Path
+        from core.workspace import resolve_staging_dir
+
+        executor = self._build_executor(tmp_path)
+        staging = Path(resolve_staging_dir(str(tmp_path), "u1", "org1", "conv1"))
+        staging.mkdir(parents=True)
+        (staging / "data.txt").write_text("absolute works")
+
+        result = await executor.execute(
+            'result = open(STAGING_DIR + "/data.txt").read()\nprint(result)',
+            description="test STAGING_DIR open",
+        )
+        assert "absolute works" in result
+
+    @pytest.mark.asyncio
+    async def test_absolute_path_outside_workspace_blocked(self, tmp_path):
+        """open('/etc/hostname') 绝对路径越界被拒绝"""
+        executor = self._build_executor(tmp_path)
+        result = await executor.execute(
+            'open("/etc/hostname").read()',
+            description="test absolute path block",
+        )
+        assert "文件访问被拒绝" in result or "PermissionError" in result
+
+    @pytest.mark.asyncio
+    async def test_path_traversal_blocked(self, tmp_path):
+        """open('../../etc/passwd') 路径穿越被拒绝"""
+        executor = self._build_executor(tmp_path)
+        result = await executor.execute(
+            'open("../../etc/passwd").read()',
+            description="test path traversal block",
+        )
+        assert "文件访问被拒绝" in result or "PermissionError" in result
+
+    @pytest.mark.asyncio
+    async def test_write_in_output_dir(self, tmp_path):
+        """open(OUTPUT_DIR + '/test.txt', 'w') 在输出目录写文件允许"""
+        executor = self._build_executor(tmp_path)
+        result = await executor.execute(
+            'f = open(OUTPUT_DIR + "/test.txt", "w")\nf.write("written")\nf.close()\nprint("ok")',
+            description="test write in OUTPUT_DIR",
+        )
+        assert "ok" in result
+
+    @pytest.mark.asyncio
+    async def test_path_read_text_with_staging_dir(self, tmp_path):
+        """Path(STAGING_DIR + '/file').read_text() 绝对路径正常读取"""
+        from pathlib import Path
+        from core.workspace import resolve_staging_dir
+
+        executor = self._build_executor(tmp_path)
+        staging = Path(resolve_staging_dir(str(tmp_path), "u1", "org1", "conv1"))
+        staging.mkdir(parents=True)
+        (staging / "data.txt").write_text("path works")
+
+        result = await executor.execute(
+            'from pathlib import Path\nresult = Path(STAGING_DIR + "/data.txt").read_text()\nprint(result)',
+            description="test Path.read_text with STAGING_DIR",
+        )
+        assert "path works" in result
