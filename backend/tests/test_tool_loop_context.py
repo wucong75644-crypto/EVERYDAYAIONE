@@ -212,24 +212,39 @@ class TestToolResultEnvelope:
         result = "库存100件"
         assert wrap("local_stock_query", result) == result
 
-    def test_long_result_truncated_with_signal(self):
-        from services.agent.tool_result_envelope import wrap, MAIN_AGENT_BUDGET
-        result = "x" * 5000
-        wrapped = wrap("some_tool", result)
-        assert len(wrapped) < len(result)
-        assert "截断" in wrapped
-        assert "5000" in wrapped
+    def test_long_result_staged_with_summary(self, tmp_path):
+        from services.agent.tool_result_envelope import (
+            wrap, set_staging_dir, clear_staging_dir, STAGED_MARKER,
+        )
+        staging = str(tmp_path / "staging" / "test")
+        set_staging_dir(staging)
+        try:
+            result = "标题\n" + "x" * 5000
+            wrapped = wrap("some_tool", result)
+            assert len(wrapped) < len(result)
+            assert STAGED_MARKER in wrapped
+            assert "read_file" in wrapped
+        finally:
+            clear_staging_dir()
 
     def test_empty_result_unchanged(self):
         from services.agent.tool_result_envelope import wrap
         assert wrap("tool", "") == ""
         assert wrap("tool", None) is None
 
-    def test_erp_agent_budget(self):
-        from services.agent.tool_result_envelope import wrap, ERP_AGENT_RESULT_BUDGET
-        result = "x" * (ERP_AGENT_RESULT_BUDGET + 500)
-        wrapped = wrap("erp_agent", result)
-        assert "截断" in wrapped
+    def test_erp_agent_budget(self, tmp_path):
+        from services.agent.tool_result_envelope import (
+            wrap, ERP_AGENT_RESULT_BUDGET,
+            set_staging_dir, clear_staging_dir, STAGED_MARKER,
+        )
+        staging = str(tmp_path / "staging" / "test")
+        set_staging_dir(staging)
+        try:
+            result = "标题\n" + "x" * (ERP_AGENT_RESULT_BUDGET + 500)
+            wrapped = wrap("erp_agent", result)
+            assert STAGED_MARKER in wrapped
+        finally:
+            clear_staging_dir()
 
     def test_no_truncate_tools(self):
         from services.agent.tool_result_envelope import wrap

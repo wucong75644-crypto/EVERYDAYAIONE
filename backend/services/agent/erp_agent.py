@@ -99,6 +99,17 @@ class ERPAgent:
             tool_loop, hook_ctx = self._build_tool_loop(
                 adapter, executor, all_tools,
             )
+
+            # 设置 staging 分流目录（兜底：正常由 chat_handler 继承，独立运行时自己设）
+            from services.agent.tool_result_envelope import set_staging_dir
+            from core.workspace import resolve_staging_dir
+            from core.config import get_settings as _get_settings
+            _erp_settings = _get_settings()
+            set_staging_dir(resolve_staging_dir(
+                _erp_settings.file_workspace_root,
+                self.user_id, self.org_id, self.conversation_id,
+            ))
+
             try:
                 result = await tool_loop.run(
                     messages=messages,
@@ -112,11 +123,12 @@ class ERPAgent:
                 total_tokens += result.total_tokens
             finally:
                 await adapter.close()
-                # 会话级 staging 延迟清理（5分钟后删除，防止 Agent 还没调 code_execute 就被清了）
-                asyncio.create_task(self._cleanup_staging_delayed())
+                # 注意：ERPAgent 不 clear staging_dir，不清理 staging 文件
+                # 清理权归最外层（chat_handler / scheduled_task_agent）
 
-            # 判断是否被截断（text 中包含截断信号）
-            is_truncated = "⚠ 输出已截断" in text
+            # 判断是否被截断（text 中包含分流信号）
+            from services.agent.tool_result_envelope import STAGED_MARKER
+            is_truncated = STAGED_MARKER in (text or "")
             # 判断 status
             status = "success"
             if "未能生成完整结论" in text:
@@ -443,11 +455,11 @@ class ERPAgent:
         try:
             await asyncio.sleep(delay)
             settings = get_settings()
-            staging_dir = (
-                Path(settings.file_workspace_root)
-                / "staging"
-                / (self.conversation_id or "default")
-            )
+            from core.workspace import resolve_staging_dir
+            staging_dir = Path(resolve_staging_dir(
+                settings.file_workspace_root,
+                self.user_id, self.org_id, self.conversation_id,
+            ))
             if staging_dir.exists():
                 shutil.rmtree(staging_dir, ignore_errors=True)
                 logger.info(

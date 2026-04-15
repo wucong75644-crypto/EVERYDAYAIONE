@@ -1,15 +1,16 @@
 """
-工具结果信封 — 统一截断 + 信号层
+工具结果信封 — 阈值分流 + staging 落盘 + 摘要生成
 
 所有工具返回结果经过此层包装后再放入 messages，确保：
-1. LLM 上下文不被过长结果撑爆
-2. 截断时明确告知模型（模型做知情决策）
-3. 截断标注追加在末尾（保护 tool_loop_context 的正则匹配）
+1. 小结果直接放入 LLM context（不截断）
+2. 大结果落盘 staging 文件，LLM context 只放摘要 + 文件路径
+3. 沙盒通过 read_file("staging/xxx.txt") 读取完整数据
 
-设计原则：
-- 不替代 dispatcher 格式化层（4000 字行截断保持原样）
-- 只管「结果 → messages」这一段
-- 主 Agent / ERP Agent / erp_agent 结果 三种预算分开控制
+对标 OpenAI Code Interpreter / Claude Code 的架构模式：
+- 大数据不进 context，走文件交换
+- 沙盒只做纯计算，数据通过文件传递
+
+设计文档：docs/document/TECH_工具结果分流架构.md
 """
 
 from __future__ import annotations
@@ -17,19 +18,46 @@ from __future__ import annotations
 import hashlib
 import re
 from contextvars import ContextVar
+from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from loguru import logger
 
 
 # ============================================================
-# 大结果暂存（请求级内存，基于 contextvars 实现并发隔离）
+# staging 目录路径（请求级，ContextVar 并发隔离）
 #
-# 原理：每个 asyncio.create_task() 自动拷贝 context，
-# 不同请求的 _stream_generate 在不同 task 中运行，
-# ContextVar 天然隔离，互不干扰。
+# 由最外层入口设置（chat_handler / scheduled_task_agent），
+# 子调用（ERPAgent）自动继承或兜底 set。
+# 只在最外层 clear，子调用不 clear。
+# ============================================================
+
+_staging_dir_ctx: ContextVar[Optional[str]] = ContextVar(
+    "staging_dir", default=None,
+)
+
+
+def set_staging_dir(path: str) -> None:
+    """设置当前请求的 staging 目录路径"""
+    _staging_dir_ctx.set(path)
+
+
+def get_staging_dir() -> Optional[str]:
+    """获取当前请求的 staging 目录路径"""
+    return _staging_dir_ctx.get()
+
+
+def clear_staging_dir() -> None:
+    """清理 staging 目录路径（仅最外层 finally 调用）"""
+    _staging_dir_ctx.set(None)
+
+
+# ============================================================
+# 大结果暂存（请求级内存，保留兼容）
 #
-# 注意：default=None 而非 default={}，避免所有 context 共享同一个 dict。
+# persist_and_get_key / get_persisted / clear_persisted
+# 不再从截断信号中引用，但保留函数供其他模块使用。
 # ============================================================
 
 _persisted_ctx: ContextVar[Optional[Dict[str, str]]] = ContextVar(
@@ -47,7 +75,7 @@ def _get_store() -> Dict[str, str]:
 
 
 def persist_and_get_key(tool_name: str, result: str) -> str:
-    """暂存完整结果到内存，返回 key 供 code_execute 读取"""
+    """暂存完整结果到内存，返回 key（保留兼容，不再从截断信号引用）"""
     digest = hashlib.md5(result.encode()).hexdigest()[:8]
     key = f"{tool_name}_{digest}"
     _get_store()[key] = result
@@ -96,6 +124,9 @@ _SUMMARY_LINE_RE = re.compile(
     re.MULTILINE,
 )
 
+# 防重入标记（分流后的摘要包含此唯一标记，用于防重入检查和截断检测）
+STAGED_MARKER = "[STAGED→"
+
 
 # ============================================================
 # 核心函数
@@ -106,7 +137,7 @@ def wrap(
     result: str,
     budget: Optional[int] = None,
 ) -> str:
-    """包装工具结果：必要时截断 + 追加信号标注
+    """包装工具结果：小结果原样返回，大结果落盘 staging + 生成摘要
 
     Args:
         tool_name: 工具名称
@@ -114,7 +145,7 @@ def wrap(
         budget: 字符预算（None 则按 tool_name 自动选择）
 
     Returns:
-        处理后的结果（可能被截断 + 尾部标注）
+        处理后的结果（原样 或 摘要+staging路径）
     """
     if not result:
         return result
@@ -123,8 +154,8 @@ def wrap(
     if tool_name in _NO_TRUNCATE:
         return result
 
-    # 已经被截断过的结果不再处理（防止双重截断）
-    if "⚠ 输出已截断" in result:
+    # 已经分流过的结果不再处理（防重入）
+    if STAGED_MARKER in result and "read_file" in result:
         return result
 
     # 确定预算
@@ -135,9 +166,8 @@ def wrap(
     if len(result) <= budget:
         return result
 
-    # 截断 + 信号标注
-    truncated = _smart_truncate(tool_name, result, budget)
-    return truncated
+    # 超阈值 → staging 落盘 + 摘要
+    return _stage_and_summarize(tool_name, result, budget)
 
 
 def wrap_for_erp_agent(tool_name: str, result: str) -> str:
@@ -148,9 +178,8 @@ def wrap_for_erp_agent(tool_name: str, result: str) -> str:
 def wrap_erp_agent_result(result: str) -> str:
     """erp_agent 工具返回给主 Agent 的结论包装（预算 4000）。
 
-    不仅截断，还加 pass-through prompt：禁止主 Agent 改写 erp_agent
-    返回的结构化时间块和数据。这是对"主 Agent 重述时再产生 weekday
-    幻觉"的防御性提示词加固，对应 PR2 审查发现的盲点。
+    先走 wrap() 分流，再套"禁止改写"信封。
+    信封包在摘要外面是正确的——摘要里的数字/日期同样需要保护。
 
     设计文档：docs/document/TECH_ERP时间准确性架构.md §14.7
     """
@@ -177,133 +206,91 @@ def _resolve_budget(tool_name: str) -> int:
     """根据工具名自动选择预算"""
     if tool_name == "erp_agent":
         return ERP_AGENT_RESULT_BUDGET
-    # ERP 相关工具在 ERP Agent 内部用 wrap_for_erp_agent 显式调用，
-    # 走到这里说明是主 Agent 直接调用
     return MAIN_AGENT_BUDGET
 
 
-def _smart_truncate(tool_name: str, result: str, budget: int) -> str:
-    """智能截断：按工具类型选择最佳截断策略
+def _stage_and_summarize(tool_name: str, result: str, budget: int) -> str:
+    """超阈值分流：落盘 staging + 生成摘要 + 路径提示"""
+    staging_dir = get_staging_dir()
+    if staging_dir is None:
+        raise RuntimeError(
+            f"staging_dir 未设置，无法分流工具结果（tool={tool_name}）。"
+            "请确保在工具循环入口调用了 set_staging_dir()。"
+        )
 
-    所有策略共同点：截断标注追加在末尾，不影响开头的正则匹配。
-    """
-    original_len = len(result)
-
-    # ERP 查询结果：保留首行 + 汇总行 + 前N行数据
-    if tool_name.startswith(("erp_", "local_")):
-        truncated = _truncate_erp(result, budget)
-    # 代码执行：保留错误 + 最后几行输出
-    elif tool_name == "code_execute":
-        truncated = _truncate_code(result, budget)
-    # 搜索类：保留前几条
-    elif tool_name in ("web_search", "search_knowledge", "erp_api_search", "social_crawler"):
-        truncated = _truncate_search(result, budget)
-    # 默认：保留前 N 字符
-    else:
-        truncated = result[:budget]
-
-    # 暂存完整结果供 code_execute 读取
-    persist_key = persist_and_get_key(tool_name, result)
-
-    # 追加截断信号（末尾），附带暂存 key
+    # 落盘 staging 文件
+    rel_path = _persist_to_staging(staging_dir, tool_name, result)
+    # 生成摘要（元数据头 + 首行 + 数据条数 + 前几行预览）
+    summary = _build_summary(tool_name, result, budget)
+    # 路径提示（沙盒可通过 read_file 读取）
     signal = (
-        f"\n⚠ 输出已截断（原始 {original_len} 字符，显示前 {len(truncated)} 字符）。"
-        f'完整数据已暂存(key={persist_key})，'
-        f'可用 code_execute 调用 get_persisted_result("{persist_key}") 获取。'
+        f"\n完整数据（{len(result)} 字符）{STAGED_MARKER} {rel_path}]，"
+        f'可用 code_execute 中 read_file("{rel_path}") 读取。'
     )
-    truncated += signal
+    return summary + signal
 
-    logger.debug(
-        f"ToolResultEnvelope truncated | tool={tool_name} | "
-        f"original={original_len} | truncated={len(truncated)}"
+
+def _persist_to_staging(staging_dir: str, tool_name: str, result: str) -> str:
+    """将完整结果写入 staging 文件，返回相对路径（供 read_file 使用）
+
+    相对路径格式：staging/{conv_id}/{filename}
+    FileExecutor.resolve_safe_path 以用户 workspace_dir 为 root 解析。
+    """
+    Path(staging_dir).mkdir(parents=True, exist_ok=True)
+
+    digest = hashlib.md5(result.encode()).hexdigest()[:8]
+    safe_tool = tool_name.replace("/", "_").replace("..", "_")
+    filename = f"tool_result_{safe_tool}_{digest}.txt"
+    file_path = (Path(staging_dir) / filename).resolve()
+
+    file_path.write_text(result, encoding="utf-8")
+
+    # staging_dir 格式：{workspace_dir}/staging/{conv_id}
+    # 取最后两段（staging/{conv_id}）+ filename 构成相对路径
+    parts = Path(staging_dir).parts
+    # 倒数第二个是 "staging"，倒数第一个是 conv_id
+    rel_path = f"staging/{parts[-1]}/{filename}"
+
+    logger.info(
+        f"ToolResultEnvelope staged | tool={tool_name} | "
+        f"chars={len(result)} | path={rel_path}"
     )
-    return truncated
+    return rel_path
 
 
-def _truncate_erp(result: str, budget: int) -> str:
-    """ERP 结果：首行 + 汇总行 + 尽量多的数据行"""
+def _build_summary(tool_name: str, result: str, budget: int) -> str:
+    """从完整结果生成摘要（元数据头 + 首行 + 数据条数 + 前几行预览）"""
     lines = result.split("\n")
-    if not lines:
-        return result[:budget]
+    non_empty = [l for l in lines if l.strip()]
 
-    first_line = lines[0]
-    # 收集汇总行
-    summary_lines = [
-        line for line in lines[1:]
-        if _SUMMARY_LINE_RE.search(line.strip())
-    ]
-    # 数据行（非空、非分隔线、非汇总行）
-    data_lines = [
-        line for line in lines[1:]
-        if line.strip()
-        and not line.startswith("---")
-        and not _SUMMARY_LINE_RE.search(line.strip())
-    ]
+    # 元数据头（工具名 + 时间戳）
+    meta = f"[数据来源: {tool_name} | 获取时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]"
 
-    # 组装：首行 + 尽量多数据行 + 汇总行
-    parts = [first_line]
-    used = len(first_line)
-    # 预留汇总行空间（不超过预算的一半，防止 reserve > budget 导致无数据行）
-    summary_text = "\n".join(summary_lines)
-    reserve = len(summary_text) + 100 if summary_lines else 100
-    reserve = min(reserve, budget // 2)
+    # 首行（通常是标题/汇总行，如"共 50 个店铺："）
+    first_line = lines[0] if lines else ""
 
-    for line in data_lines:
-        if used + len(line) + 1 > budget - reserve:
+    # 汇总行
+    summary_set = {
+        l for l in lines if _SUMMARY_LINE_RE.search(l.strip())
+    }
+
+    # 数据预览（前几行，不超预算的 60%）
+    preview_budget = int(budget * 0.6)
+    preview_lines: List[str] = []
+    used = len(meta) + len(first_line)
+    for line in non_empty[1:]:
+        if line in summary_set:
+            continue
+        if used + len(line) + 1 > preview_budget:
             break
-        parts.append(line)
+        preview_lines.append(line)
         used += len(line) + 1
 
-    if summary_lines:
-        parts.extend(summary_lines)
+    parts = [meta, first_line]
+    if preview_lines:
+        parts.extend(preview_lines)
+        parts.append(f"... 共 {len(non_empty)} 行数据")
+    if summary_set:
+        parts.extend(sorted(summary_set))
 
     return "\n".join(parts)
-
-
-def _truncate_code(result: str, budget: int) -> str:
-    """代码执行结果：错误优先完整保留，否则保留最后几行"""
-    # 错误优先
-    if result.startswith("❌") or "Error" in result[:200] or "Traceback" in result[:200]:
-        return result[:budget]
-
-    lines = result.split("\n")
-    if len(lines) <= 15:
-        return result  # 行数少直接保留全文（预算检查已在 wrap() 中做过）
-
-    # 保留最后 15 行
-    tail = lines[-15:]
-    tail_text = "\n".join(tail)
-    if len(tail_text) <= budget:
-        prefix = f"...(前 {len(lines) - 15} 行已省略)\n"
-        return prefix + tail_text
-    return tail_text[:budget]
-
-
-def _truncate_search(result: str, budget: int) -> str:
-    """搜索结果：保留前几条"""
-    lines = result.split("\n")
-
-    # 按条目分割
-    items: List[str] = []
-    current: list[str] = []
-    for line in lines:
-        if re.match(r"^[-\d•]", line.strip()) and current:
-            items.append("\n".join(current))
-            current = [line]
-        else:
-            current.append(line)
-    if current:
-        items.append("\n".join(current))
-
-    # 保留前 N 条，不超预算
-    kept: List[str] = []
-    used = 0
-    for item in items:
-        if used + len(item) + 1 > budget:
-            break
-        kept.append(item)
-        used += len(item) + 1
-
-    if not kept:
-        return result[:budget]
-    return "\n".join(kept)

@@ -1,173 +1,14 @@
 """
-沙盒数据源函数
+沙盒执行器工厂
 
-提供沙盒内可调用的外部数据源。作为插件注册到 SandboxExecutor。
-每个函数都是 async，沙盒代码通过 await 调用。
+构建纯计算沙盒（SandboxExecutor），仅注册计算和文件读取能力。
+数据获取函数（ERP 翻页、搜索等）已迁移到 services/agent/tool_executor.py。
 """
 
-import asyncio
 import hashlib
-import time as _time
-from typing import Any, Dict, Optional
-
-from loguru import logger
+from typing import Any, Optional
 
 from services.sandbox.executor import SandboxExecutor
-
-
-async def erp_query(
-    tool_name: str,
-    action: str,
-    params: Optional[Dict[str, Any]] = None,
-    *,
-    _dispatcher: Any = None,
-) -> Dict[str, Any]:
-    """ERP 单页查询（返回原始 dict）
-
-    Args:
-        tool_name: 工具名（如 erp_trade_query）
-        action: 操作名（如 order_list）
-        params: 查询参数
-        _dispatcher: 注入的 ErpDispatcher 实例
-
-    Returns:
-        API 原始响应 dict
-    """
-    if _dispatcher is None:
-        return {"error": "ERP dispatcher 未初始化"}
-    params = params or {}
-    return await _dispatcher.execute_raw(tool_name, action, params)
-
-
-# 已知的 API response_key（按优先级排列，"list" 兜底）
-_KNOWN_RESPONSE_KEYS = (
-    "list", "items", "stockStatusVoList", "itemSkus",
-    "sellerCats", "classifies", "suppliers",
-    "itemOuterIdInfos", "trades", "workOrders",
-)
-
-
-def _extract_list(data: Dict[str, Any]) -> tuple:
-    """从 API 响应中提取列表数据，自动探测 response_key
-
-    Returns:
-        (items, key) — 列表数据和命中的 key 名
-    """
-    for key in _KNOWN_RESPONSE_KEYS:
-        items = data.get(key)
-        if isinstance(items, list) and items:
-            return items, key
-    # 全部 key 都没命中或为空列表 → 返回空
-    return [], "list"
-
-
-async def erp_query_all(
-    tool_name: str,
-    action: str,
-    params: Optional[Dict[str, Any]] = None,
-    *,
-    max_pages: int = 200,
-    _dispatcher: Any = None,
-    _semaphore: Optional[asyncio.Semaphore] = None,
-) -> Dict[str, Any]:
-    """ERP 全量翻页查询（自动翻页拉取全部数据）
-
-    Args:
-        tool_name: 工具名
-        action: 操作名
-        params: 查询参数
-        max_pages: 最大翻页数（默认200，约2万条数据上限）
-        _dispatcher: 注入的 ErpDispatcher 实例
-        _semaphore: 并发控制信号量
-
-    Returns:
-        合并后的结果 dict（list 字段包含全部数据）
-    """
-    if _dispatcher is None:
-        return {"error": "ERP dispatcher 未初始化"}
-
-    params = params or {}
-    all_items = []
-    page = 0
-    page_size = int(params.get("page_size", 100))
-    api_total = None  # API 第一页返回的 total 字段
-
-    while page < max_pages:
-        page += 1
-        page_params = {**params, "page": page, "page_size": page_size}
-
-        if _semaphore:
-            async with _semaphore:
-                data = await _dispatcher.execute_raw(
-                    tool_name, action, page_params,
-                )
-        else:
-            data = await _dispatcher.execute_raw(
-                tool_name, action, page_params,
-            )
-
-        if "error" in data:
-            if all_items:
-                # 已拉取部分数据，返回已有数据 + 警告
-                logger.warning(
-                    f"erp_query_all partial | page={page} | error={data['error']}"
-                )
-                break
-            return data
-
-        # 第一页读取 API 返回的 total 字段
-        if page == 1 and api_total is None:
-            raw_total = data.get("total")
-            if raw_total is None:
-                raw_total = data.get("totalCount")
-            if raw_total is not None:
-                try:
-                    api_total = int(raw_total)
-                except (ValueError, TypeError):
-                    pass
-
-        items, key = _extract_list(data)
-        all_items.extend(items)
-
-        # 终止条件：返回数 < pageSize → 最后一页
-        if len(items) < page_size:
-            break
-
-    logger.info(
-        f"erp_query_all | tool={tool_name} action={action} "
-        f"pages={page} total={len(all_items)}"
-    )
-
-    result = {"list": all_items, "total": len(all_items)}
-    if api_total is not None:
-        result["api_total"] = api_total
-    if page >= max_pages:
-        result["warning"] = f"已达翻页上限({max_pages}页)，数据可能不完整"
-    return result
-
-
-async def sandbox_web_search(query: str) -> str:
-    """沙盒内互联网搜索
-
-    Args:
-        query: 搜索关键词
-
-    Returns:
-        搜索结果文本
-    """
-    from services.intent_router import IntentRouter
-
-    if not query:
-        return "搜索查询不能为空"
-
-    router = IntentRouter()
-    try:
-        result = await router.execute_search(
-            query=query, user_text=query, system_prompt=None,
-        )
-        return result or f"搜索「{query}」未找到相关结果"
-    finally:
-        await router.close()
 
 
 def build_sandbox_executor(
@@ -206,22 +47,17 @@ def build_sandbox_executor(
     _conv_id = conversation_id or "default"
 
     # 1. 用户 workspace 目录（对标 OpenAI /mnt/data）
-    _ws_base = Path(_file_settings.file_workspace_root).resolve()
-    if org_id:
-        _workspace_dir = str(_ws_base / "org" / org_id / user_id)
-    elif user_id:
-        _workspace_dir = str(
-            _ws_base / "personal" / hashlib.md5(user_id.encode()).hexdigest()[:8]
-        )
-    else:
-        _workspace_dir = str(_ws_base)
+    from core.workspace import resolve_workspace_dir, resolve_staging_dir
+    _workspace_dir = resolve_workspace_dir(
+        _file_settings.file_workspace_root, user_id, org_id,
+    )
 
     # 2. 输出目录 → workspace 下的 "下载/" 文件夹（对标电脑的下载文件夹）
     _output_dir = str(Path(_workspace_dir) / "下载")
 
-    # 3. staging 数据目录（local_db_export 写 parquet 到这里）
-    _staging_dir = str(
-        Path(_file_settings.file_workspace_root) / "staging" / _conv_id
+    # 3. staging 数据目录（用户级隔离，工具结果分流 + db_export 写入）
+    _staging_dir = resolve_staging_dir(
+        _file_settings.file_workspace_root, user_id, org_id, _conv_id,
     )
 
     # 4. 文件检测函数 — 生成 workspace CDN URL（不上传 OSS，文件已通过 ossfs 在 OSS 上）

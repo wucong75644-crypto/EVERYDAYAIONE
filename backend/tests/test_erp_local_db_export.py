@@ -245,7 +245,9 @@ class TestLocalDbExport:
         assert "2 条记录" in result
         assert "Parquet" in result
 
-        staging_files = list((tmp_path / "staging" / "conv1").glob("*.parquet"))
+        from core.workspace import resolve_staging_dir
+        _staging = Path(resolve_staging_dir(str(tmp_path), org_id="org1", conversation_id="conv1"))
+        staging_files = list(_staging.glob("*.parquet"))
         assert len(staging_files) == 1
 
         # Parquet 可正确读回
@@ -270,7 +272,9 @@ class TestLocalDbExport:
             )
 
         import pandas as _pd
-        staging_files = list((tmp_path / "staging" / "conv1").glob("*.parquet"))
+        from core.workspace import resolve_staging_dir
+        _staging = Path(resolve_staging_dir(str(tmp_path), org_id="org1", conversation_id="conv1"))
+        staging_files = list(_staging.glob("*.parquet"))
         assert len(staging_files) == 1
         df = _pd.read_parquet(staging_files[0])
         # PII 字段如果存在应已脱敏（当前 columns="doc_type" 不含 PII）

@@ -260,19 +260,39 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await RedisClient.release_lock("orphan_task_recovery", _recovery_lock)
 
     # 启动时清理过期的 staging 文件（3 天过期，对标 OpenAI 容器生命周期模式）
-    # staging 是对话级临时数据库，数据跟着对话走，过期自动销毁
+    # staging 在用户 workspace 下：{workspace_root}/{org|personal}/xxx/staging/{conv_id}/
+    # 遍历所有用户目录下的 staging/ 子目录，清理过期的会话目录
     try:
         from pathlib import Path
         import time as _time_mod
-        staging_root = Path(settings.file_workspace_root) / "staging"
-        if staging_root.exists():
+        _ws_root = Path(settings.file_workspace_root)
+        if _ws_root.exists():
             import shutil
             cutoff = _time_mod.time() - 3 * 86400  # 3 天过期
             cleaned = 0
-            for child in staging_root.iterdir():
-                if child.is_dir() and child.stat().st_mtime < cutoff:
-                    shutil.rmtree(child, ignore_errors=True)
-                    cleaned += 1
+            # 精确匹配已知目录结构（不递归遍历）
+            # org/{org_id}/{user_id}/staging/ 和 personal/{hash}/staging/
+            for staging_dir in _ws_root.glob("org/*/*/staging"):
+                if not staging_dir.is_dir():
+                    continue
+                for conv_dir in staging_dir.iterdir():
+                    if conv_dir.is_dir() and conv_dir.stat().st_mtime < cutoff:
+                        shutil.rmtree(conv_dir, ignore_errors=True)
+                        cleaned += 1
+            for staging_dir in _ws_root.glob("personal/*/staging"):
+                if not staging_dir.is_dir():
+                    continue
+                for conv_dir in staging_dir.iterdir():
+                    if conv_dir.is_dir() and conv_dir.stat().st_mtime < cutoff:
+                        shutil.rmtree(conv_dir, ignore_errors=True)
+                        cleaned += 1
+            # 兼容旧的全局 staging（迁移过渡期）
+            _old_staging = _ws_root / "staging"
+            if _old_staging.exists():
+                for child in _old_staging.iterdir():
+                    if child.is_dir() and child.stat().st_mtime < cutoff:
+                        shutil.rmtree(child, ignore_errors=True)
+                        cleaned += 1
             if cleaned:
                 logger.info(f"Staging cleanup | removed={cleaned} dirs (>3 days)")
     except Exception as e:

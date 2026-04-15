@@ -2,8 +2,10 @@
 tool_result_envelope 单元测试
 
 覆盖：wrap / wrap_for_erp_agent / wrap_erp_agent_result
-      _truncate_erp / _truncate_code / _truncate_search
-      双重截断防护 / 边界值 / 并发隔离
+      阈值分流（staging 落盘 + 摘要生成）
+      防重入 / 边界值 / 并发隔离
+
+设计文档：docs/document/TECH_工具结果分流架构.md
 """
 
 import asyncio
@@ -14,10 +16,22 @@ from services.agent.tool_result_envelope import (
     wrap,
     wrap_for_erp_agent,
     wrap_erp_agent_result,
+    set_staging_dir,
+    clear_staging_dir,
     MAIN_AGENT_BUDGET,
     ERP_AGENT_BUDGET,
     ERP_AGENT_RESULT_BUDGET,
+    STAGED_MARKER,
 )
+
+
+@pytest.fixture(autouse=True)
+def _setup_staging(tmp_path):
+    """每个测试自动设置 staging_dir 到临时目录"""
+    staging = str(tmp_path / "staging" / "test-conv")
+    set_staging_dir(staging)
+    yield staging
+    clear_staging_dir()
 
 
 # ============================================================
@@ -40,26 +54,127 @@ class TestWrapBasic:
         result = "x" * MAIN_AGENT_BUDGET
         assert wrap("some_tool", result) == result
 
-    def test_over_budget_truncated_with_signal(self):
-        result = "x" * (MAIN_AGENT_BUDGET + 500)
+    def test_over_budget_staged_with_summary(self):
+        """超阈值时落盘 staging + 返回摘要"""
+        result = "标题行\n" + "x" * (MAIN_AGENT_BUDGET + 500)
         wrapped = wrap("some_tool", result)
         assert len(wrapped) < len(result)
-        assert "⚠ 输出已截断" in wrapped
-        assert str(MAIN_AGENT_BUDGET + 500) in wrapped
+        assert STAGED_MARKER in wrapped
+        assert "read_file" in wrapped
+        assert "数据来源: some_tool" in wrapped
 
     def test_no_truncate_tools_pass_through(self):
         result = "x" * 50000
         assert wrap("generate_image", result) == result
         assert wrap("generate_video", result) == result
+        assert wrap("code_execute", result) == result
 
     def test_double_wrap_skipped(self):
-        """已截断的结果不再二次截断"""
-        first = wrap("some_tool", "x" * 5000)
-        assert "⚠ 输出已截断" in first
+        """已分流的结果不再二次处理"""
+        first = wrap("some_tool", "标题\n" + "x" * 5000)
+        assert STAGED_MARKER in first
         second = wrap("erp_agent", first)
-        # 不应有嵌套的截断信号
-        assert second.count("⚠ 输出已截断") == 1
+        assert second.count(STAGED_MARKER) == 1
         assert second == first
+
+
+# ============================================================
+# staging 落盘验证
+# ============================================================
+
+class TestStagingPersist:
+
+    def test_staging_file_created(self, _setup_staging):
+        """超阈值时 staging 文件被创建"""
+        from pathlib import Path
+        result = "标题行\n" + "数据" * 2000
+        wrapped = wrap("local_stock_query", result)
+        # 检查文件存在
+        staging_dir = Path(_setup_staging)
+        files = list(staging_dir.glob("tool_result_*.txt"))
+        assert len(files) == 1
+        # 文件内容是完整原始数据
+        assert files[0].read_text(encoding="utf-8") == result
+
+    def test_staging_file_content_matches(self, _setup_staging):
+        """staging 文件内容与原始结果完全一致"""
+        from pathlib import Path
+        result = "商品列表\n" + "\n".join(f"商品{i}: 数据" * 10 for i in range(200))
+        wrap("local_product_stats", result)
+        staging_dir = Path(_setup_staging)
+        files = list(staging_dir.glob("tool_result_*.txt"))
+        assert len(files) == 1
+        assert files[0].read_text(encoding="utf-8") == result
+
+    def test_same_result_reuses_file(self, _setup_staging):
+        """相同结果（hash相同）复用同一文件"""
+        from pathlib import Path
+        result = "标题\n" + "x" * 5000
+        wrap("tool_a", result)
+        wrap("tool_a", result)
+        staging_dir = Path(_setup_staging)
+        files = list(staging_dir.glob("tool_result_tool_a_*.txt"))
+        assert len(files) == 1  # 同 hash 只有一个文件
+
+    def test_different_results_different_files(self, _setup_staging):
+        """不同结果产生不同文件"""
+        from pathlib import Path
+        wrap("tool_a", "标题\n" + "x" * 5000)
+        wrap("tool_a", "标题\n" + "y" * 5000)
+        staging_dir = Path(_setup_staging)
+        files = list(staging_dir.glob("tool_result_tool_a_*.txt"))
+        assert len(files) == 2
+
+    def test_staging_dir_not_set_raises(self):
+        """staging_dir 未设置时抛 RuntimeError"""
+        clear_staging_dir()
+        with pytest.raises(RuntimeError, match="staging_dir 未设置"):
+            wrap("some_tool", "x" * 5000)
+
+
+# ============================================================
+# 摘要生成验证
+# ============================================================
+
+class TestBuildSummary:
+
+    def test_summary_contains_metadata(self):
+        """摘要包含工具名和时间戳"""
+        result = "共 50 个店铺\n" + "\n".join(f"店铺{i}: " + "x" * 50 for i in range(100))
+        wrapped = wrap("local_shop_list", result)
+        assert "数据来源: local_shop_list" in wrapped
+        assert "获取时间:" in wrapped
+
+    def test_summary_preserves_first_line(self):
+        """摘要保留首行"""
+        result = "订单查询结果(共50单)\n" + "\n".join(f"行{i}" for i in range(200))
+        wrapped = wrap_for_erp_agent("local_order_query", result)
+        assert "订单查询结果(共50单)" in wrapped
+
+    def test_summary_preserves_summary_lines(self):
+        """摘要保留汇总行"""
+        lines = (
+            ["库存汇总"] +
+            [f"商品{i}: 100件" for i in range(200)] +
+            ["合计：20000件"]
+        )
+        result = "\n".join(lines)
+        wrapped = wrap_for_erp_agent("local_stock_query", result)
+        assert "合计：20000件" in wrapped
+
+    def test_summary_has_row_count(self):
+        """摘要包含数据行数"""
+        lines = ["标题"] + [f"数据行{i}: " + "x" * 50 for i in range(100)]
+        result = "\n".join(lines)
+        wrapped = wrap("some_tool", result)
+        assert "共 101 行数据" in wrapped
+
+    def test_summary_has_preview_lines(self):
+        """摘要包含前几行预览"""
+        lines = ["标题"] + [f"数据行{i}: 内容" for i in range(100)]
+        result = "\n".join(lines)
+        wrapped = wrap("some_tool", result)
+        assert "数据行0: 内容" in wrapped
 
 
 # ============================================================
@@ -69,40 +184,33 @@ class TestWrapBasic:
 class TestBudgetLevels:
 
     def test_main_agent_budget(self):
-        result = "x" * (MAIN_AGENT_BUDGET + 100)
+        result = "标题\n" + "x" * (MAIN_AGENT_BUDGET + 100)
         wrapped = wrap("some_tool", result)
-        assert "⚠ 输出已截断" in wrapped
+        assert STAGED_MARKER in wrapped
 
     def test_erp_agent_internal_budget(self):
-        result = "x" * (ERP_AGENT_BUDGET + 100)
+        result = "标题\n" + "x" * (ERP_AGENT_BUDGET + 100)
         wrapped = wrap_for_erp_agent("local_stock_query", result)
-        assert "⚠ 输出已截断" in wrapped
+        assert STAGED_MARKER in wrapped
 
     def test_erp_agent_result_budget(self):
-        result = "x" * (ERP_AGENT_RESULT_BUDGET + 100)
+        result = "标题\n" + "x" * (ERP_AGENT_RESULT_BUDGET + 100)
         wrapped = wrap_erp_agent_result(result)
-        assert "⚠ 输出已截断" in wrapped
+        assert STAGED_MARKER in wrapped
 
     def test_erp_agent_result_pass_through_envelope(self):
-        """wrap_erp_agent_result 包裹 pass-through 提示词，
-        防止主 Agent 重述时改写结构化时间块。
-        """
+        """wrap_erp_agent_result 包裹 pass-through 提示词"""
         result = "[当前期] 2026-04-10 周五（今天） 订单 1769 笔"
         wrapped = wrap_erp_agent_result(result)
-        # 必须包含 envelope
         assert "─── ERP 结果开始 ───" in wrapped
         assert "─── ERP 结果结束 ───" in wrapped
-        # 必须含 pass-through 强约束（禁止改写日期/星期）
         assert "禁止改写" in wrapped
-        # 原结果完整保留
         assert result in wrapped
 
     def test_erp_agent_result_empty_no_envelope(self):
-        """空结果不加 envelope，避免发送"只有提示没数据"的奇怪回复。"""
         wrapped = wrap_erp_agent_result("")
         assert wrapped == ""
         wrapped = wrap_erp_agent_result("   ")
-        # whitespace-only 也按空处理
         assert "─── ERP 结果开始 ───" not in wrapped
 
     def test_erp_agent_budget_larger_than_main(self):
@@ -113,131 +221,37 @@ class TestBudgetLevels:
 
 
 # ============================================================
-# _truncate_erp — ERP 结果截断
+# code_execute / file_* 免截断
 # ============================================================
 
-class TestTruncateErp:
-
-    def test_preserves_first_line(self):
-        lines = ["订单查询结果(共50单)"] + [f"行{i}" for i in range(200)]
-        result = "\n".join(lines)
-        wrapped = wrap_for_erp_agent("local_order_query", result)
-        assert wrapped.startswith("订单查询结果(共50单)")
-
-    def test_preserves_summary_lines(self):
-        lines = (
-            ["库存汇总"] +
-            [f"商品{i}: 100件" for i in range(200)] +
-            ["合计：20000件", "统计：200个SKU"]
-        )
-        result = "\n".join(lines)
-        wrapped = wrap_for_erp_agent("local_stock_query", result)
-        assert "合计：20000件" in wrapped
-        assert "统计：200个SKU" in wrapped
-
-    def test_separator_lines_excluded(self):
-        lines = ["标题", "---", "数据行1", "---", "数据行2"]
-        result = "\n".join(lines)
-        wrapped = wrap_for_erp_agent("erp_trade_query", result)
-        # 短结果不截断，但分隔线不影响
-        assert "标题" in wrapped
-
-    def test_signal_appended_at_end(self):
-        """截断信号在末尾，不在开头（保护正则匹配）"""
-        lines = ["商品编码：ABC123"] + ["x" * 100 for _ in range(100)]
-        result = "\n".join(lines)
-        wrapped = wrap_for_erp_agent("local_product_identify", result)
-        assert wrapped.startswith("商品编码：ABC123")
-        assert "get_persisted_result" in wrapped
-        assert "⚠ 输出已截断" in wrapped
-
-
-# ============================================================
-# _truncate_code — 代码执行结果截断
-# ============================================================
-
-class TestTruncateCode:
-
-    def test_error_preserves_start(self):
-        """错误信息优先保留开头"""
-        result = "❌ SyntaxError: invalid syntax\n" + "x" * 5000
-        wrapped = wrap("code_execute", result)
-        assert wrapped.startswith("❌ SyntaxError")
-
-    def test_traceback_preserves_start(self):
-        result = "Traceback (most recent call last):\n" + "x" * 5000
-        wrapped = wrap("code_execute", result)
-        assert wrapped.startswith("Traceback")
-
-    def test_normal_output_preserves_tail(self):
-        """正常输出保留最后几行"""
-        lines = [f"line {i}: processing..." for i in range(100)]
-        lines.append("FINAL RESULT: 42")
-        result = "\n".join(lines)
-        wrapped = wrap("code_execute", result)
-        assert "FINAL RESULT: 42" in wrapped
-
-    def test_short_code_result_unchanged(self):
-        result = "输出: 42\n完成"
-        assert wrap("code_execute", result) == result
+class TestNoTruncate:
 
     def test_code_execute_no_truncate(self):
-        """code_execute 在 _NO_TRUNCATE 白名单中，不做二次截断
-        sandbox 自有 max_result_chars=8000 兜底，envelope 不再截断
-        """
         lines = [f"line{i}: " + "x" * 290 for i in range(10)]
         result = "\n".join(lines)
         wrapped = wrap("code_execute", result)
-        assert wrapped == result  # 原文返回
-        assert "⚠ 输出已截断" not in wrapped
+        assert wrapped == result
 
     def test_file_read_no_truncate(self):
-        """file_read 免二次截断（Agent 需要完整表头信息）"""
         result = "文件: data.csv | 共 50000 行\n" + "\n".join(
             f"  {i}\tcol_{i}_data_value" for i in range(200)
         )
         assert len(result) > MAIN_AGENT_BUDGET
-        wrapped = wrap("file_read", result)
-        assert wrapped == result
+        assert wrap("file_read", result) == result
 
     def test_file_list_no_truncate(self):
-        """file_list 免二次截断"""
         result = "目录: . | 共 50 项\n" + "\n".join(
             f"  [文件] report_{i}.xlsx\t5.0MB" for i in range(50)
         )
-        wrapped = wrap("file_list", result)
-        assert wrapped == result
+        assert wrap("file_list", result) == result
 
     def test_file_info_no_truncate(self):
-        """file_info 免二次截断"""
-        result = "路径: big_report.xlsx\n类型: 文件\n大小: 56.2MB\nMIME: application/vnd.openxmlformats"
-        wrapped = wrap("file_info", result)
-        assert wrapped == result
+        result = "路径: big_report.xlsx\n类型: 文件\n大小: 56.2MB"
+        assert wrap("file_info", result) == result
 
 
 # ============================================================
-# _truncate_erp — reserve 边界保护
-# ============================================================
-
-class TestTruncateErpReserveBoundary:
-
-    def test_huge_summary_lines_clamped(self):
-        """汇总行极长时，reserve 被 clamp 到 budget//2，仍有数据行空间"""
-        # 构造：首行短 + 大量数据行 + 一个超长汇总行 → 总长远超 ERP_AGENT_BUDGET(3000)
-        huge_summary = "合计：" + "统计数据" * 500  # ~2000 字符
-        lines = ["查询结果"] + [f"数据行{i}: 详细数据内容" * 5 for i in range(100)] + [huge_summary]
-        result = "\n".join(lines)
-        assert len(result) > ERP_AGENT_BUDGET  # 确保超预算
-        wrapped = wrap_for_erp_agent("local_stock_query", result)
-        # 应该包含首行
-        assert "查询结果" in wrapped
-        # reserve 被 clamp 到 budget//2，仍有空间放数据行
-        assert "数据行0" in wrapped
-        assert "⚠ 输出已截断" in wrapped
-
-
-# ============================================================
-# persist_and_get_key + get_persisted 基础链路
+# persist_and_get_key + get_persisted（保留兼容）
 # ============================================================
 
 class TestPersistedBasicFlow:
@@ -266,49 +280,47 @@ class TestPersistedBasicFlow:
         clear_persisted()
         assert get_persisted(key) is None
 
-    def test_truncation_auto_persists(self):
-        """wrap() 截断时自动暂存完整结果"""
-        from services.agent.tool_result_envelope import get_persisted
-        long_result = "标题行\n" + "数据" * 2000
-        wrapped = wrap("local_stock_query", long_result)
-        # 截断信号中应有 key
-        assert "key=" in wrapped
-        # 提取 key 并验证可读取
-        import re
-        match = re.search(r'key=(\S+?)\)', wrapped)
-        assert match
-        key = match.group(1).rstrip(',')
-        assert get_persisted(key) == long_result
+
+# ============================================================
+# staging_dir ContextVar 管理
+# ============================================================
+
+class TestStagingDirContextVar:
+
+    def test_set_and_get(self, tmp_path):
+        from services.agent.tool_result_envelope import get_staging_dir
+        path = str(tmp_path / "staging" / "conv123")
+        set_staging_dir(path)
+        assert get_staging_dir() == path
+
+    def test_clear(self):
+        from services.agent.tool_result_envelope import get_staging_dir
+        clear_staging_dir()
+        assert get_staging_dir() is None
 
 
 # ============================================================
-# _truncate_search — 搜索结果截断
+# 非 ERP 工具分流
 # ============================================================
 
-class TestTruncateSearch:
+class TestNonErpToolStaging:
 
-    def test_preserves_first_items(self):
+    def test_web_search_staged(self):
         items = [f"- 搜索结果{i}: 详细描述" + "x" * 200 for i in range(20)]
         result = "\n".join(items)
         wrapped = wrap("web_search", result)
-        assert "搜索结果0" in wrapped
-        assert "⚠ 输出已截断" in wrapped
+        assert STAGED_MARKER in wrapped
+        assert "read_file" in wrapped
 
-    def test_social_crawler_uses_search_strategy(self):
+    def test_social_crawler_staged(self):
         items = [f"• 帖子{i}: 内容" + "x" * 200 for i in range(20)]
         result = "\n".join(items)
         wrapped = wrap("social_crawler", result)
-        assert "帖子0" in wrapped
+        assert STAGED_MARKER in wrapped
 
     def test_short_search_unchanged(self):
         result = "- 结果1: xxx\n- 结果2: yyy"
         assert wrap("web_search", result) == result
-
-    def test_erp_api_search_uses_search_strategy(self):
-        items = [f"- {i}. erp_tool_{i}: 描述" for i in range(50)]
-        result = "\n".join(items)
-        wrapped = wrap("erp_api_search", result)
-        assert "erp_tool_0" in wrapped
 
 
 # ============================================================
@@ -316,16 +328,13 @@ class TestTruncateSearch:
 # ============================================================
 
 class TestPersistedConcurrentIsolation:
-    """验证 ContextVar 在多 task 场景下的隔离性"""
 
     def setup_method(self):
-        """每个测试前清理 ContextVar 状态（前面的截断测试会写入暂存）"""
         from services.agent.tool_result_envelope import clear_persisted
         clear_persisted()
 
     @pytest.mark.asyncio
     async def test_concurrent_tasks_isolated(self):
-        """两个并发 task 的 persisted_results 互不干扰"""
         from services.agent.tool_result_envelope import (
             persist_and_get_key, get_persisted, clear_persisted,
         )
@@ -335,15 +344,14 @@ class TestPersistedConcurrentIsolation:
 
         async def task_a():
             key = persist_and_get_key("tool_a", "data_from_request_A")
-            await asyncio.sleep(0.01)  # 让 task_b 有机会执行
-            # task_b 的 clear 不应影响 task_a
+            await asyncio.sleep(0.01)
             val = get_persisted(key)
             results_a.append(val)
             clear_persisted()
 
         async def task_b():
             key = persist_and_get_key("tool_b", "data_from_request_B")
-            clear_persisted()  # task_b 先清理完毕
+            clear_persisted()
             results_b.append(get_persisted(key))
 
         await asyncio.gather(
@@ -351,14 +359,11 @@ class TestPersistedConcurrentIsolation:
             asyncio.create_task(task_b()),
         )
 
-        # task_a 应该看到自己的数据（不被 task_b 的 clear 影响）
         assert results_a[0] == "data_from_request_A"
-        # task_b clear 后自己看不到了
         assert results_b[0] is None
 
     @pytest.mark.asyncio
     async def test_clear_only_affects_own_context(self):
-        """clear_persisted 只清自己的 context，不影响其他"""
         from services.agent.tool_result_envelope import (
             persist_and_get_key, get_persisted, clear_persisted,
         )
@@ -367,14 +372,13 @@ class TestPersistedConcurrentIsolation:
 
         async def writer():
             key = persist_and_get_key("tool", "important_data")
-            await asyncio.sleep(0.05)  # 等 cleaner 执行完
-            # 自己的数据应该还在（cleaner 清的是自己的 context）
+            await asyncio.sleep(0.05)
             seen_by_writer.append(get_persisted(key))
             clear_persisted()
 
         async def cleaner():
             await asyncio.sleep(0.01)
-            clear_persisted()  # 清自己的（空的），不影响 writer
+            clear_persisted()
 
         await asyncio.gather(
             asyncio.create_task(writer()),
