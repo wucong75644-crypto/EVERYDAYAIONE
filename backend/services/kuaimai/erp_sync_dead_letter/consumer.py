@@ -92,21 +92,27 @@ async def _process_batch(
                 except Exception:
                     pass
 
-    # 查询到期的 pending 记录
+    # 查询到期的 pending 记录（连接断开时重试一次，让 PG 瞬断对业务透明）
     now = now_cn().isoformat()
-    try:
-        result = await (
-            db.table("erp_sync_dead_letter")
-            .select("*")
-            .eq("status", "pending")
-            .lte("next_retry_at", now)
-            .order("next_retry_at")
-            .limit(CONSUMER_BATCH_SIZE)
-            .execute()
-        )
-    except Exception as e:
-        logger.error(f"Dead letter query failed | error={e}")
-        return 0
+    for attempt in range(2):
+        try:
+            result = await (
+                db.table("erp_sync_dead_letter")
+                .select("*")
+                .eq("status", "pending")
+                .lte("next_retry_at", now)
+                .order("next_retry_at")
+                .limit(CONSUMER_BATCH_SIZE)
+                .execute()
+            )
+            break
+        except Exception as e:
+            if attempt == 0 and "server closed" in str(e):
+                logger.warning(f"Dead letter query connection lost, retrying | error={e}")
+                await asyncio.sleep(1)
+                continue
+            logger.error(f"Dead letter query failed | error={e}")
+            return 0
 
     rows = result.data or []
     if not rows:

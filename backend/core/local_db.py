@@ -536,6 +536,9 @@ class LocalDBClient:
             # session-TZ-依赖的 cast 行为出错
             kwargs={"row_factory": dict_row, "options": "-c timezone=Asia/Shanghai"},
             check=ConnectionPool.check_connection,
+            # 连接最多存活 10 分钟后主动回收重建，
+            # 防止长生存连接被 PG 侧静默断开（idle timeout / 网络波动）
+            max_lifetime=600,
             open=True,
         )
         logger.info(f"LocalDB 连接池已创建 | min={min_size} max={max_size} | tz=Asia/Shanghai")
@@ -670,6 +673,7 @@ class AsyncLocalDBClient:
             # session-TZ-依赖的 cast 行为出错
             kwargs={"row_factory": dict_row, "options": "-c timezone=Asia/Shanghai"},
             check=AsyncConnectionPool.check_connection,
+            max_lifetime=600,
             open=False,
         )
         self._min_size = min_size

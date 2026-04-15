@@ -249,35 +249,24 @@ class TestGetLatestScore:
     """历史评分查询测试"""
 
     @pytest.mark.asyncio
-    async def test_returns_score(self, mock_pg_connection, mock_cursor):
+    async def test_returns_score(self, mock_conn, mock_cursor):
         """有历史评分时返回分数"""
         mock_cursor.fetchone = AsyncMock(return_value=(0.88,))
 
-        with patch("services.model_scorer.get_pg_connection", return_value=mock_pg_connection):
-            from services.model_scorer import _get_latest_score
+        from services.model_scorer import _get_latest_score
 
-            result = await _get_latest_score("gemini-3-pro", "chat")
-            assert result == 0.88
+        result = await _get_latest_score(mock_conn, "gemini-3-pro", "chat")
+        assert result == 0.88
 
     @pytest.mark.asyncio
-    async def test_returns_none_no_history(self, mock_pg_connection, mock_cursor):
+    async def test_returns_none_no_history(self, mock_conn, mock_cursor):
         """无历史评分时返回 None"""
         mock_cursor.fetchone = AsyncMock(return_value=None)
 
-        with patch("services.model_scorer.get_pg_connection", return_value=mock_pg_connection):
-            from services.model_scorer import _get_latest_score
+        from services.model_scorer import _get_latest_score
 
-            result = await _get_latest_score("new-model", "chat")
-            assert result is None
-
-    @pytest.mark.asyncio
-    async def test_returns_none_db_unavailable(self):
-        """DB 不可用时返回 None"""
-        with patch("services.model_scorer.get_pg_connection", return_value=None):
-            from services.model_scorer import _get_latest_score
-
-            result = await _get_latest_score("gemini-3-pro", "chat")
-            assert result is None
+        result = await _get_latest_score(mock_conn, "new-model", "chat")
+        assert result is None
 
 
 class TestWriteScoreToKnowledge:
@@ -309,33 +298,33 @@ class TestWriteAuditLog:
     """审核日志写入测试"""
 
     @pytest.mark.asyncio
-    async def test_writes_log(self, mock_pg_connection, mock_conn, mock_cursor):
+    async def test_writes_log(self, mock_conn, mock_cursor):
         """成功写入审核日志"""
-        with patch("services.model_scorer.get_pg_connection", return_value=mock_pg_connection):
-            from services.model_scorer import _write_audit_log
+        from services.model_scorer import _write_audit_log
 
-            row = _make_row()
-            await _write_audit_log(row, 0.85, 0.88, "auto_applied", "node-123")
+        row = _make_row()
+        await _write_audit_log(mock_conn, row, 0.85, 0.88, "auto_applied", "node-123")
 
-            mock_cursor.execute.assert_called_once()
-            mock_conn.commit.assert_called_once()
+        mock_cursor.execute.assert_called_once()
+        mock_conn.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_skips_when_db_unavailable(self):
-        """DB 不可用时跳过"""
-        with patch("services.model_scorer.get_pg_connection", return_value=None):
-            from services.model_scorer import _write_audit_log
+    async def test_exception_swallowed(self, mock_conn, mock_cursor):
+        """DB 异常时不抛出"""
+        mock_cursor.execute = AsyncMock(side_effect=RuntimeError("DB error"))
 
-            row = _make_row()
-            # 不应抛异常
-            await _write_audit_log(row, None, 0.88, "pending_review", None)
+        from services.model_scorer import _write_audit_log
+
+        row = _make_row()
+        # 不应抛异常
+        await _write_audit_log(mock_conn, row, None, 0.88, "pending_review", None)
 
 
 class TestQueryAggregatedMetrics:
     """聚合查询测试"""
 
     @pytest.mark.asyncio
-    async def test_returns_rows(self, mock_pg_connection, mock_cursor):
+    async def test_returns_rows(self, mock_conn, mock_cursor):
         """返回聚合结果"""
         now = datetime.now(timezone.utc)
         mock_cursor.fetchall = AsyncMock(return_value=[
@@ -354,33 +343,31 @@ class TestQueryAggregatedMetrics:
             desc.append(col)
         mock_cursor.description = desc
 
-        with patch("services.model_scorer.is_kb_available", return_value=True), \
-             patch("services.model_scorer.get_pg_connection", return_value=mock_pg_connection):
-            from services.model_scorer import _query_aggregated_metrics
+        from services.model_scorer import _query_aggregated_metrics
 
-            rows = await _query_aggregated_metrics()
-            assert len(rows) == 1
-            assert rows[0]["model_id"] == "gemini-3-pro"
+        rows = await _query_aggregated_metrics(mock_conn)
+        assert len(rows) == 1
+        assert rows[0]["model_id"] == "gemini-3-pro"
 
     @pytest.mark.asyncio
-    async def test_returns_empty_when_no_data(self, mock_pg_connection, mock_cursor):
+    async def test_returns_empty_when_no_data(self, mock_conn, mock_cursor):
         """无数据时返回空列表"""
         mock_cursor.fetchall = AsyncMock(return_value=[])
 
-        with patch("services.model_scorer.get_pg_connection", return_value=mock_pg_connection):
-            from services.model_scorer import _query_aggregated_metrics
+        from services.model_scorer import _query_aggregated_metrics
 
-            rows = await _query_aggregated_metrics()
-            assert rows == []
+        rows = await _query_aggregated_metrics(mock_conn)
+        assert rows == []
 
     @pytest.mark.asyncio
-    async def test_returns_empty_db_unavailable(self):
-        """DB 不可用时返回空"""
-        with patch("services.model_scorer.get_pg_connection", return_value=None):
-            from services.model_scorer import _query_aggregated_metrics
+    async def test_sql_exception_returns_empty(self, mock_conn, mock_cursor):
+        """SQL 异常时返回空"""
+        mock_cursor.execute = AsyncMock(side_effect=RuntimeError("DB error"))
 
-            rows = await _query_aggregated_metrics()
-            assert rows == []
+        from services.model_scorer import _query_aggregated_metrics
+
+        rows = await _query_aggregated_metrics(mock_conn)
+        assert rows == []
 
 
 class TestAggregateModelScores:
@@ -396,10 +383,25 @@ class TestAggregateModelScores:
             await aggregate_model_scores()
 
     @pytest.mark.asyncio
-    async def test_skips_when_no_metrics(self):
-        """无指标数据时跳过"""
+    async def test_skips_when_conn_unavailable(self):
+        """连接不可用时跳过"""
         with patch("services.model_scorer.is_kb_available", return_value=True), \
+             patch("services.model_scorer.create_dedicated_connection", new_callable=AsyncMock) as mock_c:
+            mock_c.return_value = None
+            from services.model_scorer import aggregate_model_scores
+
+            await aggregate_model_scores()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_metrics(self, mock_conn):
+        """无指标数据时跳过"""
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("services.model_scorer.is_kb_available", return_value=True), \
+             patch("services.model_scorer.create_dedicated_connection", new_callable=AsyncMock) as mock_c, \
              patch("services.model_scorer._query_aggregated_metrics", new_callable=AsyncMock) as mock_q:
+            mock_c.return_value = mock_conn
             mock_q.return_value = []
             from services.model_scorer import aggregate_model_scores
 
@@ -407,15 +409,19 @@ class TestAggregateModelScores:
             mock_q.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_full_flow_auto_applied(self):
+    async def test_full_flow_auto_applied(self, mock_conn):
         """完整流程：auto_applied → 写入知识库 + 审核日志"""
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
         row = _make_row(total=100, success_count=95)
 
         with patch("services.model_scorer.is_kb_available", return_value=True), \
+             patch("services.model_scorer.create_dedicated_connection", new_callable=AsyncMock) as mock_c, \
              patch("services.model_scorer._query_aggregated_metrics", new_callable=AsyncMock) as mock_q, \
              patch("services.model_scorer._get_latest_score", new_callable=AsyncMock) as mock_old, \
              patch("services.model_scorer._write_score_to_knowledge", new_callable=AsyncMock) as mock_write, \
              patch("services.model_scorer._write_audit_log", new_callable=AsyncMock) as mock_log:
+            mock_c.return_value = mock_conn
             mock_q.return_value = [row]
             mock_old.return_value = 0.90  # 接近新分数，不触发审核
             mock_write.return_value = "node-abc"
@@ -427,12 +433,14 @@ class TestAggregateModelScores:
             mock_write.assert_called_once()
             mock_log.assert_called_once()
             log_args = mock_log.call_args
-            assert log_args[0][3] == "auto_applied"  # status
-            assert log_args[0][4] == "node-abc"  # knowledge_node_id
+            assert log_args[0][4] == "auto_applied"  # status (conn, row, old, new, status, ...)
+            assert log_args[0][5] == "node-abc"  # knowledge_node_id
 
     @pytest.mark.asyncio
-    async def test_full_flow_pending_review(self):
+    async def test_full_flow_pending_review(self, mock_conn):
         """完整流程：pending_review → 只写审核日志，不写知识库"""
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
         # 极差模型：成功率 10%、高延迟、大量重试和硬错误
         row = _make_row(
             total=100, success_count=10, p75_latency=28000.0,
@@ -440,10 +448,12 @@ class TestAggregateModelScores:
         )
 
         with patch("services.model_scorer.is_kb_available", return_value=True), \
+             patch("services.model_scorer.create_dedicated_connection", new_callable=AsyncMock) as mock_c, \
              patch("services.model_scorer._query_aggregated_metrics", new_callable=AsyncMock) as mock_q, \
              patch("services.model_scorer._get_latest_score", new_callable=AsyncMock) as mock_old, \
              patch("services.model_scorer._write_score_to_knowledge", new_callable=AsyncMock) as mock_write, \
              patch("services.model_scorer._write_audit_log", new_callable=AsyncMock) as mock_log:
+            mock_c.return_value = mock_conn
             mock_q.return_value = [row]
             mock_old.return_value = 0.95  # 与极差 raw_score 差距大 → EMA 变化 ≥0.1
 
@@ -454,12 +464,14 @@ class TestAggregateModelScores:
             mock_write.assert_not_called()
             mock_log.assert_called_once()
             log_args = mock_log.call_args
-            assert log_args[0][3] == "pending_review"
-            assert log_args[0][4] is None  # 无 knowledge_node_id
+            assert log_args[0][4] == "pending_review"  # status (conn, row, old, new, status, ...)
+            assert log_args[0][5] is None  # 无 knowledge_node_id
 
     @pytest.mark.asyncio
-    async def test_single_model_error_does_not_abort(self):
+    async def test_single_model_error_does_not_abort(self, mock_conn):
         """单个模型处理失败不影响其他模型"""
+        mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+        mock_conn.__aexit__ = AsyncMock(return_value=False)
         row_ok = _make_row(model_id="model-ok")
         row_bad = _make_row(model_id="model-bad")
 
@@ -472,16 +484,18 @@ class TestAggregateModelScores:
         async def mock_log(*args, **kwargs):
             call_count["log"] += 1
 
-        async def bad_latest(model_id, task_type, org_id=None):
+        async def bad_latest(conn, model_id, task_type, org_id=None):
             if model_id == "model-bad":
                 raise RuntimeError("DB error")
             return 0.90
 
         with patch("services.model_scorer.is_kb_available", return_value=True), \
+             patch("services.model_scorer.create_dedicated_connection", new_callable=AsyncMock) as mock_c, \
              patch("services.model_scorer._query_aggregated_metrics", new_callable=AsyncMock) as mock_q, \
              patch("services.model_scorer._get_latest_score", side_effect=bad_latest), \
              patch("services.model_scorer._write_score_to_knowledge", side_effect=mock_write), \
              patch("services.model_scorer._write_audit_log", side_effect=mock_log):
+            mock_c.return_value = mock_conn
             mock_q.return_value = [row_bad, row_ok]
 
             from services.model_scorer import aggregate_model_scores
