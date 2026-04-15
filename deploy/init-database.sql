@@ -1081,7 +1081,7 @@ CREATE OR REPLACE FUNCTION erp_try_acquire_sync_lock(
     p_org_id UUID DEFAULT NULL
 )
 RETURNS BOOLEAN LANGUAGE plpgsql AS $$
-DECLARE v_acquired BOOLEAN;
+DECLARE v_acquired INTEGER;
 BEGIN
     UPDATE erp_sync_state SET status = 'running', last_run_at = NOW()
     WHERE sync_type = 'purchase'
