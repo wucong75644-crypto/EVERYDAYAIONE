@@ -139,9 +139,14 @@ class TestSecurityBlocking:
         assert "验证失败" in result
 
     @pytest.mark.asyncio
-    async def test_open_blocked(self, executor):
-        result = await executor.execute("open('/etc/passwd')", "open调用")
-        assert "验证失败" in result
+    async def test_open_outside_workspace_blocked(self, tmp_path):
+        """open() 访问 workspace 外路径被 _scoped_open 拦截"""
+        ws_executor = SandboxExecutor(
+            timeout=5.0, max_result_chars=1000,
+            workspace_dir=str(tmp_path),
+        )
+        result = await ws_executor.execute("open('/etc/passwd')", "open越界调用")
+        assert "文件访问被拒绝" in result or "PermissionError" in result
 
     @pytest.mark.asyncio
     async def test_dunder_escape_blocked(self, executor):

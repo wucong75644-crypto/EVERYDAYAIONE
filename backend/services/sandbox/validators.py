@@ -22,7 +22,9 @@ _BLOCKED_MODULES = frozenset({
 # 禁止调用的函数名
 _BLOCKED_CALLS = frozenset({
     "eval", "exec", "compile", "execfile",
-    "open", "input", "breakpoint",
+    "input", "breakpoint",
+    # open 已从黑名单移除 — 运行时注入 workspace-scoped open（_build_globals），
+    # 相对路径自动解析到用户 workspace，绝对路径检查边界，对标 OpenAI Code Interpreter
     "__import__", "getattr", "setattr", "delattr",
     "globals", "locals", "vars", "dir",
     "exit", "quit",

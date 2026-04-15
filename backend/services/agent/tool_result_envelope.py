@@ -155,7 +155,7 @@ def wrap(
         return result
 
     # 已经分流过的结果不再处理（防重入）
-    if STAGED_MARKER in result and "read_file" in result:
+    if STAGED_MARKER in result and "STAGING_DIR" in result:
         return result
 
     # 确定预算
