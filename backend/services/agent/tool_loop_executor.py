@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any, Dict, List, Tuple
 
 from loguru import logger
@@ -24,6 +25,12 @@ from services.agent.loop_types import (
     HookContext, LoopConfig, LoopResult, LoopStrategy,
 )
 from services.agent.tool_result_cache import ToolResultCache
+
+# [FILE] 标记正则：沙盒 code_execute 输出的文件引用
+# 格式：[FILE]{url}|{filename}|{mime_type}|{size}[/FILE]
+_FILE_RE = re.compile(
+    r"\[FILE\](?P<url>[^|]+)\|(?P<name>[^|]+)\|(?P<mime>[^|]+)\|(?P<size>\d+)\[/FILE\]"
+)
 
 
 class ToolLoopExecutor:
@@ -93,6 +100,7 @@ class ToolLoopExecutor:
         empty_turns = 0
         recent_calls: List[str] = []
         context_recovery_used = False
+        self._collected_files: List[Dict[str, Any]] = []
 
         for turn in range(self.config.max_turns):
             hook_ctx.turn = turn + 1
@@ -206,6 +214,7 @@ class ToolLoopExecutor:
             turns=min(turn + 1, self.config.max_turns),
             is_llm_synthesis=is_llm_synthesis,
             exit_via_ask_user=exit_via_ask_user,
+            collected_files=self._collected_files,
         )
 
     def _try_recover_from_context_error(
@@ -529,6 +538,20 @@ class ToolLoopExecutor:
                 )
             )
 
+            # 提取 [FILE] 标记到独立通道（不经过 LLM，防止被改写）
+            if result and "[FILE]" in result:
+                for m in _FILE_RE.finditer(result):
+                    self._collected_files.append({
+                        "url": m.group("url"),
+                        "name": m.group("name"),
+                        "mime_type": m.group("mime"),
+                        "size": int(m.group("size")),
+                    })
+                # 替换为友好文本给 LLM 看
+                result = _FILE_RE.sub(
+                    lambda m: f"📎 文件: {m.group('name')}", result,
+                )
+
             # 截断防爆
             from services.agent.tool_result_envelope import wrap_for_erp_agent
             is_truncated = len(result) > 3000 if result else False
@@ -546,6 +569,26 @@ class ToolLoopExecutor:
                     audit_status, elapsed_ms,
                     is_cached, is_truncated, tc["id"],
                 )
+
+            # ── 打断检查点：用户在工具执行期间发了新消息 ──
+            if hook_ctx.task_id:
+                from services.websocket_manager import ws_manager
+                _steer = ws_manager.check_steer(hook_ctx.task_id)
+                if _steer:
+                    logger.info(
+                        f"ToolLoop steer | task={hook_ctx.task_id} | "
+                        f"msg={_steer[:50]}"
+                    )
+                    # 跳过剩余工具，注入用户消息
+                    remaining = completed[completed.index(tc) + 1:]
+                    for r_tc in remaining:
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": r_tc["id"],
+                            "content": "⚠ 用户发送了新消息，跳过此工具调用。",
+                        })
+                    messages.append({"role": "user", "content": _steer})
+                    break
 
             # 自动扩展：模型调了隐藏工具 → 从全量列表动态注入
             if self.strategy.enable_tool_expansion:

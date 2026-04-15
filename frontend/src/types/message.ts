@@ -104,6 +104,12 @@ export interface Message {
   updated_at?: string;
   client_request_id?: string;
   is_error?: boolean;
+  /** AI 主动沟通：消息交互类型 */
+  interaction_type?: 'response' | 'question';
+  /** AI 主动沟通：pending_interaction ID（恢复时用） */
+  interaction_id?: string;
+  /** AI 主动沟通：快捷选项（前端渲染为可点击按钮） */
+  interaction_options?: string[];
 }
 
 // ============================================================

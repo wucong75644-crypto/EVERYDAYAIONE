@@ -73,6 +73,9 @@ class LoopResult:
     turns: int
     is_llm_synthesis: bool          # True = LLM 合成的结论；False = 走兜底
     exit_via_ask_user: bool = False  # 是否通过 ask_user 退出
+    collected_files: List[Dict[str, Any]] = field(default_factory=list)
+    # 工具循环中提取的 [FILE] 标记，独立通道透传，不经过 LLM
+    # 每项: {"url": str, "name": str, "mime_type": str, "size": int}
 
 
 # ============================================================

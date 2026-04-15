@@ -113,6 +113,17 @@ class ChatToolMixin:
             self._last_erp_display_text = _erp_display
             self._last_erp_display_files = getattr(executor, "_erp_display_files", [])
 
+        # ERP Agent ask_user 冒泡：透传到 handler 级别供冻结逻辑检测
+        _erp_ask = getattr(executor, "_ask_user_pending", None)
+        if _erp_ask and not getattr(self, "_ask_user_pending", None):
+            # 用 erp_agent 工具调用的 tool_call_id（主循环冻结时需要）
+            erp_tc = next(
+                (tc for tc, _, _ in results if tc["name"] == "erp_agent"), None,
+            )
+            if erp_tc:
+                _erp_ask["tool_call_id"] = erp_tc["id"]
+            self._ask_user_pending = _erp_ask
+
         return results
 
     async def _execute_single_tool(
@@ -130,6 +141,20 @@ class ChatToolMixin:
 
         tool_name = tc["name"]
         tool_call_id = tc["id"]
+
+        # ask_user 短路：提取追问信息，标记到 handler 级别供冻结逻辑使用
+        if tool_name == "ask_user":
+            try:
+                args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+            except json.JSONDecodeError:
+                args = {}
+            self._ask_user_pending = {
+                "message": args.get("message", "请补充更多信息"),
+                "reason": args.get("reason", "need_info"),
+                "tool_call_id": tool_call_id,
+            }
+            return (tc, "OK", False)
+
         safety = get_safety_level(tool_name)
 
         # dangerous 级别：需要用户确认

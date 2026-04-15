@@ -40,6 +40,7 @@ from config.erp_tools import build_erp_tools  # 已含 build_local_tools
 from config.crawler_tools import build_crawler_tools
 from config.code_tools import build_code_tools
 from config.file_tools import build_file_tools
+from config.phase_tools import _build_ask_user_tool
 
 # ============================================================
 # 工具并发安全标记
@@ -139,6 +140,18 @@ TOOL_SYSTEM_PROMPT = """## 工具使用规则
 
 ### 模糊请求
 选最可能的理解，说明假设，执行后在结尾提供替代选项。不要连问多个问题，最多问 1 个关键澄清。
+
+### 主动沟通（ask_user 工具）
+当以下情况出现时，必须调用 ask_user 工具向用户确认，禁止猜测或使用默认值：
+1. 查询缺少关键参数（时间范围、具体店铺、商品等）且有多种合理默认值
+2. 工具返回多条相似结果无法区分（需要用户明确选择）
+3. 操作有风险或不可逆（删除、修改等需要用户确认）
+4. 用户需求有歧义，不同理解会导致完全不同的结果
+
+调用 ask_user 时的要求：
+- 列出你已知的信息，说明缺什么
+- 给出 2-3 个选项引导用户选择（写在 message 参数中）
+- 用简洁的语言，不要长篇大论
 
 ### 禁止行为（CRITICAL）
 - NEVER 不调工具就回答业务数据问题——必须调 erp_agent 查数据再回答
@@ -329,6 +342,9 @@ def get_chat_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
     # 通用工具（搜索、知识库、图片、视频 — 始终加载）
     tools.extend(_build_common_tools())
 
+    # AI 主动沟通工具（信息不足时追问用户）
+    tools.append(_build_ask_user_tool())
+
     return tools
 
 
@@ -359,6 +375,8 @@ _CORE_TOOLS: Set[str] = {
     "file_list",                # 目录列表
     "file_search",              # 文件搜索
     "file_info",                # 文件信息
+    # 主动沟通
+    "ask_user",                 # 信息不足时追问用户
 }
 
 

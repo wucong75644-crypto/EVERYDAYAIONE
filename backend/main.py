@@ -298,6 +298,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.debug(f"Staging cleanup skipped | error={e}")
 
+    # 清理过期的 pending_interaction（24h 过期）
+    try:
+        expired = db.table("pending_interaction") \
+            .update({"status": "expired"}) \
+            .eq("status", "pending") \
+            .lt("expired_at", "now()") \
+            .execute()
+        _expired_count = len(expired.data) if expired.data else 0
+        if _expired_count:
+            logger.info(f"Pending interaction cleanup | expired={_expired_count}")
+    except Exception as e:
+        logger.debug(f"Pending interaction cleanup skipped | error={e}")
+
     worker = BackgroundTaskWorker(db)
     worker_task = asyncio.create_task(worker.start())
     logger.info("BackgroundTaskWorker started")

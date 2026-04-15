@@ -577,6 +577,36 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       logger.info('ws:tool', 'confirm_request', { conversationId: conversation_id, tool: toolName, taskId: task_id });
     },
 
+    ask_user_request: (msg) => {
+      const { conversation_id, message_id } = msg;
+      const interactionId = msg.payload?.interaction_id as string | undefined;
+      const question = msg.payload?.question as string | undefined;
+      const options = msg.payload?.options as string[] | undefined;
+      if (!conversation_id) return;
+
+      const store = deps.getStore();
+
+      // 标记当前消息为追问类型（前端可据此渲染不同样式）
+      if (message_id) {
+        store.updateMessage(message_id, {
+          interaction_type: 'question',
+          interaction_id: interactionId,
+          interaction_options: options,
+        } as Partial<Message>);
+      }
+
+      // 快捷选项作为 suggestion chips 显示（复用现有组件）
+      if (options?.length) {
+        store.setSuggestions(conversation_id, options);
+      }
+
+      logger.info('ws:ask_user', 'ask_user_request', {
+        conversationId: conversation_id,
+        question: question?.slice(0, 50),
+        optionCount: options?.length ?? 0,
+      });
+    },
+
     error: (msg) => {
       const message = msg.message ?? msg.payload?.message;
       logger.error('ws:error', 'error received', undefined, { error: message });

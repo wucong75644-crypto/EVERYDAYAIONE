@@ -285,6 +285,21 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     useMessageStore.getState().setToolConfirmRequest(null);
   }, [ws]);
 
+  // 用户打断（steer）— InputArea 通过 CustomEvent 触发
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { taskId, conversationId, message } = (e as CustomEvent).detail;
+      if (!taskId || !message) return;
+      ws.send({
+        type: 'user_steer' as const,
+        payload: { task_id: taskId, conversation_id: conversationId, message },
+      });
+      logger.info('ws:steer', 'user_steer sent', { taskId, msgLen: message.length });
+    };
+    window.addEventListener('chat:user-steer', handler);
+    return () => window.removeEventListener('chat:user-steer', handler);
+  }, [ws]);
+
   const contextValue: WebSocketContextValue = {
     isConnected: ws.isConnected,
     isConnecting: ws.isConnecting,

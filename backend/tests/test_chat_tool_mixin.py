@@ -358,3 +358,83 @@ class TestAccumulateToolCallDelta:
         assert acc[0]["id"] == "tc1"
         assert acc[0]["name"] == "test"
         assert acc[0]["arguments"] == "args"
+
+
+# ============================================================
+# ask_user 短路（_execute_single_tool）
+# ============================================================
+
+
+class TestAskUserShortCircuit:
+    """ask_user 工具短路：不经过 executor，直接返回 OK + 暂存追问信息"""
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_ask_user_returns_ok(self, mock_ws):
+        """ask_user 工具返回 (tc, 'OK', False)"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mock_ws.send_to_task_or_user = AsyncMock()
+        executor = AsyncMock()
+
+        tc = {
+            "name": "ask_user",
+            "id": "tc_ask",
+            "arguments": '{"message": "请选择店铺", "reason": "need_info"}',
+        }
+        result = await ChatToolMixin._execute_single_tool(
+            mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
+        )
+        tc_out, text, is_error = result
+        assert text == "OK"
+        assert is_error is False
+        # executor 不应被调用
+        executor.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_ask_user_stores_pending_info(self, mock_ws):
+        """ask_user 工具将追问信息暂存到 _ask_user_pending"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mixin._ask_user_pending = None
+        mock_ws.send_to_task_or_user = AsyncMock()
+        executor = AsyncMock()
+
+        tc = {
+            "name": "ask_user",
+            "id": "tc_ask",
+            "arguments": '{"message": "选时间范围", "reason": "ambiguous"}',
+        }
+        await ChatToolMixin._execute_single_tool(
+            mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
+        )
+
+        assert mixin._ask_user_pending is not None
+        assert mixin._ask_user_pending["message"] == "选时间范围"
+        assert mixin._ask_user_pending["reason"] == "ambiguous"
+        assert mixin._ask_user_pending["tool_call_id"] == "tc_ask"
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_ask_user_bad_json_uses_default(self, mock_ws):
+        """ask_user 参数 JSON 解析失败时使用默认消息"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mixin._ask_user_pending = None
+        mock_ws.send_to_task_or_user = AsyncMock()
+        executor = AsyncMock()
+
+        tc = {
+            "name": "ask_user",
+            "id": "tc_ask",
+            "arguments": "invalid json",
+        }
+        await ChatToolMixin._execute_single_tool(
+            mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
+        )
+
+        assert mixin._ask_user_pending["message"] == "请补充更多信息"

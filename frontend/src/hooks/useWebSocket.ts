@@ -76,7 +76,9 @@ export type WSMessageType =
   | 'content_block_add'
   | 'suggestions_ready'
   | 'thinking_chunk'
-  | 'image_partial_update';
+  | 'image_partial_update'
+  // AI 主动沟通
+  | 'ask_user_request';
 
 export interface WSMessage {
   type: WSMessageType;
