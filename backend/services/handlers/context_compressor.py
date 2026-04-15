@@ -63,6 +63,61 @@ def deduplicate_system_prompts(messages: List[Dict[str, Any]]) -> None:
             messages.pop(idx)
 
 
+def _find_reverse_accumulation_cut(
+    messages: List[Dict[str, Any]],
+    max_tokens: int,
+) -> int:
+    """反向累积 token 找最佳切点（对标 Claude calculateMessagesToKeepIndex）。
+
+    从 messages 末尾向前累积 token，返回第一条需要保留的消息 index。
+    切点之前的非 system 消息全部归档。
+    保证 assistant(tool_calls) 和紧跟的 tool 消息不被拆分。
+    """
+    if not messages:
+        return 0
+
+    # 从后往前累积
+    accumulated = 0
+    cut_point = len(messages)  # 默认保留全部
+    for i in range(len(messages) - 1, -1, -1):
+        msg_tokens = _msg_tokens(messages[i])
+        if accumulated + msg_tokens > max_tokens:
+            break
+        accumulated += msg_tokens
+        cut_point = i
+
+    # 调整切点：保证 tool_use/tool_result 配对不拆分
+    # 如果 cut_point 落在一组 tool 消息中间，向前扩展到 assistant(tool_calls)
+    cut_point = _adjust_cut_for_tool_pairs(messages, cut_point)
+
+    return cut_point
+
+
+def _adjust_cut_for_tool_pairs(
+    messages: List[Dict[str, Any]],
+    cut_point: int,
+) -> int:
+    """确保 cut_point 不会拆分 assistant(tool_calls) + tool 消息组。
+
+    如果 cut_point 的消息是 tool 角色，说明切到了一组工具调用中间，
+    需要向前回退到对应的 assistant(tool_calls) 消息（包含它）。
+    """
+    if cut_point >= len(messages):
+        return cut_point
+
+    # 如果切点是 tool 消息，向前找对应的 assistant(tool_calls)
+    if messages[cut_point].get("role") == "tool":
+        for j in range(cut_point - 1, -1, -1):
+            msg = messages[j]
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                return j
+            if msg.get("role") != "tool":
+                # 没找到匹配的 assistant，保持原切点
+                break
+
+    return cut_point
+
+
 def enforce_budget(
     messages: List[Dict[str, Any]],
     max_tokens: int,
@@ -70,28 +125,35 @@ def enforce_budget(
     """超预算时逐步降级（原地修改）
 
     策略1: 去重 system prompts
-    策略2: 从最旧的历史消息开始移除
+    策略2: 反向累积 token 找最佳切点，切点之前的消息归档
+           （对标 Claude reverse token accumulation）
     """
     # 策略1
     deduplicate_system_prompts(messages)
     if estimate_tokens(messages) <= max_tokens:
         return
 
-    # 策略2: 移除最旧的非 system 消息（跳过 system 和最后几条）
-    # 保护最后 6 条消息（当前轮的 user + assistant + tool）
-    protected_tail = 6
-    removable = []
-    for i, msg in enumerate(messages):
-        if i >= len(messages) - protected_tail:
-            break
-        if msg.get("role") in ("user", "assistant", "tool"):
-            removable.append(i)
+    # 策略2: 反向累积找切点
+    cut_point = _find_reverse_accumulation_cut(messages, max_tokens)
 
-    # 从最旧的开始移除
-    for idx in removable:
-        if estimate_tokens(messages) <= max_tokens:
-            break
-        messages[idx]["content"] = "[已归档]"
+    # 切点之前的非 system 消息归档
+    compacted = 0
+    for i in range(cut_point):
+        msg = messages[i]
+        if msg.get("role") == "system":
+            continue  # system 消息始终保留
+        if _is_archived(msg):
+            continue
+        messages[i]["content"] = "[已归档]"
+        compacted += 1
+
+    if compacted:
+        logger.info(
+            f"Budget enforced (reverse accumulation) | "
+            f"cut_point={cut_point}/{len(messages)} | "
+            f"compacted={compacted} | "
+            f"tokens_after={estimate_tokens(messages)} | max={max_tokens}"
+        )
 
     if estimate_tokens(messages) > max_tokens:
         logger.warning(

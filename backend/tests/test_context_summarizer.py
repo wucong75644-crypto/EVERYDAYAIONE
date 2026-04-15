@@ -24,10 +24,12 @@ class TestValidateSummary:
         from services.context_summarizer import _validate_summary
 
         summary = (
+            "### 用户目标\n- 查询库存\n\n"
             "### 话题线索\n- 库存查询\n\n"
             "### 关键实体\n- 订单号：123456789\n\n"
-            "### 已确认结论\n- 库存充足\n\n"
-            "### 待处理事项\n- 无"
+            "### 已完成工作\n- 库存充足\n\n"
+            "### 当前工作与待处理\n- 无\n\n"
+            "### 关键决策与纠正\n- 无"
         )
         msgs = [{"content": "订单号 123456789 库存查询"}]
         result = _validate_summary(summary, msgs)
@@ -41,8 +43,8 @@ class TestValidateSummary:
         msgs = [{"content": "短消息"}]
         result = _validate_summary(summary, msgs)
         assert "摘要不完整" in result
-        assert "已确认结论" in result
-        assert "待处理事项" in result
+        assert "用户目标" in result
+        assert "已完成工作" in result
 
     def test_missing_numbers_appended(self):
         """源消息中的长数字丢失时自动补充"""
@@ -51,8 +53,9 @@ class TestValidateSummary:
         summary = (
             "### 话题线索\n- 查订单\n\n"
             "### 关键实体\n- 无\n\n"
-            "### 已确认结论\n- 无\n\n"
-            "### 待处理事项\n- 无"
+            "### 已完成工作\n- 无\n\n"
+            "### 当前工作与待处理\n- 无\n\n"
+            "### 关键决策与纠正\n- 无"
         )
         msgs = [{"content": "订单号 1234567890 和 9876543210"}]
         result = _validate_summary(summary, msgs)
@@ -67,8 +70,9 @@ class TestValidateSummary:
         summary = (
             "### 话题线索\n- 查订单\n\n"
             "### 关键实体\n- 订单号：1234567890\n\n"
-            "### 已确认结论\n- 无\n\n"
-            "### 待处理事项\n- 无"
+            "### 已完成工作\n- 无\n\n"
+            "### 当前工作与待处理\n- 无\n\n"
+            "### 关键决策与纠正\n- 无"
         )
         msgs = [{"content": "订单号 1234567890"}]
         result = _validate_summary(summary, msgs)
@@ -78,7 +82,7 @@ class TestValidateSummary:
         """短数字（<6位）不检查"""
         from services.context_summarizer import _validate_summary
 
-        summary = "### 话题线索\n- x\n\n### 关键实体\n- 无\n\n### 已确认结论\n- 无\n\n### 待处理事项\n- 无"
+        summary = "### 用户目标\n- x\n\n### 话题线索\n- x\n\n### 关键实体\n- 无\n\n### 已完成工作\n- 无\n\n### 当前工作与待处理\n- 无\n\n### 关键决策与纠正\n- 无"
         msgs = [{"content": "数量 123 价格 45"}]
         result = _validate_summary(summary, msgs)
         assert "遗漏实体补充" not in result
@@ -87,11 +91,112 @@ class TestValidateSummary:
         """多模态 content(list) 不参与数字检查"""
         from services.context_summarizer import _validate_summary
 
-        summary = "### 话题线索\n- x\n\n### 关键实体\n- 无\n\n### 已确认结论\n- 无\n\n### 待处理事项\n- 无"
+        summary = "### 用户目标\n- x\n\n### 话题线索\n- x\n\n### 关键实体\n- 无\n\n### 已完成工作\n- 无\n\n### 当前工作与待处理\n- 无\n\n### 关键决策与纠正\n- 无"
         msgs = [{"content": [{"type": "text", "text": "1234567890"}]}]
         result = _validate_summary(summary, msgs)
         # list content 被跳过，不检查数字
         assert "遗漏实体补充" not in result
+
+
+# ============ Test update_summary (增量更新) ============
+
+
+class TestUpdateSummary:
+    """update_summary：在旧摘要基础上增量更新"""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_empty_inputs(self):
+        from services.context_summarizer import update_summary
+        assert await update_summary("", []) is None
+        assert await update_summary("旧摘要", []) is None
+        assert await update_summary("", [{"role": "user", "content": "hi"}]) is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_without_api_key(self):
+        from services.context_summarizer import update_summary
+        with patch("services.context_summarizer.settings") as mock_settings:
+            mock_settings.dashscope_api_key = None
+            result = await update_summary("旧摘要", [{"role": "user", "content": "新消息"}])
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_incremental_success(self):
+        """主模型成功时返回更新后的摘要"""
+        from services.context_summarizer import update_summary
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": (
+                "### 用户目标\n- 查库存\n\n### 话题线索\n- 库存查询\n\n"
+                "### 关键实体\n- 无\n\n### 已完成工作\n- 已查到库存\n\n"
+                "### 当前工作与待处理\n- 无\n\n### 关键决策与纠正\n- 无"
+            )}}]
+        }
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.post.return_value = mock_response
+
+        with patch("services.context_summarizer._ds_client.get", return_value=mock_client), \
+             patch("services.context_summarizer.settings") as s:
+            s.dashscope_api_key = "key"
+            s.context_summary_model = "qwen-turbo"
+            s.context_summary_fallback_model = "qwen-plus"
+            s.context_summary_max_chars = 2000
+            result = await update_summary("旧摘要内容", [{"role": "user", "content": "新消息"}])
+
+        assert result is not None
+        assert "用户目标" in result
+        mock_client.post.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_fallback_on_primary_failure(self):
+        """主模型失败时降级到备用模型"""
+        from services.context_summarizer import update_summary
+        import httpx
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": (
+                "### 用户目标\n- x\n\n### 话题线索\n- x\n\n### 关键实体\n- 无\n\n"
+                "### 已完成工作\n- 无\n\n### 当前工作与待处理\n- 无\n\n### 关键决策与纠正\n- 无"
+            )}}]
+        }
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.post.side_effect = [httpx.TimeoutException("timeout"), mock_response]
+
+        with patch("services.context_summarizer._ds_client.get", return_value=mock_client), \
+             patch("services.context_summarizer.settings") as s:
+            s.dashscope_api_key = "key"
+            s.context_summary_model = "qwen-turbo"
+            s.context_summary_fallback_model = "qwen-plus"
+            s.context_summary_max_chars = 2000
+            result = await update_summary("旧摘要", [{"role": "user", "content": "msg"}])
+
+        assert result is not None
+        assert mock_client.post.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_all_fail_returns_none(self):
+        """所有模型失败时返回 None（调用方退化为全量生成）"""
+        from services.context_summarizer import update_summary
+        import httpx
+
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.post.side_effect = httpx.TimeoutException("timeout")
+
+        with patch("services.context_summarizer._ds_client.get", return_value=mock_client), \
+             patch("services.context_summarizer.settings") as s:
+            s.dashscope_api_key = "key"
+            s.context_summary_model = "qwen-turbo"
+            s.context_summary_fallback_model = "qwen-plus"
+            s.context_summary_max_chars = 2000
+            result = await update_summary("旧摘要", [{"role": "user", "content": "msg"}])
+
+        assert result is None
 
 
 # ============ Fixtures ============
@@ -539,6 +644,105 @@ class TestUpdateSummaryIfNeeded:
         mock_summarize.assert_called_once()
         summarized_msgs = mock_summarize.call_args.args[0]
         assert len(summarized_msgs) == 15
+
+    @pytest.mark.asyncio
+    async def test_incremental_update_path(self, chat_handler):
+        """有旧摘要 + 足够新消息时走增量更新路径"""
+        messages = []
+        for i in range(35):
+            role = "user" if i % 2 == 0 else "assistant"
+            messages.append({
+                "role": role,
+                "content": f"消息{i}",
+                "status": "completed",
+            })
+
+        # summary_message_count=25 表示已有摘要覆盖前25条
+        mock_db, conv_table = self._mock_db_for_update(
+            message_count=35,
+            summary_message_count=25,
+            messages_data=messages,
+        )
+        # _mock_db_for_update 的 conversations 表需要额外支持查 context_summary
+        # 增量路径会查一次 context_summary
+        original_execute = conv_table.execute
+        call_count = [0]
+
+        def conv_execute_side_effect():
+            call_count[0] += 1
+            if call_count[0] <= 2:
+                # 前两次是 select（message_count + context_summary）
+                return MagicMock(data={
+                    "message_count": 35,
+                    "summary_message_count": 25,
+                    "context_summary": "旧摘要内容",
+                })
+            return original_execute()
+
+        conv_table.execute.side_effect = conv_execute_side_effect
+
+        chat_handler.db = mock_db
+
+        with patch(
+            "services.context_summarizer.update_summary",
+            new_callable=AsyncMock,
+            return_value="增量更新后的摘要",
+        ) as mock_update, patch(
+            "services.context_summarizer.summarize_messages",
+            new_callable=AsyncMock,
+            return_value="全量摘要",
+        ) as mock_full:
+            await chat_handler._update_summary_if_needed("conv1")
+
+        # 增量路径成功，不应调用全量
+        mock_update.assert_called_once()
+        mock_full.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_incremental_fails_falls_back_to_full(self, chat_handler):
+        """增量更新失败时退化为全量生成"""
+        messages = []
+        for i in range(35):
+            role = "user" if i % 2 == 0 else "assistant"
+            messages.append({
+                "role": role,
+                "content": f"消息{i}",
+                "status": "completed",
+            })
+
+        mock_db, conv_table = self._mock_db_for_update(
+            message_count=35,
+            summary_message_count=25,
+            messages_data=messages,
+        )
+        call_count = [0]
+
+        def conv_execute_side_effect():
+            call_count[0] += 1
+            if call_count[0] <= 2:
+                return MagicMock(data={
+                    "message_count": 35,
+                    "summary_message_count": 25,
+                    "context_summary": "旧摘要",
+                })
+            return MagicMock(data=[])
+
+        conv_table.execute.side_effect = conv_execute_side_effect
+        chat_handler.db = mock_db
+
+        with patch(
+            "services.context_summarizer.update_summary",
+            new_callable=AsyncMock,
+            return_value=None,  # 增量失败
+        ) as mock_update, patch(
+            "services.context_summarizer.summarize_messages",
+            new_callable=AsyncMock,
+            return_value="全量摘要兜底",
+        ) as mock_full:
+            await chat_handler._update_summary_if_needed("conv1")
+
+        mock_update.assert_called_once()
+        mock_full.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_skips_when_summarizer_fails(self, chat_handler):
