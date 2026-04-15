@@ -503,12 +503,13 @@ class ChatContextMixin:
                 return None
 
             # 优先使用预取值（HTTP 阶段 get_conversation 已查过同一行）
+            summary_updated = None
             if prefetched is not None:
                 summary = prefetched
             else:
                 result = (
                     self.db.table("conversations")
-                    .select("context_summary")
+                    .select("context_summary, updated_at")
                     .eq("id", conversation_id)
                     .single()
                     .execute()
@@ -518,14 +519,23 @@ class ChatContextMixin:
                     return None
 
                 summary = result.data.get("context_summary")
+                summary_updated = result.data.get("updated_at")
             if not summary:
                 return None
+
+            # 标注摘要生成时间，防止模型误将旧摘要当最新数据
+            from utils.time_context import _parse_iso_to_cn
+            ts_label = ""
+            if summary_updated:
+                ts = _parse_iso_to_cn(summary_updated)
+                if ts:
+                    ts_label = f"（生成于 {ts.strftime('%m-%d %H:%M')}，可能不是最新数据）"
 
             logger.debug(
                 f"Context summary injected | "
                 f"conversation_id={conversation_id} | len={len(summary)}"
             )
-            return f"以下是之前对话的摘要（供参考）：\n{summary}"
+            return f"以下是之前对话的摘要{ts_label}：\n{summary}"
 
         except Exception as e:
             logger.warning(
