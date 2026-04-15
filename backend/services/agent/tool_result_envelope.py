@@ -220,12 +220,13 @@ def _stage_and_summarize(tool_name: str, result: str, budget: int) -> str:
 
     # 落盘 staging 文件
     rel_path = _persist_to_staging(staging_dir, tool_name, result)
+    filename = rel_path.split("/")[-1]
     # 生成摘要（元数据头 + 首行 + 数据条数 + 前几行预览）
     summary = _build_summary(tool_name, result, budget)
-    # 路径提示（沙盒可通过 read_file 读取）
+    # 路径提示（用 STAGING_DIR 绝对路径变量，沙盒内 open/Path/read_file 均可用）
     signal = (
-        f"\n完整数据（{len(result)} 字符）{STAGED_MARKER} {rel_path}]，"
-        f'可用 code_execute 中 read_file("{rel_path}") 读取。'
+        f"\n完整数据（{len(result)} 字符）{STAGED_MARKER} {filename}]，"
+        f'可用 code_execute 中 data = open(STAGING_DIR + "/{filename}").read() 读取。'
     )
     return summary + signal
 

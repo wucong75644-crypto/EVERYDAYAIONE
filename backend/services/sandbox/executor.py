@@ -261,6 +261,27 @@ class SandboxExecutor:
             _Path(self._output_dir).mkdir(parents=True, exist_ok=True)
             g["OUTPUT_DIR"] = self._output_dir
 
+        # workspace-scoped open — 相对路径自动解析到 workspace，绝对路径检查边界
+        # 对标 OpenAI Code Interpreter：不限制函数，限制环境
+        import builtins as _builtins
+        import os as _os
+        _ws_dir = self._workspace_dir
+
+        def _scoped_open(path, mode="r", *args, **kwargs):
+            path_str = str(path)
+            if _ws_dir and not _os.path.isabs(path_str):
+                path_str = _os.path.join(_ws_dir, path_str)
+            resolved = _os.path.realpath(path_str)
+            if _ws_dir:
+                ws_real = _os.path.realpath(_ws_dir)
+                if not resolved.startswith(ws_real + _os.sep) and resolved != ws_real:
+                    raise PermissionError(
+                        f"文件访问被拒绝：{path} 不在工作目录内"
+                    )
+            return _builtins.open(resolved, mode, *args, **kwargs)
+
+        g["open"] = _scoped_open
+
         return g
 
     # ========================================
