@@ -554,10 +554,10 @@ class ChatContextMixin:
             if not settings.context_summary_enabled:
                 return
 
-            # 查询对话信息
+            # 查询对话信息（含已有摘要，一次查完）
             conv_result = (
                 self.db.table("conversations")
-                .select("message_count, summary_message_count")
+                .select("message_count, summary_message_count, context_summary")
                 .eq("id", conversation_id)
                 .single()
                 .execute()
@@ -568,6 +568,7 @@ class ChatContextMixin:
 
             message_count = conv_result.data.get("message_count", 0)
             summary_count = conv_result.data.get("summary_message_count", 0)
+            existing_summary: Optional[str] = conv_result.data.get("context_summary")
             context_limit = settings.chat_context_limit
 
             # 不需要摘要（≤20 条消息）
@@ -612,10 +613,34 @@ class ChatContextMixin:
             if not text_messages:
                 return
 
-            # 调用压缩服务
-            from services.context_summarizer import summarize_messages
+            # 增量路径：有旧摘要时只传新增消息（对标 Claude PARTIAL_COMPACT_PROMPT）
+            summary = None
+            if existing_summary and summary_count > 0:
+                from services.context_summarizer import update_summary
 
-            summary = await summarize_messages(text_messages)
+                # new_total = 新增消息数（所有角色），用作 msgs_to_summarize 尾部切片上界
+                # 偏大（含 tool/system）无害——LLM 增量 prompt 会自动去重
+                new_total = message_count - summary_count
+                if new_total > 0:
+                    new_slice = msgs_to_summarize[-new_total:] if new_total < len(msgs_to_summarize) else msgs_to_summarize
+                    new_text_messages = []
+                    for msg in new_slice:
+                        text = self._extract_text_from_content(msg.get("content"))
+                        if text:
+                            new_text_messages.append({"role": msg["role"], "content": text})
+                    if new_text_messages:
+                        summary = await update_summary(existing_summary, new_text_messages)
+                        if summary:
+                            logger.info(
+                                f"Context summary incremental update | "
+                                f"conversation_id={conversation_id} | "
+                                f"new_msgs={len(new_text_messages)}"
+                            )
+
+            # 全量降级：增量失败或无旧摘要
+            if not summary:
+                from services.context_summarizer import summarize_messages
+                summary = await summarize_messages(text_messages)
 
             if summary:
                 self.db.table("conversations").update({

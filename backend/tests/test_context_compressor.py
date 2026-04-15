@@ -101,8 +101,86 @@ class TestDeduplicateSystemPrompts:
 # ============================================================
 
 
+class TestFindReverseAccumulationCut:
+    """反向累积 token 切点计算"""
+
+    def test_empty_messages(self):
+        from services.handlers.context_compressor import _find_reverse_accumulation_cut
+        assert _find_reverse_accumulation_cut([], 1000) == 0
+
+    def test_all_fit_in_budget(self):
+        from services.handlers.context_compressor import _find_reverse_accumulation_cut
+        msgs = [{"role": "user", "content": "short"}]
+        cut = _find_reverse_accumulation_cut(msgs, max_tokens=10000)
+        assert cut == 0  # 全部保留
+
+    def test_cuts_oldest_when_over_budget(self):
+        from services.handlers.context_compressor import _find_reverse_accumulation_cut
+        msgs = [
+            {"role": "user", "content": "x" * 5000},      # ~2000 tokens
+            {"role": "assistant", "content": "y" * 5000},  # ~2000 tokens
+            {"role": "user", "content": "z" * 500},        # ~200 tokens
+        ]
+        cut = _find_reverse_accumulation_cut(msgs, max_tokens=1000)
+        # 预算只够最后一条，切点应在前面
+        assert cut >= 1
+
+    def test_respects_tool_pair_integrity(self):
+        """切点落在 tool 消息上时，向前回退到 assistant(tool_calls)"""
+        from services.handlers.context_compressor import _find_reverse_accumulation_cut
+        msgs = [
+            {"role": "user", "content": "x" * 5000},
+            {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "t"}}]},
+            {"role": "tool", "content": "result " + "x" * 3000},
+            {"role": "user", "content": "current"},
+        ]
+        cut = _find_reverse_accumulation_cut(msgs, max_tokens=500)
+        # 切点不应落在 tool 上（index 2），应回退到 assistant（index 1）或更前
+        if cut > 0:
+            assert msgs[cut].get("role") != "tool"
+
+
+class TestAdjustCutForToolPairs:
+    """tool_calls + tool 配对不拆分"""
+
+    def test_cut_on_tool_backs_up_to_assistant(self):
+        from services.handlers.context_compressor import _adjust_cut_for_tool_pairs
+        msgs = [
+            {"role": "user", "content": "query"},
+            {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "t"}}]},
+            {"role": "tool", "content": "result"},
+            {"role": "user", "content": "next"},
+        ]
+        # 切点在 tool(index=2) → 应回退到 assistant(index=1)
+        assert _adjust_cut_for_tool_pairs(msgs, 2) == 1
+
+    def test_cut_on_non_tool_unchanged(self):
+        from services.handlers.context_compressor import _adjust_cut_for_tool_pairs
+        msgs = [
+            {"role": "user", "content": "q1"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "q2"},
+        ]
+        assert _adjust_cut_for_tool_pairs(msgs, 2) == 2
+
+    def test_cut_beyond_length_unchanged(self):
+        from services.handlers.context_compressor import _adjust_cut_for_tool_pairs
+        msgs = [{"role": "user", "content": "hi"}]
+        assert _adjust_cut_for_tool_pairs(msgs, 5) == 5
+
+    def test_orphan_tool_no_matching_assistant(self):
+        """tool 消息前面没有 assistant(tool_calls)，保持原切点"""
+        from services.handlers.context_compressor import _adjust_cut_for_tool_pairs
+        msgs = [
+            {"role": "user", "content": "q"},
+            {"role": "tool", "content": "orphan result"},
+            {"role": "user", "content": "next"},
+        ]
+        assert _adjust_cut_for_tool_pairs(msgs, 1) == 1
+
+
 class TestEnforceBudget:
-    """token 预算兜底"""
+    """token 预算兜底（反向累积策略）"""
 
     def test_under_budget_unchanged(self):
         messages = [{"role": "user", "content": "hi"}]
@@ -115,11 +193,8 @@ class TestEnforceBudget:
             {"role": "assistant", "content": "y" * 25000},
             {"role": "user", "content": "z" * 25000},
             {"role": "assistant", "content": "w" * 25000},
-            # 后面6条是 protected_tail
             {"role": "user", "content": "q1"},
             {"role": "assistant", "content": "a1"},
-            {"role": "user", "content": "q2"},
-            {"role": "assistant", "content": "a2"},
             {"role": "user", "content": "current"},
             {"role": "assistant", "content": "response"},
         ]
@@ -127,14 +202,37 @@ class TestEnforceBudget:
         archived = [m for m in messages if m["content"] == "[已归档]"]
         assert len(archived) > 0
 
+    def test_system_messages_never_archived(self):
+        """system 消息始终保留，不被归档"""
+        messages = [
+            {"role": "system", "content": "你是AI助手"},
+            {"role": "user", "content": "x" * 50000},
+            {"role": "user", "content": "current"},
+        ]
+        enforce_budget(messages, max_tokens=100)
+        assert messages[0]["content"] == "你是AI助手"
+
     def test_protects_tail_messages(self):
         messages = [
             {"role": "user", "content": "x" * 10000},
             {"role": "user", "content": "current question"},
         ]
         enforce_budget(messages, max_tokens=100)
-        # 最后几条不应被归档（protected_tail）
         assert messages[-1]["content"] == "current question"
+
+    def test_tool_pair_not_split(self):
+        """enforce_budget 不会拆分 assistant(tool_calls) + tool 配对"""
+        messages = [
+            {"role": "user", "content": "x" * 20000},
+            {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "t"}}]},
+            {"role": "tool", "content": "result"},
+            {"role": "user", "content": "current " + "y" * 5000},
+        ]
+        enforce_budget(messages, max_tokens=3000)
+        # assistant 和 tool 应该同时被归档或同时保留
+        ast_archived = messages[1]["content"] == "[已归档]"
+        tool_archived = messages[2]["content"] == "[已归档]"
+        assert ast_archived == tool_archived
 
 
 # ============================================================
