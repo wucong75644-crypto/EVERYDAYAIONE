@@ -3,7 +3,7 @@
 
 提供积分管理功能：
 1. 原子扣除（deduct_atomic）：简单场景，直接扣除
-2. 锁定模式（credit_lock）：复杂场景，先锁定再确认/退回
+2. 锁定模式（credit_lock）：复杂场景，先锁定再确认/退回，支持按量计费
 """
 from typing import Optional
 from contextlib import asynccontextmanager
@@ -15,6 +15,50 @@ from redis.asyncio import Redis
 from loguru import logger
 
 from core.exceptions import InsufficientCreditsError, AppException
+
+
+class CreditLockHandle:
+    """积分锁定句柄 — 由 credit_lock 上下文管理器 yield
+
+    调用方可通过 set_actual(n) 设置实际消耗量，
+    退出时只确认 actual_amount，差额自动退回。
+
+    若未调用 set_actual，则按锁定全额确认（向后兼容）。
+    """
+
+    def __init__(self, transaction_id: str, locked_amount: int) -> None:
+        self.transaction_id = transaction_id
+        self.locked_amount = locked_amount
+        self._actual_amount: Optional[int] = None
+        self._refund_succeeded: Optional[bool] = None  # None=无需退回, True/False
+
+    def set_actual(self, amount: int) -> None:
+        """设置实际消耗积分（必须 >= 1 且 <= locked_amount）"""
+        self._actual_amount = max(1, min(amount, self.locked_amount))
+
+    @property
+    def actual_amount(self) -> int:
+        """实际扣费量：未设置则等于锁定量"""
+        if self._actual_amount is not None:
+            return self._actual_amount
+        return self.locked_amount
+
+    @property
+    def refund_amount(self) -> int:
+        """需退回的差额"""
+        return self.locked_amount - self.actual_amount
+
+    @property
+    def final_credits_used(self) -> int:
+        """最终实际扣费量（考虑退回是否成功）
+
+        退回成功 → actual_amount
+        退回失败 → locked_amount（用户实际被扣了全额）
+        无需退回 → actual_amount == locked_amount
+        """
+        if self._refund_succeeded is False:
+            return self.locked_amount
+        return self.actual_amount
 
 
 class CreditService:
@@ -274,6 +318,57 @@ class CreditService:
                 status_code=500
             )
 
+    async def _partial_refund(
+        self,
+        transaction_id: str,
+        user_id: str,
+        refund_amount: int,
+        org_id: str | None = None,
+    ) -> bool:
+        """退回部分锁定积分（按量计费差额退回）
+
+        与 refund_credits 不同：事务已 confirmed，这里只退回差额到用户余额。
+        使用 partial_refund_credits RPC 保证原子性（余额+历史在同一事务）。
+        迁移：079_partial_refund_credits.sql
+
+        Returns:
+            True=退回成功, False=失败（调用方据此决定 credits_used 记录值）
+        """
+        try:
+            result = self.db.rpc(
+                'partial_refund_credits',
+                {
+                    'p_user_id': user_id,
+                    'p_refund_amount': refund_amount,
+                    'p_description': f"按量计费差额退回 (tx={transaction_id})",
+                    'p_org_id': org_id,
+                }
+            ).execute()
+            data = result.data
+            if data and data.get('refunded'):
+                logger.info(
+                    "部分退回成功",
+                    transaction_id=transaction_id,
+                    refund_amount=refund_amount,
+                    new_balance=data.get('new_balance'),
+                )
+                return True
+            reason = data.get('reason', 'unknown') if data else 'no_response'
+            logger.warning(
+                "部分退回跳过",
+                transaction_id=transaction_id,
+                reason=reason,
+            )
+            return False
+        except Exception as e:
+            logger.error(
+                "部分退回失败",
+                transaction_id=transaction_id,
+                refund_amount=refund_amount,
+                error=str(e),
+            )
+            return False
+
     @asynccontextmanager
     async def credit_lock(
         self,
@@ -284,24 +379,40 @@ class CreditService:
         org_id: str | None = None,
     ):
         """
-        积分锁定上下文管理器
+        积分锁定上下文管理器（支持按量计费）
 
-        正常退出：自动确认扣除
-        异常退出：自动退回积分
+        正常退出：
+          - 若调用了 handle.set_actual(n)，只确认 n 积分，退回差额
+          - 若未调用，全额确认（向后兼容）
+        异常退出：自动退回全部积分
 
         Usage:
-            async with credit_service.credit_lock(task_id, user_id, 10) as tx_id:
+            async with credit_service.credit_lock(task_id, user_id, 10) as handle:
                 result = await do_something()
-                # 成功则自动确认
-            # 异常则自动退回
+                handle.set_actual(3)  # 实际只消耗 3 积分
+            # 退出时自动确认 3，退回 7
         """
         transaction_id = await self.lock_credits(task_id, user_id, amount, reason, org_id=org_id)
+        handle = CreditLockHandle(transaction_id, amount)
         try:
-            yield transaction_id
-            # 正常退出，确认扣除
+            yield handle
+            # 正常退出，按实际量确认
             await self.confirm_deduct(transaction_id)
+            if handle.refund_amount > 0:
+                handle._refund_succeeded = await self._partial_refund(
+                    transaction_id, user_id, handle.refund_amount,
+                    org_id=org_id,
+                )
+                logger.info(
+                    "按量计费退回差额",
+                    transaction_id=transaction_id,
+                    locked=amount,
+                    actual=handle.actual_amount,
+                    refunded=handle.refund_amount,
+                    refund_ok=handle._refund_succeeded,
+                )
         except Exception as e:
-            # 异常退出，退回积分
+            # 异常退出，退回全部积分
             logger.error(
                 "任务失败，退回积分",
                 transaction_id=transaction_id,

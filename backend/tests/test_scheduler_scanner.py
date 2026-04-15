@@ -310,15 +310,17 @@ class TestTaskExecutor:
 
     @pytest.mark.asyncio
     async def test_success_flow(self):
-        """成功执行：积分锁 → Agent → 推送 → 更新"""
+        """成功执行：积分锁 → Agent → 按量计费 → 推送 → 更新"""
         db = self._make_db()
         executor = ScheduledTaskExecutor(db)
 
-        # mock credit_lock
+        # mock credit_lock — yield CreditLockHandle
         from contextlib import asynccontextmanager
+        from services.credit_service import CreditLockHandle
+
         @asynccontextmanager
         async def fake_lock(**kwargs):
-            yield "txn_123"
+            yield CreditLockHandle("txn_123", kwargs.get("amount", 10))
 
         # mock ScheduledTaskAgent
         from services.agent.scheduled_task_agent import ScheduledTaskResult
@@ -347,7 +349,11 @@ class TestTaskExecutor:
                 # push_dispatcher Phase 5 才实现，这里 mock 整个 _push_result
                 executor._push_result = AsyncMock(return_value="pushed")
 
-                await executor.execute(make_task())
+                # mock _calc_actual_credits 避免导入 adapter
+                with patch.object(
+                    ScheduledTaskExecutor, "_calc_actual_credits", return_value=3
+                ):
+                    await executor.execute(make_task())
 
         # 验证 update 被调用（用 update 才能确认 _on_success 跑了）
         assert db.table.called
@@ -359,9 +365,11 @@ class TestTaskExecutor:
         executor = ScheduledTaskExecutor(db)
 
         from contextlib import asynccontextmanager
+        from services.credit_service import CreditLockHandle
+
         @asynccontextmanager
         async def fake_lock(**kwargs):
-            yield "txn_123"
+            yield CreditLockHandle("txn_123", kwargs.get("amount", 10))
 
         with patch("services.credit_service.CreditService") as mock_credit_cls:
             mock_credit_inst = MagicMock()
@@ -393,9 +401,11 @@ class TestTaskExecutor:
         executor._notify_owner = fake_notify
 
         from contextlib import asynccontextmanager
+        from services.credit_service import CreditLockHandle
+
         @asynccontextmanager
         async def fake_lock(**kwargs):
-            yield "txn_123"
+            yield CreditLockHandle("txn_123", kwargs.get("amount", 10))
 
         task = make_task(consecutive_failures=2)  # 已经 2 次失败了
 
@@ -417,3 +427,61 @@ class TestTaskExecutor:
         assert len(notify_calls) == 1
         assert task["id"] in notify_calls[0][0]
         assert "已自动暂停" in notify_calls[0][1]
+
+
+class TestCalcActualCredits:
+    """_calc_actual_credits 独立测试"""
+
+    def test_zero_tokens_returns_1(self):
+        """token=0 → 保底 1 积分"""
+        result = ScheduledTaskExecutor._calc_actual_credits(0, make_task())
+        assert result == 1
+
+    def test_negative_tokens_returns_1(self):
+        """token<0 → 保底 1 积分"""
+        result = ScheduledTaskExecutor._calc_actual_credits(-100, make_task())
+        assert result == 1
+
+    def test_normal_tokens_uses_pricing(self):
+        """正常 token 量走定价表计算"""
+        # qwen3.5-plus: input=12/1M, output=68/1M
+        # 10000 tokens → 7000 input + 3000 output
+        # input_credits = 7000 * 12 / 1_000_000 = 0.084 → 0
+        # output_credits = 3000 * 68 / 1_000_000 = 0.204 → 0
+        # total = 0 → max(1, 0) = 1
+        result = ScheduledTaskExecutor._calc_actual_credits(
+            10000, make_task(max_credits=10)
+        )
+        assert result >= 1
+        assert result <= 10
+
+    def test_large_tokens_capped_at_max_credits(self):
+        """大量 token 不超过 max_credits 上限"""
+        result = ScheduledTaskExecutor._calc_actual_credits(
+            5_000_000, make_task(max_credits=5)
+        )
+        assert result <= 5
+
+    def test_fallback_when_pricing_missing(self):
+        """定价表无对应模型 → 兜底 5000 token/积分"""
+        with patch(
+            "services.adapters.dashscope.chat_adapter.DASHSCOPE_PRICING", {}
+        ):
+            result = ScheduledTaskExecutor._calc_actual_credits(
+                15000, make_task(max_credits=10)
+            )
+            # 15000 // 5000 = 3
+            assert result == 3
+
+    def test_fallback_on_import_error(self):
+        """导入失败 → 兜底公式"""
+        with patch(
+            "services.adapters.dashscope.chat_adapter.DASHSCOPE_PRICING",
+            side_effect=ImportError("no module"),
+        ):
+            # patch 为 side_effect 会在访问时报错，
+            # 但 _calc_actual_credits 内部 try/except 会 fallback
+            result = ScheduledTaskExecutor._calc_actual_credits(
+                25000, make_task(max_credits=10)
+            )
+            assert 1 <= result <= 10
