@@ -256,6 +256,13 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 max_wall_time=_s.budget_max_wall_time,
             )
 
+            # 设置 staging 分流目录（用户级隔离，工具结果超阈值时落盘到此目录）
+            from services.agent.tool_result_envelope import set_staging_dir
+            from core.workspace import resolve_staging_dir
+            set_staging_dir(resolve_staging_dir(
+                _s.file_workspace_root, user_id, self.org_id, conversation_id,
+            ))
+
             while not _budget.stop_reason:
                 _budget.use_turn()
                 turn = _budget.turns_used - 1  # 0-based for logging
@@ -535,8 +542,13 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             if self._adapter:
                 await self._adapter.close()
             # 清理截断暂存的大结果（请求级生命周期）
-            from services.agent.tool_result_envelope import clear_persisted
+            from services.agent.tool_result_envelope import clear_persisted, clear_staging_dir
             clear_persisted()
+            clear_staging_dir()
+            # 延迟清理 staging 文件（会话级，5 分钟后）
+            asyncio.create_task(
+                _delayed_cleanup_staging(conversation_id, user_id, self.org_id)
+            )
 
         # ── Boundary 2: 持久化（LLM 成功后执行，错误不触发重试）──
         if _llm_succeeded and _completion_args:
@@ -656,4 +668,32 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             request_params=request_params, metadata=metadata,
         )
         self.db.table("tasks").insert(task_data).execute()
+
+
+async def _delayed_cleanup_staging(
+    conversation_id: str,
+    user_id: str = "",
+    org_id: str | None = None,
+    delay: int = 300,
+) -> None:
+    """会话级 staging 延迟清理（5 分钟后删除）
+
+    设计文档：docs/document/TECH_工具结果分流架构.md §6
+    """
+    import shutil
+    from pathlib import Path
+    from core.config import get_settings
+    from core.workspace import resolve_staging_dir
+
+    try:
+        await asyncio.sleep(delay)
+        settings = get_settings()
+        staging_dir = Path(resolve_staging_dir(
+            settings.file_workspace_root, user_id, org_id, conversation_id,
+        ))
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir, ignore_errors=True)
+            logger.info(f"Chat staging cleaned | dir={staging_dir}")
+    except Exception as e:
+        logger.debug(f"Chat staging cleanup failed | error={e}")
 

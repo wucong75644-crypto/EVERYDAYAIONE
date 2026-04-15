@@ -500,6 +500,47 @@ class TestLocalStockQuery:
         assert "80" in result
 
     @pytest.mark.asyncio
+    async def test_multi_warehouse_with_names(self):
+        """多仓分组展示：注入仓库表后输出仓库名称而非裸ID"""
+        from services.kuaimai.erp_local_query import local_stock_query
+        db = _make_db(
+            erp_stock_status=[
+                _stock("C01", "C01-01", warehouse_id="WH-A",
+                       sellable_num=50, total_stock=80),
+                _stock("C01", "C01-02", warehouse_id="WH-B",
+                       sellable_num=30, total_stock=40),
+            ],
+            erp_warehouses=[
+                {"warehouse_id": "WH-A", "name": "义乌主仓"},
+                {"warehouse_id": "WH-B", "name": "杭州分仓"},
+            ],
+            erp_sync_state=[_sync_state("stock")],
+        )
+        result = await local_stock_query(db, "C01")
+        assert "义乌主仓" in result
+        assert "杭州分仓" in result
+        # 裸ID不应出现在仓库标签中
+        assert "仓库: WH-A" not in result
+        assert "仓库: WH-B" not in result
+
+    @pytest.mark.asyncio
+    async def test_warehouse_name_fallback_when_no_data(self):
+        """仓库表无数据时降级回warehouse_id"""
+        from services.kuaimai.erp_local_query import local_stock_query
+        db = _make_db(
+            erp_stock_status=[
+                _stock("C01", "C01-01", warehouse_id="WH-X",
+                       sellable_num=10, total_stock=20),
+                _stock("C01", "C01-02", warehouse_id="WH-Y",
+                       sellable_num=5, total_stock=10),
+            ],
+            erp_sync_state=[_sync_state("stock")],
+        )
+        result = await local_stock_query(db, "C01")
+        assert "WH-X" in result
+        assert "WH-Y" in result
+
+    @pytest.mark.asyncio
     async def test_single_warehouse_no_group(self):
         """单仓不分组（保持原有逻辑）"""
         from services.kuaimai.erp_local_query import local_stock_query
@@ -658,6 +699,43 @@ class TestLocalPlatformMapQuery:
         db = MockSupabaseClient()
         result = await local_platform_map_query(db)
         assert "product_code" in result or "num_iid" in result
+
+    @pytest.mark.asyncio
+    async def test_with_shop_names(self):
+        """注入店铺表后输出店铺名称(平台)而非裸user_id"""
+        from services.kuaimai.erp_local_query import local_platform_map_query
+        db = _make_db(
+            erp_product_platform_map=[
+                _platform_map("C01", "111", user_id="S001"),
+                _platform_map("C01", "222", user_id="S002"),
+            ],
+            erp_products=[_product("C01", title="测试商品")],
+            erp_shops=[
+                {"shop_id": "S001", "name": "旗舰店", "platform": "tb"},
+                {"shop_id": "S002", "name": "拼多多店", "platform": "pdd"},
+            ],
+            erp_sync_state=[_sync_state("product")],
+        )
+        result = await local_platform_map_query(db, product_code="C01")
+        assert "旗舰店(tb)" in result
+        assert "拼多多店(pdd)" in result
+        # 裸ID不应出现
+        assert "S001" not in result
+        assert "S002" not in result
+
+    @pytest.mark.asyncio
+    async def test_shop_name_fallback_when_no_data(self):
+        """店铺表无数据时降级回user_id"""
+        from services.kuaimai.erp_local_query import local_platform_map_query
+        db = _make_db(
+            erp_product_platform_map=[
+                _platform_map("C01", "111", user_id="UNKNOWN_SHOP"),
+            ],
+            erp_products=[_product("C01", title="测试商品")],
+            erp_sync_state=[_sync_state("product")],
+        )
+        result = await local_platform_map_query(db, product_code="C01")
+        assert "UNKNOWN_SHOP" in result
 
 
 # ============================================================

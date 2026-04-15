@@ -817,3 +817,80 @@ class TestSearchHandlers:
             result = await exe.execute("erp_api_search", {"query": "库存"})
         assert result == "结果"
 
+
+# ============================================================
+# _web_search 内联 IntentRouter 测试
+# ============================================================
+
+
+class TestWebSearchInline:
+    """_web_search 使用内联 IntentRouter 的行为测试"""
+
+    @pytest.mark.asyncio
+    async def test_search_returns_result(self):
+        """正常搜索返回结果"""
+        exe = _make_executor()
+        mock_router = MagicMock()
+        mock_router.execute_search = AsyncMock(return_value="搜索结果内容")
+        mock_router.close = AsyncMock()
+
+        with patch(
+            "services.intent_router.IntentRouter",
+            return_value=mock_router,
+        ):
+            result = await exe._web_search({"query": "今天天气"})
+
+        assert result == "搜索结果内容"
+        mock_router.execute_search.assert_called_once_with(
+            query="今天天气", user_text="今天天气", system_prompt=None,
+        )
+        mock_router.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_search_empty_result(self):
+        """搜索无结果时返回友好提示"""
+        exe = _make_executor()
+        mock_router = MagicMock()
+        mock_router.execute_search = AsyncMock(return_value=None)
+        mock_router.close = AsyncMock()
+
+        with patch(
+            "services.intent_router.IntentRouter",
+            return_value=mock_router,
+        ):
+            result = await exe._web_search({"query": "极冷门关键词"})
+
+        assert "极冷门关键词" in result
+        assert "未找到" in result
+
+    @pytest.mark.asyncio
+    async def test_search_empty_query(self):
+        """空查询直接返回错误"""
+        exe = _make_executor()
+        result = await exe._web_search({"query": ""})
+        assert "不能为空" in result
+
+    @pytest.mark.asyncio
+    async def test_search_missing_query(self):
+        """缺少 query 参数"""
+        exe = _make_executor()
+        result = await exe._web_search({})
+        assert "不能为空" in result
+
+    @pytest.mark.asyncio
+    async def test_router_closed_on_exception(self):
+        """搜索异常时仍然关闭 router"""
+        exe = _make_executor()
+        mock_router = MagicMock()
+        mock_router.execute_search = AsyncMock(side_effect=RuntimeError("网络错误"))
+        mock_router.close = AsyncMock()
+
+        with patch(
+            "services.intent_router.IntentRouter",
+            return_value=mock_router,
+        ):
+            with pytest.raises(RuntimeError, match="网络错误"):
+                await exe._web_search({"query": "测试"})
+
+        mock_router.close.assert_called_once()
+

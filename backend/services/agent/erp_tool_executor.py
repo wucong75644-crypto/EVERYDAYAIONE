@@ -245,11 +245,12 @@ class ErpToolMixin:
             # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B16)
             request_ctx = getattr(self, "request_ctx", None)
 
-            # local_db_export 需要额外的 conversation_id 确定 staging 路径
+            # local_db_export 需要额外的 user_id + conversation_id 确定 staging 路径
             if tool_name == "local_db_export":
                 return await func(
                     self.db, **args,
                     org_id=self.org_id,
+                    user_id=self.user_id,
                     conversation_id=self.conversation_id,
                     request_ctx=request_ctx,
                 )

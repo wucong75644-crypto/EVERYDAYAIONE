@@ -210,6 +210,7 @@ async def local_db_export(
     status: str | None = None,
     max_rows: int = DEFAULT_MAX_ROWS,
     org_id: str | None = None,
+    user_id: str | None = None,
     conversation_id: str | None = None,
     request_ctx: Optional[RequestContext] = None,
 ) -> str:
@@ -244,14 +245,19 @@ async def local_db_export(
     from core.config import get_settings
     settings = get_settings()
 
+    from core.workspace import resolve_staging_dir, resolve_staging_rel_path
+
     conv_id = conversation_id or "default"
-    staging_dir = Path(settings.file_workspace_root) / "staging" / conv_id
+    staging_dir = Path(resolve_staging_dir(
+        settings.file_workspace_root, user_id=user_id or "", org_id=org_id,
+        conversation_id=conv_id,
+    ))
     staging_dir.mkdir(parents=True, exist_ok=True)
 
     ts = int(_time.time())
     filename = f"local_{doc_type}_{ts}.parquet"
     staging_path = staging_dir / filename
-    rel_path = f"staging/{conv_id}/{filename}"
+    rel_path = resolve_staging_rel_path(conversation_id=conv_id, filename=filename)
 
     start = _time.monotonic()
     all_rows: list[dict] = []

@@ -873,7 +873,12 @@ class TestStagingCleanup:
     async def test_cleanup_removes_staging_dir(self, tmp_path):
         """清理删除对应会话的 staging 目录"""
         agent = self._make_agent()
-        staging_dir = tmp_path / "staging" / "test-conv-123"
+        from core.workspace import resolve_staging_dir
+        staging_dir_str = resolve_staging_dir(
+            str(tmp_path), agent.user_id, agent.org_id, agent.conversation_id,
+        )
+        from pathlib import Path
+        staging_dir = Path(staging_dir_str)
         staging_dir.mkdir(parents=True)
         (staging_dir / "data.json").write_text('[]')
 

@@ -152,11 +152,20 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
 
     async def _web_search(self, args: Dict[str, Any]) -> str:
         """搜索互联网获取实时信息"""
-        from services.sandbox.functions import sandbox_web_search
+        from services.intent_router import IntentRouter
+
         query = args.get("query", "").strip()
         if not query:
             return "搜索查询不能为空"
-        return await sandbox_web_search(query)
+
+        router = IntentRouter()
+        try:
+            result = await router.execute_search(
+                query=query, user_text=query, system_prompt=None,
+            )
+            return result or f"搜索「{query}」未找到相关结果"
+        finally:
+            await router.close()
 
     # ========================================
     # ERP Agent（独立 Agent 作为工具调用）
@@ -250,12 +259,10 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
     async def _fetch_all_pages(self, args: Dict[str, Any]) -> str:
         """包装任意 erp_* 远程查询工具，自动翻页拉取全部数据并存 staging"""
         import asyncio
-        import json
         import time as _time
         from pathlib import Path
 
         from core.config import get_settings
-        from services.sandbox.functions import erp_query_all
 
         tool_name = args.get("tool", "")
         action = args.get("action", "")
@@ -278,8 +285,9 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
 
         start = _time.monotonic()
 
-        # 复用 erp_query_all 的翻页逻辑
-        result = await erp_query_all(
+        from services.agent.erp_pagination import paginate_erp
+
+        result = await paginate_erp(
             tool_name, action, {**params, "page_size": page_size},
             max_pages=max_pages,
             _dispatcher=dispatcher,
@@ -295,10 +303,13 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         if not items:
             return f"查询结果为空（{tool_name}:{action}）"
 
-        # 存 staging 文件
-        staging_dir = Path(settings.file_workspace_root) / "staging" / (
-            self.conversation_id or "default"
-        )
+        # 存 staging 文件（用户级隔离）
+        from core.workspace import resolve_staging_dir, resolve_staging_rel_path
+
+        _conv = self.conversation_id or "default"
+        staging_dir = Path(resolve_staging_dir(
+            settings.file_workspace_root, self.user_id, self.org_id, _conv,
+        ))
         staging_dir.mkdir(parents=True, exist_ok=True)
 
         import pandas as _pd
@@ -313,7 +324,7 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         df = _pd.DataFrame(items)
         df.to_parquet(staging_path, index=False, engine="pyarrow")
 
-        rel_path = f"staging/{self.conversation_id or 'default'}/{filename}"
+        rel_path = resolve_staging_rel_path(conversation_id=_conv, filename=filename)
         file_size_kb = staging_path.stat().st_size / 1024
 
         # 预览前3条

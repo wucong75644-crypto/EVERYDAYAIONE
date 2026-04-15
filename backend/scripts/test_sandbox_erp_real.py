@@ -1,8 +1,10 @@
 """
-沙盒 ERP 真实参数集成测试
+[已废弃] 沙盒 ERP 真实参数集成测试
 
-用真实 API 字段名 + response_key + 平台订单号格式模拟 ERP 返回。
-目的：验证沙盒代码能正确处理真实数据结构。
+⚠️ 本脚本已废弃（2026-04-15）。
+原因：沙盒纯计算重构后，erp_query_all/erp_query 已从沙盒移除，
+      数据获取统一走 Agent 工具层（fetch_all_pages → staging → code_execute）。
+替代方案：backend/tests/test_paginate_erp.py（翻页引擎单元测试）
 
 运行: cd backend && source venv/bin/activate && PYTHONPATH=. python scripts/test_sandbox_erp_real.py
 """

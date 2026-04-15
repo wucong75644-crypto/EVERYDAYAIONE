@@ -133,7 +133,15 @@ class ScheduledTaskAgent:
                 max_wall_time=deadline,
             )
 
-            # 7. 共享 ToolLoopExecutor（无 WS 推送 / 无时间校验 / 无失败反思）
+            # 7. 设置 staging 分流目录（用户级隔离）
+            from services.agent.tool_result_envelope import set_staging_dir, STAGED_MARKER
+            from core.workspace import resolve_staging_dir
+            set_staging_dir(resolve_staging_dir(
+                settings.file_workspace_root,
+                self.user_id, self.org_id, self.conversation_id,
+            ))
+
+            # 8. 共享 ToolLoopExecutor（无 WS 推送 / 无时间校验 / 无失败反思）
             tool_loop, hook_ctx = self._build_tool_loop(
                 adapter, executor, all_tools,
             )
@@ -163,7 +171,7 @@ class ScheduledTaskAgent:
                 turns_used=turns,
                 tools_called=tools_called,
                 files=files,
-                is_truncated="⚠ 输出已截断" in (text or ""),
+                is_truncated=STAGED_MARKER in (text or ""),
             )
 
         except asyncio.TimeoutError:
@@ -192,7 +200,9 @@ class ScheduledTaskAgent:
                     await adapter.close()
                 except Exception:
                     pass
-            # 延迟清理 staging
+            # 清理 staging ContextVar + 延迟清理 staging 文件
+            from services.agent.tool_result_envelope import clear_staging_dir
+            clear_staging_dir()
             asyncio.create_task(self._cleanup_staging_delayed())
 
     # ════════════════════════════════════════════════════════
@@ -355,7 +365,10 @@ class ScheduledTaskAgent:
             settings = get_settings()
             workspace_root = settings.file_workspace_root
 
-            staging_dir = Path(workspace_root) / "staging" / self.conversation_id
+            from core.workspace import resolve_staging_dir as _resolve_staging
+            staging_dir = Path(_resolve_staging(
+                workspace_root, self.user_id, self.org_id, self.conversation_id,
+            ))
             staging_dir.mkdir(parents=True, exist_ok=True)
 
             fe = FileExecutor(
@@ -389,11 +402,11 @@ class ScheduledTaskAgent:
             import shutil
 
             settings = get_settings()
-            staging_dir = (
-                Path(settings.file_workspace_root)
-                / "staging"
-                / self.conversation_id
-            )
+            from core.workspace import resolve_staging_dir
+            staging_dir = Path(resolve_staging_dir(
+                settings.file_workspace_root,
+                self.user_id, self.org_id, self.conversation_id,
+            ))
             if staging_dir.exists():
                 shutil.rmtree(staging_dir, ignore_errors=True)
         except Exception as e:

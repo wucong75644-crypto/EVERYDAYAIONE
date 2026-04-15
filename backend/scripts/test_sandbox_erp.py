@@ -1,7 +1,11 @@
 """
-沙盒 ERP 数据计算集成测试脚本
+[已废弃] 沙盒 ERP 数据计算集成测试脚本
 
-用 mock dispatcher 模拟真实 ERP 数据，验证沙盒内各种数据聚合场景。
+⚠️ 本脚本已废弃（2026-04-15）。
+原因：沙盒纯计算重构后，erp_query_all/erp_query 已从沙盒移除，
+      数据获取统一走 Agent 工具层（fetch_all_pages → staging → code_execute）。
+替代方案：backend/tests/test_paginate_erp.py（翻页引擎单元测试）
+
 运行: cd backend && source venv/bin/activate && python scripts/test_sandbox_erp.py
 """
 
