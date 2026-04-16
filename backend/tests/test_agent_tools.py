@@ -159,11 +159,11 @@ class TestToolSets:
 
 class TestBuildErpTools:
 
-    def test_returns_23_tools(self):
-        """build_erp_tools 返回 23 个工具（8 API + 15 本地，含 local_compare_stats）"""
+    def test_returns_17_tools(self):
+        """build_erp_tools 返回 17 个工具（8 API + 9 本地，含统一查询引擎 local_data）"""
         from config.erp_tools import build_erp_tools
         tools = build_erp_tools()
-        assert len(tools) == 23
+        assert len(tools) == 17
 
     def test_each_tool_structure(self):
         """每个工具有完整的 function calling 结构"""
@@ -310,31 +310,30 @@ class TestErpRoutingPrompt:
         from config.erp_tools import ERP_ROUTING_PROMPT
         assert "time_type" in ERP_ROUTING_PROMPT
 
-    def test_p0_aftersales_cross_tool(self):
-        """P0: 售后查询跨工具的决策"""
+    def test_p0_unified_query_in_prompt(self):
+        """P0: 统一查询引擎 local_data 在提示词中"""
         from config.erp_tools import ERP_ROUTING_PROMPT
-        for keyword in [
-            "aftersale_list", "refund_list", "refund_warehouse",
-        ]:
-            assert keyword in ERP_ROUTING_PROMPT, f"Missing aftersales: {keyword}"
+        assert "local_data" in ERP_ROUTING_PROMPT
+        assert "filters" in ERP_ROUTING_PROMPT
+        assert "summary" in ERP_ROUTING_PROMPT
 
-    def test_p0_archive_difference(self):
-        """P0: 归档差异（订单 query_type vs 采购换 action）"""
+    def test_p0_compare_stats_in_prompt(self):
+        """P0: 对比统计工具在提示词中"""
         from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "query_type=1" in ERP_ROUTING_PROMPT
-        assert "purchase_order_history" in ERP_ROUTING_PROMPT or "_history" in ERP_ROUTING_PROMPT
+        assert "local_compare_stats" in ERP_ROUTING_PROMPT
+        assert "同比" in ERP_ROUTING_PROMPT or "环比" in ERP_ROUTING_PROMPT
 
-    def test_p0_trade_vs_taobao_query(self):
-        """P0: erp_taobao_query 时间参数 date_type 在提示词中"""
+    def test_p0_remote_tools_in_prompt(self):
+        """P0: 远程工具协议在提示词中"""
         from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "date_type" in ERP_ROUTING_PROMPT
-        assert "erp_taobao_query" in ERP_ROUTING_PROMPT
+        assert "erp_*" in ERP_ROUTING_PROMPT or "远程工具" in ERP_ROUTING_PROMPT
 
-    def test_p0_required_params_trap(self):
-        """P0: 必填参数陷阱提示"""
+    def test_p0_time_type_in_prompt(self):
+        """P0: time_type 用法在提示词中"""
         from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "refund_warehouse" in ERP_ROUTING_PROMPT
         assert "time_type" in ERP_ROUTING_PROMPT
+        assert "pay_time" in ERP_ROUTING_PROMPT
+        assert "consign_time" in ERP_ROUTING_PROMPT
 
     def test_p1_product_query_in_scenario_docs(self):
         """P1: 商品查询 action 选择在场景指南中"""
@@ -356,12 +355,12 @@ class TestErpRoutingPrompt:
         ]:
             assert action in doc, f"Missing purchase action: {action}"
 
-    def test_p1_relay_keys(self):
-        """P1: 中继键 sid/order_no/outer_id 在提示词中"""
+    def test_p1_common_scenarios(self):
+        """P1: 常见场景在提示词中"""
         from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "sid" in ERP_ROUTING_PROMPT
         assert "order_no" in ERP_ROUTING_PROMPT
-        assert "outer_id" in ERP_ROUTING_PROMPT
+        assert "order_status" in ERP_ROUTING_PROMPT
+        assert "group_by" in ERP_ROUTING_PROMPT
 
     def test_p2_statistics_in_scenario_docs(self):
         """P2: 统计类汇总策略在场景指南中"""
@@ -371,16 +370,16 @@ class TestErpRoutingPrompt:
         assert "各仓库库存" in doc
 
     def test_p2_fallback_strategy(self):
-        """P2: 查不到时的降级策略"""
+        """P2: 降级策略在提示词中"""
         from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "查不到" in ERP_ROUTING_PROMPT
+        assert "降级" in ERP_ROUTING_PROMPT or "远程工具重试" in ERP_ROUTING_PROMPT
         assert "ask_user" in ERP_ROUTING_PROMPT
 
-    def test_broadened_code_query_documented(self):
-        """编码智能匹配功能在提示词中有说明"""
+    def test_encoding_identification_documented(self):
+        """编码识别流程在提示词中"""
         from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "基础编码" in ERP_ROUTING_PROMPT
-        assert "无需手动重试" in ERP_ROUTING_PROMPT
+        assert "local_product_identify" in ERP_ROUTING_PROMPT
+        assert "编码" in ERP_ROUTING_PROMPT
 
     def test_tool_capability_section(self):
         """ERP_ROUTING_PROMPT 包含工具选择规则"""
@@ -391,9 +390,8 @@ class TestErpRoutingPrompt:
         assert "降级策略" in ERP_ROUTING_PROMPT
 
     def test_data_freshness_section(self):
-        """ERP_ROUTING_PROMPT 包含数据新鲜度和同步警告降级规则"""
+        """ERP_ROUTING_PROMPT 包含同步工具引用"""
         from config.erp_tools import ERP_ROUTING_PROMPT
-        assert "同步警告" in ERP_ROUTING_PROMPT
         assert "trigger_erp_sync" in ERP_ROUTING_PROMPT
 
     def test_no_routing_directives(self):

@@ -68,33 +68,6 @@ def cutoff_iso(days: int) -> str:
     return (datetime.now(CN_TZ) - timedelta(days=days)).isoformat()
 
 
-def query_doc_items(
-    db, doc_type: str, code: str, days: int,
-    extra_filters: dict | None = None,
-    org_id: str | None = None,
-) -> list[dict]:
-    """查询 erp_document_items（days>90 自动 UNION 冷表）"""
-    cutoff = cutoff_iso(days)
 
-    def _do_query(table: str) -> list[dict]:
-        q = (
-            db.table(table)
-            .select("*")
-            .eq("doc_type", doc_type)
-            .or_(f"outer_id.eq.{code},sku_outer_id.eq.{code}")
-            .gte("doc_created_at", cutoff)
-        )
-        if extra_filters:
-            for k, v in extra_filters.items():
-                q = q.eq(k, v)
-        return q.order("doc_created_at", desc=True).limit(500).execute().data or []
-
-    rows = _do_query("erp_document_items")
-    if days > 90:
-        archive_rows = _do_query("erp_document_items_archive")
-        seen = {(r["doc_id"], r["item_index"]) for r in rows}
-        for r in archive_rows:
-            if (r["doc_id"], r["item_index"]) not in seen:
-                rows.append(r)
-        rows.sort(key=lambda r: r.get("doc_created_at", ""), reverse=True)
-    return rows
+# query_doc_items() 已移除 — erp_document_items 查询统一由
+# erp_unified_query.UnifiedQueryEngine 处理。

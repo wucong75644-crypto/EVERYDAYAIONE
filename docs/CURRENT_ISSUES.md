@@ -12,6 +12,24 @@
 
 ---
 
+### 2026-04-16 统一查询引擎（Filter DSL）— 全部完成
+
+**关联文档**：[TECH_统一查询引擎FilterDSL.md](document/TECH_统一查询引擎FilterDSL.md)
+
+**完成内容**：
+- 7 个碎片工具合并为 1 个 `local_data` 统一查询工具（Filter DSL 模式）
+- 新增 `erp_unified_query.py`（519行）+ `erp_unified_schema.py`（331行）
+- RPC 升级：`erp_global_stats_query` 新增 `p_filters JSONB` 参数
+- ERP_ROUTING_PROMPT 从 ~100 行精简到 ~55 行
+- 删除 3 个旧实现文件 + 精简 erp_local_query.py（-287行）
+- 净减少 ~700 行代码
+- 测试：4055 passed, 0 failed
+
+**待部署**：
+- 在 Supabase 执行迁移 `080_unified_query_rpc.sql`
+
+---
+
 ### 2026-02-01 聊天系统综合重构（阶段0-7完成，97%进度）
 
 **关联文档**：[重构执行清单](docs/document/重构执行清单.md)

@@ -208,33 +208,6 @@ class TestCutoffIso:
         assert dt.tzinfo is not None
 
 
-class TestQueryDocItems:
-
-    def test_basic_query(self):
-        """基础查询返回匹配数据"""
-        from services.kuaimai.erp_local_helpers import query_doc_items
-        items = [
-            _doc_item("purchase", "PO001", "CODE01"),
-            _doc_item("purchase", "PO002", "CODE02"),
-        ]
-        db = _make_db(erp_document_items=items)
-        rows = query_doc_items(db, "purchase", "CODE01", days=30)
-        assert len(rows) >= 0  # mock or_ 简单实现，至少不抛异常
-
-    def test_archive_union_on_long_range(self):
-        """days>90 自动查冷表"""
-        from services.kuaimai.erp_local_helpers import query_doc_items
-        hot = [_doc_item("order", "ORD1", "C01", item_index=0)]
-        cold = [_doc_item("order", "ORD2", "C01", item_index=0)]
-        db = _make_db(
-            erp_document_items=hot,
-            erp_document_items_archive=cold,
-        )
-        rows = query_doc_items(db, "order", "C01", days=120)
-        # 应该包含热表+冷表数据（去重后）
-        assert isinstance(rows, list)
-
-
 # ============================================================
 # TestLocalIdentify — 本地编码识别
 # ============================================================
@@ -360,94 +333,8 @@ class TestLocalIdentify:
         assert "CHILD01" in result
 
 
-# ============================================================
-# TestLocalQuery — 6个本地查询工具
-# ============================================================
-
-
-class TestLocalPurchaseQuery:
-
-    @pytest.mark.asyncio
-    async def test_basic_purchase(self):
-        """基础采购查询"""
-        from services.kuaimai.erp_local_query import local_purchase_query
-        items = [
-            _doc_item("purchase", "PO001", "C01", quantity=500, amount=5000),
-        ]
-        db = _make_db(
-            erp_document_items=items,
-            erp_sync_state=[_sync_state("purchase")],
-        )
-        result = await local_purchase_query(db, "C01")
-        assert isinstance(result, str)
-
-    @pytest.mark.asyncio
-    async def test_no_data(self):
-        """无采购数据"""
-        from services.kuaimai.erp_local_query import local_purchase_query
-        db = _make_db(
-            erp_document_items=[],
-            erp_sync_state=[_sync_state("purchase")],
-        )
-        result = await local_purchase_query(db, "NODATA")
-        assert "无" in result or "未" in result or "0" in result
-
-
-class TestLocalAftersaleQuery:
-
-    @pytest.mark.asyncio
-    async def test_basic_aftersale(self):
-        """基础售后查询"""
-        from services.kuaimai.erp_local_query import local_aftersale_query
-        items = [
-            _doc_item("aftersale", "AS001", "C01",
-                      extra={"aftersale_type": "2", "work_order_id": "W001"}),
-        ]
-        db = _make_db(
-            erp_document_items=items,
-            erp_sync_state=[_sync_state("aftersale")],
-        )
-        result = await local_aftersale_query(db, "C01")
-        assert isinstance(result, str)
-
-
-class TestLocalOrderQuery:
-
-    @pytest.mark.asyncio
-    async def test_basic_order(self):
-        """基础订单查询"""
-        from services.kuaimai.erp_local_query import local_order_query
-        items = [
-            _doc_item("order", "ORD001", "C01", platform="tb",
-                      shop_name="旗舰店", amount=160),
-        ]
-        db = _make_db(
-            erp_document_items=items,
-            erp_sync_state=[_sync_state("order")],
-        )
-        result = await local_order_query(db, "C01")
-        assert isinstance(result, str)
-
-
-class TestLocalProductFlow:
-
-    @pytest.mark.asyncio
-    async def test_flow_with_data(self):
-        """全链路流转查询"""
-        from services.kuaimai.erp_local_query import local_product_flow
-        items = [
-            _doc_item("purchase", "PO001", "C01", quantity=500),
-            _doc_item("receipt", "RC001", "C01", quantity=300),
-            _doc_item("shelf", "SH001", "C01", quantity=300),
-            _doc_item("order", "ORD001", "C01", quantity=100),
-            _doc_item("aftersale", "AS001", "C01", quantity=5),
-        ]
-        db = _make_db(
-            erp_document_items=items,
-            erp_sync_state=[_sync_state("order")],
-        )
-        result = await local_product_flow(db, "C01")
-        assert isinstance(result, str)
+# TestLocalPurchaseQuery/AftersaleQuery/OrderQuery/ProductFlow 已移除
+# — 功能统一由 local_data (UnifiedQueryEngine) 覆盖
 
 
 class TestLocalStockQuery:
@@ -873,11 +760,11 @@ class TestLocalShopList:
 
 class TestBuildLocalTools:
 
-    def test_returns_15_tools(self):
-        """build_local_tools 返回 15 个工具（含时间事实层 local_compare_stats）"""
+    def test_returns_9_tools(self):
+        """build_local_tools 返回 9 个工具（1 统一查询 + 7 专用 + 1 同步）"""
         from config.erp_local_tools import build_local_tools
         tools = build_local_tools()
-        assert len(tools) == 15
+        assert len(tools) == 9
 
     def test_each_tool_structure(self):
         """每个工具有完整 function calling 结构"""
@@ -910,12 +797,10 @@ class TestBuildLocalTools:
         assert identify["function"]["parameters"]["required"] == []
 
     def test_query_tools_require_product_code(self):
-        """5个查询工具必填 product_code"""
+        """product_stats 和 stock_query 必填 product_code"""
         from config.erp_local_tools import build_local_tools
         required_tools = {
-            "local_purchase_query", "local_aftersale_query",
-            "local_order_query", "local_product_stats",
-            "local_product_flow", "local_stock_query",
+            "local_product_stats", "local_stock_query",
         }
         tools = build_local_tools()
         for tool in tools:
@@ -925,29 +810,31 @@ class TestBuildLocalTools:
                     f"{name} 缺少 product_code 必填"
                 )
 
-
-    def test_db_export_tool_definition(self):
-        """local_db_export 工具定义正确"""
+    def test_local_data_tool_definition(self):
+        """local_data 统一查询工具定义正确"""
         from config.erp_local_tools import build_local_tools
         tools = build_local_tools()
-        export = [t for t in tools
-                  if t["function"]["name"] == "local_db_export"][0]
-        params = export["function"]["parameters"]
+        ld = [t for t in tools
+              if t["function"]["name"] == "local_data"][0]
+        params = ld["function"]["parameters"]
         assert "doc_type" in params["required"]
-        assert "shop_name" in params["properties"]
-        assert "platform" in params["properties"]
-        assert "max_rows" in params["properties"]
-        assert "staging" in export["function"]["description"]
+        assert "filters" in params["required"]
+        assert "filters" in params["properties"]
+        assert params["properties"]["filters"]["type"] == "array"
+        assert "mode" in params["properties"]
+        assert "summary" in params["properties"]["mode"]["enum"]
+        assert "detail" in params["properties"]["mode"]["enum"]
+        assert "export" in params["properties"]["mode"]["enum"]
 
-    def test_db_export_max_rows_description(self):
-        """local_db_export 描述中的默认值与代码一致"""
+    def test_local_data_has_limit_description(self):
+        """local_data limit 描述包含默认值和上限"""
         from config.erp_local_tools import build_local_tools
         tools = build_local_tools()
-        export = [t for t in tools
-                  if t["function"]["name"] == "local_db_export"][0]
-        desc = export["function"]["parameters"]["properties"]["max_rows"]["description"]
-        assert "5000" in desc  # 默认值
-        assert "10000" in desc  # 上限
+        ld = [t for t in tools
+              if t["function"]["name"] == "local_data"][0]
+        desc = ld["function"]["parameters"]["properties"]["limit"]["description"]
+        assert "20" in desc
+        assert "10000" in desc
 
 
 class TestLocalToolRegistry:
@@ -1004,36 +891,30 @@ class TestCNTimezone:
 # ============================================================
 
 
-class TestGlobalStatsTimeType:
-    """local_global_stats 的 time_type 参数校验"""
+class TestUnifiedSchemaTimeType:
+    """统一查询引擎 time_type 常量校验"""
 
-    def test_valid_time_types(self):
-        from services.kuaimai.erp_local_global_stats import _VALID_TIME_TYPES
-        assert "doc_created_at" in _VALID_TIME_TYPES
-        assert "pay_time" in _VALID_TIME_TYPES
-        assert "consign_time" in _VALID_TIME_TYPES
+    def test_valid_time_cols(self):
+        from services.kuaimai.erp_unified_schema import VALID_TIME_COLS
+        assert "doc_created_at" in VALID_TIME_COLS
+        assert "pay_time" in VALID_TIME_COLS
+        assert "consign_time" in VALID_TIME_COLS
 
-    def test_invalid_time_type_defaults_to_created(self):
-        """无效 time_type 应降级为 doc_created_at"""
-        from services.kuaimai.erp_local_global_stats import _VALID_TIME_TYPES
+    def test_invalid_time_type_not_in_whitelist(self):
+        """无效 time_type 不在白名单中"""
+        from services.kuaimai.erp_unified_schema import VALID_TIME_COLS
         invalid = "hacked_column; DROP TABLE"
-        assert invalid not in _VALID_TIME_TYPES
+        assert invalid not in VALID_TIME_COLS
 
-    def test_time_type_labels(self):
-        from services.kuaimai.erp_local_global_stats import _TIME_TYPE_LABELS
-        assert _TIME_TYPE_LABELS["pay_time"] == "付款"
-        assert _TIME_TYPE_LABELS["consign_time"] == "发货"
-        assert _TIME_TYPE_LABELS["doc_created_at"] == "下单"
-
-    def test_local_global_stats_tool_has_time_type_param(self):
-        """工具定义应包含 time_type 参数"""
+    def test_local_data_tool_has_time_type_param(self):
+        """local_data 工具定义应包含 time_type 参数"""
         from config.erp_local_tools import build_local_tools
         tools = build_local_tools()
-        stats_tool = next(
+        data_tool = next(
             t for t in tools
-            if t["function"]["name"] == "local_global_stats"
+            if t["function"]["name"] == "local_data"
         )
-        props = stats_tool["function"]["parameters"]["properties"]
+        props = data_tool["function"]["parameters"]["properties"]
         assert "time_type" in props
         assert "pay_time" in props["time_type"]["enum"]
         assert "consign_time" in props["time_type"]["enum"]

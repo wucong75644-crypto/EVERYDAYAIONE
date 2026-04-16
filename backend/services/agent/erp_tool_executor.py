@@ -202,38 +202,28 @@ class ErpToolMixin:
     ) -> str:
         """本地查询工具统一调度（直接查DB，毫秒级响应）"""
         from services.kuaimai.erp_local_compare_stats import local_compare_stats
-        from services.kuaimai.erp_local_doc_query import local_doc_query
-        from services.kuaimai.erp_local_global_stats import local_global_stats
         from services.kuaimai.erp_local_identify import local_product_identify
         from services.kuaimai.erp_local_query import (
-            local_aftersale_query,
-            local_order_query,
             local_platform_map_query,
-            local_product_flow,
-            local_purchase_query,
             local_shop_list,
             local_stock_query,
             local_warehouse_list,
         )
-        from services.kuaimai.erp_local_db_export import local_db_export
         from services.kuaimai.erp_local_sync_trigger import trigger_erp_sync
         from services.kuaimai.erp_stats_query import local_product_stats
 
+        # local_data → 统一查询引擎（替代 7 个碎片工具）
+        if tool_name == "local_data":
+            return await self._dispatch_local_data(args)
+
         dispatch: Dict[str, Any] = {
-            "local_purchase_query": local_purchase_query,
-            "local_aftersale_query": local_aftersale_query,
-            "local_order_query": local_order_query,
             "local_product_stats": local_product_stats,
-            "local_product_flow": local_product_flow,
             "local_stock_query": local_stock_query,
             "local_product_identify": local_product_identify,
             "local_platform_map_query": local_platform_map_query,
-            "local_doc_query": local_doc_query,
-            "local_global_stats": local_global_stats,
             "local_compare_stats": local_compare_stats,
             "local_shop_list": local_shop_list,
             "local_warehouse_list": local_warehouse_list,
-            "local_db_export": local_db_export,
             "trigger_erp_sync": trigger_erp_sync,
         }
 
@@ -241,25 +231,9 @@ class ErpToolMixin:
         if not func:
             return f"Unknown local tool: {tool_name}"
         try:
-            # 时间事实层 — 把 RequestContext 透传给支持的工具
-            # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B16)
             request_ctx = getattr(self, "request_ctx", None)
-
-            # local_db_export 需要额外的 user_id + conversation_id 确定 staging 路径
-            if tool_name == "local_db_export":
-                return await func(
-                    self.db, **args,
-                    org_id=self.org_id,
-                    user_id=self.user_id,
-                    conversation_id=self.conversation_id,
-                    request_ctx=request_ctx,
-                )
-            # 时间相关工具透传 request_ctx；其他工具保留旧签名
             _TIME_AWARE_TOOLS = {
-                "local_purchase_query", "local_aftersale_query",
-                "local_order_query", "local_product_flow",
-                "local_product_stats", "local_doc_query",
-                "local_global_stats", "local_compare_stats",
+                "local_product_stats", "local_compare_stats",
             }
             if tool_name in _TIME_AWARE_TOOLS:
                 return await func(
@@ -273,3 +247,28 @@ class ErpToolMixin:
                 f"ToolExecutor local_dispatch | tool={tool_name} | error={e}"
             )
             return f"本地查询失败: {e}"
+
+    async def _dispatch_local_data(self, args: Dict[str, Any]) -> str:
+        """统一查询引擎调度入口"""
+        from services.kuaimai.erp_unified_query import UnifiedQueryEngine
+
+        request_ctx = getattr(self, "request_ctx", None)
+        engine = UnifiedQueryEngine(db=self.db, org_id=self.org_id)
+        try:
+            return await engine.execute(
+                doc_type=args.get("doc_type", "order"),
+                mode=args.get("mode", "summary"),
+                filters=args.get("filters", []),
+                group_by=args.get("group_by"),
+                sort_by=args.get("sort_by"),
+                sort_dir=args.get("sort_dir", "desc"),
+                fields=args.get("fields"),
+                limit=args.get("limit", 20),
+                time_type=args.get("time_type"),
+                user_id=self.user_id,
+                conversation_id=self.conversation_id,
+                request_ctx=request_ctx,
+            )
+        except Exception as e:
+            logger.error(f"ToolExecutor local_data | error={e}", exc_info=True)
+            return f"统一查询失败: {e}"
