@@ -78,6 +78,16 @@ TOOLS = [
         },
         required=[],
     ),
+    # 用于 array 类型校验测试
+    _make_tool(
+        "local_data",
+        {
+            "doc_type": {"type": "string", "description": "单据类型"},
+            "filters": {"type": "array", "description": "过滤条件数组"},
+            "group_by": {"type": "array", "description": "分组字段"},
+        },
+        required=["doc_type", "filters"],
+    ),
 ]
 
 
@@ -313,3 +323,59 @@ class TestTypeCoercionBoolean:
         cleaned, err = validate_tool_args("local_stock_query", args, TOOLS)
         assert err is None
         assert cleaned["low_stock"] is False
+
+
+class TestTypeCoercionArray:
+    """array 类型校验：string→list（Filter DSL 场景）"""
+
+    def test_string_array_to_list(self):
+        """双重序列化的 JSON 数组字符串 → 还原为 list"""
+        import json
+        filters = [{"field": "order_status", "op": "eq", "value": "FINISHED"}]
+        args = {"doc_type": "order", "filters": json.dumps(filters)}
+        cleaned, err = validate_tool_args("local_data", args, TOOLS)
+        assert err is None
+        assert isinstance(cleaned["filters"], list)
+        assert cleaned["filters"][0]["field"] == "order_status"
+
+    def test_normal_list_passes_through(self):
+        """正常 list 不被修改"""
+        filters = [{"field": "amount", "op": "gt", "value": 500}]
+        args = {"doc_type": "order", "filters": filters}
+        cleaned, err = validate_tool_args("local_data", args, TOOLS)
+        assert err is None
+        assert cleaned["filters"] is filters
+
+    def test_invalid_string_returns_error(self):
+        """非 JSON 字符串 → 返回错误"""
+        args = {"doc_type": "order", "filters": "not_json"}
+        cleaned, err = validate_tool_args("local_data", args, TOOLS)
+        assert err is not None
+        assert "array" in err
+
+    def test_string_dict_returns_error(self):
+        """JSON 对象字符串（非数组）→ 返回错误"""
+        import json
+        args = {"doc_type": "order", "filters": json.dumps({"key": "val"})}
+        cleaned, err = validate_tool_args("local_data", args, TOOLS)
+        assert err is not None
+        assert "array" in err
+
+    def test_empty_array_string_coerced(self):
+        """空数组字符串 "[]" → 还原为 []"""
+        args = {"doc_type": "order", "filters": "[]"}
+        cleaned, err = validate_tool_args("local_data", args, TOOLS)
+        assert err is None
+        assert cleaned["filters"] == []
+
+    def test_group_by_string_coerced(self):
+        """group_by 数组字符串也能纠偏"""
+        import json
+        args = {
+            "doc_type": "order",
+            "filters": [],
+            "group_by": json.dumps(["shop_name"]),
+        }
+        cleaned, err = validate_tool_args("local_data", args, TOOLS)
+        assert err is None
+        assert cleaned["group_by"] == ["shop_name"]

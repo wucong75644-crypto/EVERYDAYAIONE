@@ -136,6 +136,17 @@ EVERYDAYAIONE/
 │   │   │   ├── ws_client.py             # 智能机器人 WebSocket 客户端
 │   │   │   ├── access_token_manager.py  # access_token 管理
 │   │   │   └── user_mapping_service.py  # 企微用户 → 系统用户映射
+│   │   ├── kuaimai/                  # 快麦 ERP 集成
+│   │   │   ├── erp_unified_query.py     # 统一查询引擎（Filter DSL → SQL）
+│   │   │   ├── erp_unified_schema.py    # 列白名单 + 常量 + 格式化
+│   │   │   ├── erp_local_query.py       # 专用工具（库存/平台映射/店铺/仓库）
+│   │   │   ├── erp_local_compare_stats.py # 同比/环比对比
+│   │   │   ├── erp_local_identify.py    # 商品编码识别
+│   │   │   ├── erp_local_helpers.py     # 共享工具（健康检查/时区）
+│   │   │   ├── erp_sync_service.py      # 数据同步服务
+│   │   │   ├── erp_sync_handlers.py     # 同步处理器（6种单据）
+│   │   │   ├── client.py                # 快麦 API 客户端
+│   │   │   └── dispatcher.py            # API 调度器
 │   │   └── adapters/                 # AI 模型适配器
 │   │       ├── __init__.py               # 适配器导出
 │   │       ├── base.py                   # 适配器基类

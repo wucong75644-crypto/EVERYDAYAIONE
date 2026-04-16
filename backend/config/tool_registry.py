@@ -69,31 +69,22 @@ register(ToolEntry(
     priority=1,
 ))
 register(ToolEntry(
-    name="local_order_query",
+    name="local_data",
     domain="erp",
-    description="按商品编码查销售订单",
-    tags=["订单", "下单", "买家", "发货"],
-    priority=1,
-))
-register(ToolEntry(
-    name="local_purchase_query",
-    domain="erp",
-    description="按商品编码查采购到货进度",
-    tags=["采购", "采购单", "供应商", "进货"],
-    priority=1,
-))
-register(ToolEntry(
-    name="local_aftersale_query",
-    domain="erp",
-    description="按商品编码查售后情况",
-    tags=["售后", "退货", "退款", "换货", "补发"],
-    priority=1,
-))
-register(ToolEntry(
-    name="local_doc_query",
-    domain="erp",
-    description="多维度单据查询（订单号/快递号/采购单号/供应商/店铺）",
-    tags=["单据", "单号", "快递号", "流水"],
+    description="统一单据查询（订单/采购/售后/收货/上架/采退），支持 summary/detail/export 三种模式",
+    tags=[
+        # 合并自 7 个旧工具的 tags
+        "订单", "下单", "买家", "发货",
+        "采购", "采购单", "供应商", "进货",
+        "售后", "退货", "退款", "换货", "补发",
+        "单据", "单号", "快递号", "流水",
+        "全链路", "流转", "采购到销售", "进货到卖出",
+        "今天多少单", "排名", "平台对比", "全平台",
+        "退货率", "退款率", "毛利", "利润", "客单价",
+        "成交额", "销售额", "业绩", "总量", "金额", "营收",
+        "多少单", "总数", "占比", "导出", "销量",
+        "导出", "下载", "Excel", "报表", "全量数据", "明细数据",
+    ],
     priority=1,
 ))
 register(ToolEntry(
@@ -104,39 +95,11 @@ register(ToolEntry(
     priority=1,
 ))
 register(ToolEntry(
-    name="local_product_flow",
-    domain="erp",
-    description="按商品编码查完整供应链流转",
-    tags=["全链路", "流转", "采购到销售", "进货到卖出", "完整情况", "整个流程"],
-    priority=1,
-))
-register(ToolEntry(
-    name="local_global_stats",
-    domain="erp",
-    description="全局统计查询（今天多少单/排名/各平台对比）",
-    tags=[
-        "今天多少单", "排名", "平台对比", "全平台",
-        "退货率", "退款率", "毛利", "利润", "客单价", "复购率", "复购",
-        "转化率", "及时率", "签收率", "满意度", "增长", "丢件率",
-        "成交额", "销售额", "业绩", "总量", "金额", "营收", "净利",
-        "时效", "投诉", "滞留", "拒收", "处理时长",
-        "占比", "高峰", "峰值", "下滑", "达标", "曝光", "点击率",
-        "加购率", "动销率", "周转天数", "流量", "成本结构",
-        "导出", "价位", "销量",
-        "漏斗", "季度", "总结", "报告", "应付", "应收",
-        "多少单", "总数", "新客", "老客",
-        "妥投率", "完成率", "比例", "滞销", "物流成本", "物流异常",
-        "目标", "完成度", "问题分类", "退款",
-        "访客", "收藏", "加购", "支付", "搜索", "浏览",
-    ],
-    priority=1,
-))
-register(ToolEntry(
     name="local_compare_stats",
     domain="erp",
     description="时间维度对比统计（同比/环比，由后端确定计算 weekday）",
     tags=[
-        # 对比/同比/环比关键词集中在此工具，避免与 local_global_stats 抢路由
+        # 对比/同比/环比关键词集中在此工具，避免与 local_data 抢路由
         "对比", "同比", "环比", "比上周", "比上月", "比去年",
         "今天vs昨天", "本周vs上周", "本月vs上月",
         "WoW", "MoM", "YoY", "上周同期", "上月同期", "去年同期",
@@ -169,16 +132,6 @@ register(ToolEntry(
     tags=[
         "仓库", "仓库列表", "哪些仓库", "仓库地址", "仓库编码",
         "实体仓", "虚拟仓", "几个仓库", "发货仓",
-    ],
-    priority=1,
-))
-register(ToolEntry(
-    name="local_db_export",
-    domain="erp",
-    description="从本地数据库导出明细数据到staging文件，配合code_execute生成Excel",
-    tags=[
-        "导出", "下载", "Excel", "报表", "全量数据", "明细数据",
-        "导出订单", "导出采购", "导出售后",
     ],
     priority=1,
 ))

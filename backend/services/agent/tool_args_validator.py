@@ -127,6 +127,24 @@ def validate_tool_args(
                 f"param={key} | string→bool"
             )
 
+        # array: LLM 双重序列化 → 尝试 json.loads 还原
+        elif expected_type == "array" and isinstance(value, str):
+            try:
+                parsed = _json.loads(value)
+            except (ValueError, TypeError):
+                parsed = None
+            if isinstance(parsed, list):
+                logger.warning(
+                    f"ToolArgsValidator type coerced | tool={tool_name} | "
+                    f"param={key} | string→array"
+                )
+                cleaned[key] = parsed
+            else:
+                return cleaned, (
+                    f"参数 `{key}` 类型错误：期望 array(list)，"
+                    f"收到 string。请传 JSON 数组"
+                )
+
     # ── 2. 必填参数缺失检查 ──
     missing = required - set(cleaned.keys())
     if missing:

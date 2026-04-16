@@ -742,6 +742,33 @@
 
 ---
 
+### 统一查询引擎 (Unified Query Engine — Filter DSL)
+
+> **新增于统一查询引擎重构**：替代 7 个碎片工具（purchase_query/aftersale_query/order_query/product_flow/doc_query/global_stats/db_export），统一对 erp_document_items 的查询入口。设计文档: `docs/document/TECH_统一查询引擎FilterDSL.md`
+
+#### 后端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `UnifiedQueryEngine.execute` | `backend/services/kuaimai/erp_unified_query.py` | 统一查询入口（summary/detail/export 三种模式） | doc_type, mode, filters, group_by, sort_by, fields, limit, time_type, ... | str |
+| `UnifiedQueryEngine._summary` | `backend/services/kuaimai/erp_unified_query.py` | 调 RPC 返回聚合统计 | doc_type, filters, time_range, group_by, request_ctx | str |
+| `UnifiedQueryEngine._detail` | `backend/services/kuaimai/erp_unified_query.py` | ORM 查询返回明细行（热表+冷表 UNION） | doc_type, filters, time_range, fields, sort_by, sort_dir, limit, request_ctx | str |
+| `UnifiedQueryEngine._export` | `backend/services/kuaimai/erp_unified_query.py` | ORM 批量查询 + Parquet 写入 staging | doc_type, filters, time_range, fields, limit, user_id, conversation_id, request_ctx | str |
+| `_validate_filters` | `backend/services/kuaimai/erp_unified_query.py` | 校验 Filter DSL 合法性（白名单+类型兼容） | filters: list[dict] | (list[ValidatedFilter], error_msg) |
+| `_extract_time_range` | `backend/services/kuaimai/erp_unified_query.py` | 从 filters 提取时间范围（按 mode 默认） | filters, time_type, request_ctx, mode | TimeRange |
+| `_apply_orm_filters` | `backend/services/kuaimai/erp_unified_query.py` | ValidatedFilter → Supabase ORM 链式调用 | q, filters | q |
+
+#### Schema 常量
+
+| 常量名 | 文件路径 | 功能描述 |
+|--------|----------|----------|
+| `COLUMN_WHITELIST` | `backend/services/kuaimai/erp_unified_schema.py` | 列白名单（35列，含类型元数据） |
+| `OP_COMPAT` | `backend/services/kuaimai/erp_unified_schema.py` | op 与列类型兼容表 |
+| `DEFAULT_DETAIL_FIELDS` | `backend/services/kuaimai/erp_unified_schema.py` | detail 模式各 doc_type 默认返回字段 |
+| `EXPORT_COLUMNS` | `backend/services/kuaimai/erp_unified_schema.py` | export 模式可导出字段文档 |
+
+---
+
 ### 快麦参数映射模块 (Kuaimai Param Mapper)
 
 > **修改部分**：map_params 返回类型变更。
