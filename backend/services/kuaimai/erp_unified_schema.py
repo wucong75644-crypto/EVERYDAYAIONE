@@ -142,9 +142,7 @@ GROUP_BY_MAP = {
 # ── export 常量 ───────────────────────────────────────
 
 
-EXPORT_BATCH = 5000
-EXPORT_MAX = 10000
-EXPORT_DEFAULT = 5000
+EXPORT_MAX = 1_000_000    # 安全上限（DuckDB 流式不怕大数据，但防止误查全表）
 
 EXPORT_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "单据基础": [
