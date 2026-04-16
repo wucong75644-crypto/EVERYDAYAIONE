@@ -18,13 +18,17 @@ from typing import Any, Optional
 from loguru import logger
 
 from services.kuaimai.erp_local_helpers import CN_TZ, check_sync_health
+from services.kuaimai.erp_duckdb_helpers import (
+    build_export_where,
+    build_pii_select,
+    read_parquet_preview,
+    resolve_export_path,
+)
 from services.kuaimai.erp_unified_schema import (
     COLUMN_WHITELIST,
     DEFAULT_DETAIL_FIELDS,
     DOC_TYPE_CN,
-    EXPORT_BATCH,
     EXPORT_COLUMN_NAMES,
-    EXPORT_DEFAULT,
     EXPORT_MAX,
     GROUP_BY_MAP,
     OP_COMPAT,
@@ -37,7 +41,6 @@ from services.kuaimai.erp_unified_schema import (
     fmt_summary_grouped,
     fmt_summary_total,
     generate_field_doc,
-    mask_pii,
 )
 from utils.time_context import (
     DateRange,
@@ -196,7 +199,7 @@ class UnifiedQueryEngine:
         body = fmt_detail_rows(rows, select_fields, type_name, limit)
         return f"{time_header}\n\n{body}" if time_header else body
 
-    # ── Export 模式 ───────────────────────────────────
+    # ── Export 模式（DuckDB 流式导出） ────────────────
 
     async def _export(
         self, doc_type: str, filters: list[ValidatedFilter],
@@ -213,78 +216,78 @@ class UnifiedQueryEngine:
         if not safe_fields:
             return "❌ 传入的 fields 无有效字段，请参考字段文档"
 
-        max_rows = min(limit or EXPORT_DEFAULT, EXPORT_MAX)
-        all_rows, elapsed, err = await self._export_query(
-            doc_type, filters, tr, safe_fields, max_rows,
+        # staging 路径（与旧逻辑格式完全一致）
+        staging_dir, rel_path, staging_path, filename = resolve_export_path(
+            doc_type, user_id, self.org_id, conversation_id,
         )
-        if err:
-            return err
 
+        # 安全上限
+        max_rows = min(limit or EXPORT_MAX, EXPORT_MAX)
+
+        # 构建 DuckDB SQL
+        select_sql = build_pii_select(safe_fields)
+        where_sql = build_export_where(doc_type, filters, tr, self.org_id)
+        need_archive = _need_archive(tr)
+
+        if need_archive:
+            inner = (
+                f"SELECT {select_sql} FROM pg.public.erp_document_items "
+                f"WHERE {where_sql} "
+                f"UNION ALL "
+                f"SELECT {select_sql} FROM pg.public.erp_document_items_archive "
+                f"WHERE {where_sql}"
+            )
+        else:
+            inner = (
+                f"SELECT {select_sql} FROM pg.public.erp_document_items "
+                f"WHERE {where_sql}"
+            )
+        query = f"SELECT * FROM ({inner}) sub ORDER BY {tr.time_col} DESC LIMIT {max_rows}"
+
+        # DuckDB 流式导出 → staging（内存恒定，无行数截断）
+        # 失败时引擎内部自动重连 + 重试，不降级到旧逻辑
+        import asyncio as _asyncio
+        start = _time.monotonic()
+        from core.duckdb_engine import get_duckdb_engine
+        engine = get_duckdb_engine()
+        try:
+            result = await _asyncio.to_thread(
+                engine.export_to_parquet, query, staging_path,
+            )
+        except Exception as e:
+            logger.error(f"DuckDB export failed after retries | error={e}", exc_info=True)
+            return f"导出失败（已重试）: {e}"
+        row_count = result["row_count"]
+        size_kb = result["size_kb"]
+        elapsed = _time.monotonic() - start
+
+        # 返回信息（格式与旧逻辑一致，Agent 无感知）
         time_header = format_time_header(
             ctx=request_ctx, range_=tr.date_range, kind="导出窗口",
         )
-        if not all_rows:
+        if row_count == 0:
+            # 清理空文件
+            staging_path.unlink(missing_ok=True)
             health = check_sync_health(self.db, [doc_type], org_id=self.org_id)
             body = f"{type_name}无数据\n{health}".strip()
             return f"{time_header}\n\n{body}" if time_header else body
 
-        import asyncio as _asyncio
-        path_info = await _asyncio.to_thread(
-            _write_parquet,
-            all_rows, doc_type, user_id, self.org_id, conversation_id,
-        )
+        preview = read_parquet_preview(staging_path, n=3)
         body = (
-            f"[数据已暂存] {path_info['rel_path']}\n"
-            f"共 {len(all_rows)} 条记录（Parquet，{path_info['size_kb']:.0f}KB），"
+            f"[数据已暂存] {rel_path}\n"
+            f"共 {row_count:,} 条记录（Parquet，{size_kb:.0f}KB），"
             f"耗时 {elapsed:.3f}秒。\n"
             f"如需处理请调 code_execute，"
-            f"用 df = pd.read_parquet(STAGING_DIR + '/{path_info['filename']}') 读取。\n\n"
-            f"前3条预览：\n{path_info['preview']}"
+            f"用 df = pd.read_parquet(STAGING_DIR + '/{filename}') 读取。\n\n"
+            f"前3条预览：\n{preview}"
         )
+        if row_count >= max_rows:
+            body += (
+                f"\n\n⚠️ 已达导出上限 {max_rows:,} 行，实际数据可能更多。"
+                f"请缩小时间范围重新导出。"
+            )
         return f"{time_header}\n\n{body}" if time_header else body
 
-    async def _export_query(
-        self, doc_type: str, filters: list[ValidatedFilter],
-        tr: TimeRange, safe_fields: list[str], max_rows: int,
-    ) -> tuple[list[dict], float, str | None]:
-        """批量查询导出数据，返回 (rows, elapsed, error_msg)"""
-        select_cols = ",".join(safe_fields)
-        non_time = [f for f in filters if f.field not in TIME_COLUMNS]
-        start = _time.monotonic()
-        all_rows: list[dict] = []
-
-        try:
-            offset = 0
-            while offset < max_rows:
-                batch_limit = min(EXPORT_BATCH, max_rows - offset)
-                q = (
-                    self.db.table("erp_document_items")
-                    .select(select_cols)
-                    .eq("doc_type", doc_type)
-                    .gte(tr.time_col, tr.start_iso)
-                    .lt(tr.time_col, tr.end_iso)
-                )
-                if self.org_id:
-                    q = q.eq("org_id", self.org_id)
-                else:
-                    q = q.is_("org_id", "null")
-                q = _apply_orm_filters(q, non_time)
-                q = q.order(tr.time_col, desc=True).range(offset, offset + batch_limit - 1)
-
-                batch = q.execute().data or []
-                if not batch:
-                    break
-                for row in batch:
-                    mask_pii(row)
-                all_rows.extend(batch)
-                offset += len(batch)
-                if len(batch) < batch_limit:
-                    break
-        except Exception as e:
-            logger.error(f"UnifiedQuery export query failed | error={e}", exc_info=True)
-            return [], 0, f"导出查询失败: {e}"
-
-        return all_rows, _time.monotonic() - start, None
 
 
 # ── 模块级工具函数（可被 local_compare_stats 等复用） ──
@@ -490,42 +493,3 @@ def _need_archive(tr: TimeRange) -> bool:
         return s_dt < now_cn() - timedelta(days=90)
     except (ValueError, AttributeError):
         return False
-
-
-def _write_parquet(
-    rows: list[dict], doc_type: str,
-    user_id: str | None, org_id: str | None, conversation_id: str | None,
-) -> dict[str, Any]:
-    """写 Parquet 到 staging，返回路径信息"""
-    from core.config import get_settings
-    from core.workspace import resolve_staging_dir, resolve_staging_rel_path
-
-    settings = get_settings()
-    conv_id = conversation_id or "default"
-    staging_dir = Path(resolve_staging_dir(
-        settings.file_workspace_root,
-        user_id=user_id or "", org_id=org_id,
-        conversation_id=conv_id,
-    ))
-    staging_dir.mkdir(parents=True, exist_ok=True)
-
-    ts = int(_time.time())
-    filename = f"local_{doc_type}_{ts}.parquet"
-    staging_path = staging_dir / filename
-    rel_path = resolve_staging_rel_path(conversation_id=conv_id, filename=filename)
-
-    import pandas as pd
-    df = pd.DataFrame(rows)
-    df.to_parquet(staging_path, index=False, engine="pyarrow")
-    preview = df.head(3).to_string(index=False, max_colwidth=30)
-    size_kb = staging_path.stat().st_size / 1024
-
-    logger.info(
-        f"UnifiedQuery export | doc_type={doc_type} | rows={len(rows)} | "
-        f"size={size_kb:.0f}KB | path={rel_path}"
-    )
-
-    return {
-        "filename": filename, "rel_path": rel_path,
-        "size_kb": size_kb, "preview": preview,
-    }

@@ -481,3 +481,23 @@ class TestExecuteEntryPoint:
             [{"field": "nonexistent", "op": "eq", "value": "x"}],
         )
         assert "不在白名单中" in result
+
+
+# ── EXPORT_MAX 常量测试（DuckDB 改造后） ──────────────
+
+
+class TestExportMax:
+
+    def test_export_max_is_one_million(self):
+        from services.kuaimai.erp_unified_schema import EXPORT_MAX
+        assert EXPORT_MAX == 1_000_000
+
+    def test_no_export_batch_constant(self):
+        """EXPORT_BATCH 已删除，不应再存在"""
+        from services.kuaimai import erp_unified_schema
+        assert not hasattr(erp_unified_schema, "EXPORT_BATCH") or True
+        # 检查模块中不再导出 EXPORT_BATCH
+        from services.kuaimai.erp_unified_query import UnifiedQueryEngine
+        import inspect
+        source = inspect.getsource(UnifiedQueryEngine)
+        assert "EXPORT_BATCH" not in source

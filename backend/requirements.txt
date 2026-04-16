@@ -51,6 +51,9 @@ PyPDF2==3.0.1
 python-docx==1.2.0
 openpyxl==3.1.5
 
+# DuckDB（嵌入式 OLAP 引擎，大报表导出用）
+duckdb==1.2.2
+
 # 数据分析（沙盒代码执行）
 pandas==2.2.3
 pyarrow==23.0.1

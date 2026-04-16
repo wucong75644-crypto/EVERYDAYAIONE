@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     db_pool_min: int = 2  # 连接池最小连接数
     db_pool_max: int = 20  # 连接池最大连接数（支持 10 Worker 并发 + 聚合/死信消费者）
 
+    # DuckDB 导出引擎（大报表流式导出，设计文档：docs/document/TECH_DuckDB导出引擎.md）
+    duckdb_memory_limit: str = "256MB"  # 最大内存（超出自动溢出到磁盘）
+    duckdb_threads: int = 2  # 工作线程数（不超过服务器 CPU 核心的一半）
+
     # JWT 配置
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
