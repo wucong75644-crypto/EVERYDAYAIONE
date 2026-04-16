@@ -73,7 +73,7 @@ class TestIsConcurrencySafe:
         from config.chat_tools import is_concurrency_safe
         safe_tools = [
             "erp_product_query", "erp_trade_query",
-            "local_stock_query", "local_order_query",
+            "local_stock_query", "local_data",
             "erp_api_search", "search_knowledge", "web_search",
             "social_crawler", "code_execute",
         ]
