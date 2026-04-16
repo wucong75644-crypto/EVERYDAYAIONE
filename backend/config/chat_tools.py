@@ -52,10 +52,9 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     "erp_info_query", "erp_product_query", "erp_trade_query",
     "erp_aftersales_query", "erp_warehouse_query", "erp_purchase_query",
     "erp_taobao_query",
-    "local_product_identify", "local_stock_query", "local_order_query",
-    "local_purchase_query", "local_aftersale_query", "local_doc_query",
-    "local_product_stats", "local_product_flow", "local_global_stats",
-    "local_platform_map_query",
+    "local_data", "local_product_identify", "local_stock_query",
+    "local_product_stats", "local_platform_map_query",
+    "local_compare_stats", "local_shop_list", "local_warehouse_list",
     # 搜索类
     "erp_api_search", "search_knowledge", "web_search",
     "social_crawler",
@@ -138,20 +137,16 @@ TOOL_SYSTEM_PROMPT = """## 工具使用规则
 4. 一个 code_execute 完成全部计算+输出
 禁止反复打开文件探索——读一次表头，想好方案，一步到位。
 
-### 模糊请求
-选最可能的理解，说明假设，执行后在结尾提供替代选项。不要连问多个问题，最多问 1 个关键澄清。
+### 执行 vs 追问（决策框架）
+收到请求后按以下顺序判断，选择第一个命中的：
+1. **信息完整** → 直接执行，不需要确认
+2. **缺信息但无歧义**（只有一个合理值）→ 直接执行，结果中说明假设
+3. **缺信息且有歧义**（多个合理值）→ 调 ask_user，列出已知信息 + 可选条件
+4. **操作有风险或不可逆** → 调 ask_user 确认操作对象和影响
 
-### 主动沟通（ask_user 工具）
-当以下情况出现时，必须调用 ask_user 工具向用户确认，禁止猜测或使用默认值：
-1. 查询缺少关键参数（时间范围、具体店铺、商品等）且有多种合理默认值
-2. 工具返回多条相似结果无法区分（需要用户明确选择）
-3. 操作有风险或不可逆（删除、修改等需要用户确认）
-4. 用户需求有歧义，不同理解会导致完全不同的结果
-
-调用 ask_user 时的要求：
-- 列出你已知的信息，说明缺什么
-- 给出 2-3 个选项引导用户选择（写在 message 参数中）
-- 用简洁的语言，不要长篇大论
+原则：猜对了节省 5 秒，猜错了用户要重新问。数据查询猜错的代价 > 多问一次的代价。
+调 ask_user 时用简洁语言，给出 2-3 个选项引导选择，不要长篇大论。
+非数据类的模糊请求（闲聊/创作/通用问答），选最可能的理解直接回答。
 
 ### 禁止行为（CRITICAL）
 - NEVER 不调工具就回答业务数据问题——必须调 erp_agent 查数据再回答
@@ -194,10 +189,14 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                         "query": {
                             "type": "string",
                             "description": (
-                                "传给 ERP Agent 的结构化查询任务。ERP Agent 看不到对话历史，"
-                                "你需要把任务描述清楚：查询目标、涉及的店铺/商品/订单、时间范围、筛选条件。\n"
-                                "时间用相对表达（'昨天''上个月'），禁止转换成具体日期——系统会自动注入当前时间给 ERP Agent。\n"
-                                "只补全对话中的指代词（'这个''那个''上面的'），不要添加用户没提过的限定条件。"
+                                "传给 ERP Agent 的查询任务。传用户的原始表达，不要自行补充用户未提及的条件。\n"
+                                "ERP Agent 看不到对话历史，需要补全指代词（'这个''那个'→具体对象）。\n"
+                                "时间用相对表达（'昨天''上个月'），禁止转换成具体日期。\n\n"
+                                "如果用户未提供以下关键信息，先用 ask_user 确认后再调用本工具：\n"
+                                "· 统计类（销量/销售额/订单数/出单量）：需要时间范围\n"
+                                "· 商品类（库存/价格/成本）：需要商品名称或编码\n"
+                                "· 单据类（订单明细/采购/售后）：需要单号、时间范围或商品\n"
+                                "用户已明确的信息直接传，未提及的不要猜测补充。"
                             ),
                         },
                     },

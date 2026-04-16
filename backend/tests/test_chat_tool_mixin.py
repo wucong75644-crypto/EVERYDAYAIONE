@@ -60,7 +60,7 @@ class TestPartitionToolCalls:
             {"name": "local_stock_query", "id": "tc1"},
             {"name": "erp_product_query", "id": "tc2"},
             {"name": "erp_execute", "id": "tc3"},
-            {"name": "local_order_query", "id": "tc4"},
+            {"name": "local_data", "id": "tc4"},
         ]
         batches = _partition_tool_calls(calls)
         assert len(batches) == 3
@@ -327,12 +327,12 @@ class TestAccumulateToolCallDelta:
         acc = {}
         accumulate_tool_call_delta(acc, [
             ToolCallDelta(index=0, id="tc1", name="local_stock_query", arguments_delta='{"code":"A"}'),
-            ToolCallDelta(index=1, id="tc2", name="local_order_query", arguments_delta='{"code":"B"}'),
+            ToolCallDelta(index=1, id="tc2", name="local_data", arguments_delta='{"code":"B"}'),
         ])
 
         assert len(acc) == 2
         assert acc[0]["name"] == "local_stock_query"
-        assert acc[1]["name"] == "local_order_query"
+        assert acc[1]["name"] == "local_data"
 
     def test_empty_deltas(self):
         """空 deltas 列表→acc 不变"""
