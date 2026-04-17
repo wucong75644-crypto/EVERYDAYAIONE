@@ -91,12 +91,14 @@ class PurchaseAgent(DepartmentAgent):
         return "purchase_list"
 
     async def _dispatch(self, action, params, context):
+        doc_type = params.get("doc_type", "purchase")
         if action == "purchase_return":
-            return await self.query_purchase_return(
-                mode="detail", filters=params.get("filters", []),
-            )
-        return await self.query_purchase(
-            mode="detail", filters=params.get("filters", []),
+            doc_type = "purchase_return"
+        return await self._query_local_data(
+            doc_type=doc_type,
+            mode=params.get("mode", "summary"),
+            filters=params.get("filters", []),
+            group_by=params.get("group_by"),
         )
 
     # ── 采购域查询方法 ──

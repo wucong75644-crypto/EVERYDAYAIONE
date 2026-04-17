@@ -211,27 +211,17 @@ class ComputeAgent:
                     f"输出格式要求: {task.output_format}\n\n"
                     f"只返回可执行的 Python 代码，不需要 markdown 围栏。"
                 )
-                response = await adapter.chat(
+                response = await adapter.chat_sync(
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_msg},
                     ],
-                    tools=None,
-                    temperature=0.0,
                 )
                 # 收集 token 消耗（供 ERPAgent 汇总计费）
-                usage = getattr(response, "usage", None)
-                if usage:
-                    self._tokens_used += getattr(usage, "prompt_tokens", 0)
-                    self._tokens_used += getattr(usage, "completion_tokens", 0)
-                elif isinstance(response, dict):
-                    self._tokens_used += response.get("prompt_tokens", 0)
-                    self._tokens_used += response.get("completion_tokens", 0)
-                raw = (
-                    response.get("content", "")
-                    if isinstance(response, dict)
-                    else getattr(response, "content", "")
-                )
+                # chat_sync 返回 ChatResponse（dataclass）
+                self._tokens_used += getattr(response, "prompt_tokens", 0)
+                self._tokens_used += getattr(response, "completion_tokens", 0)
+                raw = getattr(response, "content", "") or ""
                 # 去除可能的 markdown 围栏
                 import re
                 cleaned = re.sub(r"```(?:python)?\s*", "", raw)

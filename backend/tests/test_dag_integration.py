@@ -359,9 +359,14 @@ class TestERPAgentDAGPath:
             db=MagicMock(), user_id="u1",
             conversation_id="c1", org_id="org1",
         )
-        result = await agent.execute("hello world")
-        assert result.status == "error"
-        assert "无法理解" in result.text
+        # mock LLM 让其失败，走降级链 → 关键词无匹配 → abort
+        with patch(
+            "services.agent.plan_builder.PlanBuilder._llm_plan",
+            new=AsyncMock(side_effect=Exception("mocked")),
+        ):
+            result = await agent.execute("hello world")
+            assert result.status == "error"
+            assert "无法理解" in result.text
 
 
 # ============================================================

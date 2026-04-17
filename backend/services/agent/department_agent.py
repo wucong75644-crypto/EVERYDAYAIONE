@@ -53,9 +53,15 @@ class DepartmentAgent(ABC):
     allowed_doc_types: list[str] = []
     """允许查询的 doc_type 白名单。_query_local_data 强制校验。"""
 
-    def __init__(self, db: Any, org_id: str | None = None):
+    def __init__(
+        self,
+        db: Any,
+        org_id: str | None = None,
+        request_ctx: Any = None,
+    ):
         self.db = db
         self.org_id = org_id
+        self.request_ctx = request_ctx
 
     # ── 抽象属性 ──
 
@@ -154,17 +160,9 @@ class DepartmentAgent(ABC):
     ) -> ToolOutput:
         """构建 ToolOutput，自动处理 FIELD_MAP 和数据分流。
 
-        - source 从 self.domain 自动取（协议层必填）
-        - columns 必须传（协议层必填）
-        - business_fields 全部放 metadata（业务层动态）
-        - FIELD_MAP 自动映射 data key 和 ColumnMeta.name（同步）
-
-        ≤200行 → TABLE（inline JSON）
-        >200行 → FILE_REF（写 staging parquet）
-
-        注意：FILE_REF 路径的 parquet 文件会被下游 _extract_field_from_context
-        同步读取。调用方应保证传入的 rows 是筛选后的结果（top-N），
-        不是全量数据。全量数据写大文件会阻塞 asyncio 事件循环。
+        ≤200行 → TABLE（inline JSON）；>200行 → FILE_REF（staging parquet）。
+        FIELD_MAP 自动映射 data key 和 ColumnMeta.name。
+        FILE_REF 会被下游同步读取，rows 应为 top-N 结果，避免全量数据。
         """
         # ── FIELD_MAP 标准化（data 和 columns 同步映射）──
         if self.FIELD_MAP:
@@ -253,19 +251,10 @@ class DepartmentAgent(ABC):
 
     # ── Context 注入（确定性提取，不靠 LLM）──
 
-    # FILE_REF 读取占位符：标记"正在读取"，防止并发协程重复读文件
-    # 注：使用 sentinel 而非 asyncio.Event，原因：
-    # _extract_field_from_context 是同步方法，被同步调用链使用
-    # （_extract_params_from_task → validate_params）。
-    # 改为 async 需要追溯整条调用链。
-    # 双读结果正确，parquet 文件通常较小（top-N 结果，毫秒级 IO），
-    # 接受此权衡。
-    #
-    # Boundary conditions（满足以下两个条件时阻塞可忽略）：
-    # 1. INLINE_THRESHOLD=200 保证 parquet 只有 >200 行才写文件
-    # 2. 跨域传递的是筛选后的 top-N 结果，不是全量数据（调用方保证）
-    # 如果未来任一条件被破坏（阈值调大 / 上游写全量数据），
-    # 需要改为 asyncio.to_thread(pd.read_parquet, ...) 避免阻塞事件循环。
+    # FILE_REF 读取 sentinel：同步方法，用 sentinel 防并发双读。
+    # 双读结果正确（同一文件同一列），接受此权衡。
+    # Boundary: parquet 须为 top-N 结果（INLINE_THRESHOLD=200），
+    # 全量数据需改为 asyncio.to_thread。
     _COL_CACHE_LOADING = object()
 
     def _extract_field_from_context(
@@ -273,14 +262,8 @@ class DepartmentAgent(ABC):
         context: list[ToolOutput] | None,
         field_name: str,
     ) -> list[Any]:
-        """从上游 context 里提取指定字段的值列表。
-
-        支持 inline data 和 FILE_REF 两种模式。
-        确定性提取，不靠 LLM。
-        零值保护：if val is not None（不用 if val），
-        库存为0的商品是缺货分析的核心数据，不能被静默丢弃。
-        FILE_REF 读取结果缓存在 ToolOutput.metadata 上，
-        同一个文件在同一次 DAG 执行里只读一次。
+        """从上游 context 提取指定字段值。支持 inline + FILE_REF。
+        零值保护（if val is not None）。FILE_REF 结果缓存在 metadata 上。
         """
         values: list[Any] = []
         for output in (context or []):
@@ -337,6 +320,52 @@ class DepartmentAgent(ABC):
                     )
         return values
 
+    # ── 语义参数 → filters DSL 转换 ──
+
+    @staticmethod
+    def _params_to_filters(params: dict) -> list[dict]:
+        """把 PlanBuilder 输出的语义参数转成 UnifiedQueryEngine 的 filters DSL。
+
+        语义参数（LLM 输出）：time_range / time_col / platform
+        filters DSL（执行层）：[{field, op, value}]
+
+        这一步是确定性转换，不需要 LLM。
+        """
+        filters: list[dict] = []
+        # 时间范围 → gte/lt 过滤器
+        tr = params.get("time_range")
+        if tr and "~" in tr:
+            time_col = params.get("time_col", "doc_created_at")
+            parts = tr.split("~")
+            if len(parts) == 2:
+                start = parts[0].strip()
+                end = parts[1].strip()
+                if start:
+                    filters.append({
+                        "field": time_col, "op": "gte",
+                        "value": f"{start}T00:00:00",
+                    })
+                if end:
+                    # 半开区间：次日 00:00:00，覆盖完整一天
+                    try:
+                        from datetime import date as _date, timedelta as _td
+                        next_day = (
+                            _date.fromisoformat(end) + _td(days=1)
+                        ).isoformat()
+                    except ValueError:
+                        next_day = end  # 格式异常时原样透传
+                    filters.append({
+                        "field": time_col, "op": "lt",
+                        "value": f"{next_day}T00:00:00",
+                    })
+        # 平台 → eq 过滤器
+        platform = params.get("platform")
+        if platform:
+            filters.append({
+                "field": "platform", "op": "eq", "value": platform,
+            })
+        return filters
+
     # ── doc_type 白名单强制校验 ──
 
     async def _query_local_data(
@@ -362,6 +391,7 @@ class DepartmentAgent(ABC):
             doc_type=doc_type,
             mode=kwargs.pop("mode", "summary"),
             filters=kwargs.pop("filters", []),
+            request_ctx=self.request_ctx,
             **kwargs,
         )
 
@@ -391,17 +421,13 @@ class DepartmentAgent(ABC):
         context: list[ToolOutput] | None = None,
         *,
         dag_mode: bool = False,
+        params: dict | None = None,
     ) -> ToolOutput:
         """统一执行入口（DAG 编排器调用）。
 
-        dag_mode=True 时禁止写操作（DAG 路径下不支持 ask_user 打断恢复）。
-
-        1. 从 task 关键词分类 action
-        2. 从 task + context 提取参数
-        3. 校验参数
-        4. 分发到具体查询方法
-
-        子类覆盖 _classify_action / _dispatch 即可。
+        params: Round.params（PlanBuilder LLM 输出的静态语义参数）。
+                动态参数（product_code）从 context 提取，合并到 params。
+        dag_mode=True 时禁止写操作。
         """
         action = self._classify_action(task)
 
@@ -420,9 +446,25 @@ class DepartmentAgent(ABC):
                 ),
             )
 
-        params = self._extract_params_from_task(task, context)
+        # 合并参数：静态（PlanBuilder）+ 动态（context）
+        merged = dict(params or {})
+        # 从 context 提取动态参数（跨域传递的 product_code）
+        if context:
+            codes = self._extract_field_from_context(
+                context, "product_code",
+            )
+            if codes:
+                merged.setdefault("product_codes", codes)
+                # 兼容：部门 Agent 的 validate_params 和 _dispatch 可能用单数
+                merged.setdefault(
+                    "product_code",
+                    codes[0] if len(codes) == 1 else codes,
+                )
+        # 语义参数 → filters DSL（确定性转换）
+        if "time_range" in merged and "filters" not in merged:
+            merged["filters"] = self._params_to_filters(merged)
 
-        validation = self.validate_params(action, params)
+        validation = self.validate_params(action, merged)
         if not validation.is_ok:
             return ToolOutput(
                 summary=validation.message,
@@ -432,7 +474,23 @@ class DepartmentAgent(ABC):
             )
 
         try:
-            return await self._dispatch(action, params, context)
+            result = await self._dispatch(action, merged, context)
+            # 降级路径标注：让用户知道时间范围可能不准确
+            if merged.get("_degraded") and result.status != OutputStatus.ERROR:
+                result = ToolOutput(
+                    summary=(
+                        "⚠ 简化查询模式（时间范围默认今天）\n\n"
+                        + result.summary
+                    ),
+                    format=result.format,
+                    source=result.source,
+                    status=result.status,
+                    columns=result.columns,
+                    data=result.data,
+                    file_ref=result.file_ref,
+                    metadata={**result.metadata, "_degraded": True},
+                )
+            return result
         except Exception as e:
             logger.error(
                 f"{self.domain} Agent execute failed | "
@@ -449,22 +507,7 @@ class DepartmentAgent(ABC):
         """从任务描述关键词分类 action。子类应覆盖。"""
         return "default"
 
-    def _extract_params_from_task(
-        self,
-        task: str,
-        context: list[ToolOutput] | None,
-    ) -> dict[str, Any]:
-        """从任务描述 + context 提取参数。
-
-        基类提供 context 字段提取，子类可覆盖添加更多逻辑。
-        """
-        params: dict[str, Any] = {}
-        # 从 context 提取 product_code（跨域传递的核心字段）
-        if context:
-            codes = self._extract_field_from_context(context, "product_code")
-            if codes:
-                params["product_code"] = codes[0] if len(codes) == 1 else codes
-        return params
+    # 参数提取已内联到 execute()：静态从 Round.params，动态从 context
 
     async def _dispatch(
         self,

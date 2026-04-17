@@ -110,15 +110,21 @@ def extract_time_range(
     if detected_col and detected_col in VALID_TIME_COLS:
         time_col = detected_col
 
+    # 半开区间：结束时间用次日 00:00:00（lt），覆盖完整一天
+    _next_day_start = (
+        (now + timedelta(days=1))
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+    )
+
     if start_val is None and end_val is None:
         if mode == "detail":
             s_dt = now - timedelta(days=30)
         else:
             s_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        e_dt = now.replace(hour=23, minute=59, second=59, microsecond=0)
+        e_dt = _next_day_start
         start_val, end_val = s_dt.isoformat(), e_dt.isoformat()
     elif start_val and not end_val:
-        end_val = now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat()
+        end_val = _next_day_start.isoformat()
     elif end_val and not start_val:
         start_val = (now - timedelta(days=30)).isoformat()
 
@@ -131,7 +137,7 @@ def extract_time_range(
             e_dt = e_dt.replace(tzinfo=CN_TZ)
     except (ValueError, AttributeError):
         s_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        e_dt = now.replace(hour=23, minute=59, second=59, microsecond=0)
+        e_dt = _next_day_start
         start_val, end_val = s_dt.isoformat(), e_dt.isoformat()
 
     date_range = DateRange.custom(s_dt, e_dt, reference=now)

@@ -197,7 +197,8 @@ class TestExtractTimeRange:
         from services.kuaimai.erp_unified_filters import extract_time_range as _extract_time_range
         tr = _extract_time_range([], None, self._ctx(), "summary")
         assert "04-15" in tr.start_iso
-        assert "04-15" in tr.end_iso
+        # 半开区间：结束时间为次日 00:00:00
+        assert "04-16" in tr.end_iso
 
     def test_no_time_filters_detail_defaults_30_days(self):
         from services.kuaimai.erp_unified_filters import extract_time_range as _extract_time_range
@@ -230,7 +231,7 @@ class TestExtractTimeRange:
         ]
         tr = _extract_time_range(filters, None, self._ctx(), "summary")
         assert "04-10" in tr.start_iso
-        assert "04-15" in tr.end_iso  # 默认到今天结束
+        assert "04-16" in tr.end_iso  # 半开区间：次日 00:00:00
 
     def test_mixed_time_cols_only_takes_first(self):
         """多时间列冲突时只取同一列（Fix 3 验证）"""
@@ -243,8 +244,8 @@ class TestExtractTimeRange:
         tr = _extract_time_range(filters, None, self._ctx(), "summary")
         assert tr.time_col == "consign_time"
         # end_val 来自 pay_time 但 detected_col 是 consign_time → pay_time 条件被忽略
-        # end 应该是默认值（今天）
-        assert "04-15" in tr.end_iso
+        # end 应该是默认值（次日 00:00:00）
+        assert "04-16" in tr.end_iso
 
 
 # ── _split_named_params 测试 ──────────────────────────

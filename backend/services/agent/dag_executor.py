@@ -161,7 +161,9 @@ class DAGExecutor:
         一个 Agent 超时不影响其他 Agent，已完成的结果保留。
         """
         tasks = [
-            self._execute_agent_with_timeout(domain, rnd.task, context)
+            self._execute_agent_with_timeout(
+                domain, rnd.task, context, rnd.params,
+            )
             for domain in rnd.agents
         ]
         if len(tasks) == 1:
@@ -170,6 +172,7 @@ class DAGExecutor:
 
     async def _execute_agent_with_timeout(
         self, domain: str, task: str, context: list[ToolOutput],
+        params: dict | None = None,
     ) -> ToolOutput:
         """执行单个 Agent（带独立超时 + deadline 协调）。"""
         config_timeout = (
@@ -198,7 +201,7 @@ class DAGExecutor:
             timeout = config_timeout
         try:
             result = await asyncio.wait_for(
-                self._execute_agent(domain, task, context),
+                self._execute_agent(domain, task, context, params),
                 timeout=timeout,
             )
             # 执行成功后，自动注册 FILE_REF 到共享 registry
@@ -235,6 +238,7 @@ class DAGExecutor:
 
     async def _execute_agent(
         self, domain: str, task: str, context: list[ToolOutput],
+        params: dict | None = None,
     ) -> ToolOutput:
         """执行单个 Agent。"""
         agent = self._agents.get(domain)
@@ -253,7 +257,9 @@ class DAGExecutor:
         from services.agent.compute_agent import ComputeAgent
         if isinstance(agent, ComputeAgent):
             return await agent.execute_from_dag(task, context=context)
-        return await agent.execute(task, context=context, dag_mode=True)
+        return await agent.execute(
+            task, context=context, dag_mode=True, params=params,
+        )
 
     def _build_result(
         self,

@@ -25,10 +25,14 @@ class Round:
     agents:     本轮需要执行的 Agent 域标识列表（如 ["warehouse", "purchase"]）
     task:       本轮任务描述（自然语言，LLM 生成）
     depends_on: 依赖的前序 Round 索引列表（必须 < 当前索引）
+    params:     静态查询参数（PlanBuilder LLM 输出）
+                包含 mode/doc_type/time_range/time_col/platform 等。
+                动态参数（product_code 等）由部门 Agent 从 context 提取。
     """
     agents: list[str]
     task: str = ""
     depends_on: list[int] = field(default_factory=list)
+    params: dict = field(default_factory=dict)
 
 
 class PlanValidationError(Exception):
@@ -92,6 +96,7 @@ class ExecutionPlan:
                 agents=r.get("agents", []),
                 task=r.get("task", ""),
                 depends_on=r.get("depends_on", []),
+                params=r.get("params", {}),
             ))
         return cls(rounds=rounds)
 
