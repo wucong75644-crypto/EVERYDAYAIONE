@@ -3,8 +3,11 @@ ERP 统计报表查询工具
 
 查询 erp_product_daily_stats 聚合表，支持月度/周度/日度统计。
 
+所有函数返回 ToolOutput（Phase 0 改造）。
+
 设计文档: docs/document/TECH_ERP数据本地索引系统.md §6 工具4
 时间事实层: docs/document/TECH_ERP时间准确性架构.md §6.2.2 (B5f)
+重构文档: docs/document/TECH_多Agent单一职责重构.md §4.3
 """
 
 from __future__ import annotations
@@ -14,6 +17,12 @@ from typing import Optional
 
 from loguru import logger
 
+from services.agent.tool_output import (
+    ColumnMeta,
+    OutputFormat,
+    OutputStatus,
+    ToolOutput,
+)
 from services.kuaimai.erp_local_helpers import CN_TZ, check_sync_health
 from utils.time_context import (
     DateRange,
@@ -23,6 +32,18 @@ from utils.time_context import (
 )
 
 
+_STATS_COLUMNS = [
+    ColumnMeta("stat_date", "text", "统计日期"),
+    ColumnMeta("order_count", "integer", "订单数"),
+    ColumnMeta("order_qty", "integer", "销量"),
+    ColumnMeta("order_amount", "numeric", "销售金额"),
+    ColumnMeta("purchase_count", "integer", "采购单数"),
+    ColumnMeta("purchase_qty", "integer", "采购数量"),
+    ColumnMeta("aftersale_count", "integer", "售后单数"),
+    ColumnMeta("aftersale_qty", "integer", "售后数量"),
+]
+
+
 async def local_product_stats(
     db, product_code: str,
     period: str = "month",
@@ -30,7 +51,7 @@ async def local_product_stats(
     end_date: str | None = None,
     org_id: str | None = None,
     request_ctx: Optional[RequestContext] = None,
-) -> str:
+) -> ToolOutput:
     """按商品编码查统计数据（聚合表）"""
     now = request_ctx.now if request_ctx else now_cn()
 
@@ -51,7 +72,12 @@ async def local_product_stats(
         rows = result.data or []
     except Exception as e:
         logger.error(f"Stats query failed | code={product_code} | error={e}")
-        return f"统计查询失败: {e}"
+        return ToolOutput(
+            summary=f"统计查询失败: {e}",
+            source="warehouse",
+            status=OutputStatus.ERROR,
+            error_message=str(e),
+        )
 
     # 时间事实头
     try:
@@ -69,7 +95,13 @@ async def local_product_stats(
     if not rows:
         health = check_sync_health(db, ["order", "purchase", "aftersale"])
         body = f"商品 {product_code} 在 {start_date}~{end_date} 无统计数据\n{health}".strip()
-        return f"{time_header}\n\n{body}" if time_header else body
+        summary = f"{time_header}\n\n{body}" if time_header else body
+        return ToolOutput(
+            summary=summary,
+            source="warehouse",
+            status=OutputStatus.EMPTY,
+            metadata={"product_code": product_code, "time_range": f"{start_date} ~ {end_date}"},
+        )
 
     # 汇总各维度
     order_count = sum(r.get("order_count", 0) for r in rows)
@@ -133,4 +165,15 @@ async def local_product_stats(
     health = check_sync_health(db, ["order", "purchase", "aftersale"])
     if health:
         lines.append(f"\n{health}")
-    return "\n".join(lines)
+
+    return ToolOutput(
+        summary="\n".join(lines),
+        format=OutputFormat.TABLE,
+        source="warehouse",
+        columns=_STATS_COLUMNS,
+        data=rows,
+        metadata={
+            "product_code": product_code,
+            "time_range": f"{start_date} ~ {end_date}",
+        },
+    )

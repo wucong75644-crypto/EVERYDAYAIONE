@@ -63,8 +63,11 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         """检查工具是否有已注册的 handler（兜底扩充用）"""
         return tool_name in self._handlers
 
-    async def execute(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-        """执行同步工具，返回结果文本
+    async def execute(self, tool_name: str, arguments: Dict[str, Any]):
+        """执行同步工具，返回 ToolOutput 或 str。
+
+        底层工具返回 ToolOutput 时直接透传，
+        ToolLoopExecutor 负责统一处理（转 content + 注入 timestamp）。
 
         Raises:
             ValueError: 未知工具名

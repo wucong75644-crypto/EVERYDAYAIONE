@@ -93,7 +93,7 @@ class TestDefaultDetailFields:
 class TestValidateFilters:
 
     def test_valid_eq_filter(self):
-        from services.kuaimai.erp_unified_query import _validate_filters
+        from services.kuaimai.erp_unified_filters import validate_filters as _validate_filters
         filters = [{"field": "order_status", "op": "eq", "value": "FINISHED"}]
         result, err = _validate_filters(filters)
         assert err is None
@@ -102,14 +102,14 @@ class TestValidateFilters:
         assert result[0].op == "eq"
 
     def test_invalid_field_returns_error(self):
-        from services.kuaimai.erp_unified_query import _validate_filters
+        from services.kuaimai.erp_unified_filters import validate_filters as _validate_filters
         filters = [{"field": "hacked_field", "op": "eq", "value": "x"}]
         result, err = _validate_filters(filters)
         assert err is not None
         assert "不在白名单中" in err
 
     def test_incompatible_op_returns_error(self):
-        from services.kuaimai.erp_unified_query import _validate_filters
+        from services.kuaimai.erp_unified_filters import validate_filters as _validate_filters
         # text 列不支持 gt
         filters = [{"field": "order_status", "op": "gt", "value": "x"}]
         result, err = _validate_filters(filters)
@@ -117,55 +117,55 @@ class TestValidateFilters:
         assert "不支持" in err
 
     def test_between_requires_array_of_two(self):
-        from services.kuaimai.erp_unified_query import _validate_filters
+        from services.kuaimai.erp_unified_filters import validate_filters as _validate_filters
         filters = [{"field": "amount", "op": "between", "value": 100}]
         result, err = _validate_filters(filters)
         assert err is not None
         assert "min, max" in err
 
     def test_between_valid(self):
-        from services.kuaimai.erp_unified_query import _validate_filters
+        from services.kuaimai.erp_unified_filters import validate_filters as _validate_filters
         filters = [{"field": "amount", "op": "between", "value": [100, 500]}]
         result, err = _validate_filters(filters)
         assert err is None
         assert result[0].value == [100, 500]
 
     def test_empty_in_skipped(self):
-        from services.kuaimai.erp_unified_query import _validate_filters
+        from services.kuaimai.erp_unified_filters import validate_filters as _validate_filters
         filters = [{"field": "platform", "op": "in", "value": []}]
         result, err = _validate_filters(filters)
         assert err is None
         assert len(result) == 0  # 空 in 被跳过
 
     def test_non_dict_items_skipped(self):
-        from services.kuaimai.erp_unified_query import _validate_filters
+        from services.kuaimai.erp_unified_filters import validate_filters as _validate_filters
         filters = ["not_a_dict", {"field": "amount", "op": "eq", "value": 100}]
         result, err = _validate_filters(filters)
         assert err is None
         assert len(result) == 1
 
     def test_empty_filters_ok(self):
-        from services.kuaimai.erp_unified_query import _validate_filters
+        from services.kuaimai.erp_unified_filters import validate_filters as _validate_filters
         result, err = _validate_filters([])
         assert err is None
         assert len(result) == 0
 
     def test_coerce_string_to_int(self):
-        from services.kuaimai.erp_unified_query import _validate_filters
+        from services.kuaimai.erp_unified_filters import validate_filters as _validate_filters
         filters = [{"field": "is_refund", "op": "eq", "value": "1"}]
         result, err = _validate_filters(filters)
         assert err is None
         assert result[0].value == 1
 
     def test_timestamp_auto_timezone(self):
-        from services.kuaimai.erp_unified_query import _validate_filters
+        from services.kuaimai.erp_unified_filters import validate_filters as _validate_filters
         filters = [{"field": "consign_time", "op": "gte", "value": "2026-04-14 00:00:00"}]
         result, err = _validate_filters(filters)
         assert err is None
         assert "+08:00" in str(result[0].value)
 
     def test_multiple_filters(self):
-        from services.kuaimai.erp_unified_query import _validate_filters
+        from services.kuaimai.erp_unified_filters import validate_filters as _validate_filters
         filters = [
             {"field": "order_status", "op": "eq", "value": "SELLER_SEND_GOODS"},
             {"field": "platform", "op": "eq", "value": "tb"},
@@ -194,19 +194,19 @@ class TestExtractTimeRange:
         )
 
     def test_no_time_filters_summary_defaults_today(self):
-        from services.kuaimai.erp_unified_query import _extract_time_range
+        from services.kuaimai.erp_unified_filters import extract_time_range as _extract_time_range
         tr = _extract_time_range([], None, self._ctx(), "summary")
         assert "04-15" in tr.start_iso
         assert "04-15" in tr.end_iso
 
     def test_no_time_filters_detail_defaults_30_days(self):
-        from services.kuaimai.erp_unified_query import _extract_time_range
+        from services.kuaimai.erp_unified_filters import extract_time_range as _extract_time_range
         tr = _extract_time_range([], None, self._ctx(), "detail")
         # start 应该是 30 天前（3月16日左右）
         assert "03-16" in tr.start_iso or "03-17" in tr.start_iso
 
     def test_explicit_time_filters_used(self):
-        from services.kuaimai.erp_unified_query import _extract_time_range
+        from services.kuaimai.erp_unified_filters import extract_time_range as _extract_time_range
         from services.kuaimai.erp_unified_schema import ValidatedFilter
         filters = [
             ValidatedFilter("consign_time", "gte", "2026-04-14 00:00:00+08:00", "timestamp"),
@@ -218,12 +218,12 @@ class TestExtractTimeRange:
         assert tr.time_col == "consign_time"
 
     def test_time_type_param_overrides_default(self):
-        from services.kuaimai.erp_unified_query import _extract_time_range
+        from services.kuaimai.erp_unified_filters import extract_time_range as _extract_time_range
         tr = _extract_time_range([], "pay_time", self._ctx(), "summary")
         assert tr.time_col == "pay_time"
 
     def test_only_start_no_end_defaults_to_today_end(self):
-        from services.kuaimai.erp_unified_query import _extract_time_range
+        from services.kuaimai.erp_unified_filters import extract_time_range as _extract_time_range
         from services.kuaimai.erp_unified_schema import ValidatedFilter
         filters = [
             ValidatedFilter("doc_created_at", "gte", "2026-04-10 00:00:00+08:00", "timestamp"),
@@ -234,7 +234,7 @@ class TestExtractTimeRange:
 
     def test_mixed_time_cols_only_takes_first(self):
         """多时间列冲突时只取同一列（Fix 3 验证）"""
-        from services.kuaimai.erp_unified_query import _extract_time_range
+        from services.kuaimai.erp_unified_filters import extract_time_range as _extract_time_range
         from services.kuaimai.erp_unified_schema import ValidatedFilter
         filters = [
             ValidatedFilter("consign_time", "gte", "2026-04-14 00:00:00+08:00", "timestamp"),
@@ -253,7 +253,7 @@ class TestExtractTimeRange:
 class TestSplitNamedParams:
 
     def test_shop_name_extracted(self):
-        from services.kuaimai.erp_unified_query import _split_named_params
+        from services.kuaimai.erp_unified_filters import split_named_params as _split_named_params
         from services.kuaimai.erp_unified_schema import ValidatedFilter
         filters = [
             ValidatedFilter("shop_name", "eq", "蓝创旗舰店", "text"),
@@ -266,7 +266,7 @@ class TestSplitNamedParams:
         assert dsl[0]["field"] == "order_status"
 
     def test_platform_extracted(self):
-        from services.kuaimai.erp_unified_query import _split_named_params
+        from services.kuaimai.erp_unified_filters import split_named_params as _split_named_params
         from services.kuaimai.erp_unified_schema import ValidatedFilter
         filters = [ValidatedFilter("platform", "eq", "tb", "text")]
         shop, plat, sup, wh, dsl = _split_named_params(filters)
@@ -274,7 +274,7 @@ class TestSplitNamedParams:
         assert len(dsl) == 0
 
     def test_amount_goes_to_dsl(self):
-        from services.kuaimai.erp_unified_query import _split_named_params
+        from services.kuaimai.erp_unified_filters import split_named_params as _split_named_params
         from services.kuaimai.erp_unified_schema import ValidatedFilter
         filters = [ValidatedFilter("amount", "gt", 500, "numeric")]
         shop, plat, sup, wh, dsl = _split_named_params(filters)
@@ -288,7 +288,7 @@ class TestSplitNamedParams:
 class TestNeedArchive:
 
     def test_within_90_days_no_archive(self):
-        from services.kuaimai.erp_unified_query import _need_archive
+        from services.kuaimai.erp_unified_filters import need_archive as _need_archive
         from services.kuaimai.erp_unified_schema import TimeRange
         now = datetime.now(CN_TZ)
         tr = TimeRange(
@@ -300,7 +300,7 @@ class TestNeedArchive:
         assert _need_archive(tr) is False
 
     def test_beyond_90_days_needs_archive(self):
-        from services.kuaimai.erp_unified_query import _need_archive
+        from services.kuaimai.erp_unified_filters import need_archive as _need_archive
         from services.kuaimai.erp_unified_schema import TimeRange
         now = datetime.now(CN_TZ)
         tr = TimeRange(
@@ -318,7 +318,7 @@ class TestNeedArchive:
 class TestApplyOrmFilters:
 
     def test_eq_calls_eq(self):
-        from services.kuaimai.erp_unified_query import _apply_orm_filters
+        from services.kuaimai.erp_unified_filters import apply_orm_filters as _apply_orm_filters
         from services.kuaimai.erp_unified_schema import ValidatedFilter
         mock_q = MagicMock()
         mock_q.eq.return_value = mock_q
@@ -327,7 +327,7 @@ class TestApplyOrmFilters:
         mock_q.eq.assert_called_once_with("status", "FINISHED")
 
     def test_gt_calls_gt(self):
-        from services.kuaimai.erp_unified_query import _apply_orm_filters
+        from services.kuaimai.erp_unified_filters import apply_orm_filters as _apply_orm_filters
         from services.kuaimai.erp_unified_schema import ValidatedFilter
         mock_q = MagicMock()
         mock_q.gt.return_value = mock_q
@@ -336,7 +336,7 @@ class TestApplyOrmFilters:
         mock_q.gt.assert_called_once_with("amount", 500)
 
     def test_like_calls_ilike(self):
-        from services.kuaimai.erp_unified_query import _apply_orm_filters
+        from services.kuaimai.erp_unified_filters import apply_orm_filters as _apply_orm_filters
         from services.kuaimai.erp_unified_schema import ValidatedFilter
         mock_q = MagicMock()
         mock_q.ilike.return_value = mock_q
@@ -345,7 +345,7 @@ class TestApplyOrmFilters:
         mock_q.ilike.assert_called_once_with("shop_name", "%蓝创%")
 
     def test_in_calls_in_(self):
-        from services.kuaimai.erp_unified_query import _apply_orm_filters
+        from services.kuaimai.erp_unified_filters import apply_orm_filters as _apply_orm_filters
         from services.kuaimai.erp_unified_schema import ValidatedFilter
         mock_q = MagicMock()
         mock_q.in_.return_value = mock_q
@@ -354,7 +354,7 @@ class TestApplyOrmFilters:
         mock_q.in_.assert_called_once_with("platform", ["tb", "jd"])
 
     def test_between_calls_gte_lte(self):
-        from services.kuaimai.erp_unified_query import _apply_orm_filters
+        from services.kuaimai.erp_unified_filters import apply_orm_filters as _apply_orm_filters
         from services.kuaimai.erp_unified_schema import ValidatedFilter
         mock_q = MagicMock()
         mock_q.gte.return_value = mock_q
@@ -454,9 +454,12 @@ class TestExecuteEntryPoint:
     @pytest.mark.asyncio
     async def test_invalid_doc_type(self):
         from services.kuaimai.erp_unified_query import UnifiedQueryEngine
+        from services.agent.tool_output import OutputStatus, ToolOutput
         engine = UnifiedQueryEngine(db=MagicMock(), org_id=None)
         result = await engine.execute("invalid_type", "summary", [])
-        assert "无效的 doc_type" in result
+        assert isinstance(result, ToolOutput)
+        assert result.status == OutputStatus.ERROR
+        assert "无效的 doc_type" in result.summary
 
     @pytest.mark.asyncio
     async def test_invalid_mode_defaults_to_summary(self):
@@ -475,12 +478,15 @@ class TestExecuteEntryPoint:
     @pytest.mark.asyncio
     async def test_invalid_filter_field_returns_error(self):
         from services.kuaimai.erp_unified_query import UnifiedQueryEngine
+        from services.agent.tool_output import OutputStatus, ToolOutput
         engine = UnifiedQueryEngine(db=MagicMock(), org_id=None)
         result = await engine.execute(
             "order", "detail",
             [{"field": "nonexistent", "op": "eq", "value": "x"}],
         )
-        assert "不在白名单中" in result
+        assert isinstance(result, ToolOutput)
+        assert result.status == OutputStatus.ERROR
+        assert "不在白名单中" in result.summary
 
 
 # ── EXPORT_MAX 常量测试（DuckDB 改造后） ──────────────
@@ -501,3 +507,47 @@ class TestExportMax:
         import inspect
         source = inspect.getsource(UnifiedQueryEngine)
         assert "EXPORT_BATCH" not in source
+
+
+# ── build_column_metas 测试 ──────────────────────────
+
+
+class TestBuildColumnMetas:
+    """erp_unified_schema.build_column_metas 辅助函数"""
+
+    def test_known_fields(self):
+        from services.kuaimai.erp_unified_schema import build_column_metas
+        result = build_column_metas(["order_no", "amount", "platform"])
+        assert len(result) >= 2  # order_no 和 amount 至少在白名单里
+        names = [c.name for c in result]
+        assert "order_no" in names
+
+    def test_unknown_fields_filtered(self):
+        from services.kuaimai.erp_unified_schema import build_column_metas
+        result = build_column_metas(["nonexistent_field_xyz"])
+        assert len(result) == 0
+
+    def test_mixed_fields(self):
+        from services.kuaimai.erp_unified_schema import build_column_metas
+        result = build_column_metas(["order_no", "fake_field", "platform"])
+        names = [c.name for c in result]
+        assert "order_no" in names
+        assert "fake_field" not in names
+
+    def test_returns_tool_output_column_meta(self):
+        from services.kuaimai.erp_unified_schema import build_column_metas
+        from services.agent.tool_output import ColumnMeta
+        result = build_column_metas(["order_no"])
+        assert len(result) > 0
+        assert isinstance(result[0], ColumnMeta)
+
+    def test_has_label(self):
+        from services.kuaimai.erp_unified_schema import build_column_metas
+        result = build_column_metas(["order_no"])
+        if result:
+            assert result[0].label  # 有中文标签
+
+    def test_empty_fields(self):
+        from services.kuaimai.erp_unified_schema import build_column_metas
+        result = build_column_metas([])
+        assert result == []

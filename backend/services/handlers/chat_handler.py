@@ -154,11 +154,15 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         question = ask_info["message"]
 
         # 序列化 messages 和循环快照
+        # file_registry / dag_progress 为新增字段（§15.2 老格式兼容：
+        # _restore_from_pending 用 .get() 取，老格式返回空列表/None）
         loop_snapshot = {
             "content_blocks": content_blocks,
             "tool_context_state": tool_context_state,
             "model_id": model_id,
             "budget_snapshot": budget_snapshot,
+            "file_registry": [],  # 由 ToolLoopExecutor._file_registry.to_snapshot() 填充
+            "dag_progress": None,  # DAG 模式由 ERPAgent 填充
         }
 
         try:
@@ -224,7 +228,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         """从 pending interaction 恢复冻结状态
 
         Returns:
-            (messages, content_blocks, discovered_tools, budget_snapshot)
+            (messages, content_blocks, tool_context_state, budget_snapshot,
+             file_registry, dag_progress)
         """
         import json as _json
 
@@ -247,6 +252,15 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         tool_context_state = snapshot.get("tool_context_state", {})
         budget_snapshot = snapshot.get("budget_snapshot", {})
 
+        # 恢复 SessionFileRegistry（§15.2 老格式兼容：空列表 → 空 Registry）
+        from services.agent.session_file_registry import SessionFileRegistry
+        file_registry = SessionFileRegistry.from_snapshot(
+            snapshot.get("file_registry", []),
+        )
+
+        # 恢复 DAG 进度（§15.2 老格式兼容：None → 无 DAG 进度）
+        dag_progress = snapshot.get("dag_progress")
+
         # 原子标记为已恢复（防并发：只有 status=pending 才能抢到）
         try:
             res = self.db.table("pending_interaction") \
@@ -259,7 +273,10 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         except Exception as e:
             logger.warning(f"Failed to mark pending as resumed | error={e}")
 
-        return messages, content_blocks, tool_context_state, budget_snapshot
+        return (
+            messages, content_blocks, tool_context_state,
+            budget_snapshot, file_registry, dag_progress,
+        )
 
     async def _stream_generate(
         self,
@@ -399,7 +416,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             if _pending:
                 text_content = self._extract_text_content(content)
                 _restored = self._restore_from_pending(_pending, text_content)
-                messages, _content_blocks, _tc_state, _bs = _restored
+                messages, _content_blocks, _tc_state, _bs, _file_reg, _dag_prog = _restored
                 # 恢复 tool_context discovered_tools
                 tool_context.discovered_tools = set(_tc_state.get("discovered_tools", []))
                 # 恢复预算消耗

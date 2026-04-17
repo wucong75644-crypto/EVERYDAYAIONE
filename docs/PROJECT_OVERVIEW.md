@@ -147,6 +147,25 @@ EVERYDAYAIONE/
 │   │   │   ├── erp_sync_handlers.py     # 同步处理器（6种单据）
 │   │   │   ├── client.py                # 快麦 API 客户端
 │   │   │   └── dispatcher.py            # API 调度器
+│   │   ├── agent/                    # Agent 架构层（多Agent单一职责）
+│   │   │   ├── erp_agent.py              # ERP 独立 Agent（路由层）
+│   │   │   ├── tool_executor.py          # 同步工具执行器
+│   │   │   ├── tool_loop_executor.py     # LLM 工具循环引擎
+│   │   │   ├── tool_output.py            # 结构化工具输出协议（ToolOutput）
+│   │   │   ├── session_file_registry.py  # 会话级文件注册表
+│   │   │   ├── department_agent.py       # 部门Agent基类
+│   │   │   ├── department_types.py       # 部门Agent类型（ValidationResult）
+│   │   │   ├── compute_agent.py          # 独立计算Agent
+│   │   │   ├── compute_types.py          # 计算Agent类型（ComputeTask/Result）
+│   │   │   ├── experience_recorder.py    # Agent经验记录器
+│   │   │   ├── execution_plan.py         # DAG执行计划（ExecutionPlan/Round）
+│   │   │   ├── plan_builder.py           # 意图分析→执行计划构建器
+│   │   │   ├── dag_executor.py           # DAG编排执行引擎
+│   │   │   └── departments/              # 部门Agent实现
+│   │   │       ├── warehouse_agent.py        # 仓储Agent
+│   │   │       ├── purchase_agent.py         # 采购Agent
+│   │   │       ├── trade_agent.py            # 订单Agent
+│   │   │       └── aftersale_agent.py        # 售后Agent
 │   │   └── adapters/                 # AI 模型适配器
 │   │       ├── __init__.py               # 适配器导出
 │   │       ├── base.py                   # 适配器基类

@@ -1,0 +1,332 @@
+"""
+采购/订单/售后 部门Agent 单元测试。
+
+覆盖: purchase_agent.py / trade_agent.py / aftersale_agent.py
+设计文档: docs/document/TECH_多Agent单一职责重构.md §8
+"""
+import sys
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+_backend_dir = Path(__file__).parent.parent
+if str(_backend_dir) not in sys.path:
+    sys.path.insert(0, str(_backend_dir))
+
+from services.agent.tool_output import OutputFormat, OutputStatus, ToolOutput
+
+
+# ============================================================
+# PurchaseAgent
+# ============================================================
+
+
+def _make_purchase(db=None, org_id=None):
+    from services.agent.departments.purchase_agent import PurchaseAgent
+    return PurchaseAgent(db=db or MagicMock(), org_id=org_id)
+
+
+class TestPurchaseProperties:
+
+    def test_domain(self):
+        assert _make_purchase().domain == "purchase"
+
+    def test_tools(self):
+        tools = _make_purchase().tools
+        assert "local_data" in tools
+        assert "erp_purchase_query" in tools
+
+    def test_allowed_doc_types(self):
+        agent = _make_purchase()
+        assert "purchase" in agent.allowed_doc_types
+        assert "purchase_return" in agent.allowed_doc_types
+        assert "order" not in agent.allowed_doc_types
+
+    def test_field_map(self):
+        agent = _make_purchase()
+        assert agent.FIELD_MAP["outer_id"] == "product_code"
+
+    def test_system_prompt(self):
+        prompt = _make_purchase().system_prompt
+        assert "采购" in prompt
+        assert "不负责" in prompt
+
+
+class TestPurchaseValidation:
+
+    def test_arrival_progress_ok(self):
+        r = _make_purchase().validate_params("arrival_progress", {"po_no": "PO-001"})
+        assert r.is_ok
+
+    def test_arrival_progress_sku_ok(self):
+        r = _make_purchase().validate_params("arrival_progress", {"sku_list": ["A01"]})
+        assert r.is_ok
+
+    def test_arrival_progress_missing(self):
+        r = _make_purchase().validate_params("arrival_progress", {})
+        assert r.is_missing
+
+    def test_supplier_query_ok(self):
+        r = _make_purchase().validate_params("supplier_query", {"supplier_name": "供应商A"})
+        assert r.is_ok
+
+    def test_supplier_query_missing(self):
+        r = _make_purchase().validate_params("supplier_query", {})
+        assert r.is_missing
+
+    def test_purchase_list_time_ok(self):
+        r = _make_purchase().validate_params("purchase_list", {
+            "time_range": "2026-03-01 ~ 2026-03-31",
+        })
+        assert r.is_ok
+
+    def test_purchase_list_po_no_ok(self):
+        r = _make_purchase().validate_params("purchase_list", {"po_no": "PO-001"})
+        assert r.is_ok
+
+    def test_purchase_list_missing(self):
+        r = _make_purchase().validate_params("purchase_list", {})
+        assert r.is_missing
+
+    def test_purchase_list_bad_time(self):
+        r = _make_purchase().validate_params("purchase_list", {
+            "time_range": "bad",
+        })
+        assert r.is_conflict
+
+    def test_purchase_return_ok(self):
+        r = _make_purchase().validate_params("purchase_return", {
+            "product_code": "A001",
+        })
+        assert r.is_ok
+
+    def test_purchase_return_missing(self):
+        r = _make_purchase().validate_params("purchase_return", {})
+        assert r.is_missing
+
+    def test_unknown_action_ok(self):
+        r = _make_purchase().validate_params("unknown", {})
+        assert r.is_ok
+
+
+class TestPurchaseQueries:
+
+    @pytest.mark.asyncio
+    async def test_query_purchase(self):
+        agent = _make_purchase()
+        mock = ToolOutput(summary="采购数据", source="erp")
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=mock)
+            result = await agent.query_purchase(mode="detail", filters=[])
+            assert result.summary == "采购数据"
+
+    @pytest.mark.asyncio
+    async def test_query_purchase_return(self):
+        agent = _make_purchase()
+        mock = ToolOutput(summary="采退数据", source="erp")
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=mock)
+            result = await agent.query_purchase_return(mode="summary", filters=[])
+            assert result.summary == "采退数据"
+
+    @pytest.mark.asyncio
+    async def test_query_order_blocked(self):
+        """采购Agent不能查订单"""
+        agent = _make_purchase()
+        result = await agent._query_local_data("order")
+        assert result.status == OutputStatus.ERROR
+
+
+# ============================================================
+# TradeAgent
+# ============================================================
+
+
+def _make_trade(db=None, org_id=None):
+    from services.agent.departments.trade_agent import TradeAgent
+    return TradeAgent(db=db or MagicMock(), org_id=org_id)
+
+
+class TestTradeProperties:
+
+    def test_domain(self):
+        assert _make_trade().domain == "trade"
+
+    def test_tools(self):
+        tools = _make_trade().tools
+        assert "local_data" in tools
+        assert "erp_trade_query" in tools
+        assert "erp_taobao_query" in tools
+
+    def test_allowed_doc_types(self):
+        agent = _make_trade()
+        assert "order" in agent.allowed_doc_types
+        assert "purchase" not in agent.allowed_doc_types
+
+    def test_system_prompt(self):
+        prompt = _make_trade().system_prompt
+        assert "订单" in prompt
+        assert "不负责" in prompt
+
+
+class TestTradeValidation:
+
+    def test_order_list_by_no(self):
+        r = _make_trade().validate_params("order_list", {"order_no": "T001"})
+        assert r.is_ok
+
+    def test_order_list_by_time(self):
+        r = _make_trade().validate_params("order_list", {
+            "time_range": "2026-03-01 ~ 2026-03-31",
+        })
+        assert r.is_ok
+
+    def test_order_list_by_platform_no(self):
+        r = _make_trade().validate_params("order_list", {
+            "platform_order_no": "123456789012345678",
+        })
+        assert r.is_ok
+
+    def test_order_list_missing(self):
+        r = _make_trade().validate_params("order_list", {})
+        assert r.is_missing
+
+    def test_order_list_bad_time(self):
+        r = _make_trade().validate_params("order_list", {
+            "time_range": "2026-01-01 ~ 2026-06-01",
+        })
+        assert r.is_conflict
+        assert "90天" in r.message
+
+    def test_logistics_query_ok(self):
+        r = _make_trade().validate_params("logistics_query", {"order_no": "T001"})
+        assert r.is_ok
+
+    def test_logistics_query_missing(self):
+        r = _make_trade().validate_params("logistics_query", {})
+        assert r.is_missing
+
+    def test_unknown_action_ok(self):
+        r = _make_trade().validate_params("unknown", {})
+        assert r.is_ok
+
+
+class TestTradeQueries:
+
+    @pytest.mark.asyncio
+    async def test_query_orders(self):
+        agent = _make_trade()
+        mock = ToolOutput(summary="订单数据", source="erp")
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=mock)
+            result = await agent.query_orders(mode="detail", filters=[])
+            assert result.summary == "订单数据"
+
+    @pytest.mark.asyncio
+    async def test_query_purchase_blocked(self):
+        """订单Agent不能查采购"""
+        agent = _make_trade()
+        result = await agent._query_local_data("purchase")
+        assert result.status == OutputStatus.ERROR
+
+
+# ============================================================
+# AftersaleAgent
+# ============================================================
+
+
+def _make_aftersale(db=None, org_id=None):
+    from services.agent.departments.aftersale_agent import AftersaleAgent
+    return AftersaleAgent(db=db or MagicMock(), org_id=org_id)
+
+
+class TestAftersaleProperties:
+
+    def test_domain(self):
+        assert _make_aftersale().domain == "aftersale"
+
+    def test_tools(self):
+        tools = _make_aftersale().tools
+        assert "local_data" in tools
+        assert "erp_aftersales_query" in tools
+
+    def test_allowed_doc_types(self):
+        agent = _make_aftersale()
+        assert "aftersale" in agent.allowed_doc_types
+        assert "order" not in agent.allowed_doc_types
+
+    def test_system_prompt(self):
+        prompt = _make_aftersale().system_prompt
+        assert "售后" in prompt
+        assert "不负责" in prompt
+
+
+class TestAftersaleValidation:
+
+    def test_aftersale_list_by_time(self):
+        r = _make_aftersale().validate_params("aftersale_list", {
+            "time_range": "2026-03-01 ~ 2026-03-31",
+        })
+        assert r.is_ok
+
+    def test_aftersale_list_by_code(self):
+        r = _make_aftersale().validate_params("aftersale_list", {
+            "product_code": "A001",
+        })
+        assert r.is_ok
+
+    def test_aftersale_list_by_no(self):
+        r = _make_aftersale().validate_params("aftersale_list", {
+            "aftersale_no": "AS001",
+        })
+        assert r.is_ok
+
+    def test_aftersale_list_missing(self):
+        r = _make_aftersale().validate_params("aftersale_list", {})
+        assert r.is_missing
+
+    def test_aftersale_list_bad_time(self):
+        r = _make_aftersale().validate_params("aftersale_list", {
+            "time_range": "bad",
+        })
+        assert r.is_conflict
+
+    def test_return_rate_ok(self):
+        r = _make_aftersale().validate_params("return_rate", {
+            "time_range": "2026-03-01 ~ 2026-03-31",
+        })
+        assert r.is_ok
+
+    def test_return_rate_missing_time(self):
+        r = _make_aftersale().validate_params("return_rate", {})
+        assert r.is_missing
+
+    def test_return_rate_over_90_days(self):
+        r = _make_aftersale().validate_params("return_rate", {
+            "time_range": "2026-01-01 ~ 2026-06-01",
+        })
+        assert r.is_conflict
+
+    def test_unknown_action_ok(self):
+        r = _make_aftersale().validate_params("unknown", {})
+        assert r.is_ok
+
+
+class TestAftersaleQueries:
+
+    @pytest.mark.asyncio
+    async def test_query_aftersale(self):
+        agent = _make_aftersale()
+        mock = ToolOutput(summary="售后数据", source="erp")
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=mock)
+            result = await agent.query_aftersale(mode="detail", filters=[])
+            assert result.summary == "售后数据"
+
+    @pytest.mark.asyncio
+    async def test_query_order_blocked(self):
+        """售后Agent不能查订单"""
+        agent = _make_aftersale()
+        result = await agent._query_local_data("order")
+        assert result.status == OutputStatus.ERROR

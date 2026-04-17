@@ -93,26 +93,36 @@ async def test_bug_2026_04_10_baseline_is_friday_not_thursday():
         request_ctx=ctx,
     )
 
+    from services.agent.tool_output import ToolOutput
+    assert isinstance(result, ToolOutput)
+    text = result.summary
+
     # 当前期：2026-04-10 周五
-    assert "2026-04-10" in result
-    assert "周五" in result
+    assert "2026-04-10" in text
+    assert "周五" in text
 
     # 基线期：2026-04-03 周五（上周同期）
-    assert "2026-04-03" in result
+    assert "2026-04-03" in text
     # 4-3 必须是「周五」，不能是「周四」（这是 bug）
-    assert "周四" not in result, f"出现了「周四」幻觉！\n{result}"
+    assert "周四" not in text, f"出现了「周四」幻觉！\n{text}"
     # 必须明确标注为周五
-    assert "上周五" in result or "周五" in result
+    assert "上周五" in text or "周五" in text
 
     # 数据正确
-    assert "1769" in result or "1,769" in result
-    assert "2955" in result or "2,955" in result
+    assert "1769" in text or "1,769" in text
+    assert "2955" in text or "2,955" in text
 
     # 对比模式说明
-    assert "上周" in result  # "环比上周同期" 或 "上周"
+    assert "上周" in text  # "环比上周同期" 或 "上周"
 
     # ISO 周语义说明
-    assert "ISO" in result or "周一为始" in result
+    assert "ISO" in text or "周一为始" in text
+
+    # 结构化数据验证
+    assert result.data is not None
+    assert len(result.data) == 2
+    assert result.data[0]["period"] == "current"
+    assert result.data[0]["doc_count"] == 1769
 
 
 @pytest.mark.asyncio
@@ -163,10 +173,10 @@ async def test_compare_kind_mom_returns_last_month_same_day():
         current_period="today",
         request_ctx=ctx,
     )
-    assert "2026-04-10" in result
-    assert "2026-03-10" in result
+    assert "2026-04-10" in result.summary
+    assert "2026-03-10" in result.summary
     # 3-10 是周二
-    assert "上月" in result or "周二" in result
+    assert "上月" in result.summary or "周二" in result.summary
 
 
 @pytest.mark.asyncio
@@ -186,8 +196,8 @@ async def test_compare_kind_yoy_returns_last_year_same_day():
         current_period="today",
         request_ctx=ctx,
     )
-    assert "2026-04-10" in result
-    assert "2025-04-10" in result
+    assert "2026-04-10" in result.summary
+    assert "2025-04-10" in result.summary
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -240,9 +250,10 @@ async def test_no_double_plus_sign_for_positive_growth():
         current_period="today",
         request_ctx=ctx,
     )
+    text = result.summary
     # 核心：禁止双加号
-    assert "++" not in result, f"出现了双加号：\n{result}"
+    assert "++" not in text, f"出现了双加号：\n{text}"
     # 必须有正确的 +1000 格式
-    assert "+1000" in result or "+1,000" in result
-    assert "+50.0%" in result  # (3000-2000)/2000 = 50%
+    assert "+1000" in text or "+1,000" in text
+    assert "+50.0%" in text  # (3000-2000)/2000 = 50%
 

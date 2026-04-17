@@ -5,7 +5,10 @@ ERP 本地查询工具（4个专用工具）
 仅保留查不同表的工具（stock/platform_map/shop/warehouse），
 erp_document_items 查询已迁移至 erp_unified_query.py。
 
+所有函数返回 ToolOutput（Phase 0 改造）。
+
 设计文档: docs/document/TECH_ERP数据本地索引系统.md §6
+重构文档: docs/document/TECH_多Agent单一职责重构.md §4.3
 """
 
 from __future__ import annotations
@@ -14,7 +17,12 @@ from typing import Optional
 
 from loguru import logger
 
-
+from services.agent.tool_output import (
+    ColumnMeta,
+    OutputFormat,
+    OutputStatus,
+    ToolOutput,
+)
 from services.kuaimai.erp_local_helpers import check_sync_health
 
 
@@ -25,12 +33,25 @@ _STOCK_STATUS_MAP = {
 }
 
 
+_STOCK_COLUMNS = [
+    ColumnMeta("outer_id", "text", "商品编码"),
+    ColumnMeta("sku_outer_id", "text", "SKU编码"),
+    ColumnMeta("properties_name", "text", "规格"),
+    ColumnMeta("warehouse_id", "text", "仓库ID"),
+    ColumnMeta("sellable_num", "integer", "可售库存"),
+    ColumnMeta("total_stock", "integer", "总库存"),
+    ColumnMeta("lock_stock", "integer", "锁定库存"),
+    ColumnMeta("purchase_num", "integer", "采购在途"),
+    ColumnMeta("stock_status", "integer", "库存状态"),
+]
+
+
 async def local_stock_query(
     db, product_code: str,
     stock_status: str | None = None,
     low_stock: bool = False,
     org_id: str | None = None,
-) -> str:
+) -> ToolOutput:
     """按商品编码查库存状态（支持多仓分组展示）"""
     try:
         q = (
@@ -44,7 +65,12 @@ async def local_stock_query(
         rows = result.data or []
     except Exception as e:
         logger.error(f"Stock query failed | code={product_code} | error={e}")
-        return f"库存查询失败: {e}"
+        return ToolOutput(
+            summary=f"库存查询失败: {e}",
+            source="warehouse",
+            status=OutputStatus.ERROR,
+            error_message=str(e),
+        )
 
     # 普通库存无结果时，查套件库存物化视图
     is_kit = False
@@ -68,21 +94,30 @@ async def local_stock_query(
 
     if not rows:
         health = check_sync_health(db, ["stock"], org_id=org_id)
-        return f"商品 {product_code} 无库存记录\n{health}".strip()
+        return ToolOutput(
+            summary=f"商品 {product_code} 无库存记录\n{health}".strip(),
+            source="warehouse",
+            status=OutputStatus.EMPTY,
+            metadata={"product_code": product_code},
+        )
 
     if low_stock:
         rows = [r for r in rows if (r.get("sellable_num") or 0) < 10]
         if not rows:
-            return f"商品 {product_code} 无库存预警SKU"
+            return ToolOutput(
+                summary=f"商品 {product_code} 无库存预警SKU",
+                source="warehouse",
+                status=OutputStatus.EMPTY,
+                metadata={"product_code": product_code},
+            )
 
+    # ── 构建 summary 文本（给 LLM 阅读）──
     kit_label = "（套件，按子单品计算）" if is_kit else ""
     lines = [f"商品 {product_code} 库存状态{kit_label}：\n"]
 
-    # 检测是否多仓
     warehouses = {r.get("warehouse_id", "") for r in rows}
     multi_warehouse = len(warehouses) > 1
 
-    # 批量查仓库名称
     wh_name_map: dict[str, str] = {}
     wh_ids = [w for w in warehouses if w]
     if wh_ids:
@@ -135,7 +170,15 @@ async def local_stock_query(
     health = check_sync_health(db, ["stock"], org_id=org_id)
     if health:
         lines.append(health)
-    return "\n".join(lines)
+
+    return ToolOutput(
+        summary="\n".join(lines),
+        format=OutputFormat.TABLE,
+        source="warehouse",
+        columns=_STOCK_COLUMNS,
+        data=rows,
+        metadata={"product_code": product_code, "is_kit": is_kit},
+    )
 
 
 def _format_stock_row(
@@ -164,16 +207,29 @@ def _format_stock_row(
 # ── 平台映射查询（erp_product_platform_map 表）────────────
 
 
+_PLATFORM_MAP_COLUMNS = [
+    ColumnMeta("outer_id", "text", "商品编码"),
+    ColumnMeta("num_iid", "text", "平台商品ID"),
+    ColumnMeta("user_id", "text", "店铺ID"),
+    ColumnMeta("sku_mappings", "text", "SKU映射"),
+]
+
+
 async def local_platform_map_query(
     db,
     product_code: str | None = None,
     num_iid: str | None = None,
     user_id: str | None = None,
     org_id: str | None = None,
-) -> str:
+) -> ToolOutput:
     """下架检查：ERP编码↔平台商品映射"""
     if not product_code and not num_iid:
-        return "请提供 product_code 或 num_iid"
+        return ToolOutput(
+            summary="请提供 product_code 或 num_iid",
+            source="warehouse",
+            status=OutputStatus.ERROR,
+            error_message="缺少必填参数",
+        )
 
     try:
         q = db.table("erp_product_platform_map").select("*")
@@ -187,12 +243,22 @@ async def local_platform_map_query(
         rows = result.data or []
     except Exception as e:
         logger.error(f"Platform map query failed | error={e}")
-        return f"平台映射查询失败: {e}"
+        return ToolOutput(
+            summary=f"平台映射查询失败: {e}",
+            source="warehouse",
+            status=OutputStatus.ERROR,
+            error_message=str(e),
+        )
 
     if not rows:
         health = check_sync_health(db, ["platform_map"], org_id=org_id)
         code = product_code or num_iid
-        return f"编码 {code} 无平台映射记录\n{health}".strip()
+        return ToolOutput(
+            summary=f"编码 {code} 无平台映射记录\n{health}".strip(),
+            source="warehouse",
+            status=OutputStatus.EMPTY,
+            metadata={"product_code": code},
+        )
 
     code = product_code or rows[0].get("outer_id", "")
     product_info = ""
@@ -213,7 +279,6 @@ async def local_platform_map_query(
     except Exception:
         pass
 
-    # 批量查店铺名称
     shop_ids = list({r.get("user_id", "") for r in rows if r.get("user_id")})
     shop_name_map: dict[str, str] = {}
     if shop_ids:
@@ -234,6 +299,7 @@ async def local_platform_map_query(
         except Exception as e:
             logger.debug(f"Shop name lookup failed: {e}")
 
+    # ── 构建 summary ──
     lines = [f"商品 {code} 平台上架情况：\n"]
     if product_info:
         lines.append(product_info)
@@ -255,7 +321,15 @@ async def local_platform_map_query(
     health = check_sync_health(db, ["platform_map"], org_id=org_id)
     if health:
         lines.append(health)
-    return "\n".join(lines)
+
+    return ToolOutput(
+        summary="\n".join(lines),
+        format=OutputFormat.TABLE,
+        source="warehouse",
+        columns=_PLATFORM_MAP_COLUMNS,
+        data=rows,
+        metadata={"product_code": code},
+    )
 
 
 # ── 店铺列表（erp_shops 表）─────────────────────────────
@@ -265,8 +339,11 @@ async def local_shop_list(
     db,
     platform: str | None = None,
     org_id: str | None = None,
-) -> str:
-    """查询本地店铺列表（优先 erp_shops 同步表，降级到订单提取）"""
+) -> ToolOutput:
+    """查询本地店铺列表（优先 erp_shops 同步表，降级到订单提取）
+
+    返回 ToolOutput(TEXT) — 纯列表，不需要 DATA_REF。
+    """
     rows: list[dict] = []
 
     try:
@@ -310,7 +387,7 @@ async def local_shop_list(
         health = check_sync_health(db, ["shop"], org_id=org_id)
         if health:
             lines.append(health)
-        return "\n".join(lines)
+        return ToolOutput(summary="\n".join(lines), source="warehouse")
 
     # 降级：从订单数据提取
     try:
@@ -318,12 +395,21 @@ async def local_shop_list(
         result = db.rpc("erp_distinct_shops", params).execute()
     except Exception as e:
         logger.error(f"local_shop_list RPC failed | error={e}")
-        return f"店铺列表查询失败: {e}"
+        return ToolOutput(
+            summary=f"店铺列表查询失败: {e}",
+            source="warehouse",
+            status=OutputStatus.ERROR,
+            error_message=str(e),
+        )
 
     if not result.data:
         platform_label = f"（平台: {platform}）" if platform else ""
         health = check_sync_health(db, ["order"], org_id=org_id)
-        return f"暂无店铺数据{platform_label}\n{health}".strip()
+        return ToolOutput(
+            summary=f"暂无店铺数据{platform_label}\n{health}".strip(),
+            source="warehouse",
+            status=OutputStatus.EMPTY,
+        )
 
     seen: dict[str, str] = {}
     for row in result.data:
@@ -346,7 +432,7 @@ async def local_shop_list(
     health = check_sync_health(db, ["order"], org_id=org_id)
     if health:
         lines.append(health)
-    return "\n".join(lines)
+    return ToolOutput(summary="\n".join(lines), source="warehouse")
 
 
 # ── 仓库列表（erp_warehouses 表）────────────────────────
@@ -356,8 +442,11 @@ async def local_warehouse_list(
     db,
     is_virtual: bool | None = None,
     org_id: str | None = None,
-) -> str:
-    """查询本地仓库列表（erp_warehouses 同步表）"""
+) -> ToolOutput:
+    """查询本地仓库列表（erp_warehouses 同步表）
+
+    返回 ToolOutput(TEXT) — 纯列表，不需要 DATA_REF。
+    """
     try:
         q = db.table("erp_warehouses").select(
             "warehouse_id, name, code, warehouse_type, status, "
@@ -372,12 +461,21 @@ async def local_warehouse_list(
         result = q.order("is_virtual").order("name").execute()
     except Exception as e:
         logger.error(f"local_warehouse_list failed | error={e}")
-        return f"仓库列表查询失败: {e}"
+        return ToolOutput(
+            summary=f"仓库列表查询失败: {e}",
+            source="warehouse",
+            status=OutputStatus.ERROR,
+            error_message=str(e),
+        )
 
     rows = result.data or []
     if not rows:
         health = check_sync_health(db, ["warehouse"], org_id=org_id)
-        return f"暂无仓库数据\n{health}".strip()
+        return ToolOutput(
+            summary=f"暂无仓库数据\n{health}".strip(),
+            source="warehouse",
+            status=OutputStatus.EMPTY,
+        )
 
     type_map = {0: "自有", 1: "第三方", 2: "门店"}
     status_map = {0: "停用", 1: "正常", 2: "禁止发货"}
@@ -414,4 +512,4 @@ async def local_warehouse_list(
     health = check_sync_health(db, ["warehouse"], org_id=org_id)
     if health:
         lines.append(health)
-    return "\n".join(lines)
+    return ToolOutput(summary="\n".join(lines), source="warehouse")

@@ -219,53 +219,63 @@ class TestLocalIdentify:
     async def test_no_params_returns_error(self):
         """未传参数返回提示"""
         from services.kuaimai.erp_local_identify import local_product_identify
+        from services.agent.tool_output import OutputStatus, ToolOutput
         db = MockSupabaseClient()
         result = await local_product_identify(db)
-        assert "至少一个参数" in result
+        assert isinstance(result, ToolOutput)
+        assert result.status == OutputStatus.ERROR
+        assert "至少一个参数" in result.summary
 
     @pytest.mark.asyncio
     async def test_code_match_outer_id(self):
         """编码匹配主编码"""
         from services.kuaimai.erp_local_identify import local_product_identify
+        from services.agent.tool_output import ToolOutput
         db = _make_db(
             erp_products=[_product("TEST01", title="测试商品")],
             erp_product_skus=[],
             erp_sync_state=[_sync_state("product")],
         )
         result = await local_product_identify(db, code="TEST01")
-        assert "✓" in result
-        assert "主编码" in result
+        assert isinstance(result, ToolOutput)
+        assert "✓" in result.summary
+        assert "主编码" in result.summary
 
     @pytest.mark.asyncio
     async def test_code_match_sku(self):
         """编码匹配SKU编码"""
         from services.kuaimai.erp_local_identify import local_product_identify
+        from services.agent.tool_output import ToolOutput
         db = _make_db(
             erp_products=[],
             erp_product_skus=[_sku("MAIN01", "SKU01-01")],
             erp_sync_state=[_sync_state("product")],
         )
         result = await local_product_identify(db, code="SKU01-01")
-        assert "✓" in result
-        assert "SKU编码" in result
+        assert isinstance(result, ToolOutput)
+        assert "✓" in result.summary
+        assert "SKU编码" in result.summary
 
     @pytest.mark.asyncio
     async def test_code_match_barcode(self):
         """编码匹配条码"""
         from services.kuaimai.erp_local_identify import local_product_identify
+        from services.agent.tool_output import ToolOutput
         db = _make_db(
             erp_products=[_product("BC01", barcode="6901234567890")],
             erp_product_skus=[],
             erp_sync_state=[_sync_state("product")],
         )
         result = await local_product_identify(db, code="6901234567890")
-        assert "条码" in result
+        assert isinstance(result, ToolOutput)
+        assert "条码" in result.summary
 
     @pytest.mark.asyncio
     @patch("services.kuaimai.client.KuaiMaiClient")
     async def test_code_not_found(self, MockClient):
         """编码未识别（本地+API均未找到）"""
         from services.kuaimai.erp_local_identify import local_product_identify
+        from services.agent.tool_output import OutputStatus, ToolOutput
 
         mock_client = AsyncMock()
         mock_client.is_configured = False
@@ -278,12 +288,15 @@ class TestLocalIdentify:
             erp_sync_state=[_sync_state("product")],
         )
         result = await local_product_identify(db, code="NOTEXIST")
-        assert "不存在" in result
+        assert isinstance(result, ToolOutput)
+        assert result.status == OutputStatus.EMPTY
+        assert "不存在" in result.summary
 
     @pytest.mark.asyncio
     async def test_name_search(self):
         """名称搜索模式"""
         from services.kuaimai.erp_local_identify import local_product_identify
+        from services.agent.tool_output import ToolOutput
         db = _make_db(
             erp_products=[
                 _product("P01", title="猫粮旗舰款"),
@@ -293,13 +306,16 @@ class TestLocalIdentify:
             erp_sync_state=[_sync_state("product")],
         )
         result = await local_product_identify(db, name="猫粮")
-        assert "匹配到" in result
-        assert "猫粮" in result
+        assert isinstance(result, ToolOutput)
+        assert result.data is not None
+        assert "匹配到" in result.summary
+        assert "猫粮" in result.summary
 
     @pytest.mark.asyncio
     async def test_spec_search(self):
         """规格搜索模式"""
         from services.kuaimai.erp_local_identify import local_product_identify
+        from services.agent.tool_output import ToolOutput
         db = _make_db(
             erp_products=[_product("P01", title="测试商品")],
             erp_product_skus=[
@@ -309,13 +325,16 @@ class TestLocalIdentify:
             erp_sync_state=[_sync_state("product")],
         )
         result = await local_product_identify(db, spec="红色")
-        assert "匹配到" in result
-        assert "红色" in result
+        assert isinstance(result, ToolOutput)
+        assert result.data is not None
+        assert "匹配到" in result.summary
+        assert "红色" in result.summary
 
     @pytest.mark.asyncio
     async def test_suite_product_shows_children(self):
         """套件商品显示子单品"""
         from services.kuaimai.erp_local_identify import local_product_identify
+        from services.agent.tool_output import ToolOutput
         db = _make_db(
             erp_products=[_product(
                 "SUITE01", item_type=2, title="套件商品",
@@ -329,8 +348,9 @@ class TestLocalIdentify:
             erp_sync_state=[_sync_state("product")],
         )
         result = await local_product_identify(db, code="SUITE01")
-        assert "套件子单品" in result
-        assert "CHILD01" in result
+        assert isinstance(result, ToolOutput)
+        assert "套件子单品" in result.summary
+        assert "CHILD01" in result.summary
 
 
 # TestLocalPurchaseQuery/AftersaleQuery/OrderQuery/ProductFlow 已移除
@@ -350,8 +370,10 @@ class TestLocalStockQuery:
             ],
             erp_sync_state=[_sync_state("product")],
         )
+        from services.agent.tool_output import ToolOutput
         result = await local_stock_query(db, "C01")
-        assert isinstance(result, str)
+        assert isinstance(result, ToolOutput)
+        assert result.data is not None
 
     @pytest.mark.asyncio
     async def test_no_stock(self):
@@ -362,7 +384,7 @@ class TestLocalStockQuery:
             erp_sync_state=[_sync_state("product")],
         )
         result = await local_stock_query(db, "NOSTOCK")
-        assert "无" in result or "未" in result or "0" in result
+        assert "无" in result.summary or "未" in result.summary or "0" in result.summary
 
     @pytest.mark.asyncio
     async def test_multi_warehouse_display(self):
@@ -381,10 +403,10 @@ class TestLocalStockQuery:
         )
         result = await local_stock_query(db, "C01")
         # 验证按仓库分组
-        assert "WH-A" in result
-        assert "WH-B" in result
+        assert "WH-A" in result.summary
+        assert "WH-B" in result.summary
         # 验证汇总（50+30=80）
-        assert "80" in result
+        assert "80" in result.summary
 
     @pytest.mark.asyncio
     async def test_multi_warehouse_with_names(self):
@@ -404,11 +426,11 @@ class TestLocalStockQuery:
             erp_sync_state=[_sync_state("stock")],
         )
         result = await local_stock_query(db, "C01")
-        assert "义乌主仓" in result
-        assert "杭州分仓" in result
+        assert "义乌主仓" in result.summary
+        assert "杭州分仓" in result.summary
         # 裸ID不应出现在仓库标签中
-        assert "仓库: WH-A" not in result
-        assert "仓库: WH-B" not in result
+        assert "仓库: WH-A" not in result.summary
+        assert "仓库: WH-B" not in result.summary
 
     @pytest.mark.asyncio
     async def test_warehouse_name_fallback_when_no_data(self):
@@ -424,8 +446,8 @@ class TestLocalStockQuery:
             erp_sync_state=[_sync_state("stock")],
         )
         result = await local_stock_query(db, "C01")
-        assert "WH-X" in result
-        assert "WH-Y" in result
+        assert "WH-X" in result.summary
+        assert "WH-Y" in result.summary
 
     @pytest.mark.asyncio
     async def test_single_warehouse_no_group(self):
@@ -442,8 +464,8 @@ class TestLocalStockQuery:
         )
         result = await local_stock_query(db, "C01")
         # 单仓不显示仓库分组头
-        assert "WH-B" not in result
-        assert "SKU" in result
+        assert "WH-B" not in result.summary
+        assert "SKU" in result.summary
 
     @pytest.mark.asyncio
     async def test_low_stock_multi_warehouse(self):
@@ -460,9 +482,9 @@ class TestLocalStockQuery:
         )
         result = await local_stock_query(db, "C01", low_stock=True)
         # 只保留 sellable < 10 的 SKU
-        assert "C01-02" in result
+        assert "C01-02" in result.summary
         # C01-01 被过滤掉（sellable=50 >= 10）
-        assert "C01-01" not in result
+        assert "C01-01" not in result.summary
 
 
 class TestLocalStockQueryKitFallback:
@@ -491,8 +513,8 @@ class TestLocalStockQueryKitFallback:
             erp_sync_state=[_sync_state("stock")],
         )
         result = await local_stock_query(db, "TJ-KIT01-01")
-        assert "套件" in result
-        assert "100" in result
+        assert "套件" in result.summary
+        assert "100" in result.summary
 
     @pytest.mark.asyncio
     async def test_kit_fallback_with_status_filter(self):
@@ -518,7 +540,7 @@ class TestLocalStockQueryKitFallback:
         )
         # stock_status=3(无货) 不匹配 status=1 的数据 → 无结果
         result = await local_stock_query(db, "TJ-KIT01-01", stock_status="3")
-        assert "无库存记录" in result or "无" in result
+        assert "无库存记录" in result.summary or "无" in result.summary
 
     @pytest.mark.asyncio
     async def test_kit_fallback_table_not_exist(self):
@@ -530,7 +552,7 @@ class TestLocalStockQueryKitFallback:
         )
         # mv_kit_stock 未设置数据 → MockDB 会抛异常或返回空
         result = await local_stock_query(db, "TJ-NOKIT")
-        assert "无库存记录" in result or "无" in result
+        assert "无库存记录" in result.summary or "无" in result.summary
 
     @pytest.mark.asyncio
     async def test_normal_stock_takes_priority(self):
@@ -558,8 +580,8 @@ class TestLocalStockQueryKitFallback:
         )
         result = await local_stock_query(db, "C01")
         # 应显示普通库存 200，不是套件的 999
-        assert "套件" not in result
-        assert "200" in result
+        assert "套件" not in result.summary
+        assert "200" in result.summary
 
 
 class TestLocalPlatformMapQuery:
@@ -576,8 +598,10 @@ class TestLocalPlatformMapQuery:
             erp_products=[_product("C01", title="测试商品")],
             erp_sync_state=[_sync_state("product")],
         )
+        from services.agent.tool_output import ToolOutput
         result = await local_platform_map_query(db, product_code="C01")
-        assert isinstance(result, str)
+        assert isinstance(result, ToolOutput)
+        assert result.data is not None
 
     @pytest.mark.asyncio
     async def test_no_params_returns_error(self):
@@ -585,7 +609,7 @@ class TestLocalPlatformMapQuery:
         from services.kuaimai.erp_local_query import local_platform_map_query
         db = MockSupabaseClient()
         result = await local_platform_map_query(db)
-        assert "product_code" in result or "num_iid" in result
+        assert "product_code" in result.summary or "num_iid" in result.summary
 
     @pytest.mark.asyncio
     async def test_with_shop_names(self):
@@ -604,11 +628,11 @@ class TestLocalPlatformMapQuery:
             erp_sync_state=[_sync_state("product")],
         )
         result = await local_platform_map_query(db, product_code="C01")
-        assert "旗舰店(tb)" in result
-        assert "拼多多店(pdd)" in result
+        assert "旗舰店(tb)" in result.summary
+        assert "拼多多店(pdd)" in result.summary
         # 裸ID不应出现
-        assert "S001" not in result
-        assert "S002" not in result
+        assert "S001" not in result.summary
+        assert "S002" not in result.summary
 
     @pytest.mark.asyncio
     async def test_shop_name_fallback_when_no_data(self):
@@ -622,7 +646,7 @@ class TestLocalPlatformMapQuery:
             erp_sync_state=[_sync_state("product")],
         )
         result = await local_platform_map_query(db, product_code="C01")
-        assert "UNKNOWN_SHOP" in result
+        assert "UNKNOWN_SHOP" in result.summary
 
 
 # ============================================================
@@ -636,6 +660,7 @@ class TestLocalProductStats:
     async def test_with_data(self):
         """有统计数据"""
         from services.kuaimai.erp_stats_query import local_product_stats
+        from services.agent.tool_output import ToolOutput
         db = _make_db(
             erp_product_daily_stats=[
                 _daily_stat("C01", "2026-03-18"),
@@ -644,24 +669,30 @@ class TestLocalProductStats:
             erp_sync_state=[_sync_state("order")],
         )
         result = await local_product_stats(db, "C01", start_date="2026-03-17", end_date="2026-03-18")
-        assert "统计" in result
-        assert "销售" in result
+        assert isinstance(result, ToolOutput)
+        assert result.data is not None
+        assert "统计" in result.summary
+        assert "销售" in result.summary
 
     @pytest.mark.asyncio
     async def test_no_data(self):
         """无统计数据"""
         from services.kuaimai.erp_stats_query import local_product_stats
+        from services.agent.tool_output import OutputStatus, ToolOutput
         db = _make_db(
             erp_product_daily_stats=[],
             erp_sync_state=[_sync_state("order")],
         )
         result = await local_product_stats(db, "NODATA")
-        assert "无统计数据" in result
+        assert isinstance(result, ToolOutput)
+        assert result.status == OutputStatus.EMPTY
+        assert "无统计数据" in result.summary
 
     @pytest.mark.asyncio
     async def test_aftersale_rate(self):
         """售后率计算"""
         from services.kuaimai.erp_stats_query import local_product_stats
+        from services.agent.tool_output import ToolOutput
         db = _make_db(
             erp_product_daily_stats=[
                 _daily_stat("C01", "2026-03-18",
@@ -670,7 +701,8 @@ class TestLocalProductStats:
             erp_sync_state=[],
         )
         result = await local_product_stats(db, "C01", start_date="2026-03-18", end_date="2026-03-18")
-        assert "售后率" in result
+        assert isinstance(result, ToolOutput)
+        assert "售后率" in result.summary
 
 
 # ============================================================
@@ -691,10 +723,10 @@ class TestLocalShopList:
             {"shop_name": "京东自营", "platform": "jd"},
         ])
         result = await local_shop_list(db)
-        assert "共 3 个店铺" in result
-        assert "旗舰店" in result
-        assert "【pdd】" in result
-        assert "【tb】" in result
+        assert "共 3 个店铺" in result.summary
+        assert "旗舰店" in result.summary
+        assert "【pdd】" in result.summary
+        assert "【tb】" in result.summary
 
     @pytest.mark.asyncio
     async def test_no_data(self):
@@ -703,7 +735,7 @@ class TestLocalShopList:
         db = _make_db(erp_sync_state=[_sync_state("order")])
         db.set_rpc_result("erp_distinct_shops", [])
         result = await local_shop_list(db)
-        assert "暂无店铺数据" in result
+        assert "暂无店铺数据" in result.summary
 
     @pytest.mark.asyncio
     async def test_platform_filter(self):
@@ -714,8 +746,8 @@ class TestLocalShopList:
             {"shop_name": "拼多多官方店", "platform": "pdd"},
         ])
         result = await local_shop_list(db, platform="pdd")
-        assert "拼多多官方店" in result
-        assert "共 1 个店铺" in result
+        assert "拼多多官方店" in result.summary
+        assert "共 1 个店铺" in result.summary
 
     @pytest.mark.asyncio
     async def test_empty_shop_name_filtered(self):
@@ -728,7 +760,7 @@ class TestLocalShopList:
             {"shop_name": "旗舰店", "platform": "tb"},
         ])
         result = await local_shop_list(db)
-        assert "共 1 个店铺" in result
+        assert "共 1 个店铺" in result.summary
 
     @pytest.mark.asyncio
     async def test_rpc_error(self):
@@ -741,7 +773,7 @@ class TestLocalShopList:
         mock_rpc.execute.side_effect = Exception("function erp_distinct_shops does not exist")
         db.rpc = MagicMock(return_value=mock_rpc)
         result = await local_shop_list(db)
-        assert "查询失败" in result
+        assert "查询失败" in result.summary
 
     @pytest.mark.asyncio
     async def test_no_data_with_platform_label(self):
@@ -750,7 +782,7 @@ class TestLocalShopList:
         db = _make_db(erp_sync_state=[_sync_state("order")])
         db.set_rpc_result("erp_distinct_shops", [])
         result = await local_shop_list(db, platform="pdd")
-        assert "平台: pdd" in result
+        assert "平台: pdd" in result.summary
 
 
 # ============================================================

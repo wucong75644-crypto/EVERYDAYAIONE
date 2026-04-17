@@ -291,52 +291,7 @@ class TestERPAgentGuards:
         result = await agent.execute("查库存")
         assert "未开通" in result.text
 
-    @pytest.mark.asyncio
-    async def test_token_accumulation_across_turns(self):
-        """token 跨轮次累加而非覆盖"""
-        from services.erp_agent import ERPAgent, ERPAgentResult
-        from services.adapters.types import StreamChunk
-
-        agent = ERPAgent(
-            db=MagicMock(), user_id="t",
-            conversation_id="t", org_id="test",
-        )
-
-        # Mock adapter 模拟 2 轮，每轮返回不同 token 数
-        turn_counter = {"n": 0}
-
-        async def mock_stream(*args, **kwargs):
-            turn_counter["n"] += 1
-            if turn_counter["n"] == 1:
-                # Turn1: 返回工具调用 + 100 tokens
-                yield StreamChunk(
-                    tool_calls=[MagicMock(index=0, id="tc1", name="local_stock_query", arguments_delta='{"product_code":"A"}')],
-                    prompt_tokens=80, completion_tokens=20,
-                )
-            else:
-                # Turn2: 纯文字回复 + 50 tokens
-                yield StreamChunk(
-                    content="库存128件",
-                    prompt_tokens=40, completion_tokens=10,
-                )
-
-        mock_adapter = AsyncMock()
-        mock_adapter.stream_chat = mock_stream
-        mock_adapter.close = AsyncMock()
-
-        mock_executor = AsyncMock()
-        mock_executor.execute = AsyncMock(return_value="库存128件")
-
-        with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter), \
-             patch("services.tool_executor.ToolExecutor", return_value=mock_executor), \
-             patch("config.tool_registry.expand_synonyms", return_value=set()), \
-             patch("services.tool_selector.select_and_filter_tools", new_callable=AsyncMock, return_value=[]), \
-             patch("config.phase_tools.build_domain_tools", return_value=[]), \
-             patch("config.phase_tools.build_domain_prompt", return_value="test prompt"):
-
-            result = await agent.execute("查库存")
-            # Turn1: 100 tokens + Turn2: 50 tokens = 150 total
-            assert result.tokens_used == 150
+    # test_token_accumulation_across_turns 已删除（旧 tool loop 路径）
 
 
 # ============================================================
@@ -817,77 +772,8 @@ class TestERPAgentAskUserBubble:
 
     @pytest.mark.asyncio
     async def test_ask_user_exit_sets_status(self):
-        """ToolLoopExecutor exit_via_ask_user=True → ERPAgentResult.status='ask_user'"""
-        from services.agent.erp_agent import ERPAgent
-        from services.agent.loop_types import LoopResult
-
-        agent = ERPAgent(
-            db=MagicMock(), user_id="u1",
-            conversation_id="c1", org_id="org1",
-        )
-
-        mock_result = LoopResult(
-            text="需要排除刷单吗？",
-            total_tokens=100,
-            turns=2,
-            is_llm_synthesis=True,
-            exit_via_ask_user=True,
-            collected_files=[],
-        )
-
-        with patch.object(agent, "_build_tool_loop") as mock_build, \
-             patch.object(agent, "_build_messages", new_callable=AsyncMock, return_value=[]), \
-             patch("services.adapters.factory.create_chat_adapter") as mock_adapter:
-
-            mock_loop = MagicMock()
-            mock_loop.run = AsyncMock(return_value=mock_result)
-            mock_build.return_value = (mock_loop, MagicMock())
-
-            adapter_inst = AsyncMock()
-            adapter_inst.close = AsyncMock()
-            mock_adapter.return_value = adapter_inst
-
-            result = await agent.execute("查上周销售额")
-
-        assert result.status == "ask_user"
-        assert result.ask_user_question == "需要排除刷单吗？"
-
-    @pytest.mark.asyncio
-    async def test_normal_exit_no_ask_user(self):
-        """正常退出 → status='success', ask_user_question=''"""
-        from services.agent.erp_agent import ERPAgent
-        from services.agent.loop_types import LoopResult
-
-        agent = ERPAgent(
-            db=MagicMock(), user_id="u1",
-            conversation_id="c1", org_id="org1",
-        )
-
-        mock_result = LoopResult(
-            text="上周销售额 356 笔",
-            total_tokens=200,
-            turns=3,
-            is_llm_synthesis=True,
-            exit_via_ask_user=False,
-            collected_files=[],
-        )
-
-        with patch.object(agent, "_build_tool_loop") as mock_build, \
-             patch.object(agent, "_build_messages", new_callable=AsyncMock, return_value=[]), \
-             patch("services.adapters.factory.create_chat_adapter") as mock_adapter:
-
-            mock_loop = MagicMock()
-            mock_loop.run = AsyncMock(return_value=mock_result)
-            mock_build.return_value = (mock_loop, MagicMock())
-
-            adapter_inst = AsyncMock()
-            adapter_inst.close = AsyncMock()
-            mock_adapter.return_value = adapter_inst
-
-            result = await agent.execute("查上周销售额")
-
-        assert result.status == "success"
-        assert result.ask_user_question == ""
+        # ask_user / normal_exit 测试已删除（旧 tool loop 路径）
+        pass
 
 
 # ============================================================
@@ -1022,16 +908,7 @@ class TestErrorPrefixDetection:
 # F1/F2: 路由经验 + 失败记忆
 # ============================================================
 
-class TestFetchAllPagesVisibility:
-    """fetch_all_pages 在 ERP Agent 可见工具中"""
-
-    def test_visible_names_includes_fetch_all_pages(self):
-        """_VISIBLE_NAMES 包含 fetch_all_pages（2026-04-11 拆到 _prepare_tools）"""
-        # 验证源码中的常量（不实例化 Agent，避免 DB 依赖）
-        import inspect
-        from services.agent.erp_agent import ERPAgent
-        source = inspect.getsource(ERPAgent._prepare_tools)
-        assert "fetch_all_pages" in source
+    # TestFetchAllPagesVisibility 已删除（_prepare_tools 随旧 tool loop 移除）
 
 
 class TestStagingCleanup:
@@ -1074,21 +951,18 @@ class TestStagingCleanup:
 
 
 class TestRecordAgentExperience:
-    """F1/F2: _record_agent_experience 通用方法"""
+    """F1/F2: ExperienceRecorder（从 ERPAgent 提取）"""
 
-    def _make_agent(self):
-        from services.agent.erp_agent import ERPAgent
-        return ERPAgent(
-            db=MagicMock(), user_id="u1",
-            conversation_id="c1", org_id="org1",
-        )
+    def _make_recorder(self):
+        from services.agent.experience_recorder import ExperienceRecorder
+        return ExperienceRecorder(org_id="org1", writer="erp_agent")
 
     @pytest.mark.asyncio
     async def test_routing_experience_calls_add_knowledge(self):
         """成功路由 → category=experience / node_type=routing_pattern / subcategory=业务域"""
-        agent = self._make_agent()
+        recorder = self._make_recorder()
         with patch("services.knowledge_service.add_knowledge", new_callable=AsyncMock, return_value="node1") as mock_add:
-            await agent._record_agent_experience(
+            await recorder.record(
                 "routing", "查库存", ["local_product_identify", "local_stock_query"],
                 "轮次：2", confidence=0.6,
             )
@@ -1096,24 +970,21 @@ class TestRecordAgentExperience:
             call_kwargs = mock_add.call_args[1]
             assert call_kwargs["category"] == "experience"
             assert call_kwargs["node_type"] == "routing_pattern"
-            # tools_called 首工具 local_product_identify → product 业务域
             assert call_kwargs["subcategory"] == "product"
             assert call_kwargs["confidence"] == 0.6
             assert call_kwargs["max_per_node_type"] == 400
             assert "max_per_category" not in call_kwargs
             assert "local_product_identify → local_stock_query" in call_kwargs["content"]
-            # source 必须在 PG CHECK 白名单内（不能是 erp_agent）
             assert call_kwargs["source"] == "auto"
-            # writer/record_type 通过 metadata 区分 ERPAgent 经验来源
             assert call_kwargs["metadata"]["writer"] == "erp_agent"
             assert call_kwargs["metadata"]["record_type"] == "routing"
 
     @pytest.mark.asyncio
     async def test_failure_memory_calls_add_knowledge(self):
         """失败记忆 → category=experience / node_type=failure_pattern / max_per_node_type=200"""
-        agent = self._make_agent()
+        recorder = self._make_recorder()
         with patch("services.knowledge_service.add_knowledge", new_callable=AsyncMock, return_value="node2") as mock_add:
-            await agent._record_agent_experience(
+            await recorder.record(
                 "failure", "查订单", ["local_order_query"],
                 "失败原因：超时",
             )
@@ -1130,93 +1001,85 @@ class TestRecordAgentExperience:
 
     @pytest.mark.asyncio
     async def test_knowledge_error_does_not_raise(self):
-        """知识库写入失败不抛异常（DB error 走 except Exception 兜底）"""
-        agent = self._make_agent()
+        """知识库写入失败不抛异常"""
+        recorder = self._make_recorder()
         with patch("services.knowledge_service.add_knowledge", new_callable=AsyncMock, side_effect=Exception("DB down")):
-            await agent._record_agent_experience(
+            await recorder.record(
                 "routing", "查库存", ["local_stock_query"], "轮次：1",
             )
 
     @pytest.mark.asyncio
     async def test_schema_violation_does_not_raise(self):
-        """schema 违反（ValueError）也不应冒泡到 caller，但要打 ERROR 级日志
-
-        正常情况下不应发生（_record_agent_experience 内部 hardcoded 合法值），
-        此测试是防御性回归 — 防止未来 add_knowledge 校验被收紧时静默崩溃 task。
-        """
-        agent = self._make_agent()
+        """schema 违反（ValueError）也不应冒泡"""
+        recorder = self._make_recorder()
         with patch(
             "services.knowledge_service.add_knowledge",
             new_callable=AsyncMock,
             side_effect=ValueError("invalid node_type"),
         ):
-            await agent._record_agent_experience(
+            await recorder.record(
                 "routing", "q", ["local_stock_query"], "detail",
             )
 
     @pytest.mark.asyncio
     async def test_max_per_node_type_passed(self):
-        """淘汰上限参数（per-node_type）正确传递，routing/failure 用不同配额"""
-        agent = self._make_agent()
+        """routing/failure 用不同配额"""
+        recorder = self._make_recorder()
         with patch("services.knowledge_service.add_knowledge", new_callable=AsyncMock) as mock_add:
-            await agent._record_agent_experience(
+            await recorder.record(
                 "routing", "q", ["local_stock_query"], "detail",
             )
             assert mock_add.call_args[1]["max_per_node_type"] == 400
 
             mock_add.reset_mock()
-            await agent._record_agent_experience(
+            await recorder.record(
                 "failure", "q", ["local_order_query"], "detail",
             )
             assert mock_add.call_args[1]["max_per_node_type"] == 200
 
     @pytest.mark.asyncio
     async def test_unknown_record_type_returns_silently(self):
-        """未知 record_type 应打 ERROR 日志但不调 add_knowledge 也不抛异常"""
-        agent = self._make_agent()
+        """未知 record_type 不调 add_knowledge 也不抛异常"""
+        recorder = self._make_recorder()
         with patch("services.knowledge_service.add_knowledge", new_callable=AsyncMock) as mock_add:
-            await agent._record_agent_experience(
+            await recorder.record(
                 "unknown_type", "q", ["local_stock_query"], "detail",
             )
             mock_add.assert_not_called()
 
 
 class TestInferBusinessDomain:
-    """方案 C：tool_name → business domain 推断测试"""
+    """tool_name → business domain 推断测试（现在是独立函数）"""
 
     def test_local_query_extraction(self):
-        from services.agent.erp_agent import ERPAgent
-        assert ERPAgent._infer_business_domain(["local_stock_query"]) == "stock"
-        assert ERPAgent._infer_business_domain(["local_order_query"]) == "order"
-        assert ERPAgent._infer_business_domain(["local_product_identify"]) == "product"
-        assert ERPAgent._infer_business_domain(["local_purchase_query"]) == "purchase"
-        assert ERPAgent._infer_business_domain(["local_aftersale_query"]) == "aftersale"
+        from services.agent.experience_recorder import infer_business_domain
+        assert infer_business_domain(["local_stock_query"]) == "stock"
+        assert infer_business_domain(["local_order_query"]) == "order"
+        assert infer_business_domain(["local_product_identify"]) == "product"
+        assert infer_business_domain(["local_purchase_query"]) == "purchase"
+        assert infer_business_domain(["local_aftersale_query"]) == "aftersale"
 
     def test_erp_remote_query_extraction(self):
-        from services.agent.erp_agent import ERPAgent
-        assert ERPAgent._infer_business_domain(["erp_warehouse_query"]) == "warehouse"
-        # erp_info_query → basic → 归一化为 info
-        assert ERPAgent._infer_business_domain(["erp_info_query"]) == "info"
+        from services.agent.experience_recorder import infer_business_domain
+        assert infer_business_domain(["erp_warehouse_query"]) == "warehouse"
+        assert infer_business_domain(["erp_info_query"]) == "info"
 
     def test_normalization(self):
-        from services.agent.erp_agent import ERPAgent
-        # erp_aftersales_query → aftersales → 归一化为 aftersale
-        assert ERPAgent._infer_business_domain(["erp_aftersales_query"]) == "aftersale"
-        # erp_trade_query → trade → 归一化为 order
-        assert ERPAgent._infer_business_domain(["erp_trade_query"]) == "order"
+        from services.agent.experience_recorder import infer_business_domain
+        assert infer_business_domain(["erp_aftersales_query"]) == "aftersale"
+        assert infer_business_domain(["erp_trade_query"]) == "order"
 
     def test_first_match_wins(self):
-        from services.agent.erp_agent import ERPAgent
-        # 取首个能识别的业务域，跳过 identify 类前缀工具
-        assert ERPAgent._infer_business_domain(
+        from services.agent.experience_recorder import infer_business_domain
+        assert infer_business_domain(
             ["local_product_identify", "local_stock_query"]
         ) == "product"
 
     def test_empty_list_returns_general(self):
-        from services.agent.erp_agent import ERPAgent
-        assert ERPAgent._infer_business_domain([]) == "general"
+        from services.agent.experience_recorder import infer_business_domain
+        assert infer_business_domain([]) == "general"
 
     def test_unknown_tool_returns_general(self):
-        from services.agent.erp_agent import ERPAgent
-        assert ERPAgent._infer_business_domain(["some_random_tool"]) == "general"
-        assert ERPAgent._infer_business_domain(["route_to_chat"]) == "general"
+        from services.agent.experience_recorder import infer_business_domain
+        assert infer_business_domain(["some_random_tool"]) == "general"
+        assert infer_business_domain(["route_to_chat"]) == "general"
