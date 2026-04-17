@@ -151,11 +151,11 @@ class ErpSyncWorker:
                 await self._execute_sync(wh_type, org_id=org_id, client=client)
             self._org_last_warehouse[org_id] = now_cn()
 
-        # 库存全量刷新（按企业独立计时）
-        if self.is_running and self._should_run_stock_full(org_id):
-            await self._extend_lock()
-            await self._execute_stock_full_refresh(org_id=org_id, client=client)
-            self._org_last_stock_full[org_id] = now_cn()
+        # 库存全量刷新 — 已禁用（套件商品无独立库存，由 mv_kit_stock 计算）
+        # if self.is_running and self._should_run_stock_full(org_id):
+        #     await self._extend_lock()
+        #     await self._execute_stock_full_refresh(org_id=org_id, client=client)
+        #     self._org_last_stock_full[org_id] = now_cn()
 
         # 低频同步（platform_map）
         if self.is_running and self._should_run_low_freq(org_id):

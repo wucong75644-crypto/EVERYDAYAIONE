@@ -345,13 +345,16 @@ async def _fetch_all_with_limit(
     all_items: list = []
     last_data: Dict[str, Any] = {}
 
+    from services.kuaimai.erp_sync_utils import _API_SEM
+
     for page in range(1, max_pages + 1):
         params["pageNo"] = page
-        data = await client.request_with_retry(
-            method, params,
-            base_url=base_url,
-            extra_system_params=system_params,
-        )
+        async with _API_SEM:
+            data = await client.request_with_retry(
+                method, params,
+                base_url=base_url,
+                extra_system_params=system_params,
+            )
         last_data = data
         items = data.get(response_key) or []
         all_items.extend(items)
@@ -378,6 +381,8 @@ async def try_broadened_queries(
     - str: 逗号打包编码（原始行为，兼容）
     - List[str]: 顺序编码列表（single_code_only 宽泛优先模式）
     """
+    from services.kuaimai.erp_sync_utils import _API_SEM
+
     response_key = entry.response_key  # None = detail API
 
     # 兼容：str → [str]，list 保持不变
@@ -416,11 +421,12 @@ async def try_broadened_queries(
                     return result, note
                 else:
                     # Detail API：单次查询，命中即返回
-                    data = await client.request_with_retry(
-                        entry.method, query_params,
-                        base_url=base_url,
-                        extra_system_params=system_params,
-                    )
+                    async with _API_SEM:
+                        data = await client.request_with_retry(
+                            entry.method, query_params,
+                            base_url=base_url,
+                            extra_system_params=system_params,
+                        )
                     note = f"⚙ 编码查询: {param_label}={code} → 命中"
                     return data, note
             except Exception as e:
@@ -454,16 +460,19 @@ async def try_batch_dual_query(
     all_items: List[Dict] = []
     query_labels: List[str] = []
 
+    from services.kuaimai.erp_sync_utils import _API_SEM
+
     error_count = 0
     for i, api_key in enumerate(api_keys):
         query_params = dict(api_params)
         query_params[api_key] = packed_codes
         try:
-            data = await client.request_with_retry(
-                entry.method, query_params,
-                base_url=base_url,
-                extra_system_params=system_params,
-            )
+            async with _API_SEM:
+                data = await client.request_with_retry(
+                    entry.method, query_params,
+                    base_url=base_url,
+                    extra_system_params=system_params,
+                )
         except Exception as e:
             logger.warning(f"BatchDualQuery error | key={api_key} | {e}")
             error_count += 1

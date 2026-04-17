@@ -4,14 +4,22 @@ ERP 本地编码识别工具
 纯本地查询，编码识别的唯一实现。
 支持三种模式：编码精确匹配、商品名模糊搜索、规格名模糊搜索。
 
+所有函数返回 ToolOutput（Phase 0 改造）。
+
 设计文档: docs/document/TECH_ERP数据本地索引系统.md §6 工具7
+重构文档: docs/document/TECH_多Agent单一职责重构.md §4.3
 """
 
 from __future__ import annotations
 
 from loguru import logger
 
-
+from services.agent.tool_output import (
+    ColumnMeta,
+    OutputFormat,
+    OutputStatus,
+    ToolOutput,
+)
 from services.kuaimai.erp_local_helpers import check_sync_health
 
 _TYPE_MAP = {0: "普通", 1: "SKU套件", 2: "纯套件", 3: "包材"}
@@ -23,10 +31,15 @@ async def local_product_identify(
     name: str | None = None,
     spec: str | None = None,
     org_id: str | None = None,
-) -> str:
+) -> ToolOutput:
     """本地编码识别（code/name/spec 至少传一个）"""
     if not code and not name and not spec:
-        return "请提供 code、name 或 spec 至少一个参数"
+        return ToolOutput(
+            summary="请提供 code、name 或 spec 至少一个参数",
+            source="warehouse",
+            status=OutputStatus.ERROR,
+            error_message="缺少必填参数",
+        )
 
     if code:
         return await _identify_by_code(db, code.strip(), org_id=org_id)
@@ -35,13 +48,17 @@ async def local_product_identify(
     return await _search_by_spec(db, spec.strip(), org_id=org_id)
 
 
-async def _identify_by_code(db, code: str, org_id: str | None = None) -> str:
+async def _identify_by_code(db, code: str, org_id: str | None = None) -> ToolOutput:
     """编码模式：主编码 → SKU编码 → 条码 → 未识别"""
     # 1. 主编码匹配
     try:
         result = db.table("erp_products").select("*").eq("outer_id", code).limit(1).execute()
         if result.data:
-            return _format_product(db, code, result.data[0], org_id=org_id)
+            return ToolOutput(
+                summary=_format_product(db, code, result.data[0], org_id=org_id),
+                source="warehouse",
+                metadata={"code": code, "match_type": "outer_id"},
+            )
     except Exception as e:
         logger.debug(f"Local identify product | code={code} | {e}")
 
@@ -49,7 +66,11 @@ async def _identify_by_code(db, code: str, org_id: str | None = None) -> str:
     try:
         result = db.table("erp_product_skus").select("*").eq("sku_outer_id", code).limit(1).execute()
         if result.data:
-            return _format_sku(db, code, result.data[0])
+            return ToolOutput(
+                summary=_format_sku(db, code, result.data[0]),
+                source="warehouse",
+                metadata={"code": code, "match_type": "sku_outer_id"},
+            )
     except Exception as e:
         logger.debug(f"Local identify sku | code={code} | {e}")
 
@@ -58,21 +79,29 @@ async def _identify_by_code(db, code: str, org_id: str | None = None) -> str:
         result = db.table("erp_products").select("*").eq("barcode", code).limit(1).execute()
         if result.data:
             p = result.data[0]
-            return (
-                f"编码识别: {code}\n"
-                f"✓ 条码匹配 | 编码类型: 条码(barcode)\n"
-                f"对应商品: outer_id={p['outer_id']} | 名称: {p.get('title', '')}"
+            return ToolOutput(
+                summary=(
+                    f"编码识别: {code}\n"
+                    f"✓ 条码匹配 | 编码类型: 条码(barcode)\n"
+                    f"对应商品: outer_id={p['outer_id']} | 名称: {p.get('title', '')}"
+                ),
+                source="warehouse",
+                metadata={"code": code, "match_type": "barcode"},
             )
         # SKU 条码
         result = db.table("erp_product_skus").select("*").eq("barcode", code).limit(1).execute()
         if result.data:
             s = result.data[0]
-            return (
-                f"编码识别: {code}\n"
-                f"✓ 条码匹配 | 编码类型: SKU条码(barcode)\n"
-                f"对应商品: outer_id={s['outer_id']}"
-                f" | sku_outer_id={s['sku_outer_id']}"
-                f" | 规格: {s.get('properties_name', '')}"
+            return ToolOutput(
+                summary=(
+                    f"编码识别: {code}\n"
+                    f"✓ 条码匹配 | 编码类型: SKU条码(barcode)\n"
+                    f"对应商品: outer_id={s['outer_id']}"
+                    f" | sku_outer_id={s['sku_outer_id']}"
+                    f" | 规格: {s.get('properties_name', '')}"
+                ),
+                source="warehouse",
+                metadata={"code": code, "match_type": "sku_barcode"},
             )
     except Exception as e:
         logger.debug(f"Local identify barcode | code={code} | {e}")
@@ -83,13 +112,26 @@ async def _identify_by_code(db, code: str, org_id: str | None = None) -> str:
         return api_result
 
     # 5. 确认不存在
-    return (
-        f"编码识别: {code}\n"
-        f"✗ 该编码在ERP中不存在（本地+API均未找到）"
+    return ToolOutput(
+        summary=(
+            f"编码识别: {code}\n"
+            f"✗ 该编码在ERP中不存在（本地+API均未找到）"
+        ),
+        source="warehouse",
+        status=OutputStatus.EMPTY,
+        metadata={"code": code},
     )
 
 
-async def _search_by_name(db, name: str, org_id: str | None = None) -> str:
+_NAME_SEARCH_COLUMNS = [
+    ColumnMeta("outer_id", "text", "商品编码"),
+    ColumnMeta("title", "text", "商品名称"),
+    ColumnMeta("shipper", "text", "货主"),
+    ColumnMeta("active_status", "integer", "状态"),
+]
+
+
+async def _search_by_name(db, name: str, org_id: str | None = None) -> ToolOutput:
     """名称搜索模式：pg_trgm ILIKE"""
     try:
         q = db.table("erp_products").select(
@@ -99,11 +141,21 @@ async def _search_by_name(db, name: str, org_id: str | None = None) -> str:
         rows = result.data or []
     except Exception as e:
         logger.error(f"Name search failed | name={name} | error={e}")
-        return f"商品名搜索失败: {e}"
+        return ToolOutput(
+            summary=f"商品名搜索失败: {e}",
+            source="warehouse",
+            status=OutputStatus.ERROR,
+            error_message=str(e),
+        )
 
     if not rows:
         health = check_sync_health(db, ["product"], org_id=org_id)
-        return f"搜索\"{name}\"未匹配到商品\n{health}".strip()
+        return ToolOutput(
+            summary=f"搜索\"{name}\"未匹配到商品\n{health}".strip(),
+            source="warehouse",
+            status=OutputStatus.EMPTY,
+            metadata={"keyword": name},
+        )
 
     lines = [f"搜索\"{name}\"匹配到{len(rows)}个商品：\n"]
     for i, r in enumerate(rows, 1):
@@ -116,10 +168,24 @@ async def _search_by_name(db, name: str, org_id: str | None = None) -> str:
             f"{i}. {r['outer_id']} — {r.get('title', '')}{status}{shipper}"
             f"\n   {sku_label}{pic}"
         )
-    return "\n".join(lines)
+    return ToolOutput(
+        summary="\n".join(lines),
+        format=OutputFormat.TABLE,
+        source="warehouse",
+        columns=_NAME_SEARCH_COLUMNS,
+        data=rows,
+        metadata={"keyword": name},
+    )
 
 
-async def _search_by_spec(db, spec: str, org_id: str | None = None) -> str:
+_SPEC_SEARCH_COLUMNS = [
+    ColumnMeta("sku_outer_id", "text", "SKU编码"),
+    ColumnMeta("outer_id", "text", "商品编码"),
+    ColumnMeta("properties_name", "text", "规格"),
+]
+
+
+async def _search_by_spec(db, spec: str, org_id: str | None = None) -> ToolOutput:
     """规格搜索模式：pg_trgm ILIKE on properties_name"""
     try:
         q = db.table("erp_product_skus").select(
@@ -129,11 +195,21 @@ async def _search_by_spec(db, spec: str, org_id: str | None = None) -> str:
         rows = result.data or []
     except Exception as e:
         logger.error(f"Spec search failed | spec={spec} | error={e}")
-        return f"规格搜索失败: {e}"
+        return ToolOutput(
+            summary=f"规格搜索失败: {e}",
+            source="warehouse",
+            status=OutputStatus.ERROR,
+            error_message=str(e),
+        )
 
     if not rows:
         health = check_sync_health(db, ["product"], org_id=org_id)
-        return f"搜索规格\"{spec}\"未匹配到SKU\n{health}".strip()
+        return ToolOutput(
+            summary=f"搜索规格\"{spec}\"未匹配到SKU\n{health}".strip(),
+            source="warehouse",
+            status=OutputStatus.EMPTY,
+            metadata={"keyword": spec},
+        )
 
     # 关联商品名称
     outer_ids = list({r["outer_id"] for r in rows})
@@ -155,16 +231,25 @@ async def _search_by_spec(db, spec: str, org_id: str | None = None) -> str:
             f"{i}. {r['sku_outer_id']} — {title}"
             f" | 规格: {r.get('properties_name', '')}"
         )
-    return "\n".join(lines)
+    return ToolOutput(
+        summary="\n".join(lines),
+        format=OutputFormat.TABLE,
+        source="warehouse",
+        columns=_SPEC_SEARCH_COLUMNS,
+        data=rows,
+        metadata={"keyword": spec},
+    )
 
 
 # ── API 兜底 ──────────────────────────────────────────
 
 
-async def _api_fallback_identify(db, code: str, org_id: str | None = None) -> str | None:
+async def _api_fallback_identify(
+    db, code: str, org_id: str | None = None,
+) -> ToolOutput | None:
     """本地未找到时，调 item.single.get API 兜底
 
-    有结果→写入本地→返回格式化文本；无结果→返回 None。
+    有结果→写入本地→返回 ToolOutput；无结果→返回 None。
     """
     try:
         from services.kuaimai.client import KuaiMaiClient
@@ -175,9 +260,11 @@ async def _api_fallback_identify(db, code: str, org_id: str | None = None) -> st
 
         await client.load_cached_token()
         try:
-            data = await client.request_with_retry(
-                "item.single.get", {"outerId": code},
-            )
+            from services.kuaimai.erp_sync_utils import _API_SEM
+            async with _API_SEM:
+                data = await client.request_with_retry(
+                    "item.single.get", {"outerId": code},
+                )
         finally:
             await client.close()
 
@@ -189,7 +276,11 @@ async def _api_fallback_identify(db, code: str, org_id: str | None = None) -> st
         # 重新走本地查询
         result = db.table("erp_products").select("*").eq("outer_id", data["outerId"]).limit(1).execute()
         if result.data:
-            return _format_product(db, code, result.data[0], org_id=org_id)
+            return ToolOutput(
+                summary=_format_product(db, code, result.data[0], org_id=org_id),
+                source="warehouse",
+                metadata={"code": code, "match_type": "api_fallback"},
+            )
         return None
     except Exception as e:
         logger.debug(f"API fallback identify failed | code={code} | {e}")

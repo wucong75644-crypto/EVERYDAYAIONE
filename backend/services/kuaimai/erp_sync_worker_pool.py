@@ -161,6 +161,11 @@ class ErpSyncWorkerPool:
                 f"duration={duration:.1f}s error={e}",
                 exc_info=True,
             )
+            # 失败冷却：更新调度时间戳，防止死循环重排。
+            # 效果：低频/特殊任务（stock_full/daily_maintenance 等）
+            # 失败后按正常间隔冷却，不会每 60s 重新入队。
+            # 高频任务（order/stock 等）不受影响（每轮都入队，无时间戳控制）。
+            self.scheduler.mark_completed(org_id, sync_type)
         finally:
             await self._release_task_lock(lock_key, token)
             await self._decr_org_concurrency(org_id)

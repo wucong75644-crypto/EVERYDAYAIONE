@@ -530,6 +530,11 @@ class KuaiMaiClient:
     _RATE_LIMIT_MAX_RETRIES = 3
     _RATE_LIMIT_BASE_DELAY = 5.0  # 429 退避起始秒数（5s → 10s → 20s）
 
+    # 429 监控计数器（进程级，用于周期性汇总日志）
+    _rate_limit_hits: int = 0       # 触发 429 的总次数
+    _rate_limit_recovered: int = 0  # 退避后恢复成功的次数
+    _rate_limit_exhausted: int = 0  # 退避耗尽仍失败的次数
+
     async def request_with_retry(
         self,
         method: str,
@@ -550,12 +555,23 @@ class KuaiMaiClient:
         network_errors = (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout)
 
         last_exc: Exception | None = None
+        had_429 = False
         for attempt in range(1, self._NETWORK_MAX_RETRIES + 1):
             try:
-                return await self._request_with_token_retry(method, biz_params, **kwargs)
+                result = await self._request_with_token_retry(method, biz_params, **kwargs)
+                if had_429:
+                    KuaiMaiClient._rate_limit_recovered += 1
+                    logger.info(
+                        f"KuaiMai 429 recovered | method={method} | "
+                        f"attempt={attempt}/{self._RATE_LIMIT_MAX_RETRIES}"
+                    )
+                return result
             except httpx.HTTPStatusError as e:
                 # 429 Too Many Requests → 指数退避重试
                 if e.response.status_code == 429 and attempt < self._RATE_LIMIT_MAX_RETRIES:
+                    if not had_429:
+                        KuaiMaiClient._rate_limit_hits += 1
+                        had_429 = True
                     delay = self._RATE_LIMIT_BASE_DELAY * (2 ** (attempt - 1))
                     logger.warning(
                         f"KuaiMai 429 rate limited, backing off | method={method} | "
@@ -565,6 +581,10 @@ class KuaiMaiClient:
                     await _asyncio.sleep(delay)
                     last_exc = e
                     continue
+                if e.response.status_code == 429:
+                    KuaiMaiClient._rate_limit_exhausted += 1
+                    if not had_429:
+                        KuaiMaiClient._rate_limit_hits += 1
                 raise  # 非 429 的 HTTP 错误直接抛出
             except network_errors as e:
                 last_exc = e
@@ -578,6 +598,15 @@ class KuaiMaiClient:
                     await _asyncio.sleep(delay)
 
         raise last_exc  # type: ignore[misc]
+
+    @classmethod
+    def get_rate_limit_stats(cls) -> dict[str, int]:
+        """返回 429 监控计数器（供周期性日志/健康检查使用）"""
+        return {
+            "hits": cls._rate_limit_hits,
+            "recovered": cls._rate_limit_recovered,
+            "exhausted": cls._rate_limit_exhausted,
+        }
 
     async def _request_with_token_retry(
         self,
