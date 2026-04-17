@@ -417,14 +417,15 @@ class TestComputeAgent:
         agent = self._make_agent()
         assert agent._tokens_used == 0
 
-        # 模拟 adapter.chat 返回带 usage 的 response
-        mock_response = {
-            "content": "print('hello')",
-            "prompt_tokens": 100,
-            "completion_tokens": 50,
-        }
+        # 模拟 adapter.chat_sync 返回 ChatResponse
+        from services.adapters.types import ChatResponse
+        mock_response = ChatResponse(
+            content="print('hello')",
+            prompt_tokens=100,
+            completion_tokens=50,
+        )
         mock_adapter = AsyncMock()
-        mock_adapter.chat = AsyncMock(return_value=mock_response)
+        mock_adapter.chat_sync = AsyncMock(return_value=mock_response)
         mock_adapter.close = AsyncMock()
 
         with patch(

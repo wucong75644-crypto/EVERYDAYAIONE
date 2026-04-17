@@ -437,6 +437,79 @@ class TestDepartmentAgentBase:
         for task in ("查库存", "仓库列表", "缺货分析", "导出Excel"):
             assert not agent._has_write_intent(task), f"'{task}' should not have write intent"
 
+    # ── _params_to_filters ──
+
+    def test_params_to_filters_time_range_half_open(self):
+        """time_range 转 filters：半开区间，结束时间为次日 00:00:00"""
+        agent = _make_warehouse()
+        filters = agent._params_to_filters({
+            "time_range": "2026-04-17 ~ 2026-04-17",
+            "time_col": "pay_time",
+        })
+        assert len(filters) == 2
+        assert filters[0] == {
+            "field": "pay_time", "op": "gte", "value": "2026-04-17T00:00:00",
+        }
+        assert filters[1] == {
+            "field": "pay_time", "op": "lt", "value": "2026-04-18T00:00:00",
+        }
+
+    def test_params_to_filters_with_platform(self):
+        """带 platform 参数追加 eq 过滤器"""
+        agent = _make_warehouse()
+        filters = agent._params_to_filters({
+            "time_range": "2026-04-17 ~ 2026-04-17",
+            "platform": "taobao",
+        })
+        assert any(f["field"] == "platform" and f["value"] == "taobao" for f in filters)
+
+    def test_params_to_filters_empty_params(self):
+        """空 params → 空 filters"""
+        agent = _make_warehouse()
+        assert agent._params_to_filters({}) == []
+
+    # ── execute(params=) 参数合并 + 降级标注 ──
+
+    @pytest.mark.asyncio
+    async def test_execute_params_merged_with_filters(self):
+        """execute(params=) 自动把 time_range 转成 filters 传给执行层"""
+        from services.agent.department_types import ValidationResult
+        agent = _make_warehouse()
+        mock_output = ToolOutput(summary="OK", source="warehouse")
+        with patch.object(
+            agent, "validate_params", return_value=ValidationResult.ok(),
+        ), patch.object(
+            agent, "_dispatch", new=AsyncMock(return_value=mock_output),
+        ) as mock_dispatch:
+            await agent.execute("查库存", dag_mode=True, params={
+                "mode": "summary",
+                "time_range": "2026-04-17 ~ 2026-04-17",
+                "time_col": "pay_time",
+            })
+            # _dispatch 收到的 merged params 应该包含 filters
+            call_params = mock_dispatch.call_args[0][1]
+            assert "filters" in call_params
+            assert len(call_params["filters"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_execute_degraded_notice_shown(self):
+        """降级路径 _degraded=True 时结果前缀加简化查询模式提示"""
+        from services.agent.department_types import ValidationResult
+        agent = _make_warehouse()
+        mock_output = ToolOutput(summary="库存数据", source="warehouse")
+        with patch.object(
+            agent, "validate_params", return_value=ValidationResult.ok(),
+        ), patch.object(
+            agent, "_dispatch", new=AsyncMock(return_value=mock_output),
+        ):
+            result = await agent.execute("查库存", dag_mode=True, params={
+                "mode": "summary",
+                "time_range": "2026-04-17 ~ 2026-04-17",
+                "_degraded": True,
+            })
+            assert "简化查询模式" in result.summary
+            assert "库存数据" in result.summary
+
     # ── _build_output + FIELD_MAP ──
 
     def test_build_output_inline(self):

@@ -84,8 +84,11 @@ class AftersaleAgent(DepartmentAgent):
         return "aftersale_list"
 
     async def _dispatch(self, action, params, context):
-        return await self.query_aftersale(
-            mode="detail", filters=params.get("filters", []),
+        return await self._query_local_data(
+            doc_type="aftersale",
+            mode=params.get("mode", "summary"),
+            filters=params.get("filters", []),
+            group_by=params.get("group_by"),
         )
 
     # ── 售后域查询方法 ──

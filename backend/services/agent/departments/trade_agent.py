@@ -85,7 +85,9 @@ class TradeAgent(DepartmentAgent):
 
     async def _dispatch(self, action, params, context):
         return await self.query_orders(
-            mode="detail", filters=params.get("filters", []),
+            mode=params.get("mode", "summary"),
+            filters=params.get("filters", []),
+            group_by=params.get("group_by"),
         )
 
     # ── 订单域查询方法 ──

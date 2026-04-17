@@ -14,6 +14,8 @@ _backend_dir = Path(__file__).parent.parent
 if str(_backend_dir) not in sys.path:
     sys.path.insert(0, str(_backend_dir))
 
+from services.adapters.types import ChatResponse
+
 from services.agent.execution_plan import (
     ExecutionPlan,
     PlanValidationError,
@@ -71,6 +73,31 @@ class TestExecutionPlan:
         assert len(plan.rounds) == 3
         assert plan.rounds[1].agents == ["warehouse", "purchase"]
         assert plan.rounds[2].depends_on == [0, 1]
+
+    def test_from_dict_with_params(self):
+        """from_dict 正确解析 Round.params"""
+        data = {
+            "rounds": [{
+                "agents": ["trade"],
+                "task": "今日订单",
+                "depends_on": [],
+                "params": {
+                    "doc_type": "order",
+                    "mode": "summary",
+                    "time_range": "2026-04-17 ~ 2026-04-17",
+                    "time_col": "pay_time",
+                },
+            }],
+        }
+        plan = ExecutionPlan.from_dict(data)
+        assert plan.rounds[0].params["mode"] == "summary"
+        assert plan.rounds[0].params["time_range"] == "2026-04-17 ~ 2026-04-17"
+
+    def test_from_dict_no_params_defaults_empty(self):
+        """from_dict 无 params 字段时默认空 dict"""
+        data = {"rounds": [{"agents": ["trade"], "task": "test"}]}
+        plan = ExecutionPlan.from_dict(data)
+        assert plan.rounds[0].params == {}
 
     def test_from_dict_empty(self):
         plan = ExecutionPlan.from_dict({})
@@ -287,6 +314,73 @@ class TestParseLlmPlan:
 
 
 # ============================================================
+# _sanitize_params — params 宽容校验
+# ============================================================
+
+
+class TestSanitizeParams:
+
+    def test_valid_params_pass_through(self):
+        """合法参数原样透传"""
+        from services.agent.plan_builder import _sanitize_params
+        params = {
+            "mode": "summary",
+            "doc_type": "order",
+            "time_range": "2026-04-17 ~ 2026-04-17",
+            "time_col": "pay_time",
+            "platform": "taobao",
+        }
+        clean = _sanitize_params(params)
+        assert clean["mode"] == "summary"
+        assert clean["doc_type"] == "order"
+        assert clean["time_range"] == "2026-04-17 ~ 2026-04-17"
+        assert clean["platform"] == "taobao"
+
+    def test_invalid_mode_defaults_to_summary(self):
+        """非法 mode 替换为 summary"""
+        from services.agent.plan_builder import _sanitize_params
+        clean = _sanitize_params({"mode": "garbage"})
+        assert clean["mode"] == "summary"
+
+    def test_invalid_time_range_dropped(self):
+        """非法 time_range 格式被删除（让 extract_time_range 兜底）"""
+        from services.agent.plan_builder import _sanitize_params
+        clean = _sanitize_params({"time_range": "今天到明天"})
+        assert "time_range" not in clean
+
+
+# ============================================================
+# _build_fallback_params — 降级路径参数构造
+# ============================================================
+
+
+class TestBuildFallbackParams:
+
+    def test_default_summary_today(self):
+        """默认 mode=summary + 今天日期"""
+        from services.agent.plan_builder import _build_fallback_params
+        params = _build_fallback_params("查订单")
+        assert params["mode"] == "summary"
+        assert "~" in params["time_range"]
+        assert params["_degraded"] is True
+
+    def test_detail_keywords_override_mode(self):
+        """明细/列表/导出关键词覆盖为 detail"""
+        from services.agent.plan_builder import _build_fallback_params
+        for kw in ("明细", "列表", "导出"):
+            params = _build_fallback_params(f"查订单{kw}")
+            assert params["mode"] == "detail", f"'{kw}' should trigger detail"
+
+    def test_domain_time_col_mapping(self):
+        """trade→pay_time，其他域→doc_created_at"""
+        from services.agent.plan_builder import _build_fallback_params
+        assert _build_fallback_params("x", domain="trade")["time_col"] == "pay_time"
+        assert _build_fallback_params("x", domain="purchase")["time_col"] == "doc_created_at"
+        assert _build_fallback_params("x", domain="warehouse")["time_col"] == "doc_created_at"
+        assert _build_fallback_params("x", domain="aftersale")["time_col"] == "doc_created_at"
+
+
+# ============================================================
 # build_plan_prompt
 # ============================================================
 
@@ -342,21 +436,21 @@ class TestPlanBuilder:
     async def test_llm_success(self):
         """LLM 返回合法 JSON → 直接用"""
         mock_adapter = MagicMock()
-        mock_adapter.chat = AsyncMock(return_value={
-            "content": '{"rounds": [{"agents": ["trade"], "task": "查订单"}]}',
-        })
+        mock_adapter.chat_sync = AsyncMock(return_value=ChatResponse(
+            content='{"rounds": [{"agents": ["trade"], "task": "查订单"}]}',
+        ))
         builder = PlanBuilder(adapter=mock_adapter)
         plan = await builder.build("今天多少订单")
         assert plan.rounds[0].agents == ["trade"]
-        mock_adapter.chat.assert_called_once()
+        mock_adapter.chat_sync.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_llm_failure_falls_back_to_keyword(self):
         """LLM 返回垃圾 → 降级到关键词"""
         mock_adapter = MagicMock()
-        mock_adapter.chat = AsyncMock(return_value={
-            "content": "这不是JSON",
-        })
+        mock_adapter.chat_sync = AsyncMock(return_value=ChatResponse(
+            content="这不是JSON",
+        ))
         builder = PlanBuilder(adapter=mock_adapter)
         plan = await builder.build("查一下采购单")
         assert plan.rounds[0].agents == ["purchase"]
@@ -365,7 +459,7 @@ class TestPlanBuilder:
     async def test_llm_exception_falls_back(self):
         """LLM 调用异常 → 降级到关键词"""
         mock_adapter = MagicMock()
-        mock_adapter.chat = AsyncMock(side_effect=Exception("timeout"))
+        mock_adapter.chat_sync = AsyncMock(side_effect=Exception("timeout"))
         builder = PlanBuilder(adapter=mock_adapter)
         plan = await builder.build("仓库列表")
         assert plan.rounds[0].agents == ["warehouse"]
@@ -374,11 +468,11 @@ class TestPlanBuilder:
     async def test_tokens_used_accumulated_from_llm(self):
         """LLM 调用后 token 计入 builder.tokens_used"""
         mock_adapter = MagicMock()
-        mock_adapter.chat = AsyncMock(return_value={
-            "content": '{"rounds": [{"agents": ["trade"], "task": "查订单"}]}',
-            "prompt_tokens": 200,
-            "completion_tokens": 80,
-        })
+        mock_adapter.chat_sync = AsyncMock(return_value=ChatResponse(
+            content='{"rounds": [{"agents": ["trade"], "task": "查订单"}]}',
+            prompt_tokens=200,
+            completion_tokens=80,
+        ))
         builder = PlanBuilder(adapter=mock_adapter)
         assert builder.tokens_used == 0
         await builder.build("今天多少订单")

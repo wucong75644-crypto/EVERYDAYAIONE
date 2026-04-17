@@ -112,13 +112,12 @@ class WarehouseAgent(DepartmentAgent):
             )
         if action == "warehouse_list":
             return await self.query_warehouse_list()
-        if action == "receipt_query":
-            return await self.query_receipt(
-                mode="detail", filters=params.get("filters", []),
-            )
-        if action == "shelf_query":
-            return await self.query_shelf(
-                mode="detail", filters=params.get("filters", []),
+        if action in ("receipt_query", "shelf_query"):
+            doc_type = "receipt" if action == "receipt_query" else "shelf"
+            return await self._query_local_data(
+                doc_type=doc_type,
+                mode=params.get("mode", "summary"),
+                filters=params.get("filters", []),
             )
         return await self.query_stock(
             product_code=params.get("product_code", ""),

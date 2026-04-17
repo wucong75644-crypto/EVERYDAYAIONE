@@ -104,10 +104,22 @@ class ERPAgent:
         shared_registry = SessionFileRegistry()
 
         agents: dict = {
-            "warehouse": WarehouseAgent(db=self.db, org_id=self.org_id),
-            "purchase": PurchaseAgent(db=self.db, org_id=self.org_id),
-            "trade": TradeAgent(db=self.db, org_id=self.org_id),
-            "aftersale": AftersaleAgent(db=self.db, org_id=self.org_id),
+            "warehouse": WarehouseAgent(
+                db=self.db, org_id=self.org_id,
+                request_ctx=self.request_ctx,
+            ),
+            "purchase": PurchaseAgent(
+                db=self.db, org_id=self.org_id,
+                request_ctx=self.request_ctx,
+            ),
+            "trade": TradeAgent(
+                db=self.db, org_id=self.org_id,
+                request_ctx=self.request_ctx,
+            ),
+            "aftersale": AftersaleAgent(
+                db=self.db, org_id=self.org_id,
+                request_ctx=self.request_ctx,
+            ),
             "compute": ComputeAgent(
                 staging_dir=staging_dir,
                 file_registry=shared_registry,
@@ -126,7 +138,10 @@ class ERPAgent:
             settings.agent_loop_model, org_id=self.org_id, db=self.db,
         )
         try:
-            builder = PlanBuilder(adapter=plan_adapter)
+            builder = PlanBuilder(
+                adapter=plan_adapter,
+                request_ctx=self.request_ctx,
+            )
             plan = await builder.build(query)
         finally:
             await plan_adapter.close()
