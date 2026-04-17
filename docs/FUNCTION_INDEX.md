@@ -941,3 +941,48 @@
 ### 架构文档
 - [项目概览](./PROJECT_OVERVIEW.md) - 项目整体架构和目录结构
 - [当前问题](./CURRENT_ISSUES.md) - 待修复问题和开发进度追踪
+
+---
+
+## 多Agent架构模块（2026-04-16 新增）
+
+> 设计文档: `docs/document/TECH_多Agent单一职责重构.md`
+
+### 结构化数据协议
+
+| 类名 | 文件路径 | 功能描述 |
+|------|---------|---------|
+| `ToolOutput` | `backend/services/agent/tool_output.py` | 统一工具输出（summary+data/file_ref+metadata） |
+| `ColumnMeta` | `backend/services/agent/tool_output.py` | 列元信息（name+dtype+label） |
+| `FileRef` | `backend/services/agent/tool_output.py` | Staging 文件引用（path+row_count+columns） |
+| `SessionFileRegistry` | `backend/services/agent/session_file_registry.py` | 会话级文件注册表（冻结恢复支持） |
+
+### 部门Agent
+
+| 类名 | 文件路径 | 功能描述 |
+|------|---------|---------|
+| `DepartmentAgent` | `backend/services/agent/department_agent.py` | 基类：_build_output(FIELD_MAP) / _extract_field_from_context / validate / execute |
+| `ValidationResult` | `backend/services/agent/department_types.py` | 参数校验三态（ok/missing/conflict） |
+| `WarehouseAgent` | `backend/services/agent/departments/warehouse_agent.py` | 仓储域（库存/仓库/出入库） |
+| `PurchaseAgent` | `backend/services/agent/departments/purchase_agent.py` | 采购域（采购单/供应商/采退） |
+| `TradeAgent` | `backend/services/agent/departments/trade_agent.py` | 订单域（订单/物流/发货） |
+| `AftersaleAgent` | `backend/services/agent/departments/aftersale_agent.py` | 售后域（退货/退款/售后） |
+
+### 计算Agent
+
+| 类名 | 文件路径 | 功能描述 |
+|------|---------|---------|
+| `ComputeAgent` | `backend/services/agent/compute_agent.py` | 独立计算Agent（prompt构建+输入格式化） |
+| `ComputeTask` | `backend/services/agent/compute_types.py` | 计算任务输入（instruction+inputs+output_format） |
+| `ComputeResult` | `backend/services/agent/compute_types.py` | 计算任务输出（conclusion+output+warnings） |
+| `validate_compute_result` | `backend/services/agent/compute_types.py` | 结果硬校验纯函数 |
+
+### DAG 编排引擎
+
+| 类名 | 文件路径 | 功能描述 |
+|------|---------|---------|
+| `ExecutionPlan` | `backend/services/agent/execution_plan.py` | DAG 执行计划（rounds+validate+abort） |
+| `Round` | `backend/services/agent/execution_plan.py` | DAG 单轮（agents+task+depends_on） |
+| `PlanBuilder` | `backend/services/agent/plan_builder.py` | 三级降级链（LLM→关键词→abort） |
+| `DAGExecutor` | `backend/services/agent/dag_executor.py` | Round 编排引擎（并行+错误传播+PARTIAL阈值） |
+| `ExperienceRecorder` | `backend/services/agent/experience_recorder.py` | Agent经验记录（路由/失败→知识库） |

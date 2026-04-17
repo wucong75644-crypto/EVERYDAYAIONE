@@ -279,13 +279,14 @@ class TestERPTools:
     @patch("services.kuaimai.client.KuaiMaiClient")
     async def test_trade_query_success(self, MockClient, MockDispatcher):
         """交易查询成功→返回结果（两步调用 Step 2）"""
+        from services.agent.tool_output import ToolOutput
         mock_client = AsyncMock()
         mock_client.is_configured = True
         mock_client.load_cached_token = AsyncMock()
         MockClient.return_value = mock_client
 
         mock_disp = AsyncMock()
-        mock_disp.execute.return_value = "订单数据"
+        mock_disp.execute.return_value = ToolOutput(summary="订单数据", source="erp")
         mock_disp.close = AsyncMock()
         MockDispatcher.return_value = mock_disp
 
@@ -297,7 +298,7 @@ class TestERPTools:
                 "end_date": "2026-03-10",
             },
         })
-        assert result.startswith("订单数据")
+        assert result.summary.startswith("订单数据")
         mock_disp.execute.assert_called_once_with(
             "erp_trade_query", "order_list",
             {"start_date": "2026-03-01", "end_date": "2026-03-10"},
@@ -330,13 +331,14 @@ class TestERPTools:
     @patch("services.kuaimai.client.KuaiMaiClient")
     async def test_product_query_success(self, MockClient, MockDispatcher):
         """商品查询成功→返回结果"""
+        from services.agent.tool_output import ToolOutput
         mock_client = AsyncMock()
         mock_client.is_configured = True
         mock_client.load_cached_token = AsyncMock()
         MockClient.return_value = mock_client
 
         mock_disp = AsyncMock()
-        mock_disp.execute.return_value = "商品列表"
+        mock_disp.execute.return_value = ToolOutput(summary="商品列表", source="erp")
         mock_disp.close = AsyncMock()
         MockDispatcher.return_value = mock_disp
 
@@ -346,7 +348,7 @@ class TestERPTools:
             "params": {"keyword": "手机壳"},
             "page": 1,
         })
-        assert result.startswith("商品列表")
+        assert result.summary.startswith("商品列表")
 
     @pytest.mark.asyncio
     @patch("services.kuaimai.dispatcher.ErpDispatcher")
@@ -375,13 +377,14 @@ class TestERPTools:
     @patch("services.kuaimai.client.KuaiMaiClient")
     async def test_product_stock_query(self, MockClient, MockDispatcher):
         """库存查询走 erp_product_query（两步调用 Step 2）"""
+        from services.agent.tool_output import ToolOutput
         mock_client = AsyncMock()
         mock_client.is_configured = True
         mock_client.load_cached_token = AsyncMock()
         MockClient.return_value = mock_client
 
         mock_disp = AsyncMock()
-        mock_disp.execute.return_value = "库存数据"
+        mock_disp.execute.return_value = ToolOutput(summary="库存数据", source="erp")
         mock_disp.close = AsyncMock()
         MockDispatcher.return_value = mock_disp
 
@@ -390,35 +393,10 @@ class TestERPTools:
             "action": "stock_status",
             "params": {"outer_id": "SKU001"},
         })
-        assert result.startswith("库存数据")
+        assert result.summary.startswith("库存数据")
         mock_disp.execute.assert_called_once_with(
             "erp_product_query", "stock_status", {"outer_id": "SKU001"},
         )
-
-    @pytest.mark.asyncio
-    @patch("services.kuaimai.dispatcher.ErpDispatcher")
-    @patch("services.kuaimai.client.KuaiMaiClient")
-    async def test_hints_appended_to_result(self, MockClient, MockDispatcher):
-        """Step2 返回结果后附带参数提示（hints 非空时有分隔线）"""
-        mock_client = AsyncMock()
-        mock_client.is_configured = True
-        mock_client.load_cached_token = AsyncMock()
-        MockClient.return_value = mock_client
-
-        mock_disp = AsyncMock()
-        mock_disp.execute.return_value = "查询结果"
-        mock_disp.close = AsyncMock()
-        MockDispatcher.return_value = mock_disp
-
-        exe = _make_executor()
-        # order_list + order_id 有 param_hints，会触发💡提示
-        result = await exe._erp_dispatch("erp_trade_query", {
-            "action": "order_list",
-            "params": {"order_id": "T123"},
-        })
-        assert result.startswith("查询结果")
-        assert "---" in result
-        assert "💡" in result or "📎" in result
 
     @pytest.mark.asyncio
     @patch("services.kuaimai.dispatcher.ErpDispatcher")
@@ -439,10 +417,9 @@ class TestERPTools:
         assert "action" in result
 
     @pytest.mark.asyncio
-    @patch("core.redis.get_redis", new_callable=AsyncMock, return_value=None)
     @patch("services.kuaimai.dispatcher.ErpDispatcher")
     @patch("services.kuaimai.client.KuaiMaiClient")
-    async def test_erp_execute_write(self, MockClient, MockDispatcher, mock_redis):
+    async def test_erp_execute_write(self, MockClient, MockDispatcher):
         """erp_execute 写操作→通过 category 路由"""
         mock_client = AsyncMock()
         mock_client.is_configured = True
@@ -454,16 +431,30 @@ class TestERPTools:
         mock_disp.close = AsyncMock()
         MockDispatcher.return_value = mock_disp
 
-        exe = _make_executor()
-        result = await exe._erp_dispatch("erp_execute", {
-            "category": "trade",
-            "action": "order_cancel",
-            "params": {"order_id": "T123"},
-        })
-        assert result == "操作成功"
-        mock_disp.execute.assert_called_once_with(
-            "erp_trade_query", "order_cancel", {"order_id": "T123"},
-        )
+        # Redis 可用时正常执行
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=None)  # 未执行过
+        mock_redis.set = AsyncMock()
+        with patch(
+            "core.redis.get_redis",
+            new_callable=AsyncMock, return_value=mock_redis,
+        ), patch(
+            "core.redis.RedisClient.acquire_lock",
+            new_callable=AsyncMock, return_value="lock_token_123",
+        ), patch(
+            "core.redis.RedisClient.release_lock",
+            new_callable=AsyncMock,
+        ):
+            exe = _make_executor()
+            result = await exe._erp_dispatch("erp_execute", {
+                "category": "trade",
+                "action": "order_cancel",
+                "params": {"order_id": "T123"},
+            })
+            assert result == "操作成功"
+            mock_disp.execute.assert_called_once_with(
+                "erp_trade_query", "order_cancel", {"order_id": "T123"},
+            )
 
     @pytest.mark.asyncio
     @patch("core.redis.get_redis", new_callable=AsyncMock)
@@ -534,17 +525,16 @@ class TestERPTools:
     @patch("core.redis.get_redis", new_callable=AsyncMock, return_value=None)
     @patch("services.kuaimai.dispatcher.ErpDispatcher")
     @patch("services.kuaimai.client.KuaiMaiClient")
-    async def test_erp_execute_redis_unavailable_allows_execution(
+    async def test_erp_execute_redis_unavailable_rejects_write(
         self, MockClient, MockDispatcher, mock_get_redis,
     ):
-        """B5: Redis 不可用时放行执行"""
+        """B5: Redis 不可用时拒绝写操作（幂等性无保障）"""
         mock_client = AsyncMock()
         mock_client.is_configured = True
         mock_client.load_cached_token = AsyncMock()
         MockClient.return_value = mock_client
 
         mock_disp = AsyncMock()
-        mock_disp.execute.return_value = "操作成功"
         mock_disp.close = AsyncMock()
         MockDispatcher.return_value = mock_disp
 
@@ -554,8 +544,10 @@ class TestERPTools:
             "action": "order_cancel",
             "params": {"order_id": "T123"},
         })
-        assert result == "操作成功"
-        mock_disp.execute.assert_called_once()
+        assert "缓存服务暂时不可用" in result
+        assert "写操作已暂停" in result
+        # 不应执行任何 API 调用
+        mock_disp.execute.assert_not_called()
 
     @pytest.mark.asyncio
     @patch("core.redis.get_redis", new_callable=AsyncMock)
@@ -654,13 +646,14 @@ class TestERPTools:
         self, MockClient, MockDispatcher,
     ):
         """execute() 委托 erp_trade_query 到 _erp_dispatch（Step 2 带 params）"""
+        from services.agent.tool_output import ToolOutput
         mock_client = AsyncMock()
         mock_client.is_configured = True
         mock_client.load_cached_token = AsyncMock()
         MockClient.return_value = mock_client
 
         mock_disp = AsyncMock()
-        mock_disp.execute.return_value = "物流信息"
+        mock_disp.execute.return_value = ToolOutput(summary="物流信息", source="erp")
         mock_disp.close = AsyncMock()
         MockDispatcher.return_value = mock_disp
 
@@ -669,7 +662,9 @@ class TestERPTools:
             "erp_trade_query",
             {"action": "outstock_query", "params": {"order_id": "123"}},
         )
-        assert result.startswith("物流信息")
+        # execute() 直接返回 ToolOutput（过渡层已移除）
+        assert isinstance(result, ToolOutput)
+        assert result.summary.startswith("物流信息")
 
 
 # ============================================================

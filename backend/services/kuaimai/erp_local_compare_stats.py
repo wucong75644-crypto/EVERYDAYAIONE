@@ -4,9 +4,12 @@ ERP 本地同比/环比对比工具
 替代 LLM 临场组合两次 local_global_stats 的做法 — 由后端确定地计算对比基线，
 返回结构化时间块 + 数据对比，避免 LLM 自行推算 weekday 或对比日期。
 
+所有函数返回 ToolOutput（Phase 0 改造）。
+
 设计文档:
 - docs/document/TECH_ERP时间准确性架构.md §6.2.3 (B6)
 - §14 神经-符号分离原则
+重构文档: docs/document/TECH_多Agent单一职责重构.md §4.3
 """
 
 from __future__ import annotations
@@ -16,6 +19,12 @@ from typing import Optional
 
 from loguru import logger
 
+from services.agent.tool_output import (
+    ColumnMeta,
+    OutputFormat,
+    OutputStatus,
+    ToolOutput,
+)
 from services.kuaimai.erp_local_helpers import CN_TZ, check_sync_health
 from utils.time_context import (
     ComparePoint,
@@ -157,6 +166,14 @@ def _parse_iso(s: str, *, is_end: bool = False) -> datetime:
 # ────────────────────────────────────────────────────────────────────
 
 
+_COMPARE_COLUMNS = [
+    ColumnMeta("period", "text", "期间"),
+    ColumnMeta("doc_count", "integer", "单数"),
+    ColumnMeta("total_qty", "integer", "数量"),
+    ColumnMeta("total_amount", "numeric", "金额"),
+]
+
+
 async def local_compare_stats(
     db,
     doc_type: str,
@@ -176,7 +193,7 @@ async def local_compare_stats(
     group_by: Optional[str] = None,
     org_id: Optional[str] = None,
     request_ctx: Optional[RequestContext] = None,
-) -> str:
+) -> ToolOutput:
     """同比/环比对比统计（时间事实层）。
 
     不要调 local_global_stats 两次拼对比 — 必须用本工具，由后端：
@@ -197,7 +214,12 @@ async def local_compare_stats(
             ctx, current, compare_kind, baseline_start, baseline_end,
         )
     except ValueError as e:
-        return f"参数错误: {e}"
+        return ToolOutput(
+            summary=f"参数错误: {e}",
+            source="warehouse",
+            status=OutputStatus.ERROR,
+            error_message=str(e),
+        )
 
     cp = ComparePoint.build(
         current=current, baseline=baseline, compare_kind=compare_kind,  # type: ignore[arg-type]
@@ -234,12 +256,27 @@ async def local_compare_stats(
         }).execute().data
     except Exception as e:
         logger.error(f"local_compare_stats RPC failed | error={e}", exc_info=True)
-        return f"对比查询失败: {e}"
+        return ToolOutput(
+            summary=f"对比查询失败: {e}",
+            source="warehouse",
+            status=OutputStatus.ERROR,
+            error_message=str(e),
+        )
 
     if isinstance(cur_data, dict) and "error" in cur_data:
-        return f"查询参数错误: {cur_data['error']}"
+        return ToolOutput(
+            summary=f"查询参数错误: {cur_data['error']}",
+            source="warehouse",
+            status=OutputStatus.ERROR,
+            error_message=str(cur_data["error"]),
+        )
     if isinstance(base_data, dict) and "error" in base_data:
-        return f"查询参数错误: {base_data['error']}"
+        return ToolOutput(
+            summary=f"查询参数错误: {base_data['error']}",
+            source="warehouse",
+            status=OutputStatus.ERROR,
+            error_message=str(base_data["error"]),
+        )
 
     # ── 4. 渲染结构化输出 ──────────────────────────────
     return _render_compare_output(
@@ -260,7 +297,7 @@ def _render_compare_output(
     doc_type: str,
     org_id: Optional[str],
     request_ctx: RequestContext,
-) -> str:
+) -> ToolOutput:
     """渲染同比/环比对比结果（带结构化时间块）。"""
     # 时间事实块（双时间块 + 语义说明）
     cur_header = format_time_header(
@@ -284,7 +321,12 @@ def _render_compare_output(
             "请用 group_by=None + rank_by=None 重试，"
             "或改用 local_global_stats 两次查询。"
         )
-        return _join_blocks(cur_header, base_header, semantic, body)
+        return ToolOutput(
+            summary=_join_blocks(cur_header, base_header, semantic, body),
+            source="warehouse",
+            status=OutputStatus.ERROR,
+            error_message="rank_by/group_by 模式暂不支持",
+        )
 
     cur_count = cur_data.get("doc_count", 0) if cur_data else 0
     cur_qty = cur_data.get("total_qty", 0) if cur_data else 0
@@ -323,7 +365,26 @@ def _render_compare_output(
         body_lines.append(health)
 
     body = "\n".join(body_lines)
-    return _join_blocks(cur_header, base_header, semantic, body)
+    summary = _join_blocks(cur_header, base_header, semantic, body)
+
+    # 结构化数据：当前期 vs 基线期
+    compare_data = [
+        {"period": "current", "doc_count": cur_count, "total_qty": cur_qty, "total_amount": cur_amt},
+        {"period": "baseline", "doc_count": base_count, "total_qty": base_qty, "total_amount": base_amt},
+    ]
+
+    return ToolOutput(
+        summary=summary,
+        format=OutputFormat.TABLE,
+        source="warehouse",
+        columns=_COMPARE_COLUMNS,
+        data=compare_data,
+        metadata={
+            "doc_type": doc_type,
+            "compare_kind": cp.compare_kind,
+            "time_column": time_col,
+        },
+    )
 
 
 def _join_blocks(*blocks: str) -> str:

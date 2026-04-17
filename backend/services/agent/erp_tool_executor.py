@@ -69,18 +69,22 @@ class ErpToolMixin:
 
                 from core.redis import get_redis, RedisClient
                 _redis = await get_redis()
-                if _redis:
-                    # 1. 先查是否已完成（10 分钟内）
-                    _done = await _redis.get(_result_key)
-                    if _done:
-                        return (
-                            f"⚠ 该写操作（{category}/{action}）10 分钟内已执行过，"
-                            f"避免重复执行。如需再次执行请稍后重试。"
-                        )
-                    # 2. 尝试获取锁（防止并发重复）
-                    _lock_token = await RedisClient.acquire_lock(_lock_key, timeout=120)
-                    if not _lock_token:
-                        return f"⚠ 相同操作（{category}/{action}）正在执行中，请稍候再试。"
+                if not _redis:
+                    return (
+                        "⚠ 系统缓存服务暂时不可用，写操作已暂停。"
+                        "请稍后重试，或联系管理员检查 Redis 状态。"
+                    )
+                # 1. 先查是否已完成（10 分钟内）
+                _done = await _redis.get(_result_key)
+                if _done:
+                    return (
+                        f"⚠ 该写操作（{category}/{action}）10 分钟内已执行过，"
+                        f"避免重复执行。如需再次执行请稍后重试。"
+                    )
+                # 2. 尝试获取锁（防止并发重复）
+                _lock_token = await RedisClient.acquire_lock(_lock_key, timeout=120)
+                if not _lock_token:
+                    return f"⚠ 相同操作（{category}/{action}）正在执行中，请稍候再试。"
 
                 cat_tool_map = {
                     "basic": "erp_info_query",
@@ -139,12 +143,7 @@ class ErpToolMixin:
         if isinstance(dispatcher, str):
             return dispatcher
         try:
-            result = await dispatcher.execute(tool_name, action, params)
-            from services.kuaimai.param_doc import generate_param_hints
-            hints = generate_param_hints(tool_name, action, params)
-            if hints:
-                return f"{result}\n\n---\n{hints}"
-            return result
+            return await dispatcher.execute(tool_name, action, params)
         except Exception as e:
             logger.error(
                 f"ToolExecutor erp_dispatch | tool={tool_name} | error={e}"

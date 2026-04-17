@@ -327,3 +327,22 @@ def mask_pii(row: dict) -> dict:
         if name and len(name) >= 2:
             row["receiver_name"] = name[0] + "*" * (len(name) - 1)
     return row
+
+
+def build_column_metas(fields: list[str]) -> list:
+    """从字段列表构建 ToolOutput 用的 ColumnMeta 列表。
+
+    复用 COLUMN_WHITELIST 的类型和标签信息。
+    返回 list[tool_output.ColumnMeta]（延迟 import 避免循环依赖）。
+    """
+    from services.agent.tool_output import ColumnMeta as TOColumnMeta
+
+    return [
+        TOColumnMeta(
+            f,
+            COLUMN_WHITELIST[f].col_type if f in COLUMN_WHITELIST else "text",
+            f,  # 白名单 ColumnMeta 只有 col_type，用字段名作为 label
+        )
+        for f in fields
+        if f in COLUMN_WHITELIST
+    ]

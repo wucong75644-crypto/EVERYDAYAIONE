@@ -108,7 +108,7 @@ class TestRestoreFromPending:
         handler = _make_handler()
         pending = self._make_pending()
 
-        messages, blocks, tc_state, budget = handler._restore_from_pending(
+        messages, blocks, tc_state, budget, _fr, _dp = handler._restore_from_pending(
             pending, "查最近7天的"
         )
 
@@ -122,21 +122,21 @@ class TestRestoreFromPending:
         handler = _make_handler()
         pending = self._make_pending()
 
-        _, blocks, _, _ = handler._restore_from_pending(pending, "ok")
+        _, blocks, _, _, _, _ = handler._restore_from_pending(pending, "ok")
         assert blocks == [{"type": "text"}]
 
     def test_restores_tool_context_state(self):
         handler = _make_handler()
         pending = self._make_pending()
 
-        _, _, tc_state, _ = handler._restore_from_pending(pending, "ok")
+        _, _, tc_state, _, _, _ = handler._restore_from_pending(pending, "ok")
         assert "web_search" in tc_state["discovered_tools"]
 
     def test_restores_budget_snapshot(self):
         handler = _make_handler()
         pending = self._make_pending()
 
-        _, _, _, budget = handler._restore_from_pending(pending, "ok")
+        _, _, _, budget, _, _ = handler._restore_from_pending(pending, "ok")
         assert budget["turns_used"] == 3
         assert budget["tokens_used"] == 5000
 
@@ -162,9 +162,11 @@ class TestRestoreFromPending:
         handler = _make_handler()
         pending = self._make_pending(loop_snapshot="{}")
 
-        _, blocks, tc_state, budget = handler._restore_from_pending(pending, "ok")
+        _, blocks, tc_state, budget, file_reg, dag_prog = handler._restore_from_pending(pending, "ok")
         assert blocks == []
         assert tc_state == {}
+        assert len(file_reg.list_all()) == 0  # 空 snapshot → 空 Registry
+        assert dag_prog is None
         assert budget == {}
 
 

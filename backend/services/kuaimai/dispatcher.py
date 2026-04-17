@@ -3,6 +3,10 @@ ERP统一调度引擎
 
 根据 tool_name + action 查注册表 → 映射参数 → 调API → 格式化返回。
 替代原有service.py中的独立query方法。
+
+execute() 返回 ToolOutput（Phase 0 改造）。
+
+重构文档: docs/document/TECH_多Agent单一职责重构.md §4.3
 """
 
 import asyncio
@@ -10,6 +14,7 @@ from typing import Any, Dict, Optional
 
 from loguru import logger
 
+from services.agent.tool_output import OutputStatus, ToolOutput
 from services.kuaimai.client import KuaiMaiClient
 from services.kuaimai.formatters import get_formatter
 from services.kuaimai.formatters.common import format_generic_list
@@ -36,7 +41,7 @@ class ErpDispatcher:
         tool_name: str,
         action: str,
         params: Dict[str, Any],
-    ) -> str:
+    ) -> ToolOutput:
         """执行ERP API调用
 
         Args:
@@ -45,20 +50,29 @@ class ErpDispatcher:
             params: 用户参数
 
         Returns:
-            格式化后的结果文本
+            ToolOutput 结构化结果
         """
         # 1. 查注册表
         registry = TOOL_REGISTRIES.get(tool_name)
         if not registry:
-            return f"未知的ERP工具: {tool_name}"
+            return ToolOutput(
+                summary=f"未知的ERP工具: {tool_name}",
+                source="erp",
+                status=OutputStatus.ERROR,
+                error_message=f"unknown tool: {tool_name}",
+            )
 
         entry: Optional[ApiEntry] = registry.get(action)
         if not entry:
             available = ", ".join(sorted(registry.keys()))
-            return f"未知的操作「{action}」，可选: {available}"
+            return ToolOutput(
+                summary=f"未知的操作「{action}」，可选: {available}",
+                source="erp",
+                status=OutputStatus.ERROR,
+                error_message=f"unknown action: {action}",
+            )
 
         # 2. 校验必填参数（增强错误信息：列出支持的参数）
-        # 同时检查 API 原生名（如 LLM 传了 purchaseId 而非 purchase_id）
         missing = [
             p for p in entry.required_params
             if not params.get(p)
@@ -70,9 +84,14 @@ class ErpDispatcher:
                 tool_name, action,
                 f"缺少必填参数: {', '.join(missing)}，支持: {', '.join(valid)}",
             )
-            return (
-                f"缺少必填参数: {', '.join(missing)}。"
-                f"该操作支持的参数: {', '.join(valid)}"
+            return ToolOutput(
+                summary=(
+                    f"缺少必填参数: {', '.join(missing)}。"
+                    f"该操作支持的参数: {', '.join(valid)}"
+                ),
+                source="erp",
+                status=OutputStatus.ERROR,
+                error_message=f"missing params: {', '.join(missing)}",
             )
 
         # 2.5 参数预处理（格式规则自动纠正）
@@ -131,7 +150,12 @@ class ErpDispatcher:
                     f"ErpDispatcher API error | tool={tool_name} "
                     f"action={action} error={e}"
                 )
-                return f"ERP接口调用失败: {e}"
+                return ToolOutput(
+                    summary=f"ERP接口调用失败: {e}",
+                    source="erp",
+                    status=OutputStatus.ERROR,
+                    error_message=str(e),
+                )
 
         # 5. 格式化返回（附带无效参数警告）
         result = self._format_response(data, entry, action)
@@ -159,7 +183,11 @@ class ErpDispatcher:
                 f"\n\n⚠ 忽略了无效参数: {', '.join(param_warnings)}。"
                 f"该操作支持的参数: {', '.join(valid)}"
             )
-        return result
+        return ToolOutput(
+            summary=result,
+            source="erp",
+            metadata={"tool_name": tool_name, "action": action},
+        )
 
     @staticmethod
     def _record_param_knowledge(

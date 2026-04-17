@@ -109,7 +109,7 @@ class TestRestoreFromPending:
         }
 
         handler = self._make_handler()
-        messages, blocks, tc_state, bs = handler._restore_from_pending(
+        messages, blocks, tc_state, bs, _fr, _dp = handler._restore_from_pending(
             pending, "排除刷单",
         )
 

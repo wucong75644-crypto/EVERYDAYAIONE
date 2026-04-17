@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 
 from loguru import logger
@@ -24,6 +25,8 @@ from services.agent.loop_hooks import LoopHook
 from services.agent.loop_types import (
     HookContext, LoopConfig, LoopResult, LoopStrategy,
 )
+from services.agent.session_file_registry import SessionFileRegistry
+from services.agent.tool_output import ToolOutput
 from services.agent.tool_result_cache import ToolResultCache
 
 # [FILE] 标记正则：沙盒 code_execute 输出的文件引用
@@ -53,6 +56,7 @@ class ToolLoopExecutor:
         config: LoopConfig,
         strategy: LoopStrategy,
         hooks: List[LoopHook] = None,
+        file_registry: SessionFileRegistry | None = None,
     ) -> None:
         self.adapter = adapter
         self.executor = executor
@@ -62,6 +66,8 @@ class ToolLoopExecutor:
         self.hooks: List[LoopHook] = list(hooks or [])
         # 会话级读工具缓存（key=tool_name+args_hash → result, TTL 5 分钟）
         self._cache = ToolResultCache()
+        # 会话级文件注册表（供 ComputeAgent 按域查找 staging 文件）
+        self._file_registry = file_registry or SessionFileRegistry()
 
     # ========================================
     # 工具循环主逻辑
@@ -538,29 +544,54 @@ class ToolLoopExecutor:
                 )
             )
 
-            # 提取 [FILE] 标记到独立通道（不经过 LLM，防止被改写）
-            if result and "[FILE]" in result:
-                for m in _FILE_RE.finditer(result):
-                    self._collected_files.append({
-                        "url": m.group("url"),
-                        "name": m.group("name"),
-                        "mime_type": m.group("mime"),
-                        "size": int(m.group("size")),
-                    })
-                # 替换为友好文本给 LLM 看
-                result = _FILE_RE.sub(
-                    lambda m: f"📎 文件: {m.group('name')}", result,
-                )
+            # ── ToolOutput / str 统一处理 ──
+            now_iso = datetime.now(timezone.utc).isoformat()
 
-            # 截断防爆
-            from services.agent.tool_result_envelope import wrap_for_erp_agent
-            is_truncated = len(result) > 3000 if result else False
-            result = wrap_for_erp_agent(tool_name, result)
+            if isinstance(result, ToolOutput):
+                # 结构化输出：转文本给 LLM + 注册文件 + 注入 timestamp
+                content = result.to_message_content()
+                is_truncated = False  # ToolOutput 已结构化，不截断
 
-            messages.append({
-                "role": "tool", "tool_call_id": tc["id"], "content": result,
-            })
-            accumulated = result
+                # 文件注册到 SessionFileRegistry
+                if result.file_ref:
+                    self._file_registry.register(
+                        result.source or tool_name, tool_name, result.file_ref,
+                    )
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "timestamp": now_iso,
+                    "content": content,
+                })
+                accumulated = content
+            else:
+                # 旧的 str 返回（code_execute / web_search 等未改造的工具）
+                # 提取 [FILE] 标记到独立通道
+                if result and "[FILE]" in result:
+                    for m in _FILE_RE.finditer(result):
+                        self._collected_files.append({
+                            "url": m.group("url"),
+                            "name": m.group("name"),
+                            "mime_type": m.group("mime"),
+                            "size": int(m.group("size")),
+                        })
+                    result = _FILE_RE.sub(
+                        lambda m: f"📎 文件: {m.group('name')}", result,
+                    )
+
+                # 截断防爆
+                from services.agent.tool_result_envelope import wrap_for_erp_agent
+                is_truncated = len(result) > 3000 if result else False
+                result = wrap_for_erp_agent(tool_name, result)
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "timestamp": now_iso,
+                    "content": result,
+                })
+                accumulated = result
 
             # Hook 链：单工具执行后（审计 + 失败反思等）
             for hook in self.hooks:

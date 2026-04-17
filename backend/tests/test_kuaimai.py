@@ -1065,7 +1065,7 @@ class TestErpDispatcher:
         """未知工具名→错误提示"""
         d = self._make_dispatcher()
         result = await d.execute("erp_nonexistent", "list", {})
-        assert "未知的ERP工具" in result
+        assert "未知的ERP工具" in result.summary
 
     @pytest.mark.asyncio
     async def test_unknown_action(self):
@@ -1075,8 +1075,8 @@ class TestErpDispatcher:
             "erp_trade_query": {"order_list": self._make_entry()},
         }):
             result = await d.execute("erp_trade_query", "bad_action", {})
-            assert "未知的操作" in result
-            assert "order_list" in result
+            assert "未知的操作" in result.summary
+            assert "order_list" in result.summary
 
     @pytest.mark.asyncio
     async def test_missing_required_params(self):
@@ -1087,8 +1087,8 @@ class TestErpDispatcher:
             "erp_trade_query": {"order_list": entry},
         }):
             result = await d.execute("erp_trade_query", "order_list", {})
-            assert "缺少必填参数" in result
-            assert "order_id" in result
+            assert "缺少必填参数" in result.summary
+            assert "order_id" in result.summary
 
     @pytest.mark.asyncio
     async def test_execute_success(self):
@@ -1105,7 +1105,7 @@ class TestErpDispatcher:
             result = await d.execute(
                 "erp_trade_query", "order_list", {},
             )
-            assert "1" in result
+            assert "1" in result.summary
             mock_client.request_with_retry.assert_called_once()
 
     @pytest.mark.asyncio
@@ -1121,7 +1121,7 @@ class TestErpDispatcher:
             result = await d.execute(
                 "erp_trade_query", "order_list", {},
             )
-            assert "调用失败" in result
+            assert "调用失败" in result.summary
 
     def test_format_response_with_formatter(self):
         """有格式化函数→调用格式化"""
@@ -1233,8 +1233,8 @@ class TestDispatcherGuardrails:
                 "erp_product_query", "stock_status",
                 {"order_id": "5759422420146938"},
             )
-            assert "参数自动纠正" in result
-            assert "system_id" in result
+            assert "参数自动纠正" in result.summary
+            assert "system_id" in result.summary
 
     @pytest.mark.asyncio
     async def test_no_corrections_when_normal_param(self):
@@ -1252,7 +1252,7 @@ class TestDispatcherGuardrails:
                 "erp_product_query", "stock_status",
                 {"outer_id": "ABC123"},
             )
-            assert "参数自动纠正" not in result
+            assert "参数自动纠正" not in result.summary
 
     @pytest.mark.asyncio
     async def test_diagnosis_suggestion_on_empty_result(self):
@@ -1273,8 +1273,8 @@ class TestDispatcherGuardrails:
                 "erp_product_query", "stock_status",
                 {"outer_id": "ABC123"},
             )
-            assert "sku_outer_id" in result
-            assert "重试" in result
+            assert "sku_outer_id" in result.summary
+            assert "重试" in result.summary
 
     @pytest.mark.asyncio
     async def test_no_diagnosis_when_results_found(self):
@@ -1294,7 +1294,7 @@ class TestDispatcherGuardrails:
                 "erp_product_query", "stock_status",
                 {"outer_id": "ABC123"},
             )
-            assert "重试" not in result
+            assert "重试" not in result.summary
 
     @pytest.mark.asyncio
     async def test_broadened_query_replaces_empty_result(self):
@@ -1324,8 +1324,8 @@ class TestDispatcherGuardrails:
                 "erp_product_query", "stock_status",
                 {"outer_id": "DBTXL01-02"},
             )
-            assert "编码智能匹配" in result
-            assert "DBTXL" in result
+            assert "编码智能匹配" in result.summary
+            assert "DBTXL" in result.summary
 
     @pytest.mark.asyncio
     async def test_broadened_query_pure_letter_code_still_dual_param(self):
@@ -1346,9 +1346,9 @@ class TestDispatcherGuardrails:
                 {"outer_id": "DBTXL"},
             )
             # 新架构：纯字母也会走双参数依次试
-            assert "编码智能匹配" in result
+            assert "编码智能匹配" in result.summary
             # diagnose_empty_result 路径仍生效
-            assert "重试" in result
+            assert "重试" in result.summary
 
 
 # ============================================================
@@ -3778,7 +3778,7 @@ class TestDispatcherRequiredParamsCompat:
             result = await d.execute("erp_test", "detail", {
                 "purchase_id": "PO-001",
             })
-            assert "缺少必填参数" not in result
+            assert "缺少必填参数" not in result.summary
 
     @pytest.mark.asyncio
     async def test_camel_case_required_param_also_passes(self):
@@ -3791,7 +3791,7 @@ class TestDispatcherRequiredParamsCompat:
             result = await d.execute("erp_test", "detail", {
                 "purchaseId": "PO-001",
             })
-            assert "缺少必填参数" not in result
+            assert "缺少必填参数" not in result.summary
 
     @pytest.mark.asyncio
     async def test_truly_missing_required_param_still_fails(self):
@@ -3804,7 +3804,7 @@ class TestDispatcherRequiredParamsCompat:
             result = await d.execute("erp_test", "detail", {
                 "code": "C001",
             })
-            assert "缺少必填参数" in result
+            assert "缺少必填参数" in result.summary
 
 
 # ============================================================
