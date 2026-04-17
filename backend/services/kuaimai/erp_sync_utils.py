@@ -161,9 +161,9 @@ class _ApiRateLimiter:
         pass
 
 
-_API_SEM = _ApiRateLimiter(max_qps=12)
-"""全局 API 限流器：≤12 req/s（低于 API 15 req/s 限额，留安全余量）。
-所有 API 调用（detail / list 翻页）共享此限流器。"""
+_API_SEM = _ApiRateLimiter(max_qps=10)
+"""全局 API 限流器：≤10 req/s（快麦限额 15 req/s，留 5 QPS 安全余量应对抖动）。
+同步任务 + 实时查询（ERP Agent / local_identify）共享此限流器。"""
 
 
 # ── Detail 并发拉取 ──────────────────────────────────

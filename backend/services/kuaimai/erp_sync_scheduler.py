@@ -155,6 +155,19 @@ class ErpSyncScheduler:
         # 队列积压检查
         await self._check_queue_depth()
 
+        # 429 限流监控（每轮汇总，有数据时才输出）
+        try:
+            from services.kuaimai.client import KuaiMaiClient
+            stats = KuaiMaiClient.get_rate_limit_stats()
+            if stats["hits"] > 0:
+                logger.warning(
+                    f"429 rate limit stats | "
+                    f"hits={stats['hits']} recovered={stats['recovered']} "
+                    f"exhausted={stats['exhausted']}"
+                )
+        except Exception:
+            pass
+
     def _get_due_types(self, org_id: str | None) -> list[str]:
         """判断该企业哪些 sync_type 到期需要入队。
 
@@ -191,12 +204,15 @@ class ErpSyncScheduler:
         ):
             due.extend(LOW_FREQ_TYPES)
 
-        # 库存全量刷新
-        if self._is_interval_due(
-            self._org_last_stock_full, org_id,
-            self.settings.erp_stock_full_refresh_interval,
-        ):
-            due.append("stock_full")
+        # 库存全量刷新 — 已禁用
+        # 根因：stock_full 的目标群体是 item_type=1（套件商品），
+        # 快麦 ERP 不为套件维护独立库存记录，API 查不到数据。
+        # 套件库存由 mv_kit_stock 物化视图从子单品库存实时计算。
+        # if self._is_interval_due(
+        #     self._org_last_stock_full, org_id,
+        #     self.settings.erp_stock_full_refresh_interval,
+        # ):
+        #     due.append("stock_full")
 
         # 日维护
         if self._is_interval_due(

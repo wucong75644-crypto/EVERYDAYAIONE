@@ -126,7 +126,8 @@ class TestGetDueTypes:
         due = s._get_due_types("org1")
         # First time → all intervals are due
         assert "platform_map" in due
-        assert "stock_full" in due
+        # stock_full 已禁用（套件商品无独立库存，由 mv_kit_stock 计算）
+        assert "stock_full" not in due
         assert "daily_maintenance" in due
 
     def test_second_round_low_freq_not_due(self):

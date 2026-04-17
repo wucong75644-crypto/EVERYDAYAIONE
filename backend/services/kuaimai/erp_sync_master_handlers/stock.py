@@ -55,17 +55,28 @@ def _map_stock_item(item: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+_STOCK_UPSERT_KEY = "outer_id,sku_outer_id,warehouse_id,org_id"
+_CHECKPOINT_INTERVAL = 10  # 每 10 批（~1000 编码）存盘一次
+
+
 async def _fetch_stock_by_codes(
     svc: ErpSyncService, codes: list[str],
 ) -> int:
-    """按编码批量精准查库存并 upsert（每批最多100个编码，全量刷新专用）"""
+    """按编码批量精准查库存并 upsert（每批最多100个编码，全量刷新专用）
+
+    分批存盘：每 _CHECKPOINT_INTERVAL 批 upsert 一次，避免单次 429 丢弃全部进度。
+    """
     from services.kuaimai.erp_sync_utils import _API_SEM
 
-    rows: list[dict[str, Any]] = []
-    for i in range(0, len(codes), 100):
-        batch = codes[i : i + 100]
+    total_batches = (len(codes) + 99) // 100
+    total_upserted = 0
+    buffer: list[dict[str, Any]] = []
+
+    logger.info(f"stock_full fetch start | codes={len(codes)} batches={total_batches}")
+
+    for batch_idx in range(total_batches):
+        batch = codes[batch_idx * 100 : (batch_idx + 1) * 100]
         batch_str = ",".join(batch)
-        # 按编码查可能返回多页（多 SKU × 多仓库）
         page = 0
         while page < 500:
             page += 1
@@ -78,16 +89,23 @@ async def _fetch_stock_by_codes(
             for item in items:
                 row = _map_stock_item(item)
                 if row:
-                    rows.append(row)
+                    buffer.append(row)
             if len(items) < 100:
                 break
 
-    if not rows:
-        return 0
-    return await _batch_upsert(
-        svc.db, "erp_stock_status", rows, "outer_id,sku_outer_id,warehouse_id,org_id",
-        org_id=svc.org_id,
-    )
+        # checkpoint：每 N 批或最后一批，立即存盘
+        is_checkpoint = (batch_idx + 1) % _CHECKPOINT_INTERVAL == 0
+        is_last = batch_idx == total_batches - 1
+        if buffer and (is_checkpoint or is_last):
+            count = await _batch_upsert(
+                svc.db, "erp_stock_status", buffer, _STOCK_UPSERT_KEY,
+                org_id=svc.org_id,
+            )
+            total_upserted += count
+            buffer = []
+
+    logger.info(f"stock_full fetch done | upserted={total_upserted}")
+    return total_upserted
 
 
 async def sync_stock(
