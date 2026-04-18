@@ -182,11 +182,12 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                     "'处理'先查状态再建议，'优先处理'先查订单列表，'多少钱/价格'先查成本价。\n"
                     "内部自动识别编码、选择最优查询工具，返回完整数据。\n\n"
                     "支持批量查询：查所有缺货商品、查全部待发货订单等无需指定具体商品。\n"
-                    "跨域分析：需要组合多种数据时，可多次调用本工具分别获取不同数据，"
-                    "再用 code_execute 合并分析。例如：\n"
-                    "· 缺货分析 → 调1次查缺货商品 + 调1次查采购在途 → code_execute 合并\n"
-                    "· 订单超时 → 调1次查待发货订单 + 调1次查库存 → code_execute 计算\n"
-                    "· 对账核对 → 调1次查订单 + 调1次查售后退款 → code_execute 核对"
+                    "跨域分析：需要组合多种数据时，在同一轮并行调用多次 erp_agent 获取不同数据，"
+                    "再用 code_execute 合并分析。多个 erp_agent 调用会自动并行执行，不需要等一个完成再调下一个。\n"
+                    "示例：\n"
+                    "· 缺货分析 → 同时调 erp_agent(查缺货商品) + erp_agent(查采购在途) → code_execute 合并\n"
+                    "· 订单超时 → 同时调 erp_agent(查待发货订单) + erp_agent(查库存) → code_execute 计算\n"
+                    "· 对账核对 → 同时调 erp_agent(查订单) + erp_agent(查售后退款) → code_execute 核对"
                 ),
                 "parameters": {
                     "type": "object",
