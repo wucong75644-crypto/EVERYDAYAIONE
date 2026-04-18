@@ -332,8 +332,16 @@ class DepartmentAgent(ABC):
         这一步是确定性转换，不需要 LLM。
         """
         filters: list[dict] = []
-        # 时间范围 → gte/lt 过滤器
+        # L1 格式纠正：time_range 替代分隔符归一化
         tr = params.get("time_range")
+        if tr and isinstance(tr, str):
+            # LLM 可能用 " to " / " - " / "～" 代替 "~"
+            for alt in (" to ", "～"):
+                if alt in tr:
+                    tr = tr.replace(alt, "~")
+                    logger.info(f"L1 time_range 分隔符纠正: {alt!r} → '~'")
+                    break
+        # 时间范围 → gte/lt 过滤器
         if tr and "~" in tr:
             time_col = params.get("time_col", "doc_created_at")
             parts = tr.split("~")
@@ -358,13 +366,73 @@ class DepartmentAgent(ABC):
                         "field": time_col, "op": "lt",
                         "value": f"{next_day}T00:00:00",
                     })
-        # 平台 → eq 过滤器
+        # 平台 → eq 过滤器（L1: 去空格 + 编码映射 taobao→tb, douyin→fxg）
         platform = params.get("platform")
+        if isinstance(platform, str):
+            platform = platform.strip()
         if platform:
+            from services.kuaimai.erp_unified_schema import PLATFORM_NORMALIZE
+            normalized = PLATFORM_NORMALIZE.get(platform, platform)
+            if normalized != platform:
+                logger.info(
+                    f"L1 platform 映射: {platform!r} → {normalized!r}",
+                )
             filters.append({
-                "field": "platform", "op": "eq", "value": platform,
+                "field": "platform", "op": "eq", "value": normalized,
+            })
+        # 订单号 → eq 过滤器（L1: 去空格）
+        order_no = params.get("order_no")
+        if isinstance(order_no, str):
+            order_no = order_no.strip()
+        if order_no:
+            filters.append({
+                "field": "order_no", "op": "eq", "value": order_no,
+            })
+        # 商品编码 → outer_id eq 过滤器（L1: 去空格 + 字段名映射）
+        product_code = params.get("product_code")
+        if isinstance(product_code, str):
+            product_code = product_code.strip()
+        if product_code:
+            filters.append({
+                "field": "outer_id", "op": "eq", "value": product_code,
             })
         return filters
+
+    # ── L3 空结果诊断 ──
+
+    @staticmethod
+    def _diagnose_empty(filters: list[dict]) -> str:
+        """L3：查询返回空结果时，根据 filters 生成诊断建议。"""
+        hints: list[str] = []
+        for f in filters:
+            field, value = f.get("field", ""), f.get("value", "")
+            if field == "platform" and value:
+                from services.kuaimai.erp_unified_schema import PLATFORM_CN
+                cn = PLATFORM_CN.get(value, value)
+                hints.append(f"当前过滤了平台={cn}，可尝试不限平台查询")
+            elif field == "order_no" and value:
+                hints.append(f"订单号 {value} 未匹配到记录，请确认号码是否正确")
+            elif field == "outer_id" and value:
+                hints.append(f"商品编码 {value} 未匹配到记录，请确认编码是否正确")
+        return "\n".join(f"- {h}" for h in hints) if hints else ""
+
+    @staticmethod
+    def _diagnose_error(error_msg: str) -> str:
+        """L3：查询失败时，根据错误信息给出重试建议。"""
+        if not error_msg:
+            return ""
+        msg = error_msg.lower()
+        if "timeout" in msg or "超时" in msg:
+            return "查询超时，建议缩小时间范围后重试"
+        if "too many" in msg or "65535" in msg or "参数" in msg:
+            return "数据量过大，建议缩小时间范围或添加过滤条件"
+        if "invalid" in msg and "doc_type" in msg:
+            return "文档类型不正确，请确认查询类型"
+        if "no valid" in msg and "field" in msg:
+            return "字段名无效，请参考可用字段列表"
+        if "filter" in msg or "column" in msg:
+            return "过滤条件有误，请检查字段名和操作符"
+        return ""
 
     # ── doc_type 白名单强制校验 ──
 
@@ -391,10 +459,11 @@ class DepartmentAgent(ABC):
             )
         from services.kuaimai.erp_unified_query import UnifiedQueryEngine
         engine = UnifiedQueryEngine(db=self.db, org_id=self.org_id)
-        return await engine.execute(
+        filters = kwargs.get("filters", [])
+        result = await engine.execute(
             doc_type=doc_type,
             mode=kwargs.get("mode", "summary"),
-            filters=kwargs.get("filters", []),
+            filters=filters,
             group_by=kwargs.get("group_by"),
             sort_by=kwargs.get("sort_by"),
             sort_dir=kwargs.get("sort_dir", "desc"),
@@ -404,6 +473,19 @@ class DepartmentAgent(ABC):
             include_invalid=kwargs.get("include_invalid", False),
             request_ctx=self.request_ctx,
         )
+        # L3：空结果诊断
+        if result.status == OutputStatus.EMPTY and filters:
+            diagnosis = self._diagnose_empty(filters)
+            if diagnosis:
+                result.summary += f"\n\n诊断建议：\n{diagnosis}"
+                logger.info(f"L3 空结果诊断: doc_type={doc_type}, {diagnosis}")
+        # L3：失败诊断——根据错误类型给出重试建议
+        if result.status == OutputStatus.ERROR:
+            hint = self._diagnose_error(result.error_message)
+            if hint:
+                result.summary += f"\n\n重试建议：{hint}"
+                logger.info(f"L3 失败诊断: doc_type={doc_type}, {hint}")
+        return result
 
     # ── 写操作检测 ──
 

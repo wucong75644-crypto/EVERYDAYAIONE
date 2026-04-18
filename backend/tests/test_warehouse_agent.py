@@ -455,18 +455,187 @@ class TestDepartmentAgentBase:
         }
 
     def test_params_to_filters_with_platform(self):
-        """带 platform 参数追加 eq 过滤器"""
+        """带 platform 参数追加 eq 过滤器（L1 映射 taobao→tb）"""
         agent = _make_warehouse()
         filters = agent._params_to_filters({
             "time_range": "2026-04-17 ~ 2026-04-17",
             "platform": "taobao",
         })
-        assert any(f["field"] == "platform" and f["value"] == "taobao" for f in filters)
+        assert any(f["field"] == "platform" and f["value"] == "tb" for f in filters)
 
     def test_params_to_filters_empty_params(self):
         """空 params → 空 filters"""
         agent = _make_warehouse()
         assert agent._params_to_filters({}) == []
+
+    def test_params_to_filters_platform_no_mapping_needed(self):
+        """jd/pdd 等两边一致的 platform 不做映射"""
+        agent = _make_warehouse()
+        filters = agent._params_to_filters({"platform": "jd"})
+        assert any(f["field"] == "platform" and f["value"] == "jd" for f in filters)
+
+    def test_params_to_filters_douyin_mapping(self):
+        """L1 映射 douyin → fxg"""
+        agent = _make_warehouse()
+        filters = agent._params_to_filters({"platform": "douyin"})
+        assert any(f["field"] == "platform" and f["value"] == "fxg" for f in filters)
+
+    def test_params_to_filters_order_no(self):
+        """order_no → eq 过滤器"""
+        agent = _make_warehouse()
+        filters = agent._params_to_filters({"order_no": "126036803257340376"})
+        assert any(
+            f["field"] == "order_no" and f["op"] == "eq"
+            and f["value"] == "126036803257340376"
+            for f in filters
+        )
+
+    def test_params_to_filters_product_code_to_outer_id(self):
+        """product_code → outer_id eq 过滤器（字段名映射）"""
+        agent = _make_warehouse()
+        filters = agent._params_to_filters({"product_code": "DBTXL01"})
+        assert any(
+            f["field"] == "outer_id" and f["op"] == "eq"
+            and f["value"] == "DBTXL01"
+            for f in filters
+        )
+
+    def test_params_to_filters_all_new_fields(self):
+        """order_no + product_code + platform 同时转换"""
+        agent = _make_warehouse()
+        filters = agent._params_to_filters({
+            "platform": "taobao",
+            "order_no": "123456789012345678",
+            "product_code": "ABC-01",
+        })
+        fields = [f["field"] for f in filters]
+        assert "platform" in fields
+        assert "order_no" in fields
+        assert "outer_id" in fields
+
+    # ── L3 空结果诊断 ──
+
+    def test_diagnose_empty_platform_filter(self):
+        """平台过滤导致空结果 → 建议不限平台"""
+        agent = _make_warehouse()
+        result = agent._diagnose_empty([
+            {"field": "platform", "op": "eq", "value": "tb"},
+        ])
+        assert "平台" in result
+        assert "淘宝" in result
+
+    def test_diagnose_empty_order_no(self):
+        """订单号过滤导致空结果 → 建议确认号码"""
+        agent = _make_warehouse()
+        result = agent._diagnose_empty([
+            {"field": "order_no", "op": "eq", "value": "123456"},
+        ])
+        assert "123456" in result
+        assert "订单号" in result
+
+    def test_diagnose_empty_product_code(self):
+        """商品编码过滤导致空结果 → 建议确认编码"""
+        agent = _make_warehouse()
+        result = agent._diagnose_empty([
+            {"field": "outer_id", "op": "eq", "value": "DBTXL01"},
+        ])
+        assert "DBTXL01" in result
+        assert "商品编码" in result
+
+    def test_diagnose_empty_time_only(self):
+        """只有时间过滤 → 无诊断建议"""
+        agent = _make_warehouse()
+        result = agent._diagnose_empty([
+            {"field": "doc_created_at", "op": "gte", "value": "2026-04-17T00:00:00"},
+        ])
+        assert result == ""
+
+    def test_diagnose_empty_multiple_filters(self):
+        """多个过滤条件 → 多条建议"""
+        agent = _make_warehouse()
+        result = agent._diagnose_empty([
+            {"field": "platform", "op": "eq", "value": "fxg"},
+            {"field": "order_no", "op": "eq", "value": "999"},
+        ])
+        assert "抖音" in result
+        assert "999" in result
+
+    def test_diagnose_empty_no_filters(self):
+        """无过滤条件 → 空字符串"""
+        agent = _make_warehouse()
+        assert agent._diagnose_empty([]) == ""
+
+    # ── L3 失败诊断 ──
+
+    def test_diagnose_error_timeout(self):
+        agent = _make_warehouse()
+        assert "超时" in agent._diagnose_error("query timeout after 30s")
+
+    def test_diagnose_error_timeout_cn(self):
+        agent = _make_warehouse()
+        assert "缩小时间" in agent._diagnose_error("统计查询超时")
+
+    def test_diagnose_error_too_many_params(self):
+        agent = _make_warehouse()
+        assert "数据量" in agent._diagnose_error("too many parameters: 65535")
+
+    def test_diagnose_error_invalid_doc_type(self):
+        agent = _make_warehouse()
+        assert "文档类型" in agent._diagnose_error("invalid doc_type: foo")
+
+    def test_diagnose_error_no_valid_fields(self):
+        agent = _make_warehouse()
+        assert "字段" in agent._diagnose_error("no valid export fields")
+
+    def test_diagnose_error_filter_issue(self):
+        agent = _make_warehouse()
+        assert "过滤条件" in agent._diagnose_error("unknown filter column: xyz")
+
+    def test_diagnose_error_empty_msg(self):
+        agent = _make_warehouse()
+        assert agent._diagnose_error("") == ""
+
+    def test_diagnose_error_unknown(self):
+        """未知错误 → 空字符串（不乱建议）"""
+        agent = _make_warehouse()
+        assert agent._diagnose_error("something completely unexpected") == ""
+
+    # ── L1 格式纠正 ──
+
+    def test_time_range_to_separator_normalized(self):
+        """'to' 分隔符自动纠正为 '~'"""
+        agent = _make_warehouse()
+        filters = agent._params_to_filters({
+            "time_range": "2026-04-17 to 2026-04-17",
+        })
+        assert len(filters) == 2
+        assert filters[0]["op"] == "gte"
+
+    def test_time_range_fullwidth_separator_normalized(self):
+        """全角'～'自动纠正为 '~'"""
+        agent = _make_warehouse()
+        filters = agent._params_to_filters({
+            "time_range": "2026-04-17～2026-04-17",
+        })
+        assert len(filters) == 2
+
+    def test_platform_whitespace_stripped(self):
+        """platform 前后空格被去除"""
+        agent = _make_warehouse()
+        filters = agent._params_to_filters({"platform": " jd "})
+        assert any(f["value"] == "jd" for f in filters)
+
+    def test_order_no_whitespace_stripped(self):
+        """order_no 前后空格被去除"""
+        agent = _make_warehouse()
+        filters = agent._params_to_filters({"order_no": " 123456 "})
+        assert any(f["value"] == "123456" for f in filters)
+
+    def test_product_code_whitespace_stripped(self):
+        """product_code 前后空格被去除"""
+        agent = _make_warehouse()
+        filters = agent._params_to_filters({"product_code": " ABC01 "})
+        assert any(f["value"] == "ABC01" for f in filters)
 
     # ── execute(params=) 参数合并 + 降级标注 ──
 
