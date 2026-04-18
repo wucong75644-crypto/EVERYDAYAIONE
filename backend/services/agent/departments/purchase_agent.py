@@ -57,15 +57,24 @@ class PurchaseAgent(DepartmentAgent):
         """采购域参数校验。"""
         if action == "arrival_progress":
             if not params.get("sku_list") and not params.get("po_no"):
-                return ValidationResult.missing(["SKU列表 或 采购单号"])
+                return ValidationResult.missing(
+                    ["SKU列表 或 采购单号"],
+                    prompt="查到货进度需要提供 SKU 编码或采购单号，请补充。",
+                )
 
         elif action == "supplier_query":
             if not params.get("supplier_name") and not params.get("supplier_id"):
-                return ValidationResult.missing(["供应商名称 或 ID"])
+                return ValidationResult.missing(
+                    ["供应商名称 或 ID"],
+                    prompt="请告诉我要查哪个供应商？提供名称或编号即可。",
+                )
 
         elif action == "purchase_list":
             if not params.get("time_range") and not params.get("po_no"):
-                return ValidationResult.missing(["时间范围 或 采购单号"])
+                return ValidationResult.missing(
+                    ["时间范围 或 采购单号"],
+                    prompt="请告诉我要查哪个时间段的采购单，或提供具体采购单号。",
+                )
             tr = params.get("time_range", "")
             if tr:
                 result = self._validate_time_range(tr)
@@ -74,7 +83,10 @@ class PurchaseAgent(DepartmentAgent):
 
         elif action == "purchase_return":
             if not params.get("time_range") and not params.get("product_code"):
-                return ValidationResult.missing(["时间范围 或 商品编码"])
+                return ValidationResult.missing(
+                    ["时间范围 或 商品编码"],
+                    prompt="查采购退货需要时间范围或商品编码，请补充。",
+                )
 
         return ValidationResult.ok()
 

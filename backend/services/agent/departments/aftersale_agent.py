@@ -57,9 +57,10 @@ class AftersaleAgent(DepartmentAgent):
             if (not params.get("time_range")
                     and not params.get("product_code")
                     and not params.get("aftersale_no")):
-                return ValidationResult.missing([
-                    "时间范围 或 商品编码 或 售后单号",
-                ])
+                return ValidationResult.missing(
+                    ["时间范围 或 商品编码 或 售后单号"],
+                    prompt="您想查哪些售后记录？请提供时间范围、商品编码或售后单号。",
+                )
             tr = params.get("time_range", "")
             if tr:
                 result = self._validate_time_range(tr)
@@ -68,7 +69,10 @@ class AftersaleAgent(DepartmentAgent):
 
         elif action == "return_rate":
             if not params.get("time_range"):
-                return ValidationResult.missing(["时间范围"])
+                return ValidationResult.missing(
+                    ["时间范围"],
+                    prompt="计算退货率需要指定时间范围，比如'最近7天'或'本月'。",
+                )
             result = self._validate_time_range(params["time_range"])
             if result is not None:
                 return result

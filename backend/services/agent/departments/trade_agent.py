@@ -60,9 +60,10 @@ class TradeAgent(DepartmentAgent):
             if (not params.get("order_no")
                     and not params.get("time_range")
                     and not params.get("platform_order_no")):
-                return ValidationResult.missing([
-                    "订单号 或 平台订单号 或 时间范围",
-                ])
+                return ValidationResult.missing(
+                    ["订单号 或 平台订单号 或 时间范围"],
+                    prompt="您想查哪个订单？请提供订单号，或者告诉我时间范围。",
+                )
             tr = params.get("time_range", "")
             if tr:
                 result = self._validate_time_range(tr)
@@ -71,7 +72,10 @@ class TradeAgent(DepartmentAgent):
 
         elif action == "logistics_query":
             if not params.get("order_no") and not params.get("logistics_no"):
-                return ValidationResult.missing(["订单号 或 物流单号"])
+                return ValidationResult.missing(
+                    ["订单号 或 物流单号"],
+                    prompt="查物流需要订单号或快递单号，请提供其中一个。",
+                )
 
         return ValidationResult.ok()
 

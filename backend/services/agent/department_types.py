@@ -30,6 +30,7 @@ class ValidationResult:
     status: ValidationStatus
     message: str = ""
     missing_params: tuple[str, ...] = ()
+    prompt: str = ""  # 引导主Agent转达给用户的友好话术
 
     @classmethod
     def ok(cls) -> ValidationResult:
@@ -37,12 +38,15 @@ class ValidationResult:
         return cls(status=ValidationStatus.OK)
 
     @classmethod
-    def missing(cls, params: list[str]) -> ValidationResult:
+    def missing(
+        cls, params: list[str], prompt: str = "",
+    ) -> ValidationResult:
         """缺少必填参数"""
         return cls(
             status=ValidationStatus.MISSING,
             message=f"请补充以下信息：{', '.join(params)}",
             missing_params=tuple(params),
+            prompt=prompt or f"请补充以下信息：{', '.join(params)}",
         )
 
     @classmethod

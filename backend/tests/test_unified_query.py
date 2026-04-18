@@ -473,8 +473,9 @@ class TestExecuteEntryPoint:
 
         engine = UnifiedQueryEngine(db=mock_db, org_id=None)
         result = await engine.execute("order", "invalid_mode", [])
-        # 应该走 summary 模式
-        mock_db.rpc.assert_called_once()
+        # 应该走 summary 模式（可能先尝试分类引擎 RPC 再回退到原 RPC）
+        rpc_calls = [c for c in mock_db.rpc.call_args_list if c[0][0] == "erp_global_stats_query"]
+        assert len(rpc_calls) == 1
 
     @pytest.mark.asyncio
     async def test_invalid_filter_field_returns_error(self):
