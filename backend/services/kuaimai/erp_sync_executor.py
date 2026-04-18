@@ -88,9 +88,11 @@ class ErpSyncExecutor:
     async def _run_archive(self, org_id: str | None = None) -> int:
         """热表→冷表归档：分批 SELECT→UPSERT(archive)→DELETE(hot)
 
-        归档条件：doc_modified_at 和 synced_at 都超过保留期才归档。
-        synced_at 保底：防止 modified 为 ERP 零值（如 2000-01-01）的
+        归档条件：doc_created_at 和 doc_modified_at 都超过保留期才归档。
+        doc_created_at 保底：防止 modified 为 ERP 零值（如 2000-01-01）的
         补发单/手工单被误归档。
+
+        注意：不使用 synced_at——delete+insert 同步模式下每轮都会刷新。
         """
 
         cutoff = (
@@ -99,14 +101,15 @@ class ErpSyncExecutor:
 
         total_archived = 0
         batch_size = 1000
+        max_per_run = 100_000
 
-        while True:
+        while total_archived < max_per_run:
             try:
                 q = (
                     self.db.table("erp_document_items")
                     .select("*")
                     .lt("doc_modified_at", cutoff)
-                    .lt("synced_at", cutoff)
+                    .lt("doc_created_at", cutoff)
                 )
                 result = await q.limit(batch_size).execute()
                 rows = result.data or []
@@ -126,6 +129,9 @@ class ErpSyncExecutor:
             except Exception as e:
                 logger.error(f"Archive batch failed | error={e}")
                 break
+
+        if total_archived >= max_per_run:
+            logger.info(f"Archive hit per-run limit | archived={total_archived} max={max_per_run}")
 
         return total_archived
 

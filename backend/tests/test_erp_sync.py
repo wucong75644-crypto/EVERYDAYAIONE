@@ -870,21 +870,21 @@ class TestRunArchive:
         assert count == 1
 
     @pytest.mark.asyncio
-    async def test_run_archive_skips_recent_synced_with_old_modified(self):
-        """synced_at 保底：modified=2000（ERP零值）但 synced_at 在保留期内 → 不归档"""
+    async def test_run_archive_skips_recent_created_with_old_modified(self):
+        """doc_created_at 保底：modified=2000（ERP零值）但 created 在保留期内 → 不归档"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
         db = MockErpAsyncDBClient()
-        # 模拟补发/手工单：doc_modified_at 为 ERP 零值，但 synced_at 是近期
-        recent_synced_row = {
+        # 模拟补发/手工单：doc_modified_at 为 ERP 零值，但 doc_created_at 是近期
+        recent_created_row = {
             "id": "row-recent",
             "doc_id": "doc-recent",
             "item_index": 0,
             "doc_type": "order",
             "doc_modified_at": "2000-01-01T00:00:00+00:00",
-            "synced_at": "2026-04-02T10:00:00+00:00",
+            "doc_created_at": "2026-04-02T10:00:00+00:00",
         }
-        db.set_table_data("erp_document_items", [recent_synced_row])
+        db.set_table_data("erp_document_items", [recent_created_row])
 
         worker = ErpSyncWorker(db)
         with patch.object(worker, "settings") as mock_settings:
@@ -898,7 +898,7 @@ class TestRunArchive:
 
     @pytest.mark.asyncio
     async def test_run_archive_archives_when_both_old(self):
-        """doc_modified_at 和 synced_at 都超过保留期 → 正常归档"""
+        """doc_modified_at 和 doc_created_at 都超过保留期 → 正常归档"""
         from services.kuaimai.erp_sync_worker import ErpSyncWorker
 
         db = MockErpAsyncDBClient()
@@ -908,7 +908,7 @@ class TestRunArchive:
             "item_index": 0,
             "doc_type": "order",
             "doc_modified_at": "2024-01-01T00:00:00+00:00",
-            "synced_at": "2024-01-02T00:00:00+00:00",
+            "doc_created_at": "2024-01-02T00:00:00+00:00",
         }
         db.set_table_data("erp_document_items", [both_old_row])
 
@@ -920,6 +920,30 @@ class TestRunArchive:
         assert count == 1
         archive_table = db.table("erp_document_items_archive")
         assert len(archive_table._data) == 1
+
+    @pytest.mark.asyncio
+    async def test_run_archive_old_synced_at_still_archives(self):
+        """synced_at 近期但 created+modified 都老 → 仍归档（修复 delete+insert 刷新问题）"""
+        from services.kuaimai.erp_sync_worker import ErpSyncWorker
+
+        db = MockErpAsyncDBClient()
+        row = {
+            "id": "row-section",
+            "doc_id": "doc-section",
+            "item_index": 0,
+            "doc_type": "section_record",
+            "doc_modified_at": "2024-06-01T00:00:00+00:00",
+            "doc_created_at": "2024-06-01T00:00:00+00:00",
+            "synced_at": "2026-04-18T00:00:00+00:00",  # 刚同步过
+        }
+        db.set_table_data("erp_document_items", [row])
+
+        worker = ErpSyncWorker(db)
+        with patch.object(worker, "settings") as mock_settings:
+            mock_settings.erp_archive_retention_days = 90
+            count = await worker._run_archive()
+
+        assert count == 1, "synced_at 近期不应阻止归档"
 
 
 class TestRunReaggregation:
