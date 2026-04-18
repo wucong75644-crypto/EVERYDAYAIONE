@@ -64,6 +64,12 @@ COLUMN_WHITELIST: dict[str, ColumnMeta] = {
     "is_exception": ColumnMeta("integer"),
     "is_halt": ColumnMeta("integer"),
     "is_urgent": ColumnMeta("integer"),
+    # 081 扩展字段
+    "is_scalping": ColumnMeta("integer"),
+    "unified_status": ColumnMeta("text"),
+    "is_presell": ColumnMeta("integer"),
+    "online_status": ColumnMeta("text"),
+    "handler_status": ColumnMeta("text"),
     # 售后
     "aftersale_type": ColumnMeta("text"),
     "refund_status": ColumnMeta("text"),
