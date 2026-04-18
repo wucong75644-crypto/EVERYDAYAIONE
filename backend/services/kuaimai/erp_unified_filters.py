@@ -157,7 +157,10 @@ def split_named_params(
     dsl: list[dict] = []
 
     for f in non_time:
-        if f.field == "shop_name" and f.op in ("eq", "like"):
+        # doc_type 由 RPC p_doc_type 参数处理，不重复进入 DSL
+        if f.field == "doc_type":
+            continue
+        elif f.field == "shop_name" and f.op in ("eq", "like"):
             p_shop = str(f.value).replace("%", "")
         elif f.field == "platform" and f.op == "eq":
             p_platform = str(f.value)
