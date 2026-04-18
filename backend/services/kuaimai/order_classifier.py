@@ -72,14 +72,17 @@ class OrderClassifier:
         self.rules = rules
 
     @classmethod
-    async def for_org(cls, db: Any, org_id: str) -> OrderClassifier:
-        """加载指定租户的分类规则（带缓存）"""
+    def for_org(cls, db: Any, org_id: str) -> OrderClassifier:
+        """加载指定租户的分类规则（带缓存）
+
+        同步调用 db.table().execute()，与查询链路 LocalDBClient 一致。
+        """
         cached = cls._cache.get(org_id)
         if cached and time.time() < cached[1]:
             return cls(cached[0])
 
         rules = (
-            await db.table("erp_classification_rules")
+            db.table("erp_classification_rules")
             .select("*")
             .eq("org_id", org_id)
             .eq("doc_type", "order")
@@ -91,9 +94,9 @@ class OrderClassifier:
         )
 
         if not rules.data:
-            await cls._init_default_rules(db, org_id)
+            cls._init_default_rules(db, org_id)
             rules = (
-                await db.table("erp_classification_rules")
+                db.table("erp_classification_rules")
                 .select("*")
                 .eq("org_id", org_id)
                 .eq("doc_type", "order")
@@ -198,15 +201,16 @@ class OrderClassifier:
         return False
 
     @classmethod
-    async def _init_default_rules(cls, db: Any, org_id: str) -> None:
+    def _init_default_rules(cls, db: Any, org_id: str) -> None:
         """懒加载：首次查询时写入默认规则。
 
         先清理可能的残留（部分写入场景），再全量写入，确保规则集完整。
+        同步调用，与查询链路 LocalDBClient 一致。
         """
         from config.default_classification_rules import DEFAULT_ORDER_RULES
 
         # 清理残留（防止上次中途失败留下不完整规则集）
-        await (
+        (
             db.table("erp_classification_rules")
             .delete()
             .eq("org_id", org_id)
@@ -215,7 +219,7 @@ class OrderClassifier:
         )
 
         for rule in DEFAULT_ORDER_RULES:
-            await (
+            (
                 db.table("erp_classification_rules")
                 .insert({
                     "org_id": org_id,
