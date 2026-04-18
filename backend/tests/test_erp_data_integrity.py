@@ -160,10 +160,9 @@ class TestClassifierE2E:
 
         # Patch OrderClassifier.for_org 直接返回带默认规则的 classifier
         classifier = OrderClassifier(DEFAULT_ORDER_RULES)
-        mock_for_org = AsyncMock(return_value=classifier)
         with patch(
             "services.kuaimai.order_classifier.OrderClassifier.for_org",
-            mock_for_org,
+            return_value=classifier,
         ):
             result = await engine.execute(
                 doc_type="order", mode="summary",
@@ -250,10 +249,9 @@ class TestClassifierE2E:
 
         engine = UnifiedQueryEngine(db=mock_db, org_id="test-org")
         classifier = OrderClassifier(DEFAULT_ORDER_RULES)
-        mock_for_org = AsyncMock(return_value=classifier)
         with patch(
             "services.kuaimai.order_classifier.OrderClassifier.for_org",
-            mock_for_org,
+            return_value=classifier,
         ):
             await engine.execute(
                 doc_type="order", mode="summary",

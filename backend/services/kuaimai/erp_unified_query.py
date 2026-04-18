@@ -255,7 +255,7 @@ class UnifiedQueryEngine:
             return None
 
         try:
-            classifier = await OrderClassifier.for_org(self.db, self.org_id)
+            classifier = OrderClassifier.for_org(self.db, self.org_id)
             cr = classifier.classify(raw_rows)
         except Exception as e:
             logger.warning(f"分类引擎异常，回退原逻辑 | error={e}")
