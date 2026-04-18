@@ -412,8 +412,9 @@ class ErpSyncWorker:
         ).isoformat()
 
         total_archived = 0
-        batch_size = 1000
-        max_per_run = 100_000  # 每次日维护最多归档 10 万行，避免阻塞同步
+        # 166列×300行=49800参数 < PG上限65535；1000行会超限
+        batch_size = 300
+        max_per_run = 100_000
 
         while total_archived < max_per_run:
             try:
