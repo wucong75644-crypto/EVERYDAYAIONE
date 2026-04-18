@@ -132,10 +132,15 @@ DEFAULT_DETAIL_FIELDS: dict[str, list[str]] = {
 
 # RPC group_by 映射（filter DSL 字段名 → RPC 枚举值）
 GROUP_BY_MAP = {
+    # 列名 → RPC 枚举值
     "outer_id": "product", "item_name": "product",
     "shop_name": "shop", "platform": "platform",
     "supplier_name": "supplier", "warehouse_name": "warehouse",
     "doc_status": "status", "order_status": "status",
+    # LLM 简写 → RPC 枚举值（PlanBuilder prompt 用 shop/platform 等简写）
+    "shop": "shop", "product": "product",
+    "supplier": "supplier", "warehouse": "warehouse",
+    "status": "status",
 }
 
 

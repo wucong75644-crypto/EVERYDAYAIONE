@@ -87,8 +87,9 @@ class UnifiedQueryEngine:
         conversation_id: str | None = None,
         request_ctx: Optional[RequestContext] = None,
         include_invalid: bool = False,
+        **_kwargs,  # 吸收 LLM 透传的未知参数，防止 TypeError
     ) -> ToolOutput:
-        """统一入口"""
+        """统一入口——所有参数在此校验，下游不再需要防御"""
         if doc_type not in VALID_DOC_TYPES:
             return ToolOutput(
                 summary=f"无效的 doc_type: {doc_type}，可选: {', '.join(sorted(VALID_DOC_TYPES))}",
@@ -98,6 +99,25 @@ class UnifiedQueryEngine:
             )
         if mode not in ("summary", "detail", "export"):
             mode = "summary"
+
+        # group_by 白名单校验（LLM 可能传 "store" 等非标准值）
+        if group_by:
+            valid_groups = [g for g in group_by if g in GROUP_BY_MAP]
+            group_by = valid_groups or None
+
+        # sort_by 白名单校验（只允许 COLUMN_WHITELIST 中的列）
+        if sort_by and sort_by not in COLUMN_WHITELIST:
+            sort_by = None
+
+        # sort_dir 枚举校验
+        if sort_dir not in ("asc", "desc"):
+            sort_dir = "desc"
+
+        # fields 白名单校验（detail + export 模式）
+        if fields:
+            fields = [f for f in fields if f in COLUMN_WHITELIST]
+            if not fields:
+                fields = None
 
         validated, err = _validate_filters(filters)
         if err:

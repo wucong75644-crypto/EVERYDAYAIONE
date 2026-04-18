@@ -371,7 +371,11 @@ class DepartmentAgent(ABC):
     async def _query_local_data(
         self, doc_type: str, **kwargs: Any,
     ) -> ToolOutput:
-        """封装 local_data 调用，强制 doc_type 白名单校验。"""
+        """封装 local_data 调用，强制 doc_type 白名单校验。
+
+        显式提取已知参数，未知参数通过 execute(**_kwargs) 吸收丢弃，
+        防止 LLM 注入任意参数到查询引擎。
+        """
         if doc_type not in self.allowed_doc_types:
             return ToolOutput(
                 summary=(
@@ -389,10 +393,16 @@ class DepartmentAgent(ABC):
         engine = UnifiedQueryEngine(db=self.db, org_id=self.org_id)
         return await engine.execute(
             doc_type=doc_type,
-            mode=kwargs.pop("mode", "summary"),
-            filters=kwargs.pop("filters", []),
+            mode=kwargs.get("mode", "summary"),
+            filters=kwargs.get("filters", []),
+            group_by=kwargs.get("group_by"),
+            sort_by=kwargs.get("sort_by"),
+            sort_dir=kwargs.get("sort_dir", "desc"),
+            fields=kwargs.get("fields"),
+            limit=kwargs.get("limit", 20),
+            time_type=kwargs.get("time_type"),
+            include_invalid=kwargs.get("include_invalid", False),
             request_ctx=self.request_ctx,
-            **kwargs,
         )
 
     # ── 写操作检测 ──
