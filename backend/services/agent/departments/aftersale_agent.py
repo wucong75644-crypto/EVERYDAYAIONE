@@ -93,6 +93,7 @@ class AftersaleAgent(DepartmentAgent):
             mode=params.get("mode", "summary"),
             filters=params.get("filters", []),
             group_by=params.get("group_by"),
+            include_invalid=params.get("include_invalid", False),
         )
 
     # ── 售后域查询方法 ──

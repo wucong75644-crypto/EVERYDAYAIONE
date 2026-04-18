@@ -141,6 +141,7 @@ class ERPAgent:
             builder = PlanBuilder(
                 adapter=plan_adapter,
                 request_ctx=self.request_ctx,
+                db=self.db,
             )
             plan = await builder.build(query)
         finally:

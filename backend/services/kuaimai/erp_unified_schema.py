@@ -97,6 +97,19 @@ PLATFORM_CN = {
     "1688": "1688", "sys": "系统", "wd": "微店",
 }
 
+# LLM 参数值 / 中文关键词 → 数据库 platform 列值（L1 + L2 共用）
+PLATFORM_NORMALIZE: dict[str, str] = {
+    # L1: LLM 输出的英文参数值（PlanBuilder prompt 定义）
+    "taobao": "tb", "douyin": "fxg",
+    # jd/pdd/kuaishou/xhs/1688 两边一致，无需映射
+    # L2: 用户查询文本中的中文关键词
+    "淘宝": "tb", "天猫": "tb",
+    "京东": "jd", "拼多多": "pdd",
+    "抖音": "fxg", "抖店": "fxg",
+    "快手": "kuaishou", "小红书": "xhs",
+    "1688": "1688", "微店": "wd",
+}
+
 # detail 模式默认字段
 DEFAULT_DETAIL_FIELDS: dict[str, list[str]] = {
     "order": [

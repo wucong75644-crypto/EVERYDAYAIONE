@@ -53,6 +53,22 @@ VALID_DOMAINS = frozenset({
     "warehouse", "purchase", "trade", "aftersale", "compute",
 })
 
+# L2 域路由冲突检测：agent → 允许的 doc_type 集合
+_DOMAIN_DOC_TYPES: dict[str, frozenset[str]] = {
+    "trade": frozenset({"order"}),
+    "purchase": frozenset({"purchase", "purchase_return"}),
+    "aftersale": frozenset({"aftersale"}),
+    "warehouse": frozenset({"receipt", "shelf"}),
+    # compute 不限制 doc_type
+}
+# 域路由冲突时的默认 doc_type（消除 frozenset 迭代顺序不确定性）
+_DOMAIN_DEFAULT_DOC_TYPE: dict[str, str] = {
+    "trade": "order",
+    "purchase": "purchase",
+    "aftersale": "aftersale",
+    "warehouse": "receipt",
+}
+
 
 def quick_classify(query: str) -> str | None:
     """关键词匹配单域分类（降级链第二级）。
@@ -132,7 +148,169 @@ def _sanitize_params(params: dict) -> dict:
         clean["platform"] = params["platform"]
     if params.get("group_by"):
         clean["group_by"] = params["group_by"]
+    # product_code / order_no / include_invalid: 透传（L1 链路断裂修复）
+    if params.get("product_code"):
+        clean["product_code"] = params["product_code"]
+    if params.get("order_no"):
+        clean["order_no"] = params["order_no"]
+    if isinstance(params.get("include_invalid"), bool):
+        clean["include_invalid"] = params["include_invalid"]
     return clean
+
+
+def _fill_platform(plan: ExecutionPlan, query: str) -> None:
+    """L2 意图完整性：从用户查询文本补全 LLM 漏提取的 platform。
+
+    规则：
+    - 遍历每个 Round，跳过 compute 域
+    - 如果 params 已有 platform → 不覆盖（AI 优先）
+    - 扫描 query 中的中文平台名 → 注入 DB 编码
+    - 匹配到多个不同平台 → 不补全（宁可不补也不补错）
+    """
+    from services.kuaimai.erp_unified_schema import PLATFORM_NORMALIZE
+
+    # 只用中文关键词做 L2 检测（英文 key 由 L1 处理）
+    cn_keys = [k for k in PLATFORM_NORMALIZE if not k.isascii() or k == "1688"]
+    matched_platforms: set[str] = set()
+    for key in cn_keys:
+        if key in query:
+            matched_platforms.add(PLATFORM_NORMALIZE[key])
+
+    if len(matched_platforms) != 1:
+        if len(matched_platforms) > 1:
+            logger.warning(
+                f"L2 platform 多匹配，不补全: query={query!r}, "
+                f"matched={matched_platforms}",
+            )
+        return
+
+    platform_db = matched_platforms.pop()
+    for rnd in plan.rounds:
+        # compute 域不做数据查询，跳过
+        if rnd.agents == ["compute"]:
+            continue
+        if rnd.params is None:
+            rnd.params = {}
+        if rnd.params.get("platform"):
+            continue  # AI 已提取，不覆盖
+        rnd.params["platform"] = platform_db
+        logger.info(f"L2 platform 补全: query={query!r} → platform={platform_db}")
+
+
+# ── L2 product_code / order_no 补全（DB 验证） ──
+
+# 商品编码候选：字母开头 + 字母数字混合（含可选连字符），≥3 字符
+_PRODUCT_CODE_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*")
+# 订单号候选：16-19 位纯数字，或 P+18 位（小红书）
+_ORDER_NO_RE = re.compile(r"P\d{18}|\d{16,19}")
+# 商品编码正则过滤：排除常见英文短词，避免误匹配
+_CODE_STOP_WORDS = frozenset({
+    "the", "and", "for", "not", "all", "but", "are", "was",
+    "order", "trade", "shop", "sku", "erp",
+})
+
+
+async def _fill_codes(
+    plan: ExecutionPlan, query: str, db: Any, org_id: str | None,
+) -> None:
+    """L2 意图完整性：从用户查询文本补全 LLM 漏提取的 product_code / order_no。
+
+    策略：正则粗筛候选 → DB 验证存在性 → 存在才补全。
+    """
+    if not db:
+        return
+
+    # ── 提取 product_code 候选并验证 ──
+    code_candidates = _PRODUCT_CODE_RE.findall(query)
+    code_candidates = [
+        c for c in code_candidates
+        if len(c) >= 3 and c.lower() not in _CODE_STOP_WORDS
+    ][:5]  # 最多验证 5 个候选，防止异常输入触发大量 DB 查询
+    verified_code: str | None = None
+    if code_candidates:
+        verified_code = await _verify_product_code(db, code_candidates, org_id)
+
+    # ── 提取 order_no 候选并验证 ──
+    order_candidates = _ORDER_NO_RE.findall(query)[:3]  # 最多 3 个
+    verified_order: str | None = None
+    if order_candidates:
+        verified_order = await _verify_order_no(db, order_candidates, org_id)
+
+    # ── 注入到 plan params ──
+    if not verified_code and not verified_order:
+        return
+
+    for rnd in plan.rounds:
+        if rnd.agents == ["compute"]:
+            continue
+        if rnd.params is None:
+            rnd.params = {}
+        if verified_code and not rnd.params.get("product_code"):
+            rnd.params["product_code"] = verified_code
+            logger.info(
+                f"L2 product_code 补全: query={query!r} → "
+                f"product_code={verified_code}",
+            )
+        if verified_order and not rnd.params.get("order_no"):
+            rnd.params["order_no"] = verified_order
+            logger.info(
+                f"L2 order_no 补全: query={query!r} → "
+                f"order_no={verified_order}",
+            )
+
+
+async def _verify_product_code(
+    db: Any, candidates: list[str], org_id: str | None,
+) -> str | None:
+    """验证候选商品编码是否存在于 erp_products 表。
+
+    多个候选命中不同编码 → 返回 None（不补全）。
+    """
+    matched: set[str] = set()
+    for code in candidates:
+        try:
+            q = db.table("erp_products").select("outer_id").eq(
+                "outer_id", code,
+            ).limit(1)
+            if org_id:
+                q = q.eq("org_id", org_id)
+            result = q.execute()
+            if result.data:
+                matched.add(code)
+        except Exception as e:
+            logger.debug(f"L2 product_code 验证失败: {code} → {e}")
+    if len(matched) == 1:
+        return matched.pop()
+    if len(matched) > 1:
+        logger.warning(f"L2 product_code 多匹配，不补全: {matched}")
+    return None
+
+
+async def _verify_order_no(
+    db: Any, candidates: list[str], org_id: str | None,
+) -> str | None:
+    """验证候选订单号是否存在于 erp_document_items 表。
+
+    多个候选命中不同订单 → 返回 None（不补全）。
+    """
+    matched: set[str] = set()
+    for order_no in candidates:
+        try:
+            q = db.table("erp_document_items").select("order_no").eq(
+                "order_no", order_no,
+            ).limit(1)
+            if org_id:
+                q = q.eq("org_id", org_id)
+            result = q.execute()
+            if result.data:
+                matched.add(order_no)
+        except Exception as e:
+            logger.debug(f"L2 order_no 验证失败: {order_no} → {e}")
+    if len(matched) == 1:
+        return matched.pop()
+    if len(matched) > 1:
+        logger.warning(f"L2 order_no 多匹配，不补全: {matched}")
+    return None
 
 
 def parse_llm_plan(raw_json: str) -> ExecutionPlan:
@@ -158,7 +336,7 @@ def parse_llm_plan(raw_json: str) -> ExecutionPlan:
 
     plan = ExecutionPlan.from_dict(data)
 
-    # 校验域名合法性 + params 宽容校验
+    # 校验域名合法性 + params 宽容校验 + L2 域路由冲突检测
     for i, rnd in enumerate(plan.rounds):
         for agent in rnd.agents:
             if agent not in VALID_DOMAINS:
@@ -169,6 +347,18 @@ def parse_llm_plan(raw_json: str) -> ExecutionPlan:
         # params 宽容校验（非法值替代，不报错）
         if rnd.params:
             rnd.params = _sanitize_params(rnd.params)
+        # L2 域路由冲突检测：doc_type 与 agent 不匹配时自动纠正
+        if rnd.params and len(rnd.agents) == 1:
+            agent = rnd.agents[0]
+            doc_type = rnd.params.get("doc_type")
+            allowed = _DOMAIN_DOC_TYPES.get(agent)
+            if doc_type and allowed and doc_type not in allowed:
+                default = _DOMAIN_DEFAULT_DOC_TYPE.get(agent, next(iter(allowed)))
+                logger.warning(
+                    f"L2 域路由冲突: Round {i} agent={agent} "
+                    f"但 doc_type={doc_type}，自动纠正为 {default}",
+                )
+                rnd.params["doc_type"] = default
 
     plan.validate()
     return plan
@@ -209,11 +399,18 @@ def build_plan_prompt(query: str, now_str: str = "") -> str:
         "- include_invalid: 布尔值，默认 false。仅当用户明确要求'包含全部'或'不排除刷单'时设为 true。\n"
         "  注意：用户问'刷单有多少'不是 include_invalid，而是用 filters 过滤刷单类型。\n"
         "compute 域的 params 可以为空。\n\n"
-        "返回纯 JSON（不要 markdown 围栏）：\n"
+        "返回纯 JSON（不要 markdown 围栏）。\n\n"
+        "示例1（今日付款订单统计）：\n"
         '{"rounds": [{"agents": ["trade"], "task": "今日付款订单统计", '
         '"depends_on": [], '
         '"params": {"doc_type":"order","mode":"summary",'
-        '"time_range":"2026-04-17 ~ 2026-04-17","time_col":"pay_time"}}]}'
+        '"time_range":"2026-04-17 ~ 2026-04-17","time_col":"pay_time"}}]}\n\n'
+        "示例2（昨天淘宝订单统计——注意提取 platform）：\n"
+        '{"rounds": [{"agents": ["trade"], "task": "昨天淘宝订单统计", '
+        '"depends_on": [], '
+        '"params": {"doc_type":"order","mode":"summary",'
+        '"time_range":"2026-04-16 ~ 2026-04-16","time_col":"pay_time",'
+        '"platform":"taobao"}}]}'
     )
 
 
@@ -229,9 +426,14 @@ class PlanBuilder:
         self,
         adapter: Any = None,
         request_ctx: Any = None,
+        db: Any = None,
     ):
         self._adapter = adapter
         self._request_ctx = request_ctx
+        self._db = db
+        self._org_id: str | None = (
+            getattr(request_ctx, "org_id", None) if request_ctx else None
+        )
         self.tokens_used: int = 0
 
     async def build(self, query: str) -> ExecutionPlan:
@@ -240,6 +442,8 @@ class PlanBuilder:
         if self._adapter:
             try:
                 plan = await self._llm_plan(query)
+                _fill_platform(plan, query)  # L2：补全漏提取的 platform
+                await _fill_codes(plan, query, self._db, self._org_id)
                 return plan
             except (PlanValidationError, Exception) as e:
                 logger.warning(f"LLM plan failed, falling back: {e}")
@@ -260,6 +464,8 @@ class PlanBuilder:
                     task="计算/汇总/导出",
                     depends_on=[0],
                 ))
+            _fill_platform(plan, query)  # L2：降级路径也补全
+            await _fill_codes(plan, query, self._db, self._org_id)
             return plan
 
         # ── 第三级：无法理解 ──

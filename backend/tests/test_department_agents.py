@@ -330,3 +330,152 @@ class TestAftersaleQueries:
         agent = _make_aftersale()
         result = await agent._query_local_data("order")
         assert result.status == OutputStatus.ERROR
+
+
+# ============================================================
+# _dispatch include_invalid 透传测试
+# ============================================================
+
+
+class TestDispatchIncludeInvalid:
+    """所有 agent 的 _dispatch 应透传 include_invalid 到 _query_local_data。"""
+
+    @pytest.mark.asyncio
+    async def test_trade_dispatch_include_invalid(self):
+        agent = _make_trade()
+        mock_out = ToolOutput(summary="ok", source="erp")
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=mock_out)
+            await agent._dispatch("order_list", {
+                "mode": "summary",
+                "filters": [],
+                "include_invalid": True,
+            }, {})
+            call_kwargs = M.return_value.execute.call_args
+            assert call_kwargs.kwargs.get("include_invalid") is True
+
+    @pytest.mark.asyncio
+    async def test_trade_dispatch_include_invalid_default_false(self):
+        agent = _make_trade()
+        mock_out = ToolOutput(summary="ok", source="erp")
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=mock_out)
+            await agent._dispatch("order_list", {
+                "mode": "summary", "filters": [],
+            }, {})
+            call_kwargs = M.return_value.execute.call_args
+            assert call_kwargs.kwargs.get("include_invalid") is False
+
+    @pytest.mark.asyncio
+    async def test_aftersale_dispatch_include_invalid(self):
+        agent = _make_aftersale()
+        mock_out = ToolOutput(summary="ok", source="erp")
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=mock_out)
+            await agent._dispatch("aftersale_list", {
+                "mode": "summary",
+                "filters": [],
+                "include_invalid": True,
+            }, {})
+            call_kwargs = M.return_value.execute.call_args
+            assert call_kwargs.kwargs.get("include_invalid") is True
+
+    @pytest.mark.asyncio
+    async def test_purchase_dispatch_include_invalid(self):
+        agent = _make_purchase()
+        mock_out = ToolOutput(summary="ok", source="erp")
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=mock_out)
+            await agent._dispatch("purchase_list", {
+                "mode": "summary",
+                "filters": [],
+                "include_invalid": True,
+            }, {})
+            call_kwargs = M.return_value.execute.call_args
+            assert call_kwargs.kwargs.get("include_invalid") is True
+
+
+# ============================================================
+# L3 空结果诊断集成测试
+# ============================================================
+
+
+class TestL3EmptyDiagnosis:
+    """_query_local_data 返回 EMPTY 时应追加诊断建议。"""
+
+    @pytest.mark.asyncio
+    async def test_empty_with_platform_gets_diagnosis(self):
+        agent = _make_trade()
+        empty_out = ToolOutput(
+            summary="订单 无记录", source="erp",
+            status=OutputStatus.EMPTY,
+        )
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=empty_out)
+            result = await agent._query_local_data(
+                "order", mode="summary",
+                filters=[{"field": "platform", "op": "eq", "value": "tb"}],
+            )
+            assert "诊断建议" in result.summary
+            assert "淘宝" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_empty_without_filters_no_diagnosis(self):
+        agent = _make_trade()
+        empty_out = ToolOutput(
+            summary="订单 无记录", source="erp",
+            status=OutputStatus.EMPTY,
+        )
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=empty_out)
+            result = await agent._query_local_data(
+                "order", mode="summary", filters=[],
+            )
+            assert "诊断建议" not in result.summary
+
+    @pytest.mark.asyncio
+    async def test_non_empty_no_diagnosis(self):
+        agent = _make_trade()
+        ok_out = ToolOutput(summary="订单数据", source="erp")
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=ok_out)
+            result = await agent._query_local_data(
+                "order", mode="summary",
+                filters=[{"field": "platform", "op": "eq", "value": "tb"}],
+            )
+            assert "诊断建议" not in result.summary
+
+    @pytest.mark.asyncio
+    async def test_error_gets_retry_hint(self):
+        """ERROR 结果追加重试建议"""
+        agent = _make_trade()
+        err_out = ToolOutput(
+            summary="统计查询失败: timeout",
+            source="erp",
+            status=OutputStatus.ERROR,
+            error_message="query timeout after 30s",
+        )
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=err_out)
+            result = await agent._query_local_data(
+                "order", mode="summary", filters=[],
+            )
+            assert "重试建议" in result.summary
+            assert "超时" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_error_unknown_no_hint(self):
+        """未知错误类型不追加建议"""
+        agent = _make_trade()
+        err_out = ToolOutput(
+            summary="奇怪的错误",
+            source="erp",
+            status=OutputStatus.ERROR,
+            error_message="something weird happened",
+        )
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=err_out)
+            result = await agent._query_local_data(
+                "order", mode="summary", filters=[],
+            )
+            assert "重试建议" not in result.summary
