@@ -141,7 +141,6 @@ class ERPAgent:
             builder = PlanBuilder(
                 adapter=plan_adapter,
                 request_ctx=self.request_ctx,
-                db=self.db,
             )
             plan = await builder.build(query)
         finally:
@@ -154,6 +153,10 @@ class ERPAgent:
                 text=plan.abort_message,
                 status="error",
             )
+
+        # 2.5 准入校验：DB 验证 product_code / order_no
+        from services.agent.plan_builder import _fill_codes
+        await _fill_codes(plan, query, self.db, self.org_id)
 
         # 3. DAG 执行
         executor = DAGExecutor(
