@@ -265,48 +265,6 @@ class TestToolOutputMetadata:
 
 
 # ============================================================
-# ToolOutput — to_compute_input
-# ============================================================
-
-class TestToolOutputComputeInput:
-    def test_inline_compute_input(self):
-        data = [{"code": "A", "qty": 10}]
-        cols = [ColumnMeta("code", "text"), ColumnMeta("qty", "integer")]
-        t = ToolOutput(
-            summary="OK",
-            format=OutputFormat.TABLE,
-            source="warehouse",
-            columns=cols,
-            data=data,
-            metadata={"doc_type": "order"},
-        )
-        ci = t.to_compute_input()
-        assert ci["source"] == "warehouse"
-        assert ci["data"] == data
-        assert ci["columns"][0]["name"] == "code"
-        assert ci["metadata"]["doc_type"] == "order"
-
-    def test_file_ref_compute_input(self):
-        fr = _file_ref()
-        t = ToolOutput(
-            summary="OK",
-            format=OutputFormat.FILE_REF,
-            source="trade",
-            file_ref=fr,
-        )
-        ci = t.to_compute_input()
-        assert "file_ref" in ci
-        assert ci["file_ref"]["row_count"] == 500
-        assert ci["file_ref"]["format"] == "parquet"
-        assert "data" not in ci
-
-    def test_compute_input_no_metadata_when_empty(self):
-        t = ToolOutput(summary="OK", source="x")
-        ci = t.to_compute_input()
-        assert "metadata" not in ci
-
-
-# ============================================================
 # ToolOutput — OutputStatus
 # ============================================================
 

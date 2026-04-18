@@ -1,13 +1,10 @@
 """
 Session 级文件注册表。
 
-跟踪当前会话中所有工具写入的 staging 文件，供 ComputeAgent
-按域查找，不再依赖 LLM 从文本抠路径。
+跟踪当前会话中工具写入的 staging 文件。
 
 key = "{domain}:{tool_name}:{timestamp}"
 防止多个部门 Agent 都调 local_data 时互相覆盖。
-
-设计文档：docs/document/TECH_多Agent单一职责重构.md §4.2
 """
 from __future__ import annotations
 
@@ -49,7 +46,7 @@ class SessionFileRegistry:
         return list(self._files.items())
 
     def to_prompt_text(self) -> str:
-        """生成文件清单文本（注入 ComputeAgent prompt）。"""
+        """生成文件清单文本。"""
         if not self._files:
             return "当前会话无暂存文件。"
         lines = ["当前会话暂存文件："]

@@ -5,6 +5,7 @@ ERPAgent 单元测试
       ToolExecutor._erp_agent handler, erp_agent 工具注册
 """
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -292,6 +293,345 @@ class TestERPAgentGuards:
         assert "未开通" in result.text
 
     # test_token_accumulation_across_turns 已删除（旧 tool loop 路径）
+
+
+# ============================================================
+# ERPAgent 单域查询主流程（架构简化后新增）
+# ============================================================
+
+
+class TestERPAgentSingleDomain:
+    """ERPAgent._execute 单域查询主流程测试"""
+
+    def _make_agent(self):
+        from services.agent.erp_agent import ERPAgent
+        return ERPAgent(
+            db=MagicMock(), user_id="u1",
+            conversation_id="c1", org_id="org1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_llm_success_single_domain(self):
+        """LLM 提参成功 → 单域查询 → 返回结果"""
+        from services.agent.erp_agent import ERPAgent
+        from services.agent.tool_output import ToolOutput, OutputStatus
+
+        agent = self._make_agent()
+
+        # mock _extract_params → 返回 trade 域
+        agent._extract_params = AsyncMock(return_value=(
+            "trade", {"doc_type": "order", "mode": "summary",
+                      "time_range": "2026-04-18 ~ 2026-04-18"}, False,
+        ))
+
+        # mock DepartmentAgent.execute → 返回 ToolOutput
+        mock_dept = AsyncMock()
+        mock_dept.execute = AsyncMock(return_value=ToolOutput(
+            summary="今日订单 100 单", source="trade",
+            status=OutputStatus.OK,
+        ))
+        agent._create_agent = MagicMock(return_value=mock_dept)
+
+        import time
+        result = await agent._execute("今天多少订单", time.monotonic() + 60)
+
+        assert result.status == "success"
+        assert "100 单" in result.text
+        assert result.tools_called == ["trade"]
+        mock_dept.execute.assert_called_once()
+        # 确认 dag_mode=True 硬编码
+        call_kwargs = mock_dept.execute.call_args
+        assert call_kwargs.kwargs.get("dag_mode") is True
+
+    @pytest.mark.asyncio
+    async def test_llm_fail_keyword_fallback(self):
+        """LLM 失败 → 关键词降级 → 仍能查询"""
+        from services.agent.erp_agent import ERPAgent
+        from services.agent.tool_output import ToolOutput, OutputStatus
+
+        agent = self._make_agent()
+
+        # mock _extract_params → 降级（degraded=True）
+        agent._extract_params = AsyncMock(return_value=(
+            "warehouse", {"mode": "summary", "_degraded": True}, True,
+        ))
+        mock_dept = AsyncMock()
+        mock_dept.execute = AsyncMock(return_value=ToolOutput(
+            summary="库存 500 件", source="warehouse",
+            status=OutputStatus.OK,
+        ))
+        agent._create_agent = MagicMock(return_value=mock_dept)
+
+        import time
+        result = await agent._execute("查库存", time.monotonic() + 60)
+
+        assert result.status == "success"
+        assert "简化查询模式" in result.text  # 降级标记
+        assert "500 件" in result.text
+
+    @pytest.mark.asyncio
+    async def test_extract_params_none_returns_error(self):
+        """三级降级链全部失败 → 返回友好错误"""
+        agent = self._make_agent()
+        agent._extract_params = AsyncMock(return_value=None)
+
+        import time
+        result = await agent._execute("hello world", time.monotonic() + 60)
+
+        assert result.status == "error"
+        assert "无法理解" in result.text
+
+    @pytest.mark.asyncio
+    async def test_invalid_domain_returns_error(self):
+        """域不在白名单 → 返回错误"""
+        agent = self._make_agent()
+        agent._extract_params = AsyncMock(return_value=(
+            "finance", {}, False,
+        ))
+
+        import time
+        result = await agent._execute("查财务", time.monotonic() + 60)
+
+        assert result.status == "error"
+        assert "不支持" in result.text
+
+    @pytest.mark.asyncio
+    async def test_query_timeout_returns_error(self):
+        """全局超时 → execute 返回超时错误"""
+        agent = self._make_agent()
+
+        # mock _execute 永远不返回
+        async def _hang(*a, **kw):
+            await asyncio.sleep(999)
+
+        agent._execute = _hang
+
+        with patch("core.config.get_settings") as mock_gs:
+            mock_gs.return_value = MagicMock(dag_global_timeout=0.2)
+            result = await agent.execute("查订单")
+
+        assert result.status == "error"
+        assert "超时" in result.text
+
+    @pytest.mark.asyncio
+    async def test_deadline_exhausted_returns_error(self):
+        """deadline 已过 → 直接返回错误，不执行查询"""
+        agent = self._make_agent()
+        agent._extract_params = AsyncMock(return_value=(
+            "trade", {"doc_type": "order"}, False,
+        ))
+        agent._create_agent = MagicMock(return_value=AsyncMock())
+
+        import time
+        result = await agent._execute("查订单", time.monotonic() - 10)
+
+        assert result.status == "error"
+        assert "预算不足" in result.text
+
+    @pytest.mark.asyncio
+    async def test_department_exception_returns_error(self):
+        """DepartmentAgent 抛异常 → 返回异常错误"""
+        agent = self._make_agent()
+        agent._extract_params = AsyncMock(return_value=(
+            "trade", {"doc_type": "order"}, False,
+        ))
+        mock_dept = AsyncMock()
+        mock_dept.execute = AsyncMock(
+            side_effect=ConnectionError("DB down"),
+        )
+        agent._create_agent = MagicMock(return_value=mock_dept)
+
+        import time
+        result = await agent._execute("查订单", time.monotonic() + 60)
+
+        assert result.status == "error"
+        assert "DB down" in result.text
+
+    @pytest.mark.asyncio
+    async def test_file_ref_collected(self):
+        """detail 模式返回 file_ref → collected_files 有值"""
+        from services.agent.tool_output import (
+            ToolOutput, OutputStatus, FileRef, ColumnMeta,
+        )
+
+        agent = self._make_agent()
+        agent._extract_params = AsyncMock(return_value=(
+            "trade", {"doc_type": "order", "mode": "detail"}, False,
+        ))
+        mock_dept = AsyncMock()
+        mock_dept.execute = AsyncMock(return_value=ToolOutput(
+            summary="明细 200 条",
+            source="trade",
+            status=OutputStatus.OK,
+            file_ref=FileRef(
+                path="/tmp/staging/trade_123.parquet",
+                filename="trade_123.parquet",
+                format="parquet",
+                row_count=200,
+                size_bytes=4096,
+                columns=[ColumnMeta("order_no", "text")],
+            ),
+        ))
+        agent._create_agent = MagicMock(return_value=mock_dept)
+
+        import time
+        result = await agent._execute("订单明细", time.monotonic() + 60)
+
+        assert result.status == "success"
+        assert len(result.collected_files) == 1
+        assert result.collected_files[0]["name"] == "trade_123.parquet"
+
+
+# ============================================================
+# ERPAgent._extract_params 三级降级链
+# ============================================================
+
+
+class TestExtractParams:
+    """ERPAgent._extract_params 降级链测试"""
+
+    def _make_agent(self):
+        from services.agent.erp_agent import ERPAgent
+        return ERPAgent(
+            db=MagicMock(), user_id="u1",
+            conversation_id="c1", org_id="org1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_llm_success_returns_domain_params(self):
+        """LLM 提取成功 → 返回 (domain, params, False)"""
+        agent = self._make_agent()
+        agent._llm_extract = AsyncMock(return_value=(
+            "trade", {"doc_type": "order", "mode": "summary"},
+        ))
+
+        result = await agent._extract_params("今天多少订单")
+
+        assert result is not None
+        domain, params, degraded = result
+        assert domain == "trade"
+        assert params["mode"] == "summary"
+        assert degraded is False
+
+    @pytest.mark.asyncio
+    async def test_llm_fail_keyword_fallback(self):
+        """LLM 失败 → 关键词匹配降级"""
+        agent = self._make_agent()
+        agent._llm_extract = AsyncMock(side_effect=Exception("timeout"))
+
+        result = await agent._extract_params("查库存")
+
+        assert result is not None
+        domain, params, degraded = result
+        assert domain == "warehouse"
+        assert degraded is True
+        assert params.get("_degraded") is True
+
+    @pytest.mark.asyncio
+    async def test_both_fail_returns_none(self):
+        """LLM + 关键词都失败 → 返回 None"""
+        agent = self._make_agent()
+        agent._llm_extract = AsyncMock(side_effect=Exception("fail"))
+
+        result = await agent._extract_params("hello world")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_domain_doc_type_conflict_auto_corrected(self):
+        """LLM 返回 domain=trade + doc_type=purchase → 自动纠正为 order"""
+        agent = self._make_agent()
+        agent._llm_extract = AsyncMock(return_value=(
+            "trade", {"doc_type": "purchase", "mode": "summary"},
+        ))
+
+        result = await agent._extract_params("查订单")
+
+        domain, params, _ = result
+        assert domain == "trade"
+        assert params["doc_type"] == "order"  # 自动纠正
+
+    @pytest.mark.asyncio
+    async def test_platform_l2_fill(self):
+        """LLM 没提取 platform → L2 从查询文本补全"""
+        agent = self._make_agent()
+        agent._llm_extract = AsyncMock(return_value=(
+            "trade", {"doc_type": "order", "mode": "summary"},
+        ))
+
+        result = await agent._extract_params("淘宝今日订单")
+
+        _, params, _ = result
+        assert params.get("platform") == "tb"
+
+
+# ============================================================
+# ERPAgent._create_agent 域实例化
+# ============================================================
+
+
+class TestCreateAgent:
+    """ERPAgent._create_agent 测试"""
+
+    def _make_agent(self):
+        from services.agent.erp_agent import ERPAgent
+        return ERPAgent(
+            db=MagicMock(), user_id="u1",
+            conversation_id="c1", org_id="org1",
+        )
+
+    def test_four_valid_domains(self):
+        """4 个有效域各返回正确 Agent 类型"""
+        from services.agent.departments.warehouse_agent import WarehouseAgent
+        from services.agent.departments.purchase_agent import PurchaseAgent
+        from services.agent.departments.trade_agent import TradeAgent
+        from services.agent.departments.aftersale_agent import AftersaleAgent
+
+        agent = self._make_agent()
+
+        assert isinstance(agent._create_agent("warehouse"), WarehouseAgent)
+        assert isinstance(agent._create_agent("purchase"), PurchaseAgent)
+        assert isinstance(agent._create_agent("trade"), TradeAgent)
+        assert isinstance(agent._create_agent("aftersale"), AftersaleAgent)
+
+    def test_unknown_domain_returns_none(self):
+        """未知域返回 None"""
+        agent = self._make_agent()
+        assert agent._create_agent("compute") is None
+        assert agent._create_agent("finance") is None
+        assert agent._create_agent("") is None
+
+
+# ============================================================
+# TOOL_SYSTEM_PROMPT 对齐新架构
+# ============================================================
+
+
+class TestToolSystemPromptAlignment:
+    """TOOL_SYSTEM_PROMPT 与新架构一致性"""
+
+    def test_no_internal_export_claim(self):
+        """规则不能说 erp_agent 内部处理导出"""
+        from config.chat_tools import get_tool_system_prompt
+        prompt = get_tool_system_prompt()
+        assert "erp_agent 内部处理" not in prompt
+        assert "由 erp_agent 内部" not in prompt
+
+    def test_code_execute_for_export(self):
+        """规则应引导用 code_execute 做导出/计算"""
+        from config.chat_tools import get_tool_system_prompt
+        prompt = get_tool_system_prompt()
+        assert "code_execute" in prompt
+        # 导出相关指引应包含 code_execute
+        lines = prompt.split("\n")
+        code_exec_line = [l for l in lines if "代码执行" in l][0]
+        assert "导出" in code_exec_line
+
+    def test_erp_agent_single_domain_description(self):
+        """规则应说明 erp_agent 每次查一个域"""
+        from config.chat_tools import get_tool_system_prompt
+        prompt = get_tool_system_prompt()
+        assert "一个域" in prompt or "查数据" in prompt
 
 
 # ============================================================
