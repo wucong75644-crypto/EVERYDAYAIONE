@@ -420,7 +420,7 @@ class TestRowBuilderFields:
 
         # 验证 081 订单头字段
         assert row["trade_tags"] == [{"id": 1, "tagName": "VIP"}]
-        assert row["exception_tags"] == ["101", "102"]
+        assert row["exception_tags"] == '{"101","102"}'
         assert row["is_scalping"] == 1
         assert row["total_fee"] == "120.00"
         assert row["unified_status"] == "WAIT_DELIVER"
