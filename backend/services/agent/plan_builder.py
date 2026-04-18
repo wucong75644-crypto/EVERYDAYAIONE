@@ -426,14 +426,9 @@ class PlanBuilder:
         self,
         adapter: Any = None,
         request_ctx: Any = None,
-        db: Any = None,
     ):
         self._adapter = adapter
         self._request_ctx = request_ctx
-        self._db = db
-        self._org_id: str | None = (
-            getattr(request_ctx, "org_id", None) if request_ctx else None
-        )
         self.tokens_used: int = 0
 
     async def build(self, query: str) -> ExecutionPlan:
@@ -443,7 +438,6 @@ class PlanBuilder:
             try:
                 plan = await self._llm_plan(query)
                 _fill_platform(plan, query)  # L2：补全漏提取的 platform
-                await _fill_codes(plan, query, self._db, self._org_id)
                 return plan
             except (PlanValidationError, Exception) as e:
                 logger.warning(f"LLM plan failed, falling back: {e}")
@@ -465,7 +459,6 @@ class PlanBuilder:
                     depends_on=[0],
                 ))
             _fill_platform(plan, query)  # L2：降级路径也补全
-            await _fill_codes(plan, query, self._db, self._org_id)
             return plan
 
         # ── 第三级：无法理解 ──
