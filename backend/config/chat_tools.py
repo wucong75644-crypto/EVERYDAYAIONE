@@ -102,7 +102,7 @@ def get_safety_level(tool_name: str) -> SafetyLevel:
 
 TOOL_SYSTEM_PROMPT = """## 工具使用规则
 
-1. **ERP 业务问题**：用户问任何涉及订单、库存、采购、售后、发货、物流、商品、销量、统计、导出、报表的问题时，必须调用 erp_agent 工具。erp_agent 内部自动处理编码识别、工具选择、数据导出、多步查询，支持口语化表达。
+1. **ERP 业务问题**：用户问任何涉及订单、库存、采购、售后、发货、物流、商品、销量、统计的问题时，必须调用 erp_agent 工具。erp_agent 每次查询一个域的数据，内部自动识别编码，支持口语化表达。需要导出/计算/对比时，先用 erp_agent 查数据，再用 code_execute 加工导出。
 
 2. **知识库**：用户问业务规则、操作流程等非数据类问题时，用 search_knowledge。
 
@@ -110,7 +110,7 @@ TOOL_SYSTEM_PROMPT = """## 工具使用规则
 
 4. **图片/视频生成**：用户要求画图/生成视频时，用 generate_image / generate_video。
 
-5. **代码执行**：用户要求非 ERP 场景的数据分析、计算时，用 code_execute。ERP 数据导出/报表由 erp_agent 内部处理，不要直接调 code_execute。
+5. **代码执行**：数据分析、计算、对比、导出 Excel 时用 code_execute。ERP 数据先用 erp_agent 查出来，再用 code_execute 加工/导出。
 
 6. **工作区文件处理**：用户上传了 Excel/CSV 等文件并要求分析时，用 file_list 确认文件名，然后用 code_execute 读取处理（沙盒内 WORKSPACE_DIR 变量指向用户工作区）。Excel/二进制文件不能用 file_read，必须用 code_execute。
 
@@ -180,7 +180,7 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                     "'那个谁退的'=退货查询，'查一下呗'=数据查询。\n"
                     "含操作性词汇也要先查数据：'对账'先查数据再对，'对不对'先查数据再核对，"
                     "'处理'先查状态再建议，'优先处理'先查订单列表，'多少钱/价格'先查成本价。\n"
-                    "内部自动识别编码、选择最优查询工具，返回完整数据。\n\n"
+                    "内部自动识别编码，查询对应域的数据并返回。\n\n"
                     "支持批量查询：查所有缺货商品、查全部待发货订单等无需指定具体商品。\n"
                     "跨域分析：需要组合多种数据时，在同一轮并行调用多次 erp_agent 获取不同数据，"
                     "再用 code_execute 合并分析。多个 erp_agent 调用会自动并行执行，不需要等一个完成再调下一个。\n"

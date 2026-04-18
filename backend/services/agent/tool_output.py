@@ -173,28 +173,3 @@ class ToolOutput:
         parts.append("\n".join(tag_lines))
         return "\n".join(parts)
 
-    def to_compute_input(self) -> dict[str, Any]:
-        """转为 ComputeAgent 的结构化输入（Python dict，不是文本）。"""
-        result: dict[str, Any] = {
-            "source": self.source,
-            "summary": self.summary,
-        }
-        if self.metadata:
-            result["metadata"] = self.metadata
-
-        cols = self.columns or (self.file_ref.columns if self.file_ref else None)
-        if cols:
-            result["columns"] = [
-                {"name": c.name, "dtype": c.dtype, "label": c.label}
-                for c in cols
-            ]
-        if self.data is not None:
-            result["data"] = self.data
-        if self.file_ref:
-            result["file_ref"] = {
-                "path": self.file_ref.path,
-                "filename": self.file_ref.filename,
-                "format": self.file_ref.format,
-                "row_count": self.file_ref.row_count,
-            }
-        return result

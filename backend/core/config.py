@@ -147,9 +147,8 @@ class Settings(BaseSettings):
     agent_loop_brain_max_images: int = 8  # 历史注入最大图片数（控制 token 消耗）
     # agent_loop_v2_enabled 已移除：v1 已废弃，全量走 v2
     # erp_use_dag 已移除：旧 tool loop 已废弃，全量走 DAG 编排
-    dag_global_timeout: float = 180.0   # DAG 全局兜底超时（秒）
-    dag_round_timeout: float = 30.0    # DAG 普通查询 Round 超时（秒）
-    dag_compute_timeout: float = 120.0 # DAG 计算/导出 Round 超时（秒）
+    # dag_round_timeout / dag_compute_timeout 已移除：单域查询不需要 Round 超时
+    dag_global_timeout: float = 180.0   # ERP 查询全局兜底超时（秒）
 
     # Agent 知识库配置
     kb_enabled: bool = True                              # 知识库总开关
