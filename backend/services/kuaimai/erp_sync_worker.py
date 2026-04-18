@@ -399,9 +399,12 @@ class ErpSyncWorker:
         热表→冷表归档（设计文档 §5.1）
 
         分批 SELECT→UPSERT(archive)→DELETE(hot)，upsert 幂等保证安全。
-        归档条件：doc_modified_at 和 synced_at 都超过保留期才归档。
-        synced_at 保底：防止 modified 为 ERP 零值（如 2000-01-01）的
+        归档条件：doc_created_at 和 doc_modified_at 都超过保留期才归档。
+        doc_created_at 保底：防止 modified 为 ERP 零值（如 2000-01-01）的
         补发单/手工单被误归档。
+
+        注意：不使用 synced_at 作为归档条件——delete+insert 同步模式下
+        synced_at 每轮都被刷新，导致归档条件永远不满足。
         """
         from datetime import timedelta
         cutoff = (
@@ -410,10 +413,16 @@ class ErpSyncWorker:
 
         total_archived = 0
         batch_size = 1000
+        max_per_run = 100_000  # 每次日维护最多归档 10 万行，避免阻塞同步
 
-        while True:
+        while total_archived < max_per_run:
             try:
-                q = self.db.table("erp_document_items").select("*").lt("doc_modified_at", cutoff).lt("synced_at", cutoff)
+                q = (
+                    self.db.table("erp_document_items")
+                    .select("*")
+                    .lt("doc_modified_at", cutoff)
+                    .lt("doc_created_at", cutoff)
+                )
                 result = await q.limit(batch_size).execute()
                 rows = result.data or []
                 if not rows:
@@ -435,6 +444,9 @@ class ErpSyncWorker:
             except Exception as e:
                 logger.error(f"Archive batch failed | error={e}")
                 break
+
+        if total_archived >= max_per_run:
+            logger.info(f"Archive hit per-run limit | archived={total_archived} max={max_per_run}")
 
         return total_archived
 
