@@ -153,7 +153,12 @@ def _build_order_rows(
             f"doc_id={doc.get('sid')} type={type(raw_exceptions).__name__}"
         )
         raw_exceptions = None
-    exception_tags = [str(e) for e in raw_exceptions] if raw_exceptions else None
+    # PostgreSQL TEXT[] 需要 {val1,val2} 格式，不能用 JSON ["val1","val2"]
+    if raw_exceptions:
+        parts = [str(e).replace('"', '\\"') for e in raw_exceptions]
+        exception_tags = "{" + ",".join(f'"{p}"' for p in parts) + "}"
+    else:
+        exception_tags = None
 
     # trade_invoice JSONB 防御性校验
     raw_invoice = doc.get("invoice")
