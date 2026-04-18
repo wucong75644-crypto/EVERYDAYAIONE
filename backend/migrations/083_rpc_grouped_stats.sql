@@ -66,7 +66,13 @@ BEGIN
     base_q := format(
         'SELECT doc_id, quantity, amount, outer_id, item_name,
                 shop_name, platform, supplier_name, warehouse_name,
-                doc_status, order_status
+                doc_status, order_status, order_type, order_no,
+                sku_outer_id, express_no, buyer_nick, status_name,
+                cost, pay_amount, gross_profit, refund_money,
+                post_fee, discount_fee, aftersale_type, refund_status,
+                is_cancel, is_refund, is_exception, is_halt, is_urgent,
+                is_scalping, unified_status, is_presell,
+                online_status, handler_status
          FROM erp_document_items
          WHERE doc_type = %L AND %I >= %L AND %I < %L',
         p_doc_type, time_col, p_start, time_col, p_end
@@ -77,7 +83,13 @@ BEGIN
             ' UNION ALL
              SELECT doc_id, quantity, amount, outer_id, item_name,
                     shop_name, platform, supplier_name, warehouse_name,
-                    doc_status, order_status
+                    doc_status, order_status, order_type, order_no,
+                    sku_outer_id, express_no, buyer_nick, status_name,
+                    cost, pay_amount, gross_profit, refund_money,
+                    post_fee, discount_fee, aftersale_type, refund_status,
+                    is_cancel, is_refund, is_exception, is_halt, is_urgent,
+                    is_scalping, unified_status, is_presell,
+                    online_status, handler_status
              FROM erp_document_items_archive
              WHERE doc_type = %L AND %I >= %L AND %I < %L',
             p_doc_type, time_col, p_start, time_col, LEAST(p_end, NOW() - INTERVAL '90 days')
@@ -267,7 +279,15 @@ BEGIN
     need_archive := (p_start < NOW() - INTERVAL '90 days');
 
     base_q := format(
-        'SELECT doc_id, order_type, order_status, quantity, amount, is_scalping '
+        'SELECT doc_id, quantity, amount, outer_id, item_name, '
+        'shop_name, platform, supplier_name, warehouse_name, '
+        'doc_status, order_status, order_type, order_no, '
+        'sku_outer_id, express_no, buyer_nick, status_name, '
+        'cost, pay_amount, gross_profit, refund_money, '
+        'post_fee, discount_fee, aftersale_type, refund_status, '
+        'is_cancel, is_refund, is_exception, is_halt, is_urgent, '
+        'is_scalping, unified_status, is_presell, '
+        'online_status, handler_status '
         'FROM erp_document_items '
         'WHERE doc_type = ''order'' '
         'AND org_id = %L '
@@ -278,7 +298,15 @@ BEGIN
     IF need_archive THEN
         base_q := base_q || format(
             ' UNION ALL '
-            'SELECT doc_id, order_type, order_status, quantity, amount, is_scalping '
+            'SELECT doc_id, quantity, amount, outer_id, item_name, '
+        'shop_name, platform, supplier_name, warehouse_name, '
+        'doc_status, order_status, order_type, order_no, '
+        'sku_outer_id, express_no, buyer_nick, status_name, '
+        'cost, pay_amount, gross_profit, refund_money, '
+        'post_fee, discount_fee, aftersale_type, refund_status, '
+        'is_cancel, is_refund, is_exception, is_halt, is_urgent, '
+        'is_scalping, unified_status, is_presell, '
+        'online_status, handler_status '
             'FROM erp_document_items_archive '
             'WHERE doc_type = ''order'' '
             'AND org_id = %L '
