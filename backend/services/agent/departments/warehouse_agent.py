@@ -64,7 +64,10 @@ class WarehouseAgent(DepartmentAgent):
         """仓储域参数校验。"""
         if action == "stock_query":
             if not params.get("product_code") and not params.get("keyword"):
-                return ValidationResult.missing(["商品编码或关键词"])
+                return ValidationResult.missing(
+                    ["商品编码或关键词"],
+                    prompt="您想查哪个商品的库存？请告诉我商品编码或名称。",
+                )
 
         elif action == "shortage_query":
             missing = []
@@ -73,7 +76,10 @@ class WarehouseAgent(DepartmentAgent):
             if not params.get("time_range"):
                 missing.append("时间范围")
             if missing:
-                return ValidationResult.missing(missing)
+                return ValidationResult.missing(
+                    missing,
+                    prompt=f"查缺货需要知道{'和'.join(missing)}，请补充。",
+                )
             # 时间范围格式校验
             tr = params.get("time_range", "")
             if tr:
@@ -86,7 +92,10 @@ class WarehouseAgent(DepartmentAgent):
 
         elif action == "receipt_query" or action == "shelf_query":
             if not params.get("time_range") and not params.get("product_code"):
-                return ValidationResult.missing(["时间范围 或 商品编码"])
+                return ValidationResult.missing(
+                    ["时间范围 或 商品编码"],
+                    prompt="请告诉我要查哪个时间段的收货/上架记录，或指定商品编码。",
+                )
 
         return ValidationResult.ok()
 

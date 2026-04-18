@@ -204,6 +204,10 @@ def build_plan_prompt(query: str, now_str: str = "") -> str:
         "- time_col: pay_time（付款时间）/ doc_created_at（创建时间，默认）\n"
         "- platform: taobao/pdd/douyin/jd/kuaishou/xhs/1688（可选）\n"
         "- group_by: shop/platform（可选，仅 summary 模式）\n"
+        "- product_code: 商品编码（如用户提到了具体编码则提取）\n"
+        "- order_no: 订单号（如用户提到了则提取）\n"
+        "- include_invalid: 布尔值，默认 false。仅当用户明确要求'包含全部'或'不排除刷单'时设为 true。\n"
+        "  注意：用户问'刷单有多少'不是 include_invalid，而是用 filters 过滤刷单类型。\n"
         "compute 域的 params 可以为空。\n\n"
         "返回纯 JSON（不要 markdown 围栏）：\n"
         '{"rounds": [{"agents": ["trade"], "task": "今日付款订单统计", '

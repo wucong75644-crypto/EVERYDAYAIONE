@@ -86,6 +86,7 @@ class UnifiedQueryEngine:
         user_id: str | None = None,
         conversation_id: str | None = None,
         request_ctx: Optional[RequestContext] = None,
+        include_invalid: bool = False,
     ) -> ToolOutput:
         """统一入口"""
         if doc_type not in VALID_DOC_TYPES:
@@ -110,7 +111,10 @@ class UnifiedQueryEngine:
         tr = _extract_time_range(validated, time_type, request_ctx, mode)
 
         if mode == "summary":
-            return await self._summary(doc_type, validated, tr, group_by, request_ctx)
+            return await self._summary(
+                doc_type, validated, tr, group_by, request_ctx,
+                include_invalid=include_invalid,
+            )
         elif mode == "detail":
             return await self._detail(
                 doc_type, validated, tr, fields, sort_by, sort_dir, limit, request_ctx,
@@ -127,7 +131,14 @@ class UnifiedQueryEngine:
         self, doc_type: str, filters: list[ValidatedFilter],
         tr: TimeRange, group_by: list[str] | None,
         request_ctx: Optional[RequestContext],
+        include_invalid: bool = False,
     ) -> ToolOutput:
+        # 订单分类引擎分支：doc_type=order + 非全量模式 + 无分组
+        if doc_type == "order" and not include_invalid and not group_by:
+            classified = await self._summary_classified(filters, tr, request_ctx)
+            if classified is not None:
+                return classified
+
         type_name = DOC_TYPE_CN.get(doc_type, doc_type)
         non_time = [f for f in filters if f.field not in TIME_COLUMNS]
 
@@ -199,6 +210,80 @@ class UnifiedQueryEngine:
             data=result_data,
             metadata={
                 "doc_type": doc_type,
+                "time_range": tr.label,
+                "time_column": tr.time_col,
+            },
+        )
+
+    async def _summary_classified(
+        self, filters: list[ValidatedFilter],
+        tr: TimeRange,
+        request_ctx: Optional[RequestContext],
+    ) -> ToolOutput | None:
+        """订单分类统计：走 erp_order_stats_grouped RPC + 分类引擎"""
+        from services.kuaimai.order_classifier import OrderClassifier
+
+        non_time = [f for f in filters if f.field not in TIME_COLUMNS]
+        p_shop, p_platform, p_supplier, p_warehouse, dsl = _split_named_params(non_time)
+
+        # erp_order_stats_grouped 只接受 p_filters，把命名参数也转为 DSL
+        if p_shop:
+            dsl.append({"field": "shop_name", "op": "like", "value": f"%{p_shop}%"})
+        if p_platform:
+            dsl.append({"field": "platform", "op": "eq", "value": p_platform})
+        if p_supplier:
+            dsl.append({"field": "supplier_name", "op": "like", "value": f"%{p_supplier}%"})
+        if p_warehouse:
+            dsl.append({"field": "warehouse_name", "op": "like", "value": f"%{p_warehouse}%"})
+
+        params: dict[str, Any] = {
+            "p_org_id": self.org_id,
+            "p_start": tr.start_iso,
+            "p_end": tr.end_iso,
+            "p_time_col": tr.time_col,
+            "p_filters": _json.dumps(dsl) if dsl else None,
+        }
+
+        try:
+            result = self.db.rpc("erp_order_stats_grouped", params).execute()
+            raw_rows = result.data
+        except Exception as e:
+            logger.warning(f"分组统计 RPC 失败，回退原逻辑 | error={e}")
+            return None
+
+        if not raw_rows or raw_rows == []:
+            return None
+
+        try:
+            classifier = await OrderClassifier.for_org(self.db, self.org_id)
+            cr = classifier.classify(raw_rows)
+        except Exception as e:
+            logger.warning(f"分类引擎异常，回退原逻辑 | error={e}")
+            return None
+
+        time_header = format_time_header(
+            ctx=request_ctx, range_=tr.date_range, kind="统计区间",
+        )
+        body = cr.to_display_text()
+        summary_text = f"{time_header}\n\n{body}" if time_header else body
+
+        return ToolOutput(
+            summary=summary_text,
+            format=OutputFormat.TABLE,
+            source="erp",
+            columns=[
+                ColumnMeta("doc_count", "integer", "单数"),
+                ColumnMeta("total_qty", "integer", "数量"),
+                ColumnMeta("total_amount", "numeric", "金额"),
+            ],
+            data=[{
+                "total": cr.total,
+                "valid": cr.valid,
+                "categories": cr.categories_list,
+            }],
+            metadata={
+                "recommended_key": "valid",
+                "doc_type": "order",
                 "time_range": tr.label,
                 "time_column": tr.time_col,
             },

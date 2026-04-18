@@ -14,6 +14,10 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from services.kuaimai.erp_sync_row_builders import (  # noqa: F401
+    _build_aftersale_rows,
+    _build_order_rows,
+)
 from services.kuaimai.erp_sync_utils import (  # noqa: F401 — re-export for backward compat
     _API_SEM,
     _DetailResult,
@@ -249,65 +253,6 @@ async def sync_purchase_return(
 # ── 售后工单 (aftersale) ────────────────────────────────
 
 
-def _build_aftersale_rows(
-    doc: dict, svc: ErpSyncService,
-) -> list[dict[str, Any]]:
-    """从单个售后 doc 构建 DB 行（供 sync_aftersale 和对账共用）"""
-    doc_extra = _pick(
-        doc, "goodStatus", "refundWarehouseName",
-        "refundExpressCompany", "refundExpressId",
-        "reissueSid", "platformId", "shortId",
-    )
-    doc_base = {
-        "doc_type": "aftersale",
-        "doc_id": str(doc["id"]),
-        "doc_status": doc.get("status"),
-        "doc_created_at": _safe_ts(doc.get("created")),
-        "doc_modified_at": _safe_ts(doc.get("modified")),
-        "shop_name": doc.get("shopName"),
-        "platform": doc.get("source"),
-        "order_no": doc.get("tid"),
-        "aftersale_type": doc.get("afterSaleType"),
-        "refund_money": doc.get("refundMoney"),
-        "raw_refund_money": doc.get("rawRefundMoney"),
-        "text_reason": doc.get("textReason"),
-        "finished_at": _safe_ts(doc.get("finished")),
-        "remark": doc.get("remark"),
-        "good_status": doc.get("goodStatus"),
-        "refund_warehouse_name": doc.get("refundWarehouseName"),
-        "refund_express_company": doc.get("refundExpressCompany"),
-        "refund_express_no": doc.get("refundExpressId"),
-        "reissue_sid": doc.get("reissueSid"),
-        "platform_refund_id": doc.get("platformId"),
-        "short_id": doc.get("shortId"),
-    }
-
-    items = doc.get("items") or []
-    if not items:
-        return [{**doc_base, "item_index": 0, "extra_json": doc_extra}]
-
-    items = svc.sort_and_assign_index(items, "aftersale")
-    rows: list[dict[str, Any]] = []
-    for item in items:
-        item_extra = _pick(item, "goodItemCount", "badItemCount", "type")
-        merged_extra = {**doc_extra, **item_extra} if item_extra else doc_extra
-        rows.append({
-            **doc_base,
-            "item_index": item["_item_index"],
-            "outer_id": item.get("mainOuterId"),
-            "sku_outer_id": item.get("outerId"),
-            "item_name": item.get("title"),
-            "quantity": item.get("receivableCount"),
-            "real_qty": item.get("itemRealQty"),
-            "price": item.get("price"),
-            "amount": item.get("payment"),
-            "good_item_count": item.get("goodItemCount"),
-            "bad_item_count": item.get("badItemCount"),
-            "extra_json": merged_extra,
-        })
-    return rows
-
-
 async def sync_aftersale(
     svc: ErpSyncService, start: datetime, end: datetime,
 ) -> int:
@@ -358,87 +303,6 @@ async def sync_aftersale(
 
 
 # ── 销售订单 (order) ────────────────────────────────────
-
-
-def _build_order_rows(
-    doc: dict, svc: ErpSyncService,
-) -> list[dict[str, Any]]:
-    """从单个订单 doc 构建 DB 行（供 sync_order 和死信重试共用）"""
-    items = doc.get("orders") or []
-    if not items:
-        return []
-    items = svc.sort_and_assign_index(items, "order")
-
-    total_discount = _to_float(doc.get("discountFee"))
-    total_payment = sum(_to_float(i.get("payment")) for i in items) or 1
-    doc_extra = _pick(doc, "payment")
-
-    rows: list[dict[str, Any]] = []
-    discount_used = 0.0
-    for pos, item in enumerate(items):
-        payment = _to_float(item.get("payment"))
-        is_last = (pos == len(items) - 1)
-        if not is_last:
-            item_discount = round(total_discount * payment / total_payment, 2)
-            discount_used += item_discount
-        else:
-            item_discount = round(total_discount - discount_used, 2)
-
-        rows.append({
-            "doc_type": "order",
-            "doc_id": str(doc.get("sid", "")),
-            "doc_status": doc.get("sysStatus"),
-            "doc_created_at": _safe_ts(doc.get("created")),
-            "doc_modified_at": _safe_ts(doc.get("modified")),
-            "item_index": item["_item_index"],
-            "outer_id": item.get("sysItemOuterId"),   # 主编码
-            "sku_outer_id": item.get("sysOuterId"),    # SKU编码
-            "item_name": item.get("title"),
-            "quantity": item.get("num"),
-            "price": item.get("price"),
-            "amount": item.get("payment"),
-            "cost": item.get("cost"),
-            "refund_status": item.get("refundStatus"),
-            "discount_fee": item_discount if total_discount else None,
-            "post_fee": doc.get("postFee") if pos == 0 else None,
-            "gross_profit": doc.get("grossProfit") if pos == 0 else None,
-            "order_no": doc.get("tid"),
-            "order_status": doc.get("sysStatus"),
-            "express_no": doc.get("outSid"),
-            "express_company": doc.get("expressCompanyName"),
-            "shop_name": doc.get("shopName"),
-            "platform": doc.get("source"),
-            "warehouse_name": doc.get("warehouseName"),
-            "pay_time": _safe_ts(doc.get("payTime")),
-            "consign_time": _safe_ts(doc.get("consignTime")),
-            "remark": doc.get("sellerMemo"),
-            "sys_memo": doc.get("sysMemo"),
-            "buyer_message": doc.get("buyerMessage"),
-            # 标记字段（独立列，boolean）
-            "order_type": doc.get("type"),
-            "pay_amount": doc.get("payAmount"),
-            "is_cancel": doc.get("isCancel"),
-            "is_refund": doc.get("isRefund"),
-            "is_exception": doc.get("isExcep"),
-            "is_halt": doc.get("isHalt"),
-            "is_urgent": doc.get("isUrgent"),
-            # 买家 + 收件人（订单头级别，仅首行存储避免冗余）
-            "buyer_nick": doc.get("buyerNick") if pos == 0 else None,
-            "receiver_name": doc.get("receiverName") if pos == 0 else None,
-            "receiver_mobile": doc.get("receiverMobile") if pos == 0 else None,
-            "receiver_phone": doc.get("receiverPhone") if pos == 0 else None,
-            "receiver_state": doc.get("receiverState") if pos == 0 else None,
-            "receiver_city": doc.get("receiverCity") if pos == 0 else None,
-            "receiver_district": doc.get("receiverDistrict") if pos == 0 else None,
-            "receiver_address": doc.get("receiverAddress") if pos == 0 else None,
-            "status_name": doc.get("statusName"),
-            # 子订单级字段
-            "sku_properties_name": item.get("skuPropertiesName") or item.get("propertiesName"),
-            "diff_stock_num": item.get("diffStockNum"),
-            "extra_json": {**doc_extra, "payment": item.get("payment")},
-        })
-    return rows
-
 
 # 订单同步的时间维度：upd_time 拉变更，pay_time 补漏
 # （部分订单 modified=None，upd_time 查不到，pay_time 兜底）
