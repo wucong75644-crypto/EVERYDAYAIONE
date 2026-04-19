@@ -317,3 +317,53 @@
   from { opacity: 0; max-height: 0; }
   to { opacity: 1; max-height: 2000px; }
 }
+
+/* ============================================================
+ * 流式状态指示器（Claude 风格，比 thinking-dot 更灵动）
+ * ============================================================ */
+
+/* 文字：柔和呼吸（opacity 平滑过渡，不用 shimmer 渐变） */
+.streaming-text {
+  color: var(--color-text-tertiary);
+  animation: streaming-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes streaming-breathe {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+/* 圆点容器 */
+.streaming-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 2px;
+}
+
+/* 单个圆点：平滑上浮波浪（sinusoidal feel） */
+.streaming-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background-color: var(--color-text-disabled);
+  animation: streaming-wave 1.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.streaming-dot:nth-child(2) { animation-delay: 0.24s; }
+.streaming-dot:nth-child(3) { animation-delay: 0.48s; }
+
+@keyframes streaming-wave {
+  0%, 100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+  60% {
+    opacity: 0.7;
+    transform: translateY(-1px);
+  }
+}
