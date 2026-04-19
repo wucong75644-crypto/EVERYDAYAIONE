@@ -211,9 +211,9 @@ class TestConfigSettings:
         assert defaults["sandbox_max_pages"] == 200
 
     def test_context_tool_keep_turns_default(self):
-        """keep_turns 默认值为 3（多步分析需要更多上下文）"""
+        """keep_turns 默认值为 10（安全网兜底，主力归档靠 token 预算）"""
         from core.config import Settings
-        assert Settings.model_fields["context_tool_keep_turns"].default == 3
+        assert Settings.model_fields["context_tool_keep_turns"].default == 10
 
 
 class TestToolExecutorRegistration:

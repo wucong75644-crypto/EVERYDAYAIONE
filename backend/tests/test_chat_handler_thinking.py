@@ -239,3 +239,115 @@ class TestHandleCompleteThinkingContent:
 
         # 无 thinking_content → extra_generation_params 为 None（未修改）
         assert captured_params["extra_generation_params"] is None
+
+
+class TestHandleCompleteToolDigest:
+    """_handle_complete_common 将 tool_digest 存入 generation_params"""
+
+    @pytest.mark.asyncio
+    async def test_tool_digest_stored_in_gen_params(self):
+        """tool_digest 传入后应写入 extra_generation_params"""
+        handler = _make_handler()
+
+        task_data = {
+            "external_task_id": "task_d1",
+            "placeholder_message_id": "msg_d1",
+            "conversation_id": "conv_d1",
+            "user_id": "user_d1",
+            "model_id": "test-model",
+            "client_task_id": "ctd1",
+            "status": "running",
+            "version": 1,
+            "started_at": None,
+        }
+
+        handler._get_task_context = MagicMock(return_value=task_data)
+        handler._check_idempotency = MagicMock(return_value=None)
+        handler._extract_extra_gen_params = MagicMock(return_value={})
+
+        captured_params = {}
+        from datetime import datetime, timezone
+        from schemas.message import Message
+
+        def fake_upsert(**kwargs):
+            captured_params.update(kwargs)
+            msg = Message(
+                id="msg_d1", conversation_id="conv_d1", role="assistant",
+                content=[{"type": "text", "text": "ok"}],
+                created_at=datetime.now(timezone.utc),
+            )
+            return msg, {"id": "msg_d1", "content": [], "created_at": "2026-01-01T00:00:00+00:00"}
+
+        handler._upsert_assistant_message = fake_upsert
+        handler._complete_task = MagicMock()
+
+        test_digest = {
+            "tools": [{"name": "erp_agent", "hint": "查订单", "ok": True}],
+            "staging_dir": "staging/conv_d1",
+        }
+
+        with patch("services.websocket_manager.ws_manager") as mock_ws:
+            mock_ws.send_to_task_or_user = AsyncMock()
+
+            await handler._handle_complete_common(
+                task_id="task_d1",
+                result=[TextPart(text="ok")],
+                credits_consumed=0,
+                tool_digest=test_digest,
+            )
+
+        assert captured_params["extra_generation_params"]["tool_digest"] == test_digest
+
+    @pytest.mark.asyncio
+    async def test_both_thinking_and_digest(self):
+        """thinking_content + tool_digest 同时传入，两个都应存入"""
+        handler = _make_handler()
+
+        task_data = {
+            "external_task_id": "task_d2",
+            "placeholder_message_id": "msg_d2",
+            "conversation_id": "conv_d2",
+            "user_id": "user_d2",
+            "model_id": "test-model",
+            "client_task_id": "ctd2",
+            "status": "running",
+            "version": 1,
+            "started_at": None,
+        }
+
+        handler._get_task_context = MagicMock(return_value=task_data)
+        handler._check_idempotency = MagicMock(return_value=None)
+        handler._extract_extra_gen_params = MagicMock(return_value={})
+
+        captured_params = {}
+        from datetime import datetime, timezone
+        from schemas.message import Message
+
+        def fake_upsert(**kwargs):
+            captured_params.update(kwargs)
+            msg = Message(
+                id="msg_d2", conversation_id="conv_d2", role="assistant",
+                content=[{"type": "text", "text": "ok"}],
+                created_at=datetime.now(timezone.utc),
+            )
+            return msg, {"id": "msg_d2", "content": [], "created_at": "2026-01-01T00:00:00+00:00"}
+
+        handler._upsert_assistant_message = fake_upsert
+        handler._complete_task = MagicMock()
+
+        test_digest = {"tools": [{"name": "code_execute", "hint": "df.head", "ok": True}], "staging_dir": "staging/conv_d2"}
+
+        with patch("services.websocket_manager.ws_manager") as mock_ws:
+            mock_ws.send_to_task_or_user = AsyncMock()
+
+            await handler._handle_complete_common(
+                task_id="task_d2",
+                result=[TextPart(text="ok")],
+                credits_consumed=0,
+                thinking_content="推理过程",
+                tool_digest=test_digest,
+            )
+
+        gen_params = captured_params["extra_generation_params"]
+        assert gen_params["thinking_content"] == "推理过程"
+        assert gen_params["tool_digest"] == test_digest

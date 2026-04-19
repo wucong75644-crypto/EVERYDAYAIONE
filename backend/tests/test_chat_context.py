@@ -109,19 +109,21 @@ class TestExtractTextFromContent:
 # ============ Test _build_context_messages ============
 
 
-def _make_msg(role, text, status="completed", conversation_id="conv1"):
+def _make_msg(role, text, status="completed", conversation_id="conv1", generation_params=None):
     """构造 messages 表数据行"""
     if isinstance(text, str):
         content = [{"type": "text", "text": text}]
     else:
         content = text
-    return {
+    msg = {
         "role": role,
         "content": content,
         "status": status,
         "conversation_id": conversation_id,
         "created_at": "2026-03-06T10:00:00Z",  # UTC → CN_TZ = 03-06 18:00
+        "generation_params": generation_params,
     }
+    return msg
 
 
 # 历史消息时间戳前缀（mock created_at 固定为 UTC 10:00 → CN 18:00）
@@ -320,7 +322,7 @@ class TestBuildContextMessages:
         await chat_handler._build_context_messages("conv1", "current")
 
         chat_handler.db.table.assert_called_once_with("messages")
-        mock_table.select.assert_called_once_with("role, content, status, created_at")
+        mock_table.select.assert_called_once_with("role, content, status, created_at, generation_params")
         eq_calls = mock_table.eq.call_args_list
         assert ("conversation_id", "conv1") in [c.args for c in eq_calls]
         assert ("status", "completed") in [c.args for c in eq_calls]
@@ -487,6 +489,63 @@ class TestBuildContextMessages:
         assert len(result) == 1
         # url=None 的图片被跳过，只剩文本 → 纯文本格式
         assert result[0] == {"role": "assistant", "content": _ts("正在生成")}
+
+
+# ============ Test tool_digest 注入 ============
+
+
+class TestToolDigestInjection:
+    """_build_context_messages 加载带 tool_digest 的 assistant 消息时注入注解"""
+
+    @pytest.mark.asyncio
+    async def test_digest_injected_into_assistant_text(self, chat_handler, mock_db):
+        """assistant 消息带 tool_digest → 注入 [上轮工具执行记录]"""
+        digest = {
+            "tools": [{"name": "erp_agent", "hint": "查订单", "ok": True, "staged": "tool_result_erp_agent_a1b2.txt"}],
+            "staging_dir": "staging/conv1",
+        }
+        mock_db.set_table_data("messages", [
+            _make_msg("user", "当前问题"),
+            _make_msg("assistant", "回答内容", generation_params={"type": "chat", "tool_digest": digest}),
+            _make_msg("user", "之前的问题"),
+        ])
+
+        result = await chat_handler._build_context_messages("conv1", "当前问题")
+
+        # 找到 assistant 消息
+        assistant_msgs = [m for m in result if m["role"] == "assistant"]
+        assert len(assistant_msgs) == 1
+        content = assistant_msgs[0]["content"]
+        assert "[上轮工具执行记录]" in content
+        assert "erp_agent" in content
+        assert "tool_result_erp_agent_a1b2.txt" in content
+
+    @pytest.mark.asyncio
+    async def test_no_digest_no_injection(self, chat_handler, mock_db):
+        """assistant 消息无 tool_digest → 不注入"""
+        mock_db.set_table_data("messages", [
+            _make_msg("user", "当前问题"),
+            _make_msg("assistant", "回答内容", generation_params={"type": "chat"}),
+            _make_msg("user", "之前的问题"),
+        ])
+
+        result = await chat_handler._build_context_messages("conv1", "当前问题")
+
+        assistant_msgs = [m for m in result if m["role"] == "assistant"]
+        assert len(assistant_msgs) == 1
+        assert "[上轮工具执行记录]" not in assistant_msgs[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_digest_with_null_generation_params(self, chat_handler, mock_db):
+        """generation_params 为 None → 不 crash"""
+        mock_db.set_table_data("messages", [
+            _make_msg("user", "当前问题"),
+            _make_msg("assistant", "回答内容", generation_params=None),
+            _make_msg("user", "之前的问题"),
+        ])
+
+        result = await chat_handler._build_context_messages("conv1", "当前问题")
+        assert len([m for m in result if m["role"] == "assistant"]) == 1
 
 
 # ============ Test _extract_image_urls_from_content ============

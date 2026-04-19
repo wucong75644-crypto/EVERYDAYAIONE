@@ -10,9 +10,15 @@
 - 层6: enforce_budget — Token 预算兜底 + deduplicate_system_prompts
 """
 
+import re
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
+
+# staging 路径正则（与 tool_digest.py 保持一致）
+_STAGING_PATH_RE = re.compile(
+    r'STAGING_DIR\s*\+\s*"/(tool_result_[^"]+\.txt)"'
+)
 
 
 # ============================================================
@@ -181,6 +187,22 @@ def _msg_tokens(msg: Dict[str, Any]) -> int:
     return estimate_tokens([msg])
 
 
+def _build_tc_name_map(messages: List[Dict[str, Any]]) -> Dict[str, str]:
+    """从 messages 中构建 tool_call_id → tool_name 映射。
+
+    层4（compact_stale_tool_results）和层6（enforce_tool_budget）共用。
+    """
+    tc_map: Dict[str, str] = {}
+    for msg in messages:
+        if msg.get("role") == "assistant":
+            for tc in msg.get("tool_calls", []):
+                tc_id = tc.get("id", "")
+                name = tc.get("function", {}).get("name", "")
+                if tc_id and name:
+                    tc_map[tc_id] = name
+    return tc_map
+
+
 def enforce_tool_budget(
     messages: List[Dict[str, Any]],
     max_tokens: int,
@@ -211,7 +233,9 @@ def enforce_tool_budget(
     for turn in turns[-2:]:
         protected.update(turn)
 
-    # 从最旧的开始归档
+    tc_id_to_name = _build_tc_name_map(messages)
+
+    # 从最旧的开始归档（短结果也归档——token 预算已超限，必须压缩）
     compacted = 0
     for turn in turns[:-2]:
         if tool_tokens <= max_tokens:
@@ -223,10 +247,9 @@ def enforce_tool_budget(
                 continue
             old = messages[idx].get("content", "")
             saved = _msg_tokens(messages[idx])
-            messages[idx]["content"] = (
-                f"[已归档] 工具结果已压缩（原始 {len(old)} 字符）"
-            )
-            tool_tokens -= max(0, saved - 15)
+            tool_name = tc_id_to_name.get(messages[idx].get("tool_call_id", ""), "")
+            messages[idx]["content"] = _extract_archive_meta(old, tool_name)
+            tool_tokens -= max(0, saved - _msg_tokens(messages[idx]))
             compacted += 1
 
     if compacted:
@@ -358,11 +381,14 @@ def compact_stale_tool_results(
     messages: List[Dict[str, Any]],
     keep_turns: int = 2,
 ) -> int:
-    """将旧轮次的 tool 结果替换为单行摘要（原地修改）。
+    """将旧轮次的 tool 结果智能归档（原地修改）。
+
+    短结果（≤2000 字符）：不压缩（数字/时间/汇总都是关键信息）。
+    大结果（>2000 字符）：保留元数据（staging 路径、字段名、记录数），压缩数据行。
 
     Args:
         messages: 消息列表
-        keep_turns: 保留最近 N 轮的工具结果原文
+        keep_turns: 保留最近 N 轮的工具结果原文（安全网兜底）
 
     Returns:
         被压缩的 tool 消息条数
@@ -370,6 +396,8 @@ def compact_stale_tool_results(
     turns = _identify_tool_turns(messages)
     if len(turns) <= keep_turns:
         return 0
+
+    tc_id_to_name = _build_tc_name_map(messages)
 
     stale_turns = turns[:-keep_turns]
     compacted = 0
@@ -379,7 +407,15 @@ def compact_stale_tool_results(
             old_content = msg.get("content", "")
             if old_content.startswith("[已归档"):
                 continue  # 已经压缩过
-            msg["content"] = f"[已归档] 工具结果已压缩（原始 {len(old_content)} 字符）"
+
+            # 短结果不压缩：压缩收益低，但可能丢失关键汇总数字/时间范围
+            if len(old_content) <= 2000:
+                continue
+
+            # 大结果：保留元数据，压缩数据行
+            tool_name = tc_id_to_name.get(msg.get("tool_call_id", ""), "")
+            meta = _extract_archive_meta(old_content, tool_name)
+            msg["content"] = meta
             compacted += 1
 
     if compacted:
@@ -388,6 +424,73 @@ def compact_stale_tool_results(
             f"total_turns={len(turns)} | compacted={compacted}"
         )
     return compacted
+
+
+def _extract_archive_meta(content: str, tool_name: str = "") -> str:
+    """从大结果中提取元数据，生成归档文本。
+
+    容错设计：提取失败时降级为"前 200 字符摘要"，不会 crash。
+    """
+
+    # 尝试从 <persisted-output> 提取 staging 信息
+    staged_path = None
+    original_size = len(content)
+    fields_line = ""
+
+    try:
+        # 提取 staging 文件路径
+        path_match = _STAGING_PATH_RE.search(content)
+        if path_match:
+            staged_path = path_match.group(1)
+
+        # 提取原始大小
+        size_match = re.search(r'Output too large \((\d+) chars\)', content)
+        if size_match:
+            original_size = int(size_match.group(1))
+
+        # 从文件名提取工具名（兜底）
+        if not tool_name and staged_path:
+            name_match = re.match(r'tool_result_(.+?)_[a-f0-9]+\.txt', staged_path)
+            if name_match:
+                tool_name = name_match.group(1)
+
+        # 提取字段名（preview 首行通常是列标题）
+        preview_match = re.search(r'Preview.*?:\n(.+)', content)
+        if preview_match:
+            first_line = preview_match.group(1).strip()
+            # 检测是否是列标题行（含 | 分隔符或 tab）
+            if '|' in first_line or '\t' in first_line:
+                cols = [c.strip() for c in re.split(r'[|\t]', first_line) if c.strip()]
+                if cols:
+                    fields_line = f"字段: {', '.join(cols[:8])}"
+
+        # 提取记录数
+        count_match = re.search(r'共\s*(\d[\d,]*)\s*(?:条|行|件|项|笔)', content)
+        if count_match and fields_line:
+            fields_line += f" | 共 {count_match.group(1)} 条记录"
+        elif count_match:
+            fields_line = f"共 {count_match.group(1)} 条记录"
+
+    except Exception as e:
+        logger.debug(f"Archive meta extraction failed | error={e}")
+        # 最终降级：极少触发（>2000字符且无 <persisted-output> 的场景几乎不存在）
+        label = tool_name or "工具"
+        return f"[已归档] {label} 结果（原始 {len(content)} 字符）\n{content[:200]}..."
+
+    # 组装归档文本
+    label = tool_name or "工具"
+    lines = [f"[已归档] {label} 查询结果（原始 {original_size} 字符）"]
+    if staged_path:
+        lines.append(f'数据文件: STAGING_DIR + "/{staged_path}"')
+    if fields_line:
+        lines.append(fields_line)
+
+    # 如果什么元数据都没提取到
+    if not staged_path and not fields_line:
+        # 最终降级：极少触发（>2000字符且无 <persisted-output> 的场景几乎不存在）
+        lines.append(content[:200] + "...")
+
+    return "\n".join(lines)
 
 
 # ============================================================

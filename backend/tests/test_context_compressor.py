@@ -240,8 +240,13 @@ class TestEnforceBudget:
 # ============================================================
 
 
-def _make_tool_loop_messages(num_turns: int) -> list:
-    """构造 N 轮工具循环的 messages 列表"""
+def _make_tool_loop_messages(num_turns: int, content_size: int = 2500) -> list:
+    """构造 N 轮工具循环的 messages 列表
+
+    Args:
+        num_turns: 轮数
+        content_size: 每条 tool result 的字符数（默认 2500，超过 2000 阈值会被归档）
+    """
     messages = [
         {"role": "system", "content": "你是AI助手"},
         {"role": "user", "content": "帮我查一下"},
@@ -255,10 +260,10 @@ def _make_tool_loop_messages(num_turns: int) -> list:
                  "function": {"name": f"tool_{t}", "arguments": "{}"}},
             ],
         })
-        # tool result
+        # tool result（默认 >2000 字符，触发归档）
         messages.append({
             "role": "tool", "tool_call_id": f"tc{t}_0",
-            "content": f"工具{t}的查询结果，包含大量数据 " + "x" * 500,
+            "content": f"工具{t}的查询结果，包含大量数据 " + "x" * content_size,
         })
     return messages
 
@@ -313,18 +318,24 @@ class TestCompactStaleToolResults:
         msgs = _make_tool_loop_messages(2)
         compacted = compact_stale_tool_results(msgs, keep_turns=2)
         assert compacted == 0
-        # 所有 tool 消息保持原文
+
+    def test_short_results_not_compressed(self):
+        """≤2000 字符的短结果不被压缩（即使超过 keep_turns）"""
+        msgs = _make_tool_loop_messages(5, content_size=500)  # 每条 ~520 字符
+        compacted = compact_stale_tool_results(msgs, keep_turns=2)
+        assert compacted == 0
         for m in msgs:
             if m.get("role") == "tool":
                 assert not m["content"].startswith("[已归档")
 
     def test_compacts_old_turns(self):
-        msgs = _make_tool_loop_messages(5)
+        """大结果（>2000 字符）超过 keep_turns 时被归档"""
+        msgs = _make_tool_loop_messages(5, content_size=2500)
         compacted = compact_stale_tool_results(msgs, keep_turns=2)
         assert compacted == 3  # turn 0,1,2 的 tool 被压缩
 
         tool_msgs = [m for m in msgs if m.get("role") == "tool"]
-        # 前 3 条被归档
+        # 前 3 条被归档（保留元数据）
         for m in tool_msgs[:3]:
             assert m["content"].startswith("[已归档")
         # 后 2 条保持原文
@@ -333,16 +344,87 @@ class TestCompactStaleToolResults:
 
     def test_idempotent(self):
         """多次调用不会重复压缩"""
-        msgs = _make_tool_loop_messages(4)
+        msgs = _make_tool_loop_messages(4, content_size=2500)
         c1 = compact_stale_tool_results(msgs, keep_turns=2)
         c2 = compact_stale_tool_results(msgs, keep_turns=2)
         assert c1 == 2
         assert c2 == 0  # 第二次无新压缩
 
     def test_keep_turns_1(self):
-        msgs = _make_tool_loop_messages(3)
+        msgs = _make_tool_loop_messages(3, content_size=2500)
         compacted = compact_stale_tool_results(msgs, keep_turns=1)
         assert compacted == 2
+
+
+class TestBuildTcNameMap:
+    """_build_tc_name_map 公共函数"""
+
+    def test_extracts_tool_names(self):
+        from services.handlers.context_compressor import _build_tc_name_map
+        msgs = [
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "tc1", "type": "function", "function": {"name": "erp_agent", "arguments": "{}"}},
+                {"id": "tc2", "type": "function", "function": {"name": "code_execute", "arguments": "{}"}},
+            ]},
+            {"role": "tool", "tool_call_id": "tc1", "content": "result1"},
+            {"role": "tool", "tool_call_id": "tc2", "content": "result2"},
+        ]
+        tc_map = _build_tc_name_map(msgs)
+        assert tc_map["tc1"] == "erp_agent"
+        assert tc_map["tc2"] == "code_execute"
+
+    def test_empty_messages(self):
+        from services.handlers.context_compressor import _build_tc_name_map
+        assert _build_tc_name_map([]) == {}
+
+    def test_no_tool_calls(self):
+        from services.handlers.context_compressor import _build_tc_name_map
+        msgs = [{"role": "assistant", "content": "just text"}]
+        assert _build_tc_name_map(msgs) == {}
+
+
+class TestEnforceToolBudgetSmartArchive:
+    """enforce_tool_budget 使用 _extract_archive_meta 归档"""
+
+    def test_archived_content_has_metadata(self):
+        """归档后的内容应包含 [已归档] + 工具名，而不是旧的一刀切格式"""
+        # 构造 3 轮工具调用，超预算迫使归档
+        staged_content = (
+            '<persisted-output>\n'
+            'Output too large (50000 chars). '
+            'Full output saved to: STAGING_DIR + "/tool_result_erp_agent_abc123.txt"\n\n'
+            'Preview (first 2000 chars):\n'
+            '商品编码 | 可售库存 | 仓库\n'
+            'A001    | 450     | 上海\n'
+            + 'B002    | 320     | 北京\n' * 100  # 填充到 >2000 字符
+            + '...共 500 条记录\n'
+            '</persisted-output>'
+        )
+        msgs = [
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "tc1", "type": "function", "function": {"name": "erp_agent", "arguments": "{}"}},
+            ]},
+            {"role": "tool", "tool_call_id": "tc1", "content": staged_content},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "tc2", "type": "function", "function": {"name": "erp_agent", "arguments": "{}"}},
+            ]},
+            {"role": "tool", "tool_call_id": "tc2", "content": staged_content},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "tc3", "type": "function", "function": {"name": "erp_agent", "arguments": "{}"}},
+            ]},
+            {"role": "tool", "tool_call_id": "tc3", "content": "最新短结果"},
+        ]
+
+        # 设置极低预算，强制归档前两轮
+        enforce_tool_budget(msgs, max_tokens=100)
+
+        # 第一轮应被归档，且包含元数据
+        archived = msgs[1]["content"]
+        assert archived.startswith("[已归档]")
+        assert "erp_agent" in archived
+        assert "tool_result_erp_agent_abc123.txt" in archived
+        # 不应是旧格式
+        assert "工具结果已压缩" not in archived
 
 
 # ============================================================

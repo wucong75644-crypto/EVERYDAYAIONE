@@ -221,6 +221,7 @@ class MessageMixin:
         result: List[ContentPart],
         credits_consumed: int,
         thinking_content: Optional[str] = None,
+        tool_digest: Optional[dict] = None,
     ) -> Message:
         """通用完成处理：积分扣除 + 消息 upsert + WS 推送 + 任务状态更新"""
         task = self._get_task_context(task_id)
@@ -244,6 +245,10 @@ class MessageMixin:
         if thinking_content:
             extra_gen_params = extra_gen_params or {}
             extra_gen_params["thinking_content"] = thinking_content
+        # 工具执行摘要持久化（跨轮上下文补全）
+        if tool_digest:
+            extra_gen_params = extra_gen_params or {}
+            extra_gen_params["tool_digest"] = tool_digest
 
         message, msg_data = self._upsert_assistant_message(
             message_id=message_id,
