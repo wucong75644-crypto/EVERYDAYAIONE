@@ -459,7 +459,7 @@ export default memo(function MessageItem({
           isErrorMessage={isErrorMessage}
           isRegenerating={isRegenerating}
           isGenerating={isActuallyGenerating}
-          visible={showToolbar}
+          visible={showToolbar && !isStreaming && !isRegenerating}
           markdownContent={!isUser ? textContent : undefined}
           onRegenerate={onRegenerate}
           onDeleteClick={onDelete ? openDeleteModal : undefined}
