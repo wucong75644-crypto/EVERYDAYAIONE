@@ -1,13 +1,15 @@
 /**
- * 统一的加载占位符组件
+ * 统一的加载占位符组件（Claude 风格）
  *
- * 显示文字 + 三个跳动圆点（如"AI 正在思考"）
+ * - 有文字时：文字 + 三个脉冲小圆点
+ * - 无文字时：仅三个脉冲小圆点
+ * - 无卡片框，直接内联显示
  */
 
-import styles from '../menus/shared.module.css';
+import './markdown.css';
 
 interface LoadingPlaceholderProps {
-  /** 占位符文字 */
+  /** 占位符文字（如 "正在查询订单..."），不传则只显示圆点 */
   text?: string;
   /** 自定义样式类名 */
   className?: string;
@@ -18,22 +20,15 @@ export default function LoadingPlaceholder({
   className = ''
 }: LoadingPlaceholderProps) {
   return (
-    <div className={`flex items-center space-x-2 text-text-tertiary ${className}`}>
-      <span className="text-sm">{text}</span>
-      <div className="flex space-x-1">
-        <span
-          className={`w-2 h-2 bg-text-disabled rounded-full animate-bounce ${styles['bounce-dot-1']}`}
-          aria-hidden="true"
-        />
-        <span
-          className={`w-2 h-2 bg-text-disabled rounded-full animate-bounce ${styles['bounce-dot-2']}`}
-          aria-hidden="true"
-        />
-        <span
-          className={`w-2 h-2 bg-text-disabled rounded-full animate-bounce ${styles['bounce-dot-3']}`}
-          aria-hidden="true"
-        />
-      </div>
+    <div className={`flex items-center gap-1.5 py-1 ${className}`}>
+      {text && (
+        <span className="text-sm thinking-sparkle">{text}</span>
+      )}
+      <span className="thinking-dots" aria-hidden="true">
+        <span className="thinking-dot" />
+        <span className="thinking-dot" />
+        <span className="thinking-dot" />
+      </span>
     </div>
   );
 }

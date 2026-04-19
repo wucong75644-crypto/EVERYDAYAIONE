@@ -22,7 +22,7 @@ import MarkdownRenderer from './MarkdownRenderer';
 import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
 import SuggestionChips from './SuggestionChips';
-import { PLACEHOLDER_TEXT, RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../../constants/placeholder';
+import { RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../../constants/placeholder';
 import type { RenderInstruction } from '../../../types/render';
 import type { AspectRatio, VideoAspectRatio } from '../../../constants/models';
 
@@ -363,11 +363,12 @@ export default memo(function MessageItem({
 
           {/* 消息文本 */}
           <div className={isUser ? 'text-[15px] leading-relaxed whitespace-pre-wrap' : ''}>
-            {/* 加载状态：重新生成或流式输出开始但内容为空，带气泡框 */}
-            {((isRegenerating || isStreaming) && !textContent) ? (
-              <div className="rounded-2xl px-4 py-3 bg-surface-card border border-border-default">
-                <LoadingPlaceholder text={agentStepHint || PLACEHOLDER_TEXT.CHAT_THINKING} />
-              </div>
+            {/* 加载状态：流式输出开始但内容为空
+                - 有 streamingThinking 时 → ThinkingBlock 已在上方显示，不再重复
+                - 有 agentStepHint 时 → 显示工具步骤提示（"正在查询订单..."）
+                - 都没有时 → 仅显示脉冲圆点（Claude 风格，无卡片无文字） */}
+            {((isRegenerating || isStreaming) && !textContent && !streamingThinking) ? (
+              <LoadingPlaceholder text={agentStepHint || 'AI 正在思考'} />
             ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !isErrorMessage && !isStreaming && !isRegenerating) ? (
               /* 已完成但无内容（用户取消等场景） */
               <span className="text-text-disabled text-sm italic">已取消，点击「重新生成」重试</span>
@@ -388,12 +389,10 @@ export default memo(function MessageItem({
               <>
                 {message.content.map((part, idx) => {
                   if (part.type === 'text' && (part as { text: string }).text) {
-                    const isLastBlock = idx === message.content.length - 1;
                     return (
                       <MarkdownRenderer
                         key={idx}
                         content={(part as { text: string }).text}
-                        isStreaming={isLastBlock && (isStreaming || isRegenerating)}
                       />
                     );
                   }
@@ -415,10 +414,19 @@ export default memo(function MessageItem({
               /* AI 消息（单块模式）：Markdown 渲染 */
               <MarkdownRenderer
                 content={textContent}
-                isStreaming={isStreaming || isRegenerating}
               />
             )}
           </div>
+
+          {/* 流式状态指示器：整个流式期间始终显示在底部
+              - 有 agentStepHint → 显示工具步骤（"正在执行代码"等）
+              - 正在输出文字 → 显示"AI 正在输出"
+              - 等待首 token → 由上方 LoadingPlaceholder 处理，这里不重复 */}
+          {!isUser && (isStreaming || isRegenerating) && textContent && (
+            <div className="mt-1.5">
+              <LoadingPlaceholder text={agentStepHint || 'AI 正在输出'} />
+            </div>
+          )}
         </div>
 
         {/* AI 消息：文字在上，图片/文件在下 */}
