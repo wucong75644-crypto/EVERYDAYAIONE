@@ -137,18 +137,24 @@ const markdownComponents: Components = {
     return <td {...rest}>{children}</td>;
   },
 
-  // 链接：文件 URL 走 downloadFile()，其他新窗口打开
+  // 链接：workspace/CDN 文件链接走 downloadFile()，其他新窗口打开
   a({ children, node: _node, href, ...rest }) {
-    const isFileUrl = href && /\.(xlsx|xls|csv|pdf|zip|txt|parquet|json)(\?|$)/i.test(href);
+    // 匹配文件后缀 或 workspace/CDN 路径（中文编码后后缀可能丢失）
+    const isFileUrl = href && (
+      /\.(xlsx|xls|csv|pdf|zip|txt|parquet|json)(\?|$)/i.test(href) ||
+      /\/workspace\//.test(href)
+    );
     if (isFileUrl) {
-      const filename = href.split('/').pop()?.split('?')[0] || 'download';
+      // 从 URL 提取文件名，处理中文编码
+      const rawName = href.split('/').pop()?.split('?')[0] || 'download';
+      const filename = decodeURIComponent(rawName);
       return (
         <a
           {...rest}
           href={href}
           onClick={(e) => {
             e.preventDefault();
-            downloadFile(href, decodeURIComponent(filename));
+            downloadFile(href, filename);
           }}
           className="text-accent hover:underline cursor-pointer"
         >
