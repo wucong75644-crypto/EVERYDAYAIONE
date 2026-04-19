@@ -198,4 +198,5 @@ def format_knowledge_node(row: Dict[str, Any]) -> Dict[str, Any]:
         "hit_count": row.get("hit_count", 0),
         "source": row.get("source", "auto"),
         "metadata": row.get("metadata", {}),
+        "similarity": row.get("similarity", 0.0),
     }
