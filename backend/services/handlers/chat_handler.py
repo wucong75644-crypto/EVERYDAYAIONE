@@ -714,11 +714,22 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             # 标记 LLM 阶段成功，持久化在 try 外执行
             # budget 超限已走 on_error 的不再走 on_complete
             _llm_succeeded = not _budget_error_sent
+
+            # 构建工具执行摘要（_content_blocks 非空 = 有工具调用）
+            _tool_digest = None
+            if _content_blocks:
+                from services.handlers.tool_digest import build_tool_digest
+                try:
+                    _tool_digest = build_tool_digest(messages, conversation_id)
+                except Exception as _digest_err:
+                    logger.warning(f"Tool digest build failed | error={_digest_err}")
+
             _completion_args = {
                 "task_id": task_id,
                 "result": result_parts,
                 "credits_consumed": credits_consumed,
                 "thinking_content": accumulated_thinking or None,
+                "tool_digest": _tool_digest,
             }
 
         except Exception as e:
@@ -858,11 +869,13 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         result: List[ContentPart],
         credits_consumed: int = 0,
         thinking_content: Optional[str] = None,
+        tool_digest: Optional[dict] = None,
     ) -> Message:
         """完成回调（调用基类通用流程）"""
         return await self._handle_complete_common(
             task_id, result, credits_consumed,
             thinking_content=thinking_content,
+            tool_digest=tool_digest,
         )
 
     async def on_error(
@@ -897,9 +910,9 @@ async def _delayed_cleanup_staging(
     conversation_id: str,
     user_id: str = "",
     org_id: str | None = None,
-    delay: int = 300,
+    delay: int = 900,
 ) -> None:
-    """会话级 staging 延迟清理（5 分钟后删除）
+    """会话级 staging 延迟清理（15 分钟后删除，覆盖 ~85% 的用户追问间隔）
 
     设计文档：docs/document/TECH_工具结果分流架构.md §6
     """

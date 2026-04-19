@@ -124,7 +124,7 @@ class Settings(BaseSettings):
     context_summary_update_interval: int = 5  # 每N条新消息更新摘要
 
     # 工具循环上下文压缩配置（层4+层5）
-    context_tool_keep_turns: int = 3  # 层4: 保留最近 N 轮工具结果原文，更早的归档
+    context_tool_keep_turns: int = 10  # 层4: 安全网兜底，主力归档靠 enforce_tool_budget 的 token 预算
     context_loop_summary_trigger: float = 0.8  # 层5: token 占比超此值时触发循环内摘要
 
     # 智能路由配置

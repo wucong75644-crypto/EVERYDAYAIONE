@@ -354,8 +354,8 @@ class ERPAgent:
             request_ctx=self.request_ctx,
         )
 
-    async def _cleanup_staging_delayed(self, delay: int = 300) -> None:
-        """会话级 staging 延迟清理。"""
+    async def _cleanup_staging_delayed(self, delay: int = 900) -> None:
+        """会话级 staging 延迟清理（15 分钟，覆盖 ~85% 的用户追问间隔）。"""
         import shutil
         from pathlib import Path
         from core.config import get_settings

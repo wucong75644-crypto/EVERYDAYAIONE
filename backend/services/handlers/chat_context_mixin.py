@@ -390,7 +390,9 @@ class ChatContextMixin:
                 batch_count += 1
                 result = (
                     self.db.table("messages")
-                    .select("role, content, status, created_at")
+                    # NOTE: 加载 generation_params 用于提取 tool_digest（跨轮上下文补全）
+                    # 当 thinking_content 启用后，若数据量增大需优化为 JSONB 投影
+                    .select("role, content, status, created_at, generation_params")
                     .eq("conversation_id", conversation_id)
                     .eq("status", "completed")
                     .in_("role", ["user", "assistant"])
@@ -451,6 +453,20 @@ class ChatContextMixin:
                     else:
                         context.append({"role": row["role"], "content": f"{ts_prefix}{text}"})
                     total_tokens += msg_tokens
+
+                    # 注入工具执行摘要（让 LLM 知道上轮做了什么、数据在哪）
+                    if row["role"] == "assistant" and context:
+                        gen_params = row.get("generation_params") or {}
+                        digest = gen_params.get("tool_digest") if isinstance(gen_params, dict) else None
+                        if digest:
+                            from services.handlers.tool_digest import format_tool_digest
+                            annotation = format_tool_digest(digest)
+                            if annotation:
+                                last_msg = context[-1]
+                                if isinstance(last_msg["content"], str):
+                                    last_msg["content"] += annotation
+                                elif isinstance(last_msg["content"], list):
+                                    last_msg["content"].append({"type": "text", "text": annotation})
 
                 if budget_exhausted:
                     break  # 跳出外层 while
