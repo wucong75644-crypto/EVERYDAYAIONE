@@ -58,7 +58,7 @@ async def sync_purchase(
         items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "purchase")
         extra = _pick(
-            detail, "shortId", "totalAmount", "actualTotalAmount",
+            doc, "shortId", "totalAmount", "actualTotalAmount",
             "financeStatus", "arrivedQuantity", "receiveQuantity",
             "totalFee", "amendAmount",
         )
@@ -78,10 +78,10 @@ async def sync_purchase(
                 "quantity_received": item.get("arrivedQuantity"),
                 "price": item.get("price"),
                 "amount": item.get("amount") or item.get("totalFee"),
-                "supplier_name": item.get("supplierName") or detail.get("supplierName"),
-                "warehouse_name": detail.get("warehouseName"),
-                "creator_name": detail.get("createrName"),
-                "delivery_date": _safe_ts(item.get("deliveryDate") or detail.get("deliveryDate")),
+                "supplier_name": doc.get("supplierName"),
+                "warehouse_name": doc.get("receiveWarehouseName"),
+                "creator_name": doc.get("createrName"),
+                "delivery_date": _safe_ts(item.get("deliveryDate")),
                 "remark": doc.get("remark"),
                 "extra_json": extra,
             })
@@ -116,7 +116,7 @@ async def sync_receipt(
         items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "receipt")
         extra = _pick(
-            detail, "shelvedQuantity", "getGoodNum", "getBadNum",
+            doc, "shelvedQuantity", "getGoodNum", "getBadNum",
             "totalDetailFee", "busyTypeDesc",
         )
         for item in items:
@@ -134,10 +134,10 @@ async def sync_receipt(
                 "quantity": item.get("count"),
                 "price": item.get("price"),
                 "amount": item.get("amount"),
-                "supplier_name": detail.get("supplierName"),
-                "warehouse_name": detail.get("warehouseName"),
-                "creator_name": detail.get("createrName"),
-                "purchase_order_code": detail.get("purchaseOrderCode"),
+                "supplier_name": item.get("supplierName") or doc.get("supplierName"),
+                "warehouse_name": doc.get("warehouseName"),
+                "creator_name": doc.get("createrName"),
+                "purchase_order_code": doc.get("purchaseOrderCode"),
                 "extra_json": extra,
             })
 
@@ -183,7 +183,7 @@ async def sync_shelf(
                 "sku_outer_id": item.get("outerId"),      # outerId=SKU编码
                 "item_name": item.get("title"),
                 "quantity": item.get("count"),
-                "warehouse_name": detail.get("warehouseName"),
+                "warehouse_name": doc.get("warehouseName"),
             })
 
     count = await svc.upsert_document_items(all_rows)
@@ -216,11 +216,11 @@ async def sync_purchase_return(
         items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "purchase_return")
         extra = _pick(
-            detail, "shortId", "totalAmount", "financeStatus",
+            doc, "shortId", "totalAmount", "financeStatus",
             "statusName", "tagName",
         )
         # 采退单 purchaseOrderId 是数字 ID，转为字符串存储
-        po_id = detail.get("purchaseOrderId")
+        po_id = doc.get("purchaseOrderId")
         po_code = str(po_id) if po_id is not None else None
         for item in items:
             all_rows.append({
@@ -238,9 +238,9 @@ async def sync_purchase_return(
                 "actual_return_qty": item.get("actualReturnNum"),
                 "price": item.get("price"),
                 "amount": item.get("amount"),
-                "supplier_name": detail.get("supplierName"),
-                "warehouse_name": detail.get("warehouseName"),
-                "creator_name": detail.get("createrName"),
+                "supplier_name": item.get("supplierName") or doc.get("supplierName"),
+                "warehouse_name": doc.get("warehouseName"),
+                "creator_name": doc.get("createrName"),
                 "purchase_order_code": po_code,
                 "extra_json": extra,
             })

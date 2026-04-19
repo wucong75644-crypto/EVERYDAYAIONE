@@ -27,7 +27,7 @@ def _build_purchase(doc: dict, detail: dict) -> list[dict[str, Any]]:
     items = detail.get("list") or []
     items = ErpSyncService.sort_and_assign_index(items, "purchase")
     extra = _pick(
-        detail, "shortId", "totalAmount", "actualTotalAmount",
+        doc, "shortId", "totalAmount", "actualTotalAmount",
         "financeStatus", "arrivedQuantity", "receiveQuantity",
         "totalFee", "amendAmount",
     )
@@ -48,10 +48,10 @@ def _build_purchase(doc: dict, detail: dict) -> list[dict[str, Any]]:
             "quantity_received": item.get("arrivedQuantity"),
             "price": item.get("price"),
             "amount": item.get("amount") or item.get("totalFee"),
-            "supplier_name": item.get("supplierName") or detail.get("supplierName"),
-            "warehouse_name": detail.get("warehouseName"),
-            "creator_name": detail.get("createrName"),
-            "delivery_date": _safe_ts(item.get("deliveryDate") or detail.get("deliveryDate")),
+            "supplier_name": doc.get("supplierName"),
+            "warehouse_name": doc.get("receiveWarehouseName"),
+            "creator_name": doc.get("createrName"),
+            "delivery_date": _safe_ts(item.get("deliveryDate")),
             "remark": doc.get("remark"),
             "extra_json": extra,
         })
@@ -62,7 +62,7 @@ def _build_receipt(doc: dict, detail: dict) -> list[dict[str, Any]]:
     items = detail.get("list") or []
     items = ErpSyncService.sort_and_assign_index(items, "receipt")
     extra = _pick(
-        detail, "shelvedQuantity", "getGoodNum", "getBadNum",
+        doc, "shelvedQuantity", "getGoodNum", "getBadNum",
         "totalDetailFee", "busyTypeDesc",
     )
     rows = []
@@ -81,10 +81,10 @@ def _build_receipt(doc: dict, detail: dict) -> list[dict[str, Any]]:
             "quantity": item.get("count"),
             "price": item.get("price"),
             "amount": item.get("amount"),
-            "supplier_name": detail.get("supplierName"),
-            "warehouse_name": detail.get("warehouseName"),
-            "creator_name": detail.get("createrName"),
-            "purchase_order_code": detail.get("purchaseOrderCode"),
+            "supplier_name": item.get("supplierName") or doc.get("supplierName"),
+            "warehouse_name": doc.get("warehouseName"),
+            "creator_name": doc.get("createrName"),
+            "purchase_order_code": doc.get("purchaseOrderCode"),
             "extra_json": extra,
         })
     return rows
@@ -107,7 +107,7 @@ def _build_shelf(doc: dict, detail: dict) -> list[dict[str, Any]]:
             "sku_outer_id": item.get("outerId"),
             "item_name": item.get("title"),
             "quantity": item.get("count"),
-            "warehouse_name": detail.get("warehouseName"),
+            "warehouse_name": doc.get("warehouseName"),
         })
     return rows
 
@@ -116,10 +116,10 @@ def _build_purchase_return(doc: dict, detail: dict) -> list[dict[str, Any]]:
     items = detail.get("list") or []
     items = ErpSyncService.sort_and_assign_index(items, "purchase_return")
     extra = _pick(
-        detail, "shortId", "totalAmount", "financeStatus",
+        doc, "shortId", "totalAmount", "financeStatus",
         "statusName", "tagName",
     )
-    po_id = detail.get("purchaseOrderId")
+    po_id = doc.get("purchaseOrderId")
     po_code = str(po_id) if po_id is not None else None
     rows = []
     for item in items:
@@ -138,9 +138,9 @@ def _build_purchase_return(doc: dict, detail: dict) -> list[dict[str, Any]]:
             "actual_return_qty": item.get("actualReturnNum"),
             "price": item.get("price"),
             "amount": item.get("amount"),
-            "supplier_name": detail.get("supplierName"),
-            "warehouse_name": detail.get("warehouseName"),
-            "creator_name": detail.get("createrName"),
+            "supplier_name": item.get("supplierName") or doc.get("supplierName"),
+            "warehouse_name": doc.get("warehouseName"),
+            "creator_name": doc.get("createrName"),
             "purchase_order_code": po_code,
             "extra_json": extra,
         })
