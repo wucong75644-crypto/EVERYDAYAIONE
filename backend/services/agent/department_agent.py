@@ -523,7 +523,8 @@ class DepartmentAgent(ABC):
                 result.summary += f"\n\n重试建议：{hint}"
                 logger.info(f"L3 失败诊断: doc_type={doc_type}, {hint}")
 
-        # detail 模式：数据存 staging，LLM 只看 profile 摘要
+        # detail 模式：数据统一存 staging，LLM 只看 profile 摘要
+        # 不走 _build_output（其 INLINE_THRESHOLD 会让小数据走 TABLE），直接写 staging
         # summary/export 模式不变（summary 数据小、export 已有 staging）
         if (
             mode == "detail"
@@ -533,12 +534,17 @@ class DepartmentAgent(ABC):
         ):
             from services.kuaimai.erp_unified_schema import build_column_metas
             columns = result.columns or build_column_metas(list(result.data[0].keys()))
-            result = self._build_output(
-                rows=result.data,
-                summary=result.summary,
+            file_ref, profile_text = self._write_to_staging(
+                result.data, columns, self._staging_dir,
+            )
+            result = ToolOutput(
+                summary=profile_text,
+                format=OutputFormat.FILE_REF,
+                source=self.domain,
+                status=result.status,
                 columns=columns,
-                staging_dir=self._staging_dir,
-                **result.metadata,
+                file_ref=file_ref,
+                metadata=result.metadata,
             )
         return result
 
