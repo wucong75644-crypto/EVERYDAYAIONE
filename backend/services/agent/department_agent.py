@@ -413,6 +413,11 @@ class DepartmentAgent(ABC):
             filters.append({
                 "field": "outer_id", "op": "eq", "value": product_code,
             })
+        # 刷单筛选 → is_scalping eq 1
+        if params.get("is_scalping"):
+            filters.append({
+                "field": "is_scalping", "op": "eq", "value": 1,
+            })
         return filters
 
     # ── L3 空结果诊断 ──

@@ -322,12 +322,12 @@ class TestPlanBuilderSemanticParams:
         assert "order_no" in prompt
 
     def test_prompt_distinguishes_query_vs_include(self):
-        """prompt 明确区分 '查刷单' vs '不排除刷单'"""
+        """prompt 明确区分 '查刷单'(is_scalping) vs '不排除刷单'(include_invalid)"""
         from services.agent.plan_builder import build_plan_prompt
         prompt = build_plan_prompt("test", "2026-04-18")
-        # 应包含区分指令
-        assert "filters" in prompt
-        assert "不是 include_invalid" in prompt
+        # 应包含 is_scalping 参数定义（查刷单用）
+        assert "is_scalping" in prompt
+        assert "include_invalid" in prompt
 
 
 # ══════════════════════════════════════════════════════════

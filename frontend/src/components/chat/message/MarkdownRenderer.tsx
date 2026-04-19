@@ -19,6 +19,7 @@ import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import CodeBlock from './CodeBlock';
 import { escapeChineseMath } from '../../../utils/markdownPreprocess';
+import { downloadFile } from '../../../utils/downloadFile';
 import './markdown.css';
 
 // highlight.js 暗色主题（按需加载，仅注册常用语言）
@@ -136,10 +137,27 @@ const markdownComponents: Components = {
     return <td {...rest}>{children}</td>;
   },
 
-  // 链接：新窗口打开
-  a({ children, node: _node, ...rest }) {
+  // 链接：文件 URL 走 downloadFile()，其他新窗口打开
+  a({ children, node: _node, href, ...rest }) {
+    const isFileUrl = href && /\.(xlsx|xls|csv|pdf|zip|txt|parquet|json)(\?|$)/i.test(href);
+    if (isFileUrl) {
+      const filename = href.split('/').pop()?.split('?')[0] || 'download';
+      return (
+        <a
+          {...rest}
+          href={href}
+          onClick={(e) => {
+            e.preventDefault();
+            downloadFile(href, decodeURIComponent(filename));
+          }}
+          className="text-accent hover:underline cursor-pointer"
+        >
+          {children}
+        </a>
+      );
+    }
     return (
-      <a {...rest} target="_blank" rel="noopener noreferrer">
+      <a {...rest} href={href} target="_blank" rel="noopener noreferrer">
         {children}
       </a>
     );
