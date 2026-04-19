@@ -142,7 +142,7 @@ class ToolOutput:
         if self.file_ref:
             tag_lines.append("storage: file")
             tag_lines.append(f"rows: {self.file_ref.row_count}")
-            tag_lines.append(f"path: {self.file_ref.path}")
+            tag_lines.append(f"path: STAGING_DIR + '/{self.file_ref.filename}'")
             tag_lines.append(f"format: {self.file_ref.format}")
             tag_lines.append(f"size_kb: {self.file_ref.size_bytes // 1024}")
         elif self.data is not None:

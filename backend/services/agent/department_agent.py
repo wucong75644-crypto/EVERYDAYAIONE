@@ -58,10 +58,12 @@ class DepartmentAgent(ABC):
         db: Any,
         org_id: str | None = None,
         request_ctx: Any = None,
+        staging_dir: str | None = None,
     ):
         self.db = db
         self.org_id = org_id
         self.request_ctx = request_ctx
+        self._staging_dir = staging_dir
 
     # ── 抽象属性 ──
 
@@ -204,7 +206,8 @@ class DepartmentAgent(ABC):
             )
             return ToolOutput(format=OutputFormat.TABLE, data=rows, **base)
 
-        file_ref = self._write_to_staging(rows, columns, staging_dir)
+        file_ref, profile_text = self._write_to_staging(rows, columns, staging_dir)
+        base["summary"] = profile_text  # 用 profile 摘要替代原始文本
         return ToolOutput(format=OutputFormat.FILE_REF, file_ref=file_ref, **base)
 
     def _write_to_staging(
@@ -212,11 +215,16 @@ class DepartmentAgent(ABC):
         rows: list[dict],
         columns: list[ColumnMeta],
         staging_dir: str,
-    ) -> FileRef:
-        """将数据写入 staging parquet 文件。"""
+    ) -> tuple[FileRef, str]:
+        """将数据写入 staging parquet 并生成 profile 摘要。
+
+        Returns:
+            (file_ref, profile_text) — profile 用作 ToolOutput.summary
+        """
         import json as _json
 
-        ts = int(_time.time())
+        start = _time.time()
+        ts = int(start)
         filename = f"{self.domain}_{ts}.parquet"
         staging_path = Path(staging_dir)
         staging_path.mkdir(parents=True, exist_ok=True)
@@ -236,24 +244,30 @@ class DepartmentAgent(ABC):
                 _json.dumps(rows, ensure_ascii=False, default=str),
             )
             size_bytes = file_path.stat().st_size
+            df = pd.DataFrame(rows)
 
-        # 前3行预览
-        preview_rows = rows[:3]
-        preview = "\n".join(
-            _json.dumps(r, ensure_ascii=False, default=str)
-            for r in preview_rows
+        elapsed = _time.time() - start
+
+        # 生成标准数据摘要（7 板块）
+        from services.agent.data_profile import build_data_profile
+        profile_text = build_data_profile(
+            df=df,
+            filename=filename,
+            file_size_kb=size_bytes / 1024,
+            elapsed=elapsed,
         )
 
-        return FileRef(
+        file_ref = FileRef(
             path=str(file_path),
             filename=filename,
             format="parquet" if filename.endswith(".parquet") else "json",
             row_count=len(rows),
             size_bytes=size_bytes,
             columns=columns,
-            preview=preview,
+            preview=profile_text,
             created_at=_time.time(),
         )
+        return file_ref, profile_text
 
     # ── Context 注入（确定性提取，不靠 LLM）──
 
@@ -481,10 +495,11 @@ class DepartmentAgent(ABC):
             )
         from services.kuaimai.erp_unified_query import UnifiedQueryEngine
         engine = UnifiedQueryEngine(db=self.db, org_id=self.org_id)
+        mode = kwargs.get("mode", "summary")
         filters = kwargs.get("filters", [])
         result = await engine.execute(
             doc_type=doc_type,
-            mode=kwargs.get("mode", "summary"),
+            mode=mode,
             filters=filters,
             group_by=kwargs.get("group_by"),
             sort_by=kwargs.get("sort_by"),
@@ -507,6 +522,24 @@ class DepartmentAgent(ABC):
             if hint:
                 result.summary += f"\n\n重试建议：{hint}"
                 logger.info(f"L3 失败诊断: doc_type={doc_type}, {hint}")
+
+        # detail 模式：数据存 staging，LLM 只看 profile 摘要
+        # summary/export 模式不变（summary 数据小、export 已有 staging）
+        if (
+            mode == "detail"
+            and result.data
+            and result.status == OutputStatus.OK
+            and self._staging_dir
+        ):
+            from services.kuaimai.erp_unified_schema import build_column_metas
+            columns = result.columns or build_column_metas(list(result.data[0].keys()))
+            result = self._build_output(
+                rows=result.data,
+                summary=result.summary,
+                columns=columns,
+                staging_dir=self._staging_dir,
+                **result.metadata,
+            )
         return result
 
     # ── 写操作检测 ──
