@@ -99,7 +99,7 @@ VALID_DOC_TYPES = frozenset({
 _VALID_MODES = VALID_MODES
 _VALID_DOC_TYPES = VALID_DOC_TYPES
 _TIME_RANGE_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}\s*~\s*\d{4}-\d{2}-\d{2}$",
+    r"^\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?\s*~\s*\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?$",
 )
 
 
@@ -193,7 +193,7 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         "参数定义：\n"
         "- doc_type: order/purchase/purchase_return/aftersale/receipt/shelf（必填）\n"
         "- mode: summary（统计汇总）/ detail（明细列表）（必填）\n"
-        "- time_range: 标准化为 YYYY-MM-DD ~ YYYY-MM-DD（必填，根据当前时间推算）\n"
+        "- time_range: 标准化为 YYYY-MM-DD ~ YYYY-MM-DD 或 YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM（必填，根据当前时间推算；用户指定了具体时间点时带上 HH:MM）\n"
         "- time_col: pay_time（付款时间）/ consign_time（发货时间）/ doc_created_at（创建时间，默认）\n"
         "- platform: taobao/pdd/douyin/jd/kuaishou/xhs/1688（可选）\n"
         "- group_by: shop/platform/product/supplier/warehouse/status（可选，仅 summary 模式）\n"
