@@ -715,9 +715,10 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             # budget 超限已走 on_error 的不再走 on_complete
             _llm_succeeded = not _budget_error_sent
 
-            # 构建工具执行摘要（_content_blocks 非空 = 有工具调用）
+            # 构建工具执行摘要（turns > 1 = 至少执行过一轮工具调用）
+            # 不能用 _content_blocks：LLM 可能调工具时不输出文字（遵守"禁止输出思考过程"规则）
             _tool_digest = None
-            if _content_blocks:
+            if _budget.turns_used > 1:
                 from services.handlers.tool_digest import build_tool_digest
                 try:
                     _tool_digest = build_tool_digest(messages, conversation_id)
