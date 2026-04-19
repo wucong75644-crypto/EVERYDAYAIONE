@@ -101,36 +101,40 @@ _VALID_DOC_TYPES = VALID_DOC_TYPES
 _TIME_RANGE_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?\s*~\s*\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?$",
 )
+# _sanitize_params 中已做特殊校验/变换的参数，透传逻辑跳过这些 key
+_COMPLEX_KEYS = frozenset({"mode", "doc_type", "time_range", "group_by", "fields"})
 
 
 def _sanitize_params(params: dict) -> dict:
-    """宽容校验参数：非法值用默认值替代，不阻断。"""
+    """宽容校验参数：复杂类型严格校验，简单类型（str/bool）透传。
+
+    设计原则：只对需要变换/枚举校验的参数做特殊处理，
+    其余 LLM 提取的参数直接透传给下游（下游 _params_to_filters /
+    execute() 自行决定是否使用，未知参数被 **_kwargs 吸收）。
+    新增简单参数只需改 build_extract_prompt，不用改这里。
+    """
     if not isinstance(params, dict):
         return {}
     clean: dict = {}
+
+    # ── 需要校验/变换的复杂参数 ──
     mode = params.get("mode", "summary")
     clean["mode"] = mode if mode in _VALID_MODES else "summary"
+
     doc_type = params.get("doc_type")
     if doc_type and doc_type in _VALID_DOC_TYPES:
         clean["doc_type"] = doc_type
+
     tr = params.get("time_range")
     if tr and isinstance(tr, str) and _TIME_RANGE_RE.match(tr.strip()):
         clean["time_range"] = tr.strip()
-    if params.get("time_col"):
-        clean["time_col"] = params["time_col"]
-    if params.get("platform"):
-        clean["platform"] = params["platform"]
-    # group_by: 标量字符串转列表（Bug 修复——execute() 期望 list[str]）
+
+    # group_by: 标量字符串转列表（execute() 期望 list[str]）
     if params.get("group_by"):
         gb = params["group_by"]
         clean["group_by"] = [gb] if isinstance(gb, str) else gb
-    if params.get("product_code"):
-        clean["product_code"] = params["product_code"]
-    if params.get("order_no"):
-        clean["order_no"] = params["order_no"]
-    if isinstance(params.get("include_invalid"), bool):
-        clean["include_invalid"] = params["include_invalid"]
-    # fields: 动态字段选择（用户提到特定信息时 LLM 提取）
+
+    # fields: 需要白名单校验
     if params.get("fields"):
         from services.kuaimai.erp_unified_schema import (
             COLUMN_WHITELIST, EXPORT_COLUMN_NAMES,
@@ -142,6 +146,21 @@ def _sanitize_params(params: dict) -> dict:
         clean["fields"] = [f for f in fields if f in valid]
         if not clean["fields"]:
             del clean["fields"]
+
+    # ── 简单参数透传（str/bool，下游按需读取） ──
+    # 空字符串/空列表跳过，防止产生无效过滤条件
+    for key, value in params.items():
+        if key in _COMPLEX_KEYS or key in clean:
+            continue
+        if isinstance(value, bool):
+            clean[key] = value
+        elif isinstance(value, (int, float)):
+            clean[key] = value
+        elif isinstance(value, str) and value:
+            clean[key] = value
+        elif isinstance(value, list) and value and all(isinstance(v, str) for v in value):
+            clean[key] = value
+
     return clean
 
 
@@ -164,7 +183,9 @@ def _build_fallback_params(
         today = datetime.now().strftime("%Y-%m-%d")
     params["time_range"] = f"{today} ~ {today}"
     params["time_col"] = _DOMAIN_TIME_COL.get(domain, "doc_created_at")
-    if any(kw in query for kw in ("明细", "列表", "详情", "导出", "Excel")):
+    if any(kw in query for kw in ("导出", "Excel", "表格文件")):
+        params["mode"] = "export"
+    elif any(kw in query for kw in ("明细", "列表", "详情")):
         params["mode"] = "detail"
     params["_degraded"] = True
     return params
@@ -192,7 +213,7 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         "2. 如果查询涉及多个域，选最主要的那个\n\n"
         "参数定义：\n"
         "- doc_type: order/purchase/purchase_return/aftersale/receipt/shelf（必填）\n"
-        "- mode: summary（统计汇总）/ detail（明细列表）（必填）\n"
+        "- mode: summary（统计汇总）/ detail（明细列表）/ export（导出表格/文件）（必填）\n"
         "- time_range: 标准化为 YYYY-MM-DD ~ YYYY-MM-DD 或 YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM（必填，根据当前时间推算；用户指定了具体时间点时带上 HH:MM）\n"
         "- time_col: pay_time（付款时间）/ consign_time（发货时间）/ doc_created_at（创建时间，默认）\n"
         "- platform: taobao/pdd/douyin/jd/kuaishou/xhs/1688（可选）\n"
@@ -222,7 +243,10 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         '"time_range":"2026-04-01 ~ 2026-04-17","fields":["remark","doc_code","supplier_name"]}}\n\n'
         "示例5（刷单统计）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"summary",'
-        '"time_range":"2026-04-01 ~ 2026-04-17","is_scalping":true,"include_invalid":true}}'
+        '"time_range":"2026-04-01 ~ 2026-04-17","is_scalping":true,"include_invalid":true}}\n\n'
+        "示例6（导出刷单订单表格）：\n"
+        '{"domain": "trade", "params": {"doc_type":"order","mode":"export",'
+        '"time_range":"2026-04-17 ~ 2026-04-17","is_scalping":true,"include_invalid":true}}'
     )
 
 

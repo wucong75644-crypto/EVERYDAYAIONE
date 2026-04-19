@@ -160,9 +160,15 @@ class TestBuildFallbackParams:
 
     def test_detail_keywords_override_mode(self):
         from services.agent.plan_builder import _build_fallback_params
-        for kw in ("明细", "列表", "导出"):
+        for kw in ("明细", "列表", "详情"):
             params = _build_fallback_params(f"查订单{kw}")
             assert params["mode"] == "detail", f"'{kw}' should trigger detail"
+
+    def test_export_keywords_override_mode(self):
+        from services.agent.plan_builder import _build_fallback_params
+        for kw in ("导出", "Excel", "表格文件"):
+            params = _build_fallback_params(f"查订单{kw}")
+            assert params["mode"] == "export", f"'{kw}' should trigger export"
 
     def test_domain_time_col_mapping(self):
         from services.agent.plan_builder import _build_fallback_params
@@ -189,6 +195,18 @@ class TestBuildExtractPrompt:
         assert "purchase" in prompt
         assert "trade" in prompt
         assert "aftersale" in prompt
+
+    def test_mode_includes_export(self):
+        """mode 定义必须包含 export 选项（刷单导出 Bug 修复）。"""
+        prompt = build_extract_prompt("x")
+        assert "export" in prompt
+        assert "导出表格" in prompt
+
+    def test_has_export_example(self):
+        """prompt 必须包含 export 模式的 few-shot 示例。"""
+        prompt = build_extract_prompt("x")
+        assert '"mode":"export"' in prompt
+        assert "is_scalping" in prompt
 
     def test_no_compute_domain(self):
         """简化后不包含 compute 域"""
