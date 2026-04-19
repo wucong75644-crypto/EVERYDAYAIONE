@@ -277,7 +277,7 @@
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: thinking-shimmer 2.4s ease-in-out infinite;
+  animation: thinking-shimmer 1.5s ease-in-out infinite;
 }
 
 @keyframes thinking-shimmer {
