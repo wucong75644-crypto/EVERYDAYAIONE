@@ -204,11 +204,18 @@ class SandboxExecutor:
             f"result_len={len(result)} | result={result[:200]}"
         )
 
-        # 5. 先截断正文，再追加文件标记（文件标记不参与截断）
+        # 5. 隐藏真实路径——防止 LLM 将本地路径写成 file:// 链接
+        # 只改文本，不影响文件 IO / auto-upload / [FILE] 标签
+        if result and self._output_dir:
+            result = result.replace(self._output_dir, "下载")
+        if result and self._workspace_dir:
+            result = result.replace(self._workspace_dir, "工作区")
+
+        # 6. 先截断正文，再追加文件标记（文件标记不参与截断）
         # 对齐 Claude Code：文本输出和文件引用是分离的，文件不会被文本截断影响
         result = truncate_result(result, self._max_result_chars)
 
-        # 6. 自动检测生成的文件并上传（追加在截断后的文本末尾）
+        # 7. 自动检测生成的文件并上传（追加在截断后的文本末尾）
         file_results = await self._auto_upload_new_files()
         if file_results:
             result = (result or "") + "\n" + "\n".join(file_results)
