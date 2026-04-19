@@ -159,12 +159,13 @@ class ERPAgent:
             )
 
         # ── Step 6+7: 结果处理 + 后处理 ──
-        return self._build_result(result, query, domain, degraded)
+        return self._build_result(result, query, domain, degraded, params)
 
     # ── 结果处理 ──
 
     def _build_result(
         self, result: Any, query: str, domain: str, degraded: bool,
+        params: dict | None = None,
     ) -> ERPAgentResult:
         """Step 6+7: 文件注册 + 降级标记 + 经验记录 → ERPAgentResult。"""
         from services.agent.tool_output import OutputStatus
@@ -189,16 +190,17 @@ class ERPAgent:
         if degraded:
             summary = "⚠ 简化查询模式（关键词匹配，非AI分析）\n\n" + summary
 
-        # 经验记录
+        # 经验记录（detail 含关键参数，供动态案例召回使用）
         if result.status == OutputStatus.ERROR:
             asyncio.create_task(self._experience.record(
                 "failure", query, [domain],
                 f"单域失败：{summary[:200]}",
             ))
         else:
+            detail = self._build_experience_detail(domain, params)
             asyncio.create_task(self._experience.record(
                 "routing", query, [domain],
-                "单域查询", confidence=0.6,
+                detail, confidence=0.6,
             ))
 
         status = "error" if result.status == OutputStatus.ERROR else "success"
@@ -207,6 +209,84 @@ class ERPAgent:
             status=status, tokens_used=self._tokens_used,
             tools_called=[domain], collected_files=collected_files,
         )
+
+    @staticmethod
+    def _build_experience_detail(
+        domain: str, params: dict | None,
+    ) -> str:
+        """构建经验记录的 detail 字段（含关键参数，供动态案例召回）。"""
+        if not params:
+            return f"domain={domain}"
+        parts = [f"domain={domain}"]
+        mode = params.get("mode", "summary")
+        parts.append(f"mode={mode}")
+        if params.get("group_by"):
+            parts.append(f"group_by={params['group_by']}")
+        if params.get("platform"):
+            parts.append(f"platform={params['platform']}")
+        if params.get("fields"):
+            parts.append(f"fields={params['fields']}")
+        if params.get("product_code"):
+            parts.append(f"product_code={params['product_code']}")
+        return ", ".join(parts)
+
+    # ── 工具描述自动生成（静态层）──
+
+    @staticmethod
+    def build_tool_description() -> str:
+        """从 capability manifest 格式化为 5 段式描述文本。
+
+        纯模板渲染，不含任何硬编码内容。
+        改内容 → 改 get_capability_manifest()；改格式 → 改此方法。
+        设计文档: docs/document/TECH_Agent能力通信架构.md §3.3.2
+        """
+        from services.agent.plan_builder import get_capability_manifest
+        m = get_capability_manifest()
+
+        # ① 功能定义
+        lines = [m["summary"]]
+
+        # ② 决策边界
+        lines.append("\n使用场景：" + "；".join(m["use_when"]))
+        dont = " / ".join(
+            f"{d['场景']}→{d['替代']}" for d in m["dont_use_when"]
+        )
+        lines.append(f"不要用于：{dont}")
+
+        # ③ 能力清单
+        lines.append("\n能力：")
+        lines.append(
+            f"- 输出模式：{' / '.join(m['modes'])}（>200行自动导出文件）",
+        )
+        lines.append(f"- 分组统计：按{'/'.join(m['group_by'])}统计")
+        lines.append(
+            f"- 过滤：自动识别{'、'.join(m['platforms'])}、商品编码、订单号",
+        )
+        lines.append(
+            f"- 时间列：{' / '.join(m['time_cols'])}（默认 doc_created_at）",
+        )
+        lines.append("- 异常数据：默认排除刷单，query 中写'包含刷单'则包含")
+
+        # ③+ 可查询信息分类
+        categories = m.get("field_categories", {})
+        if categories:
+            lines.append(f"- 可查询信息：{'/'.join(categories.keys())}")
+            lines.append(
+                "  （query 中提到具体信息如'备注''地址''快递单号'"
+                "会自动返回对应字段）",
+            )
+
+        # ④ 返回说明
+        lines.append("\n返回：")
+        for r in m["returns"]:
+            lines.append(f"- {r}")
+
+        # ⑤ few-shot 示例
+        lines.append("\nquery 示例：")
+        for ex in m["examples"]:
+            lines.append(f"· \"{ex['query']}\" → {ex['effect']}")
+
+        return "\n".join(lines)
 
     # ── 参数提取（三级降级链）──
 

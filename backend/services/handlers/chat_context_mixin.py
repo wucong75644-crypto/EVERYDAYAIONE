@@ -191,13 +191,22 @@ class ChatContextMixin:
         if isinstance(knowledge_result, BaseException):
             logger.debug(f"Knowledge fetch failed | error={knowledge_result}")
 
-        # 知识库经验注入 — Phase 6 反向门控：排除明确不需要的，其他都注入
-        # 设计文档：docs/document/TECH_上下文工程重构.md §九
+        # 知识库经验注入 — 通用知识 + 历史案例分离注入
+        # 设计文档：docs/document/TECH_Agent能力通信架构.md §3.4.2
         if knowledge_items and not self._should_skip_knowledge(text_content):
-            knowledge_text = "\n".join(
-                f"- {k['title']}: {k['content']}" for k in knowledge_items
-            )
-            messages.insert(0, {"role": "system", "content": f"你已掌握的经验知识：\n{knowledge_text}"})
+            general = [k for k in knowledge_items if k.get("_source") != "experience"]
+            exp = [k for k in knowledge_items if k.get("_source") == "experience"]
+
+            if general:
+                knowledge_text = "\n".join(
+                    f"- {k['title']}: {k['content']}" for k in general
+                )
+                messages.insert(0, {"role": "system", "content": f"你已掌握的经验知识：\n{knowledge_text}"})
+
+            if exp:
+                exp_text = "\n".join(f"- {e['content']}" for e in exp)
+                messages.insert(0, {"role": "system", "content":
+                    f"以下是类似查询的历史成功案例，参考其查询方式：\n{exp_text}"})
 
         # 记忆注入（失败不影响主流程）
         if memory_prompt:
@@ -304,14 +313,36 @@ class ChatContextMixin:
             return None
 
     async def _fetch_knowledge(self, query: str) -> Optional[list]:
-        """获取知识库经验（系统积累的工具使用经验）"""
+        """获取知识库经验 + 历史成功案例（两路并行召回）。
+
+        通用知识和经验案例混合返回，经验结果加 _source="experience" tag，
+        注入时按 tag 分离为独立 system message。
+        设计文档: docs/document/TECH_Agent能力通信架构.md §3.4.2 / Phase 3
+        """
         if not query:
             return None
         try:
             from services.knowledge_service import search_relevant
-            return await search_relevant(query=query, limit=3, org_id=self.org_id)
-        except Exception as e:
-            logger.debug(f"Knowledge fetch skipped | error={e}")
+            general, experience = await asyncio.gather(
+                search_relevant(query=query, limit=3, org_id=self.org_id),
+                search_relevant(
+                    query=query,
+                    limit=2,
+                    category="experience",
+                    node_type="routing_pattern",
+                    min_confidence=0.6,
+                    org_id=self.org_id,
+                ),
+                return_exceptions=True,
+            )
+            g = general if not isinstance(general, BaseException) else []
+            e = experience if not isinstance(experience, BaseException) else []
+            for item in (e or []):
+                item["_source"] = "experience"
+            result = (g or []) + (e or [])
+            return result if result else None
+        except Exception as ex:
+            logger.debug(f"Knowledge fetch skipped | error={ex}")
             return None
 
     async def _extract_memories_async(

@@ -89,11 +89,15 @@ def quick_classify(query: str) -> str | None:
     return sorted_scores[0][0]
 
 
-_VALID_MODES = frozenset({"summary", "detail", "export"})
-_VALID_DOC_TYPES = frozenset({
+# 公开常量（供 get_capability_manifest / 外部引用）
+VALID_MODES = frozenset({"summary", "detail", "export"})
+VALID_DOC_TYPES = frozenset({
     "order", "purchase", "purchase_return", "aftersale",
     "receipt", "shelf",
 })
+# 向后兼容旧名
+_VALID_MODES = VALID_MODES
+_VALID_DOC_TYPES = VALID_DOC_TYPES
 _TIME_RANGE_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}\s*~\s*\d{4}-\d{2}-\d{2}$",
 )
@@ -116,14 +120,28 @@ def _sanitize_params(params: dict) -> dict:
         clean["time_col"] = params["time_col"]
     if params.get("platform"):
         clean["platform"] = params["platform"]
+    # group_by: 标量字符串转列表（Bug 修复——execute() 期望 list[str]）
     if params.get("group_by"):
-        clean["group_by"] = params["group_by"]
+        gb = params["group_by"]
+        clean["group_by"] = [gb] if isinstance(gb, str) else gb
     if params.get("product_code"):
         clean["product_code"] = params["product_code"]
     if params.get("order_no"):
         clean["order_no"] = params["order_no"]
     if isinstance(params.get("include_invalid"), bool):
         clean["include_invalid"] = params["include_invalid"]
+    # fields: 动态字段选择（用户提到特定信息时 LLM 提取）
+    if params.get("fields"):
+        from services.kuaimai.erp_unified_schema import (
+            COLUMN_WHITELIST, EXPORT_COLUMN_NAMES,
+        )
+        fields = params["fields"]
+        if isinstance(fields, str):
+            fields = [fields]
+        valid = set(COLUMN_WHITELIST.keys()) | EXPORT_COLUMN_NAMES
+        clean["fields"] = [f for f in fields if f in valid]
+        if not clean["fields"]:
+            del clean["fields"]
     return clean
 
 
@@ -176,13 +194,18 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         "- doc_type: order/purchase/purchase_return/aftersale/receipt/shelf（必填）\n"
         "- mode: summary（统计汇总）/ detail（明细列表）（必填）\n"
         "- time_range: 标准化为 YYYY-MM-DD ~ YYYY-MM-DD（必填，根据当前时间推算）\n"
-        "- time_col: pay_time（付款时间）/ doc_created_at（创建时间，默认）\n"
+        "- time_col: pay_time（付款时间）/ consign_time（发货时间）/ doc_created_at（创建时间，默认）\n"
         "- platform: taobao/pdd/douyin/jd/kuaishou/xhs/1688（可选）\n"
-        "- group_by: shop/platform（可选，仅 summary 模式）\n"
+        "- group_by: shop/platform/product/supplier/warehouse/status（可选，仅 summary 模式）\n"
         "- product_code: 商品编码（如用户提到了具体编码则提取）\n"
         "- order_no: 订单号（如用户提到了则提取）\n"
         "- include_invalid: 布尔值，默认 false。仅当用户明确要求'包含全部'或'不排除刷单'时设为 true。\n"
-        "  注意：用户问'刷单有多少'不是 include_invalid，而是用 filters 过滤刷单类型。\n\n"
+        "  注意：用户问'刷单有多少'不是 include_invalid，而是用 filters 过滤刷单类型。\n"
+        "- fields: 需要返回的特定字段列表（可选，用户明确提到特定信息时提取）\n"
+        "  可选字段：remark(备注)/buyer_message(买家留言)/express_no(快递单号)/"
+        "express_company(快递公司)/buyer_nick(买家昵称)/receiver_name(收件人)/"
+        "receiver_address(地址)/cost(成本)/gross_profit(毛利)/text_reason(退货原因)\n"
+        "  注意：不提则用默认字段，不要主动添加用户未提到的字段\n\n"
         "返回纯 JSON（不要 markdown 围栏）。\n\n"
         "示例1（今日付款订单统计）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"summary",'
@@ -190,7 +213,13 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         "示例2（昨天淘宝订单统计）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"summary",'
         '"time_range":"2026-04-16 ~ 2026-04-16","time_col":"pay_time",'
-        '"platform":"taobao"}}'
+        '"platform":"taobao"}}\n\n'
+        "示例3（退货按商品分组统计）：\n"
+        '{"domain": "aftersale", "params": {"doc_type":"aftersale","mode":"summary",'
+        '"time_range":"2026-04-01 ~ 2026-04-17","group_by":"product"}}\n\n'
+        "示例4（采购单含备注）：\n"
+        '{"domain": "purchase", "params": {"doc_type":"purchase","mode":"detail",'
+        '"time_range":"2026-04-01 ~ 2026-04-17","fields":["remark","doc_code","supplier_name"]}}'
     )
 
 
@@ -223,6 +252,77 @@ def parse_extract_response(raw_json: str) -> tuple[str, dict]:
         params = {}
 
     return (domain, params)
+
+
+# ── 能力清单导出（供 build_tool_description 消费） ──
+
+
+def get_capability_manifest() -> dict:
+    """导出 erp_agent 完整能力清单（唯一 Source of Truth）。
+
+    所有内容结构化，build_tool_description() 纯格式化消费。
+    设计文档: docs/document/TECH_Agent能力通信架构.md §3.3.1
+    """
+    from services.kuaimai.erp_unified_schema import (
+        GROUP_BY_MAP, VALID_TIME_COLS, PLATFORM_NORMALIZE,
+        EXPORT_COLUMNS,
+    )
+    group_by_dims = sorted({v for v in GROUP_BY_MAP.values()})
+    platform_names = sorted({
+        k for k in PLATFORM_NORMALIZE if not k.isascii()
+    })
+    field_categories = {
+        category: [cn_name for _, cn_name in fields]
+        for category, fields in EXPORT_COLUMNS.items()
+    }
+
+    return {
+        "domains": sorted(VALID_DOMAINS),
+        "modes": sorted(VALID_MODES),
+        "doc_types": sorted(VALID_DOC_TYPES),
+        "group_by": group_by_dims,
+        "filters": ["platform", "product_code", "order_no", "include_invalid"],
+        "time_cols": sorted(VALID_TIME_COLS),
+        "platforms": platform_names,
+        "field_categories": field_categories,
+        "summary": (
+            "ERP 数据查询专员，查询订单/库存/采购/售后等数据，"
+            "口语化表达和错别字自动识别"
+        ),
+        "use_when": [
+            "用户问任何涉及订单/库存/采购/售后/发货/物流/商品/销量的问题",
+            "含操作性词汇（对账/核对/处理/优先处理/多少钱/价格）需要先查数据",
+            ("口语/错别字也要识别：'丁单'=订单，'酷存'=库存，"
+             "'够不够卖'=库存查询，'到了没'=采购到货，"
+             "'退了'=售后，'爆单'=销量统计，'查一下呗'=数据查询"),
+        ],
+        "dont_use_when": [
+            {"场景": "写操作（创建/修改/取消）", "替代": "erp_execute"},
+            {"场景": "非 ERP 数据（天气/新闻）", "替代": "web_search"},
+            {"场景": "业务规则/操作流程", "替代": "search_knowledge"},
+        ],
+        "returns": [
+            "summary 模式：统计数字（总量/金额/分组明细）",
+            "detail 模式：数据表格，>200行自动生成文件链接",
+            "每次只查一个业务域，跨域数据并行调用多次",
+            "query 中提到具体信息（如'备注''地址''快递单号'）会自动返回对应字段",
+        ],
+        "examples": [
+            {"query": "昨天淘宝退货按店铺统计",
+             "effect": "summary + platform=taobao + group_by=shop"},
+            {"query": "本周订单明细列表", "effect": "detail 模式"},
+            {"query": "编码 HZ001 的库存", "effect": "product_code 过滤"},
+            {"query": "上月采购到货按供应商统计",
+             "effect": "summary + group_by=supplier"},
+            {"query": "包含刷单的订单有多少",
+             "effect": "include_invalid=true"},
+        ],
+        "auto_behaviors": [
+            ">200行自动导出 staging 文件",
+            "返回格式自动适配（文本/表格/文件链接）",
+            "降级链：AI提取 → 关键词匹配 → abort",
+        ],
+    }
 
 
 # ── L2 product_code / order_no 补全（DB 验证） ──

@@ -1077,3 +1077,147 @@ class TestShouldSkipKnowledge:
     def test_summary_request_not_skipped(self):
         """'帮我写个总结'不跳过（可能是 ERP 数据总结）"""
         assert self._skip("帮我写个总结") is False
+
+
+# ============ Test _fetch_knowledge 两路并行召回 ============
+
+
+class TestFetchKnowledgeParallel:
+    """验证 _fetch_knowledge 两路并行召回 + _source tag。"""
+
+    def _make_mixin(self):
+        from services.handlers.chat_context_mixin import ChatContextMixin
+        mixin = ChatContextMixin()
+        mixin.org_id = "test_org"
+        return mixin
+
+    @pytest.mark.asyncio
+    async def test_both_results_merged(self):
+        """general + experience 结果合并返回"""
+        general_items = [{"title": "知识1", "content": "内容1"}]
+        exp_items = [{"title": "经验1", "content": "查询：xx\n路径：trade"}]
+
+        async def mock_search(**kwargs):
+            if kwargs.get("category") == "experience":
+                return exp_items
+            return general_items
+
+        mixin = self._make_mixin()
+        with patch("services.knowledge_service.search_relevant", side_effect=mock_search):
+            result = await mixin._fetch_knowledge("各平台退货率")
+
+        assert result is not None
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_experience_has_source_tag(self):
+        """experience 结果有 _source='experience' tag"""
+        exp_items = [{"title": "经验1", "content": "内容"}]
+
+        async def mock_search(**kwargs):
+            if kwargs.get("category") == "experience":
+                return exp_items
+            return []
+
+        mixin = self._make_mixin()
+        with patch("services.knowledge_service.search_relevant", side_effect=mock_search):
+            result = await mixin._fetch_knowledge("测试查询")
+
+        tagged = [r for r in result if r.get("_source") == "experience"]
+        assert len(tagged) == 1
+
+    @pytest.mark.asyncio
+    async def test_general_no_source_tag(self):
+        """general 结果没有 _source tag"""
+        general_items = [{"title": "知识1", "content": "内容"}]
+
+        async def mock_search(**kwargs):
+            if kwargs.get("category") == "experience":
+                return []
+            return general_items
+
+        mixin = self._make_mixin()
+        with patch("services.knowledge_service.search_relevant", side_effect=mock_search):
+            result = await mixin._fetch_knowledge("测试查询")
+
+        untagged = [r for r in result if r.get("_source") != "experience"]
+        assert len(untagged) == 1
+
+    @pytest.mark.asyncio
+    async def test_experience_failure_isolated(self):
+        """experience 召回失败不影响 general"""
+        general_items = [{"title": "知识1", "content": "内容"}]
+
+        call_count = 0
+
+        async def mock_search(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if kwargs.get("category") == "experience":
+                raise ConnectionError("DB down")
+            return general_items
+
+        mixin = self._make_mixin()
+        with patch("services.knowledge_service.search_relevant", side_effect=mock_search):
+            result = await mixin._fetch_knowledge("测试查询")
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0]["title"] == "知识1"
+
+    @pytest.mark.asyncio
+    async def test_general_failure_isolated(self):
+        """general 召回失败不影响 experience"""
+        exp_items = [{"title": "经验1", "content": "内容"}]
+
+        async def mock_search(**kwargs):
+            if kwargs.get("category") == "experience":
+                return exp_items
+            raise ConnectionError("DB down")
+
+        mixin = self._make_mixin()
+        with patch("services.knowledge_service.search_relevant", side_effect=mock_search):
+            result = await mixin._fetch_knowledge("测试查询")
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].get("_source") == "experience"
+
+    @pytest.mark.asyncio
+    async def test_both_empty_returns_none(self):
+        """两路都空返回 None"""
+        async def mock_search(**kwargs):
+            return []
+
+        mixin = self._make_mixin()
+        with patch("services.knowledge_service.search_relevant", side_effect=mock_search):
+            result = await mixin._fetch_knowledge("测试查询")
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_empty_query_returns_none(self):
+        """空 query 直接返回 None"""
+        mixin = self._make_mixin()
+        result = await mixin._fetch_knowledge("")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_experience_search_params(self):
+        """验证 experience 召回的搜索参数正确"""
+        calls = []
+
+        async def mock_search(**kwargs):
+            calls.append(kwargs)
+            return []
+
+        mixin = self._make_mixin()
+        with patch("services.knowledge_service.search_relevant", side_effect=mock_search):
+            await mixin._fetch_knowledge("各平台退货率")
+
+        assert len(calls) == 2
+        exp_call = [c for c in calls if c.get("category") == "experience"][0]
+        assert exp_call["node_type"] == "routing_pattern"
+        assert exp_call["min_confidence"] == 0.6
+        assert exp_call["org_id"] == "test_org"
+        assert exp_call["limit"] == 2
