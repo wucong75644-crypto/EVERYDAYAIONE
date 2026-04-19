@@ -74,7 +74,7 @@ class TestSanitizeParamsPassthrough:
         assert result["product_code"] == "ABC123"
         assert result["order_no"] == "999888777666"
         assert result["include_invalid"] is True
-        assert result["mode"] == "detail"
+        assert result["mode"] == "export"  # detail→export mapping
 
     def test_existing_fields_still_work(self):
         result = _sanitize_params({

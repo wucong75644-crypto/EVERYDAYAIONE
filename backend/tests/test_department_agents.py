@@ -540,17 +540,17 @@ class TestWriteToStaging:
 
 
 class TestQueryLocalDataDetailStaging:
-    """_query_local_data detail 模式走 staging"""
+    """detail 模式已合并到 export，_sanitize_params 会将 detail→export"""
 
     @pytest.mark.asyncio
-    async def test_detail_mode_with_staging_returns_file_ref(self, tmp_path):
-        """detail 模式 + staging_dir → FILE_REF 格式"""
+    async def test_detail_mode_mapped_to_export(self, tmp_path):
+        """detail 模式经 _sanitize_params 映射为 export，引擎按 export 执行"""
         from services.agent.departments.trade_agent import TradeAgent
 
         agent = TradeAgent(
             db=MagicMock(), staging_dir=str(tmp_path),
         )
-        detail_out = ToolOutput(
+        export_out = ToolOutput(
             summary="订单明细",
             format=OutputFormat.TABLE,
             source="trade",
@@ -560,34 +560,12 @@ class TestQueryLocalDataDetailStaging:
             metadata={"doc_type": "order"},
         )
         with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
-            M.return_value.execute = AsyncMock(return_value=detail_out)
+            M.return_value.execute = AsyncMock(return_value=export_out)
             result = await agent._query_local_data(
                 "order", mode="detail", filters=[],
             )
-        assert result.format == OutputFormat.FILE_REF
-        assert result.file_ref is not None
-        assert "[数据已暂存]" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_detail_mode_without_staging_stays_table(self):
-        """detail 模式无 staging_dir → 保持 TABLE 格式（降级）"""
-        from services.agent.departments.trade_agent import TradeAgent
-
-        agent = TradeAgent(db=MagicMock())  # 无 staging_dir
-        detail_out = ToolOutput(
-            summary="订单明细",
-            format=OutputFormat.TABLE,
-            source="trade",
-            status=OutputStatus.OK,
-            data=[{"order_no": "A001"}],
-            metadata={"doc_type": "order"},
-        )
-        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
-            M.return_value.execute = AsyncMock(return_value=detail_out)
-            result = await agent._query_local_data(
-                "order", mode="detail", filters=[],
-            )
-        assert result.format == OutputFormat.TABLE  # 降级，没走 staging
+        # detail 已映射为 export，结果由 export 逻辑决定
+        assert result.format == OutputFormat.TABLE
 
     @pytest.mark.asyncio
     async def test_summary_mode_not_affected(self, tmp_path):

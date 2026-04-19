@@ -90,7 +90,7 @@ def quick_classify(query: str) -> str | None:
 
 
 # 公开常量（供 get_capability_manifest / 外部引用）
-VALID_MODES = frozenset({"summary", "detail", "export"})
+VALID_MODES = frozenset({"summary", "export"})
 VALID_DOC_TYPES = frozenset({
     "order", "purchase", "purchase_return", "aftersale",
     "receipt", "shelf",
@@ -119,6 +119,8 @@ def _sanitize_params(params: dict) -> dict:
 
     # ── 需要校验/变换的复杂参数 ──
     mode = params.get("mode", "summary")
+    if mode == "detail":
+        mode = "export"  # detail 已合并到 export（staging + profile 统一处理）
     clean["mode"] = mode if mode in _VALID_MODES else "summary"
 
     doc_type = params.get("doc_type")
@@ -183,10 +185,8 @@ def _build_fallback_params(
         today = datetime.now().strftime("%Y-%m-%d")
     params["time_range"] = f"{today} ~ {today}"
     params["time_col"] = _DOMAIN_TIME_COL.get(domain, "doc_created_at")
-    if any(kw in query for kw in ("导出", "Excel", "表格文件")):
+    if any(kw in query for kw in ("导出", "Excel", "表格文件", "明细", "列表", "详情")):
         params["mode"] = "export"
-    elif any(kw in query for kw in ("明细", "列表", "详情")):
-        params["mode"] = "detail"
     params["_degraded"] = True
     return params
 
@@ -213,7 +213,7 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         "2. 如果查询涉及多个域，选最主要的那个\n\n"
         "参数定义：\n"
         "- doc_type: order/purchase/purchase_return/aftersale/receipt/shelf（必填）\n"
-        "- mode: summary（统计汇总）/ detail（查看少量明细）/ export（导出表格/文件，用户说'导出''Excel''生成报表'时必须用 export）（必填）\n"
+        "- mode: summary（统计汇总/多少/占比）/ export（获取数据/明细/导出/列表）（必填）\n"
         "- time_range: 标准化为 YYYY-MM-DD ~ YYYY-MM-DD 或 YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM（必填，根据当前时间推算；用户指定了具体时间点时带上 HH:MM）\n"
         "- time_col: pay_time（付款时间）/ consign_time（发货时间）/ doc_created_at（创建时间，默认）\n"
         "- platform: taobao/pdd/douyin/jd/kuaishou/xhs/1688（可选）\n"
@@ -239,7 +239,7 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         '{"domain": "aftersale", "params": {"doc_type":"aftersale","mode":"summary",'
         '"time_range":"2026-04-01 ~ 2026-04-17","group_by":"product"}}\n\n'
         "示例4（采购单含备注）：\n"
-        '{"domain": "purchase", "params": {"doc_type":"purchase","mode":"detail",'
+        '{"domain": "purchase", "params": {"doc_type":"purchase","mode":"export",'
         '"time_range":"2026-04-01 ~ 2026-04-17","fields":["remark","doc_code","supplier_name"]}}\n\n'
         "示例5（刷单统计）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"summary",'

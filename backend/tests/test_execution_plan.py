@@ -162,7 +162,7 @@ class TestBuildFallbackParams:
         from services.agent.plan_builder import _build_fallback_params
         for kw in ("明细", "列表", "详情"):
             params = _build_fallback_params(f"查订单{kw}")
-            assert params["mode"] == "detail", f"'{kw}' should trigger detail"
+            assert params["mode"] == "export", f"'{kw}' should trigger export"
 
     def test_export_keywords_override_mode(self):
         from services.agent.plan_builder import _build_fallback_params
@@ -200,7 +200,7 @@ class TestBuildExtractPrompt:
         """mode 定义必须包含 export 选项（刷单导出 Bug 修复）。"""
         prompt = build_extract_prompt("x")
         assert "export" in prompt
-        assert "导出表格" in prompt
+        assert "获取数据" in prompt
 
     def test_has_export_example(self):
         """prompt 必须包含 export 模式的 few-shot 示例。"""
