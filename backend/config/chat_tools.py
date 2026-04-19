@@ -153,8 +153,7 @@ TOOL_SYSTEM_PROMPT = """## 工具使用规则
 - NEVER 说"我无法查看"——用你的工具查
 - NEVER 反复打开文件探索——读一次表头，想好方案，一步到位
 - NEVER 用 pd.read_excel() 不加 engine='calamine'——不加会超时
-- NEVER 在 code_execute 中 print(df) 输出整个表——用 df.shape/df.describe()/df.head()，大结果写文件
-- NEVER 输出你的思考过程——禁止输出"让我查询""让我尝试""我需要获取"等内部推理。调工具时不要输出任何文字，直接调用。只在拿到结果后才对用户说话。"""
+- NEVER 在 code_execute 中 print(df) 输出整个表——用 df.shape/df.describe()/df.head()，大结果写文件"""
 
 
 def get_tool_system_prompt() -> str:
