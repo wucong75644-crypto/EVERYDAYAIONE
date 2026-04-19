@@ -191,7 +191,7 @@ class TestToolOutputFileRef:
         content = t.to_message_content()
         assert "storage: file" in content
         assert "rows: 500" in content
-        assert "path: /tmp/test.parquet" in content
+        assert "path: STAGING_DIR + '/test.parquet'" in content
         assert "format: parquet" in content
         assert "size_kb: 50" in content
 

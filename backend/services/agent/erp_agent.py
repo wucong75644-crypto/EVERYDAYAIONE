@@ -429,9 +429,26 @@ class ERPAgent:
         cls = agent_map.get(domain)
         if cls is None:
             return None
+
+        # 解析 staging_dir（与主 agent 的 code_execute 共享同一目录）
+        staging_dir = None
+        try:
+            from core.config import get_settings
+            from core.workspace import resolve_staging_dir
+            _s = get_settings()
+            staging_dir = resolve_staging_dir(
+                _s.file_workspace_root,
+                self.user_id,
+                self.org_id,
+                self.conversation_id or "default",
+            )
+        except Exception as e:
+            logger.warning(f"resolve staging_dir failed: {e}")
+
         return cls(
             db=self.db, org_id=self.org_id,
             request_ctx=self.request_ctx,
+            staging_dir=staging_dir,
         )
 
     async def _cleanup_staging_delayed(self, delay: int = 900) -> None:
