@@ -1020,63 +1020,86 @@ class TestBuildLlmMessagesUserLocation:
         assert len(location_msgs) == 0
 
 
-# ============ Test _should_skip_knowledge (Phase 6 门控) ============
+# ============ Test _filter_knowledge_by_similarity (Phase 7 分数门控) ============
 
 
-class TestShouldSkipKnowledge:
-    """Phase 6 反向门控：排除明确不需要知识库的场景"""
+class TestFilterKnowledgeBySimilarity:
+    """Phase 7: similarity 分数门控替代正则排除"""
 
     @staticmethod
-    def _skip(text: str) -> bool:
+    def _filter(items):
         from services.handlers.chat_context_mixin import ChatContextMixin
-        return ChatContextMixin._should_skip_knowledge(text)
+        return ChatContextMixin._filter_knowledge_by_similarity(items)
 
-    def test_chitchat_skipped(self):
-        """纯问候/闲聊跳过"""
-        for text in ["你好", "早上好", "hi", "hello", "谢谢", "再见", "666"]:
-            assert self._skip(text) is True, f"'{text}' should be skipped"
+    def test_high_similarity_all_kept(self):
+        """≥0.7 的高分结果全部保留"""
+        items = [
+            {"title": "A", "content": "a", "similarity": 0.85},
+            {"title": "B", "content": "b", "similarity": 0.72},
+            {"title": "C", "content": "c", "similarity": 0.91},
+        ]
+        result = self._filter(items)
+        assert len(result) == 3
 
-    def test_very_short_skipped(self):
-        """极短消息（<=3字）跳过"""
-        assert self._skip("嗯") is True
-        assert self._skip("好") is True
+    def test_mid_similarity_max_one(self):
+        """0.5~0.7 的中分结果最多保留 1 条"""
+        items = [
+            {"title": "A", "content": "a", "similarity": 0.65},
+            {"title": "B", "content": "b", "similarity": 0.55},
+            {"title": "C", "content": "c", "similarity": 0.60},
+        ]
+        result = self._filter(items)
+        assert len(result) == 1
+        assert result[0]["title"] == "A"  # 第一个中分条目
 
-    def test_creative_skipped(self):
-        """创作/娱乐意图跳过"""
-        assert self._skip("写一首关于春天的诗") is True
-        assert self._skip("画一个猫") is True
-        assert self._skip("讲个笑话") is True
-        assert self._skip("今天天气怎么样") is True
+    def test_low_similarity_all_dropped(self):
+        """<0.5 的低分结果全部丢弃"""
+        items = [
+            {"title": "A", "content": "a", "similarity": 0.3},
+            {"title": "B", "content": "b", "similarity": 0.45},
+        ]
+        result = self._filter(items)
+        assert len(result) == 0
 
-    def test_general_qa_skipped(self):
-        """通用问答跳过（不含业务词）"""
-        assert self._skip("什么是REST API") is True
-        assert self._skip("如何学习Python") is True
+    def test_mixed_scores(self):
+        """混合分数：高分全保留 + 中分最多 1 条 + 低分丢弃"""
+        items = [
+            {"title": "高分1", "content": "a", "similarity": 0.80},
+            {"title": "中分1", "content": "b", "similarity": 0.60},
+            {"title": "中分2", "content": "c", "similarity": 0.55},
+            {"title": "低分1", "content": "d", "similarity": 0.40},
+            {"title": "高分2", "content": "e", "similarity": 0.75},
+        ]
+        result = self._filter(items)
+        titles = [r["title"] for r in result]
+        assert "高分1" in titles
+        assert "高分2" in titles
+        assert "中分1" in titles  # 中分只留第一个
+        assert "中分2" not in titles
+        assert "低分1" not in titles
+        assert len(result) == 3
 
-    def test_general_qa_with_business_not_skipped(self):
-        """通用问答含业务词不跳过"""
-        assert self._skip("什么是退货流程") is False
-        assert self._skip("解释一下库存锁定") is False
+    def test_empty_input(self):
+        """空列表返回空"""
+        assert self._filter([]) == []
 
-    def test_business_queries_not_skipped(self):
-        """业务查询不跳过"""
-        for text in [
-            "蓝色连衣裙卖了多少",
-            "帮我查一下库存",
-            "订单1234567890什么状态",
-            "昨天的销量统计",
-            "对比一下本周和上周",
-        ]:
-            assert self._skip(text) is False, f"'{text}' should NOT be skipped"
+    def test_missing_similarity_defaults_to_keep(self):
+        """没有 similarity 字段默认保留（兜底：宁可多注入不漏注入）"""
+        items = [{"title": "A", "content": "a"}]
+        result = self._filter(items)
+        assert len(result) == 1
 
-    def test_ambiguous_defaults_to_inject(self):
-        """模糊指令默认注入"""
-        assert self._skip("帮我看看那个") is False
-        assert self._skip("查一下呗") is False
+    def test_boundary_exactly_07(self):
+        """similarity 恰好 0.7 算高分"""
+        items = [{"title": "A", "content": "a", "similarity": 0.7}]
+        result = self._filter(items)
+        assert len(result) == 1
 
-    def test_summary_request_not_skipped(self):
-        """'帮我写个总结'不跳过（可能是 ERP 数据总结）"""
-        assert self._skip("帮我写个总结") is False
+    def test_boundary_exactly_05(self):
+        """similarity 恰好 0.5 算中分"""
+        items = [{"title": "A", "content": "a", "similarity": 0.5}]
+        result = self._filter(items)
+        assert len(result) == 1
 
 
 # ============ Test _fetch_knowledge 两路并行召回 ============
