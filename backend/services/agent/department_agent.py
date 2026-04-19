@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time as _time
 from abc import ABC, abstractmethod
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -93,7 +93,11 @@ class DepartmentAgent(ABC):
     # ── 通用校验（基类提供，子类不需要重复实现）──
 
     def _validate_time_range(self, time_range_str: str) -> ValidationResult | None:
-        """校验已标准化的时间范围字符串（格式：YYYY-MM-DD ~ YYYY-MM-DD）。
+        """校验已标准化的时间范围字符串。
+
+        支持格式：
+        - YYYY-MM-DD ~ YYYY-MM-DD（天级）
+        - YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM（分钟级）
 
         ERPAgent 的 LLM 层已经把"上个月"转成了标准化参数，
         部门Agent收到的是已标准化的字符串。
@@ -101,11 +105,13 @@ class DepartmentAgent(ABC):
         """
         try:
             start_str, end_str = time_range_str.split(" ~ ")
-            start = date.fromisoformat(start_str.strip())
-            end = date.fromisoformat(end_str.strip())
+            start_str, end_str = start_str.strip(), end_str.strip()
+            # 兼容纯日期和带时分的格式
+            start = datetime.fromisoformat(start_str) if " " in start_str else datetime.fromisoformat(start_str + " 00:00")
+            end = datetime.fromisoformat(end_str) if " " in end_str else datetime.fromisoformat(end_str + " 23:59")
         except (ValueError, AttributeError):
             return ValidationResult.conflict(
-                f"时间范围格式错误: {time_range_str}，应为 YYYY-MM-DD ~ YYYY-MM-DD",
+                f"时间范围格式错误: {time_range_str}，应为 YYYY-MM-DD ~ YYYY-MM-DD 或 YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM",
             )
         if end < start:
             return ValidationResult.conflict("结束日期不能早于开始日期")
@@ -348,24 +354,35 @@ class DepartmentAgent(ABC):
             if len(parts) == 2:
                 start = parts[0].strip()
                 end = parts[1].strip()
+                has_start_time = " " in start  # YYYY-MM-DD HH:MM
+                has_end_time = " " in end
                 if start:
+                    start_val = start.replace(" ", "T") if has_start_time else f"{start}T00:00:00"
                     filters.append({
                         "field": time_col, "op": "gte",
-                        "value": f"{start}T00:00:00",
+                        "value": start_val,
                     })
                 if end:
-                    # 半开区间：次日 00:00:00，覆盖完整一天
-                    try:
-                        from datetime import date as _date, timedelta as _td
-                        next_day = (
-                            _date.fromisoformat(end) + _td(days=1)
-                        ).isoformat()
-                    except ValueError:
-                        next_day = end  # 格式异常时原样透传
-                    filters.append({
-                        "field": time_col, "op": "lt",
-                        "value": f"{next_day}T00:00:00",
-                    })
+                    if has_end_time:
+                        # 用户指定了具体时间，精确使用
+                        end_val = end.replace(" ", "T")
+                        filters.append({
+                            "field": time_col, "op": "lt",
+                            "value": end_val,
+                        })
+                    else:
+                        # 纯日期：半开区间，次日 00:00:00 覆盖完整一天
+                        try:
+                            from datetime import date as _date, timedelta as _td
+                            next_day = (
+                                _date.fromisoformat(end) + _td(days=1)
+                            ).isoformat()
+                        except ValueError:
+                            next_day = end
+                        filters.append({
+                            "field": time_col, "op": "lt",
+                            "value": f"{next_day}T00:00:00",
+                        })
         # 平台 → eq 过滤器（L1: 去空格 + 编码映射 taobao→tb, douyin→fxg）
         platform = params.get("platform")
         if isinstance(platform, str):
