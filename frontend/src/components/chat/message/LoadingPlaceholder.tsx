@@ -22,7 +22,7 @@ export default function LoadingPlaceholder({
   return (
     <div className={`flex items-center gap-1.5 py-1 ${className}`}>
       {text && (
-        <span className="text-sm text-text-tertiary">{text}</span>
+        <span className="text-sm thinking-sparkle">{text}</span>
       )}
       <span className="thinking-dots" aria-hidden="true">
         <span className="thinking-dot" />
