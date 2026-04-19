@@ -394,7 +394,7 @@ export default memo(function MessageItem({
                       <MarkdownRenderer
                         key={idx}
                         content={(part as { text: string }).text}
-                        isStreaming={isLastBlock && (isStreaming || isRegenerating)}
+                        isStreaming={isLastBlock && (isStreaming || isRegenerating) && !agentStepHint}
                       />
                     );
                   }
@@ -416,10 +416,17 @@ export default memo(function MessageItem({
               /* AI 消息（单块模式）：Markdown 渲染 */
               <MarkdownRenderer
                 content={textContent}
-                isStreaming={isStreaming || isRegenerating}
+                isStreaming={(isStreaming || isRegenerating) && !agentStepHint}
               />
             )}
           </div>
+
+          {/* 工具执行中：文字已输出但工具正在执行，在文本下方显示步骤提示 */}
+          {!isUser && (isStreaming || isRegenerating) && textContent && agentStepHint && (
+            <div className="mt-1.5">
+              <LoadingPlaceholder text={agentStepHint} />
+            </div>
+          )}
         </div>
 
         {/* AI 消息：文字在上，图片/文件在下 */}
