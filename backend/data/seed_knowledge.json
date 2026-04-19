@@ -179,5 +179,119 @@
     "source": "seed",
     "confidence": 1.0,
     "metadata": {"related_models": ["deepseek-v3.2", "deepseek-r1", "qwen3.5-plus", "kimi-k2.5", "glm-5", "gemini-3-pro", "gemini-3-flash"]}
-  }
+  },
+
+  {"category": "experience", "subcategory": "order", "node_type": "routing_pattern",
+   "title": "查询路由：昨天淘宝订单按店铺统计",
+   "content": "查询：昨天淘宝订单按店铺统计\n路径：trade\ndomain=trade, mode=summary, platform=taobao, group_by=[\"shop\"]\n耗时：seed",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "erp_agent", "record_type": "routing", "tools": ["trade"]}},
+
+  {"category": "experience", "subcategory": "aftersale", "node_type": "routing_pattern",
+   "title": "查询路由：本周退货明细列表",
+   "content": "查询：本周退货明细列表\n路径：aftersale\ndomain=aftersale, mode=detail\n耗时：seed",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "erp_agent", "record_type": "routing", "tools": ["aftersale"]}},
+
+  {"category": "experience", "subcategory": "purchase", "node_type": "routing_pattern",
+   "title": "查询路由：上月采购单按供应商统计",
+   "content": "查询：上月采购单按供应商统计\n路径：purchase\ndomain=purchase, mode=summary, group_by=[\"supplier\"]\n耗时：seed",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "erp_agent", "record_type": "routing", "tools": ["purchase"]}},
+
+  {"category": "experience", "subcategory": "purchase", "node_type": "routing_pattern",
+   "title": "查询路由：采退明细按状态统计",
+   "content": "查询：采退明细按状态统计\n路径：purchase\ndomain=purchase, mode=summary, group_by=[\"status\"]\n耗时：seed",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "erp_agent", "record_type": "routing", "tools": ["purchase"]}},
+
+  {"category": "experience", "subcategory": "warehouse", "node_type": "routing_pattern",
+   "title": "查询路由：本月入库单按仓库统计",
+   "content": "查询：本月入库单按仓库统计\n路径：warehouse\ndomain=warehouse, mode=summary, group_by=[\"warehouse\"]\n耗时：seed",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "erp_agent", "record_type": "routing", "tools": ["warehouse"]}},
+
+  {"category": "experience", "subcategory": "warehouse", "node_type": "routing_pattern",
+   "title": "查询路由：上架单明细",
+   "content": "查询：上架单明细\n路径：warehouse\ndomain=warehouse, mode=detail\n耗时：seed",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "erp_agent", "record_type": "routing", "tools": ["warehouse"]}},
+
+  {"category": "experience", "subcategory": "order", "node_type": "routing_pattern",
+   "title": "查询路由：刷单集中在哪些商品",
+   "content": "查询：刷单集中在哪些商品\n路径：trade\ndomain=trade, mode=summary, group_by=[\"product\"], include_invalid=true\n耗时：seed",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "erp_agent", "record_type": "routing", "tools": ["trade"]}},
+
+  {"category": "experience", "subcategory": "stock", "node_type": "routing_pattern",
+   "title": "查询路由：编码HZ001的库存",
+   "content": "查询：编码HZ001的库存\n路径：warehouse\ndomain=warehouse, product_code=HZ001\n耗时：seed",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "erp_agent", "record_type": "routing", "tools": ["warehouse"]}},
+
+  {"category": "experience", "subcategory": "order", "node_type": "routing_pattern",
+   "title": "查询路由：订单号T12345的详情",
+   "content": "查询：订单号T12345的详情\n路径：trade\ndomain=trade, order_no=T12345\n耗时：seed",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "erp_agent", "record_type": "routing", "tools": ["trade"]}},
+
+  {"category": "experience", "subcategory": "order", "node_type": "routing_pattern",
+   "title": "查询路由：昨天按平台统计发货量",
+   "content": "查询：昨天按平台统计发货量\n路径：trade\ndomain=trade, mode=summary, group_by=[\"platform\"], time_col=consign_time\n耗时：seed",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "erp_agent", "record_type": "routing", "tools": ["trade"]}},
+
+  {"category": "experience", "subcategory": "order", "node_type": "routing_pattern",
+   "title": "查询路由：本月付款订单汇总",
+   "content": "查询：本月付款订单汇总\n路径：trade\ndomain=trade, mode=summary, time_col=pay_time\n耗时：seed",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "erp_agent", "record_type": "routing", "tools": ["trade"]}},
+
+  {"category": "experience", "subcategory": "general", "node_type": "routing_pattern",
+   "title": "编排案例：各平台退货率",
+   "content": "查询：各平台退货率\n编排：并行 erp_agent(\"订单按平台统计\") + erp_agent(\"退货按平台统计\") → code_execute(退货数/订单数计算退货率)\n要点：用 group_by=platform 一次按平台分组，不要逐平台查",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "orchestration", "record_type": "routing", "tools": ["trade", "aftersale", "code_execute"]}},
+
+  {"category": "experience", "subcategory": "general", "node_type": "routing_pattern",
+   "title": "编排案例：缺货商品的采购进度",
+   "content": "查询：缺货商品的采购进度\n编排：并行 erp_agent(\"缺货商品明细列表\") + erp_agent(\"采购在途明细列表\") → code_execute(按商品编码关联)\n要点：两个域并行查，code_execute 做关联",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "orchestration", "record_type": "routing", "tools": ["warehouse", "purchase", "code_execute"]}},
+
+  {"category": "experience", "subcategory": "order", "node_type": "routing_pattern",
+   "title": "编排案例：某订单的物流轨迹",
+   "content": "查询：某订单的物流轨迹\n编排：erp_agent(\"查订单拿system_id\") → erp_agent(\"用system_id查物流\")\n要点：链式调用，第一步结果的ID用于第二步",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "orchestration", "record_type": "routing", "tools": ["trade"]}},
+
+  {"category": "experience", "subcategory": "order", "node_type": "routing_pattern",
+   "title": "编排案例：各店铺本月销售额排名",
+   "content": "查询：各店铺本月销售额排名\n编排：erp_agent(\"本月订单按店铺统计\", group_by=shop) → code_execute(排序取TopN)\n要点：用 group_by=shop 一次搞定，不要逐店铺查N次",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "orchestration", "record_type": "routing", "tools": ["trade", "code_execute"]}},
+
+  {"category": "experience", "subcategory": "aftersale", "node_type": "routing_pattern",
+   "title": "编排案例：淘宝和拼多多退货数对比",
+   "content": "查询：淘宝和拼多多退货数对比\n编排：并行 erp_agent(\"淘宝退货统计\", platform=taobao) + erp_agent(\"拼多多退货统计\", platform=pdd) → code_execute(对比)\n要点：指定平台的并行对比",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "orchestration", "record_type": "routing", "tools": ["aftersale", "code_execute"]}},
+
+  {"category": "experience", "subcategory": "order", "node_type": "routing_pattern",
+   "title": "编排案例：各平台各店铺销售额",
+   "content": "查询：各平台各店铺销售额\n编排：erp_agent(\"订单按平台统计\", group_by=platform) → code_execute(从明细数据按店铺二次分组)\n要点：单维度group_by不够时，用code_execute做二次分组",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "orchestration", "record_type": "routing", "tools": ["trade", "code_execute"]}},
+
+  {"category": "experience", "subcategory": "purchase", "node_type": "routing_pattern",
+   "title": "编排案例：采购单备注里写了什么",
+   "content": "查询：采购单备注里写了什么\n编排：erp_agent(\"采购单明细\", 需要备注字段 fields=[\"remark\",\"doc_code\",\"supplier_name\"])\n要点：用户提到备注/地址/快递单号等特定信息时，query中要明确提到",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "orchestration", "record_type": "routing", "tools": ["purchase"]}},
+
+  {"category": "experience", "subcategory": "general", "node_type": "routing_pattern",
+   "title": "编排案例：待发货订单超时+采购到货+库存",
+   "content": "查询：待发货订单超时分析+采购到货进度+库存情况\n编排：并行 erp_agent(\"待发货订单明细\") + erp_agent(\"采购在途明细\") + erp_agent(\"库存明细\") → code_execute(关联计算超时)\n要点：三个域并行查，code_execute做关联计算",
+   "source": "seed", "confidence": 0.9,
+   "metadata": {"writer": "orchestration", "record_type": "routing", "tools": ["trade", "purchase", "warehouse", "code_execute"]}}
 ]

@@ -5,9 +5,16 @@
 """
 
 import json
+import sys
+from pathlib import Path
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
+
+_backend_dir = Path(__file__).parent.parent
+if str(_backend_dir) not in sys.path:
+    sys.path.insert(0, str(_backend_dir))
 
 
 # ============ Fixtures ============
@@ -467,7 +474,7 @@ class TestSeedKnowledge:
             for field in required:
                 assert field in item, f"Missing field '{field}' in: {item['title']}"
             assert item["source"] == "seed"
-            assert item["confidence"] == 1.0
+            assert 0.9 <= item["confidence"] <= 1.0
             assert item["category"] in ("model", "tool", "experience")
 
     def test_seed_titles_unique(self):

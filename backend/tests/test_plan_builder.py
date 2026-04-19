@@ -20,6 +20,8 @@ from services.agent.plan_builder import (
     _fill_codes_for_params,
     _sanitize_params,
     parse_extract_response,
+    get_capability_manifest,
+    build_extract_prompt,
     _DOMAIN_DOC_TYPES,
     _DOMAIN_DEFAULT_DOC_TYPE,
 )
@@ -85,9 +87,41 @@ class TestSanitizeParamsPassthrough:
         assert result["mode"] == "summary"
         assert result["doc_type"] == "order"
         assert result["platform"] == "taobao"
-        assert result["group_by"] == "shop"
+        assert result["group_by"] == ["shop"]  # str→list 转换
         assert result["time_range"] == "2026-04-17 ~ 2026-04-17"
         assert result["time_col"] == "pay_time"
+
+    # ── group_by str→list 转换（Bug 1 修复验证）──
+
+    def test_group_by_string_to_list(self):
+        result = _sanitize_params({"group_by": "product"})
+        assert result["group_by"] == ["product"]
+
+    def test_group_by_list_unchanged(self):
+        result = _sanitize_params({"group_by": ["shop", "platform"]})
+        assert result["group_by"] == ["shop", "platform"]
+
+    def test_group_by_empty_not_passed(self):
+        result = _sanitize_params({"group_by": ""})
+        assert "group_by" not in result
+
+    # ── fields 白名单校验 ──
+
+    def test_fields_string_to_list(self):
+        result = _sanitize_params({"fields": "remark"})
+        assert result["fields"] == ["remark"]
+
+    def test_fields_list_filtered(self):
+        result = _sanitize_params({"fields": ["remark", "invalid_col", "cost"]})
+        assert result["fields"] == ["remark", "cost"]
+
+    def test_fields_all_invalid_removed(self):
+        result = _sanitize_params({"fields": ["xxx", "yyy"]})
+        assert "fields" not in result
+
+    def test_fields_empty_not_passed(self):
+        result = _sanitize_params({"fields": []})
+        assert "fields" not in result
 
 
 # ============================================================
@@ -294,3 +328,77 @@ class TestFillCodesForParams:
         )
         assert params["product_code"] == "DBTXL01"
         assert params["order_no"] == "126036803257340376"
+
+
+# ============================================================
+# get_capability_manifest 结构完整性测试
+# ============================================================
+
+
+class TestCapabilityManifest:
+    """验证 get_capability_manifest 返回结构完整且从常量自动生成。"""
+
+    def test_required_keys_present(self):
+        m = get_capability_manifest()
+        required = {
+            "domains", "modes", "doc_types", "group_by", "filters",
+            "time_cols", "platforms", "field_categories", "summary",
+            "use_when", "dont_use_when", "returns", "examples",
+            "auto_behaviors",
+        }
+        assert required.issubset(m.keys())
+
+    def test_group_by_has_six_dims(self):
+        m = get_capability_manifest()
+        assert set(m["group_by"]) == {
+            "shop", "platform", "product", "supplier", "warehouse", "status",
+        }
+
+    def test_time_cols_has_three(self):
+        m = get_capability_manifest()
+        assert set(m["time_cols"]) == {
+            "doc_created_at", "pay_time", "consign_time",
+        }
+
+    def test_field_categories_not_empty(self):
+        m = get_capability_manifest()
+        assert len(m["field_categories"]) >= 10
+
+    def test_platforms_are_chinese(self):
+        m = get_capability_manifest()
+        for p in m["platforms"]:
+            assert not p.isascii(), f"平台名应为中文: {p}"
+
+    def test_examples_have_query_and_effect(self):
+        m = get_capability_manifest()
+        for ex in m["examples"]:
+            assert "query" in ex and "effect" in ex
+
+
+# ============================================================
+# build_extract_prompt 补全验证
+# ============================================================
+
+
+class TestBuildExtractPromptCompleteness:
+    """验证 prompt 包含新增的 group_by 维度、consign_time、fields。"""
+
+    def test_all_group_by_dims_in_prompt(self):
+        prompt = build_extract_prompt("test")
+        for dim in ("shop", "platform", "product", "supplier",
+                     "warehouse", "status"):
+            assert dim in prompt, f"group_by 维度 {dim} 未在 prompt 中"
+
+    def test_consign_time_in_prompt(self):
+        prompt = build_extract_prompt("test")
+        assert "consign_time" in prompt
+
+    def test_fields_in_prompt(self):
+        prompt = build_extract_prompt("test")
+        assert "fields" in prompt
+        assert "remark" in prompt
+
+    def test_group_by_example_in_prompt(self):
+        prompt = build_extract_prompt("test")
+        assert "product" in prompt
+        assert "示例3" in prompt or "按商品分组" in prompt

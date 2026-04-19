@@ -165,6 +165,12 @@ def get_tool_system_prompt() -> str:
 # 顶层工具 schema（始终在 messages 中）
 # ============================================================
 
+def _build_erp_agent_description() -> str:
+    """从 ERPAgent.build_tool_description() 自动生成描述（运行时调用）。"""
+    from services.agent.erp_agent import ERPAgent
+    return ERPAgent.build_tool_description()
+
+
 def _build_common_tools() -> List[Dict[str, Any]]:
     """构建通用工具（非 ERP 直接查询）"""
     return [
@@ -172,23 +178,7 @@ def _build_common_tools() -> List[Dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "erp_agent",
-                "description": (
-                    "ERP 数据查询专员。用户问任何涉及以下内容时必须调用此工具：\n"
-                    "订单/库存/采购/售后/发货/物流/商品/销量/统计/仓储/价格/成本/对账/核对/盘点/调拨/补发/换货/退款/退货金额。\n"
-                    "口语/错别字映射：'丁单'=订单，'酷存'=库存，'够不够卖'=库存查询，"
-                    "'到了没'=采购到货，'退了'=售后，'爆单'=销量统计，"
-                    "'那个谁退的'=退货查询，'查一下呗'=数据查询。\n"
-                    "含操作性词汇也要先查数据：'对账'先查数据再对，'对不对'先查数据再核对，"
-                    "'处理'先查状态再建议，'优先处理'先查订单列表，'多少钱/价格'先查成本价。\n"
-                    "内部自动识别编码，查询对应域的数据并返回。\n\n"
-                    "支持批量查询：查所有缺货商品、查全部待发货订单等无需指定具体商品。\n"
-                    "跨域分析：需要组合多种数据时，在同一轮并行调用多次 erp_agent 获取不同数据，"
-                    "再用 code_execute 合并分析。多个 erp_agent 调用会自动并行执行，不需要等一个完成再调下一个。\n"
-                    "示例：\n"
-                    "· 缺货分析 → 同时调 erp_agent(查缺货商品) + erp_agent(查采购在途) → code_execute 合并\n"
-                    "· 订单超时 → 同时调 erp_agent(查待发货订单) + erp_agent(查库存) → code_execute 计算\n"
-                    "· 对账核对 → 同时调 erp_agent(查订单) + erp_agent(查售后退款) → code_execute 核对"
-                ),
+                "description": _build_erp_agent_description(),
                 "parameters": {
                     "type": "object",
                     "required": ["query"],

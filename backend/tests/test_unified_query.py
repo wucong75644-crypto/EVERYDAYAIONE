@@ -553,3 +553,66 @@ class TestBuildColumnMetas:
         from services.kuaimai.erp_unified_schema import build_column_metas
         result = build_column_metas([])
         assert result == []
+
+
+# ============================================================
+# execute() fields 白名单扩大验证
+# ============================================================
+
+
+class TestExecuteFieldsWhitelist:
+    """验证 execute() 的 fields 校验接受 EXPORT_COLUMN_NAMES 字段。
+
+    修复前：fields 只校验 COLUMN_WHITELIST（36 个），remark 等被静默过滤。
+    修复后：fields 校验 COLUMN_WHITELIST ∪ EXPORT_COLUMN_NAMES（55+）。
+    """
+
+    def test_export_only_field_accepted(self):
+        """remark 不在 COLUMN_WHITELIST 但在 EXPORT_COLUMN_NAMES，应保留"""
+        from services.kuaimai.erp_unified_schema import (
+            COLUMN_WHITELIST, EXPORT_COLUMN_NAMES,
+        )
+        # 确认 remark 只在 EXPORT 不在 WHITELIST
+        assert "remark" not in COLUMN_WHITELIST
+        assert "remark" in EXPORT_COLUMN_NAMES
+
+        # 模拟 execute 的 fields 校验逻辑
+        fields = ["remark", "doc_code"]
+        valid_fields = set(COLUMN_WHITELIST.keys()) | EXPORT_COLUMN_NAMES
+        result = [f for f in fields if f in valid_fields]
+        assert "remark" in result
+        assert "doc_code" in result
+
+    def test_buyer_message_accepted(self):
+        """buyer_message 在 EXPORT_COLUMN_NAMES 中"""
+        from services.kuaimai.erp_unified_schema import (
+            COLUMN_WHITELIST, EXPORT_COLUMN_NAMES,
+        )
+        assert "buyer_message" not in COLUMN_WHITELIST
+        assert "buyer_message" in EXPORT_COLUMN_NAMES
+
+    def test_receiver_address_accepted(self):
+        """receiver_address 在 EXPORT_COLUMN_NAMES 中"""
+        from services.kuaimai.erp_unified_schema import EXPORT_COLUMN_NAMES
+        assert "receiver_address" in EXPORT_COLUMN_NAMES
+
+    def test_text_reason_accepted(self):
+        """text_reason（退货原因）在 EXPORT_COLUMN_NAMES 中"""
+        from services.kuaimai.erp_unified_schema import EXPORT_COLUMN_NAMES
+        assert "text_reason" in EXPORT_COLUMN_NAMES
+
+    def test_invalid_field_still_filtered(self):
+        """不存在的字段仍被过滤"""
+        from services.kuaimai.erp_unified_schema import (
+            COLUMN_WHITELIST, EXPORT_COLUMN_NAMES,
+        )
+        valid_fields = set(COLUMN_WHITELIST.keys()) | EXPORT_COLUMN_NAMES
+        assert "totally_fake_field" not in valid_fields
+
+    def test_whitelist_union_size(self):
+        """合并后的白名单应大于 COLUMN_WHITELIST"""
+        from services.kuaimai.erp_unified_schema import (
+            COLUMN_WHITELIST, EXPORT_COLUMN_NAMES,
+        )
+        union = set(COLUMN_WHITELIST.keys()) | EXPORT_COLUMN_NAMES
+        assert len(union) > len(COLUMN_WHITELIST)

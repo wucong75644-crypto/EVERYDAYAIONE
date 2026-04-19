@@ -635,6 +635,124 @@ class TestToolSystemPromptAlignment:
 
 
 # ============================================================
+# _build_experience_detail 经验记录 detail 测试
+# ============================================================
+
+
+class TestBuildExperienceDetail:
+    """验证经验记录 detail 包含关键参数（供动态案例召回）。"""
+
+    def _detail(self, domain: str, params: dict | None) -> str:
+        from services.agent.erp_agent import ERPAgent
+        return ERPAgent._build_experience_detail(domain, params)
+
+    def test_none_params(self):
+        assert self._detail("trade", None) == "domain=trade"
+
+    def test_empty_params(self):
+        assert self._detail("warehouse", {}) == "domain=warehouse"
+
+    def test_basic_params(self):
+        d = self._detail("trade", {"mode": "summary"})
+        assert "domain=trade" in d
+        assert "mode=summary" in d
+
+    def test_group_by_included(self):
+        d = self._detail("trade", {"mode": "summary", "group_by": ["shop"]})
+        assert "group_by=['shop']" in d
+
+    def test_platform_included(self):
+        d = self._detail("trade", {"mode": "detail", "platform": "taobao"})
+        assert "platform=taobao" in d
+
+    def test_fields_included(self):
+        d = self._detail("purchase", {"mode": "detail", "fields": ["remark"]})
+        assert "fields=['remark']" in d
+
+    def test_product_code_included(self):
+        d = self._detail("warehouse", {"product_code": "HZ001"})
+        assert "product_code=HZ001" in d
+
+    def test_all_params_combined(self):
+        d = self._detail("trade", {
+            "mode": "summary", "group_by": ["platform"],
+            "platform": "taobao", "product_code": "A01",
+        })
+        assert "domain=trade" in d
+        assert "mode=summary" in d
+        assert "group_by=" in d
+        assert "platform=taobao" in d
+        assert "product_code=A01" in d
+
+
+# ============================================================
+# build_tool_description 自动生成描述测试
+# ============================================================
+
+
+class TestBuildToolDescription:
+    """验证 build_tool_description 内容完整性和 token 预算。"""
+
+    def _desc(self) -> str:
+        from services.agent.erp_agent import ERPAgent
+        return ERPAgent.build_tool_description()
+
+    def test_contains_all_group_by_dims(self):
+        desc = self._desc()
+        for dim in ("shop", "platform", "product", "supplier",
+                     "warehouse", "status"):
+            assert dim in desc, f"group_by 维度 {dim} 缺失"
+
+    def test_contains_time_cols(self):
+        desc = self._desc()
+        for col in ("pay_time", "consign_time", "doc_created_at"):
+            assert col in desc, f"time_col {col} 缺失"
+
+    def test_contains_field_categories(self):
+        desc = self._desc()
+        assert "可查询信息" in desc
+        assert "备注" in desc
+
+    def test_contains_use_when(self):
+        desc = self._desc()
+        assert "使用场景" in desc
+        assert "订单" in desc
+
+    def test_contains_dont_use_when(self):
+        desc = self._desc()
+        assert "不要用于" in desc
+        assert "erp_execute" in desc
+
+    def test_contains_oral_mappings(self):
+        desc = self._desc()
+        assert "丁单" in desc
+        assert "酷存" in desc
+
+    def test_contains_examples(self):
+        desc = self._desc()
+        assert "query 示例" in desc
+        assert "按店铺统计" in desc
+
+    def test_token_budget(self):
+        desc = self._desc()
+        estimated_tokens = len(desc) / 2.5
+        assert estimated_tokens < 400, (
+            f"描述 token 超预算: {estimated_tokens:.0f} > 400"
+        )
+
+    def test_no_hardcoded_content(self):
+        """描述内容全部来自 manifest，修改 manifest 会改变输出"""
+        from services.agent.plan_builder import get_capability_manifest
+        m = get_capability_manifest()
+        desc = self._desc()
+        # manifest 的 summary 必须出现在描述中
+        assert m["summary"] in desc
+        # manifest 的每个 example query 必须出现
+        for ex in m["examples"]:
+            assert ex["query"] in desc
+
+
+# ============================================================
 # _run_tool_loop 退出逻辑
 # ============================================================
 

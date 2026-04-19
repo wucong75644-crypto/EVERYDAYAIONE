@@ -113,9 +113,10 @@ class UnifiedQueryEngine:
         if sort_dir not in ("asc", "desc"):
             sort_dir = "desc"
 
-        # fields 白名单校验（detail + export 模式）
+        # fields 白名单校验（SELECT 列，范围比 filter 列更大）
         if fields:
-            fields = [f for f in fields if f in COLUMN_WHITELIST]
+            valid_fields = set(COLUMN_WHITELIST.keys()) | EXPORT_COLUMN_NAMES
+            fields = [f for f in fields if f in valid_fields]
             if not fields:
                 fields = None
 
