@@ -349,12 +349,14 @@ class TestWorkspaceDirInjection:
 
     @pytest.mark.asyncio
     async def test_workspace_dir_available(self):
-        """workspace_dir 参数注入到沙盒 globals"""
+        """workspace_dir 注入到沙盒 globals，输出中真实路径被替换为虚拟路径"""
         executor = SandboxExecutor(
             timeout=5.0, workspace_dir="/tmp/test_ws",
         )
         result = await executor.execute("print(WORKSPACE_DIR)", "读workspace")
-        assert "/tmp/test_ws" in result
+        # 真实路径被隐藏，替换为"工作区"
+        assert "工作区" in result
+        assert "/tmp/test_ws" not in result
 
     @pytest.mark.asyncio
     async def test_workspace_dir_none_not_injected(self):
