@@ -171,7 +171,7 @@ export default memo(function MarkdownRenderer({
       <div className={`text-[15px] leading-relaxed whitespace-pre-wrap ${className}`}>
         {content}
         {isStreaming && content && (
-          <span className="inline-block w-0.5 h-[18px] bg-text-tertiary ml-0.5 rounded-sm animate-cursor-blink" />
+          <span className="inline-block w-2 h-4 bg-accent ml-0.5 animate-cursor-blink" />
         )}
       </div>
     );
@@ -187,7 +187,7 @@ export default memo(function MarkdownRenderer({
         {processedContent}
       </Markdown>
       {isStreaming && content && (
-        <span className="inline-block w-0.5 h-[18px] bg-text-tertiary ml-0.5 rounded-sm animate-cursor-blink" />
+        <span className="inline-block w-2 h-4 bg-accent ml-0.5 animate-cursor-blink" />
       )}
     </div>
   );
