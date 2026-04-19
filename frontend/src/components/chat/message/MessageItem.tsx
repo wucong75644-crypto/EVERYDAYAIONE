@@ -389,12 +389,10 @@ export default memo(function MessageItem({
               <>
                 {message.content.map((part, idx) => {
                   if (part.type === 'text' && (part as { text: string }).text) {
-                    const isLastBlock = idx === message.content.length - 1;
                     return (
                       <MarkdownRenderer
                         key={idx}
                         content={(part as { text: string }).text}
-                        isStreaming={isLastBlock && (isStreaming || isRegenerating) && !agentStepHint}
                       />
                     );
                   }
@@ -416,15 +414,17 @@ export default memo(function MessageItem({
               /* AI 消息（单块模式）：Markdown 渲染 */
               <MarkdownRenderer
                 content={textContent}
-                isStreaming={(isStreaming || isRegenerating) && !agentStepHint}
               />
             )}
           </div>
 
-          {/* 工具执行中：文字已输出但工具正在执行，在文本下方显示步骤提示 */}
-          {!isUser && (isStreaming || isRegenerating) && textContent && agentStepHint && (
+          {/* 流式状态指示器：整个流式期间始终显示在底部
+              - 有 agentStepHint → 显示工具步骤（"正在执行代码"等）
+              - 正在输出文字 → 显示"AI 正在输出"
+              - 等待首 token → 由上方 LoadingPlaceholder 处理，这里不重复 */}
+          {!isUser && (isStreaming || isRegenerating) && textContent && (
             <div className="mt-1.5">
-              <LoadingPlaceholder text={agentStepHint} />
+              <LoadingPlaceholder text={agentStepHint || 'AI 正在输出'} />
             </div>
           )}
         </div>
