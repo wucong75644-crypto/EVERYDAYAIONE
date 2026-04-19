@@ -213,7 +213,7 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         "2. 如果查询涉及多个域，选最主要的那个\n\n"
         "参数定义：\n"
         "- doc_type: order/purchase/purchase_return/aftersale/receipt/shelf（必填）\n"
-        "- mode: summary（统计汇总）/ detail（明细列表）/ export（导出表格/文件）（必填）\n"
+        "- mode: summary（统计汇总）/ detail（查看少量明细）/ export（导出表格/文件，用户说'导出''Excel''生成报表'时必须用 export）（必填）\n"
         "- time_range: 标准化为 YYYY-MM-DD ~ YYYY-MM-DD 或 YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM（必填，根据当前时间推算；用户指定了具体时间点时带上 HH:MM）\n"
         "- time_col: pay_time（付款时间）/ consign_time（发货时间）/ doc_created_at（创建时间，默认）\n"
         "- platform: taobao/pdd/douyin/jd/kuaishou/xhs/1688（可选）\n"
@@ -244,7 +244,10 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         "示例5（刷单统计）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"summary",'
         '"time_range":"2026-04-01 ~ 2026-04-17","is_scalping":true,"include_invalid":true}}\n\n'
-        "示例6（导出刷单订单表格）：\n"
+        "示例6（导出订单到 Excel）：\n"
+        '{"domain": "trade", "params": {"doc_type":"order","mode":"export",'
+        '"time_range":"2026-04-17 ~ 2026-04-17","time_col":"pay_time"}}\n\n'
+        "示例7（导出刷单订单表格）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"export",'
         '"time_range":"2026-04-17 ~ 2026-04-17","is_scalping":true,"include_invalid":true}}'
     )
