@@ -200,7 +200,7 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         "- product_code: 商品编码（如用户提到了具体编码则提取）\n"
         "- order_no: 订单号（如用户提到了则提取）\n"
         "- include_invalid: 布尔值，默认 false。仅当用户明确要求'包含全部'或'不排除刷单'时设为 true。\n"
-        "  注意：用户问'刷单有多少'不是 include_invalid，而是用 filters 过滤刷单类型。\n"
+        "- is_scalping: 布尔值，默认 false。用户查'刷单''空包'时设为 true（筛选 is_scalping=1 的订单）。\n"
         "- fields: 需要返回的特定字段列表（可选，用户明确提到特定信息时提取）\n"
         "  可选字段：remark(备注)/buyer_message(买家留言)/express_no(快递单号)/"
         "express_company(快递公司)/buyer_nick(买家昵称)/receiver_name(收件人)/"
@@ -219,7 +219,10 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         '"time_range":"2026-04-01 ~ 2026-04-17","group_by":"product"}}\n\n'
         "示例4（采购单含备注）：\n"
         '{"domain": "purchase", "params": {"doc_type":"purchase","mode":"detail",'
-        '"time_range":"2026-04-01 ~ 2026-04-17","fields":["remark","doc_code","supplier_name"]}}'
+        '"time_range":"2026-04-01 ~ 2026-04-17","fields":["remark","doc_code","supplier_name"]}}\n\n'
+        "示例5（刷单统计）：\n"
+        '{"domain": "trade", "params": {"doc_type":"order","mode":"summary",'
+        '"time_range":"2026-04-01 ~ 2026-04-17","is_scalping":true,"include_invalid":true}}'
     )
 
 
@@ -316,6 +319,8 @@ def get_capability_manifest() -> dict:
              "effect": "summary + group_by=supplier"},
             {"query": "包含刷单的订单有多少",
              "effect": "include_invalid=true"},
+            {"query": "今天刷单有多少",
+             "effect": "is_scalping=true + include_invalid=true"},
         ],
         "auto_behaviors": [
             ">200行自动导出 staging 文件",

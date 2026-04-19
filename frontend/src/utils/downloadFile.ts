@@ -22,14 +22,14 @@ export async function downloadFile(
     document.body.removeChild(link);
     URL.revokeObjectURL(blobUrl);
   } catch {
-    // CORS 失败时用 <a target="_blank">（会开新标签但能下载）
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    // CORS 失败时用隐藏 iframe 触发浏览器原生下载
+    // （跨域 <a download> 会被浏览器忽略变成跳转，iframe 对 octet-stream 会触发下载）
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = url;
+    document.body.appendChild(iframe);
+    setTimeout(() => {
+      try { document.body.removeChild(iframe); } catch { /* already removed */ }
+    }, 30000);
   }
 }
