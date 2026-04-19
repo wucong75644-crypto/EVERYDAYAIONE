@@ -479,3 +479,135 @@ class TestL3EmptyDiagnosis:
                 "order", mode="summary", filters=[],
             )
             assert "重试建议" not in result.summary
+
+
+# ============================================================
+# Staging + Data Profile 集成
+# ============================================================
+
+
+class TestStagingDir:
+    """DepartmentAgent staging_dir 传递"""
+
+    def test_init_accepts_staging_dir(self):
+        """__init__ 接受 staging_dir 参数"""
+        from services.agent.departments.trade_agent import TradeAgent
+        agent = TradeAgent(db=MagicMock(), staging_dir="/tmp/test_staging")
+        assert agent._staging_dir == "/tmp/test_staging"
+
+    def test_init_staging_dir_default_none(self):
+        """staging_dir 默认 None（向后兼容）"""
+        from services.agent.departments.trade_agent import TradeAgent
+        agent = TradeAgent(db=MagicMock())
+        assert agent._staging_dir is None
+
+
+class TestWriteToStaging:
+    """_write_to_staging 返回 tuple + profile"""
+
+    def test_returns_tuple(self, tmp_path):
+        """返回 (FileRef, profile_text) 元组"""
+        from services.agent.departments.trade_agent import TradeAgent
+        from services.agent.tool_output import ColumnMeta
+
+        agent = TradeAgent(db=MagicMock())
+        rows = [{"order_no": "A001", "amount": 99.9}]
+        columns = [
+            ColumnMeta("order_no", "text", "订单号"),
+            ColumnMeta("amount", "numeric", "金额"),
+        ]
+        file_ref, profile = agent._write_to_staging(rows, columns, str(tmp_path))
+
+        assert isinstance(profile, str)
+        assert "[数据已暂存]" in profile
+        assert "[字段]" in profile
+        assert file_ref.row_count == 1
+        assert file_ref.filename.startswith("trade_")
+        assert file_ref.preview == profile
+
+    def test_parquet_file_created(self, tmp_path):
+        """staging 目录下生成 parquet 文件"""
+        from services.agent.departments.trade_agent import TradeAgent
+        from services.agent.tool_output import ColumnMeta
+
+        agent = TradeAgent(db=MagicMock())
+        rows = [{"a": 1}, {"a": 2}]
+        columns = [ColumnMeta("a", "integer")]
+        file_ref, _ = agent._write_to_staging(rows, columns, str(tmp_path))
+
+        assert Path(file_ref.path).exists()
+        assert file_ref.format == "parquet"
+
+
+class TestQueryLocalDataDetailStaging:
+    """_query_local_data detail 模式走 staging"""
+
+    @pytest.mark.asyncio
+    async def test_detail_mode_with_staging_returns_file_ref(self, tmp_path):
+        """detail 模式 + staging_dir → FILE_REF 格式"""
+        from services.agent.departments.trade_agent import TradeAgent
+
+        agent = TradeAgent(
+            db=MagicMock(), staging_dir=str(tmp_path),
+        )
+        detail_out = ToolOutput(
+            summary="订单明细",
+            format=OutputFormat.TABLE,
+            source="trade",
+            status=OutputStatus.OK,
+            data=[{"order_no": "A001", "amount": 99.9}],
+            columns=None,
+            metadata={"doc_type": "order"},
+        )
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=detail_out)
+            result = await agent._query_local_data(
+                "order", mode="detail", filters=[],
+            )
+        assert result.format == OutputFormat.FILE_REF
+        assert result.file_ref is not None
+        assert "[数据已暂存]" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_detail_mode_without_staging_stays_table(self):
+        """detail 模式无 staging_dir → 保持 TABLE 格式（降级）"""
+        from services.agent.departments.trade_agent import TradeAgent
+
+        agent = TradeAgent(db=MagicMock())  # 无 staging_dir
+        detail_out = ToolOutput(
+            summary="订单明细",
+            format=OutputFormat.TABLE,
+            source="trade",
+            status=OutputStatus.OK,
+            data=[{"order_no": "A001"}],
+            metadata={"doc_type": "order"},
+        )
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=detail_out)
+            result = await agent._query_local_data(
+                "order", mode="detail", filters=[],
+            )
+        assert result.format == OutputFormat.TABLE  # 降级，没走 staging
+
+    @pytest.mark.asyncio
+    async def test_summary_mode_not_affected(self, tmp_path):
+        """summary 模式不受 staging 影响"""
+        from services.agent.departments.trade_agent import TradeAgent
+
+        agent = TradeAgent(
+            db=MagicMock(), staging_dir=str(tmp_path),
+        )
+        summary_out = ToolOutput(
+            summary="统计结果",
+            format=OutputFormat.TABLE,
+            source="trade",
+            status=OutputStatus.OK,
+            data=[{"count": 100}],
+            metadata={},
+        )
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=summary_out)
+            result = await agent._query_local_data(
+                "order", mode="summary", filters=[],
+            )
+        assert result.format == OutputFormat.TABLE  # summary 保持不变

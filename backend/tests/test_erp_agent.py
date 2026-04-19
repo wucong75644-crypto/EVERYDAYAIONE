@@ -601,6 +601,23 @@ class TestCreateAgent:
         assert agent._create_agent("finance") is None
         assert agent._create_agent("") is None
 
+    @patch("core.workspace.resolve_staging_dir", return_value="/tmp/staging")
+    @patch("core.config.get_settings")
+    def test_create_agent_passes_staging_dir(self, mock_settings, mock_resolve):
+        """_create_agent 传入 staging_dir 给 DepartmentAgent"""
+        mock_settings.return_value = MagicMock(file_workspace_root="/mnt/ws")
+        agent = self._make_agent()
+        dept = agent._create_agent("trade")
+        assert dept._staging_dir == "/tmp/staging"
+        mock_resolve.assert_called_once()
+
+    @patch("core.config.get_settings", side_effect=RuntimeError("config error"))
+    def test_create_agent_staging_dir_none_on_error(self, _):
+        """resolve_staging_dir 异常时 staging_dir 为 None（降级）"""
+        agent = self._make_agent()
+        dept = agent._create_agent("trade")
+        assert dept._staging_dir is None  # 降级，不崩溃
+
 
 # ============================================================
 # TOOL_SYSTEM_PROMPT 对齐新架构
