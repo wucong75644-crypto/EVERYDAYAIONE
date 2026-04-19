@@ -51,9 +51,10 @@ class TestSanitizeParamsPassthrough:
         result = _sanitize_params({"include_invalid": False})
         assert result["include_invalid"] is False
 
-    def test_include_invalid_non_bool_ignored(self):
+    def test_include_invalid_non_bool_passthrough(self):
+        """str 类型透传（下游 truthy 判断兼容）。"""
         result = _sanitize_params({"include_invalid": "yes"})
-        assert "include_invalid" not in result
+        assert result["include_invalid"] == "yes"
 
     def test_empty_product_code_not_passed(self):
         result = _sanitize_params({"product_code": ""})
@@ -90,6 +91,63 @@ class TestSanitizeParamsPassthrough:
         assert result["group_by"] == ["shop"]  # str→list 转换
         assert result["time_range"] == "2026-04-17 ~ 2026-04-17"
         assert result["time_col"] == "pay_time"
+
+    # ── is_scalping 透传（刷单导出 Bug 修复验证）──
+
+    def test_is_scalping_true_passed_through(self):
+        result = _sanitize_params({"is_scalping": True})
+        assert result["is_scalping"] is True
+
+    def test_is_scalping_false_passed_through(self):
+        result = _sanitize_params({"is_scalping": False})
+        assert result["is_scalping"] is False
+
+    def test_scalping_with_export_mode(self):
+        """刷单导出场景：is_scalping + include_invalid + export 全部透传。"""
+        result = _sanitize_params({
+            "doc_type": "order",
+            "mode": "export",
+            "time_range": "2026-04-18 ~ 2026-04-18",
+            "is_scalping": True,
+            "include_invalid": True,
+        })
+        assert result["is_scalping"] is True
+        assert result["include_invalid"] is True
+        assert result["mode"] == "export"
+
+    # ── 简单类型透传 / 非简单类型阻断 ──
+
+    def test_unknown_str_param_passed_through(self):
+        """LLM 提取的未知 str 参数透传给下游（被 **_kwargs 吸收）。"""
+        result = _sanitize_params({"some_future_param": "hello"})
+        assert result["some_future_param"] == "hello"
+
+    def test_int_param_passed_through(self):
+        result = _sanitize_params({"limit": 100})
+        assert result["limit"] == 100
+
+    def test_float_param_passed_through(self):
+        result = _sanitize_params({"threshold": 0.5})
+        assert result["threshold"] == 0.5
+
+    def test_dict_param_blocked(self):
+        """dict 类型不透传，防止注入。"""
+        result = _sanitize_params({"evil": {"inject": True}})
+        assert "evil" not in result
+
+    def test_nested_list_blocked(self):
+        """嵌套 list 不透传。"""
+        result = _sanitize_params({"evil": [[1, 2]]})
+        assert "evil" not in result
+
+    def test_empty_list_not_passed(self):
+        result = _sanitize_params({"tags": []})
+        assert "tags" not in result
+
+    def test_str_list_passed_through(self):
+        """纯字符串列表透传。"""
+        result = _sanitize_params({"tags": ["a", "b"]})
+        assert result["tags"] == ["a", "b"]
 
     # ── group_by str→list 转换（Bug 1 修复验证）──
 
