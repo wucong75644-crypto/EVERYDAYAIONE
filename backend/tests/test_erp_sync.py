@@ -1415,11 +1415,12 @@ class TestBuildRowsFromDetail:
 
         doc = {"id": "123", "code": "CG123", "status": "FINISHED",
                "created": "2026-03-25 10:00:00", "modified": "2026-03-25 11:00:00",
-               "remark": "test remark"}
+               "remark": "test remark",
+               "supplierName": "供应商A", "receiveWarehouseName": "仓库1"}
         detail = {"list": [
             {"itemOuterId": "A01", "outerId": "A01-01", "count": 10,
              "price": 100, "amount": 1000, "_item_index": 0},
-        ], "supplierName": "供应商A", "warehouseName": "仓库1"}
+        ]}
 
         rows = build_rows_from_detail("purchase", doc, detail)
         assert len(rows) == 1

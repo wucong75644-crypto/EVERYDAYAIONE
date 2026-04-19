@@ -151,16 +151,15 @@ class TestSyncPurchase:
     async def test_basic_purchase(self):
         from services.kuaimai.erp_sync_handlers import sync_purchase
         docs = [{"id": 101, "code": "PO001", "status": "FINISHED",
-                 "created": "2026-03-18", "modified": "2026-03-18"}]
+                 "created": "2026-03-18", "modified": "2026-03-18",
+                 "supplierName": "供应商A", "receiveWarehouseName": "仓库1",
+                 "createrName": "张三"}]
         detail = {
             "list": [
                 {"outerId": "C01", "itemOuterId": "C01-01",
                  "title": "商品A", "purchaseNum": 100,
                  "price": 10.0, "amount": 1000.0},
             ],
-            "supplierName": "供应商A",
-            "warehouseName": "仓库1",
-            "createrName": "张三",
         }
         svc = _mock_svc(pages=docs, detail=detail)
         count = await sync_purchase(svc, START, END)
@@ -197,15 +196,15 @@ class TestSyncReceipt:
     async def test_basic_receipt(self):
         from services.kuaimai.erp_sync_handlers import sync_receipt
         docs = [{"id": 201, "code": "RC001", "status": "FINISHED",
-                 "created": "2026-03-18", "modified": "2026-03-18"}]
+                 "created": "2026-03-18", "modified": "2026-03-18",
+                 "supplierName": "供应商A", "purchaseOrderCode": "PO001",
+                 "warehouseName": "仓库1", "createrName": "张三"}]
         detail = {
             "list": [
                 {"outerId": "C01", "itemOuterId": "C01-01",
                  "title": "商品A", "quantity": 50, "price": 10.0,
                  "amount": 500.0},
             ],
-            "supplierName": "供应商A",
-            "purchaseOrderCode": "PO001",
         }
         svc = _mock_svc(pages=docs, detail=detail)
         count = await sync_receipt(svc, START, END)
@@ -230,10 +229,10 @@ class TestSyncShelf:
     async def test_basic_shelf(self):
         from services.kuaimai.erp_sync_handlers import sync_shelf
         docs = [{"id": 301, "code": "SH001", "status": "FINISHED",
-                 "created": "2026-03-18", "modified": "2026-03-18"}]
+                 "created": "2026-03-18", "modified": "2026-03-18",
+                 "warehouseName": "仓库1"}]
         detail = {
             "list": [{"outerId": "C01", "title": "商品A", "quantity": 50}],
-            "warehouseName": "仓库1",
         }
         svc = _mock_svc(pages=docs, detail=detail)
         count = await sync_shelf(svc, START, END)
@@ -259,14 +258,14 @@ class TestSyncPurchaseReturn:
         """采退单字段映射反转：itemOuterId→outer_id, outerId→sku_outer_id"""
         from services.kuaimai.erp_sync_handlers import sync_purchase_return
         docs = [{"id": 401, "code": "RT001", "status": "1",
-                 "gmCreate": "2026-03-18"}]
+                 "gmCreate": "2026-03-18",
+                 "purchaseOrderId": 12345, "supplierName": "供应商A",
+                 "warehouseName": "仓库1", "createrName": "张三"}]
         detail = {
             "list": [
                 {"outerId": "SKU01", "itemOuterId": "MAIN01",
                  "title": "商品A", "returnNum": 10, "price": 10.0},
             ],
-            "purchaseOrderId": 12345,
-            "supplierName": "供应商A",
         }
         svc = _mock_svc(pages=docs, detail=detail)
         count = await sync_purchase_return(svc, START, END)
