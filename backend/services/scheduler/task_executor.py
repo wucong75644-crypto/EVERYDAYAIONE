@@ -242,15 +242,33 @@ class ScheduledTaskExecutor:
         now = datetime.now(timezone.utc)
         duration_ms = int((now - started_at).total_seconds() * 1000)
 
-        is_once = task.get("schedule_type") == "once"
+        # 重新读 DB 获取最新 cron_expr / schedule_type，
+        # 防止执行期间用户修改了定时配置，完成后用旧 cron 覆盖新的 next_run_at
+        try:
+            fresh = self.db.table("scheduled_tasks") \
+                .select("cron_expr, schedule_type, timezone") \
+                .eq("id", task["id"]).execute()
+            if fresh.data:
+                live = fresh.data[0]
+                cron_expr = live.get("cron_expr") or task.get("cron_expr")
+                schedule_type = live.get("schedule_type") or task.get("schedule_type")
+                tz = live.get("timezone") or task.get("timezone") or "Asia/Shanghai"
+            else:
+                cron_expr = task.get("cron_expr")
+                schedule_type = task.get("schedule_type")
+                tz = task.get("timezone") or "Asia/Shanghai"
+        except Exception:
+            cron_expr = task.get("cron_expr")
+            schedule_type = task.get("schedule_type")
+            tz = task.get("timezone") or "Asia/Shanghai"
+
+        is_once = schedule_type == "once"
         if is_once:
             next_status = "paused"
             next_run = None
         else:
             next_status = "active"
-            next_run = calc_next_run(
-                task["cron_expr"], task.get("timezone") or "Asia/Shanghai"
-            )
+            next_run = calc_next_run(cron_expr, tz)
 
         try:
             self.db.table("scheduled_tasks").update({
@@ -358,16 +376,25 @@ class ScheduledTaskExecutor:
                 f"attempt={attempts_used + 1}/{retry_count}"
             )
         else:
-            # 重试用完
-            if task.get("schedule_type") == "once":
+            # 重试用完 — 重新读 DB 获取最新 cron（用户可能在执行期间改了时间）
+            try:
+                fresh = self.db.table("scheduled_tasks") \
+                    .select("cron_expr, schedule_type, timezone") \
+                    .eq("id", task["id"]).execute()
+                live = fresh.data[0] if fresh.data else {}
+            except Exception:
+                live = {}
+            live_schedule = live.get("schedule_type") or task.get("schedule_type")
+            live_cron = live.get("cron_expr") or task.get("cron_expr")
+            live_tz = live.get("timezone") or task.get("timezone") or "Asia/Shanghai"
+
+            if live_schedule == "once":
                 # 单次任务失败后不再调度，直接暂停
                 update["next_run_at"] = None
                 update["status"] = "paused"
             else:
-                # 周期任务按 cron 正常时间继续
-                next_run = calc_next_run(
-                    task["cron_expr"], task.get("timezone") or "Asia/Shanghai"
-                )
+                # 周期任务按最新 cron 正常时间继续
+                next_run = calc_next_run(live_cron, live_tz)
                 update["next_run_at"] = next_run.isoformat()
                 update["status"] = "active"
 

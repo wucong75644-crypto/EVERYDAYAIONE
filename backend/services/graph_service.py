@@ -8,6 +8,7 @@
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
+from psycopg.types.json import Json
 
 from services.knowledge_config import get_pg_connection
 
@@ -206,7 +207,7 @@ class GraphService:
                         "target_id": target_id,
                         "relation_type": relation_type,
                         "weight": weight,
-                        "metadata": metadata or {},
+                        "metadata": Json(metadata or {}),
                         "org_id": org_id,
                     })
                     result = await cur.fetchone()

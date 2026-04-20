@@ -78,18 +78,36 @@ class ScheduledTaskScanner:
         return len(tasks)
 
     async def _claim_due_tasks(self, now: datetime, limit: int) -> List[dict]:
-        """通过 RPC 原子领取到期任务
+        """通过 SQL 函数原子领取到期任务
 
-        注意：直接传 datetime 对象（不是 isoformat 字符串），
-        让 psycopg 自动绑定为 timestamptz。否则 PG 把字符串当成
-        unknown 类型，找不到 (timestamptz, integer) 函数签名。
+        必须使用 SELECT * FROM func() 而非 SELECT func()：
+        后者返回复合类型的文本表示（字符串），前者展开为列（dict_row）。
+        db.rpc() 内部用 SELECT func() 调用，对 RETURNS SETOF 不兼容。
         """
         try:
-            result = self.db.rpc("claim_due_tasks", {
-                "p_now": now,
-                "p_limit": int(limit),
-            }).execute()
-            return list(result.data or [])
+            with self.db.pool.connection() as conn:
+                conn.autocommit = True
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT * FROM claim_due_tasks(%s, %s)",
+                        [now, int(limit)],
+                    )
+                    rows = cur.fetchall()
+            # psycopg3 dict_row 返回 UUID 对象，统一转 str 防止下游
+            # Path 拼接 / JSON 序列化失败
+            from uuid import UUID as _UUID
+            result = []
+            for row in (rows or []):
+                result.append({
+                    k: str(v) if isinstance(v, _UUID) else v
+                    for k, v in row.items()
+                })
+            if result:
+                logger.info(
+                    f"_claim_due_tasks | claimed={len(result)} | "
+                    f"ids={[r.get('id') for r in result]}"
+                )
+            return result
         except Exception as e:
             logger.error(f"_claim_due_tasks error | {e}")
             return []

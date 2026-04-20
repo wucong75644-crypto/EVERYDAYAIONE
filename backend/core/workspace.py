@@ -27,9 +27,9 @@ def resolve_workspace_dir(
     """计算用户级 workspace 目录（绝对路径）"""
     base = Path(workspace_root).resolve()
     if org_id:
-        return str(base / "org" / org_id / user_id)
+        return str(base / "org" / str(org_id) / str(user_id))
     elif user_id:
-        user_hash = hashlib.md5(user_id.encode()).hexdigest()[:8]
+        user_hash = hashlib.md5(str(user_id).encode()).hexdigest()[:8]
         return str(base / "personal" / user_hash)
     return str(base)
 
