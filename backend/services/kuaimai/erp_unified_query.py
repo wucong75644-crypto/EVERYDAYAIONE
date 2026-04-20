@@ -407,6 +407,9 @@ class UnifiedQueryEngine:
             fields = DEFAULT_DETAIL_FIELDS.get(doc_type, ["*"])
 
         safe_fields = [c for c in fields if c in EXPORT_COLUMN_NAMES]
+        # 排序列必须在 SELECT 中，否则 ORDER BY 报列不存在
+        if tr.time_col and tr.time_col not in safe_fields and tr.time_col in EXPORT_COLUMN_NAMES:
+            safe_fields.append(tr.time_col)
         if not safe_fields:
             return ToolOutput(
                 summary="传入的 fields 无有效字段，请参考字段文档",

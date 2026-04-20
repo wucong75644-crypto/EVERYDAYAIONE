@@ -1,6 +1,7 @@
 """测试 Scheduler Scanner + TaskExecutor"""
 from __future__ import annotations
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 backend_dir = Path(__file__).parent.parent
@@ -34,6 +35,22 @@ def make_task(**overrides):
     return base
 
 
+def _mock_pool_returning(rows: list) -> MagicMock:
+    """构造 db.pool.connection() 上下文管理器 mock，cursor.fetchall() 返回 rows"""
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = rows
+
+    mock_conn = MagicMock()
+    mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+    mock_conn.__exit__ = MagicMock(return_value=False)
+    mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+    mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
+    mock_pool = MagicMock()
+    mock_pool.connection.return_value = mock_conn
+    return mock_pool
+
+
 # ════════════════════════════════════════════════════════
 # Scanner
 # ════════════════════════════════════════════════════════
@@ -44,9 +61,7 @@ class TestScanner:
     async def test_no_tasks(self):
         """没有到期任务时返回 0"""
         db = MagicMock()
-        rpc_call = MagicMock()
-        rpc_call.execute.return_value = MagicMock(data=[])
-        db.rpc.return_value = rpc_call
+        db.pool = _mock_pool_returning([])
 
         scanner = ScheduledTaskScanner(db, executor=MagicMock())
         count = await scanner.poll()
@@ -58,9 +73,7 @@ class TestScanner:
         import asyncio as _asyncio
         db = MagicMock()
         tasks = [make_task(id="t1"), make_task(id="t2")]
-        rpc_call = MagicMock()
-        rpc_call.execute.return_value = MagicMock(data=tasks)
-        db.rpc.return_value = rpc_call
+        db.pool = _mock_pool_returning(tasks)
 
         executor = MagicMock()
         executor.execute = AsyncMock()
@@ -80,9 +93,7 @@ class TestScanner:
         import asyncio as _asyncio
         db = MagicMock()
         tasks = [make_task(id="t1")]
-        rpc_call = MagicMock()
-        rpc_call.execute.return_value = MagicMock(data=tasks)
-        db.rpc.return_value = rpc_call
+        db.pool = _mock_pool_returning(tasks)
 
         executor = MagicMock()
         executor.execute = AsyncMock(side_effect=RuntimeError("boom"))
@@ -96,10 +107,11 @@ class TestScanner:
         assert count == 1
 
     @pytest.mark.asyncio
-    async def test_rpc_error_returns_zero(self):
-        """RPC 错误时返回 0"""
+    async def test_db_error_returns_zero(self):
+        """DB 连接异常时返回 0"""
         db = MagicMock()
-        db.rpc.side_effect = RuntimeError("db down")
+        db.pool = MagicMock()
+        db.pool.connection.side_effect = RuntimeError("db down")
 
         scanner = ScheduledTaskScanner(db)
         count = await scanner.poll()
@@ -134,9 +146,7 @@ class TestScanner:
 
         db.table.side_effect = table_router
         # claim_due_tasks 不返回任何到期任务
-        rpc_call = MagicMock()
-        rpc_call.execute.return_value = MagicMock(data=[])
-        db.rpc.return_value = rpc_call
+        db.pool = _mock_pool_returning([])
 
         scanner = ScheduledTaskScanner(db, executor=MagicMock())
         await scanner.poll()
@@ -171,9 +181,7 @@ class TestScanner:
             return t
 
         db.table.side_effect = table_router
-        rpc_call = MagicMock()
-        rpc_call.execute.return_value = MagicMock(data=[])
-        db.rpc.return_value = rpc_call
+        db.pool = _mock_pool_returning([])
 
         scanner = ScheduledTaskScanner(db, executor=MagicMock())
         await scanner.poll()
@@ -201,9 +209,7 @@ class TestScanner:
             return t
 
         db.table.side_effect = table_router
-        rpc_call = MagicMock()
-        rpc_call.execute.return_value = MagicMock(data=[])
-        db.rpc.return_value = rpc_call
+        db.pool = _mock_pool_returning([])
 
         scanner = ScheduledTaskScanner(db, executor=MagicMock())
         await scanner.poll()
@@ -226,9 +232,7 @@ class TestScanner:
             return t
 
         db.table.side_effect = table_router
-        rpc_call = MagicMock()
-        rpc_call.execute.return_value = MagicMock(data=[])
-        db.rpc.return_value = rpc_call
+        db.pool = _mock_pool_returning([])
 
         scanner = ScheduledTaskScanner(db, executor=MagicMock())
 
@@ -244,39 +248,46 @@ class TestScanner:
         assert second_call_count == first_call_count
 
     @pytest.mark.asyncio
-    async def test_claim_due_tasks_passes_correct_param_types(self):
-        """回归测试：_claim_due_tasks 传给 RPC 的参数类型必须是 datetime + int
+    async def test_claim_due_tasks_passes_datetime_and_int(self):
+        """回归测试：_claim_due_tasks 传给 SQL 的参数类型必须是 datetime + int
 
         生产 bug 复盘（commit 5bd7b86）：
         曾经传 now.isoformat() 字符串给 PG，被推断为 unknown 类型，
         无法匹配函数签名 (timestamptz, integer)，导致整个 scanner 死循环报错。
 
         防御要点：
-        - p_now 必须是 datetime 对象（不是 .isoformat() 字符串）
-        - p_limit 必须是 Python int（不是 numpy int / smallint 等）
+        - 第一个参数必须是 datetime 对象（不是 .isoformat() 字符串）
+        - 第二个参数必须是 Python int
         """
         from datetime import datetime, timezone
 
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = []
+
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_conn.cursor.return_value.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_conn.cursor.return_value.__exit__ = MagicMock(return_value=False)
+
         db = MagicMock()
-        rpc_call = MagicMock()
-        rpc_call.execute.return_value = MagicMock(data=[])
-        db.rpc.return_value = rpc_call
+        db.pool = MagicMock()
+        db.pool.connection.return_value = mock_conn
 
         scanner = ScheduledTaskScanner(db, executor=MagicMock())
-        await scanner._claim_due_tasks(datetime.now(timezone.utc), 5)
+        now = datetime.now(timezone.utc)
+        await scanner._claim_due_tasks(now, 5)
 
-        # 验证 db.rpc 被调用且参数类型正确
-        db.rpc.assert_called_once()
-        call_args = db.rpc.call_args
-        assert call_args[0][0] == "claim_due_tasks", "RPC 名称必须正确"
+        # 验证 cursor.execute 被调用且参数类型正确
+        mock_cursor.execute.assert_called_once()
+        call_args = mock_cursor.execute.call_args
+        sql = call_args[0][0]
         params = call_args[0][1]
-        assert isinstance(params["p_now"], datetime), \
-            f"p_now 必须是 datetime 对象，实际是 {type(params['p_now']).__name__}"
-        assert type(params["p_limit"]) is int, \
-            f"p_limit 必须是 Python int，实际是 {type(params['p_limit']).__name__}"
-        # 防止某些类型检查"通过" isinstance 但实际是子类（如 numpy.int64）
-        assert not isinstance(params["p_now"], str), \
-            "p_now 不能是字符串（生产 bug 根因）"
+        assert "claim_due_tasks" in sql, "SQL 必须调用 claim_due_tasks"
+        assert isinstance(params[0], datetime), \
+            f"第一个参数必须是 datetime 对象，实际是 {type(params[0]).__name__}"
+        assert type(params[1]) is int, \
+            f"第二个参数必须是 Python int，实际是 {type(params[1]).__name__}"
 
 
 # ════════════════════════════════════════════════════════

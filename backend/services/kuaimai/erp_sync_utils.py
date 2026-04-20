@@ -107,9 +107,20 @@ async def _batch_upsert(
     org_id 注入由 OrgScopedDB._inject_org_id() 自动完成，
     此函数不再手动注入（V1.6 多租户隔离架构 §4.4）。
     org_id 参数保留以保持调用方兼容，P12 阶段统一清理。
+
+    行按冲突键排序后再分批，保证多 worker 并发 upsert 时锁顺序一致，
+    避免死锁（见 error_logs 2026-04-19 erp_product_skus 死锁事件）。
     """
     if not rows:
         return 0
+
+    # 按冲突键排序，防止并发 upsert 死锁
+    sort_keys = [k.strip() for k in on_conflict.split(",")]
+    try:
+        rows = sorted(rows, key=lambda r: tuple(str(r.get(k, "")) for k in sort_keys))
+    except Exception:
+        pass  # 排序失败不影响功能，退回原序
+
     total = 0
     for i in range(0, len(rows), batch_size):
         batch = rows[i : i + batch_size]
