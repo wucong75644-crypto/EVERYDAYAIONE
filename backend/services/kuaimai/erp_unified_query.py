@@ -402,11 +402,9 @@ class UnifiedQueryEngine:
     ) -> ToolOutput:
         type_name = DOC_TYPE_CN.get(doc_type, doc_type)
 
+        # fields 为空时用默认字段（detail 合并到 export 后，用户不一定指定 fields）
         if not fields:
-            return ToolOutput(
-                summary=generate_field_doc(doc_type),
-                source="erp",
-            )
+            fields = DEFAULT_DETAIL_FIELDS.get(doc_type, ["*"])
 
         safe_fields = [c for c in fields if c in EXPORT_COLUMN_NAMES]
         if not safe_fields:
