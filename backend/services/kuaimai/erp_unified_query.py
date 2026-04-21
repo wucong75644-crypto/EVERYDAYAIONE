@@ -350,7 +350,7 @@ class UnifiedQueryEngine:
         max_rows = EXPORT_MAX
 
         # 构建 DuckDB SQL
-        select_sql = build_pii_select(safe_fields)
+        select_sql = build_pii_select(safe_fields, cn_header=True)
         where_sql = build_export_where(doc_type, filters, tr, self.org_id)
         need_archive = _need_archive(tr)
 
