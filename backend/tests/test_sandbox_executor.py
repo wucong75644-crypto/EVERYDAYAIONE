@@ -505,3 +505,206 @@ class TestSnapshotAndAutoUpload:
 
         await executor._auto_upload_new_files()
         assert "report.xlsx" in results
+
+
+class TestDedupOverwrittenFiles:
+    """Google Drive 风格同名文件保护"""
+
+    def test_backup_creates_dedup_bak_files(self, tmp_path):
+        """备份为已有的可上传文件创建 .dedup_bak 副本"""
+        (tmp_path / "report.xlsx").write_bytes(b"old data")
+        (tmp_path / "data.csv").write_bytes(b"old csv")
+        (tmp_path / "notes.parquet").write_bytes(b"skip me")  # 不在白名单
+
+        executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
+        backups = executor._backup_existing_files()
+
+        assert len(backups) == 2
+        assert (tmp_path / "report.xlsx.dedup_bak").exists()
+        assert (tmp_path / "data.csv.dedup_bak").exists()
+        assert not (tmp_path / "notes.parquet.dedup_bak").exists()
+
+    def test_dedup_renames_new_file_keeps_old(self, tmp_path):
+        """覆盖写入 → 新文件重命名为 name (1).ext，旧文件恢复原名"""
+        old_content = b"March sales data"
+        new_content = b"April sales data - different"
+
+        (tmp_path / "report.xlsx").write_bytes(old_content)
+
+        executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
+        backups = executor._backup_existing_files()
+
+        # 模拟沙箱代码覆盖写入
+        import time; time.sleep(0.05)
+        (tmp_path / "report.xlsx").write_bytes(new_content)
+
+        executor._dedup_overwritten_files(backups)
+
+        # 旧文件恢复原名
+        assert (tmp_path / "report.xlsx").read_bytes() == old_content
+        # 新文件被重命名
+        assert (tmp_path / "report (1).xlsx").read_bytes() == new_content
+        # 备份已清理
+        assert not (tmp_path / "report.xlsx.dedup_bak").exists()
+
+    def test_dedup_increments_suffix(self, tmp_path):
+        """已有 (1) 时自动递增到 (2)"""
+        (tmp_path / "report.xlsx").write_bytes(b"v1")
+        (tmp_path / "report (1).xlsx").write_bytes(b"v2 from last time")
+
+        executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
+        backups = executor._backup_existing_files()
+
+        import time; time.sleep(0.05)
+        (tmp_path / "report.xlsx").write_bytes(b"v3 new")
+
+        executor._dedup_overwritten_files(backups)
+
+        assert (tmp_path / "report.xlsx").read_bytes() == b"v1"
+        assert (tmp_path / "report (1).xlsx").read_bytes() == b"v2 from last time"
+        assert (tmp_path / "report (2).xlsx").read_bytes() == b"v3 new"
+
+    def test_dedup_no_overwrite_cleans_backup(self, tmp_path):
+        """文件未被覆盖 → 删除备份，不做任何重命名"""
+        (tmp_path / "report.xlsx").write_bytes(b"untouched")
+
+        executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
+        backups = executor._backup_existing_files()
+
+        # 沙箱代码没有写同名文件
+        executor._dedup_overwritten_files(backups)
+
+        assert (tmp_path / "report.xlsx").read_bytes() == b"untouched"
+        assert not (tmp_path / "report.xlsx.dedup_bak").exists()
+        assert not (tmp_path / "report (1).xlsx").exists()
+
+    def test_dedup_deleted_file_restored(self, tmp_path):
+        """原文件被沙箱删除 → 从备份恢复"""
+        (tmp_path / "report.xlsx").write_bytes(b"important data")
+
+        executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
+        backups = executor._backup_existing_files()
+
+        # 沙箱代码删除了文件
+        (tmp_path / "report.xlsx").unlink()
+
+        executor._dedup_overwritten_files(backups)
+
+        assert (tmp_path / "report.xlsx").read_bytes() == b"important data"
+
+    @pytest.mark.asyncio
+    async def test_dedup_bak_not_uploaded(self, tmp_path):
+        """.dedup_bak 文件不会被 auto_upload 扫描到"""
+        (tmp_path / "report.xlsx.dedup_bak").write_bytes(b"backup")
+
+        results = []
+
+        async def mock_upload(filename, size):
+            results.append(filename)
+            return f"✅ {filename}"
+
+        executor = SandboxExecutor(
+            timeout=5.0, output_dir=str(tmp_path), upload_fn=mock_upload,
+        )
+        executor._snapshot_before = {}
+
+        await executor._auto_upload_new_files()
+        assert "report.xlsx.dedup_bak" not in results
+
+    @pytest.mark.asyncio
+    async def test_dedup_renamed_file_gets_uploaded(self, tmp_path):
+        """覆盖后重命名的新文件 report (1).xlsx 应被 auto_upload 检测到"""
+        old_content = b"old"
+        new_content = b"new data here"
+
+        (tmp_path / "report.xlsx").write_bytes(old_content)
+
+        results = []
+
+        async def mock_upload(filename, size):
+            results.append(filename)
+            return f"✅ {filename}"
+
+        executor = SandboxExecutor(
+            timeout=5.0, output_dir=str(tmp_path), upload_fn=mock_upload,
+        )
+        executor._snapshot_before = executor._snapshot_output_files()
+        backups = executor._backup_existing_files()
+
+        import time; time.sleep(0.05)
+        (tmp_path / "report.xlsx").write_bytes(new_content)
+
+        # dedup 先跑 → 新文件变成 report (1).xlsx
+        executor._dedup_overwritten_files(backups)
+
+        # auto_upload 应该检测到 report (1).xlsx（新文件，不在 snapshot 里）
+        await executor._auto_upload_new_files()
+        assert "report (1).xlsx" in results
+        # 旧文件 report.xlsx 恢复后 mtime 不变，不应被上传
+        assert "report.xlsx" not in results
+
+    def test_next_available_name(self, tmp_path):
+        """_next_available_name 返回最小可用后缀"""
+        p = tmp_path / "data.csv"
+        assert SandboxExecutor._next_available_name(p).name == "data (1).csv"
+
+        (tmp_path / "data (1).csv").write_bytes(b"x")
+        assert SandboxExecutor._next_available_name(p).name == "data (2).csv"
+
+        (tmp_path / "data (2).csv").write_bytes(b"x")
+        assert SandboxExecutor._next_available_name(p).name == "data (3).csv"
+
+    def test_backup_scans_both_output_and_staging(self, tmp_path):
+        """backup 同时扫描 output_dir 和 staging_dir 两个目录"""
+        out_dir = tmp_path / "output"
+        stg_dir = tmp_path / "staging"
+        out_dir.mkdir()
+        stg_dir.mkdir()
+        (out_dir / "a.xlsx").write_bytes(b"output file")
+        (stg_dir / "b.csv").write_bytes(b"staging file")
+
+        executor = SandboxExecutor(
+            timeout=5.0,
+            output_dir=str(out_dir),
+            staging_dir=str(stg_dir),
+        )
+        backups = executor._backup_existing_files()
+
+        assert len(backups) == 2
+        assert (out_dir / "a.xlsx.dedup_bak").exists()
+        assert (stg_dir / "b.csv.dedup_bak").exists()
+
+    @pytest.mark.asyncio
+    async def test_dedup_runs_on_timeout(self, tmp_path):
+        """execute() 超时时仍执行 dedup，备份被正确清理"""
+        (tmp_path / "report.xlsx").write_bytes(b"precious data")
+
+        executor = SandboxExecutor(
+            timeout=0.01,  # 极短超时
+            output_dir=str(tmp_path),
+        )
+        # 执行一段会超时的代码
+        result = await executor.execute("import time; time.sleep(10)")
+        assert "超时" in result
+
+        # 备份已被清理（未覆盖 → unlink）
+        assert not (tmp_path / "report.xlsx.dedup_bak").exists()
+        # 原文件完好
+        assert (tmp_path / "report.xlsx").read_bytes() == b"precious data"
+
+    @pytest.mark.asyncio
+    async def test_dedup_runs_on_exception(self, tmp_path):
+        """execute() 异常时仍执行 dedup，备份被正确清理"""
+        (tmp_path / "data.csv").write_bytes(b"important csv")
+
+        executor = SandboxExecutor(
+            timeout=5.0,
+            output_dir=str(tmp_path),
+        )
+        result = await executor.execute("raise ValueError('boom')")
+        assert "执行错误" in result
+
+        # 备份已被清理
+        assert not (tmp_path / "data.csv.dedup_bak").exists()
+        # 原文件完好
+        assert (tmp_path / "data.csv").read_bytes() == b"important csv"
