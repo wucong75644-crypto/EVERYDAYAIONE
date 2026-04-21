@@ -174,28 +174,6 @@ def wrap_for_erp_agent(tool_name: str, result: str, tight: bool = False) -> str:
     return wrap(tool_name, result, budget=budget_val)
 
 
-def wrap_erp_agent_result(result: str) -> str:
-    """erp_agent 工具返回给主 Agent 的结论包装（预算 4000）。
-
-    先走 wrap() 分流，再套"禁止改写"信封。
-    信封包在摘要外面是正确的——摘要里的数字/日期同样需要保护。
-
-    设计文档：docs/document/TECH_ERP时间准确性架构.md §14.7
-    """
-    truncated = wrap("erp_agent", result, budget=ERP_AGENT_RESULT_BUDGET)
-    # 空结果不加 envelope，避免给前端发"只有提示没数据"的奇怪回复
-    if not truncated.strip():
-        return truncated
-    return (
-        "⚠ 以下是 ERP 数据查询的最终结果，已包含**正确的中文星期/日期/数字**。\n"
-        "**禁止改写**其中的日期或星期（如「2026-04-10 周五」必须逐字保留）。\n"
-        "你只能在前后加简短的中文序言或总结，"
-        "结构化时间块（[当前期]/[基线期]/[查询窗口]/[统计区间] 等）和数据本身必须原文输出。\n\n"
-        "─── ERP 结果开始 ───\n"
-        f"{truncated}\n"
-        "─── ERP 结果结束 ───"
-    )
-
 
 # ============================================================
 # 内部函数

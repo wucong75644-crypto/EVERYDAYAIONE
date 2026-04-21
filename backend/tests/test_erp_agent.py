@@ -110,33 +110,55 @@ class TestFilterErpContext:
 
 
 # ============================================================
-# ERPAgentResult 数据结构
+# AgentResult 数据结构（Phase 6: 替代 ERPAgentResult）
 # ============================================================
 
 
-class TestERPAgentResult:
-    """ERPAgentResult 数据结构"""
+class TestAgentResultBasic:
+    """AgentResult 基本字段"""
 
     def test_default_values(self):
-        from services.erp_agent import ERPAgentResult
-        r = ERPAgentResult(text="测试")
-        assert r.text == "测试"
-        assert r.full_text == ""
+        from services.agent.agent_result import AgentResult
+        r = AgentResult(status="success", summary="测试")
+        assert r.summary == "测试"
+        assert r.status == "success"
         assert r.tokens_used == 0
-        assert r.turns_used == 0
-        assert r.tools_called == []
+        assert r.agent_name == ""
 
     def test_with_all_fields(self):
-        from services.erp_agent import ERPAgentResult
-        r = ERPAgentResult(
-            text="结论",
-            full_text="完整数据",
+        from services.agent.agent_result import AgentResult
+        r = AgentResult(
+            status="success",
+            summary="结论",
             tokens_used=500,
-            turns_used=3,
-            tools_called=["local_stock_query", "local_order_query"],
+            agent_name="erp_agent",
+            confidence=0.6,
         )
         assert r.tokens_used == 500
-        assert len(r.tools_called) == 2
+        assert r.agent_name == "erp_agent"
+        assert r.confidence == 0.6
+
+
+# ============================================================
+# re-export 兼容性（Phase 6: services/erp_agent.py 导出 AgentResult）
+# ============================================================
+
+
+class TestReExportCompatibility:
+    """services/erp_agent.py re-export 保证旧导入路径可用"""
+
+    def test_import_agent_result_from_compat_path(self):
+        from services.erp_agent import AgentResult
+        r = AgentResult(status="success", summary="test")
+        assert r.status == "success"
+
+    def test_import_max_erp_turns_from_compat_path(self):
+        from services.erp_agent import MAX_ERP_TURNS
+        assert isinstance(MAX_ERP_TURNS, int)
+
+    def test_import_filter_erp_context_from_compat_path(self):
+        from services.erp_agent import filter_erp_context
+        assert callable(filter_erp_context)
 
 
 # ============================================================
@@ -163,7 +185,10 @@ class TestToolExecutorERPAgent:
             conversation_id="t", org_id="test",
         )
         result = await exe._erp_agent({"query": ""})
-        assert "请输入" in result
+        from services.agent.agent_result import AgentResult
+        assert isinstance(result, AgentResult)
+        assert result.status == "error"
+        assert "请输入" in result.summary
 
     @pytest.mark.asyncio
     @patch("services.erp_agent.ERPAgent.execute")
@@ -1202,43 +1227,39 @@ class TestIsContextLengthError:
 
 
 # ============================================================
-# ERPAgentResult — D1 结构化增强
+# AgentResult — 结构化状态（Phase 6: 替代 ERPAgentResult D1）
 # ============================================================
 
-class TestERPAgentResultStructured:
-    """D1: status / is_truncated 字段"""
+class TestAgentResultStructured:
+    """AgentResult status 字段"""
 
-    def test_default_status_is_success(self):
-        from services.erp_agent import ERPAgentResult
-        r = ERPAgentResult(text="OK")
+    def test_default_status_values(self):
+        from services.agent.agent_result import AgentResult
+        r = AgentResult(status="success", summary="OK")
         assert r.status == "success"
-        assert r.is_truncated is False
 
     def test_error_status(self):
-        from services.erp_agent import ERPAgentResult
-        r = ERPAgentResult(text="出错了", status="error")
+        from services.agent.agent_result import AgentResult
+        r = AgentResult(status="error", summary="出错了", error_message="出错了")
         assert r.status == "error"
+        assert r.error_message == "出错了"
 
     def test_partial_status(self):
-        from services.erp_agent import ERPAgentResult
-        r = ERPAgentResult(text="部分结果", status="partial", is_truncated=True)
+        from services.agent.agent_result import AgentResult
+        r = AgentResult(status="partial", summary="部分结果")
         assert r.status == "partial"
-        assert r.is_truncated is True
 
     def test_all_fields_populated(self):
-        from services.erp_agent import ERPAgentResult
-        r = ERPAgentResult(
-            text="结论",
-            full_text="完整文本",
+        from services.agent.agent_result import AgentResult
+        r = AgentResult(
             status="success",
+            summary="结论",
             tokens_used=1000,
-            turns_used=3,
-            tools_called=["local_stock_query", "local_order_query"],
-            is_truncated=False,
+            agent_name="erp_agent",
+            confidence=1.0,
         )
         assert r.tokens_used == 1000
-        assert r.turns_used == 3
-        assert len(r.tools_called) == 2
+        assert r.agent_name == "erp_agent"
 
 
 # ============================================================

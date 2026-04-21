@@ -153,16 +153,16 @@ class TestCollectedFilesInLoopResult:
         assert result.collected_files[0]["name"] == "f.xlsx"
 
 
-class TestCollectedFilesInERPAgentResult:
-    """ERPAgentResult.collected_files 字段正确传递"""
+class TestCollectedFilesInAgentResult:
+    """AgentResult.collected_files 字段正确传递（Phase 6: 替代 ERPAgentResult）"""
 
-    def test_default_empty(self):
-        from services.agent.erp_agent_types import ERPAgentResult
-        result = ERPAgentResult(text="ok")
-        assert result.collected_files == []
+    def test_default_none(self):
+        from services.agent.agent_result import AgentResult
+        result = AgentResult(status="success", summary="ok")
+        assert result.collected_files is None
 
     def test_with_files(self):
-        from services.agent.erp_agent_types import ERPAgentResult
+        from services.agent.agent_result import AgentResult
         files = [{"url": "https://x.com/f.xlsx", "name": "f.xlsx", "mime_type": "app/xlsx", "size": 100}]
-        result = ERPAgentResult(text="ok", collected_files=files)
+        result = AgentResult(status="success", summary="ok", collected_files=files)
         assert len(result.collected_files) == 1

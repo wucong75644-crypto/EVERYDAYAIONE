@@ -1,6 +1,6 @@
 # 技术设计：主 Agent ↔ 子 Agent 标准通信协议
 
-> 日期：2026-04-20 | 等级：A级 | 状态：待实施
+> 日期：2026-04-20 | 等级：A级 | 状态：✅ 已完成（Phase 1-6 全部完成，2026-04-21）
 > 前置依赖：无（与 Agent 架构细节对齐计划独立并行）
 
 ---
@@ -771,9 +771,9 @@ class AnalystAgent:
 - [ ] 5.3 验证：主 Agent 能从 file_ref block 正确获取路径调 code_execute
 - [ ] 5.4 验证：前端文件卡片仍正常显示（_pending_file_parts 通道）
 
-### Phase 6：清理旧路径（协议稳定后）
-- [ ] 6.1 删除 ERPAgentResult，统一用 AgentResult
-- [ ] 6.2 删除 tool_executor 中旧的文件提取/ask_user/display/wrap 逻辑
-- [ ] 6.3 删除 wrap_erp_agent_result 纯文本包装
-- [ ] 6.4 删除 `[DATA_REF]` 文本标记生成（ToolOutput.to_message_content 内部）
-- [ ] 6.5 迁移测试
+### Phase 6：清理旧路径（协议稳定后）— ✅ 2026-04-21 完成
+- [x] 6.1 删除 ERPAgentResult，统一用 AgentResult
+- [x] 6.2 删除 tool_executor 中旧的文件提取/ask_user/display/wrap 逻辑（已在 Phase 3 完成）
+- [x] 6.3 删除 wrap_erp_agent_result 纯文本包装
+- [ ] 6.4 删除 `[DATA_REF]` 文本标记生成（ToolOutput.to_message_content 内部）— 保留，ERP Agent 内部循环仍在使用
+- [x] 6.5 迁移测试（5 个文件 20+ 处 ERPAgentResult → AgentResult）
