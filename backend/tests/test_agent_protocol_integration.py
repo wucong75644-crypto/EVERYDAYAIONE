@@ -90,7 +90,7 @@ class TestChatToolMixinAgentResult:
                 "url": "/tmp/a.parquet", "name": "a.parquet",
                 "mime_type": "application/octet-stream", "size": 1024,
             }],
-            agent_name="erp_agent",
+            source="erp_agent",
         )
         assert result.collected_files is not None
         assert len(result.collected_files) == 1
@@ -101,11 +101,11 @@ class TestChatToolMixinAgentResult:
         result = AgentResult(
             status="ask_user", summary="需确认",
             ask_user_question="查哪个平台？",
-            agent_name="erp_agent",
+            source="erp_agent",
         )
         assert result.status == "ask_user"
         assert result.ask_user_question == "查哪个平台？"
-        assert result.agent_name == "erp_agent"
+        assert result.source == "erp_agent"
 
     def test_token_accumulation(self):
         """tokens_used 正确累加"""

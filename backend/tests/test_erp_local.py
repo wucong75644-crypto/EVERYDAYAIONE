@@ -223,7 +223,7 @@ class TestLocalIdentify:
         db = MockSupabaseClient()
         result = await local_product_identify(db)
         assert isinstance(result, ToolOutput)
-        assert result.status == OutputStatus.ERROR
+        assert result.status == "error"
         assert "至少一个参数" in result.summary
 
     @pytest.mark.asyncio
@@ -289,7 +289,7 @@ class TestLocalIdentify:
         )
         result = await local_product_identify(db, code="NOTEXIST")
         assert isinstance(result, ToolOutput)
-        assert result.status == OutputStatus.EMPTY
+        assert result.status == "empty"
         assert "不存在" in result.summary
 
     @pytest.mark.asyncio
@@ -685,7 +685,7 @@ class TestLocalProductStats:
         )
         result = await local_product_stats(db, "NODATA")
         assert isinstance(result, ToolOutput)
-        assert result.status == OutputStatus.EMPTY
+        assert result.status == "empty"
         assert "无统计数据" in result.summary
 
     @pytest.mark.asyncio

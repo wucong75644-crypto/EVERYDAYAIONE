@@ -30,7 +30,7 @@ def _error_result(summary: str, status: str = "error") -> AgentResult:
     """构建错误/异常 AgentResult 的快捷方式。"""
     return AgentResult(
         status=status, summary=summary,
-        agent_name="erp_agent", error_message=summary,
+        source="erp_agent", error_message=summary,
     )
 
 
@@ -194,7 +194,7 @@ class ERPAgent:
     ) -> "AgentResult":
         """Step 6+7: 文件注册 + 降级标记 + 经验记录 → AgentResult。"""
         from services.agent.agent_result import AgentResult
-        from services.agent.tool_output import OutputStatus, OutputFormat
+        from services.agent.tool_output import OutputFormat
 
         summary = result.summary or ""
 
@@ -210,7 +210,7 @@ class ERPAgent:
             asyncio.create_task(self._cleanup_staging_delayed())
 
         # ③ 经验记录（detail 含关键参数，供动态案例召回使用）
-        if result.status == OutputStatus.ERROR:
+        if result.status == "error":
             asyncio.create_task(self._experience.record(
                 "failure", query, [domain],
                 f"单域失败：{summary[:200]}",
@@ -223,14 +223,14 @@ class ERPAgent:
             ))
 
         # ④ 构建 AgentResult（通信协议标准输出）
-        status = "error" if result.status == OutputStatus.ERROR else "success"
+        status = "error" if result.status == "error" else "success"
         return AgentResult(
             status=status,
             summary=summary,
             file_ref=result.file_ref,
             data=result.data if result.format == OutputFormat.TABLE else None,
             columns=result.columns,
-            agent_name="erp_agent",
+            source="erp_agent",
             tokens_used=self._tokens_used,
             confidence=0.6 if degraded else 1.0,
             error_message=summary if status == "error" else "",

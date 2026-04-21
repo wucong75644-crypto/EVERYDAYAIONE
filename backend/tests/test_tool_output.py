@@ -66,15 +66,15 @@ def _file_ref(path: str = "/tmp/test.parquet", rows: int = 500) -> FileRef:
 class TestToolOutputText:
     def test_text_returns_summary_only(self):
         t = ToolOutput(summary="共8个仓库", source="warehouse")
-        assert t.to_message_content() == "共8个仓库"
+        assert t.to_tool_content() == "共8个仓库"
 
     def test_text_no_data_ref_tag(self):
         t = ToolOutput(summary="列表", source="warehouse")
-        assert "[DATA_REF]" not in t.to_message_content()
+        assert "[DATA_REF]" not in t.to_tool_content()
 
     def test_text_default_status_is_ok(self):
         t = ToolOutput(summary="x")
-        assert t.status == OutputStatus.OK
+        assert t.status == "success"
         assert t.error_message == ""
 
 
@@ -91,7 +91,7 @@ class TestToolOutputTable:
             columns=_cols_stock(),
             data=_data_stock(),
         )
-        content = t.to_message_content()
+        content = t.to_tool_content()
         assert "[DATA_REF]" in content
         assert "[/DATA_REF]" in content
 
@@ -103,7 +103,7 @@ class TestToolOutputTable:
             columns=_cols_stock(),
             data=_data_stock(),
         )
-        content = t.to_message_content()
+        content = t.to_tool_content()
         assert "source: warehouse" in content
         assert "storage: inline" in content
         assert "rows: 2" in content
@@ -116,7 +116,7 @@ class TestToolOutputTable:
             columns=_cols_stock(),
             data=[],
         )
-        content = t.to_message_content()
+        content = t.to_tool_content()
         assert "product_code: text  # 商品编码" in content
         assert "sellable: integer  # 可售库存" in content
 
@@ -129,7 +129,7 @@ class TestToolOutputTable:
             columns=cols,
             data=[{"id": 1}],
         )
-        content = t.to_message_content()
+        content = t.to_tool_content()
         assert "- id: integer\n" in content  # 没有 # 标签
 
     def test_inline_data_json_embedded(self):
@@ -141,7 +141,7 @@ class TestToolOutputTable:
             columns=[ColumnMeta("code", "text"), ColumnMeta("qty", "integer")],
             data=data,
         )
-        content = t.to_message_content()
+        content = t.to_tool_content()
         assert "data:" in content
         parsed = json.loads(
             content.split("data:\n  ")[1].split("\n[/DATA_REF]")[0]
@@ -170,7 +170,7 @@ class TestToolOutputTable:
             columns=[ColumnMeta("id", "integer")],
             data=big_data,
         )
-        content = t.to_message_content()
+        content = t.to_tool_content()
         assert "rows: 201" in content
         assert "data:" not in content
 
@@ -188,7 +188,7 @@ class TestToolOutputFileRef:
             source="trade",
             file_ref=fr,
         )
-        content = t.to_message_content()
+        content = t.to_tool_content()
         assert "storage: file" in content
         assert "rows: 500" in content
         assert "path: STAGING_DIR + '/test.parquet'" in content
@@ -203,7 +203,7 @@ class TestToolOutputFileRef:
             source="x",
             file_ref=fr,
         )
-        content = t.to_message_content()
+        content = t.to_tool_content()
         assert "preview:" in content
         assert "A001" in content
 
@@ -223,7 +223,7 @@ class TestToolOutputFileRef:
             source="trade",
             file_ref=fr,
         )
-        content = t.to_message_content()
+        content = t.to_tool_content()
         # 必须包含 sandbox_ref 格式
         assert "STAGING_DIR + '/local_order_123.parquet'" in content
         # 绝对路径不能泄漏给 LLM
@@ -240,7 +240,7 @@ class TestToolOutputFileRef:
             columns=None,
             file_ref=fr,
         )
-        content = t.to_message_content()
+        content = t.to_tool_content()
         assert "product_code: text" in content
 
 
@@ -261,7 +261,7 @@ class TestToolOutputMetadata:
                 "time_range": "2026-03-01 ~ 2026-03-31",
             },
         )
-        content = t.to_message_content()
+        content = t.to_tool_content()
         assert "doc_type: aftersale" in content
         assert "time_range: 2026-03-01 ~ 2026-03-31" in content
 
@@ -274,7 +274,7 @@ class TestToolOutputMetadata:
             data=[],
             metadata={"doc_type": None, "platform": ""},
         )
-        content = t.to_message_content()
+        content = t.to_tool_content()
         assert "doc_type" not in content
         assert "platform" not in content
 
@@ -284,7 +284,7 @@ class TestToolOutputMetadata:
             source="x",
             metadata={"doc_type": "order"},
         )
-        assert "doc_type" not in t.to_message_content()
+        assert "doc_type" not in t.to_tool_content()
 
 
 # ============================================================
@@ -349,16 +349,16 @@ class TestOutputStatus:
             status=OutputStatus.ERROR,
             error_message="权限不足",
         )
-        assert t.status == OutputStatus.ERROR
+        assert t.status == "error"
         assert t.error_message == "权限不足"
 
     def test_partial_status(self):
         t = ToolOutput(summary="部分", status=OutputStatus.PARTIAL)
-        assert t.status == OutputStatus.PARTIAL
+        assert t.status == "partial"
 
     def test_empty_status(self):
         t = ToolOutput(summary="无数据", status=OutputStatus.EMPTY)
-        assert t.status == OutputStatus.EMPTY
+        assert t.status == "empty"
 
 
 # ============================================================

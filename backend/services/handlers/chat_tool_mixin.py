@@ -121,7 +121,7 @@ class ChatToolMixin:
                     "message": result.ask_user_question,
                     "reason": "need_info",
                     "tool_call_id": tc["id"],
-                    "source": result.agent_name,
+                    "source": result.source,
                 }
             # ③ 展示文本（供 content_block_add 推送）
             self._last_erp_display_text = result.summary

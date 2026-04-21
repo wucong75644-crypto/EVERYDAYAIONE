@@ -177,7 +177,7 @@ class TestPurchaseQueries:
         """采购Agent不能查订单"""
         agent = _make_purchase()
         result = await agent._query_local_data("order")
-        assert result.status == OutputStatus.ERROR
+        assert result.status == "error"
 
 
 # ============================================================
@@ -270,7 +270,7 @@ class TestTradeQueries:
         """订单Agent不能查采购"""
         agent = _make_trade()
         result = await agent._query_local_data("purchase")
-        assert result.status == OutputStatus.ERROR
+        assert result.status == "error"
 
 
 # ============================================================
@@ -371,7 +371,7 @@ class TestAftersaleQueries:
         """售后Agent不能查订单"""
         agent = _make_aftersale()
         result = await agent._query_local_data("order")
-        assert result.status == OutputStatus.ERROR
+        assert result.status == "error"
 
 
 # ============================================================

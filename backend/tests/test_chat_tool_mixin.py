@@ -461,7 +461,7 @@ class TestExecuteSingleToolAgentResult:
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value=AgentResult(
             status="success", summary="共 945 条订单",
-            agent_name="erp_agent", tokens_used=500,
+            source="erp_agent", tokens_used=500,
         ))
 
         tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查订单"}'}
@@ -485,7 +485,7 @@ class TestExecuteSingleToolAgentResult:
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value=AgentResult(
             status="error", summary="查询超时",
-            agent_name="erp_agent", error_message="查询超时",
+            source="erp_agent", error_message="查询超时",
         ))
 
         tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查订单"}'}
@@ -508,7 +508,7 @@ class TestExecuteSingleToolAgentResult:
         executor = AsyncMock()
         executor.execute = AsyncMock(return_value=AgentResult(
             status="success", summary="ok",
-            agent_name="erp_agent",
+            source="erp_agent",
         ))
 
         tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查"}'}
@@ -560,7 +560,7 @@ class TestExecuteToolCallsAgentResult:
                   "mime_type": "application/octet-stream", "size": 1024}]
         agent_result = AgentResult(
             status="success", summary="已导出",
-            collected_files=files, agent_name="erp_agent", tokens_used=300,
+            collected_files=files, source="erp_agent", tokens_used=300,
         )
 
         # 模拟 _execute_tool_calls 的 AgentResult 处理循环
@@ -595,7 +595,7 @@ class TestExecuteToolCallsAgentResult:
         agent_result = AgentResult(
             status="ask_user", summary="需确认",
             ask_user_question="查哪个平台？",
-            agent_name="erp_agent",
+            source="erp_agent",
         )
 
         tc = {"name": "erp_agent", "id": "tc1"}
@@ -606,7 +606,7 @@ class TestExecuteToolCallsAgentResult:
                 "message": agent_result.ask_user_question,
                 "reason": "need_info",
                 "tool_call_id": tc["id"],
-                "source": agent_result.agent_name,
+                "source": agent_result.source,
             }
 
         assert mixin._ask_user_pending is not None

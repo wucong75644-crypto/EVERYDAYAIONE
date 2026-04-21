@@ -123,7 +123,7 @@ class TestAgentResultBasic:
         assert r.summary == "测试"
         assert r.status == "success"
         assert r.tokens_used == 0
-        assert r.agent_name == ""
+        assert r.source == ""
 
     def test_with_all_fields(self):
         from services.agent.agent_result import AgentResult
@@ -131,11 +131,11 @@ class TestAgentResultBasic:
             status="success",
             summary="结论",
             tokens_used=500,
-            agent_name="erp_agent",
+            source="erp_agent",
             confidence=0.6,
         )
         assert r.tokens_used == 500
-        assert r.agent_name == "erp_agent"
+        assert r.source == "erp_agent"
         assert r.confidence == 0.6
 
 
@@ -198,7 +198,7 @@ class TestToolExecutorERPAgent:
 
         mock_execute.return_value = AgentResult(
             status="success", summary="库存128件",
-            agent_name="erp_agent", tokens_used=200,
+            source="erp_agent", tokens_used=200,
         )
 
         exe = ToolExecutor(
@@ -221,7 +221,7 @@ class TestToolExecutorERPAgent:
         mock_execute.return_value = AgentResult(
             status="ask_user", summary="需要排除刷单吗？",
             ask_user_question="需要排除刷单吗？",
-            agent_name="erp_agent", tokens_used=100,
+            source="erp_agent", tokens_used=100,
         )
 
         exe = ToolExecutor(
@@ -244,7 +244,7 @@ class TestToolExecutorERPAgent:
 
         mock_execute.return_value = AgentResult(
             status="success", summary="查询结果",
-            agent_name="erp_agent", tokens_used=100,
+            source="erp_agent", tokens_used=100,
         )
 
         exe = ToolExecutor(
@@ -365,7 +365,7 @@ class TestERPAgentSingleDomain:
 
         assert result.status == "success"
         assert "100 单" in result.summary
-        assert result.agent_name == "erp_agent"
+        assert result.source == "erp_agent"
         mock_dept.execute.assert_called_once()
         # 确认 dag_mode=True 硬编码
         call_kwargs = mock_dept.execute.call_args
@@ -1255,11 +1255,11 @@ class TestAgentResultStructured:
             status="success",
             summary="结论",
             tokens_used=1000,
-            agent_name="erp_agent",
+            source="erp_agent",
             confidence=1.0,
         )
         assert r.tokens_used == 1000
-        assert r.agent_name == "erp_agent"
+        assert r.source == "erp_agent"
 
 
 # ============================================================

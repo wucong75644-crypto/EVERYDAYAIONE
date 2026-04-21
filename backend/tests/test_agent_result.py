@@ -1,12 +1,22 @@
-"""AgentResult 标准结构单元测试。
+"""AgentResult 统一结果类型单元测试。
 
 覆盖场景：success/error/timeout/ask_user/file_ref/data/insights
-设计文档: docs/document/TECH_Agent通信协议结构化.md §2.2
+         __post_init__ / to_tool_content / validate / ToolOutput 别名
+设计文档: docs/document/TECH_Agent通信协议结构化.md
 """
+
+import sys
+from pathlib import Path
+
+backend_dir = Path(__file__).parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
 
 import pytest
 from services.agent.agent_result import AgentResult
-from services.agent.tool_output import FileRef, ColumnMeta
+from services.agent.tool_output import (
+    FileRef, ColumnMeta, OutputFormat, OutputStatus,
+)
 
 
 # ============================================================
@@ -259,14 +269,14 @@ class TestToJson:
         result = AgentResult(
             status="success",
             summary="测试" * 200,
-            agent_name="erp_agent",
+            source="erp_agent",
             tokens_used=1500,
             confidence=0.6,
         )
         parsed = json.loads(result.to_json())
         assert parsed["status"] == "success"
         assert len(parsed["summary"]) <= 200
-        assert parsed["agent_name"] == "erp_agent"
+        assert parsed["source"] == "erp_agent"
         assert parsed["tokens_used"] == 1500
         assert parsed["confidence"] == 0.6
 
@@ -311,7 +321,7 @@ class TestFieldCompleteness:
         assert result.data is None
         assert result.columns is None
         assert result.collected_files is None
-        assert result.agent_name == ""
+        assert result.source == ""
         assert result.tokens_used == 0
         assert result.confidence == 1.0
         assert result.error_message == ""
@@ -319,3 +329,236 @@ class TestFieldCompleteness:
         assert result.insights is None
         assert result.follow_up is None
         assert result.metadata == {}
+        assert result.format == OutputFormat.TEXT
+
+
+# ============================================================
+# __post_init__ 状态归一化
+# ============================================================
+
+
+class TestPostInit:
+    """__post_init__ 自动转换 OutputStatus → str + "ok" → "success" """
+
+    def test_output_status_enum_to_str(self):
+        """OutputStatus.ERROR → "error" """
+        r = AgentResult(summary="失败", status=OutputStatus.ERROR)
+        assert r.status == "error"
+        assert isinstance(r.status, str)
+
+    def test_output_status_ok_to_success(self):
+        """OutputStatus.OK → "success"（"ok" 归一化为 "success"）"""
+        r = AgentResult(summary="成功", status=OutputStatus.OK)
+        assert r.status == "success"
+
+    def test_output_status_empty(self):
+        """OutputStatus.EMPTY → "empty" """
+        r = AgentResult(summary="无数据", status=OutputStatus.EMPTY)
+        assert r.status == "empty"
+
+    def test_output_status_partial(self):
+        """OutputStatus.PARTIAL → "partial" """
+        r = AgentResult(summary="部分", status=OutputStatus.PARTIAL)
+        assert r.status == "partial"
+
+    def test_str_ok_normalized(self):
+        """字符串 "ok" → "success" """
+        r = AgentResult(summary="test", status="ok")
+        assert r.status == "success"
+
+    def test_str_error_unchanged(self):
+        """字符串 "error" 不变"""
+        r = AgentResult(summary="test", status="error")
+        assert r.status == "error"
+
+    def test_default_status_is_success(self):
+        """不传 status 时默认 "success" """
+        r = AgentResult(summary="test")
+        assert r.status == "success"
+
+
+# ============================================================
+# to_tool_content() 工具循环 LLM 序列化
+# ============================================================
+
+
+class TestToToolContent:
+    """to_tool_content() → str（给工具循环内部 LLM）"""
+
+    def test_text_format_returns_summary(self):
+        """TEXT 格式直接返回 summary"""
+        r = AgentResult(summary="共8个仓库", format=OutputFormat.TEXT)
+        assert r.to_tool_content() == "共8个仓库"
+        assert "[DATA_REF]" not in r.to_tool_content()
+
+    def test_table_format_has_data_ref(self):
+        """TABLE 格式包含 [DATA_REF] 标签"""
+        r = AgentResult(
+            summary="库存数据",
+            format=OutputFormat.TABLE,
+            source="warehouse",
+            columns=[ColumnMeta("sku", "text", "商品编码")],
+            data=[{"sku": "A001"}],
+        )
+        content = r.to_tool_content()
+        assert "[DATA_REF]" in content
+        assert "[/DATA_REF]" in content
+        assert "source: warehouse" in content
+        assert "storage: inline" in content
+        assert "rows: 1" in content
+        assert "sku: text" in content
+
+    def test_file_ref_format_has_path(self, tmp_path):
+        """FILE_REF 格式包含文件路径和大小"""
+        fpath = tmp_path / "test.parquet"
+        fpath.write_bytes(b"x" * 1024)
+        ref = FileRef(
+            path=str(fpath), filename="test.parquet",
+            format="parquet", row_count=100, size_bytes=1024,
+            columns=[ColumnMeta("id", "integer")],
+        )
+        r = AgentResult(
+            summary="数据已导出",
+            format=OutputFormat.FILE_REF,
+            source="trade",
+            file_ref=ref,
+        )
+        content = r.to_tool_content()
+        assert "storage: file" in content
+        assert "rows: 100" in content
+        assert "format: parquet" in content
+        assert "STAGING_DIR" in content
+
+    def test_metadata_included(self):
+        """metadata 字段出现在 [DATA_REF] 中"""
+        r = AgentResult(
+            summary="test",
+            format=OutputFormat.TABLE,
+            source="warehouse",
+            columns=[ColumnMeta("x", "integer")],
+            data=[{"x": 1}],
+            metadata={"doc_type": "order", "time_range": "昨天"},
+        )
+        content = r.to_tool_content()
+        assert "doc_type: order" in content
+        assert "time_range: 昨天" in content
+
+    def test_inline_data_json(self):
+        """内联数据以 JSON 格式输出"""
+        data = [{"id": 1, "name": "测试"}]
+        r = AgentResult(
+            summary="test",
+            format=OutputFormat.TABLE,
+            source="test",
+            columns=[ColumnMeta("id", "integer"), ColumnMeta("name", "text")],
+            data=data,
+        )
+        content = r.to_tool_content()
+        assert '"id": 1' in content or '"id":1' in content
+
+
+# ============================================================
+# validate() 一致性校验
+# ============================================================
+
+
+class TestValidate:
+    """validate() → list[str] 校验规则"""
+
+    def test_valid_text_no_issues(self):
+        """正常 TEXT 结果无违规"""
+        r = AgentResult(summary="ok", source="test")
+        assert r.validate() == []
+
+    def test_empty_summary(self):
+        r = AgentResult(summary="", source="test")
+        issues = r.validate()
+        assert any("summary" in i for i in issues)
+
+    def test_file_ref_missing(self):
+        """FILE_REF 格式但缺 file_ref"""
+        r = AgentResult(
+            summary="test", format=OutputFormat.FILE_REF, source="test",
+        )
+        issues = r.validate()
+        assert any("file_ref" in i for i in issues)
+
+    def test_table_missing_columns(self):
+        """TABLE 格式但缺 columns"""
+        r = AgentResult(
+            summary="test", format=OutputFormat.TABLE, source="test",
+        )
+        issues = r.validate()
+        assert any("columns" in i for i in issues)
+
+    def test_error_missing_error_message(self):
+        """ERROR 状态但缺 error_message"""
+        r = AgentResult(summary="失败", status="error", source="test")
+        issues = r.validate()
+        assert any("error_message" in i or "ERROR" in i for i in issues)
+
+    def test_error_with_message_ok(self):
+        """ERROR 状态有 error_message 则通过"""
+        r = AgentResult(
+            summary="失败", status="error",
+            error_message="连接超时", source="test",
+        )
+        issues = r.validate()
+        assert not any("ERROR" in i for i in issues)
+
+
+# ============================================================
+# ToolOutput 别名兼容性
+# ============================================================
+
+
+class TestToolOutputAlias:
+    """ToolOutput = AgentResult 别名正确工作"""
+
+    def test_isinstance_compatible(self):
+        """isinstance(AgentResult实例, ToolOutput) 为 True"""
+        from services.agent.tool_output import ToolOutput
+        r = AgentResult(summary="test")
+        assert isinstance(r, ToolOutput)
+
+    def test_tooloutput_creates_agent_result(self):
+        """ToolOutput(...) 实际创建 AgentResult"""
+        from services.agent.tool_output import ToolOutput
+        r = ToolOutput(summary="test", source="warehouse")
+        assert type(r).__name__ == "AgentResult"
+        assert r.summary == "test"
+        assert r.source == "warehouse"
+
+    def test_tooloutput_with_output_status(self):
+        """ToolOutput 构造传 OutputStatus 枚举自动转 str"""
+        from services.agent.tool_output import ToolOutput
+        r = ToolOutput(
+            summary="无数据",
+            status=OutputStatus.EMPTY,
+            source="warehouse",
+        )
+        assert r.status == "empty"
+
+    def test_tooloutput_default_status(self):
+        """ToolOutput 不传 status 默认 "success" """
+        from services.agent.tool_output import ToolOutput
+        r = ToolOutput(summary="ok")
+        assert r.status == "success"
+
+    def test_tooloutput_has_to_tool_content(self):
+        """ToolOutput 实例可调 to_tool_content()"""
+        from services.agent.tool_output import ToolOutput
+        r = ToolOutput(
+            summary="共8个仓库",
+            format=OutputFormat.TEXT,
+            source="warehouse",
+        )
+        assert r.to_tool_content() == "共8个仓库"
+
+    def test_tooloutput_has_to_message_content(self):
+        """ToolOutput 实例可调 to_message_content()（返回 list[dict]）"""
+        from services.agent.tool_output import ToolOutput
+        r = ToolOutput(summary="test")
+        blocks = r.to_message_content()
+        assert isinstance(blocks, list)
+        assert blocks[0]["type"] == "text"

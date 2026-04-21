@@ -471,7 +471,7 @@ class TestExecuteEntryPoint:
         engine = UnifiedQueryEngine(db=MagicMock(), org_id=None)
         result = await engine.execute("invalid_type", "summary", [])
         assert isinstance(result, ToolOutput)
-        assert result.status == OutputStatus.ERROR
+        assert result.status == "error"
         assert "无效的 doc_type" in result.summary
 
     @pytest.mark.asyncio
@@ -499,7 +499,7 @@ class TestExecuteEntryPoint:
             [{"field": "nonexistent", "op": "eq", "value": "x"}],
         )
         assert isinstance(result, ToolOutput)
-        assert result.status == OutputStatus.ERROR
+        assert result.status == "error"
         assert "不在白名单中" in result.summary
 
 

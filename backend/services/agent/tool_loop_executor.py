@@ -560,7 +560,7 @@ class ToolLoopExecutor:
                         f"issues={_warnings}",
                     )
                 # 结构化输出：转文本给 LLM + 注册文件 + 注入 timestamp
-                content = result.to_message_content()
+                content = result.to_tool_content()
                 is_truncated = False  # ToolOutput 已结构化，不截断
 
                 # 文件注册到 SessionFileRegistry

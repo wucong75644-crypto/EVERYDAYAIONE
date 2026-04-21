@@ -373,7 +373,7 @@ class TestDepartmentAgentBase:
         # 模拟子类 _classify_action 返回写操作
         agent._classify_action = lambda task: "update"
         result = await agent.execute("修改库存数量", dag_mode=True)
-        assert result.status == OutputStatus.ERROR
+        assert result.status == "error"
         assert "写操作" in result.summary
 
     @pytest.mark.asyncio
@@ -382,7 +382,7 @@ class TestDepartmentAgentBase:
         agent = _make_warehouse()
         # _classify_action 返回 default，但任务描述含 "修改"
         result = await agent.execute("批量修改库存", dag_mode=True)
-        assert result.status == OutputStatus.ERROR
+        assert result.status == "error"
         assert "写操作" in result.summary
 
     @pytest.mark.asyncio
@@ -397,7 +397,7 @@ class TestDepartmentAgentBase:
             agent, "_dispatch", new=AsyncMock(return_value=mock_output),
         ):
             result = await agent.execute("查库存", dag_mode=True)
-            assert result.status == OutputStatus.OK
+            assert result.status == "success"
 
     @pytest.mark.asyncio
     async def test_no_dag_mode_allows_write(self):
@@ -407,7 +407,7 @@ class TestDepartmentAgentBase:
         mock_output = ToolOutput(summary="OK", source="warehouse")
         with patch.object(agent, "_dispatch", new=AsyncMock(return_value=mock_output)):
             result = await agent.execute("修改库存数量")
-            assert result.status == OutputStatus.OK
+            assert result.status == "success"
 
     # ── _is_write_action / _has_write_intent 独立测试 ──
 
@@ -733,7 +733,7 @@ class TestDepartmentAgentBase:
             [ColumnMeta("x", "integer")],
             status=OutputStatus.EMPTY,
         )
-        assert result.status == OutputStatus.EMPTY
+        assert result.status == "empty"
         # v6: 无 staging → TEXT，data 为 None
         assert result.format == OutputFormat.TEXT
 
@@ -768,7 +768,7 @@ class TestDepartmentAgentBase:
         """非白名单 doc_type → ERROR"""
         agent = _make_warehouse()
         result = await agent._query_local_data("order")
-        assert result.status == OutputStatus.ERROR
+        assert result.status == "error"
         assert "无权查询" in result.summary
 
     @pytest.mark.asyncio
@@ -940,7 +940,7 @@ class TestWarehouseQueries:
         """缺少编码 → ERROR"""
         agent = _make_warehouse()
         result = await agent.query_stock("")
-        assert result.status == OutputStatus.ERROR
+        assert result.status == "error"
         assert "商品编码" in result.summary
 
     @pytest.mark.asyncio
@@ -1004,5 +1004,5 @@ class TestWarehouseQueries:
         """订单查询被白名单阻止"""
         agent = _make_warehouse()
         result = await agent._query_local_data("order")
-        assert result.status == OutputStatus.ERROR
+        assert result.status == "error"
         assert "无权" in result.summary
