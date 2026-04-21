@@ -1504,7 +1504,8 @@
       "Bash(./venv/bin/pytest tests/ -q --tb=short)",
       "Bash(./git-push.sh \"fix: 4处数据出口内部编码翻译——platform/sysStatus/refundStatus/列名标签全部中文化\")",
       "Bash(./venv/bin/pytest tests/test_erp_duckdb_helpers.py tests/test_unified_query.py -x -q --tb=short)",
-      "Bash(./git-push.sh \"fix: DuckDB导出Excel表头中文化——build_pii_select加cn_header参数，export路径列名用中文别名\")"
+      "Bash(./git-push.sh \"fix: DuckDB导出Excel表头中文化——build_pii_select加cn_header参数，export路径列名用中文别名\")",
+      "Bash(./git-push.sh \"fix: 导出parquet列名与ColumnMeta对齐——ORDER BY用中文别名+build_column_metas_cn name也用中文\")"
     ],
     "additionalDirectories": [
       "/tmp"

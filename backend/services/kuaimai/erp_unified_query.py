@@ -53,6 +53,7 @@ from services.kuaimai.erp_unified_schema import (
     VALID_DOC_TYPES,
     TimeRange,
     ValidatedFilter,
+    _FIELD_LABEL_CN,
     fmt_summary_grouped,
     fmt_summary_total,
     generate_field_doc,
@@ -367,7 +368,9 @@ class UnifiedQueryEngine:
                 f"SELECT {select_sql} FROM pg.public.erp_document_items "
                 f"WHERE {where_sql}"
             )
-        query = f"SELECT * FROM ({inner}) sub ORDER BY {tr.time_col} DESC LIMIT {max_rows}"
+        # ORDER BY 用中文别名（子查询 AS 后外层只能用别名）
+        order_col = _FIELD_LABEL_CN.get(tr.time_col, tr.time_col)
+        query = f'SELECT * FROM ({inner}) sub ORDER BY "{order_col}" DESC LIMIT {max_rows}'
 
         # DuckDB 流式导出 → staging（内存恒定，无行数截断）
         import asyncio as _asyncio
@@ -422,9 +425,9 @@ class UnifiedQueryEngine:
             )
         summary = f"{time_header}\n\n{body}" if time_header else body
 
-        # 构建列元信息（复用 schema 辅助函数，消除重复）
-        from services.kuaimai.erp_unified_schema import build_column_metas
-        export_columns = build_column_metas(safe_fields)
+        # 构建列元信息（export 用中文列名，与 parquet 列头一致）
+        from services.kuaimai.erp_unified_schema import build_column_metas_cn
+        export_columns = build_column_metas_cn(safe_fields)
 
         file_ref = FileRef(
             path=str(staging_path),
