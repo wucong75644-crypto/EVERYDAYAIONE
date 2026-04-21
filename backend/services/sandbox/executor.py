@@ -321,66 +321,56 @@ class SandboxExecutor:
             dirs.append(self._staging_dir)
         return dirs
 
-    def _snapshot_output_files(self) -> set:
-        """快照所有受监控目录的现有文件（执行前调用，用于检测新生成的文件）。
+    def _snapshot_output_files(self) -> dict[str, tuple[float, int]]:
+        """快照所有受监控目录的现有文件（执行前调用，用于检测新增或覆盖写入的文件）。
 
-        key 用 dir/filename 区分不同目录下的同名文件。
+        返回 {dir/filename: (mtime, size)}，覆盖写入同名文件后 mtime/size 会变，
+        对比即可检测到。
         """
         from pathlib import Path
-        files: set[str] = set()
+        files: dict[str, tuple[float, int]] = {}
         for d in self._upload_scan_dirs:
             dp = Path(d)
             if dp.exists():
-                dir_files = [f.name for f in dp.iterdir() if f.is_file()]
-                files.update(f"{d}/{name}" for name in dir_files)
-                logger.info(
-                    f"SandboxExecutor snapshot | dir={d} | "
-                    f"files={dir_files[:10]} | count={len(dir_files)}"
-                )
-            else:
-                logger.info(f"SandboxExecutor snapshot | dir={d} | not_exists")
-        logger.info(f"SandboxExecutor snapshot total | count={len(files)}")
+                for f in dp.iterdir():
+                    if f.is_file():
+                        st = f.stat()
+                        files[f"{d}/{f.name}"] = (st.st_mtime, st.st_size)
+        logger.info(f"SandboxExecutor snapshot | count={len(files)}")
         return files
 
     async def _auto_upload_new_files(self) -> list[str]:
         """扫描受监控目录中的新文件并自动上传（保留源文件供工作区下载）"""
         if not self._upload_fn:
-            logger.warning("SandboxExecutor auto-upload skipped | no upload_fn")
             return []
 
         from pathlib import Path
-        before = getattr(self, "_snapshot_before", set())
+        before: dict = getattr(self, "_snapshot_before", {})
         results = []
 
         for scan_dir in self._upload_scan_dirs:
             dir_path = Path(scan_dir)
             if not dir_path.exists():
-                logger.info(f"SandboxExecutor auto-upload | dir={scan_dir} | not_exists")
                 continue
             for f in dir_path.iterdir():
                 if not f.is_file():
                     continue
-                full_key = f"{scan_dir}/{f.name}"
-                if full_key in before:
-                    logger.info(
-                        f"SandboxExecutor auto-upload skip (in snapshot) | "
-                        f"file={f.name} | dir={scan_dir}"
-                    )
-                    continue
                 if f.suffix.lower() not in self._AUTO_UPLOAD_EXTENSIONS:
-                    logger.debug(
-                        f"SandboxExecutor auto-upload skip (ext) | "
-                        f"file={f.name} | ext={f.suffix}"
-                    )
                     continue
 
+                # 对比快照：新文件 OR 覆盖写入（mtime/size 变化）
+                full_key = f"{scan_dir}/{f.name}"
+                st = f.stat()
+                old = before.get(full_key)
+                if old and old == (st.st_mtime, st.st_size):
+                    continue  # 未修改，跳过
+
                 try:
-                    file_size = f.stat().st_size
-                    upload_result = await self._upload_fn(f.name, file_size)
+                    upload_result = await self._upload_fn(f.name, st.st_size)
                     results.append(upload_result)
                     logger.info(
                         f"SandboxExecutor auto-upload | file={f.name} | "
-                        f"size={file_size} | dir={scan_dir}"
+                        f"size={st.st_size} | new={old is None}"
                     )
                 except Exception as e:
                     logger.error(
@@ -388,8 +378,6 @@ class SandboxExecutor:
                         f"error={e}"
                     )
                     results.append(f"❌ 文件上传失败: {f.name} ({e})")
-
-        logger.info(f"SandboxExecutor auto-upload done | results={len(results)}")
 
         return results
 

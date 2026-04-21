@@ -447,22 +447,24 @@ class TestSnapshotAndAutoUpload:
     """文件快照 + 新文件检测测试"""
 
     def test_snapshot_captures_existing_files(self, tmp_path):
-        """快照捕获输出目录已有文件（key = dir/filename）"""
+        """快照捕获输出目录已有文件（key = dir/filename, value = (mtime, size)）"""
         (tmp_path / "old.xlsx").write_bytes(b"old")
         executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
         snapshot = executor._snapshot_output_files()
-        assert f"{tmp_path}/old.xlsx" in snapshot
+        key = f"{tmp_path}/old.xlsx"
+        assert key in snapshot
+        assert isinstance(snapshot[key], tuple)
+        assert len(snapshot[key]) == 2  # (mtime, size)
 
     def test_snapshot_empty_dir(self, tmp_path):
-        """空目录快照为空集"""
+        """空目录快照为空 dict"""
         executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
         snapshot = executor._snapshot_output_files()
-        assert snapshot == set()
+        assert snapshot == {}
 
     @pytest.mark.asyncio
     async def test_auto_upload_only_new_files(self, tmp_path):
-        """auto_upload 只处理新生成的文件，跳过执行前已有的"""
-        # 模拟执行前已有文件
+        """auto_upload 只处理新生成的文件，跳过未修改的"""
         (tmp_path / "old.xlsx").write_bytes(b"old data")
 
         results = []
@@ -474,13 +476,32 @@ class TestSnapshotAndAutoUpload:
         executor = SandboxExecutor(
             timeout=5.0, output_dir=str(tmp_path), upload_fn=mock_upload,
         )
-        # 快照执行前状态
         executor._snapshot_before = executor._snapshot_output_files()
 
-        # 模拟执行后新增文件
         (tmp_path / "new.xlsx").write_bytes(b"new data")
 
         await executor._auto_upload_new_files()
-        # 只上传新文件，不上传旧文件
         assert "new.xlsx" in results
         assert "old.xlsx" not in results
+
+    @pytest.mark.asyncio
+    async def test_auto_upload_detects_overwritten_file(self, tmp_path):
+        """覆盖写入同名文件 → mtime/size 变化 → 检测为新文件"""
+        (tmp_path / "report.xlsx").write_bytes(b"v1")
+
+        results = []
+
+        async def mock_upload(filename, size):
+            results.append(filename)
+            return f"✅ {filename}"
+
+        executor = SandboxExecutor(
+            timeout=5.0, output_dir=str(tmp_path), upload_fn=mock_upload,
+        )
+        executor._snapshot_before = executor._snapshot_output_files()
+
+        import time; time.sleep(0.05)  # 确保 mtime 不同
+        (tmp_path / "report.xlsx").write_bytes(b"v2 with more data")
+
+        await executor._auto_upload_new_files()
+        assert "report.xlsx" in results
