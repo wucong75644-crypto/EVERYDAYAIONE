@@ -562,13 +562,13 @@ class TestOldDataCompatibility:
         assert not ref.is_valid()  # 已超过 TTL
 
     def test_confidence_field_default(self):
-        """ERPAgentResult.confidence 默认 1.0"""
-        from services.agent.erp_agent_types import ERPAgentResult
-        result = ERPAgentResult(text="test")
+        """AgentResult.confidence 默认 1.0"""
+        from services.agent.agent_result import AgentResult
+        result = AgentResult(status="success", summary="test")
         assert result.confidence == 1.0
 
     def test_confidence_field_degraded(self):
         """降级时 confidence 0.6"""
-        from services.agent.erp_agent_types import ERPAgentResult
-        result = ERPAgentResult(text="test", confidence=0.6)
+        from services.agent.agent_result import AgentResult
+        result = AgentResult(status="success", summary="test", confidence=0.6)
         assert result.confidence == 0.6

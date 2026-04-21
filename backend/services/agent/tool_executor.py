@@ -10,7 +10,12 @@
 - erp_tool_executor.py: ERP远程/本地调度 (ErpToolMixin)
 """
 
-from typing import Any, Callable, Coroutine, Dict
+from __future__ import annotations
+
+from typing import Any, Callable, Coroutine, Dict, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from services.agent.agent_result import AgentResult
 
 from loguru import logger
 
@@ -174,14 +179,15 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
     # ERP Agent（独立 Agent 作为工具调用）
     # ========================================
 
-    async def _erp_agent(self, args: Dict[str, Any]) -> str:
+    async def _erp_agent(self, args: Dict[str, Any]) -> AgentResult:
         """ERP 独立 Agent：接收用户问题，内部运行工具循环，返回结论"""
         from services.agent.erp_agent import ERPAgent
 
         # 输入协议：task + conversation_context（向后兼容旧 query）
         task = (args.get("task") or args.get("query", "")).strip()
         if not task:
-            return "请输入 ERP 相关问题"
+            from services.agent.agent_result import AgentResult as _AR
+            return _AR(status="error", summary="请输入 ERP 相关问题")
         conversation_context = args.get("conversation_context", "")
 
         logger.info(f"ERPAgent dispatch | task={task[:200]}")

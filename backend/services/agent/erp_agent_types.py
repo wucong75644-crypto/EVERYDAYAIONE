@@ -2,32 +2,12 @@
 ERP Agent 类型定义、常量与工具函数
 
 从 erp_agent.py 拆分，保持主文件 <500 行。
+注：ERPAgentResult 已被 AgentResult 替代（Phase 6 清理），
+    标准返回格式见 services/agent/agent_result.py。
 """
 
 import re
-from dataclasses import dataclass, field
 from typing import Any, Dict, List
-
-
-# ============================================================
-# ERP Agent 结果
-# ============================================================
-
-@dataclass
-class ERPAgentResult:
-    """ERP Agent 执行结果"""
-    text: str                       # 结论文本（给主 Agent 的精简版）
-    full_text: str = ""             # 完整文本（给用户的详细版）
-    status: str = "success"         # success | partial | error | timeout | ask_user
-    tokens_used: int = 0            # 消耗的总 tokens
-    turns_used: int = 0             # 内部轮次数
-    tools_called: List[str] = field(default_factory=list)  # 调用过的工具名
-    is_truncated: bool = False      # 结果是否被截断
-    collected_files: List[Dict[str, Any]] = field(default_factory=list)
-    # ToolLoopExecutor 提取的 [FILE] 标记，独立通道透传，不经过 LLM
-    # 每项: {"url": str, "name": str, "mime_type": str, "size": int}
-    ask_user_question: str = ""     # ask_user 退出时的追问内容（冒泡到主循环）
-    confidence: float = 1.0         # v6: 结果置信度（降级时 0.6）
 
 
 # ============================================================

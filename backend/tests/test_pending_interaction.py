@@ -201,19 +201,19 @@ class TestERPAgentAskUserBubble:
     """ERP Agent ask_user → status="ask_user" → tool_executor 标记"""
 
     def test_erp_result_ask_user_status(self):
-        from services.agent.erp_agent_types import ERPAgentResult
+        from services.agent.agent_result import AgentResult
 
-        result = ERPAgentResult(
-            text="需要排除刷单吗？",
+        result = AgentResult(
             status="ask_user",
+            summary="需要排除刷单吗？",
             ask_user_question="需要排除刷单吗？",
         )
         assert result.status == "ask_user"
         assert result.ask_user_question == "需要排除刷单吗？"
 
     def test_erp_result_default_no_ask(self):
-        from services.agent.erp_agent_types import ERPAgentResult
+        from services.agent.agent_result import AgentResult
 
-        result = ERPAgentResult(text="查询结果: 356笔")
+        result = AgentResult(status="success", summary="查询结果: 356笔")
         assert result.status == "success"
         assert result.ask_user_question == ""

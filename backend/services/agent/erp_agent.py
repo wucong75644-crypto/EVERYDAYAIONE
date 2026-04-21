@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from utils.time_context import RequestContext
 
 from services.agent.agent_result import AgentResult
-from services.agent.erp_agent_types import ERPAgentResult  # 向后兼容，Phase 6 删除
 
 
 # 有效数据域（不含 compute，计算由主 Agent 的 code_execute 负责）

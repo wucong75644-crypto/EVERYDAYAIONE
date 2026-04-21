@@ -1,7 +1,7 @@
 """
 tool_result_envelope 单元测试
 
-覆盖：wrap / wrap_for_erp_agent / wrap_erp_agent_result
+覆盖：wrap / wrap_for_erp_agent
       阈值分流（staging 落盘 + 摘要生成）
       防重入 / 边界值 / 并发隔离
 
@@ -15,7 +15,6 @@ import pytest
 from services.agent.tool_result_envelope import (
     wrap,
     wrap_for_erp_agent,
-    wrap_erp_agent_result,
     set_staging_dir,
     clear_staging_dir,
     MAIN_AGENT_BUDGET,
@@ -178,26 +177,6 @@ class TestBudgetLevels:
         result = "标题\n" + "x" * (ERP_AGENT_BUDGET + 100)
         wrapped = wrap_for_erp_agent("local_stock_query", result)
         assert STAGED_MARKER in wrapped
-
-    def test_erp_agent_result_budget(self):
-        result = "标题\n" + "x" * (ERP_AGENT_RESULT_BUDGET + 100)
-        wrapped = wrap_erp_agent_result(result)
-        assert STAGED_MARKER in wrapped
-
-    def test_erp_agent_result_pass_through_envelope(self):
-        """wrap_erp_agent_result 包裹 pass-through 提示词"""
-        result = "[当前期] 2026-04-10 周五（今天） 订单 1769 笔"
-        wrapped = wrap_erp_agent_result(result)
-        assert "─── ERP 结果开始 ───" in wrapped
-        assert "─── ERP 结果结束 ───" in wrapped
-        assert "禁止改写" in wrapped
-        assert result in wrapped
-
-    def test_erp_agent_result_empty_no_envelope(self):
-        wrapped = wrap_erp_agent_result("")
-        assert wrapped == ""
-        wrapped = wrap_erp_agent_result("   ")
-        assert "─── ERP 结果开始 ───" not in wrapped
 
     def test_erp_agent_budget_larger_than_main(self):
         assert ERP_AGENT_BUDGET > MAIN_AGENT_BUDGET
