@@ -54,9 +54,22 @@ _PII_SQL_MAP: dict[str, str] = {
 }
 
 
+_TIMESTAMP_COLS = frozenset({
+    "doc_created_at", "doc_modified_at", "pay_time",
+    "consign_time", "delivery_date", "finished_at", "apply_date",
+})
+
+
 def build_pii_select(safe_fields: list[str]) -> str:
-    """构建 SELECT 列表，PII 字段自动替换为脱敏 CASE WHEN 表达式。"""
-    cols = [_PII_SQL_MAP.get(f, f) for f in safe_fields]
+    """构建 SELECT 列表：PII 脱敏 + timestamp 去时区（Excel 不支持 tz-aware）。"""
+    cols: list[str] = []
+    for f in safe_fields:
+        if f in _PII_SQL_MAP:
+            cols.append(_PII_SQL_MAP[f])
+        elif f in _TIMESTAMP_COLS:
+            cols.append(f"CAST({f} AS TIMESTAMP) AS {f}")
+        else:
+            cols.append(f)
     return ", ".join(cols)
 
 
