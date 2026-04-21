@@ -7,7 +7,7 @@
 
 from typing import Any, Callable, Dict
 
-from services.kuaimai.formatters.common import format_item_with_labels, format_timestamp
+from services.kuaimai.formatters.common import format_item_with_labels, format_platform, format_timestamp
 from services.kuaimai.registry.base import ApiEntry
 
 # 订单类型映射
@@ -51,6 +51,7 @@ _QIMEN_ORDER_LABELS = {
     "consignTime": "发货时间",
 }
 _QIMEN_ORDER_TRANSFORMS: Dict[str, Callable] = {
+    "source": format_platform,
     "type": lambda v: _ORDER_TYPE_MAP.get(str(v), str(v)) if v is not None else "",
     "buyerNick": lambda v: v or "（隐私保护）",
     "payment": lambda v: f"¥{v}" if v else "",
@@ -92,6 +93,7 @@ _QIMEN_REFUND_LABELS = {
     "finished": "完成时间",
 }
 _QIMEN_REFUND_TRANSFORMS: Dict[str, Callable] = {
+    "source": format_platform,
     "afterSaleType": lambda v: _REFUND_TYPE_MAP.get(v, str(v)),
     "status": lambda v: _REFUND_STATUS_MAP.get(v, str(v)),
     "goodStatus": lambda v: {1: "买家未发", 2: "买家已发",

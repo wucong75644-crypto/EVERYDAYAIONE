@@ -6,7 +6,7 @@
 
 from typing import Any, Callable, Dict
 
-from services.kuaimai.formatters.common import format_item_with_labels, format_timestamp
+from services.kuaimai.formatters.common import format_item_with_labels, format_platform, format_timestamp
 from services.kuaimai.registry.base import ApiEntry
 
 # ---------------------------------------------------------------------------
@@ -37,6 +37,7 @@ _AFTERSALE_LABELS = {
     "finished": "完成时间",
 }
 _AFTERSALE_TRANSFORMS: Dict[str, Callable] = {
+    "source": format_platform,
     "afterSaleType": lambda v: {1: "退款", 2: "退货", 3: "补发",
                                 4: "换货", 5: "发货前退款"}.get(v, str(v)),
     "status": lambda v: {1: "未分配", 2: "未解决", 3: "优先退款", 4: "同意",

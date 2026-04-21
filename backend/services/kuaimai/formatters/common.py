@@ -10,8 +10,14 @@ import json
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional, Set
 
+from services.kuaimai.erp_unified_schema import PLATFORM_CN
 from services.kuaimai.registry.base import ApiEntry
 from utils.time_context import now_cn
+
+
+def format_platform(v: Any) -> str:
+    """平台编码 → 中文名（公共 transform，所有 formatter 复用）"""
+    return PLATFORM_CN.get(str(v), str(v)) if v else ""
 
 # ---------------------------------------------------------------------------
 # 全局跳过字段（图片/系统ID等无业务价值的）

@@ -6,7 +6,7 @@
 
 from typing import Any, Callable, Dict
 
-from services.kuaimai.formatters.common import format_item_with_labels, format_timestamp
+from services.kuaimai.formatters.common import format_item_with_labels, format_platform, format_timestamp
 from services.kuaimai.registry.base import ApiEntry
 
 # ---------------------------------------------------------------------------
@@ -39,6 +39,7 @@ _SHOP_LABELS = {
     "groupName": "店铺组",
 }
 _SHOP_TRANSFORMS: Dict[str, Callable] = {
+    "source": format_platform,
     "state": lambda v: {1: "停用", 2: "未初始化", 3: "启用",
                         4: "会话失效"}.get(v, str(v)),
     "deadline": format_timestamp,

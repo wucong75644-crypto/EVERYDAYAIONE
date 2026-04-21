@@ -1496,7 +1496,13 @@
       "Bash(sed -i '' 's/to_message_content/to_tool_content/g' tests/test_tool_loop_tooloutput.py)",
       "Bash(./venv/bin/pytest tests/test_agent_result.py -v --tb=short)",
       "Bash(./venv/bin/pytest tests/test_unified_result_e2e.py -v --tb=short)",
-      "Bash(./git-push.sh \"refactor: 统一ToolOutput→AgentResult——删除双箱子架构，单一结果类型+两套序列化\")"
+      "Bash(./git-push.sh \"refactor: 统一ToolOutput→AgentResult——删除双箱子架构，单一结果类型+两套序列化\")",
+      "Bash(grep -n \"unified_status\\\\|handler_status\\\\|online_status\" /Users/wucong/EVERYDAYAIONE/backend/services/kuaimai/*.py)",
+      "Bash(grep -n '\"source\"' /Users/wucong/EVERYDAYAIONE/backend/services/kuaimai/formatters/*.py)",
+      "Bash(grep -n 'source.*platform\\\\|\"source\":' /Users/wucong/EVERYDAYAIONE/backend/services/kuaimai/formatters/*.py)",
+      "Bash(grep -n \"source.*PLATFORM_CN\\\\|PLATFORM_CN.*source\" /Users/wucong/EVERYDAYAIONE/backend/services/kuaimai/formatters/*.py)",
+      "Bash(./venv/bin/pytest tests/ -q --tb=short)",
+      "Bash(./git-push.sh \"fix: 4处数据出口内部编码翻译——platform/sysStatus/refundStatus/列名标签全部中文化\")"
     ],
     "additionalDirectories": [
       "/tmp"
