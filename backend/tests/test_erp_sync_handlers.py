@@ -542,3 +542,75 @@ class TestAftersaleNewFields:
         # 行级字段
         assert row["good_item_count"] == 1
         assert row["bad_item_count"] == 0
+
+
+# ============================================================
+# 金额转换：_fen_to_yuan / _pick_money
+# ============================================================
+
+
+class TestFenToYuan:
+    """快麦采购类 API 金额从分转元"""
+
+    def test_normal_int(self):
+        from services.kuaimai.erp_sync_utils import _fen_to_yuan
+        assert _fen_to_yuan(2600) == 26.0
+
+    def test_normal_float(self):
+        from services.kuaimai.erp_sync_utils import _fen_to_yuan
+        assert _fen_to_yuan(2600.0) == 26.0
+
+    def test_string_number(self):
+        from services.kuaimai.erp_sync_utils import _fen_to_yuan
+        assert _fen_to_yuan("2600") == 26.0
+
+    def test_none_returns_none(self):
+        from services.kuaimai.erp_sync_utils import _fen_to_yuan
+        assert _fen_to_yuan(None) is None
+
+    def test_invalid_returns_none(self):
+        from services.kuaimai.erp_sync_utils import _fen_to_yuan
+        assert _fen_to_yuan("abc") is None
+
+    def test_zero(self):
+        from services.kuaimai.erp_sync_utils import _fen_to_yuan
+        assert _fen_to_yuan(0) == 0.0
+
+    def test_small_value(self):
+        from services.kuaimai.erp_sync_utils import _fen_to_yuan
+        assert _fen_to_yuan(10) == 0.1
+
+    def test_rounding(self):
+        from services.kuaimai.erp_sync_utils import _fen_to_yuan
+        assert _fen_to_yuan(333) == 3.33
+
+
+class TestPickMoney:
+    """extra_json 金额字段自动转换"""
+
+    def test_money_fields_converted(self):
+        from services.kuaimai.erp_sync_utils import _pick_money
+        src = {"totalAmount": 260000, "financeStatus": "DONE", "shortId": "10055"}
+        result = _pick_money(src, {"totalAmount"}, "totalAmount", "financeStatus", "shortId")
+        assert result["totalAmount"] == 2600.0
+        assert result["financeStatus"] == "DONE"
+        assert result["shortId"] == "10055"
+
+    def test_non_money_fields_untouched(self):
+        from services.kuaimai.erp_sync_utils import _pick_money
+        src = {"arrivedQuantity": 500, "totalFee": 12000}
+        result = _pick_money(src, {"totalFee"}, "arrivedQuantity", "totalFee")
+        assert result["arrivedQuantity"] == 500  # 非金额，不转换
+        assert result["totalFee"] == 120.0        # 金额，÷100
+
+    def test_missing_keys_skipped(self):
+        from services.kuaimai.erp_sync_utils import _pick_money
+        src = {"totalAmount": 100}
+        result = _pick_money(src, {"totalAmount", "totalFee"}, "totalAmount", "totalFee")
+        assert result == {"totalAmount": 1.0}
+
+    def test_none_values_skipped(self):
+        from services.kuaimai.erp_sync_utils import _pick_money
+        src = {"totalAmount": None}
+        result = _pick_money(src, {"totalAmount"}, "totalAmount")
+        assert result == {}

@@ -21,10 +21,12 @@ from services.kuaimai.erp_sync_row_builders import (  # noqa: F401
 from services.kuaimai.erp_sync_utils import (  # noqa: F401 — re-export for backward compat
     _API_SEM,
     _DetailResult,
+    _fen_to_yuan,
     _fetch_details,
     _fmt_d,
     _fmt_dt,
     _pick,
+    _pick_money,
     _safe_ts,
     _to_float,
 )
@@ -53,12 +55,15 @@ async def sync_purchase(
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
         await record_dead_letter(svc.db, "purchase", "purchase.order.get", detail_result.failed, org_id=svc.org_id)
 
+    # 快麦采购 API 金额以"分"返回，入库统一转"元"
+    _PURCHASE_MONEY_KEYS = {"totalAmount", "actualTotalAmount", "totalFee", "amendAmount"}
     all_rows: list[dict[str, Any]] = []
     for doc, detail in detail_result:
         items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "purchase")
-        extra = _pick(
-            doc, "shortId", "totalAmount", "actualTotalAmount",
+        extra = _pick_money(
+            doc, _PURCHASE_MONEY_KEYS,
+            "shortId", "totalAmount", "actualTotalAmount",
             "financeStatus", "arrivedQuantity", "receiveQuantity",
             "totalFee", "amendAmount",
         )
@@ -76,8 +81,8 @@ async def sync_purchase(
                 "item_name": item.get("title"),
                 "quantity": item.get("count"),
                 "quantity_received": item.get("arrivedQuantity"),
-                "price": item.get("price"),
-                "amount": item.get("amount") or item.get("totalFee"),
+                "price": _fen_to_yuan(item.get("price")),
+                "amount": _fen_to_yuan(item.get("amount") or item.get("totalFee")),
                 "supplier_name": doc.get("supplierName"),
                 "warehouse_name": doc.get("receiveWarehouseName"),
                 "creator_name": doc.get("createrName"),
@@ -111,12 +116,15 @@ async def sync_receipt(
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
         await record_dead_letter(svc.db, "receipt", "warehouse.entry.list.get", detail_result.failed, org_id=svc.org_id)
 
+    # 快麦收货 API 金额以"分"返回，入库统一转"元"
+    _RECEIPT_MONEY_KEYS = {"totalDetailFee"}
     all_rows: list[dict[str, Any]] = []
     for doc, detail in detail_result:
         items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "receipt")
-        extra = _pick(
-            doc, "shelvedQuantity", "getGoodNum", "getBadNum",
+        extra = _pick_money(
+            doc, _RECEIPT_MONEY_KEYS,
+            "shelvedQuantity", "getGoodNum", "getBadNum",
             "totalDetailFee", "busyTypeDesc",
         )
         for item in items:
@@ -132,8 +140,8 @@ async def sync_receipt(
                 "sku_outer_id": item.get("outerId"),      # outerId=SKU编码
                 "item_name": item.get("title"),
                 "quantity": item.get("count"),
-                "price": item.get("price"),
-                "amount": item.get("amount"),
+                "price": _fen_to_yuan(item.get("price")),
+                "amount": _fen_to_yuan(item.get("amount")),
                 "supplier_name": item.get("supplierName") or doc.get("supplierName"),
                 "warehouse_name": doc.get("warehouseName"),
                 "creator_name": doc.get("createrName"),
@@ -211,12 +219,15 @@ async def sync_purchase_return(
         from services.kuaimai.erp_sync_dead_letter import record_dead_letter
         await record_dead_letter(svc.db, "purchase_return", "purchase.return.list.get", detail_result.failed, org_id=svc.org_id)
 
+    # 快麦采退 API 金额以"分"返回，入库统一转"元"
+    _RETURN_MONEY_KEYS = {"totalAmount"}
     all_rows: list[dict[str, Any]] = []
     for doc, detail in detail_result:
         items = detail.get("list") or []
         items = svc.sort_and_assign_index(items, "purchase_return")
-        extra = _pick(
-            doc, "shortId", "totalAmount", "financeStatus",
+        extra = _pick_money(
+            doc, _RETURN_MONEY_KEYS,
+            "shortId", "totalAmount", "financeStatus",
             "statusName", "tagName",
         )
         # 采退单 purchaseOrderId 是数字 ID，转为字符串存储
@@ -236,8 +247,8 @@ async def sync_purchase_return(
                 "item_name": item.get("title"),
                 "quantity": item.get("returnNum"),
                 "actual_return_qty": item.get("actualReturnNum"),
-                "price": item.get("price"),
-                "amount": item.get("amount"),
+                "price": _fen_to_yuan(item.get("price")),
+                "amount": _fen_to_yuan(item.get("amount")),
                 "supplier_name": item.get("supplierName") or doc.get("supplierName"),
                 "warehouse_name": doc.get("warehouseName"),
                 "creator_name": doc.get("createrName"),

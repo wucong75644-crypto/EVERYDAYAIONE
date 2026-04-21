@@ -75,6 +75,40 @@ def _pick(src: dict, *keys: str) -> dict:
     return {k: src[k] for k in keys if k in src and src[k] is not None}
 
 
+def _fen_to_yuan(val: Any) -> float | None:
+    """快麦采购类 API 金额从分转元。
+
+    快麦 API 不同模块金额单位不一致：
+    - 订单/售后：返回"元"（如 price=23.90）
+    - 采购/收货/采退：返回"分"（如 price=2600 实际 ¥26.00）
+    本函数用于采购类入库前统一转为"元"。
+    """
+    if val is None:
+        return None
+    try:
+        return round(float(val) / 100, 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _pick_money(src: dict, money_keys: set[str], *keys: str) -> dict:
+    """提取 extra_json 键值对，金额字段自动从分转元。
+
+    Args:
+        src: 源 dict
+        money_keys: 需要 /100 的金额字段名集合
+        *keys: 要提取的所有字段名
+    """
+    result = {}
+    for k in keys:
+        if k in src and src[k] is not None:
+            if k in money_keys:
+                result[k] = _fen_to_yuan(src[k])
+            else:
+                result[k] = src[k]
+    return result
+
+
 def _to_float(val: Any) -> float:
     """安全转 float（用于折扣分摊计算）"""
     if val is None:
