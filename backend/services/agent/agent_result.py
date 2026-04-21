@@ -83,12 +83,13 @@ class AgentResult:
         # 文本摘要（始终有）
         blocks.append({"type": "text", "text": self.summary})
 
-        # 文件引用（有数据文件时）→ 文本描述
+        # 文件引用（有数据文件时）→ sandbox 标准引用（对标 OpenAI /mnt/data/）
         if self.file_ref:
             blocks.append({
                 "type": "text",
                 "text": (
-                    f"[文件: {self.file_ref.path} | "
+                    f"[文件已存入 staging | "
+                    f"读取: pd.read_parquet({self.file_ref.sandbox_ref}) | "
                     f"{self.file_ref.row_count}行 | "
                     f"{self.file_ref.format} | "
                     f"{self.file_ref.size_bytes // 1024}KB]"

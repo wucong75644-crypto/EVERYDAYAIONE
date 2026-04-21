@@ -198,19 +198,15 @@ class ERPAgent:
         from services.agent.tool_output import OutputStatus, OutputFormat
 
         summary = result.summary or ""
-        collected_files: list[dict[str, Any]] = []
 
         # ① SessionFileRegistry 注册（沙盒 read_file 依赖）
         if result.file_ref:
             from services.agent.session_file_registry import SessionFileRegistry
             registry = SessionFileRegistry()
             registry.register(domain, "execute", result.file_ref)
-            collected_files.append({
-                "url": result.file_ref.path,
-                "name": result.file_ref.filename,
-                "mime_type": result.file_ref.mime_type or "application/octet-stream",
-                "size": result.file_ref.size_bytes,
-            })
+            # staging parquet 是中间产物（供 code_execute 转 Excel），
+            # 不发 collected_files 给前端。用户最终下载的 Excel 由
+            # code_execute → OUTPUT_DIR → auto_upload → [FILE] 链路生成。
             # ② staging 延迟清理
             asyncio.create_task(self._cleanup_staging_delayed())
 
@@ -235,7 +231,6 @@ class ERPAgent:
             file_ref=result.file_ref,
             data=result.data if result.format == OutputFormat.TABLE else None,
             columns=result.columns,
-            collected_files=collected_files or None,
             agent_name="erp_agent",
             tokens_used=self._tokens_used,
             confidence=0.6 if degraded else 1.0,

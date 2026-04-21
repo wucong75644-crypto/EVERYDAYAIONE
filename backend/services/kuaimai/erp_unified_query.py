@@ -505,7 +505,7 @@ class UnifiedQueryEngine:
         export_columns = build_column_metas(safe_fields)
 
         file_ref = FileRef(
-            path=str(rel_path),
+            path=str(staging_path),
             filename=filename,
             format="parquet",
             row_count=row_count,

@@ -78,8 +78,13 @@ class FileRef:
     row_count 由写文件的函数在写完后立即填入（DuckDB COPY TO
     返回写入行数 / pandas to_parquet 后用 len(df)），准确性由
     写入操作保证，不是事后读文件猜的。
+
+    路径协议（对标 OpenAI /mnt/data/ 固定前缀方案）：
+    - path: 绝对路径，仅供内部文件操作（is_valid / pd.read_parquet）
+    - filename: 文件名，全局唯一（带域标识 + 时间戳）
+    - sandbox_ref: LLM 朝向的标准引用，所有 to_message_content 统一用此属性
     """
-    path: str                       # 相对路径 staging/{conv_id}/{filename}
+    path: str                       # 绝对路径（内部文件操作用，不暴露给 LLM）
     filename: str                   # 文件名（带域标识，如 warehouse_stock_xxx.parquet）
     format: str                     # parquet / csv / xlsx
     row_count: int                  # 行数
@@ -93,6 +98,14 @@ class FileRef:
     created_by: str = ""            # 哪个 agent/工具创建
     ttl_seconds: int = 86400        # 文件有效期（秒），导出可设 172800
     derived_from: tuple[str, ...] = ()  # v6: 血缘追踪（输入 artifact id 列表）
+
+    @property
+    def sandbox_ref(self) -> str:
+        """LLM 朝向的标准文件引用 — 等价于 OpenAI /mnt/data/filename。
+
+        所有 to_message_content() 统一用此属性，禁止直接输出 path。
+        """
+        return f"STAGING_DIR + '/{self.filename}'"
 
     def is_valid(self, max_age_seconds: int = 0) -> bool:
         """检查文件是否仍然有效（存在 + 未过期）。
@@ -201,7 +214,7 @@ class ToolOutput:
         if self.file_ref:
             tag_lines.append("storage: file")
             tag_lines.append(f"rows: {self.file_ref.row_count}")
-            tag_lines.append(f"path: STAGING_DIR + '/{self.file_ref.filename}'")
+            tag_lines.append(f"path: {self.file_ref.sandbox_ref}")
             tag_lines.append(f"format: {self.file_ref.format}")
             tag_lines.append(f"size_kb: {self.file_ref.size_bytes // 1024}")
         elif self.data is not None:

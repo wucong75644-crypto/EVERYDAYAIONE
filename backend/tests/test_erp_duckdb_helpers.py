@@ -87,8 +87,13 @@ class TestBuildPiiSelect:
         assert "AS receiver_phone" in result
 
     def test_all_pii_fields_masked(self):
-        result = build_pii_select(["receiver_name", "receiver_mobile", "receiver_phone"])
-        assert result.count("CASE WHEN") == 3
+        result = build_pii_select(["receiver_name", "receiver_mobile", "receiver_phone", "receiver_address"])
+        assert result.count("CASE WHEN") == 4
+
+    def test_receiver_address_masked(self):
+        result = build_pii_select(["receiver_address"])
+        assert "CASE WHEN receiver_address" in result
+        assert "AS receiver_address" in result
 
     def test_mixed_normal_and_pii(self):
         fields = ["order_no", "receiver_name", "amount", "receiver_mobile"]

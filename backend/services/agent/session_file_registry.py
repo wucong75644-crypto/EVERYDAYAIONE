@@ -131,6 +131,8 @@ class SessionFileRegistry:
                 )
                 for c in fr_data.get("columns", [])
             ]
+            # path 统一为绝对路径（v7 协议）；历史数据可能是相对路径，
+            # is_valid() 会返回 False，不影响正确性。
             ref = FileRef(
                 path=fr_data.get("path", ""),
                 filename=fr_data.get("filename", ""),

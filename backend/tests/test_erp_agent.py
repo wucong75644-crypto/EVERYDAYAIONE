@@ -481,8 +481,11 @@ class TestERPAgentSingleDomain:
         result = await agent._execute("订单明细", time.monotonic() + 60)
 
         assert result.status == "success"
-        assert len(result.collected_files) == 1
-        assert result.collected_files[0]["name"] == "trade_123.parquet"
+        # staging parquet 是中间产物，不发 collected_files 给前端
+        assert result.collected_files is None
+        # 但 file_ref 仍在 AgentResult 中传递给主 Agent
+        assert result.file_ref is not None
+        assert result.file_ref.filename == "trade_123.parquet"
 
 
 # ============================================================
