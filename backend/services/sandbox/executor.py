@@ -10,12 +10,14 @@ import asyncio
 import io
 import math
 import json
+import shutil
 import sys
 import time as _time
 import traceback
 from collections import Counter, defaultdict, OrderedDict
 from datetime import datetime, timedelta, date, time as dt_time, timezone
 from decimal import Decimal, ROUND_HALF_UP
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from loguru import logger
@@ -171,6 +173,9 @@ class SandboxExecutor:
         self._clean_output_dir()
         self._snapshot_before = self._snapshot_output_files()
 
+        # 2.5 备份已有的可上传文件（防止沙箱代码覆盖后丢失旧数据）
+        file_backups = self._backup_existing_files()
+
         # 3. 构建受限执行环境
         sandbox_globals = self._build_globals()
 
@@ -181,10 +186,13 @@ class SandboxExecutor:
                 timeout=self._timeout,
             )
         except asyncio.TimeoutError:
-            return (
+            result = (
                 f"⏱ 代码执行超时（{self._timeout}秒）。\n"
                 "建议：缩小查询范围、减少数据量、或分批处理。"
             )
+            # 超时也可能已部分写入文件，dedup 后直接返回
+            self._dedup_overwritten_files(file_backups)
+            return result
         except Exception as e:
             tb = traceback.format_exc()
             tb_lines = tb.strip().split("\n")
@@ -193,6 +201,8 @@ class SandboxExecutor:
                 f"SandboxExecutor exec error | desc={description} | "
                 f"error={short_tb[:200]}"
             )
+            # 异常也可能已部分写入文件，dedup 后直接返回
+            self._dedup_overwritten_files(file_backups)
             return f"❌ 执行错误:\n{short_tb}"
         finally:
             # 清理 matplotlib figure 防止内存泄露（用户代码可能忘记 plt.close）
@@ -215,7 +225,10 @@ class SandboxExecutor:
         # 对齐 Claude Code：文本输出和文件引用是分离的，文件不会被文本截断影响
         result = truncate_result(result, self._max_result_chars)
 
-        # 7. 自动检测生成的文件并上传（追加在截断后的文本末尾）
+        # 7. 同名文件保护：覆盖检测 + Google Drive 风格重命名
+        self._dedup_overwritten_files(file_backups)
+
+        # 8. 自动检测生成的文件并上传（追加在截断后的文本末尾）
         file_results = await self._auto_upload_new_files()
         if file_results:
             result = (result or "") + "\n" + "\n".join(file_results)
@@ -303,7 +316,6 @@ class SandboxExecutor:
         """确保输出目录存在（不清空，下载文件夹是持久的）"""
         if not self._output_dir:
             return
-        from pathlib import Path
         Path(self._output_dir).mkdir(parents=True, exist_ok=True)
 
     @property
@@ -327,7 +339,6 @@ class SandboxExecutor:
         返回 {dir/filename: (mtime, size)}，覆盖写入同名文件后 mtime/size 会变，
         对比即可检测到。
         """
-        from pathlib import Path
         files: dict[str, tuple[float, int]] = {}
         for d in self._upload_scan_dirs:
             dp = Path(d)
@@ -339,12 +350,86 @@ class SandboxExecutor:
         logger.info(f"SandboxExecutor snapshot | count={len(files)}")
         return files
 
+    # --------------------------------------------------
+    # Google Drive 风格同名文件保护
+    # --------------------------------------------------
+
+    def _backup_existing_files(self) -> dict[str, str]:
+        """执行前备份已有的可上传文件，防止沙箱代码覆盖后丢失旧数据。
+
+        Returns:
+            {原始路径: 备份路径}，备份文件以 .dedup_bak 后缀存放在同目录。
+        """
+        backups: dict[str, str] = {}
+        for d in self._upload_scan_dirs:
+            dp = Path(d)
+            if not dp.exists():
+                continue
+            for f in dp.iterdir():
+                if not f.is_file():
+                    continue
+                if f.suffix.lower() not in self._AUTO_UPLOAD_EXTENSIONS:
+                    continue
+                backup = f.with_suffix(f.suffix + ".dedup_bak")
+                shutil.copy2(f, backup)  # 保留 mtime
+                backups[str(f)] = str(backup)
+        if backups:
+            logger.info(
+                f"SandboxExecutor backup | count={len(backups)} | "
+                f"files={[Path(p).name for p in backups]}"
+            )
+        return backups
+
+    def _dedup_overwritten_files(self, backups: dict[str, str]) -> None:
+        """执行后检测被覆盖的文件，Google Drive 风格重命名新文件、恢复旧文件。
+
+        策略：新文件改名为 name (N).ext，旧文件恢复原名——保证历史 CDN URL 不失效。
+        """
+        for orig_path, backup_path in backups.items():
+            orig = Path(orig_path)
+            backup = Path(backup_path)
+            if not backup.exists():
+                continue
+            if not orig.exists():
+                # 原文件被删除（罕见），恢复备份
+                backup.rename(orig)
+                continue
+            # 对比 mtime+size：不同 = 被覆盖
+            orig_st = orig.stat()
+            backup_st = backup.stat()
+            if (orig_st.st_mtime, orig_st.st_size) != (
+                backup_st.st_mtime, backup_st.st_size
+            ):
+                # 沙箱代码覆盖了同名文件 → 重命名新文件，恢复旧文件
+                dedup_name = self._next_available_name(orig)
+                orig.rename(dedup_name)   # 新内容 → name (N).ext
+                backup.rename(orig)       # 旧内容 → 恢复原名
+                logger.info(
+                    f"SandboxExecutor dedup | "
+                    f"old={orig.name} kept | new={dedup_name.name}"
+                )
+            else:
+                # 未被覆盖，删除备份
+                backup.unlink()
+
+    @staticmethod
+    def _next_available_name(path: Path) -> Path:
+        """Google Drive 风格：name (1).ext, name (2).ext, ..."""
+        stem = path.stem
+        suffix = path.suffix
+        parent = path.parent
+        n = 1
+        while True:
+            candidate = parent / f"{stem} ({n}){suffix}"
+            if not candidate.exists():
+                return candidate
+            n += 1
+
     async def _auto_upload_new_files(self) -> list[str]:
         """扫描受监控目录中的新文件并自动上传（保留源文件供工作区下载）"""
         if not self._upload_fn:
             return []
 
-        from pathlib import Path
         before: dict = getattr(self, "_snapshot_before", {})
         results = []
 
