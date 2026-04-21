@@ -632,3 +632,159 @@ class TestQueryLocalDataDetailStaging:
                 "order", mode="summary", filters=[],
             )
         assert result.format == OutputFormat.TABLE  # summary 保持不变
+
+
+# ============================================================
+# _query_kwargs 统一透传
+# ============================================================
+
+
+class TestQueryKwargs:
+    """_query_kwargs 从 params 提取通用查询参数。"""
+
+    def test_basic_fields(self):
+        agent = _make_trade()
+        kw = agent._query_kwargs({
+            "mode": "export", "filters": [{"field": "a"}],
+        })
+        assert kw["mode"] == "export"
+        assert kw["filters"] == [{"field": "a"}]
+
+    def test_default_mode(self):
+        agent = _make_trade()
+        kw = agent._query_kwargs({})
+        assert kw["mode"] == "summary"
+        assert kw["filters"] == []
+
+    def test_optional_fields_forwarded(self):
+        agent = _make_trade()
+        kw = agent._query_kwargs({
+            "mode": "export",
+            "filters": [],
+            "fields": ["remark", "buyer_nick"],
+            "sort_by": "pay_time",
+            "sort_dir": "asc",
+            "limit": 50,
+            "group_by": ["shop"],
+            "include_invalid": True,
+        })
+        assert kw["fields"] == ["remark", "buyer_nick"]
+        assert kw["sort_by"] == "pay_time"
+        assert kw["sort_dir"] == "asc"
+        assert kw["limit"] == 50
+        assert kw["group_by"] == ["shop"]
+        assert kw["include_invalid"] is True
+
+    def test_optional_absent_not_in_kw(self):
+        """未提供的可选参数不出现在 kw 中（由引擎用默认值）"""
+        agent = _make_trade()
+        kw = agent._query_kwargs({"mode": "summary", "filters": []})
+        assert "fields" not in kw
+        assert "sort_by" not in kw
+        assert "limit" not in kw
+
+    def test_include_invalid_false_forwarded(self):
+        """include_invalid=False 也应传递（不等于不传）"""
+        agent = _make_trade()
+        kw = agent._query_kwargs({"include_invalid": False})
+        assert kw["include_invalid"] is False
+
+
+# ============================================================
+# _dispatch 透传 fields 到引擎
+# ============================================================
+
+
+class TestDispatchFieldsForwarded:
+    """所有 agent _dispatch 通过 _query_kwargs 透传 fields 到引擎。"""
+
+    @pytest.mark.asyncio
+    async def test_trade_dispatch_fields(self):
+        agent = _make_trade()
+        mock_out = ToolOutput(summary="ok", source="erp")
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=mock_out)
+            await agent._dispatch("order_list", {
+                "mode": "export",
+                "filters": [],
+                "fields": ["remark", "express_no"],
+            }, {})
+            call_kwargs = M.return_value.execute.call_args
+            assert call_kwargs.kwargs.get("fields") == ["remark", "express_no"]
+
+    @pytest.mark.asyncio
+    async def test_aftersale_dispatch_fields(self):
+        agent = _make_aftersale()
+        mock_out = ToolOutput(summary="ok", source="erp")
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=mock_out)
+            await agent._dispatch("aftersale_list", {
+                "mode": "export",
+                "filters": [],
+                "fields": ["text_reason"],
+            }, {})
+            call_kwargs = M.return_value.execute.call_args
+            assert call_kwargs.kwargs.get("fields") == ["text_reason"]
+
+    @pytest.mark.asyncio
+    async def test_warehouse_receipt_dispatch_fields(self):
+        from services.agent.departments.warehouse_agent import WarehouseAgent
+        agent = WarehouseAgent(db=MagicMock(), org_id="org1")
+        mock_out = ToolOutput(summary="ok", source="erp")
+        with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
+            M.return_value.execute = AsyncMock(return_value=mock_out)
+            await agent._dispatch("receipt_query", {
+                "mode": "export",
+                "filters": [],
+                "fields": ["supplier_name"],
+                "group_by": ["warehouse"],
+            }, {})
+            call_kwargs = M.return_value.execute.call_args
+            assert call_kwargs.kwargs.get("fields") == ["supplier_name"]
+            assert call_kwargs.kwargs.get("group_by") == ["warehouse"]
+
+
+# ============================================================
+# TradeAgent validate_params: express_no / buyer_nick
+# ============================================================
+
+
+class TestTradeValidateParamsNewFields:
+    """TradeAgent validate_params 接受 express_no 和 buyer_nick。"""
+
+    def test_express_no_accepted(self):
+        agent = _make_trade()
+        result = agent.validate_params("order_list", {
+            "express_no": "SF1234567890",
+            "time_range": "2026-04-01 ~ 2026-04-21",
+        })
+        assert result.is_ok
+
+    def test_buyer_nick_accepted(self):
+        agent = _make_trade()
+        result = agent.validate_params("order_list", {
+            "buyer_nick": "张三",
+            "time_range": "2026-04-01 ~ 2026-04-21",
+        })
+        assert result.is_ok
+
+    def test_express_no_alone_accepted(self):
+        """只有 express_no 没有 time_range 也应通过校验"""
+        agent = _make_trade()
+        result = agent.validate_params("order_list", {
+            "express_no": "SF1234567890",
+        })
+        assert result.is_ok
+
+    def test_buyer_nick_alone_accepted(self):
+        agent = _make_trade()
+        result = agent.validate_params("order_list", {
+            "buyer_nick": "张三",
+        })
+        assert result.is_ok
+
+    def test_no_identifier_rejected(self):
+        """没有任何标识参数应被拒绝"""
+        agent = _make_trade()
+        result = agent.validate_params("order_list", {})
+        assert not result.is_ok

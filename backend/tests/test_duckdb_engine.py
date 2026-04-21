@@ -317,3 +317,116 @@ class TestProfileParquet:
 
         assert result["columns"] == []
         assert result["row_count"] == 0
+
+
+# ============================================================
+# 超时看门狗测试
+# ============================================================
+
+
+class TestExportTimeout:
+    """DuckDB export_to_parquet 超时看门狗（conn.interrupt）"""
+
+    def _make_engine(self):
+        from core.duckdb_engine import DuckDBEngine
+        return DuckDBEngine(pg_url="postgresql://fake/fake", memory_limit="128MB", threads=1)
+
+    @patch("core.duckdb_engine.duckdb")
+    def test_interrupted_event_triggers_timeout_error(self, mock_duckdb):
+        """interrupted event 被设置时 → 识别为超时 → 抛 TimeoutError 不重试"""
+        import threading
+        mock_conn = MagicMock()
+        # 我们在 execute 中手动找到 interrupted event 并设置它
+        # 模拟真实场景：看门狗线程 set event → execute 抛异常
+        captured_event = [None]
+
+        original_timer_init = threading.Timer.__init__
+
+        def capture_timer_init(self_timer, interval, function, args=None, kwargs=None):
+            # 拦截 Timer 构造，拿到 event 参数
+            if args and len(args) >= 2 and isinstance(args[1], threading.Event):
+                captured_event[0] = args[1]
+            original_timer_init(self_timer, interval, function, args, kwargs)
+
+        def execute_side_effect(sql):
+            if "SET" in sql or "INSTALL" in sql or "ATTACH" in sql or "LOAD" in sql:
+                return MagicMock()
+            # 在 COPY 执行时，模拟看门狗已触发
+            if captured_event[0]:
+                captured_event[0].set()
+            raise RuntimeError("query was interrupted")
+
+        mock_conn.execute.side_effect = execute_side_effect
+        mock_duckdb.connect.return_value = mock_conn
+
+        engine = self._make_engine()
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
+            tmp_path = f.name
+
+        try:
+            with patch.object(threading.Timer, '__init__', capture_timer_init):
+                with pytest.raises(TimeoutError, match="导出超时"):
+                    engine.export_to_parquet(
+                        "SELECT * FROM pg.public.test", tmp_path,
+                    )
+            # 关键：COPY 只执行一次（超时不重试）
+            copy_calls = [c for c in mock_conn.execute.call_args_list
+                          if "COPY" in str(c)]
+            assert len(copy_calls) == 1
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    @patch("core.duckdb_engine.duckdb")
+    def test_interrupt_exception_name_triggers_timeout(self, mock_duckdb):
+        """异常类名含 'interrupt' → 识别为超时"""
+        mock_conn = MagicMock()
+
+        class FakeInterruptException(Exception):
+            pass
+
+        def execute_side_effect(sql):
+            if "SET" in sql or "INSTALL" in sql or "ATTACH" in sql or "LOAD" in sql:
+                return MagicMock()
+            raise FakeInterruptException("interrupted by watchdog")
+
+        mock_conn.execute.side_effect = execute_side_effect
+        mock_duckdb.connect.return_value = mock_conn
+
+        engine = self._make_engine()
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
+            tmp_path = f.name
+
+        try:
+            with pytest.raises(TimeoutError, match="导出超时"):
+                engine.export_to_parquet(
+                    "SELECT * FROM pg.public.test", tmp_path,
+                )
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    def test_interrupt_conn_sets_event(self):
+        """_interrupt_conn 正确设置 event 并调用 conn.interrupt"""
+        import threading
+        from core.duckdb_engine import DuckDBEngine
+
+        mock_conn = MagicMock()
+        event = threading.Event()
+        assert not event.is_set()
+
+        DuckDBEngine._interrupt_conn(mock_conn, event)
+
+        assert event.is_set()
+        mock_conn.interrupt.assert_called_once()
+
+    def test_interrupt_conn_handles_closed_conn(self):
+        """conn 已关闭时 interrupt 不崩"""
+        import threading
+        from core.duckdb_engine import DuckDBEngine
+
+        mock_conn = MagicMock()
+        mock_conn.interrupt.side_effect = RuntimeError("connection closed")
+        event = threading.Event()
+
+        DuckDBEngine._interrupt_conn(mock_conn, event)
+
+        assert event.is_set()  # event 仍然被设置

@@ -118,11 +118,7 @@ class PurchaseAgent(DepartmentAgent):
         if action == "purchase_return":
             doc_type = "purchase_return"
         return await self._query_local_data(
-            doc_type=doc_type,
-            mode=params.get("mode", "summary"),
-            filters=params.get("filters", []),
-            group_by=params.get("group_by"),
-            include_invalid=params.get("include_invalid", False),
+            doc_type=doc_type, **self._query_kwargs(params),
         )
 
     # ── 采购域查询方法 ──

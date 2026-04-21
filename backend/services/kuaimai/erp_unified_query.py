@@ -143,6 +143,7 @@ class UnifiedQueryEngine:
             return await self._export(
                 doc_type, validated, tr, fields, limit,
                 user_id, conversation_id, request_ctx,
+                include_invalid=include_invalid,
             )
 
     # ── Summary 模式 ──────────────────────────────────
@@ -322,8 +323,12 @@ class UnifiedQueryEngine:
         tr: TimeRange, fields: list[str] | None, limit: int,
         user_id: str | None, conversation_id: str | None,
         request_ctx: Optional[RequestContext],
+        include_invalid: bool = False,
     ) -> ToolOutput:
         type_name = DOC_TYPE_CN.get(doc_type, doc_type)
+        # include_invalid 在 export 模式预留（与 summary 语义一致：
+        # 总数包含刷单，只做标记分类不排除。用户显式传 is_scalping
+        # 过滤时才会排除刷单行）
 
         # fields 为空时用默认字段（detail 合并到 export 后，用户不一定指定 fields）
         if not fields:

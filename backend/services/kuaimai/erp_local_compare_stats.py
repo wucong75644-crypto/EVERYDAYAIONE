@@ -240,6 +240,7 @@ async def local_compare_stats(
         "p_group_by": rpc_group,
         "p_limit": 20,
         "p_org_id": org_id,
+        "p_filters": None,  # 预留：未来支持传入 DSL 过滤器
     }
 
     # ── 3. 双查 ────────────────────────────────────────

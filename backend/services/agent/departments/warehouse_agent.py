@@ -124,9 +124,7 @@ class WarehouseAgent(DepartmentAgent):
         if action in ("receipt_query", "shelf_query"):
             doc_type = "receipt" if action == "receipt_query" else "shelf"
             return await self._query_local_data(
-                doc_type=doc_type,
-                mode=params.get("mode", "summary"),
-                filters=params.get("filters", []),
+                doc_type=doc_type, **self._query_kwargs(params),
             )
         return await self.query_stock(
             product_code=params.get("product_code", ""),

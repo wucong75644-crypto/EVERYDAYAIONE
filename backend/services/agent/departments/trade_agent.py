@@ -59,10 +59,12 @@ class TradeAgent(DepartmentAgent):
         if action == "order_list":
             if (not params.get("order_no")
                     and not params.get("time_range")
-                    and not params.get("platform_order_no")):
+                    and not params.get("platform_order_no")
+                    and not params.get("express_no")
+                    and not params.get("buyer_nick")):
                 return ValidationResult.missing(
-                    ["订单号 或 平台订单号 或 时间范围"],
-                    prompt="您想查哪个订单？请提供订单号，或者告诉我时间范围。",
+                    ["订单号 或 快递单号 或 时间范围"],
+                    prompt="您想查哪个订单？请提供订单号、快递单号，或者告诉我时间范围。",
                 )
             tr = params.get("time_range", "")
             if tr:
@@ -88,12 +90,7 @@ class TradeAgent(DepartmentAgent):
         return "order_list"
 
     async def _dispatch(self, action, params, context):
-        return await self.query_orders(
-            mode=params.get("mode", "summary"),
-            filters=params.get("filters", []),
-            group_by=params.get("group_by"),
-            include_invalid=params.get("include_invalid", False),
-        )
+        return await self.query_orders(**self._query_kwargs(params))
 
     # ── 订单域查询方法 ──
 
