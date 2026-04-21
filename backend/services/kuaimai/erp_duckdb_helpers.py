@@ -8,9 +8,23 @@ DuckDB 导出辅助函数 — SQL 构建、PII 脱敏、路径解析、预览。
 from __future__ import annotations
 
 import time as _time
+from datetime import datetime
 from pathlib import Path
 
 from services.kuaimai.erp_unified_schema import TIME_COLUMNS, TimeRange, ValidatedFilter
+
+
+def _to_duckdb_timestamp(iso_str: str) -> str:
+    """ISO 时间字符串 → DuckDB 兼容格式 YYYY-MM-DD HH:MM:SS。
+
+    DuckDB 不接受带时区的 ISO 格式（如 2026-04-19T00:00+08:00），
+    Supabase RPC 可以。此函数仅供 DuckDB SQL 使用。
+    """
+    try:
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, AttributeError):
+        return iso_str
 
 
 # ── PII 脱敏 SQL 表达式 ──────────────────────────────
@@ -63,8 +77,8 @@ def build_export_where(
     """构建 WHERE 子句（纯 SQL 字符串，值经过单引号转义——仅用于 DuckDB COPY）。"""
     clauses: list[str] = [
         f"doc_type = '{_sql_escape(doc_type)}'",
-        f"{tr.time_col} >= '{_sql_escape(tr.start_iso)}'",
-        f"{tr.time_col} < '{_sql_escape(tr.end_iso)}'",
+        f"{tr.time_col} >= '{_sql_escape(_to_duckdb_timestamp(tr.start_iso))}'",
+        f"{tr.time_col} < '{_sql_escape(_to_duckdb_timestamp(tr.end_iso))}'",
     ]
 
     if org_id:

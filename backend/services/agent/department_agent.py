@@ -63,12 +63,16 @@ class DepartmentAgent(ABC):
         request_ctx: Any = None,
         staging_dir: str | None = None,
         budget: Any = None,
+        user_id: str | None = None,
+        conversation_id: str | None = None,
     ):
         self.db = db
         self.org_id = org_id
         self.request_ctx = request_ctx
         self._staging_dir = staging_dir
         self._budget = budget  # v6: ExecutionBudget（可选）
+        self._user_id = user_id
+        self._conversation_id = conversation_id
 
     # ── 抽象属性 ──
 
@@ -518,6 +522,8 @@ class DepartmentAgent(ABC):
             time_type=kwargs.get("time_type"),
             include_invalid=kwargs.get("include_invalid", False),
             request_ctx=self.request_ctx,
+            user_id=self._user_id,
+            conversation_id=self._conversation_id,
         )
         # L3：空结果诊断
         if result.status == OutputStatus.EMPTY and filters:
