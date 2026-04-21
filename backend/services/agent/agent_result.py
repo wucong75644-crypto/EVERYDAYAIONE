@@ -75,45 +75,46 @@ class AgentResult:
 
         返回 list[dict]，每个 dict 是一个 content block：
         - {"type": "text", "text": "..."}          — 文本摘要（始终有）
-        - {"type": "file_ref", "file_ref": {...}}   — 文件引用
-        - {"type": "data", "data": {...}}           — 内联数据
-        - {"type": "insights", "insights": [...]}   — 分析洞察
+        所有 block 统一用 type="text"（模型 API 只支持 text/image_url/video_url/video），
+        结构化信息以可读文本格式嵌入。
         """
         blocks: list[dict[str, Any]] = []
 
         # 文本摘要（始终有）
         blocks.append({"type": "text", "text": self.summary})
 
-        # 文件引用（有数据文件时）
+        # 文件引用（有数据文件时）→ 文本描述
         if self.file_ref:
             blocks.append({
-                "type": "file_ref",
-                "file_ref": {
-                    "path": self.file_ref.path,
-                    "filename": self.file_ref.filename,
-                    "format": self.file_ref.format,
-                    "rows": self.file_ref.row_count,
-                    "size_kb": self.file_ref.size_bytes // 1024,
-                },
+                "type": "text",
+                "text": (
+                    f"[文件: {self.file_ref.path} | "
+                    f"{self.file_ref.row_count}行 | "
+                    f"{self.file_ref.format} | "
+                    f"{self.file_ref.size_bytes // 1024}KB]"
+                ),
             })
 
-        # 内联数据（少量数据、无文件引用时）
+        # 内联数据（少量数据、无文件引用时）→ 文本描述
         if self.data and not self.file_ref:
             col_names = [c.name for c in self.columns] if self.columns else []
+            preview = json.dumps(self.data[:5], ensure_ascii=False)
             blocks.append({
-                "type": "data",
-                "data": {
-                    "rows": len(self.data),
-                    "columns": col_names,
-                    "records": self.data[:20],
-                },
+                "type": "text",
+                "text": (
+                    f"[数据: {len(self.data)}行 | "
+                    f"列: {', '.join(col_names)}]\n"
+                    f"{preview}"
+                ),
             })
 
-        # 分析洞察（子 Agent 有分析能力时）
+        # 分析洞察（子 Agent 有分析能力时）→ 文本描述
         if self.insights:
             blocks.append({
-                "type": "insights",
-                "insights": self.insights,
+                "type": "text",
+                "text": "分析洞察：\n" + "\n".join(
+                    f"· {i}" for i in self.insights
+                ),
             })
 
         return blocks
