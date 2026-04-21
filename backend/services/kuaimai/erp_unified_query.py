@@ -48,6 +48,7 @@ from services.kuaimai.erp_unified_schema import (
     EXPORT_COLUMN_NAMES,
     EXPORT_MAX,
     GROUP_BY_MAP,
+    PLATFORM_CN,
     TIME_COLUMNS,
     VALID_DOC_TYPES,
     TimeRange,
@@ -215,7 +216,13 @@ class UnifiedQueryEngine:
         summary = f"{time_header}\n\n{body}" if time_header else body
 
         # summary 数据可以是 dict（总计）或 list（分组）
+        # platform 编码 → 中文（和 summary 文本保持一致，防止 LLM 输出编码）
         result_data = data if isinstance(data, list) else [data]
+        for row in result_data:
+            if "platform" in row:
+                row["platform"] = PLATFORM_CN.get(row["platform"], row["platform"])
+            if "group_key" in row and rpc_group == "platform":
+                row["group_key"] = PLATFORM_CN.get(row["group_key"], row["group_key"])
         return ToolOutput(
             summary=summary,
             format=OutputFormat.TABLE,
