@@ -1470,7 +1470,8 @@
       "Bash(grep -rn \"logging\\\\|telemetry\\\\|trace\\\\|span\" /Users/wucong/EVERYDAYAIONE/backend/services/agent/*.py)",
       "Bash(grep -rn \"loguru\\\\|logger\" /Users/wucong/EVERYDAYAIONE/backend/services/agent/*.py)",
       "Bash(grep -E \"ALTER TABLE erp_document_items|ADD COLUMN\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
-      "Bash(./git-push.sh \"feat: 供应商工具+字段白名单扩展——local_supplier_list 8层注册+COLUMN_WHITELIST 42→79+RPC白名单删除SELECT*简化+平台编码翻译4处+PII地址脱敏\")"
+      "Bash(./git-push.sh \"feat: 供应商工具+字段白名单扩展——local_supplier_list 8层注册+COLUMN_WHITELIST 42→79+RPC白名单删除SELECT*简化+平台编码翻译4处+PII地址脱敏\")",
+      "Bash(./git-push.sh \"fix: PurchaseAgent供应商分类过宽——缩窄supplier_query触发词+dispatch直调local_supplier_list\")"
     ],
     "additionalDirectories": [
       "/tmp"
