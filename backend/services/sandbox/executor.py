@@ -306,52 +306,70 @@ class SandboxExecutor:
         from pathlib import Path
         Path(self._output_dir).mkdir(parents=True, exist_ok=True)
 
+    @property
+    def _upload_scan_dirs(self) -> list[str]:
+        """auto_upload 监控的目录列表：OUTPUT_DIR + STAGING_DIR。
+
+        LLM 可能把输出文件写到 STAGING_DIR 而非 OUTPUT_DIR，
+        同时扫描两个目录保证无论写到哪里都能检测到。
+        parquet 等中间格式由 _AUTO_UPLOAD_EXTENSIONS 过滤。
+        """
+        dirs: list[str] = []
+        if self._output_dir:
+            dirs.append(self._output_dir)
+        if self._staging_dir and self._staging_dir != self._output_dir:
+            dirs.append(self._staging_dir)
+        return dirs
+
     def _snapshot_output_files(self) -> set:
-        """快照输出目录现有文件（执行前调用，用于检测新生成的文件）"""
-        if not self._output_dir:
-            return set()
+        """快照所有受监控目录的现有文件（执行前调用，用于检测新生成的文件）。
+
+        key 用 dir/filename 区分不同目录下的同名文件。
+        """
         from pathlib import Path
-        output_path = Path(self._output_dir)
-        if not output_path.exists():
-            return set()
-        return {f.name for f in output_path.iterdir() if f.is_file()}
+        files: set[str] = set()
+        for d in self._upload_scan_dirs:
+            dp = Path(d)
+            if dp.exists():
+                files.update(f"{d}/{f.name}" for f in dp.iterdir() if f.is_file())
+        return files
 
     async def _auto_upload_new_files(self) -> list[str]:
-        """扫描输出目录中的新文件并自动上传（保留源文件供工作区下载）"""
-        if not self._output_dir or not self._upload_fn:
+        """扫描受监控目录中的新文件并自动上传（保留源文件供工作区下载）"""
+        if not self._upload_fn:
             return []
 
         from pathlib import Path
-        output_path = Path(self._output_dir)
-        if not output_path.exists():
-            return []
-
-        # 只处理本次执行新生成的文件（对比执行前快照）
         before = getattr(self, "_snapshot_before", set())
         results = []
-        for f in output_path.iterdir():
-            if not f.is_file():
-                continue
-            if f.name in before:
-                continue  # 执行前就存在的文件，跳过
-            if f.suffix.lower() not in self._AUTO_UPLOAD_EXTENSIONS:
-                continue
 
-            try:
-                file_size = f.stat().st_size
-                upload_result = await self._upload_fn(f.name, file_size)
-                results.append(upload_result)
-                # 保留源文件（用户从工作区"下载/"文件夹直接下载）
-                logger.info(
-                    f"SandboxExecutor auto-upload | file={f.name} | "
-                    f"size={file_size}"
-                )
-            except Exception as e:
-                logger.error(
-                    f"SandboxExecutor auto-upload failed | file={f.name} | "
-                    f"error={e}"
-                )
-                results.append(f"❌ 文件上传失败: {f.name} ({e})")
+        for scan_dir in self._upload_scan_dirs:
+            dir_path = Path(scan_dir)
+            if not dir_path.exists():
+                continue
+            for f in dir_path.iterdir():
+                if not f.is_file():
+                    continue
+                full_key = f"{scan_dir}/{f.name}"
+                if full_key in before:
+                    continue  # 执行前就存在的文件，跳过
+                if f.suffix.lower() not in self._AUTO_UPLOAD_EXTENSIONS:
+                    continue
+
+                try:
+                    file_size = f.stat().st_size
+                    upload_result = await self._upload_fn(f.name, file_size)
+                    results.append(upload_result)
+                    logger.info(
+                        f"SandboxExecutor auto-upload | file={f.name} | "
+                        f"size={file_size} | dir={scan_dir}"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"SandboxExecutor auto-upload failed | file={f.name} | "
+                        f"error={e}"
+                    )
+                    results.append(f"❌ 文件上传失败: {f.name} ({e})")
 
         return results
 
