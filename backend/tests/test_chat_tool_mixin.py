@@ -248,7 +248,8 @@ class TestExtractFileParts:
         obj = self._make_instance()
         text = "✅ 文件已上传: 报表.xlsx\n[FILE]https://cdn.example.com/a.xlsx|报表.xlsx|application/vnd.ms-excel|2048[/FILE]"
         result = obj._extract_file_parts(text)
-        assert "📎 文件: 报表.xlsx" in result
+        # 替换为带 CDN URL 的 markdown 链接（LLM 引用时 URL 正确）
+        assert "📎 [报表.xlsx](https://cdn.example.com/a.xlsx)" in result
         assert "[FILE]" not in result
         assert len(obj._pending_file_parts) == 1
         fp = obj._pending_file_parts[0]
@@ -257,7 +258,7 @@ class TestExtractFileParts:
         assert fp.size == 2048
 
     def test_multiple_files_extracted(self):
-        """多个 [FILE] 标记 → 全部提取"""
+        """多个 [FILE] 标记 → 全部提取，保留 CDN URL"""
         obj = self._make_instance()
         text = (
             "[FILE]https://cdn.example.com/a.csv|数据.csv|text/csv|1024[/FILE]\n"
@@ -266,8 +267,8 @@ class TestExtractFileParts:
         )
         result = obj._extract_file_parts(text)
         assert "[FILE]" not in result
-        assert "📎 文件: 数据.csv" in result
-        assert "📎 文件: 报表.xlsx" in result
+        assert "📎 [数据.csv](https://cdn.example.com/a.csv)" in result
+        assert "📎 [报表.xlsx](https://cdn.example.com/b.xlsx)" in result
         assert len(obj._pending_file_parts) == 2
 
     def test_accumulates_across_calls(self):
