@@ -212,44 +212,96 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         "1. 只输出一个域（每次查询只查一个域的数据）\n"
         "2. 如果查询涉及多个域，选最主要的那个\n\n"
         "参数定义：\n"
+        "【基础参数（必填）】\n"
         "- doc_type: order/purchase/purchase_return/aftersale/receipt/shelf（必填）\n"
         "- mode: summary（统计汇总/多少/占比）/ export（获取数据/明细/导出/列表）（必填）\n"
         "- time_range: 标准化为 YYYY-MM-DD ~ YYYY-MM-DD 或 YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM（必填，根据当前时间推算；用户指定了具体时间点时带上 HH:MM）\n"
         "- time_col: pay_time（付款时间）/ consign_time（发货时间）/ doc_created_at（创建时间，默认）\n"
-        "- platform: taobao/pdd/douyin/jd/kuaishou/xhs/1688（可选）\n"
-        "- group_by: shop/platform/product/supplier/warehouse/status（可选，仅 summary 模式）\n"
-        "- product_code: 商品编码（如用户提到了具体编码则提取）\n"
-        "- order_no: 订单号（如用户提到了则提取）\n"
+        "\n"
+        "【通用过滤参数（可选，用户提到才提取）】\n"
+        "- platform: taobao/pdd/douyin/jd/kuaishou/xhs/1688\n"
+        "- product_code: 商品编码\n"
+        "- order_no: 订单号（平台订单号或ERP系统单号）\n"
+        "- shop_name: 店铺名称（模糊匹配）\n"
+        "- warehouse_name: 仓库名称（模糊匹配）\n"
+        "- item_name: 商品名称（模糊匹配）\n"
+        "- creator_name: 创建人姓名（模糊匹配）\n"
+        "- doc_code: 单据编号（精确匹配，如采购单号PO...、售后单号AS...）\n"
+        "- sku_code: SKU编码/变体编码（精确匹配）\n"
+        "\n"
+        "【订单域过滤参数（doc_type=order 时可用）】\n"
+        "- express_no: 快递单号（如SF/YT/ZTO/JD/EMS开头的单号）\n"
+        "- express_company: 快递公司名（如顺丰/圆通/中通/韵达）\n"
+        "- buyer_nick: 买家昵称（精确匹配）\n"
+        "- receiver_name: 收件人姓名（精确匹配）\n"
+        "- receiver_state: 收件省份（如广东/浙江/上海）\n"
+        "- receiver_city: 收件城市（如深圳/杭州）\n"
+        "- order_status: 订单状态。可选值: WAIT_BUYER_PAY(待付款)/WAIT_AUDIT(待审核)/"
+        "WAIT_SEND_GOODS(待发货)/SELLER_SEND_GOODS(已发货)/FINISHED(已完成)/CLOSED(已关闭)\n"
+        "- order_type: 订单类型。可选值: 补发/换货/预售/合并/拆分/加急\n"
+        "- is_cancel: 布尔值，查已取消订单时设为 true\n"
+        "- is_refund: 布尔值，查有退款的订单时设为 true\n"
+        "- is_exception: 布尔值，查异常订单时设为 true\n"
+        "- is_halt: 布尔值，查被拦截的订单时设为 true\n"
+        "- is_urgent: 布尔值，查加急订单时设为 true\n"
+        "- is_presell: 布尔值，查预售订单时设为 true\n"
+        "\n"
+        "【售后域过滤参数（doc_type=aftersale 时可用）】\n"
+        "- aftersale_type: 售后类型（如 仅退款/退货退款/换货）\n"
+        "- refund_status: 退款状态（如 退款中/退款成功/退款关闭）\n"
+        "- good_status: 货物状态（如 买家已退货/买家未退货）\n"
+        "- text_reason: 退货原因关键词（模糊匹配）\n"
+        "- refund_express_no: 退货快递单号（精确匹配）\n"
+        "- refund_express_company: 退货快递公司（模糊匹配）\n"
+        "- refund_warehouse_name: 退货仓库（模糊匹配）\n"
+        "- platform_refund_id: 平台退款单号（精确匹配）\n"
+        "\n"
+        "【采购域过滤参数（doc_type=purchase/purchase_return 时可用）】\n"
+        "- supplier_name: 供应商名称（模糊匹配）\n"
+        "- purchase_order_code: 采购单号（精确匹配）\n"
+        "- doc_status: 单据状态（如 待审核/已审核/待收货/已完成）\n"
+        "\n"
+        "【刷单/特殊过滤】\n"
         "- include_invalid: 布尔值，默认 false。仅当用户明确要求'包含全部'或'不排除刷单'时设为 true。\n"
-        "- is_scalping: 布尔值，默认 false。用户查'刷单''空包'时设为 true（筛选 is_scalping=1 的订单）。\n"
+        "- is_scalping: 布尔值，默认 false。用户查'刷单''空包'时设为 true。\n"
+        "\n"
+        "【展示控制】\n"
+        "- group_by: shop/platform/product/supplier/warehouse/status（可选，仅 summary 模式）\n"
         "- fields: 需要返回的特定字段列表（可选，用户明确提到特定信息时提取）\n"
         "  可选字段：remark(备注)/buyer_message(买家留言)/express_no(快递单号)/"
         "express_company(快递公司)/buyer_nick(买家昵称)/receiver_name(收件人)/"
         "receiver_address(地址)/cost(成本)/gross_profit(毛利)/text_reason(退货原因)\n"
         "  注意：不提则用默认字段，不要主动添加用户未提到的字段\n\n"
+        "【重要规则】\n"
+        "- 用户给了一个单号但没说是什么类型时：纯数字16-19位→order_no；字母+数字（如SF/YT/ZTO/JD开头）→express_no\n"
+        "- 用户指定订单号或快递单号查询时，time_range 仍然必填（用最近3个月）\n"
+        "- 用户未指定具体状态值时不要猜测，留空让系统返回全部\n\n"
         "返回纯 JSON（不要 markdown 围栏）。\n\n"
         "示例1（今日付款订单统计）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"summary",'
         '"time_range":"2026-04-17 ~ 2026-04-17","time_col":"pay_time"}}\n\n'
-        "示例2（昨天淘宝订单统计）：\n"
+        "示例2（查快递单号对应订单）：\n"
+        '{"domain": "trade", "params": {"doc_type":"order","mode":"export",'
+        '"time_range":"2026-01-21 ~ 2026-04-21","express_no":"SF1234567890"}}\n\n'
+        "示例3（XX旗舰店待发货订单）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"summary",'
-        '"time_range":"2026-04-16 ~ 2026-04-16","time_col":"pay_time",'
-        '"platform":"taobao"}}\n\n'
-        "示例3（退货按商品分组统计）：\n"
+        '"time_range":"2026-04-17 ~ 2026-04-17","shop_name":"XX旗舰店",'
+        '"order_status":"WAIT_SEND_GOODS"}}\n\n'
+        "示例4（退货按商品分组统计）：\n"
         '{"domain": "aftersale", "params": {"doc_type":"aftersale","mode":"summary",'
         '"time_range":"2026-04-01 ~ 2026-04-17","group_by":"product"}}\n\n'
-        "示例4（采购单含备注）：\n"
+        "示例5（XX供应商的采购单）：\n"
         '{"domain": "purchase", "params": {"doc_type":"purchase","mode":"export",'
-        '"time_range":"2026-04-01 ~ 2026-04-17","fields":["remark","doc_code","supplier_name"]}}\n\n'
-        "示例5（刷单统计）：\n"
+        '"time_range":"2026-04-01 ~ 2026-04-17","supplier_name":"XX供应商"}}\n\n'
+        "示例6（刷单统计）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"summary",'
         '"time_range":"2026-04-01 ~ 2026-04-17","is_scalping":true,"include_invalid":true}}\n\n'
-        "示例6（导出订单到 Excel）：\n"
+        "示例7（买家张三的订单）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"export",'
-        '"time_range":"2026-04-17 ~ 2026-04-17","time_col":"pay_time"}}\n\n'
-        "示例7（导出刷单订单表格）：\n"
-        '{"domain": "trade", "params": {"doc_type":"order","mode":"export",'
-        '"time_range":"2026-04-17 ~ 2026-04-17","is_scalping":true,"include_invalid":true}}'
+        '"time_range":"2026-01-21 ~ 2026-04-21","buyer_nick":"张三"}}\n\n'
+        "示例8（因质量问题的退货）：\n"
+        '{"domain": "aftersale", "params": {"doc_type":"aftersale","mode":"export",'
+        '"time_range":"2026-04-01 ~ 2026-04-17","text_reason":"质量"}}'
     )
 
 
@@ -311,7 +363,15 @@ def get_capability_manifest() -> dict:
         "modes": sorted(VALID_MODES),
         "doc_types": sorted(VALID_DOC_TYPES),
         "group_by": group_by_dims,
-        "filters": ["platform", "product_code", "order_no", "include_invalid"],
+        "filters": [
+            "platform", "product_code", "order_no", "include_invalid",
+            "shop_name", "warehouse_name", "supplier_name",
+            "express_no", "buyer_nick", "order_status", "doc_status",
+            "aftersale_type", "refund_status", "express_company",
+            "receiver_state", "receiver_city", "item_name",
+            "is_cancel", "is_refund", "is_exception", "is_halt",
+            "is_urgent", "is_presell",
+        ],
         "time_cols": sorted(VALID_TIME_COLS),
         "platforms": platform_names,
         "field_categories": field_categories,
@@ -357,10 +417,17 @@ def get_capability_manifest() -> dict:
     }
 
 
-# ── L2 product_code / order_no 补全（DB 验证） ──
+# ── L2 product_code / order_no / express_no 补全（DB 验证） ──
 
 _PRODUCT_CODE_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*")
 _ORDER_NO_RE = re.compile(r"P\d{18}|\d{16,19}")
+# 快递单号格式：字母前缀(2-4位) + 数字(8-20位)
+# 覆盖：SF顺丰/YT圆通/ZTO中通/YD韵达/STO申通/BEST百世/JD京东/EMS/YZPY邮政
+_EXPRESS_NO_RE = re.compile(
+    r"(?:SF|YT|ZTO|YD|STO|BEST|JD|EMS|YZPY|JDVA|DBL|YUNDA)"
+    r"\d{8,20}",
+    re.IGNORECASE,
+)
 _CODE_STOP_WORDS = frozenset({
     "the", "and", "for", "not", "all", "but", "are", "was",
     "order", "trade", "shop", "sku", "erp",
@@ -370,7 +437,7 @@ _CODE_STOP_WORDS = frozenset({
 async def _fill_codes_for_params(
     params: dict, query: str, db: Any, org_id: str | None,
 ) -> None:
-    """L2 意图完整性：从用户查询文本补全 product_code / order_no。
+    """L2 意图完整性：从用户查询文本补全 product_code / order_no / express_no。
 
     与旧版 _fill_codes 功能一致，但操作单个 params dict 而非 ExecutionPlan。
     """
@@ -391,7 +458,15 @@ async def _fill_codes_for_params(
     if order_candidates:
         verified_order = await _verify_order_no(db, order_candidates, org_id)
 
-    if not verified_code and not verified_order:
+    # 快递单号识别（字母前缀+数字，如 SF1234567890）
+    express_candidates = _EXPRESS_NO_RE.findall(query)[:3]
+    verified_express: str | None = None
+    if express_candidates:
+        verified_express = await _verify_express_no(
+            db, express_candidates, org_id,
+        )
+
+    if not verified_code and not verified_order and not verified_express:
         return
 
     if verified_code and not params.get("product_code"):
@@ -405,6 +480,12 @@ async def _fill_codes_for_params(
         logger.info(
             f"L2 order_no 补全: query={query!r} → "
             f"order_no={verified_order}",
+        )
+    if verified_express and not params.get("express_no"):
+        params["express_no"] = verified_express
+        logger.info(
+            f"L2 express_no 补全: query={query!r} → "
+            f"express_no={verified_express}",
         )
 
 
@@ -453,6 +534,30 @@ async def _verify_order_no(
         return matched.pop()
     if len(matched) > 1:
         logger.warning(f"L2 order_no 多匹配，不补全: {matched}")
+    return None
+
+
+async def _verify_express_no(
+    db: Any, candidates: list[str], org_id: str | None,
+) -> str | None:
+    """验证候选快递单号是否存在于 erp_document_items 表。"""
+    matched: set[str] = set()
+    for express_no in candidates:
+        try:
+            q = db.table("erp_document_items").select("express_no").eq(
+                "express_no", express_no,
+            ).limit(1)
+            if org_id:
+                q = q.eq("org_id", org_id)
+            result = q.execute()
+            if result.data:
+                matched.add(express_no)
+        except Exception as e:
+            logger.debug(f"L2 express_no 验证失败: {express_no} → {e}")
+    if len(matched) == 1:
+        return matched.pop()
+    if len(matched) > 1:
+        logger.warning(f"L2 express_no 多匹配，不补全: {matched}")
     return None
 
 

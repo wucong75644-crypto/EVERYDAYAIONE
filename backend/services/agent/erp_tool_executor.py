@@ -266,6 +266,7 @@ class ErpToolMixin:
                 fields=args.get("fields"),
                 limit=args.get("limit", 20),
                 time_type=args.get("time_type"),
+                include_invalid=args.get("include_invalid", False),
                 user_id=self.user_id,
                 conversation_id=self.conversation_id,
                 request_ctx=request_ctx,

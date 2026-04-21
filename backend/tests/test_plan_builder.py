@@ -460,3 +460,182 @@ class TestBuildExtractPromptCompleteness:
         prompt = build_extract_prompt("test")
         assert "product" in prompt
         assert "示例3" in prompt or "按商品分组" in prompt
+
+    def test_new_filter_params_in_prompt(self):
+        """验证新增的过滤参数在 prompt 中"""
+        prompt = build_extract_prompt("test")
+        new_params = [
+            "express_no", "buyer_nick", "shop_name", "order_status",
+            "aftersale_type", "refund_status", "supplier_name",
+            "warehouse_name", "receiver_state", "receiver_city",
+            "is_cancel", "is_refund", "is_exception", "is_halt",
+            "express_company", "doc_code", "sku_code", "doc_status",
+            "text_reason", "good_status",
+        ]
+        for p in new_params:
+            assert p in prompt, f"新参数 {p} 未在 prompt 中"
+
+    def test_express_no_rule_in_prompt(self):
+        """prompt 包含快递单号识别规则"""
+        prompt = build_extract_prompt("test")
+        assert "SF" in prompt
+        assert "express_no" in prompt
+
+    def test_express_no_example_in_prompt(self):
+        """prompt 包含快递单号查询示例"""
+        prompt = build_extract_prompt("test")
+        assert "SF1234567890" in prompt
+
+
+# ============================================================
+# get_capability_manifest: 新增 filters 字段验证
+# ============================================================
+
+
+class TestCapabilityManifestFilters:
+    """验证 capability_manifest 的 filters 包含新增字段。"""
+
+    def test_new_filters_in_manifest(self):
+        m = get_capability_manifest()
+        new_filters = [
+            "shop_name", "warehouse_name", "supplier_name",
+            "express_no", "buyer_nick", "order_status", "doc_status",
+            "aftersale_type", "refund_status", "express_company",
+        ]
+        for f in new_filters:
+            assert f in m["filters"], f"manifest filters 缺少 {f}"
+
+    def test_flag_filters_in_manifest(self):
+        m = get_capability_manifest()
+        for flag in ["is_cancel", "is_refund", "is_exception",
+                     "is_halt", "is_urgent", "is_presell"]:
+            assert flag in m["filters"], f"manifest filters 缺少 {flag}"
+
+
+# ============================================================
+# _EXPRESS_NO_RE 正则匹配测试
+# ============================================================
+
+
+class TestExpressNoRegex:
+    """快递单号正则识别。"""
+
+    def test_sf_match(self):
+        from services.agent.plan_builder import _EXPRESS_NO_RE
+        assert _EXPRESS_NO_RE.findall("快递 SF1234567890 查一下")
+
+    def test_yt_match(self):
+        from services.agent.plan_builder import _EXPRESS_NO_RE
+        assert _EXPRESS_NO_RE.findall("YT98765432101234")
+
+    def test_zto_match(self):
+        from services.agent.plan_builder import _EXPRESS_NO_RE
+        assert _EXPRESS_NO_RE.findall("ZTO12345678901")
+
+    def test_jd_match(self):
+        from services.agent.plan_builder import _EXPRESS_NO_RE
+        assert _EXPRESS_NO_RE.findall("JD12345678901234")
+
+    def test_ems_match(self):
+        from services.agent.plan_builder import _EXPRESS_NO_RE
+        assert _EXPRESS_NO_RE.findall("EMS1234567890")
+
+    def test_case_insensitive(self):
+        from services.agent.plan_builder import _EXPRESS_NO_RE
+        assert _EXPRESS_NO_RE.findall("sf1234567890")
+
+    def test_pure_digits_no_match(self):
+        """纯数字不匹配快递正则（那是订单号）"""
+        from services.agent.plan_builder import _EXPRESS_NO_RE
+        assert not _EXPRESS_NO_RE.findall("1234567890123456")
+
+    def test_short_number_no_match(self):
+        """前缀+短数字不匹配"""
+        from services.agent.plan_builder import _EXPRESS_NO_RE
+        assert not _EXPRESS_NO_RE.findall("SF12345")
+
+
+# ============================================================
+# _fill_codes_for_params: express_no 补全
+# ============================================================
+
+
+def _mock_db_with_express(codes: list[str]):
+    """mock DB：同时支持 product/order/express 查询。"""
+    db = MagicMock()
+
+    def _mock_table(table_name):
+        table = MagicMock()
+        chain = MagicMock()
+        table.select.return_value = chain
+        chain.eq.return_value = chain
+        chain.limit.return_value = chain
+
+        def _execute():
+            result = MagicMock()
+            eq_calls = chain.eq.call_args_list
+            val = None
+            for call in eq_calls:
+                args = call[0] if call[0] else ()
+                if len(args) >= 2 and args[0] in (
+                    "outer_id", "order_no", "express_no",
+                ):
+                    val = args[1]
+            if table_name == "erp_products":
+                result.data = [{"outer_id": val}] if val in codes else []
+            elif table_name == "erp_document_items":
+                result.data = (
+                    [{"order_no": val}] if val in codes
+                    else [{"express_no": val}] if val in codes
+                    else []
+                )
+            else:
+                result.data = []
+            return result
+
+        chain.execute = _execute
+        return table
+
+    db.table = _mock_table
+    return db
+
+
+class TestFillCodesExpressNo:
+    """_fill_codes_for_params 快递单号补全。"""
+
+    @pytest.mark.asyncio
+    async def test_express_no_found_in_db(self):
+        params: dict = {}
+        db = _mock_db_with_express(["SF1234567890"])
+        await _fill_codes_for_params(
+            params, "查快递 SF1234567890", db, "org1",
+        )
+        assert params.get("express_no") == "SF1234567890"
+
+    @pytest.mark.asyncio
+    async def test_express_no_not_in_db(self):
+        params: dict = {}
+        db = _mock_db_with_express([])
+        await _fill_codes_for_params(
+            params, "查快递 SF9999999999", db, "org1",
+        )
+        assert "express_no" not in params
+
+    @pytest.mark.asyncio
+    async def test_express_no_already_extracted(self):
+        params = {"express_no": "YT111111111"}
+        db = _mock_db_with_express(["SF1234567890"])
+        await _fill_codes_for_params(
+            params, "查快递 SF1234567890", db, "org1",
+        )
+        assert params["express_no"] == "YT111111111"
+
+    @pytest.mark.asyncio
+    async def test_pure_digits_not_matched_as_express(self):
+        """纯数字走 order_no 路径，不走 express_no"""
+        params: dict = {}
+        db = _mock_db_with_express(["1234567890123456"])
+        await _fill_codes_for_params(
+            params, "查 1234567890123456", db, "org1",
+        )
+        assert "express_no" not in params
