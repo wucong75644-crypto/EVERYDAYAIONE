@@ -272,6 +272,8 @@ EXPORT_COLUMNS: dict[str, list[tuple[str, str]]] = {
     ],
 }
 EXPORT_COLUMN_NAMES: set[str] = {c for g in EXPORT_COLUMNS.values() for c, _ in g}
+# 字段英文名 → 中文标签（供 build_column_metas 用）
+_FIELD_LABEL_CN: dict[str, str] = {c: label for g in EXPORT_COLUMNS.values() for c, label in g}
 
 
 # ── 数据类型 ──────────────────────────────────────────
@@ -423,7 +425,7 @@ def build_column_metas(fields: list[str]) -> list:
         TOColumnMeta(
             f,
             COLUMN_WHITELIST[f].col_type if f in COLUMN_WHITELIST else "text",
-            f,  # 白名单 ColumnMeta 只有 col_type，用字段名作为 label
+            _FIELD_LABEL_CN.get(f, f),  # 优先用中文标签，无映射时降级为字段名
         )
         for f in fields
         if f in COLUMN_WHITELIST

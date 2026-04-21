@@ -7,7 +7,7 @@
 
 from typing import Any, Callable, Dict
 
-from services.kuaimai.formatters.common import format_item_with_labels, format_timestamp
+from services.kuaimai.formatters.common import format_item_with_labels, format_platform, format_timestamp
 from services.kuaimai.registry.base import ApiEntry
 
 # ---------------------------------------------------------------------------
@@ -32,7 +32,15 @@ _ORDER_LABELS = {
     "receiverState": "省", "receiverCity": "市",
     "receiverDistrict": "区", "receiverAddress": "地址",
 }
+_SYS_STATUS_CN: Dict[str, str] = {
+    "WAIT_PAY": "待付款", "WAIT_SEND": "待发货", "PART_SEND": "部分发货",
+    "SEND": "已发货", "SIGN": "已签收", "FINISH": "已完成",
+    "CLOSED": "已关闭", "CANCEL": "已取消",
+}
+
 _ORDER_TRANSFORMS: Dict[str, Callable] = {
+    "source": format_platform,
+    "sysStatus": lambda v: _SYS_STATUS_CN.get(str(v), str(v)) if v else "",
     "type": lambda v: {0: "普通", 7: "合并", 8: "拆分", 33: "分销",
                        99: "出库单"}.get(v, str(v)) if isinstance(v, int) else str(v),
     "buyerNick": lambda v: v or "（隐私保护）",
@@ -60,6 +68,9 @@ _SUB_ORDER_LABELS = {
     "cost": "成本", "refundStatus": "退款状态",
 }
 _SUB_ORDER_TRANSFORMS: Dict[str, Callable] = {
+    "refundStatus": lambda v: {
+        0: "无退款", 1: "退款中", 2: "退款成功", 3: "退款关闭",
+    }.get(v, str(v)) if isinstance(v, int) else str(v),
     "price": lambda v: f"¥{v}" if v else "",
     "payment": lambda v: f"¥{v}" if v else "",
     "cost": lambda v: f"¥{v}" if v else "",
