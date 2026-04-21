@@ -526,13 +526,13 @@ class DepartmentAgent(ABC):
             conversation_id=self._conversation_id,
         )
         # L3：空结果诊断
-        if result.status == OutputStatus.EMPTY and filters:
+        if result.status == "empty" and filters:
             diagnosis = self._diagnose_empty(filters)
             if diagnosis:
                 result.summary += f"\n\n诊断建议：\n{diagnosis}"
                 logger.info(f"L3 空结果诊断: doc_type={doc_type}, {diagnosis}")
         # L3：失败诊断——根据错误类型给出重试建议
-        if result.status == OutputStatus.ERROR:
+        if result.status == "error":
             hint = self._diagnose_error(result.error_message)
             if hint:
                 result.summary += f"\n\n重试建议：{hint}"
@@ -623,7 +623,7 @@ class DepartmentAgent(ABC):
         try:
             result = await self._dispatch(action, merged, context)
             # 降级标记（v6: 纯结构化，不拼文本前缀）
-            if merged.get("_degraded") and result.status != OutputStatus.ERROR:
+            if merged.get("_degraded") and result.status != "error":
                 result = ToolOutput(
                     summary=result.summary,
                     format=result.format,

@@ -335,7 +335,7 @@ class TestValidateAndDegraded:
         assert "简化查询模式" not in output.summary
         assert output.metadata["_degraded"] is True
 
-    def test_to_message_content_dict_as_json(self):
+    def test_to_tool_content_dict_as_json(self):
         """metadata 中的 dict 值序列化为 JSON 而非 Python literal"""
         output = ToolOutput(
             summary="test",
@@ -345,7 +345,7 @@ class TestValidateAndDegraded:
             data=[{"id": 1}],
             metadata={"stats": {"count": 100, "total": 500}},
         )
-        content = output.to_message_content()
+        content = output.to_tool_content()
         # 应该是 JSON 格式（双引号），不是 Python literal（单引号）
         assert '"count": 100' in content or '"count":100' in content
         assert "{'count'" not in content
@@ -381,7 +381,7 @@ class TestPartialArtifactTimeout:
                 "mode": "summary",
                 "time_range": "2026-04-01 ~ 2026-04-20",
             })
-            assert result.status == OutputStatus.PARTIAL
+            assert result.status == "partial"
             assert len(result.data) == 2
             assert "部分数据" in result.summary
 

@@ -1,12 +1,12 @@
 """
-结构化工具输出协议。
+工具输出类型定义。
 
-所有执行层工具返回 ToolOutput，不再返回裸字符串。
+定义 FileRef / ColumnMeta / OutputFormat / OutputStatus 等基础类型。
+ToolOutput 已合并到 AgentResult（agent_result.py），此处保留别名。
 - 部门 Agent 读 .data 拿原始数据
-- ToolLoopExecutor 调 .to_message_content() 拿文本给 LLM
-- 一个函数、一个返回类型、两种用法
+- ToolLoopExecutor 调 .to_tool_content() 拿文本给 LLM
 
-设计文档：docs/document/TECH_多Agent单一职责重构.md §4.1 + §13.10
+设计文档：docs/document/TECH_Agent通信协议结构化.md
 """
 from __future__ import annotations
 
@@ -122,130 +122,20 @@ class FileRef:
 
 
 # ============================================================
-# 统一工具输出
+# ToolOutput 别名（统一到 AgentResult）
 # ============================================================
+# ToolOutput 已合并到 AgentResult（services/agent/agent_result.py）。
+# 保留 ToolOutput 名称作为延迟别名，确保 150+ 处现有代码无需改动：
+#   from services.agent.tool_output import ToolOutput  → 实际拿到 AgentResult
+#   isinstance(x, ToolOutput)                          → 等价 isinstance(x, AgentResult)
+#   ToolOutput(summary="...", status=OutputStatus.OK)   → 创建 AgentResult 实例
+#
+# 使用 module __getattr__ 延迟导入，避免 agent_result ↔ tool_output 循环引用。
 
-@dataclass
-class ToolOutput:
-    """统一工具输出 — 所有 Agent/工具的标准返回格式。
 
-    协议层字段（固定，和业务无关）：
-        summary   — 文本摘要（必填，始终存在）
-        format    — TEXT / TABLE / FILE_REF
-        source    — 哪个 Agent 产出的（必填）
-        status    — 执行状态 OK/EMPTY/PARTIAL/ERROR
-        error_message — 错误信息（ERROR 时必填）
-        columns   — 列名+类型+标签（TABLE/FILE_REF 必填）
-        data      — 内联数据（TABLE 模式）
-        file_ref  — 文件引用（FILE_REF 模式）
-
-    业务层字段（动态，Agent 自主决定）：
-        metadata  — dict，Agent 根据任务放 doc_type / time_range 等
-    """
-    # ── 协议层（固定）──
-    summary: str
-    format: OutputFormat = OutputFormat.TEXT
-    source: str = ""
-    status: OutputStatus = OutputStatus.OK
-    error_message: str = ""
-    columns: list[ColumnMeta] | None = None
-    data: list[dict[str, Any]] | None = None
-    file_ref: FileRef | None = None
-    # ── 业务层（动态，Agent 自主决定）──
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    # ----------------------------------------------------------
-    # 校验（v6 新增）
-    # ----------------------------------------------------------
-
-    _valid_cache: dict[str, bool] = field(
-        default_factory=dict, repr=False, compare=False,
-    )
-
-    def validate(self) -> list[str]:
-        """校验 ToolOutput 内部一致性，返回违规项列表（空=有效）。
-
-        规则：
-        1. summary 非空
-        2. FILE_REF 格式必须有 file_ref
-        3. TABLE 格式必须有 columns
-        4. ERROR 状态必须有 error_message
-        5. file_ref 存在时检查 is_valid()（首次调用后缓存）
-        """
-        issues: list[str] = []
-        if not self.summary:
-            issues.append("summary 为空")
-        if self.format == OutputFormat.FILE_REF and not self.file_ref:
-            issues.append("FILE_REF 格式但缺少 file_ref")
-        if self.format == OutputFormat.TABLE and not self.columns:
-            issues.append("TABLE 格式但缺少 columns")
-        if self.status == OutputStatus.ERROR and not self.error_message:
-            issues.append("ERROR 状态但缺少 error_message")
-        if self.file_ref:
-            cache_key = self.file_ref.path
-            if cache_key not in self._valid_cache:
-                self._valid_cache[cache_key] = self.file_ref.is_valid()
-            if not self._valid_cache[cache_key]:
-                issues.append(f"file_ref 无效: {self.file_ref.path}")
-        return issues
-
-    # ----------------------------------------------------------
-    # 序列化方法
-    # ----------------------------------------------------------
-
-    def to_message_content(self) -> str:
-        """转为 messages 数组里的 content 字符串。
-
-        - 纯文本（TEXT）：直接返回 summary，不加标签
-        - 结构化（TABLE/FILE_REF）：summary + [DATA_REF] 标签
-
-        注意：timestamp 由通道层（ToolLoopExecutor）注入，
-        不是 ToolOutput 的职责。DATA_REF 的动态字段由 Agent
-        根据任务结果自行填充，不强制所有字段都出现。
-        """
-        if self.format == OutputFormat.TEXT:
-            return self.summary
-
-        parts = [self.summary]
-        tag_lines = ["\n[DATA_REF]"]
-
-        # ── 最小必填字段 ──
-        tag_lines.append(f"source: {self.source}")
-        if self.file_ref:
-            tag_lines.append("storage: file")
-            tag_lines.append(f"rows: {self.file_ref.row_count}")
-            tag_lines.append(f"path: {self.file_ref.sandbox_ref}")
-            tag_lines.append(f"format: {self.file_ref.format}")
-            tag_lines.append(f"size_kb: {self.file_ref.size_bytes // 1024}")
-        elif self.data is not None:
-            tag_lines.append("storage: inline")
-            tag_lines.append(f"rows: {len(self.data)}")
-
-        # ── 动态字段（全走 metadata，Agent 自己决定放什么）──
-        for key, val in self.metadata.items():
-            if val is not None and val != "":
-                # v6: dict/list 用 JSON 序列化（避免 Python literal 格式）
-                if isinstance(val, (dict, list)):
-                    tag_lines.append(f"{key}: {json.dumps(val, ensure_ascii=False)}")
-                else:
-                    tag_lines.append(f"{key}: {val}")
-
-        # ── 列信息（必填：有 DATA_REF 就必须有 columns）──
-        cols = self.columns or (self.file_ref.columns if self.file_ref else None)
-        if cols:
-            tag_lines.append("columns:")
-            for col in cols:
-                label_part = f"  # {col.label}" if col.label else ""
-                tag_lines.append(f"  - {col.name}: {col.dtype}{label_part}")
-
-        # ── 内联数据 or 文件预览 ──
-        if self.data is not None and len(self.data) <= 200:
-            tag_lines.append("data:")
-            tag_lines.append(f"  {json.dumps(self.data, ensure_ascii=False)}")
-        elif self.file_ref and self.file_ref.preview:
-            tag_lines.append(f"preview:\n  {self.file_ref.preview}")
-
-        tag_lines.append("[/DATA_REF]")
-        parts.append("\n".join(tag_lines))
-        return "\n".join(parts)
+def __getattr__(name: str):
+    if name == "ToolOutput":
+        from services.agent.agent_result import AgentResult
+        return AgentResult
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 

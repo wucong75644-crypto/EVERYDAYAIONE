@@ -49,7 +49,7 @@ def _simulate_result_handling(result, tool_name="local_stock_query", tc_id="tc1"
     now_iso = datetime.now(timezone.utc).isoformat()
 
     if isinstance(result, ToolOutput):
-        content = result.to_message_content()
+        content = result.to_tool_content()
         is_truncated = False
 
         if result.file_ref:
@@ -136,8 +136,8 @@ class TestToolOutputBranch:
         assert msg["timestamp"]  # 非空
         assert msg["role"] == "tool"
 
-    def test_tooloutput_content_is_to_message_content(self):
-        """content 是 to_message_content() 的输出"""
+    def test_tooloutput_content_is_to_tool_content(self):
+        """content 是 to_tool_content() 的输出"""
         result = ToolOutput(
             summary="OK",
             format=OutputFormat.TABLE,
