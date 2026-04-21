@@ -414,10 +414,10 @@ def mask_pii(row: dict) -> dict:
 
 
 def build_column_metas(fields: list[str]) -> list:
-    """从字段列表构建 ToolOutput 用的 ColumnMeta 列表。
+    """从字段列表构建 ColumnMeta（name=英文，label=中文）。
 
-    复用 COLUMN_WHITELIST 的类型和标签信息。
-    返回 list[tool_output.ColumnMeta]（延迟 import 避免循环依赖）。
+    内部 staging 场景使用：name 与 parquet 列名一致（英文），
+    label 用中文供 LLM 阅读。
     """
     from services.agent.tool_output import ColumnMeta as TOColumnMeta
 
@@ -425,7 +425,26 @@ def build_column_metas(fields: list[str]) -> list:
         TOColumnMeta(
             f,
             COLUMN_WHITELIST[f].col_type if f in COLUMN_WHITELIST else "text",
-            _FIELD_LABEL_CN.get(f, f),  # 优先用中文标签，无映射时降级为字段名
+            _FIELD_LABEL_CN.get(f, f),
+        )
+        for f in fields
+        if f in COLUMN_WHITELIST
+    ]
+
+
+def build_column_metas_cn(fields: list[str]) -> list:
+    """从字段列表构建 ColumnMeta（name=中文，label=中文）。
+
+    导出 Excel 场景使用：name 与 parquet 列名一致（中文，
+    因为 DuckDB SQL 用了 AS "中文别名"），防止 LLM 用英文列名读 parquet 报错。
+    """
+    from services.agent.tool_output import ColumnMeta as TOColumnMeta
+
+    return [
+        TOColumnMeta(
+            _FIELD_LABEL_CN.get(f, f),  # name 用中文（与 parquet 列头一致）
+            COLUMN_WHITELIST[f].col_type if f in COLUMN_WHITELIST else "text",
+            _FIELD_LABEL_CN.get(f, f),
         )
         for f in fields
         if f in COLUMN_WHITELIST
