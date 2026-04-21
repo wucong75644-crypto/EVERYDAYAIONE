@@ -39,7 +39,6 @@ from services.kuaimai.erp_unified_filters import (
     validate_filters as _validate_filters,
     extract_time_range as _extract_time_range,
     split_named_params as _split_named_params,
-    query_table as _query_table,
     need_archive as _need_archive,
 )
 from services.kuaimai.erp_unified_schema import (
@@ -53,7 +52,6 @@ from services.kuaimai.erp_unified_schema import (
     VALID_DOC_TYPES,
     TimeRange,
     ValidatedFilter,
-    fmt_detail_rows,
     fmt_summary_grouped,
     fmt_summary_total,
     generate_field_doc,
@@ -98,7 +96,9 @@ class UnifiedQueryEngine:
                 status=OutputStatus.ERROR,
                 error_message=f"invalid doc_type: {doc_type}",
             )
-        if mode not in ("summary", "detail", "export"):
+        if mode == "detail":
+            mode = "export"  # detail 已合并到 export（与 plan_builder 对齐）
+        if mode not in ("summary", "export"):
             mode = "summary"
 
         # group_by 白名单校验（LLM 可能传 "store" 等非标准值）
@@ -136,10 +136,6 @@ class UnifiedQueryEngine:
             return await self._summary(
                 doc_type, validated, tr, group_by, request_ctx,
                 include_invalid=include_invalid,
-            )
-        elif mode == "detail":
-            return await self._detail(
-                doc_type, validated, tr, fields, sort_by, sort_dir, limit, request_ctx,
             )
         else:
             return await self._export(
@@ -311,88 +307,6 @@ class UnifiedQueryEngine:
             },
         )
 
-    # ── Detail 模式 ───────────────────────────────────
-
-    async def _detail(
-        self, doc_type: str, filters: list[ValidatedFilter],
-        tr: TimeRange, fields: list[str] | None,
-        sort_by: str | None, sort_dir: str, limit: int,
-        request_ctx: Optional[RequestContext],
-    ) -> ToolOutput:
-        limit = min(max(limit, 1), 200)
-        select_fields = fields or DEFAULT_DETAIL_FIELDS.get(doc_type, ["*"])
-        non_time = [f for f in filters if f.field not in TIME_COLUMNS]
-        sort_col = sort_by or tr.time_col
-
-        # 冷表 UNION 需要 doc_id + item_index 做去重，确保 select 包含它们
-        need_archive = _need_archive(tr)
-        query_fields = list(select_fields)
-        if need_archive:
-            for col in ("doc_id", "item_index"):
-                if col not in query_fields:
-                    query_fields.append(col)
-        select_cols = ",".join(query_fields)
-
-        try:
-            rows = _query_table(
-                self.db, "erp_document_items", doc_type, non_time, tr,
-                select_cols, sort_col, sort_dir, limit, self.org_id,
-            )
-            if need_archive:
-                archive = _query_table(
-                    self.db, "erp_document_items_archive", doc_type, non_time, tr,
-                    select_cols, sort_col, sort_dir, limit, self.org_id,
-                )
-                seen = {(r.get("doc_id"), r.get("item_index")) for r in rows}
-                for r in archive:
-                    if (r.get("doc_id"), r.get("item_index")) not in seen:
-                        rows.append(r)
-                rows.sort(key=lambda r: r.get(sort_col, ""), reverse=(sort_dir == "desc"))
-                rows = rows[:limit]
-        except Exception as e:
-            logger.error(f"UnifiedQuery detail failed | error={e}", exc_info=True)
-            return ToolOutput(
-                summary=f"明细查询失败: {e}",
-                source="erp",
-                status=OutputStatus.ERROR,
-                error_message=str(e),
-            )
-
-        type_name = DOC_TYPE_CN.get(doc_type, doc_type)
-        time_header = format_time_header(
-            ctx=request_ctx, range_=tr.date_range, kind="查询窗口",
-        )
-        if not rows:
-            health = check_sync_health(self.db, [doc_type], org_id=self.org_id)
-            body = f"{type_name}无匹配记录\n{health}".strip()
-            summary = f"{time_header}\n\n{body}" if time_header else body
-            return ToolOutput(
-                summary=summary,
-                source="erp",
-                status=OutputStatus.EMPTY,
-                metadata={"doc_type": doc_type, "time_range": tr.label},
-            )
-
-        body = fmt_detail_rows(rows, select_fields, type_name, limit)
-        summary = f"{time_header}\n\n{body}" if time_header else body
-
-        # 构建列元信息（复用 schema 辅助函数，消除重复）
-        from services.kuaimai.erp_unified_schema import build_column_metas
-        detail_columns = build_column_metas(select_fields)
-
-        return ToolOutput(
-            summary=summary,
-            format=OutputFormat.TABLE,
-            source="erp",
-            columns=detail_columns or None,
-            data=rows,
-            metadata={
-                "doc_type": doc_type,
-                "time_range": tr.label,
-                "time_column": tr.time_col,
-            },
-        )
-
     # ── Export 模式（DuckDB 流式导出） ────────────────
 
     async def _export(
@@ -424,8 +338,9 @@ class UnifiedQueryEngine:
             doc_type, user_id, self.org_id, conversation_id,
         )
 
-        # 安全上限
-        max_rows = min(limit or EXPORT_MAX, EXPORT_MAX)
+        # export = DuckDB 流式导出，固定用 EXPORT_MAX（100万行）。
+        # 上游 limit=20 是 summary 默认值，export 无视。
+        max_rows = EXPORT_MAX
 
         # 构建 DuckDB SQL
         select_sql = build_pii_select(safe_fields)
