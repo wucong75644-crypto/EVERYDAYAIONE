@@ -97,13 +97,23 @@ class PurchaseAgent(DepartmentAgent):
         t = task.lower()
         if any(kw in t for kw in ("到货", "进度", "arrival")):
             return "arrival_progress"
-        if any(kw in t for kw in ("供应商", "supplier")):
+        # "供应商列表/有哪些供应商" → 查供应商信息
+        # "XX供应商的采购单/采购金额" → 走 purchase_list（按供应商过滤）
+        if any(kw in t for kw in ("供应商列表", "哪些供应商", "供应商信息", "联系方式")):
             return "supplier_query"
         if any(kw in t for kw in ("采退", "purchase_return")):
             return "purchase_return"
         return "purchase_list"
 
     async def _dispatch(self, action, params, context):
+        if action == "supplier_query":
+            from services.kuaimai.erp_local_query import local_supplier_list
+            return await local_supplier_list(
+                self.db,
+                category=params.get("category"),
+                status=params.get("status"),
+                org_id=self.org_id,
+            )
         doc_type = params.get("doc_type", "purchase")
         if action == "purchase_return":
             doc_type = "purchase_return"
