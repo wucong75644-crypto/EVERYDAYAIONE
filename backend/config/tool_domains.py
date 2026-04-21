@@ -69,6 +69,7 @@ TOOL_DOMAINS: Dict[str, ToolDomain] = {
     "local_compare_stats":      ToolDomain.ERP,
     "local_shop_list":          ToolDomain.ERP,
     "local_warehouse_list":     ToolDomain.ERP,
+    "local_supplier_list":      ToolDomain.ERP,
     "fetch_all_pages":          ToolDomain.ERP,
     "trigger_erp_sync":         ToolDomain.ERP,
     "route_to_chat":            ToolDomain.ERP,

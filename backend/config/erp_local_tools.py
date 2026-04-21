@@ -19,6 +19,7 @@ ERP_LOCAL_TOOLS: Set[str] = {
     "local_compare_stats",     # 时间事实层 — 同比/环比 (PR1 §6.2.3)
     "local_shop_list",
     "local_warehouse_list",
+    "local_supplier_list",
     "trigger_erp_sync",
 }
 
@@ -301,7 +302,22 @@ def build_local_tools() -> List[Dict[str, Any]]:
             },
             [],
         ),
-        # 9. 手动触发同步
+        # 9. 供应商列表
+        _tool(
+            "local_supplier_list",
+            "查询供应商列表（含编码/联系人/分类）。毫秒级响应。"
+            "返回供应商名称/编码/状态/联系人/分类，按分类分组显示。"
+            "支持按分类过滤（如只看某采购员负责的供应商）。"
+            "适合：有哪些供应商、供应商列表、供应商联系方式等查询。"
+            "相关工具：拿到供应商名后可用 local_data(doc_type=purchase, mode=summary, "
+            "supplier_name=...) 统计该供应商采购数据。",
+            {
+                "category": _str("按分类/采购员过滤（模糊匹配，如'采购陈'）"),
+                "status": _int("按状态过滤（0=停用, 1=启用，不传=全部）"),
+            },
+            [],
+        ),
+        # 10. 手动触发同步
         _tool(
             "trigger_erp_sync",
             "手动触发ERP数据同步。"
@@ -380,6 +396,13 @@ LOCAL_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "required": [],
         "properties": {
             "is_virtual": {"type": "boolean"},
+        },
+    },
+    "local_supplier_list": {
+        "required": [],
+        "properties": {
+            "category": {"type": "string"},
+            "status": {"type": "integer"},
         },
     },
     "trigger_erp_sync": {

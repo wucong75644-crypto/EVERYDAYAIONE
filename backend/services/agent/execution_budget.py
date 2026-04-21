@@ -24,17 +24,23 @@ from loguru import logger
 class ExecutionBudget:
     """多维执行预算管理器"""
 
+    # v6: 上下文紧张阈值（token 剩余低于此值时收紧 inline/wrap 策略）
+    TIGHT_THRESHOLD = 15000
+
     def __init__(
         self,
         max_turns: int = 15,
         max_tokens: int = 100_000,
         max_wall_time: float = 600.0,
+        reserved_for_response: int = 4000,
     ) -> None:
         self._max_turns = max_turns
         self._max_tokens = max_tokens
         self._max_wall_time = max_wall_time
+        self._reserved_for_response = reserved_for_response
         self._turns_used = 0
         self._tokens_used = 0
+        self._per_tool_tokens: dict[str, int] = {}
         self._start = time.monotonic()
         self._parent: Optional[ExecutionBudget] = None
 
@@ -46,11 +52,15 @@ class ExecutionBudget:
         """记录一轮工具调用"""
         self._turns_used += 1
 
-    def use_tokens(self, n: int) -> None:
-        """记录 token 消耗（自动回写父 budget）"""
+    def use_tokens(self, n: int, tool_name: str = "") -> None:
+        """记录 token 消耗（自动回写父 budget + per-tool 统计）"""
         self._tokens_used += n
+        if tool_name:
+            self._per_tool_tokens[tool_name] = (
+                self._per_tool_tokens.get(tool_name, 0) + n
+            )
         if self._parent is not None:
-            self._parent.use_tokens(n)
+            self._parent.use_tokens(n, tool_name)
 
     # ========================================
     # 状态查询
@@ -70,7 +80,25 @@ class ExecutionBudget:
 
     @property
     def tokens_remaining(self) -> int:
-        return max(0, self._max_tokens - self._tokens_used)
+        """可用 token（已扣除 reserved_for_response）"""
+        return max(0, self._max_tokens - self._tokens_used - self._reserved_for_response)
+
+    @property
+    def is_tight(self) -> bool:
+        """上下文是否紧张（token 剩余 < TIGHT_THRESHOLD）"""
+        return self.tokens_remaining < self.TIGHT_THRESHOLD
+
+    @property
+    def inline_threshold(self) -> int:
+        """v6 两档 inline 切换（对标 Claude Code 容量分层）。
+
+        正常：200 行（inline）；紧张：50 行（更积极 staging）。
+        """
+        return 50 if self.is_tight else 200
+
+    def get_tool_tokens(self) -> dict[str, int]:
+        """查询 per-tool token 消耗"""
+        return dict(self._per_tool_tokens)
 
     @property
     def elapsed(self) -> float:
@@ -115,8 +143,9 @@ class ExecutionBudget:
         """
         child = ExecutionBudget(
             max_turns=min(max_turns, self.turns_remaining),
-            max_tokens=self.tokens_remaining,
+            max_tokens=self.tokens_remaining + self._reserved_for_response,
             max_wall_time=self.remaining,
+            reserved_for_response=self._reserved_for_response,
         )
         child._parent = self
         return child

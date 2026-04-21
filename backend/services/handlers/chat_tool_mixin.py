@@ -101,28 +101,41 @@ class ChatToolMixin:
                     )
                     results.append(result)
 
-        # 收集子 Agent（如 ERP Agent）透传的 FilePart
+        # ── AgentResult 处理（通信协议 §3.2）──
+        from services.agent.agent_result import AgentResult
+        for i, (tc, result, is_error) in enumerate(results):
+            if not isinstance(result, AgentResult):
+                continue
+            # ① 前端文件卡片通道
+            if result.collected_files and hasattr(self, "_pending_file_parts"):
+                from schemas.message import FilePart
+                for f in result.collected_files:
+                    self._pending_file_parts.append(FilePart(
+                        url=f["url"], name=f["name"],
+                        mime_type=f["mime_type"], size=f["size"],
+                    ))
+            # ② ask_user 冒泡
+            if (result.status == "ask_user" and result.ask_user_question
+                    and not getattr(self, "_ask_user_pending", None)):
+                self._ask_user_pending = {
+                    "message": result.ask_user_question,
+                    "reason": "need_info",
+                    "tool_call_id": tc["id"],
+                    "source": result.agent_name,
+                }
+            # ③ 展示文本（供 content_block_add 推送）
+            self._last_erp_display_text = result.summary
+            self._last_erp_display_files = result.collected_files or []
+            # ④ token 统计
+            self._erp_agent_tokens = (
+                getattr(self, "_erp_agent_tokens", 0) + result.tokens_used
+            )
+
+        # 收集普通工具（非 AgentResult）透传的 FilePart（[FILE] 标记通道）
         if executor._pending_file_parts:
             if hasattr(self, "_pending_file_parts"):
                 self._pending_file_parts.extend(executor._pending_file_parts)
             executor._pending_file_parts.clear()
-
-        # 收集 ERP Agent 原始展示文本 + 文件（供 chat_handler 推送 content_block_add）
-        _erp_display = getattr(executor, "_erp_display_text", None)
-        if _erp_display:
-            self._last_erp_display_text = _erp_display
-            self._last_erp_display_files = getattr(executor, "_erp_display_files", [])
-
-        # ERP Agent ask_user 冒泡：透传到 handler 级别供冻结逻辑检测
-        _erp_ask = getattr(executor, "_ask_user_pending", None)
-        if _erp_ask and not getattr(self, "_ask_user_pending", None):
-            # 用 erp_agent 工具调用的 tool_call_id（主循环冻结时需要）
-            erp_tc = next(
-                (tc for tc, _, _ in results if tc["name"] == "erp_agent"), None,
-            )
-            if erp_tc:
-                _erp_ask["tool_call_id"] = erp_tc["id"]
-            self._ask_user_pending = _erp_ask
 
         return results
 
@@ -204,6 +217,32 @@ class ChatToolMixin:
         try:
             result = await executor.execute(tool_name, args)
             _audit_elapsed = int((_time.monotonic() - _audit_start) * 1000)
+
+            # AgentResult 直接返回（不做 str 操作，由上层处理）
+            from services.agent.agent_result import AgentResult
+            if isinstance(result, AgentResult):
+                raw_summary = result.summary[:100] if result.summary else ""
+                await ws_manager.send_to_task_or_user(
+                    task_id, user_id,
+                    build_tool_result(
+                        task_id=task_id,
+                        conversation_id=conversation_id,
+                        message_id=message_id,
+                        tool_name=tool_name,
+                        tool_call_id=tool_call_id,
+                        success=result.status != "error",
+                        summary=raw_summary,
+                        turn=turn,
+                    ),
+                )
+                self._emit_tool_audit(
+                    task_id, conversation_id, user_id, tool_name,
+                    tool_call_id, turn, args, len(result.summary),
+                    _audit_elapsed, result.status,
+                )
+                return (tc, result, result.status == "error")
+
+            # 普通工具（str 路径）
             # 提取 [FILE] 标记 → FilePart 暂存到 ChatHandler（不经过 LLM）
             result = self._extract_file_parts(result)
             # 先用完整结果生成 summary 推送前端（用户看到完整摘要）

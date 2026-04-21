@@ -579,3 +579,55 @@ class TestScopedOpen:
             description="test Path.read_text with STAGING_DIR",
         )
         assert "path works" in result
+
+
+# ============================================================
+# v6: tight 两档切换测试
+# ============================================================
+
+
+class TestTightBudgetSwitch:
+    """v6: wrap_for_erp_agent 的 tight 参数两档预算切换"""
+
+    def test_normal_budget_3000(self, tmp_path):
+        """tight=False 时预算 3000"""
+        from services.agent.tool_result_envelope import (
+            wrap_for_erp_agent, set_staging_dir, clear_staging_dir,
+        )
+        set_staging_dir(str(tmp_path))
+        try:
+            short = "x" * 2000
+            result = wrap_for_erp_agent("local_data", short, tight=False)
+            assert result == short  # 2000 < 3000，不截断
+        finally:
+            clear_staging_dir()
+
+    def test_tight_budget_1800(self, tmp_path):
+        """tight=True 时预算 1800"""
+        from services.agent.tool_result_envelope import (
+            wrap_for_erp_agent, set_staging_dir, clear_staging_dir,
+        )
+        set_staging_dir(str(tmp_path))
+        try:
+            medium = "x" * 2500
+            result_normal = wrap_for_erp_agent("local_data", medium, tight=False)
+            result_tight = wrap_for_erp_agent("local_data", medium, tight=True)
+            # 2500 < 3000 → normal 不截断
+            assert result_normal == medium
+            # 2500 > 1800 → tight 截断
+            assert len(result_tight) < len(medium)
+        finally:
+            clear_staging_dir()
+
+    def test_tight_default_false(self, tmp_path):
+        """不传 tight 默认 False（向后兼容）"""
+        from services.agent.tool_result_envelope import (
+            wrap_for_erp_agent, set_staging_dir, clear_staging_dir,
+        )
+        set_staging_dir(str(tmp_path))
+        try:
+            short = "x" * 2000
+            result = wrap_for_erp_agent("local_data", short)
+            assert result == short
+        finally:
+            clear_staging_dir()

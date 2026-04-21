@@ -50,6 +50,7 @@ class LoopHook:
         is_cached: bool,
         is_truncated: bool,
         tool_call_id: str,
+        **kwargs: Any,
     ) -> None:
         """单工具执行之后触发（含成功/超时/异常/缓存命中）"""
 
@@ -144,11 +145,14 @@ class ToolAuditHook(LoopHook):
         is_cached: bool,
         is_truncated: bool,
         tool_call_id: str,
+        turn_prompt_tokens: int = 0,
+        turn_completion_tokens: int = 0,
     ) -> None:
         try:
             from services.agent.tool_audit import (
                 ToolAuditEntry, build_args_hash, record_tool_audit,
             )
+            from services.agent.observability import get_trace_id
             entry = ToolAuditEntry(
                 task_id=ctx.task_id or "",
                 conversation_id=ctx.conversation_id,
@@ -163,6 +167,9 @@ class ToolAuditHook(LoopHook):
                 status=status,
                 is_cached=is_cached,
                 is_truncated=is_truncated,
+                prompt_tokens=turn_prompt_tokens,
+                completion_tokens=turn_completion_tokens,
+                trace_id=get_trace_id(),
             )
             asyncio.create_task(record_tool_audit(ctx.db, entry))
         except Exception as e:
@@ -239,6 +246,7 @@ class FailureReflectionHook(LoopHook):
         is_cached: bool,
         is_truncated: bool,
         tool_call_id: str,
+        **kwargs: Any,
     ) -> None:
         if not result:
             return
@@ -289,6 +297,7 @@ class AmbiguityDetectionHook(LoopHook):
         is_cached: bool,
         is_truncated: bool,
         tool_call_id: str,
+        **kwargs: Any,
     ) -> None:
         if not result or tool_name not in self._AMBIGUITY_TOOLS:
             return

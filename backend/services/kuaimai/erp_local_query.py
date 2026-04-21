@@ -24,6 +24,7 @@ from services.agent.tool_output import (
     ToolOutput,
 )
 from services.kuaimai.erp_local_helpers import check_sync_health
+from services.kuaimai.erp_unified_schema import PLATFORM_CN
 
 
 # ── 库存查询（erp_stock_status 表）───────────────────────
@@ -294,7 +295,7 @@ async def local_platform_map_query(
             for s in shop_res.data or []:
                 label = s.get("name") or s.get("shop_id", "")
                 if s.get("platform"):
-                    label += f"({s['platform']})"
+                    label += f"({PLATFORM_CN.get(s['platform'], s['platform'])})"
                 shop_name_map[s["shop_id"]] = label
         except Exception as e:
             logger.debug(f"Shop name lookup failed: {e}")
@@ -366,15 +367,10 @@ async def local_shop_list(
             plat = r.get("platform") or "未知"
             by_platform.setdefault(plat, []).append(r)
 
-        _plat_cn = {
-            "tb": "淘宝", "jd": "京东", "pdd": "拼多多",
-            "fxg": "抖音", "kuaishou": "快手", "xhs": "小红书",
-            "1688": "1688", "sys": "系统", "wd": "微店",
-        }
         total = len(rows)
         lines = [f"共 {total} 个店铺：\n"]
         for plat, shops in sorted(by_platform.items()):
-            plat_label = _plat_cn.get(plat, plat)
+            plat_label = PLATFORM_CN.get(plat, plat)
             lines.append(f"【{plat_label}】({len(shops)}个)")
             for i, s in enumerate(shops, 1):
                 name = s.get("name") or s.get("short_name") or "未命名"
@@ -403,7 +399,7 @@ async def local_shop_list(
         )
 
     if not result.data:
-        platform_label = f"（平台: {platform}）" if platform else ""
+        platform_label = f"（平台: {PLATFORM_CN.get(platform, platform)}）" if platform else ""
         health = check_sync_health(db, ["order"], org_id=org_id)
         return ToolOutput(
             summary=f"暂无店铺数据{platform_label}\n{health}".strip(),
@@ -513,3 +509,80 @@ async def local_warehouse_list(
     if health:
         lines.append(health)
     return ToolOutput(summary="\n".join(lines), source="warehouse")
+
+
+# ── 供应商列表 ──────────────────────────────────────────
+
+
+async def local_supplier_list(
+    db,
+    category: str | None = None,
+    status: int | None = None,
+    org_id: str | None = None,
+) -> ToolOutput:
+    """查询本地供应商列表（erp_suppliers 同步表）
+
+    返回 ToolOutput(TEXT) — 按分类分组展示，不需要 DATA_REF。
+    """
+    try:
+        q = db.table("erp_suppliers").select(
+            "code, name, status, contact_name, mobile, "
+            "category_name, remark"
+        )
+        if org_id:
+            q = q.eq("org_id", org_id)
+        else:
+            q = q.is_("org_id", "null")
+        if status is not None:
+            q = q.eq("status", status)
+        if category:
+            q = q.ilike("category_name", f"%{category}%")
+        result = q.order("name").execute()
+    except Exception as e:
+        logger.error(f"local_supplier_list failed | error={e}")
+        return ToolOutput(
+            summary=f"供应商列表查询失败: {e}",
+            source="purchase",
+            status=OutputStatus.ERROR,
+            error_message=str(e),
+        )
+
+    rows = result.data or []
+    if not rows:
+        health = check_sync_health(db, ["supplier"], org_id=org_id)
+        return ToolOutput(
+            summary=f"暂无供应商数据\n{health}".strip(),
+            source="purchase",
+            status=OutputStatus.EMPTY,
+        )
+
+    status_map = {0: "停用", 1: "启用"}
+
+    # 按 category_name 分组
+    by_category: dict[str, list[dict]] = {}
+    for r in rows:
+        cat = r.get("category_name") or "未分类"
+        by_category.setdefault(cat, []).append(r)
+
+    lines = [f"共 {len(rows)} 个供应商：\n"]
+    for cat, suppliers in sorted(by_category.items()):
+        lines.append(f"【{cat}】({len(suppliers)}个)")
+        for i, s in enumerate(suppliers, 1):
+            name = s.get("name") or "未命名"
+            code = s.get("code") or ""
+            st = status_map.get(s.get("status"), "")
+            contact = s.get("contact_name") or ""
+            mobile = s.get("mobile") or ""
+            status_str = f" [{st}]" if st and st != "启用" else ""
+            contact_str = f" 联系人:{contact}" if contact else ""
+            mobile_str = f" {mobile}" if mobile else ""
+            lines.append(
+                f"  {i}. {name} (编码:{code}){status_str}"
+                f"{contact_str}{mobile_str}"
+            )
+        lines.append("")
+
+    health = check_sync_health(db, ["supplier"], org_id=org_id)
+    if health:
+        lines.append(health)
+    return ToolOutput(summary="\n".join(lines), source="purchase")

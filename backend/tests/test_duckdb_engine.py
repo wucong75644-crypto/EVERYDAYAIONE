@@ -263,3 +263,57 @@ class TestGetDuckDBEngine:
             assert engine._threads == 4
 
         module._engine = None
+
+
+# ============================================================
+# v6: profile_parquet 测试
+# ============================================================
+
+
+class TestProfileParquet:
+    """v6: DuckDB 直接从 parquet 文件算统计摘要"""
+
+    def test_profile_returns_expected_structure(self):
+        """profile_parquet 返回正确结构"""
+        mock_conn = MagicMock()
+
+        mock_conn.description = [
+            ("column_name",), ("column_type",), ("min",), ("max",),
+            ("approx_unique",), ("avg",), ("std",), ("null_percentage",),
+            ("count",),
+        ]
+        mock_conn.execute.return_value.fetchall.return_value = [
+            ("amount", "DOUBLE", "99.9", "589.9", 50, "344.9", "141.4", "0.00%", 50),
+            ("platform", "VARCHAR", "京东", "淘宝", 3, None, None, "0.00%", 50),
+        ]
+        mock_conn.execute.return_value.fetchone.return_value = (17245.0, 344.9, 222.4, 467.4)
+        mock_conn.execute.return_value.fetchdf.return_value.to_dict.return_value = []
+
+        engine = MagicMock()
+        engine._get_conn.return_value = mock_conn
+
+        from core.duckdb_engine import DuckDBEngine
+        result = DuckDBEngine.profile_parquet(engine, "/tmp/test.parquet")
+
+        assert "columns" in result
+        assert "row_count" in result
+        assert "top_values" in result
+        assert "duplicate_count" in result
+        assert "preview_rows" in result
+        assert result["row_count"] == 50
+        assert len(result["columns"]) == 2
+        assert result["columns"][0]["name"] == "amount"
+
+    def test_profile_handles_summarize_failure(self):
+        """SUMMARIZE 失败时返回空结构"""
+        mock_conn = MagicMock()
+        mock_conn.execute.side_effect = RuntimeError("DuckDB error")
+
+        engine = MagicMock()
+        engine._get_conn.return_value = mock_conn
+
+        from core.duckdb_engine import DuckDBEngine
+        result = DuckDBEngine.profile_parquet(engine, "/tmp/bad.parquet")
+
+        assert result["columns"] == []
+        assert result["row_count"] == 0

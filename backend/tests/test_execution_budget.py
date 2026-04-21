@@ -4,6 +4,13 @@ ExecutionBudget 单元测试
 覆盖：多维预算 (turns/tokens/wall_time) + fork + stop_reason + 向后兼容
 """
 
+import sys
+from pathlib import Path
+
+backend_dir = Path(__file__).parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+
 import time
 
 import pytest
@@ -72,10 +79,33 @@ class TestUseTurn:
 class TestUseTokens:
 
     def test_use_tokens_increments(self):
-        budget = ExecutionBudget(max_tokens=100_000)
+        budget = ExecutionBudget(max_tokens=100_000, reserved_for_response=4000)
         budget.use_tokens(5000)
         assert budget.tokens_used == 5000
-        assert budget.tokens_remaining == 95_000
+        # v6: tokens_remaining = max_tokens - used - reserved = 100000 - 5000 - 4000
+        assert budget.tokens_remaining == 91_000
+
+    def test_per_tool_tokens(self):
+        """v6: per-tool token 统计"""
+        budget = ExecutionBudget()
+        budget.use_tokens(1000, tool_name="erp_agent")
+        budget.use_tokens(500, tool_name="code_execute")
+        budget.use_tokens(200, tool_name="erp_agent")
+        assert budget.get_tool_tokens() == {"erp_agent": 1200, "code_execute": 500}
+
+    def test_inline_threshold_normal(self):
+        """v6: 正常状态 inline_threshold = 200"""
+        budget = ExecutionBudget(max_tokens=100_000, reserved_for_response=4000)
+        assert budget.inline_threshold == 200
+        assert not budget.is_tight
+
+    def test_inline_threshold_tight(self):
+        """v6: 紧张状态 inline_threshold = 50"""
+        budget = ExecutionBudget(max_tokens=20_000, reserved_for_response=4000)
+        budget.use_tokens(10_000)
+        # remaining = 20000 - 10000 - 4000 = 6000 < 15000
+        assert budget.is_tight
+        assert budget.inline_threshold == 50
 
     def test_tokens_writeback_to_parent(self):
         parent = ExecutionBudget(max_tokens=100_000)

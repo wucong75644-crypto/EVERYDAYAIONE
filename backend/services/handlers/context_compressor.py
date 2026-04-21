@@ -22,6 +22,28 @@ _STAGING_PATH_RE = re.compile(
 
 
 # ============================================================
+# 工具函数
+# ============================================================
+
+
+def _extract_text(content: Any) -> str:
+    """从 message content 提取纯文本（兼容 str 和 list[dict] 两种格式）。
+
+    AgentResult.to_message_content() 返回 list[dict]，压缩器各环节
+    需要统一用此函数提取文本，避免对 list 做字符串操作导致 TypeError。
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            b.get("text", "")
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
+        )
+    return str(content) if content else ""
+
+
+# ============================================================
 # 层4: Token 预算管理 + System Prompt 去重
 # ============================================================
 
@@ -175,11 +197,9 @@ def enforce_budget(
 
 
 def _is_archived(msg: Dict[str, Any]) -> bool:
-    """检查消息是否已被归档（兼容多模态 content=list 的情况）"""
-    content = msg.get("content", "")
-    if isinstance(content, str):
-        return content.startswith("[已归档")
-    return False
+    """检查消息是否已被归档（兼容 str / list[dict] 两种 content 格式）"""
+    text = _extract_text(msg.get("content", ""))
+    return text.startswith("[已归档")
 
 
 def _msg_tokens(msg: Dict[str, Any]) -> int:
@@ -516,7 +536,7 @@ def _build_loop_summary_input(
     for idx in stale_indices:
         msg = messages[idx]
         role = msg.get("role", "")
-        content = msg.get("content", "") or ""
+        content = _extract_text(msg.get("content", "") or "")
         if role == "assistant":
             # 提取工具调用名
             tool_names = [

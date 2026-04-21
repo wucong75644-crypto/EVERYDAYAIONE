@@ -628,8 +628,8 @@ class TestLocalPlatformMapQuery:
             erp_sync_state=[_sync_state("product")],
         )
         result = await local_platform_map_query(db, product_code="C01")
-        assert "旗舰店(tb)" in result.summary
-        assert "拼多多店(pdd)" in result.summary
+        assert "旗舰店(淘宝)" in result.summary
+        assert "拼多多店(拼多多)" in result.summary
         # 裸ID不应出现
         assert "S001" not in result.summary
         assert "S002" not in result.summary
@@ -782,7 +782,98 @@ class TestLocalShopList:
         db = _make_db(erp_sync_state=[_sync_state("order")])
         db.set_rpc_result("erp_distinct_shops", [])
         result = await local_shop_list(db, platform="pdd")
-        assert "平台: pdd" in result.summary
+        assert "平台: 拼多多" in result.summary
+
+
+# ============================================================
+# TestLocalSupplierList — 供应商列表查询
+# ============================================================
+
+
+class TestLocalSupplierList:
+
+    @pytest.mark.asyncio
+    async def test_with_data(self):
+        """正常返回多供应商，按分类分组"""
+        from services.kuaimai.erp_local_query import local_supplier_list
+        db = _make_db(
+            erp_suppliers=[
+                {"code": "0001", "name": "供应商A", "status": 1,
+                 "contact_name": "张三", "mobile": "13800001111",
+                 "category_name": "采购陈,跟单徐", "remark": ""},
+                {"code": "0002", "name": "供应商B", "status": 1,
+                 "contact_name": None, "mobile": None,
+                 "category_name": "采购段,跟单马", "remark": ""},
+                {"code": "0003", "name": "供应商C", "status": 0,
+                 "contact_name": "李四", "mobile": "13900002222",
+                 "category_name": None, "remark": ""},
+            ],
+            erp_sync_state=[_sync_state("supplier")],
+        )
+        result = await local_supplier_list(db)
+        assert "共 3 个供应商" in result.summary
+        assert "供应商A" in result.summary
+        assert "供应商B" in result.summary
+        assert "供应商C" in result.summary
+        assert "采购陈" in result.summary
+        assert "未分类" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_filter_by_category(self):
+        """按分类过滤"""
+        from services.kuaimai.erp_local_query import local_supplier_list
+        db = _make_db(
+            erp_suppliers=[
+                {"code": "0001", "name": "供应商A", "status": 1,
+                 "contact_name": None, "mobile": None,
+                 "category_name": "采购陈", "remark": ""},
+            ],
+            erp_sync_state=[_sync_state("supplier")],
+        )
+        result = await local_supplier_list(db, category="采购陈")
+        assert "供应商A" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_empty_data(self):
+        """无供应商数据"""
+        from services.kuaimai.erp_local_query import local_supplier_list
+        db = _make_db(
+            erp_suppliers=[],
+            erp_sync_state=[_sync_state("supplier")],
+        )
+        result = await local_supplier_list(db)
+        assert "暂无供应商数据" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_contact_info_display(self):
+        """联系人信息正确展示"""
+        from services.kuaimai.erp_local_query import local_supplier_list
+        db = _make_db(
+            erp_suppliers=[
+                {"code": "0001", "name": "供应商A", "status": 1,
+                 "contact_name": "张三", "mobile": "13800001111",
+                 "category_name": None, "remark": ""},
+            ],
+            erp_sync_state=[_sync_state("supplier")],
+        )
+        result = await local_supplier_list(db)
+        assert "联系人:张三" in result.summary
+        assert "13800001111" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_disabled_supplier_label(self):
+        """停用供应商有标记"""
+        from services.kuaimai.erp_local_query import local_supplier_list
+        db = _make_db(
+            erp_suppliers=[
+                {"code": "0001", "name": "停用供应商", "status": 0,
+                 "contact_name": None, "mobile": None,
+                 "category_name": None, "remark": ""},
+            ],
+            erp_sync_state=[_sync_state("supplier")],
+        )
+        result = await local_supplier_list(db)
+        assert "[停用]" in result.summary
 
 
 # ============================================================
@@ -792,11 +883,11 @@ class TestLocalShopList:
 
 class TestBuildLocalTools:
 
-    def test_returns_9_tools(self):
-        """build_local_tools 返回 9 个工具（1 统一查询 + 7 专用 + 1 同步）"""
+    def test_returns_10_tools(self):
+        """build_local_tools 返回 10 个工具（1 统一查询 + 8 专用 + 1 同步）"""
         from config.erp_local_tools import build_local_tools
         tools = build_local_tools()
-        assert len(tools) == 9
+        assert len(tools) == 10
 
     def test_each_tool_structure(self):
         """每个工具有完整 function calling 结构"""

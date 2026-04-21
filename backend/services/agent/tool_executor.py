@@ -178,74 +178,32 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         """ERP 独立 Agent：接收用户问题，内部运行工具循环，返回结论"""
         from services.agent.erp_agent import ERPAgent
 
-        query = args.get("query", "").strip()
-        if not query:
+        # 输入协议：task + conversation_context（向后兼容旧 query）
+        task = (args.get("task") or args.get("query", "")).strip()
+        if not task:
             return "请输入 ERP 相关问题"
+        conversation_context = args.get("conversation_context", "")
 
-        logger.info(f"ERPAgent dispatch | query={query[:200]}")
+        logger.info(f"ERPAgent dispatch | task={task[:200]}")
 
+        # v6: budget 通过构造函数传递（替代属性注入 hack）
+        _parent_budget = getattr(self, "_budget", None)
         agent = ERPAgent(
             db=self.db,
             user_id=self.user_id,
             conversation_id=self.conversation_id,
             org_id=self.org_id,
             task_id=getattr(self, "_task_id", None),
-            request_ctx=self.request_ctx,  # 时间事实层透传 (B16)
+            request_ctx=self.request_ctx,
+            budget=_parent_budget,
         )
 
-        # 传递父 budget（fork 机制：子消耗回写父）
-        _parent_budget = getattr(self, "_budget", None)
-        if _parent_budget is not None:
-            agent._budget = _parent_budget
-
-        # 传入父 Agent 的 messages 上下文（如果有）
-        parent_messages = getattr(self, "_parent_messages", None)
-
-        result = await agent.execute(query, parent_messages=parent_messages)
-
-        # 记录 token 消耗（供 ChatHandler 统一扣费）
-        self._erp_agent_tokens = getattr(self, "_erp_agent_tokens", 0)
-        self._erp_agent_tokens += result.tokens_used
-
-        # 透传 ToolLoopExecutor 提取的 [FILE] 标记 → 主 Agent 的 _pending_file_parts
-        # [FILE] 标记已在 ToolLoopExecutor._execute_tools 中提取，不再经过 LLM
-        collected = result.collected_files or []
-        if collected:
-            from schemas.message import FilePart
-            _pending = getattr(self, "_pending_file_parts", None)
-            if _pending is not None:
-                for f in collected:
-                    _pending.append(FilePart(
-                        url=f["url"], name=f["name"],
-                        mime_type=f["mime_type"], size=f["size"],
-                    ))
-
-        result_text = result.text
-
-        # ask_user 冒泡：ERP Agent 内部调了 ask_user，需要冒泡到主循环冻结
-        if result.status == "ask_user" and result.ask_user_question:
-            self._ask_user_pending = {
-                "message": result.ask_user_question,
-                "reason": "need_info",
-                "tool_call_id": "",  # 主循环冻结时使用 erp_agent 的 tool_call_id
-                "source": "erp_agent",
-            }
-
-        # 保存原始展示文本 + 文件信息（供 ChatHandler 推送 content_block_add）
-        self._erp_display_text = result_text
-        logger.debug(
-            f"ERP display text set | len={len(result_text)} | "
-            f"files={len(collected)}"
+        result = await agent.execute(
+            task, conversation_context=conversation_context,
         )
-        self._erp_display_files = [
-            {"url": f["url"], "name": f["name"],
-             "mime_type": f["mime_type"], "size": f["size"]}
-            for f in collected
-        ]
 
-        # erp_agent 结果截断（给主 LLM 看的精简版）
-        from services.agent.tool_result_envelope import wrap_erp_agent_result
-        return wrap_erp_agent_result(result_text)
+        # 返回 AgentResult，文件通道/ask_user/display/token 由 ChatToolMixin 统一处理
+        return result
 
     # ========================================
     # 搜索工具（按需发现 API/模型文档）

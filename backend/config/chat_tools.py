@@ -55,6 +55,7 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     "local_data", "local_product_identify", "local_stock_query",
     "local_product_stats", "local_platform_map_query",
     "local_compare_stats", "local_shop_list", "local_warehouse_list",
+    "local_supplier_list",
     # 搜索类
     "erp_api_search", "search_knowledge", "web_search",
     "social_crawler",
@@ -100,21 +101,61 @@ def get_safety_level(tool_name: str) -> SafetyLevel:
 # 全局工具使用指引（系统提示词）
 # ============================================================
 
-TOOL_SYSTEM_PROMPT = """## 工具使用规则
+TOOL_SYSTEM_PROMPT = """## 工具决策规则
 
-1. **ERP 业务问题**：用户问任何涉及订单、库存、采购、售后、发货、物流、商品、销量、统计的问题时，必须调用 erp_agent 工具。erp_agent 每次查询一个域的数据，内部自动识别编码，支持口语化表达。需要导出/计算/对比时，先用 erp_agent 查数据，再用 code_execute 加工导出。
+### 1. erp_agent — ERP 数据查询
 
-2. **知识库**：用户问业务规则、操作流程等非数据类问题时，用 search_knowledge。
+**什么时候必须调：**
+用户问任何涉及订单/库存/采购/售后/发货/物流/商品/销量/统计的问题。
 
-3. **互联网搜索**：用户问天气、新闻等实时信息时，用 web_search。社交平台内容搜索不要用此工具。
+**什么时候不调：**
+- 业务规则/操作流程 → search_knowledge
+- 写操作（创建/修改/取消订单）→ erp_execute
+- 非 ERP 数据（天气/新闻）→ web_search
 
-4. **图片/视频生成**：用户要求画图/生成视频时，用 generate_image / generate_video。
+**task 参数怎么写（你的职责）：**
+1. 解析指代词：用户说"那个" → 替换为上文提到的具体对象
+2. 补全追问上下文：用户说"导出来" → 补全为"导出昨天淘宝订单明细"
+3. 保留原始意图：不要替 erp_agent 做技术决策（不要自己算日期、不要指定查询模式）
+4. 时间用相对表达："昨天""上个月"，禁止转换成具体日期
 
-5. **代码执行**：数据分析、计算、对比、导出 Excel 时用 code_execute。ERP 数据先用 erp_agent 查出来，再用 code_execute 加工/导出。
+示例：
+· 用户说"退了多少"，上文聊的是 HZ001 → task="HZ001商品昨天的退货情况"
+· 用户说"导出来看看"，上文查了淘宝订单 → task="导出昨天淘宝订单明细"
+· 用户说"按店铺看看" → task="昨天退货按店铺统计"
 
-6. **工作区文件处理**：用户上传了 Excel/CSV 等文件并要求分析时，用 file_list 确认文件名，然后用 code_execute 读取处理（沙盒内 WORKSPACE_DIR 变量指向用户工作区）。Excel/二进制文件不能用 file_read，必须用 code_execute。
+**erp_agent 返回什么：**
+- 文本摘要（始终有）：统计数字/查询结论
+- 文件引用（大数据时）：包含 path/rows/format，code_execute 中用 STAGING_DIR + '/文件名' 读取
+- 内联数据（少量数据时）：直接包含数据记录
 
-7. **多工具并行**：你可以在一次回复中调用多个工具。没有依赖关系的工具并行调用。
+**编排原则：**
+- erp_agent 每次查一个域的数据。需要多域数据时并行调多次，需要计算/加工时接 code_execute
+- 能一步完成的不要拆多步，需要多步的自行判断编排顺序
+
+编排示例（引导而非限制，你可以根据实际需求自行组合）：
+· "昨天退货多少" → 1 次 erp_agent，直接展示
+· "导出订单 Excel" → erp_agent 存文件 → code_execute 转 Excel
+· "各平台退货率" → 并行 erp_agent(订单统计) + erp_agent(退货统计) → code_execute 算比率
+· "上月和本月销售额对比" → 并行 erp_agent(上月) + erp_agent(本月) → code_execute 对比
+
+### 2. search_knowledge — 知识库
+用户问业务规则、操作流程等非数据类问题时使用。
+
+### 3. web_search — 互联网搜索
+用户问天气、新闻等实时信息时使用。社交平台内容用 social_crawler。
+
+### 4. generate_image / generate_video — 图片/视频生成
+用户要求画图/生成视频时使用。
+
+### 5. code_execute — 代码执行
+数据计算/对比/导出 Excel 时使用。ERP 数据先用 erp_agent 查出来，再用 code_execute 加工。
+
+### 6. 工作区文件处理
+用户上传 Excel/CSV 等文件时，用 file_list 确认文件名，然后 code_execute 读取处理（沙盒内 WORKSPACE_DIR 指向用户工作区）。Excel/二进制文件不能用 file_read，必须用 code_execute。
+
+### 7. 并行调用
+没有依赖关系的工具并行调用。如：并行 2 次 erp_agent 查不同域的数据。
 
 ## 对话交互规范（分层处理）
 
@@ -181,20 +222,33 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                 "description": _build_erp_agent_description(),
                 "parameters": {
                     "type": "object",
-                    "required": ["query"],
+                    "required": ["task"],
                     "properties": {
-                        "query": {
+                        "task": {
                             "type": "string",
                             "description": (
-                                "传给 ERP Agent 的查询任务。传用户的原始表达，不要自行补充用户未提及的条件。\n"
-                                "ERP Agent 看不到对话历史，需要补全指代词（'这个''那个'→具体对象）。\n"
-                                "时间用相对表达（'昨天''上个月'），禁止转换成具体日期。\n\n"
+                                "整理好的查询任务描述。主 Agent 负责：\n"
+                                "1. 解析指代词（'那个'→具体对象，'刚才的'→具体内容）\n"
+                                "2. 补全对话上下文（追问时补全前文信息）\n"
+                                "3. 保留用户原始意图（不要替子 Agent 做技术决策）\n"
+                                "4. 时间用相对表达（'昨天''上个月'），禁止转换成具体日期\n\n"
+                                "示例：\n"
+                                "· 用户说'退了多少'，上文聊的是HZ001 → task='HZ001商品昨天的退货情况'\n"
+                                "· 用户说'导出来看看'，上文查了淘宝订单 → task='导出昨天淘宝订单明细'\n"
+                                "· 用户说'按店铺看看' → task='昨天退货按店铺统计'\n\n"
                                 "何时需要 ask_user 确认：\n"
                                 "· 统计类（销量/销售额/订单数）：需要时间范围\n"
                                 "· 查指定商品（某个商品的库存/价格）：需要商品名称或编码\n"
                                 "· 查指定单据（某个订单的明细）：需要单号\n"
-                                "注意：批量查询（所有缺货商品/全部待发货订单/今天的售后单）不需要指定具体商品或单号，直接调用。\n"
-                                "用户已明确的信息直接传，未提及的不要猜测补充。"
+                                "注意：批量查询（所有缺货商品/全部待发货订单/今天的售后单）不需要指定具体商品或单号，直接调用。"
+                            ),
+                        },
+                        "conversation_context": {
+                            "type": "string",
+                            "description": (
+                                "对话背景补充（可选）。当任务涉及追问或多轮对话时，"
+                                "提供前文关键信息帮助子 Agent 理解完整语境。\n"
+                                "示例：'用户之前查了本月淘宝订单汇总，现在想看明细'"
                             ),
                         },
                     },

@@ -265,6 +265,57 @@ class TestToolOutputMetadata:
 
 
 # ============================================================
+# ToolOutput — validate (v6)
+# ============================================================
+
+
+class TestToolOutputValidate:
+    """v6: ToolOutput.validate() 内部一致性校验"""
+
+    def test_valid_text_output(self):
+        t = ToolOutput(summary="OK", source="test")
+        assert t.validate() == []
+
+    def test_empty_summary(self):
+        t = ToolOutput(summary="", source="test")
+        issues = t.validate()
+        assert any("summary" in i for i in issues)
+
+    def test_file_ref_missing(self):
+        t = ToolOutput(
+            summary="OK", source="test",
+            format=OutputFormat.FILE_REF, file_ref=None,
+        )
+        issues = t.validate()
+        assert any("file_ref" in i for i in issues)
+
+    def test_table_missing_columns(self):
+        t = ToolOutput(
+            summary="OK", source="test",
+            format=OutputFormat.TABLE, columns=None,
+        )
+        issues = t.validate()
+        assert any("columns" in i for i in issues)
+
+    def test_error_missing_message(self):
+        t = ToolOutput(
+            summary="失败", source="test",
+            status=OutputStatus.ERROR, error_message="",
+        )
+        issues = t.validate()
+        assert any("error_message" in i for i in issues)
+
+    def test_valid_table_output(self):
+        t = ToolOutput(
+            summary="OK", source="test",
+            format=OutputFormat.TABLE,
+            columns=[ColumnMeta("id", "integer")],
+            data=[{"id": 1}],
+        )
+        assert t.validate() == []
+
+
+# ============================================================
 # ToolOutput — OutputStatus
 # ============================================================
 

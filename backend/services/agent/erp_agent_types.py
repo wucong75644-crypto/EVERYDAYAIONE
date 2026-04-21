@@ -27,6 +27,7 @@ class ERPAgentResult:
     # ToolLoopExecutor 提取的 [FILE] 标记，独立通道透传，不经过 LLM
     # 每项: {"url": str, "name": str, "mime_type": str, "size": int}
     ask_user_question: str = ""     # ask_user 退出时的追问内容（冒泡到主循环）
+    confidence: float = 1.0         # v6: 结果置信度（降级时 0.6）
 
 
 # ============================================================

@@ -516,7 +516,7 @@ class TestWriteToStaging:
             ColumnMeta("order_no", "text", "订单号"),
             ColumnMeta("amount", "numeric", "金额"),
         ]
-        file_ref, profile = agent._write_to_staging(rows, columns, str(tmp_path))
+        file_ref, profile, stats = agent._write_to_staging(rows, columns, str(tmp_path))
 
         assert isinstance(profile, str)
         assert "[数据已暂存]" in profile
@@ -524,6 +524,7 @@ class TestWriteToStaging:
         assert file_ref.row_count == 1
         assert file_ref.filename.startswith("trade_")
         assert file_ref.preview == profile
+        assert isinstance(stats, dict)
 
     def test_parquet_file_created(self, tmp_path):
         """staging 目录下生成 parquet 文件"""
@@ -533,7 +534,7 @@ class TestWriteToStaging:
         agent = TradeAgent(db=MagicMock())
         rows = [{"a": 1}, {"a": 2}]
         columns = [ColumnMeta("a", "integer")]
-        file_ref, _ = agent._write_to_staging(rows, columns, str(tmp_path))
+        file_ref, _, _ = agent._write_to_staging(rows, columns, str(tmp_path))
 
         assert Path(file_ref.path).exists()
         assert file_ref.format == "parquet"

@@ -46,18 +46,37 @@ COLUMN_WHITELIST: dict[str, ColumnMeta] = {
     "discount_fee": ColumnMeta("numeric"),
     "gross_profit": ColumnMeta("numeric"),
     "refund_money": ColumnMeta("numeric"),
+    "price": ColumnMeta("numeric"),
+    "total_fee": ColumnMeta("numeric"),
+    "actual_post_fee": ColumnMeta("numeric"),
+    "sale_price": ColumnMeta("numeric"),
+    "sale_fee": ColumnMeta("numeric"),
+    # 重量体积
+    "weight": ColumnMeta("numeric"),
+    "volume": ColumnMeta("numeric"),
     # 关联方
     "shop_name": ColumnMeta("text"),
     "platform": ColumnMeta("text"),
     "supplier_name": ColumnMeta("text"),
     "warehouse_name": ColumnMeta("text"),
+    # 关联人
+    "creator_name": ColumnMeta("text"),
     # 订单物流
     "order_no": ColumnMeta("text"),
     "express_no": ColumnMeta("text"),
     "express_company": ColumnMeta("text"),
     "order_type": ColumnMeta("text"),
-    # 买家
+    "short_id": ColumnMeta("text"),
+    "purchase_order_code": ColumnMeta("text"),
+    # 买家收件人
     "buyer_nick": ColumnMeta("text"),
+    "receiver_name": ColumnMeta("text"),
+    "receiver_mobile": ColumnMeta("text"),
+    "receiver_phone": ColumnMeta("text"),
+    "receiver_address": ColumnMeta("text"),
+    "receiver_city": ColumnMeta("text"),
+    "receiver_state": ColumnMeta("text"),
+    "receiver_district": ColumnMeta("text"),
     # 状态标记
     "is_cancel": ColumnMeta("integer"),
     "is_refund": ColumnMeta("integer"),
@@ -70,9 +89,31 @@ COLUMN_WHITELIST: dict[str, ColumnMeta] = {
     "is_presell": ColumnMeta("integer"),
     "online_status": ColumnMeta("text"),
     "handler_status": ColumnMeta("text"),
+    # 备注
+    "remark": ColumnMeta("text"),
+    "sys_memo": ColumnMeta("text"),
+    "buyer_message": ColumnMeta("text"),
+    # 采购
+    "quantity_received": ColumnMeta("numeric"),
+    "delivery_date": ColumnMeta("timestamp"),
     # 售后
     "aftersale_type": ColumnMeta("text"),
     "refund_status": ColumnMeta("text"),
+    "text_reason": ColumnMeta("text"),
+    "reason": ColumnMeta("text"),
+    "good_status": ColumnMeta("text"),
+    "finished_at": ColumnMeta("timestamp"),
+    "refund_warehouse_name": ColumnMeta("text"),
+    "refund_express_company": ColumnMeta("text"),
+    "refund_express_no": ColumnMeta("text"),
+    "raw_refund_money": ColumnMeta("numeric"),
+    "platform_refund_id": ColumnMeta("text"),
+    "apply_date": ColumnMeta("timestamp"),
+    # 子项
+    "sku_properties_name": ColumnMeta("text"),
+    "real_qty": ColumnMeta("numeric"),
+    "diff_stock_num": ColumnMeta("numeric"),
+    "actual_return_qty": ColumnMeta("numeric"),
 }
 
 # op 与列类型兼容表
@@ -121,22 +162,24 @@ DEFAULT_DETAIL_FIELDS: dict[str, list[str]] = {
     "order": [
         "order_no", "shop_name", "platform", "order_status",
         "outer_id", "item_name", "quantity", "amount",
-        "pay_time", "consign_time",
+        "pay_time", "consign_time", "remark",
     ],
     "purchase": [
         "doc_code", "supplier_name", "doc_status",
         "outer_id", "item_name", "quantity",
-        "quantity_received", "amount", "doc_created_at",
+        "quantity_received", "amount", "price",
+        "delivery_date", "creator_name", "remark", "doc_created_at",
     ],
     "aftersale": [
         "doc_code", "aftersale_type", "refund_status",
         "outer_id", "item_name", "quantity",
-        "refund_money", "doc_created_at",
+        "refund_money", "text_reason", "good_status",
+        "refund_warehouse_name", "doc_created_at",
     ],
     "receipt": [
         "doc_code", "supplier_name", "doc_status",
         "outer_id", "item_name", "quantity",
-        "quantity_received", "doc_created_at",
+        "quantity_received", "purchase_order_code", "doc_created_at",
     ],
     "shelf": [
         "doc_code", "warehouse_name", "doc_status",
@@ -145,7 +188,7 @@ DEFAULT_DETAIL_FIELDS: dict[str, list[str]] = {
     "purchase_return": [
         "doc_code", "supplier_name", "doc_status",
         "outer_id", "item_name", "quantity",
-        "amount", "doc_created_at",
+        "amount", "remark", "doc_created_at",
     ],
 }
 
@@ -184,8 +227,10 @@ EXPORT_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "数量金额": [
         ("quantity", "数量"), ("quantity_received", "已到货数量"),
         ("real_qty", "实际数量"), ("price", "单价"), ("amount", "金额"),
+        ("total_fee", "订单总金额"), ("sale_price", "销售价"), ("sale_fee", "销售金额"),
         ("cost", "成本"), ("pay_amount", "实付金额"), ("post_fee", "运费"),
-        ("discount_fee", "优惠金额"), ("gross_profit", "毛利"),
+        ("actual_post_fee", "实际运费"), ("discount_fee", "优惠金额"), ("gross_profit", "毛利"),
+        ("weight", "重量"), ("volume", "体积"),
     ],
     "关联方": [
         ("supplier_name", "供应商"), ("warehouse_name", "仓库"),
@@ -210,12 +255,17 @@ EXPORT_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("is_cancel", "是否取消"), ("is_refund", "是否退款"),
         ("is_exception", "是否异常"), ("is_halt", "是否拦截"),
         ("is_urgent", "是否加急"), ("good_status", "货物状态"),
+        ("is_scalping", "是否刷单"), ("unified_status", "统一状态"),
+        ("is_presell", "是否预售"), ("online_status", "线上状态"),
+        ("handler_status", "处理状态"),
     ],
     "售后": [
         ("aftersale_type", "售后类型"), ("refund_status", "退款状态"),
         ("refund_money", "系统退款金额"), ("raw_refund_money", "平台实退金额"),
         ("actual_return_qty", "实际退货数量"), ("text_reason", "退货原因"),
-        ("refund_warehouse_name", "退货仓库"),
+        ("reason", "售后原因详细"), ("refund_warehouse_name", "退货仓库"),
+        ("refund_express_company", "退货快递公司"), ("refund_express_no", "退货快递单号"),
+        ("platform_refund_id", "平台退款单号"), ("apply_date", "售后申请时间"),
     ],
     "备注": [
         ("remark", "备注"), ("sys_memo", "系统备注"), ("buyer_message", "买家留言"),
@@ -284,7 +334,9 @@ def fmt_summary_grouped(
         total_docs += doc_count
 
         plat = item.get("platform")
-        if group_by == "shop" and plat:
+        if group_by == "platform":
+            key = PLATFORM_CN.get(key, key)
+        elif group_by == "shop" and plat:
             key = f"{key}[{PLATFORM_CN.get(plat, plat)}]"
 
         name = item.get("item_name", "")
@@ -309,6 +361,8 @@ def fmt_detail_rows(
             v = row.get(f)
             if v is not None:
                 sv = str(v)
+                if f == "platform":
+                    sv = PLATFORM_CN.get(sv, sv)
                 if len(sv) > 40:
                     sv = sv[:37] + "..."
                 parts.append(f"{f}={sv}")
@@ -350,6 +404,10 @@ def mask_pii(row: dict) -> dict:
         name = row.get("receiver_name", "")
         if name and len(name) >= 2:
             row["receiver_name"] = name[0] + "*" * (len(name) - 1)
+    if "receiver_address" in row:
+        addr = row.get("receiver_address", "")
+        if addr and len(addr) >= 6:
+            row["receiver_address"] = addr[:6] + "****"
     return row
 
 
