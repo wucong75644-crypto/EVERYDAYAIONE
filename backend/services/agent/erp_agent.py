@@ -479,6 +479,8 @@ class ERPAgent:
             request_ctx=self.request_ctx,
             staging_dir=staging_dir,
             budget=child_budget,
+            user_id=self.user_id,
+            conversation_id=self.conversation_id,
         )
 
     async def _cleanup_staging_delayed(self, delay: int = 900) -> None:
