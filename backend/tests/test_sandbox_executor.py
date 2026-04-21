@@ -447,11 +447,11 @@ class TestSnapshotAndAutoUpload:
     """文件快照 + 新文件检测测试"""
 
     def test_snapshot_captures_existing_files(self, tmp_path):
-        """快照捕获输出目录已有文件"""
+        """快照捕获输出目录已有文件（key = dir/filename）"""
         (tmp_path / "old.xlsx").write_bytes(b"old")
         executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
         snapshot = executor._snapshot_output_files()
-        assert "old.xlsx" in snapshot
+        assert f"{tmp_path}/old.xlsx" in snapshot
 
     def test_snapshot_empty_dir(self, tmp_path):
         """空目录快照为空集"""

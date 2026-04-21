@@ -63,7 +63,8 @@ def build_tool_digest(
         if msg.get("role") == "tool":
             tc_id = msg.get("tool_call_id", "")
             if tc_id:
-                result_map[tc_id] = msg.get("content", "")
+                raw = msg.get("content", "")
+                result_map[tc_id] = raw if isinstance(raw, str) else str(raw)
 
     # 扫描所有 assistant 消息中的 tool_calls
     entries: List[Dict[str, Any]] = []

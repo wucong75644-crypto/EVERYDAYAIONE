@@ -138,7 +138,11 @@ def extract_time_range(
     except (ValueError, AttributeError):
         s_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
         e_dt = _next_day_start
-        start_val, end_val = s_dt.isoformat(), e_dt.isoformat()
+
+    # 统一用 strftime 格式化，保证 PG 和 DuckDB 都能解析
+    # （isoformat() 带 T 分隔符，DuckDB 不兼容部分变体）
+    start_val = s_dt.strftime("%Y-%m-%d %H:%M:%S%z")
+    end_val = e_dt.strftime("%Y-%m-%d %H:%M:%S%z")
 
     date_range = DateRange.custom(s_dt, e_dt, reference=now)
     label = f"{s_dt.strftime('%m-%d %H:%M')} ~ {e_dt.strftime('%m-%d %H:%M')}"
