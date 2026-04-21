@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from services.kuaimai.erp_unified_schema import (
-    TIME_COLUMNS, TimeRange, ValidatedFilter, PLATFORM_CN,
+    TIME_COLUMNS, TimeRange, ValidatedFilter, PLATFORM_CN, _FIELD_LABEL_CN,
 )
 
 
@@ -69,18 +69,38 @@ _PLATFORM_CASE = (
 )
 
 
-def build_pii_select(safe_fields: list[str]) -> str:
-    """构建 SELECT 列表：PII 脱敏 + platform 中文化 + timestamp 去时区。"""
+def build_pii_select(safe_fields: list[str], *, cn_header: bool = False) -> str:
+    """构建 SELECT 列表：PII 脱敏 + platform 中文化 + timestamp 去时区。
+
+    Args:
+        safe_fields: 白名单字段列表
+        cn_header: True 时列别名用中文（导出 Excel 场景），
+                   False 时保持英文（内部 staging 场景）
+    """
     cols: list[str] = []
     for f in safe_fields:
+        # 中文列别名（仅 cn_header=True 时生效）
+        alias = _FIELD_LABEL_CN.get(f, f) if cn_header else f
+
         if f in _PII_SQL_MAP:
-            cols.append(_PII_SQL_MAP[f])
+            # PII 脱敏字段已有 AS，替换别名
+            pii_expr = _PII_SQL_MAP[f]
+            if cn_header and alias != f:
+                # "SUBSTR(x,1,3)||'****' AS receiver_name" → "... AS 收件人"
+                pii_expr = pii_expr.rsplit(" AS ", 1)[0] + f' AS "{alias}"'
+            cols.append(pii_expr)
         elif f == "platform":
-            cols.append(_PLATFORM_CASE)
+            plat_expr = _PLATFORM_CASE
+            if cn_header and alias != f:
+                plat_expr = plat_expr.rsplit(" AS ", 1)[0] + f' AS "{alias}"'
+            cols.append(plat_expr)
         elif f in _TIMESTAMP_COLS:
-            cols.append(f"CAST({f} AS TIMESTAMP) AS {f}")
+            cols.append(f'CAST({f} AS TIMESTAMP) AS "{alias}"')
         else:
-            cols.append(f)
+            if cn_header and alias != f:
+                cols.append(f'{f} AS "{alias}"')
+            else:
+                cols.append(f)
     return ", ".join(cols)
 
 
