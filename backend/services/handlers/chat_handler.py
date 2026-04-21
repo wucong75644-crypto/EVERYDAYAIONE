@@ -393,6 +393,16 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             from services.handlers.session_memory import init_session_memory
             init_session_memory()
 
+            # 6.5 trace_id + Langfuse trace（v6 可观测性）
+            from services.agent.observability import set_trace_id
+            set_trace_id(task_id)
+            logger.bind(trace_id=task_id)
+            from services.agent.observability.langfuse_integration import create_trace
+            create_trace(
+                name="chat_request", user_id=user_id,
+                session_id=conversation_id,
+            )
+
             # 7. 工具循环：流式生成 → 检测工具调用 → 执行 → 结果塞回 → 继续
             # 多维预算：轮次为主控，token 为安全网，时间纯兜底
             from services.agent.execution_budget import ExecutionBudget
@@ -571,13 +581,23 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 )
 
                 # 工具结果塞进 messages + 更新上下文
-                for tc, result_text, is_error in tool_results:
+                from services.agent.agent_result import AgentResult
+                for tc, result, is_error in tool_results:
+                    if isinstance(result, AgentResult):
+                        content = result.to_message_content()
+                        tool_context.update_from_result(
+                            tc["name"], result.summary, is_error,
+                        )
+                    else:
+                        content = result
+                        tool_context.update_from_result(
+                            tc["name"], result, is_error,
+                        )
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
-                        "content": result_text,
+                        "content": content,
                     })
-                    tool_context.update_from_result(tc["name"], result_text, is_error)
 
                 # ── ask_user 冻结检测 ──
                 _ask_info = getattr(self, "_ask_user_pending", None)

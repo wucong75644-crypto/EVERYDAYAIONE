@@ -8,7 +8,9 @@
 """
 from __future__ import annotations
 
+import asyncio
 import time as _time
+import uuid as _uuid
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from pathlib import Path
@@ -23,6 +25,7 @@ from services.agent.tool_output import (
     OutputFormat,
     OutputStatus,
     ToolOutput,
+    _FORMAT_MIME,
 )
 
 
@@ -33,7 +36,7 @@ CANONICAL_FIELDS = {
 }
 
 # 数据分流阈值：≤200行内联，>200行写文件
-INLINE_THRESHOLD = 200
+# v6: INLINE_THRESHOLD 已废弃，统一走 staging + 摘要
 
 
 class DepartmentAgent(ABC):
@@ -59,11 +62,13 @@ class DepartmentAgent(ABC):
         org_id: str | None = None,
         request_ctx: Any = None,
         staging_dir: str | None = None,
+        budget: Any = None,
     ):
         self.db = db
         self.org_id = org_id
         self.request_ctx = request_ctx
         self._staging_dir = staging_dir
+        self._budget = budget  # v6: ExecutionBudget（可选）
 
     # ── 抽象属性 ──
 
@@ -168,7 +173,8 @@ class DepartmentAgent(ABC):
     ) -> ToolOutput:
         """构建 ToolOutput，自动处理 FIELD_MAP 和数据分流。
 
-        ≤200行 → TABLE（inline JSON）；>200行 → FILE_REF（staging parquet）。
+        v6: 统一走 staging + 摘要（~238 token），取消 inline 模式。
+        无 staging_dir 或空数据时降级为 TEXT 摘要。
         FIELD_MAP 自动映射 data key 和 ColumnMeta.name。
         FILE_REF 会被下游同步读取，rows 应为 top-N 结果，避免全量数据。
         """
@@ -196,18 +202,17 @@ class DepartmentAgent(ABC):
             metadata=business_fields,
         )
 
-        if len(rows) <= INLINE_THRESHOLD:
-            return ToolOutput(format=OutputFormat.TABLE, data=rows, **base)
-
-        # >200行走文件
+        # v6: 统一走 staging + 摘要（~238 token），取消 inline
         if not staging_dir:
-            logger.warning(
-                f"{self.domain} Agent: >200行但无 staging_dir，降级为内联",
-            )
-            return ToolOutput(format=OutputFormat.TABLE, data=rows, **base)
+            # 无 staging_dir（测试/降级场景）→ TEXT 摘要
+            return ToolOutput(format=OutputFormat.TEXT, **base)
 
-        file_ref, profile_text = self._write_to_staging(rows, columns, staging_dir)
-        base["summary"] = profile_text  # 用 profile 摘要替代原始文本
+        file_ref, profile_text, profile_stats = self._write_to_staging(
+            rows, columns, staging_dir,
+        )
+        base["summary"] = profile_text
+        if profile_stats:
+            base["metadata"] = {**base.get("metadata", {}), "stats": profile_stats}
         return ToolOutput(format=OutputFormat.FILE_REF, file_ref=file_ref, **base)
 
     def _write_to_staging(
@@ -215,11 +220,11 @@ class DepartmentAgent(ABC):
         rows: list[dict],
         columns: list[ColumnMeta],
         staging_dir: str,
-    ) -> tuple[FileRef, str]:
+    ) -> tuple[FileRef, str, dict]:
         """将数据写入 staging parquet 并生成 profile 摘要。
 
         Returns:
-            (file_ref, profile_text) — profile 用作 ToolOutput.summary
+            (file_ref, profile_text, stats_dict)
         """
         import json as _json
 
@@ -248,26 +253,30 @@ class DepartmentAgent(ABC):
 
         elapsed = _time.time() - start
 
-        # 生成标准数据摘要（7 板块）
+        # 生成标准数据摘要（v6: 返回 text + stats_dict）
         from services.agent.data_profile import build_data_profile
-        profile_text = build_data_profile(
+        profile_text, _profile_stats = build_data_profile(
             df=df,
             filename=filename,
             file_size_kb=size_bytes / 1024,
             elapsed=elapsed,
         )
 
+        fmt = "parquet" if filename.endswith(".parquet") else "json"
         file_ref = FileRef(
             path=str(file_path),
             filename=filename,
-            format="parquet" if filename.endswith(".parquet") else "json",
+            format=fmt,
             row_count=len(rows),
             size_bytes=size_bytes,
             columns=columns,
             preview=profile_text,
             created_at=_time.time(),
+            id=_uuid.uuid4().hex,
+            mime_type=_FORMAT_MIME.get(fmt, ""),
+            created_by=self.domain,
         )
-        return file_ref, profile_text
+        return file_ref, profile_text, _profile_stats
 
     # ── Context 注入（确定性提取，不靠 LLM）──
 
@@ -603,15 +612,14 @@ class DepartmentAgent(ABC):
                 error_message=validation.message,
             )
 
+        # v6: partial rows 暂存（超时 cancel 时可返回已获取的部分数据）
+        self._partial_rows: list[dict] = []
         try:
             result = await self._dispatch(action, merged, context)
-            # 降级路径标注：让用户知道时间范围可能不准确
+            # 降级标记（v6: 纯结构化，不拼文本前缀）
             if merged.get("_degraded") and result.status != OutputStatus.ERROR:
                 result = ToolOutput(
-                    summary=(
-                        "⚠ 简化查询模式（时间范围默认今天）\n\n"
-                        + result.summary
-                    ),
+                    summary=result.summary,
                     format=result.format,
                     source=result.source,
                     status=result.status,
@@ -621,6 +629,20 @@ class DepartmentAgent(ABC):
                     metadata={**result.metadata, "_degraded": True},
                 )
             return result
+        except asyncio.CancelledError:
+            # v6: 超时 cancel 时返回已获取的部分数据
+            if self._partial_rows:
+                logger.warning(
+                    f"{self.domain} Agent cancelled with {len(self._partial_rows)} partial rows",
+                )
+                return ToolOutput(
+                    summary=f"{self.domain} 查询超时，返回已获取的 {len(self._partial_rows)} 条部分数据",
+                    format=OutputFormat.TABLE,
+                    source=self.domain,
+                    status=OutputStatus.PARTIAL,
+                    data=self._partial_rows,
+                )
+            raise  # 无 partial 数据则继续传播
         except Exception as e:
             logger.error(
                 f"{self.domain} Agent execute failed | "

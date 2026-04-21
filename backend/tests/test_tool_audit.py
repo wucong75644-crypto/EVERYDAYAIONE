@@ -170,3 +170,49 @@ class TestRecordToolAudit:
         assert ("table", "tool_audit_log") in call_log
         assert ("insert", "local_stock_query") in call_log
         assert "executed" in call_log
+
+
+# ============================================================
+# v6: 新字段测试
+# ============================================================
+
+
+class TestToolAuditEntryV6:
+    """v6: prompt_tokens / completion_tokens / trace_id"""
+
+    def test_new_fields_default_values(self):
+        """新字段有默认值，旧代码不报错"""
+        entry = ToolAuditEntry(
+            task_id="t1", conversation_id="c1", user_id="u1", org_id="o1",
+            tool_name="test", tool_call_id="tc1", turn=1,
+            args_hash="abc", result_length=100, elapsed_ms=50, status="success",
+        )
+        assert entry.prompt_tokens == 0
+        assert entry.completion_tokens == 0
+        assert entry.trace_id == ""
+
+    def test_new_fields_explicit_values(self):
+        """显式传入新字段"""
+        entry = ToolAuditEntry(
+            task_id="t1", conversation_id="c1", user_id="u1", org_id="o1",
+            tool_name="erp", tool_call_id="tc1", turn=1,
+            args_hash="abc", result_length=500, elapsed_ms=300, status="success",
+            prompt_tokens=2000, completion_tokens=500, trace_id="trace_abc",
+        )
+        assert entry.prompt_tokens == 2000
+        assert entry.completion_tokens == 500
+        assert entry.trace_id == "trace_abc"
+
+    def test_asdict_includes_new_fields(self):
+        """asdict 序列化包含新字段（Supabase insert 需要）"""
+        from dataclasses import asdict
+        entry = ToolAuditEntry(
+            task_id="t1", conversation_id="c1", user_id="u1", org_id="o1",
+            tool_name="erp", tool_call_id="tc1", turn=1,
+            args_hash="abc", result_length=500, elapsed_ms=300, status="success",
+            prompt_tokens=1500, completion_tokens=300, trace_id="trace_xyz",
+        )
+        d = asdict(entry)
+        assert d["prompt_tokens"] == 1500
+        assert d["completion_tokens"] == 300
+        assert d["trace_id"] == "trace_xyz"

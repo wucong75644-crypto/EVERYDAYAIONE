@@ -206,6 +206,7 @@ class ErpToolMixin:
             local_platform_map_query,
             local_shop_list,
             local_stock_query,
+            local_supplier_list,
             local_warehouse_list,
         )
         from services.kuaimai.erp_local_sync_trigger import trigger_erp_sync
@@ -223,6 +224,7 @@ class ErpToolMixin:
             "local_compare_stats": local_compare_stats,
             "local_shop_list": local_shop_list,
             "local_warehouse_list": local_warehouse_list,
+            "local_supplier_list": local_supplier_list,
             "trigger_erp_sync": trigger_erp_sync,
         }
 

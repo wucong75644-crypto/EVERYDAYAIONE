@@ -563,9 +563,13 @@ class TestIsArchived:
     def test_normal_string(self):
         assert _is_archived({"content": "正常内容"}) is False
 
-    def test_multimodal_list(self):
-        """list content 不视为已归档"""
-        assert _is_archived({"content": [{"type": "text", "text": "[已归档"}]}) is False
+    def test_multimodal_list_archived(self):
+        """list content 中文本以 [已归档 开头 → 视为已归档"""
+        assert _is_archived({"content": [{"type": "text", "text": "[已归档"}]}) is True
+
+    def test_multimodal_list_not_archived(self):
+        """list content 中文本不以 [已归档 开头 → 不视为已归档"""
+        assert _is_archived({"content": [{"type": "text", "text": "正常文本"}]}) is False
 
     def test_empty_content(self):
         assert _is_archived({"content": ""}) is False

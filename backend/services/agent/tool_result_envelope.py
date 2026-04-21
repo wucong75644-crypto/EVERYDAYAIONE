@@ -168,9 +168,10 @@ def wrap(
     return _stage_and_summarize(tool_name, result, budget)
 
 
-def wrap_for_erp_agent(tool_name: str, result: str) -> str:
-    """ERP Agent 内部工具结果包装（预算 3000）"""
-    return wrap(tool_name, result, budget=ERP_AGENT_BUDGET)
+def wrap_for_erp_agent(tool_name: str, result: str, tight: bool = False) -> str:
+    """ERP Agent 内部工具结果包装（正常 3000 / 紧张 1800）"""
+    budget_val = 1800 if tight else ERP_AGENT_BUDGET
+    return wrap(tool_name, result, budget=budget_val)
 
 
 def wrap_erp_agent_result(result: str) -> str:
@@ -200,11 +201,14 @@ def wrap_erp_agent_result(result: str) -> str:
 # 内部函数
 # ============================================================
 
-def _resolve_budget(tool_name: str) -> int:
-    """根据工具名自动选择预算"""
+def _resolve_budget(tool_name: str, tight: bool = False) -> int:
+    """根据工具名自动选择预算。
+
+    v6: tight=True 时收紧预算（上下文紧张，对标 LangChain 三档策略）。
+    """
     if tool_name == "erp_agent":
-        return ERP_AGENT_RESULT_BUDGET
-    return MAIN_AGENT_BUDGET
+        return 2400 if tight else ERP_AGENT_RESULT_BUDGET  # 4000→2400
+    return 1200 if tight else MAIN_AGENT_BUDGET  # 2000→1200
 
 
 def _stage_and_summarize(tool_name: str, result: str, budget: int) -> str:

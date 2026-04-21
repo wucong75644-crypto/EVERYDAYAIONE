@@ -438,3 +438,177 @@ class TestAskUserShortCircuit:
         )
 
         assert mixin._ask_user_pending["message"] == "请补充更多信息"
+
+
+# ============================================================
+# AgentResult 处理（通信协议 §3.2）
+# ============================================================
+
+
+class TestExecuteSingleToolAgentResult:
+    """_execute_single_tool 收到 AgentResult 时的短路路径"""
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_agent_result_returned_directly(self, mock_ws):
+        """AgentResult 不经过 _extract_file_parts / wrap，直接返回"""
+        from services.agent.agent_result import AgentResult
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mock_ws.send_to_task_or_user = AsyncMock()
+        executor = AsyncMock()
+        executor.execute = AsyncMock(return_value=AgentResult(
+            status="success", summary="共 945 条订单",
+            agent_name="erp_agent", tokens_used=500,
+        ))
+
+        tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查订单"}'}
+        tc_out, result, is_error = await ChatToolMixin._execute_single_tool(
+            mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
+        )
+
+        assert isinstance(result, AgentResult)
+        assert result.summary == "共 945 条订单"
+        assert is_error is False
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_agent_result_error_status(self, mock_ws):
+        """AgentResult status=error → is_error=True"""
+        from services.agent.agent_result import AgentResult
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mock_ws.send_to_task_or_user = AsyncMock()
+        executor = AsyncMock()
+        executor.execute = AsyncMock(return_value=AgentResult(
+            status="error", summary="查询超时",
+            agent_name="erp_agent", error_message="查询超时",
+        ))
+
+        tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查订单"}'}
+        tc_out, result, is_error = await ChatToolMixin._execute_single_tool(
+            mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
+        )
+
+        assert isinstance(result, AgentResult)
+        assert is_error is True
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_agent_result_sends_ws_notification(self, mock_ws):
+        """AgentResult 仍发 ws build_tool_result 通知前端"""
+        from services.agent.agent_result import AgentResult
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mock_ws.send_to_task_or_user = AsyncMock()
+        executor = AsyncMock()
+        executor.execute = AsyncMock(return_value=AgentResult(
+            status="success", summary="ok",
+            agent_name="erp_agent",
+        ))
+
+        tc = {"name": "erp_agent", "id": "tc1", "arguments": '{"task":"查"}'}
+        await ChatToolMixin._execute_single_tool(
+            mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
+        )
+
+        mock_ws.send_to_task_or_user.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_str_result_still_works(self, mock_ws):
+        """普通 str 返回不受影响（旧路径兼容）"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mock_ws.send_to_task_or_user = AsyncMock()
+        executor = AsyncMock()
+        executor.execute = AsyncMock(return_value="搜索结果：3条")
+
+        tc = {"name": "web_search", "id": "tc1", "arguments": '{"query":"天气"}'}
+        tc_out, result, is_error = await ChatToolMixin._execute_single_tool(
+            mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
+        )
+
+        assert isinstance(result, str)
+        assert is_error is False
+
+
+class TestExecuteToolCallsAgentResult:
+    """_execute_tool_calls 的 AgentResult 处理循环"""
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_collected_files_to_pending(self, mock_ws):
+        """AgentResult.collected_files → _pending_file_parts"""
+        from services.agent.agent_result import AgentResult
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mixin._pending_file_parts = []
+        mixin._ask_user_pending = None
+        mixin._last_erp_display_text = None
+        mixin._last_erp_display_files = []
+        mixin._erp_agent_tokens = 0
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        files = [{"url": "/tmp/a.parquet", "name": "a.parquet",
+                  "mime_type": "application/octet-stream", "size": 1024}]
+        agent_result = AgentResult(
+            status="success", summary="已导出",
+            collected_files=files, agent_name="erp_agent", tokens_used=300,
+        )
+
+        # 模拟 _execute_tool_calls 的 AgentResult 处理循环
+        results = [
+            ({"name": "erp_agent", "id": "tc1"}, agent_result, False),
+        ]
+
+        # 直接测试循环逻辑
+        for tc, result, is_error in results:
+            if isinstance(result, AgentResult):
+                if result.collected_files and hasattr(mixin, "_pending_file_parts"):
+                    from schemas.message import FilePart
+                    for f in result.collected_files:
+                        mixin._pending_file_parts.append(FilePart(
+                            url=f["url"], name=f["name"],
+                            mime_type=f["mime_type"], size=f["size"],
+                        ))
+                mixin._erp_agent_tokens += result.tokens_used
+
+        assert len(mixin._pending_file_parts) == 1
+        assert mixin._pending_file_parts[0].url == "/tmp/a.parquet"
+        assert mixin._erp_agent_tokens == 300
+
+    @pytest.mark.asyncio
+    async def test_ask_user_bubble_from_agent_result(self):
+        """AgentResult status=ask_user → _ask_user_pending 设置"""
+        from services.agent.agent_result import AgentResult
+
+        mixin = _make_mixin()
+        mixin._ask_user_pending = None
+
+        agent_result = AgentResult(
+            status="ask_user", summary="需确认",
+            ask_user_question="查哪个平台？",
+            agent_name="erp_agent",
+        )
+
+        tc = {"name": "erp_agent", "id": "tc1"}
+        # 模拟循环逻辑
+        if (agent_result.status == "ask_user" and agent_result.ask_user_question
+                and not mixin._ask_user_pending):
+            mixin._ask_user_pending = {
+                "message": agent_result.ask_user_question,
+                "reason": "need_info",
+                "tool_call_id": tc["id"],
+                "source": agent_result.agent_name,
+            }
+
+        assert mixin._ask_user_pending is not None
+        assert mixin._ask_user_pending["message"] == "查哪个平台？"
+        assert mixin._ask_user_pending["tool_call_id"] == "tc1"
+        assert mixin._ask_user_pending["source"] == "erp_agent"

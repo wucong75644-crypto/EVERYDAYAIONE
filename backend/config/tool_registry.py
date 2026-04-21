@@ -136,6 +136,16 @@ register(ToolEntry(
     priority=1,
 ))
 register(ToolEntry(
+    name="local_supplier_list",
+    domain="erp",
+    description="查询供应商列表（按分类分组）",
+    tags=[
+        "供应商", "供应商列表", "哪些供应商", "供应商联系方式",
+        "供应商编码", "几个供应商", "采购员", "供应商分类",
+    ],
+    priority=1,
+))
+register(ToolEntry(
     name="trigger_erp_sync",
     domain="erp",
     description="手动触发ERP数据同步",

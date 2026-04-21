@@ -32,6 +32,11 @@ _PII_SQL_MAP: dict[str, str] = {
         "THEN substr(receiver_phone, 1, 3) || '****' || substr(receiver_phone, -4) "
         "ELSE receiver_phone END AS receiver_phone"
     ),
+    "receiver_address": (
+        "CASE WHEN receiver_address IS NOT NULL AND length(receiver_address) >= 6 "
+        "THEN substr(receiver_address, 1, 6) || '****' "
+        "ELSE receiver_address END AS receiver_address"
+    ),
 }
 
 
@@ -134,13 +139,3 @@ def resolve_export_path(
 
     return staging_dir, rel_path, staging_path, filename
 
-
-# ── 预览 ─────────────────────────────────────────────
-
-
-def read_parquet_preview(path: Path, n: int = 3) -> str:
-    """从 Parquet 文件只读前 N 行预览（不加载全量数据）。"""
-    import pyarrow.parquet as pq
-    pf = pq.ParquetFile(path)
-    table = pf.read_row_group(0).slice(0, n)
-    return table.to_pandas().to_string(index=False, max_colwidth=30)

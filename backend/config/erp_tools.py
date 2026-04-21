@@ -269,7 +269,7 @@ ERP_ROUTING_PROMPT = (
     "- **local_stock_query**：库存查询（不同表，不走 local_data）\n"
     "- **local_product_stats**：商品维度统计报表（预聚合表，按编码+时间段）\n"
     "- **local_platform_map_query**：编码↔平台映射\n"
-    "- **local_shop_list / local_warehouse_list**：店铺/仓库列表\n"
+    "- **local_shop_list / local_warehouse_list / local_supplier_list**：店铺/仓库/供应商列表\n"
     "- **trigger_erp_sync**：手动触发数据同步\n"
     "- **fetch_all_pages**：本地没有的数据（如物流轨迹）全量翻页拉取\n"
     "- **erp_* 远程工具**：物流轨迹、操作日志、仓库操作、写入操作\n"

@@ -170,7 +170,39 @@ class KieChatAdapter(BaseChatAdapter):
             content = msg.get("content", "")
             attachments = msg.get("attachments", [])
 
-            if attachments:
+            if isinstance(content, list):
+                # 结构化 content block（AgentResult.to_message_content()）→ KIE 格式
+                parts = []
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    btype = block.get("type", "")
+                    if btype == "text":
+                        parts.append(ChatContentPart(type="text", text=block.get("text", "")))
+                    elif btype == "file_ref":
+                        ref = block.get("file_ref", {})
+                        parts.append(ChatContentPart(
+                            type="text",
+                            text=f"[文件: {ref.get('path','')} | {ref.get('rows',0)}行 | {ref.get('format','')}]",
+                        ))
+                    elif btype == "data":
+                        d = block.get("data", {})
+                        cols = ", ".join(d.get("columns", []))
+                        parts.append(ChatContentPart(
+                            type="text",
+                            text=f"[数据: {d.get('rows',0)}行 | 列: {cols}]",
+                        ))
+                    elif btype == "insights":
+                        items = block.get("insights", [])
+                        parts.append(ChatContentPart(
+                            type="text",
+                            text="分析洞察：\n" + "\n".join(f"· {i}" for i in items),
+                        ))
+                messages.append(ChatMessage(
+                    role=role,
+                    content=parts if parts else "",
+                ))
+            elif attachments:
                 # 提取媒体 URL
                 media_urls = [
                     att.get("url") or att.get("data")

@@ -662,7 +662,7 @@ class TestDepartmentAgentBase:
 
     @pytest.mark.asyncio
     async def test_execute_degraded_notice_shown(self):
-        """降级路径 _degraded=True 时结果前缀加简化查询模式提示"""
+        """降级路径 _degraded=True 时 metadata 标记（v6: 纯结构化，无文本前缀）"""
         from services.agent.department_types import ValidationResult
         agent = _make_warehouse()
         mock_output = ToolOutput(summary="库存数据", source="warehouse")
@@ -676,8 +676,9 @@ class TestDepartmentAgentBase:
                 "time_range": "2026-04-17 ~ 2026-04-17",
                 "_degraded": True,
             })
-            assert "简化查询模式" in result.summary
-            assert "库存数据" in result.summary
+            # v6: 不再拼文本前缀，改为 metadata 标记
+            assert result.metadata.get("_degraded") is True
+            assert result.summary == "库存数据"
 
     # ── _build_output + FIELD_MAP ──
 
@@ -693,12 +694,10 @@ class TestDepartmentAgentBase:
         ]
         result = agent._build_output(rows, "库存查询完成", cols)
 
-        # FIELD_MAP 映射：outer_id → product_code
-        assert result.format == OutputFormat.TABLE
+        # v6: 无 staging_dir → TEXT 摘要（无 inline data）
+        assert result.format == OutputFormat.TEXT
         assert result.source == "warehouse"
-        assert result.data[0]["product_code"] == "A001"
-        assert "outer_id" not in result.data[0]
-        # columns 同步映射
+        # columns 同步映射（FIELD_MAP 仍然生效）
         col_names = [c.name for c in result.columns]
         assert "product_code" in col_names
         assert "outer_id" not in col_names
@@ -712,8 +711,10 @@ class TestDepartmentAgentBase:
             ColumnMeta("warehouse_id", "text"),
         ]
         result = agent._build_output(rows, "OK", cols)
-        assert "product_code" in result.data[0]
-        assert "warehouse_id" in result.data[0]
+        # v6: 无 staging_dir → TEXT，columns 仍有映射
+        col_names = [c.name for c in result.columns]
+        assert "product_code" in col_names
+        assert "warehouse_id" in col_names
 
     def test_build_output_metadata(self):
         agent = _make_warehouse()
@@ -733,18 +734,18 @@ class TestDepartmentAgentBase:
             status=OutputStatus.EMPTY,
         )
         assert result.status == OutputStatus.EMPTY
-        assert result.data == []
+        # v6: 无 staging → TEXT，data 为 None
+        assert result.format == OutputFormat.TEXT
 
-    def test_build_output_over_threshold_no_staging_fallback(self):
-        """超过200行但没有 staging_dir → 降级为内联"""
+    def test_build_output_no_staging_fallback_to_text(self):
+        """无 staging_dir → 降级为 TEXT 摘要"""
         agent = _make_warehouse()
         rows = [{"x": i} for i in range(250)]
         result = agent._build_output(
             rows, "OK",
             [ColumnMeta("x", "integer")],
         )
-        assert result.format == OutputFormat.TABLE
-        assert len(result.data) == 250
+        assert result.format == OutputFormat.TEXT
 
     def test_build_output_over_threshold_with_staging(self, tmp_path):
         """超过200行 + staging_dir → FILE_REF"""

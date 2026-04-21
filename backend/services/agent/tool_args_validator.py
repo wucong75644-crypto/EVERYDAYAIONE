@@ -52,6 +52,11 @@ def validate_tool_args(
     properties = schema.get("properties", {})
     required = set(schema.get("required", []))
 
+    # ── 0. 旧参数迁移（向后兼容协议升级）──
+    # erp_agent: query → task（通信协议结构化，§2.1）
+    if tool_name == "erp_agent" and "query" in args and "task" not in args:
+        args = {**args, "task": args.pop("query")}
+
     # ── 1. 过滤幻觉参数：只保留 schema 中声明的 key ──
     valid_keys = set(properties.keys())
     hallucinated = set(args.keys()) - valid_keys

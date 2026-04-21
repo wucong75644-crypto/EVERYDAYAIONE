@@ -34,6 +34,7 @@ class PurchaseAgent(DepartmentAgent):
         return [
             "local_data",
             "erp_purchase_query",
+            "local_supplier_list",
         ]
 
     @property

@@ -405,8 +405,8 @@ class TestFormatFunctions:
             {"group_key": "jd", "doc_count": 3, "total_qty": 10, "total_amount": 2000},
         ]
         result = fmt_summary_grouped(data, "platform", "订单", "今天")
-        assert "tb" in result
-        assert "jd" in result
+        assert "淘宝" in result
+        assert "京东" in result
         assert "8笔" in result  # 总计
 
     def test_generate_field_doc(self):
@@ -568,12 +568,11 @@ class TestExecuteFieldsWhitelist:
     """
 
     def test_export_only_field_accepted(self):
-        """remark 不在 COLUMN_WHITELIST 但在 EXPORT_COLUMN_NAMES，应保留"""
+        """remark 在 COLUMN_WHITELIST 和 EXPORT_COLUMN_NAMES 中，应保留"""
         from services.kuaimai.erp_unified_schema import (
             COLUMN_WHITELIST, EXPORT_COLUMN_NAMES,
         )
-        # 确认 remark 只在 EXPORT 不在 WHITELIST
-        assert "remark" not in COLUMN_WHITELIST
+        assert "remark" in COLUMN_WHITELIST
         assert "remark" in EXPORT_COLUMN_NAMES
 
         # 模拟 execute 的 fields 校验逻辑
@@ -584,11 +583,11 @@ class TestExecuteFieldsWhitelist:
         assert "doc_code" in result
 
     def test_buyer_message_accepted(self):
-        """buyer_message 在 EXPORT_COLUMN_NAMES 中"""
+        """buyer_message 在 COLUMN_WHITELIST 和 EXPORT_COLUMN_NAMES 中"""
         from services.kuaimai.erp_unified_schema import (
             COLUMN_WHITELIST, EXPORT_COLUMN_NAMES,
         )
-        assert "buyer_message" not in COLUMN_WHITELIST
+        assert "buyer_message" in COLUMN_WHITELIST
         assert "buyer_message" in EXPORT_COLUMN_NAMES
 
     def test_receiver_address_accepted(self):

@@ -118,7 +118,7 @@ class ToolLoopExecutor:
                 break
 
             try:
-                tc_acc, turn_text, turn_tokens = await self._stream_one_turn(
+                tc_acc, turn_text, turn_tokens, _pt, _ct = await self._stream_one_turn(
                     messages, selected_tools,
                 )
             except Exception as stream_err:
@@ -152,6 +152,7 @@ class ToolLoopExecutor:
 
             accumulated_text = await self._execute_tools(
                 completed, selected_tools, turn_text, hook_ctx,
+                turn_prompt_tokens=_pt, turn_completion_tokens=_ct,
             )
 
             # 退出信号工具命中
@@ -336,14 +337,16 @@ class ToolLoopExecutor:
         self,
         messages: List[Dict[str, Any]],
         selected_tools: List[Dict[str, Any]],
-    ) -> Tuple[Dict[int, Dict[str, Any]], str, int]:
+    ) -> Tuple[Dict[int, Dict[str, Any]], str, int, int, int]:
         """流式调用 LLM 一轮，聚合 tool_calls + content + tokens。
 
-        返回 (tc_acc, turn_text, turn_tokens)。异常由调用方捕获处理。
+        返回 (tc_acc, turn_text, turn_tokens, prompt_tokens, completion_tokens)。
         """
         tc_acc: Dict[int, Dict[str, Any]] = {}
         turn_text = ""
         turn_tokens = 0
+        _prompt_tokens = 0
+        _completion_tokens = 0
 
         async for chunk in self.adapter.stream_chat(
             messages=messages, tools=selected_tools, temperature=0.1,
@@ -364,12 +367,11 @@ class ToolLoopExecutor:
                     if tc_delta.arguments_delta:
                         entry["arguments"] += tc_delta.arguments_delta
             if chunk.prompt_tokens or chunk.completion_tokens:
-                turn_tokens = (
-                    (chunk.prompt_tokens or 0)
-                    + (chunk.completion_tokens or 0)
-                )
+                _prompt_tokens = chunk.prompt_tokens or 0
+                _completion_tokens = chunk.completion_tokens or 0
+                turn_tokens = _prompt_tokens + _completion_tokens
 
-        return tc_acc, turn_text, turn_tokens
+        return tc_acc, turn_text, turn_tokens, _prompt_tokens, _completion_tokens
 
     # ========================================
     # 写操作确认（Phase 3 B5）
@@ -452,6 +454,8 @@ class ToolLoopExecutor:
         selected_tools: List[Dict[str, Any]],
         turn_text: str,
         hook_ctx: HookContext,
+        turn_prompt_tokens: int = 0,
+        turn_completion_tokens: int = 0,
     ) -> str:
         """执行一轮工具调用（含退出信号短路、缓存、超时、hook 触发、自动扩展）"""
         messages = hook_ctx.messages
@@ -548,6 +552,13 @@ class ToolLoopExecutor:
             now_iso = datetime.now(timezone.utc).isoformat()
 
             if isinstance(result, ToolOutput):
+                # v6: 校验 ToolOutput 内部一致性（warn 不阻断）
+                _warnings = result.validate()
+                if _warnings:
+                    logger.warning(
+                        f"ToolOutput validation | tool={tool_name} | "
+                        f"issues={_warnings}",
+                    )
                 # 结构化输出：转文本给 LLM + 注册文件 + 注入 timestamp
                 content = result.to_message_content()
                 is_truncated = False  # ToolOutput 已结构化，不截断
@@ -580,10 +591,11 @@ class ToolLoopExecutor:
                         lambda m: f"📎 文件: {m.group('name')}", result,
                     )
 
-                # 截断防爆
+                # 截断防爆（v6: budget 感知紧张度）
                 from services.agent.tool_result_envelope import wrap_for_erp_agent
                 is_truncated = len(result) > 3000 if result else False
-                result = wrap_for_erp_agent(tool_name, result)
+                _tight = hook_ctx.budget.is_tight if hook_ctx.budget else False
+                result = wrap_for_erp_agent(tool_name, result, tight=_tight)
 
                 messages.append({
                     "role": "tool",
@@ -599,6 +611,8 @@ class ToolLoopExecutor:
                     hook_ctx, tool_name, args, result,
                     audit_status, elapsed_ms,
                     is_cached, is_truncated, tc["id"],
+                    turn_prompt_tokens=turn_prompt_tokens,
+                    turn_completion_tokens=turn_completion_tokens,
                 )
 
             # ── 打断检查点：用户在工具执行期间发了新消息 ──

@@ -421,3 +421,75 @@ class TestAmbiguityDetectionHook:
             "", "success", 50, False, False, "tc_001",
         )
         assert len(ctx.messages) == 0
+
+
+# ════════════════════════════════════════════════════════
+# v6: ToolAuditHook token + trace_id 传递
+# ════════════════════════════════════════════════════════
+
+
+class TestToolAuditHookV6:
+    """v6: on_tool_end 传递 turn_prompt_tokens/completion_tokens + trace_id"""
+
+    @pytest.mark.asyncio
+    async def test_token_and_trace_passed_to_entry(self):
+        """turn_prompt_tokens/completion_tokens 传入 ToolAuditEntry"""
+        from services.agent.observability import set_trace_id
+        set_trace_id("trace_v6_test")
+
+        hook = ToolAuditHook()
+        ctx = make_ctx(task_id="task_v6")
+
+        captured_entry = None
+        original_create_task = asyncio.create_task
+
+        async def capture_record(db, entry):
+            nonlocal captured_entry
+            captured_entry = entry
+
+        with patch(
+            "services.agent.tool_audit.record_tool_audit",
+            new=capture_record,
+        ):
+            await hook.on_tool_end(
+                ctx, "erp_agent", {"query": "test"},
+                "result", "success", 300, False, False, "tc_v6",
+                turn_prompt_tokens=1500,
+                turn_completion_tokens=400,
+            )
+            # 让 create_task 创建的协程有机会执行
+            await asyncio.sleep(0.01)
+
+        assert captured_entry is not None
+        assert captured_entry.prompt_tokens == 1500
+        assert captured_entry.completion_tokens == 400
+        assert captured_entry.trace_id == "trace_v6_test"
+        set_trace_id("")
+
+    @pytest.mark.asyncio
+    async def test_kwargs_backward_compatible(self):
+        """旧调用方式（不传 token）不报错"""
+        hook = ToolAuditHook()
+        ctx = make_ctx(task_id="task_compat")
+
+        with patch(
+            "services.agent.tool_audit.record_tool_audit",
+            new_callable=AsyncMock,
+        ), patch("asyncio.create_task"):
+            # 不传 turn_prompt_tokens — 向后兼容
+            await hook.on_tool_end(
+                ctx, "local_data", {}, "result",
+                "success", 100, False, False, "tc_old",
+            )  # 不报错
+
+    @pytest.mark.asyncio
+    async def test_other_hooks_accept_kwargs(self):
+        """FailureReflectionHook 等接受 **kwargs 不报错"""
+        from services.agent.loop_hooks import FailureReflectionHook
+        hook = FailureReflectionHook()
+        ctx = make_ctx()
+        # 传入 v6 新参数，不应报 TypeError
+        await hook.on_tool_end(
+            ctx, "test", {}, "result", "success", 100, False, False, "tc1",
+            turn_prompt_tokens=500, turn_completion_tokens=200,
+        )

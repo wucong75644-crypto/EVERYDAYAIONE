@@ -138,13 +138,23 @@ class ChatGenerateMixin:
                     "wecom_msg", user_id, turn + 1, messages=messages,
                     budget=_budget,
                 )
-                for tc, result_text, is_error in tool_results:
+                from services.agent.agent_result import AgentResult
+                for tc, result, is_error in tool_results:
+                    if isinstance(result, AgentResult):
+                        content = result.to_message_content()
+                        tool_context.update_from_result(
+                            tc["name"], result.summary, is_error,
+                        )
+                    else:
+                        content = result
+                        tool_context.update_from_result(
+                            tc["name"], result, is_error,
+                        )
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
-                        "content": result_text,
+                        "content": content,
                     })
-                    tool_context.update_from_result(tc["name"], result_text, is_error)
 
                 # 层4+5: 旧工具结果归档 + 循环内摘要
                 from services.handlers.context_compressor import (

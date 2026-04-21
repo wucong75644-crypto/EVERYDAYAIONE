@@ -36,6 +36,10 @@ class ToolAuditEntry:
     status: str             # success / timeout / error
     is_cached: bool = False
     is_truncated: bool = False
+    # v6: 可观测性扩展
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    trace_id: str = ""
 
 
 def build_args_hash(args: Dict[str, Any]) -> str:

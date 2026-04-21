@@ -28,7 +28,6 @@ from services.kuaimai.erp_duckdb_helpers import (
     build_pii_select,
     build_export_where,
     resolve_export_path,
-    read_parquet_preview,
 )
 from services.kuaimai.erp_unified_schema import TimeRange, ValidatedFilter
 
@@ -257,47 +256,4 @@ class TestResolveExportPath:
             assert staging_dir.exists()
 
 
-# ── read_parquet_preview 测试 ────────────────────────
-
-
-class TestReadParquetPreview:
-
-    def _create_test_parquet(self, n_rows: int = 10) -> Path:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-        tmp = Path(tempfile.mktemp(suffix=".parquet"))
-        table = pa.table({
-            "order_no": [f"TB{i}" for i in range(n_rows)],
-            "amount": [float(i * 100) for i in range(n_rows)],
-        })
-        pq.write_table(table, tmp)
-        return tmp
-
-    def test_returns_n_rows(self):
-        path = self._create_test_parquet(10)
-        try:
-            result = read_parquet_preview(path, n=3)
-            lines = [l for l in result.strip().split("\n") if l.strip()]
-            # 1 header + 3 data rows
-            assert len(lines) == 4
-            assert "TB0" in result
-            assert "TB2" in result
-        finally:
-            path.unlink()
-
-    def test_fewer_rows_than_requested(self):
-        path = self._create_test_parquet(2)
-        try:
-            result = read_parquet_preview(path, n=10)
-            lines = [l for l in result.strip().split("\n") if l.strip()]
-            assert len(lines) == 3  # 1 header + 2 data rows
-        finally:
-            path.unlink()
-
-    def test_single_row(self):
-        path = self._create_test_parquet(1)
-        try:
-            result = read_parquet_preview(path, n=1)
-            assert "TB0" in result
-        finally:
-            path.unlink()
+# v6: read_parquet_preview 已删除，功能由 build_profile_from_duckdb 替代

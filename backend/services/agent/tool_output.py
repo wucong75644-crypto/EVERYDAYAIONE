@@ -12,10 +12,23 @@ from __future__ import annotations
 
 import json
 import time as _time
+import uuid as _uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+
+# ============================================================
+# FileRef MIME 类型映射
+# ============================================================
+
+_FORMAT_MIME: dict[str, str] = {
+    "parquet": "application/x-parquet",
+    "csv": "text/csv",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "json": "application/json",
+}
 
 
 # ============================================================
@@ -74,12 +87,23 @@ class FileRef:
     columns: list[ColumnMeta]       # 完整列元信息（名称+类型+中文标签）
     preview: str = ""               # 前3行预览文本
     created_at: float = 0.0         # 创建时间戳（Unix epoch）
+    # ── v6 新增字段（均有默认值，向后兼容）──
+    id: str = ""                    # UUID 全局唯一（跨工具引用）
+    mime_type: str = ""             # 显式 MIME（不靠 format 推断）
+    created_by: str = ""            # 哪个 agent/工具创建
+    ttl_seconds: int = 86400        # 文件有效期（秒），导出可设 172800
+    derived_from: tuple[str, ...] = ()  # v6: 血缘追踪（输入 artifact id 列表）
 
-    def is_valid(self, max_age_seconds: int = 86400) -> bool:
-        """检查文件是否仍然有效（存在 + 未过期）。"""
+    def is_valid(self, max_age_seconds: int = 0) -> bool:
+        """检查文件是否仍然有效（存在 + 未过期）。
+
+        max_age_seconds 为 0 时读 self.ttl_seconds（v6 行为）；
+        传入非零值则用传入值（向后兼容旧调用方）。
+        """
         if not Path(self.path).exists():
             return False
-        if self.created_at and (_time.time() - self.created_at) > max_age_seconds:
+        ttl = max_age_seconds or self.ttl_seconds
+        if self.created_at and ttl and (_time.time() - self.created_at) > ttl:
             return False
         return True
 
@@ -118,6 +142,41 @@ class ToolOutput:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     # ----------------------------------------------------------
+    # 校验（v6 新增）
+    # ----------------------------------------------------------
+
+    _valid_cache: dict[str, bool] = field(
+        default_factory=dict, repr=False, compare=False,
+    )
+
+    def validate(self) -> list[str]:
+        """校验 ToolOutput 内部一致性，返回违规项列表（空=有效）。
+
+        规则：
+        1. summary 非空
+        2. FILE_REF 格式必须有 file_ref
+        3. TABLE 格式必须有 columns
+        4. ERROR 状态必须有 error_message
+        5. file_ref 存在时检查 is_valid()（首次调用后缓存）
+        """
+        issues: list[str] = []
+        if not self.summary:
+            issues.append("summary 为空")
+        if self.format == OutputFormat.FILE_REF and not self.file_ref:
+            issues.append("FILE_REF 格式但缺少 file_ref")
+        if self.format == OutputFormat.TABLE and not self.columns:
+            issues.append("TABLE 格式但缺少 columns")
+        if self.status == OutputStatus.ERROR and not self.error_message:
+            issues.append("ERROR 状态但缺少 error_message")
+        if self.file_ref:
+            cache_key = self.file_ref.path
+            if cache_key not in self._valid_cache:
+                self._valid_cache[cache_key] = self.file_ref.is_valid()
+            if not self._valid_cache[cache_key]:
+                issues.append(f"file_ref 无效: {self.file_ref.path}")
+        return issues
+
+    # ----------------------------------------------------------
     # 序列化方法
     # ----------------------------------------------------------
 
@@ -152,7 +211,11 @@ class ToolOutput:
         # ── 动态字段（全走 metadata，Agent 自己决定放什么）──
         for key, val in self.metadata.items():
             if val is not None and val != "":
-                tag_lines.append(f"{key}: {val}")
+                # v6: dict/list 用 JSON 序列化（避免 Python literal 格式）
+                if isinstance(val, (dict, list)):
+                    tag_lines.append(f"{key}: {json.dumps(val, ensure_ascii=False)}")
+                else:
+                    tag_lines.append(f"{key}: {val}")
 
         # ── 列信息（必填：有 DATA_REF 就必须有 columns）──
         cols = self.columns or (self.file_ref.columns if self.file_ref else None)

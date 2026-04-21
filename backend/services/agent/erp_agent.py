@@ -19,11 +19,20 @@ from loguru import logger
 if TYPE_CHECKING:
     from utils.time_context import RequestContext
 
-from services.agent.erp_agent_types import ERPAgentResult
+from services.agent.agent_result import AgentResult
+from services.agent.erp_agent_types import ERPAgentResult  # 向后兼容，Phase 6 删除
 
 
 # 有效数据域（不含 compute，计算由主 Agent 的 code_execute 负责）
 _VALID_DOMAINS = frozenset({"warehouse", "purchase", "trade", "aftersale"})
+
+
+def _error_result(summary: str, status: str = "error") -> AgentResult:
+    """构建错误/异常 AgentResult 的快捷方式。"""
+    return AgentResult(
+        status=status, summary=summary,
+        agent_name="erp_agent", error_message=summary,
+    )
 
 
 class ERPAgent:
@@ -37,12 +46,14 @@ class ERPAgent:
         org_id: str,
         task_id: Optional[str] = None,
         request_ctx: Optional["RequestContext"] = None,
+        budget: Optional["ExecutionBudget"] = None,
     ) -> None:
         self.db = db
         self.user_id = user_id
         self.conversation_id = conversation_id
         self.org_id = org_id
         self.task_id = task_id
+        self._budget = budget  # v6: 显式参数替代属性注入
         from utils.time_context import RequestContext
         self.request_ctx = request_ctx or RequestContext.build(
             user_id=user_id, org_id=org_id, request_id=task_id or "",
@@ -53,21 +64,40 @@ class ERPAgent:
 
     async def execute(
         self,
-        query: str,
-        **_kwargs: Any,
-    ) -> ERPAgentResult:
+        task: str,
+        conversation_context: str = "",
+    ) -> AgentResult:
         """执行 ERP 单域查询。
 
-        **_kwargs 兼容旧调用方传 parent_messages（已无用，不报错）。
+        Args:
+            task: 主 Agent 整理好的清晰任务描述
+            conversation_context: 对话背景补充（可选）
         """
+        # 合并为完整查询上下文
+        query = task
+        if conversation_context:
+            query = f"{task}\n（背景：{conversation_context}）"
+
+        # v6: Langfuse span
+        from services.agent.observability.langfuse_integration import (
+            create_trace, create_span,
+        )
+        create_span(
+            create_trace(name="erp_agent", user_id=self.user_id),
+            name="erp_agent.execute",
+            metadata={"task": task[:200], "has_context": bool(conversation_context)},
+        )
+
         if not self.org_id:
-            return ERPAgentResult(
-                text="当前账号未开通 ERP 功能，请联系管理员配置企业账号。",
-                status="error",
-            )
+            return _error_result("当前账号未开通 ERP 功能，请联系管理员配置企业账号。")
 
         from core.config import get_settings
-        _timeout = get_settings().dag_global_timeout
+        _cfg_timeout = get_settings().dag_global_timeout
+        # v6: budget.remaining 约束超时（取较小值）
+        _timeout = (
+            min(self._budget.remaining, _cfg_timeout)
+            if self._budget else _cfg_timeout
+        )
         _deadline = _time.monotonic() + _timeout
         try:
             return await asyncio.wait_for(
@@ -75,32 +105,27 @@ class ERPAgent:
                 timeout=_timeout,
             )
         except asyncio.TimeoutError:
-            return ERPAgentResult(
-                text=f"查询超时（{_timeout:.0f}秒），请缩小查询范围后重试",
-                status="error",
+            return _error_result(
+                f"查询超时（{_timeout:.0f}秒），请缩小查询范围后重试",
+                status="timeout",
             )
 
     # ── 单域执行主流程 ──
 
     async def _execute(
         self, query: str, deadline: float,
-    ) -> ERPAgentResult:
+    ) -> AgentResult:
         """参数提取 → 准入校验 → 实例化单个 Agent → 执行 → 结果处理。"""
         # ── Step 1: 参数提取（三级降级链）──
         extract_result = await self._extract_params(query)
         if extract_result is None:
-            return ERPAgentResult(
-                text="无法理解您的请求，请更具体地描述您要查询的内容",
-                status="error",
-            )
+            return _error_result("无法理解您的请求，请更具体地描述您要查询的内容")
         domain, params, degraded = extract_result
 
         # ── Step 2: 域白名单校验 ──
         if domain not in _VALID_DOMAINS:
-            return ERPAgentResult(
-                text=f"不支持的查询域 '{domain}'，"
-                     f"可查询：库存/采购/订单/售后",
-                status="error",
+            return _error_result(
+                f"不支持的查询域 '{domain}'，可查询：库存/采购/订单/售后",
             )
 
         # ── Step 3: 准入校验（DB 验证 product_code / order_no）──
@@ -112,18 +137,12 @@ class ERPAgent:
         # ── Step 4: 实例化单个 DepartmentAgent ──
         agent = self._create_agent(domain)
         if agent is None:
-            return ERPAgentResult(
-                text=f"域 '{domain}' 无对应 Agent",
-                status="error",
-            )
+            return _error_result(f"域 '{domain}' 无对应 Agent")
 
         # ── Step 5: 执行查询（带 deadline 协调）──
         remaining = deadline - _time.monotonic()
         if remaining < 5.0:
-            return ERPAgentResult(
-                text="查询预算不足，请缩小查询范围后重试",
-                status="error",
-            )
+            return _error_result("查询预算不足，请缩小查询范围后重试")
 
         task_desc = query[:50]
         logger.info(
@@ -137,10 +156,20 @@ class ERPAgent:
                 timeout=min(remaining, 30.0),
             )
         except asyncio.TimeoutError:
+            # v6: 超时时检查子 Agent 是否有 partial 数据
+            partial = getattr(agent, "_partial_rows", [])
+            if partial:
+                logger.warning(
+                    f"ERPAgent {domain} timeout with {len(partial)} partial rows",
+                )
+                return _error_result(
+                    f"{domain} 查询超时，返回已获取的 {len(partial)} 条部分数据",
+                    status="partial",
+                )
             logger.warning(f"ERPAgent {domain} timeout")
-            return ERPAgentResult(
-                text=f"{domain} 查询超时，请缩小查询范围后重试",
-                status="error",
+            return _error_result(
+                f"{domain} 查询超时，请缩小查询范围后重试",
+                status="timeout",
             )
         except Exception as e:
             logger.opt(exception=True).error(
@@ -153,10 +182,7 @@ class ERPAgent:
                 str(e) if is_known
                 else f"内部错误，请联系管理员（{type(e).__name__}）"
             )
-            return ERPAgentResult(
-                text=f"{domain} 执行异常: {error_msg}",
-                status="error",
-            )
+            return _error_result(f"{domain} 执行异常: {error_msg}")
 
         # ── Step 6+7: 结果处理 + 后处理 ──
         return self._build_result(result, query, domain, degraded, params)
@@ -166,14 +192,15 @@ class ERPAgent:
     def _build_result(
         self, result: Any, query: str, domain: str, degraded: bool,
         params: dict | None = None,
-    ) -> ERPAgentResult:
-        """Step 6+7: 文件注册 + 降级标记 + 经验记录 → ERPAgentResult。"""
-        from services.agent.tool_output import OutputStatus
+    ) -> "AgentResult":
+        """Step 6+7: 文件注册 + 降级标记 + 经验记录 → AgentResult。"""
+        from services.agent.agent_result import AgentResult
+        from services.agent.tool_output import OutputStatus, OutputFormat
 
         summary = result.summary or ""
         collected_files: list[dict[str, Any]] = []
 
-        # file_ref 注册到 SessionFileRegistry
+        # ① SessionFileRegistry 注册（沙盒 read_file 依赖）
         if result.file_ref:
             from services.agent.session_file_registry import SessionFileRegistry
             registry = SessionFileRegistry()
@@ -181,16 +208,13 @@ class ERPAgent:
             collected_files.append({
                 "url": result.file_ref.path,
                 "name": result.file_ref.filename,
-                "mime_type": "application/octet-stream",
+                "mime_type": result.file_ref.mime_type or "application/octet-stream",
                 "size": result.file_ref.size_bytes,
             })
+            # ② staging 延迟清理
             asyncio.create_task(self._cleanup_staging_delayed())
 
-        # 降级标记
-        if degraded:
-            summary = "⚠ 简化查询模式（关键词匹配，非AI分析）\n\n" + summary
-
-        # 经验记录（detail 含关键参数，供动态案例召回使用）
+        # ③ 经验记录（detail 含关键参数，供动态案例召回使用）
         if result.status == OutputStatus.ERROR:
             asyncio.create_task(self._experience.record(
                 "failure", query, [domain],
@@ -203,11 +227,19 @@ class ERPAgent:
                 detail, confidence=0.6,
             ))
 
+        # ④ 构建 AgentResult（通信协议标准输出）
         status = "error" if result.status == OutputStatus.ERROR else "success"
-        return ERPAgentResult(
-            text=summary, full_text=summary,
-            status=status, tokens_used=self._tokens_used,
-            tools_called=[domain], collected_files=collected_files,
+        return AgentResult(
+            status=status,
+            summary=summary,
+            file_ref=result.file_ref,
+            data=result.data if result.format == OutputFormat.TABLE else None,
+            columns=result.columns,
+            collected_files=collected_files or None,
+            agent_name="erp_agent",
+            tokens_used=self._tokens_used,
+            confidence=0.6 if degraded else 1.0,
+            error_message=summary if status == "error" else "",
         )
 
     @staticmethod
@@ -445,10 +477,13 @@ class ERPAgent:
         except Exception as e:
             logger.warning(f"resolve staging_dir failed: {e}")
 
+        # v6: 传 budget.fork() 给子 Agent
+        child_budget = self._budget.fork(max_turns=5) if self._budget else None
         return cls(
             db=self.db, org_id=self.org_id,
             request_ctx=self.request_ctx,
             staging_dir=staging_dir,
+            budget=child_budget,
         )
 
     async def _cleanup_staging_delayed(self, delay: int = 900) -> None:

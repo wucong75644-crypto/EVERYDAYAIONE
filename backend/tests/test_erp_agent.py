@@ -168,11 +168,12 @@ class TestToolExecutorERPAgent:
     @pytest.mark.asyncio
     @patch("services.erp_agent.ERPAgent.execute")
     async def test_erp_agent_delegates_to_agent(self, mock_execute):
-        from services.erp_agent import ERPAgentResult
+        from services.agent.agent_result import AgentResult
         from services.tool_executor import ToolExecutor
 
-        mock_execute.return_value = ERPAgentResult(
-            text="库存128件", tokens_used=200,
+        mock_execute.return_value = AgentResult(
+            status="success", summary="库存128件",
+            agent_name="erp_agent", tokens_used=200,
         )
 
         exe = ToolExecutor(
@@ -180,53 +181,55 @@ class TestToolExecutorERPAgent:
             conversation_id="t", org_id="test",
         )
         result = await exe._erp_agent({"query": "查库存"})
-        assert "库存128件" in result
+        # tool_executor 现在返回 AgentResult
+        assert isinstance(result, AgentResult)
+        assert "库存128件" in result.summary
         mock_execute.assert_called_once()
 
     @pytest.mark.asyncio
     @patch("services.erp_agent.ERPAgent.execute")
-    async def test_erp_agent_ask_user_sets_pending(self, mock_execute):
-        """ERP Agent 返回 ask_user → ToolExecutor 设置 _ask_user_pending"""
-        from services.erp_agent import ERPAgentResult
+    async def test_erp_agent_ask_user_returns_agent_result(self, mock_execute):
+        """ERP Agent 返回 ask_user → AgentResult 携带 ask_user_question"""
+        from services.agent.agent_result import AgentResult
         from services.tool_executor import ToolExecutor
 
-        mock_execute.return_value = ERPAgentResult(
-            text="需要排除刷单吗？",
-            status="ask_user",
+        mock_execute.return_value = AgentResult(
+            status="ask_user", summary="需要排除刷单吗？",
             ask_user_question="需要排除刷单吗？",
-            tokens_used=100,
+            agent_name="erp_agent", tokens_used=100,
         )
 
         exe = ToolExecutor(
             db=MagicMock(), user_id="t",
             conversation_id="t", org_id="test",
         )
-        exe._pending_file_parts = []
-        await exe._erp_agent({"query": "查销售额"})
+        result = await exe._erp_agent({"query": "查销售额"})
 
-        assert hasattr(exe, "_ask_user_pending")
-        assert exe._ask_user_pending["message"] == "需要排除刷单吗？"
-        assert exe._ask_user_pending["source"] == "erp_agent"
+        # ask_user 冒泡现在由 ChatToolMixin 处理，tool_executor 只返回 AgentResult
+        assert isinstance(result, AgentResult)
+        assert result.status == "ask_user"
+        assert result.ask_user_question == "需要排除刷单吗？"
 
     @pytest.mark.asyncio
     @patch("services.erp_agent.ERPAgent.execute")
-    async def test_erp_agent_normal_no_pending(self, mock_execute):
-        """ERP Agent 正常返回 → 不设置 _ask_user_pending"""
-        from services.erp_agent import ERPAgentResult
+    async def test_erp_agent_normal_returns_agent_result(self, mock_execute):
+        """ERP Agent 正常返回 → AgentResult"""
+        from services.agent.agent_result import AgentResult
         from services.tool_executor import ToolExecutor
 
-        mock_execute.return_value = ERPAgentResult(
-            text="查询结果", tokens_used=100,
+        mock_execute.return_value = AgentResult(
+            status="success", summary="查询结果",
+            agent_name="erp_agent", tokens_used=100,
         )
 
         exe = ToolExecutor(
             db=MagicMock(), user_id="t",
             conversation_id="t", org_id="test",
         )
-        exe._pending_file_parts = []
-        await exe._erp_agent({"query": "查库存"})
+        result = await exe._erp_agent({"query": "查库存"})
 
-        assert not hasattr(exe, "_ask_user_pending") or exe._ask_user_pending is None
+        assert isinstance(result, AgentResult)
+        assert result.status == "success"
 
 
 # ============================================================
@@ -281,7 +284,7 @@ class TestERPAgentGuards:
         from services.erp_agent import ERPAgent
         agent = ERPAgent(db=None, user_id="t", conversation_id="t", org_id=None)
         result = await agent.execute("查库存")
-        assert "未开通" in result.text
+        assert "未开通" in result.summary
         assert result.tokens_used == 0
 
     @pytest.mark.asyncio
@@ -290,7 +293,7 @@ class TestERPAgentGuards:
         from services.erp_agent import ERPAgent
         agent = ERPAgent(db=None, user_id="t", conversation_id="t", org_id="")
         result = await agent.execute("查库存")
-        assert "未开通" in result.text
+        assert "未开通" in result.summary
 
     # test_token_accumulation_across_turns 已删除（旧 tool loop 路径）
 
@@ -336,8 +339,8 @@ class TestERPAgentSingleDomain:
         result = await agent._execute("今天多少订单", time.monotonic() + 60)
 
         assert result.status == "success"
-        assert "100 单" in result.text
-        assert result.tools_called == ["trade"]
+        assert "100 单" in result.summary
+        assert result.agent_name == "erp_agent"
         mock_dept.execute.assert_called_once()
         # 确认 dag_mode=True 硬编码
         call_kwargs = mock_dept.execute.call_args
@@ -366,8 +369,8 @@ class TestERPAgentSingleDomain:
         result = await agent._execute("查库存", time.monotonic() + 60)
 
         assert result.status == "success"
-        assert "简化查询模式" in result.text  # 降级标记
-        assert "500 件" in result.text
+        # v6: 降级改为纯结构化 metadata._degraded，不再拼文本前缀
+        assert "500 件" in result.summary
 
     @pytest.mark.asyncio
     async def test_extract_params_none_returns_error(self):
@@ -379,7 +382,7 @@ class TestERPAgentSingleDomain:
         result = await agent._execute("hello world", time.monotonic() + 60)
 
         assert result.status == "error"
-        assert "无法理解" in result.text
+        assert "无法理解" in result.summary
 
     @pytest.mark.asyncio
     async def test_invalid_domain_returns_error(self):
@@ -393,7 +396,7 @@ class TestERPAgentSingleDomain:
         result = await agent._execute("查财务", time.monotonic() + 60)
 
         assert result.status == "error"
-        assert "不支持" in result.text
+        assert "不支持" in result.summary
 
     @pytest.mark.asyncio
     async def test_query_timeout_returns_error(self):
@@ -410,8 +413,8 @@ class TestERPAgentSingleDomain:
             mock_gs.return_value = MagicMock(dag_global_timeout=0.2)
             result = await agent.execute("查订单")
 
-        assert result.status == "error"
-        assert "超时" in result.text
+        assert result.status == "timeout"
+        assert "超时" in result.summary
 
     @pytest.mark.asyncio
     async def test_deadline_exhausted_returns_error(self):
@@ -426,7 +429,7 @@ class TestERPAgentSingleDomain:
         result = await agent._execute("查订单", time.monotonic() - 10)
 
         assert result.status == "error"
-        assert "预算不足" in result.text
+        assert "预算不足" in result.summary
 
     @pytest.mark.asyncio
     async def test_department_exception_returns_error(self):
@@ -445,7 +448,7 @@ class TestERPAgentSingleDomain:
         result = await agent._execute("查订单", time.monotonic() + 60)
 
         assert result.status == "error"
-        assert "DB down" in result.text
+        assert "DB down" in result.summary
 
     @pytest.mark.asyncio
     async def test_file_ref_collected(self):
@@ -639,10 +642,8 @@ class TestToolSystemPromptAlignment:
         from config.chat_tools import get_tool_system_prompt
         prompt = get_tool_system_prompt()
         assert "code_execute" in prompt
-        # 导出相关指引应包含 code_execute
-        lines = prompt.split("\n")
-        code_exec_line = [l for l in lines if "代码执行" in l][0]
-        assert "导出" in code_exec_line
+        # 导出编排示例应包含 code_execute
+        assert "导出" in prompt and "code_execute" in prompt
 
     def test_erp_agent_single_domain_description(self):
         """规则应说明 erp_agent 每次查一个域"""

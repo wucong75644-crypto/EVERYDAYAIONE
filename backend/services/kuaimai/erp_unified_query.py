@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json as _json
 import time as _time
+import uuid as _uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -22,6 +23,7 @@ from loguru import logger
 
 from services.agent.tool_output import (
     ColumnMeta,
+    _FORMAT_MIME,
     FileRef,
     OutputFormat,
     OutputStatus,
@@ -31,7 +33,6 @@ from services.kuaimai.erp_local_helpers import CN_TZ, check_sync_health
 from services.kuaimai.erp_duckdb_helpers import (
     build_export_where,
     build_pii_select,
-    read_parquet_preview,
     resolve_export_path,
 )
 from services.kuaimai.erp_unified_filters import (
@@ -482,15 +483,16 @@ class UnifiedQueryEngine:
                 metadata={"doc_type": doc_type, "time_range": tr.label},
             )
 
-        preview = read_parquet_preview(staging_path, n=3)
-        body = (
-            f"[数据已暂存] {rel_path}\n"
-            f"共 {row_count:,} 条记录（Parquet，{size_kb:.0f}KB），"
-            f"耗时 {elapsed:.3f}秒。\n"
-            f"如需处理请调 code_execute，"
-            f"用 df = pd.read_parquet(STAGING_DIR + '/{filename}') 读取。\n\n"
-            f"前3条预览：\n{preview}"
+        # v6: DuckDB 直接从 parquet 文件算统计（不加载到 Python 内存）
+        from services.agent.data_profile import build_profile_from_duckdb
+        _profile_raw = await _asyncio.to_thread(
+            engine.profile_parquet, staging_path,
         )
+        profile_text, _export_stats = build_profile_from_duckdb(
+            _profile_raw, filename=filename,
+            file_size_kb=size_kb, elapsed=elapsed,
+        )
+        body = profile_text
         if row_count >= max_rows:
             body += (
                 f"\n\n⚠️ 已达导出上限 {max_rows:,} 行，实际数据可能更多。"
@@ -509,8 +511,11 @@ class UnifiedQueryEngine:
             row_count=row_count,
             size_bytes=int(size_kb * 1024),
             columns=export_columns,
-            preview=preview,
+            preview=profile_text,
             created_at=_time.time(),
+            id=_uuid.uuid4().hex,
+            mime_type=_FORMAT_MIME.get("parquet", ""),
+            created_by="erp_export",
         )
 
         return ToolOutput(
@@ -522,5 +527,6 @@ class UnifiedQueryEngine:
                 "doc_type": doc_type,
                 "time_range": tr.label,
                 "time_column": tr.time_col,
+                "stats": _export_stats,
             },
         )

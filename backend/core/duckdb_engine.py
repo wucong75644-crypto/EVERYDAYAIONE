@@ -137,6 +137,192 @@ class DuckDBEngine:
 
         raise last_err  # type: ignore[misc]
 
+    # ── Parquet 统计（v6: 导出后摘要，不加载到 Python 内存）──
+
+    def profile_parquet(self, parquet_path: str | Path) -> dict:
+        """直接从 parquet 文件算统计摘要（DuckDB 列式扫描，内存 ≈ 0）。
+
+        Returns:
+            {
+                "columns": [{"name", "type", "null_count", "distinct_count",
+                             "min", "max", "avg", "median", "p25", "p75"}...],
+                "row_count": int,
+                "top_values": {col_name: [{"value", "count"}...]}  # 低基数列
+            }
+        """
+        path_escaped = str(parquet_path).replace("'", "''")
+        conn = self._get_conn()
+
+        # 1. SUMMARIZE 拿基础统计（count/min/max/avg/std/null%/unique）
+        try:
+            summary_rows = conn.execute(
+                f"SUMMARIZE SELECT * FROM read_parquet('{path_escaped}')"
+            ).fetchall()
+            summary_desc = conn.description  # column names
+        except Exception as e:
+            logger.warning(f"DuckDB SUMMARIZE failed: {e}")
+            return {"columns": [], "row_count": 0, "top_values": {}}
+
+        col_names = [d[0] for d in summary_desc] if summary_desc else []
+        name_idx = col_names.index("column_name") if "column_name" in col_names else 0
+        type_idx = col_names.index("column_type") if "column_type" in col_names else 1
+        min_idx = col_names.index("min") if "min" in col_names else 2
+        max_idx = col_names.index("max") if "max" in col_names else 3
+        approx_unique_idx = col_names.index("approx_unique") if "approx_unique" in col_names else 4
+        avg_idx = col_names.index("avg") if "avg" in col_names else 5
+        null_pct_idx = col_names.index("null_percentage") if "null_percentage" in col_names else 7
+        count_idx = col_names.index("count") if "count" in col_names else 8
+
+        row_count = 0
+        columns_info: list[dict] = []
+        numeric_cols: list[str] = []
+        text_cols_low_card: list[str] = []
+
+        for row in summary_rows:
+            col_name = str(row[name_idx])
+            col_type = str(row[type_idx])
+            approx_unique = int(row[approx_unique_idx]) if row[approx_unique_idx] is not None else 0
+            cnt = int(row[count_idx]) if row[count_idx] is not None else 0
+            if cnt > row_count:
+                row_count = cnt
+
+            null_pct_raw = row[null_pct_idx]
+            null_pct = float(null_pct_raw.replace("%", "")) if isinstance(null_pct_raw, str) else (float(null_pct_raw) if null_pct_raw else 0)
+            null_count = int(cnt * null_pct / 100) if cnt > 0 else 0
+
+            info: dict = {
+                "name": col_name,
+                "type": col_type,
+                "distinct_count": approx_unique,
+                "null_count": null_count,
+                "min": row[min_idx],
+                "max": row[max_idx],
+            }
+
+            # avg 只对数值列有意义
+            if row[avg_idx] is not None:
+                try:
+                    info["avg"] = float(row[avg_idx])
+                except (ValueError, TypeError):
+                    pass
+
+            columns_info.append(info)
+
+            # 收集需要补查的列
+            if col_type in ("BIGINT", "INTEGER", "DOUBLE", "FLOAT", "DECIMAL", "HUGEINT", "SMALLINT", "TINYINT"):
+                numeric_cols.append(col_name)
+            elif col_type == "VARCHAR" and approx_unique <= 100 and cnt > 0 and (approx_unique / cnt < 0.5):
+                text_cols_low_card.append(col_name)
+
+        # 2. 数值列补查 sum / median / p25 / p75
+        for col_name in numeric_cols[:5]:
+            try:
+                q = conn.execute(
+                    f"SELECT SUM(\"{col_name}\"), "
+                    f"MEDIAN(\"{col_name}\"), "
+                    f"QUANTILE_CONT(\"{col_name}\", 0.25), "
+                    f"QUANTILE_CONT(\"{col_name}\", 0.75) "
+                    f"FROM read_parquet('{path_escaped}')"
+                ).fetchone()
+                if q:
+                    for info in columns_info:
+                        if info["name"] == col_name:
+                            info["sum"] = float(q[0]) if q[0] is not None else None
+                            info["median"] = float(q[1]) if q[1] is not None else None
+                            info["p25"] = float(q[2]) if q[2] is not None else None
+                            info["p75"] = float(q[3]) if q[3] is not None else None
+                            break
+            except Exception as e:
+                logger.debug(f"DuckDB percentile query failed for {col_name}: {e}")
+
+        # 3. 低基数文本列 top-5
+        top_values: dict[str, list[dict]] = {}
+        for col_name in text_cols_low_card[:5]:
+            try:
+                rows = conn.execute(
+                    f"SELECT \"{col_name}\", COUNT(*) as cnt "
+                    f"FROM read_parquet('{path_escaped}') "
+                    f"WHERE \"{col_name}\" IS NOT NULL "
+                    f"GROUP BY \"{col_name}\" ORDER BY cnt DESC LIMIT 5"
+                ).fetchall()
+                top_values[col_name] = [
+                    {"value": str(r[0]), "count": int(r[1])} for r in rows
+                ]
+            except Exception as e:
+                logger.debug(f"DuckDB top values query failed for {col_name}: {e}")
+
+        # 4. 时间列跨度天数
+        time_cols = [
+            c["name"] for c in columns_info
+            if c["type"] in ("TIMESTAMP", "TIMESTAMP WITH TIME ZONE", "DATE")
+        ]
+        for col_name in time_cols[:3]:
+            try:
+                q = conn.execute(
+                    f"SELECT DATEDIFF('day', MIN(\"{col_name}\"), MAX(\"{col_name}\")) "
+                    f"FROM read_parquet('{path_escaped}')"
+                ).fetchone()
+                if q and q[0] is not None:
+                    for info in columns_info:
+                        if info["name"] == col_name:
+                            info["span_days"] = int(q[0])
+                            break
+            except Exception as e:
+                logger.debug(f"DuckDB span_days query failed for {col_name}: {e}")
+
+        # 5. 文本列 avg_length
+        all_text_cols = [c["name"] for c in columns_info if c["type"] == "VARCHAR"]
+        for col_name in all_text_cols[:5]:
+            try:
+                q = conn.execute(
+                    f"SELECT AVG(LENGTH(\"{col_name}\")) "
+                    f"FROM read_parquet('{path_escaped}') "
+                    f"WHERE \"{col_name}\" IS NOT NULL"
+                ).fetchone()
+                if q and q[0] is not None:
+                    for info in columns_info:
+                        if info["name"] == col_name:
+                            info["avg_length"] = round(float(q[0]), 1)
+                            break
+            except Exception as e:
+                logger.debug(f"DuckDB avg_length query failed for {col_name}: {e}")
+
+        # 6. 重复行数
+        duplicate_count = 0
+        try:
+            q = conn.execute(
+                f"SELECT COUNT(*) - COUNT(DISTINCT *) "
+                f"FROM read_parquet('{path_escaped}')"
+            ).fetchone()
+            if q and q[0] is not None:
+                duplicate_count = int(q[0])
+        except Exception as e:
+            logger.debug(f"DuckDB duplicate count failed: {e}")
+
+        # 7. 预览行（前2条 + 随机1条）
+        preview_rows: list[dict] = []
+        try:
+            head_rows = conn.execute(
+                f"SELECT * FROM read_parquet('{path_escaped}') LIMIT 2"
+            ).fetchdf().to_dict("records")
+            preview_rows.extend(head_rows)
+            if row_count > 2:
+                sample_row = conn.execute(
+                    f"SELECT * FROM read_parquet('{path_escaped}') "
+                    f"USING SAMPLE 1 ROWS"
+                ).fetchdf().to_dict("records")
+                preview_rows.extend(sample_row)
+        except Exception as e:
+            logger.debug(f"DuckDB preview query failed: {e}")
+
+        return {
+            "columns": columns_info,
+            "row_count": row_count,
+            "top_values": top_values,
+            "duplicate_count": duplicate_count,
+            "preview_rows": preview_rows,
+        }
+
     # ── 生命周期 ──────────────────────────────────────
 
     def close(self) -> None:
