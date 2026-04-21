@@ -76,20 +76,26 @@ class DuckDBEngine:
 
     def export_to_parquet(
         self, query: str, output_path: str | Path,
+        timeout: float = 25.0,
     ) -> dict[str, int | float | str]:
         """
         执行 SELECT 查询，流式直写 Parquet。
+
+        超时机制：用 threading.Timer + conn.interrupt() 在 timeout 秒后
+        中断 DuckDB 查询，释放连接，避免僵尸线程阻塞后续请求。
 
         失败时自动重连 + 重试（最多 2 次），不降级到旧逻辑。
 
         Args:
             query: 完整的 SELECT SQL（表名需带 pg.public. 前缀）
             output_path: Parquet 输出路径（写到 staging 目录）
+            timeout: 单次查询超时秒数（默认 25s，留 5s 给 ERPAgent 30s 预算）
 
         Returns:
             {"row_count": int, "size_kb": float, "path": str}
 
         Raises:
+            TimeoutError: 查询超时（被 interrupt 中断）
             Exception: 重试耗尽后抛出原始异常
         """
         output = str(output_path)
@@ -98,8 +104,15 @@ class DuckDBEngine:
 
         last_err: Exception | None = None
         for attempt in range(_MAX_RETRIES):
+            interrupted = threading.Event()
+            timer: threading.Timer | None = None
             try:
                 conn = self._get_conn()
+                # 看门狗：timeout 秒后中断查询，释放连接
+                timer = threading.Timer(
+                    timeout, self._interrupt_conn, args=(conn, interrupted),
+                )
+                timer.start()
                 conn.execute(f"""
                     COPY ({query}) TO '{output_escaped}' (
                         FORMAT PARQUET,
@@ -125,17 +138,46 @@ class DuckDBEngine:
                 }
 
             except Exception as e:
-                last_err = e
+                is_interrupt = (
+                    interrupted.is_set()
+                    or "interrupt" in type(e).__name__.lower()
+                )
+                if is_interrupt:
+                    # 超时：查询被看门狗中断，不重试（重跑大概率还是超时）
+                    logger.warning(
+                        f"DuckDB export interrupted by timeout ({timeout}s)"
+                    )
+                    self._reset_conn()
+                    Path(output).unlink(missing_ok=True)
+                    raise TimeoutError(
+                        f"导出超时（{timeout:.0f}秒），请缩小查询范围后重试"
+                    ) from e
+
+                # 非超时错误：重连 + 重试
                 logger.warning(
                     f"DuckDB export attempt {attempt + 1}/{_MAX_RETRIES} "
                     f"failed | error={e}"
                 )
-                # 销毁连接，下次循环 _get_conn 会重建（自动重连）
                 self._reset_conn()
-                # 清理可能写了一半的文件
                 Path(output).unlink(missing_ok=True)
+                last_err = e
+            finally:
+                if timer is not None:
+                    timer.cancel()
 
         raise last_err  # type: ignore[misc]
+
+    @staticmethod
+    def _interrupt_conn(
+        conn: duckdb.DuckDBPyConnection, event: threading.Event,
+    ) -> None:
+        """看门狗回调：中断 DuckDB 查询并标记。"""
+        event.set()
+        try:
+            conn.interrupt()
+            logger.warning("DuckDB query interrupted by watchdog timer")
+        except Exception as e:
+            logger.debug(f"DuckDB interrupt failed (conn may be closed): {e}")
 
     # ── Parquet 统计（v6: 导出后摘要，不加载到 Python 内存）──
 
