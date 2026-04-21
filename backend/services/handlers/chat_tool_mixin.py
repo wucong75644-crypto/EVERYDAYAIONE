@@ -332,7 +332,7 @@ class ChatToolMixin:
             self._pending_file_parts.append(FilePart(
                 url=url, name=name, mime_type=mime_type, size=int(size),
             ))
-            return f"📎 文件: {name}"
+            return f"📎 [{name}]({url})"
 
         return _FILE_PATTERN.sub(_replace_match, result)
 
