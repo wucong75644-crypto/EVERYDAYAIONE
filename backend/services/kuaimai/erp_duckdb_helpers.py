@@ -11,7 +11,9 @@ import time as _time
 from datetime import datetime
 from pathlib import Path
 
-from services.kuaimai.erp_unified_schema import TIME_COLUMNS, TimeRange, ValidatedFilter
+from services.kuaimai.erp_unified_schema import (
+    TIME_COLUMNS, TimeRange, ValidatedFilter, PLATFORM_CN,
+)
 
 
 def _to_duckdb_timestamp(iso_str: str) -> str:
@@ -59,13 +61,22 @@ _TIMESTAMP_COLS = frozenset({
     "consign_time", "delivery_date", "finished_at", "apply_date",
 })
 
+# platform 编码 → 中文名 SQL CASE（防止 LLM 误翻译 fxg→西瓜视频）
+_PLATFORM_CASE = (
+    "CASE "
+    + " ".join(f"WHEN platform = '{k}' THEN '{v}'" for k, v in PLATFORM_CN.items())
+    + " ELSE platform END AS platform"
+)
+
 
 def build_pii_select(safe_fields: list[str]) -> str:
-    """构建 SELECT 列表：PII 脱敏 + timestamp 去时区（Excel 不支持 tz-aware）。"""
+    """构建 SELECT 列表：PII 脱敏 + platform 中文化 + timestamp 去时区。"""
     cols: list[str] = []
     for f in safe_fields:
         if f in _PII_SQL_MAP:
             cols.append(_PII_SQL_MAP[f])
+        elif f == "platform":
+            cols.append(_PLATFORM_CASE)
         elif f in _TIMESTAMP_COLS:
             cols.append(f"CAST({f} AS TIMESTAMP) AS {f}")
         else:
