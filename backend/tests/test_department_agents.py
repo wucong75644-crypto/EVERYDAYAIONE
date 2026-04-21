@@ -110,6 +110,48 @@ class TestPurchaseValidation:
         assert r.is_ok
 
 
+class TestPurchaseClassifyAction:
+    """_classify_action 关键词分类——供应商相关查询的正确路由"""
+
+    def test_supplier_list_goes_supplier_query(self):
+        """'有哪些供应商' → supplier_query"""
+        agent = _make_purchase()
+        assert agent._classify_action("有哪些供应商") == "supplier_query"
+
+    def test_supplier_info_goes_supplier_query(self):
+        """'供应商信息' → supplier_query"""
+        agent = _make_purchase()
+        assert agent._classify_action("查一下供应商信息") == "supplier_query"
+
+    def test_supplier_contact_goes_supplier_query(self):
+        """'供应商联系方式' → supplier_query"""
+        agent = _make_purchase()
+        assert agent._classify_action("供应商联系方式") == "supplier_query"
+
+    def test_supplier_purchase_amount_goes_purchase_list(self):
+        """'XX供应商的采购金额' → purchase_list（不是 supplier_query）"""
+        agent = _make_purchase()
+        assert agent._classify_action("创包装工厂这个月采购了多少") == "purchase_list"
+
+    def test_group_by_supplier_goes_purchase_list(self):
+        """'按供应商统计采购金额' → purchase_list"""
+        agent = _make_purchase()
+        assert agent._classify_action("按供应商统计采购金额") == "purchase_list"
+
+    def test_arrival_progress(self):
+        agent = _make_purchase()
+        assert agent._classify_action("HZ001到货进度") == "arrival_progress"
+
+    def test_purchase_return(self):
+        agent = _make_purchase()
+        assert agent._classify_action("上月采退明细") == "purchase_return"
+
+    def test_default_purchase_list(self):
+        """无特定关键词 → purchase_list"""
+        agent = _make_purchase()
+        assert agent._classify_action("这个月采购了多少") == "purchase_list"
+
+
 class TestPurchaseQueries:
 
     @pytest.mark.asyncio

@@ -207,6 +207,29 @@ class TestToolOutputFileRef:
         assert "preview:" in content
         assert "A001" in content
 
+    def test_file_ref_uses_sandbox_ref_not_path(self):
+        """FILE_REF 模式输出 sandbox_ref，不暴露绝对路径"""
+        fr = FileRef(
+            path="/data/workspace/org/abc/user1/staging/conv99/local_order_123.parquet",
+            filename="local_order_123.parquet",
+            format="parquet",
+            row_count=20,
+            size_bytes=2048,
+            columns=[ColumnMeta("order_no", "text")],
+        )
+        t = ToolOutput(
+            summary="导出完成",
+            format=OutputFormat.FILE_REF,
+            source="trade",
+            file_ref=fr,
+        )
+        content = t.to_message_content()
+        # 必须包含 sandbox_ref 格式
+        assert "STAGING_DIR + '/local_order_123.parquet'" in content
+        # 绝对路径不能泄漏给 LLM
+        assert "/data/workspace/" not in content
+        assert "org/abc" not in content
+
     def test_file_ref_columns_from_ref(self):
         """columns 为 None 时从 file_ref.columns 取"""
         fr = _file_ref()
@@ -380,6 +403,36 @@ class TestFileRef:
         with pytest.raises(AttributeError):
             fr.row_count = 999  # type: ignore[misc]
 
+    def test_sandbox_ref_format(self):
+        """sandbox_ref 返回 STAGING_DIR + '/filename' 格式（对标 OpenAI /mnt/data/）"""
+        fr = _file_ref(path="/data/workspace/staging/conv123/trade_123.parquet")
+        assert fr.sandbox_ref == "STAGING_DIR + '/test.parquet'"
+
+    def test_sandbox_ref_uses_filename_not_path(self):
+        """sandbox_ref 只用 filename，不暴露绝对路径"""
+        fr = FileRef(
+            path="/absolute/secret/path/staging/conv/report.parquet",
+            filename="report.parquet",
+            format="parquet",
+            row_count=10,
+            size_bytes=1024,
+            columns=[],
+        )
+        assert "/absolute/" not in fr.sandbox_ref
+        assert "report.parquet" in fr.sandbox_ref
+
+    def test_sandbox_ref_with_domain_prefix(self):
+        """域前缀文件名（department_agent 生成）也正常"""
+        fr = FileRef(
+            path="/tmp/staging/conv/warehouse_1713600000.parquet",
+            filename="warehouse_1713600000.parquet",
+            format="parquet",
+            row_count=200,
+            size_bytes=4096,
+            columns=[],
+        )
+        assert fr.sandbox_ref == "STAGING_DIR + '/warehouse_1713600000.parquet'"
+
 
 # ============================================================
 # ColumnMeta
@@ -476,6 +529,37 @@ class TestSessionFileRegistry:
         reg.register("purchase", "order", _file_ref())
         snap = reg.to_snapshot()
         assert snap[0]["key"].startswith("purchase:order:")
+
+    def test_from_snapshot_legacy_relative_path(self):
+        """v7 兼容：历史数据中 path 是相对路径，反序列化不崩溃"""
+        snap = [{
+            "key": "trade:local_data:1713600000",
+            "file_ref": {
+                "path": "staging/conv123/local_order_1713600000.parquet",
+                "filename": "local_order_1713600000.parquet",
+                "format": "parquet",
+                "row_count": 50,
+                "size_bytes": 4096,
+                "columns": [{"name": "order_no", "dtype": "text", "label": ""}],
+                "preview": "",
+                "created_at": 1713600000.0,
+            },
+        }]
+        reg = SessionFileRegistry.from_snapshot(snap)
+        ref = reg.get_latest()
+        assert ref is not None
+        assert ref.filename == "local_order_1713600000.parquet"
+        # 相对路径 is_valid() 返回 False（文件不存在），不崩溃
+        assert not ref.is_valid()
+        # sandbox_ref 仍然正确（只用 filename）
+        assert ref.sandbox_ref == "STAGING_DIR + '/local_order_1713600000.parquet'"
+
+    def test_from_snapshot_empty_data(self):
+        """空数据反序列化返回空 Registry"""
+        reg = SessionFileRegistry.from_snapshot([])
+        assert reg.list_all() == []
+        reg2 = SessionFileRegistry.from_snapshot(None)
+        assert reg2.list_all() == []
 
     def test_from_snapshot_empty_list(self):
         """老格式兼容：空列表 → 空 Registry"""

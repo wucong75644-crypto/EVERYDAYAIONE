@@ -49,7 +49,7 @@ class TestToMessageContent:
         assert len(blocks) == 2
         assert blocks[0]["type"] == "text"
         assert blocks[1]["type"] == "text"  # file_ref 以 text 形式输出
-        assert ref.path in blocks[1]["text"]
+        assert ref.sandbox_ref in blocks[1]["text"]
         assert "945行" in blocks[1]["text"]
         assert "parquet" in blocks[1]["text"]
 
@@ -94,7 +94,7 @@ class TestToMessageContent:
 
         # 2 个 block：摘要 + 文件引用（data 不输出）
         assert len(blocks) == 2
-        assert "staging/test.parquet" in blocks[1]["text"]
+        assert ref.sandbox_ref in blocks[1]["text"]
 
     def test_with_insights(self):
         """分析洞察：text + insights（text 形式）"""

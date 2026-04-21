@@ -440,6 +440,18 @@ class TestMaskPii:
         mask_pii(row)
         assert row["receiver_mobile"] == "123"
 
+    def test_mask_address(self):
+        from services.kuaimai.erp_unified_schema import mask_pii
+        row = {"receiver_address": "浙江省杭州市西湖区文三路100号"}
+        mask_pii(row)
+        assert row["receiver_address"] == "浙江省杭州市****"
+
+    def test_short_address_not_masked(self):
+        from services.kuaimai.erp_unified_schema import mask_pii
+        row = {"receiver_address": "杭州"}
+        mask_pii(row)
+        assert row["receiver_address"] == "杭州"
+
     def test_no_pii_fields_unchanged(self):
         from services.kuaimai.erp_unified_schema import mask_pii
         row = {"order_no": "TB123", "amount": 100}

@@ -55,7 +55,7 @@ class TestMessageInjection:
         # 所有 block 都是 type=text，文件信息在第二个 block 的文本里
         assert len(msg["content"]) == 2
         file_text = msg["content"][1]["text"]
-        assert "staging/conv123/trade_20260420.parquet" in file_text
+        assert "STAGING_DIR + '/trade_20260420.parquet'" in file_text
         assert "945行" in file_text
 
     def test_mixed_messages_str_and_list(self):
