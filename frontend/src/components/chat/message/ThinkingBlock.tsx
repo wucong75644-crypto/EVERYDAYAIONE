@@ -68,7 +68,7 @@ export default memo(function ThinkingBlock({
         {/* 思考中动画 / 思考完成标签 */}
         {isThinking ? (
           <span className="flex items-center gap-1">
-            <span className="thinking-sparkle">思考中</span>
+            <span className="thinking-sparkle">thinking</span>
             <span className="thinking-dots">
               <span className="thinking-dot" />
               <span className="thinking-dot" />
@@ -77,9 +77,9 @@ export default memo(function ThinkingBlock({
           </span>
         ) : (
           <span>
-            已深度思考
+            Thought for
             {durationText && (
-              <span className="ml-1 text-text-disabled">({durationText})</span>
+              <span className="ml-1 text-text-disabled">{durationText}</span>
             )}
           </span>
         )}
