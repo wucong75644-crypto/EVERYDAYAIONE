@@ -24,34 +24,6 @@ from ..base import (
 
 
 # ============================================================
-# 消息清洗（过滤不支持的 content type）
-# ============================================================
-
-_SUPPORTED_TYPES = frozenset({"text", "image_url", "video_url", "video"})
-
-
-def _sanitize_content_types(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """过滤多模态消息中 DashScope 不支持的 content type。
-
-    DashScope 仅支持 text/image_url/video_url/video，
-    历史消息中可能含 'data' 等非标准类型（前端文件上传），直接发送会 400。
-    """
-    result = []
-    for msg in messages:
-        content = msg.get("content")
-        if isinstance(content, list):
-            filtered = [p for p in content if p.get("type") in _SUPPORTED_TYPES]
-            if not filtered:
-                # 所有 part 都被过滤掉了，转成纯文本消息
-                texts = [p.get("text", "") for p in content if p.get("text")]
-                msg = {**msg, "content": " ".join(texts) or "(附件内容)"}
-            elif len(filtered) != len(content):
-                msg = {**msg, "content": filtered}
-        result.append(msg)
-    return result
-
-
-# ============================================================
 # 模型定价配置（积分/百万 token）
 # ============================================================
 
@@ -134,9 +106,6 @@ class DashScopeChatAdapter(BaseChatAdapter):
         **kwargs,
     ) -> AsyncIterator[StreamChunk]:
         """流式聊天（统一接口）"""
-
-        # 清洗消息中不支持的 content type（DashScope 仅支持 text/image_url/video_url/video）
-        messages = _sanitize_content_types(messages)
 
         # 构建请求体（OpenAI 兼容格式）
         request_body: Dict[str, Any] = {
@@ -253,7 +222,6 @@ class DashScopeChatAdapter(BaseChatAdapter):
         **kwargs,
     ) -> ChatResponse:
         """非流式聊天（统一接口）"""
-        messages = _sanitize_content_types(messages)
         request_body: Dict[str, Any] = {
             "model": self._model_id,
             "messages": messages,
