@@ -36,7 +36,7 @@ class TestMessageInjection:
         assert msg["content"][0]["text"] == "共 23 笔"
 
     def test_file_ref_injects_path(self):
-        """文件引用 → content 包含 file_ref block 且路径准确"""
+        """文件引用 → content 包含路径信息（text 形式）"""
         ref = FileRef(
             path="staging/conv123/trade_20260420.parquet",
             filename="trade_20260420.parquet",
@@ -52,9 +52,11 @@ class TestMessageInjection:
         content = result.to_message_content()
         msg = {"role": "tool", "tool_call_id": "tc1", "content": content}
 
-        file_block = next(b for b in msg["content"] if b["type"] == "file_ref")
-        assert file_block["file_ref"]["path"] == "staging/conv123/trade_20260420.parquet"
-        assert file_block["file_ref"]["rows"] == 945
+        # 所有 block 都是 type=text，文件信息在第二个 block 的文本里
+        assert len(msg["content"]) == 2
+        file_text = msg["content"][1]["text"]
+        assert "staging/conv123/trade_20260420.parquet" in file_text
+        assert "945行" in file_text
 
     def test_mixed_messages_str_and_list(self):
         """messages 中混合 str 和 list[dict] content"""
@@ -308,16 +310,12 @@ class TestKieAdapterFormatMessages:
         assert messages[0].content == "你好"
 
     def test_list_content_converted_to_parts(self):
-        """list[dict] content → ChatContentPart 列表"""
+        """list[dict] content（全 type=text）→ ChatContentPart 列表"""
         adapter = self._make_adapter()
         history = [
             {"role": "tool", "content": [
                 {"type": "text", "text": "共 945 条"},
-                {"type": "file_ref", "file_ref": {
-                    "path": "staging/test.parquet",
-                    "rows": 945,
-                    "format": "parquet",
-                }},
+                {"type": "text", "text": "[文件: staging/test.parquet | 945行 | parquet]"},
             ]},
         ]
         messages = adapter.format_messages_from_history(history)
@@ -327,9 +325,7 @@ class TestKieAdapterFormatMessages:
         assert len(content) == 2
         assert content[0].type == "text"
         assert content[0].text == "共 945 条"
-        assert content[1].type == "text"
         assert "945行" in content[1].text
-        assert "parquet" in content[1].text
 
     def test_mixed_str_and_list_messages(self):
         """messages 中混合 str 和 list content"""
@@ -363,30 +359,25 @@ class TestKieAdapterFormatMessages:
         # parts 为空，降级为 ""
         assert messages[0].content == ""
 
-    def test_data_block_converted(self):
-        """data block → 文本描述"""
+    def test_data_text_block_converted(self):
+        """data 文本 block → ChatContentPart"""
         adapter = self._make_adapter()
         history = [
             {"role": "tool", "content": [
-                {"type": "data", "data": {
-                    "rows": 5,
-                    "columns": ["shop", "count"],
-                    "records": [{"shop": "A", "count": 10}],
-                }},
+                {"type": "text", "text": "[数据: 5行 | 列: shop, count]\n[{\"shop\":\"A\"}]"},
             ]},
         ]
         messages = adapter.format_messages_from_history(history)
         content = messages[0].content
         assert isinstance(content, list)
         assert "5行" in content[0].text
-        assert "shop" in content[0].text
 
-    def test_insights_block_converted(self):
-        """insights block → 文本描述"""
+    def test_insights_text_block_converted(self):
+        """insights 文本 block → ChatContentPart"""
         adapter = self._make_adapter()
         history = [
             {"role": "tool", "content": [
-                {"type": "insights", "insights": ["退货率异常", "集中在尺码问题"]},
+                {"type": "text", "text": "分析洞察：\n· 退货率异常\n· 集中在尺码问题"},
             ]},
         ]
         messages = adapter.format_messages_from_history(history)

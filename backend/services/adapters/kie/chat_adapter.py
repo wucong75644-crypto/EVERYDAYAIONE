@@ -171,33 +171,13 @@ class KieChatAdapter(BaseChatAdapter):
             attachments = msg.get("attachments", [])
 
             if isinstance(content, list):
-                # 结构化 content block（AgentResult.to_message_content()）→ KIE 格式
-                parts = []
-                for block in content:
-                    if not isinstance(block, dict):
-                        continue
-                    btype = block.get("type", "")
-                    if btype == "text":
-                        parts.append(ChatContentPart(type="text", text=block.get("text", "")))
-                    elif btype == "file_ref":
-                        ref = block.get("file_ref", {})
-                        parts.append(ChatContentPart(
-                            type="text",
-                            text=f"[文件: {ref.get('path','')} | {ref.get('rows',0)}行 | {ref.get('format','')}]",
-                        ))
-                    elif btype == "data":
-                        d = block.get("data", {})
-                        cols = ", ".join(d.get("columns", []))
-                        parts.append(ChatContentPart(
-                            type="text",
-                            text=f"[数据: {d.get('rows',0)}行 | 列: {cols}]",
-                        ))
-                    elif btype == "insights":
-                        items = block.get("insights", [])
-                        parts.append(ChatContentPart(
-                            type="text",
-                            text="分析洞察：\n" + "\n".join(f"· {i}" for i in items),
-                        ))
+                # 结构化 content block（AgentResult.to_message_content()）
+                # 所有 block 已统一为 type="text"，直接转 ChatContentPart
+                parts = [
+                    ChatContentPart(type="text", text=block.get("text", ""))
+                    for block in content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                ]
                 messages.append(ChatMessage(
                     role=role,
                     content=parts if parts else "",

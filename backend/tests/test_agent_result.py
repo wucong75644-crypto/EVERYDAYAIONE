@@ -48,14 +48,13 @@ class TestToMessageContent:
 
         assert len(blocks) == 2
         assert blocks[0]["type"] == "text"
-        assert blocks[1]["type"] == "file_ref"
-        assert blocks[1]["file_ref"]["path"] == ref.path
-        assert blocks[1]["file_ref"]["rows"] == 945
-        assert blocks[1]["file_ref"]["format"] == "parquet"
-        assert blocks[1]["file_ref"]["size_kb"] == 128  # 131072 // 1024
+        assert blocks[1]["type"] == "text"  # file_ref 以 text 形式输出
+        assert ref.path in blocks[1]["text"]
+        assert "945行" in blocks[1]["text"]
+        assert "parquet" in blocks[1]["text"]
 
     def test_success_with_inline_data(self):
-        """内联数据：text + data 两个 block"""
+        """内联数据：text + data（text 形式）两个 block"""
         result = AgentResult(
             status="success",
             summary="按店铺统计退货",
@@ -71,13 +70,12 @@ class TestToMessageContent:
         blocks = result.to_message_content()
 
         assert len(blocks) == 2
-        assert blocks[1]["type"] == "data"
-        assert blocks[1]["data"]["rows"] == 2
-        assert blocks[1]["data"]["columns"] == ["shop", "count"]
-        assert len(blocks[1]["data"]["records"]) == 2
+        assert blocks[1]["type"] == "text"
+        assert "2行" in blocks[1]["text"]
+        assert "shop" in blocks[1]["text"]
 
     def test_file_ref_takes_priority_over_data(self):
-        """file_ref 和 data 同时存在时，只输出 file_ref"""
+        """file_ref 和 data 同时存在时，只输出 file_ref 不输出 data"""
         ref = FileRef(
             path="staging/test.parquet",
             filename="test.parquet",
@@ -94,12 +92,12 @@ class TestToMessageContent:
         )
         blocks = result.to_message_content()
 
-        types = [b["type"] for b in blocks]
-        assert "file_ref" in types
-        assert "data" not in types
+        # 2 个 block：摘要 + 文件引用（data 不输出）
+        assert len(blocks) == 2
+        assert "staging/test.parquet" in blocks[1]["text"]
 
     def test_with_insights(self):
-        """分析洞察：text + insights"""
+        """分析洞察：text + insights（text 形式）"""
         result = AgentResult(
             status="success",
             summary="退货率 15%",
@@ -108,11 +106,12 @@ class TestToMessageContent:
         blocks = result.to_message_content()
 
         assert len(blocks) == 2
-        assert blocks[1]["type"] == "insights"
-        assert len(blocks[1]["insights"]) == 2
+        assert blocks[1]["type"] == "text"
+        assert "HZ001 退货率 30%" in blocks[1]["text"]
+        assert "尺码不合" in blocks[1]["text"]
 
     def test_full_result(self):
-        """完整结果：text + file_ref + insights（3 个 block）"""
+        """完整结果：所有 block 都是 type=text"""
         ref = FileRef(
             path="staging/test.parquet",
             filename="test.parquet",
@@ -129,8 +128,8 @@ class TestToMessageContent:
         )
         blocks = result.to_message_content()
 
-        types = [b["type"] for b in blocks]
-        assert types == ["text", "file_ref", "insights"]
+        assert len(blocks) == 3
+        assert all(b["type"] == "text" for b in blocks)
 
     def test_error_result(self):
         """错误结果：只有 text block"""
@@ -168,7 +167,7 @@ class TestToMessageContent:
         assert result.ask_user_question == "请问要查哪个平台？"
 
     def test_inline_data_preview_limit(self):
-        """内联数据最多 20 行预览"""
+        """内联数据预览最多 5 行"""
         data = [{"id": i, "val": f"row_{i}"} for i in range(50)]
         result = AgentResult(
             status="success",
@@ -177,8 +176,10 @@ class TestToMessageContent:
         )
         blocks = result.to_message_content()
 
-        assert blocks[1]["data"]["rows"] == 50
-        assert len(blocks[1]["data"]["records"]) == 20
+        assert "50行" in blocks[1]["text"]
+        # 预览只含前 5 行数据
+        assert "row_4" in blocks[1]["text"]
+        assert "row_10" not in blocks[1]["text"]
 
     def test_empty_data_no_data_block(self):
         """空数据列表不输出 data block"""
