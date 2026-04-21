@@ -18,12 +18,12 @@ describe('ThinkingBlock', () => {
 
   it('should render when isThinking even with empty content', () => {
     render(<ThinkingBlock content="" isThinking={true} />);
-    expect(screen.getByText('思考中')).toBeDefined();
+    expect(screen.getByText('thinking')).toBeDefined();
   });
 
-  it('should show "已深度思考" when thinking is complete', () => {
+  it('should show "Thought for" when thinking is complete', () => {
     render(<ThinkingBlock content="推理过程" isThinking={false} />);
-    expect(screen.getByText('已深度思考')).toBeDefined();
+    expect(screen.getByText('Thought for')).toBeDefined();
   });
 
   it('should be collapsed by default', () => {
