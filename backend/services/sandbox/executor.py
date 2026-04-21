@@ -331,12 +331,21 @@ class SandboxExecutor:
         for d in self._upload_scan_dirs:
             dp = Path(d)
             if dp.exists():
-                files.update(f"{d}/{f.name}" for f in dp.iterdir() if f.is_file())
+                dir_files = [f.name for f in dp.iterdir() if f.is_file()]
+                files.update(f"{d}/{name}" for name in dir_files)
+                logger.info(
+                    f"SandboxExecutor snapshot | dir={d} | "
+                    f"files={dir_files[:10]} | count={len(dir_files)}"
+                )
+            else:
+                logger.info(f"SandboxExecutor snapshot | dir={d} | not_exists")
+        logger.info(f"SandboxExecutor snapshot total | count={len(files)}")
         return files
 
     async def _auto_upload_new_files(self) -> list[str]:
         """扫描受监控目录中的新文件并自动上传（保留源文件供工作区下载）"""
         if not self._upload_fn:
+            logger.warning("SandboxExecutor auto-upload skipped | no upload_fn")
             return []
 
         from pathlib import Path
@@ -346,14 +355,23 @@ class SandboxExecutor:
         for scan_dir in self._upload_scan_dirs:
             dir_path = Path(scan_dir)
             if not dir_path.exists():
+                logger.info(f"SandboxExecutor auto-upload | dir={scan_dir} | not_exists")
                 continue
             for f in dir_path.iterdir():
                 if not f.is_file():
                     continue
                 full_key = f"{scan_dir}/{f.name}"
                 if full_key in before:
-                    continue  # 执行前就存在的文件，跳过
+                    logger.info(
+                        f"SandboxExecutor auto-upload skip (in snapshot) | "
+                        f"file={f.name} | dir={scan_dir}"
+                    )
+                    continue
                 if f.suffix.lower() not in self._AUTO_UPLOAD_EXTENSIONS:
+                    logger.debug(
+                        f"SandboxExecutor auto-upload skip (ext) | "
+                        f"file={f.name} | ext={f.suffix}"
+                    )
                     continue
 
                 try:
@@ -370,6 +388,8 @@ class SandboxExecutor:
                         f"error={e}"
                     )
                     results.append(f"❌ 文件上传失败: {f.name} ({e})")
+
+        logger.info(f"SandboxExecutor auto-upload done | results={len(results)}")
 
         return results
 
