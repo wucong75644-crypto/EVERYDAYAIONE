@@ -425,16 +425,17 @@ def compact_stale_tool_results(
         for idx in tool_indices:
             msg = messages[idx]
             old_content = msg.get("content", "")
-            if old_content.startswith("[已归档"):
+            old_text = _extract_text(old_content)
+            if old_text.startswith("[已归档"):
                 continue  # 已经压缩过
 
             # 短结果不压缩：压缩收益低，但可能丢失关键汇总数字/时间范围
-            if len(old_content) <= 2000:
+            if len(old_text) <= 2000:
                 continue
 
             # 大结果：保留元数据，压缩数据行
             tool_name = tc_id_to_name.get(msg.get("tool_call_id", ""), "")
-            meta = _extract_archive_meta(old_content, tool_name)
+            meta = _extract_archive_meta(old_text, tool_name)
             msg["content"] = meta
             compacted += 1
 
