@@ -177,10 +177,20 @@ class OrderClassifier:
 
         RPC 返回 p_group_by 模式时，每行多一个 group_key 字段。
         按 group_key 分桶后，复用 classify() 逐桶分类。
+
+        同名店铺跨平台时，用 platform 区分（如"白桃汽水杂货铺[pdd]"）。
         """
+        from services.kuaimai.erp_unified_schema import PLATFORM_CN
+
+        from services.kuaimai.erp_unified_schema import PLATFORM_CN
+
         buckets: dict[str, list[dict]] = defaultdict(list)
         for row in rows:
-            buckets[row.get("group_key") or "未知"].append(row)
+            key = row.get("group_key") or "未知"
+            platform = row.get("platform")
+            if platform:
+                key = f"{key}[{PLATFORM_CN.get(platform, platform)}]"
+            buckets[key].append(row)
         return {key: self.classify(bucket) for key, bucket in buckets.items()}
 
     def to_case_sql(self) -> str:
