@@ -124,8 +124,8 @@ class DepartmentAgent(ABC):
             return ValidationResult.conflict(
                 f"时间范围格式错误: {time_range_str}，应为 YYYY-MM-DD ~ YYYY-MM-DD 或 YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM",
             )
-        if end < start:
-            return ValidationResult.conflict("结束日期不能早于开始日期")
+        if end <= start:
+            return ValidationResult.conflict("结束时间必须晚于开始时间（不能相同）")
         if (end - start).days > 90:
             return ValidationResult.conflict("时间范围不能超过90天")
         return None
