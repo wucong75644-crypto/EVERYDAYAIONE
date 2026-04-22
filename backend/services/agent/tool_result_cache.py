@@ -50,8 +50,11 @@ class ToolResultCache:
         del self._store[key]
         return None
 
-    def put(self, tool_name: str, args: Dict[str, Any], result: str) -> None:
+    def put(self, tool_name: str, args: Dict[str, Any], result: Any) -> None:
         if not self.is_cacheable(tool_name):
+            return
+        # 非字符串结果（如 ToolOutput/AgentResult）不缓存
+        if not isinstance(result, str):
             return
         # 大结果不缓存，防止内存膨胀
         if len(result) > self._CACHE_MAX_VALUE_CHARS:
