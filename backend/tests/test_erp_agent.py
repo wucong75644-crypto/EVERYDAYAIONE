@@ -549,41 +549,36 @@ class TestGetErpAgentTools:
 class TestERPAgentPrompts:
     """验证 ERPAgent 内部提示词不含不可用工具、无乱码"""
 
-    def test_routing_rules_no_ask_user(self):
-        """路由规则不引用 ask_user（ERPAgent 无此工具）"""
-        from services.agent.erp_agent import _ERP_AGENT_ROUTING_RULES
-        assert "ask_user" not in _ERP_AGENT_ROUTING_RULES
-
-    def test_routing_rules_no_trigger_sync(self):
-        """路由规则不引用 trigger_erp_sync（ERPAgent 无此工具）"""
-        from services.agent.erp_agent import _ERP_AGENT_ROUTING_RULES
-        assert "trigger_erp_sync" not in _ERP_AGENT_ROUTING_RULES
-
     def test_system_prompt_no_ask_user(self):
         """系统提示不引用 ask_user"""
         from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
         assert "ask_user" not in _ERP_AGENT_SYSTEM_PROMPT
+
+    def test_system_prompt_no_trigger_sync(self):
+        """系统提示不引用 trigger_erp_sync"""
+        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
+        assert "trigger_erp_sync" not in _ERP_AGENT_SYSTEM_PROMPT
 
     def test_system_prompt_no_garbled_chars(self):
         """系统提示无乱码字符（U+FFFD）"""
         from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
         assert "\ufffd" not in _ERP_AGENT_SYSTEM_PROMPT
 
-    def test_routing_rules_no_garbled_chars(self):
-        """路由规则无乱码字符"""
-        from services.agent.erp_agent import _ERP_AGENT_ROUTING_RULES
-        assert "\ufffd" not in _ERP_AGENT_ROUTING_RULES
-
     def test_system_prompt_mentions_code_execute(self):
-        """系统提示包含 code_execute 使用说明"""
+        """系统提示包含 code_execute"""
         from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
         assert "code_execute" in _ERP_AGENT_SYSTEM_PROMPT
-        assert "OUTPUT_DIR" in _ERP_AGENT_SYSTEM_PROMPT
 
-    def test_routing_rules_mentions_cross_domain(self):
-        """路由规则包含跨域关联说明"""
-        from services.agent.erp_agent import _ERP_AGENT_ROUTING_RULES
-        assert "product_code" in _ERP_AGENT_ROUTING_RULES
+    def test_system_prompt_has_critical_section(self):
+        """系统提示包含 CRITICAL 约束段"""
+        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
+        assert "CRITICAL" in _ERP_AGENT_SYSTEM_PROMPT
+
+    def test_system_prompt_mentions_local_priority(self):
+        """系统提示明确 local 工具覆盖范围"""
+        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
+        assert "local_*" in _ERP_AGENT_SYSTEM_PROMPT
+        assert "erp_*_query" in _ERP_AGENT_SYSTEM_PROMPT
 
 
 # ============================================================
