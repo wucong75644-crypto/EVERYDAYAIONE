@@ -416,6 +416,92 @@ class TestFormatFunctions:
         assert "order_no" in doc
         assert "示例" in doc
 
+    def test_fmt_classified_grouped_basic(self):
+        """分组分类格式化：两个平台"""
+        from services.kuaimai.erp_unified_schema import fmt_classified_grouped
+        from services.kuaimai.order_classifier import ClassificationResult
+
+        grouped = {
+            "tb": ClassificationResult(
+                total={"doc_count": 130, "total_qty": 260, "total_amount": 5000},
+                categories={
+                    "有效订单": {"doc_count": 100, "total_qty": 200, "total_amount": 4500},
+                    "空包/刷单": {"doc_count": 30, "total_qty": 60, "total_amount": 500},
+                },
+                valid={"doc_count": 100, "total_qty": 200, "total_amount": 4500},
+            ),
+            "pdd": ClassificationResult(
+                total={"doc_count": 90, "total_qty": 180, "total_amount": 3000},
+                categories={
+                    "有效订单": {"doc_count": 80, "total_qty": 160, "total_amount": 2700},
+                    "已关闭/取消": {"doc_count": 10, "total_qty": 20, "total_amount": 300},
+                },
+                valid={"doc_count": 80, "total_qty": 160, "total_amount": 2700},
+            ),
+        }
+        result = fmt_classified_grouped(grouped, "platform", "04-22")
+        # 平台名中文化
+        assert "淘宝" in result
+        assert "拼多多" in result
+        # 有效和排除类别
+        assert "有效" in result
+        assert "空包/刷单" in result
+        assert "已关闭/取消" in result
+        # 合计
+        assert "220笔" in result  # 130 + 90
+        assert "有效 180笔" in result  # 100 + 80
+
+    def test_fmt_classified_grouped_show_recommendation(self):
+        """show_recommendation 控制推荐语"""
+        from services.kuaimai.erp_unified_schema import fmt_classified_grouped
+        from services.kuaimai.order_classifier import ClassificationResult
+
+        grouped = {
+            "tb": ClassificationResult(
+                total={"doc_count": 10, "total_qty": 20, "total_amount": 500},
+                categories={"有效订单": {"doc_count": 10, "total_qty": 20, "total_amount": 500}},
+                valid={"doc_count": 10, "total_qty": 20, "total_amount": 500},
+            ),
+        }
+        with_rec = fmt_classified_grouped(grouped, "platform", "04-22", show_recommendation=True)
+        without_rec = fmt_classified_grouped(grouped, "platform", "04-22", show_recommendation=False)
+        assert "后续计算请默认使用有效订单数据" in with_rec
+        assert "后续计算请默认使用有效订单数据" not in without_rec
+
+    def test_fmt_classified_grouped_skips_zero_categories(self):
+        """count=0 的排除类别不显示"""
+        from services.kuaimai.erp_unified_schema import fmt_classified_grouped
+        from services.kuaimai.order_classifier import ClassificationResult
+
+        grouped = {
+            "tb": ClassificationResult(
+                total={"doc_count": 50, "total_qty": 100, "total_amount": 2000},
+                categories={
+                    "有效订单": {"doc_count": 50, "total_qty": 100, "total_amount": 2000},
+                    "空包/刷单": {"doc_count": 0, "total_qty": 0, "total_amount": 0},
+                },
+                valid={"doc_count": 50, "total_qty": 100, "total_amount": 2000},
+            ),
+        }
+        result = fmt_classified_grouped(grouped, "shop", "04-22")
+        assert "空包/刷单" not in result
+
+    def test_fmt_classified_grouped_non_platform_no_cn(self):
+        """非 platform 分组不做中文翻译"""
+        from services.kuaimai.erp_unified_schema import fmt_classified_grouped
+        from services.kuaimai.order_classifier import ClassificationResult
+
+        grouped = {
+            "旗舰店A": ClassificationResult(
+                total={"doc_count": 20, "total_qty": 40, "total_amount": 1000},
+                categories={"有效订单": {"doc_count": 20, "total_qty": 40, "total_amount": 1000}},
+                valid={"doc_count": 20, "total_qty": 40, "total_amount": 1000},
+            ),
+        }
+        result = fmt_classified_grouped(grouped, "shop", "04-22")
+        # shop 分组直接显示原始 key，不翻译
+        assert "旗舰店A" in result
+
 
 # ── mask_pii 测试 ─────────────────────────────────────
 

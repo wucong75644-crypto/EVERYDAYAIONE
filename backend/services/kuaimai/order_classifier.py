@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,8 +35,12 @@ class ClassificationResult:
             if name != "有效订单"
         ]
 
-    def to_display_text(self) -> str:
-        """生成树形展示文本"""
+    def to_display_text(self, *, show_recommendation: bool = True) -> str:
+        """生成树形展示文本。
+
+        show_recommendation: 是否显示"后续计算请默认使用有效订单数据"提示。
+            include_invalid=true 时不显示（用户明确要全量）。
+        """
         lines = ["📊 订单统计", ""]
         total_count = self.total.get("doc_count", 0)
         lines.append(f"总订单数：{total_count:,} 笔")
@@ -55,11 +60,20 @@ class ClassificationResult:
         lines.append(
             f"结论：实际成交 {valid_count:,} 笔，销售金额 ¥{valid_amount:,.2f}"
         )
-        lines.append("（后续计算请默认使用有效订单数据）")
+        if show_recommendation:
+            lines.append("（后续计算请默认使用有效订单数据）")
         return "\n".join(lines)
 
 
 _ZERO = {"doc_count": 0, "total_qty": 0, "total_amount": 0}
+
+
+def _sql_lit(value: Any) -> str:
+    """值转 SQL 字面量（字符串加引号+转义单引号，数字原样）。"""
+    if isinstance(value, (int, float)):
+        return str(value)
+    escaped = str(value).replace("'", "''")
+    return f"'{escaped}'"
 
 
 class OrderClassifier:
@@ -155,6 +169,74 @@ class OrderClassifier:
 
         valid = categories.get("有效订单", {**_ZERO})
         return ClassificationResult(total=total, categories=categories, valid=valid)
+
+    def classify_grouped(
+        self, rows: list[dict],
+    ) -> dict[str, ClassificationResult]:
+        """按 group_key 分桶，每桶独立分类。
+
+        RPC 返回 p_group_by 模式时，每行多一个 group_key 字段。
+        按 group_key 分桶后，复用 classify() 逐桶分类。
+        """
+        buckets: dict[str, list[dict]] = defaultdict(list)
+        for row in rows:
+            buckets[row.get("group_key") or "未知"].append(row)
+        return {key: self.classify(bucket) for key, bucket in buckets.items()}
+
+    def to_case_sql(self) -> str:
+        """从规则表动态生成 SQL CASE WHEN 表达式。
+
+        用于 DuckDB 导出时给每行订单打分类标签列 order_class。
+        单一规则源：规则改了，导出标签自动一致。
+        """
+        when_clauses: list[str] = []
+        for rule in self.rules:
+            name = rule["rule_name"]
+            conditions = rule.get("conditions", [])
+            if not conditions:
+                continue  # 兜底规则（有效订单）用 ELSE
+            sql_parts: list[str] = []
+            for cond in conditions:
+                fld = cond["field"]
+                op = cond["op"]
+                val = cond["value"]
+                sql_parts.append(self._cond_to_sql(fld, op, val))
+            if sql_parts:
+                when_clauses.append(
+                    f"WHEN {' AND '.join(sql_parts)} THEN '{name}'"
+                )
+        fallback = "有效订单"
+        return f"CASE {' '.join(when_clauses)} ELSE '{fallback}' END"
+
+    @staticmethod
+    def _cond_to_sql(field: str, op: str, value: Any) -> str:
+        """单个条件转 SQL 片段（DuckDB 兼容）。"""
+        if op == "list_has":
+            # order_type 是逗号分隔字符串，用 string_split + list_contains
+            vals = [str(v) for v in value]
+            or_parts = [
+                f"list_contains(string_split({field}, ','), '{v}')"
+                for v in vals
+            ]
+            return f"({' OR '.join(or_parts)})"
+        elif op == "eq":
+            return f"{field} = {_sql_lit(value)}"
+        elif op == "ne":
+            return f"{field} != {_sql_lit(value)}"
+        elif op == "in":
+            vals = ", ".join(_sql_lit(v) for v in value)
+            return f"{field} IN ({vals})"
+        elif op == "not_in":
+            vals = ", ".join(_sql_lit(v) for v in value)
+            return f"{field} NOT IN ({vals})"
+        elif op == "list_not_has":
+            vals = [str(v) for v in value]
+            or_parts = [
+                f"list_contains(string_split({field}, ','), '{v}')"
+                for v in vals
+            ]
+            return f"(NOT ({' OR '.join(or_parts)}))"
+        return "TRUE"
 
     @classmethod
     def invalidate_cache(cls, org_id: str | None = None) -> None:

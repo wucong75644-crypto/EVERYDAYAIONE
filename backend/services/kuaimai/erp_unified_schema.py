@@ -438,6 +438,54 @@ def build_column_metas(fields: list[str]) -> list:
     ]
 
 
+def fmt_classified_grouped(
+    grouped: dict[str, Any],
+    group_by: str,
+    label: str,
+    *,
+    show_recommendation: bool = True,
+) -> str:
+    """格式化分组+分类统计结果。
+
+    每个分组展示有效/各排除类别的明细。
+    """
+    lines = [f"📊 {label} 订单按{group_by}分组统计（含分类）", ""]
+
+    sorted_groups = sorted(
+        grouped.items(),
+        key=lambda kv: kv[1].valid.get("total_amount", 0),
+        reverse=True,
+    )
+
+    grand_total = 0
+    grand_valid = 0
+    for key, cr in sorted_groups:
+        display_key = PLATFORM_CN.get(key, key) if group_by == "platform" else key
+        total_count = cr.total.get("doc_count", 0)
+        total_amount = cr.total.get("total_amount", 0)
+        valid_count = cr.valid.get("doc_count", 0)
+        valid_amount = cr.valid.get("total_amount", 0)
+        grand_total += total_count
+        grand_valid += valid_count
+
+        lines.append(f"📦 {display_key}：{total_count:,}笔 | ¥{total_amount:,.2f}")
+        lines.append(f"  ├── ✅ 有效：{valid_count:,}笔 | ¥{valid_amount:,.2f}")
+        for name, data in cr.categories.items():
+            if name == "有效订单":
+                continue
+            count = data.get("doc_count", 0)
+            if count == 0:
+                continue
+            pct = f"（{count / total_count * 100:.1f}%）" if total_count else ""
+            lines.append(f"  ├── 🔸 {name}：{count:,}笔{pct}")
+        lines.append("")
+
+    lines.append(f"📊 全部合计：{grand_total:,}笔 | 有效 {grand_valid:,}笔")
+    if show_recommendation:
+        lines.append("（后续计算请默认使用有效订单数据）")
+    return "\n".join(lines)
+
+
 def build_column_metas_cn(fields: list[str]) -> list:
     """从字段列表构建 ColumnMeta（name=中文，label=中文）。
 
