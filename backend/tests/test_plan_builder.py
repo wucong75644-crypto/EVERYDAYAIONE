@@ -412,10 +412,11 @@ class TestCapabilityManifest:
             "shop", "platform", "product", "supplier", "warehouse", "status",
         }
 
-    def test_time_cols_has_three(self):
+    def test_time_cols_complete(self):
         m = get_capability_manifest()
         assert set(m["time_cols"]) == {
             "doc_created_at", "pay_time", "consign_time",
+            "apply_date", "delivery_date", "finished_at",
         }
 
     def test_field_categories_not_empty(self):

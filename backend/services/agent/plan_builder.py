@@ -216,7 +216,7 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         "- doc_type: order/purchase/purchase_return/aftersale/receipt/shelf（必填）\n"
         "- mode: summary（统计汇总/多少/占比）/ export（获取数据/明细/导出/列表）（必填）\n"
         "- time_range: 标准化为 YYYY-MM-DD ~ YYYY-MM-DD 或 YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM（必填，根据当前时间推算；用户指定了具体时间点时带上 HH:MM）\n"
-        "- time_col: pay_time（付款时间）/ consign_time（发货时间）/ doc_created_at（创建时间，默认）\n"
+        "- time_col: pay_time（付款时间）/ consign_time（发货时间）/ doc_created_at（创建时间，默认）/ apply_date（售后申请日期）/ delivery_date（采购预计到货日）/ finished_at（售后完结日期）\n"
         "\n"
         "【通用过滤参数（可选，用户提到才提取）】\n"
         "- platform: taobao/pdd/douyin/jd/kuaishou/xhs/1688\n"
@@ -236,6 +236,8 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         "- receiver_name: 收件人姓名（精确匹配）\n"
         "- receiver_state: 收件省份（如广东/浙江/上海）\n"
         "- receiver_city: 收件城市（如深圳/杭州）\n"
+        "- receiver_district: 收件区县（如朝阳区/余杭区）\n"
+        "- receiver_address: 收件详细地址关键词（模糊匹配）\n"
         "- order_status: 订单状态。可选值: WAIT_BUYER_PAY(待付款)/WAIT_AUDIT(待审核)/"
         "WAIT_SEND_GOODS(待发货)/SELLER_SEND_GOODS(已发货)/FINISHED(已完成)/CLOSED(已关闭)\n"
         "- order_type: 订单类型。可选值: 补发/换货/预售/合并/拆分/加急\n"
@@ -255,6 +257,7 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         "- refund_express_company: 退货快递公司（模糊匹配）\n"
         "- refund_warehouse_name: 退货仓库（模糊匹配）\n"
         "- platform_refund_id: 平台退款单号（精确匹配）\n"
+        "- reason: 退货原因编码（模糊匹配，用于按原因分类筛选）\n"
         "\n"
         "【采购域过滤参数（doc_type=purchase/purchase_return 时可用）】\n"
         "- supplier_name: 供应商名称（模糊匹配）\n"
@@ -371,6 +374,7 @@ def get_capability_manifest() -> dict:
             "receiver_state", "receiver_city", "item_name",
             "is_cancel", "is_refund", "is_exception", "is_halt",
             "is_urgent", "is_presell",
+            "receiver_district", "receiver_address", "reason",
         ],
         "time_cols": sorted(VALID_TIME_COLS),
         "platforms": platform_names,
