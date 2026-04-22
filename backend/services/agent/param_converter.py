@@ -38,6 +38,9 @@ TEXT_LIKE_FIELDS: dict[str, str] = {
     "remark": "remark",
     "buyer_message": "buyer_message",
     "text_reason": "text_reason",
+    "receiver_address": "receiver_address",
+    "receiver_district": "receiver_district",
+    "reason": "reason",
 }
 
 # 枚举精确匹配：LLM语义参数名 → DB列名

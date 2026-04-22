@@ -129,8 +129,14 @@ OP_COMPAT: dict[str, set[str]] = {
 # ── 常量 ──────────────────────────────────────────────
 
 
-TIME_COLUMNS = {"doc_created_at", "doc_modified_at", "pay_time", "consign_time"}
-VALID_TIME_COLS = {"doc_created_at", "pay_time", "consign_time"}
+TIME_COLUMNS = {
+    "doc_created_at", "doc_modified_at", "pay_time", "consign_time",
+    "apply_date", "delivery_date", "finished_at",
+}
+VALID_TIME_COLS = {
+    "doc_created_at", "pay_time", "consign_time",
+    "apply_date", "delivery_date", "finished_at",
+}
 VALID_DOC_TYPES = {"order", "purchase", "aftersale", "receipt", "shelf", "purchase_return"}
 
 DOC_TYPE_CN = {
