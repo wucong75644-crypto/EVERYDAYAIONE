@@ -253,6 +253,12 @@ class ErpToolMixin:
         """统一查询引擎调度入口"""
         from services.kuaimai.erp_unified_query import UnifiedQueryEngine
 
+        logger.info(
+            f"local_data dispatch | doc_type={args.get('doc_type')} "
+            f"mode={args.get('mode')} filters={args.get('filters', [])!r} "
+            f"group_by={args.get('group_by')} time_type={args.get('time_type')}"
+        )
+
         request_ctx = getattr(self, "request_ctx", None)
         engine = UnifiedQueryEngine(db=self.db, org_id=self.org_id)
         try:
