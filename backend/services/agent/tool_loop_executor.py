@@ -548,62 +548,59 @@ class ToolLoopExecutor:
                 )
             )
 
-            # ── ToolOutput / str 统一处理 ──
+            # ── 统一后处理：类型归一化 → 文件收集 → 截断 → 入 messages ──
             now_iso = datetime.now(timezone.utc).isoformat()
 
+            # Step 1: 归一化为 content 字符串
             if isinstance(result, ToolOutput):
-                # v6: 校验 ToolOutput 内部一致性（warn 不阻断）
                 _warnings = result.validate()
                 if _warnings:
                     logger.warning(
                         f"ToolOutput validation | tool={tool_name} | "
                         f"issues={_warnings}",
                     )
-                # 结构化输出：转文本给 LLM + 注册文件 + 注入 timestamp
                 content = result.to_tool_content()
-                is_truncated = False  # ToolOutput 已结构化，不截断
+                is_truncated = False
 
-                # 文件注册到 SessionFileRegistry
+                # ToolOutput 专有：file_ref 注册 + collected_files 透传
                 if result.file_ref:
                     self._file_registry.register(
                         result.source or tool_name, tool_name, result.file_ref,
                     )
-
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "timestamp": now_iso,
-                    "content": content,
-                })
-                accumulated = content
+                if getattr(result, "collected_files", None):
+                    self._collected_files.extend(result.collected_files)
             else:
-                # 旧的 str 返回（code_execute / web_search 等未改造的工具）
-                # 提取 [FILE] 标记到独立通道
-                if result and "[FILE]" in result:
-                    for m in _FILE_RE.finditer(result):
-                        self._collected_files.append({
-                            "url": m.group("url"),
-                            "name": m.group("name"),
-                            "mime_type": m.group("mime"),
-                            "size": int(m.group("size")),
-                        })
-                    result = _FILE_RE.sub(
-                        lambda m: f"📎 文件: {m.group('name')}", result,
-                    )
+                content = result or ""
+                is_truncated = False
 
-                # 截断防爆（v6: budget 感知紧张度）
+            # Step 2: [FILE] 标记提取（统一处理，不分类型）
+            if content and "[FILE]" in content:
+                for m in _FILE_RE.finditer(content):
+                    self._collected_files.append({
+                        "url": m.group("url"),
+                        "name": m.group("name"),
+                        "mime_type": m.group("mime"),
+                        "size": int(m.group("size")),
+                    })
+                content = _FILE_RE.sub(
+                    lambda m: f"📎 文件: {m.group('name')}", content,
+                )
+
+            # Step 3: 截断防爆（ToolOutput 已结构化不截断，str 需要）
+            if not isinstance(result, ToolOutput):
                 from services.agent.tool_result_envelope import wrap_for_erp_agent
-                is_truncated = len(result) > 3000 if result else False
+                is_truncated = len(content) > 3000 if content else False
                 _tight = hook_ctx.budget.is_tight if hook_ctx.budget else False
-                result = wrap_for_erp_agent(tool_name, result, tight=_tight)
+                content = wrap_for_erp_agent(tool_name, content, tight=_tight)
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "timestamp": now_iso,
-                    "content": result,
-                })
-                accumulated = result
+            # Step 4: 入 messages
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "timestamp": now_iso,
+                "content": content,
+            })
+            accumulated = content
 
             # Hook 链：单工具执行后（审计 + 失败反思等）
             for hook in self.hooks:
