@@ -30,7 +30,7 @@ class ExecutionBudget:
     def __init__(
         self,
         max_turns: int = 15,
-        max_tokens: int = 100_000,
+        max_tokens: int = 200_000,
         max_wall_time: float = 600.0,
         reserved_for_response: int = 4000,
     ) -> None:

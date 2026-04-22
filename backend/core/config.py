@@ -226,7 +226,7 @@ class Settings(BaseSettings):
 
     # 多维预算配置（主 Agent 工具循环）
     budget_max_turns: int = 15               # 轮次上限（主控制，对标 OpenAI/LangGraph）
-    budget_max_tokens: int = 100_000         # Token 上限（安全网）
+    budget_max_tokens: int = 200_000         # Token 上限（安全网）
     budget_max_wall_time: float = 600.0      # 墙钟上限（纯兜底，10 分钟）
 
     # 超时分级配置（按任务类型差异化超时，仅用于非 budget 场景）
