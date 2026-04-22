@@ -421,6 +421,40 @@ def get_capability_manifest() -> dict:
     }
 
 
+# ── L2 platform 自动补全 ──
+
+
+def fill_platform(params: dict, query: str) -> None:
+    """L2 意图完整性：从用户查询文本补全 LLM 漏提取的 platform。
+
+    纯函数，不依赖 ERPAgent 实例。供外部调用或测试使用。
+    """
+    if params.get("platform"):
+        return  # AI 已提取，不覆盖
+
+    from services.kuaimai.erp_unified_schema import PLATFORM_NORMALIZE
+    cn_keys = [
+        k for k in PLATFORM_NORMALIZE
+        if not k.isascii() or k == "1688"
+    ]
+    matched: set[str] = set()
+    for key in cn_keys:
+        if key in query:
+            matched.add(PLATFORM_NORMALIZE[key])
+
+    if len(matched) == 1:
+        params["platform"] = matched.pop()
+        logger.info(
+            f"L2 platform 补全: query={query!r} → "
+            f"platform={params['platform']}",
+        )
+    elif len(matched) > 1:
+        logger.warning(
+            f"L2 platform 多匹配，不补全: query={query!r}, "
+            f"matched={matched}",
+        )
+
+
 # ── L2 product_code / order_no / express_no 补全（DB 验证） ──
 
 _PRODUCT_CODE_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*")

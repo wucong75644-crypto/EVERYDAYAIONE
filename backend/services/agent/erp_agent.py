@@ -1,9 +1,11 @@
 """
-ERP 独立 Agent — 单域查询模式。
+ERP 独立 Agent — 领域专家模式。
 
-每次只查一个域的数据：参数提取 → 准入校验 → 部门 Agent 执行 → 返回结果。
-跨域编排由主 Agent 负责（并行调多次 erp_agent + code_execute 合并）。
-类型/常量见 erp_agent_types.py。
+内置 ToolLoopExecutor，可自主完成跨域查询 + 关联计算 + 报表生成。
+主 Agent 只需一次调用，ERPAgent 内部编排多步工具调用并返回结论。
+
+工具集：ERP 本地/远程查询工具 + code_execute（沙盒计算）
+不含：erp_agent（防递归）、erp_execute（只读）、ask_user（无交互）
 
 设计文档: docs/document/TECH_ERPAgent架构简化.md
 """
@@ -11,19 +13,15 @@ ERP 独立 Agent — 单域查询模式。
 from __future__ import annotations
 
 import asyncio
-import time as _time
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from loguru import logger
 
 if TYPE_CHECKING:
+    from services.agent.execution_budget import ExecutionBudget
     from utils.time_context import RequestContext
 
 from services.agent.agent_result import AgentResult
-
-
-# 有效数据域（不含 compute，计算由主 Agent 的 code_execute 负责）
-_VALID_DOMAINS = frozenset({"warehouse", "purchase", "trade", "aftersale"})
 
 
 def _error_result(summary: str, status: str = "error") -> AgentResult:
@@ -34,8 +32,75 @@ def _error_result(summary: str, status: str = "error") -> AgentResult:
     )
 
 
+# ── ERPAgent 内部 system prompt ──
+
+_ERP_AGENT_SYSTEM_PROMPT = (
+    "你是 ERP 数据分析专家。你可以自主完成跨域查询、关联计算和报表生成。\n\n"
+    "## 你的工具\n"
+    "- **local_data**：本地数据库统一查询（订单/采购/售后/收货/上架/采退），毫秒级\n"
+    "- **local_stock_query**：库存查询（需精确编码）\n"
+    "- **local_product_identify**：编码识别（模糊名称→精确编码）\n"
+    "- **local_compare_stats**：时间维度对比（同比/环比）\n"
+    "- **local_product_stats**：按商品编码查统计报表\n"
+    "- **local_shop_list / local_warehouse_list / local_supplier_list**：参考列表\n"
+    "- **erp_*_query**：远程API（local 无数据时降级使用）\n"
+    "- **code_execute**：Python 沙盒，用于数据关联、计算、生成Excel\n\n"
+    "## 工作规则\n"
+    "1. local 工具优先，远程 API 仅在本地无数据时使用\n"
+    "2. 跨域数据通过 product_code（商品编码）关联\n"
+    "3. 需要计算/排序/生成报表时用 code_execute\n"
+    "4. code_execute 中用 read_file() 读取 staging 文件\n"
+    "5. 生成的 Excel/CSV 输出到 OUTPUT_DIR\n"
+    "6. 最终回复应简洁清晰：结论 + 关键数据 + 文件（如有）\n\n"
+    "## 时间规范\n"
+    "- 日期用 ISO: 2026-04-14 00:00:00\n"
+    "- 含「付款」→ time_type=pay_time\n"
+    "- 含「发货」→ time_type=consign_time\n"
+    "- 默认 doc_created_at\n"
+)
+
+
+_ERP_AGENT_ROUTING_RULES = (
+    "## 工具选择规则\n\n"
+    "### 层级：local > erp > fetch_all_pages > code_execute\n"
+    "- 禁止跳过 local 工具直接用 erp 远程 API\n"
+    "- code_execute 是纯计算沙盒，不能查数据\n\n"
+    "### 常见场景\n"
+    "- 今天/本周/本月多少单 → local_data(doc_type=order, mode=summary, filters=[时间条件])\n"
+    "- 已发货/未发货订单 → local_data(filters=[{field:order_status, op:eq, value:SELLER_SEND_GOODS}])\n"
+    "- 按店铺/平台统计 → local_data(mode=summary, group_by=[shop_name])\n"
+    "- 按商品排名 → local_data(mode=summary, group_by=[outer_id])\n"
+    "- 导出 Excel → local_data(mode=export) → code_execute 读 staging 生成 Excel\n"
+    "- 查某订单详情 → local_data(mode=detail, filters=[{field:order_no, op:eq, value:xxx}])\n"
+    "- 对比/同比/环比 → local_compare_stats\n"
+    "- 某商品编码的采购/售后/订单 → local_data(filters=[{field:outer_id, op:eq, value:编码}])\n"
+    "- 跨域关联分析 → 多次 local_data 查不同 doc_type → code_execute 用 product_code 关联\n\n"
+    "### 时间规范\n"
+    "- 日期用 ISO: 2026-04-14 00:00:00\n"
+    "- 含「付款」→ time_type=pay_time\n"
+    "- 含「发货」→ time_type=consign_time\n"
+    "- 默认 doc_created_at\n\n"
+    "### 降级策略\n"
+    "- local 工具返回错误 → 改用 erp 远程工具重试\n"
+    "- 连续 2 次空结果 → 在最终回复中说明未找到数据，建议缩小范围\n\n"
+    "### 参数充分度判断\n"
+    "- 参数充分 → 直接查\n"
+    "- 可推断且无歧义 → 直接查，结果中说明假设\n"
+    "- 有歧义 → 在最终回复中列出可能的选项，建议用户明确\n\n"
+    "### ERP 远程工具协议\n"
+    "1. 两步查询：先传 action 拿参数文档 → 再传 params 执行\n"
+    "2. page/page_size 在 tool 级别传，不放 params 里\n\n"
+    "### 编码识别\n"
+    "- 裸值编码/单号 → 先 local_product_identify(code=XX) 确认类型\n"
+    "- 套件无独立库存 → 查子单品逐个查\n\n"
+    "### 规则\n"
+    "- 禁止猜测参数值\n"
+    "- 参数明确时直接查询，禁止试探性查询\n"
+)
+
+
 class ERPAgent:
-    """ERP 独立 Agent — 单域查询：参数提取 + 部门Agent执行 + 结果返回"""
+    """ERP 领域专家 Agent — 内置 ToolLoopExecutor 自主编排查询+计算"""
 
     def __init__(
         self,
@@ -52,32 +117,30 @@ class ERPAgent:
         self.conversation_id = conversation_id
         self.org_id = org_id
         self.task_id = task_id
-        self._budget = budget  # v6: 显式参数替代属性注入
+        self._budget = budget
         from utils.time_context import RequestContext
         self.request_ctx = request_ctx or RequestContext.build(
             user_id=user_id, org_id=org_id, request_id=task_id or "",
         )
         from services.agent.experience_recorder import ExperienceRecorder
         self._experience = ExperienceRecorder(org_id=org_id, writer="erp_agent")
-        self._tokens_used: int = 0
 
     async def execute(
         self,
         task: str,
         conversation_context: str = "",
     ) -> AgentResult:
-        """执行 ERP 单域查询。
+        """执行 ERP 数据分析任务。
 
         Args:
             task: 主 Agent 整理好的清晰任务描述
             conversation_context: 对话背景补充（可选）
         """
-        # 合并为完整查询上下文
         query = task
         if conversation_context:
             query = f"{task}\n（背景：{conversation_context}）"
 
-        # v6: Langfuse span
+        # Langfuse span
         from services.agent.observability.langfuse_integration import (
             create_trace, create_span,
         )
@@ -90,171 +153,188 @@ class ERPAgent:
         if not self.org_id:
             return _error_result("当前账号未开通 ERP 功能，请联系管理员配置企业账号。")
 
-        from core.config import get_settings
-        _cfg_timeout = get_settings().dag_global_timeout
-        # v6: budget.remaining 约束超时（取较小值）
-        _timeout = (
-            min(self._budget.remaining, _cfg_timeout)
-            if self._budget else _cfg_timeout
-        )
-        _deadline = _time.monotonic() + _timeout
         try:
-            return await asyncio.wait_for(
-                self._execute(query, deadline=_deadline),
-                timeout=_timeout,
-            )
+            return await self._execute_with_tool_loop(query)
         except asyncio.TimeoutError:
-            return _error_result(
-                f"查询超时（{_timeout:.0f}秒），请缩小查询范围后重试",
-                status="timeout",
-            )
-
-    # ── 单域执行主流程 ──
-
-    async def _execute(
-        self, query: str, deadline: float,
-    ) -> AgentResult:
-        """参数提取 → 准入校验 → 实例化单个 Agent → 执行 → 结果处理。"""
-        # ── Step 1: 参数提取（三级降级链）──
-        extract_result = await self._extract_params(query)
-        if extract_result is None:
-            return _error_result("无法理解您的请求，请更具体地描述您要查询的内容")
-        domain, params, degraded = extract_result
-
-        # ── Step 2: 域白名单校验 ──
-        if domain not in _VALID_DOMAINS:
-            return _error_result(
-                f"不支持的查询域 '{domain}'，可查询：库存/采购/订单/售后",
-            )
-
-        # ── Step 3: 准入校验（DB 验证 product_code / order_no）──
-        from services.agent.plan_builder import (
-            _fill_codes_for_params,
-        )
-        await _fill_codes_for_params(params, query, self.db, self.org_id)
-
-        # ── Step 4: 实例化单个 DepartmentAgent ──
-        agent = self._create_agent(domain)
-        if agent is None:
-            return _error_result(f"域 '{domain}' 无对应 Agent")
-
-        # ── Step 5: 执行查询（带 deadline 协调）──
-        remaining = deadline - _time.monotonic()
-        if remaining < 5.0:
-            return _error_result("查询预算不足，请缩小查询范围后重试")
-
-        task_desc = query[:50]
-        logger.info(
-            f"ERPAgent execute | domain={domain} | "
-            f"params={params} | remaining={remaining:.1f}s",
-        )
-
-        try:
-            result = await asyncio.wait_for(
-                agent.execute(task_desc, dag_mode=True, params=params),
-                timeout=min(remaining, 30.0),
-            )
-        except asyncio.TimeoutError:
-            # v6: 超时时检查子 Agent 是否有 partial 数据
-            partial = getattr(agent, "_partial_rows", [])
-            if partial:
-                logger.warning(
-                    f"ERPAgent {domain} timeout with {len(partial)} partial rows",
-                )
-                return _error_result(
-                    f"{domain} 查询超时，返回已获取的 {len(partial)} 条部分数据",
-                    status="partial",
-                )
-            logger.warning(f"ERPAgent {domain} timeout")
-            return _error_result(
-                f"{domain} 查询超时，请缩小查询范围后重试",
-                status="timeout",
-            )
+            return _error_result("查询超时，请缩小查询范围后重试", status="timeout")
         except Exception as e:
             logger.opt(exception=True).error(
-                f"ERPAgent {domain} exception | query={query[:50]}",
+                f"ERPAgent exception | query={query[:100]}",
             )
-            is_known = isinstance(
-                e, (ValueError, PermissionError, ConnectionError),
-            )
+            is_known = isinstance(e, (ValueError, PermissionError, ConnectionError))
             error_msg = (
                 str(e) if is_known
                 else f"内部错误，请联系管理员（{type(e).__name__}）"
             )
-            return _error_result(f"{domain} 执行异常: {error_msg}")
+            return _error_result(f"执行异常: {error_msg}")
 
-        # ── Step 6+7: 结果处理 + 后处理 ──
-        return self._build_result(result, query, domain, degraded, params)
+    # ── 核心执行：ToolLoopExecutor ──
 
-    # ── 结果处理 ──
+    async def _execute_with_tool_loop(self, query: str) -> AgentResult:
+        """构建工具循环并执行，返回 AgentResult。"""
+        from core.config import get_settings
+        from services.adapters.factory import create_chat_adapter
+        from services.agent.tool_executor import ToolExecutor
+        from config.erp_tools import get_erp_agent_tools
 
-    def _build_result(
-        self, result: Any, query: str, domain: str, degraded: bool,
-        params: dict | None = None,
-    ) -> "AgentResult":
-        """Step 6+7: 文件注册 + 降级标记 + 经验记录 → AgentResult。"""
-        from services.agent.agent_result import AgentResult
-        from services.agent.tool_output import OutputFormat
+        settings = get_settings()
 
-        summary = result.summary or ""
+        # 1. 构建工具列表（ERP 域 + code_execute）
+        all_tools = get_erp_agent_tools(org_id=self.org_id)
 
-        # ① SessionFileRegistry 注册（沙盒 read_file 依赖）
-        if result.file_ref:
-            from services.agent.session_file_registry import SessionFileRegistry
-            registry = SessionFileRegistry()
-            registry.register(domain, "execute", result.file_ref)
-            # staging parquet 是中间产物（供 code_execute 转 Excel），
-            # 不发 collected_files 给前端。用户最终下载的 Excel 由
-            # code_execute → OUTPUT_DIR → auto_upload → [FILE] 链路生成。
-            # ② staging 延迟清理
-            asyncio.create_task(self._cleanup_staging_delayed())
-
-        # ③ 经验记录（detail 含关键参数，供动态案例召回使用）
-        if result.status == "error":
-            asyncio.create_task(self._experience.record(
-                "failure", query, [domain],
-                f"单域失败：{summary[:200]}",
-            ))
-        else:
-            detail = self._build_experience_detail(domain, params)
-            asyncio.create_task(self._experience.record(
-                "routing", query, [domain],
-                detail, confidence=0.6,
-            ))
-
-        # ④ 构建 AgentResult（通信协议标准输出）
-        status = "error" if result.status == "error" else "success"
-        return AgentResult(
-            status=status,
-            summary=summary,
-            file_ref=result.file_ref,
-            data=result.data if result.format == OutputFormat.TABLE else None,
-            columns=result.columns,
-            source="erp_agent",
-            tokens_used=self._tokens_used,
-            confidence=0.6 if degraded else 1.0,
-            error_message=summary if status == "error" else "",
+        # 2. 创建 LLM adapter
+        adapter = create_chat_adapter(
+            settings.agent_loop_model, org_id=self.org_id, db=self.db,
         )
 
+        try:
+            # 3. 创建 ToolExecutor（与主 Agent 共用同一个类，上下文隔离靠参数）
+            executor = ToolExecutor(
+                self.db, self.user_id, self.conversation_id,
+                self.org_id, self.request_ctx,
+            )
+
+            # 4. 装配 ToolLoopExecutor + HookContext
+            tool_loop, hook_ctx, budget = self._build_tool_loop(
+                adapter, executor, all_tools,
+            )
+
+            # 5. 构建 messages
+            messages = self._build_messages(query)
+
+            # 6. 执行工具循环
+            tools_called: List[str] = []
+            loop_result = await tool_loop.run(
+                messages=messages,
+                selected_tools=all_tools,
+                tools_called=tools_called,
+                hook_ctx=hook_ctx,
+                budget=budget,
+            )
+
+            # 7. 经验记录
+            asyncio.create_task(self._experience.record(
+                "routing", query, tools_called[:5],
+                f"tool_loop | turns={loop_result.turns} | "
+                f"tokens={loop_result.total_tokens}",
+                confidence=0.8,
+            ))
+
+            # 8. staging 延迟清理
+            asyncio.create_task(self._cleanup_staging_delayed())
+
+            # 9. LoopResult → AgentResult
+            return self._convert_result(loop_result)
+        finally:
+            try:
+                await adapter.close()
+            except Exception:
+                pass
+
+    def _build_tool_loop(
+        self,
+        adapter: Any,
+        executor: Any,
+        all_tools: List[Dict[str, Any]],
+    ) -> tuple:
+        """装配 ToolLoopExecutor + HookContext + Budget。
+
+        与 ScheduledTaskAgent 差异：
+        - task_id=None：不推送 WebSocket 进度（防止与主 Agent 冲突）
+        - 只挂 ToolAuditHook（审计日志）
+        - ERPAgent 专用 max_turns/max_tokens
+        """
+        from services.agent.tool_loop_executor import ToolLoopExecutor
+        from services.agent.loop_types import (
+            HookContext, LoopConfig, LoopStrategy,
+        )
+        from services.agent.loop_hooks import ToolAuditHook
+        from services.agent.execution_budget import ExecutionBudget
+        from core.config import get_settings
+
+        settings = get_settings()
+
+        hook_ctx = HookContext(
+            db=self.db,
+            user_id=self.user_id,
+            org_id=self.org_id,
+            conversation_id=self.conversation_id,
+            task_id=None,  # 不推送 WS 进度，防止与主 Agent ProgressNotifyHook 冲突
+            request_ctx=self.request_ctx,
+        )
+
+        tool_loop = ToolLoopExecutor(
+            adapter=adapter,
+            executor=executor,
+            all_tools=all_tools,
+            config=LoopConfig(
+                max_turns=settings.erp_agent_max_turns,
+                max_tokens=settings.erp_agent_max_tokens,
+                tool_timeout=settings.erp_agent_tool_timeout,
+                thinking_mode="enabled",  # qwen3.5 function calling 需要开启
+                no_synthesis_fallback_text=(
+                    "查询过程中未能生成完整结论，请缩小查询范围或更具体地描述需求。"
+                ),
+            ),
+            strategy=LoopStrategy(
+                exit_signals=frozenset(),       # 无用户交互
+                enable_tool_expansion=False,     # 工具列表固定
+                force_tool_use_first=True,       # 必须查数据
+            ),
+            hooks=[ToolAuditHook()],
+        )
+
+        # Budget: 从父 budget fork，或创建独立 budget
+        if self._budget:
+            budget = self._budget.fork(
+                max_turns=settings.erp_agent_max_turns,
+            )
+        else:
+            budget = ExecutionBudget(
+                max_turns=settings.erp_agent_max_turns,
+                max_tokens=settings.erp_agent_max_tokens,
+                max_wall_time=300.0,
+            )
+
+        return tool_loop, hook_ctx, budget
+
+    def _build_messages(self, query: str) -> List[Dict[str, Any]]:
+        """构建 ERPAgent 内部 LLM 的 messages。"""
+        # 时间事实注入
+        time_injection = self.request_ctx.for_prompt_injection()
+
+        system_content = (
+            _ERP_AGENT_SYSTEM_PROMPT
+            + "\n" + _ERP_AGENT_ROUTING_RULES
+            + "\n\n## 当前时间\n" + time_injection
+        )
+
+        return [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": query},
+        ]
+
     @staticmethod
-    def _build_experience_detail(
-        domain: str, params: dict | None,
-    ) -> str:
-        """构建经验记录的 detail 字段（含关键参数，供动态案例召回）。"""
-        if not params:
-            return f"domain={domain}"
-        parts = [f"domain={domain}"]
-        mode = params.get("mode", "summary")
-        parts.append(f"mode={mode}")
-        if params.get("group_by"):
-            parts.append(f"group_by={params['group_by']}")
-        if params.get("platform"):
-            parts.append(f"platform={params['platform']}")
-        if params.get("fields"):
-            parts.append(f"fields={params['fields']}")
-        if params.get("product_code"):
-            parts.append(f"product_code={params['product_code']}")
-        return ", ".join(parts)
+    def _convert_result(loop_result: Any) -> AgentResult:
+        """LoopResult → AgentResult 转换。"""
+        if loop_result.exit_via_ask_user:
+            return AgentResult(
+                status="ask_user",
+                summary=loop_result.text,
+                source="erp_agent",
+                ask_user_question=loop_result.text,
+                tokens_used=loop_result.total_tokens,
+            )
+
+        status = "success" if loop_result.is_llm_synthesis else "empty"
+        return AgentResult(
+            status=status,
+            summary=loop_result.text,
+            collected_files=loop_result.collected_files,
+            source="erp_agent",
+            tokens_used=loop_result.total_tokens,
+            confidence=1.0,
+        )
 
     # ── 工具描述自动生成（静态层）──
 
@@ -292,6 +372,8 @@ class ERPAgent:
             f"- 时间列：{' / '.join(m['time_cols'])}（默认 doc_created_at）",
         )
         lines.append("- 异常数据：默认排除刷单，query 中写'包含刷单'则包含")
+        lines.append("- 跨域关联分析：可自主查多个域的数据并关联计算")
+        lines.append("- 报表生成：可自主生成Excel/CSV报表文件")
 
         # ③+ 可查询信息分类
         categories = m.get("field_categories", {})
@@ -314,173 +396,7 @@ class ERPAgent:
 
         return "\n".join(lines)
 
-    # ── 参数提取（三级降级链）──
-
-    async def _extract_params(
-        self, query: str,
-    ) -> tuple[str, dict, bool] | None:
-        """从用户查询提取域和参数。
-
-        三级降级链：
-        1. LLM 结构化提取
-        2. 关键词匹配降级
-        3. abort（返回 None）
-
-        Returns: (domain, params, degraded) 或 None
-        """
-        from services.agent.plan_builder import (
-            VALID_DOMAINS as PB_VALID_DOMAINS,
-            _DOMAIN_DOC_TYPES,
-            _DOMAIN_DEFAULT_DOC_TYPE,
-            _sanitize_params,
-            quick_classify,
-            _build_fallback_params,
-            build_extract_prompt,
-            parse_extract_response,
-        )
-
-        # ── 第一级：LLM 提取 ──
-        try:
-            domain, params = await self._llm_extract(query)
-            # 参数宽容校验
-            params = _sanitize_params(params)
-            # L2 域路由冲突检测
-            doc_type = params.get("doc_type")
-            allowed = _DOMAIN_DOC_TYPES.get(domain)
-            if doc_type and allowed and doc_type not in allowed:
-                default = _DOMAIN_DEFAULT_DOC_TYPE.get(
-                    domain, next(iter(allowed)),
-                )
-                logger.warning(
-                    f"L2 域路由冲突: domain={domain} "
-                    f"doc_type={doc_type} → {default}",
-                )
-                params["doc_type"] = default
-            # L2 platform 补全
-            self._fill_platform(params, query)
-            return (domain, params, False)
-        except Exception as e:
-            logger.warning(f"LLM extract failed, falling back: {e}")
-
-        # ── 第二级：关键词匹配降级 ──
-        domain = quick_classify(query)
-        if domain:
-            params = _build_fallback_params(
-                query, self.request_ctx, domain=domain,
-            )
-            self._fill_platform(params, query)
-            return (domain, params, True)
-
-        # ── 第三级：无法理解 ──
-        return None
-
-    async def _llm_extract(
-        self, query: str,
-    ) -> tuple[str, dict]:
-        """调 LLM 提取域和参数。失败时抛异常，由调用方降级。"""
-        from services.adapters.factory import create_chat_adapter
-        from core.config import settings
-        from services.agent.plan_builder import (
-            build_extract_prompt,
-            parse_extract_response,
-        )
-
-        # 构造时间字符串
-        now = self.request_ctx.now
-        weekday = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-        now_str = (
-            f"{now.strftime('%Y-%m-%d %H:%M')} "
-            f"{weekday[now.weekday()]}"
-        )
-
-        prompt = build_extract_prompt(query, now_str=now_str)
-        messages = [
-            {"role": "system", "content": "你是参数提取器，只返回JSON。"},
-            {"role": "user", "content": prompt},
-        ]
-
-        adapter = create_chat_adapter(
-            settings.agent_loop_model, org_id=self.org_id, db=self.db,
-        )
-        try:
-            response = await adapter.chat_sync(messages=messages)
-            self._tokens_used += getattr(response, "prompt_tokens", 0)
-            self._tokens_used += getattr(response, "completion_tokens", 0)
-            raw = getattr(response, "content", "") or ""
-            return parse_extract_response(raw)
-        finally:
-            await adapter.close()
-
-    @staticmethod
-    def _fill_platform(params: dict, query: str) -> None:
-        """L2 意图完整性：从用户查询文本补全 LLM 漏提取的 platform。"""
-        if params.get("platform"):
-            return  # AI 已提取，不覆盖
-
-        from services.kuaimai.erp_unified_schema import PLATFORM_NORMALIZE
-        cn_keys = [
-            k for k in PLATFORM_NORMALIZE
-            if not k.isascii() or k == "1688"
-        ]
-        matched: set[str] = set()
-        for key in cn_keys:
-            if key in query:
-                matched.add(PLATFORM_NORMALIZE[key])
-
-        if len(matched) == 1:
-            params["platform"] = matched.pop()
-            logger.info(
-                f"L2 platform 补全: query={query!r} → "
-                f"platform={params['platform']}",
-            )
-        elif len(matched) > 1:
-            logger.warning(
-                f"L2 platform 多匹配，不补全: query={query!r}, "
-                f"matched={matched}",
-            )
-
-    def _create_agent(self, domain: str) -> Any:
-        """按域名实例化对应的 DepartmentAgent。"""
-        from services.agent.departments.warehouse_agent import WarehouseAgent
-        from services.agent.departments.purchase_agent import PurchaseAgent
-        from services.agent.departments.trade_agent import TradeAgent
-        from services.agent.departments.aftersale_agent import AftersaleAgent
-
-        agent_map = {
-            "warehouse": WarehouseAgent,
-            "purchase": PurchaseAgent,
-            "trade": TradeAgent,
-            "aftersale": AftersaleAgent,
-        }
-        cls = agent_map.get(domain)
-        if cls is None:
-            return None
-
-        # 解析 staging_dir（与主 agent 的 code_execute 共享同一目录）
-        staging_dir = None
-        try:
-            from core.config import get_settings
-            from core.workspace import resolve_staging_dir
-            _s = get_settings()
-            staging_dir = resolve_staging_dir(
-                _s.file_workspace_root,
-                self.user_id,
-                self.org_id,
-                self.conversation_id or "default",
-            )
-        except Exception as e:
-            logger.warning(f"resolve staging_dir failed: {e}")
-
-        # v6: 传 budget.fork() 给子 Agent
-        child_budget = self._budget.fork(max_turns=5) if self._budget else None
-        return cls(
-            db=self.db, org_id=self.org_id,
-            request_ctx=self.request_ctx,
-            staging_dir=staging_dir,
-            budget=child_budget,
-            user_id=self.user_id,
-            conversation_id=self.conversation_id,
-        )
+    # ── staging 清理 ──
 
     async def _cleanup_staging_delayed(self, delay: int = 900) -> None:
         """会话级 staging 延迟清理（15 分钟，覆盖 ~85% 的用户追问间隔）。"""
