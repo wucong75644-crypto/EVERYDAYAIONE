@@ -1,12 +1,16 @@
--- 091: 为两个 RPC 函数的 filter DSL 补充 between 操作符支持
--- 根因: validate_filters 和 DuckDB export 均支持 between，但 RPC CASE 缺失导致 summary 模式静默丢弃
--- 影响: "金额在100-500之间的订单" 在 summary 模式下将正确过滤
+-- 091: 基于 089 完整函数体，补充 between 操作符 + 扩展 time_col 白名单
+--
+-- 变更（相对 089）：
+--   1. Filter DSL CASE 增加 WHEN 'between' 分支（两个函数各加一处）
+--   2. time_col 白名单扩展：新增 apply_date / delivery_date / finished_at
+--   3. 其余逻辑与 089 完全一致（archive UNION / SELECT * / TIMESTAMPTZ 参数 / 子查询包裹）
 
--- ── erp_global_stats_query: 在 is_null 分支后追加 between ──
+-- ── RPC 1: erp_global_stats_query ──────────────────────
+
 CREATE OR REPLACE FUNCTION erp_global_stats_query(
     p_doc_type VARCHAR,
-    p_start VARCHAR DEFAULT NULL,
-    p_end VARCHAR DEFAULT NULL,
+    p_start TIMESTAMPTZ,
+    p_end TIMESTAMPTZ,
     p_time_col VARCHAR DEFAULT 'doc_created_at',
     p_shop VARCHAR DEFAULT NULL,
     p_platform VARCHAR DEFAULT NULL,
@@ -17,35 +21,59 @@ CREATE OR REPLACE FUNCTION erp_global_stats_query(
     p_org_id UUID DEFAULT NULL,
     p_filters JSONB DEFAULT NULL
 ) RETURNS JSONB
-LANGUAGE plpgsql SECURITY DEFINER
-AS $$
+LANGUAGE plpgsql AS $$
 DECLARE
+    result JSONB;
     base_q TEXT;
+    group_col TEXT;
+    name_col TEXT;
+    need_archive BOOLEAN;
+    org_filter TEXT;
+    time_col TEXT;
+    i INT;
     f JSONB;
     field_name TEXT;
     op TEXT;
     val JSONB;
     val_text TEXT;
-    group_col TEXT;
-    name_col TEXT;
-    result JSONB;
-    i INT;
 BEGIN
-    -- 基础查询
-    base_q := 'SELECT * FROM erp_document_items WHERE doc_type = ' || quote_literal(p_doc_type);
+    IF p_start > p_end THEN
+        RETURN jsonb_build_object('error', 'p_start must <= p_end');
+    END IF;
 
-    -- org_id 隔离
+    -- 091: 扩展 time_col 白名单（+apply_date/delivery_date/finished_at）
+    IF p_time_col IN ('doc_created_at', 'pay_time', 'consign_time',
+                      'apply_date', 'delivery_date', 'finished_at') THEN
+        time_col := p_time_col;
+    ELSE
+        time_col := 'doc_created_at';
+    END IF;
+
+    need_archive := (p_start < NOW() - INTERVAL '90 days');
+
     IF p_org_id IS NOT NULL THEN
-        base_q := base_q || ' AND org_id = ' || quote_literal(p_org_id);
+        org_filter := format(' AND org_id = %L', p_org_id);
+    ELSE
+        org_filter := ' AND org_id IS NULL';
     END IF;
 
-    -- 时间范围
-    IF p_start IS NOT NULL AND p_end IS NOT NULL THEN
-        base_q := base_q || format(' AND %I >= %L AND %I < %L',
-            p_time_col, p_start, p_time_col, p_end);
+    base_q := format(
+        'SELECT * FROM erp_document_items
+         WHERE doc_type = %L AND %I >= %L AND %I < %L',
+        p_doc_type, time_col, p_start, time_col, p_end
+    ) || org_filter;
+
+    IF need_archive THEN
+        base_q := base_q || format(
+            ' UNION ALL
+             SELECT * FROM erp_document_items_archive
+             WHERE doc_type = %L AND %I >= %L AND %I < %L',
+            p_doc_type, time_col, p_start, time_col, LEAST(p_end, NOW() - INTERVAL '90 days')
+        ) || org_filter;
     END IF;
 
-    -- 命名参数
+    base_q := 'SELECT * FROM (' || base_q || ') AS raw WHERE 1=1';
+
     IF p_shop IS NOT NULL THEN
         base_q := base_q || format(' AND shop_name ILIKE %L', '%%' || p_shop || '%%');
     END IF;
@@ -59,7 +87,7 @@ BEGIN
         base_q := base_q || format(' AND warehouse_name ILIKE %L', '%%' || p_warehouse || '%%');
     END IF;
 
-    -- DSL 过滤器
+    -- ── Filter DSL 解析（字段校验已由 Python COLUMN_WHITELIST 完成）────
     IF p_filters IS NOT NULL AND jsonb_typeof(p_filters) = 'array' THEN
         FOR i IN 0..jsonb_array_length(p_filters) - 1 LOOP
             f := p_filters->i;
@@ -98,6 +126,7 @@ BEGIN
                     ELSE
                         base_q := base_q || format(' AND %I IS NOT NULL', field_name);
                     END IF;
+                -- 091: 新增 between ��作符
                 WHEN 'between' THEN
                     IF jsonb_typeof(val) = 'array' AND jsonb_array_length(val) = 2 THEN
                         base_q := base_q || format(' AND %I BETWEEN %L AND %L',
@@ -116,8 +145,7 @@ BEGIN
                 ''doc_count'', COUNT(DISTINCT doc_id),
                 ''total_qty'', COALESCE(SUM(quantity), 0),
                 ''total_amount'', COALESCE(SUM(amount), 0)
-            ) FROM (%s) sub',
-            base_q
+            ) FROM (%s) sub', base_q
         ) INTO result;
     ELSE
         group_col := CASE p_group_by
@@ -127,68 +155,112 @@ BEGIN
             WHEN 'supplier' THEN 'supplier_name'
             WHEN 'warehouse' THEN 'warehouse_name'
             WHEN 'status' THEN 'COALESCE(doc_status, order_status)'
-            ELSE p_group_by
+            ELSE 'doc_type'
         END;
-
         name_col := CASE p_group_by
             WHEN 'product' THEN ', MAX(item_name) as item_name'
             ELSE ''
         END;
 
-        EXECUTE format(
-            'SELECT COALESCE(jsonb_agg(row_to_jsonb(sub)), ''[]''::jsonb)
-             FROM (
-                SELECT %s as group_key,
-                       COUNT(DISTINCT doc_id) as doc_count,
-                       COALESCE(SUM(quantity), 0) as total_qty,
-                       COALESCE(SUM(amount), 0) as total_amount
-                       %s
-                FROM (%s) t
-                GROUP BY %s
-                ORDER BY total_amount DESC
-                LIMIT %s
-             ) sub',
-            group_col, name_col, base_q, group_col, p_limit
-        ) INTO result;
+        IF p_group_by = 'status' THEN
+            EXECUTE format(
+                'SELECT COALESCE(jsonb_agg(row_to_json(t)), ''[]''::jsonb)
+                 FROM (
+                    SELECT COALESCE(doc_status, order_status, ''未知'') as group_key,
+                           COUNT(DISTINCT doc_id) as doc_count,
+                           COALESCE(SUM(quantity), 0) as total_qty,
+                           COALESCE(SUM(amount), 0) as total_amount
+                    FROM (%s) sub
+                    GROUP BY COALESCE(doc_status, order_status, ''未知'')
+                    ORDER BY COUNT(DISTINCT doc_id) DESC
+                    LIMIT %s
+                 ) t',
+                base_q, p_limit
+            ) INTO result;
+        ELSE
+            EXECUTE format(
+                'SELECT COALESCE(jsonb_agg(row_to_json(t)), ''[]''::jsonb)
+                 FROM (
+                    SELECT %I as group_key %s,
+                           COUNT(DISTINCT doc_id) as doc_count,
+                           COALESCE(SUM(quantity), 0) as total_qty,
+                           COALESCE(SUM(amount), 0) as total_amount
+                    FROM (%s) sub
+                    WHERE %I IS NOT NULL
+                    GROUP BY %I
+                    ORDER BY COALESCE(SUM(amount), 0) DESC
+                    LIMIT %s
+                 ) t',
+                group_col, name_col, base_q, group_col, group_col, p_limit
+            ) INTO result;
+        END IF;
     END IF;
 
     RETURN COALESCE(result, '{}'::jsonb);
 END;
 $$;
 
+COMMENT ON FUNCTION erp_global_stats_query IS
+    'ERP全局统计RPC（多租户）— 091: 基于089 + between op + 扩展time_col';
 
--- ── erp_order_stats_grouped: 同样补充 between ──
+-- ── RPC 2: erp_order_stats_grouped ─────────────────────
+
 CREATE OR REPLACE FUNCTION erp_order_stats_grouped(
-    p_org_id UUID DEFAULT NULL,
-    p_start VARCHAR DEFAULT NULL,
-    p_end VARCHAR DEFAULT NULL,
+    p_org_id UUID,
+    p_start TIMESTAMPTZ,
+    p_end TIMESTAMPTZ,
     p_time_col VARCHAR DEFAULT 'pay_time',
     p_filters JSONB DEFAULT NULL
 ) RETURNS JSONB
-LANGUAGE plpgsql SECURITY DEFINER
-AS $$
+LANGUAGE plpgsql AS $$
 DECLARE
     base_q TEXT;
+    result JSONB;
+    time_col TEXT;
+    need_archive BOOLEAN;
+    i INT;
     f JSONB;
     field_name TEXT;
     op TEXT;
     val JSONB;
     val_text TEXT;
-    result JSONB;
-    i INT;
 BEGIN
-    base_q := 'SELECT * FROM erp_document_items WHERE doc_type = ''order''';
-
-    IF p_org_id IS NOT NULL THEN
-        base_q := base_q || ' AND org_id = ' || quote_literal(p_org_id);
+    IF p_start > p_end THEN
+        RETURN '[]'::jsonb;
     END IF;
 
-    IF p_start IS NOT NULL AND p_end IS NOT NULL THEN
-        base_q := base_q || format(' AND %I >= %L AND %I < %L',
-            p_time_col, p_start, p_time_col, p_end);
+    -- 091: 扩展 time_col 白名单（+apply_date/delivery_date/finished_at）
+    IF p_time_col IN ('doc_created_at', 'pay_time', 'consign_time',
+                      'apply_date', 'delivery_date', 'finished_at') THEN
+        time_col := p_time_col;
+    ELSE
+        time_col := 'pay_time';
     END IF;
 
-    -- DSL 过滤器
+    need_archive := (p_start < NOW() - INTERVAL '90 days');
+
+    base_q := format(
+        'SELECT * FROM erp_document_items '
+        'WHERE doc_type = ''order'' '
+        'AND org_id = %L '
+        'AND %I >= %L AND %I < %L',
+        p_org_id, time_col, p_start, time_col, p_end
+    );
+
+    IF need_archive THEN
+        base_q := base_q || format(
+            ' UNION ALL '
+            'SELECT * FROM erp_document_items_archive '
+            'WHERE doc_type = ''order'' '
+            'AND org_id = %L '
+            'AND %I >= %L AND %I < %L',
+            p_org_id, time_col, p_start, time_col, LEAST(p_end, NOW() - INTERVAL '90 days')
+        );
+    END IF;
+
+    base_q := 'SELECT * FROM (' || base_q || ') AS raw WHERE 1=1';
+
+    -- ── Filter DSL 解析（字段校验已由 Python COLUMN_WHITELIST 完成）────
     IF p_filters IS NOT NULL AND jsonb_typeof(p_filters) = 'array' THEN
         FOR i IN 0..jsonb_array_length(p_filters) - 1 LOOP
             f := p_filters->i;
@@ -227,6 +299,7 @@ BEGIN
                     ELSE
                         base_q := base_q || format(' AND %I IS NOT NULL', field_name);
                     END IF;
+                -- 091: 新增 between 操作符
                 WHEN 'between' THEN
                     IF jsonb_typeof(val) = 'array' AND jsonb_array_length(val) = 2 THEN
                         base_q := base_q || format(' AND %I BETWEEN %L AND %L',
@@ -240,21 +313,21 @@ BEGIN
 
     -- 按 order_type + order_status 分组聚合
     EXECUTE format(
-        'SELECT COALESCE(jsonb_agg(row_to_jsonb(sub)), ''[]''::jsonb)
-         FROM (
-            SELECT order_type,
-                   order_status,
-                   is_scalping,
-                   COUNT(DISTINCT doc_id) as doc_count,
-                   COALESCE(SUM(quantity), 0) as total_qty,
-                   COALESCE(SUM(amount), 0) as total_amount
-            FROM (%s) t
-            GROUP BY order_type, order_status, is_scalping
-            ORDER BY total_amount DESC
-         ) sub',
+        'SELECT COALESCE(jsonb_agg(row_to_json(t)), ''[]''::jsonb) '
+        'FROM ('
+        '  SELECT order_type, order_status, is_scalping, '
+        '         COUNT(DISTINCT doc_id) AS doc_count, '
+        '         COALESCE(SUM(quantity), 0) AS total_qty, '
+        '         COALESCE(SUM(amount), 0) AS total_amount '
+        '  FROM (%s) sub '
+        '  GROUP BY order_type, order_status, is_scalping'
+        ') t',
         base_q
     ) INTO result;
 
     RETURN COALESCE(result, '[]'::jsonb);
 END;
 $$;
+
+COMMENT ON FUNCTION erp_order_stats_grouped IS
+    'ERP订单分组统计RPC — 091: 基于089 + between op + 扩展time_col';
