@@ -162,7 +162,7 @@ class ToolAuditHook(LoopHook):
                 tool_call_id=tool_call_id,
                 turn=ctx.turn,
                 args_hash=build_args_hash(args),
-                result_length=len(result) if result else 0,
+                result_length=len(result) if isinstance(result, (str, bytes)) else 0,
                 elapsed_ms=elapsed_ms,
                 status=status,
                 is_cached=is_cached,
