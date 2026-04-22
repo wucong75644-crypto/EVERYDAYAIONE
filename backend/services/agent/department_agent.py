@@ -520,7 +520,8 @@ class DepartmentAgent(ABC):
                     codes[0] if len(codes) == 1 else codes,
                 )
         # 语义参数 → filters DSL（确定性转换）
-        if "time_range" in merged and "filters" not in merged:
+        # 只要没有预设 filters 就调用转换（不再要求必须有 time_range）
+        if "filters" not in merged:
             merged["filters"] = self._params_to_filters(merged)
 
         validation = self.validate_params(action, merged)

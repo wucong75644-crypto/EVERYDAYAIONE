@@ -57,14 +57,16 @@ class TradeAgent(DepartmentAgent):
     def validate_params(self, action: str, params: dict) -> ValidationResult:
         """订单域参数校验。"""
         if action == "order_list":
-            if (not params.get("order_no")
-                    and not params.get("time_range")
-                    and not params.get("platform_order_no")
-                    and not params.get("express_no")
-                    and not params.get("buyer_nick")):
+            has_identifier = (
+                params.get("order_no") or params.get("time_range")
+                or params.get("platform_order_no") or params.get("express_no")
+                or params.get("buyer_nick") or params.get("product_code")
+                or params.get("item_name") or params.get("shop_name")
+            )
+            if not has_identifier:
                 return ValidationResult.missing(
-                    ["订单号 或 快递单号 或 时间范围"],
-                    prompt="您想查哪个订单？请提供订单号、快递单号，或者告诉我时间范围。",
+                    ["订单号 或 快递单号 或 商品编码 或 时间范围"],
+                    prompt="您想查哪个订单？请提供订单号、快递单号、商品编码，或者告诉我时间范围。",
                 )
             tr = params.get("time_range", "")
             if tr:

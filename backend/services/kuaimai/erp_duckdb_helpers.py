@@ -68,6 +68,45 @@ _PLATFORM_CASE = (
     + " ELSE platform END AS platform"
 )
 
+# order_type 数字 → 中文名（逗号分隔多值，如 "2,3,14,0" → "普通/补发"）
+# 快麦 type 字段是复合标记，一个订单可能同时有多个类型标记
+_ORDER_TYPE_CN: dict[str, str] = {
+    "0": "普通", "4": "线下", "7": "合并", "8": "拆分",
+    "13": "换货", "14": "补发", "33": "分销", "99": "出库单",
+}
+
+
+def _build_order_type_case() -> str:
+    """构建 order_type 翻译 SQL — DuckDB list_transform 拆逗号逐个翻译。
+
+    "2,3,14,0" → "普通/补发"（未知数字跳过，已知数字翻译后用 / 连接去重）
+    """
+    # 用 CASE 对每个拆出的元素翻译，未知的返回 NULL（被 list_filter 过滤）
+    inner_case = "CASE " + " ".join(
+        f"WHEN x = '{k}' THEN '{v}'" for k, v in _ORDER_TYPE_CN.items()
+    ) + " ELSE NULL END"
+    return (
+        f"CASE WHEN order_type IS NULL THEN NULL ELSE "
+        f"array_to_string("
+        f"  list_distinct("
+        f"    list_filter("
+        f"      list_transform(string_split(order_type, ','), x -> {inner_case}),"
+        f"      x -> x IS NOT NULL"
+        f"    )"
+        f"  ), '/'"
+        f") END AS order_type"
+    )
+
+
+_ORDER_TYPE_CASE = _build_order_type_case()
+
+
+# 需要 SQL CASE 翻译的特殊字段
+_SPECIAL_CASE_MAP: dict[str, str] = {
+    "platform": _PLATFORM_CASE,
+    "order_type": _ORDER_TYPE_CASE,
+}
+
 
 def build_pii_select(safe_fields: list[str], *, cn_header: bool = False) -> str:
     """构建 SELECT 列表：PII 脱敏 + platform 中文化 + timestamp 去时区。
@@ -89,11 +128,11 @@ def build_pii_select(safe_fields: list[str], *, cn_header: bool = False) -> str:
                 # "SUBSTR(x,1,3)||'****' AS receiver_name" → "... AS 收件人"
                 pii_expr = pii_expr.rsplit(" AS ", 1)[0] + f' AS "{alias}"'
             cols.append(pii_expr)
-        elif f == "platform":
-            plat_expr = _PLATFORM_CASE
+        elif f in _SPECIAL_CASE_MAP:
+            case_expr = _SPECIAL_CASE_MAP[f]
             if cn_header and alias != f:
-                plat_expr = plat_expr.rsplit(" AS ", 1)[0] + f' AS "{alias}"'
-            cols.append(plat_expr)
+                case_expr = case_expr.rsplit(" AS ", 1)[0] + f' AS "{alias}"'
+            cols.append(case_expr)
         elif f in _TIMESTAMP_COLS:
             cols.append(f'CAST({f} AS TIMESTAMP) AS "{alias}"')
         else:

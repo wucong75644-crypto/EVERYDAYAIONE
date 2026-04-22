@@ -71,10 +71,15 @@ class PurchaseAgent(DepartmentAgent):
                 )
 
         elif action == "purchase_list":
-            if not params.get("time_range") and not params.get("po_no"):
+            has_identifier = (
+                params.get("time_range") or params.get("po_no")
+                or params.get("product_code") or params.get("item_name")
+                or params.get("supplier_name") or params.get("doc_code")
+            )
+            if not has_identifier:
                 return ValidationResult.missing(
-                    ["时间范围 或 采购单号"],
-                    prompt="请告诉我要查哪个时间段的采购单，或提供具体采购单号。",
+                    ["时间范围 或 采购单号 或 商品编码 或 供应商"],
+                    prompt="请告诉我要查哪个时间段的采购单，或提供采购单号、商品编码、供应商。",
                 )
             tr = params.get("time_range", "")
             if tr:
@@ -83,10 +88,15 @@ class PurchaseAgent(DepartmentAgent):
                     return result
 
         elif action == "purchase_return":
-            if not params.get("time_range") and not params.get("product_code"):
+            has_identifier = (
+                params.get("time_range") or params.get("product_code")
+                or params.get("item_name") or params.get("supplier_name")
+                or params.get("doc_code")
+            )
+            if not has_identifier:
                 return ValidationResult.missing(
-                    ["时间范围 或 商品编码"],
-                    prompt="查采购退货需要时间范围或商品编码，请补充。",
+                    ["时间范围 或 商品编码 或 供应商"],
+                    prompt="查采购退货需要时间范围、商品编码或供应商，请补充。",
                 )
 
         return ValidationResult.ok()
