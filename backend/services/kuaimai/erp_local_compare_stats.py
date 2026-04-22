@@ -14,8 +14,9 @@ ERP 本地同比/环比对比工具
 
 from __future__ import annotations
 
+import json as _json
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 from loguru import logger
 
@@ -244,25 +245,21 @@ async def local_compare_stats(
     }
 
     # ── 3. 双查 ────────────────────────────────────────
-    try:
-        cur_data = db.rpc("erp_global_stats_query", {
-            **base_params,
-            "p_start": current.start.iso,
-            "p_end": current.end.iso,
-        }).execute().data
-        base_data = db.rpc("erp_global_stats_query", {
-            **base_params,
-            "p_start": baseline.start.iso,
-            "p_end": baseline.end.iso,
-        }).execute().data
-    except Exception as e:
-        logger.error(f"local_compare_stats RPC failed | error={e}", exc_info=True)
-        return ToolOutput(
-            summary=f"对比查询失败: {e}",
-            source="warehouse",
-            status=OutputStatus.ERROR,
-            error_message=str(e),
+    # 订单类型走分类引擎（过滤空包/刷单/补发/已关闭），其他类型走原始汇总
+    if doc_type == "order" and rpc_group is None:
+        classified = _classified_compare(
+            db, org_id, current, baseline, time_col,
+            shop_name, platform, supplier_name, warehouse_name,
         )
+        if classified is not None:
+            cur_data, base_data = classified
+        else:
+            cur_data, base_data = _raw_compare(db, base_params, current, baseline)
+    else:
+        cur_data, base_data = _raw_compare(db, base_params, current, baseline)
+
+    if isinstance(cur_data, ToolOutput):
+        return cur_data  # error output
 
     if isinstance(cur_data, dict) and "error" in cur_data:
         return ToolOutput(
@@ -285,6 +282,102 @@ async def local_compare_stats(
         type_name=type_name, time_col=time_col,
         db=db, doc_type=doc_type, org_id=org_id, request_ctx=ctx,
     )
+
+
+def _raw_compare(
+    db, base_params: dict, current: DateRange, baseline: DateRange,
+) -> tuple[Any, Any]:
+    """原始 RPC 双查（非订单类型或分类引擎不可用时的回退）。"""
+    try:
+        cur_data = db.rpc("erp_global_stats_query", {
+            **base_params,
+            "p_start": current.start.iso,
+            "p_end": current.end.iso,
+        }).execute().data
+        base_data = db.rpc("erp_global_stats_query", {
+            **base_params,
+            "p_start": baseline.start.iso,
+            "p_end": baseline.end.iso,
+        }).execute().data
+    except Exception as e:
+        logger.error(f"local_compare_stats RPC failed | error={e}", exc_info=True)
+        err = ToolOutput(
+            summary=f"对比查询失败: {e}",
+            source="warehouse",
+            status=OutputStatus.ERROR,
+            error_message=str(e),
+        )
+        return err, err
+    return cur_data, base_data
+
+
+def _classified_compare(
+    db,
+    org_id: Optional[str],
+    current: DateRange,
+    baseline: DateRange,
+    time_col: str,
+    shop_name: Optional[str],
+    platform: Optional[str],
+    supplier_name: Optional[str],
+    warehouse_name: Optional[str],
+) -> tuple[dict, dict] | None:
+    """订单分类对比：走 erp_order_stats_grouped + OrderClassifier，返回有效订单数据。
+
+    失败时返回 None，调用方回退到 _raw_compare。
+    """
+    from services.kuaimai.order_classifier import OrderClassifier
+
+    # 构建 DSL 过滤器（erp_order_stats_grouped 只接受 p_filters）
+    dsl: list[dict] = []
+    if shop_name:
+        dsl.append({"field": "shop_name", "op": "like", "value": f"%{shop_name}%"})
+    if platform:
+        dsl.append({"field": "platform", "op": "eq", "value": platform})
+    if supplier_name:
+        dsl.append({"field": "supplier_name", "op": "like", "value": f"%{supplier_name}%"})
+    if warehouse_name:
+        dsl.append({"field": "warehouse_name", "op": "like", "value": f"%{warehouse_name}%"})
+
+    try:
+        classifier = OrderClassifier.for_org(db, org_id)
+    except Exception as e:
+        logger.warning(f"分类引擎加载异常，回退原逻辑 | error={e}")
+        return None
+
+    params_base = {
+        "p_org_id": org_id,
+        "p_time_col": time_col,
+        "p_filters": _json.dumps(dsl) if dsl else None,
+        "p_group_by": None,
+    }
+
+    try:
+        cur_rows = db.rpc("erp_order_stats_grouped", {
+            **params_base,
+            "p_start": current.start.iso,
+            "p_end": current.end.iso,
+        }).execute().data
+        base_rows = db.rpc("erp_order_stats_grouped", {
+            **params_base,
+            "p_start": baseline.start.iso,
+            "p_end": baseline.end.iso,
+        }).execute().data
+    except Exception as e:
+        logger.warning(f"分类统计 RPC 失败，回退原逻辑 | error={e}")
+        return None
+
+    def _extract_valid(rows: list[dict] | None) -> dict:
+        if not rows:
+            return {"doc_count": 0, "total_qty": 0, "total_amount": 0}
+        cr = classifier.classify(rows)
+        return {
+            "doc_count": cr.valid.get("doc_count", 0),
+            "total_qty": cr.valid.get("total_qty", 0),
+            "total_amount": cr.valid.get("total_amount", 0),
+        }
+
+    return _extract_valid(cur_rows), _extract_valid(base_rows)
 
 
 def _render_compare_output(
