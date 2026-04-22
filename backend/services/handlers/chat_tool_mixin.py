@@ -107,6 +107,10 @@ class ChatToolMixin:
             if not isinstance(result, AgentResult):
                 continue
             # ① 前端文件卡片通道
+            logger.info(
+                f"AgentResult file check | source={result.source} | "
+                f"collected_files={result.collected_files!r}"
+            )
             if result.collected_files and hasattr(self, "_pending_file_parts"):
                 from schemas.message import FilePart
                 for f in result.collected_files:
