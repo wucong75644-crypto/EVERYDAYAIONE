@@ -1519,7 +1519,19 @@
       "Bash(./venv/bin/pytest tests/test_erp_duckdb_helpers.py tests/test_data_translation.py -q --tb=short)",
       "Bash(PGPASSWORD=WlnbhzE5sYYZd9t9Xw08w4I0 psql -h 47.110.94.25 -p 5432 -U everydayai -d everydayai -f /Users/wucong/EVERYDAYAIONE/backend/migrations/091_rpc_add_between_op.sql)",
       "Bash(python -m pytest tests/test_order_classifier.py tests/test_unified_query.py -x -q)",
-      "Bash(PGPASSWORD=\"WlnbhzE5sYYZd9t9Xw08w4I0\" psql -h 47.110.94.25 -U everydayai -d everydayai -f /Users/wucong/EVERYDAYAIONE/backend/migrations/092_classified_grouped_rpc.sql)"
+      "Bash(PGPASSWORD=\"WlnbhzE5sYYZd9t9Xw08w4I0\" psql -h 47.110.94.25 -U everydayai -d everydayai -f /Users/wucong/EVERYDAYAIONE/backend/migrations/092_classified_grouped_rpc.sql)",
+      "WebFetch(domain:langchain-ai.github.io)",
+      "WebFetch(domain:dify.ai)",
+      "WebFetch(domain:www.agno.com)",
+      "WebFetch(domain:blog.jetbrains.com)",
+      "WebFetch(domain:www.vellum.ai)",
+      "WebFetch(domain:dl.acm.org)",
+      "WebFetch(domain:www.richsnapp.com)",
+      "Read(//Users/wucong/**)",
+      "Bash(grep -l \"CREATE TABLE.*erp_document_items\\\\|ALTER TABLE.*erp_document_items\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(grep -n \"ALTER TABLE.*erp_document_items.*ADD.*COLUMN\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(grep -n \"status_name\\\\|handler_status\\\\|online_status\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(grep -n \"diff_stock_num\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)"
     ],
     "additionalDirectories": [
       "/tmp"
