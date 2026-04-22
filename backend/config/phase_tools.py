@@ -19,7 +19,11 @@ def _build_ask_user_tool() -> Dict[str, Any]:
         "type": "function",
         "function": {
             "name": "ask_user",
-            "description": "无法判断意图或信息不足时追问",
+            "description": (
+                    "主动向用户提问以消除歧义、收集缺失信息或确认操作意图。"
+                    "决策原则：数据查询类请求，猜错一次=用户多等10秒+重新描述需求；"
+                    "问一次=用户花3秒选选项。不确定时，永远选代价小的那个。"
+                ),
             "parameters": {
                 "type": "object",
                 "properties": {

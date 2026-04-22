@@ -1515,7 +1515,11 @@
       "Bash(cat pytest.ini)",
       "Bash(ls requirements*.txt)",
       "Bash(./venv/bin/pytest tests/test_filter_e2e.py::TestExpressNoE2E::test_express_no_reaches_engine -x --tb=short)",
-      "Bash(./git-push.sh \"fix: sys平台翻译改为'系统（补发/换货/线下）'——让用户知道系统单包含哪些类型\")"
+      "Bash(./git-push.sh \"fix: sys平台翻译改为'系统（补发/换货/线下）'——让用户知道系统单包含哪些类型\")",
+      "Bash(./venv/bin/pytest tests/test_erp_duckdb_helpers.py tests/test_data_translation.py -q --tb=short)",
+      "Bash(PGPASSWORD=WlnbhzE5sYYZd9t9Xw08w4I0 psql -h 47.110.94.25 -p 5432 -U everydayai -d everydayai -f /Users/wucong/EVERYDAYAIONE/backend/migrations/091_rpc_add_between_op.sql)",
+      "Bash(python -m pytest tests/test_order_classifier.py tests/test_unified_query.py -x -q)",
+      "Bash(PGPASSWORD=\"WlnbhzE5sYYZd9t9Xw08w4I0\" psql -h 47.110.94.25 -U everydayai -d everydayai -f /Users/wucong/EVERYDAYAIONE/backend/migrations/092_classified_grouped_rpc.sql)"
     ],
     "additionalDirectories": [
       "/tmp"
