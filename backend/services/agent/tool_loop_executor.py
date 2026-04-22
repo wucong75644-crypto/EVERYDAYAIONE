@@ -583,7 +583,7 @@ class ToolLoopExecutor:
                         "size": int(m.group("size")),
                     })
                 content = _FILE_RE.sub(
-                    lambda m: f"📎 文件: {m.group('name')}", content,
+                    lambda m: f"📎 [{m.group('name')}]({m.group('url')})", content,
                 )
 
             # Step 3: 截断防爆（ToolOutput 已结构化不截断，str 需要）
