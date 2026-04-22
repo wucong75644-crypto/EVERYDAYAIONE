@@ -98,6 +98,14 @@ export default function Chat() {
   // 定时任务面板开关
   const [scheduledTaskPanelOpen, setScheduledTaskPanelOpen] = useState(false);
 
+  // 同步 currentConversationId 到 zustand store（供 markConversationCompleted 等判断使用）
+  useEffect(() => {
+    useMessageStore.getState().setCurrentConversation(
+      currentConversationId,
+      conversationTitle,
+    );
+  }, [currentConversationId, conversationTitle]);
+
   // Cmd+F / Ctrl+F 全局快捷键打开搜索面板
   useEffect(() => {
     if (!currentConversationId) return;
