@@ -601,11 +601,11 @@ class TestToolSystemPromptAlignment:
         prompt = get_tool_system_prompt()
         assert "code_execute" in prompt
 
-    def test_cross_domain_capability(self):
-        """规则应说明 erp_agent 支持跨域分析"""
+    def test_erp_agent_task_passthrough(self):
+        """规则应说明 task 原样传递"""
         from config.chat_tools import get_tool_system_prompt
         prompt = get_tool_system_prompt()
-        assert "跨域" in prompt or "自主" in prompt
+        assert "原样传递" in prompt
 
 
 # ============================================================

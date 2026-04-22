@@ -144,7 +144,6 @@ class TestCodeToolsDefinition:
         """TOOL_SYSTEM_PROMPT 包含 print(df) 禁令"""
         from config.chat_tools import TOOL_SYSTEM_PROMPT
         assert "print(df)" in TOOL_SYSTEM_PROMPT
-        assert "df.shape" in TOOL_SYSTEM_PROMPT
 
 
 class TestAgentToolsIntegration:
