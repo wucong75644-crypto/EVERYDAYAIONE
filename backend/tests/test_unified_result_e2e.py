@@ -75,35 +75,19 @@ class TestERPQueryPath:
         )
         assert result.status == "empty"
 
-    @pytest.mark.asyncio
-    @patch("services.agent.erp_agent.ERPAgent._extract_params")
-    @patch("services.agent.erp_agent.ERPAgent._create_agent")
-    async def test_erp_agent_builds_agent_result_from_department(
-        self, mock_create, mock_extract, tmp_path,
-    ):
-        """ERPAgent._build_result() 从 DepartmentAgent 返回的 ToolOutput 构建 AgentResult"""
+    def test_erp_agent_converts_loop_result_to_agent_result(self):
+        """ERPAgent._convert_result() 从 LoopResult 构建 AgentResult"""
         from services.agent.erp_agent import ERPAgent
 
-        # 模拟 DepartmentAgent 返回（ToolOutput 别名，实际 AgentResult）
-        dept_result = ToolOutput(
-            summary="共 23 笔退货，金额 ¥1,234",
-            format=OutputFormat.TABLE,
-            source="aftersale",
-            status=OutputStatus.OK,
-            columns=[ColumnMeta("order_no", "text"), ColumnMeta("amount", "numeric")],
-            data=[{"order_no": "TB001", "amount": 100}],
-        )
+        # 模拟 LoopResult
+        mock_loop_result = MagicMock()
+        mock_loop_result.text = "共 23 笔退货，金额 ¥1,234"
+        mock_loop_result.total_tokens = 500
+        mock_loop_result.is_llm_synthesis = True
+        mock_loop_result.exit_via_ask_user = False
+        mock_loop_result.collected_files = []
 
-        mock_dept_agent = AsyncMock()
-        mock_dept_agent.execute = AsyncMock(return_value=dept_result)
-        mock_create.return_value = mock_dept_agent
-        mock_extract.return_value = ("aftersale", {"doc_type": "refund"}, False)
-
-        agent = ERPAgent(
-            db=MagicMock(), user_id="u1", conversation_id="c1",
-            org_id="org1",
-        )
-        result = await agent.execute("昨天淘宝退货多少")
+        result = ERPAgent._convert_result(mock_loop_result)
 
         # 最终返回 AgentResult
         assert isinstance(result, AgentResult)

@@ -188,11 +188,11 @@ class TestSanitizeParamsPassthrough:
 
 
 class TestFillPlatform:
-    """测试 ERPAgent._fill_platform 静态方法。"""
+    """测试 fill_platform L2 意图补全。"""
 
     def _fill(self, params: dict, query: str) -> None:
-        from services.agent.erp_agent import ERPAgent
-        ERPAgent._fill_platform(params, query)
+        from services.agent.plan_builder import fill_platform
+        fill_platform(params, query)
 
     def test_single_cn_platform_fills(self):
         params: dict = {}

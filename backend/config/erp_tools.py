@@ -320,6 +320,79 @@ ERP_ROUTING_PROMPT = (
 )
 
 
+def get_erp_agent_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
+    """ERPAgent 内部 ToolLoopExecutor 专用工具集。
+
+    包含：ERP 本地查询工具（9个） + 远程查询工具（7个） + code_execute（计算）
+    不包含：erp_agent（防递归）、erp_execute（写操作）、ask_user（无用户交互）、
+            trigger_erp_sync（写操作，需用户确认）
+
+    设计文档: ERPAgent 从域路由器升级为领域专家
+    """
+    from config.code_tools import build_code_tools
+
+    # ERPAgent 不应访问的工具（递归/写操作/交互）
+    _EXCLUDED = {"erp_agent", "erp_execute", "ask_user", "trigger_erp_sync"}
+
+    tools: List[Dict[str, Any]] = []
+
+    # 本地查询工具（9个，排除 trigger_erp_sync）
+    local_tools = [
+        t for t in build_local_tools()
+        if t["function"]["name"] not in _EXCLUDED
+    ]
+    tools.extend(local_tools)
+
+    # 远程查询工具（7个，不含 erp_execute 写操作）
+    tools.append(_build_query_tool(
+        "erp_info_query",
+        "远程API查询ERP基础信息：仓库、店铺、标签、客户、分销商。",
+        BASIC_REGISTRY,
+    ))
+    tools.append(_build_query_tool(
+        "erp_product_query",
+        "远程API查询ERP商品/SKU/库存/标签/分类/品牌信息。",
+        PRODUCT_REGISTRY,
+    ))
+    tools.append(_build_query_tool(
+        "erp_trade_query",
+        "远程API查询ERP订单/出库/物流/波次/唯一码信息。",
+        TRADE_REGISTRY,
+    ))
+    tools.append(_build_query_tool(
+        "erp_aftersales_query",
+        "远程API查询ERP售后工单/退货/维修单/补款/日志。",
+        AFTERSALES_REGISTRY,
+    ))
+    tools.append(_build_query_tool(
+        "erp_warehouse_query",
+        "远程API查询ERP调拨/入出库/盘点/下架/货位/加工单信息。",
+        WAREHOUSE_REGISTRY,
+    ))
+    tools.append(_build_query_tool(
+        "erp_purchase_query",
+        "远程API查询ERP供应商/采购单/收货单/采退单/上架单/采购建议。",
+        PURCHASE_REGISTRY,
+    ))
+    tools.append(_build_query_tool(
+        "erp_taobao_query",
+        "远程API查询淘宝/天猫平台的订单和售后单（通过奇门接口）。",
+        QIMEN_REGISTRY,
+    ))
+
+    # 全量翻页工具
+    tools.append(build_fetch_all_pages_tool())
+
+    # API 搜索工具
+    tools.append(build_erp_search_tool())
+
+    # 代码执行沙盒（ERPAgent 版，只有 STAGING_DIR + OUTPUT_DIR）
+    tools.extend(build_code_tools(include_workspace=False))
+
+    # 安全兜底：确保递归/写操作工具不泄漏
+    return [t for t in tools if t["function"]["name"] not in _EXCLUDED]
+
+
 def build_erp_search_tool() -> Dict[str, Any]:
     """构建 erp_api_search 工具定义"""
     return {

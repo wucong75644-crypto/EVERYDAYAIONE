@@ -328,8 +328,8 @@ class TestERPAgentGuards:
 # ============================================================
 
 
-class TestERPAgentSingleDomain:
-    """ERPAgent._execute 单域查询主流程测试"""
+class TestERPAgentToolLoop:
+    """ERPAgent ToolLoopExecutor 模式测试"""
 
     def _make_agent(self):
         from services.agent.erp_agent import ERPAgent
@@ -339,315 +339,251 @@ class TestERPAgentSingleDomain:
         )
 
     @pytest.mark.asyncio
-    async def test_llm_success_single_domain(self):
-        """LLM 提参成功 → 单域查询 → 返回结果"""
+    async def test_no_org_returns_error(self):
+        """org_id 为空 → 直接返回错误"""
         from services.agent.erp_agent import ERPAgent
-        from services.agent.tool_output import ToolOutput, OutputStatus
+        agent = ERPAgent(
+            db=MagicMock(), user_id="u1",
+            conversation_id="c1", org_id="",
+        )
+        result = await agent.execute("查订单")
+        assert result.status == "error"
+        assert "未开通" in result.summary
 
+    @pytest.mark.asyncio
+    async def test_execute_calls_tool_loop(self):
+        """execute → _execute_with_tool_loop 被调用"""
         agent = self._make_agent()
 
-        # mock _extract_params → 返回 trade 域
-        agent._extract_params = AsyncMock(return_value=(
-            "trade", {"doc_type": "order", "mode": "summary",
-                      "time_range": "2026-04-18 ~ 2026-04-18"}, False,
+        mock_result = MagicMock()
+        mock_result.text = "今日订单 100 单"
+        mock_result.total_tokens = 500
+        mock_result.turns = 2
+        mock_result.is_llm_synthesis = True
+        mock_result.exit_via_ask_user = False
+        mock_result.collected_files = []
+
+        agent._execute_with_tool_loop = AsyncMock(return_value=MagicMock(
+            status="success", summary="今日订单 100 单",
+            source="erp_agent", tokens_used=500,
         ))
 
-        # mock DepartmentAgent.execute → 返回 ToolOutput
-        mock_dept = AsyncMock()
-        mock_dept.execute = AsyncMock(return_value=ToolOutput(
-            summary="今日订单 100 单", source="trade",
-            status=OutputStatus.OK,
-        ))
-        agent._create_agent = MagicMock(return_value=mock_dept)
-
-        import time
-        result = await agent._execute("今天多少订单", time.monotonic() + 60)
-
+        result = await agent.execute("今天多少订单")
         assert result.status == "success"
-        assert "100 单" in result.summary
-        assert result.source == "erp_agent"
-        mock_dept.execute.assert_called_once()
-        # 确认 dag_mode=True 硬编码
-        call_kwargs = mock_dept.execute.call_args
-        assert call_kwargs.kwargs.get("dag_mode") is True
+        agent._execute_with_tool_loop.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_llm_fail_keyword_fallback(self):
-        """LLM 失败 → 关键词降级 → 仍能查询"""
-        from services.agent.erp_agent import ERPAgent
-        from services.agent.tool_output import ToolOutput, OutputStatus
-
+    async def test_exception_returns_error(self):
+        """内部异常 → 返回错误，不崩溃"""
         agent = self._make_agent()
-
-        # mock _extract_params → 降级（degraded=True）
-        agent._extract_params = AsyncMock(return_value=(
-            "warehouse", {"mode": "summary", "_degraded": True}, True,
-        ))
-        mock_dept = AsyncMock()
-        mock_dept.execute = AsyncMock(return_value=ToolOutput(
-            summary="库存 500 件", source="warehouse",
-            status=OutputStatus.OK,
-        ))
-        agent._create_agent = MagicMock(return_value=mock_dept)
-
-        import time
-        result = await agent._execute("查库存", time.monotonic() + 60)
-
-        assert result.status == "success"
-        # v6: 降级改为纯结构化 metadata._degraded，不再拼文本前缀
-        assert "500 件" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_extract_params_none_returns_error(self):
-        """三级降级链全部失败 → 返回友好错误"""
-        agent = self._make_agent()
-        agent._extract_params = AsyncMock(return_value=None)
-
-        import time
-        result = await agent._execute("hello world", time.monotonic() + 60)
-
-        assert result.status == "error"
-        assert "无法理解" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_invalid_domain_returns_error(self):
-        """域不在白名单 → 返回错误"""
-        agent = self._make_agent()
-        agent._extract_params = AsyncMock(return_value=(
-            "finance", {}, False,
-        ))
-
-        import time
-        result = await agent._execute("查财务", time.monotonic() + 60)
-
-        assert result.status == "error"
-        assert "不支持" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_query_timeout_returns_error(self):
-        """全局超时 → execute 返回超时错误"""
-        agent = self._make_agent()
-
-        # mock _execute 永远不返回
-        async def _hang(*a, **kw):
-            await asyncio.sleep(999)
-
-        agent._execute = _hang
-
-        with patch("core.config.get_settings") as mock_gs:
-            mock_gs.return_value = MagicMock(dag_global_timeout=0.2)
-            result = await agent.execute("查订单")
-
-        assert result.status == "timeout"
-        assert "超时" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_deadline_exhausted_returns_error(self):
-        """deadline 已过 → 直接返回错误，不执行查询"""
-        agent = self._make_agent()
-        agent._extract_params = AsyncMock(return_value=(
-            "trade", {"doc_type": "order"}, False,
-        ))
-        agent._create_agent = MagicMock(return_value=AsyncMock())
-
-        import time
-        result = await agent._execute("查订单", time.monotonic() - 10)
-
-        assert result.status == "error"
-        assert "预算不足" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_department_exception_returns_error(self):
-        """DepartmentAgent 抛异常 → 返回异常错误"""
-        agent = self._make_agent()
-        agent._extract_params = AsyncMock(return_value=(
-            "trade", {"doc_type": "order"}, False,
-        ))
-        mock_dept = AsyncMock()
-        mock_dept.execute = AsyncMock(
+        agent._execute_with_tool_loop = AsyncMock(
             side_effect=ConnectionError("DB down"),
         )
-        agent._create_agent = MagicMock(return_value=mock_dept)
 
-        import time
-        result = await agent._execute("查订单", time.monotonic() + 60)
-
+        result = await agent.execute("查订单")
         assert result.status == "error"
         assert "DB down" in result.summary
 
-    @pytest.mark.asyncio
-    async def test_file_ref_collected(self):
-        """detail 模式返回 file_ref → collected_files 有值"""
-        from services.agent.tool_output import (
-            ToolOutput, OutputStatus, FileRef, ColumnMeta,
-        )
-
+    def test_build_messages(self):
+        """_build_messages 生成正确的 messages 结构"""
         agent = self._make_agent()
-        agent._extract_params = AsyncMock(return_value=(
-            "trade", {"doc_type": "order", "mode": "detail"}, False,
-        ))
-        mock_dept = AsyncMock()
-        mock_dept.execute = AsyncMock(return_value=ToolOutput(
-            summary="明细 200 条",
-            source="trade",
-            status=OutputStatus.OK,
-            file_ref=FileRef(
-                path="/tmp/staging/trade_123.parquet",
-                filename="trade_123.parquet",
-                format="parquet",
-                row_count=200,
-                size_bytes=4096,
-                columns=[ColumnMeta("order_no", "text")],
-            ),
-        ))
-        agent._create_agent = MagicMock(return_value=mock_dept)
+        messages = agent._build_messages("今天多少订单")
 
-        import time
-        result = await agent._execute("订单明细", time.monotonic() + 60)
+        assert len(messages) == 2
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "user"
+        assert "今天多少订单" in messages[1]["content"]
+        assert "ERP 数据分析专家" in messages[0]["content"]
 
+    def test_convert_result_success(self):
+        """LoopResult → AgentResult 正常转换"""
+        from services.agent.erp_agent import ERPAgent
+
+        mock_loop_result = MagicMock()
+        mock_loop_result.text = "查询结果"
+        mock_loop_result.total_tokens = 300
+        mock_loop_result.is_llm_synthesis = True
+        mock_loop_result.exit_via_ask_user = False
+        mock_loop_result.collected_files = [{"url": "/test.xlsx", "name": "test.xlsx"}]
+
+        result = ERPAgent._convert_result(mock_loop_result)
         assert result.status == "success"
-        # staging parquet 是中间产物，不发 collected_files 给前端
-        assert result.collected_files is None
-        # 但 file_ref 仍在 AgentResult 中传递给主 Agent
-        assert result.file_ref is not None
-        assert result.file_ref.filename == "trade_123.parquet"
+        assert result.summary == "查询结果"
+        assert result.source == "erp_agent"
+        assert len(result.collected_files) == 1
 
-
-# ============================================================
-# ERPAgent._extract_params 三级降级链
-# ============================================================
-
-
-class TestExtractParams:
-    """ERPAgent._extract_params 降级链测试"""
-
-    def _make_agent(self):
+    def test_convert_result_empty(self):
+        """LoopResult 无合成 → status=empty"""
         from services.agent.erp_agent import ERPAgent
-        return ERPAgent(
-            db=MagicMock(), user_id="u1",
-            conversation_id="c1", org_id="org1",
+
+        mock_loop_result = MagicMock()
+        mock_loop_result.text = "兜底文本"
+        mock_loop_result.total_tokens = 100
+        mock_loop_result.is_llm_synthesis = False
+        mock_loop_result.exit_via_ask_user = False
+        mock_loop_result.collected_files = []
+
+        result = ERPAgent._convert_result(mock_loop_result)
+        assert result.status == "empty"
+
+    def test_convert_result_ask_user(self):
+        """LoopResult exit_via_ask_user → status=ask_user"""
+        from services.agent.erp_agent import ERPAgent
+
+        mock_loop_result = MagicMock()
+        mock_loop_result.text = "需要确认哪个商品？"
+        mock_loop_result.total_tokens = 200
+        mock_loop_result.is_llm_synthesis = True
+        mock_loop_result.exit_via_ask_user = True
+        mock_loop_result.collected_files = []
+
+        result = ERPAgent._convert_result(mock_loop_result)
+        assert result.status == "ask_user"
+        assert result.ask_user_question == "需要确认哪个商品？"
+
+    def test_build_tool_loop_config(self):
+        """_build_tool_loop 配置正确"""
+        agent = self._make_agent()
+
+        mock_adapter = MagicMock()
+        mock_executor = MagicMock()
+        mock_tools = [{"type": "function", "function": {"name": "local_data"}}]
+
+        tool_loop, hook_ctx, budget = agent._build_tool_loop(
+            mock_adapter, mock_executor, mock_tools,
         )
 
-    @pytest.mark.asyncio
-    async def test_llm_success_returns_domain_params(self):
-        """LLM 提取成功 → 返回 (domain, params, False)"""
-        agent = self._make_agent()
-        agent._llm_extract = AsyncMock(return_value=(
-            "trade", {"doc_type": "order", "mode": "summary"},
-        ))
-
-        result = await agent._extract_params("今天多少订单")
-
-        assert result is not None
-        domain, params, degraded = result
-        assert domain == "trade"
-        assert params["mode"] == "summary"
-        assert degraded is False
-
-    @pytest.mark.asyncio
-    async def test_llm_fail_keyword_fallback(self):
-        """LLM 失败 → 关键词匹配降级"""
-        agent = self._make_agent()
-        agent._llm_extract = AsyncMock(side_effect=Exception("timeout"))
-
-        result = await agent._extract_params("查库存")
-
-        assert result is not None
-        domain, params, degraded = result
-        assert domain == "warehouse"
-        assert degraded is True
-        assert params.get("_degraded") is True
-
-    @pytest.mark.asyncio
-    async def test_both_fail_returns_none(self):
-        """LLM + 关键词都失败 → 返回 None"""
-        agent = self._make_agent()
-        agent._llm_extract = AsyncMock(side_effect=Exception("fail"))
-
-        result = await agent._extract_params("hello world")
-
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_domain_doc_type_conflict_auto_corrected(self):
-        """LLM 返回 domain=trade + doc_type=purchase → 自动纠正为 order"""
-        agent = self._make_agent()
-        agent._llm_extract = AsyncMock(return_value=(
-            "trade", {"doc_type": "purchase", "mode": "summary"},
-        ))
-
-        result = await agent._extract_params("查订单")
-
-        domain, params, _ = result
-        assert domain == "trade"
-        assert params["doc_type"] == "order"  # 自动纠正
-
-    @pytest.mark.asyncio
-    async def test_platform_l2_fill(self):
-        """LLM 没提取 platform → L2 从查询文本补全"""
-        agent = self._make_agent()
-        agent._llm_extract = AsyncMock(return_value=(
-            "trade", {"doc_type": "order", "mode": "summary"},
-        ))
-
-        result = await agent._extract_params("淘宝今日订单")
-
-        _, params, _ = result
-        assert params.get("platform") == "tb"
+        # hook_ctx.task_id 为 None（不推送 WS）
+        assert hook_ctx.task_id is None
+        assert hook_ctx.org_id == "org1"
+        # budget 存在
+        assert budget is not None
 
 
 # ============================================================
-# ERPAgent._create_agent 域实例化
+# get_erp_agent_tools 工具集测试
 # ============================================================
 
 
-class TestCreateAgent:
-    """ERPAgent._create_agent 测试"""
+class TestGetErpAgentTools:
+    """ERPAgent 专用工具集"""
 
-    def _make_agent(self):
-        from services.agent.erp_agent import ERPAgent
-        return ERPAgent(
-            db=MagicMock(), user_id="u1",
-            conversation_id="c1", org_id="org1",
-        )
+    def test_contains_local_tools(self):
+        """包含本地查询工具"""
+        from config.erp_tools import get_erp_agent_tools
+        tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in tools}
+        assert "local_data" in names
+        assert "local_stock_query" in names
+        assert "local_product_identify" in names
 
-    def test_four_valid_domains(self):
-        """4 个有效域各返回正确 Agent 类型"""
-        from services.agent.departments.warehouse_agent import WarehouseAgent
-        from services.agent.departments.purchase_agent import PurchaseAgent
-        from services.agent.departments.trade_agent import TradeAgent
-        from services.agent.departments.aftersale_agent import AftersaleAgent
+    def test_contains_code_execute(self):
+        """包含 code_execute（计算能力）"""
+        from config.erp_tools import get_erp_agent_tools
+        tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in tools}
+        assert "code_execute" in names
 
-        agent = self._make_agent()
+    def test_excludes_erp_agent(self):
+        """不包含 erp_agent（防递归）"""
+        from config.erp_tools import get_erp_agent_tools
+        tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in tools}
+        assert "erp_agent" not in names
 
-        assert isinstance(agent._create_agent("warehouse"), WarehouseAgent)
-        assert isinstance(agent._create_agent("purchase"), PurchaseAgent)
-        assert isinstance(agent._create_agent("trade"), TradeAgent)
-        assert isinstance(agent._create_agent("aftersale"), AftersaleAgent)
+    def test_excludes_erp_execute(self):
+        """不包含 erp_execute（只读不写）"""
+        from config.erp_tools import get_erp_agent_tools
+        tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in tools}
+        assert "erp_execute" not in names
 
-    def test_unknown_domain_returns_none(self):
-        """未知域返回 None"""
-        agent = self._make_agent()
-        assert agent._create_agent("compute") is None
-        assert agent._create_agent("finance") is None
-        assert agent._create_agent("") is None
+    def test_contains_remote_query_tools(self):
+        """包含远程查询工具"""
+        from config.erp_tools import get_erp_agent_tools
+        tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in tools}
+        assert "erp_trade_query" in names
+        assert "erp_purchase_query" in names
 
-    @patch("core.workspace.resolve_staging_dir", return_value="/tmp/staging")
-    @patch("core.config.get_settings")
-    def test_create_agent_passes_staging_dir(self, mock_settings, mock_resolve):
-        """_create_agent 传入 staging_dir 给 DepartmentAgent"""
-        mock_settings.return_value = MagicMock(file_workspace_root="/mnt/ws")
-        agent = self._make_agent()
-        dept = agent._create_agent("trade")
-        assert dept._staging_dir == "/tmp/staging"
-        mock_resolve.assert_called_once()
+    def test_excludes_trigger_erp_sync(self):
+        """不包含 trigger_erp_sync（写操作，需用户确认）"""
+        from config.erp_tools import get_erp_agent_tools
+        tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in tools}
+        assert "trigger_erp_sync" not in names
 
-    @patch("core.config.get_settings", side_effect=RuntimeError("config error"))
-    def test_create_agent_staging_dir_none_on_error(self, _):
-        """resolve_staging_dir 异常时 staging_dir 为 None（降级）"""
-        agent = self._make_agent()
-        dept = agent._create_agent("trade")
-        assert dept._staging_dir is None  # 降级，不崩溃
+    def test_excludes_ask_user(self):
+        """不包含 ask_user（ERPAgent 无用户交互）"""
+        from config.erp_tools import get_erp_agent_tools
+        tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in tools}
+        assert "ask_user" not in names
+
+    def test_contains_fetch_all_pages(self):
+        """包含 fetch_all_pages（全量翻页）"""
+        from config.erp_tools import get_erp_agent_tools
+        tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in tools}
+        assert "fetch_all_pages" in names
+
+    def test_contains_erp_api_search(self):
+        """包含 erp_api_search（API 文档搜索）"""
+        from config.erp_tools import get_erp_agent_tools
+        tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in tools}
+        assert "erp_api_search" in names
+
+    def test_tool_count(self):
+        """工具总数 = 9 local + 7 remote + fetch_all_pages + erp_api_search + code_execute = 19"""
+        from config.erp_tools import get_erp_agent_tools
+        tools = get_erp_agent_tools(org_id="org1")
+        assert len(tools) == 19, f"Expected 19 tools, got {len(tools)}: {[t['function']['name'] for t in tools]}"
+
+
+# ============================================================
+# ERPAgent 内部提示词一致性测试
+# ============================================================
+
+
+class TestERPAgentPrompts:
+    """验证 ERPAgent 内部提示词不含不可用工具、无乱码"""
+
+    def test_routing_rules_no_ask_user(self):
+        """路由规则不引用 ask_user（ERPAgent 无此工具）"""
+        from services.agent.erp_agent import _ERP_AGENT_ROUTING_RULES
+        assert "ask_user" not in _ERP_AGENT_ROUTING_RULES
+
+    def test_routing_rules_no_trigger_sync(self):
+        """路由规则不引用 trigger_erp_sync（ERPAgent 无此工具）"""
+        from services.agent.erp_agent import _ERP_AGENT_ROUTING_RULES
+        assert "trigger_erp_sync" not in _ERP_AGENT_ROUTING_RULES
+
+    def test_system_prompt_no_ask_user(self):
+        """系统提示不引用 ask_user"""
+        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
+        assert "ask_user" not in _ERP_AGENT_SYSTEM_PROMPT
+
+    def test_system_prompt_no_garbled_chars(self):
+        """系统提示无乱码字符（U+FFFD）"""
+        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
+        assert "\ufffd" not in _ERP_AGENT_SYSTEM_PROMPT
+
+    def test_routing_rules_no_garbled_chars(self):
+        """路由规则无乱码字符"""
+        from services.agent.erp_agent import _ERP_AGENT_ROUTING_RULES
+        assert "\ufffd" not in _ERP_AGENT_ROUTING_RULES
+
+    def test_system_prompt_mentions_code_execute(self):
+        """系统提示包含 code_execute 使用说明"""
+        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
+        assert "code_execute" in _ERP_AGENT_SYSTEM_PROMPT
+        assert "OUTPUT_DIR" in _ERP_AGENT_SYSTEM_PROMPT
+
+    def test_routing_rules_mentions_cross_domain(self):
+        """路由规则包含跨域关联说明"""
+        from services.agent.erp_agent import _ERP_AGENT_ROUTING_RULES
+        assert "product_code" in _ERP_AGENT_ROUTING_RULES
 
 
 # ============================================================
@@ -658,77 +594,23 @@ class TestCreateAgent:
 class TestToolSystemPromptAlignment:
     """TOOL_SYSTEM_PROMPT 与新架构一致性"""
 
-    def test_no_internal_export_claim(self):
-        """规则不能说 erp_agent 内部处理导出"""
+    def test_erp_agent_described_as_expert(self):
+        """规则应描述 erp_agent 为数据分析专家"""
         from config.chat_tools import get_tool_system_prompt
         prompt = get_tool_system_prompt()
-        assert "erp_agent 内部处理" not in prompt
-        assert "由 erp_agent 内部" not in prompt
+        assert "专家" in prompt or "分析" in prompt
 
-    def test_code_execute_for_export(self):
-        """规则应引导用 code_execute 做导出/计算"""
+    def test_code_execute_mentioned(self):
+        """规则应提及 code_execute"""
         from config.chat_tools import get_tool_system_prompt
         prompt = get_tool_system_prompt()
         assert "code_execute" in prompt
-        # 导出编排示例应包含 code_execute
-        assert "导出" in prompt and "code_execute" in prompt
 
-    def test_erp_agent_single_domain_description(self):
-        """规则应说明 erp_agent 每次查一个域"""
+    def test_cross_domain_capability(self):
+        """规则应说明 erp_agent 支持跨域分析"""
         from config.chat_tools import get_tool_system_prompt
         prompt = get_tool_system_prompt()
-        assert "一个域" in prompt or "查数据" in prompt
-
-
-# ============================================================
-# _build_experience_detail 经验记录 detail 测试
-# ============================================================
-
-
-class TestBuildExperienceDetail:
-    """验证经验记录 detail 包含关键参数（供动态案例召回）。"""
-
-    def _detail(self, domain: str, params: dict | None) -> str:
-        from services.agent.erp_agent import ERPAgent
-        return ERPAgent._build_experience_detail(domain, params)
-
-    def test_none_params(self):
-        assert self._detail("trade", None) == "domain=trade"
-
-    def test_empty_params(self):
-        assert self._detail("warehouse", {}) == "domain=warehouse"
-
-    def test_basic_params(self):
-        d = self._detail("trade", {"mode": "summary"})
-        assert "domain=trade" in d
-        assert "mode=summary" in d
-
-    def test_group_by_included(self):
-        d = self._detail("trade", {"mode": "summary", "group_by": ["shop"]})
-        assert "group_by=['shop']" in d
-
-    def test_platform_included(self):
-        d = self._detail("trade", {"mode": "detail", "platform": "taobao"})
-        assert "platform=taobao" in d
-
-    def test_fields_included(self):
-        d = self._detail("purchase", {"mode": "detail", "fields": ["remark"]})
-        assert "fields=['remark']" in d
-
-    def test_product_code_included(self):
-        d = self._detail("warehouse", {"product_code": "HZ001"})
-        assert "product_code=HZ001" in d
-
-    def test_all_params_combined(self):
-        d = self._detail("trade", {
-            "mode": "summary", "group_by": ["platform"],
-            "platform": "taobao", "product_code": "A01",
-        })
-        assert "domain=trade" in d
-        assert "mode=summary" in d
-        assert "group_by=" in d
-        assert "platform=taobao" in d
-        assert "product_code=A01" in d
+        assert "跨域" in prompt or "自主" in prompt
 
 
 # ============================================================
