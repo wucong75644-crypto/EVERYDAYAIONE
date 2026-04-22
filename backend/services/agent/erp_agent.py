@@ -47,7 +47,10 @@ _ERP_AGENT_SYSTEM_PROMPT = (
     "- local_data 默认 mode=summary，用户说「导出」「下载」时才用 export\n"
     "- 模糊名称先用 local_product_identify 确认精确编码\n\n"
     "时间：日期用 ISO 格式，含「付款」用 pay_time，含「发货」用 consign_time，默认 doc_created_at。\n"
-    "参数不够时说明缺什么，让主 Agent 补充。\n"
+    "参数不够时说明缺什么，让主 Agent 补充。\n\n"
+    "=== 输出规则 ===\n"
+    "- 工具调用之间不要输出文字，静默使用工具\n"
+    "- 最后输出一次结构化结果：关键数据 + 结论，不要润色、不要加建议、不要评论\n"
 )
 
 
