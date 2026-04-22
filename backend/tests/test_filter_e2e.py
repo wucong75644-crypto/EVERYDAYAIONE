@@ -149,7 +149,7 @@ class TestAftersaleTypeE2E:
         filters = kw.get("filters", [])
 
         tf = [f for f in filters if f.get("field") == "aftersale_type"]
-        assert len(tf) == 1 and tf[0]["value"] == "退货退款"
+        assert len(tf) == 1 and tf[0]["value"] == "2"  # 退货退款 → 归一化为 "2"
 
         rf = [f for f in filters if f.get("field") == "text_reason"]
         assert len(rf) == 1 and rf[0]["op"] == "like" and "质量" in rf[0]["value"]
@@ -291,3 +291,65 @@ class TestMixedFiltersE2E:
         assert "order_status" in field_names   # 新条件
         assert "is_urgent" in field_names      # 新条件
         assert len(filters) >= 5  # 2时间 + order_no + order_status + is_urgent
+
+
+# ============================================================
+# 场景 11: 商品编码直接查订单（无 time_range）
+# ============================================================
+
+
+class TestProductCodeAloneE2E:
+    """用户只给商品编码，不给时间范围"""
+
+    @pytest.mark.asyncio
+    async def test_product_code_alone_accepted(self):
+        from services.agent.departments.trade_agent import TradeAgent
+        kw = await _run_agent_chain(TradeAgent, {
+            "doc_type": "order", "mode": "export",
+            "product_code": "DBTXL01",
+        })
+        filters = kw.get("filters", [])
+        pf = [f for f in filters if f.get("field") == "outer_id"]
+        assert len(pf) == 1
+        assert pf[0]["value"] == "DBTXL01"
+
+
+# ============================================================
+# 场景 12: 商品名称查订单
+# ============================================================
+
+
+class TestItemNameE2E:
+    """用户用商品名称查询"""
+
+    @pytest.mark.asyncio
+    async def test_item_name_reaches_engine(self):
+        from services.agent.departments.trade_agent import TradeAgent
+        kw = await _run_agent_chain(TradeAgent, {
+            "doc_type": "order", "mode": "export",
+            "item_name": "连衣裙",
+        })
+        filters = kw.get("filters", [])
+        inf = [f for f in filters if f.get("field") == "item_name"]
+        assert len(inf) == 1
+        assert inf[0]["op"] == "like"
+        assert "连衣裙" in inf[0]["value"]
+
+
+# ============================================================
+# 场景 13: 商品编码查采购（无 time_range）
+# ============================================================
+
+
+class TestProductCodePurchaseE2E:
+
+    @pytest.mark.asyncio
+    async def test_product_code_purchase_accepted(self):
+        from services.agent.departments.purchase_agent import PurchaseAgent
+        kw = await _run_agent_chain(PurchaseAgent, {
+            "doc_type": "purchase", "mode": "export",
+            "product_code": "DBTXL01",
+        })
+        filters = kw.get("filters", [])
+        pf = [f for f in filters if f.get("field") == "outer_id"]
+        assert len(pf) == 1

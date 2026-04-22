@@ -249,7 +249,7 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         "【售后域过滤参数（doc_type=aftersale 时可用）】\n"
         "- aftersale_type: 售后类型（如 仅退款/退货退款/换货）\n"
         "- refund_status: 退款状态（如 退款中/退款成功/退款关闭）\n"
-        "- good_status: 货物状态（如 买家已退货/买家未退货）\n"
+        "- good_status: 货物状态（如 买家未发/买家已发/卖家已收/无需退货）\n"
         "- text_reason: 退货原因关键词（模糊匹配）\n"
         "- refund_express_no: 退货快递单号（精确匹配）\n"
         "- refund_express_company: 退货快递公司（模糊匹配）\n"

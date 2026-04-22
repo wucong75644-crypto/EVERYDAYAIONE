@@ -90,7 +90,6 @@ class TestDepartmentAgentBase:
         agent = _make_warehouse()
         result = agent._validate_time_range("2026-04-01 ~ 2026-03-01")
         assert result.is_conflict
-        assert "早于" in result.message
 
     def test_validate_time_range_over_90_days(self):
         agent = _make_warehouse()

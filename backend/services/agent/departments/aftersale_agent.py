@@ -54,9 +54,13 @@ class AftersaleAgent(DepartmentAgent):
     def validate_params(self, action: str, params: dict) -> ValidationResult:
         """售后域参数校验。"""
         if action == "aftersale_list":
-            if (not params.get("time_range")
-                    and not params.get("product_code")
-                    and not params.get("aftersale_no")):
+            has_identifier = (
+                params.get("time_range") or params.get("product_code")
+                or params.get("doc_code") or params.get("item_name")
+                or params.get("buyer_nick") or params.get("shop_name")
+                or params.get("platform_refund_id")
+            )
+            if not has_identifier:
                 return ValidationResult.missing(
                     ["时间范围 或 商品编码 或 售后单号"],
                     prompt="您想查哪些售后记录？请提供时间范围、商品编码或售后单号。",

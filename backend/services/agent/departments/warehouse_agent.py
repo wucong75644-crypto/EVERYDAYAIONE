@@ -91,10 +91,15 @@ class WarehouseAgent(DepartmentAgent):
             pass  # 无必填参数
 
         elif action == "receipt_query" or action == "shelf_query":
-            if not params.get("time_range") and not params.get("product_code"):
+            has_identifier = (
+                params.get("time_range") or params.get("product_code")
+                or params.get("item_name") or params.get("warehouse_name")
+                or params.get("supplier_name") or params.get("doc_code")
+            )
+            if not has_identifier:
                 return ValidationResult.missing(
-                    ["时间范围 或 商品编码"],
-                    prompt="请告诉我要查哪个时间段的收货/上架记录，或指定商品编码。",
+                    ["时间范围 或 商品编码 或 仓库名"],
+                    prompt="请告诉我要查哪个时间段的收货/上架记录，或指定商品编码、仓库。",
                 )
 
         return ValidationResult.ok()

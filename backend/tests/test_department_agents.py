@@ -318,9 +318,9 @@ class TestAftersaleValidation:
         })
         assert r.is_ok
 
-    def test_aftersale_list_by_no(self):
+    def test_aftersale_list_by_doc_code(self):
         r = _make_aftersale().validate_params("aftersale_list", {
-            "aftersale_no": "AS001",
+            "doc_code": "AS001",
         })
         assert r.is_ok
 

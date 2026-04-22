@@ -56,6 +56,68 @@ FLAG_FIELDS: list[str] = [
     "is_halt", "is_urgent", "is_presell",
 ]
 
+# ── 枚举值映射（中文/别名 → DB 实际值）──
+# 同步层直接存 API 原始值（整数/英文枚举），LLM 提取中文，这里做归一化
+
+# order_type: 中文 → 整数码（API type 字段）
+ORDER_TYPE_NORMALIZE: dict[str, str] = {
+    "普通": "0", "货到付款": "1", "平台": "3", "线下": "4",
+    "预售": "6", "合并": "7", "拆分": "8", "加急": "9",
+    "空包": "10", "门店": "12", "换货": "13", "补发": "14",
+    "分销": "33", "出库单": "99",
+}
+
+# aftersale_type: 中文 → 整数码（API afterSaleType 字段）
+AFTERSALE_TYPE_NORMALIZE: dict[str, str] = {
+    "其他": "0",
+    "已发货仅退款": "1", "仅退款": "1", "退款": "1",
+    "退货": "2", "退货退款": "2",
+    "补发": "3",
+    "换货": "4",
+    "未发货仅退款": "5", "发货前退款": "5",
+    "拒收退货": "7", "拒收": "7",
+    "档口退货": "8",
+    "维修": "9",
+}
+
+# refund_status: 中文 → 整数码（API refundStatus 字段）
+REFUND_STATUS_NORMALIZE: dict[str, str] = {
+    "无退款": "0",
+    "退款中": "1",
+    "退款成功": "2", "已退款": "2",
+    "退款关闭": "3", "退款失败": "3",
+}
+
+# good_status: 中文 → 整数码（API goodStatus 字段）
+GOOD_STATUS_NORMALIZE: dict[str, str] = {
+    "买家未发": "1", "买家未退货": "1", "未发货": "1",
+    "买家已发": "2", "买家已退货": "2", "已发货": "2",
+    "卖家已收": "3", "已签收": "3",
+    "无需退货": "4",
+}
+
+# doc_status (采购域): 中文 → 英文枚举（API sysStatus 字段）
+PURCHASE_STATUS_NORMALIZE: dict[str, str] = {
+    "待审核": "WAIT_VERIFY", "待验证": "WAIT_VERIFY",
+    "审核中": "VERIFYING", "验证中": "VERIFYING",
+    "已审核": "VERIFYING",  # 审核通过后进入下一环节
+    "待收货": "GOODS_NOT_ARRIVED", "未到货": "GOODS_NOT_ARRIVED",
+    "部分到货": "GOODS_PART_ARRIVED",
+    "已完成": "FINISHED", "已收货": "FINISHED",
+    "已关闭": "GOODS_CLOSED", "关闭": "GOODS_CLOSED",
+}
+
+# 汇总：param_key → (db_field, normalize_map)
+# _params_to_filters 中的 ENUM_EQ_FIELDS 会查这个表做归一化
+ENUM_NORMALIZE: dict[str, dict[str, str]] = {
+    "order_type": ORDER_TYPE_NORMALIZE,
+    "aftersale_type": AFTERSALE_TYPE_NORMALIZE,
+    "refund_status": REFUND_STATUS_NORMALIZE,
+    "good_status": GOOD_STATUS_NORMALIZE,
+    "doc_status": PURCHASE_STATUS_NORMALIZE,
+    # order_status 不需要归一化（LLM 直接输出英文枚举）
+}
+
 # 空结果诊断模板：field → 提示文本（{v} 替换为值）
 DIAG_MAP: dict[str, str] = {
     "order_no": "订单号 {v} 未匹配到记录，请确认号码是否正确",
@@ -179,12 +241,21 @@ def params_to_filters(params: dict) -> list[dict]:
                 "field": db_field, "op": "like", "value": f"%{val}%",
             })
 
-    # ── 批量：枚举精确匹配 ──
+    # ── 批量：枚举精确匹配（中文 → DB 值归一化） ──
     for param_key, db_field in ENUM_EQ_FIELDS.items():
         val = params.get(param_key)
         if isinstance(val, str):
             val = val.strip()
         if val:
+            norm_map = ENUM_NORMALIZE.get(param_key)
+            if norm_map:
+                normalized = norm_map.get(val)
+                if normalized is not None:
+                    logger.info(
+                        f"枚举归一化: {param_key}={val!r} → {normalized!r}",
+                    )
+                    val = normalized
+                # 未找到映射时保留原值（可能用户直接输了 DB 值如 "WAIT_SEND_GOODS"）
             filters.append({"field": db_field, "op": "eq", "value": val})
 
     # ── 批量：布尔标记 ──

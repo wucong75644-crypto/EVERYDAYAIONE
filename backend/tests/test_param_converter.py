@@ -223,37 +223,42 @@ class TestEnumEqFields:
         )
 
     def test_doc_status(self):
+        """已审核 → 归一化为 DB 值 VERIFYING"""
         filters = params_to_filters({"doc_status": "已审核"})
         assert any(
-            f["field"] == "doc_status" and f["value"] == "已审核"
+            f["field"] == "doc_status" and f["value"] == "VERIFYING"
             for f in filters
         )
 
     def test_aftersale_type(self):
+        """退货退款 → 归一化为 DB 值 "2" """
         filters = params_to_filters({"aftersale_type": "退货退款"})
         assert any(
-            f["field"] == "aftersale_type" and f["value"] == "退货退款"
+            f["field"] == "aftersale_type" and f["value"] == "2"
             for f in filters
         )
 
     def test_refund_status(self):
+        """退款中 → 归一化为 DB 值 "1" """
         filters = params_to_filters({"refund_status": "退款中"})
         assert any(
-            f["field"] == "refund_status" and f["value"] == "退款中"
+            f["field"] == "refund_status" and f["value"] == "1"
             for f in filters
         )
 
     def test_good_status(self):
+        """买家已退货 → 归一化为 DB 值 "2" """
         filters = params_to_filters({"good_status": "买家已退货"})
         assert any(
-            f["field"] == "good_status" and f["value"] == "买家已退货"
+            f["field"] == "good_status" and f["value"] == "2"
             for f in filters
         )
 
     def test_order_type(self):
+        """补发 → 归一化为 DB 值 "14" """
         filters = params_to_filters({"order_type": "补发"})
         assert any(
-            f["field"] == "order_type" and f["value"] == "补发"
+            f["field"] == "order_type" and f["value"] == "14"
             for f in filters
         )
 
@@ -263,6 +268,87 @@ class TestEnumEqFields:
         filter_fields = {f["field"] for f in filters}
         for db_field in ENUM_EQ_FIELDS.values():
             assert db_field in filter_fields
+
+
+# ============================================================
+# params_to_filters: 枚举值归一化（中文 → DB 值）
+# ============================================================
+
+
+class TestEnumNormalize:
+    """枚举字段中文值归一化为 DB 实际值"""
+
+    def test_order_type_chinese_to_code(self):
+        """补发 → 14"""
+        filters = params_to_filters({"order_type": "补发"})
+        ot = [f for f in filters if f["field"] == "order_type"]
+        assert ot[0]["value"] == "14"
+
+    def test_order_type_hebing(self):
+        """合并 → 7"""
+        filters = params_to_filters({"order_type": "合并"})
+        ot = [f for f in filters if f["field"] == "order_type"]
+        assert ot[0]["value"] == "7"
+
+    def test_aftersale_type_chinese(self):
+        """退货退款 → 2"""
+        filters = params_to_filters({"aftersale_type": "退货退款"})
+        at = [f for f in filters if f["field"] == "aftersale_type"]
+        assert at[0]["value"] == "2"
+
+    def test_aftersale_type_alias(self):
+        """仅退款 → 1（别名）"""
+        filters = params_to_filters({"aftersale_type": "仅退款"})
+        at = [f for f in filters if f["field"] == "aftersale_type"]
+        assert at[0]["value"] == "1"
+
+    def test_refund_status_chinese(self):
+        """退款中 → 1"""
+        filters = params_to_filters({"refund_status": "退款中"})
+        rs = [f for f in filters if f["field"] == "refund_status"]
+        assert rs[0]["value"] == "1"
+
+    def test_refund_status_success(self):
+        """退款成功 → 2"""
+        filters = params_to_filters({"refund_status": "退款成功"})
+        rs = [f for f in filters if f["field"] == "refund_status"]
+        assert rs[0]["value"] == "2"
+
+    def test_good_status_chinese(self):
+        """买家已发 → 2"""
+        filters = params_to_filters({"good_status": "买家已发"})
+        gs = [f for f in filters if f["field"] == "good_status"]
+        assert gs[0]["value"] == "2"
+
+    def test_good_status_alias(self):
+        """买家已退货 → 2（别名）"""
+        filters = params_to_filters({"good_status": "买家已退货"})
+        gs = [f for f in filters if f["field"] == "good_status"]
+        assert gs[0]["value"] == "2"
+
+    def test_doc_status_purchase_chinese(self):
+        """待审核 → WAIT_VERIFY"""
+        filters = params_to_filters({"doc_status": "待审核"})
+        ds = [f for f in filters if f["field"] == "doc_status"]
+        assert ds[0]["value"] == "WAIT_VERIFY"
+
+    def test_doc_status_purchase_finished(self):
+        """已完成 → FINISHED"""
+        filters = params_to_filters({"doc_status": "已完成"})
+        ds = [f for f in filters if f["field"] == "doc_status"]
+        assert ds[0]["value"] == "FINISHED"
+
+    def test_order_status_english_passthrough(self):
+        """order_status 直接输英文枚举不归一化"""
+        filters = params_to_filters({"order_status": "WAIT_SEND_GOODS"})
+        os = [f for f in filters if f["field"] == "order_status"]
+        assert os[0]["value"] == "WAIT_SEND_GOODS"
+
+    def test_unknown_enum_value_passthrough(self):
+        """未知中文值保留原值（不崩溃）"""
+        filters = params_to_filters({"order_type": "未知类型XYZ"})
+        ot = [f for f in filters if f["field"] == "order_type"]
+        assert ot[0]["value"] == "未知类型XYZ"
 
 
 # ============================================================
