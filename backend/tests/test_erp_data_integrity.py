@@ -182,53 +182,85 @@ class TestClassifierE2E:
         assert "后续计算请默认使用有效订单数据" in result.summary
 
     @pytest.mark.asyncio
-    async def test_include_invalid_skips_classification(self):
-        """include_invalid=True 跳过分类引擎，走原逻辑"""
+    async def test_include_invalid_also_uses_classification(self):
+        """include_invalid=True 也走分类引擎，但不显示推荐语"""
+        from config.default_classification_rules import DEFAULT_ORDER_RULES
         from services.kuaimai.erp_unified_query import UnifiedQueryEngine
+        from services.kuaimai.order_classifier import OrderClassifier
+
+        rpc_data = [
+            {"order_type": "2,3,0", "order_status": "PAID", "is_scalping": 0,
+             "doc_count": 80, "total_qty": 160, "total_amount": 4000},
+            {"order_type": "2,3,10", "order_status": "PAID", "is_scalping": 0,
+             "doc_count": 20, "total_qty": 40, "total_amount": 1000},
+        ]
 
         mock_db = MagicMock()
         mock_rpc = MagicMock()
-        mock_rpc.execute.return_value = MagicMock(
-            data={"doc_count": 100, "total_qty": 200, "total_amount": 5000}
-        )
+        mock_rpc.execute.return_value = MagicMock(data=rpc_data)
         mock_db.rpc.return_value = mock_rpc
-        mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value.data = []
 
-        engine = UnifiedQueryEngine(db=mock_db, org_id="test-org")
-        result = await engine.execute(
-            doc_type="order", mode="summary",
-            filters=[{"field": "pay_time", "op": "gte", "value": "2026-04-18"}],
-            include_invalid=True,
-        )
+        # 注入分类规则缓存
+        OrderClassifier._cache["test-org"] = (DEFAULT_ORDER_RULES, 9999999999)
+        try:
+            engine = UnifiedQueryEngine(db=mock_db, org_id="test-org")
+            result = await engine.execute(
+                doc_type="order", mode="summary",
+                filters=[{"field": "pay_time", "op": "gte", "value": "2026-04-18"}],
+                include_invalid=True,
+            )
 
-        # 应该只调用 erp_global_stats_query，不调用 erp_order_stats_grouped
-        rpc_calls = [c[0][0] for c in mock_db.rpc.call_args_list]
-        assert "erp_global_stats_query" in rpc_calls
-        assert "erp_order_stats_grouped" not in rpc_calls
-        assert result.metadata.get("recommended_key") is None
+            # 走 erp_order_stats_grouped（分类引擎）
+            rpc_calls = [c[0][0] for c in mock_db.rpc.call_args_list]
+            assert "erp_order_stats_grouped" in rpc_calls
+            # 有分类数据
+            assert result.metadata.get("recommended_key") == "valid"
+            # 但不显示推荐语（用户已明确要全量）
+            assert "后续计算请默认使用有效订单数据" not in result.summary
+        finally:
+            OrderClassifier._cache.pop("test-org", None)
 
     @pytest.mark.asyncio
-    async def test_grouped_query_skips_classification(self):
-        """有 group_by 时跳过分类引擎"""
+    async def test_grouped_query_uses_classification(self):
+        """有 group_by 时也走分类引擎"""
+        from config.default_classification_rules import DEFAULT_ORDER_RULES
         from services.kuaimai.erp_unified_query import UnifiedQueryEngine
+        from services.kuaimai.order_classifier import OrderClassifier
+
+        rpc_data = [
+            {"group_key": "tb", "order_type": "2,3,0", "order_status": "PAID",
+             "is_scalping": 0, "doc_count": 50, "total_qty": 100, "total_amount": 2000},
+            {"group_key": "tb", "order_type": "2,3,10", "order_status": "PAID",
+             "is_scalping": 0, "doc_count": 10, "total_qty": 20, "total_amount": 0},
+            {"group_key": "pdd", "order_type": "2,3,0", "order_status": "PAID",
+             "is_scalping": 0, "doc_count": 40, "total_qty": 80, "total_amount": 1500},
+        ]
 
         mock_db = MagicMock()
         mock_rpc = MagicMock()
-        mock_rpc.execute.return_value = MagicMock(data=[
-            {"group_key": "shop1", "doc_count": 50, "total_qty": 100, "total_amount": 2000},
-        ])
+        mock_rpc.execute.return_value = MagicMock(data=rpc_data)
         mock_db.rpc.return_value = mock_rpc
 
-        engine = UnifiedQueryEngine(db=mock_db, org_id="test-org")
-        result = await engine.execute(
-            doc_type="order", mode="summary",
-            filters=[{"field": "pay_time", "op": "gte", "value": "2026-04-18"}],
-            group_by=["shop"],
-        )
+        OrderClassifier._cache["test-org"] = (DEFAULT_ORDER_RULES, 9999999999)
+        try:
+            engine = UnifiedQueryEngine(db=mock_db, org_id="test-org")
+            result = await engine.execute(
+                doc_type="order", mode="summary",
+                filters=[{"field": "pay_time", "op": "gte", "value": "2026-04-18"}],
+                group_by=["platform"],
+            )
 
-        rpc_calls = [c[0][0] for c in mock_db.rpc.call_args_list]
-        assert "erp_global_stats_query" in rpc_calls
-        assert "erp_order_stats_grouped" not in rpc_calls
+            # 走 erp_order_stats_grouped（分类引擎），带 p_group_by
+            rpc_calls = [c[0][0] for c in mock_db.rpc.call_args_list]
+            assert "erp_order_stats_grouped" in rpc_calls
+            # 验证 p_group_by 参数透传
+            rpc_kwargs = mock_db.rpc.call_args_list[0][0][1]
+            assert rpc_kwargs["p_group_by"] == "platform"
+            # 有分组分类数据
+            assert result.metadata.get("group_by") == "platform"
+            assert len(result.data) == 2  # tb + pdd 两个分组
+        finally:
+            OrderClassifier._cache.pop("test-org", None)
 
     @pytest.mark.asyncio
     async def test_named_params_forwarded_to_grouped_rpc(self):

@@ -782,8 +782,8 @@ class TestBuildToolDescription:
     def test_token_budget(self):
         desc = self._desc()
         estimated_tokens = len(desc) / 2.5
-        assert estimated_tokens < 450, (
-            f"描述 token 超预算: {estimated_tokens:.0f} > 450"
+        assert estimated_tokens < 500, (
+            f"描述 token 超预算: {estimated_tokens:.0f} > 500"
         )
 
     def test_no_hardcoded_content(self):

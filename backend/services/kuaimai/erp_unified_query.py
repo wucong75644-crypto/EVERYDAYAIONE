@@ -54,6 +54,7 @@ from services.kuaimai.erp_unified_schema import (
     TimeRange,
     ValidatedFilter,
     _FIELD_LABEL_CN,
+    fmt_classified_grouped,
     fmt_summary_grouped,
     fmt_summary_total,
     generate_field_doc,
@@ -154,9 +155,13 @@ class UnifiedQueryEngine:
         request_ctx: Optional[RequestContext],
         include_invalid: bool = False,
     ) -> ToolOutput:
-        # 订单分类引擎分支：doc_type=order + 非全量模式 + 无分组
-        if doc_type == "order" and not include_invalid and not group_by:
-            classified = await self._summary_classified(filters, tr, request_ctx)
+        # 所有 order 统计统一走分类引擎（不再判断 group_by 和 include_invalid）
+        if doc_type == "order":
+            classified = await self._summary_classified(
+                filters, tr, request_ctx,
+                group_by=group_by,
+                include_invalid=include_invalid,
+            )
             if classified is not None:
                 return classified
 
@@ -246,8 +251,15 @@ class UnifiedQueryEngine:
         self, filters: list[ValidatedFilter],
         tr: TimeRange,
         request_ctx: Optional[RequestContext],
+        group_by: list[str] | None = None,
+        include_invalid: bool = False,
     ) -> ToolOutput | None:
-        """订单分类统计：走 erp_order_stats_grouped RPC + 分类引擎"""
+        """订单分类统计：走 erp_order_stats_grouped RPC + 分类引擎。
+
+        支持两种模式：
+        - group_by=None → 整体分类统计
+        - group_by=['platform'] → 每个分组内独立分类
+        """
         from services.kuaimai.order_classifier import OrderClassifier
 
         non_time = [f for f in filters if f.field not in TIME_COLUMNS]
@@ -263,19 +275,24 @@ class UnifiedQueryEngine:
         if p_warehouse:
             dsl.append({"field": "warehouse_name", "op": "like", "value": f"%{p_warehouse}%"})
 
+        rpc_group = (
+            GROUP_BY_MAP.get(group_by[0], group_by[0]) if group_by else None
+        )
+
         params: dict[str, Any] = {
             "p_org_id": self.org_id,
             "p_start": tr.start_iso,
             "p_end": tr.end_iso,
             "p_time_col": tr.time_col,
             "p_filters": _json.dumps(dsl) if dsl else None,
+            "p_group_by": rpc_group,
         }
 
         try:
             result = self.db.rpc("erp_order_stats_grouped", params).execute()
             raw_rows = result.data
         except Exception as e:
-            logger.warning(f"分组统计 RPC 失败，回退原逻辑 | error={e}")
+            logger.warning(f"分类统计 RPC 失败，回退原逻辑 | error={e}")
             return None
 
         if not raw_rows or raw_rows == []:
@@ -283,17 +300,34 @@ class UnifiedQueryEngine:
 
         try:
             classifier = OrderClassifier.for_org(self.db, self.org_id)
-            cr = classifier.classify(raw_rows)
         except Exception as e:
-            logger.warning(f"分类引擎异常，回退原逻辑 | error={e}")
+            logger.warning(f"分类引擎加载异常，回退原逻辑 | error={e}")
             return None
 
         time_header = format_time_header(
             ctx=request_ctx, range_=tr.date_range, kind="统计区间",
         )
-        body = cr.to_display_text()
-        summary_text = f"{time_header}\n\n{body}" if time_header else body
 
+        if rpc_group is None:
+            return self._build_classified_flat(
+                classifier, raw_rows, time_header, tr, include_invalid,
+            )
+        return self._build_classified_grouped(
+            classifier, raw_rows, rpc_group, time_header, tr, include_invalid,
+        )
+
+    def _build_classified_flat(
+        self, classifier: Any, raw_rows: list[dict],
+        time_header: str, tr: TimeRange, include_invalid: bool,
+    ) -> ToolOutput | None:
+        """无分组：整体分类 → ToolOutput"""
+        try:
+            cr = classifier.classify(raw_rows)
+        except Exception as e:
+            logger.warning(f"分类引擎异常，回退原逻辑 | error={e}")
+            return None
+        body = cr.to_display_text(show_recommendation=not include_invalid)
+        summary_text = f"{time_header}\n\n{body}" if time_header else body
         return ToolOutput(
             summary=summary_text,
             format=OutputFormat.TABLE,
@@ -311,6 +345,51 @@ class UnifiedQueryEngine:
             metadata={
                 "recommended_key": "valid",
                 "doc_type": "order",
+                "time_range": tr.label,
+                "time_column": tr.time_col,
+            },
+        )
+
+    def _build_classified_grouped(
+        self, classifier: Any, raw_rows: list[dict],
+        rpc_group: str, time_header: str, tr: TimeRange,
+        include_invalid: bool,
+    ) -> ToolOutput | None:
+        """有分组：每组独立分类 → ToolOutput"""
+        try:
+            grouped = classifier.classify_grouped(raw_rows)
+        except Exception as e:
+            logger.warning(f"分组分类引擎异常，回退原逻辑 | error={e}")
+            return None
+        body = fmt_classified_grouped(
+            grouped, rpc_group, tr.label,
+            show_recommendation=not include_invalid,
+        )
+        summary_text = f"{time_header}\n\n{body}" if time_header else body
+        data_list = [
+            {
+                "group_key": key,
+                "total": cr.total,
+                "valid": cr.valid,
+                "categories": cr.categories_list,
+            }
+            for key, cr in grouped.items()
+        ]
+        return ToolOutput(
+            summary=summary_text,
+            format=OutputFormat.TABLE,
+            source="erp",
+            columns=[
+                ColumnMeta("group_key", "text", "分组"),
+                ColumnMeta("doc_count", "integer", "单数"),
+                ColumnMeta("total_qty", "integer", "数量"),
+                ColumnMeta("total_amount", "numeric", "金额"),
+            ],
+            data=data_list,
+            metadata={
+                "recommended_key": "valid",
+                "doc_type": "order",
+                "group_by": rpc_group,
                 "time_range": tr.label,
                 "time_column": tr.time_col,
             },
@@ -357,6 +436,17 @@ class UnifiedQueryEngine:
 
         # 构建 DuckDB SQL
         select_sql = build_pii_select(safe_fields, cn_header=True)
+
+        # 订单导出：追加 order_class 分类标签列（从规则表动态生成）
+        if doc_type == "order":
+            try:
+                from services.kuaimai.order_classifier import OrderClassifier
+                classifier = OrderClassifier.for_org(self.db, self.org_id)
+                case_sql = classifier.to_case_sql()
+                select_sql += f', {case_sql} AS "订单分类"'
+            except Exception as e:
+                logger.warning(f"导出分类标签生成失败，跳过 | error={e}")
+
         where_sql = build_export_where(doc_type, filters, tr, self.org_id)
         need_archive = _need_archive(tr)
 
@@ -433,6 +523,9 @@ class UnifiedQueryEngine:
         # 构建列元信息（export 用中文列名，与 parquet 列头一致）
         from services.kuaimai.erp_unified_schema import build_column_metas_cn
         export_columns = build_column_metas_cn(safe_fields)
+        # 订单导出追加分类标签列元信息
+        if doc_type == "order":
+            export_columns.append(ColumnMeta("订单分类", "text", "订单分类"))
 
         file_ref = FileRef(
             path=str(staging_path),

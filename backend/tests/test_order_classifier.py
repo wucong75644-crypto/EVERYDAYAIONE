@@ -238,3 +238,212 @@ class TestCache:
         OrderClassifier._cache["org2"] = ([], 9999999999)
         OrderClassifier.invalidate_cache()
         assert len(OrderClassifier._cache) == 0
+
+
+# ── classify_grouped 测试 ─────────────────────────────
+
+
+class TestClassifyGrouped:
+    """OrderClassifier.classify_grouped() 分组分类"""
+
+    def _make_classifier(self) -> OrderClassifier:
+        return OrderClassifier(DEFAULT_ORDER_RULES)
+
+    def test_two_groups(self):
+        """两个平台分组，各自独立分类"""
+        rows = [
+            # 淘宝有效
+            {"group_key": "tb", "order_type": "2,3,0", "order_status": "PAID",
+             "is_scalping": 0, "doc_count": 100, "total_qty": 200, "total_amount": 5000},
+            # 淘宝刷单
+            {"group_key": "tb", "order_type": "2,3,10", "order_status": "PAID",
+             "is_scalping": 0, "doc_count": 30, "total_qty": 60, "total_amount": 0},
+            # 拼多多有效
+            {"group_key": "pdd", "order_type": "2,3,0", "order_status": "PAID",
+             "is_scalping": 0, "doc_count": 80, "total_qty": 160, "total_amount": 4000},
+            # 拼多多关闭
+            {"group_key": "pdd", "order_type": "2,3", "order_status": "CLOSED",
+             "is_scalping": 0, "doc_count": 10, "total_qty": 20, "total_amount": 300},
+        ]
+        result = self._make_classifier().classify_grouped(rows)
+        assert set(result.keys()) == {"tb", "pdd"}
+
+        # 淘宝：100有效 + 30刷单
+        assert result["tb"].total["doc_count"] == 130
+        assert result["tb"].valid["doc_count"] == 100
+        assert result["tb"].categories["空包/刷单"]["doc_count"] == 30
+
+        # 拼多多：80有效 + 10关闭
+        assert result["pdd"].total["doc_count"] == 90
+        assert result["pdd"].valid["doc_count"] == 80
+        assert result["pdd"].categories["已关闭/取消"]["doc_count"] == 10
+
+    def test_single_group(self):
+        """单个分组等价于 classify"""
+        rows = [
+            {"group_key": "tb", "order_type": "2,3,0", "order_status": "PAID",
+             "is_scalping": 0, "doc_count": 50, "total_qty": 100, "total_amount": 2500},
+        ]
+        result = self._make_classifier().classify_grouped(rows)
+        assert len(result) == 1
+        assert result["tb"].valid["doc_count"] == 50
+
+    def test_missing_group_key_uses_unknown(self):
+        """缺少 group_key 的行归入 '未知'"""
+        rows = [
+            {"order_type": "2,3,0", "order_status": "PAID",
+             "is_scalping": 0, "doc_count": 10, "total_qty": 20, "total_amount": 500},
+        ]
+        result = self._make_classifier().classify_grouped(rows)
+        assert "未知" in result
+
+    def test_each_group_sums_correctly(self):
+        """每个分组内分类总和 = 该组总数"""
+        rows = [
+            {"group_key": "a", "order_type": "2,10", "order_status": "PAID",
+             "is_scalping": 0, "doc_count": 20, "total_qty": 40, "total_amount": 100},
+            {"group_key": "a", "order_type": "2,14", "order_status": "PAID",
+             "is_scalping": 0, "doc_count": 5, "total_qty": 10, "total_amount": 50},
+            {"group_key": "a", "order_type": "2,3", "order_status": "PAID",
+             "is_scalping": 0, "doc_count": 75, "total_qty": 150, "total_amount": 3000},
+        ]
+        result = self._make_classifier().classify_grouped(rows)
+        cr = result["a"]
+        cat_sum = sum(c["doc_count"] for c in cr.categories.values())
+        assert cat_sum == cr.total["doc_count"] == 100
+
+
+# ── to_case_sql 测试 ─────────────────────────────────
+
+
+class TestToCaseSql:
+    """OrderClassifier.to_case_sql() 规则转 SQL"""
+
+    def _make_classifier(self) -> OrderClassifier:
+        return OrderClassifier(DEFAULT_ORDER_RULES)
+
+    def test_generates_valid_sql(self):
+        """生成的 CASE WHEN 包含所有排除规则"""
+        sql = self._make_classifier().to_case_sql()
+        assert "CASE" in sql
+        assert "ELSE '有效订单'" in sql
+        assert "空包/刷单" in sql
+        assert "补发单" in sql
+        assert "已关闭/取消" in sql
+
+    def test_list_has_uses_string_split(self):
+        """list_has 条件转 DuckDB string_split + list_contains"""
+        sql = self._make_classifier().to_case_sql()
+        assert "string_split" in sql
+        assert "list_contains" in sql
+
+    def test_empty_rules_returns_else_only(self):
+        """无排除规则时只有 ELSE"""
+        # 只保留兜底规则
+        classifier = OrderClassifier([
+            {"rule_name": "有效订单", "conditions": [], "priority": 99},
+        ])
+        sql = classifier.to_case_sql()
+        assert sql == "CASE  ELSE '有效订单' END"
+
+
+# ── show_recommendation 参数测试 ─────────────────────
+
+
+class TestShowRecommendation:
+    """to_display_text(show_recommendation=...) 控制推荐语"""
+
+    def _make_result(self) -> ClassificationResult:
+        return ClassificationResult(
+            total={"doc_count": 100, "total_qty": 200, "total_amount": 5000},
+            categories={"有效订单": {"doc_count": 80, "total_qty": 160, "total_amount": 4000}},
+            valid={"doc_count": 80, "total_qty": 160, "total_amount": 4000},
+        )
+
+    def test_show_recommendation_true(self):
+        text = self._make_result().to_display_text(show_recommendation=True)
+        assert "后续计算请默认使用有效订单数据" in text
+
+    def test_show_recommendation_false(self):
+        text = self._make_result().to_display_text(show_recommendation=False)
+        assert "后续计算请默认使用有效订单数据" not in text
+
+    def test_default_shows_recommendation(self):
+        """默认显示推荐语（向后兼容）"""
+        text = self._make_result().to_display_text()
+        assert "后续计算请默认使用有效订单数据" in text
+
+
+# ── _sql_lit 测试 ─────────────────────────────────────
+
+
+class TestSqlLit:
+    """_sql_lit 值转 SQL 字面量"""
+
+    def test_integer(self):
+        from services.kuaimai.order_classifier import _sql_lit
+        assert _sql_lit(10) == "10"
+
+    def test_float(self):
+        from services.kuaimai.order_classifier import _sql_lit
+        assert _sql_lit(3.14) == "3.14"
+
+    def test_string(self):
+        from services.kuaimai.order_classifier import _sql_lit
+        assert _sql_lit("PAID") == "'PAID'"
+
+    def test_string_with_single_quote(self):
+        """单引号转义"""
+        from services.kuaimai.order_classifier import _sql_lit
+        assert _sql_lit("Tom's") == "'Tom''s'"
+
+    def test_string_with_multiple_quotes(self):
+        from services.kuaimai.order_classifier import _sql_lit
+        assert _sql_lit("it's Tom's") == "'it''s Tom''s'"
+
+
+# ── _cond_to_sql 测试 ────────────────────────────────
+
+
+class TestCondToSql:
+    """OrderClassifier._cond_to_sql 各操作符"""
+
+    def test_eq_integer(self):
+        sql = OrderClassifier._cond_to_sql("is_scalping", "eq", 1)
+        assert sql == "is_scalping = 1"
+
+    def test_eq_string(self):
+        sql = OrderClassifier._cond_to_sql("order_status", "eq", "PAID")
+        assert sql == "order_status = 'PAID'"
+
+    def test_ne(self):
+        sql = OrderClassifier._cond_to_sql("order_status", "ne", "CLOSED")
+        assert sql == "order_status != 'CLOSED'"
+
+    def test_in(self):
+        sql = OrderClassifier._cond_to_sql("order_status", "in", ["CLOSED", "CANCEL"])
+        assert sql == "order_status IN ('CLOSED', 'CANCEL')"
+
+    def test_not_in(self):
+        sql = OrderClassifier._cond_to_sql("order_status", "not_in", ["CLOSED"])
+        assert sql == "order_status NOT IN ('CLOSED')"
+
+    def test_list_has(self):
+        sql = OrderClassifier._cond_to_sql("order_type", "list_has", [10])
+        assert "list_contains" in sql
+        assert "string_split" in sql
+        assert "'10'" in sql
+
+    def test_list_has_multiple(self):
+        sql = OrderClassifier._cond_to_sql("order_type", "list_has", [10, 14])
+        assert sql.count("list_contains") == 2
+        assert " OR " in sql
+
+    def test_list_not_has(self):
+        sql = OrderClassifier._cond_to_sql("order_type", "list_not_has", [10])
+        assert "NOT" in sql
+        assert "list_contains" in sql
+
+    def test_unknown_op_returns_true(self):
+        sql = OrderClassifier._cond_to_sql("foo", "unknown_op", "bar")
+        assert sql == "TRUE"
