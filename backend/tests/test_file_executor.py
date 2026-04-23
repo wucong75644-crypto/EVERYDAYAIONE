@@ -193,10 +193,12 @@ class TestFileRead:
     async def test_read_with_offset_limit(self, executor, workspace):
         lines = "\n".join(f"line{i}" for i in range(100))
         Path(workspace, "big.txt").write_text(lines)
-        result = await executor.file_read("big.txt", offset=10, limit=5)
+        # offset=11 (1-based) → 从第11行开始（0-based index=10 → line10）
+        result = await executor.file_read("big.txt", offset=11, limit=5)
         assert "显示: 11-15" in result
-        assert "line10" in result  # 0-based offset=10 → line10
-        assert "line15" not in result or "line14" in result
+        assert "line10" in result  # 1-based offset=11 → 0-based[10] → line10
+        assert "line14" in result
+        assert "line15" not in result
 
     @pytest.mark.asyncio
     async def test_read_gbk_fallback(self, executor, workspace):
@@ -212,6 +214,165 @@ class TestFileRead:
         large.write_bytes(b"x" * (10 * 1024 * 1024 + 1))
         result = await executor.file_read("large.txt")
         assert "文件过大" in result
+
+    # ── 三级防线场景测试（对齐 Claude Code Read） ──
+
+    @pytest.mark.asyncio
+    async def test_l1_no_limit_blocks_large_file(self, executor, workspace):
+        """L1: 不传 limit 读 300KB 文件 → 拒绝"""
+        Path(workspace, "big.csv").write_text("x" * (300 * 1024))
+        result = await executor.file_read("big.csv")  # limit=None
+        assert "文件过大" in result
+        assert "256" in result
+        assert "offset/limit" in result
+
+    @pytest.mark.asyncio
+    async def test_l1_with_limit_allows_large_file(self, executor, workspace):
+        """L1: 传 limit 读 300KB 文件 → 放行（跳过字节检查）"""
+        lines = "\n".join(f"row,{i},data" for i in range(5000))
+        Path(workspace, "big.csv").write_text(lines)
+        result = await executor.file_read("big.csv", limit=10)
+        assert "文件过大" not in result
+        assert "row,0,data" in result
+        assert "显示: 1-10" in result
+
+    @pytest.mark.asyncio
+    async def test_l1_no_limit_allows_small_file(self, executor, workspace):
+        """L1: 不传 limit 读 100KB 文件 → 放行"""
+        lines = "\n".join(f"line{i}" for i in range(500))
+        Path(workspace, "small.txt").write_text(lines)
+        result = await executor.file_read("small.txt")  # limit=None
+        assert "文件过大" not in result
+        assert "共 500 行" in result
+
+    @pytest.mark.asyncio
+    async def test_l2_caps_at_2000_lines(self, executor, workspace):
+        """L2: 不传 limit 读 2500 行小文件 → 只返回前 2000 行"""
+        lines = "\n".join(f"L{i}" for i in range(2500))
+        Path(workspace, "many.txt").write_text(lines)
+        result = await executor.file_read("many.txt")
+        assert "共 2500 行" in result
+        assert "显示: 1-2000" in result
+        assert "L0" in result
+        assert "L1999" in result
+        assert "L2000" not in result
+
+    @pytest.mark.asyncio
+    async def test_l2_limit_exceeds_cap(self, executor, workspace):
+        """L2: limit=9999 超过硬上限 → 自动截断到 2000"""
+        lines = "\n".join(f"L{i}" for i in range(2500))
+        Path(workspace, "many.txt").write_text(lines)
+        result = await executor.file_read("many.txt", limit=9999)
+        assert "显示: 1-2000" in result
+        assert "L2000" not in result
+
+    @pytest.mark.asyncio
+    async def test_l3_token_blocks_dense_json(self, executor, workspace):
+        """L3: JSON 文件用 2 bytes/token 估算，更容易触发 token 上限"""
+        # 200KB JSON ≈ 100K tokens（200*1024/2），远超 25000
+        Path(workspace, "dense.json").write_text('{"k":"' + "v" * (200 * 1024) + '"}')
+        result = await executor.file_read("dense.json")
+        assert "tokens" in result
+        assert "超过上限" in result
+
+    @pytest.mark.asyncio
+    async def test_l3_fast_pass_small_file(self, executor, workspace):
+        """L3: 小文件粗估 ≤ 1/4 阈值 → 快速放行"""
+        # 10KB 文本 ≈ 2500 tokens (10*1024/4)，< 25000/4 = 6250
+        Path(workspace, "tiny.txt").write_text("hello\n" * 100)
+        result = await executor.file_read("tiny.txt")
+        assert "tokens" not in result
+        assert "hello" in result
+
+    @pytest.mark.asyncio
+    async def test_offset_1indexed(self, executor, workspace):
+        """offset=1 读第一行（1-based 对齐 Claude Code）"""
+        Path(workspace, "abc.txt").write_text("AAA\nBBB\nCCC")
+        result = await executor.file_read("abc.txt", offset=1, limit=1)
+        assert "AAA" in result
+        assert "BBB" not in result
+
+    @pytest.mark.asyncio
+    async def test_offset_0_treated_as_start(self, executor, workspace):
+        """offset=0 保护（对齐 Claude: offset===0 ? 0 : offset-1）"""
+        Path(workspace, "abc.txt").write_text("AAA\nBBB\nCCC")
+        result = await executor.file_read("abc.txt", offset=0, limit=1)
+        assert "AAA" in result
+
+    @pytest.mark.asyncio
+    async def test_offset_out_of_bounds(self, executor, workspace):
+        """offset 超过总行数 → 提示超出范围"""
+        Path(workspace, "short.txt").write_text("line1\nline2")
+        result = await executor.file_read("short.txt", offset=100)
+        assert "只有 2 行" in result
+        assert "超出范围" in result
+
+    @pytest.mark.asyncio
+    async def test_empty_file(self, executor, workspace):
+        """空文件 → 提示内容为空"""
+        Path(workspace, "empty.txt").write_text("")
+        result = await executor.file_read("empty.txt")
+        assert "内容为空" in result
+
+    @pytest.mark.asyncio
+    async def test_bom_stripped(self, executor, workspace):
+        """UTF-8 BOM 被剥离，不影响内容"""
+        Path(workspace, "bom.txt").write_bytes(b"\xef\xbb\xbfhello\nworld")
+        result = await executor.file_read("bom.txt")
+        assert "hello" in result
+        assert "\ufeff" not in result
+
+    @pytest.mark.asyncio
+    async def test_10mb_hard_limit_with_limit(self, executor, workspace):
+        """超 10MB 文件即使传了 limit 也拒绝（防 OOM）"""
+        large = Path(workspace, "huge.csv")
+        large.write_bytes(b"x" * (10 * 1024 * 1024 + 1))
+        result = await executor.file_read("huge.csv", limit=10)
+        assert "文件过大" in result
+        assert "硬上限" in result
+
+    @pytest.mark.asyncio
+    async def test_real_scenario_user_asks_read_csv(self, executor, workspace):
+        """真实场景：用户上传大 CSV（>256KB），说"帮我读一下这个文件"
+        LLM 调 file_read(path="sales.csv") 不传 limit → L1 拦住"""
+        # 每行约 200 字符，2000 行 ≈ 400KB > 256KB
+        header = "商品名称,平台,金额,备注,地址,联系人,电话,状态,日期,操作员"
+        rows = "\n".join(
+            f"超长商品名称测试{i:05d},平台{i%3},¥{i*10.5:.2f},"
+            f"备注信息较长的文本内容{i},地址信息{i},张三{i},"
+            f"138{i:08d},已完成,2026-04-{(i%28)+1:02d},操作员{i%10}"
+            for i in range(2000)
+        )
+        Path(workspace, "sales.csv").write_text(f"{header}\n{rows}")
+        result = await executor.file_read("sales.csv")  # 不传 limit
+        assert "文件过大" in result
+        assert "code_execute" in result
+
+    @pytest.mark.asyncio
+    async def test_real_scenario_llm_pages_large_csv(self, executor, workspace):
+        """真实场景：L1 拦住后，LLM 改用分页读取前 50 行预览"""
+        header = "商品名称,平台,金额,备注,地址,联系人,电话,状态,日期,操作员"
+        rows = "\n".join(
+            f"超长商品名称测试{i:05d},平台{i%3},¥{i*10.5:.2f},"
+            f"备注信息较长的文本内容{i},地址信息{i},张三{i},"
+            f"138{i:08d},已完成,2026-04-{(i%28)+1:02d},操作员{i%10}"
+            for i in range(2000)
+        )
+        Path(workspace, "sales.csv").write_text(f"{header}\n{rows}")
+        result = await executor.file_read("sales.csv", limit=50)
+        assert "文件过大" not in result
+        assert "商品名称" in result
+        assert "显示: 1-50" in result
+
+    @pytest.mark.asyncio
+    async def test_real_scenario_small_report(self, executor, workspace):
+        """真实场景：用户上传 200 行小报表，完整读取无阻碍"""
+        rows = "\n".join(f"item{i},{i*5}" for i in range(200))
+        Path(workspace, "report.csv").write_text(f"名称,数量\n{rows}")
+        result = await executor.file_read("report.csv")
+        assert "共 201 行" in result
+        assert "item0" in result
+        assert "item199" in result
 
 
 # ============================================================

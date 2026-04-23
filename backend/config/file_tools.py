@@ -68,9 +68,14 @@ def build_file_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "file_read",
                 "description": (
-                    "读取 workspace 内的文件内容。支持文本文件（txt/csv/json/py/md等）。\n"
-                    "大文件可通过 offset/limit 分页读取。\n"
-                    "二进制文件（图片/Excel等）请用 code_execute 处理。"
+                    "读取 workspace 内的文件内容。\n\n"
+                    "使用说明:\n"
+                    "- 默认读取整个文件（最多 2000 行）。"
+                    "大于 256KB 的文件会返回错误，请使用 offset 和 limit 分页读取\n"
+                    "- 已知需要读取文件的某个部分时，只读取该部分。这对大文件很重要\n"
+                    "- 返回格式为 cat -n 格式，行号从 1 开始\n"
+                    "- 二进制文件（图片/Excel/Parquet等）请用 code_execute 处理\n"
+                    "- 读取空文件会收到空内容警告"
                 ),
                 "parameters": {
                     "type": "object",
@@ -81,11 +86,17 @@ def build_file_tools() -> List[Dict[str, Any]]:
                         },
                         "offset": {
                             "type": "integer",
-                            "description": "起始行号（0-based，默认0）",
+                            "description": (
+                                "起始行号（1-based，默认1即文件开头）。"
+                                "仅在文件过大无法一次读取时使用"
+                            ),
                         },
                         "limit": {
                             "type": "integer",
-                            "description": "读取行数上限（默认200）",
+                            "description": (
+                                "读取行数上限。"
+                                "仅在文件过大无法一次读取时使用"
+                            ),
                         },
                     },
                     "required": ["path"],
@@ -202,12 +213,14 @@ def build_file_tools() -> List[Dict[str, Any]]:
 # 路由提示词片段
 FILE_ROUTING_PROMPT = (
     "## 文件操作规则\n"
-    "- 用户要求读取/查看文件 → file_read\n"
+    "- 用户要求读取/查看文本文件 → file_read"
+    "（大于256KB的文件会提示分页读取）\n"
+    "- 处理 Excel/图片/Parquet 等二进制文件 → code_execute"
+    "（沙盒内用 WORKSPACE_DIR 定位文件）\n"
+    "- 复杂数据分析（统计/筛选/聚合/大文件处理）→ code_execute\n"
     "- 用户要求写入/创建/保存文件 → file_write\n"
     "- 用户要求查看目录/列出文件 → file_list\n"
     "- 用户要求搜索/查找文件 → file_search\n"
     "- 用户要求查看文件信息/属性 → file_info\n"
-    "- 处理 Excel/图片等二进制文件 → code_execute（沙盒内用 WORKSPACE_DIR 定位文件）\n"
-    "- 复杂数据分析（统计/筛选/聚合）→ code_execute\n"
     "- 文件操作完毕后，调 route_to_chat 汇总结果回复用户\n\n"
 )

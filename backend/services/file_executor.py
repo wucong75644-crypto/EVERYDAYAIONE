@@ -43,7 +43,26 @@ _TEXT_EXTENSIONS = frozenset({
     ".vue", ".svelte", ".astro",
 })
 
-# 文件读取大小上限（10MB）
+# ── file_read 三级防线常量（对齐 Claude Code Read 工具） ──
+
+# L1: 无分页读取时的文件大小上限
+# 对齐 Claude Code MAX_OUTPUT_SIZE = 0.25 * 1024 * 1024
+_MAX_FILE_READ_BYTES = 256 * 1024  # 256KB
+
+# L2: 单次读取行数硬上限
+# 对齐 Claude Code MAX_LINES_TO_READ = 2000
+_MAX_READ_LINES = 2000
+
+# L3: 输出 token 估算上限
+# 对齐 Claude Code DEFAULT_MAX_OUTPUT_TOKENS = 25000
+_MAX_OUTPUT_TOKENS = 25000
+
+# token 估算比例
+# 对齐 Claude Code bytesPerTokenForFileType()
+_BYTES_PER_TOKEN = 4          # 普通文件：4 字节 ≈ 1 token
+_JSON_BYTES_PER_TOKEN = 2     # JSON/JSONL：密集标点，2 字节 ≈ 1 token
+
+# 文件读取硬上限（10MB，防 OOM；file_search 内容扫描也用）
 _MAX_READ_SIZE = 10 * 1024 * 1024
 
 # 文件写入大小上限（5MB）
@@ -180,26 +199,52 @@ class FileExecutor:
     async def file_read(
         self,
         path: str,
-        offset: int = 0,
-        limit: int = 200,
+        offset: int = 1,
+        limit: int | None = None,
         encoding: str = "utf-8",
     ) -> str:
-        """读取文件内容"""
+        """读取文件内容（对齐 Claude Code Read 工具）
+
+        三级防线：
+        - L1: limit=None 时，文件 > 256KB 拒绝（防盲读大文件）
+        - L2: 行数硬上限 2000（防单次读太多）
+        - L3: token 估算 > 25000 拒绝（最终兜底）
+
+        Args:
+            path:     文件相对路径（相对于 workspace）
+            offset:   起始行号（1-based，默认1=第一行）
+            limit:    读取行数（None=读整个文件，触发 L1 字节检查）
+            encoding: 编码（默认 utf-8，自动 fallback GBK）
+        """
         target = self.resolve_safe_path(path)
 
+        # ── 基础校验 ──
         if not target.exists():
             return f"文件不存在: {path}"
         if not target.is_file():
             return f"不是文件: {path}"
 
         size = target.stat().st_size
-        if size > _MAX_READ_SIZE:
+
+        # ── L1: 字节预检（仅无分页时） ──
+        # 对齐 Claude Code: limit === undefined ? maxSizeBytes : undefined
+        if limit is None and size > _MAX_FILE_READ_BYTES:
             return (
-                f"文件过大（{size / 1024 / 1024:.1f}MB），"
-                f"超过 {_MAX_READ_SIZE / 1024 / 1024:.0f}MB 上限。"
-                "建议使用 code_execute 分块读取。"
+                f"文件过大（{self._format_size(size)}），"
+                f"超过 {self._format_size(_MAX_FILE_READ_BYTES)} 上限。"
+                "请用 offset/limit 分页读取特定部分，"
+                "或用 code_execute 处理整个文件。"
             )
 
+        # 超大文件硬上限（防 OOM，无论是否分页）
+        if size > _MAX_READ_SIZE:
+            return (
+                f"文件过大（{self._format_size(size)}），"
+                f"超过 {self._format_size(_MAX_READ_SIZE)} 硬上限。"
+                "建议使用 code_execute 处理。"
+            )
+
+        # ── 二进制检查 ──
         if not self._is_text_file(target):
             return (
                 f"二进制文件: {path}（{self._format_size(size)}）\n"
@@ -207,6 +252,7 @@ class FileExecutor:
                 "建议使用 code_execute 处理二进制文件。"
             )
 
+        # ── 读文件 ──
         try:
             content = target.read_text(encoding=encoding)
         except UnicodeDecodeError:
@@ -215,19 +261,58 @@ class FileExecutor:
             except Exception:
                 return f"无法解码文件 {path}，请指定正确的编码"
 
+        # ── BOM 剥离（对齐 Claude Code readFileInRange） ──
+        if content and content[0] == "\ufeff":
+            content = content[1:]
+
         lines = content.splitlines()
         total_lines = len(lines)
-        selected = lines[offset:offset + limit]
 
+        # ── 空文件（对齐 Claude Code） ──
+        if total_lines == 0:
+            return "文件存在但内容为空。"
+
+        # ── offset 转换：1-indexed → 0-indexed ──
+        # 对齐 Claude Code: offset === 0 ? 0 : offset - 1
+        line_offset = 0 if offset <= 0 else offset - 1
+
+        # ── offset 超界（对齐 Claude Code） ──
+        if line_offset >= total_lines:
+            return (
+                f"文件只有 {total_lines} 行，"
+                f"起始行号 {offset} 超出范围。"
+            )
+
+        # ── L2: 行数切片（硬上限 2000 行） ──
+        effective_limit = min(limit or _MAX_READ_LINES, _MAX_READ_LINES)
+        selected = lines[line_offset: line_offset + effective_limit]
+
+        # ── 格式化（cat -n 格式，行号 1-indexed） ──
         result_lines = []
-        for i, line in enumerate(selected, start=offset + 1):
+        for i, line in enumerate(selected, start=line_offset + 1):
             result_lines.append(f"{i:>5}\t{line}")
+        output = "\n".join(result_lines)
 
+        # ── L3: token 估算（对齐 Claude Code validateContentTokens） ──
+        ext = target.suffix.lower().lstrip(".")
+        bpt = _JSON_BYTES_PER_TOKEN if ext in ("json", "jsonl") else _BYTES_PER_TOKEN
+        estimated_tokens = len(output.encode("utf-8")) / bpt
+
+        if estimated_tokens > _MAX_OUTPUT_TOKENS:
+            return (
+                f"文件内容（约 {int(estimated_tokens)} tokens）"
+                f"超过上限（{_MAX_OUTPUT_TOKENS} tokens）。"
+                "请用 offset/limit 读取特定部分，"
+                "或用 code_execute 处理。"
+            )
+
+        # ── header ──
+        end_line = line_offset + len(selected)
         header = f"文件: {path} | 共 {total_lines} 行"
-        if offset > 0 or offset + limit < total_lines:
-            header += f" | 显示: {offset + 1}-{min(offset + limit, total_lines)}"
+        if line_offset > 0 or end_line < total_lines:
+            header += f" | 显示: {line_offset + 1}-{end_line}"
 
-        return f"{header}\n{'─' * 60}\n" + "\n".join(result_lines)
+        return f"{header}\n{'─' * 60}\n{output}"
 
     async def file_write(
         self,
