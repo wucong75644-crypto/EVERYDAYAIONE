@@ -393,7 +393,7 @@ class TestERPAgentToolLoop:
         assert messages[0]["role"] == "system"
         assert messages[1]["role"] == "user"
         assert "今天多少订单" in messages[1]["content"]
-        assert "ERP 数据分析专家" in messages[0]["content"]
+        assert "ERP 数据检索 worker" in messages[0]["content"]
 
     def test_convert_result_success(self):
         """LoopResult → AgentResult 正常转换"""
@@ -405,6 +405,7 @@ class TestERPAgentToolLoop:
         mock_loop_result.is_llm_synthesis = True
         mock_loop_result.exit_via_ask_user = False
         mock_loop_result.collected_files = [{"url": "/test.xlsx", "name": "test.xlsx"}]
+
 
         result = ERPAgent._convert_result(mock_loop_result)
         assert result.status == "success"
@@ -423,6 +424,7 @@ class TestERPAgentToolLoop:
         mock_loop_result.exit_via_ask_user = False
         mock_loop_result.collected_files = []
 
+
         result = ERPAgent._convert_result(mock_loop_result)
         assert result.status == "empty"
 
@@ -435,6 +437,7 @@ class TestERPAgentToolLoop:
         mock_loop_result.total_tokens = 200
         mock_loop_result.is_llm_synthesis = True
         mock_loop_result.exit_via_ask_user = True
+
         mock_loop_result.collected_files = []
 
         result = ERPAgent._convert_result(mock_loop_result)
@@ -659,10 +662,16 @@ class TestERPAgentPrompts:
         from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
         assert "code_execute" in _ERP_AGENT_SYSTEM_PROMPT
 
-    def test_system_prompt_has_rules_section(self):
-        """系统提示包含规则约束段"""
+    def test_system_prompt_has_rules(self):
+        """系统提示包含 RULES"""
         from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
-        assert "规则" in _ERP_AGENT_SYSTEM_PROMPT
+        assert "RULES" in _ERP_AGENT_SYSTEM_PROMPT
+
+    def test_system_prompt_worker_identity(self):
+        """系统提示定义为 worker 而非主 Agent"""
+        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
+        assert "worker" in _ERP_AGENT_SYSTEM_PROMPT
+        assert "不是主 Agent" in _ERP_AGENT_SYSTEM_PROMPT
 
     def test_system_prompt_mentions_local_priority(self):
         """系统提示明确 local_data 优先"""
@@ -670,12 +679,21 @@ class TestERPAgentPrompts:
         assert "local_data" in _ERP_AGENT_SYSTEM_PROMPT
         assert "erp_*_query" in _ERP_AGENT_SYSTEM_PROMPT
 
-    def test_system_prompt_has_deferred_tools(self):
-        """系统提示包含远程API工具名录（deferred tools 模式）"""
+    def test_system_prompt_concise_output(self):
+        """系统提示要求简短事实性结论"""
         from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
-        assert "远程API工具" in _ERP_AGENT_SYSTEM_PROMPT
-        assert "local_shop_list" in _ERP_AGENT_SYSTEM_PROMPT
-        assert "fetch_all_pages" in _ERP_AGENT_SYSTEM_PROMPT
+        assert "200" in _ERP_AGENT_SYSTEM_PROMPT  # ≤200字限制
+
+    def test_system_prompt_batch_calls(self):
+        """系统提示要求批量调用独立查询"""
+        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
+        assert "批量调用" in _ERP_AGENT_SYSTEM_PROMPT
+
+    def test_system_prompt_error_handling(self):
+        """系统提示包含参数不足和错误处理规则"""
+        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
+        assert "参数不足" in _ERP_AGENT_SYSTEM_PROMPT
+        assert "不要自行重试" in _ERP_AGENT_SYSTEM_PROMPT
 
 
 # ============================================================
@@ -686,11 +704,11 @@ class TestERPAgentPrompts:
 class TestToolSystemPromptAlignment:
     """TOOL_SYSTEM_PROMPT 与新架构一致性"""
 
-    def test_erp_agent_described_as_expert(self):
-        """规则应描述 erp_agent 为数据分析专家"""
+    def test_erp_agent_described_as_worker(self):
+        """规则应描述 erp_agent 为 worker 进程"""
         from config.chat_tools import get_tool_system_prompt
         prompt = get_tool_system_prompt()
-        assert "专家" in prompt or "分析" in prompt
+        assert "worker" in prompt
 
     def test_code_execute_mentioned(self):
         """规则应提及 code_execute"""
