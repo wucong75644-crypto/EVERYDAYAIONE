@@ -476,6 +476,12 @@ class TestBuildExtractPromptCompleteness:
         for p in new_params:
             assert p in prompt, f"新参数 {p} 未在 prompt 中"
 
+    def test_aftersale_extended_params_in_prompt(self):
+        """验证售后域新增的过滤参数在 prompt 中"""
+        prompt = build_extract_prompt("test")
+        for p in ("online_status", "handler_status", "sku_properties_name"):
+            assert p in prompt, f"售后新参数 {p} 未在 prompt 中"
+
     def test_express_no_rule_in_prompt(self):
         """prompt 包含快递单号识别规则"""
         prompt = build_extract_prompt("test")
