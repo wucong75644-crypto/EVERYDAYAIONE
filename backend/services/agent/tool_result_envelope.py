@@ -108,8 +108,9 @@ ERP_AGENT_RESULT_BUDGET = 4000
 
 # 不截断的工具
 # - generate_image/video: 返回本身就短
-# - code_execute: sandbox 自有 max_result_chars=8000 兜底，不需要二次截断
-# - file_*: 返回通常 < 5K，且是 Agent 理解数据的关键信息
+# - code_execute: sandbox 自有 max_result_chars=8000 兜底
+# - file_*: file_read 自有三级防线（L1 字节 256KB / L2 行数 2000 /
+#   L3 token 25000）兜底，对齐 Claude Code maxResultSizeChars=Infinity
 _NO_TRUNCATE = {
     "generate_image", "generate_video",
     "code_execute",
