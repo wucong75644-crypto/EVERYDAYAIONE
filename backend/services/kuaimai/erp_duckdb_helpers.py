@@ -12,7 +12,8 @@ from datetime import datetime
 from pathlib import Path
 
 from services.kuaimai.erp_unified_schema import (
-    TIME_COLUMNS, TimeRange, ValidatedFilter, PLATFORM_CN, _FIELD_LABEL_CN,
+    TIME_COLUMNS, TimeRange, ValidatedFilter, PLATFORM_CN, DOC_TYPE_CN,
+    _FIELD_LABEL_CN,
 )
 
 
@@ -100,11 +101,101 @@ def _build_order_type_case() -> str:
 
 _ORDER_TYPE_CASE = _build_order_type_case()
 
+# doc_status / order_status 英文码 → 中文（快麦 sysStatus + 平台状态 合集）
+_STATUS_CN: dict[str, str] = {
+    # 快麦系统状态（sysStatus）
+    "WAIT_PAY": "待付款", "WAIT_SEND": "待发货", "PART_SEND": "部分发货",
+    "SEND": "已发货", "SIGN": "已签收", "FINISH": "已完成",
+    "CLOSED": "已关闭", "CANCEL": "已取消",
+    # 快麦统一状态 / 平台状态
+    "WAIT_AUDIT": "待审核", "WAIT_SEND_GOODS": "待发货",
+    "SELLER_SEND_GOODS": "已发货", "FINISHED": "已完成",
+    "WAIT_BUYER_CONFIRM_GOODS": "待买家确认收货",
+    "TRADE_FINISHED": "交易完成", "TRADE_CLOSED": "交易关闭",
+    # 采购/收货/上架单状态（数字字符串）
+    "0": "待提交", "1": "待审核", "2": "已审核", "3": "已完成",
+    "4": "已作废", "5": "已关闭",
+}
+
+_STATUS_CASE = (
+    "CASE "
+    + " ".join(f"WHEN {{col}} = '{k}' THEN '{v}'" for k, v in _STATUS_CN.items())
+    + " ELSE {col} END AS {col}"
+)
+
+# doc_type 翻译
+_DOC_TYPE_CASE = (
+    "CASE "
+    + " ".join(f"WHEN doc_type = '{k}' THEN '{v}'" for k, v in DOC_TYPE_CN.items())
+    + " ELSE doc_type END AS doc_type"
+)
+
+# 售后类型（aftersale_type 数字 → 中文）
+_AFTERSALE_TYPE_CN: dict[str, str] = {
+    "1": "退款", "2": "退货", "3": "补发", "4": "换货", "5": "发货前退款",
+}
+_AFTERSALE_TYPE_CASE = (
+    "CASE "
+    + " ".join(
+        f"WHEN CAST(aftersale_type AS VARCHAR) = '{k}' THEN '{v}'"
+        for k, v in _AFTERSALE_TYPE_CN.items()
+    )
+    + " ELSE CAST(aftersale_type AS VARCHAR) END AS aftersale_type"
+)
+
+# 退款状态（refund_status 数字 → 中文）
+_REFUND_STATUS_CN: dict[str, str] = {
+    "0": "无退款", "1": "退款中", "2": "退款成功", "3": "退款关闭",
+}
+_REFUND_STATUS_CASE = (
+    "CASE "
+    + " ".join(
+        f"WHEN CAST(refund_status AS VARCHAR) = '{k}' THEN '{v}'"
+        for k, v in _REFUND_STATUS_CN.items()
+    )
+    + " ELSE CAST(refund_status AS VARCHAR) END AS refund_status"
+)
+
+# 货物状态（good_status 数字 → 中文）
+_GOOD_STATUS_CN: dict[str, str] = {
+    "1": "买家未发", "2": "买家已发", "3": "卖家已收", "4": "无需退货",
+}
+_GOOD_STATUS_CASE = (
+    "CASE "
+    + " ".join(
+        f"WHEN CAST(good_status AS VARCHAR) = '{k}' THEN '{v}'"
+        for k, v in _GOOD_STATUS_CN.items()
+    )
+    + " ELSE CAST(good_status AS VARCHAR) END AS good_status"
+)
+
+# 布尔字段 0/1 → 是/否（批量生成，避免逐个手写）
+_BOOL_FIELDS = (
+    "is_cancel", "is_refund", "is_exception", "is_halt",
+    "is_urgent", "is_scalping", "is_presell",
+)
+_BOOL_CASE_MAP: dict[str, str] = {
+    f: (
+        f"CASE WHEN {f} = 1 THEN '是' WHEN {f} = 0 THEN '否' "
+        f"ELSE CAST({f} AS VARCHAR) END AS {f}"
+    )
+    for f in _BOOL_FIELDS
+}
 
 # 需要 SQL CASE 翻译的特殊字段
 _SPECIAL_CASE_MAP: dict[str, str] = {
     "platform": _PLATFORM_CASE,
     "order_type": _ORDER_TYPE_CASE,
+    "doc_type": _DOC_TYPE_CASE,
+    "doc_status": _STATUS_CASE.replace("{col}", "doc_status"),
+    "order_status": _STATUS_CASE.replace("{col}", "order_status"),
+    "unified_status": _STATUS_CASE.replace("{col}", "unified_status"),
+    "online_status": _STATUS_CASE.replace("{col}", "online_status"),
+    "handler_status": _STATUS_CASE.replace("{col}", "handler_status"),
+    "aftersale_type": _AFTERSALE_TYPE_CASE,
+    "refund_status": _REFUND_STATUS_CASE,
+    "good_status": _GOOD_STATUS_CASE,
+    **_BOOL_CASE_MAP,
 }
 
 
