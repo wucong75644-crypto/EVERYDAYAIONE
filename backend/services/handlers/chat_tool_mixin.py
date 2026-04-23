@@ -332,7 +332,9 @@ class ChatToolMixin:
             self._pending_file_parts.append(FilePart(
                 url=url, name=name, mime_type=mime_type, size=int(size),
             ))
-            return f"📎 [{name}]({url})"
+            # LLM 上下文不暴露 URL（防止 LLM 幻觉篡改域名）
+            # 下载链接由 FilePart 文件卡片提供
+            return f"📎 文件已生成: {name}"
 
         return _FILE_PATTERN.sub(_replace_match, result)
 
