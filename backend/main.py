@@ -316,41 +316,67 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     worker_task = asyncio.create_task(worker.start())
     logger.info("BackgroundTaskWorker started")
 
-    # 启动 ERP 同步工作器（仅在第一个 worker 中启动，避免多 worker 重复抢锁浪费 API 配额）
+    # ── ERP 同步编排器（Leader Election 模式） ──
+    # 对齐 Celery Beat / K8s Lease 标准：SETNX + TTL 30s + 心跳 10s + Follower 重试 10s
+    # 所有 worker 都参与选举，Leader 崩溃后最多 30s 自动 failover
     import os
-    _worker_pid = os.getpid()
-    _parent_pid = os.getppid()
-    # uvicorn 多 worker 模式：通过 Redis 原子操作竞选，第一个写入的 worker 获胜
     from core.redis import get_redis
-    _redis = await get_redis()
-    _elected = False
-    if _redis:
-        _elected = await _redis.set(
-            "erp_sync_elected_worker", str(_worker_pid),
-            nx=True, ex=300,  # 5分钟过期自动重新竞选
-        )
-    else:
-        _elected = True  # Redis 不可用时默认启动
-
     from core.database import get_async_db, close_async_db
 
-    if _elected:
+    _worker_pid = os.getpid()
+    _redis = await get_redis()
+
+    erp_orchestrator = None
+    erp_orchestrator_task = None
+    erp_healthcheck_task = None
+    _sync_election = None
+    _sync_election_task = None
+
+    if _redis:
+        from core.leader_election import LeaderElection
+
+        # 被选为 Leader 时启动同步
+        async def _on_sync_elected() -> None:
+            nonlocal erp_orchestrator, erp_orchestrator_task, erp_healthcheck_task
+            async_db = await get_async_db()
+            from services.kuaimai.erp_sync_orchestrator import ErpSyncOrchestrator
+            erp_orchestrator = ErpSyncOrchestrator(async_db)
+            erp_orchestrator_task = asyncio.create_task(erp_orchestrator.start())
+            logger.info(f"ErpSyncOrchestrator started | elected_worker={_worker_pid}")
+            from services.kuaimai.erp_sync_healthcheck import healthcheck_loop
+            erp_healthcheck_task = asyncio.create_task(healthcheck_loop(async_db))
+            logger.info(f"ErpSyncHealthcheck started | elected_worker={_worker_pid}")
+
+        # 失去 Leader 时停止同步（防御性，正常不会触发）
+        async def _on_sync_demoted() -> None:
+            nonlocal erp_orchestrator, erp_orchestrator_task, erp_healthcheck_task
+            logger.warning(f"ErpSyncOrchestrator demoted | worker={_worker_pid}")
+            if erp_orchestrator is not None:
+                await erp_orchestrator.stop()
+                erp_orchestrator = None
+            for t in (erp_orchestrator_task, erp_healthcheck_task):
+                if t is not None:
+                    t.cancel()
+            erp_orchestrator_task = None
+            erp_healthcheck_task = None
+
+        _sync_election = LeaderElection(
+            redis=_redis,
+            key="erp_sync_leader",
+            on_elected=_on_sync_elected,
+            on_demoted=_on_sync_demoted,
+        )
+        _sync_election_task = asyncio.create_task(_sync_election.run())
+    else:
+        # Redis 不可用时直接启动（单进程模式）
         async_db = await get_async_db()
         from services.kuaimai.erp_sync_orchestrator import ErpSyncOrchestrator
         erp_orchestrator = ErpSyncOrchestrator(async_db)
         erp_orchestrator_task = asyncio.create_task(erp_orchestrator.start())
-        logger.info(f"ErpSyncOrchestrator started | elected_worker={_worker_pid}")
-
-        # ERP 同步健康检查（5 分钟扫一次 erp_sync_state，error_count>=10 推企微告警）
-        # 防止类似 2026-04-10 的 token 雪崩 7 小时无人察觉
+        logger.info(f"ErpSyncOrchestrator started (no Redis) | worker={_worker_pid}")
         from services.kuaimai.erp_sync_healthcheck import healthcheck_loop
         erp_healthcheck_task = asyncio.create_task(healthcheck_loop(async_db))
-        logger.info(f"ErpSyncHealthcheck started | elected_worker={_worker_pid}")
-    else:
-        erp_orchestrator = None
-        erp_orchestrator_task = None
-        erp_healthcheck_task = None
-        logger.info(f"ErpSyncOrchestrator skipped (another worker elected) | pid={_worker_pid}")
+        logger.info(f"ErpSyncHealthcheck started (no Redis) | worker={_worker_pid}")
 
     # 全局错误监控（loguru ERROR sink → DB 持久化 + 致命级推企微）
     _error_monitor_db = await get_async_db()
@@ -379,14 +405,25 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except asyncio.CancelledError:
         pass
 
+    # 停止 Leader Election（Lua DEL-if-match 释放锁 + 退出循环）
+    if _sync_election is not None:
+        await _sync_election.stop()
+        if _sync_election_task:
+            _sync_election_task.cancel()
+            try:
+                await _sync_election_task
+            except asyncio.CancelledError:
+                pass
+
     # 停止 ERP 同步编排器
     if erp_orchestrator is not None:
         await erp_orchestrator.stop()
-        erp_orchestrator_task.cancel()
-        try:
-            await erp_orchestrator_task
-        except asyncio.CancelledError:
-            pass
+        if erp_orchestrator_task:
+            erp_orchestrator_task.cancel()
+            try:
+                await erp_orchestrator_task
+            except asyncio.CancelledError:
+                pass
 
     # 停止 ERP 健康检查后台任务
     if erp_healthcheck_task is not None:
