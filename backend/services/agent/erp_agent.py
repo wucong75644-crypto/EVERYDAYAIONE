@@ -184,10 +184,23 @@ class ERPAgent:
             # 8. staging 延迟清理
             asyncio.create_task(self._cleanup_staging_delayed())
 
-            # 9. LoopResult → AgentResult
-            return self._convert_result(loop_result)
+            # 9. 推送完成标记 + 收集thinking文本 → AgentResult
+            from services.agent.loop_hooks import SubAgentThinkingHook
+            thinking_hook = None
+            if tool_loop:
+                for hook in tool_loop.hooks:
+                    if isinstance(hook, SubAgentThinkingHook):
+                        thinking_hook = hook
+                        break
+            if thinking_hook:
+                await thinking_hook.push_done()
+
+            result = self._convert_result(loop_result)
+            if thinking_hook:
+                result.thinking_text = thinking_hook.collected_text
+            return result
         finally:
-            # 推送子Agent完成标记到thinking区域（无论成功/异常都推送）
+            # 异常路径也推送完成标记
             from services.agent.loop_hooks import SubAgentThinkingHook
             try:
                 if tool_loop:

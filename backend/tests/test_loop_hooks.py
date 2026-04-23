@@ -644,3 +644,53 @@ class TestSubAgentThinkingHook:
         expected = {"local_data", "local_compare_stats", "local_stock_query",
                     "local_product_identify", "code_execute"}
         assert expected.issubset(SubAgentThinkingHook.TOOL_LABEL.keys())
+
+    @pytest.mark.asyncio
+    async def test_push_done_is_idempotent(self):
+        """push_done 多次调用只推送一次（幂等）"""
+        hook = self._make_hook()
+        ctx = make_ctx()
+
+        with patch(
+            "services.websocket_manager.ws_manager.send_to_task_or_user",
+            new_callable=AsyncMock,
+        ) as mock_send, patch(
+            "schemas.websocket.build_thinking_chunk",
+            return_value={"type": "thinking_chunk"},
+        ):
+            await hook.on_tool_start(ctx, "local_data", {})
+            mock_send.reset_mock()
+
+            await hook.push_done()
+            await hook.push_done()  # 第二次调用
+            assert mock_send.call_count == 1  # 只推送一次
+
+    @pytest.mark.asyncio
+    async def test_collected_text_contains_all_progress(self):
+        """collected_text 包含所有推送过的文本（标题+工具+完成）"""
+        hook = self._make_hook()
+        ctx = make_ctx()
+
+        with patch(
+            "services.websocket_manager.ws_manager.send_to_task_or_user",
+            new_callable=AsyncMock,
+        ), patch(
+            "schemas.websocket.build_thinking_chunk",
+            return_value={"type": "thinking_chunk"},
+        ):
+            await hook.on_tool_start(ctx, "local_data", {})
+            await hook.on_tool_start(ctx, "code_execute", {})
+            await hook.push_done()
+
+        text = hook.collected_text
+        assert "── ERP Agent ──" in text
+        assert "查询数据" in text
+        assert "执行数据分析" in text
+        assert "✓ 完成" in text
+
+    @pytest.mark.asyncio
+    async def test_collected_text_empty_when_no_tools(self):
+        """无工具调用时 collected_text 为空"""
+        hook = self._make_hook()
+        await hook.push_done()
+        assert hook.collected_text == ""

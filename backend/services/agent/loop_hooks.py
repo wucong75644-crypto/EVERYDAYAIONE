@@ -178,6 +178,8 @@ class SubAgentThinkingHook(LoopHook):
         self._user_id = user_id
         self._agent_name = agent_name
         self._started = False
+        self._done = False
+        self._collected: list[str] = []
 
     async def on_tool_start(
         self, ctx: HookContext, tool_name: str, args: Dict[str, Any],
@@ -191,11 +193,18 @@ class SubAgentThinkingHook(LoopHook):
         await self._push(text)
 
     async def push_done(self) -> None:
-        """循环结束后由调用方手动调用（LoopHook 无 on_loop_end）"""
-        if self._started:
+        """循环结束后由调用方手动调用（幂等，多次调用只推送一次）"""
+        if self._started and not self._done:
+            self._done = True
             await self._push("\n✓ 完成")
 
+    @property
+    def collected_text(self) -> str:
+        """收集的全部进度文本（用于持久化到消息）"""
+        return "".join(self._collected)
+
     async def _push(self, text: str) -> None:
+        self._collected.append(text)
         try:
             from schemas.websocket import build_thinking_chunk
             from services.websocket_manager import ws_manager
