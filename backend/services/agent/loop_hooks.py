@@ -128,6 +128,92 @@ class ProgressNotifyHook(LoopHook):
 
 
 # ============================================================
+# 子Agent思考进度（推送到主Agent的thinking区域）
+# ============================================================
+
+class SubAgentThinkingHook(LoopHook):
+    """子Agent工具调用进度 → 以 thinking_chunk 推送到前端ThinkingBlock。
+
+    独立持有 task_id/message_id（不依赖 hook_ctx.task_id），
+    因此不与主 Agent 的 ProgressNotifyHook 冲突。
+    """
+
+    TOOL_LABEL: Dict[str, str] = {
+        # 核心工具（最常调用）
+        "local_data": "查询数据",
+        "local_compare_stats": "对比统计",
+        "local_stock_query": "查询库存",
+        "local_product_identify": "识别商品",
+        "code_execute": "执行数据分析",
+        # 扩展本地工具
+        "local_product_stats": "统计商品数据",
+        "local_platform_map_query": "查询平台映射",
+        "local_product_flow": "查询供应链",
+        "local_global_stats": "统计全局数据",
+        # 远程ERP
+        "erp_info_query": "查询基础信息",
+        "erp_product_query": "查询商品",
+        "erp_trade_query": "查询订单",
+        "erp_aftersales_query": "查询售后",
+        "erp_warehouse_query": "查询仓储",
+        "erp_purchase_query": "查询采购",
+        "erp_taobao_query": "查询平台订单",
+        "erp_execute": "执行ERP操作",
+        # 通用
+        "fetch_all_pages": "翻页获取全量数据",
+        "erp_api_search": "搜索ERP文档",
+    }
+
+    def __init__(
+        self,
+        task_id: str,
+        conversation_id: str,
+        message_id: str,
+        user_id: str,
+        agent_name: str = "ERP Agent",
+    ) -> None:
+        self._task_id = task_id
+        self._conversation_id = conversation_id
+        self._message_id = message_id
+        self._user_id = user_id
+        self._agent_name = agent_name
+        self._started = False
+
+    async def on_tool_start(
+        self, ctx: HookContext, tool_name: str, args: Dict[str, Any],
+    ) -> None:
+        label = self.TOOL_LABEL.get(tool_name, tool_name)
+        text = ""
+        if not self._started:
+            text += f"\n\n── {self._agent_name} ──"
+            self._started = True
+        text += f"\n→ 正在{label}..."
+        await self._push(text)
+
+    async def push_done(self) -> None:
+        """循环结束后由调用方手动调用（LoopHook 无 on_loop_end）"""
+        if self._started:
+            await self._push("\n✓ 完成")
+
+    async def _push(self, text: str) -> None:
+        try:
+            from schemas.websocket import build_thinking_chunk
+            from services.websocket_manager import ws_manager
+
+            msg = build_thinking_chunk(
+                task_id=self._task_id,
+                conversation_id=self._conversation_id,
+                message_id=self._message_id,
+                chunk=text,
+            )
+            await ws_manager.send_to_task_or_user(
+                self._task_id, self._user_id, msg,
+            )
+        except Exception:
+            pass  # 进度推送失败不影响业务
+
+
+# ============================================================
 # 审计日志
 # ============================================================
 

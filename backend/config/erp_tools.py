@@ -320,15 +320,55 @@ ERP_ROUTING_PROMPT = (
 )
 
 
-def get_erp_agent_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
-    """ERPAgent 内部 ToolLoopExecutor 专用工具集。
+# ── ERPAgent 核心工具名（对齐 Claude Code deferred tools 模式） ──
+# 这些工具始终对 LLM 可见（完整 Schema），覆盖 90%+ 查询场景。
+# 其余工具（7 个远程 erp_*_query + fetch_all_pages + erp_api_search）
+# Schema 不暴露，仅在系统提示词列出名称。
+#
+# 注意：OpenAI 兼容 API 约束 LLM 只能调用 tools 列表里的函数名，
+# 所以只有真正罕见的远程 API 工具才能 defer（通过 inject_tool 降级路径）。
+# 本地工具必须全部在核心集里，因为 LLM 需要直接调用它们。
+_ERP_CORE_TOOLS = frozenset({
+    # 本地查询工具（9个，全部在核心集）
+    "local_data",               # 统一查询引擎（覆盖所有单据）
+    "local_compare_stats",      # 同比/环比
+    "local_stock_query",        # 库存查询
+    "local_product_identify",   # 编码识别
+    "local_product_stats",      # 商品统计报表
+    "local_platform_map_query", # 编码↔平台映射
+    "local_shop_list",          # 店铺列表
+    "local_warehouse_list",     # 仓库列表
+    "local_supplier_list",      # 供应商列表
+    # 计算工具
+    "code_execute",             # 计算/报表/Excel
+})
 
-    包含：ERP 本地查询工具（9个） + 远程查询工具（7个） + code_execute（计算）
-    不包含：erp_agent（防递归）、erp_execute（写操作）、ask_user（无用户交互）、
-            trigger_erp_sync（写操作，需用户确认）
 
-    设计文档: ERPAgent 从域路由器升级为领域专家
+def get_erp_agent_tools(
+    org_id: str | None = None,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """ERPAgent 工具集（分层加载，对齐 Claude Code deferred tools 模式）。
+
+    返回:
+        (core_tools, all_tools)
+        - core_tools: LLM 始终可见的 10 个核心工具（完整 Schema）
+        - all_tools:  全量工具集（19个），供 tool_expansion 按需注入
+
+    设计对标：
+    - Claude Code: defer_loading=true + ToolSearch 元工具
+    - OpenAI: defer_loading=true + tool_search_call
+    - 我们：系统提示词列名称 + inject_tool 自动注入
     """
+    all_tools = _build_all_erp_tools(org_id)
+    core_tools = [
+        t for t in all_tools
+        if t["function"]["name"] in _ERP_CORE_TOOLS
+    ]
+    return core_tools, all_tools
+
+
+def _build_all_erp_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
+    """构建 ERPAgent 全量工具集（19个）。"""
     from config.code_tools import build_code_tools
 
     # ERPAgent 不应访问的工具（递归/写操作/交互）

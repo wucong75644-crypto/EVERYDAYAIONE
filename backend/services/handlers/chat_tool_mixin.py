@@ -69,6 +69,7 @@ class ChatToolMixin:
         )
         # 传递上下文给 erp_agent
         executor._task_id = task_id
+        executor._message_id = message_id
         executor._parent_messages = messages
         # 传递 budget 约束 sandbox 超时
         if budget is not None:

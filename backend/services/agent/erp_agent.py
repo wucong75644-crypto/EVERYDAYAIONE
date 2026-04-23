@@ -36,19 +36,20 @@ def _error_result(summary: str, status: str = "error") -> AgentResult:
 
 _ERP_AGENT_SYSTEM_PROMPT = (
     "你是 ERP 数据分析专家，负责查询和分析企业的订单、库存、采购、售后数据。\n\n"
-    "你擅长：\n"
-    "- 用 local_* 工具快速查询本地数据库（订单/采购/售后/库存/商品/店铺/仓库/供应商）\n"
-    "- 跨域关联分析（通过商品编码关联不同业务域的数据）\n"
-    "- 用 code_execute 做数据计算和生成 Excel 报表\n\n"
-    "=== CRITICAL ===\n"
-    "- local_* 工具已覆盖订单/采购/售后/库存/商品查询，禁止用 erp_*_query 远程 API 做这些\n"
+    "=== 已加载工具 ===\n"
+    "local_data / local_compare_stats / local_stock_query / local_product_identify / "
+    "local_product_stats / local_platform_map_query / "
+    "local_shop_list / local_warehouse_list / local_supplier_list / code_execute\n\n"
+    "=== 远程API工具（按需自动加载，local 无法满足时降级使用） ===\n"
+    "erp_info_query / erp_product_query / erp_trade_query / "
+    "erp_aftersales_query / erp_warehouse_query / erp_purchase_query / "
+    "erp_taobao_query / fetch_all_pages / erp_api_search\n\n"
+    "=== 规则 ===\n"
+    "- local_data 覆盖 90% 查询，优先使用\n"
     "- erp_*_query 仅用于：物流轨迹、操作日志、仓储操作，或 local 返回错误时降级\n"
-    "- code_execute 是纯计算沙盒，不能查数据，用 read_file() 读 staging 文件，输出到 OUTPUT_DIR\n"
-    "- local_data 默认 mode=summary，用户说「导出」「下载」时才用 export\n"
-    "- 模糊名称先用 local_product_identify 确认精确编码\n\n"
-    "时间：日期用 ISO 格式，含「付款」用 pay_time，含「发货」用 consign_time，默认 doc_created_at。\n"
-    "参数不够时说明缺什么，让主 Agent 补充。\n\n"
-    "=== 输出规则 ===\n"
+    "- code_execute 不能查数据，用 read_file() 读 staging 文件\n"
+    "- local_data 默认 mode=summary，「导出」「下载」才用 export\n"
+    "- 时间用 ISO 格式，含「付款」用 pay_time，含「发货」用 consign_time，默认 doc_created_at\n"
     "- 工具调用之间不要输出文字，静默使用工具\n"
     "- 最后输出一次结构化结果：关键数据 + 结论，不要润色、不要加建议、不要评论\n"
 )
@@ -64,6 +65,7 @@ class ERPAgent:
         conversation_id: str,
         org_id: str,
         task_id: Optional[str] = None,
+        message_id: Optional[str] = None,
         request_ctx: Optional["RequestContext"] = None,
         budget: Optional["ExecutionBudget"] = None,
     ) -> None:
@@ -72,6 +74,7 @@ class ERPAgent:
         self.conversation_id = conversation_id
         self.org_id = org_id
         self.task_id = task_id
+        self.message_id = message_id
         self._budget = budget
         from utils.time_context import RequestContext
         self.request_ctx = request_ctx or RequestContext.build(
@@ -134,14 +137,17 @@ class ERPAgent:
 
         settings = get_settings()
 
-        # 1. 构建工具列表（ERP 域 + code_execute）
-        all_tools = get_erp_agent_tools(org_id=self.org_id)
+        # 1. 工具分层加载（对齐 Claude Code deferred tools 模式）
+        #    core_tools: LLM 始终可见（10个：9 local + code_execute）
+        #    all_tools:  全量（19个），供 tool_expansion 按需注入
+        core_tools, all_tools = get_erp_agent_tools(org_id=self.org_id)
 
         # 2. 创建 LLM adapter
         adapter = create_chat_adapter(
             settings.agent_loop_model, org_id=self.org_id, db=self.db,
         )
 
+        tool_loop = None
         try:
             # 3. 创建 ToolExecutor（与主 Agent 共用同一个类，上下文隔离靠参数）
             executor = ToolExecutor(
@@ -157,11 +163,11 @@ class ERPAgent:
             # 5. 构建 messages
             messages = self._build_messages(query)
 
-            # 6. 执行工具循环
+            # 6. 执行工具循环（selected_tools=core，LLM 只看核心工具）
             tools_called: List[str] = []
             loop_result = await tool_loop.run(
                 messages=messages,
-                selected_tools=all_tools,
+                selected_tools=core_tools,
                 tools_called=tools_called,
                 hook_ctx=hook_ctx,
                 budget=budget,
@@ -181,6 +187,16 @@ class ERPAgent:
             # 9. LoopResult → AgentResult
             return self._convert_result(loop_result)
         finally:
+            # 推送子Agent完成标记到thinking区域（无论成功/异常都推送）
+            from services.agent.loop_hooks import SubAgentThinkingHook
+            try:
+                if tool_loop:
+                    for hook in tool_loop.hooks:
+                        if isinstance(hook, SubAgentThinkingHook):
+                            await hook.push_done()
+                            break
+            except Exception:
+                pass
             try:
                 await adapter.close()
             except Exception:
@@ -195,8 +211,8 @@ class ERPAgent:
         """装配 ToolLoopExecutor + HookContext + Budget。
 
         与 ScheduledTaskAgent 差异：
-        - task_id=None：不推送 WebSocket 进度（防止与主 Agent 冲突）
-        - 只挂 ToolAuditHook（审计日志）
+        - hook_ctx.task_id=None：不走 ProgressNotifyHook（防止与主 Agent 冲突）
+        - SubAgentThinkingHook 独立持有 task_id，通过 thinking_chunk 推送进度
         - ERPAgent 专用 max_turns/max_tokens
         """
         from services.agent.tool_loop_executor import ToolLoopExecutor
@@ -218,6 +234,17 @@ class ERPAgent:
             request_ctx=self.request_ctx,
         )
 
+        # Hooks: 审计 + 子Agent思考进度（仅 Web 链路有 task_id 时挂载）
+        hooks = [ToolAuditHook()]
+        if self.task_id and self.message_id:
+            from services.agent.loop_hooks import SubAgentThinkingHook
+            hooks.append(SubAgentThinkingHook(
+                task_id=self.task_id,
+                conversation_id=self.conversation_id,
+                message_id=self.message_id,
+                user_id=self.user_id,
+            ))
+
         tool_loop = ToolLoopExecutor(
             adapter=adapter,
             executor=executor,
@@ -233,10 +260,10 @@ class ERPAgent:
             ),
             strategy=LoopStrategy(
                 exit_signals=frozenset(),       # 无用户交互
-                enable_tool_expansion=False,     # 工具列表固定
+                enable_tool_expansion=True,      # 扩展工具按需注入（deferred tools）
                 force_tool_use_first=True,       # 必须查数据
             ),
-            hooks=[ToolAuditHook()],
+            hooks=hooks,
         )
 
         # Budget: 从父 budget fork，或创建独立 budget

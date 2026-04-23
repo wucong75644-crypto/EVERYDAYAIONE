@@ -459,6 +459,63 @@ class TestERPAgentToolLoop:
         # budget 存在
         assert budget is not None
 
+    def test_build_tool_loop_mounts_thinking_hook_with_ids(self):
+        """task_id + message_id 均存在时挂载 SubAgentThinkingHook"""
+        from services.agent.erp_agent import ERPAgent
+        from services.agent.loop_hooks import SubAgentThinkingHook
+
+        agent = ERPAgent(
+            db=MagicMock(), user_id="u1",
+            conversation_id="c1", org_id="org1",
+            task_id="task_001", message_id="msg_001",
+        )
+        mock_tools = [{"type": "function", "function": {"name": "local_data"}}]
+        tool_loop, _, _ = agent._build_tool_loop(MagicMock(), MagicMock(), mock_tools)
+
+        thinking_hooks = [h for h in tool_loop.hooks if isinstance(h, SubAgentThinkingHook)]
+        assert len(thinking_hooks) == 1
+        assert thinking_hooks[0]._task_id == "task_001"
+        assert thinking_hooks[0]._message_id == "msg_001"
+
+    def test_build_tool_loop_no_thinking_hook_without_task_id(self):
+        """缺少 task_id 时不挂载 SubAgentThinkingHook"""
+        from services.agent.loop_hooks import SubAgentThinkingHook
+
+        agent = self._make_agent()  # task_id=None, message_id=None
+        mock_tools = [{"type": "function", "function": {"name": "local_data"}}]
+        tool_loop, _, _ = agent._build_tool_loop(MagicMock(), MagicMock(), mock_tools)
+
+        thinking_hooks = [h for h in tool_loop.hooks if isinstance(h, SubAgentThinkingHook)]
+        assert len(thinking_hooks) == 0
+
+    def test_build_tool_loop_no_thinking_hook_without_message_id(self):
+        """有 task_id 但缺少 message_id 时不挂载 SubAgentThinkingHook"""
+        from services.agent.erp_agent import ERPAgent
+        from services.agent.loop_hooks import SubAgentThinkingHook
+
+        agent = ERPAgent(
+            db=MagicMock(), user_id="u1",
+            conversation_id="c1", org_id="org1",
+            task_id="task_001",  # 有 task_id
+            # message_id 默认 None
+        )
+        mock_tools = [{"type": "function", "function": {"name": "local_data"}}]
+        tool_loop, _, _ = agent._build_tool_loop(MagicMock(), MagicMock(), mock_tools)
+
+        thinking_hooks = [h for h in tool_loop.hooks if isinstance(h, SubAgentThinkingHook)]
+        assert len(thinking_hooks) == 0
+
+    def test_init_accepts_message_id(self):
+        """ERPAgent.__init__ 接收并保存 message_id"""
+        from services.agent.erp_agent import ERPAgent
+        agent = ERPAgent(
+            db=MagicMock(), user_id="u1",
+            conversation_id="c1", org_id="org1",
+            task_id="t1", message_id="m1",
+        )
+        assert agent.message_id == "m1"
+        assert agent.task_id == "t1"
+
 
 # ============================================================
 # get_erp_agent_tools 工具集测试
@@ -469,76 +526,109 @@ class TestGetErpAgentTools:
     """ERPAgent 专用工具集"""
 
     def test_contains_local_tools(self):
-        """包含本地查询工具"""
+        """all_tools 包含本地查询工具"""
         from config.erp_tools import get_erp_agent_tools
-        tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in tools}
+        _core, all_tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in all_tools}
         assert "local_data" in names
         assert "local_stock_query" in names
         assert "local_product_identify" in names
 
     def test_contains_code_execute(self):
-        """包含 code_execute（计算能力）"""
+        """all_tools 包含 code_execute（计算能力）"""
         from config.erp_tools import get_erp_agent_tools
-        tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in tools}
+        _core, all_tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in all_tools}
         assert "code_execute" in names
 
     def test_excludes_erp_agent(self):
         """不包含 erp_agent（防递归）"""
         from config.erp_tools import get_erp_agent_tools
-        tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in tools}
+        _core, all_tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in all_tools}
         assert "erp_agent" not in names
 
     def test_excludes_erp_execute(self):
         """不包含 erp_execute（只读不写）"""
         from config.erp_tools import get_erp_agent_tools
-        tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in tools}
+        _core, all_tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in all_tools}
         assert "erp_execute" not in names
 
     def test_contains_remote_query_tools(self):
-        """包含远程查询工具"""
+        """all_tools 包含远程查询工具"""
         from config.erp_tools import get_erp_agent_tools
-        tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in tools}
+        _core, all_tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in all_tools}
         assert "erp_trade_query" in names
         assert "erp_purchase_query" in names
 
     def test_excludes_trigger_erp_sync(self):
         """不包含 trigger_erp_sync（写操作，需用户确认）"""
         from config.erp_tools import get_erp_agent_tools
-        tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in tools}
+        _core, all_tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in all_tools}
         assert "trigger_erp_sync" not in names
 
     def test_excludes_ask_user(self):
         """不包含 ask_user（ERPAgent 无用户交互）"""
         from config.erp_tools import get_erp_agent_tools
-        tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in tools}
+        _core, all_tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in all_tools}
         assert "ask_user" not in names
 
     def test_contains_fetch_all_pages(self):
-        """包含 fetch_all_pages（全量翻页）"""
+        """all_tools 包含 fetch_all_pages（全量翻页）"""
         from config.erp_tools import get_erp_agent_tools
-        tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in tools}
+        _core, all_tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in all_tools}
         assert "fetch_all_pages" in names
 
     def test_contains_erp_api_search(self):
-        """包含 erp_api_search（API 文档搜索）"""
+        """all_tools 包含 erp_api_search（API 文档搜索）"""
         from config.erp_tools import get_erp_agent_tools
-        tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in tools}
+        _core, all_tools = get_erp_agent_tools(org_id="org1")
+        names = {t["function"]["name"] for t in all_tools}
         assert "erp_api_search" in names
 
     def test_tool_count(self):
-        """工具总数 = 9 local + 7 remote + fetch_all_pages + erp_api_search + code_execute = 19"""
+        """all_tools 总数 = 19, core_tools = 10（9 local + code_execute）"""
         from config.erp_tools import get_erp_agent_tools
-        tools = get_erp_agent_tools(org_id="org1")
-        assert len(tools) == 19, f"Expected 19 tools, got {len(tools)}: {[t['function']['name'] for t in tools]}"
+        core_tools, all_tools = get_erp_agent_tools(org_id="org1")
+        assert len(all_tools) == 19, f"Expected 19 all_tools, got {len(all_tools)}: {[t['function']['name'] for t in all_tools]}"
+        assert len(core_tools) == 10, f"Expected 10 core_tools, got {len(core_tools)}: {[t['function']['name'] for t in core_tools]}"
+
+    def test_core_tools_are_subset(self):
+        """core_tools 是 all_tools 的子集"""
+        from config.erp_tools import get_erp_agent_tools
+        core_tools, all_tools = get_erp_agent_tools(org_id="org1")
+        core_names = {t["function"]["name"] for t in core_tools}
+        all_names = {t["function"]["name"] for t in all_tools}
+        assert core_names.issubset(all_names)
+
+    def test_core_tools_content(self):
+        """core_tools 包含 10 个核心工具（9 local + code_execute）"""
+        from config.erp_tools import get_erp_agent_tools
+        core_tools, _ = get_erp_agent_tools(org_id="org1")
+        core_names = {t["function"]["name"] for t in core_tools}
+        assert core_names == {
+            "local_data", "local_compare_stats", "local_stock_query",
+            "local_product_identify", "local_product_stats",
+            "local_platform_map_query", "local_shop_list",
+            "local_warehouse_list", "local_supplier_list",
+            "code_execute",
+        }
+
+    def test_deferred_tools_are_remote_only(self):
+        """deferred 工具 = 仅远程 API 工具（不含任何 local 工具）"""
+        from config.erp_tools import get_erp_agent_tools
+        core_tools, all_tools = get_erp_agent_tools(org_id="org1")
+        core_names = {t["function"]["name"] for t in core_tools}
+        all_names = {t["function"]["name"] for t in all_tools}
+        deferred = all_names - core_names
+        for name in deferred:
+            assert name.startswith("erp_") or name == "fetch_all_pages", \
+                f"Unexpected deferred local tool: {name}"
 
 
 # ============================================================
@@ -569,16 +659,23 @@ class TestERPAgentPrompts:
         from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
         assert "code_execute" in _ERP_AGENT_SYSTEM_PROMPT
 
-    def test_system_prompt_has_critical_section(self):
-        """系统提示包含 CRITICAL 约束段"""
+    def test_system_prompt_has_rules_section(self):
+        """系统提示包含规则约束段"""
         from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
-        assert "CRITICAL" in _ERP_AGENT_SYSTEM_PROMPT
+        assert "规则" in _ERP_AGENT_SYSTEM_PROMPT
 
     def test_system_prompt_mentions_local_priority(self):
-        """系统提示明确 local 工具覆盖范围"""
+        """系统提示明确 local_data 优先"""
         from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
-        assert "local_*" in _ERP_AGENT_SYSTEM_PROMPT
+        assert "local_data" in _ERP_AGENT_SYSTEM_PROMPT
         assert "erp_*_query" in _ERP_AGENT_SYSTEM_PROMPT
+
+    def test_system_prompt_has_deferred_tools(self):
+        """系统提示包含远程API工具名录（deferred tools 模式）"""
+        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
+        assert "远程API工具" in _ERP_AGENT_SYSTEM_PROMPT
+        assert "local_shop_list" in _ERP_AGENT_SYSTEM_PROMPT
+        assert "fetch_all_pages" in _ERP_AGENT_SYSTEM_PROMPT
 
 
 # ============================================================
