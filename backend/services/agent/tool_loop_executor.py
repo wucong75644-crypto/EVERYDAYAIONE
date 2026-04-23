@@ -582,8 +582,10 @@ class ToolLoopExecutor:
                         "mime_type": m.group("mime"),
                         "size": int(m.group("size")),
                     })
+                # LLM 上下文不暴露 URL（防止 LLM 幻觉篡改域名）
+                # 下载链接由 collected_files → FilePart 文件卡片提供
                 content = _FILE_RE.sub(
-                    lambda m: f"📎 [{m.group('name')}]({m.group('url')})", content,
+                    lambda m: f"📎 文件已生成: {m.group('name')}", content,
                 )
 
             # Step 3: 截断防爆（ToolOutput 已结构化不截断，str 需要）
