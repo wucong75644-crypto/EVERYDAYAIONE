@@ -200,6 +200,7 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             conversation_id=self.conversation_id,
             org_id=self.org_id,
             task_id=getattr(self, "_task_id", None),
+            message_id=getattr(self, "_message_id", None),
             request_ctx=self.request_ctx,
             budget=_parent_budget,
         )

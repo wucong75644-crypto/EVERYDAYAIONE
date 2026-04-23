@@ -1,4 +1,4 @@
-"""LoopHook 单元测试 — 5 个 hook 的独立行为验证
+"""LoopHook 单元测试 — 6 个 hook 的独立行为验证
 
 每个 hook 单一职责，可独立单测。覆盖：
 - ProgressNotifyHook：task_id 缺失时不推送 / 存在时调 stream_publish
@@ -6,6 +6,7 @@
 - TemporalValidatorHook：合成阶段改写文本
 - FailureReflectionHook：错误前缀触发 / 业务"错误"字串不触发
 - AmbiguityDetectionHook：多条匹配触发 / 单条不触发 / 非目标工具不触发
+- SubAgentThinkingHook：子Agent工具进度推送到thinking区域
 """
 
 import sys
@@ -25,6 +26,7 @@ from services.agent.loop_hooks import (
     FailureReflectionHook,
     LoopHook,
     ProgressNotifyHook,
+    SubAgentThinkingHook,
     TemporalValidatorHook,
     ToolAuditHook,
 )
@@ -493,3 +495,152 @@ class TestToolAuditHookV6:
             ctx, "test", {}, "result", "success", 100, False, False, "tc1",
             turn_prompt_tokens=500, turn_completion_tokens=200,
         )
+
+
+# ════════════════════════════════════════════════════════
+# SubAgentThinkingHook
+# ════════════════════════════════════════════════════════
+
+class TestSubAgentThinkingHook:
+    """SubAgentThinkingHook：子Agent工具调用进度推送到thinking区域"""
+
+    def _make_hook(self):
+        return SubAgentThinkingHook(
+            task_id="task_001",
+            conversation_id="conv_001",
+            message_id="msg_001",
+            user_id="user_zhangsan",
+        )
+
+    @pytest.mark.asyncio
+    async def test_first_tool_start_pushes_title_and_label(self):
+        """首次 on_tool_start 推送标题行 + 工具标签"""
+        hook = self._make_hook()
+        ctx = make_ctx()
+
+        with patch(
+            "services.websocket_manager.ws_manager.send_to_task_or_user",
+            new_callable=AsyncMock,
+        ) as mock_send, patch(
+            "schemas.websocket.build_thinking_chunk",
+            return_value={"type": "thinking_chunk"},
+        ) as mock_build:
+            await hook.on_tool_start(ctx, "local_data", {})
+            mock_build.assert_called_once()
+            chunk_text = mock_build.call_args[1].get("chunk") or mock_build.call_args[0][3]
+            assert "── ERP Agent ──" in chunk_text
+            assert "查询数据" in chunk_text
+            mock_send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_subsequent_tool_start_no_title(self):
+        """后续 on_tool_start 只推送工具标签，不重复标题"""
+        hook = self._make_hook()
+        ctx = make_ctx()
+
+        with patch(
+            "services.websocket_manager.ws_manager.send_to_task_or_user",
+            new_callable=AsyncMock,
+        ), patch(
+            "schemas.websocket.build_thinking_chunk",
+            return_value={"type": "thinking_chunk"},
+        ) as mock_build:
+            await hook.on_tool_start(ctx, "local_data", {})
+            await hook.on_tool_start(ctx, "code_execute", {})
+            second_call_chunk = mock_build.call_args_list[1][1].get("chunk") or mock_build.call_args_list[1][0][3]
+            assert "── ERP Agent ──" not in second_call_chunk
+            assert "执行数据分析" in second_call_chunk
+
+    @pytest.mark.asyncio
+    async def test_tool_label_fallback_to_raw_name(self):
+        """未在 TOOL_LABEL 中的工具名使用原始名称"""
+        hook = self._make_hook()
+        ctx = make_ctx()
+
+        with patch(
+            "services.websocket_manager.ws_manager.send_to_task_or_user",
+            new_callable=AsyncMock,
+        ), patch(
+            "schemas.websocket.build_thinking_chunk",
+            return_value={"type": "thinking_chunk"},
+        ) as mock_build:
+            await hook.on_tool_start(ctx, "unknown_tool_xyz", {})
+            chunk_text = mock_build.call_args[1].get("chunk") or mock_build.call_args[0][3]
+            assert "unknown_tool_xyz" in chunk_text
+
+    @pytest.mark.asyncio
+    async def test_push_done_after_tool_calls(self):
+        """有工具调用后 push_done 推送完成标记"""
+        hook = self._make_hook()
+        ctx = make_ctx()
+
+        with patch(
+            "services.websocket_manager.ws_manager.send_to_task_or_user",
+            new_callable=AsyncMock,
+        ) as mock_send, patch(
+            "schemas.websocket.build_thinking_chunk",
+            return_value={"type": "thinking_chunk"},
+        ) as mock_build:
+            await hook.on_tool_start(ctx, "local_data", {})
+            mock_send.reset_mock()
+            mock_build.reset_mock()
+
+            await hook.push_done()
+            mock_build.assert_called_once()
+            chunk_text = mock_build.call_args[1].get("chunk") or mock_build.call_args[0][3]
+            assert "✓ 完成" in chunk_text
+
+    @pytest.mark.asyncio
+    async def test_push_done_without_tool_calls_is_noop(self):
+        """无工具调用时 push_done 不推送"""
+        hook = self._make_hook()
+
+        with patch(
+            "services.websocket_manager.ws_manager.send_to_task_or_user",
+            new_callable=AsyncMock,
+        ) as mock_send:
+            await hook.push_done()
+            mock_send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_push_failure_does_not_raise(self):
+        """WS 推送失败不抛异常（静默吞掉）"""
+        hook = self._make_hook()
+        ctx = make_ctx()
+
+        with patch(
+            "services.websocket_manager.ws_manager.send_to_task_or_user",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("ws closed"),
+        ), patch(
+            "schemas.websocket.build_thinking_chunk",
+            side_effect=RuntimeError("build failed"),
+        ):
+            await hook.on_tool_start(ctx, "local_data", {})  # 不应抛异常
+            await hook.push_done()  # push_done 也不应抛异常
+
+    @pytest.mark.asyncio
+    async def test_custom_agent_name(self):
+        """自定义 agent_name 出现在标题行"""
+        hook = SubAgentThinkingHook(
+            task_id="t", conversation_id="c", message_id="m",
+            user_id="u", agent_name="Custom Agent",
+        )
+        ctx = make_ctx()
+
+        with patch(
+            "services.websocket_manager.ws_manager.send_to_task_or_user",
+            new_callable=AsyncMock,
+        ), patch(
+            "schemas.websocket.build_thinking_chunk",
+            return_value={"type": "thinking_chunk"},
+        ) as mock_build:
+            await hook.on_tool_start(ctx, "local_data", {})
+            chunk_text = mock_build.call_args[1].get("chunk") or mock_build.call_args[0][3]
+            assert "── Custom Agent ──" in chunk_text
+
+    def test_tool_label_covers_core_tools(self):
+        """TOOL_LABEL 覆盖所有核心工具"""
+        expected = {"local_data", "local_compare_stats", "local_stock_query",
+                    "local_product_identify", "code_execute"}
+        assert expected.issubset(SubAgentThinkingHook.TOOL_LABEL.keys())

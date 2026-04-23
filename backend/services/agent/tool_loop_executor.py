@@ -473,7 +473,18 @@ class ToolLoopExecutor:
         ]
         messages.append(asst_msg)
 
+        # ============================================================
+        # 阶段 1：预处理（串行）
+        # 退出信号短路 / JSON 解析 / 安全检查 / 参数校验
+        # 通过的工具收集到 ready 列表，待并行执行
+        # ============================================================
+        from config.chat_tools import SafetyLevel, get_safety_level
+        from services.agent.tool_args_validator import validate_tool_args
+
         accumulated = turn_text
+        ready: List[Tuple[Dict, str, Dict]] = []  # (tc, tool_name, args)
+        exit_hit = False
+
         for tc in completed:
             tool_name = tc["name"]
             tools_called.append(tool_name)
@@ -491,6 +502,7 @@ class ToolLoopExecutor:
                 messages.append({
                     "role": "tool", "tool_call_id": tc["id"], "content": "OK",
                 })
+                exit_hit = True
                 break
 
             # JSON 解析失败 → 错误信息回灌给 LLM
@@ -508,14 +520,12 @@ class ToolLoopExecutor:
                 continue
 
             # ── 安全检查：DANGEROUS 工具需用户确认 ──
-            from config.chat_tools import SafetyLevel, get_safety_level
             safety = get_safety_level(tool_name)
             if safety == SafetyLevel.DANGEROUS:
                 confirm_result = await self._request_user_confirm(
                     tool_name, args, tc["id"], hook_ctx,
                 )
                 if confirm_result is not None:
-                    # 用户拒绝或超时 → 写入拒绝信息，继续下一个工具
                     messages.append({
                         "role": "tool", "tool_call_id": tc["id"],
                         "content": confirm_result,
@@ -524,7 +534,6 @@ class ToolLoopExecutor:
                     continue
 
             # ── 参数校验网关：过滤幻觉参数 + 必填检查 ──
-            from services.agent.tool_args_validator import validate_tool_args
             args, validation_error = validate_tool_args(
                 tool_name, args, selected_tools,
             )
@@ -536,19 +545,56 @@ class ToolLoopExecutor:
                 accumulated = validation_error
                 continue
 
-            # Hook 链：单工具执行前
-            for hook in self.hooks:
-                await hook.on_tool_start(hook_ctx, tool_name, args)
+            ready.append((tc, tool_name, args))
 
-            from services.agent.tool_loop_helpers import invoke_tool_with_cache
-            result, audit_status, is_cached, elapsed_ms = (
-                await invoke_tool_with_cache(
+        if exit_hit or not ready:
+            return accumulated
+
+        # ============================================================
+        # 阶段 2：执行（并行，对齐 LangGraph ToolNode asyncio.gather）
+        # 单工具走快路径，多工具 gather 并行
+        # ============================================================
+        import asyncio as _aio
+        from services.agent.tool_loop_helpers import invoke_tool_with_cache
+
+        async def _invoke_safe(
+            tc: Dict, tool_name: str, args: Dict,
+        ) -> Tuple[Dict, str, Dict, Any, str, bool, int]:
+            """安全执行单个工具，异常不扩散（对齐行业 return_exceptions 模式）"""
+            try:
+                r, status, cached, ms = await invoke_tool_with_cache(
                     self.executor, self._cache, tool_name, args,
                     hook_ctx.budget, self.config.tool_timeout,
                 )
+                return tc, tool_name, args, r, status, cached, ms
+            except Exception as e:
+                logger.opt(exception=True).error(f"ToolLoop parallel error | tool={tool_name} | error={e}")
+                return tc, tool_name, args, f"工具执行失败: {e}", "error", False, 0
+
+        # Hook 链：所有工具执行前
+        for tc, tool_name, args in ready:
+            for hook in self.hooks:
+                await hook.on_tool_start(hook_ctx, tool_name, args)
+
+        # 并行执行（单工具时等价于直接 await，无额外开销）
+        if len(ready) == 1:
+            results = [await _invoke_safe(*ready[0])]
+        else:
+            results = await _aio.gather(
+                *[_invoke_safe(tc, tn, a) for tc, tn, a in ready],
+            )
+            logger.info(
+                f"ToolLoop parallel done | count={len(results)} | "
+                f"tools={[r[1] for r in results]}"
             )
 
-            # ── 统一后处理：类型归一化 → 文件收集 → 截断 → 入 messages ──
+        # ============================================================
+        # 阶段 3：后处理（串行，按原始顺序）
+        # 归一化 / 文件收集 / 截断 / 入 messages / hooks / steer
+        # ============================================================
+        steer_hit = False
+
+        for idx, (tc, tool_name, args, result, audit_status, is_cached, elapsed_ms) in enumerate(results):
             now_iso = datetime.now(timezone.utc).isoformat()
 
             # Step 1: 归一化为 content 字符串
@@ -582,8 +628,6 @@ class ToolLoopExecutor:
                         "mime_type": m.group("mime"),
                         "size": int(m.group("size")),
                     })
-                # LLM 上下文不暴露 URL（防止 LLM 幻觉篡改域名）
-                # 下载链接由 collected_files → FilePart 文件卡片提供
                 content = _FILE_RE.sub(
                     lambda m: f"📎 文件已生成: {m.group('name')}", content,
                 )
@@ -615,7 +659,7 @@ class ToolLoopExecutor:
                 )
 
             # ── 打断检查点：用户在工具执行期间发了新消息 ──
-            if hook_ctx.task_id:
+            if hook_ctx.task_id and not steer_hit:
                 from services.websocket_manager import ws_manager
                 _steer = ws_manager.check_steer(hook_ctx.task_id)
                 if _steer:
@@ -623,15 +667,15 @@ class ToolLoopExecutor:
                         f"ToolLoop steer | task={hook_ctx.task_id} | "
                         f"msg={_steer[:50]}"
                     )
-                    # 跳过剩余工具，注入用户消息
-                    remaining = completed[completed.index(tc) + 1:]
-                    for r_tc in remaining:
+                    # 跳过剩余工具结果，注入用户消息
+                    for r_tc_tuple in results[idx + 1:]:
                         messages.append({
                             "role": "tool",
-                            "tool_call_id": r_tc["id"],
+                            "tool_call_id": r_tc_tuple[0]["id"],
                             "content": "⚠ 用户发送了新消息，跳过此工具调用。",
                         })
                     messages.append({"role": "user", "content": _steer})
+                    steer_hit = True
                     break
 
             # 自动扩展：模型调了隐藏工具 → 从全量列表动态注入
