@@ -588,6 +588,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         tool_context.update_from_result(
                             tc["name"], result.summary, is_error,
                         )
+                        # 子Agent thinking持久化：追加到accumulated_thinking
+                        if result.thinking_text:
+                            accumulated_thinking += result.thinking_text
                     else:
                         content = result
                         tool_context.update_from_result(

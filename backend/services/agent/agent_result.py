@@ -72,6 +72,8 @@ class AgentResult:
     """分析洞察（可选，未来分析能力用）"""
     follow_up: list[str] | None = None
     """后续建议（可选，未来分析能力用）"""
+    thinking_text: str = ""
+    """子Agent的思考/进度文本（持久化到消息的thinking_content中）"""
 
     # ── 内部（不参与比较/显示）──
     _valid_cache: dict[str, bool] = field(
