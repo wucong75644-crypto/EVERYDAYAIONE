@@ -103,11 +103,14 @@ def get_safety_level(tool_name: str) -> SafetyLevel:
 
 TOOL_SYSTEM_PROMPT = """## 工具决策规则
 
-### erp_agent — ERP 数据分析专家
+### erp_agent — ERP 数据检索
 用户问任何涉及订单/库存/采购/售后/发货/物流/商品/销量/统计的问题时调用。
 task 原样传递用户的话，conversation_context 给最近相关的对话内容。
-erp_agent 自己判断参数够不够，返回"信息不足"时你补充或问用户。
-erp_agent 返回的结果已是结构化数据，直接简洁转述给用户即可，不需要重新组织语言。
+erp_agent 是 worker 进程，返回结构化数据或简短事实结论：
+- 结果正常 → 基于返回数据向用户呈现，加上对话上下文做适当解读
+- 参数不足（Result 中提到缺少参数）→ 用 ask_user 向用户补充，然后重新调用
+- 错误（Result 中报告错误）→ 告知用户并建议替代方案
+不要重复 erp_agent 已返回的原始数据，基于它做呈现即可。
 
 ### search_knowledge — 知识库
 业务规则、操作流程等非数据类问题。
