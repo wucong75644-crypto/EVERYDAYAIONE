@@ -1531,7 +1531,17 @@
       "Bash(grep -l \"CREATE TABLE.*erp_document_items\\\\|ALTER TABLE.*erp_document_items\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
       "Bash(grep -n \"ALTER TABLE.*erp_document_items.*ADD.*COLUMN\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
       "Bash(grep -n \"status_name\\\\|handler_status\\\\|online_status\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
-      "Bash(grep -n \"diff_stock_num\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)"
+      "Bash(grep -n \"diff_stock_num\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(grep -r \"CREATE OR REPLACE FUNCTION\" backend/migrations/*.sql)",
+      "Bash(grep -l \"field_name NOT IN\\\\|NOT IN.*field\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(grep -A 100 \"CREATE TABLE.*erp_document_items\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(grep -E \"ALTER TABLE erp_document_items ADD COLUMN|buyer_nick|status_name|order_type|is_cancel|is_refund|is_exception|is_halt|is_urgent|is_scalping|unified_status|is_presell|online_status|handler_status|pay_amount|reason|good_status|refund_warehouse_name|refund_express_company|refund_express_no|platform_refund_id|sku_properties_name|diff_stock_num|actual_return_qty\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(PGPASSWORD=WlnbhzE5sYYZd9t9Xw08w4I0 psql -h 47.110.94.25 -U everydayai -d everydayai -f /tmp/fix_rpc.sql)",
+      "Bash(grep -r \"local_global_stats\\\\|local_compare_stats\" /Users/wucong/EVERYDAYAIONE/backend/services/kuaimai/*.py)",
+      "Bash(cat)",
+      "Bash(node /tmp/test_markdown.js)",
+      "Bash(python -m pytest backend/tests/ -x -q --timeout=30)",
+      "Bash(python -m pytest tests/ -x -q)"
     ],
     "additionalDirectories": [
       "/tmp"

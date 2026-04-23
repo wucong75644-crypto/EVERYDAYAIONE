@@ -41,6 +41,7 @@ TEXT_LIKE_FIELDS: dict[str, str] = {
     "receiver_address": "receiver_address",
     "receiver_district": "receiver_district",
     "reason": "reason",
+    "sku_properties_name": "sku_properties_name",  # SKU 规格（颜色/尺码等）
 }
 
 # 枚举精确匹配：LLM语义参数名 → DB列名
@@ -51,6 +52,8 @@ ENUM_EQ_FIELDS: dict[str, str] = {
     "refund_status": "refund_status",
     "good_status": "good_status",
     "order_type": "order_type",
+    "online_status": "online_status",      # 售后在线状态
+    "handler_status": "handler_status",    # 售后处理状态
 }
 
 # 布尔/整数标记字段（truthy 时 → eq 1）
@@ -99,6 +102,27 @@ GOOD_STATUS_NORMALIZE: dict[str, str] = {
     "无需退货": "4",
 }
 
+# online_status (售后域): 中文 → 整数码（API onlineStatus 字段）
+ONLINE_STATUS_NORMALIZE: dict[str, str] = {
+    "待卖家同意": "2", "等待卖家同意": "2",
+    "待买家退货": "3", "等待买家退货": "3",
+    "待卖家确认收货": "4", "等待卖家确认": "4",
+    "卖家拒绝退款": "5", "卖家拒绝": "5", "卖家拒绝补寄": "5",
+    "退款关闭": "6",
+    "退款成功": "7", "已退款": "7",
+    "待发出换货": "8", "待补发": "8",
+    "待买家收货": "9", "等待买家收货": "9",
+    "换货关闭": "10", "补发关闭": "10",
+    "换货成功": "11", "补发成功": "11",
+}
+
+# handler_status (售后域): 中文 → 整数码（API handlerStatus 字段）
+HANDLER_STATUS_NORMALIZE: dict[str, str] = {
+    "待处理": "-1", "未处理": "-1",
+    "处理成功": "1", "已处理": "1",
+    "处理失败": "2",
+}
+
 # doc_status (采购域): 中文 → 英文枚举（API sysStatus 字段）
 PURCHASE_STATUS_NORMALIZE: dict[str, str] = {
     "待审核": "WAIT_VERIFY", "待验证": "WAIT_VERIFY",
@@ -118,6 +142,8 @@ ENUM_NORMALIZE: dict[str, dict[str, str]] = {
     "refund_status": REFUND_STATUS_NORMALIZE,
     "good_status": GOOD_STATUS_NORMALIZE,
     "doc_status": PURCHASE_STATUS_NORMALIZE,
+    "online_status": ONLINE_STATUS_NORMALIZE,
+    "handler_status": HANDLER_STATUS_NORMALIZE,
     # order_status 不需要归一化（LLM 直接输出英文枚举）
 }
 

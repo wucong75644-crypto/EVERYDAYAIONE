@@ -350,6 +350,42 @@ class TestEnumNormalize:
         ot = [f for f in filters if f["field"] == "order_type"]
         assert ot[0]["value"] == "未知类型XYZ"
 
+    def test_online_status_chinese_to_code(self):
+        """待卖家同意 → 2"""
+        filters = params_to_filters({"online_status": "待卖家同意"})
+        os = [f for f in filters if f["field"] == "online_status"]
+        assert os[0]["value"] == "2"
+
+    def test_online_status_alias(self):
+        """等待卖家同意 → 2（别名）"""
+        filters = params_to_filters({"online_status": "等待卖家同意"})
+        os = [f for f in filters if f["field"] == "online_status"]
+        assert os[0]["value"] == "2"
+
+    def test_online_status_refund_success(self):
+        """退款成功 → 7"""
+        filters = params_to_filters({"online_status": "退款成功"})
+        os = [f for f in filters if f["field"] == "online_status"]
+        assert os[0]["value"] == "7"
+
+    def test_handler_status_pending(self):
+        """待处理 → -1"""
+        filters = params_to_filters({"handler_status": "待处理"})
+        hs = [f for f in filters if f["field"] == "handler_status"]
+        assert hs[0]["value"] == "-1"
+
+    def test_handler_status_alias(self):
+        """已处理 → 1（别名）"""
+        filters = params_to_filters({"handler_status": "已处理"})
+        hs = [f for f in filters if f["field"] == "handler_status"]
+        assert hs[0]["value"] == "1"
+
+    def test_handler_status_failed(self):
+        """处理失败 → 2"""
+        filters = params_to_filters({"handler_status": "处理失败"})
+        hs = [f for f in filters if f["field"] == "handler_status"]
+        assert hs[0]["value"] == "2"
+
 
 # ============================================================
 # params_to_filters: 布尔标记类（eq 1）
