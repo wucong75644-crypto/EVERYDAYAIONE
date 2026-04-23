@@ -288,6 +288,20 @@ class UnifiedQueryEngine:
             "p_group_by": rpc_group,
         }
 
+        # ── 诊断：直查 DB 对比 RPC ──
+        try:
+            direct = self.db.table("erp_document_items").select(
+                "doc_id", count="exact",
+            ).eq("org_id", self.org_id).eq(
+                "doc_type", "order",
+            ).gte(tr.time_col, tr.start_iso).lt(
+                tr.time_col, tr.end_iso,
+            ).execute()
+            direct_count = direct.count if direct.count else len(direct.data)
+            logger.info(f"诊断直查 | table row count={direct_count} | time_col={tr.time_col} | {tr.start_iso}~{tr.end_iso}")
+        except Exception as diag_err:
+            logger.warning(f"诊断直查失败 | error={diag_err}")
+
         try:
             result = self.db.rpc("erp_order_stats_grouped", params).execute()
             raw_rows = result.data
@@ -297,6 +311,19 @@ class UnifiedQueryEngine:
 
         if not raw_rows or raw_rows == []:
             return None
+
+        # ── 诊断日志：RPC 返回的原始聚合数据 ──
+        if not isinstance(raw_rows, list) or not raw_rows or not isinstance(raw_rows[0], dict):
+            return None
+        rpc_total_docs = sum(int(r.get("doc_count", 0)) for r in raw_rows)
+        rpc_row_count = len(raw_rows)
+        logger.info(
+            f"分类统计 RPC 返回 | rows={rpc_row_count} | "
+            f"sum(doc_count)={rpc_total_docs} | "
+            f"group_by={rpc_group} | "
+            f"time={tr.start_iso}~{tr.end_iso} | "
+            f"time_col={tr.time_col}"
+        )
 
         try:
             classifier = OrderClassifier.for_org(self.db, self.org_id)
@@ -309,12 +336,35 @@ class UnifiedQueryEngine:
         )
 
         if rpc_group is None:
-            return self._build_classified_flat(
+            result = self._build_classified_flat(
                 classifier, raw_rows, time_header, tr, include_invalid,
             )
-        return self._build_classified_grouped(
-            classifier, raw_rows, rpc_group, time_header, tr, include_invalid,
-        )
+        else:
+            result = self._build_classified_grouped(
+                classifier, raw_rows, rpc_group, time_header, tr, include_invalid,
+            )
+
+        # ── 诊断日志：分类引擎处理后的数据 ──
+        if result and result.data:
+            if rpc_group is None:
+                d = result.data[0] if result.data else {}
+                classified_total = d.get("total", {}).get("doc_count", "?")
+                classified_valid = d.get("valid", {}).get("doc_count", "?")
+            else:
+                classified_total = sum(
+                    d.get("total", {}).get("doc_count", 0) for d in result.data
+                )
+                classified_valid = sum(
+                    d.get("valid", {}).get("doc_count", 0) for d in result.data
+                )
+            logger.info(
+                f"分类引擎输出 | rpc_sum={rpc_total_docs} | "
+                f"classified_total={classified_total} | "
+                f"classified_valid={classified_valid} | "
+                f"match={'✅' if rpc_total_docs == classified_total else '❌ MISMATCH'}"
+            )
+
+        return result
 
     def _build_classified_flat(
         self, classifier: Any, raw_rows: list[dict],
