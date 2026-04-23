@@ -97,7 +97,7 @@ export default memo(function ThinkingBlock({
             transition={SOFT_SPRING}
           >
             <div className="text-sm text-text-tertiary leading-relaxed whitespace-pre-wrap">
-              {content}
+              {content.trimStart()}
             </div>
           </m.div>
         )}
