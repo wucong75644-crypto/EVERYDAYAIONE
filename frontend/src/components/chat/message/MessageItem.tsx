@@ -27,6 +27,40 @@ import { RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../.
 import type { RenderInstruction } from '../../../types/render';
 import type { AspectRatio, VideoAspectRatio } from '../../../constants/models';
 
+/** 内联图表图片（带骨架屏占位 + 淡入） */
+function InlineChartImage({ url, alt, onClick }: {
+  url: string; alt: string; onClick: () => void;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  return (
+    <div className="my-3 relative inline-block" style={{ maxWidth: '500px' }}>
+      {/* 骨架屏占位：图片加载前显示脉冲动画 */}
+      {!loaded && (
+        <div className="w-full rounded-xl bg-hover animate-media-pulse flex items-center justify-center"
+          style={{ minHeight: '200px', minWidth: '300px' }}
+        >
+          <svg className="w-10 h-10 text-text-disabled" xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+            strokeLinecap="round" strokeLinejoin="round"
+          >
+            <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+            <circle cx="9" cy="9" r="2" />
+            <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+          </svg>
+        </div>
+      )}
+      <img
+        src={url}
+        alt={alt}
+        className={`rounded-xl shadow-sm max-w-full h-auto cursor-pointer transition-opacity duration-500 ${loaded ? 'opacity-100' : 'opacity-0 absolute inset-0'}`}
+        onClick={onClick}
+        loading="lazy"
+        onLoad={() => setLoaded(true)}
+      />
+    </div>
+  );
+}
+
 interface MessageItemProps {
   message: Message;
   /** 是否正在流式输出 */
@@ -417,19 +451,14 @@ export default memo(function MessageItem({
                   }
                   if (part.type === 'image' && (part as { url?: string }).url) {
                     const img = part as { url: string; alt?: string };
-                    // 计算图片在 imageUrls 中的真实索引（content 数组索引 ≠ 图片索引）
                     const imgIndex = imageUrls.indexOf(img.url);
                     return (
-                      <div key={idx} className="my-3">
-                        <img
-                          src={img.url}
-                          alt={img.alt || '生成的图表'}
-                          className="rounded-xl shadow-sm max-w-full h-auto cursor-pointer"
-                          style={{ maxWidth: '500px' }}
-                          onClick={() => handleImageClick(imgIndex >= 0 ? imgIndex : 0)}
-                          loading="lazy"
-                        />
-                      </div>
+                      <InlineChartImage
+                        key={idx}
+                        url={img.url}
+                        alt={img.alt || '生成的图表'}
+                        onClick={() => handleImageClick(imgIndex >= 0 ? imgIndex : 0)}
+                      />
                     );
                   }
                   if (part.type === 'file' && (part as { url?: string }).url) {
