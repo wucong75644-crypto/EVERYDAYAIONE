@@ -130,6 +130,60 @@ class TestFileExtraction:
 
 
 # ============================================================
+# 图片/文件占位文本按 mime 分流
+# ============================================================
+
+
+class TestFilePlaceholderByMime:
+    """占位文本按 mime_type 区分：image/* → 图表提示，其他 → 文件名提示"""
+
+    def test_image_png_gets_chart_placeholder(self):
+        """image/png → 📊 图表已生成"""
+        text = "[FILE]https://cdn.com/chart.png|chart.png|image/png|2048[/FILE]"
+        from services.agent.tool_loop_executor import _FILE_RE
+
+        def _file_placeholder(m):
+            if m.group("mime").startswith("image/"):
+                return "📊 图表已生成（将自动展示给用户，不要在文字中重复描述图表数据）"
+            return f"📎 文件已生成: {m.group('name')}（下载卡片将自动展示，不要重复引用文件名）"
+
+        result = _FILE_RE.sub(_file_placeholder, text)
+        assert "📊 图表已生成" in result
+        assert "chart.png" not in result  # 文件名不暴露
+
+    def test_non_image_keeps_filename(self):
+        """application/vnd.ms-excel → 📎 文件已生成: name"""
+        text = "[FILE]https://cdn.com/data.xlsx|data.xlsx|application/vnd.ms-excel|4096[/FILE]"
+        from services.agent.tool_loop_executor import _FILE_RE
+
+        def _file_placeholder(m):
+            if m.group("mime").startswith("image/"):
+                return "📊 图表已生成（将自动展示给用户，不要在文字中重复描述图表数据）"
+            return f"📎 文件已生成: {m.group('name')}（下载卡片将自动展示，不要重复引用文件名）"
+
+        result = _FILE_RE.sub(_file_placeholder, text)
+        assert "📎 文件已生成: data.xlsx" in result
+
+    def test_mixed_image_and_file(self):
+        """混合：图片走图表提示，文件走文件名提示"""
+        text = (
+            "[FILE]https://cdn.com/pie.png|pie.png|image/png|1024[/FILE]\n"
+            "[FILE]https://cdn.com/out.csv|out.csv|text/csv|512[/FILE]"
+        )
+        from services.agent.tool_loop_executor import _FILE_RE
+
+        def _file_placeholder(m):
+            if m.group("mime").startswith("image/"):
+                return "📊 图表已生成（将自动展示给用户，不要在文字中重复描述图表数据）"
+            return f"📎 文件已生成: {m.group('name')}（下载卡片将自动展示，不要重复引用文件名）"
+
+        result = _FILE_RE.sub(_file_placeholder, text)
+        assert "📊 图表已生成" in result
+        assert "📎 文件已生成: out.csv" in result
+        assert "cdn.com" not in result
+
+
+# ============================================================
 # collected_files 通过 LoopResult 透传
 # ============================================================
 

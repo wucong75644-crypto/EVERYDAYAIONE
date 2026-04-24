@@ -630,9 +630,11 @@ class ToolLoopExecutor:
                         "mime_type": m.group("mime"),
                         "size": int(m.group("size")),
                     })
-                content = _FILE_RE.sub(
-                    lambda m: f"📎 文件已生成: {m.group('name')}", content,
-                )
+                def _file_placeholder(m):
+                    if m.group("mime").startswith("image/"):
+                        return "📊 图表已生成（将自动展示给用户，不要在文字中重复描述图表数据）"
+                    return f"📎 文件已生成: {m.group('name')}（下载卡片将自动展示，不要重复引用文件名）"
+                content = _FILE_RE.sub(_file_placeholder, content)
 
             # Step 3: 截断防爆（ToolOutput 已结构化不截断，str 需要）
             if not isinstance(result, ToolOutput):
