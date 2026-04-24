@@ -359,6 +359,12 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             )
             result = await executor.execute(code, description)
 
+            # 透传图片尺寸（沙盒读取的 PIL 宽高 → chat_handler 构建 image block）
+            if hasattr(executor, "_image_dims") and executor._image_dims:
+                if not hasattr(self, "_image_dims"):
+                    self._image_dims = {}
+                self._image_dims.update(executor._image_dims)
+
             # 判断执行状态
             if result.startswith("❌"):
                 status = "failed"

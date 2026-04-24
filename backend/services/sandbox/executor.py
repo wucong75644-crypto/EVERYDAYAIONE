@@ -459,6 +459,16 @@ class SandboxExecutor:
                 try:
                     upload_result = await self._upload_fn(f.name, st.st_size)
                     results.append(upload_result)
+                    # 图片文件：读取宽高，存到实例供 image block 使用
+                    if f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+                        try:
+                            from PIL import Image as _PILImage
+                            with _PILImage.open(f) as _im:
+                                if not hasattr(self, "_image_dims"):
+                                    self._image_dims = {}
+                                self._image_dims[f.name] = (_im.width, _im.height)
+                        except Exception:
+                            pass
                     logger.info(
                         f"SandboxExecutor auto-upload | file={f.name} | "
                         f"size={st.st_size} | new={old is None}"

@@ -27,22 +27,32 @@ import { RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../.
 import type { RenderInstruction } from '../../../types/render';
 import type { AspectRatio, VideoAspectRatio } from '../../../constants/models';
 
-/** 内联图表图片（带骨架屏占位 + 淡入）
- *  占位符使用 4:3 比例（matplotlib 默认），宽度 500px，高度 375px
- *  图片 onLoad 后淡入替换，骨架屏消失 */
-function InlineChartImage({ url, alt, onClick }: {
-  url: string; alt: string; onClick: () => void;
+/** 内联图表图片（元数据驱动的固定占位 + 直接替换）
+ *  后端传 width/height → 前端用 aspect-ratio 预留精确空间 → 零布局跳变
+ *  对齐 Claude 方案：灰色占位区 → 图片加载完直接显示 */
+function InlineChartImage({ url, alt, width, height, onClick }: {
+  url: string; alt: string; width?: number; height?: number; onClick: () => void;
 }) {
   const [loaded, setLoaded] = useState(false);
+  // 限制最大显示宽度 500px，按比例缩放高度
+  const maxW = 500;
+  const displayW = width ? Math.min(width, maxW) : maxW;
+  const displayH = (width && height) ? Math.round(displayW * height / width) : undefined;
+
   return (
-    <div className="my-3 relative" style={{ maxWidth: '500px' }}>
-      {/* 骨架屏占位：4:3 比例，与 matplotlib 默认输出一致 */}
+    <div className="my-3" style={{ width: displayW }}>
+      {/* 固定尺寸占位：用后端传的 width/height 预留精确空间 */}
       {!loaded && (
-        <div className="w-full rounded-xl bg-hover dark:bg-surface-dark-card animate-media-pulse flex items-center justify-center"
-          style={{ aspectRatio: '4/3' }}
+        <div
+          className="rounded-xl flex items-center justify-center"
+          style={{
+            width: displayW,
+            height: displayH || 120,
+            backgroundColor: '#27272a',
+          }}
         >
-          <svg className="w-10 h-10 text-text-disabled dark:text-text-tertiary" xmlns="http://www.w3.org/2000/svg"
-            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          <svg className="w-8 h-8 text-zinc-500" xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"
             strokeLinecap="round" strokeLinejoin="round"
           >
             <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
@@ -51,12 +61,12 @@ function InlineChartImage({ url, alt, onClick }: {
           </svg>
         </div>
       )}
+      {/* 图片：加载完直接显示，容器尺寸已固定不会跳变 */}
       <img
         src={url}
         alt={alt}
-        className={`rounded-xl shadow-sm max-w-full h-auto cursor-pointer transition-opacity duration-500 ${loaded ? 'opacity-100' : 'opacity-0 absolute inset-0'}`}
+        className={`rounded-xl shadow-sm w-full h-auto cursor-pointer ${loaded ? '' : 'hidden'}`}
         onClick={onClick}
-        loading="lazy"
         onLoad={() => setLoaded(true)}
       />
     </div>
@@ -452,13 +462,15 @@ export default memo(function MessageItem({
                     );
                   }
                   if (part.type === 'image' && (part as { url?: string }).url) {
-                    const img = part as { url: string; alt?: string };
+                    const img = part as { url: string; alt?: string; width?: number; height?: number };
                     const imgIndex = imageUrls.indexOf(img.url);
                     return (
                       <InlineChartImage
                         key={idx}
                         url={img.url}
                         alt={img.alt || '生成的图表'}
+                        width={img.width}
+                        height={img.height}
                         onClick={() => handleImageClick(imgIndex >= 0 ? imgIndex : 0)}
                       />
                     );

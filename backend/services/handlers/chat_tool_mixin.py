@@ -144,6 +144,12 @@ class ChatToolMixin:
                 self._pending_file_parts.extend(executor._pending_file_parts)
             executor._pending_file_parts.clear()
 
+        # 透传图片尺寸（sandbox PIL 读取 → chat_handler image block）
+        if hasattr(executor, "_image_dims") and executor._image_dims:
+            if not hasattr(self, "_image_dims"):
+                self._image_dims = {}
+            self._image_dims.update(executor._image_dims)
+
         return results
 
     async def _execute_single_tool(
