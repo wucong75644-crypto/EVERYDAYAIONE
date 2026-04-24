@@ -466,7 +466,7 @@ export default memo(function MessageItem({
                   if (part.type === 'file' && (part as { url?: string }).url) {
                     const fp = part as import('../../../types/message').FilePart;
                     return (
-                      <div key={idx} className="my-2">
+                      <div key={idx} className="my-2" style={{ maxWidth: '400px' }}>
                         <FileCardList files={[fp]} />
                       </div>
                     );
