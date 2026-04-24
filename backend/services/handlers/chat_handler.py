@@ -729,11 +729,11 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 from services.handlers.media_extractor import extract_media_parts
                 result_parts = extract_media_parts(accumulated_text)
 
-            # 合并工具执行过程中积累的 FilePart（沙盒 upload_file 生成）
+            # 合并工具执行过程中积累的 FilePart / ImagePart（沙盒 upload_file 生成，图片 mime 走 ImagePart）
             if self._pending_file_parts:
                 # 后处理：用 FilePart 的正确 URL 把 LLM 文本中的纯文件名变成 markdown 链接
                 # 解决：LLM 上下文不含 URL（防幻觉），但最终消息需要可点击的下载链接
-                _file_url_map = {p.name: p.url for p in self._pending_file_parts}
+                _file_url_map = {p.name: p.url for p in self._pending_file_parts if hasattr(p, "name")}
                 if _file_url_map:
                     from schemas.message import TextPart as _TP
                     for i, part in enumerate(result_parts):
