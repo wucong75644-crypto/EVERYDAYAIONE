@@ -13,7 +13,7 @@ from schemas.message import ContentPart, FilePart, ImagePart, TextPart, VideoPar
 
 # 匹配 [FILE] 标记（沙盒 upload_file 返回的格式，兜底解析）
 _FILE_PATTERN = re.compile(
-    r'\[FILE\](https?://\S+?)\|([^|]+)\|([^|]+)\|(\d+)\[/FILE\]'
+    r'\[FILE\]([^|]+)\|([^|]+)\|([^|]+)\|(\d+)\[/FILE\]'
 )
 
 # 匹配图片 URL（常见图片扩展名 + 无扩展名的 CDN URL 带图片参数）

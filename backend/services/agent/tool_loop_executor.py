@@ -621,7 +621,9 @@ class ToolLoopExecutor:
 
             # Step 2: [FILE] 标记提取（统一处理，不分类型）
             if content and "[FILE]" in content:
+                logger.info(f"[FILE] tag found | tool={tool_name} | content_len={len(content)}")
                 for m in _FILE_RE.finditer(content):
+                    logger.info(f"[FILE] extracted | name={m.group('name')} | url={m.group('url')[:80]}")
                     self._collected_files.append({
                         "url": m.group("url"),
                         "name": m.group("name"),
