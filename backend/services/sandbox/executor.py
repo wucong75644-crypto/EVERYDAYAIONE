@@ -35,6 +35,12 @@ except ImportError:
 try:
     import matplotlib as _mpl
     _mpl.use("Agg")  # 无 GUI 后端，必须在 import pyplot 之前
+    # 中文字体：优先 WenQuanYi（服务器预装），兜底 SimHei / sans-serif
+    _mpl.rcParams["font.sans-serif"] = [
+        "WenQuanYi Micro Hei", "SimHei", "Noto Sans SC",
+        "PingFang SC", "Microsoft YaHei", "DejaVu Sans",
+    ]
+    _mpl.rcParams["axes.unicode_minus"] = False  # 负号正常显示
     import matplotlib.pyplot as _plt
     _MATPLOTLIB_AVAILABLE = True
 except ImportError:
