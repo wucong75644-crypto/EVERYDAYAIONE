@@ -607,11 +607,14 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 # 通过 content_block_add 立即推送，前端流式阶段即可渲染占位符
                 if self._pending_file_parts:
                     from schemas.websocket import build_content_block_add
+                    _dims = getattr(self, "_image_dims", {})
                     for _fp in self._pending_file_parts:
                         if _fp.mime_type.startswith("image/"):
+                            _w, _h = _dims.get(_fp.name, (None, None))
                             _block = {
                                 "type": "image", "url": _fp.url,
                                 "alt": _fp.name,
+                                **({"width": _w, "height": _h} if _w else {}),
                             }
                         else:
                             _block = {
@@ -762,6 +765,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     elif block["type"] == "image":
                         result_parts.append(ImagePart(
                             url=block["url"], alt=block.get("alt"),
+                            width=block.get("width"),
+                            height=block.get("height"),
                         ))
                     elif block["type"] == "file":
                         result_parts.append(FilePart(
