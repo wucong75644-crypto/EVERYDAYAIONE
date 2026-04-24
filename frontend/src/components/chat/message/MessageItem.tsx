@@ -27,19 +27,21 @@ import { RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../.
 import type { RenderInstruction } from '../../../types/render';
 import type { AspectRatio, VideoAspectRatio } from '../../../constants/models';
 
-/** 内联图表图片（带骨架屏占位 + 淡入） */
+/** 内联图表图片（带骨架屏占位 + 淡入）
+ *  占位符使用 4:3 比例（matplotlib 默认），宽度 500px，高度 375px
+ *  图片 onLoad 后淡入替换，骨架屏消失 */
 function InlineChartImage({ url, alt, onClick }: {
   url: string; alt: string; onClick: () => void;
 }) {
   const [loaded, setLoaded] = useState(false);
   return (
-    <div className="my-3 relative inline-block" style={{ maxWidth: '500px' }}>
-      {/* 骨架屏占位：图片加载前显示脉冲动画 */}
+    <div className="my-3 relative" style={{ maxWidth: '500px' }}>
+      {/* 骨架屏占位：4:3 比例，与 matplotlib 默认输出一致 */}
       {!loaded && (
-        <div className="w-full rounded-xl bg-hover animate-media-pulse flex items-center justify-center"
-          style={{ minHeight: '200px', minWidth: '300px' }}
+        <div className="w-full rounded-xl bg-hover dark:bg-surface-dark-card animate-media-pulse flex items-center justify-center"
+          style={{ aspectRatio: '4/3' }}
         >
-          <svg className="w-10 h-10 text-text-disabled" xmlns="http://www.w3.org/2000/svg"
+          <svg className="w-10 h-10 text-text-disabled dark:text-text-tertiary" xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
             strokeLinecap="round" strokeLinejoin="round"
           >
