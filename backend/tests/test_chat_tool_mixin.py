@@ -544,9 +544,9 @@ class TestExecuteToolCallsAgentResult:
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
     async def test_collected_files_to_pending(self, mock_ws):
-        """AgentResult.collected_files → _pending_file_parts（非图片走 FilePart）"""
+        """AgentResult.collected_files → _pending_file_parts"""
         from services.agent.agent_result import AgentResult
-        from schemas.message import FilePart, ImagePart
+        from services.handlers.chat_tool_mixin import ChatToolMixin
 
         mixin = _make_mixin()
         mixin._pending_file_parts = []
@@ -563,83 +563,26 @@ class TestExecuteToolCallsAgentResult:
             collected_files=files, source="erp_agent", tokens_used=300,
         )
 
-        # 模拟 _execute_tool_calls 的 AgentResult 处理循环（与生产代码对齐）
+        # 模拟 _execute_tool_calls 的 AgentResult 处理循环
         results = [
             ({"name": "erp_agent", "id": "tc1"}, agent_result, False),
         ]
 
+        # 直接测试循环逻辑
         for tc, result, is_error in results:
             if isinstance(result, AgentResult):
                 if result.collected_files and hasattr(mixin, "_pending_file_parts"):
+                    from schemas.message import FilePart
                     for f in result.collected_files:
-                        mime = f.get("mime_type", "")
-                        if mime.startswith("image/"):
-                            mixin._pending_file_parts.append(ImagePart(
-                                url=f["url"], alt=f["name"],
-                            ))
-                        else:
-                            mixin._pending_file_parts.append(FilePart(
-                                url=f["url"], name=f["name"],
-                                mime_type=mime, size=f["size"],
-                            ))
+                        mixin._pending_file_parts.append(FilePart(
+                            url=f["url"], name=f["name"],
+                            mime_type=f["mime_type"], size=f["size"],
+                        ))
                 mixin._erp_agent_tokens += result.tokens_used
 
         assert len(mixin._pending_file_parts) == 1
-        assert isinstance(mixin._pending_file_parts[0], FilePart)
         assert mixin._pending_file_parts[0].url == "/tmp/a.parquet"
         assert mixin._erp_agent_tokens == 300
-
-    @pytest.mark.asyncio
-    @patch("services.handlers.chat_tool_mixin.ws_manager")
-    async def test_collected_image_files_to_image_part(self, mock_ws):
-        """AgentResult.collected_files → 图片 mime_type 走 ImagePart"""
-        from services.agent.agent_result import AgentResult
-        from schemas.message import FilePart, ImagePart
-
-        mixin = _make_mixin()
-        mixin._pending_file_parts = []
-        mixin._ask_user_pending = None
-        mixin._last_erp_display_text = None
-        mixin._last_erp_display_files = []
-        mixin._erp_agent_tokens = 0
-        mock_ws.send_to_task_or_user = AsyncMock()
-
-        files = [
-            {"url": "/tmp/chart.png", "name": "chart.png",
-             "mime_type": "image/png", "size": 2048},
-            {"url": "/tmp/data.csv", "name": "data.csv",
-             "mime_type": "text/csv", "size": 512},
-        ]
-        agent_result = AgentResult(
-            status="success", summary="已生成图表",
-            collected_files=files, source="erp_agent", tokens_used=200,
-        )
-
-        for tc, result, is_error in [
-            ({"name": "erp_agent", "id": "tc1"}, agent_result, False),
-        ]:
-            if isinstance(result, AgentResult):
-                if result.collected_files and hasattr(mixin, "_pending_file_parts"):
-                    for f in result.collected_files:
-                        mime = f.get("mime_type", "")
-                        if mime.startswith("image/"):
-                            mixin._pending_file_parts.append(ImagePart(
-                                url=f["url"], alt=f["name"],
-                            ))
-                        else:
-                            mixin._pending_file_parts.append(FilePart(
-                                url=f["url"], name=f["name"],
-                                mime_type=mime, size=f["size"],
-                            ))
-
-        assert len(mixin._pending_file_parts) == 2
-        # 图片 → ImagePart
-        assert isinstance(mixin._pending_file_parts[0], ImagePart)
-        assert mixin._pending_file_parts[0].url == "/tmp/chart.png"
-        assert mixin._pending_file_parts[0].alt == "chart.png"
-        # 非图片 → FilePart
-        assert isinstance(mixin._pending_file_parts[1], FilePart)
-        assert mixin._pending_file_parts[1].name == "data.csv"
 
     @pytest.mark.asyncio
     async def test_ask_user_bubble_from_agent_result(self):

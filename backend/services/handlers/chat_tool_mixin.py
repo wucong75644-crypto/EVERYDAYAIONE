@@ -114,20 +114,13 @@ class ChatToolMixin:
                 f"has_pending={hasattr(self, '_pending_file_parts')}"
             )
             if result.collected_files and hasattr(self, "_pending_file_parts"):
-                from schemas.message import FilePart, ImagePart
+                from schemas.message import FilePart
                 for f in result.collected_files:
-                    mime = f.get("mime_type", "")
-                    if mime.startswith("image/"):
-                        self._pending_file_parts.append(ImagePart(
-                            url=f["url"], alt=f["name"],
-                        ))
-                        logger.info(f"ImagePart added | name={f['name']} | url={f['url'][:80]}")
-                    else:
-                        self._pending_file_parts.append(FilePart(
-                            url=f["url"], name=f["name"],
-                            mime_type=mime, size=f["size"],
-                        ))
-                        logger.info(f"FilePart added | name={f['name']} | url={f['url'][:80]}")
+                    self._pending_file_parts.append(FilePart(
+                        url=f["url"], name=f["name"],
+                        mime_type=f["mime_type"], size=f["size"],
+                    ))
+                    logger.info(f"FilePart added | name={f['name']} | url={f['url'][:80]}")
             # ② ask_user 冒泡
             if (result.status == "ask_user" and result.ask_user_question
                     and not getattr(self, "_ask_user_pending", None)):
@@ -339,20 +332,15 @@ class ChatToolMixin:
         if not result or "[FILE]" not in result:
             return result
 
-        from schemas.message import FilePart, ImagePart
+        from schemas.message import FilePart
 
         def _replace_match(m):
             url, name, mime_type, size = m.groups()
-            if mime_type.startswith("image/"):
-                self._pending_file_parts.append(ImagePart(
-                    url=url, alt=name,
-                ))
-            else:
-                self._pending_file_parts.append(FilePart(
-                    url=url, name=name, mime_type=mime_type, size=int(size),
-                ))
+            self._pending_file_parts.append(FilePart(
+                url=url, name=name, mime_type=mime_type, size=int(size),
+            ))
             # LLM 上下文不暴露 URL（防止 LLM 幻觉篡改域名）
-            # 下载链接由 FilePart 文件卡片 / ImagePart 图片卡片提供
+            # 下载链接由 FilePart 文件卡片提供
             return f"📎 文件已生成: {name}"
 
         return _FILE_PATTERN.sub(_replace_match, result)
