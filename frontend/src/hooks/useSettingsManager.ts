@@ -90,7 +90,7 @@ export function useSettingsManager(): UseSettingsManagerReturn {
   // 聊天模型参数
   const [chatSettings, setChatSettings] = useState<ChatSettings>({
     thinkingEffort: savedSettings.chat?.thinkingEffort || 'low',
-    deepThinkMode: false, // 非持久化字段，每次会话重置
+    deepThinkMode: true, // 默认开启深度思考
     temperature: savedSettings.chat?.temperature ?? 1.0,
     topP: savedSettings.chat?.topP ?? 0.95,
     topK: savedSettings.chat?.topK ?? 40,
@@ -162,7 +162,7 @@ export function useSettingsManager(): UseSettingsManagerReturn {
     });
     setChatSettings({
       thinkingEffort: defaults.chat.thinkingEffort,
-      deepThinkMode: false,
+      deepThinkMode: true,
       temperature: defaults.chat.temperature,
       topP: defaults.chat.topP,
       topK: defaults.chat.topK,
