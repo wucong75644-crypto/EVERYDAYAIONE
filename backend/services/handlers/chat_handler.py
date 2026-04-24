@@ -731,6 +731,24 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
             # 合并工具执行过程中积累的 FilePart（沙盒 upload_file 生成）
             if self._pending_file_parts:
+                # 后处理：用 FilePart 的正确 URL 把 LLM 文本中的纯文件名变成 markdown 链接
+                # 解决：LLM 上下文不含 URL（防幻觉），但最终消息需要可点击的下载链接
+                _file_url_map = {p.name: p.url for p in self._pending_file_parts}
+                if _file_url_map:
+                    from schemas.message import TextPart as _TP
+                    for i, part in enumerate(result_parts):
+                        if isinstance(part, _TP) and part.text:
+                            _text = part.text
+                            for fname, furl in _file_url_map.items():
+                                # 跳过已存在的 markdown 链接 [name](...)
+                                if f"[{fname}](" in _text:
+                                    continue
+                                # 替换纯文件名为 markdown 链接
+                                if fname in _text:
+                                    _text = _text.replace(fname, f"[{fname}]({furl})")
+                            if _text != part.text:
+                                result_parts[i] = _TP(text=_text)
+
                 result_parts.extend(self._pending_file_parts)
                 self._pending_file_parts = []
 
