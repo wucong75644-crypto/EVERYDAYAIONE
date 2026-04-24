@@ -35,6 +35,38 @@ if TYPE_CHECKING:
     from services.kuaimai.erp_sync_service import ErpSyncService
 
 
+async def _backfill_item_names(
+    svc: "ErpSyncService", rows: list[dict[str, Any]],
+) -> None:
+    """批量回填 item_name：快麦采购类 API 不返回 title，用 erp_products.title 补全。"""
+    missing = {
+        r["outer_id"] for r in rows
+        if not r.get("item_name") and r.get("outer_id")
+    }
+    if not missing:
+        return
+
+    try:
+        result = svc.db.table("erp_products").select(
+            "outer_id, title",
+        ).in_("outer_id", list(missing))
+        if svc.org_id:
+            result = result.eq("org_id", svc.org_id)
+        data = result.execute().data
+        name_map = {r["outer_id"]: r["title"] for r in data if r.get("title")}
+    except Exception as e:
+        logger.warning(f"backfill_item_names 查询失败，跳过 | error={e}")
+        return
+
+    filled = 0
+    for r in rows:
+        if not r.get("item_name") and r.get("outer_id") in name_map:
+            r["item_name"] = name_map[r["outer_id"]]
+            filled += 1
+    if filled:
+        logger.info(f"backfill_item_names | filled={filled}/{len(rows)}")
+
+
 # ── 采购单 (purchase) ──────────────────────────────────
 
 
@@ -84,13 +116,16 @@ async def sync_purchase(
                 "price": _fen_to_yuan(item.get("price")),
                 "amount": _fen_to_yuan(item.get("amount") or item.get("totalFee")),
                 "supplier_name": doc.get("supplierName"),
+                "supplier_code": item.get("supplierCode") or doc.get("supplierCode"),
                 "warehouse_name": doc.get("receiveWarehouseName"),
+                "warehouse_id": str(doc["receiveWarehouseId"]) if doc.get("receiveWarehouseId") else None,
                 "creator_name": doc.get("createrName"),
                 "delivery_date": _safe_ts(item.get("deliveryDate")),
                 "remark": doc.get("remark"),
                 "extra_json": extra,
             })
 
+    await _backfill_item_names(svc, all_rows)
     count = await svc.upsert_document_items(all_rows)
     await svc.run_aggregation(svc.collect_affected_keys(all_rows))
     return count
@@ -143,12 +178,15 @@ async def sync_receipt(
                 "price": _fen_to_yuan(item.get("price")),
                 "amount": _fen_to_yuan(item.get("amount")),
                 "supplier_name": item.get("supplierName") or doc.get("supplierName"),
+                "supplier_code": item.get("supplierCode") or doc.get("supplierCode"),
                 "warehouse_name": doc.get("warehouseName"),
+                "warehouse_id": str(doc["warehouseId"]) if doc.get("warehouseId") else None,
                 "creator_name": doc.get("createrName"),
                 "purchase_order_code": doc.get("purchaseOrderCode"),
                 "extra_json": extra,
             })
 
+    await _backfill_item_names(svc, all_rows)
     count = await svc.upsert_document_items(all_rows)
     await svc.run_aggregation(svc.collect_affected_keys(all_rows))
     return count
@@ -191,9 +229,16 @@ async def sync_shelf(
                 "sku_outer_id": item.get("outerId"),      # outerId=SKU编码
                 "item_name": item.get("title"),
                 "quantity": item.get("count"),
+                "price": _fen_to_yuan(item.get("price")),
                 "warehouse_name": doc.get("warehouseName"),
+                "warehouse_id": str(doc["warehouseId"]) if doc.get("warehouseId") else None,
+                "supplier_name": doc.get("supplierName"),
+                "supplier_code": svc.resolve_supplier_code(doc.get("supplierName")),
+                "creator_name": doc.get("creator"),        # shelf 用 creator 非 createrName
+                "purchase_order_code": doc.get("weCode"),  # 关联收货单号
             })
 
+    await _backfill_item_names(svc, all_rows)
     count = await svc.upsert_document_items(all_rows)
     await svc.run_aggregation(svc.collect_affected_keys(all_rows))
     return count
@@ -250,12 +295,15 @@ async def sync_purchase_return(
                 "price": _fen_to_yuan(item.get("price")),
                 "amount": _fen_to_yuan(item.get("amount")),
                 "supplier_name": item.get("supplierName") or doc.get("supplierName"),
+                "supplier_code": item.get("supplierCode") or doc.get("supplierCode"),
                 "warehouse_name": doc.get("warehouseName"),
+                "warehouse_id": str(doc["warehouseId"]) if doc.get("warehouseId") else None,
                 "creator_name": doc.get("createrName"),
                 "purchase_order_code": po_code,
                 "extra_json": extra,
             })
 
+    await _backfill_item_names(svc, all_rows)
     count = await svc.upsert_document_items(all_rows)
     await svc.run_aggregation(svc.collect_affected_keys(all_rows))
     return count

@@ -268,12 +268,15 @@ def build_local_tools() -> List[Dict[str, Any]]:
                     ["doc_created_at", "pay_time", "consign_time"],
                 ),
                 "shop_name": _str("按店铺过滤（模糊匹配）"),
+                "shop_user_id": _str("按店铺ID精确过滤（从local_shop_list获取）"),
                 "platform": _str(
                     "按平台过滤(tb=淘宝/jd=京东/pdd=拼多多/fxg=抖音/"
                     "kuaishou=快手/xhs=小红书/1688)",
                 ),
                 "supplier_name": _str("按供应商过滤（模糊匹配）"),
+                "supplier_code": _str("按供应商编码精确过滤（从supplier_list获取）"),
                 "warehouse_name": _str("按仓库过滤"),
+                "warehouse_id": _str("按仓库ID精确过滤（从local_warehouse_list获取）"),
             },
             ["doc_type", "compare_kind", "current_period"],
         ),

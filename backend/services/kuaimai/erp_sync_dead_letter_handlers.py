@@ -49,7 +49,9 @@ def _build_purchase(doc: dict, detail: dict) -> list[dict[str, Any]]:
             "price": item.get("price"),
             "amount": item.get("amount") or item.get("totalFee"),
             "supplier_name": doc.get("supplierName"),
+            "supplier_code": item.get("supplierCode") or doc.get("supplierCode"),
             "warehouse_name": doc.get("receiveWarehouseName"),
+            "warehouse_id": str(doc["receiveWarehouseId"]) if doc.get("receiveWarehouseId") else None,
             "creator_name": doc.get("createrName"),
             "delivery_date": _safe_ts(item.get("deliveryDate")),
             "remark": doc.get("remark"),
@@ -82,7 +84,9 @@ def _build_receipt(doc: dict, detail: dict) -> list[dict[str, Any]]:
             "price": item.get("price"),
             "amount": item.get("amount"),
             "supplier_name": item.get("supplierName") or doc.get("supplierName"),
+            "supplier_code": item.get("supplierCode") or doc.get("supplierCode"),
             "warehouse_name": doc.get("warehouseName"),
+            "warehouse_id": str(doc["warehouseId"]) if doc.get("warehouseId") else None,
             "creator_name": doc.get("createrName"),
             "purchase_order_code": doc.get("purchaseOrderCode"),
             "extra_json": extra,
@@ -108,6 +112,8 @@ def _build_shelf(doc: dict, detail: dict) -> list[dict[str, Any]]:
             "item_name": item.get("title"),
             "quantity": item.get("count"),
             "warehouse_name": doc.get("warehouseName"),
+            "warehouse_id": str(doc["warehouseId"]) if doc.get("warehouseId") else None,
+            "supplier_name": doc.get("supplierName"),
         })
     return rows
 
@@ -139,7 +145,9 @@ def _build_purchase_return(doc: dict, detail: dict) -> list[dict[str, Any]]:
             "price": item.get("price"),
             "amount": item.get("amount"),
             "supplier_name": item.get("supplierName") or doc.get("supplierName"),
+            "supplier_code": item.get("supplierCode") or doc.get("supplierCode"),
             "warehouse_name": doc.get("warehouseName"),
+            "warehouse_id": str(doc["warehouseId"]) if doc.get("warehouseId") else None,
             "creator_name": doc.get("createrName"),
             "purchase_order_code": po_code,
             "extra_json": extra,
