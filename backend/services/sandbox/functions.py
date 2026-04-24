@@ -80,6 +80,7 @@ def build_sandbox_executor(
                 encoded_key = quote(object_key, safe="/")
                 url = f"https://{_cs.oss_cdn_domain}/workspace/{encoded_key}"
                 return (
+                    f"✅ 文件已生成: {safe_name}\n"
                     f"[FILE]{url}|{safe_name}|{mime_type}|{size}[/FILE]"
                 )
             except ValueError:
