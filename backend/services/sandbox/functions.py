@@ -74,8 +74,11 @@ def build_sandbox_executor(
             _ws_base = Path(_cs.file_workspace_root).resolve()
             _file_path = Path(_output_dir) / safe_name
             try:
+                from urllib.parse import quote
                 object_key = str(_file_path.relative_to(_ws_base))
-                url = f"https://{_cs.oss_cdn_domain}/workspace/{object_key}"
+                # URL 编码路径（中文+括号等特殊字符），保留 /
+                encoded_key = quote(object_key, safe="/")
+                url = f"https://{_cs.oss_cdn_domain}/workspace/{encoded_key}"
                 return (
                     f"✅ 文件已生成: {safe_name}\n"
                     f"[FILE]{url}|{safe_name}|{mime_type}|{size}[/FILE]"
