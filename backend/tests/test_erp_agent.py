@@ -715,10 +715,10 @@ class TestPushThinking:
         """有 task_id+message_id → 收集到 _thinking_parts + 推送 WS"""
         agent = self._make_agent(task_id="t1", message_id="m1")
         with patch("services.websocket_manager.ws_manager") as mock_ws:
-            mock_ws.send_to_user = AsyncMock()
+            mock_ws.send_to_task_or_user = AsyncMock()
             await agent._push_thinking("查询中...")
         assert "→ 查询中..." in agent._thinking_parts
-        mock_ws.send_to_user.assert_awaited_once()
+        mock_ws.send_to_task_or_user.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_silent_without_task_id(self):

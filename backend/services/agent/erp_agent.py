@@ -335,13 +335,17 @@ class ERPAgent:
         if not self.task_id or not self.message_id:
             return
         try:
+            from schemas.websocket_builders import build_thinking_chunk
             from services.websocket_manager import ws_manager
-            await ws_manager.send_to_user(self.user_id, {
-                "type": "thinking_chunk", "task_id": self.task_id,
-                "conversation_id": self.conversation_id,
-                "message_id": self.message_id,
-                "text": f"\n── ERP Agent ──\n→ {text}\n",
-            })
+            msg = build_thinking_chunk(
+                task_id=self.task_id,
+                conversation_id=self.conversation_id,
+                message_id=self.message_id,
+                chunk=f"\n── ERP Agent ──\n→ {text}\n",
+            )
+            await ws_manager.send_to_task_or_user(
+                self.task_id, self.user_id, msg
+            )
         except Exception:
             pass
 
