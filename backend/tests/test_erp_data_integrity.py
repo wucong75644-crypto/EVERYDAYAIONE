@@ -455,7 +455,7 @@ class TestRowBuilderFields:
         assert row["total_fee"] == "120.00"
         assert row["unified_status"] == "WAIT_DELIVER"
         assert row["weight"] == "0.5"
-        assert row["warehouse_id"] == 42
+        assert row["warehouse_id"] == "42"
 
     def test_order_rows_trade_tags_defensive(self):
         """tradeTags 非 list 时降级为 None"""
