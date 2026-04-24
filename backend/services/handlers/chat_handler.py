@@ -602,23 +602,36 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         "content": content,
                     })
 
-                # ── 文件块嵌入 content 流（而非末尾追加）──
+                # ── 文件块嵌入 content 流 + 实时推送前端 ──
                 # 设计文档：TECH_内容块混排渲染架构.md §6.2
+                # 通过 content_block_add 立即推送，前端流式阶段即可渲染占位符
                 if self._pending_file_parts:
+                    from schemas.websocket import build_content_block_add
                     for _fp in self._pending_file_parts:
                         if _fp.mime_type.startswith("image/"):
-                            _content_blocks.append({
+                            _block = {
                                 "type": "image", "url": _fp.url,
                                 "alt": _fp.name,
-                            })
+                            }
                         else:
-                            _content_blocks.append({
+                            _block = {
                                 "type": "file", "url": _fp.url,
                                 "name": _fp.name, "mime_type": _fp.mime_type,
                                 "size": _fp.size,
-                            })
+                            }
+                        _content_blocks.append(_block)
+                        # 实时推送：前端立即渲染（图片→骨架屏，文件→卡片）
+                        await ws_manager.send_to_task_or_user(
+                            task_id, user_id,
+                            build_content_block_add(
+                                task_id=task_id,
+                                conversation_id=conversation_id,
+                                message_id=message_id,
+                                block=_block,
+                            ),
+                        )
                     logger.info(
-                        f"File blocks inserted into content stream | "
+                        f"File blocks pushed to frontend | "
                         f"count={len(self._pending_file_parts)} | task={task_id}"
                     )
                     self._pending_file_parts.clear()
