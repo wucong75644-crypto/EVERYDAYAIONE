@@ -48,6 +48,8 @@ from config.phase_tools import _build_ask_user_tool
 
 # 只读工具 — 可并行
 _CONCURRENT_SAFE_TOOLS: Set[str] = {
+    # Agent（只读查询，内部自行管理并发）
+    "erp_agent",
     # ERP 查询（远程 + 本地）
     "erp_info_query", "erp_product_query", "erp_trade_query",
     "erp_aftersales_query", "erp_warehouse_query", "erp_purchase_query",
@@ -137,7 +139,8 @@ erp_agent 返回的 staging 文件需要转 Excel 或关联计算时使用，或
 - 数据查询有歧义时调 ask_user 追问用户（猜错代价 > 多问一次）
 - 需要追问时用 ask_user 工具，简洁语言 + 2-3 个选项引导选择
 - 信息完整无歧义时直接执行，不要反复确认
-- 复杂多步分析（≥3步）先列计划等用户确认，再一次性执行"""
+- 复杂多步分析（≥3步）先列计划等用户确认，再一次性执行
+- 你可以在一轮中调用多个工具，无依赖关系的工具调用应并行发起以提高效率。但如果某个调用依赖另一个的结果，必须顺序执行"""
 
 
 def get_tool_system_prompt() -> str:

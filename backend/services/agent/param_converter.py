@@ -261,13 +261,16 @@ def params_to_filters(params: dict) -> list[dict]:
             filters.append({"field": db_field, "op": "eq", "value": val})
 
     # ── 批量：文本模糊匹配 ──
+    # 空格→%：LLM 常在中文和数字间插入噪音空格（"纸制品 01"），
+    # 转为通配符使 ILIKE '%纸制品%01%' 同时兼容有/无空格的真实数据。
     for param_key, db_field in TEXT_LIKE_FIELDS.items():
         val = params.get(param_key)
         if isinstance(val, str):
             val = val.strip()
         if val:
+            like_val = "%" + val.replace(" ", "%") + "%"
             filters.append({
-                "field": db_field, "op": "like", "value": f"%{val}%",
+                "field": db_field, "op": "like", "value": like_val,
             })
 
     # ── 批量：枚举精确匹配（中文 → DB 值归一化） ──
