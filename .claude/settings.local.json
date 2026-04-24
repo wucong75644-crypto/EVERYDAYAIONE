@@ -1548,7 +1548,18 @@
       "Bash(awk 'NR>=451' services/agent/tool_loop_executor.py)",
       "Bash(awk 'NR>451 && /^    async def |^    def |^class /{print NR; exit}' services/agent/tool_loop_executor.py)",
       "Bash(awk 'NR==689{print}' services/agent/tool_loop_executor.py)",
-      "Bash(awk 'NR>=688' services/agent/tool_loop_executor.py)"
+      "Bash(awk 'NR>=688' services/agent/tool_loop_executor.py)",
+      "Bash(python -c \"from services.agent.plan_builder import build_multi_extract_prompt, parse_multi_extract_response; print\\('OK'\\)\")",
+      "Bash(python -c \"from services.agent.erp_agent import ERPAgent, PlanStep, ExecutionPlan; print\\('OK'\\)\")",
+      "Bash(python -c \"from services.agent.erp_agent import ERPAgent, PlanStep, ExecutionPlan; print\\('Import OK'\\)\")",
+      "Bash(python -c \"from config.erp_tools import build_erp_tools, ERP_ROUTING_PROMPT, ERP_TOOL_SCHEMAS; print\\('OK'\\)\")",
+      "Bash(grep -r \"PlanStep\\\\|ExecutionPlan\" /Users/wucong/EVERYDAYAIONE/backend --include=\"*.py\" ! -path \"*/__pycache__/*\")",
+      "Bash(grep -A5 -B5 \"step_params_map\\\\|OutputFormat, OutputStatus\\\\|OutputFormat$\")",
+      "Bash(grep -n \"_build_llm_messages\\\\|build_llm_messages\" /Users/wucong/EVERYDAYAIONE/backend/services/handlers/*.py)",
+      "Bash(grep -r \"_build_where\\\\|_apply_filters\\\\|filters.*field\\\\|erp_global_stats_query\" /Users/wucong/EVERYDAYAIONE/backend/services/kuaimai/*.py)",
+      "Bash(grep -n \"p_filters\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(grep -r \"p_filters\\\\|_filters\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(./git-push.sh \"refactor: ERPAgent从ToolLoopExecutor回归DepartmentAgent编排——一次LLM提取计划+并行部门执行+结构化返回，恢复白名单校验，预期耗时30s→5s\")"
     ],
     "additionalDirectories": [
       "/tmp"

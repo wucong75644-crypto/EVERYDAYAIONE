@@ -75,21 +75,25 @@ class TestERPQueryPath:
         )
         assert result.status == "empty"
 
-    def test_erp_agent_converts_loop_result_to_agent_result(self):
-        """ERPAgent._convert_result() 从 LoopResult 构建 AgentResult"""
-        from services.agent.erp_agent import ERPAgent
+    @pytest.mark.asyncio
+    async def test_erp_agent_converts_loop_result_to_agent_result(self):
+        """ERPAgent._build_multi_result() 从 DepartmentAgent 结果构建 AgentResult"""
+        from services.agent.erp_agent import ERPAgent, PlanStep, ExecutionPlan
 
-        # 模拟 LoopResult
-        mock_loop_result = MagicMock()
-        mock_loop_result.text = "共 23 笔退货，金额 ¥1,234"
-        mock_loop_result.total_tokens = 500
-        mock_loop_result.is_llm_synthesis = True
-        mock_loop_result.exit_via_ask_user = False
-        mock_loop_result.collected_files = []
+        mock_tool_output = MagicMock()
+        mock_tool_output.summary = "共 23 笔退货，金额 ¥1,234"
+        mock_tool_output.status = "ok"
+        mock_tool_output.format = MagicMock(value="text")
+        mock_tool_output.file_ref = None
+        mock_tool_output.data = None
+        mock_tool_output.columns = None
 
-        result = ERPAgent._convert_result(mock_loop_result)
+        agent = ERPAgent(db=MagicMock(), user_id="u1", conversation_id="c1", org_id="org1")
+        plan = ExecutionPlan(steps=[PlanStep("aftersale", {})])
+        result = agent._build_multi_result(
+            [("aftersale", mock_tool_output)], plan, "查退货",
+        )
 
-        # 最终返回 AgentResult
         assert isinstance(result, AgentResult)
         assert result.status == "success"
         assert result.source == "erp_agent"

@@ -106,11 +106,13 @@ TOOL_SYSTEM_PROMPT = """## 工具决策规则
 ### erp_agent — ERP 数据检索
 用户问任何涉及订单/库存/采购/售后/发货/物流/商品/销量/统计的问题时调用。
 task 原样传递用户的话，conversation_context 给最近相关的对话内容。
-erp_agent 是 worker 进程，返回结构化数据或简短事实结论：
-- 结果正常 → 基于返回数据向用户呈现，加上对话上下文做适当解读
-- 参数不足（Result 中提到缺少参数）→ 用 ask_user 向用户补充，然后重新调用
-- 错误（Result 中报告错误）→ 告知用户并建议替代方案
-不要重复 erp_agent 已返回的原始数据，基于它做呈现即可。
+erp_agent 是 worker 进程，返回数据摘要或 staging 文件引用：
+- 纯数字结论 → 直接向用户呈现，加上下文做适当解读
+- 含 [文件已存入 staging] → 用户要导出时调 code_execute 读 staging 转 Excel
+- 含 [关联计算提示] → 调 code_execute 按提示读多个 staging 文件关联计算
+- 参数不足 → 用 ask_user 补充后重新调用
+- 错误 → 告知用户并建议替代方案
+不要重复 erp_agent 的原始数据，基于它做呈现即可。
 
 ### search_knowledge — 知识库
 业务规则、操作流程等非数据类问题。
@@ -122,8 +124,8 @@ erp_agent 是 worker 进程，返回结构化数据或简短事实结论：
 用户要求画图/生成视频时使用。
 
 ### code_execute — 代码执行
-erp_agent 返回的文件需要二次加工时使用，或处理用户上传的工作区文件。
-Excel 文件必须用 engine='calamine'，大结果写文件不要 print(df)。
+erp_agent 返回的 staging 文件需要转 Excel 或关联计算时使用，或处理用户上传的工作区文件。
+读 Excel 用 engine='calamine'，写 Excel 用 engine='xlsxwriter'。大结果写文件不要 print(df)。
 
 ### 工作区文件
 用 file_list 确认文件名，code_execute 读取处理。Excel/二进制不能用 file_read。
