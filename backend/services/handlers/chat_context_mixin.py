@@ -471,7 +471,9 @@ class ChatContextMixin:
                             ts_prefix = f"[{msg_time.strftime('%m-%d %H:%M')}] "
 
                     # 有图片时用多模态格式，无图片时保持纯文本（节省 token）
-                    if images:
+                    # 注意：只有 user 消息可以发 image_url（视觉理解），
+                    # assistant 消息中的图片（沙盒图表等）转为文本占位符，LLM API 不接受 assistant 的 image_url
+                    if images and row["role"] == "user":
                         parts: List[Dict[str, Any]] = []
                         if text:
                             parts.append({"type": "text", "text": f"{ts_prefix}{text}"})
@@ -481,6 +483,10 @@ class ChatContextMixin:
                                 "image_url": {"url": url},
                             })
                         context.append({"role": row["role"], "content": parts})
+                    elif images and row["role"] == "assistant":
+                        # assistant 图片转为文本占位符（LLM API 不接受 assistant 的 image_url）
+                        img_hint = "".join(f"\n📊 [已生成图表]" for _ in images)
+                        context.append({"role": "assistant", "content": f"{ts_prefix}{text}{img_hint}"})
                     else:
                         context.append({"role": row["role"], "content": f"{ts_prefix}{text}"})
                     total_tokens += msg_tokens

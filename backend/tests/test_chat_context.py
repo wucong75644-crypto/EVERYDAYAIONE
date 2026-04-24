@@ -199,7 +199,7 @@ class TestBuildContextMessages:
 
     @pytest.mark.asyncio
     async def test_includes_image_only_messages(self, chat_handler, mock_db):
-        """图片消息（无文本）也被包含，以多模态格式传递"""
+        """assistant 图片消息转为文本占位符（LLM API 不接受 assistant 的 image_url）"""
         mock_db.set_table_data("messages", [
             _make_msg("user", "看看这张图"),
             _make_msg("assistant", [{"type": "image", "url": "https://img.png"}]),
@@ -211,9 +211,9 @@ class TestBuildContextMessages:
         assert len(result) == 2
         assert result[0] == {"role": "user", "content": _ts("第一条消息")}
         assert result[1]["role"] == "assistant"
-        assert result[1]["content"] == [
-            {"type": "image_url", "image_url": {"url": "https://img.png"}},
-        ]
+        # assistant 图片不以 image_url 发送，转为文本占位符
+        assert "📊 [已生成图表]" in result[1]["content"]
+        assert isinstance(result[1]["content"], str)
 
     @pytest.mark.asyncio
     async def test_mixed_content_includes_text_and_image(self, chat_handler, mock_db):
@@ -403,17 +403,17 @@ class TestBuildContextMessages:
 
     @pytest.mark.asyncio
     async def test_image_limit_caps_total_images(self, chat_handler, mock_db):
-        """图片数量超过 chat_context_max_images 时截断"""
+        """图片数量超过 chat_context_max_images 时截断（仅 user 图片计数）"""
         mock_db.set_table_data("messages", [
             _make_msg("user", "当前"),
-            # 最新消息：3 张图（DESC 第一条）
+            # 最新消息：3 张 user 图（DESC 第一条）
             _make_msg("user", [
                 {"type": "text", "text": "三张图"},
                 {"type": "image", "url": "https://img1.png"},
                 {"type": "image", "url": "https://img2.png"},
                 {"type": "image", "url": "https://img3.png"},
             ]),
-            # 较旧消息：2 张图（DESC 第二条）
+            # 较旧消息：assistant 图片转为文本占位符，不占 image_url 配额
             _make_msg("assistant", [
                 {"type": "text", "text": "生成了两张"},
                 {"type": "image", "url": "https://img4.png"},
@@ -427,14 +427,13 @@ class TestBuildContextMessages:
 
             result = await chat_handler._build_context_messages("conv1", "当前")
 
-        # 最新消息 3 张全部保留，较旧消息只保留 1 张（4-3=1）
         assert len(result) == 2
-        # 旧消息（正序第一条）：只有 1 张图片
+        # 旧消息（正序第一条）：assistant 图片变文本占位符
         older = result[0]
         assert older["role"] == "assistant"
-        image_parts = [p for p in older["content"] if p.get("type") == "image_url"]
-        assert len(image_parts) == 1
-        # 新消息（正序第二条）：3 张图片
+        assert isinstance(older["content"], str)
+        assert "📊 [已生成图表]" in older["content"]
+        # 新消息（正序第二条）：user 图片保留 image_url 格式
         newer = result[1]
         assert newer["role"] == "user"
         image_parts = [p for p in newer["content"] if p.get("type") == "image_url"]
