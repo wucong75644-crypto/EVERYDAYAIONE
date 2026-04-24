@@ -113,6 +113,30 @@ class ErpSyncService:
             self._client = KuaiMaiClient()
         return self._client
 
+    # ── 维度表反查缓存 ─────────────────────────────────────
+
+    def resolve_supplier_code(self, supplier_name: str | None) -> str | None:
+        """通过 supplier_name 反查 erp_suppliers.code（带会话级缓存）。
+
+        仅 shelf（上架单）需要：shelf API 只返回 supplierId 不返回 supplierCode，
+        其他采购类 API 直接返回 supplierCode。
+        """
+        if not supplier_name:
+            return None
+        if not hasattr(self, "_supplier_name_map"):
+            try:
+                q = self.db.table("erp_suppliers").select("code, name")
+                if self.org_id:
+                    q = q.eq("org_id", self.org_id)
+                data = q.execute().data
+                self._supplier_name_map: dict[str, str] = {
+                    r["name"]: r["code"] for r in data if r.get("code")
+                }
+            except Exception as e:
+                logger.warning(f"resolve_supplier_code 加载失败 | error={e}")
+                self._supplier_name_map = {}
+        return self._supplier_name_map.get(supplier_name)
+
     # ── 主入口 ────────────────────────────────────────────
 
     async def sync(self, sync_type: str) -> None:

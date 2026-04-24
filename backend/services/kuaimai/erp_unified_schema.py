@@ -56,9 +56,12 @@ COLUMN_WHITELIST: dict[str, ColumnMeta] = {
     "volume": ColumnMeta("numeric"),
     # 关联方
     "shop_name": ColumnMeta("text"),
+    "shop_user_id": ColumnMeta("text"),
     "platform": ColumnMeta("text"),
     "supplier_name": ColumnMeta("text"),
+    "supplier_code": ColumnMeta("text"),
     "warehouse_name": ColumnMeta("text"),
+    "warehouse_id": ColumnMeta("text"),
     # 关联人
     "creator_name": ColumnMeta("text"),
     # 订单物流

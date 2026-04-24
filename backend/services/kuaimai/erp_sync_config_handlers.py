@@ -59,6 +59,7 @@ async def sync_shop(
             "state": s.get("state", 3),
             "group_name": s.get("groupName"),
             "deadline": str(s.get("deadline", "")) if s.get("deadline") else None,
+            "user_id": str(s["userId"]) if s.get("userId") else None,
             "extra_json": _pick(s, "userId", "source", "serviceName"),
             "synced_at": now_cn().isoformat(),
         })

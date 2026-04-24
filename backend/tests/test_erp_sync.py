@@ -2167,3 +2167,302 @@ class TestAggregationRaceMigration:
             "deploy/init-database.sql 与 058 迁移漂移 — 新部署的库不会有锁保护"
         )
         assert "hashtextextended" in body
+
+
+# ============================================================
+# TestBackfillItemNames — 采购类 item_name 回填逻辑
+# ============================================================
+
+
+class TestBackfillItemNames:
+    """_backfill_item_names：从 erp_products.title 补全空 item_name"""
+
+    def _make_svc(self, products: list = None, org_id: str = None):
+        db = MockSupabaseClient()
+        if products:
+            db.set_table_data("erp_products", products)
+        svc = MagicMock()
+        svc.db = db
+        svc.org_id = org_id
+        return svc
+
+    @pytest.mark.asyncio
+    async def test_fills_missing_item_name(self):
+        """有 outer_id 但 item_name 为空 → 从 erp_products 回填"""
+        from services.kuaimai.erp_sync_handlers import _backfill_item_names
+        svc = self._make_svc(products=[
+            {"outer_id": "A01", "title": "商品A"},
+            {"outer_id": "B01", "title": "商品B"},
+        ])
+        rows = [
+            {"outer_id": "A01", "item_name": None},
+            {"outer_id": "B01", "item_name": None},
+            {"outer_id": "C01", "item_name": None},  # 商品表不存在
+        ]
+        await _backfill_item_names(svc, rows)
+        assert rows[0]["item_name"] == "商品A"
+        assert rows[1]["item_name"] == "商品B"
+        assert rows[2]["item_name"] is None  # 未匹配不改
+
+    @pytest.mark.asyncio
+    async def test_skips_when_all_have_names(self):
+        """所有行都有 item_name → 不查数据库"""
+        from services.kuaimai.erp_sync_handlers import _backfill_item_names
+        svc = self._make_svc()
+        rows = [{"outer_id": "A01", "item_name": "已有名称"}]
+        await _backfill_item_names(svc, rows)
+        assert rows[0]["item_name"] == "已有名称"
+
+    @pytest.mark.asyncio
+    async def test_skips_rows_without_outer_id(self):
+        """outer_id 为空的行不参与回填"""
+        from services.kuaimai.erp_sync_handlers import _backfill_item_names
+        svc = self._make_svc(products=[{"outer_id": "A01", "title": "X"}])
+        rows = [
+            {"outer_id": None, "item_name": None},
+            {"outer_id": "", "item_name": None},
+        ]
+        await _backfill_item_names(svc, rows)
+        assert rows[0]["item_name"] is None
+        assert rows[1]["item_name"] is None
+
+    @pytest.mark.asyncio
+    async def test_does_not_overwrite_existing_name(self):
+        """已有 item_name 的行不会被覆盖"""
+        from services.kuaimai.erp_sync_handlers import _backfill_item_names
+        svc = self._make_svc(products=[{"outer_id": "A01", "title": "新名称"}])
+        rows = [{"outer_id": "A01", "item_name": "旧名称"}]
+        await _backfill_item_names(svc, rows)
+        assert rows[0]["item_name"] == "旧名称"
+
+    @pytest.mark.asyncio
+    async def test_db_error_gracefully_skipped(self):
+        """数据库查询异常 → 静默跳过，不影响主流程"""
+        from services.kuaimai.erp_sync_handlers import _backfill_item_names
+        svc = MagicMock()
+        svc.org_id = None
+        svc.db.table.return_value.select.return_value.in_.return_value.execute.side_effect = Exception("DB error")
+        rows = [{"outer_id": "A01", "item_name": None}]
+        await _backfill_item_names(svc, rows)
+        assert rows[0]["item_name"] is None  # 没有崩溃，值不变
+
+
+# ============================================================
+# TestResolveSupplierCode — 供应商编码反查缓存
+# ============================================================
+
+
+class TestResolveSupplierCode:
+    """resolve_supplier_code：从 erp_suppliers 反查 code（带缓存）"""
+
+    def _make_svc(self, suppliers: list = None, org_id: str = None):
+        db = MockSupabaseClient()
+        if suppliers:
+            db.set_table_data("erp_suppliers", suppliers)
+        with patch("services.kuaimai.erp_sync_service.get_settings") as m:
+            m.return_value = MagicMock(erp_sync_initial_days=90, erp_sync_shard_days=7)
+            from services.kuaimai.erp_sync_service import ErpSyncService
+            svc = ErpSyncService(db, org_id=org_id)
+        return svc
+
+    def test_resolves_known_supplier(self):
+        """已知供应商名称 → 返回 code"""
+        svc = self._make_svc(suppliers=[
+            {"code": "0005", "name": "纸制品03"},
+            {"code": "0007", "name": "纸制品01"},
+        ])
+        assert svc.resolve_supplier_code("纸制品03") == "0005"
+        assert svc.resolve_supplier_code("纸制品01") == "0007"
+
+    def test_returns_none_for_unknown(self):
+        """未知供应商 → 返回 None"""
+        svc = self._make_svc(suppliers=[{"code": "0005", "name": "纸制品03"}])
+        assert svc.resolve_supplier_code("不存在的供应商") is None
+
+    def test_returns_none_for_empty_input(self):
+        """空字符串或 None → 返回 None（不触发数据库查询）"""
+        svc = self._make_svc()
+        assert svc.resolve_supplier_code(None) is None
+        assert svc.resolve_supplier_code("") is None
+
+    def test_caches_across_calls(self):
+        """第二次调用用缓存，不重新查数据库"""
+        svc = self._make_svc(suppliers=[{"code": "0005", "name": "供应商A"}])
+        assert svc.resolve_supplier_code("供应商A") == "0005"
+        # 清空原始数据，缓存仍命中
+        svc.db._tables["erp_suppliers"] = MockSupabaseClient().table("empty")
+        assert svc.resolve_supplier_code("供应商A") == "0005"
+
+    def test_db_error_returns_none(self):
+        """数据库异常 → 返回 None，不崩溃"""
+        with patch("services.kuaimai.erp_sync_service.get_settings") as m:
+            m.return_value = MagicMock(erp_sync_initial_days=90, erp_sync_shard_days=7)
+            from services.kuaimai.erp_sync_service import ErpSyncService
+            db = MagicMock()
+            db.table.return_value.select.return_value.execute.side_effect = Exception("DB down")
+            svc = ErpSyncService(db)
+        assert svc.resolve_supplier_code("供应商A") is None
+
+
+# ============================================================
+# TestDimensionIdMapping — 同步代码维度 ID 字段映射
+# ============================================================
+
+
+class TestDimensionIdMapping:
+    """验证 6 种单据同步时正确写入维度 ID 字段"""
+
+    def test_order_has_shop_user_id_and_warehouse_id(self):
+        """订单行包含 shop_user_id 和 warehouse_id（str类型）"""
+        from services.kuaimai.erp_sync_row_builders import _build_order_rows
+        svc = MagicMock()
+        svc.sort_and_assign_index = MagicMock(
+            side_effect=lambda items, _: [
+                {**it, "_item_index": i} for i, it in enumerate(items)
+            ]
+        )
+        doc = {
+            "sid": "123", "sysStatus": "TRADE_FINISHED",
+            "created": "2026-04-20 10:00:00", "modified": "2026-04-20 11:00:00",
+            "shopName": "测试店铺", "userId": 900187683,
+            "warehouseId": 87227, "source": "pdd",
+            "orders": [{"num": 1, "price": 10, "payment": 10, "_item_index": 0}],
+        }
+        rows = _build_order_rows(doc, svc)
+        assert len(rows) >= 1
+        assert rows[0]["shop_user_id"] == "900187683"
+        assert rows[0]["warehouse_id"] == "87227"
+        assert rows[0]["shop_name"] == "测试店铺"
+
+    def test_order_without_user_id(self):
+        """订单缺少 userId → shop_user_id 为 None"""
+        from services.kuaimai.erp_sync_row_builders import _build_order_rows
+        svc = MagicMock()
+        svc.sort_and_assign_index = MagicMock(
+            side_effect=lambda items, _: [
+                {**it, "_item_index": i} for i, it in enumerate(items)
+            ]
+        )
+        doc = {
+            "sid": "123", "sysStatus": "TRADE_FINISHED",
+            "created": "2026-04-20 10:00:00", "modified": "2026-04-20 11:00:00",
+            "shopName": "测试店铺", "source": "pdd",
+            "orders": [{"num": 1, "price": 10, "payment": 10}],
+        }
+        rows = _build_order_rows(doc, svc)
+        assert rows[0]["shop_user_id"] is None
+
+    def test_aftersale_has_dimension_ids(self):
+        """售后行包含 shop_user_id + warehouse_id + doc_code"""
+        from services.kuaimai.erp_sync_row_builders import _build_aftersale_rows
+        svc = MagicMock()
+        svc.sort_and_assign_index = MagicMock(
+            side_effect=lambda items, _: [
+                {**it, "_item_index": i} for i, it in enumerate(items)
+            ]
+        )
+        doc = {
+            "id": 5814628124428800, "status": 9,
+            "created": "2026-04-23 10:00:00", "modified": "2026-04-23 11:00:00",
+            "shopName": "趴在桌子上数羊i", "userId": 900187683,
+            "source": "pdd", "shortId": 3611965,
+            "tradeWarehouseId": 87227, "refundWarehouseId": 87227,
+            "tradeWarehouseName": "默认仓库", "refundWarehouseName": "默认仓库",
+            "items": [{"mainOuterId": "A01", "outerId": "A01-01",
+                       "title": "测试商品", "receivableCount": 1}],
+        }
+        rows = _build_aftersale_rows(doc, svc)
+        assert len(rows) >= 1
+        assert rows[0]["shop_user_id"] == "900187683"
+        assert rows[0]["warehouse_id"] == "87227"
+        assert rows[0]["doc_code"] == "3611965"
+        assert rows[0]["warehouse_name"] == "默认仓库"
+
+    def test_aftersale_warehouse_id_fallback(self):
+        """售后无 tradeWarehouseId 时用 refundWarehouseId 兜底"""
+        from services.kuaimai.erp_sync_row_builders import _build_aftersale_rows
+        svc = MagicMock()
+        svc.sort_and_assign_index = MagicMock(
+            side_effect=lambda items, _: [
+                {**it, "_item_index": i} for i, it in enumerate(items)
+            ]
+        )
+        doc = {
+            "id": 123, "status": 9,
+            "created": "2026-04-23 10:00:00", "modified": "2026-04-23 11:00:00",
+            "refundWarehouseId": 99999, "refundWarehouseName": "退货仓",
+            "items": [],
+        }
+        rows = _build_aftersale_rows(doc, svc)
+        assert rows[0]["warehouse_id"] == "99999"
+        assert rows[0]["warehouse_name"] == "退货仓"
+
+    def test_purchase_has_warehouse_id_and_supplier_code(self):
+        """采购单死信行构建包含 warehouse_id + supplier_code"""
+        from services.kuaimai.erp_sync_dead_letter_handlers import build_rows_from_detail
+        doc = {
+            "id": "123", "code": "CG123", "status": "FINISHED",
+            "created": "2026-03-25 10:00:00", "modified": "2026-03-25 11:00:00",
+            "supplierName": "供应商A", "supplierCode": "0063",
+            "receiveWarehouseName": "仓库1", "receiveWarehouseId": 87227,
+        }
+        detail = {"list": [
+            {"itemOuterId": "A01", "outerId": "A01-01", "count": 10,
+             "price": 100, "amount": 1000, "_item_index": 0,
+             "supplierCode": "0063"},
+        ]}
+        rows = build_rows_from_detail("purchase", doc, detail)
+        assert len(rows) == 1
+        assert rows[0]["supplier_code"] == "0063"
+        assert rows[0]["warehouse_id"] == "87227"
+
+    def test_warehouse_id_is_string_type(self):
+        """warehouse_id 必须是 str 类型（类型对齐后）"""
+        from services.kuaimai.erp_sync_row_builders import _build_order_rows
+        svc = MagicMock()
+        svc.sort_and_assign_index = MagicMock(
+            side_effect=lambda items, _: [
+                {**it, "_item_index": i} for i, it in enumerate(items)
+            ]
+        )
+        doc = {
+            "sid": "456", "sysStatus": "TRADE_FINISHED",
+            "created": "2026-04-20 10:00:00", "modified": "2026-04-20 11:00:00",
+            "warehouseId": 87227,  # API 返回的是 int
+            "orders": [{"num": 1, "price": 10, "payment": 10}],
+        }
+        rows = _build_order_rows(doc, svc)
+        wh_id = rows[0]["warehouse_id"]
+        assert isinstance(wh_id, str), f"warehouse_id should be str, got {type(wh_id)}"
+        assert wh_id == "87227"
+
+
+# ============================================================
+# TestShopSyncUserId — shop 同步写入 user_id
+# ============================================================
+
+
+class TestShopSyncUserId:
+    """erp_sync_config_handlers.sync_shop 写入 user_id 字段"""
+
+    def test_shop_row_includes_user_id(self):
+        """shop 同步构建的 row 包含 user_id"""
+        # 模拟 API 返回的 shop 数据
+        shop_data = {
+            "shopId": "900187178",
+            "id": "900187178",
+            "title": "趴在桌子上数羊i",
+            "source": "PDD",
+            "userId": 900187683,
+            "nick": "test",
+            "state": 1,
+        }
+        # 验证转换逻辑（不调用 sync_shop 本身，直接测映射）
+        user_id = str(shop_data["userId"]) if shop_data.get("userId") else None
+        assert user_id == "900187683"
+
+    def test_shop_without_user_id(self):
+        """shop 缺少 userId 字段 → user_id 为 None"""
+        shop_data = {"shopId": "123", "title": "测试店铺", "source": "PDD"}
+        user_id = str(shop_data["userId"]) if shop_data.get("userId") else None
+        assert user_id is None

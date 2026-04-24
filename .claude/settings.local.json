@@ -1559,7 +1559,26 @@
       "Bash(grep -r \"_build_where\\\\|_apply_filters\\\\|filters.*field\\\\|erp_global_stats_query\" /Users/wucong/EVERYDAYAIONE/backend/services/kuaimai/*.py)",
       "Bash(grep -n \"p_filters\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
       "Bash(grep -r \"p_filters\\\\|_filters\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
-      "Bash(./git-push.sh \"refactor: ERPAgent从ToolLoopExecutor回归DepartmentAgent编排——一次LLM提取计划+并行部门执行+结构化返回，恢复白名单校验，预期耗时30s→5s\")"
+      "Bash(./git-push.sh \"refactor: ERPAgent从ToolLoopExecutor回归DepartmentAgent编排——一次LLM提取计划+并行部门执行+结构化返回，恢复白名单校验，预期耗时30s→5s\")",
+      "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python3 -c ' *)",
+      "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python3)",
+      "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python3 -m pytest tests/test_erp_sync.py -x -q --timeout=30)",
+      "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python3 -m pytest tests/test_erp_sync.py -x -q)",
+      "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python3 -m pytest tests/ -x -q -k \"unified_query or erp_unified or duckdb\")",
+      "Bash(grep -l \"erp_document_items\\\\|erp_products\\\\|erp_shops\\\\|erp_warehouses\\\\|erp_suppliers\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(grep -r \"supplier\\\\|warehouse\\\\|shop\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(grep -r \"ALTER TABLE erp_products\\\\|ALTER TABLE erp_product_skus\\\\|ALTER TABLE erp_suppliers\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(grep -r \"warehouse_id\\\\|shop_id\\\\|supplier_code\\\\|supplier_id\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python3 -m pytest tests/test_erp_sync.py tests/test_unified_query.py -x -q)",
+      "Bash(python -m pytest tests/test_tool_loop_tooloutput.py -x -q)",
+      "Bash(python -m pytest tests/ -k \"file_part or FilePart or extract_file or pending_file\" -x -q)",
+      "Bash(python -m pytest tests/test_chat_tool_mixin.py tests/test_chat_handler*.py -x -q)",
+      "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python3 -m pytest tests/test_erp_sync.py tests/test_unified_query.py tests/test_erp_duckdb_helpers.py -x -q)",
+      "Bash(grep -r \"class.*Agent\" /Users/wucong/EVERYDAYAIONE/backend/services/agent/*.py)",
+      "Bash(grep -n \"erp_global_stats_query\\\\|erp_order_stats_grouped\" /Users/wucong/EVERYDAYAIONE/backend/migrations/094*)",
+      "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python3 -m pytest tests/test_erp_sync.py -x -q --tb=short)",
+      "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python3 -m pytest tests/test_erp_sync.py tests/test_unified_query.py tests/test_erp_duckdb_helpers.py -x -q --tb=short)",
+      "Bash(./git-push.sh \"feat: 维度ID补全与星型模型改造——补全supplier_code/shop_user_id/warehouse_id，RPC改用ID分组+JOIN取名称，修复item_name/warehouse_name/doc_code等6处字段映射缺失\")"
     ],
     "additionalDirectories": [
       "/tmp"
