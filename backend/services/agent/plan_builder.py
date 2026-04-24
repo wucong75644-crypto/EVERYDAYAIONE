@@ -191,6 +191,83 @@ def _build_fallback_params(
     return params
 
 
+# ── 参数定义文本（单域/多域 prompt 共用）──
+
+_PARAM_DEFINITIONS = (
+    "参数定义：\n"
+    "【基础参数（必填）】\n"
+    "- doc_type: order/purchase/purchase_return/aftersale/receipt/shelf（必填）\n"
+    "- mode: summary（统计汇总/多少/占比）/ export（获取数据/明细/导出/列表）（必填）\n"
+    "- time_range: 标准化为 YYYY-MM-DD ~ YYYY-MM-DD 或 YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM（必填，根据当前时间推算；用户指定了具体时间点时带上 HH:MM）\n"
+    "- time_col: pay_time（付款时间）/ consign_time（发货时间）/ doc_created_at（创建时间，默认）/ apply_date（售后申请日期）/ delivery_date（采购预计到货日）/ finished_at（售后完结日期）\n"
+    "\n"
+    "【通用过滤参数（可选，用户提到才提取）】\n"
+    "- platform: taobao/pdd/douyin/jd/kuaishou/xhs/1688\n"
+    "- product_code: 商品编码\n"
+    "- order_no: 订单号（平台订单号或ERP系统单号）\n"
+    "- shop_name: 店铺名称（模糊匹配）\n"
+    "- warehouse_name: 仓库名称（模糊匹配）\n"
+    "- item_name: 商品名称（模糊匹配）\n"
+    "- creator_name: 创建人姓名（模糊匹配）\n"
+    "- doc_code: 单据编号（精确匹配，如采购单号PO...、售后单号AS...）\n"
+    "- sku_code: SKU编码/变体编码（精确匹配）\n"
+    "\n"
+    "【订单域过滤参数（doc_type=order 时可用）】\n"
+    "- express_no: 快递单号（如SF/YT/ZTO/JD/EMS开头的单号）\n"
+    "- express_company: 快递公司名（如顺丰/圆通/中通/韵达）\n"
+    "- buyer_nick: 买家昵称（精确匹配）\n"
+    "- receiver_name: 收件人姓名（精确匹配）\n"
+    "- receiver_state: 收件省份（如广东/浙江/上海）\n"
+    "- receiver_city: 收件城市（如深圳/杭州）\n"
+    "- receiver_district: 收件区县（如朝阳区/余杭区）\n"
+    "- receiver_address: 收件详细地址关键词（模糊匹配）\n"
+    "- order_status: 订单状态。可选值: WAIT_BUYER_PAY(待付款)/WAIT_AUDIT(待审核)/"
+    "WAIT_SEND_GOODS(待发货)/SELLER_SEND_GOODS(已发货)/FINISHED(已完成)/CLOSED(已关闭)\n"
+    "- order_type: 订单类型。可选值: 补发/换货/预售/合并/拆分/加急\n"
+    "- is_cancel: 布尔值，查已取消订单时设为 true\n"
+    "- is_refund: 布尔值，查有退款的订单时设为 true\n"
+    "- is_exception: 布尔值，查异常订单时设为 true\n"
+    "- is_halt: 布尔值，查被拦截的订单时设为 true\n"
+    "- is_urgent: 布尔值，查加急订单时设为 true\n"
+    "- is_presell: 布尔值，查预售订单时设为 true\n"
+    "- sku_properties_name: SKU规格属性关键词（如颜色/尺码/款式，模糊匹配）\n"
+    "\n"
+    "【售后域过滤参数（doc_type=aftersale 时可用）】\n"
+    "- aftersale_type: 售后类型（如 仅退款/退货退款/换货）\n"
+    "- refund_status: 退款状态（如 退款中/退款成功/退款关闭）\n"
+    "- good_status: 货物状态（如 买家未发/买家已发/卖家已收/无需退货）\n"
+    "- online_status: 售后在线状态（如 待卖家同意/待买家退货/退款成功/退款关闭/换货成功）\n"
+    "- handler_status: 售后处理状态（如 待处理/处理成功/处理失败）\n"
+    "- text_reason: 退货原因关键词（模糊匹配）\n"
+    "- refund_express_no: 退货快递单号（精确匹配）\n"
+    "- refund_express_company: 退货快递公司（模糊匹配）\n"
+    "- refund_warehouse_name: 退货仓库（模糊匹配）\n"
+    "- platform_refund_id: 平台退款单号（精确匹配）\n"
+    "- reason: 退货原因编码（模糊匹配，用于按原因分类筛选）\n"
+    "\n"
+    "【采购域过滤参数（doc_type=purchase/purchase_return 时可用）】\n"
+    "- supplier_name: 供应商名称（模糊匹配）\n"
+    "- purchase_order_code: 采购单号（精确匹配）\n"
+    "- doc_status: 单据状态（如 待审核/已审核/待收货/已完成）\n"
+    "\n"
+    "【刷单/特殊过滤】\n"
+    "- include_invalid: 布尔值，默认 false。仅当用户明确要求'包含全部'或'不排除刷单'时设为 true。\n"
+    "- is_scalping: 布尔值，默认 false。用户查'刷单''空包'时设为 true。\n"
+    "\n"
+    "【展示控制】\n"
+    "- group_by: shop/platform/product/supplier/warehouse/status（可选，仅 summary 模式）\n"
+    "- fields: 需要返回的特定字段列表（可选，用户明确提到特定信息时提取）\n"
+    "  可选字段：remark(备注)/buyer_message(买家留言)/express_no(快递单号)/"
+    "express_company(快递公司)/buyer_nick(买家昵称)/receiver_name(收件人)/"
+    "receiver_address(地址)/cost(成本)/gross_profit(毛利)/text_reason(退货原因)\n"
+    "  注意：不提则用默认字段，不要主动添加用户未提到的字段\n\n"
+    "【重要规则】\n"
+    "- 用户给了一个单号但没说是什么类型时：纯数字16-19位→order_no；字母+数字（如SF/YT/ZTO/JD开头）→express_no\n"
+    "- 用户指定订单号或快递单号查询时，time_range 仍然必填（用最近3个月）\n"
+    "- 用户未指定具体状态值时不要猜测，留空让系统返回全部\n"
+)
+
+
 # ── LLM Prompt（单域扁平结构）──
 
 def build_extract_prompt(query: str, now_str: str = "") -> str:
@@ -211,78 +288,8 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         "规则：\n"
         "1. 只输出一个域（每次查询只查一个域的数据）\n"
         "2. 如果查询涉及多个域，选最主要的那个\n\n"
-        "参数定义：\n"
-        "【基础参数（必填）】\n"
-        "- doc_type: order/purchase/purchase_return/aftersale/receipt/shelf（必填）\n"
-        "- mode: summary（统计汇总/多少/占比）/ export（获取数据/明细/导出/列表）（必填）\n"
-        "- time_range: 标准化为 YYYY-MM-DD ~ YYYY-MM-DD 或 YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM（必填，根据当前时间推算；用户指定了具体时间点时带上 HH:MM）\n"
-        "- time_col: pay_time（付款时间）/ consign_time（发货时间）/ doc_created_at（创建时间，默认）/ apply_date（售后申请日期）/ delivery_date（采购预计到货日）/ finished_at（售后完结日期）\n"
-        "\n"
-        "【通用过滤参数（可选，用户提到才提取）】\n"
-        "- platform: taobao/pdd/douyin/jd/kuaishou/xhs/1688\n"
-        "- product_code: 商品编码\n"
-        "- order_no: 订单号（平台订单号或ERP系统单号）\n"
-        "- shop_name: 店铺名称（模糊匹配）\n"
-        "- warehouse_name: 仓库名称（模糊匹配）\n"
-        "- item_name: 商品名称（模糊匹配）\n"
-        "- creator_name: 创建人姓名（模糊匹配）\n"
-        "- doc_code: 单据编号（精确匹配，如采购单号PO...、售后单号AS...）\n"
-        "- sku_code: SKU编码/变体编码（精确匹配）\n"
-        "\n"
-        "【订单域过滤参数（doc_type=order 时可用）】\n"
-        "- express_no: 快递单号（如SF/YT/ZTO/JD/EMS开头的单号）\n"
-        "- express_company: 快递公司名（如顺丰/圆通/中通/韵达）\n"
-        "- buyer_nick: 买家昵称（精确匹配）\n"
-        "- receiver_name: 收件人姓名（精确匹配）\n"
-        "- receiver_state: 收件省份（如广东/浙江/上海）\n"
-        "- receiver_city: 收件城市（如深圳/杭州）\n"
-        "- receiver_district: 收件区县（如朝阳区/余杭区）\n"
-        "- receiver_address: 收件详细地址关键词（模糊匹配）\n"
-        "- order_status: 订单状态。可选值: WAIT_BUYER_PAY(待付款)/WAIT_AUDIT(待审核)/"
-        "WAIT_SEND_GOODS(待发货)/SELLER_SEND_GOODS(已发货)/FINISHED(已完成)/CLOSED(已关闭)\n"
-        "- order_type: 订单类型。可选值: 补发/换货/预售/合并/拆分/加急\n"
-        "- is_cancel: 布尔值，查已取消订单时设为 true\n"
-        "- is_refund: 布尔值，查有退款的订单时设为 true\n"
-        "- is_exception: 布尔值，查异常订单时设为 true\n"
-        "- is_halt: 布尔值，查被拦截的订单时设为 true\n"
-        "- is_urgent: 布尔值，查加急订单时设为 true\n"
-        "- is_presell: 布尔值，查预售订单时设为 true\n"
-        "- sku_properties_name: SKU规格属性关键词（如颜色/尺码/款式，模糊匹配）\n"
-        "\n"
-        "【售后域过滤参数（doc_type=aftersale 时可用）】\n"
-        "- aftersale_type: 售后类型（如 仅退款/退货退款/换货）\n"
-        "- refund_status: 退款状态（如 退款中/退款成功/退款关闭）\n"
-        "- good_status: 货物状态（如 买家未发/买家已发/卖家已收/无需退货）\n"
-        "- online_status: 售后在线状态（如 待卖家同意/待买家退货/退款成功/退款关闭/换货成功）\n"
-        "- handler_status: 售后处理状态（如 待处理/处理成功/处理失败）\n"
-        "- text_reason: 退货原因关键词（模糊匹配）\n"
-        "- refund_express_no: 退货快递单号（精确匹配）\n"
-        "- refund_express_company: 退货快递公司（模糊匹配）\n"
-        "- refund_warehouse_name: 退货仓库（模糊匹配）\n"
-        "- platform_refund_id: 平台退款单号（精确匹配）\n"
-        "- reason: 退货原因编码（模糊匹配，用于按原因分类筛选）\n"
-        "\n"
-        "【采购域过滤参数（doc_type=purchase/purchase_return 时可用）】\n"
-        "- supplier_name: 供应商名称（模糊匹配）\n"
-        "- purchase_order_code: 采购单号（精确匹配）\n"
-        "- doc_status: 单据状态（如 待审核/已审核/待收货/已完成）\n"
-        "\n"
-        "【刷单/特殊过滤】\n"
-        "- include_invalid: 布尔值，默认 false。仅当用户明确要求'包含全部'或'不排除刷单'时设为 true。\n"
-        "- is_scalping: 布尔值，默认 false。用户查'刷单''空包'时设为 true。\n"
-        "\n"
-        "【展示控制】\n"
-        "- group_by: shop/platform/product/supplier/warehouse/status（可选，仅 summary 模式）\n"
-        "- fields: 需要返回的特定字段列表（可选，用户明确提到特定信息时提取）\n"
-        "  可选字段：remark(备注)/buyer_message(买家留言)/express_no(快递单号)/"
-        "express_company(快递公司)/buyer_nick(买家昵称)/receiver_name(收件人)/"
-        "receiver_address(地址)/cost(成本)/gross_profit(毛利)/text_reason(退货原因)\n"
-        "  注意：不提则用默认字段，不要主动添加用户未提到的字段\n\n"
-        "【重要规则】\n"
-        "- 用户给了一个单号但没说是什么类型时：纯数字16-19位→order_no；字母+数字（如SF/YT/ZTO/JD开头）→express_no\n"
-        "- 用户指定订单号或快递单号查询时，time_range 仍然必填（用最近3个月）\n"
-        "- 用户未指定具体状态值时不要猜测，留空让系统返回全部\n\n"
-        "返回纯 JSON（不要 markdown 围栏）。\n\n"
+        + _PARAM_DEFINITIONS +
+        "\n返回纯 JSON（不要 markdown 围栏）。\n\n"
         "示例1（今日付款订单统计）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"summary",'
         '"time_range":"2026-04-17 ~ 2026-04-17","time_col":"pay_time"}}\n\n'
@@ -309,6 +316,135 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         '{"domain": "aftersale", "params": {"doc_type":"aftersale","mode":"export",'
         '"time_range":"2026-04-01 ~ 2026-04-17","text_reason":"质量"}}'
     )
+
+
+# ── LLM Prompt（多域编排结构）──
+
+
+def build_multi_extract_prompt(query: str, now_str: str = "") -> str:
+    """构建让 LLM 提取多域查询计划的 prompt。
+
+    输出格式：{"steps": [{"domain":"...", "params":{...}}, ...], "compute_hint":"..."}
+    单域查询输出 1 个 step（最常见场景），跨域输出 2-4 个 step。
+    """
+    time_line = f"当前时间：{now_str}\n\n" if now_str else ""
+    return (
+        f"{time_line}"
+        "分析以下用户查询，提取查询计划（JSON格式）。\n\n"
+        f"用户查询：{query}\n\n"
+        "可用域：\n"
+        "- warehouse：库存/仓库/出入库/盘点\n"
+        "- purchase：采购/供应商/到货/采退\n"
+        "- trade：订单/物流/发货\n"
+        "- aftersale：退货/退款/售后\n\n"
+        "规则：\n"
+        "1. 大部分查询只涉及一个域 → 输出 1 个 step\n"
+        "2. 仅当用户需要跨域关联数据时输出多个 step（最多4个）\n"
+        "   跨域场景：退货率（订单+售后）、商品流转（订单+采购+库存）、"
+        "采购到货与销售对比（采购+订单）\n"
+        "3. 每个 step 独立提取参数，共享相同的时间范围和过滤条件\n"
+        "4. compute_hint 仅在跨域需要计算时填写，"
+        "告诉下游怎么关联和计算（用哪个字段 join、算什么指标）\n"
+        "5. 不确定是否跨域时，默认单域\n\n"
+        + _PARAM_DEFINITIONS +
+        "\n返回纯 JSON（不要 markdown 围栏）。\n\n"
+        "示例1（单域：今日付款订单统计）：\n"
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '"mode":"summary","time_range":"2026-04-17 ~ 2026-04-17",'
+        '"time_col":"pay_time"}}]}\n\n'
+        "示例2（单域：退货按商品分组）：\n"
+        '{"steps":[{"domain":"aftersale","params":{"doc_type":"aftersale",'
+        '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-17",'
+        '"group_by":"product"}}]}\n\n'
+        "示例3（跨域：HZ001 商品的退货率）：\n"
+        '{"steps":['
+        '{"domain":"trade","params":{"doc_type":"order","mode":"summary",'
+        '"time_range":"2026-04-01 ~ 2026-04-17","product_code":"HZ001"}},'
+        '{"domain":"aftersale","params":{"doc_type":"aftersale",'
+        '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-17",'
+        '"product_code":"HZ001"}}'
+        '],"compute_hint":"用 product_code 关联，'
+        '退货率 = 售后笔数 / 订单笔数"}\n\n'
+        "示例4（跨域：本月各商品采购到货与销量对比）：\n"
+        '{"steps":['
+        '{"domain":"purchase","params":{"doc_type":"purchase",'
+        '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-17",'
+        '"group_by":"product"}},'
+        '{"domain":"trade","params":{"doc_type":"order","mode":"summary",'
+        '"time_range":"2026-04-01 ~ 2026-04-17","group_by":"product"}}'
+        '],"compute_hint":"用 product_code 关联采购量和销量，'
+        '计算采销比"}\n\n'
+        "示例5（单域：刷单统计）：\n"
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-17",'
+        '"is_scalping":true,"include_invalid":true}}]}'
+    )
+
+
+def parse_multi_extract_response(
+    raw_json: str,
+) -> tuple[list[tuple[str, dict]], str | None]:
+    """解析 LLM 返回的多域计划 JSON。
+
+    返回 (steps: [(domain, params), ...], compute_hint: str | None)。
+    向后兼容：旧格式 {"domain":..., "params":...} 自动包装为单 step。
+    """
+    cleaned = re.sub(r"```(?:json)?\s*", "", raw_json)
+    cleaned = cleaned.replace("```", "").strip()
+
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"LLM 返回的不是合法 JSON: {e}")
+
+    if not isinstance(data, dict):
+        raise ValueError("LLM 返回格式不是 dict")
+
+    # ── 向后兼容：旧单域格式 {"domain":..., "params":...} ──
+    if "domain" in data and "steps" not in data:
+        domain = data["domain"]
+        if domain not in VALID_DOMAINS:
+            raise ValueError(
+                f"未知域 '{domain}'，可选: {', '.join(sorted(VALID_DOMAINS))}",
+            )
+        params = data.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+        return ([(domain, params)], None)
+
+    # ── 新多域格式 {"steps":[...], "compute_hint":"..."} ──
+    steps_raw = data.get("steps")
+    if not steps_raw or not isinstance(steps_raw, list):
+        raise ValueError("LLM 返回缺少 steps 数组")
+
+    steps: list[tuple[str, dict]] = []
+    for i, step in enumerate(steps_raw):
+        if not isinstance(step, dict):
+            raise ValueError(f"steps[{i}] 不是 dict")
+        domain = step.get("domain", "")
+        if not domain:
+            raise ValueError(f"steps[{i}] 缺少 domain")
+        if domain not in VALID_DOMAINS:
+            raise ValueError(
+                f"steps[{i}] 未知域 '{domain}'，"
+                f"可选: {', '.join(sorted(VALID_DOMAINS))}",
+            )
+        params = step.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+        steps.append((domain, params))
+
+    if not steps:
+        raise ValueError("steps 数组为空")
+    if len(steps) > 4:
+        logger.warning(f"LLM 返回 {len(steps)} 个 step，截断到 4 个")
+        steps = steps[:4]
+
+    compute_hint = data.get("compute_hint")
+    if compute_hint and not isinstance(compute_hint, str):
+        compute_hint = None
+
+    return (steps, compute_hint)
 
 
 def parse_extract_response(raw_json: str) -> tuple[str, dict]:
@@ -401,8 +537,8 @@ def get_capability_manifest() -> dict:
         "returns": [
             "summary 模式：统计数字（总量/金额/分组明细），直接内联",
             "export 模式：数据存 staging parquet + 返回 profile 摘要（行数/字段/预览）",
-            "大数据导出工作流：erp_agent 查数据存 staging → code_execute 读 staging 写 Excel",
-            "每次只查一个业务域，跨域数据并行调用多次",
+            "导出工作流：erp_agent 查数据存 staging → code_execute 读 staging 写 Excel",
+            "跨域查询：一次调用可返回多域数据 + 关联计算提示，code_execute 按提示关联",
         ],
         "examples": [
             {"query": "昨天淘宝退货按店铺统计",

@@ -324,12 +324,12 @@ class TestERPAgentGuards:
 
 
 # ============================================================
-# ERPAgent 单域查询主流程（架构简化后新增）
+# ERPAgent 计划提取 + 并行执行测试
 # ============================================================
 
 
-class TestERPAgentToolLoop:
-    """ERPAgent ToolLoopExecutor 模式测试"""
+class TestExtractPlan:
+    """ERPAgent._extract_plan 三级降级链"""
 
     def _make_agent(self):
         from services.agent.erp_agent import ERPAgent
@@ -339,366 +339,500 @@ class TestERPAgentToolLoop:
         )
 
     @pytest.mark.asyncio
-    async def test_no_org_returns_error(self):
-        """org_id 为空 → 直接返回错误"""
+    async def test_single_domain_llm(self):
+        """LLM 返回单域 → ExecutionPlan 单步"""
+        agent = self._make_agent()
+        with patch.object(agent, "_llm_extract", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = ([("trade", {"doc_type": "order", "mode": "summary"})], None)
+            plan = await agent._extract_plan("今天多少订单")
+        assert plan is not None
+        assert len(plan.steps) == 1
+        assert plan.steps[0].domain == "trade"
+        assert plan.degraded is False
+        assert plan.compute_hint is None
+
+    @pytest.mark.asyncio
+    async def test_multi_domain_llm(self):
+        """LLM 返回多域 + compute_hint"""
+        agent = self._make_agent()
+        with patch.object(agent, "_llm_extract", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = (
+                [("trade", {"doc_type": "order"}), ("aftersale", {"doc_type": "aftersale"})],
+                "用 product_code 关联，退货率 = 售后/订单",
+            )
+            plan = await agent._extract_plan("退货率多少")
+        assert plan is not None
+        assert len(plan.steps) == 2
+        assert plan.steps[0].domain == "trade"
+        assert plan.steps[1].domain == "aftersale"
+        assert plan.compute_hint == "用 product_code 关联，退货率 = 售后/订单"
+
+    @pytest.mark.asyncio
+    async def test_fallback_keyword(self):
+        """LLM 失败 → 关键词降级单域"""
+        agent = self._make_agent()
+        with patch.object(agent, "_llm_extract", new_callable=AsyncMock, side_effect=ValueError("API 错误")):
+            plan = await agent._extract_plan("订单数据查一下")
+        assert plan is not None
+        assert len(plan.steps) == 1
+        assert plan.steps[0].domain == "trade"
+        assert plan.degraded is True
+
+    @pytest.mark.asyncio
+    async def test_abort_no_keyword(self):
+        """LLM 失败 + 无关键词 → None"""
+        agent = self._make_agent()
+        with patch.object(agent, "_llm_extract", new_callable=AsyncMock, side_effect=ValueError("错误")):
+            plan = await agent._extract_plan("你好啊")
+        assert plan is None
+
+    @pytest.mark.asyncio
+    async def test_domain_route_conflict_fixed(self):
+        """L2 域路由冲突: trade + doc_type=purchase → 纠正为 order"""
+        agent = self._make_agent()
+        with patch.object(agent, "_llm_extract", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = ([("trade", {"doc_type": "purchase", "mode": "summary"})], None)
+            plan = await agent._extract_plan("看看采购")
+        assert plan.steps[0].params["doc_type"] == "order"
+
+
+class TestExecutePlan:
+    """ERPAgent._execute_plan 并行执行"""
+
+    def _make_agent(self):
         from services.agent.erp_agent import ERPAgent
-        agent = ERPAgent(
+        return ERPAgent(
             db=MagicMock(), user_id="u1",
-            conversation_id="c1", org_id="",
-        )
-        result = await agent.execute("查订单")
-        assert result.status == "error"
-        assert "未开通" in result.summary
-
-    @pytest.mark.asyncio
-    async def test_execute_calls_tool_loop(self):
-        """execute → _execute_with_tool_loop 被调用"""
-        agent = self._make_agent()
-
-        mock_result = MagicMock()
-        mock_result.text = "今日订单 100 单"
-        mock_result.total_tokens = 500
-        mock_result.turns = 2
-        mock_result.is_llm_synthesis = True
-        mock_result.exit_via_ask_user = False
-        mock_result.collected_files = []
-
-        agent._execute_with_tool_loop = AsyncMock(return_value=MagicMock(
-            status="success", summary="今日订单 100 单",
-            source="erp_agent", tokens_used=500,
-        ))
-
-        result = await agent.execute("今天多少订单")
-        assert result.status == "success"
-        agent._execute_with_tool_loop.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_exception_returns_error(self):
-        """内部异常 → 返回错误，不崩溃"""
-        agent = self._make_agent()
-        agent._execute_with_tool_loop = AsyncMock(
-            side_effect=ConnectionError("DB down"),
+            conversation_id="c1", org_id="org1",
         )
 
-        result = await agent.execute("查订单")
-        assert result.status == "error"
-        assert "DB down" in result.summary
-
-    def test_build_messages(self):
-        """_build_messages 生成正确的 messages 结构"""
+    @pytest.mark.asyncio
+    async def test_single_step_success(self):
+        """单步执行成功"""
+        from services.agent.erp_agent import PlanStep, ExecutionPlan
         agent = self._make_agent()
-        messages = agent._build_messages("今天多少订单")
+        mock_output = MagicMock()
+        mock_output.summary = "订单 100 笔"
+        mock_output.status = "ok"
+        mock_output.format = "text"
+        mock_output.file_ref = None
+        mock_output.data = None
+        mock_output.columns = None
+        mock_agent = MagicMock()
+        mock_agent.execute = AsyncMock(return_value=mock_output)
+        with patch.object(agent, "_create_agent", return_value=mock_agent):
+            import time
+            results = await agent._execute_plan(
+                ExecutionPlan(steps=[PlanStep("trade", {"mode": "summary"})]),
+                "今天多少订单", time.monotonic() + 30,
+            )
+        assert len(results) == 1
+        assert results[0][0] == "trade"
+        assert results[0][1].summary == "订单 100 笔"
 
-        assert len(messages) == 2
-        assert messages[0]["role"] == "system"
-        assert messages[1]["role"] == "user"
-        assert "今天多少订单" in messages[1]["content"]
-        assert "ERP 数据检索 worker" in messages[0]["content"]
+    @pytest.mark.asyncio
+    async def test_parallel_multi_step(self):
+        """多步并行执行"""
+        from services.agent.erp_agent import PlanStep, ExecutionPlan
+        agent = self._make_agent()
+        mock_trade = MagicMock()
+        mock_trade.summary = "订单 100 笔"
+        mock_trade.status = "ok"
+        mock_aftersale = MagicMock()
+        mock_aftersale.summary = "售后 10 笔"
+        mock_aftersale.status = "ok"
 
-    def test_convert_result_success(self):
-        """LoopResult → AgentResult 正常转换"""
+        call_count = 0
+        def make_agent(domain):
+            nonlocal call_count
+            call_count += 1
+            m = MagicMock()
+            m.execute = AsyncMock(return_value=mock_trade if domain == "trade" else mock_aftersale)
+            return m
+
+        with patch.object(agent, "_create_agent", side_effect=make_agent):
+            import time
+            results = await agent._execute_plan(
+                ExecutionPlan(steps=[
+                    PlanStep("trade", {}), PlanStep("aftersale", {}),
+                ]),
+                "退货率", time.monotonic() + 30,
+            )
+        assert len(results) == 2
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_step_exception_captured(self):
+        """单步异常不影响其他步骤"""
+        from services.agent.erp_agent import PlanStep, ExecutionPlan
+        agent = self._make_agent()
+        mock_ok = MagicMock()
+        mock_ok.summary = "数据"
+        mock_ok.status = "ok"
+
+        def make_agent(domain):
+            m = MagicMock()
+            if domain == "trade":
+                m.execute = AsyncMock(return_value=mock_ok)
+            else:
+                m.execute = AsyncMock(side_effect=ConnectionError("网络错误"))
+            return m
+
+        with patch.object(agent, "_create_agent", side_effect=make_agent):
+            import time
+            results = await agent._execute_plan(
+                ExecutionPlan(steps=[PlanStep("trade", {}), PlanStep("aftersale", {})]),
+                "test", time.monotonic() + 30,
+            )
+        # trade 成功，aftersale 是 Exception
+        trade_result = [r for r in results if r[0] == "trade"][0]
+        aftersale_result = [r for r in results if r[0] == "aftersale"][0]
+        assert trade_result[1].summary == "数据"
+        assert isinstance(aftersale_result[1], Exception)
+
+
+class TestBuildMultiResult:
+    """ERPAgent._build_multi_result 结果聚合"""
+
+    def _make_agent(self):
         from services.agent.erp_agent import ERPAgent
+        return ERPAgent(
+            db=MagicMock(), user_id="u1",
+            conversation_id="c1", org_id="org1",
+        )
 
-        mock_loop_result = MagicMock()
-        mock_loop_result.text = "查询结果"
-        mock_loop_result.total_tokens = 300
-        mock_loop_result.is_llm_synthesis = True
-        mock_loop_result.exit_via_ask_user = False
-        mock_loop_result.collected_files = [{"url": "/test.xlsx", "name": "test.xlsx"}]
-
-
-        result = ERPAgent._convert_result(mock_loop_result)
+    @pytest.mark.asyncio
+    async def test_single_success(self):
+        """单步成功 → AgentResult 直传"""
+        from services.agent.erp_agent import PlanStep, ExecutionPlan
+        agent = self._make_agent()
+        mock_output = MagicMock()
+        mock_output.summary = "100 笔订单"
+        mock_output.status = "ok"
+        mock_output.format = MagicMock(value="text")
+        mock_output.file_ref = None
+        mock_output.data = None
+        mock_output.columns = None
+        plan = ExecutionPlan(steps=[PlanStep("trade", {})])
+        result = agent._build_multi_result([("trade", mock_output)], plan, "query")
         assert result.status == "success"
-        assert result.summary == "查询结果"
-        assert result.source == "erp_agent"
-        assert len(result.collected_files) == 1
+        assert result.summary == "100 笔订单"
 
-    def test_convert_result_empty(self):
-        """LoopResult 无合成 → status=empty"""
-        from services.agent.erp_agent import ERPAgent
-
-        mock_loop_result = MagicMock()
-        mock_loop_result.text = "兜底文本"
-        mock_loop_result.total_tokens = 100
-        mock_loop_result.is_llm_synthesis = False
-        mock_loop_result.exit_via_ask_user = False
-        mock_loop_result.collected_files = []
-
-
-        result = ERPAgent._convert_result(mock_loop_result)
-        assert result.status == "empty"
-
-    def test_convert_result_ask_user(self):
-        """LoopResult exit_via_ask_user → status=ask_user"""
-        from services.agent.erp_agent import ERPAgent
-
-        mock_loop_result = MagicMock()
-        mock_loop_result.text = "需要确认哪个商品？"
-        mock_loop_result.total_tokens = 200
-        mock_loop_result.is_llm_synthesis = True
-        mock_loop_result.exit_via_ask_user = True
-
-        mock_loop_result.collected_files = []
-
-        result = ERPAgent._convert_result(mock_loop_result)
-        assert result.status == "ask_user"
-        assert result.ask_user_question == "需要确认哪个商品？"
-
-    def test_build_tool_loop_config(self):
-        """_build_tool_loop 配置正确"""
+    @pytest.mark.asyncio
+    async def test_multi_success_with_compute_hint(self):
+        """多步成功 + compute_hint → metadata 包含 hint"""
+        from services.agent.erp_agent import PlanStep, ExecutionPlan
         agent = self._make_agent()
+        mock_trade = MagicMock(summary="订单 100", status="ok", file_ref=None)
+        mock_aftersale = MagicMock(summary="售后 10", status="ok", file_ref=None)
+        plan = ExecutionPlan(
+            steps=[PlanStep("trade", {}), PlanStep("aftersale", {})],
+            compute_hint="退货率 = 售后/订单",
+        )
+        result = agent._build_multi_result(
+            [("trade", mock_trade), ("aftersale", mock_aftersale)], plan, "q",
+        )
+        assert result.status == "success"
+        assert "订单" in result.summary
+        assert "售后" in result.summary
+        assert result.metadata.get("compute_hint") == "退货率 = 售后/订单"
+
+    @pytest.mark.asyncio
+    async def test_all_errors(self):
+        """全部失败 → error"""
+        from services.agent.erp_agent import PlanStep, ExecutionPlan
+        import asyncio
+        agent = self._make_agent()
+        plan = ExecutionPlan(steps=[PlanStep("trade", {})])
+        result = agent._build_multi_result(
+            [("trade", asyncio.TimeoutError())], plan, "q",
+        )
+        assert result.status == "error"
+        assert "超时" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_partial_failure(self):
+        """部分失败 → 成功的照常返回 + 附带错误提示"""
+        from services.agent.erp_agent import PlanStep, ExecutionPlan
+        agent = self._make_agent()
+        mock_ok = MagicMock(summary="数据", status="ok", format=MagicMock(value="text"),
+                           file_ref=None, data=None, columns=None)
+        plan = ExecutionPlan(steps=[PlanStep("trade", {}), PlanStep("aftersale", {})])
+        result = agent._build_multi_result(
+            [("trade", mock_ok), ("aftersale", ConnectionError("网络"))],
+            plan, "q",
+        )
+        assert result.status == "success"
+        assert "数据" in result.summary
+        assert "售后" in result.summary
+
+
+class TestParseMultiExtractResponse:
+    """parse_multi_extract_response 解析测试"""
+
+    def test_single_step(self):
+        from services.agent.plan_builder import parse_multi_extract_response
+        import json
+        steps, hint = parse_multi_extract_response(json.dumps({
+            "steps": [{"domain": "trade", "params": {"doc_type": "order"}}],
+        }))
+        assert len(steps) == 1
+        assert steps[0][0] == "trade"
+        assert hint is None
+
+    def test_multi_step_with_hint(self):
+        from services.agent.plan_builder import parse_multi_extract_response
+        import json
+        steps, hint = parse_multi_extract_response(json.dumps({
+            "steps": [
+                {"domain": "trade", "params": {}},
+                {"domain": "aftersale", "params": {}},
+            ],
+            "compute_hint": "关联分析",
+        }))
+        assert len(steps) == 2
+        assert hint == "关联分析"
+
+    def test_backward_compat_old_format(self):
+        """旧格式 {"domain":..., "params":...} → 自动包装为单步"""
+        from services.agent.plan_builder import parse_multi_extract_response
+        import json
+        steps, hint = parse_multi_extract_response(json.dumps({
+            "domain": "warehouse", "params": {"mode": "summary"},
+        }))
+        assert len(steps) == 1
+        assert steps[0][0] == "warehouse"
+        assert hint is None
+
+    def test_invalid_domain(self):
+        from services.agent.plan_builder import parse_multi_extract_response
+        import json
+        with pytest.raises(ValueError, match="未知域"):
+            parse_multi_extract_response(json.dumps({
+                "steps": [{"domain": "unknown", "params": {}}],
+            }))
+
+    def test_max_4_steps(self):
+        from services.agent.plan_builder import parse_multi_extract_response
+        import json
+        steps, _ = parse_multi_extract_response(json.dumps({
+            "steps": [{"domain": "trade", "params": {}}] * 6,
+        }))
+        assert len(steps) == 4
+
+
+
+class TestLlmExtract:
+    """ERPAgent._llm_extract LLM 调用"""
+
+    def _make_agent(self):
+        from services.agent.erp_agent import ERPAgent
+        return ERPAgent(db=MagicMock(), user_id="u1", conversation_id="c1", org_id="org1")
+
+    @pytest.mark.asyncio
+    async def test_llm_returns_valid_json(self):
+        """LLM 正常返回 JSON → 解析为 steps + compute_hint"""
+        import json
+        agent = self._make_agent()
+        mock_response = MagicMock()
+        mock_response.content = json.dumps({
+            "steps": [{"domain": "trade", "params": {"doc_type": "order"}}],
+        })
+        mock_response.prompt_tokens = 100
+        mock_response.completion_tokens = 50
 
         mock_adapter = MagicMock()
-        mock_executor = MagicMock()
-        mock_tools = [{"type": "function", "function": {"name": "local_data"}}]
+        mock_adapter.chat_sync = AsyncMock(return_value=mock_response)
+        mock_adapter.close = AsyncMock()
 
-        tool_loop, hook_ctx, budget = agent._build_tool_loop(
-            mock_adapter, mock_executor, mock_tools,
-        )
+        with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter):
+            steps, hint = await agent._llm_extract("今天多少订单")
+        assert len(steps) == 1
+        assert steps[0][0] == "trade"
+        assert agent._tokens_used == 150
+        mock_adapter.close.assert_awaited_once()
 
-        # hook_ctx.task_id 为 None（不推送 WS）
-        assert hook_ctx.task_id is None
-        assert hook_ctx.org_id == "org1"
-        # budget 存在
-        assert budget is not None
+    @pytest.mark.asyncio
+    async def test_llm_adapter_error_raises(self):
+        """adapter 异常 → 抛出，由 _extract_plan 降级处理"""
+        agent = self._make_agent()
+        mock_adapter = MagicMock()
+        mock_adapter.chat_sync = AsyncMock(side_effect=ConnectionError("API 不可用"))
+        mock_adapter.close = AsyncMock()
 
-    def test_build_tool_loop_mounts_thinking_hook_with_ids(self):
-        """task_id + message_id 均存在时挂载 SubAgentThinkingHook"""
+        with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter):
+            with pytest.raises(ConnectionError):
+                await agent._llm_extract("查库存")
+        mock_adapter.close.assert_awaited_once()  # finally 保证关闭
+
+
+class TestCreateAgent:
+    """ERPAgent._create_agent DepartmentAgent 工厂"""
+
+    def _make_agent(self):
         from services.agent.erp_agent import ERPAgent
-        from services.agent.loop_hooks import SubAgentThinkingHook
+        return ERPAgent(db=MagicMock(), user_id="u1", conversation_id="c1", org_id="org1")
 
-        agent = ERPAgent(
-            db=MagicMock(), user_id="u1",
-            conversation_id="c1", org_id="org1",
-            task_id="task_001", message_id="msg_001",
-        )
-        mock_tools = [{"type": "function", "function": {"name": "local_data"}}]
-        tool_loop, _, _ = agent._build_tool_loop(MagicMock(), MagicMock(), mock_tools)
+    def test_four_domains_create_correct_agents(self):
+        """4 个域各创建对应的 DepartmentAgent"""
+        agent = self._make_agent()
+        with patch("core.workspace.resolve_staging_dir", return_value="/tmp/staging"):
+            trade = agent._create_agent("trade")
+            purchase = agent._create_agent("purchase")
+            warehouse = agent._create_agent("warehouse")
+            aftersale = agent._create_agent("aftersale")
+        assert trade.__class__.__name__ == "TradeAgent"
+        assert purchase.__class__.__name__ == "PurchaseAgent"
+        assert warehouse.__class__.__name__ == "WarehouseAgent"
+        assert aftersale.__class__.__name__ == "AftersaleAgent"
 
-        thinking_hooks = [h for h in tool_loop.hooks if isinstance(h, SubAgentThinkingHook)]
-        assert len(thinking_hooks) == 1
-        assert thinking_hooks[0]._task_id == "task_001"
-        assert thinking_hooks[0]._message_id == "msg_001"
+    def test_unknown_domain_returns_none(self):
+        """未知域 → None"""
+        agent = self._make_agent()
+        assert agent._create_agent("finance") is None
+        assert agent._create_agent("") is None
 
-    def test_build_tool_loop_no_thinking_hook_without_task_id(self):
-        """缺少 task_id 时不挂载 SubAgentThinkingHook"""
-        from services.agent.loop_hooks import SubAgentThinkingHook
+    def test_staging_dir_injected(self):
+        """staging_dir 正确注入到 DepartmentAgent"""
+        agent = self._make_agent()
+        with patch("core.workspace.resolve_staging_dir", return_value="/tmp/test_staging"):
+            created = agent._create_agent("trade")
+        assert created._staging_dir == "/tmp/test_staging"
 
-        agent = self._make_agent()  # task_id=None, message_id=None
-        mock_tools = [{"type": "function", "function": {"name": "local_data"}}]
-        tool_loop, _, _ = agent._build_tool_loop(MagicMock(), MagicMock(), mock_tools)
 
-        thinking_hooks = [h for h in tool_loop.hooks if isinstance(h, SubAgentThinkingHook)]
-        assert len(thinking_hooks) == 0
+class TestPushThinking:
+    """ERPAgent._push_thinking 进度推送"""
 
-    def test_build_tool_loop_no_thinking_hook_without_message_id(self):
-        """有 task_id 但缺少 message_id 时不挂载 SubAgentThinkingHook"""
+    def _make_agent(self, task_id=None, message_id=None):
         from services.agent.erp_agent import ERPAgent
-        from services.agent.loop_hooks import SubAgentThinkingHook
-
-        agent = ERPAgent(
-            db=MagicMock(), user_id="u1",
-            conversation_id="c1", org_id="org1",
-            task_id="task_001",  # 有 task_id
-            # message_id 默认 None
+        return ERPAgent(
+            db=MagicMock(), user_id="u1", conversation_id="c1", org_id="org1",
+            task_id=task_id, message_id=message_id,
         )
-        mock_tools = [{"type": "function", "function": {"name": "local_data"}}]
-        tool_loop, _, _ = agent._build_tool_loop(MagicMock(), MagicMock(), mock_tools)
 
-        thinking_hooks = [h for h in tool_loop.hooks if isinstance(h, SubAgentThinkingHook)]
-        assert len(thinking_hooks) == 0
+    @pytest.mark.asyncio
+    async def test_collects_text_with_task_id(self):
+        """有 task_id+message_id → 收集到 _thinking_parts + 推送 WS"""
+        agent = self._make_agent(task_id="t1", message_id="m1")
+        with patch("services.websocket_manager.ws_manager") as mock_ws:
+            mock_ws.send_to_user = AsyncMock()
+            await agent._push_thinking("查询中...")
+        assert "→ 查询中..." in agent._thinking_parts
+        mock_ws.send_to_user.assert_awaited_once()
 
-    def test_init_accepts_message_id(self):
-        """ERPAgent.__init__ 接收并保存 message_id"""
+    @pytest.mark.asyncio
+    async def test_silent_without_task_id(self):
+        """无 task_id → 只收集文本，不推送 WS"""
+        agent = self._make_agent()
+        await agent._push_thinking("测试")
+        assert "→ 测试" in agent._thinking_parts
+        # 没有 ws_manager 调用（无 task_id 直接 return）
+
+
+class TestBuildExperienceDetail:
+    """ERPAgent._build_experience_detail 经验序列化"""
+
+    def test_with_params(self):
         from services.agent.erp_agent import ERPAgent
-        agent = ERPAgent(
-            db=MagicMock(), user_id="u1",
-            conversation_id="c1", org_id="org1",
-            task_id="t1", message_id="m1",
+        detail = ERPAgent._build_experience_detail("trade", {
+            "mode": "summary", "group_by": ["shop"], "platform": "tb",
+        })
+        assert "domain=trade" in detail
+        assert "mode=summary" in detail
+        assert "group_by=" in detail
+        assert "platform=tb" in detail
+
+    def test_without_params(self):
+        from services.agent.erp_agent import ERPAgent
+        detail = ERPAgent._build_experience_detail("warehouse", None)
+        assert detail == "domain=warehouse"
+
+    def test_with_product_code(self):
+        from services.agent.erp_agent import ERPAgent
+        detail = ERPAgent._build_experience_detail("trade", {
+            "mode": "export", "product_code": "HZ001",
+        })
+        assert "product_code=HZ001" in detail
+
+
+class TestExecuteBoundary:
+    """ERPAgent.execute 边界场景"""
+
+    def _make_agent(self):
+        from services.agent.erp_agent import ERPAgent
+        return ERPAgent(db=MagicMock(), user_id="u1", conversation_id="c1", org_id="org1")
+
+    @pytest.mark.asyncio
+    async def test_timeout_returns_timeout_status(self):
+        """全局超时 → status=timeout"""
+        agent = self._make_agent()
+        with patch.object(agent, "_execute", new_callable=AsyncMock, side_effect=asyncio.TimeoutError()):
+            result = await agent.execute("查订单")
+        assert result.status == "timeout"
+        assert "超时" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_unknown_exception_returns_error(self):
+        """未知异常 → status=error + 内部错误提示"""
+        agent = self._make_agent()
+        with patch.object(agent, "_execute", new_callable=AsyncMock, side_effect=RuntimeError("segfault")):
+            result = await agent.execute("查订单")
+        assert result.status == "error"
+        assert "内部错误" in result.summary
+        assert "RuntimeError" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_known_exception_shows_message(self):
+        """已知异常（ValueError）→ 直接展示错误信息"""
+        agent = self._make_agent()
+        with patch.object(agent, "_execute", new_callable=AsyncMock, side_effect=ValueError("参数错误")):
+            result = await agent.execute("查订单")
+        assert result.status == "error"
+        assert "参数错误" in result.summary
+
+
+class TestToolSystemPromptNewRules:
+    """TOOL_SYSTEM_PROMPT 新增规则验证"""
+
+    def test_staging_consumption_rule(self):
+        """主 Agent 提示词包含 staging 文件消费规则"""
+        from config.chat_tools import TOOL_SYSTEM_PROMPT
+        assert "[文件已存入 staging]" in TOOL_SYSTEM_PROMPT
+        assert "code_execute" in TOOL_SYSTEM_PROMPT
+
+    def test_compute_hint_consumption_rule(self):
+        """主 Agent 提示词包含 compute_hint 消费规则"""
+        from config.chat_tools import TOOL_SYSTEM_PROMPT
+        assert "[关联计算提示]" in TOOL_SYSTEM_PROMPT
+
+    def test_excel_engine_correct(self):
+        """写 Excel 用 xlsxwriter，读 Excel 用 calamine"""
+        from config.chat_tools import TOOL_SYSTEM_PROMPT
+        assert "xlsxwriter" in TOOL_SYSTEM_PROMPT
+        assert "calamine" in TOOL_SYSTEM_PROMPT
+
+
+class TestParamDefinitionsConsistency:
+    """_PARAM_DEFINITIONS 一致性验证"""
+
+    def test_old_and_new_prompt_share_same_definitions(self):
+        """build_extract_prompt 和 build_multi_extract_prompt 共用 _PARAM_DEFINITIONS"""
+        from services.agent.plan_builder import (
+            build_extract_prompt, build_multi_extract_prompt, _PARAM_DEFINITIONS,
         )
-        assert agent.message_id == "m1"
-        assert agent.task_id == "t1"
-
-
-# ============================================================
-# get_erp_agent_tools 工具集测试
-# ============================================================
-
-
-class TestGetErpAgentTools:
-    """ERPAgent 专用工具集"""
-
-    def test_contains_local_tools(self):
-        """all_tools 包含本地查询工具"""
-        from config.erp_tools import get_erp_agent_tools
-        _core, all_tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in all_tools}
-        assert "local_data" in names
-        assert "local_stock_query" in names
-        assert "local_product_identify" in names
-
-    def test_contains_code_execute(self):
-        """all_tools 包含 code_execute（计算能力）"""
-        from config.erp_tools import get_erp_agent_tools
-        _core, all_tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in all_tools}
-        assert "code_execute" in names
-
-    def test_excludes_erp_agent(self):
-        """不包含 erp_agent（防递归）"""
-        from config.erp_tools import get_erp_agent_tools
-        _core, all_tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in all_tools}
-        assert "erp_agent" not in names
-
-    def test_excludes_erp_execute(self):
-        """不包含 erp_execute（只读不写）"""
-        from config.erp_tools import get_erp_agent_tools
-        _core, all_tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in all_tools}
-        assert "erp_execute" not in names
-
-    def test_contains_remote_query_tools(self):
-        """all_tools 包含远程查询工具"""
-        from config.erp_tools import get_erp_agent_tools
-        _core, all_tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in all_tools}
-        assert "erp_trade_query" in names
-        assert "erp_purchase_query" in names
-
-    def test_excludes_trigger_erp_sync(self):
-        """不包含 trigger_erp_sync（写操作，需用户确认）"""
-        from config.erp_tools import get_erp_agent_tools
-        _core, all_tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in all_tools}
-        assert "trigger_erp_sync" not in names
-
-    def test_excludes_ask_user(self):
-        """不包含 ask_user（ERPAgent 无用户交互）"""
-        from config.erp_tools import get_erp_agent_tools
-        _core, all_tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in all_tools}
-        assert "ask_user" not in names
-
-    def test_contains_fetch_all_pages(self):
-        """all_tools 包含 fetch_all_pages（全量翻页）"""
-        from config.erp_tools import get_erp_agent_tools
-        _core, all_tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in all_tools}
-        assert "fetch_all_pages" in names
-
-    def test_contains_erp_api_search(self):
-        """all_tools 包含 erp_api_search（API 文档搜索）"""
-        from config.erp_tools import get_erp_agent_tools
-        _core, all_tools = get_erp_agent_tools(org_id="org1")
-        names = {t["function"]["name"] for t in all_tools}
-        assert "erp_api_search" in names
-
-    def test_tool_count(self):
-        """all_tools 总数 = 19, core_tools = 10（9 local + code_execute）"""
-        from config.erp_tools import get_erp_agent_tools
-        core_tools, all_tools = get_erp_agent_tools(org_id="org1")
-        assert len(all_tools) == 19, f"Expected 19 all_tools, got {len(all_tools)}: {[t['function']['name'] for t in all_tools]}"
-        assert len(core_tools) == 10, f"Expected 10 core_tools, got {len(core_tools)}: {[t['function']['name'] for t in core_tools]}"
-
-    def test_core_tools_are_subset(self):
-        """core_tools 是 all_tools 的子集"""
-        from config.erp_tools import get_erp_agent_tools
-        core_tools, all_tools = get_erp_agent_tools(org_id="org1")
-        core_names = {t["function"]["name"] for t in core_tools}
-        all_names = {t["function"]["name"] for t in all_tools}
-        assert core_names.issubset(all_names)
-
-    def test_core_tools_content(self):
-        """core_tools 包含 10 个核心工具（9 local + code_execute）"""
-        from config.erp_tools import get_erp_agent_tools
-        core_tools, _ = get_erp_agent_tools(org_id="org1")
-        core_names = {t["function"]["name"] for t in core_tools}
-        assert core_names == {
-            "local_data", "local_compare_stats", "local_stock_query",
-            "local_product_identify", "local_product_stats",
-            "local_platform_map_query", "local_shop_list",
-            "local_warehouse_list", "local_supplier_list",
-            "code_execute",
-        }
-
-    def test_deferred_tools_are_remote_only(self):
-        """deferred 工具 = 仅远程 API 工具（不含任何 local 工具）"""
-        from config.erp_tools import get_erp_agent_tools
-        core_tools, all_tools = get_erp_agent_tools(org_id="org1")
-        core_names = {t["function"]["name"] for t in core_tools}
-        all_names = {t["function"]["name"] for t in all_tools}
-        deferred = all_names - core_names
-        for name in deferred:
-            assert name.startswith("erp_") or name == "fetch_all_pages", \
-                f"Unexpected deferred local tool: {name}"
-
-
-# ============================================================
-# ERPAgent 内部提示词一致性测试
-# ============================================================
-
-
-class TestERPAgentPrompts:
-    """验证 ERPAgent 内部提示词不含不可用工具、无乱码"""
-
-    def test_system_prompt_no_ask_user(self):
-        """系统提示不引用 ask_user"""
-        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
-        assert "ask_user" not in _ERP_AGENT_SYSTEM_PROMPT
-
-    def test_system_prompt_no_trigger_sync(self):
-        """系统提示不引用 trigger_erp_sync"""
-        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
-        assert "trigger_erp_sync" not in _ERP_AGENT_SYSTEM_PROMPT
-
-    def test_system_prompt_no_garbled_chars(self):
-        """系统提示无乱码字符（U+FFFD）"""
-        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
-        assert "\ufffd" not in _ERP_AGENT_SYSTEM_PROMPT
-
-    def test_system_prompt_mentions_code_execute(self):
-        """系统提示包含 code_execute"""
-        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
-        assert "code_execute" in _ERP_AGENT_SYSTEM_PROMPT
-
-    def test_system_prompt_has_rules(self):
-        """系统提示包含 RULES"""
-        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
-        assert "RULES" in _ERP_AGENT_SYSTEM_PROMPT
-
-    def test_system_prompt_worker_identity(self):
-        """系统提示定义为 worker 而非主 Agent"""
-        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
-        assert "worker" in _ERP_AGENT_SYSTEM_PROMPT
-        assert "不是主 Agent" in _ERP_AGENT_SYSTEM_PROMPT
-
-    def test_system_prompt_mentions_local_priority(self):
-        """系统提示明确 local_data 优先"""
-        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
-        assert "local_data" in _ERP_AGENT_SYSTEM_PROMPT
-        assert "erp_*_query" in _ERP_AGENT_SYSTEM_PROMPT
-
-    def test_system_prompt_concise_output(self):
-        """系统提示要求简短事实性结论"""
-        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
-        assert "200" in _ERP_AGENT_SYSTEM_PROMPT  # ≤200字限制
-
-    def test_system_prompt_batch_calls(self):
-        """系统提示要求批量调用独立查询"""
-        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
-        assert "批量调用" in _ERP_AGENT_SYSTEM_PROMPT
-
-    def test_system_prompt_error_handling(self):
-        """系统提示包含参数不足和错误处理规则"""
-        from services.agent.erp_agent import _ERP_AGENT_SYSTEM_PROMPT
-        assert "参数不足" in _ERP_AGENT_SYSTEM_PROMPT
-        assert "不要自行重试" in _ERP_AGENT_SYSTEM_PROMPT
-
-
-# ============================================================
-# TOOL_SYSTEM_PROMPT 对齐新架构
-# ============================================================
+        old_prompt = build_extract_prompt("测试", now_str="2026-04-24")
+        new_prompt = build_multi_extract_prompt("测试", now_str="2026-04-24")
+        # 两个 prompt 都包含参数定义中的关键片段
+        for key_fragment in [
+            "doc_type: order/purchase",
+            "receiver_name",
+            "sku_properties_name",
+            "online_status",
+            "handler_status",
+            "include_invalid",
+        ]:
+            assert key_fragment in old_prompt, f"旧 prompt 缺少 {key_fragment}"
+            assert key_fragment in new_prompt, f"新 prompt 缺少 {key_fragment}"
 
 
 class TestToolSystemPromptAlignment:
@@ -789,384 +923,6 @@ class TestBuildToolDescription:
         for ex in m["examples"]:
             assert ex["query"] in desc
 
-
-# ============================================================
-# _run_tool_loop 退出逻辑
-# ============================================================
-
-
-class TestRunToolLoopExitLogic:
-    """ToolLoopExecutor 各退出路径测试（原 _run_tool_loop，2026-04-11 拆出）"""
-
-    def _make_agent(self):
-        from services.erp_agent import ERPAgent
-        agent = ERPAgent(
-            db=MagicMock(), user_id="t",
-            conversation_id="t", org_id="test",
-        )
-        return agent
-
-    def _make_loop(self, agent, adapter, executor, all_tools=None):
-        """构造与 ERPAgent 配套的 ToolLoopExecutor 实例（ERP 默认装配）"""
-        from services.agent.tool_loop_executor import ToolLoopExecutor
-        from services.agent.erp_agent_types import (
-            MAX_ERP_TURNS, MAX_TOTAL_TOKENS, TOOL_TIMEOUT,
-        )
-        from services.agent.loop_types import LoopConfig, LoopStrategy
-        return ToolLoopExecutor(
-            adapter=adapter,
-            executor=executor,
-            all_tools=all_tools or [],
-            config=LoopConfig(
-                max_turns=MAX_ERP_TURNS,
-                max_tokens=MAX_TOTAL_TOKENS,
-                tool_timeout=TOOL_TIMEOUT,
-                no_synthesis_fallback_text=(
-                    "ERP 查询过程中未能生成完整结论，请重新提问或缩小查询范围。"
-                ),
-            ),
-            strategy=LoopStrategy(
-                exit_signals=frozenset({"route_to_chat", "ask_user"}),
-                enable_tool_expansion=True,
-            ),
-            hooks=[],  # 测试场景默认不挂 hooks（每个测试自己挂）
-        )
-
-    def _make_hook_ctx(self, agent):
-        """构造测试用 HookContext"""
-        from services.agent.loop_types import HookContext
-        return HookContext(
-            db=agent.db,
-            user_id=agent.user_id,
-            org_id=agent.org_id,
-            conversation_id=agent.conversation_id,
-            task_id=agent.task_id,
-            request_ctx=agent.request_ctx,
-        )
-
-    @pytest.mark.asyncio
-    async def test_empty_turn_skipped_when_no_tools_called(self):
-        """未调过工具时，LLM 直接输出文字应被跳过，强制继续循环"""
-        from services.erp_agent import ERPAgent
-        from services.adapters.types import StreamChunk, ToolCallDelta
-
-        agent = self._make_agent()
-        turn_counter = {"n": 0}
-
-        async def mock_stream(*args, **kwargs):
-            turn_counter["n"] += 1
-            if turn_counter["n"] == 1:
-                # Turn 1: 纯文字输出（没调工具），应被跳过
-                yield StreamChunk(content="好的帮你查", prompt_tokens=10, completion_tokens=5)
-            elif turn_counter["n"] == 2:
-                # Turn 2: 调工具
-                yield StreamChunk(
-                    tool_calls=[ToolCallDelta(index=0, id="tc1", name="local_stock_query", arguments_delta='{"product_code":"A"}')],
-                    prompt_tokens=20, completion_tokens=10,
-                )
-            else:
-                # Turn 3: 输出结论
-                yield StreamChunk(content="库存128件", prompt_tokens=15, completion_tokens=8)
-
-        mock_adapter = AsyncMock()
-        mock_adapter.stream_chat = mock_stream
-
-        mock_executor = AsyncMock()
-        mock_executor.execute = AsyncMock(return_value="库存128件")
-
-        loop = self._make_loop(agent, mock_adapter, mock_executor)
-        result = await loop.run(
-            messages=[{"role": "user", "content": "查库存"}],
-            selected_tools=[], tools_called=[],
-            hook_ctx=self._make_hook_ctx(agent),
-        )
-        assert result.text == "库存128件"
-        assert turn_counter["n"] == 3  # 跑了 3 轮
-
-    @pytest.mark.asyncio
-    async def test_consecutive_empty_turns_break(self):
-        """连续 2 次空响应应中止循环"""
-        from services.adapters.types import StreamChunk
-
-        agent = self._make_agent()
-
-        async def mock_stream(*args, **kwargs):
-            # 每轮都输出废话，不调工具
-            yield StreamChunk(content="让我想想...", prompt_tokens=10, completion_tokens=5)
-
-        mock_adapter = AsyncMock()
-        mock_adapter.stream_chat = mock_stream
-
-        loop = self._make_loop(agent, mock_adapter, AsyncMock())
-        result = await loop.run(
-            messages=[{"role": "user", "content": "查库存"}],
-            selected_tools=[], tools_called=[],
-            hook_ctx=self._make_hook_ctx(agent),
-        )
-        # 有文字时应作为有效输出（不再走兜底提示）
-        assert result.text == "让我想想..."
-        assert result.turns == 2  # 2 次空响应后中止
-
-    @pytest.mark.asyncio
-    async def test_text_output_after_tool_call_is_synthesis(self):
-        """调过工具后输出纯文字 = 合成结论，应正常返回"""
-        from services.adapters.types import StreamChunk, ToolCallDelta
-
-        agent = self._make_agent()
-        turn_counter = {"n": 0}
-
-        async def mock_stream(*args, **kwargs):
-            turn_counter["n"] += 1
-            if turn_counter["n"] == 1:
-                yield StreamChunk(
-                    tool_calls=[ToolCallDelta(index=0, id="tc1", name="local_global_stats", arguments_delta='{"doc_type":"order"}')],
-                    prompt_tokens=20, completion_tokens=10,
-                )
-            else:
-                yield StreamChunk(content="今天共8000单", prompt_tokens=15, completion_tokens=8)
-
-        mock_adapter = AsyncMock()
-        mock_adapter.stream_chat = mock_stream
-
-        mock_executor = AsyncMock()
-        mock_executor.execute = AsyncMock(return_value="统计结果：8000单")
-
-        loop = self._make_loop(agent, mock_adapter, mock_executor)
-        result = await loop.run(
-            messages=[{"role": "user", "content": "今天多少单"}],
-            selected_tools=[], tools_called=[],
-            hook_ctx=self._make_hook_ctx(agent),
-        )
-        assert result.text == "今天共8000单"
-        assert "未能生成" not in result.text
-
-    @pytest.mark.asyncio
-    async def test_ask_user_sets_synthesis_true(self):
-        """ask_user 退出时 is_llm_synthesis 应为 True"""
-        from services.adapters.types import StreamChunk, ToolCallDelta
-
-        agent = self._make_agent()
-
-        async def mock_stream(*args, **kwargs):
-            yield StreamChunk(
-                tool_calls=[ToolCallDelta(index=0, id="tc1", name="ask_user", arguments_delta='{"message":"请提供商品编码"}')],
-                prompt_tokens=20, completion_tokens=10,
-            )
-
-        mock_adapter = AsyncMock()
-        mock_adapter.stream_chat = mock_stream
-
-        mock_executor = AsyncMock()
-
-        loop = self._make_loop(agent, mock_adapter, mock_executor)
-        result = await loop.run(
-            messages=[{"role": "user", "content": "查一下那个"}],
-            selected_tools=[], tools_called=[],
-            hook_ctx=self._make_hook_ctx(agent),
-        )
-        # ask_user 的 message 应作为结果返回，不应走兜底
-        assert "未能生成" not in result.text
-        assert "请提供商品编码" in result.text
-
-    @pytest.mark.asyncio
-    async def test_route_to_chat_with_turn_text(self):
-        """route_to_chat 有 turn_text 时应返回 turn_text"""
-        from services.adapters.types import StreamChunk, ToolCallDelta
-
-        agent = self._make_agent()
-
-        async def mock_stream(*args, **kwargs):
-            yield StreamChunk(
-                content="今天共8000单",
-                tool_calls=[ToolCallDelta(index=0, id="tc1", name="route_to_chat", arguments_delta='{"system_prompt":"ERP分析师"}')],
-                prompt_tokens=20, completion_tokens=10,
-            )
-
-        mock_adapter = AsyncMock()
-        mock_adapter.stream_chat = mock_stream
-
-        # 需要先调过工具才不会被 empty_turns 拦截
-        loop = self._make_loop(agent, mock_adapter, AsyncMock())
-        result = await loop.run(
-            messages=[{"role": "user", "content": "查数据"}],
-            selected_tools=[], tools_called=["local_global_stats"],
-            hook_ctx=self._make_hook_ctx(agent),
-        )
-        assert result.text == "今天共8000单"
-        assert "未能生成" not in result.text
-
-    @pytest.mark.asyncio
-    async def test_route_to_chat_without_turn_text_fallback(self):
-        """route_to_chat 无 turn_text 时应走兜底提示"""
-        from services.adapters.types import StreamChunk, ToolCallDelta
-
-        agent = self._make_agent()
-
-        async def mock_stream(*args, **kwargs):
-            yield StreamChunk(
-                tool_calls=[ToolCallDelta(index=0, id="tc1", name="route_to_chat", arguments_delta='{"system_prompt":"ERP分析师"}')],
-                prompt_tokens=20, completion_tokens=10,
-            )
-
-        mock_adapter = AsyncMock()
-        mock_adapter.stream_chat = mock_stream
-
-        loop = self._make_loop(agent, mock_adapter, AsyncMock())
-        result = await loop.run(
-            messages=[{"role": "user", "content": "查数据"}],
-            selected_tools=[], tools_called=["local_global_stats"],
-            hook_ctx=self._make_hook_ctx(agent),
-        )
-        assert "未能生成" in result.text
-
-
-class TestToolLoopSteer:
-    """ToolLoopExecutor steer 打断 — 直接测试 check_steer 在 _execute_tools 中的行为"""
-
-    def test_steer_skips_remaining_and_injects_user_msg(self):
-        """steer 信号到达 → 跳过剩余工具 + 注入 user message 到 messages"""
-        from services.websocket_manager import ws_manager
-
-        task_id = "task-steer-test-1"
-        ws_manager.register_steer_listener(task_id)
-        ws_manager.resolve_steer(task_id, "帮我查库存")
-
-        # 模拟 _execute_tools 中的打断逻辑
-        messages = [{"role": "user", "content": "查销售额"}]
-        completed = [
-            {"id": "tc1", "name": "tool_a", "arguments": "{}"},
-            {"id": "tc2", "name": "tool_b", "arguments": "{}"},
-        ]
-
-        # 模拟第一个工具执行完后检查 steer
-        executed = []
-        for tc in completed:
-            executed.append(tc["name"])
-            messages.append({
-                "role": "tool", "tool_call_id": tc["id"], "content": "result",
-            })
-
-            _steer = ws_manager.check_steer(task_id)
-            if _steer:
-                remaining = completed[completed.index(tc) + 1:]
-                for r_tc in remaining:
-                    messages.append({
-                        "role": "tool", "tool_call_id": r_tc["id"],
-                        "content": "⚠ 用户发送了新消息，跳过此工具调用。",
-                    })
-                messages.append({"role": "user", "content": _steer})
-                break
-
-        # 验证：只执行了 tool_a
-        assert executed == ["tool_a"]
-        # messages 末尾有跳过标记 + 新 user 消息
-        skipped = [m for m in messages if "跳过此工具调用" in m.get("content", "")]
-        assert len(skipped) == 1  # tool_b 被跳过
-        assert messages[-1] == {"role": "user", "content": "帮我查库存"}
-
-        ws_manager.unregister_steer_listener(task_id)
-
-
-class TestERPAgentConstants:
-    """ERP Agent 常量和安全护栏验证"""
-
-    def test_max_erp_turns_is_20(self):
-        """MAX_ERP_TURNS 应为 20（参考 Claude Code subagent 50-200 轮）"""
-        from services.erp_agent import MAX_ERP_TURNS
-        assert MAX_ERP_TURNS == 20
-
-    def test_tool_timeout_reasonable(self):
-        """单工具超时应在合理范围"""
-        from services.erp_agent import _TOOL_TIMEOUT
-        assert 10 <= _TOOL_TIMEOUT <= 60
-
-    def test_token_budget_exists(self):
-        """Token 预算上限存在"""
-        from services.erp_agent import _MAX_TOTAL_TOKENS
-        assert _MAX_TOTAL_TOKENS > 0
-
-
-class TestERPAgentJSONParseError:
-    """JSON 解析错误不再静默吞掉（2026-04-11 拆出到 ToolLoopExecutor）"""
-
-    @pytest.mark.asyncio
-    async def test_malformed_json_returns_error_to_llm(self):
-        """工具参数 JSON 格式错误时，错误信息应返回给 LLM"""
-        from services.erp_agent import ERPAgent
-        from services.adapters.types import StreamChunk, ToolCallDelta
-        from services.agent.tool_loop_executor import ToolLoopExecutor
-        from services.agent.erp_agent_types import (
-            MAX_ERP_TURNS, MAX_TOTAL_TOKENS, TOOL_TIMEOUT,
-        )
-        from services.agent.loop_types import (
-            HookContext, LoopConfig, LoopStrategy,
-        )
-
-        agent = ERPAgent(
-            db=MagicMock(), user_id="t",
-            conversation_id="t", org_id="test",
-        )
-
-        call_count = {"n": 0}
-
-        async def mock_stream(*args, **kwargs):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                # 第一轮：返回一个参数格式错误的工具调用
-                yield StreamChunk(
-                    tool_calls=[ToolCallDelta(
-                        index=0, id="tc1", name="local_stock_query",
-                        arguments_delta='{bad json!!!',
-                    )],
-                    prompt_tokens=10, completion_tokens=5,
-                )
-            else:
-                # 第二轮：正常输出文字结束
-                yield StreamChunk(content="参数格式有误，请确认", prompt_tokens=10, completion_tokens=5)
-
-        mock_adapter = AsyncMock()
-        mock_adapter.stream_chat = mock_stream
-
-        loop = ToolLoopExecutor(
-            adapter=mock_adapter,
-            executor=AsyncMock(),
-            all_tools=[],
-            config=LoopConfig(
-                max_turns=MAX_ERP_TURNS,
-                max_tokens=MAX_TOTAL_TOKENS,
-                tool_timeout=TOOL_TIMEOUT,
-            ),
-            strategy=LoopStrategy(
-                exit_signals=frozenset({"route_to_chat", "ask_user"}),
-                enable_tool_expansion=True,
-            ),
-            hooks=[],
-        )
-        hook_ctx = HookContext(
-            db=agent.db, user_id=agent.user_id,
-            org_id=agent.org_id, conversation_id=agent.conversation_id,
-            task_id=agent.task_id, request_ctx=agent.request_ctx,
-        )
-        result = await loop.run(
-            messages=[{"role": "user", "content": "查库存"}],
-            selected_tools=[], tools_called=[],
-            hook_ctx=hook_ctx,
-        )
-        # 错误信息应作为 tool result 返回，LLM 看到后输出文字
-        assert "参数格式有误" in result.text or "JSON" in result.text
-
-
-class TestFilterErpContextEdgeCases:
-    """filter_erp_context 边缘场景补充"""
-
-    def test_assistant_with_empty_tool_calls(self):
-        """tool_calls 为空列表时保留（当作纯文字）"""
-        from services.erp_agent import filter_erp_context
-        messages = [
-            {"role": "assistant", "tool_calls": [], "content": "好的"},
-        ]
-        result = filter_erp_context(messages)
-        assert len(result) == 1
 
     def test_assistant_without_tool_calls_key(self):
         """没有 tool_calls 字段时保留"""
