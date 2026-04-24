@@ -602,6 +602,27 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         "content": content,
                     })
 
+                # ── 文件块嵌入 content 流（而非末尾追加）──
+                # 设计文档：TECH_内容块混排渲染架构.md §6.2
+                if self._pending_file_parts:
+                    for _fp in self._pending_file_parts:
+                        if _fp.mime_type.startswith("image/"):
+                            _content_blocks.append({
+                                "type": "image", "url": _fp.url,
+                                "alt": _fp.name,
+                            })
+                        else:
+                            _content_blocks.append({
+                                "type": "file", "url": _fp.url,
+                                "name": _fp.name, "mime_type": _fp.mime_type,
+                                "size": _fp.size,
+                            })
+                    logger.info(
+                        f"File blocks inserted into content stream | "
+                        f"count={len(self._pending_file_parts)} | task={task_id}"
+                    )
+                    self._pending_file_parts.clear()
+
                 # ── ask_user 冻结检测 ──
                 _ask_info = getattr(self, "_ask_user_pending", None)
                 if _ask_info:
@@ -708,11 +729,12 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             _final_turn_text = accumulated_text[_harvested:]
 
             if _content_blocks:
-                # 多块模式：有工具结果插入
+                # 多块模式：有工具结果插入（text / image / file 混排）
                 if _final_turn_text:
                     _content_blocks.append({"type": "text", "text": _final_turn_text})
                 # 从 blocks 构建 result_parts
-                from schemas.message import ToolResultPart
+                # 设计文档：TECH_内容块混排渲染架构.md §6.3
+                from schemas.message import ToolResultPart, ImagePart, FilePart
                 from services.handlers.media_extractor import extract_media_parts
                 result_parts: list = []
                 for block in _content_blocks:
@@ -724,32 +746,20 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             text=block["text"],
                             files=block.get("files", []),
                         ))
+                    elif block["type"] == "image":
+                        result_parts.append(ImagePart(
+                            url=block["url"], alt=block.get("alt"),
+                        ))
+                    elif block["type"] == "file":
+                        result_parts.append(FilePart(
+                            url=block["url"], name=block["name"],
+                            mime_type=block["mime_type"],
+                            size=block.get("size"),
+                        ))
             else:
-                # 单块模式（无工具调用或工具未触发 content block）：兼容原逻辑
+                # 单块模式（无工具调用）：兼容原逻辑
                 from services.handlers.media_extractor import extract_media_parts
                 result_parts = extract_media_parts(accumulated_text)
-
-            # 合并工具执行过程中积累的 FilePart（沙盒 upload_file 生成）
-            if self._pending_file_parts:
-                # 后处理：用 FilePart 的正确 URL 把 LLM 文本中的纯文件名变成 markdown 链接
-                # 解决：LLM 上下文不含 URL（防幻觉），但最终消息需要可点击的下载链接
-                _file_url_map = {p.name: p.url for p in self._pending_file_parts}
-                if _file_url_map:
-                    from schemas.message import TextPart as _TP
-                    for i, part in enumerate(result_parts):
-                        if isinstance(part, _TP) and part.text:
-                            _text = part.text
-                            for fname, furl in _file_url_map.items():
-                                # 跳过已存在的 markdown 链接 [name](...)
-                                if f"[{fname}](" in _text:
-                                    continue
-                                # 替换纯文件名为 markdown 链接
-                                if fname in _text:
-                                    _text = _text.replace(fname, f"[{fname}]({furl})")
-                            if _text != part.text:
-                                result_parts[i] = _TP(text=_text)
-
-                result_parts.extend(self._pending_file_parts)
                 self._pending_file_parts = []
 
             # 标记 LLM 阶段成功，持久化在 try 外执行

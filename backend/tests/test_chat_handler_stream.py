@@ -735,3 +735,127 @@ class TestBoundary2PersistPhase:
             content=[TextPart(text="hi")],
             model_id="test-model",
         )
+
+
+# ============================================================
+# _content_blocks image/file 混排结果构建
+# ============================================================
+
+
+class TestContentBlocksMixedRendering:
+    """验证 _content_blocks 中 image/file 块正确构建为 result_parts"""
+
+    def test_image_block_becomes_image_part(self):
+        """_content_blocks 含 image 块 → 构建为 ImagePart"""
+        from schemas.message import ImagePart, FilePart
+        from services.handlers.media_extractor import extract_media_parts
+
+        blocks = [
+            {"type": "text", "text": "分析结果如下"},
+            {"type": "image", "url": "https://cdn.com/chart.png", "alt": "chart.png"},
+            {"type": "text", "text": "拼多多占比最大"},
+        ]
+
+        result_parts = []
+        for block in blocks:
+            if block["type"] == "text":
+                result_parts.extend(extract_media_parts(block["text"]))
+            elif block["type"] == "image":
+                result_parts.append(ImagePart(
+                    url=block["url"], alt=block.get("alt"),
+                ))
+
+        assert len(result_parts) == 3
+        assert result_parts[0].type == "text"
+        assert result_parts[1].type == "image"
+        assert result_parts[1].url == "https://cdn.com/chart.png"
+        assert result_parts[1].alt == "chart.png"
+        assert result_parts[2].type == "text"
+
+    def test_file_block_becomes_file_part(self):
+        """_content_blocks 含 file 块 → 构建为 FilePart"""
+        from schemas.message import FilePart
+        from services.handlers.media_extractor import extract_media_parts
+
+        blocks = [
+            {"type": "text", "text": "已导出数据"},
+            {"type": "file", "url": "https://cdn.com/data.xlsx",
+             "name": "data.xlsx", "mime_type": "application/vnd.ms-excel",
+             "size": 4096},
+        ]
+
+        result_parts = []
+        for block in blocks:
+            if block["type"] == "text":
+                result_parts.extend(extract_media_parts(block["text"]))
+            elif block["type"] == "file":
+                result_parts.append(FilePart(
+                    url=block["url"], name=block["name"],
+                    mime_type=block["mime_type"], size=block.get("size"),
+                ))
+
+        assert len(result_parts) == 2
+        assert result_parts[1].type == "file"
+        assert result_parts[1].name == "data.xlsx"
+        assert result_parts[1].size == 4096
+
+    def test_mixed_blocks_preserve_order(self):
+        """text + image + file + text 混排保持顺序"""
+        from schemas.message import ImagePart, FilePart
+        from services.handlers.media_extractor import extract_media_parts
+
+        blocks = [
+            {"type": "text", "text": "开始分析"},
+            {"type": "image", "url": "https://cdn.com/pie.png", "alt": "pie.png"},
+            {"type": "file", "url": "https://cdn.com/out.xlsx",
+             "name": "out.xlsx", "mime_type": "application/vnd.ms-excel",
+             "size": 2048},
+            {"type": "text", "text": "分析完成"},
+        ]
+
+        result_parts = []
+        for block in blocks:
+            if block["type"] == "text":
+                result_parts.extend(extract_media_parts(block["text"]))
+            elif block["type"] == "image":
+                result_parts.append(ImagePart(
+                    url=block["url"], alt=block.get("alt"),
+                ))
+            elif block["type"] == "file":
+                result_parts.append(FilePart(
+                    url=block["url"], name=block["name"],
+                    mime_type=block["mime_type"], size=block.get("size"),
+                ))
+
+        types = [p.type for p in result_parts]
+        assert types == ["text", "image", "file", "text"]
+
+    def test_pending_file_parts_insertion(self):
+        """_pending_file_parts 按 mime 分流插入 _content_blocks"""
+        from schemas.message import FilePart
+
+        pending = [
+            FilePart(url="https://cdn.com/chart.png", name="chart.png",
+                     mime_type="image/png", size=2048),
+            FilePart(url="https://cdn.com/data.csv", name="data.csv",
+                     mime_type="text/csv", size=512),
+        ]
+        content_blocks = [{"type": "text", "text": "分析中"}]
+
+        for fp in pending:
+            if fp.mime_type.startswith("image/"):
+                content_blocks.append({
+                    "type": "image", "url": fp.url, "alt": fp.name,
+                })
+            else:
+                content_blocks.append({
+                    "type": "file", "url": fp.url, "name": fp.name,
+                    "mime_type": fp.mime_type, "size": fp.size,
+                })
+
+        assert len(content_blocks) == 3
+        assert content_blocks[0]["type"] == "text"
+        assert content_blocks[1]["type"] == "image"
+        assert content_blocks[1]["url"] == "https://cdn.com/chart.png"
+        assert content_blocks[2]["type"] == "file"
+        assert content_blocks[2]["name"] == "data.csv"

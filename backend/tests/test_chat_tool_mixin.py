@@ -278,6 +278,33 @@ class TestExtractFileParts:
         obj._extract_file_parts("[FILE]https://a.com/2.csv|b.csv|text/csv|200[/FILE]")
         assert len(obj._pending_file_parts) == 2
 
+    def test_image_mime_placeholder_differs(self):
+        """图片 mime → 占位文本提示'将自动展示'，非图片 → 保留文件名"""
+        obj = self._make_instance()
+        text = (
+            "[FILE]https://cdn.com/chart.png|chart.png|image/png|2048[/FILE]\n"
+            "[FILE]https://cdn.com/data.xlsx|data.xlsx|application/vnd.ms-excel|4096[/FILE]"
+        )
+        result = obj._extract_file_parts(text)
+        # 图片：不含文件名，提示自动展示
+        assert "📊 图表已生成" in result
+        assert "不要在文字中重复描述" in result
+        # 非图片：保留文件名
+        assert "📎 文件已生成: data.xlsx" in result
+        assert "不要重复引用文件名" in result
+        # URL 不暴露
+        assert "cdn.com" not in result
+        assert len(obj._pending_file_parts) == 2
+
+    def test_image_svg_also_gets_image_placeholder(self):
+        """SVG (image/svg+xml) 也走图片占位文本"""
+        obj = self._make_instance()
+        result = obj._extract_file_parts(
+            "[FILE]https://cdn.com/flow.svg|flow.svg|image/svg+xml|1024[/FILE]"
+        )
+        assert "📊 图表已生成" in result
+        assert "flow.svg" not in result  # 文件名不暴露给 LLM
+
 
 # ============================================================
 # _accumulate_tool_call_delta 增量累积

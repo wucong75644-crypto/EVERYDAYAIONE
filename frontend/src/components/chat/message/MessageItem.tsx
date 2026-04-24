@@ -21,6 +21,7 @@ import LoadingPlaceholder from './LoadingPlaceholder';
 import MarkdownRenderer from './MarkdownRenderer';
 import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
+import FileCardList from '../media/FileCard';
 import SuggestionChips from './SuggestionChips';
 import { RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../../constants/placeholder';
 import type { RenderInstruction } from '../../../types/render';
@@ -92,10 +93,12 @@ export default memo(function MessageItem({
   const hasVideo = videoUrls.length > 0;
   const hasFiles = files.length > 0;
 
-  // 检测是否为多内容块模式（含 tool_result block）
+  // 检测是否为多内容块模式（含 tool_result / image / file block）
   const hasMultiBlocks = useMemo(() => {
     if (!Array.isArray(message.content)) return false;
-    return message.content.some((p) => p.type === 'tool_result');
+    return message.content.some((p) =>
+      p.type === 'tool_result' || p.type === 'image' || p.type === 'file'
+    );
   }, [message.content]);
 
   // 判断是否为失败消息
@@ -108,6 +111,9 @@ export default memo(function MessageItem({
   const genParams = message.generation_params || {};
   const actualImageAspectRatio = (genParams.aspect_ratio ?? genParams.aspectRatio ?? savedSettings.image.aspectRatio) as AspectRatio;
   const actualVideoAspectRatio = (genParams.aspect_ratio ?? genParams.aspectRatio ?? savedSettings.video.aspectRatio) as VideoAspectRatio;
+
+  // 媒体生成消息（generate_image / generate_video）走独立 MessageMedia 通道
+  const isMediaMessage = !!genParams.type && genParams.type !== 'chat';
 
   // 气泡文字信息（优先级：_render > RENDER_CONFIG > 兜底）
   const bubbleTextInfo = useMemo(() => {
@@ -385,7 +391,9 @@ export default memo(function MessageItem({
               /* 用户消息：保持纯文本 */
               <>{textContent}</>
             ) : hasMultiBlocks ? (
-              /* AI 消息（多块模式）：遍历 content 按 type 分发渲染 */
+              /* AI 消息（多块模式）：遍历 content 按 type 分发渲染
+                 text / tool_result / image / file 混排，一份 content 顺序渲染
+                 设计文档：TECH_内容块混排渲染架构.md §7.2 */
               <>
                 {message.content.map((part, idx) => {
                   if (part.type === 'text' && (part as { text: string }).text) {
@@ -407,11 +415,36 @@ export default memo(function MessageItem({
                       />
                     );
                   }
+                  if (part.type === 'image' && (part as { url?: string }).url) {
+                    const img = part as { url: string; alt?: string };
+                    // 计算图片在 imageUrls 中的真实索引（content 数组索引 ≠ 图片索引）
+                    const imgIndex = imageUrls.indexOf(img.url);
+                    return (
+                      <div key={idx} className="my-3">
+                        <img
+                          src={img.url}
+                          alt={img.alt || '生成的图表'}
+                          className="rounded-xl shadow-sm max-w-full h-auto cursor-pointer"
+                          style={{ maxWidth: '500px' }}
+                          onClick={() => handleImageClick(imgIndex >= 0 ? imgIndex : 0)}
+                          loading="lazy"
+                        />
+                      </div>
+                    );
+                  }
+                  if (part.type === 'file' && (part as { url?: string }).url) {
+                    const fp = part as import('../../../types/message').FilePart;
+                    return (
+                      <div key={idx} className="my-2">
+                        <FileCardList files={[fp]} />
+                      </div>
+                    );
+                  }
                   return null;
                 })}
               </>
             ) : (
-              /* AI 消息（单块模式）：Markdown 渲染 */
+              /* AI 消息（单块 / 流式）：Markdown 渲染 */
               <MarkdownRenderer
                 content={textContent}
               />
@@ -429,8 +462,10 @@ export default memo(function MessageItem({
           )}
         </div>
 
-        {/* AI 消息：文字在上，图片/文件在下 */}
-        {!isUser && (
+        {/* AI 媒体生成消息（generate_image / generate_video）：保留 MessageMedia 全部功能
+            聊天消息的 image/file 已在多块模式内联渲染，不走此通道
+            设计文档：TECH_内容块混排渲染架构.md §7.1 */}
+        {!isUser && isMediaMessage && (
           <MessageMedia
             imageUrls={imageUrls}
             videoUrls={videoUrls}
@@ -446,6 +481,18 @@ export default memo(function MessageItem({
             numImages={Number(genParams.num_images) || 1}
             content={message.content}
             onRegenerateSingle={onRegenerateSingle ? handleRegenerateSingle : undefined}
+            failedMediaType={failedMediaType}
+            onRegenerate={onRegenerate ? handleRegenerate : undefined}
+          />
+        )}
+        {/* AI 聊天消息：失败的媒体占位符（仅非 isMediaMessage 时需要） */}
+        {!isUser && !isMediaMessage && failedMediaType && (
+          <MessageMedia
+            imageUrls={[]}
+            videoUrls={[]}
+            messageId={message.id}
+            isUser={isUser}
+            onImageClick={handleImageClick}
             failedMediaType={failedMediaType}
             onRegenerate={onRegenerate ? handleRegenerate : undefined}
           />

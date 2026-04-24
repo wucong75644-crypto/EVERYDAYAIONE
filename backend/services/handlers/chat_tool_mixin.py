@@ -326,8 +326,12 @@ class ChatToolMixin:
     def _extract_file_parts(self, result: str) -> str:
         """从工具结果中提取 [FILE] 标记，暂存为 FilePart
 
-        [FILE] 标记替换为友好文本（LLM 可读），FilePart 存到
-        self._pending_file_parts，在 on_complete 时合并到消息中。
+        [FILE] 标记替换为占位文本（LLM 可读），FilePart 存到
+        self._pending_file_parts，在工具执行后插入 _content_blocks。
+
+        占位文本按 mime 类型区分：
+        - 图片：提示"将自动展示"，引导 LLM 只写结论不重复图表数据
+        - 其他：保留文件名，提示"下载卡片将自动展示"
         """
         if not result or "[FILE]" not in result:
             return result
@@ -340,8 +344,9 @@ class ChatToolMixin:
                 url=url, name=name, mime_type=mime_type, size=int(size),
             ))
             # LLM 上下文不暴露 URL（防止 LLM 幻觉篡改域名）
-            # 下载链接由 FilePart 文件卡片提供
-            return f"📎 文件已生成: {name}"
+            if mime_type.startswith("image/"):
+                return "📊 图表已生成（将自动展示给用户，不要在文字中重复描述图表数据）"
+            return f"📎 文件已生成: {name}（下载卡片将自动展示，不要重复引用文件名）"
 
         return _FILE_PATTERN.sub(_replace_match, result)
 
