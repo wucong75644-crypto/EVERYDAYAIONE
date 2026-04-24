@@ -14,7 +14,7 @@ from loguru import logger
 
 # [FILE] 标记正则：沙盒 upload_file 返回的格式
 _FILE_PATTERN = re.compile(
-    r'\[FILE\](https?://\S+?)\|([^|]+)\|([^|]+)\|(\d+)\[/FILE\]'
+    r'\[FILE\]([^|]+)\|([^|]+)\|([^|]+)\|(\d+)\[/FILE\]'
 )
 
 from schemas.websocket import (
@@ -108,6 +108,11 @@ class ChatToolMixin:
             if not isinstance(result, AgentResult):
                 continue
             # ① 前端文件卡片通道
+            logger.info(
+                f"AgentResult file check | tool={tc['name']} | "
+                f"collected_files={len(result.collected_files) if result.collected_files else 0} | "
+                f"has_pending={hasattr(self, '_pending_file_parts')}"
+            )
             if result.collected_files and hasattr(self, "_pending_file_parts"):
                 from schemas.message import FilePart
                 for f in result.collected_files:
@@ -115,6 +120,7 @@ class ChatToolMixin:
                         url=f["url"], name=f["name"],
                         mime_type=f["mime_type"], size=f["size"],
                     ))
+                    logger.info(f"FilePart added | name={f['name']} | url={f['url'][:80]}")
             # ② ask_user 冒泡
             if (result.status == "ask_user" and result.ask_user_question
                     and not getattr(self, "_ask_user_pending", None)):
