@@ -89,6 +89,7 @@ class ERPAgent:
 
     async def _execute(self, query: str, deadline: float) -> AgentResult:
         """计划提取 → 并行部门执行 → 结果构建。"""
+        logger.info(f"ERPAgent _execute | query={query[:500]}")
         await self._push_thinking("分析查询意图...")
         plan = await self._extract_plan(query)
         if plan is None:

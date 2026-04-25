@@ -191,7 +191,11 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             return _AR(status="error", summary="请输入 ERP 相关问题")
         conversation_context = args.get("conversation_context", "")
 
-        logger.info(f"ERPAgent dispatch | task={task[:200]}")
+        logger.info(
+            f"ERPAgent dispatch | task={task[:300]} | "
+            f"context_len={len(conversation_context)} | "
+            f"context_preview={conversation_context[:200] if conversation_context else '(empty)'}"
+        )
 
         # v6: budget 通过构造函数传递（替代属性注入 hack）
         _parent_budget = getattr(self, "_budget", None)
