@@ -204,18 +204,18 @@ class TestFlagFilterE2E:
 class TestFieldsForwardE2E:
 
     @pytest.mark.asyncio
-    async def test_fields_reach_engine(self):
+    async def test_extra_fields_reach_engine(self):
         from services.agent.departments.trade_agent import TradeAgent
         kw = await _run_agent_chain(TradeAgent, {
             "doc_type": "order", "mode": "export",
             "time_range": "2026-04-21 ~ 2026-04-21",
-            "fields": ["remark", "express_no", "buyer_nick"],
+            "extra_fields": ["remark", "express_no", "buyer_nick"],
         })
-        fields = kw.get("fields")
-        assert fields is not None
-        assert "remark" in fields
-        assert "express_no" in fields
-        assert "buyer_nick" in fields
+        extra = kw.get("extra_fields")
+        assert extra is not None
+        assert "remark" in extra
+        assert "express_no" in extra
+        assert "buyer_nick" in extra
 
 
 # ============================================================

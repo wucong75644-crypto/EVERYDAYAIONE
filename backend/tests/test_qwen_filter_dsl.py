@@ -131,10 +131,10 @@ TOOL_DEF = {
                     "type": "string",
                     "enum": ["asc", "desc"],
                 },
-                "fields": {
+                "extra_fields": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "返回字段列表（mode=detail/export时生效）",
+                    "description": "默认列之外追加的额外列（mode=export时生效）",
                 },
                 "limit": {
                     "type": "integer",
@@ -264,7 +264,7 @@ TEST_CASES = [
         "check": lambda args: (
             args.get("doc_type") == "order"
             and isinstance(args.get("filters"), list)
-            and args.get("fields") is not None
+            and args.get("extra_fields") is not None
             and args.get("sort_by") in ("amount", None)
             and args.get("sort_dir") in ("desc", None)
         ),
@@ -299,8 +299,8 @@ TEST_CASES = [
             and args.get("mode") == "export"
             and isinstance(args.get("filters"), list)
             and len(args["filters"]) >= 2
-            and args.get("fields") is not None
-            and len(args.get("fields", [])) >= 4
+            and args.get("extra_fields") is not None
+            and len(args.get("extra_fields", [])) >= 4
         ),
     },
     {

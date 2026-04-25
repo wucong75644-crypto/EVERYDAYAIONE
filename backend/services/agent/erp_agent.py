@@ -408,7 +408,7 @@ class ERPAgent:
         if not params:
             return f"domain={domain}"
         parts = [f"domain={domain}", f"mode={params.get('mode', 'summary')}"]
-        for k in ("group_by", "platform", "fields", "product_code"):
+        for k in ("group_by", "platform", "extra_fields", "product_code"):
             if params.get(k):
                 parts.append(f"{k}={params[k]}")
         return ", ".join(parts)

@@ -269,7 +269,7 @@ class ErpToolMixin:
                 group_by=args.get("group_by"),
                 sort_by=args.get("sort_by"),
                 sort_dir=args.get("sort_dir", "desc"),
-                fields=args.get("fields"),
+                extra_fields=args.get("extra_fields") or args.get("fields"),
                 limit=args.get("limit", 20),
                 time_type=args.get("time_type"),
                 include_invalid=args.get("include_invalid", False),

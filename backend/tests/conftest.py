@@ -4,6 +4,12 @@ pytest 配置和公共 fixtures
 提供测试所需的 mock 对象和工具函数。
 """
 
+import sys
+from pathlib import Path
+
+# 确保 backend/ 在 sys.path 中，使 `from config.xxx` 等导入在项目根目录运行 pytest 时也能生效
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import pytest
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch

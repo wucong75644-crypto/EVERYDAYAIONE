@@ -111,7 +111,7 @@ class UnifiedQueryEngine:
         group_by: list[str] | None = None,
         sort_by: str | None = None,
         sort_dir: str = "desc",
-        fields: list[str] | None = None,
+        extra_fields: list[str] | None = None,
         limit: int = 20,
         time_type: str | None = None,
         user_id: str | None = None,
@@ -146,12 +146,12 @@ class UnifiedQueryEngine:
         if sort_dir not in ("asc", "desc"):
             sort_dir = "desc"
 
-        # fields 白名单校验（SELECT 列，范围比 filter 列更大）
-        if fields:
+        # extra_fields 白名单校验（追加到默认列的额外列）
+        if extra_fields:
             valid_fields = set(COLUMN_WHITELIST.keys()) | EXPORT_COLUMN_NAMES
-            fields = [f for f in fields if f in valid_fields]
-            if not fields:
-                fields = None
+            extra_fields = [f for f in extra_fields if f in valid_fields]
+            if not extra_fields:
+                extra_fields = None
 
         validated, err = _validate_filters(filters)
         if err:
@@ -171,7 +171,7 @@ class UnifiedQueryEngine:
             )
         else:
             return await self._export(
-                doc_type, validated, tr, fields, limit,
+                doc_type, validated, tr, extra_fields, limit,
                 user_id, conversation_id, request_ctx,
                 include_invalid=include_invalid,
             )
@@ -475,7 +475,7 @@ class UnifiedQueryEngine:
 
     async def _export(
         self, doc_type: str, filters: list[ValidatedFilter],
-        tr: TimeRange, fields: list[str] | None, limit: int,
+        tr: TimeRange, extra_fields: list[str] | None, limit: int,
         user_id: str | None, conversation_id: str | None,
         request_ctx: Optional[RequestContext],
         include_invalid: bool = False,
@@ -485,9 +485,12 @@ class UnifiedQueryEngine:
         # 总数包含刷单，只做标记分类不排除。用户显式传 is_scalping
         # 过滤时才会排除刷单行）
 
-        # fields 为空时用默认字段（detail 合并到 export 后，用户不一定指定 fields）
-        if not fields:
-            fields = DEFAULT_DETAIL_FIELDS.get(doc_type, ["*"])
+        # 始终以默认列为基础，extra_fields 追加额外列（去重保序）
+        fields = list(DEFAULT_DETAIL_FIELDS.get(doc_type, ["*"]))
+        if extra_fields:
+            for f in extra_fields:
+                if f not in fields:
+                    fields.append(f)
 
         safe_fields = [c for c in fields if c in EXPORT_COLUMN_NAMES]
         # 排序列必须在 SELECT 中，否则 ORDER BY 报列不存在

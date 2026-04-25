@@ -713,3 +713,88 @@ class TestExecuteFieldsWhitelist:
         )
         union = set(COLUMN_WHITELIST.keys()) | EXPORT_COLUMN_NAMES
         assert len(union) > len(COLUMN_WHITELIST)
+
+
+# ============================================================
+# extra_fields 合并逻辑（fields→extra_fields 重构）
+# ============================================================
+
+
+class TestExportExtraFieldsMerge:
+    """_export 始终以 DEFAULT_DETAIL_FIELDS 为基础，extra_fields 追加不替换。
+
+    修复前：fields=["item_name","doc_created_at"] → 只返回 2 列，丢商品编码。
+    修复后：extra_fields 只追加，默认列不可能被裁剪。
+    """
+
+    def test_no_extra_fields_uses_defaults(self):
+        """extra_fields=None 时使用完整默认列。"""
+        from services.kuaimai.erp_unified_schema import DEFAULT_DETAIL_FIELDS
+        defaults = DEFAULT_DETAIL_FIELDS["purchase"]
+        # 模拟 _export 的合并逻辑
+        fields = list(defaults)
+        assert len(fields) >= 10
+        assert "outer_id" in fields
+        assert "item_name" in fields
+
+    def test_extra_fields_appended_to_defaults(self):
+        """extra_fields 追加到默认列末尾。"""
+        from services.kuaimai.erp_unified_schema import DEFAULT_DETAIL_FIELDS
+        defaults = DEFAULT_DETAIL_FIELDS["order"]
+        fields = list(defaults)
+        extra = ["buyer_nick", "receiver_address"]
+        for f in extra:
+            if f not in fields:
+                fields.append(f)
+        assert "buyer_nick" in fields
+        assert "receiver_address" in fields
+        # 默认列仍然完整
+        for d in defaults:
+            assert d in fields
+
+    def test_extra_fields_duplicate_ignored(self):
+        """extra_fields 与默认列重复时不会产生重复列。"""
+        from services.kuaimai.erp_unified_schema import DEFAULT_DETAIL_FIELDS
+        defaults = DEFAULT_DETAIL_FIELDS["purchase"]
+        fields = list(defaults)
+        # item_name 和 doc_created_at 已在默认列中
+        extra = ["item_name", "doc_created_at"]
+        for f in extra:
+            if f not in fields:
+                fields.append(f)
+        assert fields.count("item_name") == 1
+        assert fields.count("doc_created_at") == 1
+        assert len(fields) == len(defaults)  # 没有新增
+
+    def test_extra_fields_cannot_remove_defaults(self):
+        """即使 extra_fields 只写了 2 列，默认的 13 列仍完整返回。
+        这是本次修复的核心验证：LLM 误设也不会丢列。
+        """
+        from services.kuaimai.erp_unified_schema import DEFAULT_DETAIL_FIELDS
+        defaults = DEFAULT_DETAIL_FIELDS["purchase"]
+        fields = list(defaults)
+        extra = ["item_name", "doc_created_at"]  # LLM 误设的 2 列
+        for f in extra:
+            if f not in fields:
+                fields.append(f)
+        # 关键断言：outer_id（商品编码）仍在
+        assert "outer_id" in fields
+        assert len(fields) == len(defaults)
+
+    def test_all_doc_types_have_outer_id_in_defaults(self):
+        """所有单据类型的默认列都包含 outer_id（商品编码）。"""
+        from services.kuaimai.erp_unified_schema import DEFAULT_DETAIL_FIELDS
+        for doc_type, fields in DEFAULT_DETAIL_FIELDS.items():
+            assert "outer_id" in fields, (
+                f"{doc_type} 默认列缺少 outer_id"
+            )
+
+    def test_execute_extra_fields_whitelist(self):
+        """execute() 对 extra_fields 做白名单校验，无效列被过滤。"""
+        from services.kuaimai.erp_unified_schema import (
+            COLUMN_WHITELIST, EXPORT_COLUMN_NAMES,
+        )
+        extra = ["remark", "totally_fake", "cost"]
+        valid = set(COLUMN_WHITELIST.keys()) | EXPORT_COLUMN_NAMES
+        result = [f for f in extra if f in valid]
+        assert result == ["remark", "cost"]

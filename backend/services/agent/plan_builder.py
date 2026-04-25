@@ -105,7 +105,8 @@ _TIME_RANGE_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?\s*~\s*\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?$",
 )
 # _sanitize_params 中已做特殊校验/变换的参数，透传逻辑跳过这些 key
-_COMPLEX_KEYS = frozenset({"mode", "doc_type", "time_range", "group_by", "fields"})
+_COMPLEX_KEYS = frozenset({"mode", "doc_type", "time_range", "group_by", "extra_fields",
+                            "fields"})  # fields: 向后兼容旧名，映射到 extra_fields
 
 
 def _sanitize_params(params: dict) -> dict:
@@ -139,18 +140,21 @@ def _sanitize_params(params: dict) -> dict:
         gb = params["group_by"]
         clean["group_by"] = [gb] if isinstance(gb, str) else gb
 
-    # fields: 需要白名单校验
-    if params.get("fields"):
+    # extra_fields: 追加列（白名单校验）
+    # 语义：在 DEFAULT_DETAIL_FIELDS 基础上追加额外列，不替换默认列。
+    # LLM 即使误设 extra_fields=["item_name"]，也只是追加（已在默认列中则无影响）。
+    # 向后兼容：旧名 "fields" 映射到 extra_fields。
+    raw_extra = params.get("extra_fields") or params.get("fields")
+    if raw_extra:
         from services.kuaimai.erp_unified_schema import (
             COLUMN_WHITELIST, EXPORT_COLUMN_NAMES,
         )
-        fields = params["fields"]
-        if isinstance(fields, str):
-            fields = [fields]
+        if isinstance(raw_extra, str):
+            raw_extra = [raw_extra]
         valid = set(COLUMN_WHITELIST.keys()) | EXPORT_COLUMN_NAMES
-        clean["fields"] = [f for f in fields if f in valid]
-        if not clean["fields"]:
-            del clean["fields"]
+        validated = [f for f in raw_extra if f in valid]
+        if validated:
+            clean["extra_fields"] = validated
 
     # ── 内部元数据透传（_ 前缀字段，计划模式用） ──
     for key, value in params.items():
@@ -264,11 +268,12 @@ _PARAM_DEFINITIONS = (
     "\n"
     "【展示控制】\n"
     "- group_by: shop/platform/product/supplier/warehouse/status（可选，仅 summary 模式）\n"
-    "- fields: 需要返回的特定字段列表（可选，用户明确提到特定信息时提取）\n"
-    "  可选字段：remark(备注)/buyer_message(买家留言)/express_no(快递单号)/"
+    "- extra_fields: 在默认列基础上追加的额外列（可选，绝大多数查询不需要设置）\n"
+    "  默认已返回：单据编号/商品编码/商品名称/数量/金额/状态/时间等核心列\n"
+    "  仅当用户明确要求看以下额外信息时才设置：\n"
+    "  remark(备注)/buyer_message(买家留言)/express_no(快递单号)/"
     "express_company(快递公司)/buyer_nick(买家昵称)/receiver_name(收件人)/"
-    "receiver_address(地址)/cost(成本)/gross_profit(毛利)/text_reason(退货原因)\n"
-    "  注意：不提则用默认字段，不要主动添加用户未提到的字段\n\n"
+    "receiver_address(地址)/cost(成本)/gross_profit(毛利)/text_reason(退货原因)\n\n"
     "【重要规则】\n"
     "- 用户给了一个单号但没说是什么类型时：纯数字16-19位→order_no；字母+数字（如SF/YT/ZTO/JD开头）→express_no\n"
     "- 用户指定订单号或快递单号查询时，time_range 仍然必填（用最近3个月）\n"
