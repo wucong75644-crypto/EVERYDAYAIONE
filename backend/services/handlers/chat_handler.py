@@ -374,19 +374,20 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 get_core_tools, get_tools_by_names, get_tool_system_prompt,
             )
             tool_prompt = get_tool_system_prompt()
+            # 计划模式：替换"执行模式判断"段落，强制走计划流程
+            if plan_mode and tool_prompt:
+                tool_prompt = tool_prompt.replace(
+                    "=== 直接模式（大部分场景）===\n"
+                    "所有步骤的参数现在都清楚 → 直接调工具执行，不等确认。\n"
+                    "例：查昨天订单汇总、导出本周明细、退货率统计（各域独立并行）。\n"
+                    "可以自己拆步顺序调用多个工具。",
+                    "=== 计划模式已激活（用户手动开启）===\n"
+                    "所有查询都必须走计划模式，禁止直接调 erp_agent 执行。\n"
+                    "即使是简单查询也必须：先调 erp_analyze → 展示方案 → 等确认。",
+                )
+                logger.info("Plan mode active | tool_prompt patched")
             if tool_prompt:
                 messages.append({"role": "system", "content": tool_prompt})
-
-            # 4.5 计划模式强制注入（用户手动开启时）
-            logger.info(f"Plan mode check | plan_mode={plan_mode!r} | type={type(plan_mode).__name__}")
-            if plan_mode:
-                messages.append({"role": "system", "content": (
-                    "=== 计划模式已激活（覆盖所有其他指令）===\n"
-                    "用户手动开启了计划模式。你 MUST NOT 直接调用 erp_agent 执行查询。\n"
-                    "你 MUST 先调用 erp_analyze 分析任务结构，然后展示执行方案，\n"
-                    "然后停止等用户确认。即使是简单查询也必须走计划模式。\n"
-                    "此规则优先级高于所有其他指令。"
-                )})
 
             # 5. 加载核心工具（ToolSearch 模式：9 个核心直接加载）
             core_tools = get_core_tools(org_id=self.org_id)
