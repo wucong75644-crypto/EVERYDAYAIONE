@@ -252,13 +252,16 @@ class UnifiedQueryEngine:
         summary = f"{time_header}\n\n{body}" if time_header else body
 
         # summary 数据可以是 dict（总计）或 list（分组）
-        # platform 编码 → 中文（和 summary 文本保持一致，防止 LLM 输出编码）
+        # platform 编码 → 中文 + 清理冗余字段（group_key 已含分组值）
         result_data = data if isinstance(data, list) else [data]
         for row in result_data:
-            if "platform" in row:
-                row["platform"] = PLATFORM_CN.get(row["platform"], row["platform"])
             if "group_key" in row and rpc_group == "platform":
                 row["group_key"] = PLATFORM_CN.get(row["group_key"], row["group_key"])
+            elif "platform" in row:
+                row["platform"] = PLATFORM_CN.get(row["platform"], row["platform"])
+            # 分组时 platform 和 group_key 重复，删除冗余字段避免导出列名混乱
+            if "group_key" in row and "platform" in row:
+                del row["platform"]
         summary_cols = list(_SUMMARY_BASE_COLUMNS)
         if rpc_group:
             summary_cols.insert(0, ColumnMeta("group_key", "text", _GROUP_LABEL.get(rpc_group, "分组")))
@@ -414,7 +417,7 @@ class UnifiedQueryEngine:
         }
         for cat in cr.categories_list:
             name = cat.get("name", "未知")
-            flat_row[f"{name}_orders"] = cat.get("doc_count", 0)
+            flat_row[f"{name}单数"] = cat.get("doc_count", 0)
         return ToolOutput(
             summary=summary_text,
             format=OutputFormat.TABLE,
