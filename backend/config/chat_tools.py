@@ -48,8 +48,8 @@ from config.phase_tools import _build_ask_user_tool
 
 # 只读工具 — 可并行
 _CONCURRENT_SAFE_TOOLS: Set[str] = {
-    # Agent（只读查询，内部自行管理并发）
-    "erp_agent",
+    # Agent（只读查询/分析，内部自行管理并发）
+    "erp_agent", "erp_analyze",
     # ERP 查询（远程 + 本地）
     "erp_info_query", "erp_product_query", "erp_trade_query",
     "erp_aftersales_query", "erp_warehouse_query", "erp_purchase_query",
@@ -105,29 +105,20 @@ def get_safety_level(tool_name: str) -> SafetyLevel:
 
 TOOL_SYSTEM_PROMPT = """## 工具决策规则
 
-### erp_agent — ERP 数据检索
+### erp_agent — ERP 数据执行
 用户问任何涉及订单/库存/采购/售后/发货/物流/商品/销量/统计的问题时调用。
 task 原样传递用户的话，conversation_context 给最近相关的对话内容。
-erp_agent 是 worker 进程，返回数据摘要或 staging 文件引用：
+返回数据摘要或 staging 文件引用：
 - 纯数字结论 → 直接向用户呈现，加上下文做适当解读
 - 含 [文件已存入 staging] → 用户要导出时调 code_execute 读 staging 转 Excel
 - 含 [关联计算提示] → 调 code_execute 按提示读多个 staging 文件关联计算
 - 参数不足 → 用 ask_user 补充后重新调用
 - 错误 → 告知用户并建议替代方案
-- 能力约束（status=plan）→ 见下方"计划模式"
 不要重复 erp_agent 的原始数据，基于它做呈现即可。
 
-erp_agent 计划模式（status=plan）：
-erp_agent 超出一次执行能力时返回 status=plan，说明涉及哪些域、每步参数、步骤间依赖。
-收到 plan 后你的职责：
-1. 用自然语言向用户解释方案（几步、每步查什么、依赖关系），等用户确认
-2. 用户确认后按计划逐步调用 erp_agent（每步单独调用，传递上一步的结果）
-3. 最终汇总：完整结论 + 推理逻辑
-
-调用前自检——判断"一次够不够"：
-- 各域数据独立（如同时看订单汇总和售后汇总）→ 一次调用
-- 后一步的输入依赖前一步的输出（如先查供应商商品→用编码查订单）→ 自己拆成多次顺序调用
-- 不确定时直接调用，erp_agent 会自行判断是执行还是返回能力约束
+### erp_analyze — ERP 分析（计划模式专用）
+只分析不执行，返回结构化的任务拆解（涉及哪些域、每步参数、步骤间依赖）。
+计划模式的探索阶段使用，毫秒级返回。直接模式下不要调用。
 
 ### search_knowledge — 知识库
 业务规则、操作流程等非数据类问题。
@@ -145,6 +136,27 @@ erp_agent 返回的 staging 文件需要转 Excel 或关联计算时使用，或
 ### 工作区文件
 用 file_list 确认文件名，code_execute 读取处理。Excel/二进制不能用 file_read。
 
+## 执行模式判断
+
+收到用户请求后，先自检：
+**"完成这个任务，后续步骤是否需要前面步骤的结果才能确定怎么做？"**
+
+=== 直接模式（大部分场景）===
+所有步骤的参数现在都清楚 → 直接调工具执行，不等确认。
+例：查昨天订单汇总、导出本周明细、退货率统计（各域独立并行）。
+可以自己拆步顺序调用多个工具。
+
+=== 计划模式（后续步骤依赖前面的产出）===
+某一步的输入需要前面步骤的查询结果才能确定 → 进入计划模式。
+例：查供应商商品再用编码查订单、导出数据再生成图表、查库存不足再创建采购单。
+
+计划模式流程：
+1. 探索：调 erp_analyze 分析任务结构，获取步骤、域、参数、依赖关系
+2. 规划：基于分析结果制定执行方案（几步、每步做什么、数据如何传递）
+3. 展示并等待：用自然语言向用户展示方案，然后停止——不要继续调工具，等用户确认或调整
+4. 执行：用户确认后，按方案逐步调 erp_agent 等工具，每步传入上一步的结果
+5. 汇总：全部完成后输出完整结论
+
 ## 对话交互
 
 === CRITICAL ===
@@ -152,8 +164,7 @@ erp_agent 返回的 staging 文件需要转 Excel 或关联计算时使用，或
 - 数据查询有歧义时调 ask_user 追问用户（猜错代价 > 多问一次）
 - 需要追问时用 ask_user 工具，简洁语言 + 2-3 个选项引导选择
 - 信息完整无歧义时直接执行，不要反复确认
-- 复杂多步分析（≥3步）先列计划等用户确认，再一次性执行
-- 你可以在一轮中调用多个工具，无依赖关系的工具调用应并行发起以提高效率。但如果某个调用依赖另一个的结果，必须顺序执行"""
+- 你可以在一轮中调用多个工具，无依赖关系的工具调用应并行发起以提高效率"""
 
 
 def get_tool_system_prompt() -> str:
@@ -205,6 +216,32 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                                 "示例：'用户之前查了抖音平台昨天的付款订单汇总，"
                                 "现在想按店铺名重新看'"
                             ),
+                        },
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "erp_analyze",
+                "description": (
+                    "ERP 查询分析工具——只分析不执行，返回结构化的任务拆解。\n"
+                    "计划模式下使用：把用户的完整查询交给它，获取涉及哪些域、"
+                    "每步需要什么参数、步骤间的依赖关系。\n"
+                    "不查数据库、不调 API，只做意图分析，毫秒级返回。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "required": ["task"],
+                    "properties": {
+                        "task": {
+                            "type": "string",
+                            "description": "用户的完整查询（原文传入，不要拆分）",
+                        },
+                        "conversation_context": {
+                            "type": "string",
+                            "description": "对话背景补充（可选）",
                         },
                     },
                 },
@@ -364,6 +401,7 @@ def get_chat_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
 _CORE_TOOLS: Set[str] = {
     # Agent（封装复杂多步工具）
     "erp_agent",                # ERP 独立 Agent（内含 17 个 ERP 工具）
+    "erp_analyze",              # ERP 分析（计划模式探索阶段，只分析不执行）
     # 搜索
     # 注意：erp_api_search 已移至 ERP 域，主 Agent 不再直接使用
     # ERP 相关查询统一走 erp_agent，erp_api_search 在其内部可用

@@ -52,6 +52,7 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             "generate_image": self._generate_image,
             "generate_video": self._generate_video,
             "erp_agent": self._erp_agent,
+            "erp_analyze": self._erp_analyze,
         }
         # 注册文件操作工具
         for tool_name in FILE_INFO_TOOLS:
@@ -211,6 +212,32 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
 
         # 返回 AgentResult，文件通道/ask_user/display/token 由 ChatToolMixin 统一处理
         return result
+
+    async def _erp_analyze(self, args: Dict[str, Any]) -> AgentResult:
+        """ERP 分析接口：只分析不执行，返回结构化任务拆解。
+
+        主 Agent 在计划模式下调用，获取 ERP 查询的步骤、域、参数、依赖关系。
+        不查数据库、不调 API，只跑 PlanBuilder LLM 提取。
+        """
+        from services.agent.erp_agent import ERPAgent
+
+        task = (args.get("task") or args.get("query", "")).strip()
+        if not task:
+            from services.agent.agent_result import AgentResult as _AR
+            return _AR(status="error", summary="请输入要分析的 ERP 查询")
+        conversation_context = args.get("conversation_context", "")
+
+        logger.info(f"ERPAgent analyze | task={task[:200]}")
+
+        agent = ERPAgent(
+            db=self.db,
+            user_id=self.user_id,
+            conversation_id=self.conversation_id,
+            org_id=self.org_id,
+            request_ctx=self.request_ctx,
+        )
+
+        return await agent.analyze(task, conversation_context=conversation_context)
 
     # ========================================
     # 搜索工具（按需发现 API/模型文档）

@@ -102,17 +102,6 @@ class ERPAgent:
         for step in plan.steps:
             await _fill_codes_for_params(step.params, query, self.db, self.org_id)
 
-        # ── 计划模式：≥3步必须规划，2步serial也规划 ──
-        if len(plan.steps) >= 3 or (
-            plan.dependency == "serial" and len(plan.steps) > 1
-        ):
-            reason = "步骤≥3" if len(plan.steps) >= 3 else "串行依赖"
-            await self._push_thinking(f"进入计划模式：{reason}")
-            result = self._build_plan_result(plan, query)
-            if self._thinking_parts:
-                result.thinking_text = "\n".join(self._thinking_parts)
-            return result
-
         step_results = await self._execute_plan(plan, query, deadline)
         result = self._build_multi_result(step_results, plan, query)
         await self._push_thinking("完成")
@@ -208,9 +197,29 @@ class ERPAgent:
 
         return list(await asyncio.gather(*[run_step(s) for s in plan.steps]))
 
-    def _build_plan_result(self, plan: ExecutionPlan, query: str) -> AgentResult:
-        """计划模式：不执行，返回能力约束供主 Agent 自行规划。"""
-        reason = "步骤≥3" if len(plan.steps) >= 3 else "串行依赖"
+    async def analyze(self, task: str, conversation_context: str = "") -> AgentResult:
+        """分析接口：只跑 PlanBuilder 提取计划，不查数据库。
+
+        主 Agent 在计划模式下调用，获取结构化的任务拆解。
+        与 execute() 共享 _extract_plan 逻辑，但不走 _execute_plan。
+        """
+        query = f"{task}\n（背景：{conversation_context}）" if conversation_context else task
+        if not self.org_id:
+            return _error_result("当前账号未开通 ERP 功能，请联系管理员配置企业账号。")
+
+        plan = await self._extract_plan(query)
+        if plan is None:
+            return _error_result("无法理解您的请求，请更具体地描述您要查询的内容")
+
+        return self._build_analyze_result(plan, query)
+
+    def _build_analyze_result(self, plan: ExecutionPlan, query: str) -> AgentResult:
+        """构建分析结果：结构化的任务拆解供主 Agent 规划。"""
+        reason = (
+            "步骤≥3" if len(plan.steps) >= 3
+            else "串行依赖" if plan.dependency == "serial"
+            else "多域并行"
+        )
 
         step_lines: list[str] = []
         plan_steps_meta: list[dict] = []
