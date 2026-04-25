@@ -36,9 +36,10 @@ class AgentResult:
     summary: str
     """人类可读的结果摘要"""
     status: str | OutputStatus = "success"
-    """执行状态：success | error | empty | partial | timeout | ask_user
+    """执行状态：success | error | empty | partial | timeout | ask_user | plan
     构造时可传 OutputStatus 枚举，__post_init__ 自动转为 str。
     默认 "success"（兼容原 ToolOutput 的 OutputStatus.OK 默认值）。
+    plan: 超出一次执行能力，返回执行计划由调用方逐步执行。
     """
 
     # ── 第二层：数据（按场景填充）──

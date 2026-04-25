@@ -4,9 +4,12 @@ ERP 查询参数提取工具函数。
 提供 ERPAgent 需要的：
 - 关键词路由（quick_classify）
 - 参数校验（_sanitize_params）
-- 平台/编码补全（_fill_platform, _fill_codes_for_params）
 - LLM prompt 构建与解析（build_extract_prompt, parse_extract_response）
 - 降级参数构造（_build_fallback_params）
+
+拆分到独立模块（此处 re-export 保持兼容）：
+- plan_fill.py: fill_platform, _fill_codes_for_params
+- erp_tool_description.py: get_capability_manifest, build_tool_description
 
 设计文档: docs/document/TECH_ERPAgent架构简化.md §3.1 / §6
 """
@@ -148,6 +151,11 @@ def _sanitize_params(params: dict) -> dict:
         clean["fields"] = [f for f in fields if f in valid]
         if not clean["fields"]:
             del clean["fields"]
+
+    # ── 内部元数据透传（_ 前缀字段，计划模式用） ──
+    for key, value in params.items():
+        if key.startswith("_") and value is not None:
+            clean[key] = value
 
     # ── 简单参数透传（str/bool，下游按需读取） ──
     # 空字符串/空列表跳过，防止产生无效过滤条件
@@ -345,7 +353,18 @@ def build_multi_extract_prompt(query: str, now_str: str = "") -> str:
         "3. 每个 step 独立提取参数，共享相同的时间范围和过滤条件\n"
         "4. compute_hint 仅在跨域需要计算时填写，"
         "告诉下游怎么关联和计算（用哪个字段 join、算什么指标）\n"
-        "5. 不确定是否跨域时，默认单域\n\n"
+        "5. 不确定是否跨域时，默认单域\n"
+        "6. 多 step 时补充以下字段：\n"
+        "   a. dependency（必填）：\n"
+        '      - "parallel"（默认）：各 step 过滤条件互相独立，可同时执行\n'
+        '      - "serial"：后续 step 需要前序 step 的查询结果作为过滤条件\n'
+        "      判断标准：后续 step 的某个过滤参数在用户查询中没给明确值，"
+        "需要从前序 step 结果获取 → serial\n"
+        "   b. 每个 step 的 params 中补充（serial 时必填）：\n"
+        "      - _expected_output：该步骤预期产出什么数据给后续步骤\n"
+        "      - _dependencies：依赖哪些前序步骤（步骤序号数组，从1开始）\n"
+        "      - _required_input：需要前序步骤的什么字段"
+        "（如 {\"from_step\":1,\"field\":\"product_code\"}）\n\n"
         + _PARAM_DEFINITIONS +
         "\n返回纯 JSON（不要 markdown 围栏）。\n\n"
         "示例1（单域：今日付款订单统计）：\n"
@@ -356,7 +375,7 @@ def build_multi_extract_prompt(query: str, now_str: str = "") -> str:
         '{"steps":[{"domain":"aftersale","params":{"doc_type":"aftersale",'
         '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-17",'
         '"group_by":"product"}}]}\n\n'
-        "示例3（跨域：HZ001 商品的退货率）：\n"
+        "示例3（跨域 parallel：HZ001 商品的退货率）：\n"
         '{"steps":['
         '{"domain":"trade","params":{"doc_type":"order","mode":"summary",'
         '"time_range":"2026-04-01 ~ 2026-04-17","product_code":"HZ001"}},'
@@ -364,8 +383,8 @@ def build_multi_extract_prompt(query: str, now_str: str = "") -> str:
         '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-17",'
         '"product_code":"HZ001"}}'
         '],"compute_hint":"用 product_code 关联，'
-        '退货率 = 售后笔数 / 订单笔数"}\n\n'
-        "示例4（跨域：本月各商品采购到货与销量对比）：\n"
+        '退货率 = 售后笔数 / 订单笔数","dependency":"parallel"}\n\n'
+        "示例4（跨域 parallel：本月各商品采购到货与销量对比）：\n"
         '{"steps":['
         '{"domain":"purchase","params":{"doc_type":"purchase",'
         '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-17",'
@@ -373,20 +392,33 @@ def build_multi_extract_prompt(query: str, now_str: str = "") -> str:
         '{"domain":"trade","params":{"doc_type":"order","mode":"summary",'
         '"time_range":"2026-04-01 ~ 2026-04-17","group_by":"product"}}'
         '],"compute_hint":"用 product_code 关联采购量和销量，'
-        '计算采销比"}\n\n'
+        '计算采销比","dependency":"parallel"}\n\n'
         "示例5（单域：刷单统计）：\n"
         '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
         '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-17",'
-        '"is_scalping":true,"include_invalid":true}}]}'
+        '"is_scalping":true,"include_invalid":true}}]}\n\n'
+        "示例6（跨域 serial：查供应商采购商品→用编码查订单）：\n"
+        '{"steps":['
+        '{"domain":"purchase","params":{"doc_type":"purchase","mode":"summary",'
+        '"time_range":"2026-04-01 ~ 2026-04-17","supplier_name":"XX",'
+        '"group_by":"product",'
+        '"_expected_output":"商品编码列表（product_code）","_dependencies":[]}},'
+        '{"domain":"trade","params":{"doc_type":"order","mode":"summary",'
+        '"time_range":"2026-04-01 ~ 2026-04-17",'
+        '"_expected_output":"订单数据","_dependencies":[1],'
+        '"_required_input":{"from_step":1,"field":"product_code"}}}'
+        '],"compute_hint":"先查供应商采购商品获取编码，再用编码查订单",'
+        '"dependency":"serial"}'
     )
 
 
 def parse_multi_extract_response(
     raw_json: str,
-) -> tuple[list[tuple[str, dict]], str | None]:
+) -> tuple[list[tuple[str, dict]], str | None, str]:
     """解析 LLM 返回的多域计划 JSON。
 
-    返回 (steps: [(domain, params), ...], compute_hint: str | None)。
+    返回 (steps: [(domain, params), ...], compute_hint: str | None, dependency: str)。
+    dependency: "parallel"（默认）或 "serial"。
     向后兼容：旧格式 {"domain":..., "params":...} 自动包装为单 step。
     """
     cleaned = re.sub(r"```(?:json)?\s*", "", raw_json)
@@ -410,7 +442,7 @@ def parse_multi_extract_response(
         params = data.get("params", {})
         if not isinstance(params, dict):
             params = {}
-        return ([(domain, params)], None)
+        return ([(domain, params)], None, "parallel")
 
     # ── 新多域格式 {"steps":[...], "compute_hint":"..."} ──
     steps_raw = data.get("steps")
@@ -444,7 +476,22 @@ def parse_multi_extract_response(
     if compute_hint and not isinstance(compute_hint, str):
         compute_hint = None
 
-    return (steps, compute_hint)
+    dependency = data.get("dependency", "parallel")
+    if dependency not in ("parallel", "serial"):
+        dependency = "parallel"
+
+    # 自动纠正：任一 step 含 _required_input 但顶层 dependency 不是 serial
+    if dependency != "serial":
+        for _, params in steps:
+            if params.get("_required_input"):
+                logger.warning(
+                    "dependency 自动纠正: step 含 _required_input 但 "
+                    f"dependency={dependency!r} → serial"
+                )
+                dependency = "serial"
+                break
+
+    return (steps, compute_hint, dependency)
 
 
 def parse_extract_response(raw_json: str) -> tuple[str, dict]:
@@ -478,264 +525,18 @@ def parse_extract_response(raw_json: str) -> tuple[str, dict]:
     return (domain, params)
 
 
-# ── 能力清单导出（供 build_tool_description 消费） ──
+# ── 能力清单（已拆到 erp_tool_description.py，此处 re-export 保持兼容） ──
+from services.agent.erp_tool_description import get_capability_manifest  # noqa: F401
 
-
-def get_capability_manifest() -> dict:
-    """导出 erp_agent 完整能力清单（唯一 Source of Truth）。
-
-    所有内容结构化，build_tool_description() 纯格式化消费。
-    设计文档: docs/document/TECH_Agent能力通信架构.md §3.3.1
-    """
-    from services.kuaimai.erp_unified_schema import (
-        GROUP_BY_MAP, VALID_TIME_COLS, PLATFORM_NORMALIZE,
-        EXPORT_COLUMNS,
-    )
-    group_by_dims = sorted({v for v in GROUP_BY_MAP.values()})
-    platform_names = sorted({
-        k for k in PLATFORM_NORMALIZE if not k.isascii()
-    })
-    field_categories = {
-        category: [cn_name for _, cn_name in fields]
-        for category, fields in EXPORT_COLUMNS.items()
-    }
-
-    return {
-        "domains": sorted(VALID_DOMAINS),
-        "modes": sorted(VALID_MODES),
-        "doc_types": sorted(VALID_DOC_TYPES),
-        "group_by": group_by_dims,
-        "filters": [
-            "platform", "product_code", "order_no", "include_invalid",
-            "shop_name", "warehouse_name", "supplier_name",
-            "express_no", "buyer_nick", "order_status", "doc_status",
-            "aftersale_type", "refund_status", "express_company",
-            "receiver_state", "receiver_city", "item_name",
-            "is_cancel", "is_refund", "is_exception", "is_halt",
-            "is_urgent", "is_presell",
-            "receiver_district", "receiver_address", "reason",
-        ],
-        "time_cols": sorted(VALID_TIME_COLS),
-        "platforms": platform_names,
-        "field_categories": field_categories,
-        "summary": (
-            "ERP 数据查询专员，查询订单/库存/采购/售后等数据，"
-            "口语化表达和错别字自动识别"
-        ),
-        "use_when": [
-            "用户问任何涉及订单/库存/采购/售后/发货/物流/商品/销量的问题",
-            "含操作性词汇（对账/核对/处理/优先处理/多少钱/价格）需要先查数据",
-            ("口语/错别字也要识别：'丁单'=订单，'酷存'=库存，"
-             "'够不够卖'=库存查询，'到了没'=采购到货，"
-             "'退了'=售后，'爆单'=销量统计，'查一下呗'=数据查询"),
-        ],
-        "dont_use_when": [
-            {"场景": "写操作（创建/修改/取消）", "替代": "erp_execute"},
-            {"场景": "非 ERP 数据（天气/新闻）", "替代": "web_search"},
-            {"场景": "业务规则/操作流程", "替代": "search_knowledge"},
-        ],
-        "returns": [
-            "summary 模式：统计数字（总量/金额/分组明细），直接内联",
-            "export 模式：数据存 staging parquet + 返回 profile 摘要（行数/字段/预览）",
-            "导出工作流：erp_agent 查数据存 staging → code_execute 读 staging 写 Excel",
-            "跨域查询：一次调用可返回多域数据 + 关联计算提示，code_execute 按提示关联",
-        ],
-        "examples": [
-            {"query": "昨天淘宝退货按店铺统计",
-             "effect": "summary + platform=taobao + group_by=shop"},
-            {"query": "导出本周订单明细", "effect": "export → staging + profile"},
-            {"query": "编码 HZ001 的库存", "effect": "product_code 过滤"},
-            {"query": "上月采购到货按供应商统计",
-             "effect": "summary + group_by=supplier"},
-            {"query": "包含刷单的订单有多少",
-             "effect": "include_invalid=true"},
-            {"query": "今天刷单有多少",
-             "effect": "is_scalping=true + include_invalid=true"},
-        ],
-        "auto_behaviors": [
-            ">200行自动导出 staging 文件",
-            "返回格式自动适配（文本/表格/文件链接）",
-            "降级链：AI提取 → 关键词匹配 → abort",
-        ],
-    }
-
-
-# ── L2 platform 自动补全 ──
-
-
-def fill_platform(params: dict, query: str) -> None:
-    """L2 意图完整性：从用户查询文本补全 LLM 漏提取的 platform。
-
-    纯函数，不依赖 ERPAgent 实例。供外部调用或测试使用。
-    """
-    if params.get("platform"):
-        return  # AI 已提取，不覆盖
-
-    from services.kuaimai.erp_unified_schema import PLATFORM_NORMALIZE
-    cn_keys = [
-        k for k in PLATFORM_NORMALIZE
-        if not k.isascii() or k == "1688"
-    ]
-    matched: set[str] = set()
-    for key in cn_keys:
-        if key in query:
-            matched.add(PLATFORM_NORMALIZE[key])
-
-    if len(matched) == 1:
-        params["platform"] = matched.pop()
-        logger.info(
-            f"L2 platform 补全: query={query!r} → "
-            f"platform={params['platform']}",
-        )
-    elif len(matched) > 1:
-        logger.warning(
-            f"L2 platform 多匹配，不补全: query={query!r}, "
-            f"matched={matched}",
-        )
-
-
-# ── L2 product_code / order_no / express_no 补全（DB 验证） ──
-
-_PRODUCT_CODE_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*")
-_ORDER_NO_RE = re.compile(r"P\d{18}|\d{16,19}")
-# 快递单号格式：字母前缀(2-4位) + 数字(8-20位)
-# 覆盖：SF顺丰/YT圆通/ZTO中通/YD韵达/STO申通/BEST百世/JD京东/EMS/YZPY邮政
-_EXPRESS_NO_RE = re.compile(
-    r"(?:SF|YT|ZTO|YD|STO|BEST|JD|EMS|YZPY|JDVA|DBL|YUNDA)"
-    r"\d{8,20}",
-    re.IGNORECASE,
+# ── L2 补全（已拆到 plan_fill.py，此处 re-export 保持兼容） ──
+from services.agent.plan_fill import (  # noqa: F401
+    fill_platform,
+    _fill_codes_for_params,
+    _PRODUCT_CODE_RE,
+    _ORDER_NO_RE,
+    _EXPRESS_NO_RE,
+    _CODE_STOP_WORDS,
 )
-_CODE_STOP_WORDS = frozenset({
-    "the", "and", "for", "not", "all", "but", "are", "was",
-    "order", "trade", "shop", "sku", "erp",
-})
-
-
-async def _fill_codes_for_params(
-    params: dict, query: str, db: Any, org_id: str | None,
-) -> None:
-    """L2 意图完整性：从用户查询文本补全 product_code / order_no / express_no。
-
-    与旧版 _fill_codes 功能一致，但操作单个 params dict 而非 ExecutionPlan。
-    """
-    if not db:
-        return
-
-    code_candidates = _PRODUCT_CODE_RE.findall(query)
-    code_candidates = [
-        c for c in code_candidates
-        if len(c) >= 3 and c.lower() not in _CODE_STOP_WORDS
-    ][:5]
-    verified_code: str | None = None
-    if code_candidates:
-        verified_code = await _verify_product_code(db, code_candidates, org_id)
-
-    order_candidates = _ORDER_NO_RE.findall(query)[:3]
-    verified_order: str | None = None
-    if order_candidates:
-        verified_order = await _verify_order_no(db, order_candidates, org_id)
-
-    # 快递单号识别（字母前缀+数字，如 SF1234567890）
-    express_candidates = _EXPRESS_NO_RE.findall(query)[:3]
-    verified_express: str | None = None
-    if express_candidates:
-        verified_express = await _verify_express_no(
-            db, express_candidates, org_id,
-        )
-
-    if not verified_code and not verified_order and not verified_express:
-        return
-
-    if verified_code and not params.get("product_code"):
-        params["product_code"] = verified_code
-        logger.info(
-            f"L2 product_code 补全: query={query!r} → "
-            f"product_code={verified_code}",
-        )
-    if verified_order and not params.get("order_no"):
-        params["order_no"] = verified_order
-        logger.info(
-            f"L2 order_no 补全: query={query!r} → "
-            f"order_no={verified_order}",
-        )
-    if verified_express and not params.get("express_no"):
-        params["express_no"] = verified_express
-        logger.info(
-            f"L2 express_no 补全: query={query!r} → "
-            f"express_no={verified_express}",
-        )
-
-
-async def _verify_product_code(
-    db: Any, candidates: list[str], org_id: str | None,
-) -> str | None:
-    """验证候选商品编码是否存在于 erp_products 表。"""
-    matched: set[str] = set()
-    for code in candidates:
-        try:
-            q = db.table("erp_products").select("outer_id").eq(
-                "outer_id", code,
-            ).limit(1)
-            if org_id:
-                q = q.eq("org_id", org_id)
-            result = q.execute()
-            if result.data:
-                matched.add(code)
-        except Exception as e:
-            logger.debug(f"L2 product_code 验证失败: {code} → {e}")
-    if len(matched) == 1:
-        return matched.pop()
-    if len(matched) > 1:
-        logger.warning(f"L2 product_code 多匹配，不补全: {matched}")
-    return None
-
-
-async def _verify_order_no(
-    db: Any, candidates: list[str], org_id: str | None,
-) -> str | None:
-    """验证候选订单号是否存在于 erp_document_items 表。"""
-    matched: set[str] = set()
-    for order_no in candidates:
-        try:
-            q = db.table("erp_document_items").select("order_no").eq(
-                "order_no", order_no,
-            ).limit(1)
-            if org_id:
-                q = q.eq("org_id", org_id)
-            result = q.execute()
-            if result.data:
-                matched.add(order_no)
-        except Exception as e:
-            logger.debug(f"L2 order_no 验证失败: {order_no} → {e}")
-    if len(matched) == 1:
-        return matched.pop()
-    if len(matched) > 1:
-        logger.warning(f"L2 order_no 多匹配，不补全: {matched}")
-    return None
-
-
-async def _verify_express_no(
-    db: Any, candidates: list[str], org_id: str | None,
-) -> str | None:
-    """验证候选快递单号是否存在于 erp_document_items 表。"""
-    matched: set[str] = set()
-    for express_no in candidates:
-        try:
-            q = db.table("erp_document_items").select("express_no").eq(
-                "express_no", express_no,
-            ).limit(1)
-            if org_id:
-                q = q.eq("org_id", org_id)
-            result = q.execute()
-            if result.data:
-                matched.add(express_no)
-        except Exception as e:
-            logger.debug(f"L2 express_no 验证失败: {express_no} → {e}")
-    if len(matched) == 1:
-        return matched.pop()
-    if len(matched) > 1:
-        logger.warning(f"L2 express_no 多匹配，不补全: {matched}")
-    return None
 
 
 # ── 向后兼容保留（测试文件引用）──

@@ -16,6 +16,7 @@ from services.agent.agent_result import AgentResult
 
 _VALID_DOMAINS = frozenset({"warehouse", "purchase", "trade", "aftersale"})
 _DOMAIN_LABEL = {"warehouse": "库存", "purchase": "采购", "trade": "订单", "aftersale": "售后"}
+_STEP_LABELS = ("①", "②", "③", "④")
 
 
 def _error_result(summary: str, status: str = "error") -> AgentResult:
@@ -32,6 +33,7 @@ class ExecutionPlan:
     steps: list[PlanStep]
     compute_hint: str | None = None
     degraded: bool = False
+    dependency: str = "parallel"  # "parallel" | "serial"
 
 
 class ERPAgent:
@@ -100,6 +102,17 @@ class ERPAgent:
         for step in plan.steps:
             await _fill_codes_for_params(step.params, query, self.db, self.org_id)
 
+        # ── 计划模式：≥3步必须规划，2步serial也规划 ──
+        if len(plan.steps) >= 3 or (
+            plan.dependency == "serial" and len(plan.steps) > 1
+        ):
+            reason = "步骤≥3" if len(plan.steps) >= 3 else "串行依赖"
+            await self._push_thinking(f"进入计划模式：{reason}")
+            result = self._build_plan_result(plan, query)
+            if self._thinking_parts:
+                result.thinking_text = "\n".join(self._thinking_parts)
+            return result
+
         step_results = await self._execute_plan(plan, query, deadline)
         result = self._build_multi_result(step_results, plan, query)
         await self._push_thinking("完成")
@@ -116,7 +129,7 @@ class ERPAgent:
 
         # L1: LLM
         try:
-            raw_steps, compute_hint = await self._llm_extract(query)
+            raw_steps, compute_hint, dependency = await self._llm_extract(query)
             steps = []
             for domain, params in raw_steps:
                 params = _sanitize_params(params)
@@ -128,7 +141,10 @@ class ERPAgent:
                     params["doc_type"] = default
                 fill_platform(params, query)
                 steps.append(PlanStep(domain=domain, params=params))
-            return ExecutionPlan(steps=steps, compute_hint=compute_hint, degraded=False)
+            return ExecutionPlan(
+                steps=steps, compute_hint=compute_hint,
+                degraded=False, dependency=dependency,
+            )
         except Exception as e:
             logger.warning(f"LLM extract failed, falling back: {e}")
 
@@ -191,6 +207,73 @@ class ERPAgent:
                 return (step.domain, e)
 
         return list(await asyncio.gather(*[run_step(s) for s in plan.steps]))
+
+    def _build_plan_result(self, plan: ExecutionPlan, query: str) -> AgentResult:
+        """计划模式：不执行，返回能力约束供主 Agent 自行规划。"""
+        reason = "步骤≥3" if len(plan.steps) >= 3 else "串行依赖"
+
+        step_lines: list[str] = []
+        plan_steps_meta: list[dict] = []
+        for i, step in enumerate(plan.steps):
+            label = _DOMAIN_LABEL.get(step.domain, step.domain)
+            num = _STEP_LABELS[i] if i < len(_STEP_LABELS) else f"({i+1})"
+            # 条件描述（过滤内部 _ 前缀字段和 doc_type/mode）
+            conditions = "、".join(
+                f"{k}={v}" for k, v in step.params.items()
+                if k not in ("doc_type", "mode") and not k.startswith("_")
+            )
+            expected = step.params.get("_expected_output", "")
+            deps = step.params.get("_dependencies", [])
+            req_input = step.params.get("_required_input")
+
+            line = f"  {num} {label}（{step.params.get('doc_type', '')}）"
+            if conditions:
+                line += f"\n     条件: {conditions}"
+            if req_input and isinstance(req_input, dict):
+                from_step = req_input.get("from_step", "?")
+                req_field = req_input.get("field", "?")
+                line += f"\n     需要: 步骤{from_step}的 {req_field}"
+            elif deps:
+                dep_labels = [f"步骤{d}" for d in deps]
+                line += f"\n     需要: {'、'.join(dep_labels)}的产出"
+            if expected:
+                line += f"\n     产出: {expected}"
+            step_lines.append(line)
+
+            plan_steps_meta.append({
+                "step": i + 1,
+                "domain": step.domain,
+                "doc_type": step.params.get("doc_type", ""),
+                "params": {
+                    k: v for k, v in step.params.items()
+                    if not k.startswith("_")
+                },
+                "expected_output": expected,
+                "dependencies": deps if isinstance(deps, list) else [],
+                "required_input": req_input if isinstance(req_input, dict) else None,
+            })
+
+        summary = (
+            "[能力约束 — 需要分步调用]\n\n"
+            "涉及域：\n"
+            + "\n\n".join(step_lines)
+        )
+        if plan.compute_hint:
+            summary += f"\n\n[关联说明] {plan.compute_hint}"
+        summary += "\n\n请根据以上约束自行规划调用方案。"
+
+        return AgentResult(
+            status="plan",
+            summary=summary,
+            source="erp_agent",
+            tokens_used=self._tokens_used,
+            confidence=1.0,
+            metadata={
+                "plan_steps": plan_steps_meta,
+                "objective": plan.compute_hint,
+                "reason": reason,
+            },
+        )
 
     def _build_multi_result(
         self,
@@ -379,7 +462,8 @@ class ERPAgent:
     @staticmethod
     def build_tool_description() -> str:
         """从 capability manifest 格式化为 5 段式描述文本。"""
-        return _build_tool_description()
+        from services.agent.erp_tool_description import build_tool_description
+        return build_tool_description()
 
     # ── staging 清理 ──
 
@@ -405,43 +489,3 @@ class ERPAgent:
         except Exception as e:
             logger.debug(f"ERPAgent staging cleanup failed | error={e}")
 
-
-# ── 模块级辅助（从 ERPAgent 类中提取，减少类行数）──
-
-
-def _build_tool_description() -> str:
-    """从 capability manifest 格式化为 5 段式描述文本。"""
-    from services.agent.plan_builder import get_capability_manifest
-    m = get_capability_manifest()
-
-    lines = [m["summary"]]
-    lines.append("\n使用场景：" + "；".join(m["use_when"]))
-    dont = " / ".join(
-        f"{d['场景']}→{d['替代']}" for d in m["dont_use_when"]
-    )
-    lines.append(f"不要用于：{dont}")
-
-    lines.append("\n能力：")
-    lines.append(f"- 输出模式：{' / '.join(m['modes'])}（>200行自动导出文件）")
-    lines.append(f"- 分组统计：按{'/'.join(m['group_by'])}统计")
-    lines.append(f"- 过滤：自动识别{'、'.join(m['platforms'])}、商品编码、订单号")
-    lines.append(f"- 时间列：{' / '.join(m['time_cols'])}（默认 doc_created_at）")
-    lines.append("- 异常数据：默认排除刷单，query 中写'包含刷单'则包含")
-    lines.append("- 跨域并行：可一次查询多个域数据（订单+售后等）")
-    categories = m.get("field_categories", {})
-    if categories:
-        lines.append(f"- 可查询信息：{'/'.join(categories.keys())}")
-        lines.append(
-            "  （query 中提到具体信息如'备注''地址''快递单号'"
-            "会自动返回对应字段）",
-        )
-
-    lines.append("\n返回：")
-    for r in m["returns"]:
-        lines.append(f"- {r}")
-
-    lines.append("\nquery 示例：")
-    for ex in m["examples"]:
-        lines.append(f"· \"{ex['query']}\" → {ex['effect']}")
-
-    return "\n".join(lines)
