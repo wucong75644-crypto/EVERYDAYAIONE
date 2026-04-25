@@ -163,23 +163,37 @@ class TestSanitizeParamsPassthrough:
         result = _sanitize_params({"group_by": ""})
         assert "group_by" not in result
 
-    # ── fields 白名单校验 ──
+    # ── extra_fields 追加列白名单校验 ──
 
-    def test_fields_string_to_list(self):
-        result = _sanitize_params({"fields": "remark"})
-        assert result["fields"] == ["remark"]
+    def test_extra_fields_string_to_list(self):
+        result = _sanitize_params({"extra_fields": "remark"})
+        assert result["extra_fields"] == ["remark"]
 
-    def test_fields_list_filtered(self):
-        result = _sanitize_params({"fields": ["remark", "invalid_col", "cost"]})
-        assert result["fields"] == ["remark", "cost"]
+    def test_extra_fields_list_filtered(self):
+        result = _sanitize_params({"extra_fields": ["remark", "invalid_col", "cost"]})
+        assert result["extra_fields"] == ["remark", "cost"]
 
-    def test_fields_all_invalid_removed(self):
-        result = _sanitize_params({"fields": ["xxx", "yyy"]})
+    def test_extra_fields_all_invalid_removed(self):
+        result = _sanitize_params({"extra_fields": ["xxx", "yyy"]})
+        assert "extra_fields" not in result
+
+    def test_extra_fields_empty_not_passed(self):
+        result = _sanitize_params({"extra_fields": []})
+        assert "extra_fields" not in result
+
+    def test_fields_backward_compat_mapped_to_extra(self):
+        """旧名 fields 映射到 extra_fields。"""
+        result = _sanitize_params({"fields": ["remark", "cost"]})
+        assert result["extra_fields"] == ["remark", "cost"]
         assert "fields" not in result
 
-    def test_fields_empty_not_passed(self):
-        result = _sanitize_params({"fields": []})
-        assert "fields" not in result
+    def test_extra_fields_takes_precedence_over_fields(self):
+        """extra_fields 优先于旧名 fields。"""
+        result = _sanitize_params({
+            "extra_fields": ["remark"],
+            "fields": ["cost"],
+        })
+        assert result["extra_fields"] == ["remark"]
 
 
 # ============================================================
@@ -452,9 +466,9 @@ class TestBuildExtractPromptCompleteness:
         prompt = build_extract_prompt("test")
         assert "consign_time" in prompt
 
-    def test_fields_in_prompt(self):
+    def test_extra_fields_in_prompt(self):
         prompt = build_extract_prompt("test")
-        assert "fields" in prompt
+        assert "extra_fields" in prompt
         assert "remark" in prompt
 
     def test_group_by_example_in_prompt(self):

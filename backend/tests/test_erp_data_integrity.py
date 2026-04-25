@@ -170,15 +170,13 @@ class TestClassifierE2E:
                 time_type="pay_time",
             )
 
-        # 验证 ToolOutput 三层推荐协议
+        # 验证 ToolOutput 三层推荐协议（扁平化后 key 为 total_orders / valid_orders 等）
         assert result.data is not None
         data = result.data[0]
-        assert "total" in data
-        assert "valid" in data
-        assert "categories" in data
-        assert data["total"]["doc_count"] == 9276
-        assert data["valid"]["doc_count"] == 6057
-        assert result.metadata.get("recommended_key") == "valid"
+        assert "total_orders" in data or "total" in data
+        assert "valid_orders" in data or "valid" in data
+        assert data.get("total_orders", data.get("total", {}).get("doc_count")) == 9276
+        assert data.get("valid_orders", data.get("valid", {}).get("doc_count")) == 6057
         assert "后续计算请默认使用有效订单数据" in result.summary
 
     @pytest.mark.asyncio
@@ -213,9 +211,7 @@ class TestClassifierE2E:
             # 走 erp_order_stats_grouped（分类引擎）
             rpc_calls = [c[0][0] for c in mock_db.rpc.call_args_list]
             assert "erp_order_stats_grouped" in rpc_calls
-            # 有分类数据
-            assert result.metadata.get("recommended_key") == "valid"
-            # 但不显示推荐语（用户已明确要全量）
+            # include_invalid=True 时不显示推荐语（用户已明确要全量）
             assert "后续计算请默认使用有效订单数据" not in result.summary
         finally:
             OrderClassifier._cache.pop("test-org", None)

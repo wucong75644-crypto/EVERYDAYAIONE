@@ -656,30 +656,40 @@ class TestQueryKwargs:
         assert kw["mode"] == "summary"
         assert kw["filters"] == []
 
-    def test_optional_fields_forwarded(self):
+    def test_extra_fields_forwarded(self):
         agent = _make_trade()
         kw = agent._query_kwargs({
             "mode": "export",
             "filters": [],
-            "fields": ["remark", "buyer_nick"],
+            "extra_fields": ["remark", "buyer_nick"],
             "sort_by": "pay_time",
             "sort_dir": "asc",
             "limit": 50,
             "group_by": ["shop"],
             "include_invalid": True,
         })
-        assert kw["fields"] == ["remark", "buyer_nick"]
+        assert kw["extra_fields"] == ["remark", "buyer_nick"]
         assert kw["sort_by"] == "pay_time"
         assert kw["sort_dir"] == "asc"
         assert kw["limit"] == 50
         assert kw["group_by"] == ["shop"]
         assert kw["include_invalid"] is True
 
+    def test_fields_backward_compat_to_extra_fields(self):
+        """旧名 fields 映射为 extra_fields。"""
+        agent = _make_trade()
+        kw = agent._query_kwargs({
+            "mode": "export",
+            "filters": [],
+            "fields": ["remark", "buyer_nick"],
+        })
+        assert kw["extra_fields"] == ["remark", "buyer_nick"]
+
     def test_optional_absent_not_in_kw(self):
         """未提供的可选参数不出现在 kw 中（由引擎用默认值）"""
         agent = _make_trade()
         kw = agent._query_kwargs({"mode": "summary", "filters": []})
-        assert "fields" not in kw
+        assert "extra_fields" not in kw
         assert "sort_by" not in kw
         assert "limit" not in kw
 
@@ -695,11 +705,11 @@ class TestQueryKwargs:
 # ============================================================
 
 
-class TestDispatchFieldsForwarded:
-    """所有 agent _dispatch 通过 _query_kwargs 透传 fields 到引擎。"""
+class TestDispatchExtraFieldsForwarded:
+    """所有 agent _dispatch 通过 _query_kwargs 透传 extra_fields 到引擎。"""
 
     @pytest.mark.asyncio
-    async def test_trade_dispatch_fields(self):
+    async def test_trade_dispatch_extra_fields(self):
         agent = _make_trade()
         mock_out = ToolOutput(summary="ok", source="erp")
         with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
@@ -707,13 +717,13 @@ class TestDispatchFieldsForwarded:
             await agent._dispatch("order_list", {
                 "mode": "export",
                 "filters": [],
-                "fields": ["remark", "express_no"],
+                "extra_fields": ["remark", "express_no"],
             }, {})
             call_kwargs = M.return_value.execute.call_args
-            assert call_kwargs.kwargs.get("fields") == ["remark", "express_no"]
+            assert call_kwargs.kwargs.get("extra_fields") == ["remark", "express_no"]
 
     @pytest.mark.asyncio
-    async def test_aftersale_dispatch_fields(self):
+    async def test_aftersale_dispatch_extra_fields(self):
         agent = _make_aftersale()
         mock_out = ToolOutput(summary="ok", source="erp")
         with patch("services.kuaimai.erp_unified_query.UnifiedQueryEngine") as M:
@@ -721,13 +731,13 @@ class TestDispatchFieldsForwarded:
             await agent._dispatch("aftersale_list", {
                 "mode": "export",
                 "filters": [],
-                "fields": ["text_reason"],
+                "extra_fields": ["text_reason"],
             }, {})
             call_kwargs = M.return_value.execute.call_args
-            assert call_kwargs.kwargs.get("fields") == ["text_reason"]
+            assert call_kwargs.kwargs.get("extra_fields") == ["text_reason"]
 
     @pytest.mark.asyncio
-    async def test_warehouse_receipt_dispatch_fields(self):
+    async def test_warehouse_receipt_dispatch_extra_fields(self):
         from services.agent.departments.warehouse_agent import WarehouseAgent
         agent = WarehouseAgent(db=MagicMock(), org_id="org1")
         mock_out = ToolOutput(summary="ok", source="erp")
@@ -736,11 +746,11 @@ class TestDispatchFieldsForwarded:
             await agent._dispatch("receipt_query", {
                 "mode": "export",
                 "filters": [],
-                "fields": ["supplier_name"],
+                "extra_fields": ["supplier_name"],
                 "group_by": ["warehouse"],
             }, {})
             call_kwargs = M.return_value.execute.call_args
-            assert call_kwargs.kwargs.get("fields") == ["supplier_name"]
+            assert call_kwargs.kwargs.get("extra_fields") == ["supplier_name"]
             assert call_kwargs.kwargs.get("group_by") == ["warehouse"]
 
 

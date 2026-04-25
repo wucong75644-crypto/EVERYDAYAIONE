@@ -409,7 +409,7 @@ class DepartmentAgent(ABC):
             group_by=kwargs.get("group_by"),
             sort_by=kwargs.get("sort_by"),
             sort_dir=kwargs.get("sort_dir", "desc"),
-            fields=kwargs.get("fields"),
+            extra_fields=kwargs.get("extra_fields"),
             limit=kwargs.get("limit", 20),
             time_type=kwargs.get("time_type"),
             include_invalid=kwargs.get("include_invalid", False),
@@ -444,14 +444,17 @@ class DepartmentAgent(ABC):
             "mode": params.get("mode", "summary"),
             "filters": params.get("filters", []),
         }
-        # 可���参数：只在存在时传，避免覆盖引擎默认值
+        # 可选参数：只在存在时传，避免覆盖引擎默认值
         for key in (
-            "group_by", "include_invalid", "fields",
+            "group_by", "include_invalid", "extra_fields",
             "sort_by", "sort_dir", "limit",
         ):
             val = params.get(key)
             if val is not None:
                 kw[key] = val
+        # 向后兼容：旧名 fields 也透传（_export 内部统一处理）
+        if "extra_fields" not in kw and params.get("fields"):
+            kw["extra_fields"] = params["fields"]
         return kw
 
     # ── 写操作检测 ──
