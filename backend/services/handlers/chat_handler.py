@@ -378,6 +378,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 messages.append({"role": "system", "content": tool_prompt})
 
             # 4.5 计划模式强制注入（用户手动开启时）
+            logger.info(f"Plan mode check | plan_mode={plan_mode!r} | type={type(plan_mode).__name__}")
             if plan_mode:
                 messages.append({"role": "system", "content": (
                     "=== 计划模式已激活（用户手动开启）===\n"
