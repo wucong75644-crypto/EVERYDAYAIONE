@@ -129,6 +129,33 @@ OP_COMPAT: dict[str, set[str]] = {
 }
 
 
+# ── RPC filter 白名单（单一事实来源） ────────────────────
+#
+# erp_order_stats_grouped RPC 的 DSL filter 白名单。
+# SQL 迁移(101)中的白名单必须与此集合一致。
+# 新增列到 RPC base_q SELECT 时，同时在此处和 SQL 白名单中添加。
+# 测试 test_rpc_filter_whitelist.py 会自动检测两边是否同步。
+
+RPC_ORDER_STATS_FILTER_FIELDS: frozenset[str] = frozenset({
+    # 维度字段（101 修复）
+    "platform", "shop_name", "supplier_name", "warehouse_name", "item_name",
+    # 关联 ID
+    "supplier_code", "shop_user_id", "warehouse_id",
+    # 文本字段
+    "order_status", "doc_status", "status_name",
+    "outer_id", "sku_outer_id", "order_no", "express_no",
+    "buyer_nick", "order_type",
+    "aftersale_type", "refund_status",
+    # 数值字段
+    "amount", "quantity", "cost", "pay_amount",
+    "gross_profit", "refund_money", "post_fee", "discount_fee",
+    # 标记字段
+    "is_cancel", "is_refund", "is_exception", "is_halt", "is_urgent",
+    "is_scalping", "unified_status", "is_presell",
+    "online_status", "handler_status",
+})
+
+
 # ── 常量 ──────────────────────────────────────────────
 
 

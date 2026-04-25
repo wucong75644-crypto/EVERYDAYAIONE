@@ -48,6 +48,7 @@ from services.kuaimai.erp_unified_schema import (
     EXPORT_COLUMN_NAMES,
     EXPORT_MAX,
     GROUP_BY_MAP,
+    RPC_ORDER_STATS_FILTER_FIELDS,
     PLATFORM_CN,
     TIME_COLUMNS,
     VALID_DOC_TYPES,
@@ -184,15 +185,27 @@ class UnifiedQueryEngine:
         request_ctx: Optional[RequestContext],
         include_invalid: bool = False,
     ) -> ToolOutput:
-        # 所有 order 统计统一走分类引擎（不再判断 group_by 和 include_invalid）
+        # 订单统计走分类引擎，但前提是所有 filter 字段都被 RPC 支持
         if doc_type == "order":
-            classified = await self._summary_classified(
-                filters, tr, request_ctx,
-                group_by=group_by,
-                include_invalid=include_invalid,
-            )
-            if classified is not None:
-                return classified
+            # 检测 filter 字段是否在 erp_order_stats_grouped 白名单内
+            # 不支持的字段（如 receiver_name/express_company）跳过分类路径，
+            # 回退到 erp_global_stats_query（SELECT * 支持全列）
+            non_time_fields = {
+                f.field for f in filters if f.field not in TIME_COLUMNS
+            }
+            unsupported = non_time_fields - RPC_ORDER_STATS_FILTER_FIELDS
+            if unsupported:
+                logger.info(
+                    f"跳过分类引擎: filter 包含 RPC 不支持的字段 {unsupported}"
+                )
+            else:
+                classified = await self._summary_classified(
+                    filters, tr, request_ctx,
+                    group_by=group_by,
+                    include_invalid=include_invalid,
+                )
+                if classified is not None:
+                    return classified
 
         type_name = DOC_TYPE_CN.get(doc_type, doc_type)
         non_time = [f for f in filters if f.field not in TIME_COLUMNS]
