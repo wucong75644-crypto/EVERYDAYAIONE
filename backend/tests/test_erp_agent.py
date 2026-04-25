@@ -343,13 +343,14 @@ class TestExtractPlan:
         """LLM 返回单域 → ExecutionPlan 单步"""
         agent = self._make_agent()
         with patch.object(agent, "_llm_extract", new_callable=AsyncMock) as mock_llm:
-            mock_llm.return_value = ([("trade", {"doc_type": "order", "mode": "summary"})], None)
+            mock_llm.return_value = ([("trade", {"doc_type": "order", "mode": "summary"})], None, "parallel")
             plan = await agent._extract_plan("今天多少订单")
         assert plan is not None
         assert len(plan.steps) == 1
         assert plan.steps[0].domain == "trade"
         assert plan.degraded is False
         assert plan.compute_hint is None
+        assert plan.dependency == "parallel"
 
     @pytest.mark.asyncio
     async def test_multi_domain_llm(self):
@@ -359,6 +360,7 @@ class TestExtractPlan:
             mock_llm.return_value = (
                 [("trade", {"doc_type": "order"}), ("aftersale", {"doc_type": "aftersale"})],
                 "用 product_code 关联，退货率 = 售后/订单",
+                "parallel",
             )
             plan = await agent._extract_plan("退货率多少")
         assert plan is not None
@@ -366,6 +368,7 @@ class TestExtractPlan:
         assert plan.steps[0].domain == "trade"
         assert plan.steps[1].domain == "aftersale"
         assert plan.compute_hint == "用 product_code 关联，退货率 = 售后/订单"
+        assert plan.dependency == "parallel"
 
     @pytest.mark.asyncio
     async def test_fallback_keyword(self):
@@ -391,9 +394,419 @@ class TestExtractPlan:
         """L2 域路由冲突: trade + doc_type=purchase → 纠正为 order"""
         agent = self._make_agent()
         with patch.object(agent, "_llm_extract", new_callable=AsyncMock) as mock_llm:
-            mock_llm.return_value = ([("trade", {"doc_type": "purchase", "mode": "summary"})], None)
+            mock_llm.return_value = ([("trade", {"doc_type": "purchase", "mode": "summary"})], None, "parallel")
             plan = await agent._extract_plan("看看采购")
         assert plan.steps[0].params["doc_type"] == "order"
+
+
+class TestPlanMode:
+    """计划模式短路 + _build_plan_result"""
+
+    def _make_agent(self):
+        from services.agent.erp_agent import ERPAgent
+        return ERPAgent(
+            db=MagicMock(), user_id="u1",
+            conversation_id="c1", org_id="org1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_serial_2_steps_returns_plan(self):
+        """2步 serial → 返回 status=plan，不执行"""
+        agent = self._make_agent()
+        with patch.object(agent, "_llm_extract", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = (
+                [
+                    ("purchase", {"doc_type": "purchase", "mode": "summary",
+                     "_expected_output": "商品编码", "_dependencies": []}),
+                    ("trade", {"doc_type": "order", "mode": "summary",
+                     "_dependencies": [1],
+                     "_required_input": {"from_step": 1, "field": "product_code"}}),
+                ],
+                "先查采购再查订单",
+                "serial",
+            )
+            with patch.object(agent, "_execute_plan", new_callable=AsyncMock) as mock_exec:
+                import time
+                result = await agent._execute(
+                    "查供应商商品再查订单",
+                    deadline=time.monotonic() + 30,
+                )
+        # 不应调用 _execute_plan
+        mock_exec.assert_not_called()
+        assert result.status == "plan"
+        assert "能力约束" in result.summary
+        assert result.metadata["reason"] == "串行依赖"
+        assert len(result.metadata["plan_steps"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_3_steps_returns_plan(self):
+        """≥3步 → 必须计划模式"""
+        agent = self._make_agent()
+        with patch.object(agent, "_llm_extract", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = (
+                [
+                    ("purchase", {"doc_type": "purchase"}),
+                    ("trade", {"doc_type": "order"}),
+                    ("warehouse", {"doc_type": "warehouse"}),
+                ],
+                "三步分析",
+                "parallel",
+            )
+            with patch.object(agent, "_execute_plan", new_callable=AsyncMock) as mock_exec:
+                import time
+                result = await agent._execute(
+                    "采购+订单+库存",
+                    deadline=time.monotonic() + 30,
+                )
+        mock_exec.assert_not_called()
+        assert result.status == "plan"
+        assert result.metadata["reason"] == "步骤≥3"
+
+    @pytest.mark.asyncio
+    async def test_parallel_2_steps_executes_normally(self):
+        """2步 parallel → 正常执行，不进入计划模式"""
+        agent = self._make_agent()
+        with patch.object(agent, "_llm_extract", new_callable=AsyncMock) as mock_llm:
+            mock_llm.return_value = (
+                [
+                    ("trade", {"doc_type": "order"}),
+                    ("aftersale", {"doc_type": "aftersale"}),
+                ],
+                "退货率",
+                "parallel",
+            )
+            mock_result = MagicMock()
+            mock_result.summary = "数据"
+            mock_result.status = "ok"
+            mock_result.format = "text"
+            mock_result.file_ref = None
+            mock_result.data = None
+            mock_result.columns = None
+            with patch.object(
+                agent, "_execute_plan", new_callable=AsyncMock,
+                return_value=[("trade", mock_result), ("aftersale", mock_result)],
+            ) as mock_exec:
+                import time
+                result = await agent._execute(
+                    "退货率", deadline=time.monotonic() + 30,
+                )
+        mock_exec.assert_called_once()
+        assert result.status != "plan"
+
+    def test_build_plan_result_structure(self):
+        """_build_plan_result 返回结构正确"""
+        from services.agent.erp_agent import PlanStep, ExecutionPlan
+        agent = self._make_agent()
+        plan = ExecutionPlan(
+            steps=[
+                PlanStep("purchase", {
+                    "doc_type": "purchase", "mode": "summary",
+                    "supplier_name": "纸制品01",
+                    "_expected_output": "商品编码列表",
+                    "_dependencies": [],
+                }),
+                PlanStep("trade", {
+                    "doc_type": "order", "mode": "summary",
+                    "_expected_output": "订单数据",
+                    "_dependencies": [1],
+                    "_required_input": {"from_step": 1, "field": "product_code"},
+                }),
+            ],
+            compute_hint="先查采购再查订单",
+            dependency="serial",
+        )
+        result = agent._build_plan_result(plan, "测试查询")
+        assert result.status == "plan"
+        assert result.source == "erp_agent"
+        assert result.confidence == 1.0
+        # summary 包含关键内容
+        assert "采购" in result.summary
+        assert "订单" in result.summary
+        assert "步骤1" in result.summary
+        assert "product_code" in result.summary
+        # metadata 结构
+        meta = result.metadata
+        assert meta["reason"] == "串行依赖"
+        assert meta["objective"] == "先查采购再查订单"
+        assert len(meta["plan_steps"]) == 2
+        step2 = meta["plan_steps"][1]
+        assert step2["dependencies"] == [1]
+        assert step2["required_input"]["field"] == "product_code"
+        # params 中不包含 _ 前缀字段
+        assert "_expected_output" not in step2["params"]
+        assert "_dependencies" not in step2["params"]
+
+
+class TestPlanModeE2E:
+    """计划模式端到端集成测试 — 模拟 LLM 返回 → 完整链路 → 序列化输出"""
+
+    def _make_agent(self):
+        from services.agent.erp_agent import ERPAgent
+        return ERPAgent(
+            db=MagicMock(), user_id="u1",
+            conversation_id="c1", org_id="org1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_serial_e2e_llm_to_user(self):
+        """模拟真实场景：LLM 返回 serial JSON → plan 短路 → 主 Agent 收到的内容"""
+        import json
+        agent = self._make_agent()
+
+        # 模拟 LLM 返回 serial 场景的 JSON
+        llm_response_json = json.dumps({
+            "steps": [
+                {"domain": "purchase", "params": {
+                    "doc_type": "purchase", "mode": "summary",
+                    "time_range": "2026-04-01 ~ 2026-04-25",
+                    "supplier_name": "纸制品01", "group_by": "product",
+                    "_expected_output": "商品编码列表（product_code）",
+                    "_dependencies": [],
+                }},
+                {"domain": "trade", "params": {
+                    "doc_type": "order", "mode": "summary",
+                    "time_range": "2026-04-01 ~ 2026-04-25",
+                    "_expected_output": "订单数据",
+                    "_dependencies": [1],
+                    "_required_input": {"from_step": 1, "field": "product_code"},
+                }},
+            ],
+            "compute_hint": "先查供应商采购商品获取编码，再用编码查订单",
+            "dependency": "serial",
+        })
+
+        mock_response = MagicMock()
+        mock_response.content = llm_response_json
+        mock_response.prompt_tokens = 200
+        mock_response.completion_tokens = 100
+
+        mock_adapter = MagicMock()
+        mock_adapter.chat_sync = AsyncMock(return_value=mock_response)
+        mock_adapter.close = AsyncMock()
+
+        import time
+        with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter):
+            result = await agent._execute(
+                "查供应商纸制品01的采购商品，用编码查订单",
+                deadline=time.monotonic() + 30,
+            )
+
+        # 1. 验证返回 plan 状态（不执行）
+        assert result.status == "plan"
+        assert result.source == "erp_agent"
+
+        # 2. 验证 summary（主 Agent LLM 看到的文本）
+        assert "[能力约束 — 需要分步调用]" in result.summary
+        assert "采购" in result.summary
+        assert "订单" in result.summary
+        assert "纸制品01" in result.summary
+        assert "product_code" in result.summary
+        assert "先查供应商采购商品获取编码" in result.summary
+        assert "请根据以上约束自行规划调用方案" in result.summary
+
+        # 3. 验证 metadata（程序化消费）
+        meta = result.metadata
+        assert meta["reason"] == "串行依赖"
+        assert meta["objective"] == "先查供应商采购商品获取编码，再用编码查订单"
+        assert len(meta["plan_steps"]) == 2
+
+        step1 = meta["plan_steps"][0]
+        assert step1["domain"] == "purchase"
+        assert step1["params"]["supplier_name"] == "纸制品01"
+        assert step1["expected_output"] == "商品编码列表（product_code）"
+        assert step1["dependencies"] == []
+        # 内部字段已过滤
+        assert "_expected_output" not in step1["params"]
+
+        step2 = meta["plan_steps"][1]
+        assert step2["domain"] == "trade"
+        assert step2["dependencies"] == [1]
+        assert step2["required_input"] == {"from_step": 1, "field": "product_code"}
+
+        # 4. 验证序列化给主 Agent 的格式（to_message_content）
+        blocks = result.to_message_content()
+        assert len(blocks) >= 1
+        assert blocks[0]["type"] == "text"
+        assert "[能力约束" in blocks[0]["text"]
+        # 不应有文件引用 block（plan 不产生数据）
+        assert all("[文件已存入 staging" not in b["text"] for b in blocks)
+
+        # 5. 验证 thinking 记录
+        assert result.thinking_text is not None
+        assert "计划模式" in result.thinking_text
+
+    @pytest.mark.asyncio
+    async def test_3_steps_e2e(self):
+        """≥3步 parallel 也进入计划模式"""
+        import json
+        agent = self._make_agent()
+
+        llm_json = json.dumps({
+            "steps": [
+                {"domain": "purchase", "params": {"doc_type": "purchase", "mode": "summary",
+                    "time_range": "2026-04-01 ~ 2026-04-25"}},
+                {"domain": "trade", "params": {"doc_type": "order", "mode": "summary",
+                    "time_range": "2026-04-01 ~ 2026-04-25"}},
+                {"domain": "warehouse", "params": {"doc_type": "warehouse", "mode": "summary",
+                    "time_range": "2026-04-01 ~ 2026-04-25"}},
+            ],
+            "compute_hint": "采购+订单+库存综合分析",
+            "dependency": "parallel",
+        })
+
+        mock_response = MagicMock()
+        mock_response.content = llm_json
+        mock_response.prompt_tokens = 150
+        mock_response.completion_tokens = 80
+
+        mock_adapter = MagicMock()
+        mock_adapter.chat_sync = AsyncMock(return_value=mock_response)
+        mock_adapter.close = AsyncMock()
+
+        import time
+        with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter):
+            result = await agent._execute(
+                "采购到货、订单发货、库存变化综合分析",
+                deadline=time.monotonic() + 30,
+            )
+
+        assert result.status == "plan"
+        assert result.metadata["reason"] == "步骤≥3"
+        assert len(result.metadata["plan_steps"]) == 3
+
+    @pytest.mark.asyncio
+    async def test_parallel_2_steps_not_plan(self):
+        """2步 parallel → 正常执行不进计划模式（对照组）"""
+        import json
+        agent = self._make_agent()
+
+        llm_json = json.dumps({
+            "steps": [
+                {"domain": "trade", "params": {"doc_type": "order", "mode": "summary",
+                    "time_range": "2026-04-01 ~ 2026-04-25", "product_code": "HZ001"}},
+                {"domain": "aftersale", "params": {"doc_type": "aftersale", "mode": "summary",
+                    "time_range": "2026-04-01 ~ 2026-04-25", "product_code": "HZ001"}},
+            ],
+            "compute_hint": "退货率",
+            "dependency": "parallel",
+        })
+
+        mock_response = MagicMock()
+        mock_response.content = llm_json
+        mock_response.prompt_tokens = 100
+        mock_response.completion_tokens = 60
+
+        mock_adapter = MagicMock()
+        mock_adapter.chat_sync = AsyncMock(return_value=mock_response)
+        mock_adapter.close = AsyncMock()
+
+        # 需要 mock _execute_plan（因为会真的调部门 Agent）
+        mock_trade_result = MagicMock()
+        mock_trade_result.summary = "订单 50 笔"
+        mock_trade_result.status = "ok"
+        mock_trade_result.format = "text"
+        mock_trade_result.file_ref = None
+        mock_trade_result.data = None
+        mock_trade_result.columns = None
+
+        import time
+        with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter):
+            with patch.object(
+                agent, "_execute_plan", new_callable=AsyncMock,
+                return_value=[
+                    ("trade", mock_trade_result),
+                    ("aftersale", mock_trade_result),
+                ],
+            ):
+                result = await agent._execute(
+                    "HZ001 退货率",
+                    deadline=time.monotonic() + 30,
+                )
+
+        # 不应进入计划模式
+        assert result.status != "plan"
+
+    @pytest.mark.asyncio
+    async def test_auto_correct_serial_e2e(self):
+        """LLM 标 parallel 但有 _required_input → 自动纠正为 serial → plan"""
+        import json
+        agent = self._make_agent()
+
+        # LLM 标错 dependency=parallel，但 step2 有 _required_input
+        llm_json = json.dumps({
+            "steps": [
+                {"domain": "purchase", "params": {"doc_type": "purchase", "mode": "summary",
+                    "time_range": "2026-04-01 ~ 2026-04-25",
+                    "_expected_output": "商品编码"}},
+                {"domain": "trade", "params": {"doc_type": "order", "mode": "summary",
+                    "time_range": "2026-04-01 ~ 2026-04-25",
+                    "_required_input": {"from_step": 1, "field": "product_code"}}},
+            ],
+            "dependency": "parallel",  # LLM 标错了！
+        })
+
+        mock_response = MagicMock()
+        mock_response.content = llm_json
+        mock_response.prompt_tokens = 100
+        mock_response.completion_tokens = 60
+
+        mock_adapter = MagicMock()
+        mock_adapter.chat_sync = AsyncMock(return_value=mock_response)
+        mock_adapter.close = AsyncMock()
+
+        import time
+        with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter):
+            result = await agent._execute(
+                "查供应商商品再查订单",
+                deadline=time.monotonic() + 30,
+            )
+
+        # 应该被自动纠正为 serial → 进入计划模式
+        assert result.status == "plan"
+        assert result.metadata["reason"] == "串行依赖"
+
+    def test_malformed_required_input_no_crash(self):
+        """_required_input 结构不完整时不崩溃"""
+        from services.agent.erp_agent import PlanStep, ExecutionPlan
+        agent = self._make_agent()
+        plan = ExecutionPlan(
+            steps=[
+                PlanStep("purchase", {"doc_type": "purchase"}),
+                PlanStep("trade", {
+                    "doc_type": "order",
+                    "_required_input": {"from_step": 1},  # 缺 field
+                }),
+            ],
+            compute_hint="测试",
+            dependency="serial",
+        )
+        # 不应抛异常
+        result = agent._build_plan_result(plan, "测试")
+        assert result.status == "plan"
+        assert "步骤1" in result.summary  # from_step 正确显示
+        assert "?" in result.summary  # field 缺失用 ? 替代
+
+    def test_non_dict_required_input_no_crash(self):
+        """_required_input 不是 dict 时不崩溃"""
+        from services.agent.erp_agent import PlanStep, ExecutionPlan
+        agent = self._make_agent()
+        plan = ExecutionPlan(
+            steps=[
+                PlanStep("purchase", {"doc_type": "purchase"}),
+                PlanStep("trade", {
+                    "doc_type": "order",
+                    "_required_input": "invalid_string",  # 非 dict
+                    "_dependencies": "also_invalid",  # 非 list
+                }),
+            ],
+            dependency="serial",
+        )
+        result = agent._build_plan_result(plan, "测试")
+        assert result.status == "plan"
+        # metadata 中类型保护生效
+        step2 = result.metadata["plan_steps"][1]
+        assert step2["required_input"] is None  # 非 dict → None
+        assert step2["dependencies"] == []  # 非 list → []
 
 
 class TestExecutePlan:
@@ -573,17 +986,18 @@ class TestParseMultiExtractResponse:
     def test_single_step(self):
         from services.agent.plan_builder import parse_multi_extract_response
         import json
-        steps, hint = parse_multi_extract_response(json.dumps({
+        steps, hint, dep = parse_multi_extract_response(json.dumps({
             "steps": [{"domain": "trade", "params": {"doc_type": "order"}}],
         }))
         assert len(steps) == 1
         assert steps[0][0] == "trade"
         assert hint is None
+        assert dep == "parallel"
 
     def test_multi_step_with_hint(self):
         from services.agent.plan_builder import parse_multi_extract_response
         import json
-        steps, hint = parse_multi_extract_response(json.dumps({
+        steps, hint, dep = parse_multi_extract_response(json.dumps({
             "steps": [
                 {"domain": "trade", "params": {}},
                 {"domain": "aftersale", "params": {}},
@@ -592,17 +1006,19 @@ class TestParseMultiExtractResponse:
         }))
         assert len(steps) == 2
         assert hint == "关联分析"
+        assert dep == "parallel"
 
     def test_backward_compat_old_format(self):
         """旧格式 {"domain":..., "params":...} → 自动包装为单步"""
         from services.agent.plan_builder import parse_multi_extract_response
         import json
-        steps, hint = parse_multi_extract_response(json.dumps({
+        steps, hint, dep = parse_multi_extract_response(json.dumps({
             "domain": "warehouse", "params": {"mode": "summary"},
         }))
         assert len(steps) == 1
         assert steps[0][0] == "warehouse"
         assert hint is None
+        assert dep == "parallel"
 
     def test_invalid_domain(self):
         from services.agent.plan_builder import parse_multi_extract_response
@@ -615,10 +1031,47 @@ class TestParseMultiExtractResponse:
     def test_max_4_steps(self):
         from services.agent.plan_builder import parse_multi_extract_response
         import json
-        steps, _ = parse_multi_extract_response(json.dumps({
+        steps, _, dep = parse_multi_extract_response(json.dumps({
             "steps": [{"domain": "trade", "params": {}}] * 6,
         }))
         assert len(steps) == 4
+
+    def test_serial_dependency(self):
+        """显式 serial dependency 正确解析"""
+        from services.agent.plan_builder import parse_multi_extract_response
+        import json
+        steps, hint, dep = parse_multi_extract_response(json.dumps({
+            "steps": [
+                {"domain": "purchase", "params": {
+                    "_expected_output": "商品编码",
+                    "_dependencies": [],
+                }},
+                {"domain": "trade", "params": {
+                    "_dependencies": [1],
+                    "_required_input": {"from_step": 1, "field": "product_code"},
+                }},
+            ],
+            "compute_hint": "先查采购再查订单",
+            "dependency": "serial",
+        }))
+        assert len(steps) == 2
+        assert dep == "serial"
+        assert steps[1][1]["_required_input"]["field"] == "product_code"
+
+    def test_dependency_auto_correct(self):
+        """LLM 输出 _required_input 但 dependency 标 parallel → 自动纠正为 serial"""
+        from services.agent.plan_builder import parse_multi_extract_response
+        import json
+        _, _, dep = parse_multi_extract_response(json.dumps({
+            "steps": [
+                {"domain": "purchase", "params": {}},
+                {"domain": "trade", "params": {
+                    "_required_input": {"from_step": 1, "field": "product_code"},
+                }},
+            ],
+            "dependency": "parallel",
+        }))
+        assert dep == "serial"
 
 
 
@@ -646,9 +1099,10 @@ class TestLlmExtract:
         mock_adapter.close = AsyncMock()
 
         with patch("services.adapters.factory.create_chat_adapter", return_value=mock_adapter):
-            steps, hint = await agent._llm_extract("今天多少订单")
+            steps, hint, dep = await agent._llm_extract("今天多少订单")
         assert len(steps) == 1
         assert steps[0][0] == "trade"
+        assert dep == "parallel"
         assert agent._tokens_used == 150
         mock_adapter.close.assert_awaited_once()
 
@@ -908,8 +1362,8 @@ class TestBuildToolDescription:
     def test_token_budget(self):
         desc = self._desc()
         estimated_tokens = len(desc) / 2.5
-        assert estimated_tokens < 500, (
-            f"描述 token 超预算: {estimated_tokens:.0f} > 500"
+        assert estimated_tokens < 550, (
+            f"描述 token 超预算: {estimated_tokens:.0f} > 550"
         )
 
     def test_no_hardcoded_content(self):

@@ -646,3 +646,109 @@ class TestFillCodesExpressNo:
             params, "查 1234567890123456", db, "org1",
         )
         assert "express_no" not in params
+
+
+# ============================================================
+# 模块拆分独立性验证
+# ============================================================
+
+
+class TestModuleSplitIntegrity:
+    """验证 plan_fill / erp_tool_description 拆分后模块独立可用，
+    且 plan_builder re-export 不断裂。
+    """
+
+    def test_plan_fill_direct_import(self):
+        """plan_fill.py 可直接 import，不依赖 plan_builder"""
+        from services.agent.plan_fill import (
+            fill_platform,
+            _fill_codes_for_params,
+            _PRODUCT_CODE_RE,
+            _ORDER_NO_RE,
+            _EXPRESS_NO_RE,
+            _CODE_STOP_WORDS,
+        )
+        assert callable(fill_platform)
+        assert callable(_fill_codes_for_params)
+        assert _PRODUCT_CODE_RE.pattern
+        assert _ORDER_NO_RE.pattern
+        assert _EXPRESS_NO_RE.pattern
+        assert "erp" in _CODE_STOP_WORDS
+
+    def test_plan_fill_reexport_from_plan_builder(self):
+        """plan_builder re-export 与 plan_fill 直接导入是同一对象"""
+        from services.agent.plan_builder import fill_platform as pb_fill
+        from services.agent.plan_fill import fill_platform as pf_fill
+        assert pb_fill is pf_fill
+
+        from services.agent.plan_builder import _fill_codes_for_params as pb_fc
+        from services.agent.plan_fill import _fill_codes_for_params as pf_fc
+        assert pb_fc is pf_fc
+
+        from services.agent.plan_builder import _EXPRESS_NO_RE as pb_re
+        from services.agent.plan_fill import _EXPRESS_NO_RE as pf_re
+        assert pb_re is pf_re
+
+    def test_erp_tool_description_direct_import(self):
+        """erp_tool_description.py 可直接 import"""
+        from services.agent.erp_tool_description import (
+            get_capability_manifest,
+            build_tool_description,
+        )
+        assert callable(get_capability_manifest)
+        assert callable(build_tool_description)
+
+    def test_capability_manifest_reexport(self):
+        """plan_builder re-export 与 erp_tool_description 直接导入是同一对象"""
+        from services.agent.plan_builder import get_capability_manifest as pb_m
+        from services.agent.erp_tool_description import get_capability_manifest as et_m
+        assert pb_m is et_m
+
+    def test_capability_manifest_returns_valid_dict(self):
+        """直接从 erp_tool_description 调用 manifest 返回完整结构"""
+        from services.agent.erp_tool_description import get_capability_manifest
+        m = get_capability_manifest()
+        assert isinstance(m, dict)
+        required_keys = {"domains", "modes", "doc_types", "returns", "examples"}
+        assert required_keys.issubset(m.keys())
+
+    def test_build_tool_description_from_new_module(self):
+        """直接从 erp_tool_description 调用 build_tool_description"""
+        from services.agent.erp_tool_description import build_tool_description
+        desc = build_tool_description()
+        assert isinstance(desc, str)
+        assert "ERP" in desc
+        assert "计划模式" in desc
+
+    def test_erp_agent_delegates_to_new_module(self):
+        """ERPAgent.build_tool_description 委托到 erp_tool_description"""
+        from services.agent.erp_agent import ERPAgent
+        from services.agent.erp_tool_description import build_tool_description
+        assert ERPAgent.build_tool_description() == build_tool_description()
+
+    @pytest.mark.asyncio
+    async def test_plan_fill_fill_platform_works(self):
+        """plan_fill.fill_platform 功能正常（直接 import）"""
+        from services.agent.plan_fill import fill_platform
+        params: dict = {}
+        fill_platform(params, "淘宝订单有多少")
+        assert params.get("platform") == "tb"
+
+    def test_sanitize_params_preserves_underscore_fields(self):
+        """_sanitize_params 透传 _ 前缀字段（计划模式内部元数据）"""
+        params = {
+            "doc_type": "order", "mode": "summary",
+            "_expected_output": "商品编码",
+            "_dependencies": [1],
+            "_required_input": {"from_step": 1, "field": "product_code"},
+        }
+        clean = _sanitize_params(params)
+        assert clean["_expected_output"] == "商品编码"
+        assert clean["_dependencies"] == [1]
+        assert clean["_required_input"]["field"] == "product_code"
+
+    def test_sanitize_params_skips_none_underscore(self):
+        """_sanitize_params 跳过 None 值的 _ 前缀字段"""
+        params = {"doc_type": "order", "_expected_output": None}
+        clean = _sanitize_params(params)
+        assert "_expected_output" not in clean
