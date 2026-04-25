@@ -82,7 +82,9 @@ class TestToMessageContent:
         assert len(blocks) == 2
         assert blocks[1]["type"] == "text"
         assert "2行" in blocks[1]["text"]
-        assert "shop" in blocks[1]["text"]
+        # label 生效：列名和 data key 都翻译为中文
+        assert "店铺" in blocks[1]["text"]
+        assert "数量" in blocks[1]["text"]
 
     def test_file_ref_takes_priority_over_data(self):
         """file_ref 和 data 同时存在时，只输出 file_ref 不输出 data"""
@@ -406,7 +408,9 @@ class TestToToolContent:
         assert "source: warehouse" in content
         assert "storage: inline" in content
         assert "rows: 1" in content
-        assert "sku: text" in content
+        # label 生效：列名和 data key 都翻译为中文
+        assert "商品编码: text" in content
+        assert '"商品编码": "A001"' in content
 
     def test_file_ref_format_has_path(self, tmp_path):
         """FILE_REF 格式包含文件路径和大小"""
