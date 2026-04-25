@@ -124,6 +124,7 @@ class ChatStreamSupportMixin:
         model_id: str,
         thinking_effort: Optional[str],
         thinking_mode: Optional[str],
+        plan_mode: bool,
         router_system_prompt: Optional[str],
         router_search_context: Optional[str],
         _params: Optional[Dict[str, Any]],
