@@ -467,20 +467,65 @@ class DepartmentAgent(ABC):
         "修改", "删除", "创建", "调整", "取消", "新建", "更新", "批量",
     })
 
+    # 写关键词后跟这些后缀时，是统计/描述语境，不是写意图
+    # 例："取消订单数"→统计取消数量（读），"修改时间"→修改时间字段（读）
+    # 长后缀在前，避免单字"数"误匹配"数量"
+    _READ_CONTEXT_SUFFIXES = (
+        "订单数", "单数",                        # 复合统计后缀
+        "时间", "日期", "情况", "明细", "详情",    # 字段/描述后缀
+        "率", "笔", "条",                        # 统计单位后缀
+    )
+    # 单字"数"/"量"需要特殊处理：只有紧跟结尾或逗号/顿号时才算统计后缀
+    # "取消数" → 统计（"数"后是结尾）
+    # "调整数量" → 写操作（"数"后是"量"，不是结尾）
+    _STAT_SINGLE_CHARS = frozenset({"数", "量"})
+
     def _is_write_action(self, action: str) -> bool:
         """判断 action 是否为写操作。子类可覆盖添加域特定写操作。"""
         return action in self._WRITE_ACTIONS
 
     def _has_write_intent(self, task: str) -> bool:
-        """从任务描述关键词检测写意图（兜底保护）。"""
-        return any(kw in task for kw in self._WRITE_KEYWORDS)
+        """从任务描述关键词检测写意图。
+
+        注意：当前所有 department agent 的 _dispatch 只有读方法，
+        写操作走 erp_execute 独立工具。此方法仅作为审计信号，不阻断执行。
+        """
+        return self._find_write_keyword(task) is not None
 
     def _find_write_keyword(self, task: str) -> str | None:
-        """返回第一个匹配到的写操作关键词（调试用）。"""
+        """返回第一个真正表达写意图的关键词，排除统计/描述语境。
+
+        "取消订单" → 返回 "取消"（写意图）
+        "取消订单数" → 返回 None（后缀"数"表明是统计语境）
+        "修改时间" → 返回 None（后缀"时间"表明是字段名）
+        "调整数量" → 返回 "调整"（"数量"是操作对象，不是统计后缀）
+        """
         for kw in self._WRITE_KEYWORDS:
-            if kw in task:
-                return kw
+            start = 0
+            while True:
+                idx = task.find(kw, start)
+                if idx == -1:
+                    break
+                after = task[idx + len(kw):]
+                if self._is_read_context(after):
+                    start = idx + len(kw)  # 统计语境 → 跳过
+                    continue
+                return kw  # 无统计后缀 → 真写意图
         return None
+
+    @classmethod
+    def _is_read_context(cls, after: str) -> bool:
+        """判断关键词后面的文本是否为统计/描述语境。"""
+        # 多字后缀优先匹配
+        if any(after.startswith(s) for s in cls._READ_CONTEXT_SUFFIXES):
+            return True
+        # 单字"数"/"量"：仅当后面是结尾、标点、空格时才算统计后缀
+        # "取消数" → True（"数"后结尾），"调整数量" → False（"数"后是"量"）
+        if after and after[0] in cls._STAT_SINGLE_CHARS:
+            next_char = after[1] if len(after) > 1 else ""
+            if not next_char or next_char in "，、,。；;）) \n和与及":
+                return True
+        return False
 
     # ── DAG 执行入口（Phase 2B）──
 
@@ -500,14 +545,14 @@ class DepartmentAgent(ABC):
         """
         action = self._classify_action(task)
 
-        # DAG 模式下禁止写操作（双重检查：action 枚举 + 任务描述关键词）
-        is_write_action = self._is_write_action(action)
-        write_keyword = self._find_write_keyword(task) if dag_mode else None
-        if dag_mode and (is_write_action or write_keyword):
+        # DAG 模式写保护：仅当 _classify_action 返回写 action 时阻断
+        # keyword 匹配降级为审计日志（不阻断），因为：
+        # 1. _classify_action 是结构化意图检测（可靠）
+        # 2. 所有 department agent 的 _dispatch 只有读方法，代码层面不可能写
+        # 3. keyword 子串匹配在 LLM 生成的 task 文本上误判率高（如"取消订单数"）
+        if dag_mode and self._is_write_action(action):
             logger.warning(
                 f"{self.domain} write blocked | action={action} | "
-                f"is_write_action={is_write_action} | "
-                f"write_keyword={write_keyword!r} | "
                 f"task_preview={task[:200]}"
             )
             return ToolOutput(
@@ -517,9 +562,17 @@ class DepartmentAgent(ABC):
                 source=self.domain,
                 status=OutputStatus.ERROR,
                 error_message=(
-                    f"write blocked in dag_mode | action={action} | keyword={write_keyword}"
+                    f"write blocked in dag_mode | action={action}"
                 ),
             )
+        if dag_mode:
+            write_keyword = self._find_write_keyword(task)
+            if write_keyword:
+                logger.info(
+                    f"{self.domain} write keyword detected (audit only) | "
+                    f"keyword={write_keyword!r} | action={action} | "
+                    f"task_preview={task[:200]}"
+                )
 
         # 合并参数：静态（PlanBuilder）+ 动态（context）
         merged = dict(params or {})
