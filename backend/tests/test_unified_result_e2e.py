@@ -253,11 +253,12 @@ class TestScheduledTaskPath:
         assert "source: warehouse" in content
         assert "storage: inline" in content
         assert "rows: 2" in content
-        assert "sku: text  # 商品编码" in content
-        assert "qty: integer  # 数量" in content
+        # label 生效：列名和 data key 都翻译为中文
+        assert "商品编码: text" in content
+        assert "数量: integer" in content
         assert "product_code: A001" in content
-        # 数据以 JSON 格式内联
-        assert '"sku": "A001"' in content or '"sku":"A001"' in content
+        # 数据中 key 也已翻译为中文
+        assert '"商品编码": "A001"' in content or '"商品编码":"A001"' in content
 
     def test_to_tool_content_file_ref_format(self, tmp_path):
         """FILE_REF 格式 → to_tool_content() 包含路径和大小"""

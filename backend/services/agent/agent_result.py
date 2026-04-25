@@ -93,6 +93,26 @@ class AgentResult:
     # 序列化 1：主 Agent LLM（结构化 content block）
     # ----------------------------------------------------------
 
+    def _col_label_map(self) -> dict[str, str]:
+        """从 columns 构建 英文name→中文label 映射（label 非空时）。"""
+        if not self.columns:
+            return {}
+        return {c.name: c.label for c in self.columns if c.label and c.label != c.name}
+
+    def _localize_data(self, rows: list[dict]) -> list[dict]:
+        """将 data 中的英文 key 替换为中文 label（基于 columns 映射）。
+
+        这是 LLM 看到数据前的唯一翻译点——确保 LLM 用中文列名写代码，
+        导出 Excel 时自然产出中文表头。
+        """
+        mapping = self._col_label_map()
+        if not mapping:
+            return rows
+        return [
+            {mapping.get(k, k): v for k, v in row.items()}
+            for row in rows
+        ]
+
     def to_message_content(self) -> list[dict[str, Any]]:
         """AgentResult → 结构化 content block（传给主 Agent LLM）。
 
@@ -120,13 +140,14 @@ class AgentResult:
 
         # 内联数据（少量数据、无文件引用时）
         if self.data and not self.file_ref:
-            col_names = [c.name for c in self.columns] if self.columns else []
-            preview = json.dumps(self.data[:5], ensure_ascii=False)
+            col_labels = [c.label or c.name for c in self.columns] if self.columns else []
+            localized = self._localize_data(self.data[:5])
+            preview = json.dumps(localized, ensure_ascii=False)
             blocks.append({
                 "type": "text",
                 "text": (
                     f"[数据: {len(self.data)}行 | "
-                    f"列: {', '.join(col_names)}]\n"
+                    f"列: {', '.join(col_labels)}]\n"
                     f"{preview}"
                 ),
             })
@@ -182,21 +203,22 @@ class AgentResult:
                 else:
                     tag_lines.append(f"{key}: {val}")
 
-        # 列信息
+        # 列信息（有 label 时用 label 作为列名，LLM 直接用中文）
         cols = self.columns or (
             self.file_ref.columns if self.file_ref else None
         )
         if cols:
             tag_lines.append("columns:")
             for col in cols:
-                label_part = f"  # {col.label}" if col.label else ""
-                tag_lines.append(f"  - {col.name}: {col.dtype}{label_part}")
+                display_name = col.label if col.label else col.name
+                tag_lines.append(f"  - {display_name}: {col.dtype}")
 
-        # 内联数据 or 文件预览
+        # 内联数据 or 文件预览（key 翻译为中文）
         if self.data is not None and len(self.data) <= 200:
+            localized = self._localize_data(self.data)
             tag_lines.append("data:")
             tag_lines.append(
-                f"  {json.dumps(self.data, ensure_ascii=False)}",
+                f"  {json.dumps(localized, ensure_ascii=False)}",
             )
         elif self.file_ref and self.file_ref.preview:
             tag_lines.append(f"preview:\n  {self.file_ref.preview}")

@@ -117,8 +117,9 @@ class TestToolOutputTable:
             data=[],
         )
         content = t.to_tool_content()
-        assert "product_code: text  # 商品编码" in content
-        assert "sellable: integer  # 可售库存" in content
+        # label 生效：列名用中文
+        assert "商品编码: text" in content
+        assert "可售库存: integer" in content
 
     def test_inline_column_without_label(self):
         cols = [ColumnMeta("id", "integer")]
@@ -241,7 +242,8 @@ class TestToolOutputFileRef:
             file_ref=fr,
         )
         content = t.to_tool_content()
-        assert "product_code: text" in content
+        # file_ref 的 columns 也用 label
+        assert "商品编码: text" in content
 
 
 # ============================================================

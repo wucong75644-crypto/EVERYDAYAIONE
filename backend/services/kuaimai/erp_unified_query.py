@@ -67,6 +67,35 @@ from utils.time_context import (
 )
 
 
+# ── Summary 列定义（ColumnMeta label = 中文，序列化出口自动翻译 key） ──
+
+_SUMMARY_BASE_COLUMNS = [
+    ColumnMeta("doc_count", "integer", "单数"),
+    ColumnMeta("total_qty", "integer", "数量"),
+    ColumnMeta("total_amount", "numeric", "金额"),
+]
+
+_GROUP_LABEL = {
+    "platform": "平台", "shop": "店铺", "product": "商品",
+    "supplier": "供应商", "warehouse": "仓库", "status": "状态",
+}
+
+_CLASSIFIED_FLAT_COLUMNS = [
+    ColumnMeta("total_orders", "integer", "总订单数"),
+    ColumnMeta("total_amount", "numeric", "总金额"),
+    ColumnMeta("valid_orders", "integer", "有效订单数"),
+    ColumnMeta("valid_amount", "numeric", "有效金额"),
+]
+
+_CLASSIFIED_GROUPED_COLUMNS = [
+    ColumnMeta("group_key", "text", "分组"),
+    ColumnMeta("total_orders", "integer", "总订单数"),
+    ColumnMeta("total_amount", "numeric", "总金额"),
+    ColumnMeta("valid_orders", "integer", "有效订单数"),
+    ColumnMeta("valid_amount", "numeric", "有效金额"),
+]
+
+
 class UnifiedQueryEngine:
     """Filter DSL → 参数化 SQL，三种输出模式"""
 
@@ -230,15 +259,14 @@ class UnifiedQueryEngine:
                 row["platform"] = PLATFORM_CN.get(row["platform"], row["platform"])
             if "group_key" in row and rpc_group == "platform":
                 row["group_key"] = PLATFORM_CN.get(row["group_key"], row["group_key"])
+        summary_cols = list(_SUMMARY_BASE_COLUMNS)
+        if rpc_group:
+            summary_cols.insert(0, ColumnMeta("group_key", "text", _GROUP_LABEL.get(rpc_group, "分组")))
         return ToolOutput(
             summary=summary,
             format=OutputFormat.TABLE,
             source="erp",
-            columns=[
-                ColumnMeta("doc_count", "integer", "单数"),
-                ColumnMeta("total_qty", "integer", "数量"),
-                ColumnMeta("total_amount", "numeric", "金额"),
-            ],
+            columns=summary_cols,
             data=result_data,
             metadata={
                 "doc_type": doc_type,
@@ -344,18 +372,18 @@ class UnifiedQueryEngine:
                 classifier, raw_rows, rpc_group, time_header, tr, include_invalid,
             )
 
-        # ── 诊断日志：分类引擎处理后的数据 ──
+        # ── 诊断日志：分类引擎处理后的数据（扁平化结构） ──
         if result and result.data:
             if rpc_group is None:
                 d = result.data[0] if result.data else {}
-                classified_total = d.get("total", {}).get("doc_count", "?")
-                classified_valid = d.get("valid", {}).get("doc_count", "?")
+                classified_total = d.get("total_orders", "?")
+                classified_valid = d.get("valid_orders", "?")
             else:
                 classified_total = sum(
-                    d.get("total", {}).get("doc_count", 0) for d in result.data
+                    d.get("total_orders", 0) for d in result.data
                 )
                 classified_valid = sum(
-                    d.get("valid", {}).get("doc_count", 0) for d in result.data
+                    d.get("valid_orders", 0) for d in result.data
                 )
             logger.info(
                 f"分类引擎输出 | rpc_sum={rpc_total_docs} | "
@@ -370,7 +398,7 @@ class UnifiedQueryEngine:
         self, classifier: Any, raw_rows: list[dict],
         time_header: str, tr: TimeRange, include_invalid: bool,
     ) -> ToolOutput | None:
-        """无分组：整体分类 → ToolOutput"""
+        """无分组：整体分类 → ToolOutput（扁平化数据）"""
         try:
             cr = classifier.classify(raw_rows)
         except Exception as e:
@@ -378,22 +406,22 @@ class UnifiedQueryEngine:
             return None
         body = cr.to_display_text(show_recommendation=not include_invalid)
         summary_text = f"{time_header}\n\n{body}" if time_header else body
+        flat_row = {
+            "total_orders": cr.total.get("doc_count", 0),
+            "total_amount": cr.total.get("total_amount", 0),
+            "valid_orders": cr.valid.get("doc_count", 0),
+            "valid_amount": cr.valid.get("total_amount", 0),
+        }
+        for cat in cr.categories_list:
+            name = cat.get("name", "未知")
+            flat_row[f"{name}_orders"] = cat.get("doc_count", 0)
         return ToolOutput(
             summary=summary_text,
             format=OutputFormat.TABLE,
             source="erp",
-            columns=[
-                ColumnMeta("doc_count", "integer", "单数"),
-                ColumnMeta("total_qty", "integer", "数量"),
-                ColumnMeta("total_amount", "numeric", "金额"),
-            ],
-            data=[{
-                "total": cr.total,
-                "valid": cr.valid,
-                "categories": cr.categories_list,
-            }],
+            columns=_CLASSIFIED_FLAT_COLUMNS,
+            data=[flat_row],
             metadata={
-                "recommended_key": "valid",
                 "doc_type": "order",
                 "time_range": tr.label,
                 "time_column": tr.time_col,
@@ -405,7 +433,7 @@ class UnifiedQueryEngine:
         rpc_group: str, time_header: str, tr: TimeRange,
         include_invalid: bool,
     ) -> ToolOutput | None:
-        """有分组：每组独立分类 → ToolOutput"""
+        """有分组：每组独立分类 → ToolOutput（扁平化数据）"""
         try:
             grouped = classifier.classify_grouped(raw_rows)
         except Exception as e:
@@ -419,9 +447,10 @@ class UnifiedQueryEngine:
         data_list = [
             {
                 "group_key": key,
-                "total": cr.total,
-                "valid": cr.valid,
-                "categories": cr.categories_list,
+                "total_orders": cr.total.get("doc_count", 0),
+                "total_amount": cr.total.get("total_amount", 0),
+                "valid_orders": cr.valid.get("doc_count", 0),
+                "valid_amount": cr.valid.get("total_amount", 0),
             }
             for key, cr in grouped.items()
         ]
@@ -429,15 +458,9 @@ class UnifiedQueryEngine:
             summary=summary_text,
             format=OutputFormat.TABLE,
             source="erp",
-            columns=[
-                ColumnMeta("group_key", "text", "分组"),
-                ColumnMeta("doc_count", "integer", "单数"),
-                ColumnMeta("total_qty", "integer", "数量"),
-                ColumnMeta("total_amount", "numeric", "金额"),
-            ],
+            columns=_CLASSIFIED_GROUPED_COLUMNS,
             data=data_list,
             metadata={
-                "recommended_key": "valid",
                 "doc_type": "order",
                 "group_by": rpc_group,
                 "time_range": tr.label,
