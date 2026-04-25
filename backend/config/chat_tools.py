@@ -107,7 +107,7 @@ TOOL_SYSTEM_PROMPT = """## 工具决策规则
 
 ### erp_agent — ERP 数据执行
 用户问任何涉及订单/库存/采购/售后/发货/物流/商品/销量/统计的问题时调用。
-task 原样传递用户的话，conversation_context 给最近相关的对话内容。
+task 传达用户的意图，不替 erp_agent 做查询决策。conversation_context 给最近相关的对话内容。
 返回数据摘要或 staging 文件引用：
 - 纯数字结论 → 直接向用户呈现，加上下文做适当解读
 - 含 [文件已存入 staging] → 用户要导出时调 code_execute 读 staging 转 Excel
@@ -210,14 +210,12 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                         "task": {
                             "type": "string",
                             "description": (
-                                "给 erp_agent 的完整任务描述。\n"
-                                "erp_agent 是一个刚走进房间的同事，"
-                                "它没看过聊天记录、不知道之前查了什么。"
-                                "你写进 task 的就是它知道的全部。\n\n"
-                                "写完后自检：一个对上文一无所知的人，"
-                                "拿到这句 task 能独立完成吗？不能就补全。\n\n"
-                                "时间用相对表达（'昨天''上个月'），"
-                                "不要替 erp_agent 做技术决策。\n\n"
+                                "传达用户的查询意图，不做展开。\n"
+                                "erp_agent 是领域专家——"
+                                "它知道该查哪些字段、怎么分组、返回什么。\n"
+                                "你只负责说清用户要什么，"
+                                "追问时补充上文的时间/平台等背景。\n"
+                                "不要替它规划返回哪些指标或字段。\n\n"
                                 "何时 ask_user：对查询对象/范围/条件不确定就问。"
                             ),
                         },
