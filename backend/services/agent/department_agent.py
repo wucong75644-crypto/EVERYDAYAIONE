@@ -475,6 +475,13 @@ class DepartmentAgent(ABC):
         """从任务描述关键词检测写意图（兜底保护）。"""
         return any(kw in task for kw in self._WRITE_KEYWORDS)
 
+    def _find_write_keyword(self, task: str) -> str | None:
+        """返回第一个匹配到的写操作关键词（调试用）。"""
+        for kw in self._WRITE_KEYWORDS:
+            if kw in task:
+                return kw
+        return None
+
     # ── DAG 执行入口（Phase 2B）──
 
     async def execute(
@@ -494,9 +501,15 @@ class DepartmentAgent(ABC):
         action = self._classify_action(task)
 
         # DAG 模式下禁止写操作（双重检查：action 枚举 + 任务描述关键词）
-        if dag_mode and (
-            self._is_write_action(action) or self._has_write_intent(task)
-        ):
+        is_write_action = self._is_write_action(action)
+        write_keyword = self._find_write_keyword(task) if dag_mode else None
+        if dag_mode and (is_write_action or write_keyword):
+            logger.warning(
+                f"{self.domain} write blocked | action={action} | "
+                f"is_write_action={is_write_action} | "
+                f"write_keyword={write_keyword!r} | "
+                f"task_preview={task[:200]}"
+            )
             return ToolOutput(
                 summary=(
                     "DAG 模式下暂不支持写操作，请单独执行该操作"
@@ -504,7 +517,7 @@ class DepartmentAgent(ABC):
                 source=self.domain,
                 status=OutputStatus.ERROR,
                 error_message=(
-                    f"write blocked in dag_mode | action={action}"
+                    f"write blocked in dag_mode | action={action} | keyword={write_keyword}"
                 ),
             )
 
