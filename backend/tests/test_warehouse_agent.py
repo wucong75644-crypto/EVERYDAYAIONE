@@ -376,13 +376,19 @@ class TestDepartmentAgentBase:
         assert "写操作" in result.summary
 
     @pytest.mark.asyncio
-    async def test_dag_mode_blocks_write_keyword(self):
-        """dag_mode=True 时任务描述含写关键词被拦截（兜底保护）"""
+    async def test_dag_mode_keyword_audit_only(self):
+        """dag_mode=True 时写关键词不阻断（降级为审计日志），action 分类为读则放行"""
+        from services.agent.department_types import ValidationResult
         agent = _make_warehouse()
-        # _classify_action 返回 default，但任务描述含 "修改"
-        result = await agent.execute("批量修改库存", dag_mode=True)
-        assert result.status == "error"
-        assert "写操作" in result.summary
+        mock_output = ToolOutput(summary="OK", source="warehouse")
+        with patch.object(
+            agent, "validate_params", return_value=ValidationResult.ok(),
+        ), patch.object(
+            agent, "_dispatch", new=AsyncMock(return_value=mock_output),
+        ):
+            # "批量修改库存" 含写关键词，但 _classify_action 返回读 action → 放行
+            result = await agent.execute("批量修改库存", dag_mode=True)
+            assert result.status == "success"
 
     @pytest.mark.asyncio
     async def test_dag_mode_allows_read(self):
@@ -435,6 +441,32 @@ class TestDepartmentAgentBase:
         agent = _make_warehouse()
         for task in ("查库存", "仓库列表", "缺货分析", "导出Excel"):
             assert not agent._has_write_intent(task), f"'{task}' should not have write intent"
+
+    def test_has_write_intent_stat_suffix_excluded(self):
+        """写关键词后跟统计后缀时判定为读操作（修复"取消订单数"误判）"""
+        agent = _make_warehouse()
+        read_cases = (
+            "取消订单数",       # 取消 + 订单数
+            "取消数",           # 取消 + 数
+            "修改时间",         # 修改 + 时间
+            "创建日期",         # 创建 + 日期
+            "更新时间",         # 更新 + 时间
+            "删除数，共5条",    # 删除 + 数 + 标点（统计语境）
+            "调整明细",         # 调整 + 明细
+            "返回取消订单数和有效订单数",  # 多个统计字段
+        )
+        for task in read_cases:
+            assert not agent._has_write_intent(task), (
+                f"'{task}' should NOT have write intent (stat suffix)"
+            )
+
+    def test_find_write_keyword_mixed(self):
+        """同一文本中既有统计语境又有写意图时，能正确识别写意图"""
+        agent = _make_warehouse()
+        # "取消订单数" 是读，但 "并删除无效记录" 中 "删除" 后面没有统计后缀
+        assert agent._find_write_keyword("统计取消订单数，并删除无效的") == "删除"
+        # 纯统计语境
+        assert agent._find_write_keyword("统计取消数和修改时间") is None
 
     # ── _params_to_filters ──
 
