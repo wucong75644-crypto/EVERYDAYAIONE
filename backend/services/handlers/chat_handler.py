@@ -381,12 +381,11 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             logger.info(f"Plan mode check | plan_mode={plan_mode!r} | type={type(plan_mode).__name__}")
             if plan_mode:
                 messages.append({"role": "system", "content": (
-                    "=== 计划模式已激活（用户手动开启）===\n"
-                    "无论查询复杂还是简单，都必须进入计划模式流程：\n"
-                    "1. 调 erp_analyze 分析任务结构\n"
-                    "2. 展示执行方案\n"
-                    "3. 等用户确认后再执行\n"
-                    "此规则覆盖直接模式判断。"
+                    "=== 计划模式已激活（覆盖所有其他指令）===\n"
+                    "用户手动开启了计划模式。你 MUST NOT 直接调用 erp_agent 执行查询。\n"
+                    "你 MUST 先调用 erp_analyze 分析任务结构，然后展示执行方案，\n"
+                    "然后停止等用户确认。即使是简单查询也必须走计划模式。\n"
+                    "此规则优先级高于所有其他指令。"
                 )})
 
             # 5. 加载核心工具（ToolSearch 模式：9 个核心直接加载）
