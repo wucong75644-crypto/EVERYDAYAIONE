@@ -29,6 +29,7 @@ interface UseMessageHandlersParams {
   removeWatermark: boolean;
   thinkingEffort?: 'minimal' | 'low' | 'medium' | 'high';
   deepThinkMode?: boolean;
+  planMode?: boolean;
   temperature?: number;
   topP?: number;
   topK?: number;
@@ -50,6 +51,7 @@ export function useMessageHandlers(params: UseMessageHandlersParams) {
     removeWatermark,
     thinkingEffort,
     deepThinkMode,
+    planMode,
     temperature,
     topP,
     topK,
@@ -64,6 +66,7 @@ export function useMessageHandlers(params: UseMessageHandlersParams) {
     selectedModel,
     thinkingEffort,
     deepThinkMode,
+    planMode,
     temperature,
     topP,
     topK,

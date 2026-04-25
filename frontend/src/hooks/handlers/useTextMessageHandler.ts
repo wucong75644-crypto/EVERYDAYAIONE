@@ -16,6 +16,7 @@ interface UseTextMessageHandlerParams {
   selectedModel: UnifiedModel;
   thinkingEffort?: 'minimal' | 'low' | 'medium' | 'high';
   deepThinkMode?: boolean;
+  planMode?: boolean;
   temperature?: number;
   topP?: number;
   topK?: number;
@@ -28,6 +29,7 @@ export function useTextMessageHandler({
   selectedModel,
   thinkingEffort,
   deepThinkMode,
+  planMode,
   temperature,
   topP,
   topK,
@@ -74,6 +76,7 @@ export function useTextMessageHandler({
         params: {
           thinking_effort: thinkingEffort,
           thinking_mode: deepThinkMode ? 'deep_think' : undefined,
+          plan_mode: planMode || undefined,
           temperature,
           top_p: topP,
           top_k: topK,

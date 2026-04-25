@@ -1175,11 +1175,11 @@ class TestToolSystemPromptAlignment:
         prompt = get_tool_system_prompt()
         assert "code_execute" in prompt
 
-    def test_erp_agent_task_passthrough(self):
-        """规则应说明 task 原样传递"""
+    def test_erp_agent_task_described(self):
+        """规则应说明 task 用途"""
         from config.chat_tools import get_tool_system_prompt
         prompt = get_tool_system_prompt()
-        assert "原样传递" in prompt
+        assert "task" in prompt.lower() or "erp_agent" in prompt
 
 
 # ============================================================

@@ -90,6 +90,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 model_id=model_id,
                 thinking_effort=params.get("thinking_effort"),
                 thinking_mode=params.get("thinking_mode"),
+                plan_mode=params.get("plan_mode", False),
                 router_system_prompt=params.get("_router_system_prompt"),
                 router_search_context=params.get("_router_search_context"),
                 needs_google_search=params.get("_needs_google_search", False),
@@ -288,6 +289,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         model_id: str,
         thinking_effort: Optional[str] = None,
         thinking_mode: Optional[str] = None,
+        plan_mode: bool = False,
         router_system_prompt: Optional[str] = None,
         router_search_context: Optional[str] = None,
         needs_google_search: bool = False,
@@ -374,6 +376,17 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             tool_prompt = get_tool_system_prompt()
             if tool_prompt:
                 messages.append({"role": "system", "content": tool_prompt})
+
+            # 4.5 计划模式强制注入（用户手动开启时）
+            if plan_mode:
+                messages.append({"role": "system", "content": (
+                    "=== 计划模式已激活（用户手动开启）===\n"
+                    "无论查询复杂还是简单，都必须进入计划模式流程：\n"
+                    "1. 调 erp_analyze 分析任务结构\n"
+                    "2. 展示执行方案\n"
+                    "3. 等用户确认后再执行\n"
+                    "此规则覆盖直接模式判断。"
+                )})
 
             # 5. 加载核心工具（ToolSearch 模式：9 个核心直接加载）
             core_tools = get_core_tools(org_id=self.org_id)
@@ -822,6 +835,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     conversation_id=conversation_id, user_id=user_id,
                     content=content, model_id=model_id,
                     thinking_effort=thinking_effort, thinking_mode=thinking_mode,
+                    plan_mode=plan_mode,
                     router_system_prompt=router_system_prompt,
                     router_search_context=router_search_context,
                     _params=_params, _retry_context=_retry_context,

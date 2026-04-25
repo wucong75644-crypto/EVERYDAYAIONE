@@ -75,6 +75,8 @@ interface InputControlsProps {
   onThinkingEffortChange?: (effort: 'minimal' | 'low' | 'medium' | 'high') => void;
   deepThinkMode?: boolean;
   onDeepThinkModeChange?: (enabled: boolean) => void;
+  planMode?: boolean;
+  onPlanModeChange?: (enabled: boolean) => void;
   temperature?: number;
   onTemperatureChange?: (value: number) => void;
   topP?: number;
@@ -133,7 +135,7 @@ export default function InputControls(props: InputControlsProps) {
     numImages, onNumImagesChange, userCredits,
     videoFrames, onVideoFramesChange, videoAspectRatio, onVideoAspectRatioChange,
     removeWatermark, onRemoveWatermarkChange, thinkingEffort, onThinkingEffortChange,
-    deepThinkMode, onDeepThinkModeChange,
+    deepThinkMode, onDeepThinkModeChange, planMode, onPlanModeChange,
     temperature, onTemperatureChange, topP, onTopPChange, topK, onTopKChange,
     maxOutputTokens, onMaxOutputTokensChange,
     onSaveSettings, onResetSettings,
@@ -240,7 +242,8 @@ export default function InputControls(props: InputControlsProps) {
         'relative border rounded-2xl bg-surface-card shadow-sm transition-all',
         sendError && 'border-error border-2 shadow-md',
         !sendError && isDragging && 'border-accent border-2 bg-accent-light shadow-lg',
-        !sendError && !isDragging && 'border-border-default hover:shadow-md',
+        !sendError && !isDragging && planMode && 'border-success/30 hover:shadow-md',
+        !sendError && !isDragging && !planMode && 'border-border-default hover:shadow-md',
       )}
     >
       {/* 拖拽提示 */}
@@ -410,15 +413,30 @@ export default function InputControls(props: InputControlsProps) {
 
           {/* 右侧：计费提示、上传、发送/语音 */}
           <div className="flex items-center space-x-2">
-            {/* 计费提示（无边框背景，颜色渐变动画） */}
-            <span
-              className={cn(
-                'text-xs transition-colors duration-1000 ease-out',
-                creditsHighlight ? 'text-warning' : 'text-text-disabled',
-              )}
-            >
-              {estimatedCredits}
-            </span>
+            {/* 模式选择器（chat 模型）或 计费提示（图片/视频模型） */}
+            {selectedModel.type === 'chat' && onPlanModeChange ? (
+              <button
+                onClick={() => onPlanModeChange(!planMode)}
+                className={cn(
+                  'text-xs px-2 py-0.5 rounded-full transition-all duration-200',
+                  'border',
+                  planMode
+                    ? 'text-success border-success/30 bg-success/5'
+                    : 'text-text-disabled border-transparent hover:text-text-secondary',
+                )}
+              >
+                {planMode ? '计划模式' : '自动模式'}
+              </button>
+            ) : (
+              <span
+                className={cn(
+                  'text-xs transition-colors duration-1000 ease-out',
+                  creditsHighlight ? 'text-warning' : 'text-text-disabled',
+                )}
+              >
+                {estimatedCredits}
+              </span>
+            )}
 
             {/* 上传按钮（始终显示，UploadMenu 内部根据模型能力显示不同选项） */}
             <div ref={uploadMenuRef} className="relative">
