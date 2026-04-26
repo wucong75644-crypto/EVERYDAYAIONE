@@ -356,8 +356,8 @@ class DepartmentAgent(ABC):
     # ── 语义参数 → filters DSL 转换（委托 param_converter）──
 
     @staticmethod
-    def _params_to_filters(params: dict) -> list[dict]:
-        """把 PlanBuilder 输出的语义参数转成 UnifiedQueryEngine 的 filters DSL。"""
+    def _params_to_filters(params: dict) -> tuple[list[dict], list[str]]:
+        """语义参数 → filters DSL + 截断警告列表。"""
         from services.agent.param_converter import params_to_filters
         return params_to_filters(params)
 
@@ -592,16 +592,9 @@ class DepartmentAgent(ABC):
         # 语义参数 → filters DSL（确定性转换）
         # 只要没有预设 filters 就调用转换（不再要求必须有 time_range）
         if "filters" not in merged:
-            merged["filters"] = self._params_to_filters(merged)
-
-            # IN 值超限截断警告：让 Agent 知道结果可能不完整
-            from services.agent.input_normalizer import MultiValueParser, DEFAULT_MAX_IN
-            if MultiValueParser.last_truncated:
-                merged["_truncation_warning"] = (
-                    f"⚠️ 编码/单号数量（{MultiValueParser.last_truncated_total}个）"
-                    f"超过单次查询上限（{DEFAULT_MAX_IN}个），"
-                    f"已截断。建议改用分别导出+code_execute关联的方式查询完整数据。"
-                )
+            merged["filters"], _filter_warnings = self._params_to_filters(merged)
+            if _filter_warnings:
+                merged["_truncation_warning"] = "\n".join(_filter_warnings)
 
         validation = self.validate_params(action, merged)
         if not validation.is_ok:

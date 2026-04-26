@@ -155,15 +155,26 @@ class TestMultiValueParser:
 
     # ── 上限截断 ──
 
-    def test_over_limit_truncated(self):
+    def test_no_truncation_in_parser(self):
+        """parse() 不再截断——截断由 to_filter 负责"""
         codes = ",".join(f"CODE{i}" for i in range(600))
         result = MultiValueParser.parse(codes)
         assert isinstance(result, list)
-        assert len(result) == DEFAULT_MAX_IN
+        assert len(result) == 600  # 全量返回
 
-    def test_custom_limit(self):
-        result = MultiValueParser.parse("A,B,C,D,E", max_values=3)
-        assert result == ["A", "B", "C"]
+    def test_to_filter_truncates_with_warning(self):
+        """to_filter 超限时截断 + 返回 warning"""
+        codes = [f"CODE{i}" for i in range(600)]
+        f, warning = MultiValueParser.to_filter("outer_id", codes)
+        assert f["op"] == "in"
+        assert len(f["value"]) == DEFAULT_MAX_IN
+        assert warning is not None
+        assert "超过" in warning
+
+    def test_to_filter_no_warning_within_limit(self):
+        """不超限时 warning 为 None"""
+        f, warning = MultiValueParser.to_filter("outer_id", ["A", "B"])
+        assert warning is None
 
     # ── 边界 ──
 
@@ -179,12 +190,14 @@ class TestMultiValueParser:
     # ── to_filter ──
 
     def test_to_filter_single(self):
-        f = MultiValueParser.to_filter("outer_id", "ABC")
+        f, w = MultiValueParser.to_filter("outer_id", "ABC")
         assert f == {"field": "outer_id", "op": "eq", "value": "ABC"}
+        assert w is None
 
     def test_to_filter_multi(self):
-        f = MultiValueParser.to_filter("outer_id", ["A", "B"])
+        f, w = MultiValueParser.to_filter("outer_id", ["A", "B"])
         assert f == {"field": "outer_id", "op": "in", "value": ["A", "B"]}
+        assert w is None
 
 
 # ============================================================
@@ -354,19 +367,21 @@ class TestE2EPipeline:
         """完整管道 → filter dict"""
         raw = "DBTXL01;BLTMH01"
         parsed = MultiValueParser.parse(raw)
-        f = MultiValueParser.to_filter("outer_id", parsed)
+        f, w = MultiValueParser.to_filter("outer_id", parsed)
         assert f == {
             "field": "outer_id",
             "op": "in",
             "value": ["DBTXL01", "BLTMH01"],
         }
+        assert w is None
 
     def test_single_value_pipeline(self):
         raw = "DBTXL01"
         parsed = MultiValueParser.parse(raw)
         assert parsed == "DBTXL01"
-        f = MultiValueParser.to_filter("outer_id", parsed)
+        f, w = MultiValueParser.to_filter("outer_id", parsed)
         assert f["op"] == "eq"
+        assert w is None
 
 
 # ============================================================
