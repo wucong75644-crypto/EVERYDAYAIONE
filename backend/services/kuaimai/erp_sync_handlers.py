@@ -52,7 +52,7 @@ async def _backfill_item_names(
         ).in_("outer_id", list(missing))
         if svc.org_id:
             result = result.eq("org_id", svc.org_id)
-        data = result.execute().data
+        data = (await result.execute()).data
         name_map = {r["outer_id"]: r["title"] for r in data if r.get("title")}
     except Exception as e:
         logger.warning(f"backfill_item_names 查询失败，跳过 | error={e}")
