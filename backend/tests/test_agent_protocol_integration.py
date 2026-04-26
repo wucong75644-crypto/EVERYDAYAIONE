@@ -135,6 +135,21 @@ class TestChatToolMixinAgentResult:
         result = AgentResult(status="empty", summary="无数据", source="erp_agent")
         assert not result.is_failure
 
+    def test_partial_is_not_failure(self):
+        """status=partial 不应被判定为 failure（部分成功仍可用）"""
+        result = AgentResult(status="partial", summary="部分数据", source="erp_agent")
+        assert not result.is_failure
+
+    def test_ask_user_is_not_failure(self):
+        """status=ask_user 不应被判定为 failure（追问行为）"""
+        result = AgentResult(status="ask_user", summary="需要更多信息", source="erp_agent")
+        assert not result.is_failure
+
+    def test_plan_is_not_failure(self):
+        """status=plan 不应被判定为 failure（返回执行计划）"""
+        result = AgentResult(status="plan", summary="执行计划", source="erp_agent")
+        assert not result.is_failure
+
 
 # ============================================================
 # 链路 3：KIE adapter list content 转换
