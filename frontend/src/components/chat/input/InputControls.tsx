@@ -7,7 +7,8 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { m } from 'framer-motion';
-import { Send, Square, Settings, Upload, Brain, Paperclip, FolderOpen } from 'lucide-react';
+import { Send, Square, Settings, Upload, Brain, Paperclip, FolderOpen, ChevronUp, Zap, ShieldCheck, ListChecks } from 'lucide-react';
+import { Popover, PopoverClose } from '../../primitives/Popover';
 import { cn } from '../../../utils/cn';
 import { SOFT_SPRING } from '../../../utils/motion';
 import { getFileIcon } from '../../../utils/fileUtils';
@@ -416,23 +417,54 @@ export default function InputControls(props: InputControlsProps) {
           <div className="flex items-center space-x-2">
             {/* 模式选择器（chat 模型）或 计费提示（图片/视频模型） */}
             {selectedModel.type === 'chat' && onPermissionModeChange ? (
-              <button
-                onClick={() => {
-                  const cycle = { auto: 'ask', ask: 'plan', plan: 'auto' } as const;
-                  onPermissionModeChange(cycle[permissionMode || 'auto']);
-                }}
-                className={cn(
-                  'text-xs px-2 py-0.5 rounded-full transition-all duration-200',
-                  'border',
-                  permissionMode === 'plan'
-                    ? 'text-success border-success/30 bg-success/5'
-                    : permissionMode === 'ask'
-                      ? 'text-warning border-warning/30 bg-warning/5'
-                      : 'text-text-disabled border-transparent hover:text-text-secondary',
-                )}
+              <Popover
+                side="top"
+                align="end"
+                sideOffset={12}
+                maxWidth={180}
+                className="!p-1"
+                trigger={
+                  <button
+                    className={cn(
+                      'flex items-center gap-1 text-xs px-2 py-0.5 rounded-full transition-all duration-200',
+                      'border',
+                      permissionMode === 'plan'
+                        ? 'text-success border-success/30 bg-success/5'
+                        : permissionMode === 'ask'
+                          ? 'text-warning border-warning/30 bg-warning/5'
+                          : 'text-text-disabled border-transparent hover:text-text-secondary',
+                    )}
+                  >
+                    {permissionMode === 'plan' ? '计划模式' : permissionMode === 'ask' ? '确认模式' : '自动模式'}
+                    <ChevronUp className="w-3 h-3" />
+                  </button>
+                }
               >
-                {permissionMode === 'plan' ? '计划模式' : permissionMode === 'ask' ? '确认模式' : '自动模式'}
-              </button>
+                {([
+                  { value: 'auto', label: '自动模式', desc: '全自动执行', icon: Zap, color: 'text-text-secondary' },
+                  { value: 'ask', label: '确认模式', desc: '危险操作需确认', icon: ShieldCheck, color: 'text-warning' },
+                  { value: 'plan', label: '计划模式', desc: '先规划再执行', icon: ListChecks, color: 'text-success' },
+                ] as const).map(({ value, label, desc, icon: Icon, color }) => (
+                  <PopoverClose key={value} asChild>
+                    <button
+                      onClick={() => onPermissionModeChange(value)}
+                      className={cn(
+                        'w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left transition-colors',
+                        'hover:bg-surface-hover',
+                        permissionMode === value ? 'bg-surface-hover' : '',
+                      )}
+                    >
+                      <Icon className={cn('w-3.5 h-3.5 flex-shrink-0', color)} />
+                      <div className="min-w-0">
+                        <div className={cn('text-xs font-medium', permissionMode === value ? color : 'text-text-primary')}>
+                          {label}
+                        </div>
+                        <div className="text-[10px] text-text-disabled leading-tight">{desc}</div>
+                      </div>
+                    </button>
+                  </PopoverClose>
+                ))}
+              </Popover>
             ) : (
               <span
                 className={cn(
