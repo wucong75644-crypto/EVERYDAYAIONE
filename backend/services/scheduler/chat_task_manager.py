@@ -158,7 +158,7 @@ async def _load_push_targets(db: Any, user_id: str, org_id: str) -> List[Dict[st
     except Exception as e:
         logger.warning(f"load wecom_chat_targets failed: {e}")
 
-    # 企业同事（网页推送）
+    # 企业同事（网页 + 企微双通道）
     try:
         members = db.table("org_members") \
             .select("user_id") \
@@ -169,22 +169,43 @@ async def _load_push_targets(db: Any, user_id: str, org_id: str) -> List[Dict[st
             .execute()
         if members.data:
             member_ids = [m["user_id"] for m in members.data]
+            # 查昵称
             users = db.table("users") \
                 .select("id, nickname") \
                 .in_("id", member_ids) \
                 .execute()
-            for u in (users.data or []):
-                nick = u.get("nickname", "")
+            nick_map = {u["id"]: u.get("nickname", "") for u in (users.data or [])}
+            # 查企微映射
+            wecom_mappings = db.table("wecom_user_mappings") \
+                .select("user_id, wecom_userid, wecom_nickname") \
+                .in_("user_id", member_ids) \
+                .execute()
+            wecom_map = {m["user_id"]: m for m in (wecom_mappings.data or [])}
+
+            for uid in member_ids:
+                nick = nick_map.get(uid, "")
                 if not nick:
                     continue
+                # 网页通道
                 targets.append({
                     "label": f"同事 · {nick}（网页）",
                     "value": json.dumps({
                         "type": "web",
-                        "user_id": u["id"],
+                        "user_id": uid,
                         "name": nick,
                     }),
                 })
+                # 企微通道
+                wm = wecom_map.get(uid)
+                if wm:
+                    targets.append({
+                        "label": f"同事 · {nick}（企微）",
+                        "value": json.dumps({
+                            "type": "wecom_user",
+                            "wecom_userid": wm["wecom_userid"],
+                            "name": nick,
+                        }),
+                    })
     except Exception as e:
         logger.warning(f"load org_members failed: {e}")
 
