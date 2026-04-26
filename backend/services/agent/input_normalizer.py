@@ -176,8 +176,8 @@ class ValueValidator:
         # (pattern_str, flags)
         # 商品编码：字母开头 + 字母数字 + 可选 -后缀
         "product_code": (r"[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*", 0),
-        # 订单号：tb=18位 / jd|sid=16位 / fxg|1688=19位 / xhs=P+18位 / pdd=日期-数字
-        "order_no": (r"(?:P\d{18}|\d{16,19}|\d{8}-\d+)", 0),
+        # 订单号：tb=18-19位 / jd|sid=16位 / fxg|1688=19位 / xhs=P+18位 / pdd=YYMMDD-数字或YYYYMMDD-数字
+        "order_no": (r"(?:P\d{18}|\d{16,19}|\d{6,8}-\d+)", 0),
         # 系统单号：精确 16 位数字
         "system_id": (r"\d{16}", 0),
         # 快递单号：承运商前缀 + 8-20 位数字
