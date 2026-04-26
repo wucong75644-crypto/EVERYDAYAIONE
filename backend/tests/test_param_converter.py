@@ -41,43 +41,43 @@ class TestMultiValueIntegration:
     """验证各字段多值传入后生成 in 过滤器"""
 
     def test_product_code_comma(self):
-        filters = params_to_filters({"product_code": "A,B,C"})
+        filters, _ = params_to_filters({"product_code": "A,B,C"})
         f = [x for x in filters if x["field"] == "outer_id"]
         assert len(f) == 1
         assert f[0]["op"] == "in"
         assert f[0]["value"] == ["A", "B", "C"]
 
     def test_product_code_single(self):
-        filters = params_to_filters({"product_code": "ABC"})
+        filters, _ = params_to_filters({"product_code": "ABC"})
         f = [x for x in filters if x["field"] == "outer_id"]
         assert len(f) == 1
         assert f[0]["op"] == "eq"
         assert f[0]["value"] == "ABC"
 
     def test_product_code_list(self):
-        filters = params_to_filters({"product_code": ["X", "Y"]})
+        filters, _ = params_to_filters({"product_code": ["X", "Y"]})
         f = [x for x in filters if x["field"] == "outer_id"]
         assert f[0]["op"] == "in"
 
     def test_order_no_comma(self):
-        filters = params_to_filters({"order_no": "O001,O002"})
+        filters, _ = params_to_filters({"order_no": "O001,O002"})
         f = [x for x in filters if x["field"] == "order_no"]
         assert f[0]["op"] == "in"
         assert f[0]["value"] == ["O001", "O002"]
 
     def test_doc_code_multi(self):
-        filters = params_to_filters({"doc_code": "PO001;PO002"})
+        filters, _ = params_to_filters({"doc_code": "PO001;PO002"})
         f = [x for x in filters if x["field"] == "doc_code"]
         assert f[0]["op"] == "in"
 
     def test_sku_code_multi(self):
-        filters = params_to_filters({"sku_code": "SKU1,SKU2,SKU3"})
+        filters, _ = params_to_filters({"sku_code": "SKU1,SKU2,SKU3"})
         f = [x for x in filters if x["field"] == "sku_outer_id"]
         assert f[0]["op"] == "in"
         assert len(f[0]["value"]) == 3
 
     def test_buyer_nick_single_stays_eq(self):
-        filters = params_to_filters({"buyer_nick": "张三"})
+        filters, _ = params_to_filters({"buyer_nick": "张三"})
         f = [x for x in filters if x["field"] == "buyer_nick"]
         assert f[0]["op"] == "eq"
 
@@ -90,7 +90,7 @@ class TestMultiValueIntegration:
 class TestTextEqFields:
 
     def test_express_no(self):
-        filters = params_to_filters({"express_no": "SF1234567890"})
+        filters, _ = params_to_filters({"express_no": "SF1234567890"})
         assert any(
             f["field"] == "express_no" and f["op"] == "eq"
             and f["value"] == "SF1234567890"
@@ -98,7 +98,7 @@ class TestTextEqFields:
         )
 
     def test_buyer_nick(self):
-        filters = params_to_filters({"buyer_nick": "张三"})
+        filters, _ = params_to_filters({"buyer_nick": "张三"})
         assert any(
             f["field"] == "buyer_nick" and f["op"] == "eq"
             and f["value"] == "张三"
@@ -106,7 +106,7 @@ class TestTextEqFields:
         )
 
     def test_doc_code(self):
-        filters = params_to_filters({"doc_code": "PO202604001"})
+        filters, _ = params_to_filters({"doc_code": "PO202604001"})
         assert any(
             f["field"] == "doc_code" and f["op"] == "eq"
             and f["value"] == "PO202604001"
@@ -115,7 +115,7 @@ class TestTextEqFields:
 
     def test_sku_code_maps_to_sku_outer_id(self):
         """sku_code 语义名 → sku_outer_id DB列名"""
-        filters = params_to_filters({"sku_code": "ABC-01-RED"})
+        filters, _ = params_to_filters({"sku_code": "ABC-01-RED"})
         assert any(
             f["field"] == "sku_outer_id" and f["op"] == "eq"
             and f["value"] == "ABC-01-RED"
@@ -123,28 +123,28 @@ class TestTextEqFields:
         )
 
     def test_receiver_name(self):
-        filters = params_to_filters({"receiver_name": "李四"})
+        filters, _ = params_to_filters({"receiver_name": "李四"})
         assert any(
             f["field"] == "receiver_name" and f["value"] == "李四"
             for f in filters
         )
 
     def test_platform_refund_id(self):
-        filters = params_to_filters({"platform_refund_id": "RF20260401001"})
+        filters, _ = params_to_filters({"platform_refund_id": "RF20260401001"})
         assert any(
             f["field"] == "platform_refund_id" and f["value"] == "RF20260401001"
             for f in filters
         )
 
     def test_purchase_order_code(self):
-        filters = params_to_filters({"purchase_order_code": "PO-2026-001"})
+        filters, _ = params_to_filters({"purchase_order_code": "PO-2026-001"})
         assert any(
             f["field"] == "purchase_order_code" and f["value"] == "PO-2026-001"
             for f in filters
         )
 
     def test_refund_express_no(self):
-        filters = params_to_filters({"refund_express_no": "YT9876543210"})
+        filters, _ = params_to_filters({"refund_express_no": "YT9876543210"})
         assert any(
             f["field"] == "refund_express_no" and f["value"] == "YT9876543210"
             for f in filters
@@ -153,24 +153,24 @@ class TestTextEqFields:
     def test_all_text_eq_fields_mapped(self):
         """确保所有 TEXT_EQ_FIELDS 都能生成 filter"""
         params = {k: f"val_{k}" for k in TEXT_EQ_FIELDS}
-        filters = params_to_filters(params)
+        filters, _ = params_to_filters(params)
         filter_fields = {f["field"] for f in filters}
         for db_field in TEXT_EQ_FIELDS.values():
             assert db_field in filter_fields, f"missing filter for {db_field}"
 
     def test_strip_whitespace(self):
         """值带前后空格应被 strip"""
-        filters = params_to_filters({"express_no": "  SF123  "})
+        filters, _ = params_to_filters({"express_no": "  SF123  "})
         assert any(f["value"] == "SF123" for f in filters)
 
     def test_empty_string_ignored(self):
         """空字符串不产生 filter"""
-        filters = params_to_filters({"express_no": ""})
+        filters, _ = params_to_filters({"express_no": ""})
         assert not any(f["field"] == "express_no" for f in filters)
 
     def test_whitespace_only_ignored(self):
         """纯空格字符串不产生 filter"""
-        filters = params_to_filters({"buyer_nick": "   "})
+        filters, _ = params_to_filters({"buyer_nick": "   "})
         assert not any(f["field"] == "buyer_nick" for f in filters)
 
 
@@ -182,7 +182,7 @@ class TestTextEqFields:
 class TestTextLikeFields:
 
     def test_shop_name(self):
-        filters = params_to_filters({"shop_name": "旗舰店"})
+        filters, _ = params_to_filters({"shop_name": "旗舰店"})
         assert any(
             f["field"] == "shop_name" and f["op"] == "like"
             and f["value"] == "%旗舰店%"
@@ -190,7 +190,7 @@ class TestTextLikeFields:
         )
 
     def test_supplier_name(self):
-        filters = params_to_filters({"supplier_name": "供应商A"})
+        filters, _ = params_to_filters({"supplier_name": "供应商A"})
         assert any(
             f["field"] == "supplier_name" and f["op"] == "like"
             and f["value"] == "%供应商A%"
@@ -198,56 +198,56 @@ class TestTextLikeFields:
         )
 
     def test_warehouse_name(self):
-        filters = params_to_filters({"warehouse_name": "A仓"})
+        filters, _ = params_to_filters({"warehouse_name": "A仓"})
         assert any(
             f["field"] == "warehouse_name" and f["value"] == "%A仓%"
             for f in filters
         )
 
     def test_item_name(self):
-        filters = params_to_filters({"item_name": "连衣裙"})
+        filters, _ = params_to_filters({"item_name": "连衣裙"})
         assert any(
             f["field"] == "item_name" and f["value"] == "%连衣裙%"
             for f in filters
         )
 
     def test_receiver_state(self):
-        filters = params_to_filters({"receiver_state": "广东"})
+        filters, _ = params_to_filters({"receiver_state": "广东"})
         assert any(
             f["field"] == "receiver_state" and f["value"] == "%广东%"
             for f in filters
         )
 
     def test_receiver_city(self):
-        filters = params_to_filters({"receiver_city": "深圳"})
+        filters, _ = params_to_filters({"receiver_city": "深圳"})
         assert any(
             f["field"] == "receiver_city" and f["value"] == "%深圳%"
             for f in filters
         )
 
     def test_text_reason(self):
-        filters = params_to_filters({"text_reason": "质量"})
+        filters, _ = params_to_filters({"text_reason": "质量"})
         assert any(
             f["field"] == "text_reason" and f["value"] == "%质量%"
             for f in filters
         )
 
     def test_remark(self):
-        filters = params_to_filters({"remark": "加急"})
+        filters, _ = params_to_filters({"remark": "加急"})
         assert any(
             f["field"] == "remark" and f["value"] == "%加急%"
             for f in filters
         )
 
     def test_express_company(self):
-        filters = params_to_filters({"express_company": "顺丰"})
+        filters, _ = params_to_filters({"express_company": "顺丰"})
         assert any(
             f["field"] == "express_company" and f["value"] == "%顺丰%"
             for f in filters
         )
 
     def test_creator_name(self):
-        filters = params_to_filters({"creator_name": "小李"})
+        filters, _ = params_to_filters({"creator_name": "小李"})
         assert any(
             f["field"] == "creator_name" and f["value"] == "%小李%"
             for f in filters
@@ -256,13 +256,13 @@ class TestTextLikeFields:
     def test_all_text_like_fields_mapped(self):
         """确保所有 TEXT_LIKE_FIELDS 都能生成 like filter"""
         params = {k: f"val_{k}" for k in TEXT_LIKE_FIELDS}
-        filters = params_to_filters(params)
+        filters, _ = params_to_filters(params)
         filter_fields = {f["field"] for f in filters}
         for db_field in TEXT_LIKE_FIELDS.values():
             assert db_field in filter_fields, f"missing like filter for {db_field}"
 
     def test_like_empty_string_ignored(self):
-        filters = params_to_filters({"shop_name": ""})
+        filters, _ = params_to_filters({"shop_name": ""})
         assert not any(f["field"] == "shop_name" for f in filters)
 
 
@@ -274,7 +274,7 @@ class TestTextLikeFields:
 class TestEnumEqFields:
 
     def test_order_status(self):
-        filters = params_to_filters({"order_status": "WAIT_SEND_GOODS"})
+        filters, _ = params_to_filters({"order_status": "WAIT_SEND_GOODS"})
         assert any(
             f["field"] == "order_status" and f["op"] == "eq"
             and f["value"] == "WAIT_SEND_GOODS"
@@ -283,7 +283,7 @@ class TestEnumEqFields:
 
     def test_doc_status(self):
         """已审核 → 归一化为 DB 值 VERIFYING"""
-        filters = params_to_filters({"doc_status": "已审核"})
+        filters, _ = params_to_filters({"doc_status": "已审核"})
         assert any(
             f["field"] == "doc_status" and f["value"] == "VERIFYING"
             for f in filters
@@ -291,7 +291,7 @@ class TestEnumEqFields:
 
     def test_aftersale_type(self):
         """退货退款 → 归一化为 DB 值 "2" """
-        filters = params_to_filters({"aftersale_type": "退货退款"})
+        filters, _ = params_to_filters({"aftersale_type": "退货退款"})
         assert any(
             f["field"] == "aftersale_type" and f["value"] == "2"
             for f in filters
@@ -299,7 +299,7 @@ class TestEnumEqFields:
 
     def test_refund_status(self):
         """退款中 → 归一化为 DB 值 "1" """
-        filters = params_to_filters({"refund_status": "退款中"})
+        filters, _ = params_to_filters({"refund_status": "退款中"})
         assert any(
             f["field"] == "refund_status" and f["value"] == "1"
             for f in filters
@@ -307,7 +307,7 @@ class TestEnumEqFields:
 
     def test_good_status(self):
         """买家已退货 → 归一化为 DB 值 "2" """
-        filters = params_to_filters({"good_status": "买家已退货"})
+        filters, _ = params_to_filters({"good_status": "买家已退货"})
         assert any(
             f["field"] == "good_status" and f["value"] == "2"
             for f in filters
@@ -315,7 +315,7 @@ class TestEnumEqFields:
 
     def test_order_type(self):
         """补发 → 归一化为 DB 值 "14" """
-        filters = params_to_filters({"order_type": "补发"})
+        filters, _ = params_to_filters({"order_type": "补发"})
         assert any(
             f["field"] == "order_type" and f["value"] == "14"
             for f in filters
@@ -323,7 +323,7 @@ class TestEnumEqFields:
 
     def test_all_enum_eq_fields_mapped(self):
         params = {k: f"val_{k}" for k in ENUM_EQ_FIELDS}
-        filters = params_to_filters(params)
+        filters, _ = params_to_filters(params)
         filter_fields = {f["field"] for f in filters}
         for db_field in ENUM_EQ_FIELDS.values():
             assert db_field in filter_fields
@@ -339,109 +339,109 @@ class TestEnumNormalize:
 
     def test_order_type_chinese_to_code(self):
         """补发 → 14"""
-        filters = params_to_filters({"order_type": "补发"})
+        filters, _ = params_to_filters({"order_type": "补发"})
         ot = [f for f in filters if f["field"] == "order_type"]
         assert ot[0]["value"] == "14"
 
     def test_order_type_hebing(self):
         """合并 → 7"""
-        filters = params_to_filters({"order_type": "合并"})
+        filters, _ = params_to_filters({"order_type": "合并"})
         ot = [f for f in filters if f["field"] == "order_type"]
         assert ot[0]["value"] == "7"
 
     def test_aftersale_type_chinese(self):
         """退货退款 → 2"""
-        filters = params_to_filters({"aftersale_type": "退货退款"})
+        filters, _ = params_to_filters({"aftersale_type": "退货退款"})
         at = [f for f in filters if f["field"] == "aftersale_type"]
         assert at[0]["value"] == "2"
 
     def test_aftersale_type_alias(self):
         """仅退款 → 1（别名）"""
-        filters = params_to_filters({"aftersale_type": "仅退款"})
+        filters, _ = params_to_filters({"aftersale_type": "仅退款"})
         at = [f for f in filters if f["field"] == "aftersale_type"]
         assert at[0]["value"] == "1"
 
     def test_refund_status_chinese(self):
         """退款中 → 1"""
-        filters = params_to_filters({"refund_status": "退款中"})
+        filters, _ = params_to_filters({"refund_status": "退款中"})
         rs = [f for f in filters if f["field"] == "refund_status"]
         assert rs[0]["value"] == "1"
 
     def test_refund_status_success(self):
         """退款成功 → 2"""
-        filters = params_to_filters({"refund_status": "退款成功"})
+        filters, _ = params_to_filters({"refund_status": "退款成功"})
         rs = [f for f in filters if f["field"] == "refund_status"]
         assert rs[0]["value"] == "2"
 
     def test_good_status_chinese(self):
         """买家已发 → 2"""
-        filters = params_to_filters({"good_status": "买家已发"})
+        filters, _ = params_to_filters({"good_status": "买家已发"})
         gs = [f for f in filters if f["field"] == "good_status"]
         assert gs[0]["value"] == "2"
 
     def test_good_status_alias(self):
         """买家已退货 → 2（别名）"""
-        filters = params_to_filters({"good_status": "买家已退货"})
+        filters, _ = params_to_filters({"good_status": "买家已退货"})
         gs = [f for f in filters if f["field"] == "good_status"]
         assert gs[0]["value"] == "2"
 
     def test_doc_status_purchase_chinese(self):
         """待审核 → WAIT_VERIFY"""
-        filters = params_to_filters({"doc_status": "待审核"})
+        filters, _ = params_to_filters({"doc_status": "待审核"})
         ds = [f for f in filters if f["field"] == "doc_status"]
         assert ds[0]["value"] == "WAIT_VERIFY"
 
     def test_doc_status_purchase_finished(self):
         """已完成 → FINISHED"""
-        filters = params_to_filters({"doc_status": "已完成"})
+        filters, _ = params_to_filters({"doc_status": "已完成"})
         ds = [f for f in filters if f["field"] == "doc_status"]
         assert ds[0]["value"] == "FINISHED"
 
     def test_order_status_english_passthrough(self):
         """order_status 直接输英文枚举不归一化"""
-        filters = params_to_filters({"order_status": "WAIT_SEND_GOODS"})
+        filters, _ = params_to_filters({"order_status": "WAIT_SEND_GOODS"})
         os = [f for f in filters if f["field"] == "order_status"]
         assert os[0]["value"] == "WAIT_SEND_GOODS"
 
     def test_unknown_enum_value_passthrough(self):
         """未知中文值保留原值（不崩溃）"""
-        filters = params_to_filters({"order_type": "未知类型XYZ"})
+        filters, _ = params_to_filters({"order_type": "未知类型XYZ"})
         ot = [f for f in filters if f["field"] == "order_type"]
         assert ot[0]["value"] == "未知类型XYZ"
 
     def test_online_status_chinese_to_code(self):
         """待卖家同意 → 2"""
-        filters = params_to_filters({"online_status": "待卖家同意"})
+        filters, _ = params_to_filters({"online_status": "待卖家同意"})
         os = [f for f in filters if f["field"] == "online_status"]
         assert os[0]["value"] == "2"
 
     def test_online_status_alias(self):
         """等待卖家同意 → 2（别名）"""
-        filters = params_to_filters({"online_status": "等待卖家同意"})
+        filters, _ = params_to_filters({"online_status": "等待卖家同意"})
         os = [f for f in filters if f["field"] == "online_status"]
         assert os[0]["value"] == "2"
 
     def test_online_status_refund_success(self):
         """退款成功 → 7"""
-        filters = params_to_filters({"online_status": "退款成功"})
+        filters, _ = params_to_filters({"online_status": "退款成功"})
         os = [f for f in filters if f["field"] == "online_status"]
         assert os[0]["value"] == "7"
 
     def test_handler_status_pending(self):
         """待处理 → -1"""
-        filters = params_to_filters({"handler_status": "待处理"})
+        filters, _ = params_to_filters({"handler_status": "待处理"})
         hs = [f for f in filters if f["field"] == "handler_status"]
         assert hs[0]["value"] == "-1"
 
     def test_handler_status_alias(self):
         """已处理 → 1（别名）"""
-        filters = params_to_filters({"handler_status": "已处理"})
+        filters, _ = params_to_filters({"handler_status": "已处理"})
         hs = [f for f in filters if f["field"] == "handler_status"]
         assert hs[0]["value"] == "1"
 
     def test_handler_status_failed(self):
         """处理失败 → 2"""
-        filters = params_to_filters({"handler_status": "处理失败"})
+        filters, _ = params_to_filters({"handler_status": "处理失败"})
         hs = [f for f in filters if f["field"] == "handler_status"]
         assert hs[0]["value"] == "2"
 
@@ -455,7 +455,7 @@ class TestFlagFields:
 
     @pytest.mark.parametrize("flag", FLAG_FIELDS)
     def test_flag_true_generates_eq_1(self, flag):
-        filters = params_to_filters({flag: True})
+        filters, _ = params_to_filters({flag: True})
         assert any(
             f["field"] == flag and f["op"] == "eq" and f["value"] == 1
             for f in filters
@@ -463,12 +463,12 @@ class TestFlagFields:
 
     @pytest.mark.parametrize("flag", FLAG_FIELDS)
     def test_flag_false_no_filter(self, flag):
-        filters = params_to_filters({flag: False})
+        filters, _ = params_to_filters({flag: False})
         assert not any(f["field"] == flag for f in filters)
 
     @pytest.mark.parametrize("flag", FLAG_FIELDS)
     def test_flag_absent_no_filter(self, flag):
-        filters = params_to_filters({})
+        filters, _ = params_to_filters({})
         assert not any(f["field"] == flag for f in filters)
 
 
@@ -481,7 +481,7 @@ class TestCombined:
 
     def test_multiple_new_fields_together(self):
         """多个新字段同时存在"""
-        filters = params_to_filters({
+        filters, _ = params_to_filters({
             "express_no": "SF123",
             "shop_name": "旗舰店",
             "order_status": "WAIT_SEND_GOODS",
@@ -495,7 +495,7 @@ class TestCombined:
 
     def test_new_and_old_fields_coexist(self):
         """新字段和旧字段（order_no）共存"""
-        filters = params_to_filters({
+        filters, _ = params_to_filters({
             "time_range": "2026-04-01 ~ 2026-04-17",
             "order_no": "123456789012345678",
             "buyer_nick": "张三",
@@ -509,7 +509,9 @@ class TestCombined:
         # （需要 PLATFORM_NORMALIZE 导入链，本地 Python 3.14 缺 pydantic）
 
     def test_empty_params_returns_empty(self):
-        assert params_to_filters({}) == []
+        filters, warnings = params_to_filters({})
+        assert filters == []
+        assert warnings == []
 
 
 # ============================================================

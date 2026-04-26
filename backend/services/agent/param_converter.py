@@ -181,15 +181,18 @@ DIAG_MAP: dict[str, str] = {
 # ── 转换函数 ──
 
 
-def params_to_filters(params: dict) -> list[dict]:
+def params_to_filters(params: dict) -> tuple[list[dict], list[str]]:
     """把 PlanBuilder 输出的语义参数转成 UnifiedQueryEngine 的 filters DSL。
 
     语义参数（LLM 输出）：time_range / time_col / platform / ...
     filters DSL（执行层）：[{field, op, value}]
 
-    这一步是确定性转换，不需要 LLM。
+    返回 (filters, warnings)：
+      filters: 正常过滤器列表
+      warnings: 截断/格式警告列表（空列表=无警告）
     """
     filters: list[dict] = []
+    warnings: list[str] = []
 
     # ── 时间范围 → gte/lt（L1 归一化：NFKC 自动处理全角 ～→~）──
     tr = InputNormalizer.normalize(params.get("time_range"))
@@ -243,15 +246,20 @@ def params_to_filters(params: dict) -> list[dict]:
             logger.info(f"L1 platform 映射: {platform!r} → {resolved!r}")
         filters.append({"field": "platform", "op": "eq", "value": resolved})
 
+    def _add_multi(field: str, raw: Any) -> None:
+        """L2 解析 + to_filter + 收集 warning"""
+        parsed = MultiValueParser.parse(raw)
+        if parsed:
+            f, w = MultiValueParser.to_filter(field, parsed)
+            filters.append(f)
+            if w:
+                warnings.append(w)
+
     # ── 订单号 → eq / in（L2 多值解析） ──
-    order_no = MultiValueParser.parse(params.get("order_no"))
-    if order_no:
-        filters.append(MultiValueParser.to_filter("order_no", order_no))
+    _add_multi("order_no", params.get("order_no"))
 
     # ── 商品编码 → outer_id eq / in（L2 多值解析） ──
-    product_code = MultiValueParser.parse(params.get("product_code"))
-    if product_code:
-        filters.append(MultiValueParser.to_filter("outer_id", product_code))
+    _add_multi("outer_id", params.get("product_code"))
 
     # ── 刷单筛选 ──
     if params.get("is_scalping"):
@@ -259,9 +267,7 @@ def params_to_filters(params: dict) -> list[dict]:
 
     # ── 批量：文本精确匹配（L2 多值解析 → eq/in）──
     for param_key, db_field in TEXT_EQ_FIELDS.items():
-        val = MultiValueParser.parse(params.get(param_key))
-        if val:
-            filters.append(MultiValueParser.to_filter(db_field, val))
+        _add_multi(db_field, params.get(param_key))
 
     # ── 批量：文本模糊匹配（L1 归一化 + 空格→%） ──
     # 空格→%：LLM 常在中文和数字间插入噪音空格（"纸制品 01"），
@@ -294,7 +300,7 @@ def params_to_filters(params: dict) -> list[dict]:
         if params.get(flag):
             filters.append({"field": flag, "op": "eq", "value": 1})
 
-    return filters
+    return filters, warnings
 
 
 def diagnose_empty(filters: list[dict]) -> str:

@@ -473,7 +473,7 @@ class TestDepartmentAgentBase:
     def test_params_to_filters_time_range_half_open(self):
         """time_range 转 filters：半开区间，结束时间为次日 00:00:00"""
         agent = _make_warehouse()
-        filters = agent._params_to_filters({
+        filters, _ = agent._params_to_filters({
             "time_range": "2026-04-17 ~ 2026-04-17",
             "time_col": "pay_time",
         })
@@ -488,7 +488,7 @@ class TestDepartmentAgentBase:
     def test_params_to_filters_with_platform(self):
         """带 platform 参数追加 eq 过滤器（L1 映射 taobao→tb）"""
         agent = _make_warehouse()
-        filters = agent._params_to_filters({
+        filters, _ = agent._params_to_filters({
             "time_range": "2026-04-17 ~ 2026-04-17",
             "platform": "taobao",
         })
@@ -497,24 +497,26 @@ class TestDepartmentAgentBase:
     def test_params_to_filters_empty_params(self):
         """空 params → 空 filters"""
         agent = _make_warehouse()
-        assert agent._params_to_filters({}) == []
+        filters, warnings = agent._params_to_filters({})
+        assert filters == []
+        assert warnings == []
 
     def test_params_to_filters_platform_no_mapping_needed(self):
         """jd/pdd 等两边一致的 platform 不做映射"""
         agent = _make_warehouse()
-        filters = agent._params_to_filters({"platform": "jd"})
+        filters, _ = agent._params_to_filters({"platform": "jd"})
         assert any(f["field"] == "platform" and f["value"] == "jd" for f in filters)
 
     def test_params_to_filters_douyin_mapping(self):
         """L1 映射 douyin → fxg"""
         agent = _make_warehouse()
-        filters = agent._params_to_filters({"platform": "douyin"})
+        filters, _ = agent._params_to_filters({"platform": "douyin"})
         assert any(f["field"] == "platform" and f["value"] == "fxg" for f in filters)
 
     def test_params_to_filters_order_no(self):
         """order_no → eq 过滤器"""
         agent = _make_warehouse()
-        filters = agent._params_to_filters({"order_no": "126036803257340376"})
+        filters, _ = agent._params_to_filters({"order_no": "126036803257340376"})
         assert any(
             f["field"] == "order_no" and f["op"] == "eq"
             and f["value"] == "126036803257340376"
@@ -524,7 +526,7 @@ class TestDepartmentAgentBase:
     def test_params_to_filters_product_code_to_outer_id(self):
         """product_code → outer_id eq 过滤器（字段名映射）"""
         agent = _make_warehouse()
-        filters = agent._params_to_filters({"product_code": "DBTXL01"})
+        filters, _ = agent._params_to_filters({"product_code": "DBTXL01"})
         assert any(
             f["field"] == "outer_id" and f["op"] == "eq"
             and f["value"] == "DBTXL01"
@@ -534,7 +536,7 @@ class TestDepartmentAgentBase:
     def test_params_to_filters_all_new_fields(self):
         """order_no + product_code + platform 同时转换"""
         agent = _make_warehouse()
-        filters = agent._params_to_filters({
+        filters, _ = agent._params_to_filters({
             "platform": "taobao",
             "order_no": "123456789012345678",
             "product_code": "ABC-01",
@@ -638,7 +640,7 @@ class TestDepartmentAgentBase:
     def test_time_range_to_separator_normalized(self):
         """'to' 分隔符自动纠正为 '~'"""
         agent = _make_warehouse()
-        filters = agent._params_to_filters({
+        filters, _ = agent._params_to_filters({
             "time_range": "2026-04-17 to 2026-04-17",
         })
         assert len(filters) == 2
@@ -647,7 +649,7 @@ class TestDepartmentAgentBase:
     def test_time_range_fullwidth_separator_normalized(self):
         """全角'～'自动纠正为 '~'"""
         agent = _make_warehouse()
-        filters = agent._params_to_filters({
+        filters, _ = agent._params_to_filters({
             "time_range": "2026-04-17～2026-04-17",
         })
         assert len(filters) == 2
@@ -655,19 +657,19 @@ class TestDepartmentAgentBase:
     def test_platform_whitespace_stripped(self):
         """platform 前后空格被去除"""
         agent = _make_warehouse()
-        filters = agent._params_to_filters({"platform": " jd "})
+        filters, _ = agent._params_to_filters({"platform": " jd "})
         assert any(f["value"] == "jd" for f in filters)
 
     def test_order_no_whitespace_stripped(self):
         """order_no 前后空格被去除"""
         agent = _make_warehouse()
-        filters = agent._params_to_filters({"order_no": " 123456 "})
+        filters, _ = agent._params_to_filters({"order_no": " 123456 "})
         assert any(f["value"] == "123456" for f in filters)
 
     def test_product_code_whitespace_stripped(self):
         """product_code 前后空格被去除"""
         agent = _make_warehouse()
-        filters = agent._params_to_filters({"product_code": " ABC01 "})
+        filters, _ = agent._params_to_filters({"product_code": " ABC01 "})
         assert any(f["value"] == "ABC01" for f in filters)
 
     # ── execute(params=) 参数合并 + 降级标注 ──

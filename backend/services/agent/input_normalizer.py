@@ -78,6 +78,7 @@ class InputNormalizer:
 _SEPARATORS = (",", ";", "\n", "\r", "\t", "|", "\u3001")
 
 # IN 查询安全上限（PostgREST URL ≤8000字符，500×15=7500 在安全范围内）
+# 注意：此常量仅供消费方（param_converter）使用，MultiValueParser 本身不截断
 DEFAULT_MAX_IN = 500
 
 
@@ -91,23 +92,28 @@ def _strip_quotes(val: str) -> str:
 
 
 class MultiValueParser:
-    """L2: 单值 / 多值统一解析 + 去重 + 上限截断"""
+    """L2: 单值 / 多值统一解析 + 去重
+
+    纯解析器——只负责拆分和去重，不截断。
+    截断是消费方（param_converter）根据 DB 限制决定的。
+    """
 
     @classmethod
-    def parse(
-        cls,
-        val: Any,
-        max_values: int = DEFAULT_MAX_IN,
-    ) -> str | list[str] | None:
+    def parse(cls, val: Any) -> str | list[str] | None:
         """解析用户输入为单值 str 或多值 list[str]
 
         支持格式：
-          None / ""           → None
-          "ABC"               → "ABC"
-          "A,B,C"             → ["A","B","C"]
-          "A;B\\nC|D"         → ["A","B","C","D"]
-          ["A","B"]           → ["A","B"]
-          ["A"]               → "A"
+          None / ""            → None
+          "ABC"                → "ABC"
+          "A,B,C"              → ["A","B","C"]
+          "A;B\\nC|D"          → ["A","B","C","D"]
+          "A\\tB\\tC"          → ["A","B","C"]（Excel横向粘贴）
+          "A、B、C"             → ["A","B","C"]（中文顿号）
+          '"A","B"'            → ["A","B"]（CSV引号）
+          '["A","B"]'          → ["A","B"]（JSON数组）
+          "[A, B]" / "(A, B)"  → ["A","B"]（括号包裹）
+          ["A","B"]            → ["A","B"]
+          ["A"]                → "A"
         """
         # list 输入：逐个 L1 归一化
         if isinstance(val, list):
@@ -118,7 +124,7 @@ class MultiValueParser:
                 if n and n not in seen:
                     seen.add(n)
                     items.append(n)
-            return cls._apply_limit(items, max_values)
+            return _collapse(items)
 
         # str 输入：先 L1 归一化
         normalized = InputNormalizer.normalize(val)
@@ -131,7 +137,7 @@ class MultiValueParser:
                 import json
                 parsed_json = json.loads(normalized)
                 if isinstance(parsed_json, list):
-                    return cls.parse(parsed_json, max_values)
+                    return cls.parse(parsed_json)
             except (json.JSONDecodeError, ValueError):
                 pass  # 非合法 JSON，继续走正常拆分
 
@@ -157,40 +163,42 @@ class MultiValueParser:
                 seen_set.add(part)
                 items.append(part)
 
-        return cls._apply_limit(items, max_values)
+        return _collapse(items)
 
     @staticmethod
-    def to_filter(field: str, val: Union[str, list[str]]) -> dict:
-        """单值→eq, 多值→in"""
+    def to_filter(
+        field: str,
+        val: Union[str, list[str]],
+        max_in: int = DEFAULT_MAX_IN,
+    ) -> tuple[dict, str | None]:
+        """构建 filter dict + 截断警告
+
+        返回 (filter_dict, warning_or_none)。
+        消费方拿到 warning 后决定是否追加到结果中。
+        """
+        warning = None
         if isinstance(val, list):
-            return {"field": field, "op": "in", "value": val}
-        return {"field": field, "op": "eq", "value": val}
+            if len(val) > max_in:
+                warning = (
+                    f"⚠️ 值数量（{len(val)}个）超过单次IN查询上限（{max_in}个），"
+                    f"已截断为前{max_in}个。"
+                    f"建议改用分别导出+code_execute关联的方式查询完整数据。"
+                )
+                logger.warning(
+                    f"IN 值超限截断 | 原始={len(val)} | 上限={max_in}"
+                )
+                val = val[:max_in]
+            return {"field": field, "op": "in", "value": val}, warning
+        return {"field": field, "op": "eq", "value": val}, warning
 
-    # 上次 parse 是否发生了截断（调用方可检查）
-    last_truncated: bool = False
-    last_truncated_total: int = 0
 
-    @classmethod
-    def _apply_limit(
-        cls,
-        items: list[str], max_values: int,
-    ) -> str | list[str] | None:
-        """去空 + 单值退化 + 超限截断"""
-        cls.last_truncated = False
-        cls.last_truncated_total = 0
-        if not items:
-            return None
-        if len(items) == 1:
-            return items[0]
-        if len(items) > max_values:
-            cls.last_truncated = True
-            cls.last_truncated_total = len(items)
-            logger.warning(
-                f"IN 值超限截断 | 原始={len(items)} | 上限={max_values} | "
-                f"丢弃={len(items) - max_values}个值"
-            )
-            items = items[:max_values]
-        return items
+def _collapse(items: list[str]) -> str | list[str] | None:
+    """空→None / 单值→str / 多值→list"""
+    if not items:
+        return None
+    if len(items) == 1:
+        return items[0]
+    return items
 
 
 # ============================================================
