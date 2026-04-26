@@ -119,6 +119,20 @@ COLUMN_WHITELIST: dict[str, ColumnMeta] = {
     "actual_return_qty": ColumnMeta("numeric"),
 }
 
+# ── 新表列白名单（从 erp_multi_table_schema 导入）──────────
+from services.kuaimai.erp_multi_table_schema import (  # noqa: E402
+    TABLE_COLUMNS as _TABLE_COLUMNS,
+    FIELD_LABEL_CN as _NEW_TABLE_FIELD_LABEL_CN,
+)
+
+
+def get_column_whitelist(doc_type: str | None = None) -> dict[str, ColumnMeta]:
+    """获取 doc_type 对应的列白名单。None 时返回全局白名单（向后兼容）。"""
+    if doc_type is None or doc_type in _DOCUMENT_ITEM_DOC_TYPES:
+        return COLUMN_WHITELIST
+    return _TABLE_COLUMNS.get(doc_type, {})
+
+
 # op 与列类型兼容表
 OP_COMPAT: dict[str, set[str]] = {
     "text": {"eq", "ne", "like", "in", "not_in", "is_null"},
@@ -162,16 +176,75 @@ RPC_ORDER_STATS_FILTER_FIELDS: frozenset[str] = frozenset({
 TIME_COLUMNS = {
     "doc_created_at", "doc_modified_at", "pay_time", "consign_time",
     "apply_date", "delivery_date", "finished_at",
+    # 新表时间列
+    "stock_modified_time", "created_at", "modified_at",
+    "stat_date", "operate_time", "updated_at",
+    "platform_map_checked_at", "synced_at",
 }
 VALID_TIME_COLS = {
     "doc_created_at", "pay_time", "consign_time",
     "apply_date", "delivery_date", "finished_at",
+    # 新表可用时间列
+    "stock_modified_time", "created_at", "modified_at",
+    "stat_date", "operate_time", "updated_at", "synced_at",
 }
-VALID_DOC_TYPES = {"order", "purchase", "aftersale", "receipt", "shelf", "purchase_return"}
+
+# 新表默认时间列（extract_time_range 用）
+DOC_TYPE_DEFAULT_TIME_COL: dict[str, str | None] = {
+    "stock": "stock_modified_time",
+    "product": "created_at",
+    "sku": "synced_at",
+    "daily_stats": "stat_date",
+    "platform_map": "synced_at",
+    "batch_stock": "synced_at",
+    "order_log": "operate_time",
+    "aftersale_log": "operate_time",
+}
+
+# 新表是否强制要求时间范围
+# True = 不传时自动加默认范围（防止全表扫描）
+# False = 快照表，无时间维度，不加时间过滤
+DOC_TYPE_TIME_REQUIRED: dict[str, bool] = {
+    "stock": False, "product": False, "sku": False,
+    "daily_stats": True,
+    "platform_map": False, "batch_stock": False,
+    "order_log": True, "aftersale_log": True,  # 634k/90k 行，必须限定时间范围
+}
+VALID_DOC_TYPES = {
+    "order", "purchase", "aftersale", "receipt", "shelf", "purchase_return",
+    "stock", "product", "sku", "daily_stats", "platform_map",
+    "batch_stock", "order_log", "aftersale_log",
+}
+
+# doc_type → 实际表名（现有 6 个路由到 erp_document_items，新增 8 个各自独立表）
+DOC_TYPE_TABLE: dict[str, str] = {
+    # 现有 → erp_document_items
+    "order": "erp_document_items", "purchase": "erp_document_items",
+    "aftersale": "erp_document_items", "receipt": "erp_document_items",
+    "shelf": "erp_document_items", "purchase_return": "erp_document_items",
+    # 新增 → 独立表
+    "stock": "erp_stock_status",
+    "product": "erp_products",
+    "sku": "erp_product_skus",
+    "daily_stats": "erp_product_daily_stats",
+    "platform_map": "erp_product_platform_map",
+    "batch_stock": "erp_batch_stock",
+    "order_log": "erp_order_logs",
+    "aftersale_log": "erp_aftersale_logs",
+}
+
+# 现有 6 个 doc_type 集合（走 erp_document_items 表）
+_DOCUMENT_ITEM_DOC_TYPES = frozenset({
+    "order", "purchase", "aftersale", "receipt", "shelf", "purchase_return",
+})
 
 DOC_TYPE_CN = {
     "order": "订单", "purchase": "采购", "aftersale": "售后",
     "receipt": "收货", "shelf": "上架", "purchase_return": "采退",
+    "stock": "库存", "product": "商品", "sku": "SKU",
+    "daily_stats": "日统计", "platform_map": "平台映射",
+    "batch_stock": "批次库存", "order_log": "订单日志",
+    "aftersale_log": "售后日志",
 }
 
 PLATFORM_CN = {
@@ -240,6 +313,34 @@ REQUIRED_FIELDS: dict[str, list[str]] = {
         "outer_id", "item_name", "quantity", "amount",
         "doc_created_at",
     ],
+    # ── 新表 ──
+    "stock": [
+        "outer_id", "item_name", "available_stock", "total_stock",
+        "lock_stock", "sellable_num",
+    ],
+    "product": [
+        "outer_id", "title", "active_status", "brand",
+    ],
+    "sku": [
+        "outer_id", "sku_outer_id", "properties_name", "active_status",
+    ],
+    "daily_stats": [
+        "stat_date", "outer_id", "item_name",
+        "order_count", "order_qty", "order_amount",
+    ],
+    "platform_map": [
+        "outer_id", "num_iid", "title",
+    ],
+    "batch_stock": [
+        "outer_id", "item_name", "batch_no", "stock_qty",
+        "expiry_date",
+    ],
+    "order_log": [
+        "system_id", "operator", "action", "operate_time",
+    ],
+    "aftersale_log": [
+        "work_order_id", "operator", "action", "operate_time",
+    ],
 }
 
 # detail/export 模式默认字段——在 REQUIRED_FIELDS 基础上补充常用分析字段，
@@ -285,6 +386,48 @@ DEFAULT_DETAIL_FIELDS: dict[str, list[str]] = {
         "outer_id", "item_name", "quantity",
         "amount", "warehouse_name", "creator_name",
         "doc_created_at", "remark",
+    ],
+    # ── 新表 ──
+    "stock": [
+        "outer_id", "sku_outer_id", "item_name", "properties_name",
+        "available_stock", "total_stock", "lock_stock", "sellable_num",
+        "purchase_num", "on_the_way_num", "defective_stock",
+        "purchase_price", "selling_price",
+        "supplier_names", "warehouse_id", "cid_name",
+        "stock_modified_time",
+    ],
+    "product": [
+        "outer_id", "title", "item_type", "active_status",
+        "brand", "barcode", "purchase_price", "selling_price", "market_price",
+        "weight", "unit", "classify_name", "is_virtual", "is_gift",
+        "created_at", "modified_at",
+    ],
+    "sku": [
+        "outer_id", "sku_outer_id", "properties_name", "barcode",
+        "purchase_price", "selling_price", "market_price",
+        "weight", "active_status", "sys_sku_id",
+    ],
+    "daily_stats": [
+        "stat_date", "outer_id", "sku_outer_id", "item_name",
+        "order_count", "order_qty", "order_amount",
+        "order_shipped_count", "order_finished_count",
+        "aftersale_count", "aftersale_qty", "aftersale_amount",
+        "purchase_count", "purchase_qty", "purchase_amount",
+        "updated_at",
+    ],
+    "platform_map": [
+        "outer_id", "num_iid", "user_id", "title", "synced_at",
+    ],
+    "batch_stock": [
+        "outer_id", "sku_outer_id", "item_name",
+        "batch_no", "production_date", "expiry_date",
+        "shelf_life_days", "stock_qty", "warehouse_name",
+    ],
+    "order_log": [
+        "system_id", "operator", "action", "content", "operate_time",
+    ],
+    "aftersale_log": [
+        "work_order_id", "operator", "action", "content", "operate_time",
     ],
 }
 
@@ -413,7 +556,7 @@ def format_filter_hint(filters: list["ValidatedFilter"]) -> str:
     for f in filters:
         if f.field in TIME_COLUMNS:
             continue
-        label = _FIELD_LABEL_CN.get(f.field, f.field)
+        label = _FIELD_LABEL_CN.get(f.field) or _NEW_TABLE_FIELD_LABEL_CN.get(f.field, f.field)
         op_label = _OP_LABEL.get(f.op, f.op)
 
         if f.op == "is_null":
@@ -634,3 +777,21 @@ def build_column_metas_cn(fields: list[str]) -> list:
         for f in fields
         if f in COLUMN_WHITELIST
     ]
+
+
+def merge_export_fields(
+    doc_type: str, extra_fields: list[str] | None = None,
+) -> list[str]:
+    """合并导出字段：REQUIRED + DEFAULT + extra → 去重保序 → 白名单过滤。
+
+    三条导出路径（_export / fast_export / batch_export）共用此逻辑。
+    """
+    required = REQUIRED_FIELDS.get(doc_type, [])
+    defaults = DEFAULT_DETAIL_FIELDS.get(doc_type, [])
+    fields: list[str] = []
+    seen: set[str] = set()
+    for f in (*required, *defaults, *(extra_fields or [])):
+        if f not in seen:
+            fields.append(f)
+            seen.add(f)
+    return [c for c in fields if c in EXPORT_COLUMN_NAMES]

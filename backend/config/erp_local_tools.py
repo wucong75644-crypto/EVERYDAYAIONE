@@ -71,7 +71,10 @@ def build_local_tools() -> List[Dict[str, Any]]:
         #    product_flow/doc_query/global_stats/db_export 共 7 个工具）
         _tool(
             "local_data",
-            "本地数据库统一查询工具。支持查询/统计/导出 erp_document_items 表的所有单据数据。\n"
+            "本地数据库统一查询工具。支持查询/统计/导出 ERP 全部业务表数据。\n"
+            "除单据表外还支持：库存(stock)、商品(product)、SKU(sku)、"
+            "日统计(daily_stats)、平台映射(platform_map)、批次库存(batch_stock)、"
+            "订单日志(order_log)、售后日志(aftersale_log)。\n"
             "用 filters 数组指定过滤条件，任意字段组合均可。\n\n"
             "常用字段：\n"
             "- order_status/doc_status: 状态(WAIT_AUDIT/WAIT_SEND_GOODS/SELLER_SEND_GOODS/FINISHED/CLOSED)\n"
@@ -104,9 +107,14 @@ def build_local_tools() -> List[Dict[str, Any]]:
             "  fields=[\"order_no\",\"amount\",\"consign_time\"]",
             {
                 "doc_type": _enum(
-                    "单据类型",
+                    "单据类型（新增：stock=库存快照/product=商品/sku=SKU/"
+                    "daily_stats=日统计/platform_map=平台映射/"
+                    "batch_stock=批次库存/order_log=订单日志/aftersale_log=售后日志）",
                     ["order", "purchase", "aftersale", "receipt",
-                     "shelf", "purchase_return"],
+                     "shelf", "purchase_return",
+                     "stock", "product", "sku", "daily_stats",
+                     "platform_map", "batch_stock",
+                     "order_log", "aftersale_log"],
                 ),
                 "mode": _enum(
                     "输出模式：summary=聚合统计，detail=明细列表，export=导出文件",

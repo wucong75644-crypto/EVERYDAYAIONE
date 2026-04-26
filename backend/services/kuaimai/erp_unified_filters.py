@@ -17,6 +17,10 @@ from services.kuaimai.erp_unified_schema import (
     VALID_TIME_COLS,
     TimeRange,
     ValidatedFilter,
+    get_column_whitelist,
+    DOC_TYPE_DEFAULT_TIME_COL,
+    DOC_TYPE_TIME_REQUIRED,
+    _DOCUMENT_ITEM_DOC_TYPES,
 )
 from utils.time_context import DateRange, now_cn
 
@@ -26,8 +30,13 @@ if False:  # TYPE_CHECKING
 
 def validate_filters(
     filters: list[dict],
+    doc_type: str | None = None,
 ) -> tuple[list[ValidatedFilter], str | None]:
-    """校验 filters 合法性，返回 (validated_list, error_msg)"""
+    """校验 filters 合法性，返回 (validated_list, error_msg)。
+
+    doc_type 可选：传入时用对应表的列白名单校验，None 时走全局白名单（向后兼容）。
+    """
+    whitelist = get_column_whitelist(doc_type)
     result: list[ValidatedFilter] = []
     for i, f in enumerate(filters):
         if not isinstance(f, dict):
@@ -37,9 +46,9 @@ def validate_filters(
         op = f.get("op", "")
         value = f.get("value")
 
-        meta = COLUMN_WHITELIST.get(field)
+        meta = whitelist.get(field)
         if not meta:
-            available = ", ".join(sorted(COLUMN_WHITELIST.keys()))
+            available = ", ".join(sorted(whitelist.keys()))
             return [], (
                 f"filters[{i}]: 字段 '{field}' 不在白名单中。可用字段: {available}"
             )
@@ -88,10 +97,21 @@ def extract_time_range(
     time_type: str | None,
     request_ctx: Optional[RequestContext],
     mode: str,
-) -> TimeRange:
-    """从 filters 中提取时间范围"""
+    doc_type: str | None = None,
+) -> TimeRange | None:
+    """从 filters 中提取时间范围。
+
+    doc_type 可选：新表时间列逻辑不同（如 stock 无时间维度），
+    不要求 time_range 时返回 None。
+    """
     now = request_ctx.now if request_ctx else now_cn()
-    time_col = time_type if time_type in VALID_TIME_COLS else "doc_created_at"
+
+    # 新表：用 DOC_TYPE_DEFAULT_TIME_COL 确定默认时间列
+    default_time_col = DOC_TYPE_DEFAULT_TIME_COL.get(doc_type or "")
+    if default_time_col:
+        time_col = time_type if time_type in VALID_TIME_COLS else default_time_col
+    else:
+        time_col = time_type if time_type in VALID_TIME_COLS else "doc_created_at"
 
     start_val: str | None = None
     end_val: str | None = None
@@ -117,6 +137,10 @@ def extract_time_range(
     )
 
     if start_val is None and end_val is None:
+        # 新表不强制时间范围时，跳过时间过滤
+        time_required = DOC_TYPE_TIME_REQUIRED.get(doc_type or "", True)
+        if not time_required and doc_type and doc_type not in _DOCUMENT_ITEM_DOC_TYPES:
+            return None
         if mode == "detail":
             s_dt = now - timedelta(days=30)
         else:

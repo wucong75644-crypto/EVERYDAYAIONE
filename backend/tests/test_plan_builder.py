@@ -452,10 +452,14 @@ class TestCapabilityManifest:
 
     def test_time_cols_complete(self):
         m = get_capability_manifest()
-        assert set(m["time_cols"]) == {
+        expected = {
             "doc_created_at", "pay_time", "consign_time",
             "apply_date", "delivery_date", "finished_at",
+            # 新表时间列
+            "stock_modified_time", "created_at", "modified_at",
+            "stat_date", "operate_time", "updated_at", "synced_at",
         }
+        assert set(m["time_cols"]) == expected
 
     def test_field_categories_not_empty(self):
         m = get_capability_manifest()

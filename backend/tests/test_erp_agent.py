@@ -843,6 +843,44 @@ class TestBuildMultiResult:
         assert "数据" in result.summary
         assert "售后" in result.summary
 
+    @pytest.mark.asyncio
+    async def test_rejected_treated_as_error_with_suggestions(self):
+        """REJECTED 状态 → 归入 errors，透传 suggestions"""
+        from services.agent.erp_agent import PlanStep, ExecutionPlan
+        agent = self._make_agent()
+        mock_rejected = MagicMock()
+        mock_rejected.status = "rejected"
+        mock_rejected.summary = "数据量过大（预估 6,000,000 行）"
+        mock_rejected.metadata = {
+            "suggestions": ["缩小时间范围", "添加过滤条件"],
+        }
+        plan = ExecutionPlan(steps=[PlanStep("trade", {})])
+        result = agent._build_multi_result(
+            [("trade", mock_rejected)], plan, "q",
+        )
+        assert result.status == "error"
+        assert "数据量过大" in result.summary
+        assert "缩小时间范围" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_rejected_with_success_partial(self):
+        """一个域 REJECTED + 另一个域成功 → 成功的返回 + REJECTED 提示"""
+        from services.agent.erp_agent import PlanStep, ExecutionPlan
+        agent = self._make_agent()
+        mock_ok = MagicMock(summary="库存 OK", status="ok", format=MagicMock(value="text"),
+                           file_ref=None, data=None, columns=None)
+        mock_rejected = MagicMock()
+        mock_rejected.status = "rejected"
+        mock_rejected.summary = "数据量过大"
+        mock_rejected.metadata = {"suggestions": ["缩小范围"]}
+        plan = ExecutionPlan(steps=[PlanStep("warehouse", {}), PlanStep("trade", {})])
+        result = agent._build_multi_result(
+            [("warehouse", mock_ok), ("trade", mock_rejected)], plan, "q",
+        )
+        assert result.status == "success"
+        assert "库存 OK" in result.summary
+        assert "数据量过大" in result.summary
+
 
 class TestParseMultiExtractResponse:
     """parse_multi_extract_response 解析测试"""
@@ -1233,8 +1271,8 @@ class TestBuildToolDescription:
     def test_token_budget(self):
         desc = self._desc()
         estimated_tokens = len(desc) / 2.5
-        assert estimated_tokens < 600, (
-            f"描述 token 超预算: {estimated_tokens:.0f} > 600"
+        assert estimated_tokens < 900, (
+            f"描述 token 超预算: {estimated_tokens:.0f} > 900"
         )
 
     def test_no_hardcoded_content(self):
