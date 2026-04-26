@@ -221,13 +221,12 @@ def test_make_n_days_header():
 
 @time_machine.travel(FRI_4_10, tick=False)
 def test_prompt_injection_contains_chinese_weekday():
-    """prompt 注入必须含中文星期 + ISO week + 硬规则。"""
+    """prompt 注入必须含日期 + 时间 + 中文星期 + 时区。"""
     ctx = RequestContext.build(user_id="u")
     s = ctx.for_prompt_injection()
     assert "2026-04-10" in s
     assert "周五" in s
-    assert "ISO 第 15 周" in s
-    assert "禁止自行推算" in s
+    assert "UTC+8" in s
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -363,11 +362,11 @@ class TestParseIsoToCn:
 
 
 @time_machine.travel(FRI_4_10, tick=False)
-def test_prompt_injection_contains_history_date_warning():
-    """prompt 注入必须包含历史对话日期歧义警告。"""
+def test_prompt_injection_is_concise():
+    """prompt 注入应简洁：只含日期+时间+周几+时区，无多余警告。"""
     ctx = RequestContext.build(user_id="u")
     s = ctx.for_prompt_injection()
-    assert "历史对话" in s
-    assert "当时的日期" in s
-    assert "当前时间为准" in s
+    # 只有一行，无换行
+    assert "\n" not in s
+    assert "UTC+8" in s
 

@@ -80,10 +80,26 @@ FLAG_FIELDS: list[str] = [
 
 # 数值过滤允许的字段和操作符（numeric_filters 参数用）
 NUMERIC_FILTER_FIELDS: frozenset[str] = frozenset({
+    # erp_document_items 字段
     "quantity", "amount", "price", "cost", "weight",
     "pay_amount", "gross_profit", "refund_money",
     "post_fee", "discount_fee", "total_fee", "sale_price",
     "real_qty", "actual_return_qty",
+    # erp_stock_status 字段
+    "total_stock", "sellable_num", "available_stock", "lock_stock",
+    "purchase_num", "on_the_way_num", "defective_stock", "virtual_stock",
+    "purchase_price", "selling_price", "market_price",
+    "stock_status",
+    # erp_product_daily_stats 字段
+    "purchase_count", "purchase_qty", "purchase_amount",
+    "order_count", "order_qty", "order_amount", "order_cost",
+    "aftersale_count", "aftersale_qty", "aftersale_amount",
+    "order_shipped_count", "order_finished_count",
+    "order_refund_count", "order_cancelled_count",
+    # erp_products / erp_product_skus 字段
+    "item_type", "active_status",
+    # erp_batch_stock 字段
+    "shelf_life_days", "stock_qty",
 })
 NUMERIC_OPS: frozenset[str] = frozenset({"gt", "gte", "lt", "lte", "between"})
 
@@ -216,7 +232,13 @@ def params_to_filters(params: dict) -> tuple[list[dict], list[str]]:
             tr = tr.replace(" to ", "~")
             logger.info("L1 time_range 分隔符纠正: ' to ' → '~'")
     if tr and "~" in tr:
-        time_col = params.get("time_col", "doc_created_at")
+        # 新表根据 doc_type 自动选择默认时间列
+        default_time_col = "doc_created_at"
+        doc_type = params.get("doc_type")
+        if doc_type:
+            from services.kuaimai.erp_unified_schema import DOC_TYPE_DEFAULT_TIME_COL
+            default_time_col = DOC_TYPE_DEFAULT_TIME_COL.get(doc_type, "doc_created_at")
+        time_col = params.get("time_col", default_time_col)
         parts = tr.split("~")
         if len(parts) == 2:
             start = parts[0].strip()

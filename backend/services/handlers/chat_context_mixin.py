@@ -241,6 +241,17 @@ class ChatContextMixin:
             {"role": "system", "content": "请使用中文进行思考和推理。"},
         )
 
+        # 身份定义 + 输出原则（对齐 Claude Code Intro + Output Efficiency 设计）
+        messages.insert(
+            1,
+            {"role": "system", "content": (
+                "你是企业智能助手。通过工具获取真实数据回答问题，不掌握业务数据不能凭印象回答。\n"
+                "先给结论，再补充必要的解释。"
+                "回答的详略匹配问题的复杂度：简单问题用一两句话直接回答。"
+                "一句话能说清的，就不要用三句。"
+            )},
+        )
+
         # 对话历史摘要注入 — Phase 6 门控：短对话不注入
         # context_messages 的长度近似代表消息轮数（DB 只取 user/assistant）
         _msg_count = len(context_messages) if context_messages else 0
@@ -252,10 +263,7 @@ class ChatContextMixin:
                 messages.insert(pos + i, ctx_msg)
 
             # 话题聚焦指令（紧贴用户消息前，防止旧话题污染新问题）
-            focus_prompt = (
-                "回答时只关注用户的最新问题。"
-                "如果对话中途切换了话题，以最新话题为准，不要受之前话题的影响。"
-            )
+            focus_prompt = "以用户最新一条消息为准。"
             messages.insert(
                 len(messages) - 1,
                 {"role": "system", "content": focus_prompt},

@@ -426,21 +426,9 @@ class RequestContext:
         格式示例:
             "当前时间：2026-04-10 13:05 周五（中国时区 UTC+8，ISO 第 15 周）"
         """
-        holiday_part = ""
-        if self.today.is_holiday and self.today.holiday_name:
-            holiday_part = f" · 法定假日：{self.today.holiday_name}"
-        elif self.today.is_lieu:
-            holiday_part = " · 调休补班日"
-        elif not self.today.is_workday:
-            holiday_part = " · 周末"
         return (
             f"当前时间：{self.now.strftime('%Y-%m-%d %H:%M')} "
-            f"{self.today.weekday_cn}"
-            f"（中国时区 UTC+8，ISO 第 {self.today.iso_week} 周{holiday_part}）\n"
-            f"⚠ 涉及日期/星期/相对时间时，必须直接使用工具返回的字段，"
-            f"禁止自行推算 weekday 或相对日期。\n"
-            f"⚠ 历史对话中的「今天」指的是当时的日期（见消息前的时间戳），"
-            f"不代表当前日期。用户说「今天」时，必须以上面的当前时间为准。"
+            f"{self.today.weekday_cn}（UTC+8）"
         )
 
 
