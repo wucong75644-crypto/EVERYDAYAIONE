@@ -49,10 +49,11 @@ VALID_DOMAINS = frozenset({
 
 # L2 域路由冲突检测：agent → 允许的 doc_type 集合
 _DOMAIN_DOC_TYPES: dict[str, frozenset[str]] = {
-    "trade": frozenset({"order"}),
+    "trade": frozenset({"order", "order_log"}),
     "purchase": frozenset({"purchase", "purchase_return"}),
-    "aftersale": frozenset({"aftersale"}),
-    "warehouse": frozenset({"receipt", "shelf"}),
+    "aftersale": frozenset({"aftersale", "aftersale_log"}),
+    "warehouse": frozenset({"receipt", "shelf", "stock", "batch_stock",
+                             "product", "sku", "daily_stats", "platform_map"}),
 }
 # 域路由冲突时的默认 doc_type
 _DOMAIN_DEFAULT_DOC_TYPE: dict[str, str] = {
@@ -97,6 +98,8 @@ VALID_MODES = frozenset({"summary", "export"})
 VALID_DOC_TYPES = frozenset({
     "order", "purchase", "purchase_return", "aftersale",
     "receipt", "shelf",
+    "stock", "product", "sku", "daily_stats", "platform_map",
+    "batch_stock", "order_log", "aftersale_log",
 })
 # 向后兼容旧名
 _VALID_MODES = VALID_MODES
@@ -213,7 +216,11 @@ def _build_fallback_params(
 _PARAM_DEFINITIONS = (
     "参数定义：\n"
     "【基础参数（必填）】\n"
-    "- doc_type: order/purchase/purchase_return/aftersale/receipt/shelf（必填）\n"
+    "- doc_type: order/purchase/purchase_return/aftersale/receipt/shelf/"
+    "stock/product/sku/daily_stats/platform_map/batch_stock/order_log/aftersale_log（必填）\n"
+    "  新表说明：stock=实时库存快照 / product=商品主数据 / sku=SKU明细 / "
+    "daily_stats=商品日统计 / platform_map=平台商品映射 / "
+    "batch_stock=批次效期库存 / order_log=订单操作日志 / aftersale_log=售后操作日志\n"
     "- mode: summary（统计汇总/多少/占比）/ export（获取数据/明细/导出/列表）（必填）\n"
     "- time_range: 标准化为 YYYY-MM-DD ~ YYYY-MM-DD 或 YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM（必填，根据当前时间推算；用户指定了具体时间点时带上 HH:MM）\n"
     "- time_col: pay_time（付款时间）/ consign_time（发货时间）/ doc_created_at（创建时间，默认）/ apply_date（售后申请日期）/ delivery_date（采购预计到货日）/ finished_at（售后完结日期）\n"
@@ -266,6 +273,12 @@ _PARAM_DEFINITIONS = (
     "- supplier_name: 供应商名称（模糊匹配）\n"
     "- purchase_order_code: 采购单号（精确匹配）\n"
     "- doc_status: 单据状态（如 待审核/已审核/待收货/已完成）\n"
+    "\n"
+    "【新表专用过滤参数】\n"
+    "- system_id: 订单系统ID（doc_type=order_log 时，精确匹配）\n"
+    "- work_order_id: 售后工单号（doc_type=aftersale_log 时，精确匹配）\n"
+    "- batch_no: 批次号（doc_type=batch_stock 时，精确匹配）\n"
+    "- num_iid: 平台商品ID（doc_type=platform_map 时，精确匹配）\n"
     "\n"
     "【刷单/特殊过滤】\n"
     "- include_invalid: 布尔值，默认 false。仅当用户明确要求'包含全部'或'不排除刷单'时设为 true。\n"
@@ -370,7 +383,26 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         "示例12（没有快递单号的已发货订单）：\n"
         '{"domain": "trade", "params": {"doc_type":"order","mode":"export",'
         '"time_range":"2026-04-17 ~ 2026-04-17",'
-        '"order_status":"SELLER_SEND_GOODS","null_fields":["express_no"]}}'
+        '"order_status":"SELLER_SEND_GOODS","null_fields":["express_no"]}}\n\n'
+        "示例13（库存负数的商品有多少）：\n"
+        '{"domain": "warehouse", "params": {"doc_type":"stock","mode":"summary",'
+        '"numeric_filters":[{"field":"available_stock","op":"lt","value":0}]}}\n\n'
+        "示例14（停售商品列表）：\n"
+        '{"domain": "warehouse", "params": {"doc_type":"product","mode":"export",'
+        '"numeric_filters":[{"field":"active_status","op":"eq","value":2}]}}\n\n'
+        "示例15（本月各商品销量Top10）：\n"
+        '{"domain": "warehouse", "params": {"doc_type":"daily_stats","mode":"export",'
+        '"time_range":"2026-04-01 ~ 2026-04-26",'
+        '"sort_by":"order_qty","sort_dir":"desc","limit":10}}\n\n'
+        "示例16（某商品在哪些平台售卖）：\n"
+        '{"domain": "warehouse", "params": {"doc_type":"platform_map","mode":"export",'
+        '"product_code":"HZ001"}}\n\n'
+        "示例17（某订单的操作记录）：\n"
+        '{"domain": "trade", "params": {"doc_type":"order_log","mode":"export",'
+        '"time_range":"2026-01-01 ~ 2026-04-26",'
+        '"system_id":"123456"}}\n\n'
+        "示例18（快过期的批次库存）：\n"
+        '{"domain": "warehouse", "params": {"doc_type":"batch_stock","mode":"export"}}'
     )
 
 

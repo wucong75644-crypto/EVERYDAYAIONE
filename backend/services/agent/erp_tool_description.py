@@ -50,11 +50,13 @@ def get_capability_manifest() -> dict:
         "platforms": platform_names,
         "field_categories": field_categories,
         "summary": (
-            "ERP 数据查询专员，查询订单/库存/采购/售后等数据，"
+            "ERP 数据查询专员，查询订单/库存/采购/售后/商品/SKU/日统计/平台映射/批次库存/操作日志等全量数据，"
             "口语化表达和错别字自动识别"
         ),
         "use_when": [
             "用户问任何涉及订单/库存/采购/售后/发货/物流/商品/销量的问题",
+            "库存快照查询（库存负数/缺货/可用库存<N）、商品主数据（停售/虚拟商品/品牌）",
+            "SKU明细、日统计（本月销量Top）、平台映射（哪些平台在售）、批次效期、操作日志",
             "含操作性词汇（对账/核对/处理/优先处理/多少钱/价格）需要先查数据",
             ("口语/错别字也要识别：'丁单'=订单，'酷存'=库存，"
              "'够不够卖'=库存查询，'到了没'=采购到货，"
@@ -87,6 +89,16 @@ def get_capability_manifest() -> dict:
              "effect": "include_invalid=true"},
             {"query": "今天刷单有多少",
              "effect": "is_scalping=true + include_invalid=true"},
+            {"query": "库存负数的商品有多少",
+             "effect": "doc_type=stock + available_stock<0"},
+            {"query": "停售商品列表",
+             "effect": "doc_type=product + active_status=2"},
+            {"query": "本月各商品销量Top10",
+             "effect": "doc_type=daily_stats + sort_by=order_qty"},
+            {"query": "某商品在哪些平台售卖",
+             "effect": "doc_type=platform_map + product_code过滤"},
+            {"query": "某订单的操作记录",
+             "effect": "doc_type=order_log + system_id过滤"},
         ],
         "parallel_hint": (
             "支持并行多次调用：用户请求包含多个独立子任务时，"

@@ -48,6 +48,7 @@ class OutputStatus(Enum):
     EMPTY = "empty"        # 查询成功，确实没数据（业务合理）
     PARTIAL = "partial"    # 查询成功但不完整（超时截断）
     ERROR = "error"        # 查询失败（异常/权限/接口错误）
+    REJECTED = "rejected"  # 预检拒绝：数据量过大，建议上层缩小范围
 
 
 # ============================================================

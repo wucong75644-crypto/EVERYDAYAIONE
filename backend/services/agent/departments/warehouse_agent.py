@@ -1,7 +1,8 @@
 """
 仓储部门Agent。
 
-负责：库存查询、缺货分析、仓库信息、出入库记录。
+负责：库存查询、缺货分析、仓库信息、出入库记录、商品/SKU主数据、
+      日统计报表、平台映射、批次效期库存。
 不负责：采购、订单、售后、财务。
 
 设计文档: docs/document/TECH_多Agent单一职责重构.md §6.2
@@ -28,8 +29,12 @@ class WarehouseAgent(DepartmentAgent):
         "sku_outer_id": "sku_code",
     }
 
-    # ── doc_type 白名单（仓储域只能查收货/上架）──
-    allowed_doc_types = ["receipt", "shelf"]
+    # ── doc_type 白名单（仓储域全量：单据 + 新增8表中归属仓储的6个）──
+    allowed_doc_types = [
+        "receipt", "shelf",
+        "stock", "batch_stock",
+        "product", "sku", "daily_stats", "platform_map",
+    ]
 
     @property
     def domain(self) -> str:
@@ -47,8 +52,12 @@ class WarehouseAgent(DepartmentAgent):
     def system_prompt(self) -> str:
         return (
             "你是仓储专家Agent。你负责：\n"
-            "- 库存查询（可售/锁定/在途）\n"
-            "- 缺货分析（哪些SKU缺货、缺多少）\n"
+            "- 库存查询（可售/锁定/在途/缺货/库存负数）\n"
+            "- 商品主数据查询（停售/虚拟/品牌/分类）\n"
+            "- SKU 明细查询（规格/条码/价格）\n"
+            "- 商品日统计报表（销量/采购量/售后量）\n"
+            "- 平台映射查询（商品在哪些平台售卖）\n"
+            "- 批次效期库存查询（快过期/批次号）\n"
             "- 仓库信息查询\n"
             "- 出入库记录查询（入库单/上架单）\n"
             "\n"
@@ -57,6 +66,7 @@ class WarehouseAgent(DepartmentAgent):
             "参数规则：\n"
             "- 缺货查询必须指定：平台 + 时间范围\n"
             "- 库存查询必须指定：商品编码 或 关键词\n"
+            "- 日统计查询必须指定：时间范围\n"
             "- 时间范围不能超过90天"
         )
 
@@ -106,13 +116,49 @@ class WarehouseAgent(DepartmentAgent):
 
     # ── DAG 分发 ──
 
+    # action → doc_type 统一映射（_dispatch 读取，不再 if/elif 硬编码）
     _DOC_TYPE_ACTION_MAP = {
         "shelf": "shelf_query",
         "receipt": "receipt_query",
+        "stock": "stock_data_query",
+        "batch_stock": "batch_stock_query",
+        "product": "product_query",
+        "sku": "sku_query",
+        "daily_stats": "daily_stats_query",
+        "platform_map": "platform_map_query",
+    }
+
+    # action → 实际 doc_type（_dispatch 统一查表）
+    _ACTION_TO_DOC_TYPE: dict[str, str] = {
+        "receipt_query": "receipt",
+        "shelf_query": "shelf",
+        "stock_data_query": "stock",
+        "batch_stock_query": "batch_stock",
+        "product_query": "product",
+        "sku_query": "sku",
+        "daily_stats_query": "daily_stats",
+        "platform_map_query": "platform_map",
     }
 
     def _classify_action(self, task: str) -> str:
         t = task.lower()
+        # 先匹配具体场景，再匹配宽泛关键词（避免"库存"吃掉"批次库存"）
+        if any(kw in t for kw in ("批次", "效期", "过期", "保质期", "batch")):
+            return "batch_stock_query"
+        if any(kw in t for kw in ("平台映射", "哪些平台", "在售平台", "平台商品",
+                                    "platform_map")):
+            return "platform_map_query"
+        if any(kw in t for kw in ("日统计", "销量排名", "销量top", "退货率",
+                                    "daily_stats", "商品销量")):
+            return "daily_stats_query"
+        if any(kw in t for kw in ("sku", "规格", "变体")):
+            return "sku_query"
+        if any(kw in t for kw in ("商品主数据", "停售商品", "虚拟商品", "商品列表",
+                                    "品牌", "商品分类", "商品信息")):
+            return "product_query"
+        if any(kw in t for kw in ("库存负数", "库存统计", "可用库存", "总库存",
+                                    "库存预警", "缺货商品")):
+            return "stock_data_query"
         if any(kw in t for kw in ("库存", "可售", "缺货", "stock")):
             return "stock_query"
         if any(kw in t for kw in ("仓库", "warehouse")):
@@ -123,7 +169,8 @@ class WarehouseAgent(DepartmentAgent):
             return "shelf_query"
         return "stock_query"
 
-    async def _dispatch(self, action, params, context):
+    async def _dispatch(self, action: str, params: dict, context: Any) -> ToolOutput:
+        # 专用方法：stock_query（按编码查库存）和 warehouse_list
         if action == "stock_query":
             return await self.query_stock(
                 product_code=params.get("product_code", ""),
@@ -131,11 +178,15 @@ class WarehouseAgent(DepartmentAgent):
             )
         if action == "warehouse_list":
             return await self.query_warehouse_list()
-        if action in ("receipt_query", "shelf_query"):
-            doc_type = "receipt" if action == "receipt_query" else "shelf"
+
+        # 统一查询引擎路由：从 _ACTION_TO_DOC_TYPE 查表，一处维护
+        doc_type = self._ACTION_TO_DOC_TYPE.get(action)
+        if doc_type:
             return await self._query_local_data(
                 doc_type=doc_type, **self._query_kwargs(params),
             )
+
+        # 兜底
         return await self.query_stock(
             product_code=params.get("product_code", ""),
             context=context,

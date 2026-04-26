@@ -35,6 +35,10 @@ from services.kuaimai.erp_duckdb_helpers import (
     build_pii_select,
     resolve_export_path,
 )
+from services.kuaimai.erp_query_preflight import (
+    QueryRoute,
+    preflight_check,
+)
 from services.kuaimai.erp_unified_filters import (
     validate_filters as _validate_filters,
     extract_time_range as _extract_time_range,
@@ -43,19 +47,20 @@ from services.kuaimai.erp_unified_filters import (
 )
 from services.kuaimai.erp_unified_schema import (
     COLUMN_WHITELIST,
-    DEFAULT_DETAIL_FIELDS,
     DOC_TYPE_CN,
+    DOC_TYPE_TABLE,
     EXPORT_COLUMN_NAMES,
     EXPORT_MAX,
-    REQUIRED_FIELDS,
     GROUP_BY_MAP,
     RPC_ORDER_STATS_FILTER_FIELDS,
     PLATFORM_CN,
     TIME_COLUMNS,
     VALID_DOC_TYPES,
+    _DOCUMENT_ITEM_DOC_TYPES,
     TimeRange,
     ValidatedFilter,
     _FIELD_LABEL_CN,
+    get_column_whitelist,
     fmt_summary_grouped,
     fmt_summary_total,
     format_filter_hint,
@@ -127,8 +132,9 @@ class UnifiedQueryEngine:
             valid_groups = [g for g in group_by if g in GROUP_BY_MAP]
             group_by = valid_groups or None
 
-        # sort_by 白名单校验（只允许 COLUMN_WHITELIST 中的列）
-        if sort_by and sort_by not in COLUMN_WHITELIST:
+        # sort_by 白名单校验（允许当前表的列）
+        col_wl = get_column_whitelist(doc_type)
+        if sort_by and sort_by not in col_wl:
             sort_by = None
 
         # sort_dir 枚举校验
@@ -141,12 +147,18 @@ class UnifiedQueryEngine:
 
         # extra_fields 白名单校验（追加到默认列的额外列）
         if extra_fields:
-            valid_fields = set(COLUMN_WHITELIST.keys()) | EXPORT_COLUMN_NAMES
+            valid_fields = set(col_wl.keys()) | EXPORT_COLUMN_NAMES
             extra_fields = [f for f in extra_fields if f in valid_fields]
             if not extra_fields:
                 extra_fields = None
 
-        validated, err = _validate_filters(filters)
+        # 新表走按 doc_type 分组的白名单校验
+        table = DOC_TYPE_TABLE.get(doc_type, "erp_document_items")
+        is_new_table = table != "erp_document_items"
+
+        validated, err = _validate_filters(
+            filters, doc_type=doc_type if is_new_table else None,
+        )
         if err:
             return ToolOutput(
                 summary=err,
@@ -155,22 +167,80 @@ class UnifiedQueryEngine:
                 error_message=err,
             )
 
-        tr = _extract_time_range(validated, time_type, request_ctx, mode)
+        tr = _extract_time_range(
+            validated, time_type, request_ctx, mode,
+            doc_type=doc_type if is_new_table else None,
+        )
 
-        if mode == "summary":
-            result = await self._summary(
-                doc_type, validated, tr, group_by, request_ctx,
-                include_invalid=include_invalid,
-                sort_by=sort_by, sort_dir=sort_dir, limit=limit,
-            )
+        # ── 新表路由：ORM 直查 ──
+        if is_new_table:
+            if mode == "summary":
+                result = await self._summary_orm(
+                    table, doc_type, validated, tr,
+                    sort_by=sort_by, sort_dir=sort_dir, limit=limit,
+                    request_ctx=request_ctx,
+                )
+            else:
+                result = await self._export_orm(
+                    table, doc_type, validated, tr,
+                    sort_by=sort_by, sort_dir=sort_dir, limit=limit,
+                    extra_fields=extra_fields,
+                    user_id=user_id, conversation_id=conversation_id,
+                    request_ctx=request_ctx,
+                    push_thinking=push_thinking,
+                )
         else:
-            result = await self._export(
-                doc_type, validated, tr, extra_fields, limit,
-                user_id, conversation_id, request_ctx,
-                include_invalid=include_invalid,
-                push_thinking=push_thinking,
-                sort_by=sort_by, sort_dir=sort_dir,
+            # ── 现有表：预检防御层 + 三级路由（完全不变）──
+            preflight = preflight_check(
+                db=self.db, doc_type=doc_type,
+                time_col=tr.time_col, start_iso=tr.start_iso, end_iso=tr.end_iso,
+                org_id=self.org_id, mode=mode, filters=validated,
             )
+
+            # 极端场景兜底：预估 > 500 万行直接拒绝
+            if preflight.reject_reason:
+                result = ToolOutput(
+                    summary=preflight.reject_reason,
+                    source="erp",
+                    status=OutputStatus.REJECTED,
+                    metadata={
+                        "estimated_rows": preflight.estimated_rows,
+                        "suggestions": list(preflight.suggestions),
+                    },
+                )
+            elif preflight.route == QueryRoute.FAST:
+                result = await self._fast_query(
+                    doc_type, validated, tr, mode, group_by,
+                    sort_by=sort_by, sort_dir=sort_dir, limit=limit,
+                    extra_fields=extra_fields,
+                    user_id=user_id, conversation_id=conversation_id,
+                    request_ctx=request_ctx,
+                    include_invalid=include_invalid,
+                    push_thinking=push_thinking,
+                )
+            elif preflight.route == QueryRoute.BATCH and mode == "export":
+                result = await self._batch_export(
+                    doc_type, validated, tr, extra_fields, limit,
+                    user_id, conversation_id, request_ctx,
+                    estimated_rows=preflight.estimated_rows,
+                    include_invalid=include_invalid,
+                    push_thinking=push_thinking,
+                    sort_by=sort_by, sort_dir=sort_dir,
+                )
+            elif mode == "summary":
+                result = await self._summary(
+                    doc_type, validated, tr, group_by, request_ctx,
+                    include_invalid=include_invalid,
+                    sort_by=sort_by, sort_dir=sort_dir, limit=limit,
+                )
+            else:
+                result = await self._export(
+                    doc_type, validated, tr, extra_fields, limit,
+                    user_id, conversation_id, request_ctx,
+                    include_invalid=include_invalid,
+                    push_thinking=push_thinking,
+                    sort_by=sort_by, sort_dir=sort_dir,
+                )
 
         # 统一出口：注入已应用的过滤条件摘要，让下游 LLM 知道数据已过滤
         if result.summary:
@@ -179,6 +249,78 @@ class UnifiedQueryEngine:
                 result.summary = f"{hint}\n{result.summary}"
 
         return result
+
+    # ── 快路径：PG 直查（< 1000 行） ──────────────────
+
+    async def _fast_query(
+        self, doc_type: str, filters: list[ValidatedFilter],
+        tr: TimeRange, mode: str, group_by: list[str] | None,
+        sort_by: str | None = None, sort_dir: str = "desc",
+        limit: int = 20, extra_fields: list[str] | None = None,
+        user_id: str | None = None, conversation_id: str | None = None,
+        request_ctx: Optional[RequestContext] = None,
+        include_invalid: bool = False,
+        push_thinking: Any = None,
+    ) -> ToolOutput:
+        """小结果集快路径：PG 直查，跳过 RPC/DuckDB。
+
+        summary 模式：降级到 RPC（已足够快）。
+        export 模式：PG SELECT → pandas 写 parquet → 复用 profile + FileRef。
+        """
+        if mode == "summary":
+            return await self._summary(
+                doc_type, filters, tr, group_by, request_ctx,
+                include_invalid=include_invalid,
+                sort_by=sort_by, sort_dir=sort_dir, limit=limit,
+            )
+        return await self._fast_export(
+            doc_type, filters, tr, extra_fields, limit,
+            user_id, conversation_id, request_ctx,
+            sort_by=sort_by, sort_dir=sort_dir,
+        )
+
+    async def _fast_export(
+        self, doc_type: str, filters: list[ValidatedFilter],
+        tr: TimeRange, extra_fields: list[str] | None, limit: int,
+        user_id: str | None, conversation_id: str | None,
+        request_ctx: Optional[RequestContext],
+        sort_by: str | None = None, sort_dir: str = "desc",
+    ) -> ToolOutput:
+        """快路径 export：PG 直查 → 写 parquet → FileRef。"""
+        from services.kuaimai.erp_fast_export import fast_export
+        return await fast_export(
+            engine_self=self,
+            doc_type=doc_type, filters=filters, tr=tr,
+            extra_fields=extra_fields, limit=limit,
+            user_id=user_id, conversation_id=conversation_id,
+            request_ctx=request_ctx,
+            sort_by=sort_by, sort_dir=sort_dir,
+        )
+
+    # ── 分批导出（Phase 3 实现，当前降级到标准导出） ──
+
+    async def _batch_export(
+        self, doc_type: str, filters: list[ValidatedFilter],
+        tr: TimeRange, extra_fields: list[str] | None, limit: int,
+        user_id: str | None, conversation_id: str | None,
+        request_ctx: Optional[RequestContext],
+        estimated_rows: int = 0,
+        include_invalid: bool = False,
+        push_thinking: Any = None,
+        sort_by: str | None = None, sort_dir: str = "desc",
+    ) -> ToolOutput:
+        """大结果集分批导出：按时间切片分批 DuckDB，合并 parquet。"""
+        from services.kuaimai.erp_batch_export import batch_export
+        return await batch_export(
+            engine_self=self,
+            doc_type=doc_type, filters=filters, tr=tr,
+            extra_fields=extra_fields, limit=limit,
+            user_id=user_id, conversation_id=conversation_id,
+            request_ctx=request_ctx, estimated_rows=estimated_rows,
+            include_invalid=include_invalid,
+            push_thinking=push_thinking,
+            sort_by=sort_by, sort_dir=sort_dir,
+        )
 
     # ── Summary 模式 ──────────────────────────────────
 
@@ -312,6 +454,16 @@ class UnifiedQueryEngine:
             group_by=group_by, include_invalid=include_invalid,
         )
 
+    # ── 新表 ORM 查询（委托 erp_orm_query 模块）────────
+
+    async def _summary_orm(self, table, doc_type, filters, tr, **kw) -> ToolOutput:
+        from services.kuaimai.erp_orm_query import summary_orm
+        return await summary_orm(self.db, self.org_id, table, doc_type, filters, tr, **kw)
+
+    async def _export_orm(self, table, doc_type, filters, tr, **kw) -> ToolOutput:
+        from services.kuaimai.erp_orm_query import export_orm
+        return await export_orm(self.db, self.org_id, table, doc_type, filters, tr, **kw)
+
     # ── Export 模式（DuckDB 流式导出） ────────────────
 
     async def _export(
@@ -329,18 +481,8 @@ class UnifiedQueryEngine:
         # 总数包含刷单，只做标记分类不排除。用户显式传 is_scalping
         # 过滤时才会排除刷单行）
 
-        # 字段合并：REQUIRED_FIELDS（安全网）+ DEFAULT（常用）+ extra（LLM追加）
-        # 三层保障，去重保序
-        required = REQUIRED_FIELDS.get(doc_type, [])
-        defaults = DEFAULT_DETAIL_FIELDS.get(doc_type, [])
-        fields: list[str] = []
-        seen: set[str] = set()
-        for f in (*required, *defaults, *(extra_fields or [])):
-            if f not in seen:
-                fields.append(f)
-                seen.add(f)
-
-        safe_fields = [c for c in fields if c in EXPORT_COLUMN_NAMES]
+        from services.kuaimai.erp_unified_schema import merge_export_fields
+        safe_fields = merge_export_fields(doc_type, extra_fields)
         # 排序列必须在 SELECT 中，否则 ORDER BY 报列不存在
         if tr.time_col and tr.time_col not in safe_fields and tr.time_col in EXPORT_COLUMN_NAMES:
             safe_fields.append(tr.time_col)

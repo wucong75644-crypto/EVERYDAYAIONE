@@ -311,6 +311,12 @@ class ERPAgent:
             elif hasattr(result, "status") and str(result.status) == "error":
                 label = _DOMAIN_LABEL.get(domain, domain)
                 errors.append(f"{label}: {result.summary}")
+            elif hasattr(result, "status") and str(result.status) == "rejected":
+                # 预检拒绝：把 suggestions 透传给主 Agent
+                label = _DOMAIN_LABEL.get(domain, domain)
+                suggestions = (result.metadata or {}).get("suggestions", [])
+                hint = "；".join(suggestions) if suggestions else "请缩小查询范围"
+                errors.append(f"{label}: {result.summary}（建议：{hint}）")
             else:
                 successes.append((domain, result))
 

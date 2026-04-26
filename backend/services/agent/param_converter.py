@@ -32,6 +32,11 @@ TEXT_EQ_FIELDS: dict[str, str] = {
     "purchase_order_code": "purchase_order_code",
     "refund_express_no": "refund_express_no",
     "sku_code": "sku_outer_id",  # 语义名 → DB列名
+    # 新表查询字段
+    "system_id": "system_id",          # 订单日志：订单系统ID
+    "work_order_id": "work_order_id",  # 售后日志：工单号
+    "batch_no": "batch_no",            # 批次库存：批次号
+    "num_iid": "num_iid",              # 平台映射：平台商品ID
 }
 
 # 文本模糊匹配：LLM语义参数名 → DB列名

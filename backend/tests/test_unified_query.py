@@ -129,20 +129,26 @@ class TestRequiredFields:
             )
 
     def test_required_fields_in_whitelist(self):
-        """所有必须字段都在 EXPORT_COLUMN_NAMES 白名单中。"""
+        """erp_document_items 表的必须字段都在 EXPORT_COLUMN_NAMES ��名单中。"""
         from services.kuaimai.erp_unified_schema import (
-            REQUIRED_FIELDS, EXPORT_COLUMN_NAMES,
+            REQUIRED_FIELDS, EXPORT_COLUMN_NAMES, _DOCUMENT_ITEM_DOC_TYPES,
         )
         for dt, req in REQUIRED_FIELDS.items():
+            if dt not in _DOCUMENT_ITEM_DOC_TYPES:
+                continue  # 新表走 ORM，不受 EXPORT_COLUMN_NAMES 约束
             invalid = set(req) - EXPORT_COLUMN_NAMES
             assert not invalid, (
                 f"{dt} REQUIRED_FIELDS 含 {invalid}，不在 EXPORT_COLUMN_NAMES 中"
             )
 
     def test_all_types_have_outer_id_and_doc_created_at(self):
-        """所有单据类型的必须字段都包含 outer_id 和 doc_created_at。"""
-        from services.kuaimai.erp_unified_schema import REQUIRED_FIELDS
+        """erp_document_items 表的必须字段都包含 outer_id 和 doc_created_at。"""
+        from services.kuaimai.erp_unified_schema import (
+            REQUIRED_FIELDS, _DOCUMENT_ITEM_DOC_TYPES,
+        )
         for dt, req in REQUIRED_FIELDS.items():
+            if dt not in _DOCUMENT_ITEM_DOC_TYPES:
+                continue  # 新表无 doc_created_at
             assert "outer_id" in req, f"{dt} 必须字段缺少 outer_id"
             assert "doc_created_at" in req, f"{dt} 必须字段缺少 doc_created_at"
 
@@ -878,9 +884,13 @@ class TestExportExtraFieldsMerge:
         assert len(fields) == len(defaults)
 
     def test_all_doc_types_have_outer_id_in_defaults(self):
-        """所有单据类型的默认列都包含 outer_id（商品编码）。"""
-        from services.kuaimai.erp_unified_schema import DEFAULT_DETAIL_FIELDS
+        """erp_document_items 表的默认列都包含 outer_id（商品编码）。"""
+        from services.kuaimai.erp_unified_schema import (
+            DEFAULT_DETAIL_FIELDS, _DOCUMENT_ITEM_DOC_TYPES,
+        )
         for doc_type, fields in DEFAULT_DETAIL_FIELDS.items():
+            if doc_type not in _DOCUMENT_ITEM_DOC_TYPES:
+                continue  # 新表（如 order_log/aftersale_log）无 outer_id
             assert "outer_id" in fields, (
                 f"{doc_type} 默认列缺少 outer_id"
             )
@@ -980,3 +990,37 @@ class TestExportSortAndLimit:
         from services.kuaimai.erp_unified_schema import _FIELD_LABEL_CN
         order_col = _FIELD_LABEL_CN.get("doc_created_at", "doc_created_at")
         assert order_col, "doc_created_at 应有中文别名"
+
+
+class TestMergeExportFields:
+    """merge_export_fields 公共函数"""
+
+    def test_order_returns_required_plus_defaults(self):
+        from services.kuaimai.erp_unified_schema import merge_export_fields
+        fields = merge_export_fields("order")
+        assert len(fields) >= 5
+        assert "outer_id" in fields
+
+    def test_extra_fields_appended(self):
+        from services.kuaimai.erp_unified_schema import merge_export_fields
+        fields_without = merge_export_fields("order")
+        fields_with = merge_export_fields("order", ["receiver_name"])
+        assert len(fields_with) >= len(fields_without)
+        assert "receiver_name" in fields_with
+
+    def test_dedup_preserves_order(self):
+        from services.kuaimai.erp_unified_schema import merge_export_fields, REQUIRED_FIELDS
+        fields = merge_export_fields("order", ["outer_id"])  # outer_id 已在 required
+        # 不应有重复
+        assert len(fields) == len(set(fields))
+
+    def test_invalid_extra_fields_filtered(self):
+        from services.kuaimai.erp_unified_schema import merge_export_fields
+        fields = merge_export_fields("order", ["nonexistent_column_xyz"])
+        assert "nonexistent_column_xyz" not in fields
+
+    def test_unknown_doc_type_returns_empty_or_minimal(self):
+        from services.kuaimai.erp_unified_schema import merge_export_fields
+        fields = merge_export_fields("nonexistent_type")
+        # unknown doc_type → REQUIRED/DEFAULT 为空 → 返回空列表
+        assert isinstance(fields, list)
