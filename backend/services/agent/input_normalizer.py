@@ -73,10 +73,21 @@ class InputNormalizer:
 
 # NFKC 后中文标点已转半角，只需处理半角分隔符
 # \t：Excel/WPS 表格粘贴时横向复制为 Tab 分隔
-_SEPARATORS = (",", ";", "\n", "\t", "|")
+# \r：旧 Mac 换行符（Windows \r\n 中 \n 已覆盖，\r 需单独处理）
+# 、：中文顿号（用户常用作列举分隔符）
+_SEPARATORS = (",", ";", "\n", "\r", "\t", "|", "\u3001")
 
 # IN 查询安全上限（PostgREST / Supabase）
 DEFAULT_MAX_IN = 200
+
+
+def _strip_quotes(val: str) -> str:
+    """去除值两端的引号（CSV 复制常带）"""
+    if len(val) >= 2:
+        if (val[0] == '"' and val[-1] == '"') or \
+           (val[0] == "'" and val[-1] == "'"):
+            return val[1:-1].strip()
+    return val
 
 
 class MultiValueParser:
@@ -114,10 +125,25 @@ class MultiValueParser:
         if normalized is None:
             return None
 
+        # JSON 数组格式：["A","B"] → 解析为 list 后递归
+        if normalized.startswith("[") and normalized.endswith("]"):
+            try:
+                import json
+                parsed_json = json.loads(normalized)
+                if isinstance(parsed_json, list):
+                    return cls.parse(parsed_json, max_values)
+            except (json.JSONDecodeError, ValueError):
+                pass  # 非合法 JSON，继续走正常拆分
+
+        # 去除外层括号包裹：[A, B] 或 (A, B)
+        if (normalized.startswith("[") and normalized.endswith("]")) or \
+           (normalized.startswith("(") and normalized.endswith(")")):
+            normalized = normalized[1:-1].strip()
+
         # 检测分隔符
         has_sep = any(sep in normalized for sep in _SEPARATORS)
         if not has_sep:
-            return normalized
+            return _strip_quotes(normalized)
 
         # 统一替换为逗号后拆分
         tmp = normalized
@@ -126,7 +152,7 @@ class MultiValueParser:
         items = []
         seen_set: set[str] = set()
         for part in tmp.split(","):
-            part = part.strip()
+            part = _strip_quotes(part.strip())
             if part and part not in seen_set:
                 seen_set.add(part)
                 items.append(part)
