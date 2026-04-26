@@ -22,6 +22,7 @@ interface AuthState {
 
   setUser: (user: User | null) => void;
   setToken: (token: string) => void;
+  setTokens: (accessToken: string, refreshToken: string) => void;
   setCurrentOrg: (org: Organization | null) => void;
   clearAuth: () => void;
   initAuth: () => void;
@@ -50,6 +51,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     localStorage.setItem('access_token', token);
   },
 
+  setTokens: (accessToken, refreshToken) => {
+    localStorage.setItem('access_token', accessToken);
+    localStorage.setItem('refresh_token', refreshToken);
+  },
+
   setCurrentOrg: (org) => {
     if (org) {
       localStorage.setItem('current_org_id', org.org_id);
@@ -69,6 +75,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   clearAuth: () => {
     localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
     localStorage.removeItem('user');
     localStorage.removeItem('current_org_id');
     localStorage.removeItem('current_org');

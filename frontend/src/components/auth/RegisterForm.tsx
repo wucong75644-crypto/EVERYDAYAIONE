@@ -24,7 +24,7 @@ export default function RegisterForm({
   onSuccess,
   onSwitchToLogin,
 }: RegisterFormProps) {
-  const { setUser, setToken } = useAuthStore();
+  const { setUser, setTokens } = useAuthStore();
 
   const [nickname, setNickname] = useState('');
   const [phone, setPhone] = useState('');
@@ -161,7 +161,7 @@ export default function RegisterForm({
       });
 
       // 保存 token 和用户信息
-      setToken(response.token.access_token);
+      setTokens(response.token.access_token, response.token.refresh_token);
       setUser(response.user);
 
       // 触发成功回调

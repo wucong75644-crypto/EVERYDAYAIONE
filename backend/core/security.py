@@ -1,9 +1,11 @@
 """
 安全相关工具
 
-包含密码哈希、JWT Token 生成与验证等功能。
+包含密码哈希、JWT Token 生成与验证、Refresh Token 等功能。
 """
 
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -108,6 +110,63 @@ def decode_access_token(token: str) -> dict[str, Any]:
         if "expired" in error_message:
             raise TokenExpiredError()
         raise InvalidTokenError()
+
+
+def create_refresh_token() -> tuple[str, str, datetime]:
+    """
+    创建 Refresh Token（不可逆随机字符串 + SHA-256 哈希）
+
+    Returns:
+        (raw_token, token_hash, expires_at)
+        - raw_token: 返回给客户端的明文 token
+        - token_hash: 存入 DB 的 SHA-256 哈希
+        - expires_at: 过期时间（UTC）
+    """
+    settings = get_settings()
+    raw_token = secrets.token_urlsafe(48)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    expires_at = datetime.now(timezone.utc) + timedelta(
+        days=settings.jwt_refresh_token_expire_days
+    )
+    return raw_token, token_hash, expires_at
+
+
+def hash_refresh_token(raw_token: str) -> str:
+    """对 refresh token 明文计算 SHA-256 哈希，用于 DB 查找"""
+    return hashlib.sha256(raw_token.encode()).hexdigest()
+
+
+def create_token_pair(db: Any, user_id: str) -> dict:
+    """
+    签发 access + refresh token 并将 refresh hash 存入 DB。
+
+    这是所有登录/刷新路径的唯一 token 工厂，service 层不应自行拼装。
+
+    Args:
+        db: Supabase 数据库客户端
+        user_id: 用户 ID
+
+    Returns:
+        符合 TokenResponse schema 的 dict
+    """
+    settings = get_settings()
+    access_token = create_access_token({"sub": str(user_id)})
+    raw_refresh, token_hash, refresh_expires_at = create_refresh_token()
+
+    # refresh token 哈希存 DB（明文不落盘）
+    db.table("refresh_tokens").insert({
+        "user_id": user_id,
+        "token_hash": token_hash,
+        "expires_at": refresh_expires_at.isoformat(),
+    }).execute()
+
+    return {
+        "access_token": access_token,
+        "refresh_token": raw_refresh,
+        "token_type": "bearer",
+        "expires_in": settings.jwt_access_token_expire_minutes * 60,
+        "refresh_expires_in": settings.jwt_refresh_token_expire_days * 86400,
+    }
 
 
 def generate_verification_code(length: int = 6) -> str:

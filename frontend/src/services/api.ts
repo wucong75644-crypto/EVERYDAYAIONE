@@ -1,9 +1,16 @@
 /**
  * API 请求基础配置
+ *
+ * 401 处理流程（双 Token 无感刷新）：
+ * 1. 收到 401 → 调 silentRefresh() 尝试用 refresh_token 换新 token
+ * 2. 刷新成功 → 用新 token 重发原请求（用户无感知）
+ * 3. 刷新失败 → logoutOnce() 统一登出
+ * 4. 并发 401 → 第一个触发刷新，其余排队等新 token 后重发
  */
 
-import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig } from 'axios';
+import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios';
 import type { ApiErrorResponse } from '../types/auth';
+import { silentRefresh, logoutOnce } from '../utils/tokenManager';
 
 // 优先使用环境变量，默认使用相对路径（适用于同域名部署）
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
@@ -37,24 +44,27 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// 响应拦截器：处理错误
+// 响应拦截器：401 → silentRefresh → 重发 / 登出
 api.interceptors.response.use(
   (response) => response,
-  (error: AxiosError<ApiErrorResponse>) => {
-    if (error.response?.status === 401) {
-      // Token 过期或无效，清除本地存储（含企业上下文）
-      // 优先用 login_org_id，兜底用 current_org_id（老版本登录的企业用户可能没有 login_org_id）
-      const loginOrgId = localStorage.getItem('login_org_id') || localStorage.getItem('current_org_id');
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('user');
-      localStorage.removeItem('current_org_id');
-      localStorage.removeItem('current_org');
-      // 只在非首页时跳转，避免首页循环重定向
-      if (window.location.pathname !== '/') {
-        // 企业用户跳回企业登录页，散客跳回首页
-        window.location.href = loginOrgId ? `/?org=${loginOrgId}` : '/';
+  async (error: AxiosError<ApiErrorResponse>) => {
+    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
+
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
+      originalRequest._retry = true;
+
+      try {
+        const newToken = await silentRefresh();
+        // 用新 token 重发原请求
+        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+        return api(originalRequest);
+      } catch {
+        // silentRefresh 内部已调 logoutOnce()，这里只需 reject
+        return Promise.reject(error);
       }
     }
+
+    // 非 401 或已重试过 → 直接 reject
     return Promise.reject(error);
   }
 );
