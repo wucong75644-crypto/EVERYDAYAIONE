@@ -300,6 +300,33 @@ export function WebSocketProvider({ children }: WebSocketProviderProps) {
     return () => window.removeEventListener('chat:user-steer', handler);
   }, [ws]);
 
+  // 表单提交 — FormBlock 通过 CustomEvent 触发
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { formType, formData } = (e as CustomEvent).detail;
+      if (!formType || !formData) return;
+      ws.send({
+        type: 'form_submit' as const,
+        payload: { form_type: formType, form_data: formData },
+      });
+      logger.info('ws:form', 'form_submit sent', { formType });
+    };
+    window.addEventListener('chat:form-submit', handler);
+    return () => window.removeEventListener('chat:form-submit', handler);
+  }, [ws]);
+
+  // 表单提交结果 — 后端返回 form_submit_result → 派发到 FormBlock
+  useEffect(() => {
+    const unsub = ws.subscribe('form_submit_result' as never, (msg) => {
+      const payload = msg.payload as { success?: boolean; message?: string };
+      window.dispatchEvent(
+        new CustomEvent('chat:form-submit-result', { detail: payload }),
+      );
+      logger.info('ws:form', 'form_submit_result', { success: payload?.success });
+    });
+    return unsub;
+  }, [ws]);
+
   const contextValue: WebSocketContextValue = {
     isConnected: ws.isConnected,
     isConnecting: ws.isConnecting,

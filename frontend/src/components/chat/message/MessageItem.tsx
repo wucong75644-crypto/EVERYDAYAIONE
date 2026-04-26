@@ -21,6 +21,7 @@ import LoadingPlaceholder from './LoadingPlaceholder';
 import MarkdownRenderer from './MarkdownRenderer';
 import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
+import FormBlock from './FormBlock';
 import FileCardList from '../media/FileCard';
 import SuggestionChips from './SuggestionChips';
 import { RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../../constants/placeholder';
@@ -482,6 +483,10 @@ export default memo(function MessageItem({
                         <FileCardList files={[fp]} />
                       </div>
                     );
+                  }
+                  if (part.type === 'form') {
+                    const fp = part as import('../../../types/message').FormPart;
+                    return <FormBlock key={fp.form_id} form={fp} />;
                   }
                   return null;
                 })}

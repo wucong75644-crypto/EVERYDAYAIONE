@@ -80,6 +80,9 @@ export type WSMessageType =
   | 'image_partial_update'
   // AI 主动沟通
   | 'ask_user_request'
+  // 表单交互
+  | 'form_submit'
+  | 'form_submit_result'
   // 用户打断
   | 'user_steer';
 

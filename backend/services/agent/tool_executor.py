@@ -53,6 +53,7 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             "generate_video": self._generate_video,
             "erp_agent": self._erp_agent,
             "erp_analyze": self._erp_analyze,
+            "manage_scheduled_task": self._manage_scheduled_task,
         }
         # 注册文件操作工具
         for tool_name in FILE_INFO_TOOLS:
@@ -242,6 +243,37 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         )
 
         return await agent.analyze(task, conversation_context=conversation_context)
+
+    # ========================================
+    # 定时任务管理（聊天内创建/查看/修改）
+    # ========================================
+
+    async def _manage_scheduled_task(self, args: Dict[str, Any]):
+        """聊天内管理定时任务：返回 FormBlockResult 或文本 str
+
+        FormBlockResult 与 AgentResult 平级，chat_tool_mixin 用 isinstance 分发：
+        - FormBlockResult → content_block_add 推送表单到前端
+        - str → 普通文本（列表/确认/错误）
+        """
+        from services.scheduler.chat_task_manager import ChatTaskManager, FormBlockResult
+
+        if not self.org_id:
+            return "此功能仅企业用户可用，请先加入企业。"
+
+        action = (args.get("action") or "").strip()
+        if not action:
+            return "请指定操作：create / list / update / pause / resume / delete"
+
+        manager = ChatTaskManager(self.db, self.user_id, self.org_id)
+        result = await manager.handle(action, args)
+
+        if result.get("type") == "form":
+            return FormBlockResult(
+                form=result,
+                llm_hint=f"已向用户展示{result.get('title', '表单')}，等待用户确认。不要重复展示表单内容。",
+            )
+
+        return result.get("text", str(result))
 
     # ========================================
     # 搜索工具（按需发现 API/模型文档）

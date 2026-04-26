@@ -65,6 +65,8 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     "code_execute",
     # 文件操作（只读）
     "file_read", "file_list", "file_search", "file_info",
+    # 定时任务（表单返回 + 列表查询）
+    "manage_scheduled_task",
 }
 
 # 写操作工具 — 必须串行
@@ -188,6 +190,16 @@ MUST NOT 开始执行任何步骤，MUST NOT 读取或处理数据。
    步骤间的中间数据（如编码列表、ID列表）直接在上下文中传递，
    不要用 code_execute 存为文件。只有用户要求导出的最终结果才写文件。
 5. 全部完成后输出完整结论
+
+### manage_scheduled_task — 定时任务管理
+用户要求创建/查看/修改/暂停/恢复/删除定时任务时调用。
+- create: 传 description（用户原话），返回预填表单，用户确认后自动创建
+- list: 查看当前用户的定时任务
+- update: 传 task_name 或 task_id + description（变更描述），返回修改表单
+- pause / resume / delete: 传 task_name 或 task_id
+
+与计划模式配合：用户先用 erp_analyze 讨论方案，确认后再调此工具创建定时任务。
+把讨论后确认的精确指令写入 description，不要用用户的原始模糊语言。
 
 ## 对话交互
 
@@ -377,6 +389,45 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "manage_scheduled_task",
+                "description": (
+                    "管理定时任务：创建/查看/修改/暂停/恢复/删除。\n"
+                    "create: 传 description 自然语言描述，返回预填表单供用户确认。\n"
+                    "list: 查看当前用户的定时任务列表。\n"
+                    "update: 传 task_name + description 描述变更。\n"
+                    "pause/resume/delete: 传 task_name 或 task_id。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "required": ["action"],
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["create", "list", "update", "pause", "resume", "delete"],
+                            "description": "操作类型",
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": (
+                                "create/update 时传：自然语言描述任务内容和频率。"
+                                "如「每天早上9点推销售日报」「改成每周一推送」"
+                            ),
+                        },
+                        "task_name": {
+                            "type": "string",
+                            "description": "任务名称（update/pause/resume/delete 时用于查找任务）",
+                        },
+                        "task_id": {
+                            "type": "string",
+                            "description": "任务 ID（可传前 8 位短 ID）",
+                        },
+                    },
+                },
+            },
+        },
     ]
 
 
@@ -443,6 +494,8 @@ _CORE_TOOLS: Set[str] = {
     "file_list",                # 目录列表
     "file_search",              # 文件搜索
     "file_info",                # 文件信息
+    # 定时任务
+    "manage_scheduled_task",    # 定时任务管理（创建/查看/修改/暂停/恢复/删除）
     # 主动沟通
     "ask_user",                 # 信息不足时追问用户
 }

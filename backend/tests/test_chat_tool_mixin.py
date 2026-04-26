@@ -640,3 +640,90 @@ class TestExecuteToolCallsAgentResult:
         assert mixin._ask_user_pending["message"] == "查哪个平台？"
         assert mixin._ask_user_pending["tool_call_id"] == "tc1"
         assert mixin._ask_user_pending["source"] == "erp_agent"
+
+
+# ============================================================
+# FormBlockResult 通道（content_block_add 推送）
+# ============================================================
+
+
+class TestFormBlockResultChannel:
+    """_execute_single_tool 收到 FormBlockResult 时的短路路径
+
+    FormBlockResult 与 AgentResult 平级：
+    - 推送 content_block_add 到前端（表单渲染）
+    - 推送 tool_result（表单已展示）
+    - 返回 llm_hint 给 LLM（不展示给用户）
+    """
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_form_block_sends_content_block_add(self, mock_ws):
+        """FormBlockResult → content_block_add WS 推送"""
+        from services.scheduler.chat_task_manager import FormBlockResult
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mock_ws.send_to_task_or_user = AsyncMock()
+        executor = AsyncMock()
+
+        form_data = {
+            "type": "form",
+            "form_type": "scheduled_task_create",
+            "form_id": "test_form_1",
+            "title": "创建定时任务",
+            "fields": [],
+        }
+        executor.execute = AsyncMock(return_value=FormBlockResult(
+            form=form_data,
+            llm_hint="已向用户展示创建定时任务，等待用户确认。",
+        ))
+
+        tc = {"name": "manage_scheduled_task", "id": "tc1",
+              "arguments": '{"action":"create","description":"每天9点推日报"}'}
+        tc_out, result, is_error = await ChatToolMixin._execute_single_tool(
+            mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
+        )
+
+        # 不是 error
+        assert is_error is False
+        # 返回 llm_hint 字符串（不是 FormBlockResult 对象）
+        assert isinstance(result, str)
+        assert "等待用户确认" in result
+        # content_block_add 应该被推送
+        ws_calls = mock_ws.send_to_task_or_user.call_args_list
+        # 至少两次 WS 调用：content_block_add + tool_result
+        assert len(ws_calls) >= 2
+        # 第一次是 content_block_add
+        first_msg = ws_calls[0][0][2]  # (task_id, user_id, message)
+        assert first_msg["type"] == "content_block_add"
+        assert first_msg["payload"]["block"]["form_type"] == "scheduled_task_create"
+        # 第二次是 tool_result
+        second_msg = ws_calls[1][0][2]
+        assert second_msg["type"] == "tool_result"
+
+    @pytest.mark.asyncio
+    @patch("services.handlers.chat_tool_mixin.ws_manager")
+    async def test_form_block_emits_audit(self, mock_ws):
+        """FormBlockResult → 审计日志记录"""
+        from services.scheduler.chat_task_manager import FormBlockResult
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = _make_mixin()
+        mixin._emit_tool_audit = MagicMock()
+        mock_ws.send_to_task_or_user = AsyncMock()
+        executor = AsyncMock()
+        executor.execute = AsyncMock(return_value=FormBlockResult(
+            form={"type": "form", "form_type": "scheduled_task_update", "fields": []},
+        ))
+
+        tc = {"name": "manage_scheduled_task", "id": "tc2",
+              "arguments": '{"action":"update","task_name":"日报"}'}
+        await ChatToolMixin._execute_single_tool(
+            mixin, tc, executor, "task1", "conv1", "msg1", "user1", 2,
+        )
+
+        mixin._emit_tool_audit.assert_called_once()
+        audit_args = mixin._emit_tool_audit.call_args[0]
+        assert audit_args[3] == "manage_scheduled_task"  # tool_name
+        assert audit_args[9] == "success"  # status (index 9)

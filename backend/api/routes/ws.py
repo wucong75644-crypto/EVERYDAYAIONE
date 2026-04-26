@@ -233,8 +233,78 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
                 code="MISSING_STEER_PARAMS",
             ))
 
+    elif msg_type == WSMessageType.FORM_SUBMIT.value:
+        # 用户在聊天中提交表单（定时任务创建/修改等）
+        form_type = payload.get("form_type", "")
+        form_data = payload.get("form_data", {})
+        conversation_id = payload.get("conversation_id", "")
+        if form_type and form_data:
+            asyncio.create_task(_handle_form_submit(
+                conn_id, user_id, form_type, form_data, conversation_id,
+            ))
+        else:
+            await ws_manager.send_to_connection(conn_id, build_error(
+                "form_type and form_data are required",
+                code="MISSING_FORM_PARAMS",
+            ))
+
     else:
         logger.warning(f"Unknown message type | conn={conn_id} | type={msg_type}")
+
+
+async def _handle_form_submit(
+    conn_id: str,
+    user_id: str,
+    form_type: str,
+    form_data: Dict[str, Any],
+    conversation_id: str,
+) -> None:
+    """处理表单提交（异步任务）"""
+    import time as _time
+    from services.scheduler.chat_task_manager import handle_form_submit
+
+    try:
+        db = get_db()
+
+        # 查用户的 org_id
+        member = db.table("org_members") \
+            .select("org_id") \
+            .eq("user_id", user_id) \
+            .eq("status", "active") \
+            .limit(1) \
+            .execute()
+        org_id = member.data[0]["org_id"] if member.data else None
+
+        if not org_id:
+            await ws_manager.send_to_connection(conn_id, {
+                "type": WSMessageType.FORM_SUBMIT_RESULT.value,
+                "payload": {"success": False, "message": "未找到企业信息"},
+                "conversation_id": conversation_id,
+                "timestamp": int(_time.time() * 1000),
+            })
+            return
+
+        result = await handle_form_submit(db, user_id, org_id, form_type, form_data)
+
+        await ws_manager.send_to_connection(conn_id, {
+            "type": WSMessageType.FORM_SUBMIT_RESULT.value,
+            "payload": result,
+            "conversation_id": conversation_id,
+            "timestamp": int(_time.time() * 1000),
+        })
+
+        logger.info(
+            f"Form submitted | conn={conn_id} | type={form_type} | "
+            f"success={result.get('success')}"
+        )
+    except Exception as e:
+        logger.error(f"Form submit error | conn={conn_id} | type={form_type} | error={e}")
+        await ws_manager.send_to_connection(conn_id, {
+            "type": WSMessageType.FORM_SUBMIT_RESULT.value,
+            "payload": {"success": False, "message": f"提交失败: {e}"},
+            "conversation_id": conversation_id,
+            "timestamp": int(_time.time() * 1000),
+        })
 
 
 async def _get_task_accumulated_content(task_id: str, user_id: str) -> Optional[str]:

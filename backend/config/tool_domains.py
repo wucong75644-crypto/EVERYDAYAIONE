@@ -47,6 +47,7 @@ TOOL_DOMAINS: Dict[str, ToolDomain] = {
     "file_list":        ToolDomain.GENERAL,
     "file_search":      ToolDomain.GENERAL,
     "file_info":        ToolDomain.GENERAL,
+    "manage_scheduled_task": ToolDomain.GENERAL,
 
     # === shared: 多个域的 Agent 内部都能用 ===
     "code_execute":     ToolDomain.SHARED,

@@ -15,7 +15,8 @@ export type ContentPart =
   | VideoPart
   | AudioPart
   | FilePart
-  | ToolResultPart;
+  | ToolResultPart
+  | FormPart;
 
 export interface TextPart {
   type: 'text';
@@ -62,6 +63,31 @@ export interface ToolResultPart {
   tool_name: string;
   text: string;
   files?: Array<{ url: string; name: string; mime_type: string; size?: number }>;
+}
+
+/** 表单内容块（聊天内嵌表单，如定时任务创建/修改） */
+export interface FormPart {
+  type: 'form';
+  form_type: string;
+  form_id: string;
+  title?: string;
+  description?: string;
+  fields: FormField[];
+  submit_text?: string;
+  cancel_text?: string;
+}
+
+/** 表单字段定义 */
+export interface FormField {
+  type: 'text' | 'textarea' | 'select' | 'checkbox_group' | 'number' | 'time' | 'hidden';
+  name: string;
+  label: string;
+  required?: boolean;
+  default_value?: string | number | number[] | boolean;
+  placeholder?: string;
+  options?: Array<{ label: string; value: string }>;
+  /** 条件显示：当指定字段等于指定值时才显示此字段 */
+  visible_when?: { field: string; value: string };
 }
 
 // ============================================================
