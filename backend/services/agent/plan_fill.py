@@ -49,14 +49,23 @@ def fill_platform(params: dict, query: str) -> None:
 
 # ── L2 product_code / order_no / express_no 补全（DB 验证） ──
 
-_PRODUCT_CODE_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*")
-_ORDER_NO_RE = re.compile(r"P\d{18}|\d{16,19}")
-# 快递单号格式：字母前缀(2-4位) + 数字(8-20位)
-# 覆盖：SF顺丰/YT圆通/ZTO中通/YD韵达/STO申通/BEST百世/JD京东/EMS/YZPY邮政
+# 正则统一维护在 input_normalizer.ValueValidator.PATTERNS（带 ^$，校验用）
+# 这里需要搜索模式（无 ^$），从自然语言文本中提取候选值
+def _to_search_pattern(p: "re.Pattern[str]") -> str:
+    """去掉校验正则的 ^$ 锚点，变成搜索模式"""
+    s = p.pattern
+    if s.startswith("^"):
+        s = s[1:]
+    if s.endswith("$"):
+        s = s[:-1]
+    return s
+
+from services.agent.input_normalizer import ValueValidator as _VV
+
+_PRODUCT_CODE_RE = re.compile(_to_search_pattern(_VV.PATTERNS["product_code"]))
+_ORDER_NO_RE = re.compile(_to_search_pattern(_VV.PATTERNS["order_no"]))
 _EXPRESS_NO_RE = re.compile(
-    r"(?:SF|YT|ZTO|YD|STO|BEST|JD|EMS|YZPY|JDVA|DBL|YUNDA)"
-    r"\d{8,20}",
-    re.IGNORECASE,
+    _to_search_pattern(_VV.PATTERNS["express_no"]), re.IGNORECASE,
 )
 _CODE_STOP_WORDS = frozenset({
     "the", "and", "for", "not", "all", "but", "are", "was",
