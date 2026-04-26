@@ -3,57 +3,21 @@
 
 从 department_agent.py 提取，解决文件/函数超阈值问题。
 DepartmentAgent 通过 _params_to_filters / _diagnose_empty / _diagnose_error 调用。
+
+输入归一化委托给三层架构：input_normalizer.py
+  L1 InputNormalizer  — 文本归一化（NFKC + 不可见字符）
+  L2 MultiValueParser — 多值拆分 + 去重 + 上限
+  L3 ValueValidator   — 格式校验 + 枚举映射
 """
 from __future__ import annotations
 
-from typing import Any, Union
 from loguru import logger
 
-
-# ── 多值解析（架构层统一处理用户传入的编码/单号） ──
-
-# 分隔符正则替换：中文逗号、分号、中文分号、换行 → 英文逗号
-_MULTI_VALUE_SEPS = (",", "，", ";", "；", "\n", "|")
-
-
-def _normalize_multi_value(val: Any) -> Union[str, list[str], None]:
-    """统一解析用户传入的编码/单号，支持多种格式。
-
-    输入 → 输出：
-      None / ""          → None
-      "ABC"              → "ABC"（单值）
-      "A,B,C"            → ["A", "B", "C"]（逗号分隔）
-      "A，B；C"           → ["A", "B", "C"]（中文标点）
-      "A\\nB\\nC"         → ["A", "B", "C"]（换行分隔）
-      ["A", "B"]         → ["A", "B"]（已是列表）
-      ["A"]              → "A"（单元素列表退化为单值）
-    """
-    if val is None:
-        return None
-    if isinstance(val, list):
-        items = [str(v).strip() for v in val if v and str(v).strip()]
-        return items[0] if len(items) == 1 else (items or None)
-    if not isinstance(val, str):
-        val = str(val)
-    val = val.strip()
-    if not val:
-        return None
-    # 检测是否包含分隔符
-    has_sep = any(sep in val for sep in _MULTI_VALUE_SEPS)
-    if not has_sep:
-        return val
-    # 统一替换为逗号后拆分
-    for sep in _MULTI_VALUE_SEPS:
-        val = val.replace(sep, ",")
-    items = [v.strip() for v in val.split(",") if v.strip()]
-    return items[0] if len(items) == 1 else (items or None)
-
-
-def _make_eq_or_in_filter(field: str, val: Union[str, list[str]]) -> dict:
-    """根据单值/多值自动选择 eq 或 in 操作符"""
-    if isinstance(val, list):
-        return {"field": field, "op": "in", "value": val}
-    return {"field": field, "op": "eq", "value": val}
+from services.agent.input_normalizer import (
+    InputNormalizer,
+    MultiValueParser,
+    ValueValidator,
+)
 
 
 # ── 过滤映射常量（模块级，避免每次调用重建） ──
@@ -227,14 +191,13 @@ def params_to_filters(params: dict) -> list[dict]:
     """
     filters: list[dict] = []
 
-    # ── 时间范围 → gte/lt ──
-    tr = params.get("time_range")
-    if tr and isinstance(tr, str):
-        for alt in (" to ", "～"):
-            if alt in tr:
-                tr = tr.replace(alt, "~")
-                logger.info(f"L1 time_range 分隔符纠正: {alt!r} → '~'")
-                break
+    # ── 时间范围 → gte/lt（L1 归一化：NFKC 自动处理全角 ～→~）──
+    tr = InputNormalizer.normalize(params.get("time_range"))
+    if tr:
+        # " to " 是 LLM 常见替代分隔符，手动纠正
+        if " to " in tr:
+            tr = tr.replace(" to ", "~")
+            logger.info("L1 time_range 分隔符纠正: ' to ' → '~'")
     if tr and "~" in tr:
         time_col = params.get("time_col", "doc_created_at")
         parts = tr.split("~")
@@ -270,64 +233,59 @@ def params_to_filters(params: dict) -> list[dict]:
                         "value": f"{next_day}T00:00:00",
                     })
 
-    # ── 平台 → eq（编码映射） ──
-    platform = params.get("platform")
-    if isinstance(platform, str):
-        platform = platform.strip()
+    # ── 平台 → eq（L1 归一化 + 枚举映射） ──
+    platform = InputNormalizer.normalize(params.get("platform"))
     if platform:
         from services.kuaimai.erp_unified_schema import PLATFORM_NORMALIZE
-        normalized = PLATFORM_NORMALIZE.get(platform, platform)
-        if normalized != platform:
-            logger.info(f"L1 platform 映射: {platform!r} → {normalized!r}")
-        filters.append({"field": "platform", "op": "eq", "value": normalized})
+        mapped = ValueValidator.validate_enum(platform, PLATFORM_NORMALIZE)
+        resolved = mapped if mapped is not None else platform
+        if resolved != platform:
+            logger.info(f"L1 platform 映射: {platform!r} → {resolved!r}")
+        filters.append({"field": "platform", "op": "eq", "value": resolved})
 
-    # ── 订单号 → eq / in（支持多值） ──
-    order_no = _normalize_multi_value(params.get("order_no"))
+    # ── 订单号 → eq / in（L2 多值解析） ──
+    order_no = MultiValueParser.parse(params.get("order_no"))
     if order_no:
-        filters.append(_make_eq_or_in_filter("order_no", order_no))
+        filters.append(MultiValueParser.to_filter("order_no", order_no))
 
-    # ── 商品编码 → outer_id eq / in（支持多值） ──
-    product_code = _normalize_multi_value(params.get("product_code"))
+    # ── 商品编码 → outer_id eq / in（L2 多值解析） ──
+    product_code = MultiValueParser.parse(params.get("product_code"))
     if product_code:
-        filters.append(_make_eq_or_in_filter("outer_id", product_code))
+        filters.append(MultiValueParser.to_filter("outer_id", product_code))
 
     # ── 刷单筛选 ──
     if params.get("is_scalping"):
         filters.append({"field": "is_scalping", "op": "eq", "value": 1})
 
-    # ── 批量：文本精确匹配（统一支持多值 eq/in）──
+    # ── 批量：文本精确匹配（L2 多值解析 → eq/in）──
     for param_key, db_field in TEXT_EQ_FIELDS.items():
-        val = _normalize_multi_value(params.get(param_key))
+        val = MultiValueParser.parse(params.get(param_key))
         if val:
-            filters.append(_make_eq_or_in_filter(db_field, val))
+            filters.append(MultiValueParser.to_filter(db_field, val))
 
-    # ── 批量：文本模糊匹配 ──
+    # ── 批量：文本模糊匹配（L1 归一化 + 空格→%） ──
     # 空格→%：LLM 常在中文和数字间插入噪音空格（"纸制品 01"），
     # 转为通配符使 ILIKE '%纸制品%01%' 同时兼容有/无空格的真实数据。
     for param_key, db_field in TEXT_LIKE_FIELDS.items():
-        val = params.get(param_key)
-        if isinstance(val, str):
-            val = val.strip()
+        val = InputNormalizer.normalize(params.get(param_key))
         if val:
             like_val = "%" + val.replace(" ", "%") + "%"
             filters.append({
                 "field": db_field, "op": "like", "value": like_val,
             })
 
-    # ── 批量：枚举精确匹配（中文 → DB 值归一化） ──
+    # ── 批量：枚举精确匹配（L1 归一化 + L3 枚举映射） ──
     for param_key, db_field in ENUM_EQ_FIELDS.items():
-        val = params.get(param_key)
-        if isinstance(val, str):
-            val = val.strip()
+        val = InputNormalizer.normalize(params.get(param_key))
         if val:
             norm_map = ENUM_NORMALIZE.get(param_key)
             if norm_map:
-                normalized = norm_map.get(val)
-                if normalized is not None:
+                mapped = ValueValidator.validate_enum(val, norm_map)
+                if mapped is not None:
                     logger.info(
-                        f"枚举归一化: {param_key}={val!r} → {normalized!r}",
+                        f"枚举归一化: {param_key}={val!r} → {mapped!r}",
                     )
-                    val = normalized
+                    val = mapped
                 # 未找到映射时保留原值（可能用户直接输了 DB 值如 "WAIT_SEND_GOODS"）
             filters.append({"field": db_field, "op": "eq", "value": val})
 

@@ -16,86 +16,21 @@ from services.agent.param_converter import (
     params_to_filters,
     diagnose_empty,
     diagnose_error,
-    _normalize_multi_value,
-    _make_eq_or_in_filter,
     TEXT_EQ_FIELDS,
     TEXT_LIKE_FIELDS,
     ENUM_EQ_FIELDS,
     FLAG_FIELDS,
 )
+from services.agent.input_normalizer import (
+    MultiValueParser,
+    InputNormalizer,
+)
 
 
 # ============================================================
-# _normalize_multi_value: 多值解析（架构层）
+# 多值解析测试已迁移到 test_input_normalizer.py
+# 以下仅保留 params_to_filters 集成测试
 # ============================================================
-
-
-class TestNormalizeMultiValue:
-    """统一多值解析函数"""
-
-    def test_none(self):
-        assert _normalize_multi_value(None) is None
-
-    def test_empty_string(self):
-        assert _normalize_multi_value("") is None
-
-    def test_single_value(self):
-        assert _normalize_multi_value("ABC123") == "ABC123"
-
-    def test_single_value_strips(self):
-        assert _normalize_multi_value("  ABC123  ") == "ABC123"
-
-    def test_comma_separated(self):
-        assert _normalize_multi_value("A,B,C") == ["A", "B", "C"]
-
-    def test_chinese_comma(self):
-        assert _normalize_multi_value("A，B，C") == ["A", "B", "C"]
-
-    def test_semicolon(self):
-        assert _normalize_multi_value("A;B;C") == ["A", "B", "C"]
-
-    def test_chinese_semicolon(self):
-        assert _normalize_multi_value("A；B；C") == ["A", "B", "C"]
-
-    def test_newline(self):
-        assert _normalize_multi_value("A\nB\nC") == ["A", "B", "C"]
-
-    def test_pipe(self):
-        assert _normalize_multi_value("A|B|C") == ["A", "B", "C"]
-
-    def test_mixed_separators(self):
-        assert _normalize_multi_value("A,B，C;D") == ["A", "B", "C", "D"]
-
-    def test_list_input(self):
-        assert _normalize_multi_value(["A", "B"]) == ["A", "B"]
-
-    def test_single_element_list(self):
-        assert _normalize_multi_value(["A"]) == "A"
-
-    def test_empty_list(self):
-        assert _normalize_multi_value([]) is None
-
-    def test_list_with_empty_strings(self):
-        assert _normalize_multi_value(["A", "", "  ", "B"]) == ["A", "B"]
-
-    def test_strips_in_split(self):
-        assert _normalize_multi_value("A , B , C") == ["A", "B", "C"]
-
-    def test_trailing_comma(self):
-        """尾部逗号不产生空值"""
-        assert _normalize_multi_value("A,B,") == ["A", "B"]
-
-    def test_integer_input(self):
-        assert _normalize_multi_value(123) == "123"
-
-
-class TestMakeEqOrInFilter:
-    def test_single_value_eq(self):
-        assert _make_eq_or_in_filter("f", "v") == {"field": "f", "op": "eq", "value": "v"}
-
-    def test_list_value_in(self):
-        assert _make_eq_or_in_filter("f", ["a", "b"]) == {"field": "f", "op": "in", "value": ["a", "b"]}
-
 
 # ============================================================
 # params_to_filters: 多值集成测试
