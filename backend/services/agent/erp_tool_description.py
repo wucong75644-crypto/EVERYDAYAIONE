@@ -72,6 +72,10 @@ def get_capability_manifest() -> dict:
             "跨域并行：各域数据独立时一次返回多域数据 + 关联计算提示，code_execute 按提示关联",
             "计划模式（status=plan）：超出一次执行能力时返回执行计划，调用方按计划逐步调用并传递中间结果",
         ],
+        "limits": [
+            "编码/单号IN匹配：单次最多500个值。超过500个的跨域关联查询，"
+            "应分别导出两份数据到staging，再用code_execute按编码JOIN",
+        ],
         "examples": [
             {"query": "昨天淘宝退货按店铺统计",
              "effect": "summary + platform=taobao + group_by=shop"},
@@ -131,6 +135,11 @@ def build_tool_description() -> str:
     lines.append("\n返回：")
     for r in m["returns"]:
         lines.append(f"- {r}")
+
+    if m.get("limits"):
+        lines.append("\n限制：")
+        for lim in m["limits"]:
+            lines.append(f"- {lim}")
 
     lines.append("\nquery 示例：")
     for ex in m["examples"]:
