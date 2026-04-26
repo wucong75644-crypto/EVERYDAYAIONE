@@ -1678,7 +1678,10 @@
       "Bash(venv/bin/python -m pytest tests/test_preflight_integration.py tests/test_query_preflight.py -v --tb=short)",
       "Bash(venv/bin/python -m pytest tests/test_preflight_integration.py tests/test_query_preflight.py -q --tb=short)",
       "Bash(venv/bin/python -m pytest tests/ -q --tb=line --ignore=tests/test_sandbox_executor.py --ignore=tests/test_sandbox_functions.py --ignore=tests/test_orm_query.py)",
-      "Bash(./git-push.sh \"feat: ERP多表统一查询——8张新表接入UnifiedQueryEngine+116测试+3个链路断裂bug修复\")"
+      "Bash(./git-push.sh \"feat: ERP多表统一查询——8张新表接入UnifiedQueryEngine+116测试+3个链路断裂bug修复\")",
+      "Bash(venv/bin/python -m pytest tests/ -q --tb=line --ignore=tests/test_sandbox_executor.py --ignore=tests/test_sandbox_functions.py --ignore=tests/test_orm_query.py -k \"preflight\")",
+      "Bash(venv/bin/python -m pytest tests/test_preflight_integration.py::TestPreflightGateInExport::test_large_data_rejected_before_duckdb -v --tb=short)",
+      "Bash(./git-push.sh \"fix: 预检门卫位置修正——从execute入口移到_export内部DuckDB启动前，不拦截summary和小数据查询\")"
     ],
     "additionalDirectories": [
       "/tmp"
