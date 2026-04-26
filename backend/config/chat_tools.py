@@ -442,6 +442,15 @@ _CORE_TOOLS: Set[str] = {
 }
 
 
+# plan 模式下移除的执行类工具（架构层过滤，LLM 根本看不到）
+_PLAN_MODE_BLOCKED: Set[str] = {
+    "erp_agent",                # 执行类：plan 模式只允许 erp_analyze
+    "generate_image",           # 生成类：计划阶段不需要
+    "generate_video",           # 生成类：计划阶段不需要
+    "social_crawler",           # 爬取类：计划阶段不需要
+}
+
+
 def get_core_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
     """获取核心工具列表（ToolSearch 模式下初始传给 LLM 的工具）
 
@@ -452,6 +461,20 @@ def get_core_tools(org_id: str | None = None) -> List[Dict[str, Any]]:
     all_tools = get_chat_tools(org_id)
     core = [t for t in all_tools if t["function"]["name"] in _CORE_TOOLS]
     return filter_tools_for_domain(core, "general")
+
+
+def get_tools_for_mode(
+    mode: str, org_id: str | None = None,
+) -> List[Dict[str, Any]]:
+    """按权限模式获取工具列表
+
+    plan 模式：从核心工具中移除执行类工具（架构层过滤）
+    ask / auto 模式：返回完整核心工具
+    """
+    core = get_core_tools(org_id)
+    if mode == "plan":
+        return [t for t in core if t["function"]["name"] not in _PLAN_MODE_BLOCKED]
+    return core
 
 
 def get_tools_by_names(

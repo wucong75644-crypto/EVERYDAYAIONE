@@ -75,8 +75,8 @@ interface InputControlsProps {
   onThinkingEffortChange?: (effort: 'minimal' | 'low' | 'medium' | 'high') => void;
   deepThinkMode?: boolean;
   onDeepThinkModeChange?: (enabled: boolean) => void;
-  planMode?: boolean;
-  onPlanModeChange?: (enabled: boolean) => void;
+  permissionMode?: 'auto' | 'ask' | 'plan';
+  onPermissionModeChange?: (mode: 'auto' | 'ask' | 'plan') => void;
   temperature?: number;
   onTemperatureChange?: (value: number) => void;
   topP?: number;
@@ -135,7 +135,7 @@ export default function InputControls(props: InputControlsProps) {
     numImages, onNumImagesChange, userCredits,
     videoFrames, onVideoFramesChange, videoAspectRatio, onVideoAspectRatioChange,
     removeWatermark, onRemoveWatermarkChange, thinkingEffort, onThinkingEffortChange,
-    deepThinkMode, onDeepThinkModeChange, planMode, onPlanModeChange,
+    deepThinkMode, onDeepThinkModeChange, permissionMode, onPermissionModeChange,
     temperature, onTemperatureChange, topP, onTopPChange, topK, onTopKChange,
     maxOutputTokens, onMaxOutputTokensChange,
     onSaveSettings, onResetSettings,
@@ -242,8 +242,9 @@ export default function InputControls(props: InputControlsProps) {
         'relative border rounded-2xl bg-surface-card shadow-sm transition-all',
         sendError && 'border-error border-2 shadow-md',
         !sendError && isDragging && 'border-accent border-2 bg-accent-light shadow-lg',
-        !sendError && !isDragging && planMode && 'border-success/30 hover:shadow-md',
-        !sendError && !isDragging && !planMode && 'border-border-default hover:shadow-md',
+        !sendError && !isDragging && permissionMode === 'plan' && 'border-success/30 hover:shadow-md',
+        !sendError && !isDragging && permissionMode === 'ask' && 'border-warning/30 hover:shadow-md',
+        !sendError && !isDragging && permissionMode !== 'plan' && permissionMode !== 'ask' && 'border-border-default hover:shadow-md',
       )}
     >
       {/* 拖拽提示 */}
@@ -414,18 +415,23 @@ export default function InputControls(props: InputControlsProps) {
           {/* 右侧：计费提示、上传、发送/语音 */}
           <div className="flex items-center space-x-2">
             {/* 模式选择器（chat 模型）或 计费提示（图片/视频模型） */}
-            {selectedModel.type === 'chat' && onPlanModeChange ? (
+            {selectedModel.type === 'chat' && onPermissionModeChange ? (
               <button
-                onClick={() => onPlanModeChange(!planMode)}
+                onClick={() => {
+                  const cycle = { auto: 'ask', ask: 'plan', plan: 'auto' } as const;
+                  onPermissionModeChange(cycle[permissionMode || 'auto']);
+                }}
                 className={cn(
                   'text-xs px-2 py-0.5 rounded-full transition-all duration-200',
                   'border',
-                  planMode
+                  permissionMode === 'plan'
                     ? 'text-success border-success/30 bg-success/5'
-                    : 'text-text-disabled border-transparent hover:text-text-secondary',
+                    : permissionMode === 'ask'
+                      ? 'text-warning border-warning/30 bg-warning/5'
+                      : 'text-text-disabled border-transparent hover:text-text-secondary',
                 )}
               >
-                {planMode ? '计划模式' : '自动模式'}
+                {permissionMode === 'plan' ? '计划模式' : permissionMode === 'ask' ? '确认模式' : '自动模式'}
               </button>
             ) : (
               <span

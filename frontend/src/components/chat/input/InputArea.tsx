@@ -232,7 +232,7 @@ export default function InputArea({
     removeWatermark: videoSettings.removeWatermark,
     thinkingEffort: chatSettings.thinkingEffort,
     deepThinkMode: chatSettings.deepThinkMode,
-    planMode: chatSettings.planMode,
+    permissionMode: chatSettings.permissionMode,
     temperature: chatSettings.temperature,
     topP: chatSettings.topP,
     topK: chatSettings.topK,
@@ -494,8 +494,8 @@ export default function InputArea({
           onThinkingEffortChange={(v) => setChatSetting('thinkingEffort', v)}
           deepThinkMode={chatSettings.deepThinkMode}
           onDeepThinkModeChange={(v) => setChatSetting('deepThinkMode', v)}
-          planMode={chatSettings.planMode}
-          onPlanModeChange={(v) => setChatSetting('planMode', v)}
+          permissionMode={chatSettings.permissionMode}
+          onPermissionModeChange={(v) => setChatSetting('permissionMode', v)}
           temperature={chatSettings.temperature}
           onTemperatureChange={(v) => setChatSetting('temperature', v)}
           topP={chatSettings.topP}

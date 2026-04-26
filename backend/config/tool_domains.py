@@ -36,6 +36,7 @@ class ToolDomain(str, Enum):
 TOOL_DOMAINS: Dict[str, ToolDomain] = {
     # === general: 主 Agent 可直接使用 ===
     "erp_agent":        ToolDomain.GENERAL,
+    "erp_analyze":      ToolDomain.GENERAL,
     "search_knowledge": ToolDomain.GENERAL,
     "web_search":       ToolDomain.GENERAL,
     "social_crawler":   ToolDomain.GENERAL,

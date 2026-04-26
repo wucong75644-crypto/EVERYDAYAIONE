@@ -198,8 +198,8 @@ class TestCoreToolsExpanded:
     def test_core_tools_count(self):
         from config.chat_tools import get_core_tools
         tools = get_core_tools(org_id="test")
-        # 13 个核心工具（ask_user 域改为 SHARED 后通过 domain filter）
-        assert len(tools) == 13
+        # 14 个核心工具（erp_analyze 加入 GENERAL 域后通过 domain filter）
+        assert len(tools) == 14
 
     def test_core_tools_include_file_tools(self):
         from config.chat_tools import get_core_tools
@@ -217,6 +217,71 @@ class TestCoreToolsExpanded:
         names = {t["function"]["name"] for t in get_core_tools(org_id="test")}
         assert "generate_image" in names
         assert "generate_video" in names
+
+
+class TestToolsForMode:
+    """get_tools_for_mode 按权限模式过滤"""
+
+    def test_auto_mode_returns_all_core(self):
+        from config.chat_tools import get_tools_for_mode, get_core_tools
+        auto = get_tools_for_mode("auto", org_id="test")
+        core = get_core_tools(org_id="test")
+        assert len(auto) == len(core)
+
+    def test_ask_mode_returns_all_core(self):
+        from config.chat_tools import get_tools_for_mode, get_core_tools
+        ask = get_tools_for_mode("ask", org_id="test")
+        core = get_core_tools(org_id="test")
+        assert len(ask) == len(core)
+
+    def test_plan_mode_blocks_execution_tools(self):
+        from config.chat_tools import get_tools_for_mode, _PLAN_MODE_BLOCKED
+        plan = get_tools_for_mode("plan", org_id="test")
+        plan_names = {t["function"]["name"] for t in plan}
+        for blocked in _PLAN_MODE_BLOCKED:
+            assert blocked not in plan_names, f"{blocked} 不应在 plan 模式工具列表中"
+
+    def test_plan_mode_keeps_erp_analyze(self):
+        from config.chat_tools import get_tools_for_mode
+        plan = get_tools_for_mode("plan", org_id="test")
+        plan_names = {t["function"]["name"] for t in plan}
+        assert "erp_analyze" in plan_names
+
+    def test_plan_mode_keeps_ask_user(self):
+        from config.chat_tools import get_tools_for_mode
+        plan = get_tools_for_mode("plan", org_id="test")
+        plan_names = {t["function"]["name"] for t in plan}
+        assert "ask_user" in plan_names
+
+    def test_plan_mode_keeps_search_tools(self):
+        from config.chat_tools import get_tools_for_mode
+        plan = get_tools_for_mode("plan", org_id="test")
+        plan_names = {t["function"]["name"] for t in plan}
+        assert "search_knowledge" in plan_names
+        assert "web_search" in plan_names
+
+    def test_plan_mode_tool_count(self):
+        from config.chat_tools import get_tools_for_mode, _PLAN_MODE_BLOCKED
+        auto = get_tools_for_mode("auto", org_id="test")
+        plan = get_tools_for_mode("plan", org_id="test")
+        assert len(plan) == len(auto) - len(_PLAN_MODE_BLOCKED)
+
+
+class TestErpAnalyzeDomain:
+    """erp_analyze 域注册验证"""
+
+    def test_erp_analyze_in_general_domain(self):
+        from config.tool_domains import TOOL_DOMAINS, ToolDomain
+        assert "erp_analyze" in TOOL_DOMAINS
+        assert TOOL_DOMAINS["erp_analyze"] == ToolDomain.GENERAL
+
+    def test_erp_analyze_passes_domain_filter(self):
+        from config.tool_domains import can_access
+        assert can_access("erp_analyze", "general") is True
+
+    def test_erp_analyze_blocked_for_erp_domain(self):
+        from config.tool_domains import can_access
+        assert can_access("erp_analyze", "erp") is False
 
 
 class TestFileConcurrencySafe:
