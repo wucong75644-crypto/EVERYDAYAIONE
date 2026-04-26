@@ -37,10 +37,12 @@ export interface VideoSettings {
   removeWatermark: boolean;
 }
 
+export type PermissionMode = 'auto' | 'ask' | 'plan';
+
 export interface ChatSettings {
   thinkingEffort: 'minimal' | 'low' | 'medium' | 'high';
   deepThinkMode: boolean;
-  planMode: boolean;        // 计划模式：强制先规划再执行
+  permissionMode: PermissionMode;  // 权限模式：auto/ask/plan
   temperature: number;      // 0.0 - 2.0
   topP: number;            // 0.0 - 1.0
   topK: number;            // 1 - 64
@@ -92,7 +94,7 @@ export function useSettingsManager(): UseSettingsManagerReturn {
   const [chatSettings, setChatSettings] = useState<ChatSettings>({
     thinkingEffort: savedSettings.chat?.thinkingEffort || 'low',
     deepThinkMode: true, // 默认开启深度思考
-    planMode: false,     // 计划模式默认关闭（AI 自动判断）
+    permissionMode: (savedSettings.chat as any)?.permissionMode || 'auto',
     temperature: savedSettings.chat?.temperature ?? 1.0,
     topP: savedSettings.chat?.topP ?? 0.95,
     topK: savedSettings.chat?.topK ?? 40,
@@ -165,7 +167,7 @@ export function useSettingsManager(): UseSettingsManagerReturn {
     setChatSettings({
       thinkingEffort: defaults.chat.thinkingEffort,
       deepThinkMode: true,
-      planMode: false,
+      permissionMode: 'auto',
       temperature: defaults.chat.temperature,
       topP: defaults.chat.topP,
       topK: defaults.chat.topK,

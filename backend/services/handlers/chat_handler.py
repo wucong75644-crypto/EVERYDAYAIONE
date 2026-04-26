@@ -90,7 +90,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 model_id=model_id,
                 thinking_effort=params.get("thinking_effort"),
                 thinking_mode=params.get("thinking_mode"),
-                plan_mode=params.get("plan_mode", False),
+                permission_mode=params.get("permission_mode", "auto"),
                 router_system_prompt=params.get("_router_system_prompt"),
                 router_search_context=params.get("_router_search_context"),
                 needs_google_search=params.get("_needs_google_search", False),
@@ -289,7 +289,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         model_id: str,
         thinking_effort: Optional[str] = None,
         thinking_mode: Optional[str] = None,
-        plan_mode: bool = False,
+        permission_mode: str = "auto",
         router_system_prompt: Optional[str] = None,
         router_search_context: Optional[str] = None,
         needs_google_search: bool = False,
@@ -371,26 +371,31 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
             # 4. 注入全局工具使用指引
             from config.chat_tools import (
-                get_core_tools, get_tools_by_names, get_tool_system_prompt,
+                get_tools_by_names, get_tool_system_prompt,
             )
             tool_prompt = get_tool_system_prompt()
             if tool_prompt:
                 messages.append({"role": "system", "content": tool_prompt})
 
-            # 4.5 计划模式强制注入（用户手动开启时）
-            logger.info(f"Plan mode check | plan_mode={plan_mode!r} | type={type(plan_mode).__name__}")
-            if plan_mode:
-                messages.append({"role": "system", "content": (
-                    "=== 计划模式已激活（用户手动开启）===\n"
-                    "无论查询复杂还是简单，都必须进入计划模式流程：\n"
-                    "1. 调 erp_analyze 分析任务结构\n"
-                    "2. 展示执行方案\n"
-                    "3. 等用户确认后再执行\n"
-                    "此规则覆盖直接模式判断。"
-                )})
+            # 4.5 权限模式初始化（对齐 Claude Code ToolPermissionContext）
+            # 兼容旧参数：plan_mode=True → permission_mode="plan"
+            if permission_mode is True or permission_mode == "true":
+                permission_mode = "plan"
+            elif permission_mode is False or permission_mode == "false" or not permission_mode:
+                permission_mode = "auto"
 
-            # 5. 加载核心工具（ToolSearch 模式：9 个核心直接加载）
-            core_tools = get_core_tools(org_id=self.org_id)
+            from services.handlers.permission_mode import PermissionMode
+            perm = PermissionMode(mode=permission_mode)
+            logger.info(f"Permission mode | mode={perm.mode.value}")
+
+            # 首轮模式提示词注入（full reminder）
+            _mode_prompt = perm.get_reminder(turn=0)
+            if _mode_prompt:
+                messages.append({"role": "system", "content": _mode_prompt})
+
+            # 5. 按模式加载工具（plan 模式移除执行类工具）
+            from config.chat_tools import get_tools_for_mode
+            core_tools = get_tools_for_mode(perm.mode.value, org_id=self.org_id)
 
             # 按需启用 Google Search Grounding
             stream_kwargs: Dict[str, Any] = {}
@@ -458,6 +463,20 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     f"frozen_msgs={len(messages)} | budget_turns={_bs.get('turns_used', 0)}"
                 )
 
+                # ── plan 模式恢复：用户确认后解锁执行工具 ──
+                if perm.is_plan:
+                    restored_mode = perm.exit_plan()
+                    # 重建 core_tools（现在包含 erp_agent）
+                    core_tools = get_tools_for_mode(perm.mode.value, org_id=self.org_id)
+                    # Google Search 重新追加
+                    if needs_google_search and hasattr(self._adapter, 'supports_google_search') and self._adapter.supports_google_search:
+                        core_tools.append(self._adapter.create_google_search_tool())
+                    logger.info(
+                        f"Plan confirmed → execution unlocked | "
+                        f"restored_mode={restored_mode.value} | "
+                        f"tools={[t['function']['name'] for t in core_tools]}"
+                    )
+
             # ── 打断监听注册 ──
             ws_manager.register_steer_listener(task_id)
 
@@ -493,6 +512,16 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     ctx_prompt = tool_context.build_context_prompt()
                     if ctx_prompt:
                         messages.append({"role": "system", "content": ctx_prompt})
+
+                # 权限模式：exit attachment（plan 确认后一次性注入）
+                if perm.need_exit_attachment:
+                    messages.append({"role": "system", "content": perm.consume_exit_attachment()})
+
+                # 权限模式：周期性 sparse/full reminder
+                if turn > 0:
+                    _mode_reminder = perm.get_reminder(turn)
+                    if _mode_reminder:
+                        messages.append({"role": "system", "content": _mode_reminder})
 
                 turn_text = ""
                 turn_thinking = ""
@@ -836,7 +865,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     conversation_id=conversation_id, user_id=user_id,
                     content=content, model_id=model_id,
                     thinking_effort=thinking_effort, thinking_mode=thinking_mode,
-                    plan_mode=plan_mode,
+                    permission_mode=permission_mode,
                     router_system_prompt=router_system_prompt,
                     router_search_context=router_search_context,
                     _params=_params, _retry_context=_retry_context,

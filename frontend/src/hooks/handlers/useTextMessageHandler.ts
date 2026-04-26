@@ -11,12 +11,13 @@ import { sendMessage, createTextContent, createTextWithImages, createTextWithFil
 import { useWebSocketContext } from '../../contexts/WebSocketContext';
 import { tabSync } from '../../utils/tabSync';
 import { logger } from '../../utils/logger';
+import { type PermissionMode } from '../useSettingsManager';
 
 interface UseTextMessageHandlerParams {
   selectedModel: UnifiedModel;
   thinkingEffort?: 'minimal' | 'low' | 'medium' | 'high';
   deepThinkMode?: boolean;
-  planMode?: boolean;
+  permissionMode?: PermissionMode;
   temperature?: number;
   topP?: number;
   topK?: number;
@@ -29,7 +30,7 @@ export function useTextMessageHandler({
   selectedModel,
   thinkingEffort,
   deepThinkMode,
-  planMode,
+  permissionMode,
   temperature,
   topP,
   topK,
@@ -76,7 +77,7 @@ export function useTextMessageHandler({
         params: {
           thinking_effort: thinkingEffort,
           thinking_mode: deepThinkMode ? 'deep_think' : undefined,
-          plan_mode: planMode || undefined,
+          permission_mode: permissionMode || 'auto',
           temperature,
           top_p: topP,
           top_k: topK,
