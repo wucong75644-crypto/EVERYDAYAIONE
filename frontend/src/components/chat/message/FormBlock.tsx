@@ -39,9 +39,9 @@ function TextField({
       placeholder={field.placeholder}
       className={cn(
         'w-full rounded-[var(--s-radius-control)] border px-3 py-2 text-sm',
-        'border-[var(--c-border)] bg-[var(--c-surface)]',
-        'text-[var(--c-text-primary)]',
-        'focus:border-[var(--c-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--c-accent)]',
+        'border-border-default bg-surface',
+        'text-text-primary',
+        'focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent',
         'transition-colors duration-150',
       )}
     />
@@ -65,9 +65,9 @@ function TextareaField({
       rows={3}
       className={cn(
         'w-full rounded-[var(--s-radius-control)] border px-3 py-2 text-sm resize-none',
-        'border-[var(--c-border)] bg-[var(--c-surface)]',
-        'text-[var(--c-text-primary)]',
-        'focus:border-[var(--c-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--c-accent)]',
+        'border-border-default bg-surface',
+        'text-text-primary',
+        'focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent',
         'transition-colors duration-150',
       )}
     />
@@ -89,9 +89,9 @@ function SelectField({
       onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange(e.target.value)}
       className={cn(
         'w-full rounded-[var(--s-radius-control)] border px-3 py-2 text-sm',
-        'border-[var(--c-border)] bg-[var(--c-surface)]',
-        'text-[var(--c-text-primary)]',
-        'focus:border-[var(--c-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--c-accent)]',
+        'border-border-default bg-surface',
+        'text-text-primary',
+        'focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent',
         'transition-colors duration-150 appearance-none',
         'bg-no-repeat bg-[length:16px] bg-[right_8px_center]',
       )}
@@ -123,9 +123,9 @@ function TimeField({
       onChange={(e) => onChange(e.target.value)}
       className={cn(
         'w-40 rounded-[var(--s-radius-control)] border px-3 py-2 text-sm',
-        'border-[var(--c-border)] bg-[var(--c-surface)]',
-        'text-[var(--c-text-primary)]',
-        'focus:border-[var(--c-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--c-accent)]',
+        'border-border-default bg-surface',
+        'text-text-primary',
+        'focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent',
         'transition-colors duration-150',
       )}
     />
@@ -151,9 +151,9 @@ function NumberField({
       max={31}
       className={cn(
         'w-24 rounded-[var(--s-radius-control)] border px-3 py-2 text-sm',
-        'border-[var(--c-border)] bg-[var(--c-surface)]',
-        'text-[var(--c-text-primary)]',
-        'focus:border-[var(--c-accent)] focus:outline-none focus:ring-1 focus:ring-[var(--c-accent)]',
+        'border-border-default bg-surface',
+        'text-text-primary',
+        'focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent',
         'transition-colors duration-150',
       )}
     />
@@ -191,8 +191,8 @@ function CheckboxGroupField({
               'rounded-[var(--s-radius-control)] border px-3 py-1.5 text-sm',
               'transition-all duration-150',
               checked
-                ? 'border-[var(--c-accent)] bg-[var(--c-accent)] text-white'
-                : 'border-[var(--c-border)] bg-[var(--c-surface)] text-[var(--c-text-secondary)] hover:border-[var(--c-accent)] hover:text-[var(--c-text-primary)]',
+                ? 'border-accent bg-accent text-text-on-accent'
+                : 'border-border-default bg-surface text-text-secondary hover:border-accent hover:text-text-primary',
             )}
           >
             {opt.label}
@@ -302,7 +302,7 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
       transition={SOFT_SPRING}
       className={cn(
         'my-3 rounded-[var(--s-radius-card)] border overflow-hidden',
-        'border-[var(--c-border)] bg-[var(--c-surface)]',
+        'border-border-default bg-surface',
         'shadow-sm',
       )}
     >
@@ -310,19 +310,19 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
       <div
         className={cn(
           'flex items-center gap-2 px-4 py-3',
-          'border-b border-[var(--c-border)]',
-          'bg-[var(--c-surface-raised)]',
+          'border-b border-border-default',
+          'bg-surface-elevated',
         )}
       >
-        <Calendar size={16} className="text-[var(--c-accent)]" />
-        <span className="text-sm font-medium text-[var(--c-text-primary)]">
+        <Calendar size={16} className="text-accent" />
+        <span className="text-sm font-medium text-text-primary">
           {form.title}
         </span>
       </div>
 
       {/* 描述 */}
       {form.description && (
-        <p className="px-4 pt-3 text-xs text-[var(--c-text-tertiary)]">
+        <p className="px-4 pt-3 text-xs text-text-tertiary">
           {form.description}
         </p>
       )}
@@ -343,7 +343,7 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
                 transition={{ duration: 0.15 }}
               >
                 {field.label && (
-                  <label className="mb-1 block text-xs font-medium text-[var(--c-text-secondary)]">
+                  <label className="mb-1 block text-xs font-medium text-text-secondary">
                     {field.label}
                     {field.required && (
                       <span className="ml-0.5 text-red-500">*</span>
@@ -406,8 +406,8 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
       <div
         className={cn(
           'flex items-center gap-3 px-4 py-3',
-          'border-t border-[var(--c-border)]',
-          'bg-[var(--c-surface-raised)]',
+          'border-t border-border-default',
+          'bg-surface-elevated',
         )}
       >
         <button
@@ -416,7 +416,7 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
           disabled={submitting}
           className={cn(
             'flex flex-1 items-center justify-center gap-1.5 rounded-[var(--s-radius-control)] px-4 py-2 text-sm font-medium',
-            'bg-[var(--c-accent)] text-white',
+            'bg-accent text-text-on-accent',
             'hover:opacity-90 active:opacity-80',
             'disabled:opacity-50 disabled:cursor-not-allowed',
             'transition-opacity duration-150',
@@ -439,9 +439,9 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
           onClick={handleCancel}
           className={cn(
             'flex items-center justify-center gap-1.5 rounded-[var(--s-radius-control)] px-4 py-2 text-sm',
-            'border border-[var(--c-border)]',
-            'text-[var(--c-text-secondary)] hover:text-[var(--c-text-primary)]',
-            'hover:bg-[var(--c-surface-hover)]',
+            'border border-border-default',
+            'text-text-secondary hover:text-text-primary',
+            'hover:bg-hover',
             'transition-colors duration-150',
           )}
         >
