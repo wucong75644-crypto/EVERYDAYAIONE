@@ -107,6 +107,8 @@ _TIME_RANGE_RE = re.compile(
 # _sanitize_params 中已做特殊校验/变换的参数，透传逻辑跳过这些 key
 _COMPLEX_KEYS = frozenset({"mode", "doc_type", "time_range", "group_by", "extra_fields",
                             "fields"})  # fields: 向后兼容旧名，映射到 extra_fields
+# list[dict] 类型的参数白名单（_sanitize_params 需特殊处理）
+_LIST_DICT_PARAMS = frozenset({"numeric_filters", "exclude_filters"})
 
 
 def _sanitize_params(params: dict) -> dict:
@@ -172,8 +174,11 @@ def _sanitize_params(params: dict) -> dict:
             clean[key] = value
         elif isinstance(value, str) and value:
             clean[key] = value
-        elif isinstance(value, list) and value and all(isinstance(v, str) for v in value):
-            clean[key] = value
+        elif isinstance(value, list) and value:
+            if key in _LIST_DICT_PARAMS and all(isinstance(v, dict) for v in value):
+                clean[key] = value
+            elif all(isinstance(v, str) for v in value):
+                clean[key] = value
 
     return clean
 
@@ -266,8 +271,27 @@ _PARAM_DEFINITIONS = (
     "- include_invalid: 布尔值，默认 false。仅当用户明确要求'包含全部'或'不排除刷单'时设为 true。\n"
     "- is_scalping: 布尔值，默认 false。用户查'刷单''空包'时设为 true。\n"
     "\n"
+    "【数值过滤（可选，用户提到数量/金额/重量等数值条件时提取）】\n"
+    "- numeric_filters: 数值条件数组，格式 [{\"field\":\"字段名\",\"op\":\"操作符\",\"value\":数值}]\n"
+    "  field 可选: quantity(数量) / amount(金额) / price(单价) / cost(成本) / weight(重量) / "
+    "pay_amount(实付) / gross_profit(毛利) / refund_money(退款额) / post_fee(运费)\n"
+    "  op 可选: gt(大于) / gte(>=) / lt(<) / lte(<=) / between(区间)\n"
+    "  value: 数字；between 时为 [min, max]\n"
+    "  关键词映射：不足/低于/少于/小于/以下 → lt；超过/多于/大于/以上 → gt；之间/到 → between\n"
+    "\n"
+    "【否定/排除过滤（可选，用户说'不是/非/除了/排除'时提取）】\n"
+    "- exclude_filters: 排除条件数组，格式 [{\"field\":\"字段名\",\"value\":\"排除值\"}]\n"
+    "  单值: [{\"field\":\"platform\",\"value\":\"taobao\"}] → platform != taobao\n"
+    "  多值: [{\"field\":\"platform\",\"value\":[\"taobao\",\"pdd\"]}] → platform NOT IN (taobao, pdd)\n"
+    "\n"
+    "【空值检查（可选，用户说'没有/为空/缺少/未填'时提取）】\n"
+    "- null_fields: 要筛选为空的字段名列表，如 [\"express_no\"]\n"
+    "\n"
     "【展示控制】\n"
     "- group_by: shop/platform/product/supplier/warehouse/status（可选，仅 summary 模式）\n"
+    "- sort_by: 排序字段（如 quantity/amount，默认按时间降序）\n"
+    "- sort_dir: asc(升序) / desc(降序，默认)\n"
+    "- limit: 返回条数上限（\"前10名\"→limit:10，默认20）\n"
     "- extra_fields: 在默认列基础上追加的额外列（可选，绝大多数查询不需要设置）\n"
     "  默认已返回：单据编号/商品编码/商品名称/数量/金额/状态/时间等核心列\n"
     "  仅当用户明确要求看以下额外信息时才设置：\n"
@@ -330,7 +354,23 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         '"time_range":"2026-01-21 ~ 2026-04-21","buyer_nick":"张三"}}\n\n'
         "示例8（因质量问题的退货）：\n"
         '{"domain": "aftersale", "params": {"doc_type":"aftersale","mode":"export",'
-        '"time_range":"2026-04-01 ~ 2026-04-17","text_reason":"质量"}}'
+        '"time_range":"2026-04-01 ~ 2026-04-17","text_reason":"质量"}}\n\n'
+        "示例9（库存不足10件的商品）：\n"
+        '{"domain": "warehouse", "params": {"doc_type":"shelf","mode":"export",'
+        '"time_range":"2026-04-17 ~ 2026-04-17",'
+        '"numeric_filters":[{"field":"quantity","op":"lt","value":10}]}}\n\n'
+        "示例10（金额最高的10笔订单）：\n"
+        '{"domain": "trade", "params": {"doc_type":"order","mode":"export",'
+        '"time_range":"2026-04-17 ~ 2026-04-17",'
+        '"sort_by":"amount","sort_dir":"desc","limit":10}}\n\n'
+        "示例11（除了淘宝平台的订单）：\n"
+        '{"domain": "trade", "params": {"doc_type":"order","mode":"summary",'
+        '"time_range":"2026-04-17 ~ 2026-04-17",'
+        '"exclude_filters":[{"field":"platform","value":"taobao"}]}}\n\n'
+        "示例12（没有快递单号的已发货订单）：\n"
+        '{"domain": "trade", "params": {"doc_type":"order","mode":"export",'
+        '"time_range":"2026-04-17 ~ 2026-04-17",'
+        '"order_status":"SELLER_SEND_GOODS","null_fields":["express_no"]}}'
     )
 
 
@@ -416,7 +456,24 @@ def build_multi_extract_prompt(query: str, now_str: str = "") -> str:
         '"_expected_output":"订单数据","_dependencies":[1],'
         '"_required_input":{"from_step":1,"field":"product_code"}}}'
         '],"compute_hint":"先查供应商采购商品获取编码，再用编码查订单",'
-        '"dependency":"serial"}'
+        '"dependency":"serial"}\n\n'
+        "示例7（单域：库存不足10件的商品按数量排序）：\n"
+        '{"steps":[{"domain":"warehouse","params":{"doc_type":"shelf",'
+        '"mode":"export","time_range":"2026-04-17 ~ 2026-04-17",'
+        '"numeric_filters":[{"field":"quantity","op":"lt","value":10}],'
+        '"sort_by":"quantity","sort_dir":"asc","limit":50}}]}\n\n'
+        "示例8（单域：除了淘宝和拼多多的订单）：\n"
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '"mode":"summary","time_range":"2026-04-17 ~ 2026-04-17",'
+        '"exclude_filters":[{"field":"platform","value":["taobao","pdd"]}]}}]}\n\n'
+        "示例9（单域：没有快递单号的已发货订单）：\n"
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '"mode":"export","time_range":"2026-04-17 ~ 2026-04-17",'
+        '"order_status":"SELLER_SEND_GOODS","null_fields":["express_no"]}}]}\n\n'
+        "示例10（单域：金额最高的10笔订单）：\n"
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '"mode":"export","time_range":"2026-04-17 ~ 2026-04-17",'
+        '"sort_by":"amount","sort_dir":"desc","limit":10}}]}'
     )
 
 

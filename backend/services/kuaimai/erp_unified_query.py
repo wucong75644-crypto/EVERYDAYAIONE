@@ -134,6 +134,10 @@ class UnifiedQueryEngine:
         if sort_dir not in ("asc", "desc"):
             sort_dir = "desc"
 
+        # limit 归一化（≤0 无合法语义，回退默认值）
+        if not isinstance(limit, int) or limit <= 0:
+            limit = 20
+
         # extra_fields 白名单校验（追加到默认列的额外列）
         if extra_fields:
             valid_fields = set(COLUMN_WHITELIST.keys()) | EXPORT_COLUMN_NAMES
@@ -156,6 +160,7 @@ class UnifiedQueryEngine:
             return await self._summary(
                 doc_type, validated, tr, group_by, request_ctx,
                 include_invalid=include_invalid,
+                sort_by=sort_by, sort_dir=sort_dir, limit=limit,
             )
         else:
             return await self._export(
@@ -163,6 +168,7 @@ class UnifiedQueryEngine:
                 user_id, conversation_id, request_ctx,
                 include_invalid=include_invalid,
                 push_thinking=push_thinking,
+                sort_by=sort_by, sort_dir=sort_dir,
             )
 
     # ── Summary 模式 ──────────────────────────────────
@@ -172,6 +178,9 @@ class UnifiedQueryEngine:
         tr: TimeRange, group_by: list[str] | None,
         request_ctx: Optional[RequestContext],
         include_invalid: bool = False,
+        sort_by: str | None = None,
+        sort_dir: str = "desc",
+        limit: int = 20,
     ) -> ToolOutput:
         # 订单统计走分类引擎，但前提是所有 filter 字段都被 RPC 支持
         if doc_type == "order":
@@ -208,7 +217,7 @@ class UnifiedQueryEngine:
             "p_time_col": tr.time_col,
             "p_shop": p_shop, "p_platform": p_platform,
             "p_supplier": p_supplier, "p_warehouse": p_warehouse,
-            "p_group_by": rpc_group, "p_limit": 20,
+            "p_group_by": rpc_group, "p_limit": limit,
             "p_org_id": self.org_id,
             "p_filters": _json.dumps(dsl) if dsl else None,
         }
@@ -303,6 +312,8 @@ class UnifiedQueryEngine:
         request_ctx: Optional[RequestContext],
         include_invalid: bool = False,
         push_thinking: Any = None,
+        sort_by: str | None = None,
+        sort_dir: str = "desc",
     ) -> ToolOutput:
         type_name = DOC_TYPE_CN.get(doc_type, doc_type)
         # include_invalid 在 export 模式预留（与 summary 语义一致：
@@ -337,9 +348,8 @@ class UnifiedQueryEngine:
             doc_type, user_id, self.org_id, conversation_id,
         )
 
-        # export = DuckDB 流式导出，固定用 EXPORT_MAX（100万行）。
-        # 上游 limit=20 是 summary 默认值，export 无视。
-        max_rows = EXPORT_MAX
+        # export 行数：用户指定 limit 与安全上限取小值（入口已保证 limit > 0）
+        max_rows = min(limit, EXPORT_MAX)
 
         # 构建 DuckDB SQL
         select_sql = build_pii_select(safe_fields, cn_header=True)
@@ -370,9 +380,14 @@ class UnifiedQueryEngine:
                 f"SELECT {select_sql} FROM pg.public.erp_document_items "
                 f"WHERE {where_sql}"
             )
-        # ORDER BY 用中文别名（子查询 AS 后外层只能用别名）
-        order_col = _FIELD_LABEL_CN.get(tr.time_col, tr.time_col)
-        query = f'SELECT * FROM ({inner}) sub ORDER BY "{order_col}" DESC LIMIT {max_rows}'
+        # ORDER BY：优先用 sort_by，降级到 time_col（中文别名）
+        if sort_by and sort_by in COLUMN_WHITELIST:
+            order_col = _FIELD_LABEL_CN.get(sort_by, sort_by)
+            order_dir = sort_dir.upper()
+        else:
+            order_col = _FIELD_LABEL_CN.get(tr.time_col, tr.time_col)
+            order_dir = "DESC"
+        query = f'SELECT * FROM ({inner}) sub ORDER BY "{order_col}" {order_dir} LIMIT {max_rows}'
 
         # DuckDB 流式导出 → staging（子进程隔离，崩溃不影响 chat worker）
         start = _time.monotonic()

@@ -149,6 +149,30 @@ class TestSanitizeParamsPassthrough:
         result = _sanitize_params({"tags": ["a", "b"]})
         assert result["tags"] == ["a", "b"]
 
+    # ── list[dict] 白名单透传 ──
+
+    def test_numeric_filters_list_dict_passed(self):
+        """numeric_filters 是 list[dict]，在白名单内应透传。"""
+        nf = [{"field": "quantity", "op": "lt", "value": 10}]
+        result = _sanitize_params({"numeric_filters": nf})
+        assert result["numeric_filters"] == nf
+
+    def test_exclude_filters_list_dict_passed(self):
+        """exclude_filters 是 list[dict]，在白名单内应透传。"""
+        ef = [{"field": "platform", "value": "taobao"}]
+        result = _sanitize_params({"exclude_filters": ef})
+        assert result["exclude_filters"] == ef
+
+    def test_list_dict_non_whitelisted_key_rejected(self):
+        """非白名单 key 的 list[dict] 应被丢弃。"""
+        result = _sanitize_params({"unknown_param": [{"a": 1}]})
+        assert "unknown_param" not in result
+
+    def test_list_mixed_types_rejected(self):
+        """list 中混合 str+dict 应被丢弃（既不是纯 str 也不是纯 dict）。"""
+        result = _sanitize_params({"numeric_filters": [{"field": "qty"}, "bad"]})
+        assert "numeric_filters" not in result
+
     # ── group_by str→list 转换（Bug 1 修复验证）──
 
     def test_group_by_string_to_list(self):
