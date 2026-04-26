@@ -255,6 +255,40 @@ class ChatToolMixin:
                 )
                 return (tc, result, result.is_failure)
 
+            # FormBlockResult 通道：类型化表单结果 → content_block_add 推送
+            from services.scheduler.chat_task_manager import FormBlockResult
+            if isinstance(result, FormBlockResult):
+                from schemas.websocket_builders import build_content_block_add
+                await ws_manager.send_to_task_or_user(
+                    task_id, user_id,
+                    build_content_block_add(
+                        task_id=task_id,
+                        conversation_id=conversation_id,
+                        message_id=message_id,
+                        block=result.form,
+                    ),
+                )
+                llm_text = result.llm_hint
+                await ws_manager.send_to_task_or_user(
+                    task_id, user_id,
+                    build_tool_result(
+                        task_id=task_id,
+                        conversation_id=conversation_id,
+                        message_id=message_id,
+                        tool_name=tool_name,
+                        tool_call_id=tool_call_id,
+                        success=True,
+                        summary="表单已展示",
+                        turn=turn,
+                    ),
+                )
+                self._emit_tool_audit(
+                    task_id, conversation_id, user_id, tool_name,
+                    tool_call_id, turn, args, len(json.dumps(result.form)),
+                    _audit_elapsed, "success",
+                )
+                return (tc, llm_text, False)
+
             # 普通工具（str 路径）
             # 提取 [FILE] 标记 → FilePart 暂存到 ChatHandler（不经过 LLM）
             result = self._extract_file_parts(result)

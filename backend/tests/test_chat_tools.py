@@ -198,8 +198,8 @@ class TestCoreToolsExpanded:
     def test_core_tools_count(self):
         from config.chat_tools import get_core_tools
         tools = get_core_tools(org_id="test")
-        # 14 个核心工具（erp_analyze 加入 GENERAL 域后通过 domain filter）
-        assert len(tools) == 14
+        # 15 个核心工具（+manage_scheduled_task）
+        assert len(tools) == 15
 
     def test_core_tools_include_file_tools(self):
         from config.chat_tools import get_core_tools
@@ -217,6 +217,11 @@ class TestCoreToolsExpanded:
         names = {t["function"]["name"] for t in get_core_tools(org_id="test")}
         assert "generate_image" in names
         assert "generate_video" in names
+
+    def test_core_tools_include_scheduled_task(self):
+        from config.chat_tools import get_core_tools
+        names = {t["function"]["name"] for t in get_core_tools(org_id="test")}
+        assert "manage_scheduled_task" in names
 
 
 class TestToolsForMode:

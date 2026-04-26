@@ -45,6 +45,10 @@ class WSMessageType(str, Enum):
     ASK_USER_RESPONSE = "ask_user_response"      # 前端 → 后端：用户回答
     ASK_USER_DISMISS = "ask_user_dismiss"         # 前端 → 后端：用户忽略/跳过
 
+    # === 表单交互 ===
+    FORM_SUBMIT = "form_submit"                   # 前端 → 后端：表单提交
+    FORM_SUBMIT_RESULT = "form_submit_result"     # 后端 → 前端：表单提交结果
+
     # === 用户打断 ===
     USER_STEER = "user_steer"                     # 前端 → 后端：打断当前执行
 
