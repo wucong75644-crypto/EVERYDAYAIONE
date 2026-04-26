@@ -1668,7 +1668,12 @@
       "Bash(venv/bin/python -m pytest tests/test_fast_export.py tests/test_batch_export.py tests/test_query_preflight.py tests/test_unified_query.py tests/test_erp_agent.py -q --tb=short)",
       "Bash(venv/bin/python -m pytest tests/test_preflight_integration.py -v --tb=short)",
       "Bash(venv/bin/python -m pytest tests/test_preflight_integration.py -q --tb=short)",
-      "Bash(./git-push.sh \"feat: 查询预检防御层——EXPLAIN预检+三级路由（快路径PG直查/标准DuckDB/分批导出）+REJECTED兜底\")"
+      "Bash(./git-push.sh \"feat: 查询预检防御层——EXPLAIN预检+三级路由（快路径PG直查/标准DuckDB/分批导出）+REJECTED兜底\")",
+      "Bash(grep -n \"WarehouseAgent\\\\|warehouse_agent\" /Users/wucong/EVERYDAYAIONE/backend/tests/*.py)",
+      "Bash(grep -l \"batch_stock\\\\|platform_map\\\\|daily_stats\\\\|order_log\\\\|aftersale_log\" /Users/wucong/EVERYDAYAIONE/backend/tests/*.py)",
+      "Bash(venv/bin/python -m pytest tests/ -q --tb=line --ignore=tests/test_sandbox_executor.py --ignore=tests/test_sandbox_functions.py)",
+      "Bash(venv/bin/python -m pytest tests/ -q --tb=short --ignore=tests/test_sandbox_executor.py --ignore=tests/test_sandbox_functions.py --ignore=tests/test_orm_query.py)",
+      "Bash(./git-push.sh \"refactor: 预检防御层简化——删除快路径/分批导出，只保留EXPLAIN预检+超3万行拒绝，让主Agent决策\")"
     ],
     "additionalDirectories": [
       "/tmp"

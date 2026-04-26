@@ -1,209 +1,142 @@
 """查询预检防御层单测
 
-覆盖：EXPLAIN 估算 + 三级路由决策 + 降级逻辑
+覆盖：EXPLAIN 估算 + 超阈值拒绝 + 降级逻辑
 """
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from services.kuaimai.erp_query_preflight import (
-    BATCH_THRESHOLD,
-    FAST_THRESHOLD,
-    REJECT_THRESHOLD,
+    EXPORT_ROW_LIMIT,
     PreflightResult,
-    QueryRoute,
-    _decide_route,
     _explain_estimate,
     preflight_check,
 )
 
 
-# ── _decide_route 路由决策 ─────────────────────────
+def _make_db(plan_rows: int):
+    """构造 mock db，EXPLAIN 返回指定 plan_rows"""
+    mock_cur = MagicMock()
+    mock_cur.fetchone.return_value = {
+        "QUERY PLAN": [{"Plan": {"Plan Rows": plan_rows}}]
+    }
+    mock_cur.__enter__ = lambda s: s
+    mock_cur.__exit__ = MagicMock(return_value=False)
 
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value = mock_cur
+    mock_conn.__enter__ = lambda s: s
+    mock_conn.__exit__ = MagicMock(return_value=False)
 
-class TestDecideRoute:
-    """三级路由决策逻辑"""
+    mock_pool = MagicMock()
+    mock_pool.connection.return_value = mock_conn
 
-    def test_small_summary_goes_fast(self):
-        assert _decide_route(500, "summary") == QueryRoute.FAST
-
-    def test_small_export_goes_fast(self):
-        assert _decide_route(500, "export") == QueryRoute.FAST
-
-    def test_boundary_fast_threshold(self):
-        """恰好等于 FAST_THRESHOLD → STANDARD（不走快路径）"""
-        assert _decide_route(FAST_THRESHOLD, "export") == QueryRoute.STANDARD
-
-    def test_below_fast_threshold(self):
-        assert _decide_route(FAST_THRESHOLD - 1, "export") == QueryRoute.FAST
-
-    def test_medium_summary_goes_standard(self):
-        """summary 模式不管行数多大都走 STANDARD（RPC 在 PG 侧执行）"""
-        assert _decide_route(50_000, "summary") == QueryRoute.STANDARD
-
-    def test_large_summary_still_standard(self):
-        """summary 即使超过 BATCH_THRESHOLD 也走 STANDARD"""
-        assert _decide_route(100_000, "summary") == QueryRoute.STANDARD
-
-    def test_medium_export_goes_standard(self):
-        assert _decide_route(20_000, "export") == QueryRoute.STANDARD
-
-    def test_boundary_batch_threshold(self):
-        """恰好等于 BATCH_THRESHOLD → STANDARD"""
-        assert _decide_route(BATCH_THRESHOLD, "export") == QueryRoute.STANDARD
-
-    def test_above_batch_threshold_export_goes_batch(self):
-        assert _decide_route(BATCH_THRESHOLD + 1, "export") == QueryRoute.BATCH
-
-    def test_very_large_export_goes_batch(self):
-        assert _decide_route(300_000, "export") == QueryRoute.BATCH
-
-    def test_zero_rows_goes_fast(self):
-        assert _decide_route(0, "export") == QueryRoute.FAST
-
-    def test_negative_rows_goes_fast(self):
-        """异常的负数 → FAST（保守处理）"""
-        assert _decide_route(-1, "export") == QueryRoute.FAST
-
-
-# ── _explain_estimate EXPLAIN 预检 ────────────────
-
-
-class TestExplainEstimate:
-    """EXPLAIN 估算行数（mock db.pool）"""
-
-    def _make_db(self, plan_rows: int):
-        """构造 mock db，返回指定 plan_rows"""
-        mock_cur = MagicMock()
-        mock_cur.fetchone.return_value = {
-            "QUERY PLAN": [{"Plan": {"Plan Rows": plan_rows}}]
-        }
-        mock_cur.__enter__ = lambda s: s
-        mock_cur.__exit__ = MagicMock(return_value=False)
-
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value = mock_cur
-        mock_conn.__enter__ = lambda s: s
-        mock_conn.__exit__ = MagicMock(return_value=False)
-
-        mock_pool = MagicMock()
-        mock_pool.connection.return_value = mock_conn
-
-        db = MagicMock()
-        db.pool = mock_pool
-        return db
-
-    def test_returns_plan_rows(self):
-        db = self._make_db(12345)
-        result = _explain_estimate(
-            db, "order", "pay_time",
-            "2026-04-01", "2026-05-01", "org-123",
-        )
-        assert result == 12345
-
-    def test_null_org_id(self):
-        """org_id=None 时 WHERE 用 IS NULL"""
-        db = self._make_db(100)
-        result = _explain_estimate(
-            db, "order", "pay_time",
-            "2026-04-01", "2026-05-01", None,
-        )
-        assert result == 100
-        # 验证 SQL 包含 IS NULL
-        call_args = db.pool.connection().__enter__().cursor().__enter__().execute.call_args
-        sql = call_args[0][0]
-        assert "org_id IS NULL" in sql
-
-    def test_sql_injection_safe(self):
-        """time_col 直接拼入 SQL，但 doc_type/start/end 走参数化"""
-        db = self._make_db(0)
-        _explain_estimate(
-            db, "order", "pay_time",
-            "2026-04-01", "2026-05-01", "org-123",
-        )
-        call_args = db.pool.connection().__enter__().cursor().__enter__().execute.call_args
-        params = call_args[0][1]
-        assert params["doc_type"] == "order"
-        assert params["start"] == "2026-04-01"
-
-
-# ── preflight_check 完整预检 ─────────────────────
+    db = MagicMock()
+    db.pool = mock_pool
+    return db
 
 
 class TestPreflightCheck:
-    """完整预检流程"""
+    """预检门卫：能做就做，做不了就拒绝"""
 
-    def _make_db(self, plan_rows: int):
-        mock_cur = MagicMock()
-        mock_cur.fetchone.return_value = {
-            "QUERY PLAN": [{"Plan": {"Plan Rows": plan_rows}}]
-        }
-        mock_cur.__enter__ = lambda s: s
-        mock_cur.__exit__ = MagicMock(return_value=False)
-
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value = mock_cur
-        mock_conn.__enter__ = lambda s: s
-        mock_conn.__exit__ = MagicMock(return_value=False)
-
-        mock_pool = MagicMock()
-        mock_pool.connection.return_value = mock_conn
-
-        db = MagicMock()
-        db.pool = mock_pool
-        return db
-
-    def test_small_export_routes_fast(self):
-        db = self._make_db(500)
+    def test_summary_always_ok(self):
+        """summary 模式不拦截，不调 EXPLAIN"""
+        db = MagicMock()  # 不需要 pool
         result = preflight_check(
             db, "order", "pay_time",
-            "2026-04-01", "2026-05-01", "org-123", "export",
+            "2026-04-01", "2026-05-01", "org-1", "summary",
         )
-        assert result.route == QueryRoute.FAST
-        assert result.estimated_rows == 500
+        assert result.ok is True
+        # summary 不调 EXPLAIN
+        db.pool.connection.assert_not_called()
 
-    def test_medium_export_routes_standard(self):
-        db = self._make_db(15_000)
+    def test_small_export_ok(self):
+        """export 预估 < 阈值 → 放行"""
+        db = _make_db(10_000)
         result = preflight_check(
             db, "order", "pay_time",
-            "2026-04-01", "2026-05-01", "org-123", "export",
+            "2026-04-01", "2026-05-01", "org-1", "export",
         )
-        assert result.route == QueryRoute.STANDARD
+        assert result.ok is True
+        assert result.estimated_rows == 10_000
 
-    def test_large_export_routes_batch(self):
-        db = self._make_db(100_000)
+    def test_boundary_at_limit_ok(self):
+        """恰好等于阈值 → 放行"""
+        db = _make_db(EXPORT_ROW_LIMIT)
         result = preflight_check(
             db, "order", "pay_time",
-            "2026-04-01", "2026-05-01", "org-123", "export",
+            "2026-04-01", "2026-05-01", "org-1", "export",
         )
-        assert result.route == QueryRoute.BATCH
+        assert result.ok is True
 
-    def test_reject_threshold_has_suggestions(self):
-        db = self._make_db(REJECT_THRESHOLD + 1)
+    def test_above_limit_rejected(self):
+        """超过阈值 → 拒绝 + 原因 + 建议"""
+        db = _make_db(EXPORT_ROW_LIMIT + 1)
         result = preflight_check(
             db, "order", "pay_time",
-            "2026-01-01", "2026-12-31", "org-123", "export",
+            "2026-04-01", "2026-05-01", "org-1", "export",
         )
-        assert result.route == QueryRoute.BATCH
-        assert result.reject_reason != ""
+        assert result.ok is False
+        assert "数据量过大" in result.reject_reason
         assert len(result.suggestions) > 0
 
-    def test_explain_failure_fallback_standard(self):
-        """EXPLAIN 失败 → 静默降级走 STANDARD"""
-        db = MagicMock()
-        db.pool.connection.side_effect = Exception("connection failed")
+    def test_large_data_rejected(self):
+        """30 万行 → 拒绝"""
+        db = _make_db(300_000)
         result = preflight_check(
             db, "order", "pay_time",
-            "2026-04-01", "2026-05-01", "org-123", "export",
+            "2026-04-01", "2026-05-01", "org-1", "export",
         )
-        assert result.route == QueryRoute.STANDARD
+        assert result.ok is False
+        assert result.estimated_rows == 300_000
+
+    def test_explain_failure_allows_execution(self):
+        """EXPLAIN 失败 → 静默放行（防御层不能成为新故障点）"""
+        db = MagicMock()
+        db.pool.connection.side_effect = Exception("connection lost")
+        result = preflight_check(
+            db, "order", "pay_time",
+            "2026-04-01", "2026-05-01", "org-1", "export",
+        )
+        assert result.ok is True
         assert result.estimated_rows == -1
 
-    def test_large_summary_stays_standard(self):
-        """summary 即使行数很大也走 STANDARD"""
-        db = self._make_db(300_000)
+    def test_null_org_id(self):
+        """org_id=None → EXPLAIN 用 IS NULL"""
+        db = _make_db(5_000)
         result = preflight_check(
             db, "order", "pay_time",
-            "2026-04-01", "2026-05-01", "org-123", "summary",
+            "2026-04-01", "2026-05-01", None, "export",
         )
-        assert result.route == QueryRoute.STANDARD
+        assert result.ok is True
+
+
+class TestExplainEstimate:
+    """EXPLAIN 估算行数"""
+
+    def test_returns_plan_rows(self):
+        db = _make_db(12345)
+        result = _explain_estimate(
+            db, "order", "pay_time",
+            "2026-04-01", "2026-05-01", "org-1",
+        )
+        assert result == 12345
+
+    def test_invalid_time_col_raises(self):
+        """非白名单时间列 → 拒绝（防 SQL 注入）"""
+        db = _make_db(0)
+        with pytest.raises(ValueError, match="invalid time_col"):
+            _explain_estimate(
+                db, "order", "'; DROP TABLE --",
+                "2026-04-01", "2026-05-01", "org-1",
+            )
+
+    def test_null_org_id_uses_is_null(self):
+        db = _make_db(100)
+        _explain_estimate(
+            db, "order", "pay_time",
+            "2026-04-01", "2026-05-01", None,
+        )
+        call_args = db.pool.connection().__enter__().cursor().__enter__().execute.call_args
+        sql = call_args[0][0]
+        assert "org_id IS NULL" in sql

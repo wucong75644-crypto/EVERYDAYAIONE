@@ -742,3 +742,56 @@ class TestMixedFilters:
         assert "eq" in ops, "platform/is_cancel should produce eq"
         assert "ne" in ops, "exclude_filters single value should produce ne"
         assert "is_null" in ops, "null_fields should produce is_null"
+
+
+# ============================================================
+# 新表查询字段（TEXT_EQ_FIELDS 扩展）
+# ============================================================
+
+
+class TestNewTableTextEqFields:
+    """新增 system_id/work_order_id/batch_no/num_iid → TEXT_EQ_FIELDS 映射。"""
+
+    def test_system_id_single(self):
+        filters, _ = params_to_filters({"system_id": "1234567890123456"})
+        f = [x for x in filters if x["field"] == "system_id"]
+        assert len(f) == 1
+        assert f[0]["op"] == "eq"
+        assert f[0]["value"] == "1234567890123456"
+
+    def test_system_id_multi(self):
+        filters, _ = params_to_filters({"system_id": "ID1,ID2"})
+        f = [x for x in filters if x["field"] == "system_id"]
+        assert f[0]["op"] == "in"
+        assert f[0]["value"] == ["ID1", "ID2"]
+
+    def test_work_order_id_single(self):
+        filters, _ = params_to_filters({"work_order_id": "WO-2026-001"})
+        f = [x for x in filters if x["field"] == "work_order_id"]
+        assert len(f) == 1
+        assert f[0]["op"] == "eq"
+
+    def test_batch_no(self):
+        filters, _ = params_to_filters({"batch_no": "BATCH-2026-0401"})
+        f = [x for x in filters if x["field"] == "batch_no"]
+        assert len(f) == 1
+        assert f[0]["op"] == "eq"
+
+    def test_num_iid(self):
+        filters, _ = params_to_filters({"num_iid": "123456789"})
+        f = [x for x in filters if x["field"] == "num_iid"]
+        assert len(f) == 1
+        assert f[0]["op"] == "eq"
+
+    def test_empty_value_ignored(self):
+        """空字符串不产生 filter"""
+        filters, _ = params_to_filters({"system_id": ""})
+        f = [x for x in filters if x["field"] == "system_id"]
+        assert len(f) == 0
+
+    def test_text_eq_fields_has_new_entries(self):
+        """常量校验：TEXT_EQ_FIELDS 包含 4 个新字段"""
+        assert "system_id" in TEXT_EQ_FIELDS
+        assert "work_order_id" in TEXT_EQ_FIELDS
+        assert "batch_no" in TEXT_EQ_FIELDS
+        assert "num_iid" in TEXT_EQ_FIELDS
