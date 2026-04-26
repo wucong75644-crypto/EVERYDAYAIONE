@@ -158,6 +158,36 @@ async def _load_push_targets(db: Any, user_id: str, org_id: str) -> List[Dict[st
     except Exception as e:
         logger.warning(f"load wecom_chat_targets failed: {e}")
 
+    # 企业同事（网页推送）
+    try:
+        members = db.table("org_members") \
+            .select("user_id") \
+            .eq("org_id", org_id) \
+            .eq("status", "active") \
+            .neq("user_id", user_id) \
+            .limit(50) \
+            .execute()
+        if members.data:
+            member_ids = [m["user_id"] for m in members.data]
+            users = db.table("users") \
+                .select("id, nickname") \
+                .in_("id", member_ids) \
+                .execute()
+            for u in (users.data or []):
+                nick = u.get("nickname", "")
+                if not nick:
+                    continue
+                targets.append({
+                    "label": f"同事 · {nick}（网页）",
+                    "value": json.dumps({
+                        "type": "web",
+                        "user_id": u["id"],
+                        "name": nick,
+                    }),
+                })
+    except Exception as e:
+        logger.warning(f"load org_members failed: {e}")
+
     return targets
 
 
