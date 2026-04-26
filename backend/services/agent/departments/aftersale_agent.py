@@ -85,7 +85,9 @@ class AftersaleAgent(DepartmentAgent):
 
     # ── DAG 分发 ──
 
-    def _classify_action(self, task: str, **_kwargs) -> str:
+    _DOC_TYPE_ACTION_MAP = {"aftersale": "aftersale_list"}
+
+    def _classify_action(self, task: str) -> str:
         t = task.lower()
         if any(kw in t for kw in ("退货率", "退款率", "return_rate")):
             return "return_rate"

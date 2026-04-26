@@ -544,8 +544,11 @@ class DepartmentAgent(ABC):
                 动态参数（product_code）从 context 提取，合并到 params。
         dag_mode=True 时禁止写操作。
         """
+        # action 路由：PlanBuilder 的 doc_type 优先，降级到关键词分类
         doc_type = (params or {}).get("doc_type")
-        action = self._classify_action(task, doc_type=doc_type)
+        action = self._DOC_TYPE_ACTION_MAP.get(doc_type, "") if doc_type else ""
+        if not action:
+            action = self._classify_action(task)
 
         # DAG 模式写保护：仅当 _classify_action 返回写 action 时阻断
         # keyword 匹配降级为审计日志（不阻断），因为：
@@ -662,11 +665,13 @@ class DepartmentAgent(ABC):
                 error_message=str(e),
             )
 
-    def _classify_action(self, task: str, doc_type: str | None = None) -> str:
-        """从任务描述关键词分类 action。子类应覆盖。
+    # doc_type → action 映射表（子类覆盖）。
+    # PlanBuilder 已精确判断 doc_type 时，直接查此表得到 action，
+    # 跳过 _classify_action 的关键词猜测，避免两套分类机制冲突。
+    _DOC_TYPE_ACTION_MAP: dict[str, str] = {}
 
-        doc_type: PlanBuilder 已精确判断的文档类型，子类可优先使用。
-        """
+    def _classify_action(self, task: str) -> str:
+        """从任务描述关键词分类 action。子类应覆盖。"""
         return "default"
 
     # 参数提取已内联到 execute()：静态从 Round.params，动态从 context
