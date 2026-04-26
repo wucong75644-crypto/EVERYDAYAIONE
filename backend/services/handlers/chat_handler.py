@@ -964,27 +964,16 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     )
 
     def _convert_content_parts_to_dicts(self, result):
-        """转换 ContentPart 为字典（支持 Text/Image/Video/File/ToolResult）"""
-        from schemas.message import FilePart, ImagePart, ToolResultPart, VideoPart
+        """转换 ContentPart 为字典
+
+        所有 Pydantic BaseModel 子类统一用 model_dump()，
+        不再逐类型手写字段映射——新增类型不会被静默跳过。
+        """
+        from pydantic import BaseModel
         dicts = []
         for p in result:
-            if isinstance(p, TextPart):
-                dicts.append({"type": "text", "text": p.text})
-            elif isinstance(p, ImagePart):
-                dicts.append({"type": "image", "url": p.url, "width": p.width, "height": p.height})
-            elif isinstance(p, VideoPart):
-                dicts.append({"type": "video", "url": p.url})
-            elif isinstance(p, FilePart):
-                dicts.append({
-                    "type": "file", "url": p.url,
-                    "name": p.name, "mime_type": p.mime_type,
-                    "size": p.size,
-                })
-            elif isinstance(p, ToolResultPart):
-                dicts.append({
-                    "type": "tool_result", "tool_name": p.tool_name,
-                    "text": p.text, "files": p.files,
-                })
+            if isinstance(p, BaseModel):
+                dicts.append(p.model_dump(exclude_none=True))
             elif isinstance(p, dict):
                 dicts.append(p)
         return dicts
