@@ -654,8 +654,8 @@ class TestDedupOverwrittenFiles:
         (tmp_path / "data (2).csv").write_bytes(b"x")
         assert SandboxExecutor._next_available_name(p).name == "data (3).csv"
 
-    def test_backup_scans_both_output_and_staging(self, tmp_path):
-        """backup 同时扫描 output_dir 和 staging_dir 两个目录"""
+    def test_backup_only_scans_output_dir(self, tmp_path):
+        """backup 只扫 OUTPUT_DIR，STAGING_DIR 中间文件不参与"""
         out_dir = tmp_path / "output"
         stg_dir = tmp_path / "staging"
         out_dir.mkdir()
@@ -670,9 +670,50 @@ class TestDedupOverwrittenFiles:
         )
         backups = executor._backup_existing_files()
 
-        assert len(backups) == 2
+        assert len(backups) == 1
         assert (out_dir / "a.xlsx.dedup_bak").exists()
-        assert (stg_dir / "b.csv.dedup_bak").exists()
+        assert not (stg_dir / "b.csv.dedup_bak").exists()
+
+    def test_upload_scan_dirs_only_output(self, tmp_path):
+        """_upload_scan_dirs 只包含 output_dir，不含 staging_dir"""
+        out_dir = tmp_path / "output"
+        stg_dir = tmp_path / "staging"
+        executor = SandboxExecutor(
+            timeout=5.0,
+            output_dir=str(out_dir),
+            staging_dir=str(stg_dir),
+        )
+        dirs = executor._upload_scan_dirs
+        assert dirs == [str(out_dir)]
+        assert str(stg_dir) not in dirs
+
+    @pytest.mark.asyncio
+    async def test_staging_dir_excluded_from_auto_upload(self, tmp_path):
+        """STAGING_DIR 中的文件不被 auto_upload 推送"""
+        out_dir = tmp_path / "output"
+        stg_dir = tmp_path / "staging"
+        out_dir.mkdir()
+        stg_dir.mkdir()
+        (stg_dir / "intermediate.xlsx").write_bytes(b"staging data")
+        (out_dir / "report.xlsx").write_bytes(b"user output")
+
+        uploaded = []
+
+        async def mock_upload(filename, size):
+            uploaded.append(filename)
+            return f"✅ {filename}"
+
+        executor = SandboxExecutor(
+            timeout=5.0,
+            output_dir=str(out_dir),
+            staging_dir=str(stg_dir),
+            upload_fn=mock_upload,
+        )
+        executor._snapshot_before = {}
+
+        await executor._auto_upload_new_files()
+        assert "report.xlsx" in uploaded
+        assert "intermediate.xlsx" not in uploaded
 
     @pytest.mark.asyncio
     async def test_dedup_runs_on_timeout(self, tmp_path):

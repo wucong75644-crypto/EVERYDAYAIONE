@@ -326,17 +326,14 @@ class SandboxExecutor:
 
     @property
     def _upload_scan_dirs(self) -> list[str]:
-        """auto_upload 监控的目录列表：OUTPUT_DIR + STAGING_DIR。
+        """auto_upload 监控的目录列表：仅 OUTPUT_DIR。
 
-        LLM 可能把输出文件写到 STAGING_DIR 而非 OUTPUT_DIR，
-        同时扫描两个目录保证无论写到哪里都能检测到。
-        parquet 等中间格式由 _AUTO_UPLOAD_EXTENSIONS 过滤。
+        STAGING_DIR 是中间数据目录（parquet/json 等），不应推送给用户。
+        工具描述已明确要求 LLM 将用户产出写到 OUTPUT_DIR。
         """
         dirs: list[str] = []
         if self._output_dir:
             dirs.append(self._output_dir)
-        if self._staging_dir and self._staging_dir != self._output_dir:
-            dirs.append(self._staging_dir)
         return dirs
 
     def _snapshot_output_files(self) -> dict[str, tuple[float, int]]:
