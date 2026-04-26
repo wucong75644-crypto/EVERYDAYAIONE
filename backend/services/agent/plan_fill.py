@@ -16,13 +16,37 @@ from loguru import logger
 # ── L2 platform 自动补全 ──
 
 
+def _is_negated(query: str, keyword: str) -> bool:
+    """检查 query 中 keyword 前面是否有否定词（非/不是/除了/排除/不含）。
+
+    "非" 单字必须紧接 keyword（"非淘宝"✓ "非常好的淘宝"✗），
+    多字否定词在 keyword 前 4 字符内出现即匹配。
+    """
+    idx = query.find(keyword)
+    if idx < 0:
+        return False
+    prefix = query[max(0, idx - 4):idx]
+    # 多字否定词：前 4 字符内出现即可
+    if any(neg in prefix for neg in ("不是", "除了", "排除", "不含")):
+        return True
+    # 单字 "非"：必须紧接 keyword（idx-1 位置）
+    return idx >= 1 and query[idx - 1] == "非"
+
+
 def fill_platform(params: dict, query: str) -> None:
     """L2 意图完整性：从用户查询文本补全 LLM 漏提取的 platform。
 
     纯函数，不依赖 ERPAgent 实例。供外部调用或测试使用。
+    仅补全正向平台过滤（"淘宝订单"→platform=tb），
+    否定语境（"非淘宝""除了京东"）和已有排除条件时不补全。
     """
     if params.get("platform"):
-        return  # AI 已提取，不覆盖
+        return  # AI 已提取 platform 正向过滤，不覆盖
+
+    # exclude_filters 中已包含 platform → LLM 已处理平台排除条件，不补全
+    for ef in params.get("exclude_filters", []):
+        if ef.get("field") == "platform":
+            return
 
     from services.kuaimai.erp_unified_schema import PLATFORM_NORMALIZE
     cn_keys = [
@@ -31,7 +55,7 @@ def fill_platform(params: dict, query: str) -> None:
     ]
     matched: set[str] = set()
     for key in cn_keys:
-        if key in query:
+        if key in query and not _is_negated(query, key):
             matched.add(PLATFORM_NORMALIZE[key])
 
     if len(matched) == 1:
