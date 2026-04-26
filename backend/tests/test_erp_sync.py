@@ -2178,7 +2178,7 @@ class TestBackfillItemNames:
     """_backfill_item_names：从 erp_products.title 补全空 item_name"""
 
     def _make_svc(self, products: list = None, org_id: str = None):
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         if products:
             db.set_table_data("erp_products", products)
         svc = MagicMock()
