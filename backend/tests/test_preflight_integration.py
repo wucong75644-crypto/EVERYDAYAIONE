@@ -1,11 +1,7 @@
 """预检防御层集成测试
 
 验证 _export() 内部的预检门卫：DuckDB 启动前拦截大数据量请求。
-门的位置在 _export 内部，不在 execute() 入口。
 """
-
-import tempfile
-from pathlib import Path
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,19 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from services.kuaimai.erp_query_preflight import EXPORT_ROW_LIMIT
 
 
-@pytest.fixture()
-def mock_staging(tmp_path):
-    """mock staging 路径到临时目录（需要显式使用）"""
-    staging_path = tmp_path / "test_export.parquet"
-    with patch(
-        "services.kuaimai.erp_duckdb_helpers.resolve_export_path",
-        return_value=(tmp_path, "rel/path", staging_path, "test_export.parquet"),
-    ):
-        yield staging_path
-
-
 def _make_db_with_explain(plan_rows: int):
-    """构造 mock db，EXPLAIN 返回指定 plan_rows，RPC 也 mock。"""
+    """构造 mock db，EXPLAIN 返回指定 plan_rows。"""
     mock_cur = MagicMock()
     mock_cur.fetchone.return_value = {
         "QUERY PLAN": [{"Plan": {"Plan Rows": plan_rows}}]
@@ -55,32 +40,10 @@ class TestPreflightGateInExport:
     """预检门卫在 _export 内部，DuckDB 子进程启动前"""
 
     @pytest.mark.asyncio
-    async def test_small_data_passes_to_duckdb(self, mock_staging):
-        """预估 < 阈值 → DuckDB 子进程正常启动"""
+    async def test_large_data_rejected_before_duckdb(self):
+        """预估 > 阈值 → 拒绝，DuckDB 子进程不启动"""
         from services.kuaimai.erp_unified_query import UnifiedQueryEngine
-
-        db = _make_db_with_explain(10_000)
-        engine = UnifiedQueryEngine(db=db, org_id="org-1")
-
-        with patch("services.kuaimai.erp_export_subprocess.subprocess_export",
-                    new_callable=AsyncMock) as mock_sub:
-            mock_sub.return_value = {"row_count": 100, "size_kb": 5.0}
-            # profile 也要 mock
-            with patch("core.duckdb_engine.get_duckdb_engine") as mock_engine:
-                mock_engine.return_value.profile_parquet.return_value = {
-                    "row_count": 100, "columns": [], "top_values": {},
-                }
-                await engine.execute(
-                    doc_type="order", mode="export",
-                    filters=[{"field": "pay_time", "op": "gte", "value": "2026-04-25"},
-                             {"field": "pay_time", "op": "lt", "value": "2026-04-26"}],
-                )
-                mock_sub.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_large_data_large_limit_rejected(self, mock_staging):
-        """预估 > 阈值 且 limit 大（默认 20）→ 拒绝，DuckDB 不启动"""
-        from services.kuaimai.erp_unified_query import UnifiedQueryEngine
+        from services.agent.tool_output import OutputStatus
 
         db = _make_db_with_explain(300_000)
         engine = UnifiedQueryEngine(db=db, org_id="org-1")
@@ -92,12 +55,15 @@ class TestPreflightGateInExport:
                 filters=[{"field": "pay_time", "op": "gte", "value": "2026-04-01"},
                          {"field": "pay_time", "op": "lt", "value": "2026-05-01"}],
             )
+            # DuckDB 子进程不应被调用
             mock_sub.assert_not_called()
+            # 返回 REJECTED
+            assert str(result.status) == "rejected"
             assert "数据量过大" in result.summary
 
     @pytest.mark.asyncio
-    async def test_large_data_small_limit_also_rejected(self, mock_staging):
-        """预估 > 阈值 + limit=5 → 仍然拒绝（DuckDB 远程扫描 + 复杂 SQL 会超时）"""
+    async def test_small_limit_also_rejected(self):
+        """预估 > 阈值 + limit=5 → 仍然拒绝"""
         from services.kuaimai.erp_unified_query import UnifiedQueryEngine
 
         db = _make_db_with_explain(300_000)
@@ -112,6 +78,28 @@ class TestPreflightGateInExport:
             )
             mock_sub.assert_not_called()
             assert "数据量过大" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_boundary_at_limit_allowed(self):
+        """恰好等于阈值 → 放行（只拦超过的）"""
+        from services.kuaimai.erp_query_preflight import preflight_check
+        db = _make_db_with_explain(EXPORT_ROW_LIMIT)
+        result = preflight_check(
+            db, "order", "pay_time",
+            "2026-04-01", "2026-05-01", "org-1", "export",
+        )
+        assert result.ok is True
+
+    @pytest.mark.asyncio
+    async def test_boundary_above_limit_rejected(self):
+        """阈值 + 1 → 拒绝"""
+        from services.kuaimai.erp_query_preflight import preflight_check
+        db = _make_db_with_explain(EXPORT_ROW_LIMIT + 1)
+        result = preflight_check(
+            db, "order", "pay_time",
+            "2026-04-01", "2026-05-01", "org-1", "export",
+        )
+        assert result.ok is False
 
     @pytest.mark.asyncio
     async def test_summary_not_blocked(self):
@@ -131,27 +119,16 @@ class TestPreflightGateInExport:
             mock_summary.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_explain_failure_allows_duckdb(self, mock_staging):
-        """EXPLAIN 失败 → 放行，DuckDB 正常启动"""
-        from services.kuaimai.erp_unified_query import UnifiedQueryEngine
-
+    async def test_explain_failure_allows_execution(self):
+        """EXPLAIN 失败 → 放行（预检结果 ok=True）"""
+        from services.kuaimai.erp_query_preflight import preflight_check
         db = MagicMock()
         db.pool.connection.side_effect = Exception("connection lost")
-        engine = UnifiedQueryEngine(db=db, org_id="org-1")
-
-        with patch("services.kuaimai.erp_export_subprocess.subprocess_export",
-                    new_callable=AsyncMock) as mock_sub:
-            mock_sub.return_value = {"row_count": 10, "size_kb": 1.0}
-            with patch("core.duckdb_engine.get_duckdb_engine") as mock_engine:
-                mock_engine.return_value.profile_parquet.return_value = {
-                    "row_count": 10, "columns": [], "top_values": {},
-                }
-                await engine.execute(
-                    doc_type="order", mode="export",
-                    filters=[{"field": "pay_time", "op": "gte", "value": "2026-04-01"},
-                             {"field": "pay_time", "op": "lt", "value": "2026-05-01"}],
-                )
-                mock_sub.assert_called_once()
+        result = preflight_check(
+            db, "order", "pay_time",
+            "2026-04-01", "2026-05-01", "org-1", "export",
+        )
+        assert result.ok is True
 
 
 class TestRejectedPropagation:

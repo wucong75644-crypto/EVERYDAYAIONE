@@ -383,18 +383,36 @@ class UnifiedQueryEngine:
                 error_message="no valid export fields",
             )
 
-        # staging 路径（与旧逻辑格式完全一致）
+        # ── 预检门卫：DuckDB 启动前检查数据量 ──
+        # 底层数据 > 阈值 → 拒绝（DuckDB 远程扫描大表+复杂 SQL 会超时）
+        # 放在 staging 目录创建之前，拒绝时不产生任何副作用
+        preflight = preflight_check(
+            db=self.db, doc_type=doc_type,
+            time_col=tr.time_col, start_iso=tr.start_iso, end_iso=tr.end_iso,
+            org_id=self.org_id, mode="export",
+        )
+        if not preflight.ok:
+            return ToolOutput(
+                summary=preflight.reject_reason,
+                source="erp",
+                status=OutputStatus.REJECTED,
+                metadata={
+                    "estimated_rows": preflight.estimated_rows,
+                    "suggestions": list(preflight.suggestions),
+                },
+            )
+
+        # staging 路径
         staging_dir, rel_path, staging_path, filename = resolve_export_path(
             doc_type, user_id, self.org_id, conversation_id,
         )
 
-        # export 行数：用户指定 limit 与安全上限取小值（入口已保证 limit > 0）
+        # export 行数
         max_rows = min(limit, EXPORT_MAX)
 
         # 构建 DuckDB SQL
         select_sql = build_pii_select(safe_fields, cn_header=True)
 
-        # 订单导出：追加 order_class 分类标签列（从规则表动态生成）
         if doc_type == "order":
             try:
                 from services.kuaimai.order_classifier import OrderClassifier
@@ -420,7 +438,6 @@ class UnifiedQueryEngine:
                 f"SELECT {select_sql} FROM pg.public.erp_document_items "
                 f"WHERE {where_sql}"
             )
-        # ORDER BY：优先用 sort_by，降级到 time_col（中文别名）
         if sort_by and sort_by in COLUMN_WHITELIST:
             order_col = _FIELD_LABEL_CN.get(sort_by, sort_by)
             order_dir = sort_dir.upper()
@@ -428,24 +445,6 @@ class UnifiedQueryEngine:
             order_col = _FIELD_LABEL_CN.get(tr.time_col, tr.time_col)
             order_dir = "DESC"
         query = f'SELECT * FROM ({inner}) sub ORDER BY "{order_col}" {order_dir} LIMIT {max_rows}'
-
-        # ── 预检门卫：DuckDB 启动前检查数据量 ──
-        # 底层数据 > 阈值 → 拒绝（DuckDB 远程扫描大表+复杂 SQL 会超时）
-        preflight = preflight_check(
-            db=self.db, doc_type=doc_type,
-            time_col=tr.time_col, start_iso=tr.start_iso, end_iso=tr.end_iso,
-            org_id=self.org_id, mode="export",
-        )
-        if not preflight.ok:
-            return ToolOutput(
-                summary=preflight.reject_reason,
-                source="erp",
-                status=OutputStatus.REJECTED,
-                metadata={
-                    "estimated_rows": preflight.estimated_rows,
-                    "suggestions": list(preflight.suggestions),
-                },
-            )
 
         # DuckDB 流式导出 → staging（子进程隔离，崩溃不影响 chat worker）
         start = _time.monotonic()
