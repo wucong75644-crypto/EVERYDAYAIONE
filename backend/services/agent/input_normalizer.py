@@ -77,9 +77,9 @@ class InputNormalizer:
 # 、：中文顿号（用户常用作列举分隔符）
 _SEPARATORS = (",", ";", "\n", "\r", "\t", "|", "\u3001")
 
-# IN 查询安全上限（PostgREST URL ≤8000字符，500×15=7500 在安全范围内）
-# 注意：此常量仅供消费方（param_converter）使用，MultiValueParser 本身不截断
-DEFAULT_MAX_IN = 500
+# IN 查询安全上限（实测：5000值=35KB URL + 220ms查询，PostgreSQL无压力）
+# 注意：此常量仅供消费方（param_converter/to_filter）使用，parse() 本身不截断
+DEFAULT_MAX_IN = 5000
 
 
 def _strip_quotes(val: str) -> str:

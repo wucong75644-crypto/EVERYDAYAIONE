@@ -157,14 +157,14 @@ class TestMultiValueParser:
 
     def test_no_truncation_in_parser(self):
         """parse() 不再截断——截断由 to_filter 负责"""
-        codes = ",".join(f"CODE{i}" for i in range(600))
+        codes = ",".join(f"CODE{i}" for i in range(6000))
         result = MultiValueParser.parse(codes)
         assert isinstance(result, list)
-        assert len(result) == 600  # 全量返回
+        assert len(result) == 6000  # 全量返回
 
     def test_to_filter_truncates_with_warning(self):
         """to_filter 超限时截断 + 返回 warning"""
-        codes = [f"CODE{i}" for i in range(600)]
+        codes = [f"CODE{i}" for i in range(6000)]
         f, warning = MultiValueParser.to_filter("outer_id", codes)
         assert f["op"] == "in"
         assert len(f["value"]) == DEFAULT_MAX_IN
