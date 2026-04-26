@@ -1609,7 +1609,9 @@
       "Bash(grep -E \"\\\\.ts$|\\\\.tsx$\")",
       "Bash(scp -P 22 /Users/wucong/EVERYDAYAIONE/deploy/.env.production root@47.110.94.25:/var/www/everydayai/backend/.env)",
       "Bash(scp -P 22 /tmp/test_prod_token.py root@47.110.94.25:/tmp/test_prod_token.py)",
-      "Bash(./git-push.sh \"feat: Export子进程隔离——DuckDB导出从线程改为独立进程，崩溃不影响chat worker；附带修复LLM重试防护（is_error覆盖timeout+提示词对齐Claude Code风格）\")"
+      "Bash(./git-push.sh \"feat: Export子进程隔离——DuckDB导出从线程改为独立进程，崩溃不影响chat worker；附带修复LLM重试防护（is_error覆盖timeout+提示词对齐Claude Code风格）\")",
+      "Bash(awk '/^    async def _summary_classified/,/^    \\(async \\)?def [a-z_]/' services/kuaimai/erp_unified_query.py)",
+      "Bash(./git-push.sh \"fix: export子进程cwd路径修正——parents[1]→parents[2]指向backend/，修复ModuleNotFoundError\")"
     ],
     "additionalDirectories": [
       "/tmp"
