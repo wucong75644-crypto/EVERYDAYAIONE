@@ -72,7 +72,8 @@ class InputNormalizer:
 # ============================================================
 
 # NFKC 后中文标点已转半角，只需处理半角分隔符
-_SEPARATORS = (",", ";", "\n", "|")
+# \t：Excel/WPS 表格粘贴时横向复制为 Tab 分隔
+_SEPARATORS = (",", ";", "\n", "\t", "|")
 
 # IN 查询安全上限（PostgREST / Supabase）
 DEFAULT_MAX_IN = 200
