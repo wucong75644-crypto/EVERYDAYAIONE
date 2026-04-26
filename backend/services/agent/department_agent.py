@@ -594,6 +594,15 @@ class DepartmentAgent(ABC):
         if "filters" not in merged:
             merged["filters"] = self._params_to_filters(merged)
 
+            # IN 值超限截断警告：让 Agent 知道结果可能不完整
+            from services.agent.input_normalizer import MultiValueParser, DEFAULT_MAX_IN
+            if MultiValueParser.last_truncated:
+                merged["_truncation_warning"] = (
+                    f"⚠️ 编码/单号数量（{MultiValueParser.last_truncated_total}个）"
+                    f"超过单次查询上限（{DEFAULT_MAX_IN}个），"
+                    f"已截断。建议改用分别导出+code_execute关联的方式查询完整数据。"
+                )
+
         validation = self.validate_params(action, merged)
         if not validation.is_ok:
             return ToolOutput(
@@ -618,6 +627,19 @@ class DepartmentAgent(ABC):
                     data=result.data,
                     file_ref=result.file_ref,
                     metadata={**result.metadata, "_degraded": True},
+                )
+            # IN 截断警告追加到 summary（Agent 能看到并切换策略）
+            trunc_warn = merged.get("_truncation_warning")
+            if trunc_warn and not result.is_failure:
+                result = ToolOutput(
+                    summary=f"{result.summary}\n\n{trunc_warn}",
+                    format=result.format,
+                    source=result.source,
+                    status=result.status,
+                    columns=result.columns,
+                    data=result.data,
+                    file_ref=result.file_ref,
+                    metadata=result.metadata,
                 )
             return result
         except asyncio.CancelledError:

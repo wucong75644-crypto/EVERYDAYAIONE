@@ -166,18 +166,28 @@ class MultiValueParser:
             return {"field": field, "op": "in", "value": val}
         return {"field": field, "op": "eq", "value": val}
 
-    @staticmethod
+    # 上次 parse 是否发生了截断（调用方可检查）
+    last_truncated: bool = False
+    last_truncated_total: int = 0
+
+    @classmethod
     def _apply_limit(
+        cls,
         items: list[str], max_values: int,
     ) -> str | list[str] | None:
         """去空 + 单值退化 + 超限截断"""
+        cls.last_truncated = False
+        cls.last_truncated_total = 0
         if not items:
             return None
         if len(items) == 1:
             return items[0]
         if len(items) > max_values:
+            cls.last_truncated = True
+            cls.last_truncated_total = len(items)
             logger.warning(
-                f"IN 值超限截断 | 原始={len(items)} | 上限={max_values}"
+                f"IN 值超限截断 | 原始={len(items)} | 上限={max_values} | "
+                f"丢弃={len(items) - max_values}个值"
             )
             items = items[:max_values]
         return items
