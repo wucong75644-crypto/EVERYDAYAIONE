@@ -241,11 +241,23 @@ def params_to_filters(params: dict) -> list[dict]:
     if order_no:
         filters.append({"field": "order_no", "op": "eq", "value": order_no})
 
-    # ── 商品编码 → outer_id eq ──
+    # ── 商品编码 → outer_id eq / in ──
     product_code = params.get("product_code")
     if isinstance(product_code, str):
         product_code = product_code.strip()
-    if product_code:
+        # 逗号/分号分隔 → 拆成 list（LLM 可能传 "A,B,C"）
+        if product_code and ("," in product_code or "，" in product_code or ";" in product_code):
+            product_code = [
+                c.strip() for c in product_code.replace("，", ",").replace(";", ",").split(",")
+                if c.strip()
+            ]
+    if isinstance(product_code, list):
+        codes = [c.strip() for c in product_code if isinstance(c, str) and c.strip()]
+        if len(codes) == 1:
+            filters.append({"field": "outer_id", "op": "eq", "value": codes[0]})
+        elif codes:
+            filters.append({"field": "outer_id", "op": "in", "value": codes})
+    elif product_code:
         filters.append({"field": "outer_id", "op": "eq", "value": product_code})
 
     # ── 刷单筛选 ──
