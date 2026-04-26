@@ -121,9 +121,9 @@ COLUMN_WHITELIST: dict[str, ColumnMeta] = {
 
 # op 与列类型兼容表
 OP_COMPAT: dict[str, set[str]] = {
-    "text": {"eq", "ne", "like", "in", "is_null"},
-    "integer": {"eq", "ne", "gt", "gte", "lt", "lte", "in", "is_null", "between"},
-    "numeric": {"eq", "ne", "gt", "gte", "lt", "lte", "in", "is_null", "between"},
+    "text": {"eq", "ne", "like", "in", "not_in", "is_null"},
+    "integer": {"eq", "ne", "gt", "gte", "lt", "lte", "in", "not_in", "is_null", "between"},
+    "numeric": {"eq", "ne", "gt", "gte", "lt", "lte", "in", "not_in", "is_null", "between"},
     "timestamp": {"eq", "ne", "gt", "gte", "lt", "lte", "is_null", "between"},
     "boolean": {"eq", "ne", "is_null"},
 }

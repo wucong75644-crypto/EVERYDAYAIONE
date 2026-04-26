@@ -73,6 +73,15 @@ FLAG_FIELDS: list[str] = [
     "is_halt", "is_urgent", "is_presell",
 ]
 
+# 数值过滤允许的字段和操作符（numeric_filters 参数用）
+NUMERIC_FILTER_FIELDS: frozenset[str] = frozenset({
+    "quantity", "amount", "price", "cost", "weight",
+    "pay_amount", "gross_profit", "refund_money",
+    "post_fee", "discount_fee", "total_fee", "sale_price",
+    "real_qty", "actual_return_qty",
+})
+NUMERIC_OPS: frozenset[str] = frozenset({"gt", "gte", "lt", "lte", "between"})
+
 # ── 枚举值映射（中文/别名 → DB 实际值）──
 # 同步层直接存 API 原始值（整数/英文枚举），LLM 提取中文，这里做归一化
 
@@ -299,6 +308,26 @@ def params_to_filters(params: dict) -> tuple[list[dict], list[str]]:
     for flag in FLAG_FIELDS:
         if params.get(flag):
             filters.append({"field": flag, "op": "eq", "value": 1})
+
+    # ── 数值条件过滤 ──
+    for nf in params.get("numeric_filters", []):
+        field, op, value = nf.get("field"), nf.get("op"), nf.get("value")
+        if field in NUMERIC_FILTER_FIELDS and op in NUMERIC_OPS and value is not None:
+            filters.append({"field": field, "op": op, "value": value})
+
+    # ── 否定/排除过滤 ──
+    for ef in params.get("exclude_filters", []):
+        field, value = ef.get("field"), ef.get("value")
+        if field and value is not None:
+            if isinstance(value, list):
+                filters.append({"field": field, "op": "not_in", "value": value})
+            else:
+                filters.append({"field": field, "op": "ne", "value": value})
+
+    # ── 空值判断 ──
+    for nf in params.get("null_fields", []):
+        if isinstance(nf, str) and nf.strip():
+            filters.append({"field": nf, "op": "is_null", "value": True})
 
     return filters, warnings
 

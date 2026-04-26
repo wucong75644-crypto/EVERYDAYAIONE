@@ -222,6 +222,8 @@ def apply_orm_filters(q: Any, filters: list[ValidatedFilter]) -> Any:
             q = q.ilike(f.field, str(val))
         elif f.op == "in" and isinstance(val, list) and val:
             q = q.in_(f.field, val)
+        elif f.op == "not_in" and isinstance(val, list) and val:
+            q = q.not_.in_(f.field, val)
         elif f.op == "is_null":
             if val is True or val == "true" or val == 1:
                 q = q.is_(f.field, "null")

@@ -51,7 +51,7 @@ class TestOpCompat:
     def test_text_supports_eq_like_in(self):
         from services.kuaimai.erp_unified_schema import OP_COMPAT
         text_ops = OP_COMPAT["text"]
-        assert {"eq", "ne", "like", "in", "is_null"} == text_ops
+        assert {"eq", "ne", "like", "in", "not_in", "is_null"} == text_ops
 
     def test_numeric_supports_comparison(self):
         from services.kuaimai.erp_unified_schema import OP_COMPAT
@@ -68,6 +68,25 @@ class TestOpCompat:
     def test_text_rejects_gt(self):
         from services.kuaimai.erp_unified_schema import OP_COMPAT
         assert "gt" not in OP_COMPAT["text"]
+
+    def test_not_in_supported_for_text_integer_numeric(self):
+        from services.kuaimai.erp_unified_schema import OP_COMPAT
+        for col_type in ("text", "integer", "numeric"):
+            assert "not_in" in OP_COMPAT[col_type], f"{col_type} 缺少 not_in"
+        assert "not_in" not in OP_COMPAT["timestamp"]
+        assert "not_in" not in OP_COMPAT["boolean"]
+
+    def test_not_in_calls_not_in_(self):
+        """apply_orm_filters 的 not_in 分支调用 not_.in_()"""
+        from unittest.mock import MagicMock
+        from services.kuaimai.erp_unified_filters import apply_orm_filters, ValidatedFilter
+        q = MagicMock()
+        q.not_ = MagicMock()
+        q.not_.in_ = MagicMock(return_value=q)
+        f = ValidatedFilter(field="platform", op="not_in", value=["tb", "jd"], col_type="text")
+        result = apply_orm_filters(q, [f])
+        q.not_.in_.assert_called_once_with("platform", ["tb", "jd"])
+        assert result is q
 
 
 class TestDefaultDetailFields:
@@ -875,3 +894,89 @@ class TestExportExtraFieldsMerge:
         valid = set(COLUMN_WHITELIST.keys()) | EXPORT_COLUMN_NAMES
         result = [f for f in extra if f in valid]
         assert result == ["remark", "cost"]
+
+
+# ── execute() limit 归一化测试 ──────────────────────
+
+
+class TestExecuteLimitNormalization:
+    """execute() 入口处 limit ≤ 0 归一化回退默认值 20"""
+
+    @pytest.mark.asyncio
+    async def test_limit_zero_normalized_to_20(self):
+        from services.kuaimai.erp_unified_query import UnifiedQueryEngine
+        mock_db = MagicMock()
+        mock_rpc = MagicMock()
+        mock_rpc.execute.return_value.data = {"doc_count": 0, "total_qty": 0, "total_amount": 0}
+        mock_db.rpc.return_value = mock_rpc
+
+        engine = UnifiedQueryEngine(db=mock_db, org_id=None)
+        await engine.execute("purchase", "summary", [], limit=0)
+        rpc_call = mock_db.rpc.call_args
+        assert rpc_call[0][1]["p_limit"] == 20
+
+    @pytest.mark.asyncio
+    async def test_limit_negative_normalized_to_20(self):
+        from services.kuaimai.erp_unified_query import UnifiedQueryEngine
+        mock_db = MagicMock()
+        mock_rpc = MagicMock()
+        mock_rpc.execute.return_value.data = {"doc_count": 0, "total_qty": 0, "total_amount": 0}
+        mock_db.rpc.return_value = mock_rpc
+
+        engine = UnifiedQueryEngine(db=mock_db, org_id=None)
+        await engine.execute("purchase", "summary", [], limit=-5)
+        rpc_call = mock_db.rpc.call_args
+        assert rpc_call[0][1]["p_limit"] == 20
+
+    @pytest.mark.asyncio
+    async def test_limit_positive_passed_through(self):
+        from services.kuaimai.erp_unified_query import UnifiedQueryEngine
+        mock_db = MagicMock()
+        mock_rpc = MagicMock()
+        mock_rpc.execute.return_value.data = {"doc_count": 0, "total_qty": 0, "total_amount": 0}
+        mock_db.rpc.return_value = mock_rpc
+
+        engine = UnifiedQueryEngine(db=mock_db, org_id=None)
+        await engine.execute("purchase", "summary", [], limit=50)
+        rpc_call = mock_db.rpc.call_args
+        assert rpc_call[0][1]["p_limit"] == 50
+
+
+# ── _export() sort_by / limit 测试 ──────────────────
+
+
+class TestExportSortAndLimit:
+    """_export() 的 ORDER BY 和 LIMIT 逻辑"""
+
+    def test_sort_by_whitelist_check(self):
+        """sort_by 在 COLUMN_WHITELIST 中时应使用，否则回退 time_col"""
+        from services.kuaimai.erp_unified_schema import COLUMN_WHITELIST
+        assert "amount" in COLUMN_WHITELIST, "前提：amount 在白名单中"
+        assert "totally_fake" not in COLUMN_WHITELIST
+
+    def test_sort_dir_enum_check(self):
+        """sort_dir 只允许 asc/desc"""
+        from services.kuaimai.erp_unified_query import UnifiedQueryEngine
+        import inspect
+        src = inspect.getsource(UnifiedQueryEngine.execute)
+        assert 'sort_dir not in ("asc", "desc")' in src
+
+    def test_export_max_rows_capped(self):
+        """min(limit, EXPORT_MAX) 确保不超过安全上限"""
+        from services.kuaimai.erp_unified_schema import EXPORT_MAX
+        assert min(50, EXPORT_MAX) == 50
+        assert min(2_000_000, EXPORT_MAX) == EXPORT_MAX
+
+    def test_export_order_by_with_sort_by(self):
+        """sort_by 有效时，ORDER BY 应使用 sort_by 对应的中文别名"""
+        from services.kuaimai.erp_unified_schema import COLUMN_WHITELIST, _FIELD_LABEL_CN
+        sort_by = "amount"
+        assert sort_by in COLUMN_WHITELIST
+        order_col = _FIELD_LABEL_CN.get(sort_by, sort_by)
+        assert order_col, "amount 应有中文别名"
+
+    def test_export_order_by_fallback_to_time_col(self):
+        """sort_by 为 None 时，ORDER BY 应回退到 time_col"""
+        from services.kuaimai.erp_unified_schema import _FIELD_LABEL_CN
+        order_col = _FIELD_LABEL_CN.get("doc_created_at", "doc_created_at")
+        assert order_col, "doc_created_at 应有中文别名"

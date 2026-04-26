@@ -161,6 +161,16 @@ class TestBuildExportWhere:
         result = build_export_where("order", filters, self._tr(), None)
         assert "platform IN ('tb', 'jd', 'pdd')" in result
 
+    def test_not_in_generates_not_in_sql(self):
+        filters = [ValidatedFilter("platform", "not_in", ["tb", "pdd"], "text")]
+        result = build_export_where("order", filters, self._tr(), None)
+        assert "platform NOT IN ('tb', 'pdd')" in result
+
+    def test_not_in_empty_list_skipped(self):
+        filters = [ValidatedFilter("platform", "not_in", [], "text")]
+        result = build_export_where("order", filters, self._tr(), None)
+        assert "NOT IN" not in result
+
     def test_is_null_true(self):
         filters = [ValidatedFilter("express_no", "is_null", True, "text")]
         result = build_export_where("order", filters, self._tr(), None)

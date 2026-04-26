@@ -280,6 +280,9 @@ def build_export_where(
         elif f.op == "in" and isinstance(f.value, list) and f.value:
             in_vals = ", ".join(f"'{_sql_escape(x)}'" for x in f.value)
             clauses.append(f"{f.field} IN ({in_vals})")
+        elif f.op == "not_in" and isinstance(f.value, list) and f.value:
+            not_in_vals = ", ".join(f"'{_sql_escape(x)}'" for x in f.value)
+            clauses.append(f"{f.field} NOT IN ({not_in_vals})")
         elif f.op == "is_null":
             if f.value is True or f.value == "true" or f.value == 1:
                 clauses.append(f"{f.field} IS NULL")

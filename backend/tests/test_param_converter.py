@@ -633,3 +633,112 @@ class TestDiagnoseError:
 
     def test_unknown_error_empty(self):
         assert diagnose_error("something weird happened") == ""
+
+
+# ── 新增能力测试（数值/排除/空值/排序/混合） ──
+
+
+class TestNumericFilters:
+    """§4.6 numeric_filters 数值条件过滤"""
+
+    def test_quantity_lt(self):
+        params = {"numeric_filters": [{"field": "quantity", "op": "lt", "value": 10}]}
+        filters, _ = params_to_filters(params)
+        assert {"field": "quantity", "op": "lt", "value": 10} in filters
+
+    def test_amount_between(self):
+        params = {"numeric_filters": [{"field": "amount", "op": "between", "value": [100, 500]}]}
+        filters, _ = params_to_filters(params)
+        assert {"field": "amount", "op": "between", "value": [100, 500]} in filters
+
+    def test_invalid_field_ignored(self):
+        params = {"numeric_filters": [{"field": "invalid_field", "op": "gt", "value": 5}]}
+        filters, _ = params_to_filters(params)
+        nf = [f for f in filters if f.get("field") == "invalid_field"]
+        assert nf == []
+
+    def test_invalid_op_ignored(self):
+        params = {"numeric_filters": [{"field": "quantity", "op": "eq", "value": 10}]}
+        filters, _ = params_to_filters(params)
+        nf = [f for f in filters if f.get("field") == "quantity"]
+        assert nf == [], "eq 不在 NUMERIC_OPS 中，应被忽略"
+
+    def test_empty_array(self):
+        params = {"numeric_filters": []}
+        filters, _ = params_to_filters(params)
+        nf = [f for f in filters if f.get("op") in ("gt", "gte", "lt", "lte", "between")]
+        assert nf == []
+
+
+class TestExcludeFilters:
+    """§4.6 exclude_filters 否定/排除过滤"""
+
+    def test_ne_single_value(self):
+        params = {"exclude_filters": [{"field": "platform", "value": "taobao"}]}
+        filters, _ = params_to_filters(params)
+        assert {"field": "platform", "op": "ne", "value": "taobao"} in filters
+
+    def test_not_in_multi_value(self):
+        params = {"exclude_filters": [{"field": "platform", "value": ["taobao", "pdd"]}]}
+        filters, _ = params_to_filters(params)
+        assert {"field": "platform", "op": "not_in", "value": ["taobao", "pdd"]} in filters
+
+    def test_empty_array(self):
+        params = {"exclude_filters": []}
+        filters, _ = params_to_filters(params)
+        ef = [f for f in filters if f.get("op") in ("ne", "not_in")]
+        assert ef == []
+
+
+class TestNullFields:
+    """§4.6 null_fields 空值判断"""
+
+    def test_single_field(self):
+        params = {"null_fields": ["express_no"]}
+        filters, _ = params_to_filters(params)
+        assert {"field": "express_no", "op": "is_null", "value": True} in filters
+
+    def test_multi_fields(self):
+        params = {"null_fields": ["express_no", "buyer_nick"]}
+        filters, _ = params_to_filters(params)
+        assert {"field": "express_no", "op": "is_null", "value": True} in filters
+        assert {"field": "buyer_nick", "op": "is_null", "value": True} in filters
+
+    def test_empty_array(self):
+        params = {"null_fields": []}
+        filters, _ = params_to_filters(params)
+        nf = [f for f in filters if f.get("op") == "is_null"]
+        assert nf == []
+
+
+class TestSortAndLimit:
+    """§4.5B sort_by/limit 透传（由 _query_kwargs 提取）"""
+
+    def test_sort_by_not_in_filters(self):
+        """sort_by/limit 不进入 filters，由 _query_kwargs 直接传给 execute()"""
+        params = {"sort_by": "amount", "sort_dir": "desc", "limit": 10}
+        filters, _ = params_to_filters(params)
+        # sort/limit 不应出现在 filters 中
+        for f in filters:
+            assert f.get("field") not in ("sort_by", "sort_dir", "limit")
+
+
+class TestMixedFilters:
+    """所有新增过滤类型共存"""
+
+    def test_all_types_coexist(self):
+        params = {
+            "time_range": "2026-04-01 ~ 2026-04-26",
+            "platform": "taobao",
+            "numeric_filters": [{"field": "quantity", "op": "lt", "value": 10}],
+            "exclude_filters": [{"field": "shop_name", "value": "测试店"}],
+            "null_fields": ["express_no"],
+            "is_cancel": True,
+        }
+        filters, warnings = params_to_filters(params)
+        ops = {f["op"] for f in filters}
+        assert "gte" in ops, "time_range should produce gte"
+        assert "lt" in ops, "numeric_filters or time_range should produce lt"
+        assert "eq" in ops, "platform/is_cancel should produce eq"
+        assert "ne" in ops, "exclude_filters single value should produce ne"
+        assert "is_null" in ops, "null_fields should produce is_null"
