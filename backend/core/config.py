@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     # DuckDB 导出引擎（大报表流式导出，设计文档：docs/document/TECH_DuckDB导出引擎.md）
     duckdb_memory_limit: str = "256MB"  # 最大内存（超出自动溢出到磁盘）
     duckdb_threads: int = 2  # 工作线程数（不超过服务器 CPU 核心的一半）
+    export_subprocess_timeout: int = 120  # export 子进程超时（秒），子进程内部提前 5s 优雅退出
 
     # JWT 配置
     jwt_secret_key: str

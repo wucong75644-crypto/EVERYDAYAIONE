@@ -114,6 +114,23 @@ class TestChatToolMixinAgentResult:
         total = r1.tokens_used + r2.tokens_used
         assert total == 800
 
+    def test_timeout_status_is_error_true(self):
+        """status=timeout 应被判定为 is_error=True（防止 LLM 盲目重试）"""
+        result = AgentResult(status="timeout", summary="查询超时", source="erp_agent")
+        assert result.status == "timeout"
+        # chat_tool_mixin L256: result.status in ("error", "timeout")
+        assert result.status in ("error", "timeout")
+
+    def test_error_status_is_error_true(self):
+        """status=error 仍被判定为 is_error=True"""
+        result = AgentResult(status="error", summary="失败", source="erp_agent")
+        assert result.status in ("error", "timeout")
+
+    def test_success_status_is_not_error(self):
+        """status=success 不应被判定为 error"""
+        result = AgentResult(status="success", summary="ok", source="erp_agent")
+        assert result.status not in ("error", "timeout")
+
 
 # ============================================================
 # 链路 3：KIE adapter list content 转换

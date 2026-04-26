@@ -87,6 +87,83 @@ class TestDefaultDetailFields:
         assert "shop_name" in order_fields
 
 
+class TestRequiredFields:
+    """REQUIRED_FIELDS 安全网——核心字段永远出现在返回结果中。"""
+
+    def test_all_doc_types_covered(self):
+        from services.kuaimai.erp_unified_schema import (
+            REQUIRED_FIELDS, VALID_DOC_TYPES,
+        )
+        for dt in VALID_DOC_TYPES:
+            assert dt in REQUIRED_FIELDS, f"缺少 {dt} 的必须字段定义"
+
+    def test_required_is_subset_of_defaults(self):
+        """REQUIRED_FIELDS 必须是 DEFAULT_DETAIL_FIELDS 的子集。"""
+        from services.kuaimai.erp_unified_schema import (
+            REQUIRED_FIELDS, DEFAULT_DETAIL_FIELDS,
+        )
+        for dt, req in REQUIRED_FIELDS.items():
+            defaults = set(DEFAULT_DETAIL_FIELDS.get(dt, []))
+            missing = set(req) - defaults
+            assert not missing, (
+                f"{dt} REQUIRED_FIELDS 含 {missing}，但不在 DEFAULT_DETAIL_FIELDS 中"
+            )
+
+    def test_required_fields_in_whitelist(self):
+        """所有必须字段都在 EXPORT_COLUMN_NAMES 白名单中。"""
+        from services.kuaimai.erp_unified_schema import (
+            REQUIRED_FIELDS, EXPORT_COLUMN_NAMES,
+        )
+        for dt, req in REQUIRED_FIELDS.items():
+            invalid = set(req) - EXPORT_COLUMN_NAMES
+            assert not invalid, (
+                f"{dt} REQUIRED_FIELDS 含 {invalid}，不在 EXPORT_COLUMN_NAMES 中"
+            )
+
+    def test_all_types_have_outer_id_and_doc_created_at(self):
+        """所有单据类型的必须字段都包含 outer_id 和 doc_created_at。"""
+        from services.kuaimai.erp_unified_schema import REQUIRED_FIELDS
+        for dt, req in REQUIRED_FIELDS.items():
+            assert "outer_id" in req, f"{dt} 必须字段缺少 outer_id"
+            assert "doc_created_at" in req, f"{dt} 必须字段缺少 doc_created_at"
+
+    def test_related_objects_in_required(self):
+        """每个 doc_type 的关联对象标识字段必须在 REQUIRED 中。"""
+        from services.kuaimai.erp_unified_schema import REQUIRED_FIELDS
+        # doc_type → 关联对象字段（断链了就无法跨表分析）
+        related = {
+            "order": {"shop_name", "platform", "warehouse_name"},
+            "purchase": {"supplier_name", "warehouse_name"},
+            "aftersale": {"shop_name", "platform", "order_no", "refund_warehouse_name"},
+            "receipt": {"supplier_name", "warehouse_name", "purchase_order_code"},
+            "shelf": {"warehouse_name"},
+            "purchase_return": {"supplier_name", "warehouse_name"},
+        }
+        for dt, expected in related.items():
+            req = set(REQUIRED_FIELDS[dt])
+            missing = expected - req
+            assert not missing, f"{dt} REQUIRED 缺少关联对象字段 {missing}"
+
+    def test_merge_logic_required_always_present(self):
+        """模拟 _export 合并逻辑：即使 extra_fields 乱传，REQUIRED 永远在。"""
+        from services.kuaimai.erp_unified_schema import (
+            REQUIRED_FIELDS, DEFAULT_DETAIL_FIELDS,
+        )
+        for dt in REQUIRED_FIELDS:
+            required = REQUIRED_FIELDS[dt]
+            defaults = DEFAULT_DETAIL_FIELDS[dt]
+            extra_fields = ["totally_fake_col"]
+            # 模拟 _export 的三层合并
+            fields: list[str] = []
+            seen: set[str] = set()
+            for f in (*required, *defaults, *extra_fields):
+                if f not in seen:
+                    fields.append(f)
+                    seen.add(f)
+            for r in required:
+                assert r in fields, f"{dt} 合并后缺少必须字段 {r}"
+
+
 # ── _validate_filters 测试 ───────────────────────────
 
 
@@ -742,11 +819,11 @@ class TestExportExtraFieldsMerge:
         from services.kuaimai.erp_unified_schema import DEFAULT_DETAIL_FIELDS
         defaults = DEFAULT_DETAIL_FIELDS["order"]
         fields = list(defaults)
-        extra = ["buyer_nick", "receiver_address"]
+        extra = ["receiver_name", "receiver_address"]
         for f in extra:
             if f not in fields:
                 fields.append(f)
-        assert "buyer_nick" in fields
+        assert "receiver_name" in fields
         assert "receiver_address" in fields
         # 默认列仍然完整
         for d in defaults:

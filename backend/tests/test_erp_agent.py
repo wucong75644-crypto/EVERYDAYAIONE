@@ -1656,3 +1656,89 @@ class TestInferBusinessDomain:
         from services.agent.experience_recorder import infer_business_domain
         assert infer_business_domain(["some_random_tool"]) == "general"
         assert infer_business_domain(["route_to_chat"]) == "general"
+
+
+# ── Export 子进程隔离相关测试 ────────────────────────────────
+
+
+class TestExportSubprocessTimeout:
+    """erp_agent.run_step 对 export 模式的超时放宽。"""
+
+    def _make_agent(self):
+        from services.agent.erp_agent import ERPAgent
+        return ERPAgent(db=MagicMock(), user_id="u1", conversation_id="c1", org_id="org1")
+
+    @pytest.mark.asyncio
+    async def test_export_mode_gets_130s_timeout(self):
+        """export 模式的 step 应获得 130s 超时而非默认 30s。"""
+        from services.agent.erp_agent import ERPAgent, ExecutionPlan, PlanStep
+        agent = self._make_agent()
+
+        step = PlanStep(domain="trade", params={"mode": "export", "doc_type": "order"})
+        plan = ExecutionPlan(steps=[step])
+
+        captured_timeout = []
+
+        original_wait_for = asyncio.wait_for
+
+        async def spy_wait_for(coro, timeout):
+            captured_timeout.append(timeout)
+            raise asyncio.TimeoutError()  # 不真正执行
+
+        mock_child = MagicMock()
+        mock_child.execute = AsyncMock(return_value=MagicMock())
+        mock_child._push_thinking = AsyncMock()
+
+        with patch.object(agent, "_create_agent", return_value=mock_child), \
+             patch("services.agent.erp_agent.asyncio.wait_for", side_effect=spy_wait_for):
+            import time
+            results = await agent._execute_plan(plan, "test", time.monotonic() + 180)
+
+        assert len(captured_timeout) == 1
+        assert captured_timeout[0] == 130.0
+
+    @pytest.mark.asyncio
+    async def test_summary_mode_keeps_30s_timeout(self):
+        """summary 模式的 step 保持 30s 超时。"""
+        from services.agent.erp_agent import ERPAgent, ExecutionPlan, PlanStep
+        agent = self._make_agent()
+
+        step = PlanStep(domain="trade", params={"mode": "summary", "doc_type": "order"})
+        plan = ExecutionPlan(steps=[step])
+
+        captured_timeout = []
+
+        async def spy_wait_for(coro, timeout):
+            captured_timeout.append(timeout)
+            raise asyncio.TimeoutError()
+
+        mock_child = MagicMock()
+        mock_child.execute = AsyncMock()
+        mock_child._push_thinking = AsyncMock()
+
+        with patch.object(agent, "_create_agent", return_value=mock_child), \
+             patch("services.agent.erp_agent.asyncio.wait_for", side_effect=spy_wait_for):
+            import time
+            results = await agent._execute_plan(plan, "test", time.monotonic() + 180)
+
+        assert len(captured_timeout) == 1
+        assert captured_timeout[0] == 30.0
+
+
+class TestCreateAgentPushThinking:
+    """_create_agent 注入 _push_thinking 回调。"""
+
+    def test_child_agent_has_push_thinking(self):
+        """子 agent 应被注入父 ERPAgent 的 _push_thinking 方法。"""
+        from services.agent.erp_agent import ERPAgent
+        from services.agent.departments.trade_agent import TradeAgent
+        parent = ERPAgent(db=MagicMock(), user_id="u1", conversation_id="c1", org_id="org1")
+
+        # 用真实的 TradeAgent 实例（不 mock），验证属性注入
+        with patch("core.workspace.resolve_staging_dir", return_value="/tmp"):
+            child = parent._create_agent("trade")
+
+        assert isinstance(child, TradeAgent)
+        # bound method 每次访问产生新对象，比较底层函数和绑定实例
+        assert child._push_thinking.__func__ is parent._push_thinking.__func__
+        assert child._push_thinking.__self__ is parent

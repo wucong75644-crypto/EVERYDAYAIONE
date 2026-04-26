@@ -126,7 +126,7 @@ conversation_context 是专家了解上文的唯一通道。
 - 含 [文件已存入 staging] → 用户要导出时调 code_execute 读 staging 转 Excel
 - 含 [关联计算提示] → 调 code_execute 按提示读多个 staging 文件关联计算
 - 参数不足 → 用 ask_user 补充后重新调用
-- 错误 → 告知用户并建议替代方案
+- 错误 → 先诊断失败原因，再决定是换参数重试还是告知用户，不要盲目重试
 不要重复 erp_agent 的原始数据，基于它做呈现即可。
 
 ### erp_analyze — ERP 分析（计划模式专用）

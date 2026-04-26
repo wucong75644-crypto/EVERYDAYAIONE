@@ -316,14 +316,14 @@ def diagnose_empty(filters: list[dict]) -> str:
 
 
 def diagnose_error(error_msg: str) -> str:
-    """L3：查询失败时，根据错误信息给出重试建议。"""
+    """L3：查询失败时，根据错误信息给出诊断描述（中性，不引导重试）。"""
     if not error_msg:
         return ""
     msg = error_msg.lower()
     if "timeout" in msg or "超时" in msg:
-        return "查询超时，建议缩小时间范围后重试"
+        return "查询超时，可能原因：时间范围过大 / 数据量过多"
     if "too many" in msg or "65535" in msg or "参数" in msg:
-        return "数据量过大，建议缩小时间范围或添加过滤条件"
+        return "数据量超出处理能力，可能原因：时间范围过大 / 过滤条件不足"
     if "invalid" in msg and "doc_type" in msg:
         return "文档类型不正确，请确认查询类型"
     if "no valid" in msg and "field" in msg:

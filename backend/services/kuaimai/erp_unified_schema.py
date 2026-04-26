@@ -193,38 +193,98 @@ PLATFORM_NORMALIZE: dict[str, str] = {
     "1688": "1688", "微店": "wd",
 }
 
-# detail 模式默认字段
+# 核心必须字段（安全网）——不管 LLM 怎么传，这些字段永远出现在返回结果中。
+# 修改此处时同步更新 DEFAULT_DETAIL_FIELDS 和测试。
+REQUIRED_FIELDS: dict[str, list[str]] = {
+    "order": [
+        # 单据标识
+        "order_no", "order_status",
+        # 关联对象：店铺 + 平台 + 仓库
+        "shop_name", "platform", "warehouse_name",
+        # 商品 + 数量金额
+        "outer_id", "item_name", "quantity", "amount",
+        "doc_created_at",
+    ],
+    "purchase": [
+        "doc_code", "doc_status",
+        # 关联对象：供应商 + 仓库
+        "supplier_name", "warehouse_name",
+        "outer_id", "item_name", "quantity", "amount",
+        "doc_created_at",
+    ],
+    "aftersale": [
+        "doc_code", "aftersale_type", "refund_status",
+        # 关联对象：店铺 + 平台 + 原订单 + 退货仓
+        "shop_name", "platform", "order_no", "refund_warehouse_name",
+        "outer_id", "item_name", "quantity", "refund_money",
+        "doc_created_at",
+    ],
+    "receipt": [
+        "doc_code", "doc_status",
+        # 关联对象：供应商 + 仓库 + 关联采购单
+        "supplier_name", "warehouse_name", "purchase_order_code",
+        "outer_id", "item_name", "quantity",
+        "doc_created_at",
+    ],
+    "shelf": [
+        "doc_code", "doc_status",
+        # 关联对象：仓库
+        "warehouse_name",
+        "outer_id", "item_name", "quantity",
+        "doc_created_at",
+    ],
+    "purchase_return": [
+        "doc_code", "doc_status",
+        # 关联对象：供应商 + 仓库
+        "supplier_name", "warehouse_name",
+        "outer_id", "item_name", "quantity", "amount",
+        "doc_created_at",
+    ],
+}
+
+# detail/export 模式默认字段——在 REQUIRED_FIELDS 基础上补充常用分析字段，
+# 保障 staging 数据足够丰富，主 Agent 无需二次查询。
 DEFAULT_DETAIL_FIELDS: dict[str, list[str]] = {
     "order": [
         "order_no", "shop_name", "platform", "order_status",
         "outer_id", "item_name", "quantity", "amount",
-        "pay_time", "consign_time", "remark",
+        "pay_amount", "cost", "gross_profit", "post_fee",
+        "buyer_nick", "warehouse_name",
+        "pay_time", "consign_time", "doc_created_at",
+        "remark",
     ],
     "purchase": [
         "doc_code", "supplier_name", "doc_status",
         "outer_id", "item_name", "quantity",
         "quantity_received", "amount", "price",
-        "delivery_date", "creator_name", "remark", "doc_created_at",
+        "warehouse_name",
+        "delivery_date", "creator_name", "doc_created_at",
+        "remark",
     ],
     "aftersale": [
-        "doc_code", "aftersale_type", "refund_status",
+        "doc_code", "shop_name", "platform",
+        "aftersale_type", "refund_status",
         "outer_id", "item_name", "quantity",
-        "refund_money", "text_reason", "good_status",
-        "refund_warehouse_name", "doc_created_at",
+        "refund_money", "order_no",
+        "text_reason", "good_status",
+        "refund_warehouse_name", "apply_date", "doc_created_at",
     ],
     "receipt": [
         "doc_code", "supplier_name", "doc_status",
         "outer_id", "item_name", "quantity",
-        "quantity_received", "purchase_order_code", "doc_created_at",
+        "quantity_received", "warehouse_name",
+        "purchase_order_code", "creator_name", "doc_created_at",
     ],
     "shelf": [
         "doc_code", "warehouse_name", "doc_status",
-        "outer_id", "item_name", "quantity", "doc_created_at",
+        "outer_id", "item_name", "quantity",
+        "creator_name", "doc_created_at",
     ],
     "purchase_return": [
         "doc_code", "supplier_name", "doc_status",
         "outer_id", "item_name", "quantity",
-        "amount", "remark", "doc_created_at",
+        "amount", "warehouse_name", "creator_name",
+        "doc_created_at", "remark",
     ],
 }
 

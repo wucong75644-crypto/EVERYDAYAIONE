@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 from services.agent.tool_output import (
     FileRef, ColumnMeta, OutputFormat, OutputStatus,
@@ -81,6 +81,9 @@ class AgentResult:
         default_factory=dict, repr=False, compare=False,
     )
 
+    # 失败状态集合（单一事实来源，所有调用方统一用 is_failure）
+    _FAILURE_STATUSES: ClassVar[frozenset[str]] = frozenset({"error", "timeout"})
+
     def __post_init__(self) -> None:
         # OutputStatus 枚举 → str 自动转换
         if isinstance(self.status, OutputStatus):
@@ -88,6 +91,15 @@ class AgentResult:
         # "ok" → "success" 归一化（OutputStatus.OK.value == "ok"）
         if self.status == "ok":
             self.status = "success"
+
+    @property
+    def is_failure(self) -> bool:
+        """是否为失败状态（error / timeout）。
+
+        所有需要判断"工具是否失败"的地方统一用此属性，
+        不要自行硬编码 status == "error" 或 status in (...)。
+        """
+        return self.status in self._FAILURE_STATUSES
 
     # ----------------------------------------------------------
     # 序列化 1：主 Agent LLM（结构化 content block）

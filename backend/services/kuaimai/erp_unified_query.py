@@ -47,6 +47,7 @@ from services.kuaimai.erp_unified_schema import (
     DOC_TYPE_CN,
     EXPORT_COLUMN_NAMES,
     EXPORT_MAX,
+    REQUIRED_FIELDS,
     GROUP_BY_MAP,
     RPC_ORDER_STATS_FILTER_FIELDS,
     PLATFORM_CN,
@@ -119,6 +120,7 @@ class UnifiedQueryEngine:
         conversation_id: str | None = None,
         request_ctx: Optional[RequestContext] = None,
         include_invalid: bool = False,
+        push_thinking: Any = None,
         **_kwargs,  # 吸收 LLM 透传的未知参数，防止 TypeError
     ) -> ToolOutput:
         """统一入口——所有参数在此校验，下游不再需要防御"""
@@ -175,6 +177,7 @@ class UnifiedQueryEngine:
                 doc_type, validated, tr, extra_fields, limit,
                 user_id, conversation_id, request_ctx,
                 include_invalid=include_invalid,
+                push_thinking=push_thinking,
             )
 
     # ── Summary 模式 ──────────────────────────────────
@@ -492,18 +495,23 @@ class UnifiedQueryEngine:
         user_id: str | None, conversation_id: str | None,
         request_ctx: Optional[RequestContext],
         include_invalid: bool = False,
+        push_thinking: Any = None,
     ) -> ToolOutput:
         type_name = DOC_TYPE_CN.get(doc_type, doc_type)
         # include_invalid 在 export 模式预留（与 summary 语义一致：
         # 总数包含刷单，只做标记分类不排除。用户显式传 is_scalping
         # 过滤时才会排除刷单行）
 
-        # 始终以默认列为基础，extra_fields 追加额外列（去重保序）
-        fields = list(DEFAULT_DETAIL_FIELDS.get(doc_type, ["*"]))
-        if extra_fields:
-            for f in extra_fields:
-                if f not in fields:
-                    fields.append(f)
+        # 字段合并：REQUIRED_FIELDS（安全网）+ DEFAULT（常用）+ extra（LLM追加）
+        # 三层保障，去重保序
+        required = REQUIRED_FIELDS.get(doc_type, [])
+        defaults = DEFAULT_DETAIL_FIELDS.get(doc_type, [])
+        fields: list[str] = []
+        seen: set[str] = set()
+        for f in (*required, *defaults, *(extra_fields or [])):
+            if f not in seen:
+                fields.append(f)
+                seen.add(f)
 
         safe_fields = [c for c in fields if c in EXPORT_COLUMN_NAMES]
         # 排序列必须在 SELECT 中，否则 ORDER BY 报列不存在
@@ -559,19 +567,16 @@ class UnifiedQueryEngine:
         order_col = _FIELD_LABEL_CN.get(tr.time_col, tr.time_col)
         query = f'SELECT * FROM ({inner}) sub ORDER BY "{order_col}" DESC LIMIT {max_rows}'
 
-        # DuckDB 流式导出 → staging（内存恒定，无行数截断）
-        import asyncio as _asyncio
+        # DuckDB 流式导出 → staging（子进程隔离，崩溃不影响 chat worker）
         start = _time.monotonic()
-        from core.duckdb_engine import get_duckdb_engine
-        engine = get_duckdb_engine()
         try:
-            result = await _asyncio.to_thread(
-                engine.export_to_parquet, query, staging_path,
+            result = await self._subprocess_export(
+                query, str(staging_path), push_thinking=push_thinking,
             )
         except Exception as e:
-            logger.error(f"DuckDB export failed after retries | error={e}", exc_info=True)
+            logger.error(f"DuckDB export subprocess failed | error={e}", exc_info=True)
             return ToolOutput(
-                summary=f"导出失败（已重试）: {e}",
+                summary=f"导出失败: {e}",
                 source="erp",
                 status=OutputStatus.ERROR,
                 error_message=str(e),
@@ -596,7 +601,10 @@ class UnifiedQueryEngine:
             )
 
         # v6: DuckDB 直接从 parquet 文件算统计（不加载到 Python 内存）
+        import asyncio as _asyncio
+        from core.duckdb_engine import get_duckdb_engine
         from services.agent.data_profile import build_profile_from_duckdb
+        engine = get_duckdb_engine()
         _profile_raw = await _asyncio.to_thread(
             engine.profile_parquet, staging_path,
         )
@@ -645,3 +653,106 @@ class UnifiedQueryEngine:
                 "stats": _export_stats,
             },
         )
+
+    # ── 子进程导出（内存隔离） ────────────────
+
+    async def _subprocess_export(
+        self, query: str, output_path: str,
+        push_thinking: Any = None,
+    ) -> dict[str, int | float | str]:
+        """子进程执行 DuckDB 导出，内存隔离，实时进度推送。"""
+        import asyncio as _aio
+        import sys as _sys
+
+        from core.config import get_settings
+        settings = get_settings()
+        timeout = settings.export_subprocess_timeout
+
+        params = _json.dumps({
+            "query": query,
+            "output_path": output_path,
+            "pg_url": settings.database_url,
+            "memory_limit": settings.duckdb_memory_limit,
+            "threads": settings.duckdb_threads,
+            "timeout": timeout - 5,
+        })
+
+        proc = await _aio.create_subprocess_exec(
+            _sys.executable, "-m", "core.export_worker",
+            stdin=_aio.subprocess.PIPE,
+            stdout=_aio.subprocess.PIPE,
+            stderr=_aio.subprocess.PIPE,
+            cwd=str(Path(__file__).resolve().parents[1]),
+        )
+
+        proc.stdin.write(params.encode())
+        await proc.stdin.drain()
+        proc.stdin.close()
+
+        # stderr 完整收集：JSON 进度行推 thinking，所有行保留供错误诊断
+        stderr_lines: list[str] = []
+
+        async def _consume_stderr() -> None:
+            while True:
+                line = await proc.stderr.readline()
+                if not line:
+                    break
+                text = line.decode(errors="replace").rstrip()
+                stderr_lines.append(text)
+                if push_thinking:
+                    try:
+                        progress = _json.loads(text)
+                        msg = _format_export_progress(progress)
+                        if msg:
+                            await push_thinking(msg)
+                    except (ValueError, KeyError):
+                        pass  # 非进度行（traceback 等），已收集在 stderr_lines
+
+        stderr_task = _aio.create_task(_consume_stderr())
+        try:
+            stdout = await _aio.wait_for(
+                proc.stdout.read(), timeout=timeout,
+            )
+            await proc.wait()
+        except _aio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            raise TimeoutError(
+                f"Export subprocess timed out after {timeout}s"
+            )
+        finally:
+            # 确保 stderr 消费任务完整结束，不中断正在执行的 push_thinking
+            stderr_task.cancel()
+            try:
+                await stderr_task
+            except _aio.CancelledError:
+                pass
+
+        if proc.returncode != 0:
+            detail = "\n".join(stderr_lines[-10:])
+            raise RuntimeError(
+                f"Export subprocess failed (exit={proc.returncode}):\n{detail}"
+            )
+
+        return _json.loads(stdout.decode())
+
+
+def _format_export_progress(progress: dict) -> str | None:
+    """将子进程进度 JSON 格式化为 thinking 文案。"""
+    phase = progress.get("phase")
+    if phase == "connect":
+        return "正在连接数据库..."
+    if phase == "export":
+        size = progress.get("size_kb", 0)
+        elapsed = progress.get("elapsed", 0)
+        if size > 1024:
+            return f"正在导出数据... {size / 1024:.1f}MB 已写入（{elapsed:.0f}s）"
+        return f"正在导出数据... {size:.0f}KB 已写入（{elapsed:.0f}s）"
+    if phase == "done":
+        rows = progress.get("row_count", 0)
+        size = progress.get("size_kb", 0)
+        elapsed = progress.get("elapsed", 0)
+        if size > 1024:
+            return f"导出完成：{rows:,} 行，{size / 1024:.1f}MB（{elapsed:.0f}s）"
+        return f"导出完成：{rows:,} 行，{size:.0f}KB（{elapsed:.0f}s）"
+    return None
