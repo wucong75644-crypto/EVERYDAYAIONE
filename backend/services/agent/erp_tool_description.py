@@ -73,7 +73,7 @@ def get_capability_manifest() -> dict:
             "计划模式（status=plan）：超出一次执行能力时返回执行计划，调用方按计划逐步调用并传递中间结果",
         ],
         "limits": [
-            "编码/单号IN匹配：单次最多500个值。超过500个的跨域关联查询，"
+            "编码/单号IN匹配：单次最多5000个值。超过5000个的跨域关联查询，"
             "应分别导出两份数据到staging，再用code_execute按编码JOIN",
         ],
         "examples": [
