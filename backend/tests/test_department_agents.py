@@ -488,8 +488,8 @@ class TestL3EmptyDiagnosis:
             assert "诊断建议" not in result.summary
 
     @pytest.mark.asyncio
-    async def test_error_gets_retry_hint(self):
-        """ERROR 结果追加重试建议"""
+    async def test_error_gets_diagnosis(self):
+        """ERROR 结果追加诊断信息"""
         agent = _make_trade()
         err_out = ToolOutput(
             summary="统计查询失败: timeout",
@@ -502,7 +502,7 @@ class TestL3EmptyDiagnosis:
             result = await agent._query_local_data(
                 "order", mode="summary", filters=[],
             )
-            assert "重试建议" in result.summary
+            assert "诊断" in result.summary
             assert "超时" in result.summary
 
     @pytest.mark.asyncio

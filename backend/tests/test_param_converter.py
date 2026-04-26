@@ -551,7 +551,9 @@ class TestDiagnoseError:
         assert "超时" in diagnose_error("query timeout after 30s")
 
     def test_timeout_cn(self):
-        assert "缩小时间" in diagnose_error("统计查询超时")
+        result = diagnose_error("统计查询超时")
+        assert "超时" in result
+        assert "时间范围" in result
 
     def test_too_many(self):
         assert "数据量" in diagnose_error("too many rows: 65535")

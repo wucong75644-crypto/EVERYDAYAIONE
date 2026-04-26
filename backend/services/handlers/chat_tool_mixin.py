@@ -243,7 +243,7 @@ class ChatToolMixin:
                         message_id=message_id,
                         tool_name=tool_name,
                         tool_call_id=tool_call_id,
-                        success=result.status != "error",
+                        success=not result.is_failure,
                         summary=raw_summary,
                         turn=turn,
                     ),
@@ -253,7 +253,7 @@ class ChatToolMixin:
                     tool_call_id, turn, args, len(result.summary),
                     _audit_elapsed, result.status,
                 )
-                return (tc, result, result.status == "error")
+                return (tc, result, result.is_failure)
 
             # 普通工具（str 路径）
             # 提取 [FILE] 标记 → FilePart 暂存到 ChatHandler（不经过 LLM）

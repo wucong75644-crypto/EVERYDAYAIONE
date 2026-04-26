@@ -184,9 +184,13 @@ class ERPAgent:
                 return (step.domain, asyncio.TimeoutError())
             logger.info(f"ERPAgent execute | domain={step.domain} | params={step.params} | remaining={remaining:.1f}s")
             try:
+                # export 模式给子进程足够时间（120s 导出 + 10s profile）
+                step_timeout = 30.0
+                if step.params.get("mode") == "export":
+                    step_timeout = 130.0
                 result = await asyncio.wait_for(
                     agent.execute(query[:200], dag_mode=True, params=step.params),
-                    timeout=min(remaining, 30.0),
+                    timeout=min(remaining, step_timeout),
                 )
                 return (step.domain, result)
             except asyncio.TimeoutError:
@@ -463,11 +467,14 @@ class ERPAgent:
         except Exception as e:
             logger.warning(f"resolve staging_dir failed: {e}")
         child_budget = self._budget.fork(max_turns=5) if self._budget else None
-        return cls(
+        agent = cls(
             db=self.db, org_id=self.org_id, request_ctx=self.request_ctx,
             staging_dir=staging_dir, budget=child_budget,
             user_id=self.user_id, conversation_id=self.conversation_id,
         )
+        # 注入进度回调，子进程 export 可实时推送 thinking
+        agent._push_thinking = self._push_thinking
+        return agent
 
     @staticmethod
     def build_tool_description() -> str:

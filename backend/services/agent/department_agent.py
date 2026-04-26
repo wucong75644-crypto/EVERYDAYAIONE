@@ -416,6 +416,7 @@ class DepartmentAgent(ABC):
             request_ctx=self.request_ctx,
             user_id=self._user_id,
             conversation_id=self._conversation_id,
+            push_thinking=getattr(self, "_push_thinking", None),
         )
         # L3：空结果诊断
         if result.status == "empty" and filters:
@@ -423,11 +424,11 @@ class DepartmentAgent(ABC):
             if diagnosis:
                 result.summary += f"\n\n诊断建议：\n{diagnosis}"
                 logger.info(f"L3 空结果诊断: doc_type={doc_type}, {diagnosis}")
-        # L3：失败诊断——根据错误类型给出重试建议
-        if result.status == "error":
+        # L3：失败诊断——error/timeout 均走诊断
+        if result.is_failure:
             hint = self._diagnose_error(result.error_message)
             if hint:
-                result.summary += f"\n\n重试建议：{hint}"
+                result.summary += f"\n\n诊断：{hint}"
                 logger.info(f"L3 失败诊断: doc_type={doc_type}, {hint}")
 
         return result
@@ -607,7 +608,7 @@ class DepartmentAgent(ABC):
         try:
             result = await self._dispatch(action, merged, context)
             # 降级标记（v6: 纯结构化，不拼文本前缀）
-            if merged.get("_degraded") and result.status != "error":
+            if merged.get("_degraded") and not result.is_failure:
                 result = ToolOutput(
                     summary=result.summary,
                     format=result.format,

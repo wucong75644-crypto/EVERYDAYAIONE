@@ -604,7 +604,9 @@ class TestDepartmentAgentBase:
 
     def test_diagnose_error_timeout_cn(self):
         agent = _make_warehouse()
-        assert "缩小时间" in agent._diagnose_error("统计查询超时")
+        result = agent._diagnose_error("统计查询超时")
+        assert "超时" in result
+        assert "时间范围" in result
 
     def test_diagnose_error_too_many_params(self):
         agent = _make_warehouse()
