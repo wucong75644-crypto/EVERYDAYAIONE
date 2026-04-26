@@ -1683,7 +1683,8 @@
       "Bash(venv/bin/python -m pytest tests/test_preflight_integration.py::TestPreflightGateInExport::test_large_data_rejected_before_duckdb -v --tb=short)",
       "Bash(./git-push.sh \"fix: 预检门卫位置修正——从execute入口移到_export内部DuckDB启动前，不拦截summary和小数据查询\")",
       "Bash(./git-push.sh \"fix: PlanBuilder prompt补全新表字段名——LLM用quantity查stock表反复失败的根因\")",
-      "Bash(./git-push.sh \"fix: 主Agent任务传递时间对齐——对比场景task带精确HH:MM+end对齐\")"
+      "Bash(./git-push.sh \"fix: 主Agent任务传递时间对齐——对比场景task带精确HH:MM+end对齐\")",
+      "Bash(./git-push.sh \"fix: NUMERIC_FILTER_FIELDS补齐24个遗漏字段——8张新表63个数值字段全覆盖\")"
     ],
     "additionalDirectories": [
       "/tmp"

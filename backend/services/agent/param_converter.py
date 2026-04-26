@@ -89,15 +89,22 @@ NUMERIC_FILTER_FIELDS: frozenset[str] = frozenset({
     "total_stock", "sellable_num", "available_stock", "lock_stock",
     "purchase_num", "on_the_way_num", "defective_stock", "virtual_stock",
     "purchase_price", "selling_price", "market_price",
-    "stock_status",
+    "stock_status", "allocate_num", "refund_stock", "purchase_stock",
     # erp_product_daily_stats 字段
     "purchase_count", "purchase_qty", "purchase_amount",
+    "purchase_received_qty",
+    "receipt_count", "receipt_qty", "shelf_count", "shelf_qty",
+    "purchase_return_count", "purchase_return_qty", "purchase_return_amount",
     "order_count", "order_qty", "order_amount", "order_cost",
-    "aftersale_count", "aftersale_qty", "aftersale_amount",
     "order_shipped_count", "order_finished_count",
     "order_refund_count", "order_cancelled_count",
+    "aftersale_count", "aftersale_qty", "aftersale_amount",
+    "aftersale_refund_count", "aftersale_return_count",
+    "aftersale_exchange_count", "aftersale_reissue_count",
+    "aftersale_reject_count", "aftersale_repair_count", "aftersale_other_count",
     # erp_products / erp_product_skus 字段
     "item_type", "active_status",
+    "length", "width", "height",
     # erp_batch_stock 字段
     "shelf_life_days", "stock_qty",
 })
