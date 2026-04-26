@@ -156,7 +156,7 @@ class TestMultiValueParser:
     # ── 上限截断 ──
 
     def test_over_limit_truncated(self):
-        codes = ",".join(f"CODE{i}" for i in range(300))
+        codes = ",".join(f"CODE{i}" for i in range(600))
         result = MultiValueParser.parse(codes)
         assert isinstance(result, list)
         assert len(result) == DEFAULT_MAX_IN
