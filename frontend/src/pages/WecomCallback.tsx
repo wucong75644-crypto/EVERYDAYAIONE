@@ -21,7 +21,7 @@ const ERROR_MESSAGES: Record<string, string> = {
 export default function WecomCallback() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { setToken, setUser, setCurrentOrg } = useAuthStore();
+  const { setTokens, setUser, setCurrentOrg } = useAuthStore();
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -42,7 +42,7 @@ export default function WecomCallback() {
         const tokenData: TokenInfo = JSON.parse(atob(tokenB64));
         const userData: User = JSON.parse(atob(userB64));
 
-        setToken(tokenData.access_token);
+        setTokens(tokenData.access_token, tokenData.refresh_token);
         setUser(userData);
 
         // 自动切入企业（如果有 org 参数）
@@ -65,7 +65,7 @@ export default function WecomCallback() {
     }
 
     setError('无效的回调参数');
-  }, [searchParams, setToken, setUser, navigate]);
+  }, [searchParams, setTokens, setUser, navigate]);
 
   if (!error) {
     return (

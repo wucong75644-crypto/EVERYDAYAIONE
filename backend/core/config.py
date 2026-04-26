@@ -33,7 +33,10 @@ class Settings(BaseSettings):
     # JWT 配置
     jwt_secret_key: str
     jwt_algorithm: str = "HS256"
-    jwt_access_token_expire_minutes: int = 1440  # 24小时
+    # 部署须知：前端无感刷新上线后，通过 .env 设置 JWT_ACCESS_TOKEN_EXPIRE_MINUTES=30
+    # 默认 1440（24h）保持向后兼容——老前端无 silentRefresh，缩短 TTL 会频繁踢出用户
+    jwt_access_token_expire_minutes: int = 1440
+    jwt_refresh_token_expire_days: int = 7  # refresh token 7 天有效
 
     # Redis 配置
     redis_host: str = "localhost"

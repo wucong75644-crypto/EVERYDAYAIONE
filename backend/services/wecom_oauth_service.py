@@ -16,7 +16,7 @@ from loguru import logger
 
 from core.config import get_settings
 from core.redis import get_redis
-from core.security import create_access_token
+from core.security import create_token_pair
 from services.wecom.access_token_manager import get_access_token
 from services.wecom_account_merge import (
     merge_users as _merge_users,
@@ -572,14 +572,8 @@ class WecomOAuthService:
     # ----------------------------------------------------------------
 
     def _create_token_response(self, user_id: str) -> dict:
-        """创建 JWT token 响应"""
-        access_token = create_access_token({"sub": str(user_id)})
-        expires_in = self.settings.jwt_access_token_expire_minutes * 60
-        return {
-            "access_token": access_token,
-            "token_type": "bearer",
-            "expires_in": expires_in,
-        }
+        """创建双 token 响应（委托 security.create_token_pair）"""
+        return create_token_pair(self.db, user_id)
 
     def _format_user_response(self, user: dict) -> dict:
         """格式化用户响应（与 auth_service 保持一致）"""

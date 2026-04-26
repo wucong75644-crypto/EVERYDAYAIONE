@@ -30,7 +30,7 @@ export default function LoginForm({
   onSwitchToRegister,
   orgId,
 }: LoginFormProps) {
-  const { setUser, setToken, setCurrentOrg } = useAuthStore();
+  const { setUser, setTokens, setCurrentOrg } = useAuthStore();
 
   const [loginMode, setLoginMode] = useState<LoginMode>(orgId ? 'password' : 'password');
   const [phone, setPhone] = useState('');
@@ -140,7 +140,7 @@ export default function LoginForm({
           phone,
           password,
         });
-        setToken(response.token.access_token);
+        setTokens(response.token.access_token, response.token.refresh_token);
         setUser(response.user);
         setCurrentOrg({
           org_id: response.org.org_id,
@@ -152,7 +152,7 @@ export default function LoginForm({
           loginMode === 'password'
             ? await loginByPassword({ phone, password })
             : await loginByPhone({ phone, code });
-        setToken(response.token.access_token);
+        setTokens(response.token.access_token, response.token.refresh_token);
         setUser(response.user);
 
         // 企业专属链接：登录后自动切入企业

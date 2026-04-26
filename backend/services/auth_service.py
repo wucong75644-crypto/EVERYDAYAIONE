@@ -18,8 +18,9 @@ from core.exceptions import (
     ValidationError,
 )
 from core.security import (
-    create_access_token,
+    create_token_pair,
     hash_password,
+    hash_refresh_token,
     verify_password,
 )
 from services.sms_service import get_sms_service
@@ -428,16 +429,96 @@ class AuthService:
                 status_code=500
             )
 
-    def _create_token_response(self, user_id: str) -> dict:
-        """创建 token 响应"""
-        access_token = create_access_token({"sub": str(user_id)})
-        expires_in = self.settings.jwt_access_token_expire_minutes * 60
+    async def refresh_access_token(self, raw_refresh_token: str) -> dict:
+        """
+        用 refresh token 换取新的 access + refresh token（轮换模式）
 
-        return {
-            "access_token": access_token,
-            "token_type": "bearer",
-            "expires_in": expires_in,
-        }
+        流程：
+        1. 计算哈希 → 查 DB
+        2. 校验：未吊销 + 未过期 + 用户有效
+        3. 吊销旧 refresh → 签发新双 token
+        """
+        token_hash = hash_refresh_token(raw_refresh_token)
+
+        # 查 DB
+        result = (
+            self.db.table("refresh_tokens")
+            .select("id, user_id, expires_at, revoked")
+            .eq("token_hash", token_hash)
+            .maybe_single()
+            .execute()
+        )
+
+        if not result.data:
+            raise AuthenticationError("无效的刷新令牌")
+
+        record = result.data
+
+        if record["revoked"]:
+            # 可能被盗用：吊销该用户所有 refresh token（安全降级）
+            self.db.table("refresh_tokens").update({
+                "revoked": True,
+                "revoked_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("user_id", record["user_id"]).eq("revoked", False).execute()
+            logger.warning(
+                f"Refresh token reuse detected, revoking all tokens | "
+                f"user_id={record['user_id']}"
+            )
+            raise AuthenticationError("刷新令牌已失效，请重新登录")
+
+        # 检查过期
+        expires_at = datetime.fromisoformat(str(record["expires_at"]))
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at < datetime.now(timezone.utc):
+            raise AuthenticationError("刷新令牌已过期，请重新登录")
+
+        # 检查用户状态
+        user_result = (
+            self.db.table("users")
+            .select("id, status")
+            .eq("id", record["user_id"])
+            .maybe_single()
+            .execute()
+        )
+        if not user_result.data or user_result.data["status"] != "active":
+            raise AuthenticationError("账号已被禁用")
+
+        user_id = str(record["user_id"])
+
+        now = datetime.now(timezone.utc)
+
+        # 吊销旧 refresh token
+        self.db.table("refresh_tokens").update({
+            "revoked": True,
+            "revoked_at": now.isoformat(),
+        }).eq("id", record["id"]).execute()
+
+        # 写路径清理：删除该用户已吊销或已过期的 token 行（防表膨胀）
+        self.db.table("refresh_tokens").delete().eq(
+            "user_id", user_id
+        ).eq("revoked", True).execute()
+
+        self.db.table("refresh_tokens").delete().eq(
+            "user_id", user_id
+        ).lt("expires_at", now.isoformat()).execute()
+
+        # 签发新双 token
+        token = self._create_token_response(user_id)
+
+        logger.info(f"Token refreshed | user_id={user_id}")
+        return {"token": token}
+
+    def revoke_user_refresh_tokens(self, user_id: str) -> None:
+        """吊销用户所有 refresh token（用于登出/密码重置）"""
+        self.db.table("refresh_tokens").update({
+            "revoked": True,
+            "revoked_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("user_id", user_id).eq("revoked", False).execute()
+
+    def _create_token_response(self, user_id: str) -> dict:
+        """创建双 token 响应（委托 security.create_token_pair）"""
+        return create_token_pair(self.db, user_id)
 
     def _format_user_response(self, user: dict) -> dict:
         """格式化用户响应"""

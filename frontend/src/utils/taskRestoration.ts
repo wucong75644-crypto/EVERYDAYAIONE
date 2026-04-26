@@ -94,12 +94,11 @@ export async function fetchPendingTasks(): Promise<PendingTask[] | null> {
         status: axiosError.response?.status,
         data: axiosError.response?.data,
       });
-      // 如果是 401 错误，清除 token 并返回空数组（不影响其他功能）
+      // 401 由 api.ts 拦截器统一处理（silentRefresh → 重发 / logoutOnce）
+      // 这里不再手动清除 token，只返回 null 表示请求失败
       if (axiosError.response?.status === 401) {
-        logger.warn('task:fetch', 'Token 无效，清除登录状态');
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('user');
-        return [];
+        logger.warn('task:fetch', 'Token 无效，由拦截器处理刷新/登出');
+        return null;
       }
     } else {
       logger.error('task:fetch', '获取进行中任务失败', error);

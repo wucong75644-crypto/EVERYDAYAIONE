@@ -595,12 +595,195 @@ class TestAuthServiceHelpers:
         assert result["wecom_bound"] is False
 
     def test_create_token_response(self, auth_service):
-        """测试：Token 响应格式"""
-        # Act
-        with patch("services.auth_service.create_access_token", return_value="test_token"):
+        """测试：Token 响应格式（委托 create_token_pair）"""
+        fake_pair = {
+            "access_token": "test_token",
+            "refresh_token": "test_refresh",
+            "token_type": "bearer",
+            "expires_in": 1440 * 60,
+            "refresh_expires_in": 7 * 86400,
+        }
+        with patch("services.auth_service.create_token_pair", return_value=fake_pair):
             result = auth_service._create_token_response("user_123")
 
-        # Assert
         assert result["access_token"] == "test_token"
+        assert result["refresh_token"] == "test_refresh"
         assert result["token_type"] == "bearer"
         assert result["expires_in"] == 1440 * 60
+        assert result["refresh_expires_in"] == 7 * 86400
+
+
+# ── refresh_access_token / revoke_user_refresh_tokens ──────────────
+
+
+class TestRefreshAccessToken:
+    """refresh_access_token 刷新轮换测试
+
+    DB 查询通过 mock db.table() 链式调用，避免依赖 MockDB 的 eq 过滤逻辑。
+    """
+
+    @pytest.fixture
+    def auth_service(self, mock_settings):
+        mock_settings.jwt_refresh_token_expire_days = 7
+        mock_db = MagicMock()
+        with patch("services.auth_service.get_settings", return_value=mock_settings):
+            return AuthService(mock_db)
+
+    def _mock_db_chain(self, auth_service, select_data):
+        """配置 db.table("refresh_tokens").select().eq().maybe_single().execute() 链"""
+        result = MagicMock()
+        result.data = select_data
+        chain = MagicMock()
+        chain.select.return_value = chain
+        chain.eq.return_value = chain
+        chain.maybe_single.return_value = chain
+        chain.execute.return_value = result
+        # update/delete 链也需要
+        chain.update.return_value = chain
+        chain.delete.return_value = chain
+        chain.lt.return_value = chain
+        chain.insert.return_value = chain
+        auth_service.db.table.return_value = chain
+        return chain
+
+    @pytest.mark.asyncio
+    async def test_refresh_success(self, auth_service):
+        """正常轮换：旧 token 吊销 + 签发新 token"""
+        from datetime import datetime, timezone, timedelta
+        user_id = str(uuid4())
+
+        rt_record = {
+            "id": "rt-1",
+            "user_id": user_id,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(),
+            "revoked": False,
+        }
+        user_record = {"id": user_id, "status": "active"}
+
+        # 第一次调用查 refresh_tokens，第二次查 users，后续是 update/delete/insert
+        call_count = [0]
+        def table_side_effect(name):
+            call_count[0] += 1
+            chain = MagicMock()
+            chain.select.return_value = chain
+            chain.eq.return_value = chain
+            chain.lt.return_value = chain
+            chain.maybe_single.return_value = chain
+            chain.update.return_value = chain
+            chain.delete.return_value = chain
+            chain.insert.return_value = chain
+            r = MagicMock()
+            if call_count[0] == 1:  # refresh_tokens select
+                r.data = rt_record
+            elif call_count[0] == 2:  # users select
+                r.data = user_record
+            else:
+                r.data = None
+            chain.execute.return_value = r
+            return chain
+
+        auth_service.db.table.side_effect = table_side_effect
+
+        fake_pair = {
+            "access_token": "new_access",
+            "refresh_token": "new_refresh",
+            "token_type": "bearer",
+            "expires_in": 1800,
+            "refresh_expires_in": 604800,
+        }
+
+        with patch("services.auth_service.hash_refresh_token", return_value="hash"), \
+             patch("services.auth_service.create_token_pair", return_value=fake_pair):
+            result = await auth_service.refresh_access_token("raw_token")
+
+        assert result["token"]["access_token"] == "new_access"
+        assert result["token"]["refresh_token"] == "new_refresh"
+
+    @pytest.mark.asyncio
+    async def test_refresh_invalid_token_raises(self, auth_service):
+        """无效 token（DB 查不到）→ AuthenticationError"""
+        self._mock_db_chain(auth_service, None)
+
+        with patch("services.auth_service.hash_refresh_token", return_value="nonexistent"):
+            with pytest.raises(AuthenticationError, match="无效的刷新令牌"):
+                await auth_service.refresh_access_token("bad_token")
+
+    @pytest.mark.asyncio
+    async def test_refresh_revoked_token_revokes_all(self, auth_service):
+        """已吊销 token 被重用 → 吊销该用户所有 token（盗用检测）"""
+        user_id = str(uuid4())
+        self._mock_db_chain(auth_service, {
+            "id": "rt-1", "user_id": user_id,
+            "expires_at": "2099-01-01T00:00:00+00:00", "revoked": True,
+        })
+
+        with patch("services.auth_service.hash_refresh_token", return_value="abc"):
+            with pytest.raises(AuthenticationError, match="已失效"):
+                await auth_service.refresh_access_token("stolen_token")
+
+    @pytest.mark.asyncio
+    async def test_refresh_expired_token_raises(self, auth_service):
+        """过期 token → AuthenticationError"""
+        user_id = str(uuid4())
+        self._mock_db_chain(auth_service, {
+            "id": "rt-1", "user_id": user_id,
+            "expires_at": "2020-01-01T00:00:00+00:00", "revoked": False,
+        })
+
+        with patch("services.auth_service.hash_refresh_token", return_value="abc"):
+            with pytest.raises(AuthenticationError, match="已过期"):
+                await auth_service.refresh_access_token("expired_token")
+
+    @pytest.mark.asyncio
+    async def test_refresh_disabled_user_raises(self, auth_service):
+        """用户被禁用 → AuthenticationError"""
+        from datetime import datetime, timezone, timedelta
+        user_id = str(uuid4())
+
+        call_count = [0]
+        def table_side_effect(name):
+            call_count[0] += 1
+            chain = MagicMock()
+            chain.select.return_value = chain
+            chain.eq.return_value = chain
+            chain.maybe_single.return_value = chain
+            r = MagicMock()
+            if call_count[0] == 1:
+                r.data = {
+                    "id": "rt-1", "user_id": user_id,
+                    "expires_at": (datetime.now(timezone.utc) + timedelta(days=3)).isoformat(),
+                    "revoked": False,
+                }
+            elif call_count[0] == 2:
+                r.data = {"id": user_id, "status": "disabled"}
+            chain.execute.return_value = r
+            return chain
+
+        auth_service.db.table.side_effect = table_side_effect
+
+        with patch("services.auth_service.hash_refresh_token", return_value="abc"):
+            with pytest.raises(AuthenticationError, match="禁用"):
+                await auth_service.refresh_access_token("token")
+
+
+class TestRevokeUserRefreshTokens:
+    """revoke_user_refresh_tokens 测试"""
+
+    @pytest.fixture
+    def auth_service(self, mock_settings):
+        mock_settings.jwt_refresh_token_expire_days = 7
+        mock_db = MagicMock()
+        chain = MagicMock()
+        chain.update.return_value = chain
+        chain.eq.return_value = chain
+        chain.execute.return_value = MagicMock(data=None)
+        mock_db.table.return_value = chain
+        with patch("services.auth_service.get_settings", return_value=mock_settings):
+            return AuthService(mock_db)
+
+    def test_revoke_calls_update_on_active_tokens(self, auth_service):
+        """吊销：对该用户所有 revoked=False 的行设置 revoked=True"""
+        user_id = str(uuid4())
+        # 不应抛异常
+        auth_service.revoke_user_refresh_tokens(user_id)
+        auth_service.db.table.assert_called_with("refresh_tokens")

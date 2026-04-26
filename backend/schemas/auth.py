@@ -82,8 +82,10 @@ class TokenResponse(BaseModel):
     """Token 响应"""
 
     access_token: str = Field(..., description="访问令牌")
+    refresh_token: str = Field(..., description="刷新令牌（用于无感续期）")
     token_type: str = Field(default="bearer", description="令牌类型")
-    expires_in: int = Field(..., description="过期时间（秒）")
+    expires_in: int = Field(..., description="access_token 过期时间（秒）")
+    refresh_expires_in: int = Field(..., description="refresh_token 过期时间（秒）")
 
 
 class CurrentMember(BaseModel):

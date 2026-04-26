@@ -14,6 +14,7 @@
 import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react';
 import { useAuthStore } from '../stores/useAuthStore';
 import { logger } from '../utils/logger';
+import { logoutOnce } from '../utils/tokenManager';
 
 // === 配置常量 ===
 
@@ -293,15 +294,8 @@ export function useWebSocket(): UseWebSocketReturn {
         event.code === 4002;
 
       if (isAuthError) {
-        logger.warn('ws:connection', 'Auth failed, clearing token', { code: event.code });
-        const loginOrgId = localStorage.getItem('login_org_id') || localStorage.getItem('current_org_id');
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('user');
-        localStorage.removeItem('current_org_id');
-        localStorage.removeItem('current_org');
-        if (window.location.pathname !== '/') {
-          window.location.href = loginOrgId ? `/?org=${loginOrgId}` : '/';
-        }
+        logger.warn('ws:connection', 'Auth failed, unified logout', { code: event.code });
+        logoutOnce();
         return;
       }
 

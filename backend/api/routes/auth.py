@@ -4,7 +4,10 @@
 提供用户注册、登录、发送验证码等接口。
 """
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from api.deps import CurrentUser, Database, OrgCtx
 from schemas.auth import (
@@ -16,6 +19,7 @@ from schemas.auth import (
     PasswordLoginRequest,
     PhoneLoginRequest,
     PhoneRegisterRequest,
+    RefreshTokenRequest,
     ResetPasswordRequest,
     SendCodeRequest,
     UserResponse,
@@ -308,11 +312,41 @@ async def get_current_user_info(
     return response
 
 
+@router.post("/refresh", summary="刷新令牌")
+async def refresh_token(
+    req: RefreshTokenRequest,
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    """
+    用 refresh token 换取新的 access token + refresh token（轮换模式）。
+
+    - 旧 refresh token 立即失效
+    - 如果检测到已吊销的 refresh token 被重用，自动吊销该用户所有 token（防盗用）
+    """
+    return await auth_service.refresh_access_token(req.refresh_token)
+
+
+class _OptionalRefreshRequest(BaseModel):
+    refresh_token: Optional[str] = None
+
+
 @router.post("/logout", summary="退出登录")
-async def logout() -> dict:
+async def logout(
+    req: _OptionalRefreshRequest = _OptionalRefreshRequest(),
+    auth_service: AuthService = Depends(get_auth_service),
+) -> dict:
     """
     退出登录
 
-    客户端需要清除本地存储的 token
+    可选传入 refresh_token 用于服务端吊销。
+    客户端同时需要清除本地存储的 token。
     """
+    if req.refresh_token:
+        from core.security import hash_refresh_token
+        from datetime import datetime as _dt, timezone as _tz
+        token_hash = hash_refresh_token(req.refresh_token)
+        auth_service.db.table("refresh_tokens").update({
+            "revoked": True,
+            "revoked_at": _dt.now(_tz.utc).isoformat(),
+        }).eq("token_hash", token_hash).execute()
     return {"message": "已退出登录"}
