@@ -8,8 +8,6 @@
 共享逻辑在 _ConfigResolverCore 中，DB 访问各自实现。
 """
 
-from typing import Optional
-
 from loguru import logger
 
 from core.config import get_settings
@@ -45,22 +43,36 @@ class _ConfigResolverCore:
         self.db = db
         self._settings = get_settings()
 
-    def _get_encrypt_key(self) -> str:
-        """获取加密密钥，未配置时报错"""
+    # 进程级 per-org 密钥缓存（sync/async 共享，encrypt_key 变更需重启生效）
+    _org_key_cache: dict[str, str | None] = {}
+
+    def _get_encrypt_key(self, org_id: str | None = None) -> str:
+        """获取加密密钥：优先企业专属密钥（从缓存），降级到全局密钥。
+
+        优先级：_org_key_cache[org_id] > .env ORG_CONFIG_ENCRYPT_KEY
+        per-org 密钥与 .env 解耦，避免部署覆盖 .env 导致全企业停摆。
+        缓存由子类的 _load_org_encrypt_key() 填充。
+        """
+        if org_id:
+            org_key = self._org_key_cache.get(org_id)
+            if org_key:
+                return org_key
+        # 降级到全局密钥（兼容未迁移的企业）
         key = self._settings.org_config_encrypt_key
         if not key:
             raise ValueError(
-                "ORG_CONFIG_ENCRYPT_KEY 未配置，无法读写企业配置。"
-                "请运行 python -c 'from core.crypto import generate_encrypt_key; "
-                "print(generate_encrypt_key())' 生成密钥"
+                "加密密钥未配置：organizations.encrypt_key 为空且"
+                " ORG_CONFIG_ENCRYPT_KEY 未设置"
             )
         return key
 
-    def _decrypt_result(self, result_data: dict | None) -> str | None:
+    def _decrypt_result(
+        self, result_data: dict | None, org_id: str | None = None,
+    ) -> str | None:
         """解密查询结果"""
         if not result_data:
             return None
-        encrypt_key = self._get_encrypt_key()
+        encrypt_key = self._get_encrypt_key(org_id)
         return aes_decrypt(result_data["config_value_encrypted"], encrypt_key)
 
     def _get_default(self, key: str) -> str | None:
@@ -73,6 +85,25 @@ class _ConfigResolverCore:
 
 class OrgConfigResolver(_ConfigResolverCore):
     """同步企业配置解析器（传入同步 LocalDBClient）"""
+
+    def _load_org_encrypt_key(self, org_id: str) -> str | None:
+        """从 organizations 表读取企业专属加密密钥（同步，带内存缓存）"""
+        if org_id in self._org_key_cache:
+            return self._org_key_cache[org_id]
+        try:
+            result = (
+                self.db.table("organizations")
+                .select("encrypt_key")
+                .eq("id", org_id)
+                .maybe_single()
+                .execute()
+            )
+            key = (result.data or {}).get("encrypt_key")
+            self._org_key_cache[org_id] = key
+            return key
+        except Exception as e:
+            logger.warning(f"Failed to load org encrypt_key | org_id={org_id} | error={e}")
+            return None
 
     def get(self, org_id: str | None, key: str) -> str | None:
         """获取配置值。企业专属 key 不降级，AI/平台级 key 降级到 .env。"""
@@ -89,7 +120,8 @@ class OrgConfigResolver(_ConfigResolverCore):
         self, org_id: str, key: str, value: str, updated_by: str,
     ) -> None:
         """写入企业配置（AES 加密存储）"""
-        encrypt_key = self._get_encrypt_key()
+        self._load_org_encrypt_key(org_id)
+        encrypt_key = self._get_encrypt_key(org_id)
         encrypted = aes_encrypt(value, encrypt_key)
         self.db.table("org_configs").upsert(
             {
@@ -134,17 +166,12 @@ class OrgConfigResolver(_ConfigResolverCore):
     ) -> None:
         """ERP token 自动刷新成功后回写 DB（同步版）。
 
-        Why: 系统后台自动 refresh 没有用户上下文，updated_by 留空。
-        AES 加密后写入 org_configs，与初次绑定走的加密器一致。
-
         原子性: 单条 upsert × 2 — schema 反射白名单已覆盖 org_configs
         的复合唯一键 (org_id, config_key)，不需要显式事务。
-
-        显式 updated_at: 因为 UPSERT 触发 ON CONFLICT 时不会重新应用列默认值，
-        必须在 payload 里带上 updated_at，运维才能从该字段看到 token 最后刷新时间。
         """
         from datetime import datetime, timezone
-        encrypt_key = self._get_encrypt_key()
+        self._load_org_encrypt_key(org_id)
+        encrypt_key = self._get_encrypt_key(org_id)
         now = datetime.now(timezone.utc)
         for key, val in [
             ("kuaimai_access_token", access_token),
@@ -206,6 +233,8 @@ class OrgConfigResolver(_ConfigResolverCore):
     def _load_encrypted(self, org_id: str, key: str) -> str | None:
         """从 org_configs 表读取并解密（同步）"""
         try:
+            # 预热缓存：确保 _decrypt_result → _get_encrypt_key 能取到 org 密钥
+            self._load_org_encrypt_key(org_id)
             result = (
                 self.db.table("org_configs")
                 .select("config_value_encrypted")
@@ -214,7 +243,7 @@ class OrgConfigResolver(_ConfigResolverCore):
                 .maybe_single()
                 .execute()
             )
-            return self._decrypt_result(result.data)
+            return self._decrypt_result(result.data, org_id)
         except Exception as e:
             logger.warning(
                 f"Failed to load org config | org_id={org_id} | key={key} | error={e}"
@@ -227,6 +256,25 @@ class OrgConfigResolver(_ConfigResolverCore):
 
 class AsyncOrgConfigResolver(_ConfigResolverCore):
     """异步企业配置解析器（传入 AsyncLocalDBClient）"""
+
+    async def _load_org_encrypt_key(self, org_id: str) -> str | None:
+        """从 organizations 表读取企业专属加密密钥（异步，带内存缓存）"""
+        if org_id in self._org_key_cache:
+            return self._org_key_cache[org_id]
+        try:
+            result = await (
+                self.db.table("organizations")
+                .select("encrypt_key")
+                .eq("id", org_id)
+                .maybe_single()
+                .execute()
+            )
+            key = (result.data or {}).get("encrypt_key")
+            self._org_key_cache[org_id] = key
+            return key
+        except Exception as e:
+            logger.warning(f"Failed to load org encrypt_key | org_id={org_id} | error={e}")
+            return None
 
     async def get(self, org_id: str | None, key: str) -> str | None:
         """获取配置值。企业专属 key 不降级，AI/平台级 key 降级到 .env。"""
@@ -249,24 +297,22 @@ class AsyncOrgConfigResolver(_ConfigResolverCore):
             creds[k] = val
         return creds
 
+    async def _async_get_encrypt_key(self, org_id: str | None) -> str:
+        """异步版获取加密密钥：先 await 预热缓存，再走同步链路。"""
+        if org_id:
+            await self._load_org_encrypt_key(org_id)
+        return self._get_encrypt_key(org_id)
+
     async def update_erp_token(
         self, org_id: str, access_token: str, refresh_token: str,
     ) -> None:
         """ERP token 自动刷新成功后回写 DB（异步版，供 worker / dead letter 用）。
 
-        Why: 后台 worker 自动 refresh 没有用户上下文，updated_by 留空。
-        AES 加密后写入 org_configs，与初次绑定走的加密器一致。
-
-        历史教训: 多租户改造前，KuaiMaiClient 是 singleton，refresh 后的新 token
-        靠内存 + Redis 续命，能扛住 token 30 天硬寿命。改成 per-task client
-        后内存丢失，DB 又没回写，于是 12 天里所有 worker 一直用初始 token，
-        到期日 16:29 集体雪崩。这个方法是闭环的关键节点。
-
-        显式 updated_at: 因为 UPSERT 触发 ON CONFLICT 时不会重新应用列默认值，
-        必须在 payload 里带上 updated_at，运维才能从该字段看到 token 最后刷新时间。
+        原子性: 单条 upsert × 2 — schema 反射白名单已覆盖 org_configs
+        的复合唯一键 (org_id, config_key)，不需要显式事务。
         """
         from datetime import datetime, timezone
-        encrypt_key = self._get_encrypt_key()
+        encrypt_key = await self._async_get_encrypt_key(org_id)
         now = datetime.now(timezone.utc)
         for key, val in [
             ("kuaimai_access_token", access_token),
@@ -290,6 +336,8 @@ class AsyncOrgConfigResolver(_ConfigResolverCore):
     async def _load_encrypted(self, org_id: str, key: str) -> str | None:
         """从 org_configs 表读取并解密（异步）"""
         try:
+            # 预热缓存：确保 _decrypt_result 能同步拿到 org 密钥
+            await self._load_org_encrypt_key(org_id)
             result = await (
                 self.db.table("org_configs")
                 .select("config_value_encrypted")
@@ -298,7 +346,7 @@ class AsyncOrgConfigResolver(_ConfigResolverCore):
                 .maybe_single()
                 .execute()
             )
-            return self._decrypt_result(result.data)
+            return self._decrypt_result(result.data, org_id)
         except Exception as e:
             logger.warning(
                 f"Failed to load org config | org_id={org_id} | key={key} | error={e}"

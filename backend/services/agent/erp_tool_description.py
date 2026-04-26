@@ -84,6 +84,10 @@ def get_capability_manifest() -> dict:
             {"query": "今天刷单有多少",
              "effect": "is_scalping=true + include_invalid=true"},
         ],
+        "parallel_hint": (
+            "支持并行多次调用：用户请求包含多个独立子任务时，"
+            "同时发起多个 erp_agent 调用，每个 task 只写一个子任务"
+        ),
         "auto_behaviors": [
             ">200行自动导出 staging 文件",
             "返回格式自动适配（文本/表格/文件链接）",
@@ -120,6 +124,9 @@ def build_tool_description() -> str:
             "  （query 中提到具体信息如'备注''地址''快递单号'"
             "会自动返回对应字段）",
         )
+
+    if m.get("parallel_hint"):
+        lines.append(f"\n并行调用：{m['parallel_hint']}")
 
     lines.append("\n返回：")
     for r in m["returns"]:
