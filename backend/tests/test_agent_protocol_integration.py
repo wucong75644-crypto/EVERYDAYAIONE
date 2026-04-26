@@ -114,22 +114,26 @@ class TestChatToolMixinAgentResult:
         total = r1.tokens_used + r2.tokens_used
         assert total == 800
 
-    def test_timeout_status_is_error_true(self):
-        """status=timeout 应被判定为 is_error=True（防止 LLM 盲目重试）"""
+    def test_timeout_is_failure(self):
+        """status=timeout 应被判定为 is_failure（防止 LLM 盲目重试）"""
         result = AgentResult(status="timeout", summary="查询超时", source="erp_agent")
         assert result.status == "timeout"
-        # chat_tool_mixin L256: result.status in ("error", "timeout")
-        assert result.status in ("error", "timeout")
+        assert result.is_failure
 
-    def test_error_status_is_error_true(self):
-        """status=error 仍被判定为 is_error=True"""
+    def test_error_is_failure(self):
+        """status=error 应被判定为 is_failure"""
         result = AgentResult(status="error", summary="失败", source="erp_agent")
-        assert result.status in ("error", "timeout")
+        assert result.is_failure
 
-    def test_success_status_is_not_error(self):
-        """status=success 不应被判定为 error"""
+    def test_success_is_not_failure(self):
+        """status=success 不应被判定为 failure"""
         result = AgentResult(status="success", summary="ok", source="erp_agent")
-        assert result.status not in ("error", "timeout")
+        assert not result.is_failure
+
+    def test_empty_is_not_failure(self):
+        """status=empty 不应被判定为 failure（业务合理的空结果）"""
+        result = AgentResult(status="empty", summary="无数据", source="erp_agent")
+        assert not result.is_failure
 
 
 # ============================================================

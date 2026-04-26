@@ -56,7 +56,6 @@ from services.kuaimai.erp_unified_schema import (
     TimeRange,
     ValidatedFilter,
     _FIELD_LABEL_CN,
-    fmt_classified_grouped,
     fmt_summary_grouped,
     fmt_summary_total,
     generate_field_doc,
@@ -82,20 +81,6 @@ _GROUP_LABEL = {
     "supplier": "供应商", "warehouse": "仓库", "status": "状态",
 }
 
-_CLASSIFIED_FLAT_COLUMNS = [
-    ColumnMeta("total_orders", "integer", "总订单数"),
-    ColumnMeta("total_amount", "numeric", "总金额"),
-    ColumnMeta("valid_orders", "integer", "有效订单数"),
-    ColumnMeta("valid_amount", "numeric", "有效金额"),
-]
-
-_CLASSIFIED_GROUPED_COLUMNS = [
-    ColumnMeta("group_key", "text", "分组"),
-    ColumnMeta("total_orders", "integer", "总订单数"),
-    ColumnMeta("total_amount", "numeric", "总金额"),
-    ColumnMeta("valid_orders", "integer", "有效订单数"),
-    ColumnMeta("valid_amount", "numeric", "有效金额"),
-]
 
 
 class UnifiedQueryEngine:
@@ -301,190 +286,12 @@ class UnifiedQueryEngine:
         group_by: list[str] | None = None,
         include_invalid: bool = False,
     ) -> ToolOutput | None:
-        """订单分类统计：走 erp_order_stats_grouped RPC + 分类引擎。
-
-        支持两种模式：
-        - group_by=None → 整体分类统计
-        - group_by=['platform'] → 每个分组内独立分类
-        """
-        from services.kuaimai.order_classifier import OrderClassifier
-
-        non_time = [f for f in filters if f.field not in TIME_COLUMNS]
-        p_shop, p_platform, p_supplier, p_warehouse, dsl = _split_named_params(non_time)
-
-        # erp_order_stats_grouped 只接受 p_filters，把命名参数也转为 DSL
-        if p_shop:
-            dsl.append({"field": "shop_name", "op": "like", "value": f"%{p_shop}%"})
-        if p_platform:
-            dsl.append({"field": "platform", "op": "eq", "value": p_platform})
-        if p_supplier:
-            dsl.append({"field": "supplier_name", "op": "like", "value": f"%{p_supplier}%"})
-        if p_warehouse:
-            dsl.append({"field": "warehouse_name", "op": "like", "value": f"%{p_warehouse}%"})
-
-        rpc_group = (
-            GROUP_BY_MAP.get(group_by[0], group_by[0]) if group_by else None
-        )
-
-        params: dict[str, Any] = {
-            "p_org_id": self.org_id,
-            "p_start": tr.start_iso,
-            "p_end": tr.end_iso,
-            "p_time_col": tr.time_col,
-            "p_filters": _json.dumps(dsl) if dsl else None,
-            "p_group_by": rpc_group,
-        }
-
-        # ── 诊断：直查 DB 对比 RPC ──
-        try:
-            direct = self.db.table("erp_document_items").select(
-                "doc_id", count="exact",
-            ).eq("org_id", self.org_id).eq(
-                "doc_type", "order",
-            ).gte(tr.time_col, tr.start_iso).lt(
-                tr.time_col, tr.end_iso,
-            ).execute()
-            direct_count = direct.count if direct.count else len(direct.data)
-            logger.info(f"诊断直查 | table row count={direct_count} | time_col={tr.time_col} | {tr.start_iso}~{tr.end_iso}")
-        except Exception as diag_err:
-            logger.warning(f"诊断直查失败 | error={diag_err}")
-
-        try:
-            result = self.db.rpc("erp_order_stats_grouped", params).execute()
-            raw_rows = result.data
-        except Exception as e:
-            logger.warning(f"分类统计 RPC 失败，回退原逻辑 | error={e}")
-            return None
-
-        if not raw_rows or raw_rows == []:
-            return None
-
-        # ── 诊断日志：RPC 返回的原始聚合数据 ──
-        if not isinstance(raw_rows, list) or not raw_rows or not isinstance(raw_rows[0], dict):
-            return None
-        rpc_total_docs = sum(int(r.get("doc_count", 0)) for r in raw_rows)
-        rpc_row_count = len(raw_rows)
-        logger.info(
-            f"分类统计 RPC 返回 | rows={rpc_row_count} | "
-            f"sum(doc_count)={rpc_total_docs} | "
-            f"group_by={rpc_group} | "
-            f"time={tr.start_iso}~{tr.end_iso} | "
-            f"time_col={tr.time_col}"
-        )
-
-        try:
-            classifier = OrderClassifier.for_org(self.db, self.org_id)
-        except Exception as e:
-            logger.warning(f"分类引擎加载异常，回退原逻辑 | error={e}")
-            return None
-
-        time_header = format_time_header(
-            ctx=request_ctx, range_=tr.date_range, kind="统计区间",
-        )
-
-        if rpc_group is None:
-            result = self._build_classified_flat(
-                classifier, raw_rows, time_header, tr, include_invalid,
-            )
-        else:
-            result = self._build_classified_grouped(
-                classifier, raw_rows, rpc_group, time_header, tr, include_invalid,
-            )
-
-        # ── 诊断日志：分类引擎处理后的数据（扁平化结构） ──
-        if result and result.data:
-            if rpc_group is None:
-                d = result.data[0] if result.data else {}
-                classified_total = d.get("total_orders", "?")
-                classified_valid = d.get("valid_orders", "?")
-            else:
-                classified_total = sum(
-                    d.get("total_orders", 0) for d in result.data
-                )
-                classified_valid = sum(
-                    d.get("valid_orders", 0) for d in result.data
-                )
-            logger.info(
-                f"分类引擎输出 | rpc_sum={rpc_total_docs} | "
-                f"classified_total={classified_total} | "
-                f"classified_valid={classified_valid} | "
-                f"match={'✅' if rpc_total_docs == classified_total else '❌ MISMATCH'}"
-            )
-
-        return result
-
-    def _build_classified_flat(
-        self, classifier: Any, raw_rows: list[dict],
-        time_header: str, tr: TimeRange, include_invalid: bool,
-    ) -> ToolOutput | None:
-        """无分组：整体分类 → ToolOutput（扁平化数据）"""
-        try:
-            cr = classifier.classify(raw_rows)
-        except Exception as e:
-            logger.warning(f"分类引擎异常，回退原逻辑 | error={e}")
-            return None
-        body = cr.to_display_text(show_recommendation=not include_invalid)
-        summary_text = f"{time_header}\n\n{body}" if time_header else body
-        flat_row = {
-            "total_orders": cr.total.get("doc_count", 0),
-            "total_amount": cr.total.get("total_amount", 0),
-            "valid_orders": cr.valid.get("doc_count", 0),
-            "valid_amount": cr.valid.get("total_amount", 0),
-        }
-        for cat in cr.categories_list:
-            name = cat.get("name", "未知")
-            flat_row[f"{name}单数"] = cat.get("doc_count", 0)
-        return ToolOutput(
-            summary=summary_text,
-            format=OutputFormat.TABLE,
-            source="erp",
-            columns=_CLASSIFIED_FLAT_COLUMNS,
-            data=[flat_row],
-            metadata={
-                "doc_type": "order",
-                "time_range": tr.label,
-                "time_column": tr.time_col,
-            },
-        )
-
-    def _build_classified_grouped(
-        self, classifier: Any, raw_rows: list[dict],
-        rpc_group: str, time_header: str, tr: TimeRange,
-        include_invalid: bool,
-    ) -> ToolOutput | None:
-        """有分组：每组独立分类 → ToolOutput（扁平化数据）"""
-        try:
-            grouped = classifier.classify_grouped(raw_rows)
-        except Exception as e:
-            logger.warning(f"分组分类引擎异常，回退原逻辑 | error={e}")
-            return None
-        body = fmt_classified_grouped(
-            grouped, rpc_group, tr.label,
-            show_recommendation=not include_invalid,
-        )
-        summary_text = f"{time_header}\n\n{body}" if time_header else body
-        data_list = [
-            {
-                "group_key": key,
-                "total_orders": cr.total.get("doc_count", 0),
-                "total_amount": cr.total.get("total_amount", 0),
-                "valid_orders": cr.valid.get("doc_count", 0),
-                "valid_amount": cr.valid.get("total_amount", 0),
-            }
-            for key, cr in grouped.items()
-        ]
-        return ToolOutput(
-            summary=summary_text,
-            format=OutputFormat.TABLE,
-            source="erp",
-            columns=_CLASSIFIED_GROUPED_COLUMNS,
-            data=data_list,
-            metadata={
-                "doc_type": "order",
-                "group_by": rpc_group,
-                "time_range": tr.label,
-                "time_column": tr.time_col,
-            },
+        """订单分类统计（委托 erp_classified_summary 模块）。"""
+        from services.kuaimai.erp_classified_summary import classified_summary
+        return await classified_summary(
+            db=self.db, org_id=self.org_id,
+            filters=filters, tr=tr, request_ctx=request_ctx,
+            group_by=group_by, include_invalid=include_invalid,
         )
 
     # ── Export 模式（DuckDB 流式导出） ────────────────
@@ -570,7 +377,8 @@ class UnifiedQueryEngine:
         # DuckDB 流式导出 → staging（子进程隔离，崩溃不影响 chat worker）
         start = _time.monotonic()
         try:
-            result = await self._subprocess_export(
+            from services.kuaimai.erp_export_subprocess import subprocess_export
+            result = await subprocess_export(
                 query, str(staging_path), push_thinking=push_thinking,
             )
         except Exception as e:
@@ -654,105 +462,3 @@ class UnifiedQueryEngine:
             },
         )
 
-    # ── 子进程导出（内存隔离） ────────────────
-
-    async def _subprocess_export(
-        self, query: str, output_path: str,
-        push_thinking: Any = None,
-    ) -> dict[str, int | float | str]:
-        """子进程执行 DuckDB 导出，内存隔离，实时进度推送。"""
-        import asyncio as _aio
-        import sys as _sys
-
-        from core.config import get_settings
-        settings = get_settings()
-        timeout = settings.export_subprocess_timeout
-
-        params = _json.dumps({
-            "query": query,
-            "output_path": output_path,
-            "pg_url": settings.database_url,
-            "memory_limit": settings.duckdb_memory_limit,
-            "threads": settings.duckdb_threads,
-            "timeout": timeout - 5,
-        })
-
-        proc = await _aio.create_subprocess_exec(
-            _sys.executable, "-m", "core.export_worker",
-            stdin=_aio.subprocess.PIPE,
-            stdout=_aio.subprocess.PIPE,
-            stderr=_aio.subprocess.PIPE,
-            cwd=str(Path(__file__).resolve().parents[1]),
-        )
-
-        proc.stdin.write(params.encode())
-        await proc.stdin.drain()
-        proc.stdin.close()
-
-        # stderr 完整收集：JSON 进度行推 thinking，所有行保留供错误诊断
-        stderr_lines: list[str] = []
-
-        async def _consume_stderr() -> None:
-            while True:
-                line = await proc.stderr.readline()
-                if not line:
-                    break
-                text = line.decode(errors="replace").rstrip()
-                stderr_lines.append(text)
-                if push_thinking:
-                    try:
-                        progress = _json.loads(text)
-                        msg = _format_export_progress(progress)
-                        if msg:
-                            await push_thinking(msg)
-                    except (ValueError, KeyError):
-                        pass  # 非进度行（traceback 等），已收集在 stderr_lines
-
-        stderr_task = _aio.create_task(_consume_stderr())
-        try:
-            stdout = await _aio.wait_for(
-                proc.stdout.read(), timeout=timeout,
-            )
-            await proc.wait()
-        except _aio.TimeoutError:
-            proc.kill()
-            await proc.wait()
-            raise TimeoutError(
-                f"Export subprocess timed out after {timeout}s"
-            )
-        finally:
-            # 确保 stderr 消费任务完整结束，不中断正在执行的 push_thinking
-            stderr_task.cancel()
-            try:
-                await stderr_task
-            except _aio.CancelledError:
-                pass
-
-        if proc.returncode != 0:
-            detail = "\n".join(stderr_lines[-10:])
-            raise RuntimeError(
-                f"Export subprocess failed (exit={proc.returncode}):\n{detail}"
-            )
-
-        return _json.loads(stdout.decode())
-
-
-def _format_export_progress(progress: dict) -> str | None:
-    """将子进程进度 JSON 格式化为 thinking 文案。"""
-    phase = progress.get("phase")
-    if phase == "connect":
-        return "正在连接数据库..."
-    if phase == "export":
-        size = progress.get("size_kb", 0)
-        elapsed = progress.get("elapsed", 0)
-        if size > 1024:
-            return f"正在导出数据... {size / 1024:.1f}MB 已写入（{elapsed:.0f}s）"
-        return f"正在导出数据... {size:.0f}KB 已写入（{elapsed:.0f}s）"
-    if phase == "done":
-        rows = progress.get("row_count", 0)
-        size = progress.get("size_kb", 0)
-        elapsed = progress.get("elapsed", 0)
-        if size > 1024:
-            return f"导出完成：{rows:,} 行，{size / 1024:.1f}MB（{elapsed:.0f}s）"
-        return f"导出完成：{rows:,} 行，{size:.0f}KB（{elapsed:.0f}s）"
-    return None

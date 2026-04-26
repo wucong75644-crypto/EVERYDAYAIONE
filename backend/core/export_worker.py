@@ -100,5 +100,5 @@ if __name__ == "__main__":
     except Exception as e:
         # 顶层兜底：stdin 为空、JSON 解析失败、DuckDB 构造失败等
         # 都输出结构化错误，让父进程能拿到诊断信息
-        _report("error", message=f"worker startup failed: {e!s:.500}")
+        _report("error", message=f"worker startup failed: {str(e)[:500]}")
         sys.exit(1)
