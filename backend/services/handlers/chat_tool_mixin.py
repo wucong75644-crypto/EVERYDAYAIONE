@@ -255,19 +255,12 @@ class ChatToolMixin:
                 )
                 return (tc, result, result.is_failure)
 
-            # FormBlockResult 通道：类型化表单结果 → content_block_add 推送
+            # FormBlockResult 通道：暂存到 _pending_form_block
+            # chat_handler 统一处理（推送 WS + 加 _content_blocks + break）
+            # 复用 _pending_file_parts 的已验证模式
             from services.scheduler.chat_task_manager import FormBlockResult
             if isinstance(result, FormBlockResult):
-                from schemas.websocket_builders import build_content_block_add
-                await ws_manager.send_to_task_or_user(
-                    task_id, user_id,
-                    build_content_block_add(
-                        task_id=task_id,
-                        conversation_id=conversation_id,
-                        message_id=message_id,
-                        block=result.form,
-                    ),
-                )
+                self._pending_form_block = result.form
                 llm_text = result.llm_hint
                 await ws_manager.send_to_task_or_user(
                     task_id, user_id,
@@ -287,9 +280,6 @@ class ChatToolMixin:
                     tool_call_id, turn, args, len(json.dumps(result.form)),
                     _audit_elapsed, "success",
                 )
-                # 标记表单已推送，chat_handler 工具循环检测后 break
-                self._form_block_pending = True
-                self._form_block_data = result.form  # 传递给 chat_handler 持久化
                 return (tc, llm_text, False)
 
             # 普通工具（str 路径）

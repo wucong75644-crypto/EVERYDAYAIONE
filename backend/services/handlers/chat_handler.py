@@ -682,6 +682,36 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     )
                     self._pending_file_parts.clear()
 
+                # ── FormBlock 推送（复用 _pending_file_parts 模式） ──
+                _pending_form = getattr(self, "_pending_form_block", None)
+                if _pending_form:
+                    self._pending_form_block = None
+                    from schemas.websocket import build_content_block_add as _build_cba
+                    _content_blocks.append(_pending_form)
+                    await ws_manager.send_to_task_or_user(
+                        task_id, user_id,
+                        _build_cba(
+                            task_id=task_id,
+                            conversation_id=conversation_id,
+                            message_id=message_id,
+                            block=_pending_form,
+                        ),
+                    )
+                    # 追加提示文字（消息不能为空）
+                    _form_hint = "请在上方表单中确认信息后点击提交。"
+                    accumulated_text += _form_hint
+                    await ws_manager.send_to_task_or_user(
+                        task_id, user_id,
+                        build_message_chunk(
+                            task_id=task_id,
+                            conversation_id=conversation_id,
+                            message_id=message_id,
+                            chunk=_form_hint,
+                        ),
+                    )
+                    logger.info(f"FormBlock pushed + persisted | task={task_id}")
+                    break  # 停止工具循环，等用户确认表单
+
                 # ── ask_user 冻结检测 ──
                 _ask_info = getattr(self, "_ask_user_pending", None)
                 if _ask_info:
@@ -717,35 +747,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             chunk=_separator + _ask_text,
                         ),
                     )
-                    break
-
-                # ── FormBlock 冻结检测：表单已推送，停止工具循环等用户确认 ──
-                if getattr(self, "_form_block_pending", False):
-                    _form_data = getattr(self, "_form_block_data", None)
-                    self._form_block_pending = False
-                    self._form_block_data = None
-                    logger.info(
-                        f"FormBlock freeze | has_data={_form_data is not None} | "
-                        f"data_type={type(_form_data).__name__ if _form_data else 'None'} | "
-                        f"blocks_before={len(_content_blocks)}"
-                    )
-                    # 表单 block 加入持久化内容（前端刷新后仍可见）
-                    if _form_data:
-                        _content_blocks.append(_form_data)
-                        logger.info(f"FormBlock appended | blocks_after={len(_content_blocks)}")
-                    # 追加提示文字（防止消息体为空导致前端显示"已取消"）
-                    _form_hint = "请在上方表单中确认信息后点击提交。"
-                    accumulated_text += _form_hint
-                    await ws_manager.send_to_task_or_user(
-                        task_id, user_id,
-                        build_message_chunk(
-                            task_id=task_id,
-                            conversation_id=conversation_id,
-                            message_id=message_id,
-                            chunk=_form_hint,
-                        ),
-                    )
-                    logger.info(f"FormBlock pushed → stopping loop | task={task_id}")
                     break
 
                 # ── 打断检查点：用户在工具执行期间发了新消息 ──

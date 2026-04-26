@@ -658,8 +658,12 @@ class TestFormBlockResultChannel:
 
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
-    async def test_form_block_sends_content_block_add(self, mock_ws):
-        """FormBlockResult → content_block_add WS 推送"""
+    async def test_form_block_stores_pending_and_returns_hint(self, mock_ws):
+        """FormBlockResult → 暂存到 _pending_form_block + 返回 llm_hint
+
+        content_block_add 推送由 chat_handler 统一处理（复用 _pending_file_parts 模式），
+        _execute_single_tool 只负责暂存和发 tool_result。
+        """
         from services.scheduler.chat_task_manager import FormBlockResult
         from services.handlers.chat_tool_mixin import ChatToolMixin
 
@@ -685,22 +689,17 @@ class TestFormBlockResultChannel:
             mixin, tc, executor, "task1", "conv1", "msg1", "user1", 1,
         )
 
-        # 不是 error
+        # 返回 llm_hint 字符串
         assert is_error is False
-        # 返回 llm_hint 字符串（不是 FormBlockResult 对象）
         assert isinstance(result, str)
         assert "等待用户确认" in result
-        # content_block_add 应该被推送
+        # form 暂存到 _pending_form_block（chat_handler 统一处理）
+        assert mixin._pending_form_block is not None
+        assert mixin._pending_form_block["form_type"] == "scheduled_task_create"
+        # 只发 tool_result（不发 content_block_add，那是 chat_handler 的职责）
         ws_calls = mock_ws.send_to_task_or_user.call_args_list
-        # 至少两次 WS 调用：content_block_add + tool_result
-        assert len(ws_calls) >= 2
-        # 第一次是 content_block_add
-        first_msg = ws_calls[0][0][2]  # (task_id, user_id, message)
-        assert first_msg["type"] == "content_block_add"
-        assert first_msg["payload"]["block"]["form_type"] == "scheduled_task_create"
-        # 第二次是 tool_result
-        second_msg = ws_calls[1][0][2]
-        assert second_msg["type"] == "tool_result"
+        assert len(ws_calls) == 1
+        assert ws_calls[0][0][2]["type"] == "tool_result"
 
     @pytest.mark.asyncio
     @patch("services.handlers.chat_tool_mixin.ws_manager")
