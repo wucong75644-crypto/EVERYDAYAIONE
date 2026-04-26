@@ -841,8 +841,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             size=block.get("size"),
                         ))
                     elif block["type"] == "form":
-                        # 表单 block 直接作为 dict 透传（前端 FormBlock 渲染）
-                        result_parts.append(block)
+                        from schemas.message import FormPart
+                        result_parts.append(FormPart(**block))
             else:
                 # 单块模式（无工具调用）：兼容原逻辑
                 from services.handlers.media_extractor import extract_media_parts

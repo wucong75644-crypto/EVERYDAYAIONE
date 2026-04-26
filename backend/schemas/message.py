@@ -107,7 +107,22 @@ class ToolResultPart(BaseModel):
     files: List[Dict[str, Any]] = Field(default_factory=list)
 
 
-ContentPart = Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart, ToolResultPart]
+class FormPart(BaseModel):
+    """表单内容块（聊天内嵌表单，如定时任务创建/修改）
+
+    前端 FormBlock 组件渲染，用户确认后通过 WS form_submit 提交。
+    """
+    type: Literal["form"] = "form"
+    form_type: str
+    form_id: str
+    title: str = ""
+    description: str = ""
+    fields: List[Dict[str, Any]] = Field(default_factory=list)
+    submit_text: str = "确认"
+    cancel_text: str = "取消"
+
+
+ContentPart = Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart, ToolResultPart, FormPart]
 
 
 # ============================================================
