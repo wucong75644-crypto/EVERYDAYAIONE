@@ -17,20 +17,27 @@ from loguru import logger
 
 
 def _is_negated(query: str, keyword: str) -> bool:
-    """检查 query 中 keyword 前面是否有否定词（非/不是/除了/排除/不含）。
+    """检查 query 中 keyword 附近是否有否定语义。
 
-    "非" 单字必须紧接 keyword（"非淘宝"✓ "非常好的淘宝"✗），
-    多字否定词在 keyword 前 4 字符内出现即匹配。
+    前置否定词："非淘宝""除了京东""不是拼多多""排除淘宝""不含抖音"
+    后置否定词："淘宝之外""淘宝以外"
+    "非" 单字必须紧接 keyword（"非淘宝"✓ "非常好的淘宝"✗）。
     """
     idx = query.find(keyword)
     if idx < 0:
         return False
+    # ── 前置否定词 ──
     prefix = query[max(0, idx - 4):idx]
-    # 多字否定词：前 4 字符内出现即可
     if any(neg in prefix for neg in ("不是", "除了", "排除", "不含")):
         return True
-    # 单字 "非"：必须紧接 keyword（idx-1 位置）
-    return idx >= 1 and query[idx - 1] == "非"
+    if idx >= 1 and query[idx - 1] == "非":
+        return True
+    # ── 后置否定词 ──
+    end = idx + len(keyword)
+    suffix = query[end:end + 2]
+    if suffix in ("之外", "以外"):
+        return True
+    return False
 
 
 def fill_platform(params: dict, query: str) -> None:
