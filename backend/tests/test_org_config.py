@@ -134,6 +134,11 @@ class TestOrgConfigResolver:
     def db(self):
         return FakeDB()
 
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        """每个测试前清空 per-org 密钥缓存"""
+        OrgConfigResolver._org_key_cache.clear()
+
     @pytest.fixture
     def resolver(self, db):
         with patch("services.org.config_resolver.get_settings") as mock_settings:
@@ -150,6 +155,7 @@ class TestOrgConfigResolver:
 
     def test_get_from_org_config(self, resolver, db):
         """企业配置存在时返回解密值"""
+        db.set_table("organizations", {"encrypt_key": None})  # 无 per-org key，降级全局
         encrypted = aes_encrypt("org_secret_key", TEST_KEY)
         db.set_table("org_configs", {"config_value_encrypted": encrypted})
 
@@ -158,6 +164,7 @@ class TestOrgConfigResolver:
 
     def test_get_fallback_to_system_default(self, resolver, db):
         """企业未配置非企业专属 key 时降级到系统默认"""
+        db.set_table("organizations", {"encrypt_key": None})
         db.set_table("org_configs", None)  # 查询无结果
 
         result = resolver.get("org-1", "some_ai_key")
@@ -165,6 +172,7 @@ class TestOrgConfigResolver:
 
     def test_get_enterprise_key_no_fallback(self, resolver, db):
         """企业专属 key 未配置时返回 None，不降级到系统默认"""
+        db.set_table("organizations", {"encrypt_key": None})
         db.set_table("org_configs", None)
 
         result = resolver.get("org-1", "kuaimai_app_key")
@@ -182,6 +190,7 @@ class TestOrgConfigResolver:
 
     def test_get_nonexistent_key_returns_none(self, resolver, db):
         """系统也没有的 key 返回 None"""
+        db.set_table("organizations", {"encrypt_key": None})
         db.set_table("org_configs", None)
 
         result = resolver.get("org-1", "nonexistent_key_xyz")
@@ -198,6 +207,7 @@ class TestOrgConfigResolver:
 
     def test_get_erp_credentials_success(self, resolver, db):
         """ERP 凭证完整时返回全部"""
+        db.set_table("organizations", {"encrypt_key": None})
         for key in ["kuaimai_app_key", "kuaimai_app_secret",
                      "kuaimai_access_token", "kuaimai_refresh_token"]:
             encrypted = aes_encrypt(f"value_{key}", TEST_KEY)
@@ -209,6 +219,7 @@ class TestOrgConfigResolver:
 
     def test_get_erp_credentials_missing_key_raises(self, resolver, db):
         """ERP 凭证缺失时报错"""
+        db.set_table("organizations", {"encrypt_key": None})
         # 只配了 1 个，缺 3 个
         encrypted = aes_encrypt("val", TEST_KEY)
         db.set_table("org_configs", {"config_value_encrypted": encrypted})
@@ -239,6 +250,7 @@ class TestOrgConfigResolver:
 
     def test_erp_credentials_no_fallback_to_system(self, resolver, db):
         """ERP 凭证不降级到系统默认（即使系统有 kuaimai_app_key）"""
+        db.set_table("organizations", {"encrypt_key": None})
         # org_configs 全部查不到
         for _ in range(4):
             db.set_table("org_configs", None)
@@ -250,6 +262,8 @@ class TestOrgConfigResolver:
     def test_load_encrypted_db_error_returns_none(self, resolver, db):
         """DB 查询异常时 _load_encrypted 返回 None（降级到系统默认）"""
         from tests.test_org_service import FakeQueryBuilder
+
+        db.set_table("organizations", {"encrypt_key": None})
 
         # 创建一个会抛异常的 builder
         class ErrorBuilder(FakeQueryBuilder):
@@ -264,6 +278,7 @@ class TestOrgConfigResolver:
 
     def test_enterprise_key_no_fallback_for_all_keys(self, resolver, db):
         """所有 ENTERPRISE_ONLY_KEYS 未配置时均返回 None，不降级到 .env"""
+        db.set_table("organizations", {"encrypt_key": None})
         for key in _ConfigResolverCore.ENTERPRISE_ONLY_KEYS:
             db.set_table("org_configs", None)  # 每个 key 查询都无结果
             result = resolver.get("org-1", key)
@@ -271,6 +286,8 @@ class TestOrgConfigResolver:
 
     def test_list_orgs_with_wecom_bot_returns_configured_orgs(self, resolver, db):
         """配了 bot_id + bot_secret 的企业被正确返回"""
+        # 0) per-org key 查询（首次 _load_encrypted 触发）
+        db.set_table("organizations", {"encrypt_key": None})
         # 1) 查 wecom_bot_id 的 org_ids
         db.set_table("org_configs", [{"org_id": "org-abc"}])
         # 2) _load_encrypted(org-abc, wecom_bot_id)
@@ -279,7 +296,7 @@ class TestOrgConfigResolver:
         # 3) _load_encrypted(org-abc, wecom_bot_secret)
         encrypted_secret = aes_encrypt("secret-456", TEST_KEY)
         db.set_table("org_configs", {"config_value_encrypted": encrypted_secret})
-        # 4) organizations 表取 corp_id
+        # 4) organizations 表取 corp_id（缓存后不再查 encrypt_key）
         db.set_table("organizations", {"wecom_corp_id": "ww_corp_xyz"})
 
         orgs = resolver.list_orgs_with_wecom_bot()
@@ -297,6 +314,7 @@ class TestOrgConfigResolver:
 
     def test_list_orgs_with_wecom_bot_skips_incomplete(self, resolver, db):
         """有 bot_id 但无 bot_secret 的企业被跳过"""
+        db.set_table("organizations", {"encrypt_key": None})
         # 1) 查 wecom_bot_id 的 org_ids — 返回一个 org
         db.set_table("org_configs", [{"org_id": "org-incomplete"}])
         # 2) _load_encrypted(org-incomplete, wecom_bot_id) — 有值
@@ -313,16 +331,21 @@ class TestOrgConfigResolver:
         upsert_calls = []
 
         class SpyBuilder:
+            def __init__(self, record=True):
+                self._record = record
+            def select(self, *a, **kw): return self
+            def eq(self, *a, **kw): return self
+            def maybe_single(self): return self
             def upsert(self, data, on_conflict=""):
-                upsert_calls.append({"data": data, "on_conflict": on_conflict})
+                if self._record:
+                    upsert_calls.append({"data": data, "on_conflict": on_conflict})
                 return self
             def execute(self):
-                return MagicMock(data=[])
+                return MagicMock(data={"encrypt_key": None})
 
         class SpyDB:
             def table(self, name):
-                assert name == "org_configs"
-                return SpyBuilder()
+                return SpyBuilder(record=(name == "org_configs"))
 
         resolver.db = SpyDB()
         resolver.update_erp_token(
@@ -345,6 +368,7 @@ class TestOrgConfigResolver:
             mock_settings.return_value = settings
             resolver = OrgConfigResolver(db)
 
+            db.set_table("organizations", {"encrypt_key": None})
             encrypted = aes_encrypt("test", TEST_KEY)
             db.set_table("org_configs", {"config_value_encrypted": encrypted})
 
@@ -403,6 +427,11 @@ class AsyncFakeDB:
 
 class TestAsyncOrgConfigResolver:
 
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        """每个测试前清空 per-org 密钥缓存"""
+        AsyncOrgConfigResolver._org_key_cache.clear()
+
     @pytest.fixture
     def db(self):
         return AsyncFakeDB()
@@ -422,6 +451,7 @@ class TestAsyncOrgConfigResolver:
     @pytest.mark.asyncio
     async def test_get_from_org_config(self, resolver, db):
         """企业配置存在时返回解密值"""
+        db.set_table("organizations", {"encrypt_key": None})
         encrypted = aes_encrypt("org_secret_key", TEST_KEY)
         db.set_table("org_configs", {"config_value_encrypted": encrypted})
 
@@ -431,6 +461,7 @@ class TestAsyncOrgConfigResolver:
     @pytest.mark.asyncio
     async def test_get_fallback_to_system_default(self, resolver, db):
         """企业未配置非企业专属 key 时降级到系统默认"""
+        db.set_table("organizations", {"encrypt_key": None})
         db.set_table("org_configs", None)
 
         result = await resolver.get("org-1", "some_ai_key")
@@ -439,6 +470,7 @@ class TestAsyncOrgConfigResolver:
     @pytest.mark.asyncio
     async def test_get_enterprise_key_no_fallback(self, resolver, db):
         """企业专属 key 未配置时返回 None"""
+        db.set_table("organizations", {"encrypt_key": None})
         db.set_table("org_configs", None)
 
         result = await resolver.get("org-1", "kuaimai_app_key")
@@ -459,6 +491,7 @@ class TestAsyncOrgConfigResolver:
     @pytest.mark.asyncio
     async def test_get_nonexistent_key_returns_none(self, resolver, db):
         """系统也没有的 key 返回 None"""
+        db.set_table("organizations", {"encrypt_key": None})
         db.set_table("org_configs", None)
         result = await resolver.get("org-1", "nonexistent_key_xyz")
         assert result is None
@@ -466,6 +499,7 @@ class TestAsyncOrgConfigResolver:
     @pytest.mark.asyncio
     async def test_get_erp_credentials_success(self, resolver, db):
         """ERP 凭证完整时返回全部"""
+        db.set_table("organizations", {"encrypt_key": None})
         for key in ["kuaimai_app_key", "kuaimai_app_secret",
                      "kuaimai_access_token", "kuaimai_refresh_token"]:
             encrypted = aes_encrypt(f"value_{key}", TEST_KEY)
@@ -478,6 +512,7 @@ class TestAsyncOrgConfigResolver:
     @pytest.mark.asyncio
     async def test_get_erp_credentials_missing_key_raises(self, resolver, db):
         """ERP 凭证缺失时报错"""
+        db.set_table("organizations", {"encrypt_key": None})
         encrypted = aes_encrypt("val", TEST_KEY)
         db.set_table("org_configs", {"config_value_encrypted": encrypted})
         for _ in range(3):
@@ -489,6 +524,7 @@ class TestAsyncOrgConfigResolver:
     @pytest.mark.asyncio
     async def test_erp_credentials_no_fallback_to_system(self, resolver, db):
         """ERP 凭证不降级到系统默认"""
+        db.set_table("organizations", {"encrypt_key": None})
         for _ in range(4):
             db.set_table("org_configs", None)
 
@@ -498,6 +534,8 @@ class TestAsyncOrgConfigResolver:
     @pytest.mark.asyncio
     async def test_load_encrypted_db_error_returns_none(self, resolver, db):
         """DB 异常时 _load_encrypted 返回 None（降级到系统默认）"""
+        db.set_table("organizations", {"encrypt_key": None})
+
         class ErrorBuilder(AsyncFakeQueryBuilder):
             async def execute(self):
                 raise RuntimeError("DB connection lost")
@@ -519,16 +557,22 @@ class TestAsyncOrgConfigResolver:
         upsert_calls = []
 
         class SpyBuilder:
+            def __init__(self, record=True):
+                self._record = record
+            def select(self, *a, **kw): return self
+            def eq(self, *a, **kw): return self
+            def maybe_single(self): return self
             def upsert(self, data, on_conflict=""):
-                upsert_calls.append({"data": data, "on_conflict": on_conflict})
+                if self._record:
+                    upsert_calls.append({"data": data, "on_conflict": on_conflict})
                 return self
             async def execute(self):
-                return MagicMock(data=[])
+                return MagicMock(data={"encrypt_key": None})
 
         class SpyDB:
             def table(self, name):
-                assert name == "org_configs"
-                return SpyBuilder()
+                # organizations 查询返回无 per-org key
+                return SpyBuilder(record=(name == "org_configs"))
 
         # 替换 resolver 的 db
         resolver.db = SpyDB()
