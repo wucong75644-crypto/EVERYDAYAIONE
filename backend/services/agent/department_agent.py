@@ -657,6 +657,7 @@ class DepartmentAgent(ABC):
             logger.error(
                 f"{self.domain} Agent execute failed | "
                 f"action={action} | error={e}",
+                exc_info=True,
             )
             return ToolOutput(
                 summary=f"{self.domain} 查询失败: {e}",
