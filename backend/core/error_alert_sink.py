@@ -18,10 +18,22 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import re
+import traceback as _traceback_mod
 from datetime import datetime, timezone
 from typing import Any
 
 from loguru import logger
+
+
+def _format_exception(exc_tuple: tuple | None) -> str | None:
+    """将 loguru 的 (type, value, traceback) 元组格式化为完整 stack trace 字符串。"""
+    if not exc_tuple:
+        return None
+    try:
+        tp, val, tb = exc_tuple
+        return "".join(_traceback_mod.format_exception(tp, val, tb))
+    except Exception:
+        return str(exc_tuple)
 
 # ── 内存队列（sink 写入，consumer 消费）──────────────────────
 # maxsize 防止内存溢出：超出时 sink 丢弃（宁丢日志不阻塞业务）
@@ -110,7 +122,7 @@ def error_sink(message) -> None:
         "function": record["function"] or "",
         "line": record["line"],
         "message": str(record["message"])[:_MAX_MESSAGE_LEN],
-        "traceback": str(record["exception"]) if record["exception"] else None,
+        "traceback": _format_exception(record["exception"]) if record["exception"] else None,
         "timestamp": record["time"].astimezone(timezone.utc),
     }
 

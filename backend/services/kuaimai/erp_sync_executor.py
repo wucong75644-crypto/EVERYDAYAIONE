@@ -96,7 +96,7 @@ class ErpSyncExecutor:
         """
 
         cutoff = (
-            now_cn() - timedelta(days=self.settings.erp_archive_retention_days)
+            now_cn() - timedelta(days=int(self.settings.erp_archive_retention_days))
         ).isoformat()
 
         total_archived = 0

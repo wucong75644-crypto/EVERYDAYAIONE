@@ -7,7 +7,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 from pydantic import BaseModel, Field, field_validator
 import json
 
@@ -122,7 +122,10 @@ class FormPart(BaseModel):
     cancel_text: str = "取消"
 
 
-ContentPart = Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart, ToolResultPart, FormPart]
+ContentPart = Annotated[
+    Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart, ToolResultPart, FormPart],
+    Field(discriminator="type"),
+]
 
 
 # ============================================================
