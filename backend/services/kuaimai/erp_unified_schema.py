@@ -395,6 +395,47 @@ class TimeRange:
 # ── 格式化函数 ────────────────────────────────────────
 
 
+# 操作符 → 人类可读中文
+_OP_LABEL: dict[str, str] = {
+    "eq": "=", "ne": "≠", "gt": ">", "gte": "≥",
+    "lt": "<", "lte": "≤", "like": "包含",
+    "in": "属于", "not_in": "不属于",
+    "is_null": "为空", "between": "区间",
+}
+
+def format_filter_hint(filters: list["ValidatedFilter"]) -> str:
+    """将非时间 filters 格式化为人类可读的条件摘要。
+
+    返回空字符串表示无额外过滤条件（纯时间范围查询）。
+    插入到 summary 头部，让下游 LLM 知道"这是过滤后的数据"。
+    """
+    parts: list[str] = []
+    for f in filters:
+        if f.field in TIME_COLUMNS:
+            continue
+        label = _FIELD_LABEL_CN.get(f.field, f.field)
+        op_label = _OP_LABEL.get(f.op, f.op)
+
+        if f.op == "is_null":
+            parts.append(f"{label} 为空" if f.value else f"{label} 不为空")
+        elif f.op == "between" and isinstance(f.value, list) and len(f.value) == 2:
+            parts.append(f"{label} 在 {f.value[0]}~{f.value[1]} 之间")
+        elif f.op in ("in", "not_in") and isinstance(f.value, list):
+            vals = [PLATFORM_CN.get(v, str(v)) for v in f.value[:5]]
+            suffix = f" 等{len(f.value)}项" if len(f.value) > 5 else ""
+            joined = "、".join(vals) + suffix
+            parts.append(f"{label} {op_label} [{joined}]")
+        else:
+            display_val = f.value
+            if f.field == "platform":
+                display_val = PLATFORM_CN.get(str(f.value), str(f.value))
+            parts.append(f"{label} {op_label} {display_val}")
+
+    if not parts:
+        return ""
+    return "[过滤条件] " + " ＆ ".join(parts)
+
+
 def fmt_summary_total(
     data: dict, type_name: str, label: str,
     db: Any, doc_type: str, org_id: str | None,
