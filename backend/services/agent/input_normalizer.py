@@ -77,8 +77,8 @@ class InputNormalizer:
 # 、：中文顿号（用户常用作列举分隔符）
 _SEPARATORS = (",", ";", "\n", "\r", "\t", "|", "\u3001")
 
-# IN 查询安全上限（PostgREST / Supabase）
-DEFAULT_MAX_IN = 200
+# IN 查询安全上限（PostgREST URL ≤8000字符，500×15=7500 在安全范围内）
+DEFAULT_MAX_IN = 500
 
 
 def _strip_quotes(val: str) -> str:
