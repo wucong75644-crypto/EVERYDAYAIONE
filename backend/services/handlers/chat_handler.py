@@ -724,9 +724,15 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     _form_data = getattr(self, "_form_block_data", None)
                     self._form_block_pending = False
                     self._form_block_data = None
+                    logger.info(
+                        f"FormBlock freeze | has_data={_form_data is not None} | "
+                        f"data_type={type(_form_data).__name__ if _form_data else 'None'} | "
+                        f"blocks_before={len(_content_blocks)}"
+                    )
                     # 表单 block 加入持久化内容（前端刷新后仍可见）
                     if _form_data:
                         _content_blocks.append(_form_data)
+                        logger.info(f"FormBlock appended | blocks_after={len(_content_blocks)}")
                     # 追加提示文字（防止消息体为空导致前端显示"已取消"）
                     _form_hint = "请在上方表单中确认信息后点击提交。"
                     accumulated_text += _form_hint
