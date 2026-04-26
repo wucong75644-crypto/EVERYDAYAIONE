@@ -16,23 +16,38 @@ from loguru import logger
 # ── L2 platform 自动补全 ──
 
 
-def _is_negated(query: str, keyword: str) -> bool:
-    """检查 query 中 keyword 附近是否有否定语义。
+def _llm_handled_platform(params: dict) -> bool:
+    """主防线：检查 LLM 是否已在任何形式中对 platform 做出了决策。
 
-    前置否定词："非淘宝""除了京东""不是拼多多""排除淘宝""不含抖音"
-    后置否定词："淘宝之外""淘宝以外"
-    "非" 单字必须紧接 keyword（"非淘宝"✓ "非常好的淘宝"✗）。
+    包括：正向过滤(platform=)、反向排除(exclude_filters)、
+    已转换的 filters DSL。只要 LLM 碰过 platform，fill_platform 就不该干预。
+    """
+    if params.get("platform"):
+        return True
+    for ef in params.get("exclude_filters", []):
+        if ef.get("field") == "platform":
+            return True
+    for f in params.get("filters", []):
+        if isinstance(f, dict) and f.get("field") == "platform":
+            return True
+    return False
+
+
+def _is_negated_in_text(query: str, keyword: str) -> bool:
+    """安全网：检查 query 中 keyword 附近是否有否定语义。
+
+    用于 LLM 失灵（漏提取 exclude_filters）时的文本级兜底。
+    前置："非淘宝""除了京东""不是拼多多""排除淘宝""不含抖音"
+    后置："淘宝之外""淘宝以外"
     """
     idx = query.find(keyword)
     if idx < 0:
         return False
-    # ── 前置否定词 ──
     prefix = query[max(0, idx - 4):idx]
     if any(neg in prefix for neg in ("不是", "除了", "排除", "不含")):
         return True
     if idx >= 1 and query[idx - 1] == "非":
         return True
-    # ── 后置否定词 ──
     end = idx + len(keyword)
     suffix = query[end:end + 2]
     if suffix in ("之外", "以外"):
@@ -44,16 +59,14 @@ def fill_platform(params: dict, query: str) -> None:
     """L2 意图完整性：从用户查询文本补全 LLM 漏提取的 platform。
 
     纯函数，不依赖 ERPAgent 实例。供外部调用或测试使用。
-    仅补全正向平台过滤（"淘宝订单"→platform=tb），
-    否定语境（"非淘宝""除了京东"）和已有排除条件时不补全。
+    两层防御：
+      1. 主防线 _llm_handled_platform — LLM 已处理 platform → 不干预
+      2. 安全网 _is_negated_in_text — LLM 漏提取但文本有否定语义 → 不补全
+    仅当两层都未触发时才做关键词兜底补全。
     """
-    if params.get("platform"):
-        return  # AI 已提取 platform 正向过滤，不覆盖
-
-    # exclude_filters 中已包含 platform → LLM 已处理平台排除条件，不补全
-    for ef in params.get("exclude_filters", []):
-        if ef.get("field") == "platform":
-            return
+    # 主防线：LLM 已处理
+    if _llm_handled_platform(params):
+        return
 
     from services.kuaimai.erp_unified_schema import PLATFORM_NORMALIZE
     cn_keys = [
@@ -62,7 +75,8 @@ def fill_platform(params: dict, query: str) -> None:
     ]
     matched: set[str] = set()
     for key in cn_keys:
-        if key in query and not _is_negated(query, key):
+        # 安全网：文本中有否定语义的平台名不算匹配
+        if key in query and not _is_negated_in_text(query, key):
             matched.add(PLATFORM_NORMALIZE[key])
 
     if len(matched) == 1:
