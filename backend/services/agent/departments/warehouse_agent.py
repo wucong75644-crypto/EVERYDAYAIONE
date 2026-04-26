@@ -106,7 +106,13 @@ class WarehouseAgent(DepartmentAgent):
 
     # ── DAG 分发 ──
 
-    def _classify_action(self, task: str) -> str:
+    def _classify_action(self, task: str, doc_type: str | None = None) -> str:
+        # DAG 模式 PlanBuilder 已精确判断 doc_type，优先使用
+        if doc_type == "shelf":
+            return "shelf_query"
+        if doc_type == "receipt":
+            return "receipt_query"
+
         t = task.lower()
         if any(kw in t for kw in ("库存", "可售", "缺货", "stock")):
             return "stock_query"
