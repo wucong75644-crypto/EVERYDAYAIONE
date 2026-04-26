@@ -287,6 +287,8 @@ class ChatToolMixin:
                     tool_call_id, turn, args, len(json.dumps(result.form)),
                     _audit_elapsed, "success",
                 )
+                # 标记表单已推送，chat_handler 工具循环检测后 break
+                self._form_block_pending = True
                 return (tc, llm_text, False)
 
             # 普通工具（str 路径）

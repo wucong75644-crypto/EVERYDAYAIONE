@@ -719,6 +719,12 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     )
                     break
 
+                # ── FormBlock 冻结检测：表单已推送，停止工具循环等用户确认 ──
+                if getattr(self, "_form_block_pending", False):
+                    self._form_block_pending = False
+                    logger.info(f"FormBlock pushed → stopping loop | task={task_id}")
+                    break
+
                 # ── 打断检查点：用户在工具执行期间发了新消息 ──
                 _steer_msg = ws_manager.check_steer(task_id)
                 if _steer_msg:
