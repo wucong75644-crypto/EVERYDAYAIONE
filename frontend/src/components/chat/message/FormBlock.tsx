@@ -222,16 +222,18 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
   }, [form.fields]);
 
   const [values, setValues] = useState<Record<string, unknown>>(initialValues);
-  const [submitted, setSubmitted] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [status, setStatus] = useState<'idle' | 'submitting' | 'submitted' | 'cancelled'>('idle');
+  const submitted = status === 'submitted';
+  const submitting = status === 'submitting';
+  const cancelled = status === 'cancelled';
 
   const updateField = useCallback((name: string, value: unknown) => {
     setValues((prev) => ({ ...prev, [name]: value }));
   }, []);
 
   const handleSubmit = useCallback(() => {
-    if (submitting || submitted) return;
-    setSubmitting(true);
+    if (status !== 'idle') return;
+    setStatus('submitting');
 
     // 派发自定义事件，WebSocketContext 监听处理
     window.dispatchEvent(
@@ -246,11 +248,10 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
     // 监听结果
     const handleResult = (e: Event) => {
       const { success, message } = (e as CustomEvent).detail;
-      setSubmitting(false);
       if (success) {
-        setSubmitted(true);
+        setStatus('submitted');
       } else {
-        // 错误提示通过 toast 或 alert
+        setStatus('idle');
         alert(message || '提交失败');
       }
       window.removeEventListener('chat:form-submit-result', handleResult);
@@ -260,12 +261,12 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
     // 超时兜底
     setTimeout(() => {
       window.removeEventListener('chat:form-submit-result', handleResult);
-      setSubmitting(false);
+      setStatus((s) => (s === 'submitting' ? 'idle' : s));
     }, 15000);
-  }, [form.form_type, values, submitting, submitted]);
+  }, [form.form_type, values, status]);
 
   const handleCancel = useCallback(() => {
-    setSubmitted(true); // 直接关闭表单
+    setStatus('cancelled');
   }, []);
 
   // 判断字段是否可见（visible_when 联动）
@@ -277,20 +278,21 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
     [values],
   );
 
-  if (submitted) {
+  if (submitted || cancelled) {
     return (
       <m.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={SOFT_SPRING}
         className={cn(
-          'my-2 flex items-center gap-2 rounded-[var(--s-radius-card)] border p-3',
-          'border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-950/30',
-          'text-sm text-green-700 dark:text-green-300',
+          'my-2 flex items-center gap-2 rounded-[var(--s-radius-card)] border p-3 text-sm',
+          submitted
+            ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950/30 dark:text-green-300'
+            : 'border-border-default bg-surface text-text-tertiary',
         )}
       >
-        <CheckCircle2 size={16} />
-        <span>{form.title} — 已提交</span>
+        {submitted ? <CheckCircle2 size={16} /> : <X size={16} />}
+        <span>{form.title} — {submitted ? '已提交' : '已取消'}</span>
       </m.div>
     );
   }
