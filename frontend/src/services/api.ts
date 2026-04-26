@@ -10,7 +10,7 @@
 
 import axios, { AxiosError, type AxiosInstance, type AxiosRequestConfig, type InternalAxiosRequestConfig } from 'axios';
 import type { ApiErrorResponse } from '../types/auth';
-import { silentRefresh, logoutOnce } from '../utils/tokenManager';
+import { silentRefresh } from '../utils/tokenManager';
 
 // 优先使用环境变量，默认使用相对路径（适用于同域名部署）
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
