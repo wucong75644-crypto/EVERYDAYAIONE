@@ -97,7 +97,7 @@ export async function silentRefresh(): Promise<string> {
 
     return newAccessToken;
   } catch (err) {
-    logger.warn('auth:refresh', 'Refresh failed, logging out', err);
+    logger.warn('auth:refresh', 'Refresh failed, logging out');
     onRefreshFailed(err instanceof Error ? err : new Error('Refresh failed'));
     logoutOnce();
     throw err;
