@@ -138,8 +138,8 @@ FIELD_LABEL_CN: dict[str, str] = {
     "selling_price": "销售价", "market_price": "市场价",
     "allocate_num": "调拨数量", "refund_stock": "退货库存",
     "purchase_stock": "采购库存", "supplier_codes": "供应商编码",
-    "supplier_names": "供应商名称", "stock_modified_time": "库存更新时间",
-    "cid_name": "类目名称",
+    "supplier_names": "供应商名称", "warehouse_id": "仓库ID",
+    "stock_modified_time": "库存更新时间", "cid_name": "类目名称",
     # product
     "title": "商品名称", "item_type": "商品类型",
     "is_virtual": "是否虚拟", "active_status": "状态",

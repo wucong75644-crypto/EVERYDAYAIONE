@@ -795,3 +795,123 @@ class TestNewTableTextEqFields:
         assert "work_order_id" in TEXT_EQ_FIELDS
         assert "batch_no" in TEXT_EQ_FIELDS
         assert "num_iid" in TEXT_EQ_FIELDS
+
+
+class TestNewTableTimeCol:
+    """params_to_filters 对新表 doc_type 自动选择正确时间列。"""
+
+    def test_stock_default_time_col(self):
+        """stock 表默认用 stock_modified_time 而非 doc_created_at"""
+        filters, _ = params_to_filters({
+            "doc_type": "stock",
+            "time_range": "2026-04-01 ~ 2026-04-02",
+        })
+        time_fields = {f["field"] for f in filters}
+        assert "stock_modified_time" in time_fields
+        assert "doc_created_at" not in time_fields
+
+    def test_daily_stats_default_time_col(self):
+        filters, _ = params_to_filters({
+            "doc_type": "daily_stats",
+            "time_range": "2026-04-01 ~ 2026-04-26",
+        })
+        time_fields = {f["field"] for f in filters}
+        assert "stat_date" in time_fields
+
+    def test_order_log_default_time_col(self):
+        filters, _ = params_to_filters({
+            "doc_type": "order_log",
+            "time_range": "2026-04-01 ~ 2026-04-26",
+        })
+        time_fields = {f["field"] for f in filters}
+        assert "operate_time" in time_fields
+
+    def test_order_still_uses_doc_created_at(self):
+        """现有 order 表不受影响"""
+        filters, _ = params_to_filters({
+            "doc_type": "order",
+            "time_range": "2026-04-01 ~ 2026-04-02",
+        })
+        time_fields = {f["field"] for f in filters}
+        assert "doc_created_at" in time_fields
+
+    def test_no_doc_type_uses_doc_created_at(self):
+        """不传 doc_type 向后兼容"""
+        filters, _ = params_to_filters({
+            "time_range": "2026-04-01 ~ 2026-04-02",
+        })
+        time_fields = {f["field"] for f in filters}
+        assert "doc_created_at" in time_fields
+
+    def test_explicit_time_col_overrides_default(self):
+        """显式 time_col 优先于 DOC_TYPE_DEFAULT_TIME_COL"""
+        filters, _ = params_to_filters({
+            "doc_type": "stock",
+            "time_range": "2026-04-01 ~ 2026-04-02",
+            "time_col": "synced_at",
+        })
+        time_fields = {f["field"] for f in filters}
+        assert "synced_at" in time_fields
+
+
+class TestNewTableNumericFilters:
+    """NUMERIC_FILTER_FIELDS 扩展——新表数值字段不被丢弃。"""
+
+    @pytest.mark.parametrize("field", [
+        "available_stock", "total_stock", "lock_stock", "sellable_num",
+        "purchase_num", "stock_status",
+    ])
+    def test_stock_numeric_fields_accepted(self, field: str):
+        filters, _ = params_to_filters({
+            "numeric_filters": [{"field": field, "op": "gt", "value": 0}],
+        })
+        matched = [f for f in filters if f["field"] == field]
+        assert len(matched) == 1, f"{field} 应通过 NUMERIC_FILTER_FIELDS"
+
+    @pytest.mark.parametrize("field", [
+        "order_count", "order_qty", "order_amount",
+        "aftersale_count", "purchase_count",
+    ])
+    def test_daily_stats_numeric_fields_accepted(self, field: str):
+        filters, _ = params_to_filters({
+            "numeric_filters": [{"field": field, "op": "gte", "value": 100}],
+        })
+        matched = [f for f in filters if f["field"] == field]
+        assert len(matched) == 1, f"{field} 应通过 NUMERIC_FILTER_FIELDS"
+
+    def test_text_field_rejected_by_numeric_filters(self):
+        """text 字段不在 NUMERIC_FILTER_FIELDS → 被丢弃"""
+        filters, _ = params_to_filters({
+            "numeric_filters": [{"field": "item_name", "op": "eq", "value": "test"}],
+        })
+        assert not any(f["field"] == "item_name" for f in filters)
+
+
+class TestCombinedFiltersNewTable:
+    """多种过滤器组合：text + numeric + time 同时存在。"""
+
+    def test_stock_combined(self):
+        """stock 表同时传 product_code + numeric_filters + time_range"""
+        filters, _ = params_to_filters({
+            "doc_type": "stock",
+            "product_code": "HZ001",
+            "time_range": "2026-04-01 ~ 2026-04-02",
+            "numeric_filters": [
+                {"field": "available_stock", "op": "lt", "value": 0},
+            ],
+        })
+        fields = {f["field"] for f in filters}
+        assert "outer_id" in fields, "product_code → outer_id"
+        assert "available_stock" in fields, "numeric_filter"
+        assert "stock_modified_time" in fields, "time_range → stock 默认时间列"
+
+    def test_order_log_combined(self):
+        """order_log 同时传 system_id + time_range"""
+        filters, _ = params_to_filters({
+            "doc_type": "order_log",
+            "system_id": "123456",
+            "time_range": "2026-04-01 ~ 2026-04-26",
+        })
+        fields = {f["field"] for f in filters}
+        assert "system_id" in fields
+        assert "operate_time" in fields

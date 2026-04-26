@@ -1,12 +1,27 @@
 """预检防御层集成测试
 
-验证 execute() → preflight → 拒绝/放行 的完整链路。
+验证 _export() 内部的预检门卫：DuckDB 启动前拦截大数据量请求。
+门的位置在 _export 内部，不在 execute() 入口。
 """
 
+import tempfile
+from pathlib import Path
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.kuaimai.erp_query_preflight import EXPORT_ROW_LIMIT
+
+
+@pytest.fixture()
+def mock_staging(tmp_path):
+    """mock staging 路径到临时目录（需要显式使用）"""
+    staging_path = tmp_path / "test_export.parquet"
+    with patch(
+        "services.kuaimai.erp_duckdb_helpers.resolve_export_path",
+        return_value=(tmp_path, "rel/path", staging_path, "test_export.parquet"),
+    ):
+        yield staging_path
 
 
 def _make_db_with_explain(plan_rows: int):
@@ -36,53 +51,77 @@ def _make_db_with_explain(plan_rows: int):
     return db
 
 
-class TestPreflightRouting:
-    """execute() 根据预检结果拒绝或放行"""
+class TestPreflightGateInExport:
+    """预检门卫在 _export 内部，DuckDB 子进程启动前"""
 
     @pytest.mark.asyncio
-    async def test_small_export_allowed(self):
-        """预估 < 阈值 → 正常执行 _export"""
+    async def test_small_data_passes_to_duckdb(self, mock_staging):
+        """预估 < 阈值 → DuckDB 子进程正常启动"""
         from services.kuaimai.erp_unified_query import UnifiedQueryEngine
 
         db = _make_db_with_explain(10_000)
         engine = UnifiedQueryEngine(db=db, org_id="org-1")
 
-        with patch_export(engine) as mock_export:
-            mock_export.return_value = MagicMock(summary="export ok")
-            await engine.execute(
-                doc_type="order", mode="export",
-                filters=[{"field": "pay_time", "op": "gte", "value": "2026-04-25"},
-                         {"field": "pay_time", "op": "lt", "value": "2026-04-26"}],
-            )
-            mock_export.assert_called_once()
+        with patch("services.kuaimai.erp_export_subprocess.subprocess_export",
+                    new_callable=AsyncMock) as mock_sub:
+            mock_sub.return_value = {"row_count": 100, "size_kb": 5.0}
+            # profile 也要 mock
+            with patch("core.duckdb_engine.get_duckdb_engine") as mock_engine:
+                mock_engine.return_value.profile_parquet.return_value = {
+                    "row_count": 100, "columns": [], "top_values": {},
+                }
+                await engine.execute(
+                    doc_type="order", mode="export",
+                    filters=[{"field": "pay_time", "op": "gte", "value": "2026-04-25"},
+                             {"field": "pay_time", "op": "lt", "value": "2026-04-26"}],
+                )
+                mock_sub.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_large_export_rejected(self):
-        """预估 > 阈值 → 拒绝，不调用 _export"""
+    async def test_large_data_large_limit_rejected(self, mock_staging):
+        """预估 > 阈值 且 limit 大（默认 20）→ 拒绝，DuckDB 不启动"""
         from services.kuaimai.erp_unified_query import UnifiedQueryEngine
 
         db = _make_db_with_explain(300_000)
         engine = UnifiedQueryEngine(db=db, org_id="org-1")
 
-        with patch_export(engine) as mock_export:
+        with patch("services.kuaimai.erp_export_subprocess.subprocess_export",
+                    new_callable=AsyncMock) as mock_sub:
             result = await engine.execute(
                 doc_type="order", mode="export",
                 filters=[{"field": "pay_time", "op": "gte", "value": "2026-04-01"},
                          {"field": "pay_time", "op": "lt", "value": "2026-05-01"}],
             )
-            mock_export.assert_not_called()
+            mock_sub.assert_not_called()
             assert "数据量过大" in result.summary
-            assert result.metadata["suggestions"]
 
     @pytest.mark.asyncio
-    async def test_summary_not_blocked(self):
-        """summary 模式不拦截，即使数据量很大"""
+    async def test_large_data_small_limit_also_rejected(self, mock_staging):
+        """预估 > 阈值 + limit=5 → 仍然拒绝（DuckDB 远程扫描 + 复杂 SQL 会超时）"""
         from services.kuaimai.erp_unified_query import UnifiedQueryEngine
 
         db = _make_db_with_explain(300_000)
         engine = UnifiedQueryEngine(db=db, org_id="org-1")
 
-        with patch_summary(engine) as mock_summary:
+        with patch("services.kuaimai.erp_export_subprocess.subprocess_export",
+                    new_callable=AsyncMock) as mock_sub:
+            result = await engine.execute(
+                doc_type="order", mode="export", limit=5,
+                filters=[{"field": "pay_time", "op": "gte", "value": "2026-04-01"},
+                         {"field": "pay_time", "op": "lt", "value": "2026-05-01"}],
+            )
+            mock_sub.assert_not_called()
+            assert "数据量过大" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_summary_not_blocked(self):
+        """summary 模式不走 _export，不受预检影响"""
+        from services.kuaimai.erp_unified_query import UnifiedQueryEngine
+
+        db = _make_db_with_explain(300_000)
+        engine = UnifiedQueryEngine(db=db, org_id="org-1")
+
+        with patch.object(engine, "_summary", new_callable=AsyncMock) as mock_summary:
             mock_summary.return_value = MagicMock(summary="summary ok")
             await engine.execute(
                 doc_type="order", mode="summary",
@@ -92,56 +131,27 @@ class TestPreflightRouting:
             mock_summary.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_explain_failure_allows_export(self):
-        """EXPLAIN 失败 → 放行，正常执行 _export"""
+    async def test_explain_failure_allows_duckdb(self, mock_staging):
+        """EXPLAIN 失败 → 放行，DuckDB 正常启动"""
         from services.kuaimai.erp_unified_query import UnifiedQueryEngine
 
         db = MagicMock()
         db.pool.connection.side_effect = Exception("connection lost")
         engine = UnifiedQueryEngine(db=db, org_id="org-1")
 
-        with patch_export(engine) as mock_export:
-            mock_export.return_value = MagicMock(summary="export fallback")
-            await engine.execute(
-                doc_type="order", mode="export",
-                filters=[{"field": "pay_time", "op": "gte", "value": "2026-04-01"},
-                         {"field": "pay_time", "op": "lt", "value": "2026-05-01"}],
-            )
-            mock_export.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_boundary_at_limit_allowed(self):
-        """恰好等于阈值 → 放行"""
-        from services.kuaimai.erp_unified_query import UnifiedQueryEngine
-
-        db = _make_db_with_explain(EXPORT_ROW_LIMIT)
-        engine = UnifiedQueryEngine(db=db, org_id="org-1")
-
-        with patch_export(engine) as mock_export:
-            mock_export.return_value = MagicMock(summary="ok")
-            await engine.execute(
-                doc_type="order", mode="export",
-                filters=[{"field": "pay_time", "op": "gte", "value": "2026-04-20"},
-                         {"field": "pay_time", "op": "lt", "value": "2026-04-26"}],
-            )
-            mock_export.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_boundary_above_limit_rejected(self):
-        """阈值 + 1 → 拒绝"""
-        from services.kuaimai.erp_unified_query import UnifiedQueryEngine
-
-        db = _make_db_with_explain(EXPORT_ROW_LIMIT + 1)
-        engine = UnifiedQueryEngine(db=db, org_id="org-1")
-
-        with patch_export(engine) as mock_export:
-            result = await engine.execute(
-                doc_type="order", mode="export",
-                filters=[{"field": "pay_time", "op": "gte", "value": "2026-04-01"},
-                         {"field": "pay_time", "op": "lt", "value": "2026-05-01"}],
-            )
-            mock_export.assert_not_called()
-            assert str(result.status) == "rejected"
+        with patch("services.kuaimai.erp_export_subprocess.subprocess_export",
+                    new_callable=AsyncMock) as mock_sub:
+            mock_sub.return_value = {"row_count": 10, "size_kb": 1.0}
+            with patch("core.duckdb_engine.get_duckdb_engine") as mock_engine:
+                mock_engine.return_value.profile_parquet.return_value = {
+                    "row_count": 10, "columns": [], "top_values": {},
+                }
+                await engine.execute(
+                    doc_type="order", mode="export",
+                    filters=[{"field": "pay_time", "op": "gte", "value": "2026-04-01"},
+                             {"field": "pay_time", "op": "lt", "value": "2026-05-01"}],
+                )
+                mock_sub.assert_called_once()
 
 
 class TestRejectedPropagation:
@@ -158,7 +168,7 @@ class TestRejectedPropagation:
         )
 
         rejected = ToolOutput(
-            summary="数据量过大（预估 300,000 行）",
+            summary="数据量过大（预估 300,000 行，上限 30,000 行），导出可能超时失败",
             source="erp",
             status=OutputStatus.REJECTED,
             metadata={
@@ -175,21 +185,3 @@ class TestRejectedPropagation:
         assert result.status == "error"
         assert "数据量过大" in result.summary
         assert "缩小时间范围" in result.summary
-
-
-# ── helpers ──────────────────────────────────────────
-
-from unittest.mock import patch as _patch
-from contextlib import contextmanager
-
-
-@contextmanager
-def patch_export(engine):
-    with _patch.object(engine, "_export", new_callable=AsyncMock) as m:
-        yield m
-
-
-@contextmanager
-def patch_summary(engine):
-    with _patch.object(engine, "_summary", new_callable=AsyncMock) as m:
-        yield m

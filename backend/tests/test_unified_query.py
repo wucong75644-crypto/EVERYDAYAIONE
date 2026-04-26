@@ -1230,3 +1230,87 @@ class TestFormatFilterHintNewTable:
         filters = [ValidatedFilter("system_id", "eq", "123", "text")]
         hint = format_filter_hint(filters)
         assert "订单系统ID" in hint
+
+    def test_time_column_excluded(self):
+        """时间列不出现在过滤条件提示中"""
+        from services.kuaimai.erp_unified_schema import format_filter_hint, ValidatedFilter
+        filters = [
+            ValidatedFilter("stock_modified_time", "gte", "2026-04-01", "timestamp"),
+            ValidatedFilter("available_stock", "lt", 0, "numeric"),
+        ]
+        hint = format_filter_hint(filters)
+        assert "库存更新时间" not in hint
+        assert "可用库存" in hint
+
+
+class TestFieldLabelCompleteness:
+    """每个新表列白名单的字段都有中文标签。"""
+
+    def test_all_new_table_fields_have_labels(self):
+        from services.kuaimai.erp_multi_table_schema import TABLE_COLUMNS, FIELD_LABEL_CN
+        from services.kuaimai.erp_unified_schema import _FIELD_LABEL_CN as OLD_LABELS
+        missing = []
+        for doc_type, columns in TABLE_COLUMNS.items():
+            for field in columns:
+                if field not in FIELD_LABEL_CN and field not in OLD_LABELS:
+                    missing.append(f"{doc_type}.{field}")
+        assert not missing, f"以下字段缺少中文标签: {missing}"
+
+
+class TestExportOrmExtraFields:
+    """export_orm 的 extra_fields 校验。"""
+
+    @pytest.mark.asyncio
+    async def test_invalid_extra_fields_filtered(self):
+        """非白名单字段被过滤，不传到 ORM"""
+        from services.kuaimai.erp_orm_query import export_orm
+        from unittest.mock import MagicMock
+        rows = [{"outer_id": "A001", "item_name": "X", "available_stock": 10}]
+        resp = MagicMock()
+        resp.data = rows
+        resp.count = 1
+        q = MagicMock()
+        for m in ("eq", "is_", "gte", "lt", "order", "limit"):
+            setattr(q, m, MagicMock(return_value=q))
+        q.execute = MagicMock(return_value=resp)
+        db = MagicMock()
+        db.table = MagicMock(return_value=MagicMock(select=MagicMock(return_value=q)))
+
+        from pathlib import Path
+        from unittest.mock import patch
+        tmp = Path("/tmp/test_extra_fields.parquet")
+        with patch(
+            "services.kuaimai.erp_duckdb_helpers.resolve_export_path",
+            return_value=(tmp.parent, "t", tmp, "t.parquet"),
+        ), patch(
+            "core.duckdb_engine.get_duckdb_engine",
+        ) as me, patch(
+            "services.agent.data_profile.build_profile_from_duckdb",
+            return_value=("p", {}),
+        ):
+            me.return_value.profile_parquet = MagicMock(return_value={})
+            result = await export_orm(
+                db, "org1", "erp_stock_status", "stock",
+                filters=[], tr=None,
+                extra_fields=["nonexistent_col", "available_stock"],
+            )
+            # select 调用中应包含 available_stock 但不包含 nonexistent_col
+            select_call = db.table.return_value.select.call_args[0][0]
+            assert "available_stock" in select_call
+            assert "nonexistent_col" not in select_call
+            tmp.unlink(missing_ok=True)
+
+    @pytest.mark.asyncio
+    async def test_no_valid_fields_returns_error(self):
+        """所有字段都非法时返回 error"""
+        from services.kuaimai.erp_orm_query import export_orm
+        from unittest.mock import MagicMock
+        db = MagicMock()
+        # mock 一个返回空 safe_fields 的场景：传全部非法字段
+        # 但 REQUIRED + DEFAULT 会兜底，所以需要用一个白名单为空的 doc_type
+        result = await export_orm(
+            db, "org1", "erp_nonexistent", "nonexistent_type",
+            filters=[], tr=None,
+        )
+        assert result.status == "error"
+        assert "无有效字段" in result.summary

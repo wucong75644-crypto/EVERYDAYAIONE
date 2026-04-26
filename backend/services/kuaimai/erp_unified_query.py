@@ -187,24 +187,8 @@ class UnifiedQueryEngine:
                     push_thinking=push_thinking,
                 )
         else:
-            # ── 现有表：预检防御层 ──
-            preflight = preflight_check(
-                db=self.db, doc_type=doc_type,
-                time_col=tr.time_col, start_iso=tr.start_iso, end_iso=tr.end_iso,
-                org_id=self.org_id, mode=mode,
-            )
-
-            if not preflight.ok:
-                result = ToolOutput(
-                    summary=preflight.reject_reason,
-                    source="erp",
-                    status=OutputStatus.REJECTED,
-                    metadata={
-                        "estimated_rows": preflight.estimated_rows,
-                        "suggestions": list(preflight.suggestions),
-                    },
-                )
-            elif mode == "summary":
+            # ── 现有表：标准路由（预检在 _export 内部 DuckDB 启动前执行）──
+            if mode == "summary":
                 result = await self._summary(
                     doc_type, validated, tr, group_by, request_ctx,
                     include_invalid=include_invalid,
@@ -444,6 +428,24 @@ class UnifiedQueryEngine:
             order_col = _FIELD_LABEL_CN.get(tr.time_col, tr.time_col)
             order_dir = "DESC"
         query = f'SELECT * FROM ({inner}) sub ORDER BY "{order_col}" {order_dir} LIMIT {max_rows}'
+
+        # ── 预检门卫：DuckDB 启动前检查数据量 ──
+        # 底层数据 > 阈值 → 拒绝（DuckDB 远程扫描大表+复杂 SQL 会超时）
+        preflight = preflight_check(
+            db=self.db, doc_type=doc_type,
+            time_col=tr.time_col, start_iso=tr.start_iso, end_iso=tr.end_iso,
+            org_id=self.org_id, mode="export",
+        )
+        if not preflight.ok:
+            return ToolOutput(
+                summary=preflight.reject_reason,
+                source="erp",
+                status=OutputStatus.REJECTED,
+                metadata={
+                    "estimated_rows": preflight.estimated_rows,
+                    "suggestions": list(preflight.suggestions),
+                },
+            )
 
         # DuckDB 流式导出 → staging（子进程隔离，崩溃不影响 chat worker）
         start = _time.monotonic()
