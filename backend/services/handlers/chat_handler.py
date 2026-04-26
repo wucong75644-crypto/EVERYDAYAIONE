@@ -721,7 +721,24 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
                 # ── FormBlock 冻结检测：表单已推送，停止工具循环等用户确认 ──
                 if getattr(self, "_form_block_pending", False):
+                    _form_data = getattr(self, "_form_block_data", None)
                     self._form_block_pending = False
+                    self._form_block_data = None
+                    # 表单 block 加入持久化内容（前端刷新后仍可见）
+                    if _form_data:
+                        _content_blocks.append(_form_data)
+                    # 追加提示文字（防止消息体为空导致前端显示"已取消"）
+                    _form_hint = "请在上方表单中确认信息后点击提交。"
+                    accumulated_text += _form_hint
+                    await ws_manager.send_to_task_or_user(
+                        task_id, user_id,
+                        build_message_chunk(
+                            task_id=task_id,
+                            conversation_id=conversation_id,
+                            message_id=message_id,
+                            chunk=_form_hint,
+                        ),
+                    )
                     logger.info(f"FormBlock pushed → stopping loop | task={task_id}")
                     break
 
@@ -823,6 +840,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             mime_type=block["mime_type"],
                             size=block.get("size"),
                         ))
+                    elif block["type"] == "form":
+                        # 表单 block 直接作为 dict 透传（前端 FormBlock 渲染）
+                        result_parts.append(block)
             else:
                 # 单块模式（无工具调用）：兼容原逻辑
                 from services.handlers.media_extractor import extract_media_parts
