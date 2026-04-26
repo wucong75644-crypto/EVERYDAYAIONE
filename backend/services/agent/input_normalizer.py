@@ -165,27 +165,40 @@ class ValueValidator:
     """L3: 业务级值校验——格式正则 + 枚举映射
 
     正则从 plan_fill.py 实际数据验证得出，覆盖所有平台格式。
+
+    _CORE_PATTERNS: 核心正则（不带锚点），single source of truth
+    PATTERNS:       校验用（自动加 ^$），validate_format 使用
+    SEARCH_PATTERNS: 搜索用（原样），plan_fill 从文本中提取候选值使用
     """
 
-    # 编码 / 单号格式正则
-    PATTERNS: dict[str, re.Pattern[str]] = {
+    # ── 核心正则（不带锚点）── single source of truth
+    _CORE_PATTERNS: dict[str, tuple[str, int]] = {
+        # (pattern_str, flags)
         # 商品编码：字母开头 + 字母数字 + 可选 -后缀
-        "product_code": re.compile(
-            r"^[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*$"
-        ),
+        "product_code": (r"[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*", 0),
         # 订单号：tb=18位 / jd|sid=16位 / fxg|1688=19位 / xhs=P+18位 / pdd=日期-数字
-        "order_no": re.compile(
-            r"^(?:P\d{18}|\d{16,19}|\d{8}-\d+)$"
-        ),
+        "order_no": (r"(?:P\d{18}|\d{16,19}|\d{8}-\d+)", 0),
         # 系统单号：精确 16 位数字
-        "system_id": re.compile(r"^\d{16}$"),
+        "system_id": (r"\d{16}", 0),
         # 快递单号：承运商前缀 + 8-20 位数字
-        "express_no": re.compile(
-            r"^(?:SF|YT|ZTO|YD|STO|BEST|JD|EMS|YZPY|JDVA|DBL|YUNDA)\d{8,20}$",
+        "express_no": (
+            r"(?:SF|YT|ZTO|YD|STO|BEST|JD|EMS|YZPY|JDVA|DBL|YUNDA)\d{8,20}",
             re.IGNORECASE,
         ),
         # 单据编号：前缀(DB/AS/RX/RF/PO) + 日期序号
-        "doc_code": re.compile(r"^(?:DB|AS|RX|RF|PO)\d{8,}$"),
+        "doc_code": (r"(?:DB|AS|RX|RF|PO)\d{8,}", 0),
+    }
+
+    # 校验用（加 ^$）
+    PATTERNS: dict[str, re.Pattern[str]] = {
+        k: re.compile(f"^{p}$", flags)
+        for k, (p, flags) in _CORE_PATTERNS.items()
+    }
+
+    # 搜索用（不加 ^$，从自然语言文本中提取候选值）
+    SEARCH_PATTERNS: dict[str, re.Pattern[str]] = {
+        k: re.compile(p, flags)
+        for k, (p, flags) in _CORE_PATTERNS.items()
     }
 
     @classmethod

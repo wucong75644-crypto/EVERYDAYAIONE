@@ -49,24 +49,13 @@ def fill_platform(params: dict, query: str) -> None:
 
 # ── L2 product_code / order_no / express_no 补全（DB 验证） ──
 
-# 正则统一维护在 input_normalizer.ValueValidator.PATTERNS（带 ^$，校验用）
-# 这里需要搜索模式（无 ^$），从自然语言文本中提取候选值
-def _to_search_pattern(p: "re.Pattern[str]") -> str:
-    """去掉校验正则的 ^$ 锚点，变成搜索模式"""
-    s = p.pattern
-    if s.startswith("^"):
-        s = s[1:]
-    if s.endswith("$"):
-        s = s[:-1]
-    return s
-
+# 正则统一维护在 input_normalizer.ValueValidator（single source of truth）
+# SEARCH_PATTERNS：搜索模式（无 ^$），从自然语言文本中提取候选值
 from services.agent.input_normalizer import ValueValidator as _VV
 
-_PRODUCT_CODE_RE = re.compile(_to_search_pattern(_VV.PATTERNS["product_code"]))
-_ORDER_NO_RE = re.compile(_to_search_pattern(_VV.PATTERNS["order_no"]))
-_EXPRESS_NO_RE = re.compile(
-    _to_search_pattern(_VV.PATTERNS["express_no"]), re.IGNORECASE,
-)
+_PRODUCT_CODE_RE = _VV.SEARCH_PATTERNS["product_code"]
+_ORDER_NO_RE = _VV.SEARCH_PATTERNS["order_no"]
+_EXPRESS_NO_RE = _VV.SEARCH_PATTERNS["express_no"]
 _CODE_STOP_WORDS = frozenset({
     "the", "and", "for", "not", "all", "but", "are", "was",
     "order", "trade", "shop", "sku", "erp",
