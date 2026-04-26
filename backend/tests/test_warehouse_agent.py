@@ -1041,3 +1041,110 @@ class TestWarehouseQueries:
         result = await agent._query_local_data("order")
         assert result.status == "error"
         assert "无权" in result.summary
+
+
+# ============================================================
+# 多表统一查询：新 doc_type 路由测试
+# ============================================================
+
+
+class TestWarehouseNewDocTypes:
+    """warehouse_agent 对 8 个新 doc_type 的路由完整性。"""
+
+    def test_allowed_doc_types_includes_new_tables(self):
+        agent = _make_warehouse()
+        for dt in ("stock", "batch_stock", "product", "sku", "daily_stats", "platform_map"):
+            assert dt in agent.allowed_doc_types, f"{dt} 不在 allowed_doc_types"
+
+    def test_allowed_doc_types_still_includes_old(self):
+        agent = _make_warehouse()
+        for dt in ("receipt", "shelf"):
+            assert dt in agent.allowed_doc_types
+
+    def test_doc_type_action_map_covers_all_allowed(self):
+        """_DOC_TYPE_ACTION_MAP 覆盖所有 allowed_doc_types"""
+        agent = _make_warehouse()
+        for dt in agent.allowed_doc_types:
+            assert dt in agent._DOC_TYPE_ACTION_MAP, (
+                f"{dt} 在 allowed_doc_types 但不在 _DOC_TYPE_ACTION_MAP"
+            )
+
+    def test_action_to_doc_type_is_inverse(self):
+        """_ACTION_TO_DOC_TYPE 的值集合 == _DOC_TYPE_ACTION_MAP 的键集合"""
+        agent = _make_warehouse()
+        action_targets = set(agent._ACTION_TO_DOC_TYPE.values())
+        map_sources = set(agent._DOC_TYPE_ACTION_MAP.keys())
+        assert action_targets == map_sources
+
+
+class TestWarehouseClassifyActionNewTypes:
+    """_classify_action 对新表关键词的路由。"""
+
+    @pytest.mark.parametrize("query,expected", [
+        ("批次库存查询", "batch_stock_query"),
+        ("快过期的库存", "batch_stock_query"),
+        ("保质期不足30天", "batch_stock_query"),
+        ("这个商品在哪些平台在售", "platform_map_query"),
+        ("平台映射查询", "platform_map_query"),
+        ("本月商品销量排名", "daily_stats_query"),
+        ("退货率最高的商品", "daily_stats_query"),
+        ("SKU价格异常", "sku_query"),
+        ("规格属性查询", "sku_query"),
+        ("停售商品列表", "product_query"),
+        ("虚拟商品有哪些", "product_query"),
+        ("品牌XX的商品", "product_query"),
+        ("库存负数的商品", "stock_data_query"),
+        ("可用库存不足", "stock_data_query"),
+        ("总库存统计", "stock_data_query"),
+        # 旧类型不受影响
+        ("库存查询", "stock_query"),
+        ("仓库列表", "warehouse_list"),
+        ("收货记录", "receipt_query"),
+        ("上架记录", "shelf_query"),
+    ])
+    def test_classify_action(self, query: str, expected: str):
+        agent = _make_warehouse()
+        assert agent._classify_action(query) == expected
+
+
+class TestWarehouseDispatchNewTypes:
+    """_dispatch 对新 doc_type 走 _query_local_data。"""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action,expected_doc_type", [
+        ("stock_data_query", "stock"),
+        ("batch_stock_query", "batch_stock"),
+        ("product_query", "product"),
+        ("sku_query", "sku"),
+        ("daily_stats_query", "daily_stats"),
+        ("platform_map_query", "platform_map"),
+        # 旧类型
+        ("receipt_query", "receipt"),
+        ("shelf_query", "shelf"),
+    ])
+    async def test_dispatch_routes_to_query_local_data(
+        self, action: str, expected_doc_type: str,
+    ):
+        agent = _make_warehouse()
+        mock_output = ToolOutput(summary="ok", source="warehouse")
+        with patch.object(
+            agent, "_query_local_data", new=AsyncMock(return_value=mock_output),
+        ) as mock_qld:
+            await agent._dispatch(
+                action, {"mode": "summary", "filters": []}, None,
+            )
+            mock_qld.assert_called_once()
+            assert mock_qld.call_args[1]["doc_type"] == expected_doc_type
+
+    @pytest.mark.asyncio
+    async def test_dispatch_stock_query_goes_to_query_stock(self):
+        """stock_query（按编码查库存）走专用方法，不走 _query_local_data"""
+        agent = _make_warehouse()
+        mock_output = ToolOutput(summary="ok", source="warehouse")
+        with patch.object(
+            agent, "query_stock", new=AsyncMock(return_value=mock_output),
+        ) as mock_qs:
+            await agent._dispatch(
+                "stock_query", {"product_code": "A001"}, None,
+            )
+            mock_qs.assert_called_once()

@@ -35,10 +35,7 @@ from services.kuaimai.erp_duckdb_helpers import (
     build_pii_select,
     resolve_export_path,
 )
-from services.kuaimai.erp_query_preflight import (
-    QueryRoute,
-    preflight_check,
-)
+from services.kuaimai.erp_query_preflight import preflight_check
 from services.kuaimai.erp_unified_filters import (
     validate_filters as _validate_filters,
     extract_time_range as _extract_time_range,
@@ -190,15 +187,14 @@ class UnifiedQueryEngine:
                     push_thinking=push_thinking,
                 )
         else:
-            # ── 现有表：预检防御层 + 三级路由（完全不变）──
+            # ── 现有表：预检防御层 ──
             preflight = preflight_check(
                 db=self.db, doc_type=doc_type,
                 time_col=tr.time_col, start_iso=tr.start_iso, end_iso=tr.end_iso,
-                org_id=self.org_id, mode=mode, filters=validated,
+                org_id=self.org_id, mode=mode,
             )
 
-            # 极端场景兜底：预估 > 500 万行直接拒绝
-            if preflight.reject_reason:
+            if not preflight.ok:
                 result = ToolOutput(
                     summary=preflight.reject_reason,
                     source="erp",
@@ -207,25 +203,6 @@ class UnifiedQueryEngine:
                         "estimated_rows": preflight.estimated_rows,
                         "suggestions": list(preflight.suggestions),
                     },
-                )
-            elif preflight.route == QueryRoute.FAST:
-                result = await self._fast_query(
-                    doc_type, validated, tr, mode, group_by,
-                    sort_by=sort_by, sort_dir=sort_dir, limit=limit,
-                    extra_fields=extra_fields,
-                    user_id=user_id, conversation_id=conversation_id,
-                    request_ctx=request_ctx,
-                    include_invalid=include_invalid,
-                    push_thinking=push_thinking,
-                )
-            elif preflight.route == QueryRoute.BATCH and mode == "export":
-                result = await self._batch_export(
-                    doc_type, validated, tr, extra_fields, limit,
-                    user_id, conversation_id, request_ctx,
-                    estimated_rows=preflight.estimated_rows,
-                    include_invalid=include_invalid,
-                    push_thinking=push_thinking,
-                    sort_by=sort_by, sort_dir=sort_dir,
                 )
             elif mode == "summary":
                 result = await self._summary(
@@ -249,78 +226,6 @@ class UnifiedQueryEngine:
                 result.summary = f"{hint}\n{result.summary}"
 
         return result
-
-    # ── 快路径：PG 直查（< 1000 行） ──────────────────
-
-    async def _fast_query(
-        self, doc_type: str, filters: list[ValidatedFilter],
-        tr: TimeRange, mode: str, group_by: list[str] | None,
-        sort_by: str | None = None, sort_dir: str = "desc",
-        limit: int = 20, extra_fields: list[str] | None = None,
-        user_id: str | None = None, conversation_id: str | None = None,
-        request_ctx: Optional[RequestContext] = None,
-        include_invalid: bool = False,
-        push_thinking: Any = None,
-    ) -> ToolOutput:
-        """小结果集快路径：PG 直查，跳过 RPC/DuckDB。
-
-        summary 模式：降级到 RPC（已足够快）。
-        export 模式：PG SELECT → pandas 写 parquet → 复用 profile + FileRef。
-        """
-        if mode == "summary":
-            return await self._summary(
-                doc_type, filters, tr, group_by, request_ctx,
-                include_invalid=include_invalid,
-                sort_by=sort_by, sort_dir=sort_dir, limit=limit,
-            )
-        return await self._fast_export(
-            doc_type, filters, tr, extra_fields, limit,
-            user_id, conversation_id, request_ctx,
-            sort_by=sort_by, sort_dir=sort_dir,
-        )
-
-    async def _fast_export(
-        self, doc_type: str, filters: list[ValidatedFilter],
-        tr: TimeRange, extra_fields: list[str] | None, limit: int,
-        user_id: str | None, conversation_id: str | None,
-        request_ctx: Optional[RequestContext],
-        sort_by: str | None = None, sort_dir: str = "desc",
-    ) -> ToolOutput:
-        """快路径 export：PG 直查 → 写 parquet → FileRef。"""
-        from services.kuaimai.erp_fast_export import fast_export
-        return await fast_export(
-            engine_self=self,
-            doc_type=doc_type, filters=filters, tr=tr,
-            extra_fields=extra_fields, limit=limit,
-            user_id=user_id, conversation_id=conversation_id,
-            request_ctx=request_ctx,
-            sort_by=sort_by, sort_dir=sort_dir,
-        )
-
-    # ── 分批导出（Phase 3 实现，当前降级到标准导出） ──
-
-    async def _batch_export(
-        self, doc_type: str, filters: list[ValidatedFilter],
-        tr: TimeRange, extra_fields: list[str] | None, limit: int,
-        user_id: str | None, conversation_id: str | None,
-        request_ctx: Optional[RequestContext],
-        estimated_rows: int = 0,
-        include_invalid: bool = False,
-        push_thinking: Any = None,
-        sort_by: str | None = None, sort_dir: str = "desc",
-    ) -> ToolOutput:
-        """大结果集分批导出：按时间切片分批 DuckDB，合并 parquet。"""
-        from services.kuaimai.erp_batch_export import batch_export
-        return await batch_export(
-            engine_self=self,
-            doc_type=doc_type, filters=filters, tr=tr,
-            extra_fields=extra_fields, limit=limit,
-            user_id=user_id, conversation_id=conversation_id,
-            request_ctx=request_ctx, estimated_rows=estimated_rows,
-            include_invalid=include_invalid,
-            push_thinking=push_thinking,
-            sort_by=sort_by, sort_dir=sort_dir,
-        )
 
     # ── Summary 模式 ──────────────────────────────────
 

@@ -1024,3 +1024,209 @@ class TestMergeExportFields:
         fields = merge_export_fields("nonexistent_type")
         # unknown doc_type → REQUIRED/DEFAULT 为空 → 返回空列表
         assert isinstance(fields, list)
+
+
+# ── 新表多表统一查询测试 ──────────────────────────────────
+
+
+class TestGetColumnWhitelist:
+    """get_column_whitelist 按 doc_type 分组白名单。"""
+
+    def test_none_returns_global(self):
+        from services.kuaimai.erp_unified_schema import (
+            get_column_whitelist, COLUMN_WHITELIST,
+        )
+        assert get_column_whitelist(None) is COLUMN_WHITELIST
+
+    def test_old_doc_type_returns_global(self):
+        from services.kuaimai.erp_unified_schema import (
+            get_column_whitelist, COLUMN_WHITELIST,
+        )
+        for dt in ("order", "purchase", "aftersale", "receipt", "shelf", "purchase_return"):
+            assert get_column_whitelist(dt) is COLUMN_WHITELIST
+
+    def test_stock_returns_stock_columns(self):
+        from services.kuaimai.erp_unified_schema import get_column_whitelist
+        wl = get_column_whitelist("stock")
+        assert "available_stock" in wl
+        assert "total_stock" in wl
+        assert "order_no" not in wl  # order 字段不在 stock 白名单
+
+    def test_each_new_doc_type_has_whitelist(self):
+        from services.kuaimai.erp_unified_schema import get_column_whitelist
+        new_types = [
+            "stock", "product", "sku", "daily_stats",
+            "platform_map", "batch_stock", "order_log", "aftersale_log",
+        ]
+        for dt in new_types:
+            wl = get_column_whitelist(dt)
+            assert len(wl) > 0, f"{dt} 白名单为空"
+
+    def test_unknown_doc_type_returns_empty(self):
+        from services.kuaimai.erp_unified_schema import get_column_whitelist
+        assert get_column_whitelist("nonexistent") == {}
+
+
+class TestMultiTableSchemaConstants:
+    """erp_multi_table_schema 常量校验——字段数与设计文档校对。"""
+
+    def test_stock_columns_count(self):
+        from services.kuaimai.erp_multi_table_schema import STOCK_COLUMNS
+        assert len(STOCK_COLUMNS) == 25
+
+    def test_product_columns_count(self):
+        from services.kuaimai.erp_multi_table_schema import PRODUCT_COLUMNS
+        assert len(PRODUCT_COLUMNS) == 26
+
+    def test_sku_columns_count(self):
+        from services.kuaimai.erp_multi_table_schema import SKU_COLUMNS
+        assert len(SKU_COLUMNS) == 19
+
+    def test_daily_stats_columns_count(self):
+        from services.kuaimai.erp_multi_table_schema import DAILY_STATS_COLUMNS
+        assert len(DAILY_STATS_COLUMNS) == 34
+
+    def test_platform_map_columns_count(self):
+        from services.kuaimai.erp_multi_table_schema import PLATFORM_MAP_COLUMNS
+        assert len(PLATFORM_MAP_COLUMNS) == 5
+
+    def test_batch_stock_columns_count(self):
+        from services.kuaimai.erp_multi_table_schema import BATCH_STOCK_COLUMNS
+        assert len(BATCH_STOCK_COLUMNS) == 11
+
+    def test_order_log_columns_count(self):
+        from services.kuaimai.erp_multi_table_schema import ORDER_LOG_COLUMNS
+        assert len(ORDER_LOG_COLUMNS) == 6
+
+    def test_aftersale_log_columns_count(self):
+        from services.kuaimai.erp_multi_table_schema import AFTERSALE_LOG_COLUMNS
+        assert len(AFTERSALE_LOG_COLUMNS) == 6
+
+    def test_table_columns_covers_all_new_types(self):
+        from services.kuaimai.erp_multi_table_schema import TABLE_COLUMNS
+        expected = {
+            "stock", "product", "sku", "daily_stats",
+            "platform_map", "batch_stock", "order_log", "aftersale_log",
+        }
+        assert set(TABLE_COLUMNS.keys()) == expected
+
+    def test_field_label_cn_covers_key_fields(self):
+        from services.kuaimai.erp_multi_table_schema import FIELD_LABEL_CN
+        assert FIELD_LABEL_CN["available_stock"] == "可用库存"
+        assert FIELD_LABEL_CN["system_id"] == "订单系统ID"
+        assert FIELD_LABEL_CN["operate_time"] == "操作时间"
+        assert FIELD_LABEL_CN["stat_date"] == "统计日期"
+
+
+class TestDocTypeTable:
+    """DOC_TYPE_TABLE 映射完整性。"""
+
+    def test_all_valid_doc_types_have_table(self):
+        from services.kuaimai.erp_unified_schema import (
+            DOC_TYPE_TABLE, VALID_DOC_TYPES,
+        )
+        for dt in VALID_DOC_TYPES:
+            assert dt in DOC_TYPE_TABLE, f"{dt} 缺少表映射"
+
+    def test_old_types_route_to_document_items(self):
+        from services.kuaimai.erp_unified_schema import DOC_TYPE_TABLE
+        for dt in ("order", "purchase", "aftersale", "receipt", "shelf", "purchase_return"):
+            assert DOC_TYPE_TABLE[dt] == "erp_document_items"
+
+    def test_new_types_route_to_independent_tables(self):
+        from services.kuaimai.erp_unified_schema import DOC_TYPE_TABLE
+        assert DOC_TYPE_TABLE["stock"] == "erp_stock_status"
+        assert DOC_TYPE_TABLE["product"] == "erp_products"
+        assert DOC_TYPE_TABLE["daily_stats"] == "erp_product_daily_stats"
+        assert DOC_TYPE_TABLE["order_log"] == "erp_order_logs"
+
+
+class TestValidateFiltersWithDocType:
+    """validate_filters 的 doc_type 参数测试。"""
+
+    def test_stock_field_accepted(self):
+        from services.kuaimai.erp_unified_filters import validate_filters
+        filters = [{"field": "available_stock", "op": "lt", "value": 0}]
+        result, err = validate_filters(filters, doc_type="stock")
+        assert err is None
+        assert len(result) == 1
+        assert result[0].field == "available_stock"
+
+    def test_stock_rejects_order_field(self):
+        from services.kuaimai.erp_unified_filters import validate_filters
+        filters = [{"field": "order_no", "op": "eq", "value": "123"}]
+        result, err = validate_filters(filters, doc_type="stock")
+        assert err is not None
+        assert "order_no" in err
+
+    def test_none_doc_type_uses_global(self):
+        from services.kuaimai.erp_unified_filters import validate_filters
+        filters = [{"field": "order_no", "op": "eq", "value": "123"}]
+        result, err = validate_filters(filters, doc_type=None)
+        assert err is None  # order_no 在全局白名单中
+
+    def test_daily_stats_accepts_stat_date(self):
+        from services.kuaimai.erp_unified_filters import validate_filters
+        filters = [{"field": "stat_date", "op": "gte", "value": "2026-04-01"}]
+        result, err = validate_filters(filters, doc_type="daily_stats")
+        assert err is None
+
+    def test_order_log_accepts_system_id(self):
+        from services.kuaimai.erp_unified_filters import validate_filters
+        filters = [{"field": "system_id", "op": "eq", "value": "123456"}]
+        result, err = validate_filters(filters, doc_type="order_log")
+        assert err is None
+
+
+class TestExtractTimeRangeWithDocType:
+    """extract_time_range 的 doc_type 参数测试。"""
+
+    def test_stock_no_time_returns_none(self):
+        """stock 表不传时间 → 返回 None（不强制时间范围）"""
+        from services.kuaimai.erp_unified_filters import extract_time_range
+        tr = extract_time_range([], None, None, "summary", doc_type="stock")
+        assert tr is None
+
+    def test_daily_stats_no_time_returns_default(self):
+        """daily_stats 强制时间范围 → 返回默认当天"""
+        from services.kuaimai.erp_unified_filters import extract_time_range
+        tr = extract_time_range([], None, None, "summary", doc_type="daily_stats")
+        assert tr is not None
+        assert tr.time_col == "stat_date"
+
+    def test_order_log_no_time_returns_default(self):
+        """order_log 强制时间范围 → 返回默认当天"""
+        from services.kuaimai.erp_unified_filters import extract_time_range
+        tr = extract_time_range([], None, None, "summary", doc_type="order_log")
+        assert tr is not None
+        assert tr.time_col == "operate_time"
+
+    def test_product_no_time_returns_none(self):
+        """product 快照表 → 返回 None"""
+        from services.kuaimai.erp_unified_filters import extract_time_range
+        tr = extract_time_range([], None, None, "summary", doc_type="product")
+        assert tr is None
+
+    def test_none_doc_type_returns_default_range(self):
+        """不传 doc_type → 返回默认当天范围（向后兼容）"""
+        from services.kuaimai.erp_unified_filters import extract_time_range
+        tr = extract_time_range([], None, None, "summary", doc_type=None)
+        assert tr is not None
+        assert tr.time_col == "doc_created_at"
+
+
+class TestFormatFilterHintNewTable:
+    """format_filter_hint 支持新表字段标签。"""
+
+    def test_stock_field_shows_chinese_label(self):
+        from services.kuaimai.erp_unified_schema import format_filter_hint, ValidatedFilter
+        filters = [ValidatedFilter("available_stock", "lt", 0, "numeric")]
+        hint = format_filter_hint(filters)
+        assert "可用库存" in hint
+        assert "< 0" in hint
+
+    def test_system_id_shows_chinese_label(self):
+        from services.kuaimai.erp_unified_schema import format_filter_hint, ValidatedFilter
+        filters = [ValidatedFilter("system_id", "eq", "123", "text")]
+        hint = format_filter_hint(filters)
+        assert "订单系统ID" in hint
