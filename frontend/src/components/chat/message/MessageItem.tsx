@@ -144,7 +144,7 @@ export default memo(function MessageItem({
   const hasMultiBlocks = useMemo(() => {
     if (!Array.isArray(message.content)) return false;
     return message.content.some((p) =>
-      p.type === 'tool_result' || p.type === 'image' || p.type === 'file'
+      p.type === 'tool_result' || p.type === 'image' || p.type === 'file' || p.type === 'form'
     );
   }, [message.content]);
 
