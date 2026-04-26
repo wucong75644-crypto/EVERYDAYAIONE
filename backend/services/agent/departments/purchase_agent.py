@@ -103,7 +103,12 @@ class PurchaseAgent(DepartmentAgent):
 
     # ── DAG 分发 ──
 
-    def _classify_action(self, task: str, **_kwargs) -> str:
+    _DOC_TYPE_ACTION_MAP = {
+        "purchase": "purchase_list",
+        "purchase_return": "purchase_return",
+    }
+
+    def _classify_action(self, task: str) -> str:
         t = task.lower()
         if any(kw in t for kw in ("到货", "进度", "arrival")):
             return "arrival_progress"

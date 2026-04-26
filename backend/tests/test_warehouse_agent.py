@@ -370,7 +370,7 @@ class TestDepartmentAgentBase:
         """dag_mode=True 时写 action 被拦截"""
         agent = _make_warehouse()
         # 模拟子类 _classify_action 返回写操作
-        agent._classify_action = lambda task, **_kw: "update"
+        agent._classify_action = lambda task: "update"
         result = await agent.execute("修改库存数量", dag_mode=True)
         assert result.status == "error"
         assert "写操作" in result.summary
@@ -408,7 +408,7 @@ class TestDepartmentAgentBase:
     async def test_no_dag_mode_allows_write(self):
         """dag_mode=False（默认）时写操作正常放行"""
         agent = _make_warehouse()
-        agent._classify_action = lambda task, **_kw: "update"
+        agent._classify_action = lambda task: "update"
         mock_output = ToolOutput(summary="OK", source="warehouse")
         with patch.object(agent, "_dispatch", new=AsyncMock(return_value=mock_output)):
             result = await agent.execute("修改库存数量")

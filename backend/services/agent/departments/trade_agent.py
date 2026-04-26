@@ -85,7 +85,9 @@ class TradeAgent(DepartmentAgent):
 
     # ── DAG 分发 ──
 
-    def _classify_action(self, task: str, **_kwargs) -> str:
+    _DOC_TYPE_ACTION_MAP = {"order": "order_list"}
+
+    def _classify_action(self, task: str) -> str:
         t = task.lower()
         if any(kw in t for kw in ("物流", "快递", "签收", "logistics")):
             return "logistics_query"
