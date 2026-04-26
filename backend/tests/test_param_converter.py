@@ -16,11 +16,135 @@ from services.agent.param_converter import (
     params_to_filters,
     diagnose_empty,
     diagnose_error,
+    _normalize_multi_value,
+    _make_eq_or_in_filter,
     TEXT_EQ_FIELDS,
     TEXT_LIKE_FIELDS,
     ENUM_EQ_FIELDS,
     FLAG_FIELDS,
 )
+
+
+# ============================================================
+# _normalize_multi_value: 多值解析（架构层）
+# ============================================================
+
+
+class TestNormalizeMultiValue:
+    """统一多值解析函数"""
+
+    def test_none(self):
+        assert _normalize_multi_value(None) is None
+
+    def test_empty_string(self):
+        assert _normalize_multi_value("") is None
+
+    def test_single_value(self):
+        assert _normalize_multi_value("ABC123") == "ABC123"
+
+    def test_single_value_strips(self):
+        assert _normalize_multi_value("  ABC123  ") == "ABC123"
+
+    def test_comma_separated(self):
+        assert _normalize_multi_value("A,B,C") == ["A", "B", "C"]
+
+    def test_chinese_comma(self):
+        assert _normalize_multi_value("A，B，C") == ["A", "B", "C"]
+
+    def test_semicolon(self):
+        assert _normalize_multi_value("A;B;C") == ["A", "B", "C"]
+
+    def test_chinese_semicolon(self):
+        assert _normalize_multi_value("A；B；C") == ["A", "B", "C"]
+
+    def test_newline(self):
+        assert _normalize_multi_value("A\nB\nC") == ["A", "B", "C"]
+
+    def test_pipe(self):
+        assert _normalize_multi_value("A|B|C") == ["A", "B", "C"]
+
+    def test_mixed_separators(self):
+        assert _normalize_multi_value("A,B，C;D") == ["A", "B", "C", "D"]
+
+    def test_list_input(self):
+        assert _normalize_multi_value(["A", "B"]) == ["A", "B"]
+
+    def test_single_element_list(self):
+        assert _normalize_multi_value(["A"]) == "A"
+
+    def test_empty_list(self):
+        assert _normalize_multi_value([]) is None
+
+    def test_list_with_empty_strings(self):
+        assert _normalize_multi_value(["A", "", "  ", "B"]) == ["A", "B"]
+
+    def test_strips_in_split(self):
+        assert _normalize_multi_value("A , B , C") == ["A", "B", "C"]
+
+    def test_trailing_comma(self):
+        """尾部逗号不产生空值"""
+        assert _normalize_multi_value("A,B,") == ["A", "B"]
+
+    def test_integer_input(self):
+        assert _normalize_multi_value(123) == "123"
+
+
+class TestMakeEqOrInFilter:
+    def test_single_value_eq(self):
+        assert _make_eq_or_in_filter("f", "v") == {"field": "f", "op": "eq", "value": "v"}
+
+    def test_list_value_in(self):
+        assert _make_eq_or_in_filter("f", ["a", "b"]) == {"field": "f", "op": "in", "value": ["a", "b"]}
+
+
+# ============================================================
+# params_to_filters: 多值集成测试
+# ============================================================
+
+
+class TestMultiValueIntegration:
+    """验证各字段多值传入后生成 in 过滤器"""
+
+    def test_product_code_comma(self):
+        filters = params_to_filters({"product_code": "A,B,C"})
+        f = [x for x in filters if x["field"] == "outer_id"]
+        assert len(f) == 1
+        assert f[0]["op"] == "in"
+        assert f[0]["value"] == ["A", "B", "C"]
+
+    def test_product_code_single(self):
+        filters = params_to_filters({"product_code": "ABC"})
+        f = [x for x in filters if x["field"] == "outer_id"]
+        assert len(f) == 1
+        assert f[0]["op"] == "eq"
+        assert f[0]["value"] == "ABC"
+
+    def test_product_code_list(self):
+        filters = params_to_filters({"product_code": ["X", "Y"]})
+        f = [x for x in filters if x["field"] == "outer_id"]
+        assert f[0]["op"] == "in"
+
+    def test_order_no_comma(self):
+        filters = params_to_filters({"order_no": "O001,O002"})
+        f = [x for x in filters if x["field"] == "order_no"]
+        assert f[0]["op"] == "in"
+        assert f[0]["value"] == ["O001", "O002"]
+
+    def test_doc_code_multi(self):
+        filters = params_to_filters({"doc_code": "PO001;PO002"})
+        f = [x for x in filters if x["field"] == "doc_code"]
+        assert f[0]["op"] == "in"
+
+    def test_sku_code_multi(self):
+        filters = params_to_filters({"sku_code": "SKU1,SKU2,SKU3"})
+        f = [x for x in filters if x["field"] == "sku_outer_id"]
+        assert f[0]["op"] == "in"
+        assert len(f[0]["value"]) == 3
+
+    def test_buyer_nick_single_stays_eq(self):
+        filters = params_to_filters({"buyer_nick": "张三"})
+        f = [x for x in filters if x["field"] == "buyer_nick"]
+        assert f[0]["op"] == "eq"
 
 
 # ============================================================
