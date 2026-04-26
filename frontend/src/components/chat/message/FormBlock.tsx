@@ -405,31 +405,17 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
       {/* 操作栏 */}
       <div
         className={cn(
-          'flex items-center justify-end gap-2 px-4 py-3',
+          'flex items-center gap-3 px-4 py-3',
           'border-t border-[var(--c-border)]',
           'bg-[var(--c-surface-raised)]',
         )}
       >
         <button
           type="button"
-          onClick={handleCancel}
-          className={cn(
-            'flex items-center gap-1.5 rounded-[var(--s-radius-control)] px-3 py-1.5 text-sm',
-            'border border-[var(--c-border)]',
-            'text-[var(--c-text-secondary)] hover:text-[var(--c-text-primary)]',
-            'hover:bg-[var(--c-surface-hover)]',
-            'transition-colors duration-150',
-          )}
-        >
-          <X size={14} />
-          {form.cancel_text || '取消'}
-        </button>
-        <button
-          type="button"
           onClick={handleSubmit}
           disabled={submitting}
           className={cn(
-            'flex items-center gap-1.5 rounded-[var(--s-radius-control)] px-4 py-1.5 text-sm font-medium',
+            'flex flex-1 items-center justify-center gap-1.5 rounded-[var(--s-radius-control)] px-4 py-2 text-sm font-medium',
             'bg-[var(--c-accent)] text-white',
             'hover:opacity-90 active:opacity-80',
             'disabled:opacity-50 disabled:cursor-not-allowed',
@@ -447,6 +433,20 @@ export default memo(function FormBlock({ form }: FormBlockProps) {
               {form.submit_text || '确认'}
             </>
           )}
+        </button>
+        <button
+          type="button"
+          onClick={handleCancel}
+          className={cn(
+            'flex items-center justify-center gap-1.5 rounded-[var(--s-radius-control)] px-4 py-2 text-sm',
+            'border border-[var(--c-border)]',
+            'text-[var(--c-text-secondary)] hover:text-[var(--c-text-primary)]',
+            'hover:bg-[var(--c-surface-hover)]',
+            'transition-colors duration-150',
+          )}
+        >
+          <X size={14} />
+          {form.cancel_text || '取消'}
         </button>
       </div>
     </m.div>
