@@ -58,6 +58,7 @@ from services.kuaimai.erp_unified_schema import (
     _FIELD_LABEL_CN,
     fmt_summary_grouped,
     fmt_summary_total,
+    format_filter_hint,
     generate_field_doc,
 )
 from utils.time_context import (
@@ -157,19 +158,27 @@ class UnifiedQueryEngine:
         tr = _extract_time_range(validated, time_type, request_ctx, mode)
 
         if mode == "summary":
-            return await self._summary(
+            result = await self._summary(
                 doc_type, validated, tr, group_by, request_ctx,
                 include_invalid=include_invalid,
                 sort_by=sort_by, sort_dir=sort_dir, limit=limit,
             )
         else:
-            return await self._export(
+            result = await self._export(
                 doc_type, validated, tr, extra_fields, limit,
                 user_id, conversation_id, request_ctx,
                 include_invalid=include_invalid,
                 push_thinking=push_thinking,
                 sort_by=sort_by, sort_dir=sort_dir,
             )
+
+        # 统一出口：注入已应用的过滤条件摘要，让下游 LLM 知道数据已过滤
+        if result.summary:
+            hint = format_filter_hint(validated)
+            if hint:
+                result.summary = f"{hint}\n{result.summary}"
+
+        return result
 
     # ── Summary 模式 ──────────────────────────────────
 
