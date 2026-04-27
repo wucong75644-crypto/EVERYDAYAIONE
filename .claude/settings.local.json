@@ -1730,7 +1730,14 @@
       "Bash(grep -r \"FileExecutor\\\\|code_execute\\\\|_code_execute\\\\|_file_dispatch\" /Users/wucong/EVERYDAYAIONE/backend/tests/*.py)",
       "Bash(python -m pytest tests/test_file_handles_e2e.py -v --tb=short)",
       "Bash(grep -l \"workspace_file_handles\\\\|file_list_entries\\\\|_file_list_with_handles\\\\|_register_result_files\\\\|resolve_safe_path\\\\|WorkspaceFileHandles\" tests/*.py)",
-      "Bash(./git-push.sh \"fix: file_handles空dict误判——handles is not None替代truthy检查\")"
+      "Bash(./git-push.sh \"fix: file_handles空dict误判——handles is not None替代truthy检查\")",
+      "Bash(npm root *)",
+      "WebFetch(domain:databunny.medium.com)",
+      "WebFetch(domain:jakegoldsborough.com)",
+      "Bash(openssl s_client -connect cdn.everydayai.com.cn:443 -servername cdn.everydayai.com.cn)",
+      "Bash(openssl x509 *)",
+      "Bash(grep -n \"def domain\\\\|@property\" /Users/wucong/EVERYDAYAIONE/backend/services/agent/departments/*.py)",
+      "Bash(./git-push.sh \"refactor: 工具描述边界调整——erp_agent收窄为ERP查询,code_execute提升为数据计算与文件处理\")"
     ],
     "additionalDirectories": [
       "/tmp"
