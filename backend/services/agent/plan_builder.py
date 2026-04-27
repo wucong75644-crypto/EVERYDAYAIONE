@@ -216,21 +216,27 @@ def _build_fallback_params(
 _PARAM_DEFINITIONS = (
     "参数定义：\n"
     "【基础参数（必填）】\n"
-    "- doc_type: order/purchase/purchase_return/aftersale/receipt/shelf/"
-    "stock/product/sku/daily_stats/platform_map/batch_stock/order_log/aftersale_log（必填）\n"
-    "  新表说明：stock=实时库存快照 / product=商品主数据 / sku=SKU明细 / "
-    "daily_stats=商品日统计 / platform_map=平台商品映射 / "
-    "batch_stock=批次效期库存 / order_log=订单操作日志 / aftersale_log=售后操作日志\n"
-    "- mode: summary（统计汇总/多少/占比）/ export（获取数据/明细/导出/列表）（必填）\n"
+    "- doc_type: 单据类型（必填）\n"
+    "  单据表: order(订单) / purchase(采购) / purchase_return(采退) / aftersale(售后) / receipt(收货) / shelf(上架)\n"
+    "  快照表: stock(库存快照) / product(商品主数据) / sku(SKU明细) / platform_map(平台映射) / batch_stock(批次效期库存)\n"
+    "  统计/日志表: daily_stats(商品日统计) / order_log(订单操作日志) / aftersale_log(售后操作日志)\n"
+    "  关键词映射：库存/缺货/可售→stock；商品/品牌/停售→product；规格/SKU/变体→sku；"
+    "销量/日报/统计报表→daily_stats；平台映射/在售平台→platform_map；"
+    "批次/效期/过期/保质期→batch_stock；操作记录/审核记录→order_log/aftersale_log\n"
+    "- mode: summary（统计汇总/多少/占比/有几个）/ export（获取数据/明细/导出/列表/有哪些/查一下/看看）（必填）\n"
+    "  关键词映射：多少/几个/统计/汇总/占比/总计→summary；"
+    "明细/列表/导出/有哪些/查一下/看看/详情/哪些/最高N笔/Top N→export\n"
     "- time_range: YYYY-MM-DD ~ YYYY-MM-DD 或 YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM\n"
-    "  单据表(order/purchase/aftersale/receipt/shelf/purchase_return)和日统计(daily_stats)/日志(order_log/aftersale_log)：必填\n"
-    "  快照表(stock/product/sku/platform_map/batch_stock)：不传（这些表无时间维度，查全量）\n"
-    "  end 落在今天时，必须用当前时间 HH:MM 作为 end；对比场景所有 time_range 的 end 对齐到相同 HH:MM\n"
-    "- time_col: pay_time（付款时间）/ consign_time（发货时间）/ doc_created_at（创建时间，默认）/ apply_date（售后申请日期）/ delivery_date（采购预计到货日）/ finished_at（售后完结日期）\n"
-    "  快照表不需要传 time_col\n"
+    "  单据表 + daily_stats + order_log + aftersale_log：必填\n"
+    "  快照表(stock/product/sku/platform_map/batch_stock)：不传（无时间维度，查全量）\n"
+    "  end 落在今天时，必须用当前时间 HH:MM 作为 end\n"
+    "- time_col: 时间列（单据表可选，快照表不传）\n"
+    "  关键词映射：付款/支付→pay_time；发货/物流→consign_time；"
+    "申请/退货申请→apply_date；到货/交期→delivery_date；默认→doc_created_at\n"
     "\n"
     "【通用过滤参数（可选，用户提到才提取）】\n"
     "- platform: taobao/pdd/douyin/jd/kuaishou/xhs/1688\n"
+    "  关键词映射：淘宝/天猫→taobao；拼多多→pdd；抖音/抖店→douyin；京东→jd；快手→kuaishou；小红书→xhs\n"
     "- product_code: 商品编码\n"
     "- order_no: 订单号（平台订单号或ERP系统单号）\n"
     "- shop_name: 店铺名称（模糊匹配）\n"
@@ -309,11 +315,19 @@ _PARAM_DEFINITIONS = (
     "【空值检查（可选，用户说'没有/为空/缺少/未填'时提取）】\n"
     "- null_fields: 要筛选为空的字段名列表，如 [\"express_no\"]\n"
     "\n"
-    "【展示控制】\n"
-    "- group_by: shop/platform/product/supplier/warehouse/status（可选，仅 summary 模式）\n"
-    "- sort_by: 排序字段（如 quantity/amount，默认按时间降序）\n"
+    "【排序与分组（⚠ 用户提到排名/最高/最多/前N时必须提取）】\n"
+    "- sort_by: 排序字段\n"
+    "  关键词映射：金额最高/最贵→sort_by:amount；数量最多/卖得最多→sort_by:quantity；"
+    "销量最高/销量Top→sort_by:order_qty；库存最少/库存最低→sort_by:available_stock；"
+    "退货最多→sort_by:aftersale_count；采购金额最大→sort_by:purchase_amount\n"
+    "  ⚠ 含「最高/最大/最多/最贵/排名/Top/排行」→ 必须提取 sort_by + sort_dir + mode:export\n"
     "- sort_dir: asc(升序) / desc(降序，默认)\n"
-    "- limit: 返回条数上限（\"前10名\"→limit:10，默认20）\n"
+    "  关键词映射：最高/最大/最多/最贵/Top→desc；最低/最少/最小/最便宜→asc\n"
+    "- limit: 返回条数（⚠ 含「前N笔/TopN/最高N个/N条」时必须提取 limit:N）\n"
+    "  关键词映射：前5笔→5；Top10→10；最高3个→3；不指定条数时默认20\n"
+    "- group_by: shop/platform/product/supplier/warehouse/status（可选，仅 summary 模式）\n"
+    "  关键词映射：按店铺/每个店铺→shop；按平台/各平台→platform；"
+    "按商品/每个商品→product；按供应商→supplier；按仓库/分仓→warehouse；按状态→status\n"
     "- extra_fields: 在默认列基础上追加的额外列（可选，绝大多数查询不需要设置）\n"
     "  默认已返回：单据编号/商品编码/商品名称/数量/金额/状态/时间等核心列\n"
     "  仅当用户明确要求看以下额外信息时才设置：\n"
@@ -411,7 +425,23 @@ def build_extract_prompt(query: str, now_str: str = "") -> str:
         '"time_range":"2026-01-01 ~ 2026-04-26",'
         '"system_id":"123456"}}\n\n'
         "示例18（快过期的批次库存）：\n"
-        '{"domain": "warehouse", "params": {"doc_type":"batch_stock","mode":"export"}}'
+        '{"domain": "warehouse", "params": {"doc_type":"batch_stock","mode":"export"}}\n\n'
+        "示例19（4月金额最高5笔订单）：\n"
+        '{"domain": "trade", "params": {"doc_type":"order","mode":"export",'
+        '"time_range":"2026-04-01 ~ 2026-04-26 23:00",'
+        '"sort_by":"amount","sort_dir":"desc","limit":5}}\n\n'
+        "示例20（库存最少的20个商品）：\n"
+        '{"domain": "warehouse", "params": {"doc_type":"stock","mode":"export",'
+        '"sort_by":"available_stock","sort_dir":"asc","limit":20}}\n\n'
+        "示例21（某售后单的处理过程）：\n"
+        '{"domain": "aftersale", "params": {"doc_type":"aftersale_log","mode":"export",'
+        '"time_range":"2026-01-01 ~ 2026-04-27","work_order_id":"WO2026001"}}\n\n'
+        "示例22（退货按店铺统计）：\n"
+        '{"domain": "aftersale", "params": {"doc_type":"aftersale","mode":"summary",'
+        '"time_range":"2026-04-01 ~ 2026-04-27 00:00","group_by":"shop"}}\n\n'
+        "示例23（某商品的SKU列表）：\n"
+        '{"domain": "warehouse", "params": {"doc_type":"sku","mode":"export",'
+        '"product_code":"HZ001"}}'
     )
 
 
@@ -514,7 +544,10 @@ def build_multi_extract_prompt(query: str, now_str: str = "") -> str:
         "示例10（单域：金额最高的10笔订单）：\n"
         '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
         '"mode":"export","time_range":"2026-04-17 ~ 2026-04-17",'
-        '"sort_by":"amount","sort_dir":"desc","limit":10}}]}'
+        '"sort_by":"amount","sort_dir":"desc","limit":10}}]}\n\n'
+        "示例11（单域：库存最少的商品Top20）：\n"
+        '{"steps":[{"domain":"warehouse","params":{"doc_type":"stock",'
+        '"mode":"export","sort_by":"available_stock","sort_dir":"asc","limit":20}}]}'
     )
 
 
