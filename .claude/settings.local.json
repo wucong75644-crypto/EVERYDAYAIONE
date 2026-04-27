@@ -1729,7 +1729,8 @@
       "Bash(awk '{print $NF, $5}')",
       "Bash(grep -r \"FileExecutor\\\\|code_execute\\\\|_code_execute\\\\|_file_dispatch\" /Users/wucong/EVERYDAYAIONE/backend/tests/*.py)",
       "Bash(python -m pytest tests/test_file_handles_e2e.py -v --tb=short)",
-      "Bash(grep -l \"workspace_file_handles\\\\|file_list_entries\\\\|_file_list_with_handles\\\\|_register_result_files\\\\|resolve_safe_path\\\\|WorkspaceFileHandles\" tests/*.py)"
+      "Bash(grep -l \"workspace_file_handles\\\\|file_list_entries\\\\|_file_list_with_handles\\\\|_register_result_files\\\\|resolve_safe_path\\\\|WorkspaceFileHandles\" tests/*.py)",
+      "Bash(./git-push.sh \"fix: file_handles空dict误判——handles is not None替代truthy检查\")"
     ],
     "additionalDirectories": [
       "/tmp"
