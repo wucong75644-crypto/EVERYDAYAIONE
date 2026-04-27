@@ -82,6 +82,10 @@ class ChatGenerateMixin:
                 max_wall_time=_bs.budget_max_wall_time,
             )
 
+            # 对话级文件句柄（F1, F2...）— 工具无状态，此为唯一跨轮持久数据
+            from services.agent.workspace_file_handles import WorkspaceFileHandles
+            _file_handles = WorkspaceFileHandles()
+
             while not _budget.stop_reason:
                 _budget.use_turn()
                 turn = _budget.turns_used - 1
@@ -136,7 +140,7 @@ class ChatGenerateMixin:
                 tool_results = await self._execute_tool_calls(
                     completed_calls, "wecom_task", conversation_id,
                     "wecom_msg", user_id, turn + 1, messages=messages,
-                    budget=_budget,
+                    budget=_budget, file_handles=_file_handles,
                 )
                 from services.agent.agent_result import AgentResult
                 for tc, result, is_error in tool_results:
