@@ -6,7 +6,7 @@
 """
 
 import hashlib
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from services.sandbox.executor import SandboxExecutor
 
@@ -17,6 +17,7 @@ def build_sandbox_executor(
     user_id: str = "",
     org_id: Optional[str] = None,
     conversation_id: str = "",
+    files_dict: Optional[Dict[str, str]] = None,
 ) -> SandboxExecutor:
     """构建沙盒执行器（纯计算引擎）
 
@@ -111,6 +112,7 @@ def build_sandbox_executor(
         staging_dir=_staging_dir,
         workspace_dir=_workspace_dir,
         upload_fn=_auto_upload,
+        files_dict=files_dict or {},
     )
 
     # read_file: 仅允许读取 staging 目录（对标 OpenAI Code Interpreter）

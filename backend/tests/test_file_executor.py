@@ -94,10 +94,10 @@ class TestResolveSafePath:
         with pytest.raises(PermissionError, match="路径越界"):
             executor.resolve_safe_path("../../etc/passwd")
 
-    def test_absolute_path_stripped(self, executor):
-        """前导 / 被去掉，不会穿越"""
-        p = executor.resolve_safe_path("/subdir/file.txt")
-        assert executor.workspace_root in str(p)
+    def test_absolute_path_outside_workspace_rejected(self, executor):
+        """绝对路径不在 workspace 内时拒绝"""
+        with pytest.raises(PermissionError, match="路径越界"):
+            executor.resolve_safe_path("/subdir/file.txt")
 
     def test_blocked_name_env(self, executor):
         with pytest.raises(PermissionError, match="安全限制"):
@@ -766,3 +766,181 @@ class TestFileMove:
         Path(workspace, "dest").mkdir()
         result = await executor.file_move("ghost.txt", "dest")
         assert "不存在" in result
+
+
+# ============================================================
+# Workspace 文件句柄（F1, F2...）
+# ============================================================
+
+
+class TestWorkspaceFileHandles:
+    """测试 WorkspaceFileHandles 句柄注册/解析（纯单元测试）"""
+
+    def test_handle_register_and_resolve(self):
+        """注册文件返回句柄，句柄可解析回绝对路径"""
+        from services.agent.workspace_file_handles import WorkspaceFileHandles
+        handles = WorkspaceFileHandles()
+        h = handles.register("/mnt/workspace/report.xlsx", "report.xlsx")
+        assert h == "F1"
+        assert handles.resolve("F1") == "/mnt/workspace/report.xlsx"
+        assert handles.resolve("f1") == "/mnt/workspace/report.xlsx"  # 大小写不敏感
+
+    def test_handle_dedup(self):
+        """相同路径注册返回相同句柄"""
+        from services.agent.workspace_file_handles import WorkspaceFileHandles
+        handles = WorkspaceFileHandles()
+        h1 = handles.register("/mnt/workspace/a.xlsx")
+        h2 = handles.register("/mnt/workspace/a.xlsx")
+        assert h1 == h2 == "F1"
+        assert handles.count == 1
+
+    def test_handle_resolve_returns_none_for_unknown(self):
+        """未注册的句柄返回 None"""
+        from services.agent.workspace_file_handles import WorkspaceFileHandles
+        handles = WorkspaceFileHandles()
+        assert handles.resolve("F99") is None
+        assert handles.resolve("not_a_handle") is None
+
+    def test_to_sandbox_dict(self):
+        """to_sandbox_dict 返回句柄→路径字典"""
+        from services.agent.workspace_file_handles import WorkspaceFileHandles
+        handles = WorkspaceFileHandles()
+        handles.register("/mnt/ws/a.xlsx", "a.xlsx")
+        handles.register("/mnt/ws/b.csv", "b.csv")
+        d = handles.to_sandbox_dict()
+        assert d == {"F1": "/mnt/ws/a.xlsx", "F2": "/mnt/ws/b.csv"}
+
+    def test_is_handle(self):
+        """is_handle 正确识别句柄格式"""
+        from services.agent.workspace_file_handles import WorkspaceFileHandles
+        assert WorkspaceFileHandles.is_handle("F1")
+        assert WorkspaceFileHandles.is_handle("f99")
+        assert WorkspaceFileHandles.is_handle(" F1 ")
+        assert not WorkspaceFileHandles.is_handle("report.xlsx")
+        assert not WorkspaceFileHandles.is_handle("/mnt/data/file.csv")
+        assert not WorkspaceFileHandles.is_handle("")
+
+    def test_unified_workspace_and_staging(self):
+        """workspace 文件和 staging 文件在同一个字典里"""
+        from services.agent.workspace_file_handles import WorkspaceFileHandles
+        handles = WorkspaceFileHandles()
+        handles.register("/workspace/利润表.xlsx", "利润表.xlsx")
+        handles.register("/staging/trade.parquet", "trade.parquet")
+        handles.register("/staging/stock.parquet", "stock.parquet")
+        assert handles.count == 3
+        d = handles.to_sandbox_dict()
+        assert d["F1"].endswith("利润表.xlsx")
+        assert d["F2"].endswith("trade.parquet")
+        assert d["F3"].endswith("stock.parquet")
+
+
+class TestResolveSafePathAbsolute:
+    """测试 resolve_safe_path 绝对路径支持"""
+
+    def test_absolute_path_inside_workspace(self, workspace):
+        """workspace 内的绝对路径正常解析"""
+        target = Path(workspace) / "info.txt"
+        target.write_text("hello")
+        ex = FileExecutor(workspace_root=workspace)
+        resolved = ex.resolve_safe_path(str(target))
+        assert resolved == target.resolve()
+
+    def test_absolute_path_outside_workspace_rejected(self, workspace):
+        """workspace 外的绝对路径被拒绝"""
+        ex = FileExecutor(workspace_root=workspace)
+        with pytest.raises(PermissionError, match="路径越界"):
+            ex.resolve_safe_path("/etc/passwd")
+
+    def test_relative_path_still_works(self, workspace):
+        """相对路径依然正常工作"""
+        target = Path(workspace) / "notes.txt"
+        target.write_text("world")
+        ex = FileExecutor(workspace_root=workspace)
+        resolved = ex.resolve_safe_path("notes.txt")
+        assert resolved == target.resolve()
+
+
+# ============================================================
+# file_list_entries（结构化返回）
+# ============================================================
+
+
+class TestFileListEntries:
+    """测试 file_list_entries 返回结构化数据"""
+
+    @pytest.mark.asyncio
+    async def test_normal_directory(self, executor, workspace):
+        """正常目录返回 dirs + files"""
+        Path(workspace, "sub").mkdir()
+        Path(workspace, "a.txt").write_text("hello")
+        Path(workspace, "b.csv").write_text("x,y")
+
+        data = await executor.file_list_entries()
+
+        assert data["error"] is None
+        assert data["path"] == "."
+        assert len(data["dirs"]) == 1
+        assert data["dirs"][0]["name"] == "sub"
+        assert len(data["files"]) == 2
+        # 文件带 abs_path
+        assert all("abs_path" in f for f in data["files"])
+        assert not data["truncated"]
+
+    @pytest.mark.asyncio
+    async def test_empty_directory(self, executor, workspace):
+        """空目录返回空列表"""
+        data = await executor.file_list_entries()
+        assert data["error"] is None
+        assert data["dirs"] == []
+        assert data["files"] == []
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_directory(self, executor):
+        """不存在的目录返回 error"""
+        data = await executor.file_list_entries("no_such_dir")
+        assert data["error"] is not None
+        assert "不存在" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_file_as_path(self, executor, workspace):
+        """传入文件路径返回 error"""
+        Path(workspace, "file.txt").write_text("x")
+        data = await executor.file_list_entries("file.txt")
+        assert data["error"] is not None
+        assert "不是目录" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_entries_contain_metadata(self, executor, workspace):
+        """每个文件条目包含 name/size/modified/abs_path"""
+        Path(workspace, "data.json").write_text('{"k":1}')
+        data = await executor.file_list_entries()
+        f = data["files"][0]
+        assert f["name"] == "data.json"
+        assert f["size"] > 0
+        assert f["modified"]  # 非空字符串
+        assert f["abs_path"].endswith("data.json")
+
+
+# ============================================================
+# WorkspaceFileHandles.get_filename
+# ============================================================
+
+
+class TestGetFilename:
+
+    def test_returns_filename(self):
+        from services.agent.workspace_file_handles import WorkspaceFileHandles
+        h = WorkspaceFileHandles()
+        h.register("/mnt/ws/report.xlsx", "report.xlsx")
+        assert h.get_filename("F1") == "report.xlsx"
+
+    def test_auto_extracts_from_path(self):
+        from services.agent.workspace_file_handles import WorkspaceFileHandles
+        h = WorkspaceFileHandles()
+        h.register("/mnt/ws/sub/data.csv")  # 不传 filename
+        assert h.get_filename("F1") == "data.csv"
+
+    def test_returns_none_for_unknown(self):
+        from services.agent.workspace_file_handles import WorkspaceFileHandles
+        h = WorkspaceFileHandles()
+        assert h.get_filename("F99") is None

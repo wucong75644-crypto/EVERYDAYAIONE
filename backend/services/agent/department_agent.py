@@ -413,6 +413,13 @@ class DepartmentAgent(ABC):
             limit=kwargs.get("limit", 20),
             time_type=kwargs.get("time_type"),
             include_invalid=kwargs.get("include_invalid", False),
+            # ── v2.2 新增：分析类参数 ──
+            query_type=kwargs.get("query_type", "auto"),
+            time_granularity=kwargs.get("time_granularity"),
+            compare_range=kwargs.get("compare_range"),
+            metrics=kwargs.get("metrics"),
+            alert_type=kwargs.get("alert_type"),
+            # ── 保留 ──
             request_ctx=self.request_ctx,
             user_id=self._user_id,
             conversation_id=self._conversation_id,
@@ -449,6 +456,14 @@ class DepartmentAgent(ABC):
         for key in (
             "group_by", "include_invalid", "extra_fields",
             "sort_by", "sort_dir", "limit",
+        ):
+            val = params.get(key)
+            if val is not None:
+                kw[key] = val
+        # ── v2.2 新增：分析类参数透传 ──
+        for key in (
+            "query_type", "time_granularity", "compare_range",
+            "metrics", "alert_type",
         ):
             val = params.get(key)
             if val is not None:
@@ -600,7 +615,12 @@ class DepartmentAgent(ABC):
             if _filter_warnings:
                 merged["_truncation_warning"] = "\n".join(_filter_warnings)
 
-        validation = self.validate_params(action, merged)
+        # v2.2：分析类查询跳过传统参数校验（由引擎内部路由处理）
+        _ANALYTICS_TYPES = frozenset({"trend", "compare", "ratio", "cross", "alert", "distribution"})
+        if merged.get("query_type") in _ANALYTICS_TYPES or merged.get("alert_type"):
+            validation = ValidationResult.ok()
+        else:
+            validation = self.validate_params(action, merged)
         if not validation.is_ok:
             return ToolOutput(
                 summary=validation.message,

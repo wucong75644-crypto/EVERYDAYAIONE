@@ -232,3 +232,147 @@ async def _verify_express_no(
     if len(matched) > 1:
         logger.warning(f"L2 express_no 多匹配，不补全: {matched}")
     return None
+
+
+# ── L2 query_type / time_granularity / compare_range / metrics / alert_type 兜底 ──
+
+
+_ALERT_KEYWORDS: dict[str, list[str]] = {
+    "low_stock": ["缺货", "断货", "库存不足", "快没了", "补货"],
+    "slow_moving": ["滞销", "卖不动", "零销量", "不动销"],
+    "overstock": ["积压", "库存过多", "超库存"],
+    "out_of_stock": ["售罄", "卖完了", "没库存"],
+    "purchase_overdue": ["采购超期", "采购未到", "逾期未到货", "催货"],
+}
+
+_METRIC_KEYWORDS: dict[str, list[str]] = {
+    "return_rate": ["退货率", "退货比例"],
+    "refund_rate": ["退款率", "退款比例"],
+    "aftersale_rate": ["售后率", "售后比例"],
+    "avg_order_value": ["客单价", "均价", "平均订单金额"],
+    "repurchase_rate": ["复购率", "回头客", "复购"],
+    "gross_margin": ["毛利率", "毛利", "利润率"],
+    "purchase_fulfillment": ["采购达成率", "到货率"],
+    "supplier_evaluation": ["供应商评估", "供应商考核", "供应商退货率"],
+    "inventory_turnover": ["库存周转", "周转天数", "周转率"],
+    "sell_through_rate": ["动销率", "动销"],
+    "inventory_flow": ["进销存", "进出存", "进货出货库存"],
+    "avg_ship_time": ["发货时效", "发货时长", "平均发货", "发货速度"],
+    "same_day_rate": ["当日发货率", "当天发货"],
+}
+
+
+def _fill_alert_type(params: dict, query: str) -> None:
+    """从文本关键词推断 alert_type。"""
+    for at, keywords in _ALERT_KEYWORDS.items():
+        if any(kw in query for kw in keywords):
+            params["alert_type"] = at
+            return
+
+
+def _fill_metric(params: dict, query: str) -> None:
+    """从文本关键词推断 metrics。"""
+    for metric, keywords in _METRIC_KEYWORDS.items():
+        if any(kw in query for kw in keywords):
+            params["metrics"] = [metric]
+            return
+
+
+def _fill_time_granularity(params: dict, query: str) -> None:
+    """从文本关键词推断 time_granularity。"""
+    for kw in ("每天", "日", "逐日", "按天"):
+        if kw in query:
+            params["time_granularity"] = "day"
+            return
+    for kw in ("每周", "周", "逐周", "按周"):
+        if kw in query:
+            params["time_granularity"] = "week"
+            return
+    for kw in ("每月", "月", "逐月", "按月", "月度"):
+        if kw in query:
+            params["time_granularity"] = "month"
+            return
+
+
+def _fill_compare_range(params: dict, query: str) -> None:
+    """从文本关键词推断 compare_range。"""
+    for kw in ("环比", "上个月", "上月", "月环比", "比上个月"):
+        if kw in query:
+            params["compare_range"] = "mom"
+            return
+    for kw in ("同比", "去年", "同期", "去年同月", "年同比"):
+        if kw in query:
+            params["compare_range"] = "yoy"
+            return
+    for kw in ("周环比", "上周", "比上周"):
+        if kw in query:
+            params["compare_range"] = "wow"
+            return
+
+
+def fill_query_type(params: dict, query: str) -> None:
+    """L2 兜底：从文本关键词推断 query_type（LLM 未提取时）。
+
+    优先级：alert > cross > trend > compare > ratio > distribution。
+    同时联动补全关联参数（alert_type / metrics / time_granularity / compare_range）。
+    """
+    if params.get("query_type") and params["query_type"] != "auto":
+        return  # LLM 已提取有效值，不覆盖
+
+    # alert 关键词
+    for keyword in ("预警", "断货", "缺货", "滞销", "快没了", "采购超期",
+                    "积压", "售罄", "卖完了", "催货"):
+        if keyword in query:
+            params["query_type"] = "alert"
+            if not params.get("alert_type"):
+                _fill_alert_type(params, query)
+            logger.info(f"L2 query_type 补全: alert (keyword={keyword!r})")
+            return
+
+    # cross 关键词
+    for keyword in ("退货率", "毛利率", "客单价", "复购率", "周转", "进销存",
+                    "发货时效", "动销率", "供应商评估", "达成率", "售后率",
+                    "退款率", "发货时长", "上架率"):
+        if keyword in query:
+            params["query_type"] = "cross"
+            if not params.get("metrics"):
+                _fill_metric(params, query)
+            logger.info(f"L2 query_type 补全: cross (keyword={keyword!r})")
+            return
+
+    # trend 关键词
+    for keyword in ("趋势", "每天", "每周", "每月", "走势", "变化", "曲线"):
+        if keyword in query:
+            params["query_type"] = "trend"
+            if not params.get("time_granularity"):
+                _fill_time_granularity(params, query)
+            logger.info(f"L2 query_type 补全: trend (keyword={keyword!r})")
+            return
+
+    # compare 关键词
+    for keyword in ("环比", "同比", "比上个月", "比去年", "增长率",
+                    "上个月", "去年同期"):
+        if keyword in query:
+            params["query_type"] = "compare"
+            if not params.get("compare_range"):
+                _fill_compare_range(params, query)
+            logger.info(
+                f"L2 query_type 补全: compare (keyword={keyword!r})",
+            )
+            return
+
+    # ratio 关键词
+    for keyword in ("占比", "比例", "ABC", "帕累托", "贡献度"):
+        if keyword in query:
+            params["query_type"] = "ratio"
+            logger.info(f"L2 query_type 补全: ratio (keyword={keyword!r})")
+            return
+
+    # distribution 关键词
+    for keyword in ("分布", "区间", "直方图"):
+        if keyword in query:
+            params["query_type"] = "distribution"
+            logger.info(
+                f"L2 query_type 补全: distribution (keyword={keyword!r})",
+            )
+            return

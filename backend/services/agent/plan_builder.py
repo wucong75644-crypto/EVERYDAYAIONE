@@ -108,8 +108,12 @@ _TIME_RANGE_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?\s*~\s*\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?$",
 )
 # _sanitize_params 中已做特殊校验/变换的参数，透传逻辑跳过这些 key
-_COMPLEX_KEYS = frozenset({"mode", "doc_type", "time_range", "group_by", "extra_fields",
-                            "fields"})  # fields: 向后兼容旧名，映射到 extra_fields
+_COMPLEX_KEYS = frozenset({
+    "mode", "doc_type", "time_range", "group_by", "extra_fields",
+    "fields",  # 向后兼容旧名，映射到 extra_fields
+    # v2.2 分析类参数（需显式白名单校验）
+    "query_type", "time_granularity", "compare_range", "metrics", "alert_type",
+})
 # list[dict] 类型的参数白名单（_sanitize_params 需特殊处理）
 _LIST_DICT_PARAMS = frozenset({"numeric_filters", "exclude_filters"})
 
@@ -161,6 +165,49 @@ def _sanitize_params(params: dict) -> dict:
         if validated:
             clean["extra_fields"] = validated
 
+    # ── v2.2 分析类参数白名单校验 ──
+    _VALID_QUERY_TYPES = frozenset({
+        "auto", "detail", "summary", "trend", "compare",
+        "ratio", "cross", "alert", "distribution",
+    })
+    qt = params.get("query_type")
+    if qt and qt in _VALID_QUERY_TYPES:
+        clean["query_type"] = qt
+
+    tg = params.get("time_granularity")
+    if tg and tg in ("day", "week", "month"):
+        clean["time_granularity"] = tg
+
+    cr = params.get("compare_range")
+    if cr and cr in ("mom", "yoy", "wow"):
+        clean["compare_range"] = cr
+
+    _VALID_METRICS = frozenset({
+        "count", "amount", "qty", "avg_amount", "cost",
+        "return_rate", "refund_rate", "aftersale_rate",
+        "gross_margin", "avg_order_value", "repurchase_rate",
+        "inventory_turnover", "sell_through_rate", "inventory_flow",
+        "avg_ship_time", "same_day_rate",
+        "purchase_fulfillment", "shelf_rate", "supplier_evaluation",
+        # 通用聚合指标
+        "order_count", "order_amount", "order_qty", "order_cost",
+        "aftersale_count", "aftersale_amount",
+        "purchase_count", "purchase_amount",
+    })
+    raw_metrics = params.get("metrics")
+    if raw_metrics:
+        if isinstance(raw_metrics, str):
+            raw_metrics = [raw_metrics]
+        if isinstance(raw_metrics, list):
+            validated_metrics = [m for m in raw_metrics if m in _VALID_METRICS]
+            if validated_metrics:
+                clean["metrics"] = validated_metrics
+
+    at = params.get("alert_type")
+    if at and at in ("low_stock", "slow_moving", "overstock",
+                     "out_of_stock", "purchase_overdue"):
+        clean["alert_type"] = at
+
     # ── 内部元数据透传（_ 前缀字段，计划模式用） ──
     for key, value in params.items():
         if key.startswith("_") and value is not None:
@@ -211,137 +258,8 @@ def _build_fallback_params(
     return params
 
 
-# ── 参数定义文本（单域/多域 prompt 共用）──
-
-_PARAM_DEFINITIONS = (
-    "参数定义：\n"
-    "【基础参数（必填）】\n"
-    "- doc_type: 单据类型（必填）\n"
-    "  单据表: order(订单) / purchase(采购) / purchase_return(采退) / aftersale(售后) / receipt(收货) / shelf(上架)\n"
-    "  快照表: stock(库存快照) / product(商品主数据) / sku(SKU明细) / platform_map(平台映射) / batch_stock(批次效期库存)\n"
-    "  统计/日志表: daily_stats(商品日统计) / order_log(订单操作日志) / aftersale_log(售后操作日志)\n"
-    "  关键词映射：库存/缺货/可售→stock；商品/品牌/停售→product；规格/SKU/变体→sku；"
-    "销量/日报/统计报表→daily_stats；平台映射/在售平台→platform_map；"
-    "批次/效期/过期/保质期→batch_stock；操作记录/审核记录→order_log/aftersale_log\n"
-    "- mode: summary（统计汇总/多少/占比/有几个）/ export（获取数据/明细/导出/列表/有哪些/查一下/看看）（必填）\n"
-    "  关键词映射：多少/几个/统计/汇总/占比/总计→summary；"
-    "明细/列表/导出/有哪些/查一下/看看/详情/哪些/最高N笔/Top N→export\n"
-    "- time_range: YYYY-MM-DD ~ YYYY-MM-DD 或 YYYY-MM-DD HH:MM ~ YYYY-MM-DD HH:MM\n"
-    "  单据表 + daily_stats + order_log + aftersale_log：必填\n"
-    "  快照表(stock/product/sku/platform_map/batch_stock)：不传（无时间维度，查全量）\n"
-    "  end 落在今天时，必须用当前时间 HH:MM 作为 end\n"
-    "- time_col: 时间列（单据表可选，快照表不传）\n"
-    "  关键词映射：付款/支付→pay_time；发货/物流→consign_time；"
-    "申请/退货申请→apply_date；到货/交期→delivery_date；默认→doc_created_at\n"
-    "\n"
-    "【通用过滤参数（可选，用户提到才提取）】\n"
-    "- platform: taobao/pdd/douyin/jd/kuaishou/xhs/1688\n"
-    "  关键词映射：淘宝/天猫→taobao；拼多多→pdd；抖音/抖店→douyin；京东→jd；快手→kuaishou；小红书→xhs\n"
-    "- product_code: 商品编码\n"
-    "- order_no: 订单号（平台订单号或ERP系统单号）\n"
-    "- shop_name: 店铺名称（模糊匹配）\n"
-    "- warehouse_name: 仓库名称（模糊匹配）\n"
-    "- item_name: 商品名称（模糊匹配）\n"
-    "- creator_name: 创建人姓名（模糊匹配）\n"
-    "- doc_code: 单据编号（精确匹配，如采购单号PO...、售后单号AS...）\n"
-    "- sku_code: SKU编码/变体编码（精确匹配）\n"
-    "\n"
-    "【订单域过滤参数（doc_type=order 时可用）】\n"
-    "- express_no: 快递单号（如SF/YT/ZTO/JD/EMS开头的单号）\n"
-    "- express_company: 快递公司名（如顺丰/圆通/中通/韵达）\n"
-    "- buyer_nick: 买家昵称（精确匹配）\n"
-    "- receiver_name: 收件人姓名（精确匹配）\n"
-    "- receiver_state: 收件省份（如广东/浙江/上海）\n"
-    "- receiver_city: 收件城市（如深圳/杭州）\n"
-    "- receiver_district: 收件区县（如朝阳区/余杭区）\n"
-    "- receiver_address: 收件详细地址关键词（模糊匹配）\n"
-    "- order_status: 订单状态。可选值: WAIT_BUYER_PAY(待付款)/WAIT_AUDIT(待审核)/"
-    "WAIT_SEND_GOODS(待发货)/SELLER_SEND_GOODS(已发货)/FINISHED(已完成)/CLOSED(已关闭)\n"
-    "- order_type: 订单类型。可选值: 补发/换货/预售/合并/拆分/加急\n"
-    "- is_cancel: 布尔值，查已取消订单时设为 true\n"
-    "- is_refund: 布尔值，查有退款的订单时设为 true\n"
-    "- is_exception: 布尔值，查异常订单时设为 true\n"
-    "- is_halt: 布尔值，查被拦截的订单时设为 true\n"
-    "- is_urgent: 布尔值，查加急订单时设为 true\n"
-    "- is_presell: 布尔值，查预售订单时设为 true\n"
-    "- sku_properties_name: SKU规格属性关键词（如颜色/尺码/款式，模糊匹配）\n"
-    "\n"
-    "【售后域过滤参数（doc_type=aftersale 时可用）】\n"
-    "- aftersale_type: 售后类型（如 仅退款/退货退款/换货）\n"
-    "- refund_status: 退款状态（如 退款中/退款成功/退款关闭）\n"
-    "- good_status: 货物状态（如 买家未发/买家已发/卖家已收/无需退货）\n"
-    "- online_status: 售后在线状态（如 待卖家同意/待买家退货/退款成功/退款关闭/换货成功）\n"
-    "- handler_status: 售后处理状态（如 待处理/处理成功/处理失败）\n"
-    "- text_reason: 退货原因关键词（模糊匹配）\n"
-    "- refund_express_no: 退货快递单号（精确匹配）\n"
-    "- refund_express_company: 退货快递公司（模糊匹配）\n"
-    "- refund_warehouse_name: 退货仓库（模糊匹配）\n"
-    "- platform_refund_id: 平台退款单号（精确匹配）\n"
-    "- reason: 退货原因编码（模糊匹配，用于按原因分类筛选）\n"
-    "\n"
-    "【采购域过滤参数（doc_type=purchase/purchase_return 时可用）】\n"
-    "- supplier_name: 供应商名称（模糊匹配）\n"
-    "- purchase_order_code: 采购单号（精确匹配）\n"
-    "- doc_status: 单据状态（如 待审核/已审核/待收货/已完成）\n"
-    "\n"
-    "【新表专用过滤参数】\n"
-    "- system_id: 订单系统ID（doc_type=order_log 时，精确匹配）\n"
-    "- work_order_id: 售后工单号（doc_type=aftersale_log 时，精确匹配）\n"
-    "- batch_no: 批次号（doc_type=batch_stock 时，精确匹配）\n"
-    "- num_iid: 平台商品ID（doc_type=platform_map 时，精确匹配）\n"
-    "\n"
-    "【刷单/特殊过滤】\n"
-    "- include_invalid: 布尔值，默认 false。仅当用户明确要求'包含全部'或'不排除刷单'时设为 true。\n"
-    "- is_scalping: 布尔值，默认 false。用户查'刷单''空包'时设为 true。\n"
-    "\n"
-    "【数值过滤（可选，用户提到数量/金额/重量等数值条件时提取）】\n"
-    "- numeric_filters: 数值条件数组，格式 [{\"field\":\"字段名\",\"op\":\"操作符\",\"value\":数值}]\n"
-    "  单据表 field: quantity(数量) / amount(金额) / price(单价) / cost(成本) / weight(重量) / "
-    "pay_amount(实付) / gross_profit(毛利) / refund_money(退款额) / post_fee(运费)\n"
-    "  库存表(stock) field: available_stock(可用库存) / total_stock(总库存) / "
-    "lock_stock(锁定库存) / sellable_num(可售数量) / purchase_num(采购在途) / stock_status(库存状态)\n"
-    "  日统计(daily_stats) field: order_count(订单数) / order_qty(订单数量) / order_amount(订单金额) / "
-    "aftersale_count(售后数) / purchase_count(采购单数)\n"
-    "  商品(product/sku) field: active_status(状态,1=在售/2=停售) / item_type(类型,0=普通/1=组合)\n"
-    "  op 可选: gt(大于) / gte(>=) / lt(<) / lte(<=) / between(区间)\n"
-    "  value: 数字；between 时为 [min, max]\n"
-    "  关键词映射：不足/低于/少于/小于/以下 → lt；超过/多于/大于/以上 → gt；之间/到 → between\n"
-    "\n"
-    "【否定/排除过滤（可选，用户说'不是/非/除了/排除'时提取）】\n"
-    "- exclude_filters: 排除条件数组，格式 [{\"field\":\"字段名\",\"value\":\"排除值\"}]\n"
-    "  单值: [{\"field\":\"platform\",\"value\":\"taobao\"}] → platform != taobao\n"
-    "  多值: [{\"field\":\"platform\",\"value\":[\"taobao\",\"pdd\"]}] → platform NOT IN (taobao, pdd)\n"
-    "\n"
-    "【空值检查（可选，用户说'没有/为空/缺少/未填'时提取）】\n"
-    "- null_fields: 要筛选为空的字段名列表，如 [\"express_no\"]\n"
-    "\n"
-    "【排序与分组（⚠ 用户提到排名/最高/最多/前N时必须提取）】\n"
-    "- sort_by: 排序字段\n"
-    "  关键词映射：金额最高/最贵→sort_by:amount；数量最多/卖得最多→sort_by:quantity；"
-    "销量最高/销量Top→sort_by:order_qty；库存最少/库存最低→sort_by:available_stock；"
-    "退货最多→sort_by:aftersale_count；采购金额最大→sort_by:purchase_amount\n"
-    "  ⚠ 含「最高/最大/最多/最贵/排名/Top/排行」→ 必须提取 sort_by + sort_dir + mode:export\n"
-    "- sort_dir: asc(升序) / desc(降序，默认)\n"
-    "  关键词映射：最高/最大/最多/最贵/Top→desc；最低/最少/最小/最便宜→asc\n"
-    "- limit: 返回条数（⚠ 含「前N笔/TopN/最高N个/N条」时必须提取 limit:N）\n"
-    "  关键词映射：前5笔→5；Top10→10；最高3个→3；不指定条数时默认20\n"
-    "- group_by: shop/platform/product/supplier/warehouse/status（可选，仅 summary 模式）\n"
-    "  关键词映射：按店铺/每个店铺→shop；按平台/各平台→platform；"
-    "按商品/每个商品→product；按供应商→supplier；按仓库/分仓→warehouse；按状态→status\n"
-    "- extra_fields: 在默认列基础上追加的额外列（可选，绝大多数查询不需要设置）\n"
-    "  默认已返回：单据编号/商品编码/商品名称/数量/金额/状态/时间等核心列\n"
-    "  仅当用户明确要求看以下额外信息时才设置：\n"
-    "  remark(备注)/buyer_message(买家留言)/express_no(快递单号)/"
-    "express_company(快递公司)/buyer_nick(买家昵称)/receiver_name(收件人)/"
-    "receiver_address(地址)/cost(成本)/gross_profit(毛利)/text_reason(退货原因)\n\n"
-    "【重要规则】\n"
-    "- 参数相关性原则：只提取用户查询中作为筛选条件的参数。"
-    "查询文本中出现的统计指标名称（如'刷单数''取消订单数''有效金额'）是期望的输出，不是过滤条件，不要提取为参数。"
-    "判断标准：去掉这个参数后查询意图是否改变？不改变就不提取。\n"
-    "- 用户给了一个单号但没说是什么类型时：纯数字16-19位→order_no；字母+数字（如SF/YT/ZTO/JD开头）→express_no\n"
-    "- 用户指定订单号或快递单号查询时，time_range 仍然必填（用最近3个月）\n"
-    "- 用户未指定具体状态值时不要猜测，留空让系统返回全部\n"
-)
+# ── 参数定义文本（单域/多域 prompt 共用，拆分到 plan_builder_prompts.py）──
+from services.agent.plan_builder_prompts import PARAM_DEFINITIONS as _PARAM_DEFINITIONS
 
 
 # ── LLM Prompt（单域扁平结构）──
@@ -547,7 +465,51 @@ def build_multi_extract_prompt(query: str, now_str: str = "") -> str:
         '"sort_by":"amount","sort_dir":"desc","limit":10}}]}\n\n'
         "示例11（单域：库存最少的商品Top20）：\n"
         '{"steps":[{"domain":"warehouse","params":{"doc_type":"stock",'
-        '"mode":"export","sort_by":"available_stock","sort_dir":"asc","limit":20}}]}'
+        '"mode":"export","sort_by":"available_stock","sort_dir":"asc","limit":20}}]}\n\n'
+        # ── v2.2 分析类示例 ──
+        "示例12（趋势分析：每天的销售额）：\n"
+        '{"steps":[{"domain":"warehouse","params":{"doc_type":"daily_stats",'
+        '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-27 00:00",'
+        '"query_type":"trend","time_granularity":"day",'
+        '"metrics":["order_amount"]}}]}\n\n'
+        "示例13（环比对比：这个月比上个月各平台销售额）：\n"
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-27 00:00",'
+        '"query_type":"compare","compare_range":"mom",'
+        '"group_by":"platform","metrics":["amount"]}}]}\n\n'
+        "示例14（跨域指标：各平台退货率）：\n"
+        '{"steps":[{"domain":"warehouse","params":{"doc_type":"daily_stats",'
+        '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-27 00:00",'
+        '"query_type":"cross","metrics":["return_rate"],'
+        '"group_by":"platform"}}]}\n\n'
+        "示例15（预警：哪些商品快卖断了）：\n"
+        '{"steps":[{"domain":"warehouse","params":'
+        '{"query_type":"alert","alert_type":"low_stock"}}]}\n\n'
+        "示例16（占比/ABC分类：商品ABC分类）：\n"
+        '{"steps":[{"domain":"warehouse","params":{"doc_type":"daily_stats",'
+        '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-27 00:00",'
+        '"query_type":"ratio","group_by":"product",'
+        '"metrics":["order_amount"]}}]}\n\n'
+        "示例17（分布分析：订单金额分布）：\n"
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-27 00:00",'
+        '"query_type":"distribution","metrics":["amount"]}}]}\n\n'
+        "示例18（跨域指标：库存周转天数最短的10个商品）：\n"
+        '{"steps":[{"domain":"warehouse","params":'
+        '{"query_type":"cross","metrics":["inventory_turnover"],'
+        '"sort_by":"turnover_days","sort_dir":"asc","limit":10}}]}\n\n'
+        "示例19（跨域指标：这个月的进销存情况）：\n"
+        '{"steps":[{"domain":"warehouse","params":{"doc_type":"daily_stats",'
+        '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-27 00:00",'
+        '"query_type":"cross","metrics":["inventory_flow"]}}]}\n\n'
+        "示例20（跨域指标：4月复购率）：\n"
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-27 00:00",'
+        '"query_type":"cross","metrics":["repurchase_rate"]}}]}\n\n'
+        "示例21（跨域指标：平均发货时长）：\n"
+        '{"steps":[{"domain":"trade","params":{"doc_type":"order",'
+        '"mode":"summary","time_range":"2026-04-01 ~ 2026-04-27 00:00",'
+        '"query_type":"cross","metrics":["avg_ship_time"]}}]}'
     )
 
 

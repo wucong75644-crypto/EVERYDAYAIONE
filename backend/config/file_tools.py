@@ -70,6 +70,7 @@ def build_file_tools() -> List[Dict[str, Any]]:
                 "description": (
                     "读取 workspace 内的文件内容。\n\n"
                     "使用说明:\n"
+                    "- path 支持文件句柄（F1, F2...）或相对路径\n"
                     "- 默认读取整个文件（最多 2000 行）。"
                     "大于 256KB 的文件会返回错误，请使用 offset 和 limit 分页读取\n"
                     "- 已知需要读取文件的某个部分时，只读取该部分。这对大文件很重要\n"
@@ -82,7 +83,7 @@ def build_file_tools() -> List[Dict[str, Any]]:
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "文件相对路径（相对于 workspace 根目录）",
+                            "description": "文件句柄（F1, F2...）或相对路径",
                         },
                         "offset": {
                             "type": "integer",
@@ -138,6 +139,7 @@ def build_file_tools() -> List[Dict[str, Any]]:
                 "name": "file_list",
                 "description": (
                     "列出 workspace 内目录的内容（文件和子目录）。\n"
+                    "每个文件分配句柄（F1, F2...），后续用句柄引用文件。\n"
                     "默认列出 workspace 根目录。"
                 ),
                 "parameters": {
@@ -200,7 +202,7 @@ def build_file_tools() -> List[Dict[str, Any]]:
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "文件或目录的相对路径",
+                            "description": "文件句柄（F1, F2...）或相对路径",
                         },
                     },
                     "required": ["path"],
@@ -213,14 +215,14 @@ def build_file_tools() -> List[Dict[str, Any]]:
 # 路由提示词片段
 FILE_ROUTING_PROMPT = (
     "## 文件操作规则\n"
-    "- 用户要求读取/查看文本文件 → file_read"
-    "（大于256KB的文件会提示分页读取）\n"
+    "- file_list 返回的文件都有句柄（F1, F2...），后续用句柄引用文件\n"
+    "- 用户要求读取/查看文本文件 → file_read('F1')\n"
     "- 处理 Excel/图片/Parquet 等二进制文件 → code_execute"
-    "（沙盒内用 WORKSPACE_DIR 定位文件）\n"
+    "（沙盒内用 FILES['F1'] 引用文件路径）\n"
     "- 复杂数据分析（统计/筛选/聚合/大文件处理）→ code_execute\n"
     "- 用户要求写入/创建/保存文件 → file_write\n"
     "- 用户要求查看目录/列出文件 → file_list\n"
     "- 用户要求搜索/查找文件 → file_search\n"
-    "- 用户要求查看文件信息/属性 → file_info\n"
+    "- 用户要求查看文件信息/属性 → file_info('F1')\n"
     "- 文件操作完毕后，调 route_to_chat 汇总结果回复用户\n\n"
 )
