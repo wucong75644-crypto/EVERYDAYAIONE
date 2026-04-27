@@ -1180,12 +1180,15 @@ class TestParamDefinitionsConsistency:
         new_prompt = build_multi_extract_prompt("测试", now_str="2026-04-24")
         # 两个 prompt 都包含参数定义中的关键片段
         for key_fragment in [
-            "doc_type: order/purchase",
+            "order(订单)",       # doc_type 列表（新格式）
+            "stock(库存快照)",   # 新表 doc_type
             "receiver_name",
             "sku_properties_name",
             "online_status",
             "handler_status",
             "include_invalid",
+            "sort_by",           # 排序参数
+            "limit",             # 条数限制
         ]:
             assert key_fragment in old_prompt, f"旧 prompt 缺少 {key_fragment}"
             assert key_fragment in new_prompt, f"新 prompt 缺少 {key_fragment}"
