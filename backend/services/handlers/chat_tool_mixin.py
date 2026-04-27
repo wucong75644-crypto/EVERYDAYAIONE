@@ -27,6 +27,39 @@ from services.websocket_manager import ws_manager
 class ChatToolMixin:
     """工具执行 Mixin：安全检查 + 并行/串行分批 + 错误回传"""
 
+    def _ensure_executor(
+        self,
+        user_id: str,
+        conversation_id: str,
+    ) -> "ToolExecutor":
+        """获取或创建会话级 ToolExecutor（file_handles 等状态跨轮保留）"""
+        from services.tool_executor import ToolExecutor
+
+        _request_ctx = getattr(self, "request_ctx", None)
+        if _request_ctx is None:
+            from utils.time_context import RequestContext
+            _request_ctx = RequestContext.build(
+                user_id=user_id, org_id=self.org_id,
+                request_id=conversation_id or "",
+            )
+
+        # 首次调用或参数变更时创建，否则复用
+        existing = getattr(self, "_tool_executor", None)
+        if (
+            existing is not None
+            and existing.user_id == user_id
+            and existing.conversation_id == conversation_id
+        ):
+            return existing
+
+        executor = ToolExecutor(
+            db=self.db, user_id=user_id,
+            conversation_id=conversation_id, org_id=self.org_id,
+            request_ctx=_request_ctx,
+        )
+        self._tool_executor = executor
+        return executor
+
     async def _execute_tool_calls(
         self,
         tool_calls: List[Dict[str, Any]],
@@ -48,33 +81,15 @@ class ChatToolMixin:
             List of (tool_call_dict, result_text, is_error)
         """
         from config.chat_tools import is_concurrency_safe
-        from services.tool_executor import ToolExecutor
 
-        # 时间事实层 — 透传 request_ctx (B12)
-        # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4
-        # 主聊天 handler 暂未在 HTTP 入口构造 request_ctx，由 mixin 临时构造一个；
-        # PR3 / 后续重构可改为从 HTTP 入口的 RequestCtx 依赖透传
-        _request_ctx = getattr(self, "request_ctx", None)
-        if _request_ctx is None:
-            from utils.time_context import RequestContext
-            _request_ctx = RequestContext.build(
-                user_id=user_id, org_id=self.org_id,
-                request_id=conversation_id or "",
-            )
-
-        executor = ToolExecutor(
-            db=self.db, user_id=user_id,
-            conversation_id=conversation_id, org_id=self.org_id,
-            request_ctx=_request_ctx,
-        )
-        # 传递上下文给 erp_agent
+        # 复用会话级 executor（file_handles 跨轮保留）
+        executor = self._ensure_executor(user_id, conversation_id)
+        # 每轮更新的上下文（不重建 executor）
         executor._task_id = task_id
         executor._message_id = message_id
         executor._parent_messages = messages
-        # 传递 budget 约束 sandbox 超时
         if budget is not None:
             executor._budget = budget
-        # 子 Agent 生成的文件通过此列表透传到 ChatHandler
         executor._pending_file_parts = []
         results: List[tuple] = []
 

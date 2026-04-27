@@ -595,7 +595,7 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         for f in data["files"]:
             handle = self.file_handles.register(f["abs_path"], f["name"])
             size_str = executor._format_size(f["size"])
-            lines.append(f"  {handle}  {f['name']}\t{size_str}\t{f['modified']}")
+            lines.append(f"  [{handle}] {f['name']}\t{size_str}\t{f['modified']}")
 
         if data["truncated"]:
             lines.append(f"\n已达显示上限，部分条目未显示")
@@ -603,8 +603,8 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         if data["files"]:
             lines.append("")
             lines.append(
-                "💡 用句柄引用文件：file_read(\"F1\") 或 "
-                "pd.read_excel(FILES[\"F1\"])"
+                "⚠ 句柄（F1, F2...）仅用于工具调用和沙盒代码，"
+                "回复用户时必须用文件名。"
             )
 
         return "\n".join(lines)
