@@ -1685,7 +1685,8 @@
       "Bash(./git-push.sh \"fix: PlanBuilder prompt补全新表字段名——LLM用quantity查stock表反复失败的根因\")",
       "Bash(./git-push.sh \"fix: 主Agent任务传递时间对齐——对比场景task带精确HH:MM+end对齐\")",
       "Bash(./git-push.sh \"fix: NUMERIC_FILTER_FIELDS补齐24个遗漏字段——8张新表63个数值字段全覆盖\")",
-      "Bash(./git-push.sh \"feat: PlanBuilder提示词全面补齐——doc_type/mode/sort_by/limit/group_by/time_col/platform/numeric_filters全参数关键词映射+6个新few-shot示例\")"
+      "Bash(./git-push.sh \"feat: PlanBuilder提示词全面补齐——doc_type/mode/sort_by/limit/group_by/time_col/platform/numeric_filters全参数关键词映射+6个新few-shot示例\")",
+      "Bash(./git-push.sh \"refactor: preflight门卫简化——删除EXPLAIN估算，只管导出量\\(limit>30000才拦\\)\")"
     ],
     "additionalDirectories": [
       "/tmp"

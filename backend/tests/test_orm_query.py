@@ -240,7 +240,7 @@ class TestExecuteNewTableRouting:
         with patch.object(engine, "_summary_orm", new=AsyncMock()) as mock_orm, \
              patch.object(engine, "_summary", new=AsyncMock(return_value=MagicMock(summary="ok"))), \
              patch("services.kuaimai.erp_unified_query.preflight_check") as mock_pf:
-            mock_pf.return_value = MagicMock(ok=True, reject_reason=None)
+            mock_pf.return_value = MagicMock(ok=True)
             await engine.execute(doc_type="order", mode="summary", filters=[])
             mock_orm.assert_not_called()
 

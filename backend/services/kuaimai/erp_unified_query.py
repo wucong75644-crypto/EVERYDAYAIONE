@@ -383,24 +383,14 @@ class UnifiedQueryEngine:
                 error_message="no valid export fields",
             )
 
-        # ── 预检门卫：DuckDB 启动前检查数据量 ──
-        # 底层数据 > 阈值 且 用户要的数据量也超阈值 → 拒绝
-        # limit 小（如 limit=5）→ 放行，DuckDB SQL 有 LIMIT 兜底
-        from services.kuaimai.erp_query_preflight import EXPORT_ROW_LIMIT
-        preflight = preflight_check(
-            db=self.db, doc_type=doc_type,
-            time_col=tr.time_col, start_iso=tr.start_iso, end_iso=tr.end_iso,
-            org_id=self.org_id, mode="export",
-        )
-        if not preflight.ok and limit > EXPORT_ROW_LIMIT:
+        # ── 预检门卫：只管导出量 ──
+        preflight = preflight_check(mode="export", limit=limit)
+        if not preflight.ok:
             return ToolOutput(
                 summary=preflight.reject_reason,
                 source="erp",
                 status=OutputStatus.REJECTED,
-                metadata={
-                    "estimated_rows": preflight.estimated_rows,
-                    "suggestions": list(preflight.suggestions),
-                },
+                metadata={"suggestions": list(preflight.suggestions)},
             )
 
         # staging 路径
