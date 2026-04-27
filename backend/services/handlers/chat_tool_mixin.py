@@ -27,39 +27,6 @@ from services.websocket_manager import ws_manager
 class ChatToolMixin:
     """工具执行 Mixin：安全检查 + 并行/串行分批 + 错误回传"""
 
-    def _ensure_executor(
-        self,
-        user_id: str,
-        conversation_id: str,
-    ) -> "ToolExecutor":
-        """获取或创建会话级 ToolExecutor（file_handles 等状态跨轮保留）"""
-        from services.tool_executor import ToolExecutor
-
-        _request_ctx = getattr(self, "request_ctx", None)
-        if _request_ctx is None:
-            from utils.time_context import RequestContext
-            _request_ctx = RequestContext.build(
-                user_id=user_id, org_id=self.org_id,
-                request_id=conversation_id or "",
-            )
-
-        # 首次调用或参数变更时创建，否则复用
-        existing = getattr(self, "_tool_executor", None)
-        if (
-            existing is not None
-            and existing.user_id == user_id
-            and existing.conversation_id == conversation_id
-        ):
-            return existing
-
-        executor = ToolExecutor(
-            db=self.db, user_id=user_id,
-            conversation_id=conversation_id, org_id=self.org_id,
-            request_ctx=_request_ctx,
-        )
-        self._tool_executor = executor
-        return executor
-
     async def _execute_tool_calls(
         self,
         tool_calls: List[Dict[str, Any]],
@@ -70,21 +37,38 @@ class ChatToolMixin:
         turn: int,
         messages: Optional[List[Dict[str, Any]]] = None,
         budget=None,
+        file_handles=None,
     ) -> List[tuple]:
         """执行工具调用：安全检查 → 并行/串行分批 → 返回结果
 
         Args:
             messages: 当前对话 messages（传给 erp_agent 做上下文筛选）
             budget: ExecutionBudget 实例（约束 sandbox 超时）
+            file_handles: 会话级文件句柄（外部创建，跨轮传入）
 
         Returns:
             List of (tool_call_dict, result_text, is_error)
         """
         from config.chat_tools import is_concurrency_safe
+        from services.tool_executor import ToolExecutor
 
-        # 复用会话级 executor（file_handles 跨轮保留）
-        executor = self._ensure_executor(user_id, conversation_id)
-        # 每轮更新的上下文（不重建 executor）
+        _request_ctx = getattr(self, "request_ctx", None)
+        if _request_ctx is None:
+            from utils.time_context import RequestContext
+            _request_ctx = RequestContext.build(
+                user_id=user_id, org_id=self.org_id,
+                request_id=conversation_id or "",
+            )
+
+        executor = ToolExecutor(
+            db=self.db, user_id=user_id,
+            conversation_id=conversation_id, org_id=self.org_id,
+            request_ctx=_request_ctx,
+        )
+        # 对话级状态从外部注入（ToolExecutor 本身无状态）
+        if file_handles is not None:
+            executor.file_handles = file_handles
+        # 每轮上下文
         executor._task_id = task_id
         executor._message_id = message_id
         executor._parent_messages = messages
