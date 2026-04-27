@@ -135,25 +135,45 @@ class FileExecutor:
     # 路径安全校验
     # ========================================
 
-    def resolve_safe_path(self, relative_path: str) -> Path:
+    def resolve_safe_path(self, path_input: str) -> Path:
         """解析并验证路径安全性（公有方法，供外部调用）
+
+        支持两种输入格式：
+        1. 绝对路径：已在 workspace 内的绝对路径 → 直接使用
+        2. 相对路径：相对于 workspace 根目录 → 拼接 _root
+
+        注：文件句柄（F1, F2...）由 ToolExecutor 在调度层统一翻译为绝对路径，
+        本方法不处理句柄。
 
         Raises:
             PermissionError: 路径越界、符号链接、或访问被禁止的文件
         """
-        cleaned = relative_path.lstrip("/").lstrip("\\")
-        target = (self._root / cleaned).resolve()
+        path_str = path_input.strip()
 
-        # 路径越界检查（用 relative_to 替代字符串比较，避免边界误判）
-        try:
-            target.relative_to(self._root)
-        except ValueError:
-            raise PermissionError("路径越界：不允许访问 workspace 外的文件")
+        # ① 绝对路径（已在 workspace 内）
+        if Path(path_str).is_absolute():
+            raw_path = Path(path_str)
+            target = raw_path.resolve()
+            try:
+                target.relative_to(self._root)
+            except ValueError:
+                raise PermissionError("路径越界：不允许访问 workspace 外的文件")
+        # ② 相对路径（原逻辑）
+        else:
+            cleaned = path_str.lstrip("/").lstrip("\\")
+            raw_path = self._root / cleaned
+            target = raw_path.resolve()
+            try:
+                target.relative_to(self._root)
+            except ValueError:
+                raise PermissionError("路径越界：不允许访问 workspace 外的文件")
 
-        # 符号链接检查（防止 symlink 攻击）
-        raw_target = self._root / cleaned
-        if raw_target.is_symlink():
+        # 符号链接检查（用未 resolve 的原始路径，防止 symlink 攻击）
+        if raw_path.is_symlink():
             raise PermissionError("安全限制：不允许访问符号链接")
+
+        # 公共安全检查
+        rel_parts = target.relative_to(self._root)
 
         if target.name in _BLOCKED_NAMES:
             raise PermissionError(f"安全限制：不允许访问 {target.name}")
@@ -161,7 +181,7 @@ class FileExecutor:
         if target.suffix.lower() in _BLOCKED_EXTENSIONS:
             raise PermissionError(f"安全限制：不允许访问 {target.suffix} 类型文件")
 
-        for part in target.relative_to(self._root).parts:
+        for part in rel_parts.parts:
             if part in _BLOCKED_NAMES:
                 raise PermissionError(f"安全限制：不允许访问包含 {part} 的路径")
 
@@ -345,21 +365,29 @@ class FileExecutor:
         logger.info(f"FileExecutor write | path={path} | mode={mode} | size={size}")
         return f"已{action}: {path}（{self._format_size(size)}）"
 
-    async def file_list(
+    async def file_list_entries(
         self,
         path: str = ".",
         show_hidden: bool = False,
-    ) -> str:
-        """列出目录内容"""
+    ) -> Dict[str, Any]:
+        """列出目录内容（结构化数据）
+
+        Returns:
+            {"path": str, "dirs": [...], "files": [...], "error": str|None,
+             "truncated": bool}
+        """
         target = self.resolve_safe_path(path)
 
         if not target.exists():
-            return f"目录不存在: {path}"
+            return {"path": path, "dirs": [], "files": [], "error": f"目录不存在: {path}", "truncated": False}
         if not target.is_dir():
-            return f"不是目录: {path}"
+            return {"path": path, "dirs": [], "files": [], "error": f"不是目录: {path}", "truncated": False}
 
-        entries: List[Dict[str, Any]] = []
+        dirs: List[Dict[str, Any]] = []
+        files: List[Dict[str, Any]] = []
+        truncated = False
         try:
+            count = 0
             for item in sorted(target.iterdir()):
                 if not show_hidden and item.name.startswith("."):
                     continue
@@ -367,38 +395,53 @@ class FileExecutor:
                     continue
                 try:
                     st = item.stat()
-                    entries.append({
+                    entry = {
                         "name": item.name,
-                        "is_dir": item.is_dir(),
                         "size": st.st_size,
                         "modified": datetime.fromtimestamp(
                             st.st_mtime, tz=timezone.utc,
                         ).strftime("%Y-%m-%d %H:%M"),
                         "abs_path": str(item),
-                    })
+                    }
+                    if item.is_dir():
+                        dirs.append(entry)
+                    else:
+                        files.append(entry)
                 except (PermissionError, OSError):
                     continue
-                if len(entries) >= _MAX_LIST_ENTRIES:
+                count += 1
+                if count >= _MAX_LIST_ENTRIES:
+                    truncated = True
                     break
         except PermissionError:
-            return f"无权限访问目录: {path}"
+            return {"path": path, "dirs": [], "files": [], "error": f"无权限访问目录: {path}", "truncated": False}
 
-        if not entries:
+        return {"path": path, "dirs": dirs, "files": files, "error": None, "truncated": truncated}
+
+    async def file_list(
+        self,
+        path: str = ".",
+        show_hidden: bool = False,
+    ) -> str:
+        """列出目录内容（格式化文本，供 API route 和无句柄场景使用）"""
+        data = await self.file_list_entries(path, show_hidden)
+
+        if data["error"]:
+            return data["error"]
+        if not data["dirs"] and not data["files"]:
             return f"目录为空: {path}"
 
-        dirs = [e for e in entries if e["is_dir"]]
-        files = [e for e in entries if not e["is_dir"]]
-
-        lines = [f"目录: {path} | 共 {len(entries)} 项"]
+        total = len(data["dirs"]) + len(data["files"])
+        lines = [f"目录: {path} | 共 {total} 项"]
         lines.append("─" * 60)
-        for d in dirs:
+        for d in data["dirs"]:
             lines.append(f"  [目录] {d['name']}/\t\t{d['modified']}")
-        for f in files:
+        for f in data["files"]:
             size_str = self._format_size(f["size"])
             lines.append(f"  [文件] {f['name']}\t{size_str}\t{f['modified']}")
             lines.append(f"         abs: {f['abs_path']}")
 
-        if len(entries) >= _MAX_LIST_ENTRIES:
+        if data["truncated"]:
             lines.append(f"\n已达显示上限（{_MAX_LIST_ENTRIES}项），部分条目未显示")
 
         return "\n".join(lines)

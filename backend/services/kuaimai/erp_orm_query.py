@@ -1,8 +1,13 @@
 """
-新表 ORM 查询（summary + export）。
+ORM 查询模块（新表 summary/export + 旧表 detail）。
 
 从 erp_unified_query.py 拆出，保持主引擎文件可控。
-设计文档: docs/document/TECH_ERP多表统一查询.md §4.2
+- 新表 summary_orm / export_orm：原有功能
+- 旧表 detail_orm：PG ORM 直查 ≤200 行（Phase 1 新增）
+
+设计文档:
+  - docs/document/TECH_ERP多表统一查询.md §4.2
+  - docs/document/TECH_ERP查询架构重构.md §5.1
 """
 from __future__ import annotations
 
@@ -244,3 +249,166 @@ async def export_orm(
             "stats": _export_stats,
         },
     )
+
+
+# ── 旧表明细查询（Phase 1 新增）──────────────────────
+
+_DETAIL_MAX = 200
+
+
+async def detail_orm(
+    db: Any, org_id: str | None,
+    doc_type: str,
+    filters: list[ValidatedFilter],
+    tr: TimeRange | None,
+    sort_by: str | None = None, sort_dir: str = "desc",
+    limit: int = 20,
+    extra_fields: list[str] | None = None,
+    user_id: str | None = None,
+    conversation_id: str | None = None,
+    request_ctx: Optional[RequestContext] = None,
+) -> ToolOutput:
+    """旧表 PG ORM 直查——≤200 行明细 + PII 脱敏 + 字段翻译 + 归档表。
+
+    替代 DuckDB 扫描全表的慢路径：用户只要 5 行时不必走 DuckDB。
+    设计文档: docs/document/TECH_ERP查询架构重构.md §5.1
+    """
+    from services.kuaimai.erp_unified_filters import apply_orm_filters, need_archive
+    from services.kuaimai.erp_unified_schema import (
+        mask_pii, merge_export_fields, build_column_metas_cn,
+    )
+    from services.kuaimai.erp_field_translator import translate_rows
+
+    type_name = DOC_TYPE_CN.get(doc_type, doc_type)
+    safe_limit = min(limit, _DETAIL_MAX)
+
+    # 构建 SELECT 字段列表
+    fields = merge_export_fields(doc_type, extra_fields)
+    if not fields:
+        return ToolOutput(
+            summary="无有效字段", source="erp",
+            status=OutputStatus.ERROR, error_message="no valid fields",
+        )
+    select_str = ", ".join(fields)
+    col_wl = get_column_whitelist(doc_type)
+
+    # 构建 ORM 查询
+    def _build_query(table: str) -> Any:
+        q = db.table(table).select(select_str, count="exact")
+        if org_id:
+            q = q.eq("org_id", org_id)
+        else:
+            q = q.is_("org_id", "null")
+        q = q.eq("doc_type", doc_type)
+        if tr:
+            q = q.gte(tr.time_col, tr.start_iso).lt(tr.time_col, tr.end_iso)
+        non_time = [f for f in filters if f.field not in TIME_COLUMNS]
+        q = apply_orm_filters(q, non_time)
+        if sort_by and sort_by in col_wl:
+            q = q.order(sort_by, desc=(sort_dir == "desc"))
+        q = q.limit(safe_limit)
+        return q
+
+    try:
+        resp_main = _build_query("erp_document_items").execute()
+        rows = resp_main.data or []
+        total_count = getattr(resp_main, "count", None) or len(rows)
+
+        # 归档表：时间范围早于 90 天前时也查
+        if tr and need_archive(tr) and len(rows) < safe_limit:
+            remaining = safe_limit - len(rows)
+            q_archive = _build_query("erp_document_items_archive").limit(remaining)
+            resp_archive = q_archive.execute()
+            archive_rows = resp_archive.data or []
+            rows.extend(archive_rows)
+            archive_count = getattr(resp_archive, "count", None) or len(archive_rows)
+            total_count += archive_count
+    except Exception as e:
+        logger.error(f"detail_orm failed | doc_type={doc_type} error={e}", exc_info=True)
+        return ToolOutput(
+            summary=f"明细查询失败: {e}", source="erp",
+            status=OutputStatus.ERROR, error_message=str(e),
+        )
+
+    if not rows:
+        return ToolOutput(
+            summary=f"{type_name}查询：无匹配记录",
+            source="erp", status=OutputStatus.EMPTY,
+            metadata={"doc_type": doc_type, "query_type": "detail"},
+        )
+
+    # PII 脱敏
+    for row in rows:
+        mask_pii(row)
+
+    # 字段翻译（platform 编码→中文、状态码→中文、布尔→是/否）
+    translate_rows(rows)
+
+    # 写 staging parquet（有行就写，供前端下载）
+    file_ref = _write_detail_staging(
+        rows, fields, doc_type, org_id, user_id, conversation_id,
+    )
+
+    # 构建摘要
+    time_label = tr.label if tr else ""
+    time_header = ""
+    if tr and request_ctx:
+        time_header = format_time_header(
+            ctx=request_ctx, range_=tr.date_range, kind="查询区间",
+        )
+    body = f"{type_name}明细查询：共 {total_count} 条，返回 {len(rows)} 条"
+    summary = f"{time_header}\n\n{body}".strip() if time_header else body
+
+    columns = build_column_metas_cn(fields)
+
+    return ToolOutput(
+        summary=summary,
+        format=OutputFormat.TABLE,
+        source="erp",
+        data=rows,
+        columns=columns,
+        file_ref=file_ref,
+        metadata={
+            "doc_type": doc_type,
+            "query_type": "detail",
+            "time_range": time_label,
+            "total_count": total_count,
+            "returned_count": len(rows),
+        },
+    )
+
+
+def _write_detail_staging(
+    rows: list[dict], fields: list[str],
+    doc_type: str, org_id: str | None,
+    user_id: str | None, conversation_id: str | None,
+) -> FileRef | None:
+    """将明细数据写入 staging parquet，返回 FileRef。"""
+    if not rows:
+        return None
+    try:
+        import pandas as pd
+        from services.kuaimai.erp_duckdb_helpers import resolve_export_path
+
+        staging_dir, rel_path, staging_path, filename = resolve_export_path(
+            doc_type, user_id, org_id, conversation_id,
+        )
+        # 列名翻译：英文 → 中文（与 DuckDB 导出一致）
+        cn_map = {f: _FIELD_LABEL_CN.get(f, f) for f in fields}
+        df = pd.DataFrame(rows)
+        df = df.rename(columns=cn_map)
+        df.to_parquet(staging_path, index=False)
+
+        size_bytes = staging_path.stat().st_size
+        return FileRef(
+            path=str(staging_path), filename=filename,
+            format="parquet", row_count=len(rows),
+            size_bytes=size_bytes,
+            columns=[],  # columns 由上层填充
+            created_at=_time.time(), id=_uuid.uuid4().hex,
+            mime_type=_FORMAT_MIME.get("parquet", ""),
+            created_by="erp_detail_orm",
+        )
+    except Exception as e:
+        logger.warning(f"detail staging write failed: {e}")
+        return None

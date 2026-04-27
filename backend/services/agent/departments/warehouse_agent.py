@@ -72,6 +72,10 @@ class WarehouseAgent(DepartmentAgent):
 
     def validate_params(self, action: str, params: dict) -> ValidationResult:
         """仓储域参数校验。"""
+        # v2.2：分析类查询走引擎内部路由，不需要传统参数校验
+        if params.get("query_type") in self._ANALYTICS_QUERY_TYPES:
+            return ValidationResult.ok()
+
         if action == "stock_query":
             if not params.get("product_code") and not params.get("keyword"):
                 return ValidationResult.missing(
@@ -169,7 +173,26 @@ class WarehouseAgent(DepartmentAgent):
             return "shelf_query"
         return "stock_query"
 
+    # v2.2 分析类查询类型——直接走引擎路由，不需要 action 映射
+    _ANALYTICS_QUERY_TYPES = frozenset({
+        "trend", "compare", "ratio", "cross", "alert", "distribution",
+    })
+
     async def _dispatch(self, action: str, params: dict, context: Any) -> ToolOutput:
+        # ── v2.2：分析类查询直接走 _query_local_data（引擎内部路由） ──
+        # 显式 query_type 或隐式分析参数（alert_type/time_granularity/compare_range）
+        query_type = params.get("query_type")
+        has_analytics_hint = (
+            params.get("alert_type")
+            or params.get("time_granularity")
+            or params.get("compare_range")
+        )
+        if query_type in self._ANALYTICS_QUERY_TYPES or has_analytics_hint:
+            doc_type = params.get("doc_type") or "daily_stats"
+            return await self._query_local_data(
+                doc_type=doc_type, **self._query_kwargs(params),
+            )
+
         # 专用方法：stock_query（按编码查库存）和 warehouse_list
         if action == "stock_query":
             return await self.query_stock(

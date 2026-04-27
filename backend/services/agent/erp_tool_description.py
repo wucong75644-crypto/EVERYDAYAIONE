@@ -99,6 +99,17 @@ def get_capability_manifest() -> dict:
              "effect": "doc_type=platform_map + product_code过滤"},
             {"query": "某订单的操作记录",
              "effect": "doc_type=order_log + system_id过滤"},
+            # v2.2 分析类示例
+            {"query": "每天的销售额趋势",
+             "effect": "query_type=trend + time_granularity=day"},
+            {"query": "这个月比上个月各平台销售额怎么样",
+             "effect": "query_type=compare + compare_range=mom"},
+            {"query": "各平台退货率",
+             "effect": "query_type=cross + metrics=[return_rate]"},
+            {"query": "哪些SKU快卖断了",
+             "effect": "query_type=alert + alert_type=low_stock"},
+            {"query": "订单金额分布",
+             "effect": "query_type=distribution + metrics=[amount]"},
         ],
         "parallel_hint": (
             "支持并行多次调用：用户请求包含多个独立子任务时，"
@@ -108,6 +119,35 @@ def get_capability_manifest() -> dict:
             ">200行自动导出 staging 文件",
             "返回格式自动适配（文本/表格/文件链接）",
             "降级链：AI提取 → 关键词匹配 → abort",
+        ],
+        # ── v2.2 新增：分析查询能力 ──
+        "query_types": {
+            "summary": "统计聚合（COUNT/SUM/AVG + 分组）",
+            "trend": "趋势分析（按天/周/月的指标走势）",
+            "compare": "对比分析（环比/同比增长率）",
+            "ratio": "占比分析（百分比/帕累托/ABC分类）",
+            "cross": "跨域指标（退货率/毛利率/客单价/周转/进销存/发货时效/复购率/供应商评估）",
+            "alert": "预警查询（缺货/滞销/积压/断货/采购超期）",
+            "distribution": "分布直方图（金额/数量区间分布）",
+            "detail": "明细查询（返回具体行数据）",
+            "export": "大批量导出（Parquet文件，无行数上限）",
+        },
+        "cross_metrics": [
+            "return_rate（退货率）", "refund_rate（退款率）",
+            "aftersale_rate（售后率）", "avg_order_value（客单价）",
+            "gross_margin（毛利率）", "repurchase_rate（复购率）",
+            "inventory_turnover（库存周转天数）",
+            "sell_through_rate（动销率）",
+            "inventory_flow（进销存）",
+            "avg_ship_time（发货时效）", "same_day_rate（当日发货率）",
+            "purchase_fulfillment（采购达成率）",
+            "shelf_rate（上架率）",
+            "supplier_evaluation（供应商评估）",
+        ],
+        "alert_types": [
+            "low_stock（缺货预警）", "slow_moving（滞销预警）",
+            "overstock（积压预警）", "out_of_stock（热销断货）",
+            "purchase_overdue（采购超期）",
         ],
     }
 
@@ -133,6 +173,20 @@ def build_tool_description() -> str:
         "- 跨域查询：各域数据独立时一次并行查询；"
         "超出一次执行能力时进入计划模式（status=plan），返回执行计划由调用方逐步执行"
     )
+
+    # ── v2.2 分析能力 ──
+    if m.get("query_types"):
+        lines.append("\n分析能力（v2.2 新增）：")
+        lines.append("- 趋势分析：每天/每周/每月的销售额、订单量、退货量等走势")
+        lines.append("- 对比分析：环比（vs上月）、同比（vs去年）增长率")
+        lines.append("- 占比分析：各平台/商品/店铺的销售额占比、ABC商品分类")
+        lines.append(
+            "- 跨域指标：退货率、毛利率、客单价、库存周转天数、进销存、"
+            "发货时效、复购率、供应商评估（共20个指标）"
+        )
+        lines.append("- 预警查询：缺货预警、滞销预警、积压预警、采购超期")
+        lines.append("- 分布分析：订单金额区间分布、客单价分布")
+        lines.append("- 大数据导出：50万行以上数据直接导出，无行数限制")
     categories = m.get("field_categories", {})
     if categories:
         lines.append(f"- 可查询信息：{'/'.join(categories.keys())}")

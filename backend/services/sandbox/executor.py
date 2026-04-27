@@ -142,6 +142,7 @@ class SandboxExecutor:
         staging_dir: Optional[str] = None,
         workspace_dir: Optional[str] = None,
         upload_fn: Optional[Callable] = None,
+        files_dict: Optional[Dict[str, str]] = None,
     ) -> None:
         self._timeout = timeout
         self._max_result_chars = max_result_chars
@@ -150,6 +151,7 @@ class SandboxExecutor:
         self._staging_dir = staging_dir      # staging 数据目录（pd.read_parquet 用）
         self._workspace_dir = workspace_dir  # 用户 workspace 目录（只读，pd.read_excel 用）
         self._upload_fn = upload_fn          # 文件上传函数（注入）
+        self._files_dict = files_dict or {}  # 文件句柄字典（F1→abs_path）
 
     def register(self, name: str, func: Callable) -> None:
         """注册外部数据源函数（沙盒内可直接调用）"""
@@ -290,6 +292,10 @@ class SandboxExecutor:
         if self._output_dir:
             _Path(self._output_dir).mkdir(parents=True, exist_ok=True)
             g["OUTPUT_DIR"] = self._output_dir
+
+        # FILES: 文件句柄字典（F1→绝对路径），LLM 用 FILES["F1"] 读 workspace 文件
+        if self._files_dict:
+            g["FILES"] = dict(self._files_dict)  # 浅拷贝，防止沙盒代码修改原始字典
 
         # workspace-scoped open — 相对路径自动解析到 workspace，绝对路径检查边界
         # 对标 OpenAI Code Interpreter：不限制函数，限制环境

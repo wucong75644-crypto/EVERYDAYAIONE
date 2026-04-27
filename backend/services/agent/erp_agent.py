@@ -105,6 +105,14 @@ class ERPAgent:
 
         step_results = await self._execute_plan(plan, query, deadline)
         result = self._build_multi_result(step_results, plan, query)
+
+        # ── SQL 兜底：结构化查询失败时尝试 LLM 生成 SQL ──
+        if self._should_try_sql_fallback(result):
+            plan_params = plan.steps[0].params if plan.steps else None
+            fallback = await self._sql_fallback(query, result, plan_params)
+            if fallback is not None:
+                result = fallback
+
         await self._push_thinking("完成")
         if self._thinking_parts:
             result.thinking_text = "\n".join(self._thinking_parts)
@@ -432,6 +440,26 @@ class ERPAgent:
             if params.get(k):
                 parts.append(f"{k}={params[k]}")
         return ", ".join(parts)
+
+    @staticmethod
+    def _should_try_sql_fallback(result: AgentResult) -> bool:
+        from services.kuaimai.erp_sql_fallback import should_try_sql
+        return should_try_sql(result, "")
+
+    async def _sql_fallback(
+        self, query: str, failed_result: AgentResult, plan_params: dict | None,
+    ) -> AgentResult | None:
+        from services.kuaimai.erp_sql_fallback import sql_fallback
+        await self._push_thinking("结构化查询失败，尝试 SQL 兜底...")
+        return await sql_fallback(
+            query=query,
+            failed_result=failed_result,
+            plan_params=plan_params,
+            org_id=self.org_id,
+            db=self.db,
+            user_id=self.user_id,
+            conversation_id=self.conversation_id,
+        )
 
     async def _push_thinking(self, text: str) -> None:
         self._thinking_parts.append(f"→ {text}")

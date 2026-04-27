@@ -84,10 +84,79 @@ _GROUP_LABEL = {
     "supplier": "供应商", "warehouse": "仓库", "status": "状态",
 }
 
+# v2.2: 扩展 RPC 新增的聚合列（AVG/MIN/MAX 等）
+_SUMMARY_EXT_COLUMNS = [
+    ColumnMeta("avg_amount", "numeric", "均单金额"),
+    ColumnMeta("min_amount", "numeric", "最小金额"),
+    ColumnMeta("max_amount", "numeric", "最大金额"),
+    ColumnMeta("distinct_buyer", "integer", "客户数"),
+    ColumnMeta("total_cost", "numeric", "总成本"),
+    ColumnMeta("total_profit", "numeric", "总毛利"),
+]
+
+# metrics 名 → RPC 返回字段名的映射（用于过滤展示列）
+_METRIC_TO_COLS: dict[str, set[str]] = {
+    "count": {"doc_count"},
+    "amount": {"total_amount"},
+    "qty": {"total_qty"},
+    "avg_amount": {"avg_amount", "total_amount", "doc_count"},
+    "cost": {"total_cost"},
+    "profit": {"total_profit"},
+}
+
+
+
+# ── v2.2: 跨域指标集合（用于 auto 推断 query_type=cross）──
+_CROSS_METRICS = frozenset({
+    "return_rate", "refund_rate", "aftersale_rate",
+    "gross_margin", "avg_order_value", "repurchase_rate",
+    "inventory_turnover", "sell_through_rate", "inventory_flow",
+    "avg_ship_time", "same_day_rate",
+    "purchase_fulfillment", "supplier_evaluation",
+})
+
+
+def _default_time_range_30d() -> TimeRange:
+    """兜底时间范围：最近 30 天（趋势/对比 未指定时间时自动补充）。"""
+    from datetime import datetime, timedelta
+    _now = datetime.now()
+    _start = _now - timedelta(days=30)
+    return TimeRange(
+        start_iso=_start.strftime("%Y-%m-%d"),
+        end_iso=_now.strftime("%Y-%m-%d %H:%M"),
+        time_col="stat_date",
+        label=f"最近30天（{_start.strftime('%m-%d')} ~ {_now.strftime('%m-%d')}）",
+        date_range=f"{_start.strftime('%Y-%m-%d')} ~ {_now.strftime('%Y-%m-%d')}",
+    )
+
+
+def _resolve_query_type(
+    query_type: str, mode: str, limit: int,
+    time_granularity: str | None,
+    compare_range: str | None,
+    alert_type: str | None,
+    metrics: list[str] | None,
+) -> str:
+    """根据参数自动推断 query_type（用户/LLM 未显式指定时）。"""
+    if query_type != "auto":
+        return query_type
+    if alert_type:
+        return "alert"
+    if time_granularity:
+        return "trend"
+    if compare_range:
+        return "compare"
+    if metrics and any(m in _CROSS_METRICS for m in metrics):
+        return "cross"
+    if mode == "export" and limit <= 200:
+        return "detail"
+    if mode == "export" and limit > 200:
+        return "export"
+    return "summary"
 
 
 class UnifiedQueryEngine:
-    """Filter DSL → 参数化 SQL，三种输出模式"""
+    """Filter DSL → 参数化 SQL，query_type 路由分发"""
 
     def __init__(self, db: Any, org_id: str | None = None):
         self.db = db
@@ -109,6 +178,12 @@ class UnifiedQueryEngine:
         request_ctx: Optional[RequestContext] = None,
         include_invalid: bool = False,
         push_thinking: Any = None,
+        # ── v2.2 新增：分析类参数 ──
+        query_type: str = "auto",
+        time_granularity: str | None = None,
+        compare_range: str | None = None,
+        metrics: list[str] | None = None,
+        alert_type: str | None = None,
         **_kwargs,  # 吸收 LLM 透传的未知参数，防止 TypeError
     ) -> ToolOutput:
         """统一入口——所有参数在此校验，下游不再需要防御"""
@@ -169,30 +244,65 @@ class UnifiedQueryEngine:
             doc_type=doc_type if is_new_table else None,
         )
 
-        # ── 新表路由：ORM 直查 ──
-        if is_new_table:
-            if mode == "summary":
+        # ── v2.2: query_type 路由 ──
+        resolved_type = _resolve_query_type(
+            query_type, mode, limit,
+            time_granularity, compare_range, alert_type, metrics,
+        )
+
+        # detail: PG ORM 直查（≤200 行明细）
+        if resolved_type == "detail":
+            if is_new_table:
+                result = await self._export_orm(
+                    table, doc_type, validated, tr,
+                    sort_by=sort_by, sort_dir=sort_dir, limit=min(limit, 200),
+                    extra_fields=extra_fields,
+                    user_id=user_id, conversation_id=conversation_id,
+                    request_ctx=request_ctx, push_thinking=push_thinking,
+                )
+            else:
+                result = await self._query_detail(
+                    doc_type, validated, tr,
+                    sort_by=sort_by, sort_dir=sort_dir, limit=limit,
+                    extra_fields=extra_fields,
+                    user_id=user_id, conversation_id=conversation_id,
+                    request_ctx=request_ctx,
+                )
+
+        # ratio: 占比/排名/ABC 分类
+        elif resolved_type == "ratio":
+            result = await self._query_ratio(
+                doc_type, validated, tr, metrics, group_by,
+                sort_by=sort_by, limit=limit,
+                request_ctx=request_ctx,
+                include_invalid=include_invalid,
+            )
+
+        # summary: 聚合统计（现有 + 扩展）
+        elif resolved_type == "summary":
+            if is_new_table:
                 result = await self._summary_orm(
                     table, doc_type, validated, tr,
                     sort_by=sort_by, sort_dir=sort_dir, limit=limit,
                     request_ctx=request_ctx,
                 )
             else:
+                result = await self._summary(
+                    doc_type, validated, tr, group_by, request_ctx,
+                    include_invalid=include_invalid,
+                    sort_by=sort_by, sort_dir=sort_dir, limit=limit,
+                    metrics=metrics,
+                )
+
+        # export / export_large: 大批量导出
+        elif resolved_type in ("export", "export_large"):
+            if is_new_table:
                 result = await self._export_orm(
                     table, doc_type, validated, tr,
                     sort_by=sort_by, sort_dir=sort_dir, limit=limit,
                     extra_fields=extra_fields,
                     user_id=user_id, conversation_id=conversation_id,
-                    request_ctx=request_ctx,
-                    push_thinking=push_thinking,
-                )
-        else:
-            # ── 现有表：标准路由（预检在 _export 内部 DuckDB 启动前执行）──
-            if mode == "summary":
-                result = await self._summary(
-                    doc_type, validated, tr, group_by, request_ctx,
-                    include_invalid=include_invalid,
-                    sort_by=sort_by, sort_dir=sort_dir, limit=limit,
+                    request_ctx=request_ctx, push_thinking=push_thinking,
                 )
             else:
                 result = await self._export(
@@ -203,6 +313,84 @@ class UnifiedQueryEngine:
                     sort_by=sort_by, sort_dir=sort_dir,
                 )
 
+        # trend: 趋势分析（daily_stats 按天/周/月聚合）
+        elif resolved_type == "trend":
+            if not tr:
+                tr = _default_time_range_30d()
+            from services.kuaimai.erp_analytics_trend import query_trend
+            _shop, _plat, _sup, _wh, _dsl = _split_named_params(
+                [f for f in validated if f.field not in TIME_COLUMNS]
+            )
+            _outer = next((f.value for f in validated if f.field == "outer_id" and f.op == "eq"), None)
+            result = await query_trend(
+                db=self.db, org_id=self.org_id,
+                start_date=tr.start_iso, end_date=tr.end_iso,
+                time_granularity=time_granularity or "day",
+                metrics=metrics, group_by=group_by[0] if group_by else None,
+                outer_id=_outer, platform=_plat, shop_name=_shop,
+                limit=limit,
+            )
+
+        # compare: 对比分析（环比/同比）
+        elif resolved_type == "compare":
+            if not tr:
+                tr = _default_time_range_30d()
+            from services.kuaimai.erp_analytics_trend import query_compare
+            _shop, _plat, _sup, _wh, _dsl = _split_named_params(
+                [f for f in validated if f.field not in TIME_COLUMNS]
+            )
+            result = await query_compare(
+                db=self.db, org_id=self.org_id, doc_type=doc_type,
+                start_date=tr.start_iso, end_date=tr.end_iso,
+                compare_range=compare_range or "mom",
+                metrics=metrics, group_by=group_by[0] if group_by else None,
+                platform=_plat, shop_name=_shop, limit=limit,
+            )
+
+        # cross: 跨域指标（退货率/毛利率/库存周转等 20 个）
+        elif resolved_type == "cross":
+            from services.kuaimai.erp_analytics_cross import query_cross
+            result = await query_cross(
+                db=self.db, org_id=self.org_id,
+                filters=validated, tr=tr,
+                metrics=metrics, group_by=group_by,
+                time_granularity=time_granularity,
+                sort_by=sort_by, sort_dir=sort_dir, limit=limit,
+            )
+
+        # alert: 预警查询（缺货/滞销/积压/断货/采购超期）
+        elif resolved_type == "alert":
+            from services.kuaimai.erp_analytics_alert import query_alert
+            result = await query_alert(
+                db=self.db, org_id=self.org_id,
+                alert_type=alert_type or "low_stock",
+                filters=validated, tr=tr, limit=limit,
+            )
+
+        # distribution: 分布直方图（金额/数量区间分桶）
+        elif resolved_type == "distribution":
+            from services.kuaimai.erp_analytics_distribution import query_distribution
+            result = await query_distribution(
+                db=self.db, org_id=self.org_id, doc_type=doc_type,
+                filters=validated, tr=tr, metrics=metrics, limit=limit,
+            )
+
+        # 兜底：未知 query_type 走 summary
+        else:
+            logger.warning(f"unknown query_type={resolved_type}, fallback to summary")
+            if is_new_table:
+                result = await self._summary_orm(
+                    table, doc_type, validated, tr,
+                    sort_by=sort_by, sort_dir=sort_dir, limit=limit,
+                    request_ctx=request_ctx,
+                )
+            else:
+                result = await self._summary(
+                    doc_type, validated, tr, group_by, request_ctx,
+                    include_invalid=include_invalid,
+                    sort_by=sort_by, sort_dir=sort_dir, limit=limit,
+                )
+
         # 统一出口：注入已应用的过滤条件摘要，让下游 LLM 知道数据已过滤
         if result.summary:
             hint = format_filter_hint(validated)
@@ -210,6 +398,28 @@ class UnifiedQueryEngine:
                 result.summary = f"{hint}\n{result.summary}"
 
         return result
+
+    # ── Detail 模式（旧表 PG ORM 直查）─────────────────
+
+    async def _query_detail(
+        self, doc_type: str, filters: list[ValidatedFilter],
+        tr: TimeRange,
+        sort_by: str | None = None, sort_dir: str = "desc",
+        limit: int = 20,
+        extra_fields: list[str] | None = None,
+        user_id: str | None = None,
+        conversation_id: str | None = None,
+        request_ctx: Optional[RequestContext] = None,
+    ) -> ToolOutput:
+        """旧表 PG ORM 直查——≤200 行明细，替代 DuckDB 扫描全表。"""
+        from services.kuaimai.erp_orm_query import detail_orm
+        return await detail_orm(
+            self.db, self.org_id, doc_type, filters, tr,
+            sort_by=sort_by, sort_dir=sort_dir, limit=limit,
+            extra_fields=extra_fields,
+            user_id=user_id, conversation_id=conversation_id,
+            request_ctx=request_ctx,
+        )
 
     # ── Summary 模式 ──────────────────────────────────
 
@@ -221,6 +431,7 @@ class UnifiedQueryEngine:
         sort_by: str | None = None,
         sort_dir: str = "desc",
         limit: int = 20,
+        metrics: list[str] | None = None,
     ) -> ToolOutput:
         # 订单统计走分类引擎，但前提是所有 filter 字段都被 RPC 支持
         if doc_type == "order":
@@ -312,7 +523,19 @@ class UnifiedQueryEngine:
             # 分组时 platform 和 group_key 重复，删除冗余字段避免导出列名混乱
             if "group_key" in row and "platform" in row:
                 del row["platform"]
+        # v2.2: 扩展 RPC 新增字段的列定义
         summary_cols = list(_SUMMARY_BASE_COLUMNS)
+        # 新增聚合列（RPC 扩展后才有，旧 RPC 返回时无影响——不存在的 key 不展示）
+        _ext = _SUMMARY_EXT_COLUMNS
+        has_ext = any(k in result_data[0] for k in ("avg_amount", "min_amount", "total_cost"))
+        if has_ext:
+            # metrics 过滤：只保留用户关注的列
+            if metrics:
+                for col_meta in _ext:
+                    if col_meta.name in _METRIC_TO_COLS.get(metrics[0], set()) or not metrics:
+                        summary_cols.append(col_meta)
+            else:
+                summary_cols.extend(_ext)
         if rpc_group:
             summary_cols.insert(0, ColumnMeta("group_key", "text", _GROUP_LABEL.get(rpc_group, "分组")))
         return ToolOutput(
@@ -322,6 +545,7 @@ class UnifiedQueryEngine:
             columns=summary_cols,
             data=result_data,
             metadata={
+                "query_type": "summary",
                 "doc_type": doc_type,
                 "time_range": tr.label,
                 "time_column": tr.time_col,
@@ -341,6 +565,42 @@ class UnifiedQueryEngine:
             db=self.db, org_id=self.org_id,
             filters=filters, tr=tr, request_ctx=request_ctx,
             group_by=group_by, include_invalid=include_invalid,
+        )
+
+    # ── Ratio 模式（占比/排名/ABC 分类，委托 erp_analytics_ratio）───
+
+    async def _query_ratio(
+        self, doc_type: str, filters: list[ValidatedFilter],
+        tr: TimeRange, metrics: list[str] | None,
+        group_by: list[str] | None,
+        sort_by: str | None = None, limit: int = 100,
+        request_ctx: Optional[RequestContext] = None,
+        include_invalid: bool = False,
+    ) -> ToolOutput:
+        """占比/排名——先拿分组聚合数据，再委托 compute_ratio 计算。"""
+        if not group_by:
+            return ToolOutput(
+                summary="占比分析需要指定分组维度（如 platform / product / shop）",
+                source="erp", status=OutputStatus.ERROR,
+                error_message="ratio requires group_by",
+            )
+        raw_result = await self._summary(
+            doc_type, filters, tr, group_by, request_ctx,
+            include_invalid=include_invalid, limit=limit or 100,
+        )
+        if raw_result.status in (OutputStatus.ERROR, OutputStatus.EMPTY,
+                                  OutputStatus.REJECTED, "error", "empty", "rejected"):
+            return raw_result
+        if not raw_result.data:
+            return raw_result
+
+        from services.kuaimai.erp_analytics_ratio import compute_ratio
+        return compute_ratio(
+            raw_data=raw_result.data,
+            raw_columns=raw_result.columns,
+            doc_type=doc_type,
+            metrics=metrics,
+            time_label=tr.label if tr else "",
         )
 
     # ── 新表 ORM 查询（委托 erp_orm_query 模块）────────

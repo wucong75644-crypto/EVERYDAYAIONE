@@ -288,6 +288,21 @@ class ToolLoopExecutor:
         # 允许直接回复 或 已调过工具 → 干净的合成结果
         return "break", turn_text, True, empty_turns
 
+    def _register_result_files(self, result: Any, tool_name: str) -> None:
+        """统一注册 file_ref + collected_files（ToolOutput / AgentResult 共用）"""
+        file_ref = getattr(result, "file_ref", None)
+        if file_ref:
+            source = getattr(result, "source", None) or tool_name
+            self._file_registry.register(source, tool_name, file_ref)
+            # 统一文件句柄：注册到 handles（F1, F2...）
+            handles = getattr(self.executor, "file_handles", None)
+            if handles and file_ref.path:
+                handles.register(file_ref.path, file_ref.filename)
+
+        collected = getattr(result, "collected_files", None)
+        if collected:
+            self._collected_files.extend(collected)
+
     async def _pre_turn_checks(
         self,
         turn: int,
@@ -608,16 +623,11 @@ class ToolLoopExecutor:
                 content = result.to_tool_content()
                 is_truncated = False
 
-                # ToolOutput 专有：file_ref 注册 + collected_files 透传
-                if result.file_ref:
-                    self._file_registry.register(
-                        result.source or tool_name, tool_name, result.file_ref,
-                    )
-                if getattr(result, "collected_files", None):
-                    self._collected_files.extend(result.collected_files)
+                self._register_result_files(result, tool_name)
             else:
                 content = result or ""
                 is_truncated = False
+                self._register_result_files(result, tool_name)
 
             # Step 2: [FILE] 标记提取（统一处理，不分类型）
             if content and "[FILE]" in content:
