@@ -119,6 +119,8 @@ class FileExecutor:
             CDN URL 或 None（未配置 CDN）
         """
         from core.config import get_settings
+        from urllib.parse import quote
+
         settings = get_settings()
         if not settings.oss_cdn_domain:
             return None
@@ -126,8 +128,9 @@ class FileExecutor:
         target = self.resolve_safe_path(relative_path)
         # 计算相对于 ossfs 挂载根的路径 = OSS object_key
         try:
-            object_key = str(target.relative_to(self._workspace_base))
-            return f"https://{settings.oss_cdn_domain}/workspace/{object_key}"
+            object_key = str(target.relative_to(self._workspace_base)).replace("\\", "/")
+            encoded_key = quote(object_key, safe="/")
+            return f"https://{settings.oss_cdn_domain}/workspace/{encoded_key}"
         except ValueError:
             return None
 
