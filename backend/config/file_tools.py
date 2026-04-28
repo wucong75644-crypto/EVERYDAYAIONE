@@ -68,22 +68,20 @@ def build_file_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "file_read",
                 "description": (
-                    "读取 workspace 内的文件内容。\n\n"
+                    "读取 workspace 内的文本文件内容。\n\n"
                     "使用说明:\n"
-                    "- path 支持文件句柄（F1, F2...）或相对路径\n"
+                    "- path 为文件名或相对路径（如 'readme.txt'、'子目录/data.csv'）\n"
                     "- 默认读取整个文件（最多 2000 行）。"
-                    "大于 256KB 的文件会返回错误，请使用 offset 和 limit 分页读取\n"
-                    "- 已知需要读取文件的某个部分时，只读取该部分。这对大文件很重要\n"
-                    "- 返回格式为 cat -n 格式，行号从 1 开始\n"
-                    "- 二进制文件（图片/Excel/Parquet等）请用 code_execute 处理\n"
-                    "- 读取空文件会收到空内容警告"
+                    "大于 256KB 的文件请用 offset 和 limit 分页读取\n"
+                    "- 二进制文件（Excel/图片/Parquet等）请用 code_execute 处理\n"
+                    "- 返回格式为 cat -n 格式，行号从 1 开始"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "文件句柄（F1, F2...）或相对路径",
+                            "description": "文件名或相对路径",
                         },
                         "offset": {
                             "type": "integer",
@@ -139,7 +137,7 @@ def build_file_tools() -> List[Dict[str, Any]]:
                 "name": "file_list",
                 "description": (
                     "列出 workspace 内目录的内容（文件和子目录）。\n"
-                    "每个文件分配句柄（F1, F2...），后续用句柄引用文件。\n"
+                    "返回文件名列表，后续直接用文件名引用。\n"
                     "默认列出 workspace 根目录。"
                 ),
                 "parameters": {
@@ -202,7 +200,7 @@ def build_file_tools() -> List[Dict[str, Any]]:
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "文件句柄（F1, F2...）或相对路径",
+                            "description": "文件名或相对路径",
                         },
                     },
                     "required": ["path"],
@@ -215,14 +213,14 @@ def build_file_tools() -> List[Dict[str, Any]]:
 # 路由提示词片段
 FILE_ROUTING_PROMPT = (
     "## 文件操作规则\n"
-    "- file_list 返回的文件都有句柄（F1, F2...），后续用句柄引用文件\n"
-    "- 用户要求读取/查看文本文件 → file_read('F1')\n"
+    "- 所有文件操作直接用文件名或相对路径（如 '利润表.xlsx'、'子目录/data.csv'）\n"
+    "- 读取文本文件 → file_read('readme.txt')\n"
     "- 处理 Excel/图片/Parquet 等二进制文件 → code_execute"
-    "（沙盒内用 FILES['F1'] 引用文件路径）\n"
+    "（沙盒工作目录即 workspace，直接 pd.read_excel('报表.xlsx')）\n"
     "- 复杂数据分析（统计/筛选/聚合/大文件处理）→ code_execute\n"
-    "- 用户要求写入/创建/保存文件 → file_write\n"
-    "- 用户要求查看目录/列出文件 → file_list\n"
-    "- 用户要求搜索/查找文件 → file_search\n"
-    "- 用户要求查看文件信息/属性 → file_info('F1')\n"
+    "- 写入/创建/保存文件 → file_write\n"
+    "- 查看目录/列出文件 → file_list\n"
+    "- 搜索/查找文件 → file_search\n"
+    "- 查看文件信息/属性 → file_info('利润表.xlsx')\n"
     "- 文件操作完毕后，调 route_to_chat 汇总结果回复用户\n\n"
 )

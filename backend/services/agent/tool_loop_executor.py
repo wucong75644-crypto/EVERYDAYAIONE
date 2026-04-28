@@ -294,10 +294,6 @@ class ToolLoopExecutor:
         if file_ref:
             source = getattr(result, "source", None) or tool_name
             self._file_registry.register(source, tool_name, file_ref)
-            # 统一文件句柄：注册到 handles（F1, F2...）
-            handles = getattr(self.executor, "file_handles", None)
-            if handles is not None and file_ref.path:
-                handles.register(file_ref.path, file_ref.filename)
 
         collected = getattr(result, "collected_files", None)
         if collected:

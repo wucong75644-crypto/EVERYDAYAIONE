@@ -132,8 +132,8 @@ class ChatContextMixin:
                 parts.append("文本文件（用 file_read 读取）：")
                 parts.extend(text_files)
             if binary_files:
-                parts.append("二进制文件（用 code_execute + WORKSPACE_DIR 读取，"
-                             "如 pd.read_excel(WORKSPACE_DIR + '/文件名')）：")
+                parts.append("二进制文件（用 code_execute 读取，"
+                             "如 pd.read_excel('文件名')）：")
                 parts.extend(binary_files)
 
             ws_prompt = "\n".join(parts)

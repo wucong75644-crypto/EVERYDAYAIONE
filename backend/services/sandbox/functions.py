@@ -17,29 +17,17 @@ def build_sandbox_executor(
     user_id: str = "",
     org_id: Optional[str] = None,
     conversation_id: str = "",
-    files_dict: Optional[Dict[str, str]] = None,
+    files_dict: Optional[Dict[str, str]] = None,  # 兼容保留，已不使用
 ) -> SandboxExecutor:
-    """构建沙盒执行器（纯计算引擎）
+    """构建沙盒执行器（子进程隔离模式）
 
-    沙盒只注册计算和输出能力，不注册数据获取函数。
-    数据获取必须走 Agent 工具层（local_* > erp_* > fetch_all_pages）。
+    主进程负责：AST 验证、文件快照、文件上传检测。
+    子进程负责：chdir 到 workspace + exec 用户代码 + 返回结果。
 
     文件输出：
-    - LLM 代码写 df.to_excel(OUTPUT_DIR + "/报表.xlsx") 到 OUTPUT_DIR（workspace/下载/）
-    - ossfs 自动同步到 OSS → 平台生成 CDN 下载链接
+    - 子进程代码写 df.to_excel(OUTPUT_DIR + "/报表.xlsx") 到 OUTPUT_DIR
+    - ossfs 自动同步到 OSS → 主进程生成 CDN 下载链接
     - 用户在工作区"下载/"文件夹直接可见可下载
-
-    已注册能力：
-    - read_file: 读取 staging 目录下的预获取数据（仅限 staging/）
-    - 标准库: pandas, math, datetime, Decimal, Counter, io, json
-
-    Args:
-        timeout: 执行超时（秒）
-        max_result_chars: 结果最大字符数
-        conversation_id: 会话ID（用于隔离输出目录）
-
-    Returns:
-        配置好的 SandboxExecutor 实例
     """
     from core.config import get_settings as _get_settings
     from pathlib import Path
@@ -105,53 +93,14 @@ def build_sandbox_executor(
         except Exception as e:
             return f"❌ 文件处理失败: {safe_name} ({e})"
 
-    executor = SandboxExecutor(
+    return SandboxExecutor(
         timeout=timeout,
         max_result_chars=max_result_chars,
         output_dir=_output_dir,
         staging_dir=_staging_dir,
         workspace_dir=_workspace_dir,
         upload_fn=_auto_upload,
-        files_dict=files_dict or {},
     )
-
-    # read_file: 仅允许读取 staging 目录（对标 OpenAI Code Interpreter）
-    from core.config import get_settings as _get_settings
-    from services.file_executor import FileExecutor as _FileExecutor
-
-    _file_settings = _get_settings()
-
-    def _make_file_executor() -> "_FileExecutor":
-        return _FileExecutor(
-            workspace_root=_file_settings.file_workspace_root,
-            user_id=user_id,
-            org_id=org_id,
-        )
-
-    async def _read_file(path: str, encoding: str = "utf-8") -> str:
-        if not path.startswith("staging/"):
-            return (
-                "❌ 沙盒内只能读取 staging 目录下的数据文件。"
-                "请先用 local_db_export 或 fetch_all_pages 工具获取数据。"
-            )
-        if path.endswith(".parquet"):
-            return (
-                "❌ Parquet 文件不能用 read_file 读取，"
-                "请用 pd.read_parquet(STAGING_DIR + '/文件名') 读取。"
-            )
-        # 直接读原始文件内容（不走 file_read 的行号格式化），
-        # 这样 pandas 的 pd.read_json(io.StringIO(raw), lines=True) 能正确解析
-        fe = _make_file_executor()
-        target = fe.resolve_safe_path(path)
-        if not target.exists():
-            return f"❌ 文件不存在: {path}"
-        return target.read_text(encoding=encoding)
-
-    executor.register("read_file", _read_file)
-
-    # upload_file 已删除 — 所有文件输出走 OUTPUT_DIR（workspace/下载/），ossfs 自动同步到 OSS
-
-    return executor
 
 
 def compute_code_hash(code: str) -> str:
