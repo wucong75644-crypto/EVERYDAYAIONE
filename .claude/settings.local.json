@@ -1737,7 +1737,8 @@
       "Bash(openssl s_client -connect cdn.everydayai.com.cn:443 -servername cdn.everydayai.com.cn)",
       "Bash(openssl x509 *)",
       "Bash(grep -n \"def domain\\\\|@property\" /Users/wucong/EVERYDAYAIONE/backend/services/agent/departments/*.py)",
-      "Bash(./git-push.sh \"refactor: 工具描述边界调整——erp_agent收窄为ERP查询,code_execute提升为数据计算与文件处理\")"
+      "Bash(./git-push.sh \"refactor: 工具描述边界调整——erp_agent收窄为ERP查询,code_execute提升为数据计算与文件处理\")",
+      "Bash(./git-push.sh \"refactor: 沙盒子进程隔离——spawn独立进程执行用户代码+句柄系统移除+文件名直接引用+156测试全绿\")"
     ],
     "additionalDirectories": [
       "/tmp"

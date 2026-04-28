@@ -35,8 +35,6 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         org_id: str | None = None,
         request_ctx=None,
     ) -> None:
-        from services.agent.workspace_file_handles import WorkspaceFileHandles
-
         self.db = db
         self.user_id = user_id
         self.conversation_id = conversation_id
@@ -44,8 +42,6 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         # 时间事实层 — 请求级 SSOT，由 ERPAgent 透传
         # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B16)
         self.request_ctx = request_ctx
-        # workspace 文件句柄注册表（会话级，跨工具调用共享）
-        self.file_handles = WorkspaceFileHandles()
         self._handlers: Dict[str, Callable[..., Coroutine[Any, Any, str]]] = {
             "get_conversation_context": self._get_conversation_context,
             "search_knowledge": self._search_knowledge,
@@ -423,7 +419,6 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
                 user_id=self.user_id,
                 org_id=self.org_id,
                 conversation_id=self.conversation_id,
-                files_dict=self.file_handles.to_sandbox_dict(),
             )
             result = await executor.execute(code, description)
 
@@ -526,7 +521,7 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
     async def _file_dispatch(
         self, tool_name: str, args: Dict[str, Any],
     ) -> str:
-        """文件工具统一调度（句柄翻译的唯一入口）"""
+        """文件工具统一调度（直接用文件名/相对路径）"""
         from core.config import get_settings
         from services.file_executor import FileExecutor
 
@@ -534,22 +529,16 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         if not settings.file_workspace_enabled:
             return "文件操作功能已关闭，请联系管理员启用"
 
-        # ── 句柄翻译：F1 → 绝对路径（统一在此处完成） ──
-        if "path" in args:
-            resolved = self.file_handles.resolve(args["path"])
-            if resolved:
-                args["path"] = resolved
-
         executor = FileExecutor(
             workspace_root=settings.file_workspace_root,
             user_id=self.user_id,
             org_id=self.org_id,
         )
 
-        # ── file_list 特殊处理：拿结构化数据，自己格式化带句柄 ──
+        # ── file_list：格式化返回文件名列表 ──
         if tool_name == "file_list":
             try:
-                return await self._file_list_with_handles(executor, args)
+                return await self._file_list_formatted(executor, args)
             except PermissionError as e:
                 return f"权限不足: {e}"
             except Exception as e:
@@ -576,10 +565,10 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             logger.error(f"ToolExecutor file_dispatch | tool={tool_name} | error={e}")
             return f"文件操作失败: {e}"
 
-    async def _file_list_with_handles(
+    async def _file_list_formatted(
         self, executor: Any, args: Dict[str, Any],
     ) -> str:
-        """file_list + 句柄注册 + 格式化（一步到位，无侧信道）"""
+        """file_list 格式化（直接用文件名，无句柄）"""
         data = await executor.file_list_entries(**args)
 
         if data["error"]:
@@ -593,19 +582,11 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         for d in data["dirs"]:
             lines.append(f"  [目录] {d['name']}/\t\t{d['modified']}")
         for f in data["files"]:
-            handle = self.file_handles.register(f["abs_path"], f["name"])
             size_str = executor._format_size(f["size"])
-            lines.append(f"  [{handle}] {f['name']}\t{size_str}\t{f['modified']}")
+            lines.append(f"  {f['name']}\t{size_str}\t{f['modified']}")
 
         if data["truncated"]:
             lines.append(f"\n已达显示上限，部分条目未显示")
-
-        if data["files"]:
-            lines.append("")
-            lines.append(
-                "⚠ 句柄（F1, F2...）仅用于工具调用和沙盒代码，"
-                "回复用户时必须用文件名。"
-            )
 
         return "\n".join(lines)
 

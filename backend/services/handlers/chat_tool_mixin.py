@@ -37,14 +37,12 @@ class ChatToolMixin:
         turn: int,
         messages: Optional[List[Dict[str, Any]]] = None,
         budget=None,
-        file_handles=None,
     ) -> List[tuple]:
         """执行工具调用：安全检查 → 并行/串行分批 → 返回结果
 
         Args:
             messages: 当前对话 messages（传给 erp_agent 做上下文筛选）
             budget: ExecutionBudget 实例（约束 sandbox 超时）
-            file_handles: 会话级文件句柄（外部创建，跨轮传入）
 
         Returns:
             List of (tool_call_dict, result_text, is_error)
@@ -65,9 +63,6 @@ class ChatToolMixin:
             conversation_id=conversation_id, org_id=self.org_id,
             request_ctx=_request_ctx,
         )
-        # 对话级状态从外部注入（ToolExecutor 本身无状态）
-        if file_handles is not None:
-            executor.file_handles = file_handles
         # 每轮上下文
         executor._task_id = task_id
         executor._message_id = message_id

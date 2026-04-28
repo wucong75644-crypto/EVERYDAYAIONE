@@ -480,10 +480,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             # ── 打断监听注册 ──
             ws_manager.register_steer_listener(task_id)
 
-            # 对话级文件句柄（F1, F2...）— 工具无状态，此为唯一跨轮持久数据
-            from services.agent.workspace_file_handles import WorkspaceFileHandles
-            _file_handles = WorkspaceFileHandles()
-
             while not _budget.stop_reason:
                 _budget.use_turn()
                 turn = _budget.turns_used - 1  # 0-based for logging
@@ -625,7 +621,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 tool_results = await self._execute_tool_calls(
                     completed_calls, task_id, conversation_id, message_id,
                     user_id, turn + 1, messages=messages, budget=_budget,
-                    file_handles=_file_handles,
                 )
 
                 # 工具结果塞进 messages + 更新上下文

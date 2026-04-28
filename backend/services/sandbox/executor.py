@@ -1,126 +1,18 @@
 """
 沙盒执行器
 
-受限 exec 环境 + async 包装 + stdout 捕获 + 超时控制。
-与业务逻辑完全解耦，通过 register() 注入外部数据源函数。
+主进程负责：AST 验证、文件快照/上传检测、子进程生命周期管理。
+子进程负责：chdir + exec 用户代码 + 返回结果（sandbox_worker.py）。
 """
 
-import ast
 import asyncio
-import io
-import math
-import json
 import shutil
-import sys
-import time as _time
-import traceback
-from collections import Counter, defaultdict, OrderedDict
-from datetime import datetime, timedelta, date, time as dt_time, timezone
-from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Callable, Dict, Optional
 
 from loguru import logger
 
 from services.sandbox.validators import validate_code, truncate_result
-
-# 预导入数据分析库（避免每次 exec 时的冷启动）
-try:
-    import pandas as pd
-    _PANDAS_AVAILABLE = True
-except ImportError:
-    pd = None
-    _PANDAS_AVAILABLE = False
-
-try:
-    import matplotlib as _mpl
-    _mpl.use("Agg")  # 无 GUI 后端，必须在 import pyplot 之前
-    # 中文字体：优先 WenQuanYi（服务器预装），兜底 SimHei / sans-serif
-    _mpl.rcParams["font.sans-serif"] = [
-        "WenQuanYi Micro Hei", "SimHei", "Noto Sans SC",
-        "PingFang SC", "Microsoft YaHei", "DejaVu Sans",
-    ]
-    _mpl.rcParams["axes.unicode_minus"] = False  # 负号正常显示
-    import matplotlib.pyplot as _plt
-    _MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    _mpl = None
-    _plt = None
-    _MATPLOTLIB_AVAILABLE = False
-
-
-# 运行时允许 import 的模块白名单（AST 黑名单之后的第二道防线）
-_ALLOWED_IMPORT_MODULES = frozenset({
-    # 数学/数据
-    "math", "json", "decimal", "numbers", "fractions", "statistics",
-    # 日期/时间（datetime 内部依赖 time）
-    "datetime", "time", "calendar", "zoneinfo",
-    # 文件路径（沙盒内受限使用，配合注入的文件函数）
-    "pathlib",
-    # 集合/迭代
-    "collections", "itertools", "functools", "operator", "copy",
-    # 字符串/正则
-    "re", "string",
-    # 类型/枚举
-    "typing", "enum", "dataclasses", "abc",
-    # IO（BytesIO 用于生成 Excel/CSV 等二进制文件）
-    "io",
-    # 数据分析
-    "pandas", "numpy", "pyarrow",
-    # 可视化（matplotlib Agg 后端，无 GUI）
-    "matplotlib", "seaborn",
-    # 图片处理
-    "PIL",
-    # 文档生成（PDF / Word / PPT / Excel 直接操作）
-    "reportlab", "docx", "pptx", "openpyxl",
-    # 高性能 Excel 读写引擎
-    "calamine", "xlsxwriter",
-    # 内部 C 扩展（被上述模块传递依赖）
-    "_datetime", "_decimal", "_collections_abc", "_operator",
-    "_functools", "_re", "_string", "_json", "_strptime",
-})
-
-
-def _restricted_import(
-    name: str, globals: Any = None, locals: Any = None,
-    fromlist: tuple = (), level: int = 0,
-) -> Any:
-    """受限 import — 仅允许白名单模块（AST 之后的第二道防线）"""
-    top_module = name.split(".")[0]
-    if top_module not in _ALLOWED_IMPORT_MODULES:
-        raise ImportError(f"禁止导入模块: {name}")
-    return __import__(name, globals, locals, fromlist, level)
-
-
-# 沙盒内可用的安全内置函数白名单
-_SAFE_BUILTINS = {
-    # 类型转换
-    "int": int, "float": float, "str": str, "bool": bool,
-    "list": list, "dict": dict, "tuple": tuple, "set": set,
-    "frozenset": frozenset, "bytes": bytes, "bytearray": bytearray,
-    # 数学/聚合
-    "abs": abs, "round": round, "min": min, "max": max,
-    "sum": sum, "len": len, "pow": pow, "divmod": divmod,
-    # 迭代
-    "range": range, "enumerate": enumerate, "zip": zip,
-    "map": map, "filter": filter, "sorted": sorted, "reversed": reversed,
-    # 字符串/格式化
-    "format": format, "repr": repr, "chr": chr, "ord": ord,
-    # 逻辑
-    "all": all, "any": any, "isinstance": isinstance, "issubclass": issubclass,
-    "type": type, "hasattr": hasattr,
-    # 打印（重定向到 StringIO）
-    "print": print,
-    # 异常类型（允许 try-except）
-    "Exception": Exception, "ValueError": ValueError, "TypeError": TypeError,
-    "KeyError": KeyError, "IndexError": IndexError, "AttributeError": AttributeError,
-    "ZeroDivisionError": ZeroDivisionError, "RuntimeError": RuntimeError,
-    "StopIteration": StopIteration, "ImportError": ImportError,
-    # None/True/False
-    "None": None, "True": True, "False": False,
-    # 受限 import（允许白名单模块的 from X import Y 语法）
-    "__import__": _restricted_import,
-}
 
 
 class SandboxExecutor:
@@ -142,39 +34,33 @@ class SandboxExecutor:
         staging_dir: Optional[str] = None,
         workspace_dir: Optional[str] = None,
         upload_fn: Optional[Callable] = None,
-        files_dict: Optional[Dict[str, str]] = None,
     ) -> None:
         self._timeout = timeout
         self._max_result_chars = max_result_chars
-        self._registered_funcs: Dict[str, Callable] = {}
         self._output_dir = output_dir        # 沙盒输出目录（自动上传）
-        self._staging_dir = staging_dir      # staging 数据目录（pd.read_parquet 用）
-        self._workspace_dir = workspace_dir  # 用户 workspace 目录（只读，pd.read_excel 用）
+        self._staging_dir = staging_dir      # staging 数据目录
+        self._workspace_dir = workspace_dir  # 用户 workspace 目录
         self._upload_fn = upload_fn          # 文件上传函数（注入）
-        self._files_dict = files_dict or {}  # 文件句柄字典（F1→abs_path）
-
-    def register(self, name: str, func: Callable) -> None:
-        """注册外部数据源函数（沙盒内可直接调用）"""
-        self._registered_funcs[name] = func
 
     async def execute(self, code: str, description: str = "") -> str:
         """执行 Python 代码并返回结果文本
 
-        Args:
-            code: Python 代码（顶层可直接 await）
-            description: 代码功能描述（日志用）
+        使用独立子进程执行（spawn），实现：
+        - 进程级 cwd 隔离（os.chdir 到用户 workspace）
+        - 真超时杀死（SIGTERM → SIGKILL）
+        - 零状态污染（每次请求独立进程）
 
-        Returns:
-            执行结果文本（stdout 输出 + 最后一个表达式的值）
+        主进程负责：AST 验证、文件快照、文件上传检测。
+        子进程负责：chdir + exec 用户代码 + 返回结果文本。
         """
-        # 1. AST 安全验证
+        # 1. AST 安全验证（主进程，快速拦截）
         error = validate_code(code)
         if error:
             return f"❌ 代码验证失败:\n{error}"
 
         logger.info(
             f"SandboxExecutor | desc={description} | "
-            f"code_len={len(code)} | funcs={list(self._registered_funcs.keys())}"
+            f"code_len={len(code)} | subprocess=spawn"
         )
 
         # 2. 确保输出目录存在 + 快照现有文件（用于检测新生成的文件）
@@ -184,141 +70,134 @@ class SandboxExecutor:
         # 2.5 备份已有的可上传文件（防止沙箱代码覆盖后丢失旧数据）
         file_backups = self._backup_existing_files()
 
-        # 3. 构建受限执行环境
-        sandbox_globals = self._build_globals()
-
-        # 4. 执行（带超时）
-        try:
-            result = await asyncio.wait_for(
-                self._run_code(code, sandbox_globals),
-                timeout=self._timeout,
-            )
-        except asyncio.TimeoutError:
-            result = (
-                f"⏱ 代码执行超时（{self._timeout}秒）。\n"
-                "建议：缩小查询范围、减少数据量、或分批处理。"
-            )
-            # 超时也可能已部分写入文件，dedup 后直接返回
-            self._dedup_overwritten_files(file_backups)
-            return result
-        except Exception as e:
-            tb = traceback.format_exc()
-            tb_lines = tb.strip().split("\n")
-            short_tb = "\n".join(tb_lines[-3:])
-            logger.warning(
-                f"SandboxExecutor exec error | desc={description} | "
-                f"error={short_tb[:200]}"
-            )
-            # 异常也可能已部分写入文件，dedup 后直接返回
-            self._dedup_overwritten_files(file_backups)
-            return f"❌ 执行错误:\n{short_tb}"
-        finally:
-            # 清理 matplotlib figure 防止内存泄露（用户代码可能忘记 plt.close）
-            if _MATPLOTLIB_AVAILABLE:
-                _plt.close("all")
+        # 3. 子进程执行（spawn 隔离）
+        result = await self._run_in_subprocess(code)
 
         logger.info(
             f"SandboxExecutor result | desc={description} | "
             f"result_len={len(result)} | result={result[:200]}"
         )
 
-        # 5. 隐藏真实路径——防止 LLM 将本地路径写成 file:// 链接
-        # 只改文本，不影响文件 IO / auto-upload / [FILE] 标签
-        if result and self._output_dir:
-            result = result.replace(self._output_dir, "下载")
-        if result and self._workspace_dir:
-            result = result.replace(self._workspace_dir, "工作区")
-
-        # 6. 先截断正文，再追加文件标记（文件标记不参与截断）
-        # 对齐 Claude Code：文本输出和文件引用是分离的，文件不会被文本截断影响
-        result = truncate_result(result, self._max_result_chars)
-
-        # 7. 同名文件保护：覆盖检测 + Google Drive 风格重命名
+        # 4. 同名文件保护：覆盖检测 + Google Drive 风格重命名
         self._dedup_overwritten_files(file_backups)
 
-        # 8. 自动检测生成的文件并上传（追加在截断后的文本末尾）
+        # 5. 自动检测生成的文件并上传（追加在截断后的文本末尾）
         file_results = await self._auto_upload_new_files()
         if file_results:
             result = (result or "") + "\n" + "\n".join(file_results)
 
         return result
 
-    def _build_globals(self) -> Dict[str, Any]:
-        """构建每次执行独立的 globals 字典"""
-        g: Dict[str, Any] = {"__builtins__": _SAFE_BUILTINS}
+    async def _run_in_subprocess(self, code: str) -> str:
+        """在独立子进程中执行代码（spawn 隔离）
 
-        # 安全标准库模块
-        g["math"] = math
-        g["json"] = json
-        g["datetime"] = datetime
-        g["timedelta"] = timedelta
-        g["date"] = date
-        g["time"] = dt_time
-        g["timezone"] = timezone
-        g["Decimal"] = Decimal
-        g["ROUND_HALF_UP"] = ROUND_HALF_UP
-        g["Counter"] = Counter
-        g["defaultdict"] = defaultdict
-        g["OrderedDict"] = OrderedDict
+        通信协议：子进程通过 Queue 返回 (status, result_text)。
+        超时策略：SIGTERM → 5s → SIGKILL。
+        """
+        import multiprocessing as mp
+        import os
+        import signal
 
-        # pandas（如果可用）
-        if _PANDAS_AVAILABLE:
-            g["pd"] = pd
-            g["DataFrame"] = pd.DataFrame
-            g["Series"] = pd.Series
+        from services.sandbox.sandbox_worker import sandbox_worker_entry
 
-        # matplotlib（如果可用，Agg 后端已在模块加载时设置）
-        if _MATPLOTLIB_AVAILABLE:
-            g["plt"] = _plt
-            g["matplotlib"] = _mpl
+        ctx = mp.get_context("spawn")
+        result_queue = ctx.Queue()
 
-        # 注册的外部数据源函数
-        for name, func in self._registered_funcs.items():
-            g[name] = func
+        proc = ctx.Process(
+            target=sandbox_worker_entry,
+            args=(
+                result_queue,
+                code,
+                self._workspace_dir or "",
+                self._staging_dir or "",
+                self._output_dir or "",
+                self._timeout,
+                self._max_result_chars,
+            ),
+        )
+        proc.start()
+        logger.debug(f"Sandbox subprocess started | pid={proc.pid}")
 
-        # 注入目录路径
-        from pathlib import Path as _Path
-        g["Path"] = _Path
+        try:
+            # 在线程池中等待结果（不阻塞 event loop）
+            loop = asyncio.get_running_loop()
+            status, result = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None, self._wait_for_result, result_queue, proc,
+                    self._timeout,
+                ),
+                timeout=self._timeout + 10,  # 留 10s 余量给进程启动
+            )
+            if status == "error":
+                logger.warning(f"Sandbox subprocess error | pid={proc.pid}")
+            return result
 
-        # WORKSPACE_DIR: 用户 workspace 目录（只读，pd.read_excel 用）
-        if self._workspace_dir:
-            g["WORKSPACE_DIR"] = self._workspace_dir
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Sandbox subprocess timeout | pid={proc.pid} | "
+                f"timeout={self._timeout}s"
+            )
+            # 优雅退出：SIGTERM → 5s → SIGKILL
+            self._kill_process(proc)
+            return (
+                f"⏱ 代码执行超时（{self._timeout}秒）。\n"
+                "建议：缩小查询范围、减少数据量、或分批处理。"
+            )
+        except Exception as e:
+            logger.error(f"Sandbox subprocess failed | pid={proc.pid} | error={e}")
+            self._kill_process(proc)
+            return f"❌ 沙盒进程异常: {e}"
+        finally:
+            # 确保进程退出 + 清理 Queue
+            if proc.is_alive():
+                self._kill_process(proc)
+            else:
+                proc.join(timeout=3)
+            try:
+                result_queue.close()
+                result_queue.join_thread()
+            except Exception:
+                pass
 
-        # STAGING_DIR: staging 数据目录（pd.read_parquet 用）
-        if self._staging_dir:
-            g["STAGING_DIR"] = self._staging_dir
+    @staticmethod
+    def _wait_for_result(result_queue, proc, timeout: float) -> tuple:
+        """阻塞等待子进程结果（在线程池中调用）"""
+        import queue as _queue
+        try:
+            return result_queue.get(timeout=timeout + 5)  # 比子进程 timeout 多留 5s
+        except _queue.Empty:
+            # 子进程没写结果就退了
+            exitcode = proc.exitcode
+            if exitcode is not None and exitcode < 0:
+                import signal
+                sig_name = signal.Signals(-exitcode).name
+                return ("error", f"❌ 沙盒进程被信号终止: {sig_name}")
+            return ("error", "❌ 沙盒进程无响应（可能 OOM 或崩溃）")
 
-        # OUTPUT_DIR: 输出目录（写文件到这里自动上传）
-        if self._output_dir:
-            _Path(self._output_dir).mkdir(parents=True, exist_ok=True)
-            g["OUTPUT_DIR"] = self._output_dir
+    @staticmethod
+    def _kill_process(proc):
+        """优雅杀死子进程：SIGTERM → 5s → SIGKILL"""
+        import os
+        import signal
 
-        # FILES: 文件句柄字典（F1→绝对路径），LLM 用 FILES["F1"] 读 workspace 文件
-        if self._files_dict:
-            g["FILES"] = dict(self._files_dict)  # 浅拷贝，防止沙盒代码修改原始字典
+        if not proc.is_alive():
+            proc.join(timeout=3)
+            return
 
-        # workspace-scoped open — 相对路径自动解析到 workspace，绝对路径检查边界
-        # 对标 OpenAI Code Interpreter：不限制函数，限制环境
-        import builtins as _builtins
-        import os as _os
-        _ws_dir = self._workspace_dir
+        # 先 SIGTERM（给代码清理机会）
+        try:
+            os.kill(proc.pid, signal.SIGTERM)
+        except OSError:
+            pass
+        proc.join(timeout=5)
 
-        def _scoped_open(path, mode="r", *args, **kwargs):
-            path_str = str(path)
-            if _ws_dir and not _os.path.isabs(path_str):
-                path_str = _os.path.join(_ws_dir, path_str)
-            resolved = _os.path.realpath(path_str)
-            if _ws_dir:
-                ws_real = _os.path.realpath(_ws_dir)
-                if not resolved.startswith(ws_real + _os.sep) and resolved != ws_real:
-                    raise PermissionError(
-                        f"文件访问被拒绝：{path} 不在工作目录内"
-                    )
-            return _builtins.open(resolved, mode, *args, **kwargs)
-
-        g["open"] = _scoped_open
-
-        return g
+        # 还没死就 SIGKILL
+        if proc.is_alive():
+            try:
+                os.kill(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            proc.join(timeout=3)
 
     # ========================================
     # 自动文件检测与上传
@@ -484,114 +363,3 @@ class SandboxExecutor:
                     results.append(f"❌ 文件上传失败: {f.name} ({e})")
 
         return results
-
-    async def _run_code(
-        self, code: str, sandbox_globals: Dict[str, Any],
-    ) -> str:
-        """在受限环境中执行代码，捕获 stdout 和最后表达式的值"""
-        # 检测顶层 await → 包装为 async 函数
-        tree = ast.parse(code, mode="exec")
-        has_await = any(
-            isinstance(node, (ast.Await, ast.AsyncFor, ast.AsyncWith))
-            for node in ast.walk(tree)
-        )
-
-        # 捕获 stdout
-        stdout_buffer = io.StringIO()
-        sandbox_globals["print"] = lambda *args, **kwargs: print(
-            *args, **kwargs, file=stdout_buffer,
-        )
-
-        if has_await:
-            result_value = await self._exec_async(code, sandbox_globals, tree)
-        else:
-            # 同步代码在线程池执行（防止 CPU-bound 死循环阻塞事件循环）
-            loop = asyncio.get_running_loop()
-            result_value = await loop.run_in_executor(
-                None, self._exec_sync, code, sandbox_globals, tree,
-            )
-
-        # 组合输出：stdout + 最后表达式的值
-        stdout_text = stdout_buffer.getvalue()
-        parts = []
-        if stdout_text.strip():
-            parts.append(stdout_text.rstrip())
-        if result_value is not None:
-            parts.append(str(result_value))
-
-        if not parts:
-            return "代码执行成功（无输出）"
-
-        return "\n".join(parts)
-
-    def _exec_sync(
-        self,
-        code: str,
-        sandbox_globals: Dict[str, Any],
-        tree: ast.Module,
-    ) -> Optional[Any]:
-        """同步执行（无 await 的代码）
-
-        使用 sys.settrace 逐行检查超时，确保死循环可被终止。
-        """
-        deadline = _time.monotonic() + self._timeout
-
-        def _timeout_trace(frame, event, arg):
-            if _time.monotonic() > deadline:
-                raise TimeoutError("sandbox execution timeout")
-            return _timeout_trace
-
-        old_trace = sys.gettrace()
-        sys.settrace(_timeout_trace)
-        try:
-            return self._exec_sync_inner(sandbox_globals, tree)
-        except TimeoutError:
-            raise asyncio.TimeoutError()
-        finally:
-            sys.settrace(old_trace)
-
-    def _exec_sync_inner(
-        self,
-        sandbox_globals: Dict[str, Any],
-        tree: ast.Module,
-    ) -> Optional[Any]:
-        """实际执行逻辑（从 _exec_sync 中拆出，供 settrace 保护）"""
-        # 如果最后一个语句是表达式，单独提取其值
-        last_expr_value = None
-        if tree.body and isinstance(tree.body[-1], ast.Expr):
-            # 分离最后一个表达式
-            last_node = tree.body.pop()
-            # 先执行前面的语句
-            if tree.body:
-                exec(compile(tree, "<sandbox>", "exec"), sandbox_globals)
-            # 再 eval 最后一个表达式
-            expr_code = compile(
-                ast.Expression(body=last_node.value),
-                "<sandbox>", "eval",
-            )
-            last_expr_value = eval(expr_code, sandbox_globals)
-        else:
-            exec(compile(tree, "<sandbox>", "exec"), sandbox_globals)
-
-        return last_expr_value
-
-    async def _exec_async(
-        self,
-        code: str,
-        sandbox_globals: Dict[str, Any],
-        tree: ast.Module,
-    ) -> Optional[Any]:
-        """异步执行（含 await 的代码）— 包装为 async 函数"""
-        code_lines = code.split("\n")
-
-        # 使用 AST 判断最后一条语句是否为表达式（与 _exec_sync_inner 一致）
-        if tree.body and isinstance(tree.body[-1], ast.Expr):
-            last_node = tree.body[-1]
-            # 用 AST 行号定位表达式起始行（1-based → 0-based）
-            expr_start = last_node.lineno - 1
-            code_lines[expr_start] = f"return {code_lines[expr_start]}"
-
-        indented = "\n".join(f"    {line}" for line in code_lines)
-        wrapper = f"async def __sandbox_main__():\n{indented}"
-        exec(compile(wrapper, "<sandbox>", "exec"), sandbox_globals)
-        return await sandbox_globals["__sandbox_main__"]()
