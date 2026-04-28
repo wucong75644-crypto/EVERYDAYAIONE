@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Set
 FILE_INFO_TOOLS: Set[str] = {
     "file_read",
     "file_write",
+    "file_edit",
     "file_list",
     "file_search",
     "file_info",
@@ -33,6 +34,15 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "path": {"type": "string"},
             "content": {"type": "string"},
             "mode": {"type": "string"},
+        },
+    },
+    "file_edit": {
+        "required": ["path", "old_string", "new_string"],
+        "properties": {
+            "path": {"type": "string"},
+            "old_string": {"type": "string"},
+            "new_string": {"type": "string"},
+            "replace_all": {"type": "boolean"},
         },
     },
     "file_list": {
@@ -107,8 +117,11 @@ def build_file_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "file_write",
                 "description": (
-                    "在 workspace 内创建或写入文件。\n"
-                    "mode: overwrite(覆盖,默认) / append(追加) / create_only(仅新建)"
+                    "在 workspace 内创建或写入文件。\n\n"
+                    "使用说明:\n"
+                    "- 覆盖已有文件前，必须先用 file_read 读取确认内容\n"
+                    "- 修改已有文件优先用 file_edit（精确替换），而不是 file_write 重写整个文件\n"
+                    "- mode: overwrite(覆盖,默认) / append(追加) / create_only(仅新建)"
                 ),
                 "parameters": {
                     "type": "object",
@@ -128,6 +141,43 @@ def build_file_tools() -> List[Dict[str, Any]]:
                         },
                     },
                     "required": ["path", "content"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "file_edit",
+                "description": (
+                    "精确替换 workspace 内文本文件的内容。\n\n"
+                    "使用说明:\n"
+                    "- old_string 必须与文件中的文本完全一致（包括缩进和空格）\n"
+                    "- 替换前必须先用 file_read 读取文件确认内容\n"
+                    "- old_string 必须在文件中唯一。如有多处匹配，设置 replace_all=true\n"
+                    "- 修改已有文件优先用 file_edit，不要用 file_write 重写整个文件\n"
+                    "- 二进制文件不支持编辑"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "文件名或相对路径",
+                        },
+                        "old_string": {
+                            "type": "string",
+                            "description": "要替换的原始文本（必须与文件内容完全一致）",
+                        },
+                        "new_string": {
+                            "type": "string",
+                            "description": "替换后的文本",
+                        },
+                        "replace_all": {
+                            "type": "boolean",
+                            "description": "替换所有匹配项（默认 false，仅替换唯一匹配）",
+                        },
+                    },
+                    "required": ["path", "old_string", "new_string"],
                 },
             },
         },

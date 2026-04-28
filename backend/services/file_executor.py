@@ -72,7 +72,7 @@ _MAX_WRITE_SIZE = 5 * 1024 * 1024
 _MAX_LIST_ENTRIES = 200
 
 # 搜索结果上限
-_MAX_SEARCH_RESULTS = 50
+_MAX_SEARCH_RESULTS = 100
 
 
 class FileExecutor:
@@ -472,7 +472,10 @@ class FileExecutor:
                 continue
             if item.suffix.lower() in _BLOCKED_EXTENSIONS:
                 continue
-            if any(p.startswith(".") for p in item.relative_to(target).parts):
+            # 排除隐藏目录和 VCS/临时目录（对标 Claude Code Grep 自动排除）
+            rel_parts = item.relative_to(target).parts
+            _SKIP_DIRS = {"staging", "__pycache__", "node_modules", ".git", ".svn"}
+            if any(p.startswith(".") or p in _SKIP_DIRS for p in rel_parts):
                 continue
 
             rel_path = str(item.relative_to(self._root))
@@ -537,6 +540,71 @@ class FileExecutor:
         info_lines.append(f"权限: {mode}")
 
         return "\n".join(info_lines)
+
+    async def file_edit(
+        self,
+        path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> str:
+        """精确字符串替换（对标 Claude Code Edit 工具）
+
+        Args:
+            path: 文件名或相对路径
+            old_string: 要替换的原始文本
+            new_string: 替换后的文本（必须与 old_string 不同）
+            replace_all: True 时替换所有匹配项，False 时仅替换唯一匹配
+        """
+        target = self.resolve_safe_path(path)
+
+        if not target.exists():
+            return f"文件不存在: {path}"
+        if not target.is_file():
+            return f"不是文件: {path}"
+        if not self._is_text_file(target):
+            return f"二进制文件不支持编辑: {path}"
+        if old_string == new_string:
+            return "old_string 和 new_string 相同，无需修改"
+
+        # 读取文件内容
+        try:
+            content = target.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            try:
+                content = target.read_text(encoding="gbk")
+            except Exception:
+                return f"无法解码文件 {path}"
+
+        # 检查匹配
+        count = content.count(old_string)
+        if count == 0:
+            return (
+                f"未找到匹配内容。old_string 在文件中不存在。\n"
+                f"请确认 old_string 与文件中的文本完全一致（包括缩进和空格）。"
+            )
+
+        if not replace_all and count > 1:
+            return (
+                f"找到 {count} 处匹配，但 replace_all=false。\n"
+                f"请提供更多上下文使 old_string 唯一，或设置 replace_all=true 替换全部。"
+            )
+
+        # 执行替换
+        if replace_all:
+            new_content = content.replace(old_string, new_string)
+            replaced_count = count
+        else:
+            new_content = content.replace(old_string, new_string, 1)
+            replaced_count = 1
+
+        target.write_text(new_content, encoding="utf-8")
+
+        logger.info(
+            f"FileExecutor edit | path={path} | "
+            f"replaced={replaced_count} | replace_all={replace_all}"
+        )
+        return f"已替换 {replaced_count} 处 | 文件: {path}"
 
     # ========================================
     # 文件管理操作（工作区面板用）

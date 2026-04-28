@@ -114,9 +114,38 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
     g["defaultdict"] = defaultdict
     g["OrderedDict"] = OrderedDict
 
-    # pandas
+    # pandas（对标 Claude Code L2 行数限制：默认 nrows=2000）
     if _PANDAS_AVAILABLE:
-        g["pd"] = pd
+        _DEFAULT_NROWS = 2000
+
+        def _wrap_pd_reader(original_fn):
+            """包装 pd.read_excel/read_csv，默认 nrows=2000"""
+            import functools
+
+            @functools.wraps(original_fn)
+            def wrapper(*args, **kwargs):
+                # 用户未指定 nrows 时，默认限制 2000 行
+                if "nrows" not in kwargs:
+                    kwargs["nrows"] = _DEFAULT_NROWS
+                # 用户显式传 nrows=None → 全读（移除限制）
+                elif kwargs["nrows"] is None:
+                    del kwargs["nrows"]
+                return original_fn(*args, **kwargs)
+            return wrapper
+
+        # 创建 pandas 命名空间代理（不污染真实 pd 模块）
+        class _PandasProxy:
+            """代理 pd 模块，拦截 read_* 函数加默认 nrows 限制"""
+            def __init__(self, real_pd):
+                self._pd = real_pd
+                self.read_excel = _wrap_pd_reader(real_pd.read_excel)
+                self.read_csv = _wrap_pd_reader(real_pd.read_csv)
+                # read_parquet 不限制（列式存储，按列读取不吃内存）
+
+            def __getattr__(self, name):
+                return getattr(self._pd, name)
+
+        g["pd"] = _PandasProxy(pd)
         g["DataFrame"] = pd.DataFrame
         g["Series"] = pd.Series
 
@@ -136,8 +165,36 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         g["OUTPUT_DIR"] = output_dir
 
-    # workspace-scoped open（相对路径自动解析到 workspace）
+    # workspace-scoped open（相对路径自动解析到 workspace + 相似文件建议）
     _ws_dir = workspace_dir
+
+    def _find_similar_file(target_path: str) -> str:
+        """文件找不到时，搜索 workspace 下相似文件名（对标 Claude Code findSimilarFile）"""
+        target_name = _os.path.basename(target_path)
+        target_dir = _os.path.dirname(target_path) or _ws_dir
+        if not target_dir or not _os.path.isdir(target_dir):
+            return ""
+        try:
+            entries = _os.listdir(target_dir)
+        except OSError:
+            return ""
+        # 策略1：同名不同空格/连字符（利润表 - xxx vs 利润表-xxx）
+        normalized = target_name.replace(" ", "").replace("-", "").replace("_", "").lower()
+        for entry in entries:
+            entry_normalized = entry.replace(" ", "").replace("-", "").replace("_", "").lower()
+            if entry_normalized == normalized and entry != target_name:
+                rel = _os.path.relpath(_os.path.join(target_dir, entry), _ws_dir)
+                return rel
+        # 策略2：同扩展名 + 包含关键词
+        target_stem = _os.path.splitext(target_name)[0].replace(" ", "").lower()
+        target_ext = _os.path.splitext(target_name)[1].lower()
+        for entry in entries:
+            entry_ext = _os.path.splitext(entry)[1].lower()
+            entry_stem = _os.path.splitext(entry)[0].replace(" ", "").lower()
+            if entry_ext == target_ext and (target_stem[:4] in entry_stem or entry_stem[:4] in target_stem):
+                rel = _os.path.relpath(_os.path.join(target_dir, entry), _ws_dir)
+                return rel
+        return ""
 
     def _scoped_open(path, mode="r", *args, **kwargs):
         path_str = str(path)
@@ -148,7 +205,14 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
             ws_real = _os.path.realpath(_ws_dir)
             if not resolved.startswith(ws_real + _os.sep) and resolved != ws_real:
                 raise PermissionError(f"文件访问被拒绝：{path} 不在工作目录内")
-        return _builtins.open(resolved, mode, *args, **kwargs)
+        try:
+            return _builtins.open(resolved, mode, *args, **kwargs)
+        except FileNotFoundError:
+            suggestion = _find_similar_file(resolved) if _ws_dir else ""
+            msg = f"文件不存在: {path}"
+            if suggestion:
+                msg += f"。你是否要找: {suggestion}？"
+            raise FileNotFoundError(msg)
 
     g["open"] = _scoped_open
 
