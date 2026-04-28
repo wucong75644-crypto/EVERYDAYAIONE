@@ -1747,7 +1747,8 @@
       "Bash(python -m pytest tests/test_file_metadata_extractor.py tests/test_file_executor.py tests/test_file_tools.py -q)",
       "Bash(python -m pytest tests/test_file_metadata_extractor.py -q --tb=short)",
       "Bash(python -m pytest tests/test_file_metadata_extractor.py -v --tb=short)",
-      "Bash(./git-push.sh \"feat: 文件工具对齐Claude Code——元信息注入+pandas nrows限制+findSimilarFile+file_edit+搜索优化\")"
+      "Bash(./git-push.sh \"feat: 文件工具对齐Claude Code——元信息注入+pandas nrows限制+findSimilarFile+file_edit+搜索优化\")",
+      "Bash(./git-push.sh \"test: 补充file_edit+PandasProxy+findSimilarFile+搜索排除24个测试用例\")"
     ],
     "additionalDirectories": [
       "/tmp"

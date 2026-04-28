@@ -307,3 +307,153 @@ class TestSandboxWorkerEntry:
         status, result = q.get(timeout=5)
         assert status == "ok"
         assert "chdir works" in result
+
+
+# ============================================================
+# PandasProxy 测试（nrows 默认限制）
+# ============================================================
+
+
+class TestPandasProxy:
+    """pandas 读取默认 nrows=2000 限制"""
+
+    def test_default_nrows_injected(self, tmp_path):
+        """未指定 nrows 时自动加 nrows=2000"""
+        g = _build_sandbox_globals(str(tmp_path), "", "")
+        proxy = g.get("pd")
+        if proxy is None:
+            pytest.skip("pandas not installed")
+        # proxy.read_csv 应该是 wrapped 版本
+        assert proxy.read_csv is not pd.read_csv  # type: ignore
+        assert proxy.read_excel is not pd.read_excel  # type: ignore
+
+    def test_passthrough_other_attrs(self, tmp_path):
+        """非 read_* 属性透传到真实 pd"""
+        g = _build_sandbox_globals(str(tmp_path), "", "")
+        proxy = g.get("pd")
+        if proxy is None:
+            pytest.skip("pandas not installed")
+        assert proxy.DataFrame is pd.DataFrame  # type: ignore
+        assert proxy.Series is pd.Series  # type: ignore
+
+    def test_read_csv_default_nrows(self, tmp_path):
+        """read_csv 默认 nrows=2000"""
+        try:
+            import pandas
+        except ImportError:
+            pytest.skip("pandas not installed")
+
+        # 创建超过 2000 行的 CSV
+        lines = ["value"] + [str(i) for i in range(3000)]
+        (tmp_path / "big.csv").write_text("\n".join(lines))
+
+        g = _build_sandbox_globals(str(tmp_path), "", "")
+        code = (
+            "df = pd.read_csv('big.csv')\n"
+            "print(len(df))"
+        )
+        import os
+        old_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            result = _exec_code(code, g, timeout=10.0)
+        finally:
+            os.chdir(old_cwd)
+        assert "2000" in result
+
+    def test_read_csv_explicit_nrows_none(self, tmp_path):
+        """显式 nrows=None 全读"""
+        try:
+            import pandas
+        except ImportError:
+            pytest.skip("pandas not installed")
+
+        lines = ["value"] + [str(i) for i in range(3000)]
+        (tmp_path / "big.csv").write_text("\n".join(lines))
+
+        g = _build_sandbox_globals(str(tmp_path), "", "")
+        code = (
+            "df = pd.read_csv('big.csv', nrows=None)\n"
+            "print(len(df))"
+        )
+        import os
+        old_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            result = _exec_code(code, g, timeout=10.0)
+        finally:
+            os.chdir(old_cwd)
+        assert "3000" in result
+
+    def test_read_csv_explicit_nrows_100(self, tmp_path):
+        """显式 nrows=100 按用户指定"""
+        try:
+            import pandas
+        except ImportError:
+            pytest.skip("pandas not installed")
+
+        lines = ["value"] + [str(i) for i in range(3000)]
+        (tmp_path / "big.csv").write_text("\n".join(lines))
+
+        g = _build_sandbox_globals(str(tmp_path), "", "")
+        code = (
+            "df = pd.read_csv('big.csv', nrows=100)\n"
+            "print(len(df))"
+        )
+        import os
+        old_cwd = os.getcwd()
+        os.chdir(str(tmp_path))
+        try:
+            result = _exec_code(code, g, timeout=10.0)
+        finally:
+            os.chdir(old_cwd)
+        assert "100" in result
+
+
+# ============================================================
+# findSimilarFile + scoped_open 文件建议测试
+# ============================================================
+
+
+class TestFindSimilarFile:
+    """文件找不到时智能建议"""
+
+    def test_similar_file_space_difference(self, tmp_path):
+        """空格差异能匹配（'利润表 - xxx' vs '利润表-xxx'）"""
+        (tmp_path / "利润表-数据.txt").write_text("data")
+        g = _build_sandbox_globals(str(tmp_path), "", "")
+
+        with pytest.raises(FileNotFoundError, match="你是否要找"):
+            g["open"]("利润表 - 数据.txt")
+
+    def test_similar_file_underscore_difference(self, tmp_path):
+        """下划线差异能匹配"""
+        (tmp_path / "report_2026.csv").write_text("data")
+        g = _build_sandbox_globals(str(tmp_path), "", "")
+
+        with pytest.raises(FileNotFoundError, match="你是否要找"):
+            g["open"]("report-2026.csv")
+
+    def test_no_similar_file(self, tmp_path):
+        """没有相似文件时只报错不建议"""
+        g = _build_sandbox_globals(str(tmp_path), "", "")
+
+        with pytest.raises(FileNotFoundError) as exc_info:
+            g["open"]("completely_different.txt")
+        assert "你是否要找" not in str(exc_info.value)
+
+    def test_exact_file_works(self, tmp_path):
+        """精确文件名正常打开"""
+        (tmp_path / "data.txt").write_text("hello")
+        g = _build_sandbox_globals(str(tmp_path), "", "")
+
+        f = g["open"]("data.txt")
+        assert f.read() == "hello"
+        f.close()
+
+    def test_outside_workspace_still_blocked(self, tmp_path):
+        """路径穿越仍被拦截（不受 findSimilarFile 影响）"""
+        g = _build_sandbox_globals(str(tmp_path), "", "")
+
+        with pytest.raises(PermissionError, match="文件访问被拒绝"):
+            g["open"]("/etc/passwd")

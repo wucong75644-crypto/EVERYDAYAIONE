@@ -16,6 +16,12 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 
+# 搜索时跳过的目录（VCS/临时/中间数据，对标 Claude Code Grep 自动排除）
+_SKIP_SEARCH_DIRS = frozenset({
+    "staging", "__pycache__", "node_modules",
+    ".git", ".svn", ".hg",
+})
+
 # 禁止访问的文件/目录名（安全敏感）
 _BLOCKED_NAMES = frozenset({
     ".env", ".env.local", ".env.production",
@@ -472,10 +478,8 @@ class FileExecutor:
                 continue
             if item.suffix.lower() in _BLOCKED_EXTENSIONS:
                 continue
-            # 排除隐藏目录和 VCS/临时目录（对标 Claude Code Grep 自动排除）
             rel_parts = item.relative_to(target).parts
-            _SKIP_DIRS = {"staging", "__pycache__", "node_modules", ".git", ".svn"}
-            if any(p.startswith(".") or p in _SKIP_DIRS for p in rel_parts):
+            if any(p.startswith(".") or p in _SKIP_SEARCH_DIRS for p in rel_parts):
                 continue
 
             rel_path = str(item.relative_to(self._root))
