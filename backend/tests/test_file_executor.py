@@ -944,3 +944,149 @@ class TestGetFilename:
         from services.agent.workspace_file_handles import WorkspaceFileHandles
         h = WorkspaceFileHandles()
         assert h.get_filename("F99") is None
+
+
+# ============================================================
+# file_edit 测试
+# ============================================================
+
+
+class TestFileEdit:
+    """file_edit 精确字符串替换"""
+
+    @pytest.fixture
+    def executor(self, tmp_path):
+        from services.file_executor import FileExecutor
+        return FileExecutor(workspace_root=str(tmp_path))
+
+    @pytest.mark.asyncio
+    async def test_single_replace(self, executor, tmp_path):
+        """单次替换"""
+        (tmp_path / "test.txt").write_text("hello world")
+        result = await executor.file_edit("test.txt", "hello", "goodbye")
+        assert "已替换 1 处" in result
+        assert (tmp_path / "test.txt").read_text() == "goodbye world"
+
+    @pytest.mark.asyncio
+    async def test_replace_all(self, executor, tmp_path):
+        """replace_all 替换所有匹配"""
+        (tmp_path / "test.txt").write_text("aa bb aa cc aa")
+        result = await executor.file_edit("test.txt", "aa", "XX", replace_all=True)
+        assert "已替换 3 处" in result
+        assert (tmp_path / "test.txt").read_text() == "XX bb XX cc XX"
+
+    @pytest.mark.asyncio
+    async def test_multiple_matches_without_replace_all(self, executor, tmp_path):
+        """多处匹配但未设 replace_all → 报错"""
+        (tmp_path / "test.txt").write_text("aa bb aa")
+        result = await executor.file_edit("test.txt", "aa", "XX")
+        assert "找到 2 处匹配" in result
+        assert "replace_all" in result
+        # 文件未修改
+        assert (tmp_path / "test.txt").read_text() == "aa bb aa"
+
+    @pytest.mark.asyncio
+    async def test_no_match(self, executor, tmp_path):
+        """未找到匹配"""
+        (tmp_path / "test.txt").write_text("hello world")
+        result = await executor.file_edit("test.txt", "xyz", "abc")
+        assert "未找到匹配" in result
+
+    @pytest.mark.asyncio
+    async def test_same_old_new(self, executor, tmp_path):
+        """old_string == new_string"""
+        (tmp_path / "test.txt").write_text("hello")
+        result = await executor.file_edit("test.txt", "hello", "hello")
+        assert "相同" in result
+
+    @pytest.mark.asyncio
+    async def test_file_not_exists(self, executor):
+        """文件不存在"""
+        result = await executor.file_edit("nonexistent.txt", "a", "b")
+        assert "不存在" in result
+
+    @pytest.mark.asyncio
+    async def test_binary_file_rejected(self, executor, tmp_path):
+        """二进制文件拒绝"""
+        (tmp_path / "data.xlsx").write_bytes(b"\x00\x01\x02")
+        result = await executor.file_edit("data.xlsx", "a", "b")
+        assert "二进制" in result
+
+    @pytest.mark.asyncio
+    async def test_multiline_replace(self, executor, tmp_path):
+        """多行文本替换"""
+        content = "line1\nold_line2\nline3"
+        (tmp_path / "test.txt").write_text(content)
+        result = await executor.file_edit("test.txt", "old_line2", "new_line2")
+        assert "已替换 1 处" in result
+        assert (tmp_path / "test.txt").read_text() == "line1\nnew_line2\nline3"
+
+    @pytest.mark.asyncio
+    async def test_gbk_fallback(self, executor, tmp_path):
+        """GBK 编码文件可编辑"""
+        (tmp_path / "gbk.txt").write_bytes("你好世界".encode("gbk"))
+        result = await executor.file_edit("gbk.txt", "你好", "再见")
+        assert "已替换 1 处" in result
+
+
+# ============================================================
+# file_search 排除 VCS/临时目录测试
+# ============================================================
+
+
+class TestFileSearchSkipDirs:
+    """搜索排除 staging/__pycache__/node_modules 等"""
+
+    @pytest.fixture
+    def executor(self, tmp_path):
+        from services.file_executor import FileExecutor
+        return FileExecutor(workspace_root=str(tmp_path))
+
+    @pytest.mark.asyncio
+    async def test_excludes_staging(self, executor, tmp_path):
+        """staging 目录下的文件不出现在搜索结果中"""
+        staging = tmp_path / "staging" / "conv001"
+        staging.mkdir(parents=True)
+        (staging / "data.csv").write_text("staging data")
+        (tmp_path / "data.csv").write_text("workspace data")
+
+        result = await executor.file_search("data")
+        assert "staging" not in result
+
+    @pytest.mark.asyncio
+    async def test_excludes_pycache(self, executor, tmp_path):
+        """__pycache__ 目录排除"""
+        cache = tmp_path / "__pycache__"
+        cache.mkdir()
+        (cache / "module.pyc").write_bytes(b"\x00")
+        (tmp_path / "module.py").write_text("code")
+
+        result = await executor.file_search("module")
+        assert "__pycache__" not in result
+
+    @pytest.mark.asyncio
+    async def test_excludes_node_modules(self, executor, tmp_path):
+        """node_modules 目录排除"""
+        nm = tmp_path / "node_modules" / "pkg"
+        nm.mkdir(parents=True)
+        (nm / "index.js").write_text("code")
+        (tmp_path / "app.js").write_text("code")
+
+        result = await executor.file_search("index")
+        assert "node_modules" not in result
+
+    @pytest.mark.asyncio
+    async def test_normal_dir_included(self, executor, tmp_path):
+        """正常子目录不被排除"""
+        sub = tmp_path / "reports"
+        sub.mkdir()
+        (sub / "q1.txt").write_text("report")
+
+        result = await executor.file_search("q1")
+        assert "q1.txt" in result
+
+    @pytest.mark.asyncio
+    async def test_search_limit_100(self, executor, tmp_path):
+        """搜索上限为 100"""
+        from services.file_executor import _MAX_SEARCH_RESULTS
+        assert _MAX_SEARCH_RESULTS == 100
