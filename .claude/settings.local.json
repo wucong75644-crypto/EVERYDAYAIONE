@@ -1738,7 +1738,16 @@
       "Bash(openssl x509 *)",
       "Bash(grep -n \"def domain\\\\|@property\" /Users/wucong/EVERYDAYAIONE/backend/services/agent/departments/*.py)",
       "Bash(./git-push.sh \"refactor: 工具描述边界调整——erp_agent收窄为ERP查询,code_execute提升为数据计算与文件处理\")",
-      "Bash(./git-push.sh \"refactor: 沙盒子进程隔离——spawn独立进程执行用户代码+句柄系统移除+文件名直接引用+156测试全绿\")"
+      "Bash(./git-push.sh \"refactor: 沙盒子进程隔离——spawn独立进程执行用户代码+句柄系统移除+文件名直接引用+156测试全绿\")",
+      "WebFetch(domain:www.improvingagents.com)",
+      "WebFetch(domain:datapackage.org)",
+      "Bash(python -m pytest tests/test_file_metadata_extractor.py -v)",
+      "Bash(python -m pytest --timeout=60 -x -q)",
+      "Bash(python -m pytest -x -q)",
+      "Bash(python -m pytest tests/test_file_metadata_extractor.py tests/test_file_executor.py tests/test_file_tools.py -q)",
+      "Bash(python -m pytest tests/test_file_metadata_extractor.py -q --tb=short)",
+      "Bash(python -m pytest tests/test_file_metadata_extractor.py -v --tb=short)",
+      "Bash(./git-push.sh \"feat: 文件工具对齐Claude Code——元信息注入+pandas nrows限制+findSimilarFile+file_edit+搜索优化\")"
     ],
     "additionalDirectories": [
       "/tmp"

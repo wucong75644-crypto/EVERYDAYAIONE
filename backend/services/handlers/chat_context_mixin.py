@@ -99,72 +99,57 @@ class ChatContextMixin:
                 *media_parts,
             ]
 
-        # 工作区文件提示注入（按文件类型指引正确的读取方式）
-        if workspace_files:
-            def _fmt_size(size):
-                if not size:
-                    return "未知大小"
-                if size < 1024:
-                    return f"{size}B"
-                if size < 1024 * 1024:
-                    return f"{size / 1024:.1f}KB"
-                return f"{size / 1024 / 1024:.1f}MB"
-
-            # 按文件类型分类：二进制文件用 code_execute，文本文件用 file_read
-            _BINARY_EXTS = {
-                ".xlsx", ".xls", ".doc", ".docx", ".ppt", ".pptx",
-                ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp",
-                ".zip", ".tar", ".gz", ".parquet",
-            }
-            binary_files = []
-            text_files = []
-            for f in workspace_files:
-                path = f.get("workspace_path", "")
-                ext = path[path.rfind("."):].lower() if "." in path else ""
-                entry = f"- {path} ({_fmt_size(f.get('size'))}, {f.get('mime_type', '未知类型')})"
-                if ext in _BINARY_EXTS:
-                    binary_files.append(entry)
-                else:
-                    text_files.append(entry)
-
-            parts = ["用户工作区中有以下文件：\n"]
-            if text_files:
-                parts.append("文本文件（用 file_read 读取）：")
-                parts.extend(text_files)
-            if binary_files:
-                parts.append("二进制文件（用 code_execute 读取，"
-                             "如 pd.read_excel('文件名')）：")
-                parts.extend(binary_files)
-
-            ws_prompt = "\n".join(parts)
-            messages.insert(0, {"role": "system", "content": ws_prompt})
-            logger.debug(
-                f"Workspace files injected | count={len(workspace_files)} | "
-                f"paths={[f['workspace_path'] for f in workspace_files]}"
-            )
-
         # 搜索上下文注入（作为 system prompt，让工作模型基于搜索结果回答）
         if router_search_context:
             search_prompt = f"以下是联网搜索结果，请基于这些信息回答用户问题：\n\n{router_search_context}"
             messages.insert(0, {"role": "system", "content": search_prompt})
             logger.debug(f"Search context injected | len={len(router_search_context)}")
 
-        # 并行获取：记忆 / 摘要 / 历史（三者完全独立，无交叉数据依赖）
+        # 工作区文件元信息提取准备（对标 OpenAI Responses API spreadsheet augmentation）
+        # 表格文件实时提取 500 行采样 → 类型/范围/分类，与 memory/summary/history 并行
+        _metadata_coro = None
+        if workspace_files:
+            from pathlib import Path as _Path
+            _SPREADSHEET_EXTS = {".xlsx", ".xls", ".csv", ".tsv"}
+            _has_spreadsheets = any(
+                _Path(f.get("workspace_path", "")).suffix.lower() in _SPREADSHEET_EXTS
+                for f in workspace_files
+            )
+            if _has_spreadsheets:
+                from core.config import get_settings
+                from core.workspace import resolve_workspace_dir
+                from services.file_metadata_extractor import extract_metadata_for_files
+                _workspace_dir = resolve_workspace_dir(
+                    get_settings().file_workspace_root,
+                    user_id=user_id,
+                    org_id=getattr(self, "org_id", None),
+                )
+                _metadata_coro = extract_metadata_for_files(workspace_files, _workspace_dir)
+
+        # 兜底协程（无表格文件时占位，返回空 dict）
+        async def _noop_metadata():
+            return {}
+
+        metadata_task = _metadata_coro or _noop_metadata()
+
+        # 并行获取：记忆 / 摘要 / 历史 / 知识库 / 文件元信息（全部独立，无交叉依赖）
         # 有预取记忆时跳过 _build_memory_prompt（已在上游并行获取）
         if prefetched_memory is not None:
-            summary_result, context_result, knowledge_result = await asyncio.gather(
+            summary_result, context_result, knowledge_result, metadata_result = await asyncio.gather(
                 self._get_context_summary(conversation_id, prefetched=prefetched_summary),
                 self._build_context_messages(conversation_id, text_content),
                 self._fetch_knowledge(text_content),
+                metadata_task,
                 return_exceptions=True,
             )
             memory_prompt = prefetched_memory
         else:
-            memory_result, summary_result, context_result, knowledge_result = await asyncio.gather(
+            memory_result, summary_result, context_result, knowledge_result, metadata_result = await asyncio.gather(
                 self._build_memory_prompt(user_id, text_content),
                 self._get_context_summary(conversation_id, prefetched=prefetched_summary),
                 self._build_context_messages(conversation_id, text_content),
                 self._fetch_knowledge(text_content),
+                metadata_task,
                 return_exceptions=True,
             )
             memory_prompt = (
@@ -183,12 +168,30 @@ class ChatContextMixin:
         knowledge_items = (
             knowledge_result if not isinstance(knowledge_result, BaseException) else None
         )
+        metadata_map = (
+            metadata_result if not isinstance(metadata_result, BaseException) else {}
+        )
         if isinstance(summary_result, BaseException):
             logger.warning(f"Summary gather failed | error={summary_result}")
         if isinstance(context_result, BaseException):
             logger.warning(f"Context gather failed | error={context_result}")
         if isinstance(knowledge_result, BaseException):
             logger.debug(f"Knowledge fetch failed | error={knowledge_result}")
+        if isinstance(metadata_result, BaseException):
+            logger.debug(f"File metadata extraction failed | error={metadata_result}")
+
+        # 工作区文件提示注入（对标 OpenAI Responses API spreadsheet augmentation）
+        # 表格文件注入列元信息（类型/范围/分类），非表格文件注入读取指引
+        if workspace_files:
+            from services.file_metadata_extractor import format_workspace_files_prompt
+            ws_prompt = format_workspace_files_prompt(workspace_files, metadata_map)
+            if ws_prompt:
+                messages.insert(0, {"role": "system", "content": ws_prompt})
+                logger.debug(
+                    f"Workspace files injected | count={len(workspace_files)} | "
+                    f"metadata_count={len(metadata_map)} | "
+                    f"paths={[f['workspace_path'] for f in workspace_files]}"
+                )
 
         # 知识库经验注入 — Phase 7: similarity 分数门控 + 通用/案例分离
         # 设计文档：docs/document/TECH_Agent能力通信架构.md §3.4.2

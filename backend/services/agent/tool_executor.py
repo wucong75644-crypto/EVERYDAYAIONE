@@ -548,6 +548,7 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         dispatch = {
             "file_read": executor.file_read,
             "file_write": executor.file_write,
+            "file_edit": executor.file_edit,
             "file_search": executor.file_search,
             "file_info": executor.file_info,
         }
