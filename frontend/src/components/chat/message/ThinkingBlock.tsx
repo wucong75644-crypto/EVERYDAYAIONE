@@ -5,7 +5,7 @@
  * 支持流式输出时显示思考中动画，完成后显示思考时长。
  */
 
-import { useState, useCallback, useMemo, memo } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef, memo } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
 import { SOFT_SPRING } from '../../../utils/motion';
 
@@ -14,8 +14,10 @@ interface ThinkingBlockProps {
   content: string;
   /** 是否正在流式思考中 */
   isThinking?: boolean;
-  /** 思考开始时间戳（用于计算思考时长） */
+  /** 思考开始时间戳（用于计算思考时长，前端 fallback） */
   thinkingStartTime?: number;
+  /** 后端计算的精确耗时（毫秒），优先于 thinkingStartTime */
+  durationMs?: number;
 }
 
 /** 格式化思考时长 */
@@ -31,19 +33,37 @@ export default memo(function ThinkingBlock({
   content,
   isThinking = false,
   thinkingStartTime,
+  durationMs,
 }: ThinkingBlockProps) {
-  const [expanded, setExpanded] = useState(false);
+  // 初始值直接对齐 props：流式挂载 = 展开，DB 加载 = 折叠，无多余渲染
+  const [expanded, setExpanded] = useState(isThinking);
+  const prevThinkingRef = useRef(isThinking);
 
   const toggleExpanded = useCallback(() => {
     setExpanded((prev) => !prev);
   }, []);
 
-  // 计算思考时长（仅在非思考中时显示）
+  // 检测 isThinking 的 true→false 转换，延迟自动折叠（对标 Vercel Reasoning 组件）
+  useEffect(() => {
+    const wasThinking = prevThinkingRef.current;
+    prevThinkingRef.current = isThinking;
+
+    if (isThinking) {
+      setExpanded(true);
+    } else if (wasThinking) {
+      // true → false：thinking 完成，延迟 1 秒折叠
+      const timer = setTimeout(() => setExpanded(false), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [isThinking]);
+
+  // 计算思考时长：优先后端 durationMs，fallback 前端计算
   const durationText = useMemo(() => {
-    if (isThinking || !thinkingStartTime) return '';
-    const elapsed = Date.now() - thinkingStartTime;
-    return `用时 ${formatDuration(elapsed)}`;
-  }, [isThinking, thinkingStartTime]);
+    if (isThinking) return '';
+    if (durationMs != null) return `用时 ${formatDuration(durationMs)}`;
+    if (thinkingStartTime) return `用时 ${formatDuration(Date.now() - thinkingStartTime)}`;
+    return '';
+  }, [isThinking, durationMs, thinkingStartTime]);
 
   // 无内容时不渲染
   if (!content && !isThinking) return null;

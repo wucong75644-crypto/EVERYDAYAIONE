@@ -20,6 +20,7 @@ _FILE_PATTERN = re.compile(
 from schemas.websocket import (
     build_tool_result,
     build_tool_confirm_request,
+    build_content_block_add,
 )
 from services.websocket_manager import ws_manager
 
@@ -242,6 +243,14 @@ class ChatToolMixin:
                         turn=turn,
                     ),
                 )
+                # 推送 tool_step 完成更新
+                await self._push_tool_step_update(
+                    task_id, conversation_id, message_id, user_id,
+                    tool_name, tool_call_id,
+                    success=not result.is_failure,
+                    summary=result.summary[:500] if result.summary else "",
+                    elapsed_ms=_audit_elapsed,
+                )
                 self._emit_tool_audit(
                     task_id, conversation_id, user_id, tool_name,
                     tool_call_id, turn, args, len(result.summary),
@@ -268,6 +277,11 @@ class ChatToolMixin:
                         summary="表单已展示",
                         turn=turn,
                     ),
+                )
+                await self._push_tool_step_update(
+                    task_id, conversation_id, message_id, user_id,
+                    tool_name, tool_call_id,
+                    success=True, summary="表单已展示", elapsed_ms=_audit_elapsed,
                 )
                 self._emit_tool_audit(
                     task_id, conversation_id, user_id, tool_name,
@@ -299,6 +313,16 @@ class ChatToolMixin:
                     turn=turn,
                 ),
             )
+            # 推送 tool_step 完成更新（code_execute 附带 output）
+            _step_output = None
+            if tool_name == "code_execute":
+                _step_output = raw_summary[:2000] if raw_summary else None
+            await self._push_tool_step_update(
+                task_id, conversation_id, message_id, user_id,
+                tool_name, tool_call_id,
+                success=True, summary=raw_summary[:500],
+                elapsed_ms=_audit_elapsed, output=_step_output,
+            )
             # [C1] 审计日志（fire-and-forget）
             self._emit_tool_audit(
                 task_id, conversation_id, user_id, tool_name,
@@ -323,6 +347,11 @@ class ChatToolMixin:
                     turn=turn,
                 ),
             )
+            await self._push_tool_step_update(
+                task_id, conversation_id, message_id, user_id,
+                tool_name, tool_call_id,
+                success=False, summary=str(e)[:500], elapsed_ms=_audit_elapsed,
+            )
             self._emit_tool_audit(
                 task_id, conversation_id, user_id, tool_name,
                 tool_call_id, turn, args, len(error_msg),
@@ -330,6 +359,36 @@ class ChatToolMixin:
             )
             return (tc, error_msg, True)
 
+
+    async def _push_tool_step_update(
+        self, task_id: str, conversation_id: str, message_id: str,
+        user_id: str, tool_name: str, tool_call_id: str,
+        success: bool, summary: str, elapsed_ms: int,
+        output: Optional[str] = None,
+    ) -> None:
+        """推送 tool_step 完成/失败更新到前端（通过 content_block_add）"""
+        _step_update: Dict[str, Any] = {
+            "type": "tool_step",
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "status": "completed" if success else "error",
+            "summary": summary,
+            "elapsed_ms": elapsed_ms,
+        }
+        if output is not None:
+            _step_update["output"] = output
+        try:
+            await ws_manager.send_to_task_or_user(
+                task_id, user_id,
+                build_content_block_add(
+                    task_id=task_id,
+                    conversation_id=conversation_id,
+                    message_id=message_id,
+                    block=_step_update,
+                ),
+            )
+        except Exception as e:
+            logger.warning(f"tool_step update push failed | tc={tool_call_id} | {e}")
 
     def _emit_tool_audit(
         self, task_id: str, conversation_id: str, user_id: str,

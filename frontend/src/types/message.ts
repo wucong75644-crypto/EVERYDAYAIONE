@@ -15,6 +15,8 @@ export type ContentPart =
   | VideoPart
   | AudioPart
   | FilePart
+  | ThinkingPart
+  | ToolStepPart
   | ToolResultPart
   | FormPart;
 
@@ -63,6 +65,25 @@ export interface ToolResultPart {
   tool_name: string;
   text: string;
   files?: Array<{ url: string; name: string; mime_type: string; size?: number }>;
+}
+
+/** 思考过程内容块（持久化，对标 Vercel AI SDK reasoning part） */
+export interface ThinkingPart {
+  type: 'thinking';
+  text: string;
+  duration_ms?: number;
+}
+
+/** 工具调用步骤块（折叠式卡片，对标 Vercel AI SDK tool part） */
+export interface ToolStepPart {
+  type: 'tool_step';
+  tool_name: string;
+  tool_call_id: string;
+  status: 'running' | 'completed' | 'error';
+  summary?: string;
+  code?: string;
+  output?: string;
+  elapsed_ms?: number;
 }
 
 /** 表单内容块（聊天内嵌表单，如定时任务创建/修改） */

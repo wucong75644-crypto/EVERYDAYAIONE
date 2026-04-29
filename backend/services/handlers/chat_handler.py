@@ -5,6 +5,7 @@
 """
 
 import asyncio
+import json
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -22,6 +23,7 @@ from schemas.websocket import (
     build_message_chunk,
     build_thinking_chunk,
     build_tool_call,
+    build_content_block_add,
 )
 from services.adapters.factory import DEFAULT_MODEL_ID
 from services.handlers.base import BaseHandler, TaskMetadata
@@ -314,6 +316,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         _start_time = _time.monotonic()
         accumulated_text = ""
         accumulated_thinking = ""
+        _thinking_start_time: Optional[float] = None  # 首个 thinking chunk 的时间戳
         final_usage: Dict[str, Any] = {"prompt_tokens": 0, "completion_tokens": 0}
         chunk_count = 0
         _llm_succeeded = False
@@ -535,6 +538,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 ):
                     # 思考内容
                     if chunk.thinking_content:
+                        if _thinking_start_time is None:
+                            _thinking_start_time = _time.monotonic()
                         turn_thinking += chunk.thinking_content
                         accumulated_thinking += chunk.thinking_content
                         thinking_msg = build_thinking_chunk(
@@ -617,13 +622,43 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     ),
                 )
 
+                # 推送 tool_step(running) 内容块 + 记录开始时间
+                _tool_step_start_times: Dict[str, float] = {}
+                for tc in completed_calls:
+                    _tool_step: Dict[str, Any] = {
+                        "type": "tool_step",
+                        "tool_name": tc["name"],
+                        "tool_call_id": tc["id"],
+                        "status": "running",
+                    }
+                    if tc["name"] == "code_execute":
+                        try:
+                            _ce_args = json.loads(tc.get("arguments", "{}"))
+                            _tool_step["code"] = _ce_args.get("code", "")[:2000]
+                        except Exception:
+                            pass
+                    _content_blocks.append(_tool_step)
+                    _tool_step_start_times[tc["id"]] = _time.monotonic()
+                    try:
+                        await ws_manager.send_to_task_or_user(
+                            task_id, user_id,
+                            build_content_block_add(
+                                task_id=task_id,
+                                conversation_id=conversation_id,
+                                message_id=message_id,
+                                block=_tool_step,
+                            ),
+                        )
+                    except Exception as _step_err:
+                        logger.warning(f"tool_step push failed | tc={tc['id']} | {_step_err}")
+
                 # 执行工具（安全检查 + 并行/串行分批 + 传 messages 给 erp_agent）
                 tool_results = await self._execute_tool_calls(
                     completed_calls, task_id, conversation_id, message_id,
                     user_id, turn + 1, messages=messages, budget=_budget,
                 )
 
-                # 工具结果塞进 messages + 更新上下文
+                # 工具结果塞进 messages + 更新上下文 + 更新 tool_step 状态
                 from services.agent.agent_result import AgentResult
                 for tc, result, is_error in tool_results:
                     if isinstance(result, AgentResult):
@@ -644,6 +679,19 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         "tool_call_id": tc["id"],
                         "content": content,
                     })
+                    # 更新 _content_blocks 中对应 tool_step 的状态（持久化用）
+                    _tc_id = tc["id"]
+                    _tc_start = _tool_step_start_times.get(_tc_id)
+                    _elapsed = int((_time.monotonic() - _tc_start) * 1000) if _tc_start else 0
+                    for _blk in _content_blocks:
+                        if _blk.get("type") == "tool_step" and _blk.get("tool_call_id") == _tc_id:
+                            _blk["status"] = "error" if is_error else "completed"
+                            _blk["elapsed_ms"] = _elapsed
+                            if isinstance(result, AgentResult):
+                                _blk["summary"] = (result.summary or "")[:500]
+                            elif isinstance(result, str):
+                                _blk["summary"] = result[:500]
+                            break
 
                 # ── 文件块嵌入 content 流 + 实时推送前端 ──
                 # 设计文档：TECH_内容块混排渲染架构.md §6.2
@@ -823,12 +871,25 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     _content_blocks.append({"type": "text", "text": _final_turn_text})
                 # 从 blocks 构建 result_parts
                 # 设计文档：TECH_内容块混排渲染架构.md §6.3
-                from schemas.message import ToolResultPart, ImagePart, FilePart
+                from schemas.message import (
+                    ToolResultPart, ToolStepPart as _ToolStepPart,
+                    ImagePart, FilePart,
+                )
                 from services.handlers.media_extractor import extract_media_parts
                 result_parts: list = []
                 for block in _content_blocks:
                     if block["type"] == "text":
                         result_parts.extend(extract_media_parts(block["text"]))
+                    elif block["type"] == "tool_step":
+                        result_parts.append(_ToolStepPart(
+                            tool_name=block["tool_name"],
+                            tool_call_id=block["tool_call_id"],
+                            status=block.get("status", "completed"),
+                            summary=block.get("summary"),
+                            code=block.get("code"),
+                            output=block.get("output"),
+                            elapsed_ms=block.get("elapsed_ms"),
+                        ))
                     elif block["type"] == "tool_result":
                         result_parts.append(ToolResultPart(
                             tool_name=block["tool_name"],
@@ -855,6 +916,18 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 from services.handlers.media_extractor import extract_media_parts
                 result_parts = extract_media_parts(accumulated_text)
                 self._pending_file_parts = []
+
+            # 7. Thinking 持久化：作为 content 首元素（不再仅存 generation_params）
+            if accumulated_thinking:
+                from schemas.message import ThinkingPart
+                _thinking_duration = (
+                    int((_time.monotonic() - _thinking_start_time) * 1000)
+                    if _thinking_start_time else None
+                )
+                result_parts.insert(0, ThinkingPart(
+                    text=accumulated_thinking,
+                    duration_ms=_thinking_duration,
+                ))
 
             # 标记 LLM 阶段成功，持久化在 try 外执行
             # budget 超限已走 on_error 的不再走 on_complete

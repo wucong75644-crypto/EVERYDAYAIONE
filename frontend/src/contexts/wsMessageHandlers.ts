@@ -540,7 +540,21 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       const block = msg.payload?.block as Record<string, unknown> | undefined;
       if (!conversation_id || !block) return;
 
-      deps.getStore().appendContentBlock(conversation_id, block);
+      const store = deps.getStore();
+
+      // tool_step 状态更新：非 running 的 tool_step 是对已有 block 的更新
+      if (block.type === 'tool_step' && block.tool_call_id && block.status !== 'running') {
+        store.updateContentBlock(conversation_id, block.tool_call_id as string, block);
+        logger.info('ws:content', 'tool_step_update', {
+          conversationId: conversation_id,
+          toolCallId: block.tool_call_id,
+          status: block.status,
+        });
+        return;
+      }
+
+      // 其他 block（新增的 running tool_step、image、file 等）：直接追加
+      store.appendContentBlock(conversation_id, block);
       logger.info('ws:content', 'content_block_add', { conversationId: conversation_id, type: block.type });
     },
 
