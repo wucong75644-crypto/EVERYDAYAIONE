@@ -1771,7 +1771,10 @@
       "Bash(./git-push.sh \"perf: code_execute结果分流对齐Claude——沙盒50K安全网+信封30K预算+结构化预览+宽表模式识别+工具描述无状态说明\")",
       "Bash(./git-push.sh \"fix: 修复本次变更导致的3个测试断言——sandbox默认值50K+工具描述关键词+数据分析工作流\")",
       "Bash(PGPASSWORD=WlnbhzE5sYYZd9t9Xw08w4I0 psql -h 47.110.94.25 -p 5432 -U everydayai -d everydayai -c \"SELECT id, content::text FROM messages WHERE role='assistant' AND status='completed' ORDER BY created_at DESC LIMIT 3\")",
-      "Bash(./git-push.sh \"fix: chat_tool_mixin也走wrap_for_erp_agent——修复code_execute 5K结果被2K默认预算误落盘\")"
+      "Bash(./git-push.sh \"fix: chat_tool_mixin也走wrap_for_erp_agent——修复code_execute 5K结果被2K默认预算误落盘\")",
+      "Bash(python -m pytest tests/test_tool_result_envelope.py tests/test_file_metadata_extractor.py tests/test_sandbox_validators.py tests/test_e2e_sandbox_flow.py --deselect tests/test_tool_result_envelope.py::TestDelayedCleanupStaging -q --tb=line)",
+      "Bash(python -m pytest tests/test_tool_result_envelope.py tests/test_file_metadata_extractor.py tests/test_sandbox_validators.py tests/test_e2e_sandbox_flow.py tests/test_code_tools.py --deselect tests/test_tool_result_envelope.py::TestDelayedCleanupStaging -q --tb=line)",
+      "Bash(./git-push.sh \"refactor: 工具描述改Claude风格精简版+元信息砍到只留静态信息——删除xlsx列提取/表头检测/宽表模式识别\")"
     ],
     "additionalDirectories": [
       "/tmp"
