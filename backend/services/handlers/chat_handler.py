@@ -585,9 +585,10 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 if not tool_calls_acc:
                     break  # 无工具调用，输出完成
 
-                # 有工具调用 → 收割本轮文本为独立 block
+                # 有工具调用 → 中间叙述归入 thinking（不进正文）
+                # "让我查看文件..."等中间文字本质是 AI 思考过程，放到 ThinkingBlock 展示
                 if turn_text:
-                    _content_blocks.append({"type": "text", "text": turn_text})
+                    accumulated_thinking += f"\n{turn_text}"
 
                 # 有工具调用 → 执行工具循环
                 completed_calls = sorted(tool_calls_acc.values(), key=lambda x: x.get("id", ""))
@@ -622,7 +623,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     ),
                 )
 
-                # 推送 tool_step(running) 内容块 + 记录开始时间
+                # 推送 tool_step(running) 内容块 + 记录开始时间 + thinking 日志
                 _tool_step_start_times: Dict[str, float] = {}
                 for tc in completed_calls:
                     _tool_step: Dict[str, Any] = {
@@ -631,12 +632,31 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         "tool_call_id": tc["id"],
                         "status": "running",
                     }
+                    # 工具调用日志 → thinking（实时推送 + 持久化）
+                    _tool_label = tc["name"]
+                    _thinking_log = f"\n\n→ 调用 {_tool_label}"
                     if tc["name"] == "code_execute":
                         try:
                             _ce_args = json.loads(tc.get("arguments", "{}"))
-                            _tool_step["code"] = _ce_args.get("code", "")[:2000]
+                            _ce_code = _ce_args.get("code", "")[:2000]
+                            _tool_step["code"] = _ce_code
+                            if _ce_code:
+                                _thinking_log += f"\n```python\n{_ce_code}\n```"
                         except Exception:
                             pass
+                    accumulated_thinking += _thinking_log
+                    if _thinking_start_time is None:
+                        _thinking_start_time = _time.monotonic()
+                    await ws_manager.send_to_task_or_user(
+                        task_id, user_id,
+                        build_thinking_chunk(
+                            task_id=task_id,
+                            conversation_id=conversation_id,
+                            message_id=message_id,
+                            chunk=_thinking_log,
+                            accumulated=accumulated_thinking,
+                        ),
+                    )
                     _content_blocks.append(_tool_step)
                     _tool_step_start_times[tc["id"]] = _time.monotonic()
                     try:
@@ -692,6 +712,26 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             elif isinstance(result, str):
                                 _blk["summary"] = result[:500]
                             break
+
+                    # 工具结果日志 → thinking（实时推送 + 持久化）
+                    _result_preview = ""
+                    if isinstance(result, AgentResult):
+                        _result_preview = (result.summary or "")[:500]
+                    elif isinstance(result, str):
+                        _result_preview = result[:500]
+                    _status_icon = "✗" if is_error else "✓"
+                    _result_log = f"\n← {_status_icon} {tc['name']}: {_result_preview}"
+                    accumulated_thinking += _result_log
+                    await ws_manager.send_to_task_or_user(
+                        task_id, user_id,
+                        build_thinking_chunk(
+                            task_id=task_id,
+                            conversation_id=conversation_id,
+                            message_id=message_id,
+                            chunk=_result_log,
+                            accumulated=accumulated_thinking,
+                        ),
+                    )
 
                 # ── 文件块嵌入 content 流 + 实时推送前端 ──
                 # 设计文档：TECH_内容块混排渲染架构.md §6.2
@@ -858,12 +898,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             credits_consumed = self._calculate_credits(final_usage)
 
             # 最后一轮的 turn_text（循环 break 后未被收割）
-            _final_turn_text = accumulated_text
-            # 从 accumulated_text 中减去已收割到 _content_blocks 的部分
-            _harvested = sum(
-                len(b["text"]) for b in _content_blocks if b["type"] == "text"
-            )
-            _final_turn_text = accumulated_text[_harvested:]
+            # 中间轮文本已归入 accumulated_thinking，这里只取最后一轮的实际回答
+            _final_turn_text = turn_text
 
             if _content_blocks:
                 # 多块模式：有工具结果插入（text / image / file 混排）
