@@ -32,8 +32,9 @@ ALLOWED_IMPORT_MODULES = frozenset({
     "matplotlib", "seaborn",
     # 图片处理
     "PIL",
-    # 文档生成（PDF / Word / PPT / Excel 直接操作）
+    # 文档读写（PDF / Word / PPT / Excel）
     "reportlab", "docx", "pptx", "openpyxl",
+    "PyPDF2",  # PDF 读取（服务器已安装 3.0.1）
     # 高性能 Excel 读写引擎
     "calamine", "xlsxwriter",
     # 内部 C 扩展（被上述模块传递依赖）

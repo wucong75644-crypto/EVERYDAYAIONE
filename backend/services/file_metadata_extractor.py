@@ -24,6 +24,7 @@ from loguru import logger
 # ============================================================
 
 _SPREADSHEET_EXTS = {".xlsx", ".xls", ".csv", ".tsv"}
+_DOCUMENT_EXTS = {".docx", ".pptx", ".pdf"}
 _SAMPLE_ROWS = 500  # 采样行数（对标 OpenAI 1000 行，ossfs 折中）
 _MAX_PREVIEW_ROWS = 3  # 展示预览行数
 _MAX_PREVIEW_COLS = 8  # 预览表格最多展示列数
@@ -257,10 +258,25 @@ def _extract_xlsx(abs_path: str) -> Optional[Dict[str, Any]]:
         if not all_rows:
             return None
 
-        # 表头
+        # 表头检测：第一行非空列数少于总列数 30% → 可能是标题行，尝试第二行
+        # 典型场景：利润表第一行只有"利润表-店铺利润表"一个值
+        header_row_idx = 0
+        first_row_non_null = sum(1 for c in all_rows[0] if c is not None and str(c).strip())
+        total_possible_cols = len(all_rows[0])
+        if (total_possible_cols > 3
+                and first_row_non_null < total_possible_cols * 0.3
+                and len(all_rows) > 1):
+            # 检查第二行是否更像表头
+            second_row_non_null = sum(1 for c in all_rows[1] if c is not None and str(c).strip())
+            if second_row_non_null > first_row_non_null:
+                header_row_idx = 1
+
         header = [str(c).strip() if c is not None else f"列{i+1}"
-                  for i, c in enumerate(all_rows[0])]
-        data = all_rows[1:]
+                  for i, c in enumerate(all_rows[header_row_idx])]
+        data = all_rows[header_row_idx + 1:]
+
+        # 修正数据行数（减去实际表头行号）
+        data_rows = max(0, (total_rows or 0) - header_row_idx - 1)
 
         # 按列聚合
         columns_meta = []
@@ -288,6 +304,144 @@ def _extract_xlsx(abs_path: str) -> Optional[Dict[str, Any]]:
         return result
     finally:
         wb.close()
+
+
+# ============================================================
+# 文档类提取（docx / pptx / pdf）
+# ============================================================
+
+_MAX_DOC_PREVIEW_CHARS = 500  # 文档预览文本最大字符数
+_MAX_DOC_PREVIEW_PARAGRAPHS = 10  # 预览最多段落数
+
+
+def extract_document_metadata(abs_path: str) -> Optional[Dict[str, Any]]:
+    """从文档文件提取元信息（同步，在线程池中执行）"""
+    if not os.path.exists(abs_path):
+        return None
+
+    ext = Path(abs_path).suffix.lower()
+    try:
+        if ext == ".docx":
+            return _extract_docx(abs_path)
+        elif ext == ".pptx":
+            return _extract_pptx(abs_path)
+        elif ext == ".pdf":
+            return _extract_pdf(abs_path)
+        return None
+    except Exception as e:
+        logger.warning(
+            f"Document metadata extraction failed | path={abs_path} | "
+            f"error={type(e).__name__}: {e}"
+        )
+        return None
+
+
+def _extract_docx(abs_path: str) -> Optional[Dict[str, Any]]:
+    """提取 docx 元信息：段落数、表格数、前几段预览"""
+    from docx import Document
+
+    doc = Document(abs_path)
+    paragraphs = doc.paragraphs
+    tables = doc.tables
+
+    # 提取非空段落文本
+    non_empty = [p.text.strip() for p in paragraphs if p.text.strip()]
+    total_paragraphs = len(non_empty)
+
+    # 预览前 N 段
+    preview_parts = []
+    char_count = 0
+    for text in non_empty[:_MAX_DOC_PREVIEW_PARAGRAPHS]:
+        if char_count + len(text) > _MAX_DOC_PREVIEW_CHARS:
+            remaining = _MAX_DOC_PREVIEW_CHARS - char_count
+            if remaining > 20:
+                preview_parts.append(text[:remaining] + "...")
+            break
+        preview_parts.append(text)
+        char_count += len(text)
+
+    # 总字数估算
+    total_chars = sum(len(t) for t in non_empty)
+
+    return {
+        "type": "docx",
+        "paragraphs": total_paragraphs,
+        "tables": len(tables),
+        "chars": total_chars,
+        "preview": preview_parts,
+    }
+
+
+def _extract_pptx(abs_path: str) -> Optional[Dict[str, Any]]:
+    """提取 pptx 元信息：幻灯片数、每页标题、总字数"""
+    from pptx import Presentation
+
+    prs = Presentation(abs_path)
+    slides = prs.slides
+    total_slides = len(slides)
+
+    slide_info = []
+    total_chars = 0
+    for i, slide in enumerate(slides):
+        title = ""
+        slide_text_parts = []
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                text = shape.text_frame.text.strip()
+                if text:
+                    slide_text_parts.append(text)
+                    total_chars += len(text)
+            if hasattr(shape, "text") and shape == slide.shapes.title:
+                title = shape.text.strip()
+
+        slide_info.append({
+            "index": i + 1,
+            "title": title or f"第{i+1}页",
+            "text_len": sum(len(t) for t in slide_text_parts),
+        })
+
+    return {
+        "type": "pptx",
+        "slides": total_slides,
+        "slide_titles": [s["title"] for s in slide_info[:20]],  # 最多 20 页标题
+        "chars": total_chars,
+    }
+
+
+def _extract_pdf(abs_path: str) -> Optional[Dict[str, Any]]:
+    """提取 pdf 元信息：页数、前 1 页文本预览"""
+    try:
+        from PyPDF2 import PdfReader
+    except ImportError:
+        logger.debug("PyPDF2 not installed, skipping PDF metadata")
+        return None
+
+    reader = PdfReader(abs_path)
+    total_pages = len(reader.pages)
+
+    # 提取前 1 页文本预览
+    preview = ""
+    if total_pages > 0:
+        first_page_text = reader.pages[0].extract_text() or ""
+        preview = first_page_text.strip()[:_MAX_DOC_PREVIEW_CHARS]
+        if len(first_page_text.strip()) > _MAX_DOC_PREVIEW_CHARS:
+            preview += "..."
+
+    # 估算总字数（采样前 3 页）
+    total_chars = 0
+    sample_pages = min(3, total_pages)
+    for i in range(sample_pages):
+        page_text = reader.pages[i].extract_text() or ""
+        total_chars += len(page_text)
+    if sample_pages > 0 and total_pages > sample_pages:
+        total_chars = round(total_chars / sample_pages * total_pages)
+
+    return {
+        "type": "pdf",
+        "pages": total_pages,
+        "chars": total_chars,
+        "preview": preview,
+    }
 
 
 def _extract_csv(abs_path: str, delimiter: str = ",") -> Optional[Dict[str, Any]]:
@@ -385,28 +539,34 @@ async def extract_metadata_for_files(
     """
     result: Dict[str, Optional[Dict[str, Any]]] = {}
 
-    # 过滤出表格文件
-    spreadsheets = []
+    # 过滤出可提取的文件（表格 + 文档）
+    extractable = []
     for f in workspace_files:
         wp = f.get("workspace_path", "")
         ext = Path(wp).suffix.lower() if wp else ""
-        if ext in _SPREADSHEET_EXTS:
-            spreadsheets.append(f)
+        if ext in _SPREADSHEET_EXTS or ext in _DOCUMENT_EXTS:
+            extractable.append(f)
 
-    if not spreadsheets:
+    if not extractable:
         return result
 
     # 限制最大提取数
-    spreadsheets = spreadsheets[:_MAX_METADATA_FILES]
+    extractable = extractable[:_MAX_METADATA_FILES]
 
     loop = asyncio.get_running_loop()
 
     async def _extract_one(ws_file: Dict[str, Any]) -> Tuple[str, Optional[Dict[str, Any]]]:
         wp = ws_file["workspace_path"]
+        ext = Path(wp).suffix.lower()
         abs_path = os.path.join(workspace_dir, wp)
+        # 根据文件类型选提取函数
+        extract_fn = (
+            extract_spreadsheet_metadata if ext in _SPREADSHEET_EXTS
+            else extract_document_metadata
+        )
         try:
             meta = await asyncio.wait_for(
-                loop.run_in_executor(None, extract_spreadsheet_metadata, abs_path),
+                loop.run_in_executor(None, extract_fn, abs_path),
                 timeout=_PER_FILE_TIMEOUT,
             )
             return wp, meta
@@ -415,7 +575,7 @@ async def extract_metadata_for_files(
             return wp, None
 
     try:
-        tasks = [_extract_one(f) for f in spreadsheets]
+        tasks = [_extract_one(f) for f in extractable]
         results = await asyncio.wait_for(
             asyncio.gather(*tasks, return_exceptions=True),
             timeout=_TOTAL_TIMEOUT,
@@ -451,14 +611,22 @@ def format_workspace_files_prompt(
     if not workspace_files:
         return ""
 
-    _BINARY_EXTS = {
-        ".doc", ".docx", ".ppt", ".pptx",
-        ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+    _OTHER_BINARY_EXTS = {
+        ".doc", ".ppt",  # 旧格式（无解析库）
+        ".png", ".jpg", ".jpeg", ".gif", ".webp",
         ".zip", ".tar", ".gz", ".parquet",
     }
 
-    # 单次遍历分类：表格文件 vs 其他文件
+    # 文档格式的读取指引
+    _DOC_READ_HINTS = {
+        ".docx": "from docx import Document; doc = Document('{wp}')",
+        ".pptx": "from pptx import Presentation; prs = Presentation('{wp}')",
+        ".pdf": "from PyPDF2 import PdfReader; reader = PdfReader('{wp}')",
+    }
+
+    # 单次遍历分类
     spreadsheet_entries: List[Tuple[Dict[str, Any], Optional[Dict[str, Any]]]] = []
+    document_entries: List[str] = []
     other_entries: List[str] = []
 
     for f in workspace_files:
@@ -468,7 +636,10 @@ def format_workspace_files_prompt(
 
         if ext in _SPREADSHEET_EXTS:
             spreadsheet_entries.append((f, metadata_map.get(wp)))
-        elif ext in _BINARY_EXTS:
+        elif ext in _DOCUMENT_EXTS:
+            meta = metadata_map.get(wp)
+            document_entries.append(_format_document_entry(wp, size_str, ext, meta))
+        elif ext in _OTHER_BINARY_EXTS:
             other_entries.append(f"📄 {wp} ({size_str})\n  用 code_execute 读取")
         else:
             other_entries.append(f"📄 {wp} ({size_str})\n  用 file_read 读取")
@@ -501,7 +672,12 @@ def format_workspace_files_prompt(
         else:
             parts.append(_format_standard(wp, size_str, meta))
 
-    # 非表格文件
+    # 文档文件
+    if document_entries:
+        parts.append("")
+        parts.extend(document_entries)
+
+    # 其他文件
     if other_entries:
         parts.append("")
         parts.extend(other_entries)
@@ -633,6 +809,67 @@ def _format_compact(
         f"  列: {cols_str}{sheet_hint}\n"
         f"  用 {read_cmd}('{wp}') 读取"
     )
+
+
+def _format_document_entry(
+    wp: str, size_str: str, ext: str, meta: Optional[Dict[str, Any]],
+) -> str:
+    """格式化文档文件条目（docx/pptx/pdf）"""
+    _DOC_READ_HINTS = {
+        ".docx": f"from docx import Document; doc = Document('{wp}')",
+        ".pptx": f"from pptx import Presentation; prs = Presentation('{wp}')",
+        ".pdf": f"from PyPDF2 import PdfReader; reader = PdfReader('{wp}')",
+    }
+
+    read_hint = _DOC_READ_HINTS.get(ext, f"open('{wp}')")
+
+    if meta is None:
+        return f"📄 {wp} ({size_str})\n  用 code_execute: {read_hint}"
+
+    doc_type = meta.get("type", "")
+
+    if doc_type == "docx":
+        paragraphs = meta.get("paragraphs", 0)
+        tables = meta.get("tables", 0)
+        chars = meta.get("chars", 0)
+        preview = meta.get("preview", [])
+
+        lines = [f"📝 {wp} ({size_str}) | {paragraphs}段 {tables}表 ~{chars:,}字"]
+        if preview:
+            preview_text = " / ".join(preview[:3])
+            if len(preview_text) > 100:
+                preview_text = preview_text[:97] + "..."
+            lines.append(f"  预览: {preview_text}")
+        lines.append(f"  用 code_execute: {read_hint}")
+        return "\n".join(lines)
+
+    elif doc_type == "pptx":
+        slides = meta.get("slides", 0)
+        chars = meta.get("chars", 0)
+        titles = meta.get("slide_titles", [])
+
+        lines = [f"📽 {wp} ({size_str}) | {slides}页 ~{chars:,}字"]
+        if titles:
+            title_preview = ", ".join(titles[:5])
+            if len(titles) > 5:
+                title_preview += f" (+{len(titles)-5}页)"
+            lines.append(f"  页标题: {title_preview}")
+        lines.append(f"  用 code_execute: {read_hint}")
+        return "\n".join(lines)
+
+    elif doc_type == "pdf":
+        pages = meta.get("pages", 0)
+        chars = meta.get("chars", 0)
+        preview = meta.get("preview", "")
+
+        lines = [f"📕 {wp} ({size_str}) | {pages}页 ~{chars:,}字"]
+        if preview:
+            short = preview[:100] + "..." if len(preview) > 100 else preview
+            lines.append(f"  首页预览: {short}")
+        lines.append(f"  用 code_execute: {read_hint}")
+        return "\n".join(lines)
+
+    return f"📄 {wp} ({size_str})\n  用 code_execute: {read_hint}"
 
 
 def _fmt_size(size: Optional[int]) -> str:
