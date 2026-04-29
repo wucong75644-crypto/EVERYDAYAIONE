@@ -36,6 +36,8 @@ CODE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
 # ERP Agent 版（只有 STAGING_DIR + OUTPUT_DIR，不知道 WORKSPACE_DIR 的存在）
 _DESCRIPTION_BASE = (
     "纯计算沙盒。对已获取的数据做计算、转换、导出文件。\n"
+    "⚠ 每次执行是独立子进程，结束后所有变量和数据销毁。"
+    "必须在一段代码中完成全部逻辑（读取→处理→输出），不要分多次逐步探索。\n"
     "⚠ 沙盒内不能查询数据！数据必须先通过工具获取"
     "（local_* / erp_* / fetch_all_pages），"
     "大数据会自动存到 staging 文件。\n\n"
@@ -54,12 +56,16 @@ _DESCRIPTION_BASE = (
     "- 图表用 plt.savefig(OUTPUT_DIR + '/图.png', dpi=150, bbox_inches='tight');"
     " plt.close()\n"
     "- 用 print() 输出文字\n"
+    "- 输出超过 30000 字符时自动保存到 staging 文件，你会看到前 2000 字符预览，"
+    "可在后续 code_execute 中通过 STAGING_DIR 路径读取完整数据\n"
     "- 禁止 import os/sys"
 )
 
 # 主 Agent 版（加 WORKSPACE_DIR + 完整文件生成能力）
 _DESCRIPTION_WORKSPACE = (
     "计算沙盒。处理工作区文件、staging 数据，做计算、分析、生成文件。\n"
+    "⚠ 每次执行是独立子进程，结束后所有变量和数据销毁。"
+    "必须在一段代码中完成全部逻辑（读取→处理→输出），不要分多次逐步探索。\n"
     "⚠ 沙盒内不能查询 ERP 数据！ERP 数据由 erp_agent 处理。\n\n"
     "沙盒工作目录即用户工作区，直接用文件名读取（如 pd.read_excel('报表.xlsx')）。\n\n"
     "沙盒内可用变量：\n"
@@ -79,17 +85,26 @@ _DESCRIPTION_WORKSPACE = (
     "- 文本: Path(OUTPUT_DIR + '/文件.txt').write_text(content)\n\n"
     "数据分析工作流：\n"
     "1. 直接用文件名读取: pd.read_excel('报表.xlsx', engine='calamine')\n"
-    "2. 检查数据质量（空值/异常值/重复），如有问题先告知用户\n"
-    "3. 确认计算方案后，一个 code_execute 完成全部: 读取→计算→输出\n"
-    "4. 大结果写文件到 OUTPUT_DIR，只 print 确认信息（如 '已生成报表，共20条汇总'）\n"
-    "5. 数据量大(>50MB)时优先输出 CSV（打开更快）\n\n"
+    "2. 一个 code_execute 完成全部: 读取→理解结构→计算→输出\n"
+    "3. 大结果写文件到 OUTPUT_DIR，只 print 确认信息（如 '已生成报表，共20条汇总'）\n"
+    "4. 数据量大(>50MB)时优先输出 CSV（打开更快）\n\n"
+    "高效探索大表（列数>50时，在同一段代码中完成）：\n"
+    "  df = pd.read_excel('文件.xlsx', engine='calamine')\n"
+    "  print(f'形状: {df.shape}')\n"
+    "  print(f'列名: {df.columns.tolist()}')\n"
+    "  print(f'类型分布: {df.dtypes.value_counts().to_dict()}')\n"
+    "  print(df.head(3).to_string())\n"
+    "  # 看完结构后，在同一段代码中完成计算\n\n"
     "⚠ 文件输出规则：\n"
     "- 所有生成的文件必须写到 OUTPUT_DIR\n"
     "- 禁止创建 output/ 等自定义目录 — 只用 OUTPUT_DIR\n\n"
     "⚠ 禁止事项：\n"
     "- 禁止 print(df) / print(df.to_string()) — 用 df.shape, df.describe(), df.head()\n"
     "- 禁止反复打开文件探索 — 读一次表头，想好方案，一步到位\n"
-    "- 禁止 import os/sys"
+    "- 禁止 import os/sys\n\n"
+    "⚠ 输出限制：\n"
+    "- 输出超过 30000 字符时自动保存到 staging 文件，你会看到前 2000 字符预览\n"
+    "- 可在后续 code_execute 中通过 STAGING_DIR 路径读取完整数据"
 )
 
 

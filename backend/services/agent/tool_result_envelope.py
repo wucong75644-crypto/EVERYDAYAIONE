@@ -106,21 +106,23 @@ ERP_AGENT_BUDGET = 3000
 # erp_agent 工具返回给主 Agent：结论文本，适度保留
 ERP_AGENT_RESULT_BUDGET = 4000
 
-# 不截断的工具
+# code_execute 预算（对标 Claude Code BASH_MAX_OUTPUT_DEFAULT = 30000）
+# ≤30K: 直接回传（不截断）  >30K: 落盘 staging + 2K 预览
+CODE_EXECUTE_BUDGET = 30000
+
+# 不截断的工具（返回本身有界或自有防线）
 # - generate_image/video: 返回本身就短
-# - code_execute: sandbox 自有 max_result_chars=8000 兜底
 # - file_*: file_read 自有三级防线（L1 字节 256KB / L2 行数 2000 /
 #   L3 token 25000）兜底，对齐 Claude Code maxResultSizeChars=Infinity
 _NO_TRUNCATE = {
     "generate_image", "generate_video",
-    "code_execute",
     "file_read", "file_write", "file_list", "file_search", "file_info",
 }
 
 # 对齐 Claude Code 的 persisted-output 标签（防重入 + 截断检测）
 PERSISTED_OUTPUT_TAG = "<persisted-output>"
 PERSISTED_OUTPUT_CLOSING_TAG = "</persisted-output>"
-# 兼容旧标记（erp_agent.py 等用于 is_truncated 检测）
+# 兼容旧标记（erp_agent.py / tool_loop_executor.py 用于 is_truncated 检测）
 STAGED_MARKER = PERSISTED_OUTPUT_TAG
 
 # Preview 大小（对齐 Claude Code 的 PREVIEW_SIZE_BYTES = 2000）
@@ -170,8 +172,19 @@ def wrap(
 
 
 def wrap_for_erp_agent(tool_name: str, result: str, tight: bool = False) -> str:
-    """ERP Agent 内部工具结果包装（正常 3000 / 紧张 1800）"""
-    budget_val = 1800 if tight else ERP_AGENT_BUDGET
+    """工具结果包装（按工具名分派预算）
+
+    预算分派：
+    - code_execute: 30K/20K（对标 Claude Bash 30K，sandbox 50K 是子进程安全网）
+    - erp_agent:    4K/2.4K（结论文本，返回给主 Agent）
+    - 其他:         3K/1.8K（ERP 内部工具默认预算）
+    """
+    if tool_name == "code_execute":
+        budget_val = 20000 if tight else CODE_EXECUTE_BUDGET
+    elif tool_name == "erp_agent":
+        budget_val = 2400 if tight else ERP_AGENT_RESULT_BUDGET
+    else:
+        budget_val = 1800 if tight else ERP_AGENT_BUDGET
     return wrap(tool_name, result, budget=budget_val)
 
 
@@ -202,13 +215,20 @@ def _stage_and_summarize(tool_name: str, result: str, budget: int) -> str:
     # 落盘 staging 文件
     rel_path = _persist_to_staging(staging_dir, tool_name, result)
     filename = rel_path.split("/")[-1]
-    # 对齐 Claude Code 的 <persisted-output> 标签格式
-    preview = _generate_preview(result, _PREVIEW_SIZE)
+
+    # code_execute 用结构化预览（首尾行 + 统计），其他工具用纯文本预览
+    if tool_name == "code_execute":
+        preview = _generate_structured_preview(result)
+    else:
+        preview = (
+            f"Preview (first {_PREVIEW_SIZE} chars):\n"
+            + _generate_preview(result, _PREVIEW_SIZE)
+        )
+
     return (
         f"{PERSISTED_OUTPUT_TAG}\n"
-        f"Output too large ({len(result)} chars). "
+        f"Output too large ({len(result):,} chars). "
         f'Full output saved to: STAGING_DIR + "/{filename}"\n\n'
-        f"Preview (first {_PREVIEW_SIZE} chars):\n"
         f"{preview}\n"
         f"{PERSISTED_OUTPUT_CLOSING_TAG}"
     )
@@ -240,6 +260,47 @@ def _persist_to_staging(staging_dir: str, tool_name: str, result: str) -> str:
         f"chars={len(result)} | path={rel_path}"
     )
     return rel_path
+
+
+_HEAD_LINES = 8   # 结构化预览：展示前 N 行
+_TAIL_LINES = 3   # 结构化预览：展示后 N 行
+
+
+def _generate_structured_preview(content: str) -> str:
+    """生成结构化预览（code_execute 专用）
+
+    展示数据全貌：总量统计 + 首 N 行 + 尾 N 行，
+    让 AI 一看就知道数据结构和内容，无需再次读取。
+    """
+    lines = content.split("\n")
+    total_lines = len(lines)
+    total_chars = len(content)
+
+    parts = [f"结果概览（{total_chars:,} 字符 / {total_lines:,} 行）:"]
+
+    if total_lines <= _HEAD_LINES + _TAIL_LINES + 2:
+        # 行数不多，直接展示全部（不超过 _PREVIEW_SIZE 字符）
+        preview_text = _generate_preview(content, _PREVIEW_SIZE)
+        parts.append(preview_text)
+    else:
+        # 首 N 行
+        head = lines[:_HEAD_LINES]
+        parts.append(f"\n前 {_HEAD_LINES} 行:")
+        for line in head:
+            # 单行过长时截断到 200 字符
+            display = line[:200] + "..." if len(line) > 200 else line
+            parts.append(f"  {display}")
+
+        parts.append(f"\n... 省略 {total_lines - _HEAD_LINES - _TAIL_LINES} 行 ...\n")
+
+        # 尾 N 行
+        tail = lines[-_TAIL_LINES:]
+        parts.append(f"后 {_TAIL_LINES} 行:")
+        for line in tail:
+            display = line[:200] + "..." if len(line) > 200 else line
+            parts.append(f"  {display}")
+
+    return "\n".join(parts)
 
 
 def _generate_preview(content: str, max_chars: int) -> str:

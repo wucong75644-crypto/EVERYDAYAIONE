@@ -67,7 +67,23 @@ class TestWrapBasic:
         result = "x" * 50000
         assert wrap("generate_image", result) == result
         assert wrap("generate_video", result) == result
-        assert wrap("code_execute", result) == result
+        # code_execute 已移出 _NO_TRUNCATE，走 30K 预算
+
+    def test_code_execute_within_budget_pass_through(self):
+        """code_execute ≤30K: 不截断，直接回传"""
+        from services.agent.tool_result_envelope import CODE_EXECUTE_BUDGET
+        result = "x" * (CODE_EXECUTE_BUDGET - 100)
+        wrapped = wrap_for_erp_agent("code_execute", result)
+        assert wrapped == result
+
+    def test_code_execute_over_budget_persisted(self, _setup_staging):
+        """code_execute >30K: 落盘 staging + 预览"""
+        from services.agent.tool_result_envelope import CODE_EXECUTE_BUDGET
+        result = "行1: " + "x" * 200 + "\n" + "x" * (CODE_EXECUTE_BUDGET + 5000)
+        wrapped = wrap_for_erp_agent("code_execute", result)
+        assert STAGED_MARKER in wrapped
+        assert "行1:" in wrapped  # 结构化预览包含首行
+        assert "结果概览" in wrapped
 
     def test_double_wrap_skipped(self):
         """已分流的结果不再二次处理"""
@@ -186,15 +202,16 @@ class TestBudgetLevels:
 
 
 # ============================================================
-# code_execute / file_* 免截断
+# file_* 免截断 + code_execute 预算分流
 # ============================================================
 
 class TestNoTruncate:
 
-    def test_code_execute_no_truncate(self):
+    def test_code_execute_small_no_truncate(self):
+        """code_execute 小结果（<30K）不截断"""
         lines = [f"line{i}: " + "x" * 290 for i in range(10)]
         result = "\n".join(lines)
-        wrapped = wrap("code_execute", result)
+        wrapped = wrap_for_erp_agent("code_execute", result)
         assert wrapped == result
 
     def test_file_read_no_truncate(self):
@@ -610,3 +627,87 @@ class TestTightBudgetSwitch:
             assert result == short
         finally:
             clear_staging_dir()
+
+
+# ============================================================
+# v7: 按工具名分派预算
+# ============================================================
+
+
+class TestBudgetDispatch:
+    """wrap_for_erp_agent 按 tool_name 分派不同预算"""
+
+    def test_code_execute_normal_budget_30k(self, tmp_path):
+        """code_execute: tight=False → 30K 预算"""
+        from services.agent.tool_result_envelope import (
+            wrap_for_erp_agent, set_staging_dir, clear_staging_dir,
+            CODE_EXECUTE_BUDGET,
+        )
+        set_staging_dir(str(tmp_path))
+        try:
+            # 29K：在 30K 预算内，不截断
+            result = "x" * 29000
+            assert wrap_for_erp_agent("code_execute", result) == result
+        finally:
+            clear_staging_dir()
+
+    def test_code_execute_tight_budget_20k(self, tmp_path):
+        """code_execute: tight=True → 20K 预算"""
+        from services.agent.tool_result_envelope import (
+            wrap_for_erp_agent, set_staging_dir, clear_staging_dir,
+            PERSISTED_OUTPUT_TAG,
+        )
+        set_staging_dir(str(tmp_path))
+        try:
+            # 25K > 20K tight 预算 → 落盘
+            result = "x" * 25000
+            wrapped = wrap_for_erp_agent("code_execute", result, tight=True)
+            assert PERSISTED_OUTPUT_TAG in wrapped
+        finally:
+            clear_staging_dir()
+
+    def test_erp_agent_budget_4k(self, tmp_path):
+        """erp_agent: tight=False → 4K 预算"""
+        from services.agent.tool_result_envelope import (
+            wrap_for_erp_agent, set_staging_dir, clear_staging_dir,
+        )
+        set_staging_dir(str(tmp_path))
+        try:
+            # 3500：在 4K 预算内，不截断
+            result = "x" * 3500
+            assert wrap_for_erp_agent("erp_agent", result) == result
+            # 5000 > 4K → 落盘
+            big = "x" * 5000
+            wrapped = wrap_for_erp_agent("erp_agent", big)
+            assert "<persisted-output>" in wrapped
+        finally:
+            clear_staging_dir()
+
+    def test_other_tools_budget_3k(self):
+        """其他工具: tight=False → 3K 预算（ERP 内部默认）"""
+        from services.agent.tool_result_envelope import wrap_for_erp_agent
+        # 2500 < 3K → 不截断
+        result = "x" * 2500
+        assert wrap_for_erp_agent("local_order_query", result) == result
+
+    def test_is_truncated_detects_persisted_tag(self):
+        """is_truncated 应检测 <persisted-output> 标签"""
+        from services.agent.tool_result_envelope import PERSISTED_OUTPUT_TAG
+        content = f"{PERSISTED_OUTPUT_TAG}\npreview\n</persisted-output>"
+        is_truncated = PERSISTED_OUTPUT_TAG in content
+        assert is_truncated is True
+
+    def test_is_truncated_detects_sandbox_truncation(self):
+        """is_truncated 应检测沙盒截断标记"""
+        content = "data...\n\n⚠ 输出过长，已截断（省略 10000 字符）。"
+        is_truncated = "⚠ 输出过长" in content
+        assert is_truncated is True
+
+    def test_is_truncated_false_for_normal_content(self):
+        """正常内容 is_truncated 应为 False"""
+        content = "形状: (308, 1404)\n列名: ['科目', '店铺A_2024-01']"
+        is_truncated = (
+            "<persisted-output>" in content
+            or "⚠ 输出过长" in content
+        )
+        assert is_truncated is False

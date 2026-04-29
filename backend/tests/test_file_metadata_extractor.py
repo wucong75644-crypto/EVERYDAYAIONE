@@ -668,3 +668,155 @@ class TestCsvStreamRead:
         assert meta is not None
         assert meta["col_count"] == 50
         assert meta["row_count"] == 10
+
+
+# ============================================================
+# 宽表模式识别
+# ============================================================
+
+
+class TestWideTablePattern:
+    """_detect_wide_table_pattern + _format_wide_table_fallback 测试"""
+
+    def test_pattern_detected_store_x_month(self):
+        """典型宽表：店铺名_日期 → 识别模式（需 >50 列才触发）"""
+        from services.file_metadata_extractor import _detect_wide_table_pattern
+
+        stores = [f"店铺{chr(65+i)}" for i in range(5)]  # 5 店铺
+        months = [f"2024-{m:02d}" for m in range(1, 13)]  # 12 月
+        # 索引列 + 60 个值列（5 × 12）= 61 列，超过 50 阈值
+        columns = [{"name": "科目", "dtype": "文本"}]
+        for s in stores:
+            for m in months:
+                columns.append({"name": f"{s}_{m}", "dtype": "数值", "min": 0, "max": 100000})
+
+        result = _detect_wide_table_pattern(columns)
+        assert result is not None
+        desc = result["description"]
+        assert "宽表" in desc
+        assert "5 个前缀" in desc
+        assert "12 个日期" in desc  # 后缀是日期
+        assert "店铺A" in desc
+        assert result["value_col_count"] == 60
+        assert len(result["index_cols"]) == 1
+
+    def test_pattern_detected_with_dash_separator(self):
+        """分隔符为 - 时也能识别（需 >50 列）"""
+        from services.file_metadata_extractor import _detect_wide_table_pattern
+
+        regions = [f"区域{i}" for i in range(13)]  # 13 区域
+        quarters = ["Q1", "Q2", "Q3", "Q4"]  # 4 季度
+        # 1 索引 + 52 值列 = 53 列
+        columns = [{"name": "ID", "dtype": "文本"}]
+        for region in regions:
+            for q in quarters:
+                columns.append({"name": f"{region}-{q}", "dtype": "数值"})
+
+        result = _detect_wide_table_pattern(columns)
+        assert result is not None
+        assert "13 个前缀" in result["description"]
+        assert result["value_col_count"] == 52
+
+    def test_no_pattern_without_separator(self):
+        """列名无分隔符 → 返回 None"""
+        from services.file_metadata_extractor import _detect_wide_table_pattern
+
+        columns = [{"name": f"column{i}", "dtype": "文本"} for i in range(60)]
+        result = _detect_wide_table_pattern(columns)
+        assert result is None
+
+    def test_no_pattern_below_threshold(self):
+        """列数 ≤ 50 → 返回 None"""
+        from services.file_metadata_extractor import _detect_wide_table_pattern
+
+        columns = [{"name": f"a_{i}", "dtype": "文本"} for i in range(50)]
+        result = _detect_wide_table_pattern(columns)
+        assert result is None
+
+    def test_no_pattern_low_separator_hit_rate(self):
+        """分隔符命中率 < 60% → 返回 None"""
+        from services.file_metadata_extractor import _detect_wide_table_pattern
+
+        # 40 个有分隔符，30 个没有 → 命中率 57% < 60%
+        columns = [{"name": f"a_{i}", "dtype": "文本"} for i in range(40)]
+        columns += [{"name": f"plain{i}", "dtype": "文本"} for i in range(30)]
+        result = _detect_wide_table_pattern(columns)
+        assert result is None
+
+    def test_value_range_in_description(self):
+        """值列有 min/max 时描述包含范围"""
+        from services.file_metadata_extractor import _detect_wide_table_pattern
+
+        columns = [{"name": "idx", "dtype": "文本"}]
+        for i in range(60):
+            columns.append({
+                "name": f"store_{i}", "dtype": "数值",
+                "min": -5000, "max": 200000,
+            })
+
+        result = _detect_wide_table_pattern(columns)
+        assert result is not None
+        assert "值范围" in result["description"]
+        assert "-5,000" in result["description"]
+
+    def test_fallback_shows_head_and_tail(self):
+        """模式识别失败时退化为前15+后5列名"""
+        from services.file_metadata_extractor import _format_wide_table_fallback
+
+        columns = [{"name": f"column{i}"} for i in range(100)]
+        result = _format_wide_table_fallback(columns)
+        assert "column0" in result
+        assert "column14" in result  # 第 15 列
+        assert "column99" in result  # 最后一列
+        assert "省略" in result
+
+    def test_fallback_short_list_no_ellipsis(self):
+        """列数 ≤ head + tail 时只显示 head，不显示省略"""
+        from services.file_metadata_extractor import _format_wide_table_fallback
+
+        columns = [{"name": f"c{i}"} for i in range(20)]  # 20 = 15 + 5，不满足 > 条件
+        result = _format_wide_table_fallback(columns)
+        assert "c0" in result
+        assert "c14" in result  # 前 15 列的最后一个
+        assert "省略" not in result
+
+    def test_format_standard_uses_pattern_for_wide_table(self):
+        """_format_standard 对宽表用模式描述而非 8 列表格"""
+        from services.file_metadata_extractor import _format_standard
+
+        columns = [{"name": "科目", "dtype": "文本", "non_null": 100}]
+        for s in ["店A", "店B", "店C"]:
+            for m in range(1, 21):
+                columns.append({
+                    "name": f"{s}_{m}月", "dtype": "数值",
+                    "non_null": 100,
+                })
+        meta = {
+            "row_count": 50,
+            "col_count": 61,
+            "columns": columns,
+            "preview_rows": [],
+        }
+        result = _format_standard("test.xlsx", "1MB", meta)
+        assert "宽表" in result
+        assert "前缀" in result
+        # 不应出现 8 列表格格式
+        assert "显示前8列" not in result
+
+    def test_format_standard_normal_table_unchanged(self):
+        """列数 ≤ 50 时仍用原来的表格格式"""
+        from services.file_metadata_extractor import _format_standard
+
+        columns = [
+            {"name": f"col{i}", "dtype": "文本", "non_null": 10, "sample": [f"v{i}"]}
+            for i in range(10)
+        ]
+        meta = {
+            "row_count": 100,
+            "col_count": 10,
+            "columns": columns,
+            "preview_rows": [],
+        }
+        result = _format_standard("data.csv", "500KB", meta)
+        assert "| 列名 |" in result  # 表格格式
+        assert "宽表" not in result

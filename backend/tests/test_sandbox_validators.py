@@ -159,3 +159,15 @@ class TestTruncateResult:
         text = "a" * 10000
         result = truncate_result(text, 8000)
         assert "缩小查询范围" in result
+
+    def test_default_limit_is_50000(self):
+        """默认上限对标 Claude DEFAULT_MAX_RESULT_SIZE_CHARS=50000"""
+        # 49999 字符：不截断
+        text = "a" * 49999
+        assert truncate_result(text) == text
+
+        # 50001 字符：截断
+        text_over = "a" * 50001
+        result = truncate_result(text_over)
+        assert "已截断" in result
+        assert "1" in result  # 省略 1 字符

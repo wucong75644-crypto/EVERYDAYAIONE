@@ -219,7 +219,7 @@ class Settings(BaseSettings):
     # 代码执行沙盒配置
     sandbox_enabled: bool = True                  # 沙盒总开关（False 时返回"功能关闭"）
     sandbox_timeout: float = 120.0                # 代码执行超时（秒）
-    sandbox_max_result_chars: int = 8000           # 结果最大字符数
+    sandbox_max_result_chars: int = 50000          # 结果最大字符数（对标 Claude DEFAULT_MAX_RESULT_SIZE_CHARS=50000，子进程安全网）
     sandbox_max_code_length: int = 5000            # 代码最大字符数
     sandbox_api_concurrency: int = 10              # ERP API 并发限制
     sandbox_max_pages: int = 200                   # erp_query_all 最大翻页数
