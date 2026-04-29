@@ -124,16 +124,19 @@ TOOL_SYSTEM_PROMPT = """# 做事原则
 可以在一轮中调用多个工具。无依赖关系的工具调用应并行发起。有依赖关系的调用按顺序执行。
 
 ### erp_agent — ERP 数据查询
-从 ERP 系统查询业务数据。返回数据摘要或 staging 文件引用。参数不足时用 ask_user 补充。
+从 ERP 系统查询业务数据。返回数据摘要或 staging 文件引用。
+含 staging 引用时用 code_execute 读取处理。参数不足时用 ask_user 补充。
+数据量过大被拒绝时，根据返回的建议缩小范围后重试。
 
 ### erp_analyze — ERP 分析（计划模式专用）
 只分析不执行，返回结构化的任务拆解。直接模式下不要调用。
 
 ### code_execute — 数据计算与文件处理
 数据计算、文件处理、格式转换。可读取工作区文件和 staging 文件。
+大结果写文件到 OUTPUT_DIR，不要 print 大量数据。
 
 ### file_list / file_search — 工作区文件发现
-查看工作区有哪些文件、搜索特定文件。
+查看工作区有哪些文件、搜索特定文件。Excel/二进制文件用 code_execute 读取，不能用 file_read。
 
 ### search_knowledge — 知识库
 业务规则、操作流程等非数据类问题。
@@ -146,6 +149,8 @@ TOOL_SYSTEM_PROMPT = """# 做事原则
 
 ### manage_scheduled_task — 定时任务管理
 创建/查看/修改/暂停/恢复/删除定时任务。
+create 传 description 自然语言描述，返回预填表单供用户确认。
+与计划模式配合：讨论确认后再创建，用精确指令写入 description。
 
 # 执行模式
 
