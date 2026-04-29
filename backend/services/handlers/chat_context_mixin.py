@@ -105,17 +105,20 @@ class ChatContextMixin:
             messages.insert(0, {"role": "system", "content": search_prompt})
             logger.debug(f"Search context injected | len={len(router_search_context)}")
 
-        # 工作区文件元信息提取准备（对标 OpenAI Responses API spreadsheet augmentation）
-        # 表格文件实时提取 500 行采样 → 类型/范围/分类，与 memory/summary/history 并行
+        # 工作区文件元信息提取准备（表格 + 文档文件）
+        # 与 memory/summary/history/knowledge 并行执行，零额外延迟
         _metadata_coro = None
         if workspace_files:
             from pathlib import Path as _Path
-            _SPREADSHEET_EXTS = {".xlsx", ".xls", ".csv", ".tsv"}
-            _has_spreadsheets = any(
-                _Path(f.get("workspace_path", "")).suffix.lower() in _SPREADSHEET_EXTS
+            _EXTRACTABLE_EXTS = {
+                ".xlsx", ".xls", ".csv", ".tsv",  # 表格
+                ".docx", ".pptx", ".pdf",          # 文档
+            }
+            _has_extractable = any(
+                _Path(f.get("workspace_path", "")).suffix.lower() in _EXTRACTABLE_EXTS
                 for f in workspace_files
             )
-            if _has_spreadsheets:
+            if _has_extractable:
                 from core.config import get_settings
                 from core.workspace import resolve_workspace_dir
                 from services.file_metadata_extractor import extract_metadata_for_files
