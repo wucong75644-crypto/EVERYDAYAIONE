@@ -408,142 +408,76 @@ class TestExtractMetadataForFiles:
 
 
 class TestFormatPrompt:
-    def _make_meta(self, row_count=100, col_count=3):
-        return {
-            "row_count": row_count,
-            "col_count": col_count,
-            "columns": [
-                {"name": "名称", "dtype": "文本", "non_null": row_count,
-                 "sample": ["A", "B"]},
-                {"name": "金额", "dtype": "数值", "non_null": row_count,
-                 "sample": ["100", "200"], "min": 50.0, "max": 5000.0},
-                {"name": "状态", "dtype": "文本", "non_null": row_count,
-                 "sample": ["完成", "取消"],
-                 "categories": [("完成", 70), ("取消", 30)], "_unique_count": 2},
-            ],
-            "preview_rows": [["A", "100", "完成"], ["B", "200", "取消"]],
-        }
+    """format_workspace_files_prompt 简洁格式测试"""
 
-    def test_standard_format(self):
-        """≤2 个表格文件使用标准档"""
+    def test_xlsx_shows_icon_and_path(self):
+        """Excel 文件显示 📊 图标 + 路径"""
         files = [{"workspace_path": "data.xlsx", "name": "data.xlsx", "size": 1024}]
-        meta_map = {"data.xlsx": self._make_meta()}
-        result = format_workspace_files_prompt(files, meta_map)
-
-        assert "📊 data.xlsx" in result
-        assert "100 行 × 3 列" in result
-        assert "路径: data.xlsx" in result
-        assert "| 列名 |" in result
-        assert "| 名称 |" in result
-        assert "pd.read_excel('data.xlsx')" in result
-
-    def test_compact_format(self):
-        """3+ 个表格文件使用紧凑档"""
-        files = [
-            {"workspace_path": f"file_{i}.xlsx", "name": f"file_{i}.xlsx", "size": 1024}
-            for i in range(3)
-        ]
-        meta_map = {f"file_{i}.xlsx": self._make_meta() for i in range(3)}
-        result = format_workspace_files_prompt(files, meta_map)
-
-        # 紧凑档没有表格
-        assert "| 列名 |" not in result
-        assert "列:" in result
-
-    def test_failed_extraction_fallback(self):
-        """提取失败时降级"""
-        files = [{"workspace_path": "bad.xlsx", "name": "bad.xlsx", "size": 2048}]
-        meta_map = {"bad.xlsx": None}
-        result = format_workspace_files_prompt(files, meta_map)
-
-        assert "📊 bad.xlsx" in result
-        assert "pd.read_excel('bad.xlsx')" in result
-
-    def test_text_file_format(self):
-        """非表格文件显示 file_read 指引"""
-        files = [{"workspace_path": "readme.txt", "name": "readme.txt",
-                  "size": 512, "mime_type": "text/plain"}]
         result = format_workspace_files_prompt(files, {})
+        assert "📊 data.xlsx" in result
+        assert "路径: data.xlsx" in result
+        assert "xlsx" in result
 
+    def test_pdf_shows_doc_icon(self):
+        """PDF 文件显示 📝 图标"""
+        files = [{"workspace_path": "report.pdf", "name": "report.pdf", "size": 2048}]
+        result = format_workspace_files_prompt(files, {})
+        assert "📝 report.pdf" in result
+        assert "路径: report.pdf" in result
+
+    def test_txt_shows_file_icon(self):
+        """文本文件显示 📄 图标"""
+        files = [{"workspace_path": "readme.txt", "name": "readme.txt", "size": 512}]
+        result = format_workspace_files_prompt(files, {})
         assert "📄 readme.txt" in result
-        assert "file_read" in result
 
     def test_mixed_files(self):
-        """混合文件类型"""
+        """混合文件类型各用正确图标"""
         files = [
             {"workspace_path": "data.xlsx", "name": "data.xlsx", "size": 1024},
-            {"workspace_path": "notes.txt", "name": "notes.txt",
-             "size": 256, "mime_type": "text/plain"},
+            {"workspace_path": "notes.txt", "name": "notes.txt", "size": 256},
         ]
-        meta_map = {"data.xlsx": self._make_meta()}
-        result = format_workspace_files_prompt(files, meta_map)
-
+        result = format_workspace_files_prompt(files, {})
         assert "📊 data.xlsx" in result
         assert "📄 notes.txt" in result
 
-    def test_csv_read_command(self):
-        """CSV 文件使用 pd.read_csv"""
-        files = [{"workspace_path": "data.csv", "name": "data.csv", "size": 512}]
-        meta_map = {"data.csv": self._make_meta()}
-        result = format_workspace_files_prompt(files, meta_map)
-
-        assert "pd.read_csv('data.csv')" in result
-
     def test_empty_files(self):
-        """空文件列表"""
+        """空文件列表返回空"""
         result = format_workspace_files_prompt([], {})
         assert result == ""
 
-    def test_numeric_range_in_standard(self):
-        """标准档中数值列显示范围"""
-        files = [{"workspace_path": "data.xlsx", "name": "data.xlsx", "size": 1024}]
-        meta_map = {"data.xlsx": self._make_meta()}
-        result = format_workspace_files_prompt(files, meta_map)
+    def test_subdirectory_path_preserved(self):
+        """子目录路径完整保留"""
+        files = [{"workspace_path": "体积计算/运营对应店铺表.xlsx",
+                  "name": "运营对应店铺表.xlsx", "size": 15000}]
+        result = format_workspace_files_prompt(files, {})
+        assert "路径: 体积计算/运营对应店铺表.xlsx" in result
 
-        assert "范围:" in result
-        assert "50" in result
-        assert "5,000" in result
-
-    def test_category_in_standard(self):
-        """标准档中分类列显示枚举"""
-        files = [{"workspace_path": "data.xlsx", "name": "data.xlsx", "size": 1024}]
-        meta_map = {"data.xlsx": self._make_meta()}
-        result = format_workspace_files_prompt(files, meta_map)
-
-        assert '"完成"' in result
-        assert '"取消"' in result
-
-    def test_xls_fallback(self):
-        """.xls 文件提取失败应降级显示"""
-        files = [{"workspace_path": "old.xls", "name": "old.xls", "size": 4096}]
-        meta_map = {"old.xls": None}
-        result = format_workspace_files_prompt(files, meta_map)
-
-        assert "📊 old.xls" in result
-        assert "pd.read_excel('old.xls')" in result
-
-    def test_over_five_files_truncation(self):
-        """>5 个表格文件时只展示前 5 个 + 提示"""
+    def test_all_files_shown(self):
+        """所有文件都展示，不再截断到 5 个"""
         files = [
             {"workspace_path": f"sheet_{i}.xlsx", "name": f"sheet_{i}.xlsx", "size": 1024}
             for i in range(7)
         ]
-        meta_map = {f"sheet_{i}.xlsx": self._make_meta() for i in range(7)}
-        result = format_workspace_files_prompt(files, meta_map)
-
-        assert "另有 2 个表格文件" in result
-        # 前 5 个应该存在
-        assert "sheet_0.xlsx" in result
-        assert "sheet_4.xlsx" in result
-
-    def test_binary_file_code_execute(self):
-        """非表格二进制文件（如 PDF）应指引 code_execute"""
-        files = [{"workspace_path": "report.pdf", "name": "report.pdf",
-                  "size": 2048, "mime_type": "application/pdf"}]
         result = format_workspace_files_prompt(files, {})
+        assert "sheet_0.xlsx" in result
+        assert "sheet_6.xlsx" in result
 
-        assert "📄 report.pdf" in result
-        assert "code_execute" in result
+    def test_no_column_extraction(self):
+        """不再展示列名、行数、类型等元信息"""
+        files = [{"workspace_path": "data.xlsx", "name": "data.xlsx", "size": 1024}]
+        result = format_workspace_files_prompt(files, {})
+        assert "| 列名 |" not in result
+        assert "行 ×" not in result
+        assert "pd.read_excel" not in result
+
+    def test_metadata_map_ignored(self):
+        """metadata_map 传入不影响输出（兼容旧调用方）"""
+        files = [{"workspace_path": "data.xlsx", "name": "data.xlsx", "size": 1024}]
+        meta = {"data.xlsx": {"row_count": 100, "col_count": 3, "columns": []}}
+        result = format_workspace_files_prompt(files, meta)
+        # 不展示行列数
+        assert "100" not in result or "行" not in result
 
 
 # ============================================================

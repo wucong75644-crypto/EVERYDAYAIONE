@@ -626,84 +626,32 @@ def format_workspace_files_prompt(
 ) -> str:
     """将工作区文件信息格式化为 LLM system prompt
 
-    自动选择档位：
-    - ≤2 个表格文件 → 标准档（详细表格）
-    - 3~5 个表格文件 → 紧凑档
-    - >5 个 → 前 5 个紧凑档 + 提示
+    只展示靠谱的静态信息：文件名、大小、类型、时间、路径。
+    不提取列名、不检测表头、不做模式识别——让 AI 用 code_execute 自己看。
     """
     if not workspace_files:
         return ""
 
-    _OTHER_BINARY_EXTS = {
-        ".doc", ".ppt",  # 旧格式（无解析库）
-        ".png", ".jpg", ".jpeg", ".gif", ".webp",
-        ".zip", ".tar", ".gz", ".parquet",
-    }
-
-    # 文档格式的读取指引
-    _DOC_READ_HINTS = {
-        ".docx": "from docx import Document; doc = Document('{wp}')",
-        ".pptx": "from pptx import Presentation; prs = Presentation('{wp}')",
-        ".pdf": "from PyPDF2 import PdfReader; reader = PdfReader('{wp}')",
-    }
-
-    # 单次遍历分类
-    spreadsheet_entries: List[Tuple[Dict[str, Any], Optional[Dict[str, Any]]]] = []
-    document_entries: List[str] = []
-    other_entries: List[str] = []
+    parts = ["用户工作区文件：\n"]
 
     for f in workspace_files:
         wp = f.get("workspace_path", "")
         ext = Path(wp).suffix.lower() if wp else ""
         size_str = _fmt_size(f.get("size"))
+        mtime = f.get("modified", "")
 
+        # 文件类型图标
         if ext in _SPREADSHEET_EXTS:
-            spreadsheet_entries.append((f, metadata_map.get(wp)))
+            icon = "📊"
         elif ext in _DOCUMENT_EXTS:
-            meta = metadata_map.get(wp)
-            document_entries.append(_format_document_entry(wp, size_str, ext, meta))
-        elif ext in _OTHER_BINARY_EXTS:
-            other_entries.append(f"📄 {wp} ({size_str})\n  用 code_execute 读取")
+            icon = "📝"
+        elif ext in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}:
+            icon = "🖼️"
         else:
-            other_entries.append(f"📄 {wp} ({size_str})\n  用 file_read 读取")
+            icon = "📄"
 
-    # 选择档位
-    spreadsheet_count = len(spreadsheet_entries)
-    use_compact = spreadsheet_count > 2
-
-    parts = ["用户工作区中有以下文件，可直接按文件名引用：\n"]
-
-    for i, (f, meta) in enumerate(spreadsheet_entries):
-        if i >= _MAX_METADATA_FILES:
-            remaining = spreadsheet_count - _MAX_METADATA_FILES
-            parts.append(f"\n另有 {remaining} 个表格文件，用 file_list 查看")
-            break
-
-        wp = f.get("workspace_path", "")
-        size_str = _fmt_size(f.get("size"))
-
-        if meta is None:
-            # 提取失败降级
-            parts.append(
-                f"📊 {wp} ({size_str})\n"
-                f"  用 code_execute 分析: pd.read_excel('{wp}')"
-            )
-            continue
-
-        if use_compact:
-            parts.append(_format_compact(wp, size_str, meta))
-        else:
-            parts.append(_format_standard(wp, size_str, meta))
-
-    # 文档文件
-    if document_entries:
-        parts.append("")
-        parts.extend(document_entries)
-
-    # 其他文件
-    if other_entries:
-        parts.append("")
-        parts.extend(other_entries)
+        parts.append(f"{icon} {wp} | {size_str} | {ext.lstrip('.')} | {mtime}")
+        parts.append(f"   路径: {wp}")
 
     return "\n".join(parts)
 
