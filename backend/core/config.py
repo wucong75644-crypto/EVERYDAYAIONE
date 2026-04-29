@@ -142,9 +142,9 @@ class Settings(BaseSettings):
     agent_loop_provider: str = "dashscope"  # 大脑提供商："dashscope" | "openrouter"
     agent_loop_max_turns: int = 8  # 最大循环轮数（支持多步查询+汇总）
     agent_loop_max_tokens: int = 100000  # 每次运行的总 token 预算（工具定义大，每轮约10K）
-    agent_loop_model: str = "qwen3.5-plus"  # Agent 大脑模型（dashscope）
+    agent_loop_model: str = "deepseek-v4-pro"  # Agent 大脑模型（dashscope）
     agent_loop_openrouter_model: str = "anthropic/claude-sonnet-4.6"  # Agent 大脑模型（openrouter）
-    agent_loop_fallback_model: str = "qwen3.5-flash"  # 降级模型
+    agent_loop_fallback_model: str = "deepseek-v4-flash"  # 降级模型
     agent_loop_timeout: float = 120.0  # FC 调用读取超时（秒），connect=5s
     agent_loop_brain_context_limit: int = 10  # 注入对话历史条数
     agent_loop_brain_context_max_chars: int = 3000  # 历史文本最大字符数

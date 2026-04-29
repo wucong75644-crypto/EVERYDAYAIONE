@@ -64,6 +64,36 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
     ),
 
     # ==================== DashScope 百炼模型 ====================
+    "deepseek-v4-pro": ModelConfig(
+        model_id="deepseek-v4-pro",
+        provider=ModelProvider.DASHSCOPE,
+        provider_model="deepseek-v4-pro",
+        display_name="DeepSeek V4 Pro",
+        input_price=0.28,       # ~2元/1M ≈ $0.28
+        output_price=1.11,      # ~8元/1M ≈ $1.11
+        credits_per_1k_input=0.029,
+        credits_per_1k_output=0.113,
+        supports_vision=False,
+        supports_tools=True,
+        supports_thinking=True,
+        max_tokens=65536,
+        context_window=1_000_000,
+    ),
+    "deepseek-v4-flash": ModelConfig(
+        model_id="deepseek-v4-flash",
+        provider=ModelProvider.DASHSCOPE,
+        provider_model="deepseek-v4-flash",
+        display_name="DeepSeek V4 Flash",
+        input_price=0.14,       # ~1元/1M ≈ $0.14
+        output_price=0.28,      # ~2元/1M ≈ $0.28
+        credits_per_1k_input=0.014,
+        credits_per_1k_output=0.029,
+        supports_vision=False,
+        supports_tools=True,
+        supports_thinking=True,
+        max_tokens=65536,
+        context_window=1_000_000,
+    ),
     "deepseek-v3.2": ModelConfig(
         model_id="deepseek-v3.2",
         provider=ModelProvider.DASHSCOPE,
