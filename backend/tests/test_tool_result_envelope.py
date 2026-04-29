@@ -541,13 +541,13 @@ class TestScopedOpen:
 
     @pytest.mark.asyncio
     async def test_path_traversal_blocked(self, tmp_path):
-        """open('../../etc/passwd') 路径穿越被拒绝"""
+        """open('/etc/passwd') 绝对路径穿越被拒绝（逃出所有白名单目录）"""
         executor = self._build_executor(tmp_path)
         result = await executor.execute(
-            'open("../../etc/passwd").read()',
+            'open("/etc/passwd").read()',
             description="test path traversal block",
         )
-        assert "文件访问被拒绝" in result or "PermissionError" in result
+        assert "文件访问被拒绝" in result or "不在允许的目录内" in result or "PermissionError" in result
 
     @pytest.mark.asyncio
     async def test_write_in_output_dir(self, tmp_path):

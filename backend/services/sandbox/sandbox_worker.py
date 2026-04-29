@@ -330,16 +330,28 @@ def sandbox_worker_entry(
             _original_open = builtins.open
             _ws_dir = workspace_dir
 
+            # 安全白名单：workspace + staging + output + 系统临时目录
+            import tempfile as _tempfile
+            _allowed_prefixes = [os.path.realpath(_ws_dir)]
+            if staging_dir:
+                _allowed_prefixes.append(os.path.realpath(staging_dir))
+            if output_dir:
+                _allowed_prefixes.append(os.path.realpath(output_dir))
+            # 系统临时目录（xlsxwriter/openpyxl 等库写 xlsx 需要临时文件）
+            _allowed_prefixes.append(os.path.realpath(_tempfile.gettempdir()))
+
             def _global_scoped_open(path, mode="r", *args, **kwargs):
                 path_str = str(path)
                 # 相对路径解析到 workspace
                 if not os.path.isabs(path_str):
                     path_str = os.path.join(_ws_dir, path_str)
                 resolved = os.path.realpath(path_str)
-                # 安全检查：不允许访问 workspace 外
-                ws_real = os.path.realpath(_ws_dir)
-                if not resolved.startswith(ws_real + os.sep) and resolved != ws_real:
-                    raise PermissionError(f"文件访问被拒绝：{path} 不在工作目录内")
+                # 安全检查：只允许访问白名单目录
+                if not any(
+                    resolved.startswith(prefix + os.sep) or resolved == prefix
+                    for prefix in _allowed_prefixes
+                ):
+                    raise PermissionError(f"文件访问被拒绝：{path} 不在允许的目录内")
                 # 文件不存在时自动纠错（suggestion 是绝对路径，直接用）
                 if "r" in mode and not os.path.exists(resolved):
                     suggestion = _find_similar_file_global(resolved, _ws_dir)
