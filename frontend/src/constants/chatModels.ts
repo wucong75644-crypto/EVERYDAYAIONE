@@ -125,6 +125,42 @@ export const CHAT_MODELS: UnifiedModel[] = [
 
   // 国内模型（DashScope 百炼）
   {
+    id: 'deepseek-v4-pro',
+    name: 'DeepSeek V4 Pro',
+    type: 'chat',
+    description: 'Agent 极强 | 百万上下文 | 开源最强',
+    capabilities: {
+      textToImage: false,
+      imageEditing: false,
+      imageToVideo: false,
+      textToVideo: false,
+      vqa: false,
+      videoQA: false,
+      functionCalling: true,
+      streamingResponse: true,
+      maxContextTokens: 1000000,
+    },
+    credits: 0,
+  },
+  {
+    id: 'deepseek-v4-flash',
+    name: 'DeepSeek V4 Flash',
+    type: 'chat',
+    description: '高性价比 | 百万上下文 | 速度快',
+    capabilities: {
+      textToImage: false,
+      imageEditing: false,
+      imageToVideo: false,
+      textToVideo: false,
+      vqa: false,
+      videoQA: false,
+      functionCalling: true,
+      streamingResponse: true,
+      maxContextTokens: 1000000,
+    },
+    credits: 0,
+  },
+  {
     id: 'deepseek-v3.2',
     name: 'DeepSeek V3.2',
     type: 'chat',
