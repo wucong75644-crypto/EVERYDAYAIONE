@@ -21,6 +21,7 @@ import LoadingPlaceholder from './LoadingPlaceholder';
 import MarkdownRenderer from './MarkdownRenderer';
 import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
+import ToolStepCard from './ToolStepCard';
 import FormBlock from './FormBlock';
 import FileCardList from '../media/FileCard';
 import SuggestionChips from './SuggestionChips';
@@ -140,12 +141,14 @@ export default memo(function MessageItem({
   const hasVideo = videoUrls.length > 0;
   const hasFiles = files.length > 0;
 
-  // 检测是否为多内容块模式（仅 tool_result / image / file / form 触发）
-  // thinking 和 tool_step 在独立区域渲染，不触发多块模式
+  // 检测是否为多内容块模式
+  // tool_step / text(中间叙述) / tool_result / image / file / form 均触发多块模式
+  // thinking 单独在 ThinkingBlock 渲染，不触发
   const hasMultiBlocks = useMemo(() => {
     if (!Array.isArray(message.content)) return false;
     return message.content.some((p) =>
-      p.type === 'tool_result' || p.type === 'image' || p.type === 'file' || p.type === 'form'
+      p.type === 'tool_step' || p.type === 'tool_result' ||
+      p.type === 'image' || p.type === 'file' || p.type === 'form'
     );
   }, [message.content]);
 
@@ -445,12 +448,28 @@ export default memo(function MessageItem({
               <>{textContent}</>
             ) : hasMultiBlocks ? (
               /* AI 消息（多块模式）：遍历 content 按 type 分发渲染
-                 tool_result / image / file / form 混排，thinking/tool_step 已在独立区域渲染
-                 设计文档：TECH_内容块混排渲染架构.md §7.2 */
+                 text(中间叙述) / tool_step / tool_result / image / file / form 按时序混排
+                 thinking 单独在 ThinkingBlock 渲染；设计文档：TECH_内容块混排渲染架构.md §7.2 */
               <>
                 {message.content.map((part, idx) => {
-                  // thinking/tool_step 已在独立区域渲染，跳过
-                  if (part.type === 'thinking' || part.type === 'tool_step') return null;
+                  // thinking 已在独立 ThinkingBlock 渲染，跳过
+                  if (part.type === 'thinking') return null;
+                  // tool_step 内联渲染（按时序位置展示在正文流中）
+                  if (part.type === 'tool_step') {
+                    const ts = part as import('../../../types/message').ToolStepPart;
+                    return (
+                      <ToolStepCard
+                        key={ts.tool_call_id || idx}
+                        toolName={ts.tool_name}
+                        toolCallId={ts.tool_call_id}
+                        status={ts.status}
+                        summary={ts.summary}
+                        code={ts.code}
+                        output={ts.output}
+                        elapsedMs={ts.elapsed_ms}
+                      />
+                    );
+                  }
                   if (part.type === 'text' && (part as { text: string }).text) {
                     return (
                       <MarkdownRenderer

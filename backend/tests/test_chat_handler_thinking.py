@@ -72,8 +72,8 @@ class TestThinkingStream:
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
     @patch("services.handlers.chat_handler.ws_manager")
-    async def test_thinking_content_passed_to_on_complete(self, mock_ws, mock_factory):
-        """accumulated_thinking → on_complete(thinking_content=...)"""
+    async def test_thinking_content_stored_as_content_part(self, mock_ws, mock_factory):
+        """accumulated_thinking → ThinkingPart in result content（不再经 on_complete 传 thinking_content）"""
         handler = _make_handler()
         handler._build_llm_messages = AsyncMock(return_value=[
             {"role": "user", "content": "hi"},
@@ -101,13 +101,20 @@ class TestThinkingStream:
 
         handler.on_complete.assert_called_once()
         call_kwargs = handler.on_complete.call_args[1]
-        assert call_kwargs["thinking_content"] == "reasoning step 1"
+        # thinking_content 不再传给 on_complete，改由 ThinkingPart 嵌入 result
+        assert "thinking_content" not in call_kwargs
+        # result 中应有 ThinkingPart
+        from schemas.message import ThinkingPart
+        result_parts = call_kwargs["result"]
+        thinking_parts = [p for p in result_parts if isinstance(p, ThinkingPart)]
+        assert len(thinking_parts) == 1
+        assert thinking_parts[0].text == "reasoning step 1"
 
     @pytest.mark.asyncio
     @patch("services.adapters.factory.create_chat_adapter")
     @patch("services.handlers.chat_handler.ws_manager")
-    async def test_no_thinking_passes_none_to_on_complete(self, mock_ws, mock_factory):
-        """无 thinking chunk → on_complete(thinking_content=None)"""
+    async def test_no_thinking_passes_no_thinking_arg(self, mock_ws, mock_factory):
+        """无 thinking chunk → on_complete 不含 thinking_content 参数"""
         handler = _make_handler()
         handler._build_llm_messages = AsyncMock(return_value=[
             {"role": "user", "content": "hi"},
@@ -133,17 +140,17 @@ class TestThinkingStream:
         )
 
         call_kwargs = handler.on_complete.call_args[1]
-        assert call_kwargs["thinking_content"] is None
+        assert "thinking_content" not in call_kwargs
 
 
 # -- TestHandleCompleteThinkingContent --
 
 class TestHandleCompleteThinkingContent:
-    """_handle_complete_common 将 thinking_content 存入 generation_params"""
+    """thinking 已改为 ThinkingPart 存入 content，不再写 generation_params"""
 
     @pytest.mark.asyncio
-    async def test_thinking_content_stored_in_gen_params(self):
-        """thinking_content='推理过程' → extra_gen_params['thinking_content']"""
+    async def test_thinking_not_in_gen_params(self):
+        """thinking_content 不再写入 extra_generation_params（ThinkingPart 存在 content 里）"""
         handler = _make_handler()
 
         task_data = {
@@ -164,7 +171,7 @@ class TestHandleCompleteThinkingContent:
 
         captured_params = {}
         from datetime import datetime, timezone
-        from schemas.message import Message
+        from schemas.message import Message, ThinkingPart
 
         def fake_upsert(**kwargs):
             captured_params.update(kwargs)
@@ -183,17 +190,17 @@ class TestHandleCompleteThinkingContent:
 
             await handler._handle_complete_common(
                 task_id="task_1",
-                result=[TextPart(text="ok")],
+                result=[ThinkingPart(text="推理过程内容"), TextPart(text="ok")],
                 credits_consumed=0,
-                thinking_content="推理过程内容",
             )
 
-        # 核心断言：thinking_content 写入 extra_generation_params
-        assert captured_params["extra_generation_params"]["thinking_content"] == "推理过程内容"
+        # thinking_content 不再写入 generation_params
+        gen_params = captured_params.get("extra_generation_params", {})
+        assert "thinking_content" not in (gen_params or {})
 
     @pytest.mark.asyncio
-    async def test_no_thinking_content_preserves_gen_params(self):
-        """无 thinking_content → extra_gen_params 不受影响"""
+    async def test_no_thinking_gen_params_unchanged(self):
+        """无 thinking → extra_gen_params 不受影响"""
         handler = _make_handler()
 
         task_data = {
@@ -237,7 +244,7 @@ class TestHandleCompleteThinkingContent:
                 credits_consumed=0,
             )
 
-        # 无 thinking_content → extra_generation_params 为 None（未修改）
+        # 无 thinking → extra_generation_params 为 None（未修改）
         assert captured_params["extra_generation_params"] is None
 
 
@@ -299,8 +306,8 @@ class TestHandleCompleteToolDigest:
         assert captured_params["extra_generation_params"]["tool_digest"] == test_digest
 
     @pytest.mark.asyncio
-    async def test_both_thinking_and_digest(self):
-        """thinking_content + tool_digest 同时传入，两个都应存入"""
+    async def test_digest_stored_with_thinking_part_in_content(self):
+        """tool_digest 存入 generation_params；thinking 通过 ThinkingPart 在 content 中传递"""
         handler = _make_handler()
 
         task_data = {
@@ -321,7 +328,7 @@ class TestHandleCompleteToolDigest:
 
         captured_params = {}
         from datetime import datetime, timezone
-        from schemas.message import Message
+        from schemas.message import Message, ThinkingPart
 
         def fake_upsert(**kwargs):
             captured_params.update(kwargs)
@@ -342,12 +349,12 @@ class TestHandleCompleteToolDigest:
 
             await handler._handle_complete_common(
                 task_id="task_d2",
-                result=[TextPart(text="ok")],
+                result=[ThinkingPart(text="推理过程"), TextPart(text="ok")],
                 credits_consumed=0,
-                thinking_content="推理过程",
                 tool_digest=test_digest,
             )
 
         gen_params = captured_params["extra_generation_params"]
-        assert gen_params["thinking_content"] == "推理过程"
+        # thinking_content 不再写 generation_params
+        assert "thinking_content" not in gen_params
         assert gen_params["tool_digest"] == test_digest

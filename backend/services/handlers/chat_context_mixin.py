@@ -398,7 +398,6 @@ class ChatContextMixin:
                 result = (
                     self.db.table("messages")
                     # NOTE: 加载 generation_params 用于提取 tool_digest（跨轮上下文补全）
-                    # 当 thinking_content 启用后，若数据量增大需优化为 JSONB 投影
                     .select("role, content, status, created_at, generation_params")
                     .eq("conversation_id", conversation_id)
                     .eq("status", "completed")
