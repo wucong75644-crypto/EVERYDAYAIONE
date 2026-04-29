@@ -1776,7 +1776,9 @@
       "Bash(python -m pytest tests/test_tool_result_envelope.py tests/test_file_metadata_extractor.py tests/test_sandbox_validators.py tests/test_e2e_sandbox_flow.py tests/test_code_tools.py --deselect tests/test_tool_result_envelope.py::TestDelayedCleanupStaging -q --tb=line)",
       "Bash(./git-push.sh \"refactor: 工具描述改Claude风格精简版+元信息砍到只留静态信息——删除xlsx列提取/表头检测/宽表模式识别\")",
       "Bash(./git-push.sh \"refactor: 删除chat_context_mixin元信息提取协程——gather少一个task，metadata_map直接传空dict\")",
-      "Bash(./git-push.sh \"perf: 删除代码长度和AST节点限制——对标ChatGPT CI/Claude Code，安全由进程隔离保证\")"
+      "Bash(./git-push.sh \"perf: 删除代码长度和AST节点限制——对标ChatGPT CI/Claude Code，安全由进程隔离保证\")",
+      "Bash(grep -E \"\\\\.\\(ts|tsx|js|json\\)$\")",
+      "Bash(./git-push.sh \"refactor: 系统提示词重构为5层结构——做事原则/行动边界/工具使用/执行模式/业务规则，对齐Claude Code提示词架构\")"
     ],
     "additionalDirectories": [
       "/tmp"
