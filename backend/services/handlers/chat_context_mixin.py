@@ -105,54 +105,22 @@ class ChatContextMixin:
             messages.insert(0, {"role": "system", "content": search_prompt})
             logger.debug(f"Search context injected | len={len(router_search_context)}")
 
-        # 工作区文件元信息提取准备（表格 + 文档文件）
-        # 与 memory/summary/history/knowledge 并行执行，零额外延迟
-        _metadata_coro = None
-        if workspace_files:
-            from pathlib import Path as _Path
-            _EXTRACTABLE_EXTS = {
-                ".xlsx", ".xls", ".csv", ".tsv",  # 表格
-                ".docx", ".pptx", ".pdf",          # 文档
-            }
-            _has_extractable = any(
-                _Path(f.get("workspace_path", "")).suffix.lower() in _EXTRACTABLE_EXTS
-                for f in workspace_files
-            )
-            if _has_extractable:
-                from core.config import get_settings
-                from core.workspace import resolve_workspace_dir
-                from services.file_metadata_extractor import extract_metadata_for_files
-                _workspace_dir = resolve_workspace_dir(
-                    get_settings().file_workspace_root,
-                    user_id=user_id,
-                    org_id=getattr(self, "org_id", None),
-                )
-                _metadata_coro = extract_metadata_for_files(workspace_files, _workspace_dir)
-
-        # 兜底协程（无表格文件时占位，返回空 dict）
-        async def _noop_metadata():
-            return {}
-
-        metadata_task = _metadata_coro or _noop_metadata()
-
-        # 并行获取：记忆 / 摘要 / 历史 / 知识库 / 文件元信息（全部独立，无交叉依赖）
-        # 有预取记忆时跳过 _build_memory_prompt（已在上游并行获取）
+        # 并行获取：记忆 / 摘要 / 历史 / 知识库（全部独立，无交叉依赖）
+        # 元信息提取已移除——只展示静态文件信息，AI 用 code_execute 自行读取结构
         if prefetched_memory is not None:
-            summary_result, context_result, knowledge_result, metadata_result = await asyncio.gather(
+            summary_result, context_result, knowledge_result = await asyncio.gather(
                 self._get_context_summary(conversation_id, prefetched=prefetched_summary),
                 self._build_context_messages(conversation_id, text_content),
                 self._fetch_knowledge(text_content),
-                metadata_task,
                 return_exceptions=True,
             )
             memory_prompt = prefetched_memory
         else:
-            memory_result, summary_result, context_result, knowledge_result, metadata_result = await asyncio.gather(
+            memory_result, summary_result, context_result, knowledge_result = await asyncio.gather(
                 self._build_memory_prompt(user_id, text_content),
                 self._get_context_summary(conversation_id, prefetched=prefetched_summary),
                 self._build_context_messages(conversation_id, text_content),
                 self._fetch_knowledge(text_content),
-                metadata_task,
                 return_exceptions=True,
             )
             memory_prompt = (
@@ -171,20 +139,16 @@ class ChatContextMixin:
         knowledge_items = (
             knowledge_result if not isinstance(knowledge_result, BaseException) else None
         )
-        metadata_map = (
-            metadata_result if not isinstance(metadata_result, BaseException) else {}
-        )
+        metadata_map: dict = {}  # 不再提取，传空 dict 保持接口兼容
         if isinstance(summary_result, BaseException):
             logger.warning(f"Summary gather failed | error={summary_result}")
         if isinstance(context_result, BaseException):
             logger.warning(f"Context gather failed | error={context_result}")
         if isinstance(knowledge_result, BaseException):
             logger.debug(f"Knowledge fetch failed | error={knowledge_result}")
-        if isinstance(metadata_result, BaseException):
-            logger.debug(f"File metadata extraction failed | error={metadata_result}")
 
-        # 工作区文件提示注入（对标 OpenAI Responses API spreadsheet augmentation）
-        # 表格文件注入列元信息（类型/范围/分类），非表格文件注入读取指引
+        # 工作区文件提示注入（只展示静态信息：文件名/大小/类型/时间/路径）
+        # 不提取列名和表结构——AI 用 code_execute 自行读取
         if workspace_files:
             from services.file_metadata_extractor import format_workspace_files_prompt
             ws_prompt = format_workspace_files_prompt(workspace_files, metadata_map)
