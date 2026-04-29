@@ -296,9 +296,14 @@ class ChatToolMixin:
             # 先用完整结果生成 summary 推送前端（用户看到完整摘要）
             raw_summary = result[:100] if result else ""
             # 再截断+信号（messages 里只放精简版给 LLM）
-            from services.agent.tool_result_envelope import wrap
-            is_truncated = len(result) > 2000 if result else False
-            result = wrap(tool_name, result)
+            from services.agent.tool_result_envelope import (
+                wrap_for_erp_agent, PERSISTED_OUTPUT_TAG,
+            )
+            result = wrap_for_erp_agent(tool_name, result)
+            is_truncated = (
+                PERSISTED_OUTPUT_TAG in result
+                or "⚠ 输出过长" in result
+            ) if result else False
             # 通知前端工具完成（summary 基于截断前的原始结果）
             await ws_manager.send_to_task_or_user(
                 task_id, user_id,

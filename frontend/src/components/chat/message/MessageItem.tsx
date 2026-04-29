@@ -425,11 +425,11 @@ export default memo(function MessageItem({
 
           {/* 消息文本 */}
           <div className={isUser ? 'text-[15px] leading-relaxed whitespace-pre-wrap' : ''}>
-            {/* 加载状态：流式输出开始但内容为空
-                - 有 streamingThinking 时 → ThinkingBlock 已在上方显示，不再重复
+            {/* 加载状态：流式输出开始但内容为空且无多块内容
+                - hasMultiBlocks 时跳过此分支 → 进入 content.map 渲染 ToolStepCard/ThinkingBlock
                 - 有 agentStepHint 时 → 显示工具步骤提示（"正在查询订单..."）
                 - 都没有时 → 仅显示脉冲圆点（Claude 风格，无卡片无文字） */}
-            {((isRegenerating || isStreaming) && !textContent) ? (
+            {((isRegenerating || isStreaming) && !textContent && !hasMultiBlocks) ? (
               <LoadingPlaceholder text={agentStepHint || 'AI 正在思考'} />
             ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !isErrorMessage && !isStreaming && !isRegenerating) ? (
               /* 已完成但无内容（用户取消等场景） */
