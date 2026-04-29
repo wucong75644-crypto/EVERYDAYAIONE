@@ -25,6 +25,13 @@ from loguru import logger
 
 _SPREADSHEET_EXTS = {".xlsx", ".xls", ".csv", ".tsv"}
 _DOCUMENT_EXTS = {".docx", ".pptx", ".pdf"}
+_TEXT_EXTS = {
+    ".txt", ".md", ".log", ".json", ".jsonl", ".yaml", ".yml",
+    ".xml", ".html", ".css", ".js", ".ts", ".py", ".sql",
+    ".ini", ".cfg", ".conf", ".toml", ".rst", ".tex",
+}
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+_DATA_EXTS = {".parquet"}
 _SAMPLE_ROWS = 500  # 采样行数（对标 OpenAI 1000 行，ossfs 折中）
 _MAX_PREVIEW_ROWS = 3  # 展示预览行数
 _MAX_PREVIEW_COLS = 8  # 预览表格最多展示列数
@@ -565,34 +572,20 @@ async def extract_metadata_for_files(
     """
     result: Dict[str, Optional[Dict[str, Any]]] = {}
 
-    # 过滤出可提取的文件（表格 + 文档）
-    extractable = []
-    for f in workspace_files:
-        wp = f.get("workspace_path", "")
-        ext = Path(wp).suffix.lower() if wp else ""
-        if ext in _SPREADSHEET_EXTS or ext in _DOCUMENT_EXTS:
-            extractable.append(f)
+    # 所有文件都可提取元数据（统一入口 extract_file_metadata 按扩展名分派）
+    extractable = list(workspace_files)[:_MAX_METADATA_FILES]
 
     if not extractable:
         return result
-
-    # 限制最大提取数
-    extractable = extractable[:_MAX_METADATA_FILES]
 
     loop = asyncio.get_running_loop()
 
     async def _extract_one(ws_file: Dict[str, Any]) -> Tuple[str, Optional[Dict[str, Any]]]:
         wp = ws_file["workspace_path"]
-        ext = Path(wp).suffix.lower()
         abs_path = os.path.join(workspace_dir, wp)
-        # 根据文件类型选提取函数
-        extract_fn = (
-            extract_spreadsheet_metadata if ext in _SPREADSHEET_EXTS
-            else extract_document_metadata
-        )
         try:
             meta = await asyncio.wait_for(
-                loop.run_in_executor(None, extract_fn, abs_path),
+                loop.run_in_executor(None, extract_file_metadata, abs_path),
                 timeout=_PER_FILE_TIMEOUT,
             )
             return wp, meta
@@ -918,6 +911,204 @@ def _format_document_entry(
         return "\n".join(lines)
 
     return f"📄 {wp} ({size_str})\n  用 code_execute: {read_hint}"
+
+
+# ============================================================
+# 文本文件 / 图片 / Parquet 提取
+# ============================================================
+
+_TEXT_PREVIEW_LINES = 5
+_TEXT_MAX_PREVIEW_CHARS = 500
+
+
+def _extract_text_file(abs_path: str) -> Optional[Dict[str, Any]]:
+    """提取文本文件元信息：行数、字数、前几行预览"""
+    file_size = os.path.getsize(abs_path)
+    if file_size > 10 * 1024 * 1024:  # >10MB 跳过
+        return {"type": "text", "lines": None, "chars": None, "preview": "(文件过大)"}
+
+    try:
+        with open(abs_path, "rb") as f:
+            raw = f.read()
+        text = _decode_bytes(raw)
+    except Exception:
+        return None
+
+    lines = text.splitlines()
+    total_lines = len(lines)
+    total_chars = len(text)
+
+    # 预览前 N 行
+    preview_lines = []
+    char_count = 0
+    for line in lines[:_TEXT_PREVIEW_LINES]:
+        if char_count + len(line) > _TEXT_MAX_PREVIEW_CHARS:
+            remaining = _TEXT_MAX_PREVIEW_CHARS - char_count
+            if remaining > 20:
+                preview_lines.append(line[:remaining] + "...")
+            break
+        preview_lines.append(line)
+        char_count += len(line)
+
+    return {
+        "type": "text",
+        "lines": total_lines,
+        "chars": total_chars,
+        "preview": preview_lines,
+    }
+
+
+def _extract_image(abs_path: str) -> Optional[Dict[str, Any]]:
+    """提取图片元信息：宽高像素"""
+    try:
+        from PIL import Image
+        with Image.open(abs_path) as img:
+            return {
+                "type": "image",
+                "width": img.width,
+                "height": img.height,
+                "mode": img.mode,
+            }
+    except Exception:
+        return None
+
+
+def _extract_parquet(abs_path: str) -> Optional[Dict[str, Any]]:
+    """提取 parquet 元信息：行列数、列名"""
+    try:
+        import pyarrow.parquet as pq
+        pf = pq.ParquetFile(abs_path)
+        schema = pf.schema_arrow
+        num_rows = pf.metadata.num_rows
+        col_names = [field.name for field in schema]
+
+        return {
+            "type": "parquet",
+            "row_count": num_rows,
+            "col_count": len(col_names),
+            "columns": col_names[:20],  # 最多展示 20 列名
+        }
+    except Exception:
+        return None
+
+
+# ============================================================
+# 统一提取入口（所有文件类型）
+# ============================================================
+
+def extract_file_metadata(abs_path: str) -> Optional[Dict[str, Any]]:
+    """统一文件元信息提取入口
+
+    根据文件扩展名选择对应的提取函数。
+    file_list/file_search 统一调用此函数。
+    """
+    if not os.path.exists(abs_path):
+        return None
+
+    ext = Path(abs_path).suffix.lower()
+
+    if ext in _SPREADSHEET_EXTS:
+        return extract_spreadsheet_metadata(abs_path)
+    elif ext in _DOCUMENT_EXTS:
+        return extract_document_metadata(abs_path)
+    elif ext in _TEXT_EXTS:
+        return _extract_text_file(abs_path)
+    elif ext in _IMAGE_EXTS:
+        return _extract_image(abs_path)
+    elif ext in _DATA_EXTS:
+        return _extract_parquet(abs_path)
+    return None
+
+
+def format_file_metadata_line(
+    name: str, abs_path: str, size: int, meta: Optional[Dict[str, Any]],
+) -> str:
+    """将单个文件的元数据格式化为一行展示文本
+
+    供 file_list/file_search 的返回结果使用。
+    """
+    size_str = _fmt_size(size)
+    ext = Path(name).suffix.lower()
+
+    if meta is None:
+        return f"  {name}\t{size_str}"
+
+    file_type = meta.get("type", "")
+
+    # 表格类
+    if file_type in ("", ) or ext in _SPREADSHEET_EXTS:
+        row_count = meta.get("row_count")
+        col_count = meta.get("col_count", 0)
+        row_label = f"{row_count:,}" if row_count is not None else "?"
+        sheets = meta.get("sheets")
+        sheet_hint = f" | {len(sheets)} Sheets" if sheets else ""
+        header_row = meta.get("header_row")
+        read_cmd = _build_read_command(name, meta)
+        header_hint = f" | ⚠️ header={header_row}" if header_row else ""
+        return (
+            f"  📊 {name}\t{size_str} | {row_label}行×{col_count}列"
+            f"{sheet_hint}{header_hint}\n"
+            f"     读取: {read_cmd}"
+        )
+
+    # 文档类
+    if file_type == "docx":
+        p = meta.get("paragraphs", 0)
+        t = meta.get("tables", 0)
+        c = meta.get("chars", 0)
+        return (
+            f"  📝 {name}\t{size_str} | {p}段 {t}表 ~{c:,}字\n"
+            f"     读取: from docx import Document; doc = Document('{name}')"
+        )
+    if file_type == "pptx":
+        s = meta.get("slides", 0)
+        c = meta.get("chars", 0)
+        titles = meta.get("slide_titles", [])
+        title_hint = f" | {', '.join(titles[:3])}" if titles else ""
+        return (
+            f"  📽 {name}\t{size_str} | {s}页 ~{c:,}字{title_hint}\n"
+            f"     读取: from pptx import Presentation; prs = Presentation('{name}')"
+        )
+    if file_type == "pdf":
+        p = meta.get("pages", 0)
+        c = meta.get("chars", 0)
+        scanned = " | ⚠️扫描件" if meta.get("is_scanned") else ""
+        return (
+            f"  📕 {name}\t{size_str} | {p}页 ~{c:,}字{scanned}\n"
+            f"     读取: from PyPDF2 import PdfReader; reader = PdfReader('{name}')"
+        )
+
+    # 文本类
+    if file_type == "text":
+        lines = meta.get("lines")
+        chars = meta.get("chars")
+        lines_label = f"{lines:,}行" if lines else "?"
+        chars_label = f"~{chars:,}字" if chars else ""
+        preview = meta.get("preview", [])
+        first_line = preview[0][:60] + "..." if preview and len(preview[0]) > 60 else (preview[0] if preview else "")
+        preview_hint = f' | "{first_line}"' if first_line else ""
+        return f"  📄 {name}\t{size_str} | {lines_label} {chars_label}{preview_hint}"
+
+    # 图片类
+    if file_type == "image":
+        w = meta.get("width", 0)
+        h = meta.get("height", 0)
+        return f"  🖼 {name}\t{size_str} | {w}×{h}px"
+
+    # Parquet
+    if file_type == "parquet":
+        rows = meta.get("row_count", 0)
+        cols = meta.get("col_count", 0)
+        col_names = meta.get("columns", [])
+        cols_hint = f" | 列: {', '.join(col_names[:5])}" if col_names else ""
+        if len(col_names) > 5:
+            cols_hint += ", ..."
+        return (
+            f"  📊 {name}\t{size_str} | {rows:,}行×{cols}列{cols_hint}\n"
+            f"     读取: pd.read_parquet('{name}')"
+        )
+
+    return f"  {name}\t{size_str}"
 
 
 def _fmt_size(size: Optional[int]) -> str:
