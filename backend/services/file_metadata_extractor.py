@@ -212,7 +212,9 @@ def extract_spreadsheet_metadata(abs_path: str) -> Optional[Dict[str, Any]]:
             logger.debug(f"Skipping .xls metadata extraction (openpyxl unsupported) | path={abs_path}")
             return None
         elif ext in (".csv", ".tsv"):
-            return _extract_csv(abs_path, delimiter="\t" if ext == ".tsv" else ",")
+            # tsv 固定 tab，csv 自动检测分隔符
+            delimiter = "\t" if ext == ".tsv" else _detect_csv_delimiter(abs_path)
+            return _extract_csv(abs_path, delimiter=delimiter)
         return None
     except Exception as e:
         logger.warning(
@@ -298,6 +300,9 @@ def _extract_xlsx(abs_path: str) -> Optional[Dict[str, Any]]:
             "columns": columns_meta,
             "preview_rows": preview_rows,
         }
+        # 非首行表头 → 记录 header 参数，让读取指引自动带上
+        if header_row_idx > 0:
+            result["header_row"] = header_row_idx
         # 多 sheet 信息（仅多 sheet 时注入，单 sheet 不展示）
         if len(sheets_info) > 1:
             result["sheets"] = sheets_info
@@ -436,12 +441,28 @@ def _extract_pdf(abs_path: str) -> Optional[Dict[str, Any]]:
     if sample_pages > 0 and total_pages > sample_pages:
         total_chars = round(total_chars / sample_pages * total_pages)
 
-    return {
+    result = {
         "type": "pdf",
         "pages": total_pages,
         "chars": total_chars,
         "preview": preview,
     }
+    # 扫描件检测：有页但无文本 → 标注为扫描 PDF
+    if total_pages > 0 and total_chars < 10:
+        result["is_scanned"] = True
+    return result
+
+
+def _detect_csv_delimiter(abs_path: str) -> str:
+    """自动检测 CSV 分隔符（csv.Sniffer + 兜底逗号）"""
+    try:
+        with open(abs_path, "rb") as f:
+            head = f.read(8192)  # 前 8KB 足够判断
+        text = _decode_bytes(head)
+        dialect = csv.Sniffer().sniff(text, delimiters=",;\t|")
+        return dialect.delimiter
+    except Exception:
+        return ","
 
 
 def _extract_csv(abs_path: str, delimiter: str = ",") -> Optional[Dict[str, Any]]:
@@ -501,12 +522,17 @@ def _extract_csv(abs_path: str, delimiter: str = ",") -> Optional[Dict[str, Any]
             for i in range(min(len(header), _MAX_PREVIEW_COLS))
         ])
 
-    return {
+    result = {
         "row_count": total_data_rows,
         "col_count": len(header),
         "columns": columns_meta,
         "preview_rows": preview_rows,
     }
+    # 非逗号分隔 → 记录分隔符，让读取指引自动带 sep 参数
+    if delimiter != ",":
+        _SEP_NAMES = {"\t": "\\t", ";": ";", "|": "|"}
+        result["delimiter"] = _SEP_NAMES.get(delimiter, delimiter)
+    return result
 
 
 def _format_cell(value: Any) -> str:
@@ -746,13 +772,10 @@ def _format_standard(
         lines.append(f"  以上为第一个 Sheet「{sheets[0]['name']}」的信息。"
                      f"读其他 Sheet: pd.read_excel('{wp}', sheet_name='Sheet名')")
 
-    # 读取指引
-    ext = Path(wp).suffix.lower()
-    if ext in (".csv", ".tsv"):
-        lines.append(f"\n用 code_execute 分析: pd.read_csv('{wp}')")
-    else:
-        if not sheets:
-            lines.append(f"\n用 code_execute 分析: pd.read_excel('{wp}')")
+    # 读取指引（自动带正确参数）
+    read_cmd = _build_read_command(wp, meta)
+    if read_cmd:
+        lines.append(f"\n用 code_execute 分析: {read_cmd}")
 
     return "\n".join(lines)
 
@@ -794,9 +817,6 @@ def _format_compact(
     if len(columns) > _MAX_COLUMN_DISPLAY:
         cols_str += ", ..."
 
-    ext = Path(wp).suffix.lower()
-    read_cmd = "pd.read_csv" if ext in (".csv", ".tsv") else "pd.read_excel"
-
     # 多 sheet 紧凑提示
     sheets = meta.get("sheets")
     sheet_hint = ""
@@ -804,11 +824,36 @@ def _format_compact(
         sheet_names = [s["name"] for s in sheets]
         sheet_hint = f"\n  📑 {len(sheets)} Sheets: {', '.join(sheet_names)}"
 
+    read_cmd = _build_read_command(wp, meta)
+
     return (
         f"📊 {wp} | {row_label}×{col_count} | 路径: {wp}\n"
         f"  列: {cols_str}{sheet_hint}\n"
-        f"  用 {read_cmd}('{wp}') 读取"
+        f"  用 {read_cmd} 读取"
     )
+
+
+def _build_read_command(wp: str, meta: Dict[str, Any]) -> str:
+    """根据文件类型和元信息生成正确的读取命令
+
+    核心设计：元信息提取发现的特殊情况（非首行表头、分隔符）
+    自动反映到读取命令中，AI 复制即可用，不需要自己猜参数。
+    """
+    ext = Path(wp).suffix.lower()
+
+    if ext in (".csv", ".tsv"):
+        params = [f"'{wp}'"]
+        delimiter = meta.get("delimiter")
+        if delimiter:
+            params.append(f"sep='{delimiter}'")
+        return f"pd.read_csv({', '.join(params)})"
+
+    # xlsx
+    params = [f"'{wp}'"]
+    header_row = meta.get("header_row")
+    if header_row is not None and header_row > 0:
+        params.append(f"header={header_row}")
+    return f"pd.read_excel({', '.join(params)})"
 
 
 def _format_document_entry(
@@ -861,9 +906,12 @@ def _format_document_entry(
         pages = meta.get("pages", 0)
         chars = meta.get("chars", 0)
         preview = meta.get("preview", "")
+        is_scanned = meta.get("is_scanned", False)
 
         lines = [f"📕 {wp} ({size_str}) | {pages}页 ~{chars:,}字"]
-        if preview:
+        if is_scanned:
+            lines.append("  ⚠️ 扫描件 PDF（无可提取文本），需 OCR 处理")
+        elif preview:
             short = preview[:100] + "..." if len(preview) > 100 else preview
             lines.append(f"  首页预览: {short}")
         lines.append(f"  用 code_execute: {read_hint}")
