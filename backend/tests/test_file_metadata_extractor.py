@@ -374,10 +374,16 @@ class TestExtractMetadataForFiles:
         assert result.get("不存在.xlsx") is None
 
     @pytest.mark.asyncio
-    async def test_skip_non_spreadsheet(self, workspace):
+    async def test_text_file_also_extracted(self, workspace):
+        """所有文件类型都提取元数据（txt 返回行数/字数）"""
+        (Path(workspace) / "readme.txt").write_text("line1\nline2\nline3")
         files = [{"workspace_path": "readme.txt", "name": "readme.txt", "size": 100}]
         result = await extract_metadata_for_files(files, workspace)
-        assert len(result) == 0  # txt 不提取
+        assert "readme.txt" in result
+        meta = result["readme.txt"]
+        assert meta is not None
+        assert meta["type"] == "text"
+        assert meta["lines"] == 3
 
     @pytest.mark.asyncio
     async def test_empty_list(self, workspace):

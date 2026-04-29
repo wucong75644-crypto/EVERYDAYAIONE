@@ -521,7 +521,11 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
     async def _file_dispatch(
         self, tool_name: str, args: Dict[str, Any],
     ) -> str:
-        """文件工具统一调度（直接用文件名/相对路径）"""
+        """文件工具统一调度（直接用文件名/相对路径）
+
+        file_list 和 file_search 返回结果自动附带文件元数据。
+        元数据通过 per-message 缓存（_metadata_cache）避免重复提取。
+        """
         from core.config import get_settings
         from services.file_executor import FileExecutor
 
@@ -535,22 +539,30 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             org_id=self.org_id,
         )
 
-        # ── file_list：格式化返回文件名列表 ──
+        # ── file_list：格式化 + 元数据 ──
         if tool_name == "file_list":
             try:
-                return await self._file_list_formatted(executor, args)
+                return await self._file_list_with_metadata(executor, args)
             except PermissionError as e:
                 return f"权限不足: {e}"
             except Exception as e:
                 logger.error(f"ToolExecutor file_list | error={e}")
                 return f"文件操作失败: {e}"
 
+        # ── file_search：搜索 + 元数据 ──
+        if tool_name == "file_search":
+            try:
+                return await self._file_search_with_metadata(executor, args)
+            except PermissionError as e:
+                return f"权限不足: {e}"
+            except Exception as e:
+                logger.error(f"ToolExecutor file_search | error={e}")
+                return f"文件操作失败: {e}"
+
         dispatch = {
             "file_read": executor.file_read,
             "file_write": executor.file_write,
             "file_edit": executor.file_edit,
-            "file_search": executor.file_search,
-            "file_info": executor.file_info,
         }
 
         func = dispatch.get(tool_name)
@@ -566,10 +578,46 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             logger.error(f"ToolExecutor file_dispatch | tool={tool_name} | error={e}")
             return f"文件操作失败: {e}"
 
-    async def _file_list_formatted(
-        self, executor: Any, args: Dict[str, Any],
+    def _get_or_extract_metadata(self, abs_path: str) -> 'Optional[Dict]':
+        """获取文件元数据（带 per-message 缓存）
+
+        缓存挂在 ToolExecutor 实例上（_metadata_cache），
+        由 ChatHandler/ChatGenerateMixin 在工具循环开始时创建，
+        工具循环结束后自动 GC。
+        """
+        import os
+        from services.file_metadata_extractor import extract_file_metadata
+
+        cache = getattr(self, "_metadata_cache", None)
+        if cache is None:
+            cache = {}
+            self._metadata_cache = cache
+
+        # 缓存命中：路径 + mtime 匹配
+        cached = cache.get(abs_path)
+        if cached is not None:
+            try:
+                current_mtime = os.path.getmtime(abs_path)
+                if cached[0] == current_mtime:
+                    return cached[1]
+            except OSError:
+                pass
+
+        # 提取
+        try:
+            meta = extract_file_metadata(abs_path)
+            mtime = os.path.getmtime(abs_path)
+            cache[abs_path] = (mtime, meta)
+            return meta
+        except Exception:
+            return None
+
+    async def _file_list_with_metadata(
+        self, executor: 'Any', args: Dict[str, Any],
     ) -> str:
-        """file_list 格式化（直接用文件名，无句柄）"""
+        """file_list + 元数据（每个文件附带结构信息和读取命令）"""
+        from services.file_metadata_extractor import format_file_metadata_line
+
         data = await executor.file_list_entries(**args)
 
         if data["error"]:
@@ -582,14 +630,67 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         lines.append("─" * 60)
         for d in data["dirs"]:
             lines.append(f"  [目录] {d['name']}/\t\t{d['modified']}")
-        for f in data["files"]:
-            size_str = executor._format_size(f["size"])
-            lines.append(f"  {f['name']}\t{size_str}\t{f['modified']}")
+
+        # 文件：提取元数据（最多 _MAX_METADATA 个，防慢）
+        _MAX_METADATA = 5
+        for i, f in enumerate(data["files"]):
+            if i < _MAX_METADATA:
+                meta = self._get_or_extract_metadata(f["abs_path"])
+                line = format_file_metadata_line(
+                    f["name"], f["abs_path"], f["size"], meta,
+                )
+            else:
+                size_str = executor._format_size(f["size"])
+                line = f"  {f['name']}\t{size_str}"
+            lines.append(line)
 
         if data["truncated"]:
             lines.append(f"\n已达显示上限，部分条目未显示")
 
         return "\n".join(lines)
+
+    async def _file_search_with_metadata(
+        self, executor: 'Any', args: Dict[str, Any],
+    ) -> str:
+        """file_search + 元数据（搜到的文件附带结构信息）"""
+        import re
+        from services.file_metadata_extractor import format_file_metadata_line
+
+        # 先执行原始搜索
+        raw_result = await executor.file_search(**args)
+
+        # 如果搜索无结果或报错，直接返回
+        if "未找到" in raw_result or not raw_result.strip():
+            return raw_result
+
+        # 从搜索结果中提取文件路径，对前 3 个文件追加元数据
+        lines = raw_result.split("\n")
+        enhanced_lines = []
+        metadata_count = 0
+        _MAX_SEARCH_METADATA = 3
+
+        for line in lines:
+            # 搜索结果格式：  [文件] 相对路径  或  [文件] 相对路径:行号 | 预览
+            match = re.match(r"\s+\[文件\]\s+(\S+?)(?::\d+\s*\|.*)?$", line)
+            if match and metadata_count < _MAX_SEARCH_METADATA:
+                rel_path = match.group(1)
+                try:
+                    target = executor.resolve_safe_path(rel_path)
+                    if target.is_file():
+                        meta = self._get_or_extract_metadata(str(target))
+                        if meta:
+                            enhanced_line = format_file_metadata_line(
+                                target.name, str(target), target.stat().st_size, meta,
+                            )
+                            enhanced_lines.append(enhanced_line)
+                            metadata_count += 1
+                            continue
+                except Exception:
+                    pass
+
+            enhanced_lines.append(line)
+
+        return "\n".join(enhanced_lines)
 
     # ========================================
     # 社交媒体爬虫工具

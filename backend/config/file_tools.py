@@ -15,7 +15,6 @@ FILE_INFO_TOOLS: Set[str] = {
     "file_edit",
     "file_list",
     "file_search",
-    "file_info",
 }
 
 # 工具 Schema（参数验证）
@@ -59,12 +58,6 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "path": {"type": "string"},
             "search_content": {"type": "boolean"},
             "file_pattern": {"type": "string"},
-        },
-    },
-    "file_info": {
-        "required": ["path"],
-        "properties": {
-            "path": {"type": "string"},
         },
     },
 }
@@ -238,25 +231,6 @@ def build_file_tools() -> List[Dict[str, Any]]:
                 },
             },
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "file_info",
-                "description": (
-                    "获取文件或目录的元信息（大小、类型、修改时间、权限等）"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "文件名或相对路径",
-                        },
-                    },
-                    "required": ["path"],
-                },
-            },
-        },
     ]
 
 
@@ -271,6 +245,6 @@ FILE_ROUTING_PROMPT = (
     "- 写入/创建/保存文件 → file_write\n"
     "- 查看目录/列出文件 → file_list\n"
     "- 搜索/查找文件 → file_search\n"
-    "- 查看文件信息/属性 → file_info('利润表.xlsx')\n"
+    "- file_list 和 file_search 返回的结果已包含文件元信息（行列数/类型/读取命令），直接使用\n"
     "- 文件操作完毕后，调 route_to_chat 汇总结果回复用户\n\n"
 )
