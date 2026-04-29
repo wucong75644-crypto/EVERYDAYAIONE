@@ -1774,7 +1774,8 @@
       "Bash(./git-push.sh \"fix: chat_tool_mixin也走wrap_for_erp_agent——修复code_execute 5K结果被2K默认预算误落盘\")",
       "Bash(python -m pytest tests/test_tool_result_envelope.py tests/test_file_metadata_extractor.py tests/test_sandbox_validators.py tests/test_e2e_sandbox_flow.py --deselect tests/test_tool_result_envelope.py::TestDelayedCleanupStaging -q --tb=line)",
       "Bash(python -m pytest tests/test_tool_result_envelope.py tests/test_file_metadata_extractor.py tests/test_sandbox_validators.py tests/test_e2e_sandbox_flow.py tests/test_code_tools.py --deselect tests/test_tool_result_envelope.py::TestDelayedCleanupStaging -q --tb=line)",
-      "Bash(./git-push.sh \"refactor: 工具描述改Claude风格精简版+元信息砍到只留静态信息——删除xlsx列提取/表头检测/宽表模式识别\")"
+      "Bash(./git-push.sh \"refactor: 工具描述改Claude风格精简版+元信息砍到只留静态信息——删除xlsx列提取/表头检测/宽表模式识别\")",
+      "Bash(./git-push.sh \"refactor: 删除chat_context_mixin元信息提取协程——gather少一个task，metadata_map直接传空dict\")"
     ],
     "additionalDirectories": [
       "/tmp"
