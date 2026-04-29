@@ -714,11 +714,12 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             break
 
                     # 工具结果日志 → thinking（实时推送 + 持久化）
+                    # 预览放大到 2000 字符（用户需要在 thinking 里看到完整数据表）
                     _result_preview = ""
                     if isinstance(result, AgentResult):
-                        _result_preview = (result.summary or "")[:500]
+                        _result_preview = (result.summary or "")[:2000]
                     elif isinstance(result, str):
-                        _result_preview = result[:500]
+                        _result_preview = result[:2000]
                     _status_icon = "✗" if is_error else "✓"
                     _result_log = f"\n← {_status_icon} {tc['name']}: {_result_preview}"
                     accumulated_thinking += _result_log
