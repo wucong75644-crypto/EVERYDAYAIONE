@@ -30,15 +30,11 @@ _BLOCKED_CALLS = frozenset({
     "exit", "quit",
 })
 
-# 代码长度上限（字符数）
-MAX_CODE_LENGTH = 5000
-
-# AST 节点数上限
-MAX_AST_NODES = 500
-
-
 def validate_code(code: str) -> Optional[str]:
-    """验证代码安全性
+    """验证代码安全性（模块/函数黑名单 + dunder 限制）
+
+    安全由进程隔离 + 内存限制 + 超时控制保证，
+    不限制代码长度和复杂度（对标 ChatGPT CI / Claude Code）。
 
     Args:
         code: 待验证的 Python 代码
@@ -49,19 +45,11 @@ def validate_code(code: str) -> Optional[str]:
     if not code or not code.strip():
         return "代码不能为空"
 
-    if len(code) > MAX_CODE_LENGTH:
-        return f"代码超过长度限制（{len(code)}/{MAX_CODE_LENGTH} 字符）"
-
     # 解析 AST
     try:
         tree = ast.parse(code, mode="exec")
     except SyntaxError as e:
         return f"语法错误: {e.msg}（第{e.lineno}行）"
-
-    # 检查节点数
-    node_count = sum(1 for _ in ast.walk(tree))
-    if node_count > MAX_AST_NODES:
-        return f"代码复杂度超限（{node_count}/{MAX_AST_NODES} 个AST节点）"
 
     # 遍历 AST 检查危险操作
     errors: List[str] = []
