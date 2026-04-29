@@ -44,6 +44,9 @@ export interface StreamingSlice {
   removeOptimisticMessage: (conversationId: string, messageId: string) => void;
   getOptimisticMessages: (conversationId: string) => Message[];
 
+  /** 按 tool_call_id 更新已有 content block（tool_step 状态更新） */
+  updateContentBlock: (conversationId: string, toolCallId: string, updates: Record<string, unknown>) => void;
+
   // 思考内容流式状态
   /** 流式思考内容: conversationId -> accumulated thinking text */
   streamingThinking: Map<string, string>;
@@ -191,6 +194,29 @@ export const createStreamingSlice: StateCreator<
       const updatedList = [...list];
       updatedList[targetIndex] = { ...target, content };
 
+      const optimisticMessages = new Map(state.optimisticMessages);
+      optimisticMessages.set(conversationId, updatedList);
+      return { optimisticMessages };
+    });
+  },
+
+  updateContentBlock: (conversationId, toolCallId, updates) => {
+    set((state) => {
+      const streamingId = state.streamingMessages.get(conversationId);
+      if (!streamingId) return state;
+      const list = state.optimisticMessages.get(conversationId);
+      if (!list) return state;
+      const targetIndex = list.findIndex((m) => m.id === streamingId);
+      if (targetIndex === -1) return state;
+      const target = list[targetIndex];
+      const content = target.content.map((block) =>
+        block.type === 'tool_step' &&
+        (block as { tool_call_id?: string }).tool_call_id === toolCallId
+          ? { ...block, ...updates }
+          : block,
+      );
+      const updatedList = [...list];
+      updatedList[targetIndex] = { ...target, content };
       const optimisticMessages = new Map(state.optimisticMessages);
       optimisticMessages.set(conversationId, updatedList);
       return { optimisticMessages };

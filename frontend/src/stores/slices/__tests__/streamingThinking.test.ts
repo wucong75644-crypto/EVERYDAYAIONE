@@ -152,4 +152,74 @@ describe('streamingSlice - suggestions', () => {
       expect(store.getState().suggestions.get('conv_1')).toBeUndefined();
     });
   });
+
+  describe('updateContentBlock', () => {
+    it('should update matching tool_step block by tool_call_id', () => {
+      const state = store.getState();
+      state.startStreaming('conv_1', 'msg_1');
+      // 追加一个 running tool_step
+      state.appendContentBlock('conv_1', {
+        type: 'tool_step',
+        tool_name: 'web_search',
+        tool_call_id: 'tc_1',
+        status: 'running',
+      });
+
+      // 更新为 completed
+      store.getState().updateContentBlock('conv_1', 'tc_1', {
+        status: 'completed',
+        summary: '找到3条结果',
+        elapsed_ms: 1500,
+      });
+
+      const msgs = store.getState().optimisticMessages.get('conv_1')!;
+      const block = msgs[msgs.length - 1].content.find(
+        (b: Record<string, unknown>) => b.type === 'tool_step',
+      ) as Record<string, unknown>;
+      expect(block.status).toBe('completed');
+      expect(block.summary).toBe('找到3条结果');
+      expect(block.elapsed_ms).toBe(1500);
+    });
+
+    it('should not modify other blocks when updating', () => {
+      const state = store.getState();
+      state.startStreaming('conv_1', 'msg_1');
+      state.appendContentBlock('conv_1', {
+        type: 'tool_step', tool_name: 'a', tool_call_id: 'tc_a', status: 'running',
+      });
+      state.appendContentBlock('conv_1', {
+        type: 'tool_step', tool_name: 'b', tool_call_id: 'tc_b', status: 'running',
+      });
+
+      store.getState().updateContentBlock('conv_1', 'tc_b', { status: 'completed' });
+
+      const msgs = store.getState().optimisticMessages.get('conv_1')!;
+      const blocks = msgs[msgs.length - 1].content.filter(
+        (b: Record<string, unknown>) => b.type === 'tool_step',
+      ) as Array<Record<string, unknown>>;
+      expect(blocks[0].status).toBe('running');   // tc_a 不变
+      expect(blocks[1].status).toBe('completed'); // tc_b 更新
+    });
+
+    it('should be no-op when conversation has no streaming message', () => {
+      // 不应抛异常
+      store.getState().updateContentBlock('nonexistent', 'tc_1', { status: 'completed' });
+    });
+
+    it('should be no-op when tool_call_id does not match', () => {
+      const state = store.getState();
+      state.startStreaming('conv_1', 'msg_1');
+      state.appendContentBlock('conv_1', {
+        type: 'tool_step', tool_name: 'a', tool_call_id: 'tc_a', status: 'running',
+      });
+
+      store.getState().updateContentBlock('conv_1', 'tc_nonexistent', { status: 'completed' });
+
+      const msgs = store.getState().optimisticMessages.get('conv_1')!;
+      const block = msgs[msgs.length - 1].content.find(
+        (b: Record<string, unknown>) => b.type === 'tool_step',
+      ) as Record<string, unknown>;
+      expect(block.status).toBe('running'); // 未匹配，不变
+    });
+  });
 });

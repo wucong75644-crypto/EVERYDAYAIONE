@@ -95,6 +95,35 @@ class FilePart(BaseModel):
     workspace_path: Optional[str] = None  # 工作区相对路径（有值时 AI 用 file_read 读取）
 
 
+class ThinkingPart(BaseModel):
+    """思考过程内容块（持久化到 content，不再依赖 generation_params）
+
+    对标 Vercel AI SDK 的 reasoning part。
+    流式阶段通过 thinking_chunk WS 实时推送，
+    完成时作为 content 首元素持久化到 DB。
+    """
+    type: Literal["thinking"] = "thinking"
+    text: str
+    duration_ms: Optional[int] = None
+
+
+class ToolStepPart(BaseModel):
+    """工具调用步骤块（折叠式卡片，持久化到 content）
+
+    对标 Vercel AI SDK 的 tool-{toolName} part。
+    状态机：running → completed / error。
+    通过 content_block_add WS 推送，前端渲染为可折叠步骤卡片。
+    """
+    type: Literal["tool_step"] = "tool_step"
+    tool_name: str
+    tool_call_id: str
+    status: str = "running"  # "running" | "completed" | "error"
+    summary: Optional[str] = None
+    code: Optional[str] = None       # code_execute 专用：执行的代码
+    output: Optional[str] = None     # code_execute 专用：执行输出
+    elapsed_ms: Optional[int] = None
+
+
 class ToolResultPart(BaseModel):
     """工具结果内容块（独立渲染，不被主 Agent 文本覆盖）
 
@@ -123,7 +152,8 @@ class FormPart(BaseModel):
 
 
 ContentPart = Annotated[
-    Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart, ToolResultPart, FormPart],
+    Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart,
+          ThinkingPart, ToolStepPart, ToolResultPart, FormPart],
     Field(discriminator="type"),
 ]
 

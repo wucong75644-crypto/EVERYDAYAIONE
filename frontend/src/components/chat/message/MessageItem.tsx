@@ -21,6 +21,7 @@ import LoadingPlaceholder from './LoadingPlaceholder';
 import MarkdownRenderer from './MarkdownRenderer';
 import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
+import ToolStepCard from './ToolStepCard';
 import FormBlock from './FormBlock';
 import FileCardList from '../media/FileCard';
 import SuggestionChips from './SuggestionChips';
@@ -140,10 +141,11 @@ export default memo(function MessageItem({
   const hasVideo = videoUrls.length > 0;
   const hasFiles = files.length > 0;
 
-  // 检测是否为多内容块模式（含 tool_result / image / file block）
+  // 检测是否为多内容块模式（含非纯文本 block）
   const hasMultiBlocks = useMemo(() => {
     if (!Array.isArray(message.content)) return false;
     return message.content.some((p) =>
+      p.type === 'thinking' || p.type === 'tool_step' ||
       p.type === 'tool_result' || p.type === 'image' || p.type === 'file' || p.type === 'form'
     );
   }, [message.content]);
@@ -400,9 +402,15 @@ export default memo(function MessageItem({
           }`}
           style={isUser ? { boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.22), 0 4px 16px rgba(0,0,0,0.06)' } : undefined}
         >
-          {/* 思考过程折叠块（仅 AI 消息） */}
-          {!isUser && (() => {
-            const thinkingText = streamingThinking || genParams.thinking_content as string || '';
+          {/* 思考过程折叠块（仅 AI 消息，非多块模式时渲染）
+              多块模式下 thinking 由 content.map 中的 ThinkingPart 分支渲染 */}
+          {!isUser && !hasMultiBlocks && (() => {
+            // 优先级：streamingThinking（流式）> content 中的 ThinkingPart（持久化）> genParams（旧消息 fallback）
+            const thinkingFromContent = !isStreaming
+              ? (message.content.find(p => p.type === 'thinking') as import('../../../types/message').ThinkingPart | undefined)
+              : undefined;
+            const thinkingText = streamingThinking || thinkingFromContent?.text || genParams.thinking_content as string || '';
+            const thinkingDurationMs = thinkingFromContent?.duration_ms;
             const isThinkingNow = !!(isStreaming && streamingThinking && !textContent);
             if (!thinkingText && !isThinkingNow) return null;
             return (
@@ -410,6 +418,7 @@ export default memo(function MessageItem({
                 content={thinkingText}
                 isThinking={isThinkingNow}
                 thinkingStartTime={thinkingStartTime}
+                durationMs={thinkingDurationMs}
               />
             );
           })()}
@@ -439,10 +448,40 @@ export default memo(function MessageItem({
               <>{textContent}</>
             ) : hasMultiBlocks ? (
               /* AI 消息（多块模式）：遍历 content 按 type 分发渲染
-                 text / tool_result / image / file 混排，一份 content 顺序渲染
+                 text / tool_step / tool_result / image / file 混排，一份 content 顺序渲染
                  设计文档：TECH_内容块混排渲染架构.md §7.2 */
               <>
+                {/* 流式阶段：content 中还没有 ThinkingPart 时，从 streamingThinking 渲染
+                    避免 hasMultiBlocks 切换时 thinking 短暂消失 */}
+                {isStreaming && streamingThinking && !message.content.some(p => p.type === 'thinking') && (
+                  <ThinkingBlock content={streamingThinking} isThinking={!textContent} thinkingStartTime={thinkingStartTime} />
+                )}
                 {message.content.map((part, idx) => {
+                  if (part.type === 'thinking') {
+                    const tp = part as import('../../../types/message').ThinkingPart;
+                    return (
+                      <ThinkingBlock
+                        key={`thinking-${idx}`}
+                        content={tp.text}
+                        durationMs={tp.duration_ms}
+                      />
+                    );
+                  }
+                  if (part.type === 'tool_step') {
+                    const ts = part as import('../../../types/message').ToolStepPart;
+                    return (
+                      <ToolStepCard
+                        key={ts.tool_call_id || `step-${idx}`}
+                        toolName={ts.tool_name}
+                        toolCallId={ts.tool_call_id}
+                        status={ts.status}
+                        summary={ts.summary}
+                        code={ts.code}
+                        output={ts.output}
+                        elapsedMs={ts.elapsed_ms}
+                      />
+                    );
+                  }
                   if (part.type === 'text' && (part as { text: string }).text) {
                     return (
                       <MarkdownRenderer
