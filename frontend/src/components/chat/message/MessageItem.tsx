@@ -426,10 +426,11 @@ export default memo(function MessageItem({
 
           {/* 消息文本（工具调用过程已归入 ThinkingBlock，不再独立展示 ToolStepCard） */}
           <div className={isUser ? 'text-[15px] leading-relaxed whitespace-pre-wrap' : ''}>
-            {/* 加载状态：流式输出开始但内容为空
+            {/* 加载状态：流式输出开始但还没有任何可渲染的内容块
+                - 已有 content blocks（tool_step 等）时直接走多块渲染，不显示占位符
                 - 有 agentStepHint 时 → 显示工具步骤提示（"正在查询订单..."）
                 - 都没有时 → 仅显示脉冲圆点（Claude 风格，无卡片无文字） */}
-            {((isRegenerating || isStreaming) && !textContent) ? (
+            {((isRegenerating || isStreaming) && !textContent && !hasMultiBlocks) ? (
               <LoadingPlaceholder text={agentStepHint || 'AI 正在思考'} />
             ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !isErrorMessage && !isStreaming && !isRegenerating) ? (
               /* 已完成但无内容（用户取消等场景） */
@@ -517,6 +518,10 @@ export default memo(function MessageItem({
                   }
                   return null;
                 })}
+                {/* 流式阶段：工具执行完毕等待最终回答时，在末尾显示加载提示 */}
+                {(isStreaming || isRegenerating) && (
+                  <LoadingPlaceholder text={agentStepHint || 'AI 正在思考'} />
+                )}
               </>
             ) : (
               /* AI 消息（单块 / 流式）：Markdown 渲染 */
