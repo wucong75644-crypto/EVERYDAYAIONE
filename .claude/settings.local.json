@@ -1768,7 +1768,8 @@
       "Bash(python -m pytest tests/test_e2e_sandbox_flow.py::TestE2ECodeExecuteFlow::test_large_computation_persisted -v -s --tb=short)",
       "Bash(python -m pytest tests/test_tool_result_envelope.py tests/test_e2e_sandbox_flow.py --deselect tests/test_tool_result_envelope.py::TestDelayedCleanupStaging -v --tb=short)",
       "Bash(python -m pytest tests/test_sandbox_validators.py tests/test_tool_result_envelope.py tests/test_file_metadata_extractor.py tests/test_e2e_sandbox_flow.py --deselect tests/test_tool_result_envelope.py::TestDelayedCleanupStaging -q --tb=short)",
-      "Bash(./git-push.sh \"perf: code_execute结果分流对齐Claude——沙盒50K安全网+信封30K预算+结构化预览+宽表模式识别+工具描述无状态说明\")"
+      "Bash(./git-push.sh \"perf: code_execute结果分流对齐Claude——沙盒50K安全网+信封30K预算+结构化预览+宽表模式识别+工具描述无状态说明\")",
+      "Bash(./git-push.sh \"fix: 修复本次变更导致的3个测试断言——sandbox默认值50K+工具描述关键词+数据分析工作流\")"
     ],
     "additionalDirectories": [
       "/tmp"

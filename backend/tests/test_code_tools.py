@@ -90,11 +90,11 @@ class TestCodeToolsDefinition:
         desc = tool["function"]["description"]
         assert "WORKSPACE_DIR" not in desc
 
-    def test_workspace_version_has_workspace_dir(self):
-        """主 Agent 版包含 WORKSPACE_DIR"""
+    def test_workspace_version_has_workspace_hint(self):
+        """主 Agent 版包含工作区说明"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
-        assert "WORKSPACE_DIR" in desc
+        assert "工作区" in desc
 
     def test_architecture_isolation_symmetric(self):
         """两版工具名和参数完全相同，只有描述不同"""
@@ -134,11 +134,13 @@ class TestCodeToolsDefinition:
         assert "df.describe()" in desc
 
     def test_workspace_version_has_data_workflow(self):
-        """主 Agent 版包含数据分析工作流"""
+        """主 Agent 版包含数据分析工作流和大表探索策略"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
-        assert "nrows=5" in desc
+        assert "数据分析工作流" in desc
         assert "一步到位" in desc
+        assert "高效探索大表" in desc
+        assert "独立子进程" in desc
 
     def test_tool_system_prompt_forbids_print_df(self):
         """TOOL_SYSTEM_PROMPT 包含 print(df) 禁令"""
@@ -205,7 +207,7 @@ class TestConfigSettings:
         }
         assert defaults["sandbox_enabled"] is True
         assert defaults["sandbox_timeout"] == 120.0
-        assert defaults["sandbox_max_result_chars"] == 8000
+        assert defaults["sandbox_max_result_chars"] == 50000
         assert defaults["sandbox_api_concurrency"] == 10
         assert defaults["sandbox_max_pages"] == 200
 
