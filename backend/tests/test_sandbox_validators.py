@@ -3,8 +3,6 @@
 import pytest
 
 from services.sandbox.validators import (
-    MAX_AST_NODES,
-    MAX_CODE_LENGTH,
     validate_code,
     truncate_result,
 )
@@ -117,11 +115,23 @@ class TestValidateCode:
 
     # === 限制 ===
 
-    def test_code_too_long(self):
-        code = "x = 1\n" * (MAX_CODE_LENGTH // 5)
+    def test_long_code_accepted(self):
+        """长代码不再被限制（安全由进程隔离保证）"""
+        code = "x = 1\n" * 2000  # 约 10000 字符
         result = validate_code(code)
-        assert result is not None
-        assert "长度限制" in result
+        assert result is None
+
+    def test_complex_code_accepted(self):
+        """复杂代码不再被限制（对标 ChatGPT CI / Claude Code）"""
+        # 模拟真实数据处理代码（500+ AST 节点）
+        lines = ["import pandas as pd", "import json", "data = {}"]
+        for i in range(100):
+            lines.append(f"data['col_{i}'] = {i}")
+        lines.append("df = pd.DataFrame(data)")
+        lines.append("print(df.shape)")
+        code = "\n".join(lines)
+        result = validate_code(code)
+        assert result is None
 
     def test_syntax_error(self):
         result = validate_code("def foo(")
