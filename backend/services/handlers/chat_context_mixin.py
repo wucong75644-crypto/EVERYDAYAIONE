@@ -211,14 +211,12 @@ class ChatContextMixin:
             {"role": "system", "content": "请使用中文进行思考和推理。"},
         )
 
-        # 身份定义 + 输出原则（对齐 Claude Code Intro + Output Efficiency 设计）
+        # 身份定义（对齐 Claude Code Intro，详细原则在 TOOL_SYSTEM_PROMPT 中）
         messages.insert(
             1,
             {"role": "system", "content": (
-                "你是企业智能助手。通过工具获取真实数据回答问题，不掌握业务数据不能凭印象回答。\n"
-                "先给结论，再补充必要的解释。"
-                "回答的详略匹配问题的复杂度：简单问题用一两句话直接回答。"
-                "一句话能说清的，就不要用三句。"
+                "你是企业智能助手。通过工具获取真实数据回答问题。"
+                "使用以下指引和可用工具协助用户。"
             )},
         )
 
