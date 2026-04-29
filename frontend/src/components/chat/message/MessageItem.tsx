@@ -141,13 +141,19 @@ export default memo(function MessageItem({
   const hasVideo = videoUrls.length > 0;
   const hasFiles = files.length > 0;
 
-  // 检测是否为多内容块模式（含非纯文本 block）
+  // 检测是否为多内容块模式（仅 tool_result / image / file / form 触发）
+  // thinking 和 tool_step 在独立区域渲染，不触发多块模式
   const hasMultiBlocks = useMemo(() => {
     if (!Array.isArray(message.content)) return false;
     return message.content.some((p) =>
-      p.type === 'thinking' || p.type === 'tool_step' ||
       p.type === 'tool_result' || p.type === 'image' || p.type === 'file' || p.type === 'form'
     );
+  }, [message.content]);
+
+  // 提取 tool_step 块（独立区域渲染，流式+持久化通用）
+  const toolSteps = useMemo(() => {
+    if (!Array.isArray(message.content)) return [];
+    return message.content.filter((p) => p.type === 'tool_step') as import('../../../types/message').ToolStepPart[];
   }, [message.content]);
 
   // 判断是否为失败消息
@@ -402,9 +408,8 @@ export default memo(function MessageItem({
           }`}
           style={isUser ? { boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.22), 0 4px 16px rgba(0,0,0,0.06)' } : undefined}
         >
-          {/* 思考过程折叠块（仅 AI 消息，非多块模式时渲染）
-              多块模式下 thinking 由 content.map 中的 ThinkingPart 分支渲染 */}
-          {!isUser && !hasMultiBlocks && (() => {
+          {/* 思考过程折叠块（仅 AI 消息，独立区域始终渲染） */}
+          {!isUser && (() => {
             // 优先级：streamingThinking（流式）> content 中的 ThinkingPart（持久化）> genParams（旧消息 fallback）
             const thinkingFromContent = !isStreaming
               ? (message.content.find(p => p.type === 'thinking') as import('../../../types/message').ThinkingPart | undefined)
@@ -423,13 +428,30 @@ export default memo(function MessageItem({
             );
           })()}
 
+          {/* 工具步骤卡片（独立区域，不参与 content.map 混排） */}
+          {!isUser && toolSteps.length > 0 && (
+            <div className="mb-2 space-y-1">
+              {toolSteps.map((ts) => (
+                <ToolStepCard
+                  key={ts.tool_call_id}
+                  toolName={ts.tool_name}
+                  toolCallId={ts.tool_call_id}
+                  status={ts.status}
+                  summary={ts.summary}
+                  code={ts.code}
+                  output={ts.output}
+                  elapsedMs={ts.elapsed_ms}
+                />
+              ))}
+            </div>
+          )}
+
           {/* 消息文本 */}
           <div className={isUser ? 'text-[15px] leading-relaxed whitespace-pre-wrap' : ''}>
-            {/* 加载状态：流式输出开始但内容为空且无多块内容
-                - hasMultiBlocks 时跳过此分支 → 进入 content.map 渲染 ToolStepCard/ThinkingBlock
+            {/* 加载状态：流式输出开始但内容为空
                 - 有 agentStepHint 时 → 显示工具步骤提示（"正在查询订单..."）
                 - 都没有时 → 仅显示脉冲圆点（Claude 风格，无卡片无文字） */}
-            {((isRegenerating || isStreaming) && !textContent && !hasMultiBlocks) ? (
+            {((isRegenerating || isStreaming) && !textContent) ? (
               <LoadingPlaceholder text={agentStepHint || 'AI 正在思考'} />
             ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !isErrorMessage && !isStreaming && !isRegenerating) ? (
               /* 已完成但无内容（用户取消等场景） */
@@ -448,40 +470,12 @@ export default memo(function MessageItem({
               <>{textContent}</>
             ) : hasMultiBlocks ? (
               /* AI 消息（多块模式）：遍历 content 按 type 分发渲染
-                 text / tool_step / tool_result / image / file 混排，一份 content 顺序渲染
+                 tool_result / image / file / form 混排，thinking/tool_step 已在独立区域渲染
                  设计文档：TECH_内容块混排渲染架构.md §7.2 */
               <>
-                {/* 流式阶段：content 中还没有 ThinkingPart 时，从 streamingThinking 渲染
-                    避免 hasMultiBlocks 切换时 thinking 短暂消失 */}
-                {isStreaming && streamingThinking && !message.content.some(p => p.type === 'thinking') && (
-                  <ThinkingBlock content={streamingThinking} isThinking={!textContent} thinkingStartTime={thinkingStartTime} />
-                )}
                 {message.content.map((part, idx) => {
-                  if (part.type === 'thinking') {
-                    const tp = part as import('../../../types/message').ThinkingPart;
-                    return (
-                      <ThinkingBlock
-                        key={`thinking-${idx}`}
-                        content={tp.text}
-                        durationMs={tp.duration_ms}
-                      />
-                    );
-                  }
-                  if (part.type === 'tool_step') {
-                    const ts = part as import('../../../types/message').ToolStepPart;
-                    return (
-                      <ToolStepCard
-                        key={ts.tool_call_id || `step-${idx}`}
-                        toolName={ts.tool_name}
-                        toolCallId={ts.tool_call_id}
-                        status={ts.status}
-                        summary={ts.summary}
-                        code={ts.code}
-                        output={ts.output}
-                        elapsedMs={ts.elapsed_ms}
-                      />
-                    );
-                  }
+                  // thinking/tool_step 已在独立区域渲染，跳过
+                  if (part.type === 'thinking' || part.type === 'tool_step') return null;
                   if (part.type === 'text' && (part as { text: string }).text) {
                     return (
                       <MarkdownRenderer
