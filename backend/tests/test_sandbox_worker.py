@@ -147,20 +147,11 @@ class TestBuildSandboxGlobals:
         assert g["OUTPUT_DIR"] == output
         assert Path(output).exists()
 
-    def test_scoped_open_resolves_relative_to_workspace(self, tmp_path):
-        """相对路径自动解析到 workspace"""
-        (tmp_path / "test.txt").write_text("workspace file")
+    def test_open_delegates_to_builtins(self, tmp_path):
+        """sandbox globals 的 open 委托给 builtins.open（安全检查在 worker_entry 层统一处理）"""
+        import builtins
         g = _build_sandbox_globals(str(tmp_path), "", "")
-
-        result = g["open"]("test.txt", "r").read()
-        assert result == "workspace file"
-
-    def test_scoped_open_blocks_outside_workspace(self, tmp_path):
-        """访问 workspace 外路径被拦截"""
-        g = _build_sandbox_globals(str(tmp_path), "", "")
-
-        with pytest.raises(PermissionError, match="文件访问被拒绝"):
-            g["open"]("/etc/passwd", "r")
+        assert g["open"] is builtins.open
 
     def test_builtins_are_restricted(self, tmp_path):
         g = _build_sandbox_globals(str(tmp_path), "", "")
@@ -214,11 +205,18 @@ class TestExecCode:
         result = _exec_code("await some_func()", g, timeout=5.0)
         assert "不支持" in result
 
-    def test_read_workspace_file(self, tmp_path):
-        """通过 open() 读取 workspace 文件"""
+    def test_read_workspace_file_via_worker(self, tmp_path):
+        """通过 open() 读取 workspace 文件（需走 worker_entry 完整链路）"""
         (tmp_path / "data.txt").write_text("test content")
-        g = self._make_globals(tmp_path)
-        result = _exec_code("print(open('data.txt').read())", g, timeout=5.0)
+        import multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        q = ctx.Queue()
+        sandbox_worker_entry(
+            q, "print(open('data.txt').read())",
+            str(tmp_path), "", "", 5.0, 1000,
+        )
+        status, result = q.get(timeout=5)
+        assert status == "ok"
         assert "test content" in result
 
 
@@ -416,44 +414,79 @@ class TestPandasProxy:
 
 
 class TestFindSimilarFile:
-    """文件找不到时智能建议"""
+    """文件名纠错测试（_find_similar_file_global 模块级函数）"""
 
     def test_similar_file_space_difference(self, tmp_path):
         """空格差异能匹配（'利润表 - xxx' vs '利润表-xxx'）"""
+        from services.sandbox.sandbox_worker import _find_similar_file_global
         (tmp_path / "利润表-数据.txt").write_text("data")
-        g = _build_sandbox_globals(str(tmp_path), "", "")
 
-        with pytest.raises(FileNotFoundError, match="你是否要找"):
-            g["open"]("利润表 - 数据.txt")
+        result = _find_similar_file_global(
+            str(tmp_path / "利润表 - 数据.txt"), str(tmp_path),
+        )
+        assert result  # 应找到相似文件
+        assert "利润表-数据.txt" in result
 
     def test_similar_file_underscore_difference(self, tmp_path):
         """下划线差异能匹配"""
+        from services.sandbox.sandbox_worker import _find_similar_file_global
         (tmp_path / "report_2026.csv").write_text("data")
-        g = _build_sandbox_globals(str(tmp_path), "", "")
 
-        with pytest.raises(FileNotFoundError, match="你是否要找"):
-            g["open"]("report-2026.csv")
+        result = _find_similar_file_global(
+            str(tmp_path / "report-2026.csv"), str(tmp_path),
+        )
+        assert result
+        assert "report_2026.csv" in result
 
     def test_no_similar_file(self, tmp_path):
-        """没有相似文件时只报错不建议"""
-        g = _build_sandbox_globals(str(tmp_path), "", "")
+        """没有相似文件时返回空"""
+        from services.sandbox.sandbox_worker import _find_similar_file_global
 
-        with pytest.raises(FileNotFoundError) as exc_info:
-            g["open"]("completely_different.txt")
-        assert "你是否要找" not in str(exc_info.value)
+        result = _find_similar_file_global(
+            str(tmp_path / "completely_different.txt"), str(tmp_path),
+        )
+        assert result == ""
 
-    def test_exact_file_works(self, tmp_path):
-        """精确文件名正常打开"""
-        (tmp_path / "data.txt").write_text("hello")
-        g = _build_sandbox_globals(str(tmp_path), "", "")
+    def test_exact_file_via_worker(self, tmp_path):
+        """通过 sandbox_worker_entry 完整链路测试精确文件名读取"""
+        (tmp_path / "data.txt").write_text("hello from worker")
+        import multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        q = ctx.Queue()
 
-        f = g["open"]("data.txt")
-        assert f.read() == "hello"
-        f.close()
+        sandbox_worker_entry(
+            q, "print(open('data.txt').read())",
+            str(tmp_path), "", "", 5.0, 1000,
+        )
+        status, result = q.get(timeout=5)
+        assert status == "ok"
+        assert "hello from worker" in result
 
-    def test_outside_workspace_still_blocked(self, tmp_path):
-        """路径穿越仍被拦截（不受 findSimilarFile 影响）"""
-        g = _build_sandbox_globals(str(tmp_path), "", "")
+    def test_auto_correct_via_worker(self, tmp_path):
+        """通过完整链路测试文件名自动纠错"""
+        (tmp_path / "利润表-数据.xlsx").write_bytes(b"fake xlsx")
+        import multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        q = ctx.Queue()
 
-        with pytest.raises(PermissionError, match="文件访问被拒绝"):
-            g["open"]("/etc/passwd")
+        # AI 拼错的文件名（多了空格）
+        sandbox_worker_entry(
+            q, "f = open('利润表 - 数据.xlsx', 'rb')\nprint(len(f.read()))\nf.close()",
+            str(tmp_path), "", "", 5.0, 1000,
+        )
+        status, result = q.get(timeout=5)
+        assert status == "ok"
+        assert "10" in result  # b"fake xlsx" = 10 bytes
+
+    def test_outside_workspace_blocked_via_worker(self, tmp_path):
+        """通过完整链路测试路径穿越拦截"""
+        import multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        q = ctx.Queue()
+
+        sandbox_worker_entry(
+            q, "open('/etc/passwd').read()",
+            str(tmp_path), "", "", 5.0, 1000,
+        )
+        status, result = q.get(timeout=5)
+        assert "文件访问被拒绝" in result or "PermissionError" in result
