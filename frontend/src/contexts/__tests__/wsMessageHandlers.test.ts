@@ -82,6 +82,7 @@ function createMockStore(): MessageStoreActions {
     clearAgentStepHint: vi.fn(),
     appendStreamingThinking: vi.fn(),
     appendContentBlock: vi.fn(),
+    updateContentBlock: vi.fn(),
     markForceRefresh: vi.fn(),
     setSuggestions: vi.fn(),
   };
