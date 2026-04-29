@@ -11,6 +11,7 @@ import asyncio
 import csv
 import io
 import os
+import re
 from collections import Counter
 from datetime import datetime, date
 from pathlib import Path
@@ -36,6 +37,9 @@ _SAMPLE_ROWS = 500  # 采样行数（对标 OpenAI 1000 行，ossfs 折中）
 _MAX_PREVIEW_ROWS = 3  # 展示预览行数
 _MAX_PREVIEW_COLS = 8  # 预览表格最多展示列数
 _MAX_COLUMN_DISPLAY = 12  # 列名列表展示上限
+_WIDE_TABLE_THRESHOLD = 50  # 列数超过此值尝试模式识别
+_WIDE_TABLE_HEAD_COLS = 15  # 宽表退化模式：显示前 N 列名
+_WIDE_TABLE_TAIL_COLS = 5  # 宽表退化模式：显示后 N 列名
 _MAX_CATEGORY_DISPLAY = 5  # 分类值展示上限
 _PER_FILE_TIMEOUT = 3.0  # 单文件超时（秒）
 _TOTAL_TIMEOUT = 5.0  # 全部文件总超时（秒）
@@ -704,6 +708,149 @@ def format_workspace_files_prompt(
     return "\n".join(parts)
 
 
+
+# ============================================================
+# 宽表模式识别
+# ============================================================
+
+# 日期模式：2024-01, 2024/01, 2024年1月, 202401, 1月, 01 等
+_DATE_PATTERNS = [
+    re.compile(r"\d{4}[-/]\d{1,2}"),        # 2024-01, 2024/1
+    re.compile(r"\d{4}年\d{1,2}月"),          # 2024年1月
+    re.compile(r"\d{6}"),                     # 202401
+    re.compile(r"\d{1,2}月"),                 # 1月, 12月
+]
+
+
+def _detect_wide_table_pattern(
+    columns: List[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """检测宽表列名模式（列数 > _WIDE_TABLE_THRESHOLD 时调用）
+
+    返回 None 表示无法识别模式，调用方应退化为列名列表。
+    返回 dict 包含：
+      - description: 模式描述文本
+      - index_cols: 行索引列信息
+      - value_col_count: 值列数量
+    """
+    if len(columns) <= _WIDE_TABLE_THRESHOLD:
+        return None
+
+    col_names = [c["name"] for c in columns]
+
+    # 1. 找分隔符：从常用分隔符中选命中率最高的
+    best_sep, best_count = None, 0
+    for sep in ["_", "-", "/", "｜", "|"]:
+        count = sum(1 for n in col_names if sep in n)
+        if count > best_count:
+            best_sep, best_count = sep, count
+
+    # 分隔符命中率 < 60% → 无法识别模式
+    if best_sep is None or best_count < len(col_names) * 0.6:
+        return None
+
+    # 2. 按分隔符拆分列名，分离索引列和值列
+    prefixes: List[str] = []
+    suffixes: List[str] = []
+    index_cols: List[Dict[str, Any]] = []
+
+    for col in columns:
+        name = col["name"]
+        if best_sep not in name:
+            index_cols.append(col)
+            continue
+        parts = name.split(best_sep, 1)
+        prefixes.append(parts[0].strip())
+        suffixes.append(parts[1].strip() if len(parts) > 1 else "")
+
+    if not prefixes:
+        return None
+
+    # 3. 检测后缀是否为日期模式
+    is_date_suffix = False
+    for pattern in _DATE_PATTERNS:
+        date_hits = sum(1 for s in suffixes if pattern.search(s))
+        if date_hits > len(suffixes) * 0.5:
+            is_date_suffix = True
+            break
+
+    # 4. 聚合统计
+    unique_prefixes = sorted(set(prefixes))
+    unique_suffixes = sorted(set(suffixes))
+
+    # 5. 构建模式描述
+    # 索引列描述
+    idx_desc = ""
+    if index_cols:
+        idx_names = [c["name"] for c in index_cols[:5]]
+        idx_desc = f"行索引列: {', '.join(idx_names)}"
+        if len(index_cols) > 5:
+            idx_desc += f" 等共 {len(index_cols)} 列"
+
+    # 值列模式
+    suffix_label = "日期" if is_date_suffix else "后缀"
+    prefix_sample = unique_prefixes[:3]
+    suffix_sample = unique_suffixes[:3]
+
+    # 示例列名
+    sample_cols = [col_names[i] for i in range(len(col_names))
+                   if best_sep in col_names[i]][:3]
+
+    description_lines = [
+        f"结构: 宽表（{len(unique_prefixes)} 个前缀 × {len(unique_suffixes)} 个{suffix_label}）",
+    ]
+    if idx_desc:
+        description_lines.append(idx_desc)
+    description_lines.append(
+        f"值列模式: {{前缀}}{best_sep}{{{suffix_label}}}，共 {len(prefixes)} 列"
+    )
+    description_lines.append(
+        f"  前缀({len(unique_prefixes)}): {', '.join(prefix_sample)}"
+        + (f", ..." if len(unique_prefixes) > 3 else "")
+    )
+    description_lines.append(
+        f"  {suffix_label}({len(unique_suffixes)}): {', '.join(suffix_sample)}"
+        + (f", ..." if len(unique_suffixes) > 3 else "")
+    )
+    description_lines.append(
+        f"  示例列: {', '.join(sample_cols)}"
+    )
+
+    # 值列数据类型（用 id 集合避免 O(n²) dict 比较）
+    _index_ids = set(id(c) for c in index_cols)
+    value_cols = [c for c in columns if id(c) not in _index_ids]
+    if value_cols:
+        dtypes = Counter(c["dtype"] for c in value_cols)
+        main_dtype = dtypes.most_common(1)[0][0]
+        description_lines.append(f"  值类型: {main_dtype}")
+        # 如果有范围信息，取所有值列的全局 min/max
+        mins = [c["min"] for c in value_cols if c.get("min") is not None]
+        maxs = [c["max"] for c in value_cols if c.get("max") is not None]
+        if mins and maxs:
+            global_min = min(mins)
+            global_max = max(maxs)
+            min_s = f"{global_min:,.0f}" if isinstance(global_min, (int, float)) and float(global_min).is_integer() else f"{global_min:,.2f}"
+            max_s = f"{global_max:,.0f}" if isinstance(global_max, (int, float)) and float(global_max).is_integer() else f"{global_max:,.2f}"
+            description_lines.append(f"  值范围: {min_s} ~ {max_s}")
+
+    return {
+        "description": "\n".join(description_lines),
+        "index_cols": index_cols,
+        "value_col_count": len(prefixes),
+    }
+
+
+def _format_wide_table_fallback(columns: List[Dict[str, Any]]) -> str:
+    """宽表模式识别失败时的退化方案：展示前 N + 后 N 列名"""
+    head = columns[:_WIDE_TABLE_HEAD_COLS]
+    tail = columns[-_WIDE_TABLE_TAIL_COLS:] if len(columns) > _WIDE_TABLE_HEAD_COLS + _WIDE_TABLE_TAIL_COLS else []
+    parts = [c["name"] for c in head]
+    if tail:
+        parts.append(f"... (省略 {len(columns) - _WIDE_TABLE_HEAD_COLS - _WIDE_TABLE_TAIL_COLS} 列)")
+        parts.extend(c["name"] for c in tail)
+    return "列名: " + ", ".join(parts)
+
+
 def _format_standard(
     wp: str, size_str: str, meta: Dict[str, Any]
 ) -> str:
@@ -721,41 +868,49 @@ def _format_standard(
         "",
     ]
 
-    # 列元信息表格（最多 _MAX_PREVIEW_COLS 列）
-    display_cols = columns[:_MAX_PREVIEW_COLS]
-    if display_cols:
-        lines.append("| 列名 | 类型 | 非空 | 示例值 |")
-        lines.append("|------|------|------|--------|")
+    # 宽表检测：列数 > 阈值时尝试模式识别
+    if col_count > _WIDE_TABLE_THRESHOLD and columns:
+        pattern = _detect_wide_table_pattern(columns)
+        if pattern:
+            lines.append(pattern["description"])
+        else:
+            lines.append(_format_wide_table_fallback(columns))
+    else:
+        # 常规表：列元信息表格（最多 _MAX_PREVIEW_COLS 列）
+        display_cols = columns[:_MAX_PREVIEW_COLS]
+        if display_cols:
+            lines.append("| 列名 | 类型 | 非空 | 示例值 |")
+            lines.append("|------|------|------|--------|")
 
-        for col in display_cols:
-            name = col["name"]
-            dtype = col["dtype"]
-            non_null = col.get("non_null", "")
-            non_null_str = f"{non_null:,}" if isinstance(non_null, int) else str(non_null)
+            for col in display_cols:
+                name = col["name"]
+                dtype = col["dtype"]
+                non_null = col.get("non_null", "")
+                non_null_str = f"{non_null:,}" if isinstance(non_null, int) else str(non_null)
 
-            # 构建示例值
-            sample_parts = []
-            if col.get("categories"):
-                cats = col["categories"]
-                for val, cnt in cats[:_MAX_CATEGORY_DISPLAY]:
-                    sample_parts.append(f'"{val}"({cnt:,})')
-                unique = col.get("_unique_count", len(cats))
-                if unique > _MAX_CATEGORY_DISPLAY:
-                    sample_parts.append(f"+{unique - _MAX_CATEGORY_DISPLAY}类")
-            elif col.get("sample"):
-                for s in col["sample"]:
-                    sample_parts.append(f'"{s}"' if dtype != "数值" else s)
-                if col.get("min") is not None and col.get("max") is not None:
-                    mn, mx = col["min"], col["max"]
-                    mn_s = f"{mn:,.0f}" if float(mn).is_integer() else f"{mn:,.2f}"
-                    mx_s = f"{mx:,.0f}" if float(mx).is_integer() else f"{mx:,.2f}"
-                    sample_parts.append(f"[范围: {mn_s}~{mx_s}]")
+                # 构建示例值
+                sample_parts = []
+                if col.get("categories"):
+                    cats = col["categories"]
+                    for val, cnt in cats[:_MAX_CATEGORY_DISPLAY]:
+                        sample_parts.append(f'"{val}"({cnt:,})')
+                    unique = col.get("_unique_count", len(cats))
+                    if unique > _MAX_CATEGORY_DISPLAY:
+                        sample_parts.append(f"+{unique - _MAX_CATEGORY_DISPLAY}类")
+                elif col.get("sample"):
+                    for s in col["sample"]:
+                        sample_parts.append(f'"{s}"' if dtype != "数值" else s)
+                    if col.get("min") is not None and col.get("max") is not None:
+                        mn, mx = col["min"], col["max"]
+                        mn_s = f"{mn:,.0f}" if float(mn).is_integer() else f"{mn:,.2f}"
+                        mx_s = f"{mx:,.0f}" if float(mx).is_integer() else f"{mx:,.2f}"
+                        sample_parts.append(f"[范围: {mn_s}~{mx_s}]")
 
-            sample_str = ", ".join(sample_parts) if sample_parts else ""
-            lines.append(f"| {name} | {dtype} | {non_null_str} | {sample_str} |")
+                sample_str = ", ".join(sample_parts) if sample_parts else ""
+                lines.append(f"| {name} | {dtype} | {non_null_str} | {sample_str} |")
 
-        if len(columns) > _MAX_PREVIEW_COLS:
-            lines.append(f"| ... | | | (共{col_count}列，显示前{_MAX_PREVIEW_COLS}列) |")
+            if len(columns) > _MAX_PREVIEW_COLS:
+                lines.append(f"| ... | | | (共{col_count}列，显示前{_MAX_PREVIEW_COLS}列) |")
 
     # 多 sheet 提示
     sheets = meta.get("sheets")

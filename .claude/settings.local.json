@@ -1750,7 +1750,25 @@
       "Bash(./git-push.sh \"feat: 文件工具对齐Claude Code——元信息注入+pandas nrows限制+findSimilarFile+file_edit+搜索优化\")",
       "Bash(./git-push.sh \"test: 补充file_edit+PandasProxy+findSimilarFile+搜索排除24个测试用例\")",
       "Bash(./deploy/deploy.sh -b --skip-test --skip-build)",
-      "Bash(./git-push.sh \"fix: code_tools提示词清除句柄残留——FILES/F1/F2全部替换为文件名直接引用\")"
+      "Bash(./git-push.sh \"fix: code_tools提示词清除句柄残留——FILES/F1/F2全部替换为文件名直接引用\")",
+      "WebFetch(domain:sdk.vercel.ai)",
+      "WebFetch(domain:ai-sdk.dev)",
+      "Bash(grep -E \"\\\\.ts$\")",
+      "Bash(python -m pytest tests/test_sandbox_validators.py -x -q)",
+      "Bash(python -m pytest tests/test_tool_result_envelope.py -x -q)",
+      "Bash(python -m pytest tests/ -k \"metadata\" -x -q)",
+      "Bash(python -m pytest tests/test_file_metadata*.py -x -q)",
+      "Bash(python -m pytest tests/test_sandbox_validators.py tests/test_tool_result_envelope.py tests/test_file_metadata_extractor.py tests/test_tool_loop_context.py -x -q)",
+      "Bash(python -m pytest tests/test_sandbox_validators.py tests/test_tool_result_envelope.py tests/test_file_metadata_extractor.py tests/test_tool_loop_context.py --deselect tests/test_tool_result_envelope.py::TestDelayedCleanupStaging -q)",
+      "Bash(python -m pytest tests/test_sandbox_validators.py tests/test_tool_result_envelope.py tests/test_file_metadata_extractor.py --deselect tests/test_tool_result_envelope.py::TestDelayedCleanupStaging -q)",
+      "Bash(python -m pytest tests/test_sandbox_validators.py tests/test_tool_result_envelope.py tests/test_file_metadata_extractor.py --deselect tests/test_tool_result_envelope.py::TestDelayedCleanupStaging -q --tb=short)",
+      "Bash(python -m pytest tests/test_sandbox_validators.py tests/test_tool_result_envelope.py tests/test_file_metadata_extractor.py --deselect tests/test_tool_result_envelope.py::TestDelayedCleanupStaging -v --tb=short)",
+      "Bash(python -m pytest tests/test_e2e_sandbox_flow.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_e2e_sandbox_flow.py -v -s --tb=short)",
+      "Bash(python -m pytest tests/test_e2e_sandbox_flow.py::TestE2ECodeExecuteFlow::test_large_computation_persisted -v -s --tb=short)",
+      "Bash(python -m pytest tests/test_tool_result_envelope.py tests/test_e2e_sandbox_flow.py --deselect tests/test_tool_result_envelope.py::TestDelayedCleanupStaging -v --tb=short)",
+      "Bash(python -m pytest tests/test_sandbox_validators.py tests/test_tool_result_envelope.py tests/test_file_metadata_extractor.py tests/test_e2e_sandbox_flow.py --deselect tests/test_tool_result_envelope.py::TestDelayedCleanupStaging -q --tb=short)",
+      "Bash(./git-push.sh \"perf: code_execute结果分流对齐Claude——沙盒50K安全网+信封30K预算+结构化预览+宽表模式识别+工具描述无状态说明\")"
     ],
     "additionalDirectories": [
       "/tmp"

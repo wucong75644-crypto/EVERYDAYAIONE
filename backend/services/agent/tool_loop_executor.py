@@ -642,12 +642,18 @@ class ToolLoopExecutor:
                     return f"📎 文件已生成: {m.group('name')}（下载卡片将自动展示，不要重复引用文件名）"
                 content = _FILE_RE.sub(_file_placeholder, content)
 
-            # Step 3: 截断防爆（ToolOutput 已结构化不截断，str 需要）
+            # Step 3: 信封分流（按工具名自动选预算，大结果落盘 staging）
             if not isinstance(result, ToolOutput):
-                from services.agent.tool_result_envelope import wrap_for_erp_agent
-                is_truncated = len(content) > 3000 if content else False
+                from services.agent.tool_result_envelope import (
+                    wrap_for_erp_agent, PERSISTED_OUTPUT_TAG,
+                )
                 _tight = hook_ctx.budget.is_tight if hook_ctx.budget else False
                 content = wrap_for_erp_agent(tool_name, content, tight=_tight)
+                # 检测实际截断/落盘（而非猜内容长度）
+                is_truncated = (
+                    PERSISTED_OUTPUT_TAG in content
+                    or "⚠ 输出过长" in content
+                ) if content else False
 
             # Step 4: 入 messages
             messages.append({

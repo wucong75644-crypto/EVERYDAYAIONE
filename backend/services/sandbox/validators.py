@@ -117,8 +117,11 @@ def _check_node(node: ast.AST) -> Optional[str]:
     return None
 
 
-def truncate_result(text: str, max_chars: int = 8000) -> str:
-    """截断执行结果
+def truncate_result(text: str, max_chars: int = 50000) -> str:
+    """截断执行结果（子进程安全网，防止 Queue 传输过大数据）
+
+    对标 Claude Code DEFAULT_MAX_RESULT_SIZE_CHARS = 50000。
+    实际显示预算由 tool_result_envelope 控制（code_execute 30K）。
 
     Args:
         text: 原始输出文本
