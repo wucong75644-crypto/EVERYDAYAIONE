@@ -585,10 +585,23 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 if not tool_calls_acc:
                     break  # 无工具调用，输出完成
 
-                # 有工具调用 → 中间叙述归入 thinking（不进正文）
-                # "让我查看文件..."等中间文字本质是 AI 思考过程，放到 ThinkingBlock 展示
+                # 有工具调用 → 中间叙述作 TextPart 按时序插入 content_blocks
+                # "让我查看文件..."等中间文字进正文流，thinking 只留纯推理
                 if turn_text:
-                    accumulated_thinking += f"\n{turn_text}"
+                    _text_block = {"type": "text", "text": turn_text}
+                    _content_blocks.append(_text_block)
+                    try:
+                        await ws_manager.send_to_task_or_user(
+                            task_id, user_id,
+                            build_content_block_add(
+                                task_id=task_id,
+                                conversation_id=conversation_id,
+                                message_id=message_id,
+                                block=_text_block,
+                            ),
+                        )
+                    except Exception as _text_err:
+                        logger.warning(f"text block push failed | task={task_id} | {_text_err}")
 
                 # 有工具调用 → 执行工具循环
                 completed_calls = sorted(tool_calls_acc.values(), key=lambda x: x.get("id", ""))
@@ -623,7 +636,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     ),
                 )
 
-                # 推送 tool_step(running) 内容块 + 记录开始时间 + thinking 日志
+                # 推送 tool_step(running) 内容块 + 记录开始时间
+                # thinking 只留纯推理，工具调用详情通过 ToolStepCard 内联展示
                 _tool_step_start_times: Dict[str, float] = {}
                 for tc in completed_calls:
                     _tool_step: Dict[str, Any] = {
@@ -632,31 +646,14 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         "tool_call_id": tc["id"],
                         "status": "running",
                     }
-                    # 工具调用日志 → thinking（实时推送 + 持久化）
-                    _tool_label = tc["name"]
-                    _thinking_log = f"\n\n→ 调用 {_tool_label}"
                     if tc["name"] == "code_execute":
                         try:
                             _ce_args = json.loads(tc.get("arguments", "{}"))
                             _ce_code = _ce_args.get("code", "")[:2000]
-                            _tool_step["code"] = _ce_code
                             if _ce_code:
-                                _thinking_log += f"\n```python\n{_ce_code}\n```"
+                                _tool_step["code"] = _ce_code
                         except Exception:
                             pass
-                    accumulated_thinking += _thinking_log
-                    if _thinking_start_time is None:
-                        _thinking_start_time = _time.monotonic()
-                    await ws_manager.send_to_task_or_user(
-                        task_id, user_id,
-                        build_thinking_chunk(
-                            task_id=task_id,
-                            conversation_id=conversation_id,
-                            message_id=message_id,
-                            chunk=_thinking_log,
-                            accumulated=accumulated_thinking,
-                        ),
-                    )
                     _content_blocks.append(_tool_step)
                     _tool_step_start_times[tc["id"]] = _time.monotonic()
                     try:
@@ -713,26 +710,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                                 _blk["summary"] = result[:500]
                             break
 
-                    # 工具结果日志 → thinking（实时推送 + 持久化）
-                    # 预览放大到 2000 字符（用户需要在 thinking 里看到完整数据表）
-                    _result_preview = ""
-                    if isinstance(result, AgentResult):
-                        _result_preview = (result.summary or "")[:2000]
-                    elif isinstance(result, str):
-                        _result_preview = result[:2000]
-                    _status_icon = "✗" if is_error else "✓"
-                    _result_log = f"\n← {_status_icon} {tc['name']}: {_result_preview}"
-                    accumulated_thinking += _result_log
-                    await ws_manager.send_to_task_or_user(
-                        task_id, user_id,
-                        build_thinking_chunk(
-                            task_id=task_id,
-                            conversation_id=conversation_id,
-                            message_id=message_id,
-                            chunk=_result_log,
-                            accumulated=accumulated_thinking,
-                        ),
-                    )
+                    # 工具结果日志已通过 ToolStepCard 的 summary 字段展示，
+                    # 不再重复写入 thinking（保持 thinking 只含纯 AI 推理）
 
                 # ── 文件块嵌入 content 流 + 实时推送前端 ──
                 # 设计文档：TECH_内容块混排渲染架构.md §6.2
@@ -899,7 +878,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             credits_consumed = self._calculate_credits(final_usage)
 
             # 最后一轮的 turn_text（循环 break 后未被收割）
-            # 中间轮文本已归入 accumulated_thinking，这里只取最后一轮的实际回答
+            # 中间轮文本已作 TextPart 插入 _content_blocks，这里只取最后一轮的实际回答
             _final_turn_text = turn_text
 
             if _content_blocks:
@@ -984,7 +963,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 "task_id": task_id,
                 "result": result_parts,
                 "credits_consumed": credits_consumed,
-                "thinking_content": accumulated_thinking or None,
                 "tool_digest": _tool_digest,
             }
 
@@ -1114,13 +1092,11 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         task_id: str,
         result: List[ContentPart],
         credits_consumed: int = 0,
-        thinking_content: Optional[str] = None,
         tool_digest: Optional[dict] = None,
     ) -> Message:
         """完成回调（调用基类通用流程）"""
         return await self._handle_complete_common(
             task_id, result, credits_consumed,
-            thinking_content=thinking_content,
             tool_digest=tool_digest,
         )
 

@@ -196,7 +196,9 @@ class TestExtractToolNamesAndCoreTools:
         from config.chat_tools import get_tool_system_prompt
         prompt = get_tool_system_prompt()
         assert len(prompt) > 100
-        assert "工具决策规则" in prompt
+        # 系统提示词经重构后采用5层结构，校验关键段落存在
+        assert "做事原则" in prompt
+        assert "工具使用" in prompt
 
     def test_tool_group_enum(self):
         from config.chat_tools import ToolGroup

@@ -204,14 +204,14 @@ class TestBuildThinkingChunk:
 
 
 class TestBuildMessageDoneThinkingContent:
-    """测试 build_message_done 对 thinking_content 的传递"""
+    """测试 build_message_done 对 generation_params 的透传"""
 
-    def test_message_done_preserves_thinking_content_in_gen_params(self):
-        """测试：message 中 generation_params.thinking_content 被保留"""
+    def test_message_done_preserves_gen_params(self):
+        """测试：message 中 generation_params 字段被原样透传（thinking 已改为 ThinkingPart 存 content）"""
         message_data = {
             "id": "msg_t1",
-            "content": [{"type": "text", "text": "回答"}],
-            "generation_params": {"thinking_content": "推理过程"},
+            "content": [{"type": "thinking", "text": "推理过程"}, {"type": "text", "text": "回答"}],
+            "generation_params": {"tool_digest": {"tools": []}},
             "status": "completed",
         }
 
@@ -222,7 +222,9 @@ class TestBuildMessageDoneThinkingContent:
         )
 
         gen_params = msg["payload"]["message"]["generation_params"]
-        assert gen_params["thinking_content"] == "推理过程"
+        assert gen_params["tool_digest"] == {"tools": []}
+        # thinking_content 不再写入 generation_params（ThinkingPart 在 content 中）
+        assert "thinking_content" not in gen_params
 
 
 class TestBuildRoutingComplete:
