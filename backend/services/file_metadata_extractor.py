@@ -227,7 +227,19 @@ def _extract_xlsx(abs_path: str) -> Optional[Dict[str, Any]]:
 
     wb = load_workbook(abs_path, read_only=True, data_only=True)
     try:
-        ws = wb[wb.sheetnames[0]]
+        # 提取所有 sheet 名称和行列数
+        sheet_names = wb.sheetnames
+        sheets_info = []
+        for sn in sheet_names:
+            s = wb[sn]
+            sheets_info.append({
+                "name": sn,
+                "rows": (s.max_row or 0) - 1 if s.max_row and s.max_row > 0 else 0,
+                "cols": s.max_column or 0,
+            })
+
+        # 选第一个 sheet 做详细提取
+        ws = wb[sheet_names[0]]
         total_rows = ws.max_row
         total_cols = ws.max_column
 
@@ -264,12 +276,16 @@ def _extract_xlsx(abs_path: str) -> Optional[Dict[str, Any]]:
                 for i in range(min(len(header), _MAX_PREVIEW_COLS))
             ])
 
-        return {
+        result = {
             "row_count": data_rows,
             "col_count": total_cols or len(header),
             "columns": columns_meta,
             "preview_rows": preview_rows,
         }
+        # 多 sheet 信息（仅多 sheet 时注入，单 sheet 不展示）
+        if len(sheets_info) > 1:
+            result["sheets"] = sheets_info
+        return result
     finally:
         wb.close()
 
@@ -546,12 +562,21 @@ def _format_standard(
         if len(columns) > _MAX_PREVIEW_COLS:
             lines.append(f"| ... | | | (共{col_count}列，显示前{_MAX_PREVIEW_COLS}列) |")
 
+    # 多 sheet 提示
+    sheets = meta.get("sheets")
+    if sheets:
+        sheet_parts = [f"{s['name']}({s['rows']}行)" for s in sheets]
+        lines.append(f"\n📑 多 Sheet: {', '.join(sheet_parts)}")
+        lines.append(f"  以上为第一个 Sheet「{sheets[0]['name']}」的信息。"
+                     f"读其他 Sheet: pd.read_excel('{wp}', sheet_name='Sheet名')")
+
     # 读取指引
     ext = Path(wp).suffix.lower()
     if ext in (".csv", ".tsv"):
         lines.append(f"\n用 code_execute 分析: pd.read_csv('{wp}')")
     else:
-        lines.append(f"\n用 code_execute 分析: pd.read_excel('{wp}')")
+        if not sheets:
+            lines.append(f"\n用 code_execute 分析: pd.read_excel('{wp}')")
 
     return "\n".join(lines)
 
@@ -596,9 +621,16 @@ def _format_compact(
     ext = Path(wp).suffix.lower()
     read_cmd = "pd.read_csv" if ext in (".csv", ".tsv") else "pd.read_excel"
 
+    # 多 sheet 紧凑提示
+    sheets = meta.get("sheets")
+    sheet_hint = ""
+    if sheets:
+        sheet_names = [s["name"] for s in sheets]
+        sheet_hint = f"\n  📑 {len(sheets)} Sheets: {', '.join(sheet_names)}"
+
     return (
         f"📊 {wp} | {row_label}×{col_count} | 路径: {wp}\n"
-        f"  列: {cols_str}\n"
+        f"  列: {cols_str}{sheet_hint}\n"
         f"  用 {read_cmd}('{wp}') 读取"
     )
 
