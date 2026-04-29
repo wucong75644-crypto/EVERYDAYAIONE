@@ -578,12 +578,12 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             logger.error(f"ToolExecutor file_dispatch | tool={tool_name} | error={e}")
             return f"文件操作失败: {e}"
 
-    def _get_or_extract_metadata(self, abs_path: str) -> 'Optional[Dict]':
-        """获取文件元数据（带 per-message 缓存）
+    async def _get_or_extract_metadata(self, abs_path: str) -> 'Optional[Dict]':
+        """获取文件元数据（带 per-message 缓存 + 线程池执行）
 
         缓存挂在 ToolExecutor 实例上（_metadata_cache），
-        由 ChatHandler/ChatGenerateMixin 在工具循环开始时创建，
         工具循环结束后自动 GC。
+        IO 阻塞操作（openpyxl 读文件等）在线程池中执行，不阻塞 event loop。
         """
         import os
         from services.file_metadata_extractor import extract_file_metadata
@@ -603,9 +603,13 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             except OSError:
                 pass
 
-        # 提取
+        # 在线程池中提取（防阻塞 event loop）
         try:
-            meta = extract_file_metadata(abs_path)
+            loop = asyncio.get_running_loop()
+            meta = await asyncio.wait_for(
+                loop.run_in_executor(None, extract_file_metadata, abs_path),
+                timeout=3.0,
+            )
             mtime = os.path.getmtime(abs_path)
             cache[abs_path] = (mtime, meta)
             return meta
@@ -635,7 +639,7 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         _MAX_METADATA = 5
         for i, f in enumerate(data["files"]):
             if i < _MAX_METADATA:
-                meta = self._get_or_extract_metadata(f["abs_path"])
+                meta = await self._get_or_extract_metadata(f["abs_path"])
                 line = format_file_metadata_line(
                     f["name"], f["abs_path"], f["size"], meta,
                 )
@@ -677,7 +681,7 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
                 try:
                     target = executor.resolve_safe_path(rel_path)
                     if target.is_file():
-                        meta = self._get_or_extract_metadata(str(target))
+                        meta = await self._get_or_extract_metadata(str(target))
                         if meta:
                             enhanced_line = format_file_metadata_line(
                                 target.name, str(target), target.stat().st_size, meta,
