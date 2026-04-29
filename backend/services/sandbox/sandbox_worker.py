@@ -62,6 +62,46 @@ from services.sandbox.validators import truncate_result
 
 
 # ============================================================
+# 文件名纠错（模块级，供 builtins.open 和 sandbox globals 共用）
+# ============================================================
+
+def _find_similar_file_global(target_path: str, workspace_dir: str) -> str:
+    """文件找不到时，搜索同目录下相似文件名，返回绝对路径
+
+    策略1：去掉空格/连字符/下划线后完全匹配（利润表 - xxx vs 利润表-xxx）
+    策略2：同扩展名 + 文件名前缀包含关系（至少前 6 字符匹配）
+
+    返回：匹配文件的绝对路径，或空字符串
+    """
+    import os as _os
+    target_name = _os.path.basename(target_path)
+    target_dir = _os.path.dirname(target_path)
+    if not target_dir or not _os.path.isdir(target_dir):
+        target_dir = _os.path.realpath(workspace_dir)
+    if not _os.path.isdir(target_dir):
+        return ""
+    try:
+        entries = _os.listdir(target_dir)
+    except OSError:
+        return ""
+    # 策略1：归一化后完全匹配
+    normalized = target_name.replace(" ", "").replace("-", "").replace("_", "").lower()
+    for entry in entries:
+        entry_normalized = entry.replace(" ", "").replace("-", "").replace("_", "").lower()
+        if entry_normalized == normalized and entry != target_name:
+            return _os.path.join(target_dir, entry)
+    # 策略2：同扩展名 + 文件名前缀包含关系
+    target_stem = _os.path.splitext(target_name)[0].replace(" ", "").lower()
+    target_ext = _os.path.splitext(target_name)[1].lower()
+    for entry in entries:
+        entry_ext = _os.path.splitext(entry)[1].lower()
+        entry_stem = _os.path.splitext(entry)[0].replace(" ", "").lower()
+        if entry_ext == target_ext and (target_stem[:6] in entry_stem or entry_stem[:6] in target_stem):
+            return _os.path.join(target_dir, entry)
+    return ""
+
+
+# ============================================================
 # 子进程环境准备
 # ============================================================
 
@@ -165,56 +205,11 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         g["OUTPUT_DIR"] = output_dir
 
-    # workspace-scoped open（相对路径自动解析到 workspace + 相似文件建议）
-    _ws_dir = workspace_dir
-
-    def _find_similar_file(target_path: str) -> str:
-        """文件找不到时，搜索 workspace 下相似文件名（对标 Claude Code findSimilarFile）"""
-        target_name = _os.path.basename(target_path)
-        target_dir = _os.path.dirname(target_path) or _ws_dir
-        if not target_dir or not _os.path.isdir(target_dir):
-            return ""
-        try:
-            entries = _os.listdir(target_dir)
-        except OSError:
-            return ""
-        # 策略1：同名不同空格/连字符（利润表 - xxx vs 利润表-xxx）
-        normalized = target_name.replace(" ", "").replace("-", "").replace("_", "").lower()
-        for entry in entries:
-            entry_normalized = entry.replace(" ", "").replace("-", "").replace("_", "").lower()
-            if entry_normalized == normalized and entry != target_name:
-                rel = _os.path.relpath(_os.path.join(target_dir, entry), _ws_dir)
-                return rel
-        # 策略2：同扩展名 + 包含关键词
-        target_stem = _os.path.splitext(target_name)[0].replace(" ", "").lower()
-        target_ext = _os.path.splitext(target_name)[1].lower()
-        for entry in entries:
-            entry_ext = _os.path.splitext(entry)[1].lower()
-            entry_stem = _os.path.splitext(entry)[0].replace(" ", "").lower()
-            if entry_ext == target_ext and (target_stem[:4] in entry_stem or entry_stem[:4] in target_stem):
-                rel = _os.path.relpath(_os.path.join(target_dir, entry), _ws_dir)
-                return rel
-        return ""
-
-    def _scoped_open(path, mode="r", *args, **kwargs):
-        path_str = str(path)
-        if _ws_dir and not _os.path.isabs(path_str):
-            path_str = _os.path.join(_ws_dir, path_str)
-        resolved = _os.path.realpath(path_str)
-        if _ws_dir:
-            ws_real = _os.path.realpath(_ws_dir)
-            if not resolved.startswith(ws_real + _os.sep) and resolved != ws_real:
-                raise PermissionError(f"文件访问被拒绝：{path} 不在工作目录内")
-        try:
-            return _builtins.open(resolved, mode, *args, **kwargs)
-        except FileNotFoundError:
-            suggestion = _find_similar_file(resolved) if _ws_dir else ""
-            msg = f"文件不存在: {path}"
-            if suggestion:
-                msg += f"。你是否要找: {suggestion}？"
-            raise FileNotFoundError(msg)
-
-    g["open"] = _scoped_open
+    # sandbox globals 的 open 直接用 builtins.open
+    # builtins.open 已在 sandbox_worker_entry 中被替换为 _global_scoped_open
+    # 统一处理：路径解析 + 安全检查 + 文件名纠错
+    # pandas/docx/pptx/PyPDF2 等库内部调用的 open() 也自动受益
+    g["open"] = _builtins.open
 
     return g
 
@@ -326,6 +321,40 @@ def sandbox_worker_entry(
         if workspace_dir:
             os.makedirs(workspace_dir, exist_ok=True)
             os.chdir(workspace_dir)
+
+        # 3.5 替换 builtins.open 为带路径纠错 + 安全检查的版本
+        # 这是唯一的拦截点——pandas/docx/pptx/PyPDF2/pathlib 最终都调 builtins.open
+        # 在这里统一处理，所有入口自动受益
+        if workspace_dir:
+            import builtins
+            _original_open = builtins.open
+            _ws_dir = workspace_dir
+
+            def _global_scoped_open(path, mode="r", *args, **kwargs):
+                path_str = str(path)
+                # 相对路径解析到 workspace
+                if not os.path.isabs(path_str):
+                    path_str = os.path.join(_ws_dir, path_str)
+                resolved = os.path.realpath(path_str)
+                # 安全检查：不允许访问 workspace 外
+                ws_real = os.path.realpath(_ws_dir)
+                if not resolved.startswith(ws_real + os.sep) and resolved != ws_real:
+                    raise PermissionError(f"文件访问被拒绝：{path} 不在工作目录内")
+                # 文件不存在时自动纠错（suggestion 是绝对路径，直接用）
+                if "r" in mode and not os.path.exists(resolved):
+                    suggestion = _find_similar_file_global(resolved, _ws_dir)
+                    if suggestion and os.path.exists(suggestion):
+                        # logger 可能在子进程中不可用，用 print 到 stderr
+                        import sys as _sys
+                        print(f"[sandbox] 文件名自动纠正: {path} → {os.path.basename(suggestion)}", file=_sys.stderr)
+                        return _original_open(suggestion, mode, *args, **kwargs)
+                    msg = f"文件不存在: {path}"
+                    if suggestion:
+                        msg += f"。你是否要找: {os.path.basename(suggestion)}？"
+                    raise FileNotFoundError(msg)
+                return _original_open(resolved, mode, *args, **kwargs)
+
+            builtins.open = _global_scoped_open
 
         # 4. 构建沙盒环境
         sandbox_globals = _build_sandbox_globals(workspace_dir, staging_dir, output_dir)
