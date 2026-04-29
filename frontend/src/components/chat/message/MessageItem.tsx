@@ -21,7 +21,6 @@ import LoadingPlaceholder from './LoadingPlaceholder';
 import MarkdownRenderer from './MarkdownRenderer';
 import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
-import ToolStepCard from './ToolStepCard';
 import FormBlock from './FormBlock';
 import FileCardList from '../media/FileCard';
 import SuggestionChips from './SuggestionChips';
@@ -148,12 +147,6 @@ export default memo(function MessageItem({
     return message.content.some((p) =>
       p.type === 'tool_result' || p.type === 'image' || p.type === 'file' || p.type === 'form'
     );
-  }, [message.content]);
-
-  // 提取 tool_step 块（独立区域渲染，流式+持久化通用）
-  const toolSteps = useMemo(() => {
-    if (!Array.isArray(message.content)) return [];
-    return message.content.filter((p) => p.type === 'tool_step') as import('../../../types/message').ToolStepPart[];
   }, [message.content]);
 
   // 判断是否为失败消息
@@ -428,25 +421,7 @@ export default memo(function MessageItem({
             );
           })()}
 
-          {/* 工具步骤卡片（独立区域，不参与 content.map 混排） */}
-          {!isUser && toolSteps.length > 0 && (
-            <div className="mb-2 space-y-1">
-              {toolSteps.map((ts) => (
-                <ToolStepCard
-                  key={ts.tool_call_id}
-                  toolName={ts.tool_name}
-                  toolCallId={ts.tool_call_id}
-                  status={ts.status}
-                  summary={ts.summary}
-                  code={ts.code}
-                  output={ts.output}
-                  elapsedMs={ts.elapsed_ms}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* 消息文本 */}
+          {/* 消息文本（工具调用过程已归入 ThinkingBlock，不再独立展示 ToolStepCard） */}
           <div className={isUser ? 'text-[15px] leading-relaxed whitespace-pre-wrap' : ''}>
             {/* 加载状态：流式输出开始但内容为空
                 - 有 agentStepHint 时 → 显示工具步骤提示（"正在查询订单..."）
