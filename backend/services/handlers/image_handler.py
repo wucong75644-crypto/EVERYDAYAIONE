@@ -63,6 +63,9 @@ class ImageHandler(BaseHandler):
         prompt = self._extract_text_content(content)
         image_urls = self._extract_image_urls(content)
         model_id = params.get("model") or DEFAULT_IMAGE_MODEL_ID
+        # 有参考图时自动切图生图模型
+        if image_urls and "text-to-image" in model_id:
+            model_id = model_id.replace("text-to-image", "image-to-image")
         aspect_ratio = params.get("aspect_ratio") or "1:1"
         output_format = params.get("output_format") or "png"
         resolution = params.get("resolution") or None
