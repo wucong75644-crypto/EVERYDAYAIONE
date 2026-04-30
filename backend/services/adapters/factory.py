@@ -320,21 +320,6 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         max_tokens=65536,
         context_window=1_048_576,
     ),
-    "openai/gpt-5.4-image-2": ModelConfig(
-        model_id="openai/gpt-5.4-image-2",
-        provider=ModelProvider.OPENROUTER,
-        provider_model="openai/gpt-5.4-image-2",
-        display_name="GPT-5.4 Image 2",
-        input_price=2.50,       # $2.50 / 1M
-        output_price=15.00,     # $15.00 / 1M
-        credits_per_1k_input=0.5,
-        credits_per_1k_output=3.0,
-        supports_vision=True,
-        supports_tools=True,
-        supports_structured_output=True,
-        max_tokens=128000,
-        context_window=272_000,
-    ),
     "anthropic/claude-sonnet-4.6": ModelConfig(
         model_id="anthropic/claude-sonnet-4.6",
         provider=ModelProvider.OPENROUTER,
