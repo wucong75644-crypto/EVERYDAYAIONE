@@ -127,9 +127,9 @@ interface InputControlsProps {
   /** 实际生效的模型类型（智能模式用子模式，单模型用模型自身类型） */
   effectiveModelType?: 'chat' | 'image' | 'video';
   /** 智能模式子模式（仅智能模式有值） */
-  smartSubMode?: 'chat' | 'image' | 'video';
+  smartSubMode?: string;
   /** 切换智能模式子模式 */
-  onSmartSubModeChange?: (mode: 'chat' | 'image' | 'video') => void;
+  onSmartSubModeChange?: (mode: string) => void;
 }
 
 export default function InputControls(props: InputControlsProps) {
