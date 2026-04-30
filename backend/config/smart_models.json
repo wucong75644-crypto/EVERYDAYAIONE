@@ -225,10 +225,17 @@
         "priority": 3
       },
       {
+        "id": "gpt-image-2-image-to-image",
+        "description": "GPT Image 2图生图，以参考图为基础生成新图片(6积分)。用户上传了图片并要求修改/优化/重新生成时选择",
+        "keywords": ["gpt", "openai", "gpt image"],
+        "priority": 4,
+        "requires_image": true
+      },
+      {
         "id": "google/nano-banana-edit",
         "description": "纯图像编辑，仅当用户上传了图片并要求修改时选择(5积分)",
         "keywords": [],
-        "priority": 4,
+        "priority": 5,
         "requires_image": true
       }
     ],

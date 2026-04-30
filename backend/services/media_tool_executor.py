@@ -28,10 +28,14 @@ class MediaToolMixin:
             return "提示词不能为空"
 
         aspect_ratio = args.get("aspect_ratio", "1:1")
+        image_urls = args.get("image_urls") or []
 
-        # 使用默认图片模型
-        from config.smart_model_config import DEFAULT_IMAGE_MODEL
-        model_id = DEFAULT_IMAGE_MODEL
+        # 根据有无参考图片选择模型：图生图 vs 文生图
+        if image_urls:
+            model_id = "gpt-image-2-image-to-image"
+        else:
+            from config.smart_model_config import DEFAULT_IMAGE_MODEL
+            model_id = DEFAULT_IMAGE_MODEL
 
         # 1. 计算积分
         try:
@@ -56,6 +60,7 @@ class MediaToolMixin:
         try:
             result = await adapter.generate(
                 prompt=prompt,
+                image_urls=image_urls if image_urls else None,
                 size=aspect_ratio,
                 wait_for_result=True,
                 max_wait_time=90.0,

@@ -31,6 +31,7 @@ KNOWN_MODEL_IDS = frozenset([
     "openai/gpt-5.4-pro",
     "openai/gpt-5.3-codex",
     "gpt-image-2-text-to-image",
+    "gpt-image-2-image-to-image",
     "anthropic/claude-sonnet-4",
     "anthropic/claude-sonnet-4.6",
     "anthropic/claude-opus-4.6",

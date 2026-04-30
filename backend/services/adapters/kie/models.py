@@ -318,6 +318,14 @@ class GptImage2Input(BaseModel):
     resolution: ImageResolution = ImageResolution.RES_1K
 
 
+class GptImage2ImageInput(BaseModel):
+    """gpt-image-2-image-to-image 输入参数（KIE API）"""
+    prompt: str = Field(..., max_length=20000)
+    input_urls: List[str] = Field(...)  # 参考图片 URL（必填，最多16张）
+    aspect_ratio: AspectRatio = AspectRatio.AUTO
+    resolution: ImageResolution = ImageResolution.RES_1K
+
+
 # ============================================================
 # 视频模型 - Input 参数模型
 # ============================================================

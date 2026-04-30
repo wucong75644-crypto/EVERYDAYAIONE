@@ -57,6 +57,23 @@ export const IMAGE_MODELS: UnifiedModel[] = [
     supportsResolution: true,
   },
   {
+    id: 'gpt-image-2-image-to-image',
+    name: 'GPT Image 2 (图生图)',
+    type: 'image',
+    description: '参考图基础生成',
+    capabilities: {
+      textToImage: false,
+      imageEditing: true,
+      imageToVideo: false,
+      textToVideo: false,
+      vqa: false,
+      videoQA: false,
+      maxImages: 16,
+    },
+    credits: { '1K': 6, '2K': 10, '4K': 16 },
+    supportsResolution: true,
+  },
+  {
     id: 'nano-banana-pro',
     name: 'Nano Banana Pro',
     type: 'image',
