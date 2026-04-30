@@ -19,6 +19,7 @@ import {
   type VideoFrames,
   type VideoAspectRatio,
 } from '../../../constants/models';
+import { IMAGE_MODELS } from '../../../constants/mediaModels';
 
 interface AdvancedSettingsMenuProps {
   closing?: boolean;
@@ -108,6 +109,11 @@ export default function AdvancedSettingsMenu({
 }: AdvancedSettingsMenuProps) {
   // 实际用于条件渲染的模型类型（智能模式子模式 > 模型自身类型）
   const modelType = effectiveModelType ?? selectedModel.type;
+
+  // 智能模式图片/视频子模式时，用默认媒体模型的积分配置（selectedModel 是 auto，credits=0）
+  const effectiveModel: UnifiedModel = (modelType !== selectedModel.type)
+    ? (IMAGE_MODELS.find((m) => m.supportsResolution) ?? selectedModel)
+    : selectedModel;
   return (
     <div
       className={`absolute bottom-full left-0 mb-2 w-80 bg-surface-card rounded-lg shadow-lg border border-border-default p-3 z-10 ${
@@ -135,7 +141,7 @@ export default function AdvancedSettingsMenu({
               ))}
             </div>
           </div>
-          {selectedModel.supportsResolution && (
+          {effectiveModel.supportsResolution && (
             <div className="mb-3">
               <label className="block text-xs font-medium text-text-secondary mb-2">分辨率</label>
               <div className="flex gap-2">
@@ -178,7 +184,7 @@ export default function AdvancedSettingsMenu({
             <label className="block text-xs font-medium text-text-secondary mb-2">生成数量</label>
             <div className="flex gap-2">
               {IMAGE_COUNTS.map((item) => {
-                const perImage = getPerImageCredits(selectedModel, resolution);
+                const perImage = getPerImageCredits(effectiveModel, resolution);
                 const totalCredits = perImage * item.value;
                 const disabled = userCredits !== undefined && userCredits < totalCredits;
                 return (
@@ -205,16 +211,16 @@ export default function AdvancedSettingsMenu({
             <div className="flex items-center justify-between text-xs">
               <span className="text-accent font-medium">预计消耗:</span>
               <span className="text-accent font-semibold">
-                {getPerImageCredits(selectedModel, resolution) * numImages} 积分
+                {getPerImageCredits(effectiveModel, resolution) * numImages} 积分
                 {numImages > 1 && (
                   <span className="font-normal text-accent ml-1">
-                    ({getPerImageCredits(selectedModel, resolution)} x {numImages})
+                    ({getPerImageCredits(effectiveModel, resolution)} x {numImages})
                   </span>
                 )}
               </span>
             </div>
             <div className="text-[10px] text-accent mt-1">
-              ≈ ¥{(getPerImageCredits(selectedModel, resolution) * numImages * 0.036).toFixed(3)}
+              ≈ ¥{(getPerImageCredits(effectiveModel, resolution) * numImages * 0.036).toFixed(3)}
             </div>
           </div>
         </>
