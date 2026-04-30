@@ -111,14 +111,14 @@ IMAGE_MODEL_CONFIGS = {
         "supports_resolution": True,
         "supported_resolutions": ["1K", "2K", "4K"],
         "cost_per_image": {
-            "1K": Decimal("0.10"),
-            "2K": Decimal("0.10"),
-            "4K": Decimal("0.15"),
+            "1K": Decimal("0.03"),
+            "2K": Decimal("0.05"),
+            "4K": Decimal("0.08"),
         },
         "credits_per_image": {
-            "1K": 20,
-            "2K": 20,
-            "4K": 30,
+            "1K": 6,
+            "2K": 10,
+            "4K": 16,
         },
     },
 }
