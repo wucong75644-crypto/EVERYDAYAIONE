@@ -259,12 +259,10 @@ class BatchCompletionService:
                 .execute()
             )
             if not msg_result.data:
-                logger.error(
+                raise ValueError(
                     f"Message not found for single image finalize | "
-                    f"message_id={message_id} | user_id={user_id} | "
-                    f"conversation_id={conversation_id}"
+                    f"message_id={message_id}"
                 )
-                return
 
             content = msg_result.data.get("content", [])
             if isinstance(content, str):
@@ -337,6 +335,9 @@ class BatchCompletionService:
                 f"message_id={message_id} | user_id={user_id} | "
                 f"image_index={image_index} | error={e}"
             )
+
+        # 释放任务限制槽位（无论 finalize 成功与否都要释放）
+        await self._release_slot(the_task)
 
     async def _finalize_batch(
         self,
@@ -450,6 +451,14 @@ class BatchCompletionService:
             f"success={success_count}/{len(batch_tasks)} | "
             f"credits={total_credits} | status={msg_status}"
         )
+
+        # 释放任务限制槽位
+        await self._release_slot(first_task)
+
+    async def _release_slot(self, task: Dict[str, Any]) -> None:
+        """释放任务限制槽位"""
+        from services.task_limit_service import release_task_slot
+        await release_task_slot(task)
 
     def _confirm_credits(self, transaction_id: str) -> None:
         """确认积分扣除（复用 CreditMixin 逻辑）"""

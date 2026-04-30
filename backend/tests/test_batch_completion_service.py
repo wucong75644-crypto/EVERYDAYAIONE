@@ -784,5 +784,83 @@ class TestBatchCompletionServiceCredits:
             loop.close()
 
 
+# ============ Slot 释放测试 ============
+
+
+class TestBatchSlotRelease:
+    """finalize 完成后释放任务限制槽位"""
+
+    @pytest.fixture
+    def db(self):
+        return MockBatchDB()
+
+    @pytest.fixture
+    def service(self, db):
+        return BatchCompletionService(db)
+
+    @pytest.mark.asyncio
+    @patch("services.task_limit_service.release_task_slot", new_callable=AsyncMock)
+    @patch("services.batch_completion_service.ws_manager")
+    async def test_finalize_batch_releases_slot(self, mock_ws, mock_release, service, db):
+        """_finalize_batch 完成后调用 release_task_slot"""
+        batch_id = str(uuid4())
+        batch_tasks = [
+            {**create_batch_task(0, batch_id, status="completed",
+                                 result_data=create_content_part(), credits_locked=5),
+             "request_params": {"_task_slot_id": "slot-batch-1"}},
+        ]
+        db.set_table_data("tasks", batch_tasks)
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await service._finalize_batch(batch_id, batch_tasks)
+
+        mock_release.assert_awaited_once_with(batch_tasks[0])
+
+    @pytest.mark.asyncio
+    @patch("services.task_limit_service.release_task_slot", new_callable=AsyncMock)
+    @patch("services.batch_completion_service.ws_manager")
+    async def test_finalize_single_releases_slot(self, mock_ws, mock_release, service, db):
+        """_finalize_single_image 完成后调用 release_task_slot"""
+        batch_id = str(uuid4())
+        batch_tasks = [
+            {**create_batch_task(0, batch_id, status="completed",
+                                 result_data=create_content_part(), credits_locked=5),
+             "request_params": {"operation": "regenerate_single", "_task_slot_id": "slot-single-1"},
+             "image_index": 0},
+        ]
+        db.set_table_data("messages", [{
+            "id": "msg_1",
+            "content": [{"type": "image", "url": "https://oss/old.png"}],
+            "credits_cost": 5,
+            "generation_params": {"type": "image"},
+        }])
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await service._finalize_single_image(batch_id, batch_tasks)
+
+        mock_release.assert_awaited_once_with(batch_tasks[0])
+
+    @pytest.mark.asyncio
+    @patch("services.task_limit_service.release_task_slot", new_callable=AsyncMock)
+    @patch("services.batch_completion_service.ws_manager")
+    async def test_finalize_single_releases_even_on_error(self, mock_ws, mock_release, service, db):
+        """_finalize_single_image 即使 finalize 逻辑报错也释放 slot"""
+        batch_id = str(uuid4())
+        batch_tasks = [
+            {**create_batch_task(0, batch_id, status="completed",
+                                 result_data=create_content_part()),
+             "request_params": {"operation": "regenerate_single", "_task_slot_id": "slot-err"},
+             "image_index": 0},
+        ]
+        # 不设 messages 数据 → 读消息时会报错（single() 返回 None）
+        db.set_table_data("messages", [])
+        mock_ws.send_to_task_or_user = AsyncMock()
+
+        await service._finalize_single_image(batch_id, batch_tasks)
+
+        # 即使出错也应释放
+        mock_release.assert_awaited_once_with(batch_tasks[0])
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

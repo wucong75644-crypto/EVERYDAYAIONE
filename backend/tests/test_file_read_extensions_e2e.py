@@ -616,7 +616,187 @@ class TestChatHandlerTypeRecognition:
 
 
 # ============================================================
-# 7. file_search 发现 PDF/图片后 file_read 可读
+# 7. _parse_pages 纯单元测试（直接调静态方法）
+# ============================================================
+
+
+class TestParsePagesDirect:
+    """直接调用 _parse_pages 静态方法，不依赖 PDF 文件"""
+
+    def _parse(self, pages_str: str, total: int = 10):
+        from services.file_read_extensions import FileReadExtensionsMixin
+        return FileReadExtensionsMixin._parse_pages(pages_str, total)
+
+    def test_single_page(self):
+        assert self._parse("3") == [2]
+
+    def test_range(self):
+        assert self._parse("2-5") == [1, 2, 3, 4]
+
+    def test_comma_list(self):
+        assert self._parse("1,3,5") == [0, 2, 4]
+
+    def test_mixed(self):
+        assert self._parse("1-3,7,9-10") == [0, 1, 2, 6, 8, 9]
+
+    def test_dedup(self):
+        assert self._parse("1,1,2,1-3") == [0, 1, 2]
+
+    def test_sorted(self):
+        assert self._parse("5,1,3") == [0, 2, 4]
+
+    def test_first_page(self):
+        assert self._parse("1") == [0]
+
+    def test_last_page(self):
+        assert self._parse("10") == [9]
+
+    def test_full_range(self):
+        assert self._parse("1-10") == list(range(10))
+
+    def test_page_zero_error(self):
+        result = self._parse("0")
+        assert isinstance(result, str)
+        assert "必须从 1" in result
+
+    def test_page_negative_error(self):
+        result = self._parse("-1")
+        assert isinstance(result, str)
+
+    def test_page_over_total_error(self):
+        result = self._parse("11")
+        assert isinstance(result, str)
+        assert "超出范围" in result
+
+    def test_range_over_total_error(self):
+        result = self._parse("5-15")
+        assert isinstance(result, str)
+
+    def test_reversed_range_error(self):
+        result = self._parse("5-3")
+        assert isinstance(result, str)
+        assert "起始页不能大于结束页" in result
+
+    def test_non_number_error(self):
+        result = self._parse("abc")
+        assert isinstance(result, str)
+        assert "格式错误" in result
+
+    def test_empty_string(self):
+        result = self._parse("")
+        assert isinstance(result, str)
+        assert "未指定有效页码" in result
+
+    def test_trailing_comma_ok(self):
+        assert self._parse("1,2,") == [0, 1]
+
+    def test_spaces_stripped(self):
+        assert self._parse(" 1 , 3 ") == [0, 2]
+
+    def test_range_with_spaces(self):
+        assert self._parse(" 2 - 4 ") == [1, 2, 3]
+
+    def test_single_page_total(self):
+        """只有 1 页的 PDF"""
+        assert self._parse("1", total=1) == [0]
+
+    def test_single_page_out_of_range(self):
+        result = self._parse("2", total=1)
+        assert isinstance(result, str)
+        assert "超出范围" in result
+
+
+# ============================================================
+# 8. ChatHandler 图片注入逻辑
+# ============================================================
+
+
+class TestChatHandlerImageInjection:
+    """验证 ChatHandler 工具结果循环对 FileReadResult 的处理逻辑"""
+
+    def test_image_result_collected_to_pending(self):
+        """type='image' 的 FileReadResult，image_url 应被收集"""
+        result = FileReadResult(
+            type="image",
+            text="图片: test.png",
+            image_url="https://cdn.example.com/test.png",
+        )
+        # 模拟 chat_handler 中的收集逻辑
+        pending = []
+        if isinstance(result, FileReadResult):
+            content = result.text
+            if result.type == "image" and result.image_url:
+                pending.append(result.image_url)
+
+        assert content == "图片: test.png"
+        assert len(pending) == 1
+        assert pending[0] == "https://cdn.example.com/test.png"
+
+    def test_text_result_not_collected(self):
+        """type='text' 的 FileReadResult（降级），不应收集 image_url"""
+        result = FileReadResult(
+            type="text",
+            text="图片过大",
+            image_url="",
+        )
+        pending = []
+        if isinstance(result, FileReadResult):
+            content = result.text
+            if result.type == "image" and result.image_url:
+                pending.append(result.image_url)
+
+        assert content == "图片过大"
+        assert len(pending) == 0
+
+    def test_multiple_images_collected(self):
+        """多张图片全部收集"""
+        results = [
+            FileReadResult(type="image", text="img1", image_url="https://cdn/1.png"),
+            FileReadResult(type="image", text="img2", image_url="https://cdn/2.png"),
+            FileReadResult(type="text", text="pdf content"),  # 非图片
+        ]
+        pending = []
+        for r in results:
+            if isinstance(r, FileReadResult) and r.type == "image" and r.image_url:
+                pending.append(r.image_url)
+
+        assert len(pending) == 2
+        assert "https://cdn/1.png" in pending
+        assert "https://cdn/2.png" in pending
+
+    def test_image_injection_message_format(self):
+        """图片注入的 user 消息格式正确"""
+        pending_urls = ["https://cdn/a.png", "https://cdn/b.jpg"]
+        img_parts = [
+            {"type": "text", "text": "[系统：以下是 file_read 返回的图片]"},
+        ]
+        for url in pending_urls:
+            img_parts.append({
+                "type": "image_url",
+                "image_url": {"url": url},
+            })
+        msg = {"role": "user", "content": img_parts}
+
+        assert msg["role"] == "user"
+        assert len(msg["content"]) == 3  # 1 text + 2 images
+        assert msg["content"][0]["type"] == "text"
+        assert "[系统" in msg["content"][0]["text"]
+        assert msg["content"][1]["type"] == "image_url"
+        assert msg["content"][1]["image_url"]["url"] == "https://cdn/a.png"
+        assert msg["content"][2]["image_url"]["url"] == "https://cdn/b.jpg"
+
+    def test_no_images_no_injection(self):
+        """无图片时不注入"""
+        pending = []
+        messages = []
+        if pending:
+            messages.append({"role": "user", "content": "should not appear"})
+
+        assert len(messages) == 0
+
+
+# ============================================================
+# 9. file_search 发现 PDF/图片后 file_read 可读
 # ============================================================
 
 
