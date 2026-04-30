@@ -51,6 +51,7 @@ TOOL_DOMAINS: Dict[str, ToolDomain] = {
 
     # === shared: 多个域的 Agent 内部都能用 ===
     "code_execute":     ToolDomain.SHARED,
+    "data_query":       ToolDomain.SHARED,  # 主 Agent + ERP Agent 都需要查询数据文件
     "ask_user":         ToolDomain.SHARED,  # 主 Agent + ERP Agent 都需要追问能力
 
     # === erp: 仅 erp_agent 内部可用 ===

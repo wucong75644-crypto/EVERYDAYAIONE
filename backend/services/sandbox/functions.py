@@ -49,49 +49,14 @@ def build_sandbox_executor(
         _file_settings.file_workspace_root, user_id, org_id, _conv_id,
     )
 
-    # 4. 文件检测函数 — 生成 workspace CDN URL（不上传 OSS，文件已通过 ossfs 在 OSS 上）
+    # 4. 文件检测函数 — 调用公共 auto_upload 模块
     async def _auto_upload(filename: str, size: int) -> str:
-        """生成文件的 CDN URL（不读文件内容，零内存开销）"""
-        import mimetypes
-        safe_name = Path(filename).name
-        mime_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
-
-        # 直接算 workspace CDN URL（文件在 WORKSPACE_DIR/下载/ 下，ossfs 自动同步到 OSS）
-        from core.config import get_settings as _cdn_settings
-        _cs = _cdn_settings()
-        if _cs.oss_cdn_domain:
-            _ws_base = Path(_cs.file_workspace_root).resolve()
-            _file_path = Path(_output_dir) / safe_name
-            try:
-                from urllib.parse import quote
-                object_key = str(_file_path.relative_to(_ws_base))
-                # URL 编码路径（中文+括号等特殊字符），保留 /
-                encoded_key = quote(object_key, safe="/")
-                url = f"https://{_cs.oss_cdn_domain}/workspace/{encoded_key}"
-                return (
-                    f"✅ 文件已生成: {safe_name}\n"
-                    f"[FILE]{url}|{safe_name}|{mime_type}|{size}[/FILE]"
-                )
-            except ValueError:
-                pass
-
-        # 兜底：无 CDN 配置时读文件上传 OSS
-        try:
-            from services.oss_service import get_oss_service
-            _file_path = Path(_output_dir) / safe_name
-            content = _file_path.read_bytes()
-            ext = Path(safe_name).suffix.lstrip(".")
-            oss = get_oss_service()
-            result = oss.upload_bytes(
-                content=content, user_id=user_id, ext=ext,
-                category="generated", content_type=mime_type, org_id=org_id,
-            )
-            return (
-                f"✅ 文件已生成: {safe_name}\n"
-                f"[FILE]{result['url']}|{safe_name}|{mime_type}|{result['size']}[/FILE]"
-            )
-        except Exception as e:
-            return f"❌ 文件处理失败: {safe_name} ({e})"
+        """生成文件的 CDN URL（委托公共模块，零内存开销）"""
+        from services.file_upload import auto_upload
+        return await auto_upload(
+            filename=filename, size=size,
+            output_dir=_output_dir, user_id=user_id, org_id=org_id,
+        )
 
     return SandboxExecutor(
         timeout=timeout,

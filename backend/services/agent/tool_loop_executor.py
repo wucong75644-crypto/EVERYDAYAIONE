@@ -289,11 +289,19 @@ class ToolLoopExecutor:
         return "break", turn_text, True, empty_turns
 
     def _register_result_files(self, result: Any, tool_name: str) -> None:
-        """统一注册 file_ref + collected_files（ToolOutput / AgentResult 共用）"""
+        """统一注册 file_ref + collected_files（ToolOutput / AgentResult 共用）
+
+        B2: 同时传 schema_text（data_profile 文本），供 schema 智能过滤注入。
+        embedding 预计算只在对话级 registry 做一次（ChatToolMixin._save_schema_to_conversation），
+        此处不做——ERPAgent 内部 registry 不参与 schema 注入。
+        """
         file_ref = getattr(result, "file_ref", None)
         if file_ref:
             source = getattr(result, "source", None) or tool_name
-            self._file_registry.register(source, tool_name, file_ref)
+            schema_text = getattr(result, "summary", "") or ""
+            self._file_registry.register(
+                source, tool_name, file_ref, schema_text=schema_text,
+            )
 
         collected = getattr(result, "collected_files", None)
         if collected:

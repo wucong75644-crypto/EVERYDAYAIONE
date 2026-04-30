@@ -61,6 +61,8 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     # 搜索类
     "erp_api_search", "search_knowledge", "web_search",
     "social_crawler",
+    # 数据查询（只读，可并行）
+    "data_query",
     # 代码执行（沙箱隔离，可并行）
     "code_execute",
     # 文件操作（只读）
@@ -161,10 +163,45 @@ TOOL_SYSTEM_PROMPT = """# 做事原则
 ### erp_analyze — ERP 分析（计划模式专用）
 只分析不执行，返回结构化的任务拆解。直接模式下不要调用。
 
-### code_execute — 数据计算与文件处理
-数据计算、文件处理、格式转换。可读取工作区文件和 staging 文件。
-中间结果写 STAGING_DIR，最终结果写 OUTPUT_DIR。
-大结果写文件，不要 print 大量数据。
+### code_execute — 计算与文件生成
+
+对数据做计算、可视化、格式转换，生成报表和图表。
+
+何时使用：拿到查询结果（上下文中的小数据）后，需要计算涨跌幅、画趋势图、
+生成 Excel 报表时使用。
+
+核心能力：
+- 可用库：pd, plt, Path, math, json, datetime, Decimal, Counter, io
+- 生成的文件写到 OUTPUT_DIR，平台自动检测上传
+- 图表用 plt.savefig(OUTPUT_DIR + '/图.png', dpi=150, bbox_inches='tight')
+- 写 Excel 用 engine='xlsxwriter'
+- 每次执行都是全新子进程，不保留任何变量
+- 用 print() 输出文本结果
+
+注意事项：
+- 不要用 code_execute 读取大数据文件——大文件用 data_query 查询
+- 禁止 import os/sys
+
+### data_query — 数据查询与导出
+
+查询 staging 文件或工作区数据文件的内容，支持探索结构、SQL 查询和文件导出。
+
+何时使用：
+- 收到 staging 文件引用后，需要从中提取特定数据时
+- 需要了解一个数据文件有哪些列、多少行时
+- 需要将查询结果直接导出为 Excel 时
+
+核心能力：
+- file 传文件名（如 "trade_123.parquet" 或 "销售报表.xlsx"）
+- 不传 sql：返回文件结构（列名、类型、行数、统计信息）
+- 传 sql：执行查询，表名统一用 FROM data
+- 传 export：直接生成导出文件（如 export="月度报表.xlsx"）
+
+注意事项：
+- 中文列名必须用双引号包裹：SELECT "店铺名称" FROM data
+- SQL 出错时会返回可用列名列表，据此修正后重试
+- 分析大数据用 SQL 聚合筛选，不要 SELECT * 全量取出
+- 只支持单文件查询，多文件对比用多次并行调用分别聚合后合并
 
 ### file_list / file_search — 工作区文件发现
 查看工作区有哪些文件、搜索特定文件。Excel/二进制文件用 code_execute 读取，不能用 file_read。
@@ -417,6 +454,53 @@ def _build_common_tools() -> List[Dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "data_query",
+                "description": (
+                    "查询 staging 文件或工作区数据文件的内容，"
+                    "支持探索结构、SQL 查询和文件导出。\n"
+                    "不传 sql：返回文件结构（列名、类型、行数、统计信息）。\n"
+                    "传 sql：执行查询，表名统一用 FROM data。\n"
+                    "传 export：直接生成导出文件（如 export=\"月度报表.xlsx\"）。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "required": ["file"],
+                    "properties": {
+                        "file": {
+                            "type": "string",
+                            "description": (
+                                "文件名或相对路径"
+                                "（如 \"trade_123.parquet\" 或 \"销售报表.xlsx\"）"
+                            ),
+                        },
+                        "sql": {
+                            "type": "string",
+                            "description": (
+                                "SQL 查询语句，表名用 FROM data。"
+                                "中文列名用双引号包裹。"
+                            ),
+                        },
+                        "export": {
+                            "type": "string",
+                            "description": (
+                                "导出文件名（如 \"月度报表.xlsx\"），"
+                                "传则生成文件而非返回数据"
+                            ),
+                        },
+                        "sheet": {
+                            "type": "string",
+                            "description": (
+                                "Excel 的 Sheet 名称或索引"
+                                "（可选，默认第一个 Sheet）"
+                            ),
+                        },
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "manage_scheduled_task",
                 "description": (
                     "管理定时任务：创建/查看/修改/暂停/恢复/删除。\n"
@@ -511,6 +595,7 @@ _CORE_TOOLS: Set[str] = {
     # 图片/视频生成已移至前端"图片模式/视频模式"，Agent 不直接调用
     # 执行
     "code_execute",             # 代码执行
+    "data_query",               # 数据查询与导出
     # 文件操作
     "file_read",                # 文件读取
     "file_write",               # 文件写入
