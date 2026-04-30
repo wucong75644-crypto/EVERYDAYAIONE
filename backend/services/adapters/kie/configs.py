@@ -99,6 +99,28 @@ IMAGE_MODEL_CONFIGS = {
             "4K": 24,
         },
     },
+    "gpt-image-2-text-to-image": {
+        "model_id": "gpt-image-2-text-to-image",
+        "description": "GPT Image 2 文生图（OpenAI 最强图片生成）",
+        "requires_image_input": False,
+        "max_prompt_length": 20000,
+        "supported_sizes": [
+            "1:1", "9:16", "16:9", "3:4", "4:3", "auto"
+        ],
+        "supported_formats": ["png"],
+        "supports_resolution": True,
+        "supported_resolutions": ["1K", "2K", "4K"],
+        "cost_per_image": {
+            "1K": Decimal("0.10"),
+            "2K": Decimal("0.10"),
+            "4K": Decimal("0.15"),
+        },
+        "credits_per_image": {
+            "1K": 20,
+            "2K": 20,
+            "4K": 30,
+        },
+    },
 }
 
 
