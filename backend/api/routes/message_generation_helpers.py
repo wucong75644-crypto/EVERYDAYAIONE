@@ -65,7 +65,7 @@ async def handle_retry_operation(
     # 校验原消息状态
     original_msg = db.table("messages").select("id, status, conversation_id").eq(
         "id", original_message_id
-    ).single().execute()
+    ).maybe_single().execute()
 
     if not original_msg.data:
         raise HTTPException(status_code=404, detail="原消息不存在")
@@ -125,7 +125,7 @@ async def handle_regenerate_single_operation(
     # 校验原消息
     original_msg = db.table("messages").select(
         "id, status, conversation_id, content, generation_params"
-    ).eq("id", original_message_id).single().execute()
+    ).eq("id", original_message_id).maybe_single().execute()
 
     if not original_msg.data:
         raise HTTPException(status_code=404, detail="原消息不存在")
@@ -212,7 +212,7 @@ async def handle_regenerate_or_send_operation(
         # 校验原消息状态（必须是成功消息）
         original_msg = db.table("messages").select("id, status, conversation_id").eq(
             "id", original_message_id
-        ).single().execute()
+        ).maybe_single().execute()
 
         if original_msg.data and original_msg.data["status"] == MessageStatus.FAILED.value:
             raise HTTPException(
