@@ -55,6 +55,8 @@ interface AdvancedSettingsMenuProps {
   onSave: () => void;
   onReset: () => void;
   onClose: () => void;
+  /** 实际生效的模型类型（智能模式子模式覆盖） */
+  effectiveModelType?: 'chat' | 'image' | 'video';
 }
 
 // 辅助函数：获取单张图片积分
@@ -102,7 +104,10 @@ export default function AdvancedSettingsMenu({
   onSave,
   onReset,
   onClose,
+  effectiveModelType,
 }: AdvancedSettingsMenuProps) {
+  // 实际用于条件渲染的模型类型（智能模式子模式 > 模型自身类型）
+  const modelType = effectiveModelType ?? selectedModel.type;
   return (
     <div
       className={`absolute bottom-full left-0 mb-2 w-80 bg-surface-card rounded-lg shadow-lg border border-border-default p-3 z-10 ${
@@ -110,7 +115,7 @@ export default function AdvancedSettingsMenu({
       }`}
     >
       {/* 图像模型设置 */}
-      {selectedModel.type === 'image' && (
+      {modelType === 'image' && (
         <>
           <div className="mb-3">
             <label className="block text-xs font-medium text-text-secondary mb-2">宽高比</label>
@@ -216,7 +221,7 @@ export default function AdvancedSettingsMenu({
       )}
 
       {/* 视频模型设置 */}
-      {selectedModel.type === 'video' && (
+      {modelType === 'video' && (
         <>
           <div className="mb-3">
             <label className="block text-xs font-medium text-text-secondary mb-2">视频时长</label>
@@ -282,7 +287,7 @@ export default function AdvancedSettingsMenu({
       )}
 
       {/* 聊天模型设置 */}
-      {selectedModel.type === 'chat' && (
+      {modelType === 'chat' && (
         <>
           {/* 推理强度（仅支持的模型显示） */}
           {selectedModel.capabilities.thinkingEffort && (

@@ -14,7 +14,8 @@ import { useFileUpload } from '../../../hooks/useFileUpload';
 import { useModelSelection } from '../../../hooks/useModelSelection';
 import { useAudioRecording } from '../../../hooks/useAudioRecording';
 import { useSettingsManager } from '../../../hooks/useSettingsManager';
-import { type UnifiedModel } from '../../../constants/models';
+import { type UnifiedModel, type ModelType } from '../../../constants/models';
+import { isSmartModel } from '../../../constants/smartModel';
 import { useMessageStore, type Message } from '../../../stores/useMessageStore';
 import { useAuthStore } from '../../../stores/useAuthStore';
 import { cancelTaskByMessageId } from '../../../services/message';
@@ -77,6 +78,10 @@ export default function InputArea({
   const setPrompt = controlledOnPromptChange ?? setInternalPrompt;
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // 智能模式子模式：在智能模式下切换聊天/图片/视频
+  const [smartSubMode, setSmartSubMode] = useState<ModelType>('chat');
+  // 实际生效的模型类型：智能模式用子模式，单模型用模型自身类型
   const [sendError, setSendError] = useState<string | null>(null);
 
   // 用户积分（用于禁用积分不足的数量选项）
@@ -161,6 +166,15 @@ export default function InputArea({
     conversationModelId,
     onAutoSaveModel: handleAutoSaveModel,
   });
+
+  // 实际生效的模型类型：智能模式用子模式，单模型用模型自身类型
+  const isSmart = isSmartModel(selectedModel.id);
+  const effectiveModelType: ModelType = isSmart ? smartSubMode : selectedModel.type;
+
+  // 切换到非智能模型时重置子模式
+  useEffect(() => {
+    if (!isSmart) setSmartSubMode('chat');
+  }, [isSmart]);
 
   // 监听图片引用事件（从 AI 生成图片右键菜单触发）
   useEffect(() => {
@@ -369,7 +383,8 @@ export default function InputArea({
       }
 
       // 发送消息（使用真实对话 ID）
-      if (selectedModel.type === 'chat') {
+      // 智能模式下用 effectiveModelType（子模式），单模型用模型自身类型
+      if (effectiveModelType === 'chat') {
         // 聊天消息：统一使用服务器 URL（确保刷新后图片仍然可见）
         // 注：clientRequestId 由 sendMessage 内部生成，无需传入
         await handleChatMessage(
@@ -378,7 +393,7 @@ export default function InputArea({
           imageUrls,    // 使用服务器 URL（已上传完成）
           fileData,     // PDF 文件信息
         );
-      } else if (selectedModel.type === 'video') {
+      } else if (effectiveModelType === 'video') {
         await handleVideoGeneration(currentConversationId!, messageContent, imageUrls);
       } else {
         await handleImageGeneration(currentConversationId!, messageContent, imageUrls);
@@ -533,6 +548,9 @@ export default function InputArea({
           hasQuotedImage={hasQuotedImage}
           isStreaming={isStreaming}
           onStop={handleStop}
+          effectiveModelType={effectiveModelType}
+          smartSubMode={isSmart ? smartSubMode : undefined}
+          onSmartSubModeChange={isSmart ? setSmartSubMode : undefined}
         />
       </div>
     </div>

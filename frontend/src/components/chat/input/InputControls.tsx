@@ -7,7 +7,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { m } from 'framer-motion';
-import { Send, Square, Settings, Upload, Brain, Paperclip, FolderOpen, ChevronUp, Zap, ShieldCheck, ListChecks } from 'lucide-react';
+import { Send, Square, Settings, Upload, Brain, Paperclip, FolderOpen, ChevronUp, Zap, ShieldCheck, ListChecks, Image, Video, MessageSquare } from 'lucide-react';
 import { Popover, PopoverClose } from '../../primitives/Popover';
 import { cn } from '../../../utils/cn';
 import { SOFT_SPRING } from '../../../utils/motion';
@@ -124,6 +124,12 @@ interface InputControlsProps {
   isStreaming?: boolean;
   /** 停止生成回调 */
   onStop?: () => void;
+  /** 实际生效的模型类型（智能模式用子模式，单模型用模型自身类型） */
+  effectiveModelType?: 'chat' | 'image' | 'video';
+  /** 智能模式子模式（仅智能模式有值） */
+  smartSubMode?: 'chat' | 'image' | 'video';
+  /** 切换智能模式子模式 */
+  onSmartSubModeChange?: (mode: 'chat' | 'image' | 'video') => void;
 }
 
 export default function InputControls(props: InputControlsProps) {
@@ -146,6 +152,7 @@ export default function InputControls(props: InputControlsProps) {
     recordingState, audioBlob, audioDuration, onStartRecording, onStopRecording, onClearRecording,
     requiresImageUpload = false, sendError, hasQuotedImage = false,
     isStreaming = false, onStop,
+    effectiveModelType = selectedModel.type, smartSubMode, onSmartSubModeChange,
   } = props;
 
   const [showUploadMenu, setShowUploadMenu] = useState(false);
@@ -333,6 +340,32 @@ export default function InputControls(props: InputControlsProps) {
               lockTooltip={modelSelectorLockTooltip}
             />
 
+            {/* 智能模式子模式切换（聊天/图片/视频） */}
+            {smartSubMode !== undefined && onSmartSubModeChange && (
+              <div className="flex items-center bg-surface-secondary rounded-lg p-0.5">
+                {([
+                  { mode: 'chat' as const, icon: MessageSquare, label: '聊天' },
+                  { mode: 'image' as const, icon: Image, label: '图片' },
+                  { mode: 'video' as const, icon: Video, label: '视频' },
+                ]).map(({ mode, icon: Icon, label }) => (
+                  <button
+                    key={mode}
+                    onClick={() => onSmartSubModeChange(mode)}
+                    className={cn(
+                      'flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-all',
+                      smartSubMode === mode
+                        ? 'bg-surface-primary text-text-primary shadow-sm'
+                        : 'text-text-tertiary hover:text-text-secondary',
+                    )}
+                    title={label}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">{label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             {/* 高级设置 */}
             <div ref={advancedMenuRef} className="relative">
               <button
@@ -346,6 +379,7 @@ export default function InputControls(props: InputControlsProps) {
                 <AdvancedSettingsMenu
                   closing={advancedDropdownClosing}
                   selectedModel={selectedModel}
+                  effectiveModelType={effectiveModelType}
                   aspectRatio={aspectRatio}
                   onAspectRatioChange={onAspectRatioChange}
                   resolution={resolution}
@@ -415,8 +449,8 @@ export default function InputControls(props: InputControlsProps) {
 
           {/* 右侧：计费提示、上传、发送/语音 */}
           <div className="flex items-center space-x-2">
-            {/* 模式选择器（chat 模型）或 计费提示（图片/视频模型） */}
-            {selectedModel.type === 'chat' && onPermissionModeChange ? (
+            {/* 模式选择器（chat 模式）或 计费提示（图片/视频模式） */}
+            {effectiveModelType === 'chat' && onPermissionModeChange ? (
               <Popover
                 side="top"
                 align="end"
