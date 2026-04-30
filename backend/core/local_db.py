@@ -20,6 +20,18 @@ from loguru import logger
 
 
 # ============================================================
+# 自定义异常
+# ============================================================
+
+class RowNotFoundError(ValueError):
+    """single() 查询未找到行时抛出，全局 handler 统一返回 404"""
+
+    def __init__(self, table: str):
+        self.table = table
+        super().__init__(f"Row not found in table '{table}'")
+
+
+# ============================================================
 # 响应对象（兼容 Supabase SDK 的 response.data 格式）
 # ============================================================
 
@@ -421,9 +433,7 @@ class QueryBuilder:
         # 单行模式
         if self._single:
             if not rows:
-                raise ValueError(
-                    f"Row not found in table '{self._table}'"
-                )
+                raise RowNotFoundError(self._table)
             return QueryResponse(data=rows[0], count=total_count)
 
         if self._maybe_single:
@@ -599,9 +609,7 @@ class AsyncQueryBuilder(QueryBuilder):
 
         if self._single:
             if not rows:
-                raise ValueError(
-                    f"Row not found in table '{self._table}'"
-                )
+                raise RowNotFoundError(self._table)
             return QueryResponse(data=rows[0], count=total_count)
 
         if self._maybe_single:

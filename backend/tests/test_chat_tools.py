@@ -151,7 +151,6 @@ class TestGetChatTools:
         assert "erp_product_query" not in names
         # 通用工具仍在
         assert "web_search" in names
-        assert "generate_image" in names
 
     def test_guest_tool_count(self):
         """散客工具数量少于企业"""
@@ -198,8 +197,8 @@ class TestCoreToolsExpanded:
     def test_core_tools_count(self):
         from config.chat_tools import get_core_tools
         tools = get_core_tools(org_id="test")
-        # 14 个核心工具
-        assert len(tools) == 14
+        # 12 个核心工具（图片/视频生成已移至子模式）
+        assert len(tools) == 12
 
     def test_core_tools_include_file_tools(self):
         from config.chat_tools import get_core_tools
@@ -212,11 +211,12 @@ class TestCoreToolsExpanded:
         names = {t["function"]["name"] for t in get_core_tools(org_id="test")}
         assert "social_crawler" in names
 
-    def test_core_tools_include_media(self):
+    def test_core_tools_no_media(self):
+        """图片/视频生成已移至子模式，不在核心工具中"""
         from config.chat_tools import get_core_tools
         names = {t["function"]["name"] for t in get_core_tools(org_id="test")}
-        assert "generate_image" in names
-        assert "generate_video" in names
+        assert "generate_image" not in names
+        assert "generate_video" not in names
 
     def test_core_tools_include_scheduled_task(self):
         from config.chat_tools import get_core_tools
