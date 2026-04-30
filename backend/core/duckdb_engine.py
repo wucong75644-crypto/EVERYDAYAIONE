@@ -205,56 +205,9 @@ class DuckDBEngine:
             logger.warning(f"DuckDB SUMMARIZE failed: {e}")
             return {"columns": [], "row_count": 0, "top_values": {}}
 
-        col_names = [d[0] for d in summary_desc] if summary_desc else []
-        name_idx = col_names.index("column_name") if "column_name" in col_names else 0
-        type_idx = col_names.index("column_type") if "column_type" in col_names else 1
-        min_idx = col_names.index("min") if "min" in col_names else 2
-        max_idx = col_names.index("max") if "max" in col_names else 3
-        approx_unique_idx = col_names.index("approx_unique") if "approx_unique" in col_names else 4
-        avg_idx = col_names.index("avg") if "avg" in col_names else 5
-        null_pct_idx = col_names.index("null_percentage") if "null_percentage" in col_names else 7
-        count_idx = col_names.index("count") if "count" in col_names else 8
-
-        row_count = 0
-        columns_info: list[dict] = []
-        numeric_cols: list[str] = []
-        text_cols_low_card: list[str] = []
-
-        for row in summary_rows:
-            col_name = str(row[name_idx])
-            col_type = str(row[type_idx])
-            approx_unique = int(row[approx_unique_idx]) if row[approx_unique_idx] is not None else 0
-            cnt = int(row[count_idx]) if row[count_idx] is not None else 0
-            if cnt > row_count:
-                row_count = cnt
-
-            null_pct_raw = row[null_pct_idx]
-            null_pct = float(null_pct_raw.replace("%", "")) if isinstance(null_pct_raw, str) else (float(null_pct_raw) if null_pct_raw else 0)
-            null_count = int(cnt * null_pct / 100) if cnt > 0 else 0
-
-            info: dict = {
-                "name": col_name,
-                "type": col_type,
-                "distinct_count": approx_unique,
-                "null_count": null_count,
-                "min": row[min_idx],
-                "max": row[max_idx],
-            }
-
-            # avg 只对数值列有意义
-            if row[avg_idx] is not None:
-                try:
-                    info["avg"] = float(row[avg_idx])
-                except (ValueError, TypeError):
-                    pass
-
-            columns_info.append(info)
-
-            # 收集需要补查的列
-            if col_type in ("BIGINT", "INTEGER", "DOUBLE", "FLOAT", "DECIMAL", "HUGEINT", "SMALLINT", "TINYINT"):
-                numeric_cols.append(col_name)
-            elif col_type == "VARCHAR" and approx_unique <= 100 and cnt > 0 and (approx_unique / cnt < 0.5):
-                text_cols_low_card.append(col_name)
+        row_count, columns_info, numeric_cols, text_cols_low_card = (
+            DuckDBEngine.parse_summarize_rows(summary_rows, summary_desc)
+        )
 
         # 2. 数值列补查 sum / median / p25 / p75
         for col_name in numeric_cols[:5]:
@@ -364,6 +317,70 @@ class DuckDBEngine:
             "duplicate_count": duplicate_count,
             "preview_rows": preview_rows,
         }
+
+    # ── 共享工具方法 ──────────────────────────────────
+
+    @staticmethod
+    def parse_summarize_rows(
+        summary_rows: list, summary_desc: list,
+    ) -> tuple[int, list[dict], list[str], list[str]]:
+        """解析 DuckDB SUMMARIZE 结果为结构化列信息。
+
+        和 profile_parquet 共用同一解析逻辑，消除重复。
+
+        Returns:
+            (row_count, columns_info, numeric_cols, text_cols_low_card)
+        """
+        col_names = [d[0] for d in summary_desc] if summary_desc else []
+        name_idx = col_names.index("column_name") if "column_name" in col_names else 0
+        type_idx = col_names.index("column_type") if "column_type" in col_names else 1
+        min_idx = col_names.index("min") if "min" in col_names else 2
+        max_idx = col_names.index("max") if "max" in col_names else 3
+        approx_unique_idx = col_names.index("approx_unique") if "approx_unique" in col_names else 4
+        avg_idx = col_names.index("avg") if "avg" in col_names else 5
+        null_pct_idx = col_names.index("null_percentage") if "null_percentage" in col_names else 7
+        count_idx = col_names.index("count") if "count" in col_names else 8
+
+        row_count = 0
+        columns_info: list[dict] = []
+        numeric_cols: list[str] = []
+        text_cols_low_card: list[str] = []
+
+        for row in summary_rows:
+            col_name = str(row[name_idx])
+            col_type = str(row[type_idx])
+            approx_unique = int(row[approx_unique_idx]) if row[approx_unique_idx] is not None else 0
+            cnt = int(row[count_idx]) if row[count_idx] is not None else 0
+            if cnt > row_count:
+                row_count = cnt
+
+            null_pct_raw = row[null_pct_idx]
+            null_pct = float(null_pct_raw.replace("%", "")) if isinstance(null_pct_raw, str) else (float(null_pct_raw) if null_pct_raw else 0)
+            null_count = int(cnt * null_pct / 100) if cnt > 0 else 0
+
+            info: dict = {
+                "name": col_name,
+                "type": col_type,
+                "distinct_count": approx_unique,
+                "null_count": null_count,
+                "min": row[min_idx],
+                "max": row[max_idx],
+            }
+
+            if row[avg_idx] is not None:
+                try:
+                    info["avg"] = float(row[avg_idx])
+                except (ValueError, TypeError):
+                    pass
+
+            columns_info.append(info)
+
+            if col_type in ("BIGINT", "INTEGER", "DOUBLE", "FLOAT", "DECIMAL", "HUGEINT", "SMALLINT", "TINYINT"):
+                numeric_cols.append(col_name)
+            elif col_type == "VARCHAR" and approx_unique <= 100 and cnt > 0 and (approx_unique / cnt < 0.5):
+                text_cols_low_card.append(col_name)
+
+        return row_count, columns_info, numeric_cols, text_cols_low_card
 
     # ── 生命周期 ──────────────────────────────────────
 

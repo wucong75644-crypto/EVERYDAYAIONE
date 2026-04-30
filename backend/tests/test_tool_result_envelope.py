@@ -433,42 +433,56 @@ class TestStagingPathAlignment:
 
 
 # ============================================================
-# _delayed_cleanup_staging
+# _async_cleanup_staging（原 _delayed_cleanup_staging，已重构为文件级 TTL 清理）
 # ============================================================
 
-class TestDelayedCleanupStaging:
-    """chat_handler._delayed_cleanup_staging 延迟清理测试"""
+class TestAsyncCleanupStaging:
+    """chat_handler._async_cleanup_staging 文件级清理测试"""
 
     @pytest.mark.asyncio
-    async def test_cleanup_removes_staging_dir(self, tmp_path):
-        """清理后 staging 目录被删除"""
+    async def test_cleanup_removes_old_files(self, tmp_path):
+        """清理后超 TTL 的文件被删除"""
+        import os
+        import time
         from pathlib import Path
         from core.workspace import resolve_staging_dir
-        from services.handlers.chat_handler import _delayed_cleanup_staging
-        from unittest.mock import patch
+        from services.handlers.chat_handler import _async_cleanup_staging
+        from unittest.mock import patch, MagicMock
 
         staging = Path(resolve_staging_dir(
             str(tmp_path), "u1", "org1", "conv-cleanup",
         ))
         staging.mkdir(parents=True)
-        (staging / "data.txt").write_text("test data")
+        old_file = staging / "data.txt"
+        old_file.write_text("test data")
+        # 设置 mtime 为 2 天前
+        old_time = time.time() - 2 * 86400
+        os.utime(old_file, (old_time, old_time))
 
-        with patch("core.config.get_settings") as mock_s:
-            mock_s.return_value.file_workspace_root = str(tmp_path)
-            await _delayed_cleanup_staging("conv-cleanup", "u1", "org1", delay=0)
+        mock_settings = MagicMock()
+        mock_settings.file_workspace_root = str(tmp_path)
+        mock_settings.staging_file_ttl_seconds = 86400
+        mock_settings.staging_max_size_mb = 500
 
-        assert not staging.exists()
+        with patch("core.config.get_settings", return_value=mock_settings):
+            await _async_cleanup_staging("conv-cleanup", "u1", "org1")
+
+        assert not old_file.exists()
 
     @pytest.mark.asyncio
     async def test_cleanup_noop_when_no_dir(self, tmp_path):
         """staging 目录不存在时不报错"""
-        from services.handlers.chat_handler import _delayed_cleanup_staging
-        from unittest.mock import patch
+        from services.handlers.chat_handler import _async_cleanup_staging
+        from unittest.mock import patch, MagicMock
 
-        with patch("core.config.get_settings") as mock_s:
-            mock_s.return_value.file_workspace_root = str(tmp_path)
+        mock_settings = MagicMock()
+        mock_settings.file_workspace_root = str(tmp_path)
+        mock_settings.staging_file_ttl_seconds = 86400
+        mock_settings.staging_max_size_mb = 500
+
+        with patch("core.config.get_settings", return_value=mock_settings):
             # 不应抛异常
-            await _delayed_cleanup_staging("nonexistent-conv", "u1", "org1", delay=0)
+            await _async_cleanup_staging("nonexistent-conv", "u1", "org1")
 
 
 # ============================================================

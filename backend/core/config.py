@@ -108,6 +108,10 @@ class Settings(BaseSettings):
     memory_filter_fallback_model: str = "qwen3.5-plus"  # 记忆精排备用模型
     memory_filter_timeout: float = 10.0  # 记忆精排读取超时（秒），connect=5s
 
+    # schema 智能过滤（data_query 上下文注入）
+    schema_filter_model: str = "qwen-turbo-latest"  # schema 过滤降级 LLM（DashScope）
+    schema_filter_timeout: float = 3.0  # schema 过滤读取超时（秒）
+
     # 建议问题生成
     suggestion_generator_timeout: float = 5.0  # 建议生成读取超时（秒）
 
@@ -227,6 +231,11 @@ class Settings(BaseSettings):
     # 文件操作配置
     file_workspace_enabled: bool = True                          # 文件操作总开关
     file_workspace_root: str = "/mnt/oss-workspace/workspace"    # ossfs 挂载路径（生产）或本地路径（开发）
+
+    # Staging 清理配置（docs/document/TECH_data_query工具设计.md §九）
+    staging_file_ttl_seconds: int = 86400        # 孤儿文件过期时间（24h）
+    staging_max_size_mb: int = 500               # 单用户 staging 目录容量上限（MB）
+    staging_registry_max_entries: int = 20       # 单会话 registry 条目上限（LRU 淘汰）
 
     # 多维预算配置（主 Agent 工具循环）
     budget_max_turns: int = 15               # 轮次上限（主控制，对标 OpenAI/LangGraph）

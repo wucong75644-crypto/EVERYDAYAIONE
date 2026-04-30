@@ -212,8 +212,8 @@ def build_data_profile(
             preview_lines.append(f"  {i}. {' | '.join(parts)}")
         lines.append("\n[预览] 前2条+随机1条:\n" + "\n".join(preview_lines))
 
-    # ── 6. 读取指引 ──
-    lines.append(f"\n[读取] df = pd.read_parquet(STAGING_DIR + '/{filename}')")
+    # ── 6. 查询指引 ──
+    lines.append(f'\n[查询] data_query(file="{filename}", sql="SELECT ... FROM data")')
 
     # ── 7. 警告 ──
     warnings: list[str] = []
@@ -378,10 +378,10 @@ def build_profile_from_duckdb(
         label = "前2条+随机1条" if len(preview_rows) >= 3 else f"前{len(preview_rows)}条"
         lines.append(f"\n[预览] {label}:\n" + "\n".join(preview_lines))
 
-    # ── 6. 读取指引 ──
-    lines.append(f"\n[读取] df = pd.read_parquet(STAGING_DIR + '/{filename}')")
+    # ── 6. 查询指引 ──
+    lines.append(f'\n[查询] data_query(file="{filename}", sql="SELECT ... FROM data")')
 
-    # ── 6. 警告 ──
+    # ── 7. 警告 ──
     high_null = [
         col["name"] for col in columns
         if col.get("null_count", 0) / row_count > 0.1

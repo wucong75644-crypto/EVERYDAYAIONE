@@ -51,6 +51,7 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             "web_search": self._web_search,
             "generate_image": self._generate_image,
             "generate_video": self._generate_video,
+            "data_query": self._data_query,
             "erp_agent": self._erp_agent,
             "erp_analyze": self._erp_analyze,
             "manage_scheduled_task": self._manage_scheduled_task,
@@ -176,6 +177,30 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             return result or f"搜索「{query}」未找到相关结果"
         finally:
             await router.close()
+
+    # ========================================
+    # 数据查询工具
+    # ========================================
+
+    async def _data_query(self, args: Dict[str, Any]) -> str:
+        """查询 staging 文件或工作区数据文件"""
+        from core.config import get_settings
+        from services.agent.data_query_executor import DataQueryExecutor
+
+        settings = get_settings()
+        executor = DataQueryExecutor(
+            user_id=self.user_id,
+            org_id=self.org_id,
+            conversation_id=self.conversation_id,
+            workspace_root=settings.file_workspace_root,
+        )
+
+        return await executor.execute(
+            file=args.get("file", ""),
+            sql=args.get("sql"),
+            export=args.get("export"),
+            sheet=args.get("sheet"),
+        )
 
     # ========================================
     # ERP Agent（独立 Agent 作为工具调用）

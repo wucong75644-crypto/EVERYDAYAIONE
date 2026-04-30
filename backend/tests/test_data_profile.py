@@ -46,7 +46,7 @@ class TestBuildDataProfile:
         assert "[质量]" in text
         assert "[统计-数值]" in text
         assert "[预览]" in text
-        assert "[读取]" in text
+        assert "[查询]" in text
 
     def test_meta_section(self):
         """元信息板块包含行数、列数、文件大小"""
@@ -106,9 +106,9 @@ class TestBuildDataProfile:
         assert "A001" in text
 
     def test_read_instruction(self):
-        """读取指引包含 STAGING_DIR + 文件名"""
+        """查询指引包含 data_query + 文件名"""
         text, _ = build_data_profile(self._basic_df(), "trade_999.parquet", 1.0)
-        assert "STAGING_DIR + '/trade_999.parquet'" in text
+        assert 'data_query(file="trade_999.parquet"' in text
 
     def test_no_absolute_path_leaked(self):
         """输出不包含服务器绝对路径"""
