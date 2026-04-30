@@ -51,13 +51,16 @@ class ChatToolMixin:
         from config.chat_tools import is_concurrency_safe
         from services.tool_executor import ToolExecutor
 
+        # request_ctx 由入口（HTTP/WS/企微）注入到 handler，全链路不可变
         _request_ctx = getattr(self, "request_ctx", None)
         if _request_ctx is None:
+            # 防御性 fallback（不应该走到这里，说明入口未注入）
             from utils.time_context import RequestContext
             _request_ctx = RequestContext.build(
                 user_id=user_id, org_id=self.org_id,
                 request_id=conversation_id or "",
             )
+            logger.warning("request_ctx fallback in _execute_tool_calls — entry point should inject it")
 
         executor = ToolExecutor(
             db=self.db, user_id=user_id,
@@ -132,6 +135,11 @@ class ChatToolMixin:
             self._erp_agent_tokens = (
                 getattr(self, "_erp_agent_tokens", 0) + result.tokens_used
             )
+            # ⑤ schema 注入：file_ref + summary → 对话级 registry（B2 schema 智能过滤）
+            if result.file_ref and result.summary:
+                self._save_schema_to_conversation(
+                    conversation_id, result, tc["name"],
+                )
 
         # 收集普通工具（非 AgentResult）透传的 FilePart（[FILE] 标记通道）
         if executor._pending_file_parts:
@@ -146,6 +154,43 @@ class ChatToolMixin:
             self._image_dims.update(executor._image_dims)
 
         return results
+
+    @staticmethod
+    def _save_schema_to_conversation(
+        conversation_id: str,
+        result: Any,
+        tool_name: str,
+    ) -> None:
+        """将工具结果的 file_ref + schema 保存到对话级 registry。
+
+        B2: schema 智能过滤注入的写入端。
+        register() 返回 key → save 返回 added_keys → fire-and-forget 预计算 embedding。
+        """
+        import asyncio
+        from services.agent.session_file_registry import (
+            get_conversation_registry, save_conversation_registry,
+            SessionFileRegistry,
+        )
+
+        # 构建临时 registry 条目 → 合并到对话级缓存
+        tmp = SessionFileRegistry()
+        source = getattr(result, "source", None) or tool_name
+        schema_text = result.summary
+        tmp.register(source, tool_name, result.file_ref, schema_text=schema_text)
+        added_keys = save_conversation_registry(conversation_id, tmp)
+
+        # fire-and-forget: 对新增的 key 预计算 embedding
+        # added_keys 是刚合并的新 key，一定有 schema（LRU 只淘汰最旧条目）
+        if added_keys and schema_text:
+            conv_reg = get_conversation_registry(conversation_id)
+            try:
+                loop = asyncio.get_running_loop()
+                for key in added_keys:
+                    loop.create_task(
+                        conv_reg.precompute_embedding(key, schema_text),
+                    )
+            except RuntimeError:
+                pass  # 无事件循环时跳过
 
     async def _execute_single_tool(
         self,

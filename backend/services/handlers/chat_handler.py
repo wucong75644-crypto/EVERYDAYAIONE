@@ -93,8 +93,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 thinking_effort=params.get("thinking_effort"),
                 thinking_mode=params.get("thinking_mode"),
                 permission_mode=params.get("permission_mode", "auto"),
-                router_system_prompt=params.get("_router_system_prompt"),
-                router_search_context=params.get("_router_search_context"),
                 needs_google_search=params.get("_needs_google_search", False),
                 _params=params,
             )
@@ -292,8 +290,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         thinking_effort: Optional[str] = None,
         thinking_mode: Optional[str] = None,
         permission_mode: str = "auto",
-        router_system_prompt: Optional[str] = None,
-        router_search_context: Optional[str] = None,
         needs_google_search: bool = False,
         _params: Optional[Dict[str, Any]] = None,
         _retry_context: Optional[Any] = None,
@@ -354,8 +350,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
             messages = await self._build_llm_messages(
                 content, user_id, conversation_id, text_content,
-                router_system_prompt=router_system_prompt,
-                router_search_context=router_search_context,
                 prefetched_summary=prefetched_summary,
                 prefetched_memory=prefetched_memory,
                 user_location=user_location,
@@ -1013,8 +1007,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     content=content, model_id=model_id,
                     thinking_effort=thinking_effort, thinking_mode=thinking_mode,
                     permission_mode=permission_mode,
-                    router_system_prompt=router_system_prompt,
-                    router_search_context=router_search_context,
                     _params=_params, _retry_context=_retry_context,
                     elapsed_ms=elapsed_ms,
                 )
@@ -1040,9 +1032,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             from services.agent.tool_result_envelope import clear_persisted, clear_staging_dir
             clear_persisted()
             clear_staging_dir()
-            # 延迟清理 staging 文件（会话级，5 分钟后）
+            # Staging 文件清理（fire-and-forget，文件级 TTL + 容量兜底）
             asyncio.create_task(
-                _delayed_cleanup_staging(conversation_id, user_id, self.org_id)
+                _async_cleanup_staging(conversation_id, user_id, self.org_id)
             )
 
         # ── Boundary 2: 持久化（LLM 成功后执行，错误不触发重试）──
@@ -1154,30 +1146,36 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         self.db.table("tasks").insert(task_data).execute()
 
 
-async def _delayed_cleanup_staging(
+async def _async_cleanup_staging(
     conversation_id: str,
     user_id: str = "",
     org_id: str | None = None,
-    delay: int = 900,
 ) -> None:
-    """会话级 staging 延迟清理（15 分钟后删除，覆盖 ~85% 的用户追问间隔）
+    """会话级 staging 文件清理（fire-and-forget，文件级 TTL + 容量兜底）
 
-    设计文档：docs/document/TECH_工具结果分流架构.md §6
+    设计文档：docs/document/TECH_data_query工具设计.md §九
+    - 不传 registry → 纯 TTL 模式（24h 孤儿清理 + _tmp_ 残留清理）
+    - 文件 IO 在 executor 中执行，不阻塞事件循环
     """
-    import shutil
-    from pathlib import Path
     from core.config import get_settings
     from core.workspace import resolve_staging_dir
+    from services.staging_cleaner import cleanup_staging
 
     try:
-        await asyncio.sleep(delay)
         settings = get_settings()
-        staging_dir = Path(resolve_staging_dir(
+        staging_dir = resolve_staging_dir(
             settings.file_workspace_root, user_id, org_id, conversation_id,
-        ))
-        if staging_dir.exists():
-            shutil.rmtree(staging_dir, ignore_errors=True)
-            logger.info(f"Chat staging cleaned | dir={staging_dir}")
+        )
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: cleanup_staging(
+                staging_dir,
+                registry=None,
+                ttl_seconds=settings.staging_file_ttl_seconds,
+                max_size_mb=settings.staging_max_size_mb,
+            ),
+        )
     except Exception as e:
-        logger.debug(f"Chat staging cleanup failed | error={e}")
+        logger.debug(f"Staging cleanup failed | conv={conversation_id} | error={e}")
 

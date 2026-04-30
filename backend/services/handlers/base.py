@@ -56,6 +56,7 @@ class BaseHandler(TaskMixin, CreditMixin, MessageMixin, ABC):
     def __init__(self, db):
         self.db = db
         self.org_id: str | None = None
+        self.request_ctx: "RequestContext | None" = None
 
     @property
     @abstractmethod

@@ -958,17 +958,20 @@ class TestBuildLlmMessagesUserLocation:
                 user_location="浙江省金华市",
             )
 
+        # 位置合并到 Layer 1 世界状态 system message 中（不再独立消息）
         location_msgs = [
             m for m in messages
             if isinstance(m.get("content"), str)
-            and "用户所在位置：浙江省金华市" in m["content"]
+            and "用户位置：浙江省金华市" in m["content"]
         ]
         assert len(location_msgs) == 1
         assert location_msgs[0]["role"] == "system"
+        # 同一条消息中应包含时间信息（合并的世界状态）
+        assert "当前时间" in location_msgs[0]["content"]
 
     @pytest.mark.asyncio
     async def test_no_location_when_none(self, chat_handler, mock_db):
-        """user_location 为 None 时，不注入位置消息"""
+        """user_location 为 None 时，世界状态不包含位置信息"""
         mock_db.set_table_data("messages", [])
 
         with patch.object(
@@ -986,16 +989,17 @@ class TestBuildLlmMessagesUserLocation:
                 user_location=None,
             )
 
+        # None 时，世界状态 system message 不应包含位置信息
         location_msgs = [
             m for m in messages
             if isinstance(m.get("content"), str)
-            and "用户所在位置" in m["content"]
+            and "用户位置" in m["content"]
         ]
         assert len(location_msgs) == 0
 
     @pytest.mark.asyncio
     async def test_location_not_injected_when_empty(self, chat_handler, mock_db):
-        """user_location 为空字符串时，不注入位置消息"""
+        """user_location 为空字符串时，世界状态不包含位置信息"""
         mock_db.set_table_data("messages", [])
 
         with patch.object(
@@ -1013,10 +1017,11 @@ class TestBuildLlmMessagesUserLocation:
                 user_location="",
             )
 
+        # 空位置时，世界状态 system message 不应包含位置信息
         location_msgs = [
             m for m in messages
             if isinstance(m.get("content"), str)
-            and "用户所在位置" in m["content"]
+            and "用户位置" in m["content"]
         ]
         assert len(location_msgs) == 0
 

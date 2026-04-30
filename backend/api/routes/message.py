@@ -313,9 +313,13 @@ async def _do_generate_message(
             conversation_id=conversation_id,
         )
 
-    # 6. 获取 Handler 并启动任务
-    handler = get_handler(gen_type, db)
-    handler.org_id = ctx.org_id
+    # 6. 获取 Handler（工厂统一注入 org_id + request_ctx）
+    handler = get_handler(
+        gen_type, db,
+        org_id=ctx.org_id,
+        user_id=user_id,
+        request_id=request.headers.get("X-Request-Id", ""),
+    )
 
     external_task_id = await start_generation_task(
         db=db,
