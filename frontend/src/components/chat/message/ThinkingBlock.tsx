@@ -3,11 +3,20 @@
  *
  * 显示 AI 模型的推理过程（reasoning_content），默认折叠。
  * 支持流式输出时显示思考中动画，完成后显示思考时长。
+ * 支持展示工具执行步骤（带可折叠代码块）。
  */
 
-import { useState, useCallback, useMemo, useEffect, useRef, memo } from 'react';
+import { useState, useCallback, useMemo, memo } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
 import { SOFT_SPRING } from '../../../utils/motion';
+
+export interface ToolStep {
+  toolName: string;
+  status: 'running' | 'completed' | 'error';
+  summary?: string;
+  code?: string;
+  resultText?: string;
+}
 
 interface ThinkingBlockProps {
   /** 思考内容文本 */
@@ -18,6 +27,8 @@ interface ThinkingBlockProps {
   thinkingStartTime?: number;
   /** 后端计算的精确耗时（毫秒），优先于 thinkingStartTime */
   durationMs?: number;
+  /** 工具执行步骤（在 thinking 展开区域内渲染，代码默认折叠） */
+  steps?: ToolStep[];
 }
 
 /** 格式化思考时长 */
@@ -29,33 +40,81 @@ function formatDuration(ms: number): string {
   return remaining > 0 ? `${minutes}分${remaining}秒` : `${minutes}分钟`;
 }
 
+const STATUS_ICON: Record<ToolStep['status'], string> = {
+  running: '…',
+  completed: '✓',
+  error: '✗',
+};
+
+const STATUS_COLOR: Record<ToolStep['status'], string> = {
+  running: 'text-text-tertiary',
+  completed: 'text-green-500',
+  error: 'text-red-500',
+};
+
+/** 单个工具步骤：标题行 + 可折叠代码/结果 */
+const StepItem = memo(function StepItem({ step }: { step: ToolStep }) {
+  const [codeExpanded, setCodeExpanded] = useState(false);
+  const hasDetail = !!(step.code || step.resultText);
+
+  return (
+    <div className="mt-1.5">
+      <button
+        onClick={hasDetail ? () => setCodeExpanded(prev => !prev) : undefined}
+        className={`flex items-center gap-1 text-xs ${hasDetail ? 'cursor-pointer hover:text-text-secondary' : 'cursor-default'} text-text-tertiary`}
+      >
+        <span className={STATUS_COLOR[step.status]}>{STATUS_ICON[step.status]}</span>
+        <span className="font-medium">{step.toolName}</span>
+        {step.summary && <span className="ml-1 opacity-70">{step.summary}</span>}
+        {hasDetail && (
+          <svg
+            className={`w-2.5 h-2.5 ml-0.5 transition-transform duration-150 ${codeExpanded ? 'rotate-90' : ''}`}
+            fill="none" viewBox="0 0 24 24" stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        )}
+      </button>
+      <AnimatePresence initial={false}>
+        {codeExpanded && hasDetail && (
+          <m.div
+            key="step-detail"
+            className="overflow-hidden"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={SOFT_SPRING}
+          >
+            {step.code && (
+              <pre className="mt-1 ml-3 p-2 text-xs bg-bg-tertiary rounded overflow-x-auto text-text-tertiary leading-relaxed">
+                {step.code}
+              </pre>
+            )}
+            {step.resultText && (
+              <div className="mt-1 ml-3 p-2 text-xs bg-bg-tertiary rounded text-text-tertiary leading-relaxed whitespace-pre-wrap">
+                {step.resultText}
+              </div>
+            )}
+          </m.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+});
+
 export default memo(function ThinkingBlock({
   content,
   isThinking = false,
   thinkingStartTime,
   durationMs,
+  steps,
 }: ThinkingBlockProps) {
-  // 初始值直接对齐 props：流式挂载 = 展开，DB 加载 = 折叠，无多余渲染
-  const [expanded, setExpanded] = useState(isThinking);
-  const prevThinkingRef = useRef(isThinking);
+  // 默认折叠；用户手动展开后保持展开状态，不自动收起
+  const [expanded, setExpanded] = useState(false);
 
   const toggleExpanded = useCallback(() => {
     setExpanded((prev) => !prev);
   }, []);
-
-  // 检测 isThinking 的 true→false 转换，延迟自动折叠（对标 Vercel Reasoning 组件）
-  useEffect(() => {
-    const wasThinking = prevThinkingRef.current;
-    prevThinkingRef.current = isThinking;
-
-    if (isThinking) {
-      setExpanded(true);
-    } else if (wasThinking) {
-      // true → false：thinking 完成，延迟 1 秒折叠
-      const timer = setTimeout(() => setExpanded(false), 1000);
-      return () => clearTimeout(timer);
-    }
-  }, [isThinking]);
 
   // 计算思考时长：优先后端 durationMs，fallback 前端计算
   const durationText = useMemo(() => {
@@ -65,8 +124,10 @@ export default memo(function ThinkingBlock({
     return '';
   }, [isThinking, durationMs, thinkingStartTime]);
 
+  const hasSteps = steps && steps.length > 0;
+
   // 无内容时不渲染
-  if (!content && !isThinking) return null;
+  if (!content && !isThinking && !hasSteps) return null;
 
   return (
     <div className="mb-2">
@@ -105,9 +166,9 @@ export default memo(function ThinkingBlock({
         )}
       </button>
 
-      {/* 展开的思考内容 — V3：framer spring 展开动画（替代 CSS max-height 跳变） */}
+      {/* 展开的思考内容 — V3：framer spring 展开动画 */}
       <AnimatePresence initial={false}>
-        {expanded && content && (
+        {expanded && (content || hasSteps) && (
           <m.div
             key="thinking-content"
             className="thinking-content mt-1 ml-4 pl-3 border-l-2 border-border-default overflow-hidden"
@@ -116,9 +177,20 @@ export default memo(function ThinkingBlock({
             exit={{ opacity: 0, height: 0 }}
             transition={SOFT_SPRING}
           >
-            <div className="text-sm text-text-tertiary leading-relaxed whitespace-pre-wrap">
-              {content.trimStart()}
-            </div>
+            {/* AI 原始思考文本 */}
+            {content && (
+              <div className="text-sm text-text-tertiary leading-relaxed whitespace-pre-wrap">
+                {content.trimStart()}
+              </div>
+            )}
+            {/* 工具执行步骤（代码默认折叠） */}
+            {hasSteps && (
+              <div className={content ? 'mt-2 pt-2 border-t border-border-default' : ''}>
+                {steps.map((step, i) => (
+                  <StepItem key={`${step.toolName}-${i}`} step={step} />
+                ))}
+              </div>
+            )}
           </m.div>
         )}
       </AnimatePresence>
