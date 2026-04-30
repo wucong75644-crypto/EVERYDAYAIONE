@@ -232,7 +232,7 @@
         "requires_image": true
       }
     ],
-    "default": "google/nano-banana"
+    "default": "gpt-image-2-text-to-image"
   },
   "video": {
     "models": [
