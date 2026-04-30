@@ -19,7 +19,7 @@ import { useModalAnimation } from '../../../hooks/useModalAnimation';
 import { useMessageAnimation } from '../../../hooks/useMessageAnimation';
 import LoadingPlaceholder from './LoadingPlaceholder';
 import MarkdownRenderer from './MarkdownRenderer';
-import ThinkingBlock from './ThinkingBlock';
+import ThinkingBlock, { type ToolStep } from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
 import FormBlock from './FormBlock';
 import FileCardList from '../media/FileCard';
@@ -141,7 +141,7 @@ export default memo(function MessageItem({
   const hasFiles = files.length > 0;
 
   // 检测是否为多内容块模式
-  // tool_step / text(中间叙述) / tool_result / image / file / form 均触发多块模式
+  // tool_step / tool_result / image / file / form 均触发多块模式
   // thinking 单独在 ThinkingBlock 渲染，不触发
   const hasMultiBlocks = useMemo(() => {
     if (!Array.isArray(message.content)) return false;
@@ -150,6 +150,52 @@ export default memo(function MessageItem({
       p.type === 'image' || p.type === 'file' || p.type === 'form'
     );
   }, [message.content]);
+
+  // 多块模式：工具调用前的解释文字 + tool_step + tool_result → 归入 thinking 区域
+  // 只有最后一个 tool_step/tool_result 之后的 text 才正常显示
+  const { intermediateText, intermediateSteps, finalPartStartIdx } = useMemo(() => {
+    if (!hasMultiBlocks || !Array.isArray(message.content)) {
+      return { intermediateText: '', intermediateSteps: [] as ToolStep[], finalPartStartIdx: 0 };
+    }
+    // 找到最后一个 tool_step 或 tool_result 的索引
+    let lastToolIdx = -1;
+    for (let i = message.content.length - 1; i >= 0; i--) {
+      const t = message.content[i].type;
+      if (t === 'tool_step' || t === 'tool_result') {
+        lastToolIdx = i;
+        break;
+      }
+    }
+    if (lastToolIdx === -1) return { intermediateText: '', intermediateSteps: [] as ToolStep[], finalPartStartIdx: 0 };
+
+    const textParts: string[] = [];
+    const steps: ToolStep[] = [];
+    for (let i = 0; i <= lastToolIdx; i++) {
+      const p = message.content[i];
+      if (p.type === 'text' && (p as { text: string }).text) {
+        textParts.push((p as { text: string }).text);
+      } else if (p.type === 'tool_step') {
+        const ts = p as { tool_name?: string; status?: string; summary?: string; code?: string };
+        steps.push({
+          toolName: ts.tool_name || 'tool',
+          status: (ts.status as ToolStep['status']) || 'running',
+          summary: ts.summary,
+          code: ts.code,
+        });
+      } else if (p.type === 'tool_result') {
+        const tr = p as { tool_name?: string; text?: string };
+        if (tr.text) {
+          const matchStep = [...steps].reverse().find(s => s.toolName === tr.tool_name);
+          if (matchStep) {
+            matchStep.resultText = tr.text;
+          } else {
+            steps.push({ toolName: tr.tool_name || 'tool', status: 'completed', resultText: tr.text });
+          }
+        }
+      }
+    }
+    return { intermediateText: textParts.join('\n\n'), intermediateSteps: steps, finalPartStartIdx: lastToolIdx + 1 };
+  }, [hasMultiBlocks, message.content]);
 
   // 判断是否为失败消息
   const isErrorMessage = message.status === 'failed' || message.is_error === true;
@@ -409,16 +455,24 @@ export default memo(function MessageItem({
             const thinkingFromContent = !isStreaming
               ? (message.content.find(p => p.type === 'thinking') as import('../../../types/message').ThinkingPart | undefined)
               : undefined;
-            const thinkingText = streamingThinking || thinkingFromContent?.text || genParams.thinking_content as string || '';
+            let thinkingText = streamingThinking || thinkingFromContent?.text || genParams.thinking_content as string || '';
+            // 多块模式：工具调用前的解释文字追加到 thinking
+            if (intermediateText) {
+              thinkingText = thinkingText
+                ? `${thinkingText}\n\n---\n\n${intermediateText}`
+                : intermediateText;
+            }
             const thinkingDurationMs = thinkingFromContent?.duration_ms;
             const isThinkingNow = !!(isStreaming && streamingThinking && !textContent);
-            if (!thinkingText && !isThinkingNow) return null;
+            const hasSteps = intermediateSteps.length > 0;
+            if (!thinkingText && !isThinkingNow && !hasSteps) return null;
             return (
               <ThinkingBlock
                 content={thinkingText}
                 isThinking={isThinkingNow}
                 thinkingStartTime={thinkingStartTime}
                 durationMs={thinkingDurationMs}
+                steps={hasSteps ? intermediateSteps : undefined}
               />
             );
           })()}
@@ -454,8 +508,10 @@ export default memo(function MessageItem({
                 {message.content.map((part, idx) => {
                   // thinking 已在独立 ThinkingBlock 渲染，跳过
                   if (part.type === 'thinking') return null;
-                  // tool_step 不再展示（用户要求隐藏工具执行过程）
+                  // tool_step 始终归入 thinking，不展示
                   if (part.type === 'tool_step') return null;
+                  // finalPartStartIdx 之前的 text / tool_result 已归入 thinking，跳过
+                  if (idx < finalPartStartIdx && (part.type === 'text' || part.type === 'tool_result')) return null;
                   if (part.type === 'text' && (part as { text: string }).text) {
                     return (
                       <MarkdownRenderer
