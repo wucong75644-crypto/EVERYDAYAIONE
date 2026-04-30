@@ -116,22 +116,39 @@ async def _process_callback_xml(xml_content: str, db) -> None:
         # 提取文本内容
         text_content = _xml_text(root, "Content")
 
+        # 从 corp_id 查 org_id（自建应用 corp_id 在 .env 配置，org_id 在 DB 中）
+        corp_id = settings.wecom_corp_id or ""
+        org_id = None
+        if corp_id:
+            try:
+                result = db.table("organizations").select("id").eq(
+                    "wecom_corp_id", corp_id,
+                ).limit(1).execute()
+                if result.data:
+                    org_id = result.data[0]["id"]
+            except Exception as e:
+                logger.warning(f"Wecom callback: org_id lookup failed | corp_id={corp_id} | error={e}")
+
         # 构建统一消息格式
         msg = WecomIncomingMessage(
             msgid=msgid,
             wecom_userid=from_user,
-            corp_id=settings.wecom_corp_id or "",
+            corp_id=corp_id,
             chatid=from_user,  # 私聊场景 chatid=userid
             chattype=WecomChatType.SINGLE,
             msgtype=msg_type or WecomMsgType.TEXT,
             channel="app",
+            org_id=org_id,
             text_content=text_content,
         )
 
         reply_ctx = WecomReplyContext(
             channel="app",
             wecom_userid=from_user,
+            org_id=org_id,
             agent_id=settings.wecom_agent_id,
+            corp_id=corp_id,
+            agent_secret=settings.wecom_agent_secret,
         )
 
         svc = WecomMessageService(db)
