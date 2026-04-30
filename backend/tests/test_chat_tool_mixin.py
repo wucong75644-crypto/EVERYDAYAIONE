@@ -830,3 +830,70 @@ class TestPushToolStepUpdate:
 
         block = mock_ws.send_to_task_or_user.call_args[0][2]["payload"]["block"]
         assert "output" not in block
+
+
+# ============================================================
+# request_ctx fallback warning
+# ============================================================
+
+
+class TestRequestCtxFallback:
+    """request_ctx 未注入时的 fallback 行为"""
+
+    @pytest.mark.asyncio
+    async def test_fallback_logs_warning_when_request_ctx_missing(self):
+        """handler 无 request_ctx 时，_execute_tool_calls 应走 fallback 并 warning"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+
+        mixin = MagicMock(spec=ChatToolMixin)
+        mixin.db = MagicMock()
+        mixin.org_id = None
+        # 关键：不设置 request_ctx → getattr 返回 None → 触发 fallback
+        del mixin.request_ctx
+
+        with patch("services.agent.tool_executor.ToolExecutor") as MockExecutor, \
+             patch("services.handlers.chat_tool_mixin.logger") as mock_logger:
+            mock_exec = MagicMock()
+            mock_exec._pending_file_parts = []
+            MockExecutor.return_value = mock_exec
+
+            # 调用真实方法
+            await ChatToolMixin._execute_tool_calls(
+                mixin,
+                tool_calls=[],
+                task_id="t1", conversation_id="c1",
+                message_id="m1", user_id="u1",
+                turn=0, messages=[], budget=None,
+            )
+
+            # 验证 warning 日志被触发
+            mock_logger.warning.assert_called_once()
+            assert "fallback" in mock_logger.warning.call_args[0][0].lower()
+
+    @pytest.mark.asyncio
+    async def test_no_warning_when_request_ctx_present(self):
+        """handler 有 request_ctx 时，不应触发 fallback warning"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+        from utils.time_context import RequestContext
+
+        mixin = MagicMock(spec=ChatToolMixin)
+        mixin.db = MagicMock()
+        mixin.org_id = None
+        mixin.request_ctx = RequestContext.build(user_id="u1")
+
+        with patch("services.agent.tool_executor.ToolExecutor") as MockExecutor, \
+             patch("services.handlers.chat_tool_mixin.logger") as mock_logger:
+            mock_exec = MagicMock()
+            mock_exec._pending_file_parts = []
+            MockExecutor.return_value = mock_exec
+
+            await ChatToolMixin._execute_tool_calls(
+                mixin,
+                tool_calls=[],
+                task_id="t1", conversation_id="c1",
+                message_id="m1", user_id="u1",
+                turn=0, messages=[], budget=None,
+            )
+
+            # 不应有 warning
+            mock_logger.warning.assert_not_called()

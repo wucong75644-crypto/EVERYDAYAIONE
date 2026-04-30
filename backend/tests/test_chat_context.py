@@ -1026,6 +1026,153 @@ class TestBuildLlmMessagesUserLocation:
         assert len(location_msgs) == 0
 
 
+# ============ Test 分层 append 顺序 ============
+
+
+class TestBuildLlmMessagesLayerOrder:
+    """验证 _build_llm_messages 的分层 append 顺序（行业标准）
+
+    Layer 1: 世界状态（时间 + 位置）— 必须在 messages[0]
+    Layer 2: 思考语言
+    Layer 3: 领域知识
+    ...
+    Layer 7: 用户消息 — 必须在 messages[-1]
+    """
+
+    @pytest.mark.asyncio
+    async def test_layer1_world_state_is_first(self, chat_handler, mock_db):
+        """messages[0] 必须是包含时间的世界状态 system message"""
+        mock_db.set_table_data("messages", [])
+
+        with patch.object(
+            chat_handler, "_build_memory_prompt",
+            new_callable=AsyncMock, return_value=None,
+        ), patch.object(
+            chat_handler, "_get_context_summary",
+            new_callable=AsyncMock, return_value=None,
+        ):
+            messages = await chat_handler._build_llm_messages(
+                content=[{"type": "text", "text": "你好"}],
+                user_id="u1",
+                conversation_id="conv1",
+                text_content="你好",
+            )
+
+        assert messages[0]["role"] == "system"
+        assert "当前时间" in messages[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_user_message_is_last(self, chat_handler, mock_db):
+        """messages[-1] 必须是用户消息"""
+        mock_db.set_table_data("messages", [])
+
+        with patch.object(
+            chat_handler, "_build_memory_prompt",
+            new_callable=AsyncMock, return_value=None,
+        ), patch.object(
+            chat_handler, "_get_context_summary",
+            new_callable=AsyncMock, return_value=None,
+        ):
+            messages = await chat_handler._build_llm_messages(
+                content=[{"type": "text", "text": "查一下订单"}],
+                user_id="u1",
+                conversation_id="conv1",
+                text_content="查一下订单",
+            )
+
+        assert messages[-1]["role"] == "user"
+        assert messages[-1]["content"] == "查一下订单"
+
+    @pytest.mark.asyncio
+    async def test_layer2_thinking_follows_world_state(self, chat_handler, mock_db):
+        """messages[1] 是思考语言指令，紧跟 Layer 1"""
+        mock_db.set_table_data("messages", [])
+
+        with patch.object(
+            chat_handler, "_build_memory_prompt",
+            new_callable=AsyncMock, return_value=None,
+        ), patch.object(
+            chat_handler, "_get_context_summary",
+            new_callable=AsyncMock, return_value=None,
+        ):
+            messages = await chat_handler._build_llm_messages(
+                content=[{"type": "text", "text": "你好"}],
+                user_id="u1",
+                conversation_id="conv1",
+                text_content="你好",
+            )
+
+        assert messages[1]["role"] == "system"
+        assert "中文" in messages[1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_no_insert_0_pattern(self, chat_handler, mock_db):
+        """验证不存在 insert(0) 导致的顺序翻转：Layer 1 始终在最前"""
+        mock_db.set_table_data("messages", [
+            _make_msg("assistant", "之前的回复"),
+            _make_msg("user", "之前的问题"),
+        ])
+
+        with patch.object(
+            chat_handler, "_build_memory_prompt",
+            new_callable=AsyncMock, return_value="你是AI助手的记忆",
+        ), patch.object(
+            chat_handler, "_get_context_summary",
+            new_callable=AsyncMock, return_value="之前聊了天气",
+        ):
+            messages = await chat_handler._build_llm_messages(
+                content=[{"type": "text", "text": "继续"}],
+                user_id="u1",
+                conversation_id="conv1",
+                text_content="继续",
+                user_location="浙江省杭州市",
+            )
+
+        # Layer 1 仍在最前（不被记忆/摘要/历史挤到后面）
+        assert messages[0]["role"] == "system"
+        assert "当前时间" in messages[0]["content"]
+        assert "用户位置：浙江省杭州市" in messages[0]["content"]
+
+        # 用户消息仍在最后
+        assert messages[-1]["role"] == "user"
+        assert messages[-1]["content"] == "继续"
+
+        # 记忆在中间某处（不在 [0]）
+        memory_msgs = [m for m in messages if "记忆" in str(m.get("content", ""))]
+        assert len(memory_msgs) >= 1
+        assert messages.index(memory_msgs[0]) > 1
+
+    @pytest.mark.asyncio
+    async def test_multimodal_user_message_last(self, chat_handler, mock_db):
+        """带图片的用户消息也应在最后"""
+        mock_db.set_table_data("messages", [])
+
+        with patch.object(
+            chat_handler, "_build_memory_prompt",
+            new_callable=AsyncMock, return_value=None,
+        ), patch.object(
+            chat_handler, "_get_context_summary",
+            new_callable=AsyncMock, return_value=None,
+        ):
+            messages = await chat_handler._build_llm_messages(
+                content=[
+                    {"type": "text", "text": "这是什么"},
+                    {"type": "image", "url": "https://example.com/img.png"},
+                ],
+                user_id="u1",
+                conversation_id="conv1",
+                text_content="这是什么",
+            )
+
+        # 最后一条是 user message，且包含多模态内容
+        last = messages[-1]
+        assert last["role"] == "user"
+        assert isinstance(last["content"], list)
+        types = [p["type"] for p in last["content"]]
+        assert "text" in types
+        assert "image_url" in types
+
+
 # ============ Test _filter_knowledge_by_similarity (Phase 7 分数门控) ============
 
 
