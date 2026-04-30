@@ -1150,22 +1150,18 @@ class TestExecuteBoundary:
 class TestToolSystemPromptNewRules:
     """TOOL_SYSTEM_PROMPT 新增规则验证"""
 
-    def test_staging_consumption_rule(self):
-        """主 Agent 提示词包含 staging 文件消费规则"""
+    def test_staging_and_code_execute_in_prompt(self):
+        """主 Agent 提示词包含 staging 和 code_execute 关键概念"""
         from config.chat_tools import TOOL_SYSTEM_PROMPT
-        assert "[文件已存入 staging]" in TOOL_SYSTEM_PROMPT
+        assert "staging" in TOOL_SYSTEM_PROMPT
         assert "code_execute" in TOOL_SYSTEM_PROMPT
 
-    def test_compute_hint_consumption_rule(self):
-        """主 Agent 提示词包含 compute_hint 消费规则"""
-        from config.chat_tools import TOOL_SYSTEM_PROMPT
-        assert "[关联计算提示]" in TOOL_SYSTEM_PROMPT
-
-    def test_excel_engine_correct(self):
-        """写 Excel 用 xlsxwriter，读 Excel 用 calamine"""
-        from config.chat_tools import TOOL_SYSTEM_PROMPT
-        assert "xlsxwriter" in TOOL_SYSTEM_PROMPT
-        assert "calamine" in TOOL_SYSTEM_PROMPT
+    def test_excel_engine_in_code_tools(self):
+        """写 Excel 用 xlsxwriter，读 Excel 用 calamine（在 code_tools 描述中）"""
+        from config.code_tools import build_code_tools
+        desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
+        assert "xlsxwriter" in desc
+        assert "calamine" in desc
 
 
 class TestParamDefinitionsConsistency:

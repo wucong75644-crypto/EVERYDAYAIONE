@@ -11,9 +11,16 @@ import stat
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from loguru import logger
+
+from services.file_read_extensions import (
+    FileReadExtensionsMixin,
+    FileReadResult,
+    IMAGE_EXTENSIONS,
+    PDF_EXTENSIONS,
+)
 
 
 # 搜索时跳过的目录（VCS/临时/中间数据，对标 Claude Code Grep 自动排除）
@@ -81,7 +88,7 @@ _MAX_LIST_ENTRIES = 200
 _MAX_SEARCH_RESULTS = 100
 
 
-class FileExecutor:
+class FileExecutor(FileReadExtensionsMixin):
     """安全文件操作执行器
 
     所有路径操作都限制在 workspace_root/{tenant}/{user_id}/ 内。
@@ -231,19 +238,24 @@ class FileExecutor:
         offset: int = 1,
         limit: int | None = None,
         encoding: str = "utf-8",
-    ) -> str:
-        """读取文件内容（对齐 Claude Code Read 工具）
+        pages: str | None = None,
+    ) -> Union[str, "FileReadResult"]:
+        """读取文件内容（对齐 Claude Code Read 工具，支持 PDF + 图片）
 
-        三级防线：
+        三级防线（文本文件）：
         - L1: limit=None 时，文件 > 256KB 拒绝（防盲读大文件）
         - L2: 行数硬上限 2000（防单次读太多）
         - L3: token 估算 > 25000 拒绝（最终兜底）
+
+        PDF 文件：PyPDF2 按页提取文本，pages 参数指定页范围
+        图片文件：返回 FileReadResult(type="image")，供上层注入多模态消息
 
         Args:
             path:     文件相对路径（相对于 workspace）
             offset:   起始行号（1-based，默认1=第一行）
             limit:    读取行数（None=读整个文件，触发 L1 字节检查）
             encoding: 编码（默认 utf-8，自动 fallback GBK）
+            pages:    PDF 页码范围（如 '3'、'1-5'、'3,7,10'），仅 PDF 文件有效
         """
         target = self.resolve_safe_path(path)
 
@@ -254,8 +266,22 @@ class FileExecutor:
             return f"不是文件: {path}"
 
         size = target.stat().st_size
+        ext = target.suffix.lower()
 
-        # ── L1: 字节预检（仅无分页时） ──
+        # ── PDF 直读 ──
+        if ext in PDF_EXTENSIONS:
+            return await self._read_pdf(
+                path, target, size, pages,
+                max_read_size=_MAX_READ_SIZE,
+                bytes_per_token=_BYTES_PER_TOKEN,
+                max_output_tokens=_MAX_OUTPUT_TOKENS,
+            )
+
+        # ── 图片直读（返回 FileReadResult） ──
+        if ext in IMAGE_EXTENSIONS:
+            return await self._read_image(path, target, size)
+
+        # ── L1: 字节预检（仅无分页时，文本文件） ──
         # 对齐 Claude Code: limit === undefined ? maxSizeBytes : undefined
         if limit is None and size > _MAX_FILE_READ_BYTES:
             return (
@@ -273,7 +299,7 @@ class FileExecutor:
                 "建议使用 code_execute 处理。"
             )
 
-        # ── 二进制检查 ──
+        # ── 二进制检查（PDF/图片已在上面处理，这里只拦其他二进制） ──
         if not self._is_text_file(target):
             return (
                 f"二进制文件: {path}（{self._format_size(size)}）\n"

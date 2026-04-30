@@ -21,7 +21,6 @@ import LoadingPlaceholder from './LoadingPlaceholder';
 import MarkdownRenderer from './MarkdownRenderer';
 import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
-import ToolStepCard from './ToolStepCard';
 import FormBlock from './FormBlock';
 import FileCardList from '../media/FileCard';
 import SuggestionChips from './SuggestionChips';
@@ -455,22 +454,8 @@ export default memo(function MessageItem({
                 {message.content.map((part, idx) => {
                   // thinking 已在独立 ThinkingBlock 渲染，跳过
                   if (part.type === 'thinking') return null;
-                  // tool_step 内联渲染（按时序位置展示在正文流中）
-                  if (part.type === 'tool_step') {
-                    const ts = part as import('../../../types/message').ToolStepPart;
-                    return (
-                      <ToolStepCard
-                        key={ts.tool_call_id || idx}
-                        toolName={ts.tool_name}
-                        toolCallId={ts.tool_call_id}
-                        status={ts.status}
-                        summary={ts.summary}
-                        code={ts.code}
-                        output={ts.output}
-                        elapsedMs={ts.elapsed_ms}
-                      />
-                    );
-                  }
+                  // tool_step 不再展示（用户要求隐藏工具执行过程）
+                  if (part.type === 'tool_step') return null;
                   if (part.type === 'text' && (part as { text: string }).text) {
                     return (
                       <MarkdownRenderer

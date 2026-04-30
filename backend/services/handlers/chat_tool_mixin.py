@@ -290,6 +290,36 @@ class ChatToolMixin:
                 )
                 return (tc, llm_text, False)
 
+            # FileReadResult（图片多模态）：直接透传给 chat_handler 处理
+            from services.file_executor import FileReadResult
+            if isinstance(result, FileReadResult):
+                raw_summary = result.text[:100] if result.text else ""
+                await ws_manager.send_to_task_or_user(
+                    task_id, user_id,
+                    build_tool_result(
+                        task_id=task_id,
+                        conversation_id=conversation_id,
+                        message_id=message_id,
+                        tool_name=tool_name,
+                        tool_call_id=tool_call_id,
+                        success=True,
+                        summary=raw_summary,
+                        turn=turn,
+                    ),
+                )
+                await self._push_tool_step_update(
+                    task_id, conversation_id, message_id, user_id,
+                    tool_name, tool_call_id,
+                    success=True, summary=raw_summary[:500],
+                    elapsed_ms=_audit_elapsed,
+                )
+                self._emit_tool_audit(
+                    task_id, conversation_id, user_id, tool_name,
+                    tool_call_id, turn, args, len(result.text),
+                    _audit_elapsed, "success",
+                )
+                return (tc, result, False)
+
             # 普通工具（str 路径）
             # 提取 [FILE] 标记 → FilePart 暂存到 ChatHandler（不经过 LLM）
             result = self._extract_file_parts(result)

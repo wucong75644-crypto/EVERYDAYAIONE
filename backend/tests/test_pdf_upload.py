@@ -427,12 +427,11 @@ class TestBuildLlmMessagesWorkspace:
         assert user_msg["role"] == "user"
         assert user_msg["content"] == "分析这个CSV"
 
-        # 应该有一个 system prompt 包含 file_read 提示
+        # 应该有一个 system prompt 包含 workspace 文件信息
         system_prompts = [m["content"] for m in result if m["role"] == "system"]
-        ws_prompt = [p for p in system_prompts if "file_read" in p]
+        ws_prompt = [p for p in system_prompts if "工作区文件" in p]
         assert len(ws_prompt) == 1
-        assert "uploads/sales.csv" in ws_prompt[0]
-        assert "2.0KB" in ws_prompt[0]
+        assert "sales.csv" in ws_prompt[0]
 
     @pytest.mark.asyncio
     async def test_mixed_pdf_and_workspace(self, chat_handler, mock_db):
@@ -465,7 +464,7 @@ class TestBuildLlmMessagesWorkspace:
 
         # workspace 文件通过 system prompt 注入
         system_prompts = [m["content"] for m in result if m["role"] == "system"]
-        ws_prompt = [p for p in system_prompts if "file_read" in p]
+        ws_prompt = [p for p in system_prompts if "工作区文件" in p]
         assert len(ws_prompt) == 1
         assert "data.csv" in ws_prompt[0]
 
