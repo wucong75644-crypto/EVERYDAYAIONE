@@ -24,6 +24,7 @@ class KieModelType(str, Enum):
 class TaskState(str, Enum):
     """异步任务状态"""
     WAITING = "waiting"
+    GENERATING = "generating"  # GPT Image 2 等模型的中间生成状态
     SUCCESS = "success"
     FAIL = "fail"
 
