@@ -9,7 +9,7 @@ from typing import Optional
 
 from loguru import logger
 
-
+from core.exceptions import ExternalServiceError, ValidationError
 from services.oss_service import get_oss_service
 
 
@@ -81,14 +81,14 @@ class StorageService:
         """
         # 验证文件类型
         if content_type not in self.ALLOWED_IMAGE_TYPES:
-            raise ValueError(
+            raise ValidationError(
                 f"不支持的图片类型: {content_type}。"
                 f"支持: {list(self.ALLOWED_IMAGE_TYPES.keys())}"
             )
 
         # 验证文件大小
         if len(file_data) > self.MAX_FILE_SIZE:
-            raise ValueError(
+            raise ValidationError(
                 f"文件过大: {len(file_data) / 1024 / 1024:.1f}MB > "
                 f"{self.MAX_FILE_SIZE / 1024 / 1024}MB"
             )
@@ -117,7 +117,7 @@ class StorageService:
 
         except Exception as e:
             logger.error(f"Upload image failed: user_id={user_id}, error={e}")
-            raise ValueError(f"上传失败: {e}") from e
+            raise ExternalServiceError("OSS", "文件上传失败，请重试") from e
 
     async def upload_file(
         self,
@@ -144,14 +144,14 @@ class StorageService:
         """
         # 验证文件类型
         if content_type not in self.ALLOWED_FILE_TYPES:
-            raise ValueError(
+            raise ValidationError(
                 f"不支持的文件类型: {content_type}。"
                 f"支持: {list(self.ALLOWED_FILE_TYPES.keys())}"
             )
 
         # 验证文件大小
         if len(file_data) > self.MAX_DOCUMENT_SIZE:
-            raise ValueError(
+            raise ValidationError(
                 f"文件过大: {len(file_data) / 1024 / 1024:.1f}MB > "
                 f"{self.MAX_DOCUMENT_SIZE / 1024 / 1024:.0f}MB"
             )
@@ -183,7 +183,7 @@ class StorageService:
 
         except Exception as e:
             logger.error(f"Upload file failed: user_id={user_id}, error={e}")
-            raise ValueError(f"上传失败: {e}") from e
+            raise ExternalServiceError("OSS", "文件上传失败，请重试") from e
 
     async def upload_base64_image(
         self,
@@ -215,7 +215,7 @@ class StorageService:
         try:
             file_data = base64.b64decode(encoded)
         except Exception as e:
-            raise ValueError(f"无效的 base64 数据: {e}") from e
+            raise ValidationError(f"无效的图片数据") from e
 
         return await self.upload_image(
             user_id=user_id,

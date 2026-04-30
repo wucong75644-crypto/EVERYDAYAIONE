@@ -16,6 +16,11 @@ backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
+from core.exceptions import (
+    ExternalServiceError,
+    PermissionDeniedError,
+    ValidationError,
+)
 from services.wecom_oauth_service import (
     OAUTH_STATE_PREFIX,
     OAUTH_STATE_TTL,
@@ -140,7 +145,7 @@ class TestValidateState:
         with patch("services.wecom_oauth_service.get_redis", return_value=redis_mock), \
              patch("services.wecom_oauth_service.get_settings", return_value=_make_settings()):
             svc = WecomOAuthService(db)
-            with pytest.raises(ValueError, match="state 无效或已过期"):
+            with pytest.raises(ValidationError):
                 await svc.validate_state("bad_state")
 
 
@@ -198,7 +203,7 @@ class TestExchangeCode:
             mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
             svc = WecomOAuthService(db)
-            with pytest.raises(ValueError, match="仅限企业成员"):
+            with pytest.raises(PermissionDeniedError):
                 await svc.exchange_code("code_for_non_member")
 
     @pytest.mark.asyncio
@@ -217,7 +222,7 @@ class TestExchangeCode:
             mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
             svc = WecomOAuthService(db)
-            with pytest.raises(ValueError, match="企微授权失败"):
+            with pytest.raises(ExternalServiceError):
                 await svc.exchange_code("invalid_code")
 
     @pytest.mark.asyncio
@@ -228,7 +233,7 @@ class TestExchangeCode:
         with patch("services.wecom_oauth_service.get_access_token", return_value=None), \
              patch("services.wecom_oauth_service.get_settings", return_value=_make_settings()):
             svc = WecomOAuthService(db)
-            with pytest.raises(ValueError, match="access_token"):
+            with pytest.raises(ExternalServiceError):
                 await svc.exchange_code("any_code")
 
 
@@ -339,7 +344,7 @@ class TestLoginOrCreate:
 
         with patch("services.wecom_oauth_service.get_settings", return_value=_make_settings()):
             svc = WecomOAuthService(db)
-            with pytest.raises(ValueError, match="禁用"):
+            with pytest.raises(PermissionDeniedError):
                 await svc.login_or_create("wecom_disabled")
 
 
@@ -393,7 +398,7 @@ class TestUnbindAccount:
 
         with patch("services.wecom_oauth_service.get_settings", return_value=_make_settings()):
             svc = WecomOAuthService(db)
-            with pytest.raises(ValueError, match="未绑定"):
+            with pytest.raises(ValidationError):
                 await svc.unbind_account("uid-1")
 
     @pytest.mark.asyncio
@@ -415,7 +420,7 @@ class TestUnbindAccount:
 
         with patch("services.wecom_oauth_service.get_settings", return_value=_make_settings()):
             svc = WecomOAuthService(db)
-            with pytest.raises(ValueError, match="无法登录"):
+            with pytest.raises(ValidationError):
                 await svc.unbind_account("uid-1")
 
 

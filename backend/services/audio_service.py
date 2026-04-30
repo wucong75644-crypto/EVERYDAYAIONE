@@ -61,14 +61,14 @@ class AudioService:
         """
         # 验证文件类型
         if content_type not in self.ALLOWED_AUDIO_TYPES:
-            raise ValueError(
+            raise ValidationError(
                 f"不支持的音频类型: {content_type}。"
                 f"支持: {list(self.ALLOWED_AUDIO_TYPES.keys())}"
             )
 
         # 验证文件大小
         if len(file_data) > self.MAX_FILE_SIZE:
-            raise ValueError(
+            raise ValidationError(
                 f"文件过大: {len(file_data) / 1024 / 1024:.1f}MB > "
                 f"{self.MAX_FILE_SIZE / 1024 / 1024}MB"
             )
@@ -136,7 +136,7 @@ class AudioService:
             if "/uploads/" in file_url:
                 file_path = file_url.split("/uploads/")[1]
             else:
-                raise ValueError("无效的文件 URL")
+                raise ValidationError("无效的文件 URL")
 
             # 删除文件
             self.db.storage.from_(self.BUCKET_NAME).remove([file_path])
@@ -175,7 +175,7 @@ class AudioService:
             if "/uploads/" in file_url:
                 file_path = file_url.split("/uploads/")[1]
             else:
-                raise ValueError("无效的文件 URL")
+                raise ValidationError("无效的文件 URL")
 
             # Supabase Storage 不支持直接获取文件元数据
             # 音频信息应在上传时存储到数据库，或通过下载文件后解析获取

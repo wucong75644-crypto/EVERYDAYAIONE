@@ -347,7 +347,12 @@ class KieClient:
             json=request.model_dump(exclude_none=True),
         )
 
-        response_data = response.json()
+        try:
+            response_data = response.json()
+        except Exception:
+            raise KieAPIError(
+                f"KIE API 返回非 JSON 响应: status={response.status_code}"
+            )
 
         if response.status_code != 200 or response_data.get("code") != 200:
             self._handle_error_response(
@@ -382,7 +387,12 @@ class KieClient:
             params={"taskId": task_id},
         )
 
-        response_data = response.json()
+        try:
+            response_data = response.json()
+        except Exception:
+            raise KieAPIError(
+                f"KIE API 返回非 JSON 响应: status={response.status_code}"
+            )
 
         if response.status_code != 200 or response_data.get("code") != 200:
             self._handle_error_response(

@@ -95,6 +95,9 @@ def _build_app(db, user_id="user_1", org_id="org_1", with_perm=True):
     app = FastAPI()
     app.include_router(router, prefix="/api")
 
+    from main import register_exception_handlers
+    register_exception_handlers(app)
+
     app.dependency_overrides[get_current_user_id] = lambda: user_id
     app.dependency_overrides[get_org_context] = lambda: OrgContext(
         user_id=user_id, org_id=org_id, org_role="member"

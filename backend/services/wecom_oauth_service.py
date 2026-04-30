@@ -15,6 +15,12 @@ from loguru import logger
 
 
 from core.config import get_settings
+from core.exceptions import (
+    ConflictError,
+    ExternalServiceError,
+    PermissionDeniedError,
+    ValidationError,
+)
 from core.redis import get_redis
 from core.security import create_token_pair
 from services.wecom.access_token_manager import get_access_token
@@ -91,12 +97,12 @@ class WecomOAuthService:
         """
         redis = await get_redis()
         if not redis:
-            raise ValueError("Redis 不可用")
+            raise ExternalServiceError("Redis", "登录服务暂时不可用")
 
         key = f"{OAUTH_STATE_PREFIX}{state}"
         value = await redis.getdel(key)
         if not value:
-            raise ValueError("state 无效或已过期")
+            raise ValidationError("登录链接已失效，请重新扫码")
 
         return json.loads(value)
 
@@ -135,7 +141,7 @@ class WecomOAuthService:
                 org_id or "system", s.wecom_corp_id or "", s.wecom_agent_secret or "",
             )
         if not access_token:
-            raise ValueError("获取企微 access_token 失败")
+            raise ExternalServiceError("企微", "企业微信服务暂时不可用")
 
         try:
             async with httpx.AsyncClient(timeout=10) as client:
@@ -146,19 +152,19 @@ class WecomOAuthService:
                 data = resp.json()
         except Exception as e:
             logger.error(f"Wecom OAuth: getuserinfo request failed | error={e}")
-            raise ValueError("企微 API 调用失败")
+            raise ExternalServiceError("企微", "企业微信服务暂时不可用")
 
         errcode = data.get("errcode", 0)
         if errcode != 0:
             errmsg = data.get("errmsg", "unknown")
             logger.warning(f"Wecom OAuth: API error | errcode={errcode} | errmsg={errmsg}")
-            raise ValueError(f"企微授权失败（{errmsg}）")
+            raise ExternalServiceError("企微", "企业微信授权失败，请重试")
 
         # 非企业成员返回 openid 而非 userid
         userid = data.get("userid")
         if not userid:
             logger.warning(f"Wecom OAuth: non-member scan | openid={data.get('openid')}")
-            raise ValueError("仅限企业成员使用扫码登录")
+            raise PermissionDeniedError("仅限企业成员使用扫码登录")
 
         return {
             "userid": userid,
@@ -280,11 +286,11 @@ class WecomOAuthService:
 
         if not result.data:
             logger.error(f"Wecom OAuth: mapped user not found | user_id={user_id}")
-            raise ValueError("用户账号异常，请联系管理员")
+            raise ValidationError("用户账号异常，请联系管理员")
 
         user = result.data
         if user["status"] != "active":
-            raise ValueError("账号已被禁用")
+            raise PermissionDeniedError("账号已被禁用")
 
         # 更新最后登录时间
         self.db.table("users").update({
@@ -407,7 +413,7 @@ class WecomOAuthService:
             if bound_wecom == wecom_userid:
                 # 已绑定同一企微账号
                 return await self._login_existing_user(user_id, wecom_userid)
-            raise ValueError("该账号已绑定其他企微用户，请先解绑")
+            raise ConflictError("该账号已绑定其他企微用户，请先解绑")
 
         # 查找 wecom_userid 是否已映射到其他用户
         mapping = (
@@ -469,7 +475,7 @@ class WecomOAuthService:
             .execute()
         )
         if not mapping.data:
-            raise ValueError("当前账号未绑定企微")
+            raise ValidationError("当前账号未绑定企微")
 
         # 检查是否为唯一登录方式
         user = (
@@ -480,7 +486,7 @@ class WecomOAuthService:
             login_methods = user.data.get("login_methods") or []
             has_phone = bool(user.data.get("phone"))
             if not has_phone and login_methods == ["wecom"]:
-                raise ValueError("该账号仅通过企微创建，解绑后将无法登录，请先绑定手机号")
+                raise ValidationError("该账号仅通过企微创建，解绑后将无法登录，请先绑定手机号")
 
         # 删除映射
         self.db.table("wecom_user_mappings").delete().eq(

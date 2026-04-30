@@ -18,6 +18,7 @@ if str(backend_dir) not in sys.path:
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from core.exceptions import ValidationError
 from schemas.message import TextPart, ImagePart, FilePart
 from tests.conftest import MockSupabaseClient
 
@@ -68,7 +69,7 @@ class TestStorageServiceUploadFile:
     def test_upload_unsupported_type(self, storage):
         """测试：不支持的文件类型"""
         import asyncio
-        with pytest.raises(ValueError, match="不支持的文件类型"):
+        with pytest.raises(ValidationError, match="不支持的文件类型"):
             asyncio.get_event_loop().run_until_complete(
                 storage.upload_file(
                     user_id="user1",
@@ -81,7 +82,7 @@ class TestStorageServiceUploadFile:
         """测试：文件超过 50MB"""
         big_data = b"x" * (51 * 1024 * 1024)
         import asyncio
-        with pytest.raises(ValueError, match="文件过大"):
+        with pytest.raises(ValidationError, match="文件过大"):
             asyncio.get_event_loop().run_until_complete(
                 storage.upload_file(
                     user_id="user1",
