@@ -5,6 +5,7 @@
 验证：沙盒环境构建、代码执行、安全限制、环境变量清理。
 """
 
+import builtins
 import os
 import pytest
 from pathlib import Path
@@ -21,6 +22,53 @@ from services.sandbox.sandbox_constants import (
     SENSITIVE_ENV_PREFIXES,
     restricted_import,
 )
+
+import gc
+import multiprocessing as mp
+import resource
+
+_original_open = builtins.open
+_queues_to_cleanup: list = []
+
+
+def _make_queue():
+    """创建 Queue 并注册清理，防止 pipe fd 泄漏污染后续测试"""
+    ctx = mp.get_context("spawn")
+    q = ctx.Queue()
+    _queues_to_cleanup.append(q)
+    return q
+
+
+@pytest.fixture(autouse=True)
+def _restore_sandbox_side_effects():
+    """恢复沙盒测试的副作用：
+    - builtins.open（_build_sandbox_globals 会覆盖）
+    - os.environ（_clean_env 会删除 DATABASE_URL 等）
+    - multiprocessing Queue pipe fd（显式关闭）
+    """
+    env_snapshot = os.environ.copy()
+    cwd_snapshot = os.getcwd()
+    _queues_to_cleanup.clear()
+    # 阻止 _apply_resource_limits 在测试进程中生效（设 NPROC=0 不可逆）
+    import unittest.mock as _mock
+    with _mock.patch(
+        "services.sandbox.sandbox_worker._apply_resource_limits", lambda: None
+    ):
+        yield
+    builtins.open = _original_open
+    os.environ.clear()
+    os.environ.update(env_snapshot)
+    os.chdir(cwd_snapshot)
+    for q in _queues_to_cleanup:
+        try:
+            q.close()
+            q.join_thread()
+        except Exception:
+            pass
+    _queues_to_cleanup.clear()
+    for child in mp.active_children():
+        child.join(timeout=2)
+    gc.collect()
 
 
 # ============================================================
@@ -208,9 +256,7 @@ class TestExecCode:
     def test_read_workspace_file_via_worker(self, tmp_path):
         """通过 open() 读取 workspace 文件（需走 worker_entry 完整链路）"""
         (tmp_path / "data.txt").write_text("test content")
-        import multiprocessing as mp
-        ctx = mp.get_context("spawn")
-        q = ctx.Queue()
+        q = _make_queue()
         sandbox_worker_entry(
             q, "print(open('data.txt').read())",
             str(tmp_path), "", "", 5.0, 1000,
@@ -230,9 +276,7 @@ class TestSandboxWorkerEntry:
 
     def test_normal_execution(self, tmp_path):
         """正常执行返回 ok"""
-        import multiprocessing as mp
-        ctx = mp.get_context("spawn")
-        q = ctx.Queue()
+        q = _make_queue()
 
         sandbox_worker_entry(
             q, "1 + 1",
@@ -245,9 +289,7 @@ class TestSandboxWorkerEntry:
 
     def test_error_execution(self, tmp_path):
         """运行时错误由外层 catch，返回 error"""
-        import multiprocessing as mp
-        ctx = mp.get_context("spawn")
-        q = ctx.Queue()
+        q = _make_queue()
 
         sandbox_worker_entry(
             q, "1 / 0",
@@ -260,9 +302,7 @@ class TestSandboxWorkerEntry:
 
     def test_validation_failure(self, tmp_path):
         """AST 验证失败返回 error"""
-        import multiprocessing as mp
-        ctx = mp.get_context("spawn")
-        q = ctx.Queue()
+        q = _make_queue()
 
         sandbox_worker_entry(
             q, "import os",
@@ -275,9 +315,7 @@ class TestSandboxWorkerEntry:
 
     def test_path_hidden_in_result(self, tmp_path):
         """真实路径在结果中被替换"""
-        import multiprocessing as mp
-        ctx = mp.get_context("spawn")
-        q = ctx.Queue()
+        q = _make_queue()
 
         sandbox_worker_entry(
             q, "print(WORKSPACE_DIR)",
@@ -293,9 +331,7 @@ class TestSandboxWorkerEntry:
         """子进程 chdir 到 workspace，相对路径可读"""
         (tmp_path / "hello.txt").write_text("chdir works")
 
-        import multiprocessing as mp
-        ctx = mp.get_context("spawn")
-        q = ctx.Queue()
+        q = _make_queue()
 
         sandbox_worker_entry(
             q, "print(open('hello.txt').read())",
@@ -322,8 +358,9 @@ class TestPandasProxy:
         if proxy is None:
             pytest.skip("pandas not installed")
         # proxy.read_csv 应该是 wrapped 版本
-        assert proxy.read_csv is not pd.read_csv  # type: ignore
-        assert proxy.read_excel is not pd.read_excel  # type: ignore
+        import pandas as _pd
+        assert proxy.read_csv is not _pd.read_csv  # type: ignore
+        assert proxy.read_excel is not _pd.read_excel  # type: ignore
 
     def test_passthrough_other_attrs(self, tmp_path):
         """非 read_* 属性透传到真实 pd"""
@@ -331,8 +368,9 @@ class TestPandasProxy:
         proxy = g.get("pd")
         if proxy is None:
             pytest.skip("pandas not installed")
-        assert proxy.DataFrame is pd.DataFrame  # type: ignore
-        assert proxy.Series is pd.Series  # type: ignore
+        import pandas as _pd
+        assert proxy.DataFrame is _pd.DataFrame  # type: ignore
+        assert proxy.Series is _pd.Series  # type: ignore
 
     def test_read_csv_default_nrows(self, tmp_path):
         """read_csv 默认 nrows=2000"""
@@ -450,9 +488,7 @@ class TestFindSimilarFile:
     def test_exact_file_via_worker(self, tmp_path):
         """通过 sandbox_worker_entry 完整链路测试精确文件名读取"""
         (tmp_path / "data.txt").write_text("hello from worker")
-        import multiprocessing as mp
-        ctx = mp.get_context("spawn")
-        q = ctx.Queue()
+        q = _make_queue()
 
         sandbox_worker_entry(
             q, "print(open('data.txt').read())",
@@ -465,9 +501,7 @@ class TestFindSimilarFile:
     def test_auto_correct_via_worker(self, tmp_path):
         """通过完整链路测试文件名自动纠错"""
         (tmp_path / "利润表-数据.xlsx").write_bytes(b"fake xlsx")
-        import multiprocessing as mp
-        ctx = mp.get_context("spawn")
-        q = ctx.Queue()
+        q = _make_queue()
 
         # AI 拼错的文件名（多了空格）
         sandbox_worker_entry(
@@ -476,13 +510,11 @@ class TestFindSimilarFile:
         )
         status, result = q.get(timeout=5)
         assert status == "ok"
-        assert "10" in result  # b"fake xlsx" = 10 bytes
+        assert "9" in result  # b"fake xlsx" = 9 bytes
 
     def test_outside_workspace_blocked_via_worker(self, tmp_path):
         """通过完整链路测试路径穿越拦截"""
-        import multiprocessing as mp
-        ctx = mp.get_context("spawn")
-        q = ctx.Queue()
+        q = _make_queue()
 
         sandbox_worker_entry(
             q, "open('/etc/passwd').read()",

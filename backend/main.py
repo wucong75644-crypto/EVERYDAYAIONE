@@ -24,6 +24,7 @@ from api.routes import (
 )
 from core.config import get_settings
 from core.exceptions import AppException
+from core.local_db import RowNotFoundError
 from core.limiter import limiter
 from core.redis import RedisClient
 from core.logging_config import setup_logging
@@ -536,6 +537,23 @@ def register_exception_handlers(app: FastAPI) -> None:
                     "code": exc.code,
                     "message": exc.message,
                     "details": exc.details,
+                }
+            },
+        )
+
+    @app.exception_handler(RowNotFoundError)
+    async def row_not_found_handler(request: Request, exc: RowNotFoundError) -> JSONResponse:
+        """single() 查询未找到行 → 404"""
+        logger.warning(
+            f"Row not found | path={request.url.path} | table={exc.table}"
+        )
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": {
+                    "code": "NOT_FOUND",
+                    "message": f"请求的资源不存在",
+                    "details": {"table": exc.table},
                 }
             },
         )

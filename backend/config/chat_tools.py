@@ -527,8 +527,6 @@ _CORE_TOOLS: Set[str] = {
 # plan 模式下移除的执行类工具（架构层过滤，LLM 根本看不到）
 _PLAN_MODE_BLOCKED: Set[str] = {
     "erp_agent",                # 执行类：plan 模式只允许 erp_analyze
-    "generate_image",           # 生成类：计划阶段不需要
-    "generate_video",           # 生成类：计划阶段不需要
     "social_crawler",           # 爬取类：计划阶段不需要
 }
 

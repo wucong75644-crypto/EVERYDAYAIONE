@@ -54,6 +54,9 @@ class MockGenTable:
     def single(self):
         return self
 
+    def maybe_single(self):
+        return self
+
     def execute(self):
         result = MagicMock()
         result.data = self._db._inserted[-1] if self._db._inserted else None
@@ -211,6 +214,9 @@ class MockRegSingleTable:
         return self
 
     def single(self):
+        return self
+
+    def maybe_single(self):
         return self
 
     def update(self, data):

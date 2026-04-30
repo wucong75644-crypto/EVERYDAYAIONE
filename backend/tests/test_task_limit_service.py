@@ -26,8 +26,6 @@ _redis_mock = ModuleType("redis")
 _redis_asyncio_mock = ModuleType("redis.asyncio")
 _redis_asyncio_mock.Redis = MagicMock
 _redis_mock.asyncio = _redis_asyncio_mock
-sys.modules.setdefault("redis", _redis_mock)
-sys.modules.setdefault("redis.asyncio", _redis_asyncio_mock)
 
 # Mock config 模块
 _config_mock = ModuleType("core.config")
@@ -35,8 +33,6 @@ _settings = MagicMock()
 _settings.rate_limit_global_tasks = 15
 _settings.rate_limit_conversation_tasks = 5
 _config_mock.settings = _settings
-sys.modules.setdefault("core", ModuleType("core"))
-sys.modules.setdefault("core.config", _config_mock)
 
 # Mock exceptions
 _exc_mock = ModuleType("core.exceptions")
@@ -53,7 +49,25 @@ class _TaskQueueFullError(Exception):
 
 
 _exc_mock.TaskQueueFullError = _TaskQueueFullError
+
+# 保存被 mock 覆盖的原始模块，测试结束后恢复
+_MOCK_KEYS = ["redis", "redis.asyncio", "core", "core.config", "core.exceptions"]
+_saved_modules = {k: sys.modules.get(k) for k in _MOCK_KEYS}
+
+sys.modules.setdefault("redis", _redis_mock)
+sys.modules.setdefault("redis.asyncio", _redis_asyncio_mock)
+sys.modules.setdefault("core", ModuleType("core"))
+sys.modules.setdefault("core.config", _config_mock)
 sys.modules.setdefault("core.exceptions", _exc_mock)
+
+
+def teardown_module():
+    """恢复被 mock 覆盖的 sys.modules，防止污染后续测试"""
+    for key, original in _saved_modules.items():
+        if original is None:
+            sys.modules.pop(key, None)
+        else:
+            sys.modules[key] = original
 
 
 # ============ Fixtures ============
@@ -117,7 +131,7 @@ class TestCheckAndAcquire:
         _, pipe = mock_redis
         pipe.execute.return_value = [15, 0]
 
-        TaskQueueFullError = _TaskQueueFullError
+        from services.task_limit_service import TaskQueueFullError
 
         with pytest.raises(TaskQueueFullError) as exc_info:
             await service.check_and_acquire("user1", "conv1")
@@ -131,7 +145,7 @@ class TestCheckAndAcquire:
         _, pipe = mock_redis
         pipe.execute.return_value = [3, 5]
 
-        TaskQueueFullError = _TaskQueueFullError
+        from services.task_limit_service import TaskQueueFullError
 
         with pytest.raises(TaskQueueFullError) as exc_info:
             await service.check_and_acquire("user1", "conv1")
