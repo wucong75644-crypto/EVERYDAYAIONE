@@ -18,6 +18,8 @@ import {
   Lock,
   ChevronDown,
   Check,
+  Image,
+  Video,
 } from 'lucide-react';
 import { type UnifiedModel } from '../../../constants/models';
 import { isSmartModel } from '../../../constants/smartModel';
@@ -31,6 +33,10 @@ interface ModelSelectorProps {
   onSelectModel: (model: UnifiedModel) => void;
   /** 模型加载中状态（切换对话时） */
   loading?: boolean;
+  /** 智能模式子模式（仅智能模式有值） */
+  smartSubMode?: 'chat' | 'image' | 'video';
+  /** 切换智能模式子模式 */
+  onSmartSubModeChange?: (mode: 'chat' | 'image' | 'video') => void;
 }
 
 export default function ModelSelector({
@@ -40,6 +46,8 @@ export default function ModelSelector({
   lockTooltip,
   onSelectModel,
   loading = false,
+  smartSubMode,
+  onSmartSubModeChange,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const selectorRef = useRef<HTMLDivElement>(null);
@@ -96,7 +104,14 @@ export default function ModelSelector({
         {/* 模型图标 */}
         {renderModelIcon(selectedModel)}
 
-        <span className="text-sm font-medium text-text-secondary">{selectedModel.name}</span>
+        <span className="text-sm font-medium text-text-secondary">
+          {selectedModel.name}
+          {smartSubMode && smartSubMode !== 'chat' && (
+            <span className="text-text-tertiary ml-1">
+              · {smartSubMode === 'image' ? '图片' : '视频'}
+            </span>
+          )}
+        </span>
 
         {/* 下拉箭头（非锁定非加载时显示） */}
         {!locked && !loading && <ChevronDown className="w-4 h-4 text-text-tertiary" />}
@@ -116,40 +131,81 @@ export default function ModelSelector({
             <LayoutGroup id="model-selector">
               {availableModels.map((model) => {
                 const isSelected = selectedModel.id === model.id;
+                const isSmart = isSmartModel(model.id);
                 return (
-                  <button
-                    key={model.id}
-                    onClick={() => {
-                      onSelectModel(model);
-                      setIsOpen(false);
-                    }}
-                    className="relative w-full px-4 py-2.5 text-left hover:bg-hover transition-base flex items-start space-x-3"
-                  >
-                    {/* 选中项背景层 — Magic Move layoutId */}
-                    {isSelected && (
-                      <m.div
-                        layoutId="model-selected-bg"
-                        className="absolute inset-0 bg-accent-light pointer-events-none"
-                        transition={SOFT_SPRING}
-                      />
+                  <div key={model.id}>
+                    <button
+                      onClick={() => {
+                        onSelectModel(model);
+                        // 选智能模型时重置子模式为聊天
+                        if (isSmart && onSmartSubModeChange) {
+                          onSmartSubModeChange('chat');
+                        }
+                        setIsOpen(false);
+                      }}
+                      className="relative w-full px-4 py-2.5 text-left hover:bg-hover transition-base flex items-start space-x-3"
+                    >
+                      {/* 选中项背景层 — Magic Move layoutId */}
+                      {isSelected && smartSubMode === 'chat' && (
+                        <m.div
+                          layoutId="model-selected-bg"
+                          className="absolute inset-0 bg-accent-light pointer-events-none"
+                          transition={SOFT_SPRING}
+                        />
+                      )}
+
+                      {/* 图标 */}
+                      <div className="relative flex-shrink-0 mt-0.5">
+                        {renderModelIcon(model, 'w-5 h-5 text-text-tertiary')}
+                      </div>
+
+                      {/* 文字信息 */}
+                      <div className="relative flex-1 min-w-0">
+                        <div className="font-medium text-sm text-text-primary">{model.name}</div>
+                        <div className="text-xs text-text-tertiary mt-0.5">{model.description}</div>
+                      </div>
+
+                      {/* 选中标记 */}
+                      {isSelected && smartSubMode === 'chat' && (
+                        <Check className="relative w-5 h-5 text-accent flex-shrink-0" />
+                      )}
+                    </button>
+
+                    {/* 智能模式子模式：图片、视频（仅智能模型下方显示） */}
+                    {isSmart && isSelected && onSmartSubModeChange && (
+                      <>
+                        {([
+                          { mode: 'image' as const, icon: Image, label: '图片模式', desc: '设置参数后生成图片' },
+                          { mode: 'video' as const, icon: Video, label: '视频模式', desc: '设置参数后生成视频' },
+                        ]).map(({ mode, icon: Icon, label, desc }) => (
+                          <button
+                            key={mode}
+                            onClick={() => {
+                              onSmartSubModeChange(mode);
+                              setIsOpen(false);
+                            }}
+                            className="relative w-full pl-10 pr-4 py-2 text-left hover:bg-hover transition-base flex items-center space-x-3"
+                          >
+                            {smartSubMode === mode && (
+                              <m.div
+                                layoutId="model-selected-bg"
+                                className="absolute inset-0 bg-accent-light pointer-events-none"
+                                transition={SOFT_SPRING}
+                              />
+                            )}
+                            <Icon className="relative w-4 h-4 text-text-tertiary flex-shrink-0" />
+                            <div className="relative flex-1 min-w-0">
+                              <div className="font-medium text-sm text-text-primary">{label}</div>
+                              <div className="text-xs text-text-tertiary">{desc}</div>
+                            </div>
+                            {smartSubMode === mode && (
+                              <Check className="relative w-4 h-4 text-accent flex-shrink-0" />
+                            )}
+                          </button>
+                        ))}
+                      </>
                     )}
-
-                    {/* 图标 */}
-                    <div className="relative flex-shrink-0 mt-0.5">
-                      {renderModelIcon(model, 'w-5 h-5 text-text-tertiary')}
-                    </div>
-
-                    {/* 文字信息 */}
-                    <div className="relative flex-1 min-w-0">
-                      <div className="font-medium text-sm text-text-primary">{model.name}</div>
-                      <div className="text-xs text-text-tertiary mt-0.5">{model.description}</div>
-                    </div>
-
-                    {/* 选中标记 */}
-                    {isSelected && (
-                      <Check className="relative w-5 h-5 text-accent flex-shrink-0" />
-                    )}
-                  </button>
+                  </div>
                 );
               })}
             </LayoutGroup>
