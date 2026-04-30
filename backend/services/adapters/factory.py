@@ -11,6 +11,7 @@ from typing import Dict, Optional
 from loguru import logger
 
 from core.config import get_settings
+from core.exceptions import ConfigurationError
 from .base import (
     BaseChatAdapter,
     BaseImageAdapter,
@@ -548,7 +549,7 @@ def create_chat_adapter(
 
         api_key = _resolve_ai_key(org_id, "kie", "kie_api_key", db)
         if not api_key:
-            raise ValueError("KIE API Key 未配置")
+            raise ConfigurationError("KIE")
 
         client = KieClient(api_key, stream_timeout=stream_timeout)
         return KieChatAdapter(client, config.provider_model)
@@ -558,7 +559,7 @@ def create_chat_adapter(
 
         api_key = _resolve_ai_key(org_id, "dashscope", "dashscope_api_key", db)
         if not api_key:
-            raise ValueError("DashScope API Key 未配置")
+            raise ConfigurationError("DashScope")
 
         return DashScopeChatAdapter(
             api_key=api_key,
@@ -572,7 +573,7 @@ def create_chat_adapter(
 
         api_key = _resolve_ai_key(org_id, "openrouter", "openrouter_api_key", db)
         if not api_key:
-            raise ValueError("OpenRouter API Key 未配置")
+            raise ConfigurationError("OpenRouter")
 
         return OpenRouterChatAdapter(
             api_key=api_key,
@@ -587,7 +588,7 @@ def create_chat_adapter(
 
         api_key = _resolve_ai_key(org_id, "google", "google_api_key", db)
         if not api_key:
-            raise ValueError("Google API Key 未配置")
+            raise ConfigurationError("Google")
 
         return GoogleChatAdapter(
             model_id=config.provider_model,
@@ -595,7 +596,7 @@ def create_chat_adapter(
         )
 
     else:
-        raise ValueError(f"Provider {config.provider} 暂未实现")
+        raise ConfigurationError(str(config.provider), f"模型供应商 {config.provider} 暂未支持")
 
 
 def get_model_config(model_id: str) -> Optional[ModelConfig]:
@@ -665,13 +666,13 @@ def create_image_adapter(model_id: Optional[str] = None) -> BaseImageAdapter:
         from .kie import KieClient, KieImageAdapter
 
         if not settings.kie_api_key:
-            raise ValueError("KIE API Key 未配置")
+            raise ConfigurationError("KIE")
 
         client = KieClient(settings.kie_api_key)
         return KieImageAdapter(client, config["provider_model"])
 
     else:
-        raise ValueError(f"图片 Provider {config['provider']} 暂未实现")
+        raise ConfigurationError(str(config['provider']), f"图片供应商 {config['provider']} 暂未支持")
 
 
 def get_image_model_config(model_id: str) -> Optional[Dict]:
@@ -733,13 +734,13 @@ def create_video_adapter(model_id: Optional[str] = None) -> BaseVideoAdapter:
         from .kie import KieClient, KieVideoAdapter
 
         if not settings.kie_api_key:
-            raise ValueError("KIE API Key 未配置")
+            raise ConfigurationError("KIE")
 
         client = KieClient(settings.kie_api_key)
         return KieVideoAdapter(client, config["provider_model"])
 
     else:
-        raise ValueError(f"视频 Provider {config['provider']} 暂未实现")
+        raise ConfigurationError(str(config['provider']), f"视频供应商 {config['provider']} 暂未支持")
 
 
 def get_video_model_config(model_id: str) -> Optional[Dict]:

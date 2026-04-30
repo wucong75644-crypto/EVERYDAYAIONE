@@ -11,6 +11,7 @@ import pytest
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+from core.exceptions import ValidationError
 from services.scheduler.cron_utils import (
     calc_next_run,
     compose_cron,
@@ -126,12 +127,12 @@ class TestComposeCron:
         assert compose_cron("weekly", "09:00", weekdays=[5, 1, 1, 3]) == "0 9 * * 1,3,5"
 
     def test_weekly_missing_weekdays_raises(self):
-        with pytest.raises(ValueError, match="weekdays"):
+        with pytest.raises(ValidationError, match="weekdays"):
             compose_cron("weekly", "09:00")
 
     def test_weekly_invalid_weekday_filtered(self):
         # 7 / -1 这种非法值会被过滤掉
-        with pytest.raises(ValueError, match="weekdays"):
+        with pytest.raises(ValidationError, match="weekdays"):
             compose_cron("weekly", "09:00", weekdays=[7, -1])
 
     def test_monthly(self):
@@ -140,30 +141,30 @@ class TestComposeCron:
         assert compose_cron("monthly", "09:00", day_of_month=31) == "0 9 31 * *"
 
     def test_monthly_missing_day_raises(self):
-        with pytest.raises(ValueError, match="day_of_month"):
+        with pytest.raises(ValidationError, match="day_of_month"):
             compose_cron("monthly", "09:00")
 
     def test_monthly_out_of_range_raises(self):
-        with pytest.raises(ValueError, match="day_of_month"):
+        with pytest.raises(ValidationError, match="day_of_month"):
             compose_cron("monthly", "09:00", day_of_month=32)
-        with pytest.raises(ValueError, match="day_of_month"):
+        with pytest.raises(ValidationError, match="day_of_month"):
             compose_cron("monthly", "09:00", day_of_month=0)
 
     def test_invalid_time_str(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValidationError):
             compose_cron("daily", "abc")
-        with pytest.raises(ValueError):
+        with pytest.raises(ValidationError):
             compose_cron("daily", "25:00")
-        with pytest.raises(ValueError):
+        with pytest.raises(ValidationError):
             compose_cron("daily", "")
 
     def test_cron_type_raises(self):
         # cron 类型应直接用 cron_expr，调用 compose_cron 会报错
-        with pytest.raises(ValueError, match="cron"):
+        with pytest.raises(ValidationError, match="cron"):
             compose_cron("cron", "09:00")
 
     def test_unknown_type(self):
-        with pytest.raises(ValueError, match="schedule_type"):
+        with pytest.raises(ValidationError, match="schedule_type"):
             compose_cron("yearly", "09:00")
 
     def test_composed_cron_is_valid(self):

@@ -41,6 +41,13 @@ class QueryResponse:
     data: Any = None
     count: Optional[int] = None
 
+    @property
+    def first(self) -> Optional[dict]:
+        """返回第一条数据，无数据返回 None（Django/SQLAlchemy 标准命名）"""
+        if isinstance(self.data, list):
+            return self.data[0] if self.data else None
+        return self.data  # single()/maybe_single() 已经是 dict 或 None
+
 
 def _serialize_row(row: dict) -> dict:
     """将 PostgreSQL 原生类型（UUID、datetime、Decimal 等）转为 JSON 可序列化类型

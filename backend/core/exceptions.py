@@ -151,6 +151,21 @@ class TaskQueueFullError(AppException):
         )
 
 
+# ========== 配置异常 ==========
+
+
+class ConfigurationError(AppException):
+    """服务端配置缺失（API Key 未配、Provider 未实现）"""
+
+    def __init__(self, service: str, message: str = "该功能暂未开通，请联系管理员"):
+        super().__init__(
+            code="SERVICE_NOT_CONFIGURED",
+            message=message,
+            status_code=500,
+            details={"service": service},
+        )
+
+
 # ========== 外部服务异常 ==========
 
 

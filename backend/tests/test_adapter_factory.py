@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from core.exceptions import ConfigurationError
 from services.adapters.base import ModelProvider, ModelConfig
 from services.adapters.factory import (
     MODEL_REGISTRY,
@@ -105,21 +106,21 @@ class TestCreateChatAdapter:
     def test_kie_api_key_missing_raises(self, mock_settings):
         """kie_api_key 缺失 → ValueError"""
         mock_settings.return_value = _mock_settings(kie_api_key=None)
-        with pytest.raises(ValueError, match="KIE API Key"):
+        with pytest.raises(ConfigurationError):
             create_chat_adapter("gemini-3-pro")
 
     @patch("services.adapters.factory.get_settings")
     def test_dashscope_api_key_missing_raises(self, mock_settings):
         """dashscope_api_key 缺失 → ValueError"""
         mock_settings.return_value = _mock_settings(dashscope_api_key=None)
-        with pytest.raises(ValueError, match="DashScope API Key"):
+        with pytest.raises(ConfigurationError):
             create_chat_adapter("deepseek-v3.2")
 
     @patch("services.adapters.factory.get_settings")
     def test_google_api_key_missing_raises(self, mock_settings):
         """google_api_key 缺失 → ValueError"""
         mock_settings.return_value = _mock_settings(google_api_key=None)
-        with pytest.raises(ValueError, match="Google API Key"):
+        with pytest.raises(ConfigurationError):
             create_chat_adapter("gemini-2.5-flash")
 
     @patch("services.adapters.factory.get_settings")
@@ -142,7 +143,7 @@ class TestCreateChatAdapter:
     def test_openrouter_api_key_missing_raises(self, mock_settings):
         """openrouter_api_key 缺失 → ValueError"""
         mock_settings.return_value = _mock_settings(openrouter_api_key=None)
-        with pytest.raises(ValueError, match="OpenRouter API Key"):
+        with pytest.raises(ConfigurationError):
             create_chat_adapter("openai/gpt-4.1")
 
 
@@ -386,7 +387,7 @@ class TestImageVideoFactory:
     def test_image_api_key_missing_raises(self, mock_settings):
         """图片 API key 缺失→ValueError"""
         mock_settings.return_value = _mock_settings(kie_api_key=None)
-        with pytest.raises(ValueError, match="KIE API Key"):
+        with pytest.raises(ConfigurationError):
             create_image_adapter("google/nano-banana")
 
     @patch("services.adapters.factory.get_settings")
@@ -407,7 +408,7 @@ class TestImageVideoFactory:
     def test_video_api_key_missing_raises(self, mock_settings):
         """视频 API key 缺失→ValueError"""
         mock_settings.return_value = _mock_settings(kie_api_key=None)
-        with pytest.raises(ValueError, match="KIE API Key"):
+        with pytest.raises(ConfigurationError):
             create_video_adapter("sora-2-text-to-video")
 
 
