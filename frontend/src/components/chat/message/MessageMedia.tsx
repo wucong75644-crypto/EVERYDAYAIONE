@@ -1,6 +1,7 @@
 /** 消息媒体组件 - 渲染消息中的图片和视频内容 */
 
 import { memo, useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useInView } from 'react-intersection-observer';
 import { Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -231,14 +232,15 @@ function AiGeneratedImage({
             </button>
           </div>
 
-          {contextMenu && imageUrl && (
+          {contextMenu && imageUrl && createPortal(
             <ImageContextMenu
               x={contextMenu.x}
               y={contextMenu.y}
               imageUrl={imageUrl}
               messageId={messageId}
               onClose={() => setContextMenu(null)}
-            />
+            />,
+            document.body,
           )}
         </div>
       )}
@@ -269,18 +271,22 @@ function AiGeneratedImage({
   );
 }
 
-/** 单张用户图片组件（无占位符，自适应尺寸） */
+/** 单张用户图片组件（无占位符，自适应尺寸，支持右键引用） */
 function UserImage({
   imageUrl,
   index,
+  messageId,
   onImageClick,
   onMediaLoaded,
 }: {
   imageUrl: string;
   index: number;
+  messageId: string;
   onImageClick: (index: number) => void;
   onMediaLoaded?: () => void;
 }) {
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
   const handleClick = useCallback(() => {
     onImageClick(index);
   }, [index, onImageClick]);
@@ -299,6 +305,7 @@ function UserImage({
       tabIndex={0}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
+      onContextMenu={(e) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY }); }}
       aria-label={`查看图片 ${index + 1}`}
     >
       <img
@@ -307,6 +314,16 @@ function UserImage({
         className="rounded-xl shadow-sm w-full h-auto block"
         onLoad={onMediaLoaded}
       />
+      {contextMenu && createPortal(
+        <ImageContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          imageUrl={imageUrl}
+          messageId={messageId}
+          onClose={() => setContextMenu(null)}
+        />,
+        document.body,
+      )}
     </div>
   );
 }
@@ -314,11 +331,13 @@ function UserImage({
 /** 用户图片容器（auto-fill 网格，与 AI 图片统一布局逻辑） */
 function UserImageGallery({
   imageUrls,
+  messageId,
   maxWidth,
   onImageClick,
   onMediaLoaded,
 }: {
   imageUrls: string[];
+  messageId: string;
   maxWidth: number;
   onImageClick: (index: number) => void;
   onMediaLoaded?: () => void;
@@ -335,6 +354,7 @@ function UserImageGallery({
           key={`${url}-${index}`}
           imageUrl={url}
           index={index}
+          messageId={messageId}
           onImageClick={onImageClick}
           onMediaLoaded={index === 0 ? onMediaLoaded : undefined}
         />
@@ -403,6 +423,7 @@ export default memo(function MessageMedia({
           // 用户图片：直接显示，无占位符，支持多图横排
           <UserImageGallery
             imageUrls={imageUrls}
+            messageId={messageId}
             maxWidth={imagePlaceholderSize.width}
             onImageClick={handleImageClick}
             onMediaLoaded={onMediaLoaded}
