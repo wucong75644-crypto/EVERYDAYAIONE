@@ -230,6 +230,43 @@ KIE_MODEL_CONFIGS: Dict[str, Dict[str, Any]] = {
         "priority": 33,
     },
 
+    "gpt-image-2-image-to-image": {
+        "display_name": "GPT Image 2 (图生图)",
+        "description": "OpenAI 最强图生图模型，以参考图为基础生成新图片",
+        "category": KieModelCategory.IMAGE,
+        "api_pattern": KieAPIPattern.ASYNC_TASK,
+        "provider": "kie",
+        "model_id": "gpt-image-2-image-to-image",
+        "api_endpoint": "https://api.kie.ai/api/v1/jobs/createTask",
+
+        # 能力配置
+        "max_prompt_length": 20000,
+        "requires_image_input": True,
+        "max_images": 16,
+        "supported_sizes": ["1:1", "9:16", "16:9", "3:4", "4:3", "auto"],
+        "supported_formats": ["png"],
+        "supports_resolution": True,
+        "supported_resolutions": ["1K", "2K", "4K"],
+
+        # KIE 成本 (积分)
+        "kie_cost_per_image_by_resolution": {
+            "1K": 5,
+            "2K": 9,
+            "4K": 15,
+        },
+
+        # 用户定价
+        "user_credits_per_image_by_resolution": {
+            "1K": 6,
+            "2K": 10,
+            "4K": 16,
+        },
+
+        # 状态
+        "is_active": True,
+        "priority": 34,
+    },
+
     # ========================================
     # 视频模型 (异步任务)
     # ========================================

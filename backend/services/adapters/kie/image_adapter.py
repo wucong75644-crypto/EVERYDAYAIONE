@@ -24,6 +24,7 @@ from .models import (
     NanoBananaEditInput,
     NanoBananaProInput,
     GptImage2Input,
+    GptImage2ImageInput,
     AspectRatio,
     ImageResolution,
     ImageOutputFormat,
@@ -43,6 +44,7 @@ class KieImageAdapter(BaseImageAdapter):
     - google/nano-banana-edit: 图像编辑 (需要输入图片)
     - nano-banana-pro: 高级文生图 (支持图片参考、高分辨率)
     - gpt-image-2-text-to-image: GPT Image 2 文生图 (OpenAI 最强)
+    - gpt-image-2-image-to-image: GPT Image 2 图生图 (参考图基础生成)
 
     特性:
     - 异步任务模式 (创建任务 → 轮询状态 → 获取结果)
@@ -268,6 +270,16 @@ class KieImageAdapter(BaseImageAdapter):
         elif self.model == "gpt-image-2-text-to-image":
             return GptImage2Input(
                 prompt=prompt,
+                aspect_ratio=AspectRatio(size),
+                resolution=ImageResolution(resolution or "1K"),
+            ).model_dump()
+
+        elif self.model == "gpt-image-2-image-to-image":
+            if not image_urls:
+                raise ValueError("gpt-image-2-image-to-image requires image_urls")
+            return GptImage2ImageInput(
+                prompt=prompt,
+                input_urls=image_urls,
                 aspect_ratio=AspectRatio(size),
                 resolution=ImageResolution(resolution or "1K"),
             ).model_dump()

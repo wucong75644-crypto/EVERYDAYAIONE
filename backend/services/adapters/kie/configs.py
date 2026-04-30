@@ -121,6 +121,29 @@ IMAGE_MODEL_CONFIGS = {
             "4K": 16,
         },
     },
+    "gpt-image-2-image-to-image": {
+        "model_id": "gpt-image-2-image-to-image",
+        "description": "GPT Image 2 图生图（以参考图为基础生成）",
+        "requires_image_input": True,
+        "max_images": 16,
+        "max_prompt_length": 20000,
+        "supported_sizes": [
+            "1:1", "9:16", "16:9", "3:4", "4:3", "auto"
+        ],
+        "supported_formats": ["png"],
+        "supports_resolution": True,
+        "supported_resolutions": ["1K", "2K", "4K"],
+        "cost_per_image": {
+            "1K": Decimal("0.03"),
+            "2K": Decimal("0.05"),
+            "4K": Decimal("0.08"),
+        },
+        "credits_per_image": {
+            "1K": 6,
+            "2K": 10,
+            "4K": 16,
+        },
+    },
 }
 
 

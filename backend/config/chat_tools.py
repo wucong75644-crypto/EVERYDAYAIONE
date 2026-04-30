@@ -369,8 +369,9 @@ def _build_common_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "generate_image",
                 "description": (
-                    "生成/画/绘制图片。"
-                    "调用后返回 task_id，图片异步生成。"
+                    "生成/画/绘制/修改图片。\n"
+                    "纯文字描述 → 文生图；传入 image_urls → 图生图（以参考图为基础生成）。\n"
+                    "用户上传了图片并要求画图/改图时，必须把图片 URL 传入 image_urls。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -379,6 +380,11 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                         "prompt": {
                             "type": "string",
                             "description": "图片描述（英文效果更好）",
+                        },
+                        "image_urls": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "参考图片 URL 列表（用户上传的图片）。有参考图时必传",
                         },
                         "aspect_ratio": {
                             "type": "string",
