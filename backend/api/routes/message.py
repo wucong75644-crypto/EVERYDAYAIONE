@@ -170,13 +170,17 @@ async def generate_message(
     _is_smart = body.model == SMART_MODEL_ID
 
     if _is_smart:
-        # 智能模式：全部走 CHAT → ChatHandler 工具循环
-        # LLM 自主决定调什么工具（generate_image/erp_agent/web_search 等）
-        gen_type = GenerationType.CHAT
-        if body.params is None:
-            body.params = {}
-        body.params["_is_smart_mode"] = True
-        body.model = resolve_auto_model(gen_type, body.content, None)
+        # 智能模式：前端如果明确指定了图片/视频子模式，尊重它走对应 Handler
+        if body.generation_type in (GenerationType.IMAGE, GenerationType.VIDEO):
+            gen_type = body.generation_type
+            body.model = resolve_auto_model(gen_type, body.content, None)
+        else:
+            # 默认走 CHAT → ChatHandler 工具循环
+            gen_type = GenerationType.CHAT
+            if body.params is None:
+                body.params = {}
+            body.params["_is_smart_mode"] = True
+            body.model = resolve_auto_model(gen_type, body.content, None)
     elif body.generation_type:
         # 非智能模式 + 客户端指定类型 → 直接使用
         gen_type = body.generation_type
