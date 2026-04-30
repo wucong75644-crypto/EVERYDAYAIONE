@@ -10,6 +10,7 @@
  */
 
 import { memo, useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useInView } from 'react-intersection-observer';
 import { Image as ImageIcon, Loader2, RefreshCw } from 'lucide-react';
 import { FailedMediaPlaceholder } from './MediaPlaceholder';
@@ -249,15 +250,16 @@ const GridCell = memo(function GridCell({
         </button>
       </div>
 
-      {/* 右键上下文菜单 */}
-      {contextMenu && imageUrl && (
+      {/* 右键上下文菜单（Portal 到 body，避免被 overflow-hidden 裁剪） */}
+      {contextMenu && imageUrl && createPortal(
         <ImageContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
           imageUrl={imageUrl}
           messageId={messageId}
           onClose={() => setContextMenu(null)}
-        />
+        />,
+        document.body,
       )}
     </div>
   );
