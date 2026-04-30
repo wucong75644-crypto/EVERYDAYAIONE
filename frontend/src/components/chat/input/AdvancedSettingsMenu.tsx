@@ -145,20 +145,23 @@ export default function AdvancedSettingsMenu({
             <div className="mb-3">
               <label className="block text-xs font-medium text-text-secondary mb-2">分辨率</label>
               <div className="flex gap-2">
-                {RESOLUTIONS.map((res) => (
-                  <button
-                    key={res.value}
-                    onClick={() => onResolutionChange(res.value)}
-                    className={`flex flex-col items-center px-3 py-1.5 text-xs rounded-md transition-base ${
-                      resolution === res.value
-                        ? 'bg-accent text-text-on-accent'
-                        : 'bg-hover text-text-secondary hover:bg-active'
-                    }`}
-                  >
-                    <span className="font-medium">{res.label}</span>
-                    <span className="text-[10px] opacity-75">{res.credits}积分</span>
-                  </button>
-                ))}
+                {RESOLUTIONS.map((res) => {
+                  const resCredits = getPerImageCredits(effectiveModel, res.value);
+                  return (
+                    <button
+                      key={res.value}
+                      onClick={() => onResolutionChange(res.value)}
+                      className={`flex flex-col items-center px-3 py-1.5 text-xs rounded-md transition-base ${
+                        resolution === res.value
+                          ? 'bg-accent text-text-on-accent'
+                          : 'bg-hover text-text-secondary hover:bg-active'
+                      }`}
+                    >
+                      <span className="font-medium">{res.label}</span>
+                      <span className="text-[10px] opacity-75">{resCredits}积分</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
