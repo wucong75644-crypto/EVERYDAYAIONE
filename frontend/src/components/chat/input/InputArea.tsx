@@ -79,8 +79,9 @@ export default function InputArea({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // 智能模式子模式：在智能模式下切换聊天/图片/视频
-  const [smartSubMode, setSmartSubMode] = useState<ModelType>('chat');
+  // 智能模式子模式：聊天/图生图/文生图/视频
+  type SmartSubMode = 'chat' | 'image-i2i' | 'image-t2i' | 'video';
+  const [smartSubMode, setSmartSubMode] = useState<SmartSubMode>('chat');
   // 实际生效的模型类型：智能模式用子模式，单模型用模型自身类型
   const [sendError, setSendError] = useState<string | null>(null);
 
@@ -169,7 +170,9 @@ export default function InputArea({
 
   // 实际生效的模型类型：智能模式用子模式，单模型用模型自身类型
   const isSmart = isSmartModel(selectedModel.id);
-  const effectiveModelType: ModelType = isSmart ? smartSubMode : selectedModel.type;
+  const effectiveModelType: ModelType = isSmart
+    ? (smartSubMode.startsWith('image') ? 'image' : smartSubMode as ModelType)
+    : selectedModel.type;
 
   // 切换到非智能模型时重置子模式
   useEffect(() => {
@@ -326,6 +329,12 @@ export default function InputArea({
     const hasWorkspaceFiles = workspaceFiles.length > 0;
     const sendButtonState = getSendButtonState(isSubmitting, anyUploading, !!(prompt.trim() || hasImages || hasFiles || hasWorkspaceFiles));
     if (sendButtonState.disabled) return;
+
+    // 图生图模式必须上传图片
+    if (smartSubMode === 'image-i2i' && !hasImages) {
+      toast.error('图生图模式请先上传参考图片');
+      return;
+    }
 
     // 检查全局任务限制
     const taskLimitCheck = useMessageStore.getState().canStartTask();
@@ -550,7 +559,7 @@ export default function InputArea({
           onStop={handleStop}
           effectiveModelType={effectiveModelType}
           smartSubMode={isSmart ? smartSubMode : undefined}
-          onSmartSubModeChange={isSmart ? setSmartSubMode : undefined}
+          onSmartSubModeChange={isSmart ? (mode: string) => setSmartSubMode(mode as SmartSubMode) : undefined}
         />
       </div>
     </div>

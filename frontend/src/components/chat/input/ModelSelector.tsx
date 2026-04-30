@@ -34,9 +34,9 @@ interface ModelSelectorProps {
   /** 模型加载中状态（切换对话时） */
   loading?: boolean;
   /** 智能模式子模式（仅智能模式有值） */
-  smartSubMode?: 'chat' | 'image' | 'video';
+  smartSubMode?: string;
   /** 切换智能模式子模式 */
-  onSmartSubModeChange?: (mode: 'chat' | 'image' | 'video') => void;
+  onSmartSubModeChange?: (mode: string) => void;
 }
 
 export default function ModelSelector({
@@ -108,7 +108,7 @@ export default function ModelSelector({
           {selectedModel.name}
           {smartSubMode && smartSubMode !== 'chat' && (
             <span className="text-text-tertiary ml-1">
-              · {smartSubMode === 'image' ? '图片' : '视频'}
+              · {smartSubMode === 'image-i2i' ? '图生图' : smartSubMode === 'image-t2i' ? '文生图' : '视频'}
             </span>
           )}
         </span>
@@ -171,12 +171,13 @@ export default function ModelSelector({
                       )}
                     </button>
 
-                    {/* 智能模式子模式：图片、视频（仅智能模型下方显示） */}
+                    {/* 智能模式子模式：图生图、文生图、视频（仅智能模型下方显示） */}
                     {isSmart && isSelected && onSmartSubModeChange && (
                       <>
                         {([
-                          { mode: 'image' as const, icon: Image, label: '图片模式', desc: '设置参数后生成图片' },
-                          { mode: 'video' as const, icon: Video, label: '视频模式', desc: '设置参数后生成视频' },
+                          { mode: 'image-i2i', icon: Image, label: '图生图模式', desc: '上传参考图 → 生成新图' },
+                          { mode: 'image-t2i', icon: ImagePlus, label: '文生图模式', desc: '纯文字描述 → 生成图片' },
+                          { mode: 'video', icon: Video, label: '视频模式', desc: '设置参数后生成视频' },
                         ]).map(({ mode, icon: Icon, label, desc }) => (
                           <button
                             key={mode}
