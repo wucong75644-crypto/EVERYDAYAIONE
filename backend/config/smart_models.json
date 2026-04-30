@@ -220,7 +220,7 @@
       },
       {
         "id": "gpt-image-2-text-to-image",
-        "description": "GPT Image 2，OpenAI最强图片生成，真实感/文字渲染/复杂场景极强(20积分)。用户要求GPT画图、最高质量、逼真照片时选择",
+        "description": "GPT Image 2，OpenAI最强图片生成，真实感/文字渲染/复杂场景极强(6积分)。用户要求GPT画图、最高质量、逼真照片时选择",
         "keywords": ["gpt", "openai", "gpt image"],
         "priority": 3
       },
