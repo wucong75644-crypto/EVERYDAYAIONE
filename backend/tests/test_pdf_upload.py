@@ -488,3 +488,62 @@ class TestBuildLlmMessagesWorkspace:
         system_prompts = [m["content"] for m in result if m["role"] == "system"]
         ws_prompt = [p for p in system_prompts if "file_read" in p]
         assert ws_prompt == []
+
+
+# ============================================================
+# StorageService 异常类型测试（上传失败/base64 无效）
+# ============================================================
+
+
+class TestStorageServiceErrorTypes:
+    """验证 storage_service 抛出正确的异常类型"""
+
+    @pytest.fixture
+    def storage(self, mock_db):
+        from services.storage_service import StorageService
+        return StorageService(mock_db)
+
+    def test_upload_image_oss_failure_raises_external_service_error(self, storage):
+        """OSS 上传失败 → ExternalServiceError(503)"""
+        from core.exceptions import ExternalServiceError
+        fake_oss = MagicMock()
+        fake_oss.upload_bytes.side_effect = Exception("OSS connection timeout")
+
+        import asyncio
+        with patch("services.storage_service.get_oss_service", return_value=fake_oss):
+            with pytest.raises(ExternalServiceError):
+                asyncio.get_event_loop().run_until_complete(
+                    storage.upload_image(
+                        user_id="user1",
+                        file_data=b"\x89PNG\r\n\x1a\n" + b"x" * 100,
+                        content_type="image/png",
+                    )
+                )
+
+    def test_upload_file_oss_failure_raises_external_service_error(self, storage):
+        """文件上传 OSS 失败 → ExternalServiceError(503)"""
+        from core.exceptions import ExternalServiceError
+        fake_oss = MagicMock()
+        fake_oss.upload_bytes.side_effect = Exception("network error")
+
+        import asyncio
+        with patch("services.storage_service.get_oss_service", return_value=fake_oss):
+            with pytest.raises(ExternalServiceError):
+                asyncio.get_event_loop().run_until_complete(
+                    storage.upload_file(
+                        user_id="user1",
+                        file_data=b"%PDF-1.4 fake",
+                        content_type="application/pdf",
+                    )
+                )
+
+    def test_upload_base64_invalid_raises_validation_error(self, storage):
+        """无效 base64 → ValidationError(400)"""
+        import asyncio
+        with pytest.raises(ValidationError, match="无效的图片数据"):
+            asyncio.get_event_loop().run_until_complete(
+                storage.upload_base64_image(
+                    user_id="user1",
+                    base64_data="data:image/png;base64,!!!invalid!!!",
+                )
+            )
