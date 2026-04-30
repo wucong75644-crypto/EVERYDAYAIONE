@@ -18,6 +18,7 @@ from core.local_db import (
     AsyncQueryBuilder,
     AsyncRpcCaller,
     QueryResponse,
+    RowNotFoundError,
 )
 
 
@@ -511,3 +512,54 @@ class TestAsyncLocalDBClient:
                 "options='-c timezone=Asia/Shanghai' to prevent implicit TZ "
                 "dependency. See commit 39b6f81."
             )
+
+
+# ── QueryResponse.first 属性测试 ──────────────────────
+
+
+class TestQueryResponseFirst:
+    """QueryResponse.first 安全访问属性"""
+
+    def test_list_with_data(self):
+        r = QueryResponse(data=[{"id": 1}, {"id": 2}])
+        assert r.first == {"id": 1}
+
+    def test_empty_list(self):
+        r = QueryResponse(data=[])
+        assert r.first is None
+
+    def test_none_data(self):
+        r = QueryResponse(data=None)
+        assert r.first is None
+
+    def test_dict_data_from_single(self):
+        """single() 返回的 dict 直接透传"""
+        r = QueryResponse(data={"id": 1, "name": "test"})
+        assert r.first == {"id": 1, "name": "test"}
+
+    def test_first_does_not_mutate(self):
+        """多次访问 first 不修改 data"""
+        r = QueryResponse(data=[{"id": 1}])
+        _ = r.first
+        _ = r.first
+        assert r.data == [{"id": 1}]
+
+
+# ── RowNotFoundError 测试 ──────────────────────
+
+
+class TestRowNotFoundError:
+    """RowNotFoundError 异常属性"""
+
+    def test_inherits_value_error(self):
+        err = RowNotFoundError("messages")
+        assert isinstance(err, ValueError)
+
+    def test_table_attribute(self):
+        err = RowNotFoundError("users")
+        assert err.table == "users"
+
+    def test_message_format(self):
+        err = RowNotFoundError("tasks")
+        assert "tasks" in str(err)
+        assert "Row not found" in str(err)
