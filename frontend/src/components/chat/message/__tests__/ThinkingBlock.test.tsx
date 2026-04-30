@@ -57,25 +57,16 @@ describe('ThinkingBlock', () => {
     });
   });
 
-  describe('自动展开/折叠', () => {
-    it('isThinking=true 时自动展开', () => {
-      const { rerender } = render(<ThinkingBlock content="推理过程" isThinking={true} />);
-      // 流式态内容应该可见
-      expect(screen.getByText('推理过程')).toBeDefined();
-
-      // 完成后延迟 1 秒折叠
-      rerender(<ThinkingBlock content="推理过程" isThinking={false} durationMs={5000} />);
-
-      // 1 秒内仍然展开
-      act(() => { vi.advanceTimersByTime(500); });
-      expect(screen.getByText('推理过程')).toBeDefined();
-
-      // 1 秒后折叠
-      act(() => { vi.advanceTimersByTime(600); });
+  describe('默认折叠', () => {
+    it('isThinking=true 时也默认折叠', () => {
+      render(<ThinkingBlock content="推理过程" isThinking={true} />);
+      // 默认折叠，内容不可见
       expect(screen.queryByText('推理过程')).toBeNull();
+      // 但显示 thinking 动画标签
+      expect(screen.getByText('thinking')).toBeDefined();
     });
 
-    it('DB 加载（首次 isThinking=false）时保持折叠', () => {
+    it('DB 加载（isThinking=false）时保持折叠', () => {
       render(<ThinkingBlock content="历史推理" durationMs={3000} />);
       // 折叠态不显示内容
       expect(screen.queryByText('历史推理')).toBeNull();
