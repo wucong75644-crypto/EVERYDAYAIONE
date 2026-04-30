@@ -25,6 +25,7 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "path": {"type": "string"},
             "offset": {"type": "integer"},
             "limit": {"type": "integer"},
+            "pages": {"type": "string"},
         },
     },
     "file_write": {
@@ -71,13 +72,15 @@ def build_file_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "file_read",
                 "description": (
-                    "读取 workspace 内的文本文件内容。\n\n"
+                    "读取 workspace 内的文件内容。\n\n"
                     "使用说明:\n"
                     "- path 为文件名或相对路径（如 'readme.txt'、'子目录/data.csv'）\n"
-                    "- 默认读取整个文件（最多 2000 行）。"
-                    "大于 256KB 的文件请用 offset 和 limit 分页读取\n"
-                    "- 二进制文件（Excel/图片/Parquet等）请用 code_execute 处理\n"
-                    "- 返回格式为 cat -n 格式，行号从 1 开始"
+                    "- 文本文件：默认读取整个文件（最多 2000 行），大于 256KB 用 offset/limit 分页\n"
+                    "- PDF 文件：自动提取文本，用 pages 参数指定页范围（如 '3' 或 '1-5'）。"
+                    "≤10 页自动全读，>10 页必须指定 pages，每次最多 20 页\n"
+                    "- 图片文件（png/jpg/gif/webp）：自动识别并返回图片供视觉分析\n"
+                    "- Excel/Parquet 等二进制文件请用 code_execute 处理\n"
+                    "- 文本文件返回 cat -n 格式，行号从 1 开始"
                 ),
                 "parameters": {
                     "type": "object",
@@ -98,6 +101,13 @@ def build_file_tools() -> List[Dict[str, Any]]:
                             "description": (
                                 "读取行数上限。"
                                 "仅在文件过大无法一次读取时使用"
+                            ),
+                        },
+                        "pages": {
+                            "type": "string",
+                            "description": (
+                                "PDF 页码范围（如 '3'、'1-5'、'3,7,10'）。"
+                                "仅用于 PDF 文件"
                             ),
                         },
                     },
@@ -239,7 +249,9 @@ FILE_ROUTING_PROMPT = (
     "## 文件操作规则\n"
     "- 所有文件操作直接用文件名或相对路径（如 '利润表.xlsx'、'子目录/data.csv'）\n"
     "- 读取文本文件 → file_read('readme.txt')\n"
-    "- 处理 Excel/图片/Parquet 等二进制文件 → code_execute"
+    "- 读取 PDF 文件 → file_read('合同.pdf') 或 file_read('合同.pdf', pages='3-5')\n"
+    "- 查看图片内容 → file_read('截图.png')（自动进行视觉分析）\n"
+    "- 处理 Excel/Parquet 等二进制文件 → code_execute"
     "（沙盒工作目录即 workspace，直接 pd.read_excel('报表.xlsx')）\n"
     "- 复杂数据分析（统计/筛选/聚合/大文件处理）→ code_execute\n"
     "- 写入/创建/保存文件 → file_write\n"

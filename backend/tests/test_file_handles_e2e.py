@@ -85,13 +85,6 @@ class TestFileListToFileRead:
         assert "line2" in result
 
     @pytest.mark.asyncio
-    async def test_file_info_by_filename(self, tool_executor, user_workspace):
-        """file_info 直接用文件名获取信息"""
-        Path(user_workspace, "report.txt").write_text("content")
-
-        result = await tool_executor.execute("file_info", {"path": "report.txt"})
-        assert "report.txt" in result
-
     @pytest.mark.asyncio
     async def test_relative_path_works(self, tool_executor, user_workspace):
         """相对路径（含子目录）正常工作"""

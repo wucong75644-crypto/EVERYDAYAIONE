@@ -677,6 +677,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
                 # 工具结果塞进 messages + 更新上下文 + 更新 tool_step 状态
                 from services.agent.agent_result import AgentResult
+                from services.file_executor import FileReadResult
+                _pending_image_urls: List[str] = []  # 图片多模态：收集待注入的 image_url
                 for tc, result, is_error in tool_results:
                     if isinstance(result, AgentResult):
                         content = result.to_message_content()
@@ -686,6 +688,14 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         # 子Agent thinking持久化：追加到accumulated_thinking
                         if result.thinking_text:
                             accumulated_thinking += result.thinking_text
+                    elif isinstance(result, FileReadResult):
+                        # 图片多模态：text 作为 tool result，image_url 延迟注入
+                        content = result.text
+                        tool_context.update_from_result(
+                            tc["name"], result.text, is_error,
+                        )
+                        if result.type == "image" and result.image_url:
+                            _pending_image_urls.append(result.image_url)
                     else:
                         content = result
                         tool_context.update_from_result(
@@ -706,12 +716,28 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             _blk["elapsed_ms"] = _elapsed
                             if isinstance(result, AgentResult):
                                 _blk["summary"] = (result.summary or "")[:500]
+                            elif isinstance(result, FileReadResult):
+                                _blk["summary"] = result.text[:500]
                             elif isinstance(result, str):
                                 _blk["summary"] = result[:500]
                             break
 
                     # 工具结果日志已通过 ToolStepCard 的 summary 字段展示，
                     # 不再重复写入 thinking（保持 thinking 只含纯 AI 推理）
+
+                # ── 图片多模态注入 ──
+                # OpenAI 兼容 API 的 tool result content 只能是 string，
+                # 图片需要通过追加 user 消息的方式让模型"看到"。
+                if _pending_image_urls:
+                    img_parts: List[Dict[str, Any]] = [
+                        {"type": "text", "text": "[系统：以下是 file_read 返回的图片]"},
+                    ]
+                    for img_url in _pending_image_urls:
+                        img_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": img_url},
+                        })
+                    messages.append({"role": "user", "content": img_parts})
 
                 # ── 文件块嵌入 content 流 + 实时推送前端 ──
                 # 设计文档：TECH_内容块混排渲染架构.md §6.2

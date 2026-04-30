@@ -185,9 +185,20 @@ class TestFileRead:
 
     @pytest.mark.asyncio
     async def test_read_binary(self, executor, workspace):
+        """非图片/非PDF 二进制文件仍被拒绝"""
+        Path(workspace, "data.bin").write_bytes(b"\x00\x01\x02\x03")
+        result = await executor.file_read("data.bin")
+        assert "二进制文件" in result
+
+    @pytest.mark.asyncio
+    async def test_read_image_returns_file_read_result(self, executor, workspace):
+        """图片文件返回 FileReadResult（多模态）"""
+        from services.file_executor import FileReadResult
         Path(workspace, "image.png").write_bytes(b"\x89PNG\r\n\x1a\n")
         result = await executor.file_read("image.png")
-        assert "二进制文件" in result
+        assert isinstance(result, FileReadResult)
+        assert result.type == "image"
+        assert "图片" in result.text
 
     @pytest.mark.asyncio
     async def test_read_with_offset_limit(self, executor, workspace):

@@ -512,19 +512,24 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
 
     def _make_file_handler(
         self, tool_name: str,
-    ) -> Callable[..., Coroutine[Any, Any, str]]:
-        """为指定文件工具创建handler"""
-        async def handler(args: Dict[str, Any]) -> str:
+    ) -> Callable[..., Coroutine[Any, Any, Any]]:
+        """为指定文件工具创建handler
+
+        file_read 可能返回 FileReadResult（图片多模态），
+        由 ChatHandler 工具结果处理逻辑识别并注入 image_url。
+        """
+        async def handler(args: Dict[str, Any]) -> Any:
             return await self._file_dispatch(tool_name, args)
         return handler
 
     async def _file_dispatch(
         self, tool_name: str, args: Dict[str, Any],
-    ) -> str:
+    ) -> Any:
         """文件工具统一调度（直接用文件名/相对路径）
 
         file_list 和 file_search 返回结果自动附带文件元数据。
         元数据通过 per-message 缓存（_metadata_cache）避免重复提取。
+        file_read 可能返回 FileReadResult（图片多模态）。
         """
         from core.config import get_settings
         from services.file_executor import FileExecutor

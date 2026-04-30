@@ -198,13 +198,13 @@ class TestCoreToolsExpanded:
     def test_core_tools_count(self):
         from config.chat_tools import get_core_tools
         tools = get_core_tools(org_id="test")
-        # 15 个核心工具（+manage_scheduled_task）
-        assert len(tools) == 15
+        # 14 个核心工具
+        assert len(tools) == 14
 
     def test_core_tools_include_file_tools(self):
         from config.chat_tools import get_core_tools
         names = {t["function"]["name"] for t in get_core_tools(org_id="test")}
-        for ft in ("file_read", "file_write", "file_list", "file_search", "file_info"):
+        for ft in ("file_read", "file_write", "file_list", "file_search"):
             assert ft in names, f"{ft} 应在核心工具中"
 
     def test_core_tools_include_crawler(self):

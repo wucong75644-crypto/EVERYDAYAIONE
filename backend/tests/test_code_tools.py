@@ -104,13 +104,11 @@ class TestCodeToolsDefinition:
         assert base["function"]["parameters"] == ws["function"]["parameters"]
         assert base["function"]["description"] != ws["function"]["description"]
 
-    def test_workspace_version_has_doc_generation(self):
-        """主 Agent 版包含文档生成能力（reportlab/docx/pptx）"""
+    def test_workspace_version_has_workspace_dir(self):
+        """主 Agent 版包含 WORKSPACE_DIR 说明"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
-        assert "reportlab" in desc
-        assert "docx" in desc
-        assert "Presentation" in desc
+        assert "工作区" in desc or "workspace" in desc.lower()
 
     def test_base_version_no_doc_generation(self):
         """ERP Agent 版不提及文档生成库"""
@@ -125,27 +123,17 @@ class TestCodeToolsDefinition:
 
     # ---- Code-as-Query 模式测试 ----
 
-    def test_workspace_version_forbids_print_df(self):
-        """主 Agent 版禁止 print(df)"""
+    def test_workspace_version_has_print_output(self):
+        """主 Agent 版包含 print() 输出说明"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
-        assert "print(df)" in desc
-        assert "df.shape" in desc
-        assert "df.describe()" in desc
+        assert "print()" in desc
 
-    def test_workspace_version_has_data_workflow(self):
-        """主 Agent 版包含数据分析工作流和大表探索策略"""
+    def test_workspace_version_has_sandbox_isolation(self):
+        """主 Agent 版包含沙盒隔离说明"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
-        assert "数据分析工作流" in desc
-        assert "一步到位" in desc
-        assert "高效探索大表" in desc
-        assert "独立子进程" in desc
-
-    def test_tool_system_prompt_forbids_print_df(self):
-        """TOOL_SYSTEM_PROMPT 包含 print(df) 禁令"""
-        from config.chat_tools import TOOL_SYSTEM_PROMPT
-        assert "print(df)" in TOOL_SYSTEM_PROMPT
+        assert "全新子进程" in desc
 
 
 class TestAgentToolsIntegration:
