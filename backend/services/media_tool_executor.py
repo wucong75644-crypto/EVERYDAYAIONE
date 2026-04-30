@@ -41,7 +41,7 @@ class MediaToolMixin:
             return f"积分计算失败：{e}"
 
         # 2. 锁定积分（原子预扣）
-        task_id = f"img_{uuid4().hex[:12]}"
+        task_id = str(uuid4())
         try:
             tx_id = self._lock_credits(
                 task_id=task_id, user_id=self.user_id,
@@ -96,7 +96,7 @@ class MediaToolMixin:
             return f"积分计算失败：{e}"
 
         # 2. 锁定积分（原子预扣）
-        task_id = f"vid_{uuid4().hex[:12]}"
+        task_id = str(uuid4())
         try:
             tx_id = self._lock_credits(
                 task_id=task_id, user_id=self.user_id,
