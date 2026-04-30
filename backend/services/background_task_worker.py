@@ -366,6 +366,14 @@ class BackgroundTaskWorker:
                 f"task_id={external_task_id} | error={e}"
             )
 
+        # 释放任务限制槽位（无论上方成功与否都要释放）
+        await self._release_task_slot(task)
+
+    async def _release_task_slot(self, task: dict) -> None:
+        """从 task 的 request_params 提取 slot_id 并释放"""
+        from services.task_limit_service import release_task_slot
+        await release_task_slot(task)
+
     async def _refund_credits(self, transaction_id: str) -> None:
         """
         退回积分（原子操作：CAS检查+退回余额+更新状态在单个SQL事务内完成）

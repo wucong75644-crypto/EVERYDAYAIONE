@@ -345,3 +345,60 @@ class TestCleanupStaleTasks:
         db._table_mock.execute.side_effect = Exception("connection lost")
         # 不应抛异常
         await worker.cleanup_stale_tasks()
+
+
+# ── Slot 释放测试 ─────────────────────────────────────────────
+
+
+class TestTimeoutSlotRelease:
+    """_handle_timeout 后释放任务限制槽位"""
+
+    def _make_task(self, task_type: str = "chat", **overrides) -> dict:
+        base = {
+            "id": "task-1",
+            "type": task_type,
+            "external_task_id": "ext-1",
+            "user_id": "u1",
+            "conversation_id": "conv1",
+            "credit_transaction_id": "tx-1",
+            "request_params": {"_task_slot_id": "slot-timeout-1"},
+            "started_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        }
+        base.update(overrides)
+        return base
+
+    @pytest.mark.asyncio
+    @patch("services.task_limit_service.release_task_slot", new_callable=AsyncMock)
+    async def test_chat_timeout_releases_slot(self, mock_release, worker, db):
+        """chat 超时 fallback 路径后释放 slot"""
+        db.set_rpc_result("atomic_refund_credits", {
+            "refunded": True, "user_id": "u1", "amount": 5
+        })
+        task = self._make_task("chat")
+        await worker._handle_timeout(task, 10)
+
+        mock_release.assert_awaited_once_with(task)
+
+    @pytest.mark.asyncio
+    @patch("services.task_limit_service.release_task_slot", new_callable=AsyncMock)
+    @patch("services.background_task_worker.TaskCompletionService")
+    async def test_image_timeout_fallback_releases_slot(self, MockService, mock_release, worker, db):
+        """image 超时 service 失败后 fallback 释放 slot"""
+        mock_instance = AsyncMock()
+        mock_instance.process_result.side_effect = Exception("service error")
+        MockService.return_value = mock_instance
+
+        task = self._make_task("image")
+        await worker._handle_timeout(task, 30)
+
+        mock_release.assert_awaited_once_with(task)
+
+    @pytest.mark.asyncio
+    @patch("services.task_limit_service.release_task_slot", new_callable=AsyncMock)
+    async def test_no_slot_id_no_crash(self, mock_release, worker, db):
+        """task 没有 slot_id 时 release 不崩溃"""
+        task = self._make_task("chat", request_params={})
+        await worker._handle_timeout(task, 10)
+
+        # release_task_slot 被调用但内部会 early return（无 slot_id）
+        mock_release.assert_awaited_once_with(task)

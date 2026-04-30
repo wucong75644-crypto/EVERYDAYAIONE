@@ -1785,7 +1785,19 @@
       "WebFetch(domain:docs.kie.ai)",
       "WebFetch(domain:kie.ai)",
       "Bash(grep -E \"\\\\.\\(tsx?|jsx?\\)$\")",
-      "Bash(./git-push.sh \"feat: file_read支持PDF/图片读取+前端隐藏工具执行步骤展示\")"
+      "Bash(./git-push.sh \"feat: file_read支持PDF/图片读取+前端隐藏工具执行步骤展示\")",
+      "Bash(grep -E \"^\\\\-.*\\\\.sql$\")",
+      "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python3 -c \"import asyncpg; print\\('ok'\\)\")",
+      "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python3 -c \"import psycopg2; print\\('ok'\\)\")",
+      "Bash(/Users/wucong/EVERYDAYAIONE/backend/venv/bin/python3 -c \"import sqlalchemy; print\\('sqlalchemy ok'\\)\")",
+      "WebFetch(domain:duckdb.org)",
+      "Bash(rsync -avz backend/tests/test_task_limit_service.py backend/tests/test_batch_completion_service.py backend/tests/test_background_task_worker.py backend/services/task_limit_service.py backend/services/batch_completion_service.py backend/services/background_task_worker.py backend/services/handlers/mixins/message_mixin.py root@47.110.94.25:/var/www/everydayai/backend/ --relative)",
+      "Bash(scp backend/tests/test_batch_completion_service.py backend/tests/test_background_task_worker.py backend/tests/test_task_limit_service.py root@47.110.94.25:/var/www/everydayai/backend/tests/)",
+      "Bash(scp backend/services/task_limit_service.py backend/services/batch_completion_service.py backend/services/background_task_worker.py root@47.110.94.25:/var/www/everydayai/backend/services/)",
+      "Bash(scp backend/services/handlers/mixins/message_mixin.py root@47.110.94.25:/var/www/everydayai/backend/services/handlers/mixins/)",
+      "Bash(scp backend/services/batch_completion_service.py root@47.110.94.25:/var/www/everydayai/backend/services/)",
+      "Bash(scp backend/tests/test_background_task_worker.py root@47.110.94.25:/var/www/everydayai/backend/tests/)",
+      "Bash(./git-push.sh 'fix: 任务限流从INCR/DECR计数器改为Redis SET——根治槽位泄漏导致用户永久429 *)"
     ],
     "additionalDirectories": [
       "/tmp"

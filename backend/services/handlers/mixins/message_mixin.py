@@ -22,15 +22,10 @@ from schemas.message import (
 )
 
 
-async def _release_task_limit(user_id: str, conversation_id: str, org_id: str | None) -> None:
+async def _release_task_limit(task: Dict[str, Any], conversation_id: str) -> None:
     """释放任务限制槽位（任务完成/失败时调用）"""
-    try:
-        from api.deps import get_task_limit_service
-        service = await get_task_limit_service()
-        if service:
-            await service.release(user_id, conversation_id, org_id=org_id)
-    except Exception as e:
-        logger.debug(f"Task limit release skipped | error={e}")
+    from services.task_limit_service import release_task_slot
+    await release_task_slot(task)
 
 
 class MessageMixin:
@@ -312,7 +307,7 @@ class MessageMixin:
             )
 
         # 释放任务限制槽位
-        await _release_task_limit(task["user_id"], conversation_id, task.get("org_id"))
+        await _release_task_limit(task, conversation_id)
 
         # 异步生成建议问题（仅 chat 类型，fire-and-forget）
         if self.handler_type.value == "chat":
@@ -535,6 +530,6 @@ class MessageMixin:
             )
 
         # 释放任务限制槽位
-        await _release_task_limit(task["user_id"], conversation_id, task.get("org_id"))
+        await _release_task_limit(task, conversation_id)
 
         return message

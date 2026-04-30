@@ -154,9 +154,47 @@ async def generate_message(
     """
     user_id = ctx.user_id
 
-    # 1. 检查任务限制
+    # 1. 检查任务限制，获取 slot_id
+    slot_id: str | None = None
     if task_limit_service:
-        await task_limit_service.check_and_acquire(user_id, conversation_id, org_id=ctx.org_id)
+        slot_id = await task_limit_service.check_and_acquire(
+            user_id, conversation_id, org_id=ctx.org_id,
+        )
+
+    # 将 slot_id 注入 params，供后续释放路径使用
+    if slot_id:
+        if body.params is None:
+            body.params = {}
+        body.params["_task_slot_id"] = slot_id
+
+    try:
+        return await _do_generate_message(
+            request=request,
+            conversation_id=conversation_id,
+            body=body,
+            ctx=ctx,
+            db=db,
+            user_id=user_id,
+        )
+    except Exception:
+        # 任务启动失败 → 释放槽位，防止泄漏
+        if slot_id and task_limit_service:
+            await task_limit_service.release(
+                user_id, conversation_id,
+                org_id=ctx.org_id, slot_id=slot_id,
+            )
+        raise
+
+
+async def _do_generate_message(
+    request: Request,
+    conversation_id: str,
+    body: GenerateRequest,
+    ctx: OrgCtx,
+    db: ScopedDB,
+    user_id: str,
+) -> GenerateResponse:
+    """generate_message 的实际执行逻辑（拆分以支持 try/except 槽位释放）"""
 
     # 1.5 异步获取用户 IP 位置（与路由并行，不阻塞主流程）
     from services.ip_location_service import extract_client_ip, get_location_by_ip
