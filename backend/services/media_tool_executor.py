@@ -28,7 +28,10 @@ class MediaToolMixin:
             return "提示词不能为空"
 
         aspect_ratio = args.get("aspect_ratio", "1:1")
-        model_id = None  # 使用默认模型
+
+        # 使用默认图片模型
+        from config.smart_model_config import DEFAULT_IMAGE_MODEL
+        model_id = DEFAULT_IMAGE_MODEL
 
         # 1. 计算积分
         try:
