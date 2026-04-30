@@ -259,10 +259,16 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
                 content_parts.append(TextPart(text="（用户发送了一张图片）"))
 
             # ChatHandler 单循环生成（与 Web 端相同的工具编排）
-            from services.handlers.chat_handler import ChatHandler
+            # 走 factory 统一注入 org_id + request_ctx
+            from schemas.message import GenerationType
+            from services.handlers import get_handler
 
-            handler = ChatHandler(db=self.db)
-            handler.org_id = org_id
+            handler = get_handler(
+                GenerationType.CHAT, self.db,
+                org_id=org_id,
+                user_id=user_id,
+                request_id=f"wecom_{conversation_id}",
+            )
 
             # 停止保活（即将发送真实内容）
             if keepalive:

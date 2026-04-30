@@ -79,8 +79,7 @@ class TestAttemptChatRetry:
                 model_id="gemini-3-pro",
                 thinking_effort=None,
                 thinking_mode=None,
-                router_system_prompt=None,
-                router_search_context=None,
+
                 _params={"_is_smart_mode": True, "model": "gemini-3-pro"},
                 _retry_context=None,
             )
@@ -113,8 +112,7 @@ class TestAttemptChatRetry:
                 model_id="gemini-3-pro",
                 thinking_effort=None,
                 thinking_mode=None,
-                router_system_prompt=None,
-                router_search_context=None,
+
                 _params={"_is_smart_mode": True},
                 _retry_context=None,
             )
@@ -135,8 +133,7 @@ class TestAttemptChatRetry:
                 model_id="gemini-3-pro",
                 thinking_effort=None,
                 thinking_mode=None,
-                router_system_prompt=None,
-                router_search_context=None,
+
                 _params={},
                 _retry_context=None,
             )
@@ -161,8 +158,7 @@ class TestAttemptChatRetry:
                 model_id="gemini-3-flash",
                 thinking_effort=None,
                 thinking_mode=None,
-                router_system_prompt=None,
-                router_search_context=None,
+
                 _params={"_is_smart_mode": True},
                 _retry_context=MagicMock(),
             )
@@ -200,8 +196,7 @@ class TestAttemptChatRetry:
                 model_id="gemini-3-pro",
                 thinking_effort=None,
                 thinking_mode=None,
-                router_system_prompt=None,
-                router_search_context=None,
+
                 _params={"_is_smart_mode": True},
                 _retry_context=None,
             )
@@ -238,8 +233,7 @@ class TestAttemptChatRetry:
                 model_id="gemini-3-pro",
                 thinking_effort=None,
                 thinking_mode=None,
-                router_system_prompt=None,
-                router_search_context=None,
+
                 _params={"_is_smart_mode": True},
                 _retry_context=None,
             )
@@ -275,8 +269,7 @@ class TestAttemptChatRetry:
                 model_id="gemini-3-pro",
                 thinking_effort=None,
                 thinking_mode=None,
-                router_system_prompt=None,
-                router_search_context=None,
+
                 _params={"_is_smart_mode": True},
                 _retry_context=None,
             )

@@ -125,8 +125,6 @@ class ChatStreamSupportMixin:
         thinking_effort: Optional[str],
         thinking_mode: Optional[str],
         permission_mode: str,
-        router_system_prompt: Optional[str],
-        router_search_context: Optional[str],
         _params: Optional[Dict[str, Any]],
         _retry_context: Optional[Any],
         elapsed_ms: int,
@@ -137,8 +135,6 @@ class ChatStreamSupportMixin:
             conversation_id=conversation_id, user_id=user_id,
             content=content, model_id=model_id,
             thinking_effort=thinking_effort, thinking_mode=thinking_mode,
-            router_system_prompt=router_system_prompt,
-            router_search_context=router_search_context,
             _params=_params, _retry_context=_retry_context,
         )
         if not retried:
@@ -172,8 +168,6 @@ class ChatStreamSupportMixin:
         model_id: str,
         thinking_effort: Optional[str],
         thinking_mode: Optional[str],
-        router_system_prompt: Optional[str],
-        router_search_context: Optional[str],
         _params: Optional[Dict[str, Any]],
         _retry_context: Optional[Any],
     ) -> bool:
@@ -221,8 +215,6 @@ class ChatStreamSupportMixin:
             conversation_id=conversation_id, user_id=user_id,
             content=content, model_id=new_model,
             thinking_effort=thinking_effort, thinking_mode=thinking_mode,
-            router_system_prompt=router_system_prompt,
-            router_search_context=router_search_context,
             _params=_params, _retry_context=retry_ctx,
         )
         return True

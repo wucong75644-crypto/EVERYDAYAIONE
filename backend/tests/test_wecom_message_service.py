@@ -495,13 +495,13 @@ class TestHandleText:
         svc._dispatch_result_to_wecom = AsyncMock()
 
         with patch(
-            "services.handlers.chat_handler.ChatHandler"
-        ) as MockHandler:
+            "services.handlers.get_handler"
+        ) as mock_get_handler:
             mock_instance = MagicMock()
             mock_instance.generate_complete = AsyncMock(
                 return_value=[TextPart(text="你好，这是回复")]
             )
-            MockHandler.return_value = mock_instance
+            mock_get_handler.return_value = mock_instance
 
             ctx = _make_reply_ctx("smart_robot")
             await svc._handle_text("u1", "c1", "m1", "你好", ctx)
@@ -522,8 +522,8 @@ class TestHandleText:
         svc._dispatch_result_to_wecom = AsyncMock()
 
         with patch(
-            "services.handlers.chat_handler.ChatHandler"
-        ) as MockHandler:
+            "services.handlers.get_handler"
+        ) as mock_get_handler:
             mock_instance = MagicMock()
             mock_instance.generate_complete = AsyncMock(
                 return_value=[
@@ -531,7 +531,7 @@ class TestHandleText:
                     ImagePart(url="https://example.com/cat.png"),
                 ]
             )
-            MockHandler.return_value = mock_instance
+            mock_get_handler.return_value = mock_instance
 
             ctx = _make_reply_ctx("smart_robot")
             await svc._handle_text("u1", "c1", "m1", "画猫", ctx)
@@ -551,13 +551,13 @@ class TestHandleText:
         svc._dispatch_result_to_wecom = AsyncMock()
 
         with patch(
-            "services.handlers.chat_handler.ChatHandler"
-        ) as MockHandler:
+            "services.handlers.get_handler"
+        ) as mock_get_handler:
             mock_instance = MagicMock()
             mock_instance.generate_complete = AsyncMock(
                 return_value=[VideoPart(url="https://example.com/demo.mp4")]
             )
-            MockHandler.return_value = mock_instance
+            mock_get_handler.return_value = mock_instance
 
             ctx = _make_reply_ctx("smart_robot")
             await svc._handle_text("u1", "c1", "m1", "生成视频", ctx)
@@ -575,11 +575,11 @@ class TestHandleText:
         svc._reply_text = AsyncMock()
 
         with patch(
-            "services.handlers.chat_handler.ChatHandler"
-        ) as MockHandler:
+            "services.handlers.get_handler"
+        ) as mock_get_handler:
             mock_instance = MagicMock()
             mock_instance.generate_complete = AsyncMock(side_effect=RuntimeError("boom"))
-            MockHandler.return_value = mock_instance
+            mock_get_handler.return_value = mock_instance
 
             ctx = _make_reply_ctx("smart_robot")
             await svc._handle_text("u1", "c1", "m1", "你好", ctx)
@@ -597,24 +597,23 @@ class TestHandleText:
         svc._get_user_balance = MagicMock(return_value=100)
 
         svc._dispatch_result_to_wecom = AsyncMock()
-        captured_handler = None
 
         with patch(
-            "services.handlers.chat_handler.ChatHandler"
-        ) as MockHandler:
-            def capture_handler(*args, **kwargs):
-                nonlocal captured_handler
-                captured_handler = MagicMock()
-                captured_handler.generate_complete = AsyncMock(
-                    return_value=[TextPart(text="ok")]
-                )
-                return captured_handler
-            MockHandler.side_effect = capture_handler
+            "services.handlers.get_handler"
+        ) as mock_get_handler:
+            mock_instance = MagicMock()
+            mock_instance.generate_complete = AsyncMock(
+                return_value=[TextPart(text="ok")]
+            )
+            mock_get_handler.return_value = mock_instance
 
             ctx = _make_reply_ctx("smart_robot")
             await svc._handle_text("u1", "c1", "m1", "你好", ctx, org_id="org123")
 
-        assert captured_handler.org_id == "org123"
+        # factory 统一注入：验证 get_handler 收到正确的 org_id
+        mock_get_handler.assert_called_once()
+        call_kwargs = mock_get_handler.call_args
+        assert call_kwargs.kwargs.get("org_id") == "org123"
 
     @pytest.mark.asyncio
     async def test_credits_insufficient_replies_card(self):
@@ -625,13 +624,13 @@ class TestHandleText:
         svc._reply_credits_insufficient = AsyncMock()
 
         with patch(
-            "services.handlers.chat_handler.ChatHandler"
-        ) as MockHandler:
+            "services.handlers.get_handler"
+        ) as mock_get_handler:
             ctx = _make_reply_ctx("smart_robot")
             await svc._handle_text("u1", "c1", "m1", "你好", ctx)
 
         svc._reply_credits_insufficient.assert_called_once()
-        MockHandler.assert_not_called()
+        mock_get_handler.assert_not_called()
 
 
 # ============================================================

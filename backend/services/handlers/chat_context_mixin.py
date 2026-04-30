@@ -72,11 +72,19 @@ class ChatContextMixin:
         prefetched_summary: Optional[str] = None,
         prefetched_memory: Optional[str] = None,
         user_location: Optional[str] = None,
-        # 向后兼容（已废弃，不再使用）
-        router_system_prompt: Optional[str] = None,
-        router_search_context: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """组装发送给 LLM 的完整消息列表"""
+        """组装发送给 LLM 的完整消息列表。
+
+        分层 append 模式（行业标准：OpenAI/Anthropic/LangChain）：
+        Layer 1: 世界状态（时间 + 位置）
+        Layer 2: 思考语言
+        Layer 3: 领域知识（经验案例 + 通用知识 + schema + 工作区文件）
+        Layer 4: 用户记忆
+        Layer 5: 对话摘要
+        Layer 6: 对话历史 + 话题聚焦
+        Layer 7: 用户消息
+        （后续 chat_handler._stream_generate 中 append TOOL_SYSTEM_PROMPT + 权限模式）
+        """
         image_urls = self._extract_image_urls(content)
         file_urls = self._extract_file_urls(content)
         workspace_files = self._extract_workspace_files(content)
@@ -86,27 +94,7 @@ class ChatContextMixin:
             ws_urls = {f["url"] for f in workspace_files if f.get("url")}
             file_urls = [u for u in file_urls if u not in ws_urls]
 
-        # 当前用户消息
-        messages = [{"role": "user", "content": text_content}]
-        if image_urls or file_urls:
-            # 图片和非工作区文件统一用 image_url 格式（Gemini 通过 MIME 自动识别 PDF）
-            media_parts = [
-                *[{"type": "image_url", "image_url": {"url": url}} for url in image_urls],
-                *[{"type": "image_url", "image_url": {"url": url}} for url in file_urls],
-            ]
-            messages[0]["content"] = [
-                {"type": "text", "text": text_content},
-                *media_parts,
-            ]
-
-        # 搜索上下文注入（作为 system prompt，让工作模型基于搜索结果回答）
-        if router_search_context:
-            search_prompt = f"以下是联网搜索结果，请基于这些信息回答用户问题：\n\n{router_search_context}"
-            messages.insert(0, {"role": "system", "content": search_prompt})
-            logger.debug(f"Search context injected | len={len(router_search_context)}")
-
-        # 并行获取：记忆 / 摘要 / 历史 / 知识库（全部独立，无交叉依赖）
-        # 元信息提取已移除——只展示静态文件信息，AI 用 code_execute 自行读取结构
+        # ─── 并行获取：记忆 / 摘要 / 历史 / 知识库（全部独立，无交叉依赖）───
         if prefetched_memory is not None:
             summary_result, context_result, knowledge_result = await asyncio.gather(
                 self._get_context_summary(conversation_id, prefetched=prefetched_summary),
@@ -147,110 +135,94 @@ class ChatContextMixin:
         if isinstance(knowledge_result, BaseException):
             logger.debug(f"Knowledge fetch failed | error={knowledge_result}")
 
+        # ─── 按层 append 构建 messages（禁止 insert(0)）───
+        messages: List[Dict[str, Any]] = []
+
+        # Layer 1: 世界状态（时间 + 位置，合并为一条 system message）
+        # RequestContext 从入口传入（HTTP/WS/企微），全链路不可变 SSOT
+        _request_ctx = getattr(self, "request_ctx", None) or RequestContext.build(
+            user_id=user_id,
+            org_id=getattr(self, "org_id", None),
+            request_id=conversation_id or "",
+        )
+        world_state = _request_ctx.for_prompt_injection()
+        if user_location:
+            world_state += f"\n用户位置：{user_location}"
+        messages.append({"role": "system", "content": world_state})
+
+        # Layer 2: 思考语言指令（让推理模型的 thinking 过程使用中文）
+        messages.append({"role": "system", "content": "请使用中文进行思考和推理。"})
+
+        # Layer 3: 领域知识（经验案例 + 通用知识 + schema + 工作区文件）
+        if knowledge_items:
+            filtered_knowledge = self._filter_knowledge_by_similarity(knowledge_items)
+            exp = [k for k in filtered_knowledge if k.get("_source") == "experience"]
+            general = [k for k in filtered_knowledge if k.get("_source") != "experience"]
+
+            if exp:
+                exp_text = "\n".join(f"- {e['content']}" for e in exp)
+                messages.append({"role": "system", "content":
+                    f"以下是类似查询的历史成功案例，参考其查询方式：\n{exp_text}"})
+
+            if general:
+                knowledge_text = "\n".join(
+                    f"- {k['title']}: {k['content']}" for k in general
+                )
+                messages.append({"role": "system", "content": f"你已掌握的经验知识：\n{knowledge_text}"})
+
+        # schema 智能过滤注入（B2）— 从对话级 registry 中筛选相关 schema
+        await self._inject_schema_context(messages, conversation_id, text_content)
+
         # 工作区文件提示注入（只展示静态信息：文件名/大小/类型/时间/路径）
-        # 不提取列名和表结构——AI 用 code_execute 自行读取
         if workspace_files:
             from services.file_metadata_extractor import format_workspace_files_prompt
             ws_prompt = format_workspace_files_prompt(workspace_files, metadata_map)
             if ws_prompt:
-                messages.insert(0, {"role": "system", "content": ws_prompt})
+                messages.append({"role": "system", "content": ws_prompt})
                 logger.debug(
                     f"Workspace files injected | count={len(workspace_files)} | "
                     f"metadata_count={len(metadata_map)} | "
                     f"paths={[f['workspace_path'] for f in workspace_files]}"
                 )
 
-        # 知识库经验注入 — Phase 7: similarity 分数门控 + 通用/案例分离
-        # 设计文档：docs/document/TECH_Agent能力通信架构.md §3.4.2
-        if knowledge_items:
-            filtered_knowledge = self._filter_knowledge_by_similarity(knowledge_items)
-            general = [k for k in filtered_knowledge if k.get("_source") != "experience"]
-            exp = [k for k in filtered_knowledge if k.get("_source") == "experience"]
-
-            if general:
-                knowledge_text = "\n".join(
-                    f"- {k['title']}: {k['content']}" for k in general
-                )
-                messages.insert(0, {"role": "system", "content": f"你已掌握的经验知识：\n{knowledge_text}"})
-
-            if exp:
-                exp_text = "\n".join(f"- {e['content']}" for e in exp)
-                messages.insert(0, {"role": "system", "content":
-                    f"以下是类似查询的历史成功案例，参考其查询方式：\n{exp_text}"})
-
-        # 记忆注入（失败不影响主流程）
+        # Layer 4: 用户记忆（失败不影响主流程）
         if memory_prompt:
-            messages.insert(0, {"role": "system", "content": memory_prompt})
+            messages.append({"role": "system", "content": memory_prompt})
 
-        # 路由人设注入（插在最前面，优先级最低）
-        if router_system_prompt:
-            messages.insert(0, {"role": "system", "content": router_system_prompt})
-            logger.debug(f"Router system_prompt injected | len={len(router_system_prompt)}")
-
-        # 时间事实层 — 用 RequestContext 注入结构化的"今天"
-        # 替代旧的 datetime.now()（无时区，模型还要做 Friday→周五 翻译，是 4-10 bug 的诱因之一）
-        # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.1
-        # 主聊天 Agent 暂不传 ctx，由 mixin 临时构造（请求级 SSOT 待 PR1 后续把 ctx 串到 handler）
-        _request_ctx = getattr(self, "request_ctx", None) or RequestContext.build(
-            user_id=user_id,
-            org_id=getattr(self, "org_id", None),
-            request_id=conversation_id or "",
-        )
-        messages.insert(
-            0,
-            {"role": "system", "content": _request_ctx.for_prompt_injection()},
-        )
-
-        # 用户位置注入（IP 定位，辅助天气/本地查询）
-        if user_location:
-            messages.insert(0, {"role": "system", "content": f"用户所在位置：{user_location}"})
-
-        # 思考语言指令（让推理模型的 thinking 过程使用中文）
-        messages.insert(
-            0,
-            {"role": "system", "content": "请使用中文进行思考和推理。"},
-        )
-
-        # 身份定义（对齐 Claude Code Intro，详细原则在 TOOL_SYSTEM_PROMPT 中）
-        messages.insert(
-            1,
-            {"role": "system", "content": (
-                "你是企业智能助手。通过工具获取真实数据回答问题。"
-                "使用以下指引和可用工具协助用户。"
-            )},
-        )
-
-        # 对话历史摘要注入 — Phase 6 门控：短对话不注入
-        # context_messages 的长度近似代表消息轮数（DB 只取 user/assistant）
+        # Layer 5: 对话摘要 — Phase 6 门控：短对话不注入
         _msg_count = len(context_messages) if context_messages else 0
         if summary_prompt and _msg_count > 5:
-            messages.insert(0, {"role": "system", "content": summary_prompt})
+            messages.append({"role": "system", "content": summary_prompt})
+
+        # Layer 6: 对话历史 + 话题聚焦
         if context_messages:
-            pos = len(messages) - 1
-            for i, ctx_msg in enumerate(context_messages):
-                messages.insert(pos + i, ctx_msg)
-
+            messages.extend(context_messages)
             # 话题聚焦指令（紧贴用户消息前，防止旧话题污染新问题）
-            focus_prompt = "以用户最新一条消息为准。"
-            messages.insert(
-                len(messages) - 1,
-                {"role": "system", "content": focus_prompt},
-            )
+            messages.append({"role": "system", "content": "以用户最新一条消息为准。"})
 
-        # 层6: 分桶预算控制（Phase 2）
-        # 设计文档：docs/document/TECH_上下文工程重构.md §五
+        # Layer 7: 用户消息（始终最后）
+        user_msg: Dict[str, Any] = {"role": "user", "content": text_content}
+        if image_urls or file_urls:
+            media_parts = [
+                *[{"type": "image_url", "image_url": {"url": url}} for url in image_urls],
+                *[{"type": "image_url", "image_url": {"url": url}} for url in file_urls],
+            ]
+            user_msg["content"] = [
+                {"type": "text", "text": text_content},
+                *media_parts,
+            ]
+        messages.append(user_msg)
+
+        # ─── 分桶预算控制（Phase 2）───
         from core.config import get_settings
         from services.handlers.context_compressor import (
             enforce_tool_budget, enforce_history_budget, enforce_budget,
         )
         _s = get_settings()
-        # 工具桶（初始组装时 messages 里没有 tool 消息，主要在工具循环内生效）
         enforce_tool_budget(messages, _s.context_tool_token_budget)
-        # 历史桶（异步版，含 Embedding 打分）
         await enforce_history_budget(
             messages, _s.context_history_token_budget, current_query=text_content,
         )
-        # 总预算兜底
         enforce_budget(messages, _s.context_max_tokens)
 
         return messages
@@ -320,6 +292,49 @@ class ChatContextMixin:
         except Exception as ex:
             logger.debug(f"Knowledge fetch skipped | error={ex}")
             return None
+
+    async def _inject_schema_context(
+        self,
+        messages: List[Dict[str, Any]],
+        conversation_id: str,
+        query: str,
+    ) -> None:
+        """从对话级 registry 中筛选相关 schema 并注入为 system 消息。
+
+        B2: schema 智能过滤注入。
+        位置：Layer 3 领域知识层，知识库之后、工作区文件之前。
+        """
+        try:
+            from services.agent.session_file_registry import get_conversation_registry
+            registry = get_conversation_registry(conversation_id)
+            schema_entries = registry.get_schema_entries()
+            if not schema_entries:
+                return
+
+            from services.agent.schema_filter import filter_schemas
+            recent_entries = registry.get_recent_schema_entries(3)
+            matched = await filter_schemas(query, schema_entries, recent_entries)
+            if not matched:
+                return
+
+            # 构建注入文本
+            lines = ["[可用数据文件 schema]", ""]
+            for key, ref, schema_text in matched:
+                lines.append(f"=== {ref.filename} ===")
+                lines.append(schema_text)
+                lines.append("")
+                # 更新 last_used
+                registry.touch(key)
+
+            schema_prompt = "\n".join(lines).rstrip()
+            messages.append({"role": "system", "content": schema_prompt})
+            logger.debug(
+                f"Schema context injected | conv={conversation_id} | "
+                f"matched={len(matched)}/{len(schema_entries)} | "
+                f"files={[m[1].filename for m in matched]}"
+            )
+        except Exception as e:
+            logger.debug(f"Schema injection skipped | error={e}")
 
     async def _extract_memories_async(
         self,
