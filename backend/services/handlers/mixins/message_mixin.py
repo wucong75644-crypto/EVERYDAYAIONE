@@ -76,6 +76,20 @@ class MessageMixin:
         if extra_generation_params:
             gen_params.update(extra_generation_params)
 
+        # DB CHECK 约束：pg_column_size(generation_params) < 10240
+        # 超限时逐步裁剪 tool_digest，防止写入被拒
+        import json as _json
+        _GP_MAX = 8192  # 留 2KB 余量给 JSONB TOAST 开销
+        _gp_size = len(_json.dumps(gen_params, ensure_ascii=False).encode())
+        if _gp_size > _GP_MAX:
+            digest = gen_params.get("tool_digest")
+            if digest and isinstance(digest, dict):
+                digest.pop("tools", None)
+                _gp_size = len(_json.dumps(gen_params, ensure_ascii=False).encode())
+            if _gp_size > _GP_MAX:
+                gen_params = {"type": generation_type, "model": model_id}
+                logger.warning(f"generation_params truncated | original={_gp_size}B")
+
         message_data = {
             "id": message_id,
             "conversation_id": conversation_id,
