@@ -260,42 +260,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         finally:
             await RedisClient.release_lock("orphan_task_recovery", _recovery_lock)
 
-    # 启动时清理过期的 staging 文件（3 天过期，对标 OpenAI 容器生命周期模式）
-    # staging 在用户 workspace 下：{workspace_root}/{org|personal}/xxx/staging/{conv_id}/
-    # 遍历所有用户目录下的 staging/ 子目录，清理过期的会话目录
+    # 启动时清理过期的 staging 文件（24h TTL + _tmp_ 残留）
+    # 设计文档：docs/document/TECH_data_query工具设计.md §九
     try:
-        from pathlib import Path
-        import time as _time_mod
-        _ws_root = Path(settings.file_workspace_root)
-        if _ws_root.exists():
-            import shutil
-            cutoff = _time_mod.time() - 3 * 86400  # 3 天过期
-            cleaned = 0
-            # 精确匹配已知目录结构（不递归遍历）
-            # org/{org_id}/{user_id}/staging/ 和 personal/{hash}/staging/
-            for staging_dir in _ws_root.glob("org/*/*/staging"):
-                if not staging_dir.is_dir():
-                    continue
-                for conv_dir in staging_dir.iterdir():
-                    if conv_dir.is_dir() and conv_dir.stat().st_mtime < cutoff:
-                        shutil.rmtree(conv_dir, ignore_errors=True)
-                        cleaned += 1
-            for staging_dir in _ws_root.glob("personal/*/staging"):
-                if not staging_dir.is_dir():
-                    continue
-                for conv_dir in staging_dir.iterdir():
-                    if conv_dir.is_dir() and conv_dir.stat().st_mtime < cutoff:
-                        shutil.rmtree(conv_dir, ignore_errors=True)
-                        cleaned += 1
-            # 兼容旧的全局 staging（迁移过渡期）
-            _old_staging = _ws_root / "staging"
-            if _old_staging.exists():
-                for child in _old_staging.iterdir():
-                    if child.is_dir() and child.stat().st_mtime < cutoff:
-                        shutil.rmtree(child, ignore_errors=True)
-                        cleaned += 1
-            if cleaned:
-                logger.info(f"Staging cleanup | removed={cleaned} dirs (>3 days)")
+        from services.staging_cleaner import cleanup_all_staging
+        cleanup_all_staging(
+            settings.file_workspace_root,
+            ttl_seconds=settings.staging_file_ttl_seconds,
+        )
     except Exception as e:
         logger.debug(f"Staging cleanup skipped | error={e}")
 
@@ -552,8 +524,8 @@ def register_exception_handlers(app: FastAPI) -> None:
             content={
                 "error": {
                     "code": "NOT_FOUND",
-                    "message": f"请求的资源不存在",
-                    "details": {"table": exc.table},
+                    "message": "请求的资源不存在",
+                    "details": {},
                 }
             },
         )
