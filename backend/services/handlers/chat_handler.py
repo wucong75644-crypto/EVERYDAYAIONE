@@ -738,7 +738,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 # 设计文档：TECH_内容块混排渲染架构.md §6.2
                 # 通过 content_block_add 立即推送，前端流式阶段即可渲染占位符
                 if self._pending_file_parts:
-                    from schemas.websocket import build_content_block_add
                     _dims = getattr(self, "_image_dims", {})
                     for _fp in self._pending_file_parts:
                         if _fp.mime_type.startswith("image/"):
@@ -775,11 +774,10 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 _pending_form = getattr(self, "_pending_form_block", None)
                 if _pending_form:
                     self._pending_form_block = None
-                    from schemas.websocket import build_content_block_add as _build_cba
                     _content_blocks.append(_pending_form)
                     await ws_manager.send_to_task_or_user(
                         task_id, user_id,
-                        _build_cba(
+                        build_content_block_add(
                             task_id=task_id,
                             conversation_id=conversation_id,
                             message_id=message_id,
