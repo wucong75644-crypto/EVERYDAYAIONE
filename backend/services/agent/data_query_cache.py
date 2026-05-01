@@ -135,12 +135,21 @@ _SAMPLE_SIZE = 1000      # 采样行数（Polars 默认值）
 
 
 def _coerce_object_columns(df) -> None:
-    """瀑布式类型推断：int → float → datetime → str 兜底。
+    """瀑布式类型推断：numeric → datetime → str 兜底。
 
     只处理 dtype=object 的列（pandas 无法自动推断的混合类型列）。
     纯数值/日期列由 pandas 在 read_excel 时已正确推断，不进此分支。
+    合并单元格产生的 Unnamed 空列直接删除。
     """
     import pandas as pd
+
+    # 先删除合并单元格产生的全空 Unnamed 列（ERP 导出常见，1404 列中大量是空列）
+    unnamed_empty = [
+        c for c in df.columns
+        if str(c).startswith("Unnamed:") and df[c].isna().all()
+    ]
+    if unnamed_empty:
+        df.drop(columns=unnamed_empty, inplace=True)
 
     for col in df.columns:
         if df[col].dtype != object:
@@ -152,19 +161,13 @@ def _coerce_object_columns(df) -> None:
 
         sample = non_null.head(_SAMPLE_SIZE)
 
-        # 1. 尝试整数
-        as_int = pd.to_numeric(sample, errors="coerce", downcast="integer")
-        if as_int.notna().sum() / len(sample) >= _TYPE_THRESHOLD:
+        # 1. 尝试数值（int 和 float 统一检测，pandas 自动推断精度）
+        as_num = pd.to_numeric(sample, errors="coerce")
+        if as_num.notna().sum() / len(sample) >= _TYPE_THRESHOLD:
             df[col] = pd.to_numeric(df[col], errors="coerce")
             continue
 
-        # 2. 尝试浮点数
-        as_float = pd.to_numeric(sample, errors="coerce")
-        if as_float.notna().sum() / len(sample) >= _TYPE_THRESHOLD:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-            continue
-
-        # 3. 尝试日期
+        # 2. 尝试日期
         try:
             as_dt = pd.to_datetime(sample, errors="coerce", format="mixed")
             if as_dt.notna().sum() / len(sample) >= _TYPE_THRESHOLD:
@@ -173,7 +176,7 @@ def _coerce_object_columns(df) -> None:
         except Exception:
             pass
 
-        # 4. 兜底：确保类型统一为 str（防止 PyArrow 崩溃）
+        # 3. 兜底：确保类型统一为 str（防止 PyArrow 崩溃）
         types = set(type(v).__name__ for v in sample.head(100))
         if len(types) > 1:
             df[col] = df[col].astype(str).replace({"nan": None})
