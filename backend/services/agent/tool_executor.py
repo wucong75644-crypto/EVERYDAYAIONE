@@ -617,6 +617,13 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         if not func:
             return f"Unknown file tool: {tool_name}"
 
+        # file_read / file_edit 的 path 参数：先查缓存翻译
+        if "path" in args and tool_name in ("file_read", "file_edit"):
+            from services.agent.workspace_file_handles import get_file_cache
+            cached = get_file_cache(self.conversation_id).resolve(args["path"])
+            if cached:
+                args = {**args, "path": cached}
+
         try:
             return await func(**args)
         except PermissionError as e:
@@ -683,9 +690,13 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         for d in data["dirs"]:
             lines.append(f"  [目录] {d['name']}/\t\t{d['modified']}")
 
-        # 文件：提取元数据（最多 _MAX_METADATA 个，防慢）
+        # 文件：注册路径缓存 + 提取元数据（最多 _MAX_METADATA 个，防慢）
+        from services.agent.workspace_file_handles import get_file_cache
+        file_cache = get_file_cache(self.conversation_id)
+
         _MAX_METADATA = 5
         for i, f in enumerate(data["files"]):
+            file_cache.register(f["name"], f["abs_path"])
             if i < _MAX_METADATA:
                 meta = await self._get_or_extract_metadata(f["abs_path"])
                 line = format_file_metadata_line(
@@ -721,6 +732,9 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         metadata_count = 0
         _MAX_SEARCH_METADATA = 3
 
+        from services.agent.workspace_file_handles import get_file_cache
+        file_cache = get_file_cache(self.conversation_id)
+
         for line in lines:
             # 搜索结果格式：  [文件] 相对路径  或  [文件] 相对路径:行号 | 预览
             match = re.match(r"\s+\[文件\]\s+(\S+?)(?::\d+\s*\|.*)?$", line)
@@ -729,6 +743,7 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
                 try:
                     target = executor.resolve_safe_path(rel_path)
                     if target.is_file():
+                        file_cache.register(target.name, str(target))
                         meta = await self._get_or_extract_metadata(str(target))
                         if meta:
                             enhanced_line = format_file_metadata_line(
