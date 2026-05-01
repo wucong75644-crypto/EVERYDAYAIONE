@@ -22,11 +22,12 @@ from schemas.message import ContentPart, TextPart
 from services.handlers.chat_tool_mixin import accumulate_tool_call_delta
 
 
-# 优雅降级提示（与 ChatHandler 保持一致）
+# 优雅降级提示（与 ChatHandler 保持一致，有 Final Synthesis Turn 后仅作兜底）
 _STOP_MESSAGES = {
-    "max_turns": "查询涉及多个步骤，已达到工具调用上限。",
-    "max_tokens": "本次查询数据量过大。",
-    "wall_timeout": "查询耗时过长。",
+    "wrap_up_budget": "接近执行上限，正在总结当前进展。",
+    "max_turns": "已达到单次对话工具调用上限。",
+    "max_tokens": "本次任务消耗的资源过大，请缩小范围或分步进行。",
+    "wall_timeout": "任务耗时过长，请稍后重试。",
 }
 
 
@@ -174,12 +175,21 @@ class ChatGenerateMixin:
                     f"tools={[c['name'] for c in completed_calls]}"
                 )
 
-            # 优雅降级
+            # 优雅降级：Final Synthesis Turn
             _stop = _budget.stop_reason
-            if _stop and accumulated_text:
-                accumulated_text += f"\n\n> ⚠️ {_STOP_MESSAGES.get(_stop, '执行超限')}"
-            elif _stop and not accumulated_text:
-                accumulated_text = _STOP_MESSAGES.get(_stop, "执行超限，请稍后重试")
+            if _stop:
+                from services.agent.stop_policy import synthesize_wrap_up
+                _synthesis = await synthesize_wrap_up(
+                    adapter=adapter,
+                    messages=messages,
+                    reason=_STOP_MESSAGES.get(_stop, _stop),
+                )
+                if _synthesis:
+                    accumulated_text = _synthesis
+                elif accumulated_text:
+                    accumulated_text += f"\n\n> ⚠️ {_STOP_MESSAGES.get(_stop, '执行超限')}"
+                else:
+                    accumulated_text = _STOP_MESSAGES.get(_stop, "执行超限，请稍后重试")
 
         except Exception as e:
             logger.error(f"generate_complete error | error={e}")

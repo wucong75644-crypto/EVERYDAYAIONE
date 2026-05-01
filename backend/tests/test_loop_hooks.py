@@ -262,7 +262,7 @@ class TestFailureReflectionHook:
         assert len(ctx.messages) == 1
         assert ctx.messages[0]["role"] == "system"
         assert "local_stock_query" in ctx.messages[0]["content"]
-        assert "ask_user" in ctx.messages[0]["content"]
+        assert "返回了错误" in ctx.messages[0]["content"]
 
     @pytest.mark.asyncio
     async def test_timeout_prefix_triggers_injection(self):

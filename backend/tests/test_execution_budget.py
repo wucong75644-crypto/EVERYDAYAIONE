@@ -165,6 +165,37 @@ class TestStopReason:
         budget.use_tokens(100)
         assert budget.stop_reason == "max_turns"
 
+    def test_wrap_up_budget_triggers_before_max_turns(self):
+        """wrap_up_turns_reserved=1 → 在 max_turns-1 时触发 wrap_up_budget"""
+        budget = ExecutionBudget(max_turns=5, wrap_up_turns_reserved=1)
+        for _ in range(4):
+            budget.use_turn()
+        # 4 轮用完，距 max_turns=5 还差 1 轮 → 触发 wrap_up_budget
+        assert budget.stop_reason == "wrap_up_budget"
+
+    def test_max_turns_still_triggers_at_limit(self):
+        """用满 max_turns → 返回 max_turns（优先于 wrap_up_budget）"""
+        budget = ExecutionBudget(max_turns=5, wrap_up_turns_reserved=1)
+        for _ in range(5):
+            budget.use_turn()
+        assert budget.stop_reason == "max_turns"
+
+    def test_wrap_up_reserved_zero_disables(self):
+        """wrap_up_turns_reserved=0 → 不触发 wrap_up_budget"""
+        budget = ExecutionBudget(max_turns=5, wrap_up_turns_reserved=0)
+        for _ in range(4):
+            budget.use_turn()
+        assert budget.stop_reason is None
+        budget.use_turn()
+        assert budget.stop_reason == "max_turns"
+
+    def test_wrap_up_budget_not_triggered_early(self):
+        """未达阈值 → stop_reason=None"""
+        budget = ExecutionBudget(max_turns=10, wrap_up_turns_reserved=1)
+        for _ in range(5):
+            budget.use_turn()
+        assert budget.stop_reason is None
+
 
 class TestFork:
 
@@ -193,6 +224,12 @@ class TestFork:
         child = parent.fork(max_turns=5)
         # 子的 wall_time 不会超过父的 remaining
         assert child._max_wall_time <= parent.remaining + 0.1
+
+    def test_fork_inherits_wrap_up_reserved(self):
+        """子 Agent 继承父的 wrap_up_turns_reserved"""
+        parent = ExecutionBudget(max_turns=15, wrap_up_turns_reserved=2)
+        child = parent.fork(max_turns=10)
+        assert child._wrap_up_turns_reserved == 2
 
 
 class TestCheckOrLog:
