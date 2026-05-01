@@ -693,3 +693,83 @@ class TestConvertLocksLRU:
         finally:
             data_query_cache._convert_locks.clear()
             data_query_cache._convert_locks.update(old_locks)
+
+
+class TestDetectHeaderRow:
+    """detect_header_row: messytables 众数法 + csv.Sniffer 类型验证"""
+
+    def test_standard_excel_header_at_row0(self):
+        """标准表格：第 0 行就是表头 → 返回 0"""
+        from services.agent.data_query_cache import detect_header_row
+
+        rows = [
+            ["店铺名", "实付金额", "退款", "毛利"],
+            ["蓝创旗舰", 15234.5, 423.0, 8921.3],
+            ["蓝创专营", 8120.0, 210.5, 4532.1],
+        ]
+        assert detect_header_row(rows) == 0
+
+    def test_erp_profit_report_header_at_row2(self):
+        """ERP 利润表：标题行 + 分类行 + 真正表头在第 2 行"""
+        from services.agent.data_query_cache import detect_header_row
+
+        rows = [
+            ["利润表-店铺利润表", None, None, None, None, None, None, None, None, None],
+            ["日期范围", None, "2026-04-20 至 2026-04-26", None, None, None, None, None, None, None],
+            ["店铺名", "实付金额", "退款金额", "毛利", "运费", "推广费", "佣金", "利润", "利润率", "订单数"],
+            ["蓝创旗舰", 15234.5, 423.0, 8921.3, 500, 1200, 320, 6901.3, "45.3%", 128],
+            ["蓝创专营", 8120.0, 210.5, 4532.1, 300, 800, 180, 3252.1, "40.0%", 67],
+        ]
+        assert detect_header_row(rows) == 2
+
+    def test_single_title_row_header_at_row1(self):
+        """单标题行：第 0 行标题，第 1 行就是表头"""
+        from services.agent.data_query_cache import detect_header_row
+
+        rows = [
+            ["月度销售报表", None, None, None],
+            ["日期", "平台", "销售额", "订单数"],
+            ["2026-04-01", "淘宝", 5230.0, 42],
+            ["2026-04-01", "拼多多", 3120.0, 35],
+        ]
+        assert detect_header_row(rows) == 1
+
+    def test_empty_rows(self):
+        """空行列表 → 返回 0"""
+        from services.agent.data_query_cache import detect_header_row
+
+        assert detect_header_row([]) == 0
+
+    def test_all_numeric_no_header(self):
+        """纯数字表（无表头）→ 返回 0"""
+        from services.agent.data_query_cache import detect_header_row
+
+        rows = [
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+            [9, 10, 11, 12],
+        ]
+        assert detect_header_row(rows) == 0
+
+    def test_header_with_mixed_none_cells(self):
+        """表头行有少量 None 但字符串占比仍达标"""
+        from services.agent.data_query_cache import detect_header_row
+
+        rows = [
+            ["总览报表", None, None, None, None, None],
+            ["品类", "子类", None, "销量", "金额", "占比"],
+            ["服装", "上衣", "T恤", 120, 5400.0, "23%"],
+        ]
+        # 第 1 行：4/6 非空，全是字符串 → 命中
+        assert detect_header_row(rows) == 1
+
+    def test_csv_style_no_title(self):
+        """CSV 风格：第一行直接就是列名"""
+        from services.agent.data_query_cache import detect_header_row
+
+        rows = [
+            ["order_no", "platform", "amount", "status", "created_at"],
+            ["TB20260401001", "taobao", 129.9, "completed", "2026-04-01"],
+            ["PDD20260401002", "pdd", 59.9, "shipped", "2026-04-01"],
+        ]
+        assert detect_header_row(rows) == 0
