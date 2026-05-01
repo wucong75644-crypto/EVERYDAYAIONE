@@ -146,10 +146,7 @@ def _convert_excel_to_parquet(
         else sheet if sheet is not None
         else 0
     )
-    df = pd.read_excel(
-        xl, sheet_name=target_sheet, engine="calamine",
-        na_values=["-", "--", "---", "/", "N/A", "NA", "null", "NULL", "无", "—"],
-    )
+    df = pd.read_excel(xl, sheet_name=target_sheet, engine="calamine")
     xl.close()
 
     # 混合类型列（object 列里有 int+str）强制转 str，防止 PyArrow 崩溃
