@@ -271,18 +271,10 @@ def _extract_xlsx(abs_path: str) -> Optional[Dict[str, Any]]:
         if not all_rows:
             return None
 
-        # 表头检测：第一行非空列数少于总列数 30% → 可能是标题行，尝试第二行
-        # 典型场景：利润表第一行只有"利润表-店铺利润表"一个值
-        header_row_idx = 0
-        first_row_non_null = sum(1 for c in all_rows[0] if c is not None and str(c).strip())
-        total_possible_cols = len(all_rows[0])
-        if (total_possible_cols > 3
-                and first_row_non_null < total_possible_cols * 0.3
-                and len(all_rows) > 1):
-            # 检查第二行是否更像表头
-            second_row_non_null = sum(1 for c in all_rows[1] if c is not None and str(c).strip())
-            if second_row_non_null > first_row_non_null:
-                header_row_idx = 1
+        # 表头检测：messytables 列数众数法 + csv.Sniffer 类型验证
+        # 典型场景：ERP 利润表前几行是标题/分类行，真正表头在第 2-3 行
+        from services.agent.data_query_cache import detect_header_row
+        header_row_idx = detect_header_row(all_rows)
 
         header = [str(c).strip() if c is not None else f"列{i+1}"
                   for i, c in enumerate(all_rows[header_row_idx])]
@@ -866,12 +858,12 @@ def _format_standard(
         sheet_parts = [f"{s['name']}({s['rows']}行)" for s in sheets]
         lines.append(f"\n📑 多 Sheet: {', '.join(sheet_parts)}")
         lines.append(f"  以上为第一个 Sheet「{sheets[0]['name']}」的信息。"
-                     f"读其他 Sheet: pd.read_excel('{wp}', sheet_name='Sheet名')")
+                     f"读其他 Sheet: data_query(file='{wp}', sheet='Sheet名')")
 
     # 读取指引（自动带正确参数）
     read_cmd = _build_read_command(wp, meta)
     if read_cmd:
-        lines.append(f"\n用 code_execute 分析: {read_cmd}")
+        lines.append(f"\n用 data_query 分析: {read_cmd}")
 
     return "\n".join(lines)
 
@@ -930,26 +922,20 @@ def _format_compact(
 
 
 def _build_read_command(wp: str, meta: Dict[str, Any]) -> str:
-    """根据文件类型和元信息生成正确的读取命令
+    """根据文件类型和元信息生成 data_query 读取命令
 
-    核心设计：元信息提取发现的特殊情况（非首行表头、分隔符）
+    核心设计：元信息提取发现的特殊情况（Sheet 名）
     自动反映到读取命令中，AI 复制即可用，不需要自己猜参数。
+    表头行由 data_query 内部自动检测，无需暴露给 LLM。
     """
-    ext = Path(wp).suffix.lower()
+    params = [f"file=\"{wp}\""]
 
-    if ext in (".csv", ".tsv"):
-        params = [f"'{wp}'"]
-        delimiter = meta.get("delimiter")
-        if delimiter:
-            params.append(f"sep='{delimiter}'")
-        return f"pd.read_csv({', '.join(params)})"
+    # 多 sheet 时提示 sheet 参数
+    sheets = meta.get("sheets")
+    if sheets and len(sheets) > 1:
+        params.append(f"sheet=\"{sheets[0]['name']}\"")
 
-    # xlsx
-    params = [f"'{wp}'"]
-    header_row = meta.get("header_row")
-    if header_row is not None and header_row > 0:
-        params.append(f"header={header_row}")
-    return f"pd.read_excel({', '.join(params)})"
+    return f"data_query({', '.join(params)})"
 
 
 def _format_document_entry(

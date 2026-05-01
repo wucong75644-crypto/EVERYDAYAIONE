@@ -79,7 +79,7 @@ def build_file_tools() -> List[Dict[str, Any]]:
                     "- PDF 文件：自动提取文本，用 pages 参数指定页范围（如 '3' 或 '1-5'）。"
                     "≤10 页自动全读，>10 页必须指定 pages，每次最多 20 页\n"
                     "- 图片文件（png/jpg/gif/webp）：自动识别并返回图片供视觉分析\n"
-                    "- Excel/Parquet 等二进制文件请用 code_execute 处理\n"
+                    "- Excel/CSV/Parquet 等数据文件请用 data_query 查询，不能用 file_read\n"
                     "- 文本文件返回 cat -n 格式，行号从 1 开始"
                 ),
                 "parameters": {
@@ -251,9 +251,8 @@ FILE_ROUTING_PROMPT = (
     "- 读取文本文件 → file_read('readme.txt')\n"
     "- 读取 PDF 文件 → file_read('合同.pdf') 或 file_read('合同.pdf', pages='3-5')\n"
     "- 查看图片内容 → file_read('截图.png')（自动进行视觉分析）\n"
-    "- 处理 Excel/Parquet 等二进制文件 → code_execute"
-    "（沙盒工作目录即 workspace，直接 pd.read_excel('报表.xlsx')）\n"
-    "- 复杂数据分析（统计/筛选/聚合/大文件处理）→ code_execute\n"
+    "- 查询/分析 Excel/CSV/Parquet 数据文件 → data_query\n"
+    "- 复杂计算（公式/图表/多文件 JOIN）→ code_execute\n"
     "- 写入/创建/保存文件 → file_write\n"
     "- 查看目录/列出文件 → file_list\n"
     "- 搜索/查找文件 → file_search\n"

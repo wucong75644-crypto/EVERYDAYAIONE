@@ -134,6 +134,53 @@ _TYPE_THRESHOLD = 0.95   # 95% 非空值成功转换才采纳（行业标准）
 _SAMPLE_SIZE = 1000      # 采样行数（Polars 默认值）
 
 
+_HEADER_MAX_SCAN = 20   # 扫描前 N 行寻找表头
+_HEADER_STR_RATIO = 0.7  # 非空值中字符串占比阈值
+
+
+def detect_header_row(rows: list[list]) -> int:
+    """自动检测 Excel 表头行号（messytables 列数众数法 + csv.Sniffer 类型验证）。
+
+    算法：
+    1. 统计每行非空单元格数，取众数（= 数据区期望列数）
+    2. 从上往下扫，找第一行同时满足：
+       - 非空单元格数 ≥ 众数 × 0.5（messytables 思路：标题行通常只有 1-2 个非空格）
+       - 非空值中字符串占比 ≥ 70%（csv.Sniffer 思路：数据行多为数字/日期）
+    3. 找不到 → 返回 0（标准表格，不影响现有行为）
+    """
+    if not rows:
+        return 0
+
+    # ── Step 1: 统计每行非空数，取众数 ──
+    from collections import Counter
+
+    counts: list[int] = []
+    for row in rows[:_HEADER_MAX_SCAN]:
+        n = sum(1 for c in row if c is not None and str(c).strip())
+        counts.append(n)
+
+    # 排除只有 0-1 个非空值的行（标题/空行），只统计数据区
+    data_counts = [c for c in counts if c > 1]
+    if not data_counts:
+        return 0
+    modal = Counter(data_counts).most_common(1)[0][0]
+
+    threshold = modal * 0.5
+
+    # ── Step 2: 找第一行满足 非空数≥阈值 + 字符串占比≥70% ──
+    for i, row in enumerate(rows[:_HEADER_MAX_SCAN]):
+        non_null = [c for c in row if c is not None and str(c).strip()]
+        if len(non_null) < threshold:
+            continue
+
+        # 类型验证：表头行的值应该大部分是字符串
+        str_count = sum(1 for v in non_null if isinstance(v, str))
+        if str_count / len(non_null) >= _HEADER_STR_RATIO:
+            return i
+
+    return 0
+
+
 def _coerce_object_columns(df) -> None:
     """瀑布式类型推断：numeric → datetime → str 兜底。
 
@@ -198,8 +245,25 @@ def _convert_excel_to_parquet(
         else sheet if sheet is not None
         else 0
     )
-    df = pd.read_excel(xl, sheet_name=target_sheet, engine="calamine")
+
+    # 自动检测表头行（messytables 众数法 + csv.Sniffer 类型验证）
+    df_raw = pd.read_excel(
+        xl, sheet_name=target_sheet, engine="calamine",
+        header=None, nrows=_HEADER_MAX_SCAN,
+    )
+    header_row = detect_header_row(df_raw.values.tolist())
+
+    df = pd.read_excel(
+        xl, sheet_name=target_sheet, engine="calamine",
+        header=header_row,
+    )
     xl.close()
+
+    if header_row > 0:
+        logger.info(
+            f"Excel header auto-detected | src={Path(excel_path).name} "
+            f"| header_row={header_row}"
+        )
 
     # 瀑布式类型推断（行业标准：Spark/Polars/Airbyte 同模式）
     # 对 object 列按 int → float → datetime → str 顺序尝试转换

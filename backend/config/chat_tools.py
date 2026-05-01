@@ -157,7 +157,7 @@ TOOL_SYSTEM_PROMPT = """# 做事原则
 
 ### erp_agent — ERP 数据查询
 从 ERP 系统查询业务数据。返回数据摘要或 staging 文件引用。
-含 staging 引用时用 code_execute 读取处理。参数不足时用 ask_user 补充。
+含 staging 引用时用 data_query SQL 查询提取所需数据。参数不足时用 ask_user 补充。
 数据量过大被拒绝时，根据返回的建议缩小范围后重试。
 
 ### erp_analyze — ERP 分析（计划模式专用）
@@ -204,7 +204,7 @@ TOOL_SYSTEM_PROMPT = """# 做事原则
 - 只支持单文件查询，多文件对比用多次并行调用分别聚合后合并
 
 ### file_list / file_search — 工作区文件发现
-查看工作区有哪些文件、搜索特定文件。Excel/二进制文件用 code_execute 读取，不能用 file_read。
+查看工作区有哪些文件、搜索特定文件。Excel/CSV/Parquet 等数据文件用 data_query 查询，不能用 file_read。
 
 ### search_knowledge — 知识库
 业务规则、操作流程等非数据类问题。
