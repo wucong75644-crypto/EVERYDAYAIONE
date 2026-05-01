@@ -320,9 +320,22 @@ class TestParseLLMResponse:
 
 
 class TestFilterSchemas:
+    """filter_schemas 核心逻辑测试。
+
+    注意：≤5 个文件时 filter_schemas 全量注入，不走 embedding/LLM。
+    测试 embedding/LLM 路径需要 >5 个文件。_pad_entries 辅助填充到 6+。
+    """
+
     def _make_entry(self, name: str, emb=None):
         ref = _make_file_ref(name)
         return (f"key_{name}", ref, f"schema for {name}", emb)
+
+    def _pad_entries(self, entries: list, target: int = 6, emb=None) -> list:
+        """填充到 target 个条目（触发 embedding/LLM 过滤路径）"""
+        while len(entries) < target:
+            i = len(entries)
+            entries.append(self._make_entry(f"_pad_{i}.parquet", emb=emb or [0.0, 0.0, 0.0]))
+        return entries
 
     @pytest.mark.asyncio
     async def test_single_entry_returns_directly(self):
@@ -343,39 +356,38 @@ class TestFilterSchemas:
 
     @pytest.mark.asyncio
     async def test_embedding_match(self):
-        """有 embedding 且相似度高 → 返回匹配条目"""
+        """有 embedding 且相似度高 → 返回匹配条目（需 >5 文件触发过滤）"""
         high_sim_emb = [1.0, 0.0, 0.0]
         entry1 = self._make_entry("match.parquet", emb=high_sim_emb)
         entry2 = self._make_entry("other.parquet", emb=[0.0, 1.0, 0.0])
+        entries = self._pad_entries([entry1, entry2], 6, emb=[0.0, 0.0, 1.0])
 
-        # mock _filter_by_embedding 内部的 compute_embedding
-        async def _mock_filter(query, entries):
-            # 模拟: entry1 匹配, entry2 不匹配
-            return [(entries[0][0], entries[0][1], entries[0][2])]
+        async def _mock_filter(query, all_entries):
+            return [(all_entries[0][0], all_entries[0][1], all_entries[0][2])]
 
         with patch(
             "services.agent.schema_filter._filter_by_embedding",
             new_callable=AsyncMock,
             side_effect=_mock_filter,
         ):
-            result = await filter_schemas("查订单", [entry1, entry2], [])
+            result = await filter_schemas("查订单", entries, [])
         assert len(result) == 1
         assert result[0][1].filename == "match.parquet"
 
     @pytest.mark.asyncio
     async def test_no_embedding_falls_to_llm(self):
-        """无 embedding → 降级到 LLM"""
+        """无 embedding → 降级到 LLM（需 >5 文件触发过滤）"""
         entry1 = self._make_entry("a.parquet", emb=None)
         entry2 = self._make_entry("b.parquet", emb=None)
+        entries = self._pad_entries([entry1, entry2], 6, emb=None)
         recent = [(entry1[0], entry1[1], entry1[2])]
 
-        # LLM 也失败 → 返回 recent
         with patch(
             "services.agent.schema_filter._filter_by_llm",
             new_callable=AsyncMock,
             return_value=None,
         ):
-            result = await filter_schemas("查数据", [entry1, entry2], recent)
+            result = await filter_schemas("查数据", entries, recent)
         assert len(result) == 1  # recent fallback
 
     @pytest.mark.asyncio
@@ -384,19 +396,19 @@ class TestFilterSchemas:
         low_emb = [0.0, 0.0, 1.0]
         entry1 = self._make_entry("a.parquet", emb=low_emb)
         entry2 = self._make_entry("b.parquet", emb=low_emb)
+        entries = self._pad_entries([entry1, entry2], 6, emb=low_emb)
         recent = [(entry1[0], entry1[1], entry1[2])]
 
-        # mock: embedding 匹配返回空（全部低于阈值）
         with patch(
             "services.agent.schema_filter._filter_by_embedding",
             new_callable=AsyncMock,
-            return_value=[],  # 无匹配
+            return_value=[],
         ), patch(
             "services.agent.schema_filter._filter_by_llm",
             new_callable=AsyncMock,
             return_value=None,
         ):
-            result = await filter_schemas("查数据", [entry1, entry2], recent)
+            result = await filter_schemas("查数据", entries, recent)
         assert len(result) == 1  # recent fallback
 
     @pytest.mark.asyncio
@@ -404,6 +416,7 @@ class TestFilterSchemas:
         """embedding 全低 → LLM 成功返回匹配"""
         entry1 = self._make_entry("a.parquet", emb=[0.0, 0.0, 1.0])
         entry2 = self._make_entry("b.parquet", emb=[0.0, 0.0, 1.0])
+        entries = self._pad_entries([entry1, entry2], 6, emb=[0.0, 0.0, 1.0])
         llm_match = [(entry2[0], entry2[1], entry2[2])]
 
         with patch(
@@ -415,7 +428,7 @@ class TestFilterSchemas:
             new_callable=AsyncMock,
             return_value=llm_match,
         ):
-            result = await filter_schemas("查退货", [entry1, entry2], [])
+            result = await filter_schemas("查退货", entries, [])
         assert len(result) == 1
         assert result[0][1].filename == "b.parquet"
 
@@ -557,20 +570,25 @@ class TestFilterByEmbedding:
 class TestFilterByLLMIntegration:
     """_filter_by_llm 通过 filter_schemas 三级降级链验证。
 
-    直接导入 _filter_by_llm 需要 core.config（pydantic_settings），
-    在轻量测试环境不可用。通过 mock 整个函数在 filter_schemas 中测试行为。
-    _parse_llm_response 的纯逻辑已在 TestParseLLMResponse 中覆盖。
+    注意：≤5 个文件全量注入，不走 LLM 降级。需 >5 文件测试降级路径。
     """
 
     def _make_entry(self, name, emb=None):
         ref = _make_file_ref(name)
         return (f"key_{name}", ref, f"schema for {name}", emb)
 
+    def _pad_entries(self, entries, target=6):
+        while len(entries) < target:
+            i = len(entries)
+            entries.append(self._make_entry(f"_pad_{i}.parquet"))
+        return entries
+
     @pytest.mark.asyncio
     async def test_llm_success_returns_matched(self):
         """embedding 无 → LLM 成功 → 返回结果"""
         entry1 = self._make_entry("a.parquet")
         entry2 = self._make_entry("b.parquet")
+        entries = self._pad_entries([entry1, entry2])
         llm_match = [(entry2[0], entry2[1], entry2[2])]
 
         with patch(
@@ -578,7 +596,7 @@ class TestFilterByLLMIntegration:
             new_callable=AsyncMock,
             return_value=llm_match,
         ):
-            result = await filter_schemas("查退货", [entry1, entry2], [])
+            result = await filter_schemas("查退货", entries, [])
 
         assert len(result) == 1
         assert result[0][1].filename == "b.parquet"
@@ -588,13 +606,14 @@ class TestFilterByLLMIntegration:
         """LLM 判断无相关 → 返回空列表（不走兜底）"""
         entry1 = self._make_entry("a.parquet")
         entry2 = self._make_entry("b.parquet")
+        entries = self._pad_entries([entry1, entry2])
 
         with patch(
             "services.agent.schema_filter._filter_by_llm",
             new_callable=AsyncMock,
-            return_value=[],  # 无相关
+            return_value=[],
         ):
-            result = await filter_schemas("完全无关", [entry1, entry2], [])
+            result = await filter_schemas("完全无关", entries, [])
 
         assert result == []
 
@@ -603,6 +622,7 @@ class TestFilterByLLMIntegration:
         """LLM 失败（返回 None）→ 走 recent 兜底"""
         entry1 = self._make_entry("a.parquet")
         entry2 = self._make_entry("b.parquet")
+        entries = self._pad_entries([entry1, entry2])
         recent = [(entry1[0], entry1[1], entry1[2])]
 
         with patch(
@@ -610,7 +630,7 @@ class TestFilterByLLMIntegration:
             new_callable=AsyncMock,
             return_value=None,
         ):
-            result = await filter_schemas("查数据", [entry1, entry2], recent)
+            result = await filter_schemas("查数据", entries, recent)
 
         assert len(result) == 1  # recent 兜底
 
@@ -674,19 +694,24 @@ class TestInjectSchemaContextBehavior:
 
     @pytest.mark.asyncio
     async def test_filter_empty_result_no_injection(self):
-        """多文件 + 全部不匹配 → filter 返回空"""
+        """多文件(>5) + 全部不匹配 → filter 返回空"""
         conv_reg = get_conversation_registry("conv-2")
-        conv_reg.register("trade", "tool1", _make_file_ref("a.parquet"), schema_text="schema_a")
-        conv_reg.register("stock", "tool2", _make_file_ref("b.parquet"), schema_text="schema_b")
+        # 注册 6 个文件触发 embedding/LLM 过滤路径
+        for i in range(6):
+            conv_reg.register(
+                f"domain{i}", f"tool{i}",
+                _make_file_ref(f"f{i}.parquet"),
+                schema_text=f"schema_{i}",
+            )
 
         schema_entries = conv_reg.get_schema_entries()
         recent_entries = conv_reg.get_recent_schema_entries(3)
 
-        # 两文件，无 embedding → 走 LLM → LLM 也判断无关 → 返回空
+        # 无 embedding → 走 LLM → LLM 判断无关 → 返回空
         with patch(
             "services.agent.schema_filter._filter_by_llm",
             new_callable=AsyncMock,
-            return_value=[],  # 无相关
+            return_value=[],
         ):
             matched = await filter_schemas("完全无关的闲聊", schema_entries, recent_entries)
         assert matched == []
@@ -896,3 +921,84 @@ class TestRegistryPublicMethods:
         registry.register("d", "t", _make_file_ref("f.parquet"))
         oldest = registry.get_oldest_keys(10)
         assert len(oldest) == 1
+
+
+# ============================================================
+# _pending_schemas 收集协议测试
+# ============================================================
+
+
+class TestPendingSchemaProtocol:
+    """data_query / fetch_all_pages → _pending_schemas → registry 全链路"""
+
+    def test_register_schemas_from_tools_creates_entries(self):
+        """_register_schemas_from_tools 将 pending 条目写入 registry"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+        from services.agent.session_file_registry import (
+            get_conversation_registry, _conversation_registries,
+        )
+
+        conv_id = "test_pending_schema_001"
+        _conversation_registries.pop(conv_id, None)
+
+        pending = [
+            ("利润表.xlsx", "/tmp/利润表.xlsx", "利润表.xlsx | 307行 × 10列\n列: 店铺名(text), 实付金额(float)"),
+            ("运营分组.xlsx", "/tmp/运营分组.xlsx", "运营分组.xlsx | 108行 × 3列\n列: 运营(text), 店铺名(text)"),
+        ]
+
+        ChatToolMixin._register_schemas_from_tools(conv_id, pending)
+
+        registry = get_conversation_registry(conv_id)
+        entries = registry.get_schema_entries()
+        assert len(entries) == 2
+        schemas = [e[2] for e in entries]
+        assert any("利润表" in s for s in schemas)
+        assert any("运营分组" in s for s in schemas)
+
+        _conversation_registries.pop(conv_id, None)
+
+    def test_register_schemas_empty_pending(self):
+        """空 pending 不报错"""
+        from services.handlers.chat_tool_mixin import ChatToolMixin
+        from services.agent.session_file_registry import _conversation_registries
+
+        conv_id = "test_pending_empty"
+        _conversation_registries.pop(conv_id, None)
+        ChatToolMixin._register_schemas_from_tools(conv_id, [])
+        _conversation_registries.pop(conv_id, None)
+
+
+class TestFilterSchemasFullInject:
+    """≤5 个文件时全量注入，跳过相似度过滤"""
+
+    def _make_entry(self, name: str, emb=None):
+        ref = _make_file_ref(name)
+        return (f"key_{name}", ref, f"schema for {name}", emb)
+
+    @pytest.mark.asyncio
+    async def test_two_files_full_inject(self):
+        """2 个文件 → 全量注入，不走 embedding"""
+        entries = [self._make_entry("a.parquet"), self._make_entry("b.parquet")]
+        result = await filter_schemas("任意查询", entries, [])
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_five_files_full_inject(self):
+        """5 个文件 → 全量注入"""
+        entries = [self._make_entry(f"f{i}.parquet") for i in range(5)]
+        result = await filter_schemas("任意查询", entries, [])
+        assert len(result) == 5
+
+    @pytest.mark.asyncio
+    async def test_six_files_uses_embedding(self):
+        """6 个文件 → 走 embedding 过滤"""
+        entries = [
+            self._make_entry(f"f{i}.parquet", emb=[float(i), 0.0, 0.0])
+            for i in range(6)
+        ]
+        # 不 mock embedding → _filter_by_embedding 会失败 → 降级
+        # 降级 LLM 也不可用 → 兜底返回最近3个
+        recent = [(entries[0][0], entries[0][1], entries[0][2])]
+        result = await filter_schemas("查询", entries, recent)
+        # 不应该是 6 个全量（那是 ≤5 的行为）
+        assert len(result) < 6
