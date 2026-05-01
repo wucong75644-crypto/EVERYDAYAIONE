@@ -266,8 +266,8 @@ class TestExecuteSafetyGuards:
             result = await agent.execute()
 
         # 循环检测：3 次后中止
-        # adapter.call_count 应该 ≤ 3（第 4 轮没被调）
-        assert adapter.call_count <= 3
+        # adapter.call_count 应该 ≤ 4（3 轮工具 + 最多 1 次 wrap_up 合成）
+        assert adapter.call_count <= 4
         assert result.status == "success"  # 仍然返回，只是 text 是最后一次工具结果
 
     @pytest.mark.asyncio

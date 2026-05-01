@@ -315,11 +315,11 @@ class TemporalValidatorHook(LoopHook):
 # ============================================================
 
 class FailureReflectionHook(LoopHook):
-    """工具返回错误时，往 messages 注入 system message 引导模型分析
+    """工具返回错误时注入辅助提示（仅 Layer 3 辅助，不做决策）。
 
+    决策由 ToolLoopExecutor.run() 中的 stop_policy.evaluate() 完成。
+    本 Hook 只负责注入 system message 帮助模型理解错误原因。
     只匹配工具错误框架生成的固定前缀，不匹配业务数据中的"错误"/"失败"。
-
-    副作用：mutate ctx.messages（追加 system 消息）。
     """
 
     _ERROR_PREFIXES = (
@@ -345,17 +345,16 @@ class FailureReflectionHook(LoopHook):
     ) -> None:
         if not result:
             return
+        text = str(result)
         if not (
-            result.startswith(self._ERROR_PREFIXES)
-            or "Error:" in result[:100]
+            text.startswith(self._ERROR_PREFIXES)
+            or "Error:" in text[:100]
         ):
             return
+        # 只注入错误描述，不给"选项"——选项由运行时 strip tools 决定
         ctx.messages.append({
             "role": "system",
-            "content": (
-                f"工具 {tool_name} 返回了错误。请分析原因后选择："
-                f"1) 换参数重试 2) 换工具 3) 用 ask_user 向用户确认"
-            ),
+            "content": f"工具 {tool_name} 返回了错误：{text[:200]}",
         })
 
 

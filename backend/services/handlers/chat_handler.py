@@ -33,11 +33,12 @@ from services.handlers.chat_stream_support_mixin import ChatStreamSupportMixin
 from services.handlers.chat_tool_mixin import ChatToolMixin, accumulate_tool_call_delta
 from services.websocket_manager import ws_manager
 
-# 优雅降级提示消息
+# 优雅降级提示消息（去领域化，有 Final Synthesis Turn 后仅作兜底）
 _STOP_MESSAGES = {
-    "max_turns": "查询涉及多个步骤，已达到单次对话工具调用上限。请缩小查询范围或分步提问。",
-    "max_tokens": "本次查询消耗的数据量过大，请缩小查询范围。",
-    "wall_timeout": "查询耗时过长，请稍后重试。",
+    "wrap_up_budget": "接近执行上限，正在总结当前进展。",
+    "max_turns": "已达到单次对话工具调用上限。",
+    "max_tokens": "本次任务消耗的资源过大，请缩小范围或分步进行。",
+    "wall_timeout": "任务耗时过长，请稍后重试。",
 }
 
 
@@ -874,7 +875,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 # 继续循环，让 AI 看到工具结果
                 logger.info(f"Tool turn {turn + 1} complete | task={task_id} | continuing loop")
 
-            # 优雅降级：预算耗尽时追加提示或报错
+            # 优雅降级：预算耗尽时 Final Synthesis Turn
             _stop = _budget.stop_reason
             _budget_error_sent = False
             if _stop:
@@ -882,11 +883,23 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     f"Budget exhausted | task={task_id} | reason={_stop} | "
                     f"turns={_budget.turns_used} | tokens={_budget.tokens_used}"
                 )
-                if accumulated_text:
-                    # 有部分结果 → 追加提示后正常返回
+
+                # Final Synthesis Turn — 调 LLM 生成总结
+                from services.agent.stop_policy import synthesize_wrap_up
+                _synthesis = await synthesize_wrap_up(
+                    adapter=self._adapter,
+                    messages=messages,
+                    content_blocks=_content_blocks,
+                    reason=_STOP_MESSAGES.get(_stop, _stop),
+                )
+
+                if _synthesis:
+                    accumulated_text = _synthesis
+                elif accumulated_text:
+                    # 合成失败但有部分结果 → 追加提示
                     accumulated_text += f"\n\n> ⚠️ 已达到执行上限（{_STOP_MESSAGES.get(_stop, _stop)}），以上为部分结果。"
                 else:
-                    # 无结果 → 走 error 路径，阻止后续 on_complete
+                    # 完全无结果 → hard_fail
                     await self.on_error(
                         task_id=task_id,
                         error_code="BUDGET_EXCEEDED",

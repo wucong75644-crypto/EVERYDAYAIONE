@@ -68,6 +68,9 @@ class ToolLoopExecutor:
         self._cache = ToolResultCache()
         # 会话级文件注册表（供 ComputeAgent 按域查找 staging 文件）
         self._file_registry = file_registry or SessionFileRegistry()
+        # 停止策略：本轮所有工具的原始结果（供 run() 中 classify 使用）
+        # 每项: (tool_name, result, audit_status)
+        self._turn_tool_outcomes: List[Tuple[str, Any, str]] = []
 
     # ========================================
     # 工具循环主逻辑
@@ -108,6 +111,19 @@ class ToolLoopExecutor:
         context_recovery_used = False
         self._collected_files: List[Dict[str, Any]] = []
 
+        # ── 停止策略：初始化追踪器和配置 ──
+        from services.agent.stop_policy import (
+            FailureTracker, StopPolicyConfig,
+            classify_tool_result, evaluate, StopDecision, ResultClass,
+        )
+        stop_config = self.config.stop_config or StopPolicyConfig()
+        tracker = FailureTracker()
+        stop_reason = ""
+        wrap_up_reason = ""
+        _force_ask_user_next_turn = False
+        _tools_stripped = False  # strip tools 是否生效过
+        _original_selected_tools = list(selected_tools)  # strip tools 恢复用
+
         for turn in range(self.config.max_turns):
             hook_ctx.turn = turn + 1
 
@@ -116,6 +132,23 @@ class ToolLoopExecutor:
             )
             if not should_continue:
                 break
+
+            # ── strip tools：ASK_USER 决策后只保留 ask_user ──
+            if _force_ask_user_next_turn:
+                selected_tools[:] = [
+                    t for t in _original_selected_tools
+                    if t.get("function", {}).get("name") == "ask_user"
+                ]
+                _tools_stripped = True
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "工具连续执行遇到问题，继续重试不太可能成功。"
+                        "请用 ask_user 向用户说明："
+                        "1) 你在尝试做什么 2) 遇到了什么 3) 需要用户提供什么。"
+                    ),
+                })
+                _force_ask_user_next_turn = False
 
             try:
                 tc_acc, turn_text, turn_tokens, _pt, _ct = await self._stream_one_turn(
@@ -148,6 +181,7 @@ class ToolLoopExecutor:
             completed = sorted(tc_acc.values(), key=lambda x: x.get("id", ""))
 
             if self._is_loop_detected(completed, recent_calls):
+                stop_reason = "loop_detected"
                 break
 
             accumulated_text = await self._execute_tools(
@@ -162,14 +196,68 @@ class ToolLoopExecutor:
                 exit_via_ask_user = has_ask_user
                 break
 
+            # ── 停止策略：分类 + 追踪 + 决策 ──
+            # 遍历本轮所有工具结果，取最严重的做决策
+            from services.agent.stop_policy import most_severe
+            from services.agent.agent_result import AgentResult
+
+            turn_classes: List[ResultClass] = []
+            worst_tool_name = ""
+            for _tn, _res, _aud in self._turn_tool_outcomes:
+                rc = classify_tool_result(_res, _aud)
+                turn_classes.append(rc)
+                if rc == ResultClass.SUCCESS:
+                    tracker.record_success()
+                else:
+                    error_text = ""
+                    if isinstance(_res, AgentResult):
+                        error_text = _res.error_message
+                    elif isinstance(_res, str):
+                        error_text = _res
+                    tracker.record_failure(_tn, error_text)
+                    worst_tool_name = _tn
+            self._turn_tool_outcomes.clear()
+
+            result_class = most_severe(turn_classes)
+            decision = evaluate(
+                tracker, result_class, stop_config,
+                turns_remaining=self.config.max_turns - (turn + 1),
+            )
+
+            # ── 决策日志（非 CONTINUE 时记录） ──
+            if decision != StopDecision.CONTINUE:
+                logger.info(
+                    f"StopPolicy decision | tool={worst_tool_name or 'multi'} | "
+                    f"result_class={result_class.value} | decision={decision.value} | "
+                    f"consecutive={tracker.consecutive_failures} | "
+                    f"same_streak={tracker.same_error_streak} | "
+                    f"turns_remaining={self.config.max_turns - (turn + 1)}"
+                )
+
+            if decision == StopDecision.ASK_USER:
+                _force_ask_user_next_turn = True
+            elif decision == StopDecision.WRAP_UP:
+                stop_reason = "wrap_up_failure"
+                wrap_up_reason = (
+                    f"consecutive_failures={tracker.consecutive_failures} | "
+                    f"result_class={result_class.value}"
+                )
+                break
+            # CONTINUE / HARD_FAIL(不在此层处理) → 继续循环
+
             logger.info(
                 f"ToolLoop turn {turn + 1} | "
                 f"tools={[tc['name'] for tc in completed]}"
             )
 
+        # strip tools 后恢复（确保不影响调用方的 selected_tools）
+        if _tools_stripped:
+            selected_tools[:] = _original_selected_tools
+
         return await self._finalize(
             accumulated_text, total_tokens, turn,
             is_llm_synthesis, exit_via_ask_user, hook_ctx,
+            stop_reason=stop_reason, wrap_up_reason=wrap_up_reason,
         )
 
     def _is_loop_detected(
@@ -199,8 +287,31 @@ class ToolLoopExecutor:
         is_llm_synthesis: bool,
         exit_via_ask_user: bool,
         hook_ctx: HookContext,
+        stop_reason: str = "",
+        wrap_up_reason: str = "",
     ) -> LoopResult:
-        """循环退出后的兜底文本 + 合成 hook 链 + 打包 LoopResult"""
+        """循环退出后的兜底文本 / wrap_up 合成 / hook 链 + 打包 LoopResult"""
+        # ── wrap_up 合成（stop_reason 非空 且 不是 ask_user 退出） ──
+        if stop_reason and not exit_via_ask_user and not is_llm_synthesis:
+            from services.agent.stop_policy import synthesize_wrap_up
+            synthesis = await synthesize_wrap_up(
+                adapter=self.adapter,
+                messages=hook_ctx.messages,
+                collected_files=self._collected_files,
+                reason=wrap_up_reason or stop_reason,
+            )
+            if synthesis:
+                accumulated_text = synthesis
+                is_llm_synthesis = True
+                logger.info(
+                    f"ToolLoop wrap_up synthesis OK | reason={stop_reason} | "
+                    f"len={len(synthesis)}"
+                )
+            else:
+                logger.warning(
+                    f"ToolLoop wrap_up synthesis failed | reason={stop_reason}"
+                )
+
         if not is_llm_synthesis:
             logger.warning(
                 f"ToolLoop exited without synthesis | "
@@ -222,6 +333,8 @@ class ToolLoopExecutor:
             is_llm_synthesis=is_llm_synthesis,
             exit_via_ask_user=exit_via_ask_user,
             collected_files=self._collected_files,
+            stop_reason=stop_reason,
+            wrap_up_reason=wrap_up_reason,
         )
 
     def _try_recover_from_context_error(
@@ -479,6 +592,7 @@ class ToolLoopExecutor:
         """执行一轮工具调用（含退出信号短路、缓存、超时、hook 触发、自动扩展）"""
         messages = hook_ctx.messages
         tools_called = hook_ctx.tools_called
+        self._turn_tool_outcomes.clear()  # 清空上一轮残留
 
         asst_msg: Dict[str, Any] = {
             "role": "assistant", "content": turn_text or None,
@@ -671,6 +785,9 @@ class ToolLoopExecutor:
                 "content": content,
             })
             accumulated = content
+
+            # 停止策略：记录本轮工具结果（供 run() 中 classify 使用）
+            self._turn_tool_outcomes.append((tool_name, result, audit_status))
 
             # Hook 链：单工具执行后（审计 + 失败反思等）
             for hook in self.hooks:

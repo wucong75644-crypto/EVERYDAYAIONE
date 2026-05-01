@@ -33,11 +33,13 @@ class ExecutionBudget:
         max_tokens: int = 200_000,
         max_wall_time: float = 600.0,
         reserved_for_response: int = 4000,
+        wrap_up_turns_reserved: int = 1,
     ) -> None:
         self._max_turns = max_turns
         self._max_tokens = max_tokens
         self._max_wall_time = max_wall_time
         self._reserved_for_response = reserved_for_response
+        self._wrap_up_turns_reserved = wrap_up_turns_reserved
         self._turns_used = 0
         self._tokens_used = 0
         self._per_tool_tokens: dict[str, int] = {}
@@ -117,9 +119,18 @@ class ExecutionBudget:
 
     @property
     def stop_reason(self) -> Optional[str]:
-        """返回第一个触发的限制，或 None（还能继续）"""
+        """返回第一个触发的限制，或 None（还能继续）
+
+        优先级：wrap_up_budget（提前预留）> max_turns > max_tokens > wall_timeout
+        wrap_up_budget 在 max_turns - reserved 时触发，预留轮次给 synthesize_wrap_up。
+        """
         if self._turns_used >= self._max_turns:
-            return "max_turns"
+            return "max_turns"     # 最终兜底（wrap_up 合成也用完时）
+        if (
+            self._wrap_up_turns_reserved > 0
+            and self._turns_used >= self._max_turns - self._wrap_up_turns_reserved
+        ):
+            return "wrap_up_budget"
         if self._tokens_used >= self._max_tokens:
             return "max_tokens"
         if self.elapsed >= self._max_wall_time:
@@ -146,6 +157,7 @@ class ExecutionBudget:
             max_tokens=self.tokens_remaining + self._reserved_for_response,
             max_wall_time=self.remaining,
             reserved_for_response=self._reserved_for_response,
+            wrap_up_turns_reserved=self._wrap_up_turns_reserved,
         )
         child._parent = self
         return child

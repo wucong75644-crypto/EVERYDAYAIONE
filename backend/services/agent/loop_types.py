@@ -12,7 +12,10 @@ ERPAgent 与 ScheduledTaskAgent 共用同一 ToolLoopExecutor，
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from services.agent.stop_policy import StopPolicyConfig
 
 
 # ============================================================
@@ -31,6 +34,8 @@ class LoopConfig:
     no_synthesis_fallback_text: str = (
         "查询过程中未能生成完整结论，请重新提问或缩小查询范围。"
     )
+    stop_config: Optional["StopPolicyConfig"] = None
+    """停止策略配置（None 时使用 StopPolicyConfig 默认值）"""
 
 
 # ============================================================
@@ -76,6 +81,10 @@ class LoopResult:
     collected_files: List[Dict[str, Any]] = field(default_factory=list)
     # 工具循环中提取的 [FILE] 标记，独立通道透传，不经过 LLM
     # 每项: {"url": str, "name": str, "mime_type": str, "size": int}
+    stop_reason: str = ""
+    """停止原因：wrap_up_failure / wrap_up_budget / loop_detected / 空=正常退出"""
+    wrap_up_reason: str = ""
+    """收尾详情（如 consecutive_failures=3）"""
 
 
 # ============================================================
