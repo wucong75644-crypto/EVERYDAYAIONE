@@ -164,7 +164,23 @@ class DataQueryExecutor:
     # ── 路径解析 ──────────────────────────────────────
 
     def _resolve_file_path(self, file_input: str) -> str:
-        """workspace 根目录 → staging → staging 子路径 → 报错。"""
+        """缓存优先 → 文件系统兜底。
+
+        解析顺序：
+        1. 对话级文件缓存（file_list 注册的 文件名→绝对路径 映射，含去空格匹配）
+        2. workspace / staging 目录直接查找（未经 file_list 的文件）
+        """
+        # ── 第一优先：对话级缓存（精确匹配 + 去空格匹配）──
+        from services.agent.workspace_file_handles import get_file_cache
+        cache = get_file_cache(self.conversation_id)
+        cached_path = cache.resolve(file_input)
+        if cached_path:
+            candidate = Path(cached_path)
+            if candidate.exists() and candidate.is_file():
+                self._check_path_safety(candidate)
+                return str(candidate.resolve())
+
+        # ── 兜底：文件系统直接查找 ──
         ws = Path(self._workspace_dir)
         staging = Path(self._staging_dir)
 

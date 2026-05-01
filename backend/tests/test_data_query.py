@@ -857,6 +857,65 @@ class TestDataQueryExecutorLastFileMeta:
         assert executor.last_file_meta is None
 
 
+class TestFilePathCache:
+    """对话级文件路径缓存"""
+
+    def test_register_and_resolve(self):
+        """注册后精确匹配"""
+        from services.agent.workspace_file_handles import FilePathCache
+
+        cache = FilePathCache()
+        cache.register("利润表.xlsx", "/workspace/利润表.xlsx")
+        assert cache.resolve("利润表.xlsx") == "/workspace/利润表.xlsx"
+
+    def test_resolve_with_spaces(self):
+        """LLM 加空格后仍能匹配"""
+        from services.agent.workspace_file_handles import FilePathCache
+
+        cache = FilePathCache()
+        cache.register(
+            "利润表-店铺利润表-2026-04-20_2026-04-26-导出20260427201027_65109_hl22DH_e3ea4b.xlsx",
+            "/workspace/real_path.xlsx",
+        )
+        # LLM 加了空格
+        result = cache.resolve(
+            "利润表 - 店铺利润表 -2026-04-20_2026-04-26-导出 20260427201027_65109_hl22DH_e3ea4b.xlsx"
+        )
+        assert result == "/workspace/real_path.xlsx"
+
+    def test_resolve_miss(self):
+        """未注册的文件名返回 None"""
+        from services.agent.workspace_file_handles import FilePathCache
+
+        cache = FilePathCache()
+        assert cache.resolve("不存在.xlsx") is None
+
+    def test_duplicate_register_overwrites(self):
+        """重复注册同名文件覆盖路径"""
+        from services.agent.workspace_file_handles import FilePathCache
+
+        cache = FilePathCache()
+        cache.register("data.xlsx", "/old/path.xlsx")
+        cache.register("data.xlsx", "/new/path.xlsx")
+        assert cache.resolve("data.xlsx") == "/new/path.xlsx"
+
+    def test_conversation_level_isolation(self):
+        """不同对话的缓存互不影响"""
+        from services.agent.workspace_file_handles import get_file_cache, _caches
+
+        _caches.pop("conv-a", None)
+        _caches.pop("conv-b", None)
+
+        cache_a = get_file_cache("conv-a")
+        cache_a.register("file.xlsx", "/a/file.xlsx")
+
+        cache_b = get_file_cache("conv-b")
+        assert cache_b.resolve("file.xlsx") is None
+
+        _caches.pop("conv-a", None)
+        _caches.pop("conv-b", None)
+
+
 class TestDetectHeaderRow:
     """detect_header_row: messytables 众数法 + csv.Sniffer 类型验证"""
 

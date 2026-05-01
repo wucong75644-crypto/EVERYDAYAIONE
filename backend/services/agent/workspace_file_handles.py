@@ -1,116 +1,93 @@
 """
-统一文件句柄注册表 — 对标 OpenAI Code Interpreter file_id 机制。
+对话级文件路径缓存 — 复用 [FILE] 标记设计思想。
 
 解决的问题：
-  LLM 抄写长路径（中文/空格/192个sheet名）极易出错。
-  本模块给所有文件（workspace + staging）统一分配短句柄（F1, F2...），
-  LLM 全程只用句柄，系统层替换为真实路径。
+  LLM 重新生成长文件名时加空格导致找不到文件。
+  本模块在 file_list/file_search 发现文件时注册 文件名→绝对路径 映射，
+  data_query/file_read 执行时查缓存替换，LLM 打的文件名不需要完全精确。
 
-生命周期：一个对话一个实例（挂在 ToolExecutor 上）。
-
-注册来源：
-  - file_list 发现 workspace 文件 → ToolExecutor._file_list_with_handles 注册
-  - 工具产出 staging 文件 → ToolLoopExecutor._register_result_files 注册
-
-翻译入口（唯一）：
-  - ToolExecutor._file_dispatch 翻译 "F1" → 绝对路径（file 工具）
-  - ToolExecutor._code_execute 注入 FILES 字典（沙盒）
+对话级生命周期（复用 session_file_registry 的模块级 dict 模式）：
+  - file_list 发现文件 → register()
+  - data_query/file_read 解析文件 → resolve()
+  - 新对话 → file_list 重新注册
 """
 from __future__ import annotations
 
-import re
+import time as _time
 
-_HANDLE_RE = re.compile(r"^F(\d+)$", re.IGNORECASE)
+# ============================================================
+# 对话级缓存（模块级 dict，按 conversation_id 隔离）
+# ============================================================
+
+_MAX_CONVERSATIONS = 200
 
 
-class WorkspaceFileHandles:
-    """会话级 workspace 文件句柄映射。
+class FilePathCache:
+    """单个对话的文件路径缓存。
 
-    线程安全说明：单个对话串行执行工具调用，无并发写入。
+    线程安全：单个对话串行执行工具调用，无并发写入。
     """
 
-    __slots__ = ("_path_to_handle", "_handle_to_path", "_handle_to_name", "_counter")
+    __slots__ = ("_name_to_path", "_normalized_index")
 
     def __init__(self) -> None:
-        self._path_to_handle: dict[str, str] = {}   # abs_path → "F1"
-        self._handle_to_path: dict[str, str] = {}   # "F1" → abs_path
-        self._handle_to_name: dict[str, str] = {}   # "F1" → filename
-        self._counter: int = 0
+        self._name_to_path: dict[str, str] = {}      # 文件名 → 绝对路径
+        self._normalized_index: dict[str, str] = {}   # 去空格文件名 → 绝对路径
 
-    # ----------------------------------------------------------
-    # 注册
-    # ----------------------------------------------------------
+    def register(self, filename: str, abs_path: str) -> None:
+        """注册文件。重复文件名覆盖（同名文件取最新路径）。"""
+        self._name_to_path[filename] = abs_path
+        self._normalized_index[filename.replace(" ", "")] = abs_path
 
-    def register(self, abs_path: str, filename: str = "") -> str:
-        """注册文件，返回句柄。重复路径返回已有句柄。
+    def resolve(self, filename: str) -> str | None:
+        """解析文件名 → 绝对路径。
 
-        Args:
-            abs_path: 文件绝对路径
-            filename: 显示用文件名（可选，默认从路径提取）
-
-        Returns:
-            句柄字符串，如 "F1"
+        优先精确匹配，其次去空格匹配。
         """
-        existing = self._path_to_handle.get(abs_path)
-        if existing:
-            return existing
-
-        self._counter += 1
-        handle = f"F{self._counter}"
-        self._path_to_handle[abs_path] = handle
-        self._handle_to_path[handle] = abs_path
-        self._handle_to_name[handle] = filename or abs_path.rsplit("/", 1)[-1]
-        return handle
-
-    # ----------------------------------------------------------
-    # 解析
-    # ----------------------------------------------------------
-
-    def resolve(self, handle_or_path: str) -> str | None:
-        """解析句柄 → 绝对路径。非句柄返回 None。
-
-        大小写不敏感：f1 / F1 均可。
-        """
-        key = handle_or_path.strip().upper()
-        return self._handle_to_path.get(key)
-
-    def get_filename(self, handle: str) -> str | None:
-        """获取句柄对应的文件名。"""
-        return self._handle_to_name.get(handle.strip().upper())
-
-    @staticmethod
-    def is_handle(value: str) -> bool:
-        """判断字符串是否为合法句柄格式（F1, F2, ...）。"""
-        return bool(_HANDLE_RE.match(value.strip()))
-
-    # ----------------------------------------------------------
-    # 沙盒注入
-    # ----------------------------------------------------------
-
-    def to_sandbox_dict(self) -> dict[str, str]:
-        """生成供沙盒注入的 FILES 字典。
-
-        Returns:
-            {"F1": "/mnt/.../file.xlsx", "F2": "/mnt/.../data.csv", ...}
-        """
-        return dict(self._handle_to_path)
-
-    # ----------------------------------------------------------
-    # 信息
-    # ----------------------------------------------------------
+        # 精确匹配
+        path = self._name_to_path.get(filename)
+        if path:
+            return path
+        # 去空格匹配（LLM 常在中文-数字、连字符两边加空格）
+        normalized = filename.replace(" ", "")
+        return self._normalized_index.get(normalized)
 
     @property
     def count(self) -> int:
-        return self._counter
-
-    def __len__(self) -> int:
-        return self._counter
-
-    def __bool__(self) -> bool:
-        return self._counter > 0
+        return len(self._name_to_path)
 
     def __repr__(self) -> str:
-        items = ", ".join(
-            f"{h}: {n}" for h, n in self._handle_to_name.items()
-        )
-        return f"WorkspaceFileHandles({items})"
+        names = list(self._name_to_path.keys())[:5]
+        return f"FilePathCache({len(self._name_to_path)} files: {names})"
+
+
+# ============================================================
+# 对话级缓存管理
+# ============================================================
+
+
+_caches: dict[str, FilePathCache] = {}
+_access_times: dict[str, float] = {}
+
+
+def get_file_cache(conversation_id: str) -> FilePathCache:
+    """获取对话级文件缓存（不存在则创建）。"""
+    _access_times[conversation_id] = _time.time()
+    if conversation_id not in _caches:
+        _caches[conversation_id] = FilePathCache()
+        _enforce_lru()
+    return _caches[conversation_id]
+
+
+def _enforce_lru() -> None:
+    """超过上限时淘汰最久未访问的对话。"""
+    if len(_caches) <= _MAX_CONVERSATIONS:
+        return
+    sorted_ids = sorted(
+        _caches.keys(),
+        key=lambda cid: _access_times.get(cid, 0.0),
+    )
+    evict_count = len(_caches) - _MAX_CONVERSATIONS
+    for cid in sorted_ids[:evict_count]:
+        _caches.pop(cid, None)
+        _access_times.pop(cid, None)

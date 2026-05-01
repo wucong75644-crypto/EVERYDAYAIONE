@@ -780,69 +780,43 @@ class TestFileMove:
 
 
 # ============================================================
-# Workspace 文件句柄（F1, F2...）
+# 对话级文件路径缓存（替代旧的 F1/F2 句柄系统）
+# 完整测试见 test_data_query.py::TestFilePathCache
 # ============================================================
 
 
-class TestWorkspaceFileHandles:
-    """测试 WorkspaceFileHandles 句柄注册/解析（纯单元测试）"""
+class TestFilePathCacheCompat:
+    """FilePathCache 基本功能验证（确保旧句柄模块替换后不影响其他功能）"""
 
-    def test_handle_register_and_resolve(self):
-        """注册文件返回句柄，句柄可解析回绝对路径"""
-        from services.agent.workspace_file_handles import WorkspaceFileHandles
-        handles = WorkspaceFileHandles()
-        h = handles.register("/mnt/workspace/report.xlsx", "report.xlsx")
-        assert h == "F1"
-        assert handles.resolve("F1") == "/mnt/workspace/report.xlsx"
-        assert handles.resolve("f1") == "/mnt/workspace/report.xlsx"  # 大小写不敏感
+    def test_register_and_resolve(self):
+        """注册文件后可解析回绝对路径"""
+        from services.agent.workspace_file_handles import FilePathCache
+        cache = FilePathCache()
+        cache.register("report.xlsx", "/mnt/workspace/report.xlsx")
+        assert cache.resolve("report.xlsx") == "/mnt/workspace/report.xlsx"
 
-    def test_handle_dedup(self):
-        """相同路径注册返回相同句柄"""
-        from services.agent.workspace_file_handles import WorkspaceFileHandles
-        handles = WorkspaceFileHandles()
-        h1 = handles.register("/mnt/workspace/a.xlsx")
-        h2 = handles.register("/mnt/workspace/a.xlsx")
-        assert h1 == h2 == "F1"
-        assert handles.count == 1
+    def test_resolve_with_spaces(self):
+        """LLM 加空格后仍能匹配"""
+        from services.agent.workspace_file_handles import FilePathCache
+        cache = FilePathCache()
+        cache.register("利润表-2026.xlsx", "/mnt/ws/利润表-2026.xlsx")
+        assert cache.resolve("利润表 - 2026.xlsx") == "/mnt/ws/利润表-2026.xlsx"
 
-    def test_handle_resolve_returns_none_for_unknown(self):
-        """未注册的句柄返回 None"""
-        from services.agent.workspace_file_handles import WorkspaceFileHandles
-        handles = WorkspaceFileHandles()
-        assert handles.resolve("F99") is None
-        assert handles.resolve("not_a_handle") is None
+    def test_resolve_returns_none_for_unknown(self):
+        """未注册的文件名返回 None"""
+        from services.agent.workspace_file_handles import FilePathCache
+        cache = FilePathCache()
+        assert cache.resolve("unknown.xlsx") is None
 
-    def test_to_sandbox_dict(self):
-        """to_sandbox_dict 返回句柄→路径字典"""
-        from services.agent.workspace_file_handles import WorkspaceFileHandles
-        handles = WorkspaceFileHandles()
-        handles.register("/mnt/ws/a.xlsx", "a.xlsx")
-        handles.register("/mnt/ws/b.csv", "b.csv")
-        d = handles.to_sandbox_dict()
-        assert d == {"F1": "/mnt/ws/a.xlsx", "F2": "/mnt/ws/b.csv"}
-
-    def test_is_handle(self):
-        """is_handle 正确识别句柄格式"""
-        from services.agent.workspace_file_handles import WorkspaceFileHandles
-        assert WorkspaceFileHandles.is_handle("F1")
-        assert WorkspaceFileHandles.is_handle("f99")
-        assert WorkspaceFileHandles.is_handle(" F1 ")
-        assert not WorkspaceFileHandles.is_handle("report.xlsx")
-        assert not WorkspaceFileHandles.is_handle("/mnt/data/file.csv")
-        assert not WorkspaceFileHandles.is_handle("")
-
-    def test_unified_workspace_and_staging(self):
-        """workspace 文件和 staging 文件在同一个字典里"""
-        from services.agent.workspace_file_handles import WorkspaceFileHandles
-        handles = WorkspaceFileHandles()
-        handles.register("/workspace/利润表.xlsx", "利润表.xlsx")
-        handles.register("/staging/trade.parquet", "trade.parquet")
-        handles.register("/staging/stock.parquet", "stock.parquet")
-        assert handles.count == 3
-        d = handles.to_sandbox_dict()
-        assert d["F1"].endswith("利润表.xlsx")
-        assert d["F2"].endswith("trade.parquet")
-        assert d["F3"].endswith("stock.parquet")
+    def test_workspace_and_staging_unified(self):
+        """workspace 和 staging 文件在同一个缓存里"""
+        from services.agent.workspace_file_handles import FilePathCache
+        cache = FilePathCache()
+        cache.register("利润表.xlsx", "/workspace/利润表.xlsx")
+        cache.register("trade.parquet", "/staging/trade.parquet")
+        assert cache.count == 2
+        assert cache.resolve("利润表.xlsx").endswith("利润表.xlsx")
+        assert cache.resolve("trade.parquet").endswith("trade.parquet")
 
 
 class TestResolveSafePathAbsolute:
@@ -933,28 +907,8 @@ class TestFileListEntries:
 
 
 # ============================================================
-# WorkspaceFileHandles.get_filename
+# FilePathCache 对话级隔离（详细测试见 test_data_query.py::TestFilePathCache）
 # ============================================================
-
-
-class TestGetFilename:
-
-    def test_returns_filename(self):
-        from services.agent.workspace_file_handles import WorkspaceFileHandles
-        h = WorkspaceFileHandles()
-        h.register("/mnt/ws/report.xlsx", "report.xlsx")
-        assert h.get_filename("F1") == "report.xlsx"
-
-    def test_auto_extracts_from_path(self):
-        from services.agent.workspace_file_handles import WorkspaceFileHandles
-        h = WorkspaceFileHandles()
-        h.register("/mnt/ws/sub/data.csv")  # 不传 filename
-        assert h.get_filename("F1") == "data.csv"
-
-    def test_returns_none_for_unknown(self):
-        from services.agent.workspace_file_handles import WorkspaceFileHandles
-        h = WorkspaceFileHandles()
-        assert h.get_filename("F99") is None
 
 
 # ============================================================
