@@ -146,8 +146,21 @@ def _convert_excel_to_parquet(
         else sheet if sheet is not None
         else 0
     )
-    df = pd.read_excel(xl, sheet_name=target_sheet, engine="calamine")
+    df = pd.read_excel(
+        xl, sheet_name=target_sheet, engine="calamine",
+        na_values=["-", "--", "---", "/", "N/A", "NA", "null", "NULL", "无", "—"],
+    )
     xl.close()
+
+    # 混合类型列（object 列里有 int+str）强制转 str，防止 PyArrow 崩溃
+    # 纯数值/日期列保留原始类型，DuckDB 查询时不需要 CAST
+    for col in df.columns:
+        if df[col].dtype == object:
+            non_null = df[col].dropna()
+            if len(non_null) > 0:
+                types = set(type(v).__name__ for v in non_null.head(100))
+                if len(types) > 1:
+                    df[col] = df[col].astype(str).replace({"nan": None})
 
     tmp_path = str(Path(cache_path).parent / f"_tmp_{uuid.uuid4().hex[:8]}.parquet")
     try:
