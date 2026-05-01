@@ -141,6 +141,13 @@ class ChatToolMixin:
                     conversation_id, result, tc["name"],
                 )
 
+        # 收集 str 工具的 schema（data_query / fetch_all_pages 等）→ 对话级 registry
+        if executor._pending_schemas:
+            self._register_schemas_from_tools(
+                conversation_id, executor._pending_schemas,
+            )
+            executor._pending_schemas.clear()
+
         # 收集普通工具（非 AgentResult）透传的 FilePart（[FILE] 标记通道）
         if executor._pending_file_parts:
             if hasattr(self, "_pending_file_parts"):
@@ -154,6 +161,58 @@ class ChatToolMixin:
             self._image_dims.update(executor._image_dims)
 
         return results
+
+    @staticmethod
+    def _register_schemas_from_tools(
+        conversation_id: str,
+        pending: list[tuple[str, str, str]],
+    ) -> None:
+        """将 str 工具收集的 schema 注册到对话级 registry。
+
+        复用 _save_schema_to_conversation 的 registry 管线，
+        但不需要 AgentResult——直接从 (filename, path, schema_text) 构造 FileRef。
+        """
+        import asyncio
+        import os
+        from services.agent.session_file_registry import (
+            get_conversation_registry, save_conversation_registry,
+            SessionFileRegistry,
+        )
+        from services.agent.tool_output import FileRef
+
+        tmp = SessionFileRegistry()
+        for filename, abs_path, schema_text in pending:
+            try:
+                size = os.path.getsize(abs_path) if os.path.exists(abs_path) else 0
+            except OSError:
+                size = 0
+            ref = FileRef(
+                path=abs_path,
+                filename=filename,
+                format=abs_path.rsplit(".", 1)[-1] if "." in abs_path else "unknown",
+                row_count=0,
+                size_bytes=size,
+                columns=[],
+            )
+            # domain 用 filename 保证同秒注册多文件时 key 不冲突
+            safe_name = filename.replace(":", "_")[:30]
+            tmp.register(f"ws:{safe_name}", "data_query", ref, schema_text=schema_text)
+
+        added_keys = save_conversation_registry(conversation_id, tmp)
+
+        # fire-and-forget: 预计算 embedding
+        if added_keys:
+            conv_reg = get_conversation_registry(conversation_id)
+            try:
+                loop = asyncio.get_running_loop()
+                for key in added_keys:
+                    schema_text = conv_reg._schemas.get(key, "")
+                    if schema_text:
+                        loop.create_task(
+                            conv_reg.precompute_embedding(key, schema_text),
+                        )
+            except RuntimeError:
+                pass
 
     @staticmethod
     def _save_schema_to_conversation(

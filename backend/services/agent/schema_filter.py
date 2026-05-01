@@ -77,10 +77,14 @@ async def filter_schemas(
     if not query or not schema_entries:
         return []
 
-    # 只有 1 个文件时直接返回
-    if len(schema_entries) == 1:
-        k, ref, text, _ = schema_entries[0]
-        return [(k, ref, text)]
+    # ≤5 个文件时全量注入（对话中文件通常很少，省去过滤开销+避免漏选）
+    _FULL_INJECT_THRESHOLD = 5
+    if len(schema_entries) <= _FULL_INJECT_THRESHOLD:
+        logger.info(
+            f"Schema filter: full inject (≤{_FULL_INJECT_THRESHOLD}) | "
+            f"count={len(schema_entries)}"
+        )
+        return [(k, ref, text) for k, ref, text, _ in schema_entries]
 
     # 主路径：embedding 余弦相似度
     has_all_embeddings = all(emb is not None for _, _, _, emb in schema_entries)

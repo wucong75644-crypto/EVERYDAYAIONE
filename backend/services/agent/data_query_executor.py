@@ -75,6 +75,10 @@ class DataQueryExecutor:
         )
         self._output_dir = str(Path(self._workspace_dir) / "下载")
 
+        # schema 收集：执行后由 tool_executor 读取
+        self.last_file_meta: tuple[str, str, str] | None = None
+        # (filename, abs_path, schema_text)
+
     async def execute(
         self,
         file: str,
@@ -105,13 +109,57 @@ class DataQueryExecutor:
             )
 
         if sql is None and export is None:
-            return await self._explore(query_path, abs_path, sheet_names)
+            result = await self._explore(query_path, abs_path, sheet_names)
         elif export is not None:
             if sql is None:
                 sql = "SELECT * FROM data"
-            return await self._export(query_path, sql, export)
+            result = await self._export(query_path, sql, export)
         else:
-            return await self._query(query_path, sql)
+            result = await self._query(query_path, sql)
+
+        # 收集 schema：所有模式都尝试（探索模式用完整 profile，查询/导出用快速 DESCRIBE）
+        if not result.startswith("❌"):
+            self._collect_schema(Path(abs_path).name, abs_path, query_path)
+
+        return result
+
+    def _collect_schema(
+        self, filename: str, original_path: str, query_path: str,
+    ) -> None:
+        """从已处理的文件收集 schema 信息（毫秒级 DuckDB DESCRIBE）。"""
+        try:
+            import duckdb
+            conn = duckdb.connect(":memory:")
+            path_escaped = query_path.replace("'", "''")
+            file_type = detect_file_type(query_path)
+            if file_type == "parquet":
+                read_fn = f"read_parquet('{path_escaped}')"
+            elif file_type == "csv":
+                read_fn = f"read_csv_auto('{path_escaped}')"
+            else:
+                return  # Excel 已转 Parquet，不会到这里
+            rows = conn.execute(f"DESCRIBE SELECT * FROM {read_fn}").fetchall()
+            conn.close()
+            if not rows:
+                return
+            # 行数：Parquet 从文件头元数据读（微秒级），CSV 用 DuckDB COUNT
+            if file_type == "parquet":
+                import pyarrow.parquet as pq
+                row_count = pq.read_metadata(query_path).num_rows
+            else:
+                conn2 = duckdb.connect(":memory:")
+                row_count = (conn2.execute(
+                    f"SELECT COUNT(*) FROM {read_fn}"
+                ).fetchone() or (0,))[0]
+                conn2.close()
+            col_parts = [f"{r[0]}({r[1].lower()})" for r in rows]
+            schema_text = (
+                f"{filename} | {row_count:,}行 × {len(rows)}列\n"
+                f"列: {', '.join(col_parts)}"
+            )
+            self.last_file_meta = (filename, original_path, schema_text)
+        except Exception:
+            pass  # schema 收集失败不影响主流程
 
     # ── 路径解析 ──────────────────────────────────────
 

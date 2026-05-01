@@ -42,6 +42,10 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         # 时间事实层 — 请求级 SSOT，由 ERPAgent 透传
         # 设计文档：docs/document/TECH_ERP时间准确性架构.md §6.2.4 (B16)
         self.request_ctx = request_ctx
+        # schema 收集协议（复用 _pending_file_parts 模式）
+        # 工具方法写入 → chat_tool_mixin 统一消费 → registry.register
+        # 元素: (filename, abs_path, schema_text)
+        self._pending_schemas: list[tuple[str, str, str]] = []
         self._handlers: Dict[str, Callable[..., Coroutine[Any, Any, str]]] = {
             "get_conversation_context": self._get_conversation_context,
             "search_knowledge": self._search_knowledge,
@@ -195,12 +199,18 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             workspace_root=settings.file_workspace_root,
         )
 
-        return await executor.execute(
+        result = await executor.execute(
             file=args.get("file", ""),
             sql=args.get("sql"),
             export=args.get("export"),
             sheet=args.get("sheet"),
         )
+
+        # schema 收集 → chat_tool_mixin 统一消费注册到 registry
+        if executor.last_file_meta:
+            self._pending_schemas.append(executor.last_file_meta)
+
+        return result
 
     # ========================================
     # ERP Agent（独立 Agent 作为工具调用）
@@ -394,12 +404,20 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         if result.get("warning"):
             warning = f"\n⚠ {result['warning']}"
 
+        # schema 收集：列名+类型+行数
+        col_parts = [f"{c}({str(df[c].dtype)})" for c in df.columns]
+        schema_text = (
+            f"{filename} | {len(items):,}行 × {len(df.columns)}列\n"
+            f"列: {', '.join(col_parts)}"
+        )
+        self._pending_schemas.append((filename, str(staging_path), schema_text))
+
         return (
             f"[数据已暂存] {rel_path}\n"
             f"共 {len(items)} 条记录（Parquet格式，{file_size_kb:.0f}KB），"
             f"耗时 {elapsed:.1f}秒。{warning}\n"
-            f"如需处理请调 code_execute，"
-            f"用 df = pd.read_parquet(STAGING_DIR + '/{filename}') 读取。\n\n"
+            f"如需处理请调 data_query，"
+            f"用 data_query(file=\"{filename}\", sql=\"SELECT ... FROM data\") 查询。\n\n"
             f"前3条预览：\n{preview}"
         )
 

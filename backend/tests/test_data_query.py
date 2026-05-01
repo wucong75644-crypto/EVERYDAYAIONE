@@ -695,6 +695,168 @@ class TestConvertLocksLRU:
             data_query_cache._convert_locks.update(old_locks)
 
 
+class TestCollectSchema:
+    """DataQueryExecutor._collect_schema: 从文件收集 schema 元信息"""
+
+    def _make_parquet(self, tmp_path, name="test.parquet", rows=10, cols=None):
+        """创建测试 Parquet 文件"""
+        import pandas as pd
+        if cols is None:
+            cols = {"店铺名": [f"店铺{i}" for i in range(rows)],
+                    "金额": [float(i * 100) for i in range(rows)],
+                    "订单数": list(range(rows))}
+        df = pd.DataFrame(cols)
+        path = tmp_path / name
+        df.to_parquet(path, index=False, engine="pyarrow")
+        return str(path)
+
+    def _make_csv(self, tmp_path, name="test.csv", rows=5):
+        """创建测试 CSV 文件"""
+        lines = ["店铺名,金额,订单数"]
+        for i in range(rows):
+            lines.append(f"店铺{i},{i * 100},{i}")
+        path = tmp_path / name
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return str(path)
+
+    def _make_executor(self, tmp_path):
+        from services.agent.data_query_executor import DataQueryExecutor
+        executor = DataQueryExecutor.__new__(DataQueryExecutor)
+        executor._workspace_dir = str(tmp_path)
+        executor._staging_dir = str(tmp_path)
+        executor._output_dir = str(tmp_path / "下载")
+        executor.last_file_meta = None
+        return executor
+
+    def test_parquet_schema_collected(self, tmp_path):
+        """Parquet 文件：列名+类型+行数全部收集"""
+        parquet_path = self._make_parquet(tmp_path, rows=50)
+        executor = self._make_executor(tmp_path)
+
+        executor._collect_schema("test.parquet", parquet_path, parquet_path)
+
+        assert executor.last_file_meta is not None
+        filename, path, schema_text = executor.last_file_meta
+        assert filename == "test.parquet"
+        assert "50行" in schema_text
+        assert "3列" in schema_text
+        assert "店铺名" in schema_text
+        assert "金额" in schema_text
+        assert "订单数" in schema_text
+
+    def test_csv_schema_collected(self, tmp_path):
+        """CSV 文件：列名+类型+行数收集"""
+        csv_path = self._make_csv(tmp_path, rows=8)
+        executor = self._make_executor(tmp_path)
+
+        executor._collect_schema("test.csv", csv_path, csv_path)
+
+        assert executor.last_file_meta is not None
+        filename, path, schema_text = executor.last_file_meta
+        assert filename == "test.csv"
+        assert "8行" in schema_text
+        assert "3列" in schema_text
+        assert "店铺名" in schema_text
+
+    def test_nonexistent_file_no_error(self, tmp_path):
+        """不存在的文件 → 静默失败，不抛异常"""
+        executor = self._make_executor(tmp_path)
+
+        executor._collect_schema("ghost.parquet", "/tmp/ghost.parquet", "/tmp/ghost.parquet")
+
+        assert executor.last_file_meta is None
+
+    def test_large_parquet_row_count_from_metadata(self, tmp_path):
+        """大 Parquet 文件：行数从 PyArrow metadata 读取（不扫描数据）"""
+        parquet_path = self._make_parquet(tmp_path, rows=10000)
+        executor = self._make_executor(tmp_path)
+
+        executor._collect_schema("big.parquet", parquet_path, parquet_path)
+
+        assert executor.last_file_meta is not None
+        _, _, schema_text = executor.last_file_meta
+        assert "10,000行" in schema_text
+
+    def test_many_columns_all_listed(self, tmp_path):
+        """多列文件：所有列都出现在 schema 中"""
+        cols = {f"col_{i}": list(range(5)) for i in range(20)}
+        parquet_path = self._make_parquet(tmp_path, cols=cols)
+        executor = self._make_executor(tmp_path)
+
+        executor._collect_schema("wide.parquet", parquet_path, parquet_path)
+
+        assert executor.last_file_meta is not None
+        _, _, schema_text = executor.last_file_meta
+        assert "20列" in schema_text
+        for i in range(20):
+            assert f"col_{i}" in schema_text
+
+
+class TestDataQueryExecutorLastFileMeta:
+    """DataQueryExecutor.execute 后 last_file_meta 在各模式下的行为"""
+
+    def _make_parquet(self, tmp_path, name="data.parquet"):
+        import pandas as pd
+        df = pd.DataFrame({"name": ["a", "b", "c"], "value": [1, 2, 3]})
+        path = tmp_path / name
+        df.to_parquet(path, index=False, engine="pyarrow")
+        return path
+
+    @pytest.mark.asyncio
+    async def test_explore_mode_sets_meta(self, tmp_path):
+        """探索模式（无 sql）→ last_file_meta 被设置"""
+        self._make_parquet(tmp_path)
+        from services.agent.data_query_executor import DataQueryExecutor
+        executor = DataQueryExecutor.__new__(DataQueryExecutor)
+        executor._workspace_dir = str(tmp_path)
+        executor._staging_dir = str(tmp_path)
+        executor._output_dir = str(tmp_path / "下载")
+        executor.last_file_meta = None
+        executor.user_id = "test"
+        executor.org_id = None
+        executor.conversation_id = "test"
+
+        result = await executor.execute(file="data.parquet")
+        assert not result.startswith("❌")
+        assert executor.last_file_meta is not None
+        assert "name" in executor.last_file_meta[2]
+
+    @pytest.mark.asyncio
+    async def test_query_mode_sets_meta(self, tmp_path):
+        """查询模式（有 sql）→ last_file_meta 被设置"""
+        self._make_parquet(tmp_path)
+        from services.agent.data_query_executor import DataQueryExecutor
+        executor = DataQueryExecutor.__new__(DataQueryExecutor)
+        executor._workspace_dir = str(tmp_path)
+        executor._staging_dir = str(tmp_path)
+        executor._output_dir = str(tmp_path / "下载")
+        executor.last_file_meta = None
+        executor.user_id = "test"
+        executor.org_id = None
+        executor.conversation_id = "test"
+
+        result = await executor.execute(file="data.parquet", sql="SELECT * FROM data LIMIT 1")
+        assert not result.startswith("❌")
+        assert executor.last_file_meta is not None
+
+    @pytest.mark.asyncio
+    async def test_error_result_no_meta(self, tmp_path):
+        """文件不存在 → 错误结果 → last_file_meta 不设置"""
+        from services.agent.data_query_executor import DataQueryExecutor
+        executor = DataQueryExecutor.__new__(DataQueryExecutor)
+        executor._workspace_dir = str(tmp_path)
+        executor._staging_dir = str(tmp_path)
+        executor._output_dir = str(tmp_path / "下载")
+        executor.last_file_meta = None
+        executor.user_id = "test"
+        executor.org_id = None
+        executor.conversation_id = "test"
+
+        result = await executor.execute(file="nonexistent.parquet")
+        assert result.startswith("❌")
+        assert executor.last_file_meta is None
+
+
 class TestDetectHeaderRow:
     """detect_header_row: messytables 众数法 + csv.Sniffer 类型验证"""
 
