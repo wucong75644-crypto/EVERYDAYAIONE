@@ -406,15 +406,8 @@ export default memo(function MessageItem({
           }`}
           style={isUser ? { boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.22), 0 4px 16px rgba(0,0,0,0.06)' } : undefined}
         >
-          {/* 思考过程折叠块（仅 AI 消息）
-              多块模式：每轮 thinking 在 content.map 内联渲染，顶部只在流式阶段显示当前轮
-              单块模式：保持原逻辑（顶部独立渲染） */}
-          {!isUser && (() => {
-            if (hasMultiBlocks) {
-              // 多块模式：每轮 thinking 已在 content.map 内联渲染，顶部不重复显示
-              return null;
-            }
-            // 单块模式：完整逻辑
+          {/* 思考过程：单块模式独立渲染，多块模式在 content.map 内联 */}
+          {!isUser && !hasMultiBlocks && (() => {
             const thinkingFromContent = !isStreaming
               ? (message.content.find(p => p.type === 'thinking') as import('../../../types/message').ThinkingPart | undefined)
               : undefined;
@@ -439,14 +432,14 @@ export default memo(function MessageItem({
                 - 有 agentStepHint 时 → 显示工具步骤提示（"正在查询订单..."）
                 - 都没有时 → 仅显示脉冲圆点（Claude 风格，无卡片无文字） */}
             {((isRegenerating || isStreaming) && !textContent && !hasMultiBlocks) ? (
-              <LoadingPlaceholder text={agentStepHint || 'AI 正在思考'} source="initial" />
+              <LoadingPlaceholder text={agentStepHint || 'AI 正在思考'} />
             ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !isErrorMessage && !isStreaming && !isRegenerating) ? (
               /* 已完成但无内容（用户取消等场景） */
               <span className="text-text-disabled text-sm italic">已取消，点击「重新生成」重试</span>
             ) : bubbleTextInfo ? (
               /* 媒体任务气泡文字：图片/视频生成中或生成完成（仅 pending 状态） */
               bubbleTextInfo.hasAnimation ? (
-                <LoadingPlaceholder text={bubbleTextInfo.text} source="media" />
+                <LoadingPlaceholder text={bubbleTextInfo.text} />
               ) : (
                 <span>{bubbleTextInfo.text}</span>
               )
@@ -532,10 +525,24 @@ export default memo(function MessageItem({
                   }
                   return null;
                 })}
-                {/* 流式阶段：工具执行完毕等待最终回答时，在末尾显示加载提示
-                    已有最终文字输出 → "AI 正在输出"；否则 → "AI 正在思考" */}
+                {/* 当前轮 live thinking：streamingThinking 中还没被 content_block_add 收录的部分 */}
+                {isStreaming && streamingThinking && (() => {
+                  const committedLen = message.content
+                    .filter(p => p.type === 'thinking')
+                    .reduce((sum, p) => sum + ((p as { text?: string }).text?.length || 0), 0);
+                  const livePart = streamingThinking.slice(committedLen);
+                  if (!livePart.trim()) return null;
+                  return (
+                    <ThinkingBlock
+                      content={livePart}
+                      isThinking
+                      thinkingStartTime={thinkingStartTime}
+                    />
+                  );
+                })()}
+                {/* 流式加载指示器 */}
                 {(isStreaming || isRegenerating) && (
-                  <LoadingPlaceholder source="multiblock" text={agentStepHint || (
+                  <LoadingPlaceholder text={agentStepHint || (
                     textContent ? 'AI 正在输出' : 'AI 正在思考'
                   )} />
                 )}
@@ -554,7 +561,7 @@ export default memo(function MessageItem({
               - 等待首 token → 由上方 LoadingPlaceholder 处理，这里不重复 */}
           {!isUser && (isStreaming || isRegenerating) && textContent && !hasMultiBlocks && (
             <div className="mt-1.5">
-              <LoadingPlaceholder text={agentStepHint || 'AI 正在输出'} source="bottom" />
+              <LoadingPlaceholder text={agentStepHint || 'AI 正在输出'} />
             </div>
           )}
         </div>
