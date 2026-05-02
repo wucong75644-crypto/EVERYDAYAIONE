@@ -56,6 +56,7 @@ export interface MessageStoreActions {
   setIsSending: (isSending: boolean) => void;
   getMessage: (messageId: string) => Message | undefined;
   setStreamingContent: (conversationId: string, content: string) => void;
+  restoreStreamingBlocks: (conversationId: string, blocks: Array<Record<string, unknown>>, remainingText: string) => void;
   setAgentStepHint: (conversationId: string, hint: string) => void;
   clearAgentStepHint: (conversationId: string) => void;
   appendStreamingThinking: (conversationId: string, chunk: string) => void;
