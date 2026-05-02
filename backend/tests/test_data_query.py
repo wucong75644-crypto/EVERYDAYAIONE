@@ -127,32 +127,36 @@ class TestExploreMode:
     @pytest.mark.asyncio
     async def test_explore_parquet(self, executor, sample_parquet):
         result = await executor.execute(file="trade_test.parquet")
-        assert "trade_test.parquet" in result
-        assert "20" in result  # 20 行
-        assert "order_no" in result
-        assert "amount" in result
-        assert "[查询]" in result
-        assert "data_query" in result
+        assert result.status == "success"
+        assert "trade_test.parquet" in result.summary
+        assert "20" in result.summary  # 20 行
+        assert "order_no" in result.summary
+        assert "amount" in result.summary
+        assert "[查询]" in result.summary
+        assert "data_query" in result.summary
 
     @pytest.mark.asyncio
     async def test_explore_csv(self, executor, sample_csv):
         result = await executor.execute(file="scores.csv")
-        assert "scores.csv" in result
-        assert "name" in result
-        assert "score" in result
+        assert result.status == "success"
+        assert "scores.csv" in result.summary
+        assert "name" in result.summary
+        assert "score" in result.summary
 
     @pytest.mark.asyncio
     async def test_explore_excel_sheets(self, executor, sample_excel):
         result = await executor.execute(file="report.xlsx")
-        assert "report.xlsx" in result
-        assert "col_a" in result
-        assert "Sheet" in result  # Sheet 列表
+        assert result.status == "success"
+        assert "report.xlsx" in result.summary
+        assert "col_a" in result.summary
+        assert "Sheet" in result.summary  # Sheet 列表
 
     @pytest.mark.asyncio
     async def test_explore_excel_specific_sheet(self, executor, sample_excel):
         result = await executor.execute(file="report.xlsx", sheet="Sheet2")
-        assert "col_c" in result
-        assert "col_d" in result
+        assert result.status == "success"
+        assert "col_c" in result.summary
+        assert "col_d" in result.summary
 
 
 # ============================================================
@@ -169,10 +173,11 @@ class TestQueryMode:
             file="trade_test.parquet",
             sql='SELECT "order_no", "amount" FROM data WHERE "amount" > 180 LIMIT 5',
         )
-        assert "order_no" in result
-        assert "amount" in result
+        assert result.status == "success"
+        assert "order_no" in result.summary
+        assert "amount" in result.summary
         # 应包含 Markdown 表格分隔符
-        assert "---" in result
+        assert "---" in result.summary
 
     @pytest.mark.asyncio
     async def test_query_empty_result(self, executor, sample_parquet):
@@ -180,8 +185,9 @@ class TestQueryMode:
             file="trade_test.parquet",
             sql='SELECT * FROM data WHERE "amount" > 99999',
         )
-        assert "0 行" in result
-        assert "❌" not in result  # 空结果不是错误
+        assert result.status == "empty"
+        assert "0 行" in result.summary
+        assert not result.is_failure  # 空结果不是错误
 
     @pytest.mark.asyncio
     async def test_query_aggregation(self, executor, sample_parquet):
@@ -189,8 +195,9 @@ class TestQueryMode:
             file="trade_test.parquet",
             sql='SELECT "shop_name", SUM("amount") as total FROM data GROUP BY "shop_name"',
         )
-        assert "旗舰店" in result
-        assert "专卖店" in result
+        assert result.status == "success"
+        assert "旗舰店" in result.summary
+        assert "专卖店" in result.summary
 
     @pytest.mark.asyncio
     async def test_query_large_result_writes_staging(
@@ -201,9 +208,10 @@ class TestQueryMode:
             file="large_data.parquet",
             sql="SELECT * FROM data",
         )
-        assert "200" in result  # 200 行
-        assert "query_result_" in result  # 暂存文件
-        assert "前 5 行预览" in result
+        assert result.status == "success"
+        assert "200" in result.summary  # 200 行
+        assert "query_result_" in result.summary  # 暂存文件
+        assert "前 5 行预览" in result.summary
 
     @pytest.mark.asyncio
     async def test_query_sql_error_shows_columns(self, executor, sample_parquet):
@@ -211,9 +219,9 @@ class TestQueryMode:
             file="trade_test.parquet",
             sql='SELECT "nonexistent_col" FROM data',
         )
-        assert "❌" in result
-        assert "可用列名" in result
-        assert "order_no" in result
+        assert result.is_failure
+        assert result.status == "error"
+        assert "order_no" in result.summary or "order_no" in result.error_message
 
     @pytest.mark.asyncio
     async def test_query_csv(self, executor, sample_csv):
@@ -221,8 +229,9 @@ class TestQueryMode:
             file="scores.csv",
             sql="SELECT name, score FROM data WHERE score > 80",
         )
-        assert "Alice" in result
-        assert "Bob" in result
+        assert result.status == "success"
+        assert "Alice" in result.summary
+        assert "Bob" in result.summary
 
 
 # ============================================================
@@ -240,6 +249,7 @@ class TestExportMode:
             sql="SELECT * FROM data",
             export="output.csv",
         )
+        assert result.status == "success"
         output_file = tmp_workspace["output_dir"] / "output.csv"
         assert output_file.exists()
         # 文件内容检查
@@ -253,6 +263,7 @@ class TestExportMode:
             sql='SELECT "shop_name", SUM("amount") as total FROM data GROUP BY "shop_name"',
             export="summary.parquet",
         )
+        assert result.status == "success"
         output_file = tmp_workspace["output_dir"] / "summary.parquet"
         assert output_file.exists()
 
@@ -263,7 +274,8 @@ class TestExportMode:
             sql="SELECT * FROM data",
             export="output.json",
         )
-        assert "不支持" in result
+        assert result.is_failure
+        assert "不支持" in result.summary
 
     @pytest.mark.asyncio
     async def test_export_default_select_all(self, executor, sample_parquet, tmp_workspace):
@@ -272,6 +284,7 @@ class TestExportMode:
             file="trade_test.parquet",
             export="all_data.csv",
         )
+        assert result.status == "success"
         output_file = tmp_workspace["output_dir"] / "all_data.csv"
         assert output_file.exists()
 
@@ -290,7 +303,8 @@ class TestSecurity:
             file="trade_test.parquet",
             sql="INSERT INTO data VALUES ('evil', 'bad', 0, 0)",
         )
-        assert "安全限制" in result
+        assert result.is_failure
+        assert "安全限制" in result.summary
 
     @pytest.mark.asyncio
     async def test_reject_drop(self, executor, sample_parquet):
@@ -298,7 +312,8 @@ class TestSecurity:
             file="trade_test.parquet",
             sql="DROP TABLE data",
         )
-        assert "安全限制" in result
+        assert result.is_failure
+        assert "安全限制" in result.summary
 
     @pytest.mark.asyncio
     async def test_reject_copy(self, executor, sample_parquet):
@@ -306,7 +321,8 @@ class TestSecurity:
             file="trade_test.parquet",
             sql="COPY data TO '/tmp/evil.csv'",
         )
-        assert "安全限制" in result
+        assert result.is_failure
+        assert "安全限制" in result.summary
 
     @pytest.mark.asyncio
     async def test_reject_create(self, executor, sample_parquet):
@@ -314,17 +330,20 @@ class TestSecurity:
             file="trade_test.parquet",
             sql="CREATE TABLE evil AS SELECT * FROM data",
         )
-        assert "安全限制" in result
+        assert result.is_failure
+        assert "安全限制" in result.summary
 
     @pytest.mark.asyncio
     async def test_path_traversal(self, executor):
         result = await executor.execute(file="../../etc/passwd")
-        assert "不存在" in result or "安全限制" in result
+        assert result.is_failure
+        assert "不存在" in result.summary or "安全限制" in result.summary
 
     @pytest.mark.asyncio
     async def test_file_not_found(self, executor):
         result = await executor.execute(file="nonexistent.parquet")
-        assert "不存在" in result
+        assert result.is_failure
+        assert "不存在" in result.summary
 
     def test_dangerous_sql_pattern(self):
         """正则匹配危险 SQL 关键词"""
@@ -343,7 +362,8 @@ class TestSecurity:
     @pytest.mark.asyncio
     async def test_empty_file_param(self, executor):
         result = await executor.execute(file="")
-        assert "不能为空" in result
+        assert result.is_failure
+        assert "不能为空" in result.summary
 
     @pytest.mark.asyncio
     async def test_reject_semicolon(self, executor, sample_parquet):
@@ -352,7 +372,8 @@ class TestSecurity:
             file="trade_test.parquet",
             sql="SELECT 1; DROP TABLE data",
         )
-        assert "分号" in result or "安全限制" in result
+        assert result.is_failure
+        assert "分号" in result.summary or "安全限制" in result.summary
 
     @pytest.mark.asyncio
     async def test_reject_semicolon_in_export(self, executor, sample_parquet):
@@ -361,13 +382,15 @@ class TestSecurity:
             sql="SELECT 1; SELECT 2",
             export="output.csv",
         )
-        assert "分号" in result or "安全限制" in result
+        assert result.is_failure
+        assert "分号" in result.summary or "安全限制" in result.summary
 
     def test_validate_sql_function(self):
-        """_validate_sql 公共校验函数"""
+        """_validate_sql 公共校验函数 — 返回 AgentResult 或 None"""
         from services.agent.data_query_executor import _validate_sql
         assert _validate_sql("SELECT * FROM data") is None
         assert _validate_sql("SELECT 1; DROP TABLE x") is not None
+        assert _validate_sql("SELECT 1; DROP TABLE x").is_failure
         assert _validate_sql("INSERT INTO data VALUES (1)") is not None
         assert _validate_sql('SELECT "update_time" FROM data') is None
 
@@ -387,7 +410,7 @@ class TestTimeout:
             file="trade_test.parquet",
             sql='SELECT COUNT(*) FROM data',
         )
-        assert "❌" not in result
+        assert not result.is_failure
 
     def test_execute_with_timeout_interrupt(self):
         """threading.Timer + interrupt 看门狗机制"""
@@ -421,9 +444,10 @@ class TestCopyToParquet:
             file="large_data.parquet",
             sql="SELECT * FROM data",
         )
-        assert "200" in result  # 200 行
-        assert "query_result_" in result  # staging 文件
-        assert "前 5 行预览" in result
+        assert result.status == "success"
+        assert "200" in result.summary  # 200 行
+        assert "query_result_" in result.summary  # staging 文件
+        assert "前 5 行预览" in result.summary
 
         # 验证 staging 中确实有 parquet 文件
         staging = tmp_workspace["staging_dir"]
@@ -439,7 +463,7 @@ class TestCopyToParquet:
             file="trade_test.parquet",
             sql='SELECT * FROM data LIMIT 5',
         )
-        assert "❌" not in result
+        assert not result.is_failure
         # 小结果不应产生 query_result_ 文件
         staging = tmp_workspace["staging_dir"]
         result_files = list(staging.glob("query_result_*.parquet"))
@@ -521,7 +545,7 @@ class TestExcelCache:
         )
 
         result = await executor.execute(file="report.xlsx")
-        assert "new_col" in result
+        assert "new_col" in result.summary
 
     @pytest.mark.asyncio
     async def test_different_sheets_different_cache(
@@ -817,7 +841,7 @@ class TestDataQueryExecutorLastFileMeta:
         executor.conversation_id = "test"
 
         result = await executor.execute(file="data.parquet")
-        assert not result.startswith("❌")
+        assert not result.is_failure
         assert executor.last_file_meta is not None
         assert "name" in executor.last_file_meta[2]
 
@@ -836,7 +860,7 @@ class TestDataQueryExecutorLastFileMeta:
         executor.conversation_id = "test"
 
         result = await executor.execute(file="data.parquet", sql="SELECT * FROM data LIMIT 1")
-        assert not result.startswith("❌")
+        assert not result.is_failure
         assert executor.last_file_meta is not None
 
     @pytest.mark.asyncio
@@ -853,7 +877,7 @@ class TestDataQueryExecutorLastFileMeta:
         executor.conversation_id = "test"
 
         result = await executor.execute(file="nonexistent.parquet")
-        assert result.startswith("❌")
+        assert result.is_failure
         assert executor.last_file_meta is None
 
 

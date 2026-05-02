@@ -522,3 +522,52 @@ class TestFindSimilarFile:
         )
         status, result = q.get(timeout=5)
         assert "文件访问被拒绝" in result or "PermissionError" in result
+
+    def test_virtual_path_output_alias(self, tmp_path):
+        """Agent 写 /output/xxx 自动映射到真实 OUTPUT_DIR"""
+        output_dir = tmp_path / "下载"
+        output_dir.mkdir()
+        q = _make_queue()
+
+        sandbox_worker_entry(
+            q,
+            "f = open('/output/test.txt', 'w')\nf.write('hello')\nf.close()\nprint('ok')",
+            str(tmp_path), "", str(output_dir), 5.0, 1000,
+        )
+        status, result = q.get(timeout=5)
+        assert status == "ok"
+        assert "ok" in result
+        assert (output_dir / "test.txt").read_text() == "hello"
+
+    def test_virtual_path_staging_alias(self, tmp_path):
+        """Agent 写 /staging/xxx 自动映射到真实 STAGING_DIR"""
+        staging_dir = tmp_path / "staging"
+        staging_dir.mkdir()
+        q = _make_queue()
+
+        sandbox_worker_entry(
+            q,
+            "f = open('/staging/mid.txt', 'w')\nf.write('mid')\nf.close()\nprint('ok')",
+            str(tmp_path), str(staging_dir), "", 5.0, 1000,
+        )
+        status, result = q.get(timeout=5)
+        assert status == "ok"
+        assert (staging_dir / "mid.txt").read_text() == "mid"
+
+    def test_virtual_path_read_back(self, tmp_path):
+        """通过 /output/ 别名写入后可用真实路径读回"""
+        output_dir = tmp_path / "下载"
+        output_dir.mkdir()
+        q = _make_queue()
+
+        sandbox_worker_entry(
+            q,
+            (
+                "f = open('/output/data.txt', 'w')\nf.write('roundtrip')\nf.close()\n"
+                "f2 = open(OUTPUT_DIR + '/data.txt')\nprint(f2.read())\nf2.close()"
+            ),
+            str(tmp_path), "", str(output_dir), 5.0, 1000,
+        )
+        status, result = q.get(timeout=5)
+        assert status == "ok"
+        assert "roundtrip" in result

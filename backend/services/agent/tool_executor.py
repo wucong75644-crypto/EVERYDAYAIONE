@@ -186,7 +186,7 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
     # 数据查询工具
     # ========================================
 
-    async def _data_query(self, args: Dict[str, Any]) -> str:
+    async def _data_query(self, args: Dict[str, Any]) -> "AgentResult":
         """查询 staging 文件或工作区数据文件"""
         from core.config import get_settings
         from services.agent.data_query_executor import DataQueryExecutor
