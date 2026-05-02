@@ -19,7 +19,7 @@ import { useModalAnimation } from '../../../hooks/useModalAnimation';
 import { useMessageAnimation } from '../../../hooks/useMessageAnimation';
 import LoadingPlaceholder from './LoadingPlaceholder';
 import MarkdownRenderer from './MarkdownRenderer';
-import ThinkingBlock, { type ToolStep, type ThinkingItem } from './ThinkingBlock';
+import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
 import FormBlock from './FormBlock';
 import FileCardList from '../media/FileCard';
@@ -151,55 +151,7 @@ export default memo(function MessageItem({
     );
   }, [message.content]);
 
-  // 多块模式：工具调用前的解释文字 + tool_step + tool_result → 归入 thinking 区域
-  // 只有最后一个 tool_step/tool_result 之后的 text 才正常显示
-  // 之前的文字和工具步骤按时序收集到 intermediateItems，穿插渲染在 ThinkingBlock 中
-  const { intermediateItems, finalPartStartIdx } = useMemo(() => {
-    if (!hasMultiBlocks || !Array.isArray(message.content)) {
-      return { intermediateItems: [] as ThinkingItem[], finalPartStartIdx: 0 };
-    }
-    // 找到最后一个 tool_step 或 tool_result 的索引
-    let lastToolIdx = -1;
-    for (let i = message.content.length - 1; i >= 0; i--) {
-      const t = message.content[i].type;
-      if (t === 'tool_step' || t === 'tool_result') {
-        lastToolIdx = i;
-        break;
-      }
-    }
-    if (lastToolIdx === -1) return { intermediateItems: [] as ThinkingItem[], finalPartStartIdx: 0 };
-
-    const items: ThinkingItem[] = [];
-    // 跟踪 step 引用，用于 tool_result 回填
-    const stepRefs: ToolStep[] = [];
-    for (let i = 0; i <= lastToolIdx; i++) {
-      const p = message.content[i];
-      if (p.type === 'text' && (p as { text: string }).text) {
-        items.push({ type: 'text', content: (p as { text: string }).text });
-      } else if (p.type === 'tool_step') {
-        const ts = p as { tool_name?: string; status?: string; summary?: string; code?: string };
-        const step: ToolStep = {
-          toolName: ts.tool_name || 'tool',
-          status: (ts.status as ToolStep['status']) || 'running',
-          summary: ts.summary,
-          code: ts.code,
-        };
-        items.push({ type: 'step', step });
-        stepRefs.push(step);
-      } else if (p.type === 'tool_result') {
-        const tr = p as { tool_name?: string; text?: string };
-        if (tr.text) {
-          const matchStep = [...stepRefs].reverse().find(s => s.toolName === tr.tool_name);
-          if (matchStep) {
-            matchStep.resultText = tr.text;
-          } else {
-            items.push({ type: 'step', step: { toolName: tr.tool_name || 'tool', status: 'completed', resultText: tr.text } });
-          }
-        }
-      }
-    }
-    return { intermediateItems: items, finalPartStartIdx: lastToolIdx + 1 };
-  }, [hasMultiBlocks, message.content]);
+  // 多块模式不再将中间文字/工具归入 ThinkingBlock，全部在主内容区内联渲染（Claude/ChatGPT 风格）
 
   // 判断是否为失败消息
   const isErrorMessage = message.status === 'failed' || message.is_error === true;
@@ -462,15 +414,13 @@ export default memo(function MessageItem({
             const thinkingText = streamingThinking || thinkingFromContent?.text || genParams.thinking_content as string || '';
             const thinkingDurationMs = thinkingFromContent?.duration_ms;
             const isThinkingNow = !!(isStreaming && streamingThinking && !textContent);
-            const hasItems = intermediateItems.length > 0;
-            if (!thinkingText && !isThinkingNow && !hasItems) return null;
+            if (!thinkingText && !isThinkingNow) return null;
             return (
               <ThinkingBlock
                 content={thinkingText}
                 isThinking={isThinkingNow}
                 thinkingStartTime={thinkingStartTime}
                 durationMs={thinkingDurationMs}
-                items={hasItems ? intermediateItems : undefined}
               />
             );
           })()}
@@ -506,10 +456,20 @@ export default memo(function MessageItem({
                 {message.content.map((part, idx) => {
                   // thinking 已在独立 ThinkingBlock 渲染，跳过
                   if (part.type === 'thinking') return null;
-                  // tool_step 始终归入 thinking，不展示
-                  if (part.type === 'tool_step') return null;
-                  // finalPartStartIdx 之前的 text / tool_result 已归入 thinking，跳过
-                  if (idx < finalPartStartIdx && (part.type === 'text' || part.type === 'tool_result')) return null;
+                  // tool_step 内联渲染为步骤卡片（Claude/ChatGPT 风格）
+                  if (part.type === 'tool_step') {
+                    const ts = part as { tool_name?: string; status?: string; summary?: string; elapsed_ms?: number };
+                    const statusIcon = ts.status === 'completed' ? '✓' : ts.status === 'error' ? '✗' : '…';
+                    const statusColor = ts.status === 'completed' ? 'text-green-500' : ts.status === 'error' ? 'text-red-500' : 'text-text-tertiary';
+                    return (
+                      <div key={idx} className="my-1 flex items-center gap-1.5 text-xs text-text-tertiary">
+                        <span className={statusColor}>{statusIcon}</span>
+                        <span className="font-medium">{ts.tool_name || 'tool'}</span>
+                        {ts.summary && <span className="opacity-70 truncate max-w-xs">{ts.summary}</span>}
+                        {ts.elapsed_ms != null && <span className="opacity-50">{ts.elapsed_ms < 1000 ? `${ts.elapsed_ms}ms` : `${(ts.elapsed_ms / 1000).toFixed(1)}s`}</span>}
+                      </div>
+                    );
+                  }
                   if (part.type === 'text' && (part as { text: string }).text) {
                     return (
                       <MarkdownRenderer
@@ -561,9 +521,7 @@ export default memo(function MessageItem({
                     已有最终文字输出 → "AI 正在输出"；否则 → "AI 正在思考" */}
                 {(isStreaming || isRegenerating) && (
                   <LoadingPlaceholder source="multiblock" text={agentStepHint || (
-                    message.content.some((p, i) => i >= finalPartStartIdx && p.type === 'text' && (p as { text: string }).text)
-                      ? 'AI 正在输出'
-                      : 'AI 正在思考'
+                    textContent ? 'AI 正在输出' : 'AI 正在思考'
                   )} />
                 )}
               </>
