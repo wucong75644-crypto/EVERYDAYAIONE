@@ -18,6 +18,7 @@ def build_sandbox_executor(
     org_id: Optional[str] = None,
     conversation_id: str = "",
     files_dict: Optional[Dict[str, str]] = None,  # 兼容保留，已不使用
+    kernel_manager=None,
 ) -> SandboxExecutor:
     """构建沙盒执行器（子进程隔离模式）
 
@@ -65,6 +66,8 @@ def build_sandbox_executor(
         staging_dir=_staging_dir,
         workspace_dir=_workspace_dir,
         upload_fn=_auto_upload,
+        kernel_manager=kernel_manager,
+        conversation_id=conversation_id,
     )
 
 

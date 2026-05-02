@@ -456,12 +456,14 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             if _budget is not None and hasattr(_budget, "remaining"):
                 _timeout = min(_timeout, max(_budget.remaining, 5.0))
 
+            from services.sandbox.kernel_manager import get_kernel_manager
             executor = build_sandbox_executor(
                 timeout=_timeout,
                 max_result_chars=settings.sandbox_max_result_chars,
                 user_id=self.user_id,
                 org_id=self.org_id,
                 conversation_id=self.conversation_id,
+                kernel_manager=get_kernel_manager(),
             )
             result = await executor.execute(code, description)
 
