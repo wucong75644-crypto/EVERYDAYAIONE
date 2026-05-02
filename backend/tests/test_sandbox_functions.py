@@ -73,6 +73,37 @@ class TestBuildSandboxExecutor:
         assert callable(executor._upload_fn)
 
 
+class TestKernelManagerInjection:
+    """kernel_manager 参数透传验证"""
+
+    def test_kernel_manager_injected(self):
+        """传入 kernel_manager 后 executor 正确接收"""
+        mock_km = object()  # 任意对象
+        executor = build_sandbox_executor(
+            user_id="u1", org_id="org1",
+            conversation_id="conv1",
+            kernel_manager=mock_km,
+        )
+        assert executor._kernel_manager is mock_km
+        assert executor._conversation_id == "conv1"
+
+    def test_kernel_manager_default_none(self):
+        """不传 kernel_manager 时默认 None"""
+        executor = build_sandbox_executor(
+            user_id="u1", org_id="org1",
+            conversation_id="conv1",
+        )
+        assert executor._kernel_manager is None
+
+    def test_conversation_id_passed_through(self):
+        """conversation_id 透传到 executor"""
+        executor = build_sandbox_executor(
+            user_id="u1", org_id="org1",
+            conversation_id="conv-abc-123",
+        )
+        assert executor._conversation_id == "conv-abc-123"
+
+
 class TestAutoUploadSignature:
     """_auto_upload 函数签名测试（filename + size，不读文件内容）"""
 

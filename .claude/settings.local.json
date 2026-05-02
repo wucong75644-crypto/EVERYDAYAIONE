@@ -1849,7 +1849,11 @@
       "Bash(./git-push.sh \"feat: 多轮Thinking内联渲染——每轮推理+工具+文字按时序穿插显示\\(Claude风格\\)\")",
       "Bash(./git-push.sh \"fix: 多块模式去掉顶部冗余thinking动画——每轮thinking已在content内联渲染\")",
       "Bash(./git-push.sh \"fix: thinking在text开始时立即提交content_block_add——确保thinking在text之前显示\")",
-      "Bash(./git-push.sh \"fix: text输出时隐藏live thinking——避免thinking出现在内容下方\")"
+      "Bash(./git-push.sh \"fix: text输出时隐藏live thinking——避免thinking出现在内容下方\")",
+      "WebFetch(domain:cursor.com)",
+      "Bash(python -m pytest backend/tests/ -k \"chat_tools or tool_system_prompt or TOOL_SYSTEM\" --no-header -q)",
+      "Bash(python -c \"from backend.config.chat_tools import TOOL_SYSTEM_PROMPT, get_tool_system_prompt; print\\(f'TOOL_SYSTEM_PROMPT length: {len\\(TOOL_SYSTEM_PROMPT\\)}'\\); print\\('get_tool_system_prompt OK:', len\\(get_tool_system_prompt\\(\\)\\) > 0\\)\")",
+      "Bash(./git-push.sh \"feat: 有状态代码执行——提示词切换+executor异常降级+测试补充+文档更新\")"
     ],
     "additionalDirectories": [
       "/tmp"

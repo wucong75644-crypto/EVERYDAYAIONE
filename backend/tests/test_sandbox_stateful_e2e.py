@@ -166,6 +166,50 @@ class TestStatefulFileUpload:
 # 降级：KernelManager 不可用时走无状态
 # ============================================================
 
+class TestExceptionDegradation:
+    """Kernel 执行中异常时自动降级为无状态 subprocess"""
+
+    @pytest.mark.asyncio
+    async def test_kernel_keyerror_fallback(self, ws, km):
+        """Kernel 死亡导致 KeyError 时降级为无状态 subprocess"""
+        ex = SandboxExecutor(
+            timeout=10.0,
+            workspace_dir=ws["workspace"],
+            staging_dir=ws["staging"],
+            output_dir=ws["output"],
+            kernel_manager=km,
+            conversation_id="test_crash",
+        )
+        # 先创建 Kernel
+        await ex.execute("x = 1", "init")
+        # 强制杀死 Kernel 进程
+        kernel = km._kernels["test_crash"]
+        kernel.process.kill()
+        await kernel.process.wait()
+        # 下次执行应降级为无状态 subprocess（不抛异常）
+        result = await ex.execute("print(42)", "降级执行")
+        assert "42" in result
+
+    @pytest.mark.asyncio
+    async def test_kernel_runtime_error_fallback(self, ws):
+        """KernelManager 启动失败（RuntimeError）时降级"""
+        from unittest.mock import AsyncMock
+
+        mock_km = AsyncMock()
+        mock_km.get_or_create = AsyncMock(side_effect=RuntimeError("spawn failed"))
+
+        ex = SandboxExecutor(
+            timeout=10.0,
+            workspace_dir=ws["workspace"],
+            staging_dir=ws["staging"],
+            output_dir=ws["output"],
+            kernel_manager=mock_km,
+            conversation_id="test_fail",
+        )
+        result = await ex.execute("print(99)", "降级测试")
+        assert "99" in result
+
+
 class TestDegradation:
 
     @pytest.mark.asyncio
