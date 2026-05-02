@@ -151,7 +151,8 @@ export default memo(function MessageItem({
     );
   }, [message.content]);
 
-  // 多块模式不再将中间文字/工具归入 ThinkingBlock，全部在主内容区内联渲染（Claude/ChatGPT 风格）
+  // 多块模式：所有内容在主内容区内联渲染（行业标准：Claude/ChatGPT 风格）
+  // ThinkingBlock 只放模型推理，不放工具步骤
 
   // 判断是否为失败消息
   const isErrorMessage = message.status === 'failed' || message.is_error === true;
@@ -456,7 +457,7 @@ export default memo(function MessageItem({
                 {message.content.map((part, idx) => {
                   // thinking 已在独立 ThinkingBlock 渲染，跳过
                   if (part.type === 'thinking') return null;
-                  // tool_step 内联渲染为步骤卡片（Claude/ChatGPT 风格）
+                  // tool_step 内联渲染为步骤卡片
                   if (part.type === 'tool_step') {
                     const ts = part as { tool_name?: string; status?: string; summary?: string; elapsed_ms?: number };
                     const statusIcon = ts.status === 'completed' ? '✓' : ts.status === 'error' ? '✗' : '…';
