@@ -406,9 +406,23 @@ export default memo(function MessageItem({
           }`}
           style={isUser ? { boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.22), 0 4px 16px rgba(0,0,0,0.06)' } : undefined}
         >
-          {/* 思考过程折叠块（仅 AI 消息，独立区域始终渲染） */}
+          {/* 思考过程折叠块（仅 AI 消息）
+              多块模式：每轮 thinking 在 content.map 内联渲染，顶部只在流式阶段显示当前轮
+              单块模式：保持原逻辑（顶部独立渲染） */}
           {!isUser && (() => {
-            // 优先级：streamingThinking（流式）> content 中的 ThinkingPart（持久化）> genParams（旧消息 fallback）
+            if (hasMultiBlocks) {
+              // 多块模式：仅流式阶段显示当前轮的 streaming thinking
+              const isThinkingNow = !!(isStreaming && streamingThinking);
+              if (!isThinkingNow) return null;
+              return (
+                <ThinkingBlock
+                  content={streamingThinking || ''}
+                  isThinking
+                  thinkingStartTime={thinkingStartTime}
+                />
+              );
+            }
+            // 单块模式：完整逻辑
             const thinkingFromContent = !isStreaming
               ? (message.content.find(p => p.type === 'thinking') as import('../../../types/message').ThinkingPart | undefined)
               : undefined;
@@ -455,8 +469,16 @@ export default memo(function MessageItem({
                  thinking 单独在 ThinkingBlock 渲染；设计文档：TECH_内容块混排渲染架构.md §7.2 */
               <>
                 {message.content.map((part, idx) => {
-                  // thinking 已在独立 ThinkingBlock 渲染，跳过
-                  if (part.type === 'thinking') return null;
+                  // thinking 内联渲染为小折叠块（每轮独立）
+                  if (part.type === 'thinking' && (part as { text?: string }).text) {
+                    return (
+                      <ThinkingBlock
+                        key={`thinking-${idx}`}
+                        content={(part as { text: string }).text}
+                        durationMs={(part as { duration_ms?: number }).duration_ms}
+                      />
+                    );
+                  }
                   // tool_step 内联渲染为步骤卡片
                   if (part.type === 'tool_step') {
                     const ts = part as { tool_name?: string; status?: string; summary?: string; elapsed_ms?: number };

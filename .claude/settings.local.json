@@ -1845,7 +1845,8 @@
       "Bash(./git-push.sh \"debug: LoadingPlaceholder加source标记定位双指示器来源\")",
       "Bash(./git-push.sh \"fix: content_block_add text去重+replaceLastTextBlock，消除ThinkingBlock内重复文字实现穿插显示\")",
       "Bash(./git-push.sh \"refactor: 工具步骤从ThinkingBlock移到主内容区内联渲染——文字和工具按时序穿插显示\\(Claude风格\\)\")",
-      "Bash(./git-push.sh \"refactor: 工具步骤主内容区内联渲染\\(Claude风格\\)——文字+工具按时序从上往下，零跳动\")"
+      "Bash(./git-push.sh \"refactor: 工具步骤主内容区内联渲染\\(Claude风格\\)——文字+工具按时序从上往下，零跳动\")",
+      "Bash(./git-push.sh \"feat: 多轮Thinking内联渲染——每轮推理+工具+文字按时序穿插显示\\(Claude风格\\)\")"
     ],
     "additionalDirectories": [
       "/tmp"
