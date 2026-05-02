@@ -255,7 +255,7 @@ export const createStreamingSlice: StateCreator<
       if (!list) return state;
 
       // 构建 content：结构化 blocks + 剩余流式文字
-      const content = [...blocks] as Message['content'];
+      const content = [...blocks] as unknown as Message['content'];
       if (remainingText) {
         content.push({ type: 'text' as const, text: remainingText });
       }
