@@ -95,17 +95,21 @@ class SandboxExecutor:
     async def _execute_code(self, code: str) -> str:
         """选择执行模式：有状态 Kernel 或无状态 subprocess"""
         if self._kernel_manager and self._conversation_id:
-            kernel_ok = await self._kernel_manager.get_or_create(
-                self._conversation_id,
-                self._workspace_dir or "",
-                self._staging_dir or "",
-                self._output_dir or "",
-            )
-            if kernel_ok:
-                status, result = await self._kernel_manager.execute(
-                    self._conversation_id, code, self._timeout,
+            try:
+                kernel_ok = await self._kernel_manager.get_or_create(
+                    self._conversation_id,
+                    self._workspace_dir or "",
+                    self._staging_dir or "",
+                    self._output_dir or "",
                 )
-                return result
+                if kernel_ok:
+                    status, result = await self._kernel_manager.execute(
+                        self._conversation_id, code, self._timeout,
+                    )
+                    return result
+            except (KeyError, RuntimeError, OSError) as e:
+                # Kernel 竞态死亡或启动失败，降级为无状态 subprocess
+                logger.warning("Kernel 执行失败，降级为无状态 | error=%s", e)
 
         # 降级：无状态 subprocess
         return await self._run_in_subprocess(code)
