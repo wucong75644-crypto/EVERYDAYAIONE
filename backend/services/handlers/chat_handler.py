@@ -532,6 +532,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
                 turn_text = ""
                 turn_thinking = ""
+                _thinking_committed = False  # 当前轮 thinking 是否已提交到 content_blocks
                 tool_calls_acc: Dict[int, Dict[str, Any]] = {}  # index → {id, name, arguments}
 
                 async for chunk in self._adapter.stream_chat(
@@ -556,6 +557,25 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         await ws_manager.send_to_task_or_user(task_id, user_id, thinking_msg)
 
                     # 正文内容
+                    # thinking→text 转换点：立即提交 thinking 块到 content_blocks
+                    # 确保前端 content.map 中 thinking 在 text 之前
+                    if chunk.content and turn_thinking and not _thinking_committed:
+                        _thinking_committed = True
+                        _thinking_block = {"type": "thinking", "text": turn_thinking}
+                        _content_blocks.append(_thinking_block)
+                        try:
+                            await ws_manager.send_to_task_or_user(
+                                task_id, user_id,
+                                build_content_block_add(
+                                    task_id=task_id,
+                                    conversation_id=conversation_id,
+                                    message_id=message_id,
+                                    block=_thinking_block,
+                                ),
+                            )
+                        except Exception as _think_err:
+                            logger.warning(f"thinking block push failed | task={task_id} | {_think_err}")
+
                     if chunk.content:
                         turn_text += chunk.content
                         accumulated_text += chunk.content
@@ -589,9 +609,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 if not tool_calls_acc:
                     break  # 无工具调用，输出完成
 
-                # 有工具调用 → 本轮推理 + 中间叙述按时序插入 content_blocks
-                # 每轮 thinking 作为独立块，前端内联渲染为小折叠块
-                if turn_thinking:
+                # 有工具调用 → 未提交的 thinking + 中间叙述按时序插入 content_blocks
+                # thinking 通常在 text 开始时已提交（转换点），这里兜底处理无 text 直接调工具的情况
+                if turn_thinking and not _thinking_committed:
                     _thinking_block = {"type": "thinking", "text": turn_thinking}
                     _content_blocks.append(_thinking_block)
                     try:
@@ -952,7 +972,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
             if _content_blocks:
                 # 多块模式：最后一轮 thinking + text 插入 content_blocks
-                if turn_thinking:
+                if turn_thinking and not _thinking_committed:
                     _content_blocks.append({"type": "thinking", "text": turn_thinking})
                 if _final_turn_text:
                     _content_blocks.append({"type": "text", "text": _final_turn_text})
