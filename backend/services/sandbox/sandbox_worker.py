@@ -350,8 +350,21 @@ def sandbox_worker_entry(
                 "/usr/share/zoneinfo",  # timezone 数据目录
             })
 
+            # 虚拟路径别名：Agent 写 /output/xxx 或 /staging/xxx 时
+            # 自动映射到真实目录，与 OUTPUT_DIR/STAGING_DIR 变量走同一套逻辑
+            _path_aliases: list[tuple[str, str]] = []
+            if output_dir:
+                _path_aliases.append(("/output/", output_dir.rstrip("/") + "/"))
+            if staging_dir:
+                _path_aliases.append(("/staging/", staging_dir.rstrip("/") + "/"))
+
             def _global_scoped_open(path, mode="r", *args, **kwargs):
                 path_str = str(path)
+                # 虚拟路径别名：/output/xxx → OUTPUT_DIR/xxx
+                for alias, real in _path_aliases:
+                    if path_str.startswith(alias):
+                        path_str = real + path_str[len(alias):]
+                        break
                 # 相对路径解析到 workspace
                 if not os.path.isabs(path_str):
                     path_str = os.path.join(_ws_dir, path_str)

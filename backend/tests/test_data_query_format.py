@@ -134,29 +134,50 @@ class TestFormatSqlError:
             ["店铺名称", "金额", "日期"],
         )
 
-        assert "❌ SQL 错误" in result
-        assert "店铺名' 不存在" in result
-        assert "店铺名称" in result
-        assert "金额" in result
-        assert "双引号" in result
+        # 返回 AgentResult
+        assert result.status == "error"
+        assert result.is_failure
+        assert "店铺名' 不存在" in result.error_message
+        assert "店铺名称" in result.summary or "店铺名称" in result.error_message
+        assert result.metadata.get("retryable") is True
 
     def test_empty_columns(self):
         result = format_sql_error("syntax error", [])
 
-        assert "❌ SQL 错误" in result
-        assert "无法获取列名" in result
+        assert result.status == "error"
+        assert "无法获取列名" in result.summary
 
     def test_many_columns_truncated(self):
         cols = [f"col_{i}" for i in range(50)]
         result = format_sql_error("error", cols)
 
-        assert "共 50 列" in result
+        assert result.status == "error"
+        assert "共 50 列" in result.summary
         # 前 30 列应该展示
-        assert "col_0" in result
-        assert "col_29" in result
+        assert "col_0" in result.summary
+        assert "col_29" in result.summary
 
     def test_chinese_hint(self):
         result = format_sql_error("error", ["店铺名称"])
 
-        assert '双引号' in result
-        assert '"店铺名称"' in result
+        assert result.status == "error"
+        assert '双引号' in result.summary
+        assert '"店铺名称"' in result.summary
+
+    def test_duckdb_did_you_mean_suggestion(self):
+        """DuckDB 'Did you mean' 建议应被提取并高亮"""
+        error_msg = 'Binder Error: Referenced column "店铺名" not found. Did you mean "店铺名称"?'
+        result = format_sql_error(error_msg, ["店铺名称", "金额"])
+
+        assert result.status == "error"
+        assert result.metadata.get("suggestion") == "店铺名称"
+        assert "店铺名称" in result.summary
+        assert "修正" in result.summary
+
+    def test_no_suggestion_shows_columns(self):
+        """无 Did you mean 时展示可用列名"""
+        result = format_sql_error("Parser Error: syntax error", ["col_a", "col_b"])
+
+        assert result.metadata.get("suggestion") is None
+        assert '"col_a"' in result.summary
+        assert '"col_b"' in result.summary

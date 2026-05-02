@@ -24,7 +24,7 @@ class ToolResultCache:
     _CACHE_MAX_VALUE_CHARS = 8000  # 单条结果上限
 
     def __init__(self) -> None:
-        self._store: Dict[str, Tuple[str, float]] = {}
+        self._store: Dict[str, Tuple[Any, float]] = {}
 
     @staticmethod
     def is_cacheable(tool_name: str) -> bool:
@@ -37,7 +37,7 @@ class ToolResultCache:
         sorted_args = json.dumps(args, sort_keys=True, ensure_ascii=False)
         return f"{tool_name}:{hashlib.md5(sorted_args.encode()).hexdigest()}"
 
-    def get(self, tool_name: str, args: Dict[str, Any]) -> Optional[str]:
+    def get(self, tool_name: str, args: Dict[str, Any]) -> Optional[Any]:
         if not self.is_cacheable(tool_name):
             return None
         key = self._key(tool_name, args)
@@ -53,11 +53,16 @@ class ToolResultCache:
     def put(self, tool_name: str, args: Dict[str, Any], result: Any) -> None:
         if not self.is_cacheable(tool_name):
             return
-        # 非字符串结果（如 ToolOutput/AgentResult）不缓存
-        if not isinstance(result, str):
-            return
-        # 大结果不缓存，防止内存膨胀
-        if len(result) > self._CACHE_MAX_VALUE_CHARS:
+        # 大小判断：AgentResult 用 summary 长度，str 用自身长度
+        from services.agent.agent_result import AgentResult
+        if isinstance(result, AgentResult):
+            if len(result.summary) > self._CACHE_MAX_VALUE_CHARS:
+                return
+        elif isinstance(result, str):
+            if len(result) > self._CACHE_MAX_VALUE_CHARS:
+                return
+        else:
+            # 未知类型不缓存
             return
         # 条目上限，满了跳过（简单策略，单次请求内缓存不会太多）
         if len(self._store) >= self._CACHE_MAX_ENTRIES:

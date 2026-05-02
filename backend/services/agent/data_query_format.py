@@ -136,13 +136,34 @@ def _summarize_parquet(con: Any, parquet_escaped: str) -> str:
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
-def format_sql_error(error_msg: str, columns: list[str]) -> str:
-    """SQL 错误信息 + 可用列名。"""
-    cols_str = ", ".join(columns[:30]) if columns else "(无法获取列名)"
-    if len(columns) > 30:
-        cols_str += f" ... 共 {len(columns)} 列"
-    return (
-        f"❌ SQL 错误：{error_msg}\n\n"
-        f"可用列名：{cols_str}\n"
-        f"提示：中文列名需用双引号包裹，如 SELECT \"店铺名称\" FROM data"
+def format_sql_error(error_msg: str, columns: list[str]) -> "AgentResult":
+    """SQL 错误 → 结构化 AgentResult，高亮 DuckDB 建议。"""
+    import re
+    from services.agent.agent_result import AgentResult
+
+    # 提取 DuckDB 的 "Did you mean" 建议
+    match = re.search(r'Did you mean "([^"]+)"', error_msg)
+    suggestion = match.group(1) if match else None
+
+    if suggestion:
+        summary = (
+            f"SQL 错误：列名不存在\n"
+            f"→ 修正：使用 \"{suggestion}\" 替代\n"
+            f"→ 示例：SELECT \"{suggestion}\" FROM data"
+        )
+    else:
+        cols_str = ", ".join(f'"{c}"' for c in columns[:30]) if columns else "(无法获取列名)"
+        if len(columns) > 30:
+            cols_str += f" ... 共 {len(columns)} 列"
+        summary = (
+            f"SQL 错误：{error_msg}\n\n"
+            f"可用列名：{cols_str}\n"
+            f"提示：中文列名需用双引号包裹"
+        )
+
+    return AgentResult(
+        summary=summary,
+        status="error",
+        error_message=error_msg,
+        metadata={"suggestion": suggestion, "retryable": True},
     )

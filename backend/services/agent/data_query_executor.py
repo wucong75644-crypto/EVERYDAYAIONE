@@ -27,6 +27,7 @@ from typing import Optional
 import duckdb
 from loguru import logger
 
+from services.agent.agent_result import AgentResult
 from services.agent.data_query_cache import detect_encoding, detect_file_type
 
 # SQL 危险关键词（查询模式只允许 SELECT）
@@ -39,15 +40,25 @@ _DANGEROUS_SQL_PATTERN = re.compile(
 _QUERY_TIMEOUT = 30
 
 
-def _validate_sql(sql: str) -> str | None:
-    """校验 SQL 安全性，返回错误信息或 None。"""
+def _validate_sql(sql: str) -> AgentResult | None:
+    """校验 SQL 安全性，返回 AgentResult 错误或 None（通过）。"""
     if ";" in sql:
-        return "❌ SQL 安全限制：不支持多语句查询（禁止分号）"
+        return AgentResult(
+            summary="SQL 安全限制：不支持多语句查询（禁止分号）",
+            status="error",
+            error_message="SQL validation: semicolons not allowed",
+            metadata={"retryable": True},
+        )
     if _DANGEROUS_SQL_PATTERN.search(sql):
-        return (
-            "❌ SQL 安全限制：data_query 仅支持 SELECT 查询。\n"
-            "禁止的操作：INSERT/UPDATE/DELETE/DROP/CREATE/COPY 等。\n"
-            "如需导出文件，请使用 export 参数。"
+        return AgentResult(
+            summary=(
+                "SQL 安全限制：data_query 仅支持 SELECT 查询。\n"
+                "禁止的操作：INSERT/UPDATE/DELETE/DROP/CREATE/COPY 等。\n"
+                "如需导出文件，请使用 export 参数。"
+            ),
+            status="error",
+            error_message="SQL validation: only SELECT allowed",
+            metadata={"retryable": True},
         )
     return None
 
@@ -85,21 +96,41 @@ class DataQueryExecutor:
         sql: str | None = None,
         export: str | None = None,
         sheet: str | None = None,
-    ) -> str:
+    ) -> AgentResult:
         """执行 data_query 工具，分发到三种模式。"""
         if not file or not file.strip():
-            return "❌ 参数错误：file 不能为空"
+            return AgentResult(
+                summary="参数错误：file 不能为空",
+                status="error",
+                error_message="Validation: file is required",
+                metadata={"retryable": True},
+            )
 
         try:
             abs_path = self._resolve_file_path(file.strip())
         except FileNotFoundError as e:
-            return f"❌ {e}"
+            return AgentResult(
+                summary=str(e),
+                status="error",
+                error_message=f"FileNotFoundError: {e}",
+                metadata={"retryable": True},
+            )
         except PermissionError as e:
-            return f"❌ 安全限制：{e}"
+            return AgentResult(
+                summary=f"安全限制：{e}",
+                status="error",
+                error_message=f"PermissionError: {e}",
+                metadata={"retryable": False},
+            )
 
         file_type = detect_file_type(abs_path)
         if file_type == "unknown":
-            return f"❌ 不支持的文件格式：{Path(abs_path).suffix}"
+            return AgentResult(
+                summary=f"不支持的文件格式：{Path(abs_path).suffix}",
+                status="error",
+                error_message=f"Unsupported format: {Path(abs_path).suffix}",
+                metadata={"retryable": False},
+            )
 
         query_path = abs_path
         sheet_names: list[str] | None = None
@@ -117,8 +148,8 @@ class DataQueryExecutor:
         else:
             result = await self._query(query_path, sql)
 
-        # 收集 schema：所有模式都尝试（探索模式用完整 profile，查询/导出用快速 DESCRIBE）
-        if not result.startswith("❌"):
+        # 收集 schema：成功时尝试（探索模式用完整 profile，查询/导出用快速 DESCRIBE）
+        if not result.is_failure:
             self._collect_schema(Path(abs_path).name, abs_path, query_path)
 
         return result
@@ -306,7 +337,7 @@ class DataQueryExecutor:
     async def _explore(
         self, query_path: str, original_path: str,
         sheet_names: list[str] | None,
-    ) -> str:
+    ) -> AgentResult:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, self._explore_sync, query_path, original_path, sheet_names,
@@ -315,7 +346,7 @@ class DataQueryExecutor:
     def _explore_sync(
         self, query_path: str, original_path: str,
         sheet_names: list[str] | None,
-    ) -> str:
+    ) -> AgentResult:
         from services.agent.data_profile import build_profile_from_duckdb
 
         filename = Path(original_path).name
@@ -335,7 +366,7 @@ class DataQueryExecutor:
         if sheet_names:
             text += f"\n\n[Sheet 列表] {', '.join(sheet_names)}"
             text += "\n使用 sheet 参数指定：data_query(file=\"...\", sheet=\"Sheet2\")"
-        return text
+        return AgentResult(summary=text, status="success")
 
     def _profile_via_view(self, file_path: str) -> dict:
         """用独立连接对非 Parquet 文件做 SUMMARIZE profiling。"""
@@ -376,14 +407,14 @@ class DataQueryExecutor:
 
     # ── 查询模式 ──────────────────────────────────────
 
-    async def _query(self, query_path: str, sql: str) -> str:
+    async def _query(self, query_path: str, sql: str) -> AgentResult:
         err = _validate_sql(sql)
         if err:
             return err
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._query_sync, query_path, sql)
 
-    def _query_sync(self, query_path: str, sql: str) -> str:
+    def _query_sync(self, query_path: str, sql: str) -> AgentResult:
         """查询模式核心：COPY TO Parquet → metadata 读行数 → 按需取数据。
 
         全程数据不经过 Python 内存（DuckDB 流式写盘），
@@ -417,7 +448,11 @@ class DataQueryExecutor:
                 )
             except TimeoutError as e:
                 result_path.unlink(missing_ok=True)
-                return f"❌ {e}"
+                return AgentResult(
+                    summary=str(e),
+                    status="timeout",
+                    error_message=f"TimeoutError: {e}",
+                )
             except (
                 duckdb.InvalidInputException, duckdb.CatalogException,
                 duckdb.BinderException, duckdb.ParserException,
@@ -437,7 +472,10 @@ class DataQueryExecutor:
             # 3. 0 行
             if row_count == 0:
                 result_path.unlink(missing_ok=True)
-                return "查询成功，结果为空（0 行匹配条件）。"
+                return AgentResult(
+                    summary="查询成功，结果为空（0 行匹配条件）。",
+                    status="empty",
+                )
 
             # 4. 小结果（≤100 行）：从 Parquet 读回 Python，返回完整表格
             if row_count <= 100:
@@ -446,10 +484,12 @@ class DataQueryExecutor:
                 result_path.unlink(missing_ok=True)  # 小结果不保留 staging
 
                 if row_count <= 10:
-                    return format_full_result(df, row_count, elapsed)
-                table = format_full_result(df, row_count, elapsed)
-                summary = format_numeric_summary(df)
-                return f"{table}\n\n{summary}" if summary else table
+                    text = format_full_result(df, row_count, elapsed)
+                else:
+                    table = format_full_result(df, row_count, elapsed)
+                    summary = format_numeric_summary(df)
+                    text = f"{table}\n\n{summary}" if summary else table
+                return AgentResult(summary=text, status="success")
 
             # 5. 大结果（>100 行）：数据已在 staging，从 Parquet 取预览和统计
             text = format_large_result_from_parquet(
@@ -457,7 +497,7 @@ class DataQueryExecutor:
             )
             if row_count > 1000:
                 text += "\n\n💡 结果超过 1000 行，建议缩小查询范围或使用 export 导出。"
-            return text
+            return AgentResult(summary=text, status="success")
         finally:
             con.close()
 
@@ -465,7 +505,7 @@ class DataQueryExecutor:
 
     async def _export(
         self, query_path: str, sql: str, export_filename: str,
-    ) -> str:
+    ) -> AgentResult:
         err = _validate_sql(sql)
         if err:
             return err
@@ -475,22 +515,31 @@ class DataQueryExecutor:
             None, self._export_sync, query_path, sql, export_filename,
         )
 
-        if result.startswith("✅"):
+        if not result.is_failure:
             from services.file_upload import auto_upload
             file_path = Path(self._output_dir) / Path(export_filename).name
             if file_path.exists():
-                return await auto_upload(
+                upload_text = await auto_upload(
                     filename=file_path.name,
                     size=file_path.stat().st_size,
                     output_dir=self._output_dir,
                     user_id=self.user_id,
                     org_id=self.org_id,
                 )
+                # auto_upload 尚未结构化（Phase 2），用前缀判断成功/失败
+                if upload_text.startswith("❌"):
+                    return AgentResult(
+                        summary=upload_text.lstrip("❌ "),
+                        status="error",
+                        error_message=upload_text,
+                        metadata={"retryable": False},
+                    )
+                return AgentResult(summary=upload_text, status="success")
         return result
 
     def _export_sync(
         self, query_path: str, sql: str, export_filename: str,
-    ) -> str:
+    ) -> AgentResult:
         con = self._create_safe_connection()
         try:
             # spatial 扩展（xlsx 导出需要，LOAD 不受 lock_configuration 影响）
@@ -502,7 +551,12 @@ class DataQueryExecutor:
                 except Exception as e:
                     logger.warning(f"spatial extension load failed: {e}")
                     if export_filename.endswith(".xlsx"):
-                        return "❌ xlsx 导出需要 DuckDB spatial 扩展，请改用 .csv 格式导出"
+                        return AgentResult(
+                            summary="xlsx 导出需要 DuckDB spatial 扩展，请改用 .csv 格式导出",
+                            status="error",
+                            error_message=f"spatial extension unavailable: {e}",
+                            metadata={"retryable": False},
+                        )
 
             self._create_view(con, query_path)
 
@@ -511,7 +565,12 @@ class DataQueryExecutor:
             safe_name = Path(export_filename).name
             output_path = output_dir / safe_name
             if output_path.is_symlink():
-                return "❌ 安全限制：输出路径不允许是符号链接"
+                return AgentResult(
+                    summary="安全限制：输出路径不允许是符号链接",
+                    status="error",
+                    error_message="Security: symlink output path",
+                    metadata={"retryable": False},
+                )
             output_escaped = str(output_path).replace("'", "''")
 
             ext = Path(safe_name).suffix.lower()
@@ -522,19 +581,36 @@ class DataQueryExecutor:
             elif ext == ".parquet":
                 copy_sql = f"COPY ({sql}) TO '{output_escaped}' (FORMAT PARQUET, COMPRESSION SNAPPY)"
             else:
-                return f"❌ 不支持的导出格式：{ext}。支持 .xlsx / .csv / .parquet"
+                return AgentResult(
+                    summary=f"不支持的导出格式：{ext}。支持 .xlsx / .csv / .parquet",
+                    status="error",
+                    error_message=f"Unsupported export format: {ext}",
+                    metadata={"retryable": True},
+                )
 
             try:
                 self._execute_with_timeout(con, copy_sql, _QUERY_TIMEOUT * 2)
             except TimeoutError as e:
                 Path(output_path).unlink(missing_ok=True)
-                return f"❌ {e}"
+                return AgentResult(
+                    summary=str(e),
+                    status="timeout",
+                    error_message=f"Export timeout: {e}",
+                )
 
             size_kb = output_path.stat().st_size / 1024
             logger.info(f"data_query export | file={safe_name} size={size_kb:.0f}KB")
-            return f"✅ 导出完成: {safe_name}（{size_kb:.0f}KB）"
+            return AgentResult(
+                summary=f"导出完成: {safe_name}（{size_kb:.0f}KB）",
+                status="success",
+            )
         except Exception as e:
             logger.error(f"data_query export error: {e}")
-            return f"❌ 导出失败：{e}"
+            return AgentResult(
+                summary=f"导出失败：{e}",
+                status="error",
+                error_message=str(e),
+                metadata={"retryable": False},
+            )
         finally:
             con.close()

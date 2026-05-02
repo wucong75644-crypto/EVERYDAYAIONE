@@ -102,10 +102,10 @@ class TestERPDataAnalysis:
         executor = _make_executor(workspace)
         result = await executor.execute(file="trade_1714400000.parquet")
 
-        assert "100" in result  # 100 行
-        assert "店铺名称" in result
-        assert "金额" in result
-        assert "日期" in result
+        assert "100" in result.summary  # 100 行
+        assert "店铺名称" in result.summary
+        assert "金额" in result.summary
+        assert "日期" in result.summary
 
     @pytest.mark.asyncio
     async def test_query_with_aggregation(self, workspace, sample_erp_data):
@@ -117,11 +117,11 @@ class TestERPDataAnalysis:
                 'FROM data GROUP BY "店铺名称" ORDER BY total DESC',
         )
 
-        assert "白桃汽水杂货铺" in result
-        assert "蓝色海洋旗舰店" in result
-        assert "星光数码专营" in result
+        assert "白桃汽水杂货铺" in result.summary
+        assert "蓝色海洋旗舰店" in result.summary
+        assert "星光数码专营" in result.summary
         # 3 行聚合结果，应该直接返回完整表格
-        assert "|" in result  # Markdown 表格格式
+        assert "|" in result.summary  # Markdown 表格格式
 
     @pytest.mark.asyncio
     async def test_query_with_filter(self, workspace, sample_erp_data):
@@ -132,7 +132,7 @@ class TestERPDataAnalysis:
             sql='SELECT COUNT(*) as cnt FROM data WHERE is_scalping = 0',
         )
 
-        assert "90" in result  # 90 条非刷单
+        assert "90" in result.summary  # 90 条非刷单
 
     @pytest.mark.asyncio
     async def test_empty_result(self, workspace, sample_erp_data):
@@ -143,8 +143,8 @@ class TestERPDataAnalysis:
             sql='SELECT * FROM data WHERE "金额" > 999999',
         )
 
-        assert "0 行" in result or "空" in result
-        assert "❌" not in result
+        assert "0 行" in result.summary or "空" in result.summary
+        assert not result.is_failure
 
 
 # ══════════════════════════════════════════════════════
@@ -162,10 +162,10 @@ class TestWorkspaceFileAnalysis:
         executor = _make_executor(workspace)
         result = await executor.execute(file="销售报表.xlsx")
 
-        assert "200" in result  # 200 行
-        assert "产品" in result
-        assert "销售额" in result
-        assert "月份" in result
+        assert "200" in result.summary  # 200 行
+        assert "产品" in result.summary
+        assert "销售额" in result.summary
+        assert "月份" in result.summary
 
     @pytest.mark.asyncio
     async def test_explore_creates_cache(self, workspace, sample_excel):
@@ -211,9 +211,9 @@ class TestWorkspaceFileAnalysis:
                 'FROM data GROUP BY "月份" ORDER BY "月份"',
         )
 
-        assert "2026-01" in result
-        assert "2026-04" in result
-        assert "|" in result  # 4 行，完整 Markdown 表格
+        assert "2026-01" in result.summary
+        assert "2026-04" in result.summary
+        assert "|" in result.summary  # 4 行，完整 Markdown 表格
 
 
 # ══════════════════════════════════════════════════════
@@ -239,7 +239,7 @@ class TestExportMode:
                 export="导出测试.csv",
             )
 
-        assert "❌" not in result
+        assert not result.is_failure
         output_file = Path(workspace["output"]) / "导出测试.csv"
         assert output_file.exists()
         # 验证行数
@@ -260,7 +260,7 @@ class TestExportMode:
                 export="已付款订单.csv",
             )
 
-        assert "❌" not in result
+        assert not result.is_failure
         output_file = Path(workspace["output"]) / "已付款订单.csv"
         df = pd.read_csv(str(output_file))
         assert len(df) == 80  # 80 条 PAID
@@ -402,8 +402,8 @@ class TestSecurityIntegration:
             sql="DROP TABLE data; SELECT 1",
         )
 
-        assert "❌" in result
-        assert "安全" in result or "禁止" in result or "SELECT" in result
+        assert result.is_failure
+        assert "安全" in result.summary or "禁止" in result.summary or "SELECT" in result.summary
 
     @pytest.mark.asyncio
     async def test_path_traversal_blocked(self, workspace, sample_erp_data):
@@ -411,7 +411,7 @@ class TestSecurityIntegration:
         executor = _make_executor(workspace)
         result = await executor.execute(file="../../etc/passwd")
 
-        assert "❌" in result
+        assert result.is_failure
 
     @pytest.mark.asyncio
     async def test_nonexistent_file(self, workspace):
@@ -419,5 +419,5 @@ class TestSecurityIntegration:
         executor = _make_executor(workspace)
         result = await executor.execute(file="不存在的文件.parquet")
 
-        assert "❌" in result
-        assert "不存在" in result
+        assert result.is_failure
+        assert "不存在" in result.summary

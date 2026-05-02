@@ -14,6 +14,8 @@ from typing import Any, Dict, FrozenSet, List, Tuple
 
 from loguru import logger
 
+from services.agent.agent_result import AgentResult
+
 
 def inject_tool(
     tool_name: str,
@@ -66,12 +68,13 @@ async def invoke_tool_with_cache(
     args: Dict[str, Any],
     budget: Any,
     default_timeout: float,
-) -> Tuple[str, str, bool, int]:
+) -> Tuple[Any, str, bool, int]:
     """缓存命中检查 → 否则执行工具（含超时控制）。
 
     Returns:
-        (result, status, is_cached, elapsed_ms)
-        status: "success" | "timeout" | "error"
+        (result, audit_status, is_cached, elapsed_ms)
+        result: 工具返回值（AgentResult / str / 其他）
+        audit_status: "success" | "timeout" | "error"
     """
     audit_start = time.monotonic()
     audit_status = "success"
@@ -97,12 +100,25 @@ async def invoke_tool_with_cache(
             f"ToolLoop tool timeout | tool={tool_name} | "
             f"timeout={tool_timeout:.1f}s"
         )
-        result = f"工具执行超时（{int(tool_timeout)}秒），请缩小查询范围"
+        result = AgentResult(
+            summary=f"工具执行超时（{int(tool_timeout)}秒），请缩小查询范围",
+            status="timeout",
+            error_message=f"Timeout: {int(tool_timeout)}s",
+        )
         audit_status = "timeout"
     except Exception as e:
         logger.error(f"ToolLoop tool error | tool={tool_name} | error={e}")
-        result = f"工具执行失败: {e}"
+        result = AgentResult(
+            summary=f"工具执行失败: {e}",
+            status="error",
+            error_message=str(e),
+            metadata={"retryable": False},
+        )
         audit_status = "error"
+
+    # AgentResult 状态 → audit_status 同步（工具内部返回结构化错误时）
+    if isinstance(result, AgentResult) and result.is_failure:
+        audit_status = "timeout" if result.status == "timeout" else "error"
 
     elapsed_ms = int((time.monotonic() - audit_start) * 1000)
     return result, audit_status, False, elapsed_ms
