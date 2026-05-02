@@ -857,6 +857,73 @@ class TestDataQueryExecutorLastFileMeta:
         assert executor.last_file_meta is None
 
 
+class TestResolveFilePathCachePriority:
+    """_resolve_file_path 缓存优先逻辑"""
+
+    def _make_executor(self, tmp_path):
+        from services.agent.data_query_executor import DataQueryExecutor
+        executor = DataQueryExecutor.__new__(DataQueryExecutor)
+        executor._workspace_dir = str(tmp_path)
+        executor._staging_dir = str(tmp_path / "staging")
+        executor._output_dir = str(tmp_path / "下载")
+        executor.last_file_meta = None
+        executor.user_id = "test"
+        executor.org_id = None
+        executor.conversation_id = "test_resolve_cache"
+        return executor
+
+    def test_cache_hit_returns_real_path(self, tmp_path):
+        """缓存命中 → 直接返回真实路径，不查文件系统"""
+        from services.agent.workspace_file_handles import get_file_cache, _caches
+
+        # 创建真实文件
+        real_file = tmp_path / "利润表-很长的名字-哈希abc123.xlsx"
+        real_file.write_text("data")
+
+        # 注册缓存
+        _caches.pop("test_resolve_cache", None)
+        cache = get_file_cache("test_resolve_cache")
+        cache.register("利润表-很长的名字-哈希abc123.xlsx", str(real_file))
+
+        executor = self._make_executor(tmp_path)
+        result = executor._resolve_file_path("利润表-很长的名字-哈希abc123.xlsx")
+        assert result == str(real_file.resolve())
+
+        _caches.pop("test_resolve_cache", None)
+
+    def test_cache_hit_with_spaces(self, tmp_path):
+        """LLM 加空格 → 去空格匹配缓存 → 返回真实路径"""
+        from services.agent.workspace_file_handles import get_file_cache, _caches
+
+        real_file = tmp_path / "利润表-2026.xlsx"
+        real_file.write_text("data")
+
+        _caches.pop("test_resolve_cache", None)
+        cache = get_file_cache("test_resolve_cache")
+        cache.register("利润表-2026.xlsx", str(real_file))
+
+        executor = self._make_executor(tmp_path)
+        result = executor._resolve_file_path("利润表 - 2026.xlsx")
+        assert result == str(real_file.resolve())
+
+        _caches.pop("test_resolve_cache", None)
+
+    def test_cache_miss_falls_to_filesystem(self, tmp_path):
+        """缓存无记录 → 兜底文件系统查找"""
+        from services.agent.workspace_file_handles import _caches
+
+        _caches.pop("test_resolve_cache", None)
+
+        real_file = tmp_path / "report.csv"
+        real_file.write_text("a,b,c")
+
+        executor = self._make_executor(tmp_path)
+        result = executor._resolve_file_path("report.csv")
+        assert result == str(real_file.resolve())
+
+        _caches.pop("test_resolve_cache", None)
+
+
 class TestFilePathCache:
     """对话级文件路径缓存"""
 

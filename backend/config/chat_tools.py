@@ -176,17 +176,14 @@ TOOL_SYSTEM_PROMPT = """# 做事原则
 
 ### code_execute — 计算与文件生成
 
-对数据做计算、可视化、格式转换，生成报表和图表。
-
-何时使用：拿到查询结果（上下文中的小数据）后，需要计算涨跌幅、画趋势图、
-生成 Excel 报表时使用。
+无状态沙盒：每次调用都是全新进程，变量不保留。
+所有计算必须写在一段代码中一次完成——读文件、计算、输出、导出放在同一次调用里。
 
 核心能力：
 - 可用库：pd, plt, Path, math, json, datetime, Decimal, Counter, io
 - 生成的文件写到 OUTPUT_DIR，平台自动检测上传
 - 图表用 plt.savefig(OUTPUT_DIR + '/图.png', dpi=150, bbox_inches='tight')
 - 写 Excel 用 engine='xlsxwriter'
-- 每次执行都是全新子进程，不保留任何变量
 - 用 print() 输出文本结果
 
 注意事项：
