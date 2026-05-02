@@ -589,8 +589,24 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 if not tool_calls_acc:
                     break  # 无工具调用，输出完成
 
-                # 有工具调用 → 中间叙述作 TextPart 按时序插入 content_blocks
-                # "让我查看文件..."等中间文字进正文流，thinking 只留纯推理
+                # 有工具调用 → 本轮推理 + 中间叙述按时序插入 content_blocks
+                # 每轮 thinking 作为独立块，前端内联渲染为小折叠块
+                if turn_thinking:
+                    _thinking_block = {"type": "thinking", "text": turn_thinking}
+                    _content_blocks.append(_thinking_block)
+                    try:
+                        await ws_manager.send_to_task_or_user(
+                            task_id, user_id,
+                            build_content_block_add(
+                                task_id=task_id,
+                                conversation_id=conversation_id,
+                                message_id=message_id,
+                                block=_thinking_block,
+                            ),
+                        )
+                    except Exception as _think_err:
+                        logger.warning(f"thinking block push failed | task={task_id} | {_think_err}")
+
                 if turn_text:
                     _text_block = {"type": "text", "text": turn_text}
                     _content_blocks.append(_text_block)
@@ -935,19 +951,26 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             _final_turn_text = turn_text
 
             if _content_blocks:
-                # 多块模式：有工具结果插入（text / image / file 混排）
+                # 多块模式：最后一轮 thinking + text 插入 content_blocks
+                if turn_thinking:
+                    _content_blocks.append({"type": "thinking", "text": turn_thinking})
                 if _final_turn_text:
                     _content_blocks.append({"type": "text", "text": _final_turn_text})
                 # 从 blocks 构建 result_parts
                 # 设计文档：TECH_内容块混排渲染架构.md §6.3
                 from schemas.message import (
+                    ThinkingPart as _ThinkingPart,
                     ToolResultPart, ToolStepPart as _ToolStepPart,
                     ImagePart, FilePart,
                 )
                 from services.handlers.media_extractor import extract_media_parts
                 result_parts: list = []
                 for block in _content_blocks:
-                    if block["type"] == "text":
+                    if block["type"] == "thinking":
+                        result_parts.append(_ThinkingPart(
+                            text=block["text"],
+                        ))
+                    elif block["type"] == "text":
                         result_parts.extend(extract_media_parts(block["text"]))
                     elif block["type"] == "tool_step":
                         result_parts.append(_ToolStepPart(
@@ -986,8 +1009,10 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 result_parts = extract_media_parts(accumulated_text)
                 self._pending_file_parts = []
 
-            # 7. Thinking 持久化：作为 content 首元素（不再仅存 generation_params）
-            if accumulated_thinking:
+            # 7. Thinking 持久化
+            # 多块模式：每轮 thinking 已按时序插入 _content_blocks，不重复插入
+            # 单块模式（无工具调用）：仍作为 content 首元素
+            if accumulated_thinking and not _content_blocks:
                 from schemas.message import ThinkingPart
                 _thinking_duration = (
                     int((_time.monotonic() - _thinking_start_time) * 1000)
