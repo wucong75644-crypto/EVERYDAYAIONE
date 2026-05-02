@@ -15,7 +15,9 @@ export interface ToolStep {
   status: 'running' | 'completed' | 'error';
   summary?: string;
   code?: string;
+  output?: string;
   resultText?: string;
+  elapsedMs?: number;
 }
 
 /** 时序混合项：文字与工具步骤按实际产生顺序穿插 */
@@ -57,20 +59,26 @@ const STATUS_COLOR: Record<ToolStep['status'], string> = {
   error: 'text-red-500',
 };
 
-/** 单个工具步骤：标题行 + 可折叠代码/结果 */
+/** 单个工具步骤：标题行 + 结果默认展开 + 代码可折叠 */
 const StepItem = memo(function StepItem({ step }: { step: ToolStep }) {
   const [codeExpanded, setCodeExpanded] = useState(false);
-  const hasDetail = !!(step.code || step.resultText);
+  const resultContent = step.output || step.resultText || step.summary;
+  const hasDetail = !!(step.code || resultContent);
+  const isError = step.status === 'error';
+  const elapsed = step.elapsedMs != null
+    ? (step.elapsedMs < 1000 ? `${step.elapsedMs}ms` : `${(step.elapsedMs / 1000).toFixed(1)}s`)
+    : undefined;
 
   return (
     <div className="mt-1.5">
+      {/* 标题行：整行可点击展开详情 */}
       <button
         onClick={hasDetail ? () => setCodeExpanded(prev => !prev) : undefined}
         className={`flex items-center gap-1 text-xs ${hasDetail ? 'cursor-pointer hover:text-text-secondary' : 'cursor-default'} text-text-tertiary`}
       >
         <span className={STATUS_COLOR[step.status]}>{STATUS_ICON[step.status]}</span>
         <span className="font-medium">{step.toolName}</span>
-        {step.summary && <span className="ml-1 opacity-70">{step.summary}</span>}
+        {elapsed && <span className="opacity-50">{elapsed}</span>}
         {hasDetail && (
           <svg
             className={`w-2.5 h-2.5 ml-0.5 transition-transform duration-150 ${codeExpanded ? 'rotate-90' : ''}`}
@@ -80,26 +88,39 @@ const StepItem = memo(function StepItem({ step }: { step: ToolStep }) {
           </svg>
         )}
       </button>
+      {/* 代码（折叠） */}
       <AnimatePresence initial={false}>
-        {codeExpanded && hasDetail && (
+        {codeExpanded && step.code && (
           <m.div
-            key="step-detail"
+            key="step-code"
             className="overflow-hidden"
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
             transition={SOFT_SPRING}
           >
-            {step.code && (
-              <pre className="mt-1 ml-3 p-2 text-xs bg-bg-tertiary rounded overflow-x-auto text-text-tertiary leading-relaxed">
-                {step.code}
-              </pre>
-            )}
-            {step.resultText && (
-              <div className="mt-1 ml-3 p-2 text-xs bg-bg-tertiary rounded text-text-tertiary leading-relaxed whitespace-pre-wrap">
-                {step.resultText}
-              </div>
-            )}
+            <pre className="mt-1 ml-3 p-2 text-xs bg-bg-tertiary rounded overflow-x-auto text-text-tertiary leading-relaxed">
+              {step.code}
+            </pre>
+          </m.div>
+        )}
+      </AnimatePresence>
+      {/* 工具结果（折叠，点击展开） */}
+      <AnimatePresence initial={false}>
+        {codeExpanded && resultContent && (
+          <m.div
+            key="step-result"
+            className="overflow-hidden"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={SOFT_SPRING}
+          >
+            <div className={`mt-1 ml-3 p-2 text-xs rounded leading-relaxed whitespace-pre-wrap ${
+              isError ? 'bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400' : 'bg-bg-tertiary text-text-tertiary'
+            }`}>
+              {resultContent}
+            </div>
           </m.div>
         )}
       </AnimatePresence>
