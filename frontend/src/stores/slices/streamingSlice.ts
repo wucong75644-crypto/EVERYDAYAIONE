@@ -31,6 +31,8 @@ export interface StreamingSlice {
   registerStreamingId: (conversationId: string, messageId: string) => void;
   appendStreamingContent: (conversationId: string, chunk: string) => void;
   appendContentBlock: (conversationId: string, block: Record<string, unknown>) => void;
+  /** text block 去重：替换最后一个 text block（message_chunk 已累积），不追加重复 */
+  replaceLastTextBlock: (conversationId: string, block: { type: 'text'; text: string }) => void;
   setStreamingContent: (conversationId: string, content: string) => void;
   /** 刷新恢复：设置结构化 content blocks + 剩余流式文字 */
   restoreStreamingBlocks: (conversationId: string, blocks: Array<Record<string, unknown>>, remainingText: string) => void;
@@ -192,6 +194,37 @@ export const createStreamingSlice: StateCreator<
 
       const target = list[targetIndex];
       const content = [...target.content, block as unknown as Message['content'][number]];
+
+      const updatedList = [...list];
+      updatedList[targetIndex] = { ...target, content };
+
+      const optimisticMessages = new Map(state.optimisticMessages);
+      optimisticMessages.set(conversationId, updatedList);
+      return { optimisticMessages };
+    });
+  },
+
+  replaceLastTextBlock: (conversationId, block) => {
+    set((state) => {
+      const streamingId = state.streamingMessages.get(conversationId);
+      if (!streamingId) return state;
+
+      const list = state.optimisticMessages.get(conversationId);
+      if (!list) return state;
+
+      const targetIndex = list.findIndex((m) => m.id === streamingId);
+      if (targetIndex === -1) return state;
+
+      const target = list[targetIndex];
+      const content = [...target.content];
+
+      // 找最后一个 text block，替换为 content_block_add 的完整版
+      for (let i = content.length - 1; i >= 0; i--) {
+        if (content[i].type === 'text') {
+          content[i] = block;
+          break;
+        }
+      }
 
       const updatedList = [...list];
       updatedList[targetIndex] = { ...target, content };

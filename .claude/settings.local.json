@@ -1842,7 +1842,8 @@
       "Bash(grep -E \"\\\\.\\(py|md\\)$\")",
       "Bash(./git-push.sh \"feat: content_blocks流式增量持久化——刷新恢复thinking+tool_step，双指示器修复+穿插渲染\")",
       "Bash(./git-push.sh \"fix: 修复restoreStreamingBlocks类型声明缺失+ContentPart类型转换\")",
-      "Bash(./git-push.sh \"debug: LoadingPlaceholder加source标记定位双指示器来源\")"
+      "Bash(./git-push.sh \"debug: LoadingPlaceholder加source标记定位双指示器来源\")",
+      "Bash(./git-push.sh \"fix: content_block_add text去重+replaceLastTextBlock，消除ThinkingBlock内重复文字实现穿插显示\")"
     ],
     "additionalDirectories": [
       "/tmp"

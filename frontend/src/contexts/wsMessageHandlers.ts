@@ -57,6 +57,7 @@ export interface MessageStoreActions {
   getMessage: (messageId: string) => Message | undefined;
   setStreamingContent: (conversationId: string, content: string) => void;
   restoreStreamingBlocks: (conversationId: string, blocks: Array<Record<string, unknown>>, remainingText: string) => void;
+  replaceLastTextBlock: (conversationId: string, block: { type: 'text'; text: string }) => void;
   setAgentStepHint: (conversationId: string, hint: string) => void;
   clearAgentStepHint: (conversationId: string) => void;
   appendStreamingThinking: (conversationId: string, chunk: string) => void;
@@ -564,6 +565,14 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
           toolCallId: block.tool_call_id,
           status: block.status,
         });
+        return;
+      }
+
+      // text block 去重：message_chunk 已逐字累积出相同的 text block，
+      // content_block_add 的 text 是完整版——替换最后一个 text block 而非追加
+      if (block.type === 'text') {
+        store.replaceLastTextBlock(conversation_id, block as { type: 'text'; text: string });
+        logger.info('ws:content', 'text_block_replace', { conversationId: conversation_id });
         return;
       }
 
