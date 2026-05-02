@@ -19,7 +19,7 @@ import { useModalAnimation } from '../../../hooks/useModalAnimation';
 import { useMessageAnimation } from '../../../hooks/useMessageAnimation';
 import LoadingPlaceholder from './LoadingPlaceholder';
 import MarkdownRenderer from './MarkdownRenderer';
-import ThinkingBlock, { type ToolStep } from './ThinkingBlock';
+import ThinkingBlock, { type ToolStep, type ThinkingItem } from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
 import FormBlock from './FormBlock';
 import FileCardList from '../media/FileCard';
@@ -153,9 +153,10 @@ export default memo(function MessageItem({
 
   // 多块模式：工具调用前的解释文字 + tool_step + tool_result → 归入 thinking 区域
   // 只有最后一个 tool_step/tool_result 之后的 text 才正常显示
-  const { intermediateText, intermediateSteps, finalPartStartIdx } = useMemo(() => {
+  // 之前的文字和工具步骤按时序收集到 intermediateItems，穿插渲染在 ThinkingBlock 中
+  const { intermediateItems, finalPartStartIdx } = useMemo(() => {
     if (!hasMultiBlocks || !Array.isArray(message.content)) {
-      return { intermediateText: '', intermediateSteps: [] as ToolStep[], finalPartStartIdx: 0 };
+      return { intermediateItems: [] as ThinkingItem[], finalPartStartIdx: 0 };
     }
     // 找到最后一个 tool_step 或 tool_result 的索引
     let lastToolIdx = -1;
@@ -166,35 +167,38 @@ export default memo(function MessageItem({
         break;
       }
     }
-    if (lastToolIdx === -1) return { intermediateText: '', intermediateSteps: [] as ToolStep[], finalPartStartIdx: 0 };
+    if (lastToolIdx === -1) return { intermediateItems: [] as ThinkingItem[], finalPartStartIdx: 0 };
 
-    const textParts: string[] = [];
-    const steps: ToolStep[] = [];
+    const items: ThinkingItem[] = [];
+    // 跟踪 step 引用，用于 tool_result 回填
+    const stepRefs: ToolStep[] = [];
     for (let i = 0; i <= lastToolIdx; i++) {
       const p = message.content[i];
       if (p.type === 'text' && (p as { text: string }).text) {
-        textParts.push((p as { text: string }).text);
+        items.push({ type: 'text', content: (p as { text: string }).text });
       } else if (p.type === 'tool_step') {
         const ts = p as { tool_name?: string; status?: string; summary?: string; code?: string };
-        steps.push({
+        const step: ToolStep = {
           toolName: ts.tool_name || 'tool',
           status: (ts.status as ToolStep['status']) || 'running',
           summary: ts.summary,
           code: ts.code,
-        });
+        };
+        items.push({ type: 'step', step });
+        stepRefs.push(step);
       } else if (p.type === 'tool_result') {
         const tr = p as { tool_name?: string; text?: string };
         if (tr.text) {
-          const matchStep = [...steps].reverse().find(s => s.toolName === tr.tool_name);
+          const matchStep = [...stepRefs].reverse().find(s => s.toolName === tr.tool_name);
           if (matchStep) {
             matchStep.resultText = tr.text;
           } else {
-            steps.push({ toolName: tr.tool_name || 'tool', status: 'completed', resultText: tr.text });
+            items.push({ type: 'step', step: { toolName: tr.tool_name || 'tool', status: 'completed', resultText: tr.text } });
           }
         }
       }
     }
-    return { intermediateText: textParts.join('\n\n'), intermediateSteps: steps, finalPartStartIdx: lastToolIdx + 1 };
+    return { intermediateItems: items, finalPartStartIdx: lastToolIdx + 1 };
   }, [hasMultiBlocks, message.content]);
 
   // 判断是否为失败消息
@@ -455,24 +459,18 @@ export default memo(function MessageItem({
             const thinkingFromContent = !isStreaming
               ? (message.content.find(p => p.type === 'thinking') as import('../../../types/message').ThinkingPart | undefined)
               : undefined;
-            let thinkingText = streamingThinking || thinkingFromContent?.text || genParams.thinking_content as string || '';
-            // 多块模式：工具调用前的解释文字追加到 thinking
-            if (intermediateText) {
-              thinkingText = thinkingText
-                ? `${thinkingText}\n\n---\n\n${intermediateText}`
-                : intermediateText;
-            }
+            const thinkingText = streamingThinking || thinkingFromContent?.text || genParams.thinking_content as string || '';
             const thinkingDurationMs = thinkingFromContent?.duration_ms;
             const isThinkingNow = !!(isStreaming && streamingThinking && !textContent);
-            const hasSteps = intermediateSteps.length > 0;
-            if (!thinkingText && !isThinkingNow && !hasSteps) return null;
+            const hasItems = intermediateItems.length > 0;
+            if (!thinkingText && !isThinkingNow && !hasItems) return null;
             return (
               <ThinkingBlock
                 content={thinkingText}
                 isThinking={isThinkingNow}
                 thinkingStartTime={thinkingStartTime}
                 durationMs={thinkingDurationMs}
-                steps={hasSteps ? intermediateSteps : undefined}
+                items={hasItems ? intermediateItems : undefined}
               />
             );
           })()}
@@ -559,9 +557,14 @@ export default memo(function MessageItem({
                   }
                   return null;
                 })}
-                {/* 流式阶段：工具执行完毕等待最终回答时，在末尾显示加载提示 */}
+                {/* 流式阶段：工具执行完毕等待最终回答时，在末尾显示加载提示
+                    已有最终文字输出 → "AI 正在输出"；否则 → "AI 正在思考" */}
                 {(isStreaming || isRegenerating) && (
-                  <LoadingPlaceholder text={agentStepHint || 'AI 正在思考'} />
+                  <LoadingPlaceholder text={agentStepHint || (
+                    message.content.some((p, i) => i >= finalPartStartIdx && p.type === 'text' && (p as { text: string }).text)
+                      ? 'AI 正在输出'
+                      : 'AI 正在思考'
+                  )} />
                 )}
               </>
             ) : (
@@ -576,7 +579,7 @@ export default memo(function MessageItem({
               - 有 agentStepHint → 显示工具步骤（"正在执行代码"等）
               - 正在输出文字 → 显示"AI 正在输出"
               - 等待首 token → 由上方 LoadingPlaceholder 处理，这里不重复 */}
-          {!isUser && (isStreaming || isRegenerating) && textContent && (
+          {!isUser && (isStreaming || isRegenerating) && textContent && !hasMultiBlocks && (
             <div className="mt-1.5">
               <LoadingPlaceholder text={agentStepHint || 'AI 正在输出'} />
             </div>

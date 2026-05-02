@@ -26,7 +26,7 @@ async def recover_orphan_tasks(db) -> int:
     try:
         response = db.table("tasks").select(
             "id, type, external_task_id, placeholder_message_id, conversation_id, "
-            "model_id, client_task_id, accumulated_content, credit_transaction_id"
+            "model_id, client_task_id, accumulated_content, accumulated_blocks, credit_transaction_id"
         ).in_(
             "status", ["pending", "running"]
         ).execute()
@@ -63,6 +63,7 @@ async def recover_orphan_tasks(db) -> int:
             model_id=model_id,
             client_task_id=client_task_id,
             task_type=task.get("type", "chat"),
+            accumulated_blocks=task.get("accumulated_blocks"),
         )
 
         if saved:

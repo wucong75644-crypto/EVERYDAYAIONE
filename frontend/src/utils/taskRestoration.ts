@@ -19,6 +19,7 @@
  */
 
 import { useMessageStore } from '../stores/useMessageStore';
+import { calcRemainingText } from './messageUtils';
 import api from '../services/api';
 import toast from 'react-hot-toast';
 import { logger } from './logger';
@@ -58,6 +59,7 @@ export interface PendingTask {
   client_task_id?: string | null;
   // chat 任务特有字段
   accumulated_content?: string | null;
+  accumulated_blocks?: Array<Record<string, unknown>> | null;
   model_id?: string | null;
   error_message?: string | null;
   assistant_message_id?: string | null;
@@ -273,7 +275,15 @@ function createChatPlaceholder(task: PendingTask) {
   store.startStreaming(task.conversation_id, streamingId, { generationParams });
 
   // 如果有累积内容，立即显示
-  if (task.accumulated_content) {
+  if (task.accumulated_blocks && task.accumulated_blocks.length > 0) {
+    const remaining = calcRemainingText(task.accumulated_blocks, task.accumulated_content);
+    store.restoreStreamingBlocks(task.conversation_id, task.accumulated_blocks, remaining);
+    logger.debug('task:restore:p1', '设置累积 blocks', {
+      taskId: task.id,
+      blocksCount: task.accumulated_blocks.length,
+      remainingLen: remaining.length,
+    });
+  } else if (task.accumulated_content) {
     store.setStreamingContent(task.conversation_id, task.accumulated_content);
     logger.debug('task:restore:p1', '设置累积内容', {
       taskId: task.id,
@@ -284,7 +294,7 @@ function createChatPlaceholder(task: PendingTask) {
   logger.info('task:restore:p1', '聊天占位符已创建', {
     taskId: task.id,
     streamingId,
-    hasContent: !!task.accumulated_content,
+    hasContent: !!(task.accumulated_content || task.accumulated_blocks),
   });
 }
 

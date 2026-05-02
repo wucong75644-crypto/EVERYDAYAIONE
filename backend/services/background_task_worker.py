@@ -342,6 +342,7 @@ class BackgroundTaskWorker:
                     model_id=task.get("model_id", "unknown"),
                     client_task_id=client_task_id,
                     task_type=task_type,
+                    accumulated_blocks=task.get("accumulated_blocks"),
                 )
                 if saved:
                     logger.info(

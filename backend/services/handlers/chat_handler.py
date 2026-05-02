@@ -132,6 +132,15 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         except Exception as e:
             logger.warning(f"Failed to save accumulated_content | task_id={task_id} | error={e}")
 
+    async def _save_accumulated_blocks(self, task_id: str, blocks: List[Dict[str, Any]]) -> None:
+        """将结构化内容块写入数据库（供刷新恢复 thinking + tool_step 等）"""
+        try:
+            self.db.table("tasks").update(
+                {"accumulated_blocks": blocks}
+            ).eq("external_task_id", task_id).execute()
+        except Exception as e:
+            logger.warning(f"Failed to save accumulated_blocks | task_id={task_id} | error={e}")
+
     # ================================================================
     # ask_user 冻结/恢复（设计文档：TECH_AI主动沟通与打断机制.md §4.2）
     # ================================================================
@@ -597,6 +606,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         )
                     except Exception as _text_err:
                         logger.warning(f"text block push failed | task={task_id} | {_text_err}")
+                    asyncio.create_task(self._save_accumulated_blocks(task_id, _content_blocks))
 
                 # 有工具调用 → 执行工具循环
                 completed_calls = sorted(tool_calls_acc.values(), key=lambda x: x.get("id", ""))
@@ -664,6 +674,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     except Exception as _step_err:
                         logger.warning(f"tool_step push failed | tc={tc['id']} | {_step_err}")
 
+                # 持久化 blocks（tool_step running 全部追加完毕）
+                asyncio.create_task(self._save_accumulated_blocks(task_id, _content_blocks))
+
                 # 执行工具（安全检查 + 并行/串行分批 + 传 messages 给 erp_agent）
                 tool_results = await self._execute_tool_calls(
                     completed_calls, task_id, conversation_id, message_id,
@@ -720,6 +733,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     # 工具结果日志已通过 ToolStepCard 的 summary 字段展示，
                     # 不再重复写入 thinking（保持 thinking 只含纯 AI 推理）
 
+                # 持久化 blocks（tool_step 状态更新完毕：running → completed/error）
+                asyncio.create_task(self._save_accumulated_blocks(task_id, _content_blocks))
+
                 # ── 图片多模态注入 ──
                 # OpenAI 兼容 API 的 tool result content 只能是 string，
                 # 图片需要通过追加 user 消息的方式让模型"看到"。
@@ -764,6 +780,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                                 block=_block,
                             ),
                         )
+                    asyncio.create_task(self._save_accumulated_blocks(task_id, _content_blocks))
                     logger.info(
                         f"File blocks pushed to frontend | "
                         f"count={len(self._pending_file_parts)} | task={task_id}"
@@ -796,6 +813,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             chunk=_form_hint,
                         ),
                     )
+                    asyncio.create_task(self._save_accumulated_blocks(task_id, _content_blocks))
                     logger.info(f"FormBlock pushed + persisted | task={task_id}")
                     break  # 停止工具循环，等用户确认表单
 
@@ -896,6 +914,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     # 多块模式下需要追加到 _content_blocks 才能被渲染
                     if _content_blocks:
                         _content_blocks.append({"type": "text", "text": _synthesis})
+                        asyncio.create_task(self._save_accumulated_blocks(task_id, _content_blocks))
                 elif accumulated_text:
                     # 合成失败但有部分结果 → 追加提示
                     accumulated_text += f"\n\n> ⚠️ 已达到执行上限（{_STOP_MESSAGES.get(_stop, _stop)}），以上为部分结果。"

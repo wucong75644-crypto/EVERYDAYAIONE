@@ -1838,7 +1838,9 @@
       "Bash(sort -t: -k1,1)",
       "WebFetch(domain:posit.co)",
       "Bash(grep -n \"async def _execute_tool_calls\" /Users/wucong/EVERYDAYAIONE/backend/services/handlers/chat_*.py)",
-      "Bash(./git-push.sh \"feat: Excel表头自动检测\\(众数法+类型验证\\) + 10处提示词统一data_query替代code_execute\")"
+      "Bash(./git-push.sh \"feat: Excel表头自动检测\\(众数法+类型验证\\) + 10处提示词统一data_query替代code_execute\")",
+      "Bash(grep -E \"\\\\.\\(py|md\\)$\")",
+      "Bash(./git-push.sh \"feat: content_blocks流式增量持久化——刷新恢复thinking+tool_step，双指示器修复+穿插渲染\")"
     ],
     "additionalDirectories": [
       "/tmp"

@@ -4,7 +4,30 @@
 供 task_recovery、background_task_worker 共用，消除重复代码。
 """
 
+from typing import List, Dict, Any
+
 from loguru import logger
+
+
+def merge_blocks_with_text(
+    blocks: List[Dict[str, Any]],
+    accumulated_text: str,
+) -> List[Dict[str, Any]]:
+    """将结构化 blocks 与累积文字合并，去重后返回完整 content 数组。
+
+    blocks 中已有的 text 块覆盖了历史轮次的文字，accumulated_text 包含全部文字。
+    计算差值（当前轮剩余文字），追加为最后一个 text 块。
+    """
+    blocks_text = "".join(
+        b.get("text", "") for b in blocks if b.get("type") == "text"
+    )
+    remaining = ""
+    if accumulated_text and accumulated_text.startswith(blocks_text):
+        remaining = accumulated_text[len(blocks_text):]
+    content = list(blocks)
+    if remaining.strip():
+        content.append({"type": "text", "text": remaining})
+    return content
 
 
 def save_accumulated_to_message(
@@ -15,19 +38,25 @@ def save_accumulated_to_message(
     model_id: str = "unknown",
     client_task_id: str = "",
     task_type: str = "chat",
+    accumulated_blocks: list | None = None,
 ) -> bool:
     """
-    将 tasks.accumulated_content 回写到 messages 表（upsert 幂等）。
+    将 tasks.accumulated_content + accumulated_blocks 回写到 messages 表（upsert 幂等）。
 
     Returns:
         True 写入成功，False 写入失败
     """
     try:
+        if accumulated_blocks:
+            content = merge_blocks_with_text(accumulated_blocks, accumulated_content)
+        else:
+            content = [{"type": "text", "text": accumulated_content}]
+
         db.table("messages").upsert({
             "id": message_id,
             "conversation_id": conversation_id,
             "role": "assistant",
-            "content": [{"type": "text", "text": accumulated_content}],
+            "content": content,
             "status": "completed",
             "credits_cost": 0,
             "task_id": client_task_id,

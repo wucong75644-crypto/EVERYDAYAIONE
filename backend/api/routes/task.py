@@ -56,7 +56,7 @@ async def get_pending_tasks(
             "id, external_task_id, client_task_id, conversation_id, type, status, "
             "request_params, credits_locked, placeholder_message_id, "
             "placeholder_created_at, started_at, last_polled_at, "
-            "accumulated_content, model_id, error_message, assistant_message_id"
+            "accumulated_content, accumulated_blocks, model_id, error_message, assistant_message_id"
         )
 
         # 查询进行中的任务（OrgScopedDB 自动加 org_id 过滤）

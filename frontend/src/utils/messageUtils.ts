@@ -36,6 +36,25 @@ export function getTextContent(message: Message): string {
   return texts.join('\n\n');
 }
 
+/**
+ * 计算 blocks 之外的剩余流式文字。
+ * blocks 中的 text 块覆盖历史轮次，accumulated 包含全部文字，
+ * 返回差值（当前轮正在流式输出的文字）。
+ */
+export function calcRemainingText(
+  blocks: Array<Record<string, unknown>>,
+  accumulated: string | null | undefined,
+): string {
+  const blocksText = blocks
+    .filter((b) => b.type === 'text')
+    .map((b) => (b as { text?: string }).text || '')
+    .join('');
+  if (accumulated && accumulated.startsWith(blocksText)) {
+    return accumulated.slice(blocksText.length);
+  }
+  return accumulated || '';
+}
+
 /** 从 Message 提取图片 URL */
 export function getImageUrls(message: Message): string[] {
   if (!Array.isArray(message.content)) return [];

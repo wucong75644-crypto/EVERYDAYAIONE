@@ -15,6 +15,7 @@ import {
   getVideoUrls,
   getFiles,
   normalizeMessage,
+  calcRemainingText,
 } from '../messageUtils';
 import type { Message, ContentPart } from '../../types/message';
 
@@ -303,5 +304,71 @@ describe('getFiles', () => {
       { type: 'file', url: 'https://a.com/2.xlsx', name: 'b.xlsx', mime_type: 'application/vnd.ms-excel', size: 200 },
     ]));
     expect(result).toHaveLength(2);
+  });
+});
+
+// ============================================================
+// calcRemainingText 测试
+// ============================================================
+
+describe('calcRemainingText', () => {
+  it('should extract remaining text after blocks text', () => {
+    const blocks = [
+      { type: 'text', text: 'turn1' },
+      { type: 'tool_step', tool_name: 'data_query' },
+    ];
+    const result = calcRemainingText(blocks, 'turn1turn2 answer');
+    expect(result).toBe('turn2 answer');
+  });
+
+  it('should return empty string when text matches blocks exactly', () => {
+    const blocks = [{ type: 'text', text: 'all text' }];
+    const result = calcRemainingText(blocks, 'all text');
+    expect(result).toBe('');
+  });
+
+  it('should return full accumulated when text does not start with blocks text', () => {
+    const blocks = [{ type: 'text', text: 'original' }];
+    const result = calcRemainingText(blocks, 'completely different');
+    expect(result).toBe('completely different');
+  });
+
+  it('should return empty string for null accumulated', () => {
+    const blocks = [{ type: 'text', text: 'hello' }];
+    const result = calcRemainingText(blocks, null);
+    expect(result).toBe('');
+  });
+
+  it('should return empty string for undefined accumulated', () => {
+    const blocks = [{ type: 'text', text: 'hello' }];
+    const result = calcRemainingText(blocks, undefined);
+    expect(result).toBe('');
+  });
+
+  it('should handle blocks with no text parts', () => {
+    const blocks = [
+      { type: 'tool_step', tool_name: 'data_query' },
+      { type: 'tool_step', tool_name: 'code_execute' },
+    ];
+    const result = calcRemainingText(blocks, 'some text');
+    // blocksText is '', accumulated starts with '' → remaining = 'some text'
+    expect(result).toBe('some text');
+  });
+
+  it('should handle multiple text blocks in order', () => {
+    const blocks = [
+      { type: 'text', text: 'a' },
+      { type: 'tool_step', tool_name: 't1' },
+      { type: 'text', text: 'b' },
+      { type: 'tool_step', tool_name: 't2' },
+    ];
+    const result = calcRemainingText(blocks, 'abfinal');
+    expect(result).toBe('final');
+  });
+
+  it('should handle empty blocks array', () => {
+    const result = calcRemainingText([], 'text');
+    // blocksText is '', accumulated starts with '' → remaining = 'text'
+    expect(result).toBe('text');
   });
 });
