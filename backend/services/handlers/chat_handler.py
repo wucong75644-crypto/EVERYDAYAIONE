@@ -893,6 +893,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
                 if _synthesis:
                     accumulated_text = _synthesis
+                    # 多块模式下需要追加到 _content_blocks 才能被渲染
+                    if _content_blocks:
+                        _content_blocks.append({"type": "text", "text": _synthesis})
                 elif accumulated_text:
                     # 合成失败但有部分结果 → 追加提示
                     accumulated_text += f"\n\n> ⚠️ 已达到执行上限（{_STOP_MESSAGES.get(_stop, _stop)}），以上为部分结果。"
