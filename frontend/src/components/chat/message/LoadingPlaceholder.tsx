@@ -13,17 +13,14 @@ interface LoadingPlaceholderProps {
   text?: string;
   /** 自定义样式类名 */
   className?: string;
-  /** debug 标记：标识渲染来源 */
-  source?: string;
 }
 
 export default function LoadingPlaceholder({
   text,
   className = '',
-  source,
 }: LoadingPlaceholderProps) {
   return (
-    <div className={`flex items-center gap-1.5 py-1 ${className}`} data-source={source}>
+    <div className={`flex items-center gap-1.5 py-1 ${className}`}>
       {text && (
         <span className="text-sm thinking-sparkle">{text}</span>
       )}
