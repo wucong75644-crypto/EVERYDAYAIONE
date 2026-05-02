@@ -593,8 +593,8 @@ class TestPromptChanges:
 
     def test_code_execute_prompt_updated(self):
         from config.chat_tools import TOOL_SYSTEM_PROMPT
-        assert "大数据文件用 data_query 查询" in TOOL_SYSTEM_PROMPT or \
-               "大文件用 data_query 查询" in TOOL_SYSTEM_PROMPT
+        assert "data_query SQL 筛选" in TOOL_SYSTEM_PROMPT or \
+               "data_query" in TOOL_SYSTEM_PROMPT
 
     def test_code_routing_prompt_has_data_query(self):
         from config.code_tools import CODE_ROUTING_PROMPT

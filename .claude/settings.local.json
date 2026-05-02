@@ -1853,7 +1853,11 @@
       "WebFetch(domain:cursor.com)",
       "Bash(python -m pytest backend/tests/ -k \"chat_tools or tool_system_prompt or TOOL_SYSTEM\" --no-header -q)",
       "Bash(python -c \"from backend.config.chat_tools import TOOL_SYSTEM_PROMPT, get_tool_system_prompt; print\\(f'TOOL_SYSTEM_PROMPT length: {len\\(TOOL_SYSTEM_PROMPT\\)}'\\); print\\('get_tool_system_prompt OK:', len\\(get_tool_system_prompt\\(\\)\\) > 0\\)\")",
-      "Bash(./git-push.sh \"feat: 有状态代码执行——提示词切换+executor异常降级+测试补充+文档更新\")"
+      "Bash(./git-push.sh \"feat: 有状态代码执行——提示词切换+executor异常降级+测试补充+文档更新\")",
+      "Bash(python -c \"from config.chat_tools import TOOL_SYSTEM_PROMPT; print\\(f'OK, length={len\\(TOOL_SYSTEM_PROMPT\\)}'\\)\")",
+      "Bash(awk '{print $NF}')",
+      "Bash(scp deploy/sandbox.cfg root@47.110.94.25:/var/www/everydayai/deploy/sandbox.cfg)",
+      "Bash(./git-push.sh \"fix: KernelManager日志格式——loguru用f-string替代%s\")"
     ],
     "additionalDirectories": [
       "/tmp"

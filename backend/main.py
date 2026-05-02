@@ -367,7 +367,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _kernel_manager = KernelManager(nsjail_cfg=_nsjail_cfg)
     await _kernel_manager.start()
     set_kernel_manager(_kernel_manager)
-    logger.info("KernelManager started | nsjail=%s", "enabled" if _nsjail_cfg else "disabled")
+    logger.info(f"KernelManager started | nsjail={'enabled' if _nsjail_cfg else 'disabled'}")
 
     yield
 
