@@ -482,14 +482,14 @@ export default memo(function MessageItem({
                 - 有 agentStepHint 时 → 显示工具步骤提示（"正在查询订单..."）
                 - 都没有时 → 仅显示脉冲圆点（Claude 风格，无卡片无文字） */}
             {((isRegenerating || isStreaming) && !textContent && !hasMultiBlocks) ? (
-              <LoadingPlaceholder text={agentStepHint || 'AI 正在思考'} />
+              <LoadingPlaceholder text={agentStepHint || 'AI 正在思考'} source="initial" />
             ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !isErrorMessage && !isStreaming && !isRegenerating) ? (
               /* 已完成但无内容（用户取消等场景） */
               <span className="text-text-disabled text-sm italic">已取消，点击「重新生成」重试</span>
             ) : bubbleTextInfo ? (
               /* 媒体任务气泡文字：图片/视频生成中或生成完成（仅 pending 状态） */
               bubbleTextInfo.hasAnimation ? (
-                <LoadingPlaceholder text={bubbleTextInfo.text} />
+                <LoadingPlaceholder text={bubbleTextInfo.text} source="media" />
               ) : (
                 <span>{bubbleTextInfo.text}</span>
               )
@@ -560,7 +560,7 @@ export default memo(function MessageItem({
                 {/* 流式阶段：工具执行完毕等待最终回答时，在末尾显示加载提示
                     已有最终文字输出 → "AI 正在输出"；否则 → "AI 正在思考" */}
                 {(isStreaming || isRegenerating) && (
-                  <LoadingPlaceholder text={agentStepHint || (
+                  <LoadingPlaceholder source="multiblock" text={agentStepHint || (
                     message.content.some((p, i) => i >= finalPartStartIdx && p.type === 'text' && (p as { text: string }).text)
                       ? 'AI 正在输出'
                       : 'AI 正在思考'
@@ -581,7 +581,7 @@ export default memo(function MessageItem({
               - 等待首 token → 由上方 LoadingPlaceholder 处理，这里不重复 */}
           {!isUser && (isStreaming || isRegenerating) && textContent && !hasMultiBlocks && (
             <div className="mt-1.5">
-              <LoadingPlaceholder text={agentStepHint || 'AI 正在输出'} />
+              <LoadingPlaceholder text={agentStepHint || 'AI 正在输出'} source="bottom" />
             </div>
           )}
         </div>
