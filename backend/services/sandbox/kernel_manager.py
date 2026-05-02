@@ -272,6 +272,7 @@ class KernelManager:
                 "-B", f"{workspace_dir}:/workspace",
                 "-B", f"{staging_dir}:/staging",
                 "-B", f"{output_dir}:/output",
+                "--cwd", "/app",
                 "--", "/venv/bin/python3", "-u",
                 "-m", "services.sandbox.kernel_worker",
                 "/workspace", "/staging", "/output",

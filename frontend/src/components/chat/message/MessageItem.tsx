@@ -525,8 +525,11 @@ export default memo(function MessageItem({
                   }
                   return null;
                 })}
-                {/* 当前轮 live thinking：streamingThinking 中还没被 content_block_add 收录的部分 */}
+                {/* 当前轮 live thinking：仅在 text 未开始输出时显示（thinking→text 转换后由内联块接管） */}
                 {isStreaming && streamingThinking && (() => {
+                  // text 正在输出时不显示 live thinking（已由 content_block_add 提交为内联块）
+                  const lastBlock = message.content[message.content.length - 1];
+                  if (lastBlock?.type === 'text') return null;
                   const committedLen = message.content
                     .filter(p => p.type === 'thinking')
                     .reduce((sum, p) => sum + ((p as { text?: string }).text?.length || 0), 0);
