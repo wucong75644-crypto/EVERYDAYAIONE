@@ -10,6 +10,7 @@
 import { normalizeMessage, type Message } from '../stores/useMessageStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import { logger } from '../utils/logger';
+import { calcRemainingText } from '../utils/messageUtils';
 import { tabSync } from '../utils/tabSync';
 import type { OperationContext } from './WebSocketContext';
 
@@ -413,17 +414,28 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
     },
 
     subscribed: (msg) => {
-      const { task_id, accumulated } = (msg.payload || {}) as { task_id?: string; accumulated?: string };
+      const { task_id, accumulated, accumulated_blocks } = (msg.payload || {}) as {
+        task_id?: string;
+        accumulated?: string;
+        accumulated_blocks?: Array<Record<string, unknown>>;
+      };
 
       logger.info('ws:subscribe', 'confirmed', {
         taskId: task_id,
         accumulatedLen: accumulated?.length ?? 0,
+        blocksCount: accumulated_blocks?.length ?? 0,
       });
 
-      if (accumulated && accumulated.length > 0 && task_id) {
+      if (task_id) {
         const conversationId = deps.taskConversationMapRef.current.get(task_id);
         if (conversationId) {
-          deps.getStore().setStreamingContent(conversationId, accumulated);
+          if (accumulated_blocks && accumulated_blocks.length > 0) {
+            const remaining = calcRemainingText(accumulated_blocks, accumulated);
+            deps.getStore().restoreStreamingBlocks(conversationId, accumulated_blocks, remaining);
+          } else if (accumulated && accumulated.length > 0) {
+            // 向后兼容：无 blocks 时仅恢复纯文字
+            deps.getStore().setStreamingContent(conversationId, accumulated);
+          }
         }
       }
     },

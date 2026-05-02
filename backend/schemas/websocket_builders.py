@@ -144,12 +144,17 @@ def build_image_partial_update(
 
 def build_subscribed(
     task_id: str, accumulated: str = "", current_index: int = -1,
+    accumulated_blocks: Optional[list] = None,
 ) -> Dict[str, Any]:
     """构建订阅确认消息"""
-    return _build_ws_message(
-        WSMessageType.SUBSCRIBED,
-        {"task_id": task_id, "accumulated": accumulated, "current_index": current_index},
-    )
+    payload: Dict[str, Any] = {
+        "task_id": task_id,
+        "accumulated": accumulated,
+        "current_index": current_index,
+    }
+    if accumulated_blocks:
+        payload["accumulated_blocks"] = accumulated_blocks
+    return _build_ws_message(WSMessageType.SUBSCRIBED, payload)
 
 
 def build_error(message: str, code: Optional[str] = None) -> Dict[str, Any]:

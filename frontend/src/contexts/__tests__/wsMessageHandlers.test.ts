@@ -78,6 +78,7 @@ function createMockStore(): MessageStoreActions {
     setIsSending: vi.fn(),
     getMessage: vi.fn(),
     setStreamingContent: vi.fn(),
+    restoreStreamingBlocks: vi.fn(),
     setAgentStepHint: vi.fn(),
     clearAgentStepHint: vi.fn(),
     appendStreamingThinking: vi.fn(),
@@ -544,6 +545,60 @@ describe('wsMessageHandlers', () => {
       });
 
       expect(store.setStreamingContent).not.toHaveBeenCalled();
+    });
+
+    it('should restore blocks with remaining text when accumulated_blocks present', () => {
+      deps.taskConversationMapRef.current.set('task_1', 'conv_1');
+
+      const blocks = [
+        { type: 'text', text: 'turn1' },
+        { type: 'tool_step', tool_name: 'data_query', status: 'completed' },
+      ];
+      handlers.subscribed({
+        payload: {
+          task_id: 'task_1',
+          accumulated: 'turn1final answer',
+          accumulated_blocks: blocks,
+        },
+      });
+
+      expect(store.restoreStreamingBlocks).toHaveBeenCalledWith(
+        'conv_1', blocks, 'final answer',
+      );
+      expect(store.setStreamingContent).not.toHaveBeenCalled();
+    });
+
+    it('should fallback to setStreamingContent when blocks is empty array', () => {
+      deps.taskConversationMapRef.current.set('task_1', 'conv_1');
+
+      handlers.subscribed({
+        payload: {
+          task_id: 'task_1',
+          accumulated: 'plain text',
+          accumulated_blocks: [],
+        },
+      });
+
+      expect(store.restoreStreamingBlocks).not.toHaveBeenCalled();
+      expect(store.setStreamingContent).toHaveBeenCalledWith('conv_1', 'plain text');
+    });
+
+    it('should handle blocks without accumulated text', () => {
+      deps.taskConversationMapRef.current.set('task_1', 'conv_1');
+
+      const blocks = [
+        { type: 'tool_step', tool_name: 'data_query', status: 'running' },
+      ];
+      handlers.subscribed({
+        payload: {
+          task_id: 'task_1',
+          accumulated_blocks: blocks,
+        },
+      });
+
+      expect(store.restoreStreamingBlocks).toHaveBeenCalledWith(
+        'conv_1', blocks, '',
+      );
     });
   });
 

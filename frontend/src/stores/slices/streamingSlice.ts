@@ -32,6 +32,8 @@ export interface StreamingSlice {
   appendStreamingContent: (conversationId: string, chunk: string) => void;
   appendContentBlock: (conversationId: string, block: Record<string, unknown>) => void;
   setStreamingContent: (conversationId: string, content: string) => void;
+  /** 刷新恢复：设置结构化 content blocks + 剩余流式文字 */
+  restoreStreamingBlocks: (conversationId: string, blocks: Array<Record<string, unknown>>, remainingText: string) => void;
   completeStreaming: (conversationId: string) => void;
   completeStreamingWithMessage: (conversationId: string, message: Message) => void;
   getStreamingMessageId: (conversationId: string) => string | null;
@@ -235,6 +237,32 @@ export const createStreamingSlice: StateCreator<
       const updatedList = list.map((m) =>
         m.id === streamingId
           ? { ...m, content: [{ type: 'text' as const, text: content }] }
+          : m
+      );
+
+      optimisticMessages.set(conversationId, updatedList);
+      return { optimisticMessages };
+    });
+  },
+
+  restoreStreamingBlocks: (conversationId, blocks, remainingText) => {
+    set((state) => {
+      const streamingId = state.streamingMessages.get(conversationId);
+      if (!streamingId) return state;
+
+      const optimisticMessages = new Map(state.optimisticMessages);
+      const list = optimisticMessages.get(conversationId);
+      if (!list) return state;
+
+      // 构建 content：结构化 blocks + 剩余流式文字
+      const content = [...blocks] as Message['content'];
+      if (remainingText) {
+        content.push({ type: 'text' as const, text: remainingText });
+      }
+
+      const updatedList = list.map((m) =>
+        m.id === streamingId
+          ? { ...m, content }
           : m
       );
 

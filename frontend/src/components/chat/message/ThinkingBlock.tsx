@@ -18,8 +18,13 @@ export interface ToolStep {
   resultText?: string;
 }
 
+/** 时序混合项：文字与工具步骤按实际产生顺序穿插 */
+export type ThinkingItem =
+  | { type: 'text'; content: string }
+  | { type: 'step'; step: ToolStep };
+
 interface ThinkingBlockProps {
-  /** 思考内容文本 */
+  /** 思考内容文本（模型 reasoning） */
   content: string;
   /** 是否正在流式思考中 */
   isThinking?: boolean;
@@ -27,8 +32,8 @@ interface ThinkingBlockProps {
   thinkingStartTime?: number;
   /** 后端计算的精确耗时（毫秒），优先于 thinkingStartTime */
   durationMs?: number;
-  /** 工具执行步骤（在 thinking 展开区域内渲染，代码默认折叠） */
-  steps?: ToolStep[];
+  /** 时序混合项：中间文字 + 工具步骤按产生顺序穿插渲染 */
+  items?: ThinkingItem[];
 }
 
 /** 格式化思考时长 */
@@ -107,7 +112,7 @@ export default memo(function ThinkingBlock({
   isThinking = false,
   thinkingStartTime,
   durationMs,
-  steps,
+  items,
 }: ThinkingBlockProps) {
   // 默认折叠；用户手动展开后保持展开状态，不自动收起
   const [expanded, setExpanded] = useState(false);
@@ -124,10 +129,10 @@ export default memo(function ThinkingBlock({
     return '';
   }, [isThinking, durationMs, thinkingStartTime]);
 
-  const hasSteps = steps && steps.length > 0;
+  const hasItems = items && items.length > 0;
 
   // 无内容时不渲染
-  if (!content && !isThinking && !hasSteps) return null;
+  if (!content && !isThinking && !hasItems) return null;
 
   return (
     <div className="mb-2">
@@ -168,7 +173,7 @@ export default memo(function ThinkingBlock({
 
       {/* 展开的思考内容 — V3：framer spring 展开动画 */}
       <AnimatePresence initial={false}>
-        {expanded && (content || hasSteps) && (
+        {expanded && (content || hasItems) && (
           <m.div
             key="thinking-content"
             className="thinking-content mt-1 ml-4 pl-3 border-l-2 border-border-default overflow-hidden"
@@ -183,12 +188,18 @@ export default memo(function ThinkingBlock({
                 {content.trimStart()}
               </div>
             )}
-            {/* 工具执行步骤（代码默认折叠） */}
-            {hasSteps && (
+            {/* 中间文字 + 工具步骤按时序穿插渲染 */}
+            {hasItems && (
               <div className={content ? 'mt-2 pt-2 border-t border-border-default' : ''}>
-                {steps.map((step, i) => (
-                  <StepItem key={`${step.toolName}-${i}`} step={step} />
-                ))}
+                {items.map((item, i) =>
+                  item.type === 'text' ? (
+                    <div key={`text-${i}`} className="text-sm text-text-tertiary leading-relaxed whitespace-pre-wrap mt-1.5">
+                      {item.content.trimStart()}
+                    </div>
+                  ) : (
+                    <StepItem key={`${item.step.toolName}-${i}`} step={item.step} />
+                  )
+                )}
               </div>
             )}
           </m.div>

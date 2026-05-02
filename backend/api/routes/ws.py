@@ -10,7 +10,7 @@ WebSocket 端点
 
 import asyncio
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
@@ -169,16 +169,17 @@ async def _handle_message(conn_id: str, user_id: str, data: dict):
             success = await ws_manager.subscribe_task(conn_id, task_id)
 
             if success:
-                # 查询最新累积内容（补全 Phase 1 到 Phase 2 之间的差异）
-                accumulated = await _get_task_accumulated_content(task_id, user_id)
+                # 查询最新累积内容 + 结构化内容块（补全刷新期间的差异）
+                accumulated, accumulated_blocks = await _get_task_accumulated_state(task_id, user_id)
 
                 await ws_manager.send_to_connection(conn_id, build_subscribed(
                     task_id=task_id,
                     accumulated=accumulated or "",
+                    accumulated_blocks=accumulated_blocks or [],
                     current_index=-1  # 不再使用索引
                 ))
 
-                logger.info(f"Task subscribed | conn={conn_id} | task={task_id} | accumulated_len={len(accumulated or '')}")
+                logger.info(f"Task subscribed | conn={conn_id} | task={task_id} | accumulated_len={len(accumulated or '')} | blocks={len(accumulated_blocks or [])}")
 
                 # 检查任务是否已完成（解决订阅晚于任务完成的问题）
                 await _check_and_send_completed_task(conn_id, task_id, user_id)
@@ -307,30 +308,35 @@ async def _handle_form_submit(
         })
 
 
-async def _get_task_accumulated_content(task_id: str, user_id: str) -> Optional[str]:
+async def _get_task_accumulated_state(task_id: str, user_id: str) -> Tuple[Optional[str], Optional[list]]:
     """
-    查询任务的累积内容（用于 subscribe 时返回最新内容）
+    查询任务的累积内容和结构化内容块（用于 subscribe 时返回最新状态）
 
     仅查询 running 状态的 chat 任务，已完成的由 _check_and_send_completed_task 处理
+
+    Returns:
+        (accumulated_content, accumulated_blocks)
     """
     try:
         db = get_db()
-        # 尝试 external_task_id 和 client_task_id 两种方式查询
         for field in ["external_task_id", "client_task_id"]:
             result = db.table("tasks").select(
-                "accumulated_content"
+                "accumulated_content, accumulated_blocks"
             ).eq(field, task_id).eq(
                 "user_id", user_id
             ).eq("type", "chat").eq(
                 "status", "running"
             ).maybe_single().execute()
 
-            if result and result.data and result.data.get("accumulated_content"):
-                return result.data["accumulated_content"]
-        return None
+            if result and result.data:
+                content = result.data.get("accumulated_content")
+                blocks = result.data.get("accumulated_blocks")
+                if content or blocks:
+                    return content, blocks or []
+        return None, None
     except Exception as e:
-        logger.warning(f"Failed to get accumulated_content | task_id={task_id} | error={e}")
-        return None
+        logger.warning(f"Failed to get accumulated_state | task_id={task_id} | error={e}")
+        return None, None
 
 
 async def _check_and_send_completed_task(conn_id: str, task_id: str, user_id: str):
@@ -455,7 +461,13 @@ def _build_fallback_message(task: Dict[str, Any], message_id: str, conversation_
 
     # 根据任务类型构建内容
     if task_type == "chat":
-        content = [{"type": "text", "text": task.get("accumulated_content", "")}]
+        blocks = task.get("accumulated_blocks") or []
+        text = task.get("accumulated_content", "")
+        if blocks:
+            from services.task_utils import merge_blocks_with_text
+            content = merge_blocks_with_text(blocks, text)
+        else:
+            content = [{"type": "text", "text": text}]
     elif task_type == "image":
         urls = task.get("result", {}).get("image_urls", [])
         content = [{"type": "image", "url": url} for url in urls]

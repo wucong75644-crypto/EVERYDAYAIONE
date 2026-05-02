@@ -14,7 +14,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from unittest.mock import MagicMock
-from services.task_utils import save_accumulated_to_message, refund_task_credits
+from services.task_utils import save_accumulated_to_message, refund_task_credits, merge_blocks_with_text
 
 
 def _mock_db():
@@ -95,6 +95,117 @@ class TestSaveAccumulatedToMessage:
             accumulated_content="content",
         )
         assert result is False
+
+
+# ── merge_blocks_with_text 测试 ───────────────────────────────
+
+
+class TestMergeBlocksWithText:
+
+    def test_blocks_with_matching_text(self):
+        """blocks 中的 text 与 accumulated_text 前缀匹配，剩余文字追加"""
+        blocks = [
+            {"type": "text", "text": "turn1"},
+            {"type": "tool_step", "tool_name": "data_query", "status": "completed"},
+        ]
+        result = merge_blocks_with_text(blocks, "turn1turn2 final")
+        assert len(result) == 3
+        assert result[0] == {"type": "text", "text": "turn1"}
+        assert result[1]["type"] == "tool_step"
+        assert result[2] == {"type": "text", "text": "turn2 final"}
+
+    def test_blocks_no_remaining_text(self):
+        """accumulated_text 与 blocks 文字完全一致，不追加额外 text"""
+        blocks = [
+            {"type": "text", "text": "all text"},
+            {"type": "tool_step", "tool_name": "code_execute", "status": "completed"},
+        ]
+        result = merge_blocks_with_text(blocks, "all text")
+        assert len(result) == 2
+
+    def test_empty_blocks(self):
+        """空 blocks 数组 + 有文字 → 追加剩余文字"""
+        result = merge_blocks_with_text([], "some text")
+        assert result == [{"type": "text", "text": "some text"}]
+
+    def test_text_mismatch_fallback(self):
+        """accumulated_text 与 blocks 文字不对齐时，不追加（安全降级）"""
+        blocks = [
+            {"type": "text", "text": "original"},
+            {"type": "tool_step", "tool_name": "data_query", "status": "completed"},
+        ]
+        result = merge_blocks_with_text(blocks, "completely different")
+        # 不对齐时 remaining 为空，不追加
+        assert len(result) == 2
+
+    def test_empty_accumulated_text(self):
+        """accumulated_text 为空字符串，不追加"""
+        blocks = [
+            {"type": "tool_step", "tool_name": "data_query", "status": "running"},
+        ]
+        result = merge_blocks_with_text(blocks, "")
+        assert len(result) == 1
+
+    def test_remaining_only_whitespace(self):
+        """剩余文字只有空白时不追加"""
+        blocks = [{"type": "text", "text": "hello"}]
+        result = merge_blocks_with_text(blocks, "hello   ")
+        assert len(result) == 1
+
+    def test_multiple_text_blocks(self):
+        """多个 text block 正确拼接计算剩余"""
+        blocks = [
+            {"type": "text", "text": "turn1"},
+            {"type": "tool_step", "tool_name": "t1", "status": "completed"},
+            {"type": "text", "text": "turn2"},
+            {"type": "tool_step", "tool_name": "t2", "status": "completed"},
+        ]
+        result = merge_blocks_with_text(blocks, "turn1turn2turn3 answer")
+        assert len(result) == 5
+        assert result[4] == {"type": "text", "text": "turn3 answer"}
+
+
+class TestSaveAccumulatedWithBlocks:
+
+    def test_with_blocks_merges_content(self):
+        """传 accumulated_blocks 时，content 应包含 blocks + 剩余文字"""
+        db = _mock_db()
+        blocks = [
+            {"type": "text", "text": "分析中"},
+            {"type": "tool_step", "tool_name": "data_query", "status": "completed"},
+        ]
+        save_accumulated_to_message(
+            db, message_id="msg-1", conversation_id="conv-1",
+            accumulated_content="分析中最终回答",
+            accumulated_blocks=blocks,
+        )
+        upsert_data = db.table.return_value.upsert.call_args[0][0]
+        assert len(upsert_data["content"]) == 3
+        assert upsert_data["content"][0] == {"type": "text", "text": "分析中"}
+        assert upsert_data["content"][1]["type"] == "tool_step"
+        assert upsert_data["content"][2] == {"type": "text", "text": "最终回答"}
+
+    def test_with_empty_blocks_fallback(self):
+        """accumulated_blocks 为空列表时，走纯文字路径"""
+        db = _mock_db()
+        save_accumulated_to_message(
+            db, message_id="msg-1", conversation_id="conv-1",
+            accumulated_content="plain text",
+            accumulated_blocks=[],
+        )
+        upsert_data = db.table.return_value.upsert.call_args[0][0]
+        assert upsert_data["content"] == [{"type": "text", "text": "plain text"}]
+
+    def test_with_none_blocks_fallback(self):
+        """accumulated_blocks 为 None 时，走纯文字路径"""
+        db = _mock_db()
+        save_accumulated_to_message(
+            db, message_id="msg-1", conversation_id="conv-1",
+            accumulated_content="plain text",
+            accumulated_blocks=None,
+        )
+        upsert_data = db.table.return_value.upsert.call_args[0][0]
+        assert upsert_data["content"] == [{"type": "text", "text": "plain text"}]
 
 
 # ── refund_task_credits 测试 ──────────────────────────────────

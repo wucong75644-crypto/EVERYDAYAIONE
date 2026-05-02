@@ -194,6 +194,59 @@ async def test_multiple_tasks_mixed():
     assert result == 1
 
 
+@pytest.mark.asyncio
+async def test_recover_task_with_accumulated_blocks():
+    """有 accumulated_blocks 的任务应合并 blocks + 剩余文字恢复到 messages 表"""
+    tasks = [{
+        "id": "task-blocks",
+        "type": "chat",
+        "external_task_id": "ext-blocks",
+        "placeholder_message_id": "msg-blocks",
+        "conversation_id": "conv-1",
+        "model_id": "gemini-pro",
+        "client_task_id": "client-blocks",
+        "accumulated_content": "分析中最终回答",
+        "accumulated_blocks": [
+            {"type": "text", "text": "分析中"},
+            {"type": "tool_step", "tool_name": "data_query", "status": "completed"},
+        ],
+        "credit_transaction_id": None,
+    }]
+    db = _mock_db(tasks)
+    result = await recover_orphan_tasks(db)
+    assert result == 1
+
+    upsert_data = db.table.return_value.upsert.call_args[0][0]
+    # blocks + 剩余文字 = 3 个 content part
+    assert len(upsert_data["content"]) == 3
+    assert upsert_data["content"][0] == {"type": "text", "text": "分析中"}
+    assert upsert_data["content"][1]["type"] == "tool_step"
+    assert upsert_data["content"][2] == {"type": "text", "text": "最终回答"}
+
+
+@pytest.mark.asyncio
+async def test_recover_task_without_blocks_fallback():
+    """无 accumulated_blocks 的旧任务仍走纯文字恢复（向后兼容）"""
+    tasks = [{
+        "id": "task-old",
+        "type": "chat",
+        "external_task_id": "ext-old",
+        "placeholder_message_id": "msg-old",
+        "conversation_id": "conv-1",
+        "model_id": "gpt-4",
+        "client_task_id": "client-old",
+        "accumulated_content": "纯文字内容",
+        "credit_transaction_id": None,
+        # 没有 accumulated_blocks 字段
+    }]
+    db = _mock_db(tasks)
+    result = await recover_orphan_tasks(db)
+    assert result == 1
+
+    upsert_data = db.table.return_value.upsert.call_args[0][0]
+    assert upsert_data["content"] == [{"type": "text", "text": "纯文字内容"}]
+
+
 def test_mark_task_failed():
     """_mark_task_failed 应更新任务状态"""
     db = MagicMock()
