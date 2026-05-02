@@ -30,6 +30,20 @@ logger = logging.getLogger(__name__)
 # nsjail 路径查找
 _NSJAIL_PATH: Optional[str] = shutil.which("nsjail")
 
+# 模块级单例（main.py lifespan 中初始化）
+_instance: Optional["KernelManager"] = None
+
+
+def get_kernel_manager() -> Optional["KernelManager"]:
+    """获取全局 KernelManager 实例（未初始化时返回 None → 降级无状态）"""
+    return _instance
+
+
+def set_kernel_manager(manager: Optional["KernelManager"]) -> None:
+    """设置全局 KernelManager 实例（main.py lifespan 调用）"""
+    global _instance
+    _instance = manager
+
 
 @dataclass
 class Kernel:

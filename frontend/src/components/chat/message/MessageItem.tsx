@@ -411,16 +411,8 @@ export default memo(function MessageItem({
               单块模式：保持原逻辑（顶部独立渲染） */}
           {!isUser && (() => {
             if (hasMultiBlocks) {
-              // 多块模式：仅流式阶段显示当前轮的 streaming thinking
-              const isThinkingNow = !!(isStreaming && streamingThinking);
-              if (!isThinkingNow) return null;
-              return (
-                <ThinkingBlock
-                  content={streamingThinking || ''}
-                  isThinking
-                  thinkingStartTime={thinkingStartTime}
-                />
-              );
+              // 多块模式：每轮 thinking 已在 content.map 内联渲染，顶部不重复显示
+              return null;
             }
             // 单块模式：完整逻辑
             const thinkingFromContent = !isStreaming

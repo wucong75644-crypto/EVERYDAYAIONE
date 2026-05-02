@@ -360,6 +360,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 企微智能机器人 WS 长连接已拆为独立进程（wecom_ws_runner.py）
     # 由 systemd everydayai-wecom.service 管理，避免多 worker 竞争
 
+    # 有状态代码执行 Kernel 管理器
+    from services.sandbox.kernel_manager import KernelManager, set_kernel_manager
+    _kernel_manager = KernelManager()
+    await _kernel_manager.start()
+    set_kernel_manager(_kernel_manager)
+    logger.info("KernelManager started")
+
     yield
 
     # 优雅关闭：通知所有 WebSocket 客户端服务即将重启
@@ -413,6 +420,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await _t
         except asyncio.CancelledError:
             pass
+
+    # 关闭 KernelManager（销毁所有 Kernel 进程）
+    if _kernel_manager is not None:
+        await _kernel_manager.shutdown()
+        set_kernel_manager(None)
+        logger.info("KernelManager shutdown")
 
     # 关闭异步数据库连接池
     try:

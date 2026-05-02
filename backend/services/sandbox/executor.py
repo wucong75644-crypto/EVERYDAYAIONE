@@ -34,6 +34,8 @@ class SandboxExecutor:
         staging_dir: Optional[str] = None,
         workspace_dir: Optional[str] = None,
         upload_fn: Optional[Callable] = None,
+        kernel_manager=None,
+        conversation_id: str = "",
     ) -> None:
         self._timeout = timeout
         self._max_result_chars = max_result_chars
@@ -41,6 +43,8 @@ class SandboxExecutor:
         self._staging_dir = staging_dir      # staging 数据目录
         self._workspace_dir = workspace_dir  # 用户 workspace 目录
         self._upload_fn = upload_fn          # 文件上传函数（注入）
+        self._kernel_manager = kernel_manager  # KernelManager（有状态模式）
+        self._conversation_id = conversation_id
 
     async def execute(self, code: str, description: str = "") -> str:
         """执行 Python 代码并返回结果文本
@@ -70,8 +74,8 @@ class SandboxExecutor:
         # 2.5 备份已有的可上传文件（防止沙箱代码覆盖后丢失旧数据）
         file_backups = self._backup_existing_files()
 
-        # 3. 子进程执行（spawn 隔离）
-        result = await self._run_in_subprocess(code)
+        # 3. 执行代码（优先有状态 Kernel，fallback 无状态 subprocess）
+        result = await self._execute_code(code)
 
         logger.info(
             f"SandboxExecutor result | desc={description} | "
@@ -87,6 +91,24 @@ class SandboxExecutor:
             result = (result or "") + "\n" + "\n".join(file_results)
 
         return result
+
+    async def _execute_code(self, code: str) -> str:
+        """选择执行模式：有状态 Kernel 或无状态 subprocess"""
+        if self._kernel_manager and self._conversation_id:
+            kernel_ok = await self._kernel_manager.get_or_create(
+                self._conversation_id,
+                self._workspace_dir or "",
+                self._staging_dir or "",
+                self._output_dir or "",
+            )
+            if kernel_ok:
+                status, result = await self._kernel_manager.execute(
+                    self._conversation_id, code, self._timeout,
+                )
+                return result
+
+        # 降级：无状态 subprocess
+        return await self._run_in_subprocess(code)
 
     async def _run_in_subprocess(self, code: str) -> str:
         """在独立子进程中执行代码（spawn 隔离）
