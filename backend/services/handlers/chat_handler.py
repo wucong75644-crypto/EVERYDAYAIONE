@@ -810,7 +810,22 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     _dims = getattr(self, "_image_dims", {})
                     _charts = getattr(self, "_chart_options", {})
                     for _fp in self._pending_file_parts:
-                        if _fp.name in _charts:
+                        # ImagePart（来自 ImageAgent）：直接序列化，不走 FilePart 逻辑
+                        if getattr(_fp, "type", None) == "image" and not hasattr(_fp, "mime_type"):
+                            _block = _fp.model_dump(exclude_none=True)
+                            _content_blocks.append(_block)
+                            await ws_manager.send_to_task_or_user(
+                                task_id, user_id,
+                                build_content_block_add(
+                                    task_id=task_id,
+                                    conversation_id=conversation_id,
+                                    message_id=message_id,
+                                    block=_block,
+                                ),
+                            )
+                            continue
+                        # FilePart（来自 sandbox/[FILE] 标记）
+                        if hasattr(_fp, "name") and _fp.name in _charts:
                             # ECharts 交互式图表（option 嵌入 block）
                             _opt = _charts[_fp.name]
                             _ct = ""
@@ -822,7 +837,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                                 "title": _opt.get("title", {}).get("text", ""),
                                 "chart_type": _ct,
                             }
-                        elif _fp.mime_type.startswith("image/"):
+                        elif hasattr(_fp, "mime_type") and _fp.mime_type and _fp.mime_type.startswith("image/"):
                             _w, _h = _dims.get(_fp.name, (None, None))
                             _block = {
                                 "type": "image", "url": _fp.url,
@@ -832,8 +847,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         else:
                             _block = {
                                 "type": "file", "url": _fp.url,
-                                "name": _fp.name, "mime_type": _fp.mime_type,
-                                "size": _fp.size,
+                                "name": getattr(_fp, "name", ""),
+                                "mime_type": getattr(_fp, "mime_type", ""),
+                                "size": getattr(_fp, "size", None),
                             }
                         _content_blocks.append(_block)
                         # 实时推送：前端立即渲染（图片→骨架屏，文件→卡片）
