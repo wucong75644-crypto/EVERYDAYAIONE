@@ -171,6 +171,11 @@ class PromptBuilder:
         """
         parts: list[str] = [f"用户需求：{text}"]
 
+        # 从用户文本中提取要求的生成数量（如"5张""生成4张"）
+        requested_count = self._extract_requested_count(text)
+        if requested_count:
+            parts.append(f"⚠️ 用户明确要求生成 {requested_count} 张图片，必须严格输出 {requested_count} 个编号描述。")
+
         if has_images:
             parts.append("用户已上传商品图片，请分析图片中的商品特征。")
             if num_images and num_images > 1:
@@ -182,6 +187,20 @@ class PromptBuilder:
         )
 
         return "\n\n".join(parts)
+
+    @staticmethod
+    def _extract_requested_count(text: str) -> int | None:
+        """从用户文本中提取要求的图片数量。
+
+        匹配："5张""生成4张""做3张""来5个""要8张图"等。
+        """
+        import re
+        match = re.search(r"(\d+)\s*[张个]", text)
+        if match:
+            count = int(match.group(1))
+            if 1 <= count <= 10:  # 合理范围
+                return count
+        return None
 
     # ----------------------------------------------------------
     # ImageAgent 专用
