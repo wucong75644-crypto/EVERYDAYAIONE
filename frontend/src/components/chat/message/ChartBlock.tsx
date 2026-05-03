@@ -1,12 +1,13 @@
 /**
  * 交互式图表内容块
  *
- * 接收 ECharts option JSON，在容器内渲染交互式图表。
- * 支持：tooltip、图例开关、数据缩放、导出 PNG、类型切换、全屏。
- *
- * 主题跟随：通过 useTheme 获取当前主题，传给 echarts.init(dom, themeName)。
- * 错误降级：option 无效时显示错误卡片。
- * 响应式：ResizeObserver 监听容器宽度变化。
+ * 接收 ECharts option JSON，渲染交互式图表。
+ * 核心能力：
+ * - 图表类型切换（柱状 ↔ 折线 ↔ 饼图），自动转换数据结构
+ * - toolbox：保存图片、数据视图（HTML 表格）、还原
+ * - 主题跟随：6 套主题（classic/claude/linear × light/dark）
+ * - 响应式 + 全屏模式
+ * - 错误降级：option 无效时显示错误卡片
  */
 
 import { useRef, useEffect, useState, useCallback, memo } from 'react';
@@ -20,138 +21,147 @@ interface ChartBlockProps {
   chartType?: string;
 }
 
-/** ECharts 按需引入（动态 import，首次渲染时加载） */
+// ============================================================
+// ECharts 按需加载（全局单例）
+// ============================================================
+
 async function loadECharts() {
-  const [
-    { use },
-    { CanvasRenderer },
-    charts,
-    components,
-  ] = await Promise.all([
+  const [{ use }, { CanvasRenderer }, charts, components] = await Promise.all([
     import('echarts/core'),
     import('echarts/renderers'),
     import('echarts/charts'),
     import('echarts/components'),
   ]);
-
   use([
     CanvasRenderer,
-    charts.LineChart,
-    charts.BarChart,
-    charts.PieChart,
-    charts.ScatterChart,
-    charts.RadarChart,
-    charts.HeatmapChart,
-    charts.FunnelChart,
-    charts.BoxplotChart,
-    charts.TreemapChart,
-    charts.SunburstChart,
-    charts.SankeyChart,
-    charts.GaugeChart,
-    charts.CandlestickChart,
-    components.GridComponent,
-    components.TooltipComponent,
-    components.LegendComponent,
-    components.ToolboxComponent,
-    components.DataZoomComponent,
-    components.TitleComponent,
-    components.VisualMapComponent,
-    components.MarkLineComponent,
-    components.MarkPointComponent,
-    components.DatasetComponent,
+    charts.LineChart, charts.BarChart, charts.PieChart, charts.ScatterChart,
+    charts.RadarChart, charts.HeatmapChart, charts.FunnelChart, charts.BoxplotChart,
+    charts.TreemapChart, charts.SunburstChart, charts.SankeyChart,
+    charts.GaugeChart, charts.CandlestickChart,
+    components.GridComponent, components.TooltipComponent, components.LegendComponent,
+    components.ToolboxComponent, components.DataZoomComponent, components.TitleComponent,
+    components.VisualMapComponent, components.MarkLineComponent,
+    components.MarkPointComponent, components.DatasetComponent,
   ]);
-
-  // 注册主题
   const { registerAllThemes } = await import('../../../constants/echartsThemes');
   await registerAllThemes();
-
   return await import('echarts/core');
 }
 
-/** 全局缓存：ECharts 模块只加载一次 */
 let echartsPromise: Promise<typeof import('echarts/core')> | null = null;
 function getECharts() {
-  if (!echartsPromise) {
-    echartsPromise = loadECharts();
-  }
+  if (!echartsPromise) echartsPromise = loadECharts();
   return echartsPromise;
 }
 
-/** 将 ECharts option 转为 HTML 表格（dataView 自定义展示） */
-function optionToContent(opt: Record<string, unknown>): string {
-  const series = opt.series as Array<Record<string, unknown>> | undefined;
-  if (!series || series.length === 0) return '<p>无数据</p>';
+// ============================================================
+// 可切换的图表类型（只有这三种可以互相转换）
+// ============================================================
 
-  // 尝试获取类目轴标签（bar/line 类图表）
-  const xAxis = opt.xAxis as Record<string, unknown> | Array<Record<string, unknown>> | undefined;
+type SwitchableType = 'bar' | 'line' | 'pie';
+const SWITCHABLE_TYPES: SwitchableType[] = ['bar', 'line', 'pie'];
+const TYPE_LABELS: Record<SwitchableType, string> = { bar: '柱状图', line: '折线图', pie: '饼图' };
+
+/** 提取原始图表的标准化数据（名称 + 数值，不依赖图表类型） */
+function extractData(option: Record<string, unknown>): { names: string[]; values: number[][]; seriesNames: string[] } | null {
+  const series = option.series as Array<Record<string, unknown>> | undefined;
+  if (!series || series.length === 0) return null;
+
+  const first = series[0];
+  const firstType = first.type as string;
+
+  // 饼图/漏斗图：{name, value}[] → 提取
+  if (firstType === 'pie' || firstType === 'funnel') {
+    const data = first.data as Array<{ name: string; value: number }> | undefined;
+    if (!data || data.length === 0) return null;
+    return {
+      names: data.map(d => d.name),
+      values: [data.map(d => d.value)],
+      seriesNames: [(first.name as string) || '数值'],
+    };
+  }
+
+  // 柱状/折线图：xAxis.data + series[].data
+  const xAxis = option.xAxis as Record<string, unknown> | Array<Record<string, unknown>> | undefined;
   const categories = Array.isArray(xAxis)
     ? (xAxis[0]?.data as string[] | undefined)
     : (xAxis?.data as string[] | undefined);
+  if (!categories || categories.length === 0) return null;
 
-  const tableStyle = 'width:100%;border-collapse:collapse;font-size:13px;border:1px solid #d1d5db;';
-  const thStyle = 'padding:8px 14px;text-align:left;border:1px solid #d1d5db;font-weight:600;color:#111827;background:#f3f4f6;';
-  const thRightStyle = 'padding:8px 14px;text-align:right;border:1px solid #d1d5db;font-weight:600;color:#111827;background:#f3f4f6;';
-  const tdStyle = 'padding:6px 14px;text-align:right;border:1px solid #e5e7eb;';
-  const tdLeftStyle = 'padding:6px 14px;text-align:left;border:1px solid #e5e7eb;font-weight:500;';
-  const rowEven = 'background:#f9fafb;';
-  const rowOdd = '';
+  return {
+    names: categories,
+    values: series.map(s => (s.data as number[]) || []),
+    seriesNames: series.map(s => (s.name as string) || '数值'),
+  };
+}
 
-  // 饼图/漏斗图等：data 是 {name, value}[] 格式
-  const firstSeries = series[0];
-  const seriesData = firstSeries.data as Array<Record<string, unknown>> | number[] | undefined;
-  if (seriesData && seriesData.length > 0 && typeof seriesData[0] === 'object' && 'name' in seriesData[0]) {
-    const items = seriesData as Array<{ name: string; value: number }>;
-    const label = (firstSeries.name as string) || '数值';
-    let html = `<table style="${tableStyle}"><thead><tr>`;
-    html += `<th style="${thStyle}">名称</th><th style="${thRightStyle}">${label}</th>`;
-    html += '</tr></thead><tbody>';
-    for (let i = 0; i < items.length; i++) {
-      const bg = i % 2 === 0 ? rowEven : rowOdd;
-      const val = typeof items[i].value === 'number' ? items[i].value.toLocaleString() : items[i].value;
-      html += `<tr style="${bg}"><td style="${tdLeftStyle}">${items[i].name}</td><td style="${tdStyle}">${val}</td></tr>`;
-    }
-    html += '</tbody></table>';
-    return html;
+/** 判断原始图表类型是否支持三种切换 */
+function getOriginalType(option: Record<string, unknown>): SwitchableType | null {
+  const series = option.series as Array<Record<string, unknown>> | undefined;
+  if (!series || series.length === 0) return null;
+  const t = series[0].type as string;
+  if (SWITCHABLE_TYPES.includes(t as SwitchableType)) return t as SwitchableType;
+  return null;
+}
+
+/** 将标准化数据重建为指定类型的 ECharts option */
+function buildOption(
+  originalOption: Record<string, unknown>,
+  targetType: SwitchableType,
+  data: { names: string[]; values: number[][]; seriesNames: string[] },
+): Record<string, unknown> {
+  // 保留原始 title
+  const title = originalOption.title;
+
+  if (targetType === 'pie') {
+    // 饼图：只取第一组 series 数据
+    const pieData = data.names.map((name, i) => ({ name, value: data.values[0]?.[i] ?? 0 }));
+    return {
+      title,
+      tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+      legend: { orient: 'vertical', left: 'left' },
+      series: [{ type: 'pie', radius: '60%', data: pieData, name: data.seriesNames[0], label: { formatter: '{b}\n{d}%' } }],
+    };
   }
 
-  // bar/line 类图表：categories + 多 series
-  if (categories && categories.length > 0) {
-    let html = `<table style="${tableStyle}"><thead><tr>`;
-    html += `<th style="${thStyle}">类别</th>`;
-    for (const s of series) {
-      html += `<th style="${thRightStyle}">${(s.name as string) || '数值'}</th>`;
-    }
-    html += '</tr></thead><tbody>';
-    for (let i = 0; i < categories.length; i++) {
-      const bg = i % 2 === 0 ? rowEven : rowOdd;
-      html += `<tr style="${bg}"><td style="${tdLeftStyle}">${categories[i]}</td>`;
-      for (const s of series) {
-        const data = s.data as number[] | undefined;
-        const val = data?.[i];
-        const display = typeof val === 'number' ? val.toLocaleString() : (val ?? '-');
-        html += `<td style="${tdStyle}">${display}</td>`;
-      }
-      html += '</tr>';
-    }
-    html += '</tbody></table>';
-    return html;
-  }
+  // 柱状/折线图
+  return {
+    title,
+    tooltip: { trigger: 'axis' },
+    legend: data.seriesNames.length > 1 ? { data: data.seriesNames } : undefined,
+    xAxis: { type: 'category', data: data.names },
+    yAxis: { type: 'value' },
+    series: data.values.map((vals, i) => ({
+      type: targetType,
+      name: data.seriesNames[i],
+      data: vals,
+    })),
+  };
+}
 
-  // 兜底：纯数组 series
-  let html = `<table style="${tableStyle}"><thead><tr><th style="${thStyle}">#</th>`;
-  for (const s of series) {
-    html += `<th style="${thRightStyle}">${(s.name as string) || '数值'}</th>`;
-  }
+// ============================================================
+// dataView HTML 表格格式化
+// ============================================================
+
+function optionToTable(data: { names: string[]; values: number[][]; seriesNames: string[] }): string {
+  const s = {
+    table: 'width:100%;border-collapse:collapse;font-size:13px;border:1px solid #d1d5db;',
+    th: 'padding:8px 14px;text-align:left;border:1px solid #d1d5db;font-weight:600;color:#111827;background:#f3f4f6;',
+    thR: 'padding:8px 14px;text-align:right;border:1px solid #d1d5db;font-weight:600;color:#111827;background:#f3f4f6;',
+    td: 'padding:6px 14px;text-align:right;border:1px solid #e5e7eb;',
+    tdL: 'padding:6px 14px;text-align:left;border:1px solid #e5e7eb;font-weight:500;',
+    even: 'background:#f9fafb;',
+  };
+
+  let html = `<table style="${s.table}"><thead><tr><th style="${s.th}">名称</th>`;
+  for (const name of data.seriesNames) html += `<th style="${s.thR}">${name}</th>`;
   html += '</tr></thead><tbody>';
-  const maxLen = Math.max(...series.map(s => ((s.data as unknown[]) || []).length));
-  for (let i = 0; i < maxLen; i++) {
-    const bg = i % 2 === 0 ? rowEven : rowOdd;
-    html += `<tr style="${bg}"><td style="${tdLeftStyle}">${i + 1}</td>`;
-    for (const s of series) {
-      const data = s.data as number[] | undefined;
-      const val = data?.[i];
-      const display = typeof val === 'number' ? val.toLocaleString() : (val ?? '-');
-      html += `<td style="${tdStyle}">${display}</td>`;
+  for (let i = 0; i < data.names.length; i++) {
+    const bg = i % 2 === 0 ? s.even : '';
+    html += `<tr style="${bg}"><td style="${s.tdL}">${data.names[i]}</td>`;
+    for (const vals of data.values) {
+      const v = vals[i];
+      html += `<td style="${s.td}">${typeof v === 'number' ? v.toLocaleString() : (v ?? '-')}</td>`;
     }
     html += '</tr>';
   }
@@ -159,53 +169,73 @@ function optionToContent(opt: Record<string, unknown>): string {
   return html;
 }
 
-/** 判断图表是否支持折线/柱状切换（需要有 xAxis 类目轴） */
-function supportsLineBarSwitch(option: Record<string, unknown>): boolean {
-  const series = option.series as Array<Record<string, unknown>> | undefined;
-  if (!series || series.length === 0) return false;
-  const firstType = series[0].type as string | undefined;
-  // 饼图/漏斗图/雷达图/仪表盘等不支持切换
-  if (['pie', 'funnel', 'radar', 'gauge', 'treemap', 'sunburst', 'sankey', 'heatmap'].includes(firstType || '')) {
-    return false;
-  }
-  return !!option.xAxis;
-}
+// ============================================================
+// 注入 toolbox（不含 magicType，切换由 React 按钮控制）
+// ============================================================
 
-/** 注入默认 toolbox 配置（用户 option 未指定时自动添加） */
-function injectToolbox(option: Record<string, unknown>): Record<string, unknown> {
+function injectToolbox(
+  option: Record<string, unknown>,
+  data: { names: string[]; values: number[][]; seriesNames: string[] } | null,
+): Record<string, unknown> {
   if (option.toolbox) return option;
-
-  const feature: Record<string, unknown> = {
-    saveAsImage: { title: '保存图片' },
-    dataView: {
-      title: '数据视图',
-      readOnly: true,
-      lang: ['数据视图', '关闭', '刷新'],
-      optionToContent: () => optionToContent(option),
-    },
-    restore: { title: '还原' },
-  };
-
-  // 只有柱状/折线类图表才显示类型切换按钮
-  if (supportsLineBarSwitch(option)) {
-    feature.magicType = { type: ['line', 'bar'], title: { line: '折线图', bar: '柱状图' } };
-  }
-
   return {
     ...option,
     toolbox: {
-      feature,
+      feature: {
+        saveAsImage: { title: '保存图片' },
+        dataView: {
+          title: '数据视图',
+          readOnly: true,
+          lang: ['数据视图', '关闭', '刷新'],
+          optionToContent: () => data ? optionToTable(data) : '<p>无数据</p>',
+        },
+        restore: { title: '还原' },
+      },
       right: 16,
       top: 4,
     },
   };
 }
 
-/** 注入默认 tooltip 配置 */
 function injectTooltip(option: Record<string, unknown>): Record<string, unknown> {
   if (option.tooltip) return option;
-  return { ...option, tooltip: { trigger: 'axis' } };
+  const series = option.series as Array<Record<string, unknown>> | undefined;
+  const firstType = series?.[0]?.type as string | undefined;
+  const trigger = firstType === 'pie' ? 'item' : 'axis';
+  return { ...option, tooltip: { trigger } };
 }
+
+// ============================================================
+// 切换按钮组件
+// ============================================================
+
+function TypeSwitchBar({ current, original, onSwitch }: {
+  current: SwitchableType;
+  original: SwitchableType;
+  onSwitch: (t: SwitchableType) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1 mb-2">
+      {SWITCHABLE_TYPES.map(t => (
+        <button
+          key={t}
+          onClick={() => onSwitch(t)}
+          className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+            t === current
+              ? 'bg-accent text-text-on-accent font-medium'
+              : 'text-text-tertiary hover:bg-hover hover:text-text-secondary'
+          }`}
+        >
+          {TYPE_LABELS[t]}{t === original ? '' : ''}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ============================================================
+// 主组件
+// ============================================================
 
 function ChartBlockInner({ option, title, chartType }: ChartBlockProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -215,7 +245,20 @@ function ChartBlockInner({ option, title, chartType }: ChartBlockProps) {
   const [loading, setLoading] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  // 初始化 + option 变更
+  // 图表类型切换状态
+  const originalType = getOriginalType(option);
+  const canSwitch = originalType !== null && extractData(option) !== null;
+  const [activeType, setActiveType] = useState<SwitchableType>(originalType || 'bar');
+
+  // 计算当前渲染用的 option
+  const currentOption = useCallback(() => {
+    if (!canSwitch || activeType === originalType) return option;
+    const data = extractData(option);
+    if (!data) return option;
+    return buildOption(option, activeType, data);
+  }, [option, activeType, canSwitch, originalType]);
+
+  // 初始化 + option/type/theme 变更
   useEffect(() => {
     if (!containerRef.current) return;
     let disposed = false;
@@ -225,22 +268,21 @@ function ChartBlockInner({ option, title, chartType }: ChartBlockProps) {
         const echarts = await getECharts();
         if (disposed || !containerRef.current) return;
 
-        // 销毁旧实例
-        if (chartRef.current) {
-          chartRef.current.dispose();
-        }
+        if (chartRef.current) chartRef.current.dispose();
 
         const themeName = getEChartsThemeName(theme, isDark);
         const instance = echarts.init(containerRef.current, themeName);
         chartRef.current = instance;
 
-        let finalOption = injectToolbox(option);
+        const opt = currentOption();
+        const data = extractData(option);
+        let finalOption = injectToolbox(opt, data);
         finalOption = injectTooltip(finalOption);
         instance.setOption(finalOption);
 
         setLoading(false);
         setError(null);
-        logger.info('ChartBlock', `rendered | type=${chartType} | theme=${themeName}`);
+        logger.info('ChartBlock', `rendered | type=${activeType} | theme=${themeName}`);
       } catch (e) {
         if (!disposed) {
           const msg = e instanceof Error ? e.message : String(e);
@@ -258,43 +300,37 @@ function ChartBlockInner({ option, title, chartType }: ChartBlockProps) {
         chartRef.current = null;
       }
     };
-  }, [option, theme, isDark, chartType]);
+  }, [currentOption, theme, isDark, activeType, option]);
 
-  // ResizeObserver 响应式
+  // ResizeObserver
   useEffect(() => {
     if (!containerRef.current) return;
-    const ro = new ResizeObserver(() => {
-      chartRef.current?.resize();
-    });
+    const ro = new ResizeObserver(() => chartRef.current?.resize());
     ro.observe(containerRef.current);
     return () => ro.disconnect();
   }, []);
 
-  // 全屏切换
+  // 全屏
   const toggleFullscreen = useCallback(() => {
     setIsFullscreen(prev => !prev);
-    // 下一帧 resize（等 DOM 更新）
-    requestAnimationFrame(() => {
-      chartRef.current?.resize();
-    });
+    requestAnimationFrame(() => chartRef.current?.resize());
   }, []);
 
-  // ESC 退出全屏
   useEffect(() => {
     if (!isFullscreen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setIsFullscreen(false);
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsFullscreen(false); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
   }, [isFullscreen]);
 
-  // 全屏后 resize
   useEffect(() => {
-    if (isFullscreen) {
-      requestAnimationFrame(() => chartRef.current?.resize());
-    }
+    if (isFullscreen) requestAnimationFrame(() => chartRef.current?.resize());
   }, [isFullscreen]);
+
+  // 类型切换
+  const handleTypeSwitch = useCallback((t: SwitchableType) => {
+    setActiveType(t);
+  }, []);
 
   // 错误降级
   if (error) {
@@ -319,23 +355,17 @@ function ChartBlockInner({ option, title, chartType }: ChartBlockProps) {
     );
   }
 
-  const containerClass = isFullscreen
+  const wrapperClass = isFullscreen
     ? 'fixed inset-0 z-50 bg-surface flex flex-col p-4'
     : 'my-3 relative';
 
   return (
-    <div className={containerClass}>
+    <div className={wrapperClass}>
       {/* 全屏顶栏 */}
       {isFullscreen && (
         <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-medium text-text-primary">
-            {title || '交互式图表'}
-          </span>
-          <button
-            onClick={toggleFullscreen}
-            className="p-1.5 rounded-md hover:bg-hover text-text-tertiary"
-            title="退出全屏 (Esc)"
-          >
+          <span className="text-sm font-medium text-text-primary">{title || '交互式图表'}</span>
+          <button onClick={toggleFullscreen} className="p-1.5 rounded-md hover:bg-hover text-text-tertiary" title="退出全屏 (Esc)">
             <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
             </svg>
@@ -343,41 +373,31 @@ function ChartBlockInner({ option, title, chartType }: ChartBlockProps) {
         </div>
       )}
 
+      {/* 图表类型切换按钮 */}
+      {canSwitch && !loading && (
+        <TypeSwitchBar current={activeType} original={originalType!} onSwitch={handleTypeSwitch} />
+      )}
+
       {/* 图表容器 */}
       <div className={isFullscreen ? 'flex-1 relative' : ''}>
-        {/* 加载骨架屏 */}
         {loading && (
-          <div
-            className="rounded-xl flex items-center justify-center"
-            style={{
-              width: '100%',
-              height: isFullscreen ? '100%' : 400,
-              backgroundColor: 'var(--color-hover)',
-            }}
-          >
+          <div className="rounded-xl flex items-center justify-center"
+            style={{ width: '100%', height: isFullscreen ? '100%' : 400, backgroundColor: 'var(--color-hover)' }}>
             <svg className="w-8 h-8 text-text-disabled animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <path d="M3 3v18h18" />
-              <path d="M7 16l4-8 4 4 4-6" />
+              <path d="M3 3v18h18" /><path d="M7 16l4-8 4 4 4-6" />
             </svg>
           </div>
         )}
-        <div
-          ref={containerRef}
-          style={{
-            width: '100%',
-            height: isFullscreen ? '100%' : 400,
-            display: loading ? 'none' : 'block',
-          }}
+        <div ref={containerRef}
+          style={{ width: '100%', height: isFullscreen ? '100%' : 400, display: loading ? 'none' : 'block' }}
         />
       </div>
 
-      {/* 非全屏时的全屏按钮 */}
+      {/* 全屏按钮 */}
       {!isFullscreen && !loading && (
-        <button
-          onClick={toggleFullscreen}
+        <button onClick={toggleFullscreen}
           className="absolute top-2 right-2 p-1 rounded hover:bg-hover text-text-tertiary opacity-0 group-hover:opacity-100 transition-opacity"
-          title="全屏查看"
-        >
+          title="全屏查看">
           <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
           </svg>
