@@ -1033,6 +1033,13 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             mime_type=block["mime_type"],
                             size=block.get("size"),
                         ))
+                    elif block["type"] == "chart":
+                        from schemas.message import ChartPart
+                        result_parts.append(ChartPart(
+                            option=block["option"],
+                            title=block.get("title", ""),
+                            chart_type=block.get("chart_type", ""),
+                        ))
                     elif block["type"] == "form":
                         from schemas.message import FormPart
                         result_parts.append(FormPart(**block))

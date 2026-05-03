@@ -1929,7 +1929,8 @@
       "Bash(npm info *)",
       "Bash(node -e \"const e = require\\('echarts/core'\\); console.log\\(typeof e.init, typeof e.default\\)\")",
       "Bash(grep -r \"VITE_API\\\\|VITE_WS\\\\|localhost:8000\\\\|api.everydayai\" /Users/wucong/EVERYDAYAIONE/frontend/.env*)",
-      "Bash(./git-push.sh \"feat: 交互式图表ECharts——前端ChartBlock渲染+提示词改造+测试+文档\")"
+      "Bash(./git-push.sh \"feat: 交互式图表ECharts——前端ChartBlock渲染+提示词改造+测试+文档\")",
+      "Bash(./git-push.sh \"fix: chart block持久化——_content_blocks→result_parts转换补充chart类型\")"
     ],
     "additionalDirectories": [
       "/tmp"
