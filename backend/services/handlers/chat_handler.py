@@ -396,6 +396,22 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             if tool_prompt:
                 messages.append({"role": "system", "content": tool_prompt})
 
+            # 4.6 电商图模式：注入 image_task_meta 到系统消息（让 LLM 看到结构化拆分）
+            _image_task_meta = _params.get("image_task_meta") if _params else None
+            if _image_task_meta and isinstance(_image_task_meta, list):
+                _meta_lines = []
+                for _im in _image_task_meta:
+                    _desc = _im.get("description", "")
+                    _ratio = _im.get("aspect_ratio", "1:1")
+                    _meta_lines.append(f"  {_im.get('index', '')}. {_desc} (aspect_ratio={_ratio})")
+                _meta_text = (
+                    "## 电商图生成任务（image_task_meta）\n"
+                    "以下是用户确认的图片生成方案，请按顺序逐张调用 image_agent：\n"
+                    + "\n".join(_meta_lines)
+                )
+                messages.append({"role": "system", "content": _meta_text})
+                logger.info(f"image_task_meta injected | count={len(_image_task_meta)}")
+
             # 4.5 权限模式初始化（对齐 Claude Code ToolPermissionContext）
             # 兼容旧参数：plan_mode=True → permission_mode="plan"
             if permission_mode is True or permission_mode == "true":
@@ -1061,9 +1077,12 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         ))
                     elif block["type"] == "image":
                         result_parts.append(ImagePart(
-                            url=block["url"], alt=block.get("alt"),
+                            url=block.get("url"), alt=block.get("alt"),
                             width=block.get("width"),
                             height=block.get("height"),
+                            failed=block.get("failed"),
+                            error=block.get("error"),
+                            retry_context=block.get("retry_context"),
                         ))
                     elif block["type"] == "file":
                         result_parts.append(FilePart(
