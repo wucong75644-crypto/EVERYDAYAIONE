@@ -400,7 +400,7 @@ def sandbox_worker_entry(
                             if os.path.exists(_alt):
                                 suggestion = _alt
                                 break
-                            _alt_suggestion = _find_similar_file_global(_alt, _ws_dir)
+                            _alt_suggestion = _find_similar_file_global(_alt, _fallback_dir)
                             if _alt_suggestion:
                                 suggestion = _alt_suggestion
                                 break

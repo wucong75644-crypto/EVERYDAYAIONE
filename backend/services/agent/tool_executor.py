@@ -536,6 +536,12 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
                     self._image_dims = {}
                 self._image_dims.update(executor._image_dims)
 
+            # 透传 ECharts 配置（沙盒读取的 JSON → chat_handler 构建 chart block）
+            if hasattr(executor, "_chart_options") and executor._chart_options:
+                if not hasattr(self, "_chart_options"):
+                    self._chart_options = {}
+                self._chart_options.update(executor._chart_options)
+
             # AgentResult 状态 → 指标状态
             if result.is_failure:
                 status = "timeout" if result.status == "timeout" else "failed"

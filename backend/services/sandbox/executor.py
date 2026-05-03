@@ -397,6 +397,26 @@ class SandboxExecutor:
                                 self._image_dims[f.name] = (_im.width, _im.height)
                         except Exception:
                             pass
+                    # .echart.json 文件：读取 ECharts option，存到实例供 chart block 使用
+                    if f.name.endswith(".echart.json"):
+                        try:
+                            _content = f.read_text(encoding="utf-8")
+                            if len(_content) <= 512_000:  # 500KB 上限，超限降级 file block
+                                import json as _json
+                                _option = _json.loads(_content)
+                                if not hasattr(self, "_chart_options"):
+                                    self._chart_options = {}
+                                self._chart_options[f.name] = _option
+                            else:
+                                logger.warning(
+                                    f"SandboxExecutor chart too large | "
+                                    f"file={f.name} | size={len(_content)}"
+                                )
+                        except Exception as _ce:
+                            logger.warning(
+                                f"SandboxExecutor chart parse failed | "
+                                f"file={f.name} | error={_ce}"
+                            )
                     logger.info(
                         f"SandboxExecutor auto-upload | file={f.name} | "
                         f"size={st.st_size} | new={old is None}"

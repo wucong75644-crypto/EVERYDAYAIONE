@@ -160,6 +160,12 @@ class ChatToolMixin:
                 self._image_dims = {}
             self._image_dims.update(executor._image_dims)
 
+        # 透传 ECharts 配置（sandbox JSON 读取 → chat_handler chart block）
+        if hasattr(executor, "_chart_options") and executor._chart_options:
+            if not hasattr(self, "_chart_options"):
+                self._chart_options = {}
+            self._chart_options.update(executor._chart_options)
+
         return results
 
     @staticmethod
@@ -569,6 +575,8 @@ class ChatToolMixin:
                 url=url, name=name, mime_type=mime_type, size=int(size),
             ))
             # LLM 上下文不暴露 URL（防止 LLM 幻觉篡改域名）
+            if name.endswith(".echart.json"):
+                return "📊 交互式图表已生成（将自动展示给用户，不要在文字中重复描述图表数据）"
             if mime_type.startswith("image/"):
                 return "📊 图表已生成（将自动展示给用户，不要在文字中重复描述图表数据）"
             return f"📎 文件已生成: {name}（下载卡片将自动展示，不要重复引用文件名）"

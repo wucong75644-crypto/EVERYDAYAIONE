@@ -571,3 +571,36 @@ class TestFindSimilarFile:
         status, result = q.get(timeout=5)
         assert status == "ok"
         assert "roundtrip" in result
+
+    def test_fallback_search_output_dir(self, tmp_path):
+        """文件在 OUTPUT_DIR 里，Agent 用相对路径读取 → 自动搜到"""
+        output_dir = tmp_path / "下载"
+        output_dir.mkdir()
+        (output_dir / "报表_2026-04-20至04-26.csv").write_text("a,b\n1,2")
+        q = _make_queue()
+
+        # Agent 用相对路径，workspace 根目录找不到 → fallback 搜 OUTPUT_DIR
+        sandbox_worker_entry(
+            q, "print(open('报表_2026-04-20至04-26.csv').read())",
+            str(tmp_path), "", str(output_dir), 5.0, 1000,
+        )
+        status, result = q.get(timeout=5)
+        assert status == "ok"
+        assert "1,2" in result
+
+    def test_fallback_search_output_dir_fuzzy(self, tmp_path):
+        """文件在 OUTPUT_DIR + 文件名有空格差异 → 模糊纠错搜到"""
+        output_dir = tmp_path / "下载"
+        output_dir.mkdir()
+        # 实际文件名无空格
+        (output_dir / "汇总_2026-04-20至04-26.csv").write_text("x,y\n3,4")
+        q = _make_queue()
+
+        # Agent 文件名多了空格（"至"前后）
+        sandbox_worker_entry(
+            q, "print(open('汇总_2026-04-20 至 04-26.csv').read())",
+            str(tmp_path), "", str(output_dir), 5.0, 1000,
+        )
+        status, result = q.get(timeout=5)
+        assert status == "ok"
+        assert "3,4" in result

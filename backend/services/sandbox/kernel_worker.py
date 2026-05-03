@@ -69,8 +69,21 @@ def _setup_scoped_open(workspace_dir: str, staging_dir: str, output_dir: str):
         "/usr/share/zoneinfo",
     })
 
+    # 虚拟路径别名：Agent 写 /output/xxx 或 /staging/xxx 时
+    # 自动映射到真实目录，与 OUTPUT_DIR/STAGING_DIR 变量走同一套逻辑
+    _path_aliases: list[tuple[str, str]] = []
+    if output_dir:
+        _path_aliases.append(("/output/", output_dir.rstrip("/") + "/"))
+    if staging_dir:
+        _path_aliases.append(("/staging/", staging_dir.rstrip("/") + "/"))
+
     def _global_scoped_open(path, mode="r", *args, **kwargs):
         path_str = str(path)
+        # 虚拟路径别名：/output/xxx → OUTPUT_DIR/xxx
+        for alias, real in _path_aliases:
+            if path_str.startswith(alias):
+                path_str = real + path_str[len(alias):]
+                break
         if not os.path.isabs(path_str):
             path_str = os.path.join(_ws_dir, path_str)
         resolved = os.path.realpath(path_str)
@@ -104,7 +117,7 @@ def _setup_scoped_open(workspace_dir: str, staging_dir: str, output_dir: str):
                     if os.path.exists(_alt):
                         suggestion = _alt
                         break
-                    _alt_suggestion = _find_similar_file_global(_alt, _ws_dir)
+                    _alt_suggestion = _find_similar_file_global(_alt, _fallback_dir)
                     if _alt_suggestion:
                         suggestion = _alt_suggestion
                         break

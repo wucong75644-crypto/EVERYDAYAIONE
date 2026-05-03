@@ -791,8 +791,21 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 # 通过 content_block_add 立即推送，前端流式阶段即可渲染占位符
                 if self._pending_file_parts:
                     _dims = getattr(self, "_image_dims", {})
+                    _charts = getattr(self, "_chart_options", {})
                     for _fp in self._pending_file_parts:
-                        if _fp.mime_type.startswith("image/"):
+                        if _fp.name in _charts:
+                            # ECharts 交互式图表（option 嵌入 block）
+                            _opt = _charts[_fp.name]
+                            _ct = ""
+                            if isinstance(_opt.get("series"), list) and _opt["series"]:
+                                _ct = _opt["series"][0].get("type", "")
+                            _block = {
+                                "type": "chart",
+                                "option": _opt,
+                                "title": _opt.get("title", {}).get("text", ""),
+                                "chart_type": _ct,
+                            }
+                        elif _fp.mime_type.startswith("image/"):
                             _w, _h = _dims.get(_fp.name, (None, None))
                             _block = {
                                 "type": "image", "url": _fp.url,
