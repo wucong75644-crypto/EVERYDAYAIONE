@@ -261,9 +261,7 @@ DuckDB SQL 引擎，恒定内存处理超大文件。
 
 ### manage_scheduled_task — 定时任务管理
 创建/查看/修改/暂停/恢复/删除定时任务。
-create 传 description 自然语言描述，返回预填表单供用户确认。
-与计划模式配合：讨论确认后再创建，用精确指令写入 description。
-任务不存在时建议用 list 查看现有任务。
+create 传 description 描述任务内容和频率，返回表单供用户确认。
 
 # 执行模式
 
@@ -403,14 +401,10 @@ def _build_common_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "erp_analyze",
                 "description": (
-                    "ERP 查询分析工具——只分析不执行。把用户的完整查询传入，"
-                    "返回结构化的任务拆解：涉及哪些数据域、每步需要什么参数、"
-                    "步骤间的依赖关系。不查数据库、不调 API，毫秒级返回。\n\n"
-                    "仅在计划模式下使用：后续步骤依赖前面步骤的结果时，"
-                    "先用 erp_analyze 分析，再展示方案等用户确认。\n\n"
-                    "返回：{steps: [{domain, action, params, depends_on}...], summary}。\n\n"
-                    "不要用于：直接模式下的查询（参数已明确时直接调 erp_agent）；"
-                    "非 ERP 数据的分析 → 用 code_execute。"
+                    "ERP 查询任务拆解——只分析不执行，不查数据库不调 API，毫秒级返回。"
+                    "将复杂查询拆解为多步计划（数据域、参数、步骤依赖）。"
+                    "仅计划模式下使用：分析后展示方案，等用户确认后再执行，不要分析完直接调 erp_agent。"
+                    "不要用于：参数已明确的查询 → 直接调 erp_agent；非 ERP 分析 → code_execute。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -438,14 +432,10 @@ def _build_common_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "erp_api_search",
                 "description": (
-                    "搜索 ERP 可用的 API 操作和参数文档。当不确定用哪个 ERP 工具、"
-                    "哪个 action、需要哪些参数时，先调此工具搜索文档。"
-                    "返回匹配的工具名、action、必填/可选参数及说明，可直接用于下一步调用。\n\n"
-                    "两种查询模式：\n"
-                    "- 关键词搜索：e.g. '退货'、'库存'、'调拨'\n"
-                    "- 精确查询：e.g. 'erp_trade_query:order_list'\n\n"
-                    "返回：匹配的 API 列表（工具名+action+参数文档+示例），无匹配时返回空。\n\n"
-                    "不要用于：直接查询数据 → erp_agent；搜索知识库 → search_knowledge。"
+                    "搜索 ERP API 文档的语义搜索工具。"
+                    "不确定用哪个工具、action 或参数格式时先调此工具，返回结果可直接用于下一步调用。"
+                    "支持关键词（如'退货'）和精确查询（如'erp_trade_query:order_list'）。"
+                    "不要用于：查询实际数据 → erp_agent；搜索知识库 → search_knowledge。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -595,16 +585,15 @@ def _build_common_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "image_agent",
                 "description": (
-                    "为电商平台生成单张专业商品图片（白底主图、场景氛围图、详情页卖点图、SKU 展示图等）。"
-                    "自动应用四层提示词（角色→品类→平台→风格），输出符合平台规范的图片。"
-                    "每次调用只生成 1 张图片，返回 CDN 图片 URL，前端自动展示。"
-                    "如需多张，按 image_task_meta 数组逐项调用。\n\n"
-                    "调用时机：消息中包含 image_task_meta 时，按 images[i].description 逐项调用。\n\n"
-                    "系统自动注入：image_urls（用户上传图片）、style（会话全局风格）— 不需要传这两个参数。\n\n"
-                    "返回：成功 → {image_url: 'https://...'} 自动渲染，不要重复描述图片内容。"
-                    "失败 → 裂开占位符 + 重试按钮，用户可点击重新生成。\n\n"
-                    "不要用于：非电商画图（画猫、logo、插画）→ generate_image；"
-                    "查询商品/订单/库存 → erp_agent；局部修图（抠图、换背景）→ 不支持。"
+                    "生成单张电商商品图片（白底主图、场景氛围图、详情页卖点图、SKU 展示图），"
+                    "输出符合目标平台规范。每次 1 张，前端自动展示。\n\n"
+                    "Guidelines:\n"
+                    "- 有 image_task_meta 时按 images[i].description 逐项调用，每张完成后简短确认即可。\n"
+                    "- 生成后不要描述图片内容，不要问后续问题，不要提及下载。\n"
+                    "- 生成失败时前端自动显示重试按钮，不需要道歉或额外处理。\n"
+                    "- image_urls 和 style 由系统自动注入，不需要传这两个参数。\n"
+                    "- 非电商画图（插画/logo/创意图）→ 用 generate_image，不要用此工具。\n"
+                    "- 局部修图（抠图/换背景）→ 不支持。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -682,16 +671,14 @@ def _build_common_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "manage_scheduled_task",
                 "description": (
-                    "管理用户的定时任务：创建、查看、修改、暂停、恢复、删除。"
-                    "定时任务可自动执行重复性工作（如每日推送报表、定期数据同步）。\n\n"
-                    "各 action 行为：\n"
-                    "- create: 传 description，返回预填表单供用户确认后再正式创建\n"
-                    "- list: 返回当前用户的任务列表（名称+状态+下次执行时间）\n"
-                    "- update: 传 task_name + description，修改任务配置\n"
-                    "- pause/resume/delete: 传 task_name 或 task_id\n\n"
-                    "返回：操作结果（成功/失败+原因）。create 返回表单 JSON。\n\n"
-                    "错误处理：任务不存在时返回错误提示，据此告知用户并建议 list 查看。\n\n"
-                    "不要用于：一次性数据查询 → erp_agent；手动触发任务执行 → 不支持。"
+                    "管理定时任务（自动执行重复性工作，如每日推送报表、定期数据同步）。\n\n"
+                    "Actions:\n"
+                    "- create: 传 description 自然语言描述任务和频率，返回预填表单供用户确认后创建。\n"
+                    "- list: 查看当前任务列表。\n"
+                    "- update: 传 task_name + description 描述变更，返回表单供确认。\n"
+                    "- pause/resume/delete: 传 task_name（模糊匹配）或 task_id 定位任务。\n\n"
+                    "任务不存在时建议用 list 查看现有任务。"
+                    "不要用于：一次性数据查询 → erp_agent；手动触发执行 → 不支持。"
                 ),
                 "parameters": {
                     "type": "object",
