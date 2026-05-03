@@ -186,9 +186,9 @@ export default memo(function MessageItem({
     const render = message.generation_params?._render as RenderInstruction | undefined;
 
     // 有媒体内容：显示完成文字
-    const hasMediaContent = (genType === 'image' && hasImage) || (genType === 'video' && hasVideo);
+    const hasMediaContent = ((genType === 'image' || genType === 'image_ecom') && hasImage) || (genType === 'video' && hasVideo);
     if (hasMediaContent) {
-      const count = genType === 'image' ? (Number(genParams.num_images) || 1) : undefined;
+      const count = (genType === 'image' || genType === 'image_ecom') ? (Number(genParams.num_images) || 1) : undefined;
       const text = render?.bubble_text || getCompletedBubbleText(genType as MessageType, count);
       return { text, hasAnimation: false };
     }
@@ -212,10 +212,10 @@ export default memo(function MessageItem({
     const config = RENDER_CONFIG[genType as Exclude<MessageType, 'chat'>];
     if (!config) return null;
 
-    const hasContent = (genType === 'image' && hasImage) || (genType === 'video' && hasVideo);
+    const hasContent = ((genType === 'image' || genType === 'image_ecom') && hasImage) || (genType === 'video' && hasVideo);
     if (skipEntryAnimation || hasContent) return null;
 
-    return { type: genType as 'image' | 'video', text: config.loadingText };
+    return { type: (genType === 'image_ecom' ? 'image' : genType) as 'image' | 'video', text: config.loadingText };
   }, [message.role, message.status, message.generation_params, hasImage, hasVideo, skipEntryAnimation]);
 
   // 失败的媒体任务信息（用于渲染"裂开"占位符）
@@ -225,8 +225,8 @@ export default memo(function MessageItem({
     const genType = message.generation_params?.type;
     if (!genType || genType === 'chat') return null;
 
-    const hasContent = (genType === 'image' && hasImage) || (genType === 'video' && hasVideo);
-    return hasContent ? null : (genType as 'image' | 'video');
+    const hasContent = ((genType === 'image' || genType === 'image_ecom') && hasImage) || (genType === 'video' && hasVideo);
+    return hasContent ? null : ((genType === 'image_ecom' ? 'image' : genType) as 'image' | 'video');
   }, [message.role, message.status, message.generation_params, hasImage, hasVideo]);
 
   // 是否真正在生成中（用于控制重新生成按钮，区别于占位符显示）
@@ -241,7 +241,7 @@ export default memo(function MessageItem({
 
     // 3. 对于媒体生成任务，pending 状态且无 URL 时才算生成中
     const genType = message.generation_params?.type;
-    if (genType === 'image') {
+    if (genType === 'image' || genType === 'image_ecom') {
       return !hasImage;
     }
     if (genType === 'video') {

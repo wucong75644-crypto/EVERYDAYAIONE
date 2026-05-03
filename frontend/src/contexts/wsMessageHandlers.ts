@@ -479,11 +479,13 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
 
       const store = deps.getStore();
 
-      if (genType === 'image' || genType === 'video' || genType === 'audio') {
+      if (genType === 'image' || genType === 'image_ecom' || genType === 'video' || genType === 'audio') {
         // 占位符变形：旋转圆点 → 媒体生成占位符
         const render = genParams?._render as Record<string, string> | undefined;
+        // image_ecom 复用 image 的占位符文字
+        const placeholderType = genType === 'image_ecom' ? 'image' : genType;
         const loadingText = render?.placeholder_text
-          || getPlaceholderText(genType as 'image' | 'video' | 'audio');
+          || getPlaceholderText(placeholderType as 'image' | 'video' | 'audio');
 
         store.completeStreamingWithMessage(conversation_id, {
           id: message_id,

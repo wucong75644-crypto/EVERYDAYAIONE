@@ -138,7 +138,7 @@ export interface MessageError {
 
 /** 生成参数 */
 export interface GenerationParams {
-  type?: 'chat' | 'image' | 'video' | 'audio';
+  type?: 'chat' | 'image' | 'image_ecom' | 'video' | 'audio';
   model?: string;
   /** 思考过程内容（持久化在 generation_params 中） */
   thinking_content?: string;

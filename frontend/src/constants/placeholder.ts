@@ -10,7 +10,7 @@ import { type Message, getTextContent } from '../stores/useMessageStore';
 import type { RenderInstruction } from '../types/render';
 
 /** 消息类型 */
-export type MessageType = 'chat' | 'image' | 'video' | 'audio' | '3d' | 'code';
+export type MessageType = 'chat' | 'image' | 'image_ecom' | 'video' | 'audio' | '3d' | 'code';
 
 /** 占位符文字常量（统一管理） */
 export const PLACEHOLDER_TEXT = {
@@ -28,6 +28,7 @@ export const PLACEHOLDER_TEXT = {
 /** 媒体类型到占位符文字的映射 */
 const MEDIA_PLACEHOLDER_MAP: Record<Exclude<MessageType, 'chat'>, string> = {
   image: PLACEHOLDER_TEXT.IMAGE_GENERATING,
+  image_ecom: PLACEHOLDER_TEXT.IMAGE_GENERATING,
   video: PLACEHOLDER_TEXT.VIDEO_GENERATING,
   audio: PLACEHOLDER_TEXT.AUDIO_GENERATING,
   '3d': PLACEHOLDER_TEXT.MODEL_3D_GENERATING,
@@ -65,6 +66,11 @@ export const RENDER_CONFIG: Record<Exclude<MessageType, 'chat'>, RenderConfig> =
     loadingText: PLACEHOLDER_TEXT.IMAGE_GENERATING,
     completedText: '好的，来看看生成的图片',
     completedTextPlural: '好的，来看看生成的 {count} 张图片',
+  },
+  image_ecom: {
+    loadingText: PLACEHOLDER_TEXT.IMAGE_GENERATING,
+    completedText: '好的，来看看生成的电商图',
+    completedTextPlural: '好的，来看看生成的 {count} 张电商图',
   },
   video: {
     loadingText: PLACEHOLDER_TEXT.VIDEO_GENERATING,

@@ -231,9 +231,10 @@ async def handle_regenerate_or_send_operation(
     # Media 类型（image/video）：将占位符 insert 到 messages 表
     # 这样刷新页面后占位符能通过 GET /messages 自然加载，无需 taskRestoration 手动重建
     # Chat 类型保持虚拟（不入库），因为 Chat 的流式 chunk 依赖 optimisticMessages
-    if gen_type in (GenerationType.IMAGE, GenerationType.VIDEO):
+    if gen_type in (GenerationType.IMAGE, GenerationType.IMAGE_ECOM, GenerationType.VIDEO):
         _PLACEHOLDER_TEXT_FALLBACK = {
             GenerationType.IMAGE: "图片生成中",
+            GenerationType.IMAGE_ECOM: "电商图生成中",
             GenerationType.VIDEO: "视频生成中",
         }
         # 优先使用大脑提供的渲染提示，兜底硬编码
@@ -249,6 +250,7 @@ async def handle_regenerate_or_send_operation(
             # 按类型提取前端渲染所需的参数
             _PARAM_KEYS = {
                 GenerationType.IMAGE: ("num_images", "aspect_ratio", "resolution", "output_format"),
+                GenerationType.IMAGE_ECOM: ("num_images", "aspect_ratio"),
                 GenerationType.VIDEO: ("aspect_ratio", "n_frames", "remove_watermark"),
             }
             for key in _PARAM_KEYS.get(gen_type, ()):
