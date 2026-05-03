@@ -239,38 +239,42 @@ class TestPdfRead:
 
 
 class TestPdfPagesParsing:
-    """_parse_pages 边界场景"""
+    """_parse_pages 边界场景（FileOperationError 异常）"""
 
     @pytest.mark.asyncio
     async def test_page_zero(self, executor, workspace):
+        from services.file_executor import FileOperationError
         _make_pdf(Path(workspace, "t.pdf"), 3)
-        result = await executor.file_read("t.pdf", pages="0")
-        assert "必须从 1 开始" in result
+        with pytest.raises(FileOperationError, match="必须从 1"):
+            await executor.file_read("t.pdf", pages="0")
 
     @pytest.mark.asyncio
     async def test_page_negative(self, executor, workspace):
+        from services.file_executor import FileOperationError
         _make_pdf(Path(workspace, "t.pdf"), 3)
-        result = await executor.file_read("t.pdf", pages="-1")
-        # "-1" 会被解析为范围 "" - "1"，应报格式错误
-        assert "格式错误" in result or "必须从 1" in result
+        with pytest.raises(FileOperationError):
+            await executor.file_read("t.pdf", pages="-1")
 
     @pytest.mark.asyncio
     async def test_page_out_of_range(self, executor, workspace):
+        from services.file_executor import FileOperationError
         _make_pdf(Path(workspace, "t.pdf"), 3)
-        result = await executor.file_read("t.pdf", pages="99")
-        assert "超出范围" in result
+        with pytest.raises(FileOperationError, match="超出范围"):
+            await executor.file_read("t.pdf", pages="99")
 
     @pytest.mark.asyncio
     async def test_page_not_number(self, executor, workspace):
+        from services.file_executor import FileOperationError
         _make_pdf(Path(workspace, "t.pdf"), 3)
-        result = await executor.file_read("t.pdf", pages="abc")
-        assert "格式错误" in result
+        with pytest.raises(FileOperationError, match="格式错误"):
+            await executor.file_read("t.pdf", pages="abc")
 
     @pytest.mark.asyncio
     async def test_page_reversed_range(self, executor, workspace):
+        from services.file_executor import FileOperationError
         _make_pdf(Path(workspace, "t.pdf"), 5)
-        result = await executor.file_read("t.pdf", pages="5-1")
-        assert "起始页不能大于结束页" in result
+        with pytest.raises(FileOperationError, match="起始页不能大于结束页"):
+            await executor.file_read("t.pdf", pages="5-1")
 
     @pytest.mark.asyncio
     async def test_page_duplicate_dedup(self, executor, workspace):
@@ -505,24 +509,26 @@ class TestToolExecutorIntegration:
 
     @pytest.mark.asyncio
     async def test_tool_executor_pdf_read(self, tool_executor, user_workspace):
-        """ToolExecutor 调用 file_read 读 PDF"""
+        """ToolExecutor 调用 file_read 读 PDF → AgentResult"""
+        from services.agent.agent_result import AgentResult
         _make_pdf(Path(user_workspace, "contract.pdf"), 2)
 
         result = await tool_executor.execute("file_read", {"path": "contract.pdf"})
-        assert isinstance(result, str)
-        assert "Page1Content" in result
+        assert isinstance(result, AgentResult)
+        assert "Page1Content" in result.summary
 
     @pytest.mark.asyncio
     async def test_tool_executor_pdf_with_pages(self, tool_executor, user_workspace):
-        """ToolExecutor 调用 file_read 带 pages"""
+        """ToolExecutor 调用 file_read 带 pages → AgentResult"""
+        from services.agent.agent_result import AgentResult
         _make_pdf(Path(user_workspace, "report.pdf"), 5)
 
         result = await tool_executor.execute(
             "file_read", {"path": "report.pdf", "pages": "3"}
         )
-        assert isinstance(result, str)
-        assert "Page3Content" in result
-        assert "Page1Content" not in result
+        assert isinstance(result, AgentResult)
+        assert "Page3Content" in result.summary
+        assert "Page1Content" not in result.summary
 
     @pytest.mark.asyncio
     async def test_tool_executor_image_read(self, tool_executor, user_workspace):
@@ -538,39 +544,42 @@ class TestToolExecutorIntegration:
 
     @pytest.mark.asyncio
     async def test_tool_executor_text_read(self, tool_executor, user_workspace):
-        """ToolExecutor 读文本文件仍返回 str"""
+        """ToolExecutor 读文本文件返回 AgentResult"""
+        from services.agent.agent_result import AgentResult
         Path(user_workspace, "notes.txt").write_text("hello world")
 
         result = await tool_executor.execute(
             "file_read", {"path": "notes.txt"}
         )
-        assert isinstance(result, str)
-        assert "hello world" in result
+        assert isinstance(result, AgentResult)
+        assert "hello world" in result.summary
 
     @pytest.mark.asyncio
     async def test_tool_executor_file_list_then_read_pdf(
         self, tool_executor, user_workspace
     ):
         """完整用户场景：file_list → 看到 PDF → file_read 读内容"""
+        from services.agent.agent_result import AgentResult
         _make_pdf(Path(user_workspace, "invoice.pdf"), 2)
         Path(user_workspace, "memo.txt").write_text("meeting notes")
 
         # Step 1: file_list
         list_result = await tool_executor.execute("file_list", {})
-        assert "invoice.pdf" in list_result
-        assert "memo.txt" in list_result
+        assert isinstance(list_result, AgentResult)
+        assert "invoice.pdf" in list_result.summary
+        assert "memo.txt" in list_result.summary
 
         # Step 2: file_read PDF
         pdf_result = await tool_executor.execute(
             "file_read", {"path": "invoice.pdf"}
         )
-        assert "Page1Content" in pdf_result
+        assert "Page1Content" in pdf_result.summary
 
         # Step 3: file_read text（回归）
         txt_result = await tool_executor.execute(
             "file_read", {"path": "memo.txt"}
         )
-        assert "meeting notes" in txt_result
+        assert "meeting notes" in txt_result.summary
 
 
 # ============================================================
