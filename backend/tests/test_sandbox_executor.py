@@ -33,36 +33,36 @@ class TestBasicExecution:
     @pytest.mark.asyncio
     async def test_simple_arithmetic(self, executor):
         result = await executor.execute("1 + 1", "简单加法")
-        assert "2" in result
+        assert "2" in result.summary
 
     @pytest.mark.asyncio
     async def test_print_output(self, executor):
         result = await executor.execute("print('hello')", "打印测试")
-        assert "hello" in result
+        assert "hello" in result.summary
 
     @pytest.mark.asyncio
     async def test_multi_line_code(self, executor):
         code = "x = 10\ny = 20\nprint(x + y)"
         result = await executor.execute(code, "多行代码")
-        assert "30" in result
+        assert "30" in result.summary
 
     @pytest.mark.asyncio
     async def test_last_expression_returned(self, executor):
         code = "x = 42\nx"
         result = await executor.execute(code, "最后表达式")
-        assert "42" in result
+        assert "42" in result.summary
 
     @pytest.mark.asyncio
     async def test_no_output(self, executor):
         result = await executor.execute("x = 1", "无输出")
-        assert "无输出" in result or "成功" in result
+        assert "无输出" in result.summary or "成功" in result.summary
 
     @pytest.mark.asyncio
     async def test_print_and_expression(self, executor):
         code = "print('line1')\n42"
         result = await executor.execute(code, "混合输出")
-        assert "line1" in result
-        assert "42" in result
+        assert "line1" in result.summary
+        assert "42" in result.summary
 
 
 # ============================================================
@@ -75,31 +75,31 @@ class TestWhitelistModules:
     @pytest.mark.asyncio
     async def test_math_module(self, executor):
         result = await executor.execute("math.sqrt(144)", "math模块")
-        assert "12" in result
+        assert "12" in result.summary
 
     @pytest.mark.asyncio
     async def test_json_module(self, executor):
         code = "json.dumps({'a': 1})"
         result = await executor.execute(code, "json模块")
-        assert '"a"' in result
+        assert '"a"' in result.summary
 
     @pytest.mark.asyncio
     async def test_datetime_available(self, executor):
         code = "str(datetime.now().year)"
         result = await executor.execute(code, "datetime")
-        assert "202" in result
+        assert "202" in result.summary
 
     @pytest.mark.asyncio
     async def test_decimal_available(self, executor):
         code = "str(Decimal('99.99') + Decimal('0.01'))"
         result = await executor.execute(code, "Decimal精度")
-        assert "100.00" in result
+        assert "100.00" in result.summary
 
     @pytest.mark.asyncio
     async def test_counter_available(self, executor):
         code = "str(Counter([1, 1, 2, 3]))"
         result = await executor.execute(code, "Counter")
-        assert "1" in result
+        assert "1" in result.summary
 
     @pytest.mark.asyncio
     async def test_pandas_available(self, executor):
@@ -109,7 +109,7 @@ class TestWhitelistModules:
             pytest.skip("pandas not installed")
         code = "df = pd.DataFrame({'a': [1, 2, 3]})\nstr(df['a'].sum())"
         result = await executor.execute(code, "pandas DataFrame")
-        assert "6" in result
+        assert "6" in result.summary
 
 
 # ============================================================
@@ -122,27 +122,27 @@ class TestSafeBuiltins:
     @pytest.mark.asyncio
     async def test_len(self, executor):
         result = await executor.execute("len([1, 2, 3])", "len")
-        assert "3" in result
+        assert "3" in result.summary
 
     @pytest.mark.asyncio
     async def test_sum(self, executor):
         result = await executor.execute("sum([10, 20, 30])", "sum")
-        assert "60" in result
+        assert "60" in result.summary
 
     @pytest.mark.asyncio
     async def test_sorted(self, executor):
         result = await executor.execute("sorted([3, 1, 2])", "sorted")
-        assert "[1, 2, 3]" in result
+        assert "[1, 2, 3]" in result.summary
 
     @pytest.mark.asyncio
     async def test_range(self, executor):
         result = await executor.execute("list(range(5))", "range")
-        assert "[0, 1, 2, 3, 4]" in result
+        assert "[0, 1, 2, 3, 4]" in result.summary
 
     @pytest.mark.asyncio
     async def test_isinstance(self, executor):
         result = await executor.execute("isinstance(42, int)", "isinstance")
-        assert "True" in result
+        assert "True" in result.summary
 
 
 # ============================================================
@@ -155,12 +155,12 @@ class TestSecurityBlocking:
     @pytest.mark.asyncio
     async def test_import_os_blocked(self, executor):
         result = await executor.execute("import os\nos.listdir('.')", "危险导入")
-        assert "验证失败" in result
+        assert "验证失败" in result.summary
 
     @pytest.mark.asyncio
     async def test_eval_blocked(self, executor):
         result = await executor.execute("eval('1+1')", "eval调用")
-        assert "验证失败" in result
+        assert "验证失败" in result.summary
 
     @pytest.mark.asyncio
     async def test_open_outside_workspace_blocked(self, tmp_path):
@@ -170,19 +170,19 @@ class TestSecurityBlocking:
             workspace_dir=str(tmp_path),
         )
         result = await ws_executor.execute("open('/etc/passwd')", "open越界调用")
-        assert "文件访问被拒绝" in result or "PermissionError" in result
+        assert "文件访问被拒绝" in result.summary or "PermissionError" in result.summary
 
     @pytest.mark.asyncio
     async def test_dunder_escape_blocked(self, executor):
         result = await executor.execute(
             "x = [].__class__.__bases__", "元编程逃逸"
         )
-        assert "验证失败" in result
+        assert "验证失败" in result.summary
 
     @pytest.mark.asyncio
     async def test_empty_code(self, executor):
         result = await executor.execute("", "空代码")
-        assert "验证失败" in result
+        assert "验证失败" in result.summary
 
 
 # ============================================================
@@ -198,7 +198,7 @@ class TestAllowedImports:
             "import io\nbuf = io.BytesIO()\nbuf.write(b'hello')\nbuf.tell()",
             "io模块导入",
         )
-        assert "5" in result
+        assert "5" in result.summary
 
     @pytest.mark.asyncio
     async def test_import_json_allowed(self, executor):
@@ -206,7 +206,7 @@ class TestAllowedImports:
             "import json\njson.dumps({'a': 1})",
             "json模块导入",
         )
-        assert '"a"' in result
+        assert '"a"' in result.summary
 
 
 # ============================================================
@@ -219,24 +219,24 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_syntax_error(self, executor):
         result = await executor.execute("def foo(", "语法错误")
-        assert "验证失败" in result
+        assert "验证失败" in result.summary
 
     @pytest.mark.asyncio
     async def test_runtime_error(self, executor):
         result = await executor.execute("1 / 0", "除零错误")
-        assert "执行错误" in result
+        assert "执行错误" in result.summary
 
     @pytest.mark.asyncio
     async def test_key_error(self, executor):
         result = await executor.execute("d = {}\nd['missing']", "KeyError")
-        assert "执行错误" in result
+        assert "执行错误" in result.summary
 
     @pytest.mark.asyncio
     async def test_timeout(self):
         executor = SandboxExecutor(timeout=2.0, workspace_dir="/tmp")
         code = "x = 0\nwhile True:\n    x += 1"
         result = await executor.execute(code, "死循环")
-        assert "超时" in result
+        assert "超时" in result.summary
 
 
 # ============================================================
@@ -253,12 +253,12 @@ class TestResultTruncation:
         )
         code = "print('x' * 500)"
         result = await executor.execute(code, "长输出")
-        assert "已截断" in result
+        assert "已截断" in result.summary
 
     @pytest.mark.asyncio
     async def test_short_output_not_truncated(self, executor):
         result = await executor.execute("print('short')", "短输出")
-        assert "已截断" not in result
+        assert "已截断" not in result.summary
 
 
 # ============================================================
@@ -275,8 +275,8 @@ class TestSubprocessIsolation:
             timeout=30.0, workspace_dir=str(tmp_path),
         )
         result = await executor.execute("print(WORKSPACE_DIR)", "读workspace")
-        assert "工作区" in result
-        assert str(tmp_path) not in result
+        assert "工作区" in result.summary
+        assert str(tmp_path) not in result.summary
 
     @pytest.mark.asyncio
     async def test_chdir_to_workspace(self, tmp_path):
@@ -289,7 +289,7 @@ class TestSubprocessIsolation:
         result = await executor.execute(
             "print(open('test_file.txt').read())", "cwd读文件"
         )
-        assert "hello from workspace" in result
+        assert "hello from workspace" in result.summary
 
     @pytest.mark.asyncio
     async def test_isolated_globals_across_executions(self, tmp_path):
@@ -299,7 +299,7 @@ class TestSubprocessIsolation:
         )
         await executor.execute("shared_var = 42", "设置变量")
         result = await executor.execute("shared_var", "读取变量")
-        assert "执行错误" in result or "NameError" in result
+        assert "执行错误" in result.summary or "NameError" in result.summary
 
     @pytest.mark.asyncio
     async def test_async_await_not_supported(self, tmp_path):
@@ -309,7 +309,7 @@ class TestSubprocessIsolation:
         )
         result = await executor.execute("await some_func()", "async代码")
         # AST 验证通过但子进程内检测到 await 返回错误
-        assert "不支持" in result or "验证失败" in result
+        assert "不支持" in result.summary or "验证失败" in result.summary
 
 
 # ============================================================

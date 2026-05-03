@@ -72,7 +72,7 @@ class TestStatefulExecution:
         """变量在多次 execute() 之间保留"""
         await stateful_executor.execute("x = 42", "定义变量")
         result = await stateful_executor.execute("print(x * 2)", "使用变量")
-        assert "84" in result
+        assert "84" in result.summary
 
     @pytest.mark.asyncio
     async def test_dataframe_persists(self, stateful_executor):
@@ -82,14 +82,14 @@ class TestStatefulExecution:
             "创建 DataFrame",
         )
         result = await stateful_executor.execute("print(df['a'].sum())", "聚合")
-        assert "6" in result
+        assert "6" in result.summary
 
     @pytest.mark.asyncio
     async def test_function_persists(self, stateful_executor):
         """自定义函数跨调用保留"""
         await stateful_executor.execute("def greet(name): return f'hi {name}'", "定义函数")
         result = await stateful_executor.execute("print(greet('world'))", "调用函数")
-        assert "hi world" in result
+        assert "hi world" in result.summary
 
     @pytest.mark.asyncio
     async def test_error_preserves_state(self, stateful_executor):
@@ -97,7 +97,7 @@ class TestStatefulExecution:
         await stateful_executor.execute("saved = 'important'", "保存")
         await stateful_executor.execute("1/0", "错误")  # 除零错误
         result = await stateful_executor.execute("print(saved)", "恢复")
-        assert "important" in result
+        assert "important" in result.summary
 
     @pytest.mark.asyncio
     async def test_timeout_preserves_state(self, stateful_executor):
@@ -107,7 +107,7 @@ class TestStatefulExecution:
         await stateful_executor.execute("while True: pass", "超时")
         stateful_executor._timeout = 30
         result = await stateful_executor.execute("print(keeper)", "恢复")
-        assert "123" in result
+        assert "123" in result.summary
 
 
 # ============================================================
@@ -119,7 +119,7 @@ class TestStatefulSecurity:
     @pytest.mark.asyncio
     async def test_import_os_blocked(self, stateful_executor):
         result = await stateful_executor.execute("import os", "拦截")
-        assert "❌" in result
+        assert result.is_failure
 
     @pytest.mark.asyncio
     async def test_builtins_tamper_reset(self, stateful_executor):
@@ -128,7 +128,7 @@ class TestStatefulSecurity:
             "__builtins__['eval'] = lambda x: x", "篡改",
         )
         result = await stateful_executor.execute("eval('1+1')", "验证")
-        assert "❌" in result
+        assert result.is_failure
 
 
 # ============================================================
@@ -146,7 +146,7 @@ class TestStatefulFileUpload:
             "print('done')"
         )
         result = await stateful_executor.execute(code, "写文件")
-        assert "done" in result
+        assert "done" in result.summary
         assert "report.json" in stateful_executor._uploaded
 
     @pytest.mark.asyncio
@@ -159,7 +159,7 @@ class TestStatefulFileUpload:
         result = await stateful_executor.execute(
             "print(open('memo.txt').read())", "读文件",
         )
-        assert "remember this" in result
+        assert "remember this" in result.summary
 
 
 # ============================================================
@@ -188,7 +188,7 @@ class TestExceptionDegradation:
         await kernel.process.wait()
         # 下次执行应降级为无状态 subprocess（不抛异常）
         result = await ex.execute("print(42)", "降级执行")
-        assert "42" in result
+        assert "42" in result.summary
 
     @pytest.mark.asyncio
     async def test_kernel_runtime_error_fallback(self, ws):
@@ -207,7 +207,7 @@ class TestExceptionDegradation:
             conversation_id="test_fail",
         )
         result = await ex.execute("print(99)", "降级测试")
-        assert "99" in result
+        assert "99" in result.summary
 
 
 class TestDegradation:
@@ -224,7 +224,7 @@ class TestDegradation:
             conversation_id="test",
         )
         result = await ex.execute("print(42)", "降级测试")
-        assert "42" in result
+        assert "42" in result.summary
 
     @pytest.mark.asyncio
     async def test_no_conversation_id_fallback(self, ws, km):
@@ -238,4 +238,4 @@ class TestDegradation:
             conversation_id="",  # 空 conversation_id
         )
         result = await ex.execute("print(42)", "降级测试")
-        assert "42" in result
+        assert "42" in result.summary

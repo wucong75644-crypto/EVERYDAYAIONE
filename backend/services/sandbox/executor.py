@@ -12,6 +12,7 @@ from typing import Callable, Dict, Optional
 
 from loguru import logger
 
+from services.agent.agent_result import AgentResult
 from services.sandbox.validators import validate_code, truncate_result
 
 
@@ -46,8 +47,8 @@ class SandboxExecutor:
         self._kernel_manager = kernel_manager  # KernelManager（有状态模式）
         self._conversation_id = conversation_id
 
-    async def execute(self, code: str, description: str = "") -> str:
-        """执行 Python 代码并返回结果文本
+    async def execute(self, code: str, description: str = "") -> AgentResult:
+        """执行 Python 代码并返回结构化结果
 
         使用独立子进程执行（spawn），实现：
         - 进程级 cwd 隔离（os.chdir 到用户 workspace）
@@ -60,7 +61,12 @@ class SandboxExecutor:
         # 1. AST 安全验证（主进程，快速拦截）
         error = validate_code(code)
         if error:
-            return f"❌ 代码验证失败:\n{error}"
+            return AgentResult(
+                summary=f"代码验证失败:\n{error}",
+                status="error",
+                error_message=error,
+                metadata={"retryable": True},
+            )
 
         logger.info(
             f"SandboxExecutor | desc={description} | "
@@ -75,11 +81,11 @@ class SandboxExecutor:
         file_backups = self._backup_existing_files()
 
         # 3. 执行代码（优先有状态 Kernel，fallback 无状态 subprocess）
-        result = await self._execute_code(code)
+        raw_result = await self._execute_code(code)
 
         logger.info(
             f"SandboxExecutor result | desc={description} | "
-            f"result_len={len(result)} | result={result[:200]}"
+            f"result_len={len(raw_result)} | result={raw_result[:200]}"
         )
 
         # 4. 同名文件保护：覆盖检测 + Google Drive 风格重命名
@@ -88,9 +94,23 @@ class SandboxExecutor:
         # 5. 自动检测生成的文件并上传（追加在截断后的文本末尾）
         file_results = await self._auto_upload_new_files()
         if file_results:
-            result = (result or "") + "\n" + "\n".join(file_results)
+            raw_result = (raw_result or "") + "\n" + "\n".join(file_results)
 
-        return result
+        # 6. 包装为 AgentResult（根据子进程返回的前缀判断状态）
+        if raw_result.startswith("❌"):
+            return AgentResult(
+                summary=raw_result.lstrip("❌ "),
+                status="error",
+                error_message=raw_result,
+                metadata={"retryable": True},
+            )
+        if raw_result.startswith("⏱"):
+            return AgentResult(
+                summary=raw_result.lstrip("⏱ "),
+                status="timeout",
+                error_message=raw_result,
+            )
+        return AgentResult(summary=raw_result, status="success")
 
     async def _execute_code(self, code: str) -> str:
         """选择执行模式：有状态 Kernel 或无状态 subprocess"""

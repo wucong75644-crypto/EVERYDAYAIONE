@@ -64,13 +64,13 @@ class TestExecutionEndToEnd:
     @pytest.mark.asyncio
     async def test_simple_calculation(self, executor):
         result = await executor.execute("2 ** 10", "幂运算")
-        assert "1024" in result
+        assert "1024" in result.summary
 
     @pytest.mark.asyncio
     async def test_print_and_expression(self, executor):
         result = await executor.execute("print('hello')\n42", "混合输出")
-        assert "hello" in result
-        assert "42" in result
+        assert "hello" in result.summary
+        assert "42" in result.summary
 
     @pytest.mark.asyncio
     async def test_multi_line_data_processing(self, executor):
@@ -81,8 +81,8 @@ class TestExecutionEndToEnd:
             "print(f'total={total}, avg={avg}')"
         )
         result = await executor.execute(code, "数据处理")
-        assert "total=15" in result
-        assert "avg=3.0" in result
+        assert "total=15" in result.summary
+        assert "avg=3.0" in result.summary
 
     @pytest.mark.asyncio
     async def test_json_processing(self, executor):
@@ -91,25 +91,25 @@ class TestExecutionEndToEnd:
             "print(data)"
         )
         result = await executor.execute(code, "JSON处理")
-        assert "测试" in result
-        assert "42" in result
+        assert "测试" in result.summary
+        assert "42" in result.summary
 
     @pytest.mark.asyncio
     async def test_datetime_usage(self, executor):
         result = await executor.execute("str(datetime.now().year)", "日期")
-        assert "202" in result
+        assert "202" in result.summary
 
     @pytest.mark.asyncio
     async def test_decimal_precision(self, executor):
         code = "str(Decimal('0.1') + Decimal('0.2'))"
         result = await executor.execute(code, "精度")
-        assert "0.3" in result
+        assert "0.3" in result.summary
 
     @pytest.mark.asyncio
     async def test_collections_usage(self, executor):
         code = "str(dict(Counter('aabbbc')))"
         result = await executor.execute(code, "Counter")
-        assert "'b': 3" in result
+        assert "'b': 3" in result.summary
 
 
 # ============================================================
@@ -127,7 +127,7 @@ class TestFileOperations:
         result = await executor.execute(
             "print(open('input.txt').read())", "读workspace文件",
         )
-        assert "workspace data here" in result
+        assert "workspace data here" in result.summary
 
     @pytest.mark.asyncio
     async def test_read_workspace_csv(self, executor, ws):
@@ -140,8 +140,8 @@ class TestFileOperations:
             "print(lines[1].strip())"
         )
         result = await executor.execute(code, "读CSV")
-        assert "rows=2" in result
-        assert "Alice,90" in result
+        assert "rows=2" in result.summary
+        assert "Alice,90" in result.summary
 
     @pytest.mark.asyncio
     async def test_read_subdirectory_file(self, executor, ws):
@@ -153,7 +153,7 @@ class TestFileOperations:
         result = await executor.execute(
             "print(open('reports/q1.txt').read())", "读子目录文件",
         )
-        assert "Q1 revenue: 1000" in result
+        assert "Q1 revenue: 1000" in result.summary
 
     @pytest.mark.asyncio
     async def test_read_chinese_filename(self, executor, ws):
@@ -163,7 +163,7 @@ class TestFileOperations:
         result = await executor.execute(
             "print(open('利润表.txt').read())", "中文文件名",
         )
-        assert "利润: 50万" in result
+        assert "利润: 50万" in result.summary
 
     @pytest.mark.asyncio
     async def test_read_staging_file(self, executor, ws):
@@ -177,7 +177,7 @@ class TestFileOperations:
             "print(data['total'])"
         )
         result = await executor.execute(code, "读staging")
-        assert "100" in result
+        assert "100" in result.summary
 
     @pytest.mark.asyncio
     async def test_write_file_to_output_dir(self, executor, ws):
@@ -188,7 +188,7 @@ class TestFileOperations:
             "print('done')"
         )
         result = await executor.execute(code, "写文件")
-        assert "done" in result
+        assert "done" in result.summary
         # 文件应被 auto_upload 检测到
         assert "result.json" in executor._uploaded
 
@@ -210,7 +210,7 @@ class TestFileOperations:
             "print('saved')"
         )
         result = await executor.execute(code, "写Excel")
-        assert "saved" in result
+        assert "saved" in result.summary
         assert Path(ws["output"], "scores.xlsx").exists()
 
     @pytest.mark.asyncio
@@ -243,7 +243,7 @@ class TestFileDedupEndToEnd:
             "print('written')"
         )
         result = await executor.execute(code, "覆盖文件")
-        assert "written" in result
+        assert "written" in result.summary
 
         # 旧文件恢复，新文件被重命名
         assert Path(ws["output"], "report.txt").read_bytes() == old_content
@@ -271,35 +271,35 @@ class TestSecurityEndToEnd:
     @pytest.mark.asyncio
     async def test_import_os_blocked(self, executor):
         result = await executor.execute("import os\nos.system('whoami')")
-        assert "验证失败" in result
+        assert "验证失败" in result.summary
 
     @pytest.mark.asyncio
     async def test_import_subprocess_blocked(self, executor):
         result = await executor.execute("import subprocess")
-        assert "验证失败" in result
+        assert "验证失败" in result.summary
 
     @pytest.mark.asyncio
     async def test_eval_blocked(self, executor):
         result = await executor.execute("eval('1+1')")
-        assert "验证失败" in result
+        assert "验证失败" in result.summary
 
     @pytest.mark.asyncio
     async def test_dunder_escape_blocked(self, executor):
         result = await executor.execute("[].__class__.__bases__")
-        assert "验证失败" in result
+        assert "验证失败" in result.summary
 
     @pytest.mark.asyncio
     async def test_open_outside_workspace(self, executor):
         """打开 workspace 外的文件被 _scoped_open 拦截"""
         result = await executor.execute("open('/etc/hosts').read()")
-        assert "文件访问被拒绝" in result or "PermissionError" in result
+        assert "文件访问被拒绝" in result.summary or "PermissionError" in result.summary
 
     @pytest.mark.asyncio
     async def test_path_traversal_blocked(self, executor):
         """路径穿越（../）被 realpath + 边界检查拦截"""
         result = await executor.execute("open('../../etc/passwd').read()")
         # 可能被白名单拦截(PermissionError)，也可能 realpath 后文件不存在(FileNotFoundError)
-        assert any(s in result for s in (
+        assert any(s in result.summary for s in (
             "文件访问被拒绝", "PermissionError", "文件不存在", "FileNotFoundError",
         ))
 
@@ -313,31 +313,31 @@ class TestSecurityEndToEnd:
             pytest.skip("Cannot create symlink")
 
         result = await executor.execute("open('escape_link/passwd').read()")
-        assert "文件访问被拒绝" in result or "PermissionError" in result
+        assert "文件访问被拒绝" in result.summary or "PermissionError" in result.summary
 
     @pytest.mark.asyncio
     async def test_empty_code_rejected(self, executor):
         result = await executor.execute("")
-        assert "验证失败" in result
+        assert "验证失败" in result.summary
 
     @pytest.mark.asyncio
     async def test_syntax_error_rejected(self, executor):
         result = await executor.execute("def foo(")
-        assert "验证失败" in result
+        assert "验证失败" in result.summary
 
     @pytest.mark.asyncio
     async def test_path_hidden_in_output(self, executor, ws):
         """真实路径在输出中被替换为虚拟路径"""
         result = await executor.execute("print(WORKSPACE_DIR)")
-        assert str(ws["workspace"]) not in result
-        assert "工作区" in result
+        assert str(ws["workspace"]) not in result.summary
+        assert "工作区" in result.summary
 
     @pytest.mark.asyncio
     async def test_output_dir_hidden(self, executor, ws):
         """OUTPUT_DIR 路径在输出中被替换"""
         result = await executor.execute("print(OUTPUT_DIR)")
-        assert str(ws["output"]) not in result
-        assert "下载" in result
+        assert str(ws["output"]) not in result.summary
+        assert "下载" in result.summary
 
 
 # ============================================================
@@ -355,14 +355,14 @@ class TestTimeoutAndProcessManagement:
             workspace_dir=ws["workspace"],
         )
         result = await executor.execute("while True: pass", "死循环")
-        assert "超时" in result
+        assert "超时" in result.summary
 
     @pytest.mark.asyncio
     async def test_long_calculation_within_timeout(self, executor):
         """正常计算在超时内完成"""
         code = "total = sum(range(1000000))\nprint(total)"
         result = await executor.execute(code, "大计算")
-        assert "499999500000" in result
+        assert "499999500000" in result.summary
 
     @pytest.mark.asyncio
     async def test_error_does_not_hang(self, executor):
@@ -371,7 +371,7 @@ class TestTimeoutAndProcessManagement:
         result = await executor.execute("1/0", "除零")
         elapsed = time.monotonic() - start
         assert elapsed < 10  # 应快速返回，不等到超时
-        assert "执行错误" in result
+        assert "执行错误" in result.summary
 
     @pytest.mark.asyncio
     async def test_result_truncation(self, ws):
@@ -382,8 +382,8 @@ class TestTimeoutAndProcessManagement:
             workspace_dir=ws["workspace"],
         )
         result = await executor.execute("print('x' * 1000)", "超长输出")
-        assert "已截断" in result
-        assert len(result) < 500  # 截断后不应太长
+        assert "已截断" in result.summary
+        assert len(result.summary) < 500  # 截断后不应太长
 
 
 # ============================================================
@@ -414,11 +414,11 @@ class TestConcurrencyIsolation:
             executor_b.execute("print(open('data.txt').read())", "User B"),
         )
 
-        assert "user_a_data" in results[0]
-        assert "user_b_data" in results[1]
+        assert "user_a_data" in results[0].summary
+        assert "user_b_data" in results[1].summary
         # 互不交叉
-        assert "user_b_data" not in results[0]
-        assert "user_a_data" not in results[1]
+        assert "user_b_data" not in results[0].summary
+        assert "user_a_data" not in results[1].summary
 
     @pytest.mark.asyncio
     async def test_globals_not_shared(self, tmp_path):
@@ -428,7 +428,7 @@ class TestConcurrencyIsolation:
         await executor.execute("shared_var = 'leaked'", "设置变量")
         result = await executor.execute("print(shared_var)", "读取变量")
 
-        assert "执行错误" in result or "NameError" in result
+        assert "执行错误" in result.summary or "NameError" in result.summary
 
 
 # ============================================================
@@ -442,14 +442,14 @@ class TestEdgeCases:
     async def test_only_comments(self, executor):
         """只有注释的代码"""
         result = await executor.execute("# this is a comment", "纯注释")
-        assert "成功" in result
+        assert "成功" in result.summary
 
     @pytest.mark.asyncio
     async def test_multiline_string(self, executor):
         """多行字符串"""
         code = "text = '''line1\nline2\nline3'''\nprint(len(text.split('\\n')))"
         result = await executor.execute(code, "多行字符串")
-        assert "3" in result
+        assert "3" in result.summary
 
     @pytest.mark.asyncio
     async def test_nested_function_definition(self, executor):
@@ -462,7 +462,7 @@ class TestEdgeCases:
             "print(outer(5))"
         )
         result = await executor.execute(code, "嵌套函数")
-        assert "15" in result
+        assert "15" in result.summary
 
     @pytest.mark.asyncio
     async def test_list_comprehension(self, executor):
@@ -470,7 +470,7 @@ class TestEdgeCases:
         result = await executor.execute(
             "str([x**2 for x in range(5)])", "列表推导",
         )
-        assert "[0, 1, 4, 9, 16]" in result
+        assert "[0, 1, 4, 9, 16]" in result.summary
 
     @pytest.mark.asyncio
     async def test_exception_with_chinese_message(self, executor):
@@ -478,7 +478,7 @@ class TestEdgeCases:
         result = await executor.execute(
             "raise ValueError('数据格式错误')", "中文异常",
         )
-        assert "执行错误" in result
+        assert "执行错误" in result.summary
 
     @pytest.mark.asyncio
     async def test_file_not_found(self, executor):
@@ -486,7 +486,7 @@ class TestEdgeCases:
         result = await executor.execute(
             "open('nonexistent.txt').read()", "文件不存在",
         )
-        assert "执行错误" in result
+        assert "执行错误" in result.summary
 
     @pytest.mark.asyncio
     async def test_workspace_dir_not_in_result(self, executor, ws):
@@ -497,25 +497,25 @@ class TestEdgeCases:
             "print(OUTPUT_DIR)"
         )
         result = await executor.execute(code, "路径检查")
-        assert ws["workspace"] not in result
-        assert ws["staging"] not in result
-        assert ws["output"] not in result
+        assert ws["workspace"] not in result.summary
+        assert ws["staging"] not in result.summary
+        assert ws["output"] not in result.summary
 
     @pytest.mark.asyncio
     async def test_async_await_rejected(self, executor):
         """子进程不支持 async/await"""
         result = await executor.execute("await some_func()", "async代码")
-        assert "不支持" in result or "验证失败" in result
+        assert "不支持" in result.summary or "验证失败" in result.summary
 
     @pytest.mark.asyncio
     async def test_import_allowed_module_in_code(self, executor):
         """用户代码中 import 白名单模块"""
         code = "import re\nprint(bool(re.match(r'\\d+', '123')))"
         result = await executor.execute(code, "import re")
-        assert "True" in result
+        assert "True" in result.summary
 
     @pytest.mark.asyncio
     async def test_import_blocked_module_in_code(self, executor):
         """用户代码中 import 黑名单模块"""
         result = await executor.execute("import socket", "import blocked")
-        assert "验证失败" in result
+        assert "验证失败" in result.summary
