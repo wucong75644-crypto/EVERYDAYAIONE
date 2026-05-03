@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { FileText, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { cn } from '../../../utils/cn';
 import { getFileIcon } from '../../../utils/fileUtils';
 import type { MentionResult } from '../../../hooks/useFileMention';
