@@ -341,6 +341,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             await ws_manager.send_to_task_or_user(task_id, user_id, start_msg)
 
             # 2. 组装消息列表（记忆未预取时并行预取）
+            import time as _time
+            _t0 = _time.monotonic()
+
             text_content = self._extract_text_content(content)
             prefetched_summary = (_params or {}).get("_prefetched_summary")
             prefetched_memory = (_params or {}).get("_prefetched_memory")
@@ -357,12 +360,19 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     logger.warning(f"Memory prefetch failed | task={task_id} | error={mem}")
                 else:
                     prefetched_memory = mem
+            _t1 = _time.monotonic()
 
             messages = await self._build_llm_messages(
                 content, user_id, conversation_id, text_content,
                 prefetched_summary=prefetched_summary,
                 prefetched_memory=prefetched_memory,
                 user_location=user_location,
+            )
+            _t2 = _time.monotonic()
+            logger.info(
+                f"Pre-stream timing | task={task_id} | "
+                f"memory={int((_t1-_t0)*1000)}ms | "
+                f"context={int((_t2-_t1)*1000)}ms"
             )
 
             # 3. 创建适配器
@@ -371,9 +381,11 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             self._adapter = create_chat_adapter(
                 model_id, org_id=self.org_id, db=self.db,
             )
+            _t3 = _time.monotonic()
             logger.info(
                 f"Stream generate starting | model={model_id} | "
-                f"adapter={type(self._adapter).__name__} | task={task_id}"
+                f"adapter={type(self._adapter).__name__} | task={task_id} | "
+                f"setup_total={int((_t3-_t0)*1000)}ms"
             )
 
             # 4. 注入全局工具使用指引
