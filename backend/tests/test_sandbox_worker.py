@@ -325,7 +325,7 @@ class TestSandboxWorkerEntry:
         status, result = q.get(timeout=5)
         assert status == "ok"
         assert str(tmp_path) not in result
-        assert "工作区" in result
+        assert "WORKSPACE_DIR" in result
 
     def test_chdir_to_workspace(self, tmp_path):
         """子进程 chdir 到 workspace，相对路径可读"""
