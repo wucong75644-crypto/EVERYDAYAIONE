@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, Sparkles } from 'lucide-react';
+// lucide-react icons moved to InputControls (AI button now inside input)
 import toast from 'react-hot-toast';
 import api from '../../../services/api';
 import { createConversation, updateConversation } from '../../../services/conversation';
@@ -573,47 +573,12 @@ export default function InputArea({
             )).flat()}
           </div>
         )}
-        {isEcomMode && (
-          <div className="flex items-center gap-2 mb-2">
-            <button
-              type="button"
-              disabled={isEnhancing || (!prompt.trim() && uploadedImageUrls.length === 0)}
-              onClick={async () => {
-                if (isEnhancing) return;
-                setIsEnhancing(true);
-                try {
-                  const { data } = await api.post('/ecom-image/enhance-prompt', {
-                    text: prompt,
-                    image_urls: uploadedImageUrls,
-                    conversation_id: conversationId || '',
-                    platform: 'taobao',
-                  });
-                  if (data.enhanced_prompt) {
-                    setPrompt(data.enhanced_prompt);
-                    setImageTaskMeta(data.images || null);
-                    setCostEstimate(data.cost_estimate || null);
-                  } else if (data.error) {
-                    toast.error(data.error);
-                  }
-                } catch (err) {
-                  toast.error('提示词增强失败，请重试');
-                } finally {
-                  setIsEnhancing(false);
-                }
-              }}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded-full text-xs font-medium hover:bg-accent-dark transition-base disabled:opacity-50"
-            >
-              {isEnhancing ? (
-                <><Loader2 className="w-3.5 h-3.5 animate-spin" />AI提示词生成中...</>
-              ) : (
-                <><Sparkles className="w-3.5 h-3.5" />AI提示词</>
-              )}
-            </button>
-            {costEstimate && (
-              <span className="text-xs text-text-tertiary">
-                预计 {costEstimate.image_count} 张，约 {costEstimate.estimated_credits} 积分
-              </span>
-            )}
+        {/* 费用预估（电商图模式，AI按钮已移到输入框内部） */}
+        {isEcomMode && costEstimate && (
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs text-text-tertiary">
+              预计 {costEstimate.image_count} 张，约 {costEstimate.estimated_credits} 积分
+            </span>
           </div>
         )}
 
@@ -696,6 +661,30 @@ export default function InputArea({
           effectiveModelType={effectiveModelType}
           smartSubMode={isSmart ? smartSubMode : undefined}
           onSmartSubModeChange={isSmart ? (mode: string) => setSmartSubMode(mode as SmartSubMode) : undefined}
+          isEnhancing={isEnhancing}
+          onEnhancePrompt={isEcomMode ? async () => {
+            if (isEnhancing) return;
+            setIsEnhancing(true);
+            try {
+              const { data } = await api.post('/ecom-image/enhance-prompt', {
+                text: prompt,
+                image_urls: uploadedImageUrls,
+                conversation_id: conversationId || '',
+                platform: 'taobao',
+              });
+              if (data.enhanced_prompt) {
+                setPrompt(data.enhanced_prompt);
+                setImageTaskMeta(data.images || null);
+                setCostEstimate(data.cost_estimate || null);
+              } else if (data.error) {
+                toast.error(data.error);
+              }
+            } catch {
+              toast.error('提示词增强失败，请重试');
+            } finally {
+              setIsEnhancing(false);
+            }
+          } : undefined}
           mentionDropdownVisible={fileMention.showDropdown}
           mentionResults={fileMention.results}
           mentionActiveIndex={fileMention.activeIndex}

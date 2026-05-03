@@ -41,8 +41,8 @@ export interface UseFileMentionReturn {
   close: () => void;
 }
 
-/** 从光标位置向前提取 @keyword */
-function extractMentionQuery(text: string, cursorPos: number): { query: string; start: number } | null {
+/** 从光标位置向前提取 @keyword（导出供测试使用） */
+export function extractMentionQuery(text: string, cursorPos: number): { query: string; start: number } | null {
   const before = text.slice(0, cursorPos);
   const atIndex = before.lastIndexOf('@');
   if (atIndex === -1) return null;
