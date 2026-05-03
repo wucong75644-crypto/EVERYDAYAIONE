@@ -159,23 +159,42 @@ function optionToContent(opt: Record<string, unknown>): string {
   return html;
 }
 
+/** 判断图表是否支持折线/柱状切换（需要有 xAxis 类目轴） */
+function supportsLineBarSwitch(option: Record<string, unknown>): boolean {
+  const series = option.series as Array<Record<string, unknown>> | undefined;
+  if (!series || series.length === 0) return false;
+  const firstType = series[0].type as string | undefined;
+  // 饼图/漏斗图/雷达图/仪表盘等不支持切换
+  if (['pie', 'funnel', 'radar', 'gauge', 'treemap', 'sunburst', 'sankey', 'heatmap'].includes(firstType || '')) {
+    return false;
+  }
+  return !!option.xAxis;
+}
+
 /** 注入默认 toolbox 配置（用户 option 未指定时自动添加） */
 function injectToolbox(option: Record<string, unknown>): Record<string, unknown> {
   if (option.toolbox) return option;
+
+  const feature: Record<string, unknown> = {
+    saveAsImage: { title: '保存图片' },
+    dataView: {
+      title: '数据视图',
+      readOnly: true,
+      lang: ['数据视图', '关闭', '刷新'],
+      optionToContent: () => optionToContent(option),
+    },
+    restore: { title: '还原' },
+  };
+
+  // 只有柱状/折线类图表才显示类型切换按钮
+  if (supportsLineBarSwitch(option)) {
+    feature.magicType = { type: ['line', 'bar'], title: { line: '折线图', bar: '柱状图' } };
+  }
+
   return {
     ...option,
     toolbox: {
-      feature: {
-        saveAsImage: { title: '保存图片' },
-        dataView: {
-          title: '数据视图',
-          readOnly: true,
-          lang: ['数据视图', '关闭', '刷新'],
-          optionToContent: () => optionToContent(option),
-        },
-        magicType: { type: ['line', 'bar'], title: { line: '折线图', bar: '柱状图' } },
-        restore: { title: '还原' },
-      },
+      feature,
       right: 16,
       top: 4,
     },
