@@ -386,13 +386,8 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
 
         # 获取 ERP dispatcher
         dispatcher = await self._get_erp_dispatcher()
-        if isinstance(dispatcher, str):
-            return AgentResult(
-                summary=dispatcher,
-                status="error",
-                error_message=dispatcher,
-                metadata={"retryable": False},
-            )
+        if isinstance(dispatcher, AgentResult):
+            return dispatcher
 
         settings = get_settings()
         semaphore = asyncio.Semaphore(
