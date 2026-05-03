@@ -74,6 +74,8 @@ class ChatToolMixin:
         if budget is not None:
             executor._budget = budget
         executor._pending_file_parts = []
+        # 提取当前用户消息中的图片 URLs（供 image_agent 自动注入）
+        executor._current_message_images = self._extract_user_image_urls(messages)
         results: List[tuple] = []
 
         # 按并发安全性分批
@@ -121,9 +123,11 @@ class ChatToolMixin:
                             width=f.get("width"),
                             height=f.get("height"),
                             alt=f.get("alt", ""),
-                            failed=f.get("failed", False),
+                            failed=f.get("failed") or None,
+                            error=f.get("error") or None,
+                            retry_context=f.get("retry_context") or None,
                         ))
-                        logger.info(f"ImagePart added | alt={f.get('alt', '')[:30]} | url={f.get('url', 'None')[:80]}")
+                        logger.info(f"ImagePart added | alt={f.get('alt', '')[:30]} | failed={f.get('failed')} | url={f.get('url', 'None')[:80] if f.get('url') else 'None'}")
                     else:
                         # 其他工具返回 FilePart 格式（url/name/mime_type/size）
                         self._pending_file_parts.append(FilePart(
@@ -568,6 +572,23 @@ class ChatToolMixin:
             result_length=result_length, elapsed_ms=elapsed_ms,
             status=status, is_truncated=is_truncated,
         )))
+
+    @staticmethod
+    def _extract_user_image_urls(messages: list) -> list[str]:
+        """从 LLM messages 中提取最后一条 user 消息的图片 URLs。"""
+        for msg in reversed(messages):
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content")
+            if isinstance(content, list):
+                return [
+                    p["image_url"]["url"]
+                    for p in content
+                    if isinstance(p, dict) and p.get("type") == "image_url"
+                    and isinstance(p.get("image_url"), dict) and p["image_url"].get("url")
+                ]
+            break
+        return []
 
     def _extract_file_parts(self, result: str) -> str:
         """从工具结果中提取 [FILE] 标记，暂存为 FilePart
