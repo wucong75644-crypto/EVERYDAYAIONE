@@ -25,7 +25,7 @@ from services.sandbox.sandbox_worker import (
     _apply_resource_limits,
     _build_sandbox_globals,
     _exec_code,
-    _find_similar_file_global,
+    build_scoped_open,
 )
 from services.sandbox.sandbox_constants import (
     SAFE_BUILTINS,
@@ -35,104 +35,23 @@ from services.sandbox.validators import validate_code, truncate_result
 
 
 def _setup_scoped_open(workspace_dir: str, staging_dir: str, output_dir: str):
-    """构建带路径安全检查 + 文件名纠错的 open 函数
+    """构建带路径安全检查的 open 函数。
 
-    返回 _global_scoped_open 闭包，用于替换 builtins.open。
-    与 sandbox_worker.py 中的逻辑一致，但提取为独立函数以便每次执行前重置。
+    委托 build_scoped_open()（sandbox_worker.py 统一定义），
+    每次执行前重置，避免路径泄漏到下一个 conversation。
     """
-    import os
     import builtins
-    import tempfile as _tempfile
 
     _original_open = builtins.open.__wrapped__ if hasattr(builtins.open, "__wrapped__") else builtins.open
-    # 首次调用时保存原始 open
     if not hasattr(_setup_scoped_open, "_original_open"):
         _setup_scoped_open._original_open = _original_open
     else:
         _original_open = _setup_scoped_open._original_open
 
-    _ws_dir = workspace_dir
-
-    # 安全白名单
-    _allowed_prefixes = [os.path.realpath(_ws_dir)]
-    if staging_dir:
-        _allowed_prefixes.append(os.path.realpath(staging_dir))
-    if output_dir:
-        _allowed_prefixes.append(os.path.realpath(output_dir))
-    _allowed_prefixes.append(os.path.realpath(_tempfile.gettempdir()))
-
-    _readonly_system_files = frozenset({
-        "/etc/apache2/mime.types",
-        "/private/etc/apache2/mime.types",
-        "/etc/mime.types",
-        "/usr/share/misc/mime.types",
-        "/usr/share/zoneinfo",
-    })
-
-    # 虚拟路径别名：Agent 写 /output/xxx 或 /staging/xxx 时
-    # 自动映射到真实目录，与 OUTPUT_DIR/STAGING_DIR 变量走同一套逻辑
-    _path_aliases: list[tuple[str, str]] = []
-    if output_dir:
-        _path_aliases.append(("/output/", output_dir.rstrip("/") + "/"))
-    if staging_dir:
-        _path_aliases.append(("/staging/", staging_dir.rstrip("/") + "/"))
-
-    def _global_scoped_open(path, mode="r", *args, **kwargs):
-        path_str = str(path)
-        # 虚拟路径别名：/output/xxx → OUTPUT_DIR/xxx
-        for alias, real in _path_aliases:
-            if path_str.startswith(alias):
-                path_str = real + path_str[len(alias):]
-                break
-        if not os.path.isabs(path_str):
-            path_str = os.path.join(_ws_dir, path_str)
-        resolved = os.path.realpath(path_str)
-
-        _in_whitelist = any(
-            resolved.startswith(prefix + os.sep) or resolved == prefix
-            for prefix in _allowed_prefixes
-        )
-        if not _in_whitelist:
-            _is_readonly_system = (
-                "r" in mode
-                and "w" not in mode
-                and "a" not in mode
-                and (
-                    resolved in _readonly_system_files
-                    or any(resolved.startswith(f + "/") for f in _readonly_system_files)
-                )
-            )
-            if not _is_readonly_system:
-                raise PermissionError(f"文件访问被拒绝：{path} 不在允许的目录内")
-
-        # 文件不存在时自动纠错：当前目录 → OUTPUT_DIR → STAGING_DIR
-        if "r" in mode and not os.path.exists(resolved):
-            _basename = os.path.basename(resolved)
-            suggestion = _find_similar_file_global(resolved, _ws_dir)
-            if not suggestion:
-                for _fallback_dir in (output_dir, staging_dir):
-                    if not _fallback_dir:
-                        continue
-                    _alt = os.path.join(_fallback_dir, _basename)
-                    if os.path.exists(_alt):
-                        suggestion = _alt
-                        break
-                    _alt_suggestion = _find_similar_file_global(_alt, _fallback_dir)
-                    if _alt_suggestion:
-                        suggestion = _alt_suggestion
-                        break
-            if suggestion and os.path.exists(suggestion):
-                print(
-                    f"[sandbox] 文件名自动纠正: {path} → {os.path.basename(suggestion)}",
-                    file=sys.stderr,
-                )
-                return _original_open(suggestion, mode, *args, **kwargs)
-            msg = f"文件不存在: {path}"
-            if suggestion:
-                msg += f"。你是否要找: {os.path.basename(suggestion)}？"
-            raise FileNotFoundError(msg)
-
-        return _original_open(resolved, mode, *args, **kwargs)
+    _global_scoped_open = build_scoped_open(
+        workspace_dir, staging_dir, output_dir,
+        original_open=_original_open,
+    )
 
     return _global_scoped_open
 
