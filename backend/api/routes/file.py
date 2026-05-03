@@ -340,21 +340,22 @@ async def search_workspace(
     q: str = "",
     limit: int = Query(default=20, ge=1, le=100),
 ):
-    """递归搜索用户 workspace 目录，按文件名关键词匹配"""
-    if not q.strip():
-        return WorkspaceSearchResponse(items=[], total=0)
-
+    """递归搜索用户 workspace 目录，按文件名关键词匹配。
+    空关键词时返回最近修改的文件列表。"""
     executor = _get_executor(ctx)
     root = executor.resolve_safe_path(".")
     if not root.exists() or not root.is_dir():
         return WorkspaceSearchResponse(items=[], total=0)
 
-    keyword = q.strip().lower()
+    keyword = q.strip().lower()  # 空字符串 → 匹配所有文件
 
     # 文件系统遍历是同步阻塞操作，放到线程池执行
     raw = await asyncio.to_thread(
         _search_files_sync, root, keyword, limit, executor.get_cdn_url,
     )
+    # 空关键词：按修改时间倒序（最近文件优先）
+    if not keyword:
+        raw.sort(key=lambda x: x["modified"], reverse=True)
 
     items = [
         WorkspaceFileItem(is_dir=False, **entry) for entry in raw

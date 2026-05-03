@@ -95,18 +95,11 @@ export function useFileMention(): UseFileMentionReturn {
     setShowDropdown(true);
     setActiveIndex(0);
 
-    // 空关键词：显示空面板等待输入
-    if (!mention.query) {
-      setResults([]);
-      setLoading(false);
-      return;
-    }
-
-    // 防抖搜索
+    // 防抖搜索（空关键词立即请求，有关键词防抖 200ms）
     if (debounceRef.current) clearTimeout(debounceRef.current);
     setLoading(true);
 
-    debounceRef.current = setTimeout(async () => {
+    const doSearch = async () => {
       seqRef.current += 1;
       const seq = seqRef.current;
 
@@ -126,7 +119,15 @@ export function useFileMention(): UseFileMentionReturn {
       } finally {
         if (seq === seqRef.current) setLoading(false);
       }
-    }, 200);
+    };
+
+    if (!mention.query) {
+      // 空关键词（刚输入 @）：立即请求最近文件
+      doSearch();
+    } else {
+      // 有关键词：防抖 200ms
+      debounceRef.current = setTimeout(doSearch, 200);
+    }
   }, [close]);
 
   // 精准替换：用 mentionStartRef 定位 @keyword 在 prompt 中的确切位置
