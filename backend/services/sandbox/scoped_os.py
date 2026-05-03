@@ -31,14 +31,31 @@ def build_scoped_os(workspace_dir: str, staging_dir: str, output_dir: str):
     if output_dir:
         _allowed.append(_real_os.path.realpath(output_dir))
 
+    # staging 父目录黑名单：禁止列举/访问其他会话的临时文件
+    _staging_parent = _real_os.path.realpath(
+        _real_os.path.join(workspace_dir, "staging")
+    )
+    _denied = [_staging_parent]
+
     _confirmed_deletes: list[str] = []
 
     def _check_path(path_str) -> str:
-        """路径安全校验 — 解析相对路径 + realpath + 白名单"""
+        """路径安全校验 — 解析相对路径 + realpath + 白名单 + 黑名单"""
         path_str = str(path_str)
         if not _real_os.path.isabs(path_str):
             path_str = _real_os.path.join(_ws, path_str)
         resolved = _real_os.path.realpath(path_str)
+
+        # 黑名单优先：staging 父目录下的路径，必须被更具体的白名单条目覆盖
+        for d in _denied:
+            if resolved == d or resolved.startswith(d + _real_os.sep):
+                # 检查是否有非 workspace-root 的白名单精确覆盖
+                if not any(
+                    (resolved == a or resolved.startswith(a + _real_os.sep))
+                    for a in _allowed if a != _ws
+                ):
+                    raise PermissionError(f"路径不在允许范围内: {path_str}")
+
         if not any(
             resolved == p or resolved.startswith(p + _real_os.sep)
             for p in _allowed
