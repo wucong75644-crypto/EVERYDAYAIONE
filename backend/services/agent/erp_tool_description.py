@@ -68,11 +68,17 @@ def get_capability_manifest() -> dict:
             {"场景": "业务规则/操作流程", "替代": "search_knowledge"},
         ],
         "returns": [
-            "summary 模式：统计数字（总量/金额/分组明细），直接内联",
-            "export 模式：数据存 staging parquet + 返回 profile 摘要（行数/字段/预览）",
-            "导出工作流：erp_agent 查数据存 staging → code_execute 读 staging 写 Excel",
-            "跨域并行：各域数据独立时一次返回多域数据 + 关联计算提示，code_execute 按提示关联",
-            "计划模式（status=plan）：超出一次执行能力时返回执行计划，调用方按计划逐步调用并传递中间结果",
+            "summary 模式：{status:'ok', summary:'统计文本', data:[{维度:值, 指标:数字}...]}，直接内联",
+            "export 模式：{status:'ok', file:'trade_xxx.parquet', rows:N, columns:[...], preview:[前3行]}",
+            "导出工作流：erp_agent 存 staging → data_query SQL 提取 → code_execute 写 Excel",
+            "跨域并行：各域数据独立时一次返回多域结果 + 关联计算提示，code_execute 按提示关联",
+            "计划模式：{status:'plan', steps:[...]}，调用方按计划逐步执行并传递中间结果",
+        ],
+        "error_handling": [
+            "无数据：返回 {status:'empty', suggestion:'建议扩大时间范围或检查平台名'}，转述建议给用户",
+            "超时：返回 {status:'timeout'}，建议缩小时间范围或减少数据量后重试",
+            "参数错误：返回 {status:'error', message:'具体原因'}，根据 message 修正 task 后重试",
+            "数据量过大被拒绝：返回建议的缩小范围策略，按建议调整 task 后重试",
         ],
         "limits": [
             "编码/单号IN匹配：单次最多5000个值。超过5000个的跨域关联查询，"
@@ -201,6 +207,11 @@ def build_tool_description() -> str:
     lines.append("\n返回：")
     for r in m["returns"]:
         lines.append(f"- {r}")
+
+    if m.get("error_handling"):
+        lines.append("\n错误处理：")
+        for eh in m["error_handling"]:
+            lines.append(f"- {eh}")
 
     if m.get("limits"):
         lines.append("\n限制：")

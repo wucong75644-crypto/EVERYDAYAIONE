@@ -66,7 +66,7 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     # 代码执行（沙箱隔离，可并行）
     "code_execute",
     # 文件操作（只读）
-    "file_read", "file_list", "file_search", "file_info",
+    "file_read",
     # 定时任务（表单返回 + 列表查询）
     "manage_scheduled_task",
 }
@@ -91,6 +91,7 @@ _SAFETY_LEVELS: Dict[str, SafetyLevel] = {
     # confirm — 消耗资源，通知用户
     "generate_image": SafetyLevel.CONFIRM,
     "generate_video": SafetyLevel.CONFIRM,
+    "image_agent": SafetyLevel.CONFIRM,
     "code_execute": SafetyLevel.CONFIRM,
     # dangerous — 写操作，必须用户确认
     "erp_execute": SafetyLevel.DANGEROUS,
@@ -170,10 +171,19 @@ data_query 只支持单文件查询，不能跨文件关联。涉及多个文件
 
 ## 工具说明
 
-### erp_agent — ERP 数据查询
-从 ERP 系统查询业务数据。返回数据摘要或 staging 文件引用。
-含 staging 引用时用 data_query SQL 查询提取所需数据。参数不足时用 ask_user 补充。
-数据量过大被拒绝时，根据返回的建议缩小范围后重试。
+### erp_agent — ERP 数据查询专员
+从 ERP 系统查询订单/库存/采购/售后/商品/物流等全量业务数据。
+支持统计聚合（summary）和明细导出（export），>200行自动存 staging 文件。
+
+返回两种形式：
+- summary：直接返回统计数字（总量/金额/分组明细），内联到回复
+- export：数据存 staging parquet + profile 摘要（行数/字段/前3行预览）
+  含 staging 引用时用 data_query SQL 查询提取所需数据
+
+错误处理：
+- 无数据：转述返回的建议（扩大时间范围/检查平台名）
+- 数据量过大被拒绝：按返回的建议缩小范围后重试
+- 参数不足：用 ask_user 向用户补充关键信息
 
 ### erp_analyze — ERP 分析（计划模式专用）
 只分析不执行，返回结构化的任务拆解。直接模式下不要调用。
@@ -181,38 +191,50 @@ data_query 只支持单文件查询，不能跨文件关联。涉及多个文件
 ### code_execute — Python 计算环境
 
 有状态沙盒：同一对话内变量跨调用保留。
-第一次读取的 DataFrame 后续可以直接使用，不需要重复读文件。
 
 何时使用：
-- 需要对数据做计算、统计、可视化、格式转换时
-- 涉及多个文件的对比、匹配、合并、JOIN 时（data_query 只支持单文件）
-- 需要数据清洗（去空格、统一格式、模糊匹配）时
-- 需要生成 Excel/图表等文件时
+- 浏览工作区文件、了解数据结构（os.listdir + pd.read + df.shape）
+- 对数据做计算、统计、可视化、格式转换
+- 涉及多个文件的对比、匹配、合并、JOIN（data_query 只支持单文件）
+- 数据清洗（去空格、统一格式、模糊匹配）
+- 搜索文件（os.walk + 文件名/内容匹配）
+- 读写 Word/PPT（python-docx / python-pptx）
 
 不适用：
-- 查询 ERP 业务数据 → 用 erp_agent
-- 探索单个文件的结构、列名、行数 → 用 data_query（不传 sql）
-- 从超过 10 万行的大文件中筛选子集 → 先用 data_query SQL 筛选，再在 code_execute 中操作
+- 读 PDF 内容 → file_read（自动分页提取、扫描件检测）
+- 看图片内容 → file_read（沙盒无法进行视觉分析，必须用 file_read）
+- 从超过 10 万行的大文件中聚合筛选 → data_query（DuckDB 恒定内存）
+- 查询 ERP 业务数据 → erp_agent
 
 核心能力：
-- 可用库：pd, plt, Path, math, json, datetime, Decimal, Counter, io
-- 变量在对话期间持续存在（df, fig, result 等下次调用仍可用）
+- 可用库：pd, plt, Path, math, json, datetime, Decimal, Counter, io, docx, pptx
+- os 模块：os.listdir / os.walk / os.stat / os.path.*（路径限制在工作区内）
+- shutil 模块：shutil.copy / shutil.move
+- 变量在对话期间持续存在
 - 最终给用户的文件写到 OUTPUT_DIR，平台自动检测上传
-- 中间计算结果（后续步骤需要读取）写到 STAGING_DIR
+- 中间计算结果写到 STAGING_DIR
 - 图表用 ECharts JSON 配置（.echart.json），不要用 plt/matplotlib：
   option = {"title":{"text":"标题"}, "xAxis":{...}, "series":[{...}]}
   json.dump(option, open(OUTPUT_DIR+'/图.echart.json','w'), ensure_ascii=False)
 - 写 Excel 用 engine='xlsxwriter'
 - 用 print() 输出文本结果
 
-使用方式：
-- 第一步：读文件 + 初步探索（df = pd.read_excel(...)、df.head()、df.describe()）
-- 后续步骤：直接操作已有变量（df.groupby(...)、df.plot(...)）
-- 每步都可以 print 中间结果，根据结果决定下一步
+典型用法——一步到位发现文件并分析：
+  import os
+  files = os.listdir('.')
+  print("工作区文件:", files)
+  for f in files:
+      if f.endswith(('.xlsx', '.csv')):
+          df = pd.read_excel(f) if f.endswith('.xlsx') else pd.read_csv(f)
+          print(f"\n{f}: {df.shape[0]}行x{df.shape[1]}列, 列: {df.columns.tolist()}")
 
 注意事项：
+- os 只能访问工作区内的文件，越界报 PermissionError
+- 删除操作需先用 ask_user 确认，确认后在 confirm_delete 参数传入文件名
+- read_excel/read_csv 默认截断 2000 行。截断时会提示，大数据请用 data_query 或 nrows=None
+- 中文 CSV 读取报 UnicodeDecodeError 时，尝试 encoding='gbk' 或 encoding='gb18030'
+- 禁止 import sys/subprocess
 - 环境可能因超时被重置，如果变量不存在请重新读取文件
-- 禁止 import os/sys
 
 ### data_query — 数据查询与导出
 
@@ -241,22 +263,29 @@ data_query 只支持单文件查询，不能跨文件关联。涉及多个文件
 - 分析大数据用 SQL 聚合筛选，不要 SELECT * 全量取出
 - 只支持单文件查询，不能跨文件关联
 
-### file_list / file_search — 工作区文件发现
-查看工作区有哪些文件、搜索特定文件。Excel/CSV/Parquet 等数据文件用 data_query 查询，不能用 file_read。
-
-### search_knowledge — 知识库
-业务规则、操作流程等非数据类问题。
+### search_knowledge — 知识库搜索
+查找企业内部业务规则、SOP、操作流程、培训文档、历史经验。
+基于语义检索，传自然语言问题比关键词效果更好。
+不查数据（数据用 erp_agent），不查实时信息（用 web_search）。
 
 ### web_search — 互联网搜索
-天气、新闻等实时信息。社交平台内容用 social_crawler。
+获取实时公开信息：天气、新闻、政策法规、行业资讯、技术文档。
+企业内部数据用 erp_agent，社交平台帖子用 social_crawler。
 
-### generate_image / generate_video
-用户要求画图/生成视频时使用。
+### generate_image — 通用图片生成
+非电商场景的图片生成：插画、概念图、logo、创意图、头像等。
+纯文字→文生图，有参考图→图生图（必须传 image_urls）。
+电商商品图（白底主图、场景图）→ 用 image_agent，效果更专业。
+
+### generate_video — 视频生成
+根据文字描述异步生成短视频，返回 task_id，完成后自动推送。
+生成通常需要 1-3 分钟。不支持视频编辑/剪辑。
 
 ### manage_scheduled_task — 定时任务管理
 创建/查看/修改/暂停/恢复/删除定时任务。
 create 传 description 自然语言描述，返回预填表单供用户确认。
 与计划模式配合：讨论确认后再创建，用精确指令写入 description。
+任务不存在时建议用 list 查看现有任务。
 
 # 执行模式
 
@@ -304,7 +333,42 @@ conversation_context 是专家了解上文的唯一通道。
 
 ## 查询限制
 
-单次 IN 匹配最多 5000 个值。超过时分别导出到 staging，用 code_execute JOIN。"""
+单次 IN 匹配最多 5000 个值。超过时分别导出到 staging，用 code_execute JOIN。
+
+## 电商图片生成（image_agent）
+
+为电商平台生成专业商品图片：白底主图、场景氛围图、详情页卖点图、SKU 展示图等。
+底层调用 AI 图片模型（文生图/图生图），自动应用四层提示词（角色→品类→平台→风格），
+输出符合各平台规范的商品图片。每次调用生成 1 张图片，返回 CDN 图片 URL，前端自动展示。
+
+### 调用时机
+- 消息中包含 image_task_meta 时：按 images[] 数组逐项调用
+- 每次传入 images[i].description 作为 task 参数
+- 每张生成后简短确认（如"白底主图已完成"），立即继续下一张
+- 最后一张完成后输出整体总结
+
+### 参数说明
+- task（必传）：单张图的完整描述。格式：`图片类型 尺寸：主体+背景+光线+构图`
+  示例：`白底主图 800×800：运动鞋居中，纯白背景，柔光箱45度布光，自然底部投影`
+  示例：`场景图 750×950：咖啡杯置于原木桌面，背景虚化书房场景，暖色侧逆光`
+- platform（可选）：目标电商平台，决定尺寸裁切规范。
+  可选值：taobao / tmall / jd / pdd / douyin / xiaohongshu，默认 taobao
+- 不需要传 image_urls — 系统自动注入用户上传的图片
+- 不需要传 style — 系统自动从会话读取全局风格指令
+
+### 返回格式
+- 成功：`{"image_url": "https://..."}` — 前端自动渲染，不要重复描述图片内容
+- 失败：裂开占位符 + 重试按钮 — 用户可点击重新生成，无需你额外处理
+
+### 错误处理
+- 生成超时/模型失败：内置自动重试，无需额外处理
+- 积分不足：返回文字提示（不生成占位符），你只需转述提示即可
+- 参数格式错误：返回具体错误信息，根据提示修正 task 后重试
+
+### 不要用于（分界规则）
+- 非电商场景的画图（画一只猫、生成 logo、插画、概念图）→ 用 generate_image
+- 查询商品数据、订单、库存等 ERP 信息 → 用 erp_agent
+- 修改已有图片的局部内容（抠图、换背景）→ 当前不支持，告知用户"""
 
 
 def get_tool_system_prompt() -> str:
@@ -337,14 +401,19 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                         "task": {
                             "type": "string",
                             "description": (
-                                "用户本次输入 + 日期补全 + 指代解析。"
+                                "用户本次查询的完整描述。写法：复述用户原话，只做两处替换——"
+                                "时间词→具体日期（如'今天'→'2026-05-03 00:00~15:30'），"
+                                "指代词→具体名称。其他一字不动，不要添加额外说明。"
+                                "e.g. '2026-05-02 00:00~23:59 淘宝退货按店铺统计'；"
+                                "'导出2026-04-28~2026-05-03的订单明细'"
                             ),
                         },
                         "conversation_context": {
                             "type": "string",
                             "description": (
-                                "追问时传上轮查询条件（时间/平台/对象），"
-                                "让专家理解上文。不传结果数字。首轮不传。"
+                                "追问时传上轮的查询条件（时间范围/平台/对象/筛选条件），"
+                                "让专家理解上文。不传结果数字，不传你的推测。首轮不传。"
+                                "e.g. '上轮查了2026-05-02淘宝退货，按店铺分组'"
                             ),
                         },
                     },
@@ -356,10 +425,14 @@ def _build_common_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "erp_analyze",
                 "description": (
-                    "ERP 查询分析工具——只分析不执行，返回结构化的任务拆解。\n"
-                    "计划模式下使用：把用户的完整查询交给它，获取涉及哪些域、"
-                    "每步需要什么参数、步骤间的依赖关系。\n"
-                    "不查数据库、不调 API，只做意图分析，毫秒级返回。"
+                    "ERP 查询分析工具——只分析不执行。把用户的完整查询传入，"
+                    "返回结构化的任务拆解：涉及哪些数据域、每步需要什么参数、"
+                    "步骤间的依赖关系。不查数据库、不调 API，毫秒级返回。\n\n"
+                    "仅在计划模式下使用：后续步骤依赖前面步骤的结果时，"
+                    "先用 erp_analyze 分析，再展示方案等用户确认。\n\n"
+                    "返回：{steps: [{domain, action, params, depends_on}...], summary}。\n\n"
+                    "不要用于：直接模式下的查询（参数已明确时直接调 erp_agent）；"
+                    "非 ERP 数据的分析 → 用 code_execute。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -367,11 +440,16 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                     "properties": {
                         "task": {
                             "type": "string",
-                            "description": "用户的完整查询（原文传入，不要拆分）",
+                            "description": (
+                                "用户的完整查询原文，不要拆分或改写。"
+                                "e.g. '对比上月和本月各平台退货率，找出退货率上升最多的平台'"
+                            ),
                         },
                         "conversation_context": {
                             "type": "string",
-                            "description": "对话背景补充（可选）",
+                            "description": (
+                                "对话背景补充（可选）。追问时传上轮的查询条件，首轮不传"
+                            ),
                         },
                     },
                 },
@@ -382,10 +460,14 @@ def _build_common_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "erp_api_search",
                 "description": (
-                    "搜索 ERP 可用的 API 操作和参数文档。"
-                    "不确定用哪个工具或 action 时必须先调此工具搜索。"
-                    "支持关键词（如'退货''库存''调拨'）或精确查询（如'erp_trade_query:order_list'）。"
-                    "搜索结果会推荐工具名、action 和必填参数，可直接用于下一步调用。"
+                    "搜索 ERP 可用的 API 操作和参数文档。当不确定用哪个 ERP 工具、"
+                    "哪个 action、需要哪些参数时，先调此工具搜索文档。"
+                    "返回匹配的工具名、action、必填/可选参数及说明，可直接用于下一步调用。\n\n"
+                    "两种查询模式：\n"
+                    "- 关键词搜索：e.g. '退货'、'库存'、'调拨'\n"
+                    "- 精确查询：e.g. 'erp_trade_query:order_list'\n\n"
+                    "返回：匹配的 API 列表（工具名+action+参数文档+示例），无匹配时返回空。\n\n"
+                    "不要用于：直接查询数据 → erp_agent；搜索知识库 → search_knowledge。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -393,7 +475,10 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "搜索关键词或 tool:action 精确查询",
+                            "description": (
+                                "搜索关键词或 tool:action 精确查询。"
+                                "e.g. '退货'、'库存盘点'、'erp_trade_query:order_list'"
+                            ),
                         },
                     },
                 },
@@ -404,9 +489,12 @@ def _build_common_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "search_knowledge",
                 "description": (
-                    "搜索企业知识库中的经验和文档。"
-                    "适合查找业务规则、操作流程、历史经验等非数据类问题。"
-                    "数据查询用 ERP 工具，不要用知识库。"
+                    "搜索企业知识库，查找业务规则、操作流程、SOP、历史经验、"
+                    "培训文档等非数据类信息。基于语义相似度检索，返回最相关的文档片段。\n\n"
+                    "返回：匹配的文档片段列表（含来源和相关度），无匹配时返回空列表。\n\n"
+                    "不要用于：查询业务数据（订单/库存/销售额）→ erp_agent；"
+                    "查询实时信息（天气/新闻）→ web_search；"
+                    "查看具体文件内容 → file_read。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -414,7 +502,10 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "搜索关键词",
+                            "description": (
+                                "搜索关键词或自然语言问题。"
+                                "e.g. '退货流程'、'新员工入职操作指南'、'淘宝发货超时规则'"
+                            ),
                         },
                     },
                 },
@@ -425,9 +516,12 @@ def _build_common_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "web_search",
                 "description": (
-                    "搜索互联网获取实时信息（天气/新闻/行业资讯等）。"
-                    "ERP 业务数据用 local_*/erp_* 工具，不要用互联网搜索。"
-                    "社交平台内容（小红书/抖音）用 social_crawler。"
+                    "搜索互联网获取实时公开信息：天气、新闻、行业资讯、"
+                    "政策法规、技术文档、公司公开信息等。返回搜索结果摘要列表。\n\n"
+                    "返回：搜索结果列表（标题+摘要+来源链接），无结果时返回空列表。\n\n"
+                    "不要用于：查询企业内部业务数据（订单/库存）→ erp_agent；"
+                    "查询企业知识库 → search_knowledge；"
+                    "爬取社交平台内容（小红书/抖音帖子）→ social_crawler。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -435,7 +529,10 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "搜索关键词",
+                            "description": (
+                                "搜索关键词，简洁精准。"
+                                "e.g. '杭州今天天气'、'2026年跨境电商政策变化'、'快递停发地区最新通知'"
+                            ),
                         },
                     },
                 },
@@ -446,9 +543,16 @@ def _build_common_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "generate_image",
                 "description": (
-                    "生成/画/绘制/修改图片。\n"
-                    "纯文字描述 → 文生图；传入 image_urls → 图生图（以参考图为基础生成）。\n"
-                    "用户上传了图片并要求画图/改图时，必须把图片 URL 传入 image_urls。"
+                    "通用图片生成工具：根据文字描述生成图片（文生图），或基于参考图片生成新图片（图生图）。"
+                    "适用于插画、概念图、logo、创意图、头像等非电商场景。"
+                    "电商商品图请用 image_agent。\n\n"
+                    "两种模式：\n"
+                    "- 纯文字 → 文生图（只传 prompt）\n"
+                    "- 有参考图 → 图生图（prompt + image_urls，用户上传图片时必传 image_urls）\n\n"
+                    "返回：成功 → 图片 URL，前端自动展示。"
+                    "失败 → 错误信息，可修改 prompt 后重试。\n\n"
+                    "不要用于：电商商品图（白底主图、场景图）→ image_agent；"
+                    "视频生成 → generate_video。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -456,17 +560,27 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                     "properties": {
                         "prompt": {
                             "type": "string",
-                            "description": "图片描述（英文效果更好）",
+                            "description": (
+                                "图片描述，英文效果更好。描述主体、风格、构图、色调等。"
+                                "e.g. 'A cozy coffee shop interior, warm lighting, watercolor style'；"
+                                "'极简风格logo，一只抽象的猫，黑白配色'"
+                            ),
                         },
                         "image_urls": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "参考图片 URL 列表（用户上传的图片）。有参考图时必传",
+                            "description": (
+                                "参考图片 URL 列表。用户上传了图片并要求画图/改图时必传。"
+                                "图生图模式下，生成结果会参考这些图片的风格和内容"
+                            ),
                         },
                         "aspect_ratio": {
                             "type": "string",
                             "enum": ["1:1", "3:4", "4:3", "9:16", "16:9"],
-                            "description": "画面比例，默认 1:1",
+                            "description": (
+                                "画面比例。默认 1:1。"
+                                "e.g. 头像/logo→1:1, 手机壁纸→9:16, 横幅→16:9"
+                            ),
                         },
                     },
                 },
@@ -476,14 +590,63 @@ def _build_common_tools() -> List[Dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "generate_video",
-                "description": "生成/制作视频。调用后返回 task_id，视频异步生成。",
+                "description": (
+                    "根据文字描述生成短视频。调用后异步生成，返回 task_id，"
+                    "视频完成后自动推送给用户。生成通常需要 1-3 分钟。\n\n"
+                    "返回：task_id + 预计等待时间。视频完成后自动展示。\n\n"
+                    "不要用于：图片生成 → generate_image / image_agent；"
+                    "视频编辑/剪辑 → 不支持。"
+                ),
                 "parameters": {
                     "type": "object",
                     "required": ["prompt"],
                     "properties": {
                         "prompt": {
                             "type": "string",
-                            "description": "视频描述",
+                            "description": (
+                                "视频内容描述，包含场景、动作、风格等。"
+                                "e.g. '一只橘猫在阳光下的窗台上伸懒腰，慢动作，温暖色调'"
+                            ),
+                        },
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "image_agent",
+                "description": (
+                    "为电商平台生成单张专业商品图片（白底主图、场景氛围图、详情页卖点图、SKU 展示图等）。"
+                    "自动应用四层提示词（角色→品类→平台→风格），输出符合平台规范的图片。"
+                    "每次调用只生成 1 张图片，返回 CDN 图片 URL，前端自动展示。"
+                    "如需多张，按 image_task_meta 数组逐项调用。\n\n"
+                    "调用时机：消息中包含 image_task_meta 时，按 images[i].description 逐项调用。\n\n"
+                    "系统自动注入：image_urls（用户上传图片）、style（会话全局风格）— 不需要传这两个参数。\n\n"
+                    "返回：成功 → {image_url: 'https://...'} 自动渲染，不要重复描述图片内容。"
+                    "失败 → 裂开占位符 + 重试按钮，用户可点击重新生成。\n\n"
+                    "不要用于：非电商画图（画猫、logo、插画）→ generate_image；"
+                    "查询商品/订单/库存 → erp_agent；局部修图（抠图、换背景）→ 不支持。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "required": ["task"],
+                    "properties": {
+                        "task": {
+                            "type": "string",
+                            "description": (
+                                "单张图片的完整描述。格式：图片类型 尺寸：主体+背景+光线+构图。"
+                                "e.g. '白底主图 800×800：运动鞋居中，纯白背景，柔光箱45度布光，自然底部投影'；"
+                                "'场景图 750×950：咖啡杯置于原木桌面，背景虚化书房，暖色侧逆光'"
+                            ),
+                        },
+                        "platform": {
+                            "type": "string",
+                            "enum": ["taobao", "tmall", "jd", "pdd", "douyin", "xiaohongshu"],
+                            "description": (
+                                "目标电商平台，决定输出尺寸裁切规范。默认 taobao。"
+                                "e.g. taobao=800×800主图, jd=800×800, pdd=750×352轮播"
+                            ),
                         },
                     },
                 },
@@ -541,11 +704,16 @@ def _build_common_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "manage_scheduled_task",
                 "description": (
-                    "管理定时任务：创建/查看/修改/暂停/恢复/删除。\n"
-                    "create: 传 description 自然语言描述，返回预填表单供用户确认。\n"
-                    "list: 查看当前用户的定时任务列表。\n"
-                    "update: 传 task_name + description 描述变更。\n"
-                    "pause/resume/delete: 传 task_name 或 task_id。"
+                    "管理用户的定时任务：创建、查看、修改、暂停、恢复、删除。"
+                    "定时任务可自动执行重复性工作（如每日推送报表、定期数据同步）。\n\n"
+                    "各 action 行为：\n"
+                    "- create: 传 description，返回预填表单供用户确认后再正式创建\n"
+                    "- list: 返回当前用户的任务列表（名称+状态+下次执行时间）\n"
+                    "- update: 传 task_name + description，修改任务配置\n"
+                    "- pause/resume/delete: 传 task_name 或 task_id\n\n"
+                    "返回：操作结果（成功/失败+原因）。create 返回表单 JSON。\n\n"
+                    "错误处理：任务不存在时返回错误提示，据此告知用户并建议 list 查看。\n\n"
+                    "不要用于：一次性数据查询 → erp_agent；手动触发任务执行 → 不支持。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -554,22 +722,25 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                         "action": {
                             "type": "string",
                             "enum": ["create", "list", "update", "pause", "resume", "delete"],
-                            "description": "操作类型",
+                            "description": "操作类型。create 需配合 description，其余需配合 task_name 或 task_id",
                         },
                         "description": {
                             "type": "string",
                             "description": (
                                 "create/update 时传：自然语言描述任务内容和频率。"
-                                "如「每天早上9点推销售日报」「改成每周一推送」"
+                                "e.g. '每天早上9点推送销售日报'、'每周一上午10点生成库存周报'"
                             ),
                         },
                         "task_name": {
                             "type": "string",
-                            "description": "任务名称（update/pause/resume/delete 时用于查找任务）",
+                            "description": (
+                                "任务名称，用于 update/pause/resume/delete。"
+                                "e.g. '销售日报推送'"
+                            ),
                         },
                         "task_id": {
                             "type": "string",
-                            "description": "任务 ID（可传前 8 位短 ID）",
+                            "description": "任务 ID，可传完整 UUID 或前 8 位短 ID",
                         },
                     },
                 },
@@ -630,16 +801,14 @@ _CORE_TOOLS: Set[str] = {
     "search_knowledge",         # 知识库
     "web_search",               # 互联网搜索
     "social_crawler",           # 社交平台爬虫（小红书/抖音/B站/微博/知乎）
-    # 图片/视频生成已移至前端"图片模式/视频模式"，Agent 不直接调用
+    # 生成
+    "image_agent",              # 电商图片生成（单张，电商图模式下使用）
     # 执行
     "code_execute",             # 代码执行
     "data_query",               # 数据查询与导出
-    # 文件操作
-    "file_read",                # 文件读取
+    # 文件操作（file_list/search/info 已被 code_execute 内 os.listdir 替代）
+    "file_read",                # 文件读取（PDF/图片多模态不可替代）
     "file_write",               # 文件写入
-    "file_list",                # 目录列表
-    "file_search",              # 文件搜索
-    "file_info",                # 文件信息
     # 定时任务
     "manage_scheduled_task",    # 定时任务管理（创建/查看/修改/暂停/恢复/删除）
     # 主动沟通
@@ -650,6 +819,7 @@ _CORE_TOOLS: Set[str] = {
 # plan 模式下移除的执行类工具（架构层过滤，LLM 根本看不到）
 _PLAN_MODE_BLOCKED: Set[str] = {
     "erp_agent",                # 执行类：plan 模式只允许 erp_analyze
+    "image_agent",              # 生成类：计划阶段不执行
     "social_crawler",           # 爬取类：计划阶段不需要
 }
 
