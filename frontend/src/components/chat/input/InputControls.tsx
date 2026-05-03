@@ -7,7 +7,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { m } from 'framer-motion';
-import { Send, Square, Settings, Upload, Brain, Paperclip, FolderOpen, ChevronUp, Zap, ShieldCheck, ListChecks } from 'lucide-react';
+import { Send, Square, Settings, Upload, Brain, Paperclip, FolderOpen, ChevronUp, Zap, ShieldCheck, ListChecks, Loader2, Sparkles } from 'lucide-react';
 import { Popover, PopoverClose } from '../../primitives/Popover';
 import { cn } from '../../../utils/cn';
 import { SOFT_SPRING } from '../../../utils/motion';
@@ -132,6 +132,10 @@ interface InputControlsProps {
   smartSubMode?: string;
   /** 切换智能模式子模式 */
   onSmartSubModeChange?: (mode: string) => void;
+  /** 电商图模式：AI提示词增强回调 */
+  onEnhancePrompt?: () => void;
+  /** 电商图模式：是否正在增强中 */
+  isEnhancing?: boolean;
   /** @ 文件提及：是否显示下拉 */
   mentionDropdownVisible?: boolean;
   /** @ 文件提及：搜索结果 */
@@ -343,21 +347,37 @@ export default function InputControls(props: InputControlsProps) {
           />
         )}
 
-        {/* 输入区域 */}
-        <textarea
-          ref={textareaRef}
-          name="chat-input"
-          value={prompt}
-          onChange={(e) => {
-            onPromptChange(e.target.value);
-            onMentionInputChange?.(e.target.value, e.target.selectionStart ?? e.target.value.length);
-          }}
-          onKeyDown={onKeyDown}
-          placeholder={hasQuotedImage ? '描述你想要的修改...' : requiresImageUpload ? '该模型需要先上传图片才能生成哦～' : smartSubMode === 'image-ecom' ? '描述商品和想要的图片效果，如"淘宝白底主图 + 场景图"，然后点击上方AI提示词按钮' : '发送消息...'}
-          className="w-full resize-none border-none outline-none bg-transparent text-text-primary placeholder:text-text-disabled text-base leading-6 pt-2 pb-1 min-h-[44px] max-h-[120px] overflow-y-auto"
-          rows={1}
-          disabled={isSubmitting}
-        />
+        {/* 输入区域（电商图模式：AI按钮 + textarea 同行） */}
+        <div className="flex items-start gap-2">
+          {smartSubMode === 'image-ecom' && props.onEnhancePrompt && (
+            <button
+              type="button"
+              disabled={props.isEnhancing || (!prompt.trim())}
+              onClick={props.onEnhancePrompt}
+              className="flex-shrink-0 mt-2 flex items-center gap-1 px-2.5 py-1 bg-accent text-white rounded-full text-xs font-medium hover:bg-accent-dark transition-base disabled:opacity-50"
+            >
+              {props.isEnhancing ? (
+                <><Loader2 className="w-3 h-3 animate-spin" />生成中</>
+              ) : (
+                <><Sparkles className="w-3 h-3" />AI提示词</>
+              )}
+            </button>
+          )}
+          <textarea
+            ref={textareaRef}
+            name="chat-input"
+            value={prompt}
+            onChange={(e) => {
+              onPromptChange(e.target.value);
+              onMentionInputChange?.(e.target.value, e.target.selectionStart ?? e.target.value.length);
+            }}
+            onKeyDown={onKeyDown}
+            placeholder={hasQuotedImage ? '描述你想要的修改...' : requiresImageUpload ? '该模型需要先上传图片才能生成哦～' : smartSubMode === 'image-ecom' ? '描述商品和图片效果，如"淘宝白底主图 + 场景图"' : '发送消息...'}
+            className="flex-1 resize-none border-none outline-none bg-transparent text-text-primary placeholder:text-text-disabled text-base leading-6 pt-2 pb-1 min-h-[44px] max-h-[120px] overflow-y-auto"
+            rows={1}
+            disabled={isSubmitting}
+          />
+        </div>
 
         {/* 底部工具栏 */}
         <div className="flex items-center justify-between mt-1">
