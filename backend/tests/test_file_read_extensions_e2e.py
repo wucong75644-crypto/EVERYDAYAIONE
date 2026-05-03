@@ -655,37 +655,39 @@ class TestParsePagesDirect:
         assert self._parse("1-10") == list(range(10))
 
     def test_page_zero_error(self):
-        result = self._parse("0")
-        assert isinstance(result, str)
-        assert "必须从 1" in result
+        from services.file_executor import FileOperationError
+        with pytest.raises(FileOperationError, match="必须从 1"):
+            self._parse("0")
 
     def test_page_negative_error(self):
-        result = self._parse("-1")
-        assert isinstance(result, str)
+        from services.file_executor import FileOperationError
+        with pytest.raises(FileOperationError):
+            self._parse("-1")
 
     def test_page_over_total_error(self):
-        result = self._parse("11")
-        assert isinstance(result, str)
-        assert "超出范围" in result
+        from services.file_executor import FileOperationError
+        with pytest.raises(FileOperationError, match="超出范围"):
+            self._parse("11")
 
     def test_range_over_total_error(self):
-        result = self._parse("5-15")
-        assert isinstance(result, str)
+        from services.file_executor import FileOperationError
+        with pytest.raises(FileOperationError):
+            self._parse("5-15")
 
     def test_reversed_range_error(self):
-        result = self._parse("5-3")
-        assert isinstance(result, str)
-        assert "起始页不能大于结束页" in result
+        from services.file_executor import FileOperationError
+        with pytest.raises(FileOperationError, match="起始页不能大于结束页"):
+            self._parse("5-3")
 
     def test_non_number_error(self):
-        result = self._parse("abc")
-        assert isinstance(result, str)
-        assert "格式错误" in result
+        from services.file_executor import FileOperationError
+        with pytest.raises(FileOperationError, match="格式错误"):
+            self._parse("abc")
 
     def test_empty_string(self):
-        result = self._parse("")
-        assert isinstance(result, str)
-        assert "未指定有效页码" in result
+        from services.file_executor import FileOperationError
+        with pytest.raises(FileOperationError, match="未指定有效页码"):
+            self._parse("")
 
     def test_trailing_comma_ok(self):
         assert self._parse("1,2,") == [0, 1]
@@ -701,9 +703,9 @@ class TestParsePagesDirect:
         assert self._parse("1", total=1) == [0]
 
     def test_single_page_out_of_range(self):
-        result = self._parse("2", total=1)
-        assert isinstance(result, str)
-        assert "超出范围" in result
+        from services.file_executor import FileOperationError
+        with pytest.raises(FileOperationError, match="超出范围"):
+            self._parse("2", total=1)
 
 
 # ============================================================

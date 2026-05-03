@@ -23,6 +23,15 @@ from services.file_read_extensions import (
 )
 
 
+class FileOperationError(Exception):
+    """文件操作业务校验失败（文件不存在/格式错误/页码无效等）。
+
+    与 PermissionError 区分：PermissionError 是权限问题（不可重试），
+    FileOperationError 是参数/路径问题（LLM 可换参数重试）。
+    """
+    pass
+
+
 # 搜索时跳过的目录（VCS/临时/中间数据，对标 Claude Code Grep 自动排除）
 _SKIP_SEARCH_DIRS = frozenset({
     "staging", "__pycache__", "node_modules",
@@ -261,9 +270,9 @@ class FileExecutor(FileReadExtensionsMixin):
 
         # ── 基础校验 ──
         if not target.exists():
-            return f"文件不存在: {path}"
+            raise FileOperationError(f"文件不存在: {path}")
         if not target.is_file():
-            return f"不是文件: {path}"
+            raise FileOperationError(f"不是文件: {path}")
 
         size = target.stat().st_size
         ext = target.suffix.lower()
@@ -314,7 +323,7 @@ class FileExecutor(FileReadExtensionsMixin):
             try:
                 content = target.read_text(encoding="gbk")
             except Exception:
-                return f"无法解码文件 {path}，请指定正确的编码"
+                raise FileOperationError(f"无法解码文件 {path}，请指定正确的编码")
 
         # ── BOM 剥离（对齐 Claude Code readFileInRange） ──
         if content and content[0] == "\ufeff":
@@ -589,13 +598,13 @@ class FileExecutor(FileReadExtensionsMixin):
         target = self.resolve_safe_path(path)
 
         if not target.exists():
-            return f"文件不存在: {path}"
+            raise FileOperationError(f"文件不存在: {path}")
         if not target.is_file():
-            return f"不是文件: {path}"
+            raise FileOperationError(f"不是文件: {path}")
         if not self._is_text_file(target):
-            return f"二进制文件不支持编辑: {path}"
+            raise FileOperationError(f"二进制文件不支持编辑: {path}")
         if old_string == new_string:
-            return "old_string 和 new_string 相同，无需修改"
+            raise FileOperationError("old_string 和 new_string 相同，无需修改")
 
         # 读取文件内容
         try:
@@ -604,18 +613,18 @@ class FileExecutor(FileReadExtensionsMixin):
             try:
                 content = target.read_text(encoding="gbk")
             except Exception:
-                return f"无法解码文件 {path}"
+                raise FileOperationError(f"无法解码文件 {path}")
 
         # 检查匹配
         count = content.count(old_string)
         if count == 0:
-            return (
+            raise FileOperationError(
                 f"未找到匹配内容。old_string 在文件中不存在。\n"
                 f"请确认 old_string 与文件中的文本完全一致（包括缩进和空格）。"
             )
 
         if not replace_all and count > 1:
-            return (
+            raise FileOperationError(
                 f"找到 {count} 处匹配，但 replace_all=false。\n"
                 f"请提供更多上下文使 old_string 唯一，或设置 replace_all=true 替换全部。"
             )

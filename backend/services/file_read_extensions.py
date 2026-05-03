@@ -240,25 +240,33 @@ class FileReadExtensionsMixin:
                     start = int(segments[0].strip())
                     end = int(segments[1].strip())
                 except ValueError:
-                    return f"页码格式错误: '{part}'，应为数字（如 '1-5'）"
+                    from services.file_executor import FileOperationError
+                    raise FileOperationError(f"页码格式错误: '{part}'，应为数字（如 '1-5'）")
                 if start < 1 or end < 1:
-                    return f"页码必须从 1 开始: '{part}'"
+                    from services.file_executor import FileOperationError
+                    raise FileOperationError(f"页码必须从 1 开始: '{part}'")
                 if start > total_pages or end > total_pages:
-                    return f"页码超出范围: '{part}'（共 {total_pages} 页）"
+                    from services.file_executor import FileOperationError
+                    raise FileOperationError(f"页码超出范围: '{part}'（共 {total_pages} 页）")
                 if start > end:
-                    return f"起始页不能大于结束页: '{part}'"
+                    from services.file_executor import FileOperationError
+                    raise FileOperationError(f"起始页不能大于结束页: '{part}'")
                 indices.update(range(start - 1, end))
             else:
                 try:
                     page = int(part)
                 except ValueError:
-                    return f"页码格式错误: '{part}'，应为数字"
+                    from services.file_executor import FileOperationError
+                    raise FileOperationError(f"页码格式错误: '{part}'，应为数字")
                 if page < 1:
-                    return f"页码必须从 1 开始: '{part}'"
+                    from services.file_executor import FileOperationError
+                    raise FileOperationError(f"页码必须从 1 开始: '{part}'")
                 if page > total_pages:
-                    return f"页码超出范围: '{part}'（共 {total_pages} 页）"
+                    from services.file_executor import FileOperationError
+                    raise FileOperationError(f"页码超出范围: '{part}'（共 {total_pages} 页）")
                 indices.add(page - 1)
 
         if not indices:
-            return "未指定有效页码"
+            from services.file_executor import FileOperationError
+            raise FileOperationError("未指定有效页码")
         return sorted(indices)

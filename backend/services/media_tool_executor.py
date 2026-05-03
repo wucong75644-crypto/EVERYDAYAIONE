@@ -17,15 +17,21 @@ from loguru import logger
 class MediaToolMixin:
     """图片/视频生成工具 Mixin"""
 
-    async def _generate_image(self, args: Dict[str, Any]) -> str:
+    async def _generate_image(self, args: Dict[str, Any]) -> "AgentResult":
         """生成图片：锁积分 → adapter 同步等待 → confirm/refund"""
         from config.kie_models import calculate_image_cost
         from core.exceptions import InsufficientCreditsError
         from services.adapters.factory import create_image_adapter
+        from services.agent.agent_result import AgentResult
 
         prompt = args.get("prompt", "").strip()
         if not prompt:
-            return "提示词不能为空"
+            return AgentResult(
+                summary="提示词不能为空",
+                status="error",
+                error_message="Validation: prompt is required",
+                metadata={"retryable": True},
+            )
 
         aspect_ratio = args.get("aspect_ratio", "1:1")
         image_urls = args.get("image_urls") or []
@@ -42,7 +48,12 @@ class MediaToolMixin:
             cost_result = calculate_image_cost(model_name=model_id, image_count=1)
             credits_needed = cost_result["user_credits"]
         except Exception as e:
-            return f"积分计算失败：{e}"
+            return AgentResult(
+                summary=f"积分计算失败：{e}",
+                status="error",
+                error_message=str(e),
+                metadata={"retryable": False},
+            )
 
         # 2. 锁定积分（原子预扣）
         task_id = str(uuid4())
@@ -53,7 +64,12 @@ class MediaToolMixin:
                 org_id=self.org_id,
             )
         except InsufficientCreditsError as e:
-            return str(e)
+            return AgentResult(
+                summary=str(e),
+                status="error",
+                error_message=str(e),
+                metadata={"retryable": False},
+            )
 
         # 3. 调用 adapter 同步等待
         adapter = create_image_adapter(model_id)
@@ -70,26 +86,45 @@ class MediaToolMixin:
             if result.image_urls:
                 self._confirm_deduct(tx_id)
                 urls = "\n".join(result.image_urls)
-                return f"图片已生成：\n{urls}"
+                return AgentResult(
+                    summary=f"图片已生成：\n{urls}",
+                    status="success",
+                )
             else:
                 self._refund_credits(tx_id)
-                return f"图片生成失败：{result.fail_msg or '未知错误'}"
+                return AgentResult(
+                    summary=f"图片生成失败：{result.fail_msg or '未知错误'}",
+                    status="error",
+                    error_message=result.fail_msg or "Unknown error",
+                    metadata={"retryable": True},
+                )
         except Exception as e:
             self._refund_credits(tx_id)
             logger.error(f"Image generation error | error={e}")
-            return f"图片生成失败：{e}"
+            return AgentResult(
+                summary=f"图片生成失败：{e}",
+                status="error",
+                error_message=str(e),
+                metadata={"retryable": False},
+            )
         finally:
             await adapter.close()
 
-    async def _generate_video(self, args: Dict[str, Any]) -> str:
+    async def _generate_video(self, args: Dict[str, Any]) -> "AgentResult":
         """生成视频：锁积分 → adapter 同步等待 → confirm/refund"""
         from config.kie_models import calculate_video_cost
         from core.exceptions import InsufficientCreditsError
         from services.adapters.factory import create_video_adapter
+        from services.agent.agent_result import AgentResult
 
         prompt = args.get("prompt", "").strip()
         if not prompt:
-            return "视频描述不能为空"
+            return AgentResult(
+                summary="视频描述不能为空",
+                status="error",
+                error_message="Validation: prompt is required",
+                metadata={"retryable": True},
+            )
 
         duration = 10  # 默认10秒
 
@@ -98,7 +133,12 @@ class MediaToolMixin:
             cost_result = calculate_video_cost(model_name=None, duration_seconds=duration)
             credits_needed = cost_result["user_credits"]
         except Exception as e:
-            return f"积分计算失败：{e}"
+            return AgentResult(
+                summary=f"积分计算失败：{e}",
+                status="error",
+                error_message=str(e),
+                metadata={"retryable": False},
+            )
 
         # 2. 锁定积分（原子预扣）
         task_id = str(uuid4())
@@ -109,7 +149,12 @@ class MediaToolMixin:
                 org_id=self.org_id,
             )
         except InsufficientCreditsError as e:
-            return str(e)
+            return AgentResult(
+                summary=str(e),
+                status="error",
+                error_message=str(e),
+                metadata={"retryable": False},
+            )
 
         # 3. 调用 adapter 同步等待
         adapter = create_video_adapter()
@@ -124,13 +169,26 @@ class MediaToolMixin:
 
             if result.video_url:
                 self._confirm_deduct(tx_id)
-                return f"视频已生成：\n{result.video_url}"
+                return AgentResult(
+                    summary=f"视频已生成：\n{result.video_url}",
+                    status="success",
+                )
             else:
                 self._refund_credits(tx_id)
-                return f"视频生成失败：{result.fail_msg or '未知错误'}"
+                return AgentResult(
+                    summary=f"视频生成失败：{result.fail_msg or '未知错误'}",
+                    status="error",
+                    error_message=result.fail_msg or "Unknown error",
+                    metadata={"retryable": True},
+                )
         except Exception as e:
             self._refund_credits(tx_id)
             logger.error(f"Video generation error | error={e}")
-            return f"视频生成失败：{e}"
+            return AgentResult(
+                summary=f"视频生成失败：{e}",
+                status="error",
+                error_message=str(e),
+                metadata={"retryable": False},
+            )
         finally:
             await adapter.close()

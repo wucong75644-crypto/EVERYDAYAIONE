@@ -23,11 +23,12 @@ from config.erp_local_tools import ERP_LOCAL_TOOLS
 from config.erp_tools import ERP_SYNC_TOOLS
 from config.file_tools import FILE_INFO_TOOLS
 from services.agent.erp_tool_executor import ErpToolMixin
+from services.agent.file_tool_mixin import CrawlerToolMixin, FileToolMixin
 from services.handlers.mixins.credit_mixin import CreditMixin
 from services.media_tool_executor import MediaToolMixin
 
 
-class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
+class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin, CreditMixin):
     """同步工具执行器"""
 
     def __init__(
@@ -141,17 +142,26 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         )
         return context_text
 
-    async def _search_knowledge(self, args: Dict[str, Any]) -> str:
+    async def _search_knowledge(self, args: Dict[str, Any]) -> "AgentResult":
         """查询 AI 知识库"""
+        from services.agent.agent_result import AgentResult
         from services.knowledge_service import search_relevant
 
         query = args.get("query", "")
         if not query:
-            return "查询关键词不能为空"
+            return AgentResult(
+                summary="查询关键词不能为空",
+                status="error",
+                error_message="Validation: query is required",
+                metadata={"retryable": True},
+            )
 
         items = await search_relevant(query=query, limit=5, org_id=self.org_id)
         if not items:
-            return f"知识库中未找到与「{query}」相关的经验"
+            return AgentResult(
+                summary=f"知识库中未找到与「{query}」相关的经验",
+                status="empty",
+            )
 
         lines = []
         for item in items:
@@ -159,26 +169,37 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
             content = item.get("content", "")
             lines.append(f"- {title}: {content}")
 
-        return "\n".join(lines)
+        return AgentResult(summary="\n".join(lines), status="success")
 
     # ========================================
     # 互联网搜索
     # ========================================
 
-    async def _web_search(self, args: Dict[str, Any]) -> str:
+    async def _web_search(self, args: Dict[str, Any]) -> "AgentResult":
         """搜索互联网获取实时信息"""
+        from services.agent.agent_result import AgentResult
         from services.intent_router import IntentRouter
 
         query = args.get("query", "").strip()
         if not query:
-            return "搜索查询不能为空"
+            return AgentResult(
+                summary="搜索查询不能为空",
+                status="error",
+                error_message="Validation: query is required",
+                metadata={"retryable": True},
+            )
 
         router = IntentRouter()
         try:
             result = await router.execute_search(
                 query=query, user_text=query, system_prompt=None,
             )
-            return result or f"搜索「{query}」未找到相关结果"
+            if not result:
+                return AgentResult(
+                    summary=f"搜索「{query}」未找到相关结果",
+                    status="empty",
+                )
+            return AgentResult(summary=result, status="success")
         finally:
             await router.close()
 
@@ -284,20 +305,31 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
     # ========================================
 
     async def _manage_scheduled_task(self, args: Dict[str, Any]):
-        """聊天内管理定时任务：返回 FormBlockResult 或文本 str
+        """聊天内管理定时任务：返回 FormBlockResult 或 AgentResult
 
         FormBlockResult 与 AgentResult 平级，chat_tool_mixin 用 isinstance 分发：
         - FormBlockResult → content_block_add 推送表单到前端
-        - str → 普通文本（列表/确认/错误）
+        - AgentResult → 普通结构化结果
         """
+        from services.agent.agent_result import AgentResult
         from services.scheduler.chat_task_manager import ChatTaskManager, FormBlockResult
 
         if not self.org_id:
-            return "此功能仅企业用户可用，请先加入企业。"
+            return AgentResult(
+                summary="此功能仅企业用户可用，请先加入企业。",
+                status="error",
+                error_message="Permission: org_id required",
+                metadata={"retryable": False},
+            )
 
         action = (args.get("action") or "").strip()
         if not action:
-            return "请指定操作：create / list / update / pause / resume / delete"
+            return AgentResult(
+                summary="请指定操作：create / list / update / pause / resume / delete",
+                status="error",
+                error_message="Validation: action is required",
+                metadata={"retryable": True},
+            )
 
         manager = ChatTaskManager(self.db, self.user_id, self.org_id)
         result = await manager.handle(action, args)
@@ -308,7 +340,10 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
                 llm_hint=f"已向用户展示{result.get('title', '表单')}，等待用户确认。不要重复展示表单内容。",
             )
 
-        return result.get("text", str(result))
+        return AgentResult(
+            summary=result.get("text", str(result)),
+            status="success",
+        )
 
     # ========================================
     # 搜索工具（按需发现 API/模型文档）
@@ -326,13 +361,14 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
     # 全量翻页工具（独立可组合工具）
     # ========================================
 
-    async def _fetch_all_pages(self, args: Dict[str, Any]) -> str:
+    async def _fetch_all_pages(self, args: Dict[str, Any]) -> "AgentResult":
         """包装任意 erp_* 远程查询工具，自动翻页拉取全部数据并存 staging"""
         import asyncio
         import time as _time
         from pathlib import Path
 
         from core.config import get_settings
+        from services.agent.agent_result import AgentResult
 
         tool_name = args.get("tool", "")
         action = args.get("action", "")
@@ -341,12 +377,22 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         max_pages = min(args.get("max_pages", 200), 500)  # 上限500
 
         if not tool_name or not action:
-            return "❌ 必须指定 tool 和 action 参数"
+            return AgentResult(
+                summary="必须指定 tool 和 action 参数",
+                status="error",
+                error_message="Validation: tool and action required",
+                metadata={"retryable": True},
+            )
 
         # 获取 ERP dispatcher
         dispatcher = await self._get_erp_dispatcher()
         if isinstance(dispatcher, str):
-            return dispatcher  # 错误信息
+            return AgentResult(
+                summary=dispatcher,
+                status="error",
+                error_message=dispatcher,
+                metadata={"retryable": False},
+            )
 
         settings = get_settings()
         semaphore = asyncio.Semaphore(
@@ -367,11 +413,19 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         elapsed = _time.monotonic() - start
 
         if "error" in result and not result.get("list"):
-            return f"❌ 翻页查询失败: {result['error']}"
+            return AgentResult(
+                summary=f"翻页查询失败: {result['error']}",
+                status="error",
+                error_message=result["error"],
+                metadata={"retryable": True},
+            )
 
         items = result.get("list", [])
         if not items:
-            return f"查询结果为空（{tool_name}:{action}）"
+            return AgentResult(
+                summary=f"查询结果为空（{tool_name}:{action}）",
+                status="empty",
+            )
 
         # 存 staging 文件（用户级隔离）
         from core.workspace import resolve_staging_dir, resolve_staging_rel_path
@@ -412,25 +466,29 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         )
         self._pending_schemas.append((filename, str(staging_path), schema_text))
 
-        return (
-            f"[数据已暂存] {rel_path}\n"
-            f"共 {len(items)} 条记录（Parquet格式，{file_size_kb:.0f}KB），"
-            f"耗时 {elapsed:.1f}秒。{warning}\n"
-            f"如需处理请调 data_query，"
-            f"用 data_query(file=\"{filename}\", sql=\"SELECT ... FROM data\") 查询。\n\n"
-            f"前3条预览：\n{preview}"
+        return AgentResult(
+            summary=(
+                f"[数据已暂存] {rel_path}\n"
+                f"共 {len(items)} 条记录（Parquet格式，{file_size_kb:.0f}KB），"
+                f"耗时 {elapsed:.1f}秒。{warning}\n"
+                f"如需处理请调 data_query，"
+                f"用 data_query(file=\"{filename}\", sql=\"SELECT ... FROM data\") 查询。\n\n"
+                f"前3条预览：\n{preview}"
+            ),
+            status="success",
         )
 
     # ========================================
     # 代码执行沙盒
     # ========================================
 
-    async def _code_execute(self, args: Dict[str, Any]) -> str:
+    async def _code_execute(self, args: Dict[str, Any]) -> "AgentResult":
         """在安全沙盒中执行 Python 代码"""
         import asyncio
         import time as _time
 
         from core.config import get_settings
+        from services.agent.agent_result import AgentResult
         from services.sandbox.functions import (
             build_sandbox_executor,
             compute_code_hash,
@@ -438,12 +496,22 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
 
         settings = get_settings()
         if not settings.sandbox_enabled:
-            return "代码执行功能已关闭，请联系管理员启用"
+            return AgentResult(
+                summary="代码执行功能已关闭，请联系管理员启用",
+                status="error",
+                error_message="Feature disabled: sandbox_enabled=false",
+                metadata={"retryable": False},
+            )
 
         code = args.get("code", "")
         description = args.get("description", "")
         if not code:
-            return "代码不能为空"
+            return AgentResult(
+                summary="代码不能为空",
+                status="error",
+                error_message="Validation: code is required",
+                metadata={"retryable": True},
+            )
 
         start_ms = int(_time.monotonic() * 1000)
         status = "success"
@@ -473,31 +541,35 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
                     self._image_dims = {}
                 self._image_dims.update(executor._image_dims)
 
-            # 判断执行状态
-            if result.startswith("❌"):
-                status = "failed"
-            elif result.startswith("⏱"):
-                status = "timeout"
+            # AgentResult 状态 → 指标状态
+            if result.is_failure:
+                status = "timeout" if result.status == "timeout" else "failed"
 
             return result
         except Exception as e:
             status = "failed"
-            result = f"沙盒执行异常: {e}"
+            result = AgentResult(
+                summary=f"沙盒执行异常: {e}",
+                status="error",
+                error_message=str(e),
+                metadata={"retryable": False},
+            )
             return result
         finally:
             # Fire-and-forget: 记录执行指标
             elapsed_ms = int(_time.monotonic() * 1000) - start_ms
+            _result_text = result.summary if isinstance(result, AgentResult) else str(result)
             self._record_sandbox_metric(
                 description=description,
                 code=code,
                 status=status,
                 elapsed_ms=elapsed_ms,
-                result_length=len(result),
+                result_length=len(_result_text),
             )
 
             # 失败时触发知识提取
             if status == "failed":
-                self._record_sandbox_knowledge(description, result)
+                self._record_sandbox_knowledge(description, _result_text)
 
     def _record_sandbox_metric(
         self,
@@ -551,260 +623,5 @@ class ToolExecutor(MediaToolMixin, ErpToolMixin, CreditMixin):
         except Exception as e:
             logger.debug(f"Sandbox knowledge recording skipped | error={e}")
 
-    # ========================================
-    # 文件操作工具
-    # ========================================
+    # 文件操作工具 + 社交爬虫：继承自 FileToolMixin / CrawlerToolMixin (file_tool_mixin.py)
 
-    def _make_file_handler(
-        self, tool_name: str,
-    ) -> Callable[..., Coroutine[Any, Any, Any]]:
-        """为指定文件工具创建handler
-
-        file_read 可能返回 FileReadResult（图片多模态），
-        由 ChatHandler 工具结果处理逻辑识别并注入 image_url。
-        """
-        async def handler(args: Dict[str, Any]) -> Any:
-            return await self._file_dispatch(tool_name, args)
-        return handler
-
-    async def _file_dispatch(
-        self, tool_name: str, args: Dict[str, Any],
-    ) -> Any:
-        """文件工具统一调度（直接用文件名/相对路径）
-
-        file_list 和 file_search 返回结果自动附带文件元数据。
-        元数据通过 per-message 缓存（_metadata_cache）避免重复提取。
-        file_read 可能返回 FileReadResult（图片多模态）。
-        """
-        from core.config import get_settings
-        from services.file_executor import FileExecutor
-
-        settings = get_settings()
-        if not settings.file_workspace_enabled:
-            return "文件操作功能已关闭，请联系管理员启用"
-
-        executor = FileExecutor(
-            workspace_root=settings.file_workspace_root,
-            user_id=self.user_id,
-            org_id=self.org_id,
-        )
-
-        # ── file_list：格式化 + 元数据 ──
-        if tool_name == "file_list":
-            try:
-                return await self._file_list_with_metadata(executor, args)
-            except PermissionError as e:
-                return f"权限不足: {e}"
-            except Exception as e:
-                logger.error(f"ToolExecutor file_list | error={e}")
-                return f"文件操作失败: {e}"
-
-        # ── file_search：搜索 + 元数据 ──
-        if tool_name == "file_search":
-            try:
-                return await self._file_search_with_metadata(executor, args)
-            except PermissionError as e:
-                return f"权限不足: {e}"
-            except Exception as e:
-                logger.error(f"ToolExecutor file_search | error={e}")
-                return f"文件操作失败: {e}"
-
-        dispatch = {
-            "file_read": executor.file_read,
-            "file_write": executor.file_write,
-            "file_edit": executor.file_edit,
-        }
-
-        func = dispatch.get(tool_name)
-        if not func:
-            return f"Unknown file tool: {tool_name}"
-
-        # file_read / file_edit 的 path 参数：先查缓存翻译
-        if "path" in args and tool_name in ("file_read", "file_edit"):
-            from services.agent.workspace_file_handles import get_file_cache
-            cached = get_file_cache(self.conversation_id).resolve(args["path"])
-            if cached:
-                args = {**args, "path": cached}
-
-        try:
-            return await func(**args)
-        except PermissionError as e:
-            logger.warning(f"ToolExecutor file_dispatch | tool={tool_name} | perm_error={e}")
-            return f"权限不足: {e}"
-        except Exception as e:
-            logger.error(f"ToolExecutor file_dispatch | tool={tool_name} | error={e}")
-            return f"文件操作失败: {e}"
-
-    async def _get_or_extract_metadata(self, abs_path: str) -> 'Optional[Dict]':
-        """获取文件元数据（带 per-message 缓存 + 线程池执行）
-
-        缓存挂在 ToolExecutor 实例上（_metadata_cache），
-        工具循环结束后自动 GC。
-        IO 阻塞操作（openpyxl 读文件等）在线程池中执行，不阻塞 event loop。
-        """
-        import os
-        from services.file_metadata_extractor import extract_file_metadata
-
-        cache = getattr(self, "_metadata_cache", None)
-        if cache is None:
-            cache = {}
-            self._metadata_cache = cache
-
-        # 缓存命中：路径 + mtime 匹配
-        cached = cache.get(abs_path)
-        if cached is not None:
-            try:
-                current_mtime = os.path.getmtime(abs_path)
-                if cached[0] == current_mtime:
-                    return cached[1]
-            except OSError:
-                pass
-
-        # 在线程池中提取（防阻塞 event loop）
-        try:
-            loop = asyncio.get_running_loop()
-            meta = await asyncio.wait_for(
-                loop.run_in_executor(None, extract_file_metadata, abs_path),
-                timeout=3.0,
-            )
-            mtime = os.path.getmtime(abs_path)
-            cache[abs_path] = (mtime, meta)
-            return meta
-        except Exception:
-            return None
-
-    async def _file_list_with_metadata(
-        self, executor: 'Any', args: Dict[str, Any],
-    ) -> str:
-        """file_list + 元数据（每个文件附带结构信息和读取命令）"""
-        from services.file_metadata_extractor import format_file_metadata_line
-
-        data = await executor.file_list_entries(**args)
-
-        if data["error"]:
-            return data["error"]
-        if not data["dirs"] and not data["files"]:
-            return f"目录为空: {data['path']}"
-
-        total = len(data["dirs"]) + len(data["files"])
-        lines = [f"目录: {data['path']} | 共 {total} 项"]
-        lines.append("─" * 60)
-        for d in data["dirs"]:
-            lines.append(f"  [目录] {d['name']}/\t\t{d['modified']}")
-
-        # 文件：注册路径缓存 + 提取元数据（最多 _MAX_METADATA 个，防慢）
-        from services.agent.workspace_file_handles import get_file_cache
-        file_cache = get_file_cache(self.conversation_id)
-
-        _MAX_METADATA = 5
-        for i, f in enumerate(data["files"]):
-            file_cache.register(f["name"], f["abs_path"])
-            if i < _MAX_METADATA:
-                meta = await self._get_or_extract_metadata(f["abs_path"])
-                line = format_file_metadata_line(
-                    f["name"], f["abs_path"], f["size"], meta,
-                )
-            else:
-                size_str = executor._format_size(f["size"])
-                line = f"  {f['name']}\t{size_str}"
-            lines.append(line)
-
-        if data["truncated"]:
-            lines.append(f"\n已达显示上限，部分条目未显示")
-
-        return "\n".join(lines)
-
-    async def _file_search_with_metadata(
-        self, executor: 'Any', args: Dict[str, Any],
-    ) -> str:
-        """file_search + 元数据（搜到的文件附带结构信息）"""
-        import re
-        from services.file_metadata_extractor import format_file_metadata_line
-
-        # 先执行原始搜索
-        raw_result = await executor.file_search(**args)
-
-        # 如果搜索无结果或报错，直接返回
-        if "未找到" in raw_result or not raw_result.strip():
-            return raw_result
-
-        # 从搜索结果中提取文件路径，对前 3 个文件追加元数据
-        lines = raw_result.split("\n")
-        enhanced_lines = []
-        metadata_count = 0
-        _MAX_SEARCH_METADATA = 3
-
-        from services.agent.workspace_file_handles import get_file_cache
-        file_cache = get_file_cache(self.conversation_id)
-
-        for line in lines:
-            # 搜索结果格式：  [文件] 相对路径  或  [文件] 相对路径:行号 | 预览
-            match = re.match(r"\s+\[文件\]\s+(\S+?)(?::\d+\s*\|.*)?$", line)
-            if match and metadata_count < _MAX_SEARCH_METADATA:
-                rel_path = match.group(1)
-                try:
-                    target = executor.resolve_safe_path(rel_path)
-                    if target.is_file():
-                        file_cache.register(target.name, str(target))
-                        meta = await self._get_or_extract_metadata(str(target))
-                        if meta:
-                            enhanced_line = format_file_metadata_line(
-                                target.name, str(target), target.stat().st_size, meta,
-                            )
-                            enhanced_lines.append(enhanced_line)
-                            metadata_count += 1
-                            continue
-                except Exception:
-                    pass
-
-            enhanced_lines.append(line)
-
-        return "\n".join(enhanced_lines)
-
-    # ========================================
-    # 社交媒体爬虫工具
-    # ========================================
-
-    async def _social_crawler(self, args: Dict[str, Any]) -> str:
-        """爬取社交媒体平台搜索结果"""
-        from core.config import get_settings
-        from services.crawler.service import CrawlerService
-
-        settings = get_settings()
-        if not settings.crawler_enabled:
-            return "社交媒体爬虫功能未启用，请在 .env 中设置 CRAWLER_ENABLED=true"
-
-        service = CrawlerService()
-        if not service.is_available():
-            return (
-                "社交媒体爬虫未安装，请运行以下命令安装：\n"
-                "cd backend/external && git clone https://github.com/NanmiCoder/MediaCrawler.git mediacrawler\n"
-                "cd mediacrawler && python3 -m venv venv && source venv/bin/activate\n"
-                "pip install -r requirements.txt && playwright install chromium"
-            )
-
-        platform = args.get("platform", "xhs")
-        keywords_str = args.get("keywords", "")
-        keywords = [k.strip() for k in keywords_str.split(",") if k.strip()]
-        if not keywords:
-            return "搜索关键词不能为空"
-
-        max_results = min(args.get("max_results", 10), 30)
-        crawl_type = args.get("crawl_type", "search")
-
-        logger.info(
-            f"ToolExecutor social_crawler | platform={platform} "
-            f"| keywords={keywords_str} | max={max_results}"
-        )
-
-        result = await service.execute(
-            platform=platform,
-            keywords=keywords,
-            max_notes=max_results,
-            crawl_type=crawl_type,
-        )
-
-        if result.error:
-            return f"爬取失败：{result.error}"
-
-        return service.format_for_brain(result.items)
