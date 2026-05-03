@@ -1939,7 +1939,8 @@
       "Bash(./git-push.sh \"fix: ChartBlock移除未使用的chartType解构\")",
       "Bash(./git-push.sh \"feat: ChartBlock统一工具栏+legend全类型支持——切换/保存/数据视图/还原合并一行，柱状折线拆series支持单项隐藏\")",
       "Bash(./git-push.sh \"fix: Toolbar移除未使用的originalType参数\")",
-      "Bash(./git-push.sh \"fix: Toolbar调用端移除originalType传参\")"
+      "Bash(./git-push.sh \"fix: Toolbar调用端移除originalType传参\")",
+      "Bash(./git-push.sh \"fix: 折线图保持单series连线+全屏按钮合并到工具栏消除重叠\")"
     ],
     "additionalDirectories": [
       "/tmp"

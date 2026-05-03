@@ -122,16 +122,14 @@ function buildOption(
     };
   }
 
-  // 柱状/折线：每个名称拆成独立 series → legend 可控制单项显隐
+  // 柱状图 + 单 series → 拆成 N 个 series（每个平台独立柱子，legend 控制单项显隐）
   const isSingleSeries = data.values.length === 1;
-  if (isSingleSeries) {
-    // 单 series → 拆成 N 个 series（每个平台一个），共享 xAxis
+  if (isSingleSeries && targetType === 'bar') {
     const seriesList = data.names.map((name, i) => ({
-      type: targetType,
+      type: 'bar' as const,
       name,
       data: data.names.map((_, j) => j === i ? (data.values[0][j] ?? 0) : null),
-      // 柱状图：相同位置堆叠成一根柱子
-      ...(targetType === 'bar' ? { stack: 'total' } : {}),
+      stack: 'total',
     }));
     return {
       title,
@@ -143,11 +141,13 @@ function buildOption(
     };
   }
 
-  // 多 series：保持原结构，legend 控制各 series 显隐
+  // 折线图 / 多 series：保持原结构（折线图拆 series 会断线）
   return {
     title,
     tooltip: { trigger: 'axis' },
-    legend: { type: 'scroll', data: data.seriesNames },
+    legend: data.seriesNames.length > 1
+      ? { type: 'scroll', data: data.seriesNames }
+      : undefined,
     xAxis: { type: 'category', data: data.names },
     yAxis: { type: 'value' },
     series: data.values.map((vals, i) => ({
@@ -206,13 +206,14 @@ function injectDefaults(option: Record<string, unknown>): Record<string, unknown
 // 工具栏（类型切换 + 保存/数据视图/还原 合并一行）
 // ============================================================
 
-function Toolbar({ canSwitch, activeType, onSwitch, onSave, onDataView, onRestore }: {
+function Toolbar({ canSwitch, activeType, onSwitch, onSave, onDataView, onRestore, onFullscreen }: {
   canSwitch: boolean;
   activeType: SwitchableType;
   onSwitch: (t: SwitchableType) => void;
   onSave: () => void;
   onDataView: () => void;
   onRestore: () => void;
+  onFullscreen: () => void;
 }) {
   const iconBtn = 'p-1.5 rounded-md text-text-tertiary hover:bg-hover hover:text-text-secondary transition-colors';
   return (
@@ -256,6 +257,11 @@ function Toolbar({ canSwitch, activeType, onSwitch, onSave, onDataView, onRestor
             </svg>
           </button>
         )}
+        <button onClick={onFullscreen} className={iconBtn} title="全屏查看">
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+          </svg>
+        </button>
       </div>
     </div>
   );
@@ -418,6 +424,7 @@ function ChartBlockInner({ option, title }: ChartBlockProps) {
           canSwitch={canSwitch} activeType={activeType}
           onSwitch={setActiveType} onSave={handleSave}
           onDataView={() => setShowDataView(true)} onRestore={handleRestore}
+          onFullscreen={toggleFullscreen}
         />
       )}
 
@@ -438,16 +445,7 @@ function ChartBlockInner({ option, title }: ChartBlockProps) {
         {showDataView && <DataViewOverlay html={dataViewHtml()} onClose={() => setShowDataView(false)} />}
       </div>
 
-      {/* 全屏按钮 */}
-      {!isFullscreen && !loading && (
-        <button onClick={toggleFullscreen}
-          className="absolute top-2 right-2 p-1 rounded hover:bg-hover text-text-tertiary opacity-0 group-hover:opacity-100 transition-opacity"
-          title="全屏查看">
-          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-          </svg>
-        </button>
-      )}
+      {/* 全屏按钮已合并到 Toolbar 右侧 */}
     </div>
   );
 }
