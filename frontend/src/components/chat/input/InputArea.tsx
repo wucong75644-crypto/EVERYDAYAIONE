@@ -245,8 +245,8 @@ export default function InputArea({
       // 计算已 commit 的 thinking 长度，只保存增量部分
       const msg = store.getMessage(streamingMessageId);
       const committedLen = msg?.content
-        ?.filter((p: Record<string, unknown>) => p.type === 'thinking')
-        .reduce((sum: number, p: Record<string, unknown>) => sum + ((p.text as string)?.length || 0), 0) ?? 0;
+        ?.filter((p) => p.type === 'thinking')
+        .reduce((sum, p) => sum + (('text' in p && typeof p.text === 'string') ? p.text.length : 0), 0) ?? 0;
       const livePart = thinkingText.slice(committedLen);
       if (livePart.trim()) {
         store.appendContentBlock(conversationId, { type: 'thinking', text: livePart });
