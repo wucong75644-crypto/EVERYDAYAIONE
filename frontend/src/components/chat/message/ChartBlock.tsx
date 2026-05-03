@@ -415,7 +415,7 @@ function ChartBlockInner({ option, title }: ChartBlockProps) {
       {/* 工具栏（类型切换 + 保存/数据视图/还原 同一行） */}
       {!loading && (
         <Toolbar
-          canSwitch={canSwitch} activeType={activeType} originalType={originalType}
+          canSwitch={canSwitch} activeType={activeType}
           onSwitch={setActiveType} onSave={handleSave}
           onDataView={() => setShowDataView(true)} onRestore={handleRestore}
         />
