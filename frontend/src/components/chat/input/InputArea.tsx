@@ -166,19 +166,12 @@ export default function InputArea({
   // @ 文件提及 Hook
   const fileMention = useFileMention();
 
-  // @ 提及选中文件：添加到 workspaceFiles + 从 prompt 移除 @keyword
+  // @ 提及选中文件：添加到 workspaceFiles + 用 hook 精准移除 @keyword
   const handleMentionSelect = useCallback((file: { name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }) => {
     onAddWorkspaceFile?.(file);
-    // 从 prompt 中移除 @keyword（找最后一个 @ 到光标位置）
-    const before = prompt.slice(0, prompt.lastIndexOf('@'));
-    const afterAt = prompt.slice(prompt.lastIndexOf('@'));
-    // afterAt 格式: "@keyword可能还有后续文本"
-    // 找第一个空格或末尾
-    const spaceIdx = afterAt.indexOf(' ', 1);
-    const after = spaceIdx >= 0 ? afterAt.slice(spaceIdx) : '';
-    setPrompt(before + after);
-    fileMention.close();
-  }, [onAddWorkspaceFile, prompt, setPrompt, fileMention]);
+    // consumeMention 用 hook 内部记录的精准 @ 起始位置做替换，不依赖 lastIndexOf
+    setPrompt(fileMention.consumeMention(prompt));
+  }, [onAddWorkspaceFile, prompt, setPrompt, fileMention.consumeMention]);
 
   // 自动保存模型到对话的回调
   const handleAutoSaveModel = useCallback((modelId: string) => {
@@ -566,12 +559,12 @@ export default function InputArea({
               { group: '平台', items: ['淘宝', '京东', '拼多多', '抖音', '小红书'] },
               { group: '类型', items: ['白底主图', '场景图', '竖图', '详情页'] },
               { group: '风格', items: ['极简', '清新', '网感', '种草', '奢华', '国潮'] },
-            ].map(({ group, items }) => (
+            ].map(({ items }) => (
               items.map(item => (
                 <button
                   key={item}
                   type="button"
-                  onClick={() => setPrompt(prev => prev + (prev && !prev.endsWith(' ') ? ' ' : '') + item)}
+                  onClick={() => setPrompt(prompt + (prompt && !prompt.endsWith(' ') ? ' ' : '') + item)}
                   className="px-2 py-0.5 text-xs bg-surface-hover rounded-full text-text-secondary hover:bg-accent-light hover:text-accent transition-base"
                 >
                   {item}

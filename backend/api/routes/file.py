@@ -12,10 +12,12 @@
 - /workspace/move: 移动文件
 """
 
+import asyncio
 import mimetypes
+from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Form, UploadFile, File
+from fastapi import APIRouter, Form, Query, UploadFile, File
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -293,6 +295,41 @@ class WorkspaceSearchResponse(BaseModel):
     total: int
 
 
+def _search_files_sync(
+    root: Path,
+    keyword: str,
+    limit: int,
+    cdn_url_fn,
+) -> list[dict]:
+    """同步递归搜索文件（由 asyncio.to_thread 调用，不阻塞事件循环）"""
+    results: list[dict] = []
+    for item in root.rglob("*"):
+        if len(results) >= limit:
+            break
+        if item.is_dir():
+            continue
+        # 跳过隐藏文件和 staging 目录
+        parts = item.relative_to(root).parts
+        if any(p.startswith(".") or p == "staging" for p in parts):
+            continue
+        if keyword not in item.name.lower():
+            continue
+        try:
+            st = item.stat()
+            rel_path = str(item.relative_to(root))
+            results.append({
+                "name": item.name,
+                "size": st.st_size,
+                "modified": str(int(st.st_mtime)),
+                "cdn_url": cdn_url_fn(rel_path),
+                "mime_type": mimetypes.guess_type(item.name)[0],
+                "workspace_path": rel_path,
+            })
+        except (PermissionError, OSError):
+            continue
+    return results
+
+
 @router.get(
     "/workspace/search",
     response_model=WorkspaceSearchResponse,
@@ -301,7 +338,7 @@ class WorkspaceSearchResponse(BaseModel):
 async def search_workspace(
     ctx: OrgCtx,
     q: str = "",
-    limit: int = 20,
+    limit: int = Query(default=20, ge=1, le=100),
 ):
     """递归搜索用户 workspace 目录，按文件名关键词匹配"""
     if not q.strip():
@@ -313,38 +350,16 @@ async def search_workspace(
         return WorkspaceSearchResponse(items=[], total=0)
 
     keyword = q.strip().lower()
-    results: list[WorkspaceFileItem] = []
 
-    # 递归遍历，跳过隐藏文件和 staging 目录
-    for item in root.rglob("*"):
-        if len(results) >= limit:
-            break
-        # 跳过目录、隐藏文件、staging
-        if item.is_dir():
-            continue
-        if any(part.startswith(".") or part == "staging" for part in item.relative_to(root).parts):
-            continue
-        if keyword not in item.name.lower():
-            continue
+    # 文件系统遍历是同步阻塞操作，放到线程池执行
+    raw = await asyncio.to_thread(
+        _search_files_sync, root, keyword, limit, executor.get_cdn_url,
+    )
 
-        try:
-            st = item.stat()
-            rel_path = str(item.relative_to(root))
-            cdn_url = executor.get_cdn_url(rel_path)
-            mime_type = mimetypes.guess_type(item.name)[0]
-            results.append(WorkspaceFileItem(
-                name=item.name,
-                is_dir=False,
-                size=st.st_size,
-                modified=str(int(st.st_mtime)),
-                cdn_url=cdn_url,
-                mime_type=mime_type,
-                workspace_path=rel_path,
-            ))
-        except (PermissionError, OSError):
-            continue
-
-    return WorkspaceSearchResponse(items=results, total=len(results))
+    items = [
+        WorkspaceFileItem(is_dir=False, **entry) for entry in raw
+    ]
+    return WorkspaceSearchResponse(items=items, total=len(items))
 
 
 # ============================================================

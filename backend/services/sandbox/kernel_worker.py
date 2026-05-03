@@ -205,8 +205,8 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
                 _scoped_os, _scoped_shutil, _scoped_import,
             )
 
-            # 设置本次执行允许删除的文件
-            if confirm_delete and hasattr(_scoped_os, "_set_confirmed_deletes"):
+            # 设置本次执行允许删除的文件（每次都调用，确保上一轮不残留）
+            if hasattr(_scoped_os, "_set_confirmed_deletes"):
                 _scoped_os._set_confirmed_deletes(confirm_delete)
 
             # 执行代码（sandbox_globals 在进程内持续存在，变量保留）

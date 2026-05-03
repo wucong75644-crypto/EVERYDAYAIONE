@@ -2,10 +2,12 @@
  * @ 文件提及 Hook
  *
  * 检测输入框中 @ 触发词，搜索工作空间文件，管理下拉选择状态。
+ * 核心设计：hook 拥有 @ 位置的完整生命周期（检测 → 搜索 → 选中替换 → 关闭），
+ * 调用方不需要知道 @ 在 prompt 中的位置。
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { searchWorkspace, type WorkspaceFileItem } from '../services/workspace';
+import { searchWorkspace } from '../services/workspace';
 
 export interface MentionResult {
   name: string;
@@ -22,13 +24,18 @@ export interface UseFileMentionReturn {
   results: MentionResult[];
   /** 当前高亮索引 */
   activeIndex: number;
+  /** 设置高亮索引（鼠标悬停用） */
+  setActiveIndex: (index: number) => void;
   /** 是否正在搜索 */
   loading: boolean;
   /** 处理输入变化（检测 @ 触发） */
   handleInputChange: (value: string, cursorPos: number) => void;
-  /** 选中文件 */
-  selectFile: (file: MentionResult) => { newPrompt: string };
-  /** 键盘导航（上下箭头、Enter、Escape） */
+  /**
+   * 消费当前 @ 提及：从 prompt 中精准移除 @keyword 并关闭下拉。
+   * 返回替换后的新 prompt 字符串。
+   */
+  consumeMention: (currentPrompt: string) => string;
+  /** 键盘导航（上下箭头、Enter、Escape），返回 true 表示已拦截 */
   handleKeyDown: (e: React.KeyboardEvent) => boolean;
   /** 关闭下拉 */
   close: () => void;
@@ -36,7 +43,6 @@ export interface UseFileMentionReturn {
 
 /** 从光标位置向前提取 @keyword */
 function extractMentionQuery(text: string, cursorPos: number): { query: string; start: number } | null {
-  // 从光标位置向前找 @
   const before = text.slice(0, cursorPos);
   const atIndex = before.lastIndexOf('@');
   if (atIndex === -1) return null;
@@ -57,14 +63,13 @@ export function useFileMention(): UseFileMentionReturn {
   const [activeIndex, setActiveIndex] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  // 存储当前 @ 的起始位置和光标位置
-  const mentionRef = useRef<{ start: number; cursorPos: number } | null>(null);
+  // 精准记录当前 @ 的起始位置（供 consumeMention 使用）
+  const mentionStartRef = useRef<number | null>(null);
   // 防抖定时器
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // 请求序号（防竞态）
   const seqRef = useRef(0);
 
-  // 清理
   useEffect(() => {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -75,7 +80,7 @@ export function useFileMention(): UseFileMentionReturn {
     setShowDropdown(false);
     setResults([]);
     setActiveIndex(0);
-    mentionRef.current = null;
+    mentionStartRef.current = null;
   }, []);
 
   const handleInputChange = useCallback((value: string, cursorPos: number) => {
@@ -86,7 +91,7 @@ export function useFileMention(): UseFileMentionReturn {
       return;
     }
 
-    mentionRef.current = { start: mention.start, cursorPos };
+    mentionStartRef.current = mention.start;
     setShowDropdown(true);
     setActiveIndex(0);
 
@@ -110,7 +115,7 @@ export function useFileMention(): UseFileMentionReturn {
         if (seq !== seqRef.current) return;
         setResults(resp.items.map((item) => ({
           name: item.name,
-          workspace_path: (item as MentionResult).workspace_path || item.name,
+          workspace_path: item.workspace_path || item.name,
           cdn_url: item.cdn_url,
           mime_type: item.mime_type,
           size: item.size,
@@ -124,11 +129,20 @@ export function useFileMention(): UseFileMentionReturn {
     }, 200);
   }, [close]);
 
-  const selectFile = useCallback((file: MentionResult): { newPrompt: string } => {
-    // 返回需要替换的新 prompt（由调用方拿到 prompt 做替换）
-    // 这里只返回标记，实际替换在调用方进行
+  // 精准替换：用 mentionStartRef 定位 @keyword 在 prompt 中的确切位置
+  const consumeMention = useCallback((currentPrompt: string): string => {
+    const start = mentionStartRef.current;
+    if (start == null) return currentPrompt;
+
+    const before = currentPrompt.slice(0, start);
+    const afterAt = currentPrompt.slice(start);
+    // afterAt 以 "@keyword" 开头，找第一个空白字符作为 @keyword 的结束
+    const endMatch = afterAt.match(/^@\S*/);
+    const mentionLen = endMatch ? endMatch[0].length : 1;
+    const after = afterAt.slice(mentionLen);
+
     close();
-    return { newPrompt: '' }; // 占位，实际在 InputControls 中处理
+    return before + after;
   }, [close]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent): boolean => {
@@ -146,7 +160,7 @@ export function useFileMention(): UseFileMentionReturn {
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      return true; // 调用方拿 results[activeIndex] 处理
+      return true; // 调用方读取 results[activeIndex] 做后续处理
     }
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -163,7 +177,7 @@ export function useFileMention(): UseFileMentionReturn {
     setActiveIndex,
     loading,
     handleInputChange,
-    selectFile,
+    consumeMention,
     handleKeyDown,
     close,
   };
