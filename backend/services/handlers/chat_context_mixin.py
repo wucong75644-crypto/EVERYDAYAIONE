@@ -89,10 +89,7 @@ class ChatContextMixin:
         file_urls = self._extract_file_urls(content)
         workspace_files = self._extract_workspace_files(content)
 
-        # workspace 文件的 URL 不走 image_url 通道（AI 通过 file_read 工具读取）
-        if workspace_files:
-            ws_urls = {f["url"] for f in workspace_files if f.get("url")}
-            file_urls = [u for u in file_urls if u not in ws_urls]
+        # workspace 文件的 CDN URL 保留在 file_urls 中，与 PDF 等文档一样作为多模态内容直接传给大模型
 
         # ─── 并行获取：记忆 / 摘要 / 历史 / 知识库（全部独立，无交叉依赖）───
         if prefetched_memory is not None:
