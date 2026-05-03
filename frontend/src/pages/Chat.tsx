@@ -445,6 +445,7 @@ export default function Chat() {
             prompt={prompt}
             onPromptChange={setPrompt}
             workspaceFiles={pendingWorkspaceFiles}
+            onAddWorkspaceFile={handleSendFromWorkspace}
             onRemoveWorkspaceFile={handleRemoveWorkspaceFile}
             onWorkspaceFilesConsumed={handleWorkspaceFilesConsumed}
             onOpenWorkspace={handleToggleWorkspace}

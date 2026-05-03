@@ -28,6 +28,8 @@ import ModelSelector from './ModelSelector';
 import AdvancedSettingsMenu from './AdvancedSettingsMenu';
 import UploadMenu from './UploadMenu';
 import AudioRecorder from './AudioRecorder';
+import FileMentionDropdown from './FileMentionDropdown';
+import type { MentionResult } from '../../../hooks/useFileMention';
 import { type UploadedImage } from '../../../hooks/useImageUpload';
 import { type UploadedFile } from '../../../hooks/useFileUpload';
 import { type RecordingState } from '../../../hooks/useAudioRecording';
@@ -130,6 +132,20 @@ interface InputControlsProps {
   smartSubMode?: string;
   /** 切换智能模式子模式 */
   onSmartSubModeChange?: (mode: string) => void;
+  /** @ 文件提及：是否显示下拉 */
+  mentionDropdownVisible?: boolean;
+  /** @ 文件提及：搜索结果 */
+  mentionResults?: MentionResult[];
+  /** @ 文件提及：当前高亮索引 */
+  mentionActiveIndex?: number;
+  /** @ 文件提及：是否搜索中 */
+  mentionLoading?: boolean;
+  /** @ 文件提及：选中文件 */
+  onMentionSelect?: (file: MentionResult) => void;
+  /** @ 文件提及：鼠标悬停索引 */
+  onMentionHover?: (index: number) => void;
+  /** @ 文件提及：输入变化通知（传光标位置） */
+  onMentionInputChange?: (value: string, cursorPos: number) => void;
 }
 
 export default function InputControls(props: InputControlsProps) {
@@ -153,6 +169,8 @@ export default function InputControls(props: InputControlsProps) {
     requiresImageUpload = false, sendError, hasQuotedImage = false,
     isStreaming = false, onStop,
     effectiveModelType = selectedModel.type, smartSubMode, onSmartSubModeChange,
+    mentionDropdownVisible = false, mentionResults = [], mentionActiveIndex = 0,
+    mentionLoading = false, onMentionSelect, onMentionHover, onMentionInputChange,
   } = props;
 
   const [showUploadMenu, setShowUploadMenu] = useState(false);
@@ -266,6 +284,17 @@ export default function InputControls(props: InputControlsProps) {
         </div>
       )}
 
+      {/* @ 文件提及下拉面板（输入框上方） */}
+      {mentionDropdownVisible && onMentionSelect && onMentionHover && (
+        <FileMentionDropdown
+          results={mentionResults}
+          activeIndex={mentionActiveIndex}
+          loading={mentionLoading}
+          onSelect={onMentionSelect}
+          onHover={onMentionHover}
+        />
+      )}
+
       <div className="px-3 pt-2 pb-2">
         {/* 图片预览区域（输入框顶部） */}
         {images.length > 0 && (
@@ -319,9 +348,12 @@ export default function InputControls(props: InputControlsProps) {
           ref={textareaRef}
           name="chat-input"
           value={prompt}
-          onChange={(e) => onPromptChange(e.target.value)}
+          onChange={(e) => {
+            onPromptChange(e.target.value);
+            onMentionInputChange?.(e.target.value, e.target.selectionStart ?? e.target.value.length);
+          }}
           onKeyDown={onKeyDown}
-          placeholder={hasQuotedImage ? '描述你想要的修改...' : requiresImageUpload ? '该模型需要先上传图片才能生成哦～' : '发送消息...'}
+          placeholder={hasQuotedImage ? '描述你想要的修改...' : requiresImageUpload ? '该模型需要先上传图片才能生成哦～' : smartSubMode === 'image-ecom' ? '描述商品和想要的图片效果，如"淘宝白底主图 + 场景图"，然后点击上方AI提示词按钮' : '发送消息...'}
           className="w-full resize-none border-none outline-none bg-transparent text-text-primary placeholder:text-text-disabled text-base leading-6 pt-2 pb-1 min-h-[44px] max-h-[120px] overflow-y-auto"
           rows={1}
           disabled={isSubmitting}

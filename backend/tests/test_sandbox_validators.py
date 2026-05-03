@@ -41,20 +41,23 @@ class TestValidateCode:
 
     # === 安全拦截 ===
 
-    def test_blocked_import_os(self):
-        result = validate_code("import os")
-        assert result is not None
-        assert "os" in result
+    def test_import_os_allowed(self):
+        """os 已从 AST 黑名单移出（运行时走 scoped_os 保障安全）"""
+        assert validate_code("import os") is None
 
     def test_blocked_import_subprocess(self):
         result = validate_code("import subprocess")
         assert result is not None
         assert "subprocess" in result
 
-    def test_blocked_from_os(self):
-        result = validate_code("from os import listdir")
-        assert result is not None
-        assert "os" in result
+    def test_from_os_allowed(self):
+        """from os import ... 已从 AST 黑名单移出"""
+        assert validate_code("from os import listdir") is None
+        assert validate_code("from os.path import join") is None
+
+    def test_import_shutil_allowed(self):
+        """shutil 已从 AST 黑名单移出"""
+        assert validate_code("import shutil") is None
 
     def test_blocked_import_sys(self):
         result = validate_code("import sys")

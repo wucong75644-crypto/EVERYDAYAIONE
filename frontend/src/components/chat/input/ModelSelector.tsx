@@ -20,6 +20,7 @@ import {
   Check,
   Image,
   Video,
+  ShoppingBag,
 } from 'lucide-react';
 import { type UnifiedModel } from '../../../constants/models';
 import { isSmartModel } from '../../../constants/smartModel';
@@ -108,7 +109,7 @@ export default function ModelSelector({
           {selectedModel.name}
           {smartSubMode && smartSubMode !== 'chat' && (
             <span className="text-text-tertiary ml-1">
-              · {smartSubMode === 'image-i2i' ? '图生图' : smartSubMode === 'image-t2i' ? '文生图' : '视频'}
+              · {smartSubMode === 'image-i2i' ? '图生图' : smartSubMode === 'image-t2i' ? '文生图' : smartSubMode === 'image-ecom' ? '电商图' : '视频'}
             </span>
           )}
         </span>
@@ -177,6 +178,7 @@ export default function ModelSelector({
                         {([
                           { mode: 'image-i2i', icon: Image, label: '图生图模式', desc: '上传参考图 → 生成新图' },
                           { mode: 'image-t2i', icon: ImagePlus, label: '文生图模式', desc: '纯文字描述 → 生成图片' },
+                          { mode: 'image-ecom', icon: ShoppingBag, label: '电商图模式', desc: 'AI提示词 → 专业商品图' },
                           { mode: 'video', icon: Video, label: '视频模式', desc: '设置参数后生成视频' },
                         ]).map(({ mode, icon: Icon, label, desc }) => (
                           <button

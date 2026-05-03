@@ -60,6 +60,7 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
             "erp_agent": self._erp_agent,
             "erp_analyze": self._erp_analyze,
             "manage_scheduled_task": self._manage_scheduled_task,
+            "image_agent": self._image_agent,
         }
         # 注册文件操作工具
         for tool_name in FILE_INFO_TOOLS:
@@ -274,7 +275,75 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
         # 返回 AgentResult，文件通道/ask_user/display/token 由 ChatToolMixin 统一处理
         return result
 
-    async def _erp_analyze(self, args: Dict[str, Any]) -> AgentResult:
+    async def _image_agent(self, args: Dict[str, Any]) -> "AgentResult":
+        """电商图片 Agent：单张图片生成（三重自动注入）。
+
+        自动注入：
+        1. image_urls — 当前消息的用户上传图片
+        2. style_directive — 会话级全局风格（从 DB 读）
+        3. history_images — 历史生成图片（从消息 FilePart 查）
+        """
+        from services.agent.image.image_agent import ImageAgent
+
+        # === 三重自动注入（LLM 不需要传这些参数）===
+
+        # 注入1：用户上传的图片
+        if not args.get("image_urls"):
+            args["image_urls"] = getattr(self, "_current_message_images", [])
+
+        # 注入2：全局风格（从 DB 读取）
+        if not args.get("style_directive"):
+            try:
+                row = self.db.table("conversations").select(
+                    "image_style_directive"
+                ).eq("id", self.conversation_id).maybe_single().execute()
+                if row and row.data and row.data.get("image_style_directive"):
+                    args["style_directive"] = row.data["image_style_directive"]
+            except Exception as e:
+                logger.warning(f"读取 style_directive 失败: {e}")
+
+        # 注入3：历史生成图片（供修改引用）
+        if not args.get("history_images"):
+            args["history_images"] = self._get_conversation_image_parts()
+
+        agent = ImageAgent(
+            db=self.db,
+            user_id=self.user_id,
+            conversation_id=self.conversation_id,
+            org_id=self.org_id,
+            task_id=getattr(self, "_task_id", None),
+            message_id=getattr(self, "_message_id", None),
+        )
+        return await agent.execute(
+            task=args.get("task", ""),
+            image_urls=args.get("image_urls", []),
+            platform=args.get("platform", "taobao"),
+            style_directive=args.get("style_directive", ""),
+            history_images=args.get("history_images", []),
+        )
+
+    def _get_conversation_image_parts(self) -> list[dict]:
+        """从会话消息历史中提取已生成的图片 FilePart（供修改引用）。"""
+        try:
+            rows = self.db.table("messages").select("content").eq(
+                "conversation_id", self.conversation_id,
+            ).eq("role", "assistant").order(
+                "created_at", desc=True,
+            ).limit(20).execute()
+
+            images: list[dict] = []
+            for row in (rows.data or []):
+                for part in (row.get("content") or []):
+                    if isinstance(part, dict) and part.get("type") == "file":
+                        mime = part.get("mime_type") or ""
+                        if mime.startswith("image/"):
+                            images.append({"url": part["url"], "name": part.get("name", "")})
+            return images
+        except Exception as e:
+            logger.warning(f"查询历史图片失败: {e}")
+            return []
+
+    async def _erp_analyze(self, args: Dict[str, Any]) -> "AgentResult":
         """ERP 分析接口：只分析不执行，返回结构化任务拆解。
 
         主 Agent 在计划模式下调用，获取 ERP 查询的步骤、域、参数、依赖关系。
@@ -500,6 +569,7 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
 
         code = args.get("code", "")
         description = args.get("description", "")
+        confirm_delete = args.get("confirm_delete") or []
         if not code:
             return AgentResult(
                 summary="代码不能为空",
@@ -528,7 +598,9 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
                 conversation_id=self.conversation_id,
                 kernel_manager=get_kernel_manager(),
             )
-            result = await executor.execute(code, description)
+            result = await executor.execute(
+                code, description, confirm_delete=confirm_delete,
+            )
 
             # 透传图片尺寸（沙盒读取的 PIL 宽高 → chat_handler 构建 image block）
             if hasattr(executor, "_image_dims") and executor._image_dims:
@@ -541,6 +613,10 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
                 if not hasattr(self, "_chart_options"):
                     self._chart_options = {}
                 self._chart_options.update(executor._chart_options)
+
+            # 从 stdout 提取文件名注册到路径缓存（替代 file_list 的缓存注册）
+            if result.status == "success" and result.summary:
+                self._register_files_from_output(result.summary)
 
             # AgentResult 状态 → 指标状态
             if result.is_failure:
@@ -623,6 +699,45 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
             )
         except Exception as e:
             logger.debug(f"Sandbox knowledge recording skipped | error={e}")
+
+    def _register_files_from_output(self, stdout: str) -> None:
+        """从 code_execute 输出中提取文件名并注册到对话级路径缓存
+
+        替代 file_list 的缓存注册机制：LLM 在 code_execute 内 os.listdir 发现的
+        文件名通过此方法注册，后续 data_query/file_read 的模糊匹配继续工作。
+        """
+        import os
+        import re
+
+        from services.agent.workspace_file_handles import get_file_cache
+
+        workspace_dir = self._get_workspace_dir()
+        if not workspace_dir:
+            return
+
+        _DATA_EXTS = r"\.(?:xlsx|xls|csv|tsv|parquet|pdf|docx|pptx|txt|json|png|jpg)"
+        _FILE_RE = re.compile(rf"['\"]([^'\"]*{_DATA_EXTS})['\"]", re.IGNORECASE)
+
+        file_cache = get_file_cache(self.conversation_id)
+
+        for m in _FILE_RE.finditer(stdout):
+            filename = m.group(1)
+            basename = os.path.basename(filename)
+            candidate = os.path.join(workspace_dir, filename)
+            if os.path.exists(candidate):
+                file_cache.register(basename, os.path.realpath(candidate))
+
+    def _get_workspace_dir(self) -> str:
+        """获取当前用户的 workspace 目录"""
+        try:
+            from core.config import get_settings
+            from core.workspace import resolve_workspace_dir
+            settings = get_settings()
+            return resolve_workspace_dir(
+                settings.file_workspace_root, self.user_id, self.org_id,
+            )
+        except Exception:
+            return ""
 
     # 文件操作工具 + 社交爬虫：继承自 FileToolMixin / CrawlerToolMixin (file_tool_mixin.py)
 

@@ -97,12 +97,42 @@ class TestSandboxConstants:
             assert mod in ALLOWED_IMPORT_MODULES
 
     def test_allowed_modules_excludes_dangerous(self):
-        for mod in ["os", "sys", "subprocess", "socket", "pickle"]:
+        # os/shutil 已移到白名单（运行时走 scoped_os），其他仍禁止
+        for mod in ["sys", "subprocess", "socket", "pickle"]:
             assert mod not in ALLOWED_IMPORT_MODULES
+        # os/shutil 在白名单（由 make_restricted_import + scoped_os 保障安全）
+        for mod in ["os", "os.path", "shutil"]:
+            assert mod in ALLOWED_IMPORT_MODULES
 
-    def test_restricted_import_blocks_os(self):
-        with pytest.raises(ImportError, match="禁止导入"):
-            restricted_import("os")
+    def test_restricted_import_allows_os_in_whitelist(self):
+        """向后兼容：无 scoped 模块时 os 在白名单中，返回真实 os（非生产路径）"""
+        mod = restricted_import("os")
+        assert hasattr(mod, "path")
+
+    def test_make_restricted_import_returns_scoped(self):
+        """make_restricted_import 带 scoped 模块时，import os 返回 scoped 实例"""
+        from services.sandbox.sandbox_constants import make_restricted_import
+
+        class _FakeOS:
+            class path:
+                join = staticmethod(lambda *a: "/".join(a))
+        fake = _FakeOS()
+        scoped = make_restricted_import({"os": fake})
+        result = scoped("os")
+        assert result is fake
+        assert not hasattr(result, "system")
+
+    def test_make_restricted_import_fromlist_os_path(self):
+        """from os.path import join → fromlist 非空时返回 os.path 子模块"""
+        from services.sandbox.sandbox_constants import make_restricted_import
+        import os as real_os
+
+        class _FakeOS:
+            path = real_os.path
+        fake = _FakeOS()
+        scoped = make_restricted_import({"os": fake})
+        result = scoped("os.path", fromlist=("join",))
+        assert result is real_os.path
 
     def test_restricted_import_allows_json(self):
         mod = restricted_import("json")
@@ -203,7 +233,19 @@ class TestBuildSandboxGlobals:
 
     def test_builtins_are_restricted(self, tmp_path):
         g = _build_sandbox_globals(str(tmp_path), "", "")
-        assert g["__builtins__"] is SAFE_BUILTINS
+        # copy 后的 dict（含 scoped_import），不再 is SAFE_BUILTINS
+        builtins = g["__builtins__"]
+        assert isinstance(builtins, dict)
+        assert "print" in builtins
+        assert callable(builtins["__import__"])
+
+    def test_scoped_os_injected(self, tmp_path):
+        """_build_sandbox_globals 注入 scoped_os/shutil"""
+        g = _build_sandbox_globals(str(tmp_path), "", "")
+        assert "os" in g
+        assert "shutil" in g
+        assert not hasattr(g["os"], "system")
+        assert hasattr(g["os"], "listdir")
 
 
 # ============================================================
@@ -301,11 +343,11 @@ class TestSandboxWorkerEntry:
         assert "执行错误" in result
 
     def test_validation_failure(self, tmp_path):
-        """AST 验证失败返回 error"""
+        """AST 验证失败返回 error（用 sys 测试，os 已放行）"""
         q = _make_queue()
 
         sandbox_worker_entry(
-            q, "import os",
+            q, "import sys",
             str(tmp_path), "", "", 5.0, 1000,
         )
 

@@ -59,7 +59,7 @@ export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles
 
   const handlePreview = useCallback((item: WorkspaceFileItem) => {
     if (!item.cdn_url) {
-      toast.error('文件暂不支持预���');
+      toast.error('文件暂不支持预览');
       return;
     }
     if (canPreview(item.name)) {

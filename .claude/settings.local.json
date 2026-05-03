@@ -1942,7 +1942,20 @@
       "Bash(./git-push.sh \"fix: Toolbar调用端移除originalType传参\")",
       "Bash(./git-push.sh \"fix: 折线图保持单series连线+全屏按钮合并到工具栏消除重叠\")",
       "Bash(./git-push.sh \"fix: ChartBlock三项根本修复——XSS\\(React表格替代dangerouslySetInnerHTML\\)+useEffect稳定引用+清理未用prop\")",
-      "Bash(./git-push.sh \"test: 交互式图表测试补全——AgentResult FILE提取+chart block构造+持久化+主题名称\\(+17用例\\)\")"
+      "Bash(./git-push.sh \"test: 交互式图表测试补全——AgentResult FILE提取+chart block构造+持久化+主题名称\\(+17用例\\)\")",
+      "Bash(grep -n \"thinking_chunk\\\\|build_thinking\" /Users/wucong/EVERYDAYAIONE/backend/schemas/websocket*.py)",
+      "Bash(ps -o pid,ppid,command -p 13077 13104 13079 13076 13106 13103 13078 13105)",
+      "WebFetch(domain:help.aliyun.com)",
+      "WebFetch(domain:www.volcengine.com)",
+      "WebFetch(domain:siliconflow.cn)",
+      "WebFetch(domain:open.bigmodel.cn)",
+      "WebFetch(domain:docs.siliconflow.cn)",
+      "WebFetch(domain:docs.bigmodel.cn)",
+      "WebFetch(domain:platform.kimi.com)",
+      "WebFetch(domain:cloud.baidu.com)",
+      "Bash(grep -A 50 \"class.*ContentPart\\\\|type ContentPart\" /Users/wucong/EVERYDAYAIONE/backend/schemas/*.py)",
+      "Bash(grep -c \"register_files_from_output\" tests/*.py)",
+      "Bash(./git-push.sh 'feat: 电商图模式——AI提示词增强+ImageAgent单张生成+四层提示词框架+风格持久化+失败重试 *)"
     ],
     "additionalDirectories": [
       "/tmp"

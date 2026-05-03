@@ -153,9 +153,10 @@ class TestSecurityBlocking:
     """安全拦截测试"""
 
     @pytest.mark.asyncio
-    async def test_import_os_blocked(self, executor):
-        result = await executor.execute("import os\nos.listdir('.')", "危险导入")
-        assert "验证失败" in result.summary
+    async def test_import_os_scoped(self, executor):
+        """import os 放行，os.listdir('.') 返回工作区文件列表"""
+        result = await executor.execute("import os\nprint(type(os.listdir('.')))", "os测试")
+        assert result.status == "success"
 
     @pytest.mark.asyncio
     async def test_eval_blocked(self, executor):

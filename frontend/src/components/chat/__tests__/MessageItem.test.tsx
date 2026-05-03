@@ -39,6 +39,19 @@ vi.mock('../media/ImagePreviewModal', () => ({
   default: () => null,
 }));
 
+// 捕获 FailedMediaPlaceholder 渲染（电商图模式 failed ImagePart 测试用）
+let capturedFailedPlaceholderProps: Record<string, unknown> | null = null;
+vi.mock('../media/MediaPlaceholder', () => ({
+  FailedMediaPlaceholder: (props: Record<string, unknown>) => {
+    capturedFailedPlaceholderProps = props;
+    return <div data-testid="failed-media-placeholder" />;
+  },
+}));
+
+vi.mock('../../../services/api', () => ({
+  default: { post: vi.fn() },
+}));
+
 vi.mock('../message/LoadingPlaceholder', () => ({
   default: ({ text }: { text: string }) => <span>{text}</span>,
 }));
@@ -66,7 +79,9 @@ vi.mock('../../../hooks/useMessageAnimation', () => ({
   }),
 }));
 
+const mockUpdateMessage = vi.fn();
 vi.mock('../../../stores/useMessageStore', () => ({
+  useMessageStore: { getState: () => ({ updateMessage: mockUpdateMessage }) },
   getTextContent: (msg: Message) => {
     if (!msg.content || msg.content.length === 0) return '';
     const text = msg.content.find((p: { type: string }) => p.type === 'text');
@@ -115,6 +130,8 @@ function makeMessage(overrides: Partial<Message> = {}): Message {
 describe('MessageItem 回调稳定性', () => {
   beforeEach(() => {
     capturedMediaProps = {};
+    capturedFailedPlaceholderProps = null;
+    mockUpdateMessage.mockClear();
   });
 
   it('传递 handleImageClick 给 MessageMedia（非内联箭头）', () => {
@@ -207,5 +224,79 @@ describe('MessageItem 回调稳定性', () => {
     // memo 组件 props 不变 → 不会重渲染 → props 引用应一致
     // 但即使重渲染了，useCallback 也保证引用稳定
     expect(firstRef).toBe(secondRef);
+  });
+});
+
+
+// ============================================================
+// 电商图模式：failed ImagePart 渲染测试
+// ============================================================
+
+describe('MessageItem failed ImagePart', () => {
+  beforeEach(() => {
+    capturedFailedPlaceholderProps = null;
+  });
+
+  it('渲染 FailedMediaPlaceholder 当 content 包含 failed image', () => {
+    const failedMessage = makeMessage({
+      content: [
+        { type: 'text', text: '图片生成失败' },
+        {
+          type: 'image',
+          url: null,
+          width: 800,
+          height: 800,
+          failed: true,
+          error: '服务繁忙',
+          retry_context: {
+            task: '白底主图',
+            image_urls: [],
+            platform: 'taobao',
+            style_directive: '',
+          },
+        },
+      ],
+      generation_params: { type: 'chat' },
+      status: 'completed',
+    });
+
+    render(
+      <MessageItem
+        message={failedMessage}
+        allImageUrls={[]}
+        currentImageIndex={0}
+      />,
+    );
+
+    // 验证 FailedMediaPlaceholder 被渲染
+    expect(screen.getByTestId('failed-media-placeholder')).toBeTruthy();
+    // 验证传入了正确的 props
+    expect(capturedFailedPlaceholderProps).not.toBeNull();
+    expect(capturedFailedPlaceholderProps?.type).toBe('image');
+    expect(capturedFailedPlaceholderProps?.retryLabel).toBe('重新生成');
+    // 验证 onRetry 回调存在（有 retry_context 时）
+    expect(typeof capturedFailedPlaceholderProps?.onRetry).toBe('function');
+  });
+
+  it('正常图片不渲染 FailedMediaPlaceholder', () => {
+    const normalMessage = makeMessage({
+      content: [
+        { type: 'text', text: '图片已生成' },
+        { type: 'image', url: 'https://cdn/img.png', width: 800, height: 800 },
+      ],
+      generation_params: { type: 'chat' },
+      status: 'completed',
+    });
+
+    render(
+      <MessageItem
+        message={normalMessage}
+        allImageUrls={['https://cdn/img.png']}
+        currentImageIndex={0}
+      />,
+    );
+
+    // 正常图片不应渲染 FailedMediaPlaceholder
+    expect(screen.queryByTestId('failed-media-placeholder')).toBeNull();
   });
 });

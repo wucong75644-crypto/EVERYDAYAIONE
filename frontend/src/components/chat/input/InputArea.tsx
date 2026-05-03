@@ -5,7 +5,9 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { Loader2, Sparkles } from 'lucide-react';
 import toast from 'react-hot-toast';
+import api from '../../../services/api';
 import { createConversation, updateConversation } from '../../../services/conversation';
 import { uploadAudio } from '../../../services/audio';
 import { useMessageHandlers } from '../../../hooks/useMessageHandlers';
@@ -20,9 +22,21 @@ import { useMessageStore, type Message } from '../../../stores/useMessageStore';
 import { useAuthStore } from '../../../stores/useAuthStore';
 import { cancelTaskByMessageId } from '../../../services/message';
 import { logger } from '../../../utils/logger';
+import { useFileMention } from '../../../hooks/useFileMention';
 import ConflictAlert from './ConflictAlert';
 import InputControls from './InputControls';
 import UploadErrorBar from './UploadErrorBar';
+
+// 电商图模式 Tab 补全词典（模块级常量，不随渲染重建）
+const ECOM_TAB_COMPLETIONS: Record<string, string> = {
+  "淘": "淘宝", "京": "京东", "拼": "拼多多", "抖": "抖音", "小红": "小红书",
+  "白底": "白底主图 800×800", "场景": "场景图 800×800",
+  "详情": "详情页 750×宽", "竖": "竖图 750×1000",
+  "极简": "极简风格", "网感": "网感风格", "种草": "种草风格",
+  "奢华": "高端奢华风格", "清新": "清新自然风格",
+  "国潮": "国潮风格", "复古": "复古文艺风格", "暖": "暖调生活风格",
+};
+const ECOM_TAB_KEYS_SORTED = Object.keys(ECOM_TAB_COMPLETIONS).sort((a, b) => b.length - a.length);
 
 interface InputAreaProps {
   conversationId: string | null;
@@ -41,6 +55,8 @@ interface InputAreaProps {
   onPromptChange?: (value: string) => void;
   /** 工作区待发送文件（"插入到聊天"功能） */
   workspaceFiles?: Array<{ name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }>;
+  /** 添加单个工作区文件（@ 提及选中时调用） */
+  onAddWorkspaceFile?: (file: { name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }) => void;
   /** 移除单个工作区文件 */
   onRemoveWorkspaceFile?: (workspacePath: string) => void;
   /** 发送后清空工作区文件队列 */
@@ -65,6 +81,7 @@ export default function InputArea({
   prompt: controlledPrompt,
   onPromptChange: controlledOnPromptChange,
   workspaceFiles = [],
+  onAddWorkspaceFile,
   onRemoveWorkspaceFile,
   onWorkspaceFilesConsumed,
   onOpenWorkspace,
@@ -79,9 +96,14 @@ export default function InputArea({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
-  // 智能模式子模式：聊天/图生图/文生图/视频
-  type SmartSubMode = 'chat' | 'image-i2i' | 'image-t2i' | 'video';
+  // 智能模式子模式：聊天/图生图/文生图/电商图/视频
+  type SmartSubMode = 'chat' | 'image-i2i' | 'image-t2i' | 'image-ecom' | 'video';
   const [smartSubMode, setSmartSubMode] = useState<SmartSubMode>('chat');
+
+  // 电商图模式：AI提示词增强相关状态
+  const [imageTaskMeta, setImageTaskMeta] = useState<Array<{index: number; type: string; description: string; aspect_ratio: string}> | null>(null);
+  const [costEstimate, setCostEstimate] = useState<{estimated_credits: number; image_count: number} | null>(null);
+  const [isEnhancing, setIsEnhancing] = useState(false);
   // 实际生效的模型类型：智能模式用子模式，单模型用模型自身类型
   const [sendError, setSendError] = useState<string | null>(null);
 
@@ -141,6 +163,23 @@ export default function InputArea({
     error: audioRecordingError,
   } = useAudioRecording();
 
+  // @ 文件提及 Hook
+  const fileMention = useFileMention();
+
+  // @ 提及选中文件：添加到 workspaceFiles + 从 prompt 移除 @keyword
+  const handleMentionSelect = useCallback((file: { name: string; workspace_path: string; cdn_url: string | null; mime_type: string | null; size: number }) => {
+    onAddWorkspaceFile?.(file);
+    // 从 prompt 中移除 @keyword（找最后一个 @ 到光标位置）
+    const before = prompt.slice(0, prompt.lastIndexOf('@'));
+    const afterAt = prompt.slice(prompt.lastIndexOf('@'));
+    // afterAt 格式: "@keyword可能还有后续文本"
+    // 找第一个空格或末尾
+    const spaceIdx = afterAt.indexOf(' ', 1);
+    const after = spaceIdx >= 0 ? afterAt.slice(spaceIdx) : '';
+    setPrompt(before + after);
+    fileMention.close();
+  }, [onAddWorkspaceFile, prompt, setPrompt, fileMention]);
+
   // 自动保存模型到对话的回调
   const handleAutoSaveModel = useCallback((modelId: string) => {
     if (conversationId) {
@@ -169,10 +208,14 @@ export default function InputArea({
   });
 
   // 实际生效的模型类型：智能模式用子模式，单模型用模型自身类型
+  // 电商图模式（image-ecom）走 chat 路径（主Agent工具循环），不走 ImageHandler
   const isSmart = isSmartModel(selectedModel.id);
   const effectiveModelType: ModelType = isSmart
-    ? (smartSubMode.startsWith('image') ? 'image' : smartSubMode as ModelType)
+    ? (smartSubMode === 'image-i2i' || smartSubMode === 'image-t2i' ? 'image'
+      : smartSubMode === 'image-ecom' ? 'chat'  // 电商图走主Agent
+      : smartSubMode as ModelType)
     : selectedModel.type;
+  const isEcomMode = smartSubMode === 'image-ecom';
 
   // 切换到非智能模型时重置子模式
   useEffect(() => {
@@ -335,6 +378,11 @@ export default function InputArea({
       toast.error('图生图模式请先上传参考图片');
       return;
     }
+    // 电商图-图生图模式也需要图片
+    if (smartSubMode === 'image-ecom' && hasImages && uploadedImageUrls.length === 0) {
+      toast.error('图片还在上传中，请稍候');
+      return;
+    }
 
     // 检查全局任务限制
     const taskLimitCheck = useMessageStore.getState().canStartTask();
@@ -396,12 +444,21 @@ export default function InputArea({
       if (effectiveModelType === 'chat') {
         // 聊天消息：统一使用服务器 URL（确保刷新后图片仍然可见）
         // 注：clientRequestId 由 sendMessage 内部生成，无需传入
+        // 电商图模式时附带 image_task_meta（主Agent用来遍历调用 image_agent）
+        const ecomParams = isEcomMode && imageTaskMeta
+          ? { image_task_meta: imageTaskMeta } : null;
         await handleChatMessage(
           messageContent,
           currentConversationId!,
           imageUrls,    // 使用服务器 URL（已上传完成）
           fileData,     // PDF 文件信息
+          ecomParams,   // 电商图模式：image_task_meta
         );
+        // 发送后清理电商图状态
+        if (isEcomMode) {
+          setImageTaskMeta(null);
+          setCostEstimate(null);
+        }
       } else if (effectiveModelType === 'video') {
         await handleVideoGeneration(currentConversationId!, messageContent, imageUrls);
       } else {
@@ -417,8 +474,29 @@ export default function InputArea({
     }
   };
 
-  // 键盘快捷键
+  // 键盘快捷键（Tab 补全用模块级常量 ECOM_TAB_COMPLETIONS / ECOM_TAB_KEYS_SORTED）
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // @ 提及键盘导航优先拦截
+    if (fileMention.showDropdown) {
+      const handled = fileMention.handleKeyDown(e);
+      if (handled) {
+        // Enter 选中当前高亮项
+        if (e.key === 'Enter' && fileMention.results[fileMention.activeIndex]) {
+          handleMentionSelect(fileMention.results[fileMention.activeIndex]);
+        }
+        return;
+      }
+    }
+    // Tab 补全（仅电商图模式，用模块级预排序常量避免重建）
+    if (e.key === 'Tab' && isEcomMode && prompt.trim()) {
+      e.preventDefault();
+      for (const key of ECOM_TAB_KEYS_SORTED) {
+        if (prompt.endsWith(key)) {
+          setPrompt(prompt.slice(0, -key.length) + ECOM_TAB_COMPLETIONS[key]);
+          return;
+        }
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSubmit();
@@ -480,6 +558,71 @@ export default function InputArea({
           onSwitchModel={handleUserSelectModel}
           onRemoveImage={handleRemoveAllImages}
         />
+
+        {/* 电商图模式：快捷标签（移动端替代 Tab 补全） + AI提示词按钮 + 费用预估 */}
+        {isEcomMode && /Android|iPhone|iPad/i.test(navigator.userAgent) && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {[
+              { group: '平台', items: ['淘宝', '京东', '拼多多', '抖音', '小红书'] },
+              { group: '类型', items: ['白底主图', '场景图', '竖图', '详情页'] },
+              { group: '风格', items: ['极简', '清新', '网感', '种草', '奢华', '国潮'] },
+            ].map(({ group, items }) => (
+              items.map(item => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setPrompt(prev => prev + (prev && !prev.endsWith(' ') ? ' ' : '') + item)}
+                  className="px-2 py-0.5 text-xs bg-surface-hover rounded-full text-text-secondary hover:bg-accent-light hover:text-accent transition-base"
+                >
+                  {item}
+                </button>
+              ))
+            )).flat()}
+          </div>
+        )}
+        {isEcomMode && (
+          <div className="flex items-center gap-2 mb-2">
+            <button
+              type="button"
+              disabled={isEnhancing || (!prompt.trim() && uploadedImageUrls.length === 0)}
+              onClick={async () => {
+                if (isEnhancing) return;
+                setIsEnhancing(true);
+                try {
+                  const { data } = await api.post('/ecom-image/enhance-prompt', {
+                    text: prompt,
+                    image_urls: uploadedImageUrls,
+                    conversation_id: conversationId || '',
+                    platform: 'taobao',
+                  });
+                  if (data.enhanced_prompt) {
+                    setPrompt(data.enhanced_prompt);
+                    setImageTaskMeta(data.images || null);
+                    setCostEstimate(data.cost_estimate || null);
+                  } else if (data.error) {
+                    toast.error(data.error);
+                  }
+                } catch (err) {
+                  toast.error('提示词增强失败，请重试');
+                } finally {
+                  setIsEnhancing(false);
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-accent text-white rounded-full text-xs font-medium hover:bg-accent-dark transition-base disabled:opacity-50"
+            >
+              {isEnhancing ? (
+                <><Loader2 className="w-3.5 h-3.5 animate-spin" />AI提示词生成中...</>
+              ) : (
+                <><Sparkles className="w-3.5 h-3.5" />AI提示词</>
+              )}
+            </button>
+            {costEstimate && (
+              <span className="text-xs text-text-tertiary">
+                预计 {costEstimate.image_count} 张，约 {costEstimate.estimated_credits} 积分
+              </span>
+            )}
+          </div>
+        )}
 
         {/* 主输入控件（包含底部的模型选择器） */}
         <InputControls
@@ -560,6 +703,13 @@ export default function InputArea({
           effectiveModelType={effectiveModelType}
           smartSubMode={isSmart ? smartSubMode : undefined}
           onSmartSubModeChange={isSmart ? (mode: string) => setSmartSubMode(mode as SmartSubMode) : undefined}
+          mentionDropdownVisible={fileMention.showDropdown}
+          mentionResults={fileMention.results}
+          mentionActiveIndex={fileMention.activeIndex}
+          mentionLoading={fileMention.loading}
+          onMentionSelect={handleMentionSelect}
+          onMentionHover={(index: number) => fileMention.setActiveIndex(index)}
+          onMentionInputChange={fileMention.handleInputChange}
         />
       </div>
     </div>

@@ -129,11 +129,11 @@ class TestCodeToolsDefinition:
         desc = tool["function"]["description"]
         assert "print()" in desc
 
-    def test_workspace_version_has_sandbox_isolation(self):
-        """主 Agent 版包含沙盒隔离说明"""
+    def test_workspace_version_has_os_module(self):
+        """主 Agent 版包含 os 模块说明"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
-        assert "全新子进程" in desc
+        assert "os.listdir" in desc
 
 
 class TestAgentToolsIntegration:

@@ -5,6 +5,7 @@
 - /upload: 上传到 OSS（CDN URL，用于聊天多模态内容）
 - /workspace/upload: 上传到 workspace（ossfs 目录，供 AI 分析）
 - /workspace/list: 列出用户 workspace 文件
+- /workspace/search: 递归搜索 workspace 文件（关键词匹配文件名）
 - /workspace/delete: 删除文件或空目录
 - /workspace/mkdir: 新建文件夹
 - /workspace/rename: 重命名
@@ -103,6 +104,7 @@ class WorkspaceFileItem(BaseModel):
     modified: str = ""
     cdn_url: Optional[str] = None
     mime_type: Optional[str] = None
+    workspace_path: Optional[str] = None
 
 
 class WorkspaceListResponse(BaseModel):
@@ -278,6 +280,71 @@ async def list_workspace(
             continue
 
     return WorkspaceListResponse(path=path, items=items, total=len(items))
+
+
+# ============================================================
+# Workspace 文件搜索（递归关键词匹配文件名）
+# ============================================================
+
+
+class WorkspaceSearchResponse(BaseModel):
+    """workspace 文件搜索响应"""
+    items: List[WorkspaceFileItem]
+    total: int
+
+
+@router.get(
+    "/workspace/search",
+    response_model=WorkspaceSearchResponse,
+    summary="搜索workspace文件",
+)
+async def search_workspace(
+    ctx: OrgCtx,
+    q: str = "",
+    limit: int = 20,
+):
+    """递归搜索用户 workspace 目录，按文件名关键词匹配"""
+    if not q.strip():
+        return WorkspaceSearchResponse(items=[], total=0)
+
+    executor = _get_executor(ctx)
+    root = executor.resolve_safe_path(".")
+    if not root.exists() or not root.is_dir():
+        return WorkspaceSearchResponse(items=[], total=0)
+
+    keyword = q.strip().lower()
+    results: list[WorkspaceFileItem] = []
+
+    # 递归遍历，跳过隐藏文件和 staging 目录
+    for item in root.rglob("*"):
+        if len(results) >= limit:
+            break
+        # 跳过目录、隐藏文件、staging
+        if item.is_dir():
+            continue
+        if any(part.startswith(".") or part == "staging" for part in item.relative_to(root).parts):
+            continue
+        if keyword not in item.name.lower():
+            continue
+
+        try:
+            st = item.stat()
+            rel_path = str(item.relative_to(root))
+            cdn_url = executor.get_cdn_url(rel_path)
+            mime_type = mimetypes.guess_type(item.name)[0]
+            results.append(WorkspaceFileItem(
+                name=item.name,
+                is_dir=False,
+                size=st.st_size,
+                modified=str(int(st.st_mtime)),
+                cdn_url=cdn_url,
+                mime_type=mime_type,
+                workspace_path=rel_path,
+            ))
+        except (PermissionError, OSError):
+            continue
+
+    return WorkspaceSearchResponse(items=results, total=len(results))
 
 
 # ============================================================
