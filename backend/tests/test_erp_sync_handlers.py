@@ -37,6 +37,7 @@ def _mock_svc(pages=None, detail=None):
     svc.upsert_document_items = AsyncMock(side_effect=lambda rows: len(rows))
     svc.collect_affected_keys = MagicMock(return_value=[])
     svc.run_aggregation = AsyncMock()
+    svc.resolve_supplier_code = AsyncMock(return_value=None)
     return svc
 
 

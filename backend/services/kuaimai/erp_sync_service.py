@@ -115,7 +115,7 @@ class ErpSyncService:
 
     # ── 维度表反查缓存 ─────────────────────────────────────
 
-    def resolve_supplier_code(self, supplier_name: str | None) -> str | None:
+    async def resolve_supplier_code(self, supplier_name: str | None) -> str | None:
         """通过 supplier_name 反查 erp_suppliers.code（带会话级缓存）。
 
         仅 shelf（上架单）需要：shelf API 只返回 supplierId 不返回 supplierCode，
@@ -128,9 +128,9 @@ class ErpSyncService:
                 q = self.db.table("erp_suppliers").select("code, name")
                 if self.org_id:
                     q = q.eq("org_id", self.org_id)
-                data = q.execute().data
+                result = await q.execute()
                 self._supplier_name_map: dict[str, str] = {
-                    r["name"]: r["code"] for r in data if r.get("code")
+                    r["name"]: r["code"] for r in result.data if r.get("code")
                 }
             except Exception as e:
                 logger.warning(f"resolve_supplier_code 加载失败 | error={e}")
