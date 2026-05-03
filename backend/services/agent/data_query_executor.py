@@ -542,19 +542,19 @@ class DataQueryExecutor:
     ) -> AgentResult:
         con = self._create_safe_connection()
         try:
-            # spatial 扩展（xlsx 导出需要，LOAD 不受 lock_configuration 影响）
-            try:
-                con.execute("LOAD spatial")
-            except Exception:
+            # xlsx 导出使用 DuckDB 原生 excel 扩展（不依赖 spatial/GDAL）
+            if export_filename.endswith(".xlsx"):
                 try:
-                    con.execute("INSTALL spatial; LOAD spatial;")
-                except Exception as e:
-                    logger.warning(f"spatial extension load failed: {e}")
-                    if export_filename.endswith(".xlsx"):
+                    con.execute("LOAD excel")
+                except Exception:
+                    try:
+                        con.execute("INSTALL excel; LOAD excel;")
+                    except Exception as e:
+                        logger.warning(f"excel extension load failed: {e}")
                         return AgentResult(
-                            summary="xlsx 导出需要 DuckDB spatial 扩展，请改用 .csv 格式导出",
+                            summary="xlsx 导出需要 DuckDB excel 扩展加载失败，请改用 .csv 格式导出",
                             status="error",
-                            error_message=f"spatial extension unavailable: {e}",
+                            error_message=f"excel extension unavailable: {e}",
                             metadata={"retryable": False},
                         )
 
@@ -575,7 +575,7 @@ class DataQueryExecutor:
 
             ext = Path(safe_name).suffix.lower()
             if ext == ".xlsx":
-                copy_sql = f"COPY ({sql}) TO '{output_escaped}' WITH (FORMAT GDAL, DRIVER 'xlsx')"
+                copy_sql = f"COPY ({sql}) TO '{output_escaped}' (FORMAT EXCEL)"
             elif ext == ".csv":
                 copy_sql = f"COPY ({sql}) TO '{output_escaped}' WITH (FORMAT CSV, HEADER true)"
             elif ext == ".parquet":

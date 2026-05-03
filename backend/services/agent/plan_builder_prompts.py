@@ -119,7 +119,7 @@ PARAM_DEFINITIONS = (
     "- sort_dir: asc(升序) / desc(降序，默认)\n"
     "  关键词映射：最高/最大/最多/最贵/Top→desc；最低/最少/最小/最便宜→asc\n"
     "- limit: 返回条数（⚠ 含「前N笔/TopN/最高N个/N条」时必须提取 limit:N）\n"
-    "  关键词映射：前5笔→5；Top10→10；最高3个→3；不指定条数时默认20\n"
+    "  关键词映射：前5笔→5；Top10→10；最高3个→3；全部/全量/所有/导出明细→999999；不指定条数时默认20\n"
     "- group_by: shop/platform/product/supplier/warehouse/status（可选，仅 summary 模式）\n"
     "  关键词映射：按店铺/每个店铺→shop；按平台/各平台→platform；"
     "按商品/每个商品→product；按供应商→supplier；按仓库/分仓→warehouse；按状态→status\n"
