@@ -172,10 +172,9 @@ class PromptBuilder:
         parts: list[str] = [f"用户需求：{text}"]
 
         # 从用户文本中提取要求的生成数量（如"5张""生成4张"）
-        # 用自然语言引导，不用硬性限制（行业做法：数量由参数控制，LLM 只参考）
         requested_count = self._extract_requested_count(text)
         if requested_count:
-            parts.append(f"用户希望生成 {requested_count} 张图片，请尽量规划 {requested_count} 个不同类型/角度的图片描述。")
+            parts.append(f"用户要求生成 {requested_count} 张图片，请规划 {requested_count} 个不同类型/角度的图片描述。")
 
         if has_images:
             parts.append("用户已上传商品图片，请分析图片中的商品特征。")
