@@ -206,10 +206,9 @@ function injectDefaults(option: Record<string, unknown>): Record<string, unknown
 // 工具栏（类型切换 + 保存/数据视图/还原 合并一行）
 // ============================================================
 
-function Toolbar({ canSwitch, activeType, originalType, onSwitch, onSave, onDataView, onRestore }: {
+function Toolbar({ canSwitch, activeType, onSwitch, onSave, onDataView, onRestore }: {
   canSwitch: boolean;
   activeType: SwitchableType;
-  originalType: SwitchableType | null;
   onSwitch: (t: SwitchableType) => void;
   onSave: () => void;
   onDataView: () => void;
