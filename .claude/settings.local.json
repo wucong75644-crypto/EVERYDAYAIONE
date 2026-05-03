@@ -1858,7 +1858,20 @@
       "Bash(awk '{print $NF}')",
       "Bash(scp deploy/sandbox.cfg root@47.110.94.25:/var/www/everydayai/deploy/sandbox.cfg)",
       "Bash(./git-push.sh \"fix: KernelManager日志格式——loguru用f-string替代%s\")",
-      "Bash(./git-push.sh \"fix: nsjail sandbox.cfg适配Alibaba Cloud Linux——cgroup目录+mime.types路径+HOME环境变量\")"
+      "Bash(./git-push.sh \"fix: nsjail sandbox.cfg适配Alibaba Cloud Linux——cgroup目录+mime.types路径+HOME环境变量\")",
+      "Bash(python -m pytest backend/tests/test_data_query.py backend/tests/test_data_query_format.py backend/tests/test_data_query_integration.py -x --tb=short)",
+      "Bash(python -m pytest backend/tests/test_data_query_format.py -x --tb=short)",
+      "Bash(python -m pytest backend/tests/test_data_query_format.py backend/tests/test_data_query.py -x --tb=short -k \"not \\(Explore or Query or Export or Timeout or CopyTo or LastFileMeta or ExcelCache or ResolveFilePath\\)\")",
+      "Bash(python -m pytest backend/tests/test_data_query_format.py backend/tests/test_data_query.py -x --tb=short -k \"FormatSqlError or Security or ToolRegistration or Prompt or CacheSnapshot or ConvertLocks or FilePathCache or DetectHeader or CollectSchema or FileType\")",
+      "Bash(python -m pytest backend/tests/test_data_query_format.py backend/tests/test_data_query.py -x --tb=short -k \"not \\(excel or Excel or xlsx\\)\")",
+      "Bash(python -m pytest backend/tests/test_data_query_format.py backend/tests/test_data_query.py --tb=short -k \"not \\(excel or Excel or xlsx or Explore or QueryMode or Export or Timeout or CopyTo or LastFileMeta or ResolveFilePath\\)\")",
+      "Bash(python -m pytest backend/tests/ -x --tb=short -k \"cache\")",
+      "Bash(python -m pytest backend/tests/test_data_query.py -x --tb=short -k \"CacheSnapshot or ConvertLocks\")",
+      "Bash(python -m pytest backend/tests/test_data_query_format.py backend/tests/test_data_query.py --tb=short -k \"not \\(excel or Excel or xlsx or Explore or QueryMode or Export or Timeout or CopyTo or LastFileMeta or ResolveFilePath or ToolRegistration or Prompt\\)\" --no-header -q)",
+      "Bash(python -m pytest backend/tests/test_data_query_format.py backend/tests/test_data_query.py backend/tests/test_sandbox_worker.py --tb=short -k \"not \\(excel or Excel or xlsx or Explore or QueryMode or Export or Timeout or CopyTo or LastFileMeta or ResolveFilePath or ToolRegistration or Prompt\\)\" --no-header -q)",
+      "Bash(python -m pytest backend/tests/test_tool_result_cache.py backend/tests/test_tool_loop_helpers.py -v --tb=short)",
+      "Bash(python -m pytest backend/tests/test_tool_result_cache.py backend/tests/test_tool_loop_helpers.py backend/tests/test_data_query_format.py backend/tests/test_data_query.py backend/tests/test_sandbox_worker.py --tb=short -k \"not \\(excel or Excel or xlsx or Explore or QueryMode or Export or Timeout or CopyTo or LastFileMeta or ResolveFilePath or ToolRegistration or Prompt\\)\" --no-header -q)",
+      "Bash(./git-push.sh \"fix: 3个生产日志异常——memory_settings upsert防并发+Mem0 Lock惰性初始化+DuckDB去重SQL修正\")"
     ],
     "additionalDirectories": [
       "/tmp"
