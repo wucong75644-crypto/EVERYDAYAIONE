@@ -282,15 +282,15 @@ class DuckDBEngine:
             except Exception as e:
                 logger.debug(f"DuckDB avg_length query failed for {col_name}: {e}")
 
-        # 6. 重复行数
+        # 6. 重复行数（总行数 - 去重行数）
         duplicate_count = 0
         try:
             q = conn.execute(
-                f"SELECT COUNT(*) - COUNT(DISTINCT *) "
-                f"FROM read_parquet('{path_escaped}')"
+                f"SELECT {row_count} - COUNT(*) FROM "
+                f"(SELECT DISTINCT * FROM read_parquet('{path_escaped}'))"
             ).fetchone()
             if q and q[0] is not None:
-                duplicate_count = int(q[0])
+                duplicate_count = max(0, int(q[0]))
         except Exception as e:
             logger.debug(f"DuckDB duplicate count failed: {e}")
 

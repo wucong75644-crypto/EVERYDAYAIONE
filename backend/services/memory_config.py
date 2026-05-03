@@ -126,18 +126,22 @@ def _build_mem0_config() -> Optional[Dict[str, Any]]:
 # 全局 Mem0 实例（延迟初始化）
 _mem0_instance = None
 _mem0_available = None  # None=未检查, True=可用, False=不可用
-_mem0_lock = asyncio.Lock()
+_mem0_lock: asyncio.Lock | None = None  # 惰性初始化（模块导入时无 event loop）
 
 
 async def _get_mem0():
     """获取 Mem0 AsyncMemory 实例（单例 + 延迟初始化，asyncio.Lock 防止并发初始化）"""
-    global _mem0_instance, _mem0_available
+    global _mem0_instance, _mem0_available, _mem0_lock
 
     # 快路径：已初始化完成
     if _mem0_available is False:
         return None
     if _mem0_instance is not None:
         return _mem0_instance
+
+    # 惰性创建锁（必须在 event loop 内创建）
+    if _mem0_lock is None:
+        _mem0_lock = asyncio.Lock()
 
     async with _mem0_lock:
         # 二次检查（另一个协程可能已完成初始化）

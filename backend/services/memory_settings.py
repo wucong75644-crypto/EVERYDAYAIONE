@@ -102,15 +102,18 @@ class MemorySettingsService:
         return s.get("memory_enabled", False)
 
     async def _create_default_settings(self, user_id: str) -> Dict[str, Any]:
-        """创建默认记忆设置"""
+        """创建默认记忆设置（upsert 防并发重复插入）"""
         try:
             result = (
                 self.db.table("user_memory_settings")
-                .insert({
-                    "user_id": user_id,
-                    "memory_enabled": settings.memory_enabled_default,
-                    "retention_days": 7,
-                })
+                .upsert(
+                    {
+                        "user_id": user_id,
+                        "memory_enabled": settings.memory_enabled_default,
+                        "retention_days": 7,
+                    },
+                    on_conflict="user_id",
+                )
                 .execute()
             )
             if result.data:
