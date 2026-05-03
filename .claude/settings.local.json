@@ -1937,7 +1937,8 @@
       "Bash(./git-push.sh \"fix: toolbox magicType按图表类型智能显示——饼图/漏斗/雷达等不显示折线柱状切换\")",
       "Bash(./git-push.sh \"feat: ChartBlock重写——自定义图表类型切换（bar↔line↔pie数据结构自动转换）+ dataView表格化\")",
       "Bash(./git-push.sh \"fix: ChartBlock移除未使用的chartType解构\")",
-      "Bash(./git-push.sh \"feat: ChartBlock统一工具栏+legend全类型支持——切换/保存/数据视图/还原合并一行，柱状折线拆series支持单项隐藏\")"
+      "Bash(./git-push.sh \"feat: ChartBlock统一工具栏+legend全类型支持——切换/保存/数据视图/还原合并一行，柱状折线拆series支持单项隐藏\")",
+      "Bash(./git-push.sh \"fix: Toolbar移除未使用的originalType参数\")"
     ],
     "additionalDirectories": [
       "/tmp"
