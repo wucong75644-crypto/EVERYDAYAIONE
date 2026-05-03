@@ -190,66 +190,44 @@ data_query 只支持单文件查询，不能跨文件关联。涉及多个文件
 
 ### code_execute — Python 计算环境
 
-有状态沙盒：同一对话内变量跨调用保留。
+有状态沙盒，变量跨调用保留。执行超时 120 秒。工作目录为用户工作区。
 
-何时使用：
-- 浏览工作区文件、了解数据结构（os.listdir + pd.read + df.shape）
-- 对数据做计算、统计、可视化、格式转换
-- 涉及多个文件的对比、匹配、合并、JOIN（data_query 只支持单文件）
-- 数据清洗（去空格、统一格式、模糊匹配）
-- 搜索文件（os.walk + 文件名/内容匹配）
-- 读写 Word/PPT（python-docx / python-pptx）
+可用库：pd, plt, Path, math, json, datetime, Decimal, Counter, io, docx, pptx, openpyxl, PyPDF2
+os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：copy/move）
+环境变量：WORKSPACE_DIR、STAGING_DIR、OUTPUT_DIR
 
-不适用：
-- 读 PDF 内容 → file_read（自动分页提取、扫描件检测）
-- 看图片内容 → file_read（沙盒无法进行视觉分析，必须用 file_read）
-- 从超过 10 万行的大文件中聚合筛选 → data_query（DuckDB 恒定内存）
-- 查询 ERP 业务数据 → erp_agent
-
-核心能力：
-- 可用库：pd, plt, Path, math, json, datetime, Decimal, Counter, io, docx, pptx
-- os 模块：os.listdir / os.walk / os.stat / os.path.*（路径限制在工作区内）
-- shutil 模块：shutil.copy / shutil.move
-- 变量在对话期间持续存在
-- 最终给用户的文件写到 OUTPUT_DIR，平台自动检测上传
-- 中间计算结果写到 STAGING_DIR
-- 图表用 ECharts JSON 配置（.echart.json），不要用 plt/matplotlib：
-  option = {"title":{"text":"标题"}, "xAxis":{...}, "series":[{...}]}
-  json.dump(option, open(OUTPUT_DIR+'/图.echart.json','w'), ensure_ascii=False)
+文件操作：
+- 工作区文件直接用文件名读取：pd.read_excel('报表.xlsx')、pd.read_csv('数据.csv')
+- os.listdir('.') 浏览目录，os.walk('.') 递归遍历
+- 生成文件写到 OUTPUT_DIR，平台自动检测上传
+- 中间数据写到 STAGING_DIR
+- 图表用 ECharts JSON（.echart.json），不要用 plt/matplotlib
 - 写 Excel 用 engine='xlsxwriter'
-- 用 print() 输出文本结果
-
-典型用法——一步到位发现文件并分析：
-  import os
-  files = os.listdir('.')
-  print("工作区文件:", files)
-  for f in files:
-      if f.endswith(('.xlsx', '.csv')):
-          df = pd.read_excel(f) if f.endswith('.xlsx') else pd.read_csv(f)
-          print(f"\n{f}: {df.shape[0]}行x{df.shape[1]}列, 列: {df.columns.tolist()}")
-
-注意事项：
-- os 只能访问工作区内的文件，越界报 PermissionError
-- 删除操作需先用 ask_user 确认，确认后在 confirm_delete 参数传入文件名
-- read_excel/read_csv 默认截断 2000 行。截断时会提示，大数据请用 data_query 或 nrows=None
-- 中文 CSV 读取报 UnicodeDecodeError 时，尝试 encoding='gbk' 或 encoding='gb18030'
-- 禁止 import sys/subprocess
-- 环境可能因超时被重置，如果变量不存在请重新读取文件
-
-### data_query — 数据查询与导出
-
-查询 staging 文件或工作区数据文件的内容，支持探索结构、SQL 查询和文件导出。
-
-何时使用：
-- 需要了解一个数据文件有哪些列、多少行时（不传 sql）
-- 收到 staging 文件引用后，需要用 SQL 提取特定数据时
-- 需要从大文件中筛选子集供 code_execute 后续操作时
-- 需要将查询结果直接导出为 Excel 时（传 export 参数）
 
 不适用：
-- 跨文件对比、匹配、合并 → 用 code_execute
-- 对数据做计算、可视化 → 用 code_execute
-- 查询 ERP 业务数据 → 用 erp_agent
+- 读 PDF/图片内容 → file_read（文本提取/视觉分析）
+- 超大文件聚合（截断提示出现时）→ data_query（DuckDB 恒定内存）
+- 查 ERP 业务数据 → erp_agent
+
+限制：
+- 禁止 import sys/subprocess
+- os 只能访问工作区内文件，越界 PermissionError
+- 删除操作需 ask_user 确认后在 confirm_delete 传入文件名
+- 环境可能因超时重置，变量不存在时重新读取
+
+### data_query — 大数据查询与导出
+
+DuckDB SQL 引擎，恒定内存处理超大文件。
+
+何时使用：
+- code_execute 截断提示出现时，用 SQL 聚合筛选超大文件
+- staging 文件的 SQL 查询
+- 直接导出为 Excel（传 export 参数）
+
+不适用：
+- 跨文件对比、匹配、合并 → code_execute
+- 计算、可视化 → code_execute
+- 查 ERP 业务数据 → erp_agent
 
 核心能力：
 - file 传文件名（如 "trade_123.parquet" 或 "销售报表.xlsx"）

@@ -488,6 +488,47 @@ class TestPandasTruncationHint:
         assert "店铺" in result.summary
         assert "Unnamed" not in result.summary
 
+    @pytest.mark.asyncio
+    async def test_csv_gbk_auto_encoding(self, executor, ws):
+        """GBK 编码 CSV 自动检测"""
+        csv_path = Path(ws["workspace"], "gbk.csv")
+        csv_path.write_bytes("店铺,金额\n旗舰店,5000\n京东,3000\n".encode("gbk"))
+
+        result = await executor.execute(
+            "df = pd.read_csv('gbk.csv')\nprint(df.columns.tolist())",
+            "读GBK",
+        )
+        assert "店铺" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_csv_tsv_auto_delimiter(self, executor, ws):
+        """Tab 分隔 CSV 自动检测分隔符"""
+        tsv_path = Path(ws["workspace"], "data.csv")
+        tsv_path.write_text("店铺\t金额\t利润\n旗舰店\t5000\t2000\n")
+
+        result = await executor.execute(
+            "df = pd.read_csv('data.csv')\nprint(len(df.columns))",
+            "读TSV",
+        )
+        assert "3" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_excel_unnamed_columns_cleaned(self, executor, ws):
+        """合并单元格产生的空 Unnamed 列自动清理"""
+        import pandas as _pd
+        # 模拟带空列的 Excel
+        data = [["店铺", None, "金额", None, "利润"],
+                ["旗舰店", None, 5000, None, 2000]]
+        df_raw = _pd.DataFrame(data)
+        xlsx_path = Path(ws["workspace"], "merged.xlsx")
+        df_raw.to_excel(str(xlsx_path), index=False, header=False)
+
+        result = await executor.execute(
+            "df = pd.read_excel('merged.xlsx')\nprint(df.columns.tolist())\nprint(len(df.columns))",
+            "读合并表",
+        )
+        assert "Unnamed" not in result.summary
+
 
 # ============================================================
 # 5. 超时和进程管理
