@@ -326,3 +326,54 @@ class TestRegisterFilesFromOutput:
         candidate = os.path.join(ws, "nonexistent.xlsx")
         if not os.path.exists(candidate):
             assert cache.resolve("nonexistent.xlsx") is None
+
+
+# ============ Staging 隔离测试 ============
+
+
+class TestStagingIsolation:
+    """staging 目录隔离：父目录禁止，当前会话放行，其他会话禁止"""
+
+    @pytest.fixture
+    def staging_workspace(self, tmp_path):
+        ws = tmp_path / "workspace"
+        conv_id = "conv_current"
+        staging_conv = ws / "staging" / conv_id
+        staging_other = ws / "staging" / "conv_other"
+        output = ws / "下载"
+        for d in (ws, staging_conv, staging_other, output):
+            d.mkdir(parents=True)
+        (staging_conv / "data.parquet").write_text("current")
+        (staging_other / "secret.parquet").write_text("other")
+        old_cwd = os.getcwd()
+        os.chdir(str(ws))
+        yield {
+            "ws": str(ws),
+            "staging": str(staging_conv),
+            "output": str(output),
+        }
+        os.chdir(old_cwd)
+
+    def test_staging_parent_blocked(self, staging_workspace):
+        """listing staging/ 父目录应被拒绝"""
+        scoped_os, _ = build_scoped_os(
+            staging_workspace["ws"], staging_workspace["staging"], staging_workspace["output"],
+        )
+        with pytest.raises(PermissionError):
+            scoped_os.listdir("staging")
+
+    def test_staging_other_conv_blocked(self, staging_workspace):
+        """访问其他会话的 staging 子目录应被拒绝"""
+        scoped_os, _ = build_scoped_os(
+            staging_workspace["ws"], staging_workspace["staging"], staging_workspace["output"],
+        )
+        with pytest.raises(PermissionError):
+            scoped_os.listdir("staging/conv_other")
+
+    def test_staging_current_conv_allowed(self, staging_workspace):
+        """当前会话的 staging 子目录应允许访问"""
+        scoped_os, _ = build_scoped_os(
+            staging_workspace["ws"], staging_workspace["staging"], staging_workspace["output"],
+        )
+        files = scoped_os.listdir("staging/conv_current")
+        assert "data.parquet" in files

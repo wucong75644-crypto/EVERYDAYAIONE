@@ -63,6 +63,71 @@ class ChatContextMixin:
             )
         return filtered
 
+    async def _build_workspace_content(
+        self,
+        workspace_files: List[Dict[str, Any]],
+        user_id: str,
+    ) -> str:
+        """读取工作区文件内容，按类型分流注入。
+
+        - 文本文件（csv/txt/md/json/py 等）：直接读内容注入
+        - 图片/PDF：已通过 file_urls 多模态传递，这里只标注
+        - 其他二进制（xlsx/docx 等）：提示 AI 用 file_read 工具处理
+        """
+        from pathlib import Path as _Path
+        from core.config import get_settings
+        from services.file_executor import FileExecutor
+
+        _MULTIMODAL_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+        _TEXT_EXTS = {
+            ".txt", ".csv", ".tsv", ".json", ".yaml", ".yml", ".xml",
+            ".md", ".log", ".py", ".js", ".ts", ".html", ".css", ".sql",
+        }
+        _MAX_TEXT_SIZE = 100 * 1024  # 文本注入上限 100KB
+
+        settings = get_settings()
+        org_id = getattr(self, "org_id", None)
+        executor = FileExecutor(
+            workspace_root=settings.file_workspace_root,
+            user_id=user_id,
+            org_id=org_id,
+        )
+
+        parts: list[str] = []
+
+        for f in workspace_files:
+            wp = f.get("workspace_path", "")
+            ext = _Path(wp).suffix.lower()
+
+            if ext in _MULTIMODAL_EXTS:
+                # 图片/PDF 已通过多模态 content 传递
+                parts.append(f"[文件已附加] {wp}")
+                continue
+
+            if ext in _TEXT_EXTS:
+                # 文本文件：直接读内容注入
+                try:
+                    target = executor.resolve_safe_path(wp)
+                    if target.exists() and target.stat().st_size <= _MAX_TEXT_SIZE:
+                        text = target.read_text(encoding="utf-8", errors="replace")
+                        parts.append(f"── {wp} ──\n{text}\n── 文件结束 ──")
+                    elif target.exists():
+                        parts.append(f"[文件过大] {wp} — 请用 file_read 工具分段读取")
+                    else:
+                        parts.append(f"[文件不存在] {wp}")
+                except Exception as e:
+                    logger.warning(f"Read workspace file failed | path={wp} | error={e}")
+                    parts.append(f"[读取失败] {wp} — 请用 file_read 工具重试")
+                continue
+
+            # 二进制文件（xlsx/docx 等）：提示用工具
+            parts.append(f"[工作区文件] {wp} — 请用 file_read 或 code_execute 工具读取分析")
+
+        if not parts:
+            return ""
+
+        return "用户附加的工作区文件：\n\n" + "\n\n".join(parts)
+
     async def _build_llm_messages(
         self,
         content: List[ContentPart],
@@ -89,7 +154,22 @@ class ChatContextMixin:
         file_urls = self._extract_file_urls(content)
         workspace_files = self._extract_workspace_files(content)
 
-        # workspace 文件的 CDN URL 保留在 file_urls 中，与 PDF 等文档一样作为多模态内容直接传给大模型
+        # workspace 文件按类型分流：
+        # - 图片/PDF → 保留在 file_urls 中，作为多模态内容直传大模型
+        # - 文本文件 → 服务端读取内容，注入 prompt（用户 @ 了就是要立即看内容）
+        # - 其他二进制 → 提示 AI 用 file_read 工具处理
+        if workspace_files:
+            _MULTIMODAL_EXTS = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+            ws_urls_to_remove = set()
+            for f in workspace_files:
+                ext = (f.get("workspace_path", "").rsplit(".", 1)[-1] if "." in f.get("workspace_path", "") else "").lower()
+                if f".{ext}" not in _MULTIMODAL_EXTS:
+                    # 非图片/PDF：从 file_urls 移除（不能作为 image_url 发送）
+                    url = f.get("url")
+                    if url:
+                        ws_urls_to_remove.add(url)
+            if ws_urls_to_remove:
+                file_urls = [u for u in file_urls if u not in ws_urls_to_remove]
 
         # ─── 并行获取：记忆 / 摘要 / 历史 / 知识库（全部独立，无交叉依赖）───
         if prefetched_memory is not None:
@@ -170,15 +250,13 @@ class ChatContextMixin:
         # schema 智能过滤注入（B2）— 从对话级 registry 中筛选相关 schema
         await self._inject_schema_context(messages, conversation_id, text_content)
 
-        # 工作区文件提示注入（只展示静态信息：文件名/大小/类型/时间/路径）
+        # 工作区文件内容注入：文本文件直接读内容，二进制文件提示用工具
         if workspace_files:
-            from services.file_metadata_extractor import format_workspace_files_prompt
-            ws_prompt = format_workspace_files_prompt(workspace_files, metadata_map)
+            ws_prompt = await self._build_workspace_content(workspace_files, user_id)
             if ws_prompt:
                 messages.append({"role": "system", "content": ws_prompt})
                 logger.debug(
                     f"Workspace files injected | count={len(workspace_files)} | "
-                    f"metadata_count={len(metadata_map)} | "
                     f"paths={[f['workspace_path'] for f in workspace_files]}"
                 )
 
@@ -735,9 +813,20 @@ class ChatContextMixin:
         if isinstance(content, list):
             texts = []
             for part in content:
-                if isinstance(part, dict) and part.get("type") == "text":
+                if not isinstance(part, dict):
+                    continue
+                ptype = part.get("type")
+                if ptype == "text":
                     text = part.get("text", "").strip()
                     if text:
                         texts.append(text)
+                elif ptype == "tool_step" and part.get("status") in ("completed", "error"):
+                    summary = (part.get("summary") or "").strip()[:500]
+                    if summary:
+                        texts.append(f"[工具执行: {part.get('tool_name', '')}] {summary}")
+                elif ptype == "tool_result":
+                    result_text = (part.get("text") or "").strip()[:500]
+                    if result_text:
+                        texts.append(f"[工具结论: {part.get('tool_name', '')}] {result_text}")
             return " ".join(texts)
         return ""

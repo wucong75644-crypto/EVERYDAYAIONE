@@ -210,6 +210,10 @@ class FileExecutor(FileReadExtensionsMixin):
             if part in _BLOCKED_NAMES:
                 raise PermissionError(f"安全限制：不允许访问包含 {part} 的路径")
 
+        # staging 目录由 data_query/code_execute 内部管理，file 工具不可直接访问
+        if rel_parts.parts and rel_parts.parts[0] == "staging":
+            raise PermissionError("安全限制：staging 目录由系统管理，不可直接访问")
+
         return target
 
     def generate_unique_filename(self, filename: str) -> str:

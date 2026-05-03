@@ -1961,7 +1961,9 @@
       "Bash(./git-push.sh \"fix: AI提示词按钮移到输入框内部——textarea左侧同行显示，删除输入框外的独立按钮\")",
       "Bash(./git-push.sh \"feat: @提及交互优化——输入@立即显示最近文件列表\\(按修改时间倒序\\)，继续输入模糊搜索\")",
       "Bash(./git-push.sh \"fix: 任务取消信号闭环+ImageAgent崩溃修复\")",
-      "WebFetch(domain:actions.zapier.com)"
+      "WebFetch(domain:actions.zapier.com)",
+      "Bash(./venv/bin/python -m pytest tests/test_chat_context.py::TestExtractTextFromContent -v)",
+      "Bash(./venv/bin/python -m pytest tests/test_scoped_os.py -v)"
     ],
     "additionalDirectories": [
       "/tmp"
