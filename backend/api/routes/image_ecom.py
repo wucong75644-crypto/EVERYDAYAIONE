@@ -32,7 +32,7 @@ class EnhancePromptRequest(BaseModel):
     image_urls: list[str] = Field(default_factory=list, description="上传的图片CDN URLs")
     platform: str = Field(default="taobao", description="目标平台")
     style: Optional[str] = Field(default=None, description="风格预设 key")
-    conversation_id: str = Field(..., description="会话ID（风格持久化用）")
+    conversation_id: str = Field(default="", description="会话ID（风格持久化用，新对话可为空）")
 
 
 class RetryImageRequest(BaseModel):
@@ -168,17 +168,17 @@ async def enhance_prompt(
     platform = builder.detect_platform(req.text, req.platform)
 
     # 3. 风格管理：三模式自动切换（create/reuse/update）
-    # 归属校验：conversation 必须属于当前用户（防越权读写 style_directive）
+    # conversation_id 为空时跳过风格管理（新对话还没创建 conversation 记录）
     existing_style: str | None = None
-    try:
-        row = db.table("conversations").select("image_style_directive").eq(
-            "id", req.conversation_id,
-        ).eq("user_id", user_id).maybe_single().execute()
-        if not row or not row.data:
-            return {"error": "对话不存在或无权访问", "success": False}
-        existing_style = row.data.get("image_style_directive")
-    except Exception as e:
-        logger.warning(f"读取 style_directive 失败: {e}")
+    if req.conversation_id and req.conversation_id.strip():
+        try:
+            row = db.table("conversations").select("image_style_directive").eq(
+                "id", req.conversation_id,
+            ).eq("user_id", user_id).maybe_single().execute()
+            if row and row.data:
+                existing_style = row.data.get("image_style_directive")
+        except Exception as e:
+            logger.warning(f"读取 style_directive 失败: {e}")
 
     if not existing_style:
         style_mode = "create"
@@ -250,16 +250,17 @@ async def enhance_prompt(
     # 7. 解析结构化图片任务
     images = _parse_image_tasks(response.content)
 
-    # 8. 提取并持久化 style_directive
+    # 8. 提取并持久化 style_directive（conversation_id 为空时跳过写入）
     new_style = existing_style
     if style_mode in ("create", "update"):
         new_style = _extract_style_directive(response.content)
-        try:
-            db.table("conversations").update(
-                {"image_style_directive": new_style}
-            ).eq("id", req.conversation_id).eq("user_id", user_id).execute()
-        except Exception as e:
-            logger.warning(f"持久化 style_directive 失败: {e}")
+        if req.conversation_id and req.conversation_id.strip():
+            try:
+                db.table("conversations").update(
+                    {"image_style_directive": new_style}
+                ).eq("id", req.conversation_id).eq("user_id", user_id).execute()
+            except Exception as e:
+                logger.warning(f"持久化 style_directive 失败: {e}")
 
     logger.info(
         f"enhance-prompt | user={user_id} | category={category} | platform={platform} "

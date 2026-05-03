@@ -69,6 +69,10 @@ class WebSocketManager(RedisPubSubMixin):
         # key = task_id → str（打断消息内容）
         self._steer_messages: Dict[str, str] = {}
 
+        # 用户取消机制（Cancel）— 硬停止，区别于 steer 的软打断
+        # key = task_id → Event（取消信号）
+        self._cancel_signals: Dict[str, asyncio.Event] = {}
+
         # Redis Pub/Sub
         self._worker_id = f"{os.getpid()}-{uuid.uuid4().hex[:6]}"
         self._init_redis_state()
@@ -385,6 +389,37 @@ class WebSocketManager(RedisPubSubMixin):
         """清理打断监听（工具循环结束时调用）"""
         self._steer_signals.pop(task_id, None)
         self._steer_messages.pop(task_id, None)
+
+    # ================================================================
+    # 用户取消（Cancel）— 硬停止 Agent 循环
+    # ================================================================
+
+    def register_cancel_listener(self, task_id: str) -> None:
+        """注册取消监听（工具循环开始时调用）"""
+        self._cancel_signals[task_id] = asyncio.Event()
+
+    def is_cancelled(self, task_id: str) -> bool:
+        """非阻塞检查是否已被用户取消"""
+        event = self._cancel_signals.get(task_id)
+        return bool(event and event.is_set())
+
+    def cancel_task(self, task_id: str) -> bool:
+        """触发取消信号（cancel API 调用）
+
+        Returns:
+            True = 找到运行中的任务并发送了取消信号
+        """
+        event = self._cancel_signals.get(task_id)
+        if event:
+            event.set()
+            logger.info(f"Cancel signal sent | task_id={task_id}")
+            return True
+        logger.warning(f"Cancel signal miss (task not running) | task_id={task_id}")
+        return False
+
+    def unregister_cancel_listener(self, task_id: str) -> None:
+        """清理取消监听（工具循环结束时调用）"""
+        self._cancel_signals.pop(task_id, None)
 
     # ================================================================
     # 心跳与清理

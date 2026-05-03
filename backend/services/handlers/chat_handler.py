@@ -496,10 +496,15 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         f"tools={[t['function']['name'] for t in core_tools]}"
                     )
 
-            # ── 打断监听注册 ──
+            # ── 打断 & 取消监听注册 ──
             ws_manager.register_steer_listener(task_id)
+            ws_manager.register_cancel_listener(task_id)
 
             while not _budget.stop_reason:
+                # ── 取消检查点：用户点了停止按钮 ──
+                if ws_manager.is_cancelled(task_id):
+                    logger.info(f"Task cancelled by user | task={task_id}")
+                    break
                 _budget.use_turn()
                 turn = _budget.turns_used - 1  # 0-based for logging
                 # 每轮动态构建工具列表：核心工具 + 已发现的工具（域过滤兜底）
@@ -915,6 +920,11 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     )
                     break
 
+                # ── 取消检查点：工具执行完后再检查一次 ──
+                if ws_manager.is_cancelled(task_id):
+                    logger.info(f"Task cancelled by user (post-tool) | task={task_id}")
+                    break
+
                 # ── 打断检查点：用户在工具执行期间发了新消息 ──
                 _steer_msg = ws_manager.check_steer(task_id)
                 if _steer_msg:
@@ -1136,8 +1146,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
         finally:
             if self._adapter:
                 await self._adapter.close()
-            # 清理打断监听
+            # 清理打断 & 取消监听
             ws_manager.unregister_steer_listener(task_id)
+            ws_manager.unregister_cancel_listener(task_id)
             # 清理截断暂存的大结果（请求级生命周期）
             from services.agent.tool_result_envelope import clear_persisted, clear_staging_dir
             clear_persisted()
