@@ -537,27 +537,38 @@ class DataQueryExecutor:
                 return AgentResult(summary=upload_text, status="success")
         return result
 
+    def _create_export_connection(self, need_excel: bool = False) -> duckdb.DuckDBPyConnection:
+        """创建导出专用连接（扩展必须在 lock_configuration 之前加载）"""
+        con = duckdb.connect(":memory:")
+        con.execute("SET memory_limit = '256MB'")
+        con.execute("SET threads = 2")
+        # xlsx 扩展必须在 lock 之前加载
+        if need_excel:
+            try:
+                con.execute("LOAD excel")
+            except Exception:
+                con.execute("INSTALL excel; LOAD excel;")
+        ws_escaped = self._workspace_dir.replace("'", "''")
+        con.execute(f"SET allowed_directories = ['{ws_escaped}']")
+        con.execute("SET enable_external_access = false")
+        con.execute("SET lock_configuration = true")
+        return con
+
     def _export_sync(
         self, query_path: str, sql: str, export_filename: str,
     ) -> AgentResult:
-        con = self._create_safe_connection()
+        need_excel = export_filename.endswith(".xlsx")
         try:
-            # xlsx 导出使用 DuckDB 原生 excel 扩展（不依赖 spatial/GDAL）
-            if export_filename.endswith(".xlsx"):
-                try:
-                    con.execute("LOAD excel")
-                except Exception:
-                    try:
-                        con.execute("INSTALL excel; LOAD excel;")
-                    except Exception as e:
-                        logger.warning(f"excel extension load failed: {e}")
-                        return AgentResult(
-                            summary="xlsx 导出需要 DuckDB excel 扩展加载失败，请改用 .csv 格式导出",
-                            status="error",
-                            error_message=f"excel extension unavailable: {e}",
-                            metadata={"retryable": False},
-                        )
-
+            con = self._create_export_connection(need_excel=need_excel)
+        except Exception as e:
+            logger.warning(f"excel extension load failed: {e}")
+            return AgentResult(
+                summary="xlsx 导出需要 DuckDB excel 扩展，加载失败，请改用 .csv 格式导出",
+                status="error",
+                error_message=f"excel extension unavailable: {e}",
+                metadata={"retryable": False},
+            )
+        try:
             self._create_view(con, query_path)
 
             output_dir = Path(self._output_dir)
