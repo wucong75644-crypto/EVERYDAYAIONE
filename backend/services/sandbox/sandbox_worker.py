@@ -409,11 +409,11 @@ def sandbox_worker_entry(
         # 5. 执行代码
         result = _exec_code(code, sandbox_globals, timeout)
 
-        # 6. 路径隐藏
+        # 6. 路径隐藏（替换为变量名，LLM 可直接用 OUTPUT_DIR/WORKSPACE_DIR 引用）
         if result and output_dir:
-            result = result.replace(output_dir, "下载")
+            result = result.replace(output_dir, "OUTPUT_DIR")
         if result and workspace_dir:
-            result = result.replace(workspace_dir, "工作区")
+            result = result.replace(workspace_dir, "WORKSPACE_DIR")
 
         # 7. 截断
         result = truncate_result(result, max_result_chars)

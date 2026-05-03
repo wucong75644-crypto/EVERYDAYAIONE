@@ -330,14 +330,14 @@ class TestSecurityEndToEnd:
         """真实路径在输出中被替换为虚拟路径"""
         result = await executor.execute("print(WORKSPACE_DIR)")
         assert str(ws["workspace"]) not in result.summary
-        assert "工作区" in result.summary
+        assert "WORKSPACE_DIR" in result.summary
 
     @pytest.mark.asyncio
     async def test_output_dir_hidden(self, executor, ws):
-        """OUTPUT_DIR 路径在输出中被替换"""
+        """OUTPUT_DIR 路径在输出中被替换为变量名"""
         result = await executor.execute("print(OUTPUT_DIR)")
         assert str(ws["output"]) not in result.summary
-        assert "下载" in result.summary
+        assert "OUTPUT_DIR" in result.summary
 
 
 # ============================================================

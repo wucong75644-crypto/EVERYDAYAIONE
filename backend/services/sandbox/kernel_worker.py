@@ -136,11 +136,11 @@ def _reset_security(
 
 
 def _hide_paths(result: str, output_dir: str, workspace_dir: str) -> str:
-    """隐藏绝对路径（与 sandbox_worker.py 一致）"""
+    """路径替换为变量名（LLM 可直接用 OUTPUT_DIR/WORKSPACE_DIR 引用文件）"""
     if result and output_dir:
-        result = result.replace(output_dir, "下载")
+        result = result.replace(output_dir, "OUTPUT_DIR")
     if result and workspace_dir:
-        result = result.replace(workspace_dir, "工作区")
+        result = result.replace(workspace_dir, "WORKSPACE_DIR")
     return result
 
 
