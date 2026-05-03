@@ -85,7 +85,6 @@ function injectToolbox(option: Record<string, unknown>): Record<string, unknown>
     toolbox: {
       feature: {
         saveAsImage: { title: '保存图片' },
-        dataView: { title: '数据视图', readOnly: true },
         magicType: { type: ['line', 'bar'], title: { line: '折线图', bar: '柱状图' } },
         restore: { title: '还原' },
       },
