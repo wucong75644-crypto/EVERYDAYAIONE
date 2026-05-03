@@ -143,8 +143,23 @@ class MessageMixin:
     def _check_idempotency(
         self, task: Dict[str, Any], task_id: str
     ) -> Optional[Message]:
-        """幂等性检查：任务已终态则返回已有消息，否则返回 None"""
+        """幂等性检查：任务已终态则返回已有消息，否则返回 None
+
+        特殊情况：用户取消（failed + error_message='用户取消了任务'）时，
+        cancel API 只改了 task status，消息内容可能还是空的占位符。
+        此时应允许 on_complete 写入部分结果，而非跳过。
+        """
         if task.get('status') not in ('completed', 'failed', 'cancelled'):
+            return None
+
+        # 用户取消场景：允许 on_complete 写入部分结果
+        if (
+            task.get('status') == 'failed'
+            and task.get('error_message') == '用户取消了任务'
+        ):
+            logger.info(
+                f"User-cancelled task, allowing content upsert | task_id={task_id}"
+            )
             return None
 
         message_id = task["placeholder_message_id"]
