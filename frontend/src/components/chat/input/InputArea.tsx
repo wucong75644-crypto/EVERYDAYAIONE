@@ -237,11 +237,27 @@ export default function InputArea({
   const handleStop = useCallback(() => {
     if (!streamingMessageId || !conversationId) return;
 
-    // 1. 标记消息完成（防止后续 WS 事件重复处理）
-    useMessageStore.getState().updateMessage(streamingMessageId, { status: 'completed' });
-    // 2. 清理流式状态
-    useMessageStore.getState().completeStreaming(conversationId);
-    // 3. 后端取消任务（fire-and-forget）
+    const store = useMessageStore.getState();
+
+    // 1. 保留未 commit 的 thinking 内容（取消时 thinking 可能还没写入 content blocks）
+    const thinkingText = store.streamingThinking.get(conversationId);
+    if (thinkingText) {
+      // 计算已 commit 的 thinking 长度，只保存增量部分
+      const msg = store.getMessage(streamingMessageId);
+      const committedLen = msg?.content
+        ?.filter((p: Record<string, unknown>) => p.type === 'thinking')
+        .reduce((sum: number, p: Record<string, unknown>) => sum + ((p.text as string)?.length || 0), 0) ?? 0;
+      const livePart = thinkingText.slice(committedLen);
+      if (livePart.trim()) {
+        store.appendContentBlock(conversationId, { type: 'thinking', text: livePart });
+      }
+    }
+
+    // 2. 标记消息完成（防止后续 WS 事件重复处理）
+    store.updateMessage(streamingMessageId, { status: 'completed' });
+    // 3. 清理流式状态
+    store.completeStreaming(conversationId);
+    // 4. 后端取消任务（fire-and-forget）
     cancelTaskByMessageId(streamingMessageId).catch((err) => {
       logger.error('inputArea', '取消任务失败', err);
     });
