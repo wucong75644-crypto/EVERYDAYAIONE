@@ -8,9 +8,10 @@ AST 预验证 + 模块/函数黑名单 + 结果截断。
 import ast
 from typing import List, Optional
 
-# 禁止导入的模块（文件系统/进程/网络/编译）
+# 禁止导入的模块（进程/网络/编译）
+# os/shutil 已移出 — 运行时走 scoped_os/scoped_shutil（见 scoped_os.py）
 _BLOCKED_MODULES = frozenset({
-    "os", "sys", "subprocess", "shutil",
+    "sys", "subprocess",
     "socket", "http", "urllib", "requests", "httpx",
     "ctypes", "importlib", "code", "codeop", "compileall",
     "multiprocessing", "threading", "signal", "resource",

@@ -46,6 +46,7 @@ export function useTextMessageHandler({
     currentConversationId: string,
     imageUrls: string[] | null = null,
     files: { url: string; name: string; mime_type: string; size: number; workspace_path?: string }[] | null = null,
+    extraParams: Record<string, unknown> | null = null,
   ) => {
     try {
       // 构建 content（优先级：files > images > text）
@@ -82,6 +83,7 @@ export function useTextMessageHandler({
           top_p: topP,
           top_k: topK,
           max_output_tokens: maxOutputTokens,
+          ...extraParams,  // 电商图模式: image_task_meta 等
         },
         subscribeTask: subscribeTaskWithMapping,
       });

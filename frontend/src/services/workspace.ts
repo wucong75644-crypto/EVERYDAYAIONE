@@ -128,6 +128,20 @@ export function renameWorkspaceItem(
   });
 }
 
+/** 搜索 workspace 文件（递归关键词匹配文件名） */
+export function searchWorkspace(q: string, limit = 20): Promise<WorkspaceSearchResponse> {
+  return request<WorkspaceSearchResponse>({
+    method: 'GET',
+    url: '/files/workspace/search',
+    params: { q, limit },
+  });
+}
+
+export interface WorkspaceSearchResponse {
+  items: (WorkspaceFileItem & { workspace_path?: string })[];
+  total: number;
+}
+
 /** 移动文件到目标目录 */
 export function moveWorkspaceItem(
   srcPath: string,

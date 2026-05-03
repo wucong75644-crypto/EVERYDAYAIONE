@@ -241,10 +241,23 @@ def _apply_resource_limits():
 
 def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str) -> Dict[str, Any]:
     """构建受限执行环境（在子进程中调用）"""
-    import os as _os
     import builtins as _builtins
+    from services.sandbox.scoped_os import build_scoped_os, build_scoped_shutil
+    from services.sandbox.sandbox_constants import make_restricted_import
 
-    g: Dict[str, Any] = {"__builtins__": SAFE_BUILTINS}
+    # 构建 scoped os/shutil（路径白名单 + 操作限制）
+    scoped_os, check_path = build_scoped_os(workspace_dir, staging_dir, output_dir)
+    scoped_shutil = build_scoped_shutil(check_path)
+    scoped_import = make_restricted_import({"os": scoped_os, "shutil": scoped_shutil})
+
+    # builtins 必须 copy 后替换 __import__（不污染全局 SAFE_BUILTINS）
+    safe = SAFE_BUILTINS.copy()
+    safe["__import__"] = scoped_import
+    g: Dict[str, Any] = {"__builtins__": safe}
+
+    # 注入 scoped os/shutil
+    g["os"] = scoped_os
+    g["shutil"] = scoped_shutil
 
     # 标准库
     g["math"] = math
@@ -265,14 +278,20 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
         _DEFAULT_NROWS = 2000
 
         def _wrap_pd_reader(original_fn):
-            """包装 pd.read_excel/read_csv，默认 nrows=2000"""
+            """包装 pd.read_excel/read_csv，默认 nrows=2000 + 截断提示"""
             import functools
 
             @functools.wraps(original_fn)
             def wrapper(*args, **kwargs):
-                # 用户未指定 nrows 时，默认限制 2000 行
                 if "nrows" not in kwargs:
                     kwargs["nrows"] = _DEFAULT_NROWS
+                    result = original_fn(*args, **kwargs)
+                    if hasattr(result, "__len__") and len(result) >= _DEFAULT_NROWS:
+                        print(
+                            f"\u26a0\ufe0f 数据已截断到前 {_DEFAULT_NROWS} 行。"
+                            f"如需全量分析，用 data_query SQL 聚合或传 nrows=None。"
+                        )
+                    return result
                 # 用户显式传 nrows=None → 全读（移除限制）
                 elif kwargs["nrows"] is None:
                     del kwargs["nrows"]
@@ -397,6 +416,7 @@ def sandbox_worker_entry(
     output_dir: str,
     timeout: float,
     max_result_chars: int,
+    confirm_delete: list | None = None,
 ):
     """子进程入口：隔离环境中执行用户代码
 
@@ -408,6 +428,7 @@ def sandbox_worker_entry(
         output_dir: 输出目录
         timeout: 执行超时（秒）
         max_result_chars: 结果最大字符数
+        confirm_delete: 用户已确认可删除的文件名列表
     """
     import os
     from services.sandbox.validators import validate_code
@@ -439,6 +460,12 @@ def sandbox_worker_entry(
 
         # 4. 构建沙盒环境
         sandbox_globals = _build_sandbox_globals(workspace_dir, staging_dir, output_dir)
+
+        # 4.5 设置本次执行允许删除的文件
+        if confirm_delete:
+            scoped_os = sandbox_globals.get("os")
+            if scoped_os and hasattr(scoped_os, "_set_confirmed_deletes"):
+                scoped_os._set_confirmed_deletes(confirm_delete)
 
         # 5. 执行代码
         result = _exec_code(code, sandbox_globals, timeout)

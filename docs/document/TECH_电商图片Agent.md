@@ -1,23 +1,30 @@
 # TECH_电商图片Agent 技术方案
 
-> 版本：v4.3 | 日期：2026-05-01
+> 版本：v4.5 | 日期：2026-05-03
 
 ## 一、需求概述
 
-新增电商图片生成能力，包含**前端AI提示词增强 + 后端ImageAgent生成**两部分。
+新增**电商图模式**，在现有模式选择器中新增入口，与现有图生图/文生图/视频模式并列、互不冲突。
 
 **核心体验**：
-1. 用户在输入框切换到"图生图/文生图"模式
+1. 用户在模式选择器中切换到"电商图模式"
 2. 上传商品图 + 写简短描述
 3. 点击 [AI提示词] 按钮 → AI自动生成专业提示词 → 填入输入框
 4. 用户可查看/编辑提示词 → 点击发送
 5. 主Agent 拆分提示词，逐张调用 ImageAgent → 图片逐张出现
 
 **技术选型**：
-- 图片生成模型：`openai/gpt-5.4-image-2`（OpenRouter）
+- 提示词增强模型：`qwen3-vl-plus`（DashScope，1元/百万tokens，创意强+能看图）
+- 图片生成：KIE adapter（现有基础设施，国内直连）
+- 主Agent：DeepSeek V4（现有，不变）
 - 背景去除：rembg（本地）
 - 多尺寸裁切：Pillow
 - 存储：复用现有 OSS/CDN 链路
+
+**与现有功能的关系**：
+- 现有"图生图/文生图"模式 → 保持不变，继续走 ImageHandler + KIE
+- 新增"电商图模式" → 独立入口，走 ImageAgent + 四层提示词 + 风格系统
+- 两者共用同一套 KIE 生图能力和积分体系，互不冲突
 
 ---
 
@@ -63,14 +70,31 @@ ChatHandler 接收消息：
 全部完成，图片逐张出现（和 ChatGPT 体验一致）
 ```
 
-### 2.2 两种图片模式
+### 2.2 模式选择器（新增"电商图模式"）
 
-已有的模式切换下拉菜单（智能 ▾）中：
+在现有模式选择器中新增一个入口，不改动已有模式：
 
-| 模式 | 输入 | AI提示词行为 |
-|-----|------|------------|
-| **图生图** | 必须上传参考图 + 文字描述 | 模型看到图片 → 识别品类 + 提取特征 → 生成提示词 |
-| **文生图** | 纯文字描述 | 只根据文字描述 → 生成提示词 |
+```
+┌─────────────────────────────────────┐
+│ ✨ 智能          ✓                  │  ← 现有
+│ 🖼️ 图生图模式                       │  ← 现有，不动
+│ 📝 文生图模式                       │  ← 现有，不动
+│ 🛒 电商图模式                       │  ← 新增！
+│ 🎬 视频模式                        │  ← 现有，不动
+└─────────────────────────────────────┘
+```
+
+```typescript
+// InputArea.tsx — 扩展 SmartSubMode
+type SmartSubMode = 'chat' | 'image-i2i' | 'image-t2i' | 'image-ecom' | 'video';
+//                                                        ↑ 新增
+```
+
+| 模式 | 路径 | 特有功能 |
+|-----|------|---------|
+| **图生图**（现有） | ImageHandler → KIE | 基础生图 |
+| **文生图**（现有） | ImageHandler → KIE | 基础生图 |
+| **电商图**（新增） | 主Agent → ImageAgent → KIE | AI提示词 + 四层框架 + 风格系统 + 多尺寸 |
 
 ### 2.3 职责分工
 
@@ -353,11 +377,13 @@ async def enhance_prompt(req: EnhancePromptRequest, user=Depends(get_current_use
         {"role": "user", "content": _build_multimodal_content(user_content, req.image_urls)},
     ]
 
-    # 6. 调 GPT-5.4-Image-2（纯文本模式）
-    adapter = OpenRouterChatAdapter(
-        api_key=settings.openrouter_api_key,
-        model=settings.image_agent_model,
-        stream_timeout=30.0,
+    # 6. 调 qwen3-vl-flash（DashScope，能看图+写提示词）
+    from services.adapters.dashscope_adapter import DashScopeChatAdapter
+    adapter = DashScopeChatAdapter(
+        api_key=settings.dashscope_api_key,
+        model=settings.image_enhance_model,  # "qwen3-vl-plus"
+        base_url=settings.dashscope_base_url,
+        timeout=settings.image_enhance_timeout,
     )
     try:
         response = await adapter.chat_sync(messages=messages)
@@ -776,9 +802,20 @@ class ImageAgent:
                 except Exception:
                     ref_images = image_urls  # 降级
 
-            # 5. 调 GPT-5.4-Image-2（含 429 限流重试）
-            generator = ImageGenerator()
-            raw_image = await generator.generate(final_prompt, ref_images, self._detect_aspect_ratio(task))
+            # 5. 调 KIE adapter 生成图片（复用现有 create_image_adapter）
+            from services.adapters.factory import create_image_adapter
+            model_id = settings.image_agent_kie_i2i_model if ref_images else settings.image_agent_kie_model
+            adapter = create_image_adapter(model_id)
+            result = await adapter.generate(
+                prompt=final_prompt,
+                image_urls=ref_images if ref_images else None,
+                size=self._detect_aspect_ratio(task),
+                wait_for_result=True, max_wait_time=90.0, poll_interval=2.0,
+            )
+            raw_image = result.image_urls[0] if result.image_urls else None
+            if not raw_image:
+                raise ImageGenerationError(result.fail_msg or "图片生成失败")
+            await adapter.close()
 
             # 6. Pillow 校验 + 裁切
             resized = ImageProcessor.resize_for_platform(raw_image, platform)
@@ -797,7 +834,7 @@ class ImageAgent:
                     "width": resized.width, "height": resized.height,
                     "alt": task[:50],
                 }],
-                metadata={"platform": platform, "model": "openai/gpt-5.4-image-2"},
+                metadata={"platform": platform, "model": model_id},
             )
 
         except Exception as e:
@@ -833,36 +870,16 @@ class ImageAgent:
         return None
 ```
 
-### 7.3 ImageGenerator（含限流重试）
+### 7.3 图片生成：复用 KIE adapter
 
-```python
-class ImageGenerator:
-    MODEL_ID = "openai/gpt-5.4-image-2"
+不新建 ImageGenerator 类。直接复用现有 `create_image_adapter` + `KieImageAdapter`（已在 §7.2 核心类中集成）。
 
-    async def generate(self, prompt, reference_images=None, aspect_ratio="1:1"):
-        adapter = OpenRouterChatAdapter(
-            api_key=settings.openrouter_api_key, model=self.MODEL_ID, stream_timeout=120.0,
-        )
-        messages = self._build_messages(prompt, reference_images)
-        max_retries, base_delay = 2, 3.0
-
-        try:
-            for attempt in range(max_retries + 1):
-                try:
-                    response = await adapter.chat_sync(
-                        messages=messages, modalities=["text", "image"],
-                        image_config={"aspect_ratio": aspect_ratio},
-                    )
-                    return self._extract_images(response)
-                except OpenRouterAPIError as e:
-                    if e.status_code == 429 and attempt < max_retries:
-                        await asyncio.sleep(base_delay * (2 ** attempt))
-                        continue
-                    if e.status_code == 429:
-                        raise ImageGenerationError("图片生成服务繁忙，请等待几秒后重试")
-                    raise
-        finally:
-            await adapter.close()
+KIE adapter 已有的能力（直接复用，不重写）：
+- 异步任务创建 + 同步等待轮询（`wait_for_result=True`）
+- 多模型支持（gpt-image-2 文生图/图生图、nano-banana-pro）
+- 积分预估 `estimate_cost()`
+- 回调解析 `parse_callback()`
+- 智能重试（Smart Mode 下自动切换备选模型，ImageHandler 已实现）
 ```
 
 ### 7.4 Thinking 进度推送
@@ -1242,7 +1259,14 @@ _CONCURRENT_SAFE:     不加入（串行）
 ### 13.1 Config
 
 ```python
-image_agent_model: str = "openai/gpt-5.4-image-2"
+# 提示词增强（enhance API）
+image_enhance_model: str = "qwen3-vl-plus"             # DashScope，1元/百万tokens，创意强+能看图
+image_enhance_fallback_model: str = "qwen3-vl-flash"   # 降级备选，0.15元/百万tokens
+image_enhance_timeout: int = 10                         # 超时秒数
+
+# 图片生成（ImageAgent → KIE adapter）
+image_agent_kie_model: str = "gpt-image-2-text-to-image"    # 文生图默认模型
+image_agent_kie_i2i_model: str = "gpt-image-2-image-to-image"  # 图生图模型
 image_agent_timeout: int = 120
 image_agent_max_images: int = 8
 ```
@@ -1256,37 +1280,18 @@ ALTER TABLE conversations ADD COLUMN image_style_directive text;
 
 ### 13.3 Adapter 改造
 
-> **项目实际 gap**：`chat_sync` 已接受 `**kwargs`（line 185），但内部**没有合并到 request_body**（lines 188-192）。传 `modalities` 不会生效。
+**OpenRouter adapter 不需要改造**（图片生成走 KIE，不走 OpenRouter）。
 
-需要在 `chat_sync` 中显式提取并合并：
+enhance API 使用 DashScope adapter 调用 `qwen3-vl-flash`（已有 DashScope 集成，复用 `dashscope_base_url` + API Key）。
 
-```python
-# openrouter/chat_adapter.py — chat_sync 方法内增加
-
-request_body: Dict[str, Any] = {
-    "model": self._model_id,
-    "messages": messages,
-    "stream": False,
-}
-
-# === 新增：图片生成参数合并（当前代码缺失这部分）===
-if modalities := kwargs.get("modalities"):
-    request_body["modalities"] = modalities
-if image_config := kwargs.get("image_config"):
-    request_body["image_config"] = image_config
-```
-
-响应解析扩展：支持多模态内容（`isinstance(raw_content, list)` → 分离 text/images）。
-
-ChatResponse 新增 `images: list[str]` 字段（`base.py`）。
+ImageAgent 使用 KIE adapter（已有 `create_image_adapter` + `KieImageAdapter`，直接复用）。
 
 ### 13.4 新建文件
 
 ```
 backend/services/agent/image/
 ├── __init__.py
-├── image_agent.py              # 单张生成器（含失败处理+retry_context）
-├── image_generator.py          # OpenRouter调用（含429限流重试）
+├── image_agent.py              # 单张生成器（KIE adapter，含失败处理+retry_context）
 ├── image_processor.py          # rembg去背景（含失败降级）+ Pillow裁切校验
 ├── platform_sizes.py           # 6平台尺寸常量
 ├── prompts.py                  # 四层提示词（角色+12品类+6平台+8风格+矩阵）
@@ -1296,27 +1301,32 @@ backend/services/agent/image/
 backend/routes/image_routes.py  # enhance-prompt + retry 两个API
 ```
 
+注意：不需要 `image_generator.py`（直接复用 `create_image_adapter` + `KieImageAdapter`）。
+
 ### 13.5 修改文件
 
 | 文件 | 改动 |
 |-----|------|
-| `adapters/openrouter/chat_adapter.py` | modalities + image_config + 多模态响应解析 |
-| `adapters/base.py` | ChatResponse.images 字段 |
-| `agent/tool_executor.py` | 注册 handler + 三重自动注入 |
+| `agent/tool_executor.py` | 注册 image_agent handler + 三重自动注入 |
 | `handlers/chat_tool_mixin.py` | 注入 _current_message_images + placeholder 描述性格式 |
 | `config/chat_tools.py` | 工具定义 + _CORE_TOOLS + _PLAN_MODE_BLOCKED + _SAFETY_LEVELS + TOOL_SYSTEM_PROMPT |
-| `core/config.py` | 配置字段 |
+| `core/config.py` | 新增 image_enhance_model / image_agent_kie_model 等配置 |
 | `main.py` | 注册 image_routes |
 | `requirements.txt` | rembg |
-| `frontend/ChatInput.tsx` | AI按钮+placeholder+Tab补全/标签+费用预估+防抖 |
-| `frontend/content block渲染` | failed ImagePart → FailedMediaPlaceholder |
+| `frontend/InputArea.tsx` | SmartSubMode 新增 'image-ecom' + AI按钮+placeholder+Tab补全/标签+费用预估 |
+| `frontend/ModelSelector.tsx` | 新增"电商图模式"按钮 |
+| `frontend/MessageItem.tsx` | content block 渲染 failed ImagePart + 按 aspect_ratio 分组 |
 | `frontend/重试逻辑` | handleRetryImage → /api/image/retry |
+
+**不需要改的文件**（相比 v4.3 移除）：
+- ~~`adapters/openrouter/chat_adapter.py`~~ — 图片生成走 KIE，不走 OpenRouter
+- ~~`adapters/base.py`~~ — 不需要 ChatResponse.images 字段
 
 ### 13.6 安全配置
 
 | 项 | 方案 | 来源 |
 |---|------|------|
-| 内容安全 | GPT-5.4-Image-2 自带过滤 | 复用 |
+| 内容安全 | KIE adapter 自带过滤 | 复用 |
 | 输入校验 | CDN白名单+长度上限+enum | 新增 |
 | 积分扣费 | lock/confirm/refund + TTL超时退还 | 复用+增强 |
 | 超时控制 | execution_budget + asyncio.wait_for | 复用 |
@@ -1329,11 +1339,11 @@ backend/routes/image_routes.py  # enhance-prompt + retry 两个API
 
 | # | Gap | 实际代码 | 需要的改动 |
 |--|-----|---------|----------|
-| 1 | 前端模式字段 | `smartSubMode: 'image-i2i' \| 'image-t2i'`（InputArea.tsx:83） | 方案代码已修正为项目实际字段名 |
+| 1 | 前端模式字段 | `smartSubMode` 类型需扩展（InputArea.tsx:83） | 新增 `'image-ecom'` 值 + ModelSelector 新增按钮 |
 | 2 | sendMessage 参数 | `params: Record<string, unknown>`（messageSender.ts:29） | `image_task_meta` 通过 `params` 透传，不是独立字段 |
 | 3 | CreditMixin 无 TTL | `_lock_credits(task_id, user_id, amount, reason, org_id)`（credit_mixin.py:62） | **需扩展**：增加 `ttl_seconds` 参数 + 定时清理过期锁 |
 | 4 | placeholder 格式固定 | 图片固定 `📊 图表已生成...`（chat_tool_mixin.py:492） | **需改**：图片类型改为 `🖼️ {name} 已生成...` |
-| 5 | OpenRouter kwargs 不生效 | `chat_sync` 接受 `**kwargs` 但没合并到 request_body（chat_adapter.py:188） | **需改**：显式提取 `modalities`/`image_config` 合并到 request_body |
+| 5 | ~~OpenRouter kwargs~~ | ~~已不需要~~（图片生成走 KIE，不走 OpenRouter） | **已删除**，无需改动 |
 | 6 | content block 无 failed 处理 | 只判断 `part.type === 'image' && url`（MessageItem.tsx:534） | **需加**：`url === null && failed === true` 时渲染 FailedMediaPlaceholder |
 | 7 | InlineChartImage 无分组网格 | 逐个 `InlineChartImage` 渲染（MessageItem.tsx:538） | **需加**：`groupImagesByRatio` 分组后传 AiImageGrid |
 
@@ -1364,12 +1374,11 @@ Pillow>=10.0.0   # 已有
 
 ## 十四、实施计划
 
-### Phase 1：基础设施（1天）
-- [ ] config.py 配置字段
-- [ ] chat_adapter.py 扩展 modalities + image_config + 多模态响应
-- [ ] base.py ChatResponse.images 字段
-- [ ] DB 迁移：image_style_directive
-- [ ] 验证 OpenRouter 图片生成 API
+### Phase 1：基础设施（0.5天）
+- [ ] config.py 添加 image_enhance_model / image_agent_kie_model 等配置字段
+- [ ] DB 迁移：conversations 表新增 `image_style_directive` 字段
+- [ ] 验证 DashScope qwen3-vl-plus 可调通（enhance API 用）
+- [ ] 验证 KIE adapter 生图基线（现有功能确认可用）
 
 ### Phase 2：四层提示词系统（1.5天）
 - [ ] 新建 backend/services/agent/image/ 目录

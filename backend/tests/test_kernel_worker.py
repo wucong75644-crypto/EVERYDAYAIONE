@@ -144,9 +144,11 @@ class TestStatefulPersistence:
 
 class TestSecurityReset:
 
-    def test_import_os_blocked(self, kernel_proc):
-        r = _send(kernel_proc, {"id": "sec1", "code": "import os", "timeout": 10})
-        assert r["status"] == "error"
+    def test_import_os_returns_scoped(self, kernel_proc):
+        """import os 返回 scoped 版本，无 system 属性"""
+        r = _send(kernel_proc, {"id": "sec1", "code": "import os\nprint(hasattr(os, 'system'))", "timeout": 10})
+        assert r["status"] == "ok"
+        assert "False" in r["result"]
 
     def test_import_subprocess_blocked(self, kernel_proc):
         r = _send(kernel_proc, {"id": "sec2", "code": "import subprocess", "timeout": 10})

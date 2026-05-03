@@ -11,6 +11,10 @@ import type { Message } from '../../../stores/useMessageStore';
 import { getTextContent, getImageUrls, getVideoUrls, getFiles } from '../../../stores/useMessageStore';
 import DeleteMessageModal from '../modals/DeleteMessageModal';
 import ImagePreviewModal from '../media/ImagePreviewModal';
+import toast from 'react-hot-toast';
+import { FailedMediaPlaceholder } from '../media/MediaPlaceholder';
+import api from '../../../services/api';
+import { useMessageStore } from '../../../stores/useMessageStore';
 import MessageMedia from './MessageMedia';
 import MessageActions from './MessageActions';
 import { getSavedSettings } from '../../../utils/settingsStorage';
@@ -510,6 +514,55 @@ export default memo(function MessageItem({
                         height={img.height}
                         onClick={() => handleImageClick(imgIndex >= 0 ? imgIndex : 0)}
                       />
+                    );
+                  }
+                  {/* 失败的图片：裂开占位符 + 重新生成按钮（电商图模式） */}
+                  if (part.type === 'image' && (part as { failed?: boolean }).failed) {
+                    const failedImg = part as {
+                      width?: number; height?: number; alt?: string;
+                      retry_context?: { task: string; image_urls: string[]; platform: string; style_directive: string };
+                    };
+                    return (
+                      <div key={`failed-${idx}`} className="my-2">
+                        <FailedMediaPlaceholder
+                          type="image"
+                          width={failedImg.width || 280}
+                          height={failedImg.height || 280}
+                          retryLabel="重新生成"
+                          onRetry={failedImg.retry_context ? async () => {
+                            try {
+                              const { data } = await api.post('/ecom-image/retry', {
+                                conversation_id: message.conversation_id,
+                                message_id: message.id,
+                                task: failedImg.retry_context!.task,
+                                image_urls: failedImg.retry_context!.image_urls,
+                                platform: failedImg.retry_context!.platform,
+                                style_directive: failedImg.retry_context!.style_directive,
+                                part_index: message.content
+                                  .filter((p, i) => i < idx && p.type === 'image')
+                                  .length,
+                              });
+                              if (data.success && data.image_url) {
+                                // 局部更新：替换 content 中对应位置的 ImagePart（不刷新页面）
+                                const newContent = [...message.content];
+                                newContent[idx] = {
+                                  type: 'image',
+                                  url: data.image_url,
+                                  width: failedImg.width || 800,
+                                  height: failedImg.height || 800,
+                                  alt: failedImg.alt || '',
+                                };
+                                useMessageStore.getState().updateMessage(message.id, { content: newContent });
+                                toast.success('图片重新生成成功');
+                              } else {
+                                toast.error(data.error || '重新生成失败');
+                              }
+                            } catch {
+                              toast.error('重新生成失败，请稍后再试');
+                            }
+                          } : undefined}
+                        />
+                      </div>
                     );
                   }
                   if (part.type === 'file' && (part as { url?: string }).url) {

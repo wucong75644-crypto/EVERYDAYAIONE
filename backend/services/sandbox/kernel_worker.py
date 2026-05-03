@@ -29,7 +29,6 @@ from services.sandbox.sandbox_worker import (
 )
 from services.sandbox.sandbox_constants import (
     SAFE_BUILTINS,
-    restricted_import,
 )
 from services.sandbox.validators import validate_code, truncate_result
 
@@ -59,26 +58,32 @@ def _setup_scoped_open(workspace_dir: str, staging_dir: str, output_dir: str):
 def _reset_security(
     sandbox_globals: Dict[str, Any],
     scoped_open,
+    scoped_os=None,
+    scoped_shutil=None,
+    scoped_import=None,
 ) -> None:
     """每次执行前重置安全关键项（防跨调用篡改）
 
-    有状态 Kernel 中用户代码可能覆盖 __builtins__、open、__import__，
+    有状态 Kernel 中用户代码可能覆盖 __builtins__、open、os、shutil，
     必须在每次执行前重置到安全状态。
-
-    注意：不能替换 builtins.__import__，因为 restricted_import 内部调用
-    __import__() 会解析到 builtins.__import__，造成无限递归。
-    restricted_import 仅通过 sandbox_globals["__builtins__"] 注入沙盒作用域。
     """
     import builtins
 
-    # 重置 builtins 白名单（SAFE_BUILTINS 是 dict，必须 copy）
-    # 这已包含 "__import__": restricted_import，沙盒内 import 走白名单
-    sandbox_globals["__builtins__"] = SAFE_BUILTINS.copy()
+    # 重置 builtins 白名单（copy 后注入 scoped_import）
+    safe = SAFE_BUILTINS.copy()
+    if scoped_import is not None:
+        safe["__import__"] = scoped_import
+    sandbox_globals["__builtins__"] = safe
 
-    # 重置 open（sandbox_globals 和 builtins 两个入口都要重置）
-    # builtins.open 必须替换：pandas/docx 等库内部调用 builtins.open
+    # 重置 open
     builtins.open = scoped_open
     sandbox_globals["open"] = scoped_open
+
+    # 重置 os / shutil（防用户 del os 或 os = None）
+    if scoped_os is not None:
+        sandbox_globals["os"] = scoped_os
+    if scoped_shutil is not None:
+        sandbox_globals["shutil"] = scoped_shutil
 
 
 def _hide_paths(result: str, output_dir: str, workspace_dir: str) -> str:
@@ -140,6 +145,11 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
     # 5. 构建沙盒 globals（变量跨调用保留）
     sandbox_globals = _build_sandbox_globals(workspace_dir, staging_dir, output_dir)
 
+    # 取 scoped 引用（_reset_security 每次执行前重置用）
+    _scoped_os = sandbox_globals.get("os")
+    _scoped_shutil = sandbox_globals.get("shutil")
+    _scoped_import = sandbox_globals["__builtins__"]["__import__"]
+
     # 6. 通知主进程 Kernel 就绪
     _write_response({"id": "__ready__", "status": "ok", "result": "kernel ready"})
 
@@ -163,6 +173,7 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
 
         code = request.get("code", "")
         timeout = request.get("timeout", 120.0)
+        confirm_delete = request.get("confirm_delete", [])
 
         if not code or not code.strip():
             _write_response({
@@ -189,7 +200,14 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
                 continue
 
             # 重置安全关键项（防跨调用篡改）
-            _reset_security(sandbox_globals, scoped_open)
+            _reset_security(
+                sandbox_globals, scoped_open,
+                _scoped_os, _scoped_shutil, _scoped_import,
+            )
+
+            # 设置本次执行允许删除的文件
+            if confirm_delete and hasattr(_scoped_os, "_set_confirmed_deletes"):
+                _scoped_os._set_confirmed_deletes(confirm_delete)
 
             # 执行代码（sandbox_globals 在进程内持续存在，变量保留）
             result = _exec_code(code, sandbox_globals, timeout)

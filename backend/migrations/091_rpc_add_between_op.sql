@@ -126,7 +126,7 @@ BEGIN
                     ELSE
                         base_q := base_q || format(' AND %I IS NOT NULL', field_name);
                     END IF;
-                -- 091: 新增 between ��作符
+                -- 091: 新增 between 操作符
                 WHEN 'between' THEN
                     IF jsonb_typeof(val) = 'array' AND jsonb_array_length(val) = 2 THEN
                         base_q := base_q || format(' AND %I BETWEEN %L AND %L',

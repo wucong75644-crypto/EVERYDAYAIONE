@@ -116,7 +116,7 @@ CODE_EXECUTE_BUDGET = 30000
 #   L3 token 25000）兜底，对齐 Claude Code maxResultSizeChars=Infinity
 _NO_TRUNCATE = {
     "generate_image", "generate_video",
-    "file_read", "file_write", "file_list", "file_search", "file_info",
+    "file_read", "file_write", "file_edit",
 }
 
 # 对齐 Claude Code 的 persisted-output 标签（防重入 + 截断检测）

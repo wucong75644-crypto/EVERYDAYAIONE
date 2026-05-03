@@ -9,12 +9,11 @@ from typing import Any, Dict, List, Set
 
 
 # 文件工具名集合（INFO 类型：结果回传大脑）
+# file_list/search/info 已被 code_execute 内 os.listdir/walk/stat 替代
 FILE_INFO_TOOLS: Set[str] = {
     "file_read",
     "file_write",
     "file_edit",
-    "file_list",
-    "file_search",
 }
 
 # 工具 Schema（参数验证）
@@ -45,27 +44,12 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "replace_all": {"type": "boolean"},
         },
     },
-    "file_list": {
-        "required": [],
-        "properties": {
-            "path": {"type": "string"},
-            "show_hidden": {"type": "boolean"},
-        },
-    },
-    "file_search": {
-        "required": ["keyword"],
-        "properties": {
-            "keyword": {"type": "string"},
-            "path": {"type": "string"},
-            "search_content": {"type": "boolean"},
-            "file_pattern": {"type": "string"},
-        },
-    },
+    # file_list/file_search 已移除（被 code_execute 内 os.listdir/walk 替代）
 }
 
 
 def build_file_tools() -> List[Dict[str, Any]]:
-    """构建文件操作工具定义（5个 INFO 工具）"""
+    """构建文件操作工具定义（3个：file_read/file_write/file_edit）"""
     return [
         {
             "type": "function",
@@ -184,63 +168,6 @@ def build_file_tools() -> List[Dict[str, Any]]:
                 },
             },
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "file_list",
-                "description": (
-                    "列出 workspace 内目录的内容（文件和子目录）。\n"
-                    "返回文件名列表，后续直接用文件名引用。\n"
-                    "默认列出 workspace 根目录。"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "目录相对路径（默认'.'即根目录）",
-                        },
-                        "show_hidden": {
-                            "type": "boolean",
-                            "description": "是否显示隐藏文件（默认false）",
-                        },
-                    },
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "file_search",
-                "description": (
-                    "在 workspace 内搜索文件。\n"
-                    "默认按文件名搜索，设置 search_content=true 可搜索文件内容。\n"
-                    "可用 file_pattern 过滤文件类型（如 *.csv）。"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "keyword": {
-                            "type": "string",
-                            "description": "搜索关键词",
-                        },
-                        "path": {
-                            "type": "string",
-                            "description": "搜索起始目录（默认'.'）",
-                        },
-                        "search_content": {
-                            "type": "boolean",
-                            "description": "是否同时搜索文件内容（默认false）",
-                        },
-                        "file_pattern": {
-                            "type": "string",
-                            "description": "文件名匹配模式（如 *.csv、report*）",
-                        },
-                    },
-                    "required": ["keyword"],
-                },
-            },
-        },
     ]
 
 
@@ -248,14 +175,10 @@ def build_file_tools() -> List[Dict[str, Any]]:
 FILE_ROUTING_PROMPT = (
     "## 文件操作规则\n"
     "- 所有文件操作直接用文件名或相对路径（如 '利润表.xlsx'、'子目录/data.csv'）\n"
-    "- 读取文本文件 → file_read('readme.txt')\n"
-    "- 读取 PDF 文件 → file_read('合同.pdf') 或 file_read('合同.pdf', pages='3-5')\n"
-    "- 查看图片内容 → file_read('截图.png')（自动进行视觉分析）\n"
-    "- 查询/分析 Excel/CSV/Parquet 数据文件 → data_query\n"
-    "- 复杂计算（公式/图表/多文件 JOIN）→ code_execute\n"
-    "- 写入/创建/保存文件 → file_write\n"
-    "- 查看目录/列出文件 → file_list\n"
-    "- 搜索/查找文件 → file_search\n"
-    "- file_list 和 file_search 返回的结果已包含文件元信息（行列数/类型/读取命令），直接使用\n"
+    "- 浏览目录 + 读数据 + 分析 → code_execute（os.listdir + pd.read，一步到位）\n"
+    "- 读取 PDF/图片 → file_read（自动提取文本/视觉分析）\n"
+    "- 查询/聚合大数据文件（>10万行）→ data_query（DuckDB 恒定内存）\n"
+    "- 写入/创建文件 → file_write（快捷文本创建）或 code_execute（生成 Excel/图表）\n"
+    "- 精确替换文本 → file_edit\n"
     "- 文件操作完毕后，调 route_to_chat 汇总结果回复用户\n\n"
 )

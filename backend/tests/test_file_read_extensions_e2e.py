@@ -558,24 +558,18 @@ class TestToolExecutorIntegration:
     async def test_tool_executor_file_list_then_read_pdf(
         self, tool_executor, user_workspace
     ):
-        """完整用户场景：file_list → 看到 PDF → file_read 读内容"""
+        """用户场景：file_read PDF + text（file_list 已被 os.listdir 替代）"""
         from services.agent.agent_result import AgentResult
         _make_pdf(Path(user_workspace, "invoice.pdf"), 2)
         Path(user_workspace, "memo.txt").write_text("meeting notes")
 
-        # Step 1: file_list
-        list_result = await tool_executor.execute("file_list", {})
-        assert isinstance(list_result, AgentResult)
-        assert "invoice.pdf" in list_result.summary
-        assert "memo.txt" in list_result.summary
-
-        # Step 2: file_read PDF
+        # Step 1: file_read PDF
         pdf_result = await tool_executor.execute(
             "file_read", {"path": "invoice.pdf"}
         )
         assert "Page1Content" in pdf_result.summary
 
-        # Step 3: file_read text（回归）
+        # Step 2: file_read text（回归）
         txt_result = await tool_executor.execute(
             "file_read", {"path": "memo.txt"}
         )

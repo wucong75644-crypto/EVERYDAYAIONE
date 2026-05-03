@@ -333,7 +333,7 @@ def _generate_periods(start_str: str, end_str: str, granularity: str) -> list[da
     return periods
 
 
-# ── 粒度自动调整 ────────────────────────────────────────��
+# ── 粒度自动调整 ──────────────────────────────────────────
 
 
 def _auto_adjust_granularity(granularity: str, start_str: str, end_str: str) -> str:

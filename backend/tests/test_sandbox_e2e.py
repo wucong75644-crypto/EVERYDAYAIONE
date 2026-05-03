@@ -269,9 +269,10 @@ class TestSecurityEndToEnd:
     """安全拦截 E2E"""
 
     @pytest.mark.asyncio
-    async def test_import_os_blocked(self, executor):
-        result = await executor.execute("import os\nos.system('whoami')")
-        assert "验证失败" in result.summary
+    async def test_import_os_system_blocked(self, executor):
+        """import os 放行，但 os.system 不存在（scoped_os 无此属性）"""
+        result = await executor.execute("import os\nprint(hasattr(os, 'system'))")
+        assert "False" in result.summary
 
     @pytest.mark.asyncio
     async def test_import_subprocess_blocked(self, executor):
@@ -338,6 +339,131 @@ class TestSecurityEndToEnd:
         result = await executor.execute("print(OUTPUT_DIR)")
         assert str(ws["output"]) not in result.summary
         assert "OUTPUT_DIR" in result.summary
+
+
+# ============================================================
+# confirm_delete E2E（stateless subprocess）
+# ============================================================
+
+class TestConfirmDeleteEndToEnd:
+    """删除操作确认流程 E2E"""
+
+    @pytest.mark.asyncio
+    async def test_remove_without_confirm_blocked(self, executor, ws):
+        """os.remove 无 confirm_delete → PermissionError"""
+        Path(ws["workspace"], "temp.txt").write_text("delete me")
+        result = await executor.execute(
+            "import os\nos.remove('temp.txt')", "删除文件",
+        )
+        assert "删除操作需要用户确认" in result.summary
+        # 文件未被删除
+        assert Path(ws["workspace"], "temp.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_remove_with_confirm_allowed(self, executor, ws):
+        """os.remove + confirm_delete → 删除成功"""
+        Path(ws["workspace"], "temp.txt").write_text("delete me")
+        result = await executor.execute(
+            "import os\nos.remove('temp.txt')\nprint('deleted')",
+            "删除文件",
+            confirm_delete=["temp.txt"],
+        )
+        assert "deleted" in result.summary
+        assert not Path(ws["workspace"], "temp.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_confirm_delete_path_mismatch_blocked(self, executor, ws):
+        """confirm_delete 传的文件名和代码里的不匹配 → 仍然拒绝"""
+        Path(ws["workspace"], "important.xlsx").write_text("data")
+        result = await executor.execute(
+            "import os\nos.remove('important.xlsx')", "删除",
+            confirm_delete=["other.xlsx"],  # 不匹配
+        )
+        assert "删除操作需要用户确认" in result.summary
+        assert Path(ws["workspace"], "important.xlsx").exists()
+
+    @pytest.mark.asyncio
+    async def test_rmdir_always_blocked(self, executor, ws):
+        """os.rmdir 始终拒绝"""
+        Path(ws["workspace"], "empty_dir").mkdir()
+        result = await executor.execute(
+            "import os\nos.rmdir('empty_dir')", "删除目录",
+        )
+        assert "删除目录被禁止" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_os_listdir_works(self, executor, ws):
+        """os.listdir 正常工作（E2E 验证 scoped_os 注入）"""
+        Path(ws["workspace"], "data.csv").write_text("a,b\n1,2")
+        result = await executor.execute(
+            "import os\nprint(os.listdir('.'))", "列目录",
+        )
+        assert "data.csv" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_os_walk_relative_paths(self, executor, ws):
+        """os.walk 返回相对路径（不泄露绝对路径）"""
+        sub = Path(ws["workspace"], "sub")
+        sub.mkdir()
+        (sub / "file.txt").write_text("hi")
+        result = await executor.execute(
+            "import os\nfor r,d,f in os.walk('.'):\n  for fn in f:\n    print(os.path.join(r,fn))",
+            "遍历",
+        )
+        # 不含绝对路径
+        assert ws["workspace"] not in result.summary
+        # 含相对路径
+        assert "./sub/file.txt" in result.summary or "sub/file.txt" in result.summary
+
+
+# ============================================================
+# PandasProxy 截断提示 E2E
+# ============================================================
+
+class TestPandasTruncationHint:
+    """PandasProxy 截断到 2000 行时自动输出提示"""
+
+    @pytest.mark.asyncio
+    async def test_truncation_hint_shown(self, executor, ws):
+        """读取大 CSV 时输出截断提示"""
+        # 创建 3000 行 CSV
+        csv_path = Path(ws["workspace"], "big.csv")
+        lines = ["id,value"] + [f"{i},{i*10}" for i in range(3000)]
+        csv_path.write_text("\n".join(lines))
+
+        result = await executor.execute(
+            "df = pd.read_csv('big.csv')\nprint(f'rows={len(df)}')",
+            "读大文件",
+        )
+        assert "rows=2000" in result.summary
+        assert "截断" in result.summary or "2000" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_no_hint_for_small_file(self, executor, ws):
+        """读取小文件不输出截断提示"""
+        csv_path = Path(ws["workspace"], "small.csv")
+        lines = ["id,value"] + [f"{i},{i*10}" for i in range(100)]
+        csv_path.write_text("\n".join(lines))
+
+        result = await executor.execute(
+            "df = pd.read_csv('small.csv')\nprint(f'rows={len(df)}')",
+            "读小文件",
+        )
+        assert "rows=100" in result.summary
+        assert "截断" not in result.summary
+
+    @pytest.mark.asyncio
+    async def test_nrows_none_bypasses_limit(self, executor, ws):
+        """nrows=None 跳过截断限制"""
+        csv_path = Path(ws["workspace"], "big.csv")
+        lines = ["id,value"] + [f"{i},{i*10}" for i in range(3000)]
+        csv_path.write_text("\n".join(lines))
+
+        result = await executor.execute(
+            "df = pd.read_csv('big.csv', nrows=None)\nprint(f'rows={len(df)}')",
+            "全读",
+        )
+        assert "rows=3000" in result.summary
 
 
 # ============================================================

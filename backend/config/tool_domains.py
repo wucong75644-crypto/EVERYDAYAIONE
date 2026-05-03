@@ -42,11 +42,10 @@ TOOL_DOMAINS: Dict[str, ToolDomain] = {
     "social_crawler":   ToolDomain.GENERAL,
     "generate_image":   ToolDomain.GENERAL,
     "generate_video":   ToolDomain.GENERAL,
+    "image_agent":      ToolDomain.GENERAL,
     "file_read":        ToolDomain.GENERAL,
     "file_write":       ToolDomain.GENERAL,
-    "file_list":        ToolDomain.GENERAL,
-    "file_search":      ToolDomain.GENERAL,
-    "file_info":        ToolDomain.GENERAL,
+    "file_edit":        ToolDomain.GENERAL,
     "manage_scheduled_task": ToolDomain.GENERAL,
 
     # === shared: 多个域的 Agent 内部都能用 ===

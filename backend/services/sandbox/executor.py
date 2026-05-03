@@ -50,7 +50,10 @@ class SandboxExecutor:
         self._kernel_manager = kernel_manager  # KernelManager（有状态模式）
         self._conversation_id = conversation_id
 
-    async def execute(self, code: str, description: str = "") -> AgentResult:
+    async def execute(
+        self, code: str, description: str = "",
+        confirm_delete: list[str] | None = None,
+    ) -> AgentResult:
         """执行 Python 代码并返回结构化结果
 
         使用独立子进程执行（spawn），实现：
@@ -84,7 +87,7 @@ class SandboxExecutor:
         file_backups = self._backup_existing_files()
 
         # 3. 执行代码（优先有状态 Kernel，fallback 无状态 subprocess）
-        raw_result = await self._execute_code(code)
+        raw_result = await self._execute_code(code, confirm_delete=confirm_delete)
 
         logger.info(
             f"SandboxExecutor result | desc={description} | "
@@ -115,7 +118,9 @@ class SandboxExecutor:
             )
         return AgentResult(summary=raw_result, status="success")
 
-    async def _execute_code(self, code: str) -> str:
+    async def _execute_code(
+        self, code: str, confirm_delete: list[str] | None = None,
+    ) -> str:
         """选择执行模式：有状态 Kernel 或无状态 subprocess"""
         if self._kernel_manager and self._conversation_id:
             try:
@@ -128,6 +133,7 @@ class SandboxExecutor:
                 if kernel_ok:
                     status, result = await self._kernel_manager.execute(
                         self._conversation_id, code, self._timeout,
+                        confirm_delete=confirm_delete,
                     )
                     return result
             except (KeyError, RuntimeError, OSError) as e:
@@ -135,9 +141,11 @@ class SandboxExecutor:
                 logger.warning("Kernel 执行失败，降级为无状态 | error=%s", e)
 
         # 降级：无状态 subprocess
-        return await self._run_in_subprocess(code)
+        return await self._run_in_subprocess(code, confirm_delete=confirm_delete)
 
-    async def _run_in_subprocess(self, code: str) -> str:
+    async def _run_in_subprocess(
+        self, code: str, confirm_delete: list[str] | None = None,
+    ) -> str:
         """在独立子进程中执行代码（spawn 隔离）
 
         通信协议：子进程通过 Queue 返回 (status, result_text)。
@@ -162,6 +170,7 @@ class SandboxExecutor:
                 self._output_dir or "",
                 self._timeout,
                 self._max_result_chars,
+                confirm_delete or [],
             ),
         )
         proc.start()

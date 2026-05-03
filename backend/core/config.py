@@ -253,6 +253,17 @@ class Settings(BaseSettings):
     image_generation_timeout: float = 180.0   # 图片生成轮询超时
     video_generation_timeout: float = 600.0   # 视频生成轮询超时（Sora 等，合理长时间）
 
+    # 电商图模式配置（设计文档：docs/document/TECH_电商图片Agent.md）
+    # 提示词增强（enhance API → DashScope 多模态 VL 模型）
+    image_enhance_model: str = "qwen3-vl-plus"             # 主选：创意强+能看图，1元/百万tokens
+    image_enhance_fallback_model: str = "qwen3-vl-flash"   # 降级备选，0.15元/百万tokens
+    image_enhance_timeout: float = 10.0                    # 超时秒数
+    # 图片生成（ImageAgent → KIE adapter，复用现有生图基础设施）
+    image_agent_kie_model: str = "gpt-image-2-text-to-image"       # 文生图默认模型
+    image_agent_kie_i2i_model: str = "gpt-image-2-image-to-image"  # 图生图模型
+    image_agent_timeout: float = 120.0                             # 单张生成超时（秒）
+    image_agent_max_images: int = 8                                # 单次最大生成张数
+
     # 熔断器配置（Provider 级别）
     circuit_breaker_failure_threshold: int = 3      # 连续失败次数阈值 → 触发 OPEN
     circuit_breaker_failure_window: float = 60.0    # 失败计数滑动窗口（秒）

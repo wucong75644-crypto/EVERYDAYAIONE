@@ -1,7 +1,7 @@
 """
 企微文件消息处理 Mixin
 
-提供 WecomMessageService 的文��处理能力：
+提供 WecomMessageService 的文件处理能力：
 - 文件下载 + AES 解密
 - 文件内容解析（PDF/Word/Excel/TXT/CSV/JSON 等）
 - 文件上传 OSS 归档

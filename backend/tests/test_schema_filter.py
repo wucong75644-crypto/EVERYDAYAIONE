@@ -641,7 +641,7 @@ class TestFilterByLLMIntegration:
 
 
 # ============================================================
-# _inject_schema_context 行��测试
+# _inject_schema_context 行为测试
 # 直接复现 mixin 方法的逻辑（handlers 导入链在轻量测试环境不可用），
 # 验证 registry → filter → messages 注入 的完整数据流。
 # ============================================================
@@ -728,7 +728,7 @@ class TestInjectSchemaContextBehavior:
 
 
 # ============================================================
-# _save_schema_to_conversation 行为���试
+# _save_schema_to_conversation 行为测试
 # 验证 register → merge → conversation registry 的完整数据流
 # ============================================================
 

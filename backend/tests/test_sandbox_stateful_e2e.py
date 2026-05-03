@@ -117,9 +117,12 @@ class TestStatefulExecution:
 class TestStatefulSecurity:
 
     @pytest.mark.asyncio
-    async def test_import_os_blocked(self, stateful_executor):
-        result = await stateful_executor.execute("import os", "拦截")
-        assert result.is_failure
+    async def test_import_os_scoped(self, stateful_executor):
+        """import os 返回 scoped 版本（无 system 属性）"""
+        result = await stateful_executor.execute(
+            "import os\nprint(hasattr(os, 'system'))", "os测试",
+        )
+        assert "False" in result.summary
 
     @pytest.mark.asyncio
     async def test_builtins_tamper_reset(self, stateful_executor):
@@ -239,3 +242,50 @@ class TestDegradation:
         )
         result = await ex.execute("print(42)", "降级测试")
         assert "42" in result.summary
+
+
+# ============================================================
+# confirm_delete（有状态 Kernel）
+# ============================================================
+
+class TestStatefulConfirmDelete:
+
+    @pytest.mark.asyncio
+    async def test_remove_without_confirm_blocked(self, stateful_executor, ws):
+        """Kernel 模式：os.remove 无 confirm → 拒绝"""
+        Path(ws["workspace"], "temp.txt").write_text("data")
+        result = await stateful_executor.execute(
+            "import os\nos.remove('temp.txt')", "删除",
+        )
+        assert "删除操作需要用户确认" in result.summary
+        assert Path(ws["workspace"], "temp.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_remove_with_confirm_allowed(self, stateful_executor, ws):
+        """Kernel 模式：os.remove + confirm_delete → 删除成功"""
+        Path(ws["workspace"], "temp.txt").write_text("data")
+        result = await stateful_executor.execute(
+            "import os\nos.remove('temp.txt')\nprint('ok')",
+            "删除",
+            confirm_delete=["temp.txt"],
+        )
+        assert "ok" in result.summary
+        assert not Path(ws["workspace"], "temp.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_confirm_not_persist_across_calls(self, stateful_executor, ws):
+        """Kernel 模式：confirm_delete 不跨调用残留"""
+        Path(ws["workspace"], "a.txt").write_text("data")
+        # 第一次：带 confirm 删除
+        await stateful_executor.execute(
+            "import os\nos.remove('a.txt')", "删除a",
+            confirm_delete=["a.txt"],
+        )
+        # 重新创建
+        Path(ws["workspace"], "a.txt").write_text("new data")
+        # 第二次：不带 confirm → 应拒绝
+        result = await stateful_executor.execute(
+            "import os\nos.remove('a.txt')", "删除a",
+        )
+        assert "删除操作需要用户确认" in result.summary
+        assert Path(ws["workspace"], "a.txt").exists()

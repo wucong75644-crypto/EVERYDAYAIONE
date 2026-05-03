@@ -129,7 +129,7 @@ class TestRequiredFields:
             )
 
     def test_required_fields_in_whitelist(self):
-        """erp_document_items 表的必须字段都在 EXPORT_COLUMN_NAMES ��名单中。"""
+        """erp_document_items 表的必须字段都在 EXPORT_COLUMN_NAMES 白名单中。"""
         from services.kuaimai.erp_unified_schema import (
             REQUIRED_FIELDS, EXPORT_COLUMN_NAMES, _DOCUMENT_ITEM_DOC_TYPES,
         )

@@ -37,21 +37,44 @@ ALLOWED_IMPORT_MODULES = frozenset({
     "PyPDF2",  # PDF 读取（服务器已安装 3.0.1）
     # 高性能 Excel 读写引擎
     "calamine", "xlsxwriter",
+    # 受限文件系统操作（运行时走 scoped_os/scoped_shutil，不是真实模块）
+    "os", "os.path", "shutil",
     # 内部 C 扩展（被上述模块传递依赖）
     "_datetime", "_decimal", "_collections_abc", "_operator",
     "_functools", "_re", "_string", "_json", "_strptime",
 })
 
 
-def restricted_import(
-    name: str, globals: Any = None, locals: Any = None,
-    fromlist: tuple = (), level: int = 0,
-) -> Any:
-    """受限 import — 仅允许白名单模块（AST 之后的第二道防线）"""
-    top_module = name.split(".")[0]
-    if top_module not in ALLOWED_IMPORT_MODULES:
-        raise ImportError(f"禁止导入模块: {name}")
-    return __import__(name, globals, locals, fromlist, level)
+def make_restricted_import(scoped_modules: dict | None = None):
+    """构建受限 import 函数（闭包工厂）
+
+    Args:
+        scoped_modules: {"os": scoped_os, "shutil": scoped_shutil}
+                        为 None 时退化为原始行为（os/shutil → ImportError）
+    """
+    _scoped = scoped_modules or {}
+
+    def _restricted_import(
+        name: str, globals: Any = None, locals: Any = None,
+        fromlist: tuple = (), level: int = 0,
+    ) -> Any:
+        top = name.split(".")[0]
+        if top in _scoped:
+            mod = _scoped[top]
+            # from os.path import join → fromlist 非空，返回子模块
+            if name == "os.path" and fromlist:
+                return mod.path
+            # import os / import os.path（无 fromlist）→ 返回顶层
+            return mod
+        if top not in ALLOWED_IMPORT_MODULES:
+            raise ImportError(f"禁止导入模块: {name}")
+        return __import__(name, globals, locals, fromlist, level)
+
+    return _restricted_import
+
+
+# 向后兼容：无 scoped 模块时保持原有行为
+restricted_import = make_restricted_import()
 
 
 # ============================================================
