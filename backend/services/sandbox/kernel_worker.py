@@ -92,8 +92,22 @@ def _setup_scoped_open(workspace_dir: str, staging_dir: str, output_dir: str):
             if not _is_readonly_system:
                 raise PermissionError(f"文件访问被拒绝：{path} 不在允许的目录内")
 
+        # 文件不存在时自动纠错：当前目录 → OUTPUT_DIR → STAGING_DIR
         if "r" in mode and not os.path.exists(resolved):
+            _basename = os.path.basename(resolved)
             suggestion = _find_similar_file_global(resolved, _ws_dir)
+            if not suggestion:
+                for _fallback_dir in (output_dir, staging_dir):
+                    if not _fallback_dir:
+                        continue
+                    _alt = os.path.join(_fallback_dir, _basename)
+                    if os.path.exists(_alt):
+                        suggestion = _alt
+                        break
+                    _alt_suggestion = _find_similar_file_global(_alt, _ws_dir)
+                    if _alt_suggestion:
+                        suggestion = _alt_suggestion
+                        break
             if suggestion and os.path.exists(suggestion):
                 print(
                     f"[sandbox] 文件名自动纠正: {path} → {os.path.basename(suggestion)}",
