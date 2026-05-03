@@ -269,7 +269,8 @@ EVERYDAYAIONE/
         │       └── useMediaMessageHandler.ts  # 统一媒体消息处理（图片/视频）
         ├── constants/                # 常量配置
         │   ├── models.ts                 # 模型配置（UnifiedModel）
-        │   └── placeholder.ts            # 占位符常量（PLACEHOLDER_TEXT）
+        │   ├── placeholder.ts            # 占位符常量（PLACEHOLDER_TEXT）
+        │   └── echartsThemes.ts          # ECharts 6 套主题配置（classic/claude/linear × light/dark）
         └── utils/                    # 工具函数
             ├── settingsStorage.ts        # 用户设置存储
             ├── modelConflict.ts          # 模型冲突检测
@@ -527,6 +528,13 @@ cache = client.caches.create(
 
 ## 更新记录
 
+- **2026-05-03**：交互式图表（ECharts 替代 matplotlib）
+  - 新增 `ChartPart` content block 类型（后端 `schemas/message.py` + 前端 `types/message.ts`）
+  - 沙盒 `.echart.json` 检测 → JSON 读取 → `_chart_options` 传播链（executor → tool_executor → chat_tool_mixin → chat_handler）
+  - 前端 `ChartBlock.tsx` ECharts 按需动态加载 + 6 套主题跟随 + toolbox 全开
+  - 前端 `echartsThemes.ts` 6 套主题配置（classic/claude/linear × light/dark）
+  - 提示词改造：matplotlib → ECharts JSON 输出 + 图表选择参考 + 反模式护栏
+  - 新增 10 个后端测试（`test_chart_block.py`）
 - **2026-03-07**：记忆智能过滤功能
   - 新增 `memory_filter.py` 千问精排过滤器（降级链：turbo → plus → 跳过）
   - Mem0 search 加 `threshold=0.5` 相似度阈值初筛
