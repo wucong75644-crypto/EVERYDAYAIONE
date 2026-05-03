@@ -18,7 +18,8 @@ export type ContentPart =
   | ThinkingPart
   | ToolStepPart
   | ToolResultPart
-  | FormPart;
+  | FormPart
+  | ChartPart;
 
 export interface TextPart {
   type: 'text';
@@ -96,6 +97,14 @@ export interface FormPart {
   fields: FormField[];
   submit_text?: string;
   cancel_text?: string;
+}
+
+/** 交互式图表内容块（ECharts 配置 JSON，前端 ChartBlock 渲染） */
+export interface ChartPart {
+  type: 'chart';
+  option: Record<string, unknown>;
+  title?: string;
+  chart_type?: string;
 }
 
 /** 表单字段定义 */

@@ -22,6 +22,7 @@ import MarkdownRenderer from './MarkdownRenderer';
 import ThinkingBlock from './ThinkingBlock';
 import ToolResultBlock from './ToolResultBlock';
 import FormBlock from './FormBlock';
+import ChartBlock from './ChartBlock';
 import FileCardList from '../media/FileCard';
 import SuggestionChips from './SuggestionChips';
 import { RENDER_CONFIG, getCompletedBubbleText, type MessageType } from '../../../constants/placeholder';
@@ -516,6 +517,18 @@ export default memo(function MessageItem({
                     return (
                       <div key={fp.url} className="my-2" style={{ maxWidth: '400px' }}>
                         <FileCardList files={[fp]} />
+                      </div>
+                    );
+                  }
+                  if (part.type === 'chart') {
+                    const cp = part as import('../../../types/message').ChartPart;
+                    return (
+                      <div key={idx} className="my-3 group" style={{ maxWidth: '100%' }}>
+                        <ChartBlock
+                          option={cp.option}
+                          title={cp.title}
+                          chartType={cp.chart_type}
+                        />
                       </div>
                     );
                   }

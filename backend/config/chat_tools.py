@@ -199,7 +199,9 @@ data_query 只支持单文件查询，不能跨文件关联。涉及多个文件
 - 变量在对话期间持续存在（df, fig, result 等下次调用仍可用）
 - 最终给用户的文件写到 OUTPUT_DIR，平台自动检测上传
 - 中间计算结果（后续步骤需要读取）写到 STAGING_DIR
-- 图表用 plt.savefig(OUTPUT_DIR + '/图.png', dpi=150, bbox_inches='tight')
+- 图表用 ECharts JSON 配置（.echart.json），不要用 plt/matplotlib：
+  option = {"title":{"text":"标题"}, "xAxis":{...}, "series":[{...}]}
+  json.dump(option, open(OUTPUT_DIR+'/图.echart.json','w'), ensure_ascii=False)
 - 写 Excel 用 engine='xlsxwriter'
 - 用 print() 输出文本结果
 

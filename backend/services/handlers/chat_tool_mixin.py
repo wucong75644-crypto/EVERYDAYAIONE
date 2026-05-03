@@ -339,6 +339,9 @@ class ChatToolMixin:
             # AgentResult 直接返回（不做 str 操作，由上层处理）
             from services.agent.agent_result import AgentResult
             if isinstance(result, AgentResult):
+                # 提取 [FILE] 标记 → FilePart 暂存（code_execute 生成的文件）
+                if result.summary and "[FILE]" in result.summary:
+                    result.summary = self._extract_file_parts(result.summary)
                 raw_summary = result.summary[:100] if result.summary else ""
                 await ws_manager.send_to_task_or_user(
                     task_id, user_id,
