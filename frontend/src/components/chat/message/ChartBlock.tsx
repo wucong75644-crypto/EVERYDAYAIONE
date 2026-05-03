@@ -237,7 +237,7 @@ function TypeSwitchBar({ current, original, onSwitch }: {
 // 主组件
 // ============================================================
 
-function ChartBlockInner({ option, title, chartType }: ChartBlockProps) {
+function ChartBlockInner({ option, title }: ChartBlockProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof import('echarts/core').init> | null>(null);
   const { theme, isDark } = useTheme();
