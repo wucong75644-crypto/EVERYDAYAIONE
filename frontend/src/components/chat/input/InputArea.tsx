@@ -201,11 +201,10 @@ export default function InputArea({
   });
 
   // 实际生效的模型类型：智能模式用子模式，单模型用模型自身类型
-  // 电商图模式（image-ecom）走 chat 路径（主Agent工具循环），不走 ImageHandler
+  // 电商图模式走专用 EcomImageHandler（和 ImageHandler 同级），不走 ChatHandler
   const isSmart = isSmartModel(selectedModel.id);
   const effectiveModelType: ModelType = isSmart
-    ? (smartSubMode === 'image-i2i' || smartSubMode === 'image-t2i' ? 'image'
-      : smartSubMode === 'image-ecom' ? 'chat'  // 电商图走主Agent
+    ? (smartSubMode.startsWith('image') ? 'image'  // 图生图/文生图/电商图都走 image 路径
       : smartSubMode as ModelType)
     : selectedModel.type;
   const isEcomMode = smartSubMode === 'image-ecom';
@@ -464,24 +463,29 @@ export default function InputArea({
 
       // 发送消息（使用真实对话 ID）
       // 智能模式下用 effectiveModelType（子模式），单模型用模型自身类型
-      if (effectiveModelType === 'chat') {
-        // 聊天消息：统一使用服务器 URL（确保刷新后图片仍然可见）
-        // 注：clientRequestId 由 sendMessage 内部生成，无需传入
-        // 电商图模式时附带 image_task_meta（主Agent用来遍历调用 image_agent）
-        const ecomParams = isEcomMode && imageTaskMeta
-          ? { image_task_meta: imageTaskMeta } : null;
+      if (isEcomMode) {
+        // 电商图模式：走专用 EcomImageHandler（不走 ChatHandler）
+        // 通过 handleImageGeneration 发送，extraParams 覆盖 generationType 为 image_ecom
+        await handleImageGeneration(
+          currentConversationId!,
+          messageContent,
+          imageUrls,
+          {
+            generation_type_override: 'image_ecom',
+            image_task_meta: imageTaskMeta,
+            num_images: imageTaskMeta?.length || 1,
+          },
+        );
+        setImageTaskMeta(null);
+        setCostEstimate(null);
+      } else if (effectiveModelType === 'chat') {
+        // 聊天消息
         await handleChatMessage(
           messageContent,
           currentConversationId!,
-          imageUrls,    // 使用服务器 URL（已上传完成）
-          fileData,     // PDF 文件信息
-          ecomParams,   // 电商图模式：image_task_meta
+          imageUrls,
+          fileData,
         );
-        // 发送后清理电商图状态
-        if (isEcomMode) {
-          setImageTaskMeta(null);
-          setCostEstimate(null);
-        }
       } else if (effectiveModelType === 'video') {
         await handleVideoGeneration(currentConversationId!, messageContent, imageUrls);
       } else {

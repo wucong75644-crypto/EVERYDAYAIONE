@@ -45,6 +45,7 @@ class GenerationType(str, Enum):
     """生成类型"""
     CHAT = "chat"
     IMAGE = "image"
+    IMAGE_ECOM = "image_ecom"  # 电商图模式（专用 Handler，不走 ChatHandler）
     VIDEO = "video"
     AUDIO = "audio"
 
