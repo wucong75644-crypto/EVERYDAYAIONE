@@ -273,76 +273,132 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
     g["defaultdict"] = defaultdict
     g["OrderedDict"] = OrderedDict
 
-    # pandas（对标 Claude Code L2 行数限制：默认 nrows=2000）
+    # pandas 读取增强管道
+    # 对标行业标准：底层自动处理数据格式，提示词只描述环境能力
     if _PANDAS_AVAILABLE:
         _DEFAULT_NROWS = 2000
+        _SIZE_WARN_BYTES = 500 * 1024 * 1024  # 500MB
 
-        def _wrap_pd_reader(original_fn):
-            """包装 pd.read_csv，默认 nrows=2000 + 截断提示"""
-            import functools
+        def _post_clean(df):
+            """POST-READ 清洗：空 Unnamed 列 + 尾部空行"""
+            # 合并单元格拆开后产生的全空 Unnamed 列（ERP 导出常见）
+            unnamed_empty = [
+                c for c in df.columns
+                if str(c).startswith("Unnamed:") and df[c].isna().all()
+            ]
+            if unnamed_empty:
+                df.drop(columns=unnamed_empty, inplace=True)
+            # 尾部全空行
+            while len(df) > 0 and df.iloc[-1].isna().all():
+                df = df.iloc[:-1]
+            return df
 
-            @functools.wraps(original_fn)
-            def wrapper(*args, **kwargs):
-                if "nrows" not in kwargs:
-                    kwargs["nrows"] = _DEFAULT_NROWS
-                    result = original_fn(*args, **kwargs)
-                    if hasattr(result, "__len__") and len(result) >= _DEFAULT_NROWS:
-                        print(
-                            f"\u26a0\ufe0f 数据已截断到前 {_DEFAULT_NROWS} 行。"
-                            f"如需全量分析，用 data_query SQL 聚合或传 nrows=None。"
-                        )
-                    return result
-                elif kwargs["nrows"] is None:
-                    del kwargs["nrows"]
-                return original_fn(*args, **kwargs)
-            return wrapper
+        def _check_file_size(file_arg):
+            """PRE-READ 文件大小预检"""
+            import os as _os
+            try:
+                path = str(file_arg)
+                if _os.path.isfile(path):
+                    size = _os.path.getsize(path)
+                    if size > _SIZE_WARN_BYTES:
+                        print(f"\u26a0\ufe0f 文件 {size // 1048576}MB，建议用 data_query SQL 聚合。")
+            except Exception:
+                pass
+
+        def _nrows_read(original_fn, args, kwargs):
+            """统一的 nrows 截断 + 清洗 + 提示逻辑"""
+            if "nrows" not in kwargs:
+                kwargs["nrows"] = _DEFAULT_NROWS
+                result = original_fn(*args, **kwargs)
+                result = _post_clean(result)
+                if len(result) >= _DEFAULT_NROWS:
+                    print(
+                        f"\u26a0\ufe0f 数据已截断到前 {_DEFAULT_NROWS} 行。"
+                        f"如需全量分析，用 data_query SQL 聚合或传 nrows=None。"
+                    )
+                return result
+            if kwargs["nrows"] is None:
+                del kwargs["nrows"]
+            result = original_fn(*args, **kwargs)
+            return _post_clean(result)
 
         def _wrap_pd_read_excel(original_fn):
-            """包装 pd.read_excel：自动表头检测 + 默认 nrows=2000 + 截断提示
-
-            复用 data_query_cache.detect_header_row 算法（messytables 众数法
-            + csv.Sniffer 类型验证），解决 ERP 导出 Excel 表头不在第一行的问题。
-            """
+            """read_excel 管道：预检 → 引擎 → 表头检测 → 读取 → 清洗 → 截断提示"""
             import functools
 
             @functools.wraps(original_fn)
             def wrapper(*args, **kwargs):
-                # 用户没指定 header → 自动检测
-                if "header" not in kwargs:
+                file_arg = args[0] if args else kwargs.get("io") or kwargs.get("filepath_or_buffer")
+                # ① 文件大小预检
+                if file_arg is not None:
+                    _check_file_size(file_arg)
+                # ② 引擎选择：未指定 → calamine（快 7 倍）
+                if "engine" not in kwargs:
+                    kwargs["engine"] = "calamine"
+                # ③ 表头检测：未指定 header → 自动检测
+                if "header" not in kwargs and file_arg is not None:
                     try:
                         from services.agent.data_query_cache import detect_header_row
-                        file_arg = args[0] if args else kwargs.get("io")
-                        if file_arg is not None:
-                            probe = original_fn(file_arg, header=None, nrows=20)
-                            header_row = detect_header_row(probe.values.tolist())
-                            if header_row > 0:
-                                kwargs["header"] = header_row
-                    except Exception:
-                        pass  # 检测失败不干预，保持 pandas 默认行为
-
-                # nrows 截断逻辑（同 read_csv）
-                if "nrows" not in kwargs:
-                    kwargs["nrows"] = _DEFAULT_NROWS
-                    result = original_fn(*args, **kwargs)
-                    if hasattr(result, "__len__") and len(result) >= _DEFAULT_NROWS:
-                        print(
-                            f"\u26a0\ufe0f 数据已截断到前 {_DEFAULT_NROWS} 行。"
-                            f"如需全量分析，用 data_query SQL 聚合或传 nrows=None。"
+                        probe = original_fn(
+                            file_arg, header=None, nrows=20,
+                            engine=kwargs.get("engine", "calamine"),
                         )
-                    return result
-                elif kwargs["nrows"] is None:
-                    del kwargs["nrows"]
-                return original_fn(*args, **kwargs)
+                        header_row = detect_header_row(probe.values.tolist())
+                        if header_row > 0:
+                            kwargs["header"] = header_row
+                    except Exception:
+                        pass
+                # ④⑤⑥ 读取 + 清洗 + 截断
+                return _nrows_read(original_fn, args, kwargs)
             return wrapper
 
-        # 创建 pandas 命名空间代理（不污染真实 pd 模块）
+        def _wrap_pd_read_csv(original_fn):
+            """read_csv 管道：预检 → 编码检测 → 分隔符检测 → 读取 → 清洗 → 截断提示"""
+            import functools
+
+            @functools.wraps(original_fn)
+            def wrapper(*args, **kwargs):
+                file_arg = args[0] if args else kwargs.get("filepath_or_buffer")
+                # ① 文件大小预检
+                if file_arg is not None:
+                    _check_file_size(file_arg)
+                # ② 编码检测：未指定 → chardet 自动检测
+                if "encoding" not in kwargs and file_arg is not None:
+                    try:
+                        from services.agent.data_query_cache import detect_encoding
+                        enc = detect_encoding(str(file_arg))
+                        if enc.lower() not in ("utf-8", "ascii"):
+                            kwargs["encoding"] = enc
+                    except Exception:
+                        pass
+                # ③ 分隔符检测：未指定 → csv.Sniffer
+                if "sep" not in kwargs and "delimiter" not in kwargs and file_arg is not None:
+                    try:
+                        import csv as _csv
+                        enc = kwargs.get("encoding", "utf-8")
+                        with open(str(file_arg), encoding=enc, errors="ignore") as _f:
+                            sample = _f.read(8192)
+                        dialect = _csv.Sniffer().sniff(sample)
+                        if dialect.delimiter != ",":
+                            kwargs["sep"] = dialect.delimiter
+                    except Exception:
+                        pass
+                # ④⑤⑥ 读取 + 清洗 + 截断（含 UnicodeDecodeError 降级 GBK）
+                try:
+                    return _nrows_read(original_fn, args, kwargs)
+                except UnicodeDecodeError:
+                    if "encoding" not in kwargs:
+                        kwargs["encoding"] = "gbk"
+                        return _nrows_read(original_fn, args, kwargs)
+                    raise
+            return wrapper
+
         class _PandasProxy:
-            """代理 pd 模块，拦截 read_* 函数加默认 nrows 限制 + Excel 表头检测"""
+            """pd 代理：Excel 表头/引擎 + CSV 编码/分隔符 + nrows 截断 + 数据清洗"""
             def __init__(self, real_pd):
                 self._pd = real_pd
                 self.read_excel = _wrap_pd_read_excel(real_pd.read_excel)
-                self.read_csv = _wrap_pd_reader(real_pd.read_csv)
-                # read_parquet 不限制（列式存储，按列读取不吃内存）
+                self.read_csv = _wrap_pd_read_csv(real_pd.read_csv)
 
             def __getattr__(self, name):
                 return getattr(self._pd, name)

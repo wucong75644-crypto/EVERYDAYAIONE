@@ -123,17 +123,18 @@ class TestCodeToolsDefinition:
 
     # ---- Code-as-Query 模式测试 ----
 
-    def test_workspace_version_has_print_output(self):
-        """主 Agent 版包含 print() 输出说明"""
+    def test_workspace_version_has_output_dir(self):
+        """主 Agent 版包含 OUTPUT_DIR 说明"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
-        assert "print()" in desc
+        assert "OUTPUT_DIR" in desc
 
-    def test_workspace_version_has_os_module(self):
-        """主 Agent 版包含 os 模块说明"""
+    def test_workspace_version_has_os(self):
+        """主 Agent 版包含 os 受限说明"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
-        assert "os.listdir" in desc
+        assert "os" in desc
+        assert "listdir" in desc or "受限" in desc
 
 
 class TestAgentToolsIntegration:

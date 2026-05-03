@@ -40,33 +40,22 @@ CODE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
 
 # ERP Agent 版（只有 STAGING_DIR + OUTPUT_DIR，不知道 WORKSPACE_DIR 的存在）
 _DESCRIPTION_BASE = (
-    "在沙盒子进程中执行 Python 代码并返回输出。\n\n"
-    "沙盒内不能查询数据，大数据用 data_query 查询提取所需子集。\n"
-    "每次执行都是全新子进程，不保留任何变量。\n\n"
-    "可用库: pd, plt, Path, math, json, datetime, Decimal, Counter, io\n"
-    "os 模块: os.listdir / os.walk / os.stat / os.path.*（路径限制在工作区内）\n"
-    "shutil 模块: shutil.copy / shutil.move\n"
-    "环境变量: STAGING_DIR（staging 数据）、OUTPUT_DIR（输出目录，自动上传）\n"
-    "data_query 暂存的小数据集可用 pd.read_parquet() 读取。\n"
-    "写 Excel 用 engine='xlsxwriter'。\n"
-    "生成的文件写到 OUTPUT_DIR，用 print() 输出文本。\n"
-    "禁止 import sys/subprocess。"
+    "Python 沙盒，每次执行不保留变量。\n"
+    "可用库: pd, plt, Path, math, json, datetime, Decimal, Counter, io, "
+    "os(受限: listdir/walk/stat/path), shutil(受限: copy/move)\n"
+    "环境变量: STAGING_DIR, OUTPUT_DIR（自动上传）\n"
+    "staging 数据用 pd.read_parquet() 读取，写 Excel 用 engine='xlsxwriter'。\n"
+    "生成文件写到 OUTPUT_DIR，用 print() 输出文本。禁止 sys/subprocess。"
 )
 
 # 主 Agent 版（加 WORKSPACE_DIR + 完整文件生成能力）
 _DESCRIPTION_WORKSPACE = (
-    "在沙盒子进程中执行 Python 代码并返回输出。\n\n"
-    "工作目录为用户工作区，可用 os.listdir('.') 浏览文件。\n"
-    "有状态沙盒：同一对话内变量跨调用保留。\n\n"
-    "可用库: pd, plt, Path, math, json, datetime, Decimal, Counter, io, docx, pptx\n"
-    "os 模块: os.listdir / os.walk / os.stat / os.path.*（路径限制在工作区内）\n"
-    "shutil 模块: shutil.copy / shutil.move\n"
-    "环境变量: STAGING_DIR（staging 数据）、OUTPUT_DIR（输出目录，自动上传）\n"
-    "读 Excel 用 engine='calamine'，写 Excel 用 engine='xlsxwriter'。\n"
-    "大数据文件用 data_query 查询提取所需子集。"
-    "data_query 暂存的小数据集可用 pd.read_parquet() 读取。\n"
-    "生成的文件写到 OUTPUT_DIR，用 print() 输出文本。\n"
-    "禁止 import sys/subprocess。"
+    "有状态 Python 沙盒，变量跨调用保留。工作目录为用户工作区。\n"
+    "可用库: pd, plt, Path, math, json, datetime, Decimal, Counter, io, docx, pptx, "
+    "os(受限: listdir/walk/stat/path), shutil(受限: copy/move)\n"
+    "环境变量: WORKSPACE_DIR, STAGING_DIR, OUTPUT_DIR（自动上传）\n"
+    "工作区文件直接用文件名读取: pd.read_excel('报表.xlsx')。\n"
+    "写 Excel 用 engine='xlsxwriter'。生成文件写到 OUTPUT_DIR。禁止 sys/subprocess。"
 )
 
 
