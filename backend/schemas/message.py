@@ -61,12 +61,15 @@ class TextPart(BaseModel):
 
 
 class ImagePart(BaseModel):
-    """图片内容（url 可为 None 表示占位符/生成中）"""
+    """图片内容（url 可为 None 表示占位符/生成中，failed=True 表示生成失败）"""
     type: Literal["image"] = "image"
     url: Optional[str] = None
     width: Optional[int] = None
     height: Optional[int] = None
     alt: Optional[str] = None
+    failed: Optional[bool] = None
+    error: Optional[str] = None
+    retry_context: Optional[dict] = None
 
 
 class VideoPart(BaseModel):

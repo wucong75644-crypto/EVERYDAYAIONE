@@ -112,13 +112,25 @@ class ChatToolMixin:
                 f"has_pending={hasattr(self, '_pending_file_parts')}"
             )
             if result.collected_files and hasattr(self, "_pending_file_parts"):
-                from schemas.message import FilePart
+                from schemas.message import FilePart, ImagePart
                 for f in result.collected_files:
-                    self._pending_file_parts.append(FilePart(
-                        url=f["url"], name=f["name"],
-                        mime_type=f["mime_type"], size=f["size"],
-                    ))
-                    logger.info(f"FilePart added | name={f['name']} | url={f['url'][:80]}")
+                    # ImageAgent 返回 ImagePart 格式（type=image, url/width/height/alt）
+                    if f.get("type") == "image":
+                        self._pending_file_parts.append(ImagePart(
+                            url=f.get("url"),
+                            width=f.get("width"),
+                            height=f.get("height"),
+                            alt=f.get("alt", ""),
+                            failed=f.get("failed", False),
+                        ))
+                        logger.info(f"ImagePart added | alt={f.get('alt', '')[:30]} | url={f.get('url', 'None')[:80]}")
+                    else:
+                        # 其他工具返回 FilePart 格式（url/name/mime_type/size）
+                        self._pending_file_parts.append(FilePart(
+                            url=f["url"], name=f["name"],
+                            mime_type=f["mime_type"], size=f.get("size"),
+                        ))
+                        logger.info(f"FilePart added | name={f['name']} | url={f['url'][:80]}")
             # ② ask_user 冒泡
             if (result.status == "ask_user" and result.ask_user_question
                     and not getattr(self, "_ask_user_pending", None)):

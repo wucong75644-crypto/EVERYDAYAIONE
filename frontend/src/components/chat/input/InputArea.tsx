@@ -247,6 +247,20 @@ export default function InputArea({
     });
   }, [streamingMessageId, conversationId]);
 
+  // 全局 ESC 快捷键停止生成（textarea 没有 focus 时也能用）
+  useEffect(() => {
+    if (!isStreaming) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // 有 dialog/modal 打开时不拦截，让 Radix 自行处理关闭
+      if (document.querySelector('[role="dialog"]')) return;
+      e.preventDefault();
+      handleStop();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isStreaming, handleStop]);
+
   // 打断当前执行（用户在 AI 执行中发送新消息）
   const sendSteer = useCallback((message: string) => {
     // 获取当前 streaming 任务的 task_id

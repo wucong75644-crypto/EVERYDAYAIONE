@@ -177,16 +177,23 @@ async def cancel_task_by_message_id(
             result = q.execute()
 
             if result.data:
+                from services.websocket_manager import ws_manager
+
                 for task in result.data:
                     db.table("tasks").update({
                         "status": "failed",
-                        "error_message": "用户删除了占位符消息",
+                        "error_message": "用户取消了任务",
                         "completed_at": datetime.now(timezone.utc).isoformat(),
                     }).eq("id", task["id"]).execute()
 
+                    # 向运行中的 Agent 循环发送取消信号（同进程 asyncio.Event）
+                    ext_id = task.get("external_task_id")
+                    if ext_id:
+                        ws_manager.cancel_task(ext_id)
+
                     logger.info(
-                        f"Task cancelled by message deletion | task_id={task['id']} | "
-                        f"message_id={message_id} | user_id={ctx.user_id}"
+                        f"Task cancelled by user | task_id={task['id']} | "
+                        f"ext={ext_id} | message_id={message_id} | user_id={ctx.user_id}"
                     )
 
                 # 同步更新消息状态，防止重新登录后仍为 streaming 显示空气泡
