@@ -1957,7 +1957,8 @@
       "Bash(grep -c \"register_files_from_output\" tests/*.py)",
       "Bash(./git-push.sh 'feat: 电商图模式——AI提示词增强+ImageAgent单张生成+四层提示词框架+风格持久化+失败重试 *)",
       "Bash(grep -E \"test_.*\\\\.\\(py|ts\\)$\")",
-      "Bash(./git-push.sh \"test: @文件提及功能测试补全——后端搜索纯函数+Hook行为+Dropdown组件+API服务\\(+42用例\\)\")"
+      "Bash(./git-push.sh \"test: @文件提及功能测试补全——后端搜索纯函数+Hook行为+Dropdown组件+API服务\\(+42用例\\)\")",
+      "Bash(./git-push.sh \"fix: AI提示词按钮移到输入框内部——textarea左侧同行显示，删除输入框外的独立按钮\")"
     ],
     "additionalDirectories": [
       "/tmp"

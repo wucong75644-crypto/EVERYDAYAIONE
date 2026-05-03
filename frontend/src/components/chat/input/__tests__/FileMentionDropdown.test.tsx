@@ -38,8 +38,8 @@ const mockSubdirFile: MentionResult = {
 };
 
 describe('FileMentionDropdown', () => {
-  it('should render empty state prompt', () => {
-    render(
+  it('should render nothing when empty and not loading', () => {
+    const { container } = render(
       <FileMentionDropdown
         results={[]}
         activeIndex={0}
@@ -48,7 +48,7 @@ describe('FileMentionDropdown', () => {
         onHover={vi.fn()}
       />,
     );
-    expect(screen.getByText('输入关键词搜索工作区文件...')).toBeTruthy();
+    expect(container.innerHTML).toBe('');
   });
 
   it('should render loading state', () => {

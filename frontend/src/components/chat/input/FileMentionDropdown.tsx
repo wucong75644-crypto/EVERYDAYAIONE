@@ -36,18 +36,8 @@ export default function FileMentionDropdown({
     activeEl?.scrollIntoView({ block: 'nearest' });
   }, [activeIndex]);
 
-  // 空状态
-  if (!loading && results.length === 0) {
-    return (
-      <div className="absolute bottom-full left-0 right-0 mb-1 z-50">
-        <div className="rounded-xl border border-border-default bg-surface-card shadow-lg overflow-hidden">
-          <div className="px-4 py-3 text-sm text-text-tertiary">
-            输入关键词搜索工作区文件...
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // 无结果且非加载中：不渲染面板
+  if (!loading && results.length === 0) return null;
 
   return (
     <div className="absolute bottom-full left-0 right-0 mb-1 z-50">
