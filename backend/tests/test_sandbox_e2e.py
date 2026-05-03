@@ -465,6 +465,29 @@ class TestPandasTruncationHint:
         )
         assert "rows=3000" in result.summary
 
+    @pytest.mark.asyncio
+    async def test_excel_auto_header_detection(self, executor, ws):
+        """ERP 导出 Excel 自动检测表头行（表头不在第一行）"""
+        import pandas as _pd
+        # 模拟 ERP 导出：第 0 行是标题，第 1 行是真正表头
+        data = [
+            ["利润表-店铺利润表", None, None],
+            ["店铺", "收入", "利润"],
+            ["旗舰店", 5000, 2000],
+            ["京东店", 3000, 1500],
+        ]
+        df_raw = _pd.DataFrame(data)
+        xlsx_path = Path(ws["workspace"], "erp_report.xlsx")
+        df_raw.to_excel(str(xlsx_path), index=False, header=False)
+
+        result = await executor.execute(
+            "df = pd.read_excel('erp_report.xlsx')\nprint(df.columns.tolist())",
+            "读ERP表",
+        )
+        # 应该自动检测到 header=1，列名是 [店铺, 收入, 利润]
+        assert "店铺" in result.summary
+        assert "Unnamed" not in result.summary
+
 
 # ============================================================
 # 5. 超时和进程管理

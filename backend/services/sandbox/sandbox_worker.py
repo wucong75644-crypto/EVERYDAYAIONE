@@ -278,7 +278,7 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
         _DEFAULT_NROWS = 2000
 
         def _wrap_pd_reader(original_fn):
-            """包装 pd.read_excel/read_csv，默认 nrows=2000 + 截断提示"""
+            """包装 pd.read_csv，默认 nrows=2000 + 截断提示"""
             import functools
 
             @functools.wraps(original_fn)
@@ -292,7 +292,44 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
                             f"如需全量分析，用 data_query SQL 聚合或传 nrows=None。"
                         )
                     return result
-                # 用户显式传 nrows=None → 全读（移除限制）
+                elif kwargs["nrows"] is None:
+                    del kwargs["nrows"]
+                return original_fn(*args, **kwargs)
+            return wrapper
+
+        def _wrap_pd_read_excel(original_fn):
+            """包装 pd.read_excel：自动表头检测 + 默认 nrows=2000 + 截断提示
+
+            复用 data_query_cache.detect_header_row 算法（messytables 众数法
+            + csv.Sniffer 类型验证），解决 ERP 导出 Excel 表头不在第一行的问题。
+            """
+            import functools
+
+            @functools.wraps(original_fn)
+            def wrapper(*args, **kwargs):
+                # 用户没指定 header → 自动检测
+                if "header" not in kwargs:
+                    try:
+                        from services.agent.data_query_cache import detect_header_row
+                        file_arg = args[0] if args else kwargs.get("io")
+                        if file_arg is not None:
+                            probe = original_fn(file_arg, header=None, nrows=20)
+                            header_row = detect_header_row(probe.values.tolist())
+                            if header_row > 0:
+                                kwargs["header"] = header_row
+                    except Exception:
+                        pass  # 检测失败不干预，保持 pandas 默认行为
+
+                # nrows 截断逻辑（同 read_csv）
+                if "nrows" not in kwargs:
+                    kwargs["nrows"] = _DEFAULT_NROWS
+                    result = original_fn(*args, **kwargs)
+                    if hasattr(result, "__len__") and len(result) >= _DEFAULT_NROWS:
+                        print(
+                            f"\u26a0\ufe0f 数据已截断到前 {_DEFAULT_NROWS} 行。"
+                            f"如需全量分析，用 data_query SQL 聚合或传 nrows=None。"
+                        )
+                    return result
                 elif kwargs["nrows"] is None:
                     del kwargs["nrows"]
                 return original_fn(*args, **kwargs)
@@ -300,10 +337,10 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
 
         # 创建 pandas 命名空间代理（不污染真实 pd 模块）
         class _PandasProxy:
-            """代理 pd 模块，拦截 read_* 函数加默认 nrows 限制"""
+            """代理 pd 模块，拦截 read_* 函数加默认 nrows 限制 + Excel 表头检测"""
             def __init__(self, real_pd):
                 self._pd = real_pd
-                self.read_excel = _wrap_pd_reader(real_pd.read_excel)
+                self.read_excel = _wrap_pd_read_excel(real_pd.read_excel)
                 self.read_csv = _wrap_pd_reader(real_pd.read_csv)
                 # read_parquet 不限制（列式存储，按列读取不吃内存）
 
