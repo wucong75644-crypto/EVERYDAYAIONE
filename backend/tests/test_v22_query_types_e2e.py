@@ -91,8 +91,15 @@ class TestResolveQueryType:
     def test_non_cross_metrics_stay_summary(self):
         assert self._resolve(metrics=["count"]) == "summary"
 
-    def test_export_small_becomes_detail(self):
-        assert self._resolve(mode="export", limit=5) == "detail"
+    def test_export_default_limit_becomes_export(self):
+        """mode=export + limit≤20（默认值）→ 用户大概率想全量导出"""
+        assert self._resolve(mode="export", limit=5) == "export"
+        assert self._resolve(mode="export", limit=20) == "export"
+
+    def test_export_small_explicit_becomes_detail(self):
+        """mode=export + limit 在 21~200 → 明确指定了少量条数，走 detail"""
+        assert self._resolve(mode="export", limit=50) == "detail"
+        assert self._resolve(mode="export", limit=200) == "detail"
 
     def test_export_large_stays_export(self):
         assert self._resolve(mode="export", limit=500) == "export"

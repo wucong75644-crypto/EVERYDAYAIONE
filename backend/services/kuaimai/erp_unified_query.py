@@ -148,6 +148,9 @@ def _resolve_query_type(
         return "compare"
     if metrics and any(m in _CROSS_METRICS for m in metrics):
         return "cross"
+    if mode == "export" and limit <= 20:
+        # mode=export 但 limit 是默认值（20）→ 用户大概率想导出全量，走 export 路径
+        return "export"
     if mode == "export" and limit <= 200:
         return "detail"
     if mode == "export" and limit > 200:
