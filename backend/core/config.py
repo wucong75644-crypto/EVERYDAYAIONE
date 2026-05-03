@@ -254,10 +254,13 @@ class Settings(BaseSettings):
     video_generation_timeout: float = 600.0   # 视频生成轮询超时（Sora 等，合理长时间）
 
     # 电商图模式配置（设计文档：docs/document/TECH_电商图片Agent.md）
-    # 提示词增强（enhance API → DashScope 多模态 VL 模型）
-    image_enhance_model: str = "qwen3-vl-plus"             # 主选：创意强+能看图，1元/百万tokens
-    image_enhance_fallback_model: str = "qwen3-vl-flash"   # 降级备选，0.15元/百万tokens
-    image_enhance_timeout: float = 10.0                    # 超时秒数
+    # 提示词增强（enhance API → DashScope）
+    # 文字模式用 qwen3.5-plus（主Agent同款，稳定可靠）
+    # 图生图模式（有图片）用 VL 模型（能看图分析商品）
+    image_enhance_model: str = "qwen3.5-plus"              # 主选：文字模式，稳定可靠
+    image_enhance_vl_model: str = "qwen-vl-max"            # 图生图模式：能看图，最强VL
+    image_enhance_fallback_model: str = "qwen3.5-flash"    # 降级备选
+    image_enhance_timeout: float = 15.0                    # 超时秒数（VL模型需要更长）
     # 图片生成（ImageAgent → KIE adapter，复用现有生图基础设施）
     image_agent_kie_model: str = "gpt-image-2-text-to-image"       # 文生图默认模型
     image_agent_kie_i2i_model: str = "gpt-image-2-image-to-image"  # 图生图模型

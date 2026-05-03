@@ -209,10 +209,10 @@ async def enhance_prompt(
     else:
         messages.append({"role": "user", "content": user_prompt})
 
-    # 6. 调 DashScope qwen3-vl-plus
+    # 6. 调 DashScope（有图片用 VL 模型，纯文字用普通模型）
     from services.adapters.dashscope.chat_adapter import DashScopeChatAdapter
 
-    model = settings.image_enhance_model
+    model = settings.image_enhance_vl_model if req.image_urls else settings.image_enhance_model
     timeout = settings.image_enhance_timeout
     # 调用 LLM（主模型 → 降级备选，确保 adapter 资源关闭）
     response = None
