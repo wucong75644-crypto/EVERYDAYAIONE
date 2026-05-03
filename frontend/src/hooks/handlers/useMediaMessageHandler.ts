@@ -54,7 +54,8 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
   const handleMediaGeneration = async (
     conversationId: string,
     prompt: string,
-    imageUrls: string[] | null = null
+    imageUrls: string[] | null = null,
+    extraParams: Record<string, unknown> | null = null,
   ) => {
     try {
       // 构建 content
@@ -86,13 +87,19 @@ export function useMediaMessageHandler(params: UseMediaMessageHandlerParams) {
         mediaParams.remove_watermark = removeWatermark;
       }
 
+      // 电商图模式覆盖 generationType
+      const genType = extraParams?.generation_type_override
+        ? String(extraParams.generation_type_override)
+        : type;
+      const { generation_type_override: _, ...cleanExtra } = extraParams || {};
+
       // 调用统一发送器
       await sendMessage({
         conversationId,
         content,
-        generationType: type as GenerationType,
+        generationType: genType as GenerationType,
         model: selectedModel.id,
-        params: mediaParams,
+        params: { ...mediaParams, ...cleanExtra },
         subscribeTask: subscribeTaskWithMapping,
         unsubscribeTask, // 🔥 传入取消订阅函数
       });

@@ -469,4 +469,7 @@ def resolve_auto_model(
         has_images = any(isinstance(p, ImagePart) for p in content)
         if has_images:
             return get_image_to_video_model()
+    # IMAGE_ECOM 复用 IMAGE 的默认模型
+    if gen_type == GenerationType.IMAGE_ECOM:
+        return AUTO_MODEL_DEFAULTS.get(GenerationType.IMAGE, DEFAULT_IMAGE_MODEL)
     return AUTO_MODEL_DEFAULTS.get(gen_type, DEFAULT_CHAT_MODEL)

@@ -209,7 +209,7 @@ async def _do_generate_message(
 
     if _is_smart:
         # 智能模式：前端如果明确指定了图片/视频子模式，尊重它走对应 Handler
-        if body.generation_type in (GenerationType.IMAGE, GenerationType.VIDEO):
+        if body.generation_type in (GenerationType.IMAGE, GenerationType.IMAGE_ECOM, GenerationType.VIDEO):
             gen_type = body.generation_type
             body.model = resolve_auto_model(gen_type, body.content, None)
         else:

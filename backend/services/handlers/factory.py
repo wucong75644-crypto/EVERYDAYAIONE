@@ -11,6 +11,7 @@ from typing import Dict, Optional, Type
 from schemas.message import GenerationType
 from services.handlers.base import BaseHandler
 from services.handlers.chat_handler import ChatHandler
+from services.handlers.ecom_image_handler import EcomImageHandler
 from services.handlers.image_handler import ImageHandler
 from services.handlers.video_handler import VideoHandler
 
@@ -21,6 +22,7 @@ class HandlerFactory:
     _handlers: Dict[GenerationType, Type[BaseHandler]] = {
         GenerationType.CHAT: ChatHandler,
         GenerationType.IMAGE: ImageHandler,
+        GenerationType.IMAGE_ECOM: EcomImageHandler,
         GenerationType.VIDEO: VideoHandler,
     }
 
