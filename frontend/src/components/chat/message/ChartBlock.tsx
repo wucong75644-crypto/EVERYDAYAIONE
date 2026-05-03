@@ -88,10 +88,13 @@ function optionToContent(opt: Record<string, unknown>): string {
     ? (xAxis[0]?.data as string[] | undefined)
     : (xAxis?.data as string[] | undefined);
 
-  const tableStyle = 'width:100%;border-collapse:collapse;font-size:13px;';
-  const thStyle = 'padding:6px 12px;text-align:left;border-bottom:2px solid #e5e7eb;font-weight:600;color:#374151;';
-  const tdStyle = 'padding:5px 12px;text-align:right;border-bottom:1px solid #f3f4f6;';
-  const tdLeftStyle = 'padding:5px 12px;text-align:left;border-bottom:1px solid #f3f4f6;color:#374151;';
+  const tableStyle = 'width:100%;border-collapse:collapse;font-size:13px;border:1px solid #d1d5db;';
+  const thStyle = 'padding:8px 14px;text-align:left;border:1px solid #d1d5db;font-weight:600;color:#111827;background:#f3f4f6;';
+  const thRightStyle = 'padding:8px 14px;text-align:right;border:1px solid #d1d5db;font-weight:600;color:#111827;background:#f3f4f6;';
+  const tdStyle = 'padding:6px 14px;text-align:right;border:1px solid #e5e7eb;';
+  const tdLeftStyle = 'padding:6px 14px;text-align:left;border:1px solid #e5e7eb;font-weight:500;';
+  const rowEven = 'background:#f9fafb;';
+  const rowOdd = '';
 
   // 饼图/漏斗图等：data 是 {name, value}[] 格式
   const firstSeries = series[0];
@@ -100,11 +103,12 @@ function optionToContent(opt: Record<string, unknown>): string {
     const items = seriesData as Array<{ name: string; value: number }>;
     const label = (firstSeries.name as string) || '数值';
     let html = `<table style="${tableStyle}"><thead><tr>`;
-    html += `<th style="${thStyle}">名称</th><th style="${thStyle}">${label}</th>`;
+    html += `<th style="${thStyle}">名称</th><th style="${thRightStyle}">${label}</th>`;
     html += '</tr></thead><tbody>';
-    for (const item of items) {
-      const val = typeof item.value === 'number' ? item.value.toLocaleString() : item.value;
-      html += `<tr><td style="${tdLeftStyle}">${item.name}</td><td style="${tdStyle}">${val}</td></tr>`;
+    for (let i = 0; i < items.length; i++) {
+      const bg = i % 2 === 0 ? rowEven : rowOdd;
+      const val = typeof items[i].value === 'number' ? items[i].value.toLocaleString() : items[i].value;
+      html += `<tr style="${bg}"><td style="${tdLeftStyle}">${items[i].name}</td><td style="${tdStyle}">${val}</td></tr>`;
     }
     html += '</tbody></table>';
     return html;
@@ -115,11 +119,12 @@ function optionToContent(opt: Record<string, unknown>): string {
     let html = `<table style="${tableStyle}"><thead><tr>`;
     html += `<th style="${thStyle}">类别</th>`;
     for (const s of series) {
-      html += `<th style="${thStyle}">${(s.name as string) || '数值'}</th>`;
+      html += `<th style="${thRightStyle}">${(s.name as string) || '数值'}</th>`;
     }
     html += '</tr></thead><tbody>';
     for (let i = 0; i < categories.length; i++) {
-      html += `<tr><td style="${tdLeftStyle}">${categories[i]}</td>`;
+      const bg = i % 2 === 0 ? rowEven : rowOdd;
+      html += `<tr style="${bg}"><td style="${tdLeftStyle}">${categories[i]}</td>`;
       for (const s of series) {
         const data = s.data as number[] | undefined;
         const val = data?.[i];
@@ -135,12 +140,13 @@ function optionToContent(opt: Record<string, unknown>): string {
   // 兜底：纯数组 series
   let html = `<table style="${tableStyle}"><thead><tr><th style="${thStyle}">#</th>`;
   for (const s of series) {
-    html += `<th style="${thStyle}">${(s.name as string) || '数值'}</th>`;
+    html += `<th style="${thRightStyle}">${(s.name as string) || '数值'}</th>`;
   }
   html += '</tr></thead><tbody>';
   const maxLen = Math.max(...series.map(s => ((s.data as unknown[]) || []).length));
   for (let i = 0; i < maxLen; i++) {
-    html += `<tr><td style="${tdLeftStyle}">${i + 1}</td>`;
+    const bg = i % 2 === 0 ? rowEven : rowOdd;
+    html += `<tr style="${bg}"><td style="${tdLeftStyle}">${i + 1}</td>`;
     for (const s of series) {
       const data = s.data as number[] | undefined;
       const val = data?.[i];

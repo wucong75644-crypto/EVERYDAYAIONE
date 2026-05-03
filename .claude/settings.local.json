@@ -1932,7 +1932,8 @@
       "Bash(./git-push.sh \"feat: 交互式图表ECharts——前端ChartBlock渲染+提示词改造+测试+文档\")",
       "Bash(./git-push.sh \"fix: chart block持久化——_content_blocks→result_parts转换补充chart类型\")",
       "Bash(./git-push.sh \"fix: 移除ECharts toolbox dataView——终端用户易混淆误触\")",
-      "Bash(./git-push.sh \"fix: dataView表格化——optionToContent自定义HTML表格（表头+对齐+千分位）\")"
+      "Bash(./git-push.sh \"fix: dataView表格化——optionToContent自定义HTML表格（表头+对齐+千分位）\")",
+      "Bash(./git-push.sh \"fix: dataView表格样式——可见边框+灰色表头+斑马纹+数值右对齐\")"
     ],
     "additionalDirectories": [
       "/tmp"
