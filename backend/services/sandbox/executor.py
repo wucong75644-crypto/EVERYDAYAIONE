@@ -19,6 +19,9 @@ from services.sandbox.validators import validate_code, truncate_result
 class SandboxExecutor:
     """通用 Python 代码沙盒执行器"""
 
+    # ECharts option JSON 最大字节数（超限降级为普通文件下载）
+    _CHART_OPTION_MAX_BYTES = 512_000  # 500KB
+
     # 自动检测并上传的文件扩展名
     _AUTO_UPLOAD_EXTENSIONS = frozenset({
         ".xlsx", ".xls", ".csv", ".tsv",
@@ -401,7 +404,7 @@ class SandboxExecutor:
                     if f.name.endswith(".echart.json"):
                         try:
                             _content = f.read_text(encoding="utf-8")
-                            if len(_content) <= 512_000:  # 500KB 上限，超限降级 file block
+                            if len(_content) <= self._CHART_OPTION_MAX_BYTES:
                                 import json as _json
                                 _option = _json.loads(_content)
                                 if not hasattr(self, "_chart_options"):
