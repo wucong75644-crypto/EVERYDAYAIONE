@@ -21,20 +21,26 @@ def _build_ask_user_tool() -> Dict[str, Any]:
             "name": "ask_user",
             "description": (
                     "主动向用户提问以消除歧义、收集缺失信息或确认操作意图。"
-                    "决策原则：数据查询类请求，猜错一次=用户多等10秒+重新描述需求；"
-                    "问一次=用户花3秒选选项。不确定时，永远选代价小的那个。"
+                    "决策原则：猜错一次=用户多等10秒+重新描述需求；"
+                    "问一次=用户花3秒选选项。不确定时，选代价小的那个。\n\n"
+                    "返回：用户的回复文本。\n\n"
+                    "不要用于：已有足够信息的场景（直接执行）；"
+                    "纯确认类（'要我继续吗'）— 信息无歧义时直接做。"
                 ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "message": {
                         "type": "string",
-                        "description": "追问内容（带选项引导用户）",
+                        "description": (
+                            "追问内容，简洁+带 2-3 个选项引导用户快速选择。"
+                            "e.g. '请确认查询范围：1. 全平台 2. 仅淘宝 3. 仅拼多多'"
+                        ),
                     },
                     "reason": {
                         "type": "string",
                         "enum": ["need_info", "out_of_scope"],
-                        "description": "need_info=信息不足, out_of_scope=超出能力",
+                        "description": "need_info=信息不足需补充, out_of_scope=超出当前能力范围",
                     },
                 },
             },
