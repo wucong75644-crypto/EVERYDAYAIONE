@@ -151,9 +151,21 @@ class FormPart(BaseModel):
     cancel_text: str = "取消"
 
 
+class ChartPart(BaseModel):
+    """交互式图表内容块（ECharts 配置 JSON）
+
+    沙盒 code_execute 生成 .echart.json → 后端读取内容嵌入 block →
+    前端 ChartBlock 用 ECharts 渲染交互式图表。
+    """
+    type: Literal["chart"] = "chart"
+    option: Dict[str, Any]           # ECharts option 配置
+    title: str = ""                  # 图表标题（用于无障碍和导出）
+    chart_type: str = ""             # 类型标识（line/bar/pie，日志用）
+
+
 ContentPart = Annotated[
     Union[TextPart, ImagePart, VideoPart, AudioPart, FilePart,
-          ThinkingPart, ToolStepPart, ToolResultPart, FormPart],
+          ThinkingPart, ToolStepPart, ToolResultPart, FormPart, ChartPart],
     Field(discriminator="type"),
 ]
 

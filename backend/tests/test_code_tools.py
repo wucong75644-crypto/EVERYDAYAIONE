@@ -241,14 +241,14 @@ class TestFetchAllPagesExecution:
         """缺少 tool 参数返回错误"""
         executor = self._make_executor()
         result = await executor._fetch_all_pages({"action": "order_list"})
-        assert "❌" in result
+        assert result.is_failure
 
     @pytest.mark.asyncio
     async def test_missing_action_param(self):
         """缺少 action 参数返回错误"""
         executor = self._make_executor()
         result = await executor._fetch_all_pages({"tool": "erp_trade_query"})
-        assert "❌" in result
+        assert result.is_failure
 
     @pytest.mark.asyncio
     async def test_page_size_min_20(self):
@@ -286,7 +286,7 @@ class TestFetchAllPagesExecution:
                 "tool": "../../../etc", "action": "passwd",
             })
         # 文件名中不包含 ../
-        assert "../" not in result
+        assert "../" not in result.summary
 
     @pytest.mark.asyncio
     async def test_empty_result(self):
@@ -302,4 +302,4 @@ class TestFetchAllPagesExecution:
             result = await executor._fetch_all_pages({
                 "tool": "erp_trade_query", "action": "order_list",
             })
-        assert "为空" in result
+        assert "为空" in result.summary
