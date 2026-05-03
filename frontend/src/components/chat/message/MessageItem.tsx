@@ -438,8 +438,8 @@ export default memo(function MessageItem({
                 - 都没有时 → 仅显示脉冲圆点（Claude 风格，无卡片无文字） */}
             {((isRegenerating || isStreaming) && !textContent && !hasMultiBlocks) ? (
               <LoadingPlaceholder text={agentStepHint || 'AI 正在思考'} />
-            ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !isErrorMessage && !isStreaming && !isRegenerating) ? (
-              /* 已完成但无内容（用户取消等场景） */
+            ) : (!isUser && !textContent && !hasImage && !hasVideo && !hasFiles && !isErrorMessage && !isStreaming && !isRegenerating && !(suggestions && suggestions.length > 0)) ? (
+              /* 已完成但无内容（用户取消等场景，有建议按钮时不算取消） */
               <span className="text-text-disabled text-sm italic">已取消，点击「重新生成」重试</span>
             ) : bubbleTextInfo ? (
               /* 媒体任务气泡文字：图片/视频生成中或生成完成（仅 pending 状态） */
