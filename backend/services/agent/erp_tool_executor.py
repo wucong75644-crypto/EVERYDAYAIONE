@@ -11,6 +11,8 @@ from typing import Any, Callable, Coroutine, Dict
 
 from loguru import logger
 
+from services.agent.agent_result import AgentResult
+
 
 class ErpToolMixin:
     """ERP 远程/本地工具调度 Mixin"""
@@ -48,7 +50,7 @@ class ErpToolMixin:
         # erp_execute 用 category 查找注册表（不走两步模式）
         if tool_name == "erp_execute":
             dispatcher = await self._get_erp_dispatcher()
-            if isinstance(dispatcher, str):
+            if isinstance(dispatcher, AgentResult):
                 return dispatcher
             try:
                 category = args.get("category", "")
@@ -70,21 +72,33 @@ class ErpToolMixin:
                 from core.redis import get_redis, RedisClient
                 _redis = await get_redis()
                 if not _redis:
-                    return (
-                        "⚠ 系统缓存服务暂时不可用，写操作已暂停。"
-                        "请稍后重试，或联系管理员检查 Redis 状态。"
+                    return AgentResult(
+                        summary="系统缓存服务暂时不可用，写操作已暂停。请稍后重试。",
+                        status="error",
+                        error_message="Redis unavailable",
+                        metadata={"retryable": True},
                     )
                 # 1. 先查是否已完成（10 分钟内）
                 _done = await _redis.get(_result_key)
                 if _done:
-                    return (
-                        f"⚠ 该写操作（{category}/{action}）10 分钟内已执行过，"
-                        f"避免重复执行。如需再次执行请稍后重试。"
+                    return AgentResult(
+                        summary=(
+                            f"该写操作（{category}/{action}）10 分钟内已执行过，"
+                            f"避免重复执行。如需再次执行请稍后重试。"
+                        ),
+                        status="error",
+                        error_message="Idempotency: duplicate write within 10min",
+                        metadata={"retryable": False},
                     )
                 # 2. 尝试获取锁（防止并发重复）
                 _lock_token = await RedisClient.acquire_lock(_lock_key, timeout=120)
                 if not _lock_token:
-                    return f"⚠ 相同操作（{category}/{action}）正在执行中，请稍候再试。"
+                    return AgentResult(
+                        summary=f"相同操作（{category}/{action}）正在执行中，请稍候再试。",
+                        status="error",
+                        error_message="Concurrent write lock",
+                        metadata={"retryable": True},
+                    )
 
                 cat_tool_map = {
                     "basic": "erp_info_query",
@@ -110,7 +124,12 @@ class ErpToolMixin:
                 logger.error(
                     f"ToolExecutor erp_dispatch | tool={tool_name} | error={e}"
                 )
-                return f"ERP操作失败：{e}"
+                return AgentResult(
+                    summary=f"ERP操作失败：{e}",
+                    status="error",
+                    error_message=str(e),
+                    metadata={"retryable": True},
+                )
             finally:
                 await dispatcher.close()
                 # [B5] 释放锁
@@ -123,7 +142,12 @@ class ErpToolMixin:
         # 查询工具：两步模式
         action = args.get("action", "")
         if not action:
-            return "缺少 action 参数"
+            return AgentResult(
+                summary="缺少 action 参数",
+                status="error",
+                error_message="Validation: action is required",
+                metadata={"retryable": True},
+            )
 
         params = args.get("params")
 
@@ -131,7 +155,8 @@ class ErpToolMixin:
         # 注意：params={} 是合法的 Step 2（查全部），不能用 `not params`
         if params is None:
             from services.kuaimai.param_doc import generate_param_doc
-            return generate_param_doc(tool_name, action)
+            doc = generate_param_doc(tool_name, action)
+            return AgentResult(summary=doc, status="success")
 
         # Step 2: 有 params → 注入分页参数 → 执行查询 → 附带精简参数提示
         if args.get("page") is not None:
@@ -140,7 +165,7 @@ class ErpToolMixin:
             params["page_size"] = args["page_size"]
 
         dispatcher = await self._get_erp_dispatcher()
-        if isinstance(dispatcher, str):
+        if isinstance(dispatcher, AgentResult):
             return dispatcher
         try:
             return await dispatcher.execute(tool_name, action, params)
@@ -148,7 +173,12 @@ class ErpToolMixin:
             logger.error(
                 f"ToolExecutor erp_dispatch | tool={tool_name} | error={e}"
             )
-            return f"ERP操作失败：{e}"
+            return AgentResult(
+                summary=f"ERP操作失败：{e}",
+                status="error",
+                error_message=str(e),
+                metadata={"retryable": True},
+            )
         finally:
             await dispatcher.close()
 
@@ -183,12 +213,22 @@ class ErpToolMixin:
                 await client.load_cached_token()  # 从 Redis 拿最新热缓存
                 return ErpDispatcher(client)
             except ValueError as e:
-                return str(e)
+                return AgentResult(
+                    summary=str(e),
+                    status="error",
+                    error_message=str(e),
+                    metadata={"retryable": False},
+                )
 
         client = KuaiMaiClient()
         if not client.is_configured:
             await client.close()
-            return "ERP系统未配置，请联系管理员设置快麦ERP的AppKey和AccessToken"
+            return AgentResult(
+                summary="ERP系统未配置，请联系管理员设置快麦ERP的AppKey和AccessToken",
+                status="error",
+                error_message="ERP not configured",
+                metadata={"retryable": False},
+            )
         await client.load_cached_token()
         return ErpDispatcher(client)
 
@@ -230,7 +270,12 @@ class ErpToolMixin:
 
         func = dispatch.get(tool_name)
         if not func:
-            return f"Unknown local tool: {tool_name}"
+            return AgentResult(
+                summary=f"Unknown local tool: {tool_name}",
+                status="error",
+                error_message=f"Unknown tool: {tool_name}",
+                metadata={"retryable": False},
+            )
         try:
             request_ctx = getattr(self, "request_ctx", None)
             _TIME_AWARE_TOOLS = {
@@ -247,7 +292,12 @@ class ErpToolMixin:
             logger.error(
                 f"ToolExecutor local_dispatch | tool={tool_name} | error={e}"
             )
-            return f"本地查询失败: {e}"
+            return AgentResult(
+                summary=f"本地查询失败: {e}",
+                status="error",
+                error_message=str(e),
+                metadata={"retryable": True},
+            )
 
     async def _dispatch_local_data(self, args: Dict[str, Any]) -> str:
         """统一查询引擎调度入口"""
@@ -279,4 +329,9 @@ class ErpToolMixin:
             )
         except Exception as e:
             logger.error(f"ToolExecutor local_data | error={e}", exc_info=True)
-            return f"统一查询失败: {e}"
+            return AgentResult(
+                summary=f"统一查询失败: {e}",
+                status="error",
+                error_message=str(e),
+                metadata={"retryable": True},
+            )
