@@ -2256,7 +2256,7 @@ class TestResolveSupplierCode:
     """resolve_supplier_code：从 erp_suppliers 反查 code（带缓存）"""
 
     def _make_svc(self, suppliers: list = None, org_id: str = None):
-        db = MockSupabaseClient()
+        db = MockErpAsyncDBClient()
         if suppliers:
             db.set_table_data("erp_suppliers", suppliers)
         with patch("services.kuaimai.erp_sync_service.get_settings") as m:
@@ -2265,43 +2265,48 @@ class TestResolveSupplierCode:
             svc = ErpSyncService(db, org_id=org_id)
         return svc
 
-    def test_resolves_known_supplier(self):
+    @pytest.mark.asyncio
+    async def test_resolves_known_supplier(self):
         """已知供应商名称 → 返回 code"""
         svc = self._make_svc(suppliers=[
             {"code": "0005", "name": "纸制品03"},
             {"code": "0007", "name": "纸制品01"},
         ])
-        assert svc.resolve_supplier_code("纸制品03") == "0005"
-        assert svc.resolve_supplier_code("纸制品01") == "0007"
+        assert await svc.resolve_supplier_code("纸制品03") == "0005"
+        assert await svc.resolve_supplier_code("纸制品01") == "0007"
 
-    def test_returns_none_for_unknown(self):
+    @pytest.mark.asyncio
+    async def test_returns_none_for_unknown(self):
         """未知供应商 → 返回 None"""
         svc = self._make_svc(suppliers=[{"code": "0005", "name": "纸制品03"}])
-        assert svc.resolve_supplier_code("不存在的供应商") is None
+        assert await svc.resolve_supplier_code("不存在的供应商") is None
 
-    def test_returns_none_for_empty_input(self):
+    @pytest.mark.asyncio
+    async def test_returns_none_for_empty_input(self):
         """空字符串或 None → 返回 None（不触发数据库查询）"""
         svc = self._make_svc()
-        assert svc.resolve_supplier_code(None) is None
-        assert svc.resolve_supplier_code("") is None
+        assert await svc.resolve_supplier_code(None) is None
+        assert await svc.resolve_supplier_code("") is None
 
-    def test_caches_across_calls(self):
+    @pytest.mark.asyncio
+    async def test_caches_across_calls(self):
         """第二次调用用缓存，不重新查数据库"""
         svc = self._make_svc(suppliers=[{"code": "0005", "name": "供应商A"}])
-        assert svc.resolve_supplier_code("供应商A") == "0005"
+        assert await svc.resolve_supplier_code("供应商A") == "0005"
         # 清空原始数据，缓存仍命中
-        svc.db._tables["erp_suppliers"] = MockSupabaseClient().table("empty")
-        assert svc.resolve_supplier_code("供应商A") == "0005"
+        svc.db._tables["erp_suppliers"] = MockErpAsyncDBClient().table("empty")
+        assert await svc.resolve_supplier_code("供应商A") == "0005"
 
-    def test_db_error_returns_none(self):
+    @pytest.mark.asyncio
+    async def test_db_error_returns_none(self):
         """数据库异常 → 返回 None，不崩溃"""
         with patch("services.kuaimai.erp_sync_service.get_settings") as m:
             m.return_value = MagicMock(erp_sync_initial_days=90, erp_sync_shard_days=7)
             from services.kuaimai.erp_sync_service import ErpSyncService
             db = MagicMock()
-            db.table.return_value.select.return_value.execute.side_effect = Exception("DB down")
+            db.table.return_value.select.return_value.execute = AsyncMock(side_effect=Exception("DB down"))
             svc = ErpSyncService(db)
-        assert svc.resolve_supplier_code("供应商A") is None
+        assert await svc.resolve_supplier_code("供应商A") is None
 
 
 # ============================================================

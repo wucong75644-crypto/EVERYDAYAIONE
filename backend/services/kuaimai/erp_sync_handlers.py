@@ -233,7 +233,7 @@ async def sync_shelf(
                 "warehouse_name": doc.get("warehouseName"),
                 "warehouse_id": str(doc["warehouseId"]) if doc.get("warehouseId") else None,
                 "supplier_name": doc.get("supplierName"),
-                "supplier_code": svc.resolve_supplier_code(doc.get("supplierName")),
+                "supplier_code": await svc.resolve_supplier_code(doc.get("supplierName")),
                 "creator_name": doc.get("creator"),        # shelf 用 creator 非 createrName
                 "purchase_order_code": doc.get("weCode"),  # 关联收货单号
             })
