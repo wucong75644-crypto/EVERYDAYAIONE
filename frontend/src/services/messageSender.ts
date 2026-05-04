@@ -20,7 +20,7 @@ import { getPlaceholderText } from '../constants/placeholder';
 // ============================================================
 
 /** 生成类型 */
-export type GenerationType = 'chat' | 'image' | 'video' | 'audio';
+export type GenerationType = 'chat' | 'image' | 'image_ecom' | 'video' | 'audio';
 
 /** 操作类型 */
 export type MessageOperation = 'send' | 'regenerate' | 'retry' | 'regenerate_single';
@@ -154,9 +154,10 @@ function processApiResponse(
       messageStore.updateMessage(ctx.assistantMessageId, {
         generation_params: response.assistant_message.generation_params,
       });
-    } else if (actualType === 'image' || actualType === 'video' || actualType === 'audio') {
+    } else if (actualType === 'image' || actualType === 'image_ecom' || actualType === 'video' || actualType === 'audio') {
+      const placeholderType = actualType === 'image_ecom' ? 'image' : actualType;
       const render = response.assistant_message?.generation_params?._render as Record<string, string> | undefined;
-      const loadingText = render?.placeholder_text || getPlaceholderText(actualType as 'image' | 'video' | 'audio');
+      const loadingText = render?.placeholder_text || getPlaceholderText(placeholderType as 'image' | 'video' | 'audio');
       messageStore.completeStreamingWithMessage(conversationId, {
         id: ctx.assistantMessageId,
         conversation_id: conversationId,

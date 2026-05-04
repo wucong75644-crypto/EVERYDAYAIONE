@@ -177,7 +177,7 @@ export interface TaskState {
   taskId: string;
   messageId: string;
   conversationId: string;
-  type: 'chat' | 'image' | 'video' | 'audio';
+  type: 'chat' | 'image' | 'image_ecom' | 'video' | 'audio';
   status: 'pending' | 'processing' | 'completed' | 'failed';
   progress: number;
   createdAt: number;
