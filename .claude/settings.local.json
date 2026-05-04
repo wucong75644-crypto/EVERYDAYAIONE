@@ -1975,7 +1975,11 @@
       "Bash(python -m pytest backend/tests/ -k \"sandbox or kernel\" --tb=short -q --ignore=backend/tests/test_task_completion_routing.py --ignore=backend/tests/test_task_nl_parser.py --ignore=backend/tests/test_time_context.py --ignore=backend/tests/test_tool_confirm.py --ignore=backend/tests/test_tool_digest.py --ignore=backend/tests/test_video_retry.py --ignore=backend/tests/test_websocket_manager_steer.py)",
       "Bash(python -m pytest backend/tests/test_sandbox*.py --tb=short -q)",
       "Bash(python -m pytest backend/tests/test_sandbox*.py -k \"not functions\" --tb=short -q)",
-      "Bash(./git-push.sh \"fix: Kernel崩溃自动恢复——诊断stderr/returncode+重建重试+降级subprocess兜底\")"
+      "Bash(./git-push.sh \"fix: Kernel崩溃自动恢复——诊断stderr/returncode+重建重试+降级subprocess兜底\")",
+      "Bash(python -c \"from services.sandbox.executor import SandboxExecutor; from services.sandbox.sandbox_worker import _apply_resource_limits; print\\('import ok'\\)\")",
+      "Bash(python -m pytest backend/tests/test_sandbox*.py -k \"not functions\" -q --tb=short)",
+      "Bash(python -m pytest backend/tests/ -k \"sandbox\" -q --tb=short)",
+      "Bash(./git-push.sh \"fix: nsjail pids_max 32→128 + RLIMIT_NPROC 0→32——openpyxl读大Excel因线程配额不足SIGSEGV\")"
     ],
     "additionalDirectories": [
       "/tmp"

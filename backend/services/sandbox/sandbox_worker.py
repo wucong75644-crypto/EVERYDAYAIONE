@@ -230,9 +230,9 @@ def _apply_resource_limits():
         except (ValueError, OSError):
             pass  # macOS 不支持 RLIMIT_AS
 
-        # 禁止创建子进程（防 fork bomb）
+        # 限制子进程/线程数量（防 fork bomb，但允许库创建工作线程）
         try:
-            resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
+            resource.setrlimit(resource.RLIMIT_NPROC, (32, 32))
         except (ValueError, OSError, AttributeError):
             pass  # 某些平台不支持
     except ImportError:
