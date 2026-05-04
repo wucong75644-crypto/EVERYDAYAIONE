@@ -102,28 +102,30 @@ function handleTaskDoneWithMessage(deps: HandlerDeps, taskId: string, messageDat
   const store = deps.getStore();
   const normalized = normalizeMessage(messageData as NormalizeInput);
 
-  // 幂等性检查：使用 Store 作为唯一真相来源
+  // 幂等性检查：stream_end 可能已标记 completed（流/持久化解耦）
   const existingMessage = store.getMessage(normalized.id);
-  if (existingMessage?.status === 'completed') {
-    logger.warn('ws:done', 'message already completed in store, skipping', {
+  const alreadyCompleted = existingMessage?.status === 'completed';
+
+  if (alreadyCompleted) {
+    logger.info('ws:done', 'message already completed by stream_end, persisting DB data', {
       taskId,
       messageId: normalized.id,
     });
-    return false;
+  } else {
+    logger.info('ws:done', 'processing message', {
+      taskId,
+      conversationId,
+      messageId: normalized.id,
+    });
   }
-
-  logger.info('ws:done', 'processing message', {
-    taskId,
-    conversationId,
-    messageId: normalized.id,
-  });
 
   const updateData = {
     ...normalized,
     status: 'completed' as const,
   };
 
-  // 统一更新逻辑：updateMessage 自动处理 messages 和 optimisticMessages
+  // 统一更新逻辑：即使 stream_end 已标记 completed，
+  // 仍用 DB 返回的完整数据覆盖（含 credits_cost、generation_params 等）
   store.updateMessage(normalized.id, updateData);
 
   // 持久化到 messages（确保切换对话再切回来时不丢失）
@@ -137,7 +139,8 @@ function handleTaskDoneWithMessage(deps: HandlerDeps, taskId: string, messageDat
   context?.onComplete?.(normalized);
   deps.operationContextRef.current.delete(taskId);
 
-  return true;
+  // stream_end 已处理 streaming 状态 → 不重复触发 completeStreaming/toast
+  return !alreadyCompleted;
 }
 
 /** 处理任务失败 */
@@ -385,6 +388,30 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
         deps.chunkBufferRef.current.set(message_id, { chunk: '', conversationId: conversation_id });
       } else if (!deps.flushTimerRef.current) {
         deps.flushTimerRef.current = setTimeout(() => flushChunkBuffer(deps), 16);
+      }
+    },
+
+    // stream_end：LLM 流结束信号（对标 Anthropic message_stop）
+    // 在 DB 持久化之前发送，前端立即退出 streaming 状态
+    stream_end: (msg) => {
+      const { message_id, conversation_id } = msg;
+      logger.info('ws:message', 'stream_end received', { messageId: message_id, conversationId: conversation_id });
+
+      // flush 残留 chunk
+      if (deps.chunkBufferRef.current.size > 0) {
+        if (deps.flushTimerRef.current) {
+          clearTimeout(deps.flushTimerRef.current);
+          deps.flushTimerRef.current = null;
+        }
+        flushChunkBuffer(deps);
+      }
+
+      const store = deps.getStore();
+      if (message_id) {
+        store.setStatus(message_id, 'completed');
+      }
+      if (conversation_id) {
+        store.completeStreaming(conversation_id);
       }
     },
 

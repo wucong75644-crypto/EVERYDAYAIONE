@@ -25,6 +25,7 @@ class WSMessageType(str, Enum):
     MESSAGE_CHUNK = "message_chunk"
     THINKING_CHUNK = "thinking_chunk"
     MESSAGE_PROGRESS = "message_progress"
+    STREAM_END = "stream_end"
     MESSAGE_DONE = "message_done"
     MESSAGE_ERROR = "message_error"
     MESSAGE_RETRY = "message_retry"
