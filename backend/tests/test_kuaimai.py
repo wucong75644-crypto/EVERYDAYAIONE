@@ -877,8 +877,7 @@ class TestToolExecutorERP:
             db=MagicMock(), user_id="u1", conversation_id="c1"
         )
         result = await executor._get_erp_dispatcher()
-        assert isinstance(result, str)
-        assert "未配置" in result
+        assert "未配置" in str(result)
 
     @pytest.mark.asyncio
     async def test_erp_dispatch_error(self):

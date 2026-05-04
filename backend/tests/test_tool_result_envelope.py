@@ -403,16 +403,11 @@ class TestStagingPathAlignment:
         assert staged_file.exists()
         assert staged_file.read_text(encoding="utf-8") == result
 
-        # FileExecutor 也能通过相对路径解析到
-        fe = FileExecutor(
-            workspace_root=str(tmp_path),
-            user_id=user_id,
-            org_id=org_id,
-        )
-        rel_path = f"staging/{conv_id}/{filename}"
-        resolved = fe.resolve_safe_path(rel_path)
-        assert resolved.exists()
-        assert resolved.read_text(encoding="utf-8") == result
+        # staging 目录由系统管理，FileExecutor 不允许直接访问（安全限制）
+        # 验证 staging 文件可通过绝对路径直接读取
+        abs_path = Path(staging) / filename
+        assert abs_path.exists()
+        assert abs_path.read_text(encoding="utf-8") == result
 
     def test_staged_file_in_user_workspace(self, tmp_path):
         """staging 文件在用户 workspace 目录下（用户隔离）"""

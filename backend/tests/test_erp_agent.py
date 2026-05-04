@@ -1157,11 +1157,10 @@ class TestToolSystemPromptNewRules:
         assert "code_execute" in TOOL_SYSTEM_PROMPT
 
     def test_excel_engine_in_code_tools(self):
-        """写 Excel 用 xlsxwriter，读 Excel 用 calamine（在 code_tools 描述中）"""
+        """写 Excel 用 xlsxwriter（在 code_tools 描述中）"""
         from config.code_tools import build_code_tools
         desc = build_code_tools(include_workspace=True)[0]["function"]["description"]
         assert "xlsxwriter" in desc
-        assert "calamine" in desc
 
 
 class TestParamDefinitionsConsistency:

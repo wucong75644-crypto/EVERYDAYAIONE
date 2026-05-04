@@ -10,7 +10,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch
 
-from services.file_executor import FileExecutor
+from services.file_executor import FileExecutor, FileOperationError
 
 
 @pytest.fixture
@@ -174,14 +174,14 @@ class TestFileRead:
 
     @pytest.mark.asyncio
     async def test_read_not_found(self, executor):
-        result = await executor.file_read("nonexistent.txt")
-        assert "文件不存在" in result
+        with pytest.raises(FileOperationError, match="文件不存在"):
+            await executor.file_read("nonexistent.txt")
 
     @pytest.mark.asyncio
     async def test_read_directory(self, executor, workspace):
         (Path(workspace) / "subdir").mkdir()
-        result = await executor.file_read("subdir")
-        assert "不是文件" in result
+        with pytest.raises(FileOperationError, match="不是文件"):
+            await executor.file_read("subdir")
 
     @pytest.mark.asyncio
     async def test_read_binary(self, executor, workspace):
@@ -944,9 +944,8 @@ class TestFileEdit:
     async def test_multiple_matches_without_replace_all(self, executor, tmp_path):
         """多处匹配但未设 replace_all → 报错"""
         (tmp_path / "test.txt").write_text("aa bb aa")
-        result = await executor.file_edit("test.txt", "aa", "XX")
-        assert "找到 2 处匹配" in result
-        assert "replace_all" in result
+        with pytest.raises(FileOperationError, match="找到 2 处匹配"):
+            await executor.file_edit("test.txt", "aa", "XX")
         # 文件未修改
         assert (tmp_path / "test.txt").read_text() == "aa bb aa"
 
@@ -954,28 +953,28 @@ class TestFileEdit:
     async def test_no_match(self, executor, tmp_path):
         """未找到匹配"""
         (tmp_path / "test.txt").write_text("hello world")
-        result = await executor.file_edit("test.txt", "xyz", "abc")
-        assert "未找到匹配" in result
+        with pytest.raises(FileOperationError, match="未找到匹配"):
+            await executor.file_edit("test.txt", "xyz", "abc")
 
     @pytest.mark.asyncio
     async def test_same_old_new(self, executor, tmp_path):
         """old_string == new_string"""
         (tmp_path / "test.txt").write_text("hello")
-        result = await executor.file_edit("test.txt", "hello", "hello")
-        assert "相同" in result
+        with pytest.raises(FileOperationError, match="相同"):
+            await executor.file_edit("test.txt", "hello", "hello")
 
     @pytest.mark.asyncio
     async def test_file_not_exists(self, executor):
         """文件不存在"""
-        result = await executor.file_edit("nonexistent.txt", "a", "b")
-        assert "不存在" in result
+        with pytest.raises(FileOperationError, match="不存在"):
+            await executor.file_edit("nonexistent.txt", "a", "b")
 
     @pytest.mark.asyncio
     async def test_binary_file_rejected(self, executor, tmp_path):
         """二进制文件拒绝"""
         (tmp_path / "data.xlsx").write_bytes(b"\x00\x01\x02")
-        result = await executor.file_edit("data.xlsx", "a", "b")
-        assert "二进制" in result
+        with pytest.raises(FileOperationError, match="二进制"):
+            await executor.file_edit("data.xlsx", "a", "b")
 
     @pytest.mark.asyncio
     async def test_multiline_replace(self, executor, tmp_path):

@@ -22,6 +22,47 @@ _PARQUET_MAGIC = b"PAR1"
 _ZIP_MAGIC = b"PK"  # xlsx 是 zip 格式
 
 
+def fuzzy_match_sheet(target: str, sheet_names: list[str]) -> str:
+    """Sheet 名模糊匹配（对标 _find_similar_file_global 的文件名纠错思路）。
+
+    匹配策略：
+      1. 精确匹配 → 直接返回
+      2. 归一化匹配（strip + 全角→半角 + 去空格/连字符 + 小写）→ 返回实际名
+      3. 包含关系（归一化后互相包含，≥4 字符）→ 返回最佳候选
+      4. 无匹配 → 返回原始值（让 pandas 报原始错误）
+    """
+    if target in sheet_names:
+        return target
+
+    def _normalize(s: str) -> str:
+        s = s.strip()
+        # 全角括号→半角
+        s = s.replace("\uff08", "(").replace("\uff09", ")")
+        # 全角逗号/句号/冒号
+        s = s.replace("\uff0c", ",").replace("\u3002", ".").replace("\uff1a", ":")
+        # 去空格/连字符/下划线
+        s = s.replace(" ", "").replace("-", "").replace("_", "")
+        return s.lower()
+
+    target_norm = _normalize(target)
+
+    # 策略 2：归一化后精确匹配
+    for name in sheet_names:
+        if _normalize(name) == target_norm:
+            logger.info(f"Sheet fuzzy match | '{target}' → '{name}' (normalized)")
+            return name
+
+    # 策略 3：归一化后包含关系（≥4 字符防误匹配）
+    if len(target_norm) >= 4:
+        for name in sheet_names:
+            name_norm = _normalize(name)
+            if target_norm in name_norm or name_norm in target_norm:
+                logger.info(f"Sheet fuzzy match | '{target}' → '{name}' (contains)")
+                return name
+
+    return target
+
+
 def detect_file_type(abs_path: str) -> str:
     """扩展名 + magic bytes 双重检测。"""
     ext = Path(abs_path).suffix.lower()
@@ -240,11 +281,13 @@ def _convert_excel_to_parquet(
     xl = pd.ExcelFile(excel_path, engine="calamine")
     sheet_names = xl.sheet_names
 
-    target_sheet: str | int = (
-        int(sheet) if sheet is not None and sheet.isdigit()
-        else sheet if sheet is not None
-        else 0
-    )
+    target_sheet: str | int
+    if sheet is None:
+        target_sheet = 0
+    elif sheet.isdigit():
+        target_sheet = int(sheet)
+    else:
+        target_sheet = fuzzy_match_sheet(sheet, sheet_names)
 
     # 自动检测表头行（messytables 众数法 + csv.Sniffer 类型验证）
     df_raw = pd.read_excel(

@@ -502,6 +502,9 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             ws_manager.register_steer_listener(task_id)
             ws_manager.register_cancel_listener(task_id)
 
+            turn_text = ""
+            turn_thinking = ""
+
             while not _budget.stop_reason:
                 # ── 取消检查点：用户点了停止按钮 ──
                 if ws_manager.is_cancelled(task_id):

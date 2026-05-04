@@ -124,24 +124,20 @@ class TestResolveStagingRelPath:
         assert result.startswith("staging/")
 
     def test_rel_path_resolvable_by_file_executor(self, tmp_path):
-        """相对路径能被 FileExecutor.resolve_safe_path 正确解析到 staging 目录"""
-        from services.file_executor import FileExecutor
-
-        # 创建 FileExecutor（模拟用户 workspace）
-        fe = FileExecutor(
-            workspace_root=str(tmp_path),
-            user_id="u1",
-            org_id="org1",
-        )
-
+        """staging 相对路径能正确解析到对应文件（staging 目录由系统管理，不经 FileExecutor）"""
         # 创建 staging 文件
         staging_dir = Path(resolve_staging_dir(str(tmp_path), "u1", "org1", "conv1"))
         staging_dir.mkdir(parents=True)
         test_file = staging_dir / "test.txt"
         test_file.write_text("hello")
 
-        # 用 resolve_staging_rel_path 生成的相对路径能被 resolve_safe_path 解析
+        # resolve_staging_rel_path 返回 workspace 根下的相对路径
         rel_path = resolve_staging_rel_path("conv1", "test.txt")
-        resolved = fe.resolve_safe_path(rel_path)
+        assert rel_path.startswith("staging/")
+
+        # 通过 workspace 根 + 相对路径可定位到实际文件
+        from core.workspace import resolve_workspace_dir
+        ws_dir = resolve_workspace_dir(str(tmp_path), "u1", "org1")
+        resolved = Path(ws_dir) / rel_path
         assert resolved.exists()
         assert resolved.read_text() == "hello"

@@ -92,6 +92,21 @@ class AgentResult:
         if self.status == "ok":
             self.status = "success"
 
+    def __contains__(self, item: str) -> bool:
+        """支持 `"xxx" in result` — 在 summary 中查找。"""
+        return item in self.summary
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, str):
+            return self.summary == other
+        return super().__eq__(other)
+
+    def __hash__(self) -> int:
+        return id(self)
+
+    def __str__(self) -> str:
+        return self.summary
+
     @property
     def is_failure(self) -> bool:
         """是否为失败状态（error / timeout）。
