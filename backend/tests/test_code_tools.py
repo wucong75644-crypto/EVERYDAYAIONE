@@ -90,11 +90,11 @@ class TestCodeToolsDefinition:
         desc = tool["function"]["description"]
         assert "WORKSPACE_DIR" not in desc
 
-    def test_workspace_version_has_workspace_hint(self):
-        """主 Agent 版包含工作区说明"""
+    def test_workspace_version_has_staging_hint(self):
+        """主 Agent 版包含 staging 读取说明"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
-        assert "工作区" in desc
+        assert "STAGING_DIR" in desc
 
     def test_architecture_isolation_symmetric(self):
         """两版工具名和参数完全相同，只有描述不同"""
@@ -104,11 +104,11 @@ class TestCodeToolsDefinition:
         assert base["function"]["parameters"] == ws["function"]["parameters"]
         assert base["function"]["description"] != ws["function"]["description"]
 
-    def test_workspace_version_has_workspace_dir(self):
-        """主 Agent 版包含 WORKSPACE_DIR 说明"""
+    def test_workspace_version_has_parquet_hint(self):
+        """主 Agent 版包含 read_parquet 说明"""
         tool = build_code_tools(include_workspace=True)[0]
         desc = tool["function"]["description"]
-        assert "工作区" in desc or "workspace" in desc.lower()
+        assert "read_parquet" in desc
 
     def test_base_version_no_doc_generation(self):
         """ERP Agent 版不提及文档生成库"""

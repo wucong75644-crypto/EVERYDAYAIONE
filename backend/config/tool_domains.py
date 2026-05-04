@@ -46,6 +46,8 @@ TOOL_DOMAINS: Dict[str, ToolDomain] = {
     "file_read":        ToolDomain.GENERAL,
     "file_write":       ToolDomain.GENERAL,
     "file_edit":        ToolDomain.GENERAL,
+    "file_list":        ToolDomain.GENERAL,
+    "file_search":      ToolDomain.GENERAL,
     "manage_scheduled_task": ToolDomain.GENERAL,
 
     # === shared: 多个域的 Agent 内部都能用 ===

@@ -66,7 +66,7 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     # 代码执行（沙箱隔离，可并行）
     "code_execute",
     # 文件操作（只读）
-    "file_read",
+    "file_read", "file_list", "file_search",
     # 定时任务（表单返回 + 列表查询）
     "manage_scheduled_task",
 }
@@ -190,38 +190,37 @@ data_query 只支持单文件查询，不能跨文件关联。涉及多个文件
 
 ### code_execute — Python 计算环境
 
-有状态沙盒，变量跨调用保留。执行超时 120 秒。工作目录为用户工作区。
+有状态沙盒，变量跨调用保留。执行超时 120 秒。
 
 可用库：pd, plt, Path, math, json, datetime, Decimal, Counter, io, docx, pptx, openpyxl, PyPDF2
 os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：copy/move）
-环境变量：WORKSPACE_DIR、STAGING_DIR、OUTPUT_DIR
+环境变量：STAGING_DIR、OUTPUT_DIR
 
-文件操作：
-- 工作区文件直接用文件名读取：pd.read_excel('报表.xlsx')、pd.read_csv('数据.csv')
-- os.listdir('.') 浏览目录，os.walk('.') 递归遍历
+数据读取：
+- data_query 缓存的 staging 文件用 pd.read_parquet(STAGING_DIR + '/文件名') 读取
 - 生成文件写到 OUTPUT_DIR，平台自动检测上传
-- 中间数据写到 STAGING_DIR
 - 图表用 ECharts JSON（.echart.json），不要用 plt/matplotlib
 - 写 Excel 用 engine='xlsxwriter'
 
 不适用：
-- 读 PDF/图片内容 → file_read（文本提取/视觉分析）
-- 超大文件聚合（截断提示出现时）→ data_query（DuckDB 恒定内存）
+- 直接读工作区 Excel/CSV → 先用 data_query 读取（自动清洗+缓存）
+- 读 PDF/图片 → file_read
 - 查 ERP 业务数据 → erp_agent
 
 限制：
 - 禁止 import sys/subprocess
-- os 只能访问工作区内文件，越界 PermissionError
 - 删除操作需 ask_user 确认后在 confirm_delete 传入文件名
 - 环境可能因超时重置，变量不存在时重新读取
 
-### data_query — 大数据查询与导出
+### data_query — 数据读取与查询
 
-DuckDB SQL 引擎，恒定内存处理超大文件。
+读取工作区 Excel/CSV 文件，自动处理表头/编码/格式问题。
+小文件直接返回内容，大文件缓存到 staging 供 code_execute 读取。
+DuckDB SQL 引擎，恒定内存。
 
 何时使用：
-- code_execute 截断提示出现时，用 SQL 聚合筛选超大文件
-- staging 文件的 SQL 查询
+- file_list 发现文件后，读取数据内容和结构
+- 大文件 SQL 聚合筛选
 - 直接导出为 Excel（传 export 参数）
 
 不适用：
@@ -229,17 +228,15 @@ DuckDB SQL 引擎，恒定内存处理超大文件。
 - 计算、可视化 → code_execute
 - 查 ERP 业务数据 → erp_agent
 
-核心能力：
-- file 传文件名（如 "trade_123.parquet" 或 "销售报表.xlsx"）
+参数：
+- file：文件名（如 "trade_123.parquet" 或 "销售报表.xlsx"）
 - 不传 sql：返回文件结构（列名、类型、行数、统计信息）
-- 传 sql：执行查询，表名统一用 FROM data
-- 传 export：直接生成导出文件（如 export="月度报表.xlsx"）
+- 传 sql：执行查询，表名用 FROM data，中文列名用双引号
+- 传 export：生成导出文件（如 export="月度报表.xlsx"）
 
-注意事项：
-- 中文列名必须用双引号包裹：SELECT "列名" FROM data
-- SQL 出错时会返回修正建议和可用列名，据此修正后重试
-- 分析大数据用 SQL 聚合筛选，不要 SELECT * 全量取出
-- 只支持单文件查询，不能跨文件关联
+### file_list / file_search — 工作区文件发现
+查看工作区有哪些文件、搜索特定文件。
+返回文件元信息（行列数/类型/读取命令），Excel/CSV 数据文件用 data_query 读取。
 
 ### search_knowledge — 知识库搜索
 查找企业内部业务规则、SOP、操作流程、培训文档、历史经验。
@@ -771,9 +768,11 @@ _CORE_TOOLS: Set[str] = {
     # 执行
     "code_execute",             # 代码执行
     "data_query",               # 数据查询与导出
-    # 文件操作（file_list/search/info 已被 code_execute 内 os.listdir 替代）
-    "file_read",                # 文件读取（PDF/图片多模态不可替代）
+    # 文件操作
+    "file_read",                # 文件读取（PDF/图片多模态）
     "file_write",               # 文件写入
+    "file_list",                # 目录列表（含元数据）
+    "file_search",              # 文件搜索
     # 定时任务
     "manage_scheduled_task",    # 定时任务管理（创建/查看/修改/暂停/恢复/删除）
     # 主动沟通

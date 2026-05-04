@@ -60,6 +60,40 @@ class FileToolMixin:
             org_id=self.org_id,
         )
 
+        # ── file_list：格式化 + 元数据 ──
+        if tool_name == "file_list":
+            try:
+                return await self._file_list_with_metadata(executor, args)
+            except PermissionError as e:
+                return AgentResult(
+                    summary=f"权限不足: {e}", status="error",
+                    error_message=f"PermissionError: {e}",
+                    metadata={"retryable": False},
+                )
+            except Exception as e:
+                logger.error(f"ToolExecutor file_list | error={e}")
+                return AgentResult(
+                    summary=f"文件操作失败: {e}", status="error",
+                    error_message=str(e), metadata={"retryable": False},
+                )
+
+        # ── file_search：搜索 + 元数据 ──
+        if tool_name == "file_search":
+            try:
+                return await self._file_search_with_metadata(executor, args)
+            except PermissionError as e:
+                return AgentResult(
+                    summary=f"权限不足: {e}", status="error",
+                    error_message=f"PermissionError: {e}",
+                    metadata={"retryable": False},
+                )
+            except Exception as e:
+                logger.error(f"ToolExecutor file_search | error={e}")
+                return AgentResult(
+                    summary=f"文件操作失败: {e}", status="error",
+                    error_message=str(e), metadata={"retryable": False},
+                )
+
         dispatch = {
             "file_read": executor.file_read,
             "file_write": executor.file_write,
@@ -153,8 +187,92 @@ class FileToolMixin:
         except Exception:
             return None
 
-    # _file_list_with_metadata 和 _file_search_with_metadata 已删除
-    # file_list/search 被 code_execute 内 os.listdir/walk 替代（见 TECH_沙盒OS开放与工具精简.md）
+    async def _file_list_with_metadata(
+        self, executor: 'Any', args: Dict[str, Any],
+    ) -> 'AgentResult':
+        """file_list + 元数据（每个文件附带结构信息和读取命令）"""
+        from services.agent.agent_result import AgentResult
+        from services.file_metadata_extractor import format_file_metadata_line
+
+        data = await executor.file_list_entries(**args)
+
+        if data["error"]:
+            return AgentResult(
+                summary=data["error"], status="error",
+                error_message=data["error"], metadata={"retryable": False},
+            )
+        if not data["dirs"] and not data["files"]:
+            return AgentResult(summary=f"目录为空: {data['path']}", status="empty")
+
+        total = len(data["dirs"]) + len(data["files"])
+        lines = [f"目录: {data['path']} | 共 {total} 项"]
+        lines.append("─" * 60)
+        for d in data["dirs"]:
+            lines.append(f"  [目录] {d['name']}/\t\t{d['modified']}")
+
+        from services.agent.workspace_file_handles import get_file_cache
+        file_cache = get_file_cache(self.conversation_id)
+
+        _MAX_METADATA = 5
+        for i, f in enumerate(data["files"]):
+            file_cache.register(f["name"], f["abs_path"])
+            if i < _MAX_METADATA:
+                meta = await self._get_or_extract_metadata(f["abs_path"])
+                line = format_file_metadata_line(
+                    f["name"], f["abs_path"], f["size"], meta,
+                )
+            else:
+                size_str = executor._format_size(f["size"])
+                line = f"  {f['name']}\t{size_str}"
+            lines.append(line)
+
+        if data["truncated"]:
+            lines.append("\n已达显示上限，部分条目未显示")
+
+        return AgentResult(summary="\n".join(lines), status="success")
+
+    async def _file_search_with_metadata(
+        self, executor: 'Any', args: Dict[str, Any],
+    ) -> 'AgentResult':
+        """file_search + 元数据（搜到的文件附带结构信息）"""
+        import re
+        from services.file_metadata_extractor import format_file_metadata_line
+        from services.agent.agent_result import AgentResult
+
+        raw_result = await executor.file_search(**args)
+
+        if "未找到" in raw_result or not raw_result.strip():
+            return AgentResult(summary=raw_result or "未找到匹配文件", status="empty")
+
+        lines = raw_result.split("\n")
+        enhanced_lines = []
+        metadata_count = 0
+        _MAX_SEARCH_METADATA = 3
+
+        from services.agent.workspace_file_handles import get_file_cache
+        file_cache = get_file_cache(self.conversation_id)
+
+        for line in lines:
+            match = re.match(r"\s+\[文件\]\s+(\S+?)(?::\d+\s*\|.*)?$", line)
+            if match and metadata_count < _MAX_SEARCH_METADATA:
+                rel_path = match.group(1)
+                try:
+                    target = executor.resolve_safe_path(rel_path)
+                    if target.is_file():
+                        file_cache.register(target.name, str(target))
+                        meta = await self._get_or_extract_metadata(str(target))
+                        if meta:
+                            enhanced_line = format_file_metadata_line(
+                                target.name, str(target), target.stat().st_size, meta,
+                            )
+                            enhanced_lines.append(enhanced_line)
+                            metadata_count += 1
+                            continue
+                except Exception:
+                    pass
+            enhanced_lines.append(line)
+
+        return AgentResult(summary="\n".join(enhanced_lines), status="success")
 
 
 class CrawlerToolMixin:
