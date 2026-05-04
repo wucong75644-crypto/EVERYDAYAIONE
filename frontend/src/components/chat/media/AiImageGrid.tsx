@@ -204,7 +204,7 @@ const GridCell = memo(function GridCell({
         <img
           src={imageUrlWithRetry || imageUrl}
           alt={`生成的图片 ${index + 1}`}
-          className={`w-full h-full object-cover block transition-opacity duration-500 ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
+          className={`w-full h-full object-cover block transition-opacity duration-200 ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
           onLoad={() => { setImageLoaded(true); onMediaLoaded?.(); }}
           onError={handleImageError}
         />
