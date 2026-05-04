@@ -1127,6 +1127,18 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 "tool_digest": _tool_digest,
             }
 
+            # stream_end：立即告知前端流已结束，不等 DB 持久化
+            # 对标 Anthropic message_stop / OpenAI [DONE]
+            from schemas.websocket import build_stream_end
+            await ws_manager.send_to_task_or_user(
+                task_id, user_id,
+                build_stream_end(
+                    task_id=task_id,
+                    conversation_id=conversation_id,
+                    message_id=message_id,
+                ),
+            )
+
         except Exception as e:
             logger.error(
                 f"Chat stream error | task_id={task_id} | "

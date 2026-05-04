@@ -1963,7 +1963,11 @@
       "Bash(./git-push.sh \"fix: 任务取消信号闭环+ImageAgent崩溃修复\")",
       "WebFetch(domain:actions.zapier.com)",
       "Bash(./venv/bin/python -m pytest tests/test_chat_context.py::TestExtractTextFromContent -v)",
-      "Bash(./venv/bin/python -m pytest tests/test_scoped_os.py -v)"
+      "Bash(./venv/bin/python -m pytest tests/test_scoped_os.py -v)",
+      "Bash(python -c \"from api.routes.message_generation_helpers import handle_regenerate_or_send_operation; print\\('OK'\\)\")",
+      "Bash(python -m pytest tests/test_websocket_schemas.py -x -q)",
+      "Bash(python -m pytest tests/test_chat_handler_stream.py -x -q)",
+      "Bash(./git-push.sh \"perf: 流式输出与持久化解耦——新增stream_end信号，内容输出完毕立即退出streaming状态，不等DB写入\")"
     ],
     "additionalDirectories": [
       "/tmp"

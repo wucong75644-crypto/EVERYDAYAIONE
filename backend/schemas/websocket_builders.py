@@ -84,6 +84,20 @@ def build_thinking_chunk(
     )
 
 
+def build_stream_end(
+    task_id: str, conversation_id: str, message_id: str,
+) -> Dict[str, Any]:
+    """构建流式输出终止信号（对标 Anthropic message_stop）
+
+    在 LLM 流结束后立即发送，不等待 DB 持久化。
+    前端收到后立即退出 streaming 状态。
+    """
+    return _build_ws_message(
+        WSMessageType.STREAM_END, {},
+        task_id=task_id, conversation_id=conversation_id, message_id=message_id,
+    )
+
+
 def build_message_done(
     task_id: str, conversation_id: str,
     message: Dict[str, Any], credits_consumed: Optional[int] = None,
