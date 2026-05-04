@@ -121,24 +121,45 @@ class SandboxExecutor:
     async def _execute_code(
         self, code: str, confirm_delete: list[str] | None = None,
     ) -> str:
-        """选择执行模式：有状态 Kernel 或无状态 subprocess"""
+        """选择执行模式：有状态 Kernel 或无状态 subprocess
+
+        崩溃恢复策略（对标 Jupyter autorestart）：
+        Kernel 崩溃 → 销毁 → 重建 → 重试一次 → 再失败降级 subprocess
+        """
         if self._kernel_manager and self._conversation_id:
-            try:
-                kernel_ok = await self._kernel_manager.get_or_create(
-                    self._conversation_id,
-                    self._workspace_dir or "",
-                    self._staging_dir or "",
-                    self._output_dir or "",
-                )
-                if kernel_ok:
+            for attempt in range(2):  # 最多 2 次：首次 + 崩溃重试
+                try:
+                    kernel_ok = await self._kernel_manager.get_or_create(
+                        self._conversation_id,
+                        self._workspace_dir or "",
+                        self._staging_dir or "",
+                        self._output_dir or "",
+                    )
+                    if not kernel_ok:
+                        break  # 池满且无法驱逐，直接降级
+
                     status, result = await self._kernel_manager.execute(
                         self._conversation_id, code, self._timeout,
                         confirm_delete=confirm_delete,
                     )
-                    return result
-            except (KeyError, RuntimeError, OSError) as e:
-                # Kernel 竞态死亡或启动失败，降级为无状态 subprocess
-                logger.warning("Kernel 执行失败，降级为无状态 | error=%s", e)
+
+                    if status != "crashed":
+                        return result
+
+                    # Kernel 崩溃：销毁后重试一次
+                    if attempt == 0:
+                        logger.warning("Kernel 崩溃，尝试重建 | conv=%s",
+                                       self._conversation_id[:8])
+                        await self._kernel_manager.destroy(self._conversation_id)
+                        continue
+                    # 第二次仍崩溃，降级
+                    logger.warning("Kernel 重建后仍崩溃，降级为无状态 | conv=%s",
+                                   self._conversation_id[:8])
+                    break
+
+                except (KeyError, RuntimeError, OSError) as e:
+                    logger.warning("Kernel 执行失败，降级为无状态 | error=%s", e)
+                    break
 
         # 降级：无状态 subprocess
         return await self._run_in_subprocess(code, confirm_delete=confirm_delete)

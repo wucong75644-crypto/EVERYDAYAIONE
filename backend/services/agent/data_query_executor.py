@@ -150,12 +150,15 @@ class DataQueryExecutor:
 
         # 收集 schema：成功时尝试（探索模式用完整 profile，查询/导出用快速 DESCRIBE）
         if not result.is_failure:
-            self._collect_schema(Path(abs_path).name, abs_path, query_path)
+            self._collect_schema(
+                Path(abs_path).name, abs_path, query_path, sheet_names,
+            )
 
         return result
 
     def _collect_schema(
         self, filename: str, original_path: str, query_path: str,
+        sheet_names: list[str] | None = None,
     ) -> None:
         """从已处理的文件收集 schema 信息（毫秒级 DuckDB DESCRIBE）。"""
         try:
@@ -188,6 +191,14 @@ class DataQueryExecutor:
                 f"{filename} | {row_count:,}行 × {len(rows)}列\n"
                 f"列: {', '.join(col_parts)}"
             )
+            if sheet_names and len(sheet_names) > 1:
+                preview = sheet_names[:5]
+                more = f" ...等共{len(sheet_names)}个Sheet" if len(sheet_names) > 5 else ""
+                schema_text += (
+                    f"\n[多Sheet Excel] {', '.join(preview)}{more}"
+                    f"\n注意: 当前schema仅为第1个Sheet，其他Sheet可能包含不同数据，"
+                    f"用 data_query(sheet=\"SheetName\") 切换"
+                )
             self.last_file_meta = (filename, original_path, schema_text)
         except Exception:
             pass  # schema 收集失败不影响主流程
