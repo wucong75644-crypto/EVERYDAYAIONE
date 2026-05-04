@@ -148,12 +148,12 @@ class SandboxExecutor:
 
                     # Kernel 崩溃：销毁后重试一次
                     if attempt == 0:
-                        logger.warning("Kernel 崩溃，尝试重建 | conv=%s",
+                        logger.warning("Kernel 崩溃，尝试重建 | conv={}",
                                        self._conversation_id[:8])
                         await self._kernel_manager.destroy(self._conversation_id)
                         continue
                     # 第二次仍崩溃，降级
-                    logger.warning("Kernel 重建后仍崩溃，降级为无状态 | conv=%s",
+                    logger.warning("Kernel 重建后仍崩溃，降级为无状态 | conv={}",
                                    self._conversation_id[:8])
                     break
 
