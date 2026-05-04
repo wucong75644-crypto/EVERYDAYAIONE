@@ -196,7 +196,7 @@ function AiGeneratedImage({
           <img
             src={imageUrlWithRetry || imageUrl}
             alt="生成的图片"
-            className={`rounded-xl shadow-sm w-full h-auto block transition-opacity duration-500 ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
+            className={`rounded-xl shadow-sm w-full h-auto block transition-opacity duration-200 ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
             onLoad={() => {
               setImageLoaded(true);
               onMediaLoaded?.();
