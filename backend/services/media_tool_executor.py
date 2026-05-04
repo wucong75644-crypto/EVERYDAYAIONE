@@ -92,11 +92,21 @@ class MediaToolMixin:
                 )
             else:
                 self._refund_credits(tx_id)
+                fail_msg = result.fail_msg or "未知错误"
                 return AgentResult(
-                    summary=f"图片生成失败：{result.fail_msg or '未知错误'}",
+                    summary=f"图片生成失败：{fail_msg}",
                     status="error",
-                    error_message=result.fail_msg or "Unknown error",
+                    error_message=fail_msg,
                     metadata={"retryable": True},
+                    collected_files=[{
+                        "type": "image", "url": None,
+                        "failed": True, "error": fail_msg,
+                        "retry_context": {
+                            "prompt": prompt,
+                            "aspect_ratio": aspect_ratio,
+                            "model_id": model_id,
+                        },
+                    }],
                 )
         except Exception as e:
             self._refund_credits(tx_id)
@@ -105,7 +115,16 @@ class MediaToolMixin:
                 summary=f"图片生成失败：{e}",
                 status="error",
                 error_message=str(e),
-                metadata={"retryable": False},
+                metadata={"retryable": True},
+                collected_files=[{
+                    "type": "image", "url": None,
+                    "failed": True, "error": str(e),
+                    "retry_context": {
+                        "prompt": prompt,
+                        "aspect_ratio": aspect_ratio,
+                        "model_id": model_id,
+                    },
+                }],
             )
         finally:
             await adapter.close()
