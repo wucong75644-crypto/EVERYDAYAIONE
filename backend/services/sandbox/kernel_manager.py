@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import platform
+import signal
 import shutil
 import sys
 import time
@@ -312,7 +313,11 @@ class KernelManager:
             return "timeout", f"⏱ Kernel 响应超时（{timeout}秒）"
 
         if not response_line:
-            return "error", "❌ Kernel 进程已退出，环境已重置"
+            # 读取 stderr 和 returncode 诊断崩溃原因
+            diag = await self._diagnose_crash(kernel)
+            logger.error("Kernel 崩溃 | conv=%s %s",
+                         kernel.conversation_id[:8], diag)
+            return "crashed", f"❌ Kernel 进程已退出，环境已重置\n原因: {diag}"
 
         try:
             response = json.loads(response_line)
@@ -320,6 +325,38 @@ class KernelManager:
             return "error", f"❌ Kernel 返回无效 JSON: {response_line[:200]}"
 
         return response.get("status", "error"), response.get("result", "")
+
+    @staticmethod
+    async def _diagnose_crash(kernel: "Kernel") -> str:
+        """读取已死亡 Kernel 的 stderr + returncode，返回诊断摘要"""
+        parts: list[str] = []
+
+        # returncode → 信号名
+        rc = kernel.process.returncode
+        if rc is not None:
+            if rc < 0:
+                try:
+                    sig_name = signal.Signals(-rc).name
+                except (ValueError, AttributeError):
+                    sig_name = f"signal {-rc}"
+                parts.append(f"被 {sig_name} 终止 (code={rc})")
+            else:
+                parts.append(f"exit code={rc}")
+
+        # stderr 尾部（最多 500 字符，避免超长）
+        try:
+            stderr_bytes = await asyncio.wait_for(
+                kernel.process.stderr.read(4096), timeout=2,
+            )
+            if stderr_bytes:
+                stderr_tail = stderr_bytes.decode("utf-8", errors="replace").strip()
+                if len(stderr_tail) > 500:
+                    stderr_tail = "..." + stderr_tail[-500:]
+                parts.append(f"stderr: {stderr_tail}")
+        except (asyncio.TimeoutError, OSError):
+            pass
+
+        return " | ".join(parts) if parts else "未知原因（无 stderr、无 returncode）"
 
     async def _destroy_kernel(self, conversation_id: str) -> None:
         """安全销毁 Kernel"""

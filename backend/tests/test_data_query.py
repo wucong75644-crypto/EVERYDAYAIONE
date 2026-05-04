@@ -642,10 +642,10 @@ class TestPromptChanges:
         assert "data_query" in _DESCRIPTION_WORKSPACE
         assert "ERP 数据由 erp_agent" not in _DESCRIPTION_WORKSPACE
 
-    def test_description_base_updated(self):
+    def test_description_base_no_data_query(self):
+        """ERP Agent 版描述不包含 data_query（架构隔离）。"""
         from config.code_tools import _DESCRIPTION_BASE
-        assert "data_query" in _DESCRIPTION_BASE
-        assert "数据由其他工具获取后" not in _DESCRIPTION_BASE
+        assert "data_query" not in _DESCRIPTION_BASE
 
 
 # ============================================================
