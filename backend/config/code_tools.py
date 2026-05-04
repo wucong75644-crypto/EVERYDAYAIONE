@@ -50,11 +50,11 @@ _DESCRIPTION_BASE = (
 
 # 主 Agent 版（加 WORKSPACE_DIR + 完整文件生成能力）
 _DESCRIPTION_WORKSPACE = (
-    "有状态 Python 沙盒，变量跨调用保留。工作目录为用户工作区。\n"
+    "有状态 Python 沙盒，变量跨调用保留。\n"
     "可用库: pd, plt, Path, math, json, datetime, Decimal, Counter, io, docx, pptx, "
     "os(受限: listdir/walk/stat/path), shutil(受限: copy/move)\n"
-    "环境变量: WORKSPACE_DIR, STAGING_DIR, OUTPUT_DIR（自动上传）\n"
-    "工作区文件直接用文件名读取: pd.read_excel('报表.xlsx')。\n"
+    "环境变量: STAGING_DIR, OUTPUT_DIR（自动上传）\n"
+    "data_query 缓存的 staging 数据用 pd.read_parquet(STAGING_DIR + '/文件名') 读取。\n"
     "写 Excel 用 engine='xlsxwriter'。生成文件写到 OUTPUT_DIR。禁止 sys/subprocess。"
 )
 

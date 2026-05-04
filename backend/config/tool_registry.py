@@ -245,7 +245,20 @@ register(ToolEntry(
     tags=["写入", "创建", "保存", "文件"],
     priority=1,
 ))
-# file_list/file_search/file_info 已移除（被 code_execute 内 os.listdir/walk/stat 替代）
+register(ToolEntry(
+    name="file_list",
+    domain="computer",
+    description="列出workspace内目录内容",
+    tags=["目录", "文件夹", "列表", "ls"],
+    priority=1,
+))
+register(ToolEntry(
+    name="file_search",
+    domain="computer",
+    description="在workspace内搜索文件（按名称或内容）",
+    tags=["搜索", "查找", "文件"],
+    priority=1,
+))
 
 # ============================================================
 # 爬虫工具

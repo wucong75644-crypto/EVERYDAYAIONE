@@ -197,11 +197,8 @@ class TestCoreToolsExpanded:
     def test_core_tools_include_file_tools(self):
         from config.chat_tools import get_core_tools
         names = {t["function"]["name"] for t in get_core_tools(org_id="test")}
-        # file_list/search/info 已移除（被 code_execute 内 os.listdir 替代）
-        for ft in ("file_read", "file_write"):
+        for ft in ("file_read", "file_write", "file_list", "file_search"):
             assert ft in names, f"{ft} 应在核心工具中"
-        for removed in ("file_list", "file_search", "file_info"):
-            assert removed not in names, f"{removed} 应已从核心工具移除"
 
     def test_core_tools_include_crawler(self):
         from config.chat_tools import get_core_tools
@@ -293,13 +290,13 @@ class TestFileConcurrencySafe:
         from config.chat_tools import is_concurrency_safe
         assert is_concurrency_safe("file_read")
 
-    def test_file_list_removed(self):
+    def test_file_list_is_safe(self):
         from config.chat_tools import is_concurrency_safe
-        assert not is_concurrency_safe("file_list")
+        assert is_concurrency_safe("file_list")
 
-    def test_file_search_removed(self):
+    def test_file_search_is_safe(self):
         from config.chat_tools import is_concurrency_safe
-        assert not is_concurrency_safe("file_search")
+        assert is_concurrency_safe("file_search")
 
     def test_file_write_is_not_safe(self):
         from config.chat_tools import is_concurrency_safe
