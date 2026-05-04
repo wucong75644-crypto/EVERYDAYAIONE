@@ -124,13 +124,15 @@ class TestResolveQueryType:
 class TestDetailQuery:
 
     @pytest.mark.asyncio
-    async def test_detail_routes_correctly(self):
+    async def test_detail_routes_correctly(self, tmp_path):
         """mode=export + limit≤200 → detail → ORM 直查"""
         rows = [{"doc_id": "D001", "amount": 100, "outer_id": "P001"}]
         db = _mock_db(rows, count=1)
         engine = _make_engine(db)
 
-        with patch("services.kuaimai.erp_orm_query.detail_orm", new_callable=AsyncMock) as mock_detail:
+        with patch("services.kuaimai.erp_duckdb_helpers.get_settings") as mock_settings, \
+             patch("services.kuaimai.erp_orm_query.detail_orm", new_callable=AsyncMock) as mock_detail:
+            mock_settings.return_value.file_workspace_root = str(tmp_path)
             from services.agent.tool_output import ToolOutput, OutputFormat
             mock_detail.return_value = ToolOutput(
                 summary="订单明细：共 1 条",

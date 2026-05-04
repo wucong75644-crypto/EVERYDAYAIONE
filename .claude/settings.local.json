@@ -1979,7 +1979,13 @@
       "Bash(python -c \"from services.sandbox.executor import SandboxExecutor; from services.sandbox.sandbox_worker import _apply_resource_limits; print\\('import ok'\\)\")",
       "Bash(python -m pytest backend/tests/test_sandbox*.py -k \"not functions\" -q --tb=short)",
       "Bash(python -m pytest backend/tests/ -k \"sandbox\" -q --tb=short)",
-      "Bash(./git-push.sh \"fix: nsjail pids_max 32→128 + RLIMIT_NPROC 0→32——openpyxl读大Excel因线程配额不足SIGSEGV\")"
+      "Bash(./git-push.sh \"fix: nsjail pids_max 32→128 + RLIMIT_NPROC 0→32——openpyxl读大Excel因线程配额不足SIGSEGV\")",
+      "Bash(python -m pytest tests/test_file_executor.py::TestFileRead::test_read_normal -xvs)",
+      "Bash(python -m pytest tests/test_tool_executor.py::TestSearchKnowledge::test_empty_query -xvs)",
+      "Bash(python -m pytest backend/tests/test_data_query.py backend/tests/test_sandbox_worker.py -q --tb=short)",
+      "Bash(python -m pytest tests/test_sandbox_worker.py tests/test_data_query.py -q --tb=short)",
+      "Bash(python -m pytest backend/tests/test_data_query.py::TestExcelCache::test_cache_created -q --tb=long)",
+      "Bash(./git-push.sh \"fix: data_query/code_execute Sheet名模糊匹配——全角半角+空格连字符+大小写归一化，根治Worksheet not found\")"
     ],
     "additionalDirectories": [
       "/tmp"

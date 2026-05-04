@@ -400,6 +400,13 @@ class TestBuildLlmMessagesWorkspace:
         from services.handlers.chat_handler import ChatHandler
         return ChatHandler(db=mock_db)
 
+    @pytest.fixture(autouse=True)
+    def _patch_workspace_root(self, tmp_path):
+        """workspace_root 指向 tmp_path，避免 /mnt 只读文件系统"""
+        with patch("services.handlers.chat_context_mixin.get_settings") as m:
+            m.return_value.file_workspace_root = str(tmp_path)
+            yield
+
     @pytest.mark.asyncio
     async def test_workspace_file_injects_system_prompt(self, chat_handler, mock_db):
         """workspace 文件注入 system prompt，不作为 image_url"""

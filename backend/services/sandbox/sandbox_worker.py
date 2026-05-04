@@ -323,7 +323,7 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
             return _post_clean(result)
 
         def _wrap_pd_read_excel(original_fn):
-            """read_excel 管道：预检 → 引擎 → 表头检测 → 读取 → 清洗 → 截断提示"""
+            """read_excel 管道：预检 → 引擎 → sheet纠错 → 表头检测 → 读取 → 清洗 → 截断提示"""
             import functools
 
             @functools.wraps(original_fn)
@@ -335,6 +335,17 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
                 # ② 引擎选择：未指定 → calamine（快 7 倍）
                 if "engine" not in kwargs:
                     kwargs["engine"] = "calamine"
+                # ②b sheet 名模糊匹配（防全角/半角/空格等不精确匹配）
+                sheet_arg = kwargs.get("sheet_name")
+                if isinstance(sheet_arg, str) and file_arg is not None:
+                    try:
+                        import pandas as _pd
+                        from services.agent.data_query_cache import fuzzy_match_sheet
+                        _xl = _pd.ExcelFile(file_arg, engine=kwargs.get("engine", "calamine"))
+                        kwargs["sheet_name"] = fuzzy_match_sheet(sheet_arg, _xl.sheet_names)
+                        _xl.close()
+                    except Exception:
+                        pass
                 # ③ 表头检测：未指定 header → 自动检测
                 if "header" not in kwargs and file_arg is not None:
                     try:

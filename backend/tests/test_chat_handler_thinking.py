@@ -52,6 +52,7 @@ class TestThinkingStream:
         )
         mock_factory.return_value = mock_adapter
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
@@ -93,6 +94,7 @@ class TestThinkingStream:
         )
         mock_factory.return_value = mock_adapter
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
@@ -133,6 +135,7 @@ class TestThinkingStream:
         )
         mock_factory.return_value = mock_adapter
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
@@ -187,6 +190,7 @@ class TestHandleCompleteThinkingContent:
 
         with patch("services.websocket_manager.ws_manager") as mock_ws:
             mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
             await handler._handle_complete_common(
                 task_id="task_1",
@@ -237,6 +241,7 @@ class TestHandleCompleteThinkingContent:
 
         with patch("services.websocket_manager.ws_manager") as mock_ws:
             mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
             await handler._handle_complete_common(
                 task_id="task_2",
@@ -295,6 +300,7 @@ class TestHandleCompleteToolDigest:
 
         with patch("services.websocket_manager.ws_manager") as mock_ws:
             mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
             await handler._handle_complete_common(
                 task_id="task_d1",
@@ -346,6 +352,7 @@ class TestHandleCompleteToolDigest:
 
         with patch("services.websocket_manager.ws_manager") as mock_ws:
             mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
             await handler._handle_complete_common(
                 task_id="task_d2",

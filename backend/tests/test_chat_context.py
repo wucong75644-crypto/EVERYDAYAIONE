@@ -682,6 +682,7 @@ class TestStreamGenerateContextInjection:
              patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
              patch.object(chat_handler, "_update_summary_if_needed", new_callable=AsyncMock):
             mock_ws.send_to_task_or_user = AsyncMock()
+            mock_ws.is_cancelled.return_value = False
 
             await chat_handler._stream_generate(
                 task_id="t1", message_id="m1", conversation_id="conv1",
@@ -721,6 +722,7 @@ class TestStreamGenerateContextInjection:
              patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
              patch.object(chat_handler, "_update_summary_if_needed", new_callable=AsyncMock):
             mock_ws.send_to_task_or_user = AsyncMock()
+            mock_ws.is_cancelled.return_value = False
 
             await chat_handler._stream_generate(
                 task_id="t1", message_id="m1", conversation_id="conv1",
@@ -759,6 +761,7 @@ class TestStreamGenerateContextInjection:
              patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
              patch.object(chat_handler, "_update_summary_if_needed", new_callable=AsyncMock):
             mock_ws.send_to_task_or_user = AsyncMock()
+            mock_ws.is_cancelled.return_value = False
 
             await chat_handler._stream_generate(
                 task_id="t1", message_id="m1", conversation_id="conv1",
@@ -796,6 +799,7 @@ class TestStreamGenerateContextInjection:
              patch.object(chat_handler, "_get_context_summary", new_callable=AsyncMock, return_value=None), \
              patch.object(chat_handler, "_update_summary_if_needed", new_callable=AsyncMock):
             mock_ws.send_to_task_or_user = AsyncMock()
+            mock_ws.is_cancelled.return_value = False
 
             await chat_handler._stream_generate(
                 task_id="t1", message_id="m1", conversation_id="conv1",

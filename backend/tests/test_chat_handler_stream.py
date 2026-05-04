@@ -151,6 +151,7 @@ class TestStreamGenerate:
         )
         mock_factory.return_value = mock_adapter
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
         await handler._stream_generate(
             task_id="t1",
@@ -188,6 +189,7 @@ class TestStreamGenerate:
         mock_adapter.close = AsyncMock()
         mock_factory.return_value = mock_adapter
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
         await handler._stream_generate(
             task_id="t1",
@@ -220,6 +222,7 @@ class TestStreamGenerate:
         mock_adapter.close = AsyncMock()
         mock_factory.return_value = mock_adapter
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
         await handler._stream_generate(
             task_id="t1",
@@ -255,6 +258,7 @@ class TestStreamGenerate:
         )
         mock_factory.return_value = mock_adapter
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
         handler.on_complete = AsyncMock()
         handler._dispatch_post_tasks = MagicMock()
 
@@ -282,6 +286,7 @@ class TestStreamDirectReply:
         handler = _make_handler()
         handler.on_complete = AsyncMock()
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
         await handler._stream_direct_reply(
             task_id="t1",
@@ -307,6 +312,7 @@ class TestStreamDirectReply:
         mock_ws.send_to_task_or_user = AsyncMock(
             side_effect=Exception("ws down"),
         )
+        mock_ws.is_cancelled.return_value = False
 
         await handler._stream_direct_reply(
             task_id="t1",
@@ -440,6 +446,7 @@ class TestStreamOptimizations:
         )
         mock_factory.return_value = mock_adapter
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
@@ -483,6 +490,7 @@ class TestStreamOptimizations:
         )
         mock_factory.return_value = mock_adapter
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
@@ -521,6 +529,7 @@ class TestStreamOptimizations:
         )
         mock_factory.return_value = mock_adapter
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
@@ -570,6 +579,7 @@ class TestUserLocationPassthrough:
         )
         mock_factory.return_value = mock_adapter
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
@@ -612,6 +622,7 @@ class TestUserLocationPassthrough:
         )
         mock_factory.return_value = mock_adapter
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
         await handler._stream_generate(
             task_id="t1", message_id="m1", conversation_id="c1",
@@ -650,6 +661,7 @@ class TestBoundary2PersistPhase:
         )
         mock_factory.return_value = mock_adapter
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
         await handler._stream_generate(
             task_id="t1",
@@ -690,6 +702,7 @@ class TestBoundary2PersistPhase:
         )
         mock_factory.return_value = mock_adapter
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
         await handler._stream_generate(
             task_id="t1",
@@ -725,6 +738,7 @@ class TestBoundary2PersistPhase:
         )
         mock_factory.return_value = mock_adapter
         mock_ws.send_to_task_or_user = AsyncMock()
+        mock_ws.is_cancelled.return_value = False
 
         # 不应抛异常
         await handler._stream_generate(
