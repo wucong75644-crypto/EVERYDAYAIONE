@@ -314,10 +314,13 @@ class FileExecutor(FileReadExtensionsMixin):
 
         # ── 二进制检查（PDF/图片已在上面处理，这里只拦其他二进制） ──
         if not self._is_text_file(target):
+            _data_exts = {".xlsx", ".xls", ".csv", ".tsv", ".parquet"}
+            if ext in _data_exts:
+                return f"数据文件请用 data_query 读取: data_query(file=\"{path}\")"
             return (
                 f"二进制文件: {path}（{self._format_size(size)}）\n"
                 f"类型: {mimetypes.guess_type(str(target))[0] or '未知'}\n"
-                "建议使用 code_execute 处理二进制文件。"
+                "请用 code_execute 处理。"
             )
 
         # ── 读文件 ──

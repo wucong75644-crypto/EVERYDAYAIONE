@@ -1985,7 +1985,12 @@
       "Bash(python -m pytest backend/tests/test_data_query.py backend/tests/test_sandbox_worker.py -q --tb=short)",
       "Bash(python -m pytest tests/test_sandbox_worker.py tests/test_data_query.py -q --tb=short)",
       "Bash(python -m pytest backend/tests/test_data_query.py::TestExcelCache::test_cache_created -q --tb=long)",
-      "Bash(./git-push.sh \"fix: data_query/code_execute Sheet名模糊匹配——全角半角+空格连字符+大小写归一化，根治Worksheet not found\")"
+      "Bash(./git-push.sh \"fix: data_query/code_execute Sheet名模糊匹配——全角半角+空格连字符+大小写归一化，根治Worksheet not found\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tests/test_chat_context.py'\\).read\\(\\)\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('tests/test_chat_handler_stream.py'\\).read\\(\\)\\)\")",
+      "Bash(python -c \"from config.file_tools import build_file_tools, FILE_INFO_TOOLS, FILE_TOOL_SCHEMAS; tools = build_file_tools\\(\\); print\\(f'Tools: {len\\(tools\\)}'\\); print\\([t[\\\\\"function\\\\\"][\\\\\"name\\\\\"] for t in tools]\\); print\\(f'INFO_TOOLS: {FILE_INFO_TOOLS}'\\)\")",
+      "Bash(python -c \"from config.chat_tools import get_core_tools; tools = get_core_tools\\(org_id='test'\\); names = [t['function']['name'] for t in tools]; print\\(f'Core tools: {len\\(names\\)}'\\); print\\(names\\); assert 'file_write' not in names; assert 'file_edit' not in names; print\\('OK: file_write/file_edit removed'\\)\")",
+      "Bash(./git-push.sh \"fix: 工作区文件统一为路径注入——删除预读/分流逻辑，AI自调工具；文件卡片统一渲染不分类型\")"
     ],
     "additionalDirectories": [
       "/tmp"

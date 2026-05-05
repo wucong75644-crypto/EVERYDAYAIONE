@@ -458,16 +458,19 @@ class TestCopyToParquet:
     async def test_small_result_no_staging_file(
         self, executor, sample_parquet, tmp_workspace,
     ):
-        """≤100 行结果不保留 staging 文件"""
+        """≤100 行结果也保留 staging 文件（确保 code_execute 后续能读到）"""
         result = await executor.execute(
             file="trade_test.parquet",
             sql='SELECT * FROM data LIMIT 5',
         )
         assert not result.is_failure
-        # 小结果不应产生 query_result_ 文件
+        # 小结果也应保留 staging 文件
         staging = tmp_workspace["staging_dir"]
         result_files = list(staging.glob("query_result_*.parquet"))
-        assert len(result_files) == 0
+        assert len(result_files) == 1
+        # 返回文本应包含 staging 引用
+        assert "staging" in result.summary
+        assert "pd.read_parquet" in result.summary
 
 
 # ============================================================

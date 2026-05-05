@@ -565,10 +565,10 @@ export default memo(function MessageItem({
                       </div>
                     );
                   }
-                  if (part.type === 'file' && (part as { url?: string }).url) {
+                  if (part.type === 'file' && ((part as { url?: string }).url || (part as { workspace_path?: string }).workspace_path)) {
                     const fp = part as import('../../../types/message').FilePart;
                     return (
-                      <div key={fp.url} className="my-2" style={{ maxWidth: '400px' }}>
+                      <div key={fp.url || fp.workspace_path || idx} className="my-2" style={{ maxWidth: '400px' }}>
                         <FileCardList files={[fp]} />
                       </div>
                     );

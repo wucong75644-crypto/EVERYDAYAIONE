@@ -1,10 +1,6 @@
 """
-文件工具定义测试
-
-验证 file_tools.py 的工具 Schema、工具集合、路由提示词。
+文件工具定义单元测试
 """
-
-import pytest
 
 from config.file_tools import (
     FILE_INFO_TOOLS,
@@ -16,11 +12,11 @@ from config.file_tools import (
 
 class TestFileInfoTools:
 
-    def test_has_five_tools(self):
-        assert len(FILE_INFO_TOOLS) == 5
+    def test_has_three_tools(self):
+        assert len(FILE_INFO_TOOLS) == 3
 
     def test_tool_names(self):
-        expected = {"file_read", "file_write", "file_edit", "file_list", "file_search"}
+        expected = {"file_read", "file_list", "file_search"}
         assert FILE_INFO_TOOLS == expected
 
 
@@ -34,11 +30,6 @@ class TestFileToolSchemas:
         schema = FILE_TOOL_SCHEMAS["file_read"]
         assert "path" in schema["required"]
 
-    def test_file_write_requires_path_and_content(self):
-        schema = FILE_TOOL_SCHEMAS["file_write"]
-        assert "path" in schema["required"]
-        assert "content" in schema["required"]
-
     def test_file_list_no_required(self):
         schema = FILE_TOOL_SCHEMAS["file_list"]
         assert schema["required"] == []
@@ -47,18 +38,12 @@ class TestFileToolSchemas:
         schema = FILE_TOOL_SCHEMAS["file_search"]
         assert "keyword" in schema["required"]
 
-    def test_file_edit_requires_path_and_strings(self):
-        schema = FILE_TOOL_SCHEMAS["file_edit"]
-        assert "path" in schema["required"]
-        assert "old_string" in schema["required"]
-        assert "new_string" in schema["required"]
-
 
 class TestBuildFileTools:
 
-    def test_returns_five_tools(self):
+    def test_returns_three_tools(self):
         tools = build_file_tools()
-        assert len(tools) == 5
+        assert len(tools) == 3
 
     def test_all_function_type(self):
         tools = build_file_tools()
@@ -73,14 +58,12 @@ class TestBuildFileTools:
         names = {t["function"]["name"] for t in tools}
         assert names == FILE_INFO_TOOLS
 
-    def test_file_write_has_mode_enum(self):
+    def test_no_file_write_or_edit(self):
+        """file_write 和 file_edit 已移除"""
         tools = build_file_tools()
-        write_tool = next(
-            t for t in tools if t["function"]["name"] == "file_write"
-        )
-        mode_prop = write_tool["function"]["parameters"]["properties"]["mode"]
-        assert "enum" in mode_prop
-        assert set(mode_prop["enum"]) == {"overwrite", "append", "create_only"}
+        names = {t["function"]["name"] for t in tools}
+        assert "file_write" not in names
+        assert "file_edit" not in names
 
 
 class TestFileReadPagesParam:
@@ -122,15 +105,17 @@ class TestFileReadPagesParam:
 
 class TestFileRoutingPrompt:
 
-    def test_mentions_all_tools(self):
-        for tool in ["file_read", "file_write", "file_list", "file_search"]:
+    def test_mentions_core_tools(self):
+        for tool in ["file_read", "file_list", "file_search"]:
             assert tool in FILE_ROUTING_PROMPT
 
-    def test_mentions_code_execute_for_binary(self):
+    def test_no_file_write_or_edit_in_routing(self):
+        """路由提示词不再提及已移除的工具"""
+        assert "file_write" not in FILE_ROUTING_PROMPT
+        assert "file_edit" not in FILE_ROUTING_PROMPT
+
+    def test_mentions_code_execute(self):
         assert "code_execute" in FILE_ROUTING_PROMPT
 
-    def test_mentions_pdf_in_routing(self):
-        assert "PDF" in FILE_ROUTING_PROMPT or "pdf" in FILE_ROUTING_PROMPT
-
-    def test_mentions_image_in_routing(self):
-        assert "图片" in FILE_ROUTING_PROMPT or "png" in FILE_ROUTING_PROMPT.lower()
+    def test_mentions_data_query(self):
+        assert "data_query" in FILE_ROUTING_PROMPT

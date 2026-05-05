@@ -78,9 +78,9 @@ class TestCodeToolsDefinition:
         assert "parquet" in desc.lower()
         assert "OUTPUT_DIR" in desc
 
-    def test_routing_prompt_mentions_local_db_export(self):
-        """CODE_ROUTING_PROMPT 提及 local_db_export"""
-        assert "local_db_export" in CODE_ROUTING_PROMPT
+    def test_routing_prompt_no_local_db_export(self):
+        """CODE_ROUTING_PROMPT 不再提及已删除的 local_db_export"""
+        assert "local_db_export" not in CODE_ROUTING_PROMPT
 
     # ---- 架构隔离测试 ----
 

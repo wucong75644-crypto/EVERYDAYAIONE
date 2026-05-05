@@ -197,8 +197,11 @@ class TestCoreToolsExpanded:
     def test_core_tools_include_file_tools(self):
         from config.chat_tools import get_core_tools
         names = {t["function"]["name"] for t in get_core_tools(org_id="test")}
-        for ft in ("file_read", "file_write", "file_list", "file_search"):
+        for ft in ("file_read", "file_list", "file_search"):
             assert ft in names, f"{ft} 应在核心工具中"
+        # file_write/file_edit 已移除
+        assert "file_write" not in names
+        assert "file_edit" not in names
 
     def test_core_tools_include_crawler(self):
         from config.chat_tools import get_core_tools

@@ -96,8 +96,6 @@ class FileToolMixin:
 
         dispatch = {
             "file_read": executor.file_read,
-            "file_write": executor.file_write,
-            "file_edit": executor.file_edit,
         }
 
         func = dispatch.get(tool_name)
@@ -109,8 +107,8 @@ class FileToolMixin:
                 metadata={"retryable": False},
             )
 
-        # file_read / file_edit 的 path 参数：先查缓存翻译
-        if "path" in args and tool_name in ("file_read", "file_edit"):
+        # file_read 的 path 参数：先查缓存翻译
+        if "path" in args and tool_name == "file_read":
             from services.agent.workspace_file_handles import get_file_cache
             cached = get_file_cache(self.conversation_id).resolve(args["path"])
             if cached:
@@ -210,20 +208,29 @@ class FileToolMixin:
         for d in data["dirs"]:
             lines.append(f"  [目录] {d['name']}/\t\t{d['modified']}")
 
+        from pathlib import Path as _Path
         from services.agent.workspace_file_handles import get_file_cache
         file_cache = get_file_cache(self.conversation_id)
+        ws_root = _Path(executor.workspace_root)
 
         _MAX_METADATA = 5
         for i, f in enumerate(data["files"]):
+            # 计算 workspace 相对路径（子目录文件带完整路径，如 "报表/月度汇总.xlsx"）
+            try:
+                rel_path = str(_Path(f["abs_path"]).relative_to(ws_root))
+            except ValueError:
+                rel_path = f["name"]
+            # 注册两种 key：纯文件名 + 相对路径（都能命中缓存）
             file_cache.register(f["name"], f["abs_path"])
+            file_cache.register(rel_path, f["abs_path"])
             if i < _MAX_METADATA:
                 meta = await self._get_or_extract_metadata(f["abs_path"])
                 line = format_file_metadata_line(
-                    f["name"], f["abs_path"], f["size"], meta,
+                    rel_path, f["abs_path"], f["size"], meta,
                 )
             else:
                 size_str = executor._format_size(f["size"])
-                line = f"  {f['name']}\t{size_str}"
+                line = f"  {rel_path}\t{size_str}"
             lines.append(line)
 
         if data["truncated"]:
