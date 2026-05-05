@@ -78,7 +78,7 @@ export function getFiles(message: Message): FilePart[] {
   if (!Array.isArray(message.content)) return [];
 
   return message.content.filter(
-    (p): p is FilePart => p.type === 'file' && !!p.url,
+    (p): p is FilePart => p.type === 'file' && (!!p.url || !!(p as FilePart).workspace_path),
   );
 }
 
