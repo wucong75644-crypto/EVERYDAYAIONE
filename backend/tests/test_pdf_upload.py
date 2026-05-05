@@ -403,8 +403,9 @@ class TestBuildLlmMessagesWorkspace:
     @pytest.fixture(autouse=True)
     def _patch_workspace_root(self, tmp_path):
         """workspace_root 指向 tmp_path，避免 /mnt 只读文件系统"""
-        with patch("services.handlers.chat_context_mixin.get_settings") as m:
-            m.return_value.file_workspace_root = str(tmp_path)
+        from core.config import get_settings
+        real_settings = get_settings()
+        with patch.object(real_settings, "file_workspace_root", str(tmp_path)):
             yield
 
     @pytest.mark.asyncio

@@ -130,9 +130,10 @@ class TestDetailQuery:
         db = _mock_db(rows, count=1)
         engine = _make_engine(db)
 
-        with patch("services.kuaimai.erp_duckdb_helpers.get_settings") as mock_settings, \
+        from core.config import get_settings
+        real_settings = get_settings()
+        with patch.object(real_settings, "file_workspace_root", str(tmp_path)), \
              patch("services.kuaimai.erp_orm_query.detail_orm", new_callable=AsyncMock) as mock_detail:
-            mock_settings.return_value.file_workspace_root = str(tmp_path)
             from services.agent.tool_output import ToolOutput, OutputFormat
             mock_detail.return_value = ToolOutput(
                 summary="订单明细：共 1 条",
@@ -141,7 +142,7 @@ class TestDetailQuery:
                 metadata={"query_type": "detail"},
             )
             result = await engine.execute(
-                doc_type="order", mode="export", limit=5,
+                doc_type="order", mode="export", limit=50,
                 filters=[{"field": "doc_created_at", "op": "gte", "value": "2026-04-01"},
                          {"field": "doc_created_at", "op": "lt", "value": "2026-04-28"}],
                 sort_by="amount", sort_dir="desc",
