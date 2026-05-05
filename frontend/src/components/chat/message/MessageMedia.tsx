@@ -413,7 +413,7 @@ export default memo(function MessageMedia({
     onImageClick(index ?? 0);
   }, [onImageClick]);
 
-  if (imageUrls.length === 0 && !videoUrl && !isGenerating && !failedMediaType) return null;
+  if (imageUrls.length === 0 && !videoUrl && !isGenerating && !failedMediaType && files.length === 0) return null;
 
   return (
     <>
