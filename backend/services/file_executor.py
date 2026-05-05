@@ -442,7 +442,7 @@ class FileExecutor(FileReadExtensionsMixin):
             for item in sorted(target.iterdir()):
                 if not show_hidden and item.name.startswith("."):
                     continue
-                if item.name in _BLOCKED_NAMES:
+                if item.name in _BLOCKED_NAMES or item.name == "staging":
                     continue
                 try:
                     st = item.stat()

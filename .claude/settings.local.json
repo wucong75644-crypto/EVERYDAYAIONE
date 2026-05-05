@@ -1996,7 +1996,8 @@
       "Bash(grep -r \"large.*staging\\\\|大结果.*引用\\\\|staging.*引用\" tests/test_data_query*.py)",
       "Bash(grep -r \"explore.*path\\\\|探索.*路径\\\\|后续操作\" tests/test_data_query*.py)",
       "Bash(python -m pytest backend/tests/test_erp_analytics_trend.py -x -q)",
-      "Bash(./git-push.sh \"test: 文件工具链路全覆盖——rglob兜底+staging注册+workspace提示+元数据读取命令+提示词文案修正（+28用例）\")"
+      "Bash(./git-push.sh \"test: 文件工具链路全覆盖——rglob兜底+staging注册+workspace提示+元数据读取命令+提示词文案修正（+28用例）\")",
+      "Bash(./git-push.sh \"fix: file_list遍历目录跳过staging——对齐前端API和file_search的安全过滤\")"
     ],
     "additionalDirectories": [
       "/tmp"
