@@ -14,15 +14,11 @@ if "pydantic_settings" not in sys.modules:
     sys.modules["pydantic_settings"] = MagicMock()
 
 # 预注入无法 import 的模块（它们内部依赖 pydantic_settings）
+# 注意：不注入 core.redis（会污染其他测试的真实模块），改用 fixture patch
 import types
-for mod_path in ["core.redis", "services.org", "services.org.config_resolver"]:
+for mod_path in ["services.org", "services.org.config_resolver"]:
     if mod_path not in sys.modules:
         sys.modules[mod_path] = types.ModuleType(mod_path)
-
-# core.redis 需要 get_redis 和 RedisClient 属性（函数内 from core.redis import ...）
-_redis_mod = sys.modules["core.redis"]
-_redis_mod.get_redis = AsyncMock(return_value=None)
-_redis_mod.RedisClient = MagicMock()
 
 import pytest
 

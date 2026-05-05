@@ -190,7 +190,7 @@ class TestHandleCompleteThinkingContent:
 
         with patch("services.websocket_manager.ws_manager") as mock_ws:
             mock_ws.send_to_task_or_user = AsyncMock()
-        mock_ws.is_cancelled.return_value = False
+            mock_ws.is_cancelled.return_value = False
 
             await handler._handle_complete_common(
                 task_id="task_1",
@@ -241,7 +241,7 @@ class TestHandleCompleteThinkingContent:
 
         with patch("services.websocket_manager.ws_manager") as mock_ws:
             mock_ws.send_to_task_or_user = AsyncMock()
-        mock_ws.is_cancelled.return_value = False
+            mock_ws.is_cancelled.return_value = False
 
             await handler._handle_complete_common(
                 task_id="task_2",
@@ -300,7 +300,7 @@ class TestHandleCompleteToolDigest:
 
         with patch("services.websocket_manager.ws_manager") as mock_ws:
             mock_ws.send_to_task_or_user = AsyncMock()
-        mock_ws.is_cancelled.return_value = False
+            mock_ws.is_cancelled.return_value = False
 
             await handler._handle_complete_common(
                 task_id="task_d1",
@@ -352,7 +352,7 @@ class TestHandleCompleteToolDigest:
 
         with patch("services.websocket_manager.ws_manager") as mock_ws:
             mock_ws.send_to_task_or_user = AsyncMock()
-        mock_ws.is_cancelled.return_value = False
+            mock_ws.is_cancelled.return_value = False
 
             await handler._handle_complete_common(
                 task_id="task_d2",
