@@ -9,8 +9,8 @@ Phase 4: query_compare() — 环比/同比/周环比增长率（双 RPC + Python
 from __future__ import annotations
 
 import asyncio
-from datetime import date, timedelta
-from typing import Any
+from datetime import date, datetime, timedelta
+from typing import Any, Union
 
 from loguru import logger
 
@@ -114,7 +114,7 @@ async def query_compare(
 ) -> ToolOutput:
     """对比分析——并行查两个时间段，Python 计算差值和增长率。"""
     try:
-        cur_start, cur_end = _parse_date(start_date), _parse_date(end_date)
+        cur_start, cur_end = _parse_datetime(start_date), _parse_datetime(end_date)
         prev_start, prev_end = shift_time_range(cur_start, cur_end, compare_range)
     except ValueError as e:
         return ToolOutput(
@@ -175,9 +175,13 @@ async def query_compare(
 
 
 def shift_time_range(
-    start: date, end: date, compare_range: str,
-) -> tuple[date, date]:
-    """根据 compare_range 计算前期起止: mom/yoy/wow。"""
+    start: Union[date, datetime], end: Union[date, datetime], compare_range: str,
+) -> tuple[Union[date, datetime], Union[date, datetime]]:
+    """根据 compare_range 计算前期起止: mom/yoy/wow。
+
+    支持 date 和 datetime：传入 datetime 时保留时分秒，
+    确保对比期与当前期的时间边界一致（如今天到 14:30，上周也到 14:30）。
+    """
     if compare_range == "mom":
         return _shift_months(start, -1), _shift_months(end, -1)
     if compare_range == "yoy":
@@ -187,15 +191,18 @@ def shift_time_range(
     raise ValueError(f"未知 compare_range: {compare_range}")
 
 
-def _shift_months(d: date, months: int) -> date:
-    """安全月偏移（月末日不存在时降级到月末）。"""
+def _shift_months(d: Union[date, datetime], months: int) -> Union[date, datetime]:
+    """安全月偏移（月末日不存在时降级到月末，datetime 保留时分秒）。"""
     year = d.year + (d.month - 1 + months) // 12
     month = (d.month - 1 + months) % 12 + 1
-    return date(year, month, min(d.day, _last_day_of_month(year, month)))
+    day = min(d.day, _last_day_of_month(year, month))
+    if isinstance(d, datetime):
+        return d.replace(year=year, month=month, day=day)
+    return date(year, month, day)
 
 
-def _shift_years(d: date, years: int) -> date:
-    """安全年偏移（02-29 降级到 02-28）。"""
+def _shift_years(d: Union[date, datetime], years: int) -> Union[date, datetime]:
+    """安全年偏移（02-29 降级到 02-28，datetime 保留时分秒）。"""
     try:
         return d.replace(year=d.year + years)
     except ValueError:
@@ -283,7 +290,10 @@ def _to_float(v: Any) -> float:
 # ── RPC 封装 ─────────────────────────────────────────────
 
 
-async def _fetch_stats(db: Any, base_params: dict, start: date, end: date) -> Any:
+async def _fetch_stats(
+    db: Any, base_params: dict,
+    start: Union[date, datetime], end: Union[date, datetime],
+) -> Any:
     """调用 erp_global_stats_query RPC。"""
     result = db.rpc("erp_global_stats_query", {
         **base_params, "p_start": start.isoformat(), "p_end": end.isoformat(),
@@ -362,6 +372,23 @@ def _sanitize_metrics(metrics: list[str] | None) -> list[str]:
 
 def _parse_date(s: str) -> date:
     return date.fromisoformat(s.strip()[:10])
+
+
+def _parse_datetime(s: str) -> datetime:
+    """解析时间字符串，保留时分秒（对比查询需要精确时间边界）。
+
+    输入格式：
+    - "2026-05-05 14:30:00+0800" → datetime(2026,5,5,14,30, tzinfo=...)
+    - "2026-05-05" → datetime(2026,5,5,0,0)（无时间部分则为当天 00:00）
+    """
+    stripped = s.strip()
+    # 尝试完整 datetime 解析
+    try:
+        return datetime.fromisoformat(stripped.replace("Z", "+00:00"))
+    except ValueError:
+        pass
+    # 降级为 date → datetime midnight
+    return datetime.combine(date.fromisoformat(stripped[:10]), datetime.min.time())
 
 
 def _translate_platform_in_rows(rows: list[dict]) -> None:

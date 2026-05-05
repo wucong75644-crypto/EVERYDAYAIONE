@@ -1,6 +1,6 @@
 """erp_analytics_trend.py 单元测试——趋势+对比分析内部逻辑。"""
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -49,6 +49,60 @@ class TestShiftTimeRange:
     def test_unknown_raises(self):
         with pytest.raises(ValueError):
             self._shift(date(2026, 4, 1), date(2026, 4, 30), "invalid")
+
+    # ── datetime 精度保留（对比查询同时段匹配）──
+
+    def test_wow_datetime_preserves_time(self):
+        """周环比：今天 14:30 → 上周同天 14:30，时间精度不丢失。"""
+        CN = timezone(timedelta(hours=8))
+        s = datetime(2026, 5, 5, 0, 0, tzinfo=CN)
+        e = datetime(2026, 5, 5, 14, 30, tzinfo=CN)
+        ps, pe = self._shift(s, e, "wow")
+        assert isinstance(ps, datetime)
+        assert isinstance(pe, datetime)
+        assert ps == datetime(2026, 4, 28, 0, 0, tzinfo=CN)
+        assert pe == datetime(2026, 4, 28, 14, 30, tzinfo=CN)
+
+    def test_mom_datetime_preserves_time(self):
+        """月环比：datetime 保留时分秒。"""
+        CN = timezone(timedelta(hours=8))
+        s = datetime(2026, 5, 1, 9, 0, tzinfo=CN)
+        e = datetime(2026, 5, 5, 14, 30, tzinfo=CN)
+        ps, pe = self._shift(s, e, "mom")
+        assert ps == datetime(2026, 4, 1, 9, 0, tzinfo=CN)
+        assert pe == datetime(2026, 4, 5, 14, 30, tzinfo=CN)
+
+    def test_yoy_datetime_preserves_time(self):
+        """年同比：datetime 保留时分秒。"""
+        CN = timezone(timedelta(hours=8))
+        s = datetime(2026, 5, 5, 10, 15, tzinfo=CN)
+        e = datetime(2026, 5, 5, 14, 30, tzinfo=CN)
+        ps, pe = self._shift(s, e, "yoy")
+        assert ps == datetime(2025, 5, 5, 10, 15, tzinfo=CN)
+        assert pe == datetime(2025, 5, 5, 14, 30, tzinfo=CN)
+
+
+class TestParseDatetime:
+
+    def _parse(self, s):
+        from services.kuaimai.erp_analytics_trend import _parse_datetime
+        return _parse_datetime(s)
+
+    def test_full_iso_with_tz(self):
+        result = self._parse("2026-05-05 14:30:00+08:00")
+        assert result.hour == 14
+        assert result.minute == 30
+
+    def test_date_only_becomes_midnight(self):
+        result = self._parse("2026-05-05")
+        assert result.hour == 0
+        assert result.minute == 0
+        assert result.day == 5
+
+    def test_preserves_end_of_day(self):
+        result = self._parse("2026-05-05 23:59:59+08:00")
+        assert result.hour == 23
+        assert result.minute == 59
 
 
 # ── _auto_adjust_granularity ──

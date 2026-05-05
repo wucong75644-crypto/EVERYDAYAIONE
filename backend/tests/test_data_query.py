@@ -697,6 +697,185 @@ class TestCacheSnapshotTolerance:
         assert result is False
 
 
+# ============================================================
+# rglob 子目录兜底搜索
+# ============================================================
+
+
+class TestResolveFilePathRglob:
+    """_resolve_file_path 的 rglob 递归搜索兜底"""
+
+    @pytest.mark.asyncio
+    async def test_find_file_in_subdirectory(self, tmp_workspace):
+        """子目录文件通过 rglob 兜底找到"""
+        ws = tmp_workspace["ws_dir"]
+        subdir = ws / "报表"
+        subdir.mkdir()
+        target = subdir / "月度汇总.xlsx"
+        target.write_bytes(b"PK\x03\x04")  # xlsx magic bytes
+
+        executor = DataQueryExecutor(
+            user_id=tmp_workspace["user_id"],
+            org_id=tmp_workspace["org_id"],
+            conversation_id=tmp_workspace["conv_id"],
+            workspace_root=tmp_workspace["root"],
+        )
+        resolved = executor._resolve_file_path("月度汇总.xlsx")
+        assert resolved == str(target.resolve())
+
+    @pytest.mark.asyncio
+    async def test_multiple_same_name_files_raises(self, tmp_workspace):
+        """多个同名文件应报错并列出路径"""
+        ws = tmp_workspace["ws_dir"]
+        for d in ("dir1", "dir2"):
+            sub = ws / d
+            sub.mkdir()
+            (sub / "report.csv").write_text("a,b\n1,2")
+
+        executor = DataQueryExecutor(
+            user_id=tmp_workspace["user_id"],
+            org_id=tmp_workspace["org_id"],
+            conversation_id=tmp_workspace["conv_id"],
+            workspace_root=tmp_workspace["root"],
+        )
+        with pytest.raises(FileNotFoundError, match="多个同名文件"):
+            executor._resolve_file_path("report.csv")
+
+    @pytest.mark.asyncio
+    async def test_rglob_excludes_staging(self, tmp_workspace):
+        """仅在 staging 中存在的文件，rglob 阶段不会命中（staging 文件走第二优先级直接查找）"""
+        ws = tmp_workspace["ws_dir"]
+        # 在子目录放一个工作区文件
+        subdir = ws / "reports"
+        subdir.mkdir()
+        (subdir / "workspace_only.csv").write_text("a\n1")
+
+        # staging 里放一个不同名的文件
+        staging = tmp_workspace["staging_dir"]
+        (staging / "staging_only.csv").write_text("x\n1")
+
+        executor = DataQueryExecutor(
+            user_id=tmp_workspace["user_id"],
+            org_id=tmp_workspace["org_id"],
+            conversation_id=tmp_workspace["conv_id"],
+            workspace_root=tmp_workspace["root"],
+        )
+        # 工作区子目录文件通过 rglob 找到
+        resolved = executor._resolve_file_path("workspace_only.csv")
+        assert "reports" in resolved
+
+    @pytest.mark.asyncio
+    async def test_rglob_scan_limit(self, tmp_workspace):
+        """超过扫描上限不会卡住"""
+        ws = tmp_workspace["ws_dir"]
+        # 不创建目标文件，只确认不会无限搜索
+        executor = DataQueryExecutor(
+            user_id=tmp_workspace["user_id"],
+            org_id=tmp_workspace["org_id"],
+            conversation_id=tmp_workspace["conv_id"],
+            workspace_root=tmp_workspace["root"],
+        )
+        with pytest.raises(FileNotFoundError):
+            executor._resolve_file_path("不存在的文件.xlsx")
+
+
+# ============================================================
+# 探索模式返回后续操作命令
+# ============================================================
+
+
+class TestExploreReturnsPaths:
+    """探索模式返回 data_query 后续操作命令"""
+
+    @pytest.mark.asyncio
+    async def test_explore_returns_query_commands(self, tmp_workspace):
+        """探索模式返回两种 data_query 命令"""
+        ws = tmp_workspace["ws_dir"]
+        df = pd.DataFrame({"col_a": [1, 2], "col_b": ["x", "y"]})
+        df.to_csv(str(ws / "test.csv"), index=False)
+
+        executor = DataQueryExecutor(
+            user_id=tmp_workspace["user_id"],
+            org_id=tmp_workspace["org_id"],
+            conversation_id=tmp_workspace["conv_id"],
+            workspace_root=tmp_workspace["root"],
+        )
+        result = await executor.execute(file="test.csv")
+        assert not result.is_failure
+        assert '后续操作:' in result.summary
+        assert 'data_query(file="test.csv"' in result.summary
+        assert 'SELECT * FROM data' in result.summary
+
+    @pytest.mark.asyncio
+    async def test_explore_no_workspace_dir_reference(self, tmp_workspace):
+        """探索模式不返回 WORKSPACE_DIR 沙盒读取命令"""
+        ws = tmp_workspace["ws_dir"]
+        df = pd.DataFrame({"a": [1]})
+        df.to_csv(str(ws / "simple.csv"), index=False)
+
+        executor = DataQueryExecutor(
+            user_id=tmp_workspace["user_id"],
+            org_id=tmp_workspace["org_id"],
+            conversation_id=tmp_workspace["conv_id"],
+            workspace_root=tmp_workspace["root"],
+        )
+        result = await executor.execute(file="simple.csv")
+        assert "WORKSPACE_DIR" not in result.summary
+        assert "pd.read_excel" not in result.summary
+        assert "pd.read_csv" not in result.summary
+
+    @pytest.mark.asyncio
+    async def test_explore_subdirectory_file_has_rel_path(self, tmp_workspace):
+        """子目录文件的探索结果包含完整相对路径"""
+        ws = tmp_workspace["ws_dir"]
+        subdir = ws / "数据"
+        subdir.mkdir()
+        df = pd.DataFrame({"x": [1, 2, 3]})
+        df.to_csv(str(subdir / "report.csv"), index=False)
+
+        executor = DataQueryExecutor(
+            user_id=tmp_workspace["user_id"],
+            org_id=tmp_workspace["org_id"],
+            conversation_id=tmp_workspace["conv_id"],
+            workspace_root=tmp_workspace["root"],
+        )
+        result = await executor.execute(file="report.csv")
+        assert 'data_query(file="数据/report.csv"' in result.summary
+
+
+# ============================================================
+# 大结果 staging 引用格式
+# ============================================================
+
+
+class TestLargeResultStagingRef:
+    """大结果（>100 行）附加标准 staging 引用"""
+
+    @pytest.fixture
+    def large_parquet(self, tmp_workspace):
+        df = pd.DataFrame({
+            "id": range(200),
+            "value": [i * 1.5 for i in range(200)],
+        })
+        path = tmp_workspace["staging_dir"] / "large_test.parquet"
+        df.to_parquet(str(path), index=False)
+        return path
+
+    @pytest.mark.asyncio
+    async def test_large_result_has_staging_ref(
+        self, executor, large_parquet, tmp_workspace,
+    ):
+        """大结果返回标准 staging 引用格式"""
+        result = await executor.execute(
+            file="large_test.parquet",
+            sql="SELECT * FROM data",
+        )
+        assert not result.is_failure
+        assert "[文件已存入 staging" in result.summary
+        assert "pd.read_parquet(STAGING_DIR" in result.summary
+        assert "parquet" in result.summary
+
+
 class TestConvertLocksLRU:
     """_convert_locks 按文件路径隔离的锁，LRU 淘汰。"""
 
