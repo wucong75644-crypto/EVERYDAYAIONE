@@ -44,8 +44,6 @@ TOOL_DOMAINS: Dict[str, ToolDomain] = {
     "generate_video":   ToolDomain.GENERAL,
     "image_agent":      ToolDomain.GENERAL,
     "file_read":        ToolDomain.GENERAL,
-    "file_write":       ToolDomain.GENERAL,
-    "file_edit":        ToolDomain.GENERAL,
     "file_list":        ToolDomain.GENERAL,
     "file_search":      ToolDomain.GENERAL,
     "manage_scheduled_task": ToolDomain.GENERAL,

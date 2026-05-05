@@ -67,6 +67,7 @@ _CONCURRENT_SAFE_TOOLS: Set[str] = {
     "code_execute",
     # 文件操作（只读）
     "file_read", "file_list", "file_search",
+    # 注意：file_write/file_edit 已移除（数据分析场景不需要，生成文件走 code_execute）
     # 定时任务（表单返回 + 列表查询）
     "manage_scheduled_task",
 }
@@ -155,7 +156,7 @@ TOOL_SYSTEM_PROMPT = """# 做事原则
 - 不确定已有数据是否满足 → 用 ask_user 向用户确认，不要自行决定
 
 用户上传了文件或提及工作区文件后说"帮我分析"，指的是分析这些文件的数据。
-data_query 只支持单文件查询，不能跨文件关联。涉及多个文件的对比、匹配、合并，必须用 code_execute。
+data_query 只支持单文件查询。多文件场景：每个文件分别调 data_query（可并行），各自存 staging，再用 code_execute 读取多个 staging 文件 merge。
 
 ## 编排与串联
 
@@ -173,16 +174,22 @@ data_query 只支持单文件查询，不能跨文件关联。涉及多个文件
 - 中间计算结果（后续步骤需要读取）→ STAGING_DIR；最终给用户的文件 → OUTPUT_DIR
 - 写入 staging 后必须 print 摘要：文件名、行数、列名、关键指标值
 
+自动导出规则：
+- 查询结果 ≤20 行：直接在回复中展示表格
+- 查询结果 >20 行：用 code_execute 生成 Excel 到 OUTPUT_DIR，回复中给出关键摘要 + 下载链接
+- 不要把大量数据贴在回复里，用户看不过来
+
 ## 工具说明
 
 ### erp_agent — ERP 数据查询专员
 从 ERP 系统查询订单/库存/采购/售后/商品/物流等全量业务数据。
-支持统计聚合（summary）和明细导出（export），>200行自动存 staging 文件。
+支持统计聚合（summary）和明细导出（export），数据自动存 staging 文件。
+支持并行调用（多个独立查询可同时发起）。
 
 返回两种形式：
 - summary：直接返回统计数字（总量/金额/分组明细），内联到回复
 - export：数据存 staging parquet + profile 摘要（行数/字段/前3行预览）
-  含 staging 引用时用 data_query SQL 查询提取所需数据
+  含 staging 引用时用 code_execute 读取: pd.read_parquet(STAGING_DIR + '/文件名')
 
 错误处理：
 - 无数据：转述返回的建议（扩大时间范围/检查平台名）
@@ -198,17 +205,20 @@ data_query 只支持单文件查询，不能跨文件关联。涉及多个文件
 
 可用库：pd, plt, Path, math, json, datetime, Decimal, Counter, io, docx, pptx, openpyxl, PyPDF2
 os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：copy/move）
-环境变量：STAGING_DIR、OUTPUT_DIR
+环境变量：WORKSPACE_DIR（工作区根目录）、STAGING_DIR（中间数据目录）、OUTPUT_DIR（输出目录）
 
 数据读取：
-- data_query 缓存的 staging 文件用 pd.read_parquet(STAGING_DIR + '/文件名') 读取
+- 所有数据文件先通过 data_query 读取，结果自动存 staging
+- code_execute 统一从 staging 读: pd.read_parquet(STAGING_DIR + '/文件名')
+- 多文件关联：每个文件分别调 data_query，然后在 code_execute 中读多个 staging 文件 merge
 - 生成文件写到 OUTPUT_DIR，平台自动检测上传
 - 图表用 ECharts JSON（.echart.json），不要用 plt/matplotlib
 - 写 Excel 用 engine='xlsxwriter'
 
-不适用：
-- 直接读工作区 Excel/CSV → 先用 data_query 读取（自动清洗+缓存）
-- 读 PDF/图片 → file_read
+不适用（优先用外部工具，更快更准）：
+- 读数据文件内容/结构 → data_query
+- 读 PDF/图片/纯文本 → file_read
+- 列目录/搜索文件 → file_list / file_search
 - 查 ERP 业务数据 → erp_agent
 
 限制：
@@ -219,27 +229,27 @@ os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：c
 ### data_query — 数据读取与查询
 
 读取工作区 Excel/CSV 文件，自动处理表头/编码/格式问题。
-小文件直接返回内容，大文件缓存到 staging 供 code_execute 读取。
-DuckDB SQL 引擎，恒定内存。
+查询结果自动存 staging 供 code_execute 后续读取。
+DuckDB SQL 引擎，恒定内存。支持并行调用（多文件可同时读取）。
 
 何时使用：
-- file_list 发现文件后，读取数据内容和结构
-- 大文件 SQL 聚合筛选
+- 看文件结构（不传 sql）：返回列名、类型、行数、统计信息 + 后续可用路径
+- SQL 聚合筛选（传 sql）：结果存 staging，返回数据 + staging 引用
 - 直接导出为 Excel（传 export 参数）
+- 多文件场景：每个文件分别调 data_query（可并行），各自存 staging，再用 code_execute merge
 
 不适用：
-- 跨文件对比、匹配、合并 → code_execute
 - 计算、可视化 → code_execute
 - 查 ERP 业务数据 → erp_agent
 
 参数：
-- file：文件名（如 "trade_123.parquet" 或 "销售报表.xlsx"）
-- 不传 sql：返回文件结构（列名、类型、行数、统计信息）
+- file：文件名或相对路径（如 "销售报表.xlsx" 或 "报表/销售报表.xlsx"），使用 data_query 探索模式返回的路径最准确
+- 不传 sql：返回文件结构 + SQL查询命令 + 沙盒读取命令
 - 传 sql：执行查询，表名用 FROM data，中文列名用双引号
 - 传 export：生成导出文件（如 export="月度报表.xlsx"）
 
 ### file_list / file_search — 工作区文件发现
-查看工作区有哪些文件、搜索特定文件。
+查看工作区有哪些文件、搜索特定文件。支持并行调用。
 返回文件元信息（行列数/类型/读取命令），Excel/CSV 数据文件用 data_query 读取。
 
 ### search_knowledge — 知识库搜索
@@ -638,8 +648,8 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                         "file": {
                             "type": "string",
                             "description": (
-                                "文件名或相对路径"
-                                "（如 \"trade_123.parquet\" 或 \"销售报表.xlsx\"）"
+                                "文件名或相对路径（如 \"销售报表.xlsx\" 或 \"报表/销售报表.xlsx\"）。"
+                                "优先使用 file_list 或 data_query 探索模式返回的路径"
                             ),
                         },
                         "sql": {
@@ -773,8 +783,7 @@ _CORE_TOOLS: Set[str] = {
     "code_execute",             # 代码执行
     "data_query",               # 数据查询与导出
     # 文件操作
-    "file_read",                # 文件读取（PDF/图片多模态）
-    "file_write",               # 文件写入
+    "file_read",                # 文件读取（PDF/图片/纯文本）
     "file_list",                # 目录列表（含元数据）
     "file_search",              # 文件搜索
     # 定时任务

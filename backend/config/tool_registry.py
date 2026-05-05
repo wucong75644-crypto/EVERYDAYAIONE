@@ -239,13 +239,6 @@ register(ToolEntry(
     priority=1,
 ))
 register(ToolEntry(
-    name="file_write",
-    domain="computer",
-    description="在workspace内创建或写入文件",
-    tags=["写入", "创建", "保存", "文件"],
-    priority=1,
-))
-register(ToolEntry(
     name="file_list",
     domain="computer",
     description="列出workspace内目录内容",

@@ -1147,7 +1147,7 @@ def format_file_metadata_line(
         c = meta.get("chars", 0)
         return (
             f"  📝 {name}\t{size_str} | {p}段 {t}表 ~{c:,}字\n"
-            f"     读取: from docx import Document; doc = Document('{name}')"
+            f"     读取: file_read(path=\"{name}\")"
         )
     if file_type == "pptx":
         s = meta.get("slides", 0)
@@ -1156,7 +1156,7 @@ def format_file_metadata_line(
         title_hint = f" | {', '.join(titles[:3])}" if titles else ""
         return (
             f"  📽 {name}\t{size_str} | {s}页 ~{c:,}字{title_hint}\n"
-            f"     读取: from pptx import Presentation; prs = Presentation('{name}')"
+            f"     读取: file_read(path=\"{name}\")"
         )
     if file_type == "pdf":
         p = meta.get("pages", 0)
@@ -1164,7 +1164,7 @@ def format_file_metadata_line(
         scanned = " | ⚠️扫描件" if meta.get("is_scanned") else ""
         return (
             f"  📕 {name}\t{size_str} | {p}页 ~{c:,}字{scanned}\n"
-            f"     读取: from PyPDF2 import PdfReader; reader = PdfReader('{name}')"
+            f"     读取: file_read(path=\"{name}\")"
         )
 
     # 文本类
@@ -1176,13 +1176,19 @@ def format_file_metadata_line(
         preview = meta.get("preview", [])
         first_line = preview[0][:60] + "..." if preview and len(preview[0]) > 60 else (preview[0] if preview else "")
         preview_hint = f' | "{first_line}"' if first_line else ""
-        return f"  📄 {name}\t{size_str} | {lines_label} {chars_label}{preview_hint}"
+        return (
+            f"  📄 {name}\t{size_str} | {lines_label} {chars_label}{preview_hint}\n"
+            f"     读取: file_read(path=\"{name}\")"
+        )
 
     # 图片类
     if file_type == "image":
         w = meta.get("width", 0)
         h = meta.get("height", 0)
-        return f"  🖼 {name}\t{size_str} | {w}×{h}px"
+        return (
+            f"  🖼 {name}\t{size_str} | {w}×{h}px\n"
+            f"     读取: file_read(path=\"{name}\")"
+        )
 
     # Parquet
     if file_type == "parquet":

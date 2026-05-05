@@ -206,11 +206,12 @@ class DataQueryExecutor:
     # ── 路径解析 ──────────────────────────────────────
 
     def _resolve_file_path(self, file_input: str) -> str:
-        """缓存优先 → 文件系统兜底。
+        """缓存优先 → 直接查找 → 递归搜索兜底。
 
         解析顺序：
         1. 对话级文件缓存（file_list 注册的 文件名→绝对路径 映射，含去空格匹配）
         2. workspace / staging 目录直接查找（未经 file_list 的文件）
+        3. workspace 内递归搜索（LLM 只传文件名但文件在子目录时）
         """
         # ── 第一优先：对话级缓存（精确匹配 + 去空格匹配）──
         from services.agent.workspace_file_handles import get_file_cache
@@ -222,7 +223,7 @@ class DataQueryExecutor:
                 self._check_path_safety(candidate)
                 return str(candidate.resolve())
 
-        # ── 兜底：文件系统直接查找 ──
+        # ── 第二优先：文件系统直接查找 ──
         ws = Path(self._workspace_dir)
         staging = Path(self._staging_dir)
 
@@ -237,6 +238,29 @@ class DataQueryExecutor:
             if candidate.exists() and candidate.is_file():
                 self._check_path_safety(candidate)
                 return str(candidate.resolve())
+
+        # ── 第三优先：workspace 内递归搜索（子目录文件兜底，限制扫描量）──
+        filename = Path(file_input).name
+        matches: list[Path] = []
+        _MAX_SCAN = 1000  # 最多扫描 1000 个文件，防止大工作区卡住
+        scanned = 0
+        for p in ws.rglob(filename):
+            scanned += 1
+            if scanned > _MAX_SCAN:
+                break
+            if p.is_file() and "staging" not in p.relative_to(ws).parts:
+                matches.append(p)
+                if len(matches) > 5:
+                    break  # 同名文件太多，无需继续
+        if len(matches) == 1:
+            self._check_path_safety(matches[0])
+            return str(matches[0].resolve())
+        if len(matches) > 1:
+            paths = [str(m.relative_to(ws)) for m in matches[:5]]
+            raise FileNotFoundError(
+                f"找到多个同名文件 '{filename}'，请指定完整路径：\n"
+                + "\n".join(f"  - {p}" for p in paths)
+            )
 
         raise FileNotFoundError(f"文件 '{file_input}' 不存在。请检查文件名是否正确。")
 
@@ -377,6 +401,18 @@ class DataQueryExecutor:
         if sheet_names:
             text += f"\n\n[Sheet 列表] {', '.join(sheet_names)}"
             text += "\n使用 sheet 参数指定：data_query(file=\"...\", sheet=\"Sheet2\")"
+
+        # 附加可用路径（让 LLM 后续调用不用猜路径）
+        try:
+            rel_path = str(Path(original_path).relative_to(self._workspace_dir))
+        except ValueError:
+            rel_path = filename
+        text += (
+            f"\n\n后续操作:"
+            f"\n- 查询数据: data_query(file=\"{rel_path}\", sql=\"SELECT ... FROM data\")"
+            f"\n- 全量读取: data_query(file=\"{rel_path}\", sql=\"SELECT * FROM data\")"
+        )
+
         return AgentResult(summary=text, status="success")
 
     def _profile_via_view(self, file_path: str) -> dict:
@@ -488,11 +524,11 @@ class DataQueryExecutor:
                     status="empty",
                 )
 
-            # 4. 小结果（≤100 行）：从 Parquet 读回 Python，返回完整表格
+            # 4. 小结果（≤100 行）：从 Parquet 读回 Python，返回完整表格 + 保留 staging
             if row_count <= 100:
                 import pandas as pd
                 df = pd.read_parquet(str(result_path))
-                result_path.unlink(missing_ok=True)  # 小结果不保留 staging
+                # 保留 staging 文件（确保 code_execute 后续能读到）
 
                 if row_count <= 10:
                     text = format_full_result(df, row_count, elapsed)
@@ -500,11 +536,26 @@ class DataQueryExecutor:
                     table = format_full_result(df, row_count, elapsed)
                     summary = format_numeric_summary(df)
                     text = f"{table}\n\n{summary}" if summary else table
+
+                # 附加 staging 引用（和大文件对齐，让 code_execute 有路径可读）
+                size_kb = result_path.stat().st_size / 1024
+                text += (
+                    f"\n\n[文件已存入 staging | "
+                    f"读取: pd.read_parquet(STAGING_DIR + '/{result_file}') | "
+                    f"{row_count}行 | parquet | {size_kb:.0f}KB]"
+                )
                 return AgentResult(summary=text, status="success")
 
             # 5. 大结果（>100 行）：数据已在 staging，从 Parquet 取预览和统计
             text = format_large_result_from_parquet(
                 con, result_escaped, result_file, row_count, elapsed,
+            )
+            # 附加标准 staging 引用（和 ERP Agent 格式对齐）
+            size_kb = result_path.stat().st_size / 1024
+            text += (
+                f"\n\n[文件已存入 staging | "
+                f"读取: pd.read_parquet(STAGING_DIR + '/{result_file}') | "
+                f"{row_count}行 | parquet | {size_kb:.0f}KB]"
             )
             if row_count > 1000:
                 text += "\n\n💡 结果超过 1000 行，建议缩小查询范围或使用 export 导出。"

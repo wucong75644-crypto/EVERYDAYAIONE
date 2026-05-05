@@ -232,6 +232,9 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
         if executor.last_file_meta:
             self._pending_schemas.append(executor.last_file_meta)
 
+        # staging 文件注册到共享路径缓存（其他工具可直接用文件名引用）
+        self._register_staging_files(result)
+
         return result
 
     # ========================================
@@ -271,6 +274,9 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
         result = await agent.execute(
             task, conversation_context=conversation_context,
         )
+
+        # staging 文件注册到共享路径缓存（其他工具可直接用文件名引用）
+        self._register_staging_files(result)
 
         # 返回 AgentResult，文件通道/ask_user/display/token 由 ChatToolMixin 统一处理
         return result
@@ -726,6 +732,53 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
             candidate = os.path.join(workspace_dir, filename)
             if os.path.exists(candidate):
                 file_cache.register(basename, os.path.realpath(candidate))
+
+    def _register_staging_files(self, result: "AgentResult") -> None:
+        """从工具结果中提取 staging 文件路径，注册到共享路径缓存。
+
+        data_query / erp_agent 产出的 staging 文件注册后，
+        后续任何工具都能通过文件名直接引用。
+        """
+        import os
+        from services.agent.workspace_file_handles import get_file_cache
+
+        if not result or not result.summary:
+            return
+
+        # 从 file_ref 注册（结构化路径，最可靠）
+        if hasattr(result, "file_ref") and result.file_ref:
+            fr = result.file_ref
+            if fr.path and os.path.exists(fr.path):
+                file_cache = get_file_cache(self.conversation_id)
+                file_cache.register(fr.filename, fr.path)
+                return
+
+        # 兜底：从 summary 文本中提取 staging 文件名
+        import re
+        _STAGING_RE = re.compile(r"STAGING_DIR\s*\+\s*'/([^']+)'")
+        file_cache = get_file_cache(self.conversation_id)
+        staging_dir = self._get_staging_dir()
+        if not staging_dir:
+            return
+
+        for m in _STAGING_RE.finditer(result.summary):
+            filename = m.group(1)
+            abs_path = os.path.join(staging_dir, filename)
+            if os.path.exists(abs_path):
+                file_cache.register(filename, abs_path)
+
+    def _get_staging_dir(self) -> str:
+        """获取当前用户的 staging 目录"""
+        try:
+            from core.config import get_settings
+            from core.workspace import resolve_staging_dir
+            settings = get_settings()
+            return resolve_staging_dir(
+                settings.file_workspace_root, self.user_id, self.org_id,
+                self.conversation_id or "default",
+            )
+        except Exception:
+            return ""
 
     def _get_workspace_dir(self) -> str:
         """获取当前用户的 workspace 目录"""

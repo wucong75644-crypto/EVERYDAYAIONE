@@ -17,9 +17,9 @@ export default function FileCardList({ files }: { files: FilePart[] }) {
 
   return (
     <div className="mt-3 space-y-2">
-      {files.map((file) => (
+      {files.map((file, i) => (
         <FileCardItem
-          key={file.url}
+          key={file.url || file.workspace_path || i}
           file={file}
           onPreview={canPreview(file.name) ? () => setPreviewFile(file) : undefined}
         />
@@ -64,15 +64,17 @@ function FileCardItem({ file, onPreview }: { file: FilePart; onPreview?: () => v
       {onPreview && (
         <span className="text-xs text-accent flex-shrink-0">预览</span>
       )}
-      <button
-        onClick={handleDownload}
-        className="p-1.5 rounded-lg hover:bg-active dark:hover:bg-active transition-base flex-shrink-0"
-        title="下载"
-      >
-        <svg className="w-4 h-4 text-text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-        </svg>
-      </button>
+      {file.url && (
+        <button
+          onClick={handleDownload}
+          className="p-1.5 rounded-lg hover:bg-active dark:hover:bg-active transition-base flex-shrink-0"
+          title="下载"
+        >
+          <svg className="w-4 h-4 text-text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
