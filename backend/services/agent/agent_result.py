@@ -14,11 +14,37 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, ClassVar
+from uuid import UUID
 
 from services.agent.tool_output import (
     FileRef, ColumnMeta, OutputFormat, OutputStatus,
 )
+
+
+class _SafeEncoder(json.JSONEncoder):
+    """JSON encoder 兼容 PostgreSQL 原生类型。
+
+    psycopg 返回的 numeric→Decimal、timestamp→datetime、id→UUID，
+    标准 json.dumps 无法序列化。此 encoder 在所有 AgentResult 序列化点统一使用，
+    从根本消除 'Object of type Decimal is not JSON serializable'。
+    """
+
+    def default(self, o: object) -> object:
+        if isinstance(o, Decimal):
+            return float(o)
+        if isinstance(o, (datetime, date)):
+            return o.isoformat()
+        if isinstance(o, UUID):
+            return str(o)
+        return super().default(o)
+
+
+def _dumps(obj: object, **kw: Any) -> str:
+    """AgentResult 专用 json.dumps — 自动处理 Decimal/datetime/UUID。"""
+    return json.dumps(obj, ensure_ascii=False, cls=_SafeEncoder, **kw)
 
 
 @dataclass
@@ -169,7 +195,7 @@ class AgentResult:
         if self.data and not self.file_ref:
             col_labels = [c.label or c.name for c in self.columns] if self.columns else []
             localized = self._localize_data(self.data[:5])
-            preview = json.dumps(localized, ensure_ascii=False)
+            preview = _dumps(localized)
             blocks.append({
                 "type": "text",
                 "text": (
@@ -225,7 +251,7 @@ class AgentResult:
             if val is not None and val != "":
                 if isinstance(val, (dict, list)):
                     tag_lines.append(
-                        f"{key}: {json.dumps(val, ensure_ascii=False)}",
+                        f"{key}: {_dumps(val)}",
                     )
                 else:
                     tag_lines.append(f"{key}: {val}")
@@ -245,7 +271,7 @@ class AgentResult:
             localized = self._localize_data(self.data)
             tag_lines.append("data:")
             tag_lines.append(
-                f"  {json.dumps(localized, ensure_ascii=False)}",
+                f"  {_dumps(localized)}",
             )
         elif self.file_ref and self.file_ref.preview:
             tag_lines.append(f"preview:\n  {self.file_ref.preview}")
@@ -273,18 +299,15 @@ class AgentResult:
 
     def to_json(self) -> str:
         """序列化为 JSON 字符串（供日志/调试）。"""
-        return json.dumps(
-            {
-                "status": self.status,
-                "summary": self.summary[:200],
-                "has_file_ref": self.file_ref is not None,
-                "has_data": self.data is not None,
-                "source": self.source,
-                "tokens_used": self.tokens_used,
-                "confidence": self.confidence,
-            },
-            ensure_ascii=False,
-        )
+        return _dumps({
+            "status": self.status,
+            "summary": self.summary[:200],
+            "has_file_ref": self.file_ref is not None,
+            "has_data": self.data is not None,
+            "source": self.source,
+            "tokens_used": self.tokens_used,
+            "confidence": self.confidence,
+        })
 
     # ----------------------------------------------------------
     # 校验

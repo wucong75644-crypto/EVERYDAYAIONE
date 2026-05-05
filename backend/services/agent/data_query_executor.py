@@ -648,7 +648,7 @@ class DataQueryExecutor:
 
             ext = Path(safe_name).suffix.lower()
             if ext == ".xlsx":
-                copy_sql = f"COPY ({sql}) TO '{output_escaped}' (FORMAT EXCEL)"
+                copy_sql = f"COPY ({sql}) TO '{output_escaped}' (FORMAT XLSX)"
             elif ext == ".csv":
                 copy_sql = f"COPY ({sql}) TO '{output_escaped}' WITH (FORMAT CSV, HEADER true)"
             elif ext == ".parquet":
