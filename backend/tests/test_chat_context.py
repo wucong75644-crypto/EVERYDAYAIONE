@@ -1438,3 +1438,53 @@ class TestFetchKnowledgeParallel:
         assert exp_call["min_confidence"] == 0.6
         assert exp_call["org_id"] == "test_org"
         assert exp_call["limit"] == 2
+
+
+# ============================================================
+# _build_workspace_prompt 测试
+# ============================================================
+
+
+class TestBuildWorkspacePrompt:
+    """_build_workspace_prompt 只输出文件路径和类型，不读文件内容"""
+
+    def test_empty_list_returns_empty(self):
+        from services.handlers.chat_context_mixin import ChatContextMixin
+        result = ChatContextMixin._build_workspace_prompt([])
+        assert result == ""
+
+    def test_single_file(self):
+        from services.handlers.chat_context_mixin import ChatContextMixin
+        files = [{"workspace_path": "销售报表.xlsx", "size": 156000}]
+        result = ChatContextMixin._build_workspace_prompt(files)
+        assert "销售报表.xlsx" in result
+        assert "xlsx" in result
+        assert "用合适的工具读取" in result
+
+    def test_multiple_files(self):
+        from services.handlers.chat_context_mixin import ChatContextMixin
+        files = [
+            {"workspace_path": "data.csv", "size": 3000},
+            {"workspace_path": "合同.pdf", "size": 2300000},
+            {"workspace_path": "photo.png", "size": 500000},
+        ]
+        result = ChatContextMixin._build_workspace_prompt(files)
+        assert "data.csv" in result
+        assert "合同.pdf" in result
+        assert "photo.png" in result
+
+    def test_no_file_content_injected(self):
+        """不读文件内容，只输出路径"""
+        from services.handlers.chat_context_mixin import ChatContextMixin
+        files = [{"workspace_path": "secret.txt", "size": 100}]
+        result = ChatContextMixin._build_workspace_prompt(files)
+        # 不应包含文件内容（旧版会读取注入）
+        assert "──" not in result
+        assert "文件结束" not in result
+
+    def test_size_formatting(self):
+        from services.handlers.chat_context_mixin import ChatContextMixin
+        files = [{"workspace_path": "big.xlsx", "size": 1048576}]
+        result = ChatContextMixin._build_workspace_prompt(files)
+        # 应该有可读的大小格式
+        assert "big.xlsx" in result

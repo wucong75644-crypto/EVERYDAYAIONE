@@ -475,14 +475,14 @@ class TestBinaryFileRegression:
         Path(workspace, "report.xlsx").write_bytes(b"PK\x03\x04")
         result = await executor.file_read("report.xlsx")
         assert isinstance(result, str)
-        assert "二进制" in result or "code_execute" in result
+        assert "data_query" in result  # 数据文件引导到 data_query
 
     @pytest.mark.asyncio
     async def test_parquet_rejected(self, executor, workspace):
         Path(workspace, "data.parquet").write_bytes(b"PAR1" + b"\x00" * 100)
         result = await executor.file_read("data.parquet")
         assert isinstance(result, str)
-        assert "二进制" in result or "code_execute" in result
+        assert "data_query" in result  # 数据文件引导到 data_query
 
     @pytest.mark.asyncio
     async def test_docx_rejected(self, executor, workspace):

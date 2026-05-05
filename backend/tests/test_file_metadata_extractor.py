@@ -754,3 +754,62 @@ class TestWideTablePattern:
         result = _format_standard("data.csv", "500KB", meta)
         assert "| 列名 |" in result  # 表格格式
         assert "宽表" not in result
+
+
+# ============================================================
+# format_file_metadata_line 统一读取命令
+# ============================================================
+
+
+class TestFormatFileMetadataLineReadCommands:
+    """所有文件类型的读取命令统一为外部工具调用格式"""
+
+    def test_xlsx_uses_data_query(self):
+        from services.file_metadata_extractor import format_file_metadata_line
+        meta = {"type": "", "row_count": 100, "col_count": 5}
+        result = format_file_metadata_line("report.xlsx", "/abs/report.xlsx", 50000, meta)
+        assert 'data_query(file="report.xlsx")' in result
+
+    def test_pdf_uses_file_read(self):
+        from services.file_metadata_extractor import format_file_metadata_line
+        meta = {"type": "pdf", "pages": 10, "chars": 5000}
+        result = format_file_metadata_line("doc.pdf", "/abs/doc.pdf", 200000, meta)
+        assert 'file_read(path="doc.pdf")' in result
+
+    def test_docx_uses_file_read(self):
+        from services.file_metadata_extractor import format_file_metadata_line
+        meta = {"type": "docx", "paragraphs": 20, "tables": 2, "chars": 3000}
+        result = format_file_metadata_line("方案.docx", "/abs/方案.docx", 100000, meta)
+        assert 'file_read(path="方案.docx")' in result
+
+    def test_pptx_uses_file_read(self):
+        from services.file_metadata_extractor import format_file_metadata_line
+        meta = {"type": "pptx", "slides": 15, "chars": 8000, "slide_titles": ["封面"]}
+        result = format_file_metadata_line("ppt.pptx", "/abs/ppt.pptx", 500000, meta)
+        assert 'file_read(path="ppt.pptx")' in result
+
+    def test_text_uses_file_read(self):
+        from services.file_metadata_extractor import format_file_metadata_line
+        meta = {"type": "text", "lines": 50, "chars": 2000, "preview": ["hello"]}
+        result = format_file_metadata_line("readme.md", "/abs/readme.md", 2000, meta)
+        assert 'file_read(path="readme.md")' in result
+
+    def test_image_uses_file_read(self):
+        from services.file_metadata_extractor import format_file_metadata_line
+        meta = {"type": "image", "width": 800, "height": 600}
+        result = format_file_metadata_line("photo.png", "/abs/photo.png", 500000, meta)
+        assert 'file_read(path="photo.png")' in result
+
+    def test_no_code_snippets_in_read_commands(self):
+        """读取命令不应包含 Python 代码（from xxx import）"""
+        from services.file_metadata_extractor import format_file_metadata_line
+        for file_type, meta in [
+            ("pdf", {"type": "pdf", "pages": 5, "chars": 1000}),
+            ("docx", {"type": "docx", "paragraphs": 10, "tables": 1, "chars": 500}),
+            ("pptx", {"type": "pptx", "slides": 3, "chars": 200, "slide_titles": []}),
+        ]:
+            result = format_file_metadata_line(f"test.{file_type}", f"/abs/test.{file_type}", 1000, meta)
+            assert "import" not in result
+            assert "Document(" not in result
+            assert "Presentation(" not in result
+            assert "PdfReader(" not in result
