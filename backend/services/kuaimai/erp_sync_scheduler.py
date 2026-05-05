@@ -204,15 +204,12 @@ class ErpSyncScheduler:
         ):
             due.extend(LOW_FREQ_TYPES)
 
-        # 库存全量刷新 — 已禁用
-        # 根因：stock_full 的目标群体是 item_type=1（套件商品），
-        # 快麦 ERP 不为套件维护独立库存记录，API 查不到数据。
-        # 套件库存由 mv_kit_stock 物化视图从子单品库存实时计算。
-        # if self._is_interval_due(
-        #     self._org_last_stock_full, org_id,
-        #     self.settings.erp_stock_full_refresh_interval,
-        # ):
-        #     due.append("stock_full")
+        # 库存全量刷新 — 按仓库遍历所有活跃商品，兜底增量同步的遗漏
+        if self._is_interval_due(
+            self._org_last_stock_full, org_id,
+            self.settings.erp_stock_full_refresh_interval,
+        ):
+            due.append("stock_full")
 
         # 日维护
         if self._is_interval_due(
