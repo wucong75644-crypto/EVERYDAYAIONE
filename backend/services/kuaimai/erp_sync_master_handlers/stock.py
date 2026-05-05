@@ -59,50 +59,86 @@ _STOCK_UPSERT_KEY = "outer_id,sku_outer_id,warehouse_id,org_id"
 _CHECKPOINT_INTERVAL = 10  # 每 10 批（~1000 编码）存盘一次
 
 
+async def _get_warehouse_ids(svc: ErpSyncService) -> list[str]:
+    """获取当前企业配置的仓库 ID 列表"""
+    from core.config import get_settings
+
+    wh_config = None
+    if svc.org_id:
+        try:
+            from services.org.config_resolver import AsyncOrgConfigResolver
+            resolver = AsyncOrgConfigResolver(svc.db)
+            wh_config = await resolver.get(svc.org_id, "erp_warehouse_ids")
+        except Exception:
+            pass
+    if not wh_config:
+        settings = get_settings()
+        wh_config = settings.erp_warehouse_ids or ""
+    return [wid.strip() for wid in wh_config.split(",") if wid.strip()]
+
+
 async def _fetch_stock_by_codes(
-    svc: ErpSyncService, codes: list[str],
+    svc: ErpSyncService, codes: list[str], warehouse_ids: list[str] | None = None,
 ) -> int:
     """按编码批量精准查库存并 upsert（每批最多100个编码，全量刷新专用）
 
+    按仓库遍历：对每个仓库分别查询，确保多仓数据完整。
     分批存盘：每 _CHECKPOINT_INTERVAL 批 upsert 一次，避免单次 429 丢弃全部进度。
     """
     from services.kuaimai.erp_sync_utils import _API_SEM
 
+    if not warehouse_ids:
+        warehouse_ids = await _get_warehouse_ids(svc)
+    if not warehouse_ids:
+        logger.warning("stock_full: no warehouse_ids configured, skip")
+        return 0
+
     total_batches = (len(codes) + 99) // 100
     total_upserted = 0
-    buffer: list[dict[str, Any]] = []
 
-    logger.info(f"stock_full fetch start | codes={len(codes)} batches={total_batches}")
+    logger.info(
+        f"stock_full fetch start | codes={len(codes)} batches={total_batches} "
+        f"warehouses={warehouse_ids}"
+    )
 
-    for batch_idx in range(total_batches):
-        batch = codes[batch_idx * 100 : (batch_idx + 1) * 100]
-        batch_str = ",".join(batch)
-        page = 0
-        while page < 500:
-            page += 1
-            async with _API_SEM:
-                data = await svc._get_client().request_with_retry(
-                    "stock.api.status.query",
-                    {"mainOuterId": batch_str, "pageSize": 100, "pageNo": page},
+    for wh_id in warehouse_ids:
+        buffer: list[dict[str, Any]] = []
+        for batch_idx in range(total_batches):
+            batch = codes[batch_idx * 100 : (batch_idx + 1) * 100]
+            batch_str = ",".join(batch)
+            page = 0
+            while page < 500:
+                page += 1
+                async with _API_SEM:
+                    data = await svc._get_client().request_with_retry(
+                        "stock.api.status.query",
+                        {
+                            "mainOuterId": batch_str,
+                            "warehouseId": int(wh_id),
+                            "pageSize": 100,
+                            "pageNo": page,
+                        },
+                    )
+                items = data.get("stockStatusVoList") or []
+                for item in items:
+                    row = _map_stock_item(item)
+                    if row:
+                        buffer.append(row)
+                if len(items) < 100:
+                    break
+
+            # checkpoint：每 N 批或最后一批，立即存盘
+            is_checkpoint = (batch_idx + 1) % _CHECKPOINT_INTERVAL == 0
+            is_last = batch_idx == total_batches - 1
+            if buffer and (is_checkpoint or is_last):
+                count = await _batch_upsert(
+                    svc.db, "erp_stock_status", buffer, _STOCK_UPSERT_KEY,
+                    org_id=svc.org_id,
                 )
-            items = data.get("stockStatusVoList") or []
-            for item in items:
-                row = _map_stock_item(item)
-                if row:
-                    buffer.append(row)
-            if len(items) < 100:
-                break
+                total_upserted += count
+                buffer = []
 
-        # checkpoint：每 N 批或最后一批，立即存盘
-        is_checkpoint = (batch_idx + 1) % _CHECKPOINT_INTERVAL == 0
-        is_last = batch_idx == total_batches - 1
-        if buffer and (is_checkpoint or is_last):
-            count = await _batch_upsert(
-                svc.db, "erp_stock_status", buffer, _STOCK_UPSERT_KEY,
-                org_id=svc.org_id,
-            )
-            total_upserted += count
-            buffer = []
+        logger.info(f"stock_full warehouse {wh_id} done | upserted_so_far={total_upserted}")
 
     logger.info(f"stock_full fetch done | upserted={total_upserted}")
     return total_upserted
@@ -182,11 +218,16 @@ async def sync_stock(
 
 
 async def sync_stock_full(svc: ErpSyncService) -> int:
-    """库存全量刷新：从商品表取所有活跃编码 → 按编码批量查最新值 → upsert
+    """库存全量刷新：按仓库遍历所有活跃编码 → 查最新值 → upsert + 清理不在配置中的仓库数据
 
     作为增量同步的兜底，定期执行确保数据完整。
-    12000 编码 ÷ 100/批 = 120 次 API 调用，串行约 10 秒。
+    全量刷新后删除不在配置仓库列表中的残留数据，防止僵尸库存。
     """
+    warehouse_ids = await _get_warehouse_ids(svc)
+    if not warehouse_ids:
+        logger.warning("sync_stock_full: no warehouse_ids configured, skip")
+        return 0
+
     try:
         q = svc.db.table("erp_products").select("outer_id").eq("active_status", 1)
         result = await q.limit(50000).execute()
@@ -198,5 +239,20 @@ async def sync_stock_full(svc: ErpSyncService) -> int:
     if not codes:
         return 0
 
-    logger.info(f"sync_stock_full | total_codes={len(codes)}")
-    return await _fetch_stock_by_codes(svc, codes)
+    logger.info(f"sync_stock_full | total_codes={len(codes)} warehouses={warehouse_ids}")
+    count = await _fetch_stock_by_codes(svc, codes, warehouse_ids)
+
+
+    # 清理不在配置中的仓库残留数据（防止僵尸库存累积）
+    try:
+        q = svc.db.table("erp_stock_status").delete().not_.in_(
+            "warehouse_id", warehouse_ids
+        )
+        result = await q.execute()
+        deleted = len(result.data) if result.data else 0
+        if deleted:
+            logger.info(f"sync_stock_full: cleaned {deleted} rows from unconfigured warehouses")
+    except Exception as e:
+        logger.warning(f"sync_stock_full: stale cleanup failed | error={e}")
+
+    return count
