@@ -5,6 +5,7 @@ ChatHandler 非流式生成 Mixin
 - 复用 ChatHandler 的上下文构建 + 工具循环
 - 不推 WebSocket，收集完整结果返回
 - 企微等非 WebSocket 场景使用
+- 收集 tool_step 块 + 构建 tool_digest（与 Web 端 _stream_generate 对齐）
 
 依赖宿主类提供：
 - self.db, self.org_id
@@ -14,6 +15,9 @@ ChatHandler 非流式生成 Mixin
 - self._execute_tool_calls() (ChatToolMixin)
 """
 
+import json
+import time as _time
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -31,6 +35,39 @@ _STOP_MESSAGES = {
 }
 
 
+@dataclass
+class GenerateResult:
+    """generate_complete 的返回结果，携带 tool_step 和 tool_digest。"""
+    parts: List[ContentPart]
+    content_blocks: List[Dict[str, Any]] = field(default_factory=list)
+    tool_digest: Optional[Dict[str, Any]] = None
+
+
+def unpack_tool_result(result) -> tuple:
+    """统一解包工具返回值 → (message_content, summary_text)。
+
+    Web 端 _stream_generate 和企微端 generate_complete 共用，
+    避免新增 result 类型时两处不同步。
+
+    Returns:
+        (msg_content, summary_text):
+            msg_content — 塞进 messages[role=tool] 的内容
+            summary_text — 写入 tool_step.summary 的摘要（≤500字）
+    """
+    from services.agent.agent_result import AgentResult
+    from services.file_executor import FileReadResult
+
+    if isinstance(result, AgentResult):
+        return result.to_message_content(), (result.summary or "")[:500]
+    if isinstance(result, FileReadResult):
+        return result.text, result.text[:500]
+    if isinstance(result, str):
+        return result, result[:500]
+    # 兜底：未知类型强转 str
+    s = str(result)
+    return s, s[:500]
+
+
 class ChatGenerateMixin:
     """非流式生成能力（被 ChatHandler 继承）"""
 
@@ -40,11 +77,12 @@ class ChatGenerateMixin:
         user_id: str,
         conversation_id: str,
         model_id: Optional[str] = None,
-    ) -> List[ContentPart]:
+    ) -> GenerateResult:
         """非流式生成（企微等非 WebSocket 场景）
 
         复用 ChatHandler 的上下文构建 + 工具循环，但不推 WebSocket。
-        返回 List[ContentPart]（TextPart + ImagePart + VideoPart）。
+        返回 GenerateResult（parts + content_blocks + tool_digest），
+        与 Web 端 _stream_generate 的持久化结构对齐。
         """
         from config.chat_tools import get_core_tools, get_tools_by_names, get_tool_system_prompt
         from services.adapters.factory import DEFAULT_MODEL_ID, create_chat_adapter
@@ -71,6 +109,7 @@ class ChatGenerateMixin:
         adapter = create_chat_adapter(model_id, org_id=self.org_id, db=self.db)
         tool_context = ToolLoopContext(org_id=self.org_id, agent_domain="general")
         accumulated_text = ""
+        _content_blocks: List[Dict[str, Any]] = []
 
         try:
             # 4. 工具循环（与 _stream_generate 相同逻辑，无 WebSocket 推送）
@@ -117,7 +156,10 @@ class ChatGenerateMixin:
                         accumulate_tool_call_delta(tool_calls_acc, chunk.tool_calls)
 
                 if not tool_calls_acc:
-                    break  # 无工具调用，生成完成
+                    # 无工具调用，记录最终文本块
+                    if turn_text:
+                        _content_blocks.append({"type": "text", "text": turn_text})
+                    break
 
                 # 执行工具
                 completed_calls = sorted(
@@ -133,28 +175,52 @@ class ChatGenerateMixin:
                 ]
                 messages.append(assistant_msg)
 
+                # 收集 tool_step(running)（对齐 Web 端 chat_handler.py L700-719）
+                _tool_step_start_times: Dict[str, float] = {}
+                for tc in completed_calls:
+                    _tool_step: Dict[str, Any] = {
+                        "type": "tool_step",
+                        "tool_name": tc["name"],
+                        "tool_call_id": tc["id"],
+                        "status": "running",
+                    }
+                    if tc["name"] == "code_execute":
+                        try:
+                            _ce_args = json.loads(tc.get("arguments", "{}"))
+                            _ce_code = _ce_args.get("code", "")[:2000]
+                            if _ce_code:
+                                _tool_step["code"] = _ce_code
+                        except Exception:
+                            pass
+                    _content_blocks.append(_tool_step)
+                    _tool_step_start_times[tc["id"]] = _time.monotonic()
+
                 tool_results = await self._execute_tool_calls(
                     completed_calls, "wecom_task", conversation_id,
                     "wecom_msg", user_id, turn + 1, messages=messages,
                     budget=_budget,
                 )
-                from services.agent.agent_result import AgentResult
                 for tc, result, is_error in tool_results:
-                    if isinstance(result, AgentResult):
-                        content = result.to_message_content()
-                        tool_context.update_from_result(
-                            tc["name"], result.summary, is_error,
-                        )
-                    else:
-                        content = result
-                        tool_context.update_from_result(
-                            tc["name"], result, is_error,
-                        )
+                    msg_content, summary_text = unpack_tool_result(result)
+                    tool_context.update_from_result(
+                        tc["name"], summary_text, is_error,
+                    )
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
-                        "content": content,
+                        "content": msg_content,
                     })
+
+                    # 更新 tool_step 状态（对齐 Web 端 chat_handler.py L773-787）
+                    _tc_id = tc["id"]
+                    _tc_start = _tool_step_start_times.get(_tc_id)
+                    _elapsed = int((_time.monotonic() - _tc_start) * 1000) if _tc_start else 0
+                    for _blk in _content_blocks:
+                        if _blk.get("type") == "tool_step" and _blk.get("tool_call_id") == _tc_id:
+                            _blk["status"] = "error" if is_error else "completed"
+                            _blk["elapsed_ms"] = _elapsed
+                            _blk["summary"] = summary_text
+                            break
 
                 # 层4+5: 旧工具结果归档 + 循环内摘要
                 from services.handlers.context_compressor import (
@@ -190,11 +256,24 @@ class ChatGenerateMixin:
                 else:
                     accumulated_text = _STOP_MESSAGES.get(_stop, "执行超限，请稍后重试")
 
+            # 构建 tool_digest（对齐 Web 端 chat_handler.py L1112-1118）
+            _tool_digest = None
+            if _budget.turns_used > 1:
+                from services.handlers.tool_digest import build_tool_digest
+                try:
+                    _tool_digest = build_tool_digest(messages, conversation_id)
+                except Exception as _digest_err:
+                    logger.warning(f"generate_complete tool_digest build failed | error={_digest_err}")
+
         except Exception as e:
             logger.error(f"generate_complete error | error={e}")
             if not accumulated_text:
-                return [TextPart(text="生成回复时遇到了问题，请稍后再试。")]
+                return GenerateResult(parts=[TextPart(text="生成回复时遇到了问题，请稍后再试。")])
         finally:
             await adapter.close()
 
-        return extract_media_parts(accumulated_text)
+        return GenerateResult(
+            parts=extract_media_parts(accumulated_text),
+            content_blocks=_content_blocks,
+            tool_digest=_tool_digest,
+        )

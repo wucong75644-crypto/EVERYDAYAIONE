@@ -739,33 +739,26 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 # 工具结果塞进 messages + 更新上下文 + 更新 tool_step 状态
                 from services.agent.agent_result import AgentResult
                 from services.file_executor import FileReadResult
+                from services.handlers.chat_generate_mixin import unpack_tool_result
                 _pending_image_urls: List[str] = []  # 图片多模态：收集待注入的 image_url
                 for tc, result, is_error in tool_results:
-                    if isinstance(result, AgentResult):
-                        content = result.to_message_content()
-                        tool_context.update_from_result(
-                            tc["name"], result.summary, is_error,
-                        )
-                        # 子Agent thinking持久化：追加到accumulated_thinking
-                        if result.thinking_text:
-                            accumulated_thinking += result.thinking_text
-                    elif isinstance(result, FileReadResult):
-                        # 图片多模态：text 作为 tool result，image_url 延迟注入
-                        content = result.text
-                        tool_context.update_from_result(
-                            tc["name"], result.text, is_error,
-                        )
-                        if result.type == "image" and result.image_url:
-                            _pending_image_urls.append(result.image_url)
-                    else:
-                        content = result
-                        tool_context.update_from_result(
-                            tc["name"], result, is_error,
-                        )
+                    msg_content, summary_text = unpack_tool_result(result)
+                    tool_context.update_from_result(
+                        tc["name"], summary_text, is_error,
+                    )
+
+                    # Web 端特有：子Agent thinking 持久化
+                    if isinstance(result, AgentResult) and result.thinking_text:
+                        accumulated_thinking += result.thinking_text
+
+                    # Web 端特有：图片多模态延迟注入
+                    if isinstance(result, FileReadResult) and result.type == "image" and result.image_url:
+                        _pending_image_urls.append(result.image_url)
+
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
-                        "content": content,
+                        "content": msg_content,
                     })
                     # 更新 _content_blocks 中对应 tool_step 的状态（持久化用）
                     _tc_id = tc["id"]
@@ -775,12 +768,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         if _blk.get("type") == "tool_step" and _blk.get("tool_call_id") == _tc_id:
                             _blk["status"] = "error" if is_error else "completed"
                             _blk["elapsed_ms"] = _elapsed
-                            if isinstance(result, AgentResult):
-                                _blk["summary"] = (result.summary or "")[:500]
-                            elif isinstance(result, FileReadResult):
-                                _blk["summary"] = result.text[:500]
-                            elif isinstance(result, str):
-                                _blk["summary"] = result[:500]
+                            _blk["summary"] = summary_text
                             break
 
                     # 工具结果日志已通过 ToolStepCard 的 summary 字段展示，

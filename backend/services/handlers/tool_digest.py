@@ -16,14 +16,14 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 
-# staging 路径正则：匹配 STAGING_DIR + "/tool_result_xxx.txt" 或完整路径
+# staging 路径正则：匹配 STAGING_DIR + '/xxx.parquet' 或 "/xxx.txt" 等任意格式
 _STAGING_RE = re.compile(
-    r'STAGING_DIR\s*\+\s*"/(tool_result_[^"]+\.txt)"'
+    r"STAGING_DIR\s*\+\s*['\"]/?([^'\"]+)['\"]"
 )
 
 # 归档消息中保留的 staging 路径正则
 _ARCHIVED_STAGING_RE = re.compile(
-    r'数据文件:\s*STAGING_DIR\s*\+\s*"/(tool_result_[^"]+\.txt)"'
+    r"数据文件:\s*STAGING_DIR\s*\+\s*['\"]/?([^'\"]+)['\"]"
 )
 
 # 错误标记（字面量匹配，不是正则）

@@ -53,12 +53,13 @@ class TestGenerateCompleteBasic:
              patch.object(handler, "_build_llm_messages", new_callable=AsyncMock, return_value=[]), \
              patch.object(handler, "_build_memory_prompt", new_callable=AsyncMock, return_value=None), \
              patch.object(handler, "_extract_text_content", return_value="你好"):
-            result = await handler.generate_complete(
+            gen_result = await handler.generate_complete(
                 content=[TextPart(text="你好")],
                 user_id="u1",
                 conversation_id="c1",
             )
 
+        result = gen_result.parts
         assert len(result) >= 1
         assert any(isinstance(p, TextPart) for p in result)
         text = next(p for p in result if isinstance(p, TextPart))
@@ -77,12 +78,13 @@ class TestGenerateCompleteBasic:
              patch.object(handler, "_build_llm_messages", new_callable=AsyncMock, return_value=[]), \
              patch.object(handler, "_build_memory_prompt", new_callable=AsyncMock, return_value=None), \
              patch.object(handler, "_extract_text_content", return_value="test"):
-            result = await handler.generate_complete(
+            gen_result = await handler.generate_complete(
                 content=[TextPart(text="test")],
                 user_id="u1",
                 conversation_id="c1",
             )
 
+        result = gen_result.parts
         assert len(result) == 1
         assert isinstance(result[0], TextPart)
         assert "问题" in result[0].text
@@ -103,12 +105,13 @@ class TestGenerateCompleteBasic:
              patch.object(handler, "_build_llm_messages", new_callable=AsyncMock, return_value=[]), \
              patch.object(handler, "_build_memory_prompt", new_callable=AsyncMock, return_value=None), \
              patch.object(handler, "_extract_text_content", return_value="画猫"):
-            result = await handler.generate_complete(
+            gen_result = await handler.generate_complete(
                 content=[TextPart(text="画猫")],
                 user_id="u1",
                 conversation_id="c1",
             )
 
+        result = gen_result.parts
         images = [p for p in result if isinstance(p, ImagePart)]
         assert len(images) == 1
         assert "cat.png" in images[0].url

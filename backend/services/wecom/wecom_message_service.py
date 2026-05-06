@@ -8,8 +8,12 @@ Agent Loop 路由 → AI 生成 → 流式回复到企微。
 """
 
 import asyncio
+import json
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from services.handlers.chat_generate_mixin import GenerateResult
 
 from loguru import logger
 
@@ -275,7 +279,7 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
                 await keepalive.stop()
                 keepalive = None
 
-            result_parts = await handler.generate_complete(
+            gen_result = await handler.generate_complete(
                 content=content_parts,
                 user_id=user_id,
                 conversation_id=conversation_id,
@@ -283,7 +287,7 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
 
             # 按内容类型分发到企微
             await self._dispatch_result_to_wecom(
-                result_parts, reply_ctx, message_id, org_id,
+                gen_result, reply_ctx, message_id, org_id,
             )
 
         except Exception as e:
@@ -295,7 +299,7 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
 
     async def _dispatch_result_to_wecom(
         self,
-        result_parts: List[ContentPart],
+        gen_result: "GenerateResult",
         reply_ctx: WecomReplyContext,
         message_id: str,
         org_id: Optional[str] = None,
@@ -304,6 +308,7 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
         from schemas.message import ImagePart, VideoPart
         from services.wecom.markdown_adapter import clean_for_stream
 
+        result_parts = gen_result.parts
         text_parts = []
         media_urls = {"image": [], "video": []}
 
@@ -341,20 +346,54 @@ class WecomMessageService(WecomAIMixin, WecomFileMixin):
             await self._reply_text(reply_ctx, "抱歉，AI 没有生成回复内容。")
             return
 
-        # 统一保存完整 content 到 DB（文字+图片+视频一次性写入，不分开覆盖）
+        # 构建 content_dicts：tool_step 块 + 最终文本/媒体（对齐 Web 端结构）
         content_dicts = []
-        for part in result_parts:
-            if isinstance(part, TextPart) and part.text:
-                content_dicts.append({"type": "text", "text": part.text})
-            elif isinstance(part, ImagePart) and part.url:
-                content_dicts.append({"type": "image", "url": part.url})
-            elif isinstance(part, VideoPart) and part.url:
-                content_dicts.append({"type": "video", "url": part.url})
+        content_blocks = gen_result.content_blocks or []
+        if content_blocks:
+            # 有 tool_step 块：按 Web 端结构保存（tool_step + text + image）
+            for block in content_blocks:
+                if block.get("type") == "tool_step":
+                    content_dicts.append(block)
+                elif block.get("type") == "text":
+                    content_dicts.append(block)
+            # 追加非 text 块中的媒体
+            for part in result_parts:
+                if isinstance(part, ImagePart) and part.url:
+                    content_dicts.append({"type": "image", "url": part.url})
+                elif isinstance(part, VideoPart) and part.url:
+                    content_dicts.append({"type": "video", "url": part.url})
+        else:
+            # 无工具调用：保持原逻辑
+            for part in result_parts:
+                if isinstance(part, TextPart) and part.text:
+                    content_dicts.append({"type": "text", "text": part.text})
+                elif isinstance(part, ImagePart) and part.url:
+                    content_dicts.append({"type": "image", "url": part.url})
+                elif isinstance(part, VideoPart) and part.url:
+                    content_dicts.append({"type": "video", "url": part.url})
+
+        # 构建 generation_params（含 tool_digest，对齐 Web 端）
+        gen_params: dict = {"type": "chat"}
+        tool_digest = gen_result.tool_digest
+        if tool_digest:
+            gen_params["tool_digest"] = tool_digest
+            # 大小保护：与 Web 端 _upsert_assistant_message 一致
+            _GP_MAX = 8192
+            _gp_size = len(json.dumps(gen_params, ensure_ascii=False).encode())
+            if _gp_size > _GP_MAX:
+                gen_params["tool_digest"].pop("tools", None)
+                _gp_size = len(json.dumps(gen_params, ensure_ascii=False).encode())
+            if _gp_size > _GP_MAX:
+                gen_params = {"type": "chat"}
+                logger.warning(f"Wecom generation_params truncated | original={_gp_size}B")
 
         try:
-            self.db.table("messages").update({
-                "content": content_dicts, "status": "completed",
-            }).eq("id", message_id).execute()
+            update_data: dict = {
+                "content": content_dicts,
+                "status": "completed",
+                "generation_params": gen_params,
+            }
+            self.db.table("messages").update(update_data).eq("id", message_id).execute()
         except Exception as e:
             logger.warning(f"Update assistant message failed | msg_id={message_id} | error={e}")
 
