@@ -944,15 +944,14 @@ def _format_document_entry(
     """格式化文档文件条目（docx/pptx/pdf）"""
     _DOC_READ_HINTS = {
         ".docx": f"file_read(path=\"{wp}\")",
-        ".pptx": f"from pptx import Presentation; prs = Presentation('{wp}')",
+        ".pptx": f"file_read(path=\"{wp}\")",
         ".pdf": f"file_read(path=\"{wp}\")",
     }
 
     read_hint = _DOC_READ_HINTS.get(ext, f"open('{wp}')")
 
     if meta is None:
-        action = "读取" if ext in {".docx", ".pdf"} else "用 code_execute"
-        return f"📄 {wp} ({size_str})\n  {action}: {read_hint}"
+        return f"📄 {wp} ({size_str})\n  读取: {read_hint}"
 
     doc_type = meta.get("type", "")
 
@@ -982,7 +981,7 @@ def _format_document_entry(
             if len(titles) > 5:
                 title_preview += f" (+{len(titles)-5}页)"
             lines.append(f"  页标题: {title_preview}")
-        lines.append(f"  用 code_execute: {read_hint}")
+        lines.append(f"  读取: {read_hint}")
         return "\n".join(lines)
 
     elif doc_type == "pdf":

@@ -20,6 +20,7 @@ from services.file_read_extensions import (
     FileReadResult,
     IMAGE_EXTENSIONS,
     PDF_EXTENSIONS,
+    PPTX_EXTENSIONS,
 )
 from services.file_write_extensions import FileWriteExtensionsMixin
 
@@ -279,6 +280,15 @@ class FileExecutor(FileReadExtensionsMixin, FileQueryExtensionsMixin, FileWriteE
         # ── DOCX 直读 ──
         if ext in DOCX_EXTENSIONS:
             return await self._read_docx(
+                path, target, size,
+                max_read_size=_MAX_READ_SIZE,
+                bytes_per_token=_BYTES_PER_TOKEN,
+                max_output_tokens=_MAX_OUTPUT_TOKENS,
+            )
+
+        # ── PPTX 直读 ──
+        if ext in PPTX_EXTENSIONS:
+            return await self._read_pptx(
                 path, target, size,
                 max_read_size=_MAX_READ_SIZE,
                 bytes_per_token=_BYTES_PER_TOKEN,
