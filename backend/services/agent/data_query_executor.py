@@ -418,20 +418,55 @@ class DataQueryExecutor:
         elapsed = time.monotonic() - start
         text, _ = build_profile_from_duckdb(profile, filename, file_size_kb, elapsed)
 
-        if sheet_names:
-            text += f"\n\n[Sheet 列表] {', '.join(sheet_names)}"
-            text += "\n使用 sheet 参数指定：data_query(file=\"...\", sheet=\"Sheet2\")"
-
-        # 附加可用路径（让 LLM 后续调用不用猜路径）
+        # 附加可用路径
         try:
             rel_path = str(Path(original_path).relative_to(self._workspace_dir))
         except ValueError:
             rel_path = filename
-        text += (
-            f"\n\n后续操作:"
-            f"\n- 查询数据: data_query(file=\"{rel_path}\", sql=\"SELECT ... FROM data\")"
-            f"\n- 全量读取: data_query(file=\"{rel_path}\", sql=\"SELECT * FROM data\")"
-        )
+
+        if sheet_names and len(sheet_names) > 1:
+            # 多 sheet：扫描结构，给出概览
+            from services.agent.data_query_cache import (
+                scan_sheet_structures, detect_same_structure,
+            )
+            try:
+                structures = scan_sheet_structures(original_path)
+            except Exception:
+                structures = [{"name": n, "columns": [], "row_count": 0} for n in sheet_names]
+
+            same = detect_same_structure(structures)
+            text += f"\n\n[Sheet 概览] 共 {len(structures)} 个 Sheet"
+
+            if same:
+                # 结构相同：显示公共列 + 各 sheet 行数
+                total_rows = sum(s["row_count"] for s in structures)
+                cols_preview = ", ".join(structures[0]["columns"][:8])
+                if len(structures[0]["columns"]) > 8:
+                    cols_preview += f" (+{len(structures[0]['columns'])-8}列)"
+                names_preview = ", ".join(s["name"] for s in structures[:5])
+                if len(structures) > 5:
+                    names_preview += f" ... 等{len(structures)}个"
+                text += f"\n- 结构相同（{len(structures)}个）: {names_preview}"
+                text += f"\n- 每个 Sheet {structures[0]['row_count']}行 × {len(structures[0]['columns'])}列 | 合计 {total_rows:,}行"
+                text += f"\n- 列: {cols_preview}"
+                text += f"\n- 合并读取: data_query(file=\"{rel_path}\", sheet=\"*\")"
+                text += f"\n- 单个读取: data_query(file=\"{rel_path}\", sheet=\"{structures[0]['name']}\")"
+            else:
+                # 结构不同：逐个显示
+                for s in structures[:10]:
+                    cols = ", ".join(s["columns"][:5])
+                    if len(s["columns"]) > 5:
+                        cols += f" (+{len(s['columns'])-5}列)"
+                    text += f"\n- \"{s['name']}\" | {s['row_count']}行 × {len(s['columns'])}列 | 列: {cols}"
+                if len(structures) > 10:
+                    text += f"\n- ... 等{len(structures)}个 Sheet"
+                text += f"\n- 读取指定 Sheet: data_query(file=\"{rel_path}\", sheet=\"Sheet名\")"
+        else:
+            text += (
+                f"\n\n后续操作:"
+                f"\n- 查询数据: data_query(file=\"{rel_path}\", sql=\"SELECT ... FROM data\")"
+                f"\n- 全量读取: data_query(file=\"{rel_path}\", sql=\"SELECT * FROM data\")"
+            )
 
         return AgentResult(summary=text, status="success")
 
