@@ -97,7 +97,7 @@ class DataQueryExecutor:
         export: str | None = None,
         sheet: str | None = None,
     ) -> AgentResult:
-        """执行 data_query 工具，分发到三种模式。"""
+        """执行 data_query 工具，分发到探索/查询两种模式。"""
         if not file or not file.strip():
             return AgentResult(
                 summary="参数错误：file 不能为空",
@@ -139,12 +139,22 @@ class DataQueryExecutor:
                 abs_path, sheet,
             )
 
-        if sql is None and export is None:
+        # export 参数已废弃——导出给用户统一走 code_execute
+        if export is not None:
+            return AgentResult(
+                summary=(
+                    "data_query 不支持 export 参数。\n"
+                    "导出文件请用 code_execute：\n"
+                    "  df = pd.read_parquet(STAGING_DIR + '/文件名')\n"
+                    "  df.to_excel(OUTPUT_DIR + '/报表.xlsx', index=False, engine='xlsxwriter')"
+                ),
+                status="error",
+                error_message="export parameter removed, use code_execute",
+                metadata={"retryable": True},
+            )
+
+        if sql is None:
             result = await self._explore(query_path, abs_path, sheet_names)
-        elif export is not None:
-            if sql is None:
-                sql = "SELECT * FROM data"
-            result = await self._export(query_path, sql, export)
         else:
             result = await self._query(query_path, sql)
 
@@ -652,10 +662,21 @@ class DataQueryExecutor:
             elif ext == ".csv":
                 copy_sql = f"COPY ({sql}) TO '{output_escaped}' WITH (FORMAT CSV, HEADER true)"
             elif ext == ".parquet":
-                copy_sql = f"COPY ({sql}) TO '{output_escaped}' (FORMAT PARQUET, COMPRESSION SNAPPY)"
+                # parquet 是中间数据格式，不应导出给用户
+                # 查询模式自动存 staging parquet，用 sql 参数即可
+                return AgentResult(
+                    summary=(
+                        "parquet 是中间数据格式，不支持导出给用户。\n"
+                        "- 给用户下载：改用 export=\"报表.xlsx\" 或 export=\"数据.csv\"\n"
+                        "- 中间计算用：不传 export，用 sql 参数查询（结果自动存 staging）"
+                    ),
+                    status="error",
+                    error_message="Export: parquet not allowed for user download",
+                    metadata={"retryable": True},
+                )
             else:
                 return AgentResult(
-                    summary=f"不支持的导出格式：{ext}。支持 .xlsx / .csv / .parquet",
+                    summary=f"不支持的导出格式：{ext}。支持 .xlsx / .csv",
                     status="error",
                     error_message=f"Unsupported export format: {ext}",
                     metadata={"retryable": True},

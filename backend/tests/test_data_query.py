@@ -239,54 +239,39 @@ class TestQueryMode:
 # ============================================================
 
 
-class TestExportMode:
-    """导出模式：传 sql + export，生成文件"""
+class TestExportModeRemoved:
+    """export 参数已废弃——导出给用户统一走 code_execute"""
 
     @pytest.mark.asyncio
-    async def test_export_csv(self, executor, sample_parquet, tmp_workspace):
+    async def test_export_rejected(self, executor, sample_parquet):
+        """传 export 参数返回错误提示"""
         result = await executor.execute(
             file="trade_test.parquet",
             sql="SELECT * FROM data",
             export="output.csv",
         )
-        assert result.status == "success"
-        output_file = tmp_workspace["output_dir"] / "output.csv"
-        assert output_file.exists()
-        # 文件内容检查
-        df = pd.read_csv(str(output_file))
-        assert len(df) == 20
+        assert result.is_failure
+        assert "不支持 export" in result.summary
+        assert "code_execute" in result.summary
 
     @pytest.mark.asyncio
-    async def test_export_parquet(self, executor, sample_parquet, tmp_workspace):
-        result = await executor.execute(
-            file="trade_test.parquet",
-            sql='SELECT "shop_name", SUM("amount") as total FROM data GROUP BY "shop_name"',
-            export="summary.parquet",
-        )
-        # parquet 导出文件生成成功（auto_upload 可能不支持 parquet 格式，但文件存在）
-        output_file = tmp_workspace["output_dir"] / "summary.parquet"
-        assert output_file.exists()
-
-    @pytest.mark.asyncio
-    async def test_export_unsupported_format(self, executor, sample_parquet):
+    async def test_export_parquet_rejected(self, executor, sample_parquet):
         result = await executor.execute(
             file="trade_test.parquet",
             sql="SELECT * FROM data",
-            export="output.json",
+            export="summary.parquet",
         )
         assert result.is_failure
-        assert "不支持" in result.summary
+        assert "code_execute" in result.summary
 
     @pytest.mark.asyncio
-    async def test_export_default_select_all(self, executor, sample_parquet, tmp_workspace):
-        """不传 sql 但传 export，默认 SELECT *"""
+    async def test_export_without_sql_rejected(self, executor, sample_parquet):
+        """不传 sql 但传 export 也被拒绝"""
         result = await executor.execute(
             file="trade_test.parquet",
             export="all_data.csv",
         )
-        assert result.status == "success"
-        output_file = tmp_workspace["output_dir"] / "all_data.csv"
-        assert output_file.exists()
+        assert result.is_failure
 
 
 # ============================================================
@@ -376,14 +361,15 @@ class TestSecurity:
         assert "分号" in result.summary or "安全限制" in result.summary
 
     @pytest.mark.asyncio
-    async def test_reject_semicolon_in_export(self, executor, sample_parquet):
+    async def test_export_param_rejected_before_sql_check(self, executor, sample_parquet):
+        """export 参数在 SQL 校验前就被拒绝"""
         result = await executor.execute(
             file="trade_test.parquet",
             sql="SELECT 1; SELECT 2",
             export="output.csv",
         )
         assert result.is_failure
-        assert "分号" in result.summary or "安全限制" in result.summary
+        assert "不支持 export" in result.summary
 
     def test_validate_sql_function(self):
         """_validate_sql 公共校验函数 — 返回 AgentResult 或 None"""
