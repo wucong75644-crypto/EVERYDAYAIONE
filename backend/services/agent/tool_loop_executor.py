@@ -359,7 +359,7 @@ class ToolLoopExecutor:
         )
         enforce_budget(
             messages,
-            int(self.config.max_tokens * self.config.context_recovery_target),
+            int(self.config.context_window * self.config.context_recovery_target),
         )
         messages.append({
             "role": "user",
@@ -440,17 +440,10 @@ class ToolLoopExecutor:
         ):
             return False
 
-        # Token 预算检查
-        if total_tokens >= self.config.max_tokens:
-            logger.warning(
-                f"ToolLoop token budget exceeded | used={total_tokens}"
-            )
-            return False
-
-        # 上下文压缩：超过阈值时主动压缩 messages
+        # 上下文压缩：基于模型窗口大小（对标大厂：每轮压缩到窗口内）
         estimated = estimate_tokens(hook_ctx.messages)
         threshold = int(
-            self.config.max_tokens * self.config.context_compression_threshold
+            self.config.context_window * self.config.context_compression_threshold
         )
         if estimated > threshold:
             logger.info(
@@ -769,8 +762,7 @@ class ToolLoopExecutor:
                 from services.agent.tool_result_envelope import (
                     wrap_for_erp_agent, PERSISTED_OUTPUT_TAG,
                 )
-                _tight = hook_ctx.budget.is_tight if hook_ctx.budget else False
-                content = wrap_for_erp_agent(tool_name, content, tight=_tight)
+                content = wrap_for_erp_agent(tool_name, content, tight=False)
                 # 检测实际截断/落盘（而非猜内容长度）
                 is_truncated = (
                     PERSISTED_OUTPUT_TAG in content

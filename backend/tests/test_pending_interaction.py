@@ -104,7 +104,7 @@ class TestRestoreFromPending:
             "loop_snapshot": json.dumps({
                 "content_blocks": [],
                 "tool_context_state": {"discovered_tools": ["erp_agent"]},
-                "budget_snapshot": {"turns_used": 2, "tokens_used": 5000},
+                "budget_snapshot": {"turns_used": 2},
             }),
         }
 
@@ -122,7 +122,6 @@ class TestRestoreFromPending:
         # 快照恢复
         assert tc_state["discovered_tools"] == ["erp_agent"]
         assert bs["turns_used"] == 2
-        assert bs["tokens_used"] == 5000
 
     def test_marks_pending_as_resumed(self):
         pending = {

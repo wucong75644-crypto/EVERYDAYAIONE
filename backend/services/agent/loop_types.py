@@ -1,7 +1,7 @@
 """Tool Loop Executor 共用类型定义
 
 设计文档：参考 OpenAI Agents SDK / LangGraph / Anthropic Claude Code 的模式：
-- LoopConfig：数值参数（max_turns/max_tokens/timeout/...）
+- LoopConfig：数值参数（max_turns/context_window/timeout/...）
 - LoopStrategy：结构性决策（exit_signals/tool_expansion）
 - LoopHook：行为差异（progress notify/audit/temporal validation/failure reflection）
 - HookContext：单次 run 的可变上下文，hook 间共享
@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 class LoopConfig:
     """工具循环数值配置"""
     max_turns: int                                # 最大轮次
-    max_tokens: int                               # Token 预算上限
+    context_window: int                           # 模型上下文窗口大小（token），压缩阈值基于此计算
     tool_timeout: float                           # 单工具超时上限（秒）
     context_compression_threshold: float = 0.7   # 超过该比例触发主动压缩
     context_recovery_target: float = 0.5         # 上下文超限恢复时压缩到该比例

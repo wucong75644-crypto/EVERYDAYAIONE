@@ -51,7 +51,7 @@ def _make_executor(tools_for_parallel: int = 1) -> ToolLoopExecutor:
     """构造最小 ToolLoopExecutor（跳过 LLM 只测工具执行）"""
     adapter = AsyncMock()
     executor = AsyncMock()
-    config = LoopConfig(max_turns=5, max_tokens=50000, tool_timeout=30.0)
+    config = LoopConfig(max_turns=5, context_window=50000, tool_timeout=30.0)
     strategy = LoopStrategy(
         exit_signals=frozenset({"route_to_chat", "ask_user"}),
         enable_tool_expansion=True,
@@ -320,7 +320,7 @@ class TestPhase3PostProcess:
         ]
         adapter = AsyncMock()
         executor = AsyncMock()
-        config = LoopConfig(max_turns=5, max_tokens=50000, tool_timeout=30.0)
+        config = LoopConfig(max_turns=5, context_window=50000, tool_timeout=30.0)
         strategy = LoopStrategy(enable_tool_expansion=True)
         tle = ToolLoopExecutor(
             adapter=adapter, executor=executor,
@@ -362,7 +362,7 @@ class TestHooksTiming:
 
         adapter = AsyncMock()
         executor = AsyncMock()
-        config = LoopConfig(max_turns=5, max_tokens=50000, tool_timeout=30.0)
+        config = LoopConfig(max_turns=5, context_window=50000, tool_timeout=30.0)
         strategy = LoopStrategy()
         tle = ToolLoopExecutor(
             adapter=adapter, executor=executor,

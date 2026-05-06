@@ -135,33 +135,16 @@ class TestFileRefFullChain:
 # ============================================================
 
 
-class TestBudgetTwoTierSwitch:
-    """模拟: 用户连续查询，context 逐渐填满 → inline 阈值从 200 降到 50"""
+class TestBudgetSimplified:
+    """ExecutionBudget 简化后：只有 turns + wall_time"""
 
-    def test_normal_budget_inline_200(self):
-        """充足 token 时 inline_threshold=200"""
-        budget = ExecutionBudget(max_tokens=100_000, reserved_for_response=4000)
-        assert budget.inline_threshold == 200
-        assert not budget.is_tight
-
-    def test_tight_budget_inline_50(self):
-        """紧张时 inline_threshold=50"""
-        budget = ExecutionBudget(max_tokens=100_000, reserved_for_response=4000)
-        # 模拟消耗了 85K tokens
-        budget.use_tokens(85_000)
-        # remaining = 100000 - 85000 - 4000 = 11000 < 15000
-        assert budget.is_tight
-        assert budget.inline_threshold == 50
-
-    def test_budget_fork_inherits_tight(self):
-        """子 budget fork 后也继承 tight 状态"""
-        parent = ExecutionBudget(max_tokens=100_000, reserved_for_response=4000)
-        parent.use_tokens(85_000)
-        child = parent.fork(max_turns=5)
-        # child tokens_remaining = parent.tokens_remaining + reserved = 11000 + 4000 = 15000
-        # child 自己的 reserved = 4000, 所以 child.tokens_remaining = 15000 - 0 - 4000 = 11000
-        assert child.is_tight
-        assert child.inline_threshold == 50
+    def test_budget_turns_only(self):
+        """不再有 max_tokens / is_tight"""
+        budget = ExecutionBudget(max_turns=15)
+        assert budget.turns_remaining == 15
+        budget.use_turn()
+        assert budget.turns_remaining == 14
+        assert not hasattr(budget, 'is_tight') or not callable(getattr(budget, 'is_tight', None))
 
     def test_department_agent_no_staging_returns_text(self):
         """v6: 无 staging_dir → TEXT 摘要（不再 inline）"""
@@ -190,23 +173,13 @@ class TestBudgetTwoTierSwitch:
         assert result.file_ref is not None
         assert "[数据已暂存]" in result.summary
 
-    def test_per_tool_tokens_tracking(self):
-        """per-tool token 统计正确"""
-        budget = ExecutionBudget()
-        budget.use_tokens(1000, tool_name="erp_agent")
-        budget.use_tokens(500, tool_name="code_execute")
-        budget.use_tokens(200, tool_name="erp_agent")
-        stats = budget.get_tool_tokens()
-        assert stats["erp_agent"] == 1200
-        assert stats["code_execute"] == 500
-
-    def test_per_tool_tokens_propagate_to_parent(self):
-        """子 budget 的 per-tool 统计回写父"""
-        parent = ExecutionBudget()
+    def test_fork_shares_wall_time(self):
+        """子 budget 共享父的墙钟时间"""
+        parent = ExecutionBudget(max_turns=15, max_wall_time=600.0)
         child = parent.fork(max_turns=5)
-        child.use_tokens(300, tool_name="local_data")
-        assert parent.get_tool_tokens()["local_data"] == 300
-        assert child.get_tool_tokens()["local_data"] == 300
+        assert child.turns_remaining == 5
+        # 子 budget 的剩余时间不超过父的（允许 1s 时间精度误差）
+        assert child.remaining <= parent.remaining + 1.0
 
 
 # ============================================================

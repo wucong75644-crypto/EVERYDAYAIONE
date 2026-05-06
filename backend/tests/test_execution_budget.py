@@ -1,7 +1,7 @@
 """
 ExecutionBudget 单元测试
 
-覆盖：多维预算 (turns/tokens/wall_time) + fork + stop_reason + 向后兼容
+覆盖：两维预算 (turns/wall_time) + fork + stop_reason + 向后兼容
 """
 
 import sys
@@ -21,11 +21,10 @@ from services.agent.execution_budget import ExecutionBudget
 class TestExecutionBudgetProperties:
 
     def test_initial_state(self):
-        budget = ExecutionBudget(max_turns=15, max_tokens=100_000, max_wall_time=600.0)
+        budget = ExecutionBudget(max_turns=15, max_wall_time=600.0)
         assert budget.elapsed < 1.0
         assert budget.remaining > 599.0
         assert budget.turns_used == 0
-        assert budget.tokens_used == 0
         assert not budget.is_expired
         assert budget.stop_reason is None
 
@@ -54,12 +53,6 @@ class TestExecutionBudgetProperties:
         assert budget.is_expired
         assert budget.stop_reason == "max_turns"
 
-    def test_is_expired_by_tokens(self):
-        budget = ExecutionBudget(max_tokens=1000)
-        budget.use_tokens(1000)
-        assert budget.is_expired
-        assert budget.stop_reason == "max_tokens"
-
 
 class TestUseTurn:
 
@@ -74,45 +67,6 @@ class TestUseTurn:
         budget.use_turn()
         budget.use_turn()  # 超过上限
         assert budget.turns_remaining == 0
-
-
-class TestUseTokens:
-
-    def test_use_tokens_increments(self):
-        budget = ExecutionBudget(max_tokens=100_000, reserved_for_response=4000)
-        budget.use_tokens(5000)
-        assert budget.tokens_used == 5000
-        # v6: tokens_remaining = max_tokens - used - reserved = 100000 - 5000 - 4000
-        assert budget.tokens_remaining == 91_000
-
-    def test_per_tool_tokens(self):
-        """v6: per-tool token 统计"""
-        budget = ExecutionBudget()
-        budget.use_tokens(1000, tool_name="erp_agent")
-        budget.use_tokens(500, tool_name="code_execute")
-        budget.use_tokens(200, tool_name="erp_agent")
-        assert budget.get_tool_tokens() == {"erp_agent": 1200, "code_execute": 500}
-
-    def test_inline_threshold_normal(self):
-        """v6: 正常状态 inline_threshold = 200"""
-        budget = ExecutionBudget(max_tokens=100_000, reserved_for_response=4000)
-        assert budget.inline_threshold == 200
-        assert not budget.is_tight
-
-    def test_inline_threshold_tight(self):
-        """v6: 紧张状态 inline_threshold = 50"""
-        budget = ExecutionBudget(max_tokens=20_000, reserved_for_response=4000)
-        budget.use_tokens(10_000)
-        # remaining = 20000 - 10000 - 4000 = 6000 < 15000
-        assert budget.is_tight
-        assert budget.inline_threshold == 50
-
-    def test_tokens_writeback_to_parent(self):
-        parent = ExecutionBudget(max_tokens=100_000)
-        child = parent.fork(max_turns=5)
-        child.use_tokens(3000)
-        assert child.tokens_used == 3000
-        assert parent.tokens_used == 3000  # 回写
 
 
 class TestToolTimeout:
@@ -143,26 +97,13 @@ class TestToolTimeout:
 class TestStopReason:
 
     def test_none_when_budget_available(self):
-        budget = ExecutionBudget(max_turns=15, max_tokens=100_000, max_wall_time=600.0)
+        budget = ExecutionBudget(max_turns=15, max_wall_time=600.0)
         assert budget.stop_reason is None
 
     def test_max_turns_first(self):
         """轮次先耗尽时返回 max_turns"""
-        budget = ExecutionBudget(max_turns=1, max_tokens=100_000, max_wall_time=600.0)
+        budget = ExecutionBudget(max_turns=1, max_wall_time=600.0)
         budget.use_turn()
-        assert budget.stop_reason == "max_turns"
-
-    def test_max_tokens_first(self):
-        """token 先耗尽时返回 max_tokens"""
-        budget = ExecutionBudget(max_turns=15, max_tokens=100, max_wall_time=600.0)
-        budget.use_tokens(100)
-        assert budget.stop_reason == "max_tokens"
-
-    def test_priority_turns_over_tokens(self):
-        """同时耗尽时轮次优先"""
-        budget = ExecutionBudget(max_turns=1, max_tokens=100)
-        budget.use_turn()
-        budget.use_tokens(100)
         assert budget.stop_reason == "max_turns"
 
     def test_wrap_up_budget_triggers_before_max_turns(self):
@@ -196,14 +137,21 @@ class TestStopReason:
             budget.use_turn()
         assert budget.stop_reason is None
 
+    def test_no_max_tokens_stop_reason(self):
+        """确认不再有 max_tokens 停止原因（对标大厂：不限累计 token）"""
+        budget = ExecutionBudget(max_turns=15, max_wall_time=600.0)
+        # 无论调多少轮，只有 turns 和 wall_time 触发停止
+        for _ in range(14):
+            budget.use_turn()
+        assert budget.stop_reason == "wrap_up_budget"
+
 
 class TestFork:
 
     def test_fork_creates_child(self):
-        parent = ExecutionBudget(max_turns=15, max_tokens=100_000, max_wall_time=600.0)
+        parent = ExecutionBudget(max_turns=15, max_wall_time=600.0)
         child = parent.fork(max_turns=10)
         assert child.turns_remaining <= 10
-        assert child.tokens_remaining <= 100_000
 
     def test_fork_respects_parent_remaining_turns(self):
         parent = ExecutionBudget(max_turns=5)
@@ -212,12 +160,6 @@ class TestFork:
         # 父剩余 3 轮，子请求 10 轮 → 实际只有 3 轮
         child = parent.fork(max_turns=10)
         assert child._max_turns == 3
-
-    def test_fork_token_writeback(self):
-        parent = ExecutionBudget(max_tokens=50_000)
-        child = parent.fork(max_turns=5)
-        child.use_tokens(10_000)
-        assert parent.tokens_used == 10_000
 
     def test_fork_wall_time_shared(self):
         parent = ExecutionBudget(max_wall_time=10.0)
@@ -235,7 +177,7 @@ class TestFork:
 class TestCheckOrLog:
 
     def test_returns_true_when_budget_available(self):
-        budget = ExecutionBudget(max_turns=15, max_tokens=100_000, max_wall_time=600.0)
+        budget = ExecutionBudget(max_turns=15, max_wall_time=600.0)
         assert budget.check_or_log("test") is True
 
     def test_returns_false_when_turns_expired(self):
