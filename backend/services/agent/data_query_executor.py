@@ -156,12 +156,22 @@ class DataQueryExecutor:
         if sql is None:
             result = await self._explore(query_path, abs_path, sheet_names)
         else:
+            # L1 归一化：NFKC 全角→半角（中文逗号→英文逗号等）
+            from services.agent.input_normalizer import InputNormalizer
+            sql = InputNormalizer.normalize(sql) or sql
             result = await self._query(query_path, sql)
 
         # 收集 schema：成功时尝试（探索模式用完整 profile，查询/导出用快速 DESCRIBE）
         if not result.is_failure:
             self._collect_schema(
                 Path(abs_path).name, abs_path, query_path, sheet_names,
+            )
+
+        # Excel→Parquet 缓存路径提示（让 code_execute 可直接读完整数据）
+        if not result.is_failure and query_path != abs_path:
+            cache_name = Path(query_path).name
+            result.summary += (
+                f"\n[完整数据] pd.read_parquet(STAGING_DIR + '/{cache_name}')"
             )
 
         return result
