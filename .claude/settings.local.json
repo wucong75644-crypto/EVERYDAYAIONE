@@ -1999,7 +1999,21 @@
       "Bash(./git-push.sh \"test: 文件工具链路全覆盖——rglob兜底+staging注册+workspace提示+元数据读取命令+提示词文案修正（+28用例）\")",
       "Bash(./git-push.sh \"fix: file_list遍历目录跳过staging——对齐前端API和file_search的安全过滤\")",
       "Bash(./git-push.sh \"fix: @文件不显示——getFiles过滤条件补充workspace_path，url为空时不再被过滤\")",
-      "Bash(./git-push.sh \"fix: 用户消息文件卡片不渲染——MessageMedia early return未检查files，只有文件时直接返回null\")"
+      "Bash(./git-push.sh \"fix: 用户消息文件卡片不渲染——MessageMedia early return未检查files，只有文件时直接返回null\")",
+      "Bash(grep -c 'workspace_path' /Users/wucong/EVERYDAYAIONE/frontend/dist/assets/index-*.js)",
+      "Bash(ssh root@47.98.40.133 \"tail -200 /root/EVERYDAYAIONE/logs/app.log 2>/dev/null || tail -200 /var/log/everydayai/*.log 2>/dev/null\")",
+      "Bash(ssh root@47.98.40.133 \"ls /root/EVERYDAYAIONE/logs/ 2>/dev/null; ls /root/logs/ 2>/dev/null; find /root -name '*.log' -maxdepth 3 2>/dev/null | head -20\")",
+      "Bash(ssh root@47.98.40.133 \"ls /root/EVERYDAYAIONE/logs/\")",
+      "Bash(python -m pytest tests/test_execution_budget.py -v)",
+      "Bash(python -m pytest tests/test_execution_budget.py tests/test_tool_confirm.py tests/test_tool_loop_parallel.py -v)",
+      "Bash(python -m pytest tests/test_execution_budget.py tests/test_tool_loop_parallel.py -v)",
+      "Bash(grep -l \"messages\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(grep -l \"generation_params\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(grep -A 100 \"CREATE TABLE.*messages\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.sql)",
+      "Bash(ssh wucong@47.116.173.97 \"tail -200 /home/wucong/EVERYDAYAIONE/backend/logs/app_2026-05-06.log | grep -i 'image\\\\|generate_image\\\\|500\\\\|error' | grep -v DEBUG | tail -40\")",
+      "Bash(ssh root@47.116.173.97 \"tail -200 /home/wucong/EVERYDAYAIONE/backend/logs/app_2026-05-06.log | grep -i 'image\\\\|generate_image\\\\|500\\\\|error' | grep -v DEBUG | tail -40\")",
+      "Bash(grep -i \"host\\\\|server\" /Users/wucong/EVERYDAYAIONE/deploy*.sh)",
+      "Bash(./git-push.sh \"chore: 清理 ExecutionBudget 残留引用（use_tokens/is_tight/tokens_used）\")"
     ],
     "additionalDirectories": [
       "/tmp"
