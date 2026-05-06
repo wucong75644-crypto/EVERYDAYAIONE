@@ -37,7 +37,6 @@ from services.websocket_manager import ws_manager
 _STOP_MESSAGES = {
     "wrap_up_budget": "接近执行上限，正在总结当前进展。",
     "max_turns": "已达到单次对话工具调用上限。",
-    "max_tokens": "本次任务消耗的资源过大，请缩小范围或分步进行。",
     "wall_timeout": "任务耗时过长，请稍后重试。",
 }
 

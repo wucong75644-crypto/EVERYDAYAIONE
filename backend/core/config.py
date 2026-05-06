@@ -244,7 +244,6 @@ class Settings(BaseSettings):
 
     # ERPAgent 内部工具循环配置（从域路由器升级为领域专家）
     erp_agent_max_turns: int = 8               # ERPAgent 内部轮次上限
-    erp_agent_context_window: int = 80_000     # ERPAgent 上下文窗口（压缩阈值基准）
     erp_agent_tool_timeout: float = 30.0       # ERPAgent 单工具超时
 
     # 超时分级配置（按任务类型差异化超时，仅用于非 budget 场景）
