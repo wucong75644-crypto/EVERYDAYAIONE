@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Union
 from loguru import logger
 
 from services.file_read_extensions import (
+    DOCX_EXTENSIONS,
     FileReadExtensionsMixin,
     FileReadResult,
     IMAGE_EXTENSIONS,
@@ -280,6 +281,15 @@ class FileExecutor(FileReadExtensionsMixin):
 
         size = target.stat().st_size
         ext = target.suffix.lower()
+
+        # ── DOCX 直读 ──
+        if ext in DOCX_EXTENSIONS:
+            return await self._read_docx(
+                path, target, size,
+                max_read_size=_MAX_READ_SIZE,
+                bytes_per_token=_BYTES_PER_TOKEN,
+                max_output_tokens=_MAX_OUTPUT_TOKENS,
+            )
 
         # ── PDF 直读 ──
         if ext in PDF_EXTENSIONS:

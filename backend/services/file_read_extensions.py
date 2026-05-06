@@ -1,7 +1,7 @@
 """
-file_read PDF/图片扩展（FileExecutor mixin）
+file_read PDF/图片/DOCX 扩展（FileExecutor mixin）
 
-将 PDF 直读、图片多模态、页码解析从 FileExecutor 中拆出。
+将 PDF 直读、图片多模态、DOCX 直读、页码解析从 FileExecutor 中拆出。
 FileExecutor 通过继承 FileReadExtensionsMixin 获得这些能力。
 
 修复清单（来自审查）：
@@ -9,6 +9,7 @@ FileExecutor 通过继承 FileReadExtensionsMixin 获得这些能力。
 - PDF 错误信息脱敏：不暴露服务端路径
 - 图片注入措辞中性化：[系统] 标签替代指令式文案
 - 同步 I/O 改 run_in_executor：PdfReader / Image.open / read_bytes
+- DOCX 直读：python-docx 提取文本，不再绕 code_execute
 """
 
 import asyncio
@@ -24,6 +25,7 @@ from loguru import logger
 # ── PDF 直读常量（对齐 Claude Code Read 工具 PDF 支持） ──
 
 PDF_EXTENSIONS = frozenset({".pdf"})
+DOCX_EXTENSIONS = frozenset({".docx"})
 _PDF_MAX_AUTO_PAGES = 10    # 无 pages 参数时自动全读的最大页数
 _PDF_MAX_READ_PAGES = 20    # 单次读取最大页数
 
@@ -221,6 +223,54 @@ class FileReadExtensionsMixin:
                 "可用 code_execute 处理（PIL 已可用）。"
             ),
         )
+
+    async def _read_docx(
+        self, path: str, target: Path, size: int,
+        max_read_size: int, bytes_per_token: int, max_output_tokens: int,
+    ) -> str:
+        """DOCX 文件文本提取（对齐 PDF 直读模式）
+
+        - 大文件预检：size > max_read_size 直接拒绝
+        - python-docx 提取全部段落文本
+        - 同步 I/O 在线程池执行，不阻塞事件循环
+        """
+        if size > max_read_size:
+            return (
+                f"DOCX 文件过大（{self._format_size(size)}），"
+                f"超过 {self._format_size(max_read_size)} 硬上限。"
+                "建议使用 code_execute 处理。"
+            )
+
+        try:
+            from docx import Document
+        except ImportError:
+            return "DOCX 读取依赖 python-docx 未安装，请用 code_execute 处理。"
+
+        loop = asyncio.get_running_loop()
+        try:
+            def _extract_text():
+                doc = Document(str(target))
+                return "\n".join(p.text for p in doc.paragraphs)
+
+            text = await loop.run_in_executor(None, _extract_text)
+        except Exception as e:
+            logger.warning(f"DOCX open failed | path={path} | error={type(e).__name__}: {e}")
+            return f"DOCX 文件无法打开: {path}（{type(e).__name__}）"
+
+        if not text.strip():
+            return f"DOCX 文件为空或无可提取文本: {path}"
+
+        # L3: token 估算
+        estimated_tokens = len(text.encode("utf-8")) / bytes_per_token
+        if estimated_tokens > max_output_tokens:
+            return (
+                f"DOCX 提取文本（约 {int(estimated_tokens)} tokens）"
+                f"超过上限（{max_output_tokens} tokens）。\n"
+                "建议使用 code_execute 分段处理。"
+            )
+
+        header = f"文件: {path} | DOCX | {self._format_size(size)}"
+        return f"{header}\n{'─' * 60}\n{text}"
 
     @staticmethod
     def _parse_pages(pages_str: str, total_pages: int) -> Union[list[int], str]:
