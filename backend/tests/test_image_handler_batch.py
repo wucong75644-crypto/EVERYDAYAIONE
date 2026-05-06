@@ -312,7 +312,7 @@ class TestImageHandlerPartialFailure:
 
         with patch.object(handler, '_build_callback_url', return_value="http://cb"):
             with patch("services.handlers.image_handler.asyncio.sleep", new_callable=AsyncMock):
-                with pytest.raises(Exception, match="所有图片生成请求均失败"):
+                with pytest.raises(Exception, match="图片生成服务暂时不可用"):
                     await handler.start(
                         message_id="msg_1",
                         conversation_id="conv_1",
