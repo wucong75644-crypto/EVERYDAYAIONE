@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -126,6 +127,11 @@ async def _fetch_stock_by_codes(
                         buffer.append(row)
                 if len(items) < 100:
                     break
+                # 全量同步请求间延迟，避免触发快麦429限流
+                await asyncio.sleep(0.5)
+
+            # 每批间延迟（全量同步非紧急，优先稳定性）
+            await asyncio.sleep(0.3)
 
             # checkpoint：每 N 批或最后一批，立即存盘
             is_checkpoint = (batch_idx + 1) % _CHECKPOINT_INTERVAL == 0
