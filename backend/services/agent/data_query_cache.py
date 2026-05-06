@@ -103,6 +103,70 @@ def detect_encoding(abs_path: str) -> str:
     return "utf-8"
 
 
+# ── 多 Sheet 结构扫描 ──────────────────────────────
+
+_SCAN_NROWS = 5          # 扫描每个 sheet 的前 N 行（只需列名+行数）
+_MAX_SCAN_SHEETS = 200   # 超过此数量只扫描前 N 个（防超大 workbook 卡住）
+
+
+def scan_sheet_structures(excel_path: str) -> list[dict]:
+    """快速扫描所有 sheet 的结构（列名+行数），不全量加载数据。
+
+    Returns:
+        [{"name": "Sheet1", "columns": ["col1", "col2"], "row_count": 500}, ...]
+    """
+    import pandas as pd
+
+    xl = pd.ExcelFile(excel_path, engine="calamine")
+    sheet_names = xl.sheet_names[:_MAX_SCAN_SHEETS]
+    results: list[dict] = []
+
+    for name in sheet_names:
+        try:
+            # 只读前几行检测表头
+            df_raw = pd.read_excel(
+                xl, sheet_name=name, engine="calamine",
+                header=None, nrows=_HEADER_MAX_SCAN,
+            )
+            header_row = detect_header_row(df_raw.values.tolist())
+
+            # 用检测到的表头行读取列名
+            df_head = pd.read_excel(
+                xl, sheet_name=name, engine="calamine",
+                header=header_row, nrows=_SCAN_NROWS,
+            )
+            columns = [str(c) for c in df_head.columns
+                        if not str(c).startswith("Unnamed:")]
+
+            # 行数：用 calamine 引擎全量计数（只读行数，不加载数据）
+            df_count = pd.read_excel(
+                xl, sheet_name=name, engine="calamine",
+                header=header_row, usecols=[0],
+            )
+            row_count = len(df_count)
+
+            results.append({
+                "name": name,
+                "columns": columns,
+                "row_count": row_count,
+            })
+        except Exception as e:
+            logger.warning(f"Sheet scan failed | sheet={name} | error={e}")
+            results.append({"name": name, "columns": [], "row_count": 0})
+
+    xl.close()
+    return results
+
+
+def detect_same_structure(sheets: list[dict]) -> bool:
+    """判断所有 sheet 是否结构相同（列名集合一致）。"""
+    non_empty = [s for s in sheets if s["columns"]]
+    if len(non_empty) < 2:
+        return False
+    first_cols = set(non_empty[0]["columns"])
+    return all(set(s["columns"]) == first_cols for s in non_empty[1:])
+
+
 # 按文件路径隔离的转换锁（LRU 上限 100，防止长期运行内存泄漏）
 _MAX_LOCKS = 100
 _convert_locks: dict[str, asyncio.Lock] = {}
@@ -147,11 +211,18 @@ async def ensure_parquet_cache(
             return str(cache_path), None
 
         loop = asyncio.get_running_loop()
-        sheet_names = await loop.run_in_executor(
-            None, _convert_excel_to_parquet,
-            excel_path, str(cache_path), sheet, src_mtime, src_size,
-            str(snapshot_path),
-        )
+        if sheet == "*":
+            sheet_names = await loop.run_in_executor(
+                None, _convert_all_sheets_to_parquet,
+                excel_path, str(cache_path), src_mtime, src_size,
+                str(snapshot_path),
+            )
+        else:
+            sheet_names = await loop.run_in_executor(
+                None, _convert_excel_to_parquet,
+                excel_path, str(cache_path), sheet, src_mtime, src_size,
+                str(snapshot_path),
+            )
         return str(cache_path), sheet_names
 
 
@@ -328,4 +399,62 @@ def _convert_excel_to_parquet(
         f"| elapsed={time.monotonic() - start:.1f}s"
     )
     del df
+    return sheet_names
+
+
+def _convert_all_sheets_to_parquet(
+    excel_path: str, cache_path: str,
+    src_mtime: float, src_size: int, snapshot_path: str,
+) -> list[str]:
+    """所有同结构 Sheet 合并为单个 Parquet（加 _sheet 列标识来源）。"""
+    import pandas as pd
+
+    start = time.monotonic()
+    xl = pd.ExcelFile(excel_path, engine="calamine")
+    sheet_names = xl.sheet_names
+
+    frames: list = []
+    for name in sheet_names:
+        try:
+            df_raw = pd.read_excel(
+                xl, sheet_name=name, engine="calamine",
+                header=None, nrows=_HEADER_MAX_SCAN,
+            )
+            header_row = detect_header_row(df_raw.values.tolist())
+
+            df = pd.read_excel(
+                xl, sheet_name=name, engine="calamine",
+                header=header_row,
+            )
+            if df.empty:
+                continue
+            _coerce_object_columns(df)
+            df.insert(0, "_sheet", name)
+            frames.append(df)
+        except Exception as e:
+            logger.warning(f"Sheet merge skip | sheet={name} | error={e}")
+            continue
+
+    xl.close()
+
+    if not frames:
+        raise ValueError(f"所有 Sheet 均为空或读取失败: {Path(excel_path).name}")
+
+    merged = pd.concat(frames, ignore_index=True)
+
+    tmp_path = str(Path(cache_path).parent / f"_tmp_{uuid.uuid4().hex[:8]}.parquet")
+    try:
+        merged.to_parquet(tmp_path, index=False, engine="pyarrow")
+        os.rename(tmp_path, cache_path)
+    except Exception:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise
+
+    Path(snapshot_path).write_text(f"{src_mtime},{src_size}")
+    logger.info(
+        f"Excel→Parquet merge-all | src={Path(excel_path).name} "
+        f"| sheets={len(frames)} | rows={len(merged):,} "
+        f"| elapsed={time.monotonic() - start:.1f}s"
+    )
+    del merged
     return sheet_names
