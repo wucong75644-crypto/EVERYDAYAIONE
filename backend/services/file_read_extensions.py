@@ -26,6 +26,7 @@ from loguru import logger
 
 PDF_EXTENSIONS = frozenset({".pdf"})
 DOCX_EXTENSIONS = frozenset({".docx"})
+PPTX_EXTENSIONS = frozenset({".pptx"})
 _PDF_MAX_AUTO_PAGES = 10    # 无 pages 参数时自动全读的最大页数
 _PDF_MAX_READ_PAGES = 20    # 单次读取最大页数
 
@@ -277,6 +278,70 @@ class FileReadExtensionsMixin:
             )
 
         header = f"文件: {path} | DOCX | {self._format_size(size)}"
+        return f"{header}\n{'─' * 60}\n{text}"
+
+    async def _read_pptx(
+        self, path: str, target: Path, size: int,
+        max_read_size: int, bytes_per_token: int, max_output_tokens: int,
+    ) -> str:
+        """PPTX 文件文本提取（对齐 DOCX 直读模式）
+
+        - 大文件预检：size > max_read_size 直接拒绝
+        - python-pptx 提取每页标题+文本框+表格
+        - 同步 I/O 在线程池执行，不阻塞事件循环
+        """
+        if size > max_read_size:
+            return (
+                f"PPTX 文件过大（{self._format_size(size)}），"
+                f"超过 {self._format_size(max_read_size)} 硬上限。"
+                "建议使用 code_execute 处理。"
+            )
+
+        try:
+            from pptx import Presentation
+        except ImportError:
+            return "PPTX 读取依赖 python-pptx 未安装，请用 code_execute 处理。"
+
+        loop = asyncio.get_running_loop()
+        try:
+            def _extract_text():
+                prs = Presentation(str(target))
+                parts: list[str] = []
+                for i, slide in enumerate(prs.slides, 1):
+                    slide_parts: list[str] = []
+                    for shape in slide.shapes:
+                        if shape.has_text_frame:
+                            for para in shape.text_frame.paragraphs:
+                                text = para.text.strip()
+                                if text:
+                                    slide_parts.append(text)
+                        if shape.has_table:
+                            for row in shape.table.rows:
+                                cells = [c.text.strip() for c in row.cells if c.text.strip()]
+                                if cells:
+                                    slide_parts.append(" | ".join(cells))
+                    if slide_parts:
+                        parts.append(f"── 第 {i} 页 ──\n" + "\n".join(slide_parts))
+                return "\n\n".join(parts)
+
+            text = await loop.run_in_executor(None, _extract_text)
+        except Exception as e:
+            logger.warning(f"PPTX open failed | path={path} | error={type(e).__name__}")
+            return f"PPTX 文件无法打开: {path}（{type(e).__name__}）"
+
+        if not text.strip():
+            return f"PPTX 文件为空或无可提取文本: {path}"
+
+        # L3: token 估算
+        estimated_tokens = len(text.encode("utf-8")) / bytes_per_token
+        if estimated_tokens > max_output_tokens:
+            return (
+                f"PPTX 提取文本（约 {int(estimated_tokens)} tokens）"
+                f"超过上限（{max_output_tokens} tokens）。\n"
+                "建议使用 code_execute 分段处理。"
+            )
+
+        header = f"文件: {path} | PPTX | {self._format_size(size)}"
         return f"{header}\n{'─' * 60}\n{text}"
 
     @staticmethod
