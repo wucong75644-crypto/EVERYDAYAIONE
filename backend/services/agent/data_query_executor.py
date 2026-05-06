@@ -167,11 +167,29 @@ class DataQueryExecutor:
                 Path(abs_path).name, abs_path, query_path, sheet_names,
             )
 
-        # Excel→Parquet 缓存路径提示（让 code_execute 可直接读完整数据）
+        # Excel→Parquet 缓存路径 + schema 提示（让 code_execute 可直接写代码）
         if not result.is_failure and query_path != abs_path:
             cache_name = Path(query_path).name
+            cache_schema = ""
+            try:
+                import duckdb as _dq
+                _con = _dq.connect(":memory:")
+                _escaped = query_path.replace("'", "''")
+                pq_cols = _con.execute(
+                    f"SELECT column_name, data_type FROM parquet_schema('{_escaped}')"
+                ).fetchall()
+                pq_rows = _con.execute(
+                    f"SELECT num_rows::BIGINT FROM parquet_file_metadata('{_escaped}')"
+                ).fetchone()[0]
+                _con.close()
+                col_preview = ", ".join(f"{n}({t})" for n, t in pq_cols[:15])
+                if len(pq_cols) > 15:
+                    col_preview += f" (+{len(pq_cols)-15}列)"
+                cache_schema = f" | {pq_rows}行 × {len(pq_cols)}列\n[列: {col_preview}]"
+            except Exception:
+                pass
             result.summary += (
-                f"\n[完整数据] pd.read_parquet(STAGING_DIR + '/{cache_name}')"
+                f"\n[完整数据] pd.read_parquet(STAGING_DIR + '/{cache_name}'){cache_schema}"
             )
 
         return result
@@ -592,12 +610,18 @@ class DataQueryExecutor:
                     summary = format_numeric_summary(df)
                     text = f"{table}\n\n{summary}" if summary else table
 
-                # 附加 staging 引用（和大文件对齐，让 code_execute 有路径可读）
+                # 附加 staging 引用 + schema（让 code_execute 直接写代码）
                 size_kb = result_path.stat().st_size / 1024
+                col_schema = ", ".join(
+                    f"{c}({df[c].dtype})" for c in list(df.columns)[:15]
+                )
+                if len(df.columns) > 15:
+                    col_schema += f" (+{len(df.columns)-15}列)"
                 text += (
                     f"\n\n[文件已存入 staging | "
                     f"读取: pd.read_parquet(STAGING_DIR + '/{result_file}') | "
-                    f"{row_count}行 | parquet | {size_kb:.0f}KB]"
+                    f"{row_count}行 × {len(df.columns)}列 | parquet | {size_kb:.0f}KB]\n"
+                    f"[列: {col_schema}]"
                 )
                 return AgentResult(summary=text, status="success")
 
@@ -605,13 +629,28 @@ class DataQueryExecutor:
             text = format_large_result_from_parquet(
                 con, result_escaped, result_file, row_count, elapsed,
             )
-            # 附加标准 staging 引用（和 ERP Agent 格式对齐）
+            # 附加标准 staging 引用 + schema
             size_kb = result_path.stat().st_size / 1024
+            try:
+                pq_cols = con.execute(
+                    f"SELECT column_name, data_type FROM parquet_schema('{result_escaped}')"
+                ).fetchall()
+                col_schema = ", ".join(
+                    f"{name}({dtype})" for name, dtype in pq_cols[:15]
+                )
+                if len(pq_cols) > 15:
+                    col_schema += f" (+{len(pq_cols)-15}列)"
+                col_count = len(pq_cols)
+            except Exception:
+                col_schema = ""
+                col_count = 0
             text += (
                 f"\n\n[文件已存入 staging | "
                 f"读取: pd.read_parquet(STAGING_DIR + '/{result_file}') | "
-                f"{row_count}行 | parquet | {size_kb:.0f}KB]"
+                f"{row_count}行 × {col_count}列 | parquet | {size_kb:.0f}KB]"
             )
+            if col_schema:
+                text += f"\n[列: {col_schema}]"
             if row_count > 1000:
                 text += "\n\n💡 结果超过 1000 行，建议缩小查询范围或使用 export 导出。"
             return AgentResult(summary=text, status="success")

@@ -536,13 +536,21 @@ class ToolExecutor(FileToolMixin, CrawlerToolMixin, MediaToolMixin, ErpToolMixin
         )
         self._pending_schemas.append((filename, str(staging_path), schema_text))
 
+        # 列 schema 摘要（截取前15列）
+        col_schema = ", ".join(col_parts[:15])
+        if len(col_parts) > 15:
+            col_schema += f" (+{len(col_parts)-15}列)"
+
         return AgentResult(
             summary=(
                 f"[数据已暂存] {rel_path}\n"
                 f"共 {len(items)} 条记录（Parquet格式，{file_size_kb:.0f}KB），"
                 f"耗时 {elapsed:.1f}秒。{warning}\n"
                 f"如需处理请调 data_query，"
-                f"用 data_query(file=\"{filename}\", sql=\"SELECT ... FROM data\") 查询。\n\n"
+                f"用 data_query(file=\"{filename}\", sql=\"SELECT ... FROM data\") 查询。\n"
+                f"代码处理: pd.read_parquet(STAGING_DIR + '/{filename}') | "
+                f"{len(items)}行 × {len(df.columns)}列\n"
+                f"[列: {col_schema}]\n\n"
                 f"前3条预览：\n{preview}"
             ),
             status="success",
