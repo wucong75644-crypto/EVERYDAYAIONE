@@ -134,6 +134,8 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
     if workspace_dir:
         os.makedirs(workspace_dir, exist_ok=True)
         os.chdir(workspace_dir)
+    if staging_dir:
+        os.makedirs(staging_dir, exist_ok=True)
 
     # 3. 构建 scoped open（进程生命周期内复用同一个闭包）
     scoped_open = _setup_scoped_open(workspace_dir, staging_dir, output_dir)
