@@ -557,10 +557,13 @@ def sandbox_worker_entry(
         # 逻辑在 build_scoped_open() 中统一定义，kernel_worker 共用
         if workspace_dir:
             import builtins
-            builtins.open = build_scoped_open(
+            import io as _io
+            scoped_open = build_scoped_open(
                 workspace_dir, staging_dir, output_dir,
                 original_open=builtins.open,
             )
+            builtins.open = scoped_open
+            _io.open = scoped_open  # 堵住 io.open 绕过沙盒的漏洞
 
         # 4. 构建沙盒环境
         sandbox_globals = _build_sandbox_globals(workspace_dir, staging_dir, output_dir)

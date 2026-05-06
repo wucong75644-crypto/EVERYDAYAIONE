@@ -728,6 +728,89 @@ class TestDispatchResultToWecom:
         types = [c["type"] for c in update_args["content"]]
         assert "video" in types
 
+    @pytest.mark.asyncio
+    async def test_tool_step_blocks_saved_to_content(self):
+        """有 tool_step 块 → DB content 包含 tool_step + text"""
+        from schemas.message import TextPart
+        from services.handlers.chat_generate_mixin import GenerateResult
+
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._reply_text = AsyncMock()
+
+        ctx = _make_reply_ctx("smart_robot")
+        gen_result = GenerateResult(
+            parts=[TextPart(text="查询结果：100笔")],
+            content_blocks=[
+                {"type": "tool_step", "tool_name": "erp_agent", "tool_call_id": "call_1",
+                 "status": "completed", "summary": "订单100笔", "elapsed_ms": 3000},
+                {"type": "text", "text": "查询结果：100笔"},
+            ],
+            tool_digest={"tools": [{"name": "erp_agent", "ok": True, "hint": "订单查询"}]},
+        )
+        await svc._dispatch_result_to_wecom(gen_result, ctx, "m1")
+
+        msg_mock = db._table_mocks["messages"]
+        update_args = msg_mock.update.call_args[0][0]
+
+        # content 应包含 tool_step 和 text
+        types = [c["type"] for c in update_args["content"]]
+        assert "tool_step" in types
+        assert "text" in types
+
+        # tool_step 应包含完整信息
+        tool_steps = [c for c in update_args["content"] if c["type"] == "tool_step"]
+        assert tool_steps[0]["tool_name"] == "erp_agent"
+        assert tool_steps[0]["summary"] == "订单100笔"
+
+    @pytest.mark.asyncio
+    async def test_generation_params_saved_with_tool_digest(self):
+        """有 tool_digest → DB generation_params 包含 tool_digest"""
+        from schemas.message import TextPart
+        from services.handlers.chat_generate_mixin import GenerateResult
+
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._reply_text = AsyncMock()
+
+        ctx = _make_reply_ctx("smart_robot")
+        digest = {"tools": [{"name": "erp_agent", "ok": True, "hint": "订单"}], "staging_dir": "staging/c1"}
+        gen_result = GenerateResult(
+            parts=[TextPart(text="ok")],
+            content_blocks=[{"type": "text", "text": "ok"}],
+            tool_digest=digest,
+        )
+        await svc._dispatch_result_to_wecom(gen_result, ctx, "m1")
+
+        msg_mock = db._table_mocks["messages"]
+        update_args = msg_mock.update.call_args[0][0]
+
+        assert "generation_params" in update_args
+        gen_params = update_args["generation_params"]
+        assert gen_params["type"] == "chat"
+        assert gen_params["tool_digest"] == digest
+
+    @pytest.mark.asyncio
+    async def test_no_tool_digest_minimal_generation_params(self):
+        """无 tool_digest → generation_params 只有 type"""
+        from schemas.message import TextPart
+        from services.handlers.chat_generate_mixin import GenerateResult
+
+        db = _make_db_mock()
+        svc = WecomMessageService(db)
+        svc._reply_text = AsyncMock()
+
+        ctx = _make_reply_ctx("smart_robot")
+        gen_result = GenerateResult(parts=[TextPart(text="纯文字回复")])
+        await svc._dispatch_result_to_wecom(gen_result, ctx, "m1")
+
+        msg_mock = db._table_mocks["messages"]
+        update_args = msg_mock.update.call_args[0][0]
+
+        gen_params = update_args["generation_params"]
+        assert gen_params == {"type": "chat"}
+        assert "tool_digest" not in gen_params
+
 
 # ============================================================
 # TestGetOrCreateConversation

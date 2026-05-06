@@ -138,9 +138,11 @@ def kernel_main(workspace_dir: str, staging_dir: str, output_dir: str,
     # 3. 构建 scoped open（进程生命周期内复用同一个闭包）
     scoped_open = _setup_scoped_open(workspace_dir, staging_dir, output_dir)
 
-    # 4. 替换 builtins.open
+    # 4. 替换 builtins.open + io.open
     import builtins
+    import io as _io
     builtins.open = scoped_open
+    _io.open = scoped_open  # 堵住 io.open 绕过沙盒的漏洞
 
     # 5. 构建沙盒 globals（变量跨调用保留）
     sandbox_globals = _build_sandbox_globals(workspace_dir, staging_dir, output_dir)
