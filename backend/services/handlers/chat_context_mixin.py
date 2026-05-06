@@ -192,6 +192,16 @@ class ChatContextMixin:
 
         # 工作区文件提示注入：告诉 AI 文件路径和类型，由 AI 自行调用工具读取
         if workspace_files:
+            # 注册到文件缓存，后续工具调用时 resolve 可纠正 LLM 加空格等变形
+            from services.agent.workspace_file_handles import get_file_cache
+            from pathlib import Path as _Path
+            file_cache = get_file_cache(conversation_id)
+            for f in workspace_files:
+                wp = f.get("workspace_path", "")
+                if wp:
+                    file_cache.register(wp, wp)
+                    file_cache.register(_Path(wp).name, wp)
+
             ws_prompt = self._build_workspace_prompt(workspace_files)
             if ws_prompt:
                 messages.append({"role": "system", "content": ws_prompt})
