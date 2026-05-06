@@ -79,7 +79,6 @@ class ChatGenerateMixin:
             _bs = _get_budget_settings()
             _budget = ExecutionBudget(
                 max_turns=_bs.budget_max_turns,
-                max_tokens=_bs.budget_max_tokens,
                 max_wall_time=_bs.budget_max_wall_time,
             )
 

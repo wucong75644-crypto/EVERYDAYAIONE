@@ -98,7 +98,7 @@ class TestRestoreFromPending:
             "loop_snapshot": json.dumps({
                 "content_blocks": [{"type": "text"}],
                 "tool_context_state": {"discovered_tools": ["web_search"]},
-                "budget_snapshot": {"turns_used": 3, "tokens_used": 5000},
+                "budget_snapshot": {"turns_used": 3},
             }),
         }
         base.update(overrides)
@@ -138,7 +138,6 @@ class TestRestoreFromPending:
 
         _, _, _, budget, _, _ = handler._restore_from_pending(pending, "ok")
         assert budget["turns_used"] == 3
-        assert budget["tokens_used"] == 5000
 
     def test_marks_pending_as_resumed_atomically(self):
         handler = _make_handler()

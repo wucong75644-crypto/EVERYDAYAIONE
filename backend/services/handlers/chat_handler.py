@@ -450,7 +450,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             _s = _get_settings()
             _budget = ExecutionBudget(
                 max_turns=_s.budget_max_turns,
-                max_tokens=_s.budget_max_tokens,
                 max_wall_time=_s.budget_max_wall_time,
             )
 
@@ -469,8 +468,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 messages, _content_blocks, _tc_state, _bs, _file_reg, _dag_prog = _restored
                 # 恢复 tool_context discovered_tools
                 tool_context.discovered_tools = set(_tc_state.get("discovered_tools", []))
-                # 恢复预算消耗
-                _budget.use_tokens(_bs.get("tokens_used", 0))
+                # 恢复预算消耗（只恢复轮次，累计 token 不再限制）
                 for _ in range(_bs.get("turns_used", 0)):
                     _budget.use_turn()
                 # 上下文压缩（frozen_messages 可能较大）
@@ -620,10 +618,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
                     # Token 使用量（累加到 budget + final_usage）
                     if chunk.prompt_tokens or chunk.completion_tokens:
-                        _turn_tokens = (chunk.prompt_tokens or 0) + (chunk.completion_tokens or 0)
                         final_usage["prompt_tokens"] += chunk.prompt_tokens or 0
                         final_usage["completion_tokens"] += chunk.completion_tokens or 0
-                        _budget.use_tokens(_turn_tokens)
                     if chunk.credits_consumed is not None:
                         final_usage["api_credits"] = chunk.credits_consumed
 
@@ -923,7 +919,6 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         },
                         budget_snapshot={
                             "turns_used": _budget.turns_used,
-                            "tokens_used": _budget.tokens_used,
                         },
                     )
                     # 追问文本作为本轮输出
@@ -989,7 +984,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             if _stop:
                 logger.warning(
                     f"Budget exhausted | task={task_id} | reason={_stop} | "
-                    f"turns={_budget.turns_used} | tokens={_budget.tokens_used}"
+                    f"turns={_budget.turns_used}"
                 )
 
                 # Final Synthesis Turn — 调 LLM 生成总结

@@ -237,14 +237,14 @@ class Settings(BaseSettings):
     staging_max_size_mb: int = 500               # 单用户 staging 目录容量上限（MB）
     staging_registry_max_entries: int = 20       # 单会话 registry 条目上限（LRU 淘汰）
 
-    # 多维预算配置（主 Agent 工具循环）
+    # 多维预算配置（主 Agent 工具循环，对标大厂：turns + 压缩器 + 墙钟）
     budget_max_turns: int = 15               # 轮次上限（主控制，对标 OpenAI/LangGraph）
-    budget_max_tokens: int = 200_000         # Token 上限（安全网）
     budget_max_wall_time: float = 600.0      # 墙钟上限（纯兜底，10 分钟）
+    context_window_tokens: int = 128_000     # 模型上下文窗口大小（压缩器基于此控制每轮上下文）
 
     # ERPAgent 内部工具循环配置（从域路由器升级为领域专家）
     erp_agent_max_turns: int = 8               # ERPAgent 内部轮次上限
-    erp_agent_max_tokens: int = 80_000         # ERPAgent 内部 Token 上限
+    erp_agent_context_window: int = 80_000     # ERPAgent 上下文窗口（压缩阈值基准）
     erp_agent_tool_timeout: float = 30.0       # ERPAgent 单工具超时
 
     # 超时分级配置（按任务类型差异化超时，仅用于非 budget 场景）

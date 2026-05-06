@@ -93,7 +93,7 @@ class TestRequestUserConfirm:
             adapter=MagicMock(),
             executor=MagicMock(),
             all_tools=[],
-            config=LoopConfig(max_turns=10, max_tokens=10000, tool_timeout=30),
+            config=LoopConfig(max_turns=10, context_window=10000, tool_timeout=30),
             strategy=LoopStrategy(exit_signals=frozenset()),
         )
 

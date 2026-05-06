@@ -46,7 +46,7 @@ class ScheduledTaskResult:
 # ════════════════════════════════════════════════════════
 
 TOOL_TIMEOUT = 30.0                # 单工具超时上限
-MAX_TOTAL_TOKENS = 50000           # Token 预算上限
+CONTEXT_WINDOW = 50000             # 上下文窗口大小（压缩阈值基准）
 DEFAULT_DEADLINE = 180.0           # 默认总执行时间预算（秒）
 MAX_SCHEDULED_TURNS = 12           # 工具循环最大轮次（比 ERP 少，任务粒度更明确）
 
@@ -237,7 +237,7 @@ class ScheduledTaskAgent:
             all_tools=all_tools,
             config=LoopConfig(
                 max_turns=MAX_SCHEDULED_TURNS,
-                max_tokens=MAX_TOTAL_TOKENS,
+                context_window=CONTEXT_WINDOW,
                 tool_timeout=TOOL_TIMEOUT,
                 no_synthesis_fallback_text=(
                     "定时任务执行未能生成完整结论，请检查任务指令。"
