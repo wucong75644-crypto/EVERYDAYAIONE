@@ -7,14 +7,13 @@
 
 import hashlib
 import mimetypes
-import stat
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from loguru import logger
 
+from services.file_query_extensions import FileQueryExtensionsMixin
 from services.file_read_extensions import (
     DOCX_EXTENSIONS,
     FileReadExtensionsMixin,
@@ -22,6 +21,7 @@ from services.file_read_extensions import (
     IMAGE_EXTENSIONS,
     PDF_EXTENSIONS,
 )
+from services.file_write_extensions import FileWriteExtensionsMixin
 
 
 class FileOperationError(Exception):
@@ -32,12 +32,6 @@ class FileOperationError(Exception):
     """
     pass
 
-
-# 搜索时跳过的目录（VCS/临时/中间数据，对标 Claude Code Grep 自动排除）
-_SKIP_SEARCH_DIRS = frozenset({
-    "staging", "__pycache__", "node_modules",
-    ".git", ".svn", ".hg",
-})
 
 # 禁止访问的文件/目录名（安全敏感）
 _BLOCKED_NAMES = frozenset({
@@ -98,7 +92,7 @@ _MAX_LIST_ENTRIES = 200
 _MAX_SEARCH_RESULTS = 100
 
 
-class FileExecutor(FileReadExtensionsMixin):
+class FileExecutor(FileReadExtensionsMixin, FileQueryExtensionsMixin, FileWriteExtensionsMixin):
     """安全文件操作执行器
 
     所有路径操作都限制在 workspace_root/{tenant}/{user_id}/ 内。
@@ -394,377 +388,6 @@ class FileExecutor(FileReadExtensionsMixin):
             header += f" | 显示: {line_offset + 1}-{end_line}"
 
         return f"{header}\n{'─' * 60}\n{output}"
-
-    async def file_write(
-        self,
-        path: str,
-        content: str,
-        mode: str = "overwrite",
-        encoding: str = "utf-8",
-    ) -> str:
-        """写入文件"""
-        target = self.resolve_safe_path(path)
-
-        if len(content.encode(encoding)) > _MAX_WRITE_SIZE:
-            return f"内容过大，超过 {_MAX_WRITE_SIZE / 1024 / 1024:.0f}MB 上限"
-
-        if mode == "create_only" and target.exists():
-            return f"文件已存在: {path}（mode=create_only 不覆盖）"
-
-        target.parent.mkdir(parents=True, exist_ok=True)
-        existed = target.exists()
-
-        if mode == "append":
-            with open(target, "a", encoding=encoding) as f:
-                f.write(content)
-            action = "追加" if existed else "创建"
-        else:
-            target.write_text(content, encoding=encoding)
-            action = "覆盖写入" if existed else "创建"
-
-        size = target.stat().st_size
-        logger.info(f"FileExecutor write | path={path} | mode={mode} | size={size}")
-        return f"已{action}: {path}（{self._format_size(size)}）"
-
-    async def file_list_entries(
-        self,
-        path: str = ".",
-        show_hidden: bool = False,
-    ) -> Dict[str, Any]:
-        """列出目录内容（结构化数据）
-
-        Returns:
-            {"path": str, "dirs": [...], "files": [...], "error": str|None,
-             "truncated": bool}
-        """
-        target = self.resolve_safe_path(path)
-
-        if not target.exists():
-            return {"path": path, "dirs": [], "files": [], "error": f"目录不存在: {path}", "truncated": False}
-        if not target.is_dir():
-            return {"path": path, "dirs": [], "files": [], "error": f"不是目录: {path}", "truncated": False}
-
-        dirs: List[Dict[str, Any]] = []
-        files: List[Dict[str, Any]] = []
-        truncated = False
-        try:
-            count = 0
-            for item in sorted(target.iterdir()):
-                if not show_hidden and item.name.startswith("."):
-                    continue
-                if item.name in _BLOCKED_NAMES or item.name == "staging":
-                    continue
-                try:
-                    st = item.stat()
-                    entry = {
-                        "name": item.name,
-                        "size": st.st_size,
-                        "modified": datetime.fromtimestamp(
-                            st.st_mtime, tz=timezone.utc,
-                        ).strftime("%Y-%m-%d %H:%M"),
-                        "abs_path": str(item),
-                    }
-                    if item.is_dir():
-                        dirs.append(entry)
-                    else:
-                        files.append(entry)
-                except (PermissionError, OSError):
-                    continue
-                count += 1
-                if count >= _MAX_LIST_ENTRIES:
-                    truncated = True
-                    break
-        except PermissionError:
-            return {"path": path, "dirs": [], "files": [], "error": f"无权限访问目录: {path}", "truncated": False}
-
-        return {"path": path, "dirs": dirs, "files": files, "error": None, "truncated": truncated}
-
-    async def file_list(
-        self,
-        path: str = ".",
-        show_hidden: bool = False,
-    ) -> str:
-        """列出目录内容（格式化文本，供 API route 和无句柄场景使用）"""
-        data = await self.file_list_entries(path, show_hidden)
-
-        if data["error"]:
-            return data["error"]
-        if not data["dirs"] and not data["files"]:
-            return f"目录为空: {path}"
-
-        total = len(data["dirs"]) + len(data["files"])
-        lines = [f"目录: {path} | 共 {total} 项"]
-        lines.append("─" * 60)
-        for d in data["dirs"]:
-            lines.append(f"  [目录] {d['name']}/\t\t{d['modified']}")
-        for f in data["files"]:
-            size_str = self._format_size(f["size"])
-            lines.append(f"  [文件] {f['name']}\t{size_str}\t{f['modified']}")
-            lines.append(f"         abs: {f['abs_path']}")
-
-        if data["truncated"]:
-            lines.append(f"\n已达显示上限（{_MAX_LIST_ENTRIES}项），部分条目未显示")
-
-        return "\n".join(lines)
-
-    async def file_search(
-        self,
-        keyword: str,
-        path: str = ".",
-        search_content: bool = False,
-        file_pattern: Optional[str] = None,
-    ) -> str:
-        """搜索文件（按文件名或内容）"""
-        target = self.resolve_safe_path(path)
-
-        if not target.exists() or not target.is_dir():
-            return f"目录不存在: {path}"
-
-        results: List[str] = []
-        keyword_lower = keyword.lower()
-
-        for item in target.rglob(file_pattern or "*"):
-            if len(results) >= _MAX_SEARCH_RESULTS:
-                break
-            if item.name in _BLOCKED_NAMES:
-                continue
-            if item.suffix.lower() in _BLOCKED_EXTENSIONS:
-                continue
-            rel_parts = item.relative_to(target).parts
-            if any(p.startswith(".") or p in _SKIP_SEARCH_DIRS for p in rel_parts):
-                continue
-
-            rel_path = str(item.relative_to(self._root))
-
-            if keyword_lower in item.name.lower():
-                type_tag = "[目录]" if item.is_dir() else "[文件]"
-                results.append(f"  {type_tag} {rel_path}")
-                continue
-
-            if search_content and item.is_file() and self._is_text_file(item):
-                try:
-                    if item.stat().st_size > _MAX_READ_SIZE:
-                        continue
-                    text = item.read_text(encoding="utf-8", errors="ignore")
-                    for line_no, line in enumerate(text.splitlines(), 1):
-                        if keyword_lower in line.lower():
-                            preview = line.strip()[:100]
-                            results.append(f"  [文件] {rel_path}:{line_no} | {preview}")
-                            break
-                except (PermissionError, OSError):
-                    continue
-
-        if not results:
-            mode = "文件名+内容" if search_content else "文件名"
-            return f"未找到匹配「{keyword}」的结果（{mode}搜索）"
-
-        header = f"搜索「{keyword}」| 找到 {len(results)} 项"
-        if len(results) >= _MAX_SEARCH_RESULTS:
-            header += f"（已达上限 {_MAX_SEARCH_RESULTS}）"
-
-        return f"{header}\n{'─' * 60}\n" + "\n".join(results)
-
-    async def file_info(self, path: str) -> str:
-        """获取文件/目录元信息"""
-        target = self.resolve_safe_path(path)
-
-        if not target.exists():
-            return f"路径不存在: {path}"
-
-        st = target.stat()
-        info_lines = [
-            f"路径: {path}",
-            f"类型: {'目录' if target.is_dir() else '文件'}",
-            f"大小: {self._format_size(st.st_size)}",
-            f"修改时间: {datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}",
-            f"创建时间: {datetime.fromtimestamp(st.st_ctime, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}",
-        ]
-
-        if target.is_file():
-            mime, _ = mimetypes.guess_type(str(target))
-            info_lines.append(f"MIME: {mime or '未知'}")
-            info_lines.append(f"可读文本: {'是' if self._is_text_file(target) else '否'}")
-
-        if target.is_dir():
-            try:
-                count = sum(1 for _ in target.iterdir())
-                info_lines.append(f"子项数量: {count}")
-            except PermissionError:
-                info_lines.append("子项数量: 无权限")
-
-        mode = stat.filemode(st.st_mode)
-        info_lines.append(f"权限: {mode}")
-
-        return "\n".join(info_lines)
-
-    async def file_edit(
-        self,
-        path: str,
-        old_string: str,
-        new_string: str,
-        replace_all: bool = False,
-    ) -> str:
-        """精确字符串替换（对标 Claude Code Edit 工具）
-
-        Args:
-            path: 文件名或相对路径
-            old_string: 要替换的原始文本
-            new_string: 替换后的文本（必须与 old_string 不同）
-            replace_all: True 时替换所有匹配项，False 时仅替换唯一匹配
-        """
-        target = self.resolve_safe_path(path)
-
-        if not target.exists():
-            raise FileOperationError(f"文件不存在: {path}")
-        if not target.is_file():
-            raise FileOperationError(f"不是文件: {path}")
-        if not self._is_text_file(target):
-            raise FileOperationError(f"二进制文件不支持编辑: {path}")
-        if old_string == new_string:
-            raise FileOperationError("old_string 和 new_string 相同，无需修改")
-
-        # 读取文件内容
-        try:
-            content = target.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            try:
-                content = target.read_text(encoding="gbk")
-            except Exception:
-                raise FileOperationError(f"无法解码文件 {path}")
-
-        # 检查匹配
-        count = content.count(old_string)
-        if count == 0:
-            raise FileOperationError(
-                f"未找到匹配内容。old_string 在文件中不存在。\n"
-                f"请确认 old_string 与文件中的文本完全一致（包括缩进和空格）。"
-            )
-
-        if not replace_all and count > 1:
-            raise FileOperationError(
-                f"找到 {count} 处匹配，但 replace_all=false。\n"
-                f"请提供更多上下文使 old_string 唯一，或设置 replace_all=true 替换全部。"
-            )
-
-        # 执行替换
-        if replace_all:
-            new_content = content.replace(old_string, new_string)
-            replaced_count = count
-        else:
-            new_content = content.replace(old_string, new_string, 1)
-            replaced_count = 1
-
-        target.write_text(new_content, encoding="utf-8")
-
-        logger.info(
-            f"FileExecutor edit | path={path} | "
-            f"replaced={replaced_count} | replace_all={replace_all}"
-        )
-        return f"已替换 {replaced_count} 处 | 文件: {path}"
-
-    # ========================================
-    # 文件管理操作（工作区面板用）
-    # ========================================
-
-    async def file_delete(self, path: str) -> str:
-        """删除文件或空目录
-
-        - 文件：直接删除
-        - 目录：仅允许空目录（非空返回错误提示）
-
-        Returns:
-            操作结果描述
-        """
-        target = self.resolve_safe_path(path)
-
-        if not target.exists():
-            return f"路径不存在: {path}"
-
-        if target.is_file():
-            target.unlink()
-            logger.info(f"FileExecutor delete file | path={path}")
-            return f"已删除文件: {path}"
-
-        if target.is_dir():
-            # 检查是否为空
-            children = list(target.iterdir())
-            if children:
-                return f"目录不为空（{len(children)} 项），请先清空内容: {path}"
-            target.rmdir()
-            logger.info(f"FileExecutor delete dir | path={path}")
-            return f"已删除目录: {path}"
-
-        return f"无法删除: {path}"
-
-    async def file_mkdir(self, path: str) -> str:
-        """创建目录（含中间路径）
-
-        Returns:
-            操作结果描述
-        """
-        target = self.resolve_safe_path(path)
-
-        if target.exists():
-            if target.is_dir():
-                return f"目录已存在: {path}"
-            return f"同名文件已存在，无法创建目录: {path}"
-
-        target.mkdir(parents=True, exist_ok=True)
-        logger.info(f"FileExecutor mkdir | path={path}")
-        return f"已创建目录: {path}"
-
-    async def file_rename(self, old_path: str, new_path: str) -> str:
-        """重命名文件或目录（同目录下改名，不允许跨目录）
-
-        Returns:
-            操作结果描述
-        """
-        old_target = self.resolve_safe_path(old_path)
-        new_target = self.resolve_safe_path(new_path)
-
-        if not old_target.exists():
-            return f"源路径不存在: {old_path}"
-
-        # 不允许跨目录（跨目录用 file_move）
-        if old_target.parent != new_target.parent:
-            return f"重命名不允许跨目录，请使用移动功能"
-
-        if new_target.exists():
-            return f"目标已存在: {new_path}"
-
-        old_target.rename(new_target)
-        logger.info(f"FileExecutor rename | {old_path} → {new_path}")
-        return f"已重命名: {old_path} → {new_path}"
-
-    async def file_move(self, src_path: str, dest_dir: str) -> str:
-        """移动文件到目标目录
-
-        Args:
-            src_path: 源文件/目录相对路径
-            dest_dir: 目标目录相对路径
-
-        Returns:
-            操作结果描述（含新路径）
-        """
-        src_target = self.resolve_safe_path(src_path)
-        dest_target = self.resolve_safe_path(dest_dir)
-
-        if not src_target.exists():
-            return f"源路径不存在: {src_path}"
-
-        if not dest_target.exists() or not dest_target.is_dir():
-            return f"目标目录不存在: {dest_dir}"
-
-        new_target = dest_target / src_target.name
-
-        if new_target.exists():
-            return f"目标位置已有同名文件: {dest_dir}/{src_target.name}"
-
-        src_target.rename(new_target)
-        # 计算新的相对路径
-        new_rel = str(new_target.relative_to(self._root))
-        logger.info(f"FileExecutor move | {src_path} → {new_rel}")
-        return f"已移动: {src_path} → {new_rel}"
 
     # ========================================
     # 辅助方法

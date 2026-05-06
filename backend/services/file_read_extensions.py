@@ -231,7 +231,7 @@ class FileReadExtensionsMixin:
         """DOCX 文件文本提取（对齐 PDF 直读模式）
 
         - 大文件预检：size > max_read_size 直接拒绝
-        - python-docx 提取全部段落文本
+        - python-docx 提取段落+表格文本
         - 同步 I/O 在线程池执行，不阻塞事件循环
         """
         if size > max_read_size:
@@ -250,11 +250,18 @@ class FileReadExtensionsMixin:
         try:
             def _extract_text():
                 doc = Document(str(target))
-                return "\n".join(p.text for p in doc.paragraphs)
+                parts = [p.text for p in doc.paragraphs]
+                for table in doc.tables:
+                    for row in table.rows:
+                        cells = [c.text.strip() for c in row.cells if c.text.strip()]
+                        if cells:
+                            parts.append(" | ".join(cells))
+                return "\n".join(parts)
 
             text = await loop.run_in_executor(None, _extract_text)
         except Exception as e:
-            logger.warning(f"DOCX open failed | path={path} | error={type(e).__name__}: {e}")
+            # 脱敏：只暴露异常类型，不暴露服务端绝对路径
+            logger.warning(f"DOCX open failed | path={path} | error={type(e).__name__}")
             return f"DOCX 文件无法打开: {path}（{type(e).__name__}）"
 
         if not text.strip():

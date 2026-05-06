@@ -1000,3 +1000,26 @@
 | `build_sandbox_executor` | `backend/services/sandbox/functions.py` | 工厂函数（构建执行器+注入KernelManager） |
 | `validate_code` | `backend/services/sandbox/validators.py` | AST安全预检（模块/函数黑名单+dunder限制） |
 | `get_kernel_manager` | `backend/services/sandbox/kernel_manager.py` | 获取全局KernelManager单例 |
+
+### 文件操作模块（FileExecutor 三 Mixin 架构）
+
+| 类/函数名 | 文件路径 | 功能描述 |
+|-----------|---------|---------|
+| `FileExecutor` | `backend/services/file_executor.py` | 文件操作执行器（路径安全校验 + file_read 路由 + 三 Mixin 继承） |
+| `FileOperationError` | `backend/services/file_executor.py` | 文件操作业务校验异常（参数/路径问题，LLM 可重试） |
+| `FileReadExtensionsMixin` | `backend/services/file_read_extensions.py` | PDF/图片/DOCX 直读 Mixin |
+| `_read_pdf` | `backend/services/file_read_extensions.py` | PDF 文本提取（PyPDF2，线程池，扫描件检测） |
+| `_read_image` | `backend/services/file_read_extensions.py` | 图片多模态读取（CDN URL / base64） |
+| `_read_docx` | `backend/services/file_read_extensions.py` | DOCX 文本提取（python-docx，段落+表格，线程池） |
+| `FileQueryExtensionsMixin` | `backend/services/file_query_extensions.py` | 文件查询+编辑 Mixin |
+| `file_list_entries` | `backend/services/file_query_extensions.py` | 列目录（结构化数据返回） |
+| `file_list` | `backend/services/file_query_extensions.py` | 列目录（格式化文本） |
+| `file_search` | `backend/services/file_query_extensions.py` | 搜索文件（文件名/内容） |
+| `file_info` | `backend/services/file_query_extensions.py` | 文件/目录元信息 |
+| `file_edit` | `backend/services/file_query_extensions.py` | 精确字符串替换（对标 Claude Code Edit） |
+| `FileWriteExtensionsMixin` | `backend/services/file_write_extensions.py` | 文件写入+管理 Mixin |
+| `file_write` | `backend/services/file_write_extensions.py` | 写入文件（覆盖/追加/仅创建） |
+| `file_delete` | `backend/services/file_write_extensions.py` | 删除文件或空目录 |
+| `file_mkdir` | `backend/services/file_write_extensions.py` | 创建目录（含中间路径） |
+| `file_rename` | `backend/services/file_write_extensions.py` | 重命名（同目录） |
+| `file_move` | `backend/services/file_write_extensions.py` | 移动文件到目标目录 |

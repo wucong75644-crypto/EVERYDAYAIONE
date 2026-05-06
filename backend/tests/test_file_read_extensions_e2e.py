@@ -485,11 +485,12 @@ class TestBinaryFileRegression:
         assert "data_query" in result  # 数据文件引导到 data_query
 
     @pytest.mark.asyncio
-    async def test_docx_rejected(self, executor, workspace):
+    async def test_docx_invalid_file(self, executor, workspace):
+        """损坏的 docx 走 _read_docx 路由，返回友好错误"""
         Path(workspace, "doc.docx").write_bytes(b"PK\x03\x04")
         result = await executor.file_read("doc.docx")
         assert isinstance(result, str)
-        assert "二进制" in result or "code_execute" in result
+        assert "DOCX" in result and "无法打开" in result
 
     @pytest.mark.asyncio
     async def test_unknown_binary_rejected(self, executor, workspace):

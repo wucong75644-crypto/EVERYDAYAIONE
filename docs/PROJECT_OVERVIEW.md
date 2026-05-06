@@ -166,6 +166,12 @@ EVERYDAYAIONE/
 │   │   │       ├── purchase_agent.py         # 采购Agent
 │   │   │       ├── trade_agent.py            # 订单Agent
 │   │   │       └── aftersale_agent.py        # 售后Agent
+│   │   ├── file_executor.py          # 文件操作执行器（安全路径校验 + file_read 路由）
+│   │   ├── file_read_extensions.py   # file_read 扩展 Mixin（PDF/图片/DOCX 直读）
+│   │   ├── file_query_extensions.py  # file_list/search/info/edit 扩展 Mixin
+│   │   ├── file_write_extensions.py  # file_write/delete/mkdir/rename/move 扩展 Mixin
+│   │   ├── file_metadata_extractor.py # 文件元信息提取（docx/pptx/pdf/xlsx 预览）
+│   │   ├── file_upload.py            # 文件上传服务
 │   │   └── adapters/                 # AI 模型适配器
 │   │       ├── __init__.py               # 适配器导出
 │   │       ├── base.py                   # 适配器基类
