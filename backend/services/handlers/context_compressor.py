@@ -15,9 +15,9 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
-# staging 路径正则（与 tool_digest.py 保持一致）
+# staging 路径正则（匹配 STAGING_DIR + '/xxx.parquet' 或 "/xxx.txt" 等任意格式）
 _STAGING_PATH_RE = re.compile(
-    r'STAGING_DIR\s*\+\s*"/(tool_result_[^"]+\.txt)"'
+    r"STAGING_DIR\s*\+\s*['\"]/?([^'\"]+)['\"]"
 )
 
 
@@ -502,7 +502,7 @@ def _extract_archive_meta(content: str, tool_name: str = "") -> str:
     label = tool_name or "工具"
     lines = [f"[已归档] {label} 查询结果（原始 {original_size} 字符）"]
     if staged_path:
-        lines.append(f'数据文件: STAGING_DIR + "/{staged_path}"')
+        lines.append(f"数据文件: STAGING_DIR + '/{staged_path}'")
     if fields_line:
         lines.append(fields_line)
 

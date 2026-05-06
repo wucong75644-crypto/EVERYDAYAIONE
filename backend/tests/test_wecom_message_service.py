@@ -498,8 +498,9 @@ class TestHandleText:
             "services.handlers.get_handler"
         ) as mock_get_handler:
             mock_instance = MagicMock()
+            from services.handlers.chat_generate_mixin import GenerateResult
             mock_instance.generate_complete = AsyncMock(
-                return_value=[TextPart(text="你好，这是回复")]
+                return_value=GenerateResult(parts=[TextPart(text="你好，这是回复")])
             )
             mock_get_handler.return_value = mock_instance
 
@@ -507,8 +508,8 @@ class TestHandleText:
             await svc._handle_text("u1", "c1", "m1", "你好", ctx)
 
         svc._dispatch_result_to_wecom.assert_called_once()
-        result_parts = svc._dispatch_result_to_wecom.call_args[0][0]
-        assert any(isinstance(p, TextPart) for p in result_parts)
+        gen_result = svc._dispatch_result_to_wecom.call_args[0][0]
+        assert any(isinstance(p, TextPart) for p in gen_result.parts)
 
     @pytest.mark.asyncio
     async def test_image_response_dispatched(self):
@@ -525,19 +526,20 @@ class TestHandleText:
             "services.handlers.get_handler"
         ) as mock_get_handler:
             mock_instance = MagicMock()
+            from services.handlers.chat_generate_mixin import GenerateResult
             mock_instance.generate_complete = AsyncMock(
-                return_value=[
+                return_value=GenerateResult(parts=[
                     TextPart(text="图片如下"),
                     ImagePart(url="https://example.com/cat.png"),
-                ]
+                ])
             )
             mock_get_handler.return_value = mock_instance
 
             ctx = _make_reply_ctx("smart_robot")
             await svc._handle_text("u1", "c1", "m1", "画猫", ctx)
 
-        result_parts = svc._dispatch_result_to_wecom.call_args[0][0]
-        assert any(isinstance(p, ImagePart) for p in result_parts)
+        gen_result = svc._dispatch_result_to_wecom.call_args[0][0]
+        assert any(isinstance(p, ImagePart) for p in gen_result.parts)
 
     @pytest.mark.asyncio
     async def test_video_response_dispatched(self):
@@ -554,16 +556,17 @@ class TestHandleText:
             "services.handlers.get_handler"
         ) as mock_get_handler:
             mock_instance = MagicMock()
+            from services.handlers.chat_generate_mixin import GenerateResult
             mock_instance.generate_complete = AsyncMock(
-                return_value=[VideoPart(url="https://example.com/demo.mp4")]
+                return_value=GenerateResult(parts=[VideoPart(url="https://example.com/demo.mp4")])
             )
             mock_get_handler.return_value = mock_instance
 
             ctx = _make_reply_ctx("smart_robot")
             await svc._handle_text("u1", "c1", "m1", "生成视频", ctx)
 
-        result_parts = svc._dispatch_result_to_wecom.call_args[0][0]
-        assert any(isinstance(p, VideoPart) for p in result_parts)
+        gen_result = svc._dispatch_result_to_wecom.call_args[0][0]
+        assert any(isinstance(p, VideoPart) for p in gen_result.parts)
 
     @pytest.mark.asyncio
     async def test_generate_failure_replies_error(self):
@@ -602,8 +605,9 @@ class TestHandleText:
             "services.handlers.get_handler"
         ) as mock_get_handler:
             mock_instance = MagicMock()
+            from services.handlers.chat_generate_mixin import GenerateResult
             mock_instance.generate_complete = AsyncMock(
-                return_value=[TextPart(text="ok")]
+                return_value=GenerateResult(parts=[TextPart(text="ok")])
             )
             mock_get_handler.return_value = mock_instance
 
@@ -645,14 +649,15 @@ class TestDispatchResultToWecom:
     async def test_text_only_dispatched(self):
         """纯文字 → 推送文字 + DB 写入 TextPart"""
         from schemas.message import TextPart
+        from services.handlers.chat_generate_mixin import GenerateResult
 
         db = _make_db_mock()
         svc = WecomMessageService(db)
         svc._reply_text = AsyncMock()
 
         ctx = _make_reply_ctx("smart_robot")
-        parts = [TextPart(text="回复内容")]
-        await svc._dispatch_result_to_wecom(parts, ctx, "m1")
+        gen_result = GenerateResult(parts=[TextPart(text="回复内容")])
+        await svc._dispatch_result_to_wecom(gen_result, ctx, "m1")
 
         # DB messages 表应被 update
         msg_mock = db._table_mocks["messages"]
@@ -665,6 +670,7 @@ class TestDispatchResultToWecom:
     async def test_mixed_text_and_image(self):
         """文字+图片 → 都推送 + DB 一次性包含两种类型"""
         from schemas.message import ImagePart, TextPart
+        from services.handlers.chat_generate_mixin import GenerateResult
 
         db = _make_db_mock()
         svc = WecomMessageService(db)
@@ -672,8 +678,8 @@ class TestDispatchResultToWecom:
         svc._send_media_to_wecom = AsyncMock()
 
         ctx = _make_reply_ctx("smart_robot")
-        parts = [TextPart(text="图如下"), ImagePart(url="https://example.com/cat.png")]
-        await svc._dispatch_result_to_wecom(parts, ctx, "m1")
+        gen_result = GenerateResult(parts=[TextPart(text="图如下"), ImagePart(url="https://example.com/cat.png")])
+        await svc._dispatch_result_to_wecom(gen_result, ctx, "m1")
 
         # 媒体应推送（message_id=None，不让内部更新 DB）
         svc._send_media_to_wecom.assert_called_once()
@@ -690,12 +696,14 @@ class TestDispatchResultToWecom:
     @pytest.mark.asyncio
     async def test_empty_result_replies_error(self):
         """空结果 → 回复错误信息"""
+        from services.handlers.chat_generate_mixin import GenerateResult
+
         db = _make_db_mock()
         svc = WecomMessageService(db)
         svc._reply_text = AsyncMock()
 
         ctx = _make_reply_ctx("smart_robot")
-        await svc._dispatch_result_to_wecom([], ctx, "m1")
+        await svc._dispatch_result_to_wecom(GenerateResult(parts=[]), ctx, "m1")
 
         svc._reply_text.assert_called_once()
         assert "没有生成" in svc._reply_text.call_args[0][1]
@@ -704,6 +712,7 @@ class TestDispatchResultToWecom:
     async def test_video_dispatched(self):
         """视频 → 推送视频 + DB 包含 video"""
         from schemas.message import TextPart, VideoPart
+        from services.handlers.chat_generate_mixin import GenerateResult
 
         db = _make_db_mock()
         svc = WecomMessageService(db)
@@ -711,8 +720,8 @@ class TestDispatchResultToWecom:
         svc._send_media_to_wecom = AsyncMock()
 
         ctx = _make_reply_ctx("smart_robot")
-        parts = [TextPart(text="视频如下"), VideoPart(url="https://example.com/demo.mp4")]
-        await svc._dispatch_result_to_wecom(parts, ctx, "m1")
+        gen_result = GenerateResult(parts=[TextPart(text="视频如下"), VideoPart(url="https://example.com/demo.mp4")])
+        await svc._dispatch_result_to_wecom(gen_result, ctx, "m1")
 
         msg_mock = db._table_mocks["messages"]
         update_args = msg_mock.update.call_args[0][0]
