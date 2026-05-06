@@ -2013,7 +2013,9 @@
       "Bash(ssh wucong@47.116.173.97 \"tail -200 /home/wucong/EVERYDAYAIONE/backend/logs/app_2026-05-06.log | grep -i 'image\\\\|generate_image\\\\|500\\\\|error' | grep -v DEBUG | tail -40\")",
       "Bash(ssh root@47.116.173.97 \"tail -200 /home/wucong/EVERYDAYAIONE/backend/logs/app_2026-05-06.log | grep -i 'image\\\\|generate_image\\\\|500\\\\|error' | grep -v DEBUG | tail -40\")",
       "Bash(grep -i \"host\\\\|server\" /Users/wucong/EVERYDAYAIONE/deploy*.sh)",
-      "Bash(./git-push.sh \"chore: 清理 ExecutionBudget 残留引用（use_tokens/is_tight/tokens_used）\")"
+      "Bash(./git-push.sh \"chore: 清理 ExecutionBudget 残留引用（use_tokens/is_tight/tokens_used）\")",
+      "Bash(ssh root@47.98.247.233 \"tail -300 /root/EVERYDAYAIONE/backend/logs/app_2026-05-06.log 2>/dev/null || ls /root/EVERYDAYAIONE/backend/logs/\")",
+      "Bash(./git-push.sh \"fix: ImageHandler全失败时返回502友好提示，替代裸Exception导致的500\")"
     ],
     "additionalDirectories": [
       "/tmp"

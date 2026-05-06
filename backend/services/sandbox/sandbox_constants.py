@@ -20,8 +20,8 @@ ALLOWED_IMPORT_MODULES = frozenset({
     "pathlib",
     # 集合/迭代
     "collections", "itertools", "functools", "operator", "copy",
-    # 字符串/正则
-    "re", "string",
+    # 字符串/正则/相似度
+    "re", "string", "difflib",
     # 类型/枚举
     "typing", "enum", "dataclasses", "abc",
     # IO（BytesIO 用于生成 Excel/CSV 等二进制文件）

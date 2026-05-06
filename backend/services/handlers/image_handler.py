@@ -166,7 +166,12 @@ class ImageHandler(BaseHandler):
             await adapter.close()
 
         if not tasks_created:
-            raise Exception("所有图片生成请求均失败")
+            from core.exceptions import AppException
+            raise AppException(
+                code="IMAGE_GENERATION_FAILED",
+                message="图片生成服务暂时不可用，请稍后重试",
+                status_code=502,
+            )
 
         logger.info(
             f"Image batch created | batch_id={batch_id} | "
