@@ -217,53 +217,25 @@ class TestWorkspaceFileAnalysis:
 
 
 # ══════════════════════════════════════════════════════
-# 链路3：全量导出
-# staging → data_query export → xlsx 文件
+# 链路3：export 参数已废弃
+# 导出给用户统一走 code_execute
 # ══════════════════════════════════════════════════════
 
 
-class TestExportMode:
-    """全量导出链路。"""
+class TestExportModeRemoved:
+    """export 参数已废弃——传 export 返回错误提示。"""
 
     @pytest.mark.asyncio
-    async def test_export_csv(self, workspace, sample_erp_data):
-        """导出为 CSV（不依赖 spatial 扩展）。"""
+    async def test_export_rejected(self, workspace, sample_erp_data):
         executor = _make_executor(workspace)
-
-        with patch("services.file_upload.auto_upload",
-                   new_callable=AsyncMock,
-                   return_value="[FILE]https://cdn/test.csv|test.csv|text/csv|1234[/FILE]"):
-            result = await executor.execute(
-                file="trade_1714400000.parquet",
-                sql="SELECT * FROM data",
-                export="导出测试.csv",
-            )
-
-        assert not result.is_failure
-        output_file = Path(workspace["output"]) / "导出测试.csv"
-        assert output_file.exists()
-        # 验证行数
-        df = pd.read_csv(str(output_file))
-        assert len(df) == 100
-
-    @pytest.mark.asyncio
-    async def test_export_with_filter(self, workspace, sample_erp_data):
-        """导出带过滤条件的子集。"""
-        executor = _make_executor(workspace)
-
-        with patch("services.file_upload.auto_upload",
-                   new_callable=AsyncMock,
-                   return_value="[FILE]https://cdn/test.csv|test.csv|text/csv|1234[/FILE]"):
-            result = await executor.execute(
-                file="trade_1714400000.parquet",
-                sql='SELECT * FROM data WHERE "订单状态" = \'PAID\'',
-                export="已付款订单.csv",
-            )
-
-        assert not result.is_failure
-        output_file = Path(workspace["output"]) / "已付款订单.csv"
-        df = pd.read_csv(str(output_file))
-        assert len(df) == 80  # 80 条 PAID
+        result = await executor.execute(
+            file="trade_1714400000.parquet",
+            sql="SELECT * FROM data",
+            export="导出测试.csv",
+        )
+        assert result.is_failure
+        assert "不支持 export" in result.summary
+        assert "code_execute" in result.summary
 
 
 # ══════════════════════════════════════════════════════

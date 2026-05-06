@@ -235,10 +235,10 @@ DuckDB SQL 引擎，恒定内存。支持并行调用（多文件可同时读取
 何时使用：
 - 看文件结构（不传 sql）：返回列名、类型、行数、统计信息 + 后续可用路径
 - SQL 聚合筛选（传 sql）：结果存 staging，返回数据 + staging 引用
-- 直接导出为 Excel（传 export 参数）
 - 多文件场景：每个文件分别调 data_query（可并行），各自存 staging，再用 code_execute merge
 
 不适用：
+- 导出文件给用户 → code_execute（从 staging 读取后 df.to_excel 写到 OUTPUT_DIR）
 - 计算、可视化 → code_execute
 - 查 ERP 业务数据 → erp_agent
 
@@ -246,7 +246,6 @@ DuckDB SQL 引擎，恒定内存。支持并行调用（多文件可同时读取
 - file：文件名或相对路径（如 "销售报表.xlsx" 或 "报表/销售报表.xlsx"），使用 data_query 探索模式返回的路径最准确
 - 不传 sql：返回文件结构 + 后续可用的查询命令
 - 传 sql：执行查询，表名用 FROM data，中文列名用双引号
-- 传 export：生成导出文件（如 export="月度报表.xlsx"）
 
 ### file_list / file_search — 工作区文件发现
 查看工作区有哪些文件、搜索特定文件。支持并行调用。
@@ -635,11 +634,11 @@ def _build_common_tools() -> List[Dict[str, Any]]:
             "function": {
                 "name": "data_query",
                 "description": (
-                    "查询 staging 文件或工作区数据文件的内容，"
-                    "支持探索结构、SQL 查询和文件导出。\n"
-                    "不传 sql：返回文件结构（列名、类型、行数、统计信息）。\n"
-                    "传 sql：执行查询，表名统一用 FROM data。\n"
-                    "传 export：直接生成导出文件（如 export=\"月度报表.xlsx\"）。"
+                    "查询工作区数据文件或 staging 文件的内容，"
+                    "支持探索结构和 SQL 查询。\n"
+                    "不传 sql：返回文件结构（列名、类型、行数、统计信息）+ 后续可用路径。\n"
+                    "传 sql：执行查询，表名统一用 FROM data，结果自动存 staging。\n"
+                    "导出文件给用户请用 code_execute（df.to_excel 写到 OUTPUT_DIR）。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -657,13 +656,6 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                             "description": (
                                 "SQL 查询语句，表名用 FROM data。"
                                 "中文列名用双引号包裹。"
-                            ),
-                        },
-                        "export": {
-                            "type": "string",
-                            "description": (
-                                "导出文件名（如 \"月度报表.xlsx\"），"
-                                "传则生成文件而非返回数据"
                             ),
                         },
                         "sheet": {
