@@ -58,6 +58,46 @@ def _map_stock_item(item: dict[str, Any]) -> dict[str, Any] | None:
 
 _STOCK_UPSERT_KEY = "outer_id,sku_outer_id,warehouse_id,org_id"
 _CHECKPOINT_INTERVAL = 10  # 每 10 批（~1000 编码）存盘一次
+_STOCK_FULL_429_MAX_RETRIES = 8  # 全量同步429最大重试（比增量更宽容）
+_STOCK_FULL_429_BASE_DELAY = 10.0  # 全量同步429退避起始秒数
+
+
+async def _stock_full_request(
+    svc: "ErpSyncService", batch_str: str, wh_id: int, page: int,
+) -> dict[str, Any] | None:
+    """全量同步单次API请求，带429长退避（不依赖client的3次短重试）"""
+    import httpx
+    from services.kuaimai.erp_sync_utils import _API_SEM
+
+    for attempt in range(_STOCK_FULL_429_MAX_RETRIES):
+        try:
+            async with _API_SEM:
+                return await svc._get_client().request_with_retry(
+                    "stock.api.status.query",
+                    {
+                        "mainOuterId": batch_str,
+                        "warehouseId": wh_id,
+                        "pageSize": 100,
+                        "pageNo": page,
+                    },
+                )
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                delay = _STOCK_FULL_429_BASE_DELAY * (2 ** attempt)
+                delay = min(delay, 120.0)  # 最多等2分钟
+                logger.warning(
+                    f"stock_full 429, long backoff | attempt={attempt + 1}/"
+                    f"{_STOCK_FULL_429_MAX_RETRIES} | delay={delay:.0f}s"
+                )
+                await asyncio.sleep(delay)
+            else:
+                logger.warning(f"stock_full request error | status={e.response.status_code}")
+                return None
+        except Exception as e:
+            logger.warning(f"stock_full request failed | error={e}")
+            return None
+    logger.error("stock_full 429 exhausted after max retries, skipping batch")
+    return None
 
 
 async def _get_warehouse_ids(svc: ErpSyncService) -> list[str]:
@@ -110,16 +150,11 @@ async def _fetch_stock_by_codes(
             page = 0
             while page < 500:
                 page += 1
-                async with _API_SEM:
-                    data = await svc._get_client().request_with_retry(
-                        "stock.api.status.query",
-                        {
-                            "mainOuterId": batch_str,
-                            "warehouseId": int(wh_id),
-                            "pageSize": 100,
-                            "pageNo": page,
-                        },
-                    )
+                data = await _stock_full_request(
+                    svc, batch_str, int(wh_id), page,
+                )
+                if data is None:
+                    break  # 无法恢复，跳过此批
                 items = data.get("stockStatusVoList") or []
                 for item in items:
                     row = _map_stock_item(item)
@@ -127,11 +162,9 @@ async def _fetch_stock_by_codes(
                         buffer.append(row)
                 if len(items) < 100:
                     break
-                # 全量同步请求间延迟，避免触发快麦429限流
-                await asyncio.sleep(0.5)
 
             # 每批间延迟（全量同步非紧急，优先稳定性）
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(1.0)
 
             # checkpoint：每 N 批或最后一批，立即存盘
             is_checkpoint = (batch_idx + 1) % _CHECKPOINT_INTERVAL == 0
