@@ -237,13 +237,19 @@ DuckDB SQL 引擎，恒定内存。支持并行调用（多文件可同时读取
 - SQL 聚合筛选（传 sql）：结果存 staging，返回数据 + staging 引用
 - 多文件场景：每个文件分别调 data_query（可并行），各自存 staging，再用 code_execute merge
 
+多 Sheet Excel：
+- 探索模式自动扫描所有 Sheet 结构，返回概览（列名+行数+是否可合并）
+- 结构相同的 Sheet 用 sheet="*" 一次性合并为一张表（自动加 _sheet 列标识来源）
+- 结构不同的 Sheet 用 sheet="Sheet名" 单独读取
+
 不适用：
 - 导出文件给用户 → code_execute（从 staging 读取后 df.to_excel 写到 OUTPUT_DIR）
 - 计算、可视化 → code_execute
 - 查 ERP 业务数据 → erp_agent
 
 参数：
-- file：文件名或相对路径（如 "销售报表.xlsx" 或 "报表/销售报表.xlsx"），使用 data_query 探索模式返回的路径最准确
+- file：文件名或相对路径，使用 data_query 探索模式或 file_list 返回的路径最准确
+- sheet：Sheet 名称（可选），传 "*" 合并所有同结构 Sheet
 - 不传 sql：返回文件结构 + 后续可用的查询命令
 - 传 sql：执行查询，表名用 FROM data，中文列名用双引号
 
@@ -661,8 +667,9 @@ def _build_common_tools() -> List[Dict[str, Any]]:
                         "sheet": {
                             "type": "string",
                             "description": (
-                                "Excel 的 Sheet 名称或索引"
-                                "（可选，默认第一个 Sheet）"
+                                "Excel 的 Sheet 名称（可选，默认第一个 Sheet）。"
+                                "传 \"*\" 合并所有同结构 Sheet 为一张表（自动加 _sheet 列标识来源）。"
+                                "探索模式会返回 Sheet 概览，告知是否可合并。"
                             ),
                         },
                     },
