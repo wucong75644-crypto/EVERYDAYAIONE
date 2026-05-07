@@ -632,18 +632,18 @@ def format_workspace_files_prompt(
         size_str = _fmt_size(f.get("size"))
         mtime = f.get("modified", "")
 
-        # 文件类型图标
+        # 文件类型标签
         if ext in _SPREADSHEET_EXTS:
-            icon = "📊"
+            tag = "📊 [Excel]"
         elif ext in _DOCUMENT_EXTS:
-            icon = "📝"
+            tag = "📝 [文档]"
         elif ext in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}:
-            icon = "🖼️"
+            tag = "🖼 [图片]"
         else:
-            icon = "📄"
+            tag = "📄 [文件]"
 
-        parts.append(f"{icon} {wp} | {size_str} | {ext.lstrip('.')} | {mtime}")
-        parts.append(f"   路径: {wp}")
+        parts.append(f"{tag} ({size_str}) | {ext.lstrip('.')} | {mtime}")
+        parts.append(f"  路径: {wp}")
 
     return "\n".join(parts)
 
@@ -803,7 +803,7 @@ def _format_standard(
     row_label = f"{row_count:,}" if row_count is not None else "未知"
 
     lines = [
-        f"📊 {wp} | {row_label} 行 × {col_count} 列",
+        f"📊 [Excel] | {row_label} 行 × {col_count} 列",
         f"路径: {wp}",
         "",
     ]
@@ -915,7 +915,7 @@ def _format_compact(
     read_cmd = _build_read_command(wp, meta)
 
     return (
-        f"📊 {wp} | {row_label}×{col_count} | 路径: {wp}\n"
+        f"📊 [Excel] | {row_label}×{col_count}\n"
         f"  列: {cols_str}{sheet_hint}\n"
         f"  用 {read_cmd} 读取"
     )
@@ -950,8 +950,11 @@ def _format_document_entry(
 
     read_hint = _DOC_READ_HINTS.get(ext, f"open('{wp}')")
 
+    _DOC_TYPE_TAGS = {".docx": "📝 [Word]", ".pptx": "📽 [PPT]", ".pdf": "📕 [PDF]"}
+    tag = _DOC_TYPE_TAGS.get(ext, "📝 [文档]")
+
     if meta is None:
-        return f"📄 {wp} ({size_str})\n  读取: {read_hint}"
+        return f"{tag} ({size_str})\n  读取: {read_hint}"
 
     doc_type = meta.get("type", "")
 
@@ -961,7 +964,7 @@ def _format_document_entry(
         chars = meta.get("chars", 0)
         preview = meta.get("preview", [])
 
-        lines = [f"📝 {wp} ({size_str}) | {paragraphs}段 {tables}表 ~{chars:,}字"]
+        lines = [f"📝 [Word] ({size_str}) | {paragraphs}段 {tables}表 ~{chars:,}字"]
         if preview:
             preview_text = " / ".join(preview[:3])
             if len(preview_text) > 100:
@@ -975,7 +978,7 @@ def _format_document_entry(
         chars = meta.get("chars", 0)
         titles = meta.get("slide_titles", [])
 
-        lines = [f"📽 {wp} ({size_str}) | {slides}页 ~{chars:,}字"]
+        lines = [f"📽 [PPT] ({size_str}) | {slides}页 ~{chars:,}字"]
         if titles:
             title_preview = ", ".join(titles[:5])
             if len(titles) > 5:
@@ -990,16 +993,16 @@ def _format_document_entry(
         preview = meta.get("preview", "")
         is_scanned = meta.get("is_scanned", False)
 
-        lines = [f"📕 {wp} ({size_str}) | {pages}页 ~{chars:,}字"]
+        lines = [f"📕 [PDF] ({size_str}) | {pages}页 ~{chars:,}字"]
         if is_scanned:
-            lines.append("  ⚠️ 扫描件 PDF（无可提取文本），需 OCR 处理")
+            lines.append("  扫描件 PDF（无可提取文本），需 OCR 处理")
         elif preview:
             short = preview[:100] + "..." if len(preview) > 100 else preview
             lines.append(f"  首页预览: {short}")
-        lines.append(f"  用 code_execute: {read_hint}")
+        lines.append(f"  读取: {read_hint}")
         return "\n".join(lines)
 
-    return f"📄 {wp} ({size_str})\n  用 code_execute: {read_hint}"
+    return f"{tag} ({size_str})\n  读取: {read_hint}"
 
 
 # ============================================================
@@ -1133,11 +1136,11 @@ def format_file_metadata_line(
         sheet_hint = f" | {len(sheets)} Sheets" if sheets else ""
         header_row = meta.get("header_row")
         read_cmd = _build_read_command(name, meta)
-        header_hint = f" | ⚠️ header={header_row}" if header_row else ""
+        header_hint = f" | header={header_row}" if header_row else ""
         return (
-            f"  📊 {name}\t{size_str} | {row_label}行×{col_count}列"
+            f"  📊 [Excel] ({size_str}) | {row_label}行×{col_count}列"
             f"{sheet_hint}{header_hint}\n"
-            f"     读取: {read_cmd}"
+            f"  读取: {read_cmd}"
         )
 
     # 文档类
@@ -1146,8 +1149,8 @@ def format_file_metadata_line(
         t = meta.get("tables", 0)
         c = meta.get("chars", 0)
         return (
-            f"  📝 {name}\t{size_str} | {p}段 {t}表 ~{c:,}字\n"
-            f"     读取: file_read(path=\"{name}\")"
+            f"  📝 [Word] ({size_str}) | {p}段 {t}表 ~{c:,}字\n"
+            f"  读取: file_read(path=\"{name}\")"
         )
     if file_type == "pptx":
         s = meta.get("slides", 0)
@@ -1155,16 +1158,16 @@ def format_file_metadata_line(
         titles = meta.get("slide_titles", [])
         title_hint = f" | {', '.join(titles[:3])}" if titles else ""
         return (
-            f"  📽 {name}\t{size_str} | {s}页 ~{c:,}字{title_hint}\n"
-            f"     读取: file_read(path=\"{name}\")"
+            f"  📽 [PPT] ({size_str}) | {s}页 ~{c:,}字{title_hint}\n"
+            f"  读取: file_read(path=\"{name}\")"
         )
     if file_type == "pdf":
         p = meta.get("pages", 0)
         c = meta.get("chars", 0)
-        scanned = " | ⚠️扫描件" if meta.get("is_scanned") else ""
+        scanned = " | 扫描件" if meta.get("is_scanned") else ""
         return (
-            f"  📕 {name}\t{size_str} | {p}页 ~{c:,}字{scanned}\n"
-            f"     读取: file_read(path=\"{name}\")"
+            f"  📕 [PDF] ({size_str}) | {p}页 ~{c:,}字{scanned}\n"
+            f"  读取: file_read(path=\"{name}\")"
         )
 
     # 文本类
@@ -1177,8 +1180,8 @@ def format_file_metadata_line(
         first_line = preview[0][:60] + "..." if preview and len(preview[0]) > 60 else (preview[0] if preview else "")
         preview_hint = f' | "{first_line}"' if first_line else ""
         return (
-            f"  📄 {name}\t{size_str} | {lines_label} {chars_label}{preview_hint}\n"
-            f"     读取: file_read(path=\"{name}\")"
+            f"  📄 [文本] ({size_str}) | {lines_label} {chars_label}{preview_hint}\n"
+            f"  读取: file_read(path=\"{name}\")"
         )
 
     # 图片类
@@ -1186,8 +1189,8 @@ def format_file_metadata_line(
         w = meta.get("width", 0)
         h = meta.get("height", 0)
         return (
-            f"  🖼 {name}\t{size_str} | {w}×{h}px\n"
-            f"     读取: file_read(path=\"{name}\")"
+            f"  🖼 [图片] ({size_str}) | {w}×{h}px\n"
+            f"  读取: file_read(path=\"{name}\")"
         )
 
     # Parquet
@@ -1199,8 +1202,8 @@ def format_file_metadata_line(
         if len(col_names) > 5:
             cols_hint += ", ..."
         return (
-            f"  📊 {name}\t{size_str} | {rows:,}行×{cols}列{cols_hint}\n"
-            f"     读取: pd.read_parquet('{name}')"
+            f"  📊 [Parquet] ({size_str}) | {rows:,}行×{cols}列{cols_hint}\n"
+            f"  读取: pd.read_parquet('{name}')"
         )
 
     return f"  {name}\t{size_str}"

@@ -414,7 +414,7 @@ class TestFormatPrompt:
         """Excel 文件显示 📊 图标 + 路径"""
         files = [{"workspace_path": "data.xlsx", "name": "data.xlsx", "size": 1024}]
         result = format_workspace_files_prompt(files, {})
-        assert "📊 data.xlsx" in result
+        assert "📊 [Excel]" in result
         assert "路径: data.xlsx" in result
         assert "xlsx" in result
 
@@ -422,14 +422,14 @@ class TestFormatPrompt:
         """PDF 文件显示 📝 图标"""
         files = [{"workspace_path": "report.pdf", "name": "report.pdf", "size": 2048}]
         result = format_workspace_files_prompt(files, {})
-        assert "📝 report.pdf" in result
+        assert "📝 [文档]" in result
         assert "路径: report.pdf" in result
 
     def test_txt_shows_file_icon(self):
         """文本文件显示 📄 图标"""
         files = [{"workspace_path": "readme.txt", "name": "readme.txt", "size": 512}]
         result = format_workspace_files_prompt(files, {})
-        assert "📄 readme.txt" in result
+        assert "📄 [文件]" in result
 
     def test_mixed_files(self):
         """混合文件类型各用正确图标"""
@@ -438,8 +438,8 @@ class TestFormatPrompt:
             {"workspace_path": "notes.txt", "name": "notes.txt", "size": 256},
         ]
         result = format_workspace_files_prompt(files, {})
-        assert "📊 data.xlsx" in result
-        assert "📄 notes.txt" in result
+        assert "📊 [Excel]" in result
+        assert "📄 [文件]" in result
 
     def test_empty_files(self):
         """空文件列表返回空"""
