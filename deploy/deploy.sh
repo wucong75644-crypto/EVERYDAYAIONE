@@ -240,6 +240,12 @@ sync_backend() {
         backend/ \
         ${SERVER_USER}@${SERVER_HOST}:${REMOTE_BACKEND_DIR}/
 
+    # 同步部署配置（sandbox.cfg 等）
+    rsync -avz \
+        -e "ssh -p ${SERVER_PORT}" \
+        deploy/ \
+        ${SERVER_USER}@${SERVER_HOST}:${REMOTE_BACKEND_DIR}/../deploy/
+
     log_success "后端文件同步完成"
 }
 
