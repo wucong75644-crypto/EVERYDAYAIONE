@@ -56,7 +56,10 @@ _DESCRIPTION_WORKSPACE = (
     "环境变量: WORKSPACE_DIR（工作区）, STAGING_DIR（中间数据）, OUTPUT_DIR（输出，自动上传）\n"
     "数据文件先通过 data_query 读取（自动存 staging），"
     "code_execute 统一用 pd.read_parquet(STAGING_DIR + '/文件名') 读取。\n"
-    "写 Excel 用 engine='xlsxwriter'。生成文件写到 OUTPUT_DIR。禁止 sys/subprocess。"
+    "写 Excel 用 engine='xlsxwriter'。禁止 sys/subprocess。\n"
+    "文件输出规则：\n"
+    "- 生成新文件（导出报表、新建图表）→ 写到 OUTPUT_DIR\n"
+    "- 修改原文件（改列值、删行、格式调整）→ 写回原路径覆盖原文件，系统自动备份"
 )
 
 
