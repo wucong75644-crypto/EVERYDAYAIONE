@@ -27,8 +27,8 @@ from loguru import logger
 PDF_EXTENSIONS = frozenset({".pdf"})
 DOCX_EXTENSIONS = frozenset({".docx"})
 PPTX_EXTENSIONS = frozenset({".pptx"})
-_PDF_MAX_AUTO_PAGES = 10    # 无 pages 参数时自动全读的最大页数
-_PDF_MAX_READ_PAGES = 20    # 单次读取最大页数
+_PDF_MAX_AUTO_PAGES = 100   # 无 pages 参数时自动全读的最大页数（对标 Claude API）
+_PDF_MAX_READ_PAGES = 100   # 单次读取最大页数（token 上限兜底）
 
 # ── 图片直读常量 ──
 
