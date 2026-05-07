@@ -7,6 +7,7 @@
 
 import asyncio
 import shutil
+import time as _time
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
@@ -86,6 +87,9 @@ class SandboxExecutor:
         # 2.5 备份已有的可上传文件（防止沙箱代码覆盖后丢失旧数据）
         file_backups = self._backup_existing_files()
 
+        # 2.6 备份 workspace 原始文件（修改后可回退，备份存 STAGING_DIR）
+        ws_backups = self._backup_workspace_files()
+
         # 3. 执行代码（优先有状态 Kernel，fallback 无状态 subprocess）
         raw_result = await self._execute_code(code, confirm_delete=confirm_delete)
 
@@ -97,26 +101,36 @@ class SandboxExecutor:
         # 4. 同名文件保护：覆盖检测 + Google Drive 风格重命名
         self._dedup_overwritten_files(file_backups)
 
+        # 4.5 workspace 备份清理（未修改的删除，已修改的保留供回退）
+        ws_modified = self._cleanup_workspace_backups(ws_backups)
+
         # 5. 自动检测生成的文件并上传（追加在截断后的文本末尾）
         file_results = await self._auto_upload_new_files()
         if file_results:
             raw_result = (raw_result or "") + "\n" + "\n".join(file_results)
 
         # 6. 包装为 AgentResult（根据子进程返回的前缀判断状态）
+        # workspace_backups 透传到调用方，由 ToolExecutor 注册到 registry
+        metadata: dict = {}
+        if ws_modified:
+            metadata["workspace_backups"] = ws_modified
+
         if raw_result.startswith("❌"):
+            metadata["retryable"] = True
             return AgentResult(
                 summary=raw_result.lstrip("❌ "),
                 status="error",
                 error_message=raw_result,
-                metadata={"retryable": True},
+                metadata=metadata,
             )
         if raw_result.startswith("⏱"):
             return AgentResult(
                 summary=raw_result.lstrip("⏱ "),
                 status="timeout",
                 error_message=raw_result,
+                metadata=metadata,
             )
-        return AgentResult(summary=raw_result, status="success")
+        return AgentResult(summary=raw_result, status="success", metadata=metadata)
 
     async def _execute_code(
         self, code: str, confirm_delete: list[str] | None = None,
@@ -378,6 +392,84 @@ class SandboxExecutor:
             else:
                 # 未被覆盖，删除备份
                 backup.unlink()
+
+    # --------------------------------------------------
+    # Workspace 原始文件备份（修改可回退）
+    # --------------------------------------------------
+
+    def _backup_workspace_files(self) -> dict[str, str]:
+        """执行前备份 WORKSPACE_DIR 顶层数据文件到 STAGING_DIR。
+
+        备份命名：_bak_{timestamp}_{原文件名}
+        备份位置：STAGING_DIR（受 24h TTL + 500MB 容量清理管辖，不注册 registry）
+
+        Returns:
+            {原始绝对路径: 备份绝对路径}
+        """
+        if not self._workspace_dir or not self._staging_dir:
+            return {}
+        ws = Path(self._workspace_dir)
+        staging = Path(self._staging_dir)
+        if not ws.exists():
+            return {}
+        staging.mkdir(parents=True, exist_ok=True)
+
+        backups: dict[str, str] = {}
+        ts = int(_time.time())
+        for f in ws.iterdir():
+            if not f.is_file():
+                continue
+            if f.suffix.lower() not in self._AUTO_UPLOAD_EXTENSIONS:
+                continue
+            backup_name = f"_bak_{ts}_{f.name}"
+            backup_path = staging / backup_name
+            shutil.copy2(f, backup_path)  # 保留 mtime
+            backups[str(f)] = str(backup_path)
+        if backups:
+            logger.info(
+                f"SandboxExecutor workspace backup | count={len(backups)} | "
+                f"files={[Path(p).name for p in backups]}"
+            )
+        return backups
+
+    def _cleanup_workspace_backups(self, backups: dict[str, str]) -> dict[str, str]:
+        """执行后清理未被修改的 workspace 备份。
+
+        已修改 → 保留备份（24h TTL 自动清理，用户可回退）
+        未修改 → 立即删除（不浪费空间）
+        原文件被删除 → 保留备份（用户可能要恢复）
+
+        Returns:
+            {原始文件名: 备份绝对路径}，仅包含被修改/删除的文件（供 registry 注册）
+        """
+        modified: dict[str, str] = {}
+        for orig_path, backup_path in backups.items():
+            orig = Path(orig_path)
+            backup = Path(backup_path)
+            if not backup.exists():
+                continue
+            if not orig.exists():
+                # 原文件被沙盒删除 → 保留备份
+                modified[orig.name] = backup_path
+                logger.info(
+                    f"SandboxExecutor workspace backup kept (deleted) | "
+                    f"file={orig.name}"
+                )
+                continue
+            # 对比 mtime+size：相同 = 未被修改
+            orig_st = orig.stat()
+            backup_st = backup.stat()
+            if (orig_st.st_mtime, orig_st.st_size) == (
+                backup_st.st_mtime, backup_st.st_size
+            ):
+                backup.unlink()
+            else:
+                modified[orig.name] = backup_path
+                logger.info(
+                    f"SandboxExecutor workspace backup kept (modified) | "
+                    f"file={orig.name} | backup={Path(backup_path).name}"
+                )
+        return modified
 
     @staticmethod
     def _next_available_name(path: Path) -> Path:

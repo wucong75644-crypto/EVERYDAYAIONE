@@ -94,6 +94,23 @@ class FileToolMixin:
                     error_message=str(e), metadata={"retryable": False},
                 )
 
+        # ── restore_file：从备份恢复 workspace 文件 ──
+        if tool_name == "restore_file":
+            try:
+                return await self._restore_file(executor, args)
+            except PermissionError as e:
+                return AgentResult(
+                    summary=f"权限不足: {e}", status="error",
+                    error_message=f"PermissionError: {e}",
+                    metadata={"retryable": False},
+                )
+            except Exception as e:
+                logger.error(f"ToolExecutor restore_file | error={e}")
+                return AgentResult(
+                    summary=f"文件恢复失败: {e}", status="error",
+                    error_message=str(e), metadata={"retryable": False},
+                )
+
         dispatch = {
             "file_read": executor.file_read,
         }
@@ -283,6 +300,80 @@ class FileToolMixin:
             enhanced_lines.append(line)
 
         return AgentResult(summary="\n".join(enhanced_lines), status="success")
+
+    async def _restore_file(
+        self, executor: "Any", args: Dict[str, Any],
+    ) -> "AgentResult":
+        """从 session_file_registry 中查找备份并恢复到 workspace。
+
+        路径安全：目标路径通过 FileExecutor.resolve_safe_path 校验，
+        与 file_read/file_list/file_search 共用同一套安全基础设施。
+
+        查找逻辑：registry 中 key 以 "backup:{filename}:" 开头的条目，
+        取最新的（timestamp 降序），copy 回 workspace 原路径。
+        """
+        import shutil
+
+        from services.agent.agent_result import AgentResult
+        from services.agent.session_file_registry import get_conversation_registry
+
+        filename = args.get("filename", "").strip()
+        if not filename:
+            return AgentResult(
+                summary="请指定要恢复的文件名",
+                status="error",
+                error_message="Validation: filename is required",
+                metadata={"retryable": True},
+            )
+
+        # 路径安全校验（realpath + workspace 白名单 + 符号链接 + 黑名单）
+        # 拦截 "../"、绝对路径、符号链接等穿越攻击
+        target_path = executor.resolve_safe_path(filename)
+
+        # 从对话级 registry 查找备份
+        registry = get_conversation_registry(self.conversation_id)
+        prefix = f"backup:{filename}:"
+        candidates = [
+            (key, ref)
+            for key, ref in registry.list_all()
+            if key.startswith(prefix)
+        ]
+
+        if not candidates:
+            return AgentResult(
+                summary=f"未找到「{filename}」的备份。可能备份已过期（24小时有效期）或该文件未被修改过。",
+                status="empty",
+            )
+
+        # 取最新的备份（key 末尾是 timestamp）
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        best_key, best_ref = candidates[0]
+
+        # 验证备份文件存在
+        if not best_ref.is_valid():
+            # 备份文件已被清理，移除 registry 条目
+            registry.remove(best_key)
+            return AgentResult(
+                summary=f"「{filename}」的备份文件已过期被清理，无法恢复。",
+                status="error",
+                error_message="Backup file expired",
+            )
+
+        # 恢复：copy 备份 → workspace 原路径
+        shutil.copy2(best_ref.path, str(target_path))
+
+        # 恢复后移除该备份条目（一次性使用）
+        registry.remove(best_key)
+
+        logger.info(
+            f"ToolExecutor restore_file | file={filename} | "
+            f"backup={best_ref.filename} | target={target_path}"
+        )
+
+        return AgentResult(
+            summary=f"已恢复「{filename}」到修改前的版本。",
+            status="success",
+        )
 
 
 class CrawlerToolMixin:

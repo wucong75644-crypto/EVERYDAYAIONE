@@ -13,6 +13,7 @@ FILE_INFO_TOOLS: Set[str] = {
     "file_read",
     "file_list",
     "file_search",
+    "restore_file",
 }
 
 # 工具 Schema（参数验证）
@@ -40,6 +41,12 @@ FILE_TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "path": {"type": "string"},
             "search_content": {"type": "boolean"},
             "file_pattern": {"type": "string"},
+        },
+    },
+    "restore_file": {
+        "required": ["filename"],
+        "properties": {
+            "filename": {"type": "string"},
         },
     },
 }
@@ -153,6 +160,29 @@ def build_file_tools() -> List[Dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "restore_file",
+                "description": (
+                    "恢复 workspace 文件到修改前的版本。\n\n"
+                    "当用户说「撤销」「恢复原文件」「回退」时使用。\n"
+                    "系统在每次 code_execute 修改 workspace 文件前自动备份，"
+                    "此工具从备份中恢复原始文件。\n"
+                    "备份有效期 24 小时，过期后无法恢复。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "filename": {
+                            "type": "string",
+                            "description": "要恢复的文件名（如 '销售报表.xlsx'）",
+                        },
+                    },
+                    "required": ["filename"],
+                },
+            },
+        },
     ]
 
 
@@ -165,6 +195,7 @@ FILE_ROUTING_PROMPT = (
     "- 读取/分析 Excel/CSV 数据文件 → data_query\n"
     "- 读取 PDF/图片/纯文本 → file_read\n"
     "- 计算分析/生成文件 → code_execute\n"
+    "- 撤销/恢复原文件/回退 → restore_file\n"
     "- file_list 和 file_search 返回的结果已包含文件元信息（行列数/类型/读取命令），直接使用\n"
     "- 文件操作完毕后，调 route_to_chat 汇总结果回复用户\n\n"
 )
