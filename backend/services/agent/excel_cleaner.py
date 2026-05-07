@@ -120,7 +120,7 @@ def clean_excel(
     # Layer 3: 质量校验
     _deduplicate_columns(df)  # 先去重，防止后续按列名操作时 ambiguous
     _remove_empty_rows_cols(df, report)
-    _coerce_object_columns(df)  # 瀑布式类型推断（在清洗后做，NaN 已修复，准确率更高）
+    _coerce_object_columns(df)  # 混合类型列统一为 str（防 PyArrow 崩溃）
     _fix_int_columns(df, report)
 
     report.final_shape = (len(df), len(df.columns))
@@ -426,12 +426,11 @@ def _deduplicate_columns(df: pd.DataFrame) -> None:
     if new_cols != [str(c) for c in cols]:
         df.columns = new_cols
 
-_TYPE_THRESHOLD = 0.95   # 95% 非空值成功转换才采纳（行业标准）
-_SAMPLE_SIZE = 1000      # 采样行数（Polars 默认值）
-
-
 def _coerce_object_columns(df: pd.DataFrame) -> None:
-    """瀑布式类型推断：numeric → datetime → str 兜底。
+    """混合类型列统一为 str（防止 PyArrow 崩溃）。
+
+    不猜测数值/日期类型——类型转换交给下游 AI 在 code_execute 中按需处理，
+    与 ChatGPT Code Interpreter 等主流产品一致。
 
     只处理 dtype=object 的列（pandas 无法自动推断的混合类型列）。
     纯数值/日期列由 pandas 在 read_excel 时已正确推断，不进此分支。
@@ -444,24 +443,7 @@ def _coerce_object_columns(df: pd.DataFrame) -> None:
         non_null = df[col].dropna()
         if len(non_null) == 0:
             continue
-        sample = non_null.head(_SAMPLE_SIZE)
-
-        # 1. 尝试数值
-        as_num = pd.to_numeric(sample, errors="coerce")
-        if as_num.notna().sum() / len(sample) >= _TYPE_THRESHOLD:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-            continue
-
-        # 2. 尝试日期
-        try:
-            as_dt = pd.to_datetime(sample, errors="coerce", format="mixed")
-            if as_dt.notna().sum() / len(sample) >= _TYPE_THRESHOLD:
-                df[col] = pd.to_datetime(df[col], errors="coerce", format="mixed")
-                continue
-        except Exception:
-            pass
-
-        # 3. 兜底：确保类型统一为 str（防止 PyArrow 崩溃）
-        types = set(type(v).__name__ for v in sample.head(100))
+        # 检测是否存在混合类型（如同一列有 int 和 str）
+        types = set(type(v).__name__ for v in non_null.head(200))
         if len(types) > 1:
             df[col] = df[col].astype(str).replace({"nan": None})
