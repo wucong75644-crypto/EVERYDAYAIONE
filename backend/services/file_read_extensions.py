@@ -64,51 +64,46 @@ class FileReadExtensionsMixin:
         self, path: str, target: Path, size: int, pages: str | None,
         max_read_size: int, bytes_per_token: int, max_output_tokens: int,
     ) -> str:
-        """PDF 文件文本提取（对齐 Claude Code Read 工具 PDF 支持）
+        """PDF 文件文本提取（pdfplumber 引擎）
 
-        - 大文件预检：size > max_read_size 直接拒绝
+        - 无文件大小硬上限（pdfplumber 逐页提取，内存安全）
         - ≤10 页无 pages 参数自动全读
         - >10 页必须指定 pages
         - 单次最多 20 页
         - 扫描件检测（提取文本为空）
+        - 提取后按 token 上限控制返回量
         - 同步 I/O 在线程池执行，不阻塞事件循环
         """
-        # ── 大文件预检（对齐文本文件 _MAX_READ_SIZE 硬上限） ──
-        if size > max_read_size:
-            return (
-                f"PDF 文件过大（{self._format_size(size)}），"
-                f"超过 {self._format_size(max_read_size)} 硬上限。"
-                "建议使用 code_execute 处理。"
-            )
-
         try:
-            from PyPDF2 import PdfReader
+            import pdfplumber
         except ImportError:
-            return "PDF 读取依赖 PyPDF2 未安装，请用 code_execute 处理。"
+            return "PDF 读取依赖 pdfplumber 未安装，请用 code_execute 处理。"
 
-        # ── 在线程池中打开 PDF（同步 I/O 不阻塞事件循环） ──
+        # ── 在线程池中打开 PDF ──
         loop = asyncio.get_running_loop()
         try:
-            reader = await loop.run_in_executor(
-                None, lambda: PdfReader(str(target)),
+            pdf = await loop.run_in_executor(
+                None, lambda: pdfplumber.open(str(target)),
             )
         except Exception as e:
-            # 脱敏：只暴露异常类型，不暴露服务端绝对路径
-            logger.warning(f"PDF open failed | path={path} | error={type(e).__name__}: {e}")
+            logger.warning(f"PDF open failed | path={path} | error={type(e).__name__}")
             return f"PDF 文件无法打开: {path}（{type(e).__name__}）"
 
-        total_pages = len(reader.pages)
+        total_pages = len(pdf.pages)
         if total_pages == 0:
+            pdf.close()
             return f"PDF 文件为空: {path}"
 
         # 解析页码范围
         if pages:
             page_indices = self._parse_pages(pages, total_pages)
             if isinstance(page_indices, str):
-                return page_indices  # 错误信息
+                pdf.close()
+                return page_indices
         elif total_pages <= _PDF_MAX_AUTO_PAGES:
             page_indices = list(range(total_pages))
         else:
+            pdf.close()
             return (
                 f"PDF 共 {total_pages} 页，超过 {_PDF_MAX_AUTO_PAGES} 页自动读取上限。\n"
                 f"请用 pages 参数指定页范围（如 pages='1-5'、pages='3,7,10'）。"
@@ -116,17 +111,19 @@ class FileReadExtensionsMixin:
 
         # 单次最多 20 页
         if len(page_indices) > _PDF_MAX_READ_PAGES:
+            pdf.close()
             return (
                 f"请求读取 {len(page_indices)} 页，超过单次上限 {_PDF_MAX_READ_PAGES} 页。\n"
                 "请缩小页码范围。"
             )
 
-        # ── 在线程池中提取文本（同步 I/O） ──
+        # ── 在线程池中提取文本 ──
         def _extract_pages():
             parts: list[str] = []
             empty: list[int] = []
             for idx in page_indices:
-                page_text = reader.pages[idx].extract_text() or ""
+                page = pdf.pages[idx]
+                page_text = page.extract_text() or ""
                 page_text = page_text.strip()
                 if not page_text:
                     empty.append(idx + 1)
@@ -135,6 +132,7 @@ class FileReadExtensionsMixin:
                     f"── 第 {page_num} 页 ──\n"
                     f"{page_text if page_text else '（无可提取文本）'}"
                 )
+            pdf.close()
             return parts, empty
 
         parts, empty_pages = await loop.run_in_executor(None, _extract_pages)

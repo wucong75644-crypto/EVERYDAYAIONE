@@ -83,6 +83,7 @@ _JSON_BYTES_PER_TOKEN = 2     # JSON/JSONL：密集标点，2 字节 ≈ 1 token
 # 文件读取硬上限（10MB，防 OOM；file_search 内容扫描也用）
 _MAX_READ_SIZE = 10 * 1024 * 1024
 
+
 # 文件写入大小上限（5MB）
 _MAX_WRITE_SIZE = 5 * 1024 * 1024
 

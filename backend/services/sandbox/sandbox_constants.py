@@ -34,7 +34,7 @@ ALLOWED_IMPORT_MODULES = frozenset({
     "PIL",
     # 文档读写（PDF / Word / PPT / Excel）
     "reportlab", "docx", "pptx", "openpyxl",
-    "PyPDF2",  # PDF 读取（服务器已安装 3.0.1）
+    "pdfplumber", "pdfminer",  # PDF 读取（pdfplumber 基于 pdfminer）
     # 高性能 Excel 读写引擎
     "calamine", "xlsxwriter",
     # 受限文件系统操作（运行时走 scoped_os/scoped_shutil，不是真实模块）

@@ -188,14 +188,13 @@ class TestPdfRead:
         assert "20" in result
 
     @pytest.mark.asyncio
-    async def test_pdf_size_limit(self, executor, workspace):
-        """>10MB PDF 直接拒绝（不尝试解析）"""
+    async def test_pdf_corrupted_large(self, executor, workspace):
+        """损坏的大 PDF 返回友好错误（无文件大小硬上限）"""
         pdf = Path(workspace, "fat.pdf")
-        pdf.write_bytes(b"%PDF-" + b"x" * (11 * 1024 * 1024))
+        pdf.write_bytes(b"%PDF-" + b"x" * 1024)
         result = await executor.file_read("fat.pdf")
 
-        assert "过大" in result
-        assert "硬上限" in result
+        assert "无法打开" in result
 
     @pytest.mark.asyncio
     async def test_pdf_corrupted(self, executor, workspace):

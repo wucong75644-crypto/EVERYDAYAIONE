@@ -261,20 +261,23 @@ class FileToolMixin:
 
         for line in lines:
             match = re.match(r"\s+\[文件\]\s+(\S+?)(?::\d+\s*\|.*)?$", line)
-            if match and metadata_count < _MAX_SEARCH_METADATA:
+            if match:
                 rel_path = match.group(1)
                 try:
                     target = executor.resolve_safe_path(rel_path)
                     if target.is_file():
+                        # 注册两种 key（对齐 file_list），所有搜索结果都注册
                         file_cache.register(target.name, str(target))
-                        meta = await self._get_or_extract_metadata(str(target))
-                        if meta:
-                            enhanced_line = format_file_metadata_line(
-                                target.name, str(target), target.stat().st_size, meta,
-                            )
-                            enhanced_lines.append(enhanced_line)
-                            metadata_count += 1
-                            continue
+                        file_cache.register(rel_path, str(target))
+                        if metadata_count < _MAX_SEARCH_METADATA:
+                            meta = await self._get_or_extract_metadata(str(target))
+                            if meta:
+                                enhanced_line = format_file_metadata_line(
+                                    target.name, str(target), target.stat().st_size, meta,
+                                )
+                                enhanced_lines.append(enhanced_line)
+                                metadata_count += 1
+                                continue
                 except Exception:
                     pass
             enhanced_lines.append(line)
