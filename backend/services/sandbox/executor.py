@@ -99,7 +99,7 @@ class SandboxExecutor:
         )
 
         # 4. 同名文件保护：覆盖检测 + Google Drive 风格重命名
-        self._dedup_overwritten_files(file_backups)
+        self._dedup_overwritten_files(file_backups, confirm_delete or [])
 
         # 4.5 workspace 备份清理（未修改的删除，已修改的保留供回退）
         ws_modified = self._cleanup_workspace_backups(ws_backups)
@@ -361,19 +361,32 @@ class SandboxExecutor:
             )
         return backups
 
-    def _dedup_overwritten_files(self, backups: dict[str, str]) -> None:
+    def _dedup_overwritten_files(
+        self, backups: dict[str, str], confirm_delete: list[str] | None = None,
+    ) -> None:
         """执行后检测被覆盖的文件，Google Drive 风格重命名新文件、恢复旧文件。
 
         策略：新文件改名为 name (N).ext，旧文件恢复原名——保证历史 CDN URL 不失效。
+        用户通过 confirm_delete 确认删除的文件不恢复。
         """
+        # confirm_delete 是文件名列表，转为 set 加速查找
+        confirmed = set(confirm_delete or [])
         for orig_path, backup_path in backups.items():
             orig = Path(orig_path)
             backup = Path(backup_path)
             if not backup.exists():
                 continue
             if not orig.exists():
-                # 原文件被删除（罕见），恢复备份
-                backup.rename(orig)
+                if orig.name in confirmed:
+                    # 用户确认删除 → 不恢复，删除备份
+                    backup.unlink()
+                    logger.info(
+                        f"SandboxExecutor dedup | "
+                        f"confirmed delete, backup removed | file={orig.name}"
+                    )
+                else:
+                    # 意外删除 → 恢复备份
+                    backup.rename(orig)
                 continue
             # 对比 mtime+size：不同 = 被覆盖
             orig_st = orig.stat()
