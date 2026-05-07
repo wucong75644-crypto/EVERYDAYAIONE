@@ -393,3 +393,126 @@ class TestSecurityIntegration:
 
         assert result.is_failure
         assert "不存在" in result.summary
+
+
+# ══════════════════════════════════════════════════════
+# 链路6：Excel 三层清洗端到端
+# 带合并/隐藏/汇总的 Excel → Parquet → 探索 → 清洗报告注入
+# ══════════════════════════════════════════════════════
+
+
+@pytest.fixture()
+def dirty_excel(workspace):
+    """带合并单元格 + 隐藏行的 Excel。"""
+    import openpyxl
+
+    path = Path(workspace["workspace"]) / "脏数据.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws["A1"], ws["B1"], ws["C1"] = "订单号", "商品", "金额"
+    ws["A2"], ws["B2"], ws["C2"] = "ORD001", "苹果", 100
+    ws["A3"], ws["B3"], ws["C3"] = None, "香蕉", 200
+    ws["A4"], ws["B4"], ws["C4"] = None, "橙子", 300
+    ws["A5"], ws["B5"], ws["C5"] = "ORD002", "葡萄", 150
+    ws["A6"], ws["B6"], ws["C6"] = None, "西瓜", 250
+    ws.merge_cells("A2:A4")  # 垂直合并
+    ws.merge_cells("A5:A6")  # 垂直合并
+    ws.row_dimensions[4].hidden = True  # 隐藏第 4 行
+    wb.save(str(path))
+    wb.close()
+    return str(path)
+
+
+class TestExcelCleaningE2E:
+    """Excel 三层清洗端到端测试。"""
+
+    @pytest.mark.asyncio
+    async def test_explore_shows_cleaning_report(self, workspace, dirty_excel):
+        """探索模式应显示清洗报告。"""
+        executor = _make_executor(workspace)
+        result = await executor.execute(file="脏数据.xlsx")
+
+        assert not result.is_failure
+        assert "数据清洗" in result.summary
+        assert "合并单元格已填充" in result.summary
+        assert "标记隐藏行" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_merged_cells_filled(self, workspace, dirty_excel):
+        """合并单元格 ffill 后可正确查询。"""
+        executor = _make_executor(workspace)
+        result = await executor.execute(
+            file="脏数据.xlsx",
+            sql='SELECT "订单号", COUNT(*) as cnt FROM data '
+                'GROUP BY "订单号" ORDER BY "订单号"',
+        )
+
+        assert not result.is_failure
+        assert "ORD001" in result.summary
+        assert "ORD002" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_hidden_row_marked(self, workspace, dirty_excel):
+        """隐藏行被标记为 _is_hidden=true。"""
+        executor = _make_executor(workspace)
+        result = await executor.execute(
+            file="脏数据.xlsx",
+            sql='SELECT COUNT(*) as cnt FROM data WHERE _is_hidden = true',
+        )
+
+        assert not result.is_failure
+        assert "1" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_cache_reuse(self, workspace, dirty_excel):
+        """第二次探索应复用 Parquet 缓存。"""
+        executor = _make_executor(workspace)
+        r1 = await executor.execute(file="脏数据.xlsx")
+        r2 = await executor.execute(file="脏数据.xlsx")
+
+        assert not r1.is_failure
+        assert not r2.is_failure
+        for r in [r1, r2]:
+            assert "数据清洗" in r.summary
+            assert "共 5 条" in r.summary
+
+
+@pytest.fixture()
+def multi_sheet_dirty_excel(workspace):
+    """多 Sheet Excel，每个 Sheet 都有合并单元格。"""
+    import openpyxl
+
+    path = Path(workspace["workspace"]) / "多Sheet脏数据.xlsx"
+    wb = openpyxl.Workbook()
+    # Sheet 1: 合并
+    ws1 = wb.active
+    ws1.title = "一月"
+    ws1["A1"], ws1["B1"] = "分类", "金额"
+    ws1["A2"], ws1["B2"] = "水果", 100
+    ws1["A3"], ws1["B3"] = None, 200
+    ws1.merge_cells("A2:A3")
+    # Sheet 2: 合并 + 隐藏行
+    ws2 = wb.create_sheet("二月")
+    ws2["A1"], ws2["B1"] = "分类", "金额"
+    ws2["A2"], ws2["B2"] = "蔬菜", 150
+    ws2["A3"], ws2["B3"] = None, 250
+    ws2.merge_cells("A2:A3")
+    ws2.row_dimensions[3].hidden = True
+    wb.save(str(path))
+    wb.close()
+    return str(path)
+
+
+class TestMultiSheetCleaningE2E:
+    """多 Sheet 合并清洗报告端到端。"""
+
+    @pytest.mark.asyncio
+    async def test_merge_all_sheets_report(self, workspace, multi_sheet_dirty_excel):
+        """sheet='*' 合并所有 Sheet，清洗报告应累加。"""
+        executor = _make_executor(workspace)
+        result = await executor.execute(file="多Sheet脏数据.xlsx", sheet="*")
+
+        assert not result.is_failure
+        assert "数据清洗" in result.summary
+        assert "合并单元格已填充（2列）" in result.summary
+        assert "标记隐藏行" in result.summary

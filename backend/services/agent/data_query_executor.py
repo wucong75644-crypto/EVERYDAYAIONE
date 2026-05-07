@@ -436,6 +436,15 @@ class DataQueryExecutor:
         elapsed = time.monotonic() - start
         text, _ = build_profile_from_duckdb(profile, filename, file_size_kb, elapsed)
 
+        # 注入清洗报告（如果有）
+        from services.agent.excel_cleaner import read_cleaning_report
+
+        cleaning_report = read_cleaning_report(query_path)
+        if cleaning_report is not None:
+            llm_text = cleaning_report.to_llm_text()
+            if llm_text:
+                text += f"\n\n{llm_text}"
+
         # 附加可用路径
         try:
             rel_path = str(Path(original_path).relative_to(self._workspace_dir))
