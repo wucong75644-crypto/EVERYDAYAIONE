@@ -161,6 +161,9 @@ EVERYDAYAIONE/
 │   │   │   ├── execution_plan.py         # DAG执行计划（ExecutionPlan/Round）
 │   │   │   ├── plan_builder.py           # 意图分析→执行计划构建器
 │   │   │   ├── dag_executor.py           # DAG编排执行引擎
+│   │   │   ├── data_query_cache.py       # Excel→Parquet 缓存（双重检查锁+快照校验）
+│   │   │   ├── data_query_executor.py    # data_query 工具执行器（探索/查询双模式）
+│   │   │   ├── excel_cleaner.py          # ★ Excel 三层清洗（结构检测/智能清洗/质量校验）
 │   │   │   └── departments/              # 部门Agent实现
 │   │   │       ├── warehouse_agent.py        # 仓储Agent
 │   │   │       ├── purchase_agent.py         # 采购Agent

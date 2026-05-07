@@ -769,6 +769,27 @@
 
 ---
 
+### Excel 三层清洗模块 (Excel Cleaner)
+
+> **新增**：2026-05-07。三层清洗防线（结构检测 / 智能清洗 / 质量校验），独立于 data_query_cache.py。
+
+#### 后端函数
+
+| 函数名 | 文件路径 | 功能描述 | 参数 | 返回值 |
+|--------|----------|----------|------|--------|
+| `clean_excel` | `backend/services/agent/excel_cleaner.py` | 三层清洗入口 | df, excel_path, sheet_name, header_row | `(DataFrame, CleaningReport)` |
+| `write_cleaning_report` | `backend/services/agent/excel_cleaner.py` | 将清洗报告写入 .meta.json | cache_path, report | None |
+| `read_cleaning_report` | `backend/services/agent/excel_cleaner.py` | 读取 .meta.json 清洗报告 | cache_path | `CleaningReport \| None` |
+
+#### 数据结构
+
+| 类名 | 文件路径 | 说明 |
+|------|----------|------|
+| `ExcelStructure` | `backend/services/agent/excel_cleaner.py` | Layer 1 结构检测结果（合并区域/隐藏行列/筛选） |
+| `CleaningReport` | `backend/services/agent/excel_cleaner.py` | 清洗报告（各项清洗计数 + warnings + LLM 文本生成） |
+
+---
+
 ### 快麦参数映射模块 (Kuaimai Param Mapper)
 
 > **修改部分**：map_params 返回类型变更。

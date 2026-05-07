@@ -1,10 +1,4 @@
-"""
-data_query 文件检测与 Excel → Parquet 缓存模块
-
-文件类型/编码检测 + 双重检查锁 + (mtime,size) 快照校验 + 原子写入。
-从 data_query_executor.py 拆分。
-"""
-
+"""data_query 文件检测与 Excel → Parquet 缓存模块"""
 from __future__ import annotations
 
 import asyncio
@@ -256,11 +250,6 @@ def _snapshot_matches(
     except (ValueError, OSError):
         return False
 
-
-_TYPE_THRESHOLD = 0.95   # 95% 非空值成功转换才采纳（行业标准）
-_SAMPLE_SIZE = 1000      # 采样行数（Polars 默认值）
-
-
 _HEADER_MAX_SCAN = 20   # 扫描前 N 行寻找表头
 _HEADER_STR_RATIO = 0.7  # 非空值中字符串占比阈值
 
@@ -308,52 +297,36 @@ def detect_header_row(rows: list[list]) -> int:
     return 0
 
 
-def _coerce_object_columns(df) -> None:
-    """瀑布式类型推断：numeric → datetime → str 兜底。
+def detect_header_depth(
+    header_row: int,
+    merged_ranges: list[tuple[int, int, int, int]] | None = None,
+) -> tuple[int, int]:
+    """基于合并元数据检测多级表头（Spark-excel 同模式）。返回 (actual_start, depth)。"""
+    if not merged_ranges:
+        return header_row, 1
 
-    只处理 dtype=object 的列（pandas 无法自动推断的混合类型列）。
-    纯数值/日期列由 pandas 在 read_excel 时已正确推断，不进此分支。
-    合并单元格产生的 Unnamed 空列直接删除。
-    """
-    import pandas as pd
+    # 找表头区域（header_row 上方）的水平合并：跨列且在 header_row+1 行及以上
+    header_excel_row = header_row + 1  # 0-indexed → 1-indexed
+    min_merge_row = header_excel_row  # 最上层合并行
+    has_header_merge = False
 
-    # 先删除合并单元格产生的全空 Unnamed 列（ERP 导出常见，1404 列中大量是空列）
-    unnamed_empty = [
-        c for c in df.columns
-        if str(c).startswith("Unnamed:") and df[c].isna().all()
-    ]
-    if unnamed_empty:
-        df.drop(columns=unnamed_empty, inplace=True)
+    for min_row, max_row, min_col, max_col in merged_ranges:
+        if max_col <= min_col:
+            continue  # 非水平合并，跳过
+        if min_row > header_excel_row:
+            continue  # 在数据区，不是表头
+        if min_row < min_merge_row:
+            min_merge_row = min_row
+        has_header_merge = True
 
-    for col in df.columns:
-        if df[col].dtype != object:
-            continue
+    if not has_header_merge:
+        return header_row, 1
 
-        non_null = df[col].dropna()
-        if len(non_null) == 0:
-            continue
-
-        sample = non_null.head(_SAMPLE_SIZE)
-
-        # 1. 尝试数值（int 和 float 统一检测，pandas 自动推断精度）
-        as_num = pd.to_numeric(sample, errors="coerce")
-        if as_num.notna().sum() / len(sample) >= _TYPE_THRESHOLD:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-            continue
-
-        # 2. 尝试日期
-        try:
-            as_dt = pd.to_datetime(sample, errors="coerce", format="mixed")
-            if as_dt.notna().sum() / len(sample) >= _TYPE_THRESHOLD:
-                df[col] = pd.to_datetime(df[col], errors="coerce", format="mixed")
-                continue
-        except Exception:
-            pass
-
-        # 3. 兜底：确保类型统一为 str（防止 PyArrow 崩溃）
-        types = set(type(v).__name__ for v in sample.head(100))
-        if len(types) > 1:
-            df[col] = df[col].astype(str).replace({"nan": None})
+    # depth = 从最上层合并行到 header_row（含）
+    actual_start_0indexed = min_merge_row - 1  # 1-indexed → 0-indexed
+    depth = header_excel_row - min_merge_row + 1
+    depth = min(depth, 3)  # 安全上限
+    return actual_start_0indexed, depth
 
 
 def _convert_excel_to_parquet(
@@ -375,29 +348,44 @@ def _convert_excel_to_parquet(
     else:
         target_sheet = fuzzy_match_sheet(sheet, sheet_names)
 
-    # 自动检测表头行（messytables 众数法 + csv.Sniffer 类型验证）
+    # Layer 1: 结构检测（合并区域 / 隐藏行列 / 筛选状态）
+    from services.agent.excel_cleaner import (
+        _detect_structure, clean_excel, write_cleaning_report,
+    )
+
+    resolved_name = target_sheet if isinstance(target_sheet, str) else 0
+    structure = _detect_structure(excel_path, resolved_name)
+    merged = structure.merged_ranges if structure else None
+
+    # 自动检测表头行 + 基于合并元数据的多级表头深度
     df_raw = pd.read_excel(
         xl, sheet_name=target_sheet, engine="calamine",
         header=None, nrows=_HEADER_MAX_SCAN,
     )
     header_row = detect_header_row(df_raw.values.tolist())
+    actual_start, header_depth = detect_header_depth(header_row, merged)
+
+    # 多级表头：传 list 让 pandas 生成 MultiIndex 列名
+    header_param: int | list[int] = actual_start
+    if header_depth > 1:
+        header_param = list(range(actual_start, actual_start + header_depth))
 
     df = pd.read_excel(
         xl, sheet_name=target_sheet, engine="calamine",
-        header=header_row,
+        header=header_param,
     )
     xl.close()
 
-    if header_row > 0:
+    if actual_start > 0 or header_depth > 1:
         logger.info(
             f"Excel header auto-detected | src={Path(excel_path).name} "
-            f"| header_row={header_row}"
+            f"| header_row={actual_start} | depth={header_depth}"
         )
 
-    # 瀑布式类型推断（行业标准：Spark/Polars/Airbyte 同模式）
-    # 对 object 列按 int → float → datetime → str 顺序尝试转换
-    # 阈值 95%：允许少量脏值变 NaN，但不误转文本列
-    _coerce_object_columns(df)
+    # Layer 2+3: 智能清洗 + 质量校验（复用已检测的 structure）
+    df, cleaning_report = clean_excel(
+        df, excel_path, resolved_name, actual_start, structure,
+    )
 
     tmp_path = str(Path(cache_path).parent / f"_tmp_{uuid.uuid4().hex[:8]}.parquet")
     try:
@@ -407,6 +395,7 @@ def _convert_excel_to_parquet(
         Path(tmp_path).unlink(missing_ok=True)
         raise
 
+    write_cleaning_report(cache_path, cleaning_report)
     Path(snapshot_path).write_text(f"{src_mtime},{src_size}")
     logger.info(
         f"Excel→Parquet cache | src={Path(excel_path).name} "
@@ -431,19 +420,31 @@ def _convert_all_sheets_to_parquet(
     xl = pd.ExcelFile(excel_path, engine="calamine")
     sheet_names = xl.sheet_names
 
+    from services.agent.excel_cleaner import (
+        CleaningReport, _detect_structure, clean_excel, write_cleaning_report,
+    )
+
     frames: list = []
     total_rows = 0
+    merged_report = CleaningReport()
     for name in sheet_names:
         try:
+            structure = _detect_structure(excel_path, name)
+            merged = structure.merged_ranges if structure else None
+
             df_raw = pd.read_excel(
                 xl, sheet_name=name, engine="calamine",
                 header=None, nrows=_HEADER_MAX_SCAN,
             )
             header_row = detect_header_row(df_raw.values.tolist())
+            actual_start, header_depth = detect_header_depth(header_row, merged)
+            header_param: int | list[int] = actual_start
+            if header_depth > 1:
+                header_param = list(range(actual_start, actual_start + header_depth))
 
             df = pd.read_excel(
                 xl, sheet_name=name, engine="calamine",
-                header=header_row,
+                header=header_param,
             )
             if df.empty:
                 continue
@@ -456,7 +457,11 @@ def _convert_all_sheets_to_parquet(
                     f"请用 sheet 参数逐个读取。"
                 )
 
-            _coerce_object_columns(df)
+            # 三层清洗（复用已检测的 structure）
+            df, sheet_report = clean_excel(
+                df, excel_path, name, actual_start, structure,
+            )
+            merged_report.merge(sheet_report)
             df.insert(0, "_sheet", name)
             frames.append(df)
         except ValueError:
@@ -480,6 +485,7 @@ def _convert_all_sheets_to_parquet(
         Path(tmp_path).unlink(missing_ok=True)
         raise
 
+    write_cleaning_report(cache_path, merged_report)
     Path(snapshot_path).write_text(f"{src_mtime},{src_size}")
     logger.info(
         f"Excel→Parquet merge-all | src={Path(excel_path).name} "

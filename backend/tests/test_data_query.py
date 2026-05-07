@@ -1253,3 +1253,70 @@ class TestDetectHeaderRow:
             ["PDD20260401002", "pdd", 59.9, "shipped", "2026-04-01"],
         ]
         assert detect_header_row(rows) == 0
+
+
+class TestDetectHeaderDepth:
+    """detect_header_depth: 基于合并元数据的多级表头检测"""
+
+    def test_no_merges_depth_1(self):
+        """无合并信息 → depth=1"""
+        from services.agent.data_query_cache import detect_header_depth
+
+        actual_start, depth = detect_header_depth(header_row=0, merged_ranges=None)
+        assert actual_start == 0
+        assert depth == 1
+
+    def test_empty_merges_depth_1(self):
+        """空合并列表 → depth=1"""
+        from services.agent.data_query_cache import detect_header_depth
+
+        actual_start, depth = detect_header_depth(header_row=0, merged_ranges=[])
+        assert actual_start == 0
+        assert depth == 1
+
+    def test_horizontal_merge_in_header(self):
+        """表头区域水平合并 A1:B1 → depth=2（row 0 是父表头，row 1 是子表头）"""
+        from services.agent.data_query_cache import detect_header_depth
+
+        # A1:B1 合并 → min_row=1, max_row=1, min_col=1, max_col=2（1-indexed）
+        merged = [(1, 1, 1, 2)]
+        actual_start, depth = detect_header_depth(header_row=1, merged_ranges=merged)
+        assert actual_start == 0
+        assert depth == 2
+
+    def test_vertical_merge_no_effect(self):
+        """垂直合并（数据区 A2:A4）不影响表头深度"""
+        from services.agent.data_query_cache import detect_header_depth
+
+        # A2:A4 垂直合并 → min_row=2, max_row=4, min_col=1, max_col=1
+        merged = [(2, 4, 1, 1)]
+        actual_start, depth = detect_header_depth(header_row=0, merged_ranges=merged)
+        assert actual_start == 0
+        assert depth == 1
+
+    def test_merge_below_header_no_effect(self):
+        """数据区的水平合并不影响表头深度"""
+        from services.agent.data_query_cache import detect_header_depth
+
+        # B5:D5 水平合并但在数据区（header_row=0 → header Excel row=1）
+        merged = [(5, 5, 2, 4)]
+        actual_start, depth = detect_header_depth(header_row=0, merged_ranges=merged)
+        assert actual_start == 0
+        assert depth == 1
+
+    def test_max_depth_capped_at_3(self):
+        """depth 上限为 3"""
+        from services.agent.data_query_cache import detect_header_depth
+
+        # 合并从 row 1 开始，header 在 row 5 → depth 应被截断到 3
+        merged = [(1, 1, 1, 4)]
+        actual_start, depth = detect_header_depth(header_row=4, merged_ranges=merged)
+        assert depth <= 3
+
+    def test_erp_profit_report_no_false_multi(self):
+        """ERP 利润表无水平合并 → depth=1（不误判标题行为多级表头）"""
+        from services.agent.data_query_cache import detect_header_depth
+
+        # ERP 利润表没有合并单元格
+        actual_start, depth = detect_header_depth(header_row=1, merged_ranges=None)
+        assert depth == 1
