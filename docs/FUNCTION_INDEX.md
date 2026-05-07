@@ -1014,6 +1014,8 @@
 |-----------|---------|---------|
 | `SandboxExecutor` | `backend/services/sandbox/executor.py` | 沙盒执行器（AST验证+文件快照+有状态/无状态执行+文件上传） |
 | `SandboxExecutor.execute` | `backend/services/sandbox/executor.py` | 执行代码（优先有状态Kernel，fallback无状态subprocess） |
+| `SandboxExecutor._backup_workspace_files` | `backend/services/sandbox/executor.py` | 执行前备份workspace数据文件到STAGING_DIR（_bak_{ts}_{name}格式） |
+| `SandboxExecutor._cleanup_workspace_backups` | `backend/services/sandbox/executor.py` | 执行后清理未修改的备份，返回{文件名:备份路径}供registry注册 |
 | `KernelManager` | `backend/services/sandbox/kernel_manager.py` | Kernel进程池管理器（创建/复用/回收/降级） |
 | `KernelManager.get_or_create` | `backend/services/sandbox/kernel_manager.py` | 获取或创建Kernel（超限降级返回False） |
 | `KernelManager.execute` | `backend/services/sandbox/kernel_manager.py` | 向Kernel发送代码并等待结果 |
@@ -1044,3 +1046,5 @@
 | `file_mkdir` | `backend/services/file_write_extensions.py` | 创建目录（含中间路径） |
 | `file_rename` | `backend/services/file_write_extensions.py` | 重命名（同目录） |
 | `file_move` | `backend/services/file_write_extensions.py` | 移动文件到目标目录 |
+| `_restore_file` | `backend/services/agent/file_tool_mixin.py` | 从registry查找备份并恢复workspace文件（restore_file工具执行逻辑） |
+| `_register_workspace_backups` | `backend/services/agent/tool_executor.py` | 将workspace备份注册到对话级session_file_registry |

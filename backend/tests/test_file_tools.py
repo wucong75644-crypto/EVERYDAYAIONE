@@ -12,11 +12,11 @@ from config.file_tools import (
 
 class TestFileInfoTools:
 
-    def test_has_three_tools(self):
-        assert len(FILE_INFO_TOOLS) == 3
+    def test_has_four_tools(self):
+        assert len(FILE_INFO_TOOLS) == 4
 
     def test_tool_names(self):
-        expected = {"file_read", "file_list", "file_search"}
+        expected = {"file_read", "file_list", "file_search", "restore_file"}
         assert FILE_INFO_TOOLS == expected
 
 
@@ -41,9 +41,9 @@ class TestFileToolSchemas:
 
 class TestBuildFileTools:
 
-    def test_returns_three_tools(self):
+    def test_returns_four_tools(self):
         tools = build_file_tools()
-        assert len(tools) == 3
+        assert len(tools) == 4
 
     def test_all_function_type(self):
         tools = build_file_tools()

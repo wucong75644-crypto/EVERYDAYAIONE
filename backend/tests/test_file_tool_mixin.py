@@ -30,6 +30,10 @@ class FakeMixin(FileToolMixin, CrawlerToolMixin):
         self.user_id = user_id
         self.org_id = org_id
         self.conversation_id = conversation_id
+        self._workspace_dir_override = ""
+
+    def _get_workspace_dir(self) -> str:
+        return self._workspace_dir_override
 
 
 @pytest.fixture
@@ -249,3 +253,149 @@ class TestSocialCrawlerExecution:
         assert isinstance(result, AgentResult)
         assert result.status == "success"
         assert "小红书笔记" in result.summary
+
+
+# ============================================================
+# FileToolMixin._restore_file
+# ============================================================
+
+
+class TestRestoreFile:
+    """restore_file 工具测试"""
+
+    @staticmethod
+    def _make_executor(ws_path):
+        """创建真实 FileExecutor（复用项目路径安全基础设施）"""
+        from services.file_executor import FileExecutor
+        # FileExecutor 需要 workspace_root，_root 会解析为 ws_path
+        executor = MagicMock()
+        # 用真实的 resolve_safe_path 逻辑：realpath + workspace 白名单
+        from pathlib import Path as _Path
+        _root = _Path(ws_path).resolve()
+
+        def _resolve(path_input):
+            p = path_input.strip()
+            if _Path(p).is_absolute():
+                target = _Path(p).resolve()
+            else:
+                target = (_root / p.lstrip("/").lstrip("\\")).resolve()
+            target.relative_to(_root)  # ValueError → PermissionError
+            return target
+
+        executor.resolve_safe_path = _resolve
+        return executor
+
+    @pytest.mark.asyncio
+    async def test_restore_success(self, tmp_path):
+        """备份存在 → 恢复成功"""
+        from services.agent.session_file_registry import SessionFileRegistry
+        from services.agent.tool_output import FileRef
+
+        ws = tmp_path / "workspace"
+        stg = tmp_path / "staging"
+        ws.mkdir()
+        stg.mkdir()
+
+        # 创建备份文件
+        backup_file = stg / "_bak_1700000000_report.xlsx"
+        backup_file.write_bytes(b"original data")
+
+        # 当前文件（被修改后的）
+        (ws / "report.xlsx").write_bytes(b"modified data")
+
+        # 注册到 registry
+        registry = SessionFileRegistry()
+        ref = FileRef(
+            path=str(backup_file), filename=backup_file.name,
+            format="xlsx", row_count=0, size_bytes=13, columns=[],
+        )
+        registry.register("backup:report.xlsx", "code_execute", ref)
+
+        mixin = FakeMixin()
+        executor = self._make_executor(str(ws))
+
+        with patch(
+            "services.agent.session_file_registry.get_conversation_registry",
+            return_value=registry,
+        ):
+            result = await mixin._restore_file(executor, {"filename": "report.xlsx"})
+
+        assert result.status == "success"
+        assert "已恢复" in result.summary
+        assert (ws / "report.xlsx").read_bytes() == b"original data"
+
+    @pytest.mark.asyncio
+    async def test_restore_no_backup(self, tmp_path):
+        """无备份 → 返回 empty"""
+        from services.agent.session_file_registry import SessionFileRegistry
+
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+
+        registry = SessionFileRegistry()
+        mixin = FakeMixin()
+        executor = self._make_executor(str(ws))
+
+        with patch(
+            "services.agent.session_file_registry.get_conversation_registry",
+            return_value=registry,
+        ):
+            result = await mixin._restore_file(executor, {"filename": "report.xlsx"})
+
+        assert result.status == "empty"
+        assert "未找到" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_restore_expired_backup(self, tmp_path):
+        """备份文件已被清理 → 返回 error"""
+        from services.agent.session_file_registry import SessionFileRegistry
+        from services.agent.tool_output import FileRef
+
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+
+        # 注册一个指向不存在文件的 ref
+        registry = SessionFileRegistry()
+        ref = FileRef(
+            path="/nonexistent/_bak_1700000000_report.xlsx",
+            filename="_bak_1700000000_report.xlsx",
+            format="xlsx", row_count=0, size_bytes=100, columns=[],
+        )
+        registry.register("backup:report.xlsx", "code_execute", ref)
+
+        mixin = FakeMixin()
+        executor = self._make_executor(str(ws))
+
+        with patch(
+            "services.agent.session_file_registry.get_conversation_registry",
+            return_value=registry,
+        ):
+            result = await mixin._restore_file(executor, {"filename": "report.xlsx"})
+
+        assert result.status == "error"
+        assert "过期" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_restore_empty_filename(self, tmp_path):
+        """空文件名 → 返回 error"""
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+
+        mixin = FakeMixin()
+        executor = self._make_executor(str(ws))
+        result = await mixin._restore_file(executor, {"filename": ""})
+        assert result.status == "error"
+        assert "请指定" in result.summary
+
+    @pytest.mark.asyncio
+    async def test_restore_path_traversal_blocked(self, tmp_path):
+        """路径穿越攻击 → PermissionError"""
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+
+        mixin = FakeMixin()
+        executor = self._make_executor(str(ws))
+
+        # ../etc/passwd 应该被 resolve_safe_path 拦截
+        with pytest.raises(ValueError):
+            await mixin._restore_file(executor, {"filename": "../../etc/passwd"})

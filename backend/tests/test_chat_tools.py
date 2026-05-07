@@ -286,6 +286,45 @@ class TestErpAnalyzeDomain:
         assert can_access("erp_analyze", "erp") is False
 
 
+class TestRestoreFileInCoreTools:
+    """restore_file 工具注册验证"""
+
+    def test_restore_file_in_core_tools(self):
+        from config.chat_tools import _CORE_TOOLS
+        assert "restore_file" in _CORE_TOOLS
+
+    def test_restore_file_in_chat_tools(self):
+        from config.chat_tools import get_chat_tools
+        tools = get_chat_tools(org_id=None)
+        names = {t["function"]["name"] for t in tools}
+        assert "restore_file" in names
+
+    def test_restore_file_has_filename_param(self):
+        from config.chat_tools import get_chat_tools
+        tools = get_chat_tools(org_id=None)
+        rf = next(t for t in tools if t["function"]["name"] == "restore_file")
+        assert "filename" in rf["function"]["parameters"]["required"]
+
+
+class TestCommonToolsSplit:
+    """common_tools 拆分后集成验证"""
+
+    def test_build_common_tools_importable(self):
+        from config.common_tools import build_common_tools
+        tools = build_common_tools()
+        assert isinstance(tools, list)
+        assert len(tools) > 0
+
+    def test_chat_tools_uses_common_tools(self):
+        """拆分后 get_chat_tools 返回的工具集不变"""
+        from config.chat_tools import get_chat_tools
+        tools = get_chat_tools(org_id="test_org")
+        names = {t["function"]["name"] for t in tools}
+        # common_tools 中的核心工具必须存在
+        for name in ("erp_agent", "data_query", "web_search", "manage_scheduled_task"):
+            assert name in names, f"拆分后丢失工具: {name}"
+
+
 class TestFileConcurrencySafe:
     """file 工具并发安全标记"""
 
