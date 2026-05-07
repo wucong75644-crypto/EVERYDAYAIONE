@@ -2028,7 +2028,15 @@
       "Bash(grep -r \"merged\\\\|multi-level\\\\|header\" /Users/wucong/EVERYDAYAIONE/backend/tests/test_data_query*.py)",
       "Bash(grep -n '^$' backend/services/agent/excel_cleaner.py)",
       "Bash(grep -n '^$' backend/services/agent/data_query_cache.py)",
-      "Bash(./git-push.sh \"feat: Excel三层清洗防线——合并ffill/隐藏行标记/多级表头展平/质量校验\")"
+      "Bash(./git-push.sh \"feat: Excel三层清洗防线——合并ffill/隐藏行标记/多级表头展平/质量校验\")",
+      "Bash(grep -r \"ToolLoopExecutor\" /Users/wucong/EVERYDAYAIONE/backend/services/agent/*.py --include=\"*.py\")",
+      "Bash(grep -n \"你是一个\" /Users/wucong/EVERYDAYAIONE/backend/services/handlers/*.py)",
+      "Bash(grep -rn \"system.*prompt\\\\|role.*system\" /Users/wucong/EVERYDAYAIONE/backend/services/handlers/*.py)",
+      "Bash(python -m pytest tests/test_data_query.py::TestDataQueryPrompt -x -q)",
+      "Bash(python -m pytest tests/test_erp_agent.py::TestToolSystemPrompt -x -q)",
+      "Bash(python -m pytest tests/test_data_query.py -k \"prompt\" -x -q)",
+      "Bash(python -m pytest tests/test_erp_agent.py -k \"prompt\" -x -q)",
+      "Bash(./git-push.sh \"feat: 主Agent提示词——先确认方案再执行，基于4条通用判断标准（做法唯一性/理解偏差/多步判断依赖/执行成本）\")"
     ],
     "additionalDirectories": [
       "/tmp"
