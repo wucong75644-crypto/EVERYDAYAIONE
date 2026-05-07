@@ -413,6 +413,9 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       if (conversation_id) {
         store.completeStreaming(conversation_id);
       }
+
+      // Agent 操作完成 → 通知工作区刷新（覆盖删除等无 file block 的场景）
+      window.dispatchEvent(new CustomEvent('workspace:changed'));
     },
 
     message_progress: (msg) => {
@@ -608,6 +611,11 @@ export function createWSMessageHandlers(deps: HandlerDeps): Record<string, (msg:
       // 其他 block（新增的 running tool_step、image、file 等）：直接追加
       store.appendContentBlock(conversation_id, block);
       logger.info('ws:content', 'content_block_add', { conversationId: conversation_id, type: block.type });
+
+      // 文件产出 → 通知工作区刷新
+      if (block.type === 'file') {
+        window.dispatchEvent(new CustomEvent('workspace:changed'));
+      }
     },
 
     suggestions_ready: (msg) => {
