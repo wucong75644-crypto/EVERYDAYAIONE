@@ -209,13 +209,13 @@ export function useImageUpload() {
 
   /**
    * 添加引用图片（已有 CDN URL，无需上传）
-   * - 如果已有引用图，替换（每次只能引用一张）
+   * - 支持多张引用图，同一 URL 不重复添加
    * - 引用图的 preview 和 url 均使用 CDN URL
    */
   const addQuotedImage = (cdnUrl: string) => {
     setImages((prev) => {
-      // 移除已有的引用图（保证只有一张引用图）
-      const withoutQuoted = prev.filter((img) => !img.isQuoted);
+      // 同一张图不重复引用
+      if (prev.some((img) => img.isQuoted && img.url === cdnUrl)) return prev;
       const quotedImage: UploadedImage = {
         id: `quoted-${Date.now()}`,
         file: new File([], 'quoted-image'),
@@ -226,7 +226,7 @@ export function useImageUpload() {
         isQuoted: true,
       };
       // 引用图放在最前面
-      return [quotedImage, ...withoutQuoted];
+      return [quotedImage, ...prev];
     });
     setUploadError(null);
   };
