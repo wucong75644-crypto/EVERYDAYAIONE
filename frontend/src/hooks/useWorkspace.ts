@@ -112,6 +112,13 @@ export function useWorkspace(): UseWorkspaceReturn {
     fetchList(currentPath);
   }, [currentPath, fetchList]);
 
+  // Agent 文件操作（code_execute 生成/删除）后自动刷新
+  useEffect(() => {
+    const handler = () => { fetchList(currentPath, true); };
+    window.addEventListener('workspace:changed', handler);
+    return () => window.removeEventListener('workspace:changed', handler);
+  }, [currentPath, fetchList]);
+
   const navigateTo = useCallback((path: string) => {
     setCurrentPath(path);
   }, []);
