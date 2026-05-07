@@ -476,6 +476,22 @@ class TestDedupOverwrittenFiles:
 
         assert (tmp_path / "report.xlsx").read_bytes() == b"important data"
 
+    def test_dedup_confirmed_delete_not_restored(self, tmp_path):
+        """用户通过 confirm_delete 确认删除的文件，不恢复"""
+        (tmp_path / "report.xlsx").write_bytes(b"to be deleted")
+
+        executor = SandboxExecutor(timeout=5.0, output_dir=str(tmp_path))
+        backups = executor._backup_existing_files()
+
+        (tmp_path / "report.xlsx").unlink()
+
+        executor._dedup_overwritten_files(backups, confirm_delete=["report.xlsx"])
+
+        # 文件不应被恢复
+        assert not (tmp_path / "report.xlsx").exists()
+        # 备份也应被清理
+        assert not (tmp_path / "report.xlsx.dedup_bak").exists()
+
     @pytest.mark.asyncio
     async def test_dedup_bak_not_uploaded(self, tmp_path):
         (tmp_path / "report.xlsx.dedup_bak").write_bytes(b"backup")
