@@ -141,6 +141,13 @@ def build_scoped_open(
 
     def _scoped_open(path, mode="r", *args, **kwargs):
         path_str = str(path)
+        # 虚拟路径检测：LLM 可能误用 /staging/ /output/ 字面路径
+        if path_str.startswith("/staging/") or path_str.startswith("/output/"):
+            hint = "STAGING_DIR" if path_str.startswith("/staging/") else "OUTPUT_DIR"
+            raise PermissionError(
+                f"请使用 {hint} 变量而非字面路径。"
+                f"正确写法: {hint} + '/{os.path.basename(path_str)}'"
+            )
         # 相对路径解析到 workspace
         if not os.path.isabs(path_str):
             path_str = os.path.join(_ws_dir, path_str)
