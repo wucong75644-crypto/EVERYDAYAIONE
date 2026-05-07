@@ -105,10 +105,13 @@ def build_scoped_open(
     workspace_dir: str, staging_dir: str, output_dir: str,
     original_open=None,
 ):
-    """构建带路径安全检查 + 虚拟路径别名 + 文件名纠错的 open 函数。
+    """构建带路径安全检查 + 文件名纠错的 open 函数。
 
     sandbox_worker 和 kernel_worker 共用此逻辑，避免两处维护。
     返回 scoped_open 函数，调用方赋值给 builtins.open。
+
+    注意：不做虚拟路径别名（/staging/ /output/），LLM 统一用
+    STAGING_DIR/OUTPUT_DIR 变量（真实绝对路径），任何库都能直接写。
     """
     import os
     import tempfile as _tempfile
@@ -136,21 +139,8 @@ def build_scoped_open(
         "/usr/share/zoneinfo",
     })
 
-    # 虚拟路径别名：Agent 写 /output/xxx 或 /staging/xxx 时
-    # 自动映射到真实目录，与 OUTPUT_DIR/STAGING_DIR 变量走同一套逻辑
-    _path_aliases: list[tuple[str, str]] = []
-    if output_dir:
-        _path_aliases.append(("/output/", output_dir.rstrip("/") + "/"))
-    if staging_dir:
-        _path_aliases.append(("/staging/", staging_dir.rstrip("/") + "/"))
-
     def _scoped_open(path, mode="r", *args, **kwargs):
         path_str = str(path)
-        # 虚拟路径别名：/output/xxx → OUTPUT_DIR/xxx
-        for alias, real in _path_aliases:
-            if path_str.startswith(alias):
-                path_str = real + path_str[len(alias):]
-                break
         # 相对路径解析到 workspace
         if not os.path.isabs(path_str):
             path_str = os.path.join(_ws_dir, path_str)
