@@ -545,7 +545,7 @@ def sandbox_worker_entry(
         if staging_dir:
             os.makedirs(staging_dir, exist_ok=True)
 
-        # 3.5 替换 builtins.open 为带路径安全检查 + 虚拟路径别名 + 文件名纠错的版本
+        # 3.5 替换 builtins.open 为带路径安全检查 + 文件名纠错的版本
         # 逻辑在 build_scoped_open() 中统一定义，kernel_worker 共用
         if workspace_dir:
             import builtins
