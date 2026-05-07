@@ -195,12 +195,20 @@ class ChatContextMixin:
             # 注册到文件缓存，后续工具调用时 resolve 可纠正 LLM 加空格等变形
             from services.agent.workspace_file_handles import get_file_cache
             from pathlib import Path as _Path
+            from core.config import get_settings as _get_settings
+            from core.workspace import resolve_workspace_dir as _resolve_ws
+            _ws_settings = _get_settings()
+            _ws_dir = _resolve_ws(
+                _ws_settings.file_workspace_root, user_id,
+                getattr(self, "org_id", None),
+            )
             file_cache = get_file_cache(conversation_id)
             for f in workspace_files:
                 wp = f.get("workspace_path", "")
                 if wp:
-                    file_cache.register(wp, wp)
-                    file_cache.register(_Path(wp).name, wp)
+                    abs_path = str(_Path(_ws_dir) / wp)
+                    file_cache.register(wp, abs_path)
+                    file_cache.register(_Path(wp).name, abs_path)
 
             ws_prompt = self._build_workspace_prompt(workspace_files)
             if ws_prompt:
