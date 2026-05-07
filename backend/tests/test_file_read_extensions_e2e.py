@@ -159,9 +159,9 @@ class TestPdfRead:
 
     @pytest.mark.asyncio
     async def test_pdf_large_requires_pages(self, executor, workspace):
-        """>10 页 PDF 无 pages 参数拒绝"""
+        """>100 页 PDF 无 pages 参数拒绝"""
         pdf = Path(workspace, "large.pdf")
-        _make_pdf(pdf, 15)
+        _make_pdf(pdf, 105)
         result = await executor.file_read("large.pdf")
 
         assert "超过" in result
@@ -178,14 +178,14 @@ class TestPdfRead:
         assert "Page5Content" in result
 
     @pytest.mark.asyncio
-    async def test_pdf_max_20_pages(self, executor, workspace):
-        """单次读取超过 20 页拒绝"""
+    async def test_pdf_max_100_pages(self, executor, workspace):
+        """单次读取超过 100 页拒绝"""
         pdf = Path(workspace, "huge.pdf")
-        _make_pdf(pdf, 25)
-        result = await executor.file_read("huge.pdf", pages="1-25")
+        _make_pdf(pdf, 105)
+        result = await executor.file_read("huge.pdf", pages="1-105")
 
         assert "超过单次上限" in result
-        assert "20" in result
+        assert "100" in result
 
     @pytest.mark.asyncio
     async def test_pdf_corrupted_large(self, executor, workspace):
