@@ -210,14 +210,14 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
         {tableData && !loading && (
           <div className="p-4">
             <div className="overflow-auto rounded-lg bg-white dark:bg-gray-900">
-              <table className="w-full text-sm table-fixed">
+              <table className="text-sm">
                 <thead>
                   {tableData.length > 0 && (
                     <tr>
                       {tableData[0].map((cell, i) => (
                         <th
                           key={i}
-                          className="px-3 py-2 text-left font-semibold bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-gray-700 truncate"
+                          className="px-3 py-2 text-left font-semibold bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-gray-700 whitespace-nowrap max-w-[240px] truncate"
                           title={String(cell ?? '')}
                         >
                           {cell ?? ''}
@@ -232,7 +232,7 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
                       {row.map((cell, ci) => (
                         <td
                           key={ci}
-                          className="px-3 py-1.5 border-b border-gray-100 dark:border-gray-800 text-gray-700 dark:text-gray-300 truncate"
+                          className="px-3 py-1.5 border-b border-gray-100 dark:border-gray-800 text-gray-700 dark:text-gray-300 whitespace-nowrap max-w-[240px] truncate"
                           title={String(cell ?? '')}
                         >
                           {cell ?? ''}
@@ -263,12 +263,12 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
 
       {/* 底部 Sheet 切换（Excel 多 Sheet） */}
       {sheetNames.length > 1 && (
-        <div className="flex items-center gap-1 px-4 py-2 bg-gray-900/90">
+        <div className="flex items-center gap-1 px-4 py-2 bg-gray-900/90 overflow-x-auto flex-shrink-0">
           {sheetNames.map((name, i) => (
             <button
               key={name}
               onClick={() => handleSheetChange(i)}
-              className={`px-3 py-1 rounded text-sm transition-colors ${
+              className={`px-3 py-1 rounded text-sm transition-colors whitespace-nowrap flex-shrink-0 ${
                 i === activeSheet
                   ? 'bg-blue-600 text-white'
                   : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
