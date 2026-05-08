@@ -219,102 +219,61 @@ from services.agent.data_profile import _infer_structure
 
 
 class TestInferStructure:
-    """列角色分类 + 主从模式检测"""
+    """相邻重复率输出"""
 
-    def test_master_detail_detected(self):
-        """主从模式：主字段相邻重复率高，明细字段低，两极分化明显"""
+    def test_outputs_adjacent_dup_ratios(self):
+        """有相邻重复率 → 输出每列百分比"""
         columns = [
             {"name": "order_id", "type": "BIGINT", "distinct_count": 50, "null_count": 0},
-            {"name": "order_type", "type": "VARCHAR", "distinct_count": 1, "null_count": 0},
-            {"name": "amount", "type": "DOUBLE", "distinct_count": 50, "null_count": 0},
-            {"name": "item_price", "type": "DOUBLE", "distinct_count": 80, "null_count": 0},
-            {"name": "qty", "type": "INTEGER", "distinct_count": 3, "null_count": 0},
+            {"name": "price", "type": "DOUBLE", "distinct_count": 80, "null_count": 0},
         ]
-        profile = {
-            "adjacent_dup_ratios": {
-                "order_id": 0.50,    # 主字段
-                "order_type": 0.99,  # 主字段
-                "amount": 0.50,      # 主字段
-                "item_price": 0.15,  # 明细字段
-                "qty": 0.15,         # 明细字段
-            },
-        }
+        profile = {"adjacent_dup_ratios": {"order_id": 0.50, "price": 0.05}}
         lines = _infer_structure(columns, 100, profile)
         text = "\n".join(lines)
-        assert "主从模式" in text
-        assert "明细字段" in text
-        assert "去重" in text
+        assert "相邻重复率" in text
+        assert "order_id: 50%" in text
+        assert "price: 5%" in text
 
-    def test_flat_table_no_master_detail(self):
-        """扁平表：所有列相邻重复率都低且相近 → 不输出主从段"""
+    def test_sorted_by_ratio_desc(self):
+        """按重复率降序排列"""
         columns = [
-            {"name": "id", "type": "BIGINT", "distinct_count": 95, "null_count": 0},
-            {"name": "name", "type": "VARCHAR", "distinct_count": 90, "null_count": 0},
-            {"name": "amount", "type": "DOUBLE", "distinct_count": 80, "null_count": 0},
+            {"name": "a", "type": "VARCHAR", "distinct_count": 10, "null_count": 0},
+            {"name": "b", "type": "VARCHAR", "distinct_count": 10, "null_count": 0},
         ]
-        profile = {
-            "adjacent_dup_ratios": {"id": 0.01, "name": 0.03, "amount": 0.02},
-        }
+        profile = {"adjacent_dup_ratios": {"a": 0.10, "b": 0.90}}
         lines = _infer_structure(columns, 100, profile)
-        text = "\n".join(lines)
-        assert "主从模式" not in text
-
-    def test_all_high_ratio_no_master_detail(self):
-        """所有列相邻重复率都高但无两极分化 → 不输出主从段"""
-        columns = [
-            {"name": "a", "type": "VARCHAR", "distinct_count": 5, "null_count": 0},
-            {"name": "b", "type": "VARCHAR", "distinct_count": 3, "null_count": 0},
-            {"name": "c", "type": "INTEGER", "distinct_count": 10, "null_count": 0},
-        ]
-        profile = {
-            "adjacent_dup_ratios": {"a": 0.80, "b": 0.85, "c": 0.75},
-        }
-        lines = _infer_structure(columns, 100, profile)
-        text = "\n".join(lines)
-        assert "主从模式" not in text
-
-    def test_column_roles_id(self):
-        """唯一率 >0.9 且完整率 >0.95 → ID"""
-        columns = [
-            {"name": "order_no", "type": "VARCHAR", "distinct_count": 95, "null_count": 0},
-            {"name": "status", "type": "VARCHAR", "distinct_count": 3, "null_count": 0},
-        ]
-        lines = _infer_structure(columns, 100, {})
-        text = "\n".join(lines)
-        assert "ID: order_no" in text
-        assert "分类: status" in text
-
-    def test_column_roles_timestamp(self):
-        """时间类型 → 时间角色"""
-        columns = [
-            {"name": "created_at", "type": "TIMESTAMP", "distinct_count": 90, "null_count": 0},
-            {"name": "amount", "type": "DOUBLE", "distinct_count": 80, "null_count": 0},
-        ]
-        lines = _infer_structure(columns, 100, {})
-        text = "\n".join(lines)
-        assert "时间: created_at" in text
-        assert "度量: amount" in text
+        # b(90%) 应在 a(10%) 前面
+        b_idx = next(i for i, l in enumerate(lines) if "b:" in l)
+        a_idx = next(i for i, l in enumerate(lines) if "a:" in l)
+        assert b_idx < a_idx
 
     def test_small_table_skipped(self):
-        """小表（<10行）→ 跳过推断"""
+        """小表（<10行）→ 跳过"""
         columns = [{"name": "a", "type": "INTEGER", "distinct_count": 5, "null_count": 0}]
-        lines = _infer_structure(columns, 5, {})
+        lines = _infer_structure(columns, 5, {"adjacent_dup_ratios": {"a": 0.5}})
         assert lines == []
 
     def test_empty_columns_skipped(self):
-        """空列列表 → 跳过推断"""
-        lines = _infer_structure([], 100, {})
+        """空列列表 → 跳过"""
+        lines = _infer_structure([], 100, {"adjacent_dup_ratios": {"a": 0.5}})
         assert lines == []
 
-    def test_no_adjacent_ratios_still_outputs_roles(self):
-        """无相邻重复率数据 → 不输出主从，但仍输出列角色"""
+    def test_no_adjacent_ratios_skipped(self):
+        """无相邻重复率数据 → 跳过"""
         columns = [
             {"name": "id", "type": "BIGINT", "distinct_count": 95, "null_count": 0},
-            {"name": "status", "type": "VARCHAR", "distinct_count": 2, "null_count": 0},
-            {"name": "pay_time", "type": "TIMESTAMP", "distinct_count": 90, "null_count": 0},
         ]
         lines = _infer_structure(columns, 100, {})
+        assert lines == []
+
+    def test_hidden_columns_excluded(self):
+        """_is_ 前缀的标记列不输出"""
+        columns = [
+            {"name": "order_id", "type": "BIGINT", "distinct_count": 50, "null_count": 0},
+            {"name": "_is_hidden", "type": "BOOLEAN", "distinct_count": 2, "null_count": 0},
+        ]
+        profile = {"adjacent_dup_ratios": {"order_id": 0.50, "_is_hidden": 0.95}}
+        lines = _infer_structure(columns, 100, profile)
         text = "\n".join(lines)
-        assert "主从模式" not in text
-        assert "[列角色]" in text
-        assert "ID: id" in text
+        assert "order_id" in text
+        assert "_is_hidden" not in text
