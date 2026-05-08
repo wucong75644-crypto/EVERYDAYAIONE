@@ -448,13 +448,13 @@ def _build_structured_preview(
             header += f" | ...+{hidden}列"
         lines.append(f"\n  {header}")
 
-        # 数据行（空值用 - 占位，保持列对齐）
+        # 数据行（空值显示 null，保持列对齐）
         for i, row in enumerate(preview_rows, 1):
             cells = []
             for k in display_keys:
                 v = row.get(k)
                 if v is None or str(v) in ("nan", "NaT", "None"):
-                    cells.append("")
+                    cells.append("null")
                 else:
                     sv = str(v)
                     if len(sv) > 20:
