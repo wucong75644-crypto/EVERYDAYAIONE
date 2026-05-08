@@ -38,6 +38,8 @@ export interface WorkspaceFileItem {
   mime_type: string | null;
   /** 上传进度 0~100，undefined 表示非上传状态 */
   uploadProgress?: number;
+  /** 上传目标路径（内部用，仅占位项） */
+  _uploadPath?: string;
 }
 
 export interface WorkspaceListResponse {
