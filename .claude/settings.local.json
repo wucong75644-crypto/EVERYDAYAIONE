@@ -2053,7 +2053,8 @@
       "Bash(python -m pytest tests/test_data_profile.py -q --tb=short)",
       "Bash(python -m pytest tests/test_data_profile.py -v --tb=short)",
       "Bash(npm view *)",
-      "Bash(./git-push.sh \"feat: 工作区桌面级交互——多选/右键菜单/键盘快捷键/列排序/拖拽移动/批量操作/图片缩略图\\(+24测试\\)\")"
+      "Bash(./git-push.sh \"feat: 工作区桌面级交互——多选/右键菜单/键盘快捷键/列排序/拖拽移动/批量操作/图片缩略图\\(+24测试\\)\")",
+      "Bash(./git-push.sh \"fix: 网格视图图标放大\\(40→56px\\)+文件名两行显示\\(line-clamp-2\\)+网格间距加大\")"
     ],
     "additionalDirectories": [
       "/tmp"
