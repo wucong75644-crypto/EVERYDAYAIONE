@@ -441,6 +441,15 @@ class DataQueryExecutor:
             raw_rows = _read_raw_excel_preview(original_path, max_rows=20)
             if raw_rows:
                 profile["preview_rows"] = raw_rows
+                logger.info(
+                    f"Raw Excel preview loaded | file={Path(original_path).name} "
+                    f"| rows={len(raw_rows)}"
+                )
+            else:
+                logger.warning(
+                    f"Raw Excel preview failed, using DuckDB fallback | "
+                    f"file={original_path}"
+                )
 
         text, _ = build_profile_from_duckdb(profile, filename, file_size_kb, elapsed)
 
