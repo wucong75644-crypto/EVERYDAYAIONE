@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Download, Loader2, AlertTriangle } from 'lucide-react';
+import { X, Download, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { FilePart } from '../../../types/message';
 import { downloadFile } from '../../../utils/downloadFile';
@@ -17,9 +17,6 @@ import { getWorkspacePreviewUrl, getAuthHeaders } from '../../../services/worksp
 // ============================================================
 // 常量
 // ============================================================
-
-/** 预览文件大小上限（20MB），超出引导下载 */
-const MAX_PREVIEW_SIZE = 20 * 1024 * 1024;
 
 /** 表格最多渲染行数 */
 const MAX_TABLE_ROWS = 200;
@@ -104,8 +101,7 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
   const [error, setError] = useState<string | null>(null);
   const [tableData, setTableData] = useState<string[][] | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
-  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
-  const [tooLarge, setTooLarge] = useState(false);
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [activeSheet, setActiveSheet] = useState(0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -132,17 +128,16 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
     async function loadContent() {
       setLoading(true);
       setError(null);
-      setTooLarge(false);
 
       try {
-        // 大文件保护：超过 20MB 引导下载
-        if (file.size && file.size > MAX_PREVIEW_SIZE) {
-          setTooLarge(true);
+        // PDF：iframe 原生渲染，直接用 URL（不走 fetch/blob，无大小限制）
+        if (isPdf) {
+          setPdfUrl(file.url || getWorkspacePreviewUrl(file.workspace_path!));
           setLoading(false);
           return;
         }
 
-        // CDN 优先（快），CORS 失败时降级后端代理（慢但可靠）
+        // 非 PDF：CDN 优先 fetch，CORS 失败降级后端代理
         let response: Response;
         if (file.url) {
           try {
@@ -162,11 +157,7 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
 
         if (cancelled) return;
 
-        if (isPdf) {
-          const blob = await response.blob();
-          if (cancelled) return;
-          setPdfBlobUrl(URL.createObjectURL(blob));
-        } else if (isExcel) {
+        if (isExcel) {
           const { read, utils } = await import('xlsx');
           const buffer = await response.arrayBuffer();
           if (cancelled) return;
@@ -193,11 +184,8 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
     }
 
     loadContent();
-    return () => {
-      cancelled = true;
-      setPdfBlobUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
-    };
-  }, [file.url, file.workspace_path, isPdf, isExcel, isCsv, ext, file.size]);
+    return () => { cancelled = true; };
+  }, [file.url, file.workspace_path, isPdf, isExcel, isCsv, ext]);
 
   // Sheet 切换
   const handleSheetChange = useCallback(async (index: number) => {
@@ -273,24 +261,10 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
           </div>
         )}
 
-        {/* 大文件提示 */}
-        {tooLarge && !loading && (
-          <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-300">
-            <AlertTriangle className="w-12 h-12 text-yellow-500" />
-            <p>文件较大（{formatFileSize(file.size!)}），建议下载后查看</p>
-            <button
-              onClick={handleDownload}
-              className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-            >
-              下载文件
-            </button>
-          </div>
-        )}
-
-        {/* PDF 预览 */}
-        {isPdf && pdfBlobUrl && !loading && (
+        {/* PDF 预览（iframe 原生渲染，浏览器流式加载，无大小限制） */}
+        {isPdf && pdfUrl && !loading && (
           <iframe
-            src={pdfBlobUrl}
+            src={pdfUrl}
             className="w-full h-full bg-white"
             title={file.name}
           />
