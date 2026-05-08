@@ -249,7 +249,7 @@ os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：c
 DuckDB SQL 引擎，恒定内存。支持并行调用（多文件可同时读取）。
 
 何时使用：
-- 看文件结构（不传 sql）：返回列名、类型、行数、统计信息 + 后续可用路径
+- 看文件结构（不传 sql）：返回列名、类型、行数、统计信息 + 后续可用路径。探索结果包含数据质量和结构指标，向用户完整说明数据特征后再操作
 - SQL 聚合筛选（传 sql）：结果存 staging，返回数据 + staging 引用
 - 多文件场景：每个文件分别调 data_query（可并行），各自存 staging，再用 code_execute merge
 
