@@ -14,7 +14,7 @@ interface BatchActionBarProps {
 }
 
 export default function BatchActionBar({ selectedCount, onDelete, onClear }: BatchActionBarProps) {
-  if (selectedCount === 0) return null;
+  if (selectedCount < 2) return null;
 
   return (
     <div className="flex items-center gap-3 px-4 py-2 border-b border-[var(--s-border-default)] bg-[var(--s-accent)]/5 shrink-0">
