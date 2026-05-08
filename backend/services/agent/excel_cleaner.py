@@ -112,8 +112,7 @@ def clean_excel(
     if structure is None:
         structure = _detect_structure(excel_path, sheet_name)
     if structure is not None:
-        # ffill 不再执行：保留原始空值，Agent 查询时 SUM/AVG 自动跳过 NULL
-        # _apply_merge_fill(df, structure, header_row, report)
+        _apply_merge_fill(df, structure, header_row, report)
         _mark_hidden_rows(df, structure, header_row, report)
         _mark_hidden_cols(df, structure, report)
         report.has_auto_filter = structure.has_auto_filter
@@ -313,17 +312,24 @@ def _apply_merge_fill(
     header_row: int,
     report: CleaningReport,
 ) -> None:
-    """对垂直合并列做 ffill。"""
-    filled_cols: set[int] = set()
+    """对垂直合并列显式填充 None（不做 ffill）。
+
+    保留原始空值结构，Agent 看到 null 就知道哪些行是明细行。
+    SUM/AVG 自动跳过 NULL，查询结果正确。
+    Agent 需要关联时在 code_execute 里自行 ffill。
+    """
+    null_filled_cols: set[int] = set()
     for min_row, max_row, min_col, max_col in structure.merged_ranges:
         if max_row <= min_row:
             continue  # 水平合并，跳过
         for col_1indexed in range(min_col, max_col + 1):
             pandas_col = col_1indexed - 1
-            if pandas_col < len(df.columns) and pandas_col not in filled_cols:
-                df.iloc[:, pandas_col] = df.iloc[:, pandas_col].ffill()
-                filled_cols.add(pandas_col)
-    report.merged_cols_filled = len(filled_cols)
+            if pandas_col < len(df.columns) and pandas_col not in null_filled_cols:
+                # 合并区域内的空值显式设为 None（pandas 读取时可能是 NaN）
+                col_series = df.iloc[:, pandas_col]
+                df.iloc[:, pandas_col] = col_series.where(col_series.notna(), None)
+                null_filled_cols.add(pandas_col)
+    report.merged_cols_filled = len(null_filled_cols)
 
 
 def _mark_hidden_rows(
