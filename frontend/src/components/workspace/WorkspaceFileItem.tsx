@@ -2,16 +2,13 @@
  * 工作区单个文件/文件夹条目
  *
  * 支持列表模式和图标模式两种渲染。
- * 操作菜单：重命名、删除、插入到聊天、移动到（待 Phase 4）。
+ * 交互：单击选中、双击打开、右键菜单（由 FileContextMenu 包裹）。
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Folder, MoreHorizontal, Pencil, Trash2, MessageSquarePlus, Download } from 'lucide-react';
-import { Dropdown, DropdownItem, DropdownDivider } from '../ui/Dropdown';
-import { Button } from '../ui/Button';
+import { Folder } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { getFileIcon, getFileIconColor, formatFileSize } from '../../utils/fileUtils';
-import { downloadFile } from '../../utils/downloadFile';
 import type { WorkspaceFileItem as FileItemData } from '../../services/workspace';
 
 interface WorkspaceFileItemProps {
@@ -19,15 +16,21 @@ interface WorkspaceFileItemProps {
   /** 当前目录路径（用于拼完整路径） */
   currentPath: string;
   mode: 'list' | 'grid';
-  onNavigate: (path: string) => void;
+  /** 是否选中 */
+  selected?: boolean;
+  /** 单击回调（选中用，由父组件处理 Ctrl/Shift） */
+  onSelect?: (path: string, e: React.MouseEvent) => void;
+  /** 双击回调（打开文件/进入文件夹） */
+  onOpen: (item: FileItemData) => void;
   onRename: (oldName: string, newName: string) => Promise<boolean>;
-  onDelete: (path: string) => void;
-  onPreview: (item: FileItemData) => void;
-  onSendToChat?: (item: FileItemData) => void;
+  /** 开始重命名（外部触发，如右键菜单/F2） */
+  startRename?: boolean;
+  /** 重命名结束通知父组件 */
+  onRenameEnd?: () => void;
 }
 
 /** 计算文件的完整相对路径 */
-function getFullPath(currentPath: string, name: string): string {
+export function getFullPath(currentPath: string, name: string): string {
   return currentPath === '.' ? name : `${currentPath}/${name}`;
 }
 
@@ -50,108 +53,83 @@ export default function WorkspaceFileItem({
   item,
   currentPath,
   mode,
-  onNavigate,
+  selected = false,
+  onSelect,
+  onOpen,
   onRename,
-  onDelete,
-  onPreview,
-  onSendToChat,
+  startRename = false,
+  onRenameEnd,
 }: WorkspaceFileItemProps) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState(item.name);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const renameSubmittingRef = useRef(false);
 
+  // 外部触发重命名（右键菜单 / F2）
+  useEffect(() => {
+    if (startRename && !isRenaming) {
+      setIsRenaming(true);
+      setNewName(item.name);
+    }
+  }, [startRename, isRenaming, item.name]);
+
   useEffect(() => {
     if (isRenaming) {
       renameInputRef.current?.focus();
-      // 选中文件名（不含扩展名）
       const dotIndex = newName.lastIndexOf('.');
       renameInputRef.current?.setSelectionRange(0, dotIndex > 0 ? dotIndex : newName.length);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅在 isRenaming 变化时执行
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRenaming]);
 
-  const handleClick = () => {
+  const handleClick = (e: React.MouseEvent) => {
     if (isRenaming) return;
-    if (item.is_dir) {
-      onNavigate(getFullPath(currentPath, item.name));
-    } else {
-      onPreview(item);
-    }
+    e.stopPropagation();
+    const fullPath = getFullPath(currentPath, item.name);
+    onSelect?.(fullPath, e);
+  };
+
+  const handleDoubleClick = () => {
+    if (isRenaming) return;
+    onOpen(item);
   };
 
   const handleRenameSubmit = useCallback(async () => {
-    if (renameSubmittingRef.current) return; // 防止 blur+Enter 双提交
+    if (renameSubmittingRef.current) return;
     const trimmed = newName.trim();
     if (!trimmed || trimmed === item.name) {
       setIsRenaming(false);
       setNewName(item.name);
+      onRenameEnd?.();
       return;
     }
     renameSubmittingRef.current = true;
     try {
       const success = await onRename(item.name, trimmed);
-      if (success) {
-        setIsRenaming(false);
-      } else {
-        setNewName(item.name);
-        setIsRenaming(false);
-      }
+      if (!success) setNewName(item.name);
+      setIsRenaming(false);
+      onRenameEnd?.();
     } finally {
       renameSubmittingRef.current = false;
     }
-  }, [newName, item.name, onRename]);
+  }, [newName, item.name, onRename, onRenameEnd]);
 
   const handleRenameKeyDown = (e: React.KeyboardEvent) => {
+    e.stopPropagation();
     if (e.key === 'Enter') handleRenameSubmit();
     if (e.key === 'Escape') {
       setIsRenaming(false);
       setNewName(item.name);
+      onRenameEnd?.();
     }
   };
-
-  const handleDownload = () => {
-    if (item.cdn_url) {
-      downloadFile(item.cdn_url, item.name);
-    }
-  };
-
-  const fullPath = getFullPath(currentPath, item.name);
-
-  const menuTrigger = (
-    <Button
-      variant="ghost"
-      size="sm"
-      className="!p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-      aria-label="更多操作"
-    >
-      <MoreHorizontal className="w-4 h-4" />
-    </Button>
-  );
-
-  const dropdownMenu = (
-    <Dropdown trigger={menuTrigger} placement="bottom" align="end">
-      <DropdownItem icon={<Pencil className="w-4 h-4" />} onClick={() => { setIsRenaming(true); setNewName(item.name); }}>
-        重命名
-      </DropdownItem>
-      {!item.is_dir && item.cdn_url && (
-        <DropdownItem icon={<Download className="w-4 h-4" />} onClick={handleDownload}>
-          下载
-        </DropdownItem>
-      )}
-      {!item.is_dir && onSendToChat && (
-        <DropdownItem icon={<MessageSquarePlus className="w-4 h-4" />} onClick={() => onSendToChat(item)}>
-          插入到聊天
-        </DropdownItem>
-      )}
-      <DropdownDivider />
-      <DropdownItem icon={<Trash2 className="w-4 h-4" />} variant="danger" onClick={() => onDelete(fullPath)}>
-        删除
-      </DropdownItem>
-    </Dropdown>
-  );
 
   const isUploading = item.uploadProgress !== undefined;
+
+  // 选中态样式
+  const selectedClass = selected && !isUploading
+    ? 'bg-[var(--s-accent)]/10 border-l-2 border-l-[var(--s-accent)]'
+    : '';
 
   // === 列表模式 ===
   if (mode === 'list') {
@@ -160,9 +138,10 @@ export default function WorkspaceFileItem({
         className={cn(
           "group flex items-center gap-3 px-3 py-2.5 rounded-[var(--s-radius-control)] transition-colors",
           isUploading ? 'opacity-70' : 'hover:bg-[var(--s-hover)] cursor-pointer',
+          selectedClass,
         )}
         onClick={isUploading ? undefined : handleClick}
-        onDoubleClick={isUploading ? undefined : () => { if (!item.is_dir) { setIsRenaming(true); setNewName(item.name); } }}
+        onDoubleClick={isUploading ? undefined : handleDoubleClick}
       >
         {/* 图标 */}
         <span className={cn('text-xl shrink-0', item.is_dir ? 'text-blue-500 dark:text-blue-400' : getFileIconColor(item.name))}>
@@ -205,11 +184,6 @@ export default function WorkspaceFileItem({
         <span className="text-xs text-[var(--s-text-tertiary)] w-24 text-right shrink-0">
           {isUploading ? '上传中...' : formatTime(item.modified)}
         </span>
-
-        {/* 操作菜单 */}
-        <div onClick={(e) => e.stopPropagation()}>
-          {!isUploading && dropdownMenu}
-        </div>
       </div>
     );
   }
@@ -220,17 +194,11 @@ export default function WorkspaceFileItem({
       className={cn(
         "group relative flex flex-col items-center gap-2 p-3 rounded-[var(--s-radius-card)] transition-colors",
         isUploading ? 'opacity-70' : 'hover:bg-[var(--s-hover)] cursor-pointer',
+        selected && !isUploading && 'bg-[var(--s-accent)]/10 ring-1 ring-[var(--s-accent)]/30',
       )}
       onClick={isUploading ? undefined : handleClick}
-      onDoubleClick={isUploading ? undefined : () => { if (!item.is_dir) { setIsRenaming(true); setNewName(item.name); } }}
+      onDoubleClick={isUploading ? undefined : handleDoubleClick}
     >
-      {/* 操作按钮（右上角） */}
-      {!isUploading && (
-        <div className="absolute top-1 right-1" onClick={(e) => e.stopPropagation()}>
-          {dropdownMenu}
-        </div>
-      )}
-
       {/* 大图标 */}
       <span className={cn('text-4xl', item.is_dir ? 'text-blue-500 dark:text-blue-400' : getFileIconColor(item.name))}>
         {item.is_dir ? <Folder className="w-10 h-10 fill-current" /> : getFileIcon(item.name)}
