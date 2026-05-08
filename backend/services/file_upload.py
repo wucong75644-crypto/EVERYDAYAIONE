@@ -54,9 +54,19 @@ async def auto_upload(
             object_key = str(file_path.relative_to(ws_base))
             encoded_key = quote(object_key, safe="/")
             url = f"https://{settings.oss_cdn_domain}/workspace/{encoded_key}"
+            # workspace_path = 相对于用户目录的路径（供前端代理预览）
+            ws_path_suffix = ""
+            try:
+                from services.file_executor import FileExecutor
+                ws_path = FileExecutor.extract_user_relative_path(
+                    file_path, ws_base, user_id, org_id,
+                )
+                ws_path_suffix = f"|{ws_path}"
+            except ValueError:
+                pass
             return (
                 f"✅ 文件已生成: {safe_name}\n"
-                f"[FILE]{url}|{safe_name}|{mime_type}|{size}[/FILE]"
+                f"[FILE]{url}|{safe_name}|{mime_type}|{size}{ws_path_suffix}[/FILE]"
             )
         except ValueError:
             pass

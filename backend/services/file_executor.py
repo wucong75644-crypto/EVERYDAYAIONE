@@ -128,6 +128,34 @@ class FileExecutor(FileReadExtensionsMixin, FileQueryExtensionsMixin, FileWriteE
     def workspace_root(self) -> str:
         return str(self._root)
 
+    @staticmethod
+    def extract_user_relative_path(
+        file_path: Path,
+        ws_base: Path,
+        user_id: str,
+        org_id: Optional[str] = None,
+    ) -> str:
+        """从绝对路径计算相对于用户 workspace 根的路径。
+
+        Args:
+            file_path: 文件绝对路径
+            ws_base: workspace 基础目录（resolve 后）
+            user_id: 用户 ID
+            org_id: 企业 ID
+
+        Returns:
+            相对路径字符串（如 "staging/output.xlsx"）
+        """
+        if org_id:
+            user_root = ws_base / "org" / org_id / user_id
+        elif user_id:
+            user_hash = hashlib.md5(user_id.encode()).hexdigest()[:8]
+            user_root = ws_base / "personal" / user_hash
+        else:
+            user_root = ws_base
+        resolved = file_path.resolve()
+        return str(resolved.relative_to(user_root))
+
     def get_cdn_url(self, relative_path: str) -> Optional[str]:
         """获取文件的 CDN 下载 URL
 
