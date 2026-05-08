@@ -30,9 +30,9 @@ from services.agent.tool_output import ToolOutput
 from services.agent.tool_result_cache import ToolResultCache
 
 # [FILE] 标记正则：沙盒 code_execute 输出的文件引用
-# 格式：[FILE]{url}|{filename}|{mime_type}|{size}[/FILE]
+# 格式：[FILE]{url}|{filename}|{mime_type}|{size}[|{workspace_path}][/FILE]
 _FILE_RE = re.compile(
-    r"\[FILE\](?P<url>[^|]+)\|(?P<name>[^|]+)\|(?P<mime>[^|]+)\|(?P<size>\d+)\[/FILE\]"
+    r"\[FILE\](?P<url>[^|]+)\|(?P<name>[^|]+)\|(?P<mime>[^|]+)\|(?P<size>\d+)(?:\|(?P<wspath>[^[\]]+))?\[/FILE\]"
 )
 
 
@@ -745,12 +745,15 @@ class ToolLoopExecutor:
                 logger.info(f"[FILE] tag found | tool={tool_name} | content_len={len(content)}")
                 for m in _FILE_RE.finditer(content):
                     logger.info(f"[FILE] extracted | name={m.group('name')} | url={m.group('url')[:80]}")
-                    self._collected_files.append({
+                    entry: Dict[str, Any] = {
                         "url": m.group("url"),
                         "name": m.group("name"),
                         "mime_type": m.group("mime"),
                         "size": int(m.group("size")),
-                    })
+                    }
+                    if m.group("wspath"):
+                        entry["workspace_path"] = m.group("wspath")
+                    self._collected_files.append(entry)
                 def _file_placeholder(m):
                     if m.group("mime").startswith("image/"):
                         return "📊 图表已生成（将自动展示给用户，不要在文字中重复描述图表数据）"

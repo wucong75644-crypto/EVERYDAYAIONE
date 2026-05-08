@@ -16,9 +16,11 @@ from services.file_upload import auto_upload
 
 @pytest.fixture()
 def output_dir(tmp_path):
-    """临时输出目录，含一个测试文件。"""
-    d = tmp_path / "下载"
-    d.mkdir()
+    """临时输出目录，模拟 personal 用户目录结构。"""
+    import hashlib
+    user_hash = hashlib.md5("u1".encode()).hexdigest()[:8]
+    d = tmp_path / "personal" / user_hash / "下载"
+    d.mkdir(parents=True)
     f = d / "report.xlsx"
     f.write_bytes(b"fake xlsx content" * 10)
     return str(d)
@@ -45,6 +47,11 @@ class TestAutoUploadCDN:
         assert "cdn.example.com" in result
         assert "report.xlsx" in result
         assert "✅" in result
+        # workspace_path 应包含在 [FILE] 标记中（第5段）
+        file_tag = result.split("[FILE]")[1].split("[/FILE]")[0]
+        parts = file_tag.split("|")
+        assert len(parts) == 5, f"Expected 5 parts in [FILE] tag, got {len(parts)}: {parts}"
+        assert parts[4] == "下载/report.xlsx"
 
     @pytest.mark.asyncio
     async def test_cdn_url_encodes_chinese(self, output_dir, tmp_path):

@@ -1060,6 +1060,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                             url=block["url"], name=block["name"],
                             mime_type=block["mime_type"],
                             size=block.get("size"),
+                            workspace_path=block.get("workspace_path"),
                         ))
                     elif block["type"] == "chart":
                         from schemas.message import ChartPart

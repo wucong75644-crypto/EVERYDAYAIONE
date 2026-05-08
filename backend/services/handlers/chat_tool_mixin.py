@@ -14,7 +14,7 @@ from loguru import logger
 
 # [FILE] 标记正则：沙盒 upload_file 返回的格式
 _FILE_PATTERN = re.compile(
-    r'\[FILE\]([^|]+)\|([^|]+)\|([^|]+)\|(\d+)\[/FILE\]'
+    r'\[FILE\]([^|]+)\|([^|]+)\|([^|]+)\|(\d+)(?:\|([^[\]]+))?\[/FILE\]'
 )
 
 from schemas.websocket import (
@@ -129,10 +129,11 @@ class ChatToolMixin:
                         ))
                         logger.info(f"ImagePart added | alt={f.get('alt', '')[:30]} | failed={f.get('failed')} | url={f.get('url', 'None')[:80] if f.get('url') else 'None'}")
                     else:
-                        # 其他工具返回 FilePart 格式（url/name/mime_type/size）
+                        # 其他工具返回 FilePart 格式（url/name/mime_type/size/workspace_path）
                         self._pending_file_parts.append(FilePart(
                             url=f["url"], name=f["name"],
                             mime_type=f["mime_type"], size=f.get("size"),
+                            workspace_path=f.get("workspace_path"),
                         ))
                         logger.info(f"FilePart added | name={f['name']} | url={f['url'][:80]}")
             # ② ask_user 冒泡
@@ -606,9 +607,10 @@ class ChatToolMixin:
         from schemas.message import FilePart
 
         def _replace_match(m):
-            url, name, mime_type, size = m.groups()
+            url, name, mime_type, size, ws_path = m.groups()
             self._pending_file_parts.append(FilePart(
                 url=url, name=name, mime_type=mime_type, size=int(size),
+                workspace_path=ws_path,
             ))
             # LLM 上下文不暴露 URL（防止 LLM 幻觉篡改域名）
             if name.endswith(".echart.json"):
