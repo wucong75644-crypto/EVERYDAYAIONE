@@ -112,7 +112,8 @@ def clean_excel(
     if structure is None:
         structure = _detect_structure(excel_path, sheet_name)
     if structure is not None:
-        _apply_merge_fill(df, structure, header_row, report)
+        # ffill 不再执行：保留原始空值，Agent 查询时 SUM/AVG 自动跳过 NULL
+        # _apply_merge_fill(df, structure, header_row, report)
         _mark_hidden_rows(df, structure, header_row, report)
         _mark_hidden_cols(df, structure, report)
         report.has_auto_filter = structure.has_auto_filter
