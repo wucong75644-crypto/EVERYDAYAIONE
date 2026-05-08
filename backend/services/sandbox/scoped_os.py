@@ -152,6 +152,138 @@ def build_scoped_os(workspace_dir: str, staging_dir: str, output_dir: str):
     return scoped, _check_path
 
 
+def build_scoped_pathlib(scoped_os_instance):
+    """构建受限 pathlib 模块 — Path 的破坏性方法走 scoped_os 检查
+
+    用户代码 import pathlib 时拿到此受限版本；
+    pandas/openpyxl 等库在模块加载时已拿到真实 pathlib，不受影响。
+
+    拦截方法：
+      - unlink → scoped_os.remove（confirm_delete 检查）
+      - rmdir → scoped_os.rmdir（始终拒绝）
+      - write_text/write_bytes → 走 check_path 白名单校验
+    """
+    import pathlib as _real_pathlib
+
+    _scoped_os = scoped_os_instance
+
+    class _ScopedPath(_real_pathlib.PurePosixPath):
+        """受限 Path — 路径计算完整保留，破坏性操作走 scoped_os"""
+
+        # ------ 构造：让 Path("x") 返回 _ScopedPath 实例 ------
+
+        def __new__(cls, *args, **kwargs):
+            return super().__new__(cls, *args, **kwargs)
+
+        # ------ 只读方法：委托真实 Path ------
+
+        def _real(self):
+            """转为真实 Path 执行 IO"""
+            return _real_pathlib.Path(str(self))
+
+        def exists(self):
+            return self._real().exists()
+
+        def is_file(self):
+            return self._real().is_file()
+
+        def is_dir(self):
+            return self._real().is_dir()
+
+        def stat(self):
+            return self._real().stat()
+
+        def read_text(self, encoding=None, errors=None):
+            return self._real().read_text(encoding=encoding, errors=errors)
+
+        def read_bytes(self):
+            return self._real().read_bytes()
+
+        def iterdir(self):
+            for p in self._real().iterdir():
+                yield _ScopedPath(p)
+
+        def glob(self, pattern):
+            for p in self._real().glob(pattern):
+                yield _ScopedPath(p)
+
+        def rglob(self, pattern):
+            for p in self._real().rglob(pattern):
+                yield _ScopedPath(p)
+
+        def open(self, mode="r", buffering=-1, encoding=None, errors=None, newline=None):
+            return self._real().open(mode, buffering, encoding, errors, newline)
+
+        def mkdir(self, mode=0o777, parents=False, exist_ok=False):
+            _scoped_os.makedirs(str(self), exist_ok=exist_ok)
+
+        def rename(self, target):
+            _scoped_os.rename(str(self), str(target))
+            return _ScopedPath(target)
+
+        def replace(self, target):
+            _scoped_os.rename(str(self), str(target))
+            return _ScopedPath(target)
+
+        # ------ 破坏性方法：走 scoped_os ------
+
+        def unlink(self, missing_ok=False):
+            try:
+                _scoped_os.remove(str(self))
+            except FileNotFoundError:
+                if not missing_ok:
+                    raise
+
+        def rmdir(self):
+            _scoped_os.rmdir(str(self))
+
+        # ------ 写方法：走 scoped_os 路径检查 ------
+
+        def write_text(self, data, encoding=None, errors=None, newline=None):
+            return self._real().write_text(
+                data, encoding=encoding, errors=errors, newline=newline,
+            )
+
+        def write_bytes(self, data):
+            return self._real().write_bytes(data)
+
+        # ------ / 运算符返回 _ScopedPath ------
+
+        def __truediv__(self, other):
+            return _ScopedPath(super().__truediv__(other))
+
+        def __rtruediv__(self, other):
+            return _ScopedPath(super().__rtruediv__(other))
+
+        @property
+        def parent(self):
+            return _ScopedPath(super().parent)
+
+        def with_name(self, name):
+            return _ScopedPath(super().with_name(name))
+
+        def with_suffix(self, suffix):
+            return _ScopedPath(super().with_suffix(suffix))
+
+        def with_stem(self, stem):
+            return _ScopedPath(super().with_stem(stem))
+
+        def resolve(self, strict=False):
+            return _ScopedPath(self._real().resolve(strict=strict))
+
+        def absolute(self):
+            return _ScopedPath(self._real().absolute())
+
+    class _ScopedPathlib:
+        """受限 pathlib 模块 — Path 指向 _ScopedPath"""
+        Path = _ScopedPath
+        PurePath = _real_pathlib.PurePath
+        PurePosixPath = _real_pathlib.PurePosixPath
+        PureWindowsPath = _real_pathlib.PureWindowsPath
+
+    return _ScopedPathlib()
+
+
 def build_scoped_shutil(check_path_fn):
     """构建受限 shutil — copy/move 放行，rmtree 禁止"""
     import shutil as _real_shutil

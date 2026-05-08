@@ -377,3 +377,82 @@ class TestStagingIsolation:
         )
         files = scoped_os.listdir("staging/conv_current")
         assert "data.parquet" in files
+
+
+# ============================================================
+# 10. scoped pathlib — Path.unlink 走 confirm_delete 检查
+# ============================================================
+
+
+class TestScopedPathlib:
+
+    @pytest.fixture
+    def pathlib_env(self, workspace):
+        """构建 scoped pathlib 环境"""
+        from services.sandbox.scoped_os import build_scoped_pathlib
+        scoped_os, _ = build_scoped_os(
+            workspace["ws"], workspace["staging"], workspace["output"],
+        )
+        scoped_pl = build_scoped_pathlib(scoped_os)
+        return scoped_pl, scoped_os, workspace
+
+    def test_path_unlink_blocked_without_confirm(self, pathlib_env):
+        """Path.unlink 无 confirm_delete → PermissionError"""
+        scoped_pl, _, ws = pathlib_env
+        Path = scoped_pl.Path
+        with pytest.raises(PermissionError, match="删除操作需要用户确认"):
+            Path(os.path.join(ws["ws"], "销售报表.xlsx")).unlink()
+
+    def test_path_unlink_allowed_with_confirm(self, pathlib_env):
+        """Path.unlink + confirm_delete → 删除成功"""
+        scoped_pl, scoped_os, ws = pathlib_env
+        target = os.path.join(ws["output"], "旧报表.xlsx")
+        scoped_os._set_confirmed_deletes([target])
+        scoped_pl.Path(target).unlink()
+        assert not os.path.exists(target)
+
+    def test_path_unlink_missing_ok(self, pathlib_env):
+        """Path.unlink(missing_ok=True) 对不存在文件不报错"""
+        scoped_pl, scoped_os, ws = pathlib_env
+        target = os.path.join(ws["output"], "不存在.xlsx")
+        scoped_os._set_confirmed_deletes([target])
+        scoped_pl.Path(target).unlink(missing_ok=True)  # 不应抛异常
+
+    def test_path_rmdir_always_blocked(self, pathlib_env):
+        """Path.rmdir 始终拒绝"""
+        scoped_pl, _, ws = pathlib_env
+        with pytest.raises(PermissionError, match="删除目录被禁止"):
+            scoped_pl.Path(os.path.join(ws["ws"], "子目录")).rmdir()
+
+    def test_path_read_operations_work(self, pathlib_env):
+        """Path 的只读操作正常工作"""
+        scoped_pl, _, ws = pathlib_env
+        Path = scoped_pl.Path
+        p = Path(os.path.join(ws["ws"], "销售报表.xlsx"))
+        assert p.exists()
+        assert p.is_file()
+        assert p.read_text() == "fake"
+        assert p.name == "销售报表.xlsx"
+        assert p.suffix == ".xlsx"
+
+    def test_path_division_returns_scoped(self, pathlib_env):
+        """/ 运算符返回 _ScopedPath 而非真实 Path"""
+        scoped_pl, _, ws = pathlib_env
+        Path = scoped_pl.Path
+        p = Path(ws["ws"]) / "销售报表.xlsx"
+        # 仍是受限 Path：unlink 会被拦截
+        with pytest.raises(PermissionError, match="删除操作需要用户确认"):
+            p.unlink()
+
+    def test_path_iterdir_returns_scoped(self, pathlib_env):
+        """iterdir 返回的也是受限 Path"""
+        scoped_pl, _, ws = pathlib_env
+        Path = scoped_pl.Path
+        items = list(Path(ws["ws"]).iterdir())
+        assert len(items) > 0
+        # 每个子项的 unlink 都应被拦截
+        for item in items:
+            if item.is_file():
+                with pytest.raises(PermissionError):
+                    item.unlink()
+                break
