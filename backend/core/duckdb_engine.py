@@ -310,12 +310,42 @@ class DuckDBEngine:
         except Exception as e:
             logger.debug(f"DuckDB preview query failed: {e}")
 
+        # 8. 相邻重复率（主从结构检测用，只算前 20 列，跳过小表）
+        # 大表（>10万行）采样前10万行，避免窗口函数全表扫描
+        _ADJ_SAMPLE_LIMIT = 100_000
+        adjacent_dup_ratios: dict[str, float] = {}
+        if row_count >= 10 and columns_info:
+            target_cols = [c["name"] for c in columns_info[:20]]
+            try:
+                cases = ", ".join(
+                    f'SUM(CASE WHEN "{c}" IS NOT DISTINCT FROM '
+                    f'LAG("{c}") OVER (ORDER BY _rowid) THEN 1 ELSE 0 END)::FLOAT '
+                    f'/ COUNT(*) AS "{c}"'
+                    for c in target_cols
+                )
+                # 子查询：带行号，大表截断
+                source = (
+                    f"(SELECT *, ROW_NUMBER() OVER () AS _rowid "
+                    f"FROM read_parquet('{path_escaped}') "
+                    f"LIMIT {_ADJ_SAMPLE_LIMIT})"
+                )
+                ratios = conn.execute(
+                    f"SELECT {cases} FROM {source}"
+                ).fetchone()
+                if ratios:
+                    for i, col_name in enumerate(target_cols):
+                        if ratios[i] is not None:
+                            adjacent_dup_ratios[col_name] = round(float(ratios[i]), 3)
+            except Exception as e:
+                logger.debug(f"DuckDB adjacent dup ratio failed: {e}")
+
         return {
             "columns": columns_info,
             "row_count": row_count,
             "top_values": top_values,
             "duplicate_count": duplicate_count,
             "preview_rows": preview_rows,
+            "adjacent_dup_ratios": adjacent_dup_ratios,
         }
 
     # ── 共享工具方法 ──────────────────────────────────

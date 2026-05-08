@@ -209,3 +209,97 @@ class TestBuildDataProfileEdgeCases:
         text, stats = build_data_profile(df, "t.parquet", 0.1)
         assert "异常值" in text
         assert stats["val"].get("outlier_count", 0) > 0
+
+
+# ============================================================
+# 数据结构画像（_infer_structure）
+# ============================================================
+
+from services.agent.data_profile import _infer_structure
+
+
+class TestInferStructure:
+    """列角色分类 + 主从模式检测"""
+
+    def test_master_detail_detected(self):
+        """主从模式：主字段相邻重复率高，明细字段低"""
+        columns = [
+            {"name": "order_id", "type": "BIGINT", "distinct_count": 50, "null_count": 0},
+            {"name": "amount", "type": "DOUBLE", "distinct_count": 50, "null_count": 0},
+            {"name": "item_price", "type": "DOUBLE", "distinct_count": 80, "null_count": 0},
+            {"name": "qty", "type": "INTEGER", "distinct_count": 5, "null_count": 0},
+        ]
+        profile = {
+            "adjacent_dup_ratios": {
+                "order_id": 0.85,   # 主字段
+                "amount": 0.85,     # 主字段
+                "item_price": 0.05, # 明细字段
+                "qty": 0.03,        # 明细字段
+            },
+        }
+        lines = _infer_structure(columns, 100, profile)
+        text = "\n".join(lines)
+        assert "主从模式" in text
+        assert "order_id" in text
+        assert "明细字段" in text
+        assert "去重" in text
+
+    def test_flat_table_no_master_detail(self):
+        """扁平表：所有列相邻重复率都低 → 不输出主从段"""
+        columns = [
+            {"name": "id", "type": "BIGINT", "distinct_count": 95, "null_count": 0},
+            {"name": "name", "type": "VARCHAR", "distinct_count": 90, "null_count": 0},
+            {"name": "amount", "type": "DOUBLE", "distinct_count": 80, "null_count": 0},
+        ]
+        profile = {
+            "adjacent_dup_ratios": {"id": 0.01, "name": 0.03, "amount": 0.02},
+        }
+        lines = _infer_structure(columns, 100, profile)
+        text = "\n".join(lines)
+        assert "主从模式" not in text
+
+    def test_column_roles_id(self):
+        """唯一率 >0.9 且完整率 >0.95 → ID"""
+        columns = [
+            {"name": "order_no", "type": "VARCHAR", "distinct_count": 95, "null_count": 0},
+            {"name": "status", "type": "VARCHAR", "distinct_count": 3, "null_count": 0},
+        ]
+        lines = _infer_structure(columns, 100, {})
+        text = "\n".join(lines)
+        assert "ID: order_no" in text
+        assert "分类: status" in text
+
+    def test_column_roles_timestamp(self):
+        """时间类型 → 时间角色"""
+        columns = [
+            {"name": "created_at", "type": "TIMESTAMP", "distinct_count": 90, "null_count": 0},
+            {"name": "amount", "type": "DOUBLE", "distinct_count": 80, "null_count": 0},
+        ]
+        lines = _infer_structure(columns, 100, {})
+        text = "\n".join(lines)
+        assert "时间: created_at" in text
+        assert "度量: amount" in text
+
+    def test_small_table_skipped(self):
+        """小表（<10行）→ 跳过推断"""
+        columns = [{"name": "a", "type": "INTEGER", "distinct_count": 5, "null_count": 0}]
+        lines = _infer_structure(columns, 5, {})
+        assert lines == []
+
+    def test_empty_columns_skipped(self):
+        """空列列表 → 跳过推断"""
+        lines = _infer_structure([], 100, {})
+        assert lines == []
+
+    def test_no_adjacent_ratios_still_outputs_roles(self):
+        """无相邻重复率数据 → 不输出主从，但仍输出列角色"""
+        columns = [
+            {"name": "id", "type": "BIGINT", "distinct_count": 95, "null_count": 0},
+            {"name": "status", "type": "VARCHAR", "distinct_count": 2, "null_count": 0},
+            {"name": "pay_time", "type": "TIMESTAMP", "distinct_count": 90, "null_count": 0},
+        ]
+        lines = _infer_structure(columns, 100, {})
+        text = "\n".join(lines)
+        assert "主从模式" not in text
+        assert "[列角色]" in text
+        assert "ID: id" in text
