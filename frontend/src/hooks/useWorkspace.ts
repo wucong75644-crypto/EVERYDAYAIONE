@@ -168,6 +168,7 @@ export function useWorkspace(): UseWorkspaceReturn {
         cdn_url: null,
         mime_type: file.type || null,
         uploadProgress: 0,
+        _uploadPath: currentPath,
       });
     }
     setUploadingFiles((prev) => new Map([...prev, ...placeholders]));
@@ -296,7 +297,7 @@ export function useWorkspace(): UseWorkspaceReturn {
   // 排序后的文件列表（文件夹始终在前）+ 合并上传中占位
   const sortedItems = useMemo(() => {
     const existing = new Set(items.map((i) => i.name));
-    const merged = [...items, ...Array.from(uploadingFiles.values()).filter((u) => !existing.has(u.name))];
+    const merged = [...items, ...Array.from(uploadingFiles.values()).filter((u) => !existing.has(u.name) && u._uploadPath === currentPath)];
     const dir = sortOrder === 'asc' ? 1 : -1;
     return merged.sort((a, b) => {
       // 文件夹始终在前
@@ -307,7 +308,7 @@ export function useWorkspace(): UseWorkspaceReturn {
       if (sortField === 'modified') return dir * (Number(a.modified || 0) - Number(b.modified || 0));
       return 0;
     });
-  }, [items, uploadingFiles, sortField, sortOrder]);
+  }, [items, uploadingFiles, sortField, sortOrder, currentPath]);
 
   return {
     currentPath,
