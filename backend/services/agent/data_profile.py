@@ -428,25 +428,39 @@ def _build_structured_preview(
         lines.append("")
         lines.extend(pattern_lines)
 
-    # ── 连续行展示（只显示有值字段，空值跳过，信息密度更高） ──
+    # ── 连续行展示（列对齐，空值用 - 占位） ──
     preview_rows = profile.get("preview_rows", [])
     if preview_rows:
-        lines.append(f"\n  前{len(preview_rows)}行:")
+        # 选择展示列：至少有一行有值的列（全空列不展示）
+        all_keys = [k for k in preview_rows[0].keys() if not k.startswith("_is_")]
+        show_keys: list[str] = []
+        for k in all_keys:
+            vals = [r.get(k) for r in preview_rows]
+            if any(v is not None and str(v) not in ("nan", "NaT", "None") for v in vals):
+                show_keys.append(k)
+        # 上限 12 列，超出折叠
+        hidden = max(0, len(show_keys) - 12)
+        display_keys = show_keys[:12]
+
+        # 表头
+        header = " | ".join(display_keys)
+        if hidden > 0:
+            header += f" | ...+{hidden}列"
+        lines.append(f"\n  {header}")
+
+        # 数据行（空值用 - 占位，保持列对齐）
         for i, row in enumerate(preview_rows, 1):
-            parts = []
-            for k, v in row.items():
-                if k.startswith("_is_"):
-                    continue
+            cells = []
+            for k in display_keys:
+                v = row.get(k)
                 if v is None or str(v) in ("nan", "NaT", "None"):
-                    continue  # 跳过空值，只展示有值字段
-                sv = str(v)
-                if len(sv) > 40:
-                    sv = sv[:37] + "..."
-                parts.append(f"{k}={sv}")
-            if parts:
-                lines.append(f"    行{i}: {' | '.join(parts)}")
-            else:
-                lines.append(f"    行{i}: （全部为空）")
+                    cells.append("")
+                else:
+                    sv = str(v)
+                    if len(sv) > 20:
+                        sv = sv[:17] + "..."
+                    cells.append(sv)
+            lines.append(f"  行{i}: {' | '.join(cells)}")
 
     return lines
 
