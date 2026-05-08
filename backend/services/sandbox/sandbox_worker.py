@@ -232,13 +232,18 @@ def _apply_resource_limits():
 def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str) -> Dict[str, Any]:
     """构建受限执行环境（在子进程中调用）"""
     import builtins as _builtins
-    from services.sandbox.scoped_os import build_scoped_os, build_scoped_shutil
+    from services.sandbox.scoped_os import (
+        build_scoped_os, build_scoped_shutil, build_scoped_pathlib,
+    )
     from services.sandbox.sandbox_constants import make_restricted_import
 
-    # 构建 scoped os/shutil（路径白名单 + 操作限制）
+    # 构建 scoped os/shutil/pathlib（路径白名单 + 操作限制）
     scoped_os, check_path = build_scoped_os(workspace_dir, staging_dir, output_dir)
     scoped_shutil = build_scoped_shutil(check_path)
-    scoped_import = make_restricted_import({"os": scoped_os, "shutil": scoped_shutil})
+    scoped_pathlib = build_scoped_pathlib(scoped_os)
+    scoped_import = make_restricted_import({
+        "os": scoped_os, "shutil": scoped_shutil, "pathlib": scoped_pathlib,
+    })
 
     # builtins 必须 copy 后替换 __import__（不污染全局 SAFE_BUILTINS）
     safe = SAFE_BUILTINS.copy()
