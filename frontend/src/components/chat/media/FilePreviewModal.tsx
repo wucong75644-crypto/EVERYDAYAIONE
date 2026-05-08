@@ -210,14 +210,15 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
         {tableData && !loading && (
           <div className="p-4">
             <div className="overflow-auto rounded-lg bg-white dark:bg-gray-900">
-              <table className="min-w-full text-sm">
+              <table className="w-full text-sm table-fixed">
                 <thead>
                   {tableData.length > 0 && (
                     <tr>
                       {tableData[0].map((cell, i) => (
                         <th
                           key={i}
-                          className="px-4 py-2 text-left font-semibold bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-gray-700 whitespace-nowrap"
+                          className="px-3 py-2 text-left font-semibold bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-gray-700 truncate"
+                          title={String(cell ?? '')}
                         >
                           {cell ?? ''}
                         </th>
@@ -231,7 +232,8 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
                       {row.map((cell, ci) => (
                         <td
                           key={ci}
-                          className="px-4 py-1.5 border-b border-gray-100 dark:border-gray-800 text-gray-700 dark:text-gray-300 whitespace-nowrap"
+                          className="px-3 py-1.5 border-b border-gray-100 dark:border-gray-800 text-gray-700 dark:text-gray-300 truncate"
+                          title={String(cell ?? '')}
                         >
                           {cell ?? ''}
                         </td>
