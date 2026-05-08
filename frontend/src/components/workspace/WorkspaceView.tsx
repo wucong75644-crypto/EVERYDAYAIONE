@@ -5,7 +5,7 @@
  * 桌面级交互：单击选中、双击打开、右键菜单、键盘快捷键。
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useWorkspace } from '../../hooks/useWorkspace';
@@ -14,6 +14,7 @@ import Modal from '../common/Modal';
 import { Button } from '../ui/Button';
 import FilePreviewModal, { canPreview } from '../chat/media/FilePreviewModal';
 import FileContextMenu from './FileContextMenu';
+import BatchActionBar from './BatchActionBar';
 import WorkspaceHeader from './WorkspaceHeader';
 import WorkspaceFileList from './WorkspaceFileList';
 import WorkspaceFileGrid from './WorkspaceFileGrid';
@@ -67,7 +68,10 @@ export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles
   const [deleteLoading, setDeleteLoading] = useState(false);
 
   // 有序路径列表（供 Shift 范围选用）
-  const orderedPaths = ws.items.map((item) => getFullPath(ws.currentPath, item.name));
+  const orderedPaths = useMemo(
+    () => ws.items.map((item) => getFullPath(ws.currentPath, item.name)),
+    [ws.items, ws.currentPath],
+  );
 
   // 单击选中（处理 Ctrl/Shift）
   const handleSelect = useCallback((path: string, e: React.MouseEvent) => {
@@ -149,13 +153,63 @@ export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles
     }
   }, [selection]);
 
+  // 键盘快捷键
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 重命名/弹窗/输入框中不拦截
+      if (renameTarget || deleteTarget || previewFile) return;
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+      // Ctrl/Cmd + A → 全选
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault();
+        selection.selectAll(orderedPaths);
+        return;
+      }
+      // Escape → 清空选中
+      if (e.key === 'Escape') {
+        selection.clear();
+        return;
+      }
+      // 以下需要有选中项
+      if (!selection.hasSelection) return;
+
+      // Delete / Backspace → 删除
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        if (selection.selectedCount > 1) {
+          setDeleteTarget(`batch:${selection.selectedCount}`);
+        } else {
+          setDeleteTarget(Array.from(selection.selectedPaths)[0]);
+        }
+        return;
+      }
+      // F2 → 重命名（仅单选）
+      if (e.key === 'F2' && selection.selectedCount === 1) {
+        e.preventDefault();
+        setRenameTarget(Array.from(selection.selectedPaths)[0]);
+        return;
+      }
+      // Enter → 打开（仅单选）
+      if (e.key === 'Enter' && selection.selectedCount === 1) {
+        e.preventDefault();
+        const path = Array.from(selection.selectedPaths)[0];
+        const item = ws.items.find((i) => getFullPath(ws.currentPath, i.name) === path);
+        if (item) handleOpen(item);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [renameTarget, deleteTarget, previewFile, selection, orderedPaths, ws.items, ws.currentPath, handleOpen]);
+
   // 删除弹窗显示名称
   const deleteDisplayName = deleteTarget?.startsWith('batch:')
     ? `${deleteTarget.split(':')[1]} 个文件`
     : deleteTarget?.split('/').pop();
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-[var(--s-surface-base)]">
+    <div className="flex-1 flex flex-col min-h-0 bg-[var(--s-surface-base)]" tabIndex={-1}>
       <WorkspaceHeader
         breadcrumbs={ws.breadcrumbs}
         viewMode={ws.viewMode}
@@ -164,6 +218,13 @@ export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles
         onViewModeChange={ws.setViewMode}
         onUpload={handleUpload}
         onMkdir={ws.mkdir}
+      />
+
+      {/* 批量操作工具栏（选中时显示） */}
+      <BatchActionBar
+        selectedCount={selection.selectedCount}
+        onDelete={() => setDeleteTarget(`batch:${selection.selectedCount}`)}
+        onClear={selection.clear}
       />
 
       {/* 错误提示 */}
@@ -197,6 +258,9 @@ export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles
                   currentPath={ws.currentPath}
                   selectedPaths={selection.selectedPaths}
                   renameTarget={renameTarget}
+                  sortField={ws.sortField}
+                  sortOrder={ws.sortOrder}
+                  onToggleSort={ws.toggleSort}
                   onSelect={handleSelect}
                   onOpen={handleOpen}
                   onRename={ws.rename}
@@ -204,6 +268,7 @@ export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles
                   onDelete={handleDelete}
                   onSendToChat={handleSendToChat}
                   onStartRename={setRenameTarget}
+                  onMove={ws.move}
                 />
               </div>
             ) : (
@@ -219,6 +284,7 @@ export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles
                 onDelete={handleDelete}
                 onSendToChat={handleSendToChat}
                 onStartRename={setRenameTarget}
+                onMove={ws.move}
               />
             )}
           </div>

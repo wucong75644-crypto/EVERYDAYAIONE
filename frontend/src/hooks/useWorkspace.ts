@@ -29,6 +29,9 @@ function loadViewMode(): ViewMode {
   return 'list';
 }
 
+export type SortField = 'name' | 'size' | 'modified';
+export type SortOrder = 'asc' | 'desc';
+
 export interface UseWorkspaceReturn {
   /** 当前路径 */
   currentPath: string;
@@ -38,6 +41,10 @@ export interface UseWorkspaceReturn {
   loading: boolean;
   /** 视图模式 */
   viewMode: ViewMode;
+  /** 排序字段 */
+  sortField: SortField;
+  /** 排序方向 */
+  sortOrder: SortOrder;
   /** 操作中的路径（用于显示 loading 状态） */
   operatingPath: string | null;
   /** 错误信息 */
@@ -60,6 +67,8 @@ export interface UseWorkspaceReturn {
   move: (srcPath: string, destDir: string) => Promise<boolean>;
   /** 切换视图 */
   setViewMode: (mode: ViewMode) => void;
+  /** 切换排序（点击同列翻转方向，点击新列重置升序） */
+  toggleSort: (field: SortField) => void;
   /** 清除错误 */
   clearError: () => void;
 }
@@ -79,6 +88,8 @@ export function useWorkspace(): UseWorkspaceReturn {
   const [operatingPath, setOperatingPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewModeState] = useState<ViewMode>(loadViewMode);
+  const [sortField, setSortField] = useState<SortField>('name');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
 
   // 防止快速切换目录时的竞态
   const fetchSeqRef = useRef(0);
@@ -270,22 +281,41 @@ export function useWorkspace(): UseWorkspaceReturn {
 
   const clearError = useCallback(() => setError(null), []);
 
-  // 排序后的文件列表（文件夹在前，各自按名称排序）+ 合并上传中占位
+  // 切换排序：同字段翻转方向，新字段重置升序
+  const toggleSort = useCallback((field: SortField) => {
+    setSortField((prev) => {
+      if (prev === field) {
+        setSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'));
+        return prev;
+      }
+      setSortOrder('asc');
+      return field;
+    });
+  }, []);
+
+  // 排序后的文件列表（文件夹始终在前）+ 合并上传中占位
   const sortedItems = useMemo(() => {
     const existing = new Set(items.map((i) => i.name));
-    // 只添加尚未出现在真实列表中的占位项
     const merged = [...items, ...Array.from(uploadingFiles.values()).filter((u) => !existing.has(u.name))];
+    const dir = sortOrder === 'asc' ? 1 : -1;
     return merged.sort((a, b) => {
+      // 文件夹始终在前
       if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-      return a.name.localeCompare(b.name);
+      // 同类型内按字段排序
+      if (sortField === 'name') return dir * a.name.localeCompare(b.name);
+      if (sortField === 'size') return dir * ((a.size || 0) - (b.size || 0));
+      if (sortField === 'modified') return dir * (Number(a.modified || 0) - Number(b.modified || 0));
+      return 0;
     });
-  }, [items, uploadingFiles]);
+  }, [items, uploadingFiles, sortField, sortOrder]);
 
   return {
     currentPath,
     items: sortedItems,
     loading,
     viewMode,
+    sortField,
+    sortOrder,
     operatingPath,
     error,
     navigateTo,
@@ -297,6 +327,7 @@ export function useWorkspace(): UseWorkspaceReturn {
     rename,
     move,
     setViewMode,
+    toggleSort,
     clearError,
   };
 }
