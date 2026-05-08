@@ -295,7 +295,7 @@ export default function WorkspaceFileItem({
           className="w-full px-1 py-0.5 text-xs text-center bg-[var(--s-surface-base)] border border-[var(--s-border-focus)] rounded outline-none text-[var(--s-text-primary)]"
         />
       ) : (
-        <span className="text-[13px] text-[var(--s-text-primary)] text-center w-full px-1 line-clamp-2 break-all leading-[18px]">
+        <span className="text-[13px] text-[var(--s-text-primary)] text-center w-full px-1 line-clamp-2 break-words leading-[18px]">
           {item.name}
         </span>
       )}
