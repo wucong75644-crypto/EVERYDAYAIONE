@@ -28,6 +28,23 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Dict
 
+
+class PathStr(str):
+    """支持 / 运算符的路径字符串
+
+    沙盒内 OUTPUT_DIR / STAGING_DIR / WORKSPACE_DIR 的类型。
+    保持 str 的全部行为（+ 拼接、f-string、传给 pandas 等），
+    额外支持 Path 风格的 / 运算符拼路径。
+    """
+
+    def __truediv__(self, other):
+        import os
+        return PathStr(os.path.join(self, str(other)))
+
+    def __rtruediv__(self, other):
+        import os
+        return PathStr(os.path.join(str(other), self))
+
 # 预导入数据分析库
 try:
     import pandas as pd
@@ -57,6 +74,7 @@ except ImportError:
 from services.sandbox.sandbox_constants import (
     SAFE_BUILTINS,
     SENSITIVE_ENV_PREFIXES,
+    TIMEOUT_MESSAGE,
 )
 from services.sandbox.validators import truncate_result
 
@@ -420,14 +438,14 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
 
     g["Path"] = Path
 
-    # 目录路径
+    # 目录路径（PathStr：str 兼容 + 支持 / 运算符拼路径）
     if workspace_dir:
-        g["WORKSPACE_DIR"] = workspace_dir
+        g["WORKSPACE_DIR"] = PathStr(workspace_dir)
     if staging_dir:
-        g["STAGING_DIR"] = staging_dir
+        g["STAGING_DIR"] = PathStr(staging_dir)
     if output_dir:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
-        g["OUTPUT_DIR"] = output_dir
+        g["OUTPUT_DIR"] = PathStr(output_dir)
 
     # sandbox globals 的 open 直接用 builtins.open
     # builtins.open 已在 sandbox_worker_entry 中被替换为 _global_scoped_open
@@ -483,7 +501,7 @@ def _exec_code(code: str, sandbox_globals: Dict[str, Any], timeout: float) -> st
         else:
             exec(compile(tree, "<sandbox>", "exec"), sandbox_globals)
     except TimeoutError:
-        return f"⏱ 代码执行超时（{timeout}秒）。\n建议：缩小查询范围、减少数据量、或分批处理。"
+        return TIMEOUT_MESSAGE.format(timeout=timeout)
     finally:
         sys.settrace(old_trace)
         if _MATPLOTLIB_AVAILABLE:

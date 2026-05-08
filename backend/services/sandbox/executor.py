@@ -232,10 +232,8 @@ class SandboxExecutor:
             )
             # 优雅退出：SIGTERM → 5s → SIGKILL
             self._kill_process(proc)
-            return (
-                f"⏱ 代码执行超时（{self._timeout}秒）。\n"
-                "建议：缩小查询范围、减少数据量、或分批处理。"
-            )
+            from services.sandbox.sandbox_constants import TIMEOUT_MESSAGE
+            return TIMEOUT_MESSAGE.format(timeout=self._timeout)
         except Exception as e:
             logger.error(f"Sandbox subprocess failed | pid={proc.pid} | error={e}")
             self._kill_process(proc)

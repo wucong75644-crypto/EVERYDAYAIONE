@@ -304,6 +304,10 @@ def build_scoped_shutil(check_path_fn):
 
         @staticmethod
         def rmtree(path):
-            raise PermissionError("递归删除目录被禁止。")
+            raise PermissionError(
+                "递归删除目录被禁止。"
+                "如需删除文件，请逐个使用 os.remove(path)，"
+                "并在 code_execute 的 confirm_delete 参数中传入文件名列表。"
+            )
 
     return _ScopedShutil()

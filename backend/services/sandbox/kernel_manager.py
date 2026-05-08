@@ -310,7 +310,8 @@ class KernelManager:
                 timeout=timeout + 10,
             )
         except asyncio.TimeoutError:
-            return "timeout", f"⏱ Kernel 响应超时（{timeout}秒）"
+            from services.sandbox.sandbox_constants import TIMEOUT_MESSAGE
+            return "timeout", TIMEOUT_MESSAGE.format(timeout=timeout)
 
         if not response_line:
             # 读取 stderr 和 returncode 诊断崩溃原因
