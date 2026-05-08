@@ -369,14 +369,6 @@ def build_profile_from_duckdb(
     # ── 7. 查询指引 ──
     lines.append(f'\n[查询] data_query(file="{filename}", sql="SELECT ... FROM data")')
 
-    # ── 8. 警告 ──
-    high_null = [
-        col["name"] for col in columns
-        if col.get("null_count", 0) / row_count > 0.1
-    ]
-    if high_null:
-        lines.append(f"\n⚠ 高空值率列: {', '.join(high_null)}")
-
     return "\n".join(lines), stats_dict
 
 
