@@ -434,6 +434,14 @@ class DataQueryExecutor:
             profile = self._profile_via_view(query_path)
 
         elapsed = time.monotonic() - start
+
+        # Excel 文件：用原始数据覆盖预览（保留空值，展示真实结构）
+        # parquet 缓存经过 ffill 后空值被填充，结构信息丢失
+        if original_path.lower().endswith((".xlsx", ".xls", ".xlsm")):
+            raw_rows = _read_raw_excel_preview(original_path, max_rows=20)
+            if raw_rows:
+                profile["preview_rows"] = raw_rows
+
         text, _ = build_profile_from_duckdb(profile, filename, file_size_kb, elapsed)
 
         # 注入清洗报告（如果有）
@@ -801,3 +809,39 @@ class DataQueryExecutor:
             )
         finally:
             con.close()
+
+
+def _read_raw_excel_preview(
+    excel_path: str, max_rows: int = 20,
+) -> list[dict] | None:
+    """从原始 Excel 读取前 N 行（不经过 ffill/pandas，保留空值）。
+
+    用 openpyxl 直接读，空单元格返回 None。
+    Agent 看到真实的空值分布，自然理解主从/合并结构。
+    """
+    try:
+        import openpyxl
+
+        wb = openpyxl.load_workbook(excel_path, read_only=True, data_only=True)
+        ws = wb.active
+        if ws is None:
+            wb.close()
+            return None
+
+        rows: list[dict] = []
+        headers: list[str] = []
+        for i, row in enumerate(ws.iter_rows(values_only=True)):
+            if i == 0:
+                headers = [str(c) if c is not None else f"col_{j}" for j, c in enumerate(row)]
+                continue
+            if i > max_rows:
+                break
+            rows.append({
+                h: v for h, v in zip(headers, row)
+            })
+
+        wb.close()
+        return rows if rows else None
+    except Exception as e:
+        logger.debug(f"Raw Excel preview failed: {e}")
+        return None
