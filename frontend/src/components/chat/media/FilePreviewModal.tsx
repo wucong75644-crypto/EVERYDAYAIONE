@@ -1,18 +1,88 @@
 /**
  * 文件在线预览弹窗
  *
- * 支持：Excel/CSV 表格渲染、文本/代码高亮、PDF iframe 预览
+ * 支持：Excel/CSV 表格渲染、文本/代码预览（含行号）、PDF iframe 预览
  * 参考 ImagePreviewModal 的全屏弹窗架构。
  */
 
 import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Download, Loader2 } from 'lucide-react';
+import { X, Download, Loader2, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { FilePart } from '../../../types/message';
 import { downloadFile } from '../../../utils/downloadFile';
 import { getFileIcon, formatFileSize } from '../../../utils/fileUtils';
 import { getWorkspacePreviewUrl, getAuthHeaders } from '../../../services/workspace';
+
+// ============================================================
+// 常量
+// ============================================================
+
+/** 预览文件大小上限（20MB），超出引导下载 */
+const MAX_PREVIEW_SIZE = 20 * 1024 * 1024;
+
+/** 表格最多渲染行数 */
+const MAX_TABLE_ROWS = 200;
+
+const PREVIEWABLE_EXTS = new Set([
+  'xlsx', 'xls', 'csv', 'tsv',
+  'json', 'yaml', 'yml', 'xml',
+  'txt', 'md', 'log',
+  'py', 'js', 'ts', 'html', 'css', 'sql',
+  'pdf',
+]);
+
+// ============================================================
+// CSV 解析器（支持引号内逗号/换行）
+// ============================================================
+
+function parseCSV(text: string, separator: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"' && text[i + 1] === '"') {
+        cell += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        cell += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === separator) {
+      row.push(cell);
+      cell = '';
+    } else if (ch === '\n' || (ch === '\r' && text[i + 1] === '\n')) {
+      row.push(cell);
+      cell = '';
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+      if (ch === '\r') i++;
+    } else if (ch === '\r') {
+      row.push(cell);
+      cell = '';
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+    } else {
+      cell += ch;
+    }
+  }
+  if (cell || row.length > 0) {
+    row.push(cell);
+    if (row.some(Boolean)) rows.push(row);
+  }
+  return rows;
+}
+
+// ============================================================
+// 公共 API
+// ============================================================
 
 interface FilePreviewModalProps {
   file: FilePart;
@@ -25,13 +95,9 @@ export function canPreview(name: string): boolean {
   return PREVIEWABLE_EXTS.has(ext);
 }
 
-const PREVIEWABLE_EXTS = new Set([
-  'xlsx', 'xls', 'csv', 'tsv',
-  'json', 'yaml', 'yml', 'xml',
-  'txt', 'md', 'log',
-  'py', 'js', 'ts', 'html', 'css', 'sql',
-  'pdf',
-]);
+// ============================================================
+// 组件
+// ============================================================
 
 export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModalProps) {
   const [loading, setLoading] = useState(true);
@@ -39,10 +105,11 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
   const [tableData, setTableData] = useState<string[][] | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+  const [tooLarge, setTooLarge] = useState(false);
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [activeSheet, setActiveSheet] = useState(0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const workbookRef = useRef<any>(null);  // 缓存 xlsx workbook，避免 sheet 切换重复 fetch
+  const workbookRef = useRef<any>(null);
 
   const ext = file.name.split('.').pop()?.toLowerCase() || '';
   const isPdf = ext === 'pdf';
@@ -65,8 +132,16 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
     async function loadContent() {
       setLoading(true);
       setError(null);
+      setTooLarge(false);
 
       try {
+        // 大文件保护：超过 20MB 引导下载
+        if (file.size && file.size > MAX_PREVIEW_SIZE) {
+          setTooLarge(true);
+          setLoading(false);
+          return;
+        }
+
         // CDN 优先（快），CORS 失败时降级后端代理（慢但可靠）
         let response: Response;
         if (file.url) {
@@ -74,7 +149,6 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
             response = await fetch(file.url);
             if (!response.ok) throw new Error(`CDN ${response.status}`);
           } catch {
-            // CDN 失败（CORS / 网络），降级到后端代理
             if (!file.workspace_path) throw new Error('加载失败');
             response = await fetch(getWorkspacePreviewUrl(file.workspace_path), { headers: getAuthHeaders() });
             if (!response.ok) throw new Error(`加载失败: ${response.status}`);
@@ -86,6 +160,8 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
           throw new Error('无可用的文件 URL');
         }
 
+        if (cancelled) return;
+
         if (isPdf) {
           const blob = await response.blob();
           if (cancelled) return;
@@ -93,9 +169,9 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
         } else if (isExcel) {
           const { read, utils } = await import('xlsx');
           const buffer = await response.arrayBuffer();
-          const wb = read(buffer);
           if (cancelled) return;
-          workbookRef.current = wb;  // 缓存 workbook
+          const wb = read(buffer);
+          workbookRef.current = wb;
           setSheetNames(wb.SheetNames);
           const ws = wb.Sheets[wb.SheetNames[0]];
           setTableData(utils.sheet_to_json<string[]>(ws, { header: 1 }) as string[][]);
@@ -103,10 +179,8 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
           const text = await response.text();
           if (cancelled) return;
           const separator = ext === 'tsv' ? '\t' : ',';
-          const rows = text.split('\n').map((row) => row.split(separator));
-          setTableData(rows);
+          setTableData(parseCSV(text, separator));
         } else {
-          // 文本/代码
           const text = await response.text();
           if (cancelled) return;
           setTextContent(text);
@@ -121,12 +195,11 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
     loadContent();
     return () => {
       cancelled = true;
-      // 清理 PDF blob URL 防止内存泄漏
       setPdfBlobUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
     };
-  }, [file.url, file.workspace_path, isPdf, isExcel, isCsv, ext]);
+  }, [file.url, file.workspace_path, isPdf, isExcel, isCsv, ext, file.size]);
 
-  // 切换 Sheet（从缓存读取，无需重新 fetch）
+  // Sheet 切换
   const handleSheetChange = useCallback(async (index: number) => {
     setActiveSheet(index);
     const wb = workbookRef.current;
@@ -142,24 +215,27 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
 
   const handleDownload = async () => {
     try {
-      // CDN 优先下载（downloadFile 内部有 iframe fallback 兜底 CORS）
       await downloadFile(file.url || getWorkspacePreviewUrl(file.workspace_path!), file.name);
     } catch {
       toast.error('下载失败');
     }
   };
 
+  // 表格数据行数（不含表头）
+  const dataRowCount = tableData ? tableData.length - 1 : 0;
+  const displayRows = tableData ? tableData.slice(1, 1 + MAX_TABLE_ROWS) : [];
+
   return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex flex-col bg-black/80"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
+    <div className="fixed inset-0 z-50 flex flex-col bg-black/80">
+      {/* 点击遮罩关闭（独立层，不影响内容区点击） */}
+      <div className="absolute inset-0 -z-10" onClick={onClose} />
+
       {/* 顶部工具栏 */}
-      <div className="flex items-center justify-between px-6 py-3 bg-gray-900/90 text-white">
+      <div className="flex items-center justify-between px-6 py-3 bg-gray-900/90 text-white flex-shrink-0">
         <div className="flex items-center gap-3 min-w-0">
           <span className="text-lg">{getFileIcon(file.name)}</span>
           <span className="truncate font-medium">{file.name}</span>
-          {file.size && (
+          {file.size != null && (
             <span className="text-sm text-gray-400 flex-shrink-0">
               {formatFileSize(file.size)}
             </span>
@@ -184,7 +260,7 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
       </div>
 
       {/* 内容区域 */}
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto min-h-0">
         {loading && (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="w-8 h-8 animate-spin text-white" />
@@ -194,6 +270,20 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
         {error && (
           <div className="flex items-center justify-center h-full text-red-400">
             {error}
+          </div>
+        )}
+
+        {/* 大文件提示 */}
+        {tooLarge && !loading && (
+          <div className="flex flex-col items-center justify-center h-full gap-4 text-gray-300">
+            <AlertTriangle className="w-12 h-12 text-yellow-500" />
+            <p>文件较大（{formatFileSize(file.size!)}），建议下载后查看</p>
+            <button
+              onClick={handleDownload}
+              className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+            >
+              下载文件
+            </button>
           </div>
         )}
 
@@ -209,54 +299,81 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
         {/* 表格预览（Excel/CSV） */}
         {tableData && !loading && (
           <div className="p-4">
-            <div className="overflow-auto rounded-lg bg-white dark:bg-gray-900">
-              <table className="text-sm">
-                <thead>
-                  {tableData.length > 0 && (
-                    <tr>
-                      {tableData[0].map((cell, i) => (
-                        <th
-                          key={i}
-                          className="px-3 py-2 text-left font-semibold bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-gray-700 whitespace-nowrap max-w-[240px] truncate"
-                          title={String(cell ?? '')}
-                        >
-                          {cell ?? ''}
+            {dataRowCount === 0 ? (
+              <div className="flex items-center justify-center py-12 text-gray-400 bg-white dark:bg-gray-900 rounded-lg">
+                暂无数据
+              </div>
+            ) : (
+              <div className="overflow-auto rounded-lg bg-white dark:bg-gray-900 max-h-[calc(100vh-140px)]">
+                <table className="text-sm border-collapse">
+                  <thead>
+                    {tableData.length > 0 && (
+                      <tr>
+                        {/* 行号列 */}
+                        <th className="px-2 py-2 text-center text-xs font-normal bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 border-b border-r border-gray-300 dark:border-gray-600 sticky top-0 z-10 w-12">
+                          #
                         </th>
-                      ))}
-                    </tr>
-                  )}
-                </thead>
-                <tbody>
-                  {tableData.slice(1, 200).map((row, ri) => (
-                    <tr key={ri} className="hover:bg-gray-50 dark:hover:bg-gray-800">
-                      {row.map((cell, ci) => (
-                        <td
-                          key={ci}
-                          className="px-3 py-1.5 border-b border-gray-100 dark:border-gray-800 text-gray-700 dark:text-gray-300 whitespace-nowrap max-w-[240px] truncate"
-                          title={String(cell ?? '')}
-                        >
-                          {cell ?? ''}
+                        {tableData[0].map((cell, i) => (
+                          <th
+                            key={i}
+                            className="px-3 py-2 text-left font-semibold bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-gray-700 whitespace-nowrap max-w-[240px] truncate sticky top-0 z-10"
+                            title={String(cell ?? '')}
+                          >
+                            {cell ?? ''}
+                          </th>
+                        ))}
+                      </tr>
+                    )}
+                  </thead>
+                  <tbody>
+                    {displayRows.map((row, ri) => (
+                      <tr key={ri} className="hover:bg-gray-50 dark:hover:bg-gray-800">
+                        {/* 行号 */}
+                        <td className="px-2 py-1.5 text-center text-xs bg-gray-50 dark:bg-gray-850 text-gray-400 border-b border-r border-gray-200 dark:border-gray-700 sticky left-0">
+                          {ri + 1}
                         </td>
-                      ))}
+                        {row.map((cell, ci) => (
+                          <td
+                            key={ci}
+                            className="px-3 py-1.5 border-b border-gray-100 dark:border-gray-800 text-gray-700 dark:text-gray-300 whitespace-nowrap max-w-[240px] truncate"
+                            title={String(cell ?? '')}
+                          >
+                            {cell ?? ''}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {dataRowCount > MAX_TABLE_ROWS && (
+                  <div className="px-4 py-2 text-sm text-gray-500 bg-gray-50 dark:bg-gray-800 sticky bottom-0">
+                    显示前 {MAX_TABLE_ROWS} 行，共 {dataRowCount} 行数据
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 文本/代码预览（含行号） */}
+        {textContent !== null && !loading && (
+          <div className="p-4">
+            <div className="rounded-lg bg-gray-900 overflow-auto max-h-[calc(100vh-140px)]">
+              <table className="text-sm leading-6 w-full">
+                <tbody>
+                  {textContent.split('\n').map((line, i) => (
+                    <tr key={i} className="hover:bg-gray-800/50">
+                      <td className="pl-4 pr-3 py-0 text-right text-gray-500 select-none w-12 align-top sticky left-0 bg-gray-900">
+                        {i + 1}
+                      </td>
+                      <td className="pr-4 py-0 text-gray-100 whitespace-pre-wrap break-all">
+                        {line || '\u00A0'}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {tableData.length > 201 && (
-                <div className="px-4 py-2 text-sm text-gray-500 bg-gray-50 dark:bg-gray-800">
-                  显示前 200 行，共 {tableData.length - 1} 行数据
-                </div>
-              )}
             </div>
-          </div>
-        )}
-
-        {/* 文本/代码预览 */}
-        {textContent !== null && !loading && (
-          <div className="p-4">
-            <pre className="p-4 rounded-lg bg-gray-900 text-gray-100 text-sm overflow-auto max-h-[80vh] whitespace-pre-wrap">
-              {textContent}
-            </pre>
           </div>
         )}
       </div>
@@ -283,5 +400,3 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
     document.body,
   );
 });
-
-
