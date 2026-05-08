@@ -18,6 +18,8 @@ import WorkspaceFileGrid from './WorkspaceFileGrid';
 import WorkspaceEmptyState from './WorkspaceEmptyState';
 import WorkspaceDropZone from './WorkspaceDropZone';
 import type { WorkspaceFileItem, WorkspaceFile } from '../../services/workspace';
+import { getWorkspacePreviewUrl, getAuthHeaders } from '../../services/workspace';
+import { downloadFile } from '../../utils/downloadFile';
 import type { FilePart } from '../../types/message';
 
 interface WorkspaceViewProps {
@@ -58,26 +60,25 @@ export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles
   const [deleteLoading, setDeleteLoading] = useState(false);
 
   const handlePreview = useCallback((item: WorkspaceFileItem) => {
-    if (!item.cdn_url) {
-      toast.error('文件暂不支持预览');
-      return;
-    }
+    const fullPath = ws.currentPath === '.' ? item.name : `${ws.currentPath}/${item.name}`;
     if (canPreview(item.name)) {
       setPreviewFile({
         type: 'file',
-        url: item.cdn_url,
+        url: item.cdn_url || '',
         name: item.name,
         mime_type: item.mime_type || 'application/octet-stream',
         size: item.size,
+        workspace_path: fullPath,
       });
     } else if (item.cdn_url) {
       // 不支持预览 → 下载
-      const link = document.createElement('a');
-      link.href = item.cdn_url;
-      link.download = item.name;
-      link.click();
+      downloadFile(
+        getWorkspacePreviewUrl(fullPath),
+        item.name,
+        getAuthHeaders(),
+      );
     }
-  }, []);
+  }, [ws.currentPath]);
 
   const handleSendToChat = useCallback((item: WorkspaceFileItem) => {
     const fullPath = ws.currentPath === '.' ? item.name : `${ws.currentPath}/${item.name}`;
