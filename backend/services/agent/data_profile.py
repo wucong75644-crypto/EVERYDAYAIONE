@@ -189,28 +189,27 @@ def build_data_profile(
         if text_lines:
             lines.append("\n[统计-文本]\n" + "\n".join(text_lines))
 
-    # ── 5. 预览（head(2) + sample(1)） ──
-    n_head = min(2, rows)
-    n_sample = min(1, max(0, rows - n_head))
-    if n_head > 0:
-        preview_df = df.head(n_head)
-        if n_sample > 0:
-            import pandas as _pd
-            preview_df = _pd.concat([
-                preview_df, df.iloc[n_head:].sample(n=n_sample, random_state=42),
-            ])
-        preview_lines: list[str] = []
-        for i, (_, row) in enumerate(preview_df.iterrows(), 1):
-            parts = []
-            for col_name in df.columns:
-                v = row[col_name]
-                if v is not None and str(v) != "nan":
-                    sv = str(v)
-                    if len(sv) > 40:
-                        sv = sv[:37] + "..."
-                    parts.append(f"{col_name}={sv}")
-            preview_lines.append(f"  {i}. {' | '.join(parts)}")
-        lines.append("\n[预览] 前2条+随机1条:\n" + "\n".join(preview_lines))
+    # ── 5. 结构化预览（前5行连续展示） ──
+    n_preview = min(5, rows)
+    if n_preview > 0:
+        preview_df = df.head(n_preview)
+        # 构造 profile 格式（复用 _build_structured_preview）
+        col_infos = []
+        for col_name in df.columns:
+            null_count = int(df[col_name].isna().sum())
+            col_infos.append({"name": col_name, "null_count": null_count})
+        import pandas as _pd
+        preview_rows = []
+        for _, row in preview_df.iterrows():
+            preview_rows.append({
+                col: (None if _pd.isna(row[col]) else row[col])
+                for col in df.columns
+            })
+        preview_lines = _build_structured_preview(
+            col_infos, rows, {"preview_rows": preview_rows},
+        )
+        if preview_lines:
+            lines.append("\n" + "\n".join(preview_lines))
 
     # ── 6. 查询指引 ──
     lines.append(f'\n[查询] data_query(file="{filename}", sql="SELECT ... FROM data")')
@@ -362,26 +361,10 @@ def build_profile_from_duckdb(
     if text_lines:
         lines.append("\n[统计-文本]\n" + "\n".join(text_lines))
 
-    # ── 5. 预览行（来自 DuckDB 采样） ──
-    preview_rows = profile.get("preview_rows", [])
-    if preview_rows:
-        preview_lines: list[str] = []
-        for i, row in enumerate(preview_rows, 1):
-            parts = []
-            for k, v in row.items():
-                if v is not None and str(v) != "nan" and str(v) != "NaT":
-                    sv = str(v)
-                    if len(sv) > 40:
-                        sv = sv[:37] + "..."
-                    parts.append(f"{k}={sv}")
-            preview_lines.append(f"  {i}. {' | '.join(parts)}")
-        label = "前2条+随机1条" if len(preview_rows) >= 3 else f"前{len(preview_rows)}条"
-        lines.append(f"\n[预览] {label}:\n" + "\n".join(preview_lines))
-
-    # ── 6. 结构画像（列角色 + 主从检测） ──
-    structure_lines = _infer_structure(columns, row_count, profile)
-    if structure_lines:
-        lines.append("\n" + "\n".join(structure_lines))
+    # ── 5. 结构化预览（空值率分组 + 列名模式 + 连续行） ──
+    preview_lines = _build_structured_preview(columns, row_count, profile)
+    if preview_lines:
+        lines.append("\n" + "\n".join(preview_lines))
 
     # ── 7. 查询指引 ──
     lines.append(f'\n[查询] data_query(file="{filename}", sql="SELECT ... FROM data")')
@@ -398,44 +381,106 @@ def build_profile_from_duckdb(
 
 
 # ============================================================
-# 数据结构画像（相邻重复率 → LLM 自行判断结构）
+# 结构化预览（空值率分组 + 列名模式 + 连续行展示）
 # ============================================================
 
 
-def _infer_structure(
+def _build_structured_preview(
     columns: list[dict], row_count: int, profile: dict,
 ) -> list[str]:
-    """输出每列的相邻重复率，供 LLM 自行判断数据结构。
+    """构建结构化预览：按空值率分组列 + 检测列名模式 + 展示连续行。
 
-    系统只提供客观统计数据，不做阈值判断。
-    LLM 根据列名语义 + 重复率数字推断主从关系、分组键等。
-    小表（<10行）或空表或无相邻重复率数据时跳过。
+    不分类、不贴标签，只描述客观事实。
+    Agent 看到分组和连续行的实际样貌后自行理解数据结构。
     """
-    if row_count < 10 or not columns:
+    if row_count == 0:
+        return [f"[预览] 共0行"]
+
+    lines: list[str] = [f"[预览] 共{row_count:,}行"]
+
+    # ── 行维度：按空值率分组列 ──
+    # 只在列之间空值率有明显差异时输出（否则是普通扁平表，不需要分组）
+    data_cols = [c for c in columns if not c["name"].startswith("_is_")]
+    if data_cols and row_count > 0:
+        fill_rates: dict[str, int] = {}  # col_name → fill_rate_pct
+        for col in data_cols:
+            null_count = col.get("null_count", 0)
+            fill_pct = round((1 - null_count / row_count) * 100)
+            fill_rates[col["name"]] = fill_pct
+
+        # 按 10% 粒度分桶
+        buckets: dict[int, list[str]] = {}
+        for name, pct in fill_rates.items():
+            bucket = (pct // 10) * 10  # 0, 10, 20, ..., 100
+            buckets.setdefault(bucket, []).append(name)
+
+        # 只在有多个不同桶时才输出分组（说明列之间有结构差异）
+        if len(buckets) >= 2:
+            for bucket in sorted(buckets.keys()):
+                col_names = buckets[bucket]
+                pct_label = f"{bucket}~{min(bucket + 9, 100)}%行有值"
+                if bucket >= 100:
+                    pct_label = "每行都有值"
+                elif bucket <= 0:
+                    pct_label = "全部为空"
+                display = ", ".join(col_names[:8])
+                if len(col_names) > 8:
+                    display += f" 等{len(col_names)}个"
+                lines.append(f"\n  以下字段{pct_label}:")
+                lines.append(f"    {display}")
+
+    # ── 列维度：检测列名重复模式 ──
+    col_names = [c["name"] for c in data_cols]
+    pattern_lines = _detect_column_name_patterns(col_names)
+    if pattern_lines:
+        lines.append("")
+        lines.extend(pattern_lines)
+
+    # ── 连续行展示 ──
+    preview_rows = profile.get("preview_rows", [])
+    if preview_rows:
+        lines.append(f"\n  前{len(preview_rows)}行:")
+        for i, row in enumerate(preview_rows, 1):
+            parts = []
+            for k, v in row.items():
+                if k.startswith("_is_"):
+                    continue
+                sv = str(v) if v is not None and str(v) not in ("nan", "NaT", "None") else "空"
+                if len(sv) > 40:
+                    sv = sv[:37] + "..."
+                parts.append(f"{k}={sv}")
+            lines.append(f"    行{i}: {' | '.join(parts)}")
+
+    return lines
+
+
+def _detect_column_name_patterns(col_names: list[str]) -> list[str]:
+    """检测列名中的重复模式（前缀/后缀），用于发现交叉表等列维度结构。
+
+    按 _ 拆分列名，统计每个部分出现次数，≥3次的报出来。
+    """
+    if len(col_names) < 3:
         return []
 
-    adj_ratios = profile.get("adjacent_dup_ratios", {})
-    if not adj_ratios:
+    # 按 _ 拆分，统计每个 part 出现在多少个列名中
+    from collections import Counter
+    part_counter: Counter[str] = Counter()
+    for name in col_names:
+        parts = name.split("_")
+        # 去重（同一列名拆出的重复部分只计一次）
+        for part in set(parts):
+            if part and len(part) >= 2:  # 忽略空串和单字符
+                part_counter[part] += 1
+
+    # 筛选出现 ≥3 次的部分
+    repeated = [(part, cnt) for part, cnt in part_counter.items() if cnt >= 3]
+    if not repeated:
         return []
 
-    # 只输出有相邻重复率的列，按重复率降序排列
-    items: list[tuple[str, float]] = []
-    for col in columns:
-        name = col["name"]
-        if name.startswith("_is_"):
-            continue
-        ratio = adj_ratios.get(name)
-        if ratio is not None:
-            items.append((name, ratio))
-
-    if not items:
-        return []
-
-    items.sort(key=lambda x: x[1], reverse=True)
-
-    lines = ["[相邻重复率] 值越高表示该列在相邻行中重复越多（可能是合并/分组字段）"]
-    for name, ratio in items:
-        pct = int(ratio * 100)
-        lines.append(f"  {name}: {pct}%")
+    repeated.sort(key=lambda x: x[1], reverse=True)
+    lines = ["  列名含重复模式:"]
+    for part, cnt in repeated[:5]:
+        matching = [n for n in col_names if part in n.split("_")]
+        lines.append(f"    \"{part}\" 出现{cnt}次: {', '.join(matching[:5])}")
 
     return lines

@@ -294,58 +294,15 @@ class DuckDBEngine:
         except Exception as e:
             logger.debug(f"DuckDB duplicate count failed: {e}")
 
-        # 7. 预览行（前2条 + 随机1条）
+        # 7. 预览行（前5行连续，展示数据的实际结构）
         preview_rows: list[dict] = []
         try:
             head_rows = conn.execute(
-                f"SELECT * FROM read_parquet('{path_escaped}') LIMIT 2"
+                f"SELECT * FROM read_parquet('{path_escaped}') LIMIT 5"
             ).fetchdf().to_dict("records")
             preview_rows.extend(head_rows)
-            if row_count > 2:
-                sample_row = conn.execute(
-                    f"SELECT * FROM read_parquet('{path_escaped}') "
-                    f"USING SAMPLE 1 ROWS"
-                ).fetchdf().to_dict("records")
-                preview_rows.extend(sample_row)
         except Exception as e:
             logger.debug(f"DuckDB preview query failed: {e}")
-
-        # 8. 相邻重复率（主从结构检测用，只算前 20 列，跳过小表）
-        # 大表（>10万行）采样前10万行，避免窗口函数全表扫描
-        # 两步 SQL：内层 LAG 窗口函数 → 外层 SUM 聚合（DuckDB 不允许嵌套）
-        _ADJ_SAMPLE_LIMIT = 100_000
-        adjacent_dup_ratios: dict[str, float] = {}
-        if row_count >= 10 and columns_info:
-            target_cols = [c["name"] for c in columns_info[:20]]
-            try:
-                # 内层：为每列计算 LAG 比较结果（0/1）
-                lag_cols = ", ".join(
-                    f'CASE WHEN "{c}" IS NOT DISTINCT FROM '
-                    f'LAG("{c}") OVER (ORDER BY _rowid) '
-                    f'THEN 1 ELSE 0 END AS "_adj_{i}"'
-                    for i, c in enumerate(target_cols)
-                )
-                # 外层：聚合求比例
-                avg_cols = ", ".join(
-                    f'AVG("_adj_{i}") AS "_r{i}"'
-                    for i in range(len(target_cols))
-                )
-                sql = (
-                    f"SELECT {avg_cols} FROM ("
-                    f"  SELECT {lag_cols} FROM ("
-                    f"    SELECT *, ROW_NUMBER() OVER () AS _rowid "
-                    f"    FROM read_parquet('{path_escaped}') "
-                    f"    LIMIT {_ADJ_SAMPLE_LIMIT}"
-                    f"  )"
-                    f")"
-                )
-                ratios = conn.execute(sql).fetchone()
-                if ratios:
-                    for i, col_name in enumerate(target_cols):
-                        if ratios[i] is not None:
-                            adjacent_dup_ratios[col_name] = round(float(ratios[i]), 3)
-            except Exception as e:
-                logger.debug(f"DuckDB adjacent dup ratio failed: {e}")
 
         return {
             "columns": columns_info,
@@ -353,7 +310,6 @@ class DuckDBEngine:
             "top_values": top_values,
             "duplicate_count": duplicate_count,
             "preview_rows": preview_rows,
-            "adjacent_dup_ratios": adjacent_dup_ratios,
         }
 
     # ── 共享工具方法 ──────────────────────────────────
