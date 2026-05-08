@@ -2049,7 +2049,10 @@
       "Bash(python -m pytest tests/test_common_tools.py tests/test_sandbox_tool_mixin.py tests/test_chat_tools.py tests/test_sandbox_executor.py tests/test_file_tool_mixin.py tests/test_file_tools.py tests/test_staging_cleaner.py -v --tb=short)",
       "Bash(python -m pytest tests/test_common_tools.py tests/test_sandbox_tool_mixin.py tests/test_chat_tools.py tests/test_sandbox_executor.py tests/test_file_tool_mixin.py tests/test_file_tools.py tests/test_staging_cleaner.py -q --tb=short)",
       "WebFetch(domain:towardsdatascience.com)",
-      "Bash(./git-push.sh \"fix: 文件预览/下载CORS失败——后端代理端点+前端统一走代理\")"
+      "Bash(./git-push.sh \"fix: 文件预览/下载CORS失败——后端代理端点+前端统一走代理\")",
+      "Bash(python -m pytest tests/test_data_profile.py -q --tb=short)",
+      "Bash(python -m pytest tests/test_data_profile.py -v --tb=short)",
+      "Bash(npm view *)"
     ],
     "additionalDirectories": [
       "/tmp"
