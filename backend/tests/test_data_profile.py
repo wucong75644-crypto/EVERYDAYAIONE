@@ -98,11 +98,9 @@ class TestBuildDataProfile:
         assert stats["shop_name"]["distinct_count"] == 2
 
     def test_preview_section(self):
-        """预览板块显示 head(2) + sample(1)"""
+        """预览板块显示行数据"""
         text, _ = build_data_profile(self._basic_df(), "test.parquet", 1.0)
-        assert "1." in text
-        assert "2." in text
-        assert "3." in text
+        assert "[预览]" in text
         assert "A001" in text
 
     def test_read_instruction(self):
@@ -215,65 +213,107 @@ class TestBuildDataProfileEdgeCases:
 # 数据结构画像（_infer_structure）
 # ============================================================
 
-from services.agent.data_profile import _infer_structure
+from services.agent.data_profile import _build_structured_preview, _detect_column_name_patterns
 
 
-class TestInferStructure:
-    """相邻重复率输出"""
+class TestStructuredPreview:
+    """结构化预览"""
 
-    def test_outputs_adjacent_dup_ratios(self):
-        """有相邻重复率 → 输出每列百分比"""
+    def test_flat_table_no_grouping(self):
+        """扁平表（所有列空值率相同）→ 无分组，只有连续行"""
         columns = [
-            {"name": "order_id", "type": "BIGINT", "distinct_count": 50, "null_count": 0},
-            {"name": "price", "type": "DOUBLE", "distinct_count": 80, "null_count": 0},
+            {"name": "id", "type": "BIGINT", "distinct_count": 100, "null_count": 0},
+            {"name": "name", "type": "VARCHAR", "distinct_count": 90, "null_count": 0},
+            {"name": "amount", "type": "DOUBLE", "distinct_count": 80, "null_count": 0},
         ]
-        profile = {"adjacent_dup_ratios": {"order_id": 0.50, "price": 0.05}}
-        lines = _infer_structure(columns, 100, profile)
+        profile = {"preview_rows": [
+            {"id": 1, "name": "Alice", "amount": 99.9},
+            {"id": 2, "name": "Bob", "amount": 149.9},
+        ]}
+        lines = _build_structured_preview(columns, 100, profile)
         text = "\n".join(lines)
-        assert "相邻重复率" in text
-        assert "order_id: 50%" in text
-        assert "price: 5%" in text
+        assert "[预览]" in text
+        assert "行1:" in text
+        assert "Alice" in text
+        # 无分组描述（所有列空值率相同）
+        assert "行有值" not in text
 
-    def test_sorted_by_ratio_desc(self):
-        """按重复率降序排列"""
+    def test_mixed_null_rates_show_groups(self):
+        """不同列空值率差异大 → 输出分组"""
         columns = [
-            {"name": "a", "type": "VARCHAR", "distinct_count": 10, "null_count": 0},
-            {"name": "b", "type": "VARCHAR", "distinct_count": 10, "null_count": 0},
+            {"name": "order_id", "type": "BIGINT", "distinct_count": 50, "null_count": 47},
+            {"name": "buyer", "type": "VARCHAR", "distinct_count": 50, "null_count": 47},
+            {"name": "price", "type": "DOUBLE", "distinct_count": 80, "null_count": 0},
+            {"name": "qty", "type": "INTEGER", "distinct_count": 5, "null_count": 0},
         ]
-        profile = {"adjacent_dup_ratios": {"a": 0.10, "b": 0.90}}
-        lines = _infer_structure(columns, 100, profile)
-        # b(90%) 应在 a(10%) 前面
-        b_idx = next(i for i, l in enumerate(lines) if "b:" in l)
-        a_idx = next(i for i, l in enumerate(lines) if "a:" in l)
-        assert b_idx < a_idx
-
-    def test_small_table_skipped(self):
-        """小表（<10行）→ 跳过"""
-        columns = [{"name": "a", "type": "INTEGER", "distinct_count": 5, "null_count": 0}]
-        lines = _infer_structure(columns, 5, {"adjacent_dup_ratios": {"a": 0.5}})
-        assert lines == []
-
-    def test_empty_columns_skipped(self):
-        """空列列表 → 跳过"""
-        lines = _infer_structure([], 100, {"adjacent_dup_ratios": {"a": 0.5}})
-        assert lines == []
-
-    def test_no_adjacent_ratios_skipped(self):
-        """无相邻重复率数据 → 跳过"""
-        columns = [
-            {"name": "id", "type": "BIGINT", "distinct_count": 95, "null_count": 0},
-        ]
-        lines = _infer_structure(columns, 100, {})
-        assert lines == []
-
-    def test_hidden_columns_excluded(self):
-        """_is_ 前缀的标记列不输出"""
-        columns = [
-            {"name": "order_id", "type": "BIGINT", "distinct_count": 50, "null_count": 0},
-            {"name": "_is_hidden", "type": "BOOLEAN", "distinct_count": 2, "null_count": 0},
-        ]
-        profile = {"adjacent_dup_ratios": {"order_id": 0.50, "_is_hidden": 0.95}}
-        lines = _infer_structure(columns, 100, profile)
+        profile = {"preview_rows": [
+            {"order_id": 123, "buyer": "Alice", "price": 9.99, "qty": 1},
+            {"order_id": None, "buyer": None, "price": 6.99, "qty": 1},
+        ]}
+        lines = _build_structured_preview(columns, 100, profile)
         text = "\n".join(lines)
         assert "order_id" in text
+        assert "price" in text
+        assert "行有值" in text  # 分组描述出现
+
+    def test_preview_shows_null_as_empty(self):
+        """空值在预览中显示为"空" """
+        columns = [
+            {"name": "a", "type": "VARCHAR", "distinct_count": 50, "null_count": 50},
+            {"name": "b", "type": "DOUBLE", "distinct_count": 80, "null_count": 0},
+        ]
+        profile = {"preview_rows": [
+            {"a": "hello", "b": 1.0},
+            {"a": None, "b": 2.0},
+        ]}
+        lines = _build_structured_preview(columns, 100, profile)
+        text = "\n".join(lines)
+        assert "a=空" in text
+
+    def test_hidden_columns_excluded(self):
+        """_is_ 前缀列不出现在预览里"""
+        columns = [
+            {"name": "id", "type": "BIGINT", "distinct_count": 100, "null_count": 0},
+            {"name": "_is_hidden", "type": "BOOLEAN", "distinct_count": 2, "null_count": 0},
+        ]
+        profile = {"preview_rows": [{"id": 1, "_is_hidden": False}]}
+        lines = _build_structured_preview(columns, 100, profile)
+        text = "\n".join(lines)
         assert "_is_hidden" not in text
+
+    def test_empty_table(self):
+        """空表 → 只显示行数"""
+        lines = _build_structured_preview([], 0, {})
+        text = "\n".join(lines)
+        assert "共0行" in text
+
+    def test_long_value_truncated(self):
+        """超长值在预览中截断"""
+        columns = [{"name": "text", "type": "VARCHAR", "distinct_count": 1, "null_count": 0}]
+        profile = {"preview_rows": [{"text": "a" * 100}]}
+        lines = _build_structured_preview(columns, 1, profile)
+        text = "\n".join(lines)
+        assert "..." in text
+
+
+class TestColumnNamePatterns:
+    """列名重复模式检测"""
+
+    def test_detects_repeated_suffix(self):
+        """列名含重复后缀 → 报出来"""
+        col_names = ["一月_销量", "二月_销量", "三月_销量", "一月_金额", "二月_金额", "三月_金额"]
+        lines = _detect_column_name_patterns(col_names)
+        text = "\n".join(lines)
+        assert "销量" in text
+        assert "金额" in text
+
+    def test_no_pattern_returns_empty(self):
+        """无重复模式 → 空列表"""
+        col_names = ["id", "name", "amount", "status"]
+        lines = _detect_column_name_patterns(col_names)
+        assert lines == []
+
+    def test_too_few_columns_skipped(self):
+        """列数 <3 → 跳过"""
+        lines = _detect_column_name_patterns(["a_x", "b_x"])
+        assert lines == []
