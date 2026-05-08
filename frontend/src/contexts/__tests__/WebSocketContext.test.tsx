@@ -333,7 +333,7 @@ describe('WebSocketContext - Provider & Hook', () => {
       });
     });
 
-    it('should skip message_done if message already completed', async () => {
+    it('should still updateMessage when already completed (DB data覆盖)', async () => {
       const wrapper = createWrapper(mockWs, mockMessageStore);
       renderHook(() => useWebSocketContext(), { wrapper });
 
@@ -357,9 +357,12 @@ describe('WebSocketContext - Provider & Hook', () => {
         });
       });
 
-      // 应该跳过更新
+      // 即使已 completed，仍用 DB 返回的完整数据覆盖
       await waitFor(() => {
-        expect(mockMessageStore.updateMessage).not.toHaveBeenCalled();
+        expect(mockMessageStore.updateMessage).toHaveBeenCalledWith('msg_123', expect.objectContaining({
+          id: 'msg_123',
+          status: 'completed',
+        }));
       });
     });
 
@@ -601,9 +604,10 @@ describe('WebSocketContext - Provider & Hook', () => {
 
       unmount();
 
-      // 25 个消息类型的订阅都应该被取消
-      // 17 个原有 + 4 个定时任务事件 + 1 个 content_block_add + 1 个 suggestions_ready + 1 个 ask_user_request + 1 个 form_submit_result
-      expect(unsubscribe).toHaveBeenCalledTimes(25);
+      // 26 个消息类型的订阅都应该被取消
+      // 17 个原有 + 4 个定时任务事件 + 1 个 content_block_add + 1 个 suggestions_ready
+      // + 1 个 ask_user_request + 1 个 form_submit_result + 1 个 tool_confirm_request
+      expect(unsubscribe).toHaveBeenCalledTimes(26);
     });
 
     it('should clear flush timer on unmount', async () => {

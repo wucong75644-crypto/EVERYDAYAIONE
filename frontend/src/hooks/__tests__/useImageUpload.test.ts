@@ -44,7 +44,7 @@ describe('useImageUpload - addQuotedImage', () => {
     expect(result.current.uploadedImageUrls).toContain('https://cdn.example.com/image1.png');
   });
 
-  it('should replace existing quoted image when adding a new one', () => {
+  it('should support multiple quoted images (not replace)', () => {
     const { result } = renderHook(() => useImageUpload());
 
     act(() => {
@@ -56,8 +56,10 @@ describe('useImageUpload - addQuotedImage', () => {
       result.current.addQuotedImage('https://cdn.example.com/new.png');
     });
 
-    expect(result.current.images).toHaveLength(1);
+    // 多张引用图共存
+    expect(result.current.images).toHaveLength(2);
     expect(result.current.images[0].url).toBe('https://cdn.example.com/new.png');
+    expect(result.current.images[1].url).toBe('https://cdn.example.com/old.png');
   });
 
   it('should place quoted image at the beginning of the array', () => {
