@@ -8,7 +8,7 @@ FileExecutor 通过继承 FileReadExtensionsMixin 获得这些能力。
 - PDF 大文件预检：size > _MAX_READ_SIZE 直接拒绝
 - PDF 错误信息脱敏：不暴露服务端路径
 - 图片注入措辞中性化：[系统] 标签替代指令式文案
-- 同步 I/O 改 run_in_executor：PdfReader / Image.open / read_bytes
+- 同步 I/O 改 run_in_executor：pdfplumber.open / Image.open / read_bytes
 - DOCX 直读：python-docx 提取文本，不再绕 code_execute
 """
 

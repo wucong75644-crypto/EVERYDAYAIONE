@@ -419,30 +419,30 @@ def _extract_pptx(abs_path: str) -> Optional[Dict[str, Any]]:
 def _extract_pdf(abs_path: str) -> Optional[Dict[str, Any]]:
     """提取 pdf 元信息：页数、前 1 页文本预览"""
     try:
-        from PyPDF2 import PdfReader
+        import pdfplumber
     except ImportError:
-        logger.debug("PyPDF2 not installed, skipping PDF metadata")
+        logger.debug("pdfplumber not installed, skipping PDF metadata")
         return None
 
-    reader = PdfReader(abs_path)
-    total_pages = len(reader.pages)
+    with pdfplumber.open(abs_path) as pdf:
+        total_pages = len(pdf.pages)
 
-    # 提取前 1 页文本预览
-    preview = ""
-    if total_pages > 0:
-        first_page_text = reader.pages[0].extract_text() or ""
-        preview = first_page_text.strip()[:_MAX_DOC_PREVIEW_CHARS]
-        if len(first_page_text.strip()) > _MAX_DOC_PREVIEW_CHARS:
-            preview += "..."
+        # 提取前 1 页文本预览
+        preview = ""
+        if total_pages > 0:
+            first_page_text = pdf.pages[0].extract_text() or ""
+            preview = first_page_text.strip()[:_MAX_DOC_PREVIEW_CHARS]
+            if len(first_page_text.strip()) > _MAX_DOC_PREVIEW_CHARS:
+                preview += "..."
 
-    # 估算总字数（采样前 3 页）
-    total_chars = 0
-    sample_pages = min(3, total_pages)
-    for i in range(sample_pages):
-        page_text = reader.pages[i].extract_text() or ""
-        total_chars += len(page_text)
-    if sample_pages > 0 and total_pages > sample_pages:
-        total_chars = round(total_chars / sample_pages * total_pages)
+        # 估算总字数（采样前 3 页）
+        total_chars = 0
+        sample_pages = min(3, total_pages)
+        for i in range(sample_pages):
+            page_text = pdf.pages[i].extract_text() or ""
+            total_chars += len(page_text)
+        if sample_pages > 0 and total_pages > sample_pages:
+            total_chars = round(total_chars / sample_pages * total_pages)
 
     result = {
         "type": "pdf",

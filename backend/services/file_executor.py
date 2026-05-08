@@ -285,7 +285,7 @@ class FileExecutor(FileReadExtensionsMixin, FileQueryExtensionsMixin, FileWriteE
         - L2: 行数硬上限 2000（防单次读太多）
         - L3: token 估算 > 25000 拒绝（最终兜底）
 
-        PDF 文件：PyPDF2 按页提取文本，pages 参数指定页范围
+        PDF 文件：pdfplumber 按页提取文本，pages 参数指定页范围
         图片文件：返回 FileReadResult(type="image")，供上层注入多模态消息
 
         Args:

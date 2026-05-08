@@ -427,7 +427,7 @@ def _build_sandbox_globals(workspace_dir: str, staging_dir: str, output_dir: str
     # sandbox globals 的 open 直接用 builtins.open
     # builtins.open 已在 sandbox_worker_entry 中被替换为 _global_scoped_open
     # 统一处理：路径解析 + 安全检查 + 文件名纠错
-    # pandas/docx/pptx/PyPDF2 等库内部调用的 open() 也自动受益
+    # pandas/docx/pptx/pdfplumber 等库内部调用的 open() 也自动受益
     g["open"] = _builtins.open
 
     return g

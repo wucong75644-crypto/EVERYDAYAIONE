@@ -79,17 +79,17 @@ def _get_ext(filename: str) -> str:
 
 def _parse_pdf(data: bytes) -> str:
     """解析 PDF 文件"""
-    from PyPDF2 import PdfReader
+    import pdfplumber
 
-    reader = PdfReader(io.BytesIO(data))
     pages = []
-    for i, page in enumerate(reader.pages):
-        page_text = page.extract_text() or ""
-        if page_text.strip():
-            pages.append(f"[第{i + 1}页]\n{page_text.strip()}")
-        # 提前退出：已有足够文本
-        if sum(len(p) for p in pages) > MAX_TEXT_LENGTH:
-            break
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
+        for i, page in enumerate(pdf.pages):
+            page_text = page.extract_text() or ""
+            if page_text.strip():
+                pages.append(f"[第{i + 1}页]\n{page_text.strip()}")
+            # 提前退出：已有足够文本
+            if sum(len(p) for p in pages) > MAX_TEXT_LENGTH:
+                break
     return "\n\n".join(pages)
 
 
