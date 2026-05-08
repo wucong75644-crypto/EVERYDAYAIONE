@@ -444,16 +444,23 @@ def _infer_structure(
             timestamps.append(name)
         elif uniqueness > 0.9 and completeness > 0.95:
             ids.append(name)
-        elif col_type in _NUMERIC_TYPES and uniqueness > 0.1:
-            measures.append(name)
+        elif col_type in _NUMERIC_TYPES:
+            # 高唯一率数值（唯一率>0.3）→ 度量（金额/单价）
+            # 低唯一率数值（唯一率<=0.05, 基数<=10）→ 分类（数量/状态码）
+            if uniqueness > 0.3:
+                measures.append(name)
+            elif uniqueness <= 0.05 and distinct <= 10:
+                dimensions.append(name)
         elif uniqueness < 0.05 and distinct <= 10:
             dimensions.append(name)
 
-    # ── 主从模式检测 ──
+    # ── 主从模式检测（基于相邻重复率的最大间隔切分） ──
     master_cols: list[str] = []
     detail_cols: list[str] = []
 
     if adj_ratios:
+        # 收集所有非标记列的相邻重复率
+        col_ratios: list[tuple[str, float, float]] = []  # (name, adj_ratio, uniqueness)
         for col in columns:
             name = col["name"]
             if name.startswith("_is_"):
@@ -463,10 +470,25 @@ def _infer_structure(
                 continue
             distinct = col.get("distinct_count", 0)
             uniqueness = distinct / row_count if row_count > 0 else 0
-            if ratio > 0.5 and uniqueness < 0.8:
-                master_cols.append(name)
-            elif ratio < 0.1:
-                detail_cols.append(name)
+            col_ratios.append((name, ratio, uniqueness))
+
+        if len(col_ratios) >= 2:
+            # 按相邻重复率排序，找从低到高的第一个显著间隔（>0.25）作为切分点
+            # 这样 0.15, 0.15 | 0.50, 0.50, 0.99 切在第一个间隔处
+            sorted_vals = sorted(set(round(r, 2) for _, r, _ in col_ratios))
+            split_at = -1.0
+            for i in range(len(sorted_vals) - 1):
+                gap = sorted_vals[i + 1] - sorted_vals[i]
+                if gap > 0.25:
+                    split_at = (sorted_vals[i] + sorted_vals[i + 1]) / 2
+                    break  # 取第一个显著间隔
+
+            if split_at > 0:
+                for name, ratio, uniqueness in col_ratios:
+                    if ratio > split_at and uniqueness < 0.95:
+                        master_cols.append(name)
+                    elif ratio <= split_at:
+                        detail_cols.append(name)
 
     lines: list[str] = []
 

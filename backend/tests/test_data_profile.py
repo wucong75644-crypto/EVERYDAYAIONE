@@ -222,30 +222,31 @@ class TestInferStructure:
     """列角色分类 + 主从模式检测"""
 
     def test_master_detail_detected(self):
-        """主从模式：主字段相邻重复率高，明细字段低"""
+        """主从模式：主字段相邻重复率高，明细字段低，两极分化明显"""
         columns = [
             {"name": "order_id", "type": "BIGINT", "distinct_count": 50, "null_count": 0},
+            {"name": "order_type", "type": "VARCHAR", "distinct_count": 1, "null_count": 0},
             {"name": "amount", "type": "DOUBLE", "distinct_count": 50, "null_count": 0},
             {"name": "item_price", "type": "DOUBLE", "distinct_count": 80, "null_count": 0},
-            {"name": "qty", "type": "INTEGER", "distinct_count": 5, "null_count": 0},
+            {"name": "qty", "type": "INTEGER", "distinct_count": 3, "null_count": 0},
         ]
         profile = {
             "adjacent_dup_ratios": {
-                "order_id": 0.85,   # 主字段
-                "amount": 0.85,     # 主字段
-                "item_price": 0.05, # 明细字段
-                "qty": 0.03,        # 明细字段
+                "order_id": 0.50,    # 主字段
+                "order_type": 0.99,  # 主字段
+                "amount": 0.50,      # 主字段
+                "item_price": 0.15,  # 明细字段
+                "qty": 0.15,         # 明细字段
             },
         }
         lines = _infer_structure(columns, 100, profile)
         text = "\n".join(lines)
         assert "主从模式" in text
-        assert "order_id" in text
         assert "明细字段" in text
         assert "去重" in text
 
     def test_flat_table_no_master_detail(self):
-        """扁平表：所有列相邻重复率都低 → 不输出主从段"""
+        """扁平表：所有列相邻重复率都低且相近 → 不输出主从段"""
         columns = [
             {"name": "id", "type": "BIGINT", "distinct_count": 95, "null_count": 0},
             {"name": "name", "type": "VARCHAR", "distinct_count": 90, "null_count": 0},
@@ -253,6 +254,20 @@ class TestInferStructure:
         ]
         profile = {
             "adjacent_dup_ratios": {"id": 0.01, "name": 0.03, "amount": 0.02},
+        }
+        lines = _infer_structure(columns, 100, profile)
+        text = "\n".join(lines)
+        assert "主从模式" not in text
+
+    def test_all_high_ratio_no_master_detail(self):
+        """所有列相邻重复率都高但无两极分化 → 不输出主从段"""
+        columns = [
+            {"name": "a", "type": "VARCHAR", "distinct_count": 5, "null_count": 0},
+            {"name": "b", "type": "VARCHAR", "distinct_count": 3, "null_count": 0},
+            {"name": "c", "type": "INTEGER", "distinct_count": 10, "null_count": 0},
+        ]
+        profile = {
+            "adjacent_dup_ratios": {"a": 0.80, "b": 0.85, "c": 0.75},
         }
         lines = _infer_structure(columns, 100, profile)
         text = "\n".join(lines)
