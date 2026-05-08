@@ -219,7 +219,7 @@ data_query 只支持单文件查询。多文件场景：每个文件分别调 da
 
 有状态沙盒，变量跨调用保留。执行超时 120 秒。
 
-可用库：pd, plt, Path, math, json, datetime, Decimal, Counter, io, docx, pptx, openpyxl, PyPDF2
+可用库：pd, plt, Path, math, json, datetime, Decimal, Counter, io, docx, pptx, openpyxl, pdfplumber, zipfile
 os（受限：listdir/walk/stat/path，无 system/popen）、shutil（受限：copy/move）
 环境变量：WORKSPACE_DIR（工作区根目录）、STAGING_DIR（中间数据目录）、OUTPUT_DIR（输出目录）
 

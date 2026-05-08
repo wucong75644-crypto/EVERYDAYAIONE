@@ -181,9 +181,9 @@ class TestParseJson:
 
 class TestPdfParse:
     def test_pdf_parse_with_real_lib(self):
-        """验证 PyPDF2 导入可用"""
-        from PyPDF2 import PdfReader
-        assert PdfReader is not None
+        """验证 pdfplumber 导入可用"""
+        import pdfplumber
+        assert pdfplumber is not None
 
 
 class TestDocxParse:
