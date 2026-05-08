@@ -256,8 +256,8 @@ class TestStructuredPreview:
         assert "price" in text
         assert "行有值" in text  # 分组描述出现
 
-    def test_preview_shows_null_as_empty(self):
-        """空值在预览中显示为"空" """
+    def test_preview_skips_null_fields(self):
+        """空值字段在预览中不展示（只显示有值字段）"""
         columns = [
             {"name": "a", "type": "VARCHAR", "distinct_count": 50, "null_count": 50},
             {"name": "b", "type": "DOUBLE", "distinct_count": 80, "null_count": 0},
@@ -268,7 +268,11 @@ class TestStructuredPreview:
         ]}
         lines = _build_structured_preview(columns, 100, profile)
         text = "\n".join(lines)
-        assert "a=空" in text
+        # 行1 有 a 和 b
+        assert "a=hello" in text
+        assert "b=1.0" in text
+        # 行2 只有 b，a 不展示
+        assert "行2: b=2.0" in text
 
     def test_hidden_columns_excluded(self):
         """_is_ 前缀列不出现在预览里"""
