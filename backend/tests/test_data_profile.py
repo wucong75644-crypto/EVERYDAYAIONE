@@ -273,7 +273,7 @@ class TestStructuredPreview:
         # 行1 有值
         assert "hello" in text
         # 行2 空值用 - 占位
-        assert " | 2.0" in text
+        assert "null | 2.0" in text
 
     def test_hidden_columns_excluded(self):
         """_is_ 前缀列不出现在预览里"""
