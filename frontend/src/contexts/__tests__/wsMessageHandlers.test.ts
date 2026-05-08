@@ -305,7 +305,7 @@ describe('wsMessageHandlers', () => {
       expect(store.setIsSending).toHaveBeenCalledWith(false);
     });
 
-    it('should skip if message already completed (idempotency)', () => {
+    it('should still updateMessage when already completed (DB data覆盖)', () => {
       (store.getMessage as ReturnType<typeof vi.fn>).mockReturnValue({
         id: 'msg_1',
         status: 'completed',
@@ -322,8 +322,11 @@ describe('wsMessageHandlers', () => {
         },
       });
 
-      // updateMessage should NOT be called (idempotent skip)
-      expect(store.updateMessage).not.toHaveBeenCalled();
+      // 即使已 completed，仍用 DB 返回的完整数据覆盖（含 credits_cost 等）
+      expect(store.updateMessage).toHaveBeenCalledWith('msg_1', expect.objectContaining({
+        id: 'msg_1',
+        status: 'completed',
+      }));
     });
 
     it('should trigger onComplete callback', () => {
