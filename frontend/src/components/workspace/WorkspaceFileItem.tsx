@@ -76,7 +76,6 @@ export default function WorkspaceFileItem({
   const [isDragOver, setIsDragOver] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const renameSubmittingRef = useRef(false);
-  const renameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 外部触发重命名（右键菜单 / F2）
   useEffect(() => {
@@ -98,42 +97,23 @@ export default function WorkspaceFileItem({
   const isUploading = item.uploadProgress !== undefined;
   const fullPath = getFullPath(currentPath, item.name);
 
-  // 组件卸载时清除重命名定时器
-  useEffect(() => () => { if (renameTimerRef.current) clearTimeout(renameTimerRef.current); }, []);
-
-  // 清除重命名延迟定时器
-  const clearRenameTimer = useCallback(() => {
-    if (renameTimerRef.current) {
-      clearTimeout(renameTimerRef.current);
-      renameTimerRef.current = null;
-    }
-  }, []);
-
   const handleClick = (e: React.MouseEvent) => {
     if (isRenaming) return;
     e.stopPropagation();
     onSelect?.(fullPath, e);
   };
 
-  /** 慢速点击名字：已选中 → 延迟进入重命名（双击会取消） */
-  const handleNameClick = (e: React.MouseEvent) => {
-    if (isRenaming || isUploading) return;
+  /** 双击名字 → 进入重命名（stopPropagation 阻止冒泡到父级的"打开"） */
+  const handleNameDoubleClick = (e: React.MouseEvent) => {
+    if (isUploading) return;
     e.stopPropagation();
-    if (!selected || e.metaKey || e.ctrlKey || e.shiftKey) {
-      onSelect?.(fullPath, e);
-      return;
-    }
-    // 已选中，延迟触发重命名（给双击留时间取消）
-    clearRenameTimer();
-    renameTimerRef.current = setTimeout(() => {
-      setIsRenaming(true);
-      setNewName(item.name);
-    }, 400);
+    setIsRenaming(true);
+    setNewName(item.name);
   };
 
+  /** 双击图标/行其他区域 → 打开文件或进入文件夹 */
   const handleDoubleClick = () => {
     if (isRenaming) return;
-    clearRenameTimer();
     onOpen(item);
   };
 
@@ -250,7 +230,7 @@ export default function WorkspaceFileItem({
           ) : (
             <span
               className="text-sm text-[var(--s-text-primary)] truncate block"
-              onClick={handleNameClick}
+              onDoubleClick={handleNameDoubleClick}
             >
               {item.name}{item.is_dir && '/'}
             </span>
@@ -328,7 +308,7 @@ export default function WorkspaceFileItem({
       ) : (
         <span
           className="text-[13px] text-[var(--s-text-primary)] text-center w-full px-1 line-clamp-2 break-words leading-[18px]"
-          onClick={handleNameClick}
+          onDoubleClick={handleNameDoubleClick}
         >
           {item.name}
         </span>
