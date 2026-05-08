@@ -67,13 +67,24 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
       setError(null);
 
       try {
-        // 优先走后端代理（绕过 CDN CORS），无 workspace_path 时 fallback 到 CDN
-        const previewUrl = file.workspace_path
-          ? getWorkspacePreviewUrl(file.workspace_path)
-          : file.url;
-        const headers = file.workspace_path ? getAuthHeaders() : undefined;
-        const response = await fetch(previewUrl, { headers });
-        if (!response.ok) throw new Error(`加载失败: ${response.status}`);
+        // CDN 优先（快），CORS 失败时降级后端代理（慢但可靠）
+        let response: Response;
+        if (file.url) {
+          try {
+            response = await fetch(file.url);
+            if (!response.ok) throw new Error(`CDN ${response.status}`);
+          } catch {
+            // CDN 失败（CORS / 网络），降级到后端代理
+            if (!file.workspace_path) throw new Error('加载失败');
+            response = await fetch(getWorkspacePreviewUrl(file.workspace_path), { headers: getAuthHeaders() });
+            if (!response.ok) throw new Error(`加载失败: ${response.status}`);
+          }
+        } else if (file.workspace_path) {
+          response = await fetch(getWorkspacePreviewUrl(file.workspace_path), { headers: getAuthHeaders() });
+          if (!response.ok) throw new Error(`加载失败: ${response.status}`);
+        } else {
+          throw new Error('无可用的文件 URL');
+        }
 
         if (isPdf) {
           const blob = await response.blob();
@@ -131,9 +142,8 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
 
   const handleDownload = async () => {
     try {
-      const url = file.workspace_path ? getWorkspacePreviewUrl(file.workspace_path) : file.url;
-      const headers = file.workspace_path ? getAuthHeaders() : undefined;
-      await downloadFile(url, file.name, headers);
+      // CDN 优先下载（downloadFile 内部有 iframe fallback 兜底 CORS）
+      await downloadFile(file.url || getWorkspacePreviewUrl(file.workspace_path!), file.name);
     } catch {
       toast.error('下载失败');
     }

@@ -9,7 +9,6 @@ import toast from 'react-hot-toast';
 import type { FilePart } from '../../../types/message';
 import { downloadFile } from '../../../utils/downloadFile';
 import { getFileIcon, formatFileSize } from '../../../utils/fileUtils';
-import { getWorkspacePreviewUrl, getAuthHeaders } from '../../../services/workspace';
 import FilePreviewModal, { canPreview } from './FilePreviewModal';
 
 /** 文件卡片列表（含预览弹窗状态） */
@@ -40,9 +39,7 @@ function FileCardItem({ file, onPreview }: { file: FilePart; onPreview?: () => v
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      const url = file.workspace_path ? getWorkspacePreviewUrl(file.workspace_path) : file.url;
-      const headers = file.workspace_path ? getAuthHeaders() : undefined;
-      await downloadFile(url, file.name, headers);
+      await downloadFile(file.url, file.name);
     } catch {
       toast.error('下载失败，请重试');
     }
