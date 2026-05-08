@@ -251,7 +251,7 @@ export default function WorkspaceFileItem({
   return (
     <div
       className={cn(
-        "group relative flex flex-col items-center gap-2 p-3 rounded-[var(--s-radius-card)] transition-colors",
+        "group relative flex flex-col items-center gap-3 p-4 rounded-[var(--s-radius-card)] transition-colors",
         isUploading ? 'opacity-70' : 'hover:bg-[var(--s-hover)] cursor-pointer',
         selected && !isUploading && 'bg-[var(--s-accent)]/10 ring-1 ring-[var(--s-accent)]/30',
         dragOverClass,
@@ -267,9 +267,9 @@ export default function WorkspaceFileItem({
           <>
             {isImage && (
               <img
-                src={`${item.cdn_url}?x-oss-process=image/resize,w_120,h_120,m_fill`}
+                src={`${item.cdn_url}?x-oss-process=image/resize,w_160,h_160,m_fill`}
                 alt={item.name}
-                className="w-14 h-14 rounded-lg object-cover"
+                className="w-[72px] h-[72px] rounded-lg object-cover"
                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }}
               />
             )}
@@ -277,7 +277,7 @@ export default function WorkspaceFileItem({
               item.is_dir ? 'text-blue-500 dark:text-blue-400' : getFileIconColor(item.name),
               isImage && 'hidden',
             )}>
-              {item.is_dir ? <Folder className="w-14 h-14 fill-current" /> : <span className="text-5xl">{getFileIcon(item.name)}</span>}
+              {item.is_dir ? <Folder className="w-[72px] h-[72px] fill-current" /> : <span className="text-[56px] leading-none">{getFileIcon(item.name)}</span>}
             </span>
           </>
         );
@@ -295,7 +295,7 @@ export default function WorkspaceFileItem({
           className="w-full px-1 py-0.5 text-xs text-center bg-[var(--s-surface-base)] border border-[var(--s-border-focus)] rounded outline-none text-[var(--s-text-primary)]"
         />
       ) : (
-        <span className="text-xs text-[var(--s-text-primary)] text-center w-full px-1 line-clamp-2 break-all leading-4">
+        <span className="text-[13px] text-[var(--s-text-primary)] text-center w-full px-1 line-clamp-2 break-all leading-[18px]">
           {item.name}
         </span>
       )}
@@ -314,7 +314,7 @@ export default function WorkspaceFileItem({
           </span>
         </div>
       ) : !item.is_dir && (
-        <span className="text-[10px] text-[var(--s-text-tertiary)]">
+        <span className="text-[11px] text-[var(--s-text-tertiary)]">
           {formatFileSize(item.size)}
         </span>
       )}
