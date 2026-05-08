@@ -11,6 +11,8 @@ import { cn } from '../../utils/cn';
 import { getFileIcon, getFileIconColor, formatFileSize } from '../../utils/fileUtils';
 import type { WorkspaceFileItem as FileItemData } from '../../services/workspace';
 
+const _IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
+
 interface WorkspaceFileItemProps {
   item: FileItemData;
   /** 当前目录路径（用于拼完整路径） */
@@ -27,6 +29,10 @@ interface WorkspaceFileItemProps {
   startRename?: boolean;
   /** 重命名结束通知父组件 */
   onRenameEnd?: () => void;
+  /** 拖拽移动回调（将文件移入目标文件夹） */
+  onMove?: (srcPath: string, destDir: string) => void;
+  /** 当前选中的路径集合（拖拽多文件用） */
+  selectedPaths?: Set<string>;
 }
 
 /** 计算文件的完整相对路径 */
@@ -49,6 +55,9 @@ function formatTime(modified: string): string {
   }
 }
 
+// 自定义 MIME type 标识内部拖拽（区分外部文件上传）
+const DRAG_MIME = 'application/x-workspace-move';
+
 export default function WorkspaceFileItem({
   item,
   currentPath,
@@ -59,9 +68,12 @@ export default function WorkspaceFileItem({
   onRename,
   startRename = false,
   onRenameEnd,
+  onMove,
+  selectedPaths,
 }: WorkspaceFileItemProps) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState(item.name);
+  const [isDragOver, setIsDragOver] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const renameSubmittingRef = useRef(false);
 
@@ -125,11 +137,56 @@ export default function WorkspaceFileItem({
   };
 
   const isUploading = item.uploadProgress !== undefined;
+  const fullPath = getFullPath(currentPath, item.name);
+
+  // 拖拽：开始拖拽（文件作为拖拽源）
+  const handleDragStart = (e: React.DragEvent) => {
+    if (isUploading || isRenaming) { e.preventDefault(); return; }
+    // 收集要拖拽的路径（如果当前文件在选中集合中，拖拽所有选中项；否则只拖拽当前文件）
+    const paths = selectedPaths?.has(fullPath) && selectedPaths.size > 1
+      ? Array.from(selectedPaths)
+      : [fullPath];
+    e.dataTransfer.setData(DRAG_MIME, JSON.stringify(paths));
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  // 拖拽：文件夹作为放入目标
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!item.is_dir || !e.dataTransfer.types.includes(DRAG_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = () => setIsDragOver(false);
+
+  const handleDrop = (e: React.DragEvent) => {
+    setIsDragOver(false);
+    if (!item.is_dir || !onMove) return;
+    const raw = e.dataTransfer.getData(DRAG_MIME);
+    if (!raw) return;
+    e.preventDefault();
+    let paths: string[];
+    try { paths = JSON.parse(raw); } catch { return; }
+    const destDir = fullPath;
+    for (const src of paths) {
+      if (src !== destDir) onMove(src, destDir);
+    }
+  };
+
+  // 拖拽 props（文件可拖，文件夹可接收）
+  const dragProps = isUploading ? {} : {
+    draggable: true,
+    onDragStart: handleDragStart,
+    ...(item.is_dir ? { onDragOver: handleDragOver, onDragLeave: handleDragLeave, onDrop: handleDrop } : {}),
+  };
 
   // 选中态样式
   const selectedClass = selected && !isUploading
     ? 'bg-[var(--s-accent)]/10 border-l-2 border-l-[var(--s-accent)]'
     : '';
+  // 拖拽放入目标高亮
+  const dragOverClass = isDragOver ? 'bg-[var(--s-accent)]/15 border border-dashed border-[var(--s-accent)]' : '';
 
   // === 列表模式 ===
   if (mode === 'list') {
@@ -139,9 +196,11 @@ export default function WorkspaceFileItem({
           "group flex items-center gap-3 px-3 py-2.5 rounded-[var(--s-radius-control)] transition-colors",
           isUploading ? 'opacity-70' : 'hover:bg-[var(--s-hover)] cursor-pointer',
           selectedClass,
+          dragOverClass,
         )}
         onClick={isUploading ? undefined : handleClick}
         onDoubleClick={isUploading ? undefined : handleDoubleClick}
+        {...dragProps}
       >
         {/* 图标 */}
         <span className={cn('text-xl shrink-0', item.is_dir ? 'text-blue-500 dark:text-blue-400' : getFileIconColor(item.name))}>
@@ -195,14 +254,35 @@ export default function WorkspaceFileItem({
         "group relative flex flex-col items-center gap-2 p-3 rounded-[var(--s-radius-card)] transition-colors",
         isUploading ? 'opacity-70' : 'hover:bg-[var(--s-hover)] cursor-pointer',
         selected && !isUploading && 'bg-[var(--s-accent)]/10 ring-1 ring-[var(--s-accent)]/30',
+        dragOverClass,
       )}
       onClick={isUploading ? undefined : handleClick}
+      {...dragProps}
       onDoubleClick={isUploading ? undefined : handleDoubleClick}
     >
-      {/* 大图标 */}
-      <span className={cn('text-4xl', item.is_dir ? 'text-blue-500 dark:text-blue-400' : getFileIconColor(item.name))}>
-        {item.is_dir ? <Folder className="w-10 h-10 fill-current" /> : getFileIcon(item.name)}
-      </span>
+      {/* 大图标 / 图片缩略图 */}
+      {(() => {
+        const isImage = !item.is_dir && !!item.cdn_url && _IMAGE_EXTS.has(('.' + (item.name.split('.').pop() || '')).toLowerCase());
+        return (
+          <>
+            {isImage && (
+              <img
+                src={`${item.cdn_url}?x-oss-process=image/resize,w_80,h_80,m_fill`}
+                alt={item.name}
+                className="w-10 h-10 rounded object-cover"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }}
+              />
+            )}
+            <span className={cn(
+              'text-4xl',
+              item.is_dir ? 'text-blue-500 dark:text-blue-400' : getFileIconColor(item.name),
+              isImage && 'hidden',
+            )}>
+              {item.is_dir ? <Folder className="w-10 h-10 fill-current" /> : getFileIcon(item.name)}
+            </span>
+          </>
+        );
+      })()}
 
       {/* 文件名 */}
       {isRenaming ? (

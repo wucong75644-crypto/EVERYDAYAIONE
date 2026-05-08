@@ -21,6 +21,7 @@ interface WorkspaceFileGridProps {
   onDelete: (path: string) => void;
   onSendToChat?: (item: FileItemData) => void;
   onStartRename: (path: string) => void;
+  onMove?: (srcPath: string, destDir: string) => void;
 }
 
 export default function WorkspaceFileGrid({
@@ -35,6 +36,7 @@ export default function WorkspaceFileGrid({
   onDelete,
   onSendToChat,
   onStartRename,
+  onMove,
 }: WorkspaceFileGridProps) {
   return (
     <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 gap-1 p-2">
@@ -66,6 +68,8 @@ export default function WorkspaceFileGrid({
                 onRename={onRename}
                 startRename={renameTarget === fullPath}
                 onRenameEnd={onRenameEnd}
+                onMove={onMove}
+                selectedPaths={selectedPaths}
               />
             </div>
           </FileContextMenu>
