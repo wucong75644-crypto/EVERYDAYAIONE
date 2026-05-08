@@ -161,7 +161,8 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
           const { read, utils } = await import('xlsx');
           const buffer = await response.arrayBuffer();
           if (cancelled) return;
-          const wb = read(buffer);
+          // sheetRows: 只解析前 N 行（预览不需要全量数据，56MB 文件秒开）
+          const wb = read(buffer, { sheetRows: MAX_TABLE_ROWS + 1 });
           workbookRef.current = wb;
           setSheetNames(wb.SheetNames);
           const ws = wb.Sheets[wb.SheetNames[0]];
@@ -187,7 +188,7 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
     return () => { cancelled = true; };
   }, [file.url, file.workspace_path, isPdf, isExcel, isCsv, ext]);
 
-  // Sheet 切换
+  // Sheet 切换（workbook 已用 sheetRows 限制过解析深度，直接读取缓存）
   const handleSheetChange = useCallback(async (index: number) => {
     setActiveSheet(index);
     const wb = workbookRef.current;
@@ -195,7 +196,8 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
     try {
       const { utils } = await import('xlsx');
       const ws = wb.Sheets[wb.SheetNames[index]];
-      setTableData(utils.sheet_to_json<string[]>(ws, { header: 1 }) as string[][]);
+      const rows = utils.sheet_to_json<string[]>(ws, { header: 1 }) as string[][];
+      setTableData(rows);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -319,9 +321,9 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
                     ))}
                   </tbody>
                 </table>
-                {dataRowCount > MAX_TABLE_ROWS && (
+                {dataRowCount >= MAX_TABLE_ROWS && (
                   <div className="px-4 py-2 text-sm text-gray-500 bg-gray-50 dark:bg-gray-800 sticky bottom-0">
-                    显示前 {MAX_TABLE_ROWS} 行，共 {dataRowCount} 行数据
+                    仅显示前 {MAX_TABLE_ROWS} 行，下载文件查看完整数据
                   </div>
                 )}
               </div>
