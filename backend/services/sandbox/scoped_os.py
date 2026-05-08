@@ -237,7 +237,7 @@ def build_scoped_pathlib(scoped_os_instance):
         def rmdir(self):
             _scoped_os.rmdir(str(self))
 
-        # ------ 写方法：走 scoped_os 路径检查 ------
+        # ------ 写方法：路径安全由 io.open → scoped_open 保证 ------
 
         def write_text(self, data, encoding=None, errors=None, newline=None):
             return self._real().write_text(
@@ -277,6 +277,7 @@ def build_scoped_pathlib(scoped_os_instance):
     class _ScopedPathlib:
         """受限 pathlib 模块 — Path 指向 _ScopedPath"""
         Path = _ScopedPath
+        PosixPath = _ScopedPath
         PurePath = _real_pathlib.PurePath
         PurePosixPath = _real_pathlib.PurePosixPath
         PureWindowsPath = _real_pathlib.PureWindowsPath
