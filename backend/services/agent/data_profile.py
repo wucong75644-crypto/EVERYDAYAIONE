@@ -398,135 +398,44 @@ def build_profile_from_duckdb(
 
 
 # ============================================================
-# 数据结构画像（列角色 + 主从检测）
+# 数据结构画像（相邻重复率 → LLM 自行判断结构）
 # ============================================================
-
-# 数值类型集合（DuckDB type names）
-_NUMERIC_TYPES = frozenset({
-    "BIGINT", "INTEGER", "DOUBLE", "FLOAT", "DECIMAL",
-    "HUGEINT", "SMALLINT", "TINYINT",
-})
-_TIME_TYPES = frozenset({
-    "TIMESTAMP", "TIMESTAMP WITH TIME ZONE", "DATE",
-})
 
 
 def _infer_structure(
     columns: list[dict], row_count: int, profile: dict,
 ) -> list[str]:
-    """基于统计指标推断数据结构，返回 [结构] + [列角色] 文本行列表。
+    """输出每列的相邻重复率，供 LLM 自行判断数据结构。
 
-    不依赖 Excel 格式信息，纯数据驱动。
-    小表（<10行）或空表跳过。
+    系统只提供客观统计数据，不做阈值判断。
+    LLM 根据列名语义 + 重复率数字推断主从关系、分组键等。
+    小表（<10行）或空表或无相邻重复率数据时跳过。
     """
     if row_count < 10 or not columns:
         return []
 
     adj_ratios = profile.get("adjacent_dup_ratios", {})
+    if not adj_ratios:
+        return []
 
-    # ── 列角色分类 ──
-    ids: list[str] = []
-    measures: list[str] = []
-    dimensions: list[str] = []
-    timestamps: list[str] = []
-
+    # 只输出有相邻重复率的列，按重复率降序排列
+    items: list[tuple[str, float]] = []
     for col in columns:
         name = col["name"]
         if name.startswith("_is_"):
             continue
-        col_type = col.get("type", "")
-        distinct = col.get("distinct_count", 0)
-        null_count = col.get("null_count", 0)
-        uniqueness = distinct / row_count if row_count > 0 else 0
-        completeness = 1 - (null_count / row_count) if row_count > 0 else 0
+        ratio = adj_ratios.get(name)
+        if ratio is not None:
+            items.append((name, ratio))
 
-        if col_type in _TIME_TYPES:
-            timestamps.append(name)
-        elif uniqueness > 0.9 and completeness > 0.95:
-            ids.append(name)
-        elif col_type in _NUMERIC_TYPES:
-            # 高唯一率数值（唯一率>0.3）→ 度量（金额/单价）
-            # 低唯一率数值（唯一率<=0.05, 基数<=10）→ 分类（数量/状态码）
-            if uniqueness > 0.3:
-                measures.append(name)
-            elif uniqueness <= 0.05 and distinct <= 10:
-                dimensions.append(name)
-        elif uniqueness < 0.05 and distinct <= 10:
-            dimensions.append(name)
+    if not items:
+        return []
 
-    # ── 主从模式检测（基于相邻重复率的最大间隔切分） ──
-    master_cols: list[str] = []
-    detail_cols: list[str] = []
+    items.sort(key=lambda x: x[1], reverse=True)
 
-    if adj_ratios:
-        # 收集所有非标记列的相邻重复率
-        col_ratios: list[tuple[str, float, float]] = []  # (name, adj_ratio, uniqueness)
-        for col in columns:
-            name = col["name"]
-            if name.startswith("_is_"):
-                continue
-            ratio = adj_ratios.get(name)
-            if ratio is None:
-                continue
-            distinct = col.get("distinct_count", 0)
-            uniqueness = distinct / row_count if row_count > 0 else 0
-            col_ratios.append((name, ratio, uniqueness))
-
-        if len(col_ratios) >= 2:
-            # 按相邻重复率排序，找从低到高的第一个显著间隔（>0.25）作为切分点
-            # 这样 0.15, 0.15 | 0.50, 0.50, 0.99 切在第一个间隔处
-            sorted_vals = sorted(set(round(r, 2) for _, r, _ in col_ratios))
-            split_at = -1.0
-            for i in range(len(sorted_vals) - 1):
-                gap = sorted_vals[i + 1] - sorted_vals[i]
-                if gap > 0.25:
-                    split_at = (sorted_vals[i] + sorted_vals[i + 1]) / 2
-                    break  # 取第一个显著间隔
-
-            if split_at > 0:
-                for name, ratio, uniqueness in col_ratios:
-                    if ratio > split_at and uniqueness < 0.95:
-                        master_cols.append(name)
-                    elif ratio <= split_at:
-                        detail_cols.append(name)
-
-    lines: list[str] = []
-
-    # 主从结构输出
-    if master_cols and detail_cols:
-        # 分组键 = master_cols 中唯一率最高的
-        group_key = max(
-            master_cols,
-            key=lambda n: next(
-                (c.get("distinct_count", 0) for c in columns if c["name"] == n), 0
-            ),
-        )
-        group_distinct = next(
-            (c.get("distinct_count", 0) for c in columns if c["name"] == group_key), 0
-        )
-        avg_size = round(row_count / group_distinct, 1) if group_distinct > 0 else 0
-
-        lines.append("[结构] 主从模式（一对多）")
-        lines.append(f"  分组键: {group_key}（{group_distinct}组，平均每组{avg_size}行）")
-        lines.append(f"  主字段（每组共享）: {', '.join(master_cols[:8])}")
-        if len(master_cols) > 8:
-            lines.append(f"    ... 等{len(master_cols)}个主字段")
-        lines.append(f"  明细字段（每行独立）: {', '.join(detail_cols[:8])}")
-        if len(detail_cols) > 8:
-            lines.append(f"    ... 等{len(detail_cols)}个明细字段")
-        lines.append(f"  ⚠ 对主字段做 SUM/COUNT 时必须先按 {group_key} 去重")
-
-    # 列角色输出（有任何分类结果就输出）
-    role_parts: list[str] = []
-    if ids:
-        role_parts.append(f"ID: {', '.join(ids[:5])}")
-    if measures:
-        role_parts.append(f"度量: {', '.join(measures[:5])}")
-    if dimensions:
-        role_parts.append(f"分类: {', '.join(dimensions[:5])}")
-    if timestamps:
-        role_parts.append(f"时间: {', '.join(timestamps[:5])}")
-    if role_parts:
-        lines.append(f"[列角色] {' | '.join(role_parts)}")
+    lines = ["[相邻重复率] 值越高表示该列在相邻行中重复越多（可能是合并/分组字段）"]
+    for name, ratio in items:
+        pct = int(ratio * 100)
+        lines.append(f"  {name}: {pct}%")
 
     return lines
