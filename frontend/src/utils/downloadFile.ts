@@ -2,15 +2,17 @@
  * 通用文件下载（fetch + blob）
  *
  * 支持所有文件类型（xlsx/csv/pdf 等），直接用原始文件名。
+ * 可传入自定义 headers（用于后端代理认证）。
  */
 
 export async function downloadFile(
   url: string,
   filename: string,
+  headers?: Record<string, string>,
 ): Promise<void> {
   try {
     // 优先用 fetch + blob（能指定文件名，不跳转）
-    const response = await fetch(url, { mode: 'cors', credentials: 'omit' });
+    const response = await fetch(url, { headers });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const blob = await response.blob();
     const blobUrl = URL.createObjectURL(blob);

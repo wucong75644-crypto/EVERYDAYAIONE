@@ -4,7 +4,26 @@
  * 整合原 workspaceUpload.ts 全部功能，新增 delete/mkdir/rename/move。
  */
 
-import { request } from './api';
+import { request, API_BASE_URL } from './api';
+
+// ============================================================
+// Workspace 文件代理（绕过 CDN CORS）
+// ============================================================
+
+/** 构造后端代理预览 URL（绕过 CDN CORS） */
+export function getWorkspacePreviewUrl(workspacePath: string): string {
+  return `${API_BASE_URL}/files/workspace/preview?path=${encodeURIComponent(workspacePath)}`;
+}
+
+/** 构造认证 headers（用于后端代理的 fetch 调用） */
+export function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const token = localStorage.getItem('access_token');
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const orgId = localStorage.getItem('current_org_id');
+  if (orgId) headers['X-Org-Id'] = orgId;
+  return headers;
+}
 
 // ============================================================
 // 类型定义

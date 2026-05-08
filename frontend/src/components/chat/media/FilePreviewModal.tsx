@@ -12,6 +12,7 @@ import toast from 'react-hot-toast';
 import type { FilePart } from '../../../types/message';
 import { downloadFile } from '../../../utils/downloadFile';
 import { getFileIcon, formatFileSize } from '../../../utils/fileUtils';
+import { getWorkspacePreviewUrl, getAuthHeaders } from '../../../services/workspace';
 
 interface FilePreviewModalProps {
   file: FilePart;
@@ -37,6 +38,7 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
   const [error, setError] = useState<string | null>(null);
   const [tableData, setTableData] = useState<string[][] | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
   const [sheetNames, setSheetNames] = useState<string[]>([]);
   const [activeSheet, setActiveSheet] = useState(0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -65,16 +67,19 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
       setError(null);
 
       try {
-        if (isPdf) {
-          // PDF 用 iframe，不需要预加载
-          setLoading(false);
-          return;
-        }
-
-        const response = await fetch(file.url, { mode: 'cors', credentials: 'omit' });
+        // 优先走后端代理（绕过 CDN CORS），无 workspace_path 时 fallback 到 CDN
+        const previewUrl = file.workspace_path
+          ? getWorkspacePreviewUrl(file.workspace_path)
+          : file.url;
+        const headers = file.workspace_path ? getAuthHeaders() : undefined;
+        const response = await fetch(previewUrl, { headers });
         if (!response.ok) throw new Error(`加载失败: ${response.status}`);
 
-        if (isExcel) {
+        if (isPdf) {
+          const blob = await response.blob();
+          if (cancelled) return;
+          setPdfBlobUrl(URL.createObjectURL(blob));
+        } else if (isExcel) {
           const { read, utils } = await import('xlsx');
           const buffer = await response.arrayBuffer();
           const wb = read(buffer);
@@ -103,8 +108,12 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
     }
 
     loadContent();
-    return () => { cancelled = true; };
-  }, [file.url, isPdf, isExcel, isCsv, ext]);
+    return () => {
+      cancelled = true;
+      // 清理 PDF blob URL 防止内存泄漏
+      setPdfBlobUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null; });
+    };
+  }, [file.url, file.workspace_path, isPdf, isExcel, isCsv, ext]);
 
   // 切换 Sheet（从缓存读取，无需重新 fetch）
   const handleSheetChange = useCallback(async (index: number) => {
@@ -122,7 +131,9 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
 
   const handleDownload = async () => {
     try {
-      await downloadFile(file.url, file.name);
+      const url = file.workspace_path ? getWorkspacePreviewUrl(file.workspace_path) : file.url;
+      const headers = file.workspace_path ? getAuthHeaders() : undefined;
+      await downloadFile(url, file.name, headers);
     } catch {
       toast.error('下载失败');
     }
@@ -177,9 +188,9 @@ export default memo(function FilePreviewModal({ file, onClose }: FilePreviewModa
         )}
 
         {/* PDF 预览 */}
-        {isPdf && !loading && (
+        {isPdf && pdfBlobUrl && !loading && (
           <iframe
-            src={file.url}
+            src={pdfBlobUrl}
             className="w-full h-full bg-white"
             title={file.name}
           />

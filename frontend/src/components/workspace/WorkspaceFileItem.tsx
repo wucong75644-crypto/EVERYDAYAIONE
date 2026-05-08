@@ -13,6 +13,7 @@ import { cn } from '../../utils/cn';
 import { getFileIcon, getFileIconColor, formatFileSize } from '../../utils/fileUtils';
 import { downloadFile } from '../../utils/downloadFile';
 import type { WorkspaceFileItem as FileItemData } from '../../services/workspace';
+import { getWorkspacePreviewUrl, getAuthHeaders } from '../../services/workspace';
 
 interface WorkspaceFileItemProps {
   item: FileItemData;
@@ -111,9 +112,9 @@ export default function WorkspaceFileItem({
   };
 
   const handleDownload = () => {
-    if (item.cdn_url) {
-      downloadFile(item.cdn_url, item.name);
-    }
+    const wsPath = getFullPath(currentPath, item.name);
+    const url = getWorkspacePreviewUrl(wsPath);
+    downloadFile(url, item.name, getAuthHeaders());
   };
 
   const fullPath = getFullPath(currentPath, item.name);

@@ -2036,7 +2036,20 @@
       "Bash(python -m pytest tests/test_erp_agent.py::TestToolSystemPrompt -x -q)",
       "Bash(python -m pytest tests/test_data_query.py -k \"prompt\" -x -q)",
       "Bash(python -m pytest tests/test_erp_agent.py -k \"prompt\" -x -q)",
-      "Bash(./git-push.sh \"feat: 主Agent提示词——先确认方案再执行，基于4条通用判断标准（做法唯一性/理解偏差/多步判断依赖/执行成本）\")"
+      "Bash(./git-push.sh \"feat: 主Agent提示词——先确认方案再执行，基于4条通用判断标准（做法唯一性/理解偏差/多步判断依赖/执行成本）\")",
+      "Bash(python -m pytest tests/test_sandbox_executor.py::TestWorkspaceBackup -v --tb=short)",
+      "Bash(python -m pytest tests/test_sandbox_executor.py::TestDedupOverwrittenFiles -v --tb=short)",
+      "Bash(python -m pytest tests/test_file_tool_mixin.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_sandbox_executor.py tests/test_file_tool_mixin.py tests/test_file_tools.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_sandbox_executor.py tests/test_file_tool_mixin.py tests/test_file_tools.py --tb=short -q)",
+      "Bash(python -m pytest tests/ -q --tb=short --ignore=tests/test_wecom_crypto.py --ignore=tests/test_wecom_file_mixin.py --ignore=tests/test_wecom_media_downloader.py --ignore=tests/test_wecom_message_service.py --ignore=tests/test_wecom_oauth_service.py --ignore=tests/test_wecom_push.py --ignore=tests/test_wecom_ws_client.py --ignore=tests/test_wecom_ws_runner.py)",
+      "Bash(python -m pytest tests/test_sandbox_executor.py tests/test_file_tool_mixin.py tests/test_file_tools.py tests/test_staging_cleaner.py tests/test_session_file_registry.py -q --tb=short)",
+      "Bash(python -m pytest tests/test_sandbox_executor.py tests/test_file_tool_mixin.py tests/test_file_tools.py tests/test_staging_cleaner.py -q --tb=short)",
+      "Bash(python -m pytest tests/test_file_tool_mixin.py::TestRestoreFile -v --tb=short)",
+      "Bash(python -m pytest tests/test_common_tools.py tests/test_sandbox_tool_mixin.py tests/test_chat_tools.py tests/test_sandbox_executor.py tests/test_file_tool_mixin.py tests/test_file_tools.py tests/test_staging_cleaner.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_common_tools.py tests/test_sandbox_tool_mixin.py tests/test_chat_tools.py tests/test_sandbox_executor.py tests/test_file_tool_mixin.py tests/test_file_tools.py tests/test_staging_cleaner.py -q --tb=short)",
+      "WebFetch(domain:towardsdatascience.com)",
+      "Bash(./git-push.sh \"fix: 文件预览/下载CORS失败——后端代理端点+前端统一走代理\")"
     ],
     "additionalDirectories": [
       "/tmp"

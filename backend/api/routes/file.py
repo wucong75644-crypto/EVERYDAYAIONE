@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Form, Query, UploadFile, File
+from fastapi.responses import FileResponse
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -361,6 +362,39 @@ async def search_workspace(
         WorkspaceFileItem(is_dir=False, **entry) for entry in raw
     ]
     return WorkspaceSearchResponse(items=items, total=len(items))
+
+
+# ============================================================
+# Workspace 文件预览代理（绕过 CDN CORS）
+# ============================================================
+
+
+@router.get(
+    "/workspace/preview",
+    summary="预览workspace文件（代理，绕过CDN CORS）",
+)
+async def preview_workspace_file(
+    ctx: OrgCtx,
+    path: str = Query(..., description="workspace 内相对路径", max_length=500),
+):
+    """读取 workspace 文件并返回，供前端预览使用。绕过 CDN 的 CORS 限制。"""
+    executor = _get_executor(ctx)
+    target = executor.resolve_safe_path(path)
+
+    if not target.exists() or not target.is_file():
+        raise AppException(
+            code="FILE_NOT_FOUND",
+            message=f"文件不存在: {path}",
+            status_code=404,
+        )
+
+    media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    logger.info(f"Workspace preview | user={ctx.user_id} | path={path}")
+    return FileResponse(
+        path=str(target),
+        media_type=media_type,
+        filename=target.name,
+    )
 
 
 # ============================================================
