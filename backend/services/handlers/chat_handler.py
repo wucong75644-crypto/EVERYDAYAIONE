@@ -838,6 +838,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                                 "name": getattr(_fp, "name", ""),
                                 "mime_type": getattr(_fp, "mime_type", ""),
                                 "size": getattr(_fp, "size", None),
+                                "workspace_path": getattr(_fp, "workspace_path", None),
                             }
                         _content_blocks.append(_block)
                         # 实时推送：前端立即渲染（图片→骨架屏，文件→卡片）
