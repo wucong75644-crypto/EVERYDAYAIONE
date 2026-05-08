@@ -26,6 +26,8 @@ ALLOWED_IMPORT_MODULES = frozenset({
     "typing", "enum", "dataclasses", "abc",
     # IO（BytesIO 用于生成 Excel/CSV 等二进制文件）
     "io",
+    # 压缩/归档（ZIP 解压读取）
+    "zipfile",
     # 数据分析
     "pandas", "numpy", "pyarrow",
     # 可视化（matplotlib Agg 后端，无 GUI）
