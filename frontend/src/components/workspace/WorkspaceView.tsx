@@ -18,7 +18,6 @@ import WorkspaceFileGrid from './WorkspaceFileGrid';
 import WorkspaceEmptyState from './WorkspaceEmptyState';
 import WorkspaceDropZone from './WorkspaceDropZone';
 import type { WorkspaceFileItem, WorkspaceFile } from '../../services/workspace';
-import { getWorkspacePreviewUrl, getAuthHeaders } from '../../services/workspace';
 import { downloadFile } from '../../utils/downloadFile';
 import type { FilePart } from '../../types/message';
 
@@ -71,12 +70,8 @@ export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles
         workspace_path: fullPath,
       });
     } else if (item.cdn_url) {
-      // 不支持预览 → 下载
-      downloadFile(
-        getWorkspacePreviewUrl(fullPath),
-        item.name,
-        getAuthHeaders(),
-      );
+      // 不支持预览 → CDN 直接下载
+      downloadFile(item.cdn_url, item.name);
     }
   }, [ws.currentPath]);
 
