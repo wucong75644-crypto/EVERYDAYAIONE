@@ -312,21 +312,19 @@ def _apply_merge_fill(
     header_row: int,
     report: CleaningReport,
 ) -> None:
-    """对垂直合并列做 ffill（staging 数据关联用）。
+    """检测合并列但不做 ffill，保留原始空值。
 
-    ffill 后每行都有订单编号等关联字段，Agent 可直接 groupby。
-    Agent 看结构用原始 Excel 预览（openpyxl 直读，null 保留），不看 staging。
+    Agent 看到预览中的 null 后自行决定是否 ffill。
     """
-    filled_cols: set[int] = set()
+    merged_cols: set[int] = set()
     for min_row, max_row, min_col, max_col in structure.merged_ranges:
         if max_row <= min_row:
             continue  # 水平合并，跳过
         for col_1indexed in range(min_col, max_col + 1):
             pandas_col = col_1indexed - 1
-            if pandas_col < len(df.columns) and pandas_col not in filled_cols:
-                df.iloc[:, pandas_col] = df.iloc[:, pandas_col].ffill()
-                filled_cols.add(pandas_col)
-    report.merged_cols_filled = len(filled_cols)
+            if pandas_col < len(df.columns):
+                merged_cols.add(pandas_col)
+    report.merged_cols_filled = len(merged_cols)
 
 
 def _mark_hidden_rows(
