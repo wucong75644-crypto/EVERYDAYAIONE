@@ -312,24 +312,21 @@ def _apply_merge_fill(
     header_row: int,
     report: CleaningReport,
 ) -> None:
-    """对垂直合并列显式填充 None（不做 ffill）。
+    """对垂直合并列做 ffill（staging 数据关联用）。
 
-    保留原始空值结构，Agent 看到 null 就知道哪些行是明细行。
-    SUM/AVG 自动跳过 NULL，查询结果正确。
-    Agent 需要关联时在 code_execute 里自行 ffill。
+    ffill 后每行都有订单编号等关联字段，Agent 可直接 groupby。
+    Agent 看结构用原始 Excel 预览（openpyxl 直读，null 保留），不看 staging。
     """
-    null_filled_cols: set[int] = set()
+    filled_cols: set[int] = set()
     for min_row, max_row, min_col, max_col in structure.merged_ranges:
         if max_row <= min_row:
             continue  # 水平合并，跳过
         for col_1indexed in range(min_col, max_col + 1):
             pandas_col = col_1indexed - 1
-            if pandas_col < len(df.columns) and pandas_col not in null_filled_cols:
-                # 合并区域内的空值显式设为 None（pandas 读取时可能是 NaN）
-                col_series = df.iloc[:, pandas_col]
-                df.iloc[:, pandas_col] = col_series.where(col_series.notna(), None)
-                null_filled_cols.add(pandas_col)
-    report.merged_cols_filled = len(null_filled_cols)
+            if pandas_col < len(df.columns) and pandas_col not in filled_cols:
+                df.iloc[:, pandas_col] = df.iloc[:, pandas_col].ffill()
+                filled_cols.add(pandas_col)
+    report.merged_cols_filled = len(filled_cols)
 
 
 def _mark_hidden_rows(
