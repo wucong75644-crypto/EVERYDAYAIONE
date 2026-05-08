@@ -428,7 +428,7 @@ def _build_structured_preview(
         lines.append("")
         lines.extend(pattern_lines)
 
-    # ── 连续行展示 ──
+    # ── 连续行展示（只显示有值字段，空值跳过，信息密度更高） ──
     preview_rows = profile.get("preview_rows", [])
     if preview_rows:
         lines.append(f"\n  前{len(preview_rows)}行:")
@@ -437,11 +437,16 @@ def _build_structured_preview(
             for k, v in row.items():
                 if k.startswith("_is_"):
                     continue
-                sv = str(v) if v is not None and str(v) not in ("nan", "NaT", "None") else "空"
+                if v is None or str(v) in ("nan", "NaT", "None"):
+                    continue  # 跳过空值，只展示有值字段
+                sv = str(v)
                 if len(sv) > 40:
                     sv = sv[:37] + "..."
                 parts.append(f"{k}={sv}")
-            lines.append(f"    行{i}: {' | '.join(parts)}")
+            if parts:
+                lines.append(f"    行{i}: {' | '.join(parts)}")
+            else:
+                lines.append(f"    行{i}: （全部为空）")
 
     return lines
 
