@@ -319,29 +319,14 @@ def _apply_merge_fill(
     Agent 看结构用原始 Excel 预览（openpyxl 直读，null 保留）。
     """
     filled_cols: set[int] = set()
-    offset = header_row + 1  # Excel 1-indexed row → pandas 0-indexed
-
     for min_row, max_row, min_col, max_col in structure.merged_ranges:
-        if max_row > min_row:
-            # 垂直合并：ffill
-            for col_1indexed in range(min_col, max_col + 1):
-                pandas_col = col_1indexed - 1
-                if pandas_col < len(df.columns) and pandas_col not in filled_cols:
-                    df.iloc[:, pandas_col] = df.iloc[:, pandas_col].ffill()
-                    filled_cols.add(pandas_col)
-        elif max_col > min_col:
-            # 水平合并：用首列的值填充同行其他列
-            pandas_row = min_row - offset
-            if 0 <= pandas_row < len(df):
-                first_col = min_col - 1
-                if first_col < len(df.columns):
-                    val = df.iloc[pandas_row, first_col]
-                    for col_1indexed in range(min_col + 1, max_col + 1):
-                        pandas_col = col_1indexed - 1
-                        if pandas_col < len(df.columns):
-                            if pd.isna(df.iloc[pandas_row, pandas_col]):
-                                df.iloc[pandas_row, pandas_col] = val
-
+        if max_row <= min_row:
+            continue  # 水平合并：不处理，保持空值（通常是视觉格式）
+        for col_1indexed in range(min_col, max_col + 1):
+            pandas_col = col_1indexed - 1
+            if pandas_col < len(df.columns) and pandas_col not in filled_cols:
+                df.iloc[:, pandas_col] = df.iloc[:, pandas_col].ffill()
+                filled_cols.add(pandas_col)
     report.merged_cols_filled = len(filled_cols)
 
 
