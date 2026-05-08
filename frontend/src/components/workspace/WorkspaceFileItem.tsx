@@ -267,24 +267,23 @@ export default function WorkspaceFileItem({
           <>
             {isImage && (
               <img
-                src={`${item.cdn_url}?x-oss-process=image/resize,w_80,h_80,m_fill`}
+                src={`${item.cdn_url}?x-oss-process=image/resize,w_120,h_120,m_fill`}
                 alt={item.name}
-                className="w-10 h-10 rounded object-cover"
+                className="w-14 h-14 rounded-lg object-cover"
                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }}
               />
             )}
             <span className={cn(
-              'text-4xl',
               item.is_dir ? 'text-blue-500 dark:text-blue-400' : getFileIconColor(item.name),
               isImage && 'hidden',
             )}>
-              {item.is_dir ? <Folder className="w-10 h-10 fill-current" /> : getFileIcon(item.name)}
+              {item.is_dir ? <Folder className="w-14 h-14 fill-current" /> : <span className="text-5xl">{getFileIcon(item.name)}</span>}
             </span>
           </>
         );
       })()}
 
-      {/* 文件名 */}
+      {/* 文件名（最多两行） */}
       {isRenaming ? (
         <input
           ref={renameInputRef}
@@ -296,7 +295,7 @@ export default function WorkspaceFileItem({
           className="w-full px-1 py-0.5 text-xs text-center bg-[var(--s-surface-base)] border border-[var(--s-border-focus)] rounded outline-none text-[var(--s-text-primary)]"
         />
       ) : (
-        <span className="text-xs text-[var(--s-text-primary)] text-center truncate w-full px-1">
+        <span className="text-xs text-[var(--s-text-primary)] text-center w-full px-1 line-clamp-2 break-all leading-4">
           {item.name}
         </span>
       )}
