@@ -378,10 +378,15 @@ def build_profile_from_duckdb(
         label = "前2条+随机1条" if len(preview_rows) >= 3 else f"前{len(preview_rows)}条"
         lines.append(f"\n[预览] {label}:\n" + "\n".join(preview_lines))
 
-    # ── 6. 查询指引 ──
+    # ── 6. 结构画像（列角色 + 主从检测） ──
+    structure_lines = _infer_structure(columns, row_count, profile)
+    if structure_lines:
+        lines.append("\n" + "\n".join(structure_lines))
+
+    # ── 7. 查询指引 ──
     lines.append(f'\n[查询] data_query(file="{filename}", sql="SELECT ... FROM data")')
 
-    # ── 7. 警告 ──
+    # ── 8. 警告 ──
     high_null = [
         col["name"] for col in columns
         if col.get("null_count", 0) / row_count > 0.1
@@ -390,3 +395,116 @@ def build_profile_from_duckdb(
         lines.append(f"\n⚠ 高空值率列: {', '.join(high_null)}")
 
     return "\n".join(lines), stats_dict
+
+
+# ============================================================
+# 数据结构画像（列角色 + 主从检测）
+# ============================================================
+
+# 数值类型集合（DuckDB type names）
+_NUMERIC_TYPES = frozenset({
+    "BIGINT", "INTEGER", "DOUBLE", "FLOAT", "DECIMAL",
+    "HUGEINT", "SMALLINT", "TINYINT",
+})
+_TIME_TYPES = frozenset({
+    "TIMESTAMP", "TIMESTAMP WITH TIME ZONE", "DATE",
+})
+
+
+def _infer_structure(
+    columns: list[dict], row_count: int, profile: dict,
+) -> list[str]:
+    """基于统计指标推断数据结构，返回 [结构] + [列角色] 文本行列表。
+
+    不依赖 Excel 格式信息，纯数据驱动。
+    小表（<10行）或空表跳过。
+    """
+    if row_count < 10 or not columns:
+        return []
+
+    adj_ratios = profile.get("adjacent_dup_ratios", {})
+
+    # ── 列角色分类 ──
+    ids: list[str] = []
+    measures: list[str] = []
+    dimensions: list[str] = []
+    timestamps: list[str] = []
+
+    for col in columns:
+        name = col["name"]
+        if name.startswith("_is_"):
+            continue
+        col_type = col.get("type", "")
+        distinct = col.get("distinct_count", 0)
+        null_count = col.get("null_count", 0)
+        uniqueness = distinct / row_count if row_count > 0 else 0
+        completeness = 1 - (null_count / row_count) if row_count > 0 else 0
+
+        if col_type in _TIME_TYPES:
+            timestamps.append(name)
+        elif uniqueness > 0.9 and completeness > 0.95:
+            ids.append(name)
+        elif col_type in _NUMERIC_TYPES and uniqueness > 0.1:
+            measures.append(name)
+        elif uniqueness < 0.05 and distinct <= 10:
+            dimensions.append(name)
+
+    # ── 主从模式检测 ──
+    master_cols: list[str] = []
+    detail_cols: list[str] = []
+
+    if adj_ratios:
+        for col in columns:
+            name = col["name"]
+            if name.startswith("_is_"):
+                continue
+            ratio = adj_ratios.get(name)
+            if ratio is None:
+                continue
+            distinct = col.get("distinct_count", 0)
+            uniqueness = distinct / row_count if row_count > 0 else 0
+            if ratio > 0.5 and uniqueness < 0.8:
+                master_cols.append(name)
+            elif ratio < 0.1:
+                detail_cols.append(name)
+
+    lines: list[str] = []
+
+    # 主从结构输出
+    if master_cols and detail_cols:
+        # 分组键 = master_cols 中唯一率最高的
+        group_key = max(
+            master_cols,
+            key=lambda n: next(
+                (c.get("distinct_count", 0) for c in columns if c["name"] == n), 0
+            ),
+        )
+        group_distinct = next(
+            (c.get("distinct_count", 0) for c in columns if c["name"] == group_key), 0
+        )
+        avg_size = round(row_count / group_distinct, 1) if group_distinct > 0 else 0
+
+        lines.append("[结构] 主从模式（一对多）")
+        lines.append(f"  分组键: {group_key}（{group_distinct}组，平均每组{avg_size}行）")
+        lines.append(f"  主字段（每组共享）: {', '.join(master_cols[:8])}")
+        if len(master_cols) > 8:
+            lines.append(f"    ... 等{len(master_cols)}个主字段")
+        lines.append(f"  明细字段（每行独立）: {', '.join(detail_cols[:8])}")
+        if len(detail_cols) > 8:
+            lines.append(f"    ... 等{len(detail_cols)}个明细字段")
+        lines.append(f"  ⚠ 对主字段做 SUM/COUNT 时必须先按 {group_key} 去重")
+
+    # 列角色输出（有任何分类结果就输出）
+    role_parts: list[str] = []
+    if ids:
+        role_parts.append(f"ID: {', '.join(ids[:5])}")
+    if measures:
+        role_parts.append(f"度量: {', '.join(measures[:5])}")
+    if dimensions:
+        role_parts.append(f"分类: {', '.join(dimensions[:5])}")
+    if timestamps:
+        role_parts.append(f"时间: {', '.join(timestamps[:5])}")
+    if role_parts:
+        lines.append(f"[列角色] {' | '.join(role_parts)}")
+
+    return lines
