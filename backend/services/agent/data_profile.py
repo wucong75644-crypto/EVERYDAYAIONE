@@ -420,6 +420,11 @@ def _build_structured_preview(
                     display += f" 等{len(col_names)}个"
                 lines.append(f"\n  以下字段{pct_label}:")
                 lines.append(f"    {display}")
+            # 有空值分组差异 → 提示 Agent 计算前需 ffill
+            lines.append(
+                "\n  ⚠ 数据含空值行（明细行），code_execute 计算前"
+                "需先对关键字段做 ffill() 填充才能正确关联和统计"
+            )
 
     # ── 列维度：检测列名重复模式 ──
     col_names = [c["name"] for c in data_cols]
