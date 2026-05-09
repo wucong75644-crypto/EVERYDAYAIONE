@@ -91,6 +91,7 @@ export default function Chat() {
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(getInitialConversationId);
   const [conversationTitle, setConversationTitle] = useState('新对话');
   const [conversationModelId, setConversationModelId] = useState<string | null>(null);
+  const [conversationChatSettings, setConversationChatSettings] = useState<import('../services/conversation').ChatSettings | null>(null);
   // 当前选择的模型（由 InputArea 设置，用于将来扩展）
   const [, setCurrentSelectedModel] = useState<UnifiedModel | null>(null);
   // 搜索面板开关（V3 Phase 4：cursor 分页 + 搜索）
@@ -289,6 +290,7 @@ export default function Chat() {
           if (urlConversationId === conversation.id) {
             setConversationTitle(conversation.title);
             setConversationModelId(conversation.model_id);
+            setConversationChatSettings(conversation.chat_settings ?? null);
           }
         })
         .catch((error) => {
@@ -310,6 +312,7 @@ export default function Chat() {
       setCurrentConversationId(null);
       setConversationTitle('新对话');
       setConversationModelId(null);
+      setConversationChatSettings(null);
     }
   }, [urlConversationId, navigate]);
 
@@ -438,6 +441,7 @@ export default function Chat() {
           <InputArea
             conversationId={currentConversationId}
             conversationModelId={conversationModelId}
+            conversationChatSettings={conversationChatSettings}
             onConversationCreated={handleConversationCreated}
             onMessagePending={handleMessagePending}
             onMessageSent={handleMessageSent}

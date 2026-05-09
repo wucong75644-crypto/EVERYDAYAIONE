@@ -42,6 +42,8 @@ interface InputAreaProps {
   conversationId: string | null;
   /** 当前对话保存的模型 ID（用于恢复模型选择） */
   conversationModelId?: string | null;
+  /** 当前对话保存的聊天设置（用于恢复设置） */
+  conversationChatSettings?: import('../../../services/conversation').ChatSettings | null;
   onConversationCreated: (id: string, title: string) => void;
   /** 消息开始发送时调用（乐观更新） */
   onMessagePending: (message: Message) => void;
@@ -74,6 +76,7 @@ interface InputAreaProps {
 export default function InputArea({
   conversationId,
   conversationModelId,
+  conversationChatSettings,
   onConversationCreated,
   onMessagePending,
   onMessageSent,
@@ -120,7 +123,7 @@ export default function InputArea({
     setChatSetting,
     saveSettings: handleSaveSettings,
     resetSettings: handleResetSettings,
-  } = useSettingsManager();
+  } = useSettingsManager(conversationId, conversationChatSettings);
 
   // 图片上传 Hook
   const {
@@ -172,6 +175,23 @@ export default function InputArea({
     // consumeMention 用 hook 内部记录的精准 @ 起始位置做替换，不依赖 lastIndexOf
     setPrompt(fileMention.consumeMention(prompt));
   }, [onAddWorkspaceFile, prompt, setPrompt, fileMention.consumeMention]);
+
+  // 构建当前 chat_settings 快照（创建对话时保存）
+  const buildChatSettingsPayload = useCallback(() => ({
+    deep_think_mode: chatSettings.deepThinkMode,
+    thinking_effort: chatSettings.thinkingEffort,
+    temperature: chatSettings.temperature,
+    top_p: chatSettings.topP,
+    top_k: chatSettings.topK,
+    max_output_tokens: chatSettings.maxOutputTokens,
+    image_aspect_ratio: imageSettings.aspectRatio,
+    image_resolution: imageSettings.resolution,
+    image_output_format: imageSettings.outputFormat,
+    image_num_images: imageSettings.numImages,
+    video_frames: videoSettings.frames,
+    video_aspect_ratio: videoSettings.aspectRatio,
+    video_remove_watermark: videoSettings.removeWatermark,
+  }), [chatSettings, imageSettings, videoSettings]);
 
   // 自动保存模型到对话的回调
   const handleAutoSaveModel = useCallback((modelId: string) => {
@@ -362,6 +382,7 @@ export default function InputArea({
         const conversation = await createConversation({
           title: '语音对话',
           model_id: selectedModel.id,
+          chat_settings: buildChatSettingsPayload(),
         });
         currentConversationId = conversation.id;
         onConversationCreated(currentConversationId, '语音对话');
@@ -455,6 +476,7 @@ export default function InputArea({
         const conversation = await createConversation({
           title,
           model_id: selectedModel.id,
+          chat_settings: buildChatSettingsPayload(),
         });
         currentConversationId = conversation.id;
         // 通知父组件对话已创建

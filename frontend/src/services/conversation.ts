@@ -4,10 +4,28 @@
 
 import { request } from './api';
 
+/** 对话级设置（per-conversation 持久化） */
+export interface ChatSettings {
+  deep_think_mode?: boolean;
+  thinking_effort?: string;
+  temperature?: number;
+  top_p?: number;
+  top_k?: number;
+  max_output_tokens?: number;
+  image_aspect_ratio?: string;
+  image_resolution?: string;
+  image_output_format?: string;
+  image_num_images?: number;
+  video_frames?: number;
+  video_aspect_ratio?: string;
+  video_remove_watermark?: boolean;
+}
+
 export interface Conversation {
   id: string;
   title: string;
   model_id: string | null;
+  chat_settings?: ChatSettings | null;
   message_count: number;
   credits_consumed: number;
   created_at: string;
@@ -19,6 +37,7 @@ export interface ConversationListItem {
   title: string;
   last_message: string | null;
   model_id: string | null;
+  chat_settings?: ChatSettings | null;
   updated_at: string;
   source?: 'web' | 'wecom';
 }
@@ -31,11 +50,13 @@ export interface ConversationListResponse {
 export interface CreateConversationRequest {
   title?: string;
   model_id?: string;
+  chat_settings?: ChatSettings;
 }
 
 export interface UpdateConversationRequest {
   title?: string;
   model_id?: string;
+  chat_settings?: ChatSettings;
 }
 
 /**
