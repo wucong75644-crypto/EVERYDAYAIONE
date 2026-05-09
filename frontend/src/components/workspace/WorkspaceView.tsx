@@ -97,14 +97,31 @@ export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles
   }, [ws.currentPath, ws.navigateTo]);
 
   const handleSendToChat = useCallback((item: WorkspaceFileItem) => {
-    onSendToChat({
-      name: item.name,
-      workspace_path: getFullPath(ws.currentPath, item.name),
-      cdn_url: item.cdn_url,
-      mime_type: item.mime_type,
-      size: item.size,
-    });
-  }, [ws.currentPath, onSendToChat]);
+    // 多选时插入所有选中的非文件夹项
+    const fullPath = getFullPath(ws.currentPath, item.name);
+    if (selection.selectedCount > 1 && selection.selectedPaths.has(fullPath)) {
+      const selectedItems = ws.items.filter(
+        (it) => !it.is_dir && selection.selectedPaths.has(getFullPath(ws.currentPath, it.name)),
+      );
+      for (const it of selectedItems) {
+        onSendToChat({
+          name: it.name,
+          workspace_path: getFullPath(ws.currentPath, it.name),
+          cdn_url: it.cdn_url,
+          mime_type: it.mime_type,
+          size: it.size,
+        });
+      }
+    } else {
+      onSendToChat({
+        name: item.name,
+        workspace_path: getFullPath(ws.currentPath, item.name),
+        cdn_url: item.cdn_url,
+        mime_type: item.mime_type,
+        size: item.size,
+      });
+    }
+  }, [ws.currentPath, ws.items, onSendToChat, selection.selectedCount, selection.selectedPaths]);
 
   // 删除（支持批量）
   const handleDelete = useCallback((path: string) => {
