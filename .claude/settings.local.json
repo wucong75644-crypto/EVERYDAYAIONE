@@ -2077,7 +2077,9 @@
       "Bash(ping -c 5 -W 3 47.96.237.162)",
       "Bash(grep -r -l 'deploy\\\\|47.96\\\\|47.110' /Users/wucong/EVERYDAYAIONE/scripts/ /Users/wucong/EVERYDAYAIONE/deploy* /Users/wucong/EVERYDAYAIONE/Makefile)",
       "Bash(node -e ' *)",
-      "Bash(./git-push.sh \"fix: ToolStepCard加max-w-md限制卡片宽度，避免撑满容器\")"
+      "Bash(./git-push.sh \"fix: ToolStepCard加max-w-md限制卡片宽度，避免撑满容器\")",
+      "Bash(npm ls *)",
+      "Bash(./git-push.sh \"feat: 文件卡片内联渲染——remark插件匹配文件名位置渲染FileCard，未匹配兜底末尾\")"
     ],
     "additionalDirectories": [
       "/tmp"
