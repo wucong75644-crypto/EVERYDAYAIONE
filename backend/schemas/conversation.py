@@ -3,7 +3,7 @@
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
 
@@ -11,12 +11,14 @@ class ConversationCreate(BaseModel):
     """创建对话请求"""
     title: Optional[str] = Field(default="新对话", max_length=200)
     model_id: Optional[str] = None
+    chat_settings: Optional[Dict[str, Any]] = None
 
 
 class ConversationUpdate(BaseModel):
     """更新对话请求"""
     title: Optional[str] = Field(default=None, min_length=1, max_length=200)
     model_id: Optional[str] = None
+    chat_settings: Optional[Dict[str, Any]] = None
 
 
 class ConversationResponse(BaseModel):
@@ -24,6 +26,7 @@ class ConversationResponse(BaseModel):
     id: str
     title: str
     model_id: Optional[str] = None
+    chat_settings: Optional[Dict[str, Any]] = None
     message_count: int = 0
     credits_consumed: int = 0
     created_at: datetime
@@ -36,6 +39,7 @@ class ConversationListResponse(BaseModel):
     title: str
     last_message: Optional[str] = None
     model_id: Optional[str] = None
+    chat_settings: Optional[Dict[str, Any]] = None
     updated_at: datetime
 
 

@@ -49,6 +49,7 @@ async def create_conversation(
             user_id=ctx.user_id,
             title=request.title,
             model_id=request.model_id,
+            chat_settings=request.chat_settings,
             org_id=ctx.org_id,
         )
         return result
@@ -170,6 +171,7 @@ async def update_conversation(
             user_id=ctx.user_id,
             title=request.title,
             model_id=request.model_id,
+            chat_settings=request.chat_settings,
             org_id=ctx.org_id,
         )
         return result

@@ -4,7 +4,7 @@
  * 管理图像/视频/聊天参数状态，支持持久化存储
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   type AspectRatio,
   type ImageResolution,
@@ -19,6 +19,8 @@ import {
   resetSettings as clearSettings,
   type UserAdvancedSettings,
 } from '../utils/settingsStorage';
+import { updateConversation, type ChatSettings as ConversationChatSettings } from '../services/conversation';
+import { logger } from '../utils/logger';
 
 // ============================================================
 // 类型定义
@@ -71,58 +73,139 @@ export interface UseSettingsManagerReturn {
 // Hook 实现
 // ============================================================
 
-export function useSettingsManager(): UseSettingsManagerReturn {
-  // 加载保存的设置
+/** 系统默认值（新建对话时使用） */
+const DEFAULTS = {
+  image: { aspectRatio: '1:1' as AspectRatio, resolution: '1024x1024' as ImageResolution, outputFormat: 'png' as ImageOutputFormat, numImages: 1 as ImageCount },
+  video: { frames: 81 as VideoFrames, aspectRatio: '16:9' as VideoAspectRatio, removeWatermark: false },
+  chat: { thinkingEffort: 'low' as const, deepThinkMode: true, permissionMode: 'auto' as PermissionMode, temperature: 1.0, topP: 0.95, topK: 40, maxOutputTokens: 8192 },
+};
+
+export function useSettingsManager(
+  conversationId?: string | null,
+  conversationChatSettings?: ConversationChatSettings | null,
+): UseSettingsManagerReturn {
+  // 加载保存的设置（localStorage 作为全局默认的兜底）
   const savedSettings = getSavedSettings();
+  // 对话级设置（优先）> localStorage（兜底）> 系统默认值
+  const cs = conversationChatSettings;
 
   // 图像生成参数
   const [imageSettings, setImageSettings] = useState<ImageSettings>({
-    aspectRatio: savedSettings.image.aspectRatio,
-    resolution: savedSettings.image.resolution,
-    outputFormat: savedSettings.image.outputFormat,
-    numImages: savedSettings.image.numImages,
+    aspectRatio: (cs?.image_aspect_ratio as AspectRatio) || savedSettings.image.aspectRatio,
+    resolution: (cs?.image_resolution as ImageResolution) || savedSettings.image.resolution,
+    outputFormat: (cs?.image_output_format as ImageOutputFormat) || savedSettings.image.outputFormat,
+    numImages: (cs?.image_num_images as ImageCount) ?? savedSettings.image.numImages,
   });
 
   // 视频生成参数
   const [videoSettings, setVideoSettings] = useState<VideoSettings>({
-    frames: savedSettings.video.frames,
-    aspectRatio: savedSettings.video.aspectRatio,
-    removeWatermark: savedSettings.video.removeWatermark,
+    frames: (cs?.video_frames as VideoFrames) ?? savedSettings.video.frames,
+    aspectRatio: (cs?.video_aspect_ratio as VideoAspectRatio) || savedSettings.video.aspectRatio,
+    removeWatermark: cs?.video_remove_watermark ?? savedSettings.video.removeWatermark,
   });
 
   // 聊天模型参数
   const [chatSettings, setChatSettings] = useState<ChatSettings>({
-    thinkingEffort: savedSettings.chat?.thinkingEffort || 'low',
-    deepThinkMode: true, // 默认开启深度思考
-    permissionMode: (savedSettings.chat as any)?.permissionMode || 'auto',
-    temperature: savedSettings.chat?.temperature ?? 1.0,
-    topP: savedSettings.chat?.topP ?? 0.95,
-    topK: savedSettings.chat?.topK ?? 40,
-    maxOutputTokens: savedSettings.chat?.maxOutputTokens ?? 8192,
+    thinkingEffort: (cs?.thinking_effort as ChatSettings['thinkingEffort']) || savedSettings.chat?.thinkingEffort || DEFAULTS.chat.thinkingEffort,
+    deepThinkMode: cs?.deep_think_mode ?? true,
+    permissionMode: (savedSettings.chat as any)?.permissionMode || DEFAULTS.chat.permissionMode,
+    temperature: cs?.temperature ?? savedSettings.chat?.temperature ?? DEFAULTS.chat.temperature,
+    topP: cs?.top_p ?? savedSettings.chat?.topP ?? DEFAULTS.chat.topP,
+    topK: cs?.top_k ?? savedSettings.chat?.topK ?? DEFAULTS.chat.topK,
+    maxOutputTokens: cs?.max_output_tokens ?? savedSettings.chat?.maxOutputTokens ?? DEFAULTS.chat.maxOutputTokens,
   });
+
+  // 切换对话时恢复设置
+  const prevConversationId = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (conversationId === prevConversationId.current) return;
+    prevConversationId.current = conversationId;
+    const s = conversationChatSettings;
+    // 有对话级设置 → 恢复；无（新对话）→ 用系统默认值
+    setImageSettings({
+      aspectRatio: (s?.image_aspect_ratio as AspectRatio) || DEFAULTS.image.aspectRatio,
+      resolution: (s?.image_resolution as ImageResolution) || DEFAULTS.image.resolution,
+      outputFormat: (s?.image_output_format as ImageOutputFormat) || DEFAULTS.image.outputFormat,
+      numImages: (s?.image_num_images as ImageCount) ?? DEFAULTS.image.numImages,
+    });
+    setVideoSettings({
+      frames: (s?.video_frames as VideoFrames) ?? DEFAULTS.video.frames,
+      aspectRatio: (s?.video_aspect_ratio as VideoAspectRatio) || DEFAULTS.video.aspectRatio,
+      removeWatermark: s?.video_remove_watermark ?? DEFAULTS.video.removeWatermark,
+    });
+    setChatSettings({
+      thinkingEffort: (s?.thinking_effort as ChatSettings['thinkingEffort']) || DEFAULTS.chat.thinkingEffort,
+      deepThinkMode: s?.deep_think_mode ?? DEFAULTS.chat.deepThinkMode,
+      permissionMode: DEFAULTS.chat.permissionMode,
+      temperature: s?.temperature ?? DEFAULTS.chat.temperature,
+      topP: s?.top_p ?? DEFAULTS.chat.topP,
+      topK: s?.top_k ?? DEFAULTS.chat.topK,
+      maxOutputTokens: s?.max_output_tokens ?? DEFAULTS.chat.maxOutputTokens,
+    });
+  }, [conversationId, conversationChatSettings]);
+
+  // 自动保存到对话（debounce 避免频繁请求）
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const autoSaveToConversation = useCallback((
+    img: ImageSettings, vid: VideoSettings, chat: ChatSettings,
+  ) => {
+    if (!conversationId) return;
+    clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      const payload: ConversationChatSettings = {
+        deep_think_mode: chat.deepThinkMode,
+        thinking_effort: chat.thinkingEffort,
+        temperature: chat.temperature,
+        top_p: chat.topP,
+        top_k: chat.topK,
+        max_output_tokens: chat.maxOutputTokens,
+        image_aspect_ratio: img.aspectRatio,
+        image_resolution: img.resolution,
+        image_output_format: img.outputFormat,
+        image_num_images: img.numImages,
+        video_frames: vid.frames,
+        video_aspect_ratio: vid.aspectRatio,
+        video_remove_watermark: vid.removeWatermark,
+      };
+      updateConversation(conversationId, { chat_settings: payload })
+        .catch((e) => logger.error('settings', '保存对话设置失败', e));
+    }, 500);
+  }, [conversationId]);
 
   // 设置单个图像参数
   const setImageSetting = useCallback(
     <K extends keyof ImageSettings>(key: K, value: ImageSettings[K]) => {
-      setImageSettings((prev) => ({ ...prev, [key]: value }));
+      setImageSettings((prev) => {
+        const next = { ...prev, [key]: value };
+        autoSaveToConversation(next, videoSettings, chatSettings);
+        return next;
+      });
     },
-    []
+    [autoSaveToConversation, videoSettings, chatSettings]
   );
 
   // 设置单个视频参数
   const setVideoSetting = useCallback(
     <K extends keyof VideoSettings>(key: K, value: VideoSettings[K]) => {
-      setVideoSettings((prev) => ({ ...prev, [key]: value }));
+      setVideoSettings((prev) => {
+        const next = { ...prev, [key]: value };
+        autoSaveToConversation(imageSettings, next, chatSettings);
+        return next;
+      });
     },
-    []
+    [autoSaveToConversation, imageSettings, chatSettings]
   );
 
   // 设置单个聊天参数
   const setChatSetting = useCallback(
     <K extends keyof ChatSettings>(key: K, value: ChatSettings[K]) => {
-      setChatSettings((prev) => ({ ...prev, [key]: value }));
+      setChatSettings((prev) => {
+        const next = { ...prev, [key]: value };
+        autoSaveToConversation(imageSettings, videoSettings, next);
+        return next;
+      });
     },
-    []
+    [autoSaveToConversation, imageSettings, videoSettings]
   );
 
   // 保存当前设置为默认值

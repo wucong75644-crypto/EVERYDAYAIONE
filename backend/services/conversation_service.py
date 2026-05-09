@@ -23,6 +23,7 @@ class ConversationService:
         user_id: str,
         title: Optional[str] = None,
         model_id: Optional[str] = None,
+        chat_settings: dict | None = None,
         org_id: Optional[str] = None,
         source: str = "web",
     ) -> dict:
@@ -33,6 +34,7 @@ class ConversationService:
             user_id: 用户 ID
             title: 对话标题（可选）
             model_id: 模型 ID（可选）
+            chat_settings: 对话级设置（可选）
             source: 来源（web / wecom）
 
         Returns:
@@ -50,6 +52,8 @@ class ConversationService:
 
             if model_id:
                 conversation_data["model_id"] = model_id
+            if chat_settings:
+                conversation_data["chat_settings"] = chat_settings
 
             result = self.db.table("conversations").insert(conversation_data).execute()
 
@@ -152,7 +156,7 @@ class ConversationService:
             # 单次查询同时获取数据和总数（count="exact" 在同一请求中返回计数）
             query = (
                 self.db.table("conversations")
-                .select("id, title, last_message_preview, model_id, updated_at, source", count="exact")
+                .select("id, title, last_message_preview, model_id, chat_settings, updated_at, source", count="exact")
                 .eq("user_id", user_id)
             )
             if org_id:
@@ -172,6 +176,7 @@ class ConversationService:
                     "title": conv["title"],
                     "last_message": conv.get("last_message_preview"),
                     "model_id": conv.get("model_id"),
+                    "chat_settings": conv.get("chat_settings"),
                     "updated_at": conv["updated_at"],
                     "source": conv.get("source", "web"),
                 }
@@ -202,6 +207,7 @@ class ConversationService:
         user_id: str,
         title: Optional[str] = None,
         model_id: Optional[str] = None,
+        chat_settings: dict | None = None,
         org_id: Optional[str] = None,
     ) -> dict:
         """
@@ -212,6 +218,7 @@ class ConversationService:
             user_id: 用户 ID
             title: 新标题（可选）
             model_id: 模型 ID（可选）
+            chat_settings: 对话级设置（可选）
 
         Returns:
             更新后的对话信息
@@ -230,6 +237,8 @@ class ConversationService:
                 update_data["title"] = title
             if model_id is not None:
                 update_data["model_id"] = model_id
+            if chat_settings is not None:
+                update_data["chat_settings"] = chat_settings
 
             if not update_data:
                 return await self.get_conversation(conversation_id, user_id, org_id)
@@ -323,6 +332,7 @@ class ConversationService:
             "user_id": conversation["user_id"],
             "title": conversation["title"],
             "model_id": conversation.get("model_id"),
+            "chat_settings": conversation.get("chat_settings"),
             "message_count": conversation.get("message_count", 0),
             "credits_consumed": conversation.get("credits_consumed", 0),
             "created_at": conversation["created_at"],
