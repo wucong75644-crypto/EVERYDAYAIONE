@@ -47,7 +47,7 @@ function FileCardItem({ file, onPreview }: { file: FilePart; onPreview?: () => v
 
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-3 rounded-xl bg-surface dark:bg-surface-dark-card hover:bg-hover dark:hover:bg-surface-dark-card transition-base border border-border-default dark:border-border-dark ${onPreview ? 'cursor-pointer' : ''}`}
+      className={`inline-flex items-center gap-3 px-4 py-3 rounded-xl bg-surface dark:bg-surface-dark-card hover:bg-hover dark:hover:bg-surface-dark-card transition-base border border-border-default dark:border-border-dark max-w-sm ${onPreview ? 'cursor-pointer' : ''}`}
       onClick={onPreview}
     >
       <span className="text-2xl flex-shrink-0">{getFileIcon(file.name)}</span>
