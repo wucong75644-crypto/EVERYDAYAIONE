@@ -6,6 +6,7 @@ import { request } from './api';
 
 /** 对话级设置（per-conversation 持久化） */
 export interface ChatSettings {
+  smart_sub_mode?: string;
   deep_think_mode?: boolean;
   thinking_effort?: string;
   temperature?: number;
