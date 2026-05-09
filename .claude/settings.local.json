@@ -2126,7 +2126,8 @@
       "Bash(python -m pytest backend/tests/ -x -q --tb=short -k \"dedup or confirm_delete or delete\")",
       "Bash(python -m pytest backend/tests/ -x -q --tb=short -k \"dedup or confirm_delete or delete\" --ignore=backend/tests/manual)",
       "Bash(python -m pytest backend/tests/test_sandbox_executor.py backend/tests/test_sandbox_e2e.py backend/tests/test_sandbox_worker.py -x -q --tb=short -k \"dedup or confirm_delete or delete\")",
-      "Bash(./git-push.sh \"fix: 沙盒文件删除confirm_delete路径匹配bug——basename对齐+静默恢复补日志\")"
+      "Bash(./git-push.sh \"fix: 沙盒文件删除confirm_delete路径匹配bug——basename对齐+静默恢复补日志\")",
+      "Bash(./git-push.sh \"fix: confirm_delete提示词修正——传相对路径而非纯文件名，与scoped_os路径解析对齐\")"
     ],
     "additionalDirectories": [
       "/tmp"
