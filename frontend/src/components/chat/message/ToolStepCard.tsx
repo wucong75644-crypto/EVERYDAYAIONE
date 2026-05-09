@@ -3,7 +3,7 @@
  *
  * 对标 Vercel AI SDK 的 <Tool> 组件。
  * 展示工具调用的名称、状态（running/completed/error）、耗时，
- * 折叠区可展开查看 summary / code / output。
+ * 折叠区可展开查看 Input（调用参数）+ Result（返回结果）。
  */
 
 import { useState, memo } from 'react';
@@ -13,7 +13,6 @@ interface ToolStepCardProps {
   toolName: string;
   toolCallId: string;
   status: 'running' | 'completed' | 'error';
-  summary?: string;
   code?: string;
   output?: string;
   input?: string;
@@ -49,7 +48,6 @@ export default memo(function ToolStepCard({
   toolName,
   toolCallId,
   status,
-  summary,
   code,
   output,
   input,
@@ -57,7 +55,7 @@ export default memo(function ToolStepCard({
 }: ToolStepCardProps) {
   const [expanded, setExpanded] = useState(false);
   const label = getToolLabel(toolName);
-  const hasContent = !!(summary || code || output || input);
+  const hasContent = !!(code || output || input);
   const canExpand = hasContent && status !== 'running';
 
   return (
@@ -149,26 +147,16 @@ export default memo(function ToolStepCard({
           )}
 
           {/* Result：返回结果 */}
-          {(output || summary) && (
+          {output && (
             <div>
               <div className="text-[10px] font-medium text-text-tertiary mb-1 uppercase tracking-wider">Result</div>
-              {output ? (
-                <pre className={`rounded-md p-2 overflow-x-auto text-[11px] leading-relaxed max-h-60 overflow-y-auto ${
-                  status === 'error'
-                    ? 'bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400'
-                    : 'bg-neutral-900 dark:bg-neutral-950 text-neutral-200'
-                }`}>
-                  {output}
-                </pre>
-              ) : (
-                <div className={`text-xs leading-relaxed whitespace-pre-wrap p-2 rounded-md max-h-60 overflow-y-auto ${
-                  status === 'error'
-                    ? 'bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400'
-                    : 'bg-[var(--color-bg-primary)] border border-border-default/40 text-text-secondary'
-                }`}>
-                  {summary}
-                </div>
-              )}
+              <pre className={`rounded-md p-2 overflow-x-auto text-[11px] leading-relaxed max-h-60 overflow-y-auto whitespace-pre-wrap ${
+                status === 'error'
+                  ? 'bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400'
+                  : 'bg-neutral-900 dark:bg-neutral-950 text-neutral-200'
+              }`}>
+                {output}
+              </pre>
             </div>
           )}
         </div>

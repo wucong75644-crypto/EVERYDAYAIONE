@@ -779,7 +779,7 @@ class ChatContextMixin:
                     if text:
                         texts.append(text)
                 elif ptype == "tool_step" and part.get("status") in ("completed", "error"):
-                    summary = (part.get("summary") or "").strip()[:500]
+                    summary = (part.get("output") or "").strip()[:500]
                     if summary:
                         texts.append(f"[工具执行: {part.get('tool_name', '')}] {summary}")
                 elif ptype == "tool_result":

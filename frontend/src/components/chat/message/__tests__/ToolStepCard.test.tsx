@@ -13,7 +13,7 @@ describe('ToolStepCard', () => {
     toolName: 'web_search',
     toolCallId: 'tc_1',
     status: 'completed' as const,
-    summary: '找到3条结果',
+    output: '找到3条结果',
     elapsedMs: 1500,
   };
 
@@ -40,9 +40,9 @@ describe('ToolStepCard', () => {
   });
 
   describe('折叠展开', () => {
-    it('completed 状态默认折叠，点击展开显示 summary', () => {
+    it('completed 状态默认折叠，点击展开显示 output', () => {
       render(<ToolStepCard {...baseProps} />);
-      // 默认折叠，summary 不可见
+      // 默认折叠，output 不可见
       expect(screen.queryByText('找到3条结果')).toBeNull();
 
       // 点击展开
@@ -51,16 +51,14 @@ describe('ToolStepCard', () => {
     });
 
     it('running 状态不可展开', () => {
-      render(<ToolStepCard {...baseProps} status="running" summary="进行中" />);
+      render(<ToolStepCard {...baseProps} status="running" output="进行中" />);
       fireEvent.click(screen.getByRole('button'));
-      // 点击后仍然看不到 summary
       expect(screen.queryByText('进行中')).toBeNull();
     });
 
-    it('无 summary 时不可展开', () => {
-      render(<ToolStepCard {...baseProps} summary={undefined} />);
+    it('无 output 时不可展开', () => {
+      render(<ToolStepCard {...baseProps} output={undefined} />);
       fireEvent.click(screen.getByRole('button'));
-      // 没有折叠内容区
       expect(screen.queryByText('Input')).toBeNull();
     });
   });

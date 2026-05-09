@@ -43,29 +43,38 @@ class GenerateResult:
     tool_digest: Optional[Dict[str, Any]] = None
 
 
-def unpack_tool_result(result) -> tuple:
-    """统一解包工具返回值 → (message_content, summary_text)。
+def unpack_tool_result(result) -> str:
+    """解包工具返回值 → LLM 上下文内容。仅用于 messages[role=tool]。
 
-    Web 端 _stream_generate 和企微端 generate_complete 共用，
-    避免新增 result 类型时两处不同步。
-
-    Returns:
-        (msg_content, summary_text):
-            msg_content — 塞进 messages[role=tool] 的内容
-            summary_text — 写入 tool_step.summary 的摘要（≤500字）
+    Web 端 _stream_generate 和企微端 generate_complete 共用。
     """
     from services.agent.agent_result import AgentResult
     from services.file_executor import FileReadResult
 
     if isinstance(result, AgentResult):
-        return result.to_message_content(), (result.summary or "")[:500]
+        return result.to_message_content()
     if isinstance(result, FileReadResult):
-        return result.text, result.text[:500]
+        return result.text
     if isinstance(result, str):
-        return result, result[:500]
-    # 兜底：未知类型强转 str
-    s = str(result)
-    return s, s[:500]
+        return result
+    return str(result)
+
+
+def extract_display_text(result) -> str:
+    """提取工具结果的原始文本，用于前端 ToolStepCard 展开区展示。
+
+    不截断、不结构化。工具自身已有尺寸限制，直接透传。
+    """
+    from services.agent.agent_result import AgentResult
+    from services.file_executor import FileReadResult
+
+    if isinstance(result, AgentResult):
+        return result.summary or ""
+    if isinstance(result, FileReadResult):
+        return result.text or ""
+    if isinstance(result, str):
+        return result
+    return str(result)
 
 
 class ChatGenerateMixin:
@@ -184,9 +193,12 @@ class ChatGenerateMixin:
                         "tool_call_id": tc["id"],
                         "status": "running",
                     }
+                    _raw_args = tc.get("arguments", "")
+                    if _raw_args:
+                        _tool_step["input"] = _raw_args[:2000]
                     if tc["name"] == "code_execute":
                         try:
-                            _ce_args = json.loads(tc.get("arguments", "{}"))
+                            _ce_args = json.loads(_raw_args or "{}")
                             _ce_code = _ce_args.get("code", "")[:2000]
                             if _ce_code:
                                 _tool_step["code"] = _ce_code
@@ -200,10 +212,10 @@ class ChatGenerateMixin:
                     "wecom_msg", user_id, turn + 1, messages=messages,
                     budget=_budget,
                 )
-                for tc, result, is_error in tool_results:
-                    msg_content, summary_text = unpack_tool_result(result)
+                for tc, result, is_error, display_text in tool_results:
+                    msg_content = unpack_tool_result(result)
                     tool_context.update_from_result(
-                        tc["name"], summary_text, is_error,
+                        tc["name"], display_text, is_error,
                     )
                     messages.append({
                         "role": "tool",
@@ -211,7 +223,7 @@ class ChatGenerateMixin:
                         "content": msg_content,
                     })
 
-                    # 更新 tool_step 状态（对齐 Web 端 chat_handler.py L773-787）
+                    # 更新 tool_step 状态（对齐 Web 端 chat_handler.py）
                     _tc_id = tc["id"]
                     _tc_start = _tool_step_start_times.get(_tc_id)
                     _elapsed = int((_time.monotonic() - _tc_start) * 1000) if _tc_start else 0
@@ -219,7 +231,7 @@ class ChatGenerateMixin:
                         if _blk.get("type") == "tool_step" and _blk.get("tool_call_id") == _tc_id:
                             _blk["status"] = "error" if is_error else "completed"
                             _blk["elapsed_ms"] = _elapsed
-                            _blk["summary"] = summary_text
+                            _blk["output"] = display_text
                             break
 
                 # 层4+5: 旧工具结果归档 + 循环内摘要

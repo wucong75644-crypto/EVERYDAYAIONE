@@ -481,14 +481,13 @@ export default memo(function MessageItem({
                   }
                   // tool_step 折叠卡片（完成后可展开查看代码/输出）
                   if (part.type === 'tool_step') {
-                    const ts = part as { tool_name: string; tool_call_id: string; status: 'running' | 'completed' | 'error'; summary?: string; code?: string; output?: string; input?: string; elapsed_ms?: number };
+                    const ts = part as { tool_name: string; tool_call_id: string; status: 'running' | 'completed' | 'error'; code?: string; output?: string; input?: string; elapsed_ms?: number };
                     return (
                       <ToolStepCard
                         key={ts.tool_call_id || idx}
                         toolName={ts.tool_name || 'tool'}
                         toolCallId={ts.tool_call_id || String(idx)}
                         status={ts.status || 'completed'}
-                        summary={ts.summary}
                         code={ts.code}
                         output={ts.output}
                         input={ts.input}

@@ -2097,7 +2097,14 @@
       "WebFetch(domain:www.cursor.com)",
       "WebFetch(domain:www.answeroverflow.com)",
       "WebFetch(domain:webflow.com)",
-      "Bash(./git-push.sh \"feat: ToolStepCard展开区对齐Claude风格\\(Input+Result\\)，子Agent thinking不再混入主thinking，删除SubAgentThinkingHook死代码\")"
+      "Bash(./git-push.sh \"feat: ToolStepCard展开区对齐Claude风格\\(Input+Result\\)，子Agent thinking不再混入主thinking，删除SubAgentThinkingHook死代码\")",
+      "Bash(grep -l \"CREATE TABLE.*messages\" /Users/wucong/EVERYDAYAIONE/backend/migrations/*.py)",
+      "Bash(grep -n \"_convert_content_parts_to_dicts\" /Users/wucong/EVERYDAYAIONE/backend/services/handlers/*.py)",
+      "Bash(psql -h 127.0.0.1 -U everydayai -d everydayai -c \"\\\\d messages\")",
+      "WebFetch(domain:support.anthropic.com)",
+      "WebFetch(domain:support.claude.com)",
+      "WebFetch(domain:community.anthropic.com)",
+      "Bash(./git-push.sh \"refactor: tool_step统一为单一数据源——summary废弃改用output，去掉所有截断，两条链路合并为一条\")"
     ],
     "additionalDirectories": [
       "/tmp"

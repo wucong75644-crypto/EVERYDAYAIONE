@@ -745,10 +745,10 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 from services.file_executor import FileReadResult
                 from services.handlers.chat_generate_mixin import unpack_tool_result
                 _pending_image_urls: List[str] = []  # 图片多模态：收集待注入的 image_url
-                for tc, result, is_error in tool_results:
-                    msg_content, summary_text = unpack_tool_result(result)
+                for tc, result, is_error, display_text in tool_results:
+                    msg_content = unpack_tool_result(result)
                     tool_context.update_from_result(
-                        tc["name"], summary_text, is_error,
+                        tc["name"], display_text, is_error,
                     )
 
                     # 子Agent thinking 不再混入主 thinking，统一在 ToolStepCard 展开区展示
@@ -770,7 +770,7 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                         if _blk.get("type") == "tool_step" and _blk.get("tool_call_id") == _tc_id:
                             _blk["status"] = "error" if is_error else "completed"
                             _blk["elapsed_ms"] = _elapsed
-                            _blk["summary"] = summary_text
+                            _blk["output"] = display_text
                             break
 
                     # 工具结果日志已通过 ToolStepCard 的 summary 字段展示，
