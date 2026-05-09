@@ -115,13 +115,10 @@ export function useSettingsManager(
     maxOutputTokens: cs?.max_output_tokens ?? savedSettings.chat?.maxOutputTokens ?? DEFAULTS.chat.maxOutputTokens,
   });
 
-  // 切换对话时恢复设置
-  const prevConversationId = useRef<string | null | undefined>(undefined);
+  // 对话设置恢复：conversationChatSettings 变化时（切换对话 / API 返回），重置本地状态
+  // 不跟踪 conversationId — 只要 settings 变了就恢复，避免异步时序 bug
   useEffect(() => {
-    if (conversationId === prevConversationId.current) return;
-    prevConversationId.current = conversationId;
     const s = conversationChatSettings;
-    // 有对话级设置 → 恢复；无（新对话）→ 用系统默认值
     setImageSettings({
       aspectRatio: (s?.image_aspect_ratio as AspectRatio) || DEFAULTS.image.aspectRatio,
       resolution: (s?.image_resolution as ImageResolution) || DEFAULTS.image.resolution,
@@ -142,7 +139,7 @@ export function useSettingsManager(
       topK: s?.top_k ?? DEFAULTS.chat.topK,
       maxOutputTokens: s?.max_output_tokens ?? DEFAULTS.chat.maxOutputTokens,
     });
-  }, [conversationId, conversationChatSettings]);
+  }, [conversationChatSettings]);
 
   // 自动保存到对话（debounce 避免频繁请求）
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
