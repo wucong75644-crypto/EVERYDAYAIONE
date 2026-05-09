@@ -13,6 +13,16 @@ import type { WorkspaceFileItem as FileItemData } from '../../services/workspace
 
 const _IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 
+/** 中间省略：保留文件名头部 + 后缀，中间用 … 替代 */
+function ellipsisMiddle(name: string, maxLen: number): string {
+  if (name.length <= maxLen) return name;
+  const dotIdx = name.lastIndexOf('.');
+  const ext = dotIdx > 0 ? name.slice(dotIdx) : '';
+  // 头部保留 = 总长 - 省略号(1) - 后缀长度
+  const headLen = Math.max(1, maxLen - 1 - ext.length);
+  return name.slice(0, headLen) + '…' + ext;
+}
+
 interface WorkspaceFileItemProps {
   item: FileItemData;
   /** 当前目录路径（用于拼完整路径） */
@@ -225,7 +235,7 @@ export default function WorkspaceFileItem({
               onBlur={handleRenameSubmit}
               onKeyDown={handleRenameKeyDown}
               onClick={(e) => e.stopPropagation()}
-              className="w-full px-1.5 py-0.5 text-sm bg-[var(--s-surface-base)] border border-[var(--s-border-focus)] rounded outline-none text-[var(--s-text-primary)]"
+              className="w-full px-1.5 py-0.5 text-sm bg-transparent border-none outline-none ring-1 ring-[var(--s-accent)] rounded text-[var(--s-text-primary)]"
             />
           ) : (
             <span
@@ -294,7 +304,7 @@ export default function WorkspaceFileItem({
         );
       })()}
 
-      {/* 文件名（最多两行） */}
+      {/* 文件名 */}
       {isRenaming ? (
         <input
           ref={renameInputRef}
@@ -303,14 +313,15 @@ export default function WorkspaceFileItem({
           onBlur={handleRenameSubmit}
           onKeyDown={handleRenameKeyDown}
           onClick={(e) => e.stopPropagation()}
-          className="w-full px-1 py-0.5 text-xs text-center bg-[var(--s-surface-base)] border border-[var(--s-border-focus)] rounded outline-none text-[var(--s-text-primary)]"
+          className="w-full px-1 py-0.5 text-[13px] text-center bg-transparent border-none outline-none ring-1 ring-[var(--s-accent)] rounded text-[var(--s-text-primary)] leading-[18px]"
         />
       ) : (
         <span
-          className="text-[13px] text-[var(--s-text-primary)] text-center w-full px-1 line-clamp-2 break-words leading-[18px]"
+          className="text-[13px] text-[var(--s-text-primary)] text-center w-full px-1 leading-[18px]"
           onDoubleClick={handleNameDoubleClick}
+          title={item.name}
         >
-          {item.name}
+          {ellipsisMiddle(item.name, 20)}
         </span>
       )}
 
