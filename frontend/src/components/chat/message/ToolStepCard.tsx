@@ -153,7 +153,7 @@ export default memo(function ToolStepCard({
               <pre className={`rounded-md p-2 overflow-x-auto text-[11px] leading-relaxed max-h-60 overflow-y-auto whitespace-pre-wrap ${
                 status === 'error'
                   ? 'bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400'
-                  : 'bg-neutral-900 dark:bg-neutral-950 text-neutral-200'
+                  : 'bg-[var(--color-bg-primary)] border border-border-default/40 text-text-secondary'
               }`}>
                 {output}
               </pre>

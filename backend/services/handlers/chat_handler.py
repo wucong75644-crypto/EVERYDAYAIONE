@@ -551,7 +551,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
 
                 turn_text = ""
                 turn_thinking = ""
-                _thinking_committed = False  # 当前轮 thinking 是否已提交到 content_blocks
+                _thinking_committed = False
+                _thinking_start_time = None  # 每轮重置，确保 duration_ms 只算当前轮
                 tool_calls_acc: Dict[int, Dict[str, Any]] = {}  # index → {id, name, arguments}
 
                 async for chunk in self._adapter.stream_chat(
@@ -580,7 +581,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                     # 确保前端 content.map 中 thinking 在 text 之前
                     if chunk.content and turn_thinking and not _thinking_committed:
                         _thinking_committed = True
-                        _thinking_block = {"type": "thinking", "text": turn_thinking}
+                        _think_dur = int((_time.monotonic() - _thinking_start_time) * 1000) if _thinking_start_time else 0
+                        _thinking_block = {"type": "thinking", "text": turn_thinking, "duration_ms": _think_dur}
                         _content_blocks.append(_thinking_block)
                         try:
                             await ws_manager.send_to_task_or_user(
@@ -629,7 +631,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
                 # 有工具调用 → 未提交的 thinking + 中间叙述按时序插入 content_blocks
                 # thinking 通常在 text 开始时已提交（转换点），这里兜底处理无 text 直接调工具的情况
                 if turn_thinking and not _thinking_committed:
-                    _thinking_block = {"type": "thinking", "text": turn_thinking}
+                    _think_dur = int((_time.monotonic() - _thinking_start_time) * 1000) if _thinking_start_time else 0
+                    _thinking_block = {"type": "thinking", "text": turn_thinking, "duration_ms": _think_dur}
                     _content_blocks.append(_thinking_block)
                     try:
                         await ws_manager.send_to_task_or_user(
@@ -1014,7 +1017,8 @@ class ChatHandler(ChatGenerateMixin, ChatToolMixin, ChatStreamSupportMixin, Chat
             if _content_blocks:
                 # 多块模式：最后一轮 thinking + text 插入 content_blocks
                 if turn_thinking and not _thinking_committed:
-                    _content_blocks.append({"type": "thinking", "text": turn_thinking})
+                    _think_dur = int((_time.monotonic() - _thinking_start_time) * 1000) if _thinking_start_time else 0
+                    _content_blocks.append({"type": "thinking", "text": turn_thinking, "duration_ms": _think_dur})
                 if _final_turn_text:
                     _content_blocks.append({"type": "text", "text": _final_turn_text})
                 # 从 blocks 构建 result_parts
