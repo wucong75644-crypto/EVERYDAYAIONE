@@ -18,8 +18,11 @@ import remarkMath from 'remark-math';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import CodeBlock from './CodeBlock';
+import remarkFileRef from './remarkFileRef';
 import { escapeChineseMath } from '../../../utils/markdownPreprocess';
 import { downloadFile } from '../../../utils/downloadFile';
+import type { FilePart } from '../../../types/message';
+import FileCardList from '../media/FileCard';
 import './markdown.css';
 
 // highlight.js 暗色主题（按需加载，仅注册常用语言）
@@ -39,6 +42,8 @@ interface MarkdownRendererProps {
   isStreaming?: boolean;
   /** 自定义样式类名 */
   className?: string;
+  /** 内联文件映射：文件名 → 文件元数据。文件名在文本中匹配到时渲染为 FileCard */
+  inlineFiles?: Map<string, FilePart>;
 }
 
 /** 图片 URL 域名匹配（用于表格内缩略图检测） */
@@ -174,6 +179,7 @@ export default memo(function MarkdownRenderer({
   content,
   isStreaming = false,
   className = '',
+  inlineFiles,
 }: MarkdownRendererProps) {
   // 检测内容是否包含 Markdown 语法特征
   const hasMarkdown = useMemo(() => {
@@ -188,6 +194,35 @@ export default memo(function MarkdownRenderer({
     () => (content ? escapeChineseMath(content) : content),
     [content],
   );
+
+  // 动态 remark 插件：有内联文件时追加 remarkFileRef
+  const dynamicRemarkPlugins = useMemo(() => {
+    if (inlineFiles && inlineFiles.size > 0) {
+      return [
+        ...remarkPlugins,
+        [remarkFileRef, { fileNames: [...inlineFiles.keys()] }],
+      ] as PluggableList;
+    }
+    return remarkPlugins;
+  }, [inlineFiles]);
+
+  // file-ref 组件：将 <file-ref data-name="xxx"> 渲染为 FileCard
+  const dynamicComponents = useMemo(() => {
+    if (!inlineFiles || inlineFiles.size === 0) return markdownComponents;
+    return {
+      ...markdownComponents,
+      'file-ref': function FileRefCard(props: Record<string, unknown>) {
+        const name = props['data-name'] as string;
+        const file = inlineFiles.get(name);
+        if (!file) return <span>{name}</span>;
+        return (
+          <span className="block my-2" style={{ maxWidth: '400px' }}>
+            <FileCardList files={[file]} />
+          </span>
+        );
+      },
+    } as Components;
+  }, [inlineFiles]);
 
   // 纯文本快速路径：无 Markdown 语法时跳过解析
   if (!hasMarkdown) {
@@ -204,9 +239,9 @@ export default memo(function MarkdownRenderer({
   return (
     <div className={`markdown-body ${className}`}>
       <Markdown
-        remarkPlugins={remarkPlugins}
+        remarkPlugins={dynamicRemarkPlugins}
         rehypePlugins={rehypePlugins}
-        components={markdownComponents}
+        components={dynamicComponents}
       >
         {processedContent}
       </Markdown>
