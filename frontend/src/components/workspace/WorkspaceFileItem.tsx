@@ -13,14 +13,18 @@ import type { WorkspaceFileItem as FileItemData } from '../../services/workspace
 
 const _IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
 
-/** 中间省略：保留文件名头部 + 后缀，中间用 … 替代 */
+/** 中间省略：头部 + … + 尾部（含后缀前几个字符），对齐 macOS Finder */
 function ellipsisMiddle(name: string, maxLen: number): string {
   if (name.length <= maxLen) return name;
   const dotIdx = name.lastIndexOf('.');
   const ext = dotIdx > 0 ? name.slice(dotIdx) : '';
-  // 头部保留 = 总长 - 省略号(1) - 后缀长度
-  const headLen = Math.max(1, maxLen - 1 - ext.length);
-  return name.slice(0, headLen) + '…' + ext;
+  const stem = dotIdx > 0 ? name.slice(0, dotIdx) : name;
+  // 尾部保留 stem 最后 4 个字符 + 后缀
+  const tailLen = Math.min(4, stem.length);
+  const tail = stem.slice(-tailLen) + ext;
+  // 头部 = 总长 - 省略号(1) - 尾部
+  const headLen = Math.max(1, maxLen - 1 - tail.length);
+  return name.slice(0, headLen) + '…' + tail;
 }
 
 interface WorkspaceFileItemProps {
