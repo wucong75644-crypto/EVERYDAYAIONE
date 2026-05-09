@@ -70,10 +70,10 @@ function FileMenu({ isDir, hasCdnUrl, selectedCount, onOpen, onRename, onDownloa
     <>
       {!isBatch && <MenuItem icon={<FolderOpen className="w-4 h-4" />} onSelect={onOpen}>打开</MenuItem>}
       {!isBatch && <MenuItem icon={<Pencil className="w-4 h-4" />} shortcut="F2" onSelect={onRename}>重命名</MenuItem>}
-      {!isBatch && !isDir && hasCdnUrl && (
+      {!isDir && hasCdnUrl && (
         <MenuItem icon={<Download className="w-4 h-4" />} onSelect={onDownload}>下载</MenuItem>
       )}
-      {!isBatch && !isDir && (
+      {!isDir && (
         <MenuItem icon={<MessageSquarePlus className="w-4 h-4" />} onSelect={onSendToChat}>插入到聊天</MenuItem>
       )}
       <Separator />

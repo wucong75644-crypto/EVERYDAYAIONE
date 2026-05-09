@@ -14,7 +14,7 @@ import Modal from '../common/Modal';
 import { Button } from '../ui/Button';
 import FilePreviewModal, { canPreview } from '../chat/media/FilePreviewModal';
 import FileContextMenu from './FileContextMenu';
-import BatchActionBar from './BatchActionBar';
+// BatchActionBar removed — 多选用轻量文字提示
 import WorkspaceHeader from './WorkspaceHeader';
 import WorkspaceFileList from './WorkspaceFileList';
 import WorkspaceFileGrid from './WorkspaceFileGrid';
@@ -220,12 +220,15 @@ export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles
         onMkdir={ws.mkdir}
       />
 
-      {/* 批量操作工具栏（选中时显示） */}
-      <BatchActionBar
-        selectedCount={selection.selectedCount}
-        onDelete={() => setDeleteTarget(`batch:${selection.selectedCount}`)}
-        onClear={selection.clear}
-      />
+      {/* 批量选中提示（轻量文字） */}
+      {selection.selectedCount >= 2 && (
+        <div className="flex items-center gap-2 px-4 py-1.5 border-b border-[var(--s-border-default)] bg-[var(--s-accent)]/5 shrink-0">
+          <span className="text-xs text-[var(--s-text-secondary)]">
+            已选中 <span className="font-medium text-[var(--s-text-primary)]">{selection.selectedCount}</span> 个文件
+          </span>
+          <button type="button" onClick={selection.clear} className="text-xs text-[var(--s-text-tertiary)] hover:text-[var(--s-text-primary)]">取消</button>
+        </div>
+      )}
 
       {/* 错误提示 */}
       {ws.error && (
@@ -244,7 +247,7 @@ export default function WorkspaceView({ onBack, onSendToChat, pendingUploadFiles
             onUpload: () => fileInputRef.current?.click(),
           }}
         >
-          <div className="flex-1 overflow-y-auto" onClick={handleBlankClick}>
+          <div className="flex-1 overflow-y-auto select-none" onClick={handleBlankClick}>
             {ws.loading && ws.items.length === 0 ? (
               <div className="flex-1 flex items-center justify-center h-full">
                 <Loader2 className="w-8 h-8 text-[var(--s-text-tertiary)] animate-spin" />
