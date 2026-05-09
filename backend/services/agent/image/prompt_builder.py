@@ -169,12 +169,12 @@ class PromptBuilder:
         Returns:
             user prompt 字符串
         """
-        parts: list[str] = [f"用户需求：{text}"]
+        parts: list[str] = [f"## 用户需求\n{text}"]
 
         # 从用户文本中提取要求的生成数量（如"5张""生成4张"）
         requested_count = self._extract_requested_count(text)
         if requested_count:
-            parts.append(f"用户要求生成 {requested_count} 张图片，请规划 {requested_count} 个不同类型/角度的图片描述。")
+            parts.append(f"用户要求生成 {requested_count} 张图片，请规划 {requested_count} 张，每张承担不同角色。")
 
         if has_images:
             parts.append("用户已上传商品图片，请分析图片中的商品特征。")
