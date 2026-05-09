@@ -71,15 +71,15 @@ export default function ImagePreview({ images, onRemove }: ImagePreviewProps) {
 
   return (
     <>
-      <div className="flex gap-2">
+      <div className="flex gap-2 py-1">
         {images.map((image) => (
-          <div key={image.id} className="relative inline-block">
+          <div key={image.id} className="relative inline-block shrink-0">
             {image.preview ? (
               <img
                 src={image.preview}
                 alt={image.isQuoted ? '引用图片' : `预览 ${image.file.name}`}
                 onClick={() => handleImageClick(image)}
-                className={`h-10 w-10 rounded-lg object-cover transition-transform ${
+                className={`h-12 w-12 rounded-lg object-cover transition-transform ${
                   image.isUploading ? 'opacity-50' : ''
                 } ${image.error ? 'border-2 border-error' : ''} ${
                   image.isQuoted ? 'ring-2 ring-blue-400' : ''
@@ -88,7 +88,7 @@ export default function ImagePreview({ images, onRemove }: ImagePreviewProps) {
                 }`}
               />
             ) : (
-            <div className="h-10 w-10 rounded-lg bg-active flex items-center justify-center">
+            <div className="h-12 w-12 rounded-lg bg-active flex items-center justify-center">
               <div className="w-4 h-4 border-2 border-text-disabled border-t-transparent rounded-full animate-spin"></div>
             </div>
           )}
