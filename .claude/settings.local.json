@@ -2080,7 +2080,24 @@
       "Bash(./git-push.sh \"fix: ToolStepCard加max-w-md限制卡片宽度，避免撑满容器\")",
       "Bash(npm ls *)",
       "Bash(./git-push.sh \"feat: 文件卡片内联渲染——remark插件匹配文件名位置渲染FileCard，未匹配兜底末尾\")",
-      "Bash(./git-push.sh \"fix: 文件卡片改为固定槽位——统一在文字内容后渲染，移除remark插件方案\")"
+      "Bash(./git-push.sh \"fix: 文件卡片改为固定槽位——统一在文字内容后渲染，移除remark插件方案\")",
+      "WebFetch(domain:www.perplexity.ai)",
+      "WebFetch(domain:uxdesign.cc)",
+      "WebFetch(domain:api-docs.deepseek.com)",
+      "WebFetch(domain:support.google.com)",
+      "WebFetch(domain:www.builder.io)",
+      "WebFetch(domain:bootcamp.uxdesign.cc)",
+      "WebFetch(domain:www.tldraw.com)",
+      "WebFetch(domain:cdn.openai.com)",
+      "WebFetch(domain:vercel.com)",
+      "WebFetch(domain:www.nagwa.com)",
+      "WebFetch(domain:www.geoffreylitt.com)",
+      "WebFetch(domain:blog.cloudflare.com)",
+      "WebFetch(domain:x.com)",
+      "WebFetch(domain:www.cursor.com)",
+      "WebFetch(domain:www.answeroverflow.com)",
+      "WebFetch(domain:webflow.com)",
+      "Bash(./git-push.sh \"feat: ToolStepCard展开区对齐Claude风格\\(Input+Result\\)，子Agent thinking不再混入主thinking，删除SubAgentThinkingHook死代码\")"
     ],
     "additionalDirectories": [
       "/tmp"

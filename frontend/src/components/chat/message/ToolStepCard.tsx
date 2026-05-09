@@ -16,6 +16,7 @@ interface ToolStepCardProps {
   summary?: string;
   code?: string;
   output?: string;
+  input?: string;
   elapsedMs?: number;
 }
 
@@ -35,6 +36,15 @@ function getToolLabel(toolName: string): string {
 
 const isCodeTool = (name: string) => name === 'code_execute';
 
+/** 尝试格式化 JSON 字符串，失败则原样返回 */
+function tryFormatJson(raw: string): string {
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
+}
+
 export default memo(function ToolStepCard({
   toolName,
   toolCallId,
@@ -42,11 +52,12 @@ export default memo(function ToolStepCard({
   summary,
   code,
   output,
+  input,
   elapsedMs,
 }: ToolStepCardProps) {
   const [expanded, setExpanded] = useState(false);
   const label = getToolLabel(toolName);
-  const hasContent = !!(summary || code || output);
+  const hasContent = !!(summary || code || output || input);
   const canExpand = hasContent && status !== 'running';
 
   return (
@@ -116,33 +127,48 @@ export default memo(function ToolStepCard({
         )}
       </button>
 
-      {/* 折叠内容区 */}
+      {/* 折叠内容区：Input（调用参数）+ Result（返回结果），对齐 Claude 风格 */}
       {expanded && hasContent && (
         <div className="border-t border-border-default/40 px-3 py-2 space-y-2">
-          {/* code_execute: 代码块 */}
+          {/* Input：调用参数（code_execute 显示代码，其他工具显示 JSON 参数） */}
           {code && (
             <div>
-              <div className="text-[10px] font-medium text-text-tertiary mb-1 uppercase tracking-wider">代码</div>
-              <pre className="rounded-md bg-[var(--color-bg-primary)] border border-border-default/40 p-2 overflow-x-auto text-[11px] leading-relaxed text-text-secondary">
+              <div className="text-[10px] font-medium text-text-tertiary mb-1 uppercase tracking-wider">Input</div>
+              <pre className="rounded-md bg-[var(--color-bg-primary)] border border-border-default/40 p-2 overflow-x-auto text-[11px] leading-relaxed text-text-secondary max-h-60 overflow-y-auto">
                 <code>{code}</code>
               </pre>
             </div>
           )}
-
-          {/* code_execute: 输出块 */}
-          {output && (
+          {input && !code && (
             <div>
-              <div className="text-[10px] font-medium text-text-tertiary mb-1 uppercase tracking-wider">输出</div>
-              <pre className="rounded-md bg-neutral-900 dark:bg-neutral-950 text-neutral-200 p-2 overflow-x-auto text-[11px] leading-relaxed">
-                {output}
+              <div className="text-[10px] font-medium text-text-tertiary mb-1 uppercase tracking-wider">Input</div>
+              <pre className="rounded-md bg-[var(--color-bg-primary)] border border-border-default/40 p-2 overflow-x-auto text-[11px] leading-relaxed text-text-secondary max-h-60 overflow-y-auto">
+                <code>{tryFormatJson(input)}</code>
               </pre>
             </div>
           )}
 
-          {/* 通用工具: summary */}
-          {summary && !code && !output && (
-            <div className="text-text-secondary text-xs leading-relaxed whitespace-pre-wrap">
-              {summary}
+          {/* Result：返回结果 */}
+          {(output || summary) && (
+            <div>
+              <div className="text-[10px] font-medium text-text-tertiary mb-1 uppercase tracking-wider">Result</div>
+              {output ? (
+                <pre className={`rounded-md p-2 overflow-x-auto text-[11px] leading-relaxed max-h-60 overflow-y-auto ${
+                  status === 'error'
+                    ? 'bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400'
+                    : 'bg-neutral-900 dark:bg-neutral-950 text-neutral-200'
+                }`}>
+                  {output}
+                </pre>
+              ) : (
+                <div className={`text-xs leading-relaxed whitespace-pre-wrap p-2 rounded-md max-h-60 overflow-y-auto ${
+                  status === 'error'
+                    ? 'bg-red-50 text-red-600 dark:bg-red-950/30 dark:text-red-400'
+                    : 'bg-[var(--color-bg-primary)] border border-border-default/40 text-text-secondary'
+                }`}>
+                  {summary}
+                </div>
+              )}
             </div>
           )}
         </div>
